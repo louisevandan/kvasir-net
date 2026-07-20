@@ -10,7 +10,7 @@
 # Then run this script. It creates the tunnel, writes the ingress config, and
 # routes gate.kvasir-ai.net -> the tunnel. Finally start it (printed at the end).
 set -euo pipefail
-CF="/home/banya/linkcpp/bin/cloudflared"
+CF="${HOME}/linkcpp/bin/cloudflared"
 NAME="linkcpp-gw"
 HOST="gate.kvasir-ai.net"
 TARGET="http://localhost:5173"

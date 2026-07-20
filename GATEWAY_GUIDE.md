@@ -34,7 +34,7 @@ Nodes (iOS / Android / desktop wallets) then point their "settlement server URL"
 
 ## 2. Git / where to work
 
-- Repo has remotes: `origin` = hikaMaeng/linkcpp (read-only upstream), **`fork` = github.com/kr-ai-dev-association/linkcpp** (writable).
+- Work from the writable fork **`github.com/kr-ai-dev-association/linkcpp`**.
 - Work branch: **`tony`**. Pull on the Linux box with: `git clone -b tony https://github.com/kr-ai-dev-association/linkcpp.git`
   (or `git fetch fork && git checkout tony`). Push with `git push fork tony`.
 - The devnet **admin secret key is NOT in git** (gitignored at `solana/token/.keys/admin.json`). You must
