@@ -1758,7 +1758,7 @@ const RING_LAST_OK = {}; // cid -> ts of last successful client completion
 const markRingOk = (cid) => { if (cid) RING_LAST_OK[cid] = Date.now(); };
 
 let HEALTH_CACHE = { at: 0, body: null, code: 200 };
-app.get(['/v1/health', '/health'], async (_req, res) => {
+app.get(['/v1/health'], async (_req, res) => {
   const now = Date.now();
   if (HEALTH_CACHE.body && (now - HEALTH_CACHE.at) < 5000) return res.status(HEALTH_CACHE.code).json(HEALTH_CACHE.body);
   const pool = await resolveModels().catch(() => []);
