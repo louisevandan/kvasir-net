@@ -1,0 +1,18 @@
+# Opt-in proxy overlay.  Do not use this file for the stable RPC-only stack.
+services:
+  hub:
+    image: linkcpp-proxy:dev
+    build:
+      dockerfile: docker/Dockerfile.cuda
+      target: hub
+      args:
+        LINKCPP_ARTIFACT_IMAGE: "${LINKCPP_PROXY_ARTIFACT_IMAGE:-linkcpp-proxy-artifacts:local}"
+        CUDA_RUNTIME_IMAGE: "${LINKCPP_CUDA_RUNTIME_IMAGE:-nvidia/cuda:13.0.0-runtime-ubuntu22.04}"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"
+      LINKCPP_ALLOW_RUNTIME_PACK_INSTALL: "${LINKCPP_ALLOW_RUNTIME_PACK_INSTALL:-1}"
+      LINKCPP_AUTO_DISTRIBUTE_RUNTIME_PACK: "${LINKCPP_AUTO_DISTRIBUTE_RUNTIME_PACK:-1}"
+    gpus: all
+    ports:
+      - "50052-50056:50052-50056"
+      - "51052-51056:51052-51056"

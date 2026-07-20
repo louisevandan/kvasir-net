@@ -1,0 +1,70 @@
+name: KvasirWallet
+options:
+  bundleIdPrefix: ai.banya.linkcpp
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+packages:
+  Core:
+    path: Core
+targets:
+  KvasirWallet:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+    dependencies:
+      - package: Core
+        product: Core
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Kvasir
+        UILaunchScreen: {}
+        NSFaceIDUsageDescription: "지갑 잠금 해제에 Face ID를 사용합니다."
+        NSCameraUsageDescription: "QR 코드로 주소를 스캔합니다."
+        NSLocalNetworkUsageDescription: "같은 네트워크의 스테이킹 정산 서버 및 노드에 연결합니다."
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        # Keep contributing as a node when backgrounded: the processing background
+        # mode + a BGProcessingTask (requires external power) lets iOS grant
+        # compute windows while charging so the worker survives a screen lock.
+        UIBackgroundModes:
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - ai.banya.linkcpp.wallet.node
+        # Stamped identity the in-app RPC worker reports to the hub (advisory fields).
+        KvasirUnitVersion: "0.0.7"
+        KvasirLlamaCppRev: "6b85b26bdee2"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.banya.linkcpp.wallet
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: N47DUU3PJJ
+        CODE_SIGN_STYLE: Automatic
+        # In-app workers: ggml RPC worker + linkcpp ring stage. All static libs
+        # come from ONE build tree (build-ios-ring) so ggml symbols never clash.
+        SWIFT_OBJC_BRIDGING_HEADER: App/Worker/KvasirWorker-Bridging.h
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/../../external/llama.cpp/ggml/include"
+          - "$(SRCROOT)/../../external/llama.cpp/include"
+          - "$(SRCROOT)/../../apps/linkcpp-node"
+        LIBRARY_SEARCH_PATHS:
+          - "$(SRCROOT)/../../build-ios-ring/apps/linkcpp-node"
+          - "$(SRCROOT)/../../build-ios-ring/apps/linkcpp-expert-worker"
+          - "$(SRCROOT)/../../build-ios-ring/external/llama.cpp/src"
+          - "$(SRCROOT)/../../build-ios-ring/external/llama.cpp/common"
+          - "$(SRCROOT)/../../build-ios-ring/external/llama.cpp/ggml/src"
+          - "$(SRCROOT)/../../build-ios-ring/external/llama.cpp/ggml/src/ggml-metal"
+          - "$(SRCROOT)/../../build-ios-ring/external/llama.cpp/ggml/src/ggml-rpc"
+        OTHER_LDFLAGS: "-llinkcpp-stage -llinkcpp-expert -lllama -lllama-common -lllama-common-base -lggml -lggml-base -lggml-cpu -lggml-metal -lggml-rpc -lc++ -framework Metal -framework Accelerate"

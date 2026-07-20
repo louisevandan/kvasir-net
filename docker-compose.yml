@@ -1,0 +1,19 @@
+services:
+  hub:
+    image: linkcpp:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    hostname: hub
+    restart: unless-stopped
+    environment:
+      LINKCPP_MODEL_DIR: /models
+      LINKCPP_DATA_DIR: /models/linkcpp
+      LINKCPP_STAGE_DIR: /models/linkcpp/stage
+      LINKCPP_MAX_NODES: "${LINKCPP_MAX_NODES:-5}"
+    ports:
+      - "${LINKCPP_UI_PORT:-19000}:9000"
+    volumes:
+      - type: bind
+        source: "${MODELS_DIR:-C:/Users/admin/.lmstudio/model}"
+        target: /models

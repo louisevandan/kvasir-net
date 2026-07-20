@@ -1,0 +1,85 @@
+# Kvasir gateway — public-server deployment.
+#
+#   cd solana/staking-service
+#   cp .env.example .env           # then edit .env (set KVR_PUBLIC_URL etc.)
+#   # provide the settlement admin key ONE of two ways:
+#   #   (a) file:  mkdir -p secrets && cp ../token/.keys/admin.json secrets/admin.json
+#   #   (b) inline: set KVR_ADMIN_KEY=[...] in .env  (then remove the secrets volume below)
+#   docker compose up -d --build
+#
+# Build context is the repo root (../..) so the Dockerfile can reach the web app + token spec.
+
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: solana/staking-service/Dockerfile
+    image: kvasir-gateway:latest
+    container_name: kvasir-gateway
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-8791}:8791"
+    environment:
+      PORT: "8791"
+      LINKCPP_RPC_URL: "${LINKCPP_RPC_URL:-https://api.devnet.solana.com}"
+      # linkcpp inference hub — set LINKCPP_HUB_URL (e.g. in .env) to the hub's
+      # address to make the pay-inference model list + completions use real served
+      # models. Left empty, the gateway falls back to the static demo catalog.
+      LINKCPP_HUB_URL: "${LINKCPP_HUB_URL:-}"
+      # Shared secret to reach a SIWS-protected hub (must match the hub's value).
+      LINKCPP_HUB_SERVICE_TOKEN: "${LINKCPP_HUB_SERVICE_TOKEN:-}"
+      # Gateway admin login (Sign-In With Solana + TOTP 2FA) at /admin. Comma-separated
+      # admin wallet allowlist; EMPTY => admin surface disabled. KVR_SESSION_SECRET keeps
+      # admin sessions valid across restarts (random per-process if unset).
+      KVR_ADMIN_WALLETS: "${KVR_ADMIN_WALLETS:-}"
+      KVR_SESSION_SECRET: "${KVR_SESSION_SECRET:-}"
+      # Operator token-gate: registering/running a node requires the owner wallet to
+      # hold >= this many KVR on-chain (0 disables). Should match the hub's value.
+      LINKCPP_MIN_OPERATOR_KVR: "${LINKCPP_MIN_OPERATOR_KVR:-0}"
+      STAKING_APR: "${STAKING_APR:-0.12}"
+      KVR_GATEWAY_BONUS: "${KVR_GATEWAY_BONUS:-1.5}"
+      # Infra operator rewards: wallet that owns the headless hub/gateway roles on
+      # this host. The gateway auto-registers a node on its behalf (uptime rewards +
+      # visibility in that wallet's node monitor). Empty => not reported.
+      KVR_INFRA_OWNER: "${KVR_INFRA_OWNER:-}"
+      KVR_HUB_OWNER: "${KVR_HUB_OWNER:-}"
+      KVR_GATEWAY_OWNER: "${KVR_GATEWAY_OWNER:-}"
+      KVR_HUB_UPTIME_PER_HOUR: "${KVR_HUB_UPTIME_PER_HOUR:-2.0}"
+      KVR_GATEWAY_UPTIME_PER_HOUR: "${KVR_GATEWAY_UPTIME_PER_HOUR:-1.0}"
+      # The canonical URL clients should use (returned by /api/config). e.g. https://gw.example.com
+      KVR_PUBLIC_URL: "${KVR_PUBLIC_URL:-}"
+      # Inline admin key alternative to the mounted file (leave empty if using the secrets volume).
+      KVR_ADMIN_KEY: "${KVR_ADMIN_KEY:-}"
+    volumes:
+      # persistent settlement state (positions, node registry). A named volume
+      # (not a host bind) so it inherits the image's kvasir ownership and the
+      # non-root container can write it — a host dir mounts as root:root.
+      - gateway-data:/app/data
+      # settlement admin key (devnet). Comment this out if you pass KVR_ADMIN_KEY inline instead.
+      - ./secrets/admin.json:/run/secrets/admin.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8791/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Automatic HTTPS via Let's Encrypt, reverse-proxying to the gateway.
+  # Needs a public DNS A record for the domain + ports 80/443 open.
+  caddy:
+    image: caddy:2
+    container_name: kvasir-caddy
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  gateway-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,88 @@
+{
+  "timestamp": "2026-07-13T02:29:00+09:00",
+  "model": {
+    "id": "Qwen2.5-1.5B-Instruct-Q8_0.gguf",
+    "size_gib": 1.53,
+    "architecture": "qwen2",
+    "layers": 28
+  },
+  "settings": {
+    "context": 1024,
+    "parallel": 1,
+    "batch": 512,
+    "ubatch": 512,
+    "cache_type_k": "f16",
+    "cache_type_v": "f16",
+    "cache_prompt": false,
+    "max_tokens": 128,
+    "ignore_eos": true,
+    "temperature": 0,
+    "warmup_runs": 2,
+    "measured_runs": 7,
+    "layer_split": [14, 14]
+  },
+  "pairs": {
+    "3090_4080": {
+      "rpc": {
+        "load_seconds": 35.03,
+        "runs": [
+          {"run": 1, "wall_s": 1.930094, "prompt_tokens": 376, "prompt_tps": 2137.395901, "generation_tokens": 128, "generation_tps": 75.845919},
+          {"run": 2, "wall_s": 2.044793, "prompt_tokens": 376, "prompt_tps": 2021.874966, "generation_tokens": 128, "generation_tps": 71.232959},
+          {"run": 3, "wall_s": 2.201866, "prompt_tokens": 376, "prompt_tps": 2024.171624, "generation_tokens": 128, "generation_tps": 65.442918},
+          {"run": 4, "wall_s": 2.375236, "prompt_tokens": 376, "prompt_tps": 1865.903102, "generation_tokens": 128, "generation_tps": 60.594670},
+          {"run": 5, "wall_s": 2.456989, "prompt_tokens": 376, "prompt_tps": 1765.448851, "generation_tokens": 128, "generation_tps": 58.908915},
+          {"run": 6, "wall_s": 2.687692, "prompt_tokens": 376, "prompt_tps": 1570.173387, "generation_tokens": 128, "generation_tps": 53.697041},
+          {"run": 7, "wall_s": 2.863243, "prompt_tokens": 376, "prompt_tps": 1503.362574, "generation_tokens": 128, "generation_tps": 50.460611}
+        ],
+        "generation_tps_mean": 62.311862,
+        "generation_tps_median": 60.594670,
+        "wall_s_median": 2.375236
+      },
+      "ring_proxy": {
+        "load_seconds": 33.26,
+        "runs": [
+          {"run": 1, "wall_s": 0.918049, "prompt_tokens_reported": 0, "generation_tokens": 128, "generation_tps": 142.698},
+          {"run": 2, "wall_s": 1.068505, "prompt_tokens_reported": 0, "generation_tokens": 128, "generation_tps": 122.021},
+          {"run": 3, "wall_s": 1.194949, "prompt_tokens_reported": 0, "generation_tokens": 128, "generation_tps": 109.029},
+          {"run": 4, "wall_s": 1.132803, "prompt_tokens_reported": 0, "generation_tokens": 128, "generation_tps": 115.004},
+          {"run": 5, "wall_s": 1.281380, "prompt_tokens_reported": 0, "generation_tokens": 128, "generation_tps": 101.507},
+          {"run": 6, "wall_s": 1.428948, "prompt_tokens_reported": 0, "generation_tokens": 128, "generation_tps": 90.974},
+          {"run": 7, "wall_s": 1.463701, "prompt_tokens_reported": 0, "generation_tokens": 128, "generation_tps": 88.766}
+        ],
+        "generation_tps_mean": 109.999857,
+        "generation_tps_median": 109.029,
+        "wall_s_median": 1.194949,
+        "known_measurement_gap": "prompt token count and prompt timing are not reported by the proxy response adapter"
+      },
+      "median_generation_tps_speedup": 1.799317,
+      "median_wall_time_speedup": 1.987730
+    },
+    "3090_4070": {
+      "rpc": {
+        "load_seconds": 60.25,
+        "runs": [
+          {"run": 1, "wall_s": 10.872892, "prompt_tokens": 376, "prompt_tps": 197.341039, "generation_tokens": 128, "generation_tps": 14.371096},
+          {"run": 2, "wall_s": 12.192761, "prompt_tokens": 376, "prompt_tps": 142.883038, "generation_tokens": 128, "generation_tps": 13.474569},
+          {"run": 3, "wall_s": 14.511764, "prompt_tokens": 376, "prompt_tps": 132.806487, "generation_tokens": 128, "generation_tps": 11.023254},
+          {"run": 4, "wall_s": 14.717723, "prompt_tokens": 376, "prompt_tps": 125.690252, "generation_tokens": 128, "generation_tps": 10.973110},
+          {"run": 5, "wall_s": 14.251317, "prompt_tokens": 376, "prompt_tps": 254.210531, "generation_tokens": 128, "generation_tps": 10.069991},
+          {"run": 6, "wall_s": 14.248520, "prompt_tokens": 376, "prompt_tps": 126.415237, "generation_tokens": 128, "generation_tps": 11.414611},
+          {"run": 7, "wall_s": 14.264688, "prompt_tokens": 376, "prompt_tps": 130.341804, "generation_tokens": 128, "generation_tps": 11.309773}
+        ],
+        "generation_tps_mean": 11.805201,
+        "generation_tps_median": 11.309773,
+        "wall_s_median": 14.251317
+      },
+      "ring_proxy": {
+        "status": "blocked_before_measurement",
+        "error": "ring adapter runtime mismatch: Slot 2: request adapter is not installed",
+        "required_action": "bootstrap the proxy-capable container once on 192.168.0.15; later runtime-pack updates can use the pack API"
+      }
+    }
+  },
+  "additional_findings": [
+    "gemma-4-E2B-it-Q8_0 failed in stock two-GPU RPC load with GGML_SCHED_MAX_SPLIT_INPUTS assertion",
+    "the legacy model download API does not create missing parent directories",
+    "proxy responses currently omit prompt token and prompt timing fields"
+  ]
+}

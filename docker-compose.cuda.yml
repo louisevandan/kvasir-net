@@ -1,0 +1,16 @@
+# Optional Linux NVIDIA overlay. Do not use on macOS: Docker Desktop cannot
+# pass an Apple Metal device through to a Linux container.
+services:
+  hub:
+    build:
+      dockerfile: docker/Dockerfile.cuda
+      target: hub
+      args:
+        LINKCPP_ARTIFACT_IMAGE: "${LINKCPP_RPC_ARTIFACT_IMAGE:-linkcpp-rpc-artifacts:local}"
+        CUDA_RUNTIME_IMAGE: "${LINKCPP_CUDA_RUNTIME_IMAGE:-nvidia/cuda:13.0.0-runtime-ubuntu22.04}"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"
+    gpus: all
+    ports:
+      - "50052-50056:50052-50056"
+      - "51052-51056:51052-51056"

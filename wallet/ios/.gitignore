@@ -1,0 +1,14 @@
+# SPM / Xcode build products (regenerated)
+.build/
+.build-xcode/
+DerivedData/
+.swiftpm/
+
+# XcodeGen output (regenerate with `xcodegen generate` from project.yml)
+KvasirWallet.xcodeproj/
+
+# generated Info.plist (from project.yml)
+App/Info.plist
+
+# macOS
+.DS_Store

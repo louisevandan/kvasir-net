@@ -1,0 +1,26 @@
+# Fast CUDA runtime assembly. CUDA/CMake compilation is performed separately
+# by docker/cuda/Dockerfile.llama and docker/cuda/Dockerfile.proxy.
+ARG LINKCPP_ARTIFACT_IMAGE=linkcpp-rpc-artifacts:local
+ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:13.0.0-runtime-ubuntu22.04
+FROM ${LINKCPP_ARTIFACT_IMAGE} AS artifacts
+FROM ${CUDA_RUNTIME_IMAGE} AS hub
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip libgomp1 libcurl4 ca-certificates curl procps \
+    && pip3 install --no-cache-dir fastapi "uvicorn[standard]" httpx gguf numpy python-multipart \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=artifacts /opt/linkcpp/lib/ /usr/local/lib/
+RUN ldconfig
+COPY --from=artifacts /opt/linkcpp/bin/ /app/bin/
+COPY --from=artifacts /opt/linkcpp/runtime-packs/ /app/runtime-packs/
+COPY VERSION /app/VERSION
+COPY controller /app/controller
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility PYTHONPATH=/app LINKCPP_LLAMA_CPP_BACKEND=cuda \
+    RPC_BIN=/app/bin/ggml-rpc-server LLAMA_SERVER_BIN=/app/bin/llama-server \
+    LINKCPP_STAGE_BIN=/app/bin/linkcpp-node LINKCPP_SERVER_BIN=/app/bin/linkcpp-server \
+    LINKCPP_BUNDLED_RUNTIME_PACK_DIR=/app/runtime-packs \
+    LINKCPP_MODEL_DIR=/models LINKCPP_DATA_DIR=/models/linkcpp LINKCPP_STAGE_DIR=/models/linkcpp/stage
+WORKDIR /app
+EXPOSE 9000 50052-50056 51052-51056
+VOLUME ["/models"]
+ENTRYPOINT ["python3", "-m", "uvicorn", "controller.hub:app", "--host", "0.0.0.0", "--port", "9000"]

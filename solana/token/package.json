@@ -1,0 +1,18 @@
+{
+  "name": "linkcpp-token",
+  "version": "0.0.1",
+  "private": true,
+  "description": "linkcpp SPL token mint tooling (devnet)",
+  "type": "commonjs",
+  "scripts": {
+    "airdrop": "node airdrop.js",
+    "create-mint": "node create-mint.js",
+    "transfer": "node transfer.js",
+    "add-metadata": "node add-metadata.js",
+    "show": "node show.js"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0"
+  }
+}

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>linkcpp controller</title>
+  <link rel="stylesheet" href="/web/style.css"/>
+</head>
+<body>
+  <header>
+    <h1>linkcpp <span class="muted">control plane</span></h1>
+    <p id="status" data-testid="serve-status" role="status" aria-live="polite">idle</p>
+  </header>
+
+  <main>
+    <section aria-labelledby="nodes-h">
+      <h2 id="nodes-h">Nodes</h2>
+      <form id="node-form" aria-label="Add node">
+        <label>Node address (from a node-host)
+          <input name="addr" data-testid="node-addr" placeholder="192.168.1.50:9101" size="24" required/></label>
+        <button type="submit" data-testid="node-add-btn">Add node</button>
+      </form>
+      <table data-testid="nodes-table">
+        <thead><tr><th>id</th><th>GPU</th><th>VRAM (GiB)</th><th>RAM (GiB)</th><th>cores</th><th>bound</th><th></th></tr></thead>
+        <tbody id="nodes-body"></tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="models-h">
+      <h2 id="models-h">Models</h2>
+      <form id="dl-form" aria-label="Download model">
+        <input name="url" data-testid="dl-url" placeholder="https://…/model.gguf" size="40"/>
+        <input name="name" data-testid="dl-name" placeholder="model.gguf" size="20"/>
+        <button type="submit" data-testid="dl-btn">Download</button>
+      </form>
+      <ul id="models-list" data-testid="models-list"></ul>
+    </section>
+
+    <section aria-labelledby="serve-h">
+      <h2 id="serve-h">Serve</h2>
+      <form id="serve-form" aria-label="Plan and serve">
+        <label>Model
+          <select name="model" data-testid="serve-model" required></select>
+        </label>
+        <label>Context <input name="ctx" data-testid="serve-ctx" value="4096" size="6"/></label>
+        <label>Parallel <input name="parallel" data-testid="serve-parallel" value="1" size="4"/></label>
+        <button type="button" id="plan-btn" data-testid="plan-btn">Plan</button>
+        <button type="submit" id="serve-btn" data-testid="serve-btn">Serve</button>
+      </form>
+      <div id="serve-live" data-testid="serve-live" class="live idle" role="status" aria-live="polite">
+        <span class="dot"></span><span id="serve-live-text">idle — no model served</span>
+      </div>
+      <pre id="plan-verdict" data-testid="plan-verdict" role="region" aria-label="Plan verdict"></pre>
+    </section>
+
+    <section aria-labelledby="chat-h">
+      <h2 id="chat-h">Chat</h2>
+      <form id="chat-form" aria-label="Chat">
+        <textarea name="prompt" data-testid="chat-input" rows="2" placeholder="Ask something…"></textarea>
+        <button type="submit" data-testid="chat-send">Send</button>
+      </form>
+      <output id="chat-output" data-testid="chat-output" aria-live="polite"></output>
+    </section>
+  </main>
+  <script src="/web/app.js"></script>
+</body>
+</html>

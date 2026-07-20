@@ -1,0 +1,23 @@
+# Heavy stock llama.cpp CUDA/RPC build. Tag the llama-build target and reuse it
+# as the parent of proxy-only adapter builds.
+ARG CUDA_TOOLCHAIN_IMAGE=linkcpp-cuda-toolchain:local
+FROM ${CUDA_TOOLCHAIN_IMAGE} AS llama-build
+ARG CUDA_ARCHS="75;80;86;89;90;120;121"
+ARG LINKCPP_BUILD_JOBS=4
+WORKDIR /src
+COPY external/llama.cpp ./external/llama.cpp
+COPY CMakeLists.txt ./CMakeLists.txt
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_CUDA=ON -DGGML_RPC=ON -DLLAMA_CURL=ON \
+        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
+        -DLINKCPP_BUILD_RING_ADAPTER=OFF \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,--allow-shlib-undefined" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--allow-shlib-undefined" \
+    && cmake --build build -j"${LINKCPP_BUILD_JOBS}" \
+        --target ggml-rpc-server llama-server \
+    && mkdir -p /opt/linkcpp/bin /opt/linkcpp/lib /opt/linkcpp/runtime-packs \
+    && cp build/bin/ggml-rpc-server build/bin/llama-server /opt/linkcpp/bin/ \
+    && cp -a build/bin/*.so* /opt/linkcpp/lib/
+
+FROM scratch AS llama-artifacts
+COPY --from=llama-build /opt/linkcpp /opt/linkcpp

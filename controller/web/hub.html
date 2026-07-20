@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Kvasir Hub</title>
+  <link rel="stylesheet" href="/web/hub.css?v=twofa3"/>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-h">
+      <strong>Kvasir <span class="muted">Hub</span></strong>
+      <span id="unit-version" data-testid="unit-version" class="muted">unit 0.0.1</span>
+    </div>
+    <div class="wallet-menu">
+      <button id="wallet-toggle" class="wallet-icon" type="button" title="Wallet" aria-label="Wallet" data-testid="wallet-toggle">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1"/>
+          <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2Z"/>
+          <circle cx="16.5" cy="12.5" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        <span id="wallet-label" class="wallet-label"></span>
+      </button>
+      <div id="wallet-dropdown" class="wallet-dropdown hidden" data-testid="wallet-dropdown">
+        <div class="wd-head">Hub wallet</div>
+        <p class="sub">A wallet that is an admin <b>or</b> holds the required KVR may operate this hub. Create a wallet, fund it with KVR, and sign in — the same recovery phrase works in the Kvasir wallet.</p>
+
+        <!-- first-run: create or import a built-in wallet -->
+        <div id="hw-setup" class="hidden">
+          <div class="hw-tabs">
+            <button id="hw-tab-create" class="hw-tab on" type="button">Create</button>
+            <button id="hw-tab-import" class="hw-tab" type="button">Import</button>
+          </div>
+          <div id="hw-create-pane">
+            <p class="sub">Back up this recovery phrase — it is the only way to restore the wallet.</p>
+            <textarea id="hw-mnemonic-new" data-testid="hw-mnemonic-new" readonly rows="3" placeholder="click Generate phrase"></textarea>
+            <button id="hw-generate" class="btn ghost" type="button">Generate phrase</button>
+          </div>
+          <div id="hw-import-pane" class="hidden">
+            <label>Recovery phrase<textarea id="hw-mnemonic-in" data-testid="hw-mnemonic-in" rows="3" placeholder="12 or 24 words"></textarea></label>
+          </div>
+          <label>Passphrase <span class="sub">(encrypts the wallet on this device)</span><input id="hw-pass-new" type="password" autocomplete="new-password"/></label>
+          <button id="hw-save" data-testid="hw-save" class="btn block" type="button">Save wallet</button>
+        </div>
+
+        <!-- returning: unlock the stored wallet -->
+        <div id="hw-unlock" class="hidden">
+          <p class="sub">Unlock your hub wallet.</p>
+          <label>Passphrase<input id="hw-pass" data-testid="hw-pass" type="password" autocomplete="current-password"/></label>
+          <div class="hw-row">
+            <button id="hw-unlock-btn" data-testid="hw-unlock" class="btn" type="button">Unlock</button>
+            <button id="hw-forget" class="btn ghost" type="button" title="Remove this wallet from this device">Forget</button>
+          </div>
+        </div>
+
+        <!-- unlocked account -->
+        <div id="hw-account" class="hidden">
+          <div class="hw-field"><span class="sub">Wallet</span><code id="hw-address" data-testid="hw-address" class="hw-addr"></code></div>
+          <div class="hw-balance-box">
+            <span class="sub">KVR balance</span>
+            <b id="hw-balance">…</b>
+          </div>
+          <div id="hw-gate" class="sub" style="min-height:14px"></div>
+          <div id="hw-signin-row" class="hw-row">
+            <button id="hw-signin" data-testid="hw-signin" class="btn">Sign in</button>
+            <button id="hw-lock" class="btn ghost" type="button">Lock</button>
+          </div>
+          <div id="hw-signedin" class="hidden">
+            <div class="hw-ok">✓ Signed in — operating this hub</div>
+            <!-- two-factor management (only meaningful once signed in) -->
+            <div id="hw-2fa" class="hw-2fa">
+              <div class="hw-2fa-head"><span class="sub">Two-factor auth</span><span id="hw-2fa-state" class="sub"></span></div>
+              <button id="hw-2fa-enable" class="btn ghost block" type="button">Enable 2FA (authenticator app)</button>
+              <div id="hw-2fa-enroll" class="hidden">
+                <p class="sub">Scan this QR with Google Authenticator (or enter the setup key manually), then type the 6-digit code to confirm.</p>
+                <div class="hw-2fa-qr-wrap"><canvas id="hw-2fa-qr" class="hw-2fa-qr" width="200" height="200"></canvas></div>
+                <div class="hw-field"><span class="sub">Setup key</span><code id="hw-2fa-secret" class="hw-addr"></code></div>
+                <details><summary class="sub">otpauth URI</summary><code id="hw-2fa-uri" class="hw-addr" style="word-break:break-all"></code></details>
+                <div class="hw-2fa-backup">
+                  <span class="sub">Backup codes — save these; each works once if you lose your authenticator:</span>
+                  <pre id="hw-2fa-codes" class="hw-codes"></pre>
+                </div>
+                <label>Authenticator code<input id="hw-2fa-confirm-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456"/></label>
+                <button id="hw-2fa-confirm" class="btn block" type="button">Confirm &amp; enable</button>
+              </div>
+              <div id="hw-2fa-disable-row" class="hidden">
+                <label>Authenticator or backup code<input id="hw-2fa-disable-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456"/></label>
+                <button id="hw-2fa-disable" class="btn ghost block" type="button">Disable 2FA</button>
+              </div>
+            </div>
+            <button id="hw-logout" class="btn ghost block" type="button">Sign out</button>
+          </div>
+        </div>
+
+        <!-- login-time 2FA challenge (shown after wallet signature when 2FA is on) -->
+        <div id="hw-2fa-login" class="hidden">
+          <p class="sub">Enter the 6-digit code from your authenticator app (or a backup code).</p>
+          <label>Code<input id="hw-2fa-login-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456"/></label>
+          <button id="hw-2fa-login-btn" class="btn block" type="button">Verify &amp; sign in</button>
+          <button id="hw-2fa-login-cancel" class="btn ghost block" type="button">Cancel</button>
+        </div>
+
+        <!-- fallback: external browser-extension wallet -->
+        <details id="auth-external">
+          <summary class="sub">Use a browser wallet extension instead</summary>
+          <div style="margin-top:8px">
+            <label>Admin wallet<input id="auth-wallet" data-testid="auth-wallet" placeholder="Solana address" autocomplete="off" spellcheck="false"/></label>
+            <button id="auth-connect" data-testid="auth-connect" class="btn block">Connect wallet &amp; sign</button>
+            <div id="auth-manual" class="hidden" style="margin-top:12px">
+              <p class="sub">No wallet extension detected — sign this exact message, then paste the base64 signature:</p>
+              <textarea id="auth-message" readonly rows="3"></textarea>
+              <label>Signature (base64)<input id="auth-sig" data-testid="auth-sig" placeholder="base64 signature" autocomplete="off"/></label>
+              <button id="auth-verify" data-testid="auth-verify" class="btn block">Verify signature</button>
+            </div>
+          </div>
+        </details>
+
+        <div id="auth-msg" class="sub" style="margin-top:8px;min-height:14px"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Starts locked; hub.js unlocks it once /api/auth/status says auth is off or the session is valid. -->
+  <div class="app locked">
+    <aside class="sidebar">
+      <section class="side-sec">
+        <div class="sec-head">
+          <span>Nodes &amp; logical slots</span>
+        </div>
+        <ul class="items" id="node-list" data-testid="node-list"></ul>
+      </section>
+
+      <section class="side-sec">
+        <div class="sec-head">
+          <span>Controllers</span>
+          <button class="add" data-testid="add-ctrl-btn" title="Add controller">+</button>
+        </div>
+        <form id="add-ctrl" class="add-form hidden" data-testid="add-ctrl-form">
+          <label>Name <input data-testid="ctrl-name" placeholder="optional"/></label>
+          <button type="button" data-testid="ctrl-create-btn">Create controller</button>
+        </form>
+        <ul class="items" id="ctrl-list" data-testid="ctrl-list"></ul>
+      </section>
+
+      <section class="side-sec">
+        <div class="sec-head"><span>Operations</span></div>
+        <ul class="items">
+          <li id="firewall-menu" data-testid="firewall-menu">
+            <span class="dot info"></span>
+            <span><span class="name">Network access</span><br><span class="sub">Firewall setup</span></span>
+          </li>
+          <li id="runtime-menu" data-testid="runtime-menu">
+            <span class="dot info"></span>
+            <span><span class="name">Runtime</span><br><span class="sub">Versions and backend</span></span>
+          </li>
+        </ul>
+      </section>
+    </aside>
+
+    <main id="main" data-testid="main">
+      <div class="welcome">
+        <h2>Welcome</h2>
+        <p class="muted">Docker-local slots are for GPUs visible inside the container. On macOS, create native Metal logical slots instead; each one has its own memory and CPU budget.</p>
+      </div>
+    </main>
+  </div>
+
+  <div id="auth-gate" class="auth-gate hidden" data-testid="auth-gate">
+    <div class="auth-gate-card">
+      <strong>Sign-in required</strong>
+      <p class="sub">Open the wallet menu (top-right) and sign in with a wallet that may operate this hub.</p>
+    </div>
+  </div>
+
+  <script src="/web/vendor/hub-wallet.js"></script>
+  <script src="/web/vendor/qrcode.js?v=twofa3"></script>
+  <script src="/web/hub.js?v=auth-lock-1"></script>
+</body>
+</html>

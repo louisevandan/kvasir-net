@@ -1,0 +1,9 @@
+# Rarely rebuilt CUDA compiler/toolchain image. This context contains no source.
+ARG CUDA_DEVEL_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu22.04
+FROM ${CUDA_DEVEL_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git ninja-build libcurl4-openssl-dev ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/*
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+WORKDIR /src

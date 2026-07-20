@@ -1,0 +1,12 @@
+# Kvasir gateway — automatic HTTPS (Let's Encrypt) reverse proxy.
+# Caddy obtains + renews a trusted cert for the domain and proxies to the
+# gateway container over the compose network. Requires:
+#   - DNS A record: kvr.prototypebench.org -> this host's public IP
+#   - Ports 80 and 443 reachable from the internet (ACME challenge + HTTPS)
+{
+	email ops@kvasir-ai.net
+}
+
+kvr.prototypebench.org {
+	reverse_proxy gateway:8791
+}

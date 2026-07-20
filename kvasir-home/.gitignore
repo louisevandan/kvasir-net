@@ -1,0 +1,19 @@
+# dependencies
+node_modules
+
+# build output
+dist
+*.tsbuildinfo
+
+# local env
+.env
+.env.local
+
+# editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# tooling
+.playwright-mcp

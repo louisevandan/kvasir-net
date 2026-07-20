@@ -1,0 +1,34 @@
+reference/
+build/
+build-node-*/
+.venv-linkcpp-node/
+.ccache/
+.env
+build_incr.log
+/models/
+*.log
+# ad-hoc build/deploy/runtime logs collect here, never committed
+log/
+__pycache__/
+*.pyc
+tests/acceptance/*.png
+.codechick/
+node_modules/
+
+# large local models & llama.cpp build outputs
+/models/
+# native worker build trees (regenerated per host)
+build-node-*/
+build-ios-worker/
+# internal handoff docs (session-to-session notes; may contain tokens/IPs) — never commit
+*-handoff.md
+
+# Internal ops docs (server/GPU/launcher details) — never publish
+docs/*.internal.md
+*.internal.md
+
+# Internal design/handoff docs — architecture/tech not for public repos
+docs/
+
+# Local OCI archives for platform-specific CUDA runtime artifacts.
+/artifacts/prebuilt/

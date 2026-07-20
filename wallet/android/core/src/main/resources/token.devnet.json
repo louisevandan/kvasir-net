@@ -1,0 +1,27 @@
+{
+  "cluster": "devnet",
+  "rpcUrl": "https://api.devnet.solana.com",
+  "token": {
+    "name": "Kvasir",
+    "symbol": "KVR",
+    "decimals": 6,
+    "mint": "6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ",
+    "initialSupply": 1000000000
+  },
+  "treasury": {
+    "owner": "8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF",
+    "ata": "38kt9QVdwt8r6auHK57rF1zkHSLq1dPChhJX2FuoY4CF"
+  },
+  "governance": {
+    "wallet": "JcVYk4PpP5m2kDhGzJAmYAtD8GF7svNgNK1V1BzTrRG"
+  },
+  "authorities": {
+    "mintAuthority": "8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF",
+    "freezeAuthority": "8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF"
+  },
+  "explorer": {
+    "mint": "https://explorer.solana.com/address/6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ?cluster=devnet",
+    "treasury": "https://explorer.solana.com/address/38kt9QVdwt8r6auHK57rF1zkHSLq1dPChhJX2FuoY4CF?cluster=devnet"
+  },
+  "createdAtIso": "2026-07-11T07:46:40.186Z"
+}

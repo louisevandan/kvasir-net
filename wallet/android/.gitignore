@@ -1,0 +1,16 @@
+# Gradle / build outputs
+.gradle/
+build/
+*/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+captures/
+
+# macOS
+.DS_Store
+
+# debug screenshots (module root)
+/*.png

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>linkcpp node-host</title>
+  <link rel="stylesheet" href="/web/style.css"/>
+  <style>
+    .cap { font-weight: 600; }
+    .addr { font-family: ui-monospace, monospace; }
+    .copy { padding: .15rem .5rem; font-size: .8rem; }
+    .full { opacity: .5; pointer-events: none; }
+    .gpucard { border: 1px solid var(--bd); border-radius: 8px; padding: .6rem .8rem; margin: .4rem 0; }
+    .gpucard .row { display: flex; gap: .6rem; align-items: end; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>linkcpp <span class="muted">node-host</span></h1>
+    <p id="host" data-testid="host-name" class="muted">…</p>
+  </header>
+  <main>
+    <section aria-labelledby="create-h">
+      <h2 id="create-h">Create nodes on this machine
+        <span class="cap" id="capacity" data-testid="capacity">(0/5)</span></h2>
+      <p class="muted">Pick a GPU, set a budget (0 = whole GPU), click <b>Create</b>. Each node
+        gets an externally-exposed port; paste its <b>address</b> into the controller.</p>
+      <div id="gpu-cards" data-testid="gpu-cards"></div>
+    </section>
+
+    <section aria-labelledby="nodes-h">
+      <h2 id="nodes-h">Nodes running here</h2>
+      <table data-testid="nodes-table">
+        <thead><tr><th>id</th><th>GPU</th><th>VRAM</th><th>controller address</th><th></th><th>running</th><th></th></tr></thead>
+        <tbody id="nodes-body"></tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const api = async (m, p, b) => {
+      const r = await fetch(p, {method: m, headers: {"Content-Type": "application/json"},
+                               body: b ? JSON.stringify(b) : undefined});
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      return j;
+    };
+    let FULL = false;
+    async function refreshGpus() {
+      const {gpus, public_host} = await api("GET", "/api/gpus");
+      $("#host").textContent = "this machine → controller host: " + public_host;
+      const box = $("#gpu-cards"); box.innerHTML = "";
+      for (const g of gpus) {
+        const card = document.createElement("div");
+        card.className = "gpucard"; card.dataset.testid = "gpu-card";
+        card.innerHTML = `<div><b>${g.name}</b> — ${g.vram_total_gib} GiB
+          <span class="muted">${g.uuid}</span></div>
+          <div class="row">
+            <label>VRAM <input value="0" size="4" data-f="vram"/></label>
+            <label>RAM <input value="0" size="4" data-f="ram"/></label>
+            <label>cores <input value="0" size="4" data-f="cores"/></label>
+            <button data-gpu="${g.uuid}" data-testid="create-btn">Create node</button>
+          </div>`;
+        box.appendChild(card);
+      }
+      applyFull();
+    }
+    function applyFull() {
+      document.querySelectorAll('[data-testid="create-btn"]').forEach(b =>
+        b.classList.toggle("full", FULL));
+    }
+    async function refreshNodes() {
+      const {nodes, used, max} = await api("GET", "/api/nodes");
+      FULL = used >= max;
+      $("#capacity").textContent = `(${used}/${max})`;
+      applyFull();
+      const body = $("#nodes-body"); body.innerHTML = "";
+      for (const n of nodes) {
+        const tr = document.createElement("tr");
+        tr.dataset.testid = "node-row";
+        tr.innerHTML = `<td>${n.id}</td><td>${n.gpu_name}</td><td>${n.vram}</td>
+          <td class="addr" data-testid="node-address">${n.address}</td>
+          <td><button class="copy" data-copy="${n.address}">copy</button></td>
+          <td>${n.running ? "yes" : "no"}</td>
+          <td><button data-del="${n.id}">remove</button></td>`;
+        body.appendChild(tr);
+      }
+    }
+    $("#gpu-cards").addEventListener("click", async (e) => {
+      const uuid = e.target.getAttribute("data-gpu");
+      if (!uuid || FULL) return;
+      const card = e.target.closest(".gpucard");
+      const val = (f) => +card.querySelector(`[data-f="${f}"]`).value || 0;
+      try {
+        await api("POST", "/api/nodes", {gpu_uuid: uuid, vram: val("vram"),
+          ram: val("ram"), cores: val("cores")});
+        await refreshNodes();
+      } catch (err) { alert("create: " + err.message); }
+    });
+    $("#nodes-body").addEventListener("click", async (e) => {
+      const del = e.target.getAttribute("data-del");
+      const cp = e.target.getAttribute("data-copy");
+      if (del) { await api("DELETE", "/api/nodes/" + del); await refreshNodes(); }
+      if (cp) { navigator.clipboard?.writeText(cp); e.target.textContent = "copied"; setTimeout(() => e.target.textContent = "copy", 1200); }
+    });
+    refreshGpus(); refreshNodes();
+    setInterval(refreshNodes, 3000);
+  </script>
+</body>
+</html>

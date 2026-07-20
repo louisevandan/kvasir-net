@@ -1,0 +1,573 @@
+import type { Dict } from "./types";
+
+export const es: Dict = {
+  nav: {
+    why: "Por qué",
+    how: "Cómo funciona",
+    contributors: "Colaboradores",
+    developers: "Desarrolladores",
+    token: "KVR",
+    rewards: "Recompensas",
+    tech: "Tecnología",
+    roadmap: "Hoja de ruta",
+    careers: "Empleo",
+    technology: "Tecnología",
+    blog: "Blog",
+    wiki: "Wiki",
+  },
+
+  actions: {
+    runNode: "Ejecuta un nodo",
+    joinNode: "Únete",
+    useApi: "Usa la API",
+    getApiKey: "Consigue una clave de API",
+    getApiAccess: "Consigue acceso a la API",
+    runNodeGuide: "Guía para ejecutar un nodo",
+    readDocs: "Lee la documentación",
+    viewGithub: "Ver en GitHub",
+    github: "GitHub",
+    menu: "Menú",
+    copy: "copiar",
+    copied: "copiado ✓",
+    language: "Idioma",
+  },
+
+  hero: {
+    eyebrow: "DePIN · IA descentralizada — más allá del monopolio",
+    headline1: "Aporta cómputo.",
+    headline2: "Gana KVR.",
+    sub: "Kvasir reparte grandes modelos abiertos entre hardware compartido con linkcpp, de modo que ningún nodo contiene el modelo completo. Aporta una GPU, CPU, NPU — incluso un teléfono — y gana KVR por las capas que ejecutes.",
+    badges: [
+      "Funciona en GPU · CPU · NPU · teléfono",
+      "Compatible con OpenAI + Anthropic",
+      "Código disponible (BSL)",
+      "Solana devnet",
+    ],
+    ringCenter: "un anillo · sin maestro",
+    topologyCaption:
+      "Un anillo de dispositivos — una GPU, CPU, NPU y teléfono — cada uno con unas pocas de las 49 capas. Cada nodo ejecuta su porción y solo pasa el límite del estado oculto a su vecino; el último devuelve el token dando la vuelta al anillo. Ningún nodo contiene el modelo completo, y no hay maestro central — ilustrativo.",
+  },
+
+  thesis: {
+    eyebrow: "Por qué la IA descentralizada",
+    title: "La IA no debería ser propiedad de un puñado de empresas",
+    lede: "La inferencia de vanguardia se está concentrando tras unos pocos centros de datos cerrados — pesos cerrados, acceso medido, una factura pagada a un único dueño. Kvasir apunta en la dirección contraria: modelos abiertos servidos a través de una red sin permisos de dispositivos cotidianos, propiedad de quienes la ejecutan y ganada por ellos.",
+    centralizedLabel: "IA centralizada",
+    centralizedPoints: [
+      "Unos pocos hyperscalers son dueños de las GPU",
+      "Modelos e infraestructura tras APIs cerradas",
+      "Alquilas el acceso; el valor fluye hacia arriba",
+      "Opaca — confías en el operador",
+    ],
+    kvasirLabel: "Kvasir",
+    kvasirPoints: [
+      "Cualquier dispositivo se une a un anillo entre pares — sin maestro central",
+      "Motor linkcpp de código disponible — con licencia BSL y totalmente inspeccionable",
+      "Los colaboradores ganan KVR por el cómputo real que aportan",
+      "No custodial — tus claves, tu nodo, tus recompensas",
+    ],
+  },
+
+  origin: {
+    eyebrow: "El nombre",
+    title: "Kvasir — sabiduría nacida de muchos, compartida con todos",
+    mythLabel: "Mito nórdico",
+    myth: "En la mitología nórdica, Kvasir nació cuando los dioses Æsir y Vanir pusieron fin a su guerra e hicieron las paces: cada uno escupió en una misma vasija, y de su esencia reunida surgió el ser más sabio que jamás vivió — uno que podía responder cualquier pregunta. Cuando fue asesinado, su sangre se fermentó para hacer el hidromiel de la poesía, un brebaje que otorgaba sabiduría a todo el que lo bebía.",
+    whyLabel: "Por qué lo elegimos",
+    mappings: [
+      {
+        from: "Reunido de cada dios, propiedad de ninguno",
+        to: "Inteligencia ensamblada a partir de los dispositivos de muchos colaboradores — sin un único dueño.",
+      },
+      {
+        from: "El ser más sabio, respondiendo cualquier pregunta",
+        to: "Una red de inferencia abierta que cualquiera puede consultar.",
+      },
+      {
+        from: "Un hidromiel que compartía sabiduría con todos",
+        to: "Acceso abierto, y recompensas KVR para cada colaborador que aporta.",
+      },
+    ],
+    footnote: "En cadena, el token se llama Kvasir (KVR) — el hidromiel, distribuido.",
+  },
+
+  how: {
+    eyebrow: "Cómo funciona",
+    title: "Un modelo, muchos dispositivos, pagado por capa",
+    lede: "Ningún nodo contiene el modelo completo. Una solicitud fluye a través del camino de capas y cada nodo es recompensado exactamente por el trabajo que realizó.",
+    steps: [
+      {
+        title: "Dividir",
+        body: "El modelo se divide en ventanas de capas contiguas. Cada dispositivo almacena el mismo modelo pero solo carga su ventana — ningún nodo contiene el todo.",
+        note: "Qwen3.5-122B · 49 capas · manifiesto de rangos",
+      },
+      {
+        title: "Servir",
+        body: "La solicitud entra en el anillo. Cada nodo ejecuta sus capas y solo pasa el límite del estado oculto a su vecino; el último nodo muestrea el token y lo envía de vuelta por el anillo — sin maestro central.",
+        note: "ring runtime · compatible con OpenAI/Anthropic",
+      },
+      {
+        title: "Recompensar",
+        body: "Cada nodo gana KVR ponderado por las capas que ejecutó — su porción de los tokens producidos — liquidado en Solana a la propia billetera de ese nodo.",
+        note: "units += (out_tokens / 1000) × layer_share",
+      },
+    ],
+  },
+
+  contributors: {
+    pill: "Para colaboradores",
+    title: "Convierte el cómputo inactivo en KVR",
+    lede: "Dirige un dispositivo compatible hacia la red y empezará a servir capas. Ganas KVR proporcional a las capas que ejecuta tu nodo — tus claves permanecen en tu propia billetera.",
+    nonCustodial:
+      "No custodial por diseño — el inicio de sesión del operador es una firma de billetera (Sign-In With Solana) con 2FA opcional.",
+    points: [
+      {
+        title: "Cualquier dispositivo puede unirse",
+        body: "GPU, CPU, NPU y teléfonos ejecutan capas hoy. Un ring runtime entre pares permite que cada dispositivo contenga solo unas pocas capas y pase únicamente un pequeño estado de límite a su vecino — así no hay guardián ni un único dueño.",
+      },
+      {
+        title: "Recompensas por porción de capas",
+        body: "Las recompensas son proporcionales a las capas que ejecuta tu nodo, no a una participación vaga. 1 unidad ≈ 1k tokens × tu porción de capas de cada inferencia.",
+      },
+      {
+        title: "Niveles de rendimiento",
+        body: "El rendimiento medido fija un nivel — S (×1.5), A (×1.25), B (×1.0), C (×0.7) — que multiplica las unidades que ganas. Hardware más rápido, mayor multiplicador.",
+      },
+      {
+        title: "Disponibilidad para roles de infraestructura",
+        body: "Los nodos que cumplen roles de infraestructura también acumulan recompensas de disponibilidad por hora por mantener la red accesible.",
+      },
+    ],
+    devicesLabel: "Dispositivos compatibles",
+    statusLive: "Activo",
+    statusComing: "Próximamente",
+    deviceDetails: [
+      "CUDA · ROCm · Metal · Vulkan",
+      "x86-64 · ARM",
+      "aceleradores en el dispositivo",
+      "teléfonos y edge · ring runtime",
+    ],
+  },
+
+  developers: {
+    pill: "Para desarrolladores",
+    title: "Un endpoint, respaldado por muchos dispositivos",
+    lede: "Conserva tu cliente actual de OpenAI o Anthropic. Apúntalo al gateway de Kvasir y paga por inferencia en KVR — sin reescrituras.",
+    points: [
+      "Compatible con OpenAI: sustitución directa para /v1/chat/completions, /v1/responses, /v1/models",
+      "Compatible con Anthropic: /anthropic/v1/messages y /anthropic/v1/models",
+      "Pago por inferencia en KVR: cotización → pago → inferencia",
+      "Catálogo de modelos en vivo agregado desde los hubs accesibles",
+    ],
+    codeHeader: "POST /v1/chat/completions",
+  },
+
+  token: {
+    eyebrow: "Token y recompensas",
+    title: "KVR paga por el cómputo — y lo recompensa",
+    lede: "KVR es la unidad que los desarrolladores gastan en inferencia y la unidad que los colaboradores ganan por las capas que ejecutan. Las recompensas se calculan a partir del trabajo real, no de la participación.",
+    facts: [
+      { k: "Símbolo", v: "KVR", note: "nombre en cadena “Kvasir”, 6 decimals" },
+      { k: "Cadena", v: "Solana", note: "devnet hoy" },
+      { k: "Paga por", v: "Inferencia", note: "pago por solicitud a través del gateway" },
+      { k: "Recompensa", v: "Cómputo", note: "porción de capas × nivel de rendimiento" },
+    ],
+    whatForTitle: "Para qué sirve KVR",
+    whatForBody:
+      "Un token, en ambas direcciones: los desarrolladores gastan KVR para ejecutar inferencia a través del gateway, y los colaboradores ganan KVR por el cómputo que aportan sus nodos. Es la unidad de cuenta de la red para el trabajo real — mira abajo cómo se desglosan las recompensas por rol.",
+    whatForChips: ["paga por inferencia", "recompensa por capa", "liquida en Solana"],
+    custodyTitle: "Billetera no custodial",
+    custodyBody:
+      "Las recompensas se liquidan en la propia billetera del dueño de cada nodo. Las claves viven en la billetera del usuario — navegador, escritorio o móvil — nunca con un operador. Verificado en cuatro billeteras de dueños distintas, cada una ganando su porción de capas.",
+    custodyChips: ["web", "desktop", "iOS", "Android"],
+    devnetStrong: "Devnet, token de utilidad.",
+    devnetBody:
+      "KVR se ejecuta actualmente en Solana devnet y es un token de utilidad / contribución — no un activo negociable, precio ni inversión. Nada aquí es asesoramiento financiero ni una promesa de rentabilidad.",
+  },
+
+  network: {
+    eyebrow: "Red y recompensas",
+    title: "Cada rol de la red gana KVR",
+    lede: "El anillo de nodos de cómputo es coordinado por los roles de hub y gateway. Cada uno cobra en KVR por lo que realmente hace — cómputo por las capas que ejecuta, infraestructura por la disponibilidad que mantiene.",
+    roles: [
+      {
+        role: "Nodo de cómputo",
+        tagline: "Ejecuta las capas del modelo",
+        body: "Contiene unas pocas capas contiguas en el anillo y las ejecuta para cada solicitud. Gana por unidad de contribución (≈1k tokens servidos), ponderada por su porción de capas y escalada por su nivel de rendimiento.",
+        earns: "por unidad × porción de capas × nivel",
+      },
+      {
+        role: "Host de gateway",
+        tagline: "Entrada pública + liquidación",
+        body: "Sirve el gateway de OpenAI/Anthropic y liquida los pagos en KVR. Gana una recompensa de disponibilidad por hora por mantener el punto de entrada en línea, más un bono ×1.5 en cada inferencia que ayuda a servir.",
+        earns: "disponibilidad por hora + bono ×1.5 por inferencia",
+      },
+      {
+        role: "Host de hub",
+        tagline: "El plano de control",
+        body: "Descubre dispositivos, planifica la colocación de capas y orquesta el anillo. El rol más crítico — por eso gana la mayor recompensa de disponibilidad por hora por mantener la red coordinada.",
+        earns: "mayor disponibilidad por hora",
+      },
+    ],
+    rolesNote:
+      "Los roles se acumulan: una misma máquina puede ser cómputo, gateway y hub a la vez, y sus recompensas se suman. Todo se liquida en KVR a la propia billetera de ese nodo.",
+    formulaTitle: "Cómo se calculan las recompensas",
+    formulaLabels: ["Unidades de cómputo", "Efectivo", "Disponibilidad de infra"],
+    tiersTitle: "Niveles de rendimiento",
+    tiersBody:
+      "La velocidad de decodificación medida de un nodo fija su multiplicador — el hardware más rápido gana proporcionalmente más por el mismo trabajo.",
+  },
+
+  tech: {
+    eyebrow: "Bajo el capó",
+    title: "linkcpp — el motor detrás de la red",
+    lede: "linkcpp es el hub de control abierto que convierte hardware cotidiano en un motor de inferencia distribuido. Su ring runtime permite que cada dispositivo contenga solo unas pocas capas y pase el estado oculto a su vecino — sin maestro central — mientras el plano de datos estándar de motor de inferencia permanece sin bifurcar.",
+    taglineCaption: "— linkcpp, en sus propias palabras",
+    points: [
+      {
+        title: "Ring runtime",
+        body: "Cada dispositivo almacena el mismo modelo y solo carga su ventana de capas, luego abre un enlace con su predecesor y otro con su sucesor. Los límites del estado oculto circulan por el anillo y el último rango devuelve el token — sin maestro central, y ningún nodo lo contiene todo.",
+      },
+      {
+        title: "Hub de control linkcpp",
+        body: "Un único hub en Docker — el plano de control que le faltaba al plano de datos RPC de motor de inferencia. Descubre dispositivos, planifica la colocación de capas, lanza los workers estándar y expone los gateways. Código disponible bajo la Business Source License (BSL).",
+      },
+      {
+        title: "Colocación de capas distribuida",
+        body: "linkcpp lee los metadatos GGUF y calcula ventanas de capas contiguas por nodo mediante un manifiesto de rangos, más una descarga opcional de FFN de expertos MoE a la RAM del nodo.",
+      },
+      {
+        title: "Seguridad SIWS + 2FA",
+        body: "Para despliegues públicos, el acceso del operador es una firma Sign-In With Solana sobre un nonce del servidor, más 2FA TOTP y códigos de respaldo de un solo uso — tanto en el hub como en el gateway.",
+      },
+    ],
+    openText:
+      "El código está disponible bajo la Business Source License (BSL) — léelo, ejecútalo y construye sobre él gratis en desarrollo y pruebas. El uso en producción (comercial) requiere una licencia adquirida.",
+  },
+
+  roadmap: {
+    eyebrow: "Hoja de ruta",
+    title: "Activo hoy, y hacia dónde va",
+    lede: "Una línea clara entre lo que ya funciona y lo que está planeado. No presentamos la hoja de ruta como algo ya entregado.",
+    items: [
+      {
+        phase: "Ahora",
+        title: "Inferencia en cualquier dispositivo, en vivo",
+        body: "GPU, CPU, NPU y teléfonos sirven capas a través del ring runtime. 122B se ejecutó repartido entre 4 GPU; la contribución se acredita de extremo a extremo; las billeteras no custodiales llegan a web/desktop/iOS/Android; el acceso está protegido en dominios públicos.",
+      },
+      {
+        phase: "Próximamente",
+        title: "Mainnet y liquidación en cadena",
+        body: "Todo lo actual se ejecuta en Solana devnet con un servicio de liquidación fuera de cadena. Están planeados un programa de recompensas en cadena y la mainnet.",
+      },
+      {
+        phase: "Próximamente",
+        title: "Una red global sin permisos",
+        body: "Las demos actuales se ejecutaron en el hardware de un solo operador. Lo siguiente es abrir la red para que cualquiera, en cualquier lugar, pueda conectar un dispositivo y ganar — sin ningún guardián.",
+      },
+    ],
+  },
+
+  proof: {
+    pill: "Probado en esta versión",
+    title: "Inferencia distribuida real, ejecutándose en dominios públicos",
+    items: [
+      "parámetros servidos repartidos entre 4 GPU AMD MI250",
+      "billeteras de dueños distintas, cada una ganando su porción de capas",
+      "superficies de API — compatibles con OpenAI + Anthropic",
+      "plataformas de billetera — web · desktop · iOS · Android",
+    ],
+    strip:
+      "122B servido entre 4 GPU · compatible con OpenAI + Anthropic · billeteras en web / desktop / iOS / Android · en vivo en dominios públicos",
+  },
+
+  footer: {
+    ctaTitle: "Pon tu GPU en la red.",
+    ctaBody:
+      "Ejecuta un nodo y gana KVR por las capas que sirves, o conecta el gateway a tu aplicación con un endpoint compatible con OpenAI/Anthropic.",
+    tagline:
+      "La marca de red para la inferencia de IA descentralizada, impulsada por el hub de control linkcpp — un motor de código disponible (BSL) que reparte grandes modelos entre dispositivos cotidianos (sobre un plano de datos estándar de motor de inferencia).",
+    disclaimerStrong: "Aviso legal.",
+    disclaimer:
+      "KVR es un token de utilidad / contribución usado para pagar la inferencia y recompensar el cómputo. Hoy se ejecuta en Solana devnet — no es un activo negociable de mainnet y nada aquí es una oferta, precio ni promesa de rentabilidad financiera. Las recompensas reflejan el cómputo real aportado, no la participación.",
+    rights: "© 2026 Kvasir · linkcpp. Motor bajo la Business Source License (BSL) — gratis para desarrollo y pruebas; el uso en producción requiere una licencia.",
+  },
+
+  guide: {
+    home: "Inicio",
+    eyebrow: "Guía para operadores de nodo",
+    headline1: "Aporta cómputo,",
+    headline2: "ejecuta un nodo.",
+    sub: "Crea una wallet, haz staking de KVR y luego conecta tu dispositivo a la red Kvasir para ganar KVR por el cómputo que aportas. Elige tu plataforma abajo para ver los pasos de descarga, instalación y ejecución.",
+    badgeCustody: "No custodial — tus claves",
+    badgeDevices: "GPU · CPU · NPU",
+    badgeToken: "Solana devnet · KVR",
+    devnetNote: "KVR es un token de utilidad de Solana devnet — no es un activo negociable en mainnet ni un rendimiento financiero.",
+    reqTitle: "Requisito para operadores de hub · gateway",
+    reqBody: "Para ejecutar un nodo hub o un nodo gateway debes hacer staking de 100.000 KVR en tu wallet. Los nodos de cómputo normales se unen sin este requisito y ganan por las capas que ejecutan.",
+    tabDesktop: "Escritorio",
+    tabMobile: "Móvil",
+    soon: "Próximamente",
+    download: "Descargar",
+    desktopTitle: "Kvasir Wallet · App de escritorio",
+    desktopSub: "macOS · Windows · Linux — wallet y nodo en una sola app.",
+    desktop: [
+      { title: "Descarga la app", body: "Descarga arriba el instalador de Kvasir Wallet para tu sistema operativo. Se recomienda una GPU (NVIDIA / AMD / Apple Silicon), pero también funciona con CPU.", body2: "" },
+      { title: "Instala y abre", body: "Ejecuta el instalador y luego abre Kvasir Wallet. En macOS, si ves una advertencia de \"desarrollador no identificado\", permítelo en Configuración del sistema → Privacidad y seguridad.", body2: "" },
+      { title: "Crea tu wallet", body: "Elige Crear nueva wallet. Anota tu frase de recuperación de 12 palabras y guárdala en un lugar seguro — no se puede recuperar si se pierde. Luego establece una contraseña para desbloquear la app. Las claves son no custodiales y se guardan solo en este dispositivo.", body2: "" },
+      { title: "Deposita fondos y haz staking de KVR", body: "Recibe algo de SOL de devnet (para las comisiones) y KVR (para el staking) en la dirección de Recibir de tu wallet. En el panel de staking del dashboard, ingresa un monto y pulsa Stake para ganar intereses APR y calificar para las recompensas de nodo.", body2: "" },
+      { title: "Configura el nodo", body: "En Configuración del nodo, elige el backend de cómputo de esta máquina (CUDA / ROCm / Metal / CPU) y selecciona Shard local (recomendado) — ejecuta el shard de capas localmente y solo retransmite un pequeño estado de frontera, el modo más rápido.", body2: "" },
+      { title: "Ejecuta el nodo", body: "Activa Ejecutar nodo (en vivo) para registrar esta máquina en la red bajo tu wallet (propietario) y ponerla en línea.", body2: "Para un nodo de cómputo GPU real, ejecuta también el agente nativo que se indica abajo. El planificador del hub coloca capas del modelo en tu máquina, y tu nodo gana una parte de KVR por capas, acreditada a la wallet propietaria." },
+      { title: "Sigue tu contribución y recompensas", body: "En Estado del nodo, observa nodos / en línea / contribución efectiva / reclamable. Los nodos se clasifican por nivel según el rendimiento (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); bruto × nivel = efectivo. Usa Reclamar recompensas para transferir el KVR acumulado a tu wallet.", body2: "" },
+    ],
+    faucetTitle: "Consigue SOL de devnet (faucet gratuito)",
+    faucetIntro: "Necesitas algo de SOL de devnet para las comisiones de transacción (usa la dirección de Recibir de tu wallet):",
+    faucetWeb: "Web: faucet.solana.com — pega tu dirección y elige la red Devnet",
+    faucetCli: "CLI: solana airdrop 2 <your address> --url devnet",
+    faucetAlt: "Alternativas: QuickNode · SolFaucet devnet",
+    faucetKvr: "Consigue KVR para hacer staking mediante distribución o swap (KVR swap: SOL/ETH ↔ KVR — próximamente).",
+    mobileTitle: "Kvasir Wallet · app de {0}",
+    mobileSub: "Crea una wallet y conecta tu dispositivo a la red.",
+    mobile: [
+      { title: "Instala la app", body: "Instala Kvasir Wallet desde {0}. Usa el botón de arriba para abrir la página de la tienda. Se recomienda un dispositivo reciente con GPU/NPU.", note: "" },
+      { title: "Crea o restaura una wallet", body: "Abre la app y elige Crear nueva wallet o Restaurar desde frase de recuperación. Guarda tu frase de 12 palabras en un lugar seguro y establece una contraseña — la misma cuenta se restaura en el escritorio y otros dispositivos a partir de esta frase. Las claves son no custodiales y se guardan solo en el dispositivo.", note: "" },
+      { title: "Configura el nodo", body: "En Configuración de nodo móvil, elige un backend de cómputo (GPU · OpenCL/Vulkan · CPU) y Shard local (recomendado). Se muestran el rendimiento esperado (tok/s) y el impacto en memoria / temperatura / rendimiento.", note: "" },
+      { title: "Staking y recompensas", body: "En Staking y recompensas de nodo, haz staking de KVR y consulta / reclama las recompensas reclamables que acumula tu nodo. El estado del nodo muestra tu nivel de rendimiento y tu contribución.", note: "La participación en inferencia con shard local en móviles se está implementando gradualmente; hoy los principales nodos de cómputo son máquinas GPU/CPU que ejecutan el agente." },
+    ],
+    viewGithub: "Ver en GitHub",
+    capWelcome: "Bienvenida — crea o restaura una wallet",
+    capRecovery: "Guarda tu frase de recuperación de 12 palabras (palabras difuminadas)",
+    capPassphrase: "Establece una contraseña → Comenzar",
+    capReceive: "Recibir — dirección y QR (dirección parcialmente oculta)",
+    capBalances: "Saldo de la wallet — KVR · SOL",
+    capStaking: "Staking — APR · capital · intereses · recompensas de nodo",
+    capBackend: "Backend de cómputo (CUDA · ROCm · Metal · CPU)",
+    capMode: "Modo de nodo — Shard local (recomendado)",
+    capRunlive: "Ejecutar nodo (en vivo) — indicadores en vivo · id de nodo · SO",
+    capNodes: "Estado del nodo — totales · niveles · contribución por nodo",
+    capClaim: "Reclamar recompensas — KVR reclamable",
+    capWallet: "Inicio de la wallet — saldo de KVR (dirección oculta)",
+    capNodeset: "Configuración del nodo — backend / modo / recursos esperados",
+    capStakingM: "Staking y recompensas para operadores de nodo",
+  },
+
+  techBlog: {
+    docTitle: "Kvasir — Blog técnico",
+    pill: "Blog técnico",
+    title: "La ingeniería del enjambre",
+    lede: "Notas de diseño e hitos verificados en hardware real al construir la inferencia en enjambre con expertos fragmentados sobre linkcpp: cómo un modelo de 122B corre entre GPU, CPU y teléfonos.",
+    langNote: "",
+    sidebarTitle: "Explorar artículos",
+    allArticles: "Todos los artículos",
+    read: "Leer",
+    notFound: "Ese artículo no existe.",
+    categories: {
+      overview: "Visión y arquitectura",
+      core: "Tecnología central",
+      milestones: "Hitos",
+      demos: "Demos en dispositivo real",
+    },
+  },
+
+  wiki: {
+    docTitle: "Kvasir — Wiki",
+    pill: "Wiki",
+    title: "La base de conocimiento de Kvasir",
+    lede: "Entradas breves y precisas sobre cada concepto de la red: del ring runtime y la fragmentación de expertos a las recompensas KVR.",
+    langNote: "",
+    sidebarTitle: "Explorar entradas",
+    allEntries: "Todas las entradas",
+    notFound: "Esa entrada no existe.",
+    categories: {
+      network: "Red y roles",
+      inference: "Inferencia y motor",
+      token: "Token y recompensas",
+    },
+  },
+
+  apiDocs: {
+    docTitle: "API de Kvasir — inferencia de pago por uso con KVR",
+    pill: "Para desarrolladores · devnet",
+    title: "Llama a la inferencia de Kvasir, pagando en KVR",
+    lede: "Los modelos del enjambre de Kvasir no están expuestos a la internet abierta. El único punto de entrada público es la pasarela de pago por uso en KVR: cada inferencia se desbloquea con un pago on-chain en KVR firmado por tu monedero. Aquí tienes todo el flujo, en el lenguaje en el que programas.",
+    devnetNote: "Funciona en la devnet de Solana — KVR no es un activo real. Antes de empezar, financia un monedero de devnet con KVR y un poco de SOL para las comisiones.",
+    baseLabel: "URL base",
+    flowTitle: "Cuatro pasos",
+    flowSteps: [
+      { n: "1", title: "Descubre un modelo", body: "Pregunta a la pasarela qué modelos sirve el enjambre ahora mismo. La lista es en vivo: no codifiques nada de forma fija." },
+      { n: "2", title: "Obtén una cotización", body: "Envía el id del modelo y tu prompt. Recibes un requestId ligado a ese prompt y un precio en KVR." },
+      { n: "3", title: "Paga on-chain", body: "Transfiere los KVR cotizados a la cuenta de token del destinatario y fírmalo con tu monedero. Guarda la firma." },
+      { n: "4", title: "Canjea", body: "Devuelve el requestId y la firma. La pasarela verifica el pago, ejecuta la inferencia y devuelve el resultado." },
+    ],
+    refTitle: "Referencia de la API",
+    requestLabel: "Solicitud",
+    responseLabel: "Respuesta",
+    apiModels: "Lista los modelos que el enjambre sirve ahora mismo — un array vacío cuando no hay ninguno, así que nunca codifiques un id de forma fija.",
+    apiQuote: "Obtén una cotización de precio y un requestId ligado a tu prompt. priceToken es la cantidad de KVR a pagar; la facturación final se basa en el uso real de tokens.",
+    apiPay: "Transfiere los KVR cotizados a la cuenta de token asociada del destinatario (el vault) y firma con tu monedero. La firma es de un solo uso.",
+    apiInfer: "La pasarela sondea la cadena para verificar el pago, ejecuta la inferencia en el hub y devuelve el resultado junto con el uso y el coste reales.",
+    codeTitle: "Ejemplo de extremo a extremo",
+    codeLede: "Carga la clave secreta de tu monedero desde el entorno, cotiza, paga y canjea — un fragmento autónomo. Los pasos 1, 2 y 4 son HTTP puro; solo el paso 3 (la transferencia SPL) difiere según el SDK.",
+    adapterTitle: "Adaptador compatible con OpenAI",
+    adapterLede: "¿Ya tienes un cliente de OpenAI (o una herramienta que solo habla OpenAI)? Ejecuta este adaptador plug-and-play junto a tu aplicación. Expone /v1/chat/completions y paga cada llamada desde tu propio monedero — cotización, firma, canje — de forma transparente. Apunta la base URL de tu cliente al adaptador y usa cualquier clave de API ficticia.",
+    adapterNote: "No custodial: el secreto del monedero (KVR_SECRET_KEY) permanece en este proceso y nunca llega a Kvasir. No existe una clave de API de Kvasir — la autenticación es el pago on-chain en KVR que tu adaptador firma. Cada llamada es una ida y vuelta de cotización/pago/canje; usa caché o lotes según tu rendimiento.",
+    prereqTitle: "Antes de empezar",
+    prereqs: [
+      "Un monedero de devnet de Solana que tenga KVR (para pagar) y un poco de SOL (para las comisiones).",
+      "El mint de KVR tiene 6 decimales — la cantidad on-chain es round(priceToken × 1.000.000).",
+      "El destino es la cuenta de token asociada del destinatario; si aún no existe, tu transferencia debe crearla (cuesta un poco de SOL).",
+    ],
+    securityTitle: "Reglas de seguridad que aplica la pasarela",
+    security: [
+      "Cada firma de transacción es de un solo uso — reutilizarla devuelve 409.",
+      "La inferencia está protegida por el requestId más la firma de un solo uso, así que mantén el requestId privado — solo quien lo emite debe canjearlo.",
+      "El vault debe recibir al menos priceToken KVR o la solicitud se rechaza.",
+      "Casos de fallo: requestId desconocido (404), firma ya usada (409), transacción aún no confirmada (400).",
+    ],
+    walletTitle: "Crea un monedero de prueba",
+    walletLede: "¿Aún no tienes un monedero de devnet? Genera un par de claves, imprime su secreto para tu entorno y recárgalo con SOL para las comisiones — luego solicita KVR en el faucet de abajo.",
+    walletNote: "Mantén el secreto fuera del control de versiones y cárgalo desde una variable de entorno. Solo devnet — nunca reutilices una clave de prueba en mainnet. También puedes crear un monedero en la app de Kvasir y copiar su dirección.",
+    faucetTitle: "Consigue KVR de prueba",
+    faucetLede: "Pega una dirección de devnet de Solana para recibir 100 KVR — suficiente para probar el flujo de arriba. Una solicitud por dirección al día.",
+    faucetPlaceholder: "Tu dirección de devnet de Solana",
+    faucetButton: "Solicitar 100 KVR",
+    faucetSending: "Enviando…",
+    faucetSuccess: "Se enviaron {0} KVR a tu monedero",
+    faucetViewTx: "Ver transacción",
+    faucetError: "No se pudo enviar KVR",
+    ctaTitle: "Construye sobre Kvasir",
+    ctaBody: "El mismo contrato /api/pay impulsa los monederos de escritorio, iOS y Android de Kvasir. Lee la implementación de referencia y el código de la pasarela en GitHub.",
+    ctaButton: "Ver en GitHub",
+    catRunNode: "Ejecuta un nodo → inferencia gratis",
+    catUseApi: "Usa la API",
+    selfHostTitle: "Ejecuta un nodo y obtén inferencia gratis",
+    selfHostPitch: "¿Quieres usar modelos de IA gratis? Haz que tu agente de código una tu máquina a la red como nodo — y te devuelva un endpoint de inferencia.",
+    selfHostBody: "Un script levanta el hub (y, opcionalmente, la pasarela KVR) con Docker. Añade tu GPU y carga un modelo abierto en la interfaz del hub, luego llama a un endpoint estándar compatible con OpenAI — /c/<id>/v1/chat/completions — que corre en tu propio hardware. Apunta a él cualquier herramienta que hable OpenAI.",
+    selfHostNote: "Esto sirve gratis los modelos abiertos que tu máquina pueda alojar — es tu cómputo. Para modelos de frontera demasiado grandes para un equipo, únete al enjambre: para eso está la API de pago por uso en KVR de abajo.",
+    inferenceApiTitle: "API de inferencia (créditos)",
+    inferenceApiLede: "El camino más simple: un endpoint nativo de OpenAI con una clave de API. El streaming (SSE) y las llamadas a herramientas nativas funcionan sin más, y cada llamada se descuenta de un saldo prepago de KVR — sin firmar con el monedero en cada llamada. El acceso se controla mediante una lista blanca de monederos.",
+    inferenceApiSteps: [
+      { title: "Recarga créditos", body: "Consigue crédito en KVR mediante una concesión de un operador, o autodepositando: transfiere KVR a la tesorería y envía la firma a POST /api/credits/deposit." },
+      { title: "Obtén una clave de API", body: "Demuestra la propiedad del monedero una sola vez (SIWS): solicita un desafío, firma el mensaje y cámbialo por una clave. La apiKey se devuelve una sola vez — guárdala." },
+      { title: "Llámalo como OpenAI", body: "Apunta cualquier cliente de OpenAI a la URL base con tu clave. El streaming y tool_calls funcionan sin cambios; el saldo se debita por llamada." },
+    ],
+    inferenceApiKeyLede: "Emite una clave de API (una firma del monedero)",
+    inferenceApiCallLede: "Luego llámalo con el SDK estándar de OpenAI — solo cambian base_url y la clave",
+    inferenceApiRefTitle: "Referencia",
+    inferenceApiRef: {
+      base: "URL base", auth: "Autenticación", endpoints: "Endpoints", balance: "Saldo",
+      pricing: "Precios", errors: "Errores", context: "Contexto máximo", model: "Modelo",
+    },
+    inferenceApiThinkNote: "El modelo servido razona por defecto. Para respuestas cortas o llamadas a herramientas, establece chat_template_kwargs.enable_thinking = false; deja el razonamiento activado (mejor para programar) con un max_tokens generoso. Las llamadas a herramientas siempre funcionan. La tarifa actual la fija la gobernanza y puede cambiar.",
+    keyIssueTitle: "Emite una clave aquí",
+    keyIssueLede: "¿Prefieres no programarlo? Ejecuta todo el flujo aquí mismo: introduce tu monedero, firma cada desafío y obtén una clave. Los mismos endpoints que arriba; tu clave nunca sale de tu navegador.",
+    keyIssueWalletPh: "La dirección de tu monedero Solana",
+    keyIssueLabelPh: "Etiqueta de la clave (p. ej. my-app)",
+    keyIssueStart: "Empezar",
+    keyIssueRegisterNote: "Este monedero aún no está registrado — firma una vez para autorregistrarte y otra vez para obtener la clave.",
+    keyIssueSignPrompt: "Firma este mensaje exacto con tu monedero (ed25519), luego pega la firma en base64:",
+    keyIssueSigPh: "firma en base64",
+    keyIssueSubmit: "Enviar firma",
+    keyIssuePending: "Este monedero no está en la lista blanca y el autorregistro está cerrado. Un operador debe aprobarlo — por favor, ponte en contacto.",
+    keyIssueKeyReady: "Tu API key — se muestra una sola vez. Cópiala ahora.",
+    keyIssueBalanceLabel: "Saldo de crédito",
+    keyIssueTopUp: "El saldo es 0 — recarga crédito KVR (transfiere KVR al treasury y luego haz POST /api/credits/deposit) antes de hacer llamadas.",
+    keyIssueError: "La solicitud falló",
+    keyIssueUseNote: "Ahora úsala: es una clave Bearer para https://gate.kvasir-ai.net/v1. Ejecuta el comando ya preparado de abajo, o apunta cualquier SDK de OpenAI a esa base URL (ejemplos completos más abajo).",
+    selfIssueTitle: "Autoemisión de clave (agentes)",
+    selfIssueLede: "Un agente de código puede hacerlo todo sin interfaz a partir de un secreto de monedero: firmar los desafíos SIWS, autorregistrarse, obtener una clave y luego llamar al endpoint de OpenAI. Sin navegador, sin clics.",
+    gateTitle: "Dale una estrella para desbloquear los docs",
+    gateBody: "Los docs siguen abiertos — una estrella en GitHub solo te mantiene al tanto y ayuda a que el proyecto crezca. Inicia sesión con GitHub y da estrella al repo para continuar.",
+    gateSignIn: "Iniciar sesión con GitHub",
+    gateStarBody: "Sesión iniciada como {0}. Da estrella al repo en GitHub y vuelve a comprobar para desbloquear.",
+    gateStarLink: "Dar estrella a louisevandan/kvasir-net ↗",
+    gateRecheck: "Ya le di estrella — volver a comprobar",
+  },
+
+  careers: {
+    docTitle: "Marketing y Crecimiento — Kvasir",
+    pill: "Estamos contratando",
+    headline1: "Marketing y Crecimiento",
+    headline2: "haz crecer la red",
+    sub: "Kvasir es una red descentralizada de inferencia de IA (DePIN) sobre Solana. El motor de código abierto linkcpp divide grandes modelos abiertos entre muchas GPU y máquinas aportadas, y cada nodo gana KVR por las capas que realmente sirvió. La parte técnica ya funciona — necesitamos a la persona que lo cuente al mundo.",
+    factRole: "Rol",
+    factRoleV: "Marketing y crecimiento — jornada completa",
+    factLocation: "Ubicación",
+    factLocationV: "Remoto · zona horaria de EE. UU./Europa o Sudeste Asiático · ≥3–4 h diarias de solapamiento con KST",
+    factComp: "Compensación",
+    factCompV:
+      "Equity temprano (4 años de vesting / 1 año de cliff) + asignación de tokens condicionada al TGE · prueba remunerada antes de cualquier compromiso",
+    factEngine: "Motor",
+    liveTitle: "Lo que ya está en marcha",
+    liveLede: "No te unes a un whitepaper. Verificado y funcionando hoy:",
+    liveProof: [
+      "Modelos probados en la red: Qwen3.5 122B, Qwen3.5 35B y Gemma4 12B — cada uno dividido capa a capa entre varias máquinas, de modo que ningún nodo aloja el modelo completo.",
+      "Una flota heterogénea en vivo de 21 nodos: 4× AMD MI250 (host ARM), 4× NVIDIA GB10, 4× NVIDIA RTX Pro 6000, 1 MacBook Pro, 6 máquinas x86 Windows con CPU y 2 nodos móviles (iOS + Android).",
+      "Acreditación de contribución por nodo: cada nodo gana KVR ponderado por su cuota de capas en cada inferencia servida, liquidado a su propia billetera.",
+      "Pasarela de pago por inferencia compatible con OpenAI y Anthropic, en vivo en nuestro propio dominio.",
+      "Billeteras sin custodia publicadas en web, escritorio, iOS y Android, con inicio de sesión por firma de billetera (Sign-In With Solana) + 2FA.",
+    ],
+    devnetNote:
+      "KVR funciona actualmente en la devnet de Solana. Es un token de utilidad/contribución — nada en esta página es una oferta de valores ni una promesa de valor del token.",
+    ownsTitle: "De qué te encargarás",
+    ownsLede:
+      "Una red de dos lados necesita crecimiento en ambos: operadores de nodos en la oferta, desarrolladores en la demanda. Ambos parten de cero — ese es el trabajo.",
+    owns: [
+      {
+        title: "Comunidad y redes",
+        body: "Construye X y Discord desde cero. Cultiva relaciones con KOL del nicho DePIN / cripto-IA y mantén una cadencia constante de contenido.",
+      },
+      {
+        title: "Crecimiento de operadores de nodos",
+        body: "Captación del lado de la oferta: llega a dueños de GPU y comunidades de home-lab, y ejecuta campañas que los conviertan en nodos activos de Kvasir.",
+      },
+      {
+        title: "Demanda de desarrolladores",
+        body: "Marketing del lado de la demanda para desarrolladores y startups de IA que necesitan endpoints de inferencia compatibles con OpenAI/Anthropic — contenido cercano a la documentación, posts de lanzamiento, escaparates de integraciones.",
+      },
+      {
+        title: "Campañas y analítica",
+        body: "Diseña experimentos de crecimiento, mídelos con honestidad y redobla en los canales que realmente mueven el número de nodos y el uso de la API.",
+      },
+      {
+        title: "Soporte de lanzamiento y alianzas",
+        body: "Apoya el marketing del lanzamiento del token cuando la red se gradúe de la devnet y asiste en la prospección de alianzas (flotas de GPU, billeteras, proveedores de modelos).",
+      },
+    ],
+    profileTitle: "A quién buscamos",
+    profile: [
+      "Marketer cripto-nativo: has hecho crecer una comunidad o producto web3 desde cero — verificable en X, Discord u on-chain.",
+      "Se valora mucho la familiaridad con DePIN o cripto-IA; sabes explicarle a un dueño de GPU por qué debería operar un nodo.",
+      "Inglés nativo o fluido; zona horaria de EE. UU./Europa o Sudeste Asiático con ≥3–4 h diarias de solapamiento con KST (UTC+9).",
+      "Cómodo con una compensación de etapa temprana: equity significativo + potencial del token por encima de un gran salario.",
+      "Ejecutor práctico — publicas posts, campañas y experimentos tú mismo.",
+    ],
+    processTitle: "Cómo contratamos",
+    processLede:
+      "Cada candidato pasa por una prueba remunerada antes de cualquier conversación sobre equity — protege a ambas partes.",
+    process: [
+      {
+        title: "Llamada inicial",
+        body: "Te mostramos la red en vivo y la hoja de ruta; tú nos cuentas una comunidad o campaña que realmente hayas construido.",
+      },
+      {
+        title: "Prueba remunerada (2–4 semanas)",
+        body: "Una muestra de trabajo real y pagada — p. ej., un plan de captación de operadores de nodos con cálculos por canal, o un experimento de crecimiento en vivo en X/Discord. Evaluamos resultados, velocidad y autonomía.",
+      },
+      {
+        title: "Oferta",
+        body: "Marketing y Crecimiento: equity con vesting estándar de 4 años (cliff de 1 año) más una asignación de tokens condicionada al TGE; base en efectivo cuando llegue la financiación.",
+      },
+      {
+        title: "Construir juntos",
+        body: "Primer hito como equipo: co-crear nuestra próxima participación en un hackathon y hacer crecer la primera cohorte de operadores de nodos.",
+      },
+    ],
+    applyTitle: "Cómo postular",
+    applyBody:
+      "Envía por correo una breve presentación con enlaces que demuestren el perfil anterior — la comunidad o campaña que construiste, tu usuario de X, cualquier cosa on-chain. El currículum es opcional; las pruebas no.",
+    applyCta: "Postular",
+    readCode: "Lee el código primero",
+    seeProduct: "Ver el producto",
+  },
+};

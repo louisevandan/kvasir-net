@@ -1,0 +1,32 @@
+# Incremental proxy adapter build. The expensive llama.cpp CUDA graph is taken
+# from a previously tagged llama-build image.
+ARG LLAMA_BUILD_IMAGE=linkcpp-llama-build:local
+FROM ${LLAMA_BUILD_IMAGE} AS proxy-build
+ARG LINKCPP_BUILD_JOBS=4
+ARG LINKCPP_RING_BUILD_ID
+WORKDIR /src
+COPY CMakeLists.txt ./CMakeLists.txt
+COPY apps ./apps
+COPY src ./src
+COPY cmake ./cmake
+COPY scripts/package-ring-runtime.py ./scripts/package-ring-runtime.py
+RUN test -n "${LINKCPP_RING_BUILD_ID}" \
+    && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_CUDA=ON -DGGML_RPC=ON -DLLAMA_CURL=ON \
+        -DLINKCPP_BUILD_RING_ADAPTER=ON \
+        -DLINKCPP_RING_BUILD_ID="${LINKCPP_RING_BUILD_ID}" \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,--allow-shlib-undefined" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--allow-shlib-undefined" \
+    && cmake --build build -j"${LINKCPP_BUILD_JOBS}" \
+        --target linkcpp-node linkcpp-server \
+    && mkdir -p /opt/linkcpp/bin /opt/linkcpp/lib /opt/linkcpp/runtime-packs \
+    && cp -a build/bin/*.so* /opt/linkcpp/lib/ \
+    && cp build/apps/linkcpp-node/linkcpp-node /opt/linkcpp/bin/ \
+    && cp build/apps/linkcpp-server/linkcpp-server /opt/linkcpp/bin/ \
+    && python3 scripts/package-ring-runtime.py \
+        --node build/apps/linkcpp-node/linkcpp-node \
+        --server build/apps/linkcpp-server/linkcpp-server \
+        --library-dir build/bin --output-dir /opt/linkcpp/runtime-packs --backend cuda
+
+FROM scratch AS proxy-artifacts
+COPY --from=proxy-build /opt/linkcpp /opt/linkcpp

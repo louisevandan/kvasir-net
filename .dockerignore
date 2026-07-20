@@ -1,0 +1,18 @@
+reference/
+**/.git
+**/build/
+**/node_modules
+**/dist
+**/.build
+**/.build-xcode
+**/DerivedData
+**/bin/
+/models/
+tests/reports/
+.venv/
+.playwright-mcp/
+*.gguf
+*.apk
+# never send secrets to the build context
+solana/token/.keys/
+**/*.enc

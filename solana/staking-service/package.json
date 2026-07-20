@@ -1,0 +1,17 @@
+{
+  "name": "linkcpp-staking-service",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Off-chain KVR staking settlement service (devnet MVP)",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "express": "^4.21.2",
+    "tweetnacl": "^1.0.3"
+  }
+}

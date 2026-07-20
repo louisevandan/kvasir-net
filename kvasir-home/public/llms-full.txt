@@ -1,0 +1,132 @@
+# Kvasir — Decentralized AI Inference (full site text)
+
+Source: https://kvasir-ai.net/ · Engine: https://github.com/louisevandan/kvasir-net (BSL) · Last updated: 2026-07-13
+
+This file is a plain-text mirror of the Kvasir homepage for LLM ingestion. All
+claims are grounded in the linkcpp / Kvasir codebase. Compliance note: KVR is a
+utility / contribution token on Solana devnet — not a tradable asset, price, or
+investment; nothing here is a promise of financial return.
+
+## Brand system
+
+- linkcpp — the source-available engine / control plane: a Dockerized control hub around inference engine's RPC data plane, plus a new peer-to-peer ring runtime. Discovers devices, plans layer placement, launches workers, exposes OpenAI/Anthropic-compatible gateways. Source-available under the Business Source License (BSL).
+- Kvasir — the network / product brand: the non-custodial wallet + settlement gateway + node-reward network built on linkcpp.
+- KVR — the token. On-chain name "Kvasir", 6 decimals, Solana (devnet today). Used to pay for inference and to reward contributors.
+
+One line: linkcpp is the engine; Kvasir is the network that turns it into a rewarded, decentralized AI inference marketplace paid in KVR.
+
+## Hero
+
+Headline: Bring compute. Earn KVR.
+Kvasir splits large open models across shared hardware with linkcpp, so no single node holds the whole model. Contribute a GPU, CPU, NPU — even a phone — and earn KVR for the layers you run.
+Badges: Runs on GPU · CPU · NPU · phone · OpenAI + Anthropic compatible · BSL engine · Solana devnet.
+
+## Why decentralized AI (thesis)
+
+AI shouldn't be owned by a handful of companies. Frontier inference is concentrating behind a few walled datacenters — closed weights, metered access, one bill paid to one owner. Kvasir points the other way: open models served across a permissionless network of everyday devices, owned and earned by the people who run it.
+
+Centralized AI: a few hyperscalers own the GPUs; models and infrastructure behind closed APIs; you rent access and value flows upward; opaque — you trust the operator.
+Kvasir: any device joins a peer-to-peer ring — no central master; source-available linkcpp engine (BSL), inspectable; contributors earn KVR for the real compute they give; non-custodial — your keys, your node, your rewards.
+
+## The name (origin)
+
+In Norse mythology, Kvasir was born when the Æsir and Vanir gods ended their war and made peace: each spat into a single vessel, and from their pooled essence rose the wisest being who ever lived — one who could answer any question. When he was slain, his blood was brewed into the Mead of Poetry, a draught that granted wisdom to everyone who drank it.
+Why the name: pooled from every god and owned by none → intelligence assembled from many contributors' devices, no single owner. The wisest being answering any question → an open inference network anyone can query. A mead that shared wisdom with all → open access and KVR rewards to every contributor. On-chain, the token is named Kvasir (KVR) — the mead, distributed.
+
+## How it works
+
+1. Split — the model is divided into contiguous layer windows. Every device stores the same model but loads only its window; no node holds the whole thing. (Qwen3.5-122B, 49 layers, rank manifest.)
+2. Serve — the request enters the ring. Each node runs its layers and passes only the hidden-state boundary to its neighbor; the last node samples the token and sends it back around — no central master. (ring runtime, OpenAI/Anthropic compatible.)
+3. Reward — each node earns KVR weighted by the layers it ran (its share of the tokens produced), settled on Solana to that node's own wallet. (units += (out_tokens / 1000) × layer_share.)
+
+## For contributors
+
+Turn idle compute into KVR. Point a supported device at the network and it starts serving layers. You earn KVR proportional to the layers your node runs — your keys stay in your own wallet. Non-custodial by design — operator login is a Sign-In With Solana wallet signature with optional 2FA.
+
+- Any device can join: GPUs, CPUs, NPUs and phones all run layers today. A peer-to-peer ring runtime lets each device hold just a few layers and pass only small boundary state to its neighbor — no gatekeeper, no single owner.
+- Layer-share rewards: proportional to the layers your node runs, not vague participation. 1 unit ≈ 1k tokens × your layer share of each inference.
+- Performance tiers: measured throughput sets a tier — S (×1.5), A (×1.25), B (×1.0), C (×0.7) — that multiplies your earned units.
+- Uptime for infra roles: nodes filling infrastructure roles also accrue hourly uptime rewards.
+
+Supported devices: GPU (CUDA · ROCm · Metal · Vulkan), CPU (x86-64 · ARM), NPU (on-device accelerators), Mobile (phones & edge via the ring runtime).
+
+## For developers
+
+One endpoint, backed by many devices. Keep your existing OpenAI or Anthropic client, point it at the Kvasir gateway, and pay per inference in KVR — no rewrites.
+
+- OpenAI-compatible: /v1/chat/completions, /v1/responses, /v1/models
+- Anthropic-compatible: /anthropic/v1/messages and /anthropic/v1/models
+- Pay-per-inference in KVR: quote → payment → inference
+- Live model catalog aggregated from reachable hubs
+
+Example:
+curl https://gate.kvasir-ai.net/v1/chat/completions \
+  -H "Authorization: Bearer $KVR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "model": "Qwen3.5-122B-A10B", "messages": [ { "role": "user", "content": "Explain layer-split inference." } ] }'
+
+## Token & rewards (KVR)
+
+KVR is the unit developers spend on inference and the unit contributors earn for the layers they run. Rewards are computed from real work, not participation.
+- Symbol: KVR (on-chain name "Kvasir", 6 decimals). Chain: Solana (devnet today). Pays for: inference (pay-per-request via the gateway). Rewards: compute (layer-share × performance tier).
+- Non-custodial wallet: rewards settle to each node's own owner wallet; keys live in the user's wallet (browser, desktop, or mobile), never with an operator. Wallets on web, desktop, iOS, Android.
+- Devnet, utility token: KVR currently runs on Solana devnet and is a utility / contribution token — not a tradable asset, price, or investment. Nothing here is financial advice or a promise of return.
+
+## Network roles & rewards
+
+Every role in the network earns KVR. The ring of compute nodes is coordinated by hub and gateway roles; each is paid in KVR for what it actually does.
+- Compute node (runs the model's layers): holds a few contiguous layers in the ring; earns per contribution unit (≈1k tokens served) × layer share × performance tier.
+- Gateway host (public entry + settlement): serves the OpenAI/Anthropic gateway and settles KVR payments; earns hourly uptime + a ×1.5 bonus on every inference it helps serve.
+- Hub host (the control plane): discovers devices, plans layer placement, orchestrates the ring; the most critical role, so it earns the highest hourly uptime reward.
+Roles stack: one machine can be compute, gateway and hub at once, and its rewards sum together — all settled in KVR to that node's own wallet.
+
+Reward math: units += (tokens / 1k) × (node_layers / total_layers); effective = units × perf_tier × gateway_bonus; infra roles also earn hourly uptime (hub rate > gateway rate), summed on top.
+Performance tiers (by measured decode throughput): S ≥ 90 tok/s ×1.5; A ≥ 60 tok/s ×1.25; B ≥ 30 tok/s ×1.0; C < 30 tok/s ×0.7.
+
+## Under the hood (linkcpp)
+
+linkcpp is the open control hub that turns everyday hardware into a distributed inference engine. Its ring runtime lets each device hold only a few layers and pass hidden state to its neighbor — no central master — while the stock inference engine data plane stays unforked. linkcpp's own tagline: "Run large GGUF models across multiple GPUs and machines with stock inference engine binaries."
+- Ring runtime: every device stores the same model and loads only its layer window, opening one link to its predecessor and one to its successor; hidden-state boundaries circulate around the ring and the last rank returns the token — no central master.
+- linkcpp control hub: a single Dockerized hub — the control plane inference engine's RPC data plane was missing. Discovers devices, plans layer placement, launches the stock workers, exposes the gateways. Source-available under the Business Source License (BSL).
+- Distributed layer placement: reads GGUF metadata and computes contiguous per-node layer windows via a rank manifest, plus optional MoE expert-FFN offload to node RAM.
+- SIWS + 2FA security: for public deployments, operator access is a Sign-In With Solana signature over a server nonce, plus TOTP 2FA and single-use backup codes — on both hub and gateway.
+The engine is source-available under the Business Source License (BSL): https://github.com/louisevandan/kvasir-net
+
+## Roadmap
+
+- Now — Any-device inference, live: GPUs, CPUs, NPUs and phones serve layers across the ring runtime. 122B ran split across 4 GPUs; contribution credited end-to-end; non-custodial wallets on web/desktop/iOS/Android; access secured on public domains.
+- Coming — Mainnet & on-chain settlement: everything today runs on Solana devnet with an off-chain settlement service; an on-chain rewards program and mainnet are planned.
+- Coming — A permissionless global network: current demos ran on one operator's hardware; opening the network so anyone, anywhere can plug in a device and earn (no gatekeeper) is next.
+
+## Proof / traction
+
+- 122B params served split across 4 AMD MI250 GPUs.
+- 4 distinct owner wallets each earning their layer share.
+- 2 API surfaces — OpenAI + Anthropic compatible.
+- 4 wallet platforms — web · desktop · iOS · Android.
+Summary: 122B served across 4 GPUs · OpenAI + Anthropic compatible · wallets on web/desktop/iOS/Android · live on public domains.
+
+## Inference API — self-issue an API key (for agents)
+
+A native OpenAI-compatible endpoint with a prepaid-credit API key. An AI agent holding a Solana wallet secret can obtain a key headlessly (no browser):
+
+- Base URL: https://gate.kvasir-ai.net/v1 · Auth: `Authorization: Bearer <apiKey>`
+- Model: `f793eb7b:ctrl-f11eb9` (Qwen3.5-122B-A10B); `GET /v1/models` to list. Streaming (SSE) and native tool_calls are supported.
+- SIWS signing: sign the challenge `message` string verbatim with the wallet's ed25519 key; submit the 64-byte signature as base64. `wallet` is the base58 public key.
+
+Self-issue flow:
+1. `POST https://gate.kvasir-ai.net/api/credits/register/challenge {"wallet":"<W>"}` -> `{nonce, message}`
+2. sign(message) -> `POST /api/credits/register {"wallet","nonce","signature"}` (200 = self-registered onto the whitelist; 403 = self-register closed, an operator must approve)
+3. `POST /api/credits/challenge {"wallet":"<W>"}` -> `{nonce, message}` (403 = not whitelisted)
+4. sign(message) -> `POST /api/credits/apikey {"wallet","nonce","signature","label":"agent"}` -> `{apiKey}` (returned once — store it)
+5. Use `apiKey` as an OpenAI Bearer key at the base URL. Check credit with `GET /api/credits/balance` (Bearer) -> `{balance, spent, symbol}`.
+
+Pricing: `basePrice + tokens × perToken` KVR (currently `0.01 + tokens×0.00002`), Solana devnet. Insufficient balance -> HTTP 402; top up by transferring KVR to the treasury, then `POST /api/credits/deposit {wallet, amount, signature}`.
+Runnable self-issue scripts (TS/Node, Python), the streaming + tool-call examples, and an interactive issuer are on the developer page: https://kvasir-ai.net/docs/api
+
+## Links
+
+- Homepage: https://kvasir-ai.net/
+- linkcpp (engine, BSL): https://github.com/louisevandan/kvasir-net
+- Gateway (OpenAI/Anthropic-compatible): https://gate.kvasir-ai.net
+- Hub (control plane): https://hub.kvasir-ai.net
