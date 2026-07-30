@@ -241,6 +241,23 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
         key
     }
 
+    /** Discard the stored credit API key and mint a new one.
+     *
+     *  Only the key's hash is kept by the gateway, so a key it no longer
+     *  recognises cannot be repaired by asking for it back — it has to be
+     *  reminted. Without this, "invalid API key" has no way out from inside the
+     *  app. Credit balance is held against the wallet, not the key, so nothing
+     *  is lost by reissuing. */
+    suspend fun reissueCreditApiKey(): String = withContext(Dispatchers.IO) {
+        val w = address ?: throw IllegalStateException("wallet locked")
+        val phrase = keyStore.loadMnemonic() ?: throw IllegalStateException("wallet locked")
+        keyStore.deleteApiKey(w)
+        credit.register(phrase)                                   // self-whitelist (idempotent)
+        val key = credit.mintApiKey(phrase, "Kvasir Android")
+        keyStore.saveApiKey(w, key)
+        key
+    }
+
     /** Current credit balance, or null if there is no API key yet. */
     suspend fun creditBalance(): Double? = withContext(Dispatchers.IO) {
         val w = address ?: return@withContext null

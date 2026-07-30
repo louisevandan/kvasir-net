@@ -76,11 +76,31 @@ final class InferenceStore: ObservableObject {
     /// key. Requires the wallet to be unlockable (mnemonic reveal).
     private func ensureApiKey() async throws -> String {
         if let k = apiKey { return k }
+        return try await mintApiKey()
+    }
+
+    /// Register (idempotent) and mint a key, replacing whatever is stored.
+    private func mintApiKey() async throws -> String {
         guard let w = wallet.address else { throw CreditError.message(Localizer.shared.t("nodeSettings.walletLocked")) }
         guard let phrase = wallet.revealMnemonic() else { throw CreditError.message(Localizer.shared.t("nodeSettings.walletLocked")) }
         try await credit.register(mnemonic: phrase)                       // self-whitelist (idempotent)
         let key = try await credit.mintApiKey(mnemonic: phrase, label: "Kvasir iOS")
         try? KeyStore.saveApiKey(key, wallet: w)
+        return key
+    }
+
+    /// Discard the stored key and mint a new one.
+    ///
+    /// Only the key's hash is kept by the gateway, so a key it no longer
+    /// recognises cannot be repaired by asking for it back — it has to be
+    /// reminted. Without this, "invalid API key" has no way out from inside the
+    /// app. Credit balance is held against the wallet, not the key, so nothing
+    /// is lost by reissuing.
+    @discardableResult
+    public func reissueApiKey() async throws -> String {
+        if let w = wallet.address { KeyStore.deleteApiKey(wallet: w) }
+        let key = try await mintApiKey()
+        await refreshBalance()
         return key
     }
 

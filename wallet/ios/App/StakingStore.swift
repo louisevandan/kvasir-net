@@ -70,6 +70,29 @@ final class StakingStore: ObservableObject {
         }
     }
 
+    /// Discard the stored credit API key and mint a new one. Returns a UI status
+    /// message.
+    ///
+    /// Only the key's hash is kept by the gateway, so a key it no longer
+    /// recognises cannot be repaired by asking for it back — it has to be
+    /// reminted. Without this, "invalid API key" has no way out from inside the
+    /// app. Credit balance is held against the wallet, not the key, so nothing
+    /// is lost by reissuing.
+    func reissueCreditApiKey() async -> String {
+        guard let w = wallet.address else { return Localizer.shared.t("nodeSettings.walletLocked") }
+        guard let phrase = wallet.revealMnemonic() else { return Localizer.shared.t("nodeSettings.walletLocked") }
+        KeyStore.deleteApiKey(wallet: w)
+        do {
+            let credit = CreditService(baseUrl: wallet.stakingServiceURL)
+            try await credit.register(mnemonic: phrase)                   // self-whitelist (idempotent)
+            let key = try await credit.mintApiKey(mnemonic: phrase, label: "Kvasir iOS")
+            try? KeyStore.saveApiKey(key, wallet: w)
+            return Localizer.shared.t("apiKey.ok")
+        } catch {
+            return "\(Localizer.shared.t("apiKey.failed")): \(error)"
+        }
+    }
+
     private unowned let wallet: WalletStore
     private var service: StakingService?
 

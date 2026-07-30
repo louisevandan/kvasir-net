@@ -5,6 +5,7 @@ import { useWallet } from '../state'
 import { useI18n } from '../i18n'
 import { api, fmt } from '../api'
 import { Gateway, Credit, PayModel } from '../services'
+import { ensureApiKey as ensureCreditKey, cachedApiKey } from '../creditKey'
 
 interface Msg {
   role: 'user' | 'assistant'
@@ -64,27 +65,18 @@ export function InferenceScreen() {
   const isLocal = model.startsWith('local:')
 
   // Prepaid-credit onboarding + streaming. The wallet self-registers and mints an
-  // API key on first use (both sign a gateway nonce), stored per-wallet.
-  const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u))
-  const apiKeyKey = (addr: string) => `kvasir.credit.apikey.${addr}`
-
+  // API key on first use (both sign a gateway nonce), cached per wallet. Minting
+  // and recovery live in ../creditKey so Settings can reissue the same key.
   async function ensureApiKey(): Promise<string> {
     const addr = await api.wallet.address()
     if (!addr || !api.wallet.signMessage) throw new Error(t('inf.walletLocked'))
-    const stored = localStorage.getItem(apiKeyKey(addr))
-    if (stored) return stored
-    const rc = await credit.registerChallenge(addr)                        // self-whitelist (idempotent)
-    await credit.register(addr, rc.nonce, b64(await api.wallet.signMessage(new TextEncoder().encode(rc.message))))
-    const ac = await credit.apikeyChallenge(addr)
-    const { apiKey } = await credit.apikey(addr, ac.nonce, b64(await api.wallet.signMessage(new TextEncoder().encode(ac.message))), 'Kvasir Desktop')
-    localStorage.setItem(apiKeyKey(addr), apiKey)
-    return apiKey
+    return await ensureCreditKey(credit, addr, 'Kvasir Desktop')
   }
 
   async function refreshBalance() {
     const addr = await api.wallet.address()
     if (!addr) return
-    const key = localStorage.getItem(apiKeyKey(addr))
+    const key = cachedApiKey(addr)
     if (!key) { setCreditBalance(null); return }
     try { setCreditBalance((await credit.balance(key)).balance) } catch { /* ignore */ }
   }

@@ -188,6 +188,12 @@ class Strings(val lang: AppLanguage) {
 
             // node settings
             "ns.title" to "모바일폰 노드 설정",
+            "ns.apiKey" to "API 키",
+            "ns.apiKeyDesc" to "추론 크레딧에 쓰이는 키입니다. 이 기기에 저장되며, 게이트웨이가 더 이상 인정하지 않으면 재발급하세요. 크레딧 잔액은 지갑에 남아 영향받지 않습니다.",
+            "ns.apiKeyReissue" to "키 재발급",
+            "ns.apiKeyWorking" to "재발급 중…",
+            "ns.apiKeyOk" to "새 키를 발급했습니다.",
+            "ns.apiKeyFailed" to "재발급 실패",
             "ns.backend" to "컴퓨트 백엔드",
             "ns.backendDesc" to "이 기기가 추론에 사용할 연산 유닛",
             "ns.mode" to "노드 모드",
@@ -429,6 +435,12 @@ class Strings(val lang: AppLanguage) {
 
             // node settings
             "ns.title" to "Mobile node settings",
+            "ns.apiKey" to "API key",
+            "ns.apiKeyDesc" to "The key your inference credit is spent against. It is stored on this device — reissue it if the gateway stops accepting it. Your credit balance lives with the wallet and is not affected.",
+            "ns.apiKeyReissue" to "Reissue key",
+            "ns.apiKeyWorking" to "Reissuing…",
+            "ns.apiKeyOk" to "A new key was issued.",
+            "ns.apiKeyFailed" to "Reissue failed",
             "ns.backend" to "Compute backend",
             "ns.backendDesc" to "The compute unit this device uses for inference",
             "ns.mode" to "Node mode",

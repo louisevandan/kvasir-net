@@ -34,6 +34,7 @@ class KeyStore(context: Context) {
     // recoverable via a fresh SIWS mint.
     fun saveApiKey(wallet: String, key: String) { prefs.edit().putString("apikey:$wallet", key).apply() }
     fun loadApiKey(wallet: String): String? = prefs.getString("apikey:$wallet", null)?.takeIf { it.isNotEmpty() }
+    fun deleteApiKey(wallet: String) { prefs.edit().remove("apikey:$wallet").apply() }
 
     private companion object { const val KEY = "mnemonic" }
 }

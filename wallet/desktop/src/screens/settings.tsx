@@ -5,6 +5,8 @@ import { api, lockCapable, fmt, Network, GatewayStatus } from '../api'
 import { Card, Field, CopyButton } from '../components'
 import { passphraseError } from './lock'
 import { OperatorPanel } from './operator'
+import { Credit } from '../services'
+import { cachedApiKey, reissueApiKey } from '../creditKey'
 
 // A gateway-start failure caused by macOS blocking the app from the folder/volume
 // (e.g. a repo on an external drive) — offer to open Full Disk Access settings.
@@ -177,6 +179,51 @@ function SecurityCard() {
   )
 }
 
+// The credit API key is cached on this device and only its hash is kept by the
+// gateway, so a key the gateway no longer recognises cannot be repaired by
+// asking for it back — it has to be reminted. Without this, "invalid API key"
+// is unrecoverable from inside the app.
+function ApiKeyCard() {
+  const { t } = useI18n()
+  const { stakingUrl } = useWallet()
+  const [addr, setAddr] = useState<string | null>(null)
+  const [has, setHas] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
+
+  useEffect(() => {
+    api.wallet.address().then((a) => { setAddr(a); setHas(!!(a && cachedApiKey(a))) }).catch(() => {})
+  }, [])
+
+  const reissue = async () => {
+    if (!addr) { setMsg({ text: t('set.apiKeyLocked'), ok: false }); return }
+    setBusy(true); setMsg(null)
+    try {
+      await reissueApiKey(new Credit(stakingUrl), addr, 'Kvasir Desktop')
+      setHas(true)
+      setMsg({ text: t('set.apiKeyOk'), ok: true })
+    } catch (e: any) {
+      setMsg({ text: `${t('set.apiKeyFailed')}: ${e?.message ?? e}`, ok: false })
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Card>
+      <div className="label" style={{ marginBottom: 6 }}>{t('set.apiKey')}</div>
+      <div className="small muted" style={{ marginBottom: 12 }}>{t('set.apiKeyDesc')}</div>
+      <button className="btn ghost block" onClick={reissue} disabled={busy}>
+        {busy ? t('set.apiKeyWorking') : t('set.apiKeyReissue')}
+      </button>
+      {msg && (
+        <div className="small" style={{ marginTop: 10, color: msg.ok ? 'var(--good)' : 'var(--danger)' }}>
+          {msg.text}
+        </div>
+      )}
+      {!msg && has && <div className="small muted" style={{ marginTop: 10 }}>✓</div>}
+    </Card>
+  )
+}
+
 export function SettingsScreen() {
   const { t, lang, setLang } = useI18n()
   const { network, setNetwork, stakingUrl, setStakingUrl, logout } = useWallet()
@@ -224,6 +271,7 @@ export function SettingsScreen() {
           </Field>
         </Card>
         <GenesisCard />
+        <ApiKeyCard />
         <Card>
           <div className="label" style={{ marginBottom: 6 }}>{t('set.export')}</div>
           <div className="small muted" style={{ marginBottom: 12 }}>{t('set.exportDesc')}</div>

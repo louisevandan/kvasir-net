@@ -169,7 +169,53 @@ fun NodeSettingsScreen(vm: WalletViewModel, nav: NavController) {
                     Text(s.t("ns.gaugeNote"), color = b.textSecondary, fontSize = 10.sp)
                 }
             }
+            Spacer(Modifier.height(12.dp))
+            ApiKeyCard(vm)
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Reissue the credit API key.
+ *
+ * The key is stored on this device and the gateway keeps only its hash, so a key
+ * it no longer recognises cannot be repaired by asking for it back — it has to
+ * be reminted. Without this, "invalid API key" has no way out from inside the
+ * app. Credit balance is held against the wallet, not the key.
+ */
+@Composable
+private fun ApiKeyCard(vm: WalletViewModel) {
+    val b = LocalBrand.current
+    val s = Strings(vm.language)
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+
+    Column(Modifier.brandCard()) {
+        Text(s.t("ns.apiKey"), color = b.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(s.t("ns.apiKeyDesc"), color = b.textSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(10.dp))
+        Box(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (busy) b.pink.copy(alpha = 0.4f) else b.pink)
+                .clickableNoRipple {
+                    if (busy) return@clickableNoRipple
+                    busy = true; status = s.t("ns.apiKeyWorking")
+                    scope.launch {
+                        val r = runCatching { vm.reissueCreditApiKey() }
+                        status = r.fold({ s.t("ns.apiKeyOk") }, { "${s.t("ns.apiKeyFailed")}: ${it.message}" })
+                        busy = false
+                    }
+                }
+                .padding(vertical = 12.dp), contentAlignment = Alignment.Center,
+        ) { Text(if (busy) s.t("ns.apiKeyWorking") else s.t("ns.apiKeyReissue"), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
+
+        if (status.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(status, color = if (status == s.t("ns.apiKeyOk")) GREEN else b.textSecondary, fontSize = 11.sp)
         }
     }
 }

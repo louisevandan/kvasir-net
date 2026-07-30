@@ -12,6 +12,8 @@ struct NodeSettingsView: View {
     @State private var hubURL = "https://hub.kvasir-ai.net"
     @State private var hubStatus = ""
     @State private var hubBusy = false
+    @State private var keyStatus = ""
+    @State private var keyBusy = false
 
     private var profile: NodeProfile { nodeProfile(backend: staking.nodeBackend, mode: staking.nodeMode) }
 
@@ -25,6 +27,7 @@ struct NodeSettingsView: View {
                     infographicCard
                     policyCard
                     hubCard
+                    apiKeyCard
                     if staking.nodeLive { liveCard }
                 }
                 .padding(20)
@@ -54,6 +57,40 @@ struct NodeSettingsView: View {
     }
 
     // MARK: connect to a remote hub (SIWS node token -> outbound shard serving)
+
+    // The credit API key is stored on this device and the gateway keeps only its
+    // hash, so a key it no longer recognises has to be reminted rather than
+    // repaired. This is the way out of "invalid API key" from inside the app.
+    private var apiKeyCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(loc.t("apiKey.title"))
+                .font(.system(.headline, design: .rounded)).foregroundStyle(Brand.textPrimary)
+            Text(loc.t("apiKey.desc"))
+                .font(.caption).foregroundStyle(Brand.textSecondary)
+            Button {
+                guard !keyBusy else { return }
+                keyBusy = true
+                keyStatus = loc.t("apiKey.working")
+                Task {
+                    let r = await staking.reissueCreditApiKey()
+                    keyStatus = r; keyBusy = false
+                }
+            } label: {
+                Text(keyBusy ? loc.t("apiKey.working") : loc.t("apiKey.reissue"))
+                    .fontWeight(.semibold).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Brand.pink.opacity(keyBusy ? 0.4 : 1),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .disabled(keyBusy)
+            if !keyStatus.isEmpty {
+                Text(keyStatus).font(.caption2)
+                    .foregroundStyle(keyStatus == loc.t("apiKey.ok") ? Color.green : Brand.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .brandCard()
+    }
 
     private var hubCard: some View {
         VStack(alignment: .leading, spacing: 10) {
