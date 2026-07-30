@@ -136,7 +136,16 @@ function keypairFromMnemonic(mnemonic) {
   return Keypair.fromSeed(key)
 }
 function addressOf(mnemonic) { return keypairFromMnemonic(mnemonic).publicKey.toBase58() }
-function rpc(network) { return (C.clusters[network] || C.clusters[C.defaultCluster]).rpcUrl }
+// The app's Network is 'devnet' | 'mainnet'; wallet-constants keys the clusters
+// by their Solana names, where mainnet is 'mainnet-beta'. Indexing by the app
+// value therefore missed on mainnet, and the old fallback missed too because
+// there is no defaultCluster key — so this threw on .rpcUrl instead of picking
+// an endpoint. Map it the same way api.ts does for explorer links.
+const CLUSTER_KEY = { devnet: 'devnet', mainnet: 'mainnet-beta' }
+function rpc(network) {
+  const cluster = C.clusters[CLUSTER_KEY[network] ?? network] || C.clusters.devnet
+  return cluster.rpcUrl
+}
 function conn(network) { return new Connection(rpc(network), 'confirmed') }
 
 // ---- balances / history ---------------------------------------------------
