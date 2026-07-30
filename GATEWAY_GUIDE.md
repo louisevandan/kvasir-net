@@ -1,150 +1,161 @@
-# Kvasir Gateway — Public Deployment Guide
+# Kvasir Gateway — architecture and operations
 
-> Self-contained handoff. Everything needed to continue this on **another machine / new session**
-> (e.g. the Linux server) is in this file + the repo. Nothing here depends on local machine memory.
+What the public Kvasir deployment consists of and how the pieces relate. For
+the step-by-step of standing one up on a new machine, see
+[DEPLOY_GATE.md](DEPLOY_GATE.md).
 
-## 0. Goal
+## The shape
 
-Run the **Kvasir gateway** on a **Linux server with a public IP**, as a **Docker** container, so that:
-
-- it is always-on and reachable from anywhere (not just LAN mDNS `.local`), and
-- it serves a **web application whose UI + features are identical to the desktop app**
-  (the same `wallet/desktop` React app, built for the browser and served at `/`), while also
-  exposing the gateway/staking/node/inference API under `/api/*`.
-
-Nodes (iOS / Android / desktop wallets) then point their "settlement server URL" at the public gateway.
-
-## 1. What Kvasir is (context)
-
-- **Kvasir** = a decentralized-inference AI project. Its Solana devnet token is **KVR**.
-  - Token mint: `6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ` (devnet), decimals 6, supply 1e9.
-  - Treasury owner / mint+freeze authority / settlement admin: `8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF`.
-  - Treasury ATA (vault): `38kt9QVdwt8r6auHK57rF1zkHSLq1dPChhJX2FuoY4CF`.
-  - Token facts live in `wallet/shared-spec/token.devnet.json` (source of truth, read by server + wallets).
-- **Wallets**: native iOS (Swift), Android (Kotlin), desktop (React + Electron), all under `wallet/`.
-  Internal IDs are still `ai.banya.linkcpp.*` (kept on purpose); only display/product names are "Kvasir".
-- **The gateway** = `solana/staking-service/` (Node/Express). It verifies on-chain KVR transfers,
-  tracks staking positions + node registry + rewards, and brokers inference payments. Binds `0.0.0.0`,
-  permissive CORS. Endpoints: `/api/config`, `/api/positions/:owner`, `/api/stake`, `/api/unstake`,
-  `/api/node/{register,heartbeat,remove,contribution,rewards/:owner,status/:owner,all,claim}`,
-  `/api/pay/{models,quote}`, `/api/inference`, `/health`.
-- **Node reward economics**: reward = `rawUnits × perfTierMult × gatewayBonus`. A node that **hosts the
-  gateway** earns a **+50% bonus** (`GATEWAY_BONUS`, env `KVR_GATEWAY_BONUS`, default 1.5); the wallet
-  sends `hostsGateway:true` on register/heartbeat when it manages the gateway.
-
-## 2. Git / where to work
-
-- Work from the writable fork **`github.com/kr-ai-dev-association/linkcpp`**.
-- Work branch: **`tony`**. Pull on the Linux box with: `git clone -b tony https://github.com/kr-ai-dev-association/linkcpp.git`
-  (or `git fetch fork && git checkout tony`). Push with `git push fork tony`.
-- The devnet **admin secret key is NOT in git** (gitignored at `solana/token/.keys/admin.json`). You must
-  copy it to the server out-of-band (scp) — see §4. It is a **devnet** key; never reuse on mainnet.
-
-## 3. What is already DONE (this session)
-
-The gateway is **deploy-ready**; artifacts live in `solana/staking-service/`:
-
-- **`server.js` refactored** to be config-injectable (backward compatible):
-  - `KVR_TOKEN_SPEC` → path to the token spec (default `../../wallet/shared-spec/token.devnet.json`).
-  - Admin key via `KVR_ADMIN_KEY` (inline JSON array) **or** `KVR_ADMIN_KEY_FILE` (path); dev fallback to `../token/.keys/admin.json`.
-  - `KVR_PUBLIC_URL` → returned in `/api/config.publicUrl` so clients learn the canonical address.
-  - **Serves the web UI**: if `KVR_WEB_DIR` (default `../../wallet/desktop/dist`) has an `index.html`,
-    it is served at `/` with an SPA fallback (never shadows `/api/*` or `/health`).
-- **`Dockerfile`** (multi-stage): stage 1 runs `wallet/desktop` `npm run build:web` (with
-  `ELECTRON_SKIP_BINARY_DOWNLOAD=1`); stage 2 = server + `--omit=dev` deps + baked token spec + the web
-  bundle at `/app/web`. Non-root user, `HEALTHCHECK` on `/health`. **Build context = repo root.**
-- **`docker-compose.yml`** + **`.env.example`**: ports, RPC, APR, bonus, public URL, data volume,
-  admin-key mount (`./secrets/admin.json`) or inline env.
-- **`.dockerignore`** (repo root) excludes node_modules/dist/build/keys; **`.gitignore`** excludes
-  `secrets/` + `.env` so the key never lands in git.
-
-Verified locally (Node, no Docker): `server.js` parses, `/api/config` returns `publicUrl`, web UI serving
-activates when `dist` exists, and the +50% gateway-host bonus math is correct (host node 225 eff vs 150).
-
-## 4. Deploy on the Linux server (Docker)
-
-Prereqs: Docker + docker compose plugin. Then:
-
-```bash
-git clone -b tony https://github.com/kr-ai-dev-association/linkcpp.git
-cd linkcpp/solana/staking-service
-
-# 1) config
-cp .env.example .env
-#    edit .env: set KVR_PUBLIC_URL to your address, e.g.
-#      KVR_PUBLIC_URL=https://gw.example.com     (or http://<public-ip>:8791)
-
-# 2) settlement admin key (devnet). Copy it from the machine that has it:
-mkdir -p secrets
-#    scp the file from the dev machine:
-#      scp dev-mac:/…/linkcpp/solana/token/.keys/admin.json ./secrets/admin.json
-chmod 600 secrets/admin.json
-
-# 3) build + run  (context is the repo root; compose handles it)
-docker compose up -d --build
-
-# 4) verify
-curl -s http://localhost:8791/health           # {"ok":true}
-curl -s http://localhost:8791/api/config        # symbol KVR, gatewayBonus 1.5, publicUrl set
-#    open http://<public-ip>:8791/  in a browser → the Kvasir web app (desktop UI)
-docker compose logs -f gateway
-```
-
-Open firewall/security-group for the port (8791, or 443 if behind a proxy).
-
-## 5. HTTPS (recommended for a public server)
-
-Plain HTTP works for clients today (iOS ATS allows arbitrary loads; Android `usesCleartextTraffic=true`),
-but a public gateway should be TLS. Easiest: put **Caddy** in front (auto Let's Encrypt):
+Two public hostnames, one tunnel, three services:
 
 ```
-# Caddyfile
-gw.example.com {
-    reverse_proxy 127.0.0.1:8791
-}
+browser / Electron app / mobile node
+        │
+        ▼  Cloudflare Tunnel — the only public path
+┌──────────────────────────────────────────────────────────────┐
+│ gate.kvasir-ai.net → :8791   solana/staking-service          │
+│     wallet web app + /api/node/*, /api/stake, /api/pay/*,    │
+│     /api/credits/*, /api/inference, /api/config              │
+│                        │ x-linkcpp-service-token             │
+│ hub.kvasir-ai.net  → :19000  controller/hub.py               │
+│     operator auth, settlement view, linker SPA at /linker    │
+│                        │ delegation over the compose network │
+│                          :19001  linker  ← never published   │
+│                             └─ ring stages → the model       │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-Then set `KVR_PUBLIC_URL=https://gw.example.com` and point clients there.
+**gate** and **hub** are two different APIs with no overlapping paths. The
+wallet apps have `gate.kvasir-ai.net` compiled in, so the names are not
+interchangeable — pointing one at the other service yields 404s behind a login
+wall, not a working app.
 
-## 6. Point the wallets at the public gateway
+**linker is never published.** It has no authentication of its own; the hub
+gateway is its only client and the thing that authenticates.
 
-Each wallet has a **"정산 서버 URL / settlement server URL"** setting:
-- Desktop: Settings → 정산 서버 URL.
-- iOS / Android: settings / device-connect (staking URL).
+## What each service owns
 
-Set it to your `KVR_PUBLIC_URL`. (Optional: change the shipped default in
-`wallet/shared-spec/wallet-constants.json` `stakingServiceUrl` and `wallet/desktop/electron/constants.cjs`
-`stakingServiceUrl`, then rebuild the apps — but per-device override is enough to test.)
+### gate — `solana/staking-service/` (Node/Express)
 
-## 7. Remaining work / TODO (the real functional gap)
+Verifies on-chain KVR transfers, tracks staking positions, the node registry,
+rewards and credit accounts, and brokers inference payments. Also serves the
+wallet web app (the same `wallet/desktop` React build, at `/`).
 
-The web app served by the gateway reaches **full desktop parity for dashboard / nodes / staking /
-inference** (those go through `/api/*`). **Wallet key operations are the gap**: in a browser there is no
-Electron main process, so `wallet/desktop/src/api.ts` currently falls back to a **mock** (`window.linkcpp`
-is undefined). To make the hosted web app a real, full-parity wallet:
+Two ways to pay for inference, both live:
 
-- Implement a **third `api` provider** in `wallet/desktop/src/api.ts` — a browser wallet that runs the same
-  derivation as Electron main (`bip39` + `ed25519-hd-key` + `@solana/web3.js`, path `m/44'/501'/0'/0'`),
-  stores the mnemonic **encrypted in IndexedDB/localStorage** (e.g. WebCrypto AES-GCM with a passphrase),
-  and signs in the browser. Select provider by: `window.linkcpp` (Electron) → real bridge; else if running
-  as a served web app → the new browser wallet; else (dev preview) → mock.
-- Reuse the existing renderer screens unchanged (they only call `api.*`). Only the provider changes.
-- Security caveats to document: browser-stored keys are weaker than OS keychain; consider read-only mode by
-  default and require an explicit passphrase to unlock signing.
+- **Pay per request** — `/api/pay/quote` → client signs a KVR transfer →
+  `/api/inference`. No API key; holding KVR is what grants access. This is what
+  the desktop app's AI Inference screen uses.
+- **Credit accounts** — `/api/credits/register` (wallet signature) →
+  `/api/credits/apikey` → `Authorization: Bearer` on `/v1/chat/completions`.
+  OpenAI-compatible, debited from a prepaid balance. Self-registration is
+  gated by `KVR_CREDIT_OPEN_REGISTER`; spending is gated by
+  `KVR_CREDIT_MIN_BALANCE`, so a key with no deposit cannot infer.
 
-Until then, the hosted web app is a **live dashboard + node/staking/inference console** with the desktop UI;
-add the browser wallet provider to make send/receive/stake-signing work in-browser too.
+The model list is not local: `fetchModelsFrom()` polls the hub's
+`/api/controllers` and surfaces only controllers that are `runtime_loaded` and
+serving. It swallows connection errors and returns `[]`, so a misconfigured
+`LINKCPP_HUB_URL` or a mismatched service token shows up as an empty model
+dropdown with nothing in any log.
 
-Optional niceties: mDNS auto-discovery (LAN), `KVR_PUBLIC_URL` auto-fill in the wallets from `/api/config`,
-multi-node/world-map polish.
+### hub — `controller/hub.py` (Python/FastAPI)
 
-## 8. Continuation checklist (for the next session)
+Owns authentication, the settlement view, the UI shell, and serving linker's
+SPA at `/linker`. **It no longer implements the control plane**: nodes,
+controllers, planning, model loading, runtime state and inference are delegated
+to linker over its API (`controller/linker_client.py`).
 
-- [ ] On the Linux box: clone branch `tony`, `cd solana/staking-service`.
-- [ ] Put `secrets/admin.json` (devnet key) + set `KVR_PUBLIC_URL` in `.env`.
-- [ ] `docker compose up -d --build`; verify `/health`, `/api/config`, and the web UI at `/`.
-- [ ] (Recommended) Caddy/nginx TLS in front; update `KVR_PUBLIC_URL`.
-- [ ] Point one wallet at the public URL; register a node; confirm node status + rewards.
-- [ ] Implement the **browser wallet provider** (§7) for full web parity; rebuild the image (web stage
-      picks it up automatically).
-- [ ] `git push fork tony`.
+Deliberately not delegated, and still implemented here:
+
+- **The MoE expert market** — dispatch port allocation, relay registry,
+  recruitment targets, scarcity-weighted contribution flush. Linker exposes
+  same-named routes, but this hub's implementation is the one in use.
+- **External-controller registration** (`/api/controllers/external`).
+- **The stage/ring proxy subsystem** (`controller/proxy/`), which has its own
+  module-boundary tests.
+
+Auth is **required by default**. Without `LINKCPP_ADMIN_WALLETS` (or a KVR
+balance gate) nothing can pass it — that is the safe failure for a process
+fronting an unauthenticated control plane, and it is logged at startup.
+Sessions carry a short idle life (`LINKCPP_SESSION_TTL`, default 300s): the UI
+watches real input, slides the session forward via `/api/auth/touch`, and locks
+the screen when the window elapses. A 401 on a browser navigation renders the
+lock screen rather than JSON, so the `/linker` window recovers by signing in.
+
+### linker — the `convertarchitecture` checkout (Node)
+
+The control plane proper: node slots, controllers, layer placement, model
+loading, and the ring runtime that actually serves the model. Consumed only
+through its REST/WebSocket API and otherwise left untouched.
+
+A ring needs **at least two stages**. With one node slot the ring's `--next`
+points at its own `--listen`, the reset acknowledgement never returns, and the
+stage exits — configure two slots on the same GPU and split the layers.
+
+## Token facts
+
+Source of truth is `wallet/shared-spec/token.devnet.json`, read by the server
+and every wallet.
+
+| | |
+| --- | --- |
+| Mint (devnet) | `6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ`, decimals 6 |
+| Treasury owner / mint + freeze authority | `8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF` |
+| Treasury ATA (vault) | `38kt9QVdwt8r6auHK57rF1zkHSLq1dPChhJX2FuoY4CF` |
+| Genesis / governance wallet | `JcVYk4PpP5m2kDhGzJAmYAtD8GF7svNgNK1V1BzTrRG` |
+
+The treasury signing key (`admin.json`) holds all three authorities and is
+**unrecoverable if lost**. It is gitignored and must be provisioned per host;
+see DEPLOY_GATE.md for how to verify a copy before using it.
+
+## Reward economics
+
+`reward = rawUnits × perfTierMult × gatewayBonus`, where `rawUnits` accrues as
+`(output_tokens / 1000) × the node's layer share` — one unit per 1k tokens,
+split by how much of the model a node holds. A node that hosts the gateway
+earns a +50% bonus (`KVR_GATEWAY_BONUS`, default 1.5).
+
+Metering happens where execution happens: linker credits each completion to the
+participating nodes and exposes the ledger, and the hub's `/api/contributions`
+is the single public settlement surface the payout service polls.
+
+## Wallets
+
+Native iOS (Swift), Android (Kotlin), and desktop (React + Electron) under
+`wallet/`. Internal identifiers remain `ai.banya.linkcpp.*` on purpose; only
+display names are "Kvasir".
+
+The desktop app runs in three modes, selected at runtime in
+`wallet/desktop/src/api.ts`: the Electron bridge when `window.linkcpp` exists,
+otherwise the **browser wallet** (`browserWallet.ts` — same derivation as
+Electron main, mnemonic encrypted in browser storage, signing in-page), and a
+mock only for dev preview. The hosted web app at `gate.kvasir-ai.net` is
+therefore a full wallet, not a read-only console.
+
+`wallet/shared-spec/wallet-constants.json` carries the cluster endpoints. Note
+its keys are `devnet` and `mainnet-beta`, while the app's `Network` type is
+`'devnet' | 'mainnet'` — `rpc('mainnet')` currently resolves to `undefined` and
+throws. Devnet is unaffected; fix before any mainnet switch.
+
+## Repository
+
+- Origin: `github.com/louisevandan/kvasir-net`, branch `kvasir-net`.
+- The linker control plane lives in a separate checkout on the
+  `convertarchitecture` branch of `github.com/hikaMaeng/linkcpp` and is treated
+  as an external dependency.
+- Secrets — `.env`, `solana/staking-service/secrets/`, tunnel credentials — are
+  gitignored and provisioned per host.
+
+## Operational notes
+
+- **One machine per tunnel.** Cloudflare load-balances across every connected
+  connector, so a second `cloudflared` on the same tunnel ID makes routing
+  non-deterministic. Check for strays with `ps -eo pid,cmd | grep cloudflared`.
+- **Neither service is published on `0.0.0.0`.** The tunnel connects from the
+  host, so both bind loopback; linker has no host port at all.
+- **The settlement ledger is a named volume** (`gateway-data`,
+  `/app/data/positions.json`) holding stake positions, the node registry, credit
+  accounts and API key hashes. Migrating a host means moving that volume.
+- **linker's image copies `apps/linker/dist`** rather than compiling — run
+  `npm run build:server` before `docker compose build`, or the change will not
+  be in the image.
