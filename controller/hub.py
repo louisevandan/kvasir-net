@@ -12,50 +12,26 @@ Policy: a node bound to one controller cannot be bound to another.
 
   uvicorn controller.hub:app --host 0.0.0.0 --port 9000
 """
-import os, time, json, uuid, asyncio, subprocess, glob, collections, socket, re, logging, math
-from typing import Optional
+import os, time, json, uuid, asyncio, subprocess, glob, collections, socket, re, logging
 from urllib.parse import quote, urlparse
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Query, WebSocket
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import hmac as _hmac
 from controller import host_resources
+from controller import linker_client
 from controller import siws
 from controller import totp
 from controller.model_catalog import is_embedding_model, model_label
-from controller.planner import PLACEMENT_STRATEGIES, read_model, plan as run_plan
-from controller.runtime_modes import (
-    DEFAULT_RUNTIME_MODE,
-    LLAMA_RPC,
-    RING_PROXY,
-    data_plane_contract,
-    enrich_topology_item,
-    normalize_runtime_mode,
-    runtime_mode_catalog,
-    serve_background as serve_selected_runtime,
-    unload as unload_selected_runtime,
-)
-from controller.runtimes.gateway import chat as runtime_chat, stream_chat as runtime_stream_chat
-from controller.protocol import (
-    CancelLoadRequest,
-    DownloadRequest,
-    LoadMonitorRequest,
-    LoadRequest,
-    ModelSource,
-    NodeReport,
-    ResourceSnapshot,
-    UnitLoadSessionPrepareRequest,
-    UnitLoadSessionReleaseRequest,
-    UnloadRequest,
-    model_to_dict,
-)
+from controller.planner import read_model
+from controller.runtime_modes import LLAMA_RPC, data_plane_contract, enrich_topology_item
+from controller.protocol import DownloadRequest, ModelSource, model_to_dict
 from controller.versioning import (
     backend_from_runtime,
     backend_identity,
-    backend_label,
     backend_report,
     compatibility_report,
     incompatible_nodes,
@@ -138,9 +114,24 @@ def _service_headers():
 MIN_OPERATOR_KVR = float(os.environ.get("LINKCPP_MIN_OPERATOR_KVR", "0") or 0)
 KVR_MINT = os.environ.get("LINKCPP_KVR_MINT", "").strip()
 SOLANA_RPC = os.environ.get("LINKCPP_SOLANA_RPC", "https://api.devnet.solana.com").strip()
-# Auth is ON when either an admin allowlist OR a balance gate is configured.
-AUTH_ENABLED = bool(ADMIN_WALLETS) or MIN_OPERATOR_KVR > 0
+# The gateway is locked by default: without a wallet session nothing but the
+# login flow is reachable. Set LINKCPP_REQUIRE_AUTH=0 only for a throwaway
+# trusted-LAN instance — this process fronts an unauthenticated control plane,
+# so an open gateway means an open control plane.
+REQUIRE_AUTH = os.environ.get("LINKCPP_REQUIRE_AUTH", "1").strip().lower() not in ("0", "false", "no")
+AUTH_ENABLED = REQUIRE_AUTH or bool(ADMIN_WALLETS) or MIN_OPERATOR_KVR > 0
+# Locked with no way in is the safe failure, but it is never the intent, so say
+# so loudly rather than letting an operator discover it at the sign-in prompt.
+if AUTH_ENABLED and not (ADMIN_WALLETS or MIN_OPERATOR_KVR > 0):
+    logging.getLogger("linkcpp").error(
+        "auth is required but no wallet may pass it: set LINKCPP_ADMIN_WALLETS "
+        "(comma-separated addresses) or LINKCPP_MIN_OPERATOR_KVR with LINKCPP_KVR_MINT")
 SESSION_COOKIE = "linkcpp_session"
+# Idle lifetime of a wallet session. The UI renews it on real user activity and
+# locks itself when this elapses, so the two expire together; the server is what
+# actually enforces it. Short by design — this session authorises the whole
+# control plane.
+SESSION_TTL = int(os.environ.get("LINKCPP_SESSION_TTL", "300"))
 # Paths reachable without a session even when auth is on: the login flow + the UI
 # shell/static (the UI itself renders a login gate) + health.
 _AUTH_OPEN_PREFIXES = ("/api/auth/", "/web/", "/health")
@@ -213,6 +204,53 @@ def _authed_node(request):
     return (siws.verify_token(tok, "node") if tok else None) or None
 
 
+# --------------------------- linker delegation ----------------------------
+# Nodes, controllers, planning, model loading and runtime state are owned by the
+# linker service and reached only over its API. These prefixes are forwarded
+# verbatim; everything else stays with the gateway.
+#
+# Deliberately NOT delegated:
+#   /api/auth/*        session issuance, 2FA, node tokens. Linker never sees a
+#                      browser session — see controller/linker_client.py.
+#   /api/contributions the settlement surface the payout service polls.
+#   the MoE expert market and the external-controller registration below.
+#     Linker exposes same-named routes, but this hub carries its own
+#     implementation (expert dispatch ports, relay registry, recruitment,
+#     scarcity-weighted contribution flush). Delegating would strand that, so
+#     the market stays here until the two are deliberately reconciled.
+#   the stage/ring proxy routes, which are this gateway's own subsystem with
+#     its own module-boundary tests.
+_DELEGATED_PREFIXES = (
+    "/api/nodes", "/api/controllers", "/api/models", "/api/gpus",
+    "/api/runtime", "/api/kv-cache-types", "/api/operator",
+    "/api/unit/", "/api/topology/", "/api/linker", "/api/version",
+    "/api/shard-demand", "/api/shard-volunteer", "/api/shard-enroll",
+    "/api/node-reports",
+    "/c/",
+)
+# Paths inside a delegated prefix that this hub still answers itself.
+_DELEGATION_EXCEPTIONS = (
+    "/api/controllers/external",   # external-controller registration (local)
+)
+
+
+def _is_delegated(path):
+    if path.startswith("/api/auth/") or path == "/api/contributions":
+        return False
+    if any(path.startswith(p) for p in _DELEGATION_EXCEPTIONS):
+        return False
+    return any(path.startswith(prefix) for prefix in _DELEGATED_PREFIXES)
+
+
+# Registered before the auth gate so that, with Starlette building the stack
+# outermost-last, requests are authenticated *before* anything is forwarded.
+@app.middleware("http")
+async def _linker_delegation(request: Request, call_next):
+    if _is_delegated(request.url.path):
+        return await linker_client.proxy(request)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def _auth_gate(request: Request, call_next):
     if not AUTH_ENABLED:                       # auth disabled -> fully open (LAN mode)
@@ -229,6 +267,36 @@ async def _auth_gate(request: Request, call_next):
     # endpoints only — enough for an autonomous node, not for operator actions.
     if any(path.startswith(p) for p in _NODE_TOKEN_PREFIXES) and _authed_node(request):
         return await call_next(request)
+    return _unauthenticated(request)
+
+
+def _wants_document(request):
+    """True when a browser is navigating, rather than a script calling an API.
+
+    Sec-Fetch-Dest is the reliable signal and every current browser sends it;
+    the Accept sniff only catches older ones. Either way a miss just falls back
+    to the JSON body, which is the safe direction — a stray lock screen in an
+    XHR would be far more confusing than a JSON 401 in a tab.
+    """
+    if request.headers.get("sec-fetch-dest") == "document":
+        return True
+    if request.headers.get("sec-fetch-mode") == "navigate":
+        return True
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept and "application/json" not in accept
+
+
+def _unauthenticated(request):
+    """401 for API callers, a lock screen for a browser that navigated here.
+
+    Linker's SPA opens in its own window at /linker. It has no idea this
+    gateway's session expired, so without this it would render its own error
+    against a wall of 401s. Serving the gateway's shell instead means that
+    window shows the same lock screen as the main one, and signing in there
+    brings it straight back.
+    """
+    if _wants_document(request):
+        return FileResponse(os.path.join(WEB_DIR, "hub.html"), status_code=401)
     return JSONResponse({"error": "authentication required"}, status_code=401)
 
 
@@ -243,77 +311,18 @@ def list_gpus():
     return host_resources.local_gpus()
 
 
-def _system_ram_gib():
-    return round(host_resources.memory_info().get("total", 0.0), 1)
 
 
-def _master_ram_budget_gib():
-    memory = host_resources.memory_info()
-    reserve = float(os.environ.get("LINKCPP_MASTER_RAM_RESERVE_GIB", "8"))
-    return round(max(0.0, memory.get("total", 0.0) - memory.get("used", 0.0) - reserve), 2)
 
 
-def _master_load_timeout_s(result):
-    """Return the initial health-check window for a model load.
-
-    With stock llama.cpp RPC, the master still opens every GGUF shard. A
-    Windows Docker bind mount can sustain far less than local NVMe bandwidth,
-    so this is only a bootstrap estimate.  Once RPC tensor traffic is observed,
-    ``_wait_health`` replaces it with a progress-renewed deadline derived from
-    the measured transfer rate.
-    """
-    weight_gib = max(0.0, float(result.get("total_weight_gib") or 0.0))
-    read_mib_s = max(16.0, float(os.environ.get("LINKCPP_MASTER_LOAD_MIB_S", "64")))
-    setup_s = max(0, int(os.environ.get("LINKCPP_MASTER_LOAD_SETUP_S", "300")))
-    estimate_s = int(math.ceil(weight_gib * 1024.0 / read_mib_s)) + setup_s
-    return max(900, estimate_s)
 
 
-def _load_observed_transfer_bytes(c, parent_op_id):
-    """Return cumulative RPC tensor bytes reported by this load's workers."""
-    total = 0
-    for op in _ctrl_ops(c).values():
-        if op.get("type") != "node_load":
-            continue
-        details = op.get("details") or {}
-        if details.get("parent_op_id") != parent_op_id:
-            continue
-        activity = details.get("rpc_activity") or {}
-        total += max(0, int(activity.get("bytes_observed") or 0))
-    return total
 
 
-def _load_stall_timeout_s(expected_bytes, observed_bytes, bytes_per_s, bootstrap_s):
-    """Allow twice the measured full-transfer duration before declaring a stall.
-
-    This is intentionally a *stall* deadline, not a total wall-clock limit:
-    any new tensor traffic renews it.  A large model on a slow LAN therefore
-    continues loading, while a genuinely stuck load still terminates.
-    """
-    if bytes_per_s <= 0:
-        return max(900, int(bootstrap_s))
-    expected = max(int(expected_bytes or 0), int(observed_bytes or 0))
-    full_transfer_s = expected / bytes_per_s
-    return max(900, int(math.ceil(full_transfer_s * 2)))
 
 
-def _master_startup_fatal(log_text):
-    """Recognize errors that cannot become healthy by waiting longer."""
-    text = (log_text or "").lower()
-    return any(marker in text for marker in (
-        "remote rpc server crashed",
-        "remote rpc server returned malformed response",
-        "failed to create graph node",
-        "invalid data ptr",
-        "failed to load model",
-    ))
 
 
-def local_resource_limits():
-    return {
-        "ram_total_gib": _system_ram_gib(),
-        "cpu_cores": os.cpu_count() or 0,
-    }
 
 
 def gpu_used_gib(uuid_):
@@ -381,60 +390,8 @@ def _log_event(event, **fields):
         LOG.info("linkcpp_event %s %s", event, payload)
 
 
-def _request_log_fields(body):
-    messages = body.get("messages") or body.get("input") or []
-    return {
-        "prompt_chars": _payload_size_hint(body),
-        "max_tokens": body.get("max_tokens") or body.get("max_output_tokens"),
-        "stream": bool(body.get("stream")),
-        "message_count": len(messages) if isinstance(messages, list) else 1,
-    }
 
 
-def _plan_log_summary(result):
-    if not result:
-        return {}
-    placement = []
-    for p in result.get("placement", []) or []:
-        if not p.get("n_layers"):
-            continue
-        placement.append({
-            "node": p.get("node"),
-            "node_id": p.get("node_id"),
-            "node_name": p.get("node_name"),
-            "layers": p.get("layers"),
-            "vram_used_gib": p.get("vram_used_gib"),
-            "ram_used_gib": p.get("ram_used_gib"),
-            "kv_vram_gib": p.get("kv_vram_gib"),
-            "kv_ram_gib": p.get("kv_ram_gib"),
-            "layer_body_vram_gib": p.get("layer_body_vram_gib"),
-            "layer_body_ram_gib": p.get("layer_body_ram_gib"),
-            "ffn_vram_gib": p.get("ffn_vram_gib"),
-            "ffn_ram_gib": p.get("ffn_ram_gib"),
-            "offload_policy": p.get("offload_policy"),
-        })
-    return {
-        "feasible": result.get("feasible"),
-        "reason": result.get("reason"),
-        "model_ref": result.get("model_ref"),
-        "model_label": result.get("model_label"),
-        "resource_totals": result.get("resource_totals"),
-        "need_vram_gib": result.get("need_vram_gib"),
-        "sum_vram_budget_gib": result.get("sum_vram_budget_gib"),
-        "sum_ram_budget_gib": result.get("sum_ram_budget_gib"),
-        "kv_total_gib": result.get("kv_total_gib"),
-        "kv_cache_location": result.get("kv_cache_location"),
-        "kv_offload_enabled": result.get("kv_offload_enabled"),
-        "cache_type_k": result.get("cache_type_k"),
-        "cache_type_v": result.get("cache_type_v"),
-        "flash_attention": result.get("flash_attention"),
-        "nodes_used": result.get("nodes_used"),
-        "tensor_split": result.get("tensor_split"),
-        "master_load_timeout_s": result.get("master_load_timeout_s"),
-        "placement": placement,
-        "adaptive_load_available": result.get("adaptive_load_available"),
-        "adaptive_load_blocker": result.get("adaptive_load_blocker"),
-    }
 
 
 def _rpc_topology(c, active, runtime_mode=LLAMA_RPC):
@@ -483,118 +440,22 @@ def _master_log_path(c):
     return f"/tmp/master-{c['id']}.log"
 
 
-def _load_diag_dir(c, op_id=None):
-    existing = c.get("load_diagnostic_dir")
-    if existing:
-        return existing
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    suffix = _safe_slug(op_id or uuid.uuid4().hex[:10])
-    path = os.path.join(LOAD_DIAGNOSTICS_DIR, _safe_slug(c.get("id")), f"{stamp}_{suffix}")
-    os.makedirs(path, exist_ok=True)
-    c["load_diagnostic_dir"] = path
-    return path
 
 
-def _diag_write_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True, default=str)
 
 
-def _diag_event(c, op_id, event, **fields):
-    path = _load_diag_dir(c, op_id)
-    payload = {"ts": time.time(), "event": event, **fields}
-    with open(os.path.join(path, "events.jsonl"), "a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
 
 
-def _master_process_snapshot(c):
-    proc = c.get("master")
-    log_path = _master_log_path(c)
-    try:
-        log_size = os.path.getsize(log_path)
-    except OSError:
-        log_size = 0
-    return {
-        "pid": getattr(proc, "pid", None),
-        "returncode": proc.poll() if proc else None,
-        "alive": _proc_alive(proc),
-        "log_path": log_path,
-        "log_size_bytes": log_size,
-        "host_memory": host_resources.memory_info(),
-    }
 
 
-async def _capture_load_diagnostics(c, op_id, reason, *, include_node_logs=False):
-    """Persist enough evidence to diagnose one distributed load after cleanup.
-
-    Operations retain only compact UI data.  This artifact preserves the full
-    master stderr and, on terminal paths, substantial worker-log tails before
-    teardown removes the processes and their in-memory context.
-    """
-    path = _load_diag_dir(c, op_id)
-    stamp = f"snapshot-{int(time.time() * 1000)}"
-    snapshot = {
-        "reason": reason,
-        "controller": {k: c.get(k) for k in ("id", "name", "phase", "detail", "model", "master_port")},
-        "master": _master_process_snapshot(c),
-        "operations": list(_ctrl_ops(c).values()),
-        "plan": c.get("plan"),
-    }
-    _diag_write_json(os.path.join(path, f"{stamp}.json"), snapshot)
-    _diag_event(c, op_id, "snapshot", reason=reason, snapshot=f"{stamp}.json")
-    try:
-        with open(_master_log_path(c), "rb") as src, open(os.path.join(path, "master.log"), "wb") as dst:
-            dst.write(src.read())
-    except OSError as exc:
-        _diag_event(c, op_id, "master_log_copy_failed", error=str(exc))
-    if not include_node_logs:
-        return path
-    node_dir = os.path.join(path, "nodes")
-    os.makedirs(node_dir, exist_ok=True)
-    for nid in c.get("nodes", []):
-        n = NODES.get(nid)
-        if not n:
-            continue
-        try:
-            payload = await _load_monitor_log(n)
-        except Exception as exc:
-            payload = {"error": str(exc), "log": ""}
-        _diag_write_json(os.path.join(node_dir, f"{_safe_slug(nid)}.json"), {
-            "node": node_view(n), "capture": {k: v for k, v in payload.items() if k != "log"},
-        })
-        with open(os.path.join(node_dir, f"{_safe_slug(nid)}.log"), "w", encoding="utf-8") as f:
-            f.write(str(payload.get("log") or ""))
-    return path
 
 
 KV_CACHE_TYPES_FALLBACK = ["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
 _KV_CACHE_TYPES_CACHE = None
 
 
-def _supported_kv_cache_types():
-    global _KV_CACHE_TYPES_CACHE
-    if _KV_CACHE_TYPES_CACHE is not None:
-        return _KV_CACHE_TYPES_CACHE
-    try:
-        out = subprocess.check_output([LLAMA_SERVER, "--help"], text=True, stderr=subprocess.STDOUT, timeout=10)
-        match = re.search(r"--cache-type-k[\s\S]*?allowed values:\s*([^\r\n]+)", out)
-        if match:
-            values = [v.strip() for v in match.group(1).split(",") if v.strip()]
-            if values:
-                _KV_CACHE_TYPES_CACHE = values
-                return values
-    except Exception as exc:
-        _log_event("kv_cache_type_probe_failed", error=str(exc), llama_server=LLAMA_SERVER)
-    _KV_CACHE_TYPES_CACHE = list(KV_CACHE_TYPES_FALLBACK)
-    return _KV_CACHE_TYPES_CACHE
 
 
-def _validate_cache_type(value, field):
-    value = str(value or "f16").lower()
-    supported = _supported_kv_cache_types()
-    if value not in supported:
-        raise HTTPException(400, f"{field} {value!r} is not supported by this llama.cpp runtime")
-    return value
 
 
 def _local_slot_id(index):
@@ -609,12 +470,6 @@ def _slot_log_path(nid):
     return f"/tmp/node-{nid}.log"
 
 
-def _touch_log(path):
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        open(path, "w").close()
-    except Exception:
-        pass
 
 
 def _new_local_slot(index):
@@ -941,22 +796,8 @@ def _slot_configured(n):
     return n.get("kind", "local") != "local" or bool(n.get("assigned"))
 
 
-def _reset_local_slot(n):
-    _kill(n.get("worker"))
-    index = int(n.get("slot") or 1)
-    fresh = _new_local_slot(index)
-    fresh["log"] = n.get("log") or fresh["log"]
-    NODES[n["id"]] = fresh
-    try:
-        _touch_log(fresh["log"])
-    except Exception:
-        pass
-    return fresh
 
 
-def _short_gpu_name(name):
-    m = re.search(r"RTX\s+(\d+\w*)", name or "")
-    return m.group(1) if m else (name or "node").split()[-1]
 
 
 def _proc_alive(p):
@@ -976,19 +817,8 @@ def _ctrl_ops(c):
     return c.setdefault("operations", {})
 
 
-def _clear_ctrl_activity(c, reason, model=None):
-    count = len(c.get("operations", {}) or {})
-    c["operations"] = {}
-    _log_event("controller_activity_cleared", controller_id=c.get("id"),
-               reason=reason, model=model, cleared=count)
 
 
-def _reset_inference_activity(c, reason):
-    state = INFERENCE.pop(c.get("id"), None)
-    count = len((state or {}).get("items", {}))
-    if count:
-        _log_event("inference_activity_cleared", controller_id=c.get("id"),
-                   reason=reason, cleared=count)
 
 
 def _record_ctrl_op(c, kind, phase, status, progress=0.0, message="", op_id=None,
@@ -1013,391 +843,36 @@ def _record_ctrl_op(c, kind, phase, status, progress=0.0, message="", op_id=None
     return op
 
 
-def _load_monitor_key(c, node_id, op_id):
-    return f"{c.get('id')}:{node_id}:{op_id}"
 
 
-def _rpc_activity_metrics(log_text):
-    log_text = log_text or ""
-    sizes = [int(x) for x in re.findall(r"\[(?:set_tensor|get_tensor|alloc_buffer)\][^\n]*size:\s*(\d+)", log_text)]
-    get_tensor_sizes = [int(x) for x in re.findall(r"\[get_tensor\][^\n]*size:\s*(\d+)", log_text)]
-    return {
-        "alloc_buffer_count": len(re.findall(r"\[alloc_buffer\]", log_text)),
-        "set_tensor_count": len(re.findall(r"\[set_tensor\]", log_text)),
-        "get_tensor_count": len(re.findall(r"\[get_tensor\]", log_text)),
-        "get_alloc_size_count": len(re.findall(r"\[get_alloc_size\]", log_text)),
-        "graph_compute_count": len(re.findall(r"\[graph_compute\]", log_text)),
-        "accepted_connections": len(re.findall(r"Accepted client connection", log_text)),
-        "get_tensor_bytes": sum(get_tensor_sizes),
-        "bytes_observed": sum(sizes),
-    }
 
 
-def _node_resource_report(n, node_log=None):
-    existing = n.get("resources") or {}
-    if n.get("kind") == "local":
-        vram_used = gpu_used_gib(n.get("gpu_uuid")) if n.get("gpu_uuid") else 0.0
-        ram_used = n.get("ram_used", 0.0)
-        ram_total = _system_ram_gib()
-        cores_total = os.cpu_count() or 0
-        cpu_used = host_resources.cpu_percent()
-    else:
-        vram_used = float((node_log or {}).get("vram_used_gib") or existing.get("vram_used_gib") or 0.0)
-        ram_used = float((node_log or {}).get("ram_used_gib") or n.get("ram_used", 0.0) or 0.0)
-        ram_total = float(existing.get("ram_total_gib") or n.get("ram") or 0.0)
-        cores_total = int(existing.get("cores_total") or n.get("cores") or 0)
-        cpu_used = float(existing.get("cpu_used_percent") or 0.0)
-    return ResourceSnapshot(
-        vram_total_gib=float(n.get("vram") or 0.0),
-        vram_used_gib=round(vram_used, 3),
-        vram_budget_gib=float(n.get("vram") or 0.0),
-        ram_total_gib=ram_total,
-        ram_used_gib=round(ram_used, 3),
-        ram_budget_gib=float(n.get("ram") or 0.0),
-        cores_total=cores_total,
-        cores_budget=int(n.get("cores") or 0),
-        cpu_used_percent=cpu_used,
-        disk_free_gib=float(existing.get("disk_free_gib") or 0.0),
-    )
 
 
-async def _load_monitor_log(n):
-    if n.get("kind") == "remote_unit_node":
-        source_id = n.get("remote_source_node_id") or ""
-        try:
-            payload = await _remote_unit_node_request(
-                n, "GET", f"/api/nodes/{quote(source_id, safe='')}/logs?tail=5000", timeout=10)
-            return payload if isinstance(payload, dict) else {"log": str(payload)}
-        except Exception as exc:
-            return {"log": "", "error": str(exc)}
-    if n.get("kind") == "agent":
-        try:
-            info = await _refresh_agent_node(n)
-            reports = (info or {}).get("last_reports", [])
-            log = "\n".join(
-                f"{r.get('seq', '')} {r.get('op_type', '')} {r.get('phase', '')} "
-                f"{r.get('status', '')} {r.get('progress', 0)}% {r.get('message', '')}"
-                for r in reports[-20:])
-            resources = n.get("resources") or {}
-            return {"log": log, "vram_used_gib": resources.get("vram_used_gib", 0.0),
-                    "ram_used_gib": resources.get("ram_used_gib", n.get("ram_used", 0.0))}
-        except Exception as exc:
-            return {"log": "", "error": str(exc)}
-    return {"log": tail(n.get("log", ""), 320),
-            "vram_used_gib": gpu_used_gib(n.get("gpu_uuid")) if n.get("gpu_uuid") else 0.0,
-            "ram_used_gib": n.get("ram_used", 0.0)}
 
 
-async def _unit_session_monitor_log(c, n):
-    """Read measurement data from the unit session, with legacy log polling fallback."""
-    session = (c.get("unit_load_sessions") or {}).get(n.get("remote_unit_id"))
-    if not session or not session.get("response"):
-        return await _load_monitor_log(n)
-    try:
-        data = await _remote_unit_node_request(
-            n, "GET", f"/api/unit/load-sessions/{quote(session['session_id'], safe='')}", timeout=20)
-        node = (data.get("nodes") or {}).get(n.get("remote_source_node_id")) or {}
-        resources = node.get("resources") or {}
-        return {
-            "log": node.get("worker_log_tail", ""),
-            "vram_used_gib": resources.get("vram_used_gib", 0.0),
-            "ram_used_gib": resources.get("ram_used_gib", 0.0),
-            "unit_session_id": session.get("session_id"),
-            "unit_measurement": node,
-        }
-    except Exception as exc:
-        fallback = await _load_monitor_log(n)
-        fallback["unit_session_error"] = str(exc)
-        return fallback
 
 
-def _monitor_progress(sample, baseline, placement, c):
-    planned_vram = float(placement.get("vram_used_gib") or 0.0)
-    planned_ram = float(placement.get("ram_used_gib") or 0.0)
-    layers = int(placement.get("n_layers") or 1)
-    resources = sample["resources"]
-    vram_delta = max(0.0, resources.vram_used_gib - baseline.get("vram_used_gib", resources.vram_used_gib))
-    ram_delta = max(0.0, resources.ram_used_gib - baseline.get("ram_used_gib", resources.ram_used_gib))
-    vram_ratio = min(1.0, vram_delta / planned_vram) if planned_vram > 0 else 0.0
-    ram_ratio = min(1.0, ram_delta / planned_ram) if planned_ram > 0 else 0.0
-    activity = sample["activity"]
-    expected_events = max(20, layers * 8)
-    activity_events = activity["alloc_buffer_count"] + activity["set_tensor_count"] + activity["get_alloc_size_count"] * 0.08
-    activity_ratio = min(1.0, activity_events / expected_events)
-    ratio = max(vram_ratio, ram_ratio * 0.6, activity_ratio)
-    if _ctrl_phase(c) == "running":
-        return 100.0
-    if _ctrl_phase(c) == "error":
-        return 0.0
-    return round(10.0 + ratio * 80.0, 1)
 
 
-def _node_load_report(c, n, op_id, phase, status, progress, message, resources,
-                      model=None, error=None, details=None):
-    seq = int((n.get("last_report") or {}).get("seq", 0)) + 1
-    report = NodeReport(
-        node_id=n["id"],
-        controller_id=c.get("id"),
-        op_id=op_id,
-        op_type="node_load",
-        phase=phase,
-        status=status,
-        progress=progress,
-        message=message,
-        resources=resources,
-        model=model or c.get("model"),
-        error=error,
-        seq=seq,
-    )
-    data = model_to_dict(report)
-    data.setdefault("details", {})
-    if details:
-        data["details"] = details
-    n["last_report"] = data
-    n["resources"] = data.get("resources", {})
-    ops = n.setdefault("operations_map", {})
-    ops[op_id] = data
-    n["operations"] = list(ops.values())[-50:]
-    _record_ctrl_op(c, "node_load", phase, status, progress, message,
-                    op_id=op_id, node_id=n["id"], model=model or c.get("model"),
-                    error=error, details=details or {})
 
 
-async def _load_monitor_loop(c, req, nid, placement, op_id, parent_op_id):
-    n = NODES.get(nid)
-    if not n:
-        return
-    first_payload = (await _unit_session_monitor_log(c, n)
-                     if n.get("kind") == "remote_unit_node" else await _load_monitor_log(n))
-    baseline_resources = _node_resource_report(n, first_payload)
-    baseline = {
-        "vram_used_gib": baseline_resources.vram_used_gib,
-        "ram_used_gib": baseline_resources.ram_used_gib,
-    }
-    _node_load_report(c, n, op_id, "worker_ready", "running", 10.0,
-                      "node load monitor started", baseline_resources, model=req.model,
-                      details={"parent_op_id": parent_op_id, "layers": placement.get("layers"),
-                               "node_kind": n.get("kind", "local"), "baseline": baseline})
-    try:
-        while True:
-            await asyncio.sleep(2.0)
-            payload = (await _unit_session_monitor_log(c, n)
-                       if n.get("kind") == "remote_unit_node" else await _load_monitor_log(n))
-            resources = _node_resource_report(n, payload)
-            activity = _rpc_activity_metrics(payload.get("log", ""))
-            sample = {"resources": resources, "activity": activity}
-            phase = "rpc_loading" if activity["alloc_buffer_count"] or activity["set_tensor_count"] or activity["get_alloc_size_count"] else "waiting_for_rpc"
-            status = "running"
-            progress = _monitor_progress(sample, baseline, placement, c)
-            if _ctrl_phase(c) == "running":
-                phase, status, progress = "loaded", "done", 100.0
-            elif _ctrl_phase(c) == "error":
-                phase, status, progress = "load_error", "error", 0.0
-            message = (
-                f"{phase}: vram {resources.vram_used_gib:.2f}/{placement.get('vram_used_gib', 0)} GiB, "
-                f"rpc alloc {activity['alloc_buffer_count']}, set {activity['set_tensor_count']}"
-            )
-            if payload.get("error"):
-                message += f", monitor warning: {payload['error']}"
-            _node_load_report(c, n, op_id, phase, status, progress, message,
-                              resources, model=req.model,
-                              error=payload.get("error") if status == "error" else None,
-                              details={"parent_op_id": parent_op_id,
-                                       "layers": placement.get("layers"),
-                                       "node_kind": n.get("kind", "local"),
-                                       "planned_vram_gib": placement.get("vram_used_gib"),
-                                       "planned_ram_gib": placement.get("ram_used_gib"),
-                                       "rpc_activity": activity,
-                                       "unit_session_id": payload.get("unit_session_id"),
-                                       "unit_measurement": payload.get("unit_measurement"),
-                                       "monitor_source": "unit_load_session" if payload.get("unit_session_id") else
-                                       ("remote_unit_poll" if n.get("kind") == "remote_unit_node" else "local_scheduler")})
-            if status in ("done", "error") or _ctrl_phase(c) not in ("loading",):
-                return
-    except asyncio.CancelledError:
-        resources = _node_resource_report(n)
-        _node_load_report(c, n, op_id, "canceled", "canceled", 0.0,
-                          "node load monitor canceled", resources, model=req.model,
-                          details={"parent_op_id": parent_op_id, "layers": placement.get("layers")})
-        raise
 
 
-def _start_load_monitor(c, req, nid, placement, parent_op_id):
-    op_id = f"node-load-{parent_op_id}-{_safe_slug(nid)}"[:120]
-    key = _load_monitor_key(c, nid, op_id)
-    old = LOAD_MONITORS.pop(key, None)
-    if old:
-        old.cancel()
-    task = asyncio.create_task(_load_monitor_loop(c, req, nid, placement, op_id, parent_op_id))
-    LOAD_MONITORS[key] = task
-    task.add_done_callback(lambda _t, k=key: LOAD_MONITORS.pop(k, None))
-    n = NODES.get(nid)
-    if n and n.get("kind") == "remote_unit_node" and PUBLIC_HUB_URL:
-        asyncio.create_task(_start_remote_unit_standalone_monitor(c, req, n, placement, op_id))
-    return op_id
 
 
-def _cancel_load_monitors(c, *, final_status="canceled"):
-    prefix = f"{c.get('id')}:"
-    for key, task in list(LOAD_MONITORS.items()):
-        if key.startswith(prefix):
-            parts = key.split(":", 2)
-            if len(parts) == 3:
-                n = NODES.get(parts[1])
-                if n and n.get("kind") == "remote_unit_node" and PUBLIC_HUB_URL:
-                    asyncio.create_task(_stop_remote_unit_standalone_monitor(c, n, parts[2]))
-                if n and n.get("kind") == "agent" and final_status == "done":
-                    body = model_to_dict(CancelLoadRequest(op_id=parts[2], reason="load_done"))
-                    asyncio.create_task(_agent_request(n, "POST", "/control/load-monitor/stop", body, timeout=10))
-            if final_status == "done":
-                continue
-            task.cancel()
 
 
-async def _start_remote_unit_standalone_monitor(c, req, n, placement, op_id):
-    source_id = n.get("remote_source_node_id")
-    if not source_id:
-        return
-    body = model_to_dict(LoadMonitorRequest(
-        controller_id=c.get("id"),
-        op_id=op_id,
-        model=req.model,
-        report_node_id=n.get("id"),
-        layers=placement.get("layers"),
-        planned_vram_gib=float(placement.get("vram_used_gib") or 0.0),
-        planned_ram_gib=float(placement.get("ram_used_gib") or 0.0),
-        report_url=PUBLIC_HUB_URL.rstrip("/") + "/api/node-reports",
-        interval_s=2.0,
-    ))
-    try:
-        await _remote_unit_node_request(
-            n, "POST", f"/api/nodes/{quote(source_id, safe='')}/load-monitor/start", body=body, timeout=10)
-        _log_event("remote_unit_load_monitor_started", controller_id=c.get("id"),
-                   node_id=n.get("id"), source_node_id=source_id, op_id=op_id)
-    except Exception as exc:
-        _log_event("remote_unit_load_monitor_unavailable", controller_id=c.get("id"),
-                   node_id=n.get("id"), source_node_id=source_id, op_id=op_id, error=str(exc))
 
 
-async def _stop_remote_unit_standalone_monitor(c, n, op_id):
-    source_id = n.get("remote_source_node_id")
-    if not source_id:
-        return
-    body = model_to_dict(LoadMonitorRequest(
-        controller_id=c.get("id"),
-        op_id=op_id,
-        model=c.get("model") or "",
-        report_node_id=n.get("id"),
-        report_url=PUBLIC_HUB_URL.rstrip("/") + "/api/node-reports",
-    ))
-    try:
-        await _remote_unit_node_request(
-            n, "POST", f"/api/nodes/{quote(source_id, safe='')}/load-monitor/stop", body=body, timeout=10)
-    except Exception as exc:
-        _log_event("remote_unit_load_monitor_stop_unavailable", controller_id=c.get("id"),
-                   node_id=n.get("id"), source_node_id=source_id, op_id=op_id, error=str(exc))
 
 
-async def _push_report(url, report):
-    if not url:
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.post(url, json=model_to_dict(report), headers=_service_headers())
-            resp.raise_for_status()
-        return True
-    except Exception:
-        return False
 
 
-async def _standalone_node_monitor_loop(nid, req: LoadMonitorRequest):
-    n = NODES.get(nid)
-    if not n:
-        return
-    baseline_payload = await _load_monitor_log(n)
-    baseline_resources = _node_resource_report(n, baseline_payload)
-    baseline = {
-        "vram_used_gib": baseline_resources.vram_used_gib,
-        "ram_used_gib": baseline_resources.ram_used_gib,
-    }
-    seq = 0
-    try:
-        while True:
-            payload = await _load_monitor_log(n)
-            resources = _node_resource_report(n, payload)
-            activity = _rpc_activity_metrics(payload.get("log", ""))
-            vram_delta = max(0.0, resources.vram_used_gib - baseline["vram_used_gib"])
-            ram_delta = max(0.0, resources.ram_used_gib - baseline["ram_used_gib"])
-            vram_ratio = min(1.0, vram_delta / req.planned_vram_gib) if req.planned_vram_gib > 0 else 0.0
-            ram_ratio = min(1.0, ram_delta / req.planned_ram_gib) if req.planned_ram_gib > 0 else 0.0
-            activity_ratio = min(1.0, (activity["alloc_buffer_count"] + activity["set_tensor_count"] + activity["get_alloc_size_count"] * 0.08) / 40.0)
-            progress = round(10.0 + max(vram_ratio, ram_ratio * 0.6, activity_ratio) * 80.0, 1)
-            phase = "rpc_loading" if activity["alloc_buffer_count"] or activity["set_tensor_count"] or activity["get_alloc_size_count"] else "waiting_for_rpc"
-            seq += 1
-            report = NodeReport(
-                node_id=req.report_node_id or nid,
-                controller_id=req.controller_id,
-                op_id=req.op_id,
-                op_type="node_load",
-                phase=phase,
-                status="running",
-                progress=progress,
-                message=f"{phase}: vram {resources.vram_used_gib:.2f}/{req.planned_vram_gib:.2f} GiB, rpc alloc {activity['alloc_buffer_count']}, set {activity['set_tensor_count']}",
-                resources=resources,
-                model=req.model,
-                error=payload.get("error"),
-                seq=seq,
-            )
-            ops = n.setdefault("operations_map", {})
-            ops[req.op_id] = model_to_dict(report)
-            n["operations"] = list(ops.values())[-50:]
-            n["last_report"] = model_to_dict(report)
-            await _push_report(req.report_url, report)
-            await asyncio.sleep(max(0.5, float(req.interval_s or 2.0)))
-    except asyncio.CancelledError:
-        seq += 1
-        report = NodeReport(
-            node_id=req.report_node_id or nid,
-            controller_id=req.controller_id,
-            op_id=req.op_id,
-            op_type="node_load",
-            phase="monitor_stopped",
-            status="done",
-            progress=100.0,
-            message="node load monitor stopped",
-            resources=_node_resource_report(n),
-            model=req.model,
-            seq=seq,
-        )
-        await _push_report(req.report_url, report)
-        raise
 
 
-@app.post("/api/nodes/{nid}/load-monitor/start")
-async def api_node_load_monitor_start(nid: str, req: LoadMonitorRequest):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n:
-        raise HTTPException(404, "unknown node")
-    if n.get("kind", "local") != "local":
-        raise HTTPException(409, "load monitor endpoint is only for local unit slots")
-    key = f"standalone:{nid}:{req.op_id}"
-    old = LOAD_MONITORS.pop(key, None)
-    if old:
-        old.cancel()
-    task = asyncio.create_task(_standalone_node_monitor_loop(nid, req))
-    LOAD_MONITORS[key] = task
-    task.add_done_callback(lambda _t, k=key: LOAD_MONITORS.pop(k, None))
-    return {"accepted": True, "op_id": req.op_id, "node_id": nid}
 
 
-@app.post("/api/nodes/{nid}/load-monitor/stop")
-async def api_node_load_monitor_stop(nid: str, req: LoadMonitorRequest):
-    key = f"standalone:{nid}:{req.op_id}"
-    task = LOAD_MONITORS.pop(key, None)
-    if task:
-        task.cancel()
-    return {"stopped": bool(task), "op_id": req.op_id, "node_id": nid}
 
 
 async def _agent_request(n, method, path, body=None, timeout=30):
@@ -1417,90 +892,25 @@ async def _agent_request_stream(n, method, path, body=None):
                 yield chunk
 
 
-def _controller_teardown_lock(c):
-    return CTRL_TEARDOWN_LOCKS.setdefault(c["id"], asyncio.Lock())
 
 
-async def _wait_agent_worker_stopped(n, timeout=20.0, *, require_unbound=False):
-    """Confirm native runtime processes exit before clearing node ownership."""
-    deadline = time.time() + timeout
-    last_error = ""
-    while time.time() < deadline:
-        try:
-            info = await _agent_request(n, "GET", "/control/status", timeout=5)
-            _apply_agent_info(n, info)
-            released = (not n.get("worker_running") and not n.get("desired_load")
-                        and not info.get("stage_running"))
-            if released and (not require_unbound or not info.get("bound_to")):
-                return info
-        except Exception as exc:
-            last_error = str(exc)
-        await asyncio.sleep(0.5)
-    detail = "agent still reports runtime resources as active"
-    if require_unbound:
-        detail += " or remains bound"
-    if last_error:
-        detail += f" ({last_error})"
-    raise RuntimeError(detail)
 
 
-async def _stop_agent_worker_confirmed(n, path, body, *, timeout=20.0):
-    await _agent_request(n, "POST", path, body, timeout=timeout)
-    return await _wait_agent_worker_stopped(n, timeout=timeout)
 
 
-async def _unbind_agent_confirmed(n, *, timeout=20.0):
-    await _agent_request(n, "POST", "/unbind", {}, timeout=timeout)
-    return await _wait_agent_worker_stopped(n, timeout=timeout, require_unbound=True)
 
 
-@app.get("/api/runtime")
-def api_runtime():
-    _ensure_local_slots()
-    nodes = [node_view(n) for n in sorted(NODES.values(), key=_node_sort_key)
-             if n.get("kind") != "remote_unit_node"] if NODES else []
-    return {
-        "runtime": runtime_identity(),
-        "backend": backend_identity(),
-        "label": runtime_label(),
-        "backend_label": backend_label(),
-        "kv_cache_types": _supported_kv_cache_types(),
-        "flash_attention": {"forced": True, "value": "on"},
-        "runtime_modes": runtime_mode_catalog(),
-        "unit_control_protocols": ["unit-load-session/v1"],
-        "nodes": nodes,
-        "controllers": [ctrl_view(c) for c in CTRLS.values()],
-        "remote_units": [_remote_unit_view(r) for r in REMOTE_UNITS.values()],
-        "operator_wallet": OPERATOR_WALLET,
-    }
 
 
-class OperatorWallet(BaseModel):
-    wallet: str = ""
 
 
 _B58_CHARS = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
 
 
-def _valid_wallet(w):
-    w = (w or "").strip()
-    return w == "" or (32 <= len(w) <= 44 and all(c in _B58_CHARS for c in w))
 
 
-@app.get("/api/operator")
-def api_get_operator():
-    return {"wallet": OPERATOR_WALLET}
 
 
-@app.post("/api/operator")
-def api_set_operator(body: OperatorWallet):
-    global OPERATOR_WALLET
-    w = (body.wallet or "").strip()
-    if not _valid_wallet(w):
-        raise HTTPException(400, "invalid Solana wallet address")
-    OPERATOR_WALLET = w
-    _persist_hub_state()
-    return {"wallet": OPERATOR_WALLET}
 
 
 class AuthChallenge(BaseModel):
@@ -1517,9 +927,11 @@ class AuthVerify(BaseModel):
 def api_auth_status(request: Request):
     # enabled=False means the hub runs open (trusted LAN); UI shows no login gate.
     if not AUTH_ENABLED:
-        return {"enabled": False, "authenticated": True, "wallet": None}
+        return {"enabled": False, "authenticated": True, "wallet": None, "idle_ttl": 0}
     w = _authed_wallet(request)
-    return {"enabled": True, "authenticated": bool(w), "wallet": w}
+    # idle_ttl drives the UI's own lock timer, so both sides expire together
+    # instead of the screen staying up against a session the server has dropped.
+    return {"enabled": True, "authenticated": bool(w), "wallet": w, "idle_ttl": SESSION_TTL}
 
 
 @app.get("/api/auth/kvr-balance")
@@ -1548,11 +960,26 @@ def _twofa_enabled(wallet):
     return bool((TWO_FACTOR.get(wallet) or {}).get("enabled"))
 
 
-def _issue_session(wallet):
-    resp = JSONResponse({"wallet": wallet})
-    resp.set_cookie(SESSION_COOKIE, siws.make_session(wallet), httponly=True,
-                    samesite="lax", max_age=86400, path="/")
+def _issue_session(wallet, body=None):
+    resp = JSONResponse(body if body is not None else {"wallet": wallet})
+    resp.set_cookie(SESSION_COOKIE, siws.make_session(wallet, ttl=SESSION_TTL),
+                    httponly=True, samesite="lax", max_age=SESSION_TTL, path="/")
     return resp
+
+
+@app.post("/api/auth/touch")
+def api_auth_touch(request: Request):
+    """Slide the session forward. Called by the UI on real user activity only.
+
+    The idle window has to be driven by the client because the UI polls on a
+    timer: renewing on any authenticated request would mean an unattended
+    browser holds a session open forever, which is the opposite of what an idle
+    timeout is for.
+    """
+    wallet = _authed_wallet(request)
+    if not wallet:
+        raise HTTPException(401, "no session to renew")
+    return _issue_session(wallet, {"wallet": wallet, "ttl": SESSION_TTL})
 
 
 @app.post("/api/auth/verify")
@@ -1700,13 +1127,6 @@ def api_auth_logout():
     return resp
 
 
-@app.get("/api/kv-cache-types")
-def api_kv_cache_types():
-    return {
-        "types": _supported_kv_cache_types(),
-        "default": "f16",
-        "flash_attention": {"forced": True, "value": "on"},
-    }
 
 
 # ------------------------------- nodes ------------------------------------
@@ -1792,22 +1212,10 @@ def _node_backend(n):
     return backend_from_runtime(_node_runtime(n))
 
 
-def _node_runtime_report(n):
-    return compatibility_report(_node_runtime(n))
 
 
-def _runtime_error_message(report):
-    expected = runtime_label(report.get("expected"))
-    actual = runtime_label(report.get("actual")) if report.get("actual") else "missing runtime identity"
-    mismatched = ", ".join(m.get("field", "") for m in report.get("mismatches", [])) or "runtime"
-    return f"protocol mismatch ({mismatched}); expected {expected}; got {actual}"
 
 
-def _require_node_runtime(n):
-    report = _node_runtime_report(n)
-    if not report["compatible"]:
-        raise HTTPException(409, _runtime_error_message(report))
-    return report
 
 
 def _controller_nodes(c):
@@ -1827,133 +1235,24 @@ def _controller_runtime_check(c):
     }
 
 
-def _require_controller_runtime(c):
-    report = _controller_runtime_check(c)
-    if not report["compatible"]:
-        names = ", ".join(n.get("name") or n.get("id") for n in report["nodes"])
-        raise HTTPException(409, f"controller has protocol-incompatible nodes: {names}")
-    return report
 
 
-def _start_node_worker(n):
-    if n.get("kind") in ("remote", "remote_unit_node", "agent"):
-        _log_event("node_worker_skip_start", node_id=n.get("id"), kind=n.get("kind"))
-        return
-    if not _slot_configured(n):
-        raise HTTPException(409, "assign node resources before starting the worker")
-    if _node_worker_running(n):
-        _log_event("node_worker_already_running", node_id=n.get("id"), rpc_port=n.get("rpc_port"))
-        return
-    cache = f"/root/.cache/linkcpp/{n['id']}"
-    os.makedirs(cache, exist_ok=True)
-    env = dict(os.environ, CUDA_VISIBLE_DEVICES=n["gpu_uuid"],
-               GGML_RPC_DEBUG="1", LLAMA_CACHE=cache)
-    cmd = [RPC_BIN, "-H", "0.0.0.0", "-p", str(n["rpc_port"]), "-c"]
-    _log_event("node_worker_starting", node_id=n.get("id"), rpc_port=n.get("rpc_port"),
-               gpu_uuid=n.get("gpu_uuid"), log_path=n.get("log"), cmd=cmd)
-    n["worker"] = subprocess.Popen(
-        cmd,
-        env=env, stdout=open(n["log"], "w"), stderr=subprocess.STDOUT)
-    _log_event("node_worker_started", node_id=n.get("id"), rpc_port=n.get("rpc_port"),
-               pid=n["worker"].pid, log_path=n.get("log"))
 
 
-def _parse_endpoint(endpoint):
-    host, sep, port = endpoint.strip().rpartition(":")
-    if not sep or not host or not port.isdigit():
-        raise HTTPException(400, "endpoint must be host:port")
-    return host, int(port)
 
 
-def _remote_unit_rpc_host(base_url):
-    parsed = urlparse(base_url)
-    if not parsed.hostname:
-        raise HTTPException(400, "remote unit URL has no host")
-    return parsed.hostname
 
 
-def _remote_unit_source_node_configured(nd):
-    if nd.get("assigned") is False and not nd.get("gpu_uuid"):
-        return False
-    return True
 
 
-def _remote_unit_node_bound_in_unit(n):
-    return n.get("kind") == "remote_unit_node" and bool(n.get("remote_controller_id"))
 
 
-def _tcp_reachable(host, port, timeout=2.0):
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
 
 
-def _rpc_log_ready(log_text):
-    text = log_text or ""
-    if "failed to initialize CUDA" in text or "Remote RPC server crashed" in text:
-        return False
-    return (
-        "ggml_cuda_init: found" in text
-        or "CUDA devices" in text
-        or ("Starting RPC server" in text and "endpoint" in text)
-        # The startup banner can age out of a bounded log tail while a healthy
-        # worker continues handling RPC requests.
-        or "Accepted client connection" in text
-        or "graph_recompute" in text
-        or "[graph_compute]" in text
-    )
 
 
-async def _wait_node_rpc_ready(n, timeout=20.0):
-    deadline = time.time() + timeout
-    last = {
-        "worker_running": False,
-        "tcp_reachable": False,
-        "rpc_log_ready": False,
-        "error": "",
-        "log_tail": "",
-    }
-    while time.time() < deadline:
-        host, port = n.get("rpc_host"), n.get("rpc_port")
-        last["worker_running"] = bool(_node_worker_running(n))
-        last["tcp_reachable"] = await asyncio.to_thread(_tcp_reachable, host, port, 1.0) if host and port else False
-        if n.get("kind") == "remote_unit_node":
-            sample = _read_remote_node_log_delta(n, {})
-            log_text = sample.get("recent_log", "")
-            last["error"] = sample.get("error", "")
-        else:
-            log_text = tail(n.get("log"), 80)
-        last["log_tail"] = log_text[-1200:]
-        last["rpc_log_ready"] = _rpc_log_ready(log_text)
-        # Native managed agents own their worker log on the host, not in the
-        # hub container.  Their successful control/load response plus a TCP
-        # connection is the readiness signal; requiring the container-local
-        # log would wait until timeout even after Metal is serving.
-        ready_signal = last["tcp_reachable"] if n.get("kind") == "agent" else last["rpc_log_ready"]
-        if last["worker_running"] and last["tcp_reachable"] and ready_signal and not last["error"]:
-            return {**last, "ready": True}
-        await asyncio.sleep(0.5)
-    return {**last, "ready": False}
 
 
-def _apply_remote_unit_node_status(n, info):
-    resources = info.get("resources") or {}
-    n["worker_running"] = bool(info.get("worker_running"))
-    n["desired_load"] = info.get("desired_load")
-    n["resources"] = resources
-    n["ram_used"] = resources.get("ram_used_gib", info.get("ram_used_gib", n.get("ram_used", 0.0)))
-    n["capabilities"] = info.get("capabilities", n.get("capabilities", {}))
-    n["host_platform"] = info.get("host_platform", n.get("host_platform", {}))
-    n["runtime"] = info.get("runtime", n.get("runtime"))
-    n["backend"] = info.get("backend", n.get("backend")) or backend_from_runtime(n.get("runtime"))
-    remote_cid = info.get("bound_to") or info.get("controller_id") or ""
-    n["remote_controller_id"] = remote_cid
-    n["remote_controller_name"] = info.get("bound_to_name") or remote_cid
-    n["remote_status_error"] = ""
-    n["remote_status_updated_at"] = time.time()
-    return n
 
 
 async def _remote_unit_node_request(n, method, path, body=None, timeout=15):
@@ -1979,377 +1278,40 @@ async def _remote_unit_node_request_stream(n, method, path, body=None):
                 yield chunk
 
 
-async def _refresh_remote_unit_node(n):
-    source_id = n.get("remote_source_node_id") or ""
-    if not source_id:
-        n["worker_running"] = False
-        n["remote_status_error"] = "remote source node id is missing"
-        n["remote_status_updated_at"] = time.time()
-        return None
-    try:
-        info = await _remote_unit_node_request(n, "GET", f"/api/nodes/{quote(source_id, safe='')}")
-        _apply_remote_unit_node_status(n, info)
-        _log_event("remote_unit_node_refreshed",
-                   node_id=n.get("id"), remote_unit_url=n.get("remote_unit_url"),
-                   remote_source_node_id=source_id, worker_running=n.get("worker_running"),
-                   remote_bound_to=n.get("remote_controller_id"),
-                   desired_load=bool(n.get("desired_load")))
-        return info
-    except Exception as exc:
-        n["worker_running"] = False
-        n["remote_status_error"] = str(exc)
-        n["remote_status_updated_at"] = time.time()
-        _log_event("remote_unit_node_refresh_failed",
-                   node_id=n.get("id"), remote_unit_url=n.get("remote_unit_url"),
-                   remote_source_node_id=source_id, error=str(exc))
-        return None
 
 
-async def _start_remote_unit_worker(n):
-    source_id = n.get("remote_source_node_id") or ""
-    if not source_id:
-        raise RuntimeError("remote source node id is missing")
-    result = await _remote_unit_node_request(
-        n, "POST", f"/api/nodes/{quote(source_id, safe='')}/worker/start", timeout=30)
-    info = result.get("node", result)
-    if isinstance(info, dict):
-        _apply_remote_unit_node_status(n, info)
-    _log_event("remote_unit_worker_start_requested",
-               node_id=n.get("id"), remote_unit_url=n.get("remote_unit_url"),
-               remote_source_node_id=source_id, worker_running=n.get("worker_running"))
-    return result
 
 
-async def _stop_remote_unit_worker(n, reason="requested"):
-    source_id = n.get("remote_source_node_id") or ""
-    if not source_id:
-        raise RuntimeError("remote source node id is missing")
-    result = await _remote_unit_node_request(
-        n, "POST", f"/api/nodes/{quote(source_id, safe='')}/worker/stop",
-        body={"reason": reason}, timeout=15)
-    info = result.get("node", result)
-    if isinstance(info, dict):
-        _apply_remote_unit_node_status(n, info)
-    _log_event("remote_unit_worker_stop_requested",
-               node_id=n.get("id"), remote_unit_url=n.get("remote_unit_url"),
-               remote_source_node_id=source_id, reason=reason,
-               worker_running=n.get("worker_running"))
-    return result
 
 
-async def _remote_unit_node_ready_check(n, start=False):
-    endpoint = _node_rpc_endpoint(n)
-    check = {
-        "node_id": n.get("id"),
-        "node_name": n.get("name"),
-        "remote_unit_url": n.get("remote_unit_url"),
-        "remote_source_node_id": n.get("remote_source_node_id"),
-        "endpoint": endpoint,
-        "started": False,
-        "worker_running": False,
-        "tcp_reachable": False,
-        "ready": False,
-        "error": "",
-    }
-    await _refresh_remote_unit_node(n)
-    if start and not n.get("worker_running"):
-        try:
-            await _start_remote_unit_worker(n)
-            check["started"] = True
-        except Exception as exc:
-            check["error"] = str(exc)
-            n["worker_running"] = False
-            n["remote_status_error"] = str(exc)
-            n["remote_status_updated_at"] = time.time()
-    host, port = n.get("rpc_host"), n.get("rpc_port")
-    check["worker_running"] = bool(n.get("worker_running"))
-    check["tcp_reachable"] = await asyncio.to_thread(_tcp_reachable, host, port) if host and port else False
-    remote_managed_agent = bool((n.get("capabilities") or {}).get("native_agent")) or \
-        _node_backend(n).get("backend_kind") == "metal"
-    # A native agent can lose its in-memory Popen handle when its service is
-    # restarted while its already-listening RPC child remains alive.  The
-    # source unit then reports worker_running=false even though it accepted
-    # this start request and the data-plane endpoint is live.  For that narrow
-    # managed-agent case, successful lifecycle control plus a fresh TCP probe
-    # is the authoritative observation; do not reject a usable worker solely
-    # because the agent cannot reconstruct the old child handle.
-    if remote_managed_agent and check["started"] and check["tcp_reachable"]:
-        check["worker_running"] = True
-        n["worker_running"] = True
-    ready_probe = await _wait_node_rpc_ready(n, timeout=20.0) if check["worker_running"] else {"ready": False}
-    # The first TCP probe is intentionally immediate, so it can race a native
-    # worker that has accepted the start request but is still binding its RPC
-    # socket.  _wait_node_rpc_ready owns the authoritative final observation.
-    check["worker_running"] = bool(ready_probe.get("worker_running", check["worker_running"]))
-    check["tcp_reachable"] = bool(ready_probe.get("tcp_reachable", check["tcp_reachable"]))
-    if remote_managed_agent and check["started"] and check["tcp_reachable"]:
-        check["worker_running"] = True
-        n["worker_running"] = True
-    # A managed Metal agent writes its RPC log on the source macOS host.  The
-    # importing unit cannot read that file, so treating a reachable TCP worker
-    # as not-ready rejects valid distributed plans.  Its source-unit status
-    # already confirms the worker is running; TCP is the data-plane proof.
-    # The importing hub cannot read the native macOS worker log.  Its local
-    # log probe therefore times out even after the source unit has confirmed
-    # the worker and its TCP endpoint are live; do not turn that expected
-    # observability gap into a data-plane failure.
-    check["rpc_log_ready"] = bool(ready_probe.get("rpc_log_ready")) or \
-        bool(remote_managed_agent and check["worker_running"] and check["tcp_reachable"])
-    check["rpc_ready_probe"] = ready_probe
-    if n.get("remote_status_error") and not check["error"]:
-        check["error"] = n.get("remote_status_error")
-    if remote_managed_agent and check["worker_running"] and check["tcp_reachable"]:
-        check["error"] = ""
-        # Source-unit logs are not an RPC readiness contract for a managed
-        # agent.  Once its controller confirms the worker and the master can
-        # establish TCP, ignore stale/unavailable log-reader errors.
-        n["remote_status_error"] = ""
-    check["ready"] = bool(check["worker_running"] and check["tcp_reachable"] and check["rpc_log_ready"] and not check["error"])
-    _log_event("remote_unit_node_ready_check", **check)
-    return check
 
 
-async def _prepare_remote_unit_sessions(c, req, active):
-    """Ask each capable unit to prepare all of its selected nodes as one session."""
-    groups = {}
-    for nid, placement in active:
-        n = NODES.get(nid)
-        if not n or n.get("kind") != "remote_unit_node":
-            continue
-        uid = n.get("remote_unit_id")
-        unit = REMOTE_UNITS.get(uid, {})
-        if "unit-load-session/v1" not in unit.get("unit_control_protocols", []):
-            continue
-        groups.setdefault(uid, []).append((nid, placement))
-    sessions = {}
-    for uid, members in groups.items():
-        first = NODES[members[0][0]]
-        session_id = f"uls-{_safe_slug(c.get('id'))}-{uuid.uuid4().hex[:12]}"
-        body = {
-            "protocol_version": "unit-load-session/v1", "session_id": session_id,
-            "controller_id": c.get("id"), "model": req.model, "diagnostics": True,
-            "nodes": [{"node_id": NODES[nid].get("remote_source_node_id"),
-                       "layers": placement.get("layers"),
-                       "planned_vram_gib": placement.get("vram_used_gib", 0.0),
-                       "planned_ram_gib": placement.get("ram_used_gib", 0.0)}
-                      for nid, placement in members],
-        }
-        try:
-            response = await _remote_unit_node_request(
-                first, "POST", "/api/unit/load-sessions/prepare", body=body, timeout=90)
-            sessions[uid] = {"session_id": session_id, "unit_url": first.get("remote_unit_url"),
-                             "response": response, "members": [nid for nid, _ in members]}
-        except Exception as exc:
-            sessions[uid] = {"session_id": session_id, "unit_url": first.get("remote_unit_url"),
-                             "error": str(exc), "members": [nid for nid, _ in members]}
-    c["unit_load_sessions"] = sessions
-    return sessions
 
 
-async def _release_remote_unit_sessions(c, reason):
-    releases = []
-    for item in (c.get("unit_load_sessions") or {}).values():
-        if not item.get("response"):
-            continue
-        members = item.get("members") or []
-        n = NODES.get(members[0]) if members else None
-        if not n:
-            continue
-        try:
-            result = await _remote_unit_node_request(
-                n, "POST", f"/api/unit/load-sessions/{quote(item['session_id'], safe='')}/release",
-                body={"reason": reason}, timeout=30)
-            releases.append({"session_id": item["session_id"], "released": True, "result": result})
-        except Exception as exc:
-            releases.append({"session_id": item["session_id"], "released": False, "error": str(exc)})
-    c["unit_load_sessions"] = {}
-    return releases
 
 
-async def _check_remote_unit_nodes_ready(c, req, active):
-    checks = []
-    topology = _rpc_topology(c, active)
-    topology_by_node = {item["node_id"]: item for item in topology}
-    unit_sessions = await _prepare_remote_unit_sessions(c, req, active)
-    for nid, placement in active:
-        n = NODES.get(nid)
-        if not n or n.get("kind") != "remote_unit_node":
-            continue
-        session = unit_sessions.get(n.get("remote_unit_id"))
-        session_node = ((session or {}).get("response") or {}).get("nodes", {}).get(n.get("remote_source_node_id"))
-        if session_node is not None:
-            check = {
-                "node_id": nid, "node_name": n.get("name"), "remote_unit_url": n.get("remote_unit_url"),
-                "remote_source_node_id": n.get("remote_source_node_id"), "endpoint": _node_rpc_endpoint(n),
-                "session_id": session.get("session_id"), "protocol": "unit-load-session/v1",
-                "started": bool(session_node.get("started_by_session")),
-                "worker_running": bool(session_node.get("readiness", {}).get("worker_running")),
-                "tcp_reachable": bool(session_node.get("readiness", {}).get("tcp_reachable")),
-                "rpc_log_ready": bool(session_node.get("readiness", {}).get("rpc_log_ready")),
-                "ready": bool(session_node.get("ready")), "error": session_node.get("error", ""),
-                "unit_measurement": session_node,
-            }
-            # Older source-unit agents can retain a live native RPC child but
-            # lose its Popen handle after an agent-service restart.  Their
-            # unit-load-session result is then false solely because of that
-            # stale handle.  Re-run the managed-agent control/TCP proof rather
-            # than rejecting a reachable data-plane worker.
-            remote_managed_agent = bool((n.get("capabilities") or {}).get("native_agent")) or \
-                _node_backend(n).get("backend_kind") == "metal"
-            if remote_managed_agent and not check["ready"]:
-                fallback = await _remote_unit_node_ready_check(n, start=True)
-                fallback.update({
-                    "session_id": session.get("session_id"),
-                    "protocol": "unit-load-session/v1+managed-agent-tcp-fallback",
-                    "unit_measurement": session_node,
-                })
-                check = fallback
-        elif session and session.get("error"):
-            check = {"node_id": nid, "node_name": n.get("name"), "remote_unit_url": n.get("remote_unit_url"),
-                     "remote_source_node_id": n.get("remote_source_node_id"), "endpoint": _node_rpc_endpoint(n),
-                     "session_id": session.get("session_id"), "protocol": "unit-load-session/v1",
-                     "ready": False, "error": session["error"]}
-        else:
-            check = await _remote_unit_node_ready_check(n, start=True)
-        topo = topology_by_node.get(nid, {})
-        check["placement"] = {
-            "layers": placement.get("layers"),
-            "n_layers": placement.get("n_layers"),
-            "vram_used_gib": placement.get("vram_used_gib"),
-            "ram_used_gib": placement.get("ram_used_gib"),
-            "position": topo.get("position"),
-            "is_first": topo.get("is_first"),
-            "is_last": topo.get("is_last"),
-            "rpc_endpoint": topo.get("rpc_endpoint"),
-            "remote_source_rpc_endpoint": topo.get("remote_source_rpc_endpoint"),
-        }
-        checks.append(check)
-    if checks:
-        _log_event("remote_unit_load_preflight",
-                   controller_id=c.get("id"), model=req.model, checks=checks)
-    return checks
 
 
-def _remote_unit_block_message(checks):
-    bad = [c for c in checks if not c.get("ready")]
-    parts = []
-    for item in bad:
-        reason = item.get("error") or (
-            "RPC TCP endpoint is not reachable" if not item.get("tcp_reachable")
-            else "remote worker is not running")
-        parts.append(f"{item.get('node_name') or item.get('node_id')} at {item.get('endpoint')}: {reason}")
-    return "remote unit RPC worker not ready: " + "; ".join(parts)
 
 
-class CreateNode(BaseModel):
-    slot_id: str = ""
-    gpu_uuid: str = ""
-    name: str = ""
-    vram: float = 0
-    ram: float = 0
-    cores: int = 0
 
 
-class LinkAgentNode(BaseModel):
-    agent_url: str
-    name: str = ""
-    vram_budget_gib: Optional[float] = None
-    ram_budget_gib: Optional[float] = None
-    cores_budget: Optional[int] = None
 
 
-class MetalSlotResources(BaseModel):
-    ram_budget_gib: float
-    cores_budget: int
-    # The UI includes this so a restarted hub can repair the one fixed Metal
-    # slot when the native agent still remembers a controller ID from before
-    # the hub state was recreated.
-    node_id: Optional[str] = None
 
 
-class RegisterRemoteUnit(BaseModel):
-    unit_url: str = ""
-    base_url: str = ""
-    name: str = ""
 
 
-class RemoteNodeClaim(BaseModel):
-    controller_id: str
-    controller_name: str = ""
-    report_url: str = ""
 
 
-class WorkerStopRequest(BaseModel):
-    reason: str = "requested"
 
 
-@app.get("/api/gpus")
-def api_gpus():
-    return {"gpus": list_gpus(), "system": local_resource_limits()}
 
 
-@app.get("/api/nodes")
-def api_nodes():
-    _ensure_local_slots()
-    # A remote unit is attached to one controller, not to this unit-wide node
-    # pool.  Keep its projected nodes out of the global/sidebar surface.
-    ordered = sorted((n for n in NODES.values() if n.get("kind") != "remote_unit_node"),
-                     key=_node_sort_key)
-    local_used = sum(1 for n in _local_slots() if _slot_configured(n))
-    return {"nodes": [node_view(n) for n in ordered],
-            "used": local_used, "total": len(ordered), "max": MAX_NODES}
 
 
-@app.post("/api/nodes")
-def api_create_node(c: CreateNode):
-    _ensure_local_slots()
-    gpus = {g["uuid"]: g for g in list_gpus()}
-    if c.gpu_uuid not in gpus:
-        raise HTTPException(400, f"unknown gpu {c.gpu_uuid}")
-    if c.slot_id:
-        n = NODES.get(c.slot_id)
-        if not n or n.get("kind", "local") != "local":
-            raise HTTPException(404, "unknown local node slot")
-    else:
-        n = next((slot for slot in _local_slots() if not _slot_configured(slot)), None)
-        if not n:
-            raise HTTPException(409, f"all {MAX_NODES} local node slots are assigned")
-    if n.get("bound_to"):
-        raise HTTPException(409, "unbind the node before changing resources")
-    _kill(n.get("worker"))
-    gpu_name = gpus[c.gpu_uuid]["name"]
-    slot = int(n.get("slot") or 1)
-    n.update({"name": c.name or f"{_short_gpu_name(gpu_name)}-{slot}",
-              "gpu_uuid": c.gpu_uuid, "gpu_name": gpu_name, "assigned": True,
-              "vram": c.vram or gpus[c.gpu_uuid]["vram_total_gib"], "ram": c.ram,
-              "cores": c.cores, "worker": None, "ram_used": 0.0})
-    _touch_log(n["log"])
-    _persist_local_slots()
-    return node_view(n)
 
 
-def _parse_remote_unit_ref(req):
-    raw = (req.unit_url or req.base_url or "").strip().rstrip("/")
-    if not raw:
-        raise HTTPException(400, "unit_url is required")
-    raw = re.sub(r"^(https?);/+", r"\1://", raw, flags=re.IGNORECASE)
-    if "://" not in raw:
-        raw = "http://" + raw
-    parsed = urlparse(raw)
-    netloc = parsed.netloc
-    if ";" in netloc and ":" not in netloc.rsplit("@", 1)[-1]:
-        netloc = netloc.replace(";", ":", 1)
-        parsed = urlparse(f"{parsed.scheme}://{netloc}")
-    if parsed.scheme not in ("http", "https") or not parsed.netloc or not parsed.hostname:
-        raise HTTPException(400, "unit_url must be an http(s) URL")
-    try:
-        port = parsed.port
-    except ValueError:
-        raise HTTPException(400, "unit_url port must be a number")
-    host = parsed.hostname
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    return f"{parsed.scheme}://{host}{f':{port}' if port else ''}"
 
 
 def _remote_unit_view(r):
@@ -2372,181 +1334,26 @@ def _remote_unit_view(r):
     }
 
 
-def _remote_node_id(uid, source_node_id):
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", source_node_id or uuid.uuid4().hex[:8]).strip("-")
-    return f"runit-{uid}-{safe}"[:96]
 
 
-def _remote_node_endpoint(nd):
-    endpoint = nd.get("rpc_endpoint") or ""
-    if endpoint:
-        try:
-            return _parse_endpoint(endpoint)
-        except HTTPException:
-            pass
-    host = nd.get("rpc_host") or nd.get("host") or ""
-    port = nd.get("rpc_port") or nd.get("port")
-    if host and port:
-        return str(host), int(port)
-    raise HTTPException(400, f"remote unit node {nd.get('id', '')} has no rpc endpoint")
 
 
-def _upsert_remote_unit_nodes(uid, remote_info, base_url, display_name="", owner_controller_id=""):
-    name = display_name or remote_info.get("name") or urlparse(base_url).netloc
-    existing = REMOTE_UNITS.get(uid, {})
-    old_node_ids = set(existing.get("node_ids", []))
-    incoming = remote_info.get("nodes") or []
-    controllers = remote_info.get("controllers") or []
-    unit_runtime = remote_info.get("runtime")
-    unit_backend = remote_info.get("backend") or backend_from_runtime(unit_runtime)
-    ctrl_names = {c.get("id"): c.get("name") or c.get("id") for c in controllers}
-    node_ids = []
-
-    for nd in incoming:
-        if not _remote_unit_source_node_configured(nd):
-            continue
-        host, port = _remote_node_endpoint(nd)
-        advertised_endpoint = f"{host}:{port}"
-        host = _remote_unit_rpc_host(base_url)
-        source_id = nd.get("id") or f"{host}:{port}"
-        nid = _remote_node_id(uid, source_id)
-        previous = NODES.get(nid, {})
-        remote_cid = nd.get("bound_to") or nd.get("controller_id") or ""
-        remote_cname = nd.get("bound_to_name") or ctrl_names.get(remote_cid, remote_cid)
-        NODES[nid] = {
-            "id": nid,
-            "kind": "remote_unit_node",
-            "name": nd.get("name") or source_id,
-            "gpu_uuid": nd.get("gpu_uuid", ""),
-            "gpu_name": nd.get("gpu_name") or nd.get("gpu") or "Remote GPU",
-            "vram": nd.get("vram", nd.get("vram_budget_gib", 0.0)),
-            "ram": nd.get("ram", nd.get("ram_budget_gib", 0.0)),
-            "cores": nd.get("cores", nd.get("cores_budget", 0)),
-            "rpc_host": host,
-            "rpc_port": port,
-            "bound_to": previous.get("bound_to"),
-            "worker": None,
-            "worker_running": bool(nd.get("worker_running")),
-            "ram_used": nd.get("ram_used_gib", 0.0),
-            "log": "",
-            "resources": nd.get("resources", {}),
-            "capabilities": nd.get("capabilities", {}),
-            "host_platform": nd.get("host_platform", {}),
-            "runtime": nd.get("runtime") or unit_runtime,
-            "backend": nd.get("backend") or backend_from_runtime(nd.get("runtime")) or unit_backend,
-            "remote_unit_id": uid,
-            "remote_unit_name": name,
-            "remote_unit_url": base_url,
-            "owner_controller_id": owner_controller_id or existing.get("owner_controller_id"),
-            "remote_controller_id": remote_cid,
-            "remote_controller_name": remote_cname,
-            "remote_status_error": nd.get("remote_status_error", ""),
-            "remote_status_updated_at": time.time(),
-            "remote_source_node_id": source_id,
-            "remote_source_rpc_endpoint": advertised_endpoint,
-        }
-        node_ids.append(nid)
-
-    for nid in old_node_ids - set(node_ids):
-        removed = NODES.pop(nid, None)
-        if removed and removed.get("bound_to") in CTRLS:
-            CTRLS[removed["bound_to"]]["nodes"] = [x for x in CTRLS[removed["bound_to"]]["nodes"] if x != nid]
-
-    REMOTE_UNITS[uid] = {
-        "id": uid,
-        "name": name,
-        "base_url": base_url,
-        "runtime": unit_runtime,
-        "backend": unit_backend,
-        "owner_controller_id": owner_controller_id or existing.get("owner_controller_id"),
-        "controllers": controllers,
-        "unit_control_protocols": remote_info.get("unit_control_protocols", []),
-        "node_ids": node_ids,
-        "updated_at": time.time(),
-    }
-    return REMOTE_UNITS[uid]
 
 
-async def _fetch_remote_unit_nodes(base_url):
-    async with httpx.AsyncClient(timeout=15, headers=_service_headers()) as client:
-        runtime = None
-        backend = None
-        try:
-            runtime_resp = await client.get(f"{base_url}/api/runtime")
-            runtime_resp.raise_for_status()
-            runtime_info = runtime_resp.json()
-            runtime = runtime_info.get("runtime")
-            backend = runtime_info.get("backend") or backend_from_runtime(runtime)
-            unit_control_protocols = runtime_info.get("unit_control_protocols", [])
-        except Exception:
-            runtime = None
-            backend = None
-            unit_control_protocols = []
-        ctrls = await client.get(f"{base_url}/api/controllers")
-        ctrls.raise_for_status()
-        controllers = ctrls.json().get("controllers", [])
-        nodes = await client.get(f"{base_url}/api/nodes")
-        nodes.raise_for_status()
-        all_nodes = nodes.json().get("nodes", [])
-        return {"controllers": controllers, "nodes": all_nodes, "runtime": runtime, "backend": backend,
-                "unit_control_protocols": unit_control_protocols}
 
 
 def _controller_remote_units(cid):
     return [r for r in REMOTE_UNITS.values() if r.get("owner_controller_id") == cid]
 
 
-def _delete_remote_unit(uid):
-    r = REMOTE_UNITS.pop(uid, None)
-    if not r:
-        raise HTTPException(404, "unknown remote unit")
-    for nid in list(r.get("node_ids", [])):
-        n = NODES.pop(nid, None)
-        if n and n.get("bound_to") in CTRLS:
-            CTRLS[n["bound_to"]]["nodes"] = [x for x in CTRLS[n["bound_to"]]["nodes"] if x != nid]
-    return r
 
 
-@app.get("/api/controllers/{cid}/remote-units")
-def api_controller_remote_units(cid: str):
-    if cid not in CTRLS:
-        raise HTTPException(404, "unknown controller")
-    return {"remote_units": [_remote_unit_view(r) for r in _controller_remote_units(cid)]}
 
 
-@app.post("/api/controllers/{cid}/remote-units")
-async def api_register_controller_remote_unit(cid: str, req: RegisterRemoteUnit):
-    if cid not in CTRLS:
-        raise HTTPException(404, "unknown controller")
-    base_url = _parse_remote_unit_ref(req)
-    remote_info = await _fetch_remote_unit_nodes(base_url)
-    uid = "unit-" + uuid.uuid5(uuid.NAMESPACE_URL, f"{cid}:{base_url}").hex[:10]
-    r = _upsert_remote_unit_nodes(uid, remote_info, base_url, req.name, cid)
-    _persist_hub_state()
-    return {"remote_unit": _remote_unit_view(r),
-            "nodes": [node_view(NODES[nid]) for nid in r.get("node_ids", []) if nid in NODES]}
 
 
-@app.post("/api/controllers/{cid}/remote-units/{uid}/refresh")
-async def api_refresh_controller_remote_unit(cid: str, uid: str):
-    r = REMOTE_UNITS.get(uid)
-    if not r or r.get("owner_controller_id") != cid:
-        raise HTTPException(404, "unknown remote unit")
-    remote_info = await _fetch_remote_unit_nodes(r["base_url"])
-    r = _upsert_remote_unit_nodes(uid, remote_info, r["base_url"], r["name"], cid)
-    _persist_hub_state()
-    return {"remote_unit": _remote_unit_view(r),
-            "nodes": [node_view(NODES[nid]) for nid in r.get("node_ids", []) if nid in NODES]}
 
 
-@app.delete("/api/controllers/{cid}/remote-units/{uid}")
-def api_delete_controller_remote_unit(cid: str, uid: str):
-    r = REMOTE_UNITS.get(uid)
-    if not r or r.get("owner_controller_id") != cid:
-        raise HTTPException(404, "unknown remote unit")
-    _delete_remote_unit(uid)
-    _persist_hub_state()
-    return {"removed": uid}
 
 
 async def _discover_managed_agents():
@@ -2603,425 +1410,34 @@ async def _discover_managed_agents():
     _persist_hub_state()
 
 
-async def _create_agent_node(cid, req, report_url):
-    agent_url = req.agent_url.rstrip("/")
-    parsed = urlparse(agent_url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise HTTPException(400, "agent_url must be an http(s) URL")
-    async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            r = await client.post(agent_url + "/control/join",
-                                  json={"controller_id": cid, "report_url": report_url, "name": req.name,
-                                        "vram_budget_gib": req.vram_budget_gib,
-                                        "ram_budget_gib": req.ram_budget_gib,
-                                        "cores_budget": req.cores_budget})
-            r.raise_for_status()
-            info = r.json()
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 409:
-                raise HTTPException(409, exc.response.json())
-            raise
-    runtime = info.get("runtime")
-    runtime_check = compatibility_report(runtime)
-    if not runtime_check["compatible"]:
-        try:
-            await _agent_request({"agent_url": agent_url}, "POST", "/unbind", timeout=10)
-        except Exception:
-            pass
-        raise HTTPException(409, _runtime_error_message(runtime_check))
-    resources = info.get("resources") or {}
-    node_id = info.get("node_id") or "agent-" + uuid.uuid4().hex[:8]
-    if node_id not in NODES and _owned_node_count() >= MAX_NODES:
-        try:
-            await _agent_request({"agent_url": agent_url}, "POST", "/unbind", timeout=10)
-        except Exception:
-            pass
-        raise HTTPException(409, f"unit node limit reached ({MAX_NODES})")
-    host = parsed.hostname or "127.0.0.1"
-    backend = info.get("backend") or backend_from_runtime(runtime)
-    existing = NODES.get(node_id) or {}
-    n = {"id": node_id, "kind": "agent", "name": req.name or info.get("name") or node_id,
-         # macOS exposes one Metal device, so it is always the unit's Slot 1.
-         # Do not let historical/stale agent records shift it to Slot 2+.
-         "logical_slot": 1 if (backend or {}).get("backend_kind") == "metal"
-         else (existing.get("logical_slot") or _next_logical_slot()),
-         "agent_url": agent_url, "report_url": report_url, "gpu_uuid": info.get("gpu_uuid", ""),
-         "gpu_name": info.get("gpu", "Managed node"),
-         "vram": resources.get("vram_budget_gib", info.get("vram_budget_gib", 0.0)),
-         "ram": resources.get("ram_budget_gib", info.get("ram_budget_gib", 0.0)),
-         "cores": resources.get("cores_budget", info.get("cores", 0)),
-         "rpc_host": host, "rpc_port": int(info.get("rpc_port", 50052)),
-         "bound_to": cid, "worker": None, "worker_running": bool(info.get("worker_running")),
-         "ram_used": resources.get("ram_used_gib", 0.0), "log": "",
-         "resources": resources, "operations": info.get("operations", []),
-         "models": info.get("models", {}), "last_report": None,
-         "desired_load": info.get("desired_load"),
-         "capabilities": info.get("capabilities", {}),
-         "host_platform": info.get("host_platform", {}),
-         "owner": (info.get("owner") or "").strip(),
-         "runtime": runtime,
-         "backend": backend}
-    NODES[node_id] = n
-    return n
 
 
-def _apply_agent_info(n, info):
-    resources = info.get("resources") or {}
-    n["resources"] = resources
-    n["operations"] = info.get("operations", [])
-    n["models"] = info.get("models", {})
-    n["desired_load"] = info.get("desired_load")
-    n["worker_running"] = bool(info.get("worker_running"))
-    n["ram_used"] = resources.get("ram_used_gib", n.get("ram_used", 0.0))
-    n["vram"] = resources.get("vram_budget_gib", n.get("vram", 0.0))
-    n["ram"] = resources.get("ram_budget_gib", n.get("ram", 0.0))
-    n["cores"] = resources.get("cores_budget", n.get("cores", 0))
-    n["capabilities"] = info.get("capabilities", n.get("capabilities", {}))
-    n["host_platform"] = info.get("host_platform", n.get("host_platform", {}))
-    n["owner"] = (info.get("owner") or n.get("owner") or "").strip()
-    n["runtime"] = info.get("runtime", n.get("runtime"))
-    n["backend"] = info.get("backend", n.get("backend")) or backend_from_runtime(n.get("runtime"))
-    return n
 
 
-async def _refresh_agent_node(n):
-    try:
-        info = await _agent_request(n, "GET", "/control/status", timeout=10)
-    except Exception:
-        n["worker_running"] = False
-        return None
-    _apply_agent_info(n, info)
-    return info
 
 
-@app.get("/api/nodes/{nid}")
-async def api_node_detail(nid: str):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n:
-        raise HTTPException(404, "unknown node")
-    if n.get("kind") == "agent":
-        await _refresh_agent_node(n)
-    elif n.get("kind") == "remote_unit_node":
-        await _refresh_remote_unit_node(n)
-    v = node_view(n)
-    v["log"] = "" if n.get("kind") == "agent" else tail(n["log"])
-    return v
 
 
-@app.get("/api/nodes/{nid}/logs")
-async def api_node_logs(nid: str, tail_lines: int = Query(500, alias="tail", ge=20, le=10000)):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n:
-        raise HTTPException(404, "unknown node")
-    if n.get("kind") == "agent":
-        info = await _refresh_agent_node(n)
-        worker_log = {}
-        try:
-            worker_log = await _agent_request(n, "GET", f"/control/logs?tail={tail_lines}", timeout=10)
-        except Exception as exc:
-            worker_log = {"error": str(exc)}
-        reports = (info or {}).get("last_reports", []) if info else []
-        report_log = "\n".join(
-            f"{r.get('seq', '')} {r.get('op_type', '')} {r.get('phase', '')} "
-            f"{r.get('status', '')} {r.get('progress', 0)}% {r.get('message', '')}"
-            for r in reports[-100:])
-        resources = n.get("resources") or {}
-        return {"log": worker_log.get("log") or report_log or "managed node agent status unavailable\n",
-                "agent_reports": report_log,
-                "rpc_activity": worker_log.get("rpc_activity", {}),
-                "worker_pid": worker_log.get("worker_pid"),
-                "desired_load": worker_log.get("desired_load"),
-                "diagnostic_error": worker_log.get("error", ""),
-                "worker_running": _node_worker_running(n),
-                "vram_used_gib": worker_log.get("vram_used_gib", resources.get("vram_used_gib", 0.0)),
-                "vram": n["vram"],
-                "ram_used_gib": worker_log.get("ram_used_gib", resources.get("ram_used_gib", n.get("ram_used", 0.0))),
-                "ram": n["ram"],
-                "operations": n.get("operations", []),
-                "resources": resources}
-    if n.get("kind") == "remote_unit_node":
-        await _refresh_remote_unit_node(n)
-        log = ""
-        try:
-            source_id = n.get("remote_source_node_id") or ""
-            remote_logs = await _remote_unit_node_request(
-                n, "GET", f"/api/nodes/{quote(source_id, safe='')}/logs?tail={tail_lines}", timeout=10)
-            log = remote_logs.get("log", "") if isinstance(remote_logs, dict) else ""
-        except Exception as exc:
-            log = f"remote unit log unavailable: {exc}\n"
-        return {"log": log,
-                "worker_running": _node_worker_running(n),
-                "vram_used_gib": 0.0,
-                "vram": n["vram"],
-                "ram_used_gib": n.get("ram_used", 0.0),
-                "ram": n["ram"],
-                "remote_status_error": n.get("remote_status_error", ""),
-                "remote_status_updated_at": n.get("remote_status_updated_at")}
-    if n.get("kind") == "remote":
-        host, port = n["rpc_host"], n["rpc_port"]
-        reachable = _tcp_reachable(host, port)
-        return {"log": f"remote RPC endpoint: {host}:{port}\nreachable: {str(reachable).lower()}\n",
-                "worker_running": reachable,
-                "vram_used_gib": 0.0, "vram": n["vram"],
-                "ram_used_gib": n.get("ram_used", 0.0), "ram": n["ram"]}
-    return {"log": tail(n["log"], tail_lines),
-            "worker_running": _node_worker_running(n),
-            "vram_used_gib": gpu_used_gib(n["gpu_uuid"]) if n.get("gpu_uuid") else 0.0,
-            "vram": n["vram"], "ram_used_gib": n.get("ram_used", 0.0), "ram": n["ram"]}
 
 
-@app.get("/api/nodes/{nid}/status")
-async def api_node_status(nid: str):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n:
-        raise HTTPException(404, "unknown node")
-    if n.get("kind") == "agent":
-        info = await _refresh_agent_node(n)
-        return info or {"error": "agent unavailable", "node": node_view(n)}
-    if n.get("kind") == "remote_unit_node":
-        await _refresh_remote_unit_node(n)
-    return node_view(n)
 
 
-async def _unit_session_prepare_node(n, request):
-    """Have the owning unit prove worker readiness without using the RPC port as control API."""
-    was_running = _node_worker_running(n)
-    if n.get("kind") == "agent":
-        if not was_running:
-            info = await _agent_request(n, "POST", "/start_worker", {}, timeout=30)
-            _apply_agent_info(n, info)
-    elif n.get("kind") == "local":
-        _start_node_worker(n)
-        n["worker_running"] = _node_worker_running(n)
-    else:
-        raise HTTPException(409, "unit load sessions can only own local or managed-agent nodes")
-    ready = await _wait_node_rpc_ready(n, timeout=60.0)
-    payload = await _load_monitor_log(n)
-    resources = _node_resource_report(n, payload)
-    return {
-        "node_id": n["id"], "rpc_endpoint": _node_rpc_endpoint(n),
-        "started_by_session": not was_running and bool(ready.get("worker_running")),
-        "ready": bool(ready.get("ready")), "readiness": ready,
-        "resources": model_to_dict(resources),
-        "rpc_activity": _rpc_activity_metrics(payload.get("log", "")),
-        "worker_log_tail": str(payload.get("log") or "")[-16000:],
-        "planned_layers": request.layers,
-        "planned_vram_gib": request.planned_vram_gib,
-        "planned_ram_gib": request.planned_ram_gib,
-    }
 
 
-@app.post("/api/unit/load-sessions/prepare")
-async def api_unit_load_session_prepare(req: UnitLoadSessionPrepareRequest):
-    """Prepare a unit-owned distributed-load session and return measured readiness.
-
-    This is the only controller-to-unit readiness contract.  The controller
-    later uses the returned RPC endpoint strictly for llama.cpp data-plane
-    traffic, while lifecycle and diagnostics continue through this session.
-    """
-    _ensure_local_slots()
-    existing = UNIT_LOAD_SESSIONS.get(req.session_id)
-    if existing and existing.get("controller_id") != req.controller_id:
-        raise HTTPException(409, "unit load session belongs to another controller")
-    session = existing or {
-        "session_id": req.session_id, "controller_id": req.controller_id,
-        "model": req.model, "protocol_version": req.protocol_version,
-        "created_at": time.time(), "nodes": {}, "phase": "preparing",
-    }
-    session.update({"updated_at": time.time(), "phase": "preparing", "diagnostics": req.diagnostics})
-    UNIT_LOAD_SESSIONS[req.session_id] = session
-    for item in req.nodes:
-        n = NODES.get(item.node_id)
-        if not n:
-            session["nodes"][item.node_id] = {"node_id": item.node_id, "ready": False, "error": "unknown node"}
-            continue
-        try:
-            session["nodes"][item.node_id] = await _unit_session_prepare_node(n, item)
-        except Exception as exc:
-            session["nodes"][item.node_id] = {"node_id": item.node_id, "ready": False, "error": str(exc)}
-    session["updated_at"] = time.time()
-    session["phase"] = "ready" if all(node.get("ready") for node in session["nodes"].values()) else "error"
-    _log_event("unit_load_session_prepared", session_id=req.session_id, controller_id=req.controller_id,
-               model=req.model, phase=session["phase"], nodes=session["nodes"])
-    return session
 
 
-@app.get("/api/unit/load-sessions/{session_id}")
-async def api_unit_load_session_status(session_id: str):
-    session = UNIT_LOAD_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(404, "unknown unit load session")
-    for node_id, status in session.get("nodes", {}).items():
-        n = NODES.get(node_id)
-        if not n:
-            continue
-        payload = await _load_monitor_log(n)
-        status["resources"] = model_to_dict(_node_resource_report(n, payload))
-        status["rpc_activity"] = _rpc_activity_metrics(payload.get("log", ""))
-        status["worker_log_tail"] = str(payload.get("log") or "")[-16000:]
-        status["worker_running"] = _node_worker_running(n)
-        status["sampled_at"] = time.time()
-    session["updated_at"] = time.time()
-    return session
 
 
-@app.post("/api/unit/load-sessions/{session_id}/release")
-async def api_unit_load_session_release(session_id: str, req: UnitLoadSessionReleaseRequest):
-    session = UNIT_LOAD_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(404, "unknown unit load session")
-    releases = []
-    for node_id, status in session.get("nodes", {}).items():
-        n = NODES.get(node_id)
-        if not n or not status.get("started_by_session"):
-            continue
-        try:
-            if n.get("kind") == "agent":
-                await _stop_agent_worker_confirmed(n, "/control/unload", {"reason": req.reason})
-            else:
-                _kill(n.get("worker")); n["worker"] = None; n["worker_running"] = False
-            releases.append({"node_id": node_id, "released": True})
-        except Exception as exc:
-            releases.append({"node_id": node_id, "released": False, "error": str(exc)})
-    session.update({"phase": "released", "released_at": time.time(), "release_reason": req.reason,
-                    "release": releases})
-    _log_event("unit_load_session_released", session_id=session_id, reason=req.reason, release=releases)
-    return session
 
 
-@app.post("/api/nodes/{nid}/remote-claim")
-async def api_node_remote_claim(nid: str, claim: RemoteNodeClaim):
-    """Reserve a locally-owned node for a controller in another unit.
-
-    A remote unit imports this node as a proxy, but the owning unit remains the
-    source of truth for exclusivity and for starting the native worker.
-    """
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n or n.get("kind") == "remote_unit_node":
-        raise HTTPException(404, "unknown locally-owned node")
-    if not _slot_configured(n):
-        raise HTTPException(409, "assign node resources before binding")
-    if n.get("bound_to") and n["bound_to"] != claim.controller_id:
-        raise HTTPException(409, f"node already bound to {n['bound_to']}")
-    if n.get("kind") == "agent":
-        info = await _agent_request(n, "POST", "/control/join", {
-            "controller_id": claim.controller_id,
-            "report_url": claim.report_url,
-            "name": n.get("name") or "Managed node",
-            "vram_budget_gib": n.get("vram"),
-            "ram_budget_gib": n.get("ram"),
-            "cores_budget": n.get("cores"),
-        })
-        _apply_agent_info(n, info)
-    n["bound_to"] = claim.controller_id
-    n["bound_to_name"] = claim.controller_name or claim.controller_id
-    _persist_hub_state()
-    return {"node": node_view(n)}
 
 
-@app.post("/api/nodes/{nid}/remote-release")
-async def api_node_remote_release(nid: str, claim: RemoteNodeClaim):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n or n.get("kind") == "remote_unit_node":
-        raise HTTPException(404, "unknown locally-owned node")
-    if n.get("bound_to") != claim.controller_id:
-        raise HTTPException(409, "node is not bound to this remote controller")
-    if n.get("kind") == "agent":
-        try:
-            await _unbind_agent_confirmed(n)
-        except Exception as exc:
-            raise HTTPException(409, f"node resources were not released: {exc}") from exc
-    else:
-        _kill(n.get("worker")); n["worker"] = None
-        n["worker_running"] = False
-        n["desired_load"] = None
-    n["bound_to"] = None
-    n["bound_to_name"] = None
-    _persist_hub_state()
-    return {"node": node_view(n)}
 
 
-@app.post("/api/nodes/{nid}/worker/start")
-async def api_node_worker_start(nid: str):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n:
-        raise HTTPException(404, "unknown node")
-    if n.get("kind") == "agent":
-        if not n.get("bound_to"):
-            raise HTTPException(409, "bind the managed node before starting a worker")
-        info = await _agent_request(n, "POST", "/start_worker", {})
-        _apply_agent_info(n, info)
-        return {"node": node_view(n), "log": "managed worker started"}
-    if n.get("kind", "local") != "local":
-        raise HTTPException(409, "only locally-owned nodes can start a worker")
-    if not _slot_configured(n):
-        raise HTTPException(409, "assign node resources before starting the worker")
-    if n.get("bound_to") in CTRLS:
-        raise HTTPException(409, "unbind the node before remote worker start")
-    _start_node_worker(n)
-    n["worker_running"] = _node_worker_running(n)
-    _log_event("node_worker_start_api", node_id=nid, worker_running=n["worker_running"],
-               rpc_endpoint=_node_rpc_endpoint(n))
-    return {"node": node_view(n), "log": tail(n["log"])}
 
 
-@app.post("/api/nodes/{nid}/worker/stop")
-async def api_node_worker_stop(nid: str, req: WorkerStopRequest = None):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n:
-        raise HTTPException(404, "unknown node")
-    if n.get("kind") == "agent":
-        await _stop_agent_worker_confirmed(
-            n, "/control/unload", model_to_dict(UnloadRequest(reason="remote_worker_stop")))
-        return {"node": node_view(n), "log": "managed worker stopped"}
-    if n.get("kind", "local") != "local":
-        raise HTTPException(409, "only locally-owned nodes can stop a worker")
-    if n.get("bound_to") in CTRLS:
-        raise HTTPException(409, "unbind the node before remote worker stop")
-    req = req or WorkerStopRequest()
-    _kill(n.get("worker"))
-    n["worker"] = None
-    n["worker_running"] = False
-    n["desired_load"] = None
-    n["ram_used"] = 0.0
-    _log_event("node_worker_stop_api", node_id=nid, reason=req.reason,
-               rpc_endpoint=_node_rpc_endpoint(n))
-    return {"node": node_view(n), "log": tail(n["log"])}
 
 
-@app.delete("/api/nodes/{nid}")
-async def api_del_node(nid: str):
-    _ensure_local_slots()
-    n = NODES.get(nid)
-    if not n:
-        raise HTTPException(404, "unknown node")
-    if n.get("kind") == "remote_unit_node":
-        raise HTTPException(409, "delete the registered remote unit instead")
-    if n.get("kind", "local") == "local":
-        if n.get("bound_to"):
-            raise HTTPException(409, "unbind the node before clearing resources")
-        _reset_local_slot(n)
-        _persist_local_slots()
-        return {"cleared": nid}
-    n = NODES.pop(nid)
-    if n["bound_to"] in CTRLS:
-        CTRLS[n["bound_to"]]["nodes"] = [x for x in CTRLS[n["bound_to"]]["nodes"] if x != nid]
-    if n.get("kind", "local") == "local":
-        _kill(n.get("worker"))
-    elif n.get("kind") == "agent":
-        try:
-            await _agent_request(n, "POST", "/control/unload", model_to_dict(UnloadRequest(reason="remove_node")))
-        except Exception:
-            pass
-    _persist_hub_state()
-    return {"removed": nid}
 
 
 # ------------------------------- models -----------------------------------
@@ -3137,9 +1553,6 @@ def _resolve_model(ref):
     raise HTTPException(404, f"unknown model {ref}")
 
 
-@app.get("/api/models")
-def api_models():
-    return {"dir": MODEL_DIR, "models": _scan_models(), "downloads": DL}
 
 
 SHARD_TARGET_REPLICAS = int(os.environ.get("LINKCPP_SHARD_TARGET_REPLICAS", "2") or 2)
@@ -3151,102 +1564,14 @@ SELF_START_CONFIGS: dict = {}
 _RELAY_SEQ = 0
 
 
-def _shard_coverage():
-    """Roll up which layer segments of each model are currently covered by live
-    ring stages, so nodes can see where coverage is thin and choose to fill it.
-    Per model: a per-layer replica count folded into contiguous segments, each
-    with a scarcity score (0 = fully covered, 1 = uncovered)."""
-    per_model = {}   # model -> {"n_layer": int, "coverage": [int]*n_layer}
-    for c in CTRLS.values():
-        plan = c.get("plan") or {}
-        if normalize_runtime_mode(plan.get("runtime_mode")) != RING_PROXY:
-            continue
-        model = plan.get("model_ref") or c.get("model") or c.get("serving")
-        n_layer = int((plan.get("model") or {}).get("n_layer") or 0)
-        if not model or n_layer <= 0:
-            continue
-        entry = per_model.setdefault(model, {"n_layer": n_layer, "coverage": [0] * n_layer})
-        for p in plan.get("placement", []):
-            window = p.get("layers") or []
-            node = NODES.get(p.get("node_id")) or {}
-            if len(window) != 2 or not node.get("worker_running"):
-                continue
-            start, end = int(window[0]), int(window[1])
-            for i in range(max(0, start), min(entry["n_layer"], end)):
-                entry["coverage"][i] += 1
-    out = []
-    for model, e in per_model.items():
-        cov = e["coverage"]
-        segments, i = [], 0
-        while i < len(cov):
-            j = i
-            while j < len(cov) and cov[j] == cov[i]:
-                j += 1
-            replicas = cov[i]
-            segments.append({
-                "layers": [i, j], "replicas": replicas,
-                "target": SHARD_TARGET_REPLICAS,
-                "scarcity": round(max(0, SHARD_TARGET_REPLICAS - replicas) / SHARD_TARGET_REPLICAS, 3),
-            })
-            i = j
-        out.append({"model": model, "n_layer": e["n_layer"],
-                    "target_replicas": SHARD_TARGET_REPLICAS, "segments": segments})
-    return out
 
 
-@app.get("/api/shard-demand")
-def api_shard_demand(model: str = Query("")):
-    """Live shard coverage/demand map: for each model, which contiguous layer
-    segments are under-replicated (high scarcity). A node polls this to choose a
-    segment to serve — the scarce ones are where its contribution counts most."""
-    demand = _shard_coverage()
-    if model:
-        demand = [d for d in demand if d["model"] == model or os.path.basename(d["model"]) == model]
-    return {"target_replicas": SHARD_TARGET_REPLICAS, "models": demand}
 
 
-def _recommend_segment(model="", max_layers=0):
-    """Pick the segment a volunteering node should serve: the scarcest (most
-    under-covered) window across the demand map, clipped to the node's layer
-    budget. Returns None when nothing is under target. This is the bottom-up
-    matchmaking a node uses instead of waiting to be force-placed."""
-    best = None
-    for entry in _shard_coverage():
-        if model and os.path.basename(entry["model"]) != os.path.basename(model):
-            continue
-        for seg in entry["segments"]:
-            if seg["scarcity"] <= 0:
-                continue
-            start, end = seg["layers"]
-            if max_layers and (end - start) > max_layers:
-                end = start + max_layers   # take a coverable sub-window of the gap
-            cand = {"model": entry["model"], "n_layer": entry["n_layer"],
-                    "layers": [start, end], "scarcity": seg["scarcity"],
-                    "replicas": seg["replicas"], "target": seg["target"]}
-            key = (seg["scarcity"], end - start)
-            if best is None or key > best[0]:
-                best = (key, cand)
-    return best[1] if best else None
 
 
-class ShardVolunteer(BaseModel):
-    node_id: str = ""
-    model: str = ""
-    max_layers: int = 0
 
 
-@app.post("/api/shard-volunteer")
-def api_shard_volunteer(req: ShardVolunteer):
-    """A node offers to serve a shard; the hub replies with the scarcest segment
-    it should take (model + layer window), or none if coverage is already at
-    target. The node then downloads just that window (partial shard) and serves
-    it — bottom-up participation driven by where reward is highest (scarcity)."""
-    seg = _recommend_segment(req.model, req.max_layers)
-    if not seg:
-        return {"assigned": False, "reason": "no under-covered segment"}
-    _log_event("shard_volunteer_assigned", node_id=req.node_id, model=seg["model"],
-               layers=seg["layers"], scarcity=seg["scarcity"])
-    return {"assigned": True, **seg}
 
 
 # ---- expert coverage market (M3): the layer market, at (layer, expert-range) grain -------
@@ -3783,87 +2108,12 @@ async def api_expert_relay(ws: WebSocket, session: str = Query(""), token: str =
             pass
 
 
-def _node_can_coordinate(nid) -> bool:
-    n = NODES.get(nid) or {}
-    hp = n.get("host_platform") or {}
-    system = (hp.get("system") if isinstance(hp, dict) else "") or ""
-    return system.lower() not in ("android", "ios")
 
 
-class ShardEnroll(BaseModel):
-    node_id: str
-    name: str = ""
-    controller_id: str = ""       # target ring controller (auto-found if empty)
-    model: str = ""
-    layers: list = []             # requested window (advisory; planner decides)
-    host_platform: dict = {}
-    backend: dict = {}
-    vram_budget_gib: float = 4.0
-    ram_budget_gib: float = 4.0
-    cores: int = 4
-    perf_tps: float = 0.0
-    stage_port: int = 51072
-    ctx: int = 512
 
 
-@app.post("/api/shard-enroll")
-async def api_shard_enroll(req: ShardEnroll):
-    """A NAT'd node self-enrolls to serve a shard. The hub registers it, binds it
-    to a ring controller that has a coordinator on a public node, and serves.
-    The hub cannot push a stage-start to a node reachable only outbound, so
-    serve() publishes this node's stage config for it to pull
-    (GET /api/shard-enroll/config) and self-start — inverting the node lifecycle
-    for NAT participants."""
-    c = CTRLS.get(req.controller_id) if req.controller_id else None
-    if not c:
-        # Auto-find a controller with a coordinator-capable node. Only an IDLE one:
-        # a self-enroll triggers a re-serve, so falling back to a serving/loading
-        # controller would preempt it (drop its model, splice this NAT node into the
-        # ring) — exactly what let an offline phone repeatedly break a 122B ring.
-        cands = [cc for cc in CTRLS.values()
-                 if any(_node_can_coordinate(nid) for nid in cc.get("nodes", []))]
-        c = next((cc for cc in cands if _ctrl_phase(cc) not in ("running", "loading")), None)
-    if not c:
-        raise HTTPException(409, "no idle ring controller with a coordinator is available")
-    # Never preempt a controller that is serving or mid-load, even if named explicitly.
-    if _ctrl_phase(c) in ("running", "loading"):
-        raise HTTPException(409, "target ring controller is serving; self-enroll will not preempt it")
-    n = NODES.get(req.node_id) or {}
-    n.update({
-        "id": req.node_id, "name": req.name or req.node_id,
-        "kind": "self_enrolled", "nat": True, "self_enrolled": True,
-        "host_platform": req.host_platform or {"system": "android", "machine": "arm64"},
-        "backend": req.backend or {}, "vram": float(req.vram_budget_gib),
-        "ram": float(req.ram_budget_gib), "cores": int(req.cores),
-        "perf_tps": float(req.perf_tps), "vram_budget": float(req.vram_budget_gib),
-        "ram_budget": float(req.ram_budget_gib), "vram_used": 0.0, "ram_used": 0.0,
-        "rpc_port": int(req.stage_port) - 1000, "stage_port": int(req.stage_port),
-        "worker_running": True, "bound_to": c["id"], "bound_to_name": c.get("name"),
-        "gpu_uuid": "self-" + req.node_id, "gpu_name": (req.backend or {}).get("backend_device")
-            or ((req.host_platform or {}).get("hostname")) or req.node_id,
-        "resources": {"vram_budget_gib": float(req.vram_budget_gib),
-                      "ram_budget_gib": float(req.ram_budget_gib),
-                      "cores_budget": int(req.cores)},
-    })
-    NODES[req.node_id] = n
-    if req.node_id not in c.get("nodes", []):
-        c.setdefault("nodes", []).append(req.node_id)
-    SELF_START_CONFIGS.pop(req.node_id, None)
-    _log_event("shard_enroll", node_id=req.node_id, controller_id=c["id"],
-               model=req.model, layers=req.layers)
-    sreq = ServeReq(model=req.model, ctx=int(req.ctx), parallel=1, batch=128, ubatch=128,
-                    runtime_mode=RING_PROXY)
-    asyncio.create_task(api_ctrl_serve(c["id"], sreq))
-    return {"enrolled": True, "controller_id": c["id"],
-            "config_url": "/api/shard-enroll/config?node_id=" + req.node_id}
 
 
-@app.get("/api/shard-enroll/config")
-def api_shard_enroll_config(node_id: str = Query("")):
-    """A self-enrolled node polls this for its stage config once serve() has
-    planned the ring, then downloads its window and self-starts its stage."""
-    cfg = SELF_START_CONFIGS.get(node_id)
-    return {"ready": True, **cfg} if cfg else {"ready": False}
 
 
 @app.websocket("/api/ring-relay")
@@ -3948,120 +2198,22 @@ async def api_ring_relay(ws: WebSocket, controller_id: str = Query(""), token: s
             pass
 
 
-@app.get("/api/models/{name}/file")
-def api_model_file(name: str, request: Request, service_token: str = Query("")):
-    """Serve a staged GGUF so managed nodes (e.g. phones, which download over a
-    plain URL) can pull it straight from the hub. Auth-gated: an auth-enabled hub
-    requires a valid session, the M2M service token header, or ?service_token=
-    (URLSession on the phone cannot set headers on a background download)."""
-    if AUTH_ENABLED:
-        st = request.headers.get("x-linkcpp-service-token", "") or service_token
-        ok = bool(SERVICE_TOKEN and st and _hmac.compare_digest(st, SERVICE_TOKEN))
-        if not ok and not _authed_wallet(request):
-            raise HTTPException(401, "authentication required")
-    path, _meta = _resolve_model(name)
-    return FileResponse(path, filename=os.path.basename(path),
-                        media_type="application/octet-stream")
 
 
-class Download(BaseModel):
-    url: str
-    name: str
 
 
-class ControllerDownload(BaseModel):
-    model: str
-    source: ModelSource
-    op_id: str = ""
 
 
-async def _download(url, dest, name):
-    DL[name] = {"total": 0, "done": 0, "status": "downloading"}
-    try:
-        async with httpx.AsyncClient(timeout=None, follow_redirects=True) as c:
-            async with c.stream("GET", url) as r:
-                r.raise_for_status()
-                DL[name]["total"] = int(r.headers.get("content-length", 0))
-                with open(dest, "wb") as fh:
-                    async for chunk in r.aiter_bytes(1 << 20):
-                        fh.write(chunk); DL[name]["done"] += len(chunk)
-        DL[name]["status"] = "done"
-    except Exception as e:
-        DL[name]["status"] = f"error: {e}"
 
 
-@app.post("/api/models/download")
-async def api_download(d: Download):
-    asyncio.create_task(_download(d.url, os.path.join(MODEL_DIR, d.name), d.name))
-    return {"started": d.name}
 
 
-def _model_source_url(source):
-    headers = {}
-    if source.kind == "direct_url":
-        if not source.url:
-            raise HTTPException(400, "source.url is required")
-        return source.url, headers
-    if source.kind == "huggingface":
-        if not source.repo_id or not source.filename:
-            raise HTTPException(400, "repo_id and filename are required")
-        url = f"https://huggingface.co/{source.repo_id}/resolve/{source.revision or 'main'}/{source.filename}"
-        if source.hf_token:
-            headers["Authorization"] = f"Bearer {source.hf_token}"
-        return url, headers
-    raise HTTPException(400, "source.kind must be direct_url or huggingface")
 
 
-async def _download_from_source(source, dest, name):
-    url, headers = _model_source_url(source)
-    DL[name] = {"total": 0, "done": 0, "status": "downloading"}
-    try:
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        async with httpx.AsyncClient(timeout=None, follow_redirects=True) as c:
-            async with c.stream("GET", url, headers=headers) as r:
-                r.raise_for_status()
-                DL[name]["total"] = int(r.headers.get("content-length", 0))
-                tmp = dest + ".part"
-                with open(tmp, "wb") as fh:
-                    async for chunk in r.aiter_bytes(1 << 20):
-                        fh.write(chunk)
-                        DL[name]["done"] += len(chunk)
-                os.replace(tmp, dest)
-        DL[name]["status"] = "done"
-    except Exception as e:
-        DL[name]["status"] = f"error: {e}"
 
 
-@app.post("/api/node-reports")
-def api_node_reports(report: NodeReport):
-    data = model_to_dict(report)
-    n = NODES.get(report.node_id)
-    if n:
-        last_seq = int((n.get("last_report") or {}).get("seq", -1))
-        if report.seq >= last_seq:
-            n["last_report"] = data
-            n["resources"] = data.get("resources", {})
-            if report.op_type == "load":
-                n["worker_running"] = report.status in ("running", "done") and report.phase not in ("model_missing", "error")
-            elif report.op_type == "unload":
-                n["worker_running"] = False
-            if report.op_id:
-                ops = n.setdefault("operations_map", {})
-                ops[report.op_id] = data
-                n["operations"] = list(ops.values())[-50:]
-            if data.get("resources"):
-                n["ram_used"] = data["resources"].get("ram_used_gib", n.get("ram_used", 0.0))
-    c = CTRLS.get(report.controller_id or "")
-    if c and report.op_id:
-        _record_ctrl_op(c, report.op_type or "node", report.phase, report.status,
-                        report.progress, report.message, op_id=report.op_id,
-                        node_id=report.node_id, model=report.model, error=report.error,
-                        details={"report_seq": report.seq})
-    return {"accepted": True}
 
 
-class LoadCancelled(Exception):
-    pass
 
 
 def _serve_req_snapshot(req):
@@ -4174,119 +2326,14 @@ def _perf_req_snapshot(req):
     return data
 
 
-def _append_llama_perf_args(cmd, req):
-    spec_type = _validate_spec_types(getattr(req, "spec_type", "none"))
-    if spec_type != "none":
-        cmd += ["--spec-type", spec_type]
-    draft_model = str(getattr(req, "spec_draft_model", "") or "").strip()
-    if draft_model:
-        cmd += ["--spec-draft-model", draft_model]
-    for attr, flag in (
-        ("batch", "-b"),
-        ("ubatch", "-ub"),
-        ("poll", "--poll"),
-        ("spec_draft_n_max", "--spec-draft-n-max"),
-        ("spec_draft_n_min", "--spec-draft-n-min"),
-        ("spec_ngram_mod_n_min", "--spec-ngram-mod-n-min"),
-        ("spec_ngram_mod_n_max", "--spec-ngram-mod-n-max"),
-        ("spec_ngram_mod_n_match", "--spec-ngram-mod-n-match"),
-        ("spec_ngram_simple_size_n", "--spec-ngram-simple-size-n"),
-        ("spec_ngram_simple_size_m", "--spec-ngram-simple-size-m"),
-        ("spec_ngram_simple_min_hits", "--spec-ngram-simple-min-hits"),
-        ("cache_reuse", "--cache-reuse"),
-    ):
-        value = _positive_int(getattr(req, attr, 0))
-        if value:
-            cmd += [flag, str(value)]
-    for attr, flag in (
-        ("spec_draft_p_min", "--spec-draft-p-min"),
-        ("spec_draft_p_split", "--spec-draft-p-split"),
-    ):
-        value = _non_negative_float(getattr(req, attr, None))
-        if value is not None:
-            cmd += [flag, str(value)]
-    for attr, flag in (
-        ("lookup_cache_static", "--lookup-cache-static"),
-        ("lookup_cache_dynamic", "--lookup-cache-dynamic"),
-    ):
-        value = str(getattr(req, attr, "") or "").strip()
-        if value:
-            cmd += [flag, value]
-    if getattr(req, "cont_batching", True) is False:
-        cmd += ["--no-cont-batching"]
-    return cmd
 
 
-def _load_cancel_requested(c):
-    return bool((c.get("load_cancel") or {}).get("requested"))
 
 
-def _raise_if_load_cancelled(c):
-    if _load_cancel_requested(c):
-        raise LoadCancelled((c.get("load_cancel") or {}).get("reason") or "load canceled")
 
 
-def _copy_model_file(src, dst, sink, label, cancel=None):
-    if cancel:
-        cancel()
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    total = os.path.getsize(src)
-    if os.path.exists(dst) and os.path.getsize(dst) == total:
-        return dst
-    # Models and the staging area normally share the same mounted volume.  A
-    # hard link avoids duplicating multi-shard GGUF files before an RPC master
-    # reads them, while unsupported mounts retain the existing copy behavior.
-    try:
-        os.link(src, dst)
-        sink["detail"] = f"staged {label} as hard link"
-        return dst
-    except FileExistsError:
-        if os.path.getsize(dst) == total:
-            return dst
-    except OSError:
-        pass
-    tmp = dst + ".part"; done = 0; gib = total / 1024**3
-    try:
-        with open(src, "rb") as fi, open(tmp, "wb") as fo:
-            while True:
-                b = fi.read(16 << 20)
-                if not b:
-                    break
-                if cancel:
-                    cancel()
-                fo.write(b); done += len(b)
-                sink["detail"] = f"staging {label} {done*100//total}% ({done/1024**3:.1f}/{gib:.1f} GiB)"
-    except LoadCancelled:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
-    if cancel:
-        cancel()
-    os.replace(tmp, dst)
-    return dst
 
 
-def _stage_model(model_ref, sink, cancel=None):
-    try:
-        os.makedirs(STAGE_DIR, exist_ok=True)
-        primary_src, meta = _resolve_model(model_ref)
-        for rel in meta.get("shards", []) + meta.get("aux_files", []):
-            src = os.path.join(MODEL_DIR, rel)
-            if os.path.exists(src):
-                _copy_model_file(src, os.path.join(STAGE_DIR, rel), sink, rel, cancel=cancel)
-        if cancel:
-            cancel()
-        sink["detail"] = "model already staged"
-        return os.path.join(STAGE_DIR, meta["primary_file"])
-    except LoadCancelled:
-        raise
-    except Exception:
-        path, _ = _resolve_model(model_ref)
-        if cancel:
-            cancel()
-        return path
 
 
 # ------------------------------- controllers ------------------------------
@@ -4342,25 +2389,10 @@ def _ctrl_phase(c):
     return c["phase"]
 
 
-class CreateCtrl(BaseModel):
-    name: str = ""
 
 
-@app.get("/api/controllers")
-def api_ctrls():
-    _ensure_local_slots()
-    return {"controllers": [ctrl_view(c) for c in CTRLS.values()]}
 
 
-@app.post("/api/controllers")
-def api_create_ctrl(c: CreateCtrl):
-    cid = "ctrl-" + uuid.uuid4().hex[:6]
-    CTRLS[cid] = {"id": cid, "name": c.name or cid, "nodes": [], "model": None,
-                  "ctx": 4096, "parallel": 1, "phase": "idle", "detail": "",
-                  "plan": None, "master": None, "last_load": {},
-                  "master_port": _next_master_port(), "operations": {}}
-    _persist_hub_state()
-    return ctrl_view(CTRLS[cid], full=True)
 
 
 class ExternalCtrl(BaseModel):
@@ -4392,359 +2424,32 @@ def api_register_external_ctrl(req: ExternalCtrl):
     return ctrl_view(CTRLS[cid])
 
 
-@app.get("/api/controllers/{cid}")
-def api_ctrl_detail(cid: str):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    return ctrl_view(c, full=True)
 
 
-@app.get("/api/controllers/{cid}/runtime-check")
-def api_ctrl_runtime_check(cid: str):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    return _controller_runtime_check(c)
 
 
-@app.delete("/api/controllers/{cid}")
-async def api_del_ctrl(cid: str):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    _kill(c.get("master"))
-    for nid in list(c["nodes"]):
-        n = NODES.get(nid)
-        if not n:
-            continue
-        try:
-            if n.get("kind", "local") == "local":
-                _kill(n.get("worker")); n["worker"] = None
-                n["worker_running"] = False
-                n["desired_load"] = None
-            elif n.get("kind") == "agent":
-                await _unbind_agent_confirmed(n)
-            elif n.get("kind") == "remote_unit_node":
-                await _remote_unit_node_request(
-                    n, "POST",
-                    f"/api/nodes/{quote(n.get('remote_source_node_id') or '', safe='')}/remote-release",
-                    body={"controller_id": cid})
-            n["bound_to"] = None
-            n["bound_to_name"] = None
-        except Exception as exc:
-            # Do not discard the controller record while it still owns a
-            # worker.  Keeping it visible makes the release safely retryable.
-            raise HTTPException(409, f"controller deletion blocked; {nid} resources were not released: {exc}") from exc
-    for unit in list(_controller_remote_units(cid)):
-        _delete_remote_unit(unit["id"])
-    CTRLS.pop(cid, None)
-    _persist_hub_state()
-    return {"removed": cid}
 
 
-class BindNode(BaseModel):
-    node_id: str
 
 
-@app.post("/api/controllers/{cid}/bind")
-async def api_bind(cid: str, b: BindNode, request: Request = None):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    n = NODES.get(b.node_id)
-    if not c or not n:
-        raise HTTPException(404, "unknown controller or node")
-    if not _slot_configured(n):
-        raise HTTPException(409, "assign node resources before binding")
-    if (n.get("kind") == "remote_unit_node" and n.get("owner_controller_id")
-            and n.get("owner_controller_id") != cid):
-        raise HTTPException(404, "remote unit node is not registered by this controller")
-    if n["bound_to"] and n["bound_to"] != cid:
-        raise HTTPException(409, f"node already bound to {n['bound_to']}")
-    if _remote_unit_node_bound_in_unit(n) and n.get("bound_to") != cid:
-        owner = n.get("remote_controller_name") or n.get("remote_controller_id")
-        raise HTTPException(409, f"remote unit node already bound in its unit: {owner}")
-    _require_node_runtime(n)
-    if n.get("kind") == "remote_unit_node" and request is not None:
-        report_base = PUBLIC_HUB_URL or str(request.base_url)
-        try:
-            await _remote_unit_node_request(n, "POST",
-                                            f"/api/nodes/{quote(n.get('remote_source_node_id') or '', safe='')}/remote-claim",
-                                            body={"controller_id": cid, "controller_name": c.get("name", cid),
-                                                  "report_url": report_base.rstrip("/") + "/api/node-reports"})
-        except Exception as exc:
-            raise HTTPException(409, f"remote node cannot be bound: {exc}") from exc
-    n["bound_to"] = cid
-    if n.get("kind") == "agent" and n.get("agent_url"):
-        # Hand the managed agent its report URL + M2M token so its node telemetry
-        # reaches an auth-enabled hub. Startup discovery (via /control/status) does
-        # not establish these, so without this a bound agent never reports.
-        report_base = PUBLIC_HUB_URL or (str(request.base_url) if request is not None else "")
-        if report_base:
-            n["report_url"] = report_base.rstrip("/") + "/api/node-reports"
-            try:
-                await _agent_request(n, "POST", "/control/join", body={
-                    "controller_id": cid, "report_url": n["report_url"],
-                    "service_token": SERVICE_TOKEN or None, "name": n.get("name"),
-                }, timeout=10)
-            except Exception:
-                pass  # best-effort; the bind itself still succeeds
-    if b.node_id not in c["nodes"]:
-        c["nodes"].append(b.node_id)
-    _persist_hub_state()
-    return ctrl_view(c, full=True)
 
 
-@app.post("/api/controllers/{cid}/unbind")
-async def api_unbind(cid: str, b: BindNode):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    n = NODES.get(b.node_id)
-    if not c or not n:
-        raise HTTPException(404, "unknown controller or node")
-    if n.get("kind") == "remote_unit_node":
-        try:
-            await _remote_unit_node_request(n, "POST",
-                                            f"/api/nodes/{quote(n.get('remote_source_node_id') or '', safe='')}/remote-release",
-                                            body={"controller_id": cid})
-        except Exception as exc:
-            raise HTTPException(409, f"remote node cannot be released: {exc}") from exc
-    if n.get("kind", "local") == "local":
-        _kill(n.get("worker")); n["worker"] = None
-        n["worker_running"] = False
-        n["desired_load"] = None
-    elif n.get("kind") == "agent":
-        try:
-            await _unbind_agent_confirmed(n)
-        except Exception as exc:
-            # Keep ownership intact: a second controller must never acquire a
-            # node whose previous Metal worker has not released its memory.
-            raise HTTPException(409, f"node resources were not released: {exc}") from exc
-    n["bound_to"] = None
-    n["bound_to_name"] = None
-    c["nodes"] = [x for x in c["nodes"] if x != b.node_id]
-    _persist_hub_state()
-    return ctrl_view(c, full=True)
 
 
-async def api_ctrl_link_agent_node(cid: str, req: LinkAgentNode, request: Request):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    report_base = PUBLIC_HUB_URL or str(request.base_url)
-    report_url = report_base.rstrip("/") + "/api/node-reports"
-    n = await _create_agent_node(cid, req, report_url)
-    if n["id"] not in c["nodes"]:
-        c["nodes"].append(n["id"])
-    _record_ctrl_op(c, "join", "joined", "done", 100.0, "agent node linked", node_id=n["id"])
-    _persist_hub_state()
-    return ctrl_view(c, full=True)
 
 
-@app.post("/api/controllers/{cid}/metal-slot/resources")
-async def api_update_metal_slot_resources(cid: str, req: MetalSlotResources):
-    c = CTRLS.get(cid)
-    recovered_stale_binding = False
-    node = None
-    if not c and req.node_id:
-        candidate = NODES.get(req.node_id)
-        # A Metal host has exactly one logical slot.  If its native agent is
-        # bound to a controller that this hub no longer knows about, the only
-        # idle controller is the safe replacement.  This happens after the
-        # hub and native-agent state files are restored independently.
-        candidates = [item for item in CTRLS.values()
-                      if item.get("phase") in ("idle", "error")
-                      and not _proc_alive(item.get("master"))]
-        if (candidate and candidate.get("kind") == "agent"
-                and _node_backend(candidate).get("backend_kind") == "metal"
-                and candidate.get("bound_to") == cid and len(candidates) == 1):
-            c = candidates[0]
-            node = candidate
-            recovered_stale_binding = True
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    if c.get("phase") not in ("idle", "error") or _proc_alive(c.get("master")):
-        raise HTTPException(409, "unload the controller before changing Metal slot resources")
-    node = node or next((NODES.get(nid) for nid in c.get("nodes", [])
-                         if NODES.get(nid, {}).get("kind") == "agent"
-                         and _node_backend(NODES[nid]).get("backend_kind") == "metal"), None)
-    if not node:
-        raise HTTPException(404, "no Metal slot is bound to this controller")
-    if req.ram_budget_gib <= 0 or req.cores_budget <= 0:
-        raise HTTPException(400, "RAM and CPU core budgets must be greater than zero")
-    try:
-        if recovered_stale_binding:
-            # The old controller does not exist in this hub.  Release that
-            # orphaned ownership before assigning the fixed Metal slot to the
-            # recovered controller.
-            await _agent_request(node, "POST", "/unbind")
-        info = await _agent_request(node, "POST", "/control/join", {
-            "controller_id": c["id"],
-            "report_url": node.get("report_url"),
-            "name": node.get("name") or "Slot 1",
-            # Apple Silicon uses unified memory. The planner uses the same selected
-            # budget for Metal weights and RAM rather than pretending there are two
-            # independently partitionable pools.
-            "vram_budget_gib": req.ram_budget_gib,
-            "ram_budget_gib": req.ram_budget_gib,
-            "cores_budget": req.cores_budget,
-        })
-    except httpx.HTTPError as exc:
-        raise HTTPException(503, "Mac Metal Slot 1 agent is unavailable; start the native node agent and retry") from exc
-    resources = info.get("resources") or {}
-    if recovered_stale_binding:
-        node["bound_to"] = c["id"]
-        node["bound_to_name"] = c["name"]
-        if node["id"] not in c["nodes"]:
-            c["nodes"].append(node["id"])
-        _record_ctrl_op(c, "join", "recovered", "done", 100.0,
-                        "recovered stale Mac Metal Slot 1 binding", node_id=node["id"])
-    node.update({"vram": resources.get("vram_budget_gib", node.get("vram", 0.0)),
-                 "ram": resources.get("ram_budget_gib", node.get("ram", 0.0)),
-                 "cores": resources.get("cores_budget", node.get("cores", 0)),
-                 "resources": resources, "backend": info.get("backend", node.get("backend"))})
-    _persist_hub_state()
-    return ctrl_view(c, full=True)
 
 
-class ServeReq(BaseModel):
-    model: str
-    ctx: int = 4096
-    parallel: int = 1
-    kv_bits: int = 16
-    cache_type_k: str = "f16"
-    cache_type_v: str = "f16"
-    no_cpu_offload: bool = False
-    reserve_mib: int = 1024
-    placement_strategy: str = "balanced"
-    require_all_nodes: bool = False
-    runtime_mode: str = DEFAULT_RUNTIME_MODE
-    batch: int = 0
-    ubatch: int = 0
-    poll: int = 0
-    cont_batching: bool = True
-    cache_reuse: int = 0
-    spec_type: str = "none"
-    spec_draft_model: str = ""
-    spec_draft_n_max: int = 0
-    spec_draft_n_min: int = 0
-    spec_draft_p_min: Optional[float] = None
-    spec_draft_p_split: Optional[float] = None
-    spec_ngram_mod_n_min: int = 0
-    spec_ngram_mod_n_max: int = 0
-    spec_ngram_mod_n_match: int = 0
-    spec_ngram_simple_size_n: int = 0
-    spec_ngram_simple_size_m: int = 0
-    spec_ngram_simple_min_hits: int = 0
-    lookup_cache_static: str = ""
-    lookup_cache_dynamic: str = ""
 
 
-def _ctrl_planner_nodes(c):
-    # host_platform + backend let the ring planner keep the coordinator off phones
-    # and weight layer splits by compute tier (see planner._can_coordinate /
-    # _node_compute_factor).
-    return [{"vram": NODES[nid]["vram"], "ram": NODES[nid]["ram"], "cores": NODES[nid]["cores"],
-             "host_platform": NODES[nid].get("host_platform") or {},
-             "backend": NODES[nid].get("backend") or {},
-             "perf_tps": NODES[nid].get("perf_tps")}
-            for nid in c["nodes"] if nid in NODES]
 
 
-def _node_monitored(n):
-    return n.get("kind") != "remote"
 
 
-def _annotate_plan(c, result, model_meta):
-    result["model_ref"] = model_meta["id"]
-    result["model_label"] = model_meta["label"]
-    result["model_shards"] = list(model_meta.get("shards") or [model_meta["primary_file"]])
-    result["adaptive_load_available"] = True
-    result["monitoring_required"] = True
-    nids = [nid for nid in c["nodes"] if nid in NODES]
-    for p in result.get("placement", []):
-        idx = p.get("node")
-        if idx is None or idx >= len(nids):
-            continue
-        n = NODES[nids[idx]]
-        p["node_id"] = n["id"]
-        p["node_name"] = n["name"]
-        p["node_kind"] = n.get("kind", "local")
-        p["gpu_name"] = n.get("gpu_name", "")
-        p["monitoring"] = _node_monitored(n)
-        p["kv_vram_gib"] = p.get("kv_vram_gib", result.get("kv_per_layer_gib", 0) * p.get("n_layers", 0))
-        if p.get("n_layers") and not p["monitoring"]:
-            result["adaptive_load_available"] = False
-    if not result["adaptive_load_available"]:
-        result["adaptive_load_blocker"] = "some nodes cannot report VRAM/RAM usage"
-    return result
 
 
-def _do_plan(c, req):
-    _require_controller_runtime(c)
-    nl = _ctrl_planner_nodes(c)
-    if not nl:
-        raise HTTPException(400, "controller has no bound nodes")
-    model_path, meta = _resolve_model(req.model)
-    req.cache_type_k = _validate_cache_type(req.cache_type_k, "cache_type_k")
-    req.cache_type_v = _validate_cache_type(req.cache_type_v, "cache_type_v")
-    _validate_spec_types(req.spec_type)
-    if req.reserve_mib < 0:
-        raise HTTPException(400, "reserve_mib must be non-negative")
-    try:
-        req.runtime_mode = normalize_runtime_mode(req.runtime_mode)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    if req.placement_strategy not in PLACEMENT_STRATEGIES:
-        raise HTTPException(400, f"unsupported placement strategy: {req.placement_strategy}")
-    # A ring keeps every bound rank (weights + KV live on the rank that owns the
-    # layer), so ring loads always plan with the all-rank ring-stage strategy
-    # regardless of the caller's default RPC-oriented choice.
-    if req.runtime_mode == RING_PROXY and req.placement_strategy != "ring-stage-vram-weighted":
-        req.placement_strategy = "ring-stage-vram-weighted"
-    shard_paths = [os.path.join(MODEL_DIR, rel) for rel in meta.get("shards", [])]
-    m = read_model(model_path, shard_paths=shard_paths)
-    result = _annotate_plan(
-        c,
-        run_plan(m, nl, req.ctx, req.parallel, req.kv_bits,
-                 cache_type_k=req.cache_type_k, cache_type_v=req.cache_type_v,
-                 reserve_mib=req.reserve_mib, no_cpu_offload=req.no_cpu_offload,
-                 placement_strategy=req.placement_strategy,
-                 master_ram_gib=_master_ram_budget_gib(),
-                 _allow_subset_search=not req.require_all_nodes),
-        meta,
-    )
-    result["master_load_timeout_s"] = _master_load_timeout_s(result)
-    result["runtime_mode"] = req.runtime_mode
-    nids = [nid for nid in c["nodes"] if nid in NODES]
-    active = [(nids[p["node"]], p) for p in result.get("placement", []) if p.get("n_layers")]
-    topology = _rpc_topology(c, active, req.runtime_mode)
-    result["data_plane"] = topology[0]["data_plane"] if topology else data_plane_contract(req.runtime_mode, [])
-    return result
 
 
-@app.post("/api/controllers/{cid}/plan")
-def api_ctrl_plan(cid: str, req: ServeReq):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    if _ctrl_phase(c) not in ("loading", "unloading"):
-        _clear_ctrl_activity(c, "new_plan", req.model)
-    _log_event("plan_request_received", controller_id=cid, model=req.model,
-               ctx=req.ctx, parallel=req.parallel, kv_bits=req.kv_bits,
-               cache_type_k=req.cache_type_k, cache_type_v=req.cache_type_v,
-               nodes=list(c.get("nodes", [])))
-    result = _do_plan(c, req)
-    c["plan"] = result
-    _log_event("load_plan_result", controller_id=cid, model=req.model,
-               plan=_plan_log_summary(result))
-    _record_ctrl_op(c, "plan", "planned", "done" if result.get("feasible") else "error",
-                    100.0 if result.get("feasible") else 0.0,
-                    "load plan generated", model=result.get("model_ref", req.model),
-                    details={"adaptive_load_available": result.get("adaptive_load_available")})
-    return result
 
 
 def _hub_reachable_url():
@@ -4822,851 +2527,61 @@ async def _ensure_agent_models_for_ring(nodes, model_name, node_source_urls=None
             raise RuntimeError(f"model staging to {n.get('name') or n['id']} timed out")
 
 
-@app.post("/api/controllers/{cid}/models/download")
-async def api_ctrl_download_model(cid: str, req: ControllerDownload):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    model = os.path.basename(req.model)
-    op_id = req.op_id or "download-" + uuid.uuid4().hex[:10]
-    _record_ctrl_op(c, "download", "dispatch", "running", 0.0,
-                    "dispatching model download", op_id=op_id, model=model,
-                    details={"source": req.source.redacted()})
-    if not os.path.exists(os.path.join(MODEL_DIR, model)):
-        asyncio.create_task(_download_from_source(req.source, os.path.join(MODEL_DIR, model), model))
-    else:
-        DL[model] = {"total": os.path.getsize(os.path.join(MODEL_DIR, model)),
-                     "done": os.path.getsize(os.path.join(MODEL_DIR, model)),
-                     "status": "done"}
-    agent_results = []
-    for nid in c["nodes"]:
-        n = NODES.get(nid)
-        if not n or n.get("kind") != "agent":
-            continue
-        body = model_to_dict(DownloadRequest(model=model, source=req.source, op_id=f"{op_id}-{nid}"))
-        try:
-            agent_results.append({"node_id": nid, "result": await _agent_request(n, "POST", "/control/download", body)})
-        except Exception as exc:
-            agent_results.append({"node_id": nid, "error": str(exc)})
-    _record_ctrl_op(c, "download", "dispatched", "running", 5.0,
-                    "download dispatched", op_id=op_id, model=model,
-                    details={"agents": agent_results})
-    return {"accepted": True, "op_id": op_id, "model": model, "agents": agent_results,
-            "controller_download": DL.get(model)}
 
 
-async def _load_rpc_node(c, req, result, nid, placement):
-    _raise_if_load_cancelled(c)
-    n = NODES[nid]
-    n["ram_used"] = round(placement.get("ram_used_gib", 0.0), 2)
-    desired_load = {
-        "model": req.model,
-        "layers": placement.get("layers"),
-        "tensor_split": result.get("tensor_split", []),
-        "offload": placement.get("ot"),
-        "parallel": req.parallel,
-        "ctx": req.ctx,
-        "kv_bits": req.kv_bits,
-        "cache_type_k": result.get("cache_type_k", req.cache_type_k),
-        "cache_type_v": result.get("cache_type_v", req.cache_type_v),
-    }
-    if n.get("kind") == "agent":
-        op_id = f"load-{c['id']}-{nid}-{uuid.uuid4().hex[:6]}"
-        body = model_to_dict(LoadRequest(
-            model=req.model,
-            op_id=op_id,
-            layers=placement.get("layers"),
-            tensor_split=result.get("tensor_split", []),
-            offload=placement.get("ot"),
-            parallel=req.parallel,
-            ctx=req.ctx,
-            kv_bits=req.kv_bits,
-            cache_type_k=result.get("cache_type_k", req.cache_type_k),
-            cache_type_v=result.get("cache_type_v", req.cache_type_v),
-        ))
-        _record_ctrl_op(c, "load", "load_requested", "running", 5.0,
-                        "requesting node load", op_id=op_id, node_id=nid, model=req.model)
-        _log_event("agent_node_load_request", controller_id=c.get("id"), node_id=nid,
-                   op_id=op_id, model=req.model, placement=placement)
-        info = await _agent_request(n, "POST", "/control/load", body, timeout=60)
-        _raise_if_load_cancelled(c)
-        n["worker_running"] = True
-        n["desired_load"] = body
-        n["operations"] = info.get("status", {}).get("operations", n.get("operations", []))
-        # A native Metal RPC worker initializes the Metal runtime before it
-        # binds its TCP socket.  Do not start the Linux master after a fixed
-        # delay: on Apple Silicon that races the bind and produces a misleading
-        # malformed-RPC response.
-        ready_probe = await _wait_node_rpc_ready(n, timeout=60.0)
-        if not ready_probe.get("ready"):
-            raise HTTPException(503, f"node RPC worker is not ready at {_node_rpc_endpoint(n)}")
-        return _node_rpc_endpoint(n)
-    if n.get("kind") == "remote_unit_node":
-        check = await _remote_unit_node_ready_check(n, start=True)
-        if not check["ready"]:
-            raise HTTPException(409, _remote_unit_block_message([check]))
-        n["desired_load"] = desired_load
-        _log_event("remote_unit_node_load_ready", controller_id=c.get("id"), node_id=nid,
-                   model=req.model, check=check, placement=placement)
-        return _node_rpc_endpoint(n)
-    _log_event("local_node_load_request", controller_id=c.get("id"), node_id=nid,
-               model=req.model, placement=placement)
-    _start_node_worker(n)
-    _raise_if_load_cancelled(c)
-    n["worker_running"] = True
-    n["desired_load"] = desired_load
-    ready_probe = await _wait_node_rpc_ready(n, timeout=20.0)
-    _log_event("local_node_rpc_ready_check", controller_id=c.get("id"), node_id=nid,
-               model=req.model, check=ready_probe)
-    if not ready_probe.get("ready"):
-        raise HTTPException(409, f"local RPC worker not ready: {nid} at {_node_rpc_endpoint(n)}")
-    return _node_rpc_endpoint(n)
 
 
-def _combined_ot(active):
-    rules = []
-    seen = set()
-    for _, placement in active:
-        for rule in (placement.get("ot") or "").split(","):
-            rule = rule.strip()
-            if rule and rule not in seen:
-                seen.add(rule)
-                rules.append(rule)
-    return ",".join(rules)
 
 
-async def _cancel_load_runtime(c, reason="requested"):
-    async with _controller_teardown_lock(c):
-        _kill(c.get("master")); c["master"] = None
-        node_results = [{"kind": "unit_load_session", **item}
-                        for item in await _release_remote_unit_sessions(c, reason)]
-        for nid in list(c.get("nodes", [])):
-            n = NODES.get(nid)
-            if not n:
-                continue
-            if n.get("kind") == "local":
-                _kill(n.get("worker")); n["worker"] = None
-                n["worker_running"] = False
-                n["desired_load"] = None
-                n["ram_used"] = 0.0
-                node_results.append({"node_id": nid, "status": "canceled", "kind": "local"})
-            elif n.get("kind") == "agent":
-                if not n.get("worker_running") and not n.get("desired_load"):
-                    node_results.append({"node_id": nid, "status": "already_stopped", "kind": "agent"})
-                    continue
-                try:
-                    body = model_to_dict(CancelLoadRequest(
-                        op_id=f"cancel-{c['id']}-{nid}-{uuid.uuid4().hex[:6]}",
-                        reason=reason,
-                    ))
-                    await _stop_agent_worker_confirmed(n, "/control/load/cancel", body)
-                    n["ram_used"] = 0.0
-                    node_results.append({"node_id": nid, "status": "canceled", "kind": "agent"})
-                except Exception as exc:
-                    node_results.append({"node_id": nid, "status": "error", "kind": "agent", "error": str(exc)})
-            elif n.get("kind") == "remote_unit_node":
-                if not n.get("worker_running") and not n.get("desired_load"):
-                    node_results.append({"node_id": nid, "status": "already_stopped", "kind": "remote_unit_node"})
-                    continue
-                try:
-                    await _stop_remote_unit_worker(n, reason)
-                    await _refresh_remote_unit_node(n)
-                    if n.get("worker_running") or n.get("desired_load"):
-                        raise RuntimeError("remote unit still reports its worker as running")
-                    n["ram_used"] = 0.0
-                    node_results.append({"node_id": nid, "status": "canceled", "kind": "remote_unit_node"})
-                except Exception as exc:
-                    node_results.append({"node_id": nid, "status": "error",
-                                         "kind": "remote_unit_node", "error": str(exc)})
-        return node_results
 
 
-async def _serve_llama_rpc(c, req, result, active):
-    serve_op = None
-    try:
-        if normalize_runtime_mode(req.runtime_mode) != LLAMA_RPC:
-            raise RuntimeError("llama RPC loader received a non-RPC runtime mode")
-        _require_controller_runtime(c)
-        _raise_if_load_cancelled(c)
-        _log_event("load_task_started", controller_id=c.get("id"), model=req.model,
-                   ctx=req.ctx, parallel=req.parallel, plan=_plan_log_summary(result))
-        c.update(phase="loading", detail="staging model", model=req.model,
-                 parallel=req.parallel, plan=result)
-        serve_op = _record_ctrl_op(c, "load", "staging_model", "running", 1.0,
-                                   "staging model", model=req.model)
-        _record_ctrl_op(c, "calibration", "first_layer_probe", "done", 100.0,
-                        "first-layer calibration uses monitored node reports when available",
-                        model=req.model, details={"confidence": min((p.get("confidence", 0.75) for _, p in active), default=0.75)})
-        model_path = await asyncio.to_thread(_stage_model, req.model, c, lambda: _raise_if_load_cancelled(c))
-        _raise_if_load_cancelled(c)
-        _log_event("model_staged", controller_id=c.get("id"), model=req.model,
-                   model_path=model_path)
-        c["detail"] = "starting workers"
-        topology = _rpc_topology(c, active, req.runtime_mode)
-        rpc_eps = []
-        for nid, p in active:
-            _raise_if_load_cancelled(c)
-            rpc_eps.append(await _load_rpc_node(c, req, result, nid, p))
-            _start_load_monitor(c, req, nid, p, serve_op["op_id"])
-        await asyncio.sleep(2)
-        _raise_if_load_cancelled(c)
-        ts = ",".join(str(p["n_layers"]) for _, p in active)
-        gpu_layers = int(result.get("gpu_layers") or result.get("model", {}).get("n_layer") or 0)
-        # A Metal-enabled RPC server advertises its Metal device followed by a
-        # CPU fallback device.  The fallback has no allocatable device memory,
-        # but llama.cpp otherwise auto-selects it along with the intended RPC
-        # endpoints.  Keep the tensor-split ranks aligned with the planned
-        # accelerators by selecting only the first device for each endpoint.
-        rpc_devices = []
-        rpc_device_index = 0
-        for nid, _ in active:
-            rpc_devices.append(f"RPC{rpc_device_index}")
-            rpc_device_index += 1
-            if _node_backend(NODES[nid]).get("backend_kind") == "metal":
-                rpc_device_index += 1
-        cmd = [LLAMA_SERVER, "-m", model_path, "-ngl", str(gpu_layers), "--rpc", ",".join(rpc_eps),
-               "--device", ",".join(rpc_devices), "--tensor-split", ts, "-np", str(req.parallel),
-               "-c", str(req.ctx * req.parallel), "--host", "127.0.0.1",
-               "--port", str(c["master_port"]), "--flash-attn", "on",
-               "--cache-type-k", result.get("cache_type_k", req.cache_type_k),
-               "--cache-type-v", result.get("cache_type_v", req.cache_type_v)]
-        # The RPC master must own a bounded, resident model copy before it
-        # distributes tensors.  mmap faults through a host bind mount bypass
-        # that budget and can stall a large distributed load indefinitely.
-        cmd.append("--no-mmap")
-        # Use the model's Jinja chat template so native tool calling (tools /
-        # tool_choice -> tool_calls) and correct role formatting work through the
-        # OpenAI-compatible gateway. Inert for models without a tool template.
-        cmd.append("--jinja")
-        # The linkcpp planner has already reserved per-worker VRAM/RAM.  Do
-        # not let llama.cpp's auto-fit issue an unbounded device-memory probe
-        # to every RPC backend; some managed Metal workers cannot serve that
-        # optional query even though tensor RPC is available.
-        cmd += ["--fit", "off"]
-        # Keep a detailed master-side trace in the load artifact.  Worker-side
-        # RPC tracing is enabled separately through GGML_RPC_DEBUG.
-        cmd += ["-lv", "4"]
-        _append_llama_perf_args(cmd, req)
-        if result.get("kv_cache_location") == "ram":
-            cmd += ["--no-kv-offload"]
-        ot = _combined_ot(active)
-        if ot:
-            cmd += ["-ot", ot]
-        env = dict(os.environ, CUDA_VISIBLE_DEVICES="", GGML_RPC_DEBUG="1")
-        _kill(c.get("master"))
-        _raise_if_load_cancelled(c)
-        c["detail"] = "loading model into GPUs"
-        _record_ctrl_op(c, "load", "master_starting", "running", 40.0,
-                        "starting llama-server master", op_id=serve_op["op_id"], model=req.model,
-                        details={"rpc_workers": rpc_eps, "tensor_split": ts, "ot": ot,
-                                 "flash_attention": True,
-                                 "cache_type_k": result.get("cache_type_k"),
-                                 "cache_type_v": result.get("cache_type_v"),
-                                 "performance": _perf_req_snapshot(req),
-                                 "rpc_topology": topology})
-        master_log = _master_log_path(c)
-        _log_event("master_starting", controller_id=c.get("id"), model=req.model,
-                   cmd=cmd, rpc_workers=rpc_eps, tensor_split=ts, ot=ot,
-                   rpc_topology=topology, log_path=master_log)
-        c["master"] = subprocess.Popen(cmd, env=env,
-                                       stdout=open(master_log, "w"),
-                                       stderr=subprocess.STDOUT)
-        diag_dir = _load_diag_dir(c, serve_op["op_id"])
-        _diag_write_json(os.path.join(diag_dir, "manifest.json"), {
-            "created_at": time.time(), "controller_id": c.get("id"), "model": req.model,
-            "command": cmd, "environment": {k: env.get(k) for k in ("CUDA_VISIBLE_DEVICES", "GGML_RPC_DEBUG", "LLAMA_CACHE")},
-            "plan": result, "rpc_topology": topology, "rpc_workers": rpc_eps,
-            "master": _master_process_snapshot(c),
-        })
-        _diag_event(c, serve_op["op_id"], "master_started", pid=c["master"].pid,
-                    diagnostic_dir=diag_dir, rpc_workers=rpc_eps)
-        _log_event("master_started", controller_id=c.get("id"), pid=c["master"].pid,
-                   port=c["master_port"], log_path=master_log)
-        load_timeout_s = int(result.get("master_load_timeout_s") or _master_load_timeout_s(result))
-        expected_load_bytes = int(max(0.0, float(result.get("total_weight_gib") or 0.0)) * 1024 ** 3)
-        ok = await _wait_health(c["master_port"], c, op_id=serve_op["op_id"], secs=load_timeout_s,
-                                expected_load_bytes=expected_load_bytes)
-        _raise_if_load_cancelled(c)
-        if ok:
-            c["detail"] = "running smoke inference"
-            _log_event("master_healthy", controller_id=c.get("id"), port=c["master_port"])
-            try:
-                _raise_if_load_cancelled(c)
-                await _master_chat(c["master_port"], {
-                    "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
-                    "max_tokens": 8,
-                    "temperature": 0,
-                })
-                _raise_if_load_cancelled(c)
-                c.update(phase="running", detail="")
-                c["last_load"] = _serve_req_snapshot(req)
-                c["ctx"] = req.ctx
-                c["parallel"] = req.parallel
-                _persist_hub_state()
-                _record_ctrl_op(c, "load", "running", "done", 100.0,
-                                "model loaded and smoke test passed",
-                                op_id=serve_op["op_id"], model=req.model)
-                await _capture_load_diagnostics(c, serve_op["op_id"], "load_healthy", include_node_logs=True)
-                _cancel_load_monitors(c, final_status="done")
-                _log_event("load_task_done", controller_id=c.get("id"), model=req.model)
-            except Exception as exc:
-                c.update(phase="error", detail=f"smoke inference failed: {exc}")
-                _record_ctrl_op(c, "load", "smoke_error", "error", 90.0,
-                                "smoke inference failed", op_id=serve_op["op_id"],
-                                model=req.model, error=str(exc))
-                _log_event("smoke_inference_failed", controller_id=c.get("id"),
-                           model=req.model, error=str(exc), exc_info=True)
-                _cancel_load_monitors(c)
-        else:
-            c.update(phase="error", detail="master not healthy")
-            master_tail = tail(_master_log_path(c), 120)
-            diagnostic_dir = await _capture_load_diagnostics(
-                c, serve_op["op_id"], "master_not_healthy_pre_cleanup", include_node_logs=True)
-            master_snapshot = _master_process_snapshot(c)
-            # A health timeout is a terminal failure for this load attempt.
-            # Leaving llama-server alive keeps its partial RPC allocations and
-            # makes the next attempt contend with a ghost master process.
-            _kill(c.get("master"))
-            c["master"] = None
-            node_results = await _cancel_load_runtime(c, "master not healthy")
-            _record_ctrl_op(c, "load", "error", "error", 0.0,
-                            "master not healthy", op_id=serve_op["op_id"], model=req.model,
-                            error="master not healthy", details={"master_log_tail": master_tail,
-                                                                   "nodes": node_results,
-                                                                   "diagnostic_dir": diagnostic_dir,
-                                                                   "master_snapshot": master_snapshot})
-            _log_event("master_not_healthy", controller_id=c.get("id"), model=req.model,
-                       port=c["master_port"], master_returncode=master_snapshot.get("returncode"),
-                       master_log_tail=master_tail, diagnostic_dir=diagnostic_dir)
-            _cancel_load_monitors(c)
-    except LoadCancelled as e:
-        reason = str(e) or "load canceled"
-        node_results = await _cancel_load_runtime(c, reason)
-        c.update(phase="idle", detail="", model=None)
-        _record_ctrl_op(c, "load", "canceled", "canceled", 0.0,
-                        reason, op_id=serve_op["op_id"] if serve_op else None,
-                        model=req.model, details={"nodes": node_results})
-        _log_event("load_task_canceled", controller_id=c.get("id"), model=req.model,
-                   reason=reason, nodes=node_results)
-        _cancel_load_monitors(c)
-        _persist_hub_state()
-    except Exception as e:
-        if serve_op:
-            await _capture_load_diagnostics(c, serve_op["op_id"], "load_task_exception", include_node_logs=True)
-        _kill(c.get("master"))
-        c["master"] = None
-        c.update(phase="error", detail=str(e))
-        _record_ctrl_op(c, "load", "error", "error", 0.0,
-                        "serve failed", model=req.model, error=str(e))
-        LOG.exception("linkcpp_event %s", json.dumps({
-            "event": "load_task_exception",
-            "controller_id": c.get("id"),
-            "model": getattr(req, "model", None),
-            "error": str(e),
-        }, sort_keys=True, default=str))
-        _cancel_load_monitors(c)
-    finally:
-        c.pop("load_cancel", None)
-        c.pop("load_task", None)
-        c.pop("pending_load", None)
 
 
-async def _wait_health(port, c, op_id=None, secs=900, expected_load_bytes=0):
-    started = time.time()
-    last_report = 0.0
-    last_diagnostic = 0.0
-    last_transfer_bytes = _load_observed_transfer_bytes(c, op_id) if op_id else 0
-    last_transfer_at = started
-    last_progress_at = started
-    observed_rate = 0.0
-    async with httpx.AsyncClient(timeout=3) as cl:
-        while True:
-            if _load_cancel_requested(c):
-                _log_event("master_health_wait_canceled", controller_id=c.get("id"),
-                           port=port, elapsed_s=round(time.time() - started, 3))
-                raise LoadCancelled((c.get("load_cancel") or {}).get("reason") or "load canceled")
-            if c.get("master") is not None and c["master"].poll() is not None:
-                _log_event("master_health_wait_exit", controller_id=c.get("id"),
-                           port=port, elapsed_s=round(time.time() - started, 3),
-                           returncode=c["master"].poll(), log_tail=tail(_master_log_path(c), 80))
-                return False
-            log_tail = tail(_master_log_path(c), 80)
-            if _master_startup_fatal(log_tail):
-                _log_event("master_health_wait_fatal", controller_id=c.get("id"),
-                           port=port, elapsed_s=round(time.time() - started, 3),
-                           log_tail=log_tail)
-                return False
-            try:
-                if (await cl.get(f"http://127.0.0.1:{port}/health")).status_code == 200:
-                    _log_event("master_health_wait_ok", controller_id=c.get("id"),
-                               port=port, elapsed_s=round(time.time() - started, 3))
-                    return True
-            except Exception:
-                pass
-            now = time.time()
-            if op_id and now - last_diagnostic >= 15.0:
-                last_diagnostic = now
-                try:
-                    await _capture_load_diagnostics(c, op_id, "health_wait", include_node_logs=False)
-                except Exception as exc:
-                    _log_event("load_diagnostic_snapshot_failed", controller_id=c.get("id"),
-                               op_id=op_id, error=str(exc))
-            observed_bytes = _load_observed_transfer_bytes(c, op_id) if op_id else 0
-            if observed_bytes > last_transfer_bytes:
-                elapsed = max(0.001, now - last_transfer_at)
-                instant_rate = (observed_bytes - last_transfer_bytes) / elapsed
-                observed_rate = instant_rate if observed_rate <= 0 else (observed_rate * 0.7 + instant_rate * 0.3)
-                last_transfer_bytes = observed_bytes
-                last_transfer_at = now
-                last_progress_at = now
-            stall_timeout_s = _load_stall_timeout_s(
-                expected_load_bytes, observed_bytes, observed_rate, secs)
-            if now - last_progress_at >= stall_timeout_s:
-                _log_event("master_health_wait_stalled", controller_id=c.get("id"), port=port,
-                           elapsed_s=round(now - started, 3), idle_s=round(now - last_progress_at, 3),
-                           observed_bytes=observed_bytes, bytes_per_s=round(observed_rate, 2),
-                           stall_timeout_s=stall_timeout_s, log_tail=log_tail)
-                return False
-            if op_id and now - last_report >= 30.0:
-                last_report = now
-                _record_ctrl_op(
-                    c, "load", "master_loading", "running", 45.0,
-                    "waiting for llama-server health",
-                    op_id=op_id, model=c.get("model"),
-                    details={"master_log_tail": log_tail,
-                             "elapsed_s": round(now - started, 3),
-                             "timeout_s": stall_timeout_s,
-                             "timeout_mode": "progress_renewed",
-                             "observed_transfer_bytes": observed_bytes,
-                             "observed_transfer_mib_s": round(observed_rate / (1024 ** 2), 3),
-                             "last_progress_age_s": round(now - last_progress_at, 3)})
-            await asyncio.sleep(2)
 
 
-@app.post("/api/controllers/{cid}/serve")
-async def api_ctrl_serve(cid: str, req: ServeReq):
-    existing = CTRLS.get(cid)
-    if existing and _ctrl_phase(existing) == "loading":
-        raise HTTPException(409, "load already in progress; cancel it before starting another load")
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    if _ctrl_phase(c) == "loading":
-        raise HTTPException(409, "load already in progress; cancel it before starting another load")
-    c.pop("load_diagnostic_dir", None)
-    _clear_ctrl_activity(c, "new_load", req.model)
-    _reset_inference_activity(c, "new_load")
-    c["ctx"] = req.ctx
-    c["parallel"] = req.parallel
-    _persist_hub_state()
-    _log_event("load_request_received", controller_id=cid, model=req.model,
-               ctx=req.ctx, parallel=req.parallel, kv_bits=req.kv_bits,
-               cache_type_k=req.cache_type_k, cache_type_v=req.cache_type_v, runtime_mode=req.runtime_mode,
-               nodes=list(c.get("nodes", [])))
-    result = _do_plan(c, req)
-    c["plan"] = result
-    _log_event("load_plan_result", controller_id=cid, model=req.model,
-               plan=_plan_log_summary(result))
-    if not result["feasible"]:
-        _record_ctrl_op(c, "plan", "infeasible", "error", 0.0,
-                        result.get("reason", "cannot place model"),
-                        model=result.get("model_ref", req.model),
-                        details={"plan": _plan_log_summary(result)})
-        _record_ctrl_op(c, "load", "blocked", "error", 0.0,
-                        "infeasible: " + result.get("reason", "cannot place model"),
-                        model=result.get("model_ref", req.model),
-                        details={"plan": result})
-        _log_event("load_rejected", controller_id=cid, model=req.model,
-                   error="infeasible", plan=_plan_log_summary(result))
-        return JSONResponse(status_code=400, content={"error": "infeasible", "plan": result})
-    if not result.get("adaptive_load_available", True):
-        _record_ctrl_op(c, "load", "blocked", "error", 0.0,
-                        result.get("adaptive_load_blocker", "adaptive load unavailable"),
-                        model=result.get("model_ref", req.model),
-                        details={"plan": result})
-        _log_event("load_rejected", controller_id=cid, model=req.model,
-                   error="adaptive_load_unavailable", plan=_plan_log_summary(result))
-        return JSONResponse(status_code=400, content={
-            "error": "adaptive_load_unavailable",
-            "detail": result.get("adaptive_load_blocker", "adaptive load unavailable"),
-            "plan": result,
-        })
-    if req.runtime_mode != LLAMA_RPC:
-        data_plane = result.get("data_plane") or data_plane_contract(RING_PROXY, [])
-        if not data_plane.get("available"):
-            detail = data_plane.get("blocker") or "selected runtime is not available"
-            _record_ctrl_op(c, "load", "runtime_mode_blocked", "error", 0.0, detail,
-                            model=result.get("model_ref", req.model),
-                            details={"runtime_mode": req.runtime_mode, "data_plane": data_plane})
-            return JSONResponse(status_code=501, content={"error": "runtime_mode_unavailable", "detail": detail,
-                "runtime_mode": req.runtime_mode, "data_plane": data_plane, "plan": result})
-    nids = c["nodes"]
-    active = [(nids[p["node"]], p) for p in result["placement"] if p["n_layers"]]
-    remote_checks = await _check_remote_unit_nodes_ready(c, req, active)
-    if any(not item.get("ready") for item in remote_checks):
-        detail = _remote_unit_block_message(remote_checks)
-        _record_ctrl_op(c, "load", "remote_unit_not_ready", "error", 0.0,
-                        detail, model=result.get("model_ref", req.model),
-                        details={"remote_unit_checks": remote_checks})
-        _log_event("load_rejected", controller_id=cid, model=req.model,
-                   error="remote_unit_not_ready", remote_unit_checks=remote_checks)
-        return JSONResponse(status_code=409, content={
-            "error": "remote_unit_not_ready",
-            "detail": detail,
-            "remote_unit_checks": remote_checks,
-            "plan": result,
-        })
-    c["pending_load"] = _serve_req_snapshot(req)
-    c["load_cancel"] = {"requested": False, "reason": "", "ts": None}
-    c["phase"] = "loading"
-    c["detail"] = "load queued"
-    c["model"] = req.model
-    loader = (_serve_llama_rpc(c, req, result, active) if req.runtime_mode == LLAMA_RPC
-              else serve_selected_runtime(req.runtime_mode, c, req, result, active))
-    c["load_task"] = asyncio.create_task(loader)
-    return {"accepted": req.model, "phase": "loading", "plan": result}
 
 
-@app.post("/api/controllers/{cid}/load")
-async def api_ctrl_load(cid: str, req: ServeReq):
-    return await api_ctrl_serve(cid, req)
 
 
-@app.post("/api/controllers/{cid}/load/cancel")
-async def api_ctrl_cancel_load(cid: str, req: CancelLoadRequest = None):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    if _ctrl_phase(c) != "loading":
-        raise HTTPException(409, "no load is in progress")
-    req = req or CancelLoadRequest()
-    token = c.setdefault("load_cancel", {})
-    token.update({"requested": True, "reason": req.reason or "requested", "ts": time.time()})
-    c["detail"] = "canceling load"
-    op = _record_ctrl_op(c, "load", "cancel_requested", "running", 0.0,
-                         "cancel requested", op_id=req.op_id, model=c.get("model"),
-                         details={"reason": req.reason})
-    _log_event("load_cancel_requested", controller_id=cid, model=c.get("model"),
-               reason=req.reason, op_id=op["op_id"])
-    nodes = await _cancel_load_runtime(c, req.reason)
-    task = c.get("load_task")
-    if not task or task.done():
-        c.update(model=None, phase="idle", detail="")
-        c.pop("load_cancel", None)
-        c.pop("load_task", None)
-        c.pop("pending_load", None)
-        _record_ctrl_op(c, "load", "canceled", "canceled", 0.0,
-                        "load canceled", op_id=op["op_id"], model=c.get("model"),
-                        details={"nodes": nodes})
-        _persist_hub_state()
-    return {"canceling": True, "op_id": op["op_id"], "nodes": nodes}
 
 
-@app.get("/api/controllers/{cid}/status")
-def api_ctrl_status(cid: str):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    ph = _ctrl_phase(c)
-    # A ring controller has no hub-local master (its coordinator runs on the first
-    # ring node), so "loaded" is gated on the ring being up (proxy_first_node set),
-    # not on a local master process — otherwise running ring models look unloaded
-    # and never surface to the pay gateway / model list.
-    runtime_loaded = ph in ("running", "error") and (
-        c.get("proxy_first_node") is not None or _proc_alive(c.get("master")))
-    can_unload = runtime_loaded or ph in ("running", "unloading", "error")
-    return {"phase": ph, "detail": c["detail"], "serving": c["model"] if ph in ("loading", "running") else None,
-            "active_model": c["model"], "can_unload": can_unload,
-            "can_cancel_load": ph == "loading", "runtime_loaded": runtime_loaded,
-            "last_load": c.get("last_load") or {},
-            "running": ph == "running", "parallel": c["parallel"], "plan": c["plan"],
-            "nodes": len(c["nodes"]), "operations": list(_ctrl_ops(c).values())[-50:]}
 
 
-@app.get("/api/controllers/{cid}/operations")
-def api_ctrl_operations(cid: str):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    return {"operations": list(_ctrl_ops(c).values())[-100:]}
 
 
-@app.get("/api/controllers/{cid}/inference-activity")
-def api_ctrl_inference_activity(cid: str):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    return _inference_snapshot(c)
 
 
-@app.get("/api/controllers/{cid}/inference-history")
-def api_ctrl_inference_history(cid: str, limit: int = Query(20, ge=1, le=100),
-                               detail: bool = Query(False)):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    return {"history": _load_inference_history(c, limit=limit, include_detail=detail),
-            "archive_dir": os.path.join(INFERENCE_ARCHIVE_DIR, _safe_slug(c.get("id")))}
 
 
-@app.get("/api/controllers/{cid}/logs")
-def api_ctrl_logs(cid: str, tail_lines: int = Query(200, alias="tail")):
-    _ensure_local_slots()
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    lines = max(20, min(1000, int(tail_lines or 200)))
-    log = tail(_master_log_path(c), lines)
-    return {
-        "controller_id": cid,
-        "phase": _ctrl_phase(c),
-        "master_port": c.get("master_port"),
-        "master_running": _proc_alive(c.get("master")),
-        "log_path": _master_log_path(c),
-        "log": log,
-        "master_progress": _parse_master_progress(log),
-        "inference_activity": _inference_snapshot(c),
-    }
 
 
-@app.get("/api/controllers/{cid}/load-diagnostics")
-def api_ctrl_load_diagnostics(cid: str):
-    """List persisted diagnostic bundles for a controller's load attempts."""
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    root = os.path.join(LOAD_DIAGNOSTICS_DIR, _safe_slug(cid))
-    bundles = []
-    for path in sorted(glob.glob(os.path.join(root, "*")), reverse=True):
-        if not os.path.isdir(path):
-            continue
-        bundles.append({
-            "id": os.path.basename(path),
-            "path": path,
-            "files": sorted(os.path.relpath(p, path) for p in glob.glob(os.path.join(path, "**", "*"), recursive=True) if os.path.isfile(p)),
-        })
-    return {"controller_id": cid, "active": c.get("load_diagnostic_dir"), "bundles": bundles[:20]}
 
 
-@app.get("/api/controllers/{cid}/load-diagnostics/{bundle}/{artifact:path}")
-def api_ctrl_load_diagnostic_file(cid: str, bundle: str, artifact: str):
-    root = os.path.abspath(os.path.join(LOAD_DIAGNOSTICS_DIR, _safe_slug(cid), _safe_slug(bundle)))
-    target = os.path.abspath(os.path.join(root, artifact))
-    if os.path.commonpath((root, target)) != root or not os.path.isfile(target):
-        raise HTTPException(404, "diagnostic artifact not found")
-    return FileResponse(target, filename=os.path.basename(target))
 
 
-async def _unload_ctrl(c, reason="requested"):
-    _reset_inference_activity(c, "unload")
-    runtime_mode = normalize_runtime_mode((c.get("plan") or {}).get("runtime_mode"))
-    if runtime_mode != LLAMA_RPC:
-        c.update(phase="unloading", detail="stopping selected runtime")
-        return await unload_selected_runtime(runtime_mode, c, reason)
-    c.update(phase="unloading", detail="stopping master")
-    op = _record_ctrl_op(c, "unload", "unloading", "running", 10.0, "stopping master",
-                         model=c.get("model"), details={"reason": reason})
-    _kill(c.get("master")); c["master"] = None
-    unload_results = []
-    node_ids = list(c["nodes"])
-    total = max(1, len(node_ids))
-    for idx, nid in enumerate(node_ids, start=1):
-        n = NODES.get(nid)
-        if not n:
-            unload_results.append({"node_id": nid, "status": "missing", "message": "node not found"})
-            continue
-        node_name = n.get("name") or nid
-        node_op_id = f"{op['op_id']}-{nid}"
-        progress = 10.0 + (idx - 1) / total * 80.0
-        _record_ctrl_op(c, "unload", "node_unloading", "running", progress,
-                        f"unloading {node_name}", op_id=node_op_id, node_id=nid,
-                        model=c.get("model"), details={"node_kind": n.get("kind", "local")})
-        if n.get("kind") == "local":
-            _kill(n.get("worker")); n["worker"] = None
-            n["worker_running"] = False
-            n["desired_load"] = None
-            n["ram_used"] = 0.0
-            result = {"node_id": nid, "name": node_name, "kind": "local", "status": "done",
-                      "message": "local worker stopped"}
-            _record_ctrl_op(c, "unload", "node_unloaded", "done", progress + 80.0 / total,
-                            result["message"], op_id=node_op_id, node_id=nid, model=c.get("model"))
-        elif n.get("kind") == "agent":
-            try:
-                await _stop_agent_worker_confirmed(
-                    n, "/control/unload",
-                    model_to_dict(UnloadRequest(op_id=f"{op['op_id']}-{nid}", reason=reason)))
-                n["ram_used"] = 0.0
-                result = {"node_id": nid, "name": node_name, "kind": "agent", "status": "done",
-                          "message": "agent RPC worker exit confirmed"}
-                _record_ctrl_op(c, "unload", "node_unloaded", "done", progress + 80.0 / total,
-                                result["message"], op_id=node_op_id, node_id=nid, model=c.get("model"))
-            except Exception as exc:
-                result = {"node_id": nid, "name": node_name, "kind": "agent", "status": "error",
-                          "message": str(exc)}
-                _record_ctrl_op(c, "unload", "node_unload_error", "error", 50.0,
-                                "node unload failed", node_id=nid, error=str(exc))
-        elif n.get("kind") == "remote_unit_node":
-            try:
-                await _stop_remote_unit_worker(n, reason)
-                n["worker_running"] = False
-                n["desired_load"] = None
-                n["ram_used"] = 0.0
-                result = {"node_id": nid, "name": node_name, "kind": "remote_unit_node", "status": "done",
-                          "message": "remote unit worker stopped"}
-                _record_ctrl_op(c, "unload", "node_unloaded", "done", progress + 80.0 / total,
-                                result["message"], op_id=node_op_id, node_id=nid, model=c.get("model"))
-            except Exception as exc:
-                result = {"node_id": nid, "name": node_name, "kind": "remote_unit_node", "status": "error",
-                          "message": str(exc)}
-                _record_ctrl_op(c, "unload", "node_unload_error", "error", 50.0,
-                                "remote unit worker stop failed", node_id=nid, error=str(exc))
-        else:
-            result = {"node_id": nid, "name": node_name, "kind": n.get("kind", "remote"),
-                      "status": "skipped", "message": "node is not managed by this controller"}
-            _record_ctrl_op(c, "unload", "node_skipped", "done", progress + 80.0 / total,
-                            result["message"], op_id=node_op_id, node_id=nid, model=c.get("model"))
-        unload_results.append(result)
-    failed = [item for item in unload_results if item.get("status") == "error"]
-    if failed:
-        _record_ctrl_op(c, "unload", "unload_incomplete", "error", 100.0,
-                        "unload incomplete; one or more workers remain active",
-                        op_id=op["op_id"], model=c.get("model"), details={"nodes": unload_results})
-        c.update(phase="error", detail="unload incomplete; retry after checking failed nodes")
-        _persist_hub_state()
-        return {"stopped": False, "nodes": unload_results,
-                "operations": list(_ctrl_ops(c).values())[-50:],
-                "cleared": {"plan": False, "operations": False}}
-    _record_ctrl_op(c, "unload", "unloaded", "done", 100.0, "unload complete",
-                    op_id=op["op_id"], model=c.get("model"))
-    final_operations = list(_ctrl_ops(c).values())[-50:]
-    c.update(model=None, phase="idle", detail="", plan=None)
-    c["operations"] = {}
-    _persist_hub_state()
-    return {"stopped": True, "nodes": unload_results, "operations": final_operations,
-            "cleared": {"plan": True, "operations": True}}
 
 
-@app.post("/api/controllers/{cid}/unload")
-async def api_ctrl_unload(cid: str, req: UnloadRequest = None):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    req = req or UnloadRequest()
-    return await _unload_ctrl(c, req.reason)
 
 
-@app.post("/api/controllers/{cid}/stop")
-async def api_ctrl_stop(cid: str):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    return await _unload_ctrl(c, "stop")
 
 
 # ------------------------------- gateway (per controller) -----------------
-async def _master_chat(port, payload):
-    async with httpx.AsyncClient(timeout=None) as c:
-        r = await c.post(f"http://127.0.0.1:{port}/v1/chat/completions", json=payload)
-        r.raise_for_status()
-        return r.json()
 
 
-async def _read_json_body(req):
-    try:
-        return await req.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(400, f"invalid JSON body: {exc.msg}") from exc
 
 
-def _normalize_generation_limits(body):
-    normalized = dict(body)
-    requested = normalized.get("max_tokens")
-    key = "max_tokens"
-    if requested is None and "max_output_tokens" in normalized:
-        requested = normalized.get("max_output_tokens")
-        key = "max_output_tokens"
-    try:
-        requested_int = int(requested) if requested is not None else DEFAULT_COMPLETION_TOKENS
-    except Exception:
-        requested_int = DEFAULT_COMPLETION_TOKENS
-    max_allowed = max(1, MAX_COMPLETION_TOKENS)
-    effective = max(1, min(requested_int, max_allowed))
-    normalized[key] = effective
-    limit_info = {
-        "requested_max_tokens": requested,
-        "effective_max_tokens": effective,
-        "max_completion_tokens": max_allowed,
-        "capped": requested_int != effective,
-    }
-    return normalized, limit_info
 
 
-def _need_running(cid):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    _require_controller_runtime(c)
-    if _ctrl_phase(c) != "running":
-        raise HTTPException(503, f"model not ready (phase: {c['phase']} {c['detail']})")
-    return c
 
 
-def _need_controller(cid):
-    c = CTRLS.get(cid)
-    if not c:
-        raise HTTPException(404, "unknown controller")
-    return c
 
 
-def _controller_served_model(c):
-    return c.get("model") if _ctrl_phase(c) == "running" else None
 
 
-def _model_created(model_id):
-    try:
-        path = model_id if os.path.isabs(model_id) else os.path.join(MODEL_DIR, model_id)
-        path = os.path.abspath(path)
-        root = os.path.abspath(MODEL_DIR)
-        if (path == root or path.startswith(root + os.sep)) and os.path.exists(path):
-            return int(os.path.getmtime(path))
-    except Exception:
-        pass
-    return 0
 
 
-def _openai_model_list(model_id):
-    data = []
-    if model_id:
-        data.append({
-            "id": model_id,
-            "object": "model",
-            "created": _model_created(model_id),
-            "owned_by": "linkcpp",
-        })
-    return {"object": "list", "data": data}
 
 
-def _anthropic_model_list(model_id):
-    data = []
-    if model_id:
-        created = _model_created(model_id)
-        data.append({
-            "type": "model",
-            "id": model_id,
-            "display_name": os.path.splitext(os.path.basename(model_id))[0] or model_id,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created)),
-        })
-    return {
-        "data": data,
-        "has_more": False,
-        "first_id": data[0]["id"] if data else None,
-        "last_id": data[-1]["id"] if data else None,
-    }
 
 
 def _inference_tracker(c):
@@ -5690,40 +2605,8 @@ def _safe_slug(value):
     return slug[:80] or "unknown"
 
 
-def _json_safe(value):
-    try:
-        json.dumps(value)
-        return value
-    except Exception:
-        return str(value)
 
 
-def _node_archive_snapshot(c):
-    rows = []
-    for nid in c.get("nodes", []):
-        n = NODES.get(nid)
-        if not n:
-            rows.append({"id": nid, "missing": True})
-            continue
-        rows.append({
-            "id": n.get("id"),
-            "name": n.get("name"),
-            "kind": n.get("kind", "local"),
-            "gpu_name": n.get("gpu_name"),
-            "vram_budget_gib": n.get("vram"),
-            "ram_budget_gib": n.get("ram"),
-            "rpc_endpoint": _node_rpc_endpoint(n),
-            "remote_unit_id": n.get("remote_unit_id"),
-            "remote_unit_name": n.get("remote_unit_name"),
-            "remote_unit_url": n.get("remote_unit_url"),
-            "remote_controller_id": n.get("remote_controller_id"),
-            "remote_controller_name": n.get("remote_controller_name"),
-            "remote_source_node_id": n.get("remote_source_node_id"),
-            "remote_source_rpc_endpoint": n.get("remote_source_rpc_endpoint"),
-            "runtime": _node_runtime(n),
-            "backend": _node_backend(n),
-        })
-    return rows
 
 
 def _parse_rpc_activity_text(log_text):
@@ -5929,11 +2812,6 @@ def _node_runtime_status(c, item, placement, master_task=None):
     return status
 
 
-def _archive_path_for_inference(c, item):
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(item.get("created_at", time.time())))
-    day = time.strftime("%Y%m%d", time.gmtime(item.get("created_at", time.time())))
-    name = f"{stamp}_seq-{item.get('seq', 0):04d}_{_safe_slug(item.get('kind'))}_{_safe_slug(item.get('id'))}.json"
-    return os.path.join(INFERENCE_ARCHIVE_DIR, _safe_slug(c.get("id")), day, name)
 
 
 def _edge_cross_host(source_endpoint, target_endpoint):
@@ -6187,39 +3065,6 @@ def _sample_inference(c, item, usage=None, timings=None, finish_reason=None, mas
     return metrics
 
 
-def _record_stream_chunk(c, item, raw):
-    text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
-    buf = item.get("sse_buffer", "") + text
-    lines = buf.splitlines(keepends=True)
-    item["sse_buffer"] = ""
-    for line in lines:
-        if not line.endswith("\n") and not line.endswith("\r"):
-            item["sse_buffer"] += line
-            continue
-        line = line.strip()
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].strip()
-        if not data or data == "[DONE]":
-            continue
-        try:
-            chunk = json.loads(data)
-        except Exception:
-            continue
-        choice = (chunk.get("choices") or [{}])[0]
-        delta = ((choice.get("delta") or {}).get("content")
-                 or (choice.get("message") or {}).get("content") or "")
-        if delta:
-            item["output_events"] = int(item.get("output_events") or 0) + 1
-            item["output_chars"] = int(item.get("output_chars") or 0) + len(delta)
-        if choice.get("finish_reason"):
-            item["finish_reason"] = choice.get("finish_reason")
-        if chunk.get("usage"):
-            item["usage"] = chunk.get("usage") or {}
-        if chunk.get("timings"):
-            item["timings"] = chunk.get("timings") or {}
-        _sample_inference(c, item, usage=item.get("usage"), timings=item.get("timings"),
-                          finish_reason=item.get("finish_reason"))
 
 
 def _inference_record_detail(record):
@@ -6281,67 +3126,6 @@ def _load_inference_history(c, limit=20, include_detail=False):
     return out
 
 
-def _persist_inference_record(c, item, status, message, error=None, usage=None, timings=None,
-                              finish_reason=None, limits=None):
-    metrics = _sample_inference(c, item, usage=usage, timings=timings, finish_reason=finish_reason)
-    finished = time.time()
-    path = _archive_path_for_inference(c, item)
-    active = []
-    plan = c.get("plan") or {}
-    for p in _plan_placements(c):
-        if p.get("node_id"):
-            active.append((p.get("node_id"), p))
-    record = {
-        "schema_version": 1,
-        "request_id": item.get("id"),
-        "seq": item.get("seq"),
-        "kind": item.get("kind"),
-        "status": status,
-        "message": message,
-        "error": error,
-        "created_at": item.get("created_at"),
-        "started_at": item.get("started_at"),
-        "finished_at": finished,
-        "duration_s": round(finished - item.get("created_at", finished), 3),
-        "controller": {
-            "id": c.get("id"),
-            "name": c.get("name"),
-            "parallel": c.get("parallel"),
-            "master_port": c.get("master_port"),
-        },
-        "model": c.get("model"),
-        "request": {
-            "stream": bool(item.get("stream")),
-            "prompt_chars": item.get("prompt_chars"),
-            "max_tokens": item.get("max_tokens"),
-            "limits": limits or item.get("limits") or {},
-        },
-        "plan": plan,
-        "nodes": _node_archive_snapshot(c),
-        "rpc_topology": _rpc_topology(c, active) if active else [],
-        "usage": usage or item.get("usage") or {},
-        "timings": timings or item.get("timings") or {},
-        "finish_reason": finish_reason or item.get("finish_reason"),
-        "metrics": metrics,
-        "samples": item.get("samples") or [],
-        "archive_path": path,
-    }
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(_json_safe(record), f, ensure_ascii=False, indent=2, sort_keys=True)
-        item["record_path"] = path
-        state = _inference_tracker(c)
-        history = state.setdefault("history", [])
-        history.insert(0, _inference_record_summary(record, include_detail=True))
-        del history[50:]
-        _log_event("inference_record_persisted", controller_id=c.get("id"),
-                   request_id=item.get("id"), path=path, status=status,
-                   output_tokens=metrics.get("output_tokens"), tps=metrics.get("tps"))
-    except Exception as exc:
-        _log_event("inference_record_persist_failed", controller_id=c.get("id"),
-                   request_id=item.get("id"), path=path, error=str(exc))
-    return path
 
 
 def _inference_snapshot(c):
@@ -6373,64 +3157,12 @@ def _inference_snapshot(c):
             "archive_dir": os.path.join(INFERENCE_ARCHIVE_DIR, _safe_slug(c.get("id")))}
 
 
-def _new_inference_item(c, kind, body, stream=False):
-    state = _inference_tracker(c)
-    state["seq"] += 1
-    item = {
-        "id": "inference-" + uuid.uuid4().hex[:10],
-        "seq": state["seq"],
-        "kind": kind,
-        "status": "queued",
-        "phase": "queued",
-        "progress": 0.0,
-        "message": f"{kind} request queued",
-        "model": c.get("model"),
-        "stream": bool(stream),
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "slot_acquired": False,
-        "prompt_chars": _payload_size_hint(body),
-        "max_tokens": body.get("max_tokens") or body.get("max_output_tokens"),
-        "output_events": 0,
-        "output_chars": 0,
-        "samples": [],
-        "metrics": {},
-        "plan_snapshot": c.get("plan") or {},
-        "node_snapshot": _node_archive_snapshot(c),
-    }
-    state["items"][item["id"]] = item
-    _log_event("inference_request_queued", controller_id=c.get("id"), request_id=item["id"],
-               kind=kind, parallel_limit=state["limit"], stream=bool(stream))
-    return item
 
 
-def _payload_size_hint(body):
-    try:
-        return len(json.dumps(body.get("messages") or body.get("input") or "", ensure_ascii=False))
-    except Exception:
-        return 0
 
 
-async def _acquire_inference_slot(c, item):
-    state = _inference_tracker(c)
-    # Creating an asyncio primitive while rendering a synchronous API response
-    # fails on Python 3.9 when no event loop is installed. Create it only in
-    # the request coroutine that will own and use it.
-    if state.get("semaphore") is None:
-        state["semaphore"] = asyncio.Semaphore(state["limit"])
-    await state["semaphore"].acquire()
-    item["slot_acquired"] = True
-    item.update(status="running", phase="master_request", progress=20.0,
-                message="forwarded to llama-server master", started_at=time.time(),
-                updated_at=time.time())
-    _log_event("inference_request_started", controller_id=c.get("id"), request_id=item["id"],
-               kind=item.get("kind"), queue_wait_s=round(item["started_at"] - item["created_at"], 3))
 
 
-def _mark_inference_streaming(c, item):
-    item.update(status="streaming", phase="streaming", progress=50.0,
-                message="streaming response from master", updated_at=time.time())
-    _log_event("inference_request_streaming", controller_id=c.get("id"), request_id=item["id"])
 
 
 # Per-node inference contribution (runtime-only). The settlement gateway polls
@@ -6448,68 +3180,8 @@ SHARD_SCARCITY_ALPHA = float(os.environ.get("LINKCPP_SHARD_SCARCITY_ALPHA", "1.0
 SHARD_SCARCITY_MAX = float(os.environ.get("LINKCPP_SHARD_SCARCITY_MAX", "2.0") or 2.0)
 
 
-def _window_scarcity_multiplier(model, layers):
-    """Reward for covering a thin segment: 1.0 when a node's window is at/above
-    the target replica count, rising toward SHARD_SCARCITY_MAX as coverage of
-    that window gets scarcer. Uses the live coverage map, so the sole coverer of
-    an otherwise-uncovered segment earns the most."""
-    if not SHARD_SCARCITY_REWARD or not layers or len(layers) != 2:
-        return 1.0
-    name = os.path.basename(str(model or ""))
-    mid = (int(layers[0]) + int(layers[1])) // 2
-    for entry in _shard_coverage():
-        if os.path.basename(entry["model"]) != name:
-            continue
-        for seg in entry["segments"]:
-            if seg["layers"][0] <= mid < seg["layers"][1]:
-                mult = 1.0 + SHARD_SCARCITY_ALPHA * seg["scarcity"]
-                return round(min(SHARD_SCARCITY_MAX, mult), 3)
-    return 1.0
 
 
-def _credit_node_contribution(c, item):
-    """On a completed inference, split the output tokens across the participating
-    nodes by their layer share and accumulate per-node contribution units. Each node
-    is credited to its own owner wallet if it reported one, else the hub operator.
-    With LINKCPP_SHARD_SCARCITY_REWARD, units are scaled by a scarcity multiplier
-    so nodes that fill thin shard segments earn more."""
-    tokens = _usage_output_tokens(item.get("usage"))
-    if tokens is None:
-        tokens = (item.get("metrics") or {}).get("output_tokens")
-    tokens = int(tokens or 0)
-    if tokens <= 0:
-        return
-    placements = _plan_placements(c)
-    total = sum(int(p.get("n_layers") or 0) for p in placements)
-    if total <= 0:
-        return
-    tps = (item.get("metrics") or {}).get("tps")
-    model = c.get("model") or c.get("serving")
-    for p in placements:
-        nid = p.get("node_id")
-        nlay = int(p.get("n_layers") or 0)
-        if not nid or nlay <= 0:
-            continue
-        node = _placement_node(c, p) or {}
-        owner = (node.get("owner") or "").strip() or OPERATOR_WALLET
-        if not owner:
-            continue  # node has no owner and no hub operator wallet => can't credit
-        backend = node.get("backend")
-        backend_kind = backend.get("backend_kind") if isinstance(backend, dict) else backend
-        scarcity_mult = _window_scarcity_multiplier(model, p.get("layers"))
-        rec = CONTRIBUTIONS.setdefault(nid, {"node_id": nid, "units": 0.0})
-        # layer-weighted (1 unit == 1k tokens), optionally scaled by shard scarcity
-        rec["units"] += (tokens / 1000.0) * (nlay / total) * scarcity_mult
-        rec["scarcity_multiplier"] = scarcity_mult
-        rec["owner"] = owner
-        rec["model"] = model
-        rec["node_name"] = p.get("node_name") or node.get("name") or nid
-        rec["backend"] = backend_kind
-        rec["os"] = (node.get("host_platform") or {}).get("system") or node.get("os")
-        rec["accelerator"] = "gpu"
-        rec["device_kind"] = node.get("kind") or "node"
-        if tps is not None:
-            rec["perf_tps"] = tps
 
 
 @app.get("/api/contributions")
@@ -6519,230 +3191,55 @@ def api_contributions():
     return {"contributions": list(CONTRIBUTIONS.values())}
 
 
-def _finish_inference(c, item, status="done", message="complete", error=None, usage=None,
-                      timings=None, finish_reason=None, limits=None):
-    if item.get("slot_acquired"):
-        state = _inference_tracker(c)
-        state["semaphore"].release()
-        item["slot_acquired"] = False
-    item.update(status=status, phase="complete" if status == "done" else "error",
-                progress=100.0 if status == "done" else 0.0,
-                message=message, error=error, usage=usage or item.get("usage") or {},
-                timings=timings or item.get("timings") or {},
-                finish_reason=finish_reason or item.get("finish_reason"),
-                updated_at=time.time())
-    _persist_inference_record(c, item, status, message, error=error, usage=item.get("usage"),
-                              timings=item.get("timings"), finish_reason=item.get("finish_reason"),
-                              limits=limits)
-    if status == "done":
-        try:
-            _credit_node_contribution(c, item)
-        except Exception:
-            logging.getLogger("linkcpp").warning("node contribution credit failed", exc_info=True)
-    duration = round(item["updated_at"] - item["created_at"], 3)
-    _log_event("inference_request_finished", controller_id=c.get("id"), request_id=item["id"],
-               status=status, duration_s=duration, error=error,
-               tps=(item.get("metrics") or {}).get("tps"),
-               output_tokens=(item.get("metrics") or {}).get("output_tokens"),
-               record_path=item.get("record_path"))
-    state = _inference_tracker(c)
-    state["items"].pop(item["id"], None)
 
 
-@app.get("/c/{cid}/v1/models")
-async def gw_openai_models(cid: str):
-    c = _need_controller(cid)
-    return _openai_model_list(_controller_served_model(c))
 
 
-@app.post("/c/{cid}/v1/chat/completions")
-async def gw_chat(cid: str, req: Request):
-    c = _need_running(cid)
-    raw_body = await _read_json_body(req)
-    body, limits = _normalize_generation_limits(raw_body)
-    item = _new_inference_item(c, "chat", body, stream=bool(body.get("stream")))
-    item["limits"] = limits
-    inf_id = item["id"]
-    _record_ctrl_op(c, "inference", "queued", "running", 0.0, "chat request queued",
-                    op_id=inf_id, model=c.get("model"),
-                    details={"nodes": c["nodes"], "stream": bool(body.get("stream")), **limits})
-    _log_event("inference_gateway_request", controller_id=c.get("id"), request_id=inf_id,
-               kind="chat", **_request_log_fields(body), **limits)
-    if body.get("stream"):
-        async def gen():
-            started = time.time()
-            try:
-                await _acquire_inference_slot(c, item)
-                _mark_inference_streaming(c, item)
-                _record_ctrl_op(c, "inference", "streaming", "running", 20.0,
-                                "streaming chat request", op_id=inf_id, model=c.get("model"))
-                async for line in runtime_stream_chat(c, body, request_id=inf_id):
-                    _record_stream_chunk(c, item, line)
-                    yield line
-                _record_ctrl_op(c, "inference", "complete", "done", 100.0,
-                                "stream complete", op_id=inf_id, model=c.get("model"),
-                                details={"duration_s": round(time.time() - started, 3),
-                                         "usage": item.get("usage", {}),
-                                         "timings": item.get("timings", {}),
-                                         "finish_reason": item.get("finish_reason"),
-                                         "metrics": item.get("metrics", {}), **limits})
-                _finish_inference(c, item, "done", "stream complete",
-                                  usage=item.get("usage"), timings=item.get("timings"),
-                                  finish_reason=item.get("finish_reason"), limits=limits)
-            except asyncio.CancelledError:
-                _record_ctrl_op(c, "inference", "canceled", "canceled", 0.0,
-                                "stream client disconnected", op_id=inf_id, model=c.get("model"),
-                                details={"metrics": item.get("metrics", {}), **limits})
-                _finish_inference(c, item, "canceled", "stream client disconnected",
-                                  error="client disconnected", usage=item.get("usage"),
-                                  timings=item.get("timings"), finish_reason=item.get("finish_reason"),
-                                  limits=limits)
-                raise
-            except Exception as exc:
-                _record_ctrl_op(c, "inference", "error", "error", 0.0,
-                                "stream failed", op_id=inf_id, model=c.get("model"), error=str(exc),
-                                details={"metrics": item.get("metrics", {}), **limits})
-                _finish_inference(c, item, "error", "stream failed", error=str(exc),
-                                  usage=item.get("usage"), timings=item.get("timings"),
-                                  finish_reason=item.get("finish_reason"), limits=limits)
-                raise
-        return StreamingResponse(gen(), media_type="text/event-stream")
-    started = time.time()
-    try:
-        await _acquire_inference_slot(c, item)
-        out = await runtime_chat(c, body, request_id=inf_id)
-        choice = (out.get("choices") or [{}])[0]
-        finish_reason = choice.get("finish_reason")
-        timings = out.get("timings") or {}
-        usage = out.get("usage", {})
-        metrics = _sample_inference(c, item, usage=usage, timings=timings, finish_reason=finish_reason)
-        _record_ctrl_op(c, "inference", "complete", "done", 100.0,
-                        "chat complete", op_id=inf_id, model=c.get("model"),
-                        details={"duration_s": round(time.time() - started, 3), "usage": usage,
-                                 "timings": timings, "finish_reason": finish_reason,
-                                 "metrics": metrics, **limits})
-        _finish_inference(c, item, "done", "chat complete", usage=usage,
-                          timings=timings, finish_reason=finish_reason, limits=limits)
-        return JSONResponse(out)
-    except Exception as exc:
-        _record_ctrl_op(c, "inference", "error", "error", 0.0,
-                        "chat failed", op_id=inf_id, model=c.get("model"), error=str(exc),
-                        details={"metrics": item.get("metrics", {}), **limits})
-        _finish_inference(c, item, "error", "chat failed", error=str(exc),
-                          usage=item.get("usage"), timings=item.get("timings"),
-                          finish_reason=item.get("finish_reason"), limits=limits)
-        raise
 
 
-@app.post("/c/{cid}/v1/responses")
-async def gw_responses(cid: str, req: Request):
-    c = _need_running(cid)
-    body = await _read_json_body(req)
-    item = _new_inference_item(c, "responses", body)
-    inf_id = item["id"]
-    _record_ctrl_op(c, "inference", "running", "running", 20.0,
-                    "responses request running", op_id=inf_id, model=c.get("model"),
-                    details={"nodes": c["nodes"]})
-    msgs = []
-    if body.get("instructions"):
-        msgs.append({"role": "system", "content": body["instructions"]})
-    inp = body.get("input", "")
-    if isinstance(inp, str):
-        msgs.append({"role": "user", "content": inp})
-    else:
-        for it in inp:
-            ct = it.get("content", "")
-            if isinstance(ct, list):
-                ct = "".join(p.get("text", "") for p in ct)
-            msgs.append({"role": it.get("role", "user"), "content": ct})
-    started = time.time()
-    try:
-        await _acquire_inference_slot(c, item)
-        chat = await runtime_chat(c, {"messages": msgs,
-                "temperature": body.get("temperature", 1.0), "max_tokens": body.get("max_output_tokens", 256)},
-                request_id=inf_id)
-        choice = (chat.get("choices") or [{}])[0]
-        text = choice["message"]["content"]
-        usage = chat.get("usage", {})
-        timings = chat.get("timings") or {}
-        finish_reason = choice.get("finish_reason")
-        metrics = _sample_inference(c, item, usage=usage, timings=timings, finish_reason=finish_reason)
-        _record_ctrl_op(c, "inference", "complete", "done", 100.0,
-                        "responses request complete", op_id=inf_id, model=c.get("model"),
-                        details={"duration_s": round(time.time() - started, 3), "usage": usage,
-                                 "timings": timings, "finish_reason": finish_reason, "metrics": metrics})
-        _finish_inference(c, item, "done", "responses request complete", usage=usage,
-                          timings=timings, finish_reason=finish_reason)
-        return {"id": "resp_" + uuid.uuid4().hex, "object": "response", "created_at": int(time.time()),
-                "model": c["model"], "status": "completed",
-                "output": [{"id": "msg_" + uuid.uuid4().hex, "type": "message", "role": "assistant",
-                            "content": [{"type": "output_text", "text": text}]}],
-                "output_text": text, "usage": chat.get("usage", {})}
-    except Exception as exc:
-        _record_ctrl_op(c, "inference", "error", "error", 0.0,
-                        "responses request failed", op_id=inf_id, model=c.get("model"), error=str(exc))
-        _finish_inference(c, item, "error", "responses request failed", error=str(exc),
-                          usage=item.get("usage"), timings=item.get("timings"),
-                          finish_reason=item.get("finish_reason"))
-        raise
 
 
-@app.get("/c/{cid}/anthropic/v1/models")
-async def gw_anthropic_models(cid: str):
-    c = _need_controller(cid)
-    return _anthropic_model_list(_controller_served_model(c))
 
 
-@app.post("/c/{cid}/anthropic/v1/messages")
-async def gw_anthropic(cid: str, req: Request):
-    c = _need_running(cid)
-    body = await _read_json_body(req)
-    item = _new_inference_item(c, "anthropic", body)
-    inf_id = item["id"]
-    _record_ctrl_op(c, "inference", "running", "running", 20.0,
-                    "anthropic request running", op_id=inf_id, model=c.get("model"),
-                    details={"nodes": c["nodes"]})
-    msgs = []
-    if body.get("system"):
-        msgs.append({"role": "system", "content": body["system"]})
-    for m in body.get("messages", []):
-        ct = m["content"]
-        if isinstance(ct, list):
-            ct = "".join(b.get("text", "") for b in ct if b.get("type") == "text")
-        msgs.append({"role": m["role"], "content": ct})
-    started = time.time()
-    try:
-        await _acquire_inference_slot(c, item)
-        chat = await runtime_chat(c, {"messages": msgs,
-                "max_tokens": body.get("max_tokens", 256), "temperature": body.get("temperature", 1.0)},
-                request_id=inf_id)
-        choice = (chat.get("choices") or [{}])[0]
-        text = choice["message"]["content"]; u = chat.get("usage", {})
-        timings = chat.get("timings") or {}
-        finish_reason = choice.get("finish_reason")
-        metrics = _sample_inference(c, item, usage=u, timings=timings, finish_reason=finish_reason)
-        _record_ctrl_op(c, "inference", "complete", "done", 100.0,
-                        "anthropic request complete", op_id=inf_id, model=c.get("model"),
-                        details={"duration_s": round(time.time() - started, 3), "usage": u,
-                                 "timings": timings, "finish_reason": finish_reason, "metrics": metrics})
-        _finish_inference(c, item, "done", "anthropic request complete", usage=u,
-                          timings=timings, finish_reason=finish_reason)
-        return {"id": "msg_" + uuid.uuid4().hex, "type": "message", "role": "assistant", "model": c["model"],
-                "content": [{"type": "text", "text": text}], "stop_reason": "end_turn",
-                "usage": {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}}
-    except Exception as exc:
-        _record_ctrl_op(c, "inference", "error", "error", 0.0,
-                        "anthropic request failed", op_id=inf_id, model=c.get("model"), error=str(exc))
-        _finish_inference(c, item, "error", "anthropic request failed", error=str(exc),
-                          usage=item.get("usage"), timings=item.get("timings"),
-                          finish_reason=item.get("finish_reason"))
-        raise
 
 
 # ------------------------------- web UI -----------------------------------
+@app.get("/health")
+def health():
+    """Liveness only — deliberately does not probe linker, so a control-plane
+    outage does not make the container look dead and get restarted."""
+    return {"ok": True}
+
+
 @app.get("/")
 def index():
     return FileResponse(os.path.join(WEB_DIR, "hub.html"))
+
+
+# ----------------------------- linker UI ----------------------------------
+# The gateway menu opens this in a new window, full screen. Linker's SPA is
+# served as-is: its assets are absolute (/assets/...) and the gateway's own UI
+# lives under /web/, so the two never collide and no HTML rewriting is needed.
+# The app carries no client-side router, so a single entry point is enough.
+@app.get("/linker")
+async def linker_ui(request: Request):
+    return await linker_client.proxy(request, "/")
+
+
+@app.get("/assets/{path:path}")
+async def linker_assets(request: Request, path: str):
+    return await linker_client.proxy(request, "/assets/" + path)
+
+
+# Linker's SPA opens this against window.location.host, i.e. the gateway.
+@app.websocket("/api/events")
+async def linker_events(ws: WebSocket):
+    await linker_client.relay_websocket(ws, "/api/events")
+
+
+@app.on_event("shutdown")
+async def _close_linker_client():
+    await linker_client.aclose()
 
 
 app.mount("/web", StaticFiles(directory=WEB_DIR), name="web")

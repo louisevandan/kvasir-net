@@ -1,9 +1,12 @@
 services:
   hub:
-    image: linkcpp:latest
+    image: linkcpp-gateway:latest
     build:
       context: .
-      dockerfile: docker/Dockerfile
+      # The gateway delegates all model work to linker, so it needs no CUDA and
+      # no llama.cpp. docker/Dockerfile still builds the full data plane and is
+      # what a node runtime image should use.
+      dockerfile: docker/Dockerfile.gateway
     hostname: hub
     restart: unless-stopped
     environment:
@@ -11,9 +14,43 @@ services:
       LINKCPP_DATA_DIR: /models/linkcpp
       LINKCPP_STAGE_DIR: /models/linkcpp/stage
       LINKCPP_MAX_NODES: "${LINKCPP_MAX_NODES:-5}"
+      LINKCPP_NODE_AGENT_URLS: "${LINKCPP_NODE_AGENT_URLS:-http://host.docker.internal:9101}"
+      # Control plane the gateway delegates to. Reached by service name over
+      # linker's own compose network, so linker needs no published port and
+      # stays unreachable from outside this host — the gateway is its only
+      # client, and it has no authentication of its own to fall back on.
+      LINKCPP_LINKER_URL: "${LINKCPP_LINKER_URL:-http://linker:19001}"
+      # Must equal the value linker was started with, or every delegated call 401s.
+      LINKCPP_LINKER_SERVICE_TOKEN: "${LINKCPP_LINKER_SERVICE_TOKEN:-}"
+      # Auth. The gateway is locked unless a wallet here (or a KVR balance gate)
+      # can pass it; the session it issues authorises the whole control plane,
+      # so the idle window is short and the secret must outlive a restart.
+      LINKCPP_ADMIN_WALLETS: "${LINKCPP_ADMIN_WALLETS:-}"
+      LINKCPP_SESSION_SECRET: "${LINKCPP_SESSION_SECRET:-}"
+      # Machine-to-machine token. The settlement service presents this to poll
+      # /api/contributions; without it that poll hits the session gate and 401s.
+      LINKCPP_HUB_SERVICE_TOKEN: "${LINKCPP_HUB_SERVICE_TOKEN:-}"
+      LINKCPP_SESSION_TTL: "${LINKCPP_SESSION_TTL:-300}"
+      LINKCPP_MIN_OPERATOR_KVR: "${LINKCPP_MIN_OPERATOR_KVR:-0}"
+      LINKCPP_KVR_MINT: "${LINKCPP_KVR_MINT:-}"
+      LINKCPP_SOLANA_RPC: "${LINKCPP_SOLANA_RPC:-https://api.devnet.solana.com}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      - "${LINKCPP_UI_PORT:-19000}:9000"
+      # Loopback only: the public entrance is the Cloudflare tunnel, which
+      # connects from this host. Publishing on 0.0.0.0 would put a second,
+      # unproxied door on the host's public IP.
+      - "127.0.0.1:${LINKCPP_UI_PORT:-19000}:9000"
+    networks:
+      - default
+      - linker
     volumes:
       - type: bind
         source: "${MODELS_DIR:-C:/Users/admin/.lmstudio/model}"
         target: /models
+
+networks:
+  # Created by the linkcpp-convertarchitecture project; joined, never managed.
+  linker:
+    external: true
+    name: linkcpp-convertarchitecture_linkcpp-convertarchitecture_internal

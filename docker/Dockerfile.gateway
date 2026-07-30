@@ -1,0 +1,30 @@
+# Kvasir gateway — the public entrance (auth, settlement, UI shell).
+#
+# The gateway runs no model and spawns no worker: nodes, controllers, planning,
+# model loading and inference all belong to the linker service and are reached
+# over its API (see controller/linker_client.py). So this image needs Python and
+# nothing from llama.cpp, which is why it is separate from docker/Dockerfile —
+# that one still builds the CUDA data plane and takes tens of minutes.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# websockets is a direct dependency, not just uvicorn's: the gateway bridges
+# linker's /api/events socket to the browser. gguf (and its numpy) is needed by
+# controller/proxy, which still serves stage artifacts from this side — it
+# degrades to a no-op reader when absent, which would silently weaken those
+# routes rather than fail loudly.
+RUN pip install --no-cache-dir \
+        fastapi "uvicorn[standard]" httpx websockets pydantic python-multipart \
+        gguf numpy
+
+WORKDIR /app
+COPY controller/ /app/controller/
+COPY VERSION /app/VERSION
+
+EXPOSE 9000
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=6 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3)" || exit 1
+
+ENTRYPOINT ["python", "-m", "uvicorn", "controller.hub:app", "--host", "0.0.0.0", "--port", "9000"]

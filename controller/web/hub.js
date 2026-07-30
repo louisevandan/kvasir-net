@@ -224,20 +224,65 @@ $("#runtime-menu").onclick = () => select("runtime", "overview");
 // so no menu can be opened in the window before the first status round-trip.
 let AUTH_ENABLED = true, AUTHED = false, SESSION_WALLET = null;
 function uiLocked() { return AUTH_ENABLED && !AUTHED; }
+
+// ---- idle lock ------------------------------------------------------------
+// The server expires a session after IDLE_TTL of no *user* activity. It cannot
+// measure that itself: this app polls every 2s, so anything keyed on incoming
+// requests would keep an unattended browser signed in indefinitely. So the page
+// watches real input, slides the session forward while someone is there, and
+// locks the moment the window elapses — before the cookie is even sent again.
+let IDLE_TTL = 300;               // seconds; replaced by /api/auth/status
+let lastActivity = Date.now();
+let lastTouch = 0;
+const TOUCH_EVERY = 60_000;       // renew at most once a minute while active
+
+function noteActivity() {
+  if (uiLocked()) return;         // input on the lock screen must not revive it
+  lastActivity = Date.now();
+  if (!AUTH_ENABLED || !AUTHED) return;
+  if (Date.now() - lastTouch < TOUCH_EVERY) return;
+  lastTouch = Date.now();
+  api("POST", "/api/auth/touch").catch(() => {});
+}
+["mousemove", "mousedown", "keydown", "wheel", "touchstart", "scroll"]
+  .forEach((ev) => window.addEventListener(ev, noteActivity, {passive: true, capture: true}));
+
+function idleExpired() {
+  return AUTH_ENABLED && AUTHED && (Date.now() - lastActivity) >= IDLE_TTL * 1000;
+}
+
+async function lockNow() {
+  AUTHED = false;
+  // Drop the cookie too, so a stolen tab cannot resume by moving the mouse.
+  try { await api("POST", "/api/auth/logout"); } catch (e) {}
+  applyAuthState();
+}
+
 async function checkAuth() {
+  if (idleExpired()) { await lockNow(); return false; }
   let st;
   try { st = await api("GET", "/api/auth/status"); } catch (e) { return !uiLocked(); } // status unreachable => keep current lock state
   AUTH_ENABLED = !!st.enabled;
+  if (st.idle_ttl > 0) IDLE_TTL = st.idle_ttl;
   const authed = !st.enabled || st.authenticated;
+  if (authed && !AUTHED) lastActivity = Date.now();   // fresh sign-in starts the window
   AUTHED = authed; SESSION_WALLET = st.wallet || null;
+  applyAuthState();
+  return authed;
+}
+
+// Render whatever AUTH_ENABLED/AUTHED currently say. Split out of checkAuth so
+// the idle timer can lock the screen without waiting for a status round-trip.
+function applyAuthState() {
+  const locked = AUTH_ENABLED && !AUTHED;
   const gate = $("#auth-gate");
-  if (gate) gate.classList.toggle("hidden", authed || !AUTH_ENABLED);
-  // Lock the whole app shell (sidebar + main) when sign-in is required. The header
-  // sign-in UI stays usable (it lives outside .app). UX / defense-in-depth only —
-  // the real boundary is the server (every control API returns 401 unauthenticated).
+  if (gate) gate.classList.toggle("hidden", !locked);
+  // Lock the whole app shell (sidebar + main). The header sign-in UI stays
+  // usable, since it lives outside .app. UX / defense-in-depth only — the real
+  // boundary is the server (every control API returns 401 unauthenticated).
   const app = document.querySelector(".app");
-  if (app) app.classList.toggle("locked", AUTH_ENABLED && !authed);
-  if (AUTH_ENABLED && !authed && sel.type) {
+  if (app) app.classList.toggle("locked", locked);
+  if (locked && sel.type) {
     // Session ended (or never started): close any open panel and return to Welcome.
     sel = {type: null, id: null};
     const main = $("#main");
@@ -245,8 +290,12 @@ async function checkAuth() {
   }
   hwInit();
   hwRenderAuthState();
-  if (AUTH_ENABLED && !authed) walletSetOpen(true); // nudge the operator to sign in
-  return authed;
+  const idleNote = $("#auth-gate-idle");
+  if (idleNote) {
+    const mins = Math.max(1, Math.round(IDLE_TTL / 60));
+    setTextIfChanged(idleNote, `The screen locks again after ${mins} minute${mins === 1 ? "" : "s"} without activity.`);
+  }
+  if (locked) walletSetOpen(true); // nudge the operator to sign in
 }
 const b64FromBytes = (u8) => btoa(String.fromCharCode.apply(null, u8));
 // After a wallet signature verifies, the server either issues a session (reload)

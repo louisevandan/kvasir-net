@@ -32,3 +32,6 @@ docs/
 
 # Local OCI archives for platform-specific CUDA runtime artifacts.
 /artifacts/prebuilt/
+
+# Downloaded Cloudflare Tunnel binary (fetched by hand on the host, not source).
+bin/cloudflared

@@ -48,6 +48,12 @@ services:
       KVR_GATEWAY_UPTIME_PER_HOUR: "${KVR_GATEWAY_UPTIME_PER_HOUR:-1.0}"
       # The canonical URL clients should use (returned by /api/config). e.g. https://gw.example.com
       KVR_PUBLIC_URL: "${KVR_PUBLIC_URL:-}"
+      # Credit accounts (API-key path). Without these the service falls back to
+      # closed self-registration, so /api/credits/balance answers 401 for every
+      # wallet and the app's credit screen cannot recover on its own.
+      KVR_CREDIT_OPEN_REGISTER: "${KVR_CREDIT_OPEN_REGISTER:-}"
+      KVR_CREDIT_WHITELIST: "${KVR_CREDIT_WHITELIST:-}"
+      KVR_CREDIT_MIN_BALANCE: "${KVR_CREDIT_MIN_BALANCE:-0}"
       # Inline admin key alternative to the mounted file (leave empty if using the secrets volume).
       KVR_ADMIN_KEY: "${KVR_ADMIN_KEY:-}"
     volumes:
@@ -57,6 +63,13 @@ services:
       - gateway-data:/app/data
       # settlement admin key (devnet). Comment this out if you pass KVR_ADMIN_KEY inline instead.
       - ./secrets/admin.json:/run/secrets/admin.json:ro
+    networks:
+      - default
+      # The linkcpp gateway's own network, so LINKCPP_HUB_URL can name it as a
+      # service instead of routing back out through the host. fetchModelsFrom()
+      # swallows connection errors and returns [], so an unreachable hub shows
+      # up only as an empty model list in the app — not as an error anywhere.
+      - linkcpp
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8791/health"]
       interval: 30s
@@ -83,3 +96,10 @@ volumes:
   gateway-data:
   caddy-data:
   caddy-config:
+
+networks:
+  default:
+  # Created by the linkcpp gateway's compose project; joined, never managed.
+  linkcpp:
+    external: true
+    name: linkcpp_default

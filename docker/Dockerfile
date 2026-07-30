@@ -32,7 +32,7 @@ FROM ${LINKCPP_RUNTIME_IMAGE} AS hub
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip libgomp1 libcurl4 ca-certificates curl procps \
-    && pip3 install --no-cache-dir fastapi "uvicorn[standard]" httpx gguf numpy python-multipart \
+    && pip3 install --no-cache-dir fastapi "uvicorn[standard]" httpx websockets gguf numpy python-multipart \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /src/build/bin/*.so* /usr/local/lib/
 RUN ldconfig
