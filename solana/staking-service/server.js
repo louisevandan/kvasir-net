@@ -1408,6 +1408,46 @@ app.post('/api/admin/pricing/relays/remove', requireAdmin, requireLocalDesktop, 
 const CREDIT_WHITELIST = (process.env.KVR_CREDIT_WHITELIST || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const CREDIT_MIN_BALANCE = Number(process.env.KVR_CREDIT_MIN_BALANCE || 0);
+// Wallets whose API keys are served without a balance — an evaluation or partner
+// key that must work before any KVR exists. Scoped to named wallets on purpose:
+// lowering KVR_CREDIT_MIN_BALANCE instead would make *every* registered wallet
+// free, which with open self-registration is the whole world. Usage is still
+// metered and still debited (the balance simply goes negative), so what the key
+// consumed stays visible in the ledger.
+const CREDIT_UNMETERED = (process.env.KVR_CREDIT_UNMETERED_WALLETS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const creditUnmetered = (w) => CREDIT_UNMETERED.includes(w);
+// Source addresses an unmetered key may be used from. Empty => no restriction.
+//
+// An unmetered key spends nothing, so a leak has no natural ceiling — and over
+// plain HTTP (the IP-direct endpoint) the key travels in the clear. Binding it
+// to known sources means a copied key is useless from anywhere else. Metered
+// wallets are deliberately unaffected: this must not lock the wallet apps out.
+const UNMETERED_ALLOW_IPS = (process.env.KVR_CREDIT_UNMETERED_ALLOW_IPS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+/** Caller's address, preferring the socket over any forwarded header.
+ *
+ *  X-Forwarded-For is attacker-controlled on a directly-reachable port, so it
+ *  is only consulted for requests that actually arrived through the tunnel —
+ *  otherwise a spoofed header would defeat the whole check. */
+function callerIp(req) {
+  const direct = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+  const viaProxy = req.headers['cf-connecting-ip'];
+  return (viaProxy ? String(viaProxy) : direct).trim();
+}
+
+function unmeteredIpAllowed(req) {
+  if (!UNMETERED_ALLOW_IPS.length) return true;         // unset => open
+  const ip = callerIp(req);
+  if (UNMETERED_ALLOW_IPS.includes(ip)) return true;
+  // Log what was actually observed. NAT or a proxy in front can rewrite the
+  // source, so a denial that looks wrong is usually an allowlist holding the
+  // address the operator *expected* rather than the one that arrives — without
+  // this the only way to find out is to guess.
+  console.warn(`[credit] unmetered key denied: observed ip=${ip || '(none)'} allowed=${UNMETERED_ALLOW_IPS.join(',')}`);
+  return false;
+}
 // Open self-registration: any wallet that proves ownership (SIWS) adds itself to
 // the whitelist. Prepaid credits remain the real spend gate. OFF => operator
 // approves wallets via /api/admin/credits/whitelist (genesis).
@@ -1564,7 +1604,11 @@ app.post('/api/credits/deposit', async (req, res) => {
 
 // OpenAI-compatible model list (API-key auth).
 app.get('/v1/models', async (req, res) => {
-  if (!bearerWallet(req)) return res.status(401).json({ error: { message: 'invalid API key', type: 'invalid_request_error' } });
+  const mw = bearerWallet(req);
+  if (!mw) return res.status(401).json({ error: { message: 'invalid API key', type: 'invalid_request_error' } });
+  if (creditUnmetered(mw) && !unmeteredIpAllowed(req)) {
+    return res.status(403).json({ error: { message: 'key not permitted from this address', type: 'access_denied' } });
+  }
   const pool = await resolveModels();
   res.json({ object: 'list', data: pool.map((m) => ({ id: m.id, object: 'model', owned_by: 'kvasir', name: m.name })) });
 });
@@ -1631,7 +1675,11 @@ app.post('/v1/chat/completions', async (req, res) => {
   const w = bearerWallet(req);
   if (!w) return res.status(401).json({ error: { message: 'invalid API key', type: 'invalid_request_error' } });
   if (!creditWhitelisted(w)) return res.status(403).json({ error: { message: 'wallet is not whitelisted', type: 'access_denied' } });
-  if (creditAcct(loadDB(), w).balance <= CREDIT_MIN_BALANCE) {
+  if (creditUnmetered(w)) {
+    if (!unmeteredIpAllowed(req)) {
+      return res.status(403).json({ error: { message: 'key not permitted from this address', type: 'access_denied' } });
+    }
+  } else if (creditAcct(loadDB(), w).balance <= CREDIT_MIN_BALANCE) {
     return res.status(402).json({ error: { message: 'insufficient credit balance; top up', type: 'insufficient_quota' } });
   }
   const body = req.body || {};

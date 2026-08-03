@@ -54,6 +54,12 @@ services:
       KVR_CREDIT_OPEN_REGISTER: "${KVR_CREDIT_OPEN_REGISTER:-}"
       KVR_CREDIT_WHITELIST: "${KVR_CREDIT_WHITELIST:-}"
       KVR_CREDIT_MIN_BALANCE: "${KVR_CREDIT_MIN_BALANCE:-0}"
+      # Wallets served without a balance (evaluation / partner keys). Scoped to
+      # named wallets rather than lowering the minimum, which would make every
+      # self-registered wallet free.
+      KVR_CREDIT_UNMETERED_WALLETS: "${KVR_CREDIT_UNMETERED_WALLETS:-}"
+      # Source addresses an unmetered key may be used from; empty means any.
+      KVR_CREDIT_UNMETERED_ALLOW_IPS: "${KVR_CREDIT_UNMETERED_ALLOW_IPS:-}"
       # Inline admin key alternative to the mounted file (leave empty if using the secrets volume).
       KVR_ADMIN_KEY: "${KVR_ADMIN_KEY:-}"
     volumes:
