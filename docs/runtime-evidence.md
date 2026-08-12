@@ -12,10 +12,13 @@ The topology is sound. All three stages loaded, `P4_HEALTH` reported ready, and
 the first stage logged
 `op=wavefront active=8 in_flight=8 peak=8 limit=8 capacity=8`.
 
-That line is the first observation in this repository of more than one sequence
-alive in the native scheduler. Every earlier run reported `peak=1`. It confirms
-in a live run what the arrival-axis fix was meant to do, and it confirms that
-the native scheduler was never the tier that refused concurrency.
+That is the first concurrency observed since the arrival-axis regression: the
+four-node run and every run after `p4_max_inflight` was dropped from
+`node_spec` reported `peak=1`. It is not a repository first — `c1c` reached
+`peak=16` and both `c3b` and `d3` reached `peak=32` before the regression. What
+it establishes is narrower and still useful: the fix restores the width those
+earlier runs had, across hosts, and the native scheduler was never the tier
+that refused concurrency.
 
 Then `remote-3090-a`, `stage_index=1`, exited with `exit_code=3221225477`
 (`0xC0000005`, access violation) and all eight requests failed with
