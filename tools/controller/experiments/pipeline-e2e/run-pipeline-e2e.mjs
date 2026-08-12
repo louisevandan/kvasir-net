@@ -1,5 +1,4 @@
 import { ControllerInstance } from '../../client/controller-instance.mjs';
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
@@ -7,6 +6,8 @@ import { ringTopology } from '../../topology/pipeline-topology.mjs';
 import { compatibleRingCapabilities } from '../../capability/pipeline-capabilities.mjs';
 import { measuredModelLoadOptions } from '../../capability/model-load-policy.mjs';
 import { distribution, writePlan, writeSummary, writeTrace } from '../../evidence/run-evidence.mjs';
+import { startGpuTelemetry, summarizeGpuTelemetry } from '../../evidence/gpu-telemetry.mjs';
+import { buildGroupStats } from '../../evidence/pipeline-group-stats.mjs';
 
 // The owned E2E can outlive an invoking terminal. Preserve its artifacts even
 // when that terminal closes the inherited stdout pipe before the run ends.
@@ -134,30 +135,10 @@ const post = async (path, body) => {
   if (!response.ok) throw new Error(`${path} HTTP ${response.status}: ${await response.text()}`);
   return response.json();
 };
-const asText = (entry) => typeof entry === 'string' ? entry : entry?.message ?? entry?.text ?? '';
-const numericFields = (line) => Object.fromEntries([...line.matchAll(/([a-z0-9_]+)=([0-9]+(?:\.[0-9]+)?)/g)].map(([, key, value]) => [key, Number(value)]));
 const groupStats = async (groupHost = host) => {
   const response = await fetch(`${groupHost}/api/runtime-groups/${deploymentId}`);
   if (!response.ok) throw new Error(`runtime group stats HTTP ${response.status}: ${await response.text()}`);
-  const group = await response.json();
-  const stages = (group.processes ?? []).map((process, stageIndex) => {
-    const messages = (process.logs ?? []).map(asText);
-    const wire = [...messages].reverse().find((message) => message.includes('[linker_wire_summary]')) ?? '';
-    const request = [...messages].reverse().find((message) => message.includes('[linker_request_summary]')) ?? '';
-    const aggregate = [...messages].reverse().find((message) => message.includes('[linker_stage_aggregate]')) ?? '';
-    const wireStats = numericFields(wire);
-    const nodeId = process.identity?.nodeId ?? nodes[stageIndex]?.id;
-    const node = nodes.find((candidate) => candidate.id === nodeId);
-    return { stage_index: process.identity?.stageIndex ?? stageIndex, node_id: nodeId, gpu_uuid: node?.gpu_uuid, phase: process.phase, shared_memory: { sent_frames: wireStats.local_hidden_send_frames ?? 0, received_frames: wireStats.local_hidden_recv_frames ?? 0 }, wire: wireStats, request: numericFields(request), aggregate: numericFields(aggregate) };
-  });
-  const transfers = (group.observability?.transfers ?? []).map((transfer) => ({
-    request_id: transfer.request_id,
-    total_bytes: transfer.total_bytes,
-    elapsed_ms: transfer.elapsed_ms,
-    average_bytes_per_second: transfer.average_bytes_per_second,
-    source_to_destination: transfer.source_to_destination
-  }));
-  return { group_phase: group.phase, stages, transfers };
+  return buildGroupStats(await response.json(), nodes);
 };
 const controller = new ControllerInstance({ controllerId, endpoint });
 const peerController = new ControllerInstance({ controllerId: peerControllerId, endpoint });
@@ -197,43 +178,6 @@ const executeTraced = async (request) => {
   return { accepted, tokens, done, trace };
 };
 
-function startGpuTelemetry() {
-  const samples = [];
-  let pending = '';
-  const process = spawn('nvidia-smi', [
-    '--query-gpu=uuid,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw',
-    '--format=csv,noheader,nounits', '-lms', '250'
-  ], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-  process.stdout.on('data', (chunk) => {
-    const lines = `${pending}${chunk}`.split(/\r?\n/);
-    pending = lines.pop() ?? '';
-    for (const line of lines) {
-      const [uuid, gpu, memory, used, total, power] = line.split(',').map((field) => field.trim());
-      if (!uuid || ![gpu, memory, used, total, power].every((field) => Number.isFinite(Number(field)))) continue;
-      samples.push({ observed_at: new Date().toISOString(), uuid, gpu_pct: Number(gpu), memory_pct: Number(memory), memory_mib: Number(used), memory_total_mib: Number(total), power_w: Number(power) });
-    }
-  });
-  return {
-    async stop() {
-      process.kill();
-      await new Promise((resolve) => process.once('close', resolve));
-      return samples;
-    }
-  };
-}
-
-function summarizeGpuTelemetry(samples) {
-  const byGpu = new Map();
-  for (const sample of samples) byGpu.set(sample.uuid, [...(byGpu.get(sample.uuid) ?? []), sample]);
-  return [...byGpu].map(([uuid, values]) => ({
-    uuid,
-    samples: values.length,
-    gpu_pct: distribution(values.map((sample) => sample.gpu_pct)),
-    memory_pct: distribution(values.map((sample) => sample.memory_pct)),
-    memory_mib: distribution(values.map((sample) => sample.memory_mib)),
-    power_w: distribution(values.map((sample) => sample.power_w))
-  }));
-}
 try {
   let started = performance.now();
   const plan = await post('/api/plans', { model, nodes: plannerNodes, ctx: contextTokens, parallel: nativeParallel, reserve_mib: 128, cache_type_k: 'q8_0', cache_type_v: 'q8_0', loading_strategy: 'pipeline-stage-vram-only' });
@@ -379,7 +323,7 @@ try {
   }
   const gpuTraceFile = summaryFileArgument?.replace(/\.json$/i, '-gpu.jsonl');
   if (gpuTraceFile && gpuSamples.length) await writeFile(gpuTraceFile, `${gpuSamples.map((sample) => JSON.stringify(sample)).join('\n')}\n`, 'utf8');
-  const runStats = { prompt, prompt_fixture: promptSet.source, prompt_offset: promptOffset, prompt_target_tokens: promptSet.targetTokens, benchmark, benchmark_ignore_eog: benchmarkIgnoreEog, requested_max_tokens: maxTokens, parallel, concurrent_requests: concurrentRequests, execution_window: executionWindow, native_parallel: nativeParallel, batch, ubatch, model_load_options: loadOptions, stage_layers: adapterRequest.plan.placement.map((placement) => placement.layers), stage_nodes: adapterRequest.plan.placement.map((placement) => placement.node_id ?? nodes[placement.node]?.id), context_tokens: contextTokens, context_per_request_tokens: contextPerRequestTokens, generated_token_events: tokens, response_chars: text.length, p4_latency_ms: latency, ...(gpuSamples.length ? { gpu_telemetry: { trace_file: gpuTraceFile, summary: summarizeGpuTelemetry(gpuSamples) } } : {}), ...ringStats, ...(remoteRingStats ? { remote_group: remoteRingStats } : {}) };
+  const runStats = { prompt, prompt_fixture: promptSet.source, prompt_offset: promptOffset, prompt_target_tokens: promptSet.targetTokens, benchmark, benchmark_ignore_eog: benchmarkIgnoreEog, requested_max_tokens: maxTokens, parallel, concurrent_requests: concurrentRequests, execution_window: executionWindow, native_parallel: nativeParallel, batch, ubatch, model_load_options: loadOptions, stage_layers: adapterRequest.plan.placement.map((placement) => placement.layers), stage_nodes: adapterRequest.plan.placement.map((placement) => placement.node_id ?? nodes[placement.node]?.id), context_tokens: contextTokens, context_per_request_tokens: contextPerRequestTokens, generated_token_events: tokens, response_chars: text.length, p4_latency_ms: latency, ...(gpuSamples.length ? { gpu_telemetry: { trace_file: gpuTraceFile, summary: summarizeGpuTelemetry(gpuSamples, distribution) } } : {}), ...ringStats, ...(remoteRingStats ? { remote_group: remoteRingStats } : {}) };
   await writeSummary(summaryFileArgument, reportFileArgument, runStats, parallelTraces);
   console.log(`P4_PIPELINE_STATS ${JSON.stringify(runStats)}`);
   completed = true;
