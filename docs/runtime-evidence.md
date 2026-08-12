@@ -1,0 +1,326 @@
+# Runtime evidence
+
+## 2026-08-11: P4B1 v5 persistent-route and stock llama.cpp continuous-batch proof
+
+The stock E2E launched unchanged `llama-server.exe` with `parallel=8`,
+`ctx-size=8192` (1024 per slot), `batch-size=2048`, and `ubatch-size=512`.
+One Node.js process used two logical layers of multiplexing: all eight external
+ingress streams shared one Agent link, and all eight Agent execution routes
+shared one adapter link. The adapter reported its independent bounded admission
+as `max_inflight=256`, `max_queued=1024`.
+
+| Observation | Result |
+| --- | --- |
+| requested / accepted / text / `DONE` / error | 8 / 8 / 8 / 8 / 0 |
+| session IDs | eight distinct controller-issued IDs |
+| completion order | `4, 0, 2, 3, 6, 7, 5, 1`; no batch barrier |
+| llama-server slot evidence | slots `0..7` each logged `processing task` |
+| generated text | one `안녕하세요!`; seven `안녕하세요 (Annyeonghaseyo)` |
+| adapter errors | none |
+
+The raw server proof is
+[`llama-server-20260811170006.err.log`](../target/real-e2e/llama-server-20260811170006.err.log),
+and the eight adapter admissions are in
+[`p4-llamacpp-20260811170006.log`](../target/real-e2e/p4-llamacpp-20260811170006.log).
+This proves that the enlarged adapter scheduler can fill all configured stock
+server slots while preserving independently completed P4 streams. It does not
+claim that eight slots or these batch sizes are optimal for another model,
+device, or backend.
+
+A follow-up run used the explicit state-machine settings `max_batch=8` and
+`partial_linger_ms=1000`. All eight routes again emitted text and `DONE`; the
+adapter accepted eight executions and llama-server logged eight task launches.
+The deterministic scheduler tests separately held the one-second linger and
+proved both transitions: the second item completed a two-item full batch and
+dispatched it after about 20 ms, while an execution-completion cycle hint
+released a one-item partial batch without waiting for the remaining linger.
+Evidence: [`p4-llamacpp-20260811170738.log`](../target/real-e2e/p4-llamacpp-20260811170738.log)
+and [`llama-server-20260811170738.err.log`](../target/real-e2e/llama-server-20260811170738.err.log).
+For stock HTTP the cycle hint is request completion, not direct GPU kernel-cycle
+telemetry; the scheduler exposes a separate hint/heuristic seam for that future
+improvement.
+
+## 2026-08-10: abstract Agent ingress-credit correction
+
+The 256-session experiments showed that P4 transport retained every valid
+request/response pair and that CUDA-specific work was concentrated below the
+adapter boundary. The selected protocol improvement is therefore not another
+llama.cpp/CUDA change: the Agent now acquires the generic NodeSlot execution
+credit before it emits `INGRESS_ACCEPTED`. A saturated slot produces only
+`ERROR`, so an accepted ingress is no longer a promise that can immediately be
+withdrawn by admission failure.
+
+| Verification | Result |
+| --- | --- |
+| ready credit | mock adapter observes `EXECUTE`; client receives `INGRESS_ACCEPTED` then `DONE` |
+| saturated credit | client receives `ERROR` and no `INGRESS_ACCEPTED` |
+| backend assumptions | none; test uses only P4 frames and a local TCP mock adapter |
+| wire revision | unchanged (`P4B1 v3`) |
+
+This does not claim a CUDA throughput gain. It makes multi-controller ingress
+backpressure truthful at the Agent boundary and applies unchanged to llama.cpp,
+vLLM, SGLang, CPU, CUDA, HIP, Vulkan, Metal, or another adapter.
+
+## 2026-08-09: native microbatch 256×500 success
+
+The native first-stage scheduler now groups ready sequence windows into a
+physical `min(batch, ubatch)` microbatch and waits for a complete replacement
+batch before refilling an in-flight wavefront. The proof used an isolated CUDA
+runtime pack (build ID suffix `498d73d6b9ad`) on a temporary supervisor at port
+`18083`; it did not replace the active host runtime.
+
+| Artifact | Contents |
+| --- | --- |
+| [plan-20260809161709.json](../target/pipeline-e2e/plan-20260809161709.json) | 256 persisted Korean prompt requests, `max_tokens=500`. |
+| [trace-20260809161709.jsonl](../target/pipeline-e2e/trace-20260809161709.jsonl) | Every P4 ingress, token, and terminal response. |
+| [summary-20260809161709.json](../target/pipeline-e2e/summary-20260809161709.json) | Counts and latency distributions. |
+| [report-20260809161709.md](../target/pipeline-e2e/report-20260809161709.md) | All 256 prompt/final-output pairs. |
+
+| Measurement | Observed value |
+| --- | ---: |
+| planned / accepted / first token / `DONE` / `ERROR` | 256 / 256 / 256 / 256 / 0 |
+| P4 text events / aggregate event rate | 56,975 / 550.206 events/s |
+| concurrent wall-clock | 103,552.076 ms |
+| accepted / TTFT / `DONE` p95 | 131.114 / 8,365.671 / 102,766.373 ms |
+| stage-local observed maximum batch size | 128 on both stages |
+| pipeline peak / terminal credit | 256 / 0 (`issued = returned = 72,093`) |
+
+The prior 256×500 artifact took 302,396.880 ms for 57,439 events. This new run
+is a comparable harness result, not a controlled repeated experiment, but it
+reduced wall-clock by 65.8% and raised aggregate event rate by about 2.9× while
+preserving all request/response pairs. The runtime is documented by
+[`apps/llama` scheduler internals](../../llama/docs/internals.md#multi-token-prefill).
+
+## 2026-08-09: 500-token concurrency sweep, 100/50/10/2/1
+
+Five fresh two-GPU Pipeline runs used the same model, 1,024 context tokens per request, a 500-token output cap, deterministic prefixes of one prompt family, and full plan/trace/report artifacts. Every planned request was accepted, streamed text, and ended in `DONE`; no run had a P4 `ERROR`. The complete linked evidence is [sweep-20260809150430.md](../target/pipeline-e2e/sweep-20260809150430.md) and [sweep-20260809150430.json](../target/pipeline-e2e/sweep-20260809150430.json).
+
+| Concurrent sessions | P4 events/s | TTFT p50 / p95 ms | `DONE` p50 / p95 ms | Natural stop / length cap |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | 247.311 | 3,437.945 / 3,592.087 | 18,761.322 / 25,505.134 | 99 / 1 |
+| 50 | 243.363 | 2,132.378 / 2,202.624 | 7,869.504 / 9,268.574 | 50 / 0 |
+| 10 | 178.148 | 1,101.835 / 1,117.138 | 1,882.353 / 2,068.411 | 10 / 0 |
+| 2 | 89.067 | 452.436 / 506.389 | 829.396 / 880.565 | 2 / 0 |
+| 1 | 14.705 | 433.752 / 433.752 | 2,440.899 / 2,440.899 | 1 / 0 |
+
+The observed aggregate-event-rate peak is 100 sessions, but it is only 1.62% above 50 sessions while its p95 TTFT is 63.1% higher and p95 completion latency is 175.2% higher. For this model and host, use 50 as the current balanced batch setting, use 100 only when maximizing aggregate throughput outweighs tail latency, and use 10 or fewer for latency-sensitive traffic. The rise from 1→50 is consistent with better GPU utilization from concurrent sequence work; the 50→100 plateau with rising latency is consistent with a saturated shared Pipeline/native execution path and increased queueing. This is one deterministic sweep with different prompt-prefix sizes and naturally varying output lengths, so repeat it before turning the operating guidance into a hard policy.
+
+## 2026-08-09: scripted 256×500 request/response proof
+
+The owned Pipeline E2E first generated and persisted exactly 256 input requests, then opened all 256 ingress streams concurrently with `max_tokens=500`. It persisted the frame-level response trace and generated the report only after all streams terminated. Plan and trace `request_id` sets both contain 256 unique IDs and match exactly.
+
+| Artifact | Contents |
+| --- | --- |
+| [plan-20260809144839.json](../target/pipeline-e2e/plan-20260809144839.json) | Exact 256 prompts and fixed sampling request fields before ingress. |
+| [trace-20260809144839.jsonl](../target/pipeline-e2e/trace-20260809144839.jsonl) | Every `INGRESS_ACCEPTED`, `TOKEN`, and terminal `DONE`/`ERROR` per request. |
+| [summary-20260809144839.json](../target/pipeline-e2e/summary-20260809144839.json) | Machine-readable count and latency distributions derived from the trace. |
+| [report-20260809144839.md](../target/pipeline-e2e/report-20260809144839.md) | All 256 input/final-output pairs and session-level first-token/completion latency. |
+
+| Measurement | Observed value |
+| --- | ---: |
+| planned / accepted / first token / `DONE` / `ERROR` | 256 / 256 / 256 / 256 / 0 |
+| maximum output tokens per request | 500 |
+| natural stop / output-length stop | 228 / 28 |
+| P4 text events / native generated tokens | 57,439 / 57,439 |
+| concurrent request wall-clock | 302,396.880 ms |
+| model load to ready binding | 20,968.571 ms |
+| native KV allocation | 7,985,976,320 B |
+| total / per-request context | 262,144 / 1,024 tokens |
+
+| Per-request event latency | min | mean | p50 | p95 | p99 | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ingress accepted | 128.288 | 133.993 | 133.745 | 138.224 | 138.731 | 138.848 |
+| first text token | 532.918 | 7,656.837 | 7,702.827 | 8,146.075 | 8,183.449 | 8,190.316 |
+| `DONE` | 917.304 | 166,673.330 | 144,088.042 | 302,172.541 | 302,173.294 | 302,173.666 |
+
+The report preserves the exact prompt/final-streamed-text relationship. Text answer quality is separate from transport correctness; 28 responses stopped at the configured 500-token cap and 228 stopped naturally.
+
+## 2026-08-09: traceable `parallel=256` request/response proof
+
+The maximum-native-capacity test was repeated with per-session evidence. The runner wrote the submitted `INGRESS_SUBMIT` data, the `INGRESS_ACCEPTED`, every `TOKEN`, terminal `DONE`/`ERROR`, and the joined final streamed text for each concurrent request. The result contains 256 JSONL rows: 256 accepted, 256 `DONE`, zero `ERROR`, and 4,084 P4 text events.
+
+| Artifact | Contents |
+| --- | --- |
+| [trace-20260809144038.md](../target/pipeline-e2e/trace-20260809144038.md) | All 256 prompt → final-text pairs, session IDs, and terminal reasons. |
+| [trace-20260809144038.jsonl](../target/pipeline-e2e/trace-20260809144038.jsonl) | Full per-session P4 request/response event sequence, including every streamed text chunk. |
+| [client-20260809144038.log](../target/pipeline-e2e/client-20260809144038.log) | Lifecycle, aggregate timing, resource draft, and trace artifact paths. |
+
+| Input prompt | Final streamed text | Terminal |
+| --- | --- | --- |
+| `Rust 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `Rust은 고성능이고 안전한 프로그래밍 언어` | `length`, 16 |
+| `C 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `C 언어는 간단하고 효율적인 프로그래밍 언` | `length`, 16 |
+| `C++ 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `C++는 객체지향 언어로, 데이터와 함수를 분리` | `length`, 16 |
+| `C# 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `C#은 객체지향 언어로, 변수와 함수를 쉽게 사용` | `length`, 16 |
+| `Java 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `Java는 객체지향 프로그래밍 언어로, 복잡` | `length`, 16 |
+
+Each request used the 16-token output cap, so `reason=length` and incomplete sentences are expected. This is complete transport evidence, not answer-quality evidence.
+
+## 2026-08-09: native Pipeline capacity ceiling and `parallel=256` proof
+
+The planner estimated that `parallel=1000` with `1,024` context tokens per request would fit GPU memory, but the measured native load failed before KV allocation: `llama_init_from_model: failed to initialize the context: n_seq_max must be <= 256`. This is a native Pipeline/llama runtime ceiling, not a P4 controller or Agent queue result, and means VRAM cannot establish a higher usable session count for the currently linked binary.
+
+The owned E2E then set the actual maximum, `parallel=256`, `ConcurrentRequests=256`, `P4_AGENT_MAX_INFLIGHT=256`, and `262,144` total context tokens. It generated 256 distinct Korean prompts in the form `<language> 언어를 한국어로 간단히 설명해. <style>` from programming and human language names. Every stream emitted text and reached `DONE`; no session was queued for later execution.
+
+| Measurement | Observed value |
+| --- | ---: |
+| failed native probe | `parallel=1000`, `n_seq_max <= 256` |
+| completed concurrent ingress requests | 256 / 256 |
+| distinct prompts | 256 |
+| output cap per request | 16 tokens |
+| aggregate P4 streamed text events | 4,083 |
+| concurrent request wall-clock | 22,631.502 ms |
+| aggregate streamed-event rate | 180.41 events/s |
+| native KV allocation | 7,985,976,320 B |
+| total / per-request context | 262,144 / 1,024 tokens |
+| model load to ready binding | 20,890.301 ms |
+
+The final native request summary is a last-request sample, not a percentile: 57 prompt tokens, 56 prefill tokens, 8,414.878 ms native TTFT, and 2,741.520 ms queue wait. The runner removed its exact runtime group and P4 processes. Raw artifact: `target/pipeline-e2e/client-20260809141921.log`.
+
+## 2026-08-09: native Pipeline `parallel=20` simultaneous ingress
+
+Command:
+
+```powershell
+.\scripts\run-pipeline-e2e.ps1 -P4ListenPort 29221 -Prompt '러스트에 대해 한국어로 설명하라.' -MaxTokens 32 -Parallel 20 -ConcurrentRequests 20
+```
+
+The planner and Pipeline runtime both received `parallel=20`. Because native context is divided among the parallel slots, the E2E calculated a total context of `20,480` tokens to preserve `1,024` tokens per request. The Agent gave the bound NodeSlot `p4_max_inflight=20`, opened 20 ingress streams concurrently, and every stream emitted text and reached `DONE`.
+
+| Measurement | Observed value |
+| --- | ---: |
+| concurrent ingress requests completed | 20 / 20 |
+| output cap per request | 32 tokens |
+| aggregate P4 streamed text events | 637 |
+| concurrent request wall-clock | 2,751.773 ms |
+| aggregate streamed-event rate | 231.49 events/s |
+| native KV allocation | 623,924,224 B |
+| context total / per request | 20,480 / 1,024 tokens |
+
+The final post-stress request also completed with `DONE(reason=length)`. The script removed its exact runtime group and P4 processes. Raw artifact: `target/pipeline-e2e/client-20260809140406.log`.
+
+## 2026-08-09: Tokio Agent admission and two-controller proof
+
+`p4-agent` accepted ingress through a Tokio multi-thread I/O runtime at `127.0.0.1:29221`; its relay pool is bounded by `P4_AGENT_MAX_INFLIGHT=64` by default. The owned Pipeline E2E created two distinct NodeSlots concurrently from two ControllerInstances (`pipeline-2gpu` and a marker slot), then loaded only `pipeline-2gpu` as a two-GPU Pipeline deployment. While one execution held that slot's default `p4_max_inflight=1` permit, a second execution received an immediate admission `ERROR`; it was not queued. The held stream completed, and the requested 500-token-cap Korean Rust prompt then completed with 267 streamed text events and `reason=stop`.
+
+| Measurement | Observed value |
+| --- | ---: |
+| concurrent controllers / created NodeSlots | 2 / 2 |
+| model-load to ready binding | 20,947.912 ms |
+| P4 ingress to first text event | 149.015 ms |
+| P4 ingress to `DONE` | 2,829.497 ms |
+| native stage 0 / stage 1 compute | 1,293.745 / 176.339 ms |
+| stage 0 → 1 hidden state | 311 frames / 1,008,884 B |
+| stage 1 → 0 sampled token | 272 frames / 3,185 B |
+
+The final adapter error log was empty and the script removed its owned P4 processes and Pipeline group. Raw artifact: `target/pipeline-e2e/client-20260809135821.log`.
+
+## 2026-08-08: P4B1 v3 agent inventory, NodeSlot, binding, and ingress
+
+The owned stock E2E started `p4-agent` at `127.0.0.1:29111` before the self-registering stock adapter. The external Node.js controller received `HARDWARE_REPORT` with one registered adapter and two NVIDIA GPUs, created model-free `gpu-0`, bound the configured model at generation `1`, then submitted ingress without a session ID. ControllerProcessor returned `nodejs-controller-example-session-1`, streamed `12` events, and removed only the binding; the process-owned llama-server remained available.
+
+The owned two-GPU Pipeline E2E used the same lifecycle at `127.0.0.1:29211`: one registered adapter, two discovered GPUs, `NODE_CREATED(ready)` for `pipeline-2gpu`, progress and `DRAFT_REPORT`, `MODEL_BOUND(generation=1)`, ingress-issued session, `16` streamed events, and `MODEL_UNBOUND`. The model deployment was independently deleted in cleanup while the NodeSlot contract remained valid.
+
+| Measurement | Observed Pipeline value |
+| --- | ---: |
+| GGUF model / layer / KV bytes | 1,640,622,080 / 1,392,656,384 / 15,619,072 B |
+| native decode / P4 streamed events | 16 / 16 |
+| time to first token | 328.686 ms |
+| stage 0 -> 1 hidden-state traffic | 52 frames / 168,688 B |
+| stage 1 -> 0 sampled-token traffic | 16 frames / 167 B |
+| host-observed average transfer rate | 52,209,223.15 B/s |
+
+This proves agent-side lifecycle separation and ingress relay, not durable controller registry, public authentication, or a throughput guarantee.
+
+## 2026-08-08: P4B1 v2 adapter-owned execution options
+
+`cargo test --workspace` passed the P4B1 v2 `EXECUTE` codec round trip and both adapter policy tests: stock llama.cpp preserves a backend option such as `top_p` while restoring P4-owned `model` and `stream`; Pipeline copies `top_p`, `top_k`, and `seed` while omitting an unsupported `repeat_penalty`.
+
+The owned stock E2E used `run-inference.mjs`, whose `infer()` call supplied `options: { top_p: 0.9, top_k: 20, seed: 7 }`, at agent listener `127.0.0.1:29101`. The model streamed `12` P4 token events and ended with `P4_DONE`.
+
+The owned two-stage Pipeline E2E used the same options at `127.0.0.1:29201` with prompt `러스트에 대해 설명하라.` and a `16` token cap. The current Pipeline parser accepted its supported subset and returned:
+
+| Measurement | Observed value |
+| --- | ---: |
+| GGUF model / layer / KV bytes | 1,640,622,080 / 1,392,656,384 / 15,619,072 B |
+| P4 streamed text events / native decode tokens | 16 / 16 |
+| finish reason | `length` |
+| time to first token | 342.563 ms |
+| stage 0 -> 1 hidden-state traffic | 52 frames / 168,688 B |
+| stage 1 -> 0 sampled-token traffic | 16 frames / 167 B |
+| host-observed average transfer rate | 49,731,132.08 B/s |
+
+The exact temporary Pipeline group and spawned P4 relay processes were removed by the scripts' `finally` blocks. This validates v2 transport and adapter filtering, not model-answer quality or a universal llama.cpp option set.
+
+## 2026-08-08: real two-stage Pipeline request
+
+Command:
+
+```powershell
+.\scripts\run-pipeline-e2e.ps1 -Prompt '러스트에 대해 설명하라.' -MaxTokens 128
+```
+
+The current `S:\models` inventory contained one GGUF file, `Qwen2.5-1.5B-Instruct-Q8_0.gguf`; this run did not select among multiple model sizes. The test created one P4 controller identity and routed its logical `pipeline-2gpu` node to a native Pipeline group with these stages:
+
+| Stage | Logical node | GPU |
+| --- | --- | --- |
+| 0 | `p4-gpu-3090` | RTX 3090 (`GPU-38e6dbac-fee5-ac16-62d4-cfacbe02f8ed`) |
+| 1 | `p4-gpu-4080` | RTX 4080 (`GPU-79caabbe-c843-631f-3cea-9c01e652c78c`) |
+
+P4 received progress `0..99`, then `DRAFT_REPORT`, then `LOAD_PROGRESS=100` only after the group became `running`. Its health response was `ready=true`.
+
+| Measurement | Observed value |
+| --- | ---: |
+| GGUF model bytes | 1,640,622,080 B |
+| GGUF layer bytes | 1,392,656,384 B |
+| native KV allocation bytes | 15,619,072 B |
+| FFN allocation bytes | unavailable (`0`, not measured zero) |
+| prompt / prefill tokens | 37 / 36 |
+| native decode-token budget/count | 128 / 128 |
+| P4 streamed text events | 122 |
+| time to first token | 340.844 ms |
+| stage 0 prefill / decode compute | 98.208 ms / 1,944.521 ms |
+| stage 1 prefill / decode compute | 110.016 ms / 104.062 ms |
+| stage 0 -> 1 hidden-state traffic | 164 frames, 532,016 B |
+| stage 1 -> 0 sampled-token traffic | 128 frames, 1,421 B |
+| host-observed average transfer rate | 54,666,666.67 B/s |
+
+The generated response was truncated by the requested token cap and included factual inaccuracies. It proves transport, resource reporting, and cleanup behavior; it does not certify model answer quality.
+
+After the run, the exact `p4-adapter-e2e-*` group was deleted and no listeners remained on P4 ports 19201-19203 or Pipeline ports 52221-52222. The retained raw client artifact is `target/pipeline-e2e/client-20260808190619.log`.
+
+## 2026-08-08: combined `p4-agent` reconstruction verification
+
+The relay implementation was rebuilt into a policy-free listener/frame-forwarding base (`layers/runtime/src/foundation/transport/mod.rs`) and independent ControllerProcessor/NodeProcessor policies (`layers/runtime/src/application/routing/processor/mod.rs`). The default `p4-agent` invokes the latter two in-process; only the adapter boundary remains a P4 TCP connection.
+
+`tools/scripts/e2e/stock/run-real-e2e.ps1` then completed an owned stock CPU `llama-server` request through `p4-agent` with 12 streamed tokens and `P4_DONE`.
+
+`tools/scripts/e2e/pipeline/run-pipeline-e2e.ps1 -Prompt 'P4 agent 경로가 동작하는지 한 문장으로 답하라.' -MaxTokens 16` completed the actual two-GPU Pipeline path through the same combined agent:
+
+| Measurement | Observed value |
+| --- | ---: |
+| P4 health | `ready=true` |
+| GGUF model / layer / KV bytes | 1,640,622,080 / 1,392,656,384 / 15,619,072 B |
+| prompt / prefill / native decode tokens | 47 / 46 / 16 |
+| P4 streamed text events | 16 |
+| time to first token | 350.292 ms |
+| stage 0 prefill / decode compute | 100.878 ms / 591.312 ms |
+| stage 1 prefill / decode compute | 117.116 ms / 37.466 ms |
+| stage 0 -> 1 hidden-state traffic | 62 frames, 201,128 B |
+| stage 1 -> 0 sampled-token traffic | 16 frames, 193 B |
+| host-observed average transfer rate | 77,297,463.49 B/s |
+
+The exact owned Pipeline group and all P4 relay processes are removed by the scripts' `finally` blocks; the raw artifact is retained under `target/pipeline-e2e/`.
+
+## 2026-08-08: startup-selected listener ports
+
+The rebuilt agent accepts its sole `LISTEN_ENDPOINT` argument and prints the resolved listener address. The owned stock E2E completed at `127.0.0.1:29017` with 12 streamed tokens. The owned 2-GPU Pipeline E2E completed at `127.0.0.1:29201` with `LOAD`, `DRAFT_REPORT`, `HEALTH ready=true`, 16 P4 token events, and `DONE`.
+
+For the Pipeline run, the host reported 362.875 ms TTFT, 207,616 B of stage-0-to-stage-1 hidden-state traffic, 172 B of sampled-token return traffic, and 82,980,015.99 B/s average observed transfer rate. This proves that the listener port is a startup configuration, not a protocol constant.
+
+## 2026-08-08: controller-supplied dynamic node route
+
+The default agent was started with only `p4-agent 127.0.0.1:29019`; it received no node, GPU, model, or backend argument. The stock E2E first sent `LOAD` with `p4_agent.adapter_endpoint=127.0.0.1:19103`, received 0% then 100% progress, and completed 12 streamed tokens.
+
+The two-GPU Pipeline E2E started the agent with only `p4-agent 127.0.0.1:29202`, sent the same control envelope with its Adapter endpoint and opaque Pipeline `adapter_request`, then completed `LOAD`, `DRAFT_REPORT`, `HEALTH ready=true`, 16 token events, and `DONE`. Its observed TTFT was 357.091 ms; hidden-state traffic was 62 frames / 201,128 B, sampled-token return traffic was 16 frames / 200 B, and host-observed transfer rate was 44,675,255.44 B/s.
+
+This proves that concrete inference topology is protocol-supplied runtime state, not agent startup configuration.

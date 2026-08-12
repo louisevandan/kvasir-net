@@ -1,0 +1,23 @@
+//! Stable P4B1 message kind identifiers.
+
+pub(super) const EXECUTE: u8 = 1;
+pub(super) const TOKEN: u8 = 2;
+pub(super) const DONE: u8 = 3;
+pub(super) const ERROR: u8 = 4;
+pub(super) const CANCEL: u8 = 5;
+pub(super) const HEALTH_CHECK: u8 = 16;
+pub(super) const HEALTH: u8 = 17;
+pub(super) const LOAD_PROGRESS: u8 = 19;
+pub(super) const DRAFT_REPORT: u8 = 20;
+pub(super) const INGRESS_SUBMIT: u8 = 32;
+pub(super) const INGRESS_ACCEPTED: u8 = 33;
+pub(super) const INVENTORY_QUERY: u8 = 34;
+pub(super) const HARDWARE_REPORT: u8 = 35;
+pub(super) const ADAPTER_REGISTER: u8 = 36;
+pub(super) const ADAPTER_REGISTERED: u8 = 37;
+pub(super) const NODE_CREATE: u8 = 38;
+pub(super) const NODE_CREATED: u8 = 39;
+pub(super) const MODEL_LOAD: u8 = 40;
+pub(super) const MODEL_BOUND: u8 = 41;
+pub(super) const MODEL_UNLOAD: u8 = 42;
+pub(super) const MODEL_UNBOUND: u8 = 43;

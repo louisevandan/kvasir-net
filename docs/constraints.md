@@ -1,0 +1,27 @@
+# Constraints
+
+| Surface | Consumers | Invariant |
+| --- | --- | --- |
+| `layers/protocol/src/contract`, `catalog`, `codec`, `task` | all P4 processes and Node.js client | P4B1 v5 route envelope, field order, message semantics, and task directions change only in a coordinated wire revision. Protocol never imports runtime or adapters. |
+| `layers/runtime/src/foundation/transport` | Controller, Node, Agent, in-process adapters | Every transport invokes `P4Handler` and emits through `ResponseSink`; TCP framing must not acquire lifecycle policy or change response order. |
+| `layers/runtime/src/domain/agent` | `p4-agent`, all adapters | Controller never supplies an adapter endpoint; only registered adapters create routable NodeSlots. |
+| `layers/runtime/src/domain/agent/lifecycle#register_in_memory_adapter` | co-resident concrete adapters | A directly registered adapter uses the same P4 handler contract as TCP registration; process-separated adapters remain TCP and cannot be treated as direct memory calls merely by matching host address. |
+| `layers/runtime/src/domain/agent/ingress` | external ingress, all adapters | `INGRESS_ACCEPTED` is emitted only after the selected NodeSlot credit and binding generation are valid; saturated ingress emits only `ERROR`. |
+| `layers/runtime/src/application/agent_host` | `p4-agent`, external callers | Tokio admission is bounded; overload is an immediate `ERROR`, never an unbounded in-memory prefill queue. |
+| `layers/runtime/src/application/routing/startup#AgentOptions`, `application/agent_host#serve_agent` | Agent launchers and E2E scripts | Default workers equal physical CPU cores × 2; only `--workers 1..1024` overrides it, independently of transport and inference admission limits. |
+| `layers/runtime/src/foundation/task_queue` | every Agent handler and transport | Item and full routed-frame byte budgets are mandatory. Workers compete globally within a lane; ordered work registers its successor after completion instead of relying on queue FIFO. |
+| `layers/runtime/src/application/dispatch` | Agent server, Controller/Node roles, adapter responses | Handlers perform no blocking I/O and never await a response; every follow-up and response re-enters the generic queue. |
+| `layers/runtime/src/application/routing/processor` | external callers | Missing session IDs are issued by ControllerProcessor, never by an adapter or node. |
+| `tools/controller/client/controller-instance.mjs` | Node.js callers | `infer()` requires a ready binding generation and sends external ingress, not backend routing data. |
+| `layers/adapters/adapter/src/infrastructure/local_transport` | Adapter, llama native runtime | Agent-owned local stages receive one Agent-derived `ipc_domain_id`; external stages retain their transport identity and must not receive an in-memory claim. |
+| `layers/adapters/llamacpp/src/application/adapter`, `scheduler` | stock adapter | NodeSlot creation does not load a model; ModelLoad may reuse a process-owned llama-server. Adapter pending/ready/active state, max batch, inflight, waiting, cycle hints, and partial-batch heuristic are bounded independently of llama-server slot/tensor-batch settings. |
+| `layers/adapters/adapter/src/application/lifecycle` | Adapter | NodeSlot creation does not create a Pipeline group; ModelLoad/Unload owns group lifecycle by deployment ID. |
+| `layers/adapters/adapter/src/domain/capability`, `tools/controller/capability` | Adapter and controller | The Agent stores opaque descriptors; the Pipeline controller must reject missing or unequal protocol, ABI, or capability bits before any model group is created. |
+| `tools/controller/experiments/pipeline-e2e`, `tools/scripts/e2e/pipeline` | owned native Pipeline E2E | The current linked native Pipeline binary rejects `n_seq_max > 256`; the runner must fail before model loading above that adapter limit. |
+| `tools/controller/evidence`, `tools/controller/experiments/pipeline-e2e` | concurrent test evidence | A parallel test writes the exact request plan before ingress, then preserves every response frame and derives its summary/report only from those traces. |
+| `tools/scripts/benchmark/concurrency` | concurrency sweep | The native Pipeline/NodeSlot parallel value equals the measured session count; optional `AgentWorkers` changes Agent dispatch threads only and must not be reported as inference parallelism. |
+| `layers/adapters/*/src/application/execution/options` | concrete backends | Sampling option acceptance remains adapter-specific. |
+
+Hardware reports are observations, not leases: controller planning must check timestamp and binding results. A NodeSlot can have zero bindings or be rebound with a different plan revision. A failed load must not make an old or unknown generation executable.
+
+P4B1 v5 has no TLS, authentication, authorization, durable controller registry, or multi-agent deployment commit barrier. In-band cancellation removes the Agent route and propagates best effort: the stock llama.cpp adapter shuts down its active HTTP socket, while Pipeline may still finish already-issued native compute after its route output is detached. Native Pipeline prefill data-plane credits remain an adapter/native responsibility. Use only inside a trusted network. Public HTTP/WebSocket/Kafka endpoints must authenticate before translating into `INGRESS_SUBMIT`.

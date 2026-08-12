@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "layers/protocol",
+    "layers/runtime",
+    "layers/adapters/llamacpp",
+    "layers/adapters/adapter",
+    "entrypoints/agent",
+    "entrypoints/controller",
+    "entrypoints/node",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"

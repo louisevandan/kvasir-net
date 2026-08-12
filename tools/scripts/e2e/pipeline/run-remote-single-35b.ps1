@@ -1,0 +1,23 @@
+$ErrorActionPreference = 'Stop'
+$stamp = Get-Date -Format 'yyyyMMddHHmmss'
+$out = Join-Path $PSScriptRoot '../../../../target/remote-3090x2-20260812'
+$env:P4_E2E_RUN_ID = "single-35b-$stamp"
+$env:P4_PIPELINE_ADAPTER_ID = 'pipeline-local'
+$env:P4_PIPELINE_MODEL = 'unsloth\Ornith-1.0-35B-GGUF\Ornith-1.0-35B-UD-Q5_K_S.gguf'
+$env:P4_PIPELINE_NODE_IDS = 'remote-3090-a,remote-3090-b'
+$env:P4_PIPELINE_NODE_GPU_UUIDS = 'GPU-98d47fe7-caf3-3991-bf94-398029e93c31,GPU-9983bf45-0d89-5b0f-0ec6-3525016f28fe'
+$env:P4_PIPELINE_NODE_VRAM_GIB = '23,23'
+$env:P4_PIPELINE_NODE_CORES = '24,24'
+$env:P4_PIPELINE_STAGE_HOSTS = '127.0.0.1,127.0.0.1'
+$env:P4_PIPELINE_STAGE_PORT_BASE = '52221'
+$env:P4_NATIVE_PARALLEL = '1'
+$env:P4_EXECUTION_WINDOW = '1'
+$env:P4_PIPELINE_BATCH = '256'
+$env:P4_PIPELINE_UBATCH = '128'
+$env:P4_PREFILL_PROMPT_FILE = (Resolve-Path (Join-Path $PSScriptRoot '../../../../fixtures/prefill-prompts-ko-400t.json')).Path
+$trace = Join-Path $out "trace-single-35b-$stamp.jsonl"
+$plan = Join-Path $out "plan-single-35b-$stamp.json"
+$summary = Join-Path $out "summary-single-35b-$stamp.json"
+$report = Join-Path $out "report-single-35b-$stamp.md"
+$prompt = 'Rust 언어를 한국어로 설명하라. 소유권, 대여, 비동기 실행 모델, 오류 처리와 실무 활용을 포함하여 초보자가 이해할 수 있는 구조적인 글로 답하라. 각 개념의 관계와 장단점을 구체적인 예시와 함께 설명하고, 마지막에 간단한 학습 순서를 제시하라.'
+node (Join-Path $PSScriptRoot '../../../controller/experiments/pipeline-e2e/run-pipeline-e2e.mjs') '127.0.0.1:19201' 'remote-3090-a' 'http://127.0.0.1:18082' $prompt 500 1 1 0 $trace $plan $summary $report 0
