@@ -1,5 +1,46 @@
 # Runtime evidence
 
+## 2026-08-12: the first stage reserves a fixed 13.1 GiB compute buffer
+
+Six loads of `Ornith-1.0-35B-UD-Q5_K_S.gguf` (qwen35moe, `n_expert=256`,
+`n_expert_used=8`, `n_embd=2048`) on a local 3090 + 4080, layers `0:16` and
+`16:40`, driven through the owned E2E with one request capped at one token.
+Only the load path matters here. Logs are under
+[`target/graph-buffer-sweep-20260812/native-logs/`](../target/graph-buffer-sweep-20260812/native-logs/).
+
+| parallel | `n_ctx` | `n_ubatch` | first `CUDA0` | last `CUDA0` | first `CUDA_Host` |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1,024 | 128 | **13,124.56 MiB** | 124.77 MiB | 125.73 MiB |
+| 8 | 8,192 | 128 | **13,194.40 MiB** | 124.25 MiB | 134.22 MiB |
+| 32 | 32,768 | 128 | **13,461.90 MiB** | 425.27 MiB | 163.33 MiB |
+| 1 | 1,024 | 16 | **13,110.96 MiB** | 15.53 MiB | 16.79 MiB |
+
+Both stages receive identical `llama_context_params`. The last stage scales
+with context and micro-batch exactly as expected. The first stage does not
+scale with any of them: 32x the context, 32x the sequences and an eighth of the
+micro-batch all leave it within 350 MiB of the same ~13.1 GiB. It is a fixed
+reservation, present with a single sequence and a 1,024-token context, and it
+is 105x the last stage's allocation under the same parameters. Across 16
+layers that is 819 MiB of compute buffer per layer against the last stage's
+0.6 MiB.
+
+The same sweep on `Qwen2.5-1.5B-Instruct-Q8_0` (dense) shows no such term —
+first `CUDA0` moves 15.71 / 17.46 / 43.08 MiB across the same parallel values
+while the last stage holds 74.94 MiB. The reservation is specific to the MoE
+model on the first-stage code path.
+
+This falsifies the earlier reading recorded in the pipeline throughput handoff,
+which attributed the first stage's buffer and its `graph splits = 2` to the
+boundary hidden-state copy and called it normal. At `n_ubatch=16` the boundary
+frame is 64 KiB while `CUDA_Host` is 16.79 MiB and `CUDA0` is still 13.1 GiB,
+so the copy cannot account for either. Because the term is independent of
+batching, no admission, queue or scheduler change can remove it.
+
+Two consequences follow. The first-stage device loses 13.1 GiB before any
+weight is placed, which is why a 16 GiB 4080 in the first position is planned
+with very few layers, and it is the leading suspect for the first stage costing
+roughly eight times the last stage per layer during generation.
+
 ## 2026-08-12: four-node run completed 16/16 while every session ran alone
 
 Local RTX 3090 + RTX 4080 and remote RTX 3090×2, four stages
