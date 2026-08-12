@@ -53,12 +53,21 @@ Session count is the other axis the fix opened, and it is close to saturation:
 | sessions | aggregate | wall | stage compute | first-stage wait |
 | ---: | ---: | ---: | --- | ---: |
 | 32 | 246.1 tok/s | 129.0 s | 64.6 / 31.7 | 62.0 s |
-| 48 | 254.6 tok/s | 185.1 s | 94.4 / 43.8 | 87.3 s |
+| **48** | **254.6 tok/s** | 185.1 s | 94.4 / 43.8 | 87.3 s |
+| 64 | 8.5 tok/s | 7458.8 s | 7025.7 / 330.0 | 428.6 s |
 
-Half again as many sessions bought 3.5%. Per-step cost now grows nearly
-linearly with batch width, so the remaining headroom is the 47% of wall clock
-the first stage spends waiting for the round trip, which only overlap can
-recover.
+Half again as many sessions bought 3.5%, and a third again after that falls
+off the same cliff as 24 layers: the KV growth pushes the 4080 past 16 GiB and
+the driver spills. Both axes therefore end at the same wall, the 16 GiB first
+stage, and the measured optimum for this pair of cards is 48 sessions with
+20/20 and the 4080 leading, at 254.6 tok/s and 3.86x the single session.
+
+Per-step cost now grows nearly linearly with batch width, so what is left is
+the 47% of wall clock the first stage spends waiting for the round trip, which
+only stage overlap can recover. An earlier attempt at that — relaxing the
+microbatch refill gate — broke the boundary transport, but it was made while
+the first stage still carried the 10.6 GiB reservation, so it is worth
+retrying now that the device has room.
 
 ## 2026-08-13: a stale graph terminal was reserving the unowned layers
 
