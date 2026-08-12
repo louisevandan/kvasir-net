@@ -1,6 +1,6 @@
 # Runtime evidence
 
-## 2026-08-12: the first stage reserves a fixed 13.1 GiB compute buffer
+## 2026-08-12: a non-final stage reserves the weight of the layers it does not own
 
 Loads of `Ornith-1.0-35B-UD-Q5_K_S.gguf` (qwen35moe, `n_expert=256`,
 `n_expert_used=8`, `n_embd=2048`) on a local 3090 + 4080, layers `0:16` and
