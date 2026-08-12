@@ -41,6 +41,36 @@ weight is placed, which is why a 16 GiB 4080 in the first position is planned
 with very few layers, and it is the leading suspect for the first stage costing
 roughly eight times the last stage per layer during generation.
 
+### It grows per layer only in a non-final stage
+
+Holding the model, `parallel=1`, `n_ctx=1024` and `n_ubatch=16` fixed and
+moving the stage boundary:
+
+| first-stage layers | first `CUDA0` | per layer | last-stage layers | last `CUDA0` |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 5,185.43 MiB | 1,296 MiB | 36 | 15.53 MiB |
+| 16 | 13,110.96 MiB | 819 MiB | 24 | 15.53 MiB |
+| 30 | 19,900.82 MiB | 663 MiB | 10 | 15.53 MiB |
+
+The first stage fits `2.9 GiB + 566 MiB x layers`. The last stage does not
+move at all: 36 layers cost exactly what 10 layers cost. Per-layer scratch is
+reused in the final stage and retained in the non-final stage.
+
+`llm_graph_result::apply_linkcpp_stage` explains the asymmetry. Both stages
+prune the full graph to their own layer range, but only a stage with
+`end < n_layer` runs `t_linkcpp_outputs = cut_at(end)` and then calls
+`ggml_set_output` on every crossing tensor, and only a stage with `begin == 0`
+expands placeholder `t_logits` / `t_embd` / `t_sampled_*` terminals it never
+computes. An output tensor is excluded from allocator reuse, so a cut-set that
+holds one or more tensors per prefix layer keeps every layer's scratch alive.
+The final stage takes neither path and stays flat, which makes it the control:
+the retention is introduced by the non-final branch, not by the model or by
+llama.cpp's MoE graph.
+
+This predicts that in a four-stage group the three non-final stages each pay
+the term, which is consistent with the planner giving the 16 GiB 4080 six
+layers in the four-node plan.
+
 ## 2026-08-12: four-node run completed 16/16 while every session ran alone
 
 Local RTX 3090 + RTX 4080 and remote RTX 3090×2, four stages
