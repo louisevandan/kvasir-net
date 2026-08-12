@@ -1,5 +1,42 @@
 # Runtime evidence
 
+## 2026-08-13: placement alone takes 32 sessions from 74 to 196 tok/s
+
+The first multi-session measurement on the placement the single-session run
+validated: `0:20` on the 3090 as first stage, `20:40` on the 4080 as last, 32
+concurrent requests capped at 1000 tokens, 400-token Korean prompts,
+`batch 256 / ubatch 128`. Every earlier throughput run used `0:16` on the
+4080 as first stage.
+
+| | `d3` (4080 first, 16/24) | this run (3090 first, 20/20) |
+| --- | ---: | ---: |
+| accepted / done / errors | 32 / 32 / 0 | 32 / 32 / 0 |
+| wall clock | 417.1 s | **160.3 s** |
+| **aggregate throughput** | 74.3 tok/s | **196.2 tok/s** |
+| per-stream throughput | 2.32 tok/s | 6.13 tok/s |
+| first-stage compute | 311.5 s | **65.5 s** |
+| last-stage compute | 56.7 s | 41.0 s |
+| first-stage downstream wait | 103.2 s | 91.5 s |
+| native occupancy | peak 32 | `active=32 in_flight=32 peak=32` |
+
+Aggregate throughput is 2.97x the 66 tok/s single session, so the objective in
+the handoff's section 0 is met for the first time. The gain is entirely
+placement: first-stage compute fell 4.75x for four *more* layers.
+
+That also corrects an earlier reading. The "front stage costs about eight times
+the last stage per layer" figure was not a property of being the front stage.
+It was the 4080 holding the front role while a non-final stage reserves the
+whole model's 22.17 GiB against its 16.0 GiB of VRAM. Move the front role to a
+24 GiB card and the term disappears. The memory defect and the throughput
+collapse are the same defect seen from two sides.
+
+Headroom remains and it is now the pipeline bubble, not admission. With all 32
+sequences admitted and alive in the native scheduler, `nvidia-smi` sampled
+through generation gives the 3090 a 32.5% mean and the 4080 53.4%. Stage
+compute sums to 106.5 s against a 160.3 s wall, and the first stage spends
+91.5 s waiting downstream. If the stages overlapped, the wall would approach
+the slower stage's 65.5 s, which is about 480 tok/s.
+
 ## 2026-08-12: three all-3090 stages reach 8-way concurrency, then the middle stage faults
 
 Dropping the 16 GiB 4080 and running three RTX 3090 stages — local plus the two
