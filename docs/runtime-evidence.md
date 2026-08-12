@@ -1,5 +1,43 @@
 # Runtime evidence
 
+## 2026-08-13: a stale graph terminal was reserving the unowned layers
+
+`llm_graph_result::reset()` cleared `t_linkcpp_inputs`,
+`t_linkcpp_input_nodes`, `t_linkcpp_outputs` and `linkcpp_tensor_layers`, but
+not `t_linkcpp_terminals`. A non-final stage expands its terminals into the
+freshly pruned graph, and a terminal left from an earlier build still depends
+on every layer of the full graph, so it dragged the layers the stage does not
+own back in. Those weights are `no_alloc` metadata tensors, so once reachable
+the scheduler reserved their bytes as compute buffer.
+
+An audit added to `apply_linkcpp_stage`, now behind
+`LINKER_STAGE_REACH_AUDIT`, walks the final graph and reports every reachable
+tensor with no buffer whose layer falls outside the stage range. On the 35B
+MoE with `layers=[0,20)`:
+
+| Build | unowned tensors | unowned MiB | holder |
+| --- | ---: | ---: | --- |
+| first | 0 | 0.00 | none |
+| second | 269 | 8,525.25 | `ffn_moe_down-34` (`MUL_MAT_ID`, layer 34) |
+| third | 340 | 10,837.41 | same |
+
+The accumulation across builds is the leak, and 10,837.41 MiB matched the
+stage's 10,847.68 MiB compute buffer. The final stage never expands terminals
+and reported zero throughout, which is why only non-final stages carried the
+term.
+
+Adding `t_linkcpp_terminals.clear()` to `reset()` removes it:
+
+| First stage `[0,20)` | before | after |
+| --- | ---: | ---: |
+| reachable unowned tensors | 340 | **0** |
+| `CUDA0` compute buffer | 10,847.68 MiB | **15.27 MiB** |
+| stage total | 22,169 MiB | **11,337 MiB** |
+
+That returns 10.6 GiB to the first-stage device. A node-array aliasing
+hypothesis was tested first — snapshotting the order before
+`ggml_graph_clear` — and rejected: the audit reported byte-identical numbers.
+
 ## 2026-08-13: placement alone takes 32 sessions from 74 to 196 tok/s
 
 The first multi-session measurement on the placement the single-session run
