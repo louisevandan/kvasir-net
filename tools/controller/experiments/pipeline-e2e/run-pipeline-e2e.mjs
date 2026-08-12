@@ -17,6 +17,8 @@ process.stdout.on('error', (error) => {
 
 // Native ceiling measured; see ../../../../docs/runtime-evidence.md#2026-08-09-native-pipeline-capacity-ceiling-and-parallel256-proof.
 const MAX_NATIVE_PIPELINE_PARALLEL = 256;
+// Matches MAX_INFLIGHT_RANGE in layers/runtime/src/domain/agent/lifecycle/node_spec.
+const MAX_AGENT_SLOT_WIDTH = 1024;
 const [endpoint, nodeId, host, promptArgument, maxTokensArgument, parallelArgument, concurrentArgument, preserveFailedGroupArgument, traceFileArgument, planFileArgument, summaryFileArgument, reportFileArgument, benchmarkArgument] = process.argv.slice(2);
 const prompt = promptArgument || 'Reply with one short Korean greeting.';
 const maxTokens = Number(maxTokensArgument || 8);
@@ -25,6 +27,11 @@ const parallel = Number(parallelArgument || 1);
 const concurrentRequests = Number(concurrentArgument || parallel);
 const executionWindow = Number(process.env.P4_EXECUTION_WINDOW ?? concurrentRequests);
 const nativeParallel = Number(process.env.P4_NATIVE_PARALLEL ?? parallel);
+// Arrival admission, not plan width. A NodeSlot defaults to one permit, so a
+// node_spec without this value serialises every stream at the Agent and the
+// adapter never sees two requests to coalesce. Sized from concurrent arrivals;
+// the adapter queue and its per-deployment gate remain the real bound.
+const agentSlotWidth = Number(process.env.P4_AGENT_SLOT_WIDTH ?? Math.min(concurrentRequests, MAX_AGENT_SLOT_WIDTH));
 const preserveFailedGroup = preserveFailedGroupArgument === '1';
 const benchmark = benchmarkArgument === '1';
 const benchmarkIgnoreEog = process.env.P4_PIPELINE_BENCHMARK_IGNORE_EOG === '1';
@@ -35,6 +42,11 @@ if (!Number.isInteger(parallel) || parallel < 1 || parallel > 65_535) throw new 
 if (!Number.isInteger(concurrentRequests) || concurrentRequests < 1 || concurrentRequests > parallel) throw new Error('concurrentRequests must be an integer from 1 to parallel');
 if (!Number.isInteger(executionWindow) || executionWindow < 1 || executionWindow > concurrentRequests) throw new Error('P4_EXECUTION_WINDOW must be an integer from 1 to concurrentRequests');
 if (!Number.isInteger(nativeParallel) || nativeParallel < 1 || nativeParallel > MAX_NATIVE_PIPELINE_PARALLEL) throw new Error(`P4_NATIVE_PARALLEL must be an integer from 1 to ${MAX_NATIVE_PIPELINE_PARALLEL}`);
+if (!Number.isInteger(agentSlotWidth) || agentSlotWidth < 1 || agentSlotWidth > MAX_AGENT_SLOT_WIDTH) throw new Error(`P4_AGENT_SLOT_WIDTH must be an integer from 1 to ${MAX_AGENT_SLOT_WIDTH}`);
+// Acceptance bound for a parallel run: aggregate throughput must hold the
+// measured single-stream rate of the same placement.
+const referenceTps = process.env.P4_REFERENCE_TPS === undefined ? undefined : Number(process.env.P4_REFERENCE_TPS);
+if (referenceTps !== undefined && (!Number.isFinite(referenceTps) || referenceTps <= 0)) throw new Error('P4_REFERENCE_TPS must be a positive number');
 const model = process.env.P4_PIPELINE_MODEL ?? 'Qwen2.5-1.5B-Instruct-Q8_0.gguf';
 const adapterId = process.env.P4_PIPELINE_ADAPTER_ID ?? 'adapter-local';
 const promptSet = await loadPromptSet(process.env.P4_PREFILL_PROMPT_FILE);
@@ -231,14 +243,15 @@ try {
   console.log(`P4_PIPELINE_CAPABILITY ${JSON.stringify(nativeRingCapabilities)}`);
   started = performance.now();
   const [node, peerNode] = await Promise.all([
-    controller.createNode({ nodeId: localNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: topology.remoteIds.length ? 'four-stage-cross-host' : 'two-stage' } }),
+    controller.createNode({ nodeId: localNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: topology.remoteIds.length ? 'four-stage-cross-host' : 'two-stage', p4_max_inflight: agentSlotWidth } }),
     peerController.createNode({ nodeId: peerNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: 'marker-only' } }),
-    remoteController ? remoteController.createNode({ nodeId: remoteNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: 'remote-stage-owner' } }) : Promise.resolve(undefined)
+    remoteController ? remoteController.createNode({ nodeId: remoteNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: 'remote-stage-owner', p4_max_inflight: agentSlotWidth } }) : Promise.resolve(undefined)
   ]);
   latency.node_create_ms = performance.now() - started;
   if (node.state !== 'ready') throw new Error(`P4 pipeline node is not ready: ${node.detail}`);
   if (peerNode.state !== 'ready') throw new Error(`P4 peer node is not ready: ${peerNode.detail}`);
   console.log(`P4_NODE state=${node.state} id=${node.nodeId}`);
+  console.log(`P4_AGENT_ADMISSION slot_width=${agentSlotWidth} concurrent_requests=${concurrentRequests} source=${process.env.P4_AGENT_SLOT_WIDTH ? 'P4_AGENT_SLOT_WIDTH' : 'concurrent_requests'} axis=arrival`);
   console.log(`P4_MULTI_CONTROLLER_PASS controllers=2 nodes=2 peer_node=${peerNode.nodeId}`);
   let sawDraft = false;
   const adapterRequest = {
@@ -309,7 +322,7 @@ try {
   }
   const gpuTraceFile = summaryFileArgument?.replace(/\.json$/i, '-gpu.jsonl');
   if (gpuTraceFile && gpuSamples.length) await writeFile(gpuTraceFile, `${gpuSamples.map((sample) => JSON.stringify(sample)).join('\n')}\n`, 'utf8');
-  const runStats = { prompt, prompt_fixture: promptSet.source, prompt_offset: promptOffset, prompt_target_tokens: promptSet.targetTokens, benchmark, benchmark_ignore_eog: benchmarkIgnoreEog, requested_max_tokens: maxTokens, parallel, concurrent_requests: concurrentRequests, execution_window: executionWindow, native_parallel: nativeParallel, batch, ubatch, model_load_options: loadOptions, stage_layers: adapterRequest.plan.placement.map((placement) => placement.layers), stage_nodes: adapterRequest.plan.placement.map((placement) => placement.node_id ?? nodes[placement.node]?.id), context_tokens: contextTokens, context_per_request_tokens: contextPerRequestTokens, generated_token_events: tokens, response_chars: text.length, p4_latency_ms: latency, ...(gpuSamples.length ? { gpu_telemetry: { trace_file: gpuTraceFile, summary: summarizeGpuTelemetry(gpuSamples, distribution) } } : {}), ...ringStats, ...(remoteRingStats ? { remote_group: remoteRingStats } : {}) };
+  const runStats = { prompt, prompt_fixture: promptSet.source, prompt_offset: promptOffset, prompt_target_tokens: promptSet.targetTokens, benchmark, benchmark_ignore_eog: benchmarkIgnoreEog, requested_max_tokens: maxTokens, parallel, concurrent_requests: concurrentRequests, execution_window: executionWindow, native_parallel: nativeParallel, agent_slot_width: agentSlotWidth, ...(referenceTps === undefined ? {} : { reference_tps: referenceTps }), batch, ubatch, model_load_options: loadOptions, stage_layers: adapterRequest.plan.placement.map((placement) => placement.layers), stage_nodes: adapterRequest.plan.placement.map((placement) => placement.node_id ?? nodes[placement.node]?.id), context_tokens: contextTokens, context_per_request_tokens: contextPerRequestTokens, generated_token_events: tokens, response_chars: text.length, p4_latency_ms: latency, ...(gpuSamples.length ? { gpu_telemetry: { trace_file: gpuTraceFile, summary: summarizeGpuTelemetry(gpuSamples, distribution) } } : {}), ...ringStats, ...(remoteRingStats ? { remote_group: remoteRingStats } : {}) };
   await writeSummary(summaryFileArgument, reportFileArgument, runStats, parallelTraces);
   console.log(`P4_PIPELINE_STATS ${JSON.stringify(runStats)}`);
   completed = true;

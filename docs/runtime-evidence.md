@@ -1,5 +1,38 @@
 # Runtime evidence
 
+## 2026-08-12: four-node run completed 16/16 while every session ran alone
+
+Local RTX 3090 + RTX 4080 and remote RTX 3090×2, four stages
+`[0,11] [11,17] [17,29] [29,40]`, 16 concurrent requests capped at 16 tokens.
+Artifacts are under
+[`target/four-node-current-20260812/`](../target/four-node-current-20260812/).
+
+| Observation | Result |
+| --- | --- |
+| planned / accepted / `DONE` / error | 16 / 16 / 16 / 0 |
+| `INGRESS_ACCEPTED` latency mean | 1.852 ms — async acceptance works |
+| first token mean / max | 18,082 ms / 36,061 ms |
+| wall clock / generated tokens | 36,731 ms / 256 |
+| aggregate throughput | **6.97 tok/s** |
+| declared adapter capacity | `max_sequences=16 source=stage_plan` |
+| adapter batch sizes | `requests=1`, all 16 of 16 batches |
+| native occupancy | `active=1 in_flight=1 peak=1 limit=16 capacity=16` |
+
+The three tiers agreed on a width of 16 and the run still executed one session
+at a time. The cause is upstream of both the adapter and the native scheduler:
+`run-pipeline-e2e.mjs` stopped sending `p4_max_inflight` when the plan-width
+copy was removed, so each NodeSlot fell back to its one-permit default. The
+async relay waits for that permit and holds it to the terminal response, so the
+Agent released one execution at a time, the adapter's 5 ms coalescing window
+had nothing to merge, and the native scheduler never saw a second sequence.
+
+Two corrections followed. The runner now declares the arrival axis explicitly
+(`P4_AGENT_SLOT_WIDTH`, defaulting to `concurrent_requests`), and every summary
+carries `throughput.aggregate_tps` with an admission verdict, so a run that is
+correct but serialised reports `serialized` instead of passing silently. Rerun
+this configuration before quoting any four-node throughput number; the table
+above measures the defect, not the topology.
+
 ## 2026-08-11: P4B1 v5 persistent-route and stock llama.cpp continuous-batch proof
 
 The stock E2E launched unchanged `llama-server.exe` with `parallel=8`,
