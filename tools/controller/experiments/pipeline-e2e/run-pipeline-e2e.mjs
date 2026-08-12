@@ -231,9 +231,9 @@ try {
   console.log(`P4_PIPELINE_CAPABILITY ${JSON.stringify(nativeRingCapabilities)}`);
   started = performance.now();
   const [node, peerNode] = await Promise.all([
-    controller.createNode({ nodeId: localNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: topology.remoteIds.length ? 'four-stage-cross-host' : 'two-stage', p4_max_inflight: parallel } }),
+    controller.createNode({ nodeId: localNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: topology.remoteIds.length ? 'four-stage-cross-host' : 'two-stage' } }),
     peerController.createNode({ nodeId: peerNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: 'marker-only' } }),
-    remoteController ? remoteController.createNode({ nodeId: remoteNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: 'remote-stage-owner', p4_max_inflight: parallel } }) : Promise.resolve(undefined)
+    remoteController ? remoteController.createNode({ nodeId: remoteNodeId, adapterId, nodeSpec: { resource_policy: 'adapter-owned', topology: 'remote-stage-owner' } }) : Promise.resolve(undefined)
   ]);
   latency.node_create_ms = performance.now() - started;
   if (node.state !== 'ready') throw new Error(`P4 pipeline node is not ready: ${node.detail}`);
@@ -274,20 +274,6 @@ try {
     options: { top_p: 0.9, top_k: 20, seed: 7 }
   }));
   await writePlan(planFileArgument, requests);
-  if (parallel === 1 && !benchmark) {
-    const held = inferRequest(`${controllerId}-admission-held`, 16);
-    const accepted = await held.next();
-    if (accepted.done || accepted.value.type !== 'accepted') throw new Error('P4 admission probe was not accepted');
-    let rejected = false;
-    try {
-      for await (const _event of inferRequest(`${controllerId}-admission-rejected`, 8)) {}
-    } catch (error) {
-      rejected = /admission is full/.test(String(error));
-    }
-    if (!rejected) throw new Error('P4 NodeSlot admitted a second concurrent stream despite p4_max_inflight=1');
-    for await (const _event of held) {}
-    console.log('P4_ADMISSION_PASS node_max_inflight=1 overflow=error-no-queue');
-  }
   started = performance.now();
   const gpuMonitor = process.env.P4_GPU_TELEMETRY === '1' ? startGpuTelemetry() : undefined;
   let results;

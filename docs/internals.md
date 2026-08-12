@@ -13,6 +13,7 @@
 - Requests and responses are separate `TaskEnvelope` instances linked by `causation_id`; no handler waits for its request's response.
 - Equal source/target Agent IDs select the common in-memory route. Transport selection does not change message validation, response ordering, or handler code.
 - NodeSlot admission is controller-owned and permit-based: `INGRESS_ACCEPTED` means ownership and binding validation succeeded; the async relay takes one permit before adapter dispatch, while binding lifecycle takes every permit.
+- Pipeline throughput has three independent axes: arrival is the E2E request window (`concurrent_requests`), bounded waiting belongs to the Agent/adapter queues, and GPU service capacity is the deployment's declared `max_sequences`. An E2E `parallel` value must not be copied into `node_spec.p4_max_inflight`.
 - <a id="agent-local-native-transport"></a>At `MODEL_LOAD`, the Adapter derives the IPC domain of every local stage from its owning Agent address; the controller cannot claim local memory affinity. Native Pipeline selects shared memory only for adjacent stages with that common domain and otherwise retains TCP.
 - `MODEL_LOAD.stage_plan.load_options` carries the controller-selected common load policy and its reproducible batch-limit calculation. Agent routing treats it as opaque JSON; the concrete adapter filters it. Unsupported process-start options fail explicitly instead of becoming hidden defaults. See [model-load.md](model-load.md).
 
