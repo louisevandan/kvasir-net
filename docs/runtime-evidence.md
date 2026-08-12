@@ -1,5 +1,38 @@
 # Runtime evidence
 
+## 2026-08-13: 246 tok/s, and stage cost follows the role rather than the device
+
+Same 35B MoE, 32 concurrent requests capped at 1000 tokens, 400-token prompts,
+`batch 256 / ubatch 128`, measured after the terminal-clearing fix below.
+
+| Run | placement | aggregate | vs single session |
+| --- | --- | ---: | ---: |
+| single session | 20/20, 3090 first | 66.0 tok/s | 1.00x |
+| `d3`, before any of this | 16/24, 4080 first | 74.3 tok/s | 1.13x |
+| baseline | 20/20, 3090 first | 196.2 tok/s | 2.97x |
+| terminal fix | 20/20, 3090 first | 206.4 tok/s | 3.13x |
+| stage swap | 20/20, **4080 first** | **246.1 tok/s** | **3.73x** |
+
+The swap is the measurement that reinterprets the earlier stage timings:
+
+| placement | first-stage compute | last-stage compute |
+| --- | ---: | ---: |
+| 3090 first | 3090 **64.2 s** | 4080 39.5 s |
+| 4080 first | 4080 **64.6 s** | 3090 31.7 s |
+
+Whichever card leads costs about 64 s and whichever trails costs 32-40 s, so
+the per-layer cost belongs to the stage role, not to the device. The earlier
+reading that the 4080 was 1.62x faster per layer was wrong; the last stage is
+simply cheaper than the first, and the 3090 is the faster card once it holds
+the role that shows it, at 31.7 s against the 4080's 39.5 s.
+
+It also closes the `d3` question. A 4080 in the first position cost 311.5 s of
+compute then and 64.6 s now, so the 4.75x penalty was the reservation defect
+against a 16 GiB card, not the role or the device.
+
+At 3.23 s per first-stage layer and 1.59 s per last-stage layer, an even split
+of work is near 13/27 rather than 20/20.
+
 ## 2026-08-13: a stale graph terminal was reserving the unowned layers
 
 `llm_graph_result::reset()` cleared `t_linkcpp_inputs`,
