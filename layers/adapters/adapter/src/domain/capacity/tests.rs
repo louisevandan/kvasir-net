@@ -93,3 +93,16 @@ fn the_same_deployment_reuses_one_gate() {
         &registry.gate("deployment-a")
     ));
 }
+
+/// Widening the gate is a measured regression until the native scheduler can
+/// use the extra width, so a declaration must not take effect on its own.
+#[test]
+fn deriving_from_a_declaration_is_opt_in() {
+    let mut registry = CapacityRegistry::new(16, 256);
+    registry.derive = false;
+    assert_eq!(registry.declare("deployment-a", &plan(50)), 16);
+    assert_eq!(registry.gate("deployment-a").available_permits(), 16);
+
+    registry.derive = true;
+    assert_eq!(registry.declare("deployment-a", &plan(50)), 50);
+}
