@@ -2,7 +2,7 @@
 
 ## 2026-08-12: the first stage reserves a fixed 13.1 GiB compute buffer
 
-Six loads of `Ornith-1.0-35B-UD-Q5_K_S.gguf` (qwen35moe, `n_expert=256`,
+Loads of `Ornith-1.0-35B-UD-Q5_K_S.gguf` (qwen35moe, `n_expert=256`,
 `n_expert_used=8`, `n_embd=2048`) on a local 3090 + 4080, layers `0:16` and
 `16:40`, driven through the owned E2E with one request capped at one token.
 Only the load path matters here. Logs are under
@@ -41,35 +41,44 @@ weight is placed, which is why a 16 GiB 4080 in the first position is planned
 with very few layers, and it is the leading suspect for the first stage costing
 roughly eight times the last stage per layer during generation.
 
-### It grows per layer only in a non-final stage
+### The compute buffer is the weight of the layers the stage does not own
 
 Holding the model, `parallel=1`, `n_ctx=1024` and `n_ubatch=16` fixed and
-moving the stage boundary:
+moving the stage boundary. Stage 0 ran on the 4080 and stage 1 on the 3090 in
+every row; process-to-range mapping is taken from the supervisor spawn records,
+not inferred from file order.
 
-| first-stage layers | first `CUDA0` | per layer | last-stage layers | last `CUDA0` |
-| ---: | ---: | ---: | ---: | ---: |
-| 4 | 5,185.43 MiB | 1,296 MiB | 36 | 15.53 MiB |
-| 16 | 13,110.96 MiB | 819 MiB | 24 | 15.53 MiB |
-| 30 | 19,900.82 MiB | 663 MiB | 10 | 15.53 MiB |
+| stage 0 layers | stage 0 model | stage 0 compute | sum | stage 1 layers | stage 1 model | stage 1 compute |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0:4 | 2,264.35 | 19,900.82 | 22,165 | 4:40 | 20,996.45 | 15.53 |
+| 0:16 | 9,057.39 | 13,110.96 | 22,168 | 16:40 | 14,203.41 | 15.53 |
+| 0:30 | 16,986.11 | 5,185.43 | 22,172 | 30:40 | 6,274.69 | 15.53 |
 
-The first stage fits `2.9 GiB + 566 MiB x layers`. The last stage does not
-move at all: 36 layers cost exactly what 10 layers cost. Per-layer scratch is
-reused in the final stage and retained in the non-final stage.
+One layer of this model weighs 566.2 MiB, and every model-buffer figure above
+is that figure times the layers the stage owns. The first stage's compute
+buffer is then `566.2 MiB x (40 - owned) - 478 MiB`: it is the weight of the
+layers it does not own. Model plus compute is 22.17 GiB in all three rows, so
+splitting the model changes only how the first stage's memory is labelled, not
+how much it takes. The last stage carries no such term and sits at 15.53 MiB
+whether it holds 10 layers or 36.
 
-`llm_graph_result::apply_linkcpp_stage` explains the asymmetry. Both stages
-prune the full graph to their own layer range, but only a stage with
-`end < n_layer` runs `t_linkcpp_outputs = cut_at(end)` and then calls
-`ggml_set_output` on every crossing tensor, and only a stage with `begin == 0`
-expands placeholder `t_logits` / `t_embd` / `t_sampled_*` terminals it never
-computes. An output tensor is excluded from allocator reuse, so a cut-set that
-holds one or more tensors per prefix layer keeps every layer's scratch alive.
-The final stage takes neither path and stays flat, which makes it the control:
-the retention is introduced by the non-final branch, not by the model or by
-llama.cpp's MoE graph.
+The reservation is real, not a reported estimate. Sampling `nvidia-smi` through
+the `0:4` run shows the 4080 holding 15.7 GiB of its 16.0 GiB for the whole
+group lifetime while owning four layers, or 2.26 GiB of weights.
 
-This predicts that in a four-stage group the three non-final stages each pay
-the term, which is consistent with the planner giving the 16 GiB 4080 six
-layers in the four-node plan.
+The dense `Qwen2.5-1.5B` control does not show it: its first stage stays at
+15-43 MiB rather than reserving its unowned layers. The term therefore belongs
+to the MoE expert tensors of unowned layers on the non-final stage path, where
+`llama_model_loader` substitutes a metadata tensor for every tensor outside
+`[linkcpp_layer_begin, linkcpp_layer_end)` and `apply_linkcpp_stage` is
+expected to prune the corresponding nodes. The final stage proves the pruning
+works there; the first stage shows it does not, and its debug line reports
+`inputs=0 outputs=1`, so the earlier guess that a large output cut-set retained
+per-layer scratch is ruled out.
+
+Consequence: pipeline splitting currently gives a non-final stage almost no
+memory relief. A four-stage group has three such stages, which is why the
+planner gives the 16 GiB 4080 six layers in the four-node plan.
 
 ## 2026-08-12: four-node run completed 16/16 while every session ran alone
 
