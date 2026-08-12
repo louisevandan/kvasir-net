@@ -30,7 +30,7 @@ fn an_undeclared_deployment_falls_back_rather_than_blocking() {
 }
 
 #[test]
-fn a_declared_deployment_sizes_its_own_gate() {
+fn a_declared_deployment_sizes_its_own_gate_without_an_opt_in() {
     let registry = CapacityRegistry::new(16, 256);
     assert_eq!(registry.declare("deployment-a", &plan(50)), 50);
     assert_eq!(registry.capacity("deployment-a"), 50);
@@ -92,17 +92,4 @@ fn the_same_deployment_reuses_one_gate() {
         &registry.gate("deployment-a"),
         &registry.gate("deployment-a")
     ));
-}
-
-/// Widening the gate is a measured regression until the native scheduler can
-/// use the extra width, so a declaration must not take effect on its own.
-#[test]
-fn deriving_from_a_declaration_is_opt_in() {
-    let mut registry = CapacityRegistry::new(16, 256);
-    registry.derive = false;
-    assert_eq!(registry.declare("deployment-a", &plan(50)), 16);
-    assert_eq!(registry.gate("deployment-a").available_permits(), 16);
-
-    registry.derive = true;
-    assert_eq!(registry.declare("deployment-a", &plan(50)), 50);
 }
