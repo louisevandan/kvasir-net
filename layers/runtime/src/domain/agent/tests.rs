@@ -1,6 +1,7 @@
 use super::*;
-use crate::{P4Handler, ResponseCollector, ResponseSink, in_memory};
+use crate::foundation::transport::{P4Handler, ResponseCollector, ResponseSink};
 use p4_protocol::{ExecutionDone, ExecutionToken, Message};
+use std::sync::Arc;
 
 struct ScriptedAdapter;
 
@@ -34,6 +35,19 @@ impl P4Handler for ScriptedAdapter {
                 state: "ready".into(),
                 detail: "in-memory adapter binding ready".into(),
             }),
+            Message::ModelUnload {
+                operation_id,
+                node_id,
+                deployment_id,
+                binding_id,
+                ..
+            } => responses.emit(Message::ModelUnbound {
+                operation_id,
+                node_id,
+                deployment_id,
+                binding_id,
+                detail: "in-memory adapter binding removed".into(),
+            }),
             Message::Execute(request) => {
                 responses.emit(Message::Token(ExecutionToken {
                     controller_id: request.controller_id.clone(),
@@ -59,15 +73,9 @@ impl P4Handler for ScriptedAdapter {
     }
 }
 
-#[test]
-fn node_admission_defaults_to_one_and_is_bounded() {
-    assert_eq!(lifecycle::max_inflight("{}"), 1);
-    assert_eq!(lifecycle::max_inflight(r#"{"p4_max_inflight":4}"#), 4);
-    assert_eq!(lifecycle::max_inflight(r#"{"p4_max_inflight":1025}"#), 1);
-}
-
-#[test]
-fn co_resident_agent_adapter_and_execution_use_one_in_memory_handler_path() {
+/// An agent with one co-resident adapter, one created node, and one ready
+/// binding at generation 1.
+fn bound_agent(max_inflight: u32) -> AgentProcessor {
     let agent = AgentProcessor::new();
     agent
         .register_in_memory_adapter(
@@ -77,8 +85,7 @@ fn co_resident_agent_adapter_and_execution_use_one_in_memory_handler_path() {
             Arc::new(ScriptedAdapter),
         )
         .unwrap();
-
-    let mut responses = ResponseCollector::new();
+    let mut created = ResponseCollector::new();
     agent
         .handle(
             Message::NodeCreate {
@@ -86,34 +93,75 @@ fn co_resident_agent_adapter_and_execution_use_one_in_memory_handler_path() {
                 operation_id: "create-a".into(),
                 node_id: "node-a".into(),
                 adapter_id: "adapter-a".into(),
-                node_spec: r#"{"p4_max_inflight":1}"#.into(),
+                node_spec: format!(r#"{{"p4_max_inflight":{max_inflight}}}"#),
             },
-            &mut responses,
+            &mut created,
         )
         .unwrap();
     assert!(matches!(
-        responses.terminal(),
+        created.terminal(),
         Some(Message::NodeCreated { .. })
     ));
-
-    let mut load = ResponseCollector::new();
+    let mut loaded = ResponseCollector::new();
+    agent.handle(load_message("deployment-a"), &mut loaded).unwrap();
+    assert!(matches!(loaded.terminal(), Some(Message::ModelBound { .. })));
     agent
-        .handle(
-            Message::ModelLoad {
-                controller_id: "controller-a".into(),
-                node_id: "node-a".into(),
-                operation_id: "load-a".into(),
-                deployment_id: "deployment-a".into(),
-                binding_id: "binding-a".into(),
-                model: "model.gguf".into(),
-                plan_revision: "test".into(),
-                stage_plan: "{}".into(),
-            },
-            &mut load,
-        )
-        .unwrap();
-    assert!(matches!(load.terminal(), Some(Message::ModelBound { .. })));
+}
 
+fn load_message(deployment_id: &str) -> Message {
+    Message::ModelLoad {
+        controller_id: "controller-a".into(),
+        node_id: "node-a".into(),
+        operation_id: "load-a".into(),
+        deployment_id: deployment_id.into(),
+        binding_id: "binding-a".into(),
+        model: "model.gguf".into(),
+        plan_revision: "test".into(),
+        stage_plan: "{}".into(),
+    }
+}
+
+fn unload_message(deployment_id: &str) -> Message {
+    Message::ModelUnload {
+        controller_id: "controller-a".into(),
+        node_id: "node-a".into(),
+        operation_id: "unload-a".into(),
+        deployment_id: deployment_id.into(),
+        binding_id: "binding-a".into(),
+    }
+}
+
+fn ingress_message() -> Message {
+    ingress_for("controller-a", 1)
+}
+
+fn ingress_for(controller_id: &str, runtime_generation: u64) -> Message {
+    Message::IngressSubmit {
+        controller_id: controller_id.into(),
+        ingress_id: "ingress-a".into(),
+        request_id: "request-a".into(),
+        session_id: String::new(),
+        node_id: "node-a".into(),
+        deployment_id: "deployment-a".into(),
+        binding_id: "binding-a".into(),
+        runtime_generation,
+        max_tokens: 1,
+        temperature: 0.7,
+        prompt: "hello".into(),
+        options: "{}".into(),
+    }
+}
+
+fn error_detail(responses: ResponseCollector) -> String {
+    match responses.into_messages().pop() {
+        Some(Message::Error { detail, .. }) => detail,
+        other => panic!("expected an ERROR, got {other:?}"),
+    }
+}
+
+#[test]
+fn co_resident_agent_adapter_and_execution_use_one_in_memory_handler_path() {
+    let agent = bound_agent(1);
     let mut ingress = ResponseCollector::new();
     agent.handle(ingress_message(), &mut ingress).unwrap();
     assert!(matches!(
@@ -128,49 +176,172 @@ fn co_resident_agent_adapter_and_execution_use_one_in_memory_handler_path() {
 
 #[test]
 fn saturated_ingress_is_rejected_before_acceptance() {
-    let agent = AgentProcessor {
-        agent_id: "agent-test".into(),
-        session_sequence: AtomicU64::new(1),
-        state: RwLock::new(Registry {
-            adapters: HashMap::new(),
-            nodes: HashMap::from([(
-                "node-a".into(),
-                NodeSlot {
-                    controller_id: "controller-a".into(),
-                    adapter_id: "adapter-a".into(),
-                    transport: in_memory(Arc::new(ScriptedAdapter)),
-                    endpoint: None,
-                    max_inflight: 1,
-                    admission: Arc::new(Semaphore::new(0)),
-                    bindings: HashMap::from([(
-                        "binding-a".into(),
-                        Binding {
-                            deployment_id: "deployment-a".into(),
-                            generation: 1,
-                        },
-                    )]),
-                },
-            )]),
-        }),
-    };
+    let agent = bound_agent(1);
+    let slot = agent
+        .state
+        .read()
+        .unwrap()
+        .nodes
+        .get("node-a")
+        .cloned()
+        .unwrap();
+    let held = admission::execution(&slot).expect("hold the only permit");
+
     let mut responses = ResponseCollector::new();
     agent.handle(ingress_message(), &mut responses).unwrap();
-    assert!(matches!(responses.terminal(), Some(Message::Error { .. })));
+    let detail = error_detail(responses);
+    assert!(detail.contains("admission is full"), "{detail}");
+    drop(held);
 }
 
-fn ingress_message() -> Message {
-    Message::IngressSubmit {
-        controller_id: "controller-a".into(),
-        ingress_id: "ingress-a".into(),
-        request_id: "request-a".into(),
-        session_id: String::new(),
-        node_id: "node-a".into(),
-        deployment_id: "deployment-a".into(),
-        binding_id: "binding-a".into(),
-        runtime_generation: 1,
-        max_tokens: 1,
-        temperature: 0.7,
-        prompt: "hello".into(),
-        options: "{}".into(),
-    }
+#[test]
+fn another_controller_cannot_execute_on_an_owned_node() {
+    let agent = bound_agent(1);
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(ingress_for("controller-b", 1), &mut responses)
+        .unwrap();
+    let detail = error_detail(responses);
+    assert!(detail.contains("is not owned by controller controller-b"), "{detail}");
+}
+
+#[test]
+fn a_stale_runtime_generation_cannot_execute() {
+    let agent = bound_agent(1);
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(ingress_for("controller-a", 99), &mut responses)
+        .unwrap();
+    let detail = error_detail(responses);
+    assert!(detail.contains("has no ready binding"), "{detail}");
+}
+
+#[test]
+fn another_controller_cannot_claim_an_existing_node() {
+    let agent = bound_agent(1);
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(
+            Message::NodeCreate {
+                controller_id: "controller-b".into(),
+                operation_id: "create-b".into(),
+                node_id: "node-a".into(),
+                adapter_id: "adapter-a".into(),
+                node_spec: "{}".into(),
+            },
+            &mut responses,
+        )
+        .unwrap();
+    let detail = error_detail(responses);
+    assert!(detail.contains("is not owned by controller controller-b"), "{detail}");
+}
+
+#[test]
+fn unloading_another_deployment_is_refused_and_keeps_the_binding() {
+    let agent = bound_agent(1);
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(unload_message("deployment-other"), &mut responses)
+        .unwrap();
+    let detail = error_detail(responses);
+    assert!(detail.contains("belongs to deployment deployment-a"), "{detail}");
+
+    let mut ingress = ResponseCollector::new();
+    agent.handle(ingress_message(), &mut ingress).unwrap();
+    assert!(
+        matches!(
+            ingress.into_messages().first(),
+            Some(Message::IngressAccepted { .. })
+        ),
+        "a refused unload must leave the binding executable"
+    );
+}
+
+#[test]
+fn unloading_the_recorded_deployment_removes_the_binding() {
+    let agent = bound_agent(1);
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(unload_message("deployment-a"), &mut responses)
+        .unwrap();
+    assert!(matches!(
+        responses.terminal(),
+        Some(Message::ModelUnbound { .. })
+    ));
+
+    let mut ingress = ResponseCollector::new();
+    agent.handle(ingress_message(), &mut ingress).unwrap();
+    let detail = error_detail(ingress);
+    assert!(detail.contains("has no ready binding"), "{detail}");
+}
+
+#[test]
+fn an_execution_holds_the_slot_against_a_concurrent_unload() {
+    let agent = bound_agent(1);
+    let slot = agent
+        .state
+        .read()
+        .unwrap()
+        .nodes
+        .get("node-a")
+        .cloned()
+        .unwrap();
+    let held = admission::execution(&slot).expect("hold the only permit");
+
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(unload_message("deployment-a"), &mut responses)
+        .unwrap();
+    let detail = error_detail(responses);
+    assert!(detail.contains("admission is full"), "{detail}");
+    drop(held);
+}
+
+#[test]
+fn a_node_cannot_be_created_on_an_unregistered_adapter() {
+    let agent = AgentProcessor::new();
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(
+            Message::NodeCreate {
+                controller_id: "controller-a".into(),
+                operation_id: "create-a".into(),
+                node_id: "node-a".into(),
+                adapter_id: "adapter-missing".into(),
+                node_spec: "{}".into(),
+            },
+            &mut responses,
+        )
+        .unwrap();
+    let detail = error_detail(responses);
+    assert!(detail.contains("is not registered"), "{detail}");
+}
+
+#[test]
+fn an_adapter_cannot_move_its_endpoint_while_slots_are_attached() {
+    let agent = bound_agent(1);
+    let mut responses = ResponseCollector::new();
+    agent
+        .handle(
+            Message::AdapterRegister {
+                adapter_id: "adapter-a".into(),
+                adapter_kind: "test".into(),
+                endpoint: "127.0.0.1:19999".into(),
+                descriptor: "{}".into(),
+            },
+            &mut responses,
+        )
+        .unwrap();
+    let detail = error_detail(responses);
+    assert!(detail.contains("attached node"), "{detail}");
+
+    let mut ingress = ResponseCollector::new();
+    agent.handle(ingress_message(), &mut ingress).unwrap();
+    assert!(
+        matches!(
+            ingress.into_messages().first(),
+            Some(Message::IngressAccepted { .. })
+        ),
+        "a refused re-registration must leave the original route intact"
+    );
 }

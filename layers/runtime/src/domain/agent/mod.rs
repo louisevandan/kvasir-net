@@ -1,48 +1,32 @@
 //! Agent-owned adapter registry, NodeSlot lifecycle, and hardware inventory.
+//!
+//! The Agent is the rejection gate between controllers and concrete runtimes.
+//! It keeps node/controller/binding state until the binding is unloaded and
+//! refuses any request that contradicts it; concrete adapters re-check binding
+//! generation but never key on `controller_id`, so ownership lives only here.
 //! See `apps/p4/docs/internals.md#agent-state`.
 
+mod admission;
+mod authorization;
 mod ingress;
 mod lifecycle;
+mod registry;
 #[cfg(test)]
 mod tests;
 
-use crate::foundation::transport::{P4Handler, ResponseSink, Result, SharedTransport, reject};
+use crate::foundation::transport::{P4Handler, ResponseSink, Result, SharedTransport};
 use p4_protocol::Message;
-use std::collections::HashMap;
 use std::env;
+use std::sync::RwLock;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, RwLock};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::OwnedSemaphorePermit;
+
+pub(crate) use registry::{Registry, ResolvedNode};
 
 pub struct AgentProcessor {
     agent_id: String,
     session_sequence: AtomicU64,
     state: RwLock<Registry>,
-}
-
-#[derive(Default)]
-pub(super) struct Registry {
-    pub(super) adapters: HashMap<String, Adapter>,
-    pub(super) nodes: HashMap<String, NodeSlot>,
-}
-
-#[derive(Clone)]
-pub(super) struct Adapter {
-    pub(super) kind: String,
-    pub(super) transport: SharedTransport,
-    pub(super) endpoint: Option<String>,
-    pub(super) descriptor: String,
-}
-
-#[derive(Clone)]
-pub(super) struct NodeSlot {
-    pub(super) controller_id: String,
-    pub(super) adapter_id: String,
-    pub(super) transport: SharedTransport,
-    pub(super) endpoint: Option<String>,
-    pub(super) max_inflight: u32,
-    pub(super) admission: Arc<Semaphore>,
-    pub(super) bindings: HashMap<String, Binding>,
 }
 
 pub(crate) struct AsyncIngress {
@@ -55,12 +39,6 @@ pub(crate) struct AsyncExecution {
     pub(crate) transport: SharedTransport,
     pub(crate) endpoint: Option<String>,
     pub(crate) _permit: OwnedSemaphorePermit,
-}
-
-#[derive(Clone)]
-pub(super) struct Binding {
-    deployment_id: String,
-    generation: u64,
 }
 
 impl AgentProcessor {
@@ -96,7 +74,7 @@ impl AgentProcessor {
                 request_id: request.request_id.clone(),
                 detail: error.to_string(),
             })?;
-        let Some((slot, permit)) = acquired else {
+        let Some((resolved, permit)) = acquired else {
             return Err(responses.into_messages().pop().unwrap_or(Message::Error {
                 request_id: request.request_id.clone(),
                 detail: "execution admission rejected".into(),
@@ -104,8 +82,8 @@ impl AgentProcessor {
         };
         Ok(AsyncExecution {
             execute: message,
-            transport: slot.transport,
-            endpoint: slot.endpoint,
+            transport: resolved.adapter.transport,
+            endpoint: resolved.adapter.endpoint,
             _permit: permit,
         })
     }
@@ -201,12 +179,10 @@ impl AgentProcessor {
                 request_id,
                 controller_id,
             } => self.health(responses, controller_id, node_id, request_id),
-            _other => reject(
+            _other => self.refuse(
                 responses,
-                Message::Error {
-                    request_id: "unknown".into(),
-                    detail: "agent cannot process this message".into(),
-                },
+                "unknown",
+                "agent cannot process this message",
             ),
         }
     }
@@ -215,99 +191,54 @@ impl AgentProcessor {
         let Message::Execute(request) = message else {
             unreachable!()
         };
-        let Some((slot, permit)) = self.acquire_execution(responses, &request)? else {
+        let Some((resolved, permit)) = self.acquire_execution(responses, &request)? else {
             return Ok(());
         };
-        let result =
-            lifecycle::forward_capture(responses, &slot.transport, Message::Execute(request))
-                .map(|_| ());
+        let result = lifecycle::forward::capture(
+            responses,
+            &resolved.adapter.transport,
+            Message::Execute(request),
+        )
+        .map(|_| ());
         drop(permit);
         result
     }
 
+    /// Ownership, binding readiness, then credit — in that order, so a
+    /// request that fails the gate never consumes capacity.
     /// See `apps/p4/docs/internals.md#execution-credit`.
-    pub(super) fn acquire_execution(
+    pub(crate) fn acquire_execution(
         &self,
         responses: &mut dyn ResponseSink,
         request: &p4_protocol::ExecutionRequest,
-    ) -> Result<Option<(NodeSlot, OwnedSemaphorePermit)>> {
-        let slot = match self.node(
+    ) -> Result<Option<(ResolvedNode, OwnedSemaphorePermit)>> {
+        let resolved = match self.owned(
             &request.controller_id,
             &request.node_id,
             &request.request_id,
-        ) {
-            Ok(slot) => slot,
-            Err(error) => {
-                return reject(
+        )? {
+            Ok(resolved) => resolved,
+            Err(denial) => {
+                return self
+                    .deny(responses, &request.request_id, &denial)
+                    .map(|()| None);
+            }
+        };
+        if let Err(denial) = authorization::execution(&resolved, request) {
+            return self
+                .deny(responses, &request.request_id, &denial)
+                .map(|()| None);
+        }
+        let Some(permit) = admission::execution(&resolved.slot) else {
+            return self
+                .refuse(
                     responses,
-                    Message::Error {
-                        request_id: request.request_id.clone(),
-                        detail: error.to_string(),
-                    },
+                    &request.request_id,
+                    &admission::saturated_detail(&request.node_id),
                 )
                 .map(|()| None);
-            }
         };
-        let binding = slot.bindings.get(&request.binding_id);
-        if !matches!(binding, Some(value) if value.deployment_id == request.deployment_id && value.generation == request.runtime_generation)
-        {
-            return reject(
-                responses,
-                Message::Error {
-                    request_id: request.request_id.clone(),
-                    detail: format!(
-                        "node {} has no ready binding {} generation {}",
-                        request.node_id, request.binding_id, request.runtime_generation
-                    ),
-                },
-            )
-            .map(|()| None);
-        }
-        let permit = match Arc::clone(&slot.admission).try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
-                self.busy(responses, &request.request_id, &request.node_id)?;
-                return Ok(None);
-            }
-        };
-        Ok(Some((slot, permit)))
-    }
-
-    fn node(&self, controller_id: &str, node_id: &str, request_id: &str) -> Result<NodeSlot> {
-        let slot = self
-            .state
-            .read()
-            .map_err(|_| "agent registry lock poisoned")?
-            .nodes
-            .get(node_id)
-            .cloned()
-            .ok_or_else(|| {
-                format!("node instance {node_id} is not created; request {request_id}")
-            })?;
-        if slot.controller_id != controller_id {
-            return Err(format!(
-                "node instance {node_id} is not owned by controller {controller_id}"
-            )
-            .into());
-        }
-        Ok(slot)
-    }
-
-    fn busy(
-        &self,
-        responses: &mut dyn ResponseSink,
-        request_id: &str,
-        node_id: &str,
-    ) -> Result<()> {
-        reject(
-            responses,
-            Message::Error {
-                request_id: request_id.into(),
-                detail: format!(
-                    "node {node_id} admission is full; retry after an active stream completes"
-                ),
-            },
-        )
+        Ok(Some((resolved, permit)))
     }
 }
 

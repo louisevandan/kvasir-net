@@ -1,14 +1,23 @@
-//! Adapter registration, NodeSlot lifecycle, and terminal-response forwarding.
+//! Controller-facing protocol operations: adapter registration, NodeSlot
+//! creation, model binding lifecycle, inventory, and health.
+//!
+//! Every operation resolves its adapter through the registry rather than a
+//! handle cached on the slot, and every controller-facing one passes the
+//! authorization gate first.
 
-use super::{Adapter, AgentProcessor, Binding, NodeSlot};
+pub(crate) mod forward;
+pub(crate) mod node_spec;
+
+use super::admission;
+use super::authorization::{self, Denial};
+use super::registry::adapter::{Adapter, RegistrationRefusal, authorize_registration};
+use super::registry::node::{NodeSlot, UnbindRefusal};
+use super::{AgentProcessor, ResolvedNode};
 use crate::foundation::transport::{
-    ResponseSink, Result, SharedHandler, SharedTransport, in_memory, reject, tcp, terminal,
+    ResponseSink, Result, SharedHandler, in_memory, reject, tcp,
 };
 use p4_protocol::Message;
-use std::collections::HashMap;
 use std::net::ToSocketAddrs;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
 
 impl AgentProcessor {
     pub(super) fn register(
@@ -20,35 +29,41 @@ impl AgentProcessor {
         descriptor: String,
     ) -> Result<()> {
         if adapter_id.is_empty() || kind.is_empty() || endpoint.to_socket_addrs().is_err() {
-            return reject(
+            return self.refuse(
                 responses,
-                Message::Error {
-                    request_id: adapter_id,
-                    detail: "adapter registration needs ID, kind, and valid endpoint".into(),
-                },
+                &adapter_id,
+                &RegistrationRefusal::Malformed.detail(),
             );
         }
-        self.state
+        let mut state = self
+            .state
             .write()
-            .map_err(|_| "agent registry lock poisoned")?
-            .adapters
-            .insert(
-                adapter_id.clone(),
-                Adapter {
-                    kind,
-                    transport: tcp(endpoint.clone()),
-                    endpoint: Some(endpoint),
-                    descriptor,
-                },
-            );
+            .map_err(|_| "agent registry lock poisoned")?;
+        let attached = state.attached_nodes(&adapter_id);
+        if let Err(refusal) =
+            authorize_registration(state.adapters.get(&adapter_id), &endpoint, attached)
+        {
+            drop(state);
+            return self.refuse(responses, &adapter_id, &refusal.detail());
+        }
+        state.adapters.insert(
+            adapter_id.clone(),
+            Adapter {
+                kind,
+                transport: tcp(endpoint.clone()),
+                endpoint: Some(endpoint),
+                descriptor,
+            },
+        );
+        drop(state);
         responses.emit(Message::AdapterRegistered {
             adapter_id,
             detail: "registered".into(),
         })
     }
 
-    /// Installs a co-resident concrete adapter without creating a loopback socket.
-    /// See `apps/p4/docs/internals.md#transport-neutral-dispatch`.
+    /// Installs a co-resident concrete adapter without creating a loopback
+    /// socket. See `apps/p4/docs/internals.md#transport-neutral-dispatch`.
     pub fn register_in_memory_adapter(
         &self,
         adapter_id: String,
@@ -85,6 +100,7 @@ impl AgentProcessor {
             .read()
             .map_err(|_| "agent registry lock poisoned")?;
         let snapshot = crate::domain::hardware::snapshot(&state);
+        drop(state);
         responses.emit(Message::HardwareReport {
             agent_id: self.agent_id.clone(),
             report_id: request_id,
@@ -101,56 +117,31 @@ impl AgentProcessor {
         adapter_id: String,
         node_spec: String,
     ) -> Result<()> {
-        let adapter = self
-            .state
-            .read()
-            .map_err(|_| "agent registry lock poisoned")?
-            .adapters
-            .get(&adapter_id)
-            .cloned();
-        let Some(adapter) = adapter else {
-            return reject(
-                responses,
-                Message::Error {
-                    request_id: operation_id,
-                    detail: format!("adapter {adapter_id} is not registered"),
-                },
-            );
+        let transport = {
+            let state = self
+                .state
+                .read()
+                .map_err(|_| "agent registry lock poisoned")?;
+            if let Err(denial) =
+                authorization::node_create(&state, &controller_id, &node_id, &adapter_id)
+            {
+                drop(state);
+                return self.deny(responses, &operation_id, &denial);
+            }
+            state
+                .adapters
+                .get(&adapter_id)
+                .expect("authorization confirmed the adapter")
+                .transport
+                .clone()
         };
-        if let Some(existing) = self
-            .state
-            .read()
-            .map_err(|_| "agent registry lock poisoned")?
-            .nodes
-            .get(&node_id)
-            .cloned()
-        {
-            if existing.controller_id != controller_id {
-                return reject(
-                    responses,
-                    Message::Error {
-                        request_id: operation_id,
-                        detail: format!("node {node_id} is owned by another controller"),
-                    },
-                );
-            }
-            if existing.adapter_id != adapter_id {
-                return reject(
-                    responses,
-                    Message::Error {
-                        request_id: operation_id,
-                        detail: format!("node {node_id} is already attached to another adapter"),
-                    },
-                );
-            }
-        }
-        let max_inflight = max_inflight(&node_spec);
-        let response = forward_capture(
+        let max_inflight = node_spec::max_inflight(&node_spec);
+        let response = forward::capture(
             responses,
-            &adapter.transport,
+            &transport,
             Message::NodeCreate {
                 controller_id: controller_id.clone(),
-                operation_id: operation_id.clone(),
+                operation_id,
                 node_id: node_id.clone(),
                 adapter_id: adapter_id.clone(),
                 node_spec,
@@ -161,22 +152,13 @@ impl AgentProcessor {
                 .write()
                 .map_err(|_| "agent registry lock poisoned")?
                 .nodes
-                .insert(
-                    node_id,
-                    NodeSlot {
-                        controller_id,
-                        adapter_id,
-                        transport: adapter.transport,
-                        endpoint: adapter.endpoint,
-                        max_inflight,
-                        admission: Arc::new(Semaphore::new(max_inflight as usize)),
-                        bindings: HashMap::new(),
-                    },
-                );
+                .entry(node_id)
+                .or_insert_with(|| NodeSlot::new(controller_id, adapter_id, max_inflight));
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn load_model(
         &self,
         responses: &mut dyn ResponseSink,
@@ -189,18 +171,18 @@ impl AgentProcessor {
         plan_revision: String,
         stage_plan: String,
     ) -> Result<()> {
-        let slot = self.node(&controller_id, &node_id, &operation_id)?;
-        let permit = match Arc::clone(&slot.admission).try_acquire_many_owned(slot.max_inflight) {
-            Ok(permit) => permit,
-            Err(_) => return self.busy(responses, &operation_id, &node_id),
+        let Some((resolved, permit)) =
+            self.exclusive(responses, &controller_id, &node_id, &operation_id)?
+        else {
+            return Ok(());
         };
-        let response = forward_capture(
+        let response = forward::capture(
             responses,
-            &slot.transport,
+            &resolved.adapter.transport,
             Message::ModelLoad {
                 controller_id,
                 node_id: node_id.clone(),
-                operation_id: operation_id.clone(),
+                operation_id,
                 deployment_id: deployment_id.clone(),
                 binding_id: binding_id.clone(),
                 model,
@@ -213,23 +195,15 @@ impl AgentProcessor {
             runtime_generation,
             ..
         } = response
+            && state == "ready"
         {
-            if state == "ready" {
-                self.state
-                    .write()
-                    .map_err(|_| "agent registry lock poisoned")?
-                    .nodes
-                    .get_mut(&node_id)
-                    .ok_or("node disappeared")?
-                    .bindings
-                    .insert(
-                        binding_id,
-                        Binding {
-                            deployment_id,
-                            generation: runtime_generation,
-                        },
-                    );
-            }
+            self.state
+                .write()
+                .map_err(|_| "agent registry lock poisoned")?
+                .nodes
+                .get_mut(&node_id)
+                .ok_or("node disappeared")?
+                .bind(binding_id, deployment_id, runtime_generation);
         }
         drop(permit);
         Ok(())
@@ -244,31 +218,33 @@ impl AgentProcessor {
         deployment_id: String,
         binding_id: String,
     ) -> Result<()> {
-        let slot = self.node(&controller_id, &node_id, &operation_id)?;
-        let permit = match Arc::clone(&slot.admission).try_acquire_many_owned(slot.max_inflight) {
-            Ok(permit) => permit,
-            Err(_) => return self.busy(responses, &operation_id, &node_id),
+        let Some((resolved, permit)) =
+            self.exclusive(responses, &controller_id, &node_id, &operation_id)?
+        else {
+            return Ok(());
         };
-        let response = forward_capture(
+        let response = forward::capture(
             responses,
-            &slot.transport,
+            &resolved.adapter.transport,
             Message::ModelUnload {
                 controller_id,
                 node_id: node_id.clone(),
                 operation_id: operation_id.clone(),
-                deployment_id,
+                deployment_id: deployment_id.clone(),
                 binding_id: binding_id.clone(),
             },
         )?;
         if matches!(response, Message::ModelUnbound { .. }) {
-            self.state
+            let mut state = self
+                .state
                 .write()
-                .map_err(|_| "agent registry lock poisoned")?
-                .nodes
-                .get_mut(&node_id)
-                .ok_or("node disappeared")?
-                .bindings
-                .remove(&binding_id);
+                .map_err(|_| "agent registry lock poisoned")?;
+            let slot = state.nodes.get_mut(&node_id).ok_or("node disappeared")?;
+            if let Err(refusal) = slot.unbind(&binding_id, &deployment_id) {
+                drop(state);
+                drop(permit);
+                return self.refuse(responses, &operation_id, &unbind_detail(&refusal, &binding_id));
+            }
         }
         drop(permit);
         Ok(())
@@ -281,10 +257,13 @@ impl AgentProcessor {
         node_id: String,
         request_id: String,
     ) -> Result<()> {
-        let slot = self.node(&controller_id, &node_id, &request_id)?;
-        forward_capture(
+        let resolved = match self.owned(&controller_id, &node_id, &request_id)? {
+            Ok(resolved) => resolved,
+            Err(denial) => return self.deny(responses, &request_id, &denial),
+        };
+        forward::capture(
             responses,
-            &slot.transport,
+            &resolved.adapter.transport,
             Message::HealthCheck {
                 controller_id,
                 node_id,
@@ -293,46 +272,82 @@ impl AgentProcessor {
         )
         .map(|_| ())
     }
+
+    /// Resolves an owned slot and takes every permit, so no execution can
+    /// overlap the binding transition that follows.
+    fn exclusive(
+        &self,
+        responses: &mut dyn ResponseSink,
+        controller_id: &str,
+        node_id: &str,
+        correlation_id: &str,
+    ) -> Result<Option<(ResolvedNode, tokio::sync::OwnedSemaphorePermit)>> {
+        let resolved = match self.owned(controller_id, node_id, correlation_id)? {
+            Ok(resolved) => resolved,
+            Err(denial) => return self.deny(responses, correlation_id, &denial).map(|()| None),
+        };
+        let Some(permit) = admission::lifecycle(&resolved.slot) else {
+            return self
+                .refuse(
+                    responses,
+                    correlation_id,
+                    &admission::saturated_detail(node_id),
+                )
+                .map(|()| None);
+        };
+        Ok(Some((resolved, permit)))
+    }
+
+    pub(super) fn owned(
+        &self,
+        controller_id: &str,
+        node_id: &str,
+        correlation_id: &str,
+    ) -> Result<std::result::Result<ResolvedNode, Denial>> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| "agent registry lock poisoned")?;
+        Ok(authorization::owned_node(
+            &state,
+            controller_id,
+            node_id,
+            correlation_id,
+        ))
+    }
+
+    pub(super) fn deny(
+        &self,
+        responses: &mut dyn ResponseSink,
+        correlation_id: &str,
+        denial: &Denial,
+    ) -> Result<()> {
+        self.refuse(responses, correlation_id, &denial.detail())
+    }
+
+    pub(super) fn refuse(
+        &self,
+        responses: &mut dyn ResponseSink,
+        correlation_id: &str,
+        detail: &str,
+    ) -> Result<()> {
+        reject(
+            responses,
+            Message::Error {
+                request_id: correlation_id.into(),
+                detail: detail.into(),
+            },
+        )
+    }
 }
 
-pub(super) fn max_inflight(node_spec: &str) -> u32 {
-    serde_json::from_str::<serde_json::Value>(node_spec)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("p4_max_inflight")
-                .and_then(serde_json::Value::as_u64)
-        })
-        .and_then(|value| u32::try_from(value).ok())
-        .filter(|value| (1..=1024).contains(value))
-        .unwrap_or(1)
-}
-
-pub(super) fn forward_capture(
-    responses: &mut dyn ResponseSink,
-    transport: &SharedTransport,
-    message: Message,
-) -> Result<Message> {
-    let mut forwarded = ForwardCaptureSink {
-        downstream: responses,
-        terminal: None,
-    };
-    transport.dispatch(message, &mut forwarded)?;
-    forwarded
-        .terminal
-        .ok_or_else(|| "P4 transport completed without a terminal response".into())
-}
-
-struct ForwardCaptureSink<'a> {
-    downstream: &'a mut dyn ResponseSink,
-    terminal: Option<Message>,
-}
-
-impl ResponseSink for ForwardCaptureSink<'_> {
-    fn emit(&mut self, message: Message) -> Result<()> {
-        if terminal(&message) {
-            self.terminal = Some(message.clone());
+fn unbind_detail(refusal: &UnbindRefusal, binding_id: &str) -> String {
+    match refusal {
+        UnbindRefusal::UnknownBinding => {
+            format!("binding {binding_id} is not recorded on this node")
         }
-        self.downstream.emit(message)
+        UnbindRefusal::DeploymentMismatch { recorded } => format!(
+            "binding {binding_id} belongs to deployment {recorded}; refusing to unbind it for another deployment"
+        ),
     }
 }

@@ -16,10 +16,20 @@
 - <a id="agent-local-native-transport"></a>At `MODEL_LOAD`, the Adapter derives the IPC domain of every local stage from its owning Agent address; the controller cannot claim local memory affinity. Native Pipeline selects shared memory only for adjacent stages with that common domain and otherwise retains TCP.
 - `MODEL_LOAD.stage_plan.load_options` carries the controller-selected common load policy and its reproducible batch-limit calculation. Agent routing treats it as opaque JSON; the concrete adapter filters it. Unsupported process-start options fail explicitly instead of becoming hidden defaults. See [model-load.md](model-load.md).
 
+## Rejection gate
+
+- <a id="rejection-gate"></a>The Agent keeps node, controller and binding state until the binding is unloaded, and refuses any request that contradicts it. `authorization/` owns those rules; adding authentication changes that folder alone.
+- Concrete adapters re-check binding generation, but none of them keys on `controller_id`. Ownership therefore exists only at this boundary and cannot be delegated downstream.
+- A slot never caches its adapter handle. `registry::resolve` joins the slot with `adapters[adapter_id]` at use time, so adapter identity has exactly one source.
+- Re-registering an adapter under a different endpoint is refused while NodeSlots are attached; those slots were authorised against the previously registered runtime.
+- `MODEL_UNLOAD` removes a binding only when the request names the deployment that was recorded, so a mismatched unload cannot silently drop a live binding.
+
 ## Execution credit
 
-- `INGRESS_ACCEPTED` follows NodeSlot credit acquisition, not raw socket receipt; a controller can treat it as the point at which a selected binding may begin execution.
-- The credit is held until the adapter sends a terminal P4 response; `MODEL_LOAD` and `MODEL_UNLOAD` acquire the entire slot so they cannot replace a live binding.
+- <a id="execution-credit"></a>`INGRESS_ACCEPTED` follows NodeSlot credit acquisition, not raw socket receipt; a controller can treat it as the point at which a selected binding may begin execution.
+- The slot semaphore is a reader/writer lock written as a counting semaphore: an execution takes one permit, `MODEL_LOAD` and `MODEL_UNLOAD` take every permit.
+- Sizing and exclusivity are independent. Raising `p4_max_inflight` changes concurrency only; a lifecycle transition still waits for every permit, so a binding stays stable until it is explicitly unloaded.
+- Ownership and binding readiness are checked before credit, so a request that fails the gate never consumes capacity.
 - This is Agent policy over opaque NodeSlot capacity, not a CUDA, llama.cpp, or native Pipeline data-plane mechanism.
 
 ## Invariants
