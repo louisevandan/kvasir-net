@@ -17,10 +17,11 @@ mod tests;
 use crate::foundation::transport::{P4Handler, ResponseSink, Result, SharedTransport};
 use p4_protocol::Message;
 use std::env;
-use std::sync::RwLock;
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, RwLock};
 use tokio::sync::OwnedSemaphorePermit;
 
+use registry::node::NodeSlot;
 pub(crate) use registry::{Registry, ResolvedNode};
 
 pub struct AgentProcessor {
@@ -38,7 +39,7 @@ pub(crate) struct AsyncExecution {
     pub(crate) execute: Message,
     pub(crate) transport: SharedTransport,
     pub(crate) endpoint: Option<String>,
-    pub(crate) _permit: OwnedSemaphorePermit,
+    pub(crate) slot: NodeSlot,
 }
 
 impl AgentProcessor {
@@ -67,25 +68,36 @@ impl AgentProcessor {
                 detail: "async execution requires EXECUTE".into(),
             });
         };
-        let mut responses = crate::foundation::transport::ResponseCollector::new();
-        let acquired = self
-            .acquire_execution(&mut responses, request)
-            .map_err(|error| Message::Error {
+        let resolved = self
+            .resolve_execution(request)
+            .map_err(|detail| Message::Error {
                 request_id: request.request_id.clone(),
-                detail: error.to_string(),
+                detail,
             })?;
-        let Some((resolved, permit)) = acquired else {
-            return Err(responses.into_messages().pop().unwrap_or(Message::Error {
-                request_id: request.request_id.clone(),
-                detail: "execution admission rejected".into(),
-            }));
-        };
         Ok(AsyncExecution {
             execute: message,
             transport: resolved.adapter.transport,
             endpoint: resolved.adapter.endpoint,
-            _permit: permit,
+            slot: resolved.slot,
         })
+    }
+
+    pub(crate) async fn acquire_async_execution(
+        &self,
+        execution: &AsyncExecution,
+    ) -> std::result::Result<OwnedSemaphorePermit, String> {
+        let permit = Arc::clone(&execution.slot.admission)
+            .acquire_owned()
+            .await
+            .map_err(|_| "execution admission closed".to_owned())?;
+        let Message::Execute(request) = &execution.execute else {
+            unreachable!()
+        };
+        if let Err(detail) = self.resolve_execution(request) {
+            drop(permit);
+            return Err(detail);
+        }
+        Ok(permit)
     }
 
     pub fn handle(&self, message: Message, responses: &mut dyn ResponseSink) -> Result<()> {
@@ -212,23 +224,14 @@ impl AgentProcessor {
         responses: &mut dyn ResponseSink,
         request: &p4_protocol::ExecutionRequest,
     ) -> Result<Option<(ResolvedNode, OwnedSemaphorePermit)>> {
-        let resolved = match self.owned(
-            &request.controller_id,
-            &request.node_id,
-            &request.request_id,
-        )? {
+        let resolved = match self.resolve_execution(request) {
             Ok(resolved) => resolved,
-            Err(denial) => {
+            Err(detail) => {
                 return self
-                    .deny(responses, &request.request_id, &denial)
+                    .refuse(responses, &request.request_id, &detail)
                     .map(|()| None);
             }
         };
-        if let Err(denial) = authorization::execution(&resolved, request) {
-            return self
-                .deny(responses, &request.request_id, &denial)
-                .map(|()| None);
-        }
         let Some(permit) = admission::execution(&resolved.slot) else {
             return self
                 .refuse(
@@ -239,6 +242,22 @@ impl AgentProcessor {
                 .map(|()| None);
         };
         Ok(Some((resolved, permit)))
+    }
+
+    fn resolve_execution(
+        &self,
+        request: &p4_protocol::ExecutionRequest,
+    ) -> std::result::Result<ResolvedNode, String> {
+        let resolved = self
+            .owned(
+                &request.controller_id,
+                &request.node_id,
+                &request.request_id,
+            )
+            .map_err(|error| error.to_string())?
+            .map_err(|denial| denial.detail())?;
+        authorization::execution(&resolved, request).map_err(|denial| denial.detail())?;
+        Ok(resolved)
     }
 }
 

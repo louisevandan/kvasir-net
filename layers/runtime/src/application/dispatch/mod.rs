@@ -140,6 +140,7 @@ impl AgentTaskHandler {
         let queue = context.queue().clone();
         if prepared.endpoint.is_some() {
             let peers = Arc::clone(&self.peers);
+            let processor = Arc::clone(&self.processor);
             let deliveries = Arc::clone(&self.deliveries);
             let route_id = task.route_id.clone();
             let endpoint = prepared
@@ -154,7 +155,7 @@ impl AgentTaskHandler {
                 if started.await.is_err() {
                     return;
                 }
-                relay::execution(peers, queue, task, prepared, deliveries).await;
+                relay::execution(processor, peers, queue, task, prepared, deliveries).await;
                 if let Ok(mut active) = active.lock() {
                     active.remove(&relay_route);
                 }
@@ -178,10 +179,11 @@ impl AgentTaskHandler {
             drop(active_routes);
             let _ = start.send(());
         } else {
+            let processor = Arc::clone(&self.processor);
             let deliveries = Arc::clone(&self.deliveries);
             let runtime = tokio::runtime::Handle::current();
-            tokio::task::spawn_blocking(move || {
-                relay::local(queue, task, prepared, deliveries, runtime)
+            tokio::spawn(async move {
+                relay::local(processor, queue, task, prepared, deliveries, runtime).await
             });
         }
         Ok(())

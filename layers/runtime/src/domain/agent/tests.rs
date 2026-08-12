@@ -103,8 +103,13 @@ fn bound_agent(max_inflight: u32) -> AgentProcessor {
         Some(Message::NodeCreated { .. })
     ));
     let mut loaded = ResponseCollector::new();
-    agent.handle(load_message("deployment-a"), &mut loaded).unwrap();
-    assert!(matches!(loaded.terminal(), Some(Message::ModelBound { .. })));
+    agent
+        .handle(load_message("deployment-a"), &mut loaded)
+        .unwrap();
+    assert!(matches!(
+        loaded.terminal(),
+        Some(Message::ModelBound { .. })
+    ));
     agent
 }
 
@@ -195,6 +200,48 @@ fn saturated_ingress_is_rejected_before_acceptance() {
 }
 
 #[test]
+fn async_ingress_is_accepted_while_the_slot_waits_for_capacity() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let agent = bound_agent(1);
+        let slot = agent
+            .state
+            .read()
+            .unwrap()
+            .nodes
+            .get("node-a")
+            .cloned()
+            .unwrap();
+        let held = admission::execution(&slot).expect("hold the only permit");
+
+        let ingress = agent.prepare_async_ingress(ingress_message()).unwrap();
+        assert!(matches!(ingress.accepted, Message::IngressAccepted { .. }));
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(1),
+                agent.acquire_async_execution(&ingress.execution),
+            )
+            .await
+            .is_err()
+        );
+
+        drop(held);
+        drop(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                agent.acquire_async_execution(&ingress.execution),
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+        );
+    });
+}
+
+#[test]
 fn another_controller_cannot_execute_on_an_owned_node() {
     let agent = bound_agent(1);
     let mut responses = ResponseCollector::new();
@@ -202,7 +249,10 @@ fn another_controller_cannot_execute_on_an_owned_node() {
         .handle(ingress_for("controller-b", 1), &mut responses)
         .unwrap();
     let detail = error_detail(responses);
-    assert!(detail.contains("is not owned by controller controller-b"), "{detail}");
+    assert!(
+        detail.contains("is not owned by controller controller-b"),
+        "{detail}"
+    );
 }
 
 #[test]
@@ -233,7 +283,10 @@ fn another_controller_cannot_claim_an_existing_node() {
         )
         .unwrap();
     let detail = error_detail(responses);
-    assert!(detail.contains("is not owned by controller controller-b"), "{detail}");
+    assert!(
+        detail.contains("is not owned by controller controller-b"),
+        "{detail}"
+    );
 }
 
 #[test]
@@ -244,7 +297,10 @@ fn unloading_another_deployment_is_refused_and_keeps_the_binding() {
         .handle(unload_message("deployment-other"), &mut responses)
         .unwrap();
     let detail = error_detail(responses);
-    assert!(detail.contains("belongs to deployment deployment-a"), "{detail}");
+    assert!(
+        detail.contains("belongs to deployment deployment-a"),
+        "{detail}"
+    );
 
     let mut ingress = ResponseCollector::new();
     agent.handle(ingress_message(), &mut ingress).unwrap();

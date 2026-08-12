@@ -1,13 +1,12 @@
 //! Ingress-to-execution credit transition.
 //!
-//! `INGRESS_ACCEPTED` is emitted only after the gate has authorised the slot
-//! and binding and the execution credit is held, so acceptance already means
-//! "a stable binding is reserved for this request".
+//! `INGRESS_ACCEPTED` is emitted after ownership and binding validation. The
+//! async relay waits for execution credit before it dispatches to an adapter.
 //! See `apps/p4/docs/internals.md#execution-credit`.
 
 use super::lifecycle::forward;
 use super::{AgentProcessor, AsyncIngress};
-use crate::foundation::transport::{ResponseCollector, ResponseSink, Result};
+use crate::foundation::transport::{ResponseSink, Result};
 use p4_protocol::{ExecutionRequest, Message, Phase};
 use std::sync::atomic::Ordering;
 
@@ -54,31 +53,14 @@ impl AgentProcessor {
             prompt,
             options,
         );
-        let mut responses = ResponseCollector::new();
-        let acquired = self
-            .acquire_execution(&mut responses, &request)
-            .map_err(|error| Message::Error {
-                request_id: request_id.clone(),
-                detail: error.to_string(),
-            })?;
-        let Some((resolved, permit)) = acquired else {
-            return Err(responses.into_messages().pop().unwrap_or(Message::Error {
-                request_id,
-                detail: "execution admission rejected".into(),
-            }));
-        };
+        let execution = self.prepare_async_execution(Message::Execute(request))?;
         Ok(AsyncIngress {
             accepted: Message::IngressAccepted {
                 ingress_id,
                 request_id,
                 session_id,
             },
-            execution: super::AsyncExecution {
-                execute: Message::Execute(request),
-                transport: resolved.adapter.transport,
-                endpoint: resolved.adapter.endpoint,
-                _permit: permit,
-            },
+            execution,
         })
     }
 

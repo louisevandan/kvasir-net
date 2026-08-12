@@ -24,6 +24,7 @@ pub(super) fn compatibility(
 }
 
 pub(super) async fn execution(
+    processor: Arc<AgentProcessor>,
     peers: Arc<PeerMuxPool>,
     queue: TaskQueue,
     cause: TaskEnvelope,
@@ -31,6 +32,21 @@ pub(super) async fn execution(
     deliveries: Arc<DeliveryTracker>,
 ) {
     let request_id = cause.correlation_id.clone();
+    let permit = match processor.acquire_async_execution(&prepared).await {
+        Ok(permit) => permit,
+        Err(detail) => {
+            let mut causation_id = cause.task_id.clone();
+            let _ = enqueue(
+                &queue,
+                &cause,
+                &mut causation_id,
+                Message::Error { request_id, detail },
+                &deliveries,
+            )
+            .await;
+            return;
+        }
+    };
     let endpoint = prepared
         .endpoint
         .as_deref()
@@ -71,10 +87,11 @@ pub(super) async fn execution(
             .await;
         }
     }
-    drop(prepared._permit);
+    drop(permit);
 }
 
-pub(super) fn local(
+pub(super) async fn local(
+    processor: Arc<AgentProcessor>,
     queue: TaskQueue,
     cause: TaskEnvelope,
     prepared: AsyncExecution,
@@ -82,17 +99,35 @@ pub(super) fn local(
     runtime: tokio::runtime::Handle,
 ) {
     let request_id = cause.correlation_id.clone();
-    let mut responses = QueueResponseSink::new(queue, cause, deliveries, runtime);
-    if let Err(error) = prepared
-        .transport
-        .dispatch(prepared.execute, &mut responses)
-    {
-        let _ = responses.emit(Message::Error {
-            request_id,
-            detail: error.to_string(),
-        });
-    }
-    drop(prepared._permit);
+    let permit = match processor.acquire_async_execution(&prepared).await {
+        Ok(permit) => permit,
+        Err(detail) => {
+            let mut causation_id = cause.task_id.clone();
+            let _ = enqueue(
+                &queue,
+                &cause,
+                &mut causation_id,
+                Message::Error { request_id, detail },
+                &deliveries,
+            )
+            .await;
+            return;
+        }
+    };
+    let _ = tokio::task::spawn_blocking(move || {
+        let mut responses = QueueResponseSink::new(queue, cause, deliveries, runtime);
+        if let Err(error) = prepared
+            .transport
+            .dispatch(prepared.execute, &mut responses)
+        {
+            let _ = responses.emit(Message::Error {
+                request_id,
+                detail: error.to_string(),
+            });
+        }
+        drop(permit);
+    })
+    .await;
 }
 
 struct QueueResponseSink {
