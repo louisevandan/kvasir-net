@@ -31,7 +31,34 @@ compute then and 64.6 s now, so the 4.75x penalty was the reservation defect
 against a 16 GiB card, not the role or the device.
 
 At 3.23 s per first-stage layer and 1.59 s per last-stage layer, an even split
-of work is near 13/27 rather than 20/20.
+of work looks like 13/27 rather than 20/20. Measuring it says otherwise.
+
+| first-stage layers (4080) | aggregate | wall | stage compute | first-stage wait |
+| ---: | ---: | ---: | --- | ---: |
+| 13 | 229.1 tok/s | 137.8 s | 49.7 / 51.2 | 85.9 s |
+| **20** | **246.1 tok/s** | 129.0 s | 64.6 / 31.7 | 62.0 s |
+| 24 | 9.1 tok/s | 3519.1 s | 3283.5 / 72.8 | 233.3 s |
+
+Balancing the two stages made it slower. The wall tracks
+`first compute + last compute + about 32 s`, so the stages do not overlap at
+all and what matters is the sum, not the balance: moving seven layers to the
+last stage saved 14.9 s of first-stage compute and added 23.9 s of waiting.
+The 24-layer row is the other bound — 13,586 MiB of weights plus buffers
+brushes the 4080's 16 GiB and the driver spills to host memory, which costs
+50x. Twenty layers, about 12.1 GiB, is the practical ceiling for a 16 GiB
+first stage.
+
+Session count is the other axis the fix opened, and it is close to saturation:
+
+| sessions | aggregate | wall | stage compute | first-stage wait |
+| ---: | ---: | ---: | --- | ---: |
+| 32 | 246.1 tok/s | 129.0 s | 64.6 / 31.7 | 62.0 s |
+| 48 | 254.6 tok/s | 185.1 s | 94.4 / 43.8 | 87.3 s |
+
+Half again as many sessions bought 3.5%. Per-step cost now grows nearly
+linearly with batch width, so the remaining headroom is the 47% of wall clock
+the first stage spends waiting for the round trip, which only overlap can
+recover.
 
 ## 2026-08-13: a stale graph terminal was reserving the unowned layers
 
