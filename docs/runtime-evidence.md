@@ -1,5 +1,41 @@
 # Runtime evidence
 
+## 2026-08-12: three all-3090 stages reach 8-way concurrency, then the middle stage faults
+
+Dropping the 16 GiB 4080 and running three RTX 3090 stages — local plus the two
+on `192.168.0.29` — follows directly from the previous entry: a non-final stage
+needs the whole model's footprint, about 22.17 GiB, which a 24 GiB card can
+hold and a 16 GiB card cannot. Artifacts are under
+[`target/three-node-20260812/`](../target/three-node-20260812/).
+
+The topology is sound. All three stages loaded, `P4_HEALTH` reported ready, and
+the first stage logged
+`op=wavefront active=8 in_flight=8 peak=8 limit=8 capacity=8`.
+
+That line is the first observation in this repository of more than one sequence
+alive in the native scheduler. Every earlier run reported `peak=1`. It confirms
+in a live run what the arrival-axis fix was meant to do, and it confirms that
+the native scheduler was never the tier that refused concurrency.
+
+Then `remote-3090-a`, `stage_index=1`, exited with `exit_code=3221225477`
+(`0xC0000005`, access violation) and all eight requests failed with
+`pipeline stage control pipe closed`. This is the same fault class seen earlier
+on an asymmetric local placement, now on a 24 GiB card, so card size alone does
+not explain it. A three-stage group has two non-final stages, each reserving
+about 22.17 GiB of a 24 GiB card and leaving roughly 1.8 GiB for KV cache,
+context and fragmentation. The middle stage is the one that takes both the
+`cut_at(begin)` input path and the `cut_at(end)` output path.
+
+Iteration then stopped for an environmental reason worth recording. The remote
+supervisor does not survive its child vanishing, which is the standing defect,
+and after that first crash it would no longer stay up at all: it starts, serves
+`/api/runtime` with 200, and exits within about two minutes leaving nothing in
+`supervisor.log`, `launcher.out.log` or `launcher.err.log`. Restarting the
+remote agent and adapter cleared their stale NodeSlot state but not this. No
+native stage log was captured for the crash because the sink dies with the
+supervisor; `LINKER_NATIVE_LOG_DIR` was set on the remote for later attempts
+and produced no files for the same reason.
+
 ## 2026-08-12: a non-final stage reserves the weight of the layers it does not own
 
 Loads of `Ornith-1.0-35B-UD-Q5_K_S.gguf` (qwen35moe, `n_expert=256`,
