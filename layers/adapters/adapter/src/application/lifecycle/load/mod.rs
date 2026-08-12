@@ -92,6 +92,18 @@ pub(crate) fn load(
             last = Some(percent);
         }
         if phase == "running" {
+            // Size this deployment's execution gate from what the controller
+            // measured, so the throttle sits next to the GPU instead of three
+            // tiers upstream of it.
+            let capacity = config.capacity.declare(deployment, stage_plan);
+            eprintln!(
+                "P4_ADAPTER_CAPACITY deployment={deployment} max_sequences={capacity} source={}",
+                if crate::domain::capacity::declared_max_sequences(stage_plan).is_some() {
+                    "stage_plan"
+                } else {
+                    "fallback"
+                }
+            );
             draft(stream, operation, node, model, &group, config)?;
             write_message(
                 stream,

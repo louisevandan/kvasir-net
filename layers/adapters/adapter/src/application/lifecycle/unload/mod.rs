@@ -32,6 +32,7 @@ pub(crate) fn unload(
         .write()
         .map_err(|_| "binding registry lock poisoned")?
         .remove(&(node.into(), binding.into()));
+    config.capacity.forget(deployment);
     write_message(
         stream,
         &Message::ModelUnbound {

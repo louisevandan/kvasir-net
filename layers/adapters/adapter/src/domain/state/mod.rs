@@ -1,5 +1,6 @@
 //! Adapter registries.
 
+use super::capacity::CapacityRegistry;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
@@ -10,6 +11,9 @@ pub(crate) struct Config {
     pub(crate) adapter_id: String,
     pub(crate) nodes: Arc<RwLock<HashSet<String>>>,
     pub(crate) bindings: Arc<RwLock<HashMap<(String, String), Binding>>>,
+    /// Execution capacity per deployment, sized from what the controller
+    /// declared at MODEL_LOAD rather than from a process-wide constant.
+    pub(crate) capacity: Arc<CapacityRegistry>,
 }
 
 #[derive(Clone)]

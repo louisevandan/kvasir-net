@@ -30,11 +30,6 @@ pub(crate) fn serve(
     config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let max_inflight = configured_limit("P4_ADAPTER_MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT);
-    let prefill_credits = configured_limit(
-        "P4_ADAPTER_PREFILL_CREDITS",
-        DEFAULT_PREFILL_CREDITS.min(max_inflight),
-    )
-    .min(max_inflight);
     let decode_credits = configured_limit(
         "P4_ADAPTER_DECODE_CREDITS",
         DEFAULT_DECODE_CREDITS.min(max_inflight),
@@ -45,14 +40,17 @@ pub(crate) fn serve(
     listener.set_nonblocking(true)?;
     let runtime = execution_runtime()?;
     println!(
-        "P4_ADAPTER_TRANSPORT max_queued={} prefill_credits={} decode_credits={} batch_coalesce_ms={} batch_dispatch=opportunistic time_driver=true",
-        max_inflight, prefill_credits, decode_credits, batch_coalesce_ms
+        "P4_ADAPTER_TRANSPORT max_queued={} prefill_gate=per-deployment prefill_fallback={} prefill_ceiling={} decode_credits={} batch_coalesce_ms={} batch_dispatch=opportunistic time_driver=true",
+        max_inflight,
+        config.capacity.fallback(),
+        config.capacity.ceiling(),
+        decode_credits,
+        batch_coalesce_ms
     );
     runtime.block_on(run(
         listener,
         config,
         max_inflight,
-        prefill_credits,
         decode_credits,
         batch_coalesce_ms,
     ))
@@ -76,7 +74,6 @@ async fn run(
     listener: StdTcpListener,
     config: Config,
     max_inflight: usize,
-    prefill_credits: usize,
     decode_credits: usize,
     batch_coalesce_ms: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,7 +100,6 @@ async fn run(
                 stream,
                 config,
                 queued,
-                prefill_credits,
                 decode_credits,
                 batch_coalesce_ms,
             )
@@ -125,7 +121,6 @@ async fn dispatch(
     mut stream: TcpStream,
     config: Config,
     queued: Arc<Semaphore>,
-    prefill_credits: usize,
     decode_credits: usize,
     batch_coalesce_ms: usize,
 ) -> Result<(), AsyncError> {
@@ -137,7 +132,6 @@ async fn dispatch(
             routed,
             config,
             queued,
-            prefill_credits,
             decode_credits,
             batch_coalesce_ms,
         )
@@ -158,7 +152,6 @@ async fn serve_execution_connection(
     first: RoutedMessage,
     config: Config,
     queued: Arc<Semaphore>,
-    prefill_credits: usize,
     decode_credits: usize,
     batch_coalesce_ms: usize,
 ) -> Result<(), AsyncError> {
@@ -191,7 +184,6 @@ async fn serve_execution_connection(
         job_rx,
         config,
         responses.clone(),
-        prefill_credits,
         decode_credits,
         batch_coalesce_ms,
     ));
@@ -280,17 +272,16 @@ async fn batch_loop(
     mut jobs: mpsc::Receiver<BatchJob>,
     config: Config,
     responses: mpsc::Sender<Message>,
-    prefill_credits: usize,
     decode_credits: usize,
     batch_coalesce_ms: usize,
 ) -> Result<(), AsyncError> {
     if batch_coalesce_ms == 0 {
-        return independent_loop(jobs, config, responses, prefill_credits, decode_credits).await;
+        return independent_loop(jobs, config, responses, decode_credits).await;
     }
     while let Some(first) = jobs.recv().await {
         let phase = first.request.phase.clone();
         let limit = if phase == Phase::Prefill {
-            prefill_credits
+            config.capacity.capacity(&first.request.deployment_id)
         } else {
             decode_credits
         };
@@ -328,16 +319,16 @@ async fn independent_loop(
     mut jobs: mpsc::Receiver<BatchJob>,
     config: Config,
     responses: mpsc::Sender<Message>,
-    prefill_credits: usize,
     decode_credits: usize,
 ) -> Result<(), AsyncError> {
-    let prefill = Arc::new(Semaphore::new(prefill_credits));
     let decode = Arc::new(Semaphore::new(decode_credits));
     let runtime = Arc::new(RuntimeStream::connect(&config.host).await?);
     let mut tasks = tokio::task::JoinSet::new();
     while let Some(job) = jobs.recv().await {
+        // Prefill is gated per deployment at the capacity its controller
+        // declared; decode keeps the adapter-wide credit.
         let phase_limit = if job.request.phase == Phase::Prefill {
-            Arc::clone(&prefill)
+            config.capacity.gate(&job.request.deployment_id)
         } else {
             Arc::clone(&decode)
         };

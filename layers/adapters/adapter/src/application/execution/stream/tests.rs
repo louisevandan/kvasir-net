@@ -39,6 +39,7 @@ fn multiplexes_independent_requests_over_one_runtime_stream() {
             adapter_id: "pipeline".into(),
             nodes: Arc::new(RwLock::new(HashSet::new())),
             bindings: Arc::new(RwLock::new(bindings)),
+            capacity: Arc::new(crate::domain::capacity::CapacityRegistry::new(16, 256)),
         };
         let mut tasks = Vec::new();
         for index in 0..32 {

@@ -59,6 +59,7 @@ fn coalesces_only_when_an_explicit_window_is_configured() {
             adapter_id: "pipeline".into(),
             nodes: Arc::new(RwLock::new(HashSet::new())),
             bindings: Arc::new(RwLock::new(bindings)),
+            capacity: Arc::new(crate::domain::capacity::CapacityRegistry::new(64, 256)),
         };
         let pipeline = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut client = TcpStream::connect(pipeline.local_addr().unwrap())
@@ -69,7 +70,6 @@ fn coalesces_only_when_an_explicit_window_is_configured() {
             server,
             config,
             Arc::new(Semaphore::new(64)),
-            64,
             1,
             5,
         ));

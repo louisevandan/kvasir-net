@@ -2,6 +2,7 @@
 
 use crate::application::lifecycle;
 use crate::domain::capability;
+use crate::domain::capacity::CapacityRegistry;
 use crate::domain::state::Config;
 use crate::infrastructure::listener;
 use p4_protocol::{Message, read_message, write_message};
@@ -25,6 +26,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         host: args[3].clone(),
         nodes: Arc::new(RwLock::new(HashSet::new())),
         bindings: Arc::new(RwLock::new(HashMap::new())),
+        capacity: Arc::new(CapacityRegistry::from_env()),
     };
     register_adapter(&config, &args[0])?;
     println!("P4_ADAPTER_READY listen={} host={}", args[0], config.host);
