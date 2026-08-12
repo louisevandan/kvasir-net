@@ -1,9 +1,8 @@
 //! Tokio-backed Pipeline listener. Execute streams stay on asynchronous I/O.
 
 use crate::application::adapter::handle_message;
-use crate::application::execution::{batch as execution, stream::RuntimeStream};
 use crate::domain::state::Config;
-use p4_protocol::{Message, Phase, RoutedMessage, encode_routed_message};
+use p4_protocol::{Message, RoutedMessage, encode_routed_message};
 use std::collections::HashMap;
 use std::env;
 use std::net::TcpListener as StdTcpListener;
@@ -12,17 +11,19 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Runtime;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::{Mutex, Semaphore, mpsc};
 
-type AsyncError = Box<dyn std::error::Error + Send + Sync>;
+pub(super) type AsyncError = Box<dyn std::error::Error + Send + Sync>;
 
 const DEFAULT_MAX_INFLIGHT: usize = 256;
 const DEFAULT_PREFILL_CREDITS: usize = 16;
 const DEFAULT_DECODE_CREDITS: usize = 4;
 const DEFAULT_BATCH_COALESCE_MS: usize = 0;
 const RESPONSE_QUEUE: usize = 4096;
+mod queue;
 mod wire;
 
+use queue::BatchJob;
 use wire::{read_message, restore_request_id, write_message};
 
 pub(crate) fn serve(
@@ -96,14 +97,7 @@ async fn run(
         let config = config.clone();
         let queued = Arc::clone(&queued);
         tokio::spawn(async move {
-            let result = dispatch(
-                stream,
-                config,
-                queued,
-                decode_credits,
-                batch_coalesce_ms,
-            )
-            .await;
+            let result = dispatch(stream, config, queued, decode_credits, batch_coalesce_ms).await;
             drop(permit);
             if let Err(error) = result {
                 if !error
@@ -180,7 +174,7 @@ async fn serve_execution_connection(
         Ok::<(), AsyncError>(())
     });
     let (jobs, job_rx) = mpsc::channel(DEFAULT_MAX_INFLIGHT);
-    let batch_task = tokio::spawn(batch_loop(
+    let batch_task = tokio::spawn(queue::run(
         job_rx,
         config,
         responses.clone(),
@@ -251,7 +245,8 @@ async fn schedule(
     let permit = Arc::clone(queued).acquire_owned().await?;
     jobs.send(BatchJob {
         request,
-        _permit: permit,
+        deadline_unix_ms: routed.deadline_unix_ms,
+        permit,
     })
     .await
     .map_err(|_| "Pipeline batch dispatcher closed".into())
@@ -261,100 +256,6 @@ async fn schedule(
 struct RouteBinding {
     request_id: String,
     deadline_unix_ms: u64,
-}
-
-struct BatchJob {
-    request: p4_protocol::ExecutionRequest,
-    _permit: OwnedSemaphorePermit,
-}
-
-async fn batch_loop(
-    mut jobs: mpsc::Receiver<BatchJob>,
-    config: Config,
-    responses: mpsc::Sender<Message>,
-    decode_credits: usize,
-    batch_coalesce_ms: usize,
-) -> Result<(), AsyncError> {
-    if batch_coalesce_ms == 0 {
-        return independent_loop(jobs, config, responses, decode_credits).await;
-    }
-    while let Some(first) = jobs.recv().await {
-        let phase = first.request.phase.clone();
-        let limit = if phase == Phase::Prefill {
-            config.capacity.capacity(&first.request.deployment_id)
-        } else {
-            decode_credits
-        };
-        let mut batch = vec![first];
-        let deadline = tokio::time::sleep(Duration::from_millis(batch_coalesce_ms as u64));
-        tokio::pin!(deadline);
-        while batch.len() < limit {
-            tokio::select! {
-                biased;
-                Some(job) = jobs.recv() => batch.push(job),
-                _ = &mut deadline => break,
-                else => break,
-            }
-        }
-        let request_ids = batch
-            .iter()
-            .map(|job| job.request.request_id.clone())
-            .collect::<Vec<_>>();
-        let requests = batch.iter().map(|job| job.request.clone()).collect();
-        if let Err(error) = execution::execute_batch(&responses, requests, &config).await {
-            for request_id in request_ids {
-                let _ = responses
-                    .send(Message::Error {
-                        request_id,
-                        detail: format!("Pipeline batch execution failed: {error}"),
-                    })
-                    .await;
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn independent_loop(
-    mut jobs: mpsc::Receiver<BatchJob>,
-    config: Config,
-    responses: mpsc::Sender<Message>,
-    decode_credits: usize,
-) -> Result<(), AsyncError> {
-    let decode = Arc::new(Semaphore::new(decode_credits));
-    let runtime = Arc::new(RuntimeStream::connect(&config.host).await?);
-    let mut tasks = tokio::task::JoinSet::new();
-    while let Some(job) = jobs.recv().await {
-        // Prefill is gated per deployment at the capacity its controller
-        // declared; decode keeps the adapter-wide credit.
-        let phase_limit = if job.request.phase == Phase::Prefill {
-            config.capacity.gate(&job.request.deployment_id)
-        } else {
-            Arc::clone(&decode)
-        };
-        let permit = phase_limit.acquire_owned().await?;
-        let config = config.clone();
-        let responses = responses.clone();
-        let runtime = Arc::clone(&runtime);
-        tasks.spawn(async move {
-            let request_id = job.request.request_id.clone();
-            let result = runtime.execute(job.request, &config, &responses).await;
-            drop(permit);
-            drop(job._permit);
-            if let Err(error) = result {
-                let _ = responses
-                    .send(Message::Error {
-                        request_id,
-                        detail: format!("Pipeline execution failed: {error}"),
-                    })
-                    .await;
-            }
-        });
-    }
-    while let Some(result) = tasks.join_next().await {
-        result.map_err(|error| format!("Pipeline execution task failed: {error}"))?;
-    }
-    Ok(())
 }
 
 async fn reject_overload(stream: &mut TcpStream) {
