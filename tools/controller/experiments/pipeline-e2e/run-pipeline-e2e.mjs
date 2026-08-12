@@ -110,6 +110,21 @@ const loadOptions = await measuredModelLoadOptions({
   ubatch,
   nodeBatchLimits
 });
+// A stage with no measured profile is capped at one sequence, which collapses
+// the whole group without producing a single error. Say so before loading.
+if (loadOptions.batching.unverified_nodes.length) {
+  console.log(
+    `P4_UNVERIFIED_STAGES nodes=${loadOptions.batching.unverified_nodes.join(',')} `
+      + `model=${model} max_sequences=${loadOptions.batching.max_sequences} `
+      + 'detail=no measured batch profile matched; the group runs one sequence at a time. '
+      + 'Add a profile to tools/controller/capability/measured-batch-profiles.json '
+      + 'or set P4_NODE_BATCH_LIMITS_JSON.',
+  );
+}
+console.log(
+  `P4_BATCH_POLICY max_sequences=${loadOptions.batching.max_sequences} `
+    + `per_node=${loadOptions.batching.node_limits.map((n) => `${n.node_id}:${n.max_sequences}`).join(',')}`,
+);
 const stagePorts = nodes.map((node) => node.node_port);
 const forcedStageNodeOrder = process.env.P4_PIPELINE_STAGE_NODE_ORDER === undefined
   ? undefined

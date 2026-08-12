@@ -77,8 +77,11 @@ export async function measuredModelLoadOptions({
           value: 1,
           source: 'unverified stage; no matching measured profile; conservative compatibility limit'
         };
-    const nodeTerms = [...terms.slice(0, 3), measuredTerm];
-    if (overrideTerm !== undefined) nodeTerms.push(overrideTerm);
+    // An explicit override is an operator asserting a measurement, so it
+    // replaces the profile term instead of joining the minimum with it.
+    // Joining meant an unverified stage stayed pinned at 1 and the documented
+    // escape hatch could only ever lower the limit, never restore it.
+    const nodeTerms = [...terms.slice(0, 3), overrideTerm ?? measuredTerm];
     const nodeResult = Math.min(...nodeTerms.map((term) => term.value));
     calculationTerms.push({ name: `effective_node_limit:${node.id}`, value: nodeResult, source: nodeTerms[nodeTerms.length - 1].source });
     nodeLimits.push({
@@ -88,6 +91,14 @@ export async function measuredModelLoadOptions({
     });
   }
   const result = Math.min(...calculationTerms.map((term) => term.value));
+  // An unverified stage silently collapses the whole group to one sequence.
+  // Measured: 32 concurrent requests took 136.5s at max_sequences=1 with no
+  // error anywhere in the trace. Name the stages so the caller can see why.
+  const unverified = nodeLimits
+    .filter((entry) =>
+      entry.calculation.terms.some((term) => term.name.startsWith('unverified_stage:'))
+      && !entry.calculation.terms.some((term) => term.name.startsWith('override_stage:')))
+    .map((entry) => entry.node_id);
   return {
     flash_attention: flashAttention,
     mmap,
@@ -98,6 +109,7 @@ export async function measuredModelLoadOptions({
       node_limits: nodeLimits,
       context_batch_tokens: batch,
       context_ubatch_tokens: ubatch,
+      unverified_nodes: unverified,
       calculation: { method: 'minimum', terms: calculationTerms, result }
     },
     adapter_options: adapterOptions
