@@ -17,13 +17,13 @@ test('rejects an unstaggered follow-up cohort', () => {
   assert.throws(() => steadyArrivalPlan(5, 4, 0), /intervalMs must be positive/);
 });
 
-test('rejects a follow-up submitted after inference has ended', async () => {
+test('rejects a follow-up submitted after every inference request has ended', async () => {
   await assert.rejects(
     executeSteadyArrivals(
       [{ arrival: { phase: 'steady', scheduled_after_ms: 0 } }],
       async () => undefined,
       () => false
     ),
-    /did not overlap an active inference stream/
+    /did not overlap an active inference request/
   );
 });

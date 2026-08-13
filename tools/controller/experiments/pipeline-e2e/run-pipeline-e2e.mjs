@@ -171,13 +171,14 @@ let remoteGeneration;
 let completed = false;
 const latency = {};
 let parallelTraces = [];
-let activeInferenceStreams = 0;
+let activeInferenceRequests = 0;
 const inferRequest = (requestId, maxTokens, requestPrompt = prompt) => controller.infer({ nodeId: localNodeId, deploymentId, bindingId, runtimeGeneration: generation, prompt: requestPrompt, sessionId: '', requestId, maxTokens, temperature: 0.2, options: { top_p: 0.9, top_k: 20, seed: 7 } });
 const executeTraced = async (request) => {
   const { request_id: requestId, prompt: requestPrompt } = request;
   const requestStarted = performance.now();
   const trace = { request: { type: 'INGRESS_SUBMIT', ...request }, controller_wait_ms: Number((requestStarted - request.scheduled_at).toFixed(3)), responses: [] };
-  let accepted = false; let tokens = 0; let done = false; let text = ''; let streamActive = false;
+  let accepted = false; let tokens = 0; let done = false; let text = '';
+  activeInferenceRequests += 1;
   try {
     for await (const event of inferRequest(requestId, maxTokens, requestPrompt)) {
       const elapsed_ms = Number((performance.now() - requestStarted).toFixed(3));
@@ -185,10 +186,6 @@ const executeTraced = async (request) => {
         accepted = true;
         trace.responses.push({ type: 'INGRESS_ACCEPTED', ingress_id: event.ingressId, request_id: event.requestId, session_id: event.sessionId, elapsed_ms });
       } else if (event.type === 'token') {
-        if (!streamActive) {
-          streamActive = true;
-          activeInferenceStreams += 1;
-        }
         tokens += 1; text += event.text;
         trace.responses.push({ type: 'TOKEN', request_id: event.requestId, session_id: event.sessionId, phase: event.phase, position: event.position, index: event.index, text: event.text, elapsed_ms });
       } else if (event.type === 'done') {
@@ -199,7 +196,7 @@ const executeTraced = async (request) => {
   } catch (error) {
     trace.responses.push({ type: 'ERROR', request_id: requestId, detail: String(error), elapsed_ms: Number((performance.now() - requestStarted).toFixed(3)) });
   } finally {
-    if (streamActive) activeInferenceStreams -= 1;
+    activeInferenceRequests -= 1;
   }
   trace.final_text = text;
   trace.completed = accepted && done && tokens > 0;
@@ -312,7 +309,7 @@ try {
     results = totalRequests === initialRequests
       ? await executeWindow(requests, executionWindow, executeTraced)
       : await executeSteadyArrivals(
-        requests, executeTraced, () => activeInferenceStreams > 0);
+        requests, executeTraced, () => activeInferenceRequests > 0);
   } finally {
     if (gpuMonitor) gpuSamples = await gpuMonitor.stop();
   }

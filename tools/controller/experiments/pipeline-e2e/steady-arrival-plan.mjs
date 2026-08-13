@@ -35,7 +35,7 @@ export async function executeSteadyArrivals(requests, execute, hasActiveInferenc
     const delay = scheduledAt - performance.now();
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
     if (request.arrival.phase === 'steady' && !hasActiveInference()) {
-      throw new Error('steady arrival did not overlap an active inference stream');
+      throw new Error('steady arrival did not overlap an active inference request');
     }
     return execute({ ...request, scheduled_at: scheduledAt });
   }));
