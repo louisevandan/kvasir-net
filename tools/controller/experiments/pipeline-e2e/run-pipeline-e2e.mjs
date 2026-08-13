@@ -8,6 +8,7 @@ import { measuredModelLoadOptions } from '../../capability/model-load-policy.mjs
 import { distribution, writePlan, writeSummary, writeTrace } from '../../evidence/run-evidence.mjs';
 import { startGpuTelemetry, summarizeGpuTelemetry } from '../../evidence/gpu-telemetry.mjs';
 import { buildGroupStats } from '../../evidence/pipeline-group-stats.mjs';
+import { executeSteadyArrivals, executeWindow, steadyArrivalPlan } from './steady-arrival-plan.mjs';
 
 // The owned E2E can outlive an invoking terminal. Preserve its artifacts even
 // when that terminal closes the inherited stdout pipe before the run ends.
@@ -25,13 +26,16 @@ const maxTokens = Number(maxTokensArgument || 8);
 if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 1024) throw new Error('maxTokens must be an integer from 1 to 1024');
 const parallel = Number(parallelArgument || 1);
 const concurrentRequests = Number(concurrentArgument || parallel);
-const executionWindow = Number(process.env.P4_EXECUTION_WINDOW ?? concurrentRequests);
+const totalRequests = Number(process.env.P4_TOTAL_REQUESTS ?? concurrentRequests);
+const initialRequests = Number(process.env.P4_INITIAL_REQUESTS ?? concurrentRequests);
+const arrivalIntervalMs = Number(process.env.P4_ARRIVAL_INTERVAL_MS ?? 0);
+const executionWindow = Number(process.env.P4_EXECUTION_WINDOW ?? totalRequests);
 const nativeParallel = Number(process.env.P4_NATIVE_PARALLEL ?? parallel);
 // Arrival admission, not plan width. A NodeSlot defaults to one permit, so a
 // node_spec without this value serialises every stream at the Agent and the
 // adapter never sees two requests to coalesce. Sized from concurrent arrivals;
 // the adapter queue and its per-deployment gate remain the real bound.
-const agentSlotWidth = Number(process.env.P4_AGENT_SLOT_WIDTH ?? Math.min(concurrentRequests, MAX_AGENT_SLOT_WIDTH));
+const agentSlotWidth = Number(process.env.P4_AGENT_SLOT_WIDTH ?? Math.min(totalRequests, MAX_AGENT_SLOT_WIDTH));
 const preserveFailedGroup = preserveFailedGroupArgument === '1';
 const benchmark = benchmarkArgument === '1';
 const benchmarkIgnoreEog = process.env.P4_PIPELINE_BENCHMARK_IGNORE_EOG === '1';
@@ -40,7 +44,12 @@ if (benchmarkIgnoreEog && !benchmark) {
 }
 if (!Number.isInteger(parallel) || parallel < 1 || parallel > 65_535) throw new Error('parallel must be an integer from 1 to 65535');
 if (!Number.isInteger(concurrentRequests) || concurrentRequests < 1 || concurrentRequests > parallel) throw new Error('concurrentRequests must be an integer from 1 to parallel');
-if (!Number.isInteger(executionWindow) || executionWindow < 1 || executionWindow > concurrentRequests) throw new Error('P4_EXECUTION_WINDOW must be an integer from 1 to concurrentRequests');
+if (!Number.isInteger(totalRequests) || totalRequests < concurrentRequests || totalRequests > MAX_AGENT_SLOT_WIDTH) throw new Error(`P4_TOTAL_REQUESTS must be an integer from concurrentRequests to ${MAX_AGENT_SLOT_WIDTH}`);
+if (!Number.isInteger(initialRequests) || initialRequests < 1 || initialRequests > concurrentRequests) throw new Error('P4_INITIAL_REQUESTS must be an integer from 1 to concurrentRequests');
+if (!Number.isInteger(arrivalIntervalMs) || arrivalIntervalMs < 0) throw new Error('P4_ARRIVAL_INTERVAL_MS must be a non-negative integer');
+if (totalRequests > initialRequests && arrivalIntervalMs === 0) throw new Error('P4_ARRIVAL_INTERVAL_MS must be positive when P4_TOTAL_REQUESTS exceeds P4_INITIAL_REQUESTS');
+if (!Number.isInteger(executionWindow) || executionWindow < 1 || executionWindow > totalRequests) throw new Error('P4_EXECUTION_WINDOW must be an integer from 1 to P4_TOTAL_REQUESTS');
+if (totalRequests > initialRequests && executionWindow < totalRequests) throw new Error('P4_EXECUTION_WINDOW must cover P4_TOTAL_REQUESTS for steady ingress; otherwise the client, not the Pipeline, queues requests');
 if (!Number.isInteger(nativeParallel) || nativeParallel < 1 || nativeParallel > MAX_NATIVE_PIPELINE_PARALLEL) throw new Error(`P4_NATIVE_PARALLEL must be an integer from 1 to ${MAX_NATIVE_PIPELINE_PARALLEL}`);
 if (!Number.isInteger(agentSlotWidth) || agentSlotWidth < 1 || agentSlotWidth > MAX_AGENT_SLOT_WIDTH) throw new Error(`P4_AGENT_SLOT_WIDTH must be an integer from 1 to ${MAX_AGENT_SLOT_WIDTH}`);
 // Acceptance bound for a parallel run: aggregate throughput must hold the
@@ -162,12 +171,13 @@ let remoteGeneration;
 let completed = false;
 const latency = {};
 let parallelTraces = [];
+let activeInferenceStreams = 0;
 const inferRequest = (requestId, maxTokens, requestPrompt = prompt) => controller.infer({ nodeId: localNodeId, deploymentId, bindingId, runtimeGeneration: generation, prompt: requestPrompt, sessionId: '', requestId, maxTokens, temperature: 0.2, options: { top_p: 0.9, top_k: 20, seed: 7 } });
 const executeTraced = async (request) => {
   const { request_id: requestId, prompt: requestPrompt } = request;
   const requestStarted = performance.now();
   const trace = { request: { type: 'INGRESS_SUBMIT', ...request }, controller_wait_ms: Number((requestStarted - request.scheduled_at).toFixed(3)), responses: [] };
-  let accepted = false; let tokens = 0; let done = false; let text = '';
+  let accepted = false; let tokens = 0; let done = false; let text = ''; let streamActive = false;
   try {
     for await (const event of inferRequest(requestId, maxTokens, requestPrompt)) {
       const elapsed_ms = Number((performance.now() - requestStarted).toFixed(3));
@@ -175,6 +185,10 @@ const executeTraced = async (request) => {
         accepted = true;
         trace.responses.push({ type: 'INGRESS_ACCEPTED', ingress_id: event.ingressId, request_id: event.requestId, session_id: event.sessionId, elapsed_ms });
       } else if (event.type === 'token') {
+        if (!streamActive) {
+          streamActive = true;
+          activeInferenceStreams += 1;
+        }
         tokens += 1; text += event.text;
         trace.responses.push({ type: 'TOKEN', request_id: event.requestId, session_id: event.sessionId, phase: event.phase, position: event.position, index: event.index, text: event.text, elapsed_ms });
       } else if (event.type === 'done') {
@@ -184,6 +198,8 @@ const executeTraced = async (request) => {
     }
   } catch (error) {
     trace.responses.push({ type: 'ERROR', request_id: requestId, detail: String(error), elapsed_ms: Number((performance.now() - requestStarted).toFixed(3)) });
+  } finally {
+    if (streamActive) activeInferenceStreams -= 1;
   }
   trace.final_text = text;
   trace.completed = accepted && done && tokens > 0;
@@ -251,7 +267,7 @@ try {
   if (node.state !== 'ready') throw new Error(`P4 pipeline node is not ready: ${node.detail}`);
   if (peerNode.state !== 'ready') throw new Error(`P4 peer node is not ready: ${peerNode.detail}`);
   console.log(`P4_NODE state=${node.state} id=${node.nodeId}`);
-  console.log(`P4_AGENT_ADMISSION slot_width=${agentSlotWidth} concurrent_requests=${concurrentRequests} source=${process.env.P4_AGENT_SLOT_WIDTH ? 'P4_AGENT_SLOT_WIDTH' : 'concurrent_requests'} axis=arrival`);
+  console.log(`P4_AGENT_ADMISSION slot_width=${agentSlotWidth} concurrent_requests=${concurrentRequests} total_requests=${totalRequests} source=${process.env.P4_AGENT_SLOT_WIDTH ? 'P4_AGENT_SLOT_WIDTH' : 'total_requests'} axis=arrival`);
   console.log(`P4_MULTI_CONTROLLER_PASS controllers=2 nodes=2 peer_node=${peerNode.nodeId}`);
   let sawDraft = false;
   const adapterRequest = {
@@ -277,10 +293,11 @@ try {
   latency.health_ms = performance.now() - started;
   if (!health.ready) throw new Error(`P4 pipeline health is not ready: ${health.detail}`);
   console.log(`P4_HEALTH ready=${health.ready} detail=${health.detail}`);
-  const requests = promptsFor(concurrentRequests).map((requestPrompt, index) => ({
+  const arrivals = steadyArrivalPlan(totalRequests, initialRequests, arrivalIntervalMs);
+  const requests = promptsFor(totalRequests).map((requestPrompt, index) => ({
     index,
-    request_id: `${controllerId}-parallel-${index}`,
-    scheduled_at: performance.now(),
+    request_id: `${controllerId}-arrival-${index}`,
+    arrival: arrivals[index],
     prompt: requestPrompt,
     max_tokens: maxTokens,
     temperature: 0.2,
@@ -292,7 +309,10 @@ try {
   let results;
   let gpuSamples = [];
   try {
-    results = await executeWindow(requests, executionWindow);
+    results = totalRequests === initialRequests
+      ? await executeWindow(requests, executionWindow, executeTraced)
+      : await executeSteadyArrivals(
+        requests, executeTraced, () => activeInferenceStreams > 0);
   } finally {
     if (gpuMonitor) gpuSamples = await gpuMonitor.stop();
   }
@@ -308,7 +328,7 @@ try {
   latency.parallel_requests_ms = performance.now() - started;
   latency.parallel_completed = results.length;
   latency.parallel_streamed_events = results.reduce((sum, result) => sum + result.tokens, 0);
-  console.log(`P4_PARALLEL_PASS parallel=${parallel} requests=${results.length} unique_prompts=${new Set(requests.map((request) => request.prompt)).size} streamed_events=${latency.parallel_streamed_events} elapsed_ms=${latency.parallel_requests_ms.toFixed(3)}`);
+  console.log(`P4_ARRIVAL_PASS parallel=${parallel} initial=${initialRequests} steady=${totalRequests - initialRequests} interval_ms=${arrivalIntervalMs} overlap=${totalRequests > initialRequests ? 'verified' : 'not_requested'} requests=${results.length} unique_prompts=${new Set(requests.map((request) => request.prompt)).size} streamed_events=${latency.parallel_streamed_events} elapsed_ms=${latency.parallel_requests_ms.toFixed(3)}`);
   const tokens = latency.parallel_streamed_events;
   const text = parallelTraces.map((trace) => trace.final_text).join('');
   if (!tokens || !text) throw new Error('P4 pipeline did not stream a token');
@@ -322,7 +342,7 @@ try {
   }
   const gpuTraceFile = summaryFileArgument?.replace(/\.json$/i, '-gpu.jsonl');
   if (gpuTraceFile && gpuSamples.length) await writeFile(gpuTraceFile, `${gpuSamples.map((sample) => JSON.stringify(sample)).join('\n')}\n`, 'utf8');
-  const runStats = { prompt, prompt_fixture: promptSet.source, prompt_offset: promptOffset, prompt_target_tokens: promptSet.targetTokens, benchmark, benchmark_ignore_eog: benchmarkIgnoreEog, requested_max_tokens: maxTokens, parallel, concurrent_requests: concurrentRequests, execution_window: executionWindow, native_parallel: nativeParallel, agent_slot_width: agentSlotWidth, ...(referenceTps === undefined ? {} : { reference_tps: referenceTps }), batch, ubatch, model_load_options: loadOptions, stage_layers: adapterRequest.plan.placement.map((placement) => placement.layers), stage_nodes: adapterRequest.plan.placement.map((placement) => placement.node_id ?? nodes[placement.node]?.id), context_tokens: contextTokens, context_per_request_tokens: contextPerRequestTokens, generated_token_events: tokens, response_chars: text.length, p4_latency_ms: latency, ...(gpuSamples.length ? { gpu_telemetry: { trace_file: gpuTraceFile, summary: summarizeGpuTelemetry(gpuSamples, distribution) } } : {}), ...ringStats, ...(remoteRingStats ? { remote_group: remoteRingStats } : {}) };
+  const runStats = { prompt, prompt_fixture: promptSet.source, prompt_offset: promptOffset, prompt_target_tokens: promptSet.targetTokens, benchmark, benchmark_ignore_eog: benchmarkIgnoreEog, requested_max_tokens: maxTokens, parallel, concurrent_requests: concurrentRequests, total_requests: totalRequests, initial_requests: initialRequests, steady_arrivals: totalRequests - initialRequests, arrival_interval_ms: arrivalIntervalMs, steady_overlap_verified: totalRequests > initialRequests, execution_window: executionWindow, native_parallel: nativeParallel, agent_slot_width: agentSlotWidth, ...(referenceTps === undefined ? {} : { reference_tps: referenceTps }), batch, ubatch, model_load_options: loadOptions, stage_layers: adapterRequest.plan.placement.map((placement) => placement.layers), stage_nodes: adapterRequest.plan.placement.map((placement) => placement.node_id ?? nodes[placement.node]?.id), context_tokens: contextTokens, context_per_request_tokens: contextPerRequestTokens, generated_token_events: tokens, response_chars: text.length, p4_latency_ms: latency, ...(gpuSamples.length ? { gpu_telemetry: { trace_file: gpuTraceFile, summary: summarizeGpuTelemetry(gpuSamples, distribution) } } : {}), ...ringStats, ...(remoteRingStats ? { remote_group: remoteRingStats } : {}) };
   await writeSummary(summaryFileArgument, reportFileArgument, runStats, parallelTraces);
   console.log(`P4_PIPELINE_STATS ${JSON.stringify(runStats)}`);
   completed = true;
@@ -337,19 +357,6 @@ function promptsFor(count) {
   if (promptSet.prompts.length >= promptOffset + count) return promptSet.prompts.slice(promptOffset, promptOffset + count);
   if (promptSet.prompts.length) throw new Error(`prompt fixture ${promptSet.source} supplies ${promptSet.prompts.length} prompts, but offset=${promptOffset} count=${count} are required`);
   return languagePrompts(count, promptOffset);
-}
-
-async function executeWindow(requests, window) {
-  const results = Array(requests.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < requests.length) {
-      const index = next++;
-      results[index] = await executeTraced(requests[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(window, requests.length) }, worker));
-  return results;
 }
 
 async function loadPromptSet(promptFile) {

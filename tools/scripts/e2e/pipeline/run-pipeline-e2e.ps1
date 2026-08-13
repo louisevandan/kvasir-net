@@ -5,9 +5,12 @@ param(
     [ValidateRange(1, 1024)][int]$MaxTokens = 8,
     [string]$PromptFile,
     [ValidateRange(0, 65535)][int]$PromptOffset = 0,
-    [ValidateRange(0, 256)][int]$ExecutionWindow = 0,
+    [ValidateRange(0, 1024)][int]$ExecutionWindow = 0,
     [ValidateRange(1, 256)][int]$Parallel = 1,
     [ValidateRange(0, 256)][int]$ConcurrentRequests = 0,
+    [ValidateRange(0, 1024)][int]$TotalRequests = 0,
+    [ValidateRange(0, 256)][int]$InitialRequests = 0,
+    [ValidateRange(0, 60000)][int]$ArrivalIntervalMs = 0,
     [ValidateRange(0, 1024)][int]$AgentWorkers = 0,
     [switch]$PreserveFailedGroup,
     [switch]$Benchmark,
@@ -28,11 +31,19 @@ $stamp = if ([string]::IsNullOrWhiteSpace($env:P4_E2E_RUN_ID)) {
 }
 $effectiveConcurrent = if ($ConcurrentRequests -eq 0) { $Parallel } else { $ConcurrentRequests }
 if ($effectiveConcurrent -gt $Parallel) { throw 'ConcurrentRequests cannot exceed Parallel' }
+$effectiveTotal = if ($TotalRequests -eq 0) { $effectiveConcurrent } else { $TotalRequests }
+$effectiveInitial = if ($InitialRequests -eq 0) { $effectiveConcurrent } else { $InitialRequests }
+if ($effectiveTotal -lt $effectiveConcurrent) { throw 'TotalRequests cannot be lower than ConcurrentRequests' }
+if ($effectiveInitial -gt $effectiveConcurrent) { throw 'InitialRequests cannot exceed ConcurrentRequests' }
+if ($effectiveTotal -gt $effectiveInitial -and $ArrivalIntervalMs -eq 0) { throw 'ArrivalIntervalMs must be positive when TotalRequests exceeds InitialRequests' }
 if ($BenchmarkIgnoreEog -and -not $Benchmark) { throw 'BenchmarkIgnoreEog requires Benchmark' }
 $previousBenchmarkIgnoreEog = $env:P4_PIPELINE_BENCHMARK_IGNORE_EOG
 $previousPromptFile = $env:P4_PREFILL_PROMPT_FILE
 $previousPromptOffset = $env:P4_PREFILL_PROMPT_OFFSET
 $previousExecutionWindow = $env:P4_EXECUTION_WINDOW
+$previousTotalRequests = $env:P4_TOTAL_REQUESTS
+$previousInitialRequests = $env:P4_INITIAL_REQUESTS
+$previousArrivalIntervalMs = $env:P4_ARRIVAL_INTERVAL_MS
 $previousExpectSharedMemory = $env:P4_PIPELINE_EXPECT_SHARED_MEMORY
 New-Item -ItemType Directory -Force -Path $target | Out-Null
 $owned = @()
@@ -66,7 +77,13 @@ try {
         $env:P4_PREFILL_PROMPT_FILE = (Resolve-Path -LiteralPath $PromptFile).Path
     }
     $env:P4_PREFILL_PROMPT_OFFSET = $PromptOffset
-    $env:P4_EXECUTION_WINDOW = if ($ExecutionWindow -eq 0) { $effectiveConcurrent } else { $ExecutionWindow }
+    $effectiveExecutionWindow = if ($ExecutionWindow -eq 0) { $effectiveTotal } else { $ExecutionWindow }
+    if ($effectiveExecutionWindow -gt $effectiveTotal) { throw 'ExecutionWindow cannot exceed TotalRequests' }
+    if ($effectiveTotal -gt $effectiveInitial -and $effectiveExecutionWindow -lt $effectiveTotal) { throw 'ExecutionWindow must cover TotalRequests for steady ingress' }
+    $env:P4_TOTAL_REQUESTS = $effectiveTotal
+    $env:P4_INITIAL_REQUESTS = $effectiveInitial
+    $env:P4_ARRIVAL_INTERVAL_MS = $ArrivalIntervalMs
+    $env:P4_EXECUTION_WINDOW = $effectiveExecutionWindow
     $agentArguments = @("127.0.0.1:$P4ListenPort")
     if ($AgentWorkers -gt 0) { $agentArguments += @('--workers', [string]$AgentWorkers) }
     Start-Owned (Join-Path $bin 'p4-agent.exe') $agentArguments 'p4-agent'
@@ -87,6 +104,9 @@ try {
     $env:P4_PREFILL_PROMPT_FILE = $previousPromptFile
     $env:P4_PREFILL_PROMPT_OFFSET = $previousPromptOffset
     $env:P4_EXECUTION_WINDOW = $previousExecutionWindow
+    $env:P4_TOTAL_REQUESTS = $previousTotalRequests
+    $env:P4_INITIAL_REQUESTS = $previousInitialRequests
+    $env:P4_ARRIVAL_INTERVAL_MS = $previousArrivalIntervalMs
     if ($null -eq $previousExpectSharedMemory) {
         Remove-Item Env:P4_PIPELINE_EXPECT_SHARED_MEMORY -ErrorAction SilentlyContinue
     } else {

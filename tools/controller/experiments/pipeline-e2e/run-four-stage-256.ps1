@@ -6,6 +6,8 @@ param(
     [int]$MaxTokens = 600,
     [int]$ConcurrentRequests = 256,
     [int]$TotalRequests = 256,
+    [int]$InitialRequests = 0,
+    [int]$ArrivalIntervalMs = 0,
     [int]$NativeParallel = 16,
     [string]$LocalHost = "http://127.0.0.1:18089",
     [string]$RemoteGroupHost = "http://127.0.0.1:28083",
@@ -20,7 +22,14 @@ $env:P4_E2E_RUN_ID = $Stamp
 $env:P4_PIPELINE_MODEL = "unsloth\Ornith-1.0-35B-GGUF\Ornith-1.0-35B-UD-Q5_K_S.gguf"
 $env:P4_PREFILL_PROMPT_FILE = "F:\dev\linkcpp_product\apps\p4\fixtures\prefill-prompts-ko-400t.json"
 $env:P4_PIPELINE_BENCHMARK_IGNORE_EOG = if ($BenchmarkIgnoreEog) { "1" } else { "0" }
-$env:P4_EXECUTION_WINDOW = "$ConcurrentRequests"
+$effectiveInitialRequests = if ($InitialRequests -eq 0) { $ConcurrentRequests } else { $InitialRequests }
+if ($TotalRequests -lt $ConcurrentRequests) { throw 'TotalRequests cannot be lower than ConcurrentRequests' }
+if ($effectiveInitialRequests -gt $ConcurrentRequests) { throw 'InitialRequests cannot exceed ConcurrentRequests' }
+if ($TotalRequests -gt $effectiveInitialRequests -and $ArrivalIntervalMs -eq 0) { throw 'ArrivalIntervalMs must be positive when TotalRequests exceeds InitialRequests' }
+$env:P4_TOTAL_REQUESTS = "$TotalRequests"
+$env:P4_INITIAL_REQUESTS = "$effectiveInitialRequests"
+$env:P4_ARRIVAL_INTERVAL_MS = "$ArrivalIntervalMs"
+$env:P4_EXECUTION_WINDOW = "$TotalRequests"
 $env:P4_NATIVE_PARALLEL = "$NativeParallel"
 $env:P4_PIPELINE_BATCH = if ($NoProtocolBatch) { "$NativeParallel" } else { "256" }
 $env:P4_PIPELINE_UBATCH = if ($NoProtocolBatch) { "$NativeParallel" } else { "128" }

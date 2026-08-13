@@ -38,3 +38,11 @@ node .\tools\scripts\fixtures\generate-prefill-prompts.mjs
 active continuous streams for large-prefill workloads while preserving the full
 set of 256 unique logical sessions. Raise it only after native prefill capacity
 has been measured for the selected model and context.
+
+For overlap validation, retain an initial 48-session cohort and add requests
+while those streams are still running. `ExecutionWindow` must cover the whole
+arrival plan so the client does not hide a Pipeline queue behind its own limit.
+
+```powershell
+.\tools\scripts\e2e\pipeline\run-pipeline-e2e.ps1 -PromptFile .\fixtures\prefill-prompts-ko-400t.json -MaxTokens 1000 -Parallel 48 -ConcurrentRequests 48 -TotalRequests 56 -InitialRequests 48 -ArrivalIntervalMs 2000 -ExecutionWindow 56 -ExpectSharedMemory -Benchmark
+```
