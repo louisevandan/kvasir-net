@@ -165,7 +165,9 @@ const controller = new ControllerInstance({ controllerId, endpoint });
 const peerController = new ControllerInstance({ controllerId: peerControllerId, endpoint });
 const remoteController = topology.remoteAgentEndpoint ? new ControllerInstance({ controllerId, endpoint: topology.remoteAgentEndpoint }) : undefined;
 const localNodeId = nodeId || 'pipeline-2gpu';
-const remoteNodeId = `${localNodeId}-remote`;
+// The remote Agent persists independently from this client. Its node identity
+// must therefore be run-scoped, just like both local controller identities.
+const remoteNodeId = `${localNodeId}-remote-${runIdentity}`;
 let generation;
 let remoteGeneration;
 let completed = false;
