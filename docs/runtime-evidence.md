@@ -1,5 +1,84 @@
 # Runtime evidence
 
+## 2026-08-13: stage overlap, and why the first-stage layer count is a session budget
+
+The pipeline never overlapped its stages. The credit ledger issues one credit
+per sequence and the scheduler refills only while `in_flight < credit_limit`,
+where the limit is `max_sequences`; a window as wide as the active cohort spends
+every credit at once, so exactly one physical window was ever downstream. The
+identity held at every session count, which is why the session sweep could not
+expose it.
+
+`scheduler_window_target` splits the cohort into `pipeline_stage_count` equal
+windows. Windows stay full, so the full-batch refill gate that protects the
+boundary transport is untouched. Paired back-to-back runs on one binary, depth
+forced with `LINKER_PIPELINE_WINDOW_DEPTH`, 35B MoE, 500 tokens per request,
+400-token prompts, `batch 256 / ubatch 128`, 4080 leading:
+
+| layers / sessions | depth | window | aggregate | wall | stage0 wait | sum/wall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20/20, 48 | 1 | 48 | 210.4 tok/s | 114.1 s | 50.0 s | 97.5% |
+| 20/20, 48 | 2 | 24 | 234.4 tok/s | 102.4 s | 8.0 s | 166.2% |
+| 16/24, 64 | 1 | 64 | 213.8 tok/s | 149.7 s | 80.4 s | 97.6% |
+| **16/24, 64** | **2** | **32** | **271.5 tok/s** | **117.9 s** | **33.7 s** | **163.5%** |
+
+`sum/wall` is every stage compute plus terminal sampling over wall clock. 97.5%
+is serial by construction; above 100% is only reachable when stages compute at
+the same time. All runs finished with zero errors and exactly 500 tokens per
+request. The gain is +11.4% at 20/20 with 48 sessions and +27.0% at 16/24 with
+64.
+
+Overlap then re-opened the layer axis, which the serial regime had closed. With
+no overlap the wall tracked the sum of the stages, so moving layers only traded
+one stage cost for another and 20/20 measured best. With overlap the wall tracks
+the max, and the first stage's layer count is really a VRAM budget: KV costs
+about 188 MiB per layer per 48 sessions, so 20 layers plus 48 sessions puts the
+16 GiB card at about 15.4 GiB and 64 sessions at about 16.6 GiB. That is the
+64-session cliff recorded below as 8.5 tok/s, and it is a spill, not a scheduler
+limit. Dropping the first stage to 16 layers buys back the room:
+
+| layers | sessions | first-stage VRAM | aggregate |
+| --- | ---: | ---: | ---: |
+| 20/20 | 48 | ~15.4 GiB | 234.4 tok/s |
+| 20/20 | 64 | ~16.6 GiB | spills; 8.5 tok/s in the earlier sweep |
+| **16/24** | **64** | **~13.3 GiB** | **271.5 tok/s** |
+
+The balance point moved with it. At 64 sessions the first stage costs 5.05 s per
+layer and the second 3.0 s per layer plus 39.8 s of terminal sampling, which
+solves to 20 first-stage layers -- and 20 is exactly what does not fit. 16/24 is
+the constrained optimum for this pair of cards, and the last stage is now the
+bottleneck at 111.9 s of a 117.9 s wall.
+
+Putting the 3090 first instead was measured and abandoned: the 4080 then holds
+the terminal role, which carries the output head on top of 20 layers, and the
+16 GiB card spilled. The first stage sat at 0% GPU while the terminal sat at
+100%, and the run was stopped after 23 minutes against a 2-minute expectation.
+
+Two negative results bound what to try next.
+
+Backend sampling removes the cost it targets: terminal sampling fell from 27.9 s
+to 0.1 s with 23,999 backend tokens. But the profile enlarges context
+construction, the run reported `kv=7,526,154,240`, and the 16 GiB first stage
+spilled -- its compute went from 85.5 s to 448.9 s, of which 378.0 s was
+`llama_decode` submit, and throughput fell to 50.3 tok/s. The blocker is that
+reservation, not the 256-output ceiling recorded earlier.
+
+Multi-token prefill for concurrent cohorts crashed. Removing the
+`sessions.size() == 1` term made prefill windows 120 tokens instead of 24, cut
+first-stage prefill compute from 32.0 s to 18.6 s and mean TTFT from 33.9 s to
+21.1 s, and moved aggregate throughput -1.4%. The second run of that identical
+configuration killed the terminal stage with `exit_code=3221225477`
+(`0xC0000005`) and `stop_requested=false`, and every in-flight request failed
+with a closed stage control pipe. The term was reinstated. Its prize is latency,
+not throughput, and any retry has to explain the access violation first.
+
+Absolute tok/s on this host is noisy: the first stage runs on the display GPU,
+and two depth-1 runs of the identical 20/20 configuration measured 88.3 s and
+61.3 s of first-stage compute while the second stage reproduced within 2%.
+Compare depths inside one session and read `sum/wall` and downstream wait, which
+are ratios and survive the clock noise.
+
+
 ## 2026-08-13: 246 tok/s, and stage cost follows the role rather than the device
 
 Same 35B MoE, 32 concurrent requests capped at 1000 tokens, 400-token prompts,
