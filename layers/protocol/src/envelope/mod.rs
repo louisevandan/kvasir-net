@@ -12,6 +12,7 @@
 pub mod address;
 pub mod chain;
 pub mod recipient;
+pub(crate) mod wire;
 
 pub use address::{Address, Scheme};
 pub use chain::{Chain, Link};

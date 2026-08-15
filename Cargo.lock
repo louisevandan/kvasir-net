@@ -65,6 +65,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "p4-agent-core"
+version = "0.1.0"
+dependencies = [
+ "p4-adapter",
+ "p4-protocol",
+ "tokio",
+]
+
+[[package]]
 name = "p4-controller"
 version = "0.1.0"
 dependencies = [

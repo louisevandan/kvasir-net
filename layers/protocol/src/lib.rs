@@ -4,6 +4,7 @@ mod catalog;
 mod codec;
 mod contract;
 mod envelope;
+pub mod frame;
 mod task;
 
 pub use catalog::{MessageClass, MessageKind, QueueClass};

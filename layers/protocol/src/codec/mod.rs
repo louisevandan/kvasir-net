@@ -1,6 +1,6 @@
 //! Bounded P4 binary framing and payload codec.
 
-mod fields;
+pub(crate) mod fields;
 mod frame;
 mod kind;
 mod payload;
