@@ -54,6 +54,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "p4-adapter"
+version = "0.1.0"
+
+[[package]]
 name = "p4-agent"
 version = "0.1.0"
 dependencies = [

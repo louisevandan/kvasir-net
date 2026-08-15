@@ -2,6 +2,7 @@
 members = [
     "layers/protocol",
     "layers/runtime",
+    "layers/adapter",
     "layers/adapters/llamacpp",
     "layers/adapters/pipeline",
     "entrypoints/agent",
