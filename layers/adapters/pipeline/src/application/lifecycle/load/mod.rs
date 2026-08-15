@@ -97,7 +97,7 @@ pub(crate) fn load(
             // tiers upstream of it.
             let capacity = config.capacity.declare(deployment, stage_plan);
             eprintln!(
-                "P4_ADAPTER_CAPACITY deployment={deployment} max_sequences={capacity} source={}",
+                "P4_PIPELINE_CAPACITY deployment={deployment} max_sequences={capacity} source={}",
                 if crate::domain::capacity::declared_max_sequences(stage_plan).is_some() {
                     "stage_plan"
                 } else {

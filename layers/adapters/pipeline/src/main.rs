@@ -3,6 +3,7 @@
 mod application;
 mod domain;
 mod infrastructure;
+mod knob;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     application::adapter::run()

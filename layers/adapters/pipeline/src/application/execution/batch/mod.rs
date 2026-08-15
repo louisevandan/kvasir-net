@@ -167,7 +167,7 @@ async fn execute_group(
     let completed = states.len();
     for (_, state) in states {
         eprintln!(
-            "P4_ADAPTER_BATCH_RESULT {}",
+            "P4_PIPELINE_BATCH_RESULT {}",
             json!({
                 "request_id": &state.request.request_id,
                 "prompt_n": state.timings.as_ref().and_then(|value| value.get("prompt_n")),
@@ -191,7 +191,7 @@ async fn execute_group(
         .await?;
     }
     eprintln!(
-        "P4_ADAPTER_BATCH_COMPLETE deployment={} requests={} elapsed_ms={}",
+        "P4_PIPELINE_BATCH_COMPLETE deployment={} requests={} elapsed_ms={}",
         deployment,
         completed,
         started.elapsed().as_millis()

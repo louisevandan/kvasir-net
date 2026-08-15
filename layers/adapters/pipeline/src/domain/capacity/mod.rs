@@ -33,8 +33,8 @@ impl CapacityRegistry {
     /// earlier conservative 16-credit fallback is only for malformed plans.
     pub(crate) fn from_env() -> Self {
         Self::new(
-            bounded("P4_ADAPTER_PREFILL_CREDITS", DEFAULT_FALLBACK_CREDITS),
-            bounded("P4_ADAPTER_MAX_INFLIGHT", DEFAULT_CEILING),
+            crate::knob::limit("PREFILL_CREDITS", DEFAULT_FALLBACK_CREDITS),
+            crate::knob::limit("MAX_INFLIGHT", DEFAULT_CEILING),
         )
     }
 
@@ -101,14 +101,6 @@ impl CapacityRegistry {
                 .or_insert_with(|| Arc::new(Semaphore::new(capacity))),
         )
     }
-}
-
-fn bounded(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| (1..=4096).contains(value))
-        .unwrap_or(default)
 }
 
 /// `load_options.batching.max_sequences` is the controller's minimum across

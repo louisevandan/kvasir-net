@@ -8,12 +8,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener as TokioTcpListener;
 
 #[test]
-fn admission_limit_has_a_safe_default() {
-    assert_eq!(configured_limit("P4_PIPELINE_TEST_MISSING", 4), 4);
-    assert_eq!(configured_nonnegative_limit("P4_PIPELINE_TEST_MISSING", 0), 0);
-}
-
-#[test]
 fn production_runtime_enables_batch_timer() {
     let runtime = execution_runtime().unwrap();
     runtime.block_on(async {

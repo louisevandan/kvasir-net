@@ -4,7 +4,6 @@ use crate::application::adapter::handle_message;
 use crate::domain::state::Config;
 use p4_protocol::{Message, RoutedMessage, encode_routed_message};
 use std::collections::HashMap;
-use std::env;
 use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +15,6 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 pub(super) type AsyncError = Box<dyn std::error::Error + Send + Sync>;
 
 const DEFAULT_MAX_INFLIGHT: usize = 256;
-const DEFAULT_PREFILL_CREDITS: usize = 16;
 const DEFAULT_DECODE_CREDITS: usize = 4;
 const DEFAULT_BATCH_COALESCE_MS: usize = 0;
 const RESPONSE_QUEUE: usize = 4096;
@@ -30,18 +28,18 @@ pub(crate) fn serve(
     listener: StdTcpListener,
     config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let max_inflight = configured_limit("P4_ADAPTER_MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT);
-    let decode_credits = configured_limit(
-        "P4_ADAPTER_DECODE_CREDITS",
+    let max_inflight = crate::knob::limit("MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT);
+    let decode_credits = crate::knob::limit(
+        "DECODE_CREDITS",
         DEFAULT_DECODE_CREDITS.min(max_inflight),
     )
     .min(max_inflight);
     let batch_coalesce_ms =
-        configured_nonnegative_limit("P4_ADAPTER_BATCH_COALESCE_MS", DEFAULT_BATCH_COALESCE_MS);
+        crate::knob::nonnegative_limit("BATCH_COALESCE_MS", DEFAULT_BATCH_COALESCE_MS);
     listener.set_nonblocking(true)?;
     let runtime = execution_runtime()?;
     println!(
-        "P4_ADAPTER_TRANSPORT max_queued={} prefill_gate=per-deployment prefill_fallback={} prefill_ceiling={} decode_credits={} batch_coalesce_ms={} batch_dispatch=opportunistic time_driver=true",
+        "P4_PIPELINE_TRANSPORT max_queued={} prefill_gate=per-deployment prefill_fallback={} prefill_ceiling={} decode_credits={} batch_coalesce_ms={} batch_dispatch=opportunistic time_driver=true",
         max_inflight,
         config.capacity.fallback(),
         config.capacity.ceiling(),
@@ -85,7 +83,7 @@ async fn run(
         let (mut stream, _) = match listener.accept().await {
             Ok(connection) => connection,
             Err(error) => {
-                eprintln!("P4_ADAPTER_ACCEPT_ERROR {error}");
+                eprintln!("P4_PIPELINE_ACCEPT_ERROR {error}");
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             }
@@ -104,7 +102,7 @@ async fn run(
                     .downcast_ref::<p4_protocol::ProtocolError>()
                     .is_some_and(p4_protocol::ProtocolError::is_peer_closed)
                 {
-                    eprintln!("P4_ADAPTER_ERROR {error}");
+                    eprintln!("P4_PIPELINE_ERROR {error}");
                 }
             }
         });
@@ -196,7 +194,7 @@ async fn serve_execution_connection(
             }
             Ok(other) => {
                 eprintln!(
-                    "P4_ADAPTER_ROUTE_ERROR route={} unsupported={:?}",
+                    "P4_PIPELINE_ROUTE_ERROR route={} unsupported={:?}",
                     other.route_id,
                     other.message.kind()
                 );
@@ -268,22 +266,6 @@ async fn reject_overload(stream: &mut TcpStream) {
     )
     .await;
     let _ = stream.shutdown().await;
-}
-
-fn configured_limit(name: &str, default: usize) -> usize {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| (1..=4096).contains(value))
-        .unwrap_or(default)
-}
-
-fn configured_nonnegative_limit(name: &str, default: usize) -> usize {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value <= 4096)
-        .unwrap_or(default)
 }
 
 #[cfg(test)]
