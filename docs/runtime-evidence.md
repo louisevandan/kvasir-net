@@ -1,5 +1,68 @@
 # Runtime evidence
 
+## 2026-08-15: the terminal-stage access violation is corruption, not the churn or the oversubscription ratio
+
+The 2026-08-13 entry below recorded `exit_code=3221225477` (`0xC0000005`) on a
+second identical run and left the retry condition open: explain the access
+violation before trying again. This reproduces it under a controlled sweep and
+narrows what actually triggers it.
+
+Same 35B MoE, 14/24 split (4080 first, 3090 last), 10-slot capacity declared at
+load, `batch 256 / ubatch 128`, 2560-token context fixture. Three concurrency
+shapes were run back to back on the same binary:
+
+| arrivals | native peak | cohort admission waves | outcome |
+| --- | ---: | --- | --- |
+| 10 | 10 | 1 (no replacement) | pass, 119.4 tok/s |
+| 20 | 10 | 2 (one full cohort replaced mid-run) | pass, 57.9 tok/s, `verdict=partial` |
+| 30 | 10 | 3 | **crash**, terminal stage `exit_code=3221225477` |
+
+`pipeline_occupancy` in the 20-arrival run shows `peak=10, in_flight=10` sustained
+through a genuine cohort replacement -- ten of the twenty sessions completed and
+the P4 admission gate (`config.capacity.gate(deployment_id)`, a real semaphore
+sized from the declared `max_sequences`, gating `independent_loop` in
+`layers/adapters/adapter/src/infrastructure/listener/queue.rs`) let the next ten
+in. That run passed. If cohort replacement itself were the trigger, it would
+have failed at 20. It did not. The trigger scales with total window volume
+processed, not with whether replacement happens at all: 20 requests worth of
+windows survived, 30 did not.
+
+Two prior dumps for `linker-node.exe` (2026-08-10, presumably captured by an
+earlier session with default Windows Error Reporting already active) carry a
+different exception: `0xC0000409` (`STATUS_STACK_BUFFER_OVERRUN`), raised inside
+`ucrtbase.dll` with `__fastfail` parameter `0x7`
+(`FAST_FAIL_FATAL_APP_EXIT`) -- the CRT's own heap/stack integrity check
+tripping, not a bare dereference. Both dumps were parsed by hand (no `cdb` or
+`windbg` on this machine; a small Node script walked the minidump module list
+and exception stream directly) since no symbol server was available. Two
+different exception codes from the same load shape -- a raw access violation on
+one run, a CRT-detected corruption on another -- is the signature of an
+out-of-bounds write landing in different places depending on heap layout, not
+two separate bugs. Static review of the terminal-stage batched path
+(`handle_forward_window` in `pipeline/batch-forward.inc`) did not find an
+unchecked index: `window.count`, `sequence_id`, and every array sized from
+either are bounds-checked before use. The corrupting write is somewhere deeper
+-- inside `engine.decode_boundary_batch` or `engine.sample_tokens_batch` -- and
+was not reached by this pass.
+
+Today's crash produced no fresh dump. Windows Error Reporting never logged an
+`AppCrash` event for it (checked via `Get-WinEvent` on the Application log), so
+the child-process launch path this adapter uses does not get picked up by WER
+the way the 2026-08-10 session's did, even with a `LocalDumps` registry key
+registered for `linker-node.exe` for this run. Capturing a fresh, symbol-mapped
+dump needs either the Windows SDK debugging tools (`cdb.exe`, not installed
+here) or a JIT debugger registration, neither of which was set up before this
+session's time budget on the chase ran out.
+
+What is now safe to state: the defect is real, reproducible, and is memory
+corruption in the terminal-stage batched decode/sampling path, not a scheduler
+race tied to session churn. The practical boundary today is `native_peak =
+declared max_sequences` with no oversubscription -- both tested shapes at that
+line passed, and oversubscription is unsafe at an unknown ratio between 20 and
+30 arrivals against 10 slots. Retrying past this point without a symbol-mapped
+dump would be guessing at the same defect the 2026-08-13 entry already declined
+to guess at.
+
 ## 2026-08-13: stage overlap, and why the first-stage layer count is a session budget
 
 The pipeline never overlapped its stages. The credit ledger issues one credit
