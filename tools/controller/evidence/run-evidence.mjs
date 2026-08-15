@@ -17,7 +17,7 @@ export async function writeTrace(traceFile, traces) {
 
 export async function writePlan(planFile, requests) {
   if (!planFile) return;
-  const evidence = { protocol: 'P4B1-v5', generated_at: new Date().toISOString(), requests };
+  const evidence = { protocol: 'P4B1-v6', generated_at: new Date().toISOString(), requests };
   await writeFile(planFile, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
   console.log(`P4_PLAN json=${planFile} requests=${requests.length}`);
 }
@@ -27,7 +27,7 @@ export async function writeSummary(summaryFile, reportFile, runStats, traces) {
   const timings = (kind) => traces.map((trace) => trace.responses.find((response) => response.type === kind)?.elapsed_ms).filter(Number.isFinite);
   const done = traces.map((trace) => trace.responses.find((response) => response.type === 'DONE'));
   const summary = {
-    protocol: 'P4B1-v5', generated_at: new Date().toISOString(), run: runStats,
+    protocol: 'P4B1-v6', generated_at: new Date().toISOString(), run: runStats,
     request_response: {
       planned: traces.length,
       accepted: timings('INGRESS_ACCEPTED').length,

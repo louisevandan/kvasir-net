@@ -113,6 +113,8 @@ function decode({ kind, payload }) { let offset = 0; const readText = () => { co
   if (kind === KIND.error) return { kind, requestId: readText(), detail: readText() };
   if (kind === KIND.health) return { kind, requestId: readText(), nodeId: readText(), ready: payload[offset++] === 1, detail: readText() };
   if (kind === KIND.loadProgress) return { kind, operationId: readText(), nodeId: readText(), percent: readU32(), detail: readText() };
-  if (kind === KIND.draftReport) return { kind, operationId: readText(), nodeId: readText(), modelBytes: readU64(), kvBytes: readU64(), layerBytes: readU64(), ffnBytes: readU64(), detail: readText() };
+  // Allocation categories are the reporting adapter's words. Read them as data;
+  // do not switch on the names here.
+  if (kind === KIND.draftReport) { const operationId = readText(); const nodeId = readText(); const totalBytes = readU64(); const count = readU32(); const allocations = []; for (let index = 0; index < count; index += 1) allocations.push({ category: readText(), bytes: readU64() }); return { kind, operationId, nodeId, totalBytes, allocations, detail: readText() }; }
   return { kind };
 }

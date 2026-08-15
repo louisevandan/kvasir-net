@@ -2,7 +2,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 
 const MAGIC = Buffer.from('P4B1');
-const VERSION = 5;
+const VERSION = 6;
 const CANCEL = 5;
 const TERMINAL = new Set([3, 4, 17, 35, 37, 39, 41, 43]);
 const links = new Map();

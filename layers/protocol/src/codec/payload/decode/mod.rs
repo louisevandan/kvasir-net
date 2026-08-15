@@ -1,8 +1,10 @@
 //! P4 message payload decoding.
 
-use super::super::fields::Cursor;
+use super::super::fields::{Cursor, MAX_ELEMENTS};
 use super::super::kind::*;
-use crate::{ExecutionDone, ExecutionRequest, ExecutionToken, Message, Phase, ProtocolError};
+use crate::{
+    Allocation, ExecutionDone, ExecutionRequest, ExecutionToken, Message, Phase, ProtocolError,
+};
 
 pub(crate) fn decode_payload(kind: u8, payload: &[u8]) -> Result<Message, ProtocolError> {
     let mut c = Cursor {
@@ -149,15 +151,29 @@ pub(crate) fn decode_payload(kind: u8, payload: &[u8]) -> Result<Message, Protoc
             percent: c.u32()?,
             detail: c.text()?,
         },
-        DRAFT_REPORT => Message::DraftReport {
-            operation_id: c.text()?,
-            node_id: c.text()?,
-            model_bytes: c.u64()?,
-            kv_bytes: c.u64()?,
-            layer_bytes: c.u64()?,
-            ffn_bytes: c.u64()?,
-            detail: c.text()?,
-        },
+        DRAFT_REPORT => {
+            let operation_id = c.text()?;
+            let node_id = c.text()?;
+            let total_bytes = c.u64()?;
+            let count = c.u32()? as usize;
+            if count > MAX_ELEMENTS {
+                return Err(ProtocolError::new("too many draft allocations"));
+            }
+            let mut allocations = Vec::with_capacity(count);
+            for _ in 0..count {
+                allocations.push(Allocation {
+                    category: c.text()?,
+                    bytes: c.u64()?,
+                });
+            }
+            Message::DraftReport {
+                operation_id,
+                node_id,
+                total_bytes,
+                allocations,
+                detail: c.text()?,
+            }
+        }
         ERROR => Message::Error {
             request_id: c.text()?,
             detail: c.text()?,

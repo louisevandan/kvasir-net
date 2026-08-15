@@ -8,6 +8,6 @@ mod wire;
 
 pub use error::ProtocolError;
 pub use execution::{ExecutionDone, ExecutionRequest, ExecutionToken};
-pub use message::Message;
+pub use message::{Allocation, Message};
 pub use phase::Phase;
 pub use wire::{PROTOCOL, VERSION};

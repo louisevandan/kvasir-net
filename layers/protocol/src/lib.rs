@@ -1,4 +1,4 @@
-//! P4B1 v5 protocol surface. See `apps/p4/docs/api.md#wire-contract`.
+//! P4B1 v6 protocol surface. See `apps/p4/docs/api.md#wire-contract`.
 
 mod catalog;
 mod codec;
@@ -11,7 +11,7 @@ pub use codec::{
     read_message, read_routed_message, write_message, write_routed_message,
 };
 pub use contract::{
-    ExecutionDone, ExecutionRequest, ExecutionToken, Message, PROTOCOL, Phase, ProtocolError,
-    VERSION,
+    Allocation, ExecutionDone, ExecutionRequest, ExecutionToken, Message, PROTOCOL, Phase,
+    ProtocolError, VERSION,
 };
 pub use task::{Participant, ParticipantRole, TaskDirection, TaskEnvelope, TaskError, TaskKind};

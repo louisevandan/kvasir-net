@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ExecutionRequest, Message, Phase};
+use crate::{Allocation, ExecutionRequest, Message, Phase};
 
 fn request() -> Message {
     Message::Execute(ExecutionRequest {
@@ -40,15 +40,54 @@ fn round_trips_draft_report() {
     let expected = Message::DraftReport {
         operation_id: "load-1".into(),
         node_id: "n".into(),
-        model_bytes: 1,
-        kv_bytes: 2,
-        layer_bytes: 3,
-        ffn_bytes: 4,
+        total_bytes: 30,
+        allocations: vec![
+            Allocation {
+                category: "stage0.context_reserved".into(),
+                bytes: 10,
+            },
+            Allocation {
+                category: "stage1.context_reserved".into(),
+                bytes: 20,
+            },
+        ],
         detail: "measured".into(),
     };
     let mut bytes = Vec::new();
     write_message(&mut bytes, &expected).unwrap();
     assert_eq!(read_message(&mut bytes.as_slice()).unwrap(), expected);
+}
+
+#[test]
+fn a_draft_report_carries_no_allocations_when_nothing_was_reserved() {
+    let expected = Message::DraftReport {
+        operation_id: "load-1".into(),
+        node_id: "n".into(),
+        total_bytes: 0,
+        allocations: Vec::new(),
+        detail: "nothing reported".into(),
+    };
+    let mut bytes = Vec::new();
+    write_message(&mut bytes, &expected).unwrap();
+    assert_eq!(read_message(&mut bytes.as_slice()).unwrap(), expected);
+}
+
+#[test]
+fn an_allocation_count_past_the_ceiling_is_refused_rather_than_allocated() {
+    let expected = Message::DraftReport {
+        operation_id: "load-1".into(),
+        node_id: "n".into(),
+        total_bytes: 0,
+        allocations: (0..257)
+            .map(|index| Allocation {
+                category: format!("stage{index}"),
+                bytes: 0,
+            })
+            .collect(),
+        detail: String::new(),
+    };
+    let mut bytes = Vec::new();
+    assert!(write_message(&mut bytes, &expected).is_err());
 }
 
 #[test]

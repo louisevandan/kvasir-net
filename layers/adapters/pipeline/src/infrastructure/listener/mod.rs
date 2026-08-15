@@ -29,11 +29,9 @@ pub(crate) fn serve(
     config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let max_inflight = crate::knob::limit("MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT);
-    let decode_credits = crate::knob::limit(
-        "DECODE_CREDITS",
-        DEFAULT_DECODE_CREDITS.min(max_inflight),
-    )
-    .min(max_inflight);
+    let decode_credits =
+        crate::knob::limit("DECODE_CREDITS", DEFAULT_DECODE_CREDITS.min(max_inflight))
+            .min(max_inflight);
     let batch_coalesce_ms =
         crate::knob::nonnegative_limit("BATCH_COALESCE_MS", DEFAULT_BATCH_COALESCE_MS);
     listener.set_nonblocking(true)?;

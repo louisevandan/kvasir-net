@@ -1,10 +1,10 @@
 # P4 request/response message pairs
 
-This is the complete implemented P4B1 v5 request/response map. The source of truth is [`Message`](../layers/protocol/src/contract/message/mod.rs), its semantic [`catalog`](../layers/protocol/src/catalog/mod.rs), and its binary [`codec`](../layers/protocol/src/codec/mod.rs); the Node.js caller surface is [`ControllerInstance`](../tools/controller/client/controller-instance.mjs). `*` means zero or more frames; `ERROR` is the terminal alternative unless noted.
+This is the complete implemented P4B1 v6 request/response map. The source of truth is [`Message`](../layers/protocol/src/contract/message/mod.rs), its semantic [`catalog`](../layers/protocol/src/catalog/mod.rs), and its binary [`codec`](../layers/protocol/src/codec/mod.rs); the Node.js caller surface is [`ControllerInstance`](../tools/controller/client/controller-instance.mjs). `*` means zero or more frames; `ERROR` is the terminal alternative unless noted.
 
 ## Frame and correlation rules
 
-Every P4 TCP frame has a 16-byte little-endian header: magic `P4B1`, version `5`, kind, reserved zeroes, payload byte length, reserved zeroes. The payload begins with `u32 route_id_length`, UTF-8 `route_id`, and `u64 deadline_unix_ms`, followed by the message fields below. A frame is at most 1 MiB; a string field is at most 256 KiB. `u32`, `u64`, and `f32` values are little-endian.
+Every P4 TCP frame has a 16-byte little-endian header: magic `P4B1`, version `6`, kind, reserved zeroes, payload byte length, reserved zeroes. The payload begins with `u32 route_id_length`, UTF-8 `route_id`, and `u64 deadline_unix_ms`, followed by the message fields below. A frame is at most 1 MiB; a string field is at most 256 KiB; a repeated field carries a `u32` count of at most 256 elements. `u32`, `u64`, and `f32` values are little-endian.
 
 | Correlation field | Used by | Rule |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ Every P4 TCP frame has a 16-byte little-endian header: magic `P4B1`, version `5`
 | `INVENTORY_QUERY` (34) | `HARDWARE_REPORT` (35) | `controller_id`, `request_id` | `agent_id`, `report_id`, `snapshot` JSON | Agent |
 | `ADAPTER_REGISTER` (36) | `ADAPTER_REGISTERED` (37) | `adapter_id`, `adapter_kind`, `endpoint`, `descriptor` JSON | `adapter_id`, `detail` | adapter → Agent |
 | `NODE_CREATE` (38) | `NODE_CREATED` (39) | `controller_id`, `operation_id`, `node_id`, `adapter_id`, `node_spec` JSON | `operation_id`, `node_id`, `adapter_id`, `state`, `detail` | Agent forwards to selected adapter |
-| `MODEL_LOAD` (40) | `LOAD_PROGRESS` (19)* → `DRAFT_REPORT` (20)* → `MODEL_BOUND` (41) | `controller_id`, `node_id`, `operation_id`, `deployment_id`, `binding_id`, `model`, `plan_revision`, `stage_plan` JSON | progress: `operation_id`, `node_id`, `percent`, `detail`; draft: `operation_id`, `node_id`, `model_bytes`, `kv_bytes`, `layer_bytes`, `ffn_bytes`, `detail`; bound: `operation_id`, `node_id`, `deployment_id`, `binding_id`, `runtime_generation`, `state`, `detail` | Agent forwards; adapter owns concrete load |
+| `MODEL_LOAD` (40) | `LOAD_PROGRESS` (19)* → `DRAFT_REPORT` (20)* → `MODEL_BOUND` (41) | `controller_id`, `node_id`, `operation_id`, `deployment_id`, `binding_id`, `model`, `plan_revision`, `stage_plan` JSON | progress: `operation_id`, `node_id`, `percent`, `detail`; draft: `operation_id`, `node_id`, `total_bytes`, `allocations` (up to 256 `category`/`bytes` pairs the reporting adapter names and P4 never reads), `detail`; bound: `operation_id`, `node_id`, `deployment_id`, `binding_id`, `runtime_generation`, `state`, `detail` | Agent forwards; adapter owns concrete load |
 | `MODEL_UNLOAD` (42) | `MODEL_UNBOUND` (43) | `controller_id`, `node_id`, `operation_id`, `deployment_id`, `binding_id` | `operation_id`, `node_id`, `deployment_id`, `binding_id`, `detail` | Agent forwards; adapter owns concrete unload |
 | `HEALTH_CHECK` (16) | `HEALTH` (17) | `controller_id`, `node_id`, `request_id` | `request_id`, `node_id`, `ready`, `detail` | Agent forwards to adapter |
 

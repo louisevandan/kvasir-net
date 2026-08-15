@@ -60,13 +60,7 @@ fn coalesces_only_when_an_explicit_window_is_configured() {
             .await
             .unwrap();
         let (server, _) = pipeline.accept().await.unwrap();
-        let relay = tokio::spawn(dispatch(
-            server,
-            config,
-            Arc::new(Semaphore::new(64)),
-            1,
-            5,
-        ));
+        let relay = tokio::spawn(dispatch(server, config, Arc::new(Semaphore::new(64)), 1, 5));
         for index in 0..64 {
             let message = execute(index);
             client

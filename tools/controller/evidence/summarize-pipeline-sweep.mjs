@@ -24,7 +24,7 @@ const rows = runs.map(({ file, run, request_response: result }) => ({
   trace: path.basename(file).replace(/^summary-/, 'trace-').replace(/\.json$/, '.jsonl'),
   report: path.basename(file).replace(/^summary-/, 'report-').replace(/\.json$/, '.md')
 })).sort((left, right) => right.concurrent_requests - left.concurrent_requests);
-const suite = { protocol: 'P4B1-v5', generated_at: new Date().toISOString(), runs: rows };
+const suite = { protocol: 'P4B1-v6', generated_at: new Date().toISOString(), runs: rows };
 await writeFile(summaryFile, `${JSON.stringify(suite, null, 2)}\n`, 'utf8');
 const tableRows = rows.map((row) => `| ${row.concurrent_requests} | ${row.token_events} | ${row.generated_tokens} | ${row.events_per_second} | ${row.ttft_p50_ms} | ${row.ttft_p95_ms} | ${row.done_p50_ms} | ${row.done_p95_ms} | ${row.finish_reasons.stop ?? 0} / ${row.finish_reasons.length ?? 0} | [plan](${row.plan}) [trace](${row.trace}) [responses](${row.report}) [summary](${row.artifact}) |`);
 await writeFile(reportFile, `# P4 concurrency sweep\n\nAll runs use the same model, generated request family, max output token cap, and per-request context. Each row links the exact plan, frame trace, full request/response report, and summary. The input set is a deterministic prefix of the same generated prompt family, so output length still varies by request; compare the trend as a measured operating signal, not a statistically repeated benchmark.\n\n| Concurrent sessions | P4 events | Generated tokens | Events/s | TTFT p50 ms | TTFT p95 ms | DONE p50 ms | DONE p95 ms | stop / length | Evidence |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n${tableRows.join('\n')}\n`, 'utf8');

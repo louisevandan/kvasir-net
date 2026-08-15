@@ -2,6 +2,18 @@
 
 use crate::{ExecutionDone, ExecutionRequest, ExecutionToken};
 
+/// One named slice of what a load actually reserved.
+///
+/// The category is the adapter's word, not P4's. P4 carries the pair and never
+/// reads the name — knowing that a model divides into KV cache and FFN blocks
+/// would be knowing the shape of one family of backends, and a backend built
+/// differently would have nothing to put there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Allocation {
+    pub category: String,
+    pub bytes: u64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     IngressSubmit {
@@ -118,10 +130,10 @@ pub enum Message {
     DraftReport {
         operation_id: String,
         node_id: String,
-        model_bytes: u64,
-        kv_bytes: u64,
-        layer_bytes: u64,
-        ffn_bytes: u64,
+        /// Sum of `allocations`, carried so a reader that ignores the
+        /// adapter's vocabulary still has one comparable figure.
+        total_bytes: u64,
+        allocations: Vec<Allocation>,
         detail: String,
     },
     Error {

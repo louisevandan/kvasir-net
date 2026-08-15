@@ -2,7 +2,7 @@
 
 ## Wire contract
 
-[`contract/message/mod.rs`](../layers/protocol/src/contract/message/mod.rs) and [`codec/frame/mod.rs`](../layers/protocol/src/codec/frame/mod.rs) own P4B1 v5: fixed 16-byte little-endian header, `P4B1` magic, version byte `5`, kind byte, u32 payload length, 1 MiB frame cap, and 256 KiB text-field cap. Every payload starts with a bounded `route_id` and absolute `deadline_unix_ms`; the remaining bytes are the message payload. v5 is intentionally incompatible with v4.
+[`contract/message/mod.rs`](../layers/protocol/src/contract/message/mod.rs) and [`codec/frame/mod.rs`](../layers/protocol/src/codec/frame/mod.rs) own P4B1 v6: fixed 16-byte little-endian header, `P4B1` magic, version byte `6`, kind byte, u32 payload length, 1 MiB frame cap, 256 KiB text-field cap, and a 256-element cap on any repeated field. Every payload starts with a bounded `route_id` and absolute `deadline_unix_ms`; the remaining bytes are the message payload. v6 is intentionally incompatible with v5: `DRAFT_REPORT` no longer names transformer parts, and the version byte makes a stale peer fail instead of misreading the new payload.
 
 | Subprotocol | Messages | Contract |
 | --- | --- | --- |

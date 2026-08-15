@@ -28,7 +28,7 @@ Every queued item is a `TaskEnvelope` with `task_id`, transport `route_id`, `dea
 | Terminal | `HARDWARE_REPORT`, `ADAPTER_REGISTERED`, `NODE_CREATED`, `MODEL_BOUND`, `MODEL_UNBOUND`, `DONE`, `HEALTH` | response; closes the correlation route |
 | Error | `ERROR` | response; terminal |
 
-P4B1 v5 routes responses by `route_id`; business correlation IDs remain visible to controllers and adapters but never key a multiplexed socket's pending map.
+P4B1 v6 routes responses by `route_id`; business correlation IDs remain visible to controllers and adapters but never key a multiplexed socket's pending map.
 
 ## Generic workers
 

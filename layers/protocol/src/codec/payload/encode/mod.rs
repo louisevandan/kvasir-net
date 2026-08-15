@@ -1,6 +1,6 @@
 //! P4 message payload encoding.
 
-use super::super::fields::{put_text, put_u32, texts};
+use super::super::fields::{MAX_ELEMENTS, put_text, put_u32, put_u64, texts};
 use super::super::kind::*;
 use crate::{Message, ProtocolError};
 
@@ -262,15 +262,19 @@ pub(crate) fn encode_payload(message: &Message) -> Result<(u8, Vec<u8>), Protoco
         Message::DraftReport {
             operation_id,
             node_id,
-            model_bytes,
-            kv_bytes,
-            layer_bytes,
-            ffn_bytes,
+            total_bytes,
+            allocations,
             detail,
         } => {
+            if allocations.len() > MAX_ELEMENTS {
+                return Err(ProtocolError::new("too many draft allocations"));
+            }
             texts(&mut value, &[operation_id, node_id])?;
-            for n in [model_bytes, kv_bytes, layer_bytes, ffn_bytes] {
-                value.extend_from_slice(&n.to_le_bytes());
+            put_u64(&mut value, *total_bytes);
+            put_u32(&mut value, allocations.len() as u32);
+            for allocation in allocations {
+                put_text(&mut value, &allocation.category)?;
+                put_u64(&mut value, allocation.bytes);
             }
             put_text(&mut value, detail)?;
             DRAFT_REPORT

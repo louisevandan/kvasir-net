@@ -4,6 +4,11 @@ use crate::ProtocolError;
 
 const MAX_FIELD_BYTES: usize = 256 * 1024;
 
+/// Ceiling on a repeated field's element count. A report names what one load
+/// reserved, so this bounds a decoder's allocation against a hostile length
+/// without constraining any plausible adapter.
+pub(super) const MAX_ELEMENTS: usize = 256;
+
 pub(super) fn texts(payload: &mut Vec<u8>, values: &[&str]) -> Result<(), ProtocolError> {
     for v in values {
         put_text(payload, v)?;
@@ -19,6 +24,9 @@ pub(super) fn put_text(payload: &mut Vec<u8>, value: &str) -> Result<(), Protoco
     Ok(())
 }
 pub(super) fn put_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+pub(super) fn put_u64(payload: &mut Vec<u8>, value: u64) {
     payload.extend_from_slice(&value.to_le_bytes());
 }
 pub(super) struct Cursor<'a> {

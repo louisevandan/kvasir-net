@@ -2,7 +2,7 @@
 
 | Surface | Consumers | Invariant |
 | --- | --- | --- |
-| `layers/protocol/src/contract`, `catalog`, `codec`, `task` | all P4 processes and Node.js client | P4B1 v5 route envelope, field order, message semantics, and task directions change only in a coordinated wire revision. Protocol never imports runtime or adapters. |
+| `layers/protocol/src/contract`, `catalog`, `codec`, `task` | all P4 processes and Node.js client | P4B1 v6 route envelope, field order, message semantics, and task directions change only in a coordinated wire revision. Protocol never imports runtime or adapters. |
 | `layers/runtime/src/foundation/transport` | Controller, Node, Agent, in-process adapters | Every transport invokes `P4Handler` and emits through `ResponseSink`; TCP framing must not acquire lifecycle policy or change response order. |
 | `layers/runtime/src/domain/agent` | `p4-agent`, all adapters | Controller never supplies an adapter endpoint; only registered adapters create routable NodeSlots. |
 | `layers/runtime/src/domain/agent/authorization` | every controller-facing operation | Node ownership, adapter attachment, and binding deployment/generation are enforced here and nowhere else: no concrete adapter keys on `controller_id`. The state backing these rules is retained until the binding is unloaded. |
@@ -30,4 +30,4 @@
 
 Hardware reports are observations, not leases: controller planning must check timestamp and binding results. A NodeSlot can have zero bindings or be rebound with a different plan revision. A failed load must not make an old or unknown generation executable.
 
-P4B1 v5 has no TLS, authentication, authorization, durable controller registry, or multi-agent deployment commit barrier. In-band cancellation removes the Agent route and propagates best effort: the stock llama.cpp adapter shuts down its active HTTP socket, while Pipeline may still finish already-issued native compute after its route output is detached. Native Pipeline prefill data-plane credits remain an adapter/native responsibility. Use only inside a trusted network. Public HTTP/WebSocket/Kafka endpoints must authenticate before translating into `INGRESS_SUBMIT`.
+P4B1 v6 has no TLS, authentication, authorization, durable controller registry, or multi-agent deployment commit barrier. In-band cancellation removes the Agent route and propagates best effort: the stock llama.cpp adapter shuts down its active HTTP socket, while Pipeline may still finish already-issued native compute after its route output is detached. Native Pipeline prefill data-plane credits remain an adapter/native responsibility. Use only inside a trusted network. Public HTTP/WebSocket/Kafka endpoints must authenticate before translating into `INGRESS_SUBMIT`.

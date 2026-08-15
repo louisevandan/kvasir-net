@@ -101,6 +101,6 @@ min(requested_parallel, context_batch_tokens, context_ubatch_tokens,
 - 다른 구상 런타임은 공통 필드 중 지원 항목과 `adapter_options`를 자체 정책으로
   선별하되, 실제 적용값을 binding detail 또는 런타임 관측값으로 보고해야 한다.
 
-`load_options`는 `stage_plan` 내부 계약이므로 P4B1 v5의 frame layout은 변하지
+`load_options`는 `stage_plan` 내부 계약이므로 P4B1 v6의 frame layout은 변하지
 않는다. 의미 계약의 소비자는 ControllerInstance, 각 어뎁터,
 `llama_domain`의 호스트 런치 경계다.

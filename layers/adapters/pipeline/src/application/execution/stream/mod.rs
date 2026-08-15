@@ -95,7 +95,8 @@ impl RuntimeStream {
                 match lines.next_line().await {
                     Ok(Some(line)) if line.len() <= MAX_LINE_BYTES => {
                         let Ok(event) = serde_json::from_str::<StreamEvent>(&line) else {
-                            fail_all(&reader_pending, "invalid Pipeline inference stream event").await;
+                            fail_all(&reader_pending, "invalid Pipeline inference stream event")
+                                .await;
                             return;
                         };
                         if event.protocol != PROTOCOL {
@@ -117,8 +118,11 @@ impl RuntimeStream {
                         }
                     }
                     Ok(Some(_)) => {
-                        fail_all(&reader_pending, "Pipeline inference stream event exceeds 4 MiB")
-                            .await;
+                        fail_all(
+                            &reader_pending,
+                            "Pipeline inference stream event exceeds 4 MiB",
+                        )
+                        .await;
                         return;
                     }
                     Ok(None) => {

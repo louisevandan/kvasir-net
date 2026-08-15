@@ -4,8 +4,8 @@ use crate::application::adapter::write_error;
 use crate::domain::state::{Binding, Config};
 use crate::infrastructure::http::synchronous as http;
 use crate::infrastructure::local_transport;
-use p4_protocol::{Message, write_message};
-use serde_json::{Value, json};
+use p4_protocol::{Allocation, Message, write_message};
+use serde_json::Value;
 use std::net::TcpStream;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -69,7 +69,11 @@ pub(crate) fn load(
             None,
         )?;
         if status != 200 {
-            return write_error(stream, operation, format!("pipeline group disappeared: {text}"));
+            return write_error(
+                stream,
+                operation,
+                format!("pipeline group disappeared: {text}"),
+            );
         }
         let phase = group
             .get("phase")
@@ -104,7 +108,7 @@ pub(crate) fn load(
                     "fallback"
                 }
             );
-            draft(stream, operation, node, model, &group, config)?;
+            draft(stream, operation, node, &group)?;
             write_message(
                 stream,
                 &Message::LoadProgress {
@@ -143,7 +147,9 @@ pub(crate) fn load(
                     binding_id: binding.into(),
                     runtime_generation: generation,
                     state: "ready".into(),
-                    detail: format!("Pipeline deployment loaded with plan revision {plan_revision}"),
+                    detail: format!(
+                        "Pipeline deployment loaded with plan revision {plan_revision}"
+                    ),
                 },
             )?;
             return Ok(());
@@ -155,49 +161,62 @@ pub(crate) fn load(
     }
 }
 
+/// Reports what this deployment actually reserved, in the adapter's own terms.
+///
+/// The GGUF weight figures this used to fetch from the host's model inspection
+/// route were never the adapter's to report. They are planning knowledge --
+/// OUTER read them itself to decide this placement, and asking for them back
+/// put the adapter across the firewall for a number the caller already had.
+/// What only a running deployment can say is what its stages reserved.
 fn draft(
     stream: &mut TcpStream,
     operation: &str,
     node: &str,
-    model: &str,
     group: &Value,
-    config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (_, inspected, _) = http::json(
-        &config.host,
-        "POST",
-        "/api/models/inspect",
-        Some(&json!({"model": model})),
+    let allocations = reservations(group);
+    write_message(
+        stream,
+        &Message::DraftReport {
+            operation_id: operation.into(),
+            node_id: node.into(),
+            total_bytes: allocations.iter().map(|entry| entry.bytes).sum(),
+            allocations,
+            detail: "context reservations reported by each running stage; category names are this adapter's".into(),
+        },
     )?;
-    let model_bytes = inspected
-        .get("totalWeight")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let layer_bytes = inspected
-        .get("weightLayer")
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_u64).sum())
-        .unwrap_or(0);
-    let kv_bytes = group
-        .get("processes")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .flat_map(|process| {
-                    process
-                        .get("logs")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                })
+    Ok(())
+}
+
+/// One entry per stage that reserved anything. A stage names itself by the
+/// index the supervisor gave it, falling back to its position in the group
+/// when the runtime has not published an identity yet.
+fn reservations(group: &Value) -> Vec<Allocation> {
+    let Some(processes) = group.get("processes").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    processes
+        .iter()
+        .enumerate()
+        .filter_map(|(position, process)| {
+            let bytes: u64 = process
+                .get("logs")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
                 .filter_map(Value::as_str)
                 .filter_map(cache_bytes)
-                .sum()
+                .sum();
+            let stage = process
+                .pointer("/identity/stageIndex")
+                .and_then(Value::as_u64)
+                .unwrap_or(position as u64);
+            (bytes > 0).then(|| Allocation {
+                category: format!("stage{stage}.context_reserved"),
+                bytes,
+            })
         })
-        .unwrap_or(0);
-    write_message(stream, &Message::DraftReport { operation_id: operation.into(), node_id: node.into(), model_bytes, kv_bytes, layer_bytes, ffn_bytes: 0, detail: "model/layer bytes are GGUF exact; kv bytes are native context allocations; stock runtime does not classify FFN allocations".into() })?;
-    Ok(())
+        .collect()
 }
 
 fn cache_bytes(line: &str) -> Option<u64> {

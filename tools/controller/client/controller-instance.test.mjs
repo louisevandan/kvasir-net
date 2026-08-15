@@ -4,7 +4,7 @@ import test from 'node:test';
 import { ControllerInstance } from './controller-instance.mjs';
 import { closeAgentLinks } from './transport/agent-link.mjs';
 
-test('P4B1 v5 multiplexes two controllers over one Agent socket', { timeout: 5_000 }, async () => {
+test('P4B1 v6 multiplexes two controllers over one Agent socket', { timeout: 5_000 }, async () => {
   let connections = 0;
   const server = net.createServer(socket => {
     connections += 1;
@@ -144,7 +144,7 @@ class Decoder {
     const frames = [];
     while (this.pending.length >= 16) {
       assert.equal(this.pending.subarray(0, 4).toString(), 'P4B1');
-      assert.equal(this.pending[4], 5);
+      assert.equal(this.pending[4], 6);
       const length = this.pending.readUInt32LE(8);
       if (this.pending.length < 16 + length) break;
       const payload = this.pending.subarray(16, 16 + length);
@@ -169,7 +169,7 @@ function frame(routeId, kind, messagePayload) {
   messagePayload.copy(payload, 12 + route.length);
   const header = Buffer.alloc(16);
   header.write('P4B1');
-  header[4] = 5;
+  header[4] = 6;
   header[5] = kind;
   header.writeUInt32LE(payload.length, 8);
   return Buffer.concat([header, payload]);
