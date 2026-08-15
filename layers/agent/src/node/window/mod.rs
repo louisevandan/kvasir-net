@@ -43,7 +43,10 @@ pub fn compose(waiting: &[Waiting], ceiling: usize, now_unix_ms: u64) -> Option<
     if ceiling == 0 {
         return None;
     }
-    let live: Vec<&Waiting> = waiting.iter().filter(|item| !expired(item, now_unix_ms)).collect();
+    let live: Vec<&Waiting> = waiting
+        .iter()
+        .filter(|item| !expired(item, now_unix_ms))
+        .collect();
     let lane = if live.iter().any(|item| item.lane == QueueClass::Decode) {
         QueueClass::Decode
     } else {

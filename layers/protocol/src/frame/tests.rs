@@ -83,6 +83,9 @@ fn resealing_moves_a_body_to_a_new_target_without_re_encoding_it() {
     onward.target = Address::tcp("192.168.0.29", 19001);
     let resealed = decode(&reseal(&onward, first.body.clone()).unwrap()).unwrap();
 
-    assert_eq!(resealed.envelope.target, Address::tcp("192.168.0.29", 19001));
+    assert_eq!(
+        resealed.envelope.target,
+        Address::tcp("192.168.0.29", 19001)
+    );
     assert_eq!(resealed.body, body);
 }

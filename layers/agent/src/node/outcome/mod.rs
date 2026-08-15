@@ -46,11 +46,7 @@ pub fn next(carrier: &Frame, outcome: &Outcome) -> Next {
     if outcome.is_finished() {
         return Next::Finish(Frame {
             envelope: reply,
-            body: outcome
-                .stop
-                .clone()
-                .unwrap_or_default()
-                .into_bytes(),
+            body: outcome.stop.clone().unwrap_or_default().into_bytes(),
         });
     }
     let Some(lap) = carrier.envelope.to_next_lap() else {

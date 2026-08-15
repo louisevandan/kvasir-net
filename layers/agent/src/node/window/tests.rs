@@ -60,7 +60,10 @@ fn a_window_never_mixes_lanes() {
 
 #[test]
 fn prefill_runs_when_no_lap_is_ready() {
-    let waiting = vec![item("p1", QueueClass::Prefill), item("p2", QueueClass::Prefill)];
+    let waiting = vec![
+        item("p1", QueueClass::Prefill),
+        item("p2", QueueClass::Prefill),
+    ];
     let window = compose(&waiting, 8, 0).expect("a window");
     assert_eq!(window.lane, QueueClass::Prefill);
     assert_eq!(window.width(), 2);

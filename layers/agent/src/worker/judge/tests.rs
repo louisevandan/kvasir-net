@@ -35,7 +35,10 @@ fn a_message_for_outer_is_forwarded_by_the_same_path() {
 
 #[test]
 fn our_own_address_with_an_agent_recipient_stays_here() {
-    assert_eq!(judge(&envelope(own(), Recipient::Agent), &own()), Verdict::Agent);
+    assert_eq!(
+        judge(&envelope(own(), Recipient::Agent), &own()),
+        Verdict::Agent
+    );
 }
 
 #[test]
@@ -63,6 +66,9 @@ fn the_verdict_never_depends_on_the_lane_or_the_chain() {
     // the verdict, forwarding would need to understand the traffic.
     let mut carrying = envelope(Address::tcp("192.168.0.26", 19001), Recipient::node("n"));
     carrying.lane = QueueClass::Decode;
-    let plain = judge(&envelope(Address::tcp("192.168.0.26", 19001), Recipient::Agent), &own());
+    let plain = judge(
+        &envelope(Address::tcp("192.168.0.26", 19001), Recipient::Agent),
+        &own(),
+    );
     assert_eq!(judge(&carrying, &own()), plain);
 }

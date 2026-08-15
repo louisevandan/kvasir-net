@@ -8,3 +8,6 @@ license.workspace = true
 p4-adapter = { path = "../adapter" }
 p4-protocol = { path = "../protocol" }
 tokio = { version = "1.48.0", features = ["net", "rt-multi-thread", "sync", "time", "io-util", "macros"] }
+
+[dev-dependencies]
+p4-mock = { path = "../adapters/mock" }

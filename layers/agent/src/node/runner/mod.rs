@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 /// Unbounded on purpose. An adapter only raises events for work it was handed,
 /// so depth is already bounded by the window; dropping one would lose a hop
 /// completion and leave the node idle forever with work still queued.
+#[derive(Clone)]
 struct Sink(mpsc::UnboundedSender<Event>);
 
 impl EventSink for Sink {
@@ -144,7 +145,15 @@ impl Node {
                     in_flight.insert(sequence.sequence.clone(), frame.clone());
                 }
                 drop(in_flight);
-                self.adapter.start(Work::Hop(hop), &self.events);
+                // An adapter is a procedure and is allowed to block — a real
+                // one waits on a device. Running it on a blocking thread is
+                // what keeps that from stalling the workers that still have to
+                // relay and answer while this node is busy.
+                let adapter = Arc::clone(&self.adapter);
+                let events = self.events.clone();
+                tokio::task::spawn_blocking(move || {
+                    adapter.start(Work::Hop(hop), &events);
+                });
             }
             None => {
                 // Nothing executable came out of the window. The node is not
@@ -195,7 +204,9 @@ impl Node {
                 }
                 self.drain();
             }
-            Event::Failed { sequence, detail, .. } => {
+            Event::Failed {
+                sequence, detail, ..
+            } => {
                 let mut in_flight = self.in_flight.lock().expect("in-flight lock");
                 let failed: Vec<Frame> = match sequence {
                     Some(id) => in_flight.remove(&id).into_iter().collect(),
@@ -232,7 +243,6 @@ impl Node {
             body: detail.as_bytes().to_vec(),
         });
     }
-
 }
 
 fn now_unix_ms() -> u64 {

@@ -1,8 +1,8 @@
 use super::*;
 use crate::transport::inbox;
 use p4_adapter::{Distribution, Event, EventSink, Outcome, Sequence, Work};
-use p4_protocol::{Chain, Envelope, Link, Recipient};
 use p4_protocol::frame::{self};
+use p4_protocol::{Chain, Envelope, Link, Recipient};
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -119,8 +119,16 @@ fn a_message_for_another_agent_is_carried_there_over_a_socket() {
         near.enqueue(control(far.address().clone())).unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
 
-        assert_eq!(near_seen.lock().unwrap().len(), 0, "the near agent kept nothing");
-        assert_eq!(far_seen.lock().unwrap().len(), 1, "the far agent received it");
+        assert_eq!(
+            near_seen.lock().unwrap().len(),
+            0,
+            "the near agent kept nothing"
+        );
+        assert_eq!(
+            far_seen.lock().unwrap().len(),
+            1,
+            "the far agent received it"
+        );
         assert_eq!(far_seen.lock().unwrap()[0].body, b"hello");
     });
 }
@@ -212,7 +220,10 @@ fn a_frame_survives_the_wire_between_two_agents_unchanged() {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].body, sent.body, "a body is bytes, not text");
-        assert_eq!(seen[0].envelope.deadline_unix_ms, sent.envelope.deadline_unix_ms);
+        assert_eq!(
+            seen[0].envelope.deadline_unix_ms,
+            sent.envelope.deadline_unix_ms
+        );
     });
 }
 

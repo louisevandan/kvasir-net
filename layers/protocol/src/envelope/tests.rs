@@ -10,8 +10,12 @@ fn link(node: &str, port: u16) -> Link {
 }
 
 fn inference(hops: u16) -> Envelope {
-    let chain =
-        Chain::new((0..hops).map(|i| link(&format!("n{i}"), 52001 + i)).collect()).unwrap();
+    let chain = Chain::new(
+        (0..hops)
+            .map(|i| link(&format!("n{i}"), 52001 + i))
+            .collect(),
+    )
+    .unwrap();
     Envelope {
         target: chain.current().address.clone(),
         recipient: Recipient::node(chain.current().node.clone()),

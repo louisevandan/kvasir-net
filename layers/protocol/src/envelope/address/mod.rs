@@ -63,7 +63,11 @@ impl FromStr for Address {
             .ok_or_else(|| ProtocolError::new("address must be scheme://host:port"))?;
         let scheme = match scheme {
             "tcp" => Scheme::Tcp,
-            other => return Err(ProtocolError::new(format!("unknown address scheme {other}"))),
+            other => {
+                return Err(ProtocolError::new(format!(
+                    "unknown address scheme {other}"
+                )));
+            }
         };
         // Split from the right so an IPv6 literal keeps its own colons.
         let (host, port) = rest

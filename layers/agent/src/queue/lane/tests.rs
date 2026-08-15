@@ -17,9 +17,18 @@ fn the_three_axes_are_independent() {
 #[test]
 fn a_zero_budget_is_refused_at_start_rather_than_clamped() {
     for budget in [
-        Budget { connections: 0, ..Budget::default() },
-        Budget { in_flight: 0, ..Budget::default() },
-        Budget { depth: 0, ..Budget::default() },
+        Budget {
+            connections: 0,
+            ..Budget::default()
+        },
+        Budget {
+            in_flight: 0,
+            ..Budget::default()
+        },
+        Budget {
+            depth: 0,
+            ..Budget::default()
+        },
     ] {
         assert!(budget.checked().is_err());
     }

@@ -10,8 +10,8 @@
 //! is the recorded defect this file exists to avoid repeating.
 
 use super::lane::{Budget, Lanes};
-use p4_protocol::frame::Frame;
 use p4_protocol::QueueClass;
+use p4_protocol::frame::Frame;
 use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
 
@@ -83,10 +83,12 @@ impl Sender {
             QueueClass::Decode => &self.decode,
             QueueClass::Response => &self.response,
         };
-        lane.try_send(frame).map_err(|error| Refused(match error {
-            mpsc::error::TrySendError::Full(frame) => frame,
-            mpsc::error::TrySendError::Closed(frame) => frame,
-        }))
+        lane.try_send(frame).map_err(|error| {
+            Refused(match error {
+                mpsc::error::TrySendError::Full(frame) => frame,
+                mpsc::error::TrySendError::Closed(frame) => frame,
+            })
+        })
     }
 }
 

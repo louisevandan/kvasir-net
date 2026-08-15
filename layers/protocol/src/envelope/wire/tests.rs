@@ -29,8 +29,11 @@ fn a_control_envelope_survives_the_wire() {
 
 #[test]
 fn an_inference_envelope_carries_its_whole_chain_and_position() {
-    let chain = Chain::at(vec![link("n0", 52001), link("n1", 52002), link("n2", 52003)], 1)
-        .expect("a valid position");
+    let chain = Chain::at(
+        vec![link("n0", 52001), link("n1", 52002), link("n2", 52003)],
+        1,
+    )
+    .expect("a valid position");
     let envelope = Envelope {
         target: Address::tcp("127.0.0.1", 52002),
         recipient: Recipient::node("n1"),

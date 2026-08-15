@@ -12,7 +12,9 @@ fn link(node: &str, port: u16) -> Link {
 
 fn carrier(hops: u16, position: usize, reply: bool) -> Frame {
     let chain = Chain::at(
-        (0..hops).map(|i| link(&format!("n{i}"), 52001 + i)).collect(),
+        (0..hops)
+            .map(|i| link(&format!("n{i}"), 52001 + i))
+            .collect(),
         position,
     )
     .unwrap();
@@ -104,10 +106,15 @@ fn a_single_node_chain_laps_against_itself() {
 
 #[test]
 fn work_nobody_is_listening_for_is_reported_rather_than_dropped() {
-    assert_eq!(next(&carrier(1, 0, false), &outcome("tok", None)), Next::Unheard);
-    assert!(next(&carrier(1, 0, false), &outcome("", Some("stop")))
-        .frames()
-        .is_empty());
+    assert_eq!(
+        next(&carrier(1, 0, false), &outcome("tok", None)),
+        Next::Unheard
+    );
+    assert!(
+        next(&carrier(1, 0, false), &outcome("", Some("stop")))
+            .frames()
+            .is_empty()
+    );
 }
 
 #[test]

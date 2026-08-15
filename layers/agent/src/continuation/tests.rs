@@ -7,9 +7,12 @@ fn a_reply_calls_the_handler_that_was_registered_for_it() {
     let seen = Arc::new(AtomicU32::new(0));
     let registry = Continuations::<u32>::default();
     let recorder = Arc::clone(&seen);
-    registry.register("route-1", Box::new(move |value| {
-        recorder.store(value, Ordering::SeqCst);
-    }));
+    registry.register(
+        "route-1",
+        Box::new(move |value| {
+            recorder.store(value, Ordering::SeqCst);
+        }),
+    );
 
     assert!(registry.resolve("route-1", 42));
     assert_eq!(seen.load(Ordering::SeqCst), 42);
@@ -20,9 +23,12 @@ fn a_handler_runs_once_and_is_gone() {
     let count = Arc::new(AtomicU32::new(0));
     let registry = Continuations::<()>::default();
     let counter = Arc::clone(&count);
-    registry.register("route-1", Box::new(move |_| {
-        counter.fetch_add(1, Ordering::SeqCst);
-    }));
+    registry.register(
+        "route-1",
+        Box::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
 
     assert!(registry.resolve("route-1", ()));
     // A second terminal on one route must not run the handler again. This is
@@ -44,9 +50,12 @@ fn forgetting_discards_the_handler_without_running_it() {
     let ran = Arc::new(AtomicU32::new(0));
     let registry = Continuations::<()>::default();
     let counter = Arc::clone(&ran);
-    registry.register("route-1", Box::new(move |_| {
-        counter.fetch_add(1, Ordering::SeqCst);
-    }));
+    registry.register(
+        "route-1",
+        Box::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
 
     assert!(registry.forget("route-1"));
     assert_eq!(ran.load(Ordering::SeqCst), 0);

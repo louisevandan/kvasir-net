@@ -17,7 +17,7 @@ use p4_protocol::frame::Frame;
 use p4_protocol::{Address, QueueClass};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, mpsc};
 
 /// What the agent itself does with a message addressed to it.
 ///
@@ -73,7 +73,12 @@ impl Agent {
 
     /// Creates a node. It is an id and an adapter and nothing else until a
     /// load materialises something behind it.
-    pub async fn create_node(&self, id: impl Into<String>, adapter: Arc<dyn Adapter>, ceiling: usize) {
+    pub async fn create_node(
+        &self,
+        id: impl Into<String>,
+        adapter: Arc<dyn Adapter>,
+        ceiling: usize,
+    ) {
         let handle = Node::spawn(
             adapter,
             Arc::clone(&self.payload),
@@ -108,14 +113,24 @@ impl Agent {
         self.queue.offer(frame).map_err(|refused| refused.0)
     }
 
-    /// One message, one worker, two decisions.
+    /// Hands a frame to the connection for its target.
+    ///
+    /// Done in the order frames left the queue, not in a task of its own.
+    /// Registration order is what guarantees ordering here — a node enqueues a
+    /// token before the lap that will produce the next one — and dispatching
+    /// each frame into its own task would let two frames of one route race,
+    /// which is visible to a caller as P4 reordering its stream. Forwarding is
+    /// a hand-off to a per-peer queue, so keeping it in line costs nothing.
+    async fn forward(&self, frame: Frame) {
+        if let Err(returned) = self.peers.send(frame).await {
+            self.answer_locally(returned, "peer queue is full");
+        }
+    }
+
+    /// One message, two decisions.
     async fn dispatch(self: &Arc<Self>, frame: Frame) {
         match judge(&frame.envelope, &self.own) {
-            Verdict::Forward(_) => {
-                if let Err(returned) = self.peers.send(frame).await {
-                    self.answer_locally(returned, "peer queue is full");
-                }
-            }
+            Verdict::Forward(_) => self.forward(frame).await,
             Verdict::Agent => self.consume(frame).await,
             Verdict::Node(id) => {
                 let handle = self.nodes.lock().await.get(&id).cloned();
@@ -134,7 +149,9 @@ impl Agent {
         // continuation registered at send time is what it belongs to. An
         // unclaimed one falls through to duties rather than being dropped.
         if frame.envelope.lane == QueueClass::Response
-            && self.continuations.resolve(&frame.envelope.route.clone(), frame.clone())
+            && self
+                .continuations
+                .resolve(&frame.envelope.route.clone(), frame.clone())
         {
             return;
         }
@@ -152,22 +169,62 @@ impl Agent {
     }
 }
 
-/// Drains the queue forever, bounded by the in-flight budget.
+/// Drains the queue forever across a pool of workers.
 ///
-/// The budget is taken before the work is spawned, so how much this agent is
-/// doing at once stays independent of how much it is remembering.
+/// Workers are chosen by route, not taken at random. Order within a route is
+/// what the CPS rule buys — a node enqueues a token before the lap that will
+/// produce the next one — and handing consecutive frames of one route to
+/// different workers throws that away, which a caller sees as P4 reordering
+/// its stream. Routing by hash keeps each route sequential while leaving
+/// different routes free to run at once.
 pub async fn run(agent: Arc<Agent>, mut receiver: Receiver, in_flight: Arc<Semaphore>) {
-    while let Some(frame) = receiver.take().await {
-        let Ok(permit) = Arc::clone(&in_flight).acquire_owned().await else {
-            return;
-        };
+    let workers = worker_count(in_flight.available_permits());
+    let mut lanes = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let (sender, mut work) = mpsc::channel::<Frame>(WORKER_DEPTH);
         let agent = Arc::clone(&agent);
         tokio::spawn(async move {
-            agent.dispatch(frame).await;
-            drop(permit);
+            while let Some(frame) = work.recv().await {
+                agent.dispatch(frame).await;
+            }
         });
+        lanes.push(sender);
+    }
+    while let Some(frame) = receiver.take().await {
+        let worker = &lanes[route_worker(&frame.envelope.route, workers)];
+        if worker.send(frame).await.is_err() {
+            return;
+        }
     }
 }
+
+/// Depth of one worker's inbox. Small: a deep worker inbox would move the
+/// queueing decision out of the lanes that were sized for it.
+const WORKER_DEPTH: usize = 64;
+
+fn worker_count(in_flight: usize) -> usize {
+    in_flight
+        .min(
+            std::thread::available_parallelism()
+                .map(|value| value.get())
+                .unwrap_or(1)
+                * 2,
+        )
+        .max(1)
+}
+
+/// Cheap, stable, and dependent on nothing but the route.
+fn route_worker(route: &str, workers: usize) -> usize {
+    let mut hash: u64 = 1469598103934665603;
+    for byte in route.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    (hash % workers as u64) as usize
+}
+
+#[cfg(test)]
+mod worker_tests;
 
 #[cfg(test)]
 mod tests;

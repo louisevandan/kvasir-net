@@ -10,7 +10,12 @@ fn link(node: &str, port: u16) -> Link {
 }
 
 fn chain_of(count: u16) -> Chain {
-    Chain::new((0..count).map(|i| link(&format!("n{i}"), 52001 + i)).collect()).unwrap()
+    Chain::new(
+        (0..count)
+            .map(|i| link(&format!("n{i}"), 52001 + i))
+            .collect(),
+    )
+    .unwrap()
 }
 
 #[test]

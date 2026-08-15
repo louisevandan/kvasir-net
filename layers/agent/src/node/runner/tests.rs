@@ -67,7 +67,12 @@ fn link(node: &str, port: u16) -> Link {
 }
 
 fn work(route: &str, hops: u16) -> Frame {
-    let chain = Chain::new((0..hops).map(|i| link(&format!("n{i}"), 52001 + i)).collect()).unwrap();
+    let chain = Chain::new(
+        (0..hops)
+            .map(|i| link(&format!("n{i}"), 52001 + i))
+            .collect(),
+    )
+    .unwrap();
     Frame {
         envelope: Envelope {
             target: chain.current().address.clone(),

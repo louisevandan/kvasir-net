@@ -23,7 +23,10 @@ pub struct NodeQueue {
 
 impl NodeQueue {
     pub fn push(&self, frame: Frame) {
-        self.waiting.lock().expect("node queue lock").push_back(frame);
+        self.waiting
+            .lock()
+            .expect("node queue lock")
+            .push_back(frame);
     }
 
     /// How deep this node is. The node-side half of the pair that attributes a
