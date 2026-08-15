@@ -11,7 +11,9 @@
 //! is a message on a queue, and a requester registers a continuation instead of
 //! waiting for one.
 
+pub mod agent;
 pub mod continuation;
 pub mod node;
 pub mod queue;
+pub mod transport;
 pub mod worker;
