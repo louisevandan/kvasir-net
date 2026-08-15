@@ -96,6 +96,20 @@ impl Agent {
         Some(self.nodes.lock().await.get(id)?.depth())
     }
 
+    /// Cancels queued work for a route across this agent's nodes.
+    ///
+    /// Work already inside a backend runs to its hop boundary; cancelling
+    /// means the next hop never starts. Returns whether anything was found
+    /// waiting, so a caller can tell a cancellation from a request that had
+    /// already finished.
+    pub async fn cancel(&self, route: &str) -> bool {
+        self.nodes
+            .lock()
+            .await
+            .values()
+            .fold(false, |found, handle| handle.cancel(route) || found)
+    }
+
     /// Total work sitting on node queues. Read beside the agent queue's depth,
     /// the two say which side of the adapter boundary is slow.
     pub async fn node_depth_total(&self) -> usize {

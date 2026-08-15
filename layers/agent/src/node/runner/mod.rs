@@ -70,6 +70,16 @@ impl Handle {
     pub fn is_running(&self) -> bool {
         self.queue.is_running()
     }
+
+    /// Drops queued work for a route.
+    ///
+    /// A hop already handed to a backend is not interrupted, because there is
+    /// no way to interrupt one and no need: not starting the next is the whole
+    /// mechanism. So this cancels what has not started, and returns whether
+    /// anything was still waiting.
+    pub fn cancel(&self, route: &str) -> bool {
+        self.queue.remove(route).is_some()
+    }
 }
 
 impl Node {

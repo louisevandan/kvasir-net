@@ -673,3 +673,121 @@ fn a_load_that_fails_is_reported_and_does_not_wedge_the_node() {
         assert_eq!(a.node_depth("n0").await, Some(0), "nothing left stuck");
     });
 }
+
+fn expiring(route: &str, chain: &Chain, outer: &Arc<Agent>, deadline_unix_ms: u64) -> Frame {
+    let mut frame = request(route, chain, outer, 2);
+    frame.envelope.deadline_unix_ms = deadline_unix_ms;
+    frame
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[test]
+fn work_whose_deadline_already_passed_is_answered_rather_than_run() {
+    // Expired work must not reach a backend, and must not vanish either: a
+    // caller left waiting for a terminal that never comes is what a leaked
+    // route looks like from outside.
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        let node = Arc::new(Mock::terminal(0, Profile::default()));
+        a.create_node("n0", Arc::clone(&node) as Arc<dyn Adapter>, 4).await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(expiring("late", &chain, &outer, now_unix_ms() - 1_000))
+            .unwrap();
+        until(|| !outer_duties.frames_for("late").is_empty()).await;
+
+        let body = String::from_utf8_lossy(&outer_duties.frames_for("late")[0].body).into_owned();
+        assert!(body.contains("deadline"), "the caller was told why: {body}");
+        assert!(
+            node.widths().is_empty(),
+            "expired work never reached the backend"
+        );
+    });
+}
+
+#[test]
+fn a_live_deadline_does_not_stop_ordinary_work() {
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        a.create_node("n0", Arc::new(Mock::terminal(0, Profile::default())), 4)
+            .await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(expiring("soon", &chain, &outer, now_unix_ms() + 60_000))
+            .unwrap();
+        until(|| outer_duties.frames_for("soon").len() >= 2).await;
+
+        assert_eq!(outer_duties.frames_for("soon").len(), 2);
+    });
+}
+
+#[test]
+fn cancelling_stops_the_work_that_has_not_started() {
+    // A hop already inside a backend runs to its boundary; cancelling means
+    // the next one never starts. Here the backend never answers, so everything
+    // behind the first hop is still waiting and can be withdrawn.
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        a.create_node(
+            "n0",
+            Arc::new(Mock::terminal(
+                0,
+                Profile {
+                    fault: p4_mock::profile::Fault::Silence,
+                    ..Profile::default()
+                },
+            )),
+            1,
+        )
+        .await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        for index in 0..6 {
+            a.enqueue(request(&format!("c{index}"), &chain, &outer, 1))
+                .unwrap();
+        }
+        // The first hop is inside the silent backend; the rest are queued.
+        settle(300).await;
+
+        let mut cancelled = 0;
+        for index in 0..6 {
+            if a.cancel(&format!("c{index}")).await {
+                cancelled += 1;
+            }
+        }
+        assert!(cancelled >= 5, "the queued work was withdrawn, {cancelled}");
+        assert_eq!(a.node_depth("n0").await, Some(0), "nothing left queued");
+    });
+}
+
+#[test]
+fn cancelling_a_route_that_already_finished_says_so() {
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        a.create_node("n0", Arc::new(Mock::terminal(0, Profile::default())), 4)
+            .await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(request("done", &chain, &outer, 1)).unwrap();
+        until(|| !outer_duties.frames_for("done").is_empty()).await;
+
+        assert!(
+            !a.cancel("done").await,
+            "there was nothing left to cancel, which is not the same as failing"
+        );
+    });
+}
