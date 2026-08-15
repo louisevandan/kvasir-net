@@ -21,7 +21,7 @@ shapes were run back to back on the same binary:
 through a genuine cohort replacement -- ten of the twenty sessions completed and
 the P4 admission gate (`config.capacity.gate(deployment_id)`, a real semaphore
 sized from the declared `max_sequences`, gating `independent_loop` in
-`layers/adapters/adapter/src/infrastructure/listener/queue.rs`) let the next ten
+`layers/adapters/pipeline/src/infrastructure/listener/queue.rs`) let the next ten
 in. That run passed. If cohort replacement itself were the trigger, it would
 have failed at 20. It did not. The trigger scales with total window volume
 processed, not with whether replacement happens at all: 20 requests worth of

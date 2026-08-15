@@ -88,8 +88,8 @@ try {
     if ($AgentWorkers -gt 0) { $agentArguments += @('--workers', [string]$AgentWorkers) }
     Start-Owned (Join-Path $bin 'p4-agent.exe') $agentArguments 'p4-agent'
     Wait-Log (Join-Path $target "p4-agent-$stamp.log") 'P4_AGENT_READY'
-    Start-Owned (Join-Path $bin 'p4-adapter.exe') @("127.0.0.1:$P4RingListenPort", "127.0.0.1:$P4ListenPort", 'adapter-local', $LlamaHost) 'p4-adapter'
-    Wait-Log (Join-Path $target "p4-adapter-$stamp.log") 'P4_ADAPTER_READY'
+    Start-Owned (Join-Path $bin 'p4-pipeline.exe') @("127.0.0.1:$P4RingListenPort", "127.0.0.1:$P4ListenPort", 'adapter-local', $LlamaHost) 'p4-pipeline'
+    Wait-Log (Join-Path $target "p4-pipeline-$stamp.log") 'P4_PIPELINE_READY'
     $clientLog = Join-Path $target "client-$stamp.log"
     $traceFile = Join-Path $target "trace-$stamp.jsonl"
     $planFile = Join-Path $target "plan-$stamp.json"

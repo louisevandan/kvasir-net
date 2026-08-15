@@ -15,7 +15,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.len() != 4 {
         return Err(
-            "usage: p4-adapter LISTEN_ENDPOINT AGENT_ENDPOINT ADAPTER_ID LLAMA_HOST_ENDPOINT"
+            "usage: p4-pipeline LISTEN_ENDPOINT AGENT_ENDPOINT ADAPTER_ID LLAMA_HOST_ENDPOINT"
                 .into(),
         );
     }
@@ -29,7 +29,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         capacity: Arc::new(CapacityRegistry::from_env()),
     };
     register_adapter(&config, &args[0])?;
-    println!("P4_ADAPTER_READY listen={} host={}", args[0], config.host);
+    println!("P4_PIPELINE_READY listen={} host={}", args[0], config.host);
     listener::serve(listener, config)
 }
 

@@ -1,4 +1,8 @@
-# Adapter
+# Pipeline adapter
+
+Concrete adapter for the Linker Pipeline runtime. The name states which backend
+this crate serves; the adapter interface itself is the P4 message contract and
+is not a crate.
 
 | Path | Purpose |
 | --- | --- |

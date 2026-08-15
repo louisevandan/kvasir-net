@@ -78,7 +78,7 @@ MODEL_LOAD(binding-c, model-B, plan-3) -> adapter policy decides coexist/replace
 
 ## 구현 상태와 한계
 
-`p4-llamacpp`와 `p4-adapter`은 실제 self-registration, NodeSlot lifecycle, load/unload, ingress session, streaming을 검증했다. Pipeline의 hidden-state prefill/decode chain은 host supervisor 뒤 native data plane에 남는다.
+`p4-llamacpp`와 `p4-pipeline`은 실제 self-registration, NodeSlot lifecycle, load/unload, ingress session, streaming을 검증했다. Pipeline의 hidden-state prefill/decode chain은 host supervisor 뒤 native data plane에 남는다.
 
 현재 inventory는 best-effort snapshot이며 lease/admission authority가 아니다. Agent connection admission(기본 4096), task item/byte budget, NodeSlot의 `p4_max_inflight`(기본 1, 최대 1024), concrete adapter admission은 서로 독립적이다. prefill 큐는 기본 1024개와 64 MiB를 동시에 한도로 삼는다. ingress/`EXECUTE`는 한 permit을, `MODEL_LOAD`/`MODEL_UNLOAD`는 모든 permit을 얻어 active stream 아래에서 binding이 교체되지 않게 한다. 포화된 ingress는 `INGRESS_ACCEPTED` 없이 P4 `ERROR`로 거절한다.
 

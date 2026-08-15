@@ -105,10 +105,10 @@ if (!Number.isInteger(batch) || !Number.isInteger(ubatch) || batch < 1 || ubatch
 // runtime registry and session allocator require this root to be unique across
 // those processes, not merely within one Node.js event loop.
 const runIdentity = `${process.env.P4_E2E_RUN_ID ?? 'run'}-${randomUUID()}`;
-const controllerId = `p4-adapter-e2e-${runIdentity}`;
+const controllerId = `p4-pipeline-e2e-${runIdentity}`;
 const peerControllerId = `${controllerId}-peer`;
-const deploymentId = `p4-adapter-deployment-${runIdentity}`;
-const bindingId = `p4-adapter-binding-${runIdentity}`;
+const deploymentId = `p4-pipeline-deployment-${runIdentity}`;
+const bindingId = `p4-pipeline-binding-${runIdentity}`;
 const peerNodeId = `pipeline-peer-marker-${runIdentity}`;
 const contextPerRequestTokens = Math.max(
   1024,

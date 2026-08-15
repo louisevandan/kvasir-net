@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
-$binary = Join-Path $root 'target\release\p4-adapter.exe'
+$binary = Join-Path $root 'target\release\p4-pipeline.exe'
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
-$process = Start-Process -FilePath $binary -ArgumentList $ListenEndpoint, $AgentEndpoint, $AdapterId, $LlamaHost -RedirectStandardOutput (Join-Path $Target 'p4-adapter-local.out.log') -RedirectStandardError (Join-Path $Target 'p4-adapter-local.err.log') -WindowStyle Hidden -PassThru
+$process = Start-Process -FilePath $binary -ArgumentList $ListenEndpoint, $AgentEndpoint, $AdapterId, $LlamaHost -RedirectStandardOutput (Join-Path $Target 'p4-pipeline-local.out.log') -RedirectStandardError (Join-Path $Target 'p4-pipeline-local.err.log') -WindowStyle Hidden -PassThru
 [pscustomobject]@{ pid = $process.Id; binary = $binary; agent = $AgentEndpoint; adapter = $AdapterId } | ConvertTo-Json -Compress

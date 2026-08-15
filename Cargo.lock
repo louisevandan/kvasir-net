@@ -54,16 +54,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "p4-adapter"
-version = "0.1.0"
-dependencies = [
- "p4-protocol",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "p4-agent"
 version = "0.1.0"
 dependencies = [
@@ -90,6 +80,16 @@ name = "p4-node"
 version = "0.1.0"
 dependencies = [
  "p4-runtime",
+]
+
+[[package]]
+name = "p4-pipeline"
+version = "0.1.0"
+dependencies = [
+ "p4-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
