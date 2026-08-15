@@ -490,3 +490,186 @@ fn a_token_stream_arrives_in_the_order_it_was_produced() {
         }
     });
 }
+
+/// A body of "load|<ceiling>" or "unload" is lifecycle; anything else is a
+/// sequence. Still no message catalog in the core — this is the seam.
+struct Lifecycle;
+
+impl Payload for Lifecycle {
+    fn sequence(&self, frame: &Frame) -> Option<Sequence> {
+        Bodies.sequence(frame)
+    }
+
+    fn lifecycle(&self, frame: &Frame) -> Option<p4_adapter::Work> {
+        let text = String::from_utf8_lossy(&frame.body).into_owned();
+        let deployment = self.deployment(frame)?;
+        if text.starts_with("load|") {
+            return Some(p4_adapter::Work::Load(p4_adapter::Load {
+                deployment,
+                plan: text,
+                artifact: "model".into(),
+            }));
+        }
+        (text == "unload").then(|| p4_adapter::Work::Unload(p4_adapter::Unload { deployment }))
+    }
+
+    fn ceiling(&self, frame: &Frame) -> Option<usize> {
+        String::from_utf8_lossy(&frame.body)
+            .strip_prefix("load|")?
+            .parse()
+            .ok()
+    }
+}
+
+async fn start_with(duties: Arc<dyn Duties>, payload: Arc<dyn Payload>) -> Arc<Agent> {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (agent, receiver, in_flight) = Agent::new(
+        Address::tcp("127.0.0.1", port),
+        duties,
+        payload,
+        Lanes::default(),
+        Budget::default(),
+    );
+    tokio::spawn(inbox::serve(listener, agent.queue(), 256));
+    tokio::spawn(run(Arc::clone(&agent), receiver, in_flight));
+    agent
+}
+
+fn control(route: &str, chain: &Chain, outer: &Arc<Agent>, body: &str) -> Frame {
+    Frame {
+        envelope: Envelope {
+            target: chain.current().address.clone(),
+            recipient: Recipient::node(chain.current().node.clone()),
+            lane: QueueClass::Control,
+            route: route.into(),
+            deadline_unix_ms: 0,
+            reply_to: Some(outer.address().clone()),
+            chain: Some(chain.clone()),
+        },
+        body: body.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn a_distributed_load_reports_every_stage_then_binds() {
+    // The load workload: a model spread over stages, each reporting on its own,
+    // and the deployment executable only once the last one is in.
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start_with(Arc::new(outer_duties.clone()), Arc::new(Lifecycle)).await;
+        let a = start_with(Arc::new(Silent), Arc::new(Lifecycle)).await;
+        a.create_node(
+            "n0",
+            Arc::new(Mock::terminal(
+                0,
+                Profile {
+                    stages: 4,
+                    ..Profile::default()
+                },
+            )),
+            1,
+        )
+        .await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(control("load-1", &chain, &outer, "load|6")).unwrap();
+        until(|| outer_duties.frames_for("load-1").len() >= 5).await;
+
+        let bodies: Vec<String> = outer_duties
+            .frames_for("load-1")
+            .iter()
+            .map(|f| String::from_utf8_lossy(&f.body).into_owned())
+            .collect();
+        assert_eq!(bodies.len(), 5, "four stages then the binding: {bodies:?}");
+        assert!(bodies[0].starts_with("stage 0"), "{bodies:?}");
+        assert!(bodies[3].starts_with("stage 3"), "{bodies:?}");
+        assert!(bodies[4].starts_with("loaded generation 1"), "{bodies:?}");
+    });
+}
+
+#[test]
+fn a_load_raises_the_ceiling_the_plan_declared() {
+    // The ceiling is declared, never derived. Before the load the node admits
+    // one at a time; after it, the declared width.
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start_with(Arc::new(outer_duties.clone()), Arc::new(Lifecycle)).await;
+        let a = start_with(Arc::new(Silent), Arc::new(Lifecycle)).await;
+        let node = Arc::new(Mock::terminal(0, Profile::default()));
+        a.create_node("n0", Arc::clone(&node) as Arc<dyn Adapter>, 1).await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(control("load-1", &chain, &outer, "load|8")).unwrap();
+        until(|| !outer_duties.frames_for("load-1").is_empty()).await;
+
+        for index in 0..24 {
+            a.enqueue(request(&format!("r{index}"), &chain, &outer, 1))
+                .unwrap();
+        }
+        until(|| outer_duties.routes() >= 25).await;
+
+        let widest = node.widths().into_iter().max().unwrap_or(0);
+        assert!(widest > 1, "the declared ceiling was used, widest {widest}");
+        assert!(widest <= 8, "and not exceeded, widest {widest}");
+    });
+}
+
+#[test]
+fn an_unload_is_reported_and_the_node_keeps_serving_afterwards() {
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start_with(Arc::new(outer_duties.clone()), Arc::new(Lifecycle)).await;
+        let a = start_with(Arc::new(Silent), Arc::new(Lifecycle)).await;
+        a.create_node("n0", Arc::new(Mock::terminal(0, Profile::default())), 4)
+            .await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(control("unload-1", &chain, &outer, "unload")).unwrap();
+        until(|| !outer_duties.frames_for("unload-1").is_empty()).await;
+
+        assert_eq!(outer_duties.frames_for("unload-1")[0].body, b"unloaded");
+
+        // The node is idle again rather than stuck holding a finished
+        // instruction, so ordinary work still runs.
+        a.enqueue(request("after", &chain, &outer, 1)).unwrap();
+        until(|| !outer_duties.frames_for("after").is_empty()).await;
+        assert_eq!(outer_duties.frames_for("after").len(), 1);
+    });
+}
+
+#[test]
+fn a_load_that_fails_is_reported_and_does_not_wedge_the_node() {
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start_with(Arc::new(outer_duties.clone()), Arc::new(Lifecycle)).await;
+        let a = start_with(Arc::new(Silent), Arc::new(Lifecycle)).await;
+        a.create_node(
+            "n0",
+            Arc::new(Mock::terminal(
+                0,
+                Profile {
+                    fault: p4_mock::profile::Fault::Load,
+                    ..Profile::default()
+                },
+            )),
+            4,
+        )
+        .await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(control("load-1", &chain, &outer, "load|4")).unwrap();
+        until(|| !outer_duties.frames_for("load-1").is_empty()).await;
+
+        let bodies: Vec<String> = outer_duties
+            .frames_for("load-1")
+            .iter()
+            .map(|f| String::from_utf8_lossy(&f.body).into_owned())
+            .collect();
+        assert!(
+            bodies.iter().any(|body| body.contains("fail")),
+            "the caller was told: {bodies:?}"
+        );
+        assert_eq!(a.node_depth("n0").await, Some(0), "nothing left stuck");
+    });
+}

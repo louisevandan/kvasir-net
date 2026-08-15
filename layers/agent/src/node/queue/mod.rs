@@ -81,6 +81,17 @@ impl NodeQueue {
         *self.running.lock().expect("node running lock") = false;
     }
 
+    /// Looks at a waiting frame without taking it, so a caller can decide what
+    /// kind of work it is before committing to running it.
+    pub fn peek(&self, route: &str) -> Option<Frame> {
+        self.waiting
+            .lock()
+            .expect("node queue lock")
+            .iter()
+            .find(|frame| frame.envelope.route == route)
+            .cloned()
+    }
+
     /// Removes work whose route matches, for cancellation and expiry.
     pub fn remove(&self, route: &str) -> Option<Frame> {
         let mut waiting = self.waiting.lock().expect("node queue lock");

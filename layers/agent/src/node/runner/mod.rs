@@ -41,6 +41,9 @@ pub struct Node {
     /// Frames of the hop in flight, keyed by the sequence id they were given,
     /// so an outcome can be matched back to the route it came from.
     in_flight: Mutex<HashMap<String, Frame>>,
+    /// The load or unload in flight, if any. Kept apart from `in_flight`
+    /// because it belongs to a deployment rather than to a sequence.
+    lifecycle: Mutex<Option<Frame>>,
     events: Sink,
 }
 
@@ -87,6 +90,7 @@ impl Node {
             out,
             ceiling: Mutex::new(ceiling.max(1)),
             in_flight: Mutex::new(HashMap::new()),
+            lifecycle: Mutex::new(None),
             events: Sink(event_tx),
         };
         tokio::spawn(node.run(work_rx, event_rx));
@@ -129,6 +133,9 @@ impl Node {
                 self.reply_error(&frame, "deadline passed before this work started");
             }
         }
+        if self.start_lifecycle() {
+            return;
+        }
         let ceiling = *self.ceiling.lock().expect("ceiling lock");
         let Some(window) = compose(&self.queue.waiting(), ceiling, now) else {
             return;
@@ -165,6 +172,37 @@ impl Node {
                 self.drain();
             }
         }
+    }
+
+    /// Runs a waiting load or unload, alone.
+    ///
+    /// Lifecycle never shares a hop: materialising or releasing a model is one
+    /// instruction about a whole deployment, and batching it beside sequences
+    /// would let execution start against something half-built.
+    fn start_lifecycle(&self) -> bool {
+        let waiting = self.queue.waiting();
+        let Some(found) = waiting.iter().find_map(|item| {
+            let frame = self.queue.peek(&item.route)?;
+            let work = self.payload.lifecycle(&frame)?;
+            Some((item.route.clone(), frame, work))
+        }) else {
+            return false;
+        };
+        let (route, frame, work) = found;
+        let claimed = self.queue.claim(&[route]);
+        if claimed.is_empty() {
+            return false;
+        }
+        if let Some(ceiling) = self.payload.ceiling(&frame) {
+            *self.ceiling.lock().expect("ceiling lock") = ceiling.max(1);
+        }
+        *self.lifecycle.lock().expect("lifecycle lock") = Some(frame);
+        let adapter = Arc::clone(&self.adapter);
+        let events = self.events.clone();
+        tokio::task::spawn_blocking(move || {
+            adapter.start(work, &events);
+        });
+        true
     }
 
     fn hop(&self, claimed: &[Frame], lane: QueueClass) -> Option<Hop> {
@@ -208,21 +246,56 @@ impl Node {
                 sequence, detail, ..
             } => {
                 let mut in_flight = self.in_flight.lock().expect("in-flight lock");
-                let failed: Vec<Frame> = match sequence {
+                let mut failed: Vec<Frame> = match sequence {
                     Some(id) => in_flight.remove(&id).into_iter().collect(),
                     None => std::mem::take(&mut *in_flight).into_values().collect(),
                 };
                 drop(in_flight);
+                // A load can fail too, and its caller is waiting on the same
+                // route. Leaving it here would hold the node running forever
+                // over an instruction that already ended.
+                failed.extend(self.lifecycle.lock().expect("lifecycle lock").take());
                 self.queue.finished();
                 for frame in failed {
                     self.reply_error(&frame, &detail);
                 }
                 self.drain();
             }
-            // Load and unload reporting belongs to whoever asked for the load,
-            // and reaches them through the same reply path as anything else.
-            _ => {}
+            // Load and unload reporting belongs to whoever asked, and reaches
+            // them through the same reply path as anything else.
+            Event::Loaded { generation, .. } => {
+                self.finish_lifecycle(format!("loaded generation {generation}"))
+            }
+            Event::Unloaded { .. } => self.finish_lifecycle("unloaded".into()),
+            // Progress is reported as it happens rather than held until the
+            // end, because a distributed load's slowest stage is the fact
+            // worth seeing early.
+            Event::LoadProgress { stage, percent, .. } => {
+                let carrier = self.lifecycle.lock().expect("lifecycle lock").clone();
+                if let Some(carrier) = carrier {
+                    self.reply(&carrier, format!("stage {stage} at {percent}%"));
+                }
+            }
         }
+    }
+
+    fn finish_lifecycle(&self, detail: String) {
+        let carrier = self.lifecycle.lock().expect("lifecycle lock").take();
+        self.queue.finished();
+        if let Some(carrier) = carrier {
+            self.reply(&carrier, detail);
+        }
+        self.drain();
+    }
+
+    fn reply(&self, carrier: &Frame, detail: String) {
+        let Some(envelope) = carrier.envelope.to_reply() else {
+            return;
+        };
+        let _ = self.out.offer(Frame {
+            envelope,
+            body: detail.into_bytes(),
+        });
     }
 
     fn emit(&self, frame: Frame) {
