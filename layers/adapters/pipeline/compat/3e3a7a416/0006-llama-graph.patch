@@ -1,0 +1,641 @@
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 2be3b75fb9825ccc9aa08cda294f46d6422c61ea..5bc05e21e3cc14bac54d4034ee11bac77be44e21 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -14,13 +14,45 @@
+ #include "llama-memory-hybrid-iswa.h"
+ #include "llama-memory-recurrent.h"
+ 
++#include <algorithm>
+ #include <cassert>
+ #include <cmath>
+ #include <cstring>
++#include <unordered_map>
++#include <unordered_set>
+ #include <numeric>
+ #include <sstream>
+ #include <string>
+-#include <unordered_set>
++#include <cstdint>
++
++// ---- linkcpp MoE expert dispatch hook (private fork) ------------------------
++// See docs/design/moe-expert-sharding.md. For the flagged layer, build_moe_ffn
++// hands the routed-expert FFN to this callback instead of computing it locally.
++static llama_linkcpp_moe_dispatch_t g_linkcpp_moe_dispatch       = nullptr;
++static void *                       g_linkcpp_moe_dispatch_ud    = nullptr;
++static int32_t                      g_linkcpp_moe_dispatch_layer = -1;
++
++extern "C" void llama_linkcpp_set_moe_dispatch(
++        llama_linkcpp_moe_dispatch_t fn, void * user_data, int32_t layer) {
++    g_linkcpp_moe_dispatch       = fn;
++    g_linkcpp_moe_dispatch_ud    = user_data;
++    g_linkcpp_moe_dispatch_layer = layer;
++}
++
++// ggml custom op: fills dst [n_embd, n_expert_used, n_tokens] from
++// src0 = cur [n_embd, 1, n_tokens] and src1 = sel [n_expert_used, n_tokens].
++static void linkcpp_moe_dispatch_op(ggml_tensor * dst, int ith, int nth, void * ud) {
++    if (ith != 0) return;
++    (void) nth;
++    const int32_t       il = (int32_t) (intptr_t) ud;
++    const ggml_tensor * a  = dst->src[0];
++    const ggml_tensor * b  = dst->src[1];
++    if (g_linkcpp_moe_dispatch) {
++        g_linkcpp_moe_dispatch(il, (int32_t) dst->ne[0], (int32_t) dst->ne[1], (int32_t) dst->ne[2],
++                               (const float *) a->data, (const int32_t *) b->data,
++                               (float *) dst->data, g_linkcpp_moe_dispatch_ud);
++    }
++}
+ 
+ // dedup helpers
+ 
+@@ -195,7 +227,12 @@ void llm_graph_input_pos_bucket_kv::set_input(const llama_ubatch * ubatch) {
+ }
+ 
+ void llm_graph_input_out_ids::set_input(const llama_ubatch * ubatch) {
+-    GGML_ASSERT(out_ids);
++    // A non-final linkcpp stage returns its hidden state before output-row
++    // selection, so this optional input is not reachable by its graph and is
++    // intentionally left unallocated by the scheduler.
++    if (!out_ids || !out_ids->buffer) {
++        return;
++    }
+ 
+     const int64_t n_tokens = ubatch->n_tokens;
+ 
+@@ -1059,22 +1096,26 @@ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
+ }
+ 
+ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
+-    mctx->get_attn()->set_input_k_idxs(inp_attn->self_k_idxs, ubatch);
+-    mctx->get_attn()->set_input_v_idxs(inp_attn->self_v_idxs, ubatch);
++    if (inp_attn->self_k_idxs && inp_attn->self_k_idxs->buffer) {
++        mctx->get_attn()->set_input_k_idxs(inp_attn->self_k_idxs, ubatch);
++        mctx->get_attn()->set_input_v_idxs(inp_attn->self_v_idxs, ubatch);
++    }
+ 
+-    mctx->get_attn()->set_input_kq_mask(inp_attn->self_kq_mask, ubatch, cparams.causal_attn);
++    if (inp_attn->self_kq_mask && inp_attn->self_kq_mask->buffer) {
++        mctx->get_attn()->set_input_kq_mask(inp_attn->self_kq_mask, ubatch, cparams.causal_attn);
++    }
+ 
+-    if (inp_attn->self_k_rot) {
++    if (inp_attn->self_k_rot && inp_attn->self_k_rot->buffer) {
+         mctx->get_attn()->set_input_k_rot(inp_attn->self_k_rot);
+     }
+ 
+-    if (inp_attn->self_v_rot) {
++    if (inp_attn->self_v_rot && inp_attn->self_v_rot->buffer) {
+         mctx->get_attn()->set_input_v_rot(inp_attn->self_v_rot);
+     }
+ 
+     const int64_t n_rs = mctx->get_recr()->get_n_rs();
+ 
+-    if (inp_rs->s_copy) {
++    if (inp_rs->s_copy && inp_rs->s_copy->buffer) {
+         GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy->buffer));
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+@@ -1092,18 +1133,20 @@ bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
+ 
+     bool res = true;
+ 
+-    res &= inp_attn->self_k_idxs->ne[0] == params.ubatch.n_tokens;
+-  //res &= inp_attn->self_v_idxs->ne[0] == params.ubatch.n_tokens; // TODO: need to move this to the unified cache and check there
+-
+-    res &= can_reuse_kq_mask(inp_attn->self_kq_mask, mctx->get_attn(), params.ubatch, params.cparams);
+-
+-    res &= inp_rs->s_copy->ne[0] == mctx->get_recr()->get_n_rs();
+-
+-    res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
+-    res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
+-
+-    res &= inp_rs->head == mctx->get_recr()->get_head();
+-    res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
++    if (inp_attn->self_k_idxs && inp_attn->self_k_idxs->buffer) {
++        res &= inp_attn->self_k_idxs->ne[0] == params.ubatch.n_tokens;
++      //res &= inp_attn->self_v_idxs->ne[0] == params.ubatch.n_tokens; // TODO: need to move this to the unified cache and check there
++    }
++    if (inp_attn->self_kq_mask && inp_attn->self_kq_mask->buffer) {
++        res &= can_reuse_kq_mask(inp_attn->self_kq_mask, mctx->get_attn(), params.ubatch, params.cparams);
++    }
++    if (inp_rs->s_copy && inp_rs->s_copy->buffer) {
++        res &= inp_rs->s_copy->ne[0] == mctx->get_recr()->get_n_rs();
++        res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
++        res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
++        res &= inp_rs->head == mctx->get_recr()->get_head();
++        res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
++    }
+ 
+     return res;
+ }
+@@ -1112,13 +1155,17 @@ bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
+ // Instead of creating a hybrid input, the graph can simply create 2 separate inputs.
+ // Refactoring is required in the future.
+ void llm_graph_input_mem_hybrid_k::set_input(const llama_ubatch * ubatch) {
+-    mctx->get_attn()->set_input_k_idxs(inp_attn->self_k_idxs, ubatch);
++    if (inp_attn->self_k_idxs && inp_attn->self_k_idxs->buffer) {
++        mctx->get_attn()->set_input_k_idxs(inp_attn->self_k_idxs, ubatch);
++    }
+ 
+-    mctx->get_attn()->set_input_kq_mask(inp_attn->self_kq_mask, ubatch, cparams.causal_attn);
++    if (inp_attn->self_kq_mask && inp_attn->self_kq_mask->buffer) {
++        mctx->get_attn()->set_input_kq_mask(inp_attn->self_kq_mask, ubatch, cparams.causal_attn);
++    }
+ 
+     const int64_t n_rs = mctx->get_recr()->get_n_rs();
+ 
+-    if (inp_rs->s_copy) {
++    if (inp_rs->s_copy && inp_rs->s_copy->buffer) {
+         GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy->buffer));
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+@@ -1136,17 +1183,19 @@ bool llm_graph_input_mem_hybrid_k::can_reuse(const llm_graph_params & params) {
+ 
+     bool res = true;
+ 
+-    res &= inp_attn->self_k_idxs->ne[0] == params.ubatch.n_tokens;
+-
+-    res &= can_reuse_kq_mask(inp_attn->self_kq_mask, mctx->get_attn(), params.ubatch, params.cparams);
+-
+-    res &= inp_rs->s_copy->ne[0] == mctx->get_recr()->get_n_rs();
+-
+-    res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
+-    res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
+-
+-    res &= inp_rs->head == mctx->get_recr()->get_head();
+-    res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
++    if (inp_attn->self_k_idxs && inp_attn->self_k_idxs->buffer) {
++        res &= inp_attn->self_k_idxs->ne[0] == params.ubatch.n_tokens;
++    }
++    if (inp_attn->self_kq_mask && inp_attn->self_kq_mask->buffer) {
++        res &= can_reuse_kq_mask(inp_attn->self_kq_mask, mctx->get_attn(), params.ubatch, params.cparams);
++    }
++    if (inp_rs->s_copy && inp_rs->s_copy->buffer) {
++        res &= inp_rs->s_copy->ne[0] == mctx->get_recr()->get_n_rs();
++        res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
++        res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
++        res &= inp_rs->head == mctx->get_recr()->get_head();
++        res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
++    }
+ 
+     return res;
+ }
+@@ -1192,7 +1241,7 @@ void llm_graph_input_mem_hybrid_iswa::set_input(const llama_ubatch * ubatch) {
+ 
+     const int64_t n_rs = mctx->get_recr()->get_n_rs();
+ 
+-    if (inp_rs->s_copy) {
++    if (inp_rs->s_copy && inp_rs->s_copy->buffer) {
+         GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy->buffer));
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+@@ -1291,8 +1340,20 @@ int64_t llm_graph_result::get_max_nodes() const {
+     return max_nodes;
+ }
+ 
++void llm_graph_result::set_linkcpp_tensor_layer(ggml_tensor * tensor, int layer) {
++    if (tensor && layer >= 0) {
++        linkcpp_tensor_layers[tensor] = layer;
++    }
++}
++
++int llm_graph_result::get_linkcpp_tensor_layer(const ggml_tensor * tensor) const {
++    const auto found = linkcpp_tensor_layers.find(tensor);
++    return found == linkcpp_tensor_layers.end() ? -1 : found->second;
++}
++
+ void llm_graph_result::reset() {
+     t_inp_tokens  = nullptr;
++    t_inp_embd_raw = nullptr;
+     t_inp_embd    = nullptr;
+     t_logits      = nullptr;
+     t_embd        = nullptr;
+@@ -1301,6 +1362,18 @@ void llm_graph_result::reset() {
+ 
+     t_layer_inp.resize(LLAMA_MAX_LAYERS + 1);
+     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
++    t_linkcpp_inputs.clear();
++    t_linkcpp_input_nodes.clear();
++    t_linkcpp_outputs.clear();
++    // A terminal kept from an earlier build still depends on every layer of
++    // the full graph. A non-final stage expands its terminals into the freshly
++    // pruned graph, so a stale one drags the layers this stage does not own
++    // back in and the scheduler then reserves their weights as compute buffer.
++    // Measured 2026-08-13: successive builds of layers=[0,20) retained 0, then
++    // 269, then 340 unowned tensors worth 10,837 MiB, matching the stage's
++    // 10,847 MiB compute buffer exactly.
++    t_linkcpp_terminals.clear();
++    linkcpp_tensor_layers.clear();
+ 
+     t_sampled.clear();
+     t_sampled_probs.clear();
+@@ -1312,7 +1385,12 @@ void llm_graph_result::reset() {
+     inputs.clear();
+     fused_nodes.clear();
+ 
+-    buf_compute_meta.resize(ggml_tensor_overhead()*max_nodes + ggml_graph_overhead_custom(max_nodes, false));
++    // Pipeline staging creates bookkeeping tensors beyond the stock graph estimate.
++    // Stage cut-sets add input/output tensor metadata after the upstream graph
++    // has been built.  Reserve enough objects for multi-cut architectures (for
++    // example Ornith's recurrent/attention boundaries) plus future graph nodes.
++    constexpr int64_t linkcpp_metadata_reserve_nodes = 64;
++    buf_compute_meta.resize(ggml_tensor_overhead()*(max_nodes + linkcpp_metadata_reserve_nodes) + ggml_graph_overhead_custom(max_nodes, false));
+ 
+     ggml_init_params params = {
+         /*.mem_size   =*/ buf_compute_meta.size(),
+@@ -1325,8 +1403,17 @@ void llm_graph_result::reset() {
+     gf = ggml_new_graph_custom(ctx_compute.get(), max_nodes, false);
+ }
+ 
+-void llm_graph_result::set_inputs(const llama_ubatch * ubatch) {
++void llm_graph_result::set_inputs(
++        const llama_ubatch * ubatch,
++        bool skip_primary_model_input,
++        bool skip_terminal_output_input) {
+     for (auto & input : inputs) {
++        if (skip_primary_model_input && input->is_primary_model_input()) {
++            continue;
++        }
++        if (skip_terminal_output_input && input->is_terminal_output_input()) {
++            continue;
++        }
+         input->set_input(ubatch);
+     }
+ }
+@@ -1375,6 +1462,324 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
+     }
+ }
+ 
++void llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
++    const int begin = params.linkcpp_layer_begin;
++    const int end   = params.linkcpp_layer_end;
++    const int n_layer = params.hparams.n_layer();
++    if (begin < 0 || end < 0) {
++        return;
++    }
++    GGML_ASSERT(0 <= begin && begin < end && end <= n_layer);
++
++    if (end == n_layer) {
++        std::unordered_set<ggml_tensor *> seen_terminals;
++        auto add_terminal = [&](ggml_tensor * tensor) {
++            if (tensor && seen_terminals.insert(tensor).second) {
++                t_linkcpp_terminals.push_back(tensor);
++            }
++        };
++        add_terminal(t_logits);
++        add_terminal(t_embd);
++        add_terminal(t_embd_pooled);
++        add_terminal(t_h_nextn);
++        for (const auto & item : t_sampled_logits) add_terminal(item.second);
++        for (const auto & item : t_candidates) add_terminal(item.second);
++        for (const auto & item : t_sampled) add_terminal(item.second);
++        for (const auto & item : t_sampled_probs) add_terminal(item.second);
++    }
++
++    // The coordinator rank must expose the same terminal tensor surface as a
++    // full graph. The external stage executor fills these allocated input
++    // slots after the local prefix graph completes, so existing llama.cpp
++    // logits/embedding/sampling extraction remains unchanged.
++    if (begin == 0 && end < n_layer) {
++        std::unordered_map<ggml_tensor *, ggml_tensor *> placeholders;
++        auto make_placeholder = [&](ggml_tensor * original) -> ggml_tensor * {
++            if (!original) return nullptr;
++            auto found = placeholders.find(original);
++            if (found != placeholders.end()) return found->second;
++            ggml_tensor * placeholder = ggml_new_tensor(
++                ctx_compute.get(), original->type, ggml_n_dims(original), original->ne);
++            memcpy(placeholder->nb, original->nb, sizeof(placeholder->nb));
++            ggml_format_name(placeholder, "%s", ggml_get_name(original));
++            ggml_set_input(placeholder);
++            ggml_set_output(placeholder);
++            placeholders.emplace(original, placeholder);
++            t_linkcpp_terminals.push_back(placeholder);
++            return placeholder;
++        };
++        t_logits      = make_placeholder(t_logits);
++        t_embd        = make_placeholder(t_embd);
++        t_embd_pooled = make_placeholder(t_embd_pooled);
++        t_h_nextn     = make_placeholder(t_h_nextn);
++        for (auto & item : t_sampled_logits) item.second = make_placeholder(item.second);
++        for (auto & item : t_candidates)     item.second = make_placeholder(item.second);
++        for (auto & item : t_sampled)        item.second = make_placeholder(item.second);
++        for (auto & item : t_sampled_probs)  item.second = make_placeholder(item.second);
++    }
++
++    ggml_tensor * output = t_logits ? t_logits : (t_embd_pooled ? t_embd_pooled : t_embd);
++    GGML_ASSERT(output != nullptr && "architecture has no graph output");
++
++    ggml_tensor ** nodes = ggml_graph_nodes(gf);
++    const int n_nodes = ggml_graph_n_nodes(gf);
++    std::unordered_map<ggml_tensor *, int> node_index;
++    node_index.reserve((size_t) n_nodes);
++    for (int i = 0; i < n_nodes; ++i) {
++        node_index[nodes[i]] = i;
++    }
++    std::unordered_map<ggml_tensor *, int> tensor_layer;
++    auto parse_layer = [](const ggml_tensor * tensor) {
++        const char * name = ggml_get_name(tensor);
++        const char * marker = strstr(name, "blk.");
++        if (marker != nullptr) {
++            marker += 4;
++        } else if (strncmp(name, "cache_", 6) == 0
++                && strchr("kvrs", name[6]) != nullptr
++                && name[7] == '_' && name[8] == 'l') {
++            // KV and recurrent state storage is created outside model graph
++            // callbacks, but llama.cpp names it with the owning layer. This
++            // provenance keeps zero/copy/write side effects in the same stage.
++            marker = name + 9;
++        } else {
++            return -1;
++        }
++        int layer = 0;
++        bool has_digit = false;
++        while (*marker >= '0' && *marker <= '9') {
++            has_digit = true;
++            layer = layer * 10 + (*marker++ - '0');
++        }
++        return has_digit && (*marker == '.' || *marker == '\0') ? layer : -1;
++    };
++    std::function<int(ggml_tensor *)> layer_of = [&](ggml_tensor * tensor) -> int {
++        if (tensor == nullptr) {
++            return -1;
++        }
++        auto cached = tensor_layer.find(tensor);
++        if (cached != tensor_layer.end()) {
++            return cached->second;
++        }
++        int layer = get_linkcpp_tensor_layer(tensor);
++        if (layer < 0) {
++            layer = parse_layer(tensor);
++        }
++        tensor_layer[tensor] = layer;
++        for (int j = 0; j < GGML_MAX_SRC; ++j) {
++            layer = std::max(layer, layer_of(tensor->src[j]));
++        }
++        tensor_layer[tensor] = layer;
++        return layer;
++    };
++    for (int i = 0; i < n_nodes; ++i) {
++        layer_of(nodes[i]);
++    }
++
++    auto storage_root = [](ggml_tensor * tensor) {
++        while (tensor && tensor->view_src) tensor = tensor->view_src;
++        return tensor;
++    };
++    std::unordered_map<ggml_tensor *, bool> primary_dependency;
++    std::function<bool(ggml_tensor *)> depends_on_primary = [&](ggml_tensor * tensor) -> bool {
++        if (!tensor) return false;
++        auto cached = primary_dependency.find(tensor);
++        if (cached != primary_dependency.end()) return cached->second;
++        bool depends = tensor == t_inp_tokens || tensor == t_inp_embd_raw || tensor == t_inp_embd;
++        primary_dependency[tensor] = depends;
++        for (int j = 0; j < GGML_MAX_SRC && !depends; ++j) {
++            depends = depends_on_primary(tensor->src[j]);
++        }
++        primary_dependency[tensor] = depends;
++        return depends;
++    };
++
++    auto is_storage_write = [](const ggml_tensor * tensor) {
++        return tensor->op == GGML_OP_CPY || tensor->op == GGML_OP_SET
++            || tensor->op == GGML_OP_SET_ROWS || tensor->op == GGML_OP_ACC;
++    };
++    auto same_storage = [](const ggml_tensor * a, const ggml_tensor * b) {
++        if (a == b) return true;
++        if (!a || !b) return false;
++        if (a->buffer && a->buffer == b->buffer && a->data && b->data) {
++            const uintptr_t a0 = (uintptr_t) a->data;
++            const uintptr_t b0 = (uintptr_t) b->data;
++            const uintptr_t a1 = a0 + ggml_nbytes(a);
++            const uintptr_t b1 = b0 + ggml_nbytes(b);
++            if (a0 < b1 && b0 < a1) return true;
++        }
++        return a->type == b->type
++            && ggml_are_same_shape(a, b)
++            && strlen(ggml_get_name(a)) > 0
++            && strcmp(ggml_get_name(a), ggml_get_name(b)) == 0;
++    };
++
++    auto cut_at = [&](int boundary_layer) {
++        std::vector<ggml_tensor *> cut;
++        std::unordered_set<ggml_tensor *> seen;
++        std::vector<ggml_tensor *> prefix_written_storage;
++        for (int i = 0; i < n_nodes; ++i) {
++            const int layer = layer_of(nodes[i]);
++            if (0 <= layer && layer < boundary_layer && is_storage_write(nodes[i])) {
++                ggml_tensor * root = storage_root(nodes[i]);
++                if (std::none_of(prefix_written_storage.begin(), prefix_written_storage.end(),
++                                 [&](ggml_tensor * other) { return same_storage(root, other); })) {
++                    prefix_written_storage.push_back(root);
++                }
++            }
++        }
++        for (int i = 0; i < n_nodes; ++i) {
++            if (layer_of(nodes[i]) < boundary_layer) {
++                continue;
++            }
++            for (int j = 0; j < GGML_MAX_SRC; ++j) {
++                ggml_tensor * src = nodes[i]->src[j];
++                auto source_it = node_index.find(src);
++                const bool written_state = std::any_of(
++                    prefix_written_storage.begin(), prefix_written_storage.end(),
++                    [&](ggml_tensor * written) { return same_storage(storage_root(src), written); });
++                const bool crossing_node = source_it != node_index.end()
++                    && layer_of(src) < boundary_layer
++                    && (layer_of(src) >= 0 || depends_on_primary(src) || written_state);
++                if (crossing_node
++                    && seen.insert(src).second) {
++                    cut.push_back(src);
++                }
++            }
++        }
++        std::sort(cut.begin(), cut.end(), [&](ggml_tensor * a, ggml_tensor * b) {
++            return node_index[a] < node_index[b];
++        });
++        return cut;
++    };
++
++    if (end < n_layer) {
++        t_linkcpp_outputs = cut_at(end);
++        GGML_ASSERT(!t_linkcpp_outputs.empty() && "graph has no outgoing stage cut-set");
++    }
++
++    if (begin > 0) {
++        t_linkcpp_inputs = cut_at(begin);
++        GGML_ASSERT(!t_linkcpp_inputs.empty() && "graph has no incoming stage cut-set");
++        LLAMA_LOG_DEBUG("linkcpp graph stage reserve: layers=[%d,%d) inputs=%zu\n",
++                begin, end, t_linkcpp_inputs.size());
++        for (size_t cut_index = 0; cut_index < t_linkcpp_inputs.size(); ++cut_index) {
++            ggml_tensor * original = t_linkcpp_inputs[cut_index];
++            ggml_tensor * input = ggml_new_tensor(
++                ctx_compute.get(), original->type, ggml_n_dims(original), original->ne);
++            memcpy(input->nb, original->nb, sizeof(input->nb));
++            ggml_format_name(input, "linkcpp_in_%zu_%s", cut_index, ggml_get_name(original));
++            ggml_set_input(input);
++            t_linkcpp_input_nodes.push_back(input);
++            for (ggml_tensor *& outgoing : t_linkcpp_outputs) {
++                if (outgoing == original) {
++                    outgoing = input;
++                }
++            }
++            for (int i = 0; i < n_nodes; ++i) {
++                for (int j = 0; j < GGML_MAX_SRC; ++j) {
++                    if (nodes[i]->src[j] == original) {
++                        nodes[i]->src[j] = input;
++                    }
++                }
++            }
++        }
++    }
++
++    LLAMA_LOG_DEBUG("linkcpp graph stage: layers=[%d,%d) inputs=%zu outputs=%zu\n",
++            begin, end, t_linkcpp_inputs.size(), t_linkcpp_outputs.size());
++
++    // `nodes` aliases the graph's own node array, which ggml_graph_clear
++    // rewinds and ggml_build_forward_expand then overwrites from index 0.
++    // Reading it while refilling the same storage re-admits nodes this stage
++    // does not own: for begin == 0 the kept nodes sit at the front, so the
++    // entries the loop has not visited yet are the ones overwritten. Measured
++    // 2026-08-13: layers=[0,20) retained 340 unowned tensors worth 10,837 MiB,
++    // held by ffn_moe_down-34 (MUL_MAT_ID, layer 34), which is exactly the
++    // stage's compute buffer. Snapshot the order before clearing.
++    const std::vector<ggml_tensor *> ordered(nodes, nodes + n_nodes);
++    ggml_graph_clear(gf);
++    for (ggml_tensor * node : ordered) {
++        const int layer = layer_of(node);
++        if (begin <= layer && layer < end) {
++            ggml_build_forward_expand(gf, node);
++        }
++    }
++    if (end < n_layer) {
++        for (ggml_tensor * tensor : t_linkcpp_outputs) {
++            ggml_build_forward_expand(gf, tensor);
++            ggml_set_output(tensor);
++        }
++        if (begin == 0) {
++            for (ggml_tensor * tensor : t_linkcpp_terminals) {
++                ggml_build_forward_expand(gf, tensor);
++                ggml_set_output(tensor);
++            }
++        }
++    } else {
++        ggml_build_forward_expand(gf, output);
++        ggml_set_output(output);
++    }
++    if (end < n_layer && begin > 0) {
++        t_logits = nullptr;
++        t_embd = nullptr;
++        t_embd_pooled = nullptr;
++    }
++
++    // Audit: a stage must not keep unowned-layer weights reachable, because a
++    // reachable weight with no buffer becomes compute-buffer reservation.
++    // Off unless LINKER_STAGE_REACH_AUDIT is set; it walks every node.
++    static const bool reach_audit = getenv("LINKER_STAGE_REACH_AUDIT") != nullptr;
++    if (reach_audit) {
++        std::unordered_set<const ggml_tensor *> counted;
++        size_t unowned_bytes = 0, unowned_count = 0, owned_unbuffered = 0;
++        std::string worst_name;
++        std::string worst_holder;
++        size_t worst_bytes = 0;
++        ggml_tensor ** final_nodes = ggml_graph_nodes(gf);
++        const int final_count = ggml_graph_n_nodes(gf);
++        for (int i = 0; i < final_count; ++i) {
++            for (int j = -1; j < GGML_MAX_SRC; ++j) {
++                ggml_tensor * t = j < 0 ? final_nodes[i] : final_nodes[i]->src[j];
++                if (!t || t->buffer != nullptr || !counted.insert(t).second) continue;
++                const int tl = parse_layer(t);
++                if (tl >= 0 && (tl < begin || tl >= end)) {
++                    unowned_bytes += ggml_nbytes(t);
++                    ++unowned_count;
++                    if (ggml_nbytes(t) > worst_bytes) {
++                        worst_bytes = ggml_nbytes(t);
++                        worst_name = ggml_get_name(t);
++                        worst_holder = j < 0
++                            ? std::string("<graph node itself>")
++                            : std::string(ggml_get_name(final_nodes[i]))
++                                + " op=" + ggml_op_name(final_nodes[i]->op)
++                                + " holder_layer=" + std::to_string(layer_of(final_nodes[i]));
++                    }
++                } else if (tl >= 0) {
++                    ++owned_unbuffered;
++                }
++            }
++        }
++        LLAMA_LOG_INFO("linkcpp stage reach: layers=[%d,%d) unowned=%zu unowned_mib=%.2f owned_unbuffered=%zu worst=%s worst_mib=%.2f holder=%s\n",
++                begin, end, unowned_count, (double) unowned_bytes / (1024.0*1024.0),
++                owned_unbuffered, worst_name.empty() ? "none" : worst_name.c_str(),
++                (double) worst_bytes / (1024.0*1024.0), worst_holder.empty() ? "none" : worst_holder.c_str());
++    }
++}
++
++bool llm_graph_result::set_linkcpp_inputs(const std::vector<std::vector<uint8_t>> & payloads) {
++    if (payloads.size() != t_linkcpp_input_nodes.size()) {
++        return false;
++    }
++    for (size_t i = 0; i < payloads.size(); ++i) {
++        ggml_tensor * tensor = t_linkcpp_input_nodes[i];
++        if (payloads[i].size() != ggml_nbytes(tensor) || tensor->buffer == nullptr) {
++            return false;
++        }
++        ggml_backend_tensor_set(tensor, payloads[i].data(), 0, payloads[i].size());
++    }
++    return true;
++}
++
+ bool llm_graph_result::can_reuse(const llm_graph_params & params) {
+     if (!this->params.allow_reuse(params)) {
+         if (debug > 1) {
+@@ -2087,6 +2492,14 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+     ggml_tensor * up = nullptr;
+     ggml_tensor * experts = nullptr;
+ 
++  if (g_linkcpp_moe_dispatch && il == g_linkcpp_moe_dispatch_layer) {
++    // Relocate this layer's routed-expert FFN to the dispatch callback. The router
++    // (selected_experts, weights) stays authoritative; only the mul_mat_id block moves.
++    ggml_tensor * dargs[2] = { ggml_cont(ctx0, cur), selected_experts };
++    experts = ggml_custom_4d(ctx0, GGML_TYPE_F32, n_embd, n_expert_used, n_tokens, 1,
++                             dargs, 2, linkcpp_moe_dispatch_op, 1, (void *) (intptr_t) il);
++    cb(experts, "ffn_moe_down", il);
++  } else {
+     if (gate_up_exps) {
+         // merged gate_up path: one mul_mat_id, then split into gate and up views
+         ggml_tensor * gate_up = build_lora_mm_id(gate_up_exps, cur, selected_experts, up_exps_s); // [n_ff*2, n_expert_used, n_tokens]
+@@ -2221,6 +2634,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+         experts = ggml_add_id(ctx0, experts, down_exps_b, selected_experts);
+         cb(experts, "ffn_moe_down_biased", il);
+     }
++  } // end linkcpp moe dispatch branch
+ 
+     if (!weight_before_ffn) {
+         experts = ggml_mul(ctx0, experts, weights);
+@@ -2279,13 +2693,16 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
+     inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd_inp, ubatch.n_tokens);
+     cb(inp->embd, "inp_embd", -1);
+     ggml_set_input(inp->embd);
++    res->t_inp_embd_raw = inp->embd;
+ 
+     // select one of the 2 inputs, based on the batch contents
+     // ref: https://github.com/ggml-org/llama.cpp/pull/18550
+     std::array<ggml_tensor *, 2> inps;
+ 
+-    // token embeddings path (ubatch.token != nullptr)
+-    {
++    // token embeddings path (ubatch.token != nullptr).  Rank-local stages
++    // after the first one intentionally have no token embedding tensor and
++    // select the raw hidden-state embedding input below instead.
++    if (tok_embd) {
+         auto & cur = inps[0];
+ 
+         cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+@@ -2311,6 +2728,8 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
+         if (n_embd_inp != n_embd) {
+             cur = ggml_pad(ctx0, cur, hparams.n_embd_inp() - n_embd, 0, 0, 0);
+         }
++    } else {
++        inps[0] = inp->embd;
+     }
+ 
+     // vector embeddings path (ubatch.embd != nullptr)

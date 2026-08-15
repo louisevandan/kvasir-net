@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
+  "upstream_branch": "master",
+  "upstream_commit": "4308a4f035791f58ae111f56c39dac598bf476be",
+  "upstream_commit_date": "2026-08-04T22:24:55+02:00",
+  "upstream_subject": "server: decode Windows OEM output to UTF-8 in built-in tools (#26597)",
+  "observed_at": "2026-08-05T06:43:05.5968123+09:00",
+  "nearest_release_tag": "b10242",
+  "previous_linker_pin": "1269cb1ff1598751f846241be90083ae9ad036fb",
+  "previous_official_base": "1269cb1ff1598751f846241be90083ae9ad036fb",
+  "patch_set_sha256": "7242b67f67a5137f2c180470db8c84a4a811784d1a3aeb8501c0d3dda1a65378",
+  "patched_tree": "3052d33a699b4b7626e35ca3edf8085d726040de",
+  "patches": [
+    { "file": "0001-ggml-backend.patch", "sha256": "aadede7f03407cb2cccdbad8e3b15e86ba2260254d4553fa175c28f1ac60a4c4" },
+    { "file": "0002-ggml-rpc.patch", "sha256": "12440cb67e46e69fe40d8db0fd14c684d3bbd899b45ab541a65645213f25dff7" },
+    { "file": "0003-public-pipeline-abi.patch", "sha256": "66d0c79d880e5d9132f2241fcc131b47ebbfef810f52176fedf21955a7f05fa4" },
+    { "file": "0004-llama-context.patch", "sha256": "c6fbf7a3f38c7c37e8013ae08bfac255e5a618ce21c2356d61066382ef3184fe" },
+    { "file": "0005-llama-context-header.patch", "sha256": "e041a6fe82cbfa929c85a9be7b71befbe2586b6ec8ca766bc5cdf6c2925183b9" },
+    { "file": "0006-llama-graph.patch", "sha256": "2fd591255c81f8db8d4bc203589ec390a93ee10153aa16649c238464bd53f346" },
+    { "file": "0007-llama-graph-header.patch", "sha256": "c766b5760130dbc1a3df09730480414cef69b868d37b576bb5a47c3f2b059f67" },
+    { "file": "0008-llama-memory-header.patch", "sha256": "51df4e2f32ca46b5079db417de75e421d5fccc9573275c3a7cde845cd705ca4e" },
+    { "file": "0009-model-loader.patch", "sha256": "81f4412eae37ef124e4e96f659bf33598617b4b005e1179346b129913ef6e007" },
+    { "file": "0010-model-loader-header.patch", "sha256": "127e5977c0ef208779cf9a5c87d1ff44bc0a7b316725a072cb059e788b0dc5c5" },
+    { "file": "0011-llama-model.patch", "sha256": "9d482416bfac994a69eb999b203215033cb5b03bf1a937b93966b44cb906c0ff" },
+    { "file": "0012-llama-model-header.patch", "sha256": "00e4a4638dae7b84778f9bc1835a2739b7131aeff31cfef95bafaf787994e4d3" },
+    { "file": "0013-llama-api-implementation.patch", "sha256": "827309a54cb32bb3f32dde5aa95c0ea1d5808b12516e47b8979d0664642c46ba" }
+  ]
+}

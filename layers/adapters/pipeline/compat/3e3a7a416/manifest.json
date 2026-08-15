@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
+  "upstream_branch": "master",
+  "upstream_commit": "3e3a7a416d6588597523c792fc5874a543d59ed9",
+  "upstream_commit_date": "2026-08-05T11:03:23+02:00",
+  "upstream_subject": "ui: show generation statistics by default in chat settings (#26624)",
+  "observed_at": "2026-08-05T18:26:29.1539697+09:00",
+  "nearest_release_tag": "b10242",
+  "previous_linker_pin": "4308a4f035791f58ae111f56c39dac598bf476be",
+  "previous_official_base": "4308a4f035791f58ae111f56c39dac598bf476be",
+  "patch_set_sha256": "282f5e1fbdd79351bf55c722d5ecf5db01ba2961c1b1df08da98c23864aca40d",
+  "patched_tree": "c70d6bb7420111bf7e9b118013575fa3d4b931f6",
+  "patches": [
+    {
+      "file": "0001-ggml-backend.patch",
+      "sha256": "aadede7f03407cb2cccdbad8e3b15e86ba2260254d4553fa175c28f1ac60a4c4"
+    },
+    {
+      "file": "0002-ggml-rpc.patch",
+      "sha256": "12440cb67e46e69fe40d8db0fd14c684d3bbd899b45ab541a65645213f25dff7"
+    },
+    {
+      "file": "0003-public-pipeline-abi.patch",
+      "sha256": "07b9b49b527366c6ba959b5ca25a7b93a6839df23aeca7383965d08014ca8dcb"
+    },
+    {
+      "file": "0004-llama-context.patch",
+      "sha256": "0a3fec9b4fd448d42e9456e0898ce41e9a2374c30f48950e504e8f946cb6803c"
+    },
+    {
+      "file": "0005-llama-context-header.patch",
+      "sha256": "eef0567194841500fc5701b16ecf31daa95ad95f908d2bd1b14b2196661e2a6f"
+    },
+    {
+      "file": "0006-llama-graph.patch",
+      "sha256": "9e279e98d62c7d76601144cf0f11f965032d38d18300c159e490edaa36d62d94"
+    },
+    {
+      "file": "0007-llama-graph-header.patch",
+      "sha256": "c766b5760130dbc1a3df09730480414cef69b868d37b576bb5a47c3f2b059f67"
+    },
+    {
+      "file": "0008-llama-memory-header.patch",
+      "sha256": "51df4e2f32ca46b5079db417de75e421d5fccc9573275c3a7cde845cd705ca4e"
+    },
+    {
+      "file": "0009-model-loader.patch",
+      "sha256": "a6cfdb800644d4750c0fcb7660910703c8e4456f4d57b036ca78e41c31ee0b09"
+    },
+    {
+      "file": "0010-model-loader-header.patch",
+      "sha256": "44a12762c92740ae07b8232b8a13a613f1a490f13682283e59cf01c9bceafe8b"
+    },
+    {
+      "file": "0011-llama-model.patch",
+      "sha256": "661b113212085d91484d472a412314692f8251091d16d5d53c418241bacbd13d"
+    },
+    {
+      "file": "0012-llama-model-header.patch",
+      "sha256": "89751834700d1bc7269217e6738ac13554960ee5e4f40e3b600f1d017dfc0dd5"
+    },
+    {
+      "file": "0013-llama-api-implementation.patch",
+      "sha256": "827309a54cb32bb3f32dde5aa95c0ea1d5808b12516e47b8979d0664642c46ba"
+    },
+    {
+      "file": "0014-kv-stage-window.patch",
+      "sha256": "c2fe462d40685b6c20921177a4519cb1f530c417336a180bb090624611cee6ba"
+    }
+  ]
+}

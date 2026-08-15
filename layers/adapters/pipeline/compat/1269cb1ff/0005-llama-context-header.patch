@@ -1,0 +1,42 @@
+diff --git a/src/llama-context.h b/src/llama-context.h
+index bf91daa8b562aa66d15b08ca559b6baa09ab7855..1a6e365f2499b544f46ab076f9161a03a4899140 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -143,6 +143,19 @@ struct llama_context {
+     int encode(const llama_batch & batch_inp);
+     int decode(const llama_batch & batch_inp);
+ 
++    int32_t linkcpp_input_count() const;
++    int32_t linkcpp_output_count() const;
++    int32_t linkcpp_terminal_count() const;
++    bool linkcpp_input_desc(int32_t index, llama_linkcpp_tensor_desc * desc) const;
++    bool linkcpp_output_desc(int32_t index, llama_linkcpp_tensor_desc * desc) const;
++    bool linkcpp_terminal_desc(int32_t index, llama_linkcpp_tensor_desc * desc) const;
++    bool linkcpp_input_set(int32_t index, const void * data, size_t size);
++    bool linkcpp_input_set_tensor(const llama_linkcpp_tensor_desc * desc, const void * data, size_t size);
++    void linkcpp_input_clear();
++    bool linkcpp_output_get(int32_t index, void * data, size_t size) const;
++    bool linkcpp_terminal_get(int32_t index, void * data, size_t size) const;
++    bool linkcpp_terminal_set(int32_t index, const void * data, size_t size);
++
+     //
+     // state save/load
+     //
+@@ -260,7 +273,7 @@ private:
+             const llama_memory_context_i * mctx,
+                           llm_graph_type   gtype) const;
+ 
+-    llm_graph_cb graph_get_cb() const;
++    llm_graph_cb graph_get_cb(llm_graph_result * res) const;
+ 
+     // disable auto fused ops (Flash Attention, Gated Delta Net) whose op lands on a device
+     // that differs from the layer it belongs to (usually due to missing backend support)
+@@ -366,6 +379,8 @@ private:
+ 
+     llm_graph_result_ptr gf_res_prev;
+     llm_graph_result_ptr gf_res_reserve;
++    std::vector<std::vector<uint8_t>> linkcpp_input_payloads;
++    std::vector<llama_linkcpp_tensor_desc> linkcpp_input_payload_descs;
+ 
+     // host buffer for the model output (logits and embeddings)
+     ggml_backend_buffer_ptr buf_output;

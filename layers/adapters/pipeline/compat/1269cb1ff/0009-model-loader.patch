@@ -1,0 +1,36 @@
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index df8313e81976e47939ea7a0cb4c3fc31f7ff9406..6e2922dd63b8cb704b9f6b0637804b6df071933a 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1131,9 +1131,30 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+             }
+         }
+ 
++        // A linkcpp stage still creates metadata tensors for the complete
++        // model so every architecture can build its normal graph. Non-owned
++        // tensors remain CPU-mmap backed and are pruned before scheduling;
++        // only the rank-local window is eligible for accelerator allocation.
++        bool linkcpp_owned = true;
++        if (linkcpp_layer_begin >= 0 && linkcpp_layer_end >= linkcpp_layer_begin) {
++            if (info.layer == LLM_TENSOR_LAYER_REPEATING) {
++                linkcpp_owned = linkcpp_layer_begin <= tn.bid && tn.bid < linkcpp_layer_end;
++            } else if (info.layer == LLM_TENSOR_LAYER_INPUT) {
++                linkcpp_owned = linkcpp_layer_begin == 0;
++            } else if (info.layer == LLM_TENSOR_LAYER_OUTPUT) {
++                // Auxiliary NextN blocks are part of n_layer_all but not the
++                // normal decode graph. The stage ending at n_layer() owns the
++                // terminal tensors used by that graph.
++                linkcpp_owned = linkcpp_layer_end == (int32_t) hparams.n_layer();
++            }
++            partial_load = true;
++        }
++
+         // select the buffer type for this tensor
+         const buft_list_t * buft_list;
+-        switch (info.layer) {
++        if (!linkcpp_owned) {
++            buft_list = buft_list_cpu;
++        } else switch (info.layer) {
+             case LLM_TENSOR_LAYER_INPUT:
+                 buft_list = buft_list_input;
+                 break;

@@ -1,0 +1,14 @@
+diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
+index 7ad380782291db6dacccd8c0b44ee1e379c0c0b4..cd061a45534b85082b0aa69db99bc64b158be4d0 100644
+--- a/src/llama-model-loader.h
++++ b/src/llama-model-loader.h
+@@ -80,6 +80,9 @@ struct llama_model_loader {
+     bool check_tensors;
+     bool no_alloc;
+     bool load_mtp;
++    bool partial_load = false;
++    int32_t linkcpp_layer_begin = -1;
++    int32_t linkcpp_layer_end   = -1;
+ 
+     llama_files files;
+     llama_ftype ftype;

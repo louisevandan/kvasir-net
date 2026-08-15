@@ -1,0 +1,91 @@
+diff --git a/src/llama.cpp b/src/llama.cpp
+index d6e0bbfefa729329fe6b83e46e603a85dab0f2e3..b04173b04cc3bd0b3cfdaa904c3148653f760a84 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -23,7 +23,9 @@
+ #include <cstdio>
+ #include <cstring>
+ #include <ctime>
++#include <mutex>
+ #include <stdexcept>
++#include <string>
+ #include <vector>
+ 
+ #if defined(_MSC_VER)
+@@ -34,6 +36,59 @@
+ // interface implementation
+ //
+ 
++namespace {
++struct linkcpp_runtime_config {
++    std::string model_path;
++    int32_t layer_begin = -1;
++    int32_t layer_end = -1;
++    llama_linkcpp_stage_executor executor = nullptr;
++    void * executor_user_data = nullptr;
++    llama_linkcpp_memory_executor memory_executor = nullptr;
++    void * memory_executor_user_data = nullptr;
++    llama_linkcpp_state_executor state_executor = nullptr;
++    void * state_executor_user_data = nullptr;
++};
++
++std::mutex g_linkcpp_runtime_mutex;
++linkcpp_runtime_config g_linkcpp_runtime;
++
++void linkcpp_apply_runtime_config(const std::string & path_model, llama_model_params * params) {
++    std::lock_guard<std::mutex> lock(g_linkcpp_runtime_mutex);
++    if (!path_model.empty() && path_model == g_linkcpp_runtime.model_path) {
++        params->linkcpp_layer_begin = g_linkcpp_runtime.layer_begin;
++        params->linkcpp_layer_end = g_linkcpp_runtime.layer_end;
++        params->linkcpp_stage_executor = g_linkcpp_runtime.executor;
++        params->linkcpp_stage_executor_user_data = g_linkcpp_runtime.executor_user_data;
++        params->linkcpp_memory_executor = g_linkcpp_runtime.memory_executor;
++        params->linkcpp_memory_executor_user_data = g_linkcpp_runtime.memory_executor_user_data;
++        params->linkcpp_state_executor = g_linkcpp_runtime.state_executor;
++        params->linkcpp_state_executor_user_data = g_linkcpp_runtime.state_executor_user_data;
++    }
++}
++}
++
++bool llama_linkcpp_runtime_configure(const llama_linkcpp_runtime_params * params) {
++    if (!params || !params->model_path || !params->model_path[0]
++        || params->layer_begin < 0 || params->layer_end <= params->layer_begin
++        || !params->executor) return false;
++    std::lock_guard<std::mutex> lock(g_linkcpp_runtime_mutex);
++    g_linkcpp_runtime.model_path = params->model_path;
++    g_linkcpp_runtime.layer_begin = params->layer_begin;
++    g_linkcpp_runtime.layer_end = params->layer_end;
++    g_linkcpp_runtime.executor = params->executor;
++    g_linkcpp_runtime.executor_user_data = params->executor_user_data;
++    g_linkcpp_runtime.memory_executor = params->memory_executor;
++    g_linkcpp_runtime.memory_executor_user_data = params->memory_executor_user_data;
++    g_linkcpp_runtime.state_executor = params->state_executor;
++    g_linkcpp_runtime.state_executor_user_data = params->state_executor_user_data;
++    return true;
++}
++
++void llama_linkcpp_runtime_clear() {
++    std::lock_guard<std::mutex> lock(g_linkcpp_runtime_mutex);
++    g_linkcpp_runtime = {};
++}
++
+ const char * llama_flash_attn_type_name(enum llama_flash_attn_type flash_attn_type) {
+     switch (flash_attn_type) {
+         case LLAMA_FLASH_ATTN_TYPE_AUTO:
+@@ -306,6 +361,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
+     try {
+         llama_model_loader ml(metadata, set_tensor_data, set_tensor_data_ud, fname, splits, file, params.load_mode,
+             params.check_tensors, params.no_alloc, params.load_mtp, params.kv_overrides, params.tensor_buft_overrides);
++        ml.linkcpp_layer_begin = params.linkcpp_layer_begin;
++        ml.linkcpp_layer_end   = params.linkcpp_layer_end;
+ 
+         ml.print_info();
+         std::unique_ptr<llama_model> model_ptr(llama_model_create(ml, params));
+@@ -371,6 +428,7 @@ static struct llama_model * llama_model_load_from_file_impl(
+         std::vector<std::string> & splits,
+         FILE * file,
+         struct llama_model_params params) {
++    linkcpp_apply_runtime_config(path_model, &params);
+     {
+         int n_sources_defined = 0;
+         if (metadata != nullptr) {

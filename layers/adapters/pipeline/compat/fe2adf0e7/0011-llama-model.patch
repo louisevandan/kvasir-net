@@ -1,0 +1,48 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 8fff1a432667dfcfccc7b66447d5f8df0662d68b..a43b2baf4332db7070d2ee810ff3762fa2b8f5f0 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1512,7 +1512,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+             }
+         }
+     }
+-    ml.done_getting_tensors();
++    ml.done_getting_tensors(ml.partial_load);
+ 
+     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
+     // If sidecar scales exist, the output weight must be an actual output tensor.
+@@ -1527,7 +1527,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+         }
+     }
+ 
+-    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
++    // A stage references sparse windows inside a shared GGUF.  Mapping is
++    // still required for the selected tensors, but readahead of every shard
++    // would fault the entire model into this rank's page cache.
++    ml.init_mappings(!ml.partial_load, use_mlock ? &pimpl->mlock_mmaps : nullptr);
+     pimpl->mappings.reserve(ml.mappings.size());
+ 
+     // create the backend buffers
+@@ -2425,6 +2428,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+     llm->build_dense_out(dense_2_out_layers, dense_2_out_layers_b, dense_3_out_layers);
+ 
+     llm->res->set_outputs(params);
++    llm->res->apply_linkcpp_stage(params);
+ 
+     return llm->res->get_gf();
+ }
+@@ -2452,6 +2456,14 @@ llama_model_params llama_model_default_params() {
+         /*.no_host                     =*/ false,
+         /*.no_alloc                    =*/ false,
+         /*.load_mtp                    =*/ false,
++        /*.linkcpp_layer_begin         =*/ -1,
++        /*.linkcpp_layer_end           =*/ -1,
++        /*.linkcpp_stage_executor      =*/ nullptr,
++        /*.linkcpp_stage_executor_user_data =*/ nullptr,
++        /*.linkcpp_memory_executor     =*/ nullptr,
++        /*.linkcpp_memory_executor_user_data =*/ nullptr,
++        /*.linkcpp_state_executor      =*/ nullptr,
++        /*.linkcpp_state_executor_user_data =*/ nullptr,
+     };
+ 
+     return result;
