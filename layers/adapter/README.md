@@ -3,11 +3,16 @@
 What a node asks of whatever executes its work. `layers/adapters/*` implement
 it; nothing here names a backend.
 
-| Path | Purpose |
-| --- | --- |
-| `src/work/` | The unit a node hands over: a load, an unload, or one hop. |
-| `src/event/` | What comes back, and it comes back as an event, never a return value. |
-| `src/lib.rs` | The trait itself. |
+Folders are cut by what changes them, not by size.
+
+| Path | Purpose | Moves when |
+| --- | --- | --- |
+| `src/work/distribution/` | Whether a backend owns its own parallelism. | A new *kind* of backend appears — not a new backend. |
+| `src/work/load/` | Materialising and releasing a share of a model. | A plan gains a key. |
+| `src/work/hop/` | One pass over a window of sequences. | Throughput work changes the execution shape. |
+| `src/event/report/` | The reporting vocabulary. | Observability needs grow. |
+| `src/event/sink/` | How an event travels. | Ideally never. |
+| `src/lib.rs` | The trait itself. | Rarely. |
 
 The hop is the only execution unit. A node hands the adapter one hop and is
 told when that hop ends; between hops the node drains its own queue. That is
