@@ -56,6 +56,7 @@ name = "p4-agent-core"
 version = "0.1.0"
 dependencies = [
  "p4-adapter",
+ "p4-link",
  "p4-mock",
  "p4-protocol",
  "tokio",
@@ -68,6 +69,13 @@ dependencies = [
  "p4-agent-core",
  "p4-protocol",
  "p4-service",
+ "tokio",
+]
+
+[[package]]
+name = "p4-link"
+version = "0.1.0"
+dependencies = [
  "tokio",
 ]
 

@@ -91,6 +91,32 @@ pub async fn start(duties: Arc<dyn Duties>) -> Arc<Agent> {
     agent
 }
 
+/// An agent reachable only across a bad link.
+///
+/// The relay listens, the agent binds somewhere else, and the agent calls
+/// itself by the relay's address — which is what an agent behind any gateway
+/// does, and the reason the advertised address is an argument at all. Peers
+/// address the relay because that is the agent's name, so every frame to it
+/// crosses the declared link and nothing in P4 is told the link exists.
+pub async fn start_behind(duties: Arc<dyn Duties>, link: p4_link::Impairment) -> Arc<Agent> {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bound = listener.local_addr().unwrap();
+    let relay = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let front = relay.local_addr().unwrap().port();
+    tokio::spawn(p4_link::relay::serve(relay, bound.to_string(), link));
+
+    let (agent, receiver, in_flight) = Agent::new(
+        Address::tcp("127.0.0.1", front),
+        duties,
+        Arc::new(Bodies),
+        Lanes::default(),
+        Budget::default(),
+    );
+    tokio::spawn(inbox::serve(listener, agent.queue(), 256));
+    tokio::spawn(run(Arc::clone(&agent), receiver, in_flight));
+    agent
+}
+
 pub fn chain_over(agents: &[(&Arc<Agent>, &str)]) -> Chain {
     Chain::new(
         agents

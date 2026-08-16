@@ -11,8 +11,9 @@
 use p4_protocol::Address;
 use p4_protocol::frame::{self, Frame};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::OwnedWriteHalf;
@@ -24,15 +25,36 @@ use tokio::sync::{Mutex, mpsc};
 /// consume the memory every other peer would need.
 const PER_PEER_DEPTH: usize = 4096;
 
+/// How long a peer may be silent before its connection and its entry are let
+/// go.
+///
+/// Without this the map is append-only in the number of addresses ever seen.
+/// A fleet has few, so it looked bounded; a caller whose address changes — a
+/// restarted OUTER, an ephemeral port, anything behind a rotating gateway —
+/// makes it grow for as long as the process lives, along with a task and a
+/// socket each. That is the shape of leak that only shows up in the run nobody
+/// restarts.
+const IDLE: Duration = Duration::from_secs(60);
+
 #[derive(Clone)]
 pub struct Peers {
     inner: Arc<Mutex<HashMap<Address, mpsc::Sender<Frame>>>>,
+    idle: Duration,
 }
 
 impl Default for Peers {
     fn default() -> Self {
+        Self::with_idle(IDLE)
+    }
+}
+
+impl Peers {
+    /// The same thing with a chosen idle window, so a test can watch a peer
+    /// retire without waiting a minute for it.
+    pub fn with_idle(idle: Duration) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
+            idle,
         }
     }
 }
@@ -59,7 +81,16 @@ impl Peers {
     pub async fn send(&self, frame: Frame) -> Result<(), Frame> {
         let target = frame.envelope.target.clone();
         let sender = self.connection(&target).await;
-        sender.send(frame).await.map_err(|error| error.0)
+        match sender.send(frame).await {
+            Ok(()) => Ok(()),
+            // The pump retired between being handed out and being used. That
+            // means idle, not gone, so the frame gets a fresh connection —
+            // turning it into a refusal would let idleness lose work.
+            Err(returned) => {
+                let sender = self.connection(&target).await;
+                sender.send(returned.0).await.map_err(|error| error.0)
+            }
+        }
     }
 
     async fn connection(&self, target: &Address) -> mpsc::Sender<Frame> {
@@ -71,7 +102,13 @@ impl Peers {
         }
         let (sender, receiver) = mpsc::channel(PER_PEER_DEPTH);
         peers.insert(target.clone(), sender.clone());
-        tokio::spawn(pump(target.clone(), receiver));
+        tokio::spawn(pump(
+            target.clone(),
+            receiver,
+            Arc::downgrade(&self.inner),
+            sender.clone(),
+            self.idle,
+        ));
         sender
     }
 
@@ -88,9 +125,26 @@ impl Peers {
 /// frame for that address. Frames already written are not replayed: they may
 /// have arrived, and a duplicate hop is worse than a lost one the deadline
 /// will answer for.
-async fn pump(target: Address, mut frames: mpsc::Receiver<Frame>) {
+async fn pump(
+    target: Address,
+    mut frames: mpsc::Receiver<Frame>,
+    peers: Weak<Mutex<HashMap<Address, mpsc::Sender<Frame>>>>,
+    mine: mpsc::Sender<Frame>,
+    idle: Duration,
+) {
     let mut live: Option<Live> = None;
-    while let Some(frame) = frames.recv().await {
+    loop {
+        let frame = match tokio::time::timeout(idle, frames.recv()).await {
+            Ok(Some(frame)) => frame,
+            // The map was dropped, or this peer was replaced.
+            Ok(None) => return,
+            Err(_) => {
+                if retire(&peers, &target, &mine).await {
+                    return;
+                }
+                continue;
+            }
+        };
         let Ok(bytes) = frame::encode(&frame.envelope, &frame.body) else {
             continue;
         };
@@ -112,6 +166,34 @@ async fn pump(target: Address, mut frames: mpsc::Receiver<Frame>) {
                 eprintln!("P4_AGENT_SEND_FAILED target={target}");
             }
         }
+    }
+}
+
+/// Lets a silent peer go, and says whether it did.
+///
+/// Done under the map's lock so it cannot race a caller taking the sender out
+/// of the map: a caller either gets it before the removal and finds a closed
+/// channel — which `send` answers by reconnecting — or arrives after and
+/// builds a fresh one. Two guards keep a busy peer from retiring under its own
+/// traffic: the entry must still be this pump's channel, and that channel must
+/// be empty.
+async fn retire(
+    peers: &Weak<Mutex<HashMap<Address, mpsc::Sender<Frame>>>>,
+    target: &Address,
+    mine: &mpsc::Sender<Frame>,
+) -> bool {
+    let Some(peers) = peers.upgrade() else {
+        return true;
+    };
+    let mut peers = peers.lock().await;
+    match peers.get(target) {
+        Some(current) if current.same_channel(mine) && mine.capacity() == PER_PEER_DEPTH => {
+            peers.remove(target);
+            true
+        }
+        // Already replaced by a newer pump: this one is redundant either way.
+        Some(_) => false,
+        None => true,
     }
 }
 

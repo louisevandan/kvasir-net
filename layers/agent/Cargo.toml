@@ -11,3 +11,4 @@ tokio = { version = "1.48.0", features = ["net", "rt-multi-thread", "sync", "tim
 
 [dev-dependencies]
 p4-mock = { path = "../adapters/mock" }
+p4-link = { path = "../../tools/link" }

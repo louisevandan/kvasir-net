@@ -7,6 +7,7 @@ members = [
     "layers/adapters/mock",
     "entrypoints/agent",
     "tools/drive",
+    "tools/link",
 ]
 resolver = "2"
 
