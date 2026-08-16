@@ -67,6 +67,22 @@ pub fn chunk(payload: &str) -> Result<Chunk, String> {
     let text = choice
         .get("delta")
         .and_then(|delta| delta.get("content"))
+        // A reasoning model streams its thinking under a different key and
+        // leaves `content` null until it has finished. Reading only `content`
+        // dropped every token of a fourteen-second answer and reported the
+        // request complete having produced nothing — the model looked silent
+        // and the layer looked fine.
+        //
+        // They are merged rather than distinguished because nothing above the
+        // adapter has a field for a kind of token. Separating them is a
+        // protocol change and worth making deliberately; losing them is not a
+        // choice at all.
+        .filter(|value| !value.is_null())
+        .or_else(|| {
+            choice
+                .get("delta")
+                .and_then(|delta| delta.get("reasoning_content"))
+        })
         // Non-streamed answers put it here, and a backend may fall back to
         // that shape even when asked to stream.
         .or_else(|| {

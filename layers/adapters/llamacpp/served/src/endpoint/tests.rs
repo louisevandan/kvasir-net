@@ -55,3 +55,47 @@ fn a_backend_that_hangs_up_before_answering_is_an_error_not_an_empty_reply() {
     let mut reader = std::io::BufReader::new(&b""[..]);
     assert!(read_headers(&mut reader).is_err());
 }
+
+/// The defect a fleet run found and eight tests missed.
+///
+/// `llama-server` answers `503 Loading model` while a large model is still
+/// coming off disk. Read as a body with no `data:` lines, that is a stream
+/// which ended having produced nothing — so every request "completed", every
+/// verdict passed, and no token was ever generated. A backend saying no must
+/// not look like a backend saying nothing.
+#[test]
+fn a_backend_that_refuses_is_an_error_rather_than_an_empty_answer() {
+    let headers = vec!["http/1.1 503 service unavailable".to_string()];
+    let body = r#"{"error":{"message":"Loading model","code":503}}"#;
+    let error = check_status(&headers, body).unwrap_err();
+    assert!(error.contains("503"), "{error}");
+    assert!(
+        error.contains("Loading model"),
+        "the reason survives: {error}"
+    );
+}
+
+#[test]
+fn a_refusal_with_no_body_still_names_the_status() {
+    let headers = vec!["http/1.1 500 internal server error".to_string()];
+    let error = check_status(&headers, "").unwrap_err();
+    assert!(error.contains("500"), "{error}");
+    assert!(error.contains("internal server error"), "{error}");
+}
+
+#[test]
+fn every_success_code_is_accepted() {
+    for status in [
+        "http/1.1 200 ok",
+        "http/1.1 201 created",
+        "http/1.1 299 odd",
+    ] {
+        assert!(check_status(&[status.to_string()], "").is_ok(), "{status}");
+    }
+}
+
+#[test]
+fn a_missing_or_unreadable_status_line_is_refused_rather_than_assumed_fine() {
+    assert!(check_status(&[], "").is_err());
+    assert!(check_status(&["not a status line".to_string()], "").is_err());
+}

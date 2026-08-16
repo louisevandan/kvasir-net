@@ -108,3 +108,35 @@ fn a_failure_body_is_recognised_and_a_normal_one_is_not() {
     );
     assert_eq!(failure(r#"{"model":"qwen"}"#), None);
 }
+
+/// A reasoning model streams its thinking under a different key.
+///
+/// The defect a real model found: reading only `content` dropped every token
+/// of a fourteen-second answer, and the request completed having produced
+/// nothing. The model looked silent and the layer looked fine.
+#[test]
+fn reasoning_content_is_a_token_rather_than_a_keep_alive() {
+    let parsed =
+        chunk(r#"{"choices":[{"delta":{"reasoning_content":"Okay"},"finish_reason":null}]}"#)
+            .unwrap();
+    assert_eq!(parsed.text, "Okay");
+}
+
+/// The shape that starts such a stream: a role announcement with a null
+/// content. Null is not text, and treating it as one would emit an empty
+/// token before the answer began.
+#[test]
+fn a_null_content_is_not_text() {
+    let parsed = chunk(r#"{"choices":[{"delta":{"role":"assistant","content":null}}]}"#).unwrap();
+    assert_eq!(parsed.text, "");
+}
+
+/// When a model streams both, the answer wins — reasoning is what it says
+/// while `content` is still null.
+#[test]
+fn content_is_preferred_when_the_model_sends_both() {
+    let parsed =
+        chunk(r#"{"choices":[{"delta":{"content":"answer","reasoning_content":"thinking"}}]}"#)
+            .unwrap();
+    assert_eq!(parsed.text, "answer");
+}

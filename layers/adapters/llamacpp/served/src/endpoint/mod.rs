@@ -59,7 +59,9 @@ impl Endpoint {
         let mut stream = self.begin(path, body)?;
         let mut reader = BufReader::new(&mut stream);
         let headers = read_headers(&mut reader)?;
-        read_body(&mut reader, &headers)
+        let answer = read_body(&mut reader, &headers)?;
+        check_status(&headers, &answer)?;
+        Ok(answer)
     }
 
     /// Sends a JSON POST and hands back the socket, for a caller reading a
@@ -67,7 +69,14 @@ impl Endpoint {
     pub fn stream(&self, path: &str, body: &str) -> Result<Events, String> {
         let stream = self.begin(path, body)?;
         let mut reader = BufReader::new(stream);
-        read_headers(&mut reader)?;
+        let headers = read_headers(&mut reader)?;
+        if check_status(&headers, "").is_err() {
+            // Read what it said before reporting it. A refusal carries its
+            // reason in the body, and the code alone sends a caller looking in
+            // the wrong place.
+            let body = read_body(&mut reader, &headers).unwrap_or_default();
+            check_status(&headers, &body)?;
+        }
         Ok(Events { reader })
     }
 
@@ -83,7 +92,9 @@ impl Endpoint {
             .map_err(|error| error.to_string())?;
         let mut reader = BufReader::new(&mut stream);
         let headers = read_headers(&mut reader)?;
-        read_body(&mut reader, &headers)
+        let answer = read_body(&mut reader, &headers)?;
+        check_status(&headers, &answer)?;
+        Ok(answer)
     }
 
     fn begin(&self, path: &str, body: &str) -> Result<TcpStream, String> {
@@ -135,6 +146,30 @@ impl Events {
             }
         }
     }
+}
+
+/// Refuses anything that is not a success.
+///
+/// Read from the status line, which is the only place it is stated. Without
+/// this a `503 Loading model` — what `llama-server` answers while a large
+/// model is still coming off disk — read as a stream that ended having
+/// produced nothing: every request "completed", every verdict passed, and no
+/// token was ever generated. A backend saying no must not look like a backend
+/// saying nothing.
+fn check_status(headers: &[String], body: &str) -> Result<(), String> {
+    let status = headers.first().map(String::as_str).unwrap_or_default();
+    let code = status
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok())
+        .unwrap_or(0);
+    if (200..300).contains(&code) {
+        return Ok(());
+    }
+    // The backend's own words when it gave them, the status line when it did
+    // not. Either is more use than the code alone.
+    let detail = crate::chat::failure(body).unwrap_or_else(|| status.to_owned());
+    Err(format!("backend answered {code}: {detail}"))
 }
 
 /// Status line and headers, lower-cased so a caller can look one up.
