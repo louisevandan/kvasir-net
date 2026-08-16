@@ -43,4 +43,36 @@ pub trait Payload: Send + Sync {
     fn deployment(&self, frame: &Frame) -> Option<String> {
         Some(frame.envelope.chain.as_ref()?.current().binding.clone())
     }
+
+    // The outbound half of the same seam. A node produces tokens, terminals
+    // and progress, and the core must not decide how those are written any
+    // more than it decides how a request is read — otherwise a deployment
+    // could read its own bodies but not its own answers.
+    //
+    // The defaults are plain text: enough to run and to read in a log, and
+    // replaced wholesale by a deployment that has a vocabulary.
+
+    fn token(&self, text: &str, _index: u32) -> Vec<u8> {
+        text.as_bytes().to_vec()
+    }
+
+    fn finished(&self, reason: &str, _generated: u32) -> Vec<u8> {
+        reason.as_bytes().to_vec()
+    }
+
+    fn failure(&self, detail: &str) -> Vec<u8> {
+        detail.as_bytes().to_vec()
+    }
+
+    fn progress(&self, stage: u32, percent: u32) -> Vec<u8> {
+        format!("stage {stage} at {percent}%").into_bytes()
+    }
+
+    fn bound(&self, generation: u64) -> Vec<u8> {
+        format!("loaded generation {generation}").into_bytes()
+    }
+
+    fn released(&self) -> Vec<u8> {
+        b"unloaded".to_vec()
+    }
 }

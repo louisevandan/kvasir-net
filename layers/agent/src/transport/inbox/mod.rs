@@ -9,10 +9,10 @@
 //! whole frame without decoding any of it.
 
 use crate::queue::main::Sender;
-use p4_protocol::Address;
+
 use p4_protocol::frame::{self, Frame};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
@@ -43,6 +43,7 @@ pub async fn serve(listener: TcpListener, queue: Sender, connections: usize) {
 }
 
 async fn read_frames(mut stream: TcpStream, queue: Sender) {
+    let mut refusals = Refusals::default();
     let _ = stream.set_nodelay(true);
     loop {
         let mut header = [0u8; HEADER_BYTES];
@@ -62,24 +63,39 @@ async fn read_frames(mut stream: TcpStream, queue: Sender) {
             return;
         };
         if let Err(refused) = queue.offer(frame) {
-            // The lane is full. Answering on the socket that is already open
-            // is the fastest backpressure there is, and it keeps the reader
-            // from being the thing that blocks.
-            refuse(&mut stream, refused.0).await;
+            // The lane is full, and this connection carries traffic one way —
+            // the sender answers on its own connection back to us and never
+            // reads this one, so there is nowhere in band to say so. Inventing
+            // a target to reply to would send the refusal somewhere nobody is
+            // listening, which loses it and looks like a leak.
+            //
+            // So it is counted and said out loud, and the sender learns from
+            // its deadline. A lane that fills is a sizing fact, and one that
+            // fills quietly is the thing worth preventing.
+            refusals.record(&refused.0);
         }
     }
 }
 
-async fn refuse(stream: &mut TcpStream, frame: Frame) {
-    let Some(mut envelope) = frame.envelope.to_reply() else {
-        return;
-    };
-    // The refusal goes back the way it came, so it needs no route of its own.
-    envelope.target = Address::tcp("0.0.0.0", 1);
-    let Ok(bytes) = frame::encode(&envelope, b"agent lane is full") else {
-        return;
-    };
-    let _ = stream.write_all(&bytes).await;
+/// Counts refusals and says so, without saying so on every frame.
+#[derive(Default)]
+struct Refusals {
+    total: usize,
+}
+
+impl Refusals {
+    fn record(&mut self, frame: &Frame) {
+        self.total += 1;
+        // The first, then decade by decade. A lane that overflows tends to
+        // keep overflowing, and a line per frame would bury the run it is
+        // reporting on.
+        if self.total == 1 || self.total.is_power_of_two() {
+            eprintln!(
+                "P4_AGENT_LANE_FULL lane={:?} route={} refused={}",
+                frame.envelope.lane, frame.envelope.route, self.total
+            );
+        }
+    }
 }
 
 #[cfg(test)]

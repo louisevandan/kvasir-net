@@ -1,8 +1,0 @@
-[package]
-name = "p4-node"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-p4-runtime = { path = "../../layers/runtime" }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::node::payload::Payload;
 use p4_protocol::{Address, Chain, Envelope, Link, QueueClass, Recipient};
 
 fn link(node: &str, port: u16) -> Link {
@@ -43,7 +44,7 @@ fn outcome(text: &str, stop: Option<&str>) -> Outcome {
 
 #[test]
 fn a_middle_node_hands_the_work_on_with_its_body_untouched() {
-    let Next::Hop(frame) = next(&carrier(3, 0, true), &outcome("", None)) else {
+    let Next::Hop(frame) = next(&carrier(3, 0, true), &outcome("", None), &Plain) else {
         panic!("a middle node hops");
     };
     assert_eq!(frame.envelope.recipient, Recipient::node("n1"));
@@ -54,13 +55,14 @@ fn a_middle_node_hands_the_work_on_with_its_body_untouched() {
 fn a_middle_node_hops_even_when_it_produced_no_text() {
     // Only the chain's end produces text. Reading emptiness as completion
     // would end every sequence at the first stage.
-    let result = next(&carrier(3, 1, true), &outcome("", None));
+    let result = next(&carrier(3, 1, true), &outcome("", None), &Plain);
     assert!(matches!(result, Next::Hop(_)));
 }
 
 #[test]
 fn the_last_node_finishing_replies_to_whoever_asked() {
-    let Next::Finish(frame) = next(&carrier(3, 2, true), &outcome("done", Some("stop"))) else {
+    let Next::Finish(frame) = next(&carrier(3, 2, true), &outcome("done", Some("stop")), &Plain)
+    else {
         panic!("a finished sequence at the end replies");
     };
     assert_eq!(frame.envelope.target, Address::tcp("10.0.0.1", 19001));
@@ -71,7 +73,7 @@ fn the_last_node_finishing_replies_to_whoever_asked() {
 #[test]
 fn the_last_node_still_generating_reports_a_token_and_starts_a_lap() {
     // This is the ring: one lap of the chain produces one token.
-    let Next::Lap { token, lap } = next(&carrier(3, 2, true), &outcome("tok", None)) else {
+    let Next::Lap { token, lap } = next(&carrier(3, 2, true), &outcome("tok", None), &Plain) else {
         panic!("an unfinished sequence at the end laps");
     };
     assert_eq!(token.envelope.target, Address::tcp("10.0.0.1", 19001));
@@ -87,7 +89,7 @@ fn the_last_node_still_generating_reports_a_token_and_starts_a_lap() {
 fn a_token_is_enqueued_before_the_lap_it_precedes() {
     // Otherwise a reader could see a later position's token before an earlier
     // one, which looks like reordering in P4 rather than in the caller.
-    let frames = next(&carrier(2, 1, true), &outcome("tok", None)).frames();
+    let frames = next(&carrier(2, 1, true), &outcome("tok", None), &Plain).frames();
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0].body, b"tok");
     assert_eq!(frames[1].envelope.lane, QueueClass::Decode);
@@ -97,7 +99,7 @@ fn a_token_is_enqueued_before_the_lap_it_precedes() {
 fn a_single_node_chain_laps_against_itself() {
     // vLLM and SGLang run this way, and a lap of a one-link chain is a decode
     // step on the same node.
-    let Next::Lap { lap, .. } = next(&carrier(1, 0, true), &outcome("tok", None)) else {
+    let Next::Lap { lap, .. } = next(&carrier(1, 0, true), &outcome("tok", None), &Plain) else {
         panic!("a one-node chain still laps");
     };
     assert_eq!(lap.envelope.recipient, Recipient::node("n0"));
@@ -107,11 +109,11 @@ fn a_single_node_chain_laps_against_itself() {
 #[test]
 fn work_nobody_is_listening_for_is_reported_rather_than_dropped() {
     assert_eq!(
-        next(&carrier(1, 0, false), &outcome("tok", None)),
+        next(&carrier(1, 0, false), &outcome("tok", None), &Plain),
         Next::Unheard
     );
     assert!(
-        next(&carrier(1, 0, false), &outcome("", Some("stop")))
+        next(&carrier(1, 0, false), &outcome("", Some("stop")), &Plain)
             .frames()
             .is_empty()
     );
@@ -121,7 +123,16 @@ fn work_nobody_is_listening_for_is_reported_rather_than_dropped() {
 fn a_finished_sequence_produces_exactly_one_terminal() {
     // Two terminals on one route is a defect this shape has to make
     // impossible.
-    let frames = next(&carrier(2, 1, true), &outcome("", Some("stop"))).frames();
+    let frames = next(&carrier(2, 1, true), &outcome("", Some("stop")), &Plain).frames();
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].envelope.lane, QueueClass::Response);
+}
+
+/// Plain-text reporting, which is what the trait's defaults do.
+struct Plain;
+
+impl Payload for Plain {
+    fn sequence(&self, _: &Frame) -> Option<p4_adapter::Sequence> {
+        None
+    }
 }

@@ -24,8 +24,12 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 /// Node creation and deletion, inference intake and hardware inspection live
 /// behind this, so the core never learns a message catalog. It is a procedure:
 /// its output is whatever it puts on the queue.
+///
+/// The agent arrives as a shared handle rather than a borrow, because a duty
+/// that needs to do anything asynchronous has to outlive this call — waiting
+/// inside it is the one thing the CPS rule forbids.
 pub trait Duties: Send + Sync {
-    fn handle(&self, frame: Frame, agent: &Agent);
+    fn handle(&self, frame: Frame, agent: &Arc<Agent>);
 }
 
 pub struct Agent {

@@ -1,13 +1,11 @@
 [package]
-name = "p4-agent"
+name = "p4-drive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-p4-adapter = { path = "../../layers/adapter" }
 p4-agent-core = { path = "../../layers/agent" }
-p4-mock = { path = "../../layers/adapters/mock" }
 p4-protocol = { path = "../../layers/protocol" }
 p4-service = { path = "../../layers/service" }
-tokio = { version = "1.48.0", features = ["net", "rt-multi-thread", "signal", "time", "macros"] }
+tokio = { version = "1.48.0", features = ["net", "rt-multi-thread", "time", "macros"] }

@@ -5,7 +5,6 @@ mod codec;
 mod contract;
 mod envelope;
 pub mod frame;
-mod task;
 
 pub use catalog::{MessageClass, MessageKind, QueueClass};
 pub use codec::{
@@ -17,4 +16,3 @@ pub use contract::{
     ProtocolError, VERSION,
 };
 pub use envelope::{Address, Chain, Envelope, Link, NodeId, Recipient, Scheme};
-pub use task::{Participant, ParticipantRole, TaskDirection, TaskEnvelope, TaskError, TaskKind};

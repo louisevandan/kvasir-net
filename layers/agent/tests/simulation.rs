@@ -41,7 +41,7 @@ impl Payload for Bodies {
 struct Outer(Arc<Mutex<HashMap<String, Vec<Frame>>>>);
 
 impl Duties for Outer {
-    fn handle(&self, frame: Frame, _: &Agent) {
+    fn handle(&self, frame: Frame, _: &Arc<Agent>) {
         self.0
             .lock()
             .unwrap()
@@ -76,7 +76,7 @@ impl Outer {
 struct Silent;
 
 impl Duties for Silent {
-    fn handle(&self, _: Frame, _: &Agent) {}
+    fn handle(&self, _: Frame, _: &Arc<Agent>) {}
 }
 
 async fn start(duties: Arc<dyn Duties>) -> Arc<Agent> {

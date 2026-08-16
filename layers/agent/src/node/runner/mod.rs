@@ -246,7 +246,7 @@ impl Node {
                     let Some(carrier) = carriers.get(&outcome.sequence) else {
                         continue;
                     };
-                    for frame in next(carrier, &outcome).frames() {
+                    for frame in next(carrier, &outcome, self.payload.as_ref()).frames() {
                         self.emit(frame);
                     }
                 }
@@ -274,38 +274,35 @@ impl Node {
             // Load and unload reporting belongs to whoever asked, and reaches
             // them through the same reply path as anything else.
             Event::Loaded { generation, .. } => {
-                self.finish_lifecycle(format!("loaded generation {generation}"))
+                self.finish_lifecycle(self.payload.bound(generation))
             }
-            Event::Unloaded { .. } => self.finish_lifecycle("unloaded".into()),
+            Event::Unloaded { .. } => self.finish_lifecycle(self.payload.released()),
             // Progress is reported as it happens rather than held until the
             // end, because a distributed load's slowest stage is the fact
             // worth seeing early.
             Event::LoadProgress { stage, percent, .. } => {
                 let carrier = self.lifecycle.lock().expect("lifecycle lock").clone();
                 if let Some(carrier) = carrier {
-                    self.reply(&carrier, format!("stage {stage} at {percent}%"));
+                    self.reply(&carrier, self.payload.progress(stage, percent));
                 }
             }
         }
     }
 
-    fn finish_lifecycle(&self, detail: String) {
+    fn finish_lifecycle(&self, body: Vec<u8>) {
         let carrier = self.lifecycle.lock().expect("lifecycle lock").take();
         self.queue.finished();
         if let Some(carrier) = carrier {
-            self.reply(&carrier, detail);
+            self.reply(&carrier, body);
         }
         self.drain();
     }
 
-    fn reply(&self, carrier: &Frame, detail: String) {
+    fn reply(&self, carrier: &Frame, body: Vec<u8>) {
         let Some(envelope) = carrier.envelope.to_reply() else {
             return;
         };
-        let _ = self.out.offer(Frame {
-            envelope,
-            body: detail.into_bytes(),
-        });
+        let _ = self.out.offer(Frame { envelope, body });
     }
 
     fn emit(&self, frame: Frame) {
@@ -318,13 +315,7 @@ impl Node {
     }
 
     fn reply_error(&self, carrier: &Frame, detail: &str) {
-        let Some(envelope) = carrier.envelope.to_reply() else {
-            return;
-        };
-        let _ = self.out.offer(Frame {
-            envelope,
-            body: detail.as_bytes().to_vec(),
-        });
+        self.reply(carrier, self.payload.failure(detail));
     }
 }
 

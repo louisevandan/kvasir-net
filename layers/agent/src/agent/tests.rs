@@ -51,7 +51,7 @@ impl Payload for Bodies {
 struct Collect(Arc<StdMutex<Vec<Frame>>>);
 
 impl Duties for Collect {
-    fn handle(&self, frame: Frame, _: &Agent) {
+    fn handle(&self, frame: Frame, _: &Arc<Agent>) {
         self.0.lock().unwrap().push(frame);
     }
 }

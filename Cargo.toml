@@ -1,15 +1,14 @@
 [workspace]
 members = [
     "layers/protocol",
-    "layers/runtime",
     "layers/adapter",
     "layers/agent",
+    "layers/service",
     "layers/adapters/llamacpp",
     "layers/adapters/mock",
     "layers/adapters/pipeline",
     "entrypoints/agent",
-    "entrypoints/controller",
-    "entrypoints/node",
+    "tools/drive",
 ]
 resolver = "2"
 

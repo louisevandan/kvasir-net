@@ -9,6 +9,7 @@
 //! Bodies stay opaque. The core never learns what a message means, so a token
 //! carries its text as bytes and nothing here parses them.
 
+use crate::node::payload::Payload;
 use p4_adapter::Outcome;
 use p4_protocol::frame::Frame;
 
@@ -31,7 +32,7 @@ pub enum Next {
 ///
 /// `carrier` is the frame this hop ran for; its chain says where in the order
 /// this node sat, and its reply address says who asked.
-pub fn next(carrier: &Frame, outcome: &Outcome) -> Next {
+pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
     if let Some(onward) = carrier.envelope.to_next_hop() {
         return Next::Hop(Frame {
             envelope: onward,
@@ -46,7 +47,23 @@ pub fn next(carrier: &Frame, outcome: &Outcome) -> Next {
     if outcome.is_finished() {
         return Next::Finish(Frame {
             envelope: reply,
-            body: outcome.stop.clone().unwrap_or_default().into_bytes(),
+            body: report.finished(
+                outcome.stop.as_deref().unwrap_or_default(),
+                outcome.position,
+            ),
+        });
+    }
+    // The caller asked for a number of tokens, and that number bounds the ring
+    // whatever the backend says. A backend that never reports a stop would
+    // otherwise lap forever, which is not a slow request but an unbounded one
+    // — and the cost of it lands on every node of the chain at once.
+    if let Some(requested) = report.sequence(carrier).map(|sequence| sequence.remaining)
+        && requested > 0
+        && outcome.position >= requested
+    {
+        return Next::Finish(Frame {
+            envelope: reply,
+            body: report.finished("length", outcome.position),
         });
     }
     let Some(lap) = carrier.envelope.to_next_lap() else {
@@ -54,13 +71,15 @@ pub fn next(carrier: &Frame, outcome: &Outcome) -> Next {
         // sequence ends here rather than silently stalling.
         return Next::Finish(Frame {
             envelope: reply,
-            body: b"chain cannot continue".to_vec(),
+            body: report.failure("chain cannot continue"),
         });
     };
     Next::Lap {
         token: Frame {
             envelope: reply,
-            body: outcome.text.clone().into_bytes(),
+            // A token's index counts from zero while a position counts what
+            // has been produced, so the first token is index zero.
+            body: report.token(&outcome.text, outcome.position.saturating_sub(1)),
         },
         lap: Frame {
             envelope: lap,

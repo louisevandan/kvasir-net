@@ -1,7 +1,7 @@
 //! Exhaustive semantic catalog for every P4 wire message.
 //! See `apps/p4/docs/task-runtime.md#complete-message-catalog`.
 
-use crate::{Message, Phase, TaskDirection};
+use crate::{Message, Phase};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MessageKind {
@@ -135,31 +135,6 @@ impl Message {
 
     pub fn is_terminal(&self) -> bool {
         matches!(self.class(), MessageClass::Terminal | MessageClass::Error)
-    }
-
-    pub fn allows_direction(&self, direction: TaskDirection) -> bool {
-        use MessageKind as K;
-        use TaskDirection as D;
-        match self.kind() {
-            K::IngressSubmit | K::IngressAccepted | K::InventoryQuery | K::HardwareReport => {
-                direction == D::ExternalController
-            }
-            K::AdapterRegister | K::AdapterRegistered => direction == D::AgentInternal,
-            K::NodeCreate | K::ModelLoad | K::ModelUnload | K::HealthCheck => {
-                direction == D::ControllerNode
-            }
-            K::NodeCreated
-            | K::ModelBound
-            | K::ModelUnbound
-            | K::Health
-            | K::LoadProgress
-            | K::DraftReport => direction == D::NodeController,
-            K::Token | K::Done => {
-                matches!(direction, D::NodeController | D::ExternalController)
-            }
-            K::Execute => matches!(direction, D::ControllerNode | D::NodeNode),
-            K::Cancel | K::Error => true,
-        }
     }
 }
 

@@ -12,8 +12,10 @@ use p4_protocol::Address;
 use p4_protocol::frame::{self, Frame};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::{Mutex, mpsc};
 
 /// How many frames may wait for one peer before sending refuses.
@@ -77,22 +79,25 @@ impl Peers {
 /// have arrived, and a duplicate hop is worse than a lost one the deadline
 /// will answer for.
 async fn pump(target: Address, mut frames: mpsc::Receiver<Frame>) {
-    let mut socket: Option<TcpStream> = None;
+    let mut live: Option<Live> = None;
     while let Some(frame) = frames.recv().await {
         let Ok(bytes) = frame::encode(&frame.envelope, &frame.body) else {
             continue;
         };
         for attempt in 0..2 {
-            if socket.is_none() {
-                socket = connect(&target).await;
+            // A peer that went away leaves a socket that still accepts a write
+            // into its buffer, so the first frame after a restart is lost
+            // unless the connection is known to be gone before it is used.
+            if live.as_ref().is_none_or(Live::is_gone) {
+                live = connect(&target).await;
             }
-            let Some(stream) = socket.as_mut() else {
+            let Some(connection) = live.as_mut() else {
                 break;
             };
-            if stream.write_all(&bytes).await.is_ok() {
+            if connection.writer.write_all(&bytes).await.is_ok() {
                 break;
             }
-            socket = None;
+            live = None;
             if attempt == 1 {
                 eprintln!("P4_AGENT_SEND_FAILED target={target}");
             }
@@ -100,12 +105,43 @@ async fn pump(target: Address, mut frames: mpsc::Receiver<Frame>) {
     }
 }
 
-async fn connect(target: &Address) -> Option<TcpStream> {
+/// One connection, and whether the far end is still there.
+struct Live {
+    writer: OwnedWriteHalf,
+    gone: Arc<AtomicBool>,
+}
+
+impl Live {
+    fn is_gone(&self) -> bool {
+        self.gone.load(Ordering::Relaxed)
+    }
+}
+
+async fn connect(target: &Address) -> Option<Live> {
     let stream = TcpStream::connect((target.host.as_str(), target.port))
         .await
         .ok()?;
     let _ = stream.set_nodelay(true);
-    Some(stream)
+    let (mut reader, writer) = stream.into_split();
+    let gone = Arc::new(AtomicBool::new(false));
+
+    // These connections carry traffic one way: a peer answers on its own
+    // connection back to us, never on this one. So anything readable here is
+    // the far end closing, and noticing it is what keeps a restarted peer from
+    // swallowing the next frame.
+    let watch = Arc::clone(&gone);
+    tokio::spawn(async move {
+        let mut scratch = [0u8; 64];
+        loop {
+            match reader.read(&mut scratch).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => continue,
+            }
+        }
+        watch.store(true, Ordering::Relaxed);
+    });
+
+    Some(Live { writer, gone })
 }
 
 #[cfg(test)]
