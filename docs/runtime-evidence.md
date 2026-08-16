@@ -1,5 +1,25 @@
 # Runtime evidence
 
+## 2026-08-16: a real inference crosses the network into a stock llama.cpp
+
+The entry below proved the adapter against a real model but over loopback, on
+the machine holding it. This is the same thing with a network in the middle,
+and against a llama.cpp we have never touched: today's master cloned on the
+DGX Spark, built stock with no patches, serving Qwen2.5-1.5B on CPU. The
+driver ran on Windows, the agent and the backend on the Linux box.
+
+| Requests | Tokens each | Result |
+| ---: | ---: | --- |
+| 4 | 16 | 4/4, 4,711 ms |
+| 8 | 24 | 8/8, 6,970 ms |
+| 16 | 24 | 16/16, 18,264 ms |
+
+All four verdicts on every run, with 245 slot events in the server's own log.
+The times are a 1.5B model on CPU with four slots and say nothing about this
+layer; what they establish is that the concrete adapter works across a machine
+boundary and against an unmodified upstream build, which together are the two
+things loopback and a vendored binary could not show.
+
 ## 2026-08-16: a real llama.cpp answers through P4
 
 The first inference this layer has carried that a model actually produced.
