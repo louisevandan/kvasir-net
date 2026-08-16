@@ -134,6 +134,25 @@ impl Agent {
             .fold(false, |found, handle| handle.cancel(route) || found)
     }
 
+    /// Every node, what it is doing, and which routes it is holding.
+    ///
+    /// The thing a caller needs to answer "where is my request": the counts
+    /// say how much passed through, the routes say what is there now.
+    pub async fn node_status(&self) -> Vec<NodeStatus> {
+        let nodes = self.nodes.lock().await;
+        let mut status: Vec<NodeStatus> = nodes
+            .iter()
+            .map(|(id, handle)| NodeStatus {
+                node: id.clone(),
+                depth: handle.depth(),
+                running: handle.is_running(),
+                waiting: handle.waiting_routes(),
+            })
+            .collect();
+        status.sort_by(|left, right| left.node.cmp(&right.node));
+        status
+    }
+
     /// What every node on this agent counted at each step it could lose work.
     pub async fn node_counts(&self) -> Vec<String> {
         let nodes = self.nodes.lock().await;
@@ -334,4 +353,17 @@ pub struct Traffic {
     pub consumed: usize,
     pub to_nodes: usize,
     pub unrouted: usize,
+}
+
+/// One node, as of the moment it was asked.
+///
+/// `waiting` is the part a count cannot give: which requests are sitting on
+/// this node right now, in the order it will take them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeStatus {
+    pub node: String,
+    pub depth: usize,
+    /// Whether a hop is inside the backend at this moment.
+    pub running: bool,
+    pub waiting: Vec<String>,
 }

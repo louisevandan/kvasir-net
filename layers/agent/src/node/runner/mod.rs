@@ -51,6 +51,8 @@ pub struct Node {
     /// The load or unload in flight, if any. Kept apart from `in_flight`
     /// because it belongs to a deployment rather than to a sequence.
     lifecycle: Mutex<Option<Frame>>,
+    /// Whether this node may serve, and for which deployment.
+    bound: Mutex<Bound>,
     events: Sink,
     counts: Arc<Counts>,
     /// Frames on their way to the agent queue. Unbounded, and bounded in
@@ -65,6 +67,45 @@ pub struct Handle {
     work: mpsc::UnboundedSender<Frame>,
     queue: Arc<NodeQueue>,
     counts: Arc<Counts>,
+}
+
+/// Whether this node may serve, and for which deployment.
+///
+/// A load is a transaction across machines that no single machine can see the
+/// whole of. Nothing here coordinates it — there is nowhere to put a
+/// coordinator that would not become a controller — so each stage enforces its
+/// own half: it serves the generation it bound, and a stage whose load failed
+/// serves nothing. A chain composed over a failed stage is refused by that
+/// stage rather than answered from half a model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Bound {
+    /// Never loaded. A backend that needs no load is legitimate, so this
+    /// serves — the ones that must not serve are the two below.
+    Never,
+    At(u64),
+    /// A load failed here. Nothing runs until one succeeds.
+    Refused,
+}
+
+impl Bound {
+    /// Whether work carrying `generation` may run.
+    fn admits(self, generation: u64) -> bool {
+        match self {
+            Self::Never => true,
+            Self::At(bound) => bound == generation,
+            Self::Refused => false,
+        }
+    }
+
+    fn why(self, generation: u64) -> String {
+        match self {
+            Self::Never => String::new(),
+            Self::At(bound) => {
+                format!("node is bound at generation {bound}, work carries {generation}")
+            }
+            Self::Refused => "node has no model: its load failed".into(),
+        }
+    }
 }
 
 /// What the node did, counted at each step it could lose something.
@@ -116,6 +157,19 @@ impl Handle {
     pub fn cancel(&self, route: &str) -> bool {
         self.queue.remove(route).is_some()
     }
+
+    /// The routes this node is holding, in the order it would take them.
+    ///
+    /// A caller asking "where has my request got to" is asking this. Depth
+    /// alone answers how many, never which, and a route that has gone missing
+    /// is exactly the one a count cannot show.
+    pub fn waiting_routes(&self) -> Vec<String> {
+        self.queue
+            .waiting()
+            .into_iter()
+            .map(|waiting| waiting.route)
+            .collect()
+    }
 }
 
 impl Node {
@@ -139,6 +193,7 @@ impl Node {
             ceiling: Mutex::new(ceiling.max(1)),
             in_flight: Mutex::new(HashMap::new()),
             lifecycle: Mutex::new(None),
+            bound: Mutex::new(Bound::Never),
             events: Sink {
                 events: event_tx,
                 raised: Arc::clone(&counts.raised),
@@ -186,6 +241,10 @@ impl Node {
                 frame = work.recv() => match frame {
                     Some(frame) => {
                         self.counts.received.fetch_add(1, Ordering::Relaxed);
+                        if let Some(refused) = self.refusal(&frame) {
+                            self.reply_error(&frame, &refused);
+                            continue;
+                        }
                         self.queue.push(frame);
                         self.counts.queued.fetch_add(1, Ordering::Relaxed);
                         self.drain();
@@ -203,6 +262,20 @@ impl Node {
                 else => return,
             }
         }
+    }
+
+    /// Why this frame must not run here, if it must not.
+    ///
+    /// Only sequence work is checked. Lifecycle is how a node stops being
+    /// refused, so a load that had to pass the check to be allowed to fix the
+    /// thing the check is complaining about could never succeed.
+    fn refusal(&self, frame: &Frame) -> Option<String> {
+        let generation = frame.envelope.chain.as_ref()?.current().generation;
+        if self.payload.lifecycle(frame).is_some() {
+            return None;
+        }
+        let bound = *self.bound.lock().expect("generation lock");
+        (!bound.admits(generation)).then(|| bound.why(generation))
     }
 
     /// Starts a hop if one can start. Called after every event, which is what
@@ -349,7 +422,16 @@ impl Node {
                 // A load can fail too, and its caller is waiting on the same
                 // route. Leaving it here would hold the node running forever
                 // over an instruction that already ended.
-                failed.extend(self.lifecycle.lock().expect("lifecycle lock").take());
+                let lifecycle = self.lifecycle.lock().expect("lifecycle lock").take();
+                if lifecycle.is_some() {
+                    // A stage of a distributed model that did not load is a
+                    // stage that must not serve. Its neighbours may have bound
+                    // perfectly well, and a chain that runs anyway produces
+                    // answers from half a model — which looks like a working
+                    // deployment and is the worst outcome available.
+                    *self.bound.lock().expect("generation lock") = Bound::Refused;
+                }
+                failed.extend(lifecycle);
                 self.queue.finished();
                 for frame in failed {
                     self.reply_error(&frame, &detail);
@@ -359,6 +441,7 @@ impl Node {
             // Load and unload reporting belongs to whoever asked, and reaches
             // them through the same reply path as anything else.
             Event::Loaded { generation, .. } => {
+                *self.bound.lock().expect("generation lock") = Bound::At(generation);
                 self.finish_lifecycle(self.payload.bound(generation))
             }
             Event::Unloaded { .. } => self.finish_lifecycle(self.payload.released()),

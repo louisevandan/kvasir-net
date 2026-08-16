@@ -26,6 +26,8 @@ type Decoded<T> = Result<T, Malformed>;
 const CREATE_NODE: u8 = 1;
 const DELETE_NODE: u8 = 2;
 const INSPECT: u8 = 3;
+const CANCEL: u8 = 4;
+const STATUS: u8 = 5;
 const LOAD: u8 = 16;
 const UNLOAD: u8 = 17;
 const EXECUTE: u8 = 18;
@@ -37,6 +39,7 @@ const TOKEN: u8 = 36;
 const DONE: u8 = 37;
 const FAILED: u8 = 38;
 const MACHINE: u8 = 39;
+const STATUS_REPLY: u8 = 40;
 
 pub fn encode_to_agent(message: &ToAgent) -> Vec<u8> {
     let mut out = Vec::with_capacity(64);
@@ -51,6 +54,11 @@ pub fn encode_to_agent(message: &ToAgent) -> Vec<u8> {
             text(&mut out, node);
         }
         ToAgent::Inspect => out.push(INSPECT),
+        ToAgent::Cancel { route } => {
+            out.push(CANCEL);
+            text(&mut out, route);
+        }
+        ToAgent::Status => out.push(STATUS),
     }
     out
 }
@@ -66,6 +74,10 @@ pub fn decode_to_agent(bytes: &[u8]) -> Decoded<ToAgent> {
             node: cursor.text()?,
         },
         INSPECT => ToAgent::Inspect,
+        CANCEL => ToAgent::Cancel {
+            route: cursor.text()?,
+        },
+        STATUS => ToAgent::Status,
         tag => return Err(Malformed(format!("unknown agent message {tag}"))),
     };
     cursor.finished()?;
@@ -155,6 +167,10 @@ pub fn encode_reply(reply: &Reply) -> Vec<u8> {
             out.push(MACHINE);
             text(&mut out, snapshot);
         }
+        Reply::Status { snapshot } => {
+            out.push(STATUS_REPLY);
+            text(&mut out, snapshot);
+        }
     }
     out
 }
@@ -185,6 +201,9 @@ pub fn decode_reply(bytes: &[u8]) -> Decoded<Reply> {
             detail: cursor.text()?,
         },
         MACHINE => Reply::Machine {
+            snapshot: cursor.text()?,
+        },
+        STATUS_REPLY => Reply::Status {
             snapshot: cursor.text()?,
         },
         tag => return Err(Malformed(format!("unknown reply {tag}"))),

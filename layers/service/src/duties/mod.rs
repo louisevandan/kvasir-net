@@ -11,6 +11,7 @@ use crate::machine;
 use crate::message::wire::{decode_to_agent, encode_reply};
 use crate::message::{Reply, ToAgent};
 use crate::registry::Registry;
+use crate::status;
 use p4_agent_core::agent::{Agent, Duties};
 use p4_protocol::frame::Frame;
 use std::sync::Arc;
@@ -93,8 +94,57 @@ impl Duties for Standard {
                     snapshot: machine::snapshot(&self.adapters()),
                 },
             ),
+            ToAgent::Cancel { route } => cancel(agent, &frame, route),
+            ToAgent::Status => status(agent, &frame),
         }
     }
+}
+
+/// Stops one request, and says whether there was one to stop.
+///
+/// The distinction matters to a caller: nothing waiting means the request had
+/// already finished, which is a different outcome from having cancelled it,
+/// and a caller that cannot tell them apart cannot report either.
+fn cancel(agent: &Arc<Agent>, frame: &Frame, route: String) {
+    let stopped = reply_frame(
+        frame,
+        Reply::Accepted {
+            detail: format!("cancelled {route}"),
+        },
+    );
+    let nothing = reply_frame(
+        frame,
+        Reply::Failed {
+            detail: format!("nothing waiting for {route}"),
+        },
+    );
+    let agent = Arc::clone(agent);
+    tokio::spawn(async move {
+        let reply = if agent.cancel(&route).await {
+            stopped
+        } else {
+            nothing
+        };
+        if let Some(reply) = reply {
+            let _ = agent.enqueue(reply);
+        }
+    });
+}
+
+/// What the agent is doing, as of now.
+///
+/// Taken asynchronously because reading the nodes takes their lock, and a
+/// duties handler that waited on it would put a node's lock on the worker
+/// path — the thing the two-tier queue exists to avoid.
+fn status(agent: &Arc<Agent>, frame: &Frame) {
+    let frame = frame.clone();
+    let agent = Arc::clone(agent);
+    tokio::spawn(async move {
+        let snapshot = status::snapshot(&agent).await;
+        if let Some(reply) = reply_frame(&frame, Reply::Status { snapshot }) {
+            let _ = agent.enqueue(reply);
+        }
+    });
 }
 
 fn delete(agent: &Arc<Agent>, frame: &Frame, node: String) {

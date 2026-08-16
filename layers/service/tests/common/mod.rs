@@ -7,7 +7,7 @@ use p4_agent_core::agent::{Agent, Duties, run};
 use p4_agent_core::queue::lane::{Budget, Lanes};
 use p4_agent_core::transport::inbox;
 use p4_mock::Mock;
-use p4_mock::profile::Profile;
+use p4_mock::profile::{Fault, Profile};
 use p4_protocol::frame::Frame;
 use p4_protocol::{Address, Chain, Envelope, Link, QueueClass, Recipient};
 use p4_service::message::wire::{decode_reply, encode_to_agent, encode_to_node};
@@ -56,6 +56,29 @@ pub fn backends() -> Registry {
     });
     registry.register_fn("mock-solo", |_| {
         Arc::new(Mock::internal(Profile::default()))
+    });
+    // A backend slow enough that a caller can ask what is happening while it
+    // is still happening. Anything instant leaves nothing to observe.
+    registry.register_fn("mock-slow", |_| {
+        Arc::new(Mock::terminal(
+            0,
+            Profile {
+                leading_hop: Duration::from_millis(60),
+                trailing_hop: Duration::from_millis(60),
+                ..Profile::default()
+            },
+        ))
+    });
+    // A stage that cannot load. Its neighbours load perfectly well, which is
+    // what makes a distributed load a transaction rather than a list.
+    registry.register_fn("mock-unloadable", |_| {
+        Arc::new(Mock::staged(
+            0,
+            Profile {
+                fault: Fault::Load,
+                ..Profile::default()
+            },
+        ))
     });
     registry
 }

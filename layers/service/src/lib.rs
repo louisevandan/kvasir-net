@@ -13,6 +13,7 @@ pub mod machine;
 pub mod message;
 pub mod payload;
 pub mod registry;
+pub mod status;
 
 pub use duties::Standard;
 pub use payload::Bodies;

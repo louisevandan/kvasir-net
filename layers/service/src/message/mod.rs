@@ -29,6 +29,19 @@ pub enum ToAgent {
     },
     /// Facts about the machine, for whoever is composing placements.
     Inspect,
+    /// Stops one request. Work already inside a backend runs to its hop
+    /// boundary — there is no way to interrupt a hop — so this means the next
+    /// one never starts.
+    Cancel {
+        route: String,
+    },
+    /// What this agent is doing right now: its lanes, its traffic, and every
+    /// node with the routes it is holding.
+    ///
+    /// Separate from `Inspect`, which is about the machine and does not change
+    /// while the process runs. This changes constantly and is the only way
+    /// OUTER can see where a request has got to.
+    Status,
 }
 
 /// Sent to a node. Materialise, release, or run.
@@ -56,12 +69,33 @@ pub enum ToNode {
 /// Sent back to whoever asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reply {
-    Accepted { detail: String },
-    Progress { stage: u32, percent: u32 },
-    Bound { generation: u64 },
+    Accepted {
+        detail: String,
+    },
+    Progress {
+        stage: u32,
+        percent: u32,
+    },
+    Bound {
+        generation: u64,
+    },
     Released,
-    Token { index: u32, text: String },
-    Done { reason: String, generated: u32 },
-    Failed { detail: String },
-    Machine { snapshot: String },
+    Token {
+        index: u32,
+        text: String,
+    },
+    Done {
+        reason: String,
+        generated: u32,
+    },
+    Failed {
+        detail: String,
+    },
+    Machine {
+        snapshot: String,
+    },
+    /// What the agent is doing, as of the moment it was asked.
+    Status {
+        snapshot: String,
+    },
 }

@@ -10,6 +10,10 @@ fn every_agent_message_survives_a_round_trip() {
         },
         ToAgent::DeleteNode { node: "n0".into() },
         ToAgent::Inspect,
+        ToAgent::Cancel {
+            route: "요청-7".into(),
+        },
+        ToAgent::Status,
     ] {
         assert_eq!(
             decode_to_agent(&encode_to_agent(&message)).unwrap(),
@@ -64,6 +68,9 @@ fn every_reply_survives_a_round_trip() {
         },
         Reply::Machine {
             snapshot: "{}".into(),
+        },
+        Reply::Status {
+            snapshot: "address=tcp://h:1\nnode=n0 depth=2 running=true routes=[a,b]".into(),
         },
     ] {
         assert_eq!(decode_reply(&encode_reply(&reply)).unwrap(), reply);
