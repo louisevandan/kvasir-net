@@ -62,6 +62,12 @@ The first outbound attempt puts `p4-agent` in System Settings → Privacy &
 Security → Local Network, where it has to be switched on once. The grant then
 survives restarts, including the ones `KeepAlive` performs.
 
+It does **not** survive replacing the binary. The grant is against the
+executable, so an upgrade arrives unapproved and the new agent takes work and
+answers into nothing — the same symptom, now on a deployment that was working
+five minutes ago. A macOS rollout has to include re-approving the agent, and
+is worth checking before anything in P4 is suspected.
+
 ### On Linux
 
 A systemd user service, with lingering so it does not need a login session:
@@ -150,7 +156,7 @@ P4_AGENT_STATS=1 p4-agent 0.0.0.0:52001
 
 ```
 P4_AGENT_DEPTH control=0 prefill=812 decode=44 response=0 nodes=196
-P4_AGENT_TRAFFIC forwarded=38409 consumed=3 to_nodes=38403 unrouted=0
+P4_AGENT_TRAFFIC forwarded=38409 consumed=3 to_nodes=38403 unrouted=0 peers=3 waiting=0
 P4_AGENT_NODE node=tail-0 received=12801 queued=12801 claimed=12800 hops=745 …
 ```
 

@@ -81,9 +81,17 @@ fn watch(agent: Arc<Agent>) {
                 agent.node_depth_total().await
             );
             let traffic = agent.traffic();
+            // `peers` and `waiting` are the two numbers that only a long run
+            // moves. Both should settle; either climbing for hours is a leak
+            // rather than load, and neither shows up in a depth reading.
             println!(
-                "P4_AGENT_TRAFFIC forwarded={} consumed={} to_nodes={} unrouted={}",
-                traffic.forwarded, traffic.consumed, traffic.to_nodes, traffic.unrouted
+                "P4_AGENT_TRAFFIC forwarded={} consumed={} to_nodes={} unrouted={} peers={} waiting={}",
+                traffic.forwarded,
+                traffic.consumed,
+                traffic.to_nodes,
+                traffic.unrouted,
+                agent.peers().connected().await,
+                agent.continuations().outstanding(),
             );
             for line in agent.node_counts().await {
                 println!("P4_AGENT_NODE {line}");

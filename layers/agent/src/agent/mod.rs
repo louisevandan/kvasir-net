@@ -82,6 +82,12 @@ impl Agent {
         self.queue.clone()
     }
 
+    /// The connections this agent is holding open. A count that only rises
+    /// over hours is a peer leak rather than a busy fleet.
+    pub fn peers(&self) -> &Peers {
+        &self.peers
+    }
+
     pub fn continuations(&self) -> &Continuations<Frame> {
         &self.continuations
     }
