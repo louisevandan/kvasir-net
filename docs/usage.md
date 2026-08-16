@@ -28,6 +28,15 @@ diagnosing it from a chain that stalls after one token:
 P4_AGENT_UNREACHABLE address=tcp://0.0.0.0:52001 peers=only-this-machine
 ```
 
+### On macOS
+
+Whatever supervises the agent needs local-network access. A detached process
+becomes its own responsible process and does not inherit that grant; it still
+accepts connections, so it takes work normally and its replies go nowhere. An
+agent that receives requests while its caller reports no answer is showing this
+and not a fault in P4 — the counters say `consumed` rose and `forwarded` rose,
+and the machine has no outbound socket to the caller.
+
 A node named against a backend not in that list is refused, because a placement
 mistake is the caller's to fix and a silent fallback would hide it.
 

@@ -1,5 +1,57 @@
 # Runtime evidence
 
+## 2026-08-16: the layer builds and runs on three operating systems and two architectures
+
+Everything before this was Windows on x86-64. The source was copied to two Mac
+minis (`mobimacui-Macmini-2`, `mobimacui-Macmini`, macOS on arm64) and to the
+DGX Spark (`gx10-c044`, Linux on aarch64), built there, and joined into one
+chain with this machine. All four ran `rustc 1.97.1`; nothing in the workspace
+needed a conditional or a target-specific dependency.
+
+| Machine | Platform | Build | Tests |
+| --- | --- | --- | --- |
+| development PC | Windows x86-64 | clean | 196 |
+| Mac mini 1 | macOS arm64 | clean | 196 |
+| Mac mini 2 | macOS arm64 | clean | 196 |
+| DGX Spark GB10 | Linux aarch64 | clean | 196 |
+
+The chain was `stage-0` Windows, `stage-1` macOS, `stage-2` Linux aarch64,
+`tail-3` macOS — every hop crossing both a machine and an operating system, and
+most of them an architecture as well.
+
+| Shape | Requests | Tokens each | Result |
+| --- | ---: | ---: | --- |
+| four stages, three OSes | 800 | 48 | 800/800 three times, 80,723-81,799 frames/s |
+| four stages, three OSes | 400 | 24 | 400/400, 62,807 frames/s |
+| four stages, timed backend | 400 | 24 | 400/400 |
+| macOS to macOS only | 400 | 24 | 400/400, 79,774 frames/s |
+
+Four claims held on every run.
+
+### The macOS local-network gate, which is not this layer
+
+The first attempt failed at the macOS stage with `stage refused the node: no
+answer`, and it is worth recording because the symptom points at P4 and the
+cause is not.
+
+The counters said the agent had received the request and produced its reply —
+`consumed=1 forwarded=1` — and `netstat` on that machine showed no outbound
+socket to the driver at all. Neither side's firewall was involved: `nc` reached
+the driver from that machine while it was listening, and the same Mac running
+`p4-drive` connected out to Windows and completed 100/100.
+
+What separated the two was how the process had been started. An agent launched
+with `nohup … &` over SSH is detached and becomes its own responsible process,
+which on current macOS is not the one holding local-network access; its
+outbound LAN connections are dropped with no error to the caller. Listening is
+not gated, so it accepted work and answered into nothing. Run in the foreground
+of the SSH session — same binary, same host, same ports — it completed 100/100
+immediately.
+
+So a macOS deployment has to grant local-network access to whatever supervises
+the agent, and a macOS agent that receives work but whose replies never arrive
+should be checked there before anything in P4 is suspected.
+
 ## 2026-08-16: the v6 core carries an inference between two machines
 
 First run of the rewritten communication layer off one host. An agent on
