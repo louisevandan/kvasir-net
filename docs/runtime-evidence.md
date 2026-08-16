@@ -78,6 +78,28 @@ Linux host — and the chain's next run passed with no lost frame. That is the
 peer-restart invariant holding against a real process death rather than a
 simulated one, on two different init systems.
 
+### More than one node per agent
+
+Every fleet run above placed exactly one node on each agent, which is not the
+shape a real placement takes. Repeating the four addresses in the chain gives
+each agent a second and third node, since a node is named by its position:
+
+| Stages over four agents | Nodes per agent | Requests | Tokens each | Result |
+| ---: | ---: | ---: | ---: | --- |
+| 8 | 2 | 400 | 24 | 400/400, 31,634 frames/s |
+| 8 | 2 | 800 | 48 | 800/800, 34,240 frames/s |
+| 12 | 3 | 200 | 16 | 200/200, 16,201 frames/s |
+
+Each node was created and loaded on its own before any inference ran. The
+Windows agent's counters, the one machine reporting them, show the nodes as
+genuinely separate — `stage-0`, `stage-4` and `stage-8` each with their own
+arrivals, hops and completions, and `lost=0 orphaned=0` on all of them across
+sixty-five readings.
+
+`layers/service/tests/many_nodes.rs` now pins this by message rather than
+leaving it to a run: four nodes over two agents, loaded individually, driven by
+a chain that visits each machine twice, and then by two chains at once.
+
 ## 2026-08-16: the v6 core carries an inference between two machines
 
 First run of the rewritten communication layer off one host. An agent on

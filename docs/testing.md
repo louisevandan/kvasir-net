@@ -41,6 +41,13 @@ cancellation.
 `layers/service/tests/two_process.rs` does the same through the message
 vocabulary: nodes created, a model loaded, an inference chained, all by frame.
 
+`layers/service/tests/many_nodes.rs` gives each agent more than one. Everything
+else here places one node per agent, which hides whether the nodes are separate
+queues and lifecycles behind a single address. Four nodes over two agents, each
+created and loaded on its own, then a chain that visits each machine twice; and
+two chains sharing those nodes at once, where the claim is only that no route
+takes another's tokens.
+
 ## Fleet
 
 The level that found three defects the other two could not — a starved node
