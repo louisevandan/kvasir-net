@@ -100,6 +100,25 @@ sixty-five readings.
 leaving it to a run: four nodes over two agents, loaded individually, driven by
 a chain that visits each machine twice, and then by two chains at once.
 
+### The two queues, with the backend deliberately slow
+
+Every fleet run above used `mock-instant`, which answers with no delay — good
+for routing and ordering, and useless for the claim the two-tier queue exists
+to support. Repeating the four-machine chain on the timed `mock` at 600
+requests of 32 tokens, with the Windows agent reporting once a second:
+
+| | Peak over 27 readings |
+| --- | ---: |
+| agent lanes (control + prefill + decode + response) | **0** |
+| node depth | **473** |
+
+600 chained requests in flight across four machines, the run taking 6.1s
+against 0.5s for the same shape on the instant backend, and at no point was
+anything waiting in front of the adapter. That is the attribution the design
+was built for, measured rather than argued: work piles up on the node, where
+the slowness is, and the agent's queue drains at agent speed. A deep lane
+beside an idle node would mean the opposite, and would mean P4.
+
 ## 2026-08-16: the v6 core carries an inference between two machines
 
 First run of the rewritten communication layer off one host. An agent on

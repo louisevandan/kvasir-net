@@ -31,12 +31,21 @@ truncation, every trailing byte, every unknown tag.
 ## Simulated
 
 `layers/agent/tests/simulation.rs` stands real agents on real sockets with
-mocks behind the adapter boundary. Eighteen scenarios: chains of one, two and
-three stages; forty arrivals against a ceiling of four; batching actually
-happening; a slow backend showing as node depth rather than agent depth; relay
-through an agent owning no node; sustained arrivals; per-route ordering;
-concurrent chains sharing agents; a failing backend; a failing load; deadlines;
-cancellation.
+mocks behind the adapter boundary: chains of one, two and three stages; forty
+arrivals against a ceiling of four; batching actually happening; relay through
+an agent owning no node; sustained arrivals; per-route ordering; concurrent
+chains sharing agents; a failing backend.
+
+`layers/agent/tests/lifecycle.rs` takes the other half — a load reported per
+stage, a declared ceiling, an unload, a failing load, deadlines, cancellation.
+
+`layers/agent/tests/queues.rs` watches the two-tier queue while the mock is
+deliberately holding hops, which is the only time the interesting state exists.
+Concurrent arrivals against one slow node, a chain whose middle stage is the
+slow one, and decode still being dispatched while prefill is queued. Each
+asserts both halves of the attribution: the node's queue deep *and* the
+agent's lanes shallow. Node depth alone would also be satisfied by an agent
+that had backed up with it.
 
 `layers/service/tests/two_process.rs` does the same through the message
 vocabulary: nodes created, a model loaded, an inference chained, all by frame.
