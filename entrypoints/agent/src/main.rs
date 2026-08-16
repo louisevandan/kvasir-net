@@ -50,9 +50,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agent.queue(),
         Budget::default().connections,
     ));
+    if std::env::var("P4_AGENT_STATS").is_ok() {
+        watch(Arc::clone(&agent));
+    }
     tokio::spawn(run(agent, receiver, in_flight));
 
     tokio::signal::ctrl_c().await?;
     println!("P4_AGENT_STOPPING address={own}");
     Ok(())
+}
+
+/// Prints what the agent is holding, once a second, when asked.
+///
+/// Two numbers decide where a slowdown lives: the agent's lanes and the depth
+/// of its nodes. Shallow lanes beside deep nodes put the cause below the
+/// adapter; the reverse puts it in P4. A fleet run that cannot see both is
+/// guessing.
+fn watch(agent: Arc<Agent>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let lanes = agent.queue().depth();
+            println!(
+                "P4_AGENT_DEPTH control={} prefill={} decode={} response={} nodes={}",
+                lanes.control,
+                lanes.prefill,
+                lanes.decode,
+                lanes.response,
+                agent.node_depth_total().await
+            );
+            let traffic = agent.traffic();
+            println!(
+                "P4_AGENT_TRAFFIC forwarded={} consumed={} to_nodes={} unrouted={}",
+                traffic.forwarded, traffic.consumed, traffic.to_nodes, traffic.unrouted
+            );
+            for line in agent.node_counts().await {
+                println!("P4_AGENT_NODE {line}");
+            }
+        }
+    });
 }

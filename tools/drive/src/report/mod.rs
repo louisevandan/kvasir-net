@@ -22,6 +22,9 @@ pub fn print(outcome: &Outcome, elapsed: Duration, requests: usize, tokens: u32)
         (outcome.tokens + outcome.completed) as f64 / seconds
     );
 
+    if !outcome.stalled.is_empty() {
+        println!("  stalled_at_tokens={:?}", outcome.stalled);
+    }
     verdict("every request answered", outcome.unanswered == 0);
     verdict("no request failed", outcome.failed == 0);
     verdict("every stream in order", outcome.out_of_order == 0);

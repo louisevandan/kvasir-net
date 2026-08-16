@@ -33,6 +33,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let requests: usize = args.next().ok_or(USAGE)?.parse()?;
     let tokens: u32 = args.next().ok_or(USAGE)?.parse()?;
     let adapter = args.next().unwrap_or_else(|| "mock".to_owned());
+    // What a deployment declares it admits at once. A real one states this
+    // from what it measured; a driver that passed its own request count would
+    // be declaring a ceiling nobody sized.
+    let ceiling: u32 = std::env::var("P4_DRIVE_CEILING")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(32);
 
     let session = session::Session::start(&listen).await?;
     println!(
@@ -44,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     session.create_nodes(&chain, &adapter).await?;
     println!("P4_DRIVE_NODES created={}", chain.len());
 
-    session.load(&chain, requests.max(1) as u32).await?;
+    session.load(&chain, ceiling).await?;
     println!("P4_DRIVE_LOADED stages={}", chain.len());
 
     let started = Instant::now();

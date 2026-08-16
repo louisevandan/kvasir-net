@@ -1,18 +1,18 @@
-//! P4B1 v6 protocol surface. See `apps/p4/docs/api.md#wire-contract`.
+//! P4B1 v6: the wire.
+//!
+//! Two things travel — an envelope every hop reads, and a body only its
+//! destination does. That split is what lets a relay forward by copying bytes,
+//! a socket reader do nothing but enqueue, and a new kind of message cost a
+//! relay nothing.
+//!
+//! What a body means is not here. It belongs to whoever sends and receives it;
+//! see `layers/service` for the standard one.
 
-mod catalog;
-mod codec;
-mod contract;
-mod envelope;
+pub mod envelope;
+pub mod error;
 pub mod frame;
+pub mod lane;
 
-pub use catalog::{MessageClass, MessageKind, QueueClass};
-pub use codec::{
-    RoutedMessage, decode_message, decode_routed_message, encode_message, encode_routed_message,
-    read_message, read_routed_message, write_message, write_routed_message,
-};
-pub use contract::{
-    Allocation, ExecutionDone, ExecutionRequest, ExecutionToken, Message, PROTOCOL, Phase,
-    ProtocolError, VERSION,
-};
 pub use envelope::{Address, Chain, Envelope, Link, NodeId, Recipient, Scheme};
+pub use error::ProtocolError;
+pub use lane::QueueClass;

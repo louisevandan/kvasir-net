@@ -43,13 +43,23 @@ impl Peers {
     ///
     /// Returns the frame back when the peer's queue is full, so the caller can
     /// answer the route rather than let it hang.
+    /// Waits for room rather than refusing.
+    ///
+    /// Refusing looked safe and was not. A frame here is usually already a
+    /// reply, and a reply has no reply address of its own — so there was
+    /// nothing to answer with, and the frame went out silently. That reads
+    /// exactly like a lost route, and it is one.
+    ///
+    /// Waiting is the backpressure this design already relies on everywhere
+    /// else: a full peer queue holds the dispatcher, which fills the lanes,
+    /// which holds the node's outbox, which slows the node at its next hop.
+    /// The chain ends at the thing producing the work, which is where it
+    /// belongs. A peer that is genuinely gone is answered by the deadline, and
+    /// its pump keeps trying to reconnect meanwhile.
     pub async fn send(&self, frame: Frame) -> Result<(), Frame> {
         let target = frame.envelope.target.clone();
         let sender = self.connection(&target).await;
-        sender.try_send(frame).map_err(|error| match error {
-            mpsc::error::TrySendError::Full(frame) => frame,
-            mpsc::error::TrySendError::Closed(frame) => frame,
-        })
+        sender.send(frame).await.map_err(|error| error.0)
     }
 
     async fn connection(&self, target: &Address) -> mpsc::Sender<Frame> {

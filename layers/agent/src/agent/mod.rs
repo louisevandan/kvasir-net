@@ -17,6 +17,7 @@ use p4_protocol::frame::Frame;
 use p4_protocol::{Address, QueueClass};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
 /// What the agent itself does with a message addressed to it.
@@ -34,6 +35,12 @@ pub trait Duties: Send + Sync {
 
 pub struct Agent {
     own: Address,
+    /// What the two decisions actually did. Counted rather than inferred,
+    /// because a frame that vanishes leaves no other trace.
+    forwarded: AtomicUsize,
+    consumed: AtomicUsize,
+    to_nodes: AtomicUsize,
+    unrouted: AtomicUsize,
     queue: Sender,
     peers: Peers,
     nodes: Mutex<HashMap<String, Handle>>,
@@ -53,6 +60,10 @@ impl Agent {
         let (queue, receiver, in_flight) = channel(lanes, budget);
         let agent = Arc::new(Self {
             own,
+            forwarded: AtomicUsize::new(0),
+            consumed: AtomicUsize::new(0),
+            to_nodes: AtomicUsize::new(0),
+            unrouted: AtomicUsize::new(0),
             queue,
             peers: Peers::default(),
             nodes: Mutex::new(HashMap::new()),
@@ -114,6 +125,36 @@ impl Agent {
             .fold(false, |found, handle| handle.cancel(route) || found)
     }
 
+    /// What every node on this agent counted at each step it could lose work.
+    pub async fn node_counts(&self) -> Vec<String> {
+        let nodes = self.nodes.lock().await;
+        let mut lines: Vec<String> = nodes
+            .iter()
+            .map(|(id, handle)| {
+                let c = handle.counts();
+                let load = |value: &std::sync::atomic::AtomicUsize| value.load(Ordering::Relaxed);
+                format!(
+                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} emitted={} raised={} lost={} depth={} running={}",
+                    load(&c.received),
+                    load(&c.queued),
+                    load(&c.claimed),
+                    load(&c.hops),
+                    load(&c.completions),
+                    load(&c.outcomes),
+                    load(&c.routed),
+                    load(&c.orphaned),
+                    load(&c.emitted),
+                    c.raised.load(Ordering::Relaxed),
+                    c.lost.load(Ordering::Relaxed),
+                    handle.depth(),
+                    handle.is_running(),
+                )
+            })
+            .collect();
+        lines.sort();
+        lines
+    }
+
     /// Total work sitting on node queues. Read beside the agent queue's depth,
     /// the two say which side of the adapter boundary is slow.
     pub async fn node_depth_total(&self) -> usize {
@@ -148,15 +189,27 @@ impl Agent {
     /// One message, two decisions.
     async fn dispatch(self: &Arc<Self>, frame: Frame) {
         match judge(&frame.envelope, &self.own) {
-            Verdict::Forward(_) => self.forward(frame).await,
-            Verdict::Agent => self.consume(frame).await,
+            Verdict::Forward(_) => {
+                self.forwarded.fetch_add(1, Ordering::Relaxed);
+                self.forward(frame).await
+            }
+            Verdict::Agent => {
+                self.consumed.fetch_add(1, Ordering::Relaxed);
+                self.consume(frame).await
+            }
             Verdict::Node(id) => {
                 let handle = self.nodes.lock().await.get(&id).cloned();
                 match handle {
                     // Moving it in is the whole of the worker's job here. It
                     // does not wait to see what the node makes of it.
-                    Some(handle) => handle.offer(frame),
-                    None => self.answer_locally(frame, "no such node on this agent"),
+                    Some(handle) => {
+                        self.to_nodes.fetch_add(1, Ordering::Relaxed);
+                        handle.offer(frame)
+                    }
+                    None => {
+                        self.unrouted.fetch_add(1, Ordering::Relaxed);
+                        self.answer_locally(frame, "no such node on this agent")
+                    }
                 }
             }
         }
@@ -246,3 +299,26 @@ mod worker_tests;
 
 #[cfg(test)]
 mod tests;
+
+impl Agent {
+    /// What the two decisions did, since the process started.
+    ///
+    /// Counted because a frame that goes missing leaves nothing else behind:
+    /// depth only says what is waiting, never what already left.
+    pub fn traffic(&self) -> Traffic {
+        Traffic {
+            forwarded: self.forwarded.load(Ordering::Relaxed),
+            consumed: self.consumed.load(Ordering::Relaxed),
+            to_nodes: self.to_nodes.load(Ordering::Relaxed),
+            unrouted: self.unrouted.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Traffic {
+    pub forwarded: usize,
+    pub consumed: usize,
+    pub to_nodes: usize,
+    pub unrouted: usize,
+}

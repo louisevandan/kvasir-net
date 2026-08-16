@@ -12,6 +12,8 @@ use p4_service::Bodies;
 use p4_service::message::wire::{decode_reply, encode_to_agent, encode_to_node};
 use p4_service::message::{Reply, ToAgent, ToNode};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -41,23 +43,44 @@ impl Stream {
 }
 
 #[derive(Default, Clone)]
-struct Replies(Arc<Mutex<HashMap<String, Stream>>>);
+struct Replies {
+    streams: Arc<Mutex<HashMap<String, Stream>>>,
+    /// Counted as replies land, so waiting on progress never has to walk the
+    /// streams. Polling by cloning them held the same lock the recording path
+    /// needs, and got slower as the tokens it was counting accumulated — the
+    /// measurement starving the thing it measured.
+    finished: Arc<AtomicUsize>,
+    bound: Arc<AtomicUsize>,
+    accepted: Arc<AtomicUsize>,
+}
 
 impl Duties for Replies {
     fn handle(&self, frame: Frame, _: &Arc<Agent>) {
         let Ok(reply) = decode_reply(&frame.body) else {
             return;
         };
-        let mut streams = self.0.lock().expect("reply lock");
+        let mut streams = self.streams.lock().expect("reply lock");
         let stream = streams.entry(frame.envelope.route.clone()).or_default();
         match reply {
             Reply::Token { index, .. } => stream.tokens.push(index),
-            Reply::Done { generated, .. } => stream.done = Some(generated),
-            Reply::Failed { detail } => stream.failed = Some(detail),
+            Reply::Done { generated, .. } => {
+                stream.done = Some(generated);
+                self.finished.fetch_add(1, SeqCst);
+            }
+            Reply::Failed { detail } => {
+                stream.failed = Some(detail);
+                self.finished.fetch_add(1, SeqCst);
+            }
             Reply::Progress { .. } => stream.progress += 1,
-            Reply::Bound { .. } => stream.bound = true,
+            Reply::Bound { .. } => {
+                stream.bound = true;
+                self.bound.fetch_add(1, SeqCst);
+            }
             Reply::Released => stream.released = true,
-            Reply::Accepted { .. } => stream.accepted = true,
+            Reply::Accepted { .. } => {
+                stream.accepted = true;
+                self.accepted.fetch_add(1, SeqCst);
+            }
             Reply::Machine { .. } => {}
         }
     }
@@ -91,7 +114,7 @@ impl Session {
 
     fn stream(&self, route: &str) -> Stream {
         self.replies
-            .0
+            .streams
             .lock()
             .expect("reply lock")
             .get(route)
@@ -101,7 +124,7 @@ impl Session {
 
     fn streams(&self) -> Vec<Stream> {
         self.replies
-            .0
+            .streams
             .lock()
             .expect("reply lock")
             .values()
@@ -137,10 +160,8 @@ impl Session {
                 }),
             )?;
         }
-        self.until(|| {
-            (0..chain.len()).all(|stage| self.stream(&format!("create-{stage}")).accepted)
-        })
-        .await;
+        self.until(|| self.replies.accepted.load(SeqCst) >= chain.len())
+            .await;
         for stage in 0..chain.len() {
             let stream = self.stream(&format!("create-{stage}"));
             if !stream.accepted {
@@ -179,7 +200,7 @@ impl Session {
                 }),
             )?;
         }
-        self.until(|| (0..chain.len()).all(|stage| self.stream(&format!("load-{stage}")).bound))
+        self.until(|| self.replies.bound.load(SeqCst) >= chain.len())
             .await;
         for stage in 0..chain.len() {
             if !self.stream(&format!("load-{stage}")).bound {
@@ -220,13 +241,23 @@ impl Session {
                 }),
             );
         }
-        self.until(|| (0..requests).all(|index| self.stream(&format!("q{index}")).is_finished()))
+        // A counter, not a walk of the streams: walking them held the lock the
+        // recording path needs, and grew with the tokens it was counting.
+        let already = self.replies.finished.load(SeqCst);
+        self.until(|| self.replies.finished.load(SeqCst) >= already + requests)
             .await;
 
         let streams: Vec<Stream> = (0..requests)
             .map(|index| self.stream(&format!("q{index}")))
             .collect();
+        let stalled: Vec<usize> = streams
+            .iter()
+            .filter(|stream| !stream.is_finished())
+            .map(|stream| stream.tokens.len())
+            .take(12)
+            .collect();
         Outcome {
+            stalled,
             completed: streams.iter().filter(|s| s.done.is_some()).count(),
             failed: streams.iter().filter(|s| s.failed.is_some()).count(),
             unanswered: streams.iter().filter(|s| !s.is_finished()).count(),
@@ -275,6 +306,10 @@ impl Session {
 
 #[derive(Default, Debug)]
 pub struct Outcome {
+    /// How many tokens each unfinished route managed before it stopped. The
+    /// shape of this says where a stall is: all zero means work never
+    /// started, all near the target means a terminal was lost.
+    pub stalled: Vec<usize>,
     pub completed: usize,
     pub failed: usize,
     pub unanswered: usize,

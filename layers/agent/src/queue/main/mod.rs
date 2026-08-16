@@ -39,7 +39,12 @@ impl Clone for Sender {
     }
 }
 
+/// How often the lane preference gives way to a fair pass.
+const FAIR_EVERY: u64 = 16;
+
 pub struct Receiver {
+    /// Counts takes so the preference can be dropped periodically.
+    taken: u64,
     control: mpsc::Receiver<Frame>,
     prefill: mpsc::Receiver<Frame>,
     decode: mpsc::Receiver<Frame>,
@@ -63,6 +68,7 @@ pub fn channel(lanes: Lanes, budget: Budget) -> (Sender, Receiver, InFlight) {
             response: response_tx,
         },
         Receiver {
+            taken: 0,
             control,
             prefill,
             decode,
@@ -77,18 +83,35 @@ impl Sender {
     /// else, so a full lane must come back as a refusal rather than block the
     /// reader and stall every other route on that connection.
     pub fn offer(&self, frame: Frame) -> Result<(), Refused> {
-        let lane = match frame.envelope.lane {
+        self.lane(frame.envelope.lane)
+            .try_send(frame)
+            .map_err(|error| {
+                Refused(match error {
+                    mpsc::error::TrySendError::Full(frame) => frame,
+                    mpsc::error::TrySendError::Closed(frame) => frame,
+                })
+            })
+    }
+
+    /// Enqueues, waiting for room if there is none.
+    ///
+    /// For callers that should be slowed rather than refused. A node producing
+    /// tokens is one: it outruns the agent only by being fast, and holding it
+    /// at its next hop is backpressure, where dropping its output is loss. A
+    /// worker must never call this — waiting in a worker is what turns a
+    /// bounded queue back into an unbounded one.
+    pub async fn send(&self, frame: Frame) -> Result<(), Refused> {
+        let lane = self.lane(frame.envelope.lane).clone();
+        lane.send(frame).await.map_err(|error| Refused(error.0))
+    }
+
+    fn lane(&self, class: QueueClass) -> &mpsc::Sender<Frame> {
+        match class {
             QueueClass::Control => &self.control,
             QueueClass::Prefill => &self.prefill,
             QueueClass::Decode => &self.decode,
             QueueClass::Response => &self.response,
-        };
-        lane.try_send(frame).map_err(|error| {
-            Refused(match error {
-                mpsc::error::TrySendError::Full(frame) => frame,
-                mpsc::error::TrySendError::Closed(frame) => frame,
-            })
-        })
+        }
     }
 }
 
@@ -98,17 +121,36 @@ impl Receiver {
     /// same reason the window does — a lap belongs to a request already
     /// holding KV.
     ///
+    /// The preference is bounded. Strict priority is not a preference but a
+    /// veto: a busy lane that is never empty means the ones under it are never
+    /// polled at all, and a lap that is never dispatched is a request that
+    /// never finishes. So every `FAIR_EVERY` frames the order is dropped and
+    /// all four lanes compete, which costs nothing when the upper lanes are
+    /// quiet and guarantees progress when they are not.
+    ///
     /// Returns `None` only when every lane is closed.
     pub async fn take(&mut self) -> Option<Frame> {
-        loop {
-            tokio::select! {
-                biased;
-                Some(frame) = self.control.recv() => return Some(frame),
-                Some(frame) = self.response.recv() => return Some(frame),
-                Some(frame) = self.decode.recv() => return Some(frame),
-                Some(frame) = self.prefill.recv() => return Some(frame),
-                else => return None,
-            }
+        self.taken = self.taken.wrapping_add(1);
+        if self.taken % FAIR_EVERY == 0 {
+            return self.fair().await;
+        }
+        tokio::select! {
+            biased;
+            Some(frame) = self.control.recv() => Some(frame),
+            Some(frame) = self.response.recv() => Some(frame),
+            Some(frame) = self.decode.recv() => Some(frame),
+            Some(frame) = self.prefill.recv() => Some(frame),
+            else => None,
+        }
+    }
+
+    async fn fair(&mut self) -> Option<Frame> {
+        tokio::select! {
+            Some(frame) = self.control.recv() => Some(frame),
+            Some(frame) = self.response.recv() => Some(frame),
+            Some(frame) = self.decode.recv() => Some(frame),
+            Some(frame) = self.prefill.recv() => Some(frame),
+            else => None,
         }
     }
 
@@ -141,3 +183,20 @@ impl Depth {
 
 #[cfg(test)]
 mod tests;
+
+impl Sender {
+    /// Lane depth, read from the sending side.
+    ///
+    /// The dispatcher owns the receiver, so anything watching the queue needs
+    /// its own way in. This is the agent-side half of the pair that says which
+    /// side of the adapter boundary is slow.
+    pub fn depth(&self) -> Depth {
+        let used = |lane: &mpsc::Sender<Frame>| lane.max_capacity() - lane.capacity();
+        Depth {
+            control: used(&self.control),
+            prefill: used(&self.prefill),
+            decode: used(&self.decode),
+            response: used(&self.response),
+        }
+    }
+}

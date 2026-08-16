@@ -5,8 +5,9 @@
 //! what makes forwarding cost the same whatever the message turns out to be.
 
 use super::{Address, Chain, Envelope, Link, Recipient};
-use crate::codec::fields::{Cursor, MAX_ELEMENTS, put_text, put_u32, put_u64};
+mod bytes;
 use crate::{ProtocolError, QueueClass};
+use bytes::{Cursor, MAX_ELEMENTS, put_text, put_u32, put_u64};
 
 const RECIPIENT_AGENT: u8 = 0;
 const RECIPIENT_NODE: u8 = 1;

@@ -7,7 +7,7 @@
 
 use crate::node::window::Waiting;
 use p4_protocol::frame::Frame;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Mutex;
 
 /// Work waiting for a hop, in arrival order within its lane.
@@ -57,18 +57,25 @@ impl NodeQueue {
     /// Removes the named routes and marks a hop as running.
     ///
     /// One call so the two cannot drift apart: taking work without marking
-    /// would let a second hop start beside the first.
+    /// would let a second hop start beside the first. One pass over the queue,
+    /// not one per route.
+    ///
+    /// A window is as wide as the declared ceiling, and searching the queue
+    /// once per named route made claiming quadratic in that width — which does
+    /// not show at a ceiling of eight and dominates everything at a thousand.
     pub fn claim(&self, routes: &[String]) -> Vec<Frame> {
+        let wanted: HashSet<&str> = routes.iter().map(String::as_str).collect();
         let mut waiting = self.waiting.lock().expect("node queue lock");
         let mut claimed = Vec::with_capacity(routes.len());
-        for route in routes {
-            if let Some(index) = waiting
-                .iter()
-                .position(|frame| &frame.envelope.route == route)
-            {
-                claimed.push(waiting.remove(index).expect("index came from a search"));
+        let mut kept = VecDeque::with_capacity(waiting.len());
+        for frame in waiting.drain(..) {
+            if wanted.contains(frame.envelope.route.as_str()) {
+                claimed.push(frame);
+            } else {
+                kept.push_back(frame);
             }
         }
+        *waiting = kept;
         if !claimed.is_empty() {
             *self.running.lock().expect("node running lock") = true;
         }
@@ -81,14 +88,17 @@ impl NodeQueue {
         *self.running.lock().expect("node running lock") = false;
     }
 
-    /// Looks at a waiting frame without taking it, so a caller can decide what
-    /// kind of work it is before committing to running it.
-    pub fn peek(&self, route: &str) -> Option<Frame> {
+    /// The first waiting frame a predicate accepts.
+    ///
+    /// One pass, and it clones only what it returns. Asking route by route
+    /// meant a scan per item and a clone per hit, which is quadratic in queue
+    /// depth on a path that runs after every single event.
+    pub fn find(&self, accepts: impl Fn(&Frame) -> bool) -> Option<Frame> {
         self.waiting
             .lock()
             .expect("node queue lock")
             .iter()
-            .find(|frame| frame.envelope.route == route)
+            .find(|frame| accepts(frame))
             .cloned()
     }
 

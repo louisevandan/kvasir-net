@@ -13,6 +13,7 @@ use p4_adapter::{Adapter, Event, EventSink, Hop, Phase, Work};
 use p4_protocol::QueueClass;
 use p4_protocol::frame::Frame;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -23,11 +24,18 @@ use tokio::sync::mpsc;
 /// so depth is already bounded by the window; dropping one would lose a hop
 /// completion and leave the node idle forever with work still queued.
 #[derive(Clone)]
-struct Sink(mpsc::UnboundedSender<Event>);
+struct Sink {
+    events: mpsc::UnboundedSender<Event>,
+    raised: Arc<AtomicUsize>,
+    lost: Arc<AtomicUsize>,
+}
 
 impl EventSink for Sink {
     fn raise(&self, event: Event) {
-        let _ = self.0.send(event);
+        self.raised.fetch_add(1, Ordering::Relaxed);
+        if self.events.send(event).is_err() {
+            self.lost.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -35,7 +43,6 @@ pub struct Node {
     queue: Arc<NodeQueue>,
     adapter: Arc<dyn Adapter>,
     payload: Arc<dyn Payload>,
-    out: Sender,
     /// What the load declared. A ceiling: never derived here, never exceeded.
     ceiling: Mutex<usize>,
     /// Frames of the hop in flight, keyed by the sequence id they were given,
@@ -45,6 +52,11 @@ pub struct Node {
     /// because it belongs to a deployment rather than to a sequence.
     lifecycle: Mutex<Option<Frame>>,
     events: Sink,
+    counts: Arc<Counts>,
+    /// Frames on their way to the agent queue. Unbounded, and bounded in
+    /// practice by the work in flight, because everything here was produced by
+    /// a hop this node already admitted.
+    outbox: mpsc::UnboundedSender<Frame>,
 }
 
 /// What a caller keeps to feed a running node.
@@ -52,6 +64,26 @@ pub struct Node {
 pub struct Handle {
     work: mpsc::UnboundedSender<Frame>,
     queue: Arc<NodeQueue>,
+    counts: Arc<Counts>,
+}
+
+/// What the node did, counted at each step it could lose something.
+///
+/// A frame that goes missing leaves no trace in a depth reading, because
+/// depth only shows what is still waiting. These show what passed through.
+#[derive(Default)]
+pub struct Counts {
+    pub received: AtomicUsize,
+    pub queued: AtomicUsize,
+    pub claimed: AtomicUsize,
+    pub hops: AtomicUsize,
+    pub completions: AtomicUsize,
+    pub outcomes: AtomicUsize,
+    pub routed: AtomicUsize,
+    pub orphaned: AtomicUsize,
+    pub emitted: AtomicUsize,
+    pub raised: Arc<AtomicUsize>,
+    pub lost: Arc<AtomicUsize>,
 }
 
 impl Handle {
@@ -69,6 +101,10 @@ impl Handle {
 
     pub fn is_running(&self) -> bool {
         self.queue.is_running()
+    }
+
+    pub fn counts(&self) -> &Counts {
+        &self.counts
     }
 
     /// Drops queued work for a route.
@@ -92,21 +128,40 @@ impl Node {
     ) -> Handle {
         let (work_tx, work_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel::<Frame>();
         let queue = Arc::new(NodeQueue::default());
+        let counts = Arc::new(Counts::default());
+        let queued = out;
         let node = Node {
             queue: Arc::clone(&queue),
             adapter,
             payload,
-            out,
             ceiling: Mutex::new(ceiling.max(1)),
             in_flight: Mutex::new(HashMap::new()),
             lifecycle: Mutex::new(None),
-            events: Sink(event_tx),
+            events: Sink {
+                events: event_tx,
+                raised: Arc::clone(&counts.raised),
+                lost: Arc::clone(&counts.lost),
+            },
+            counts: Arc::clone(&counts),
+            outbox: outbox_tx,
         };
+        tokio::spawn(async move {
+            // Waits for room rather than dropping. A node that outruns its
+            // agent is held here, which slows its next hop without ever
+            // blocking the task that has to see that hop end.
+            while let Some(frame) = outbox_rx.recv().await {
+                if queued.send(frame).await.is_err() {
+                    return;
+                }
+            }
+        });
         tokio::spawn(node.run(work_rx, event_rx));
         Handle {
             work: work_tx,
             queue,
+            counts,
         }
     }
 
@@ -116,14 +171,22 @@ impl Node {
         mut events: mpsc::UnboundedReceiver<Event>,
     ) {
         loop {
+            // Deliberately not biased. Preferring events looked right — a hop
+            // ending is what frees the node — but a node under load produces
+            // an event per hop without pause, and a biased select then never
+            // polls arrivals at all. They sat unread in the channel: not in the
+            // node's queue, not in the agent's, invisible to every depth
+            // reading, and the request behind each one never answered.
+            //
+            // Fairness costs nothing here. An event still reaches `on_event`
+            // on the next turn of the loop, and the hop it reports has already
+            // finished by the time it was sent.
             tokio::select! {
-                biased;
-                // A hop ending is handled first. It is what frees the node,
-                // and letting new arrivals go ahead of it would keep a node
-                // that has finished looking busy.
                 Some(event) = events.recv() => self.on_event(event),
                 Some(frame) = work.recv() => {
+                    self.counts.received.fetch_add(1, Ordering::Relaxed);
                     self.queue.push(frame);
+                    self.counts.queued.fetch_add(1, Ordering::Relaxed);
                     self.drain();
                 }
                 else => return,
@@ -155,6 +218,9 @@ impl Node {
         if claimed.is_empty() {
             return;
         }
+        self.counts
+            .claimed
+            .fetch_add(claimed.len(), Ordering::Relaxed);
         match self.hop(&claimed, window.lane) {
             Some(hop) => {
                 let mut in_flight = self.in_flight.lock().expect("in-flight lock");
@@ -168,6 +234,7 @@ impl Node {
                 // relay and answer while this node is busy.
                 let adapter = Arc::clone(&self.adapter);
                 let events = self.events.clone();
+                self.counts.hops.fetch_add(1, Ordering::Relaxed);
                 tokio::task::spawn_blocking(move || {
                     adapter.start(Work::Hop(hop), &events);
                 });
@@ -190,15 +257,16 @@ impl Node {
     /// instruction about a whole deployment, and batching it beside sequences
     /// would let execution start against something half-built.
     fn start_lifecycle(&self) -> bool {
-        let waiting = self.queue.waiting();
-        let Some(found) = waiting.iter().find_map(|item| {
-            let frame = self.queue.peek(&item.route)?;
-            let work = self.payload.lifecycle(&frame)?;
-            Some((item.route.clone(), frame, work))
-        }) else {
+        let Some(frame) = self
+            .queue
+            .find(|frame| self.payload.lifecycle(frame).is_some())
+        else {
             return false;
         };
-        let (route, frame, work) = found;
+        let Some(work) = self.payload.lifecycle(&frame) else {
+            return false;
+        };
+        let route = frame.envelope.route.clone();
         let claimed = self.queue.claim(&[route]);
         if claimed.is_empty() {
             return false;
@@ -237,6 +305,10 @@ impl Node {
     fn on_event(&self, event: Event) {
         match event {
             Event::HopComplete { outcomes, .. } => {
+                self.counts.completions.fetch_add(1, Ordering::Relaxed);
+                self.counts
+                    .outcomes
+                    .fetch_add(outcomes.len(), Ordering::Relaxed);
                 let carriers = std::mem::take(&mut *self.in_flight.lock().expect("in-flight lock"));
                 // Released before the outcomes are routed, so a lap this hop
                 // produces can be picked up by the drain below rather than
@@ -244,8 +316,10 @@ impl Node {
                 self.queue.finished();
                 for outcome in outcomes {
                     let Some(carrier) = carriers.get(&outcome.sequence) else {
+                        self.counts.orphaned.fetch_add(1, Ordering::Relaxed);
                         continue;
                     };
+                    self.counts.routed.fetch_add(1, Ordering::Relaxed);
                     for frame in next(carrier, &outcome, self.payload.as_ref()).frames() {
                         self.emit(frame);
                     }
@@ -302,16 +376,22 @@ impl Node {
         let Some(envelope) = carrier.envelope.to_reply() else {
             return;
         };
-        let _ = self.out.offer(Frame { envelope, body });
+        // Through the outbox, like every other frame a node produces. A reply
+        // that took the direct path would be the one thing this node can still
+        // lose to a full lane.
+        self.emit(Frame { envelope, body });
     }
 
+    /// Hands a frame to this node's outbox.
+    ///
+    /// The outbox is drained by a task of its own, which waits for room on the
+    /// agent queue. That waiting is backpressure and belongs somewhere — but
+    /// not here: this is the same task that receives hop completions, and a
+    /// node blocked mid-emit could not observe the hop it is waiting on. The
+    /// outbox is the seam that keeps a full lane from becoming a stall.
     fn emit(&self, frame: Frame) {
-        if let Err(refused) = self.out.offer(frame) {
-            // The agent's queue is full. Nothing here can wait — waiting is
-            // what turns a bounded queue unbounded — so the route is answered
-            // with a refusal rather than silently held.
-            self.reply_error(&refused.0, "agent queue refused this frame");
-        }
+        self.counts.emitted.fetch_add(1, Ordering::Relaxed);
+        let _ = self.outbox.send(frame);
     }
 
     fn reply_error(&self, carrier: &Frame, detail: &str) {
