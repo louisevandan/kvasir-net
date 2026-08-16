@@ -30,12 +30,37 @@ P4_AGENT_UNREACHABLE address=tcp://0.0.0.0:52001 peers=only-this-machine
 
 ### On macOS
 
-Whatever supervises the agent needs local-network access. A detached process
-becomes its own responsible process and does not inherit that grant; it still
-accepts connections, so it takes work normally and its replies go nowhere. An
-agent that receives requests while its caller reports no answer is showing this
-and not a fault in P4 — the counters say `consumed` rose and `forwarded` rose,
-and the machine has no outbound socket to the caller.
+The agent needs local-network access, and that grant is per binary rather than
+inherited. Until it is given, the agent still accepts connections — listening is
+not gated — so it takes work normally and its replies go nowhere. An agent that
+receives requests while its caller reports no answer is showing this and not a
+fault in P4: `consumed` and `forwarded` both rise while the machine has no
+outbound socket to the caller.
+
+Run it as a user LaunchAgent, which is what the node slots on these machines
+already do. It has to be the GUI domain — a process detached with `nohup` has
+no session that can raise the prompt, so it is refused with nothing to approve.
+
+```xml
+<!-- ~/Library/LaunchAgents/com.linkcpp.p4-agent.plist -->
+<key>ProgramArguments</key>
+<array>
+  <string>/Users/USER/.local/share/linkcpp-p4/p4-agent</string>
+  <string>0.0.0.0:52001</string>
+  <string>ADVERTISED_HOST</string>
+</array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ProcessType</key><string>Interactive</string>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.linkcpp.p4-agent.plist
+```
+
+The first outbound attempt puts `p4-agent` in System Settings → Privacy &
+Security → Local Network, where it has to be switched on once. The grant then
+survives restarts, including the ones `KeepAlive` performs.
 
 A node named against a backend not in that list is refused, because a placement
 mistake is the caller's to fix and a silent fallback would hide it.

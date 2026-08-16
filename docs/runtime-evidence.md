@@ -48,9 +48,26 @@ not gated, so it accepted work and answered into nothing. Run in the foreground
 of the SSH session — same binary, same host, same ports — it completed 100/100
 immediately.
 
-So a macOS deployment has to grant local-network access to whatever supervises
-the agent, and a macOS agent that receives work but whose replies never arrive
-should be checked there before anything in P4 is suspected.
+So a macOS agent that receives work but whose replies never arrive should be
+checked there before anything in P4 is suspected.
+
+It was then resolved rather than worked around, and the fix was again to
+inherit what the node role already had on those machines: a user LaunchAgent
+(`RunAtLoad`, `KeepAlive`, `ProcessType Interactive`) bootstrapped into the GUI
+domain, which is the only place the prompt can be raised. Bootstrapping alone
+did not grant access — the agent ran, listened, and still failed — until
+`p4-agent` was switched on in Privacy & Security → Local Network on both
+machines. Both then answered immediately.
+
+| Shape, every agent resident | Requests | Tokens each | Result |
+| --- | ---: | ---: | --- |
+| four stages, three OSes | 800 | 48 | 800/800 three times, 78,867-81,316 frames/s |
+| after killing a Mac agent mid-flight | 400 | 24 | 400/400 |
+
+The last row is worth its own line. `launchctl` revived the agent under a new
+pid, the grant survived the restart, and the chain's next run passed with no
+lost frame — which is the peer-restart invariant holding against a real process
+death rather than a simulated one.
 
 ## 2026-08-16: the v6 core carries an inference between two machines
 
