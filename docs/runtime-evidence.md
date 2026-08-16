@@ -1,5 +1,40 @@
 # Runtime evidence
 
+## 2026-08-16: the v6 core carries an inference between two machines
+
+First run of the rewritten communication layer off one host. An agent on
+`m42-server2` (192.168.0.29, Windows x64) and one on the development machine,
+with a chain spanning both: `stage-0` local, `tail-1` remote. Every prefill hop
+and every decode lap crossed the physical network.
+
+| Shape | Requests | Tokens each | Result |
+| --- | ---: | ---: | --- |
+| remote node only | 300 | 16 | 300/300, 45,293 frames/s |
+| chain over both machines | 400 | 24 | 400/400 three times, ~36,000 frames/s |
+
+Four claims held on every run: every request answered, none failed, every
+stream in order, one terminal per route.
+
+The binary was copied to the remote host's temp directory and run over SSH; the
+frames travelled inside SSH forwards rather than directly on 19311, because the
+remote host's firewall does not admit that port and opening it is a change to
+that machine rather than to this project. The hop is still a real one between
+two machines — what a firewall rule would remove is the SSH wrapper, not the
+network.
+
+That constraint produced the run's one instructive failure. With both agents
+advertising `127.0.0.1`, the chain completed its prefill and then stopped after
+exactly one token each: the last node's lap named `127.0.0.1:19312`, which on
+the remote host is the remote host's own loopback. Nothing listened there. The
+addresses in an envelope are absolute and a relay resolves nothing, so an
+advertised address that is not reachable *by its peers* is not an address —
+which is why `p4-agent` takes the advertised host as an argument, and why a
+fleet must pass it.
+
+Local verification behind these runs: three agents and a driver as separate
+processes, chains of one, two and three stages, twelve runs of 800 requests at
+48 tokens, 53,000-86,000 frames/s, no failing verdict.
+
 ## 2026-08-15: the terminal-stage access violation is corruption, not the churn or the oversubscription ratio
 
 The 2026-08-13 entry below recorded `exit_code=3221225477` (`0xC0000005`) on a
