@@ -42,9 +42,14 @@ function validateOfficialPin(manifest) {
   if (manifest.upstream_repository !== "https://github.com/ggml-org/llama.cpp.git") {
     throw new Error("compatibility manifest must name the official llama.cpp repository");
   }
-  const gitmodules = fs.readFileSync(path.join(repoRoot, ".gitmodules"), "utf8");
-  if (!gitmodules.includes("url = https://github.com/ggml-org/llama.cpp.git")) {
-    throw new Error("the upstream submodule must use the official ggml-org/llama.cpp URL");
+  // Asked of the clone itself rather than of a declaration about it. It used
+  // to read .gitmodules, which said what the submodule was supposed to be;
+  // upstream/ is now llama.cpp's own repository, so its origin is the fact.
+  const origin = runGit(["remote", "get-url", "origin"], upstreamDir).trim();
+  if (origin !== "https://github.com/ggml-org/llama.cpp.git") {
+    throw new Error(
+      `upstream/ must be a clone of the official ggml-org/llama.cpp, not ${origin}`,
+    );
   }
   const head = runGit(["rev-parse", "HEAD"], upstreamDir).trim();
   if (head !== manifest.upstream_commit) {
