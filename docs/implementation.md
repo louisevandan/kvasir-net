@@ -199,7 +199,7 @@ llama.cpp's own clone, ignored by this repository.
 | --- | --- |
 | `endpoint` | The least HTTP that reaches a backend, on the standard library: request framing, chunked and length-delimited bodies, SSE lines, and a status check. A non-2xx is a failure carrying the body's message — read as a stream instead, a `503 Loading model` looked like a request that completed having produced nothing. |
 | `chat` | The OpenAI-compatible surface: building a request, and reading a chunk. Reads `delta.content`, then `reasoning_content` when content is null, then the non-streamed shapes. A reasoning model streams its thinking under the second key, and reading only the first dropped every token of an answer. |
-| `plan` | What a load's plan means here: endpoint, model name, patience. Opaque everywhere else. |
+| `plan` | What a load's plan means here: endpoint, model name, patience, and — for a model split across devices — the role this node holds, its device, what it claims of it, and the shares held elsewhere. Opaque everywhere else. |
 | `session` | The impedance mismatch, and the reason it has its own file. P4 generates by lapping — a hop reports one token and the request comes round again — while the backend streams a whole completion down one connection. Asking for one token per hop would re-prefill on every lap. So the completion is requested once, read by a thread into a channel, and each hop takes the next token. The session counts what it has delivered, because the backend is the only thing that knows how far a sequence has got. |
 
 Four tests enforce that the crate stays detached: no build script, no `-sys` or
@@ -209,6 +209,22 @@ this form, so it is checked rather than intended.
 
 Cache verbs are refused by name: llama.cpp can save sequence state, but not
 through this surface, and a caller must be able to tell "not here" from "done".
+
+### A model larger than one card
+
+llama.cpp splits a model across devices itself, over its own RPC backend and
+with no patch to it. P4 gives each share a node so the placement is stated: a
+`worker` plan names a device and what it claims of it; a `front` plan names the
+same for itself and lists the shares held elsewhere. Both must bind before the
+deployment is executable, and only the front serves — a hop sent to a worker is
+refused by name, because a caller that could not tell would wait for tokens that
+were never coming.
+
+A worker is not probed. The one question TCP could answer it cannot answer
+usefully: a worker already serving a front refuses further connections, and that
+refusal is indistinguishable from an empty port. The front is the proof —
+llama.cpp will not start against an RPC device it cannot reach, nor answer
+across one that died.
 
 ## `entrypoints/agent` — the process
 

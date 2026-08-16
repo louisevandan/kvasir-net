@@ -1,5 +1,72 @@
 # Runtime evidence
 
+## 2026-08-16: one 35B model, two GPUs, a node on each
+
+The thing the layer was built for. A single model too large for either card
+alone, split across an RTX 4080 and an RTX 3090 in one machine, with a P4 node
+standing for each share and the placement stated in the plan rather than left
+to whatever llama.cpp decided.
+
+The deployment, and where each half runs:
+
+| Stage | Node | Role | Device | Declared | Process |
+| ---: | --- | --- | --- | ---: | --- |
+| 0 | `stage-0` | worker | CUDA1 (3090) | 23 GiB | `ggml-rpc-server -d CUDA1 -p 50052` |
+| 1 | `tail-1` | front | CUDA0 (4080) | 11 GiB | `llama-server --rpc 127.0.0.1:50052 -dev CUDA0,RPC0 -ts 11,23` |
+
+Model: `Ornith-1.0-35B-UD-Q5_K_S.gguf`, 23.2 GiB, one file on the NAS, loaded
+in 4m32s. Nothing of llama.cpp was patched; the binaries are a stock CUDA
+build and the distribution is upstream's own RPC backend.
+
+What the split came out as, held steady across every run:
+
+| Card | Budget | In use | Of which weights |
+| --- | ---: | ---: | ---: |
+| RTX 4080 | 11 GiB | 10.1 GiB | 8.0 GiB |
+| RTX 3090 | 23 GiB | 15.8 GiB | 15.4 GiB |
+
+Both inside their budget, and the 4080 is the binding one — the 3090 is under
+its ceiling because the model is only 23.2 GiB and the ratio was set 11:23.
+
+| Requests | Tokens each | Tokens returned | Elapsed | Result |
+| ---: | ---: | ---: | ---: | --- |
+| 4 | 24 | 92 | 4.4 s | 4/4, all four verdicts |
+| 8 | 64 | 504 | 15.5 s | 8/8, all four verdicts |
+| 4 | 48 | 188 | 6.4 s | 4/4, all four verdicts |
+| 16 | 96 | 1,520 | 36.2 s | 16/16, all four verdicts |
+
+Sampled during the 8×64 run, both cards compute: the 3090 reaches 64% and the
+4080 33%, alternating rather than one idling. The answers are real English —
+the driver now prints one, because four passing verdicts have twice before been
+consistent with zero tokens.
+
+### The load is a transaction over shares, and the inference is not
+
+A backend that spreads a model internally makes the load set and the inference
+chain different things. Both nodes load and both must bind; only the front
+serves. A hop addressed to the worker is refused by name rather than silently
+accepted, because a caller that could not tell would wait for tokens that were
+never coming.
+
+This cost the driver two pieces of vocabulary — `P4_DRIVE_PLAN_<n>` for a plan
+per stage, and `P4_DRIVE_SERVE` for which stages a chain visits. Both are stated
+rather than inferred: the alternative was the driver reading a plan to work out
+what a stage was for, and a plan is opaque above the adapter boundary.
+
+### The probe that could not work
+
+The front's load first checked each declared worker by opening a TCP connection
+to it. It failed on the healthy deployment: an RPC worker already serving a
+front refuses further connections, and on Windows that refusal is byte-identical
+to an empty port — `ConnectionRefused` either way. A check that cannot tell
+"held" from "absent" is worse than no check, because it fires exactly when
+nothing is wrong.
+
+What replaced it is where the evidence actually is. llama.cpp will not start
+against an RPC device it cannot reach and will not answer a token across one
+that died, so a front that serves is a deployment whose workers are present.
+The worker's load is the claim; the front's is the proof.
+
 ## 2026-08-16: a real inference crosses the network into a stock llama.cpp
 
 The entry below proved the adapter against a real model but over loopback, on

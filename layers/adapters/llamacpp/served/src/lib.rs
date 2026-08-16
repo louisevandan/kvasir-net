@@ -30,8 +30,8 @@ pub mod endpoint;
 pub mod plan;
 pub mod session;
 
-use p4_adapter::{Adapter, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
-use plan::Plan;
+use p4_adapter::{Adapter, Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
+use plan::{Plan, Role};
 use session::{Next, Session};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -78,29 +78,62 @@ impl LlamaCpp {
             deployment: deployment.clone(),
             stage: 0,
             percent: 50,
-            detail: format!("reaching {}:{}", parsed.endpoint.host, parsed.endpoint.port),
+            detail: format!(
+                "reaching {} at {}:{}",
+                parsed.share(),
+                parsed.endpoint.host,
+                parsed.endpoint.port
+            ),
         });
-        if let Err(error) = parsed.endpoint.get("/v1/models") {
+
+        // Only a front is asked anything. A worker speaks llama.cpp's RPC
+        // protocol rather than HTTP, and the one question TCP could answer —
+        // is something listening — it cannot answer usefully: an RPC worker
+        // serving a front refuses further connections, and a refusal from a
+        // busy worker is byte-identical to a refusal from an empty port. A
+        // probe that cannot tell "held" from "absent" is worse than none,
+        // because it fails on exactly the healthy deployment.
+        //
+        // What proves the shares are held is the front. llama.cpp will not
+        // start against an RPC device it cannot reach, and will not answer a
+        // token across one that died, so a front that serves is a deployment
+        // whose workers are present — verified where the evidence actually is.
+        if parsed.role == Role::Front
+            && let Err(error) = parsed.endpoint.get("/v1/models")
+        {
             return events.raise(Event::Failed {
                 deployment,
                 sequence: None,
-                detail: format!("backend not reachable: {error}"),
+                detail: format!("{} not reachable: {error}", parsed.share()),
             });
         }
+        for (index, worker) in parsed.workers.iter().enumerate() {
+            events.raise(Event::LoadProgress {
+                deployment: deployment.clone(),
+                stage: (index + 1) as u32,
+                percent: 100,
+                detail: format!("share held at {}:{}", worker.host, worker.port),
+            });
+        }
+
+        let allocations = vec![Allocation {
+            category: parsed.share(),
+            // The declared claim, not a measurement. The server owns its own
+            // memory and does not report a reservation through this surface,
+            // and a figure invented here would be worse than a declared one.
+            bytes: parsed.vram_gb.unwrap_or(0) * 1024 * 1024 * 1024,
+        }];
         *self.plan.lock().expect("plan lock") = Some(parsed);
         events.raise(Event::LoadProgress {
             deployment: deployment.clone(),
             stage: 0,
             percent: 100,
-            detail: "backend answering".into(),
+            detail: "share held".into(),
         });
         events.raise(Event::Loaded {
             deployment,
             generation: self.generation.fetch_add(1, Ordering::SeqCst) + 1,
-            // The server owns its own memory and does not report a reservation
-            // through this surface. Declaring a figure we did not measure would
-            // be worse than declaring none.
-            allocations: Vec::new(),
+            allocations,
         });
     }
 
@@ -112,6 +145,20 @@ impl LlamaCpp {
                 detail: "no plan: this node was never loaded".into(),
             });
         };
+        if plan.role == Role::Worker {
+            // Said rather than silently accepted. A worker holds a share and
+            // has no completions surface; work sent here was addressed to the
+            // wrong half of the deployment, and a caller that could not tell
+            // would wait for tokens that were never going to come.
+            return events.raise(Event::Failed {
+                deployment: hop.deployment,
+                sequence: hop.sequences.first().map(|s| s.sequence.clone()),
+                detail: format!(
+                    "this node holds {} and does not serve; address the front",
+                    plan.share()
+                ),
+            });
+        }
         let mut outcomes = Vec::with_capacity(hop.sequences.len());
         for sequence in &hop.sequences {
             outcomes.push(self.advance(&plan, sequence, hop.phase, events, &hop.deployment));

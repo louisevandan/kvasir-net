@@ -133,6 +133,48 @@ P4_DRIVE_UNREACHABLE address=tcp://0.0.0.0:52003 note=remote-stages-cannot-reply
 
 `P4_DRIVE_CEILING` sets the concurrency each load declares; it defaults to 32.
 
+## Splitting one model across two GPUs
+
+llama.cpp spreads a model over its own RPC backend, unpatched. Start a worker
+per extra device and one server that reaches them:
+
+```bash
+ggml-rpc-server -H 127.0.0.1 -p 50052 -d CUDA1
+```
+
+```bash
+llama-server -m MODEL.gguf --rpc 127.0.0.1:50052 -dev CUDA0,RPC0 -ngl 999 -ts 11,23 --port 18090
+```
+
+`-ts` is the ratio the shares are split in, and `--list-devices` after `--rpc`
+names the RPC device so `-dev` can pin what the server itself uses — without
+that it would take the second card twice, once directly and once through its
+worker.
+
+P4 gives each share a node, so a placement is stated rather than implied. The
+plans differ per stage, and only the front serves:
+
+```bash
+export P4_DRIVE_PLAN_0='{"role":"worker","device":"CUDA1","vram_gb":23,"endpoint":"127.0.0.1:50052"}'
+```
+
+```bash
+export P4_DRIVE_PLAN_1='{"role":"front","device":"CUDA0","vram_gb":11,"endpoint":"127.0.0.1:18090","workers":["127.0.0.1:50052"]}'
+```
+
+```bash
+P4_DRIVE_SERVE=1 p4-drive 0.0.0.0:52000 127.0.0.1:52001,127.0.0.1:52001 16 96 llamacpp 127.0.0.1:52000
+```
+
+`P4_DRIVE_SERVE` names the stages an inference visits — here stage 1 only,
+because stage 0 holds a share and has no completions surface. It must end at
+the last stage, which is the one created as the deployment's tail. Both stages
+still load, and both must bind.
+
+The run prints one answer beside the verdicts. That is deliberate: four passes
+are equally consistent with every token being empty, which a real backend has
+produced twice.
+
 ## Making the network bad on purpose
 
 ```bash

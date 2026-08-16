@@ -112,7 +112,7 @@ at which step a frame stopped existing.
 
 ## What the suite is, file by file
 
-293 tests. The count matters less than the split: the levels catch different
+305 tests. The count matters less than the split: the levels catch different
 things, and three defects in this layer survived every level but the fleet.
 
 | Where | Tests | What it holds |
@@ -122,9 +122,10 @@ things, and three defects in this layer survived every level but the fleet.
 | `p4-service` (unit) | 32 | Message encoding with explicit tags, the payload seam, the registry, the machine and status snapshots. |
 | `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. |
 | `p4-adapter` | 9 | The contract's own small logic, including which id a fork leaves state under. |
-| `p4-llamacpp` (unit) | 33 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour. |
+| `p4-llamacpp` (unit) | 38 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour. |
 | `p4-link` | 7 | That a declared impairment is deterministic and irregular, and adds rather than replaces. |
 | `p4-agent` | 6 | That the registry carries what this build claims and refuses what it does not. |
+| `p4-drive` | 7 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. |
 | `tests/simulation.rs` | 10 | Real agents on real sockets: chains of one, two and three stages; a crowd against a ceiling; batching; relay through an agent owning no node; ordering; concurrent chains; a failing backend. |
 | `tests/lifecycle.rs` | 8 | Load reported per stage, a declared ceiling, unload, a failing load, deadlines, cancellation. |
 | `tests/queues.rs` | 3 | The two-tier queue while the mock deliberately holds hops. Asserts **both** halves — node deep *and* lanes shallow — because node depth alone is equally satisfied by an agent that backed up with it. |
@@ -167,5 +168,14 @@ the others remains is not asserted: routes are spread across workers by hash,
 so the order they reach a node is not the order they were sent.
 
 **The verdicts alone miss** an answer that produced nothing: four passes are
-consistent with zero tokens. Any harness driving a real backend records the
-token count beside them.
+consistent with zero tokens. The driver now keeps one stream's text and prints
+it beside them, because the token count alone is also consistent with every
+token being an empty string.
+
+**Nothing below the fleet could have found** that the front's worker probe was
+wrong. Opening a TCP connection to a declared worker passes against a stub, a
+mock, and an idle port, and fails against the real deployment: llama.cpp's RPC
+worker refuses further connections while it is serving, and on Windows that is
+byte-identical to nothing listening. The test that would have caught it is the
+one that ran second — a probe passing on an empty port and failing on a working
+one is only visible once something is actually working.

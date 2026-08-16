@@ -22,6 +22,11 @@ use tokio::net::TcpListener;
 #[derive(Default, Clone, Debug)]
 pub struct Stream {
     pub tokens: Vec<u32>,
+    /// What the tokens actually said, kept so a run can show an answer rather
+    /// than only count one. Four passing verdicts are equally consistent with
+    /// every token being empty, which is a failure a real backend has already
+    /// produced twice here.
+    pub text: String,
     pub done: Option<u32>,
     pub failed: Option<String>,
     pub progress: usize,
@@ -62,7 +67,10 @@ impl Duties for Replies {
         let mut streams = self.streams.lock().expect("reply lock");
         let stream = streams.entry(frame.envelope.route.clone()).or_default();
         match reply {
-            Reply::Token { index, .. } => stream.tokens.push(index),
+            Reply::Token { index, text } => {
+                stream.tokens.push(index);
+                stream.text.push_str(&text);
+            }
             Reply::Done { generated, .. } => {
                 stream.done = Some(generated);
                 self.finished.fetch_add(1, SeqCst);
@@ -92,8 +100,10 @@ impl Duties for Replies {
 pub struct Session {
     agent: Arc<Agent>,
     replies: Replies,
-    /// What a load carries. Opaque here and read only by the backend.
-    plan: String,
+    /// What each stage's load carries, one per stage. Opaque here and read only
+    /// by the backend — the shares of a distributed deployment differ from each
+    /// other, and only the backend knows how.
+    plans: Vec<String>,
 }
 
 impl Session {
@@ -103,7 +113,7 @@ impl Session {
     pub async fn start(
         listen: &str,
         advertise: Option<&str>,
-        plan: String,
+        plans: Vec<String>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(listen).await?;
         let bound = listener.local_addr()?;
@@ -120,7 +130,7 @@ impl Session {
         Ok(Self {
             agent,
             replies,
-            plan,
+            plans,
         })
     }
 
@@ -215,7 +225,7 @@ impl Session {
                     // carries it rather than inventing one, because a plan is
                     // opaque above the adapter and inventing one here would be
                     // this tool knowing a backend.
-                    plan: self.plan.clone(),
+                    plan: self.plans[stage].clone(),
                     artifact: "model".into(),
                     ceiling,
                 }),
@@ -239,12 +249,23 @@ impl Session {
         Ok(())
     }
 
-    pub async fn infer(&self, chain: &[Address], requests: usize, tokens: u32) -> Outcome {
-        let links: Vec<Link> = chain
+    /// `serving` are the stages an inference actually visits, which is not
+    /// always all of them: a backend that spreads a model internally has shares
+    /// that must be loaded and have no completions surface, and a hop sent to
+    /// one is addressed to the wrong half of its own deployment.
+    pub async fn infer(
+        &self,
+        chain: &[Address],
+        serving: &[usize],
+        requests: usize,
+        tokens: u32,
+    ) -> Outcome {
+        let links: Vec<Link> = serving
             .iter()
-            .enumerate()
-            .map(|(stage, address)| Link {
-                address: address.clone(),
+            .map(|&stage| Link {
+                address: chain[stage].clone(),
+                // The name the node was created under, not its position in this
+                // chain — a stage that is skipped does not renumber the rest.
                 node: Self::node_of(stage, chain.len()),
                 binding: "deployment".into(),
                 generation: 1,
@@ -293,6 +314,11 @@ impl Session {
             out_of_order: streams.iter().filter(|s| !s.is_ordered()).count(),
             tokens: streams.iter().map(|s| s.tokens.len()).sum(),
             routes: self.streams().len(),
+            sample: streams
+                .iter()
+                .find(|stream| !stream.text.is_empty())
+                .map(|stream| stream.text.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -345,6 +371,10 @@ pub struct Outcome {
     pub out_of_order: usize,
     pub tokens: usize,
     pub routes: usize,
+    /// One answer, in full. Evidence rather than a verdict: a mock's is
+    /// simulated and says nothing, and a real backend's is the only thing that
+    /// distinguishes tokens from empty strings that were counted.
+    pub sample: String,
 }
 
 /// A driver receives every token of every request it sent, so its response
