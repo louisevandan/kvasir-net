@@ -1,5 +1,52 @@
 # Runtime evidence
 
+## 2026-08-17: crossing a machine boundary costs 3x, and not for bandwidth
+
+Four GPUs over two machines: an RTX 4080 and an RTX 3090 here, two RTX 3090s on
+a second box, joined by llama.cpp's RPC backend over 1 GbE. The link measures
+81 MB/s end to end. The question was whether the second machine buys throughput
+or only capacity.
+
+| Devices | Where | Requests | Aggregate |
+| ---: | --- | --- | ---: |
+| 2 | both local | 64 x 500 | 173.8 tok/s |
+| 2 | one across the network | 64 x 200 | 55.3 tok/s |
+| 4 | two across the network | 64 x 200 | 71.8 tok/s |
+| 4 | same, locals ordered first | 64 x 200 | 46.2 tok/s |
+
+The token counts differ between the first row and the rest — the like-for-like
+baseline was lost when its backend was torn down mid-run — so the exact ratio
+is not to be quoted. The direction is not in doubt: one crossing costs roughly
+three times, and adding a second remote device costs nothing on top of it. What
+is expensive is *whether* the boundary is crossed, not how many devices sit past
+it. Ordering the local devices first made it worse rather than better, which
+also says the cost is not a count of crossings.
+
+### It is not bandwidth, and the numbers are not close
+
+Sampled on the interface during generation: **2.5 MB/s in, 3.0 MB/s out** on a
+125 MB/s link, rising to 9 MB/s under the four-device run. Seven per cent, at
+worst.
+
+Nor could it be. A hidden state is one token wide: 2048 dimensions at two bytes
+is 4 KB, so a 64-sequence decode step moves 256 KB across a boundary. At 81 MB/s
+that is three milliseconds, and bandwidth would not bind until something over
+five thousand tokens a second.
+
+What the interface does show is **10,932 packets a second averaging 862 bytes**
+— about fifteen thousand exchanges per decode step. llama.cpp's RPC backend
+synchronises per graph operation rather than per boundary, so a machine boundary
+costs round trips in proportion to the graph, not to the data.
+
+### What that means for the layer
+
+This is the case P4's staged distribution exists for. A stage keeps its own KV
+and hands on one hidden state per step, so the boundary carries 256 KB once
+where llama.cpp's RPC carries almost nothing fifteen thousand times. The
+measurement does not make the staged adapter faster — it is still unwritten —
+but it does say plainly that no amount of tuning the RPC path will close this,
+and that four nodes joined this way are worth capacity rather than throughput.
+
 ## 2026-08-17: 83 to 172 tok/s, and three separate reasons it was not
 
 Measured against this machine's own record — 271.5 tok/s, set by the earlier

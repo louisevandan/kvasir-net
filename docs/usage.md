@@ -154,6 +154,11 @@ is trivially true if nothing ever queued, which is what `peak_node_queue` is
 there to rule out. `peak_main_lane` staying flat says the backlog lived on the
 node rather than in front of it, and `samples` says somebody actually looked.
 
+`P4_DRIVE_VARY` gives each request a prompt of its own, with a marker in front
+because a prompt cache matches on the longest common prefix. Off by default,
+and worth knowing which is being measured: one prompt sent many times measures
+a cache as much as a model.
+
 `P4_DRIVE_QUIET_MS` is how long nothing may arrive before the driver stops
 waiting; 30s by default. It bounds silence, not duration: a five-thousand-token
 answer takes as long as it takes. When the driver does stop, it says so above

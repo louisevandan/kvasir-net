@@ -100,6 +100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .and_then(|value| value.parse().ok())
             .unwrap_or(0),
     );
+    // Whether each request gets a prompt of its own. One prompt sent many
+    // times measures a cache as much as a model, and a warm server showed
+    // exactly that: sixty-four identical prompts matched its prompt cache at
+    // similarity 1.000 and each admission evicted a 143 MiB entry.
+    let vary = std::env::var("P4_DRIVE_VARY").is_ok_and(|value| value != "0");
     // What a deployment declares it admits at once. A real one states this
     // from what it measured; a driver that passed its own request count would
     // be declaring a ceiling nobody sized.
@@ -116,6 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         options,
         quiet,
         arrive,
+        vary,
     )
     .await?;
     println!(

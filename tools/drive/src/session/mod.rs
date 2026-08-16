@@ -42,6 +42,15 @@ pub struct Session {
     /// Gap between arrivals. Zero sends the whole run at once, which measures a
     /// backlog draining rather than one forming.
     arrive: Duration,
+    /// Whether each request gets a prompt of its own.
+    ///
+    /// Off measures one prompt many times, which is a cache as much as a
+    /// model: a warm `llama-server` matched all sixty-four identical prompts
+    /// against its prompt cache at similarity 1.000 and evicted a 143 MiB
+    /// entry to admit each one, taking eight to seventeen seconds apiece while
+    /// every connection sat established and every card idle. Real traffic does
+    /// not repeat itself, so this exists to say which is being measured.
+    vary: bool,
     /// What makes this run's route names its own.
     run: String,
 }
@@ -58,6 +67,7 @@ impl Session {
         options: String,
         quiet: Duration,
         arrive: Duration,
+        vary: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(listen).await?;
         let bound = listener.local_addr()?;
@@ -79,6 +89,7 @@ impl Session {
             options,
             quiet,
             arrive,
+            vary,
             // The clock, because it is monotonic across restarts on one machine
             // and this only has to separate one run from the last.
             run: format!(
@@ -111,6 +122,18 @@ impl Session {
     /// the thing it exists to check.
     fn route(&self, name: &str) -> String {
         format!("{}-{name}", self.run)
+    }
+
+    /// What request `index` asks.
+    ///
+    /// The marker goes first because a prompt cache matches on the longest
+    /// common prefix: appending would leave every request sharing all but its
+    /// last line, which is the case that thrashed.
+    fn ask(&self, index: usize) -> String {
+        match self.vary {
+            true => format!("Request {index}.\n\n{}", self.prompt),
+            false => self.prompt.clone(),
+        }
     }
 
     fn gave_up(&self, doing: &str) -> String {
@@ -198,7 +221,7 @@ impl Session {
                 &self.route(&format!("q{index}")),
                 Some(chain.clone()),
                 encode_to_node(&ToNode::Execute {
-                    prompt: self.prompt.clone(),
+                    prompt: self.ask(index),
                     max_tokens: tokens,
                     options: self.options.clone(),
                 }),
