@@ -92,6 +92,8 @@ impl Duties for Replies {
 pub struct Session {
     agent: Arc<Agent>,
     replies: Replies,
+    /// What a load carries. Opaque here and read only by the backend.
+    plan: String,
 }
 
 impl Session {
@@ -101,6 +103,7 @@ impl Session {
     pub async fn start(
         listen: &str,
         advertise: Option<&str>,
+        plan: String,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(listen).await?;
         let bound = listener.local_addr()?;
@@ -114,7 +117,11 @@ impl Session {
         );
         tokio::spawn(inbox::serve(listener, agent.queue(), 256));
         tokio::spawn(run(Arc::clone(&agent), receiver, in_flight));
-        Ok(Self { agent, replies })
+        Ok(Self {
+            agent,
+            replies,
+            plan,
+        })
     }
 
     pub fn address(&self) -> &Address {
@@ -203,7 +210,12 @@ impl Session {
                 &format!("load-{stage}"),
                 Some(single),
                 encode_to_node(&ToNode::Load {
-                    plan: r#"{"simulated":true}"#.into(),
+                    // A mock ignores this; a concrete backend reads it and is
+                    // the only thing that knows what it means. The driver
+                    // carries it rather than inventing one, because a plan is
+                    // opaque above the adapter and inventing one here would be
+                    // this tool knowing a backend.
+                    plan: self.plan.clone(),
                     artifact: "model".into(),
                     ceiling,
                 }),
@@ -212,8 +224,16 @@ impl Session {
         self.until(|| self.replies.bound.load(SeqCst) >= chain.len())
             .await;
         for stage in 0..chain.len() {
-            if !self.stream(&format!("load-{stage}")).bound {
-                return Err(format!("stage {stage} never bound").into());
+            let stream = self.stream(&format!("load-{stage}"));
+            if !stream.bound {
+                // The backend's own words. A driver that reported only "never
+                // bound" made every load failure look the same, which is the
+                // one thing an operator cannot work from.
+                return Err(format!(
+                    "stage {stage} never bound: {}",
+                    stream.failed.unwrap_or_else(|| "no answer".into())
+                )
+                .into());
             }
         }
         Ok(())

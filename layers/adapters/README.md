@@ -10,7 +10,7 @@ a backend is a name registered in
 | --- | --- | --- |
 | `mock/` | none — arithmetic | Implements the interface. Ships in every build, so a fleet can be loaded without hardware. |
 | `pipeline/` | llama.cpp, staged | Backend present (`upstream/`, `compat/`, `scripts/`); adapter not yet written. |
-| `llamacpp/` | llama.cpp, self-contained | Not yet written. |
+| `llamacpp/` | llama.cpp, self-contained | Written and proved against a Metal build serving Qwen2.5-1.5B. Speaks the OpenAI-compatible surface, so vLLM and SGLang are the same shape with a different process. |
 | `vllm/` | vLLM | Not yet written. |
 
 ## What a new adapter owes

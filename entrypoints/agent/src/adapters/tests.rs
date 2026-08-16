@@ -34,11 +34,27 @@ fn any_other_name_builds_a_backend_that_spreads_the_model_itself() {
 
 #[test]
 fn a_backend_this_build_does_not_carry_is_reported_missing() {
-    // Until llamacpp is registered here, naming it is a placement mistake
-    // rather than a silent fallback to whatever happens to be present.
+    // Naming a backend this build has no implementation for is a placement
+    // mistake, and the caller is the only one who can fix it — so it is
+    // refused rather than falling back to whatever happens to be present.
     let registry = registry();
-    assert!(!registry.knows("llamacpp"));
-    assert!(registry.build("llamacpp", "stage-0").is_none());
+    assert!(!registry.knows("vllm"));
+    assert!(registry.build("vllm", "stage-0").is_none());
+}
+
+/// llama.cpp is carried, and is the self-contained shape: one process holds
+/// the model, so a chain over it is one link whatever the node is called.
+#[test]
+fn llamacpp_is_attached_and_spreads_the_model_itself() {
+    let registry = registry();
+    assert!(registry.knows("llamacpp"));
+    for node in ["stage-0", "tail-1", "solo"] {
+        assert_eq!(
+            registry.build("llamacpp", node).unwrap().distribution(),
+            Distribution::Internal,
+            "{node} is one link"
+        );
+    }
 }
 
 #[test]

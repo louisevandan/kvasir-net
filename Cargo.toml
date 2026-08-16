@@ -5,6 +5,7 @@ members = [
     "layers/agent",
     "layers/service",
     "layers/adapters/mock",
+    "layers/adapters/llamacpp",
     "entrypoints/agent",
     "tools/drive",
     "tools/link",

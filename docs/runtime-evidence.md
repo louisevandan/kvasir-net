@@ -1,5 +1,44 @@
 # Runtime evidence
 
+## 2026-08-16: a real llama.cpp answers through P4
+
+The first inference this layer has carried that a model actually produced.
+`llama-server` from the Metal build on `mobimacui-Macmini-2`, holding
+Qwen2.5-1.5B-Instruct-Q8_0 with all layers offloaded and four slots, driven
+through an agent carrying the `llamacpp` adapter.
+
+| Requests | Tokens each | Result |
+| ---: | ---: | --- |
+| 4 | 16 | 4/4, 650 ms |
+| 8 | 24 | 8/8, 818 ms |
+| 16 | 32 | 16/16, 1,913 ms |
+| 32 | 32 | 32/32, 3,296 ms |
+
+All four verdicts on every run, and the server's own log shows the slots
+working — 531 slot lines, prompts processed, sequences released on stop. The
+throughput figures are a 1.5B model on a Mac mini and say nothing about this
+layer; what they establish is that the path is real.
+
+The fleet run found a defect the stub tests had not. Every token of an answer
+claimed the same position, so the ordering verdict failed while everything else
+passed. The adapter was reporting the position the node handed in, and a
+request does not carry its progress back down — the backend is the only thing
+that knows how far a sequence has got, which is why the mock counts it too.
+The adapter now counts what it has delivered, and the stub test pins it.
+
+Three things about the run are worth keeping. The prebuilt `llama-server` on
+that machine could not start: its `@rpath` pointed at a build directory that no
+longer exists and its `libllama-server-impl.dylib` lives in a different runtime
+tree. It was run from a copy with `@loader_path` added rather than by modifying
+anything installed.
+
+And the macOS local-network grant was lost by the upgrade, which corrects the
+correction in the entry below. Replacing the binary in place kept the grant
+when the rebuild produced the same program; a build that genuinely differs — a
+new crate linked in — arrives unapproved. The adapter was therefore proved over
+loopback on the Mac itself, where the gate does not apply, with the
+cross-machine path already established separately.
+
 ## 2026-08-16: the same fleet with the network made bad on purpose
 
 Everything before this ran on an idle gigabit LAN, where a hop costs almost

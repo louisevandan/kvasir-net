@@ -14,6 +14,9 @@
 //!   TOKENS      how many tokens each should generate
 //!   ADAPTER     which registered backend to create nodes on (default `mock`)
 //!   ADVERTISED  what the agents should reply to; required across machines
+//!
+//! `P4_DRIVE_PLAN` is the plan each load carries, for a concrete backend that
+//! needs to be told where it is. Defaults to a simulated one.
 
 mod report;
 mod session;
@@ -37,6 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Agents reply to what the driver called itself, so across machines this
     // has to be an address they can reach.
     let advertise = args.next();
+    // What a load carries to the backend. A mock ignores it; a concrete
+    // adapter reads it and is the only thing that knows what it means.
+    let plan =
+        std::env::var("P4_DRIVE_PLAN").unwrap_or_else(|_| r#"{"simulated":true}"#.to_owned());
     // What a deployment declares it admits at once. A real one states this
     // from what it measured; a driver that passed its own request count would
     // be declaring a ceiling nobody sized.
@@ -45,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(32);
 
-    let session = session::Session::start(&listen, advertise.as_deref()).await?;
+    let session = session::Session::start(&listen, advertise.as_deref(), plan).await?;
     println!(
         "P4_DRIVE_READY address={} stages={}",
         session.address(),

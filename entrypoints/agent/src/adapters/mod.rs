@@ -5,6 +5,7 @@
 //! above this line — envelope, queue, worker, node, chain — changes for any of
 //! them, which is the property the communication layer was built to have.
 
+use p4_llamacpp::LlamaCpp;
 use p4_mock::Mock;
 use p4_mock::profile::Profile;
 use p4_service::Registry;
@@ -29,15 +30,15 @@ pub fn registry() -> Registry {
     // backend would hide.
     registry.register_fn("mock-instant", |node| build(node, Profile::default()));
 
-    // ---------------------------------------------------------------------
-    // Concrete backends go here. Each is one registration:
+    // llama.cpp behind its OpenAI-compatible server: one process holding the
+    // whole model, so a chain over it is one link and the node name says
+    // nothing. Where the server is comes from the load's plan rather than from
+    // here, which is why attaching a backend is this line and an `Adapter`
+    // implementation — the claim the layer was built to make.
     //
-    //   registry.register_fn("llamacpp", |node| Arc::new(LlamaCpp::new(node)));
-    //   registry.register_fn("vllm", |node| Arc::new(Vllm::new(node)));
-    //
-    // A staged backend reads its chain position from the node name; an
-    // internal one ignores it, since it spreads the model itself.
-    // ---------------------------------------------------------------------
+    // vLLM and SGLang answer the same surface, so each is another line once
+    // there is a process to point it at.
+    registry.register_fn("llamacpp", |_| Arc::new(LlamaCpp::new()));
 
     registry
 }
