@@ -182,6 +182,19 @@ impl Mock {
     /// because a request does not carry its own progress back down — a backend
     /// holding a sequence open is what knows how far it has got.
     fn outcome(&self, sequence: &p4_adapter::Sequence) -> Outcome {
+        // Every stage holds this sequence's attention state for its own layer
+        // range — that is what pipeline parallelism is — so every stage counts
+        // it as resident. Only the last one counts tokens.
+        self.produced
+            .lock()
+            .expect("sequence progress lock")
+            .entry(sequence.sequence.clone())
+            .and_modify(|value| value.lifetime += 1)
+            .or_insert(Progress {
+                turn: 0,
+                lifetime: 1,
+            });
+
         if !self.terminal {
             // A middle stage advanced its share and has nothing to say about
             // the token. Counting here would make an n-stage chain produce n
@@ -194,12 +207,11 @@ impl Mock {
             };
         }
         let mut produced = self.produced.lock().expect("sequence progress lock");
+        // The lifetime was already counted above, for every stage. Here only
+        // the turn advances, because only the last stage produces tokens.
         let progress = produced
             .entry(sequence.sequence.clone())
-            .and_modify(|value| {
-                value.turn += 1;
-                value.lifetime += 1;
-            })
+            .and_modify(|value| value.turn += 1)
             .or_insert(Progress {
                 turn: 1,
                 lifetime: 1,
