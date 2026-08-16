@@ -81,6 +81,18 @@ P4_AGENT_TRAFFIC forwarded=87032 consumed=52 to_nodes=86930 unrouted=0 peers=0 w
 An agent that had carried eighty-seven thousand frames holding nothing open and
 expecting no reply, with resident memory a little below its peak under load.
 
+Both fixes were then rolled out to the three resident services and the fleet
+re-checked on them: four stages over Windows x64, macOS arm64, Linux aarch64
+and macOS arm64, 800 requests at 48 tokens, three times, 800/800 each at
+78,418-81,399 frames/s.
+
+The rollout corrected something recorded earlier in this file. Replacing the
+binary at the approved path did **not** cost the macOS local-network grant —
+the upgraded services answered immediately. What had been refused was a build
+run from a different path while the installed copy served normally at the same
+moment. The grant follows the installed executable, not the source it came
+from, and a second agent stood up elsewhere for a test needs its own.
+
 ## 2026-08-16: the layer builds and runs on three operating systems and two architectures
 
 Everything before this was Windows on x86-64. The source was copied to two Mac

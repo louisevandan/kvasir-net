@@ -62,11 +62,15 @@ The first outbound attempt puts `p4-agent` in System Settings → Privacy &
 Security → Local Network, where it has to be switched on once. The grant then
 survives restarts, including the ones `KeepAlive` performs.
 
-It does **not** survive replacing the binary. The grant is against the
-executable, so an upgrade arrives unapproved and the new agent takes work and
-answers into nothing — the same symptom, now on a deployment that was working
-five minutes ago. A macOS rollout has to include re-approving the agent, and
-is worth checking before anything in P4 is suspected.
+It survives replacing the binary at that path: an upgrade installed over
+`~/.local/share/linkcpp-p4/p4-agent` kept working without being approved again.
+
+It does not extend to a copy somewhere else. A build run straight out of a
+working tree was refused while the installed copy was serving normally at the
+same moment — same source, same machine, different path. So a second agent
+stood up for a test needs its own approval, and a macOS agent that takes work
+and answers into nothing is worth checking here before anything in P4 is
+suspected.
 
 ### On Linux
 
