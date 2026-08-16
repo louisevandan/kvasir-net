@@ -23,11 +23,12 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const REMOTE = "https://github.com/ggml-org/llama.cpp.git";
-const adapterRoot = path.resolve(
+const backendRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
+  "..",
 );
-const upstreamDir = path.join(adapterRoot, "upstream");
+const upstreamDir = path.join(backendRoot, "upstream");
 
 function git(args, cwd = upstreamDir) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });

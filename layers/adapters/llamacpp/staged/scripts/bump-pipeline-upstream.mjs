@@ -3,7 +3,7 @@
 // Replays the compatibility patch series onto a newer official llama.cpp
 // commit and records the result as a new compat/<sha9>/ directory.
 //
-//   node apps/p4/layers/adapters/pipeline/scripts/bump-pipeline-upstream.mjs <ref> [--apply] [--from <sha9>]
+//   node apps/p4/layers/adapters/llamacpp/staged/scripts/bump-pipeline-upstream.mjs <ref> [--apply] [--from <sha9>]
 //
 // Without --apply this only reports, per patch, whether it still applies.
 // The submodule pin is never moved here: moving it changes what everyone
@@ -20,10 +20,13 @@ import { nextManifest, parseArguments, summarize } from "./upstream/manifest.mjs
 
 // upstream/ and compat/ are siblings of this script inside the adapter that
 // owns them, so they are located from here rather than from the repository.
-const adapterRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = path.resolve(adapterRoot, "../../../../..");
-const upstreamDir = path.join(adapterRoot, "upstream");
-const compatibilityRoot = path.join(adapterRoot, "compat");
+// This shape of the llama.cpp adapter; the clone it patches belongs to the
+// backend rather than to one shape of it, so it sits a level up.
+const shapeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const backendRoot = path.resolve(shapeRoot, "..");
+const repoRoot = path.resolve(backendRoot, "../../../../..");
+const upstreamDir = path.join(backendRoot, "upstream");
+const compatibilityRoot = path.join(shapeRoot, "compat");
 
 function git(args, cwd, { binary = false, allowFailure = false } = {}) {
   const result = spawnSync("git", args, {
@@ -162,8 +165,8 @@ try {
     const written = record(target, identity, sourceDirectory, manifest, worktree);
     console.log(`\nrecorded ${path.relative(repoRoot, written)}`);
     console.log("next, adopt the pin and rebuild:");
-    console.log(`  git -C apps/p4/layers/adapters/pipeline/upstream checkout ${target}`);
-    console.log("  node apps/p4/layers/adapters/pipeline/scripts/prepare-pipeline-upstream.mjs");
+    console.log(`  git -C apps/p4/layers/adapters/llamacpp/upstream checkout ${target}`);
+    console.log("  node apps/p4/layers/adapters/llamacpp/staged/scripts/prepare-pipeline-upstream.mjs");
     console.log("  npm run check:pipeline-contract --workspace apps/llama");
   }
 } finally {

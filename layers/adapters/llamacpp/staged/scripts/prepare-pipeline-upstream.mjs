@@ -8,10 +8,13 @@ import { fileURLToPath } from "node:url";
 
 // upstream/ and compat/ are siblings of this script inside the adapter that
 // owns them, so they are located from here rather than from the repository.
-const adapterRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = path.resolve(adapterRoot, "../../../../..");
-const upstreamDir = path.join(adapterRoot, "upstream");
-const compatibilityRoot = path.join(adapterRoot, "compat");
+// This shape of the llama.cpp adapter; the clone it patches belongs to the
+// backend rather than to one shape of it, so it sits a level up.
+const shapeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const backendRoot = path.resolve(shapeRoot, "..");
+const repoRoot = path.resolve(backendRoot, "../../../../..");
+const upstreamDir = path.join(backendRoot, "upstream");
+const compatibilityRoot = path.join(shapeRoot, "compat");
 
 function runGit(args, cwd, binary = false) {
   const result = spawnSync("git", args, {
