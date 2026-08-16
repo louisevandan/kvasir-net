@@ -59,15 +59,24 @@ did not grant access — the agent ran, listened, and still failed — until
 `p4-agent` was switched on in Privacy & Security → Local Network on both
 machines. Both then answered immediately.
 
+The Linux host was then given the equivalent — a systemd user service with
+lingering, which needs no root and has no permission to grant, macOS's gate
+having no counterpart there. Every non-Windows agent in the runs below is a
+service its operating system started, not a process held open by an SSH
+session.
+
 | Shape, every agent resident | Requests | Tokens each | Result |
 | --- | ---: | ---: | --- |
 | four stages, three OSes | 800 | 48 | 800/800 three times, 78,867-81,316 frames/s |
+| the same, GB10 under systemd | 800 | 48 | 800/800, 78,266 frames/s |
 | after killing a Mac agent mid-flight | 400 | 24 | 400/400 |
+| after restarting the GB10 service | 400 | 24 | 400/400 |
 
-The last row is worth its own line. `launchctl` revived the agent under a new
-pid, the grant survived the restart, and the chain's next run passed with no
-lost frame — which is the peer-restart invariant holding against a real process
-death rather than a simulated one.
+The last two rows are worth their own line. The supervisor revived each agent
+under a new pid — `launchctl` with the macOS grant intact, `systemctl` on the
+Linux host — and the chain's next run passed with no lost frame. That is the
+peer-restart invariant holding against a real process death rather than a
+simulated one, on two different init systems.
 
 ## 2026-08-16: the v6 core carries an inference between two machines
 

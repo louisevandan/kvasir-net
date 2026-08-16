@@ -62,6 +62,28 @@ The first outbound attempt puts `p4-agent` in System Settings → Privacy &
 Security → Local Network, where it has to be switched on once. The grant then
 survives restarts, including the ones `KeepAlive` performs.
 
+### On Linux
+
+A systemd user service, with lingering so it does not need a login session:
+
+```ini
+# ~/.config/systemd/user/p4-agent.service
+[Service]
+ExecStart=%h/.local/share/linkcpp-p4/p4-agent 0.0.0.0:52001 ADVERTISED_HOST
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now p4-agent.service
+loginctl enable-linger "$USER"
+```
+
+Neither step needs root, and there is no permission to grant — the gate that
+macOS applies has no counterpart here.
+
 A node named against a backend not in that list is refused, because a placement
 mistake is the caller's to fix and a silent fallback would hide it.
 
