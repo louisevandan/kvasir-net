@@ -1,13 +1,23 @@
-# Concrete adapter layer
+# The adapter contract, and everyone who implements it
 
-Each directory here serves one backend by implementing
-[`p4-adapter`](../adapter). Nothing above this layer changes when one is added:
-a backend is a name registered in
+[`adapter/`](adapter) is the contract: what a node asks of a backend. It
+depends on nothing at all, not even the protocol — an adapter reaching for a P4
+type is reaching past its own contract, and having no dependency to reach
+through is what makes that a compile error rather than a convention.
+
+Every other directory is a backend implementing it. Nothing above this layer
+changes when one is added: a backend is a name registered in
 [`entrypoints/agent/src/adapters`](../../entrypoints/agent/src/adapters) and an
 `Adapter` implementation, and that is the whole cost.
 
+The contract sits here rather than beside `agent/` and `protocol/` so that
+`adapters/` is self-describing — the thing to implement and the things that
+implement it, in one place. What it must not gain is a dependency on any of
+them.
+
 | Path | Backend | State |
 | --- | --- | --- |
+| `adapter/` | none — the contract | Zero dependencies. The one file every backend below is written against. |
 | `mock/` | none — arithmetic | Implements the interface. Ships in every build, so a fleet can be loaded without hardware. |
 | `llamacpp/served/` | llama.cpp, self-contained | Written and proved against a Metal build serving Qwen2.5-1.5B. Speaks the OpenAI-compatible surface, so vLLM and SGLang are the same shape with a different process. |
 | `llamacpp/staged/` | llama.cpp, split across machines | Patch series and preparation script present; the adapter itself is not written. |

@@ -22,7 +22,7 @@ This is the whole of it:
 registry.register_fn("llamacpp", |node| Arc::new(LlamaCpp::new(node)));
 ```
 
-plus one implementation of [`p4_adapter::Adapter`](layers/adapter). Nothing
+plus one implementation of [`p4_adapter::Adapter`](layers/adapters/adapter). Nothing
 else changes — not the wire, not the queue, not the worker, not the node, not
 the chain. See [layers/adapters/README.md](layers/adapters/README.md) for what
 an adapter owes and for the backend HTTP contracts.
@@ -48,10 +48,9 @@ and the reverse puts it here.
 | Path | What it is |
 | --- | --- |
 | [`layers/protocol`](layers/protocol) | The wire. An envelope every hop reads and a body only its destination does. |
-| [`layers/adapter`](layers/adapter) | What a node asks of a backend. No dependencies, no backend names. |
 | [`layers/agent`](layers/agent) | The core: one queue, workers, nodes, chains. |
 | [`layers/service`](layers/service) | Body vocabulary, the agent's own duties, and the adapter registry. |
-| [`layers/adapters`](layers/adapters) | Concrete adapters. `mock` ships in every build. |
+| [`layers/adapters`](layers/adapters) | The contract and everyone who implements it: [`adapter/`](layers/adapters/adapter) is what a node asks of a backend, with no dependencies and no backend names; the rest are backends. `mock` ships in every build. |
 | [`entrypoints/agent`](entrypoints/agent) | The process. |
 | [`tools/drive`](tools/drive) | Drives a fleet and reports a verdict. |
 

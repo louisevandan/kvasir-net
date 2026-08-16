@@ -30,7 +30,7 @@ What breaks if each goes. Most of these are here because they broke once.
 ## Boundaries
 
 `layers/protocol` knows no backend and no message vocabulary — an envelope and
-a frame. `layers/adapter` depends on nothing at all, including the protocol: an
+a frame. `layers/adapters/adapter` depends on nothing at all, including the protocol: an
 adapter reaching for a P4 type is reaching past its own contract.
 `layers/agent` routes opaque bodies and reads them only through the `Payload`
 seam a deployment supplies.

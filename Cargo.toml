@@ -1,9 +1,9 @@
 [workspace]
 members = [
     "layers/protocol",
-    "layers/adapter",
     "layers/agent",
     "layers/service",
+    "layers/adapters/adapter",
     "layers/adapters/mock",
     "layers/adapters/llamacpp/served",
     "entrypoints/agent",
