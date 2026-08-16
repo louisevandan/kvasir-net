@@ -25,12 +25,19 @@ pub fn print(outcome: &Outcome, elapsed: Duration, requests: usize, tokens: u32)
     if !outcome.stalled.is_empty() {
         println!("  stalled_at_tokens={:?}", outcome.stalled);
     }
+    // Said before the verdicts, because it changes what they mean. A run the
+    // driver walked away from has not shown the deployment failing; it has
+    // shown the driver stopping, and the two must never read the same.
+    if outcome.quiet {
+        println!("  NOTE the driver stopped waiting; the verdicts below are incomplete");
+    }
     // Not a verdict. A run against a real backend has passed all four of these
     // while generating nothing at all — once because a 503 read as a stream
     // that ended, once because the model streamed its tokens under a key the
     // adapter did not read. The words are what tell those apart.
     if !outcome.sample.is_empty() {
-        println!("  answer: {}", outcome.sample.replace('\n', "\n          "));
+        println!("  answer_chars={} first:", outcome.sample.chars().count());
+        println!("    {}", head(&outcome.sample, 240));
     }
     verdict("every request answered", outcome.unanswered == 0);
     verdict("no request failed", outcome.failed == 0);
@@ -43,4 +50,18 @@ pub fn print(outcome: &Outcome, elapsed: Duration, requests: usize, tokens: u32)
 
 fn verdict(claim: &str, held: bool) {
     println!("  [{}] {claim}", if held { "pass" } else { "FAIL" });
+}
+
+/// The opening of an answer, on one line. A five-thousand-token answer is
+/// evidence that tokens were real, not something to read in a terminal.
+fn head(text: &str, chars: usize) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let mut kept: String = flat.chars().take(chars).collect();
+    if flat.chars().count() > chars {
+        kept.push('…');
+    }
+    kept
 }

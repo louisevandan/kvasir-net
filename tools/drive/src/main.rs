@@ -25,6 +25,16 @@
 //! has shares that must be loaded and serve nothing, and stating which stages
 //! serve keeps the plan opaque here: the alternative is this tool reading a
 //! plan to work out what a stage is for, which is the one thing it must not do.
+//!
+//! `P4_DRIVE_PROMPT_FILE` (or `P4_DRIVE_PROMPT`) is what every request asks,
+//! and `P4_DRIVE_OPTIONS` is the generation settings merged into it. A real
+//! profile is a long prompt against a long answer, and a prompt sized in
+//! thousands of tokens comes from a file so that what was measured is exactly
+//! what was sent.
+//!
+//! `P4_DRIVE_QUIET_MS` is how long nothing may arrive before the driver stops
+//! waiting; 30s by default. It is not a budget for the run — an answer takes as
+//! long as it takes, and what says something is wrong is silence, not duration.
 
 mod report;
 mod session;
@@ -32,7 +42,7 @@ mod session;
 mod tests;
 
 use p4_protocol::Address;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -60,6 +70,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
     let serving = serving(std::env::var("P4_DRIVE_SERVE").ok().as_deref(), chain.len())?;
+    // What every request asks, and how it should be generated. A real profile
+    // is a long prompt against a long answer, and neither fits on a command
+    // line — the prompt comes from a file so its size is exactly what was
+    // measured rather than whatever survived a shell.
+    let prompt = match std::env::var("P4_DRIVE_PROMPT_FILE") {
+        Ok(path) => std::fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {path}: {error}"))?,
+        Err(_) => {
+            std::env::var("P4_DRIVE_PROMPT").unwrap_or_else(|_| "simulated prompt".to_owned())
+        }
+    };
+    let options = std::env::var("P4_DRIVE_OPTIONS").unwrap_or_else(|_| "{}".to_owned());
+    // How long nothing may arrive before the driver stops waiting. Not a
+    // budget for the run: a five-thousand-token answer takes as long as it
+    // takes, and what says something is wrong is silence, not duration.
+    let quiet = Duration::from_millis(
+        std::env::var("P4_DRIVE_QUIET_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30_000),
+    );
     // What a deployment declares it admits at once. A real one states this
     // from what it measured; a driver that passed its own request count would
     // be declaring a ceiling nobody sized.
@@ -68,12 +99,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(32);
 
-    let session = session::Session::start(&listen, advertise.as_deref(), plans).await?;
+    let session =
+        session::Session::start(&listen, advertise.as_deref(), plans, prompt, options, quiet)
+            .await?;
     println!(
-        "P4_DRIVE_READY address={} stages={} serving={}",
+        "P4_DRIVE_READY address={} stages={} serving={} prompt_bytes={}",
         session.address(),
         chain.len(),
-        serving.len()
+        serving.len(),
+        session.prompt_bytes()
     );
     if session.address().is_local_only() && chain.iter().any(|stage| !stage.is_local_only()) {
         println!(

@@ -1,5 +1,54 @@
 # Runtime evidence
 
+## 2026-08-16: the same two GPUs under a real session shape
+
+The runs below were sixty-four tokens against a three-word prompt, which is a
+correctness shape, not a workload. This is the workload: a 4,983-token prompt
+against a 5,000-token answer, on sessions provisioned with 15,360 tokens of
+context each — enough for both plus headroom.
+
+Provisioning changed with it. `-c 61440 --parallel 4` gives four slots of
+15,360; at 80 KiB of KV per token that is 4.7 GiB of cache, up from 0.64 GiB,
+so the split moved to `-ts 9,25` to keep the smaller card inside its budget.
+The model is `qwen35moe`: 40 layers, 2 KV heads, head dimension 256.
+
+| Card | Budget | In use |
+| --- | ---: | ---: |
+| RTX 4080 | 11 GiB | 8.6 GiB |
+| RTX 3090 | 23 GiB | 18.3 GiB |
+
+| Sessions | Tokens returned | Elapsed | Aggregate | Per session | Result |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 4,998 | 85.3 s | 58.6 tok/s | 58.6 tok/s | all four verdicts |
+| 2 | 9,996 | 152.4 s | 65.6 tok/s | 32.8 tok/s | all four verdicts |
+| 4 | 19,992 | 241.0 s | 83.0 tok/s | 20.8 tok/s | all four verdicts |
+
+Concurrency helps here rather than inverting as it did on the MI250, but it
+helps weakly: doubling to two sessions buys 12%, and four buy 42% over one.
+Each session's own rate falls almost in proportion to the number of them —
+58.6, 32.8, 20.8 — which is what a scheduler stepping every session together
+looks like. Whether the ceiling is the RPC hop, the decode ring's round trip
+per token, or llama.cpp's batching is not answered by these three rows, and
+they are not enough to claim one.
+
+### Two defects, both in the harness
+
+Neither was in the layer, and neither could appear until a run was long.
+
+The driver waited a fixed three thousand polls. Ample at sixty-four tokens; at
+five thousand it ran out at token 4,695 and reported a stall, while the backend
+went on to finish all 5,000 normally 5 seconds later. A harness that reports the
+moment its own patience expired as a defect in the thing it is measuring is
+worse than no harness. Waiting is now bounded by silence — nothing arriving for
+30s — and when the driver does stop, it says so above the verdicts, because
+"we stopped watching" and "the deployment stopped working" are different claims.
+
+Then routes were named `q0`, `q1`, … in every run. The abandoned inference above
+was still generating into the driver's address, so the next run on the same port
+collected its leftovers too: 5,232 tokens for a 5,000-token request, and an
+ordering failure reported against a layer that had ordered them correctly. Route
+names now carry the run that made them.
+
 ## 2026-08-16: one 35B model, two GPUs, a node on each
 
 The thing the layer was built for. A single model too large for either card

@@ -1,101 +1,25 @@
 //! An OUTER session against a fleet.
 //!
-//! Holds the agent that receives replies, and the record of what came back per
-//! route. Every step is a message: nothing here reaches inside an agent.
+//! The steps of a run — create, load, infer — each of them a message. Nothing
+//! here reaches inside an agent. What came back is next door, in `replies`.
 
-use p4_agent_core::agent::{Agent, Duties, run};
+mod replies;
+
+pub use replies::{Outcome, Stream};
+
+use p4_agent_core::agent::{Agent, run};
 use p4_agent_core::queue::lane::{Budget, Lanes};
 use p4_agent_core::transport::inbox;
 use p4_protocol::frame::Frame;
 use p4_protocol::{Address, Chain, Envelope, Link, QueueClass, Recipient};
 use p4_service::Bodies;
-use p4_service::message::wire::{decode_reply, encode_to_agent, encode_to_node};
-use p4_service::message::{Reply, ToAgent, ToNode};
-use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
+use p4_service::message::wire::{encode_to_agent, encode_to_node};
+use p4_service::message::{ToAgent, ToNode};
+use replies::Replies;
+use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
-
-/// What a route produced.
-#[derive(Default, Clone, Debug)]
-pub struct Stream {
-    pub tokens: Vec<u32>,
-    /// What the tokens actually said, kept so a run can show an answer rather
-    /// than only count one. Four passing verdicts are equally consistent with
-    /// every token being empty, which is a failure a real backend has already
-    /// produced twice here.
-    pub text: String,
-    pub done: Option<u32>,
-    pub failed: Option<String>,
-    pub progress: usize,
-    pub bound: bool,
-    pub released: bool,
-    pub accepted: bool,
-}
-
-impl Stream {
-    pub fn is_finished(&self) -> bool {
-        self.done.is_some() || self.failed.is_some()
-    }
-
-    /// Whether the tokens arrived in the order they were produced. The one
-    /// thing a caller cannot check any other way.
-    pub fn is_ordered(&self) -> bool {
-        self.tokens.windows(2).all(|pair| pair[0] < pair[1])
-    }
-}
-
-#[derive(Default, Clone)]
-struct Replies {
-    streams: Arc<Mutex<HashMap<String, Stream>>>,
-    /// Counted as replies land, so waiting on progress never has to walk the
-    /// streams. Polling by cloning them held the same lock the recording path
-    /// needs, and got slower as the tokens it was counting accumulated — the
-    /// measurement starving the thing it measured.
-    finished: Arc<AtomicUsize>,
-    bound: Arc<AtomicUsize>,
-    accepted: Arc<AtomicUsize>,
-}
-
-impl Duties for Replies {
-    fn handle(&self, frame: Frame, _: &Arc<Agent>) {
-        let Ok(reply) = decode_reply(&frame.body) else {
-            return;
-        };
-        let mut streams = self.streams.lock().expect("reply lock");
-        let stream = streams.entry(frame.envelope.route.clone()).or_default();
-        match reply {
-            Reply::Token { index, text } => {
-                stream.tokens.push(index);
-                stream.text.push_str(&text);
-            }
-            Reply::Done { generated, .. } => {
-                stream.done = Some(generated);
-                self.finished.fetch_add(1, SeqCst);
-            }
-            Reply::Failed { detail } => {
-                stream.failed = Some(detail);
-                self.finished.fetch_add(1, SeqCst);
-            }
-            Reply::Progress { .. } => stream.progress += 1,
-            Reply::Bound { .. } => {
-                stream.bound = true;
-                self.bound.fetch_add(1, SeqCst);
-            }
-            Reply::Released => stream.released = true,
-            Reply::Accepted { .. } => {
-                stream.accepted = true;
-                self.accepted.fetch_add(1, SeqCst);
-            }
-            // Facts about a machine, what an agent is doing, and what became of
-            // a cached sequence: each is asked for deliberately and read where
-            // it was asked for, not here.
-            Reply::Machine { .. } | Reply::Status { .. } | Reply::Cached { .. } => {}
-        }
-    }
-}
 
 pub struct Session {
     agent: Arc<Agent>,
@@ -104,6 +28,17 @@ pub struct Session {
     /// by the backend — the shares of a distributed deployment differ from each
     /// other, and only the backend knows how.
     plans: Vec<String>,
+    /// What every request asks. One prompt for all of them: a driver measures a
+    /// deployment under a shape of work, and varying the prompt would vary the
+    /// thing being measured.
+    prompt: String,
+    /// Sampling and generation settings, merged into the backend's request.
+    /// Opaque here for the same reason a plan is.
+    options: String,
+    /// How long nothing may arrive before the driver stops waiting.
+    quiet: Duration,
+    /// What makes this run's route names its own.
+    run: String,
 }
 
 impl Session {
@@ -114,6 +49,9 @@ impl Session {
         listen: &str,
         advertise: Option<&str>,
         plans: Vec<String>,
+        prompt: String,
+        options: String,
+        quiet: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(listen).await?;
         let bound = listener.local_addr()?;
@@ -131,11 +69,49 @@ impl Session {
             agent,
             replies,
             plans,
+            prompt,
+            options,
+            quiet,
+            // The clock, because it is monotonic across restarts on one machine
+            // and this only has to separate one run from the last.
+            run: format!(
+                "r{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|since| since.as_millis())
+                    .unwrap_or_default()
+            ),
         })
     }
 
     pub fn address(&self) -> &Address {
         self.agent.address()
+    }
+
+    /// Bytes, not tokens. This tool cannot count tokens without knowing the
+    /// backend's tokeniser, and guessing a number that reads as authoritative
+    /// is worse than reporting the one it actually knows.
+    pub fn prompt_bytes(&self) -> usize {
+        self.prompt.len()
+    }
+
+    /// A route name nobody else will pick.
+    ///
+    /// Agents outlive drivers, and an inference outlives a driver that walked
+    /// away from it. Reusing `q0` across runs merged one run's leftover tokens
+    /// into the next run's stream, which showed up as an ordering failure in a
+    /// layer that had ordered them correctly — the tool inventing a defect in
+    /// the thing it exists to check.
+    fn route(&self, name: &str) -> String {
+        format!("{}-{name}", self.run)
+    }
+
+    fn gave_up(&self, doing: &str) -> String {
+        format!(
+            "gave up {doing}: nothing arrived for {:?}. This is the driver's \
+             patience, not a verdict on the deployment",
+            self.quiet
+        )
     }
 
     fn stream(&self, route: &str) -> Stream {
@@ -178,7 +154,7 @@ impl Session {
                 address.clone(),
                 Recipient::Agent,
                 QueueClass::Control,
-                &format!("create-{stage}"),
+                &self.route(&format!("create-{stage}")),
                 None,
                 encode_to_agent(&ToAgent::CreateNode {
                     node: Self::node_of(stage, chain.len()),
@@ -186,10 +162,14 @@ impl Session {
                 }),
             )?;
         }
-        self.until(|| self.replies.accepted.load(SeqCst) >= chain.len())
-            .await;
+        if !self
+            .until(|| self.replies.accepted.load(SeqCst) >= chain.len())
+            .await
+        {
+            return Err(self.gave_up("creating nodes").into());
+        }
         for stage in 0..chain.len() {
-            let stream = self.stream(&format!("create-{stage}"));
+            let stream = self.stream(&self.route(&format!("create-{stage}")));
             if !stream.accepted {
                 return Err(format!(
                     "stage {stage} refused the node: {}",
@@ -217,7 +197,7 @@ impl Session {
                 address.clone(),
                 Recipient::node(Self::node_of(stage, chain.len())),
                 QueueClass::Control,
-                &format!("load-{stage}"),
+                &self.route(&format!("load-{stage}")),
                 Some(single),
                 encode_to_node(&ToNode::Load {
                     // A mock ignores this; a concrete backend reads it and is
@@ -231,10 +211,14 @@ impl Session {
                 }),
             )?;
         }
-        self.until(|| self.replies.bound.load(SeqCst) >= chain.len())
-            .await;
+        if !self
+            .until(|| self.replies.bound.load(SeqCst) >= chain.len())
+            .await
+        {
+            return Err(self.gave_up("loading").into());
+        }
         for stage in 0..chain.len() {
-            let stream = self.stream(&format!("load-{stage}"));
+            let stream = self.stream(&self.route(&format!("load-{stage}")));
             if !stream.bound {
                 // The backend's own words. A driver that reported only "never
                 // bound" made every load failure look the same, which is the
@@ -282,23 +266,24 @@ impl Session {
                 entry.clone(),
                 Recipient::node(node.clone()),
                 QueueClass::Prefill,
-                &format!("q{index}"),
+                &self.route(&format!("q{index}")),
                 Some(chain.clone()),
                 encode_to_node(&ToNode::Execute {
-                    prompt: "simulated prompt".into(),
+                    prompt: self.prompt.clone(),
                     max_tokens: tokens,
-                    options: "{}".into(),
+                    options: self.options.clone(),
                 }),
             );
         }
         // A counter, not a walk of the streams: walking them held the lock the
         // recording path needs, and grew with the tokens it was counting.
         let already = self.replies.finished.load(SeqCst);
-        self.until(|| self.replies.finished.load(SeqCst) >= already + requests)
+        let waited = self
+            .until(|| self.replies.finished.load(SeqCst) >= already + requests)
             .await;
 
         let streams: Vec<Stream> = (0..requests)
-            .map(|index| self.stream(&format!("q{index}")))
+            .map(|index| self.stream(&self.route(&format!("q{index}"))))
             .collect();
         let stalled: Vec<usize> = streams
             .iter()
@@ -319,6 +304,7 @@ impl Session {
                 .find(|stream| !stream.text.is_empty())
                 .map(|stream| stream.text.clone())
                 .unwrap_or_default(),
+            quiet: !waited,
         }
     }
 
@@ -347,34 +333,31 @@ impl Session {
             .map_err(|_| "the driver's own queue refused a frame".into())
     }
 
-    /// Waits on the condition rather than on a duration, with a ceiling that
-    /// only bounds a failure.
-    async fn until(&self, mut done: impl FnMut() -> bool) {
-        for _ in 0..3_000 {
+    /// Waits for a condition, giving up only once nothing at all is arriving.
+    ///
+    /// `false` means the driver stopped waiting, which is not the same claim as
+    /// the deployment having stalled — and the difference is the whole reason
+    /// this is written against progress rather than a count of polls. A fixed
+    /// ceiling was fine while runs generated sixty-four tokens and became a lie
+    /// at five thousand: it reported a stall at the exact token the driver ran
+    /// out of patience on, while the backend went on to finish normally.
+    async fn until(&self, mut done: impl FnMut() -> bool) -> bool {
+        let mut seen = self.replies.events.load(SeqCst);
+        let mut since = Instant::now();
+        loop {
             if done() {
-                return;
+                return true;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
+            let now = self.replies.events.load(SeqCst);
+            if now != seen {
+                seen = now;
+                since = Instant::now();
+            } else if since.elapsed() >= self.quiet {
+                return false;
+            }
         }
     }
-}
-
-#[derive(Default, Debug)]
-pub struct Outcome {
-    /// How many tokens each unfinished route managed before it stopped. The
-    /// shape of this says where a stall is: all zero means work never
-    /// started, all near the target means a terminal was lost.
-    pub stalled: Vec<usize>,
-    pub completed: usize,
-    pub failed: usize,
-    pub unanswered: usize,
-    pub out_of_order: usize,
-    pub tokens: usize,
-    pub routes: usize,
-    /// One answer, in full. Evidence rather than a verdict: a mock's is
-    /// simulated and says nothing, and a real backend's is the only thing that
-    /// distinguishes tokens from empty strings that were counted.
-    pub sample: String,
 }
 
 /// A driver receives every token of every request it sent, so its response

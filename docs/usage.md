@@ -133,6 +133,17 @@ P4_DRIVE_UNREACHABLE address=tcp://0.0.0.0:52003 note=remote-stages-cannot-reply
 
 `P4_DRIVE_CEILING` sets the concurrency each load declares; it defaults to 32.
 
+`P4_DRIVE_PROMPT_FILE` is what every request asks and `P4_DRIVE_OPTIONS` how it
+is generated. A prompt sized in thousands of tokens belongs in a file, so what
+was measured is exactly what was sent — `POST /tokenize` on the backend counts
+it in the backend's own tokeniser, which is the only count that means anything.
+
+`P4_DRIVE_QUIET_MS` is how long nothing may arrive before the driver stops
+waiting; 30s by default. It bounds silence, not duration: a five-thousand-token
+answer takes as long as it takes. When the driver does stop, it says so above
+the verdicts, because "we stopped watching" and "the deployment stopped working"
+are different claims.
+
 ## Splitting one model across two GPUs
 
 llama.cpp spreads a model over its own RPC backend, unpatched. Start a worker

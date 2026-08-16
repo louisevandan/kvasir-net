@@ -172,6 +172,17 @@ consistent with zero tokens. The driver now keeps one stream's text and prints
 it beside them, because the token count alone is also consistent with every
 token being an empty string.
 
+**A harness can invent a defect.** Two did, and both only appeared once runs
+got long. The driver waited a fixed number of polls, which was ample for
+sixty-four tokens and ran out at four thousand six hundred of five thousand —
+it reported a stall at the exact token its own patience expired on, while the
+backend went on to finish normally. Waiting is now bounded by silence rather
+than duration, and when the driver does stop it says so above the verdicts.
+Then route names were reused across runs (`q0`, `q1`, …); a driver that had
+walked away left its inference still generating into the same address, and the
+next run's stream took those tokens too — an ordering failure reported against
+a layer that had ordered them correctly. Route names now carry the run.
+
 **Nothing below the fleet could have found** that the front's worker probe was
 wrong. Opening a TCP connection to a declared worker passes against a stub, a
 mock, and an idle port, and fails against the real deployment: llama.cpp's RPC

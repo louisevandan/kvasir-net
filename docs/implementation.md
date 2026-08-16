@@ -5,18 +5,18 @@ keeps, and why it is separate from its neighbours. [`api.md`](api.md) is the
 protocol, [`internals.md`](internals.md) the decisions and the defects behind
 them, [`constraints.md`](constraints.md) the invariants. This is the map.
 
-14,526 lines of Rust across nine crates, of which 7,989 are tests.
+15,075 lines of Rust across nine crates, of which 8,151 are tests.
 
 | Crate | Path | Source | Tests | Depends on |
 | --- | --- | ---: | ---: | --- |
 | `p4-protocol` | `layers/protocol` | 801 | 561 | nothing |
 | `p4-adapter` | `layers/adapters/adapter` | 383 | 138 | nothing |
 | `p4-agent-core` | `layers/agent` | 2,086 | 3,477 | adapter, protocol |
-| `p4-service` | `layers/service` | 986 | 2,393 | adapter, agent, protocol |
+| `p4-service` | `layers/service` | 986 | 2,445 | adapter, agent, protocol |
 | `p4-mock` | `layers/adapters/mock` | 483 | 349 | adapter |
-| `p4-llamacpp` | `layers/adapters/llamacpp/served` | 802 | 928 | adapter, serde_json |
+| `p4-llamacpp` | `layers/adapters/llamacpp/served` | 935 | 984 | adapter, serde_json |
 | `p4-agent` | `entrypoints/agent` | 176 | 66 | all of the above |
-| `p4-drive` | `tools/drive` | 487 | — | agent, protocol, service |
+| `p4-drive` | `tools/drive` | 741 | 54 | agent, protocol, service |
 | `p4-link` | `tools/link` | 333 | 77 | tokio |
 
 Two crates depend on nothing, and that is load-bearing. The protocol cannot
@@ -241,6 +241,15 @@ factory, and an `Adapter` implementation.
 `drive` — OUTER. Creates nodes, loads them, runs inferences, prints four
 verdicts: every request answered, none failed, every stream in order, one
 terminal per route. Built on the same core as an agent, which is the point.
+`session/replies.rs` holds what came back — it changes with the reply
+vocabulary, and it is the only part another thread touches.
+
+Two of its rules exist because breaking them made it report defects that were
+not there. Waiting is bounded by silence rather than by a count of polls, since
+an answer takes as long as it takes. And route names carry the run that made
+them, because an agent outlives a driver: an inference the driver walked away
+from kept generating into the same address, and the next run's stream collected
+its leftovers.
 
 `link` — a relay that carries frames badly on purpose: latency, jitter,
 bandwidth, periodic stalls, and a cut. Deterministic, including jitter. Used as
