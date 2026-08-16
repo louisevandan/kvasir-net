@@ -36,6 +36,21 @@ Then each impairment alone and all of them together, on GB10's link:
 Every run passed all four verdicts. A degraded link changes how long the work
 takes and nothing else about it, which is the whole claim.
 
+### A partition, on real machines
+
+The relay in front of GB10's agent was killed mid-session — a partition rather
+than a slow link, and neither agent was touched.
+
+| | Requests | Result |
+| --- | ---: | --- |
+| link up | 200 × 16 | 200/200 |
+| link gone | 20 × 8 | refused: `stage 1 refused the node: no answer` |
+| link back | 200 × 16 | 200/200, twice |
+
+Nothing was restarted and nothing reconfigured between the second and third
+rows; the relay came back and the layer resumed. There is no membership to
+update and no reconnection to command, which is why there was nothing to do.
+
 ### The soak, and the leak it found
 
 Twenty-four waves of 150 requests over the impaired two-machine chain — four

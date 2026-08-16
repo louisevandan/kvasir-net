@@ -39,6 +39,17 @@ chains sharing agents; a failing backend.
 `layers/agent/tests/lifecycle.rs` takes the other half — a load reported per
 stage, a declared ceiling, an unload, a failing load, deadlines, cancellation.
 
+`layers/agent/tests/topology.rs` tests the model rather than the wiring.
+Everything the layer knows about the network is in the envelope — an absolute
+address, a chain that travels whole, a reply address — so if that is really all
+it needs, the shape is free. A row of agents that own nothing and relay; one
+entry point in front of five workers; a chain that returns to a machine it
+already visited; a machine that stops being reachable mid-flight, whose work
+must be answered rather than left hanging; a partition that heals with nothing
+restarted; and cut-and-heal cycles under continuous arrivals on a slow link.
+The partitions assert they really partitioned — with the link up, the same work
+would have finished long before the check.
+
 `layers/agent/tests/network.rs` makes the network the slow thing. Each agent
 sits behind a relay carrying a declared latency, jitter, width or stall, and
 nothing in P4 is told it is there. A chain across slow links, jitter that must

@@ -117,6 +117,38 @@ pub async fn start_behind(duties: Arc<dyn Duties>, link: p4_link::Impairment) ->
     agent
 }
 
+/// An agent whose link can be taken away while work is in flight.
+///
+/// Returns the agent and the cut, so a scenario can partition it from the rest
+/// of the fleet and put it back without restarting anything.
+pub async fn start_cuttable(
+    duties: Arc<dyn Duties>,
+    link: p4_link::Impairment,
+) -> (Arc<Agent>, p4_link::relay::Cut) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bound = listener.local_addr().unwrap();
+    let relay = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let front = relay.local_addr().unwrap().port();
+    let cut = p4_link::relay::Cut::default();
+    tokio::spawn(p4_link::relay::serve_with(
+        relay,
+        bound.to_string(),
+        link,
+        cut.clone(),
+    ));
+
+    let (agent, receiver, in_flight) = Agent::new(
+        Address::tcp("127.0.0.1", front),
+        duties,
+        Arc::new(Bodies),
+        Lanes::default(),
+        Budget::default(),
+    );
+    tokio::spawn(inbox::serve(listener, agent.queue(), 256));
+    tokio::spawn(run(Arc::clone(&agent), receiver, in_flight));
+    (agent, cut)
+}
+
 pub fn chain_over(agents: &[(&Arc<Agent>, &str)]) -> Chain {
     Chain::new(
         agents
