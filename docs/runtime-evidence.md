@@ -36,6 +36,51 @@ Then each impairment alone and all of them together, on GB10's link:
 Every run passed all four verdicts. A degraded link changes how long the work
 takes and nothing else about it, which is the whole claim.
 
+### The soak, and the leak it found
+
+Twenty-four waves of 150 requests over the impaired two-machine chain — four
+stages over two agents, so each also carried two nodes — with garbage bytes and
+twenty abandoned connections aimed at each agent between every wave. **3,600
+requests, no failure, nothing unanswered**, and the wave time did not drift
+(4,218ms first, 3,563ms last).
+
+The first soak is what found the defect. Throughput was flat and correct while
+resident memory climbed by a steady amount per wave, which is the shape of a
+leak rather than a fault. Every wave re-created its nodes, and a replaced node
+turned out never to be freed: the node owns its own event sender, so a run loop
+matching `Some(event) = events.recv()` parked on a channel that could not close
+once the work channel had. `else => return` was unreachable, and every node ever
+replaced or deleted stayed resident with its adapter, its queue and its
+in-flight map. Nothing broke — a leaked node is inert — which is why it survived
+every functional test.
+
+Two things were fixed off the back of it: that, and the peer map, which was
+append-only in the number of addresses ever spoken to.
+
+After both, on the same soak:
+
+| | First six waves | Last six waves |
+| --- | ---: | ---: |
+| Windows agent | +174 KB/wave | +32 KB/wave |
+| GB10 agent | +146 KB/wave | +56 KB/wave |
+
+Decelerating rather than linear, which is an allocator settling rather than
+something being retained per request. The claim is what the numbers support: no
+per-wave retention that keeps its rate, over 3,600 requests. A run of days is a
+longer measurement than this one, and `peers` and `waiting` are now printed for
+exactly that — either climbing for hours is a leak rather than load.
+
+The peer retirement was watched working in the real process rather than only in
+a test. With the load stopped, the count fell 5 → 4 → 3 as each idle window
+expired, and settled at:
+
+```
+P4_AGENT_TRAFFIC forwarded=87032 consumed=52 to_nodes=86930 unrouted=0 peers=0 waiting=0
+```
+
+An agent that had carried eighty-seven thousand frames holding nothing open and
+expecting no reply, with resident memory a little below its peak under load.
+
 ## 2026-08-16: the layer builds and runs on three operating systems and two architectures
 
 Everything before this was Windows on x86-64. The source was copied to two Mac
