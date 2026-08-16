@@ -19,9 +19,8 @@ them.
 | --- | --- | --- |
 | `adapter/` | none — the contract | Zero dependencies. The one file every backend below is written against. |
 | `mock/` | none — arithmetic | Implements the interface. Ships in every build, so a fleet can be loaded without hardware. |
-| `llamacpp/served/` | llama.cpp, self-contained | Written and proved against a Metal build serving Qwen2.5-1.5B. Speaks the OpenAI-compatible surface, so vLLM and SGLang are the same shape with a different process. |
+| `openai/` | llama.cpp, vLLM, SGLang | One implementation, registered under three names, because the three serve the same HTTP. Proved against a stock `llama-server` on Metal and on CUDA, and against wire-level servers behaving like each. |
 | `llamacpp/staged/` | llama.cpp, split across machines | Patch series and preparation script present; the adapter itself is not written. |
-| `vllm/` | vLLM | Not yet written. |
 
 ## What a new adapter owes
 

@@ -18,7 +18,7 @@ one machine, wrong across a fleet.
 On start it prints what it can serve:
 
 ```
-P4_AGENT_READY address=tcp://192.168.0.6:52001 adapters=[mock, mock-instant]
+P4_AGENT_READY address=tcp://192.168.0.6:52001 adapters=[llamacpp, mock, mock-instant, sglang, vllm]
 ```
 
 An identity only this machine can reach says so, because the alternative is
@@ -159,6 +159,26 @@ waiting; 30s by default. It bounds silence, not duration: a five-thousand-token
 answer takes as long as it takes. When the driver does stop, it says so above
 the verdicts, because "we stopped watching" and "the deployment stopped working"
 are different claims.
+
+## Pointing a node at vLLM or SGLang
+
+The same adapter, under its own name. Both serve the OpenAI-compatible surface,
+so a plan is the same shape and the chain is one link:
+
+```bash
+P4_DRIVE_PLAN=endpoint:127.0.0.1:8000 p4-drive 0.0.0.0:52000 127.0.0.1:52001 32 500 vllm 127.0.0.1:52000
+```
+
+vLLM matches the request's `model` against what it serves and answers 404 to
+anything else, so a plan that names none is resolved from `/v1/models` at load
+and the load fails if the server lists nothing. llama.cpp and SGLang answer to
+any name and are not charged that round trip. Naming a model always wins: an
+operator choosing one on a server holding several is making a placement
+decision, and the adapter does not overrule it.
+
+Neither vLLM nor SGLang has been run against here — neither installs on this
+machine — so what is proved is the contract, against servers built to behave
+like them, and not a particular release of either.
 
 ## Splitting one model across two GPUs
 

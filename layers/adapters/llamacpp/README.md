@@ -1,10 +1,7 @@
-# llama.cpp
-
-One backend, two shapes, and llama.cpp itself.
+# llama.cpp, where it is llama.cpp's alone
 
 | Path | What it is |
 | --- | --- |
-| `served/` | `Distribution::Internal`. Attaches to a stock `llama-server` over its public HTTP surface. Compiles against nothing of llama.cpp's. |
 | `staged/` | `Distribution::Staged`. Splits the model across machines with P4 owning the boundary between layer ranges, which needs llama.cpp internals it does not expose — so an ordered patch series, and the script that materialises a verified patched worktree. |
 | `upstream/` | llama.cpp's own repository, cloned by `npm run p4:upstream` and ignored by ours. Used only by `staged/`. |
 

@@ -124,7 +124,7 @@ at which step a frame stopped existing.
 
 ## What the suite is, file by file
 
-313 tests. The count matters less than the split: the levels catch different
+324 tests. The count matters less than the split: the levels catch different
 things, and three defects in this layer survived every level but the fleet.
 
 | Where | Tests | What it holds |
@@ -134,7 +134,7 @@ things, and three defects in this layer survived every level but the fleet.
 | `p4-service` (unit) | 32 | Message encoding with explicit tags, the payload seam, the registry, the machine and status snapshots. |
 | `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. |
 | `p4-adapter` | 9 | The contract's own small logic, including which id a fork leaves state under. |
-| `p4-llamacpp` (unit) | 38 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour. |
+| `p4-openai` (unit) | 41 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour, and which of the three backends insists on being told what it serves. |
 | `p4-link` | 7 | That a declared impairment is deterministic and irregular, and adds rather than replaces. |
 | `p4-agent` | 6 | That the registry carries what this build claims and refuses what it does not. |
 | `p4-drive` | 12 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. Plus reading a status snapshot: the three figures that matter, peaks that only rise, the deepest of several nodes, and a route named after a field not being read as one. |
@@ -149,7 +149,10 @@ things, and three defects in this layer survived every level but the fleet.
 | `tests/cache.rs` | 4 | The four verbs on one node: persist and restore continuing where it left off, a fork that copies rather than renames, a discard that cannot be repeated, and refusal of what was never persisted. |
 | `tests/cache_in_a_deployment.rs` | 3 | What a cache verb does around itself: the deployment stays bound and serving, and a conversation spread over a chain is persisted and restored on every stage. |
 | `tests/many_nodes.rs` | 2 | More than one node on one agent, created and loaded individually, and two chains sharing them. |
-| `tests/against_a_server.rs` | 8 | The llama.cpp adapter against a wire-level stub: real socket, real chunked framing, real SSE. |
+| `tests/against_a_server.rs` | 8 | The adapter against a wire-level stub: real socket, real chunked framing, real SSE. |
+| `tests/three_backends.rs` | 4 | The one place the three names differ, against a server that behaves like vLLM: a load that finds out what is served, a named model left alone, a server listing nothing refused at the load rather than at the first request, and the lenient two not charged for the strict one's rule. |
+| `tests/lets_go_of_a_stream.rs` | 1 | That dropping a sequence ends its connection instead of leaving it to a fifteen-minute read timeout. |
+| `tests/stays_neutral.rs` | 3 | That the core has not learned a backend: no source names one, the dependencies are the three chosen, and the window composer's inputs are still lanes and a ceiling. |
 | `tests/stays_detached.rs` | 4 | That the llama.cpp adapter compiles against nothing of llama.cpp's — no build script, no `-sys`, no `llama.h`, two dependencies, two endpoint paths. |
 
 ## What each level could not catch

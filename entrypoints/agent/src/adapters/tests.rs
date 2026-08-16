@@ -38,22 +38,30 @@ fn a_backend_this_build_does_not_carry_is_reported_missing() {
     // mistake, and the caller is the only one who can fix it — so it is
     // refused rather than falling back to whatever happens to be present.
     let registry = registry();
-    assert!(!registry.knows("vllm"));
-    assert!(registry.build("vllm", "stage-0").is_none());
+    assert!(!registry.knows("tensorrt"));
+    assert!(registry.build("tensorrt", "stage-0").is_none());
 }
 
-/// llama.cpp is carried, and is the self-contained shape: one process holds
-/// the model, so a chain over it is one link whatever the node is called.
+/// The three OpenAI-compatible servers are carried, and each is the
+/// self-contained shape: one process holds the model, so a chain over it is
+/// one link whatever the node is called.
+///
+/// All three, not just the one there is hardware for here. They are the same
+/// implementation because they answer the same HTTP, and a registration that
+/// was never built is the kind of compatibility claim that turns out to be
+/// false the first time somebody types the name.
 #[test]
-fn llamacpp_is_attached_and_spreads_the_model_itself() {
+fn the_openai_compatible_backends_are_attached_and_spread_the_model_themselves() {
     let registry = registry();
-    assert!(registry.knows("llamacpp"));
-    for node in ["stage-0", "tail-1", "solo"] {
-        assert_eq!(
-            registry.build("llamacpp", node).unwrap().distribution(),
-            Distribution::Internal,
-            "{node} is one link"
-        );
+    for backend in ["llamacpp", "vllm", "sglang"] {
+        assert!(registry.knows(backend), "{backend} is registered");
+        for node in ["stage-0", "tail-1", "solo"] {
+            assert_eq!(
+                registry.build(backend, node).unwrap().distribution(),
+                Distribution::Internal,
+                "{backend} on {node} is one link"
+            );
+        }
     }
 }
 

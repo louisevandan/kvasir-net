@@ -119,6 +119,23 @@ pub struct Events {
 }
 
 impl Events {
+    /// A handle that can end this stream from another thread.
+    ///
+    /// The reader owns the socket and blocks on it, so an abandoned stream is
+    /// otherwise alive until the read timeout — fifteen minutes, on a plan that
+    /// is patient with a slow first token. Sixty-four of those held sixty-four
+    /// connections and sixty-four threads after the work using them was gone,
+    /// and a backend serving one connection per generation had none left: of
+    /// eighty later requests, nineteen reached it and the rest waited on an
+    /// HTTP worker that was never coming back. Ending the socket makes the
+    /// blocked read return at once.
+    pub fn closer(&self) -> Option<Closer> {
+        self.reader
+            .get_ref()
+            .try_clone()
+            .ok()
+            .map(|socket| Closer { socket })
+    }
     /// The next event's payload, or `None` once the stream ends.
     ///
     /// Blank lines separate events and are skipped; `[DONE]` is the end of the
@@ -145,6 +162,22 @@ impl Events {
                 return Ok(Some(payload.to_owned()));
             }
         }
+    }
+}
+
+/// Ends a stream that nobody is reading any more.
+///
+/// Held by whoever owns the sequence rather than by the thread reading it,
+/// which is the point: the reader is blocked and cannot close anything.
+pub struct Closer {
+    socket: TcpStream,
+}
+
+impl Closer {
+    pub fn close(&self) {
+        // Both directions. Shutting only the read side leaves a backend
+        // writing into a socket nobody will ever drain.
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
     }
 }
 

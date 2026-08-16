@@ -57,8 +57,8 @@ version = "0.1.0"
 dependencies = [
  "p4-adapter",
  "p4-agent-core",
- "p4-llamacpp",
  "p4-mock",
+ "p4-openai",
  "p4-protocol",
  "p4-service",
  "tokio",
@@ -93,19 +93,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "p4-llamacpp"
-version = "0.1.0"
-dependencies = [
- "p4-adapter",
- "serde_json",
-]
-
-[[package]]
 name = "p4-mock"
 version = "0.1.0"
 dependencies = [
  "p4-adapter",
  "tokio",
+]
+
+[[package]]
+name = "p4-openai"
+version = "0.1.0"
+dependencies = [
+ "p4-adapter",
+ "serde_json",
 ]
 
 [[package]]

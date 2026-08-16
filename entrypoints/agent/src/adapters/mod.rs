@@ -5,9 +5,10 @@
 //! above this line — envelope, queue, worker, node, chain — changes for any of
 //! them, which is the property the communication layer was built to have.
 
-use p4_llamacpp::LlamaCpp;
 use p4_mock::Mock;
 use p4_mock::profile::Profile;
+use p4_openai::OpenAi;
+use p4_openai::flavour::Flavour;
 use p4_service::Registry;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,9 +37,13 @@ pub fn registry() -> Registry {
     // here, which is why attaching a backend is this line and an `Adapter`
     // implementation — the claim the layer was built to make.
     //
-    // vLLM and SGLang answer the same surface, so each is another line once
-    // there is a process to point it at.
-    registry.register_fn("llamacpp", |_| Arc::new(LlamaCpp::new()));
+    // Three names, one implementation, because the three servers answer the
+    // same HTTP. Registered rather than asserted: a compatibility claim that
+    // is never built is a claim nobody has checked, and the name an operator
+    // types is what decides which of the small differences applies.
+    for flavour in [Flavour::LlamaCpp, Flavour::Vllm, Flavour::Sglang] {
+        registry.register_fn(flavour.name(), move |_| Arc::new(OpenAi::new(flavour)));
+    }
 
     registry
 }

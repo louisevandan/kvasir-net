@@ -117,3 +117,21 @@ fn describe(error: &Value) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// The first model id a `/v1/models` answer lists.
+///
+/// Only one backend needs this — vLLM refuses a name it does not serve — so it
+/// is read where that matters rather than on every load. `None` covers both a
+/// body that is not the expected shape and a server holding nothing, because a
+/// caller can do nothing different about the two: either way there is no name
+/// to put in a request.
+pub fn first_model(listed: &str) -> Option<String> {
+    serde_json::from_str::<Value>(listed)
+        .ok()?
+        .get("data")?
+        .as_array()?
+        .first()?
+        .get("id")?
+        .as_str()
+        .map(str::to_owned)
+}

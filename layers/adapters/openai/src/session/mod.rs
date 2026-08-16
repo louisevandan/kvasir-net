@@ -13,7 +13,7 @@
 //! long as the sequence does.
 
 use crate::chat::{Chunk, Request, chunk};
-use crate::endpoint::Endpoint;
+use crate::endpoint::{Closer, Endpoint};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use std::time::Duration;
 
@@ -40,6 +40,22 @@ pub struct Session {
     /// Set once the stream has ended, so a later hop is answered from here
     /// rather than from a channel that will never speak again.
     ended: Option<String>,
+    /// Ends the socket when this sequence is let go of.
+    ///
+    /// The reader thread owns the stream and is blocked on it, so it cannot
+    /// close anything itself and will not notice this is gone until the read
+    /// times out. That timeout is generous on purpose — a first token can be
+    /// far off — which made every abandoned sequence hold a connection and a
+    /// thread for a quarter of an hour.
+    closer: Option<Closer>,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(closer) = &self.closer {
+            closer.close();
+        }
+    }
 }
 
 impl Session {
@@ -61,6 +77,7 @@ impl Session {
         }
         .body();
         let mut events = endpoint.stream("/v1/chat/completions", &body)?;
+        let closer = events.closer();
         let (sender, tokens) = channel();
         std::thread::spawn(move || {
             loop {
@@ -94,6 +111,7 @@ impl Session {
             tokens,
             delivered: 0,
             ended: None,
+            closer,
         })
     }
 

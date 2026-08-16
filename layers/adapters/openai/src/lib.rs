@@ -1,4 +1,10 @@
-//! llama.cpp, as one self-contained node.
+//! One OpenAI-compatible server, as one self-contained node.
+//!
+//! llama.cpp, vLLM and SGLang all serve the same HTTP: a model list and a
+//! streamed chat completion. That is the whole coupling, so it is one adapter
+//! registered under three names rather than three adapters — and the names are
+//! real registrations rather than a claim in a document, because a claim that
+//! is never built is a claim nobody has checked.
 //!
 //! `Distribution::Internal`: the backend holds the whole model and presents one
 //! entry point, so a chain over it is one link and a lap is a decode step on
@@ -6,10 +12,10 @@
 //! owning the boundary — is the other adapter, and shares none of this file
 //! except the interface.
 //!
-//! What is llama.cpp-specific here is small: which endpoint to reach and what a
-//! plan means. Everything about the conversation is the OpenAI-compatible
-//! surface, which is why vLLM and SGLang are the same adapter with a different
-//! process to start.
+//! What differs between the three is in `flavour`, and it is one thing: vLLM
+//! refuses a model name it does not serve, so a load against it has to find out
+//! what it is holding. Everything else here is the surface, and the surface is
+//! the same.
 //!
 //! ## The plan
 //!
@@ -27,9 +33,11 @@
 
 pub mod chat;
 pub mod endpoint;
+pub mod flavour;
 pub mod plan;
 pub mod session;
 
+use flavour::Flavour;
 use p4_adapter::{Adapter, Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
 use plan::{Plan, Role};
 use session::{Next, Session};
@@ -37,7 +45,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub struct LlamaCpp {
+pub struct OpenAi {
+    /// Which server is behind the surface. Read at load, never on the wire.
+    flavour: Flavour,
     /// Where the model is served from, once a load has said so.
     plan: Mutex<Option<Plan>>,
     generation: AtomicU64,
@@ -45,15 +55,10 @@ pub struct LlamaCpp {
     sessions: Mutex<HashMap<String, Session>>,
 }
 
-impl Default for LlamaCpp {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LlamaCpp {
-    pub fn new() -> Self {
+impl OpenAi {
+    pub fn new(flavour: Flavour) -> Self {
         Self {
+            flavour,
             plan: Mutex::new(None),
             generation: AtomicU64::new(0),
             sessions: Mutex::new(HashMap::new()),
@@ -98,14 +103,48 @@ impl LlamaCpp {
         // start against an RPC device it cannot reach, and will not answer a
         // token across one that died, so a front that serves is a deployment
         // whose workers are present — verified where the evidence actually is.
-        if parsed.role == Role::Front
-            && let Err(error) = parsed.endpoint.get("/v1/models")
-        {
-            return events.raise(Event::Failed {
-                deployment,
-                sequence: None,
-                detail: format!("{} not reachable: {error}", parsed.share()),
-            });
+        let mut parsed = parsed;
+        if parsed.role == Role::Front {
+            let listed = match parsed.endpoint.get("/v1/models") {
+                Ok(listed) => listed,
+                Err(error) => {
+                    return events.raise(Event::Failed {
+                        deployment,
+                        sequence: None,
+                        detail: format!("{} not reachable: {error}", parsed.share()),
+                    });
+                }
+            };
+            // The answer is read rather than discarded only where it has to be.
+            // vLLM matches a request's model against what it serves and answers
+            // 404 to anything else, so a plan that did not name one would fail
+            // on the first inference instead of on the load — which is the
+            // failure worth moving, because a load is where an operator is
+            // still watching.
+            if self.flavour.insists_on_the_model_name() && !parsed.names_the_model {
+                match chat::first_model(&listed) {
+                    Some(served) => {
+                        events.raise(Event::LoadProgress {
+                            deployment: deployment.clone(),
+                            stage: 0,
+                            percent: 75,
+                            detail: format!("serving {served}, which the plan did not name"),
+                        });
+                        parsed.model = served;
+                    }
+                    None => {
+                        return events.raise(Event::Failed {
+                            deployment,
+                            sequence: None,
+                            detail: format!(
+                                "{} lists no model and the plan names none, so a request \
+                                 would be refused as a model that does not exist",
+                                self.flavour.name()
+                            ),
+                        });
+                    }
+                }
+            }
         }
         for (index, worker) in parsed.workers.iter().enumerate() {
             events.raise(Event::LoadProgress {
@@ -288,7 +327,7 @@ impl LlamaCpp {
     }
 }
 
-impl Adapter for LlamaCpp {
+impl Adapter for OpenAi {
     fn distribution(&self) -> Distribution {
         Distribution::Internal
     }

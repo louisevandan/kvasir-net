@@ -38,6 +38,9 @@ pub fn print(outcome: &Outcome, elapsed: Duration, requests: usize, tokens: u32)
             outcome.node_depth, outcome.running, outcome.lane, outcome.samples
         );
     }
+    if let Some(why) = &outcome.why {
+        println!("  first_failure: {why}");
+    }
     if outcome.quiet {
         println!("  NOTE the driver stopped waiting; the verdicts below are incomplete");
     }

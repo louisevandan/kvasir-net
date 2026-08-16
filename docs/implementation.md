@@ -5,17 +5,17 @@ keeps, and why it is separate from its neighbours. [`api.md`](api.md) is the
 protocol, [`internals.md`](internals.md) the decisions and the defects behind
 them, [`constraints.md`](constraints.md) the invariants. This is the map.
 
-15,595 lines of Rust across nine crates, of which 8,365 are tests.
+16,447 lines of Rust across nine crates, of which 8,977 are tests.
 
 | Crate | Path | Source | Tests | Depends on |
 | --- | --- | ---: | ---: | --- |
 | `p4-protocol` | `layers/protocol` | 801 | 561 | nothing |
 | `p4-adapter` | `layers/adapters/adapter` | 383 | 138 | nothing |
-| `p4-agent-core` | `layers/agent` | 2,184 | 3,547 | adapter, protocol |
-| `p4-service` | `layers/service` | 986 | 2,519 | adapter, agent, protocol |
+| `p4-agent-core` | `layers/agent` | 2,203 | 3,715 | adapter, protocol |
+| `p4-service` | `layers/service` | 986 | 2,526 | adapter, agent, protocol |
 | `p4-mock` | `layers/adapters/mock` | 483 | 349 | adapter |
-| `p4-llamacpp` | `layers/adapters/llamacpp/served` | 935 | 984 | adapter, serde_json |
-| `p4-agent` | `entrypoints/agent` | 176 | 66 | all of the above |
+| `p4-openai` | `layers/adapters/openai` | 1,151 | 1,413 | adapter, serde_json |
+| `p4-agent` | `entrypoints/agent` | 181 | 74 | all of the above |
 | `p4-drive` | `tools/drive` | 949 | 124 | agent, protocol, service |
 | `p4-link` | `tools/link` | 333 | 77 | tokio |
 
@@ -195,18 +195,25 @@ protocol: it used to drop a sequence's state the moment the turn finished, and
 to record residency only on the terminal stage — but every stage holds the KV
 for its layer range, and only the last has logits.
 
-## `layers/adapters/llamacpp` — the first real backend
+## `layers/adapters/openai` — three backends, one surface
 
-`served/` attaches to a stock `llama-server` over its public HTTP surface and
-compiles against nothing of llama.cpp's. `staged/` holds the patch series for
-splitting a model across machines; its adapter is not written. `upstream/` is
-llama.cpp's own clone, ignored by this repository.
+llama.cpp, vLLM and SGLang serve the same OpenAI-compatible HTTP: a model list
+and a streamed chat completion. That is the whole coupling, so it is one
+adapter registered under three names rather than three adapters — and the names
+are real registrations rather than a claim in a document, because a claim that
+is never built is a claim nobody has checked.
+
+`layers/adapters/llamacpp` now holds only what is llama.cpp's alone: `staged/`,
+the patch series for splitting a model across machines with P4 owning the
+boundary, whose adapter is not written, and `upstream/`, llama.cpp's own clone,
+ignored by this repository.
 
 | Module | Holds |
 | --- | --- |
 | `endpoint` | The least HTTP that reaches a backend, on the standard library: request framing, chunked and length-delimited bodies, SSE lines, and a status check. A non-2xx is a failure carrying the body's message — read as a stream instead, a `503 Loading model` looked like a request that completed having produced nothing. |
 | `chat` | The OpenAI-compatible surface: building a request, and reading a chunk. Reads `delta.content`, then `reasoning_content` when content is null, then the non-streamed shapes. A reasoning model streams its thinking under the second key, and reading only the first dropped every token of an answer. |
-| `plan` | What a load's plan means here: endpoint, model name, patience, and — for a model split across devices — the role this node holds, its device, what it claims of it, and the shares held elsewhere. Opaque everywhere else. |
+| `plan` | What a load's plan means here: endpoint, model name, patience, and — for a model split across devices — the role this node holds, its device, what it claims of it, and the shares held elsewhere. Records whether the plan actually named a model, because a default cannot be told from a choice and one backend checks. Opaque everywhere else. |
+| `flavour` | Which of the three servers is behind the surface, and the one thing that follows: vLLM matches a request's `model` against what it serves and answers 404 to anything else, so its load asks and the other two are not charged the round trip. A field here that could be a plan key would be the adapter knowing a backend for no reason. |
 | `session` | The impedance mismatch, and the reason it has its own file. P4 generates by lapping — a hop reports one token and the request comes round again — while the backend streams a whole completion down one connection. Asking for one token per hop would re-prefill on every lap. So the completion is requested once, read by a thread into a channel, and each hop takes the next token. The session counts what it has delivered, because the backend is the only thing that knows how far a sequence has got. |
 
 Four tests enforce that the crate stays detached: no build script, no `-sys` or

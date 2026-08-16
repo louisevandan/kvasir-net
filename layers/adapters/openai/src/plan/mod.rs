@@ -47,9 +47,15 @@ pub enum Role {
 pub struct Plan {
     pub role: Role,
     pub endpoint: Endpoint,
-    /// What the backend calls the model. Servers holding one model accept
+    /// What the backend calls the model. Most servers holding one model accept
     /// anything here, so it defaults rather than being required.
     pub model: String,
+    /// Whether the plan actually said so, as against the default standing in.
+    ///
+    /// Kept apart from the name because a backend that checks the name cannot
+    /// tell a default from a choice, and sending "default" to one that does
+    /// check is a request refused for a model that does not exist.
+    pub names_the_model: bool,
     /// How long a hop waits for its token before giving up on the backend.
     pub patience: Duration,
     /// The device this node's share sits on, in the backend's own naming.
@@ -102,14 +108,12 @@ impl Plan {
             .and_then(Value::as_u64)
             .map(Duration::from_millis)
             .unwrap_or(endpoint.idle);
+        let named = value.get("model").and_then(Value::as_str);
         Ok(Self {
             role,
             endpoint,
-            model: value
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("default")
-                .to_owned(),
+            model: named.unwrap_or("default").to_owned(),
+            names_the_model: named.is_some(),
             patience,
             device: value
                 .get("device")

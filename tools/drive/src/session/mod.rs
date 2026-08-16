@@ -242,6 +242,7 @@ impl Session {
             stalled,
             completed: streams.iter().filter(|s| s.done.is_some()).count(),
             failed: streams.iter().filter(|s| s.failed.is_some()).count(),
+            why: streams.iter().find_map(|stream| stream.failed.clone()),
             unanswered: streams.iter().filter(|s| !s.is_finished()).count(),
             out_of_order: streams.iter().filter(|s| !s.is_ordered()).count(),
             tokens: streams.iter().map(|s| s.tokens.len()).sum(),

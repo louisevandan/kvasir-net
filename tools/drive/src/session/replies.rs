@@ -126,6 +126,10 @@ pub struct Outcome {
     pub stalled: Vec<usize>,
     pub completed: usize,
     pub failed: usize,
+    /// What the first failure said. A count of failures without one of their
+    /// reasons is the shape of report that sends an operator to the logs of
+    /// every machine in the chain, when the answer was already in hand.
+    pub why: Option<String>,
     pub unanswered: usize,
     pub out_of_order: usize,
     pub tokens: usize,
