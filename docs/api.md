@@ -85,5 +85,71 @@ not have.
 ## Bodies
 
 Opaque here. What a body means belongs to whoever sends and receives it; the
-standard vocabulary is in [`layers/service`](../layers/service), and the core
-reads a body only through the `Payload` seam a deployment supplies.
+core reads a body only through the `Payload` seam a deployment supplies. The
+standard vocabulary below lives in [`layers/service`](../layers/service) and
+can be replaced wholesale without the core noticing.
+
+Each message is a tag byte and length-prefixed fields. Tags are explicit
+constants rather than declaration order, so reordering a variant cannot
+silently change what a peer reads.
+
+### To an agent
+
+| Tag | Message | Meaning |
+| ---: | --- | --- |
+| 1 | `CreateNode { node, adapter }` | Creates the id. Nothing is materialised until a load arrives. A name whose adapter this build does not carry is refused rather than falling back. |
+| 2 | `DeleteNode { node }` | Removes it. Answers `Released`, or `Failed` if there was no such node. |
+| 3 | `Inspect` | Facts about the machine, for whoever is composing placements. Does not change while the process runs. |
+| 4 | `Cancel { route }` | Stops one request. Work already inside a backend runs to its hop boundary — there is no way to interrupt a hop — so this means the next one never starts. Distinguishes having stopped something from there having been nothing to stop. |
+| 5 | `Status` | What the agent is doing *now*: lanes, traffic, peers, replies outstanding, and every node with the routes it is holding. |
+
+### To a node
+
+| Tag | Message | Meaning |
+| ---: | --- | --- |
+| 16 | `Load { plan, artifact, ceiling }` | Materialise this node's share. `plan` is opaque above the adapter; `ceiling` is the concurrency the deployment admits, declared and never derived. |
+| 17 | `Unload` | Release it. |
+| 18 | `Execute { prompt, max_tokens, options }` | One sequence's work. Never a window — batching is the node's decision. |
+| 19 | `Persist { sequence }` | Write that request's cached state somewhere durable and free the memory. One verb, because persisting without freeing saves nothing and freeing without persisting is what already happens when a request ends. |
+| 20 | `Restore { sequence }` | Bring it back under the same id. |
+| 21 | `Fork { sequence, into }` | Copy it under a new id, leaving the original. The branch case; a copy rather than an alias, because two continuations sharing state would each corrupt the other. |
+| 22 | `Discard { sequence }` | Delete the durable copy. State nothing ever deletes is a disk filling up on a schedule nobody set. |
+
+Load and the four cache verbs are *lifecycle*: one instruction about one thing,
+run alone rather than batched into a window. That a load is about a deployment
+and a cache verb about a sequence makes no difference to the node, which cares
+only that they do not batch. A cache verb does not touch the binding —
+persisting a conversation says nothing about which model is loaded.
+
+Each stage of a chain holds its own shard of a sequence's state, so persisting
+a distributed conversation is one instruction per stage, exactly as a load is.
+
+### Replies
+
+| Tag | Reply | Meaning |
+| ---: | --- | --- |
+| 32 | `Accepted { detail }` | The instruction was taken. |
+| 33 | `Progress { stage, percent }` | A load moved. Reported per stage: a model spread over layer ranges finishes when its slowest piece does, and one total hides which piece that was. |
+| 34 | `Bound { generation }` | Executable, and which materialisation. The generation is the one identifier an adapter issues rather than receives. |
+| 35 | `Released` | Unloaded, or a node deleted. |
+| 36 | `Token { index, text }` | One token, and where in the stream it belongs. The backend counts the position — a request does not carry its progress back down. |
+| 37 | `Done { reason, generated }` | Terminal for a route, with the backend's own reason. |
+| 38 | `Failed { detail }` | Terminal, with why. |
+| 39 | `Machine { snapshot }` | Answer to `Inspect`. |
+| 40 | `Status { snapshot }` | Answer to `Status`. |
+| 41 | `Cached { sequence, bytes, detail }` | A cache verb finished. `sequence` is the id the state now lives under — the new one after a fork — and `bytes` is what the durable copy occupies, which only the backend knows. |
+
+## The transaction a load is
+
+A distributed load is a transaction across machines that no single machine sees
+the whole of, and nothing coordinates it: there is nowhere to put a coordinator
+that would not become a controller. So each stage enforces its own half.
+
+A node serves only the generation it bound. A node whose load *failed* serves
+nothing until one succeeds. A node never loaded serves anything, because a
+backend that needs no load is legitimate.
+
+The case that matters: three machines loaded, one failed. Without this the
+chain runs and answers from two thirds of a model — which looks like a working
+deployment and is the worst outcome available. With it, the failed stage
+refuses and the caller is told.

@@ -69,6 +69,18 @@ pub fn backends() -> Registry {
             },
         ))
     });
+    // A backend that takes work and never answers. The only way to know a
+    // route is still queued rather than racing to observe it: nothing behind
+    // the first hop can ever be claimed.
+    registry.register_fn("mock-silent", |_| {
+        Arc::new(Mock::terminal(
+            0,
+            Profile {
+                fault: Fault::Silence,
+                ..Profile::default()
+            },
+        ))
+    });
     // A stage that cannot load. Its neighbours load perfectly well, which is
     // what makes a distributed load a transaction rather than a list.
     registry.register_fn("mock-unloadable", |_| {

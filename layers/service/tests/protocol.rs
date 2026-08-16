@@ -21,6 +21,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Creates a node and loads it, returning once bound.
+///
+/// `ceiling` is the declared concurrency. One makes a node take work strictly
+/// in turn, which is what lets a test know something is still queued rather
+/// than racing to observe it.
 async fn place(
     agent: &Arc<p4_agent_core::agent::Agent>,
     outer: &Arc<p4_agent_core::agent::Agent>,
@@ -28,6 +32,7 @@ async fn place(
     node: &str,
     adapter: &str,
     plan: &str,
+    ceiling: u32,
 ) {
     agent
         .enqueue(to_agent(
@@ -52,7 +57,7 @@ async fn place(
             ToNode::Load {
                 plan: plan.into(),
                 artifact: "model.gguf".into(),
-                ceiling: 4,
+                ceiling,
             },
         ))
         .unwrap();
@@ -83,6 +88,7 @@ fn a_distributed_load_is_visible_stage_by_stage_on_every_machine() {
                 &format!("n{index}"),
                 adapter,
                 &format!(r#"{{"layers":"{}-{}"}}"#, index * 20, index * 20 + 19),
+                4,
             )
             .await;
         }
@@ -126,6 +132,7 @@ fn a_stage_that_fails_to_load_is_reported_and_refuses_to_serve() {
             "n0",
             "mock-lead",
             r#"{"layers":"0-19"}"#,
+            4,
         )
         .await;
         place(
@@ -135,6 +142,7 @@ fn a_stage_that_fails_to_load_is_reported_and_refuses_to_serve() {
             "n1",
             "mock-unloadable",
             r#"{"layers":"20-39"}"#,
+            4,
         )
         .await;
 
@@ -212,6 +220,7 @@ fn an_unload_is_reported_and_the_deployment_stops_being_current() {
             "n0",
             "mock-tail",
             r#"{"layers":"0-9"}"#,
+            4,
         )
         .await;
 
@@ -247,7 +256,16 @@ fn outer_can_see_which_node_is_holding_which_request() {
         let seen = Outer::default();
         let outer = start(Arc::new(seen.clone())).await;
         let agent = start(Arc::new(Standard::new(backends()))).await;
-        place(&agent, &outer, &seen, "slow", "mock-slow", r#"{"l":"0-9"}"#).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "slow",
+            "mock-slow",
+            r#"{"l":"0-9"}"#,
+            4,
+        )
+        .await;
 
         let single = chain_over(&[(&agent, "slow")]);
         for index in 0..6 {
@@ -292,56 +310,59 @@ fn outer_can_see_which_node_is_holding_which_request() {
 }
 
 /// Stopping one request without touching the others.
+///
+/// The backend never answers, on purpose. That is the only way to know a route
+/// is still queued rather than racing to observe it: the first hop never ends,
+/// so nothing behind it can be claimed, and what is queued stays queued. An
+/// earlier version of this test watched the node's status and then cancelled,
+/// which lost the race often enough to fail one run in three.
 #[test]
 fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
     runtime().block_on(async {
         let seen = Outer::default();
         let outer = start(Arc::new(seen.clone())).await;
         let agent = start(Arc::new(Standard::new(backends()))).await;
-        place(&agent, &outer, &seen, "slow", "mock-slow", r#"{"l":"0-9"}"#).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "held",
+            "mock-silent",
+            r#"{"l":"0-9"}"#,
+            1,
+        )
+        .await;
 
-        let single = chain_over(&[(&agent, "slow")]);
-        for index in 0..6 {
+        let single = chain_over(&[(&agent, "held")]);
+        for route in ["keep0", "keep1", "keep2", "drop-me", "keep3"] {
             agent
                 .enqueue(to_node(
                     &single,
                     &outer,
-                    &format!("keep{index}"),
+                    route,
                     QueueClass::Prefill,
                     ToNode::Execute {
-                        prompt: "계속".into(),
+                        prompt: "대기".into(),
                         max_tokens: 3,
                         options: "{}".into(),
                     },
                 ))
                 .unwrap();
         }
-        agent
-            .enqueue(to_node(
-                &single,
-                &outer,
-                "drop-me",
-                QueueClass::Prefill,
-                ToNode::Execute {
-                    prompt: "취소될 것".into(),
-                    max_tokens: 3,
-                    options: "{}".into(),
-                },
-            ))
-            .unwrap();
 
-        // Control is the preferred lane, so a cancel sent immediately arrives
-        // before the work it is cancelling has reached the node — which is a
-        // race the caller loses, not a defect. Wait until the node is holding
-        // it, using the same status message an operator would.
+        // Wait until the node is holding it, using the same status message an
+        // operator would. Every reply so far rather than the first: reading
+        // only the first latched onto a snapshot taken before the work arrived.
         until(|| {
-            let Some(Reply::Status { snapshot }) = seen.replies("where").into_iter().next() else {
-                agent
-                    .enqueue(to_agent(&agent, &outer, "where", ToAgent::Status))
-                    .unwrap();
-                return false;
-            };
-            snapshot.contains("drop-me")
+            if seen.replies("where").iter().any(
+                |reply| matches!(reply, Reply::Status { snapshot } if snapshot.contains("drop-me")),
+            ) {
+                return true;
+            }
+            agent
+                .enqueue(to_agent(&agent, &outer, "where", ToAgent::Status))
+                .unwrap();
+            false
         })
         .await;
 
@@ -362,30 +383,31 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
             seen.replies("cancel")
         );
 
-        // The others finish untouched.
-        until(|| {
-            (0..6).all(|index| {
-                seen.replies(&format!("keep{index}"))
-                    .iter()
-                    .any(|reply| matches!(reply, Reply::Done { .. }))
-            })
-        })
-        .await;
-        for index in 0..6 {
-            assert!(
-                seen.replies(&format!("keep{index}"))
-                    .iter()
-                    .any(|reply| matches!(reply, Reply::Done { .. })),
-                "request {index} was not disturbed"
-            );
-        }
+        // What it did not touch: the others are still there. That is the claim
+        // — cancelling one route leaves the rest alone — and it is checkable
+        // without waiting for work this backend will never finish.
+        agent
+            .enqueue(to_agent(&agent, &outer, "after", ToAgent::Status))
+            .unwrap();
+        until(|| !seen.replies("after").is_empty()).await;
+        let Some(Reply::Status { snapshot }) = seen.replies("after").into_iter().next() else {
+            panic!("a status reply came back");
+        };
         assert!(
-            !seen
-                .replies("drop-me")
-                .iter()
-                .any(|reply| matches!(reply, Reply::Done { .. })),
-            "and the cancelled one never completed: {:?}",
-            seen.replies("drop-me")
+            !snapshot.contains("drop-me"),
+            "the cancelled route is gone: {snapshot}"
+        );
+        // Which of the others is still queued rather than in flight is not
+        // fixed: routes are spread across workers by hash, so the order they
+        // reach the node is not the order they were sent. What is fixed is
+        // that cancelling one route left the rest alone.
+        let kept = ["keep0", "keep1", "keep2", "keep3"]
+            .iter()
+            .filter(|route| snapshot.contains(*route))
+            .count();
+        assert!(
+            kept >= 3,
+            "only drop-me was taken; {kept} of four keeps remain: {snapshot}"
         );
     });
 }
@@ -397,7 +419,16 @@ fn cancelling_a_finished_request_reports_that_there_was_nothing_to_stop() {
         let seen = Outer::default();
         let outer = start(Arc::new(seen.clone())).await;
         let agent = start(Arc::new(Standard::new(backends()))).await;
-        place(&agent, &outer, &seen, "n0", "mock-tail", r#"{"l":"0-9"}"#).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "n0",
+            "mock-tail",
+            r#"{"l":"0-9"}"#,
+            4,
+        )
+        .await;
 
         agent
             .enqueue(to_agent(
@@ -425,7 +456,16 @@ fn outer_can_collect_traffic_and_queue_statistics() {
         let seen = Outer::default();
         let outer = start(Arc::new(seen.clone())).await;
         let agent = start(Arc::new(Standard::new(backends()))).await;
-        place(&agent, &outer, &seen, "n0", "mock-tail", r#"{"l":"0-9"}"#).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "n0",
+            "mock-tail",
+            r#"{"l":"0-9"}"#,
+            4,
+        )
+        .await;
 
         let single = chain_over(&[(&agent, "n0")]);
         for index in 0..12 {

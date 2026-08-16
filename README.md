@@ -59,7 +59,8 @@ and the reverse puts it here.
 | Goal | File |
 | --- | --- |
 | What the layer is and why it is shaped this way | [docs/overview.md](docs/overview.md) |
-| The wire | [docs/api.md](docs/api.md) |
+| Every crate, what it holds, and what is not built | [docs/implementation.md](docs/implementation.md) |
+| The wire and the message vocabulary | [docs/api.md](docs/api.md) |
 | How a message moves through an agent | [docs/architecture.md](docs/architecture.md) |
 | Invariants and what breaks if they go | [docs/constraints.md](docs/constraints.md) |
 | Decisions, and the defects behind them | [docs/internals.md](docs/internals.md) |
