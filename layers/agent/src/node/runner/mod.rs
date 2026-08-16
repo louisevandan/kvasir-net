@@ -183,12 +183,23 @@ impl Node {
             // finished by the time it was sent.
             tokio::select! {
                 Some(event) = events.recv() => self.on_event(event),
-                Some(frame) = work.recv() => {
-                    self.counts.received.fetch_add(1, Ordering::Relaxed);
-                    self.queue.push(frame);
-                    self.counts.queued.fetch_add(1, Ordering::Relaxed);
-                    self.drain();
-                }
+                frame = work.recv() => match frame {
+                    Some(frame) => {
+                        self.counts.received.fetch_add(1, Ordering::Relaxed);
+                        self.queue.push(frame);
+                        self.counts.queued.fetch_add(1, Ordering::Relaxed);
+                        self.drain();
+                    }
+                    // The handle is gone: this node was deleted or replaced,
+                    // and nothing can reach it again. Returning is what frees
+                    // it — the node holds its own event sender, so waiting for
+                    // that channel to close waits forever. Written as a
+                    // disabled `Some(...)` branch it parked here instead,
+                    // keeping the adapter, the queue and the in-flight map for
+                    // the life of the process. Every replaced node was still
+                    // resident; the count only ever went up.
+                    None => return,
+                },
                 else => return,
             }
         }

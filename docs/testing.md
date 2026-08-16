@@ -39,6 +39,23 @@ chains sharing agents; a failing backend.
 `layers/agent/tests/lifecycle.rs` takes the other half — a load reported per
 stage, a declared ceiling, an unload, a failing load, deadlines, cancellation.
 
+`layers/agent/tests/network.rs` makes the network the slow thing. Each agent
+sits behind a relay carrying a declared latency, jitter, width or stall, and
+nothing in P4 is told it is there. A chain across slow links, jitter that must
+not become reordering, a link that seizes for a tenth of a second, a narrow
+link the lanes must not become the buffer for, one bad hop that must not
+serialise the rest, and a slow link with a slow backend at once. One test
+exists only to guard the others: a relay that fell out of the path would leave
+them passing *faster*, so it asserts the crossing really took the time.
+
+`layers/agent/tests/resilience.rs` is what a listener meets over weeks. Garbage,
+a header cut in half, a body cut short, wrong magic, wrong version, an
+impossible length, a header claiming 900KB followed by nothing; 600 connections
+opened and abandoned three ways against a ceiling of 256; frames for a node
+that does not exist. Every one of them ends by checking the agent still serves,
+and the long mixed run ends by checking every queue drained, no reply is still
+expected, and no node lost or orphaned anything.
+
 `layers/agent/tests/queues.rs` watches the two-tier queue while the mock is
 deliberately holding hops, which is the only time the interesting state exists.
 Concurrent arrivals against one slow node, a chain whose middle stage is the

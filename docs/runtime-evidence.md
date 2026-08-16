@@ -1,5 +1,41 @@
 # Runtime evidence
 
+## 2026-08-16: the same fleet with the network made bad on purpose
+
+Everything before this ran on an idle gigabit LAN, where a hop costs almost
+nothing — which is not the network a distributed inference lives on. A relay
+was put in front of each agent's port, carrying a declared latency, jitter,
+width and stall, with each agent advertising its relay's address. Nothing in
+P4 was changed or told: an agent behind a gateway is a case the addressing
+already had.
+
+Links: Windows 10ms ±5, both Macs 20ms ±10, GB10 35ms ±15. Four stages, so a
+single token's lap crosses all four.
+
+| Requests | Elapsed | Against one request | Frames/s |
+| ---: | ---: | ---: | ---: |
+| 1 | 3,031 ms | 1.00× | 8 |
+| 8 | 4,255 ms | 1.40× | 45 |
+| 64 | 4,696 ms | 1.55× | 327 |
+| 400 | 9,731 ms | **3.21×** | 987 |
+
+The first row is the floor and cannot be beaten: 24 tokens, four crossings
+each, on links averaging 26ms. Everything after it is how well the layer
+overlaps work it cannot make faster — sixty-four times the requests for 1.55×
+the time, four hundred times for 3.21×. The same shape on the unimpaired path
+takes 0.15s, so the link is what is being measured, not the agents.
+
+Then each impairment alone and all of them together, on GB10's link:
+
+| GB10's link | Requests | Result |
+| --- | ---: | --- |
+| 128 KB/s, no added latency | 200 × 16 | 200/200, 333 frames/s |
+| seizes 250ms every 12 chunks | 200 × 16 | 200/200, 573 frames/s |
+| 30ms ±20, 256 KB/s, 200ms every 20 | 200 × 16 | 200/200, 323 frames/s |
+
+Every run passed all four verdicts. A degraded link changes how long the work
+takes and nothing else about it, which is the whole claim.
+
 ## 2026-08-16: the layer builds and runs on three operating systems and two architectures
 
 Everything before this was Windows on x86-64. The source was copied to two Mac

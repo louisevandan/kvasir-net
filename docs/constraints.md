@@ -22,6 +22,10 @@ What breaks if each goes. Most of these are here because they broke once.
 | A peer connection is checked before use | A dead socket accepts a write into its buffer, so the first frame after a restart is lost. |
 | An advertised address is one a peer can reach | Two agents both calling themselves `127.0.0.1` finish the prefill and stop after one token: the lap resolves to whichever machine holds the frame. |
 | An advertised hint is parsed, not pasted | Appending the bound port to a hint that carried one produced `HOST:52001:52001`, which parses, resolves to nothing, and reports itself ready. |
+| A node's run loop ends when its handle is dropped | The node holds its own event sender, so a loop waiting for that channel to close waits for itself. Every replaced or deleted node stayed resident with its adapter, queue and in-flight map. |
+| A silent peer is released | The peer map was append-only in addresses ever seen, each holding a task and a socket. Bounded on a fixed fleet, unbounded the moment a caller returns from a new port. |
+| Releasing a peer never refuses a frame | Retirement that turned into a refusal would make idleness lose work; a send into a just-retired pump reconnects instead. |
+| A declared frame length is bounded before it is allocated | A header is 16 bytes and can claim anything. The caps make the trap cost 1.25MB per connection against a connection ceiling, rather than the process. |
 
 ## Boundaries
 

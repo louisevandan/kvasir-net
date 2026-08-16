@@ -123,6 +123,25 @@ P4_DRIVE_UNREACHABLE address=tcp://0.0.0.0:52003 note=remote-stages-cannot-reply
 
 `P4_DRIVE_CEILING` sets the concurrency each load declares; it defaults to 32.
 
+## Making the network bad on purpose
+
+```bash
+p4-link LISTEN TARGET [--delay MS] [--jitter MS] [--rate BYTES_PER_SEC] \
+                      [--stall-every N] [--stall MS]
+
+p4-link 0.0.0.0:52005 127.0.0.1:52011 --delay 35 --jitter 15
+```
+
+A relay that carries frames badly. The agent binds somewhere private, the relay
+takes the port peers use, and the agent advertises the relay's address — which
+is what an agent behind any gateway already does, so nothing in P4 changes or
+is told.
+
+Bytes are never dropped or reordered; TCP does neither, and a relay that did
+would be testing a transport this layer does not have. Everything is
+deterministic, jitter included, so two runs of one scenario differ only if P4
+differs.
+
 ## Watching an agent
 
 ```bash

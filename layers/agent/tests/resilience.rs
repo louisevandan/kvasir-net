@@ -293,3 +293,58 @@ fn peers_that_go_quiet_are_released() {
         );
     });
 }
+
+/// An adapter that says when it is finally let go.
+///
+/// A leaked node is inert — it answers nothing and breaks nothing — so the
+/// only way to see it is to ask its adapter whether it was ever dropped.
+struct Reports(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for Reports {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl p4_adapter::Adapter for Reports {
+    fn distribution(&self) -> p4_adapter::Distribution {
+        p4_adapter::Distribution::Internal
+    }
+    fn start(&self, _: p4_adapter::Work, _: &dyn p4_adapter::EventSink) {}
+}
+
+/// Replacing or deleting a node has to release the old one.
+///
+/// This is the leak a soak found and no unit test could: the node owns its own
+/// event sender, so a run loop waiting for that channel to close waits for
+/// itself. Every node ever replaced stayed resident with its adapter, its
+/// queue and its in-flight map, and a process that re-creates nodes — which is
+/// what every deployment does — grew until it died.
+#[test]
+fn replacing_and_deleting_nodes_releases_them() {
+    runtime().block_on(async {
+        let a = start(Arc::new(Silent)).await;
+        let released = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        // The same name, over and over, as a redeploying fleet does.
+        for _ in 0..24 {
+            a.create_node("n0", Arc::new(Reports(Arc::clone(&released))), 4)
+                .await;
+            settle(5).await;
+        }
+        settle(120).await;
+        assert!(
+            released.load(std::sync::atomic::Ordering::SeqCst) >= 23,
+            "every replaced node was released, not just unreferenced: {}",
+            released.load(std::sync::atomic::Ordering::SeqCst)
+        );
+
+        assert!(a.delete_node("n0").await, "and the last one deletes");
+        settle(120).await;
+        assert_eq!(
+            released.load(std::sync::atomic::Ordering::SeqCst),
+            24,
+            "including the deleted one"
+        );
+    });
+}
