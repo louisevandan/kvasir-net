@@ -6,6 +6,7 @@
 //! reply lands on the agent's own task — so keeping the shared state in one
 //! file is what makes "who holds which lock" a question with a short answer.
 
+use super::watch::Peaks;
 use p4_agent_core::agent::{Agent, Duties};
 use p4_protocol::frame::Frame;
 use p4_service::message::Reply;
@@ -54,10 +55,15 @@ pub struct Replies {
     pub(super) finished: Arc<AtomicUsize>,
     pub(super) bound: Arc<AtomicUsize>,
     pub(super) accepted: Arc<AtomicUsize>,
-    /// Every reply of any kind. What waiting is bounded by: a driver cannot
-    /// know how fast a backend is, but it can tell a deployment that is slow
-    /// from one that has stopped, and only the second is worth giving up on.
+    /// Every reply that is progress. What waiting is bounded by: a driver
+    /// cannot know how fast a backend is, but it can tell a deployment that is
+    /// slow from one that has stopped, and only the second is worth giving up
+    /// on. Answers to the driver's own questions are excluded — counting them
+    /// would let a dead deployment look busy because we were still asking it
+    /// how it was doing.
     pub(super) events: Arc<AtomicUsize>,
+    /// The deepest the queues got while the run was in flight.
+    pub(super) peaks: Peaks,
 }
 
 impl Duties for Replies {
@@ -65,6 +71,15 @@ impl Duties for Replies {
         let Ok(reply) = decode_reply(&frame.body) else {
             return;
         };
+        // Facts about a machine and what an agent is doing: each is asked for
+        // deliberately, and neither belongs to a route. They are handled here
+        // rather than filed under one, because filing them would invent a
+        // route that produced nothing and count it among the run's.
+        match &reply {
+            Reply::Status { snapshot } => return self.peaks.observe(snapshot),
+            Reply::Machine { .. } => return,
+            _ => {}
+        }
         self.events.fetch_add(1, SeqCst);
         let mut streams = self.streams.lock().expect("reply lock");
         let stream = streams.entry(frame.envelope.route.clone()).or_default();
@@ -91,10 +106,13 @@ impl Duties for Replies {
                 stream.accepted = true;
                 self.accepted.fetch_add(1, SeqCst);
             }
-            // Facts about a machine, what an agent is doing, and what became of
-            // a cached sequence: each is asked for deliberately and read where
-            // it was asked for, not here.
-            Reply::Machine { .. } | Reply::Status { .. } | Reply::Cached { .. } => {}
+            // What became of a cached sequence is asked for deliberately and
+            // read where it was asked for, not here.
+            Reply::Cached { .. } => {}
+            // Returned above. Left as a quiet arm rather than a panic: this
+            // runs on the agent's own task, where an unexpected reply must not
+            // be able to take the driver down.
+            Reply::Machine { .. } | Reply::Status { .. } => {}
         }
     }
 }
@@ -121,4 +139,13 @@ pub struct Outcome {
     /// deployment stopped working" are different claims, and only the second
     /// is about the thing under test.
     pub quiet: bool,
+    /// The deepest a node's own queue got, the most it ever had inside the
+    /// adapter at once, the deepest any main-queue lane got, and how many
+    /// times these were asked for. All four are needed together: a ceiling
+    /// held is only meaningful beside a backlog that existed, and both are
+    /// only meaningful if anybody looked.
+    pub node_depth: usize,
+    pub running: usize,
+    pub lane: usize,
+    pub samples: usize,
 }

@@ -144,6 +144,15 @@ impl Handle {
         self.queue.is_running()
     }
 
+    /// How many sequences this node has handed to the adapter right now.
+    ///
+    /// The ceiling bounds this and nothing else does — a backend is never
+    /// asked to refuse, and never told how much is waiting. Reported so that
+    /// claim is checkable from outside rather than only in the code.
+    pub fn in_adapter(&self) -> usize {
+        self.queue.in_adapter()
+    }
+
     pub fn counts(&self) -> &Counts {
         &self.counts
     }

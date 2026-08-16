@@ -170,3 +170,73 @@ fn decode_keeps_moving_while_prefill_is_still_queued() {
         );
     });
 }
+
+/// The claim the design rests on, watched rather than assumed: however far the
+/// node's own queue runs ahead, it never hands the adapter more than the
+/// ceiling the load declared.
+///
+/// This is what "P4 keeps its own queue" means in practice. A backend has its
+/// own optimal width and is configured for it; everything past that must wait
+/// on this side, because the alternative is handing a backend a hundred
+/// requests and relying on it to hold ninety — which makes the backend's
+/// queue the real one, and makes cancellation, ordering and attribution its
+/// business rather than ours.
+///
+/// Arrivals are spread over time on purpose. A burst measures a backlog
+/// draining; work arriving while earlier work is still running is the case
+/// that never ends, and it is the one the ceiling has to survive.
+#[test]
+fn a_node_never_hands_the_adapter_more_than_its_ceiling() {
+    runtime().block_on(async {
+        const CEILING: usize = 6;
+        const ARRIVALS: usize = 90;
+
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        a.create_node("n0", Arc::new(Mock::terminal(0, slow(20))), CEILING)
+            .await;
+
+        let chain = chain_over(&[(&a, "n0")]);
+        let mut widest = 0;
+        let mut deepest = 0;
+        let mut lanes_worst = 0;
+        for index in 0..ARRIVALS {
+            a.enqueue(request(&format!("r{index}"), &chain, &outer, 3))
+                .unwrap();
+            settle(4).await;
+            let status = a.node_status().await;
+            let node = status.first().expect("the node exists");
+            widest = widest.max(node.running);
+            deepest = deepest.max(node.depth);
+            let lanes = a.queue().depth();
+            lanes_worst =
+                lanes_worst.max(lanes.control + lanes.prefill + lanes.decode + lanes.response);
+            assert!(
+                node.running <= CEILING,
+                "hop {index} put {} sequences in the adapter against a ceiling of {CEILING}",
+                node.running
+            );
+        }
+
+        // Each half is worthless alone. A ceiling never exceeded is trivially
+        // true if nothing ever queued, and a deep queue proves nothing about
+        // where the excess was held.
+        assert!(
+            deepest > CEILING,
+            "nothing was ever held back: deepest {deepest} against a ceiling of {CEILING}"
+        );
+        assert!(
+            widest > 1,
+            "windows of one prove nothing: the ceiling was never approached, only \n             never exceeded"
+        );
+        assert!(
+            lanes_worst <= deepest,
+            "the backlog lived in the agent's lanes, not the node's queue: \
+             lanes {lanes_worst}, node {deepest}"
+        );
+
+        until(|| outer_duties.routes() >= ARRIVALS).await;
+        assert_eq!(outer_duties.routes(), ARRIVALS, "every arrival was answered");
+    });
+}

@@ -4,6 +4,7 @@
 //! here reaches inside an agent. What came back is next door, in `replies`.
 
 mod replies;
+mod watch;
 
 pub use replies::{Outcome, Stream};
 
@@ -37,6 +38,9 @@ pub struct Session {
     options: String,
     /// How long nothing may arrive before the driver stops waiting.
     quiet: Duration,
+    /// Gap between arrivals. Zero sends the whole run at once, which measures a
+    /// backlog draining rather than one forming.
+    arrive: Duration,
     /// What makes this run's route names its own.
     run: String,
 }
@@ -52,6 +56,7 @@ impl Session {
         prompt: String,
         options: String,
         quiet: Duration,
+        arrive: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(listen).await?;
         let bound = listener.local_addr()?;
@@ -72,6 +77,7 @@ impl Session {
             prompt,
             options,
             quiet,
+            arrive,
             // The clock, because it is monotonic across restarts on one machine
             // and this only has to separate one run from the last.
             run: format!(
@@ -239,7 +245,7 @@ impl Session {
     /// one is addressed to the wrong half of its own deployment.
     pub async fn infer(
         &self,
-        chain: &[Address],
+        chain_of: &[Address],
         serving: &[usize],
         requests: usize,
         tokens: u32,
@@ -247,10 +253,10 @@ impl Session {
         let links: Vec<Link> = serving
             .iter()
             .map(|&stage| Link {
-                address: chain[stage].clone(),
+                address: chain_of[stage].clone(),
                 // The name the node was created under, not its position in this
                 // chain — a stage that is skipped does not renumber the rest.
-                node: Self::node_of(stage, chain.len()),
+                node: Self::node_of(stage, chain_of.len()),
                 binding: "deployment".into(),
                 generation: 1,
             })
@@ -261,6 +267,17 @@ impl Session {
         let entry = chain.current().address.clone();
         let node = chain.current().node.clone();
 
+        // Every machine in the deployment, including one holding a share that
+        // serves nothing: its node has a queue too, and "nothing ever queued
+        // there" is a claim worth being able to make.
+        let mut watch: Vec<Address> = Vec::new();
+        for address in chain_of {
+            if !watch.contains(address) {
+                watch.push(address.clone());
+            }
+        }
+
+        let already = self.replies.finished.load(SeqCst);
         for index in 0..requests {
             let _ = self.send(
                 entry.clone(),
@@ -274,12 +291,30 @@ impl Session {
                     options: self.options.clone(),
                 }),
             );
+            // Arrivals spread over time rather than all at once. A burst
+            // measures a backlog draining; work actually arrives while earlier
+            // work is still running, and the queues behave differently under
+            // the two.
+            if !self.arrive.is_zero() {
+                for address in &watch {
+                    let _ = self.send(
+                        address.clone(),
+                        Recipient::Agent,
+                        QueueClass::Control,
+                        &self.route("watch"),
+                        None,
+                        encode_to_agent(&ToAgent::Status),
+                    );
+                }
+                tokio::time::sleep(self.arrive).await;
+            }
         }
         // A counter, not a walk of the streams: walking them held the lock the
         // recording path needs, and grew with the tokens it was counting.
-        let already = self.replies.finished.load(SeqCst);
         let waited = self
-            .until(|| self.replies.finished.load(SeqCst) >= already + requests)
+            .until_watching(&watch, || {
+                self.replies.finished.load(SeqCst) >= already + requests
+            })
             .await;
 
         let streams: Vec<Stream> = (0..requests)
@@ -305,6 +340,10 @@ impl Session {
                 .map(|stream| stream.text.clone())
                 .unwrap_or_default(),
             quiet: !waited,
+            node_depth: self.replies.peaks.node_depth.load(SeqCst),
+            running: self.replies.peaks.running.load(SeqCst),
+            lane: self.replies.peaks.lane.load(SeqCst),
+            samples: self.replies.peaks.samples(),
         }
     }
 
@@ -341,13 +380,38 @@ impl Session {
     /// ceiling was fine while runs generated sixty-four tokens and became a lie
     /// at five thousand: it reported a stall at the exact token the driver ran
     /// out of patience on, while the backend went on to finish normally.
-    async fn until(&self, mut done: impl FnMut() -> bool) -> bool {
+    async fn until(&self, done: impl FnMut() -> bool) -> bool {
+        self.until_watching(&[], done).await
+    }
+
+    /// The same wait, asking each address what it is doing as it goes.
+    ///
+    /// The queues only exist while the run does, so a claim about them has to
+    /// be observed from inside it — and observed by asking over the socket,
+    /// which is the only way OUTER can observe anything.
+    async fn until_watching(&self, watch: &[Address], mut done: impl FnMut() -> bool) -> bool {
         let mut seen = self.replies.events.load(SeqCst);
         let mut since = Instant::now();
+        let mut tick = 0usize;
         loop {
             if done() {
                 return true;
             }
+            // Often enough to catch a peak between two hops, rare enough that
+            // the asking is not itself the load.
+            if !watch.is_empty() && tick % 10 == 0 {
+                for address in watch {
+                    let _ = self.send(
+                        address.clone(),
+                        Recipient::Agent,
+                        QueueClass::Control,
+                        &self.route("watch"),
+                        None,
+                        encode_to_agent(&ToAgent::Status),
+                    );
+                }
+            }
+            tick += 1;
             tokio::time::sleep(Duration::from_millis(20)).await;
             let now = self.replies.events.load(SeqCst);
             if now != seen {

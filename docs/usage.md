@@ -138,6 +138,22 @@ is generated. A prompt sized in thousands of tokens belongs in a file, so what
 was measured is exactly what was sent — `POST /tokenize` on the backend counts
 it in the backend's own tokeniser, which is the only count that means anything.
 
+`P4_DRIVE_ARRIVE_MS` spaces the arrivals. Zero — the default — sends the whole
+run at once, which measures a backlog draining; a gap makes work arrive while
+earlier work is still running, which is the case that never ends. With a gap
+set, the driver also asks each agent what it is doing as it goes and reports
+the peaks:
+
+```
+peak_node_queue=110 peak_in_adapter=10 peak_main_lane=0 samples=284
+```
+
+Read together, and only together. `peak_in_adapter` never above the declared
+ceiling is the claim that P4 holds the excess rather than the backend — but it
+is trivially true if nothing ever queued, which is what `peak_node_queue` is
+there to rule out. `peak_main_lane` staying flat says the backlog lived on the
+node rather than in front of it, and `samples` says somebody actually looked.
+
 `P4_DRIVE_QUIET_MS` is how long nothing may arrive before the driver stops
 waiting; 30s by default. It bounds silence, not duration: a five-thousand-token
 answer takes as long as it takes. When the driver does stop, it says so above

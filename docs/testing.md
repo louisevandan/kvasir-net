@@ -75,6 +75,15 @@ asserts both halves of the attribution: the node's queue deep *and* the
 agent's lanes shallow. Node depth alone would also be satisfied by an agent
 that had backed up with it.
 
+The fourth is the one the design rests on: ninety arrivals spread over time
+against a ceiling of six, sampling after every one, asserting the node never
+hands the adapter more than the ceiling. Three guards keep it from passing for
+the wrong reason — the queue must actually have run past the ceiling, windows
+must actually have been wider than one, and the agent's lanes must not be where
+the backlog sat. Without the first, "never exceeded" is what an idle node also
+looks like; without the second, it is what a node dispatching one at a time
+looks like.
+
 `layers/service/tests/two_process.rs` does the same through the message
 vocabulary: nodes created, a model loaded, an inference chained, all by frame.
 
@@ -112,7 +121,7 @@ at which step a frame stopped existing.
 
 ## What the suite is, file by file
 
-305 tests. The count matters less than the split: the levels catch different
+311 tests. The count matters less than the split: the levels catch different
 things, and three defects in this layer survived every level but the fleet.
 
 | Where | Tests | What it holds |
@@ -125,10 +134,10 @@ things, and three defects in this layer survived every level but the fleet.
 | `p4-llamacpp` (unit) | 38 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour. |
 | `p4-link` | 7 | That a declared impairment is deterministic and irregular, and adds rather than replaces. |
 | `p4-agent` | 6 | That the registry carries what this build claims and refuses what it does not. |
-| `p4-drive` | 7 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. |
+| `p4-drive` | 12 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. Plus reading a status snapshot: the three figures that matter, peaks that only rise, the deepest of several nodes, and a route named after a field not being read as one. |
 | `tests/simulation.rs` | 10 | Real agents on real sockets: chains of one, two and three stages; a crowd against a ceiling; batching; relay through an agent owning no node; ordering; concurrent chains; a failing backend. |
 | `tests/lifecycle.rs` | 8 | Load reported per stage, a declared ceiling, unload, a failing load, deadlines, cancellation. |
-| `tests/queues.rs` | 3 | The two-tier queue while the mock deliberately holds hops. Asserts **both** halves — node deep *and* lanes shallow — because node depth alone is equally satisfied by an agent that backed up with it. |
+| `tests/queues.rs` | 4 | The two-tier queue while the mock deliberately holds hops. Asserts **both** halves — node deep *and* lanes shallow — because node depth alone is equally satisfied by an agent that backed up with it. The fourth holds the ceiling under spread arrivals, guarded three ways against passing for the wrong reason. |
 | `tests/network.rs` | 7 | The network as the slow thing: latency, jitter that must not reorder, stalls, a narrow link, one bad hop, and a slow link with a slow backend. One test exists only to guard the others — a relay that fell out of the path would leave them passing *faster*. |
 | `tests/topology.rs` | 6 | The model rather than the wiring: a row of relaying agents, a star, a chain revisiting a machine, a partition answered by its deadline, a heal with nothing restarted. The partitions assert they really partitioned. |
 | `tests/resilience.rs` | 6 | What a long-lived listener meets: garbage, truncation, wrong magic and version, an impossible length, a header claiming 900KB then nothing, 600 abandoned connections, frames for a node that does not exist, and a node replaced twenty-four times that must be released each time. |

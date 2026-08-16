@@ -88,7 +88,11 @@ leaves no other trace.
 
 `NodeStatus { node, depth, running, waiting }` — `waiting` is the part a count
 cannot give: which requests are on this node now, in the order it will take
-them.
+them. `running` is how many sequences are inside the adapter at this moment,
+which is the ceiling being kept, observable. It was a bool — "is something
+running" — and that could not answer the question it existed for: equally true
+at one and at a hundred, so an operator watching a backlog could not tell from
+it whether the excess was being held here or handed to the backend.
 
 ### `queue/`
 

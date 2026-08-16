@@ -1,5 +1,59 @@
 # Runtime evidence
 
+## 2026-08-17: the queue is P4's, under arrival that outruns service
+
+A backend has its own best width and is configured for it — `llama-server`
+here runs ten slots, which is where its throughput sits. Requests do not stop
+at ten. The claim this layer makes is that everything past that width waits on
+*this* side of the adapter boundary, and that the waiting is arranged without
+the backend's help, because a backend holding the backlog would make ordering,
+cancellation and attribution its business rather than ours.
+
+Until now that claim was only tested against the mock, and every real run had
+been at or below its ceiling — so nothing had ever had to be held back.
+
+The scenario: ten slots, a P4 ceiling of ten, and 120 requests arriving one
+every 700 ms — about five times faster than they can be served — each a
+1,980-token prompt against 400 tokens of answer. Arrivals are spread rather
+than burst, because a burst measures a backlog draining and the case that
+matters is one forming while earlier work is still running.
+
+```
+P4_DRIVE_RESULT requests=120 tokens_each=400
+  completed=120 failed=0 unanswered=0 routes=124
+  tokens=47880 elapsed_ms=605670 frames_per_second=79
+  peak_node_queue=118 peak_in_adapter=10 peak_main_lane=6 samples=1826
+  [pass] every request answered / no request failed
+  [pass] every stream in order / one terminal per route
+```
+
+Read together, which is the only way they mean anything. 118 requests were
+held on the node's own queue; never more than 10 were inside the adapter, which
+is the declared ceiling and nothing else enforcing it; the agent's deepest lane
+reached 6, so the backlog was not sitting in front of the node; and 1,826
+samples say this was observed rather than assumed. The driver asked over the
+same socket as everything else — the numbers are the protocol's answer, not a
+log read over the machine's shoulder.
+
+Corroborated from outside P4 entirely, sampled every few seconds through the
+run: established connections from the adapter to `llama-server` stayed at 10-11
+and its own `/slots` reported exactly 10 processing. llama.cpp's task queue was
+never used. Had P4 forwarded everything and left the backend to sort it out,
+there would have been 120 connections and 110 tasks deferred inside it.
+
+### The flag that could not answer the question
+
+`NodeStatus.running` was a bool. "Something is running" is equally true at one
+sequence and at a hundred, so an operator could not tell from it whether the
+ceiling was being kept — the one thing the field existed to show. It is now a
+count of what is inside the adapter, and the run above is the first that could
+state its own case.
+
+The driver read `running=` as a number before the field was one, which would
+have reported a peak of zero and passed for a measurement. It did not survive
+contact with a real snapshot, but only because the number was checked against
+what the run was independently known to be doing.
+
 ## 2026-08-16: the same two GPUs under a real session shape
 
 The runs below were sixty-four tokens against a three-word prompt, which is a

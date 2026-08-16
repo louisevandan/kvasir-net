@@ -91,6 +91,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .and_then(|value| value.parse().ok())
             .unwrap_or(30_000),
     );
+    // Gap between arrivals. Zero — the default — sends the whole run at once,
+    // which measures a backlog draining. Real work arrives while earlier work
+    // is still running, and the queues behave differently under the two.
+    let arrive = Duration::from_millis(
+        std::env::var("P4_DRIVE_ARRIVE_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
+    );
     // What a deployment declares it admits at once. A real one states this
     // from what it measured; a driver that passed its own request count would
     // be declaring a ceiling nobody sized.
@@ -99,9 +108,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(32);
 
-    let session =
-        session::Session::start(&listen, advertise.as_deref(), plans, prompt, options, quiet)
-            .await?;
+    let session = session::Session::start(
+        &listen,
+        advertise.as_deref(),
+        plans,
+        prompt,
+        options,
+        quiet,
+        arrive,
+    )
+    .await?;
     println!(
         "P4_DRIVE_READY address={} stages={} serving={} prompt_bytes={}",
         session.address(),

@@ -14,11 +14,18 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct NodeQueue {
     waiting: Mutex<VecDeque<Frame>>,
-    /// True between starting a hop and seeing it complete. A node runs one hop
-    /// at a time by construction: it starts the next only when it observes the
-    /// previous end, so a backend never receives overlapping work for one
-    /// deployment.
-    running: Mutex<bool>,
+    /// How many sequences are inside the adapter, which is the width of the
+    /// window running now and zero between hops. A node runs one hop at a time
+    /// by construction: it starts the next only when it observes the previous
+    /// end, so a backend never receives overlapping work for one deployment.
+    ///
+    /// A count rather than a flag, because the flag could not answer the
+    /// question it existed for. What the ceiling bounds is how many go over at
+    /// once, and "something is running" is equally true at one and at a
+    /// hundred — so an operator watching a backlog could not tell from it
+    /// whether the ceiling was being kept, which is the whole claim that this
+    /// queue holds the excess rather than the backend.
+    running: Mutex<usize>,
 }
 
 impl NodeQueue {
@@ -37,6 +44,15 @@ impl NodeQueue {
     }
 
     pub fn is_running(&self) -> bool {
+        self.in_adapter() > 0
+    }
+
+    /// How many sequences this node has handed to the adapter right now.
+    ///
+    /// The ceiling bounds this and nothing else does: a backend is never asked
+    /// to refuse and never told how much is waiting. Reported so that claim is
+    /// checkable from outside rather than only readable in the code.
+    pub fn in_adapter(&self) -> usize {
         *self.running.lock().expect("node running lock")
     }
 
@@ -77,7 +93,7 @@ impl NodeQueue {
         }
         *waiting = kept;
         if !claimed.is_empty() {
-            *self.running.lock().expect("node running lock") = true;
+            *self.running.lock().expect("node running lock") = claimed.len();
         }
         claimed
     }
@@ -85,7 +101,7 @@ impl NodeQueue {
     /// Marks the running hop finished. Called when the adapter says so, and
     /// only then — a timer here would let the node start work beside work.
     pub fn finished(&self) {
-        *self.running.lock().expect("node running lock") = false;
+        *self.running.lock().expect("node running lock") = 0;
     }
 
     /// The first waiting frame a predicate accepts.

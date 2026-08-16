@@ -145,7 +145,7 @@ impl Agent {
             .map(|(id, handle)| NodeStatus {
                 node: id.clone(),
                 depth: handle.depth(),
-                running: handle.is_running(),
+                running: handle.in_adapter(),
                 waiting: handle.waiting_routes(),
             })
             .collect();
@@ -363,7 +363,14 @@ pub struct Traffic {
 pub struct NodeStatus {
     pub node: String,
     pub depth: usize,
-    /// Whether a hop is inside the backend at this moment.
-    pub running: bool,
+    /// How many sequences are inside the backend at this moment.
+    ///
+    /// A count rather than a flag, because the flag could not answer the
+    /// question it was there for. What the ceiling bounds is how many a node
+    /// hands over at once, and "something is running" is equally true at one
+    /// and at a hundred — an operator watching a queue drain cannot tell from
+    /// it whether the ceiling is being kept, which is the whole claim that
+    /// P4 queues rather than the backend.
+    pub running: usize,
     pub waiting: Vec<String>,
 }

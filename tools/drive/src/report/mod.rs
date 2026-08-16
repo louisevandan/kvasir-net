@@ -28,6 +28,16 @@ pub fn print(outcome: &Outcome, elapsed: Duration, requests: usize, tokens: u32)
     // Said before the verdicts, because it changes what they mean. A run the
     // driver walked away from has not shown the deployment failing; it has
     // shown the driver stopping, and the two must never read the same.
+    // Where the backlog lived, asked for over the socket while the run was in
+    // flight. Both halves are needed: a ceiling held says nothing unless a
+    // backlog existed to hold back, and a shallow main queue is also what an
+    // idle agent looks like.
+    if outcome.samples > 0 {
+        println!(
+            "  peak_node_queue={} peak_in_adapter={} peak_main_lane={} samples={}",
+            outcome.node_depth, outcome.running, outcome.lane, outcome.samples
+        );
+    }
     if outcome.quiet {
         println!("  NOTE the driver stopped waiting; the verdicts below are incomplete");
     }

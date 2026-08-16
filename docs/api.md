@@ -136,7 +136,7 @@ a distributed conversation is one instruction per stage, exactly as a load is.
 | 37 | `Done { reason, generated }` | Terminal for a route, with the backend's own reason. |
 | 38 | `Failed { detail }` | Terminal, with why. |
 | 39 | `Machine { snapshot }` | Answer to `Inspect`. |
-| 40 | `Status { snapshot }` | Answer to `Status`. |
+| 40 | `Status { snapshot }` | Answer to `Status`. One line of lanes and traffic, then a line per node: `node=<id> depth=<queued> running=<in the adapter> routes=[…]`. `running` is a count rather than a flag, because the ceiling bounds how many go over at once and "something is running" is equally true at one and at a hundred. |
 | 41 | `Cached { sequence, bytes, detail }` | A cache verb finished. `sequence` is the id the state now lives under — the new one after a fork — and `bytes` is what the durable copy occupies, which only the backend knows. |
 
 ## The transaction a load is
