@@ -30,30 +30,63 @@ fn a_ceiling_of_zero_admits_nothing() {
 }
 
 #[test]
-fn a_ready_decode_lap_goes_before_fresh_prefill() {
+fn a_ready_decode_lap_goes_before_fresh_prefill_once_the_deployment_is_full() {
     // The lap belongs to a request already holding KV on every node of its
-    // chain; prefill is the long phase and has not started.
+    // chain; prefill is the long phase and has not started. This holds only
+    // when there is no room, which is when it matters.
     let waiting = vec![
         item("prefill-1", QueueClass::Prefill),
         item("prefill-2", QueueClass::Prefill),
         item("decode-1", QueueClass::Decode),
+        item("decode-2", QueueClass::Decode),
+    ];
+    let window = compose(&waiting, 2, 0).expect("a window");
+    assert_eq!(window.lane, QueueClass::Decode);
+    assert_eq!(window.width(), 2);
+}
+
+/// The other half of the same rule, and the one that was missing.
+///
+/// One sequence decoding always has a lap ready. Preferring it unconditionally
+/// meant a burst of arrivals behind it never got in, so a node never reached
+/// the width it had declared and both cards sat mostly idle. While there is
+/// room, new work goes first.
+#[test]
+fn fresh_prefill_goes_first_while_the_deployment_has_room() {
+    let waiting = vec![
+        item("decode-1", QueueClass::Decode),
+        item("prefill-1", QueueClass::Prefill),
+        item("prefill-2", QueueClass::Prefill),
     ];
     let window = compose(&waiting, 8, 0).expect("a window");
-    assert_eq!(window.lane, QueueClass::Decode);
-    assert_eq!(window.width(), 1);
-    assert_eq!(window.items[0].route, "decode-1");
+    assert_eq!(window.lane, QueueClass::Prefill);
+    assert_eq!(window.width(), 2);
+}
+
+/// Admission is not a trickle. A node that let one in per window would reach
+/// its ceiling no faster than the sequences it is already carrying complete.
+#[test]
+fn admission_fills_the_room_that_is_left_in_one_window() {
+    let mut waiting = vec![item("decode-1", QueueClass::Decode)];
+    for index in 0..40 {
+        waiting.push(item(&format!("prefill-{index}"), QueueClass::Prefill));
+    }
+    let window = compose(&waiting, 16, 0).expect("a window");
+    assert_eq!(window.lane, QueueClass::Prefill);
+    assert_eq!(window.width(), 16, "a whole window, not one at a time");
 }
 
 #[test]
 fn a_window_never_mixes_lanes() {
     // Prefill and decode are different passes and a backend batches them
-    // separately, so a mixed window would misrepresent both.
+    // separately, so a mixed window would misrepresent both. Held at the
+    // ceiling, where decode wins, and there is prefill waiting to mix in.
     let waiting = vec![
         item("d1", QueueClass::Decode),
         item("p1", QueueClass::Prefill),
         item("d2", QueueClass::Decode),
     ];
-    let window = compose(&waiting, 8, 0).expect("a window");
+    let window = compose(&waiting, 2, 0).expect("a window");
     assert!(window.items.iter().all(|i| i.lane == QueueClass::Decode));
     assert_eq!(window.width(), 2);
 }

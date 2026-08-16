@@ -170,8 +170,13 @@ ggml-rpc-server -H 127.0.0.1 -p 50052 -d CUDA1
 ```
 
 ```bash
-llama-server -m MODEL.gguf --rpc 127.0.0.1:50052 -dev CUDA0,RPC0 -ngl 999 -ts 11,23 --port 18090
+llama-server -m MODEL.gguf --rpc 127.0.0.1:50052 -dev CUDA0,RPC0 -ngl 999 -ts 8,24 -c 81920 --parallel 64 -b 4096 -ub 512 --port 18090
 ```
+
+`-b` has to hold more than one prompt or llama.cpp admits prefills one at a
+time whatever P4 offers it: at `-b 256` against 389-token prompts, slots filled
+one every 17-20 seconds. `-ub 1024` crashes in `ggml-cuda` with an illegal
+memory access, so 512 is the ceiling worth using.
 
 `-ts` is the ratio the shares are split in, and `--list-devices` after `--rpc`
 names the RPC device so `-dev` can pin what the server itself uses — without

@@ -32,10 +32,22 @@ impl Window {
 
 /// Composes the next hop from what is waiting.
 ///
-/// Decode goes first when anything decode is ready. A decode lap belongs to a
-/// request that already holds KV on every node of its chain, and prefill is
-/// the long phase — letting a fresh prefill in ahead of a ready lap makes an
+/// Decode goes first **once the deployment is full**. A decode lap belongs to a
+/// request that already holds KV on every node of its chain, and prefill is the
+/// long phase, so letting a fresh prefill in ahead of a ready lap makes an
 /// in-flight request wait behind work that has not started.
+///
+/// While there is still room, prefill goes first instead. Preferring decode
+/// unconditionally was a veto rather than a preference: one sequence decoding
+/// always has a lap ready, so a burst of arrivals behind it never got in, and a
+/// node with a ceiling of sixty-four admitted them roughly one every six
+/// seconds — never reaching the width it had declared, with both cards mostly
+/// idle. The main queue had already learned this and bounds its own preference
+/// every sixteenth take; this one had not.
+///
+/// Room is counted from the decode items themselves. Between hops every live
+/// sequence has exactly one lap waiting, so the number of them *is* how many
+/// the deployment is currently carrying.
 ///
 /// A window never mixes lanes. Prefill and decode are different passes over
 /// the model and a backend batches them separately.
@@ -47,7 +59,14 @@ pub fn compose(waiting: &[Waiting], ceiling: usize, now_unix_ms: u64) -> Option<
         .iter()
         .filter(|item| !expired(item, now_unix_ms))
         .collect();
-    let lane = if live.iter().any(|item| item.lane == QueueClass::Decode) {
+    let carrying = live
+        .iter()
+        .filter(|item| item.lane == QueueClass::Decode)
+        .count();
+    let admits = live.iter().any(|item| item.lane == QueueClass::Prefill);
+    let lane = if admits && carrying < ceiling {
+        QueueClass::Prefill
+    } else if carrying > 0 {
         QueueClass::Decode
     } else {
         live.first()?.lane

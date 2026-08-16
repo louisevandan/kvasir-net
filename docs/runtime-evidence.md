@@ -1,5 +1,62 @@
 # Runtime evidence
 
+## 2026-08-17: 83 to 172 tok/s, and three separate reasons it was not
+
+Measured against this machine's own record — 271.5 tok/s, set by the earlier
+staged Pipeline at 64 sessions on the same 35B MoE with 400-token prompts and
+500-token answers — the same workload was run through P4 and the stock
+llama.cpp adapter. It returned 83 tok/s. Three things were wrong, in three
+different places, and each hid the next.
+
+| | aggregate | what changed |
+| --- | ---: | --- |
+| before | ~83 tok/s | ten slots, and never more than a handful busy |
+| after | **172.2 tok/s** | 64/64, 31,936 tokens in 185.4 s, all four verdicts |
+
+Still 63% of the record, and the remaining gap is structural — see the end.
+
+### The adapter opened a window one sequence at a time
+
+Every sequence in a hop got its own blocking request, in sequence. A window
+produces nothing until all of it is dispatched, so the first token of a window
+of sixty-three arrived after the *sum* of sixty-three prefills — a minute and a
+half of silence with both cards idle, and a caller watching for progress gave
+up before a single token existed. Opened together, that wait is the slowest one
+instead of all of them.
+
+### The window composer starved admission
+
+`compose` preferred decode whenever any lap was ready. One sequence decoding
+always has a lap ready, so a burst behind it never got in: a node with a ceiling
+of sixty-four admitted roughly one every six seconds and never reached the width
+it had declared. The main queue had already learned this — it bounds its own
+preference every sixteenth take, because strict priority is a veto rather than a
+preference — and the composer had not.
+
+The rule now has two halves. While the deployment has room, new work goes
+first; once it is carrying its ceiling, decode wins outright, which is when
+preferring it actually protects an in-flight request. Room is counted from the
+decode items themselves: between hops every live sequence has exactly one lap
+waiting, so the number of them *is* the width being carried.
+
+### The batch could not hold one prompt
+
+`-b 256` against 389-token prompts meant llama.cpp could not admit two prefills
+in one batch, and slots filled one every 17-20 seconds however fast P4 offered
+them. `-b 4096 -ub 512` fills all 64 at once. `-ub 1024` is not usable: it
+crashes in `ggml-cuda` with an illegal memory access, in llama.cpp rather than
+in anything here.
+
+### What is left, and why it is not a tuning knob
+
+The record came from stage *overlap* — its own report gives `sum/wall = 163.5%`,
+both cards computing at the same time. llama.cpp's RPC backend splits a model
+across devices but walks them in order within a token, so one card waits while
+the other works, which is visible in the GPU sampling here: 91%/27%, then
+21%/54%, alternating rather than both high. That ceiling does not move by
+tuning; it moves by P4 owning the boundary between the pieces, which is the
+staged adapter and is not written.
+
 ## 2026-08-17: the queue is P4's, under arrival that outruns service
 
 A backend has its own best width and is configured for it — `llama-server`

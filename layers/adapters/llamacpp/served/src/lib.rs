@@ -33,7 +33,7 @@ pub mod session;
 use p4_adapter::{Adapter, Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
 use plan::{Plan, Role};
 use session::{Next, Session};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -159,9 +159,16 @@ impl LlamaCpp {
                 ),
             });
         }
+        let refused = match hop.phase {
+            Phase::Prefill => self.open(&plan, &hop, events),
+            Phase::Decode => HashSet::new(),
+        };
         let mut outcomes = Vec::with_capacity(hop.sequences.len());
         for sequence in &hop.sequences {
-            outcomes.push(self.advance(&plan, sequence, hop.phase, events, &hop.deployment));
+            if refused.contains(&sequence.sequence) {
+                continue;
+            }
+            outcomes.push(self.advance(&plan, sequence, events, &hop.deployment));
         }
         events.raise(Event::HopComplete {
             deployment: hop.deployment,
@@ -169,44 +176,80 @@ impl LlamaCpp {
         });
     }
 
+    /// Opens every prefill in the window at once, and names the ones that
+    /// could not open.
+    ///
+    /// Together rather than one after another, because a window produces
+    /// nothing until the whole of it has been dispatched: opening in sequence
+    /// made the first token of a window arrive after the *sum* of its
+    /// prefills, so a window of sixty-three spent a minute and a half silent
+    /// with both cards idle, and a caller watching for progress gave up before
+    /// a single token existed. Opened together, that wait is the slowest one
+    /// instead of all of them.
+    ///
+    /// A thread per sequence, bounded by the window, which the declared
+    /// ceiling already bounds. Each does one blocking request and ends.
+    fn open(&self, plan: &Plan, hop: &Hop, events: &dyn EventSink) -> HashSet<String> {
+        let opened: Vec<(String, Result<Session, String>)> = std::thread::scope(|scope| {
+            let threads: Vec<_> = hop
+                .sequences
+                .iter()
+                .map(|sequence| {
+                    scope.spawn(move || {
+                        let prompt = sequence.prompt.clone().unwrap_or_default();
+                        (
+                            sequence.sequence.clone(),
+                            Session::start(
+                                &plan.endpoint,
+                                &plan.model,
+                                &prompt,
+                                sequence.remaining.max(1),
+                                &sequence.options,
+                            ),
+                        )
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|thread| thread.join().expect("a prefill thread panicked"))
+                .collect()
+        });
+
+        // Raised here rather than inside the threads: an event sink crosses
+        // threads safely, but reporting from the one place keeps the order a
+        // caller sees the same as the order it asked in.
+        let mut refused = HashSet::new();
+        let mut sessions = self.sessions.lock().expect("sessions lock");
+        for (sequence, outcome) in opened {
+            match outcome {
+                Ok(session) => {
+                    sessions.insert(sequence, session);
+                }
+                Err(detail) => {
+                    refused.insert(sequence.clone());
+                    events.raise(Event::Failed {
+                        deployment: hop.deployment.clone(),
+                        sequence: Some(sequence),
+                        detail,
+                    });
+                }
+            }
+        }
+        refused
+    }
+
     /// One sequence, one token.
     ///
-    /// A prefill opens the stream; every later hop takes the next token from
+    /// The stream was opened by `open`; every hop takes the next token from
     /// it. `None` means the sequence has already been reported failed.
     fn advance(
         &self,
         plan: &Plan,
         sequence: &p4_adapter::Sequence,
-        phase: Phase,
         events: &dyn EventSink,
         deployment: &str,
     ) -> Option<Outcome> {
-        if phase == Phase::Prefill {
-            let prompt = sequence.prompt.clone().unwrap_or_default();
-            match Session::start(
-                &plan.endpoint,
-                &plan.model,
-                &prompt,
-                sequence.remaining.max(1),
-                &sequence.options,
-            ) {
-                Ok(session) => {
-                    self.sessions
-                        .lock()
-                        .expect("sessions lock")
-                        .insert(sequence.sequence.clone(), session);
-                }
-                Err(detail) => {
-                    events.raise(Event::Failed {
-                        deployment: deployment.to_owned(),
-                        sequence: Some(sequence.sequence.clone()),
-                        detail,
-                    });
-                    return None;
-                }
-            }
-        }
-
         let mut sessions = self.sessions.lock().expect("sessions lock");
         let Some(session) = sessions.get_mut(&sequence.sequence) else {
             events.raise(Event::Failed {

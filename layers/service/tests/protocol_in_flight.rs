@@ -127,10 +127,17 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
         // Wait until the node is holding it, using the same status message an
         // operator would. Every reply so far rather than the first: reading
         // only the first latched onto a snapshot taken before the work arrived.
+        // Both halves, in one snapshot. That the route is waiting is not enough
+        // on its own — the node might not have claimed anything yet, and the
+        // hop it claims next could be this one. `running=1 ` says it is already
+        // holding a hop, and with a backend that never answers, a hop it is
+        // holding is one it never lets go of, so nothing more will be claimed.
+        // Watching only for the route lost this race about one run in five.
         until(|| {
-            if seen.replies("where").iter().any(
-                |reply| matches!(reply, Reply::Status { snapshot } if snapshot.contains("drop-me")),
-            ) {
+            if seen.replies("where").iter().any(|reply| {
+                matches!(reply, Reply::Status { snapshot }
+                    if snapshot.contains("drop-me") && snapshot.contains("running=1 "))
+            }) {
                 return true;
             }
             agent

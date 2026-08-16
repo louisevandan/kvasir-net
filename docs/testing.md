@@ -16,9 +16,12 @@ the easiest to get subtly wrong and the most expensive to debug once running.
 that the verdict never depends on lane or chain: the moment it did, forwarding
 would have to understand its traffic.
 
-`node::window` — a ready lap goes before fresh prefill, a window never mixes
-lanes, the ceiling is never exceeded, expired work is reported rather than
-dropped.
+`node::window` — a ready lap goes before fresh prefill *once the deployment is
+full*, and fresh prefill goes first while there is still room; a window never
+mixes lanes; the ceiling is never exceeded; expired work is reported rather
+than dropped. Admission fills the room in one window rather than trickling,
+because a node letting one in per window reaches its ceiling no faster than the
+sequences it is already carrying complete.
 
 `node::outcome` — the three cases that are the whole routing behaviour of an
 inference. A middle node hands work on even having produced no text; the end
@@ -121,13 +124,13 @@ at which step a frame stopped existing.
 
 ## What the suite is, file by file
 
-311 tests. The count matters less than the split: the levels catch different
+313 tests. The count matters less than the split: the levels catch different
 things, and three defects in this layer survived every level but the fleet.
 
 | Where | Tests | What it holds |
 | --- | ---: | --- |
 | `p4-protocol` | 46 | Round trips, and refusal of every truncation, trailing byte and unknown tag. Address parsing, advertised-address resolution, chain advance and restart. |
-| `p4-agent-core` (unit) | 70 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement. |
+| `p4-agent-core` (unit) | 72 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement. |
 | `p4-service` (unit) | 32 | Message encoding with explicit tags, the payload seam, the registry, the machine and status snapshots. |
 | `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. |
 | `p4-adapter` | 9 | The contract's own small logic, including which id a fork leaves state under. |
