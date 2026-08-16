@@ -41,6 +41,11 @@ and its own `/slots` reported exactly 10 processing. llama.cpp's task queue was
 never used. Had P4 forwarded everything and left the backend to sort it out,
 there would have been 120 connections and 110 tasks deferred inside it.
 
+Re-run after the node runner was split into four files, because a refactor of
+the component under test is only proven by running it: 60 requests on the same
+arrival pattern, `peak_node_queue=58 peak_in_adapter=10 peak_main_lane=0` over
+924 samples, 60/60 and all four verdicts. Identical behaviour.
+
 ### The flag that could not answer the question
 
 `NodeStatus.running` was a bool. "Something is running" is equally true at one

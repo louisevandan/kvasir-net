@@ -5,18 +5,18 @@ keeps, and why it is separate from its neighbours. [`api.md`](api.md) is the
 protocol, [`internals.md`](internals.md) the decisions and the defects behind
 them, [`constraints.md`](constraints.md) the invariants. This is the map.
 
-15,075 lines of Rust across nine crates, of which 8,151 are tests.
+15,595 lines of Rust across nine crates, of which 8,365 are tests.
 
 | Crate | Path | Source | Tests | Depends on |
 | --- | --- | ---: | ---: | --- |
 | `p4-protocol` | `layers/protocol` | 801 | 561 | nothing |
 | `p4-adapter` | `layers/adapters/adapter` | 383 | 138 | nothing |
-| `p4-agent-core` | `layers/agent` | 2,086 | 3,477 | adapter, protocol |
-| `p4-service` | `layers/service` | 986 | 2,445 | adapter, agent, protocol |
+| `p4-agent-core` | `layers/agent` | 2,184 | 3,547 | adapter, protocol |
+| `p4-service` | `layers/service` | 986 | 2,519 | adapter, agent, protocol |
 | `p4-mock` | `layers/adapters/mock` | 483 | 349 | adapter |
 | `p4-llamacpp` | `layers/adapters/llamacpp/served` | 935 | 984 | adapter, serde_json |
 | `p4-agent` | `entrypoints/agent` | 176 | 66 | all of the above |
-| `p4-drive` | `tools/drive` | 741 | 54 | agent, protocol, service |
+| `p4-drive` | `tools/drive` | 949 | 124 | agent, protocol, service |
 | `p4-link` | `tools/link` | 333 | 77 | tokio |
 
 Two crates depend on nothing, and that is load-bearing. The protocol cannot
@@ -122,8 +122,11 @@ have to understand its traffic.
 
 | Module | Holds |
 | --- | --- |
-| `runner` | The event loop. Advances on two events and no others: work arriving, and a hop ending. No timer — a node's pace is the backend's pace. Holds the ceiling, the in-flight map keyed by sequence id, the lifecycle slot, the `Bound` state, the counters and the outbox. |
-| `queue` | The node's own queue: push, claim, remove, and the waiting list. |
+| `runner` | The event loop, and what it hands a backend. Advances on two events and no others: work arriving, and a hop ending. No timer — a node's pace is the backend's pace. Holds the ceiling, the in-flight map keyed by sequence id, the lifecycle slot and the outbox. |
+| `runner/events` | The other direction: the channel an adapter raises on, and what an answer means — a token routed on, a hop ended, a load bound or refused. Apart from the loop because scheduling moves when batching does and this moves when the adapter's event vocabulary does. |
+| `runner/handle` | What the agent holds and what an operator can read: depth, how many are inside the adapter, which routes are waiting, and the counters. Moves when a question needs answering. |
+| `runner/bound` | The load transaction, and nothing else. |
+| `queue` | The node's own queue: push, claim, remove, the waiting list, and how many are inside the adapter. Claiming a window sets that count and finishing clears it, in the same call as the queue removal so the two cannot drift. |
 | `window` | `compose` — a ready lap before fresh prefill, never mixing lanes, never past the ceiling, expired work reported rather than dropped. |
 | `outcome` | Pure routing: `Hop`, `Finish`, `Lap`, `Unheard`, and the token count that bounds a ring a backend never stops. |
 | `payload` | The seam. `sequence`, `lifecycle`, `ceiling`, and the reply shapes. The core learns no message catalog. |

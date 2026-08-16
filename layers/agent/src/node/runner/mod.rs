@@ -4,40 +4,27 @@
 //! There is no timer and no polling, because a node's pace is the backend's
 //! pace and inventing a third trigger would mean guessing at it.
 
-use crate::node::outcome::next;
+pub mod bound;
+pub mod events;
+pub mod handle;
+
+pub use handle::{Counts, Handle};
+
+use bound::Bound;
+use events::Sink;
+
 use crate::node::payload::Payload;
 use crate::node::queue::NodeQueue;
 use crate::node::window::{compose, expired_items};
 use crate::queue::main::Sender;
-use p4_adapter::{Adapter, Event, EventSink, Hop, Phase, Work};
+use p4_adapter::{Adapter, Event, Hop, Phase, Work};
 use p4_protocol::QueueClass;
 use p4_protocol::frame::Frame;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-
-/// Sends adapter events to the node that owns them.
-///
-/// Unbounded on purpose. An adapter only raises events for work it was handed,
-/// so depth is already bounded by the window; dropping one would lose a hop
-/// completion and leave the node idle forever with work still queued.
-#[derive(Clone)]
-struct Sink {
-    events: mpsc::UnboundedSender<Event>,
-    raised: Arc<AtomicUsize>,
-    lost: Arc<AtomicUsize>,
-}
-
-impl EventSink for Sink {
-    fn raise(&self, event: Event) {
-        self.raised.fetch_add(1, Ordering::Relaxed);
-        if self.events.send(event).is_err() {
-            self.lost.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-}
 
 pub struct Node {
     queue: Arc<NodeQueue>,
@@ -59,126 +46,6 @@ pub struct Node {
     /// practice by the work in flight, because everything here was produced by
     /// a hop this node already admitted.
     outbox: mpsc::UnboundedSender<Frame>,
-}
-
-/// What a caller keeps to feed a running node.
-#[derive(Clone)]
-pub struct Handle {
-    work: mpsc::UnboundedSender<Frame>,
-    queue: Arc<NodeQueue>,
-    counts: Arc<Counts>,
-}
-
-/// Whether this node may serve, and for which deployment.
-///
-/// A load is a transaction across machines that no single machine can see the
-/// whole of. Nothing here coordinates it — there is nowhere to put a
-/// coordinator that would not become a controller — so each stage enforces its
-/// own half: it serves the generation it bound, and a stage whose load failed
-/// serves nothing. A chain composed over a failed stage is refused by that
-/// stage rather than answered from half a model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Bound {
-    /// Never loaded. A backend that needs no load is legitimate, so this
-    /// serves — the ones that must not serve are the two below.
-    Never,
-    At(u64),
-    /// A load failed here. Nothing runs until one succeeds.
-    Refused,
-}
-
-impl Bound {
-    /// Whether work carrying `generation` may run.
-    fn admits(self, generation: u64) -> bool {
-        match self {
-            Self::Never => true,
-            Self::At(bound) => bound == generation,
-            Self::Refused => false,
-        }
-    }
-
-    fn why(self, generation: u64) -> String {
-        match self {
-            Self::Never => String::new(),
-            Self::At(bound) => {
-                format!("node is bound at generation {bound}, work carries {generation}")
-            }
-            Self::Refused => "node has no model: its load failed".into(),
-        }
-    }
-}
-
-/// What the node did, counted at each step it could lose something.
-///
-/// A frame that goes missing leaves no trace in a depth reading, because
-/// depth only shows what is still waiting. These show what passed through.
-#[derive(Default)]
-pub struct Counts {
-    pub received: AtomicUsize,
-    pub queued: AtomicUsize,
-    pub claimed: AtomicUsize,
-    pub hops: AtomicUsize,
-    pub completions: AtomicUsize,
-    pub outcomes: AtomicUsize,
-    pub routed: AtomicUsize,
-    pub orphaned: AtomicUsize,
-    pub emitted: AtomicUsize,
-    pub raised: Arc<AtomicUsize>,
-    pub lost: Arc<AtomicUsize>,
-}
-
-impl Handle {
-    /// Moves work to this node. Returns immediately — this call is the whole
-    /// of a worker's job for a node-bound message.
-    pub fn offer(&self, frame: Frame) {
-        let _ = self.work.send(frame);
-    }
-
-    /// How deep this node is. Read beside the agent's queue depth, the pair
-    /// says whether a slowdown is above or below the adapter boundary.
-    pub fn depth(&self) -> usize {
-        self.queue.depth()
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.queue.is_running()
-    }
-
-    /// How many sequences this node has handed to the adapter right now.
-    ///
-    /// The ceiling bounds this and nothing else does — a backend is never
-    /// asked to refuse, and never told how much is waiting. Reported so that
-    /// claim is checkable from outside rather than only in the code.
-    pub fn in_adapter(&self) -> usize {
-        self.queue.in_adapter()
-    }
-
-    pub fn counts(&self) -> &Counts {
-        &self.counts
-    }
-
-    /// Drops queued work for a route.
-    ///
-    /// A hop already handed to a backend is not interrupted, because there is
-    /// no way to interrupt one and no need: not starting the next is the whole
-    /// mechanism. So this cancels what has not started, and returns whether
-    /// anything was still waiting.
-    pub fn cancel(&self, route: &str) -> bool {
-        self.queue.remove(route).is_some()
-    }
-
-    /// The routes this node is holding, in the order it would take them.
-    ///
-    /// A caller asking "where has my request got to" is asking this. Depth
-    /// alone answers how many, never which, and a route that has gone missing
-    /// is exactly the one a count cannot show.
-    pub fn waiting_routes(&self) -> Vec<String> {
-        self.queue
-            .waiting()
-            .into_iter()
-            .map(|waiting| waiting.route)
-            .collect()
-    }
 }
 
 impl Node {
@@ -203,11 +70,11 @@ impl Node {
             in_flight: Mutex::new(HashMap::new()),
             lifecycle: Mutex::new(None),
             bound: Mutex::new(Bound::Never),
-            events: Sink {
-                events: event_tx,
-                raised: Arc::clone(&counts.raised),
-                lost: Arc::clone(&counts.lost),
-            },
+            events: Sink::new(
+                event_tx,
+                Arc::clone(&counts.raised),
+                Arc::clone(&counts.lost),
+            ),
             counts: Arc::clone(&counts),
             outbox: outbox_tx,
         };
@@ -222,11 +89,7 @@ impl Node {
             }
         });
         tokio::spawn(node.run(work_rx, event_rx));
-        Handle {
-            work: work_tx,
-            queue,
-            counts,
-        }
+        Handle::new(work_tx, queue, counts)
     }
 
     async fn run(
@@ -393,96 +256,6 @@ impl Node {
             },
             sequences,
         })
-    }
-
-    fn on_event(&self, event: Event) {
-        match event {
-            Event::HopComplete { outcomes, .. } => {
-                self.counts.completions.fetch_add(1, Ordering::Relaxed);
-                self.counts
-                    .outcomes
-                    .fetch_add(outcomes.len(), Ordering::Relaxed);
-                let carriers = std::mem::take(&mut *self.in_flight.lock().expect("in-flight lock"));
-                // Released before the outcomes are routed, so a lap this hop
-                // produces can be picked up by the drain below rather than
-                // waiting for the next arrival.
-                self.queue.finished();
-                for outcome in outcomes {
-                    let Some(carrier) = carriers.get(&outcome.sequence) else {
-                        self.counts.orphaned.fetch_add(1, Ordering::Relaxed);
-                        continue;
-                    };
-                    self.counts.routed.fetch_add(1, Ordering::Relaxed);
-                    for frame in next(carrier, &outcome, self.payload.as_ref()).frames() {
-                        self.emit(frame);
-                    }
-                }
-                self.drain();
-            }
-            Event::Failed {
-                sequence, detail, ..
-            } => {
-                let mut in_flight = self.in_flight.lock().expect("in-flight lock");
-                let mut failed: Vec<Frame> = match sequence {
-                    Some(id) => in_flight.remove(&id).into_iter().collect(),
-                    None => std::mem::take(&mut *in_flight).into_values().collect(),
-                };
-                drop(in_flight);
-                // A load can fail too, and its caller is waiting on the same
-                // route. Leaving it here would hold the node running forever
-                // over an instruction that already ended.
-                let lifecycle = self.lifecycle.lock().expect("lifecycle lock").take();
-                if lifecycle.is_some() {
-                    // A stage of a distributed model that did not load is a
-                    // stage that must not serve. Its neighbours may have bound
-                    // perfectly well, and a chain that runs anyway produces
-                    // answers from half a model — which looks like a working
-                    // deployment and is the worst outcome available.
-                    *self.bound.lock().expect("generation lock") = Bound::Refused;
-                }
-                failed.extend(lifecycle);
-                self.queue.finished();
-                for frame in failed {
-                    self.reply_error(&frame, &detail);
-                }
-                self.drain();
-            }
-            // Load and unload reporting belongs to whoever asked, and reaches
-            // them through the same reply path as anything else.
-            // A cache instruction is lifecycle-shaped — one instruction, run
-            // alone, answered to whoever asked — so it ends the same way, and
-            // notably does not touch the binding: persisting a conversation
-            // says nothing about which model is loaded.
-            Event::Cached {
-                sequence,
-                bytes,
-                detail,
-                ..
-            } => self.finish_lifecycle(self.payload.cached(&sequence, bytes, &detail)),
-            Event::Loaded { generation, .. } => {
-                *self.bound.lock().expect("generation lock") = Bound::At(generation);
-                self.finish_lifecycle(self.payload.bound(generation))
-            }
-            Event::Unloaded { .. } => self.finish_lifecycle(self.payload.released()),
-            // Progress is reported as it happens rather than held until the
-            // end, because a distributed load's slowest stage is the fact
-            // worth seeing early.
-            Event::LoadProgress { stage, percent, .. } => {
-                let carrier = self.lifecycle.lock().expect("lifecycle lock").clone();
-                if let Some(carrier) = carrier {
-                    self.reply(&carrier, self.payload.progress(stage, percent));
-                }
-            }
-        }
-    }
-
-    fn finish_lifecycle(&self, body: Vec<u8>) {
-        let carrier = self.lifecycle.lock().expect("lifecycle lock").take();
-        self.queue.finished();
-        if let Some(carrier) = carrier {
-            self.reply(&carrier, body);
-        }
-        self.drain();
     }
 
     fn reply(&self, carrier: &Frame, body: Vec<u8>) {

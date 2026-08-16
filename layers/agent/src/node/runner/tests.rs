@@ -1,7 +1,7 @@
 use super::*;
 use crate::queue::lane::{Budget, Lanes};
 use crate::queue::main::channel;
-use p4_adapter::{Distribution, Outcome};
+use p4_adapter::{Distribution, EventSink, Outcome};
 use p4_protocol::{Address, Chain, Envelope, Link, Recipient};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;

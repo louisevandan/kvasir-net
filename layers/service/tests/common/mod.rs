@@ -3,6 +3,10 @@
 //! Shared by every test in this directory. Each test binary compiles it
 //! separately, so an item one binary does not use is not dead code.
 #![allow(dead_code)]
+
+pub mod conversation;
+pub mod deployment;
+
 use p4_agent_core::agent::{Agent, Duties, run};
 use p4_agent_core::queue::lane::{Budget, Lanes};
 use p4_agent_core::transport::inbox;
