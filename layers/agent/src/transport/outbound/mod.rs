@@ -64,10 +64,10 @@ impl Peers {
 
     async fn connection(&self, target: &Address) -> mpsc::Sender<Frame> {
         let mut peers = self.inner.lock().await;
-        if let Some(existing) = peers.get(target) {
-            if !existing.is_closed() {
-                return existing.clone();
-            }
+        if let Some(existing) = peers.get(target)
+            && !existing.is_closed()
+        {
+            return existing.clone();
         }
         let (sender, receiver) = mpsc::channel(PER_PEER_DEPTH);
         peers.insert(target.clone(), sender.clone());

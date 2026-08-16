@@ -82,6 +82,10 @@ impl Sender {
     /// Enqueues without waiting. A socket receiver calls this and nothing
     /// else, so a full lane must come back as a refusal rather than block the
     /// reader and stall every other route on that connection.
+    ///
+    // The refusal carries the frame it refused, so a reader can count and
+    // report it. An error that dropped the frame would be the defect itself.
+    #[allow(clippy::result_large_err)]
     pub fn offer(&self, frame: Frame) -> Result<(), Refused> {
         self.lane(frame.envelope.lane)
             .try_send(frame)
@@ -131,7 +135,7 @@ impl Receiver {
     /// Returns `None` only when every lane is closed.
     pub async fn take(&mut self) -> Option<Frame> {
         self.taken = self.taken.wrapping_add(1);
-        if self.taken % FAIR_EVERY == 0 {
+        if self.taken.is_multiple_of(FAIR_EVERY) {
             return self.fair().await;
         }
         tokio::select! {

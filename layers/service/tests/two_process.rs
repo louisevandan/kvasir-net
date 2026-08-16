@@ -56,7 +56,9 @@ fn backends() -> Registry {
     registry.register_fn("mock-tail", |_| {
         Arc::new(Mock::terminal(1, Profile::default()))
     });
-    registry.register_fn("mock-solo", |_| Arc::new(Mock::internal(Profile::default())));
+    registry.register_fn("mock-solo", |_| {
+        Arc::new(Mock::internal(Profile::default()))
+    });
     registry
 }
 
@@ -154,17 +156,28 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
 
         // 1. Create the nodes. An id and an adapter name; nothing is
         //    materialised yet.
-        lead.enqueue(to_agent(&lead, &outer, "create-0", ToAgent::CreateNode {
-            node: "n0".into(),
-            adapter: "mock-lead".into(),
-        }))
+        lead.enqueue(to_agent(
+            &lead,
+            &outer,
+            "create-0",
+            ToAgent::CreateNode {
+                node: "n0".into(),
+                adapter: "mock-lead".into(),
+            },
+        ))
         .unwrap();
-        tail.enqueue(to_agent(&tail, &outer, "create-1", ToAgent::CreateNode {
-            node: "n1".into(),
-            adapter: "mock-tail".into(),
-        }))
+        tail.enqueue(to_agent(
+            &tail,
+            &outer,
+            "create-1",
+            ToAgent::CreateNode {
+                node: "n1".into(),
+                adapter: "mock-tail".into(),
+            },
+        ))
         .unwrap();
-        until(|| !seen.replies("create-0").is_empty() && !seen.replies("create-1").is_empty()).await;
+        until(|| !seen.replies("create-0").is_empty() && !seen.replies("create-1").is_empty())
+            .await;
         assert!(matches!(
             seen.replies("create-0").first(),
             Some(Reply::Accepted { .. })
@@ -174,10 +187,7 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
 
         // 2. Load each node's share, declaring the concurrency it admits.
         for (index, agent) in [(&lead, "n0"), (&tail, "n1")].iter().enumerate() {
-            let single = chain_over(&[(
-                if index == 0 { &lead } else { &tail },
-                agent.1,
-            )]);
+            let single = chain_over(&[(if index == 0 { &lead } else { &tail }, agent.1)]);
             let owner = if index == 0 { &lead } else { &tail };
             owner
                 .enqueue(to_node(
@@ -207,7 +217,8 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
         // A distributed load reports per stage before it binds.
         let load = seen.replies("load-0");
         assert!(
-            load.iter().any(|reply| matches!(reply, Reply::Progress { .. })),
+            load.iter()
+                .any(|reply| matches!(reply, Reply::Progress { .. })),
             "stages were reported: {load:?}"
         );
 
@@ -255,10 +266,15 @@ fn a_node_can_be_unloaded_and_deleted_by_message() {
         let agent = start(Arc::new(Standard::new(backends()))).await;
 
         agent
-            .enqueue(to_agent(&agent, &outer, "create", ToAgent::CreateNode {
-                node: "solo".into(),
-                adapter: "mock-solo".into(),
-            }))
+            .enqueue(to_agent(
+                &agent,
+                &outer,
+                "create",
+                ToAgent::CreateNode {
+                    node: "solo".into(),
+                    adapter: "mock-solo".into(),
+                },
+            ))
             .unwrap();
         until(|| !seen.replies("create").is_empty()).await;
 
@@ -273,15 +289,26 @@ fn a_node_can_be_unloaded_and_deleted_by_message() {
             ))
             .unwrap();
         until(|| !seen.replies("unload").is_empty()).await;
-        assert!(matches!(seen.replies("unload").last(), Some(Reply::Released)));
+        assert!(matches!(
+            seen.replies("unload").last(),
+            Some(Reply::Released)
+        ));
 
         agent
-            .enqueue(to_agent(&agent, &outer, "delete", ToAgent::DeleteNode {
-                node: "solo".into(),
-            }))
+            .enqueue(to_agent(
+                &agent,
+                &outer,
+                "delete",
+                ToAgent::DeleteNode {
+                    node: "solo".into(),
+                },
+            ))
             .unwrap();
         until(|| !seen.replies("delete").is_empty()).await;
-        assert!(matches!(seen.replies("delete").last(), Some(Reply::Released)));
+        assert!(matches!(
+            seen.replies("delete").last(),
+            Some(Reply::Released)
+        ));
         assert_eq!(agent.node_depth("solo").await, None);
     });
 }
@@ -294,15 +321,25 @@ fn many_inferences_across_two_machines_all_answer() {
         let lead = start(Arc::new(Standard::new(backends()))).await;
         let tail = start(Arc::new(Standard::new(backends()))).await;
 
-        lead.enqueue(to_agent(&lead, &outer, "c0", ToAgent::CreateNode {
-            node: "n0".into(),
-            adapter: "mock-lead".into(),
-        }))
+        lead.enqueue(to_agent(
+            &lead,
+            &outer,
+            "c0",
+            ToAgent::CreateNode {
+                node: "n0".into(),
+                adapter: "mock-lead".into(),
+            },
+        ))
         .unwrap();
-        tail.enqueue(to_agent(&tail, &outer, "c1", ToAgent::CreateNode {
-            node: "n1".into(),
-            adapter: "mock-tail".into(),
-        }))
+        tail.enqueue(to_agent(
+            &tail,
+            &outer,
+            "c1",
+            ToAgent::CreateNode {
+                node: "n1".into(),
+                adapter: "mock-tail".into(),
+            },
+        ))
         .unwrap();
         until(|| !seen.replies("c0").is_empty() && !seen.replies("c1").is_empty()).await;
 

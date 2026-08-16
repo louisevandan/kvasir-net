@@ -510,7 +510,7 @@ impl Payload for Lifecycle {
                 artifact: "model".into(),
             }));
         }
-        (text == "unload").then(|| p4_adapter::Work::Unload(p4_adapter::Unload { deployment }))
+        (text == "unload").then_some(p4_adapter::Work::Unload(p4_adapter::Unload { deployment }))
     }
 
     fn ceiling(&self, frame: &Frame) -> Option<usize> {
@@ -573,7 +573,8 @@ fn a_distributed_load_reports_every_stage_then_binds() {
         .await;
 
         let chain = chain_over(&[(&a, "n0")]);
-        a.enqueue(control("load-1", &chain, &outer, "load|6")).unwrap();
+        a.enqueue(control("load-1", &chain, &outer, "load|6"))
+            .unwrap();
         until(|| outer_duties.frames_for("load-1").len() >= 5).await;
 
         let bodies: Vec<String> = outer_duties
@@ -597,10 +598,12 @@ fn a_load_raises_the_ceiling_the_plan_declared() {
         let outer = start_with(Arc::new(outer_duties.clone()), Arc::new(Lifecycle)).await;
         let a = start_with(Arc::new(Silent), Arc::new(Lifecycle)).await;
         let node = Arc::new(Mock::terminal(0, Profile::default()));
-        a.create_node("n0", Arc::clone(&node) as Arc<dyn Adapter>, 1).await;
+        a.create_node("n0", Arc::clone(&node) as Arc<dyn Adapter>, 1)
+            .await;
 
         let chain = chain_over(&[(&a, "n0")]);
-        a.enqueue(control("load-1", &chain, &outer, "load|8")).unwrap();
+        a.enqueue(control("load-1", &chain, &outer, "load|8"))
+            .unwrap();
         until(|| !outer_duties.frames_for("load-1").is_empty()).await;
 
         for index in 0..24 {
@@ -625,7 +628,8 @@ fn an_unload_is_reported_and_the_node_keeps_serving_afterwards() {
             .await;
 
         let chain = chain_over(&[(&a, "n0")]);
-        a.enqueue(control("unload-1", &chain, &outer, "unload")).unwrap();
+        a.enqueue(control("unload-1", &chain, &outer, "unload"))
+            .unwrap();
         until(|| !outer_duties.frames_for("unload-1").is_empty()).await;
 
         assert_eq!(outer_duties.frames_for("unload-1")[0].body, b"unloaded");
@@ -658,7 +662,8 @@ fn a_load_that_fails_is_reported_and_does_not_wedge_the_node() {
         .await;
 
         let chain = chain_over(&[(&a, "n0")]);
-        a.enqueue(control("load-1", &chain, &outer, "load|4")).unwrap();
+        a.enqueue(control("load-1", &chain, &outer, "load|4"))
+            .unwrap();
         until(|| !outer_duties.frames_for("load-1").is_empty()).await;
 
         let bodies: Vec<String> = outer_duties
@@ -697,7 +702,8 @@ fn work_whose_deadline_already_passed_is_answered_rather_than_run() {
         let outer = start(Arc::new(outer_duties.clone())).await;
         let a = start(Arc::new(Silent)).await;
         let node = Arc::new(Mock::terminal(0, Profile::default()));
-        a.create_node("n0", Arc::clone(&node) as Arc<dyn Adapter>, 4).await;
+        a.create_node("n0", Arc::clone(&node) as Arc<dyn Adapter>, 4)
+            .await;
 
         let chain = chain_over(&[(&a, "n0")]);
         a.enqueue(expiring("late", &chain, &outer, now_unix_ms() - 1_000))

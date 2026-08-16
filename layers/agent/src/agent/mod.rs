@@ -117,6 +117,9 @@ impl Agent {
     /// means the next hop never starts. Returns whether anything was found
     /// waiting, so a caller can tell a cancellation from a request that had
     /// already finished.
+    // `any` would read better and stop at the first node holding the route,
+    // leaving the rest of them still queued. Every node has to be asked.
+    #[allow(clippy::unnecessary_fold)]
     pub async fn cancel(&self, route: &str) -> bool {
         self.nodes
             .lock()
@@ -168,6 +171,10 @@ impl Agent {
 
     /// Puts a frame on this agent's own queue. Used by duties answering a
     /// message, because a response is a message like any other.
+    ///
+    // The refused frame is the error, because nothing on this path may drop:
+    // a caller has to be handed back what it could not enqueue.
+    #[allow(clippy::result_large_err)]
     pub fn enqueue(&self, frame: Frame) -> Result<(), Frame> {
         self.queue.offer(frame).map_err(|refused| refused.0)
     }
