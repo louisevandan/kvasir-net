@@ -14,7 +14,10 @@ pub mod event;
 pub mod work;
 
 pub use event::{Allocation, Event, EventSink, Outcome};
-pub use work::{DeploymentId, Distribution, Hop, Load, Phase, Sequence, SequenceId, Unload, Work};
+pub use work::{
+    Cache, CacheAction, DeploymentId, Distribution, Hop, Load, Phase, Sequence, SequenceId, Unload,
+    Work,
+};
 
 /// What a node drives.
 ///

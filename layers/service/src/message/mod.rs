@@ -64,6 +64,31 @@ pub enum ToNode {
         /// Opaque sampling options, passed through whole.
         options: String,
     },
+    /// Write one request's cached state somewhere durable and free the memory.
+    ///
+    /// One verb rather than two: persisting without freeing saves nothing, and
+    /// freeing without persisting is what already happens when a request ends.
+    /// Sent to every node of the chain, because each holds its own shard.
+    Persist {
+        sequence: String,
+    },
+    /// Bring it back, so the next hop continues where it left off.
+    Restore {
+        sequence: String,
+    },
+    /// Copy it under a new id, leaving the original as it was.
+    ///
+    /// The branch: two continuations of one conversation, neither able to
+    /// disturb the other.
+    Fork {
+        sequence: String,
+        into: String,
+    },
+    /// Delete the durable copy. State nothing ever deletes is a disk filling
+    /// up on a schedule nobody set.
+    Discard {
+        sequence: String,
+    },
 }
 
 /// Sent back to whoever asked.
@@ -97,5 +122,14 @@ pub enum Reply {
     /// What the agent is doing, as of the moment it was asked.
     Status {
         snapshot: String,
+    },
+    /// A cache instruction finished. `sequence` is the id the state now lives
+    /// under — the new one after a fork — and `bytes` is what the durable copy
+    /// occupies, which an operator persisting thousands of conversations needs
+    /// and only the backend knows.
+    Cached {
+        sequence: String,
+        bytes: u64,
+        detail: String,
     },
 }

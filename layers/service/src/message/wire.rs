@@ -31,6 +31,10 @@ const STATUS: u8 = 5;
 const LOAD: u8 = 16;
 const UNLOAD: u8 = 17;
 const EXECUTE: u8 = 18;
+const PERSIST: u8 = 19;
+const RESTORE: u8 = 20;
+const FORK: u8 = 21;
+const DISCARD: u8 = 22;
 const ACCEPTED: u8 = 32;
 const PROGRESS: u8 = 33;
 const BOUND: u8 = 34;
@@ -40,6 +44,7 @@ const DONE: u8 = 37;
 const FAILED: u8 = 38;
 const MACHINE: u8 = 39;
 const STATUS_REPLY: u8 = 40;
+const CACHED: u8 = 41;
 
 pub fn encode_to_agent(message: &ToAgent) -> Vec<u8> {
     let mut out = Vec::with_capacity(64);
@@ -108,6 +113,23 @@ pub fn encode_to_node(message: &ToNode) -> Vec<u8> {
             number(&mut out, *max_tokens);
             text(&mut out, options);
         }
+        ToNode::Persist { sequence } => {
+            out.push(PERSIST);
+            text(&mut out, sequence);
+        }
+        ToNode::Restore { sequence } => {
+            out.push(RESTORE);
+            text(&mut out, sequence);
+        }
+        ToNode::Fork { sequence, into } => {
+            out.push(FORK);
+            text(&mut out, sequence);
+            text(&mut out, into);
+        }
+        ToNode::Discard { sequence } => {
+            out.push(DISCARD);
+            text(&mut out, sequence);
+        }
     }
     out
 }
@@ -125,6 +147,19 @@ pub fn decode_to_node(bytes: &[u8]) -> Decoded<ToNode> {
             prompt: cursor.text()?,
             max_tokens: cursor.number()?,
             options: cursor.text()?,
+        },
+        PERSIST => ToNode::Persist {
+            sequence: cursor.text()?,
+        },
+        RESTORE => ToNode::Restore {
+            sequence: cursor.text()?,
+        },
+        FORK => ToNode::Fork {
+            sequence: cursor.text()?,
+            into: cursor.text()?,
+        },
+        DISCARD => ToNode::Discard {
+            sequence: cursor.text()?,
         },
         tag => return Err(Malformed(format!("unknown node message {tag}"))),
     };
@@ -171,6 +206,16 @@ pub fn encode_reply(reply: &Reply) -> Vec<u8> {
             out.push(STATUS_REPLY);
             text(&mut out, snapshot);
         }
+        Reply::Cached {
+            sequence,
+            bytes,
+            detail,
+        } => {
+            out.push(CACHED);
+            text(&mut out, sequence);
+            wide(&mut out, *bytes);
+            text(&mut out, detail);
+        }
     }
     out
 }
@@ -206,6 +251,11 @@ pub fn decode_reply(bytes: &[u8]) -> Decoded<Reply> {
         STATUS_REPLY => Reply::Status {
             snapshot: cursor.text()?,
         },
+        CACHED => Reply::Cached {
+            sequence: cursor.text()?,
+            bytes: cursor.wide()?,
+            detail: cursor.text()?,
+        },
         tag => return Err(Malformed(format!("unknown reply {tag}"))),
     };
     cursor.finished()?;
@@ -215,6 +265,10 @@ pub fn decode_reply(bytes: &[u8]) -> Decoded<Reply> {
 fn text(out: &mut Vec<u8>, value: &str) {
     number(out, value.len() as u32);
     out.extend_from_slice(value.as_bytes());
+}
+
+fn wide(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
 }
 
 fn number(out: &mut Vec<u8>, value: u32) {

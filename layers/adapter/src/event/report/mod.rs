@@ -36,6 +36,19 @@ pub enum Event {
         deployment: DeploymentId,
         outcomes: Vec<Outcome>,
     },
+    /// A cache instruction finished.
+    ///
+    /// `bytes` is what the durable copy occupies — nought after a discard, and
+    /// after a restore what was read back. A KV cache is large enough that an
+    /// operator persisting thousands of conversations needs the number, and
+    /// the backend is the only thing that knows it.
+    Cached {
+        deployment: DeploymentId,
+        /// The id the state now lives under: the new one after a fork.
+        sequence: SequenceId,
+        bytes: u64,
+        detail: String,
+    },
     /// The work could not be done. Terminal for whatever it names.
     Failed {
         deployment: DeploymentId,

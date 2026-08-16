@@ -6,10 +6,12 @@
 //! `distribution`, a new plan key touches `load`, and throughput work touches
 //! `hop`. This file holds only what all three share.
 
+pub mod cache;
 pub mod distribution;
 pub mod hop;
 pub mod load;
 
+pub use cache::{Cache, CacheAction};
 pub use distribution::Distribution;
 pub use hop::{Hop, Phase, Sequence};
 pub use load::{Load, Unload};
@@ -27,4 +29,7 @@ pub enum Work {
     Load(Load),
     Unload(Unload),
     Hop(Hop),
+    /// One instruction about one sequence's cached state: persist it and free
+    /// the memory, bring it back, branch it, or delete the durable copy.
+    Cache(Cache),
 }

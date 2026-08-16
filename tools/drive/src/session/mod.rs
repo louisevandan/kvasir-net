@@ -81,9 +81,10 @@ impl Duties for Replies {
                 stream.accepted = true;
                 self.accepted.fetch_add(1, SeqCst);
             }
-            // Facts about a machine and what an agent is doing: both are asked
-            // for deliberately and read where they were asked for, not here.
-            Reply::Machine { .. } | Reply::Status { .. } => {}
+            // Facts about a machine, what an agent is doing, and what became of
+            // a cached sequence: each is asked for deliberately and read where
+            // it was asked for, not here.
+            Reply::Machine { .. } | Reply::Status { .. } | Reply::Cached { .. } => {}
         }
     }
 }

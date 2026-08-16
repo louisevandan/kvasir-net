@@ -440,6 +440,16 @@ impl Node {
             }
             // Load and unload reporting belongs to whoever asked, and reaches
             // them through the same reply path as anything else.
+            // A cache instruction is lifecycle-shaped — one instruction, run
+            // alone, answered to whoever asked — so it ends the same way, and
+            // notably does not touch the binding: persisting a conversation
+            // says nothing about which model is loaded.
+            Event::Cached {
+                sequence,
+                bytes,
+                detail,
+                ..
+            } => self.finish_lifecycle(self.payload.cached(&sequence, bytes, &detail)),
             Event::Loaded { generation, .. } => {
                 *self.bound.lock().expect("generation lock") = Bound::At(generation);
                 self.finish_lifecycle(self.payload.bound(generation))

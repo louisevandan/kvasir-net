@@ -17,6 +17,17 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
+/// How far a sequence has got: this turn, and over its life.
+///
+/// Two numbers because they answer different questions. The turn decides
+/// when this request stops; the lifetime is how much state there is, which is
+/// what a persisted copy costs.
+#[derive(Clone, Copy, Debug, Default)]
+struct Progress {
+    turn: u32,
+    lifetime: u32,
+}
+
 pub struct Mock {
     profile: Profile,
     distribution: Distribution,
@@ -39,7 +50,16 @@ pub struct Mock {
     /// A backend remembers this; the request does not carry it back down. The
     /// KV a sequence occupies lives here too, which is the same reason: state
     /// belongs to whoever is holding the sequence open.
-    produced: Mutex<HashMap<String, u32>>,
+    produced: Mutex<HashMap<String, Progress>>,
+    /// Sequences whose state has been written somewhere durable, and how big
+    /// each copy is.
+    ///
+    /// A real backend has a file or a store; what stands in for it here is a
+    /// map, because the only thing above the boundary can observe is that the
+    /// state survived being freed and came back. Sizes are derived from the
+    /// progress the sequence had made, so a longer conversation persists to a
+    /// larger copy — the proportion a caller reasons about.
+    persisted: Mutex<HashMap<String, u64>>,
 }
 
 impl Mock {
@@ -72,6 +92,7 @@ impl Mock {
             running: AtomicUsize::new(0),
             peak_running: AtomicUsize::new(0),
             produced: Mutex::new(HashMap::new()),
+            persisted: Mutex::new(HashMap::new()),
         }
     }
 
@@ -173,14 +194,24 @@ impl Mock {
             };
         }
         let mut produced = self.produced.lock().expect("sequence progress lock");
-        let count = produced
+        let progress = produced
             .entry(sequence.sequence.clone())
-            .and_modify(|value| *value += 1)
-            .or_insert(1);
-        let finished = *count >= sequence.remaining.max(1);
-        let position = *count;
+            .and_modify(|value| {
+                value.turn += 1;
+                value.lifetime += 1;
+            })
+            .or_insert(Progress {
+                turn: 1,
+                lifetime: 1,
+            });
+        let finished = progress.turn >= sequence.remaining.max(1);
+        let position = progress.turn;
         if finished {
-            produced.remove(&sequence.sequence);
+            // The turn is over; the sequence is not. A backend keeps a
+            // conversation's state against its id until something tells it to
+            // let go — removing it here would make the state unpersistable the
+            // moment it became worth persisting.
+            progress.turn = 0;
         }
         Outcome {
             sequence: sequence.sequence.clone(),
@@ -203,7 +234,123 @@ impl Adapter for Mock {
                 deployment: unload.deployment,
             }),
             Work::Hop(hop) => self.hop(hop, events),
+            Work::Cache(cache) => self.cache(cache, events),
         }
+    }
+}
+
+impl Mock {
+    /// The four cache verbs, against state this adapter is holding.
+    ///
+    /// Each is refused rather than guessed at when it makes no sense: restoring
+    /// something never persisted, or forking from nothing, is a caller error
+    /// and inventing an empty cache for it would let a branch continue from a
+    /// conversation that does not exist.
+    fn cache(&self, cache: p4_adapter::Cache, events: &dyn EventSink) {
+        spin(self.profile.trailing_hop);
+        let refuse = |detail: String| {
+            events.raise(Event::Failed {
+                deployment: cache.deployment.clone(),
+                sequence: Some(cache.sequence.clone()),
+                detail,
+            })
+        };
+        let (bytes, detail) = match &cache.action {
+            p4_adapter::CacheAction::Persist => {
+                // Progress is what there is to persist. A sequence that has
+                // run further has more state, which is the whole reason an
+                // operator wants it off the device.
+                let Some(progress) = self
+                    .produced
+                    .lock()
+                    .expect("produced")
+                    .remove(&cache.sequence)
+                else {
+                    return refuse(format!("nothing resident for {}", cache.sequence));
+                };
+                let bytes =
+                    u64::from(progress.lifetime + 1) * self.profile.reserved_per_stage.max(1_024);
+                self.persisted
+                    .lock()
+                    .expect("persisted")
+                    .insert(cache.sequence.clone(), bytes);
+                (bytes, format!("persisted and freed {}", cache.sequence))
+            }
+            p4_adapter::CacheAction::Restore => {
+                let Some(bytes) = self
+                    .persisted
+                    .lock()
+                    .expect("persisted")
+                    .remove(&cache.sequence)
+                else {
+                    return refuse(format!("nothing persisted for {}", cache.sequence));
+                };
+                // The size is what the copy was, so the progress it stood for
+                // comes back with it — a restore that forgot how far the
+                // conversation had got would be a restore in name only.
+                let lifetime =
+                    (bytes / self.profile.reserved_per_stage.max(1_024)).saturating_sub(1) as u32;
+                self.produced
+                    .lock()
+                    .expect("produced")
+                    .insert(cache.sequence.clone(), Progress { turn: 0, lifetime });
+                (bytes, format!("restored {}", cache.sequence))
+            }
+            p4_adapter::CacheAction::Fork { into } => {
+                let mut persisted = self.persisted.lock().expect("persisted");
+                let Some(bytes) = persisted.get(&cache.sequence).copied() else {
+                    return refuse(format!("nothing persisted for {}", cache.sequence));
+                };
+                // Copied, never aliased. Two branches that shared state would
+                // each corrupt the other the moment either continued.
+                persisted.insert(into.clone(), bytes);
+                (bytes, format!("forked {} into {into}", cache.sequence))
+            }
+            p4_adapter::CacheAction::Discard => {
+                let removed = self
+                    .persisted
+                    .lock()
+                    .expect("persisted")
+                    .remove(&cache.sequence);
+                if removed.is_none() {
+                    return refuse(format!("nothing persisted for {}", cache.sequence));
+                }
+                (0, format!("discarded {}", cache.sequence))
+            }
+        };
+        events.raise(Event::Cached {
+            deployment: cache.deployment.clone(),
+            sequence: cache.subject().clone(),
+            bytes,
+            detail,
+        });
+    }
+
+    /// What this adapter has written down, for a test that wants to check the
+    /// state really left memory rather than being copied beside it.
+    pub fn persisted(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .persisted
+            .lock()
+            .expect("persisted")
+            .keys()
+            .cloned()
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Sequences currently resident.
+    pub fn resident(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .produced
+            .lock()
+            .expect("produced")
+            .keys()
+            .cloned()
+            .collect();
+        ids.sort();
+        ids
     }
 }
 

@@ -6,7 +6,7 @@
 
 use crate::message::wire::{decode_to_node, encode_reply};
 use crate::message::{Reply, ToNode};
-use p4_adapter::{Load, Sequence, Unload, Work};
+use p4_adapter::{Cache, CacheAction, Load, Sequence, Unload, Work};
 use p4_agent_core::node::payload::Payload;
 use p4_protocol::frame::Frame;
 
@@ -46,6 +46,17 @@ impl Payload for Bodies {
                 artifact,
             })),
             ToNode::Unload => Some(Work::Unload(Unload { deployment })),
+            // Cache instructions are lifecycle-shaped: one instruction about
+            // one thing, run alone rather than batched into a window. That
+            // they are about a sequence and a load is about a deployment makes
+            // no difference to the node, which cares only that they do not
+            // batch.
+            ToNode::Persist { sequence } => Some(cache(deployment, sequence, CacheAction::Persist)),
+            ToNode::Restore { sequence } => Some(cache(deployment, sequence, CacheAction::Restore)),
+            ToNode::Fork { sequence, into } => {
+                Some(cache(deployment, sequence, CacheAction::Fork { into }))
+            }
+            ToNode::Discard { sequence } => Some(cache(deployment, sequence, CacheAction::Discard)),
             ToNode::Execute { .. } => None,
         }
     }
@@ -91,7 +102,24 @@ impl Payload for Bodies {
     fn released(&self) -> Vec<u8> {
         encode_reply(&Reply::Released)
     }
+
+    fn cached(&self, sequence: &str, bytes: u64, detail: &str) -> Vec<u8> {
+        encode_reply(&Reply::Cached {
+            sequence: sequence.to_owned(),
+            bytes,
+            detail: detail.to_owned(),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests;
+
+/// One cache instruction, for a node that will run it alone.
+fn cache(deployment: String, sequence: String, action: CacheAction) -> Work {
+    Work::Cache(Cache {
+        deployment,
+        sequence,
+        action,
+    })
+}

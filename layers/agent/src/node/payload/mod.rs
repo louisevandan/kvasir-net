@@ -75,4 +75,10 @@ pub trait Payload: Send + Sync {
     fn released(&self) -> Vec<u8> {
         b"unloaded".to_vec()
     }
+
+    /// A cache instruction finished. `sequence` is the id the state now lives
+    /// under, which is the new one after a fork.
+    fn cached(&self, sequence: &str, bytes: u64, detail: &str) -> Vec<u8> {
+        format!("cached {sequence} bytes={bytes} {detail}").into_bytes()
+    }
 }
