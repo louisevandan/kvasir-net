@@ -11,18 +11,24 @@ and every decode lap crossed the physical network.
 | --- | ---: | ---: | --- |
 | remote node only | 300 | 16 | 300/300, 45,293 frames/s |
 | chain over both machines | 400 | 24 | 400/400 three times, ~36,000 frames/s |
+| chain over both, direct on 52001 | 400 | 24 | 400/400 three times, 33,409-36,679 frames/s |
+| three stages, local → remote → local | 800 | 48 | 800/800 twice, 42,626-48,179 frames/s |
 
 Four claims held on every run: every request answered, none failed, every
 stream in order, one terminal per route.
 
-The binary was copied to the remote host's temp directory and run over SSH; the
-frames travelled inside SSH forwards rather than directly on 19311, because the
-remote host's firewall does not admit that port and opening it is a change to
-that machine rather than to this project. The hop is still a real one between
-two machines — what a firewall rule would remove is the SSH wrapper, not the
-network.
+The first two rows went through SSH forwards, on the reasoning that the remote
+host's firewall did not admit the port and opening it is a change to that
+machine rather than to this project. The port was the mistake, not the
+firewall. An agent stands where a node process stood, and `52001-52008` is
+already admitted on every host in this fleet for exactly that role; the layer
+had been given a new range of its own for no reason. Bound to 52001 the agent
+is reachable directly, and the last two rows are plain LAN sockets with no
+wrapper. The throughput either way is the same, which says the tunnel was never
+the constraint — but the configuration that needs no tunnel is the correct one,
+and the third row crosses the network on every hop in both directions.
 
-That constraint produced the run's one instructive failure. With both agents
+The detour produced the run's one instructive failure. With both agents
 advertising `127.0.0.1`, the chain completed its prefill and then stopped after
 exactly one token each: the last node's lap named `127.0.0.1:19312`, which on
 the remote host is the remote host's own loopback. Nothing listened there. The
@@ -30,6 +36,14 @@ addresses in an envelope are absolute and a relay resolves nothing, so an
 advertised address that is not reachable *by its peers* is not an address —
 which is why `p4-agent` takes the advertised host as an argument, and why a
 fleet must pass it.
+
+Passing it exposed a second defect in the same seam: the argument was treated
+as a host and the bound port appended to it, so `192.168.0.29:52001` became
+`tcp://192.168.0.29:52001:52001` — an address that parses, resolves to nothing,
+and is printed by a `P4_AGENT_READY` line. Both binaries now resolve the hint
+through `Address::advertised`, which takes a host or a `HOST:PORT`, refuses
+what is neither, and says out loud when a process has named itself something
+only its own machine can reach.
 
 Local verification behind these runs: three agents and a driver as separate
 processes, chains of one, two and three stages, twelve runs of 800 requests at

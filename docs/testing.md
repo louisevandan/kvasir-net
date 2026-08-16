@@ -48,9 +48,14 @@ select, a starved lane, and a silent drop on the send path. Unit tests cannot
 reach them because each needs sustained load across processes.
 
 ```bash
-p4-agent 0.0.0.0:19311            # one per machine
-p4-drive 0.0.0.0:19310 HOST:19311,HOST:19312,HOST:19313 1000 64 mock-instant
+p4-agent 0.0.0.0:52001 THIS_HOST          # one per machine
+p4-drive 0.0.0.0:52003 HOST_A:52001,HOST_B:52001 1000 64 mock-instant THIS_HOST:52003
 ```
+
+Agents bind `52001-52008`, which the fleet's hosts already admit. Name each
+agent and the driver by an address the others can reach: a run where everything
+calls itself `127.0.0.1` completes its prefill and then stops after one token,
+because the lap resolves to whichever machine is holding the frame.
 
 Four claims, printed as a verdict: every request answered, none failed, every
 stream in order, one terminal per route. Run each chain shape several times

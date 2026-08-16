@@ -19,18 +19,14 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listen = std::env::args()
-        .nth(1)
-        .ok_or("usage: p4-agent HOST:PORT [ADVERTISED_HOST]")?;
+    let listen = std::env::args().nth(1).ok_or(USAGE)?;
     let listener = TcpListener::bind(&listen).await?;
     let bound = listener.local_addr()?;
 
     // What this agent calls itself is what peers put in an envelope, so it has
     // to be the address they can reach rather than the interface it bound.
-    let host = std::env::args()
-        .nth(2)
-        .unwrap_or_else(|| bound.ip().to_string());
-    let own = Address::tcp(host, bound.port());
+    let hint = std::env::args().nth(2);
+    let own = Address::advertised(hint.as_deref(), &bound.ip().to_string(), bound.port())?;
 
     let registry = adapters::registry();
     let duties = Standard::new(registry);
@@ -45,6 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("P4_AGENT_READY address={own} adapters=[{attached}]");
+    if own.is_local_only() {
+        println!("P4_AGENT_UNREACHABLE address={own} peers=only-this-machine");
+    }
     tokio::spawn(inbox::serve(
         listener,
         agent.queue(),
@@ -59,6 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("P4_AGENT_STOPPING address={own}");
     Ok(())
 }
+
+const USAGE: &str = "usage: p4-agent HOST:PORT [ADVERTISED_HOST[:PORT]]";
 
 /// Prints what the agent is holding, once a second, when asked.
 ///

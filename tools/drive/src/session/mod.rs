@@ -92,12 +92,18 @@ pub struct Session {
 }
 
 impl Session {
-    pub async fn start(listen: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    /// `advertise` is what the agents are told to answer to. A driver that
+    /// names itself by the wildcard it bound is asking a remote machine to
+    /// reply to its own loopback.
+    pub async fn start(
+        listen: &str,
+        advertise: Option<&str>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(listen).await?;
         let bound = listener.local_addr()?;
         let replies = Replies::default();
         let (agent, receiver, in_flight) = Agent::new(
-            Address::tcp(bound.ip().to_string(), bound.port()),
+            Address::advertised(advertise, &bound.ip().to_string(), bound.port())?,
             Arc::new(replies.clone()),
             Arc::new(Bodies),
             driver_lanes(),

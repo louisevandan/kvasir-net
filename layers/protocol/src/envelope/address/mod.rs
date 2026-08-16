@@ -8,6 +8,8 @@
 //! Moves when a transport kind is added. `Scheme` exists for that day; nothing
 //! else in the envelope needs to know it happened.
 
+mod advertised;
+
 use crate::ProtocolError;
 use std::fmt;
 use std::str::FromStr;

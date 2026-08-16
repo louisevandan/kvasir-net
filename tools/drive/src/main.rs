@@ -6,13 +6,14 @@
 //! from the things that answer.
 //!
 //! Usage:
-//!   p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER]
+//!   p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER] [ADVERTISED]
 //!
-//!   LISTEN    where replies come back, e.g. 127.0.0.1:19310
-//!   CHAIN     comma-separated agent addresses, in stage order
-//!   REQUESTS  how many inferences to send
-//!   TOKENS    how many tokens each should generate
-//!   ADAPTER   which registered backend to create nodes on (default `mock`)
+//!   LISTEN      where replies come back, e.g. 0.0.0.0:52000
+//!   CHAIN       comma-separated agent addresses, in stage order
+//!   REQUESTS    how many inferences to send
+//!   TOKENS      how many tokens each should generate
+//!   ADAPTER     which registered backend to create nodes on (default `mock`)
+//!   ADVERTISED  what the agents should reply to; required across machines
 
 mod report;
 mod session;
@@ -33,6 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let requests: usize = args.next().ok_or(USAGE)?.parse()?;
     let tokens: u32 = args.next().ok_or(USAGE)?.parse()?;
     let adapter = args.next().unwrap_or_else(|| "mock".to_owned());
+    // Agents reply to what the driver called itself, so across machines this
+    // has to be an address they can reach.
+    let advertise = args.next();
     // What a deployment declares it admits at once. A real one states this
     // from what it measured; a driver that passed its own request count would
     // be declaring a ceiling nobody sized.
@@ -41,12 +45,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(32);
 
-    let session = session::Session::start(&listen).await?;
+    let session = session::Session::start(&listen, advertise.as_deref()).await?;
     println!(
         "P4_DRIVE_READY address={} stages={}",
         session.address(),
         chain.len()
     );
+    if session.address().is_local_only() && chain.iter().any(|stage| !stage.is_local_only()) {
+        println!(
+            "P4_DRIVE_UNREACHABLE address={} note=remote-stages-cannot-reply",
+            session.address()
+        );
+    }
 
     session.create_nodes(&chain, &adapter).await?;
     println!("P4_DRIVE_NODES created={}", chain.len());
@@ -70,4 +80,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-const USAGE: &str = "usage: p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER]";
+const USAGE: &str = "usage: p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER] [ADVERTISED]";

@@ -20,6 +20,8 @@ What breaks if each goes. Most of these are here because they broke once.
 | The requested token count bounds the ring | A backend that never reports a stop otherwise laps forever, across every node at once. |
 | Expired work is answered, not dropped | A caller waiting for a terminal that never comes is what a leaked route looks like. |
 | A peer connection is checked before use | A dead socket accepts a write into its buffer, so the first frame after a restart is lost. |
+| An advertised address is one a peer can reach | Two agents both calling themselves `127.0.0.1` finish the prefill and stop after one token: the lap resolves to whichever machine holds the frame. |
+| An advertised hint is parsed, not pasted | Appending the bound port to a hint that carried one produced `HOST:52001:52001`, which parses, resolves to nothing, and reports itself ready. |
 
 ## Boundaries
 

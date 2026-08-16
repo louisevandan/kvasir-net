@@ -30,9 +30,12 @@ an adapter owes and for the backend HTTP contracts.
 ## Running it
 
 ```bash
-p4-agent 0.0.0.0:19311            # one per machine
-p4-drive 0.0.0.0:19310 HOST:19311,HOST:19312 1000 64 mock-instant
+p4-agent 0.0.0.0:52001 THIS_HOST  # one per machine
+p4-drive 0.0.0.0:52003 HOST_A:52001,HOST_B:52001 1000 64 mock-instant THIS_HOST:52003
 ```
+
+The second argument is what a process calls itself, and every reply is
+addressed to it — across machines it has to be an address the others can reach.
 
 `P4_AGENT_STATS=1` makes an agent print, once a second, its lane depths, its
 node depths, and counts for every step at which a frame could go missing. Two

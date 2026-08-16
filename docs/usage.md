@@ -3,18 +3,29 @@
 ## An agent per machine
 
 ```bash
-p4-agent 0.0.0.0:19311 192.168.0.6
+p4-agent 0.0.0.0:52001 192.168.0.6
 ```
+
+An agent binds the `52001-52008` range because it stands where a node process
+stood; the fleet's hosts already admit it, so there is no firewall to change.
 
 The second argument is what this agent calls itself. Peers put it in an
 envelope, so it must be the address they can reach rather than the interface it
-bound. Omitted, it uses the bound address — fine on one machine, wrong across a
-fleet.
+bound. It takes either a host, which pairs with the bound port, or a full
+`HOST:PORT` when the two differ. Omitted, it uses the bound address — fine on
+one machine, wrong across a fleet.
 
 On start it prints what it can serve:
 
 ```
-P4_AGENT_READY address=tcp://192.168.0.6:19311 adapters=[mock, mock-instant]
+P4_AGENT_READY address=tcp://192.168.0.6:52001 adapters=[mock, mock-instant]
+```
+
+An identity only this machine can reach says so, because the alternative is
+diagnosing it from a chain that stalls after one token:
+
+```
+P4_AGENT_UNREACHABLE address=tcp://0.0.0.0:52001 peers=only-this-machine
 ```
 
 A node named against a backend not in that list is refused, because a placement
@@ -23,9 +34,9 @@ mistake is the caller's to fix and a silent fallback would hide it.
 ## Driving a fleet
 
 ```bash
-p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER]
+p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER] [ADVERTISED]
 
-p4-drive 0.0.0.0:19310 192.168.0.6:19311,192.168.0.26:19311 1000 64 mock
+p4-drive 0.0.0.0:52003 192.168.0.6:52002,192.168.0.29:52001 1000 64 mock 192.168.0.6:52003
 ```
 
 `CHAIN` is the stage order. The driver creates a node per stage, loads each,
@@ -45,12 +56,21 @@ Throughput is reported but is not one of the claims. This layer does not own
 throughput, and a figure from a simulated backend would say nothing about a
 real one.
 
+`ADVERTISED` is the driver's own identity, and it matters for the same reason
+the agent's does: every reply is addressed to it. A driver naming itself by the
+wildcard it bound asks a remote stage to answer its own loopback, so it says so
+when the chain leaves this machine:
+
+```
+P4_DRIVE_UNREACHABLE address=tcp://0.0.0.0:52003 note=remote-stages-cannot-reply
+```
+
 `P4_DRIVE_CEILING` sets the concurrency each load declares; it defaults to 32.
 
 ## Watching an agent
 
 ```bash
-P4_AGENT_STATS=1 p4-agent 0.0.0.0:19311
+P4_AGENT_STATS=1 p4-agent 0.0.0.0:52001
 ```
 
 ```
