@@ -1,33 +1,43 @@
-# Constraints
+# Invariants
 
-| Surface | Consumers | Invariant |
-| --- | --- | --- |
-| `layers/protocol/src/contract`, `catalog`, `codec`, `task` | all P4 processes and Node.js client | P4B1 v6 route envelope, field order, message semantics, and task directions change only in a coordinated wire revision. Protocol never imports runtime or adapters. |
-| `layers/runtime/src/foundation/transport` | Controller, Node, Agent, in-process adapters | Every transport invokes `P4Handler` and emits through `ResponseSink`; TCP framing must not acquire lifecycle policy or change response order. |
-| `layers/runtime/src/domain/agent` | `p4-agent`, all adapters | Controller never supplies an adapter endpoint; only registered adapters create routable NodeSlots. |
-| `layers/runtime/src/domain/agent/authorization` | every controller-facing operation | Node ownership, adapter attachment, and binding deployment/generation are enforced here and nowhere else: no concrete adapter keys on `controller_id`. The state backing these rules is retained until the binding is unloaded. |
-| `layers/runtime/src/domain/agent/registry` | Agent lifecycle and execution | A NodeSlot stores no concrete runtime handle; the adapter is resolved from `adapters[adapter_id]` at use time. Re-registering an adapter at a new endpoint is refused while slots are attached. |
-| `layers/runtime/src/domain/agent/admission` | Agent lifecycle and execution | The async relay takes one permit immediately before adapter dispatch and holds it to terminal; a binding lifecycle transition takes every permit. `p4_max_inflight` sizes concurrency only and must never relax exclusivity. |
-| `layers/runtime/src/domain/agent/lifecycle#register_in_memory_adapter` | co-resident concrete adapters | A directly registered adapter uses the same P4 handler contract as TCP registration; process-separated adapters remain TCP and cannot be treated as direct memory calls merely by matching host address. |
-| `layers/runtime/src/domain/agent/ingress` | external ingress, all adapters | `INGRESS_ACCEPTED` means node ownership and binding generation are valid and the request is queued. Relay credit waits against the bounded adapter queue; it rechecks binding generation after acquiring the permit. |
-| `layers/runtime/src/application/agent_host` | `p4-agent`, external callers | Tokio admission is bounded; overload is an immediate `ERROR`, never an unbounded in-memory prefill queue. |
-| `layers/runtime/src/application/routing/startup#AgentOptions`, `application/agent_host#serve_agent` | Agent launchers and E2E scripts | Default workers equal physical CPU cores × 2; only `--workers 1..1024` overrides it, independently of transport and inference admission limits. |
-| `layers/runtime/src/foundation/task_queue` | every Agent handler and transport | Item and full routed-frame byte budgets are mandatory. Workers compete globally within a lane; ordered work registers its successor after completion instead of relying on queue FIFO. |
-| `layers/runtime/src/application/dispatch` | Agent server, Controller/Node roles, adapter responses | Handlers perform no blocking I/O and never await a response; every follow-up and response re-enters the generic queue. |
-| `layers/runtime/src/application/routing/processor` | external callers | Missing session IDs are issued by ControllerProcessor, never by an adapter or node. |
-| `tools/controller/client/controller-instance.mjs` | Node.js callers | `infer()` requires a ready binding generation and sends external ingress, not backend routing data. |
-| `layers/adapters/pipeline/src/infrastructure/local_transport` | Adapter, llama native runtime | Agent-owned local stages receive one Agent-derived `ipc_domain_id`; external stages retain their transport identity and must not receive an in-memory claim. |
-| `layers/adapters/llamacpp/src/application/adapter`, `scheduler` | stock adapter | NodeSlot creation does not load a model; ModelLoad may reuse a process-owned llama-server. Adapter pending/ready/active state, max batch, inflight, waiting, cycle hints, and partial-batch heuristic are bounded independently of llama-server slot/tensor-batch settings. |
-| `layers/adapters/pipeline/src/application/lifecycle` | Adapter | NodeSlot creation does not create a Pipeline group; ModelLoad/Unload owns group lifecycle by deployment ID. |
-| `layers/adapters/pipeline/src/domain/capability`, `tools/controller/capability` | Adapter and controller | The Agent stores opaque descriptors; the Pipeline controller must reject missing or unequal protocol, ABI, or capability bits before any model group is created. |
-| `tools/controller/experiments/pipeline-e2e`, `tools/scripts/e2e/pipeline` | owned native Pipeline E2E | The current linked native Pipeline binary rejects `n_seq_max > 256`; the runner must fail before model loading above that adapter limit. |
-| `tools/controller/experiments/pipeline-e2e#run-pipeline-e2e.mjs` | performance experiments | Arrival (`concurrent_requests`), Agent/adapter waiting, and GPU service (`max_sequences`) are separate axes. `parallel` describes the native model plan and is never copied into `node_spec.p4_max_inflight`. The arrival axis is still declared explicitly: `p4_max_inflight` comes from `P4_AGENT_SLOT_WIDTH`, defaulting to `concurrent_requests`. Omitting it leaves the slot at its one-permit default and serialises the run. |
-| `tools/controller/experiments/pipeline-e2e#steady-arrival-plan.mjs` | overlap and ingress validation | The first `initial_requests` submit together; every remaining request has a positive `arrival_interval_ms` and must overlap an earlier unfinished inference request, including Prefill before its first token. A steady-arrival run requires an execution window that covers its total request plan, so client-side throttling cannot masquerade as Pipeline backpressure. |
-| `tools/controller/evidence#pipeline-throughput.mjs` | parallel-run acceptance | Every summary carries `throughput.aggregate_tps` and an admission verdict. `serialized` (native peak 1 while arrivals exceed 1) is a failure even when every request reaches `DONE`; absent native occupancy is `unknown`, never a pass. |
-| `tools/controller/evidence`, `tools/controller/experiments/pipeline-e2e` | concurrent test evidence | A parallel test writes the exact request plan before ingress, then preserves every response frame and derives its summary/report only from those traces. |
-| `tools/scripts/benchmark/concurrency` | concurrency sweep | The native Pipeline/NodeSlot parallel value equals the measured session count; optional `AgentWorkers` changes Agent dispatch threads only and must not be reported as inference parallelism. |
-| `layers/adapters/*/src/application/execution/options` | concrete backends | Sampling option acceptance remains adapter-specific. |
+What breaks if each goes. Most of these are here because they broke once.
 
-Hardware reports are observations, not leases: controller planning must check timestamp and binding results. A NodeSlot can have zero bindings or be rebound with a different plan revision. A failed load must not make an old or unknown generation executable.
+| Invariant | What went wrong without it |
+| --- | --- |
+| A socket reader only enqueues | Handlers ran inside the read loop, putting every handler's duration there. |
+| A worker never waits | Waiting in a worker turns a bounded queue back into an unbounded one. |
+| A node's queue holds the long work | Otherwise GPU time appears as agent queue depth and nothing can be attributed. |
+| A node runs one hop at a time | It starts the next only on seeing the previous end; a timer instead would overlap them. |
+| One route, one worker | Frames of a route on different workers race, and a caller sees P4 reordering its stream. |
+| Lane preference is bounded | Strict priority is a veto: a lap never dispatched is a request that never finishes. |
+| A node's select is not biased | Preferring completions starved arrivals entirely; they sat in a channel, in no queue, invisible. |
+| Nothing on the send path drops | A reply has no reply address, so a refused reply cannot be answered — it just vanishes. |
+| The declared ceiling is a ceiling | Concurrency above it is not safe on the current native runtime. |
+| Windows are composed next to the node | A gate further from the work reported a limit its arrivals disagreed with. |
+| Connection, in-flight and depth are sized apart | One constant did all three; narrowing the release width narrowed the others silently. |
+| Load reports per stage | One total hid a non-final stage reserving the whole model. |
+| Only a chain's end produces a token | A middle stage counting makes an n-stage chain emit n tokens per lap. |
+| The requested token count bounds the ring | A backend that never reports a stop otherwise laps forever, across every node at once. |
+| Expired work is answered, not dropped | A caller waiting for a terminal that never comes is what a leaked route looks like. |
+| A peer connection is checked before use | A dead socket accepts a write into its buffer, so the first frame after a restart is lost. |
 
-P4B1 v6 has no TLS, authentication, authorization, durable controller registry, or multi-agent deployment commit barrier. In-band cancellation removes the Agent route and propagates best effort: the stock llama.cpp adapter shuts down its active HTTP socket, while Pipeline may still finish already-issued native compute after its route output is detached. Native Pipeline prefill data-plane credits remain an adapter/native responsibility. Use only inside a trusted network. Public HTTP/WebSocket/Kafka endpoints must authenticate before translating into `INGRESS_SUBMIT`.
+## Boundaries
+
+`layers/protocol` knows no backend and no message vocabulary — an envelope and
+a frame. `layers/adapter` depends on nothing at all, including the protocol: an
+adapter reaching for a P4 type is reaching past its own contract.
+`layers/agent` routes opaque bodies and reads them only through the `Payload`
+seam a deployment supplies.
+
+Hidden state never crosses the adapter interface. That transfer stays inside a
+backend under either distribution, which is why a chain over a self-contained
+backend is one link rather than a special case.
+
+## What this layer does not have
+
+No TLS, authentication or authorisation. A self-describing address is trusted
+because the network is. Use inside a trusted network only; anything public must
+authenticate before it becomes a frame.
+
+No durable state. An agent that restarts has no nodes, and OUTER holds the
+record that says what it should have.

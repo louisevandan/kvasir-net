@@ -1,25 +1,62 @@
 # Testing
 
-Run `cargo fmt --all -- --check`, `cargo test --workspace`, and `cargo build --release --workspace` from `apps/p4`.
+```bash
+cargo test --workspace          # from apps/p4
+cargo fmt --all -- --check
+```
 
-[`layers/protocol/src/catalog/tests.rs`](../layers/protocol/src/catalog/tests.rs) verifies message metadata and health correlation. Codec tests verify that a v6 `route_id` and deadline survive independently from the business request ID. [`layers/runtime/src/foundation/task_queue/tests.rs`](../layers/runtime/src/foundation/task_queue/tests.rs) verifies all four P4 directions use one generic worker layer, requests and responses are separate queue tasks, and large prefill is rejected by byte budget. [`layers/runtime/src/application/dispatch/tests.rs`](../layers/runtime/src/application/dispatch/tests.rs) verifies local Controller→Node and Node→Controller bypass plus the ordered `INGRESS_ACCEPTED → TOKEN → DONE` response path. Peer-mux tests verify 1024 routed executions share one remote connection; the Node.js client test verifies two controllers can reuse one business ID over one Agent socket.
+Three levels, and each catches what the one below cannot.
 
-[`application/routing/tests.rs`](../layers/runtime/src/application/routing/tests.rs) verifies the optional `--workers` syntax and bounds. [`application/agent_host/tests.rs`](../layers/runtime/src/application/agent_host/tests.rs) verifies the physical-core multiplier and explicit override independently of the host running the test. A process smoke test must confirm `P4_AGENT_READY` reports `physical_cores`, final `workers`, and `worker_source`.
+## Pure
 
-[`foundation/transport/tests.rs`](../layers/runtime/src/foundation/transport/tests.rs) verifies that `InMemoryTransport` calls the same `P4Handler` contract used by TCP framing. Routing tests verify Controller→Node ingress emits `INGRESS_ACCEPTED` then `DONE` without a socket. [`domain/agent/tests.rs`](../layers/runtime/src/domain/agent/tests.rs) verifies a co-resident Agent→Adapter NodeSlot can create, bind, and execute through that same path; a saturated slot emits `ERROR` with no preceding acceptance. These tests do not load a model or assume a concrete backend.
+The parts that decide things are pure functions with no I/O, because they are
+the easiest to get subtly wrong and the most expensive to debug once running.
 
-[`model-load-policy.test.mjs`](../tools/controller/capability/model-load-policy.test.mjs) fixes the measured 3090/4080 35B limit calculation and conservative unmeasured fallback. [`controller-instance.test.mjs`](../tools/controller/client/controller-instance.test.mjs) proves the resulting object is carried inside bounded `MODEL_LOAD.stage_plan`. The stock process-owned adapter test requires explicit rejection when such process-start options cannot be applied.
+`worker::judge` — an envelope and our address in, a verdict out. A test pins
+that the verdict never depends on lane or chain: the moment it did, forwarding
+would have to understand its traffic.
 
-[`pipeline/infrastructure/local_transport/tests.rs`](../layers/adapters/pipeline/src/infrastructure/local_transport/tests.rs) verifies that only local stages inherit the Agent-derived IPC domain. Pass `-ExpectSharedMemory` to `run-pipeline-e2e.ps1` to require native `local_hidden_*` evidence for a same-Agent Pipeline edge. [`start-isolated-llama.ps1`](../tools/scripts/launch/llama/start-isolated-llama.ps1) launches a disposable host against a selected runtime pack, so an active host service is not replaced to validate that edge.
+`node::window` — a ready lap goes before fresh prefill, a window never mixes
+lanes, the ceiling is never exceeded, expired work is reported rather than
+dropped.
 
-`run-real-e2e.ps1` proves stock llama-server adapter registration, inventory, NodeSlot creation, binding, concurrent ingress-issued sessions, streams, and binding unload. Its default `parallel=8`, `batch-size=2048`, `ubatch-size=512`, and eight simultaneous requests must all emit text and `DONE`; `AdapterBatchMax` and `AdapterBatchLingerMs` exercise the adapter state machine independently. Unit tests deterministically require full-batch dispatch before linger and partial-batch dispatch after an execution-completion cycle hint. These settings validate the feed path, not a universal optimum. `run-pipeline-e2e.ps1` proves the same lifecycle through the host supervisor, including progress, draft resources, two native GPU stages, and Pipeline unload. Both start `p4-agent` before the self-registeadapter and remove only process IDs/groups they created.
+`node::outcome` — the three cases that are the whole routing behaviour of an
+inference. A middle node hands work on even having produced no text; the end
+either finishes once or reports a token and starts a lap; a token is enqueued
+before the lap it precedes.
 
-The Pipeline E2E creates two independent NodeSlots concurrently through two ControllerInstances. At `-Parallel 1`, it holds one `EXECUTE` stream and requires a second request to receive an admission `ERROR`; this proves bounded overload rejection rather than an application-side prefill queue. At `-Parallel N -ConcurrentRequests N`, it configures both native Pipeline and the model-bound NodeSlot for `N` and requires every simultaneously opened ingress stream to reach `DONE`. The current linked native Pipeline binary enforces `n_seq_max <= 256`, so both owned E2E entry points reject a larger `N` before loading; this adapter ceiling does not redefine the generic Agent admission limit.
+`envelope`, `frame`, `message::wire` — round trips, and refusal of every
+truncation, every trailing byte, every unknown tag.
 
-An overlap test must additionally exercise arrivals after inference starts: set `TotalRequests` above the initial `ConcurrentRequests`, choose a positive `ArrivalIntervalMs`, and leave `ExecutionWindow` at least `TotalRequests`. The runner then opens the initial cohort at once and submits every follow-up at its recorded cadence; it rejects a smaller controller window because that would test a client-side queue rather than Pipeline ingress. Each steady submit also requires an earlier unfinished inference request, so a completed initial cohort cannot be misreported as an overlap test; this includes long Prefill before its first token. The plan and trace retain each request's `initial|steady` phase and scheduled delay.
+## Simulated
 
-For every parallel run, [`run-pipeline-e2e.mjs`](../tools/controller/experiments/pipeline-e2e/run-pipeline-e2e.mjs) writes `plan-<timestamp>.json` before sending ingress, then `trace-<timestamp>.jsonl`, `summary-<timestamp>.json`, and `report-<timestamp>.md`. It tolerates an inherited stdout `EPIPE` so a detached terminal cannot discard completed artifacts. Each JSONL row keeps the submitted prompt, arrival phase/delay, `INGRESS_ACCEPTED`, every `TOKEN`, terminal `DONE` or `ERROR`, and the joined final streamed text. The report has one readable row per session plus accepted/TTFT/DONE latency percentiles; it is derived only from the plan and trace files.
+`layers/agent/tests/simulation.rs` stands real agents on real sockets with
+mocks behind the adapter boundary. Eighteen scenarios: chains of one, two and
+three stages; forty arrivals against a ceiling of four; batching actually
+happening; a slow backend showing as node depth rather than agent depth; relay
+through an agent owning no node; sustained arrivals; per-route ordering;
+concurrent chains sharing agents; a failing backend; a failing load; deadlines;
+cancellation.
 
-Run [`run-pipeline-concurrency-sweep.ps1`](../tools/scripts/benchmark/concurrency/run-pipeline-concurrency-sweep.ps1) to compare multiple concurrency values. Its default sequence is `100, 50, 10, 2, 1`, uses a 500-token output cap, runs each point in benchmark mode without the single-slot admission probe, and writes one linked sweep JSON/Markdown pair after every point completes.
+`layers/service/tests/two_process.rs` does the same through the message
+vocabulary: nodes created, a model loaded, an inference chained, all by frame.
 
-The raw E2E logs are ignored under `target/real-e2e/` and `target/pipeline-e2e/`; summarized evidence is [runtime-evidence.md](runtime-evidence.md).
+## Fleet
+
+The level that found three defects the other two could not — a starved node
+select, a starved lane, and a silent drop on the send path. Unit tests cannot
+reach them because each needs sustained load across processes.
+
+```bash
+p4-agent 0.0.0.0:19311            # one per machine
+p4-drive 0.0.0.0:19310 HOST:19311,HOST:19312,HOST:19313 1000 64 mock-instant
+```
+
+Four claims, printed as a verdict: every request answered, none failed, every
+stream in order, one terminal per route. Run each chain shape several times
+against long-lived agents — a defect that only appears on the second run
+against the same process is exactly the kind this level exists for.
+
+Run with `P4_AGENT_STATS=1` when something is wrong. Lane depth beside node
+depth says which side of the adapter boundary is slow; the per-node counts say
+at which step a frame stopped existing.

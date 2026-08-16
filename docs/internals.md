@@ -1,45 +1,86 @@
-# Internals
+# Decisions
 
-## Decisions
+Each of these was made, or remade, against something that went wrong. The
+defect is the argument.
 
-- NodeSlot and concrete runtime are separate: vLLM may create an engine during ModelLoad while llama.cpp may reuse one; P4 records only the stable slot and binding result.
-- Adapter endpoint registration is adapter-to-agent, never controller-to-agent; this prevents arbitrary controller route injection and survives repeated model loads.
-- `binding_id + runtime_generation` is part of execution identity; reloading the same slot cannot run a stale session on a replacement runtime.
-- ControllerProcessor owns missing-session issuance after `INGRESS_SUBMIT`; ingress transports remain interchangeable.
-- `layers/runtime/src/foundation/transport` owns no hardware, lifecycle, or backend policy; `layers/runtime/src/domain/agent` owns mutable agent state.
-- <a id="transport-neutral-dispatch"></a>`P4Handler` owns command semantics and `ResponseSink` owns stream emission; `InMemoryTransport` and `TcpTransport` differ only in delivery. This prevents controller, agent, and node routes from reimplementing lifecycle validation for a local fast path.
-- Pipeline uses deployment ID as host runtime-group identity; a model unload deletes that concrete group but preserves the NodeSlot.
-- Agent routing is a non-blocking `TaskHandler` above shared competing control/prefill/decode/response workers. Remote I/O and compatibility adapter calls execute outside those workers. Ordered output is a causal chain: final delivery of one response releases registration of the next response task.
-- Requests and responses are separate `TaskEnvelope` instances linked by `causation_id`; no handler waits for its request's response.
-- Equal source/target Agent IDs select the common in-memory route. Transport selection does not change message validation, response ordering, or handler code.
-- NodeSlot admission is controller-owned and permit-based: `INGRESS_ACCEPTED` means ownership and binding validation succeeded; the async relay takes one permit before adapter dispatch, while binding lifecycle takes every permit.
-- Pipeline throughput has three independent axes: arrival is the E2E request window (`concurrent_requests`), bounded waiting belongs to the Agent/adapter queues, and GPU service capacity is the deployment's declared `max_sequences`. An E2E `parallel` value must not be copied into `node_spec.p4_max_inflight`.
-- A throughput run has both an initial arrival cohort and, when testing overlap, a scheduled steady-arrival tail. The E2E evidence records both separately; it never calls client-side execution throttling a Pipeline queue.
-- Independent does not mean unset. A NodeSlot defaults to one permit, so a `node_spec` that omits `p4_max_inflight` makes the Agent the narrowest tier and releases one execution at a time. The adapter then receives one request per batch, its coalescing window has nothing to merge, and the native scheduler reports `peak=1` against its full `limit`. A run in that state still completes every request with zero errors, which is why `throughput.verdict` exists.
-- <a id="agent-local-native-transport"></a>At `MODEL_LOAD`, the Adapter derives the IPC domain of every local stage from its owning Agent address; the controller cannot claim local memory affinity. Native Pipeline selects shared memory only for adjacent stages with that common domain and otherwise retains TCP.
-- `MODEL_LOAD.stage_plan.load_options` carries the controller-selected common load policy and its reproducible batch-limit calculation. Agent routing treats it as opaque JSON; the concrete adapter filters it. Unsupported process-start options fail explicitly instead of becoming hidden defaults. See [model-load.md](model-load.md).
+## There is no controller
 
-## Rejection gate
+It was drawn as a participant between OUTER and the agents, and described as
+holding the node list. Both were wrong. The node list is external state, and a
+controller only ever had it because inference and load commands carry it. What
+the controller actually was is the entry point of the agent serving as the
+VPC's ingress — and that entry point is the agent. Nothing was left for a
+separate object to own or decide.
 
-- <a id="rejection-gate"></a>The Agent keeps node, controller and binding state until the binding is unloaded, and refuses any request that contradicts it. `authorization/` owns those rules; adding authentication changes that folder alone.
-- Concrete adapters re-check binding generation, but none of them keys on `controller_id`. Ownership therefore exists only at this boundary and cannot be delegated downstream.
-- A slot never caches its adapter handle. `registry::resolve` joins the slot with `adapters[adapter_id]` at use time, so adapter identity has exactly one source.
-- Re-registering an adapter under a different endpoint is refused while NodeSlots are attached; those slots were authorised against the previously registered runtime.
-- `MODEL_UNLOAD` removes a binding only when the request names the deployment that was recorded, so a mismatched unload cannot silently drop a live binding.
+An agent therefore holds one kind of internal entity. `Recipient` has two
+variants, and a third would mean something acquired state it should not have.
 
-## Execution credit
+## The address is the identity
 
-- <a id="execution-credit"></a>`INGRESS_ACCEPTED` follows ownership and binding-generation validation, not raw socket receipt or GPU credit. It means the request is queued for adapter dispatch; a deadline can still fail while it waits.
-- The async relay takes one slot permit immediately before adapter dispatch and holds it through the terminal response; `MODEL_LOAD` and `MODEL_UNLOAD` take every permit.
-- Sizing and exclusivity are independent. Raising `p4_max_inflight` changes concurrency only; a lifecycle transition still waits for every permit, so a binding stays stable until it is explicitly unloaded.
-- Ownership and binding readiness are checked before acceptance and again after relay credit acquisition, so a queued request cannot run against a reloaded binding.
-- This is Agent policy over opaque NodeSlot capacity, not a CUDA, llama.cpp, or native Pipeline data-plane mechanism.
+There is no agent id. A relay has to answer "is this mine" without consulting
+anything, or the answer needs state and it stops being a relay. So the target
+travels in the envelope, and the address is what an agent is called.
 
-## Invariants
+## The chain travels whole
 
-- `NODE_CREATED(ready)` precedes `MODEL_LOAD`.
-- `MODEL_BOUND(ready)` precedes `EXECUTE`.
-- `MODEL_UNBOUND` removes only that binding.
-- A co-resident handler is invoked directly; a distinct process is encoded with P4B1/TCP. “Same address” is insufficient when a process boundary remains.
-- Concrete workers do not participate in P4 neighbour/data-plane traffic.
-- No NodeSlot execution may overlap its ModelLoad or ModelUnload lifecycle transition.
+Carrying only the remainder would be smaller. Carrying all of it means a node
+can report where in the order it sat, and a failed request can be retried
+without reconstructing what it was meant to visit. Frame size is the cheaper
+thing to spend.
+
+## The hop is the unit, and it carries a window
+
+A hop that could hold one sequence would force the node to simulate batching
+above the adapter boundary — which is where a process-wide gate was already
+measured putting the throttle three tiers above the GPU, so the runtime
+reported a limit of fifty while sixteen arrived.
+
+## Reporting is per stage
+
+A model spread over layer ranges finishes when its slowest piece does. One
+total figure hid a non-final stage reserving the whole model's footprint, which
+was the root cause behind a long run of symptoms.
+
+## Nothing returns a value
+
+A response path pinned to a call stack dies when that frame returns, so long
+work cannot be split into tasks while one exists. Handlers are procedures; a
+requester registers a continuation. Order comes from each step registering the
+next, never from the queue.
+
+## Preference is bounded, everywhere
+
+Two starvation bugs, one shape. The node's select preferred hop completions —
+correct in intent, since a completion frees the node — and under load produced
+one per hop without pause, so arrivals were never polled at all. They sat in a
+channel, in no queue, invisible to every depth reading. The agent's lane
+priority had the same shape.
+
+Strict priority is not a preference but a veto. Both now yield.
+
+## Backpressure rather than refusal, on the send path
+
+Refusing looked safe. But a frame on the way out is usually already a reply,
+and a reply carries no reply address, so there was nothing to answer with and
+it went out silently — indistinguishable from a lost route. It now waits, and
+the wait propagates back to the node, which is the thing producing the work.
+
+Refusal is still right at the socket reader, where blocking would stall every
+other route on that connection. The difference is that a refusal there can be
+counted and reported, and the sender has a deadline.
+
+## The mock is not a convenience
+
+It is the second implementation that keeps the adapter interface honest. What
+it can implement is the interface; that it finishes without a backend concept
+is the evidence the boundary is clean. It also makes a fleet loadable anywhere,
+which is what turns "P4 is not at fault" into something testable rather than
+asserted.
+
+## Measurement over argument
+
+Three defects in this layer survived every unit test and were found by running
+four processes and reading counters. Depth alone was not enough — depth shows
+what is waiting, never what already left — so an agent counts what each
+decision did and what each node step passed through. That is what turned a long
+stretch of guessing into one measurement.

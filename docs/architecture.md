@@ -1,43 +1,75 @@
-# Architecture
+# How a message moves
 
-| Path | Contract | Drill-down |
-| --- | --- | --- |
-| `layers/protocol/` | Runtime-neutral P4B1 records, semantic catalog, task envelope, and bounded codec. It imports no runtime or adapter. | [`contract/message/mod.rs`](../layers/protocol/src/contract/message/mod.rs), [`codec/mod.rs`](../layers/protocol/src/codec/mod.rs), [`catalog/mod.rs`](../layers/protocol/src/catalog/mod.rs) |
-| `layers/runtime/src/application/` | Agent startup, Controller/Node routing, and non-blocking task dispatch orchestration. | [`agent_host/mod.rs`](../layers/runtime/src/application/agent_host/mod.rs), [`dispatch/mod.rs`](../layers/runtime/src/application/dispatch/mod.rs), [`routing/mod.rs`](../layers/runtime/src/application/routing/mod.rs) |
-| `layers/runtime/src/domain/` | Adapter registry, NodeSlot/binding state, the controller-facing rejection gate, execution admission, lifecycle invariants, and hardware observation. Each folder owns one reason to change: `registry/` the state shape, `authorization/` the trust model, `admission/` the concurrency policy, `lifecycle/` the protocol operations. | [`agent/registry/mod.rs`](../layers/runtime/src/domain/agent/registry/mod.rs), [`agent/authorization/mod.rs`](../layers/runtime/src/domain/agent/authorization/mod.rs), [`agent/admission/mod.rs`](../layers/runtime/src/domain/agent/admission/mod.rs), [`agent/lifecycle/mod.rs`](../layers/runtime/src/domain/agent/lifecycle/mod.rs) |
-| `layers/runtime/src/foundation/` | Common handler/response contracts, direct/TCP transport, and bounded scheduling queues used by every upper layer. | [`transport/mod.rs`](../layers/runtime/src/foundation/transport/mod.rs), [`task_queue/mod.rs`](../layers/runtime/src/foundation/task_queue/mod.rs) |
-| `layers/runtime/src/infrastructure/` | Persistent remote-peer multiplexing; contains no Agent lifecycle policy. | [`peer_mux/mod.rs`](../layers/runtime/src/infrastructure/peer_mux/mod.rs) |
-| `layers/adapters/llamacpp/` | Stock llama.cpp translation split into routed dispatch, bounded scheduling, inference, state, and HTTP infrastructure. | [`application/adapter/mod.rs`](../layers/adapters/llamacpp/src/application/adapter/mod.rs), [`application/scheduler/mod.rs`](../layers/adapters/llamacpp/src/application/scheduler/mod.rs), [`application/inference/mod.rs`](../layers/adapters/llamacpp/src/application/inference/mod.rs) |
-| `layers/adapters/pipeline/` | Pipeline translation split into lifecycle/execution application code, state/capability domain code, and listener/HTTP/locality infrastructure. | [`application/lifecycle/mod.rs`](../layers/adapters/pipeline/src/application/lifecycle/mod.rs), [`application/execution/mod.rs`](../layers/adapters/pipeline/src/application/execution/mod.rs), [`infrastructure/mod.rs`](../layers/adapters/pipeline/src/infrastructure/mod.rs) |
-| `entrypoints/` | Thin process launchers only; agent, compatibility controller, and compatibility node contain no policy. | [`agent/src/main.rs`](../entrypoints/agent/src/main.rs), [`controller/src/main.rs`](../entrypoints/controller/src/main.rs), [`node/src/main.rs`](../entrypoints/node/src/main.rs) |
-| `tools/controller/` | External ControllerInstance, topology/capability helpers, measured model-load policy, evidence writers, and owned experiments grouped by purpose. | [`client/controller-instance.mjs`](../tools/controller/client/controller-instance.mjs), [`capability/model-load-policy.mjs`](../tools/controller/capability/model-load-policy.mjs), [`experiments/pipeline-e2e/run-pipeline-e2e.mjs`](../tools/controller/experiments/pipeline-e2e/run-pipeline-e2e.mjs) |
-| `tools/scripts/` | Fixture generation, E2E, benchmark, and launch scripts grouped independently by change reason. | [`e2e/pipeline/run-pipeline-e2e.ps1`](../tools/scripts/e2e/pipeline/run-pipeline-e2e.ps1), [`benchmark/concurrency/run-pipeline-concurrency-sweep.ps1`](../tools/scripts/benchmark/concurrency/run-pipeline-concurrency-sweep.ps1) |
-| `fixtures/` | Reusable, deterministic semantic workload inputs. | [`prefill-prompts-ko-400t.json`](../fixtures/prefill-prompts-ko-400t.json) |
+```
+socket ──▶ [ main queue: control | response | decode | prefill ]
+                              │
+                        dispatcher (one task)
+                              │  route → worker, so a route stays sequential
+                     ┌────────┴────────┐
+                  worker            worker  …
+                     │
+        ┌────────────┼────────────┐
+     forward      agent's own   node's queue ──▶ hop ──▶ adapter ──▶ backend
+    (to a peer     duties            │                    │
+     or OUTER)                       └────── hop ends ────┘
+```
 
-`p4-agent LISTEN_ENDPOINT [--workers N]` accepts only its listener and optional worker override. Without the override it creates two Tokio workers per physical CPU core. Adapters, not controllers, register their local listening endpoint with that running agent. The agent routes `node_id` only after `NODE_CREATED(ready)` and validates `deployment_id`, `binding_id`, and runtime generation before `EXECUTE`.
+## The socket reader only enqueues
 
-## Transport-neutral dispatch
+No handler runs in it, no body is decoded, no connection gets a thread to work
+in. A frame's length comes from its header, so the reader knows it has a whole
+frame without looking inside. A full lane is counted and reported rather than
+answered, because these connections carry traffic one way and there is nowhere
+in band to say so.
 
-Every P4 command enters a `P4Handler` and emits a response stream to a `ResponseSink`. `P4Transport` has two implementations: co-resident handlers use `InMemoryTransport`, while independently running components use `TcpTransport` and the P4B1 codec. Routing and lifecycle code hold a transport, never a socket; therefore Controller→Node, Agent→Adapter, and adapter response streams use identical command validation and response ordering.
+## Workers are chosen by route
 
-An address alone cannot make two operating-system processes in-memory. The automatic fast path applies when the controller/node/adapter handler is registered in the owning Agent process; a separate `p4-pipeline`, `p4-llamacpp`, Node.js controller, or host supervisor remains a TCP/HTTP process boundary. Native Pipeline's separate stage boundary is independently eligible for its shared-memory payload channel.
+Order within a route is the only ordering guarantee there is, and it comes from
+registration: a node enqueues a token before the lap that will produce the next
+one. Handing consecutive frames of one route to different workers throws that
+away, and a caller sees it as P4 reordering its stream. Hashing the route keeps
+each route sequential while different routes still run at once.
 
-The target topology has exactly one persistent P4 channel per Agent pair. The Node.js client already pools one socket per Agent endpoint across ControllerInstances, and remote execution pools one socket per adapter endpoint. Logical controllers, NodeSlots, requests, and sessions are multiplexed by wire `route_id`; they never own sockets. Co-resident handlers are direct calls. Standalone adapter lifecycle calls may still use a compatibility one-shot socket; removing that final local process boundary requires registering the adapter as an in-process Agent handler, not disguising loopback TCP as memory transport.
+Forwarding happens on the dispatcher rather than in a task of its own, for the
+same reason.
 
-## Concurrent Agent runtime
+## Lanes are preferred, not obeyed
 
-`p4-agent` uses a Tokio multi-thread I/O runtime with `physical CPU cores × 2` workers by default; `--workers 1..1024` overrides that count. Connection admission (`P4_AGENT_MAX_CONNECTIONS`, default 4096), generic task-queue capacity, worker count, and NodeSlot execution credit are separate limits. Large prefill retention is bounded by both 1024 queued items and a 64 MiB encoded-byte budget. Saturation returns P4 `ERROR`. The in-process controller role acquires target NodeSlot credit before queuing `INGRESS_ACCEPTED`; the accepted-response handler then queues `EXECUTE`, so acceptance cannot be overtaken by generated output.
+Control over everything, decode over prefill — a lap belongs to a request
+already holding KV across a chain, where a prefill has not started.
 
-All four communication directions use the same `TaskEnvelope` and generic workers. Workers compete for every independent task in a lane; the queue does not serialize a correlation. A required order is a causal chain whose current handler registers the next task after delivery. Requests and responses remain separate tasks. See [task-runtime.md](task-runtime.md).
+But the preference is bounded: every sixteenth frame the order gives way and
+all four lanes compete. Strict priority is not a preference but a veto, and a
+busy lane that is never empty means the ones under it are never polled at all.
 
-Each NodeSlot owns an independent semaphore. `p4_max_inflight` in its generic `node_spec` is bounded to `1..1024` and defaults to `1`; ingress/`EXECUTE` use one permit and `MODEL_LOAD`/`MODEL_UNLOAD` acquire all permits, so a binding cannot be replaced beneath an active stream. Node IDs are agent-global but controller-owned: a different `controller_id` cannot operate or recreate an existing NodeSlot.
+## The node holds the long work
 
-The peer writer has two bounded lanes. Prefill frames use a 1024-entry data queue; decode/control traffic uses a 4096-entry latency queue and is selected first at frame boundaries. A frame is never interleaved byte-for-byte. Pipeline compatibility admission separately retains its 256-entry backend queue and compute credits (safe fallback: prefill 16, decode 4). These are dispatch credits, not OS thread counts; Tokio workers remain shared and OS-neutral.
+A worker's job for a node-bound frame is to move it to that node's queue and be
+finished. Whether the node acts in a microsecond or a minute stops being
+something the agent's depth reflects — which is the separation that lets a
+slowdown be attributed to one side of the adapter boundary or the other.
 
-The stock llama.cpp adapter has a separate `pending → ready → active` scheduler: `P4_LLAMACPP_MAX_INFLIGHT=256`, `P4_LLAMACPP_MAX_QUEUED=1024`, and `P4_LLAMACPP_BATCH_MAX=256` by default. A full batch is released immediately. A backend-cycle hint releases the available partial batch; current stock HTTP completion is only a conservative hint. Otherwise the pluggable `BatchHeuristic` chooses the wait (`P4_LLAMACPP_BATCH_LINGER_MS=0` today), leaving a stable seam for later controller pressure and backend telemetry. Released concurrent HTTP streams feed llama-server continuous batching. llama-server slot and tensor batch sizes remain launch-owned (`--parallel`, `--batch-size`, `--ubatch-size`) so P4 stays backend-neutral.
+A node advances on two events and no others: work arriving, and a hop ending.
+No timer, because a node's pace is the backend's pace and a third trigger would
+be a guess at it. It runs one hop at a time by construction: it starts the next
+only when it sees the previous end.
 
-Model-load scheduling limits are controller policy, not Agent constants. The controller serializes the calculation and its measured evidence into `stage_plan.load_options`; each concrete adapter validates and applies supported values. See [model-load.md](model-load.md).
+Deadlines and cancellation are decided at that boundary. There is no way to
+interrupt a hop and no need — not starting the next one is the whole mechanism.
 
-## Native Pipeline capability gate
+## A hop carries a window
 
-The Agent stores an adapter descriptor as opaque P4 inventory data; it does not learn llama.cpp, CUDA, or Pipeline implementation details. A Adapter derives `p4.adapter-capability/v1` from its local host supervisor's `/api/runtime` identity. The Pipeline controller compares `protocol`, `adapter_abi`, and `capability_bits` across every participating Agent before `NODE_CREATED` or `MODEL_LOAD`. Missing or unequal values produce a deterministic compatibility error and no model group is created. This makes independently updated concrete runtimes fail before GPU allocation instead of after hidden-state traffic begins.
+Batching is the node's decision, bounded by what the load declared and never
+derived. The window is composed next to the node rather than upstream, because
+a gate further from the work was measured reporting a limit its arrivals
+disagreed with.
+
+## Nothing returns a value
+
+Handlers are procedures whose only output is a frame on a queue. A requester
+registers a continuation instead of waiting, because a response path pinned to
+a call stack dies with that frame — and long work is split across tasks.
+
+Backpressure runs the other way down the same chain: a full peer queue holds
+the dispatcher, which fills the lanes, which holds a node's outbox, which slows
+the node at its next hop. The chain ends at the thing producing the work.

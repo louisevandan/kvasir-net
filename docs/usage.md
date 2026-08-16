@@ -1,48 +1,76 @@
-# Usage
+# Running it
 
-Start an agent with its listener address. It defaults to `physical CPU cores × 2` Tokio workers; pass `--workers N` to override the count. Then start adapters with their own agent registration arguments:
+## An agent per machine
 
-```powershell
-.\target\debug\p4-agent.exe 127.0.0.1:29101
-.\target\debug\p4-agent.exe 127.0.0.1:29101 --workers 48
-.\target\debug\p4-llamacpp.exe 127.0.0.1:19103 127.0.0.1:29101 llamacpp-stock http://127.0.0.1:19104 Qwen2.5-1.5B-Instruct-Q8_0.gguf
+```bash
+p4-agent 0.0.0.0:19311 192.168.0.6
 ```
 
-The caller never supplies `127.0.0.1:19103`. It first calls `inventory()`, creates a NodeSlot against `llamacpp-stock`, loads a deployment binding, then streams inference:
+The second argument is what this agent calls itself. Peers put it in an
+envelope, so it must be the address they can reach rather than the interface it
+bound. Omitted, it uses the bound address — fine on one machine, wrong across a
+fleet.
 
-```js
-const node = await controller.createNode({ adapterId: 'llamacpp-stock' });
-let binding;
-for await (const event of controller.loadModel({ nodeId: node.nodeId, deploymentId: 'd1', model: 'model.gguf', planRevision: '1' })) {
-  if (event.type === 'model-bound') binding = event;
-}
-for await (const event of controller.infer({ nodeId: node.nodeId, deploymentId: 'd1', bindingId: binding.bindingId, runtimeGeneration: binding.runtimeGeneration, prompt: '러스트에 대해 설명하라.', options: { top_p: 0.9, top_k: 20 } })) console.log(event);
+On start it prints what it can serve:
+
+```
+P4_AGENT_READY address=tcp://192.168.0.6:19311 adapters=[mock, mock-instant]
 ```
 
-Run owned proof paths from `apps/p4`:
+A node named against a backend not in that list is refused, because a placement
+mistake is the caller's to fix and a silent fallback would hide it.
 
-```powershell
-.\tools\scripts\e2e\stock\run-real-e2e.ps1 -P4ListenPort 29101
-.\tools\scripts\e2e\pipeline\run-pipeline-e2e.ps1 -P4ListenPort 29201 -Prompt '러스트에 대해 설명하라.' -MaxTokens 16
+## Driving a fleet
+
+```bash
+p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER]
+
+p4-drive 0.0.0.0:19310 192.168.0.6:19311,192.168.0.26:19311 1000 64 mock
 ```
 
-Generate and reuse the semantic-prefill fixture for the 256-session workload.
-`MaxTokens` is an upper bound: a normal request can end at EOG and still pass.
+`CHAIN` is the stage order. The driver creates a node per stage, loads each,
+runs the requests, and prints a verdict:
 
-```powershell
-node .\tools\scripts\fixtures\generate-prefill-prompts.mjs
-.\tools\scripts\e2e\pipeline\run-pipeline-e2e.ps1 -PromptFile .\fixtures\prefill-prompts-ko-400t.json -PromptOffset 0 -MaxTokens 600 -Parallel 256 -ConcurrentRequests 256 -ExecutionWindow 16 -AgentWorkers 48 -P4ListenPort 29301 -P4RingListenPort 29303
+```
+P4_DRIVE_RESULT requests=1000 tokens_each=64
+  completed=1000 failed=0 unanswered=0 routes=1006
+  tokens=63000 elapsed_ms=1211 frames_per_second=52846
+  [pass] every request answered
+  [pass] no request failed
+  [pass] every stream in order
+  [pass] one terminal per route
 ```
 
-`ExecutionWindow` is controller-side credit, not an Agent queue: it limits
-active continuous streams for large-prefill workloads while preserving the full
-set of 256 unique logical sessions. Raise it only after native prefill capacity
-has been measured for the selected model and context.
+Throughput is reported but is not one of the claims. This layer does not own
+throughput, and a figure from a simulated backend would say nothing about a
+real one.
 
-For overlap validation, retain an initial 48-session cohort and add requests
-while those streams are still running. `ExecutionWindow` must cover the whole
-arrival plan so the client does not hide a Pipeline queue behind its own limit.
+`P4_DRIVE_CEILING` sets the concurrency each load declares; it defaults to 32.
 
-```powershell
-.\tools\scripts\e2e\pipeline\run-pipeline-e2e.ps1 -PromptFile .\fixtures\prefill-prompts-ko-400t.json -MaxTokens 1000 -Parallel 48 -ConcurrentRequests 48 -TotalRequests 56 -InitialRequests 48 -ArrivalIntervalMs 2000 -ExecutionWindow 56 -ExpectSharedMemory -Benchmark
+## Watching an agent
+
+```bash
+P4_AGENT_STATS=1 p4-agent 0.0.0.0:19311
 ```
+
+```
+P4_AGENT_DEPTH control=0 prefill=812 decode=44 response=0 nodes=196
+P4_AGENT_TRAFFIC forwarded=38409 consumed=3 to_nodes=38403 unrouted=0
+P4_AGENT_NODE node=tail-0 received=12801 queued=12801 claimed=12800 hops=745 …
+```
+
+Read the first two numbers together. A deep node queue beside shallow lanes
+puts a slowdown below the adapter; deep lanes beside an idle node put it here.
+The per-node counts exist because a frame that goes missing leaves no trace in
+a depth reading — depth only shows what is still waiting.
+
+## Which backends a build carries
+
+Registered in [`entrypoints/agent/src/adapters`](../entrypoints/agent/src/adapters).
+`mock` reproduces the measured shape — cost by chain position, prefill dearer
+than a lap — so a fleet can be loaded anywhere. `mock-instant` answers with no
+delay, for proving routing and ordering at rates a timed backend would hide.
+
+A node's name tells a staged backend which position it plays: `stage-N` is an
+intermediate stage, `tail-N` is the end of a chain, and any other name is a
+backend that spreads the model itself.
