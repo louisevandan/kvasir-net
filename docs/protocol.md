@@ -449,16 +449,21 @@ distributed load needs a discovery phase before any node receives `Load`:
 
 The discovery phase is now present as a transport contract:
 `ToAgent::InspectModel { artifact, adapter }` and `Reply::Model { artifact,
-adapter, profile }` carry an opaque profile. The mock adapter implements this
+adapter, profile, capability_snapshot_id, generated_at, expires_at }` carry an
+opaque profile and its discovery freshness metadata. The request correlation is
+the envelope route; callers must preserve it as their request identity until a
+separate request/sequence identity is introduced. The mock adapter implements this
 hook for protocol tests. The concrete served adapter calls the backend-neutral
 GGUF inspector in [`p4-adapter::model`](../layers/adapters/adapter/src/model)
 and returns a schema-versioned profile containing artifact files, a deterministic
 fingerprint, architecture metadata, tensor inventory, layer bytes, and boundary
 bytes. The local model root is selected by `P4_MODEL_DIR` (or the host runtime's
 `LLAMA_MODEL_DIR`); only a relative artifact reference may cross the boundary
-and directory references enumerate sorted `.gguf` shards. Capability snapshot
-binding is still required. Discovery
-is also not a request for the agent to
+and directory references enumerate sorted `.gguf` shards. The transport now
+allows OUTER to bind the returned snapshot ID and expiry to `Load`, and an agent
+rejects an expired bound load before the adapter is called. A registry that
+matches the ID to a stored, hardware-specific capability snapshot is still
+required. Discovery is also not a request for the agent to
 choose the global placement. The responsibilities are deliberately separated:
 
 - The agent resolves an allowed model reference and reads the GGUF headers and
@@ -512,7 +517,7 @@ The acceptance gate must therefore include: the same `model_fingerprint` is
 observed across all selected agents; incomplete or divergent shard sets are
 rejected; the plan records which capability snapshot it used; and a load is
 refused when the snapshot has expired or the adapter cannot realize the
-selected distribution mode. Until a capability snapshot is returned and bound
-to the resulting plan, the
-existing `InspectModel` transport plus opaque `Load` pair is still insufficient
-to claim that an unknown model can be safely or optimally distributed.
+selected distribution mode. The ID/expiry transport and expiry refusal are
+implemented; full snapshot registry matching, hardware resource fields, and
+adapter-mode validation remain required before claiming that an unknown model
+can be safely or optimally distributed.

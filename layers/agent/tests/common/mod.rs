@@ -222,6 +222,8 @@ impl Payload for Lifecycle {
                 deployment,
                 plan: text,
                 artifact: "model".into(),
+                capability_snapshot_id: String::new(),
+                capability_expires_at: 0,
             }));
         }
         (text == "unload").then_some(p4_adapter::Work::Unload(p4_adapter::Unload { deployment }))

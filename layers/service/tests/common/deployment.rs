@@ -47,6 +47,8 @@ pub async fn place(
                 plan: plan.into(),
                 artifact: "model.gguf".into(),
                 ceiling,
+                capability_snapshot_id: String::new(),
+                capability_expires_at: 0,
             },
         ))
         .unwrap();

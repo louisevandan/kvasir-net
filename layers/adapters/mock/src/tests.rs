@@ -52,6 +52,8 @@ fn a_load_reports_one_stage_at_a_time_then_binds() {
             deployment: "d".into(),
             plan: "{}".into(),
             artifact: "model".into(),
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
         }),
         &recorder,
     );
@@ -84,6 +86,8 @@ fn a_load_reports_a_reservation_per_stage() {
             deployment: "d".into(),
             plan: "{}".into(),
             artifact: "m".into(),
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
         }),
         &recorder,
     );
@@ -108,6 +112,8 @@ fn a_generation_is_issued_by_the_adapter_and_advances() {
                 deployment: "d".into(),
                 plan: "{}".into(),
                 artifact: "m".into(),
+                capability_snapshot_id: String::new(),
+                capability_expires_at: 0,
             }),
             &recorder,
         );
@@ -192,6 +198,8 @@ fn a_load_fault_fails_instead_of_binding() {
             deployment: "d".into(),
             plan: "{}".into(),
             artifact: "m".into(),
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
         }),
         &recorder,
     );

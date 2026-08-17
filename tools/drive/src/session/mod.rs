@@ -40,6 +40,10 @@ pub struct Session {
     /// Sampling and generation settings, merged into the backend's request.
     /// Opaque here for the same reason a plan is.
     options: String,
+    /// Discovery snapshot binding supplied by OUTER. Empty/zero keeps mock
+    /// runs compatible; production callers must provide both values.
+    pub(crate) capability_snapshot_id: String,
+    pub(crate) capability_expires_at: u64,
     /// How long nothing may arrive before the driver stops waiting.
     quiet: Duration,
     /// Gap between arrivals. Zero sends the whole run at once, which measures a
@@ -90,6 +94,12 @@ impl Session {
             plans,
             prompt,
             options,
+            capability_snapshot_id: std::env::var("P4_DRIVE_CAPABILITY_SNAPSHOT_ID")
+                .unwrap_or_default(),
+            capability_expires_at: std::env::var("P4_DRIVE_CAPABILITY_EXPIRES_AT")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
             quiet,
             arrive,
             vary,

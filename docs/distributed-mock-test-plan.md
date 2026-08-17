@@ -197,8 +197,10 @@ status를 각각 수집한다.
   fingerprint를 반환한다.
 - 실제 모델 파일에 대한 parser smoke는
   `Qwen2.5-1.5B-Instruct-Q8_0.gguf`로 통과했다.
-- capability snapshot ID, model fingerprint, expiry를 Load plan에 묶는
-  필드는 아직 추가해야 한다.
+- discovery 응답은 snapshot ID/generated/expiry를 운반하고, OUTER가 이를
+  Load에 바인딩하면 agent가 만료된 snapshot을 adapter 호출 전에 거부한다.
+  다만 snapshot registry의 실제 ID 일치 검증, 하드웨어 자원 스냅샷, adapter
+  distribution-mode 검증은 아직 남아 있다.
 - Agent lane, node ingress, adapter event channel, node outbox는 모두
   `Budget.depth` 기반의 bounded RAM 경로다. 초과 node work는 기다리지
   않고 명시적 `Failed`로 반환되며, 느린 downstream은 bounded outbox를

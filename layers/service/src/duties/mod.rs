@@ -78,12 +78,18 @@ impl Standard {
         };
         let frame = frame.clone();
         let agent = Arc::clone(agent);
+        let generated_at = unix_ms();
+        let expires_at = generated_at.saturating_add(5 * 60 * 1000);
+        let capability_snapshot_id = format!("cap-{generated_at}-{}", frame.envelope.route);
         tokio::task::spawn_blocking(move || {
             let reply = match adapter_instance.inspect_model(&artifact) {
                 Ok(profile) => Reply::Model {
                     artifact,
                     adapter,
                     profile,
+                    capability_snapshot_id,
+                    generated_at,
+                    expires_at,
                 },
                 Err(detail) => Reply::Failed { detail },
             };
@@ -92,6 +98,13 @@ impl Standard {
             }
         });
     }
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 impl Duties for Standard {

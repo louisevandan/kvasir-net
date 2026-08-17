@@ -60,6 +60,13 @@ pub enum ToNode {
         artifact: String,
         /// Concurrency this deployment admits. A ceiling, never derived.
         ceiling: u32,
+        /// The discovery snapshot used by OUTER to compose this load. Empty
+        /// is reserved for legacy/mock tests; production plans must bind it.
+        capability_snapshot_id: String,
+        /// Unix milliseconds at which the discovery snapshot stops being valid.
+        /// Zero is the legacy/mock sentinel and is rejected only when an id is
+        /// present.
+        capability_expires_at: u64,
     },
     Unload,
     /// One sequence's work. Batching is the node's decision, so this describes
@@ -131,6 +138,9 @@ pub enum Reply {
         artifact: String,
         adapter: String,
         profile: String,
+        capability_snapshot_id: String,
+        generated_at: u64,
+        expires_at: u64,
     },
     /// What the agent is doing, as of the moment it was asked.
     Status {

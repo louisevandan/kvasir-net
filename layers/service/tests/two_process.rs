@@ -66,6 +66,8 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
                         plan: r#"{"layers":"0-19"}"#.into(),
                         artifact: "model.gguf".into(),
                         ceiling: 8,
+                        capability_snapshot_id: String::new(),
+                        capability_expires_at: 0,
                     },
                 ))
                 .unwrap();

@@ -19,6 +19,10 @@ pub struct Load {
     pub plan: String,
     /// What the adapter should materialise, named the way the plan names it.
     pub artifact: String,
+    /// Discovery snapshot selected by OUTER. The adapter may use this to
+    /// reject a plan whose capability evidence is not the one it inspected.
+    pub capability_snapshot_id: String,
+    pub capability_expires_at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

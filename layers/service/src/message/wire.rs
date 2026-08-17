@@ -107,11 +107,15 @@ pub fn encode_to_node(message: &ToNode) -> Vec<u8> {
             plan,
             artifact,
             ceiling,
+            capability_snapshot_id,
+            capability_expires_at,
         } => {
             out.push(LOAD);
             text(&mut out, plan);
             text(&mut out, artifact);
             number(&mut out, *ceiling);
+            text(&mut out, capability_snapshot_id);
+            wide(&mut out, *capability_expires_at);
         }
         ToNode::Unload => out.push(UNLOAD),
         ToNode::Execute {
@@ -152,6 +156,8 @@ pub fn decode_to_node(bytes: &[u8]) -> Decoded<ToNode> {
             plan: cursor.text()?,
             artifact: cursor.text()?,
             ceiling: cursor.number()?,
+            capability_snapshot_id: cursor.text()?,
+            capability_expires_at: cursor.wide()?,
         },
         UNLOAD => ToNode::Unload,
         EXECUTE => ToNode::Execute {
@@ -221,11 +227,17 @@ pub fn encode_reply(reply: &Reply) -> Vec<u8> {
             artifact,
             adapter,
             profile,
+            capability_snapshot_id,
+            generated_at,
+            expires_at,
         } => {
             out.push(MODEL);
             text(&mut out, artifact);
             text(&mut out, adapter);
             text(&mut out, profile);
+            text(&mut out, capability_snapshot_id);
+            wide(&mut out, *generated_at);
+            wide(&mut out, *expires_at);
         }
         Reply::Cached {
             sequence,
@@ -276,6 +288,9 @@ pub fn decode_reply(bytes: &[u8]) -> Decoded<Reply> {
             artifact: cursor.text()?,
             adapter: cursor.text()?,
             profile: cursor.text()?,
+            capability_snapshot_id: cursor.text()?,
+            generated_at: cursor.wide()?,
+            expires_at: cursor.wide()?,
         },
         CACHED => Reply::Cached {
             sequence: cursor.text()?,

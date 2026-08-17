@@ -40,10 +40,18 @@ impl Payload for Bodies {
     fn lifecycle(&self, frame: &Frame) -> Option<Work> {
         let deployment = self.deployment(frame)?;
         match decode_to_node(&frame.body).ok()? {
-            ToNode::Load { plan, artifact, .. } => Some(Work::Load(Load {
+            ToNode::Load {
+                plan,
+                artifact,
+                capability_snapshot_id,
+                capability_expires_at,
+                ..
+            } => Some(Work::Load(Load {
                 deployment,
                 plan,
                 artifact,
+                capability_snapshot_id,
+                capability_expires_at,
             })),
             ToNode::Unload => Some(Work::Unload(Unload { deployment })),
             // Cache instructions are lifecycle-shaped: one instruction about
@@ -66,6 +74,32 @@ impl Payload for Bodies {
             return None;
         };
         usize::try_from(ceiling).ok()
+    }
+
+    fn lifecycle_error(&self, frame: &Frame) -> Option<String> {
+        let ToNode::Load {
+            capability_snapshot_id,
+            capability_expires_at,
+            ..
+        } = decode_to_node(&frame.body).ok()?
+        else {
+            return None;
+        };
+        if capability_snapshot_id.is_empty() {
+            return None;
+        }
+        if capability_expires_at == 0 {
+            return Some("capability snapshot has no expiry".into());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as u64;
+        (capability_expires_at <= now).then(|| {
+            format!(
+                "capability snapshot {capability_snapshot_id} expired at {capability_expires_at}"
+            )
+        })
     }
 
     // The outbound half. Replies are the same vocabulary a caller sent in, so

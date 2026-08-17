@@ -46,6 +46,8 @@ fn a_load_body_is_lifecycle_rather_than_a_sequence() {
         plan: r#"{"layers":"0-19"}"#.into(),
         artifact: "model.gguf".into(),
         ceiling: 10,
+        capability_snapshot_id: String::new(),
+        capability_expires_at: 0,
     });
     let frame = frame(body);
 
@@ -65,6 +67,8 @@ fn the_ceiling_comes_from_the_load_that_declared_it() {
         plan: "{}".into(),
         artifact: "m".into(),
         ceiling: 24,
+        capability_snapshot_id: String::new(),
+        capability_expires_at: 0,
     });
     assert_eq!(Bodies.ceiling(&frame(body)), Some(24));
 }
@@ -101,4 +105,35 @@ fn the_deployment_comes_from_the_chain_rather_than_the_body() {
     // So a body cannot disagree with the route it travelled.
     let frame = frame(encode_to_node(&ToNode::Unload));
     assert_eq!(Bodies.deployment(&frame).as_deref(), Some("deployment-a"));
+}
+
+#[test]
+fn an_expired_discovery_snapshot_refuses_load_before_the_adapter() {
+    let body = encode_to_node(&ToNode::Load {
+        plan: "{}".into(),
+        artifact: "model.gguf".into(),
+        ceiling: 1,
+        capability_snapshot_id: "cap-old".into(),
+        capability_expires_at: 1,
+    });
+    let error = Bodies
+        .lifecycle_error(&frame(body))
+        .expect("expired snapshot");
+    assert!(error.contains("cap-old"));
+}
+
+#[test]
+fn a_live_discovery_snapshot_can_reach_the_adapter() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let body = encode_to_node(&ToNode::Load {
+        plan: "{}".into(),
+        artifact: "model.gguf".into(),
+        ceiling: 1,
+        capability_snapshot_id: "cap-live".into(),
+        capability_expires_at: now + 60_000,
+    });
+    assert!(Bodies.lifecycle_error(&frame(body)).is_none());
 }

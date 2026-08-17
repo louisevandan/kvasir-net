@@ -33,6 +33,8 @@ fn every_node_message_survives_a_round_trip() {
             plan: r#"{"layers":"0-19"}"#.into(),
             artifact: "model.gguf".into(),
             ceiling: 10,
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
         },
         ToNode::Unload,
         ToNode::Execute {
@@ -77,6 +79,9 @@ fn every_reply_survives_a_round_trip() {
             artifact: "model.gguf".into(),
             adapter: "mock".into(),
             profile: r#"{"architecture":"mock","layers":2}"#.into(),
+            capability_snapshot_id: "cap-test".into(),
+            generated_at: 100,
+            expires_at: 200,
         },
         Reply::Status {
             snapshot: "address=tcp://h:1\nnode=n0 depth=2 running=true routes=[a,b]".into(),
@@ -106,6 +111,8 @@ fn a_truncated_body_is_refused_at_every_length() {
         plan: "plan".into(),
         artifact: "artifact".into(),
         ceiling: 4,
+        capability_snapshot_id: String::new(),
+        capability_expires_at: 0,
     });
     for cut in 1..bytes.len() {
         assert!(

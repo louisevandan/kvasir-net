@@ -158,6 +158,8 @@ fn load(adapter: &Served, seen: &Seen, port: u16) {
             deployment: "d1".into(),
             plan: format!(r#"{{"endpoint":"127.0.0.1:{port}","model":"qwen","patience_ms":4000}}"#),
             artifact: "model.gguf".into(),
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
         }),
         seen,
     );
@@ -347,6 +349,8 @@ fn a_backend_that_is_not_there_fails_the_load() {
             // Nothing listens here.
             plan: r#"{"endpoint":"127.0.0.1:1","model":"qwen"}"#.into(),
             artifact: "model.gguf".into(),
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
         }),
         &seen,
     );

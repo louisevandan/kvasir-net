@@ -95,6 +95,8 @@ fn a_conversation_spread_over_a_chain_persists_and_restores_on_every_stage() {
                         plan: r#"{"layers":"0-19"}"#.into(),
                         artifact: "model.gguf".into(),
                         ceiling: 4,
+                        capability_snapshot_id: String::new(),
+                        capability_expires_at: 0,
                     },
                 ))
                 .unwrap();

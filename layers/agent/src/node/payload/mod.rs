@@ -37,6 +37,12 @@ pub trait Payload: Send + Sync {
         None
     }
 
+    /// Refuses lifecycle work before it reaches an adapter when its
+    /// discovery evidence is no longer valid.
+    fn lifecycle_error(&self, _frame: &Frame) -> Option<String> {
+        None
+    }
+
     /// The deployment this frame's work belongs to. Taken from the chain's
     /// current link, which already names it, so a body cannot disagree with
     /// the route it travelled.

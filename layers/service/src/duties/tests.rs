@@ -244,6 +244,7 @@ fn inspecting_a_model_asks_the_selected_adapter_and_returns_opaque_profile() {
             artifact,
             adapter,
             profile,
+            ..
         }) = caller_duties.replies().pop()
         else {
             panic!("expected a model profile");

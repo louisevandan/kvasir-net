@@ -132,6 +132,10 @@ impl Node {
                             self.reply_error(&frame, &refused).await;
                             continue;
                         }
+                        if let Some(refused) = self.payload.lifecycle_error(&frame) {
+                            self.reply_error(&frame, &refused).await;
+                            continue;
+                        }
                         if !self.queue.push(frame.clone()) {
                             self.reply_error(&frame, "node queue is full").await;
                             continue;

@@ -94,6 +94,8 @@ impl Session {
                     plan: self.plans[deployment][stage].clone(),
                     artifact: "model".into(),
                     ceiling,
+                    capability_snapshot_id: self.capability_snapshot_id.clone(),
+                    capability_expires_at: self.capability_expires_at,
                 }),
             )?;
         }

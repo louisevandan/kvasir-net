@@ -160,6 +160,8 @@ fn load(adapter: &Served, seen: &Seen, plan: String) {
             deployment: "d".into(),
             plan,
             artifact: "model".into(),
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
         }),
         seen,
     );

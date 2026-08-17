@@ -36,6 +36,8 @@ pub async fn place(agent: &Agent, outer: &Agent, seen: &Outer, node: &str) {
                 plan: r#"{"layers":"0-19"}"#.into(),
                 artifact: "model.gguf".into(),
                 ceiling: 4,
+                capability_snapshot_id: String::new(),
+                capability_expires_at: 0,
             },
         ))
         .unwrap();

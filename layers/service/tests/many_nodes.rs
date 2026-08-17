@@ -81,6 +81,8 @@ fn two_nodes_on_each_agent_are_created_loaded_and_driven() {
                         plan: format!(r#"{{"layers":"{}-{}"}}"#, index * 10, index * 10 + 9),
                         artifact: "model.gguf".into(),
                         ceiling: 8,
+                        capability_snapshot_id: String::new(),
+                        capability_expires_at: 0,
                     },
                 ))
                 .unwrap();
@@ -194,6 +196,8 @@ fn nodes_shared_by_two_chains_keep_the_routes_apart() {
                         plan: r#"{"layers":"0-9"}"#.into(),
                         artifact: "model.gguf".into(),
                         ceiling: 8,
+                        capability_snapshot_id: String::new(),
+                        capability_expires_at: 0,
                     },
                 ))
                 .unwrap();
