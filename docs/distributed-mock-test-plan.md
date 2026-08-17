@@ -195,9 +195,11 @@ status를 각각 수집한다.
   필요하다.
 - capability snapshot ID, model fingerprint, expiry를 Load plan에 묶는
   필드는 아직 추가해야 한다.
-- Agent lane과 node ingress는 `Budget.depth` 기반으로 bounded되고, 초과
-  node work는 기다리지 않고 명시적 `Failed`로 반환된다. 아직 disk spill,
-  FIFO paging, retry quota 정책은 구현하지 않았다.
+- Agent lane, node ingress, adapter event channel, node outbox는 모두
+  `Budget.depth` 기반의 bounded RAM 경로다. 초과 node work는 기다리지
+  않고 명시적 `Failed`로 반환되며, 느린 downstream은 bounded outbox를
+  통해 event loop까지 역압을 전파한다. 아직 disk spill, FIFO paging,
+  retry quota 정책은 구현하지 않았다.
 - 실제 staged GPU adapter가 없으므로 이 계획의 mock overlap 결과는 GPU
   utilization 증거가 아니다.
 
@@ -218,13 +220,13 @@ mock smoke를 수행했다.
 | 항목 | 결과 |
 | --- | --- |
 | binary | 중앙 release build 후 `p4-agent.exe`, `p4-drive.exe`만 원격 복사 |
-| hash | 중앙/원격 `p4-agent.exe` `7A7F0EA9...1403F3`, `p4-drive.exe` `AC1DF614...18A28` 일치 |
+| hash | 중앙/원격 `p4-agent.exe` `472B79C1...ECAE1FB`, `p4-drive.exe` `EBE024E9...01F63AD` 일치 |
 | topology | local stage + SSH-forwarded remote stage, 2 stages |
 | load | nodes 2, mock, ceiling 8 |
 | inference | 32 requests × 8 tokens |
 | result | completed 32, failed 0, unanswered 0, tokens 224 |
-| timing | 614 ms, 417 frames/s |
-| queue | peak node 24, peak adapter 8, peak main lane 1 |
+| timing | 659 ms, 388 frames/s |
+| queue | peak node 25, peak adapter 8, peak main lane 1 |
 | ordering | every stream in order, one terminal per route |
 
 직접 `192.168.0.29:52001` 경로는 원격 agent가 정상 기동했지만 중앙에서
@@ -248,10 +250,14 @@ bounded release를 원격에 재복사한 뒤 2026-08-18 cross-host tunnel smoke
 끝났고 peak node queue 25, peak in-adapter 8, peak main lane 1이었다. 실행
 후 중앙·원격 P4 listener는 모두 정리됐다.
 
-새 bounded ingress release로 4개 worker에 각각 1024 requests × 32 tokens를
-다시 실행했을 때도 모두 완료했고, peak node queue는 731~734, peak
-in-adapter는 16이었다. 6000 requests × 1 token overflow run도
+최신 bounded event/outbox release로 4개 worker에 각각 1024 requests × 32
+tokens를 다시 실행했을 때도 모두 완료했고, worker별 peak node queue는
+729~742, peak in-adapter는 16이었다. 6000 requests × 1 token overflow run도
 `completed=6000`, `failed=0`, `unanswered=0`으로 끝났고 peak node queue는
 4, peak main lane은 2였다. 즉 생산자는 lane admission에서 조절되고 node
-queue는 무제한으로 증가하지 않았다. 이 결과는 RAM 상한 자체를 증명하는
+queue/event/outbox는 무제한으로 증가하지 않았다. 최신 release를 원격에 복사해
+동일한 SSH 양방향 forwarding 경로로 32 requests × 8 tokens를 재실행했고
+`completed=32`, `failed=0`, `unanswered=0`, stream order 통과, 625 ms,
+409 frames/s, peak node 24, peak adapter 8, peak main lane 1을 확인했다.
+이 결과는 RAM 상한 자체를 증명하는
 것은 아니므로 process working-set 샘플을 포함한 별도 장기 검증이 필요하다.

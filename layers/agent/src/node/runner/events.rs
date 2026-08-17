@@ -15,19 +15,18 @@ use tokio::sync::mpsc;
 
 /// Sends adapter events to the node that owns them.
 ///
-/// Unbounded on purpose. An adapter only raises events for work it was handed,
-/// so depth is already bounded by the window; dropping one would lose a hop
-/// completion and leave the node idle forever with work still queued.
+/// Bounded by the node ingress budget. The adapter runs on a blocking thread,
+/// so `blocking_send` applies backpressure without dropping a completion.
 #[derive(Clone)]
 pub(super) struct Sink {
-    events: mpsc::UnboundedSender<Event>,
+    events: mpsc::Sender<Event>,
     raised: Arc<AtomicUsize>,
     lost: Arc<AtomicUsize>,
 }
 
 impl Sink {
     pub(super) fn new(
-        events: mpsc::UnboundedSender<Event>,
+        events: mpsc::Sender<Event>,
         raised: Arc<AtomicUsize>,
         lost: Arc<AtomicUsize>,
     ) -> Self {
@@ -42,14 +41,14 @@ impl Sink {
 impl EventSink for Sink {
     fn raise(&self, event: Event) {
         self.raised.fetch_add(1, Ordering::Relaxed);
-        if self.events.send(event).is_err() {
+        if self.events.blocking_send(event).is_err() {
             self.lost.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
 
 impl Node {
-    pub(super) fn on_event(&self, event: Event) {
+    pub(super) async fn on_event(&self, event: Event) {
         match event {
             Event::HopComplete { outcomes, .. } => {
                 self.counts.completions.fetch_add(1, Ordering::Relaxed);
@@ -68,20 +67,21 @@ impl Node {
                     };
                     self.counts.routed.fetch_add(1, Ordering::Relaxed);
                     for frame in next(carrier, &outcome, self.payload.as_ref()).frames() {
-                        self.emit(frame);
+                        self.emit(frame).await;
                     }
                 }
-                self.drain();
+                self.drain().await;
             }
             Event::Failed {
                 sequence, detail, ..
             } => {
-                let mut in_flight = self.in_flight.lock().expect("in-flight lock");
-                let mut failed: Vec<Frame> = match sequence {
-                    Some(id) => in_flight.remove(&id).into_iter().collect(),
-                    None => std::mem::take(&mut *in_flight).into_values().collect(),
+                let mut failed: Vec<Frame> = {
+                    let mut in_flight = self.in_flight.lock().expect("in-flight lock");
+                    match sequence {
+                        Some(id) => in_flight.remove(&id).into_iter().collect(),
+                        None => std::mem::take(&mut *in_flight).into_values().collect(),
+                    }
                 };
-                drop(in_flight);
                 // A load can fail too, and its caller is waiting on the same
                 // route. Leaving it here would hold the node running forever
                 // over an instruction that already ended.
@@ -97,9 +97,9 @@ impl Node {
                 failed.extend(lifecycle);
                 self.queue.finished();
                 for frame in failed {
-                    self.reply_error(&frame, &detail);
+                    self.reply_error(&frame, &detail).await;
                 }
-                self.drain();
+                self.drain().await;
             }
             // Load and unload reporting belongs to whoever asked, and reaches
             // them through the same reply path as anything else.
@@ -112,30 +112,34 @@ impl Node {
                 bytes,
                 detail,
                 ..
-            } => self.finish_lifecycle(self.payload.cached(&sequence, bytes, &detail)),
+            } => {
+                self.finish_lifecycle(self.payload.cached(&sequence, bytes, &detail))
+                    .await
+            }
             Event::Loaded { generation, .. } => {
                 *self.bound.lock().expect("generation lock") = Bound::At(generation);
-                self.finish_lifecycle(self.payload.bound(generation))
+                self.finish_lifecycle(self.payload.bound(generation)).await
             }
-            Event::Unloaded { .. } => self.finish_lifecycle(self.payload.released()),
+            Event::Unloaded { .. } => self.finish_lifecycle(self.payload.released()).await,
             // Progress is reported as it happens rather than held until the
             // end, because a distributed load's slowest stage is the fact
             // worth seeing early.
             Event::LoadProgress { stage, percent, .. } => {
                 let carrier = self.lifecycle.lock().expect("lifecycle lock").clone();
                 if let Some(carrier) = carrier {
-                    self.reply(&carrier, self.payload.progress(stage, percent));
+                    self.reply(&carrier, self.payload.progress(stage, percent))
+                        .await;
                 }
             }
         }
     }
 
-    fn finish_lifecycle(&self, body: Vec<u8>) {
+    async fn finish_lifecycle(&self, body: Vec<u8>) {
         let carrier = self.lifecycle.lock().expect("lifecycle lock").take();
         self.queue.finished();
         if let Some(carrier) = carrier {
-            self.reply(&carrier, body);
+            self.reply(&carrier, body).await;
         }
-        self.drain();
+        self.drain().await;
     }
 }

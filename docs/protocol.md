@@ -12,7 +12,7 @@ decision.
 | Reply return path | Direct reply_to works; chain is one-hop fallback | Make origin agent and return channel explicit |
 | Per-route ordering | Implemented by route-hashed workers | Separate transport request identity from backend sequence identity |
 | Pipeline overlap | Local node windows and independent node hops exist | Define global admission/credit and feed guarantees |
-| Queueing | Agent lanes, peer queues, and node ingress are bounded; adapter event/outbox channels remain unbounded | Bound remaining channels and expose spill/rejection policy |
+| Queueing | Agent lanes, peer queues, node ingress, adapter events, and node outbox are bounded in RAM | Add optional durable FIFO spill and expose spill/rejection policy |
 | Monitoring | Human-readable status and backend report are relayed | Define typed, correlated snapshots and event sequencing |
 | Generation options | Opaque request/options text is carried to the adapter | Keep semantics outside P4; define only preservation and size/error policy |
 | KV persistence | Persist/restore/fork/discard verbs exist in the mock | Define multi-stage atomicity, ownership, and request-to-KV mapping |
@@ -127,11 +127,13 @@ Required invariants:
 
 ## 4. Queueing and backpressure
 
-Agent lanes, per-peer queues, node work ingress, and NodeQueue are bounded.
-Node ingress uses the agent `Budget.depth` and returns an explicit refusal when
-its capacity is exhausted. The adapter event channel and node outbox remain
-unbounded in [Node::spawn](../layers/agent/src/node/runner/mod.rs), so the
-protocol is not yet allowed to claim that every intermediate buffer is bounded.
+Agent lanes, per-peer queues, node work ingress, NodeQueue, adapter events, and
+the node outbox are bounded in RAM. Node ingress uses the agent `Budget.depth`
+and returns an explicit refusal when its capacity is exhausted. Adapter events
+use `blocking_send` from the adapter's blocking worker, and node replies and
+forwarded frames await the bounded outbox; a slow downstream lane therefore
+propagates backpressure to the event loop without silently dropping a
+completion or hiding an unbounded intermediate queue.
 
 The policy must choose:
 
@@ -142,8 +144,9 @@ The policy must choose:
 | Spill | Persist an append-only FIFO segment under a byte/quota limit |
 | Drop by deadline | Remove expired work before adapter admission |
 
-The safe default is bounded RAM + bounded optional spill + explicit refusal.
-Spill must expose RAM depth, spill depth, oldest enqueue time, quota, and state.
+The safe default is bounded RAM + explicit refusal. A future bounded optional
+spill must preserve FIFO and expose its own quota; it is not currently part of
+the implementation.
 
 ## 5. Monitoring contract
 

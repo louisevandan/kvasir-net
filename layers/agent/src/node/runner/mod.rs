@@ -42,10 +42,9 @@ pub struct Node {
     bound: Mutex<Bound>,
     events: Sink,
     counts: Arc<Counts>,
-    /// Frames on their way to the agent queue. Unbounded, and bounded in
-    /// practice by the work in flight, because everything here was produced by
-    /// a hop this node already admitted.
-    outbox: mpsc::UnboundedSender<Frame>,
+    /// Frames on their way to the agent queue. Bounded so a slow downstream
+    /// lane applies backpressure all the way to this node's event loop.
+    outbox: mpsc::Sender<Frame>,
 }
 
 impl Node {
@@ -75,8 +74,9 @@ impl Node {
         max_queue_depth: usize,
     ) -> Handle {
         let (work_tx, work_rx) = mpsc::channel(max_queue_depth.max(1));
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel::<Frame>();
+        let capacity = max_queue_depth.max(1);
+        let (event_tx, event_rx) = mpsc::channel(capacity);
+        let (outbox_tx, mut outbox_rx) = mpsc::channel::<Frame>(capacity);
         let queue = Arc::new(NodeQueue::with_capacity(max_queue_depth));
         let reporting = Arc::clone(&adapter);
         let counts = Arc::new(Counts::default());
@@ -111,11 +111,7 @@ impl Node {
         Handle::new(work_tx, queue, counts, reporting)
     }
 
-    async fn run(
-        self,
-        mut work: mpsc::Receiver<Frame>,
-        mut events: mpsc::UnboundedReceiver<Event>,
-    ) {
+    async fn run(self, mut work: mpsc::Receiver<Frame>, mut events: mpsc::Receiver<Event>) {
         loop {
             // Deliberately not biased. Preferring events looked right — a hop
             // ending is what frees the node — but a node under load produces
@@ -128,20 +124,20 @@ impl Node {
             // on the next turn of the loop, and the hop it reports has already
             // finished by the time it was sent.
             tokio::select! {
-                Some(event) = events.recv() => self.on_event(event),
+                Some(event) = events.recv() => self.on_event(event).await,
                 frame = work.recv() => match frame {
                     Some(frame) => {
                         self.counts.received.fetch_add(1, Ordering::Relaxed);
                         if let Some(refused) = self.refusal(&frame) {
-                            self.reply_error(&frame, &refused);
+                            self.reply_error(&frame, &refused).await;
                             continue;
                         }
                         if !self.queue.push(frame.clone()) {
-                            self.reply_error(&frame, "node queue is full");
+                            self.reply_error(&frame, "node queue is full").await;
                             continue;
                         }
                         self.counts.queued.fetch_add(1, Ordering::Relaxed);
-                        self.drain();
+                        self.drain().await;
                     }
                     // The handle is gone: this node was deleted or replaced,
                     // and nothing can reach it again. Returning is what frees
@@ -174,57 +170,58 @@ impl Node {
 
     /// Starts a hop if one can start. Called after every event, which is what
     /// makes progress event-driven rather than timed.
-    fn drain(&self) {
-        if self.queue.is_running() {
-            return;
-        }
-        let now = now_unix_ms();
-        for stale in expired_items(&self.queue.waiting(), now) {
-            if let Some(frame) = self.queue.remove(&stale.route) {
-                self.reply_error(&frame, "deadline passed before this work started");
+    async fn drain(&self) {
+        loop {
+            if self.queue.is_running() {
+                return;
             }
-        }
-        if self.start_lifecycle() {
-            return;
-        }
-        let ceiling = *self.ceiling.lock().expect("ceiling lock");
-        let Some(window) = compose(&self.queue.waiting(), ceiling, now) else {
-            return;
-        };
-        let routes: Vec<String> = window.items.iter().map(|item| item.route.clone()).collect();
-        let claimed = self.queue.claim(&routes);
-        if claimed.is_empty() {
-            return;
-        }
-        self.counts
-            .claimed
-            .fetch_add(claimed.len(), Ordering::Relaxed);
-        match self.hop(&claimed, window.lane) {
-            Some(hop) => {
-                let mut in_flight = self.in_flight.lock().expect("in-flight lock");
-                for (frame, sequence) in claimed.iter().zip(hop.sequences.iter()) {
-                    in_flight.insert(sequence.sequence.clone(), frame.clone());
+            let now = now_unix_ms();
+            for stale in expired_items(&self.queue.waiting(), now) {
+                if let Some(frame) = self.queue.remove(&stale.route) {
+                    self.reply_error(&frame, "deadline passed before this work started")
+                        .await;
                 }
-                drop(in_flight);
-                // An adapter is a procedure and is allowed to block — a real
-                // one waits on a device. Running it on a blocking thread is
-                // what keeps that from stalling the workers that still have to
-                // relay and answer while this node is busy.
-                let adapter = Arc::clone(&self.adapter);
-                let events = self.events.clone();
-                self.counts.hops.fetch_add(1, Ordering::Relaxed);
-                tokio::task::spawn_blocking(move || {
-                    adapter.start(Work::Hop(hop), &events);
-                });
             }
-            None => {
-                // Nothing executable came out of the window. The node is not
-                // running after all, so it must be released or it stalls.
-                self.queue.finished();
-                for frame in claimed {
-                    self.reply_error(&frame, "work could not be read as a sequence");
+            if self.start_lifecycle() {
+                return;
+            }
+            let ceiling = *self.ceiling.lock().expect("ceiling lock");
+            let Some(window) = compose(&self.queue.waiting(), ceiling, now) else {
+                return;
+            };
+            let routes: Vec<String> = window.items.iter().map(|item| item.route.clone()).collect();
+            let claimed = self.queue.claim(&routes);
+            if claimed.is_empty() {
+                return;
+            }
+            self.counts
+                .claimed
+                .fetch_add(claimed.len(), Ordering::Relaxed);
+            match self.hop(&claimed, window.lane) {
+                Some(hop) => {
+                    let mut in_flight = self.in_flight.lock().expect("in-flight lock");
+                    for (frame, sequence) in claimed.iter().zip(hop.sequences.iter()) {
+                        in_flight.insert(sequence.sequence.clone(), frame.clone());
+                    }
+                    drop(in_flight);
+                    // An adapter is a procedure and is allowed to block — a real
+                    // one waits on a device. Running it on a blocking thread is
+                    // what keeps that from stalling the workers that still have to
+                    // relay and answer while this node is busy.
+                    let adapter = Arc::clone(&self.adapter);
+                    let events = self.events.clone();
+                    self.counts.hops.fetch_add(1, Ordering::Relaxed);
+                    tokio::task::spawn_blocking(move || {
+                        adapter.start(Work::Hop(hop), &events);
+                    });
                 }
-                self.drain();
+                None => {
+                    self.queue.finished();
+                    for frame in claimed {
+                        self.reply_error(&frame, "work could not be read as a sequence")
+                            .await;
+                    }
+                }
             }
         }
     }
@@ -280,14 +277,14 @@ impl Node {
         })
     }
 
-    fn reply(&self, carrier: &Frame, body: Vec<u8>) {
+    async fn reply(&self, carrier: &Frame, body: Vec<u8>) {
         let Some(envelope) = carrier.envelope.to_reply() else {
             return;
         };
         // Through the outbox, like every other frame a node produces. A reply
         // that took the direct path would be the one thing this node can still
         // lose to a full lane.
-        self.emit(Frame { envelope, body });
+        self.emit(Frame { envelope, body }).await;
     }
 
     /// Hands a frame to this node's outbox.
@@ -297,13 +294,13 @@ impl Node {
     /// not here: this is the same task that receives hop completions, and a
     /// node blocked mid-emit could not observe the hop it is waiting on. The
     /// outbox is the seam that keeps a full lane from becoming a stall.
-    fn emit(&self, frame: Frame) {
+    async fn emit(&self, frame: Frame) {
         self.counts.emitted.fetch_add(1, Ordering::Relaxed);
-        let _ = self.outbox.send(frame);
+        let _ = self.outbox.send(frame).await;
     }
 
-    fn reply_error(&self, carrier: &Frame, detail: &str) {
-        self.reply(carrier, self.payload.failure(detail));
+    async fn reply_error(&self, carrier: &Frame, detail: &str) {
+        self.reply(carrier, self.payload.failure(detail)).await;
     }
 }
 
