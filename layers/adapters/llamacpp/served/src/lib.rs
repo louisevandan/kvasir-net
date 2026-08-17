@@ -268,6 +268,10 @@ impl Served {
 }
 
 impl Adapter for Served {
+    fn inspect_model(&self, artifact: &str) -> Result<String, String> {
+        p4_adapter::model::inspect_artifact(artifact)
+    }
+
     fn distribution(&self) -> Distribution {
         Distribution::Internal
     }
