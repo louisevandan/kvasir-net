@@ -34,6 +34,7 @@
 pub mod chat;
 pub mod endpoint;
 pub mod flavour;
+pub mod launch;
 pub mod plan;
 pub mod report;
 pub mod session;

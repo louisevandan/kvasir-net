@@ -67,6 +67,70 @@ pub struct Plan {
     /// The shares held elsewhere. Recorded and reported, not probed — see the
     /// module note on why a busy RPC worker cannot be told from an absent one.
     pub workers: Vec<Endpoint>,
+    /// What to start, and what to give it.
+    ///
+    /// Absent means a server is already there and this node attaches to it,
+    /// which is how every plan written before this one still works.
+    pub start: Option<Start>,
+}
+
+/// What a node needs in order to bring its own backend up.
+///
+/// Placement intent, not a command line. The plan says which device, how much
+/// of it, how many sequences and how long a context; the adapter knows what
+/// those become for the server it is starting, because that is the one thing a
+/// concrete adapter is for. A plan carrying `-ts` would be a plan that had
+/// learned llama.cpp, and then vLLM could not read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Start {
+    /// The server to run.
+    pub binary: String,
+    /// The weights it should hold.
+    pub weights: String,
+    /// Total context across every sequence, and how many sequences at once.
+    pub context: u32,
+    pub slots: u32,
+    /// How wide a batch the backend may build, and its micro-batch. Declared
+    /// because a batch too small to hold one prompt makes a server admit
+    /// prefills one at a time however fast work arrives.
+    pub batch: u32,
+    pub ubatch: u32,
+}
+
+impl Start {
+    /// Reads the `start` object, if the plan has one.
+    ///
+    /// Every field is required once the object is present. A default context or
+    /// a guessed slot count would be this adapter deciding a placement, which
+    /// is the caller's to decide and the whole reason the plan exists.
+    fn parse(value: Option<&Value>) -> Result<Option<Self>, String> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        let text = |key: &str| -> Result<String, String> {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("start has no {key}"))
+        };
+        let count = |key: &str| -> Result<u32, String> {
+            value
+                .get(key)
+                .and_then(Value::as_u64)
+                .and_then(|found| u32::try_from(found).ok())
+                .filter(|found| *found > 0)
+                .ok_or_else(|| format!("start has no usable {key}"))
+        };
+        Ok(Some(Self {
+            binary: text("binary")?,
+            weights: text("weights")?,
+            context: count("context")?,
+            slots: count("slots")?,
+            batch: count("batch")?,
+            ubatch: count("ubatch")?,
+        }))
+    }
 }
 
 impl Plan {
@@ -131,6 +195,7 @@ impl Plan {
                 .map(str::to_owned),
             vram_gb: value.get("vram_gb").and_then(Value::as_u64),
             workers,
+            start: Start::parse(value.get("start"))?,
         })
     }
 
