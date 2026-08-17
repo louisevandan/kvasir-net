@@ -9,6 +9,7 @@
 //! spread over stages, hop cost belonging to a chain position, prefill dearer
 //! than a lap, and a window it reports rather than invents.
 
+pub mod cache;
 pub mod profile;
 
 use p4_adapter::{Adapter, Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
@@ -41,6 +42,11 @@ pub struct Mock {
     /// Every window width this adapter was given, so a test can prove the node
     /// batched rather than serialised.
     widths: Mutex<Vec<usize>>,
+    /// Nanoseconds spent inside a hop, so a chain can be asked the question the
+    /// old runtime measured: stage compute over wall clock. Below one, the
+    /// stages took turns; above it, they worked at the same time. It is the
+    /// only number that tells pipelining from a queue.
+    busy: AtomicU64,
     /// Hops in flight. Must never exceed one for a deployment: a node starts
     /// the next only when it sees the previous end.
     running: AtomicUsize,
@@ -89,11 +95,22 @@ impl Mock {
             terminal,
             generation: AtomicU64::new(0),
             widths: Mutex::new(Vec::new()),
+            busy: AtomicU64::new(0),
             running: AtomicUsize::new(0),
             peak_running: AtomicUsize::new(0),
             produced: Mutex::new(HashMap::new()),
             persisted: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// How long this adapter spent inside hops.
+    ///
+    /// The numerator of the question a chain has to answer: stage compute over
+    /// wall clock. One stage can never exceed the wall; a chain of three that
+    /// overlaps properly approaches three times it, and a chain that takes
+    /// turns stays at one however much work is queued behind it.
+    pub fn busy(&self) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.busy.load(Ordering::Relaxed))
     }
 
     /// Widths of every hop this adapter ran.
@@ -140,6 +157,7 @@ impl Mock {
     }
 
     fn hop(&self, hop: Hop, events: &dyn EventSink) {
+        let began = std::time::Instant::now();
         self.widths
             .lock()
             .expect("width log lock")
@@ -157,6 +175,11 @@ impl Mock {
                 .hop_cost(self.position, hop.phase == Phase::Prefill),
         );
         self.running.fetch_sub(1, Ordering::SeqCst);
+        // Recorded where the time was actually spent, not around the whole
+        // call: what a chain is asked afterwards is how much of the wall clock
+        // its stages were computing, and bookkeeping is not computing.
+        self.busy
+            .fetch_add(began.elapsed().as_nanos() as u64, Ordering::Relaxed);
 
         if self.profile.fault == Fault::Hop {
             events.raise(Event::Failed {
@@ -252,92 +275,6 @@ impl Adapter for Mock {
 }
 
 impl Mock {
-    /// The four cache verbs, against state this adapter is holding.
-    ///
-    /// Each is refused rather than guessed at when it makes no sense: restoring
-    /// something never persisted, or forking from nothing, is a caller error
-    /// and inventing an empty cache for it would let a branch continue from a
-    /// conversation that does not exist.
-    fn cache(&self, cache: p4_adapter::Cache, events: &dyn EventSink) {
-        spin(self.profile.trailing_hop);
-        let refuse = |detail: String| {
-            events.raise(Event::Failed {
-                deployment: cache.deployment.clone(),
-                sequence: Some(cache.sequence.clone()),
-                detail,
-            })
-        };
-        let (bytes, detail) = match &cache.action {
-            p4_adapter::CacheAction::Persist => {
-                // Progress is what there is to persist. A sequence that has
-                // run further has more state, which is the whole reason an
-                // operator wants it off the device.
-                let Some(progress) = self
-                    .produced
-                    .lock()
-                    .expect("produced")
-                    .remove(&cache.sequence)
-                else {
-                    return refuse(format!("nothing resident for {}", cache.sequence));
-                };
-                let bytes =
-                    u64::from(progress.lifetime + 1) * self.profile.reserved_per_stage.max(1_024);
-                self.persisted
-                    .lock()
-                    .expect("persisted")
-                    .insert(cache.sequence.clone(), bytes);
-                (bytes, format!("persisted and freed {}", cache.sequence))
-            }
-            p4_adapter::CacheAction::Restore => {
-                let Some(bytes) = self
-                    .persisted
-                    .lock()
-                    .expect("persisted")
-                    .remove(&cache.sequence)
-                else {
-                    return refuse(format!("nothing persisted for {}", cache.sequence));
-                };
-                // The size is what the copy was, so the progress it stood for
-                // comes back with it — a restore that forgot how far the
-                // conversation had got would be a restore in name only.
-                let lifetime =
-                    (bytes / self.profile.reserved_per_stage.max(1_024)).saturating_sub(1) as u32;
-                self.produced
-                    .lock()
-                    .expect("produced")
-                    .insert(cache.sequence.clone(), Progress { turn: 0, lifetime });
-                (bytes, format!("restored {}", cache.sequence))
-            }
-            p4_adapter::CacheAction::Fork { into } => {
-                let mut persisted = self.persisted.lock().expect("persisted");
-                let Some(bytes) = persisted.get(&cache.sequence).copied() else {
-                    return refuse(format!("nothing persisted for {}", cache.sequence));
-                };
-                // Copied, never aliased. Two branches that shared state would
-                // each corrupt the other the moment either continued.
-                persisted.insert(into.clone(), bytes);
-                (bytes, format!("forked {} into {into}", cache.sequence))
-            }
-            p4_adapter::CacheAction::Discard => {
-                let removed = self
-                    .persisted
-                    .lock()
-                    .expect("persisted")
-                    .remove(&cache.sequence);
-                if removed.is_none() {
-                    return refuse(format!("nothing persisted for {}", cache.sequence));
-                }
-                (0, format!("discarded {}", cache.sequence))
-            }
-        };
-        events.raise(Event::Cached {
-            deployment: cache.deployment.clone(),
-            sequence: cache.subject().clone(),
-            bytes,
-            detail,
-        });
-    }
-
     /// What this adapter has written down, for a test that wants to check the
     /// state really left memory rather than being copied beside it.
     pub fn persisted(&self) -> Vec<String> {
