@@ -4,6 +4,8 @@
 //! here reaches inside an agent. What came back is next door, in `replies`.
 
 mod deploy;
+
+use crate::fleet::Fleet;
 mod replies;
 mod watch;
 
@@ -26,10 +28,11 @@ use tokio::net::TcpListener;
 pub struct Session {
     agent: Arc<Agent>,
     replies: Replies,
-    /// What each stage's load carries, one per stage. Opaque here and read only
-    /// by the backend — the shares of a distributed deployment differ from each
-    /// other, and only the backend knows how.
-    plans: Vec<String>,
+    /// What each load carries, indexed by deployment and then stage. Opaque
+    /// here and read only by the backend — the shares of a distributed
+    /// deployment differ from each other, and two replicas of one deployment
+    /// differ again because they sit on different cards.
+    plans: Vec<Vec<String>>,
     /// What every request asks. One prompt for all of them: a driver measures a
     /// deployment under a shape of work, and varying the prompt would vary the
     /// thing being measured.
@@ -62,7 +65,7 @@ impl Session {
     pub async fn start(
         listen: &str,
         advertise: Option<&str>,
-        plans: Vec<String>,
+        plans: Vec<Vec<String>>,
         prompt: String,
         options: String,
         quiet: Duration,
@@ -164,59 +167,55 @@ impl Session {
             .collect()
     }
 
-    /// Names one node per stage. A staged backend reads its position from the
-    /// name, so the naming is part of the placement rather than cosmetic.
-    fn node_of(stage: usize, total: usize) -> String {
-        if stage + 1 == total {
-            format!("tail-{stage}")
-        } else {
-            format!("stage-{stage}")
-        }
-    }
-
     /// `serving` are the stages an inference actually visits, which is not
     /// always all of them: a backend that spreads a model internally has shares
     /// that must be loaded and have no completions surface, and a hop sent to
     /// one is addressed to the wrong half of its own deployment.
     pub async fn infer(
         &self,
-        chain_of: &[Address],
+        fleet: &Fleet,
         serving: &[usize],
         requests: usize,
         tokens: u32,
     ) -> Outcome {
-        let links: Vec<Link> = serving
-            .iter()
-            .map(|&stage| Link {
-                address: chain_of[stage].clone(),
-                // The name the node was created under, not its position in this
-                // chain — a stage that is skipped does not renumber the rest.
-                node: Self::node_of(stage, chain_of.len()),
-                binding: "deployment".into(),
-                generation: 1,
-            })
-            .collect();
-        let Ok(chain) = Chain::new(links) else {
-            return Outcome::default();
-        };
-        let entry = chain.current().address.clone();
-        let node = chain.current().node.clone();
+        // One chain per deployment, built once. They differ only in which
+        // machines and which node names they name; the shape is the same,
+        // because that is what makes them replicas.
+        let mut chains = Vec::new();
+        for deployment in 0..fleet.deployments().len() {
+            let links: Vec<Link> = serving
+                .iter()
+                .map(|&stage| Link {
+                    address: fleet.deployments()[deployment][stage].clone(),
+                    // The name the node was created under, not its position in
+                    // this chain — a stage that is skipped does not renumber
+                    // the rest.
+                    node: fleet.node_of(deployment, stage),
+                    binding: "deployment".into(),
+                    generation: 1,
+                })
+                .collect();
+            let Ok(chain) = Chain::new(links) else {
+                return Outcome::default();
+            };
+            chains.push(chain);
+        }
 
-        // Every machine in the deployment, including one holding a share that
+        // Every machine in the fleet, including one holding a share that
         // serves nothing: its node has a queue too, and "nothing ever queued
         // there" is a claim worth being able to make.
-        let mut watch: Vec<Address> = Vec::new();
-        for address in chain_of {
-            if !watch.contains(address) {
-                watch.push(address.clone());
-            }
-        }
+        let watch = fleet.addresses();
 
         let already = self.replies.finished.load(SeqCst);
         for index in 0..requests {
+            // Round robin rather than filling one and moving on. Two replicas
+            // fed in turn are two deployments working; fed in blocks they are
+            // one deployment working and one idle, which measures the same
+            // thing the single-chain driver already measured, twice.
+            let chain = &chains[index % chains.len()];
             let _ = self.send(
-                entry.clone(),
-                Recipient::node(node.clone()),
+                chain.current().address.clone(),
+                Recipient::node(chain.current().node.clone()),
                 QueueClass::Prefill,
                 &self.route(&format!("q{index}")),
                 Some(chain.clone()),

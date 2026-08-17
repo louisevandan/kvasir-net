@@ -9,10 +9,10 @@
 //! comes back arrives as a fresh frame on the listener, like any other.
 
 use p4_protocol::Address;
-use std::future::Future;
-use std::pin::Pin;
 use p4_protocol::frame::{self, Frame};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -132,10 +132,7 @@ impl Peers {
             // turning it into a refusal would let idleness lose work.
             Err(returned) => {
                 let sender = self.connection(&to).await;
-                sender
-                    .send(returned.0)
-                    .await
-                    .map_err(|error| error.0.frame)
+                sender.send(returned.0).await.map_err(|error| error.0.frame)
             }
         }
     }
@@ -273,7 +270,10 @@ async fn hand_on(
         false => outbound.frame.envelope.relay_home(own),
     };
     let (Some(through), Some(inner)) = (through, peers.upgrade()) else {
-        eprintln!("P4_AGENT_SEND_FAILED target={target} relayed={}", outbound.relayed);
+        eprintln!(
+            "P4_AGENT_SEND_FAILED target={target} relayed={}",
+            outbound.relayed
+        );
         return;
     };
     eprintln!("P4_AGENT_RELAYING target={target} through={through}");

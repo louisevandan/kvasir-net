@@ -215,9 +215,8 @@ fn chained(target: Address, through: Address) -> Frame {
         generation: 1,
     };
     let mut carrier = frame(target.clone(), "r");
-    carrier.envelope.chain = Some(
-        Chain::new(vec![link(through, "n0"), link(target, "n1")]).expect("a chain"),
-    );
+    carrier.envelope.chain =
+        Some(Chain::new(vec![link(through, "n0"), link(target, "n1")]).expect("a chain"));
     carrier
 }
 

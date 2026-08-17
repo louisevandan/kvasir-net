@@ -105,8 +105,27 @@ p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER] [ADVERTISED]
 p4-drive 0.0.0.0:52003 192.168.0.6:52002,192.168.0.29:52001 1000 64 mock 192.168.0.6:52003
 ```
 
-`CHAIN` is the stage order. The driver creates a node per stage, loads each,
-runs the requests, and prints a verdict:
+`CHAIN` is the stage order, and `;` separates replica deployments:
+
+```bash
+p4-drive 0.0.0.0:52003 "A:52001,B:52001;C:52001,D:52001" 1000 64 mock HOST:52003
+```
+
+Requests go to the replicas in turn rather than filling one and moving on —
+fed in blocks they would be one deployment working and one idle, which is what
+running two drivers already measured. Replicas must have the same number of
+stages, since `P4_DRIVE_SERVE` names stage indices and an index has to mean the
+same thing in each.
+
+Node names carry the replica only when there is more than one, so a single
+chain names its nodes exactly as it always did. With replicas they must carry
+it: two deployments can share an agent — a box with two cards is the obvious
+case — and without the suffix the second `CreateNode` would name the node the
+first one already made. `P4_DRIVE_PLAN_<d>_<n>` plans stage `n` of replica `d`,
+because replicas are copies in shape and not in placement.
+
+The driver creates a node per stage of each deployment, loads each, runs the
+requests, and prints a verdict:
 
 ```
 P4_DRIVE_RESULT requests=1000 tokens_each=64

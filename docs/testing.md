@@ -124,7 +124,7 @@ at which step a frame stopped existing.
 
 ## What the suite is, file by file
 
-353 tests. The count matters less than the split: the levels catch different
+360 tests. The count matters less than the split: the levels catch different
 things, and three defects in this layer survived every level but the fleet.
 
 | Where | Tests | What it holds |
@@ -138,7 +138,7 @@ things, and three defects in this layer survived every level but the fleet.
 | `tests/owns_its_backend.rs` | 4 | That a node owns the process behind it: a share is ready once it has not exited, one that exits while settling is a failure, a backend that gives up is reported rather than waited out through a ten-minute patience, and letting go of one kills it — the last confirmed against the operating system's own process table rather than against our record of it. |
 | `p4-link` | 7 | That a declared impairment is deterministic and irregular, and adds rather than replaces. |
 | `p4-agent` | 6 | That the registry carries what this build claims and refuses what it does not. |
-| `p4-drive` | 12 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. Plus reading a status snapshot: the three figures that matter, peaks that only rise, the deepest of several nodes, and a route named after a field not being read as one. |
+| `p4-drive` | 19 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. Plus reading a status snapshot: the three figures that matter, peaks that only rise, the deepest of several nodes, and a route named after a field not being read as one. Plus the fleet grammar: one chain reads and names its nodes as it always did, replicas are named apart because they can share an agent, replicas of different shapes are refused, and a plan falls back from replica-and-stage to stage to the default. |
 | `tests/simulation.rs` | 10 | Real agents on real sockets: chains of one, two and three stages; a crowd against a ceiling; batching; relay through an agent owning no node; ordering; concurrent chains; a failing backend. |
 | `tests/lifecycle.rs` | 8 | Load reported per stage, a declared ceiling, unload, a failing load, deadlines, cancellation. |
 | `tests/queues.rs` | 4 | The two-tier queue while the mock deliberately holds hops. Asserts **both** halves — node deep *and* lanes shallow — because node depth alone is equally satisfied by an agent that backed up with it. The fourth holds the ceiling under spread arrivals, guarded three ways against passing for the wrong reason. |

@@ -9,7 +9,8 @@
 //!   p4-drive LISTEN CHAIN REQUESTS TOKENS [ADAPTER] [ADVERTISED]
 //!
 //!   LISTEN      where replies come back, e.g. 0.0.0.0:52000
-//!   CHAIN       comma-separated agent addresses, in stage order
+//!   CHAIN       comma-separated agent addresses, in stage order. `;` separates
+//!               replica deployments, which requests are spread across in turn.
 //!   REQUESTS    how many inferences to send
 //!   TOKENS      how many tokens each should generate
 //!   ADAPTER     which registered backend to create nodes on (default `mock`)
@@ -18,7 +19,9 @@
 //! `P4_DRIVE_PLAN` is the plan each load carries, for a concrete backend that
 //! needs to be told where it is. Defaults to a simulated one.
 //! `P4_DRIVE_PLAN_<n>` overrides it for stage `n`, because the shares of a
-//! distributed deployment differ from each other.
+//! distributed deployment differ from each other, and `P4_DRIVE_PLAN_<d>_<n>`
+//! overrides it for stage `n` of replica `d` — replicas are copies in shape
+//! and not in placement, since two on one machine sit on different cards.
 //!
 //! `P4_DRIVE_SERVE` names the stages an inference visits, as indices into the
 //! chain — by default all of them. A backend that spreads a model internally
@@ -36,24 +39,20 @@
 //! waiting; 30s by default. It is not a budget for the run — an answer takes as
 //! long as it takes, and what says something is wrong is silence, not duration.
 
+mod fleet;
 mod report;
 mod session;
 #[cfg(test)]
 mod tests;
 
-use p4_protocol::Address;
+use fleet::Fleet;
 use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let listen = args.next().ok_or(USAGE)?;
-    let chain: Vec<Address> = args
-        .next()
-        .ok_or(USAGE)?
-        .split(',')
-        .map(|part| format!("tcp://{}", part.trim()).parse())
-        .collect::<Result<_, _>>()?;
+    let fleet = Fleet::parse(&args.next().ok_or(USAGE)?)?;
     let requests: usize = args.next().ok_or(USAGE)?.parse()?;
     let tokens: u32 = args.next().ok_or(USAGE)?.parse()?;
     let adapter = args.next().unwrap_or_else(|| "mock".to_owned());
@@ -64,12 +63,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // adapter reads it and is the only thing that knows what it means.
     let plan =
         std::env::var("P4_DRIVE_PLAN").unwrap_or_else(|_| r#"{"simulated":true}"#.to_owned());
-    let plans: Vec<String> = (0..chain.len())
-        .map(|stage| {
-            std::env::var(format!("P4_DRIVE_PLAN_{stage}")).unwrap_or_else(|_| plan.clone())
-        })
-        .collect();
-    let serving = serving(std::env::var("P4_DRIVE_SERVE").ok().as_deref(), chain.len())?;
+    let plans = fleet.plans(&plan);
+    let serving = serving(
+        std::env::var("P4_DRIVE_SERVE").ok().as_deref(),
+        fleet.stages(),
+    )?;
     // What every request asks, and how it should be generated. A real profile
     // is a long prompt against a long answer, and neither fits on a command
     // line — the prompt comes from a file so its size is exactly what was
@@ -125,27 +123,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     println!(
-        "P4_DRIVE_READY address={} stages={} serving={} prompt_bytes={}",
+        "P4_DRIVE_READY address={} deployments={} stages={} serving={} prompt_bytes={}",
         session.address(),
-        chain.len(),
+        fleet.deployments().len(),
+        fleet.stages(),
         serving.len(),
         session.prompt_bytes()
     );
-    if session.address().is_local_only() && chain.iter().any(|stage| !stage.is_local_only()) {
+    if session.address().is_local_only()
+        && fleet.addresses().iter().any(|stage| !stage.is_local_only())
+    {
         println!(
             "P4_DRIVE_UNREACHABLE address={} note=remote-stages-cannot-reply",
             session.address()
         );
     }
 
-    session.create_nodes(&chain, &adapter).await?;
-    println!("P4_DRIVE_NODES created={}", chain.len());
+    let nodes = fleet.deployments().len() * fleet.stages();
+    session.create_nodes(&fleet, &adapter).await?;
+    println!("P4_DRIVE_NODES created={nodes}");
 
-    session.load(&chain, ceiling).await?;
-    println!("P4_DRIVE_LOADED stages={}", chain.len());
+    session.load(&fleet, ceiling).await?;
+    println!("P4_DRIVE_LOADED nodes={nodes}");
 
     let started = Instant::now();
-    let outcome = session.infer(&chain, &serving, requests, tokens).await;
+    let outcome = session.infer(&fleet, &serving, requests, tokens).await;
     let elapsed = started.elapsed();
 
     report::print(&outcome, elapsed, requests, tokens);

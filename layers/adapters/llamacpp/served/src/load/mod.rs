@@ -218,5 +218,4 @@ impl Served {
             self.stopped.fetch_add(1, Ordering::Relaxed);
         }
     }
-
 }

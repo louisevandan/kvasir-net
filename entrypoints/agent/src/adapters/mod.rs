@@ -5,10 +5,10 @@
 //! above this line — envelope, queue, worker, node, chain — changes for any of
 //! them, which is the property the communication layer was built to have.
 
-use p4_mock::Mock;
-use p4_mock::profile::Profile;
 use p4_llamacpp_served::Served;
 use p4_llamacpp_served::flavour::Flavour;
+use p4_mock::Mock;
+use p4_mock::profile::Profile;
 use p4_service::Registry;
 use std::sync::Arc;
 use std::time::Duration;

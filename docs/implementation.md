@@ -16,7 +16,7 @@ them, [`constraints.md`](constraints.md) the invariants. This is the map.
 | `p4-mock` | `layers/adapters/mock` | 483 | 349 | adapter |
 | `p4-llamacpp-served` | `layers/adapters/llamacpp/served` | 1,151 | 1,413 | adapter, serde_json |
 | `p4-agent` | `entrypoints/agent` | 181 | 74 | all of the above |
-| `p4-drive` | `tools/drive` | 949 | 124 | agent, protocol, service |
+| `p4-drive` | `tools/drive` | 1,041 | 124 | agent, protocol, service |
 | `p4-link` | `tools/link` | 333 | 77 | tokio |
 
 Two crates depend on nothing, and that is load-bearing. The protocol cannot
