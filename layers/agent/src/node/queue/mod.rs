@@ -10,10 +10,11 @@ use p4_protocol::frame::Frame;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Mutex;
 
-/// Work waiting for a hop, in arrival order within its lane.
-#[derive(Default)]
+/// Work waiting for a hop, in arrival order within its lane. Its capacity is
+/// the agent budget, so sustained arrivals cannot create unbounded node memory.
 pub struct NodeQueue {
     waiting: Mutex<VecDeque<Frame>>,
+    max_depth: usize,
     /// How many sequences are inside the adapter, which is the width of the
     /// window running now and zero between hops. A node runs one hop at a time
     /// by construction: it starts the next only when it observes the previous
@@ -29,11 +30,21 @@ pub struct NodeQueue {
 }
 
 impl NodeQueue {
-    pub fn push(&self, frame: Frame) {
-        self.waiting
-            .lock()
-            .expect("node queue lock")
-            .push_back(frame);
+    pub fn with_capacity(max_depth: usize) -> Self {
+        Self {
+            waiting: Mutex::new(VecDeque::new()),
+            max_depth: max_depth.max(1),
+            running: Mutex::new(0),
+        }
+    }
+
+    pub fn push(&self, frame: Frame) -> bool {
+        let mut waiting = self.waiting.lock().expect("node queue lock");
+        if waiting.len() >= self.max_depth {
+            return false;
+        }
+        waiting.push_back(frame);
+        true
     }
 
     /// How deep this node is. The node-side half of the pair that attributes a
@@ -125,6 +136,12 @@ impl NodeQueue {
             .iter()
             .position(|frame| frame.envelope.route == route)?;
         waiting.remove(index)
+    }
+}
+
+impl Default for NodeQueue {
+    fn default() -> Self {
+        Self::with_capacity(4096)
     }
 }
 

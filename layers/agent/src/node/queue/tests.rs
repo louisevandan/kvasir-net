@@ -32,6 +32,15 @@ fn depth_grows_with_what_the_agent_moved_in() {
 }
 
 #[test]
+fn a_node_queue_refuses_above_its_configured_capacity() {
+    let queue = NodeQueue::with_capacity(2);
+    assert!(queue.push(frame("a", QueueClass::Prefill)));
+    assert!(queue.push(frame("b", QueueClass::Prefill)));
+    assert!(!queue.push(frame("c", QueueClass::Prefill)));
+    assert_eq!(queue.depth(), 2);
+}
+
+#[test]
 fn claiming_takes_the_named_work_and_marks_a_hop_running() {
     // One call, because taking work without marking would let a second hop
     // start beside the first.

@@ -47,6 +47,7 @@ pub struct Agent {
     continuations: Continuations<Frame>,
     duties: Arc<dyn Duties>,
     payload: Arc<dyn Payload>,
+    node_queue_depth: usize,
 }
 
 impl Agent {
@@ -70,6 +71,7 @@ impl Agent {
             continuations: Continuations::default(),
             duties,
             payload,
+            node_queue_depth: budget.depth,
         });
         (agent, receiver, in_flight)
     }
@@ -100,11 +102,12 @@ impl Agent {
         adapter: Arc<dyn Adapter>,
         ceiling: usize,
     ) {
-        let handle = Node::spawn(
+        let handle = Node::spawn_with_capacity(
             adapter,
             Arc::clone(&self.payload),
             self.queue.clone(),
             ceiling,
+            self.node_queue_depth,
         );
         self.nodes.lock().await.insert(id.into(), handle);
     }
@@ -241,7 +244,9 @@ impl Agent {
                     // does not wait to see what the node makes of it.
                     Some(handle) => {
                         self.to_nodes.fetch_add(1, Ordering::Relaxed);
-                        handle.offer(frame)
+                        if let Err(refused) = handle.offer(frame) {
+                            self.answer_locally(refused, "node ingress is full");
+                        }
                     }
                     None => {
                         self.unrouted.fetch_add(1, Ordering::Relaxed);

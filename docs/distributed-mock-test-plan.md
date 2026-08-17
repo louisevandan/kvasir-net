@@ -66,6 +66,10 @@ W1의 binary smoke가 통과한 뒤 parallel fan-out한다. 테스트 runner 자
 각 worker를 별도 프로세스로 실행해 한 worker의 CPU spin이나 종료가 다른
 worker의 결과를 가리지 않게 한다.
 
+반복 실행 명령은 [`tools/scripts/e2e/run-distributed-mock.ps1`](../tools/scripts/e2e/run-distributed-mock.ps1)이다.
+기본값은 4개 worker, worker당 2-stage, 128 requests, 16 tokens이며 각
+worker가 독립 포트·로그·deployment를 사용한다.
+
 ## 4. 시나리오와 판정 기준
 
 ### D-01 discovery contract
@@ -191,6 +195,9 @@ status를 각각 수집한다.
   필요하다.
 - capability snapshot ID, model fingerprint, expiry를 Load plan에 묶는
   필드는 아직 추가해야 한다.
+- Agent lane과 node ingress는 `Budget.depth` 기반으로 bounded되고, 초과
+  node work는 기다리지 않고 명시적 `Failed`로 반환된다. 아직 disk spill,
+  FIFO paging, retry quota 정책은 구현하지 않았다.
 - 실제 staged GPU adapter가 없으므로 이 계획의 mock overlap 결과는 GPU
   utilization 증거가 아니다.
 
@@ -227,3 +234,24 @@ mock smoke를 수행했다.
 함께 사라지는 문제가 있어 PTY 세션으로 agent를 유지했다. 이 결과는 원격
 Windows 운영 시 방화벽·프로세스 수명·forward/reply 경로를 모두 manifest에
 기록해야 한다는 증거다.
+
+2026-08-18에는 `run-distributed-mock.ps1`로 4개 worker를 병렬 실행했다.
+각 worker는 독립적인 2-stage mock deployment에서 128 requests × 16 tokens를
+처리했다. 네 worker 모두 `completed=128`, `failed=0`, `unanswered=0`,
+stream order 통과를 기록했다. worker별 peak node queue는 83~87,
+peak in-adapter는 16, main lane은 1~3이었다. 이 결과는 여러 agent/driver가
+동시에 동작해도 request별 FIFO와 terminal correlation이 유지됨을 검증한다.
+
+bounded release를 원격에 재복사한 뒤 2026-08-18 cross-host tunnel smoke도
+재실행했다. 중앙 stage와 원격 stage의 2-stage topology에서 32 requests ×
+8 tokens가 `completed=32`, `failed=0`, `unanswered=0`, stream order 통과로
+끝났고 peak node queue 25, peak in-adapter 8, peak main lane 1이었다. 실행
+후 중앙·원격 P4 listener는 모두 정리됐다.
+
+새 bounded ingress release로 4개 worker에 각각 1024 requests × 32 tokens를
+다시 실행했을 때도 모두 완료했고, peak node queue는 731~734, peak
+in-adapter는 16이었다. 6000 requests × 1 token overflow run도
+`completed=6000`, `failed=0`, `unanswered=0`으로 끝났고 peak node queue는
+4, peak main lane은 2였다. 즉 생산자는 lane admission에서 조절되고 node
+queue는 무제한으로 증가하지 않았다. 이 결과는 RAM 상한 자체를 증명하는
+것은 아니므로 process working-set 샘플을 포함한 별도 장기 검증이 필요하다.

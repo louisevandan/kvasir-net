@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 pub struct Handle {
     /// Asked on a status request, and only then.
     pub(super) backend: Arc<dyn p4_adapter::Adapter>,
-    work: mpsc::UnboundedSender<Frame>,
+    work: mpsc::Sender<Frame>,
     queue: Arc<NodeQueue>,
     counts: Arc<Counts>,
 }
@@ -45,7 +45,7 @@ pub struct Counts {
 
 impl Handle {
     pub(super) fn new(
-        work: mpsc::UnboundedSender<Frame>,
+        work: mpsc::Sender<Frame>,
         queue: Arc<NodeQueue>,
         counts: Arc<Counts>,
         backend: Arc<dyn p4_adapter::Adapter>,
@@ -65,10 +65,13 @@ impl Handle {
         self.backend.report()
     }
 
-    /// Moves work to this node. Returns immediately — this call is the whole
-    /// of a worker's job for a node-bound message.
-    pub fn offer(&self, frame: Frame) {
-        let _ = self.work.send(frame);
+    /// Moves work to this node without waiting. A full ingress channel is
+    /// returned to the caller so the worker can report refusal immediately.
+    pub fn offer(&self, frame: Frame) -> Result<(), Frame> {
+        self.work.try_send(frame).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(frame) => frame,
+            mpsc::error::TrySendError::Closed(frame) => frame,
+        })
     }
 
     /// How deep this node is. Read beside the agent's queue depth, the pair
@@ -83,9 +86,8 @@ impl Handle {
 
     /// How many sequences this node has handed to the adapter right now.
     ///
-    /// The ceiling bounds this and nothing else does — a backend is never
-    /// asked to refuse, and never told how much is waiting. Reported so that
-    /// claim is checkable from outside rather than only in the code.
+    /// The load ceiling bounds adapter admission; node queue capacity bounds
+    /// waiting memory. Both are observable separately.
     pub fn in_adapter(&self) -> usize {
         self.queue.in_adapter()
     }

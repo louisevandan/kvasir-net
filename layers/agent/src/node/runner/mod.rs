@@ -64,10 +64,20 @@ impl Node {
         out: Sender,
         ceiling: usize,
     ) -> Handle {
-        let (work_tx, work_rx) = mpsc::unbounded_channel();
+        Self::spawn_with_capacity(adapter, payload, out, ceiling, 4096)
+    }
+
+    pub fn spawn_with_capacity(
+        adapter: Arc<dyn Adapter>,
+        payload: Arc<dyn Payload>,
+        out: Sender,
+        ceiling: usize,
+        max_queue_depth: usize,
+    ) -> Handle {
+        let (work_tx, work_rx) = mpsc::channel(max_queue_depth.max(1));
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel::<Frame>();
-        let queue = Arc::new(NodeQueue::default());
+        let queue = Arc::new(NodeQueue::with_capacity(max_queue_depth));
         let reporting = Arc::clone(&adapter);
         let counts = Arc::new(Counts::default());
         let queued = out;
@@ -103,7 +113,7 @@ impl Node {
 
     async fn run(
         self,
-        mut work: mpsc::UnboundedReceiver<Frame>,
+        mut work: mpsc::Receiver<Frame>,
         mut events: mpsc::UnboundedReceiver<Event>,
     ) {
         loop {
@@ -126,7 +136,10 @@ impl Node {
                             self.reply_error(&frame, &refused);
                             continue;
                         }
-                        self.queue.push(frame);
+                        if !self.queue.push(frame.clone()) {
+                            self.reply_error(&frame, "node queue is full");
+                            continue;
+                        }
                         self.counts.queued.fetch_add(1, Ordering::Relaxed);
                         self.drain();
                     }

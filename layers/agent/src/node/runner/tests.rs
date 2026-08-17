@@ -132,7 +132,7 @@ fn a_window_never_exceeds_the_declared_ceiling() {
     runtime().block_on(async {
         let fixture = fixture(4, 1);
         for index in 0..20 {
-            fixture.handle.offer(work(&format!("r{index}"), 1));
+            let _ = fixture.handle.offer(work(&format!("r{index}"), 1));
         }
         settle().await;
 
@@ -152,7 +152,7 @@ fn a_node_runs_one_hop_at_a_time() {
     runtime().block_on(async {
         let fixture = fixture(4, 1);
         for index in 0..20 {
-            fixture.handle.offer(work(&format!("r{index}"), 1));
+            let _ = fixture.handle.offer(work(&format!("r{index}"), 1));
         }
         settle().await;
         assert_eq!(fixture.peak.load(Ordering::SeqCst), 1);
@@ -164,7 +164,7 @@ fn every_offered_request_reaches_a_terminal() {
     runtime().block_on(async {
         let mut fixture = fixture(4, 1);
         for index in 0..12 {
-            fixture.handle.offer(work(&format!("r{index}"), 1));
+            let _ = fixture.handle.offer(work(&format!("r{index}"), 1));
         }
         settle().await;
 
@@ -183,7 +183,7 @@ fn the_node_empties_and_returns_to_idle() {
     runtime().block_on(async {
         let fixture = fixture(8, 1);
         for index in 0..16 {
-            fixture.handle.offer(work(&format!("r{index}"), 1));
+            let _ = fixture.handle.offer(work(&format!("r{index}"), 1));
         }
         settle().await;
 
@@ -196,7 +196,7 @@ fn the_node_empties_and_returns_to_idle() {
 fn a_middle_node_hands_work_on_instead_of_replying() {
     runtime().block_on(async {
         let mut fixture = fixture(4, 1);
-        fixture.handle.offer(work("r0", 3));
+        let _ = fixture.handle.offer(work("r0", 3));
         settle().await;
 
         let frame = fixture

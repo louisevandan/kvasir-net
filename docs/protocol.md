@@ -12,7 +12,7 @@ decision.
 | Reply return path | Direct reply_to works; chain is one-hop fallback | Make origin agent and return channel explicit |
 | Per-route ordering | Implemented by route-hashed workers | Separate transport request identity from backend sequence identity |
 | Pipeline overlap | Local node windows and independent node hops exist | Define global admission/credit and feed guarantees |
-| Queueing | Agent lanes and peer queues are bounded; node ingress is currently unbounded | Bound every queue and expose spill/rejection policy |
+| Queueing | Agent lanes, peer queues, and node ingress are bounded; adapter event/outbox channels remain unbounded | Bound remaining channels and expose spill/rejection policy |
 | Monitoring | Human-readable status and backend report are relayed | Define typed, correlated snapshots and event sequencing |
 | Generation options | Opaque request/options text is carried to the adapter | Keep semantics outside P4; define only preservation and size/error policy |
 | KV persistence | Persist/restore/fork/discard verbs exist in the mock | Define multi-stage atomicity, ownership, and request-to-KV mapping |
@@ -127,10 +127,11 @@ Required invariants:
 
 ## 4. Queueing and backpressure
 
-Agent lanes and per-peer queues are bounded. Node work ingress, the adapter
-event channel, and the node outbox are currently unbounded in
-[Node::spawn](../layers/agent/src/node/runner/mod.rs). A request can thus be
-waiting without appearing in NodeQueue::depth() or the status snapshot.
+Agent lanes, per-peer queues, node work ingress, and NodeQueue are bounded.
+Node ingress uses the agent `Budget.depth` and returns an explicit refusal when
+its capacity is exhausted. The adapter event channel and node outbox remain
+unbounded in [Node::spawn](../layers/agent/src/node/runner/mod.rs), so the
+protocol is not yet allowed to claim that every intermediate buffer is bounded.
 
 The policy must choose:
 
