@@ -138,7 +138,8 @@ across devices but walks them in order within a token, so one card waits while
 the other works, which is visible in the GPU sampling here: 91%/27%, then
 21%/54%, alternating rather than both high. That ceiling does not move by
 tuning; it moves by P4 owning the boundary between the pieces, which is the
-staged adapter and is not written.
+staged shape and is not written — two artifacts rather than one, a C++ server
+and a Rust adapter. [STAGED.md](../../../STAGED.md) is the plan.
 
 ## 2026-08-17: the queue is P4's, under arrival that outruns service
 

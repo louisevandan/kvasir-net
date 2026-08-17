@@ -19,8 +19,8 @@ them.
 | --- | --- | --- |
 | `adapter/` | none — the contract | Zero dependencies. The one file every backend below is written against. |
 | `mock/` | none — arithmetic | Implements the interface. Ships in every build, so a fleet can be loaded without hardware. |
-| `openai/` | llama.cpp, vLLM, SGLang | One implementation, registered under three names, because the three serve the same HTTP. Proved against a stock `llama-server` on Metal and on CUDA, and against wire-level servers behaving like each. |
-| `llamacpp/staged/` | llama.cpp, split across machines | Patch series and preparation script present; the adapter itself is not written. |
+| `llamacpp/served/` | llama.cpp, vLLM, SGLang | One implementation, registered under three names, because the three serve the same HTTP. Proved against a stock `llama-server` on Metal and on CUDA, and against wire-level servers behaving like each. |
+| `llamacpp/staged/` | llama.cpp, split across machines | Patch series and preparation script present. Nothing else: it is **two** artifacts still to be written, a C++ server holding one layer range and a Rust adapter that owns that process, and it needs a cut-set path opened in `adapter/` first. [STAGED.md](../../../../STAGED.md) is the plan. |
 
 ## What a new adapter owes
 
