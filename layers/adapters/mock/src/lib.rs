@@ -284,6 +284,19 @@ impl Mock {
 }
 
 impl Adapter for Mock {
+    fn inspect_model(&self, artifact: &str) -> Result<String, String> {
+        if artifact.is_empty() {
+            return Err("mock artifact reference is empty".into());
+        }
+        Ok(format!(
+            r#"{{"artifact":"{}","architecture":"mock","layers":{},"distribution":"{:?}","stage_bytes":{}}}"#,
+            artifact.replace('"', "\\\""),
+            self.profile.stages.max(1),
+            self.distribution,
+            self.profile.reserved_per_stage,
+        ))
+    }
+
     fn distribution(&self) -> Distribution {
         self.distribution
     }

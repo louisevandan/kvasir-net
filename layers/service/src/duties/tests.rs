@@ -13,6 +13,12 @@ use tokio::net::TcpListener;
 struct Stub;
 
 impl Adapter for Stub {
+    fn inspect_model(&self, artifact: &str) -> Result<String, String> {
+        Ok(format!(
+            r#"{{"artifact":"{artifact}","architecture":"stub"}}"#
+        ))
+    }
+
     fn distribution(&self) -> Distribution {
         Distribution::Staged
     }
@@ -211,6 +217,40 @@ fn inspecting_reports_the_platform_and_the_adapters_it_can_serve() {
         };
         assert!(snapshot.contains(r#""adapters":["stub"]"#), "{snapshot}");
         assert!(snapshot.contains(std::env::consts::OS), "{snapshot}");
+    });
+}
+
+#[test]
+fn inspecting_a_model_asks_the_selected_adapter_and_returns_opaque_profile() {
+    runtime().block_on(async {
+        let caller_duties = Caller::default();
+        let caller = start(Arc::new(caller_duties.clone())).await;
+        let agent = start(Arc::new(Standard::new(with_stub()))).await;
+
+        agent
+            .enqueue(ask(
+                &agent,
+                &caller,
+                "model-r1",
+                ToAgent::InspectModel {
+                    artifact: "model.gguf".into(),
+                    adapter: "stub".into(),
+                },
+            ))
+            .unwrap();
+        until(|| !caller_duties.replies().is_empty()).await;
+
+        let Some(Reply::Model {
+            artifact,
+            adapter,
+            profile,
+        }) = caller_duties.replies().pop()
+        else {
+            panic!("expected a model profile");
+        };
+        assert_eq!(artifact, "model.gguf");
+        assert_eq!(adapter, "stub");
+        assert!(profile.contains(r#""architecture":"stub""#), "{profile}");
     });
 }
 

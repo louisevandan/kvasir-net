@@ -65,6 +65,33 @@ impl Standard {
             }
         });
     }
+
+    fn inspect_model(&self, agent: &Arc<Agent>, frame: &Frame, artifact: String, adapter: String) {
+        let Some(adapter_instance) = self.registry.build(&adapter, "inspect") else {
+            return answer(
+                agent,
+                frame,
+                Reply::Failed {
+                    detail: format!("no adapter registered as {adapter}"),
+                },
+            );
+        };
+        let frame = frame.clone();
+        let agent = Arc::clone(agent);
+        tokio::task::spawn_blocking(move || {
+            let reply = match adapter_instance.inspect_model(&artifact) {
+                Ok(profile) => Reply::Model {
+                    artifact,
+                    adapter,
+                    profile,
+                },
+                Err(detail) => Reply::Failed { detail },
+            };
+            if let Some(reply) = reply_frame(&frame, reply) {
+                let _ = agent.enqueue(reply);
+            }
+        });
+    }
 }
 
 impl Duties for Standard {
@@ -94,6 +121,9 @@ impl Duties for Standard {
                     snapshot: machine::snapshot(&self.adapters()),
                 },
             ),
+            ToAgent::InspectModel { artifact, adapter } => {
+                self.inspect_model(agent, &frame, artifact, adapter)
+            }
             ToAgent::Cancel { route } => cancel(agent, &frame, route),
             ToAgent::Status => status(agent, &frame),
         }

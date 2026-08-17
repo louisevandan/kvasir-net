@@ -28,6 +28,7 @@ const DELETE_NODE: u8 = 2;
 const INSPECT: u8 = 3;
 const CANCEL: u8 = 4;
 const STATUS: u8 = 5;
+const INSPECT_MODEL: u8 = 6;
 const LOAD: u8 = 16;
 const UNLOAD: u8 = 17;
 const EXECUTE: u8 = 18;
@@ -45,6 +46,7 @@ const FAILED: u8 = 38;
 const MACHINE: u8 = 39;
 const STATUS_REPLY: u8 = 40;
 const CACHED: u8 = 41;
+const MODEL: u8 = 42;
 
 pub fn encode_to_agent(message: &ToAgent) -> Vec<u8> {
     let mut out = Vec::with_capacity(64);
@@ -59,6 +61,11 @@ pub fn encode_to_agent(message: &ToAgent) -> Vec<u8> {
             text(&mut out, node);
         }
         ToAgent::Inspect => out.push(INSPECT),
+        ToAgent::InspectModel { artifact, adapter } => {
+            out.push(INSPECT_MODEL);
+            text(&mut out, artifact);
+            text(&mut out, adapter);
+        }
         ToAgent::Cancel { route } => {
             out.push(CANCEL);
             text(&mut out, route);
@@ -79,6 +86,10 @@ pub fn decode_to_agent(bytes: &[u8]) -> Decoded<ToAgent> {
             node: cursor.text()?,
         },
         INSPECT => ToAgent::Inspect,
+        INSPECT_MODEL => ToAgent::InspectModel {
+            artifact: cursor.text()?,
+            adapter: cursor.text()?,
+        },
         CANCEL => ToAgent::Cancel {
             route: cursor.text()?,
         },
@@ -206,6 +217,16 @@ pub fn encode_reply(reply: &Reply) -> Vec<u8> {
             out.push(STATUS_REPLY);
             text(&mut out, snapshot);
         }
+        Reply::Model {
+            artifact,
+            adapter,
+            profile,
+        } => {
+            out.push(MODEL);
+            text(&mut out, artifact);
+            text(&mut out, adapter);
+            text(&mut out, profile);
+        }
         Reply::Cached {
             sequence,
             bytes,
@@ -250,6 +271,11 @@ pub fn decode_reply(bytes: &[u8]) -> Decoded<Reply> {
         },
         STATUS_REPLY => Reply::Status {
             snapshot: cursor.text()?,
+        },
+        MODEL => Reply::Model {
+            artifact: cursor.text()?,
+            adapter: cursor.text()?,
+            profile: cursor.text()?,
         },
         CACHED => Reply::Cached {
             sequence: cursor.text()?,

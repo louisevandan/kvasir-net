@@ -443,20 +443,20 @@ distributed load needs a discovery phase before any node receives `Load`:
       -> OUTER planner: compose a global placement plan
       -> each agent/node: opaque Load(plan, artifact, ceiling)
 
-The discovery phase below is a required protocol addition, not a description
-of an existing implemented message. The current `ToAgent` enum has `Inspect`
-but no `InspectModel`, and the current replies have `Machine { snapshot }`
-but no model descriptor. The discovery phase is also not a request for the
-agent to choose the global placement. The responsibilities are deliberately
-separated:
+The discovery phase is now present as a transport contract:
+`ToAgent::InspectModel { artifact, adapter }` and `Reply::Model { artifact,
+adapter, profile }` carry an opaque profile. The mock adapter implements this
+hook for protocol tests, but a concrete GGUF parser and capability snapshot
+binding are still required. Discovery is also not a request for the agent to
+choose the global placement. The responsibilities are deliberately separated:
 
 - The agent resolves an allowed model reference and reads the GGUF headers and
   tensor indexes available on that host.
 - The agent reports local facts, current availability, and adapter limits.
 - OUTER owns policy, compares all agents, chooses layer/stage placement, and
   serializes the resulting plan for the selected adapter.
-- Once added, P4 will transport the discovery result and the final opaque
-  plan; it must not interpret llama.cpp switches or generation options.
+- P4 transports the discovery result and the final opaque plan; it must not
+  interpret llama.cpp switches or generation options.
 
 The minimum model descriptor must include a stable model fingerprint and shard
 set identity, file sizes and completeness, architecture, executable layer
@@ -501,7 +501,7 @@ The acceptance gate must therefore include: the same `model_fingerprint` is
 observed across all selected agents; incomplete or divergent shard sets are
 rejected; the plan records which capability snapshot it used; and a load is
 refused when the snapshot has expired or the adapter cannot realize the
-selected distribution mode. Until `InspectModel` and capability discovery are
-specified, implemented, and tested, the existing `Inspect` plus opaque `Load`
-pair is insufficient to claim that an unknown model can be safely or
-optimally distributed.
+selected distribution mode. Until a concrete adapter returns the required
+GGUF profile and capability snapshot is bound to the resulting plan, the
+existing `InspectModel` transport plus opaque `Load` pair is still insufficient
+to claim that an unknown model can be safely or optimally distributed.

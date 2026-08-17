@@ -10,6 +10,10 @@ fn every_agent_message_survives_a_round_trip() {
         },
         ToAgent::DeleteNode { node: "n0".into() },
         ToAgent::Inspect,
+        ToAgent::InspectModel {
+            artifact: "model.gguf".into(),
+            adapter: "mock".into(),
+        },
         ToAgent::Cancel {
             route: "요청-7".into(),
         },
@@ -68,6 +72,11 @@ fn every_reply_survives_a_round_trip() {
         },
         Reply::Machine {
             snapshot: "{}".into(),
+        },
+        Reply::Model {
+            artifact: "model.gguf".into(),
+            adapter: "mock".into(),
+            profile: r#"{"architecture":"mock","layers":2}"#.into(),
         },
         Reply::Status {
             snapshot: "address=tcp://h:1\nnode=n0 depth=2 running=true routes=[a,b]".into(),

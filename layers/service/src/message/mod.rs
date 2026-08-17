@@ -29,6 +29,12 @@ pub enum ToAgent {
     },
     /// Facts about the machine, for whoever is composing placements.
     Inspect,
+    /// Ask one concrete adapter for the model facts it can discover locally.
+    /// The artifact reference and returned profile remain opaque to P4.
+    InspectModel {
+        artifact: String,
+        adapter: String,
+    },
     /// Stops one request. Work already inside a backend runs to its hop
     /// boundary — there is no way to interrupt a hop — so this means the next
     /// one never starts.
@@ -118,6 +124,13 @@ pub enum Reply {
     },
     Machine {
         snapshot: String,
+    },
+    /// Model metadata and tensor/profile facts discovered by an adapter.
+    /// P4 carries the text but does not interpret its backend vocabulary.
+    Model {
+        artifact: String,
+        adapter: String,
+        profile: String,
     },
     /// What the agent is doing, as of the moment it was asked.
     Status {

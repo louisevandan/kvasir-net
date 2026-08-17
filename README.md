@@ -67,5 +67,6 @@ and the reverse puts it here.
 | Decisions, and the defects behind them | [docs/internals.md](docs/internals.md) |
 | Running it and driving a fleet | [docs/usage.md](docs/usage.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
+| Distributed mock test plan | [docs/distributed-mock-test-plan.md](docs/distributed-mock-test-plan.md) |
 | Measured behaviour of the backend below | [docs/runtime-evidence.md](docs/runtime-evidence.md) |
 | The revision that produced all this | [P4_REVISION_PLAN.md](P4_REVISION_PLAN.md) |

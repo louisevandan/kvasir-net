@@ -77,7 +77,7 @@ impl Duties for Replies {
         // route that produced nothing and count it among the run's.
         match &reply {
             Reply::Status { snapshot } => return self.peaks.observe(snapshot),
-            Reply::Machine { .. } => return,
+            Reply::Machine { .. } | Reply::Model { .. } => return,
             _ => {}
         }
         self.events.fetch_add(1, SeqCst);
@@ -112,7 +112,7 @@ impl Duties for Replies {
             // Returned above. Left as a quiet arm rather than a panic: this
             // runs on the agent's own task, where an unexpected reply must not
             // be able to take the driver down.
-            Reply::Machine { .. } | Reply::Status { .. } => {}
+            Reply::Machine { .. } | Reply::Model { .. } | Reply::Status { .. } => {}
         }
     }
 }

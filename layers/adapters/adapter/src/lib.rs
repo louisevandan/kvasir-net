@@ -25,6 +25,14 @@ pub use work::{
 /// return value, so no caller can be written to wait — which is the property
 /// that keeps a hop's duration out of the agent's workers.
 pub trait Adapter: Send + Sync {
+    /// Discovers local model facts without changing the loaded deployment.
+    /// The profile is opaque to P4 and is interpreted by OUTER and this
+    /// adapter's owner. A backend that cannot inspect the reference refuses it
+    /// explicitly instead of returning a guessed profile.
+    fn inspect_model(&self, _artifact: &str) -> Result<String, String> {
+        Err("model inspection is unsupported".into())
+    }
+
     /// How this backend spreads a model. Fixed for the adapter's lifetime and
     /// read by whoever composes chains, not by the node.
     fn distribution(&self) -> Distribution;
