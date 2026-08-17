@@ -114,3 +114,42 @@ fn a_reply_goes_to_whoever_asked_and_keeps_the_way_it_came() {
 fn a_message_sent_without_a_continuation_has_nowhere_to_reply() {
     assert_eq!(control().to_reply(), None);
 }
+
+/// The route home is the chain's first link.
+///
+/// Not a guess about where the caller is, which nothing here can answer, but a
+/// record of who it was talking to: the first link is the stage the caller sent
+/// the work to, so it is an agent the caller reached — and an address that
+/// demonstrably reached this machine, because the work came from it.
+#[test]
+fn a_reply_that_cannot_be_delivered_knows_who_the_caller_was_talking_to() {
+    let reply = inference(3).to_reply().expect("a reply address was given");
+    let elsewhere = Address::tcp("10.9.9.9", 52001);
+    assert_eq!(
+        reply.relay_home(&elsewhere),
+        Some(Address::tcp("127.0.0.1", 52001)),
+    );
+}
+
+/// Relaying to the address that just failed is not a fallback.
+#[test]
+fn the_route_home_is_never_the_target_that_could_not_be_reached() {
+    let mut reply = inference(3).to_reply().expect("a reply");
+    reply.target = Address::tcp("127.0.0.1", 52001);
+    let elsewhere = Address::tcp("10.9.9.9", 52001);
+    assert_eq!(reply.relay_home(&elsewhere), None);
+}
+
+/// Nor is handing the frame back to the agent that could not send it.
+#[test]
+fn the_route_home_is_never_this_agent() {
+    let reply = inference(3).to_reply().expect("a reply");
+    let first = reply.chain.as_ref().unwrap().links()[0].address.clone();
+    assert_eq!(reply.relay_home(&first), None);
+}
+
+/// A message that never travelled has no way back that it can prove.
+#[test]
+fn a_message_with_no_chain_has_no_route_home() {
+    assert_eq!(control().relay_home(&Address::tcp("10.9.9.9", 1)), None);
+}

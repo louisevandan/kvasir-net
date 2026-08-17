@@ -108,6 +108,28 @@ impl Envelope {
             ..self.clone()
         })
     }
+
+    /// Somewhere else to hand this frame when its target cannot be reached.
+    ///
+    /// The chain's first link. That is the stage the caller sent the work to,
+    /// so it is an agent the caller was connected to — which is the whole
+    /// question when a reply cannot be delivered: not "where is the caller",
+    /// which nothing here can answer, but "who was talking to it".
+    ///
+    /// A remote node's agent is often not the one OUTER holds a socket to. It
+    /// answers to the address in `reply_to` and, across a subnet or a NAT or
+    /// simply a caller that has since moved, that address may be one it cannot
+    /// open. The first link is not a guess: it demonstrably reached this
+    /// machine, because it is where the work came from.
+    ///
+    /// `None` when there is no chain, when the chain's first link is the target
+    /// already — relaying to the address that just failed is not a fallback —
+    /// or when it is this agent itself, which would be a frame handed back to
+    /// the thing that could not send it.
+    pub fn relay_home(&self, own: &Address) -> Option<Address> {
+        let first = self.chain.as_ref()?.links().first()?.address.clone();
+        (first != self.target && &first != own).then_some(first)
+    }
 }
 
 #[cfg(test)]

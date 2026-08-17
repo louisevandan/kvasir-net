@@ -9,6 +9,8 @@
 //! comes back arrives as a fresh frame on the listener, like any other.
 
 use p4_protocol::Address;
+use std::future::Future;
+use std::pin::Pin;
 use p4_protocol::frame::{self, Frame};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,25 +38,38 @@ const PER_PEER_DEPTH: usize = 4096;
 /// restarts.
 const IDLE: Duration = Duration::from_secs(60);
 
-#[derive(Clone)]
-pub struct Peers {
-    inner: Arc<Mutex<HashMap<Address, mpsc::Sender<Frame>>>>,
-    idle: Duration,
+/// A frame on its way out, and whether this is its second chance.
+///
+/// The flag never goes on the wire and is not part of the protocol. It exists
+/// so a relay cannot relay: a frame that failed to reach the caller is handed
+/// to the chain’s first link, and if that fails too there is nowhere left
+/// worth trying — the chain would name the same link again, and the frame
+/// would go round for as long as the process lives.
+struct Outbound {
+    frame: Frame,
+    relayed: bool,
 }
 
-impl Default for Peers {
-    fn default() -> Self {
-        Self::with_idle(IDLE)
-    }
+#[derive(Clone)]
+pub struct Peers {
+    inner: Arc<Mutex<HashMap<Address, mpsc::Sender<Outbound>>>>,
+    idle: Duration,
+    /// This agent’s own address, so a relay never picks itself.
+    own: Address,
 }
 
 impl Peers {
+    pub fn new(own: Address) -> Self {
+        Self::with_idle(own, IDLE)
+    }
+
     /// The same thing with a chosen idle window, so a test can watch a peer
     /// retire without waiting a minute for it.
-    pub fn with_idle(idle: Duration) -> Self {
+    pub fn with_idle(own: Address, idle: Duration) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             idle,
+            own,
         }
     }
 }
@@ -79,21 +94,53 @@ impl Peers {
     /// belongs. A peer that is genuinely gone is answered by the deadline, and
     /// its pump keeps trying to reconnect meanwhile.
     pub async fn send(&self, frame: Frame) -> Result<(), Frame> {
-        let target = frame.envelope.target.clone();
-        let sender = self.connection(&target).await;
-        match sender.send(frame).await {
+        self.offer(
+            frame.envelope.target.clone(),
+            Outbound {
+                frame,
+                relayed: false,
+            },
+        )
+        .await
+    }
+
+    /// Hands a frame to a peer that is not its target.
+    ///
+    /// Used when the target could not be reached and the chain names somewhere
+    /// the caller was demonstrably talking to. The envelope is untouched: the
+    /// target still says who this is for, so the agent it lands on judges it as
+    /// a frame for somewhere else and forwards it, which is the relay it
+    /// already does for any frame not addressed to it. Nothing new is taught to
+    /// the receiving side.
+    async fn relay(&self, through: Address, frame: Frame) -> Result<(), Frame> {
+        self.offer(
+            through,
+            Outbound {
+                frame,
+                relayed: true,
+            },
+        )
+        .await
+    }
+
+    async fn offer(&self, to: Address, outbound: Outbound) -> Result<(), Frame> {
+        let sender = self.connection(&to).await;
+        match sender.send(outbound).await {
             Ok(()) => Ok(()),
             // The pump retired between being handed out and being used. That
             // means idle, not gone, so the frame gets a fresh connection —
             // turning it into a refusal would let idleness lose work.
             Err(returned) => {
-                let sender = self.connection(&target).await;
-                sender.send(returned.0).await.map_err(|error| error.0)
+                let sender = self.connection(&to).await;
+                sender
+                    .send(returned.0)
+                    .await
+                    .map_err(|error| error.0.frame)
             }
         }
     }
 
-    async fn connection(&self, target: &Address) -> mpsc::Sender<Frame> {
+    async fn connection(&self, target: &Address) -> mpsc::Sender<Outbound> {
         let mut peers = self.inner.lock().await;
         if let Some(existing) = peers.get(target)
             && !existing.is_closed()
@@ -105,9 +152,13 @@ impl Peers {
         tokio::spawn(pump(
             target.clone(),
             receiver,
+            // Weak on purpose. A pump holding the map would keep it alive, and
+            // the map holds every pump's sender: the cycle would outlive the
+            // agent and take a task and a socket per peer with it.
             Arc::downgrade(&self.inner),
             sender.clone(),
             self.idle,
+            self.own.clone(),
         ));
         sender
     }
@@ -125,12 +176,32 @@ impl Peers {
 /// frame for that address. Frames already written are not replayed: they may
 /// have arrived, and a duplicate hop is worse than a lost one the deadline
 /// will answer for.
-async fn pump(
+/// Boxed rather than an `async fn`, and that is not a style choice.
+///
+/// A pump that cannot deliver hands the frame to another peer, which opens
+/// another pump — so this function and the one that opens connections each
+/// reach the other. Two opaque `impl Future` types whose auto traits depend on
+/// one another cannot be resolved, and the compiler says only that this one is
+/// not `Send`. Naming the type breaks the loop: past the box the answer is
+/// declared rather than inferred.
+fn pump(
     target: Address,
-    mut frames: mpsc::Receiver<Frame>,
-    peers: Weak<Mutex<HashMap<Address, mpsc::Sender<Frame>>>>,
-    mine: mpsc::Sender<Frame>,
+    frames: mpsc::Receiver<Outbound>,
+    peers: Weak<Mutex<HashMap<Address, mpsc::Sender<Outbound>>>>,
+    mine: mpsc::Sender<Outbound>,
     idle: Duration,
+    own: Address,
+) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    Box::pin(pumping(target, frames, peers, mine, idle, own))
+}
+
+async fn pumping(
+    target: Address,
+    mut frames: mpsc::Receiver<Outbound>,
+    peers: Weak<Mutex<HashMap<Address, mpsc::Sender<Outbound>>>>,
+    mine: mpsc::Sender<Outbound>,
+    idle: Duration,
+    own: Address,
 ) {
     let mut live: Option<Live> = None;
     loop {
@@ -145,9 +216,10 @@ async fn pump(
                 continue;
             }
         };
-        let Ok(bytes) = frame::encode(&frame.envelope, &frame.body) else {
+        let Ok(bytes) = frame::encode(&frame.frame.envelope, &frame.frame.body) else {
             continue;
         };
+        let mut sent = false;
         for attempt in 0..2 {
             // A peer that went away leaves a socket that still accepts a write
             // into its buffer, so the first frame after a restart is lost
@@ -159,14 +231,58 @@ async fn pump(
                 break;
             };
             if connection.writer.write_all(&bytes).await.is_ok() {
+                sent = true;
                 break;
             }
             live = None;
-            if attempt == 1 {
-                eprintln!("P4_AGENT_SEND_FAILED target={target}");
-            }
+            let _ = attempt;
+        }
+        if !sent {
+            hand_on(&target, frame, &peers, idle, &own).await;
         }
     }
+}
+
+/// What to do with a frame this peer could not take.
+///
+/// It used to be a line on stderr and a drop. For a hop that is survivable —
+/// the deadline answers it, and the caller learns the request failed. For a
+/// reply it is not: a reply is the answer itself, and losing it looks to
+/// whoever asked exactly like a request that never finished, on a fleet where
+/// the work was in fact done.
+///
+/// So the chain gets read. Its first link is the stage the caller sent the work
+/// to, which makes it an agent the caller was connected to — the frame goes
+/// there and that agent forwards it, using the same judgement it applies to any
+/// frame not addressed to it. This is the topology stated plainly: a node
+/// reports to its agent, and an agent that the caller is not connected to hands
+/// the answer to one that is.
+///
+/// Only once. A relay that failed is not relayed again: the chain would name
+/// the same link, and the frame would go round for as long as the process
+/// lives.
+async fn hand_on(
+    target: &Address,
+    outbound: Outbound,
+    peers: &Weak<Mutex<HashMap<Address, mpsc::Sender<Outbound>>>>,
+    idle: Duration,
+    own: &Address,
+) {
+    let through = match outbound.relayed {
+        true => None,
+        false => outbound.frame.envelope.relay_home(own),
+    };
+    let (Some(through), Some(inner)) = (through, peers.upgrade()) else {
+        eprintln!("P4_AGENT_SEND_FAILED target={target} relayed={}", outbound.relayed);
+        return;
+    };
+    eprintln!("P4_AGENT_RELAYING target={target} through={through}");
+    let peers = Peers {
+        inner,
+        idle,
+        own: own.clone(),
+    };
+    let _ = peers.relay(through, outbound.frame).await;
 }
 
 /// Lets a silent peer go, and says whether it did.
@@ -178,9 +294,9 @@ async fn pump(
 /// traffic: the entry must still be this pump's channel, and that channel must
 /// be empty.
 async fn retire(
-    peers: &Weak<Mutex<HashMap<Address, mpsc::Sender<Frame>>>>,
+    peers: &Weak<Mutex<HashMap<Address, mpsc::Sender<Outbound>>>>,
     target: &Address,
-    mine: &mpsc::Sender<Frame>,
+    mine: &mpsc::Sender<Outbound>,
 ) -> bool {
     let Some(peers) = peers.upgrade() else {
         return true;

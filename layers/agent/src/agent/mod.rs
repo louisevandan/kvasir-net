@@ -59,13 +59,13 @@ impl Agent {
     ) -> (Arc<Self>, Receiver, Arc<Semaphore>) {
         let (queue, receiver, in_flight) = channel(lanes, budget);
         let agent = Arc::new(Self {
+            peers: Peers::new(own.clone()),
             own,
             forwarded: AtomicUsize::new(0),
             consumed: AtomicUsize::new(0),
             to_nodes: AtomicUsize::new(0),
             unrouted: AtomicUsize::new(0),
             queue,
-            peers: Peers::default(),
             nodes: Mutex::new(HashMap::new()),
             continuations: Continuations::default(),
             duties,

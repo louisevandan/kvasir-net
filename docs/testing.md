@@ -124,13 +124,13 @@ at which step a frame stopped existing.
 
 ## What the suite is, file by file
 
-324 tests. The count matters less than the split: the levels catch different
+353 tests. The count matters less than the split: the levels catch different
 things, and three defects in this layer survived every level but the fleet.
 
 | Where | Tests | What it holds |
 | --- | ---: | --- |
-| `p4-protocol` | 46 | Round trips, and refusal of every truncation, trailing byte and unknown tag. Address parsing, advertised-address resolution, chain advance and restart. |
-| `p4-agent-core` (unit) | 72 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement. |
+| `p4-protocol` | 50 | Round trips, and refusal of every truncation, trailing byte and unknown tag. Address parsing, advertised-address resolution, chain advance and restart, and the route home a reply falls back on: the chain's first link, never the target that just failed and never this agent. |
+| `p4-agent-core` (unit) | 74 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement, and the relay: an undeliverable frame arrives at the chain's first link, and a relay that fails is the end of it rather than the start of a loop. |
 | `p4-service` (unit) | 32 | Message encoding with explicit tags, the payload seam, the registry, the machine and status snapshots. |
 | `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. |
 | `p4-adapter` | 9 | The contract's own small logic, including which id a fork leaves state under. |

@@ -1,7 +1,13 @@
 use super::*;
-use p4_protocol::{Envelope, QueueClass, Recipient};
+use p4_protocol::envelope::chain::{Chain, Link};
+use p4_protocol::{Envelope, NodeId, QueueClass, Recipient};
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
+
+/// This agent, for the relay check that never picks itself.
+fn here() -> Address {
+    Address::tcp("127.0.0.1", 1)
+}
 
 fn frame(target: Address, route: &str) -> Frame {
     Frame {
@@ -48,7 +54,7 @@ fn frames_for_one_peer_share_a_single_connection() {
             seen
         });
 
-        let peers = Peers::default();
+        let peers = Peers::new(here());
         let target = Address::tcp("127.0.0.1", port);
         for index in 0..3 {
             peers
@@ -68,7 +74,7 @@ fn a_peer_that_never_answers_does_not_block_the_caller() {
     // Sending must return whether or not anyone is there; the deadline is what
     // answers for an unreachable machine, not a stalled worker.
     runtime().block_on(async {
-        let peers = Peers::default();
+        let peers = Peers::new(here());
         let nowhere = Address::tcp("127.0.0.1", 1);
         assert!(peers.send(frame(nowhere, "r")).await.is_ok());
     });
@@ -77,7 +83,7 @@ fn a_peer_that_never_answers_does_not_block_the_caller() {
 #[test]
 fn each_peer_gets_its_own_connection() {
     runtime().block_on(async {
-        let peers = Peers::default();
+        let peers = Peers::new(here());
         for port in [1u16, 2, 3] {
             peers
                 .send(frame(Address::tcp("127.0.0.1", port), "r"))
@@ -118,7 +124,7 @@ async fn a_silent_peer_is_retired_rather_than_held_forever() {
         }
     });
 
-    let peers = Peers::with_idle(Duration::from_millis(80));
+    let peers = Peers::with_idle(here(), Duration::from_millis(80));
     let target = Address::tcp("127.0.0.1", bound.port());
     peers.send(frame(target.clone(), "r1")).await.unwrap();
     assert_eq!(peers.connected().await, 1, "the peer is held while in use");
@@ -149,7 +155,7 @@ async fn a_frame_after_a_retirement_still_arrives() {
         }
     });
 
-    let peers = Peers::with_idle(Duration::from_millis(60));
+    let peers = Peers::with_idle(here(), Duration::from_millis(60));
     let target = Address::tcp("127.0.0.1", bound.port());
     peers.send(frame(target.clone(), "before")).await.unwrap();
     tokio::time::sleep(Duration::from_millis(250)).await;
@@ -184,7 +190,7 @@ async fn a_peer_in_constant_use_is_kept() {
         }
     });
 
-    let peers = Peers::with_idle(Duration::from_millis(40));
+    let peers = Peers::with_idle(here(), Duration::from_millis(40));
     let target = Address::tcp("127.0.0.1", bound.port());
     for index in 0..20 {
         peers
@@ -198,4 +204,102 @@ async fn a_peer_in_constant_use_is_kept() {
         1,
         "traffic kept the connection alive"
     );
+}
+
+/// A chain whose first link is `through`, which is the route home.
+fn chained(target: Address, through: Address) -> Frame {
+    let link = |address: Address, node: &str| Link {
+        address,
+        node: NodeId::from(node),
+        binding: "b".into(),
+        generation: 1,
+    };
+    let mut carrier = frame(target.clone(), "r");
+    carrier.envelope.chain = Some(
+        Chain::new(vec![link(through, "n0"), link(target, "n1")]).expect("a chain"),
+    );
+    carrier
+}
+
+/// A frame that cannot reach its target goes to the agent the caller was
+/// talking to, rather than to stderr.
+///
+/// This is the reporting topology stated plainly: a node reports to its agent,
+/// and an agent the caller is not connected to hands the answer to one that is.
+/// Before this, an undeliverable reply was one line of log and a drop — which
+/// to whoever asked looks exactly like a request that never finished, on a
+/// fleet where the work had in fact been done.
+#[test]
+fn a_reply_that_cannot_reach_the_caller_goes_home_through_the_chain() {
+    runtime().block_on(async {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = TcpListener::from_std(listener).unwrap();
+        let relay = Address::tcp("127.0.0.1", listener.local_addr().unwrap().port());
+        let arrived = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 4096];
+            match stream.read(&mut buffer).await {
+                Ok(0) | Err(_) => 0,
+                Ok(bytes) => count_frames(&buffer[..bytes]),
+            }
+        });
+
+        // Port 1: nothing is listening, and nothing will be.
+        let unreachable = Address::tcp("127.0.0.1", 1);
+        let peers = Peers::new(here());
+        peers
+            .send(chained(unreachable, relay))
+            .await
+            .expect("handed to the pump");
+
+        let seen = tokio::time::timeout(Duration::from_secs(10), arrived)
+            .await
+            .expect("the relay was reached")
+            .expect("the listener ran");
+        assert_eq!(seen, 1, "the frame arrived at the chain's first link");
+    });
+}
+
+/// A relay that fails is the end of it.
+///
+/// Nothing is listening anywhere here, so both the target and the relay fail.
+/// What is being checked is that this stops: without the flag the chain would
+/// name the same first link again and the frame would go round for as long as
+/// the process lives. The observable is the peer count — the target and one
+/// relay — reached and then held rather than climbing.
+#[test]
+fn a_relay_that_fails_is_the_end_of_it() {
+    runtime().block_on(async {
+        let peers = Peers::new(here());
+        peers
+            .send(chained(
+                Address::tcp("127.0.0.1", 1),
+                Address::tcp("127.0.0.1", 2),
+            ))
+            .await
+            .expect("handed to the pump");
+
+        // Waited for rather than slept past: how long a refused connection
+        // takes is the operating system's business, and a fixed pause is a
+        // test that passes on the machine it was written on.
+        let settled = tokio::time::timeout(Duration::from_secs(10), async {
+            while peers.connected().await < 2 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(settled.is_ok(), "the relay was never attempted");
+
+        // And it stays there. A frame going round would keep finding the same
+        // two peers, so the count alone cannot tell — but a third address
+        // never appears either way, and what a loop would do is never finish
+        // opening this one.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            peers.connected().await,
+            2,
+            "the target and one relay, and nothing beyond that"
+        );
+    });
 }

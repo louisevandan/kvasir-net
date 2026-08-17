@@ -153,6 +153,26 @@ because a dead socket accepts a write into its buffer. A silent peer retires
 after an idle window and removes its own entry under the map's lock — without
 that the map was append-only in every address ever seen.
 
+A frame that still cannot be written goes home through the chain rather than to
+stderr. Its first link is the stage the caller sent the work to, so it is an
+agent the caller was connected to; the envelope is untouched, so the agent it
+lands on judges it as a frame for somewhere else and forwards it, which is what
+it already does for anything not addressed to it. Nothing is taught to the
+receiving side. This is the reporting topology stated plainly: a node reports to
+its agent, and an agent the caller is not connected to hands the answer to one
+that is.
+
+Once only. A flag travels beside the frame inside the transport — never on the
+wire — because a relay that failed would name the same first link again and go
+round for as long as the process lives. Two guards on top of that: the route
+home is never the target that just failed, and never this agent itself.
+
+`pump` returns a boxed future rather than being an `async fn`, and that is not
+style. It and `connection` each reach the other, so their opaque `impl Future`
+types have auto traits depending on one another; the compiler cannot resolve
+that and reports only that the pump is not `Send`. Naming the type is what
+breaks the loop.
+
 ### `continuation`
 
 `register`, `resolve`, `forget`, `outstanding`. A response path pinned to a call

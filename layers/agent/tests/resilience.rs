@@ -248,7 +248,10 @@ fn a_long_mixed_run_leaves_nothing_behind() {
 #[test]
 fn peers_that_go_quiet_are_released() {
     runtime().block_on(async {
-        let peers = p4_agent_core::transport::outbound::Peers::with_idle(Duration::from_millis(60));
+        let peers = p4_agent_core::transport::outbound::Peers::with_idle(
+            p4_protocol::Address::tcp("127.0.0.1", 1),
+            Duration::from_millis(60),
+        );
         let sink = start(Arc::new(Silent)).await;
 
         // One address is real; the rest are gone the moment they are used,
