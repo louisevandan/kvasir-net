@@ -74,6 +74,20 @@ async fn overlap(stages: usize, arrivals: usize, ceiling: usize, tokens: u32) ->
     let wall = began.elapsed();
 
     let computed: Duration = mocks.iter().map(|mock| mock.busy()).sum();
+    // Per stage, what a card would show: busy over busy-plus-the-gaps between
+    // its own hops. The ramp before the first hop and the drain after the last
+    // are not in it, because the question is whether a stage rests while work
+    // is queued behind it.
+    for (position, mock) in mocks.iter().enumerate() {
+        let busy = mock.busy().as_secs_f64();
+        let idle = mock.idle().as_secs_f64();
+        println!(
+            "    stage {position}: busy {:.2}s idle {:.2}s -> {:.0}% occupied",
+            busy,
+            idle,
+            100.0 * busy / (busy + idle).max(f64::MIN_POSITIVE)
+        );
+    }
     computed.as_secs_f64() / wall.as_secs_f64().max(f64::MIN_POSITIVE)
 }
 
@@ -81,17 +95,22 @@ async fn overlap(stages: usize, arrivals: usize, ceiling: usize, tokens: u32) ->
 #[test]
 fn two_stages_overlap() {
     runtime().block_on(async {
-        let ratio = overlap(2, 32, 8, 3).await;
+        let ratio = overlap(2, 128, 8, 3).await;
         println!("two stages: stage compute / wall = {ratio:.2}");
         assert!(
-            ratio > 1.2,
+            ratio > 1.8,
             "two stages managed {ratio:.2} of the wall clock between them, \
              which is one stage's worth: they took turns"
         );
     });
 }
 
-/// And three, where there is more to lose.
+/// And three, under arrival that keeps coming.
+///
+/// The arrivals are many because the measure counts the whole run, including
+/// the start where the later stages have nothing yet and the end where the
+/// earlier ones are done. That is real time, and on a short run it is most of
+/// it — which is what makes a chain that never rests read as 76% efficient.
 ///
 /// The ceiling is deliberately below the arrivals. A node given its whole
 /// queue in one window hands the next stage everything at once and then has
@@ -100,12 +119,11 @@ fn two_stages_overlap() {
 #[test]
 fn three_stages_overlap() {
     runtime().block_on(async {
-        let ratio = overlap(3, 48, 8, 3).await;
+        let ratio = overlap(3, 192, 8, 3).await;
         println!("three stages: stage compute / wall = {ratio:.2}");
         assert!(
-            ratio > 1.4,
-            "three stages managed {ratio:.2} of the wall clock between them, \
-             so at least one was idle while the others worked"
+            ratio > 2.7,
+            "three stages managed {ratio:.2} of the wall clock between them,              so one was idle while the others worked"
         );
     });
 }
@@ -126,6 +144,35 @@ fn a_ceiling_wider_than_the_work_costs_the_overlap() {
             split > whole,
             "a window bounded below the arrivals ({split:.2}) should overlap \
              more than one that swallows them ({whole:.2})"
+        );
+    });
+}
+
+/// The shortfall is the fill and the empty, not a stage resting.
+///
+/// Stage compute over wall clock counts the whole run, including the start
+/// where the later stages have nothing yet and the end where the earlier ones
+/// are done. That is real time and a short run is mostly made of it — which is
+/// why the ratio alone reads as an efficiency problem when the stages are in
+/// fact almost never idle.
+///
+/// So the same chain is run twice, differing only in how much work arrives. If the shortfall were stages resting it would not move; it is the
+/// ramp, so a longer run buries it.
+#[test]
+fn a_longer_run_approaches_the_number_of_stages() {
+    runtime().block_on(async {
+        let brief = overlap(3, 24, 8, 3).await;
+        let sustained = overlap(3, 192, 8, 3).await;
+        println!("three stages: brief={brief:.2} sustained={sustained:.2} of 3.00");
+        assert!(
+            sustained > brief,
+            "a longer run should bury the ramp: brief {brief:.2}, \
+             sustained {sustained:.2}"
+        );
+        assert!(
+            sustained > 2.8,
+            "with the ramp amortised the stages should be nearly always \
+             computing, and this measured {sustained:.2} of 3.00"
         );
     });
 }

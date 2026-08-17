@@ -42,6 +42,15 @@ pub struct Mock {
     /// Every window width this adapter was given, so a test can prove the node
     /// batched rather than serialised.
     widths: Mutex<Vec<usize>>,
+    /// Nanoseconds this node had nothing in the adapter between two hops.
+    ///
+    /// Only the gaps between hops, so the ramp before the first and the drain
+    /// after the last are excluded: what is being asked is whether a stage
+    /// rests while work is queued behind it, not whether a chain fills and
+    /// empties. Busy over busy-plus-idle is the utilisation a card would show.
+    idle: AtomicU64,
+    /// When the last hop ended, for measuring that gap.
+    rested: Mutex<Option<std::time::Instant>>,
     /// Nanoseconds spent inside a hop, so a chain can be asked the question the
     /// old runtime measured: stage compute over wall clock. Below one, the
     /// stages took turns; above it, they worked at the same time. It is the
@@ -96,6 +105,8 @@ impl Mock {
             generation: AtomicU64::new(0),
             widths: Mutex::new(Vec::new()),
             busy: AtomicU64::new(0),
+            idle: AtomicU64::new(0),
+            rested: Mutex::new(None),
             running: AtomicUsize::new(0),
             peak_running: AtomicUsize::new(0),
             produced: Mutex::new(HashMap::new()),
@@ -111,6 +122,14 @@ impl Mock {
     /// turns stays at one however much work is queued behind it.
     pub fn busy(&self) -> std::time::Duration {
         std::time::Duration::from_nanos(self.busy.load(Ordering::Relaxed))
+    }
+
+    /// How long this adapter had nothing to do between hops.
+    ///
+    /// Beside `busy`, this is the utilisation of one stage: a chain that never
+    /// rests has an idle near zero however long its queue is.
+    pub fn idle(&self) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.idle.load(Ordering::Relaxed))
     }
 
     /// Widths of every hop this adapter ran.
@@ -158,6 +177,12 @@ impl Mock {
 
     fn hop(&self, hop: Hop, events: &dyn EventSink) {
         let began = std::time::Instant::now();
+        if let Some(ended) = self.rested.lock().expect("rest lock").take() {
+            self.idle.fetch_add(
+                began.duration_since(ended).as_nanos() as u64,
+                Ordering::Relaxed,
+            );
+        }
         self.widths
             .lock()
             .expect("width log lock")
@@ -180,6 +205,7 @@ impl Mock {
         // its stages were computing, and bookkeeping is not computing.
         self.busy
             .fetch_add(began.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        *self.rested.lock().expect("rest lock") = Some(std::time::Instant::now());
 
         if self.profile.fault == Fault::Hop {
             events.raise(Event::Failed {
