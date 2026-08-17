@@ -90,15 +90,24 @@ fn a_control_message_has_no_chain_to_walk() {
     assert_eq!(envelope.to_next_lap(), None);
 }
 
+/// The chain used to be cleared here, on the reading that a reply is not still
+/// traversing. True, and it threw away the only record of how the answer got
+/// to where it is — so an agent that could not reach the caller had nothing to
+/// fall back on. It is kept now, and this test says so in the place that used
+/// to say the opposite.
 #[test]
-fn a_reply_goes_to_whoever_asked_and_carries_no_chain_onward() {
+fn a_reply_goes_to_whoever_asked_and_keeps_the_way_it_came() {
     let reply = inference(3).to_reply().expect("a reply address was given");
     assert_eq!(reply.target, Address::tcp("10.0.0.1", 19001));
     assert_eq!(reply.recipient, Recipient::Agent);
     assert_eq!(reply.lane, QueueClass::Response);
-    // Nothing further replies to a reply, and it is not still traversing.
+    // Nothing further replies to a reply.
     assert_eq!(reply.reply_to, None);
-    assert_eq!(reply.chain, None);
+    assert_eq!(
+        reply.chain,
+        inference(3).chain,
+        "every link is an address that demonstrably reached this machine"
+    );
 }
 
 #[test]

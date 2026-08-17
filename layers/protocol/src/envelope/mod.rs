@@ -89,8 +89,22 @@ impl Envelope {
             target: reply_to,
             recipient: Recipient::Agent,
             lane: QueueClass::Response,
+            // Nothing more is expected of this frame, so nobody should reply
+            // to a reply.
             reply_to: None,
-            chain: None,
+            // The chain stays. It was thrown away here, and with it the only
+            // record of how this answer got to where it is: an agent that
+            // cannot reach the caller had nothing to fall back on, because the
+            // path it arrived by was gone. Every link in it is an address that
+            // demonstrably reached this machine — it sent the work — so the
+            // chain read backwards is a route home that needs no routing table
+            // and no agent knowing the shape of the fleet.
+            //
+            // It costs about two hundred bytes on a frame that carries one
+            // token. Measured against a link running at two to seven per cent
+            // while generating, that is not a trade worth the alternative,
+            // which is a monitoring path that exists only when the caller
+            // happens to be directly reachable.
             ..self.clone()
         })
     }
