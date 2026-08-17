@@ -3,7 +3,7 @@
 This directory is the only Linker-owned patch boundary for the official
 `ggml-org/llama.cpp` commit recorded in `manifest.json`.
 
-- `apps/p4/layers/adapters/pipeline/upstream` remains a pristine official submodule.
+- `apps/p4/layers/adapters/llamacpp/upstream` remains a pristine official submodule.
 - Stock RPC/server builds compile that submodule directly.
 - Pipeline builds run `apps/p4/layers/adapters/pipeline/scripts/prepare-pipeline-upstream.mjs`, which creates
   a generated worktree under ignored `.cache/`, verifies every patch hash, and
