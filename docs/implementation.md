@@ -223,27 +223,29 @@ other shape — a model split across machines with P4 owning the boundary — an
 shares nothing with this but the interface. Two arrangements of one backend,
 which is why they are folders under it.
 
-vLLM and SGLang are registered against this same implementation because all
-three copied one HTTP from OpenAI: a model list and a streamed chat completion.
-That is the whole coupling, so it is one adapter under three names rather than
-three copies of one file diverging, and the names are real registrations rather
-than a claim in a document.
+vLLM and SGLang are also registered against this implementation, and **that is
+being undone.** Three backends answering a similar wire was taken as one
+coupling worth writing once. It is not: adapters diverge as their backends
+move, and a shared implementation means fixing one and breaking another.
 
-They are not equal tenants, and the folder says so. It sat at
-`adapters/openai/` for a while on the strength of the shared surface, which
-read as though the agent offered an OpenAI-compatible API — it does not, and a
-service API is OUTER's concern rather than this layer's. Two things differ per
-backend and both point the same way: vLLM refuses a model name it does not
-serve, and only llama.cpp can be *started* here, because `launch` composes
-`llama-server` and `ggml-rpc-server` flags and refuses to guess at anything
-else's.
+The evidence is already in this crate. Two branches exist for what was supposed
+to be one thing — vLLM alone checks the model name, and `launch` refuses vLLM
+and SGLang outright, so the capability the operating guidelines make mandatory,
+starting and killing the backend, works for exactly one of its three tenants.
+The other two get an error where the feature should be. Each backend is getting
+its own adapter; llama.cpp leaves first, and the remaining two separate at that
+moment rather than being left as a two-tenant crate.
+
+None of this reaches the agent. **The agent's only surface is P4 over a
+socket.** What an adapter does with its backend — HTTP, a pipe, a library call
+— is behind the boundary and invisible above it.
 
 | Module | Holds |
 | --- | --- |
 | `endpoint` | The least HTTP that reaches a backend, on the standard library: request framing, chunked and length-delimited bodies, SSE lines, and a status check. A non-2xx is a failure carrying the body's message — read as a stream instead, a `503 Loading model` looked like a request that completed having produced nothing. |
-| `chat` | The OpenAI-compatible surface: building a request, and reading a chunk. Reads `delta.content`, then `reasoning_content` when content is null, then the non-streamed shapes. A reasoning model streams its thinking under the second key, and reading only the first dropped every token of an answer. |
+| `chat` | This backend's completion wire: building a request, and reading a chunk. Reads `delta.content`, then `reasoning_content` when content is null, then the non-streamed shapes. A reasoning model streams its thinking under the second key, and reading only the first dropped every token of an answer. |
 | `plan` | What a load's plan means here: endpoint, model name, patience, and — for a model split across devices — the role this node holds, its device, what it claims of it, and the shares held elsewhere. Records whether the plan actually named a model, because a default cannot be told from a choice and one backend checks. Opaque everywhere else. |
-| `flavour` | Which of the three servers is behind the surface, and the one thing that follows: vLLM matches a request's `model` against what it serves and answers 404 to anything else, so its load asks and the other two are not charged the round trip. A field here that could be a plan key would be the adapter knowing a backend for no reason. |
+| `flavour` | Which of the three servers is behind it, and the one thing that follows — a distinction that disappears when the three become three adapters: vLLM matches a request's `model` against what it serves and answers 404 to anything else, so its load asks and the other two are not charged the round trip. A field here that could be a plan key would be the adapter knowing a backend for no reason. |
 | `session` | The impedance mismatch, and the reason it has its own file. P4 generates by lapping — a hop reports one token and the request comes round again — while the backend streams a whole completion down one connection. Asking for one token per hop would re-prefill on every lap. So the completion is requested once, read by a thread into a channel, and each hop takes the next token. The session counts what it has delivered, because the backend is the only thing that knows how far a sequence has got. |
 | `launch` | What a placement becomes on one server's command line, and the process that results. `arguments` is a pure function of a plan and can be checked exhaustively without starting anything — which is the half that goes quietly wrong, since a batch too small to hold one prompt makes a server admit prefills one at a time and nothing about that looks like a mistake from outside. `process` waits, kills, and starts windowless. |
 | `load` | Everything a load has to get right and an unload has to let go of, separated because it changes for different reasons than driving a completion: a backend gaining a flag, a machine gaining a card, or somebody changing their mind about who owns a running server. Every failure arrives at one place, which is where a started backend gets killed. |

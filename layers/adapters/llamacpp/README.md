@@ -11,19 +11,26 @@ sibling of `mock/` called `pipeline` read like a third backend; it was the same
 llama.cpp arranged differently, and the clone it patches belongs to llama.cpp
 rather than to one arrangement of it.
 
-## vLLM and SGLang are registered from `served/`
+## vLLM and SGLang are registered here, and should not be
 
-All three copied one HTTP surface from OpenAI, so `served/` is registered under
-three names rather than copied into three crates. It briefly lived at
-`adapters/openai/` on that reasoning and the name was wrong: it read as though
-the agent offered an OpenAI-compatible API. It does not — OUTER is a
-bidirectional socket, and a service API is OUTER's concern. What sits here is
-llama.cpp's adapter that two other servers happen to fit.
+`served/` carries three names because three backends answer a similar wire, and
+that was taken as one coupling worth writing once. It was a mistake. Adapters
+diverge as their backends move; sharing one implementation across them means
+fixing one and breaking another.
 
-They are not equal tenants. `flavour` holds what differs, and starting a
-backend is llama.cpp's alone: `launch` composes `llama-server` and
-`ggml-rpc-server` flags and refuses the other two rather than guessing at a
-command line for a server these machines have never run.
+The divergence did not wait. Two branches already exist — vLLM alone checks the
+model name, and `launch` refuses vLLM and SGLang outright, so **starting and
+killing the backend, which the operating guidelines make mandatory, works for
+one tenant of three.** The other two get an error where the capability should
+be. Apparent duplication would have been cheaper than that.
+
+Each backend gets its own adapter. llama.cpp leaves first, into `adapter/`
+beside `origin/`; vLLM and SGLang separate at that moment rather than being left
+behind as a two-tenant crate.
+
+None of this is visible above the boundary. The agent speaks P4 over a socket
+and nothing else — no HTTP, and no service API of any kind. What an adapter does
+privately with its backend is that adapter's business.
 
 ## The cost of each
 

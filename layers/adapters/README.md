@@ -58,9 +58,12 @@ The previous adapters spoke to their backends over HTTP. Their Rust is gone
 | Streamed inference | Upgrade `/api/pipeline-inference-stream`, protocol `linker-pipeline-inference-stream-v1` |
 
 **Stock llama-server**: `POST /v1/chat/completions` with
-`Accept: text/event-stream`, answered as SSE. vLLM and SGLang serve the same
-OpenAI-compatible surface, which is why one self-contained adapter shape covers
-all three.
+`Accept: text/event-stream`, answered as SSE.
+
+That is one adapter's private business with one backend. It says nothing about
+this layer: the agent speaks P4 over a socket and nothing else. Three backends
+answering a similar wire is not a reason to give them one implementation —
+they diverge as they move, and each is getting its own.
 
 Reservation figures came from `"reserved_bytes"` in the native process logs.
 Report them per stage: a model spread over layer ranges finishes when its

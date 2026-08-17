@@ -199,11 +199,11 @@ The abstract contract is therefore only:
    apply the content.
 
 The current standard service vocabulary exposes prompt, max_tokens, and options
-as separate fields, while the served adapter merges options into its
-OpenAI-compatible request. That is a service/adapter implementation choice, not
-an abstract P4 requirement. If OUTER sends a single serialized generation
-request, the service layer must preserve that representation instead of
-inventing a second P4-owned schema.
+as separate fields, while an adapter may merge options into whatever its backend
+accepts. That is an adapter implementation choice behind the boundary, not an
+abstract P4 requirement, and nothing about it reaches this protocol. If OUTER
+sends a single serialized generation request, the service layer must preserve
+that representation instead of inventing a second P4-owned schema.
 
 MTP/speculative decoding, grammar, sampling, stop rules, tokenizer/template
 selection, and launch switches are consequently OUTER-to-adapter contracts.

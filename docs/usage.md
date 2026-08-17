@@ -186,8 +186,10 @@ are different claims.
 
 ## Pointing a node at vLLM or SGLang
 
-The same adapter, under its own name. Both serve the OpenAI-compatible surface,
-so a plan is the same shape and the chain is one link:
+Registered under their own names against the same adapter today, which is a
+transitional state rather than a design: each backend is getting its own
+adapter, because two that look alike now diverge as their servers move. A plan
+is the same shape and the chain is one link:
 
 ```bash
 P4_DRIVE_PLAN=endpoint:127.0.0.1:8000 p4-drive 0.0.0.0:52000 127.0.0.1:52001 32 500 vllm 127.0.0.1:52000
