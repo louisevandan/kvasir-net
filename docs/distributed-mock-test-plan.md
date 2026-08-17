@@ -120,8 +120,9 @@ transport와 planner 입력 계약만 증명하며, 실제 GGUF metadata/tensor 
 ### Q-01 장기 도착과 메모리 압박
 
 생산 속도를 mock 처리 속도보다 빠르게 유지하고 10분 이상 실행한다.
-request 수, frame 수, queue depth, process working set을 10초 간격으로
-기록한다.
+`run-distributed-mock.ps1`는 실행 중인 각 worker agent를 1초 간격으로
+샘플링해 request/frame 결과와 함께 queue depth, process working set
+min/peak/delta를 manifest에 기록한다.
 
 판정:
 
@@ -262,5 +263,10 @@ queue/event/outbox는 무제한으로 증가하지 않았다. 최신 release를 
 동일한 SSH 양방향 forwarding 경로로 32 requests × 8 tokens를 재실행했고
 `completed=32`, `failed=0`, `unanswered=0`, stream order 통과, 581 ms,
 441 frames/s, peak node 19, peak adapter 8, peak main lane 1을 확인했다.
-이 결과는 RAM 상한 자체를 증명하는
-것은 아니므로 process working-set 샘플을 포함한 별도 장기 검증이 필요하다.
+최종 release의 10분 장기 local run은 60000 requests × 1 token을 595622 ms
+동안 처리했다. `completed=60000`, `failed=0`, `unanswered=0`, stream order
+통과, peak node queue 4, peak in-adapter 4, peak main lane 3이었다. runner는
+579개 working-set 샘플을 수집했고 min 9,314,304 B, peak 32,112,640 B,
+delta 22,798,336 B를 manifest에 기록했다. 요청 수에 비례해 무한히 증가하는
+양상은 관찰되지 않았지만 mock adapter의 결과이며, 실제 GPU
+memory/allocator 상한 검증을 대체하지 않는다.

@@ -24,6 +24,10 @@ New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 
 $startedAgents = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 $startedDrivers = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
+$workerAgents = @{}
+$workingSetPeaks = @{}
+$workingSetMins = @{}
+$workingSetSamples = @{}
 
 try {
     $jobs = @()
@@ -34,6 +38,10 @@ try {
         $driver = "127.0.0.1:$($basePort + 2)"
         $workerDir = Join-Path $outputRoot "worker-$worker"
         New-Item -ItemType Directory -Force -Path $workerDir | Out-Null
+        $workerAgents[$worker] = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
+        $workingSetPeaks[$worker] = [uint64]0
+        $workingSetMins[$worker] = [uint64]::MaxValue
+        $workingSetSamples[$worker] = 0
 
         foreach ($stage in @($stage0, $stage1)) {
             $port = $stage.Split(':')[1]
@@ -44,6 +52,7 @@ try {
                 -RedirectStandardError (Join-Path $workerDir "agent-$port.err.log") `
                 -WindowStyle Hidden -PassThru
             $startedAgents.Add($agent)
+            $workerAgents[$worker].Add($agent)
         }
 
         $driverCommand = @"
@@ -63,7 +72,24 @@ exit `$LASTEXITCODE
         $jobs += [pscustomobject]@{ Worker = $worker; Driver = $driver; Stages = @($stage0, $stage1) }
     }
 
-    $startedDrivers | Wait-Process
+    while (@($startedDrivers | Where-Object { -not $_.HasExited }).Count -gt 0) {
+        foreach ($worker in 0..($Workers - 1)) {
+            $workingSet = [uint64]0
+            foreach ($agent in $workerAgents[$worker]) {
+                if ($agent.HasExited) { continue }
+                try {
+                    $agent.Refresh()
+                    $workingSet += [uint64]$agent.WorkingSet64
+                } catch [System.InvalidOperationException] {
+                    # The process can exit between HasExited and Refresh.
+                }
+            }
+            if ($workingSet -gt $workingSetPeaks[$worker]) { $workingSetPeaks[$worker] = $workingSet }
+            if ($workingSet -gt 0 -and $workingSet -lt $workingSetMins[$worker]) { $workingSetMins[$worker] = $workingSet }
+            $workingSetSamples[$worker]++
+        }
+        Start-Sleep -Milliseconds 1000
+    }
     $results = foreach ($job in $jobs) {
         $log = Join-Path $outputRoot "worker-$($job.Worker)\drive.log"
         $text = if (Test-Path -LiteralPath $log) { Get-Content -Raw -LiteralPath $log } else { '' }
@@ -74,6 +100,10 @@ exit `$LASTEXITCODE
             passed = $text -match '\[pass\] every request answered' -and
                 $text -match '\[pass\] every stream in order'
             log = $log
+            peak_working_set_bytes = $workingSetPeaks[$job.Worker]
+            min_working_set_bytes = $workingSetMins[$job.Worker]
+            working_set_delta_bytes = $workingSetPeaks[$job.Worker] - $workingSetMins[$job.Worker]
+            working_set_samples = $workingSetSamples[$job.Worker]
         }
     }
     $manifest = [pscustomobject]@{
