@@ -1,5 +1,41 @@
 # Runtime evidence
 
+## 2026-08-17: the placement that won on a pipeline does nothing on a wavefront
+
+This machine's record came partly from where the stages sat: the 4080 leading
+with sixteen layers against the 3090's twenty-four, worth 271.5 tok/s where an
+even split gave 213.8. The first stage carries the prefill and costs more per
+layer — 5.05 seconds against 3.0 — so it is given fewer of them and the two
+stages take the same time.
+
+That reasoning is sound and it does not apply to llama.cpp's own device split.
+Four GPUs over two machines, one 35B model, 64 sessions, every configuration
+otherwise identical:
+
+| Devices | Placement | Aggregate |
+| ---: | --- | ---: |
+| 2 | both local | 173.8 tok/s |
+| 4 | remote devices in the middle | 71.8 tok/s |
+| 4 | locals first, roughly even | 46.2 tok/s |
+| 4 | **4080 leading, a tenth of the layers** | **45.4 tok/s** |
+
+The 4080 held 5.7 GiB against a ceiling of 11, so the placement was what it was
+asked to be. It made no difference, and the ordering that ought to have been
+best measured worst.
+
+Because a layer split is not a pipeline. llama.cpp takes a cohort through its
+devices as one wavefront: device A computes its layers while B, C and D wait,
+then B, and so on. Dealing the layers differently changes which term of a sum
+is large; it cannot make two terms happen at once. Stage placement is worth
+something only where stages overlap, and here they do not — which is also why
+the same four cards idle at 0-3% while one of them works.
+
+The layer-dealing rule is worth keeping. It belongs to the runtime that
+pipelines, which is P4 owning the boundary, and the measurement of it is in
+`tests/pipelining.rs` rather than here: equal layers on unequal stages leave the
+stage behind waiting at 85% occupancy, and dealing by cost brings every stage
+above 97%.
+
 ## 2026-08-17: crossing a machine boundary costs 3x, and not for bandwidth
 
 Four GPUs over two machines: an RTX 4080 and an RTX 3090 here, two RTX 3090s on
