@@ -16,8 +16,8 @@
 //! adapter is checked against the behaviour, not against a brand.
 
 use p4_adapter::{Adapter, Event, EventSink, Hop, Load, Phase, Sequence, Work};
-use p4_openai::OpenAi;
-use p4_openai::flavour::Flavour;
+use p4_llamacpp_served::Served;
+use p4_llamacpp_served::flavour::Flavour;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
@@ -154,7 +154,7 @@ fn answer(mut stream: TcpStream, serving: &str, lists: bool) {
     let _ = stream.flush();
 }
 
-fn load(adapter: &OpenAi, seen: &Seen, plan: String) {
+fn load(adapter: &Served, seen: &Seen, plan: String) {
     adapter.start(
         Work::Load(Load {
             deployment: "d".into(),
@@ -165,7 +165,7 @@ fn load(adapter: &OpenAi, seen: &Seen, plan: String) {
     );
 }
 
-fn one_hop(adapter: &OpenAi, seen: &Seen) {
+fn one_hop(adapter: &Served, seen: &Seen) {
     adapter.start(
         Work::Hop(Hop {
             deployment: "d".into(),
@@ -187,7 +187,7 @@ fn one_hop(adapter: &OpenAi, seen: &Seen) {
 #[test]
 fn a_vllm_load_finds_out_what_the_server_is_serving() {
     let port = strict_server("Qwen/Qwen3-32B", true);
-    let adapter = OpenAi::new(Flavour::Vllm);
+    let adapter = Served::new(Flavour::Vllm);
     let seen = Seen::default();
     load(
         &adapter,
@@ -219,7 +219,7 @@ fn a_vllm_load_finds_out_what_the_server_is_serving() {
 #[test]
 fn a_named_model_is_not_replaced_by_what_the_server_lists() {
     let port = strict_server("chosen", true);
-    let adapter = OpenAi::new(Flavour::Vllm);
+    let adapter = Served::new(Flavour::Vllm);
     let seen = Seen::default();
     load(
         &adapter,
@@ -250,7 +250,7 @@ fn a_vllm_server_listing_nothing_refuses_the_load() {
     let port = strict_server("unused", false);
     let seen = Seen::default();
     load(
-        &OpenAi::new(Flavour::Vllm),
+        &Served::new(Flavour::Vllm),
         &seen,
         format!(r#"{{"endpoint":"127.0.0.1:{port}"}}"#),
     );
@@ -275,7 +275,7 @@ fn llamacpp_and_sglang_bind_against_a_server_that_lists_nothing() {
         let port = strict_server("default", false);
         let seen = Seen::default();
         load(
-            &OpenAi::new(flavour),
+            &Served::new(flavour),
             &seen,
             format!(r#"{{"endpoint":"127.0.0.1:{port}"}}"#),
         );

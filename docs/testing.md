@@ -134,7 +134,7 @@ things, and three defects in this layer survived every level but the fleet.
 | `p4-service` (unit) | 32 | Message encoding with explicit tags, the payload seam, the registry, the machine and status snapshots. |
 | `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. |
 | `p4-adapter` | 9 | The contract's own small logic, including which id a fork leaves state under. |
-| `p4-openai` (unit) | 41 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour, and which of the three backends insists on being told what it serves. |
+| `p4-llamacpp-served` (unit) | 41 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour, and which of the three backends insists on being told what it serves. |
 | `p4-link` | 7 | That a declared impairment is deterministic and irregular, and adds rather than replaces. |
 | `p4-agent` | 6 | That the registry carries what this build claims and refuses what it does not. |
 | `p4-drive` | 12 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. Plus reading a status snapshot: the three figures that matter, peaks that only rise, the deepest of several nodes, and a route named after a field not being read as one. |

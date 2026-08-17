@@ -2,13 +2,28 @@
 
 | Path | What it is |
 | --- | --- |
-| `staged/` | `Distribution::Staged`. Splits the model across machines with P4 owning the boundary between layer ranges, which needs llama.cpp internals it does not expose — so an ordered patch series, and the script that materialises a verified patched worktree. |
+| `served/` | `Distribution::Internal`. Crate `p4-llamacpp-served`. Stock `llama-server` over its HTTP surface — one process holding the whole model, one entry point, so a chain over it is one link. Starts and stops that process when the plan carries a `start`. |
+| `staged/` | `Distribution::Staged`. Splits the model across machines with P4 owning the boundary between layer ranges, which needs llama.cpp internals it does not expose — so an ordered patch series, and the script that materialises a verified patched worktree. The Rust adapter is not written. |
 | `upstream/` | llama.cpp's own repository, cloned by `npm run p4:upstream` and ignored by ours. Used only by `staged/`. |
 
 They are shapes rather than backends, which is why they share a folder. A
 sibling of `mock/` called `pipeline` read like a third backend; it was the same
 llama.cpp arranged differently, and the clone it patches belongs to llama.cpp
 rather than to one arrangement of it.
+
+## vLLM and SGLang are registered from `served/`
+
+All three copied one HTTP surface from OpenAI, so `served/` is registered under
+three names rather than copied into three crates. It briefly lived at
+`adapters/openai/` on that reasoning and the name was wrong: it read as though
+the agent offered an OpenAI-compatible API. It does not — OUTER is a
+bidirectional socket, and a service API is OUTER's concern. What sits here is
+llama.cpp's adapter that two other servers happen to fit.
+
+They are not equal tenants. `flavour` holds what differs, and starting a
+backend is llama.cpp's alone: `launch` composes `llama-server` and
+`ggml-rpc-server` flags and refuses the other two rather than guessing at a
+command line for a server these machines have never run.
 
 ## The cost of each
 

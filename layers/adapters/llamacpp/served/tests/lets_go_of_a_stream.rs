@@ -6,8 +6,8 @@
 //! protocol one, and it is the half a backend feels — it has a finite number
 //! of workers, and every stream nobody ended is one of them held.
 
-use p4_openai::endpoint::Endpoint;
-use p4_openai::session::Session;
+use p4_llamacpp_served::endpoint::Endpoint;
+use p4_llamacpp_served::session::Session;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::Arc;

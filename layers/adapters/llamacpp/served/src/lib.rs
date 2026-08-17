@@ -1,21 +1,33 @@
-//! One OpenAI-compatible server, as one self-contained node.
+//! Stock `llama-server`, as one self-contained node.
 //!
-//! llama.cpp, vLLM and SGLang all serve the same HTTP: a model list and a
-//! streamed chat completion. That is the whole coupling, so it is one adapter
-//! registered under three names rather than three adapters — and the names are
-//! real registrations rather than a claim in a document, because a claim that
-//! is never built is a claim nobody has checked.
+//! This is llama.cpp's adapter for the shape llama.cpp already supports:
+//! one process holding the whole model behind one completions endpoint. The
+//! other shape is `../staged/`, which splits a model across machines with P4
+//! owning the boundary and needs internals llama.cpp does not expose. Two
+//! arrangements of one backend, which is why they are folders under it.
 //!
 //! `Distribution::Internal`: the backend holds the whole model and presents one
 //! entry point, so a chain over it is one link and a lap is a decode step on
-//! the same node. The staged shape — a model split across machines with P4
-//! owning the boundary — is the other adapter, and shares none of this file
-//! except the interface.
+//! the same node.
 //!
-//! What differs between the three is in `flavour`, and it is one thing: vLLM
-//! refuses a model name it does not serve, so a load against it has to find out
-//! what it is holding. Everything else here is the surface, and the surface is
-//! the same.
+//! ## Why vLLM and SGLang are registered from llama.cpp's folder
+//!
+//! Because all three copied the same HTTP from OpenAI — a model list and a
+//! streamed chat completion — and that is the whole coupling. Writing it three
+//! times would be three copies of one file diverging.
+//!
+//! It lived in a folder called `openai/` for exactly that reason and the name
+//! was wrong: it read as though the agent offered an OpenAI-compatible API,
+//! which it does not and will not. OUTER is a bidirectional socket; a service
+//! API is OUTER's concern and no part of this layer's. What the folder actually
+//! held was llama.cpp's adapter, so it is filed under llama.cpp.
+//!
+//! Two things differ per backend, both in `flavour`. vLLM refuses a model name
+//! it does not serve, so a load against it asks what it is holding. And only
+//! llama.cpp can be *started* here — `launch` composes its flags and nothing
+//! else's, because knowing what a placement becomes on the command line is
+//! knowledge about one server. The other two attach to something already
+//! running, which is what any plan without a `start` does.
 //!
 //! ## The plan
 //!
@@ -25,11 +37,11 @@
 //! { "endpoint": "127.0.0.1:8080", "model": "qwen", "patience_ms": 120000 }
 //! ```
 //!
-//! `endpoint` is required — this adapter attaches to a server rather than
-//! starting one, because process supervision on each operating system is a
-//! solved problem that belongs to whatever already does it on that machine,
-//! and an adapter that forked a GPU process would own restarts, logs and
-//! zombies for no gain.
+//! `endpoint` is always required: it is where this node's backend answers,
+//! whether this node started it or found it. Adding `start` makes the node own
+//! that process — brought up at load, killed at unload — which is what closes
+//! the gap between a plan declaring eleven gibibytes on a card and a server
+//! somebody else launched holding fifteen.
 
 pub mod chat;
 pub mod endpoint;
@@ -47,7 +59,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub struct OpenAi {
+pub struct Served {
     /// Which server is behind the surface. Read at load, never on the wire.
     flavour: Flavour,
     /// Where the model is served from, once a load has said so.
@@ -65,7 +77,7 @@ pub struct OpenAi {
     finished: AtomicU64,
 }
 
-impl OpenAi {
+impl Served {
     pub fn new(flavour: Flavour) -> Self {
         Self {
             flavour,
@@ -347,7 +359,7 @@ impl OpenAi {
     }
 }
 
-impl Adapter for OpenAi {
+impl Adapter for Served {
     fn distribution(&self) -> Distribution {
         Distribution::Internal
     }

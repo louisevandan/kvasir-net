@@ -6,10 +6,10 @@
 //! two were the only way to diagnose this layer under load, and neither is
 //! available from anywhere else.
 
-use super::OpenAi;
+use super::Served;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-impl OpenAi {
+impl Served {
     /// What this backend is doing, in a line.
     ///
     /// Chosen for what could not be seen while diagnosing this layer under

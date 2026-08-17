@@ -10,8 +10,8 @@
 //! `docs/runtime-evidence.md`; this file is what keeps it honest afterwards.
 
 use p4_adapter::{Adapter, Distribution, Event, EventSink, Hop, Load, Phase, Sequence, Work};
-use p4_openai::OpenAi;
-use p4_openai::flavour::Flavour;
+use p4_llamacpp_served::Served;
+use p4_llamacpp_served::flavour::Flavour;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
@@ -152,7 +152,7 @@ fn serve(mut stream: TcpStream, answer: Answer) {
     }
 }
 
-fn load(adapter: &OpenAi, seen: &Seen, port: u16) {
+fn load(adapter: &Served, seen: &Seen, port: u16) {
     adapter.start(
         Work::Load(Load {
             deployment: "d1".into(),
@@ -184,7 +184,7 @@ fn hop(phase: Phase, remaining: u32, prompt: Option<&str>) -> Work {
 #[test]
 fn a_load_reaches_the_backend_and_binds() {
     let port = stub(Answer::Tokens(&["a"]));
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
@@ -212,7 +212,7 @@ fn a_load_reaches_the_backend_and_binds() {
 #[test]
 fn a_prefill_then_laps_produce_one_token_each_and_then_stop() {
     let port = stub(Answer::Tokens(&["안", "녕", "하", "세", "요"]));
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
@@ -263,7 +263,7 @@ fn a_prefill_then_laps_produce_one_token_each_and_then_stop() {
 #[test]
 fn a_decode_for_a_sequence_that_never_prefilled_is_refused() {
     let port = stub(Answer::Tokens(&["x"]));
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
@@ -282,7 +282,7 @@ fn a_decode_for_a_sequence_that_never_prefilled_is_refused() {
 #[test]
 fn an_error_inside_the_stream_is_reported_rather_than_read_as_silence() {
     let port = stub(Answer::ErrorMidStream);
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
@@ -305,7 +305,7 @@ fn an_error_inside_the_stream_is_reported_rather_than_read_as_silence() {
 #[test]
 fn a_backend_that_hangs_up_ends_the_sequence_instead_of_stranding_it() {
     let port = stub(Answer::HangUp);
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
@@ -325,7 +325,7 @@ fn a_backend_that_hangs_up_ends_the_sequence_instead_of_stranding_it() {
 /// A hop before any load.
 #[test]
 fn work_on_a_node_that_was_never_loaded_says_so() {
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     adapter.start(hop(Phase::Prefill, 4, Some("hi")), &seen);
     assert!(
@@ -339,7 +339,7 @@ fn work_on_a_node_that_was_never_loaded_says_so() {
 /// waiting rather than at the first inference.
 #[test]
 fn a_backend_that_is_not_there_fails_the_load() {
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     adapter.start(
         Work::Load(Load {
@@ -364,7 +364,7 @@ fn a_backend_that_is_not_there_fails_the_load() {
 #[test]
 fn cache_work_is_refused_by_name_rather_than_silently_ignored() {
     let port = stub(Answer::Tokens(&["a"]));
-    let adapter = OpenAi::new(Flavour::LlamaCpp);
+    let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
     load(&adapter, &seen, port);
 

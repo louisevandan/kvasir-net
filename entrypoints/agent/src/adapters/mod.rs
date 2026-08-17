@@ -7,8 +7,8 @@
 
 use p4_mock::Mock;
 use p4_mock::profile::Profile;
-use p4_openai::OpenAi;
-use p4_openai::flavour::Flavour;
+use p4_llamacpp_served::Served;
+use p4_llamacpp_served::flavour::Flavour;
 use p4_service::Registry;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,7 +42,7 @@ pub fn registry() -> Registry {
     // is never built is a claim nobody has checked, and the name an operator
     // types is what decides which of the small differences applies.
     for flavour in [Flavour::LlamaCpp, Flavour::Vllm, Flavour::Sglang] {
-        registry.register_fn(flavour.name(), move |_| Arc::new(OpenAi::new(flavour)));
+        registry.register_fn(flavour.name(), move |_| Arc::new(Served::new(flavour)));
     }
 
     registry

@@ -14,7 +14,7 @@ them, [`constraints.md`](constraints.md) the invariants. This is the map.
 | `p4-agent-core` | `layers/agent` | 2,203 | 3,715 | adapter, protocol |
 | `p4-service` | `layers/service` | 986 | 2,526 | adapter, agent, protocol |
 | `p4-mock` | `layers/adapters/mock` | 483 | 349 | adapter |
-| `p4-openai` | `layers/adapters/openai` | 1,151 | 1,413 | adapter, serde_json |
+| `p4-llamacpp-served` | `layers/adapters/llamacpp/served` | 1,151 | 1,413 | adapter, serde_json |
 | `p4-agent` | `entrypoints/agent` | 181 | 74 | all of the above |
 | `p4-drive` | `tools/drive` | 949 | 124 | agent, protocol, service |
 | `p4-link` | `tools/link` | 333 | 77 | tokio |
@@ -195,18 +195,28 @@ protocol: it used to drop a sequence's state the moment the turn finished, and
 to record residency only on the terminal stage — but every stage holds the KV
 for its layer range, and only the last has logits.
 
-## `layers/adapters/openai` — three backends, one surface
+## `layers/adapters/llamacpp/served` — stock `llama-server`, and the two that copied its surface
 
-llama.cpp, vLLM and SGLang serve the same OpenAI-compatible HTTP: a model list
-and a streamed chat completion. That is the whole coupling, so it is one
-adapter registered under three names rather than three adapters — and the names
-are real registrations rather than a claim in a document, because a claim that
-is never built is a claim nobody has checked.
+llama.cpp's adapter for the shape llama.cpp already supports: one process
+holding the whole model behind one completions endpoint. `../staged/` is the
+other shape — a model split across machines with P4 owning the boundary — and
+shares nothing with this but the interface. Two arrangements of one backend,
+which is why they are folders under it.
 
-`layers/adapters/llamacpp` now holds only what is llama.cpp's alone: `staged/`,
-the patch series for splitting a model across machines with P4 owning the
-boundary, whose adapter is not written, and `upstream/`, llama.cpp's own clone,
-ignored by this repository.
+vLLM and SGLang are registered against this same implementation because all
+three copied one HTTP from OpenAI: a model list and a streamed chat completion.
+That is the whole coupling, so it is one adapter under three names rather than
+three copies of one file diverging, and the names are real registrations rather
+than a claim in a document.
+
+They are not equal tenants, and the folder says so. It sat at
+`adapters/openai/` for a while on the strength of the shared surface, which
+read as though the agent offered an OpenAI-compatible API — it does not, and a
+service API is OUTER's concern rather than this layer's. Two things differ per
+backend and both point the same way: vLLM refuses a model name it does not
+serve, and only llama.cpp can be *started* here, because `launch` composes
+`llama-server` and `ggml-rpc-server` flags and refuses to guess at anything
+else's.
 
 | Module | Holds |
 | --- | --- |

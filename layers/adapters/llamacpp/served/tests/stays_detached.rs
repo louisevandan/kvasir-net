@@ -48,7 +48,15 @@ fn the_crate_compiles_against_nothing_of_llama_cpp() {
     );
 }
 
-/// No source file reaches for llama.cpp's own headers, symbols or tree.
+/// No source file reaches for llama.cpp's own headers or tree.
+///
+/// Naming llama.cpp is not the hazard and used to be caught as though it were:
+/// a blanket ban on the token `llama_` fired on `fn llama_cpp`, the function
+/// that composes `llama-server`'s flags. That function is the adapter doing its
+/// job. Knowing a backend's command line is knowledge about a program, which
+/// changes when someone renames a flag; knowing its ABI is knowledge about a
+/// build, which changes when anyone commits. Only the second is what this file
+/// exists to keep out, so only the second is checked.
 #[test]
 fn no_source_file_reaches_into_the_backend() {
     let mut checked = 0;
@@ -60,11 +68,11 @@ fn no_source_file_reaches_into_the_backend() {
         let text = without_comments(&read(&entry));
         for forbidden in [
             "llama.h",
-            "ggml",
-            "llama_",
+            "ggml.h",
             "upstream",
             "extern \"C\"",
             "libloading",
+            "#[link",
         ] {
             assert!(
                 !text.contains(forbidden),
@@ -78,6 +86,25 @@ fn no_source_file_reaches_into_the_backend() {
         checked >= 4,
         "the sources were actually read: {checked} files"
     );
+}
+
+/// The check the blocklist above is only an approximation of.
+///
+/// A blocklist catches the spellings somebody thought of. This catches the
+/// whole category: calling a foreign function requires `unsafe`, so a crate
+/// with no `unsafe` in it calls into no C library at all — llama.cpp's or
+/// anyone's — whatever it is named or however it was reached.
+#[test]
+fn nothing_here_can_call_into_a_native_library() {
+    for entry in walk(&crate_root().join("src")) {
+        let text = without_comments(&read(&entry));
+        assert!(
+            !text.contains("unsafe"),
+            "{} uses unsafe: this crate talks to its backend over a socket, and \
+             the only reason to need unsafe would be to stop doing that",
+            entry.display()
+        );
+    }
 }
 
 /// What the adapter does depend on, stated so a change to it is deliberate.
