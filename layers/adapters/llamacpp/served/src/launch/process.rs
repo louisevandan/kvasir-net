@@ -15,15 +15,39 @@ use crate::endpoint::Endpoint;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// What counts as this process having started.
+///
+/// Two answers, because the two halves of a distributed load are two different
+/// programs. Asking one question of both was the first thing tried and it does
+/// not work: a share holds weights over llama.cpp's own RPC protocol and serves
+/// no HTTP at all, so waiting for it to answer `/v1/models` waits out the whole
+/// patience and then reports a healthy worker as a failure.
+pub enum Ready {
+    /// It answers HTTP once it holds the weights. The honest signal, used
+    /// wherever there is one.
+    WhenItAnswers,
+    /// Nothing can be asked of it, so all that is established is that it did
+    /// not immediately give up.
+    ///
+    /// A share cannot be probed even in principle: one already serving a front
+    /// refuses further connections, and that refusal is byte-identical to an
+    /// empty port — a probe that cannot tell "held" from "absent" fails on
+    /// exactly the healthy deployment. What proves a share is held is the front
+    /// that reaches across it, which will not start against an RPC device it
+    /// cannot reach. So this waits the stated moment, checks the process is
+    /// still alive, and leaves the proof where the evidence actually is.
+    WhenItHasNotExited(Duration),
+}
+
 /// A backend this node started, which it will stop.
 pub struct Running {
     child: Child,
 }
 
 impl Running {
-    /// Starts the process and waits until it answers, or says why not.
+    /// Starts the process and waits until it is ready, or says why not.
     ///
-    /// `ready` is asked repeatedly rather than once: a server holding tens of
+    /// Readiness is asked repeatedly rather than once: a server holding tens of
     /// gibibytes reads them before it listens, and on these machines that is
     /// minutes rather than seconds. `patience` is how long that may take, and
     /// it is the caller's number because only the caller knows how large the
@@ -32,6 +56,7 @@ impl Running {
         binary: &str,
         arguments: &[String],
         endpoint: &Endpoint,
+        ready: Ready,
         patience: Duration,
         mut progress: impl FnMut(u32, String),
     ) -> Result<Self, String> {
@@ -49,18 +74,16 @@ impl Running {
         let mut running = Self { child };
 
         let began = Instant::now();
+        let settle = match ready {
+            Ready::WhenItAnswers => patience,
+            Ready::WhenItHasNotExited(settle) => settle.min(patience),
+        };
         let mut told = 0;
-        while began.elapsed() < patience {
+        while began.elapsed() < settle {
             // A process that has already given up will never answer, and
             // waiting out the patience to say so wastes the whole of it.
-            match running.child.try_wait() {
-                Ok(Some(status)) => {
-                    return Err(format!("{binary} exited while loading: {status}"));
-                }
-                Ok(None) => {}
-                Err(error) => return Err(format!("cannot watch {binary}: {error}")),
-            }
-            if endpoint.get("/v1/models").is_ok() {
+            running.still_alive(binary)?;
+            if matches!(ready, Ready::WhenItAnswers) && endpoint.get("/v1/models").is_ok() {
                 return Ok(running);
             }
             let waited = began.elapsed().as_secs() as u32;
@@ -70,11 +93,37 @@ impl Running {
             }
             std::thread::sleep(Duration::from_secs(2));
         }
-        Err(format!(
-            "{binary} did not answer within {:?}; it is still starting or it \
-             will not start",
-            patience
-        ))
+        match ready {
+            // The settle elapsed without it dying, which is the whole of what
+            // can be established here.
+            Ready::WhenItHasNotExited(_) => {
+                running.still_alive(binary)?;
+                Ok(running)
+            }
+            Ready::WhenItAnswers => Err(format!(
+                "{binary} did not answer within {patience:?}; it is still \
+                 starting or it will not start"
+            )),
+        }
+    }
+
+    /// Which process this is, for whoever has to look.
+    ///
+    /// Reported rather than kept private because it is the one thing that lets
+    /// somebody outside P4 join what the protocol says to what the machine
+    /// shows: a node claiming a card and a process holding one are otherwise
+    /// two facts with nothing connecting them.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Fails with what the process exited with, if it has.
+    fn still_alive(&mut self, binary: &str) -> Result<(), String> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => Err(format!("{binary} exited while loading: {status}")),
+            Ok(None) => Ok(()),
+            Err(error) => Err(format!("cannot watch {binary}: {error}")),
+        }
     }
 }
 

@@ -95,6 +95,15 @@ pub struct Start {
     /// prefills one at a time however fast work arrives.
     pub batch: u32,
     pub ubatch: u32,
+    /// How long the weights may take to become answerable.
+    ///
+    /// A different number from the plan's own `patience_ms`, and deliberately
+    /// not derived from it: that one is how long a single token may take, and
+    /// it is measured in seconds. Reading seventy gibibytes off a disk is
+    /// measured in minutes. Conflating a per-token wait with a per-load one is
+    /// the same mistake as conflating the channel's wait with the socket's,
+    /// which cost this adapter a debugging session already.
+    pub patience: Duration,
 }
 
 impl Start {
@@ -129,6 +138,7 @@ impl Start {
             slots: count("slots")?,
             batch: count("batch")?,
             ubatch: count("ubatch")?,
+            patience: Duration::from_millis(u64::from(count("patience_ms")?)),
         }))
     }
 }

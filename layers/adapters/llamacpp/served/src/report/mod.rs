@@ -23,13 +23,43 @@ impl Served {
     pub(super) fn state(&self) -> String {
         let load = |value: &AtomicU64| value.load(Ordering::Relaxed);
         format!(
-            "{} open={} opened={} reopened={} refused={} finished={}",
+            "{} {} open={} opened={} reopened={} refused={} finished={}",
             self.flavour.name(),
+            self.backend(),
             self.sessions.lock().expect("sessions lock").len(),
             load(&self.opened),
             load(&self.reopened),
             load(&self.refused),
             load(&self.finished),
         )
+    }
+
+    /// Whose process is answering, and what this node has done to it.
+    ///
+    /// The distinction a reader cannot otherwise make. Two nodes reporting the
+    /// same counters mean different things if one of them started the server
+    /// and the other found it: only the first is a node whose declared share is
+    /// backed by a placement anybody chose, and only the first releases a card
+    /// when it unloads. `started`/`stopped` are there because a restart is
+    /// invisible in a snapshot otherwise — a node on its fourth backend looks
+    /// exactly like one on its first.
+    fn backend(&self) -> String {
+        let load = |value: &AtomicU64| value.load(Ordering::Relaxed);
+        let held = self.backend.lock().expect("backend lock");
+        let counts = format!(
+            "started={} stopped={}",
+            load(&self.started),
+            load(&self.stopped)
+        );
+        match held.as_ref() {
+            // The pid joins what the protocol says to what the machine shows.
+            // Without it a node claiming a card and a process holding one are
+            // two facts with nothing connecting them, which is exactly the gap
+            // that made a stray backend from a previous run look like a memory
+            // error in the next one.
+            Some(running) => format!("backend=owned pid={} {counts}", running.pid()),
+            None if load(&self.started) > 0 => format!("backend=released {counts}"),
+            None => "backend=attached".into(),
+        }
     }
 }

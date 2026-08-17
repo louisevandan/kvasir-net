@@ -113,3 +113,40 @@ fn a_plan_that_asks_for_no_patience_keeps_the_default() {
     assert_eq!(bare.patience, bare.endpoint.idle);
     assert_eq!(bare.endpoint.idle, Endpoint::new("h", 1).idle);
 }
+
+/// A load's patience and a token's patience are two numbers.
+///
+/// Deliberately not derived from one another. The plan's own `patience_ms` is
+/// how long one token may take and is measured in seconds; reading seventy
+/// gibibytes off a disk is measured in minutes. Deriving the second from the
+/// first would kill a load that was going fine, which is the same shape of
+/// mistake as a channel and its socket waiting different amounts — and that one
+/// cost a debugging session already.
+#[test]
+fn a_start_waits_on_its_own_number_rather_than_the_plans() {
+    let plan = Plan::parse(
+        r#"{"endpoint":"127.0.0.1:8080","patience_ms":120000,
+            "start":{"binary":"b","weights":"w","context":4096,"slots":4,
+                     "batch":512,"ubatch":128,"patience_ms":900000}}"#,
+    )
+    .expect("parsed");
+    let start = plan.start.clone().expect("a start");
+    assert_eq!(plan.patience, Duration::from_millis(120_000));
+    assert_eq!(start.patience, Duration::from_millis(900_000));
+}
+
+/// A `start` with no patience is refused rather than given one.
+///
+/// Every field of a start is required, because a guessed load timeout is this
+/// adapter deciding how long an operator is willing to wait for weights it
+/// knows nothing about.
+#[test]
+fn a_start_that_names_no_patience_is_refused() {
+    let refused = Plan::parse(
+        r#"{"endpoint":"127.0.0.1:8080",
+            "start":{"binary":"b","weights":"w","context":4096,"slots":4,
+                     "batch":512,"ubatch":128}}"#,
+    )
+    .expect_err("a start without patience is not a start");
+    assert!(refused.contains("patience_ms"), "{refused}");
+}

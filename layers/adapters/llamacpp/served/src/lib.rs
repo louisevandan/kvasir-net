@@ -47,12 +47,14 @@ pub mod chat;
 pub mod endpoint;
 pub mod flavour;
 pub mod launch;
+pub mod load;
 pub mod plan;
 pub mod report;
 pub mod session;
 
 use flavour::Flavour;
-use p4_adapter::{Adapter, Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
+use launch::process::Running;
+use p4_adapter::{Adapter, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
 use plan::{Plan, Role};
 use session::{Next, Session};
 use std::collections::{HashMap, HashSet};
@@ -64,6 +66,14 @@ pub struct Served {
     flavour: Flavour,
     /// Where the model is served from, once a load has said so.
     plan: Mutex<Option<Plan>>,
+    /// The backend this node started, when the plan asked it to.
+    ///
+    /// `None` means the plan named an endpoint and nothing else, so a server
+    /// somebody else is responsible for is answering there. Holding the child
+    /// is what makes the lifetime this node's: dropping it kills the process,
+    /// so an unload, a reload, or the agent going away all release the card
+    /// without anybody having to remember to.
+    backend: Mutex<Option<Running>>,
     generation: AtomicU64,
     /// One open completion per sequence, which is that sequence's state.
     sessions: Mutex<HashMap<String, Session>>,
@@ -75,6 +85,12 @@ pub struct Served {
     reopened: AtomicU64,
     refused: AtomicU64,
     finished: AtomicU64,
+    /// How many backends this node has started and killed. Two counters rather
+    /// than a flag, because the gap between them is the interesting number: a
+    /// node that has started three has reloaded twice, and started minus
+    /// stopped is how many processes it is holding right now.
+    started: AtomicU64,
+    stopped: AtomicU64,
 }
 
 impl Served {
@@ -82,124 +98,16 @@ impl Served {
         Self {
             flavour,
             plan: Mutex::new(None),
+            backend: Mutex::new(None),
             generation: AtomicU64::new(0),
             sessions: Mutex::new(HashMap::new()),
             opened: AtomicU64::new(0),
             reopened: AtomicU64::new(0),
             refused: AtomicU64::new(0),
             finished: AtomicU64::new(0),
+            started: AtomicU64::new(0),
+            stopped: AtomicU64::new(0),
         }
-    }
-
-    fn load(&self, deployment: String, plan: &str, events: &dyn EventSink) {
-        let parsed = match Plan::parse(plan) {
-            Ok(parsed) => parsed,
-            Err(detail) => {
-                return events.raise(Event::Failed {
-                    deployment,
-                    sequence: None,
-                    detail,
-                });
-            }
-        };
-        // Reaching the backend is the load. Nothing is materialised here — the
-        // server already holds the weights — so what a load establishes is
-        // that it is there and answering, which is the thing that fails.
-        events.raise(Event::LoadProgress {
-            deployment: deployment.clone(),
-            stage: 0,
-            percent: 50,
-            detail: format!(
-                "reaching {} at {}:{}",
-                parsed.share(),
-                parsed.endpoint.host,
-                parsed.endpoint.port
-            ),
-        });
-
-        // Only a front is asked anything. A worker speaks llama.cpp's RPC
-        // protocol rather than HTTP, and the one question TCP could answer —
-        // is something listening — it cannot answer usefully: an RPC worker
-        // serving a front refuses further connections, and a refusal from a
-        // busy worker is byte-identical to a refusal from an empty port. A
-        // probe that cannot tell "held" from "absent" is worse than none,
-        // because it fails on exactly the healthy deployment.
-        //
-        // What proves the shares are held is the front. llama.cpp will not
-        // start against an RPC device it cannot reach, and will not answer a
-        // token across one that died, so a front that serves is a deployment
-        // whose workers are present — verified where the evidence actually is.
-        let mut parsed = parsed;
-        if parsed.role == Role::Front {
-            let listed = match parsed.endpoint.get("/v1/models") {
-                Ok(listed) => listed,
-                Err(error) => {
-                    return events.raise(Event::Failed {
-                        deployment,
-                        sequence: None,
-                        detail: format!("{} not reachable: {error}", parsed.share()),
-                    });
-                }
-            };
-            // The answer is read rather than discarded only where it has to be.
-            // vLLM matches a request's model against what it serves and answers
-            // 404 to anything else, so a plan that did not name one would fail
-            // on the first inference instead of on the load — which is the
-            // failure worth moving, because a load is where an operator is
-            // still watching.
-            if self.flavour.insists_on_the_model_name() && !parsed.names_the_model {
-                match chat::first_model(&listed) {
-                    Some(served) => {
-                        events.raise(Event::LoadProgress {
-                            deployment: deployment.clone(),
-                            stage: 0,
-                            percent: 75,
-                            detail: format!("serving {served}, which the plan did not name"),
-                        });
-                        parsed.model = served;
-                    }
-                    None => {
-                        return events.raise(Event::Failed {
-                            deployment,
-                            sequence: None,
-                            detail: format!(
-                                "{} lists no model and the plan names none, so a request \
-                                 would be refused as a model that does not exist",
-                                self.flavour.name()
-                            ),
-                        });
-                    }
-                }
-            }
-        }
-        for (index, worker) in parsed.workers.iter().enumerate() {
-            events.raise(Event::LoadProgress {
-                deployment: deployment.clone(),
-                stage: (index + 1) as u32,
-                percent: 100,
-                detail: format!("share held at {}:{}", worker.host, worker.port),
-            });
-        }
-
-        let allocations = vec![Allocation {
-            category: parsed.share(),
-            // The declared claim, not a measurement. The server owns its own
-            // memory and does not report a reservation through this surface,
-            // and a figure invented here would be worse than a declared one.
-            bytes: parsed.vram_gb.unwrap_or(0) * 1024 * 1024 * 1024,
-        }];
-        *self.plan.lock().expect("plan lock") = Some(parsed);
-        events.raise(Event::LoadProgress {
-            deployment: deployment.clone(),
-            stage: 0,
-            percent: 100,
-            detail: "share held".into(),
-        });
-        events.raise(Event::Loaded {
-            deployment,
-            generation: self.generation.fetch_add(1, Ordering::SeqCst) + 1,
-            allocations,
-        });
     }
 
     fn hop(&self, hop: Hop, events: &dyn EventSink) {
@@ -372,10 +280,14 @@ impl Adapter for Served {
         match work {
             Work::Load(load) => self.load(load.deployment, &load.plan, events),
             Work::Unload(unload) => {
-                // The server keeps its weights; what this node holds is the
-                // conversations, and those are what a release lets go.
+                // Where the plan carried a `start`, the backend is this node's
+                // and goes with the load: the card is released here, by this
+                // unload, rather than whenever somebody notices a stray
+                // process holding it. Where it did not, the server keeps its
+                // weights and what this node holds is only the conversations.
                 self.plan.lock().expect("plan lock").take();
                 self.sessions.lock().expect("sessions lock").clear();
+                self.release();
                 events.raise(Event::Unloaded {
                     deployment: unload.deployment,
                 })

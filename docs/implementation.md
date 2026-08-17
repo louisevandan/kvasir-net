@@ -225,11 +225,44 @@ else's.
 | `plan` | What a load's plan means here: endpoint, model name, patience, and — for a model split across devices — the role this node holds, its device, what it claims of it, and the shares held elsewhere. Records whether the plan actually named a model, because a default cannot be told from a choice and one backend checks. Opaque everywhere else. |
 | `flavour` | Which of the three servers is behind the surface, and the one thing that follows: vLLM matches a request's `model` against what it serves and answers 404 to anything else, so its load asks and the other two are not charged the round trip. A field here that could be a plan key would be the adapter knowing a backend for no reason. |
 | `session` | The impedance mismatch, and the reason it has its own file. P4 generates by lapping — a hop reports one token and the request comes round again — while the backend streams a whole completion down one connection. Asking for one token per hop would re-prefill on every lap. So the completion is requested once, read by a thread into a channel, and each hop takes the next token. The session counts what it has delivered, because the backend is the only thing that knows how far a sequence has got. |
+| `launch` | What a placement becomes on one server's command line, and the process that results. `arguments` is a pure function of a plan and can be checked exhaustively without starting anything — which is the half that goes quietly wrong, since a batch too small to hold one prompt makes a server admit prefills one at a time and nothing about that looks like a mistake from outside. `process` waits, kills, and starts windowless. |
+| `load` | Everything a load has to get right and an unload has to let go of, separated because it changes for different reasons than driving a completion: a backend gaining a flag, a machine gaining a card, or somebody changing their mind about who owns a running server. Every failure arrives at one place, which is where a started backend gets killed. |
 
-Four tests enforce that the crate stays detached: no build script, no `-sys` or
-bindgen dependency, no `llama.h` or `ggml` in code, exactly two dependencies,
-exactly two endpoint paths. That property is why the adapter is worth having in
-this form, so it is checked rather than intended.
+Five tests enforce that the crate stays detached: no build script, no `-sys` or
+bindgen dependency, no `llama.h` or `ggml.h` in code, exactly two dependencies,
+exactly two endpoint paths, and no `unsafe` anywhere — the last catching the
+category rather than the spellings, since calling a foreign function requires
+it. That property is why the adapter is worth having in this form, so it is
+checked rather than intended.
+
+## Node-owned backend lifetime
+
+A plan may carry a `start`, and then the process behind the node exists because
+that load exists. Without it a plan can claim eleven gibibytes of a card while
+the server on it holds fifteen, and nothing in the protocol can tell — the plan
+is the only record of intent and nothing checks it against a process.
+
+Three things this had to get right, each found by getting it wrong first:
+
+- **Readiness differs by role.** A front answers `/v1/models` once it holds the
+  weights. A share speaks llama.cpp's RPC protocol and serves no HTTP at all, so
+  asking it the same question waits out the whole patience and then reports a
+  healthy worker as a failure. `Ready::WhenItHasNotExited` is all a share can
+  offer; the front reaching across it is what proves it is held.
+- **A load's patience is not a token's patience.** One is minutes because
+  seventy gibibytes take minutes to read; the other is seconds. `start` carries
+  its own `patience_ms` and requires it, because a guessed load timeout is the
+  adapter deciding how long an operator will wait for weights it knows nothing
+  about.
+- **A process that exited is reported, not waited out.** Checked every poll, so
+  a missing weights file fails in a second rather than after the ten minutes a
+  large model is allowed.
+
+Reload kills the previous backend before starting the next, because the card is
+what is scarce and llama.cpp reports a card still held as a memory error. The
+report carries `backend=attached|owned|released`, the pid, and started/stopped
+counts — the pid because it is the only thing joining a node that claims a card
+to a process that holds one.
 
 Cache verbs are refused by name: llama.cpp can save sequence state, but not
 through this surface, and a caller must be able to tell "not here" from "done".

@@ -19,7 +19,7 @@ const FRONT: &str = r#"{
     "endpoint":"127.0.0.1:18090","model":"m","device":"CUDA0","vram_gb":11,
     "workers":["192.168.0.29:52003","192.168.0.29:52004","127.0.0.1:50052"],
     "start":{"binary":"llama-server.exe","weights":"T:/m.gguf",
-             "context":20480,"slots":16,"batch":2048,"ubatch":256}
+             "context":20480,"slots":16,"batch":2048,"ubatch":256,"patience_ms":600000}
 }"#;
 
 #[test]
@@ -65,7 +65,7 @@ fn a_worker_is_started_as_a_share_rather_than_a_server() {
     let args = composed(
         r#"{"role":"worker","endpoint":"0.0.0.0:52003","device":"CUDA1","vram_gb":23,
             "start":{"binary":"ggml-rpc-server.exe","weights":"unused",
-                     "context":1,"slots":1,"batch":1,"ubatch":1}}"#,
+                     "context":1,"slots":1,"batch":1,"ubatch":1,"patience_ms":600000}}"#,
     );
     assert_eq!(pair(&args, "-p"), Some("52003"));
     assert_eq!(pair(&args, "-d"), Some("CUDA1"));
@@ -81,7 +81,7 @@ fn one_device_and_no_workers_names_just_the_device() {
     let args = composed(
         r#"{"endpoint":"127.0.0.1:18090","device":"CUDA0",
             "start":{"binary":"b","weights":"w","context":4096,"slots":4,
-                     "batch":512,"ubatch":128}}"#,
+                     "batch":512,"ubatch":128,"patience_ms":600000}}"#,
     );
     assert_eq!(pair(&args, "-dev"), Some("CUDA0"));
     assert!(!args.iter().any(|arg| arg == "--rpc"));
