@@ -240,3 +240,80 @@ fn a_node_never_hands_the_adapter_more_than_its_ceiling() {
         assert_eq!(outer_duties.routes(), ARRIVALS, "every arrival was answered");
     });
 }
+
+/// Stages of a chain must work at the same time, not take turns.
+///
+/// One inference is serial by construction — its stages run in order — but a
+/// node holding a queue of them should never be idle: while the stage ahead
+/// works on one cohort, this one should already be on the next. That is the
+/// whole of pipelining, and it is where the throughput of a chain comes from.
+///
+/// This machine measured it once, on the runtime that came before: a cohort
+/// taken as one window gave 97.5% of stage-compute over wall clock — serial by
+/// construction — and the same cohort split in two gave 166%, which is only
+/// reachable when stages compute together. The gain was 27%.
+///
+/// What is sampled is how many stages hold work inside their adapter at the
+/// same moment. Two of three is enough to say they overlap; all three at once
+/// is not required, because a chain drains at its ends.
+#[test]
+fn stages_of_a_chain_work_at_the_same_time() {
+    runtime().block_on(async {
+        const CEILING: usize = 24;
+        const ARRIVALS: usize = 48;
+
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        let b = start(Arc::new(Silent)).await;
+        let c = start(Arc::new(Silent)).await;
+        a.create_node("s0", Arc::new(Mock::staged(0, slow(25))), CEILING)
+            .await;
+        b.create_node("s1", Arc::new(Mock::staged(1, slow(25))), CEILING)
+            .await;
+        c.create_node("s2", Arc::new(Mock::terminal(2, slow(25))), CEILING)
+            .await;
+
+        let chain = chain_over(&[(&a, "s0"), (&b, "s1"), (&c, "s2")]);
+        for index in 0..ARRIVALS {
+            a.enqueue(request(&format!("r{index}"), &chain, &outer, 4))
+                .unwrap();
+        }
+
+        // Sampled while the work is in flight, which is the only time the
+        // answer exists. Counted per sample rather than per node, because the
+        // claim is about a moment: two stages busy at once.
+        let mut together = 0;
+        let mut any = 0;
+        for _ in 0..120 {
+            settle(10).await;
+            let busy = [
+                a.node_status().await.first().map(|n| n.running).unwrap_or(0),
+                b.node_status().await.first().map(|n| n.running).unwrap_or(0),
+                c.node_status().await.first().map(|n| n.running).unwrap_or(0),
+            ]
+            .iter()
+            .filter(|&&inside| inside > 0)
+            .count();
+            if busy >= 1 {
+                any += 1;
+            }
+            if busy >= 2 {
+                together += 1;
+            }
+        }
+
+        until(|| outer_duties.routes() >= ARRIVALS).await;
+        assert_eq!(outer_duties.routes(), ARRIVALS, "every arrival was answered");
+        // The fraction, not the fact. "It happened once" is satisfied by a
+        // chain that takes turns and overlaps only where cohorts meet; what
+        // pipelining means is that it is the normal state.
+        let overlapped = (together as f64) / (any.max(1) as f64);
+        println!("samples with work: {any}, of which two stages at once: {together} ({:.0}%)", overlapped * 100.0);
+        assert!(
+            overlapped > 0.25,
+            "stages overlapped in only {:.0}% of the samples that had work: a              chain taking turns costs about a quarter of the throughput a              pipeline gives",
+            overlapped * 100.0
+        );
+    });
+}
