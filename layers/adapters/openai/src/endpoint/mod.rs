@@ -12,7 +12,7 @@
 //! device; an async client would buy nothing and cost a runtime.
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 /// A backend's address, and how patient to be with it.
@@ -46,12 +46,65 @@ impl Endpoint {
         Some(Self::new(host, port.parse().ok()?))
     }
 
+    /// How long one attempt at reaching the backend may take.
+    ///
+    /// Short on purpose, and nothing to do with `idle`. A server busy computing
+    /// answers its accept queue late, so a connection that has not landed in a
+    /// few seconds has met a busy server rather than an absent one — and the
+    /// operating system's own default is twenty-one seconds, which turns that
+    /// into a lost request instead of a slow one.
+    const REACH: Duration = Duration::from_secs(4);
+
+    /// How many times to try. A whole window of sequences opens at once, so a
+    /// backend admitting them one at a time will refuse some of the first
+    /// wave; the ones refused are not failures, they are early.
+    const TRIES: usize = 4;
+
+    /// Connects, and says whether it took more than one go.
+    ///
+    /// The retry is reported rather than hidden: a deployment where every
+    /// stream needed three attempts is one whose backend is being offered work
+    /// faster than it can accept it, and that is worth knowing before it turns
+    /// into a lost request.
+    pub(crate) fn connect_reporting(&self) -> std::io::Result<(TcpStream, bool)> {
+        let mut last = None;
+        for attempt in 0..Self::TRIES {
+            match self.reach() {
+                Ok(stream) => return Ok((stream, attempt > 0)),
+                Err(error) => {
+                    last = Some(error);
+                    // Backing off rather than hammering: the thing in the way
+                    // is a server that has not got to its accept queue, and
+                    // arriving again immediately does not help it.
+                    std::thread::sleep(Duration::from_millis(200 << attempt));
+                }
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "no attempt was made")
+        }))
+    }
+
     fn connect(&self) -> std::io::Result<TcpStream> {
-        let stream = TcpStream::connect((self.host.as_str(), self.port))?;
-        stream.set_read_timeout(Some(self.idle))?;
-        stream.set_write_timeout(Some(self.idle))?;
-        stream.set_nodelay(true)?;
-        Ok(stream)
+        self.connect_reporting().map(|(stream, _)| stream)
+    }
+
+    fn reach(&self) -> std::io::Result<TcpStream> {
+        // Resolved rather than handed to `connect`, because a timeout can only
+        // be given per address.
+        let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+        for address in (self.host.as_str(), self.port).to_socket_addrs()? {
+            match TcpStream::connect_timeout(&address, Self::REACH) {
+                Ok(stream) => {
+                    stream.set_read_timeout(Some(self.idle))?;
+                    stream.set_write_timeout(Some(self.idle))?;
+                    stream.set_nodelay(true)?;
+                    return Ok(stream);
+                }
+                Err(error) => last = error,
+            }
+        }
+        Err(last)
     }
 
     /// Sends a JSON POST and returns the whole body.
@@ -67,7 +120,7 @@ impl Endpoint {
     /// Sends a JSON POST and hands back the socket, for a caller reading a
     /// stream of events off it.
     pub fn stream(&self, path: &str, body: &str) -> Result<Events, String> {
-        let stream = self.begin(path, body)?;
+        let (stream, retried) = self.begin_reporting(path, body)?;
         let mut reader = BufReader::new(stream);
         let headers = read_headers(&mut reader)?;
         if check_status(&headers, "").is_err() {
@@ -77,7 +130,7 @@ impl Endpoint {
             let body = read_body(&mut reader, &headers).unwrap_or_default();
             check_status(&headers, &body)?;
         }
-        Ok(Events { reader })
+        Ok(Events { reader, retried })
     }
 
     /// A plain GET, for asking whether anything is there.
@@ -97,8 +150,10 @@ impl Endpoint {
         Ok(answer)
     }
 
-    fn begin(&self, path: &str, body: &str) -> Result<TcpStream, String> {
-        let mut stream = self.connect().map_err(|error| error.to_string())?;
+    fn begin_reporting(&self, path: &str, body: &str) -> Result<(TcpStream, bool), String> {
+        let (mut stream, retried) = self
+            .connect_reporting()
+            .map_err(|error| error.to_string())?;
         let request = format!(
             "POST {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
              Accept: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -109,13 +164,18 @@ impl Endpoint {
             .write_all(request.as_bytes())
             .map_err(|error| error.to_string())?;
         stream.flush().map_err(|error| error.to_string())?;
-        Ok(stream)
+        Ok((stream, retried))
+    }
+
+    fn begin(&self, path: &str, body: &str) -> Result<TcpStream, String> {
+        self.begin_reporting(path, body).map(|(stream, _)| stream)
     }
 }
 
 /// The `data:` lines of a server-sent event stream, one at a time.
 pub struct Events {
     reader: BufReader<TcpStream>,
+    retried: bool,
 }
 
 impl Events {
@@ -129,6 +189,11 @@ impl Events {
     /// eighty later requests, nineteen reached it and the rest waited on an
     /// HTTP worker that was never coming back. Ending the socket makes the
     /// blocked read return at once.
+    /// Whether reaching the backend took more than one attempt.
+    pub fn was_retried(&self) -> bool {
+        self.retried
+    }
+
     pub fn closer(&self) -> Option<Closer> {
         self.reader
             .get_ref()

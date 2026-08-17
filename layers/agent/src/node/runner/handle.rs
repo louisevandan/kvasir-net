@@ -17,6 +17,8 @@ use tokio::sync::mpsc;
 /// What a caller keeps to feed a running node.
 #[derive(Clone)]
 pub struct Handle {
+    /// Asked on a status request, and only then.
+    pub(super) backend: Arc<dyn p4_adapter::Adapter>,
     work: mpsc::UnboundedSender<Frame>,
     queue: Arc<NodeQueue>,
     counts: Arc<Counts>,
@@ -46,12 +48,21 @@ impl Handle {
         work: mpsc::UnboundedSender<Frame>,
         queue: Arc<NodeQueue>,
         counts: Arc<Counts>,
+        backend: Arc<dyn p4_adapter::Adapter>,
     ) -> Self {
         Self {
             work,
             queue,
             counts,
+            backend,
         }
+    }
+
+    /// What the backend behind this node says it is doing. Relayed, never
+    /// read: the core has no idea what the string means, which is the same
+    /// arrangement a plan has going the other way.
+    pub fn report(&self) -> String {
+        self.backend.report()
     }
 
     /// Moves work to this node. Returns immediately — this call is the whole

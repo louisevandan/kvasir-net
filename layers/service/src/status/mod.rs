@@ -35,7 +35,7 @@ pub async fn snapshot(agent: &Arc<Agent>) -> String {
     );
     for node in agent.node_status().await {
         out.push_str(&format!(
-            "\nnode={} depth={} running={} routes=[{}]",
+            "\nnode={} depth={} running={} routes=[{}] backend=[{}]",
             escape(&node.node),
             node.depth,
             node.running,
@@ -44,6 +44,9 @@ pub async fn snapshot(agent: &Arc<Agent>) -> String {
                 .map(|route| escape(route))
                 .collect::<Vec<_>>()
                 .join(","),
+            // The backend in its own words, escaped like anything else that
+            // came from outside. Read by whoever asked and by nothing here.
+            escape(&node.backend),
         ));
     }
     out

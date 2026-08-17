@@ -50,6 +50,14 @@ pub struct Node {
 
 impl Node {
     /// Starts the node and returns the handle used to feed it.
+    /// What the backend behind this node says it is doing.
+    ///
+    /// Relayed, never read. The core has no idea what the string means, which
+    /// is the same arrangement a plan has going the other way.
+    pub fn report(&self) -> String {
+        self.adapter.report()
+    }
+
     pub fn spawn(
         adapter: Arc<dyn Adapter>,
         payload: Arc<dyn Payload>,
@@ -60,6 +68,7 @@ impl Node {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel::<Frame>();
         let queue = Arc::new(NodeQueue::default());
+        let reporting = Arc::clone(&adapter);
         let counts = Arc::new(Counts::default());
         let queued = out;
         let node = Node {
@@ -89,7 +98,7 @@ impl Node {
             }
         });
         tokio::spawn(node.run(work_rx, event_rx));
-        Handle::new(work_tx, queue, counts)
+        Handle::new(work_tx, queue, counts, reporting)
     }
 
     async fn run(

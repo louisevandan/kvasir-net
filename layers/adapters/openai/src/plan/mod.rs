@@ -108,6 +108,16 @@ impl Plan {
             .and_then(Value::as_u64)
             .map(Duration::from_millis)
             .unwrap_or(endpoint.idle);
+        // The socket is told the same thing, because it is the same wait. The
+        // two were separate and the plan reached only one of them: an operator
+        // asking for fifteen minutes of patience got fifteen minutes on the
+        // channel and two on the socket underneath it, so a backend that went
+        // quiet for two minutes — a crowded server working other slots —
+        // killed the stream from below while the adapter was still waiting
+        // patiently above. Sequences died around their ninetieth token with a
+        // timeout nobody had asked for.
+        let mut endpoint = endpoint;
+        endpoint.idle = patience;
         let named = value.get("model").and_then(Value::as_str);
         Ok(Self {
             role,

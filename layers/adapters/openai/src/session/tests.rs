@@ -14,6 +14,7 @@ fn a_stream_that_just_stops_is_reported_as_an_ending() {
         // No socket: these build a session directly to test the token
 
         // bookkeeping, so there is nothing to end when they are dropped.
+        retried: false,
         closer: None,
     };
     assert!(matches!(
@@ -30,6 +31,7 @@ fn a_finished_session_keeps_saying_so() {
         delivered: 0,
         tokens,
         ended: Some("length".into()),
+        retried: false,
         closer: None,
     };
     match session.token(Duration::from_millis(10)) {
@@ -56,6 +58,7 @@ fn the_text_on_a_final_chunk_is_not_thrown_away() {
         // No socket: these build a session directly to test the token
 
         // bookkeeping, so there is nothing to end when they are dropped.
+        retried: false,
         closer: None,
     };
     match session.token(Duration::from_millis(50)) {
@@ -98,6 +101,7 @@ fn an_empty_chunk_is_waited_through_rather_than_reported() {
         // No socket: these build a session directly to test the token
 
         // bookkeeping, so there is nothing to end when they are dropped.
+        retried: false,
         closer: None,
     };
     match session.token(Duration::from_millis(100)) {
@@ -116,6 +120,7 @@ fn a_backend_that_goes_quiet_is_a_failure_rather_than_a_wait_forever() {
         // No socket: these build a session directly to test the token
 
         // bookkeeping, so there is nothing to end when they are dropped.
+        retried: false,
         closer: None,
     };
     match session.token(Duration::from_millis(30)) {

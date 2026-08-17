@@ -93,3 +93,57 @@ fn until(mut ready: impl FnMut() -> bool, claim: &str) {
     }
     panic!("{claim}");
 }
+
+/// A backend too busy to accept is early, not absent.
+///
+/// A whole window of sequences opens at once, so a server computing answers
+/// gets to its accept queue late and the first wave is not all admitted. Under
+/// a four-node deployment that cost twelve of sixty-four requests, each failing
+/// with a connect timeout after the operating system's own twenty-one seconds
+/// — a lost request where the truth was a slow one.
+#[test]
+fn a_connection_refused_once_is_tried_again() {
+    let refusals = Arc::new(AtomicUsize::new(0));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let counted = Arc::clone(&refusals);
+    std::thread::spawn(move || {
+        for (index, stream) in listener.incoming().flatten().enumerate() {
+            // The first arrival is dropped on the floor, which is what a
+            // server that has not reached its accept queue looks like from the
+            // other end once the handshake is undone.
+            if index == 0 {
+                counted.fetch_add(1, Ordering::SeqCst);
+                drop(stream);
+                continue;
+            }
+            let mut stream = stream;
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                if line.trim().is_empty() {
+                    break;
+                }
+                line.clear();
+            }
+            let body = r#"{"data":[{"id":"m"}]}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.flush();
+        }
+    });
+
+    let endpoint = Endpoint::new("127.0.0.1", port);
+    // The first connection is taken and dropped; a second one has to be made
+    // for this to answer at all.
+    let _ = endpoint.get("/v1/models");
+    let answer = endpoint.get("/v1/models").expect("the retry reached it");
+    assert!(answer.contains("\"id\":\"m\""), "{answer}");
+    assert!(
+        refusals.load(Ordering::SeqCst) >= 1,
+        "the server never had to refuse, so nothing was retried"
+    );
+}

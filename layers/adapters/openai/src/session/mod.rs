@@ -40,6 +40,8 @@ pub struct Session {
     /// Set once the stream has ended, so a later hop is answered from here
     /// rather than from a channel that will never speak again.
     ended: Option<String>,
+    /// Whether reaching the backend took more than one attempt.
+    retried: bool,
     /// Ends the socket when this sequence is let go of.
     ///
     /// The reader thread owns the stream and is blocked on it, so it cannot
@@ -48,6 +50,14 @@ pub struct Session {
     /// far off — which made every abandoned sequence hold a connection and a
     /// thread for a quarter of an hour.
     closer: Option<Closer>,
+}
+
+impl Session {
+    /// Whether this stream needed more than one attempt to open. Reported so a
+    /// deployment being offered work faster than it can accept it says so.
+    pub fn was_retried(&self) -> bool {
+        self.retried
+    }
 }
 
 impl Drop for Session {
@@ -78,6 +88,7 @@ impl Session {
         .body();
         let mut events = endpoint.stream("/v1/chat/completions", &body)?;
         let closer = events.closer();
+        let retried = events.was_retried();
         let (sender, tokens) = channel();
         std::thread::spawn(move || {
             loop {
@@ -111,6 +122,7 @@ impl Session {
             tokens,
             delivered: 0,
             ended: None,
+            retried,
             closer,
         })
     }

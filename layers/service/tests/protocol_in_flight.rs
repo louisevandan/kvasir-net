@@ -300,3 +300,60 @@ fn outer_can_collect_traffic_and_queue_statistics() {
         );
     });
 }
+
+/// What a backend says about itself reaches OUTER, and the layer between never
+/// reads it.
+///
+/// The mirror of a plan. A plan goes down opaque and this comes up the same
+/// way, which is what lets a backend be observable without the core learning
+/// what a backend is.
+///
+/// It exists because every defect found under load in this layer was diagnosed
+/// from a backend's own log and the machine's socket table — how many streams
+/// were open, how many had to be reached twice, how many were refused — and
+/// none of that could be seen from anywhere else. A caller on another machine
+/// had no way to tell a busy deployment from a broken one.
+#[test]
+fn a_backend_describes_itself_through_the_status_message() {
+    runtime().block_on(async {
+        let seen = Outer::default();
+        let outer = start(Arc::new(seen.clone())).await;
+        let agent = start(Arc::new(Standard::new(backends()))).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "n0",
+            "mock-solo",
+            r#"{"l":"0-9"}"#,
+            4,
+        )
+        .await;
+
+        agent
+            .enqueue(to_agent(&agent, &outer, "ask", ToAgent::Status))
+            .unwrap();
+        until(|| !seen.replies("ask").is_empty()).await;
+
+        let snapshot = seen
+            .replies("ask")
+            .iter()
+            .find_map(|reply| match reply {
+                Reply::Status { snapshot } => Some(snapshot.clone()),
+                _ => None,
+            })
+            .expect("a status snapshot");
+
+        assert!(
+            snapshot.contains("backend=["),
+            "the node's line carries what the backend said: {snapshot}"
+        );
+        // The mock has nothing to say, and says nothing — an adapter is not
+        // obliged to report, and an empty report must not look like a missing
+        // field.
+        assert!(
+            snapshot.contains("backend=[]"),
+            "an adapter with nothing to say leaves it empty: {snapshot}"
+        );
+    });
+}

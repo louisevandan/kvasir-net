@@ -35,4 +35,23 @@ pub trait Adapter: Send + Sync {
     /// deployment; the node guarantees that by starting the next hop only when
     /// it sees the previous one complete.
     fn start(&self, work: Work, events: &dyn EventSink);
+
+    /// What this backend is doing, for whoever is asking.
+    ///
+    /// The mirror of a plan. A plan goes down opaque — the layer above carries
+    /// it and never reads it — and this comes up the same way: the node puts it
+    /// in a status snapshot and never interprets a byte of it. That symmetry is
+    /// what lets a backend be observable without the core learning what a
+    /// backend is.
+    ///
+    /// It exists because every defect found under load in this layer was
+    /// diagnosed by reading a backend's own logs and the machine's socket
+    /// table, neither of which an operator elsewhere can see. What is cheap to
+    /// publish should be published; what needs a debugger should not be here.
+    ///
+    /// Called on a status request, so it must be cheap and must not block. An
+    /// adapter with nothing to say says nothing, which is the default.
+    fn report(&self) -> String {
+        String::new()
+    }
 }

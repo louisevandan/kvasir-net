@@ -35,6 +35,7 @@ pub mod chat;
 pub mod endpoint;
 pub mod flavour;
 pub mod plan;
+pub mod report;
 pub mod session;
 
 use flavour::Flavour;
@@ -53,6 +54,14 @@ pub struct OpenAi {
     generation: AtomicU64,
     /// One open completion per sequence, which is that sequence's state.
     sessions: Mutex<HashMap<String, Session>>,
+    /// What has happened at the socket, for whoever asks what this backend is
+    /// doing. Every one of these was needed to diagnose something this session
+    /// and none of them was visible: they came from the machine's socket table
+    /// and the server's own log, which nobody elsewhere can read.
+    opened: AtomicU64,
+    reopened: AtomicU64,
+    refused: AtomicU64,
+    finished: AtomicU64,
 }
 
 impl OpenAi {
@@ -62,6 +71,10 @@ impl OpenAi {
             plan: Mutex::new(None),
             generation: AtomicU64::new(0),
             sessions: Mutex::new(HashMap::new()),
+            opened: AtomicU64::new(0),
+            reopened: AtomicU64::new(0),
+            refused: AtomicU64::new(0),
+            finished: AtomicU64::new(0),
         }
     }
 
@@ -263,9 +276,14 @@ impl OpenAi {
         for (sequence, outcome) in opened {
             match outcome {
                 Ok(session) => {
+                    self.opened.fetch_add(1, Ordering::Relaxed);
+                    if session.was_retried() {
+                        self.reopened.fetch_add(1, Ordering::Relaxed);
+                    }
                     sessions.insert(sequence, session);
                 }
                 Err(detail) => {
+                    self.refused.fetch_add(1, Ordering::Relaxed);
                     refused.insert(sequence.clone());
                     events.raise(Event::Failed {
                         deployment: hop.deployment.clone(),
@@ -307,6 +325,7 @@ impl OpenAi {
             }),
             Next::Done(reason) => {
                 sessions.remove(&sequence.sequence);
+                self.finished.fetch_add(1, Ordering::Relaxed);
                 Some(Outcome {
                     sequence: sequence.sequence.clone(),
                     text: String::new(),
@@ -330,6 +349,10 @@ impl OpenAi {
 impl Adapter for OpenAi {
     fn distribution(&self) -> Distribution {
         Distribution::Internal
+    }
+
+    fn report(&self) -> String {
+        self.state()
     }
 
     fn start(&self, work: Work, events: &dyn EventSink) {

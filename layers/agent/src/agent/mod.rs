@@ -147,6 +147,7 @@ impl Agent {
                 depth: handle.depth(),
                 running: handle.in_adapter(),
                 waiting: handle.waiting_routes(),
+                backend: handle.report(),
             })
             .collect();
         status.sort_by(|left, right| left.node.cmp(&right.node));
@@ -162,7 +163,7 @@ impl Agent {
                 let c = handle.counts();
                 let load = |value: &std::sync::atomic::AtomicUsize| value.load(Ordering::Relaxed);
                 format!(
-                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} emitted={} raised={} lost={} depth={} running={}",
+                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} emitted={} raised={} lost={} depth={} running={} backend=[{}]",
                     load(&c.received),
                     load(&c.queued),
                     load(&c.claimed),
@@ -175,7 +176,11 @@ impl Agent {
                     c.raised.load(Ordering::Relaxed),
                     c.lost.load(Ordering::Relaxed),
                     handle.depth(),
-                    handle.is_running(),
+                    handle.in_adapter(),
+                    // The same words the protocol carries. An operator at the
+                    // machine and a caller on another one must not have to
+                    // compare two different accounts of the same node.
+                    handle.report(),
                 )
             })
             .collect();
@@ -373,4 +378,7 @@ pub struct NodeStatus {
     /// P4 queues rather than the backend.
     pub running: usize,
     pub waiting: Vec<String>,
+    /// What the backend behind this node says it is doing, in its own words.
+    /// Carried, never interpreted.
+    pub backend: String,
 }

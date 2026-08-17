@@ -85,3 +85,31 @@ fn a_worker_that_is_not_an_address_is_refused_at_the_load() {
     let error = Plan::parse(r#"{"endpoint":"127.0.0.1:1","workers":["nowhere"]}"#).unwrap_err();
     assert!(error.contains("host:port"), "{error}");
 }
+
+/// The plan's patience reaches the socket, not only the channel above it.
+///
+/// They were separate, and the plan set only one. An operator asking for a
+/// quarter of an hour got it on the channel and two minutes on the socket
+/// underneath, so a backend that went quiet for two minutes — a crowded server
+/// working its other slots — killed the stream from below while the adapter
+/// waited patiently above. Sequences died around their ninetieth token with a
+/// timeout nobody had asked for.
+#[test]
+fn patience_is_one_number_and_the_socket_gets_it_too() {
+    let plan =
+        Plan::parse(r#"{"endpoint":"127.0.0.1:8080","patience_ms":900000}"#).expect("parsed");
+    assert_eq!(plan.patience, Duration::from_millis(900_000));
+    assert_eq!(
+        plan.endpoint.idle, plan.patience,
+        "the socket waits as long as the plan said"
+    );
+}
+
+/// Left alone when the plan says nothing, so a plan written before this still
+/// means what it meant.
+#[test]
+fn a_plan_that_asks_for_no_patience_keeps_the_default() {
+    let bare = Plan::parse(r#"{"endpoint":"127.0.0.1:8080"}"#).expect("parsed");
+    assert_eq!(bare.patience, bare.endpoint.idle);
+    assert_eq!(bare.endpoint.idle, Endpoint::new("h", 1).idle);
+}
