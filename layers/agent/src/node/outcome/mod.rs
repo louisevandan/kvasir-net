@@ -59,11 +59,12 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
     // — and the cost of it lands on every node of the chain at once.
     if let Some(requested) = report.sequence(carrier).map(|sequence| sequence.remaining)
         && requested > 0
-        && outcome.position >= requested
+        && (outcome.position > requested
+            || (outcome.position == requested && outcome.text.is_empty()))
     {
         return Next::Finish(Frame {
             envelope: reply,
-            body: report.finished("length", outcome.position),
+            body: report.finished("length", requested.min(outcome.position)),
         });
     }
     let Some(lap) = carrier.envelope.to_next_lap() else {

@@ -104,7 +104,7 @@ fn an_unload_is_reported_and_the_node_keeps_serving_afterwards() {
         // instruction, so ordinary work still runs.
         a.enqueue(request("after", &chain, &outer, 1)).unwrap();
         until(|| !outer_duties.frames_for("after").is_empty()).await;
-        assert_eq!(outer_duties.frames_for("after").len(), 1);
+        assert_eq!(outer_duties.frames_for("after").len(), 2);
     });
 }
 
@@ -197,9 +197,9 @@ fn a_live_deadline_does_not_stop_ordinary_work() {
         let chain = chain_over(&[(&a, "n0")]);
         a.enqueue(expiring("soon", &chain, &outer, now_unix_ms() + 60_000))
             .unwrap();
-        until(|| outer_duties.frames_for("soon").len() >= 2).await;
+        until(|| outer_duties.frames_for("soon").len() >= 3).await;
 
-        assert_eq!(outer_duties.frames_for("soon").len(), 2);
+        assert_eq!(outer_duties.frames_for("soon").len(), 3);
     });
 }
 

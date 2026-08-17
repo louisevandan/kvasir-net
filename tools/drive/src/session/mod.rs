@@ -4,6 +4,7 @@
 //! here reaches inside an agent. What came back is next door, in `replies`.
 
 mod deploy;
+mod discovery;
 
 use crate::fleet::Fleet;
 mod replies;

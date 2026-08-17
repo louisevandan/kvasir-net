@@ -348,12 +348,11 @@ fn a_backend_describes_itself_through_the_status_message() {
             snapshot.contains("backend=["),
             "the node's line carries what the backend said: {snapshot}"
         );
-        // The mock has nothing to say, and says nothing — an adapter is not
-        // obliged to report, and an empty report must not look like a missing
-        // field.
+        // The mock now reports the same adapter-owned evidence that a real
+        // llama-compatible runtime exposes. It remains opaque to the service.
         assert!(
-            snapshot.contains("backend=[]"),
-            "an adapter with nothing to say leaves it empty: {snapshot}"
+            snapshot.contains(r#"backend=[{"backend":"llama-compatible-mock"#),
+            "the adapter report remains opaque but visible: {snapshot}"
         );
     });
 }

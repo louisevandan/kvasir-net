@@ -474,6 +474,13 @@ choose the global placement. The responsibilities are deliberately separated:
 - P4 transports the discovery result and the final opaque plan; it must not
   interpret llama.cpp switches or generation options.
 
+The mock adapter used by the distributed scenario is intentionally llama-shaped:
+its synthetic profile includes architecture dimensions, KV-heads, context,
+quantization, fingerprint, and stage/boundary bytes; it records the opaque load
+plan and generation options, and reports adapter-owned busy/idle and batch
+evidence. This makes the protocol boundary testable without claiming that mock
+timing or memory is llama.cpp/CUDA evidence.
+
 The implemented profile is the model-descriptor foundation, but the minimum
 model descriptor still requires a stable model fingerprint and shard
 set identity, file sizes and completeness, architecture, executable layer

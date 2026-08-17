@@ -55,6 +55,9 @@ pub struct Replies {
     pub(super) finished: Arc<AtomicUsize>,
     pub(super) bound: Arc<AtomicUsize>,
     pub(super) accepted: Arc<AtomicUsize>,
+    /// Discovery replies are separate from inference streams so a preflight
+    /// can verify every selected agent before creating nodes.
+    pub(super) models: Arc<Mutex<HashMap<String, Reply>>>,
     /// Every reply that is progress. What waiting is bounded by: a driver
     /// cannot know how fast a backend is, but it can tell a deployment that is
     /// slow from one that has stopped, and only the second is worth giving up
@@ -77,7 +80,14 @@ impl Duties for Replies {
         // route that produced nothing and count it among the run's.
         match &reply {
             Reply::Status { snapshot } => return self.peaks.observe(snapshot),
-            Reply::Machine { .. } | Reply::Model { .. } => return,
+            Reply::Machine { .. } => return,
+            Reply::Model { .. } => {
+                self.models
+                    .lock()
+                    .expect("model lock")
+                    .insert(frame.envelope.route.clone(), reply);
+                return;
+            }
             _ => {}
         }
         self.events.fetch_add(1, SeqCst);

@@ -85,10 +85,10 @@ fn malformed_input_is_refused_without_taking_the_agent_with_it() {
         // Still serving.
         let chain = chain_over(&[(&a, "n0")]);
         a.enqueue(request("after", &chain, &outer, 2)).unwrap();
-        until(|| outer_duties.frames_for("after").len() >= 2).await;
+        until(|| outer_duties.frames_for("after").len() >= 3).await;
         assert_eq!(
             outer_duties.frames_for("after").len(),
-            2,
+            3,
             "the agent kept working after all of that"
         );
     });
@@ -209,7 +209,7 @@ fn a_long_mixed_run_leaves_nothing_behind() {
             raw(&a, &[0xab; 40]).await;
             a.enqueue(for_missing_node(&a)).unwrap();
         }
-        until(|| outer_duties.total_frames() >= sent * 3).await;
+        until(|| outer_duties.total_frames() >= sent * (3 + 1)).await;
 
         assert_eq!(outer_duties.routes(), sent, "every real request answered");
         assert_eq!(

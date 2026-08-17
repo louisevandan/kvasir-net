@@ -38,6 +38,10 @@
 //! `P4_DRIVE_QUIET_MS` is how long nothing may arrive before the driver stops
 //! waiting; 30s by default. It is not a budget for the run — an answer takes as
 //! long as it takes, and what says something is wrong is silence, not duration.
+//!
+//! `P4_DRIVE_DISCOVER=1` performs `InspectModel` against every selected agent
+//! before node creation. `P4_DRIVE_ARTIFACT` names its opaque artifact
+//! reference and defaults to `model`.
 
 mod fleet;
 mod report;
@@ -137,6 +141,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "P4_DRIVE_UNREACHABLE address={} note=remote-stages-cannot-reply",
             session.address()
         );
+    }
+
+    if std::env::var("P4_DRIVE_DISCOVER").is_ok_and(|value| value != "0") {
+        let artifact = std::env::var("P4_DRIVE_ARTIFACT").unwrap_or_else(|_| "model".into());
+        let discovered = session.inspect_models(&fleet, &adapter, &artifact).await?;
+        println!("P4_DRIVE_DISCOVERY models={discovered} artifact={artifact}");
     }
 
     let nodes = fleet.deployments().len() * fleet.stages();

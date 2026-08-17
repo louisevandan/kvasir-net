@@ -55,10 +55,14 @@ fn a_frame_crosses_a_row_of_agents_that_own_nothing() {
             door.enqueue(request(&format!("r{index}"), &chain, &outer, 3))
                 .unwrap();
         }
-        until(|| outer_duties.total_frames() >= 24 * 3).await;
+        until(|| outer_duties.total_frames() >= 24 * (3 + 1)).await;
 
         assert_eq!(outer_duties.routes(), 24, "every request found its way");
-        assert_eq!(outer_duties.total_frames(), 24 * 3, "with all its tokens");
+        assert_eq!(
+            outer_duties.total_frames(),
+            24 * (3 + 1),
+            "with all tokens and terminals"
+        );
         // The two that were never addressed took no part, which is the claim:
         // relaying is not membership.
         assert_eq!(middle.traffic().consumed, 0, "the middle owned nothing");
@@ -99,7 +103,7 @@ fn one_entry_point_serves_a_star_of_workers() {
                 sent += 1;
             }
         }
-        until(|| outer_duties.total_frames() >= sent * 2).await;
+        until(|| outer_duties.total_frames() >= sent * (2 + 1)).await;
 
         assert_eq!(outer_duties.routes(), sent, "every worker was reached");
         assert_eq!(
@@ -135,11 +139,11 @@ fn a_chain_may_return_to_a_machine_it_already_visited() {
             one.enqueue(request(&format!("r{index}"), &chain, &outer, 4))
                 .unwrap();
         }
-        until(|| outer_duties.total_frames() >= 16 * 4).await;
+        until(|| outer_duties.total_frames() >= 16 * (4 + 1)).await;
 
         for index in 0..16 {
             let frames = outer_duties.frames_for(&format!("r{index}"));
-            assert_eq!(frames.len(), 4, "route {index} completed");
+            assert_eq!(frames.len(), 5, "route {index} completed");
             assert_eq!(frames.last().unwrap().body, b"stop");
         }
     });
@@ -217,7 +221,7 @@ fn a_partition_that_heals_resumes_without_restarting_anything() {
 
         // Works, then the far machine goes away, then it comes back.
         near.enqueue(request("before", &chain, &outer, 2)).unwrap();
-        until(|| outer_duties.frames_for("before").len() >= 2).await;
+        until(|| outer_duties.frames_for("before").len() >= 3).await;
 
         cut.cut();
         settle(150).await;
@@ -240,13 +244,13 @@ fn a_partition_that_heals_resumes_without_restarting_anything() {
             near.enqueue(request(&format!("after{index}"), &chain, &outer, 2))
                 .unwrap();
         }
-        until(|| (0..8).all(|index| outer_duties.frames_for(&format!("after{index}")).len() >= 2))
+        until(|| (0..8).all(|index| outer_duties.frames_for(&format!("after{index}")).len() >= 3))
             .await;
 
         for index in 0..8 {
             assert_eq!(
                 outer_duties.frames_for(&format!("after{index}")).len(),
-                2,
+                3,
                 "work after the heal completed"
             );
         }
@@ -287,7 +291,7 @@ fn arrivals_continue_across_a_cut_and_heal_on_a_slow_link() {
             }
             until(|| {
                 (0..6)
-                    .all(|index| outer_duties.frames_for(&format!("ok{cycle}-{index}")).len() >= 2)
+                    .all(|index| outer_duties.frames_for(&format!("ok{cycle}-{index}")).len() >= 3)
             })
             .await;
             cut.cut();
@@ -296,10 +300,10 @@ fn arrivals_continue_across_a_cut_and_heal_on_a_slow_link() {
         cut.heal();
 
         near.enqueue(request("last", &chain, &outer, 2)).unwrap();
-        until(|| outer_duties.frames_for("last").len() >= 2).await;
+        until(|| outer_duties.frames_for("last").len() >= 3).await;
         assert_eq!(
             outer_duties.frames_for("last").len(),
-            2,
+            3,
             "the first frame after the third heal was not swallowed"
         );
     });

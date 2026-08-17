@@ -11,8 +11,9 @@
 
 pub mod cache;
 pub mod profile;
+mod runtime;
 
-use p4_adapter::{Adapter, Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
+use p4_adapter::{Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase};
 use profile::{Fault, Profile};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -75,6 +76,11 @@ pub struct Mock {
     /// progress the sequence had made, so a longer conversation persists to a
     /// larger copy — the proportion a caller reasons about.
     persisted: Mutex<HashMap<String, u64>>,
+    /// The opaque plan and generation options the adapter actually received.
+    /// These are observability evidence, never inputs to P4 scheduling.
+    loaded: Mutex<Option<String>>,
+    plans: Mutex<Vec<String>>,
+    options: Mutex<Vec<String>>,
 }
 
 impl Mock {
@@ -111,6 +117,9 @@ impl Mock {
             peak_running: AtomicUsize::new(0),
             produced: Mutex::new(HashMap::new()),
             persisted: Mutex::new(HashMap::new()),
+            loaded: Mutex::new(None),
+            plans: Mutex::new(Vec::new()),
+            options: Mutex::new(Vec::new()),
         }
     }
 
@@ -143,7 +152,18 @@ impl Mock {
         self.peak_running.load(Ordering::SeqCst)
     }
 
-    fn load(&self, deployment: String, events: &dyn EventSink) {
+    fn load(&self, load: p4_adapter::Load, events: &dyn EventSink) {
+        let deployment = load.deployment.clone();
+        if load.artifact.is_empty() || load.plan.trim().is_empty() {
+            events.raise(Event::Failed {
+                deployment,
+                sequence: None,
+                detail: "mock adapter requires artifact and opaque load plan".into(),
+            });
+            return;
+        }
+        *self.loaded.lock().expect("loaded lock") = Some(load.artifact);
+        self.plans.lock().expect("plan log lock").push(load.plan);
         let stages = self.profile.stages.max(1);
         let step = self.profile.stage_cost();
         for stage in 0..stages {
@@ -177,6 +197,7 @@ impl Mock {
 
     fn hop(&self, hop: Hop, events: &dyn EventSink) {
         let began = std::time::Instant::now();
+        let first_sequence = hop.sequences.first().map(|s| s.sequence.clone());
         if let Some(ended) = self.rested.lock().expect("rest lock").take() {
             self.idle.fetch_add(
                 began.duration_since(ended).as_nanos() as u64,
@@ -189,6 +210,27 @@ impl Mock {
             .push(hop.width());
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak_running.fetch_max(now, Ordering::SeqCst);
+
+        let mut valid = Vec::with_capacity(hop.sequences.len());
+        for sequence in hop.sequences {
+            self.options
+                .lock()
+                .expect("options log lock")
+                .push(sequence.options.clone());
+            if !is_json_object(&sequence.options) {
+                events.raise(Event::Failed {
+                    deployment: hop.deployment.clone(),
+                    sequence: Some(sequence.sequence),
+                    detail: "mock adapter rejected non-object generation options".into(),
+                });
+            } else {
+                valid.push(sequence);
+            }
+        }
+        if valid.is_empty() {
+            self.running.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
 
         if self.profile.fault == Fault::Silence {
             // Never answers. The node stays busy until its deadline or a
@@ -210,14 +252,13 @@ impl Mock {
         if self.profile.fault == Fault::Hop {
             events.raise(Event::Failed {
                 deployment: hop.deployment,
-                sequence: hop.sequences.first().map(|s| s.sequence.clone()),
+                sequence: first_sequence,
                 detail: "mock deployment was asked to fail its hops".into(),
             });
             return;
         }
         events.raise(Event::HopComplete {
-            outcomes: hop
-                .sequences
+            outcomes: valid
                 .iter()
                 .map(|sequence| self.outcome(sequence))
                 .collect(),
@@ -265,8 +306,13 @@ impl Mock {
                 turn: 1,
                 lifetime: 1,
             });
-        let finished = progress.turn >= sequence.remaining.max(1);
-        let position = progress.turn;
+        let requested = sequence.remaining;
+        let finished = requested == 0 || progress.turn > requested;
+        let position = if finished {
+            progress.turn.saturating_sub(1)
+        } else {
+            progress.turn
+        };
         if finished {
             // The turn is over; the sequence is not. A backend keeps a
             // conversation's state against its id until something tells it to
@@ -276,39 +322,13 @@ impl Mock {
         }
         Outcome {
             sequence: sequence.sequence.clone(),
-            text: format!("{}#{position} ", sequence.sequence),
+            text: if finished {
+                String::new()
+            } else {
+                format!("{}#{position} ", sequence.sequence)
+            },
             position,
             stop: finished.then(|| "stop".to_string()),
-        }
-    }
-}
-
-impl Adapter for Mock {
-    fn inspect_model(&self, artifact: &str) -> Result<String, String> {
-        if artifact.is_empty() {
-            return Err("mock artifact reference is empty".into());
-        }
-        Ok(format!(
-            r#"{{"artifact":"{}","architecture":"mock","layers":{},"distribution":"{:?}","stage_bytes":{}}}"#,
-            artifact.replace('"', "\\\""),
-            self.profile.stages.max(1),
-            self.distribution,
-            self.profile.reserved_per_stage,
-        ))
-    }
-
-    fn distribution(&self) -> Distribution {
-        self.distribution
-    }
-
-    fn start(&self, work: Work, events: &dyn EventSink) {
-        match work {
-            Work::Load(load) => self.load(load.deployment, events),
-            Work::Unload(unload) => events.raise(Event::Unloaded {
-                deployment: unload.deployment,
-            }),
-            Work::Hop(hop) => self.hop(hop, events),
-            Work::Cache(cache) => self.cache(cache, events),
         }
     }
 }
@@ -340,6 +360,19 @@ impl Mock {
         ids.sort();
         ids
     }
+
+    pub fn plans(&self) -> Vec<String> {
+        self.plans.lock().expect("plan log lock").clone()
+    }
+
+    pub fn options_seen(&self) -> Vec<String> {
+        self.options.lock().expect("options log lock").clone()
+    }
+}
+
+fn is_json_object(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with('{') && value.ends_with('}')
 }
 
 /// Burns the declared time without a runtime.

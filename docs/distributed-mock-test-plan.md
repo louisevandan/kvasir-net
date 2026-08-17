@@ -78,6 +78,10 @@ OUTER가 artifact reference와 adapter 이름으로 `InspectModel`을 요청한�
 Agent는 mock profile을 반환하고, P4는 profile 문자열을 해석하거나
 재작성하지 않는다.
 
+`P4_DRIVE_DISCOVER=1`을 지정한 drive는 node 생성 전에 모든 selected agent에
+이 preflight를 수행한다. 각 응답의 opaque profile을 비교해 일치할 때만
+create/load/inference를 시작한다.
+
 판정:
 
 - request/reply correlation이 유지된다.
@@ -99,9 +103,13 @@ local/remote agent에서 각각 model profile과 capability snapshot을 수집�
 - `Internal` adapter를 staged chain의 중간 node로 사용하지 않는다.
 - snapshot 불일치 또는 지원하지 않는 distribution은 load refusal이 된다.
 
-현재 mock profile은 GGUF parser의 대체물이 아니다. D-02는 discovery
-transport와 planner 입력 계약만 증명하며, 실제 GGUF metadata/tensor index
-프로파일은 별도 adapter 구현에서 검증한다.
+mock profile은 실제 GGUF 파일을 읽는 parser의 대체물이 아니지만, llama 계열
+architecture/layer/embedding/head/KV-head/context/quantization/fingerprint와
+stage/boundary bytes를 가진 synthetic profile이다. mock adapter는 또한 opaque
+load plan, sampling/MTP 형태의 JSON options를 수신·기록하고, 비-object options를
+요청 단위로 거부하며, llama-compatible backend report를 반환한다. 따라서
+D-02는 discovery와 adapter boundary를 검증하지만 CUDA allocator나 실제
+llama.cpp kernel 동작을 증명하지 않는다.
 
 ### P-01 pipeline feed-ahead
 
@@ -226,45 +234,55 @@ mock smoke를 수행했다.
 | 항목 | 결과 |
 | --- | --- |
 | binary | 중앙 release build 후 `p4-agent.exe`, `p4-drive.exe`만 원격 복사 |
-| hash | 중앙/원격 `p4-agent.exe` `580CF38C...E2B8CE`, `p4-drive.exe` `EC36CC65...A9E788` 일치 |
+| hash | 중앙/원격 `p4-agent.exe` `62A7633012A11AB3EB9F613378B7A195EF868A67EDB7ED9B6EF880D2327E9AC3`, `p4-drive.exe` `DFF4ABD117E5BD6DECABF2FBE11EF7D4D6677D340C01901E27146F23C5B8BADD` 일치 |
 | topology | local stage + SSH-forwarded remote stage, 2 stages |
 | load | nodes 2, mock, ceiling 8 |
 | inference | 32 requests × 8 tokens |
-| result | completed 32, failed 0, unanswered 0, tokens 224 |
-| timing | 581 ms, 441 frames/s |
-| queue | peak node 19, peak adapter 8, peak main lane 1 |
+| discovery | local/remote profile 2개 수집, profile bytes 일치 |
+| result | completed 32, failed 0, unanswered 0, tokens 256 |
+| timing | 385 ms, 748 frames/s |
+| queue | peak node 31, peak adapter 8, peak main lane 0 |
 | ordering | every stream in order, one terminal per route |
 
 직접 `192.168.0.29:52001` 경로는 원격 agent가 정상 기동했지만 중앙에서
 원격 TCP listener에 연결할 수 없어 30초 node creation timeout이 발생했다.
-방화벽을 변경하지 않고 SSH `-L 52101`과 `-R 52003` 양방향 forwarding을
+방화벽을 변경하지 않고 SSH `-L 52101`, `-R 52003` 양방향 forwarding을
 사용해 재실행했고 통과했다. 첫 tunnel 시도는 remote agent가 SSH 세션 종료와
 함께 사라지는 문제가 있어 PTY 세션으로 agent를 유지했다. 이 결과는 원격
 Windows 운영 시 방화벽·프로세스 수명·forward/reply 경로를 모두 manifest에
 기록해야 한다는 증거다.
 
-2026-08-18에는 `run-distributed-mock.ps1`로 4개 worker를 병렬 실행했다.
-각 worker는 독립적인 2-stage mock deployment에서 128 requests × 16 tokens를
-처리했다. 네 worker 모두 `completed=128`, `failed=0`, `unanswered=0`,
-stream order 통과를 기록했다. worker별 peak node queue는 83~87,
-peak in-adapter는 16, main lane은 1~3이었다. 이 결과는 여러 agent/driver가
-동시에 동작해도 request별 FIFO와 terminal correlation이 유지됨을 검증한다.
+최신 release에서 mock discovery preflight를 추가했다. 원격
+agent는 `52001`에 bind하고 `127.0.0.1:52101`로 advertise했으며, driver는
+`P4_DRIVE_DISCOVER=1`로 두 agent의 profile을 먼저 수집한 뒤 load했다. local과
+remote profile 모두 수집되고 profile bytes가 일치한 뒤 32 requests × 8 tokens를
+수행했으며 `completed=32`, `failed=0`, `unanswered=0`, stream order 통과,
+`tokens=256`, `elapsed_ms=385`, `frames_per_second=748`였다. 이 결과는
+discovery→opaque Load→pipeline inference의 cross-host 경로를 증명하지만,
+실제 GGUF 파일 fingerprint나 GPU memory 사용량은 증명하지 않는다.
+
+최종 llama-shaped mock release에서 `run-distributed-mock.ps1`로 4개 worker를
+병렬 실행했다. 각 worker는 독립적인 2-stage deployment에서 1024 requests ×
+32 tokens를 처리했고, 네 worker 모두 `completed=1024`, `failed=0`,
+`unanswered=0`, `tokens=32768`, stream order 통과를 기록했다. worker별 peak
+node queue는 753, 747, 746, 729, peak in-adapter는 16, peak main lane은
+9~15, working-set peak는 약 25~26 MB였다. 이 결과는 여러 agent/driver가 동시에 동작해도 request별
+FIFO와 terminal correlation이 유지됨을 검증한다.
 
 bounded release를 원격에 재복사한 뒤 2026-08-18 cross-host tunnel smoke도
 재실행했다. 중앙 stage와 원격 stage의 2-stage topology에서 32 requests ×
 8 tokens가 `completed=32`, `failed=0`, `unanswered=0`, stream order 통과로
-끝났고 peak node queue 25, peak in-adapter 8, peak main lane 1이었다. 실행
-후 중앙·원격 P4 listener는 모두 정리됐다.
+끝났고 peak node queue 31, peak in-adapter 8, peak main lane 0이었다. 이번
+실행에서는 discovery preflight와 generation options/opaque plan 전달도 함께
+통과했으며, 실행 후 중앙·원격 P4 listener는 모두 정리됐다.
 
-최신 bounded event/outbox release로 4개 worker에 각각 1024 requests × 32
-tokens를 다시 실행했을 때도 모두 완료했고, worker별 peak node queue는
-최종 release 기준 729~752, peak in-adapter는 16이었다. 6000 requests × 1 token overflow run도
-`completed=6000`, `failed=0`, `unanswered=0`으로 끝났고 peak node queue는
-4, peak main lane은 2였다. 즉 생산자는 lane admission에서 조절되고 node
-queue/event/outbox는 무제한으로 증가하지 않았다. 최신 release를 원격에 복사해
-동일한 SSH 양방향 forwarding 경로로 32 requests × 8 tokens를 재실행했고
-`completed=32`, `failed=0`, `unanswered=0`, stream order 통과, 581 ms,
-441 frames/s, peak node 19, peak adapter 8, peak main lane 1을 확인했다.
+6000 requests × 1 token overflow run도 `completed=6000`, `failed=0`,
+`unanswered=0`, `tokens=6000`, stream order 통과로 끝났고 elapsed 55,659 ms,
+peak node queue 24, peak in-adapter 16, peak main lane 14였다. runner는 55개
+working-set 샘플을 수집했고 min 15,138,816 B, peak 21,798,912 B, delta
+6,660,096 B를 manifest에 기록했다. 즉 생산자는 lane admission에서 조절되고
+node queue/event/outbox는 무제한으로 증가하지 않았다. 이 수치는 mock adapter의
+결과이며 실제 GPU memory/allocator 상한 검증을 대체하지 않는다.
 최종 release의 10분 장기 local run은 60000 requests × 1 token을 595622 ms
 동안 처리했다. `completed=60000`, `failed=0`, `unanswered=0`, stream order
 통과, peak node queue 4, peak in-adapter 4, peak main lane 3이었다. runner는

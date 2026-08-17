@@ -86,12 +86,16 @@ fn a_chain_across_slow_links_still_answers_every_request() {
             a.enqueue(request(&format!("r{index}"), &chain, &outer, 4))
                 .unwrap();
         }
-        until(|| outer_duties.total_frames() >= 24 * 4).await;
+        until(|| outer_duties.total_frames() >= 24 * (4 + 1)).await;
 
         assert_eq!(outer_duties.routes(), 24, "every request answered");
         for index in 0..24 {
             let frames = outer_duties.frames_for(&format!("r{index}"));
-            assert_eq!(frames.len(), 4, "route {index} got all of its tokens");
+            assert_eq!(
+                frames.len(),
+                5,
+                "route {index} got all of its tokens and terminal"
+            );
             assert_eq!(
                 frames.last().unwrap().body,
                 b"stop",
@@ -132,7 +136,7 @@ fn a_jittery_link_does_not_reorder_a_token_stream() {
             a.enqueue(request(&format!("r{index}"), &chain, &outer, 6))
                 .unwrap();
         }
-        until(|| outer_duties.total_frames() >= 16 * 6).await;
+        until(|| outer_duties.total_frames() >= 16 * (6 + 1)).await;
 
         for index in 0..16 {
             let route = format!("r{index}");
@@ -185,10 +189,14 @@ fn a_stalling_link_delays_work_without_losing_it() {
             a.enqueue(request(&format!("r{index}"), &chain, &outer, 3))
                 .unwrap();
         }
-        until(|| outer_duties.total_frames() >= 20 * 3).await;
+        until(|| outer_duties.total_frames() >= 20 * (3 + 1)).await;
 
         assert_eq!(outer_duties.routes(), 20, "every route survived the stalls");
-        assert_eq!(outer_duties.total_frames(), 20 * 3, "with all its tokens");
+        assert_eq!(
+            outer_duties.total_frames(),
+            20 * (3 + 1),
+            "with all tokens and terminals"
+        );
     });
 }
 
@@ -224,7 +232,7 @@ fn a_narrow_link_slows_the_work_rather_than_burying_it() {
             "the lanes did not become the buffer the link refused to be: {in_front}"
         );
 
-        until(|| outer_duties.total_frames() >= 32 * 4).await;
+        until(|| outer_duties.total_frames() >= 32 * (4 + 1)).await;
         assert_eq!(outer_duties.routes(), 32, "and it all arrived");
     });
 }
@@ -261,7 +269,7 @@ fn one_bad_link_in_a_chain_does_not_serialise_the_rest() {
             a.enqueue(request(&format!("r{index}"), &chain, &outer, 2))
                 .unwrap();
         }
-        until(|| outer_duties.total_frames() >= 24 * 2).await;
+        until(|| outer_duties.total_frames() >= 24 * (2 + 1)).await;
         let elapsed = started.elapsed();
 
         assert_eq!(outer_duties.routes(), 24, "every request finished");
@@ -317,7 +325,7 @@ fn a_slow_link_and_a_slow_backend_together_still_attribute_correctly() {
              node {node_depth}"
         );
 
-        until(|| outer_duties.total_frames() >= 32 * 2).await;
+        until(|| outer_duties.total_frames() >= 32 * (2 + 1)).await;
         assert_eq!(outer_duties.routes(), 32, "and everything completed");
     });
 }

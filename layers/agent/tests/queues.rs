@@ -161,12 +161,12 @@ fn decode_keeps_moving_while_prefill_is_still_queued() {
 
         // `routes` counts routes heard from, which a long generation reaches
         // early; the finish line is every token of every route.
-        until(|| outer_duties.total_frames() >= 40 * 8).await;
+        until(|| outer_duties.total_frames() >= 40 * (8 + 1)).await;
         assert_eq!(outer_duties.routes(), 40, "and every route still finished");
         assert_eq!(
             outer_duties.total_frames(),
-            40 * 8,
-            "each request got all of its tokens"
+            40 * (8 + 1),
+            "each request got all tokens and terminals"
         );
     });
 }

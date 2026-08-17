@@ -119,7 +119,11 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
                 _ => None,
             })
             .collect();
-        assert_eq!(tokens, vec![0, 1, 2], "tokens arrived in order: {stream:?}");
+        assert_eq!(
+            tokens,
+            vec![0, 1, 2, 3],
+            "tokens arrived in order: {stream:?}"
+        );
         assert!(
             matches!(stream.last(), Some(Reply::Done { generated: 4, .. })),
             "one terminal, counting every token: {stream:?}"

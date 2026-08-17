@@ -138,7 +138,7 @@ fn two_nodes_on_each_agent_are_created_loaded_and_driven() {
                 .collect();
             assert_eq!(
                 tokens,
-                vec![0, 1, 2, 3],
+                vec![0, 1, 2, 3, 4],
                 "round {round} arrived in order: {stream:?}"
             );
             assert!(
@@ -267,7 +267,7 @@ fn nodes_shared_by_two_chains_keep_the_routes_apart() {
                     .collect();
                 assert_eq!(
                     tokens,
-                    (0..expected - 1).collect::<Vec<_>>(),
+                    (0..expected).collect::<Vec<_>>(),
                     "{route} kept its own tokens: {stream:?}"
                 );
                 let terminals = stream

@@ -1,5 +1,5 @@
 use super::*;
-use p4_adapter::{Load, Sequence, Unload};
+use p4_adapter::{Adapter, Load, Sequence, Unload, Work};
 use std::sync::Mutex as StdMutex;
 
 #[derive(Default)]
@@ -137,7 +137,7 @@ fn a_hop_answers_every_sequence_it_was_given() {
 }
 
 #[test]
-fn a_sequence_with_one_token_left_finishes() {
+fn a_sequence_with_one_token_left_finishes_on_the_following_terminal_lap() {
     let mock = Mock::terminal(0, Profile::default());
     let recorder = Recorder::default();
     mock.start(
@@ -151,6 +151,24 @@ fn a_sequence_with_one_token_left_finishes() {
 
     let Some(Event::HopComplete { outcomes, .. }) = recorder.events().pop() else {
         panic!("the hop completed");
+    };
+    assert!(
+        !outcomes[0].is_finished(),
+        "the final token is emitted first"
+    );
+    assert!(!outcomes[1].is_finished());
+
+    let recorder = Recorder::default();
+    mock.start(
+        Work::Hop(Hop {
+            deployment: "d".into(),
+            phase: Phase::Decode,
+            sequences: vec![sequence("s0", 1), sequence("s1", 9)],
+        }),
+        &recorder,
+    );
+    let Some(Event::HopComplete { outcomes, .. }) = recorder.events().pop() else {
+        panic!("the terminal lap completed");
     };
     assert!(outcomes[0].is_finished());
     assert!(!outcomes[1].is_finished());
@@ -282,7 +300,7 @@ fn a_terminal_stage_counts_across_laps_rather_than_rereading_the_request() {
     // holding the sequence open is what knows how far it has got.
     let last = Mock::terminal(1, Profile::default());
     let mut finished = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..4 {
         let recorder = Recorder::default();
         last.start(
             Work::Hop(Hop {
@@ -296,5 +314,77 @@ fn a_terminal_stage_counts_across_laps_rather_than_rereading_the_request() {
             finished.push(outcomes[0].is_finished());
         }
     }
-    assert_eq!(finished, vec![false, false, true]);
+    assert_eq!(finished, vec![false, false, false, true]);
+}
+
+#[test]
+fn discovery_profile_has_llama_shape_and_stable_fingerprint() {
+    let mock = Mock::staged(
+        0,
+        Profile {
+            stages: 2,
+            reserved_per_stage: 4096,
+            ..Profile::default()
+        },
+    );
+    let first = mock.inspect_model("model.gguf").unwrap();
+    let second = mock.inspect_model("model.gguf").unwrap();
+    assert_eq!(first, second);
+    assert!(first.contains(r#""architecture":"llama""#), "{first}");
+    assert!(first.contains(r#""fingerprint":"mock-"#), "{first}");
+    assert!(first.contains(r#""kv_heads":8"#), "{first}");
+}
+
+#[test]
+fn opaque_plan_and_generation_options_reach_the_mock_boundary() {
+    let mock = Mock::terminal(0, Profile::default());
+    let recorder = Recorder::default();
+    mock.start(
+        Work::Load(Load {
+            deployment: "d".into(),
+            plan: r#"{"split":"layer-0-31","n_gpu_layers":32}"#.into(),
+            artifact: "model.gguf".into(),
+            capability_snapshot_id: String::new(),
+            capability_expires_at: 0,
+        }),
+        &recorder,
+    );
+    let mut request = sequence("s0", 1);
+    request.options = r#"{"temperature":0.2,"top_p":0.9,"mtp":true}"#.into();
+    mock.start(
+        Work::Hop(Hop {
+            deployment: "d".into(),
+            phase: Phase::Prefill,
+            sequences: vec![request],
+        }),
+        &recorder,
+    );
+    assert_eq!(mock.plans().len(), 1);
+    assert_eq!(
+        mock.options_seen().last().unwrap(),
+        r#"{"temperature":0.2,"top_p":0.9,"mtp":true}"#
+    );
+    let report = mock.report();
+    assert!(report.contains("llama-compatible-mock"), "{report}");
+    assert!(report.contains(r#""options_seen":1"#), "{report}");
+}
+
+#[test]
+fn malformed_generation_options_are_refused_per_sequence() {
+    let mock = Mock::terminal(0, Profile::default());
+    let recorder = Recorder::default();
+    let mut request = sequence("bad", 1);
+    request.options = "--temperature 0.2".into();
+    mock.start(
+        Work::Hop(Hop {
+            deployment: "d".into(),
+            phase: Phase::Decode,
+            sequences: vec![request],
+        }),
+        &recorder,
+    );
+    assert!(matches!(
+        recorder.events().first(),
+        Some(Event::Failed { sequence: Some(id), .. }) if id == "bad"
+    ));
 }

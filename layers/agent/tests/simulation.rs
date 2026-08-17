@@ -34,7 +34,7 @@ fn a_three_stage_chain_generates_across_three_machines() {
 
         let chain = chain_over(&[(&a, "n0"), (&b, "n1"), (&c, "n2")]);
         a.enqueue(request("r1", &chain, &outer, 4)).unwrap();
-        until(|| outer_duties.frames_for("r1").len() >= 4).await;
+        until(|| outer_duties.frames_for("r1").len() >= 5).await;
 
         let frames = outer_duties.frames_for("r1");
         assert!(!frames.is_empty(), "the caller heard back");
@@ -44,8 +44,8 @@ fn a_three_stage_chain_generates_across_three_machines() {
                 .all(|f| f.envelope.lane == QueueClass::Response),
             "everything returned on the response lane"
         );
-        // Four tokens wanted: tokens reported, then one terminal.
-        assert_eq!(frames.len(), 4, "one frame per token, ending in the stop");
+        // Four tokens wanted: four token frames, then one terminal.
+        assert_eq!(frames.len(), 5, "tokens plus the terminal");
         assert_eq!(frames.last().unwrap().body, b"stop");
     });
 }
@@ -63,14 +63,14 @@ fn a_single_node_chain_generates_the_same_way() {
 
         let chain = chain_over(&[(&only, "n0")]);
         only.enqueue(request("r1", &chain, &outer, 3)).unwrap();
-        until(|| outer_duties.frames_for("r1").len() >= 3).await;
+        until(|| outer_duties.frames_for("r1").len() >= 4).await;
 
         let frames = outer_duties.frames_for("r1");
         let bodies: Vec<String> = frames
             .iter()
             .map(|f| String::from_utf8_lossy(&f.body).into_owned())
             .collect();
-        assert_eq!(frames.len(), 3, "saw {bodies:?}");
+        assert_eq!(frames.len(), 4, "saw {bodies:?}");
         assert_eq!(
             frames.last().unwrap().body,
             b"stop",
@@ -100,10 +100,14 @@ fn every_request_of_a_crowd_reaches_a_terminal() {
             a.enqueue(request(&format!("r{index}"), &chain, &outer, 1))
                 .unwrap();
         }
-        until(|| outer_duties.routes() >= 40).await;
+        until(|| outer_duties.total_frames() >= 40 * (1 + 1)).await;
 
         assert_eq!(outer_duties.routes(), 40, "every route answered");
-        assert_eq!(outer_duties.total_frames(), 40, "exactly one terminal each");
+        assert_eq!(
+            outer_duties.total_frames(),
+            40 * (1 + 1),
+            "one token and terminal each"
+        );
         assert!(
             first.widths().iter().all(|width| *width <= 4),
             "no hop exceeded the declared ceiling: {:?}",
@@ -192,9 +196,9 @@ fn a_chain_through_an_agent_that_owns_no_node_still_works() {
         let chain = chain_over(&[(&worker, "n0")]);
         // Sent to the entry agent, addressed at the worker's node.
         entry.enqueue(request("r1", &chain, &outer, 2)).unwrap();
-        until(|| outer_duties.frames_for("r1").len() >= 2).await;
+        until(|| outer_duties.frames_for("r1").len() >= 3).await;
 
-        assert_eq!(outer_duties.frames_for("r1").len(), 2);
+        assert_eq!(outer_duties.frames_for("r1").len(), 3);
     });
 }
 
@@ -298,12 +302,12 @@ fn concurrent_chains_on_shared_agents_do_not_mix_their_routes() {
         for index in 0..10 {
             assert_eq!(
                 outer_duties.frames_for(&format!("L{index}")).len(),
-                2,
+                3,
                 "left route {index} got its own token count"
             );
             assert_eq!(
                 outer_duties.frames_for(&format!("R{index}")).len(),
-                3,
+                4,
                 "right route {index} got its own token count"
             );
         }
@@ -331,7 +335,7 @@ fn a_token_stream_arrives_in_the_order_it_was_produced() {
             a.enqueue(request(&format!("s{index}"), &chain, &outer, 5))
                 .unwrap();
         }
-        until(|| (0..6).all(|i| outer_duties.frames_for(&format!("s{i}")).len() >= 5)).await;
+        until(|| (0..6).all(|i| outer_duties.frames_for(&format!("s{i}")).len() >= 6)).await;
 
         for index in 0..6 {
             let route = format!("s{index}");
@@ -347,6 +351,7 @@ fn a_token_stream_arrives_in_the_order_it_was_produced() {
                     format!("{route}#2 "),
                     format!("{route}#3 "),
                     format!("{route}#4 "),
+                    format!("{route}#5 "),
                     "stop".to_string(),
                 ],
                 "route {route} arrived out of order"
