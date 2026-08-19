@@ -21,6 +21,7 @@ foreach ($binary in @($agentBinary, $driveBinary)) {
     }
 }
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+$binaryHash = (Get-FileHash -LiteralPath $agentBinary -Algorithm SHA256).Hash
 
 $startedAgents = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 $startedDrivers = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
@@ -32,11 +33,14 @@ $workingSetSamples = @{}
 function Wait-Listening([int]$port) {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     do {
-        if (@(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue).Count -gt 0) { return }
+        if (@(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue).Count -gt 0) {
+            return
+        }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Agent port $port did not become ready."
 }
+
 try {
     $jobs = @()
     for ($worker = 0; $worker -lt $Workers; $worker++) {
@@ -79,7 +83,12 @@ exit `$LASTEXITCODE
             -RedirectStandardError (Join-Path $workerDir 'drive.err.log') `
             -WindowStyle Hidden -PassThru
         $startedDrivers.Add($driverProcess)
-        $jobs += [pscustomobject]@{ Worker = $worker; Driver = $driver; Stages = @($stage0, $stage1) }
+        $jobs += [pscustomobject]@{
+            Worker = $worker
+            Driver = $driver
+            Stages = @($stage0, $stage1)
+            Process = $driverProcess
+        }
     }
 
     while (@($startedDrivers | Where-Object { -not $_.HasExited }).Count -gt 0) {
@@ -107,8 +116,12 @@ exit `$LASTEXITCODE
             worker = $job.Worker
             driver = $job.Driver
             stages = $job.Stages
+            exit_code = $job.Process.ExitCode
             passed = $text -match '\[pass\] every request answered' -and
-                $text -match '\[pass\] every stream in order'
+                $text -match '\[pass\] no request failed' -and
+                $text -match '\[pass\] every stream in order' -and
+                $text -match '\[pass\] one terminal per route' -and
+                $job.Process.ExitCode -eq 0
             log = $log
             peak_working_set_bytes = $workingSetPeaks[$job.Worker]
             min_working_set_bytes = $workingSetMins[$job.Worker]
@@ -122,6 +135,7 @@ exit `$LASTEXITCODE
         requests = $Requests
         tokens = $Tokens
         binary = $agentBinary
+        binary_sha256 = $binaryHash
         results = @($results)
     }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $outputRoot 'manifest.json')
