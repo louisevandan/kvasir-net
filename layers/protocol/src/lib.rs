@@ -12,6 +12,7 @@ pub mod envelope;
 pub mod error;
 pub mod frame;
 pub mod lane;
+pub mod return_channel;
 
 pub use envelope::{Address, Chain, Envelope, Link, NodeId, Recipient, Scheme};
 pub use error::ProtocolError;

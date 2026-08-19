@@ -1,0 +1,75 @@
+#include "plan.hpp"
+
+#include <cassert>
+#include <string>
+#include <vector>
+
+int main() {
+    char program[] = "p4_staged_capability_test";
+    char port[] = "--port";
+    char port_value[] = "1";
+    char bind[] = "--bind";
+    char bind_value[] = "127.0.0.1";
+    char *argv[] = {program, port, port_value, bind, bind_value, nullptr};
+    staged::server::ParsedLlamaOptions parsed;
+    std::string error;
+    const std::vector<std::string> speculative_types{
+        "draft-simple", "draft-eagle3", "draft-mtp", "draft-dflash",
+        "draft-dspark", "ngram-simple", "ngram-map-k", "ngram-map-k4v",
+        "ngram-mod", "ngram-cache"};
+    for (const auto & type : speculative_types) {
+        parsed = {};
+        error.clear();
+        const std::vector<std::string> tokens{
+            "--model", "not-loaded.gguf", "--bind", "127.0.0.1",
+            "--spec-type", type};
+        assert(staged::server::parse_llama_options(5, argv, tokens, &parsed, &error));
+        const auto report = staged::server::capability_report(parsed);
+        assert(report.speculative_parser);
+        assert(!report.speculative_execution);
+        assert(report.speculative_requested);
+        assert(report.serialize().find("speculative_execution=0") != std::string::npos);
+        assert(report.serialize().find("execution_blocker=") != std::string::npos);
+        if (type == "draft-mtp") {
+            assert(report.mtp_parser);
+            assert(report.mtp_auxiliary_ownership);
+            assert(!report.mtp_execution);
+            assert(report.mtp_requested);
+            assert(report.serialize().find("mtp_execution=0") != std::string::npos);
+            assert(report.execution_blocker ==
+                   "mtp_auxiliary_layers_and_proposal_state");
+        } else if (type.rfind("draft-", 0) == 0) {
+            assert(report.execution_blocker ==
+                   "draft_context_and_proposal_state_not_in_hop");
+        } else {
+            assert(report.execution_blocker ==
+                   "proposal_accept_rollback_state_not_in_hop");
+        }
+    }
+
+    parsed = {};
+    error.clear();
+    const std::vector<std::string> ordinary_tokens{
+        "--model", "not-loaded.gguf", "--bind", "127.0.0.1",
+        "--spec-type", "none"};
+    assert(staged::server::parse_llama_options(
+        5, argv, ordinary_tokens, &parsed, &error));
+    const auto ordinary = staged::server::capability_report(parsed);
+    assert(ordinary.normal_decode_execution);
+    assert(!ordinary.speculative_requested);
+    assert(ordinary.execution_blocker == "none");
+    assert(ordinary.serialize().find("execution_blocker=none") !=
+           std::string::npos);
+
+    // The synthetic stdin plan can have exactly the same token count as the
+    // Windows process command line.  In that case common_params_parse must
+    // not replace it with the server's --bind/--port argv.
+    parsed = {};
+    error.clear();
+    const std::vector<std::string> unified_tokens{
+        "--model", "not-loaded.gguf", "--kv-unified"};
+    assert(staged::server::parse_llama_options(
+        5, argv, unified_tokens, &parsed, &error));
+    assert(parsed.params.n_ctx > 0);
+    return 0;
+}

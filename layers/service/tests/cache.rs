@@ -49,12 +49,22 @@ fn state_persisted_and_restored_continues_where_it_left_off() {
         .await;
         let persisted = seen.replies("persist");
         let Some(Reply::Cached {
-            sequence, bytes, ..
+            deployment,
+            stage_id,
+            generation,
+            operation_id,
+            sequence,
+            bytes,
+            ..
         }) = persisted.first()
         else {
             panic!("persisting answered with a cache reply: {persisted:?}");
         };
         assert_eq!(sequence, "chat", "against the id it was asked about");
+        assert_eq!(deployment, "deployment");
+        assert_eq!(stage_id, "n0");
+        assert_eq!(*generation, 1);
+        assert_eq!(operation_id, "persist");
         assert!(*bytes > 0, "and said what the durable copy costs");
 
         cache_op(
@@ -251,7 +261,10 @@ fn a_discarded_copy_is_gone_and_saying_so_twice_is_refused() {
         )
         .await;
         assert!(
-            matches!(seen.replies("again").first(), Some(Reply::Failed { .. })),
+            matches!(
+                seen.replies("again").first(),
+                Some(Reply::CacheFailed { .. })
+            ),
             "and asking again says there was nothing: {:?}",
             seen.replies("again")
         );
@@ -288,7 +301,7 @@ fn restoring_or_forking_something_that_was_never_persisted_is_refused() {
         ] {
             cache_op(&agent, &outer, &seen, "n0", route, op).await;
             assert!(
-                matches!(seen.replies(route).first(), Some(Reply::Failed { .. })),
+                matches!(seen.replies(route).first(), Some(Reply::CacheFailed { .. })),
                 "{route} was refused: {:?}",
                 seen.replies(route)
             );

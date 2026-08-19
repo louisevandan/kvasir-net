@@ -95,8 +95,8 @@ fn a_conversation_spread_over_a_chain_persists_and_restores_on_every_stage() {
                         plan: r#"{"layers":"0-19"}"#.into(),
                         artifact: "model.gguf".into(),
                         ceiling: 4,
-                        capability_snapshot_id: String::new(),
-                        capability_expires_at: 0,
+                        capability_snapshot_id: "test-snapshot".into(),
+                        capability_expires_at: u64::MAX,
                     },
                 ))
                 .unwrap();
@@ -197,7 +197,8 @@ fn a_conversation_spread_over_a_chain_persists_and_restores_on_every_stage() {
                 .filter(|reply| matches!(reply, Reply::Done { .. }))
                 .count()
                 >= 2,
-            "the resumed conversation ran across both stages again"
+            "the resumed conversation ran across both stages again: {:?}",
+            seen.replies("session")
         );
     });
 }
@@ -243,7 +244,10 @@ fn a_stage_that_did_not_restore_refuses_rather_than_answering_from_half_a_histor
         )
         .await;
         assert!(
-            matches!(seen.replies("wrong").first(), Some(Reply::Failed { .. })),
+            matches!(
+                seen.replies("wrong").first(),
+                Some(Reply::CacheFailed { .. })
+            ),
             "the stage said it has nothing for that conversation: {:?}",
             seen.replies("wrong")
         );

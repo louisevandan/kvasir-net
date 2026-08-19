@@ -1,0 +1,1 @@
+Explain in a concise but technically precise way how four pipeline stages exchange hidden states during autoregressive decoding. Mention why the sampled token must return to stage zero, how KV state remains local to each stage, and how the system should distinguish prefill from decode. End with one practical validation criterion.

@@ -1,0 +1,14 @@
+{
+  "plan": "-m C:\\models\\small.gguf --ctx-size 4096",
+  "operations": [
+    {"op": "HELLO"},
+    {"op": "HOP", "hop_id": 7, "sequence_ids": [11, 12]},
+    {"op": "HOP_RESULT", "hop_id": 7},
+    {"op": "HOP", "hop_id": 8, "sequence_ids": [11, 12]},
+    {"op": "CANCEL", "hop_id": 8},
+    {"op": "KV_SAVE", "key": "session-11"},
+    {"op": "KV_RESTORE", "key": "session-11"},
+    {"op": "KV_DROP", "key": "session-11"},
+    {"op": "UNLOAD"}
+  ]
+}

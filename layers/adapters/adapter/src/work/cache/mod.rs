@@ -24,13 +24,52 @@ use crate::work::{DeploymentId, SequenceId};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cache {
     pub deployment: DeploymentId,
+    /// The concrete stage/node that owns this shard of the cache.
+    pub stage_id: String,
+    /// The deployment generation this operation was issued against. A cache
+    /// record must never be restored into a rebound deployment silently.
+    pub generation: u64,
+    /// Immutable request identity for one multi-stage cache operation.
+    pub operation_id: String,
     /// The request whose state this is about.
     pub sequence: SequenceId,
     pub action: CacheAction,
 }
 
+/// Durable state observed for one cache operation during reconciliation.
+/// This is deliberately separate from the requested action: a coordinator
+/// may ask an adapter what survived a restart without replaying a mutation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheReceiptState {
+    Absent,
+    Prepared,
+    Committed,
+    Aborted,
+    /// A receipt exists, but its durable manifest is missing, corrupt, or
+    /// does not match the receipt identity. Coordinators must stop rather
+    /// than treating this as a replayable success.
+    Inconsistent,
+}
+
+impl CacheReceiptState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Prepared => "prepared",
+            Self::Committed => "committed",
+            Self::Aborted => "aborted",
+            Self::Inconsistent => "inconsistent",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CacheAction {
+    /// Query durable receipt state without changing resident or durable KV.
+    Reconcile,
+    /// Stage a persist without releasing resident state. Commit or abort is
+    /// required before the staged mutation becomes visible.
+    PreparePersist,
     /// Write the state somewhere durable and give the memory back.
     ///
     /// One verb rather than two, because a persist that left the state
@@ -38,9 +77,15 @@ pub enum CacheAction {
     /// what already happens when a request ends. The point of the operation is
     /// that the memory goes and the state does not.
     Persist,
+    /// Stage a restore while leaving the durable copy and resident state
+    /// untouched. Commit or abort is required.
+    PrepareRestore,
     /// Bring it back into memory under the same id, so the next hop continues
     /// where it left off.
     Restore,
+    /// Stage a discard without deleting the durable copy. Commit or abort is
+    /// required.
+    PrepareDiscard,
     /// Copy it to a new id, leaving the original as it was.
     ///
     /// The branch case. Both continuations then have their own state and their
@@ -54,6 +99,10 @@ pub enum CacheAction {
     /// ever deletes is a disk filling up on a schedule nobody set. A protocol
     /// that can only create is a protocol with a leak in it.
     Discard,
+    /// Apply a previously prepared cache mutation for this operation.
+    Commit,
+    /// Forget a previously prepared cache mutation and restore its pre-state.
+    Abort,
 }
 
 impl Cache {

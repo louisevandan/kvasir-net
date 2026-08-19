@@ -81,6 +81,15 @@ impl NodeQueue {
             .collect()
     }
 
+    pub(crate) fn frames(&self) -> Vec<Frame> {
+        self.waiting
+            .lock()
+            .expect("node queue lock")
+            .iter()
+            .cloned()
+            .collect()
+    }
+
     /// Removes the named routes and marks a hop as running.
     ///
     /// One call so the two cannot drift apart: taking work without marking
@@ -136,6 +145,15 @@ impl NodeQueue {
             .iter()
             .position(|frame| frame.envelope.route == route)?;
         waiting.remove(index)
+    }
+
+    /// Takes every frame still waiting so node teardown can terminalize it
+    /// before the runner drops its scheduling state.
+    pub fn drain(&self) -> Vec<Frame> {
+        let mut waiting = self.waiting.lock().expect("node queue lock");
+        let drained = waiting.drain(..).collect();
+        *self.running.lock().expect("node running lock") = 0;
+        drained
     }
 }
 

@@ -152,6 +152,30 @@ P4_DRIVE_UNREACHABLE address=tcp://0.0.0.0:52003 note=remote-stages-cannot-reply
 
 `P4_DRIVE_CEILING` sets the concurrency each load declares; it defaults to 32.
 
+`P4_DRIVE_KEEP_LOADED=1` is reserved for sustained-load or calibration runs. It
+skips the driver's normal post-run unload so more requests can use the same
+resident model; the caller must explicitly unload the deployment afterward.
+
+The SSH-forwarded four-node runner also accepts `-Parallel`, `-PromptFile`, and
+`-KeepLoaded`; use `-Parallel` for a calibrated `n_seq_max` sweep and keep the
+same loaded deployment while changing only the request stream. Before copying
+artifacts or opening a tunnel it verifies the local files and reserved ports,
+the remote model, the remote artifact directory, and remote ports `52000`,
+`53001`, and `53002`. A non-empty remote run directory or a port collision is
+fatal; the runner does not stop pre-existing processes to make room.
+
+The runner writes the complete driver result, including completed/failed/
+unanswered requests, generated tokens, elapsed time, frame rate, queue peaks,
+and sample count to `result.json`. It passes only when the ready marker and all
+four driver verdicts are present, no quiet-timeout or unreachable marker was
+printed, all requests completed with generated tokens, and the configured
+overlap thresholds hold. Cleanup uses run-scoped PID files and leaves unrelated
+processes alone. `-KeepLoaded` still preserves the driver's intentional
+post-run unload skip; the caller owns the later unload.
+On a successful `-KeepLoaded` run the runner also keeps its agents, SSH tunnel,
+and copied remote artifacts alive so a follow-up drive can reuse the resident
+deployment. A failed keep-loaded run is still cleaned up.
+
 `P4_DRIVE_PROMPT_FILE` is what every request asks and `P4_DRIVE_OPTIONS` how it
 is generated. A prompt sized in thousands of tokens belongs in a file, so what
 was measured is exactly what was sent — `POST /tokenize` on the backend counts

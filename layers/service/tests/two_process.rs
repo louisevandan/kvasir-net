@@ -66,8 +66,8 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
                         plan: r#"{"layers":"0-19"}"#.into(),
                         artifact: "model.gguf".into(),
                         ceiling: 8,
-                        capability_snapshot_id: String::new(),
-                        capability_expires_at: 0,
+                        capability_snapshot_id: "test-snapshot".into(),
+                        capability_expires_at: u64::MAX,
                     },
                 ))
                 .unwrap();
@@ -116,6 +116,10 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
             .iter()
             .filter_map(|reply| match reply {
                 Reply::Token { index, .. } => Some(*index),
+                Reply::Done {
+                    final_token: Some((index, _)),
+                    ..
+                } => Some(*index),
                 _ => None,
             })
             .collect();

@@ -18,12 +18,20 @@ impl Adapter for Instant {
     fn start(&self, work: Work, events: &dyn EventSink) {
         let Work::Hop(hop) = work else { return };
         events.raise(Event::HopComplete {
+            hop_id: hop.id,
+            expected: hop
+                .sequences
+                .iter()
+                .map(|sequence| sequence.sequence.clone())
+                .collect(),
             outcomes: hop
                 .sequences
                 .iter()
                 .map(|sequence| Outcome {
                     sequence: sequence.sequence.clone(),
+                    outbound_cut_set: None,
                     text: "t".into(),
+                    token: None,
                     position: sequence.position + 1,
                     stop: Some("stop".into()),
                 })
@@ -39,8 +47,10 @@ impl Payload for Bodies {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
         Some(Sequence {
             sequence: frame.envelope.route.clone(),
+            inbound_cut_set: None,
             position: 0,
             prompt: Some(String::from_utf8_lossy(&frame.body).into_owned()),
+            initial_tokens: None,
             remaining: 1,
             options: "{}".into(),
         })
@@ -86,6 +96,12 @@ fn control(target: Address) -> Frame {
             recipient: Recipient::Agent,
             lane: QueueClass::Control,
             route: "route-1".into(),
+            request_id: "request-1".into(),
+            stream_id: "stream-1".into(),
+            origin_agent: None,
+            return_channel: None,
+            ingress_generation: 0,
+            event_seq: 0,
             deadline_unix_ms: 0,
             reply_to: None,
             chain: None,
@@ -148,6 +164,7 @@ fn work_for_a_node_this_agent_does_not_have_is_answered_rather_than_dropped() {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].body, b"no such node on this agent");
+        assert_eq!(seen[0].envelope.event_seq, 1);
     });
 }
 
@@ -188,6 +205,12 @@ fn an_inference_crosses_two_agents_and_comes_back() {
                     recipient: Recipient::node("n0"),
                     lane: QueueClass::Prefill,
                     route: "inference-1".into(),
+                    request_id: "request-1".into(),
+                    stream_id: "stream-1".into(),
+                    origin_agent: Some(outer.address().clone()),
+                    return_channel: Some(outer.address().to_string()),
+                    ingress_generation: 0,
+                    event_seq: 0,
                     deadline_unix_ms: 0,
                     reply_to: Some(outer.address().clone()),
                     chain: Some(chain),

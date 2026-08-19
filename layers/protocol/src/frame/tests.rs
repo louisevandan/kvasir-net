@@ -7,6 +7,12 @@ fn envelope() -> Envelope {
         recipient: Recipient::node("n0"),
         lane: QueueClass::Prefill,
         route: "route-1".into(),
+        request_id: "request-1".into(),
+        stream_id: "stream-1".into(),
+        origin_agent: Some(Address::tcp("10.0.0.2", 19001)),
+        return_channel: Some("channel-1".into()),
+        ingress_generation: 0,
+        event_seq: 1,
         deadline_unix_ms: 0,
         reply_to: Some(Address::tcp("10.0.0.1", 19001)),
         chain: Some(

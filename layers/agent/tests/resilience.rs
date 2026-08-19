@@ -40,6 +40,12 @@ fn for_missing_node(agent: &Arc<p4_agent_core::agent::Agent>) -> Frame {
             recipient: Recipient::node("no-such-node"),
             lane: QueueClass::Prefill,
             route: "stray".into(),
+            request_id: "stray".into(),
+            stream_id: "stray".into(),
+            origin_agent: None,
+            return_channel: None,
+            ingress_generation: 0,
+            event_seq: 0,
             deadline_unix_ms: 0,
             reply_to: None,
             chain: None,
@@ -113,10 +119,12 @@ fn frames_with_nowhere_to_go_are_counted_and_dropped() {
         }
         settle(150).await;
 
+        let traffic = a.traffic();
         assert!(
-            a.traffic().unrouted >= 200,
-            "each was accounted for: {}",
-            a.traffic().unrouted
+            traffic.unrouted + traffic.refused >= 200,
+            "each was accounted for: unrouted={}, refused={}",
+            traffic.unrouted,
+            traffic.refused
         );
         assert_eq!(
             a.continuations().outstanding(),
@@ -269,6 +277,12 @@ fn peers_that_go_quiet_are_released() {
                         recipient: Recipient::Agent,
                         lane: QueueClass::Control,
                         route: format!("p{port}"),
+                        request_id: format!("p{port}"),
+                        stream_id: format!("p{port}"),
+                        origin_agent: None,
+                        return_channel: None,
+                        ingress_generation: 0,
+                        event_seq: 0,
                         deadline_unix_ms: 0,
                         reply_to: None,
                         chain: None,
@@ -349,5 +363,54 @@ fn replacing_and_deleting_nodes_releases_them() {
             24,
             "including the deleted one"
         );
+    });
+}
+
+#[test]
+fn deleting_a_busy_node_terminalizes_waiting_and_active_requests() {
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        a.create_node(
+            "n0",
+            Arc::new(Mock::terminal(
+                0,
+                Profile {
+                    leading_hop: Duration::from_millis(100),
+                    ..Profile::default()
+                },
+            )),
+            1,
+        )
+        .await;
+        let chain = chain_over(&[(&a, "n0")]);
+        for index in 0..8 {
+            a.enqueue(request(&format!("delete-{index}"), &chain, &outer, 1))
+                .unwrap();
+        }
+
+        settle(20).await;
+        assert!(a.delete_node("n0").await);
+        until(|| {
+            (0..8).all(|index| {
+                !outer_duties
+                    .frames_for(&format!("delete-{index}"))
+                    .is_empty()
+            })
+        })
+        .await;
+        for index in 0..8 {
+            let frames = outer_duties.frames_for(&format!("delete-{index}"));
+            assert_eq!(
+                frames.len(),
+                1,
+                "node deletion must be exactly-once: {frames:?}"
+            );
+            assert_eq!(
+                frames[0].body, b"node removed before request completed",
+                "every queued or active request receives the teardown terminal"
+            );
+        }
     });
 }

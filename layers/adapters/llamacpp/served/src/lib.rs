@@ -115,6 +115,7 @@ impl Served {
             return events.raise(Event::Failed {
                 deployment: hop.deployment,
                 sequence: None,
+                hop_id: Some(hop.id),
                 detail: "no plan: this node was never loaded".into(),
             });
         };
@@ -126,6 +127,7 @@ impl Served {
             return events.raise(Event::Failed {
                 deployment: hop.deployment,
                 sequence: hop.sequences.first().map(|s| s.sequence.clone()),
+                hop_id: Some(hop.id),
                 detail: format!(
                     "this node holds {} and does not serve; address the front",
                     plan.share()
@@ -141,9 +143,16 @@ impl Served {
             if refused.contains(&sequence.sequence) {
                 continue;
             }
-            outcomes.push(self.advance(&plan, sequence, events, &hop.deployment));
+            outcomes.push(self.advance(&plan, sequence, events, &hop.deployment, hop.id));
         }
         events.raise(Event::HopComplete {
+            hop_id: hop.id,
+            expected: hop
+                .sequences
+                .iter()
+                .filter(|sequence| !refused.contains(&sequence.sequence))
+                .map(|sequence| sequence.sequence.clone())
+                .collect(),
             deployment: hop.deployment,
             outcomes: outcomes.into_iter().flatten().collect(),
         });
@@ -209,6 +218,7 @@ impl Served {
                     events.raise(Event::Failed {
                         deployment: hop.deployment.clone(),
                         sequence: Some(sequence),
+                        hop_id: Some(hop.id),
                         detail,
                     });
                 }
@@ -227,12 +237,14 @@ impl Served {
         sequence: &p4_adapter::Sequence,
         events: &dyn EventSink,
         deployment: &str,
+        hop_id: u64,
     ) -> Option<Outcome> {
         let mut sessions = self.sessions.lock().expect("sessions lock");
         let Some(session) = sessions.get_mut(&sequence.sequence) else {
             events.raise(Event::Failed {
                 deployment: deployment.to_owned(),
                 sequence: Some(sequence.sequence.clone()),
+                hop_id: Some(hop_id),
                 detail: "no open stream: this sequence never prefilled".into(),
             });
             return None;
@@ -240,7 +252,9 @@ impl Served {
         match session.token(plan.patience) {
             Next::Token { text, position } => Some(Outcome {
                 sequence: sequence.sequence.clone(),
+                outbound_cut_set: None,
                 text,
+                token: None,
                 position,
                 stop: None,
             }),
@@ -249,7 +263,9 @@ impl Served {
                 self.finished.fetch_add(1, Ordering::Relaxed);
                 Some(Outcome {
                     sequence: sequence.sequence.clone(),
+                    outbound_cut_set: None,
                     text: String::new(),
+                    token: None,
                     position: sequence.position,
                     stop: Some(reason),
                 })
@@ -259,6 +275,7 @@ impl Served {
                 events.raise(Event::Failed {
                     deployment: deployment.to_owned(),
                     sequence: Some(sequence.sequence.clone()),
+                    hop_id: Some(hop_id),
                     detail,
                 });
                 None
@@ -300,6 +317,7 @@ impl Adapter for Served {
             Work::Cache(cache) => events.raise(Event::Failed {
                 deployment: cache.deployment,
                 sequence: Some(cache.sequence),
+                hop_id: None,
                 // Said plainly rather than answered with a shrug. llama.cpp can
                 // save sequence state — `llama_state_seq_save_file` — but not
                 // through the OpenAI surface this adapter speaks, so the

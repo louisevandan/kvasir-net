@@ -7,6 +7,31 @@ cargo fmt --all -- --check
 
 Three levels, and each catches what the one below cannot.
 
+## Cache contract: mock first
+
+복원 정책과 P4 경계는 실제 llama.cpp 없이 목 어댑터로 먼저 검증한다. 목은
+`Adapter::start`가 즉시 반환하고 `EventSink`로 결과를 내는 계약을 지키며,
+`Work::Cache`의 단일 `sequence`·`stage_id`·`generation`·`operation_id`를
+그대로 기록해야 한다. 라마 어댑터는 아래 계약을 깨지 않는 동안 지연 가능하다.
+
+| 시나리오 | 목 어댑터가 증명할 것 | 필수 결과 |
+| --- | --- | --- |
+| Persist → Commit | resident KV를 durable 상태로 바꾸고 receipt를 남김 | `Cached`/`Committed` |
+| Restore → Commit | 같은 `sequence`를 복원하고 후속 Hop을 Restore 뒤에만 실행 | 복원 후 상태·순서 보존 |
+| Prepare → Abort | 준비 상태와 resident/durable 원상복구 | 성공을 가장하지 않음 |
+| Discard 재전달 | 이미 삭제된 durable 상태에 중복 Discard | idempotent `Cached` 또는 명시적 `Absent` |
+| KV 슬롯 부족 | Restore를 무한 대기시키지 않음 | bounded `Refused`와 재시도 정보 |
+| 없는 sequence / generation 불일치 | 다른 세션·배포에 복원하지 않음 | `Failed` |
+| 손상·누락 receipt 또는 재시작 | 추측 복원하지 않고 상태를 드러냄 | `Inconsistent` 또는 `Failed` |
+| 다단계 중 한 stage 실패 | partial residency를 실행 가능으로 공개하지 않음 | 전체 transaction 보상 또는 reconciliation |
+| 동일 sequence의 Restore + Hop 동시 도착 | 큐 순서를 보존해 Hop을 앞세우지 않음 | Restore 완료 전 Hop 금지 |
+
+구현 계약의 기준은 [`Adapter`](../layers/adapters/adapter/src/lib.rs)와
+[`Work::Cache`](../layers/adapters/adapter/src/work/cache/mod.rs)이며,
+목 구현의 수명주기 검증은 `p4-mock` 테스트에 둔다. 실제 라마 어댑터의
+파일 포맷·GPU 슬롯·전송 성능 테스트는 이 표의 대체물이 아니라 후속
+acceptance다.
+
 ## Pure
 
 The parts that decide things are pure functions with no I/O, because they are
@@ -124,13 +149,14 @@ at which step a frame stopped existing.
 
 ## What the suite is, file by file
 
-360 tests. The count matters less than the split: the levels catch different
+The counts below are the current inventory as of the latest focused run. The
+count matters less than the split: the levels catch different
 things, and three defects in this layer survived every level but the fleet.
 
 | Where | Tests | What it holds |
 | --- | ---: | --- |
 | `p4-protocol` | 50 | Round trips, and refusal of every truncation, trailing byte and unknown tag. Address parsing, advertised-address resolution, chain advance and restart, and the route home a reply falls back on: the chain's first link, never the target that just failed and never this agent. |
-| `p4-agent-core` (unit) | 74 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement, and the relay: an undeliverable frame arrives at the chain's first link, and a relay that fails is the end of it rather than the start of a loop. |
+| `p4-agent-core` (unit) | 98 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement, and the relay: an undeliverable frame arrives at the chain's first link, and a relay that fails is the end of it rather than the start of a loop. |
 | `p4-service` (unit) | 32 | Message encoding with explicit tags, the payload seam, the registry, the machine and status snapshots. |
 | `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. |
 | `p4-adapter` | 9 | The contract's own small logic, including which id a fork leaves state under. |
@@ -140,13 +166,13 @@ things, and three defects in this layer survived every level but the fleet.
 | `p4-agent` | 6 | That the registry carries what this build claims and refuses what it does not. |
 | `p4-drive` | 19 | Which stages a chain visits: all by default, a held share left out, and refusal of a stage outside the deployment, an empty set, a chain that descends or repeats, and one ending anywhere but the tail. Plus reading a status snapshot: the three figures that matter, peaks that only rise, the deepest of several nodes, and a route named after a field not being read as one. Plus the fleet grammar: one chain reads and names its nodes as it always did, replicas are named apart because they can share an agent, replicas of different shapes are refused, and a plan falls back from replica-and-stage to stage to the default. |
 | `tests/simulation.rs` | 10 | Real agents on real sockets: chains of one, two and three stages; a crowd against a ceiling; batching; relay through an agent owning no node; ordering; concurrent chains; a failing backend. |
-| `tests/lifecycle.rs` | 8 | Load reported per stage, a declared ceiling, unload, a failing load, deadlines, cancellation. |
-| `tests/queues.rs` | 4 | The two-tier queue while the mock deliberately holds hops. Asserts **both** halves — node deep *and* lanes shallow — because node depth alone is equally satisfied by an agent that backed up with it. The fourth holds the ceiling under spread arrivals, guarded three ways against passing for the wrong reason. |
+| `tests/lifecycle.rs` | 10 current (8 historical) | Load reported per stage, a declared ceiling, unload, a failing load, deadlines, cancellation. |
+| `tests/queues.rs` | 5 current (4 historical) | The two-tier queue while the mock deliberately holds hops. Asserts **both** halves — node deep *and* lanes shallow — because node depth alone is equally satisfied by an agent that backed up with it. The fifth holds the ceiling under spread arrivals, guarded three ways against passing for the wrong reason. |
 | `tests/network.rs` | 7 | The network as the slow thing: latency, jitter that must not reorder, stalls, a narrow link, one bad hop, and a slow link with a slow backend. One test exists only to guard the others — a relay that fell out of the path would leave them passing *faster*. |
 | `tests/topology.rs` | 6 | The model rather than the wiring: a row of relaying agents, a star, a chain revisiting a machine, a partition answered by its deadline, a heal with nothing restarted. The partitions assert they really partitioned. |
-| `tests/resilience.rs` | 6 | What a long-lived listener meets: garbage, truncation, wrong magic and version, an impossible length, a header claiming 900KB then nothing, 600 abandoned connections, frames for a node that does not exist, and a node replaced twenty-four times that must be released each time. |
+| `tests/resilience.rs` | 7 | What a long-lived listener meets: garbage, truncation, wrong magic and version, an impossible length, a header claiming 900KB then nothing, 600 abandoned connections, frames for a node that does not exist, and a node replaced twenty-four times that must be released each time. |
 | `tests/protocol.rs` | 3 | What a load makes visible: a distributed load watched stage by stage, a stage whose load failed refusing to serve, and an unload. |
-| `tests/protocol_in_flight.rs` | 4 | What can be watched and steered while work runs: locating a request, cancelling one without touching the rest, being told there was nothing left to stop, and collecting counters from another machine. |
+| `tests/protocol_in_flight.rs` | 5 | What can be watched and steered while work runs: locating a request, cancelling one without touching the rest, receiving its replayable terminal failure, being told there was nothing left to stop, and collecting counters from another machine. |
 | `tests/cache.rs` | 4 | The four verbs on one node: persist and restore continuing where it left off, a fork that copies rather than renames, a discard that cannot be repeated, and refusal of what was never persisted. |
 | `tests/cache_in_a_deployment.rs` | 3 | What a cache verb does around itself: the deployment stays bound and serving, and a conversation spread over a chain is persisted and restored on every stage. |
 | `tests/many_nodes.rs` | 2 | More than one node on one agent, created and loaded individually, and two chains sharing them. |

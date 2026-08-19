@@ -170,12 +170,15 @@ fn load(adapter: &Served, seen: &Seen, plan: String) {
 fn one_hop(adapter: &Served, seen: &Seen) {
     adapter.start(
         Work::Hop(Hop {
+            id: 1,
             deployment: "d".into(),
             phase: Phase::Prefill,
             sequences: vec![Sequence {
                 sequence: "s0".into(),
+                inbound_cut_set: None,
                 position: 0,
                 prompt: Some("hello".into()),
+                initial_tokens: None,
                 remaining: 4,
                 options: "{}".into(),
             }],

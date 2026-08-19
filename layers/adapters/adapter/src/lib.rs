@@ -16,8 +16,8 @@ pub mod work;
 
 pub use event::{Allocation, Event, EventSink, Outcome};
 pub use work::{
-    Cache, CacheAction, DeploymentId, Distribution, Hop, Load, Phase, Sequence, SequenceId, Unload,
-    Work,
+    Cache, CacheAction, CacheReceiptState, DeploymentId, Distribution, Hop, Load, Phase, Sequence,
+    SequenceId, Unload, Work, decode_continuation, encode_continuation, is_continuation,
 };
 
 /// What a node drives.
@@ -37,6 +37,14 @@ pub trait Adapter: Send + Sync {
     /// How this backend spreads a model. Fixed for the adapter's lifetime and
     /// read by whoever composes chains, not by the node.
     fn distribution(&self) -> Distribution;
+
+    /// Whether the adapter owns a finite native sequence table that must be
+    /// reserved before a staged prefill is started. The node uses this to
+    /// close the admission race between launching a hop and receiving the
+    /// adapter's SequenceAcquired event.
+    fn reserves_sequence_slots(&self) -> bool {
+        false
+    }
 
     /// Begins work. Returns immediately, having at most enqueued it.
     ///

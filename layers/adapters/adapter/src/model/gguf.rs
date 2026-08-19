@@ -226,24 +226,22 @@ fn parse(path: &Path, bytes: &[u8], file_size: u64) -> Result<Parsed, String> {
     if data_offset > file_size {
         return Err("GGUF tensor data starts beyond the file".into());
     }
-    let mut tensors = tensors;
     for index in 0..tensors.len() {
         let next = tensors
             .get(index + 1)
             .map(|v| v.offset)
             .unwrap_or_else(|| file_size.saturating_sub(data_offset));
         let bytes = next.checked_sub(tensors[index].offset);
-        if let Some(length) = bytes {
-            if data_offset
+        if let Some(length) = bytes
+            && data_offset
                 .saturating_add(tensors[index].offset)
                 .saturating_add(length)
                 > file_size
-            {
-                return Err(format!(
-                    "tensor {} exceeds the GGUF file",
-                    tensors[index].name
-                ));
-            }
+        {
+            return Err(format!(
+                "tensor {} exceeds the GGUF file",
+                tensors[index].name
+            ));
         }
         tensors[index].bytes = bytes;
     }
@@ -297,7 +295,7 @@ fn retain(key: &str) -> bool {
         || key.contains("context_length")
         || key.contains("expert_count")
 }
-fn metadata<'a>(values: &'a [(String, String)], key: &str) -> Option<String> {
+fn metadata(values: &[(String, String)], key: &str) -> Option<String> {
     values
         .iter()
         .find(|(name, _)| name == key)

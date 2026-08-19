@@ -7,17 +7,20 @@
 
 use crate::continuation::Continuations;
 use crate::node::payload::Payload;
-use crate::node::runner::{Handle, Node};
+use crate::node::runner::{ActiveHop, Handle, Node, WaitingRequest};
 use crate::queue::lane::{Budget, Lanes};
 use crate::queue::main::{Receiver, Sender, channel};
+use crate::transport::inbox::{SubscriptionMetrics, Subscriptions};
 use crate::transport::outbound::Peers;
 use crate::worker::judge::{Verdict, judge};
 use p4_adapter::Adapter;
 use p4_protocol::frame::Frame;
-use p4_protocol::{Address, QueueClass};
+use p4_protocol::{Address, QueueClass, Recipient};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
 /// What the agent itself does with a message addressed to it.
@@ -41,13 +44,22 @@ pub struct Agent {
     consumed: AtomicUsize,
     to_nodes: AtomicUsize,
     unrouted: AtomicUsize,
+    refused: AtomicUsize,
+    emergency_lost: Arc<AtomicUsize>,
+    ack_rejected: AtomicUsize,
+    status_sequence: AtomicU64,
     queue: Sender,
     peers: Peers,
+    subscriptions: Subscriptions,
     nodes: Mutex<HashMap<String, Handle>>,
     continuations: Continuations<Frame>,
     duties: Arc<dyn Duties>,
     payload: Arc<dyn Payload>,
     node_queue_depth: usize,
+    /// A separate bounded retry lane for errors generated while the normal
+    /// response lane is full. It prevents a refusal from being silently lost
+    /// while keeping the reader non-blocking.
+    emergency: mpsc::Sender<Frame>,
 }
 
 impl Agent {
@@ -58,20 +70,68 @@ impl Agent {
         lanes: Lanes,
         budget: Budget,
     ) -> (Arc<Self>, Receiver, Arc<Semaphore>) {
+        Self::new_with_subscriptions(
+            own,
+            duties,
+            payload,
+            lanes,
+            budget,
+            Subscriptions::default(),
+        )
+    }
+
+    pub fn new_with_subscriptions(
+        own: Address,
+        duties: Arc<dyn Duties>,
+        payload: Arc<dyn Payload>,
+        lanes: Lanes,
+        budget: Budget,
+        subscriptions: Subscriptions,
+    ) -> (Arc<Self>, Receiver, Arc<Semaphore>) {
         let (queue, receiver, in_flight) = channel(lanes, budget);
+        let (emergency, mut emergency_rx) = mpsc::channel::<Frame>(budget.depth.max(1));
+        let retry_queue = queue.clone();
+        let emergency_lost = Arc::new(AtomicUsize::new(0));
+        let retry_lost = Arc::clone(&emergency_lost);
+        tokio::spawn(async move {
+            while let Some(mut frame) = emergency_rx.recv().await {
+                loop {
+                    match retry_queue.offer(frame) {
+                        Ok(()) => break,
+                        Err(refused) => {
+                            if retry_queue.is_closed() {
+                                // The main dispatcher has terminated. Retrying
+                                // a closed queue forever strands the task and
+                                // gives teardown no completion boundary.
+                                retry_lost.fetch_add(1, Ordering::Relaxed);
+                                break;
+                            }
+                            frame = refused.0;
+                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                        }
+                    }
+                }
+            }
+        });
         let agent = Arc::new(Self {
             peers: Peers::new(own.clone()),
+            subscriptions,
             own,
             forwarded: AtomicUsize::new(0),
             consumed: AtomicUsize::new(0),
             to_nodes: AtomicUsize::new(0),
             unrouted: AtomicUsize::new(0),
+            refused: AtomicUsize::new(0),
+            emergency_lost,
+            ack_rejected: AtomicUsize::new(0),
+            status_sequence: AtomicU64::new(0),
             queue,
             nodes: Mutex::new(HashMap::new()),
             continuations: Continuations::default(),
             duties,
             payload,
             node_queue_depth: budget.depth,
+            emergency,
         });
         (agent, receiver, in_flight)
     }
@@ -94,6 +154,42 @@ impl Agent {
         &self.continuations
     }
 
+    pub async fn deliver_subscription(&self, channel: &str, frame: Frame) -> bool {
+        self.subscriptions.deliver(channel, frame).await
+    }
+
+    pub async fn acknowledge_subscription(
+        &self,
+        channel: &str,
+        generation: u64,
+        stream_id: &str,
+        event_seq: u64,
+    ) -> bool {
+        let accepted = self
+            .subscriptions
+            .acknowledge(channel, generation, stream_id, event_seq)
+            .await;
+        if !accepted {
+            self.ack_rejected.fetch_add(1, Ordering::Relaxed);
+        }
+        accepted
+    }
+
+    /// Counts an ACK rejected before the subscription registry, such as a
+    /// body/envelope channel mismatch. The count is aggregate process-local
+    /// telemetry; it is not a durable event or request-level trace.
+    pub fn record_ack_rejection(&self) {
+        self.ack_rejected.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn ack_rejected(&self) -> usize {
+        self.ack_rejected.load(Ordering::Relaxed)
+    }
+
+    pub async fn subscription_metrics(&self) -> SubscriptionMetrics {
+        self.subscriptions.metrics().await
+    }
+
     /// Creates a node. It is an id and an adapter and nothing else until a
     /// load materialises something behind it.
     pub async fn create_node(
@@ -109,11 +205,25 @@ impl Agent {
             ceiling,
             self.node_queue_depth,
         );
-        self.nodes.lock().await.insert(id.into(), handle);
+        let old = self.nodes.lock().await.insert(id.into(), handle);
+        if let Some(old) = old {
+            old.shutdown().await;
+        }
     }
 
     pub async fn delete_node(&self, id: &str) -> bool {
-        self.nodes.lock().await.remove(id).is_some()
+        let Some(node) = self.nodes.lock().await.get(id).cloned() else {
+            return false;
+        };
+        node.shutdown().await;
+        let mut nodes = self.nodes.lock().await;
+        if nodes
+            .get(id)
+            .is_some_and(|current| current.is_same_node(&node))
+        {
+            nodes.remove(id);
+        }
+        true
     }
 
     pub async fn node_depth(&self, id: &str) -> Option<usize> {
@@ -126,15 +236,24 @@ impl Agent {
     /// means the next hop never starts. Returns whether anything was found
     /// waiting, so a caller can tell a cancellation from a request that had
     /// already finished.
-    // `any` would read better and stop at the first node holding the route,
-    // leaving the rest of them still queued. Every node has to be asked.
-    #[allow(clippy::unnecessary_fold)]
     pub async fn cancel(&self, route: &str) -> bool {
-        self.nodes
-            .lock()
-            .await
-            .values()
-            .fold(false, |found, handle| handle.cancel(route) || found)
+        self.cancel_frame(route).await.is_some()
+    }
+
+    /// Cancels queued work and returns one removed carrier for terminalizing
+    /// the original request. Every node is still scanned so a chained request
+    /// cannot leave later queued stages behind.
+    // See docs/protocol-outer.md#단절과-kv-흐름.
+    pub async fn cancel_frame(&self, route: &str) -> Option<Frame> {
+        let mut removed = None;
+        self.nodes.lock().await.values().for_each(|handle| {
+            if removed.is_none() {
+                removed = handle.cancel_frame(route);
+            } else {
+                let _ = handle.cancel(route);
+            }
+        });
+        removed
     }
 
     /// Every node, what it is doing, and which routes it is holding.
@@ -149,7 +268,10 @@ impl Agent {
                 node: id.clone(),
                 depth: handle.depth(),
                 running: handle.in_adapter(),
+                outbox_lost: handle.counts().outbox_lost.load(Ordering::Relaxed),
                 waiting: handle.waiting_routes(),
+                waiting_requests: handle.waiting_requests(),
+                active_hop: handle.active_hop(),
                 backend: handle.report(),
             })
             .collect();
@@ -166,7 +288,7 @@ impl Agent {
                 let c = handle.counts();
                 let load = |value: &std::sync::atomic::AtomicUsize| value.load(Ordering::Relaxed);
                 format!(
-                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} emitted={} raised={} lost={} depth={} running={} backend=[{}]",
+                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} invalid_events={} emitted={} raised={} lost={} outbox_lost={} depth={} running={} backend=[{}]",
                     load(&c.received),
                     load(&c.queued),
                     load(&c.claimed),
@@ -175,9 +297,11 @@ impl Agent {
                     load(&c.outcomes),
                     load(&c.routed),
                     load(&c.orphaned),
+                    load(&c.invalid_events),
                     load(&c.emitted),
                     c.raised.load(Ordering::Relaxed),
                     c.lost.load(Ordering::Relaxed),
+                    c.outbox_lost.load(Ordering::Relaxed),
                     handle.depth(),
                     handle.in_adapter(),
                     // The same words the protocol carries. An operator at the
@@ -228,7 +352,19 @@ impl Agent {
 
     /// One message, two decisions.
     async fn dispatch(self: &Arc<Self>, frame: Frame) {
-        match judge(&frame.envelope, &self.own) {
+        let verdict = judge(&frame.envelope, &self.own);
+        if routing_trace_enabled() {
+            eprintln!(
+                "P4_AGENT_ROUTE own={} target={} recipient={:?} lane={:?} route={} verdict={:?}",
+                self.own,
+                frame.envelope.target,
+                frame.envelope.recipient,
+                frame.envelope.lane,
+                frame.envelope.route,
+                verdict,
+            );
+        }
+        match verdict {
             Verdict::Forward(_) => {
                 self.forwarded.fetch_add(1, Ordering::Relaxed);
                 self.forward(frame).await
@@ -261,24 +397,41 @@ impl Agent {
         // A response is the reply to something this agent asked for, so the
         // continuation registered at send time is what it belongs to. An
         // unclaimed one falls through to duties rather than being dropped.
-        if frame.envelope.lane == QueueClass::Response
-            && self
+        if frame.envelope.lane == QueueClass::Response {
+            if self
                 .continuations
-                .resolve(&frame.envelope.route.clone(), frame.clone())
-        {
-            return;
+                .resolve(&frame.envelope.return_key(), frame.clone())
+                || self
+                    .continuations
+                    .resolve(&frame.envelope.route, frame.clone())
+            {
+                return;
+            }
+            if let Some(channel) = frame.envelope.return_channel.as_deref()
+                && self.deliver_subscription(channel, frame.clone()).await
+            {
+                return;
+            }
         }
         self.duties.handle(frame, self);
     }
 
     fn answer_locally(&self, carrier: Frame, detail: &str) {
-        let Some(envelope) = carrier.envelope.to_reply() else {
+        self.refused.fetch_add(1, Ordering::Relaxed);
+        let Some(mut envelope) = carrier.envelope.to_reply() else {
             return;
         };
-        let _ = self.queue.offer(Frame {
+        // A refusal is a terminal response event. Give a request that has not
+        // emitted an event yet its first sequence number so subscription
+        // replay can retain it; later refusals advance the carrier sequence.
+        envelope.event_seq = carrier.envelope.event_seq.saturating_add(1);
+        let frame = Frame {
             envelope,
-            body: detail.as_bytes().to_vec(),
-        });
+            body: self.payload.failure(detail),
+        };
+        if self.emergency.try_send(frame).is_err() {
+            self.emergency_lost.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -304,9 +457,27 @@ pub async fn run(agent: Arc<Agent>, mut receiver: Receiver, in_flight: Arc<Semap
         lanes.push(sender);
     }
     while let Some(frame) = receiver.take().await {
-        let worker = &lanes[route_worker(&frame.envelope.route, workers)];
-        if worker.send(frame).await.is_err() {
-            return;
+        // A node is itself a single scheduling boundary. Hashing its frames
+        // by route would let two different Restore requests race through
+        // different workers and arrive at that boundary backwards. Keep all
+        // work for one node on one worker; different nodes still run in
+        // parallel, and OUTER/peer traffic retains route sharding.
+        let worker = match &frame.envelope.recipient {
+            Recipient::Node(node) => &lanes[node_worker(&frame.envelope.target, node, workers)],
+            _ => &lanes[route_worker(&frame.envelope.route, workers)],
+        };
+        match worker.try_send(frame) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(frame)) => {
+                // Never await one hashed worker here: doing so creates
+                // head-of-line blocking for every other route. The worker
+                // inbox is deliberately bounded, so refusal is the only
+                // bounded policy that preserves per-route ordering.
+                agent.answer_locally(frame, "worker queue is full");
+            }
+            Err(mpsc::error::TrySendError::Closed(frame)) => {
+                agent.answer_locally(frame, "worker is closed");
+            }
         }
     }
 }
@@ -336,6 +507,18 @@ fn route_worker(route: &str, workers: usize) -> usize {
     (hash % workers as u64) as usize
 }
 
+fn node_worker(target: &Address, node: &str, workers: usize) -> usize {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    target.hash(&mut hasher);
+    node.hash(&mut hasher);
+    (hasher.finish() % workers as u64) as usize
+}
+
+fn routing_trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("P4_AGENT_TRACE_ROUTING").is_some())
+}
+
 #[cfg(test)]
 mod worker_tests;
 
@@ -353,7 +536,14 @@ impl Agent {
             consumed: self.consumed.load(Ordering::Relaxed),
             to_nodes: self.to_nodes.load(Ordering::Relaxed),
             unrouted: self.unrouted.load(Ordering::Relaxed),
+            refused: self.refused.load(Ordering::Relaxed),
+            emergency_lost: self.emergency_lost.load(Ordering::Relaxed),
         }
+    }
+
+    /// Monotonic sequence for machine-readable status snapshots.
+    pub fn next_status_sequence(&self) -> u64 {
+        self.status_sequence.fetch_add(1, Ordering::Relaxed) + 1
     }
 }
 
@@ -363,6 +553,8 @@ pub struct Traffic {
     pub consumed: usize,
     pub to_nodes: usize,
     pub unrouted: usize,
+    pub refused: usize,
+    pub emergency_lost: usize,
 }
 
 /// One node, as of the moment it was asked.
@@ -382,7 +574,14 @@ pub struct NodeStatus {
     /// it whether the ceiling is being kept, which is the whole claim that
     /// P4 queues rather than the backend.
     pub running: usize,
+    /// Node output frames that did not reach the downstream agent queue.
+    /// This is an aggregate local counter, not OUTER delivery proof.
+    pub outbox_lost: usize,
     pub waiting: Vec<String>,
+    /// Request identities for the queued work represented by `waiting`.
+    pub waiting_requests: Vec<WaitingRequest>,
+    /// The hop currently handed to the adapter, if any.
+    pub active_hop: Option<ActiveHop>,
     /// What the backend behind this node says it is doing, in its own words.
     /// Carried, never interpreted.
     pub backend: String,

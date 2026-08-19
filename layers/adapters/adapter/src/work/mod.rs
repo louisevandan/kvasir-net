@@ -11,9 +11,9 @@ pub mod distribution;
 pub mod hop;
 pub mod load;
 
-pub use cache::{Cache, CacheAction};
+pub use cache::{Cache, CacheAction, CacheReceiptState};
 pub use distribution::Distribution;
-pub use hop::{Hop, Phase, Sequence};
+pub use hop::{Hop, Phase, Sequence, decode_continuation, encode_continuation, is_continuation};
 pub use load::{Load, Unload};
 
 /// A deployment's identity as far as the adapter is concerned. The adapter

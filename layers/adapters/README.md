@@ -20,7 +20,7 @@ them.
 | `adapter/` | none — the contract | Zero dependencies. The one file every backend below is written against. |
 | `mock/` | none — arithmetic | Implements the interface. Ships in every build, so a fleet can be loaded without hardware. |
 | `llamacpp/served/` | llama.cpp, vLLM, SGLang | One implementation, registered under three names, because the three serve the same HTTP. Proved against a stock `llama-server` on Metal and on CUDA, and against wire-level servers behaving like each. |
-| `llamacpp/staged/` | llama.cpp, split across machines | Patch series and preparation script present. Nothing else: it is **two** artifacts still to be written, a C++ server holding one layer range and a Rust adapter that owns that process, and it needs a cut-set path opened in `adapter/` first. [STAGED.md](../../../../STAGED.md) is the plan. |
+| `llamacpp/staged/` | llama.cpp, split across machines | Rust adapter and staged server sources are present behind the staged compatibility boundary. The patch series and preparation script remain the replaceable upstream integration path; native transaction parity and long-run acceptance are separate gates. |
 
 ## What a new adapter owes
 
@@ -40,6 +40,42 @@ that transfer stays inside the backend under either distribution.
 
 Only the end of a chain produces a token. A staged adapter that is not last
 returns an outcome with no text and no stop, and the node hands the work on.
+
+## Cache contract and implementation order
+
+The mock adapter is the first conformance target for durable KV. A real llama
+adapter may be incomplete while it preserves this boundary; P4 and the node
+must not wait for a llama.cpp-specific cache API before testing policy.
+
+[`Adapter`](adapter/src/lib.rs) is event-based: `start(Work, &dyn EventSink)`
+returns immediately and reports `Cached`, `Failed`, or the other outcomes
+through the sink. [`Work::Cache`](adapter/src/work/cache/mod.rs) is one
+instruction for one `sequence`, one `stage_id`, one deployment `generation`,
+and one `operation_id`. The adapter must not replace `sequence` with an
+execution request id.
+
+Cache mutations use this transaction contract:
+
+```text
+PreparePersist | PrepareRestore | PrepareDiscard
+  → Commit or Abort
+Reconcile      → receipt only; no mutation
+```
+
+`Prepare` is not visible as committed state. `Commit` is replay-safe,
+`Abort` compensates the prepared mutation, and `Reconcile` exposes
+`Absent`, `Prepared`, `Committed`, `Aborted`, or `Inconsistent` without
+guessing. Restore must be bounded: unavailable capacity, a stale generation,
+or a missing/corrupt durable record becomes an explicit refusal or failure.
+The node admits no follow-up Hop until Restore has completed for every stage.
+
+The mock must cover ordering, transaction compensation, idempotent Discard,
+capacity refusal, generation/identity fencing, restart recovery, receipt
+corruption, and multi-stage partial failure. Once those cases pass, the llama
+adapter may be implemented later behind the same contract. Its remaining work
+is backend-specific: materialising KV, selecting/evicting device slots, and
+proving long-run native acceptance. The served adapter remains unsupported for
+durable cache until it implements these operations.
 
 ## Backend HTTP contracts, for whoever writes these
 

@@ -24,17 +24,28 @@ use tokio::net::TcpListener;
 
 /// Stands in for OUTER: keeps every reply, per route.
 #[derive(Default, Clone)]
-pub struct Outer(Arc<Mutex<HashMap<String, Vec<Reply>>>>);
+pub struct Outer(
+    Arc<Mutex<HashMap<String, Vec<Reply>>>>,
+    Arc<Mutex<HashMap<String, Vec<u64>>>>,
+);
 
 impl Duties for Outer {
     fn handle(&self, frame: Frame, _: &Arc<Agent>) {
         if let Ok(reply) = decode_reply(&frame.body) {
+            let route = frame.envelope.route.clone();
+            let event_seq = frame.envelope.event_seq;
             self.0
                 .lock()
                 .unwrap()
-                .entry(frame.envelope.route.clone())
+                .entry(route.clone())
                 .or_default()
                 .push(reply);
+            self.1
+                .lock()
+                .unwrap()
+                .entry(route)
+                .or_default()
+                .push(event_seq);
         }
     }
 }
@@ -42,6 +53,15 @@ impl Duties for Outer {
 impl Outer {
     pub fn replies(&self, route: &str) -> Vec<Reply> {
         self.0
+            .lock()
+            .unwrap()
+            .get(route)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn event_sequences(&self, route: &str) -> Vec<u64> {
+        self.1
             .lock()
             .unwrap()
             .get(route)
@@ -105,7 +125,7 @@ pub async fn start(duties: Arc<dyn Duties>) -> Arc<Agent> {
     let (agent, receiver, in_flight) = Agent::new(
         Address::tcp("127.0.0.1", port),
         duties,
-        Arc::new(Bodies),
+        Arc::new(Bodies::default()),
         Lanes::default(),
         Budget::default(),
     );
@@ -121,6 +141,12 @@ pub fn to_agent(target: &Arc<Agent>, outer: &Arc<Agent>, route: &str, message: T
             recipient: Recipient::Agent,
             lane: QueueClass::Control,
             route: route.into(),
+            request_id: route.into(),
+            stream_id: route.into(),
+            origin_agent: Some(outer.address().clone()),
+            return_channel: Some(outer.address().to_string()),
+            ingress_generation: 0,
+            event_seq: 0,
             deadline_unix_ms: 0,
             reply_to: Some(outer.address().clone()),
             chain: None,
@@ -142,6 +168,12 @@ pub fn to_node(
             recipient: Recipient::node(chain.current().node.clone()),
             lane,
             route: route.into(),
+            request_id: route.into(),
+            stream_id: route.into(),
+            origin_agent: Some(outer.address().clone()),
+            return_channel: Some(outer.address().to_string()),
+            ingress_generation: 0,
+            event_seq: 0,
             deadline_unix_ms: 0,
             reply_to: Some(outer.address().clone()),
             chain: Some(chain.clone()),

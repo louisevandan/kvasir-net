@@ -297,7 +297,13 @@ fn concurrent_chains_on_shared_agents_do_not_mix_their_routes() {
             a.enqueue(request(&format!("R{index}"), &right, &outer, 3))
                 .unwrap();
         }
-        until(|| outer_duties.routes() >= 20).await;
+        until(|| {
+            (0..10).all(|index| {
+                outer_duties.frames_for(&format!("L{index}")).len() >= 3
+                    && outer_duties.frames_for(&format!("R{index}")).len() >= 4
+            })
+        })
+        .await;
 
         for index in 0..10 {
             assert_eq!(

@@ -4,7 +4,8 @@ use crate::payload::Bodies;
 use p4_adapter::{Adapter, Distribution, EventSink, Work};
 use p4_agent_core::agent::run;
 use p4_agent_core::queue::lane::{Budget, Lanes};
-use p4_agent_core::transport::inbox;
+use p4_agent_core::transport::inbox::{self, Subscriptions};
+use p4_protocol::frame::Frame;
 use p4_protocol::{Address, Envelope, QueueClass, Recipient};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -56,7 +57,7 @@ async fn start(duties: Arc<dyn Duties>) -> Arc<Agent> {
     let (agent, receiver, in_flight) = Agent::new(
         Address::tcp("127.0.0.1", port),
         duties,
-        Arc::new(Bodies),
+        Arc::new(Bodies::default()),
         Lanes::default(),
         Budget::default(),
     );
@@ -72,6 +73,12 @@ fn ask(target: &Arc<Agent>, caller: &Arc<Agent>, route: &str, message: ToAgent) 
             recipient: Recipient::Agent,
             lane: QueueClass::Control,
             route: route.into(),
+            request_id: route.into(),
+            stream_id: route.into(),
+            origin_agent: Some(caller.address().clone()),
+            return_channel: Some(caller.address().to_string()),
+            ingress_generation: 0,
+            event_seq: 0,
             deadline_unix_ms: 0,
             reply_to: Some(caller.address().clone()),
             chain: None,
@@ -93,6 +100,44 @@ fn with_stub() -> Registry {
     let mut registry = Registry::new();
     registry.register_fn("stub", |_| Arc::new(Stub));
     registry
+}
+
+#[test]
+fn an_ack_body_cannot_name_a_different_return_channel() {
+    runtime().block_on(async {
+        let subscriptions = Subscriptions::default();
+        let channel = "outer~".to_owned() + &"ab".repeat(32);
+        let (generation, _, _) = subscriptions.bind(&channel).await;
+        let (agent, _, _) = Agent::new_with_subscriptions(
+            Address::tcp("127.0.0.1", 0),
+            Arc::new(Standard::new(with_stub())),
+            Arc::new(Bodies::default()),
+            Lanes::default(),
+            Budget::default(),
+            subscriptions.clone(),
+        );
+        let mut delivered = ask(&agent, &agent, "delivery", ToAgent::Status);
+        delivered.envelope.return_channel = Some(channel.clone());
+        delivered.envelope.stream_id = "stream".into();
+        delivered.envelope.event_seq = 7;
+        subscriptions
+            .record_delivered(&channel, generation, &delivered)
+            .await;
+
+        let mut ack = Frame {
+            envelope: delivered.envelope.clone(),
+            body: encode_to_agent(&ToAgent::Acknowledge {
+                return_channel: "other~".to_owned() + &"cd".repeat(32),
+                stream_id: "stream".into(),
+                event_seq: 7,
+            }),
+        };
+        ack.envelope.ingress_generation = generation;
+        Standard::new(with_stub()).handle(ack, &agent);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(subscriptions.metrics().await.unacked, 1);
+        assert_eq!(agent.ack_rejected(), 1);
+    });
 }
 
 #[test]

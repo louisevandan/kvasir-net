@@ -65,7 +65,8 @@ fn outer_can_see_which_node_is_holding_which_request() {
             .unwrap();
         until(|| !seen.replies("status").is_empty()).await;
 
-        let Some(Reply::Status { snapshot }) = seen.replies("status").into_iter().next() else {
+        let Some(Reply::StatusSnapshot { snapshot }) = seen.replies("status").into_iter().next()
+        else {
             panic!("a status reply came back");
         };
         assert!(
@@ -135,7 +136,7 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
         // Watching only for the route lost this race about one run in five.
         until(|| {
             if seen.replies("where").iter().any(|reply| {
-                matches!(reply, Reply::Status { snapshot }
+                matches!(reply, Reply::StatusSnapshot { snapshot }
                     if snapshot.contains("drop-me") && snapshot.contains("running=1 "))
             }) {
                 return true;
@@ -154,6 +155,10 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
                 "cancel",
                 ToAgent::Cancel {
                     route: "drop-me".into(),
+                    request_id: "drop-me".into(),
+                    stream_id: "drop-me".into(),
+                    return_channel: outer.address().to_string(),
+                    generation: 0,
                 },
             ))
             .unwrap();
@@ -163,6 +168,16 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
             "the cancellation found something to stop: {:?}",
             seen.replies("cancel")
         );
+        until(|| {
+            seen.replies("drop-me")
+                .iter()
+                .any(|reply| matches!(reply, Reply::Failed { detail } if detail.contains("cancelled before start")))
+        })
+        .await;
+        assert!(
+            seen.event_sequences("drop-me").iter().any(|seq| *seq > 0),
+            "the cancellation terminal must be replayable"
+        );
 
         // What it did not touch: the others are still there. That is the claim
         // — cancelling one route leaves the rest alone — and it is checkable
@@ -171,7 +186,8 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
             .enqueue(to_agent(&agent, &outer, "after", ToAgent::Status))
             .unwrap();
         until(|| !seen.replies("after").is_empty()).await;
-        let Some(Reply::Status { snapshot }) = seen.replies("after").into_iter().next() else {
+        let Some(Reply::StatusSnapshot { snapshot }) = seen.replies("after").into_iter().next()
+        else {
             panic!("a status reply came back");
         };
         assert!(
@@ -184,7 +200,7 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
         // that cancelling one route left the rest alone.
         let kept = ["keep0", "keep1", "keep2", "keep3"]
             .iter()
-            .filter(|route| snapshot.contains(*route))
+            .filter(|route| snapshot.contains(route))
             .count();
         assert!(
             kept >= 3,
@@ -218,6 +234,10 @@ fn cancelling_a_finished_request_reports_that_there_was_nothing_to_stop() {
                 "cancel",
                 ToAgent::Cancel {
                     route: "never-existed".into(),
+                    request_id: "never-existed".into(),
+                    stream_id: "never-existed".into(),
+                    return_channel: outer.address().to_string(),
+                    generation: 0,
                 },
             ))
             .unwrap();
@@ -226,6 +246,323 @@ fn cancelling_a_finished_request_reports_that_there_was_nothing_to_stop() {
             matches!(seen.replies("cancel").first(), Some(Reply::Failed { .. })),
             "a caller can tell a cancellation from a race it lost: {:?}",
             seen.replies("cancel")
+        );
+    });
+}
+
+#[test]
+fn duplicate_cancel_is_idempotent_and_does_not_replay_the_request_terminal() {
+    runtime().block_on(async {
+        let seen = Outer::default();
+        let outer = start(Arc::new(seen.clone())).await;
+        let agent = start(Arc::new(Standard::new(backends()))).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "held",
+            "mock-silent",
+            r#"{"l":"0-9"}"#,
+            1,
+        )
+        .await;
+        let single = chain_over(&[(&agent, "held")]);
+        for route in ["blocker", "cancel-once"] {
+            agent
+                .enqueue(to_node(
+                    &single,
+                    &outer,
+                    route,
+                    QueueClass::Prefill,
+                    ToNode::Execute {
+                        prompt: "대기".into(),
+                        max_tokens: 3,
+                        options: "{}".into(),
+                    },
+                ))
+                .unwrap();
+        }
+        until(|| {
+            seen.replies("where").iter().any(|reply| {
+                matches!(reply, Reply::StatusSnapshot { snapshot }
+                    if snapshot.contains("cancel-once") && snapshot.contains("running=1 "))
+            }) || agent
+                .enqueue(to_agent(&agent, &outer, "where", ToAgent::Status))
+                .is_err()
+        })
+        .await;
+
+        let cancel = |control: &str| {
+            to_agent(
+                &agent,
+                &outer,
+                control,
+                ToAgent::Cancel {
+                    route: "cancel-once".into(),
+                    request_id: "cancel-once".into(),
+                    stream_id: "cancel-once".into(),
+                    return_channel: outer.address().to_string(),
+                    generation: 0,
+                },
+            )
+        };
+        agent.enqueue(cancel("cancel-1")).unwrap();
+        until(|| !seen.replies("cancel-1").is_empty()).await;
+        agent.enqueue(cancel("cancel-2")).unwrap();
+        until(|| !seen.replies("cancel-2").is_empty()).await;
+        until(|| {
+            seen.replies("cancel-once").iter().filter(|reply| {
+                matches!(reply, Reply::Failed { detail } if detail.contains("cancelled before start"))
+            }).count() == 1
+        }).await;
+        assert_eq!(
+            seen.replies("cancel-once")
+                .iter()
+                .filter(|reply| matches!(reply, Reply::Failed { detail } if detail.contains("cancelled before start")))
+                .count(),
+            1,
+            "duplicate cancellation must not create a second request terminal"
+        );
+        assert!(matches!(
+            seen.replies("cancel-2").first(),
+            Some(Reply::Accepted { detail }) if detail.contains("already recorded")
+        ));
+    });
+}
+
+#[test]
+fn cancelling_an_active_hop_does_not_claim_backend_interruption() {
+    runtime().block_on(async {
+        let seen = Outer::default();
+        let outer = start(Arc::new(seen.clone())).await;
+        let agent = start(Arc::new(Standard::new(backends()))).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "held",
+            "mock-silent",
+            r#"{"l":"0-9"}"#,
+            1,
+        )
+        .await;
+        let single = chain_over(&[(&agent, "held")]);
+        agent
+            .enqueue(to_node(
+                &single,
+                &outer,
+                "active-cancel",
+                QueueClass::Prefill,
+                ToNode::Execute {
+                    prompt: "실행 중".into(),
+                    max_tokens: 3,
+                    options: "{}".into(),
+                },
+            ))
+            .unwrap();
+        until(|| {
+            agent
+                .enqueue(to_agent(&agent, &outer, "active-status", ToAgent::Status))
+                .is_err()
+                || seen.replies("active-status").iter().any(|reply| {
+                    matches!(reply, Reply::StatusSnapshot { snapshot }
+                        if snapshot.contains("active-cancel") && snapshot.contains("running=1 "))
+                })
+        })
+        .await;
+        agent
+            .enqueue(to_agent(
+                &agent,
+                &outer,
+                "cancel-active",
+                ToAgent::Cancel {
+                    route: "active-cancel".into(),
+                    request_id: "active-cancel".into(),
+                    stream_id: "active-cancel".into(),
+                    return_channel: outer.address().to_string(),
+                    generation: 0,
+                },
+            ))
+            .unwrap();
+        until(|| !seen.replies("cancel-active").is_empty()).await;
+        assert!(matches!(
+            seen.replies("cancel-active").first(),
+            Some(Reply::Accepted { detail })
+                if detail.contains("active hop") && detail.contains("not claimed")
+        ));
+        assert!(
+            seen.replies("active-cancel").is_empty(),
+            "an active cancellation must not synthesize a terminal before the hop ends"
+        );
+    });
+}
+
+#[test]
+fn stale_generation_or_return_channel_cannot_remove_a_queued_request() {
+    runtime().block_on(async {
+        let seen = Outer::default();
+        let outer = start(Arc::new(seen.clone())).await;
+        let agent = start(Arc::new(Standard::new(backends()))).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "held",
+            "mock-silent",
+            r#"{"l":"0-9"}"#,
+            1,
+        )
+        .await;
+        let single = chain_over(&[(&agent, "held")]);
+        for route in ["blocker", "fenced"] {
+            agent
+                .enqueue(to_node(
+                    &single,
+                    &outer,
+                    route,
+                    QueueClass::Prefill,
+                    ToNode::Execute {
+                        prompt: "대기".into(),
+                        max_tokens: 3,
+                        options: "{}".into(),
+                    },
+                ))
+                .unwrap();
+        }
+        until(|| {
+            agent
+                .enqueue(to_agent(&agent, &outer, "where", ToAgent::Status))
+                .is_err()
+                || seen.replies("where").iter().any(|reply| {
+                    matches!(reply, Reply::StatusSnapshot { snapshot }
+                        if snapshot.contains("fenced") && snapshot.contains("running=1 "))
+                })
+        })
+        .await;
+
+        let stale_channel = to_agent(
+            &agent,
+            &outer,
+            "stale-channel",
+            ToAgent::Cancel {
+                route: "fenced".into(),
+                request_id: "fenced".into(),
+                stream_id: "fenced".into(),
+                return_channel: "old-channel".into(),
+                generation: 0,
+            },
+        );
+        agent.enqueue(stale_channel).unwrap();
+        until(|| !seen.replies("stale-channel").is_empty()).await;
+        assert!(matches!(
+            seen.replies("stale-channel").first(),
+            Some(Reply::Failed { detail }) if detail.contains("stale cancellation fence")
+        ));
+
+        let stale_generation = to_agent(
+            &agent,
+            &outer,
+            "stale-generation",
+            ToAgent::Cancel {
+                route: "fenced".into(),
+                request_id: "fenced".into(),
+                stream_id: "fenced".into(),
+                return_channel: outer.address().to_string(),
+                generation: 99,
+            },
+        );
+        agent.enqueue(stale_generation).unwrap();
+        until(|| !seen.replies("stale-generation").is_empty()).await;
+        assert!(matches!(
+            seen.replies("stale-generation").first(),
+            Some(Reply::Failed { detail }) if detail.contains("stale cancellation fence")
+        ));
+
+        agent
+            .enqueue(to_agent(
+                &agent,
+                &outer,
+                "cancel-fenced",
+                ToAgent::Cancel {
+                    route: "fenced".into(),
+                    request_id: "fenced".into(),
+                    stream_id: "fenced".into(),
+                    return_channel: outer.address().to_string(),
+                    generation: 0,
+                },
+            ))
+            .unwrap();
+        until(|| {
+            seen.replies("fenced").iter().any(|reply| {
+                matches!(reply, Reply::Failed { detail } if detail.contains("cancelled before start"))
+            })
+        })
+        .await;
+    });
+}
+
+#[test]
+fn cancelling_after_normal_terminal_reports_the_terminal_race() {
+    runtime().block_on(async {
+        let seen = Outer::default();
+        let outer = start(Arc::new(seen.clone())).await;
+        let agent = start(Arc::new(Standard::new(backends()))).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "n0",
+            "mock-tail",
+            r#"{"l":"0-9"}"#,
+            4,
+        )
+        .await;
+        let single = chain_over(&[(&agent, "n0")]);
+        agent
+            .enqueue(to_node(
+                &single,
+                &outer,
+                "finished",
+                QueueClass::Prefill,
+                ToNode::Execute {
+                    prompt: "끝".into(),
+                    max_tokens: 1,
+                    options: "{}".into(),
+                },
+            ))
+            .unwrap();
+        until(|| {
+            seen.replies("finished")
+                .iter()
+                .any(|reply| matches!(reply, Reply::Done { .. }))
+        })
+        .await;
+        agent
+            .enqueue(to_agent(
+                &agent,
+                &outer,
+                "cancel-finished",
+                ToAgent::Cancel {
+                    route: "finished".into(),
+                    request_id: "finished".into(),
+                    stream_id: "finished".into(),
+                    return_channel: outer.address().to_string(),
+                    generation: 0,
+                },
+            ))
+            .unwrap();
+        until(|| !seen.replies("cancel-finished").is_empty()).await;
+        assert!(matches!(
+            seen.replies("cancel-finished").first(),
+            Some(Reply::Failed { detail }) if detail.contains("already terminal")
+        ));
+        assert_eq!(
+            seen.replies("finished")
+                .iter()
+                .filter(|reply| matches!(reply, Reply::Done { .. } | Reply::Failed { .. }))
+                .count(),
+            1,
+            "the terminal race must not append a cancellation terminal"
         );
     });
 }
@@ -278,7 +615,8 @@ fn outer_can_collect_traffic_and_queue_statistics() {
             .unwrap();
         until(|| !seen.replies("stats").is_empty()).await;
 
-        let Some(Reply::Status { snapshot }) = seen.replies("stats").into_iter().next() else {
+        let Some(Reply::StatusSnapshot { snapshot }) = seen.replies("stats").into_iter().next()
+        else {
             panic!("a status reply came back");
         };
         for field in [
@@ -339,7 +677,7 @@ fn a_backend_describes_itself_through_the_status_message() {
             .replies("ask")
             .iter()
             .find_map(|reply| match reply {
-                Reply::Status { snapshot } => Some(snapshot.clone()),
+                Reply::StatusSnapshot { snapshot } => Some(snapshot.clone()),
                 _ => None,
             })
             .expect("a status snapshot");

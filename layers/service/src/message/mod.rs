@@ -10,6 +10,8 @@
 
 pub mod wire;
 
+use crate::status::StatusSnapshot;
+
 #[cfg(test)]
 mod tests;
 
@@ -39,7 +41,15 @@ pub enum ToAgent {
     /// boundary — there is no way to interrupt a hop — so this means the next
     /// one never starts.
     Cancel {
+        /// Transport route of the request to remove from a node queue.
         route: String,
+        /// Immutable request identity used to fence a route reuse.
+        request_id: String,
+        stream_id: String,
+        /// The return subscription that owns the request.
+        return_channel: String,
+        /// Ingress generation observed when the request was admitted.
+        generation: u64,
     },
     /// What this agent is doing right now: its lanes, its traffic, and every
     /// node with the routes it is holding.
@@ -48,6 +58,14 @@ pub enum ToAgent {
     /// while the process runs. This changes constantly and is the only way
     /// OUTER can see where a request has got to.
     Status,
+    /// Confirms receipt of response events for a logical OUTER channel.
+    /// Events at or below `event_seq` for this stream become replayable no
+    /// longer and may leave the agent's bounded delivery journal.
+    Acknowledge {
+        return_channel: String,
+        stream_id: String,
+        event_seq: u64,
+    },
 }
 
 /// Sent to a node. Materialise, release, or run.
@@ -77,6 +95,16 @@ pub enum ToNode {
         /// Opaque sampling options, passed through whole.
         options: String,
     },
+    /// Internal continuation state emitted after one decode lap. It prevents
+    /// the next lap from restarting the backend sequence at position zero.
+    Continue {
+        position: u32,
+        remaining: u32,
+        /// The token sampled by the staged tail for the next stage-0 decode.
+        /// Absent for internal/served backends and legacy continuations.
+        token: Option<u32>,
+        options: String,
+    },
     /// Write one request's cached state somewhere durable and free the memory.
     ///
     /// One verb rather than two: persisting without freeing saves nothing, and
@@ -85,8 +113,14 @@ pub enum ToNode {
     Persist {
         sequence: String,
     },
+    PreparePersist {
+        sequence: String,
+    },
     /// Bring it back, so the next hop continues where it left off.
     Restore {
+        sequence: String,
+    },
+    PrepareRestore {
         sequence: String,
     },
     /// Copy it under a new id, leaving the original as it was.
@@ -100,6 +134,20 @@ pub enum ToNode {
     /// Delete the durable copy. State nothing ever deletes is a disk filling
     /// up on a schedule nobody set.
     Discard {
+        sequence: String,
+    },
+    PrepareDiscard {
+        sequence: String,
+    },
+    Commit {
+        sequence: String,
+    },
+    Abort {
+        sequence: String,
+    },
+    /// Read the adapter-owned durable receipt for this operation without
+    /// replaying a mutation. The request identity remains in the envelope.
+    Reconcile {
         sequence: String,
     },
 }
@@ -125,8 +173,22 @@ pub enum Reply {
     Done {
         reason: String,
         generated: u32,
+        /// Optional final token carried atomically with the terminal. This
+        /// closes the max_tokens boundary without racing a separate token
+        /// reply against the terminal lane.
+        final_token: Option<(u32, String)>,
     },
     Failed {
+        detail: String,
+    },
+    /// A cache instruction failed and carries the same identity as `Cached`.
+    /// Generic failures intentionally remain identity-free for non-cache work.
+    CacheFailed {
+        deployment: String,
+        stage_id: String,
+        generation: u64,
+        operation_id: String,
+        sequence: String,
         detail: String,
     },
     Machine {
@@ -146,12 +208,32 @@ pub enum Reply {
     Status {
         snapshot: String,
     },
+    /// Correlated, machine-readable monitoring state. The legacy `Status`
+    /// string remains for peers that have not negotiated this variant.
+    StatusSnapshot {
+        snapshot: StatusSnapshot,
+    },
     /// A cache instruction finished. `sequence` is the id the state now lives
     /// under — the new one after a fork — and `bytes` is what the durable copy
     /// occupies, which an operator persisting thousands of conversations needs
     /// and only the backend knows.
     Cached {
+        deployment: String,
+        stage_id: String,
+        generation: u64,
+        operation_id: String,
         sequence: String,
+        bytes: u64,
+        detail: String,
+    },
+    /// Adapter-owned receipt state used by coordinator recovery/reconciliation.
+    CacheStatus {
+        deployment: String,
+        stage_id: String,
+        generation: u64,
+        operation_id: String,
+        sequence: String,
+        state: String,
         bytes: u64,
         detail: String,
     },

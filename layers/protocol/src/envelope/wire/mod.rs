@@ -15,6 +15,18 @@ const ABSENT: u8 = 0;
 const PRESENT: u8 = 1;
 
 pub(crate) fn encode(envelope: &Envelope) -> Result<Vec<u8>, ProtocolError> {
+    if envelope.request_id.is_empty() || envelope.stream_id.is_empty() {
+        return Err(ProtocolError::new(
+            "request and stream identity are required",
+        ));
+    }
+    if envelope.chain.is_some()
+        && (envelope.origin_agent.is_none() || envelope.return_channel.is_none())
+    {
+        return Err(ProtocolError::new(
+            "inference envelopes require origin agent and return channel",
+        ));
+    }
     let mut bytes = Vec::with_capacity(256);
     put_text(&mut bytes, &envelope.target.to_string())?;
     match &envelope.recipient {
@@ -26,6 +38,23 @@ pub(crate) fn encode(envelope: &Envelope) -> Result<Vec<u8>, ProtocolError> {
     }
     bytes.push(lane_tag(envelope.lane));
     put_text(&mut bytes, &envelope.route)?;
+    put_text(&mut bytes, &envelope.request_id)?;
+    put_text(&mut bytes, &envelope.stream_id)?;
+    match &envelope.origin_agent {
+        None => bytes.push(ABSENT),
+        Some(address) => {
+            bytes.push(PRESENT);
+            put_text(&mut bytes, &address.to_string())?;
+        }
+    }
+    match &envelope.return_channel {
+        None => bytes.push(ABSENT),
+        Some(channel) => {
+            bytes.push(PRESENT);
+            put_text(&mut bytes, channel)?;
+        }
+    }
+    put_u64(&mut bytes, envelope.event_seq);
     put_u64(&mut bytes, envelope.deadline_unix_ms);
     match &envelope.reply_to {
         None => bytes.push(ABSENT),
@@ -64,6 +93,19 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Envelope, ProtocolError> {
     };
     let lane = lane(cursor.byte()?)?;
     let route = cursor.text()?;
+    let request_id = cursor.text()?;
+    let stream_id = cursor.text()?;
+    let origin_agent = match cursor.byte()? {
+        ABSENT => None,
+        PRESENT => Some(address(&mut cursor)?),
+        _ => return Err(ProtocolError::new("unknown envelope origin flag")),
+    };
+    let return_channel = match cursor.byte()? {
+        ABSENT => None,
+        PRESENT => Some(cursor.text()?),
+        _ => return Err(ProtocolError::new("unknown envelope return channel flag")),
+    };
+    let event_seq = cursor.u64()?;
     let deadline_unix_ms = cursor.u64()?;
     let reply_to = match cursor.byte()? {
         ABSENT => None,
@@ -78,11 +120,30 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Envelope, ProtocolError> {
     if cursor.offset != bytes.len() {
         return Err(ProtocolError::new("trailing envelope bytes"));
     }
+    if request_id.is_empty() || stream_id.is_empty() {
+        return Err(ProtocolError::new(
+            "request and stream identity are required",
+        ));
+    }
+    if return_channel.as_deref().is_some_and(str::is_empty) {
+        return Err(ProtocolError::new("return channel cannot be empty"));
+    }
+    if chain.is_some() && (origin_agent.is_none() || return_channel.is_none()) {
+        return Err(ProtocolError::new(
+            "inference envelopes require origin agent and return channel",
+        ));
+    }
     Ok(Envelope {
         target,
         recipient,
         lane,
         route,
+        request_id,
+        stream_id,
+        origin_agent,
+        return_channel,
+        ingress_generation: 0,
+        event_seq,
         deadline_unix_ms,
         reply_to,
         chain,

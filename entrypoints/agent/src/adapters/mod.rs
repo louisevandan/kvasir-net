@@ -7,9 +7,12 @@
 
 use p4_llamacpp_served::Served;
 use p4_llamacpp_served::flavour::Flavour;
+use p4_llamacpp_staged_adapter::{StagedAdapter, StagedConfig};
 use p4_mock::Mock;
 use p4_mock::profile::Profile;
 use p4_service::Registry;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,7 +48,54 @@ pub fn registry() -> Registry {
         registry.register_fn(flavour.name(), move |_| Arc::new(Served::new(flavour)));
     }
 
+    // Expose staged only when this host has the prepared server artifact. A
+    // missing artifact is a missing capability, not a runtime fallback.
+    if let Some(binary) = std::env::var_os("P4_STAGED_SERVER_BINARY") {
+        let binary = PathBuf::from(binary);
+        let model_identity = std::env::var("P4_STAGED_MODEL_IDENTITY").ok();
+        let layer_begin = std::env::var("P4_STAGED_LAYER_BEGIN")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        let layer_end = std::env::var("P4_STAGED_LAYER_END")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        register_staged(
+            &mut registry,
+            binary,
+            model_identity,
+            layer_begin,
+            layer_end,
+        );
+    }
+
     registry
+}
+
+fn register_staged(
+    registry: &mut Registry,
+    binary: PathBuf,
+    model_identity: Option<String>,
+    layer_begin: i32,
+    layer_end: i32,
+) {
+    registry.register(
+        "llamacpp-staged",
+        Arc::new(move |_| {
+            if !binary.is_file() {
+                return None;
+            }
+            let endpoint: SocketAddr = "127.0.0.1:0".parse().expect("valid staged endpoint");
+            let mut config = StagedConfig::new(binary.clone(), endpoint);
+            if let Some(identity) = &model_identity
+                && layer_end > layer_begin
+            {
+                config = config.with_kv_metadata(identity.clone(), layer_begin, layer_end);
+            }
+            Some(Arc::new(StagedAdapter::new(config)) as Arc<dyn p4_adapter::Adapter>)
+        }),
+    );
 }
 
 /// Reads a chain position out of a node named `stage-N`.

@@ -16,15 +16,16 @@ return까지의 프로토콜 시나리오를 검증한다.
 
 ## 1. 실행 산출물과 증거
 
-각 실행은 `target/remote-mock-e2e/<run-id>/`에 다음을 남긴다.
+체크인된 로컬 runner는 `target/parallel-mock-e2e/<run-id>/`에 manifest와
+worker별 log를 남긴다. 원격 cross-host 실행은 수동 산출물이며 이 경로에
+자동 수집되지 않는다.
 
 | 산출물 | 검증 대상 |
 | --- | --- |
-| `manifest.json` | commit, binary hash, host, adapter, topology, limits |
-| `agent-local.log`, `agent-remote.log` | 등록·discovery·load·status·failure |
-| `client.jsonl` | request/stream/event order와 terminal 결과 |
-| `status-before.json`, `status-during.json`, `status-after.json` | queue, in-flight, node phase, peer 상태 |
-| `verdict.json` | 시나리오별 pass/fail과 실패 원인 |
+| `manifest.json` | run id, worker/request/token 입력, worker별 verdict와 working set |
+| `worker-*/agent-*.log` | local agent stdout/stderr |
+| `worker-*/drive.log` | request/stream verdict와 queue peak |
+| `worker-*/drive.err.log` | driver 오류 |
 
 바이너리는 복사 전에 중앙·원격 SHA-256을 비교한다. 원격에는 소스나
 `cargo` 실행을 요구하지 않는다.
@@ -79,8 +80,10 @@ Agent는 mock profile을 반환하고, P4는 profile 문자열을 해석하거�
 재작성하지 않는다.
 
 `P4_DRIVE_DISCOVER=1`을 지정한 drive는 node 생성 전에 모든 selected agent에
-이 preflight를 수행한다. 각 응답의 opaque profile을 비교해 일치할 때만
-create/load/inference를 시작한다.
+이 preflight를 수행한다. 각 응답의 artifact와 opaque profile을 비교하고,
+agent별 capability snapshot ID/expiry를 저장해 같은 agent의 `Load`에
+전달한다. 응답 누락·artifact 불일치·빈 snapshot이면 create/load/inference를
+시작하지 않는다.
 
 판정:
 
@@ -106,7 +109,7 @@ local/remote agent에서 각각 model profile과 capability snapshot을 수집�
 mock profile은 실제 GGUF 파일을 읽는 parser의 대체물이 아니지만, llama 계열
 architecture/layer/embedding/head/KV-head/context/quantization/fingerprint와
 stage/boundary bytes를 가진 synthetic profile이다. mock adapter는 또한 opaque
-load plan, sampling/MTP 형태의 JSON options를 수신·기록하고, 비-object options를
+load plan과 sampling 형태의 JSON options를 수신·기록하고, 비-object options를
 요청 단위로 거부하며, llama-compatible backend report를 반환한다. 따라서
 D-02는 discovery와 adapter boundary를 검증하지만 CUDA allocator나 실제
 llama.cpp kernel 동작을 증명하지 않는다.
@@ -234,7 +237,7 @@ mock smoke를 수행했다.
 | 항목 | 결과 |
 | --- | --- |
 | binary | 중앙 release build 후 `p4-agent.exe`, `p4-drive.exe`만 원격 복사 |
-| hash | 중앙/원격 `p4-agent.exe` `62A7633012A11AB3EB9F613378B7A195EF868A67EDB7ED9B6EF880D2327E9AC3`, `p4-drive.exe` `DFF4ABD117E5BD6DECABF2FBE11EF7D4D6677D340C01901E27146F23C5B8BADD` 일치 |
+| hash | 이번 수정 release의 중앙/원격 `p4-agent.exe` `2F7172B7578FCBA6E4ACADA3A04849EC411396ED7A9DAA15AEDF558EC5B22BC9`, `p4-drive.exe` `A0B88A6BD7686304AD733D18F0FCD2C88D9C1811FAB86AD79AC910EAF3EE4A37` 일치 |
 | topology | local stage + SSH-forwarded remote stage, 2 stages |
 | load | nodes 2, mock, ceiling 8 |
 | inference | 32 requests × 8 tokens |
@@ -283,10 +286,23 @@ working-set 샘플을 수집했고 min 15,138,816 B, peak 21,798,912 B, delta
 6,660,096 B를 manifest에 기록했다. 즉 생산자는 lane admission에서 조절되고
 node queue/event/outbox는 무제한으로 증가하지 않았다. 이 수치는 mock adapter의
 결과이며 실제 GPU memory/allocator 상한 검증을 대체하지 않는다.
-최종 release의 10분 장기 local run은 60000 requests × 1 token을 595622 ms
-동안 처리했다. `completed=60000`, `failed=0`, `unanswered=0`, stream order
-통과, peak node queue 4, peak in-adapter 4, peak main lane 3이었다. runner는
-579개 working-set 샘플을 수집했고 min 9,314,304 B, peak 32,112,640 B,
-delta 22,798,336 B를 manifest에 기록했다. 요청 수에 비례해 무한히 증가하는
-양상은 관찰되지 않았지만 mock adapter의 결과이며, 실제 GPU
-memory/allocator 상한 검증을 대체하지 않는다.
+기존 60000-request 기록은 595622 ms로 10분 조건보다 짧으므로 10분 통과로
+주장하지 않는다. 이번 수정 release의 arrival-paced local run은 6000 requests
+× 1 token을 56470 ms 동안 처리했고 `completed=6000`, `failed=0`,
+`unanswered=0`, `tokens=6000`, peak node queue 23, peak in-adapter 16,
+peak main lane 9, 12002 samples를 기록했다. 이는 bounded mock queue 증거이며
+실제 GPU memory/allocator 상한 검증을 대체하지 않는다.
+
+### Latest correlation/retry verification
+
+After the response-correlation, bounded emergency retry, blocking-admission, and
+file-backed mock-cache changes, the release binaries were rerun on 2026-08-18.
+The local discovery run collected two profiles and completed 16 requests × 8
+tokens with all stream/terminal verdicts passing.
+
+The latest SSH cross-host run used local agent `192.168.0.6:52301`, remote
+agent advertised as `127.0.0.1:52311`, and bidirectional `-L 52311`/`-R 52303`
+forwarding. Discovery collected both profiles; 32 requests × 8 tokens completed
+with `failed=0`, `unanswered=0`, `tokens=256`, `elapsed_ms=323`, and all four
+request/order/terminal verdicts passing. This remains mock and transport
+evidence, not real GPU or production OUTER subscription evidence.

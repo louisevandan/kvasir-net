@@ -21,6 +21,12 @@ fn inference(hops: u16) -> Envelope {
         recipient: Recipient::node(chain.current().node.clone()),
         lane: QueueClass::Prefill,
         route: "route-1".into(),
+        request_id: "request-1".into(),
+        stream_id: "stream-1".into(),
+        origin_agent: Some(Address::tcp("10.0.0.2", 19001)),
+        return_channel: Some("channel-1".into()),
+        ingress_generation: 0,
+        event_seq: 7,
         deadline_unix_ms: 0,
         reply_to: Some(Address::tcp("10.0.0.1", 19001)),
         chain: Some(chain),
@@ -33,6 +39,12 @@ fn control() -> Envelope {
         recipient: Recipient::Agent,
         lane: QueueClass::Control,
         route: "route-2".into(),
+        request_id: "request-2".into(),
+        stream_id: "stream-2".into(),
+        origin_agent: None,
+        return_channel: None,
+        ingress_generation: 0,
+        event_seq: 0,
         deadline_unix_ms: 0,
         reply_to: None,
         chain: None,
@@ -58,6 +70,10 @@ fn a_hop_retargets_at_the_next_node_and_keeps_the_request_wide_fields() {
     // The deadline and the reply address belong to the request, not the hop.
     assert_eq!(second.reply_to, first.reply_to);
     assert_eq!(second.route, first.route);
+    assert_eq!(second.request_id, first.request_id);
+    assert_eq!(second.stream_id, first.stream_id);
+    assert_eq!(second.return_channel, first.return_channel);
+    assert_eq!(second.event_seq, first.event_seq);
 }
 
 #[test]
@@ -98,7 +114,7 @@ fn a_control_message_has_no_chain_to_walk() {
 #[test]
 fn a_reply_goes_to_whoever_asked_and_keeps_the_way_it_came() {
     let reply = inference(3).to_reply().expect("a reply address was given");
-    assert_eq!(reply.target, Address::tcp("10.0.0.1", 19001));
+    assert_eq!(reply.target, Address::tcp("10.0.0.2", 19001));
     assert_eq!(reply.recipient, Recipient::Agent);
     assert_eq!(reply.lane, QueueClass::Response);
     // Nothing further replies to a reply.
@@ -108,6 +124,27 @@ fn a_reply_goes_to_whoever_asked_and_keeps_the_way_it_came() {
         inference(3).chain,
         "every link is an address that demonstrably reached this machine"
     );
+}
+
+#[test]
+fn the_ingress_agent_wins_over_a_stale_direct_reply_target() {
+    let mut request = inference(2);
+    request.reply_to = Some(Address::tcp("192.0.2.99", 19001));
+    assert_eq!(
+        request.to_reply().expect("ingress return anchor").target,
+        Address::tcp("10.0.0.2", 19001)
+    );
+}
+
+#[test]
+fn return_key_separates_channels_even_when_transport_routes_are_reused() {
+    let mut left = inference(1);
+    let mut right = left.clone();
+    left.route = "reused-route".into();
+    right.route = "reused-route".into();
+    left.return_channel = Some("outer-a".into());
+    right.return_channel = Some("outer-b".into());
+    assert_ne!(left.return_key(), right.return_key());
 }
 
 #[test]

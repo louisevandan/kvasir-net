@@ -168,8 +168,10 @@ fn load(adapter: &Served, seen: &Seen, port: u16) {
 fn sequence(remaining: u32, prompt: Option<&str>) -> Sequence {
     Sequence {
         sequence: "req-1".into(),
+        inbound_cut_set: None,
         position: 0,
         prompt: prompt.map(str::to_owned),
+        initial_tokens: None,
         remaining,
         options: r#"{"temperature":0}"#.into(),
     }
@@ -177,6 +179,7 @@ fn sequence(remaining: u32, prompt: Option<&str>) -> Sequence {
 
 fn hop(phase: Phase, remaining: u32, prompt: Option<&str>) -> Work {
     Work::Hop(Hop {
+        id: 1,
         deployment: "d1".into(),
         phase,
         sequences: vec![sequence(remaining, prompt)],
@@ -375,6 +378,9 @@ fn cache_work_is_refused_by_name_rather_than_silently_ignored() {
     adapter.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d1".into(),
+            stage_id: "stage-1".into(),
+            generation: 1,
+            operation_id: "op-cache".into(),
             sequence: "req-1".into(),
             action: p4_adapter::CacheAction::Persist,
         }),

@@ -31,6 +31,19 @@ pub struct Envelope {
     pub lane: QueueClass,
     /// Transport correlation for one exchange.
     pub route: String,
+    /// Immutable logical request identity, separate from the transport route.
+    pub request_id: String,
+    /// Stream identity. One request may own more than one stream over time.
+    pub stream_id: String,
+    /// The ingress agent that accepted the request from OUTER.
+    pub origin_agent: Option<Address>,
+    /// Stable logical return channel, distinct from a reconnectable socket.
+    pub return_channel: Option<String>,
+    /// Ingress-only socket generation. It is never serialized and is injected
+    /// by the local reader so ACK handling can reject stale connections.
+    pub ingress_generation: u64,
+    /// Monotonic event/frame sequence within the stream.
+    pub event_seq: u64,
     /// Absolute; zero disables. Checked at hop boundaries, since there is no
     /// way to interrupt work already handed to a backend.
     pub deadline_unix_ms: u64,
@@ -43,6 +56,24 @@ pub struct Envelope {
 }
 
 impl Envelope {
+    /// Stable logical key for an OUTER response subscription.
+    ///
+    /// `route` is a transport continuation key and may be reused by a caller
+    /// after reconnect. Response ownership therefore uses the immutable
+    /// request/stream/channel tuple instead of route alone.
+    pub fn return_key(&self) -> String {
+        fn part(value: &str, out: &mut String) {
+            out.push_str(&value.len().to_string());
+            out.push(':');
+            out.push_str(value);
+        }
+        let mut key = String::new();
+        part(&self.request_id, &mut key);
+        part(&self.stream_id, &mut key);
+        part(self.return_channel.as_deref().unwrap_or_default(), &mut key);
+        key
+    }
+
     /// Whether this agent consumes the message or forwards it untouched.
     ///
     /// The comparison is on the address alone. There is no agent id to look
@@ -84,7 +115,14 @@ impl Envelope {
     /// Addresses a reply at whoever asked. `None` when nobody is listening,
     /// which is legitimate for a message sent without a continuation.
     pub fn to_reply(&self) -> Option<Self> {
-        let reply_to = self.reply_to.clone()?;
+        // The ingress agent is the return anchor. `reply_to` is retained for
+        // legacy/direct callers, but a distributed inference must return to
+        // the agent that accepted the OUTER request; downstream nodes cannot
+        // infer which of several OUTER channels owns the stream.
+        let reply_to = self
+            .origin_agent
+            .clone()
+            .or_else(|| self.reply_to.clone())?;
         Some(Self {
             target: reply_to,
             recipient: Recipient::Agent,

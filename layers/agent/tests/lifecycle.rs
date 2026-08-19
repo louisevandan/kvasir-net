@@ -245,6 +245,82 @@ fn cancelling_stops_the_work_that_has_not_started() {
 }
 
 #[test]
+fn an_in_flight_hop_is_fenced_and_cancelled_at_its_deadline() {
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        a.create_node(
+            "n0",
+            Arc::new(Mock::terminal(
+                0,
+                Profile {
+                    fault: p4_mock::profile::Fault::Silence,
+                    ..Profile::default()
+                },
+            )),
+            1,
+        )
+        .await;
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(expiring(
+            "in-flight-timeout",
+            &chain,
+            &outer,
+            now_unix_ms() + 100,
+        ))
+        .unwrap();
+
+        until(|| !outer_duties.frames_for("in-flight-timeout").is_empty()).await;
+        let frames = outer_duties.frames_for("in-flight-timeout");
+        assert_eq!(frames.len(), 1, "deadline produces one terminal response");
+        assert!(String::from_utf8_lossy(&frames[0].body).contains("deadline"));
+        settle(300).await;
+        assert_eq!(a.node_depth("n0").await, Some(0));
+        assert_eq!(a.node_status().await[0].running, 0);
+    });
+}
+
+#[test]
+fn a_non_cooperative_adapter_remains_visible_as_timed_out_until_terminal_event() {
+    runtime().block_on(async {
+        let outer_duties = Outer::default();
+        let outer = start(Arc::new(outer_duties.clone())).await;
+        let a = start(Arc::new(Silent)).await;
+        a.create_node(
+            "n0",
+            Arc::new(Mock::terminal(
+                0,
+                Profile {
+                    fault: p4_mock::profile::Fault::Stubborn,
+                    ..Profile::default()
+                },
+            )),
+            1,
+        )
+        .await;
+        let chain = chain_over(&[(&a, "n0")]);
+        a.enqueue(expiring(
+            "stubborn-timeout",
+            &chain,
+            &outer,
+            now_unix_ms() + 40,
+        ))
+        .unwrap();
+
+        until(|| !outer_duties.frames_for("stubborn-timeout").is_empty()).await;
+        let status = a.node_status().await;
+        let active = status[0]
+            .active_hop
+            .as_ref()
+            .expect("timed-out adapter remains visible while still running");
+        assert!(active.timed_out);
+        settle(250).await;
+        assert!(a.node_status().await[0].active_hop.is_none());
+    });
+}
+
+#[test]
 fn cancelling_a_route_that_already_finished_says_so() {
     runtime().block_on(async {
         let outer_duties = Outer::default();

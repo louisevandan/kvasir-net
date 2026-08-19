@@ -21,12 +21,21 @@ pub struct Bodies;
 
 impl Payload for Bodies {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
-        let text = String::from_utf8_lossy(&frame.body).into_owned();
+        let (inbound_cut_set, body) = if p4_adapter::is_continuation(&frame.body) {
+            let (cut_set, original) = p4_adapter::decode_continuation(&frame.body)?;
+            (Some(cut_set), original)
+        } else {
+            (None, frame.body.clone())
+        };
+        let text = String::from_utf8_lossy(&body).into_owned();
         let (prompt, remaining) = text.rsplit_once('|')?;
+        let first_stage = inbound_cut_set.is_none();
         Some(Sequence {
             sequence: frame.envelope.route.clone(),
+            inbound_cut_set,
             position: 0,
-            prompt: Some(prompt.to_owned()),
+            prompt: first_stage.then(|| prompt.to_owned()),
+            initial_tokens: None,
             remaining: remaining.parse().ok()?,
             options: "{}".into(),
         })
@@ -171,6 +180,12 @@ pub fn request(route: &str, chain: &Chain, outer: &Arc<Agent>, tokens: u32) -> F
             recipient: Recipient::node(chain.current().node.clone()),
             lane: QueueClass::Prefill,
             route: route.into(),
+            request_id: route.into(),
+            stream_id: route.into(),
+            origin_agent: Some(outer.address().clone()),
+            return_channel: Some(outer.address().to_string()),
+            ingress_generation: 0,
+            event_seq: 0,
             deadline_unix_ms: 0,
             reply_to: Some(outer.address().clone()),
             chain: Some(chain.clone()),
@@ -259,6 +274,12 @@ pub fn control(route: &str, chain: &Chain, outer: &Arc<Agent>, body: &str) -> Fr
             recipient: Recipient::node(chain.current().node.clone()),
             lane: QueueClass::Control,
             route: route.into(),
+            request_id: route.into(),
+            stream_id: route.into(),
+            origin_agent: Some(outer.address().clone()),
+            return_channel: Some(outer.address().to_string()),
+            ingress_generation: 0,
+            event_seq: 0,
             deadline_unix_ms: 0,
             reply_to: Some(outer.address().clone()),
             chain: Some(chain.clone()),

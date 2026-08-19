@@ -41,6 +41,7 @@ impl Served {
                 return events.raise(Event::Failed {
                     deployment,
                     sequence: None,
+                    hop_id: None,
                     detail,
                 });
             }

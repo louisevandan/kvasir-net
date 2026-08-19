@@ -62,6 +62,8 @@ and the reverse puts it here.
 | Every crate, what it holds, and what is not built | [docs/implementation.md](docs/implementation.md) |
 | The wire and the message vocabulary | [docs/api.md](docs/api.md) |
 | Protocol audit, return routing, pipeline, options, and KV open decisions | [docs/protocol.md](docs/protocol.md) |
+| OUTER sessions, heartbeat, and KV lifecycle boundary | [docs/protocol-outer.md](docs/protocol-outer.md) |
+| Sealed staged MTP decision and implementation gate | [docs/protocol-mtp.md](docs/protocol-mtp.md) |
 | How a message moves through an agent | [docs/architecture.md](docs/architecture.md) |
 | Invariants and what breaks if they go | [docs/constraints.md](docs/constraints.md) |
 | Decisions, and the defects behind them | [docs/internals.md](docs/internals.md) |

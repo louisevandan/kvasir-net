@@ -11,9 +11,9 @@ mod adapters;
 
 use p4_agent_core::agent::{Agent, run};
 use p4_agent_core::queue::lane::{Budget, Lanes};
-use p4_agent_core::transport::inbox;
+use p4_agent_core::transport::inbox::{self, Subscriptions};
 use p4_protocol::Address;
-use p4_service::{Bodies, Standard};
+use p4_service::{Bodies, CapabilityRegistry, Standard};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
@@ -29,25 +29,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let own = Address::advertised(hint.as_deref(), &bound.ip().to_string(), bound.port())?;
 
     let registry = adapters::registry();
-    let duties = Standard::new(registry);
+    let capabilities = CapabilityRegistry::default();
+    let duties = Standard::with_capabilities(registry, capabilities.clone());
     let attached = duties.adapters().join(", ");
 
-    let (agent, receiver, in_flight) = Agent::new(
+    let subscriptions = std::env::var_os("P4_AGENT_STATE_ROOT")
+        .map(Subscriptions::with_journal)
+        .unwrap_or_default();
+    let (agent, receiver, in_flight) = Agent::new_with_subscriptions(
         own.clone(),
         Arc::new(duties),
-        Arc::new(Bodies),
+        Arc::new(Bodies::with_capabilities(capabilities)),
         Lanes::default(),
         Budget::default().checked()?,
+        subscriptions.clone(),
     );
 
     println!("P4_AGENT_READY address={own} adapters=[{attached}]");
     if own.is_local_only() {
         println!("P4_AGENT_UNREACHABLE address={own} peers=only-this-machine");
     }
-    tokio::spawn(inbox::serve(
+    tokio::spawn(inbox::serve_with_subscriptions(
         listener,
         agent.queue(),
         Budget::default().connections,
+        subscriptions,
     ));
     if std::env::var("P4_AGENT_STATS").is_ok() {
         watch(Arc::clone(&agent));
@@ -85,11 +91,13 @@ fn watch(agent: Arc<Agent>) {
             // moves. Both should settle; either climbing for hours is a leak
             // rather than load, and neither shows up in a depth reading.
             println!(
-                "P4_AGENT_TRAFFIC forwarded={} consumed={} to_nodes={} unrouted={} peers={} waiting={}",
+                "P4_AGENT_TRAFFIC forwarded={} consumed={} to_nodes={} unrouted={} refused={} emergency_lost={} peers={} waiting={}",
                 traffic.forwarded,
                 traffic.consumed,
                 traffic.to_nodes,
                 traffic.unrouted,
+                traffic.refused,
+                traffic.emergency_lost,
                 agent.peers().connected().await,
                 agent.continuations().outstanding(),
             );

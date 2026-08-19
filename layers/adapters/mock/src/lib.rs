@@ -13,11 +13,55 @@ pub mod cache;
 pub mod profile;
 mod runtime;
 
-use p4_adapter::{Allocation, Distribution, Event, EventSink, Hop, Outcome, Phase};
+use p4_adapter::{Distribution, Outcome, Phase};
 use profile::{Fault, Profile};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+/// One sequence as it crossed the mock adapter boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SequenceObservation {
+    pub sequence: String,
+    pub inbound_cut_set: Option<Vec<u8>>,
+    pub position: u32,
+    pub prompt: Option<String>,
+    pub remaining: u32,
+    pub options: String,
+}
+
+/// The load inputs the mock actually received. Keeping the capability
+/// snapshot beside the opaque plan makes discovery/load pass-through
+/// observable without interpreting either value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadObservation {
+    pub artifact: String,
+    pub plan: String,
+    pub capability_snapshot_id: String,
+    pub capability_expires_at: u64,
+}
+
+/// The input and output of one mock hop.
+///
+/// This is deliberately adapter-owned observation. It lets an integration
+/// test compare the mock boundary with a real llama adapter without teaching
+/// the P4 scheduler about backend details.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HopObservation {
+    pub hop_id: u64,
+    pub phase: Phase,
+    pub sequences: Vec<SequenceObservation>,
+    pub outcomes: Vec<Outcome>,
+}
+
+/// The observable resident/durable state of one sequence's KV copy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CacheState {
+    pub resident: bool,
+    pub persisted: bool,
+    pub bytes: Option<u64>,
+}
 
 /// How far a sequence has got: this turn, and over its life.
 ///
@@ -28,6 +72,44 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 struct Progress {
     turn: u32,
     lifetime: u32,
+    position: u32,
+}
+
+#[derive(Clone)]
+pub(crate) struct CacheIdentity {
+    pub deployment: String,
+    pub stage_id: String,
+    pub generation: u64,
+    pub sequence: String,
+}
+
+impl CacheIdentity {
+    pub(crate) fn matches(&self, cache: &p4_adapter::Cache) -> bool {
+        self.deployment == cache.deployment
+            && self.stage_id == cache.stage_id
+            && self.generation == cache.generation
+            && self.sequence == cache.sequence
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum PreparedCache {
+    Persist {
+        identity: CacheIdentity,
+        bytes: u64,
+        previous: Option<cache::DurableState>,
+        resident: Option<Progress>,
+    },
+    Restore {
+        identity: CacheIdentity,
+        bytes: u64,
+        position: u32,
+        resident: Option<Progress>,
+    },
+    Discard {
+        identity: CacheIdentity,
+        previous: Option<cache::DurableState>,
+    },
 }
 
 pub struct Mock {
@@ -76,298 +158,41 @@ pub struct Mock {
     /// progress the sequence had made, so a longer conversation persists to a
     /// larger copy — the proportion a caller reasons about.
     persisted: Mutex<HashMap<String, u64>>,
+    /// Prepared cache mutations keyed by the transaction phase request ID.
+    /// Preparation never changes resident state; commit/abort consumes it.
+    pub(crate) prepared: Mutex<HashMap<String, PreparedCache>>,
+    /// A committed cache keeps its pre-state until the transaction is known
+    /// to have succeeded at every stage.  The service barrier can therefore
+    /// compensate an earlier commit when a later stage fails.
+    pub(crate) committed: Mutex<HashMap<String, PreparedCache>>,
+    /// An aborted receipt makes duplicate Abort delivery idempotent across
+    /// process restart while preventing a later Commit from being guessed.
+    pub(crate) aborted: Mutex<HashMap<String, PreparedCache>>,
+    /// Optional file-backed cache root used by integration tests and local
+    /// mock runs that need restart evidence. `None` intentionally preserves
+    /// the cheap process-local fixture behavior.
+    cache_dir: Option<PathBuf>,
+    /// Startup recovery errors are retained and surfaced on the first cache
+    /// operation instead of silently dropping a malformed transaction file.
+    cache_journal_error: Option<String>,
     /// The opaque plan and generation options the adapter actually received.
     /// These are observability evidence, never inputs to P4 scheduling.
     loaded: Mutex<Option<String>>,
     plans: Mutex<Vec<String>>,
+    loads: Mutex<Vec<LoadObservation>>,
     options: Mutex<Vec<String>>,
+    /// Exact hop inputs and outputs, in adapter call order.
+    hops: Mutex<Vec<HopObservation>>,
 }
 
-impl Mock {
-    /// A stage that is not the end of its chain. It advances its layer range
-    /// and produces no token, because logits exist only at the end.
-    pub fn staged(position: usize, profile: Profile) -> Self {
-        Self::new(Distribution::Staged, position, false, profile)
-    }
+mod engine;
 
-    /// The last stage of a chain. This is where generation lands, so this is
-    /// the only stage that counts tokens and decides a sequence is finished.
-    pub fn terminal(position: usize, profile: Profile) -> Self {
-        Self::new(Distribution::Staged, position, true, profile)
-    }
-
-    /// A backend that spreads a model itself, the way vLLM and SGLang do. Its
-    /// chain is one node long, so it is both the leading and the last stage.
-    pub fn internal(profile: Profile) -> Self {
-        Self::new(Distribution::Internal, 0, true, profile)
-    }
-
-    fn new(distribution: Distribution, position: usize, terminal: bool, profile: Profile) -> Self {
-        Self {
-            profile,
-            distribution,
-            position,
-            terminal,
-            generation: AtomicU64::new(0),
-            widths: Mutex::new(Vec::new()),
-            busy: AtomicU64::new(0),
-            idle: AtomicU64::new(0),
-            rested: Mutex::new(None),
-            running: AtomicUsize::new(0),
-            peak_running: AtomicUsize::new(0),
-            produced: Mutex::new(HashMap::new()),
-            persisted: Mutex::new(HashMap::new()),
-            loaded: Mutex::new(None),
-            plans: Mutex::new(Vec::new()),
-            options: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// How long this adapter spent inside hops.
-    ///
-    /// The numerator of the question a chain has to answer: stage compute over
-    /// wall clock. One stage can never exceed the wall; a chain of three that
-    /// overlaps properly approaches three times it, and a chain that takes
-    /// turns stays at one however much work is queued behind it.
-    pub fn busy(&self) -> std::time::Duration {
-        std::time::Duration::from_nanos(self.busy.load(Ordering::Relaxed))
-    }
-
-    /// How long this adapter had nothing to do between hops.
-    ///
-    /// Beside `busy`, this is the utilisation of one stage: a chain that never
-    /// rests has an idle near zero however long its queue is.
-    pub fn idle(&self) -> std::time::Duration {
-        std::time::Duration::from_nanos(self.idle.load(Ordering::Relaxed))
-    }
-
-    /// Widths of every hop this adapter ran.
-    pub fn widths(&self) -> Vec<usize> {
-        self.widths.lock().expect("width log lock").clone()
-    }
-
-    /// The most hops this adapter ever had in flight at once. Anything above
-    /// one means a node started work beside work.
-    pub fn peak_concurrent_hops(&self) -> usize {
-        self.peak_running.load(Ordering::SeqCst)
-    }
-
-    fn load(&self, load: p4_adapter::Load, events: &dyn EventSink) {
-        let deployment = load.deployment.clone();
-        if load.artifact.is_empty() || load.plan.trim().is_empty() {
-            events.raise(Event::Failed {
-                deployment,
-                sequence: None,
-                detail: "mock adapter requires artifact and opaque load plan".into(),
-            });
-            return;
-        }
-        *self.loaded.lock().expect("loaded lock") = Some(load.artifact);
-        self.plans.lock().expect("plan log lock").push(load.plan);
-        let stages = self.profile.stages.max(1);
-        let step = self.profile.stage_cost();
-        for stage in 0..stages {
-            spin(step);
-            events.raise(Event::LoadProgress {
-                deployment: deployment.clone(),
-                stage,
-                percent: (stage + 1) * 100 / stages,
-                detail: "mock stage advancing".into(),
-            });
-        }
-        if self.profile.fault == Fault::Load {
-            events.raise(Event::Failed {
-                deployment,
-                sequence: None,
-                detail: "mock deployment was asked to fail its load".into(),
-            });
-            return;
-        }
-        events.raise(Event::Loaded {
-            generation: self.generation.fetch_add(1, Ordering::SeqCst) + 1,
-            allocations: (0..stages)
-                .map(|stage| Allocation {
-                    category: format!("stage{stage}.declared_reservation"),
-                    bytes: self.profile.reserved_per_stage,
-                })
-                .collect(),
-            deployment,
-        });
-    }
-
-    fn hop(&self, hop: Hop, events: &dyn EventSink) {
-        let began = std::time::Instant::now();
-        let first_sequence = hop.sequences.first().map(|s| s.sequence.clone());
-        if let Some(ended) = self.rested.lock().expect("rest lock").take() {
-            self.idle.fetch_add(
-                began.duration_since(ended).as_nanos() as u64,
-                Ordering::Relaxed,
-            );
-        }
-        self.widths
-            .lock()
-            .expect("width log lock")
-            .push(hop.width());
-        let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
-        self.peak_running.fetch_max(now, Ordering::SeqCst);
-
-        let mut valid = Vec::with_capacity(hop.sequences.len());
-        for sequence in hop.sequences {
-            self.options
-                .lock()
-                .expect("options log lock")
-                .push(sequence.options.clone());
-            if !is_json_object(&sequence.options) {
-                events.raise(Event::Failed {
-                    deployment: hop.deployment.clone(),
-                    sequence: Some(sequence.sequence),
-                    detail: "mock adapter rejected non-object generation options".into(),
-                });
-            } else {
-                valid.push(sequence);
-            }
-        }
-        if valid.is_empty() {
-            self.running.fetch_sub(1, Ordering::SeqCst);
-            return;
-        }
-
-        if self.profile.fault == Fault::Silence {
-            // Never answers. The node stays busy until its deadline or a
-            // cancellation ends the work, which is the point of this fault.
-            return;
-        }
-        spin(
-            self.profile
-                .hop_cost(self.position, hop.phase == Phase::Prefill),
-        );
-        self.running.fetch_sub(1, Ordering::SeqCst);
-        // Recorded where the time was actually spent, not around the whole
-        // call: what a chain is asked afterwards is how much of the wall clock
-        // its stages were computing, and bookkeeping is not computing.
-        self.busy
-            .fetch_add(began.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        *self.rested.lock().expect("rest lock") = Some(std::time::Instant::now());
-
-        if self.profile.fault == Fault::Hop {
-            events.raise(Event::Failed {
-                deployment: hop.deployment,
-                sequence: first_sequence,
-                detail: "mock deployment was asked to fail its hops".into(),
-            });
-            return;
-        }
-        events.raise(Event::HopComplete {
-            outcomes: valid
-                .iter()
-                .map(|sequence| self.outcome(sequence))
-                .collect(),
-            deployment: hop.deployment,
-        });
-    }
-
-    /// Counts a token for this sequence and decides whether it is finished.
-    ///
-    /// The count is kept here rather than read from the request each lap,
-    /// because a request does not carry its own progress back down — a backend
-    /// holding a sequence open is what knows how far it has got.
-    fn outcome(&self, sequence: &p4_adapter::Sequence) -> Outcome {
-        // Every stage holds this sequence's attention state for its own layer
-        // range — that is what pipeline parallelism is — so every stage counts
-        // it as resident. Only the last one counts tokens.
-        self.produced
-            .lock()
-            .expect("sequence progress lock")
-            .entry(sequence.sequence.clone())
-            .and_modify(|value| value.lifetime += 1)
-            .or_insert(Progress {
-                turn: 0,
-                lifetime: 1,
-            });
-
-        if !self.terminal {
-            // A middle stage advanced its share and has nothing to say about
-            // the token. Counting here would make an n-stage chain produce n
-            // tokens per lap.
-            return Outcome {
-                sequence: sequence.sequence.clone(),
-                text: String::new(),
-                position: sequence.position,
-                stop: None,
-            };
-        }
-        let mut produced = self.produced.lock().expect("sequence progress lock");
-        // The lifetime was already counted above, for every stage. Here only
-        // the turn advances, because only the last stage produces tokens.
-        let progress = produced
-            .entry(sequence.sequence.clone())
-            .and_modify(|value| value.turn += 1)
-            .or_insert(Progress {
-                turn: 1,
-                lifetime: 1,
-            });
-        let requested = sequence.remaining;
-        let finished = requested == 0 || progress.turn > requested;
-        let position = if finished {
-            progress.turn.saturating_sub(1)
-        } else {
-            progress.turn
-        };
-        if finished {
-            // The turn is over; the sequence is not. A backend keeps a
-            // conversation's state against its id until something tells it to
-            // let go — removing it here would make the state unpersistable the
-            // moment it became worth persisting.
-            progress.turn = 0;
-        }
-        Outcome {
-            sequence: sequence.sequence.clone(),
-            text: if finished {
-                String::new()
-            } else {
-                format!("{}#{position} ", sequence.sequence)
-            },
-            position,
-            stop: finished.then(|| "stop".to_string()),
-        }
-    }
-}
-
-impl Mock {
-    /// What this adapter has written down, for a test that wants to check the
-    /// state really left memory rather than being copied beside it.
-    pub fn persisted(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self
-            .persisted
-            .lock()
-            .expect("persisted")
-            .keys()
-            .cloned()
-            .collect();
-        ids.sort();
-        ids
-    }
-
-    /// Sequences currently resident.
-    pub fn resident(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self
-            .produced
-            .lock()
-            .expect("produced")
-            .keys()
-            .cloned()
-            .collect();
-        ids.sort();
-        ids
-    }
-
-    pub fn plans(&self) -> Vec<String> {
-        self.plans.lock().expect("plan log lock").clone()
-    }
-
-    pub fn options_seen(&self) -> Vec<String> {
-        self.options.lock().expect("options log lock").clone()
-    }
+fn mock_cut_set(sequence: &str, lifetime: u32) -> Vec<u8> {
+    let mut bytes = b"p4-mock-cut-v1\0".to_vec();
+    bytes.extend_from_slice(&(sequence.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(sequence.as_bytes());
+    bytes.extend_from_slice(&lifetime.to_le_bytes());
+    bytes
 }
 
 fn is_json_object(value: &str) -> bool {
@@ -384,6 +209,20 @@ fn spin(duration: std::time::Duration) {
         return;
     }
     std::thread::sleep(duration);
+}
+
+fn spin_until<F: Fn() -> bool>(duration: std::time::Duration, cancelled: F) -> bool {
+    if duration.is_zero() {
+        return cancelled();
+    }
+    let started = std::time::Instant::now();
+    while started.elapsed() < duration {
+        if cancelled() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1).min(duration));
+    }
+    cancelled()
 }
 
 #[cfg(test)]

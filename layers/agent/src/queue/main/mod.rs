@@ -189,6 +189,16 @@ impl Depth {
 mod tests;
 
 impl Sender {
+    /// Whether every main-lane receiver has been dropped. Retry lanes use this
+    /// to stop during teardown instead of spinning on a permanently closed
+    /// queue.
+    pub fn is_closed(&self) -> bool {
+        self.control.is_closed()
+            && self.prefill.is_closed()
+            && self.decode.is_closed()
+            && self.response.is_closed()
+    }
+
     /// Lane depth, read from the sending side.
     ///
     /// The dispatcher owns the receiver, so anything watching the queue needs

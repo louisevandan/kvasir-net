@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
+  "upstream_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "abi_revision": "pipeline-abi-v1",
+  "patches": [
+    {
+      "file": "0001-test.patch",
+      "sha256": "9e3e63fac9c92100f0f15e616e1abf395028edc8912bebfc42044c65eb17e114"
+    }
+  ],
+  "required_artifact_symbols": [
+    "llama_linkcpp_runtime_configure",
+    "llama_linkcpp_runtime_clear"
+  ]
+}

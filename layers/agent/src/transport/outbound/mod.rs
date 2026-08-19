@@ -213,9 +213,27 @@ async fn pumping(
                 continue;
             }
         };
-        let Ok(bytes) = frame::encode(&frame.frame.envelope, &frame.frame.body) else {
-            continue;
+        let bytes = match frame::encode(&frame.frame.envelope, &frame.frame.body) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!(
+                    "P4_AGENT_ENCODE_FAILED target={} body_bytes={} route={} error={error}",
+                    target,
+                    frame.frame.body.len(),
+                    frame.frame.envelope.route,
+                );
+                continue;
+            }
         };
+        if std::env::var_os("P4_AGENT_TRACE_ROUTING").is_some() {
+            eprintln!(
+                "P4_AGENT_SEND target={} bytes={} route={} lane={:?}",
+                target,
+                bytes.len(),
+                frame.frame.envelope.route,
+                frame.frame.envelope.lane,
+            );
+        }
         let mut sent = false;
         for attempt in 0..2 {
             // A peer that went away leaves a socket that still accepts a write

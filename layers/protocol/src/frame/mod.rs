@@ -9,11 +9,14 @@ use crate::envelope::wire;
 use crate::{Envelope, ProtocolError};
 
 pub const MAGIC: [u8; 4] = *b"P4B1";
-pub const VERSION: u8 = 6;
+pub const VERSION: u8 = 7;
 
 const HEADER_BYTES: usize = 16;
 const MAX_ENVELOPE_BYTES: usize = 256 * 1024;
-const MAX_BODY_BYTES: usize = 1024 * 1024;
+// A 5k-token staged prefill can carry a tens-of-megabytes hidden-state
+// cut-set. Keep the outer P4 frame limit aligned with the staged local wire
+// limit; the latter already bounds allocation and validates the payload.
+const MAX_BODY_BYTES: usize = 128 * 1024 * 1024;
 
 /// A frame still in its wire form. The envelope is decoded because every hop
 /// needs it; the body is not, because only its destination does.

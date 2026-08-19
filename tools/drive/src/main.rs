@@ -45,12 +45,19 @@
 
 mod fleet;
 mod report;
-mod session;
+pub mod session;
+mod telemetry;
 #[cfg(test)]
 mod tests;
 
 use fleet::Fleet;
+use std::io::Write;
 use std::time::{Duration, Instant};
+
+fn announce(line: impl AsRef<str>) {
+    println!("{}", line.as_ref());
+    let _ = std::io::stdout().flush();
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -114,53 +121,99 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(32);
+    let initial_burst: usize = std::env::var("P4_DRIVE_INITIAL_BURST")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let batch_size: usize = std::env::var("P4_DRIVE_BATCH_REQUESTS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let batch_interval = Duration::from_millis(
+        std::env::var("P4_DRIVE_BATCH_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
+    );
 
-    let session = session::Session::start(
-        &listen,
-        advertise.as_deref(),
+    let session = session::Session::start(session::StartOptions {
+        listen: &listen,
+        advertise: advertise.as_deref(),
         plans,
-        prompt,
+        prompt: prompt.clone(),
         options,
         quiet,
         arrive,
         vary,
-    )
+        initial_burst,
+        batch_size,
+        batch_interval,
+    })
     .await?;
-    println!(
+    announce(format!(
         "P4_DRIVE_READY address={} deployments={} stages={} serving={} prompt_bytes={}",
         session.address(),
         fleet.deployments().len(),
         fleet.stages(),
         serving.len(),
         session.prompt_bytes()
-    );
+    ));
     if session.address().is_local_only()
         && fleet.addresses().iter().any(|stage| !stage.is_local_only())
     {
-        println!(
+        announce(format!(
             "P4_DRIVE_UNREACHABLE address={} note=remote-stages-cannot-reply",
             session.address()
-        );
+        ));
     }
 
     if std::env::var("P4_DRIVE_DISCOVER").is_ok_and(|value| value != "0") {
         let artifact = std::env::var("P4_DRIVE_ARTIFACT").unwrap_or_else(|_| "model".into());
         let discovered = session.inspect_models(&fleet, &adapter, &artifact).await?;
-        println!("P4_DRIVE_DISCOVERY models={discovered} artifact={artifact}");
+        announce(format!(
+            "P4_DRIVE_DISCOVERY models={discovered} artifact={artifact}"
+        ));
     }
 
     let nodes = fleet.deployments().len() * fleet.stages();
-    session.create_nodes(&fleet, &adapter).await?;
-    println!("P4_DRIVE_NODES created={nodes}");
+    let reuse_loaded = std::env::var("P4_DRIVE_REUSE_LOADED").is_ok_and(|value| value != "0");
+    if reuse_loaded {
+        // The caller explicitly owns a still-loaded deployment.  This keeps
+        // repeated measurement runs from unloading/reloading multi-GPU and
+        // remote models between profiles; the agents must already contain the
+        // same node topology and compatible plans.
+        announce(format!(
+            "P4_DRIVE_REUSE_LOADED nodes={nodes} create=skipped load=skipped"
+        ));
+    } else {
+        session.create_nodes(&fleet, &adapter).await?;
+        announce(format!("P4_DRIVE_NODES created={nodes}"));
 
-    session.load(&fleet, ceiling).await?;
-    println!("P4_DRIVE_LOADED nodes={nodes}");
+        session.load(&fleet, ceiling).await?;
+        announce(format!("P4_DRIVE_LOADED nodes={nodes}"));
+    }
 
     let started = Instant::now();
     let outcome = session.infer(&fleet, &serving, requests, tokens).await;
     let elapsed = started.elapsed();
+    let telemetry = session.telemetry(elapsed);
 
-    report::print(&outcome, elapsed, requests, tokens);
+    report::print(&outcome, &telemetry, elapsed, requests, tokens);
+    if let Ok(path) = std::env::var("P4_DRIVE_EVIDENCE_FILE") {
+        report::write_evidence(&path, &prompt, &outcome, &telemetry, elapsed)?;
+        announce(format!("P4_DRIVE_EVIDENCE path={path}"));
+    }
+    // Keep-loaded mode is reserved for a follow-up calibration/sustained-load
+    // run. The caller owns the next unload in that mode; the default remains
+    // fail-safe cleanup so ordinary drive runs cannot leak model processes.
+    if std::env::var("P4_DRIVE_KEEP_LOADED").is_ok_and(|value| value != "0") {
+        announce(format!("P4_DRIVE_KEEP_LOADED nodes={nodes} unload=skipped"));
+    } else {
+        let unload_result = session.unload(&fleet).await;
+        if let Err(error) = unload_result {
+            return Err(format!("inference finished but unload failed: {error}").into());
+        }
+    }
     if outcome.completed == requests {
         Ok(())
     } else {

@@ -8,7 +8,7 @@
 //! The core therefore never learns a message catalog. Swapping what a body
 //! means costs one implementation of this trait and touches nothing else.
 
-use p4_adapter::{Sequence, Work};
+use p4_adapter::{Outcome, Sequence, Work};
 use p4_protocol::frame::Frame;
 
 pub trait Payload: Send + Sync {
@@ -18,6 +18,13 @@ pub trait Payload: Send + Sync {
     /// than guessed at, because a malformed body reaching a backend is how a
     /// protocol fault turns into a crash somewhere it cannot be traced.
     fn sequence(&self, frame: &Frame) -> Option<Sequence>;
+
+    /// Re-encode the logical request for the next decode lap. Vocabulary
+    /// owners supply position and remaining-token state while the core keeps
+    /// the body opaque.
+    fn continue_body(&self, carrier: &Frame, _outcome: &Outcome) -> Vec<u8> {
+        carrier.body.clone()
+    }
 
     /// Reads a frame as a load or an unload, if it is one.
     ///
@@ -66,8 +73,28 @@ pub trait Payload: Send + Sync {
         reason.as_bytes().to_vec()
     }
 
+    /// Optionally emits a terminal carrying the final token atomically. The
+    /// default remains the legacy terminal-only vocabulary for adapters that
+    /// do not own a structured reply codec.
+    fn finished_with_token(
+        &self,
+        _reason: &str,
+        _generated: u32,
+        _index: u32,
+        _text: &str,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
     fn failure(&self, detail: &str) -> Vec<u8> {
         detail.as_bytes().to_vec()
+    }
+
+    /// Encodes a lifecycle failure. Cache failures may override this to carry
+    /// the request identity needed by a multi-stage barrier; other failures
+    /// retain the generic identity-free vocabulary.
+    fn cache_failure(&self, _frame: &Frame, detail: &str) -> Vec<u8> {
+        self.failure(detail)
     }
 
     fn progress(&self, stage: u32, percent: u32) -> Vec<u8> {
@@ -84,7 +111,37 @@ pub trait Payload: Send + Sync {
 
     /// A cache instruction finished. `sequence` is the id the state now lives
     /// under, which is the new one after a fork.
-    fn cached(&self, sequence: &str, bytes: u64, detail: &str) -> Vec<u8> {
-        format!("cached {sequence} bytes={bytes} {detail}").into_bytes()
+    #[allow(clippy::too_many_arguments)]
+    fn cached(
+        &self,
+        deployment: &str,
+        stage_id: &str,
+        generation: u64,
+        operation_id: &str,
+        sequence: &str,
+        bytes: u64,
+        detail: &str,
+    ) -> Vec<u8> {
+        format!(
+            "cached deployment={deployment} stage={stage_id} generation={generation} operation={operation_id} {sequence} bytes={bytes} {detail}"
+        )
+        .into_bytes()
+    }
+
+    /// Encodes a read-only adapter receipt state. Deployments that use the
+    /// structured P4 vocabulary override this; plain payloads remain usable.
+    #[allow(clippy::too_many_arguments)]
+    fn cache_status(
+        &self,
+        _deployment: &str,
+        _stage_id: &str,
+        _generation: u64,
+        _operation_id: &str,
+        _sequence: &str,
+        state: &str,
+        _bytes: u64,
+        detail: &str,
+    ) -> Vec<u8> {
+        format!("cache status={state} {detail}").into_bytes()
     }
 }

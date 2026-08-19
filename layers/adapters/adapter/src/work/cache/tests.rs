@@ -3,6 +3,9 @@ use super::*;
 fn about(action: CacheAction) -> Cache {
     Cache {
         deployment: "d1".into(),
+        stage_id: "stage-1".into(),
+        generation: 3,
+        operation_id: "op-7".into(),
         sequence: "req-7".into(),
         action,
     }

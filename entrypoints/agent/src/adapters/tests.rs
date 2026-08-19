@@ -72,3 +72,19 @@ fn a_position_is_read_from_the_node_name() {
     assert_eq!(stage_of("solo"), None);
     assert_eq!(stage_of("stage-x"), None);
 }
+
+#[test]
+fn a_present_stage_server_builds_the_concrete_staged_adapter() {
+    let binary = std::env::current_exe().expect("test executable path");
+    let mut registry = p4_service::Registry::new();
+    register_staged(&mut registry, binary, None, 0, 0);
+
+    let adapter = registry
+        .build("llamacpp-staged", "stage-0")
+        .expect("present stage server is attachable");
+    assert_eq!(adapter.distribution(), Distribution::Staged);
+    assert_eq!(
+        adapter.report(),
+        "staged lifecycle=Empty\nP4_RUNTIME_EVIDENCE_V1 retained=0 dropped=0\n"
+    );
+}

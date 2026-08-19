@@ -46,6 +46,7 @@ impl Adapter for Mock {
             Work::Load(load) => self.load(load, events),
             Work::Unload(unload) => {
                 *self.loaded.lock().expect("loaded lock") = None;
+                self.produced.lock().expect("produced").clear();
                 events.raise(Event::Unloaded {
                     deployment: unload.deployment,
                 });

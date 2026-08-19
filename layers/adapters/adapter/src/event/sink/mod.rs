@@ -10,6 +10,13 @@ use crate::event::report::Event;
 /// adapter cannot come to depend on being heard synchronously.
 pub trait EventSink: Send + Sync {
     fn raise(&self, event: Event);
+
+    /// Whether the node's deadline fence has cancelled the current
+    /// operation. Adapters may poll this between backend calls; the default
+    /// keeps existing adapters source-compatible and non-cancellable.
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

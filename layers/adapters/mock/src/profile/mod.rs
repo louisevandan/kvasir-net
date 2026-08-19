@@ -46,6 +46,13 @@ pub enum Fault {
     Hop,
     /// The adapter never answers, so the deadline has to.
     Silence,
+    /// Ignores cooperative cancellation briefly and emits a terminal event
+    /// later. This makes the node's timed-out-but-still-occupied state
+    /// testable without a real backend.
+    Stubborn,
+    /// Preparation succeeds but commit fails. This is the failure needed to
+    /// exercise compensation after an earlier stage has already committed.
+    CacheCommit,
 }
 
 impl Default for Profile {

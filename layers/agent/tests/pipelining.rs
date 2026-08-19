@@ -59,9 +59,9 @@ async fn uneven(costs: &[u64], arrivals: usize, ceiling: usize, tokens: u32) -> 
 
     let mut agents = Vec::new();
     let mut mocks = Vec::new();
-    for position in 0..stages {
+    for (position, cost) in costs.iter().enumerate() {
         let agent = start(Arc::new(Silent)).await;
-        let profile = costly(costs[position]);
+        let profile = costly(*cost);
         let mock = Arc::new(match position + 1 == stages {
             true => Mock::terminal(position, profile),
             false => Mock::staged(position, profile),

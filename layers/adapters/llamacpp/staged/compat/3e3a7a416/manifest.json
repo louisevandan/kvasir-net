@@ -1,5 +1,7 @@
 {
   "schema_version": 1,
+  "abi_revision": "pipeline-abi-v1",
+  "required_artifact_symbols": ["llama_linkcpp_runtime_configure", "llama_linkcpp_runtime_clear"],
   "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
   "upstream_branch": "master",
   "upstream_commit": "3e3a7a416d6588597523c792fc5874a543d59ed9",
@@ -9,7 +11,7 @@
   "nearest_release_tag": "b10242",
   "previous_linker_pin": "4308a4f035791f58ae111f56c39dac598bf476be",
   "previous_official_base": "4308a4f035791f58ae111f56c39dac598bf476be",
-  "patch_set_sha256": "282f5e1fbdd79351bf55c722d5ecf5db01ba2961c1b1df08da98c23864aca40d",
+  "patch_set_sha256": "b48fc842be059e408dd1577ce90bad3a3e5827a8451cafd6d48547cd70be9d46",
   "patched_tree": "c70d6bb7420111bf7e9b118013575fa3d4b931f6",
   "patches": [
     {
@@ -46,7 +48,7 @@
     },
     {
       "file": "0009-model-loader.patch",
-      "sha256": "a6cfdb800644d4750c0fcb7660910703c8e4456f4d57b036ca78e41c31ee0b09"
+      "sha256": "ef64ca97c77ad02d51d21fe628c450a4d23595ad91d2b29b5f674db79838513e"
     },
     {
       "file": "0010-model-loader-header.patch",

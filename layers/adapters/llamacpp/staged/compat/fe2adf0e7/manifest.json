@@ -1,5 +1,7 @@
 {
   "schema_version": 1,
+  "abi_revision": "pipeline-abi-v1",
+  "required_artifact_symbols": ["llama_linkcpp_runtime_configure", "llama_linkcpp_runtime_clear"],
   "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
   "upstream_branch": "master",
   "upstream_commit": "fe2adf0e722f30f5295fdec8a0f1dc788f7498bc",
