@@ -281,6 +281,10 @@ try {
         Get-Item -LiteralPath (Join-Path $cudaRuntime 'cublasLt64_13.dll')
         Get-Item -LiteralPath (Join-Path $cudaRuntime 'cudart64_13.dll')
     )
+    # The CUDA runtime directory can also be the artifact directory. Keep one
+    # file per basename so the copy and manifest describe the actual remote
+    # directory rather than counting the same DLL twice.
+    $artifactFiles = @($artifactFiles | Sort-Object -Property Name -Unique)
     if ($artifactFiles.Count -eq 0) { throw "No .exe/.dll artifact files found in $ArtifactDirectory." }
     if (-not (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)) {
         throw 'nvidia-smi.exe is required to prove the 4080 VRAM guard.'
