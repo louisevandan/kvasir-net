@@ -29,6 +29,14 @@ $workingSetPeaks = @{}
 $workingSetMins = @{}
 $workingSetSamples = @{}
 
+function Wait-Listening([int]$port) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        if (@(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue).Count -gt 0) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Agent port $port did not become ready."
+}
 try {
     $jobs = @()
     for ($worker = 0; $worker -lt $Workers; $worker++) {
@@ -53,12 +61,14 @@ try {
                 -WindowStyle Hidden -PassThru
             $startedAgents.Add($agent)
             $workerAgents[$worker].Add($agent)
+            Wait-Listening ([int]$port)
         }
 
         $driverCommand = @"
 `$env:P4_DRIVE_CEILING='16'
 `$env:P4_DRIVE_ARRIVE_MS='2'
 `$env:P4_DRIVE_VARY='1'
+`$env:P4_DRIVE_DISCOVER='1'
 & '$driveBinary' '$driver' '$stage0,$stage1' $Requests $Tokens mock '$driver'
 exit `$LASTEXITCODE
 "@
