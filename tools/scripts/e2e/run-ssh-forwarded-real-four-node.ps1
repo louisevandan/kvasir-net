@@ -387,37 +387,9 @@ $launcherAssignment
 `$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $(ConvertTo-PowerShellLiteral $launcherArgument)
 `$principal = New-ScheduledTaskPrincipal -UserId 'm42-server2\42mob' -LogonType Interactive -RunLevel Limited
 `$settings = New-ScheduledTaskSettingsSet -Hidden
-`$taskStarted = `$false
-try {
-    schtasks.exe /delete /tn `$taskName /f *> `$null
-    Register-ScheduledTask -TaskName `$taskName -Action `$action -Principal `$principal -Settings `$settings | Out-Null
-    Start-ScheduledTask -TaskName `$taskName
-    `$taskStarted = `$true
-} catch {
-    # A non-interactive SSH account may not have Task Scheduler rights. The
-    # direct hidden launch below is the supported fallback in that case.
-}
-`$deadline = (Get-Date).AddSeconds(5)
-do {
-    `$ready = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { `$_.LocalPort -eq $port })
-    if (`$ready.Count -eq 0) { Start-Sleep -Milliseconds 250 }
-} while (`$ready.Count -eq 0 -and (Get-Date) -lt `$deadline)
-if (`$ready.Count -eq 0) {
-    # Interactive scheduled tasks are not reliable when the remote desktop
-    # session is absent. Fall back to the agent executable directly so cmd
-    # quoting and task-session state cannot hide the actual launch failure.
-    `$env:CUDA_VISIBLE_DEVICES = '$cuda'
-    `$env:P4_STAGED_SERVER_BINARY = $(ConvertTo-PowerShellLiteral (Join-Path $RemoteArtifactDirectory 'p4_staged_server.exe'))
-    `$env:P4_MODEL_DIR = $(ConvertTo-PowerShellLiteral $remoteModelRoot)
-    `$env:P4_STAGED_LLAMA_INHERIT_STDERR = '1'
-    `$env:P4_STAGED_READY_TIMEOUT_SECS = '900'
-    `$env:P4_STAGED_IO_TIMEOUT_SECS = '900'
-    `$env:P4_STAGED_TRACE_PROTOCOL = '1'
-    `$env:P4_AGENT_STATS = '1'
-    `$env:P4_STAGED_SERVER_WINDOWLESS = '1'
-    `$child = Start-Process -FilePath $(ConvertTo-PowerShellLiteral $agentPath) -ArgumentList @('127.0.0.1:$port', '127.0.0.1:$advertisedPort') -WorkingDirectory $(ConvertTo-PowerShellLiteral $RemoteArtifactDirectory) -WindowStyle Hidden -RedirectStandardOutput $(ConvertTo-PowerShellLiteral (Join-Path $RemoteArtifactDirectory "agent-$port.log")) -RedirectStandardError $(ConvertTo-PowerShellLiteral (Join-Path $RemoteArtifactDirectory "agent-$port.err.log")) -PassThru
-    Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $pidFile) -Value `$child.Id -Encoding ascii
-}
+schtasks.exe /delete /tn `$taskName /f *> `$null
+Register-ScheduledTask -TaskName `$taskName -Action `$action -Principal `$principal -Settings `$settings | Out-Null
+Start-ScheduledTask -TaskName `$taskName
 `$deadline = (Get-Date).AddSeconds(30)
 do {
     `$ready = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { `$_.LocalPort -eq `$port })
