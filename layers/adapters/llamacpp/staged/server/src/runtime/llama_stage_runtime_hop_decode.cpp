@@ -57,38 +57,35 @@ bool StageRuntime::execute_decode_batch(
     std::chrono::steady_clock::duration bind_taken{};
     std::chrono::steady_clock::duration split_taken{};
     std::chrono::steady_clock::duration sample_taken{};
-    // Only a stage that forwards no cut-set, which today is the tail.
+    // Every row comes back where it went in, and that is read off llama.cpp
+    // rather than hoped for:
     //
-    // llama.cpp may compute a ubatch in an order of its own — see
-    // `llama_context::decode`, which sorts `logits` and `embd` back into the
-    // order the caller gave and says the reordering is "mostly relevant for
-    // recurrent models". Both models measured here are hybrids with recurrent
-    // layers. Sampling therefore comes out right, because
-    // `llama_get_logits_ith` resolves a batch index through `output_ids`.
-    // The staged cut-set does not: it is a raw graph tensor and nothing puts
-    // its rows back in order, so slicing it by batch position hands a
-    // sequence another sequence's hidden state.
+    //   * `llama_memory_hybrid::init_batch` calls `split_equal` with
+    //     `sequential = !unified`, so a unified cache removes the
+    //     increasing-sequence-id filter entirely;
+    //   * `split_equal` builds its sequence sets by scanning the batch
+    //     upwards, and a decode gives each sequence exactly one token, so
+    //     every per-sequence list holds a single index and the final concat
+    //     is `[0 .. n)` -- the identity. `n_keep_tail` defers nothing
+    //     either, because a sequence with one token has none remaining;
+    //   * `ubatch_add` records `out_ids[i] = idxs[i]`, so `out_ids` is the
+    //     identity too, and `llama_context::decode` finds `out_id == i` on
+    //     every row, leaves `sorted_output` true and never fills
+    //     `output_swaps`. `output_reorder` is then a loop over nothing.
     //
-    // Measured exactly that way. Batching every stage was correct at widths
-    // of two and three and wrong from four up, and wrong early rather than at
-    // the end; batching only the tail was correct to width seven.
+    // So no row moves, for any model, and the identity of a row is its
+    // position. What stood here instead was a refusal for recurrent and
+    // hybrid models, inferred from runs that predate the unified cache:
+    // without it `sequential` is true, scattered slots are accepted only as
+    // a leading run and the rest deferred to another ubatch -- which splits
+    // the cut-set and makes `out_ids` non-identity at the same time. That is
+    // why batching looked right at widths of two and three and wrong from
+    // four up: a narrow window happened to hold consecutive slots. The model
+    // was never the problem.
     //
-    // So the question is only whether this model is one llama.cpp reorders
-    // for, and llama.cpp answers it. A recurrent or hybrid model carries the
-    // recurrent memory whose split does the reordering; a plain attention
-    // model does not, and its ubatch keeps the order it was given. A stage
-    // that emits a cut-set may batch when the model is neither.
+    // Both things this rests on are the stage's own invariants, checked
+    // below: a unified cache, and a lap that fits one ubatch.
     if (!loaded()) return fail_hop("stage runtime is not loaded", error);
-    // Kept behind a switch while it is re-measured. The refusal was derived
-    // from runs whose split was sequential; `llama_memory_hybrid::init_batch`
-    // passes `sequential = !unified`, so a unified cache takes that filter
-    // away, and `split_equal` builds its sequence sets in submission order.
-    // Whether the cut-set then comes back in that order is a measurement,
-    // not a deduction.
-    if (!tail_stage_ && std::getenv("P4_STAGED_BATCH_HYBRID") == nullptr &&
-        (llama_model_is_recurrent(model_) || llama_model_is_hybrid(model_))) {
-        return false;
-    }
 
     // llama.cpp splits a batch into ubatches of its own choosing, and the
     // staged cut-set is bound once per decode -- a split would leave the

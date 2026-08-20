@@ -255,4 +255,53 @@ mod tests {
         assert!(outcome.text.is_empty());
         assert_eq!(outcome.stop, None);
     }
+    /// The state handed back to an adapter has to be everything it needs.
+    ///
+    /// `SequencePayload::encode` is not that: it writes the cut-set and stops,
+    /// because the position, the sampled token and the options used to travel
+    /// beside it on the P4 wire. Encoding a state with it loses them, and what
+    /// comes back is a stage decoding token zero at position zero -- which
+    /// fails nothing, answers every request, keeps every stream in order, and
+    /// produces "!!!!!!" instead of an answer. No verdict catches that, so
+    /// this does.
+    #[test]
+    fn a_forwarded_state_carries_everything_the_next_stage_needs() {
+        let sampled = SequencePayload {
+            sequence_id: "seq".into(),
+            descriptors: Vec::new(),
+            payloads: Vec::new(),
+            n_tokens: Some(1),
+            prompt: None,
+            initial_tokens: Some(vec![50994]),
+            position: Some(7),
+            options: r#"{"temperature":0}"#.into(),
+            outcome: None,
+        };
+        let limits = ProtocolLimits::default();
+        let state = HopPayload {
+            phase: HopPhase::Decode,
+            sequences: vec![sampled.clone()],
+            legacy: false,
+        }
+        .encode(limits)
+        .expect("a state encodes");
+
+        let back = HopPayload::decode(&state, limits)
+            .expect("a state decodes")
+            .sequences
+            .into_iter()
+            .next()
+            .expect("one sequence");
+
+        assert_eq!(back.initial_tokens, Some(vec![50994]));
+        assert_eq!(back.position, Some(7));
+        assert_eq!(back.options, r#"{"temperature":0}"#);
+
+        // And the reduced form is the trap: it round-trips without them.
+        let reduced = sampled.encode(limits).expect("the cut-set form encodes");
+        let thin = SequencePayload::decode(&reduced, limits).expect("it decodes");
+        assert_eq!(thin.initial_tokens, None);
+        assert_eq!(thin.position, None);
+    }
+
 }

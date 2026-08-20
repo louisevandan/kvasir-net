@@ -10,18 +10,48 @@ impl StagedAdapter {
         // any of them exist.
         match &sequence.state {
             Some(bytes) => {
-                let payload = SequencePayload::decode(bytes, self.config.protocol_limits).map_err(
-                    |error| format!("invalid inbound state for {}: {error}", sequence.sequence),
-                )?;
+                // One sequence in a HOP envelope. `SequencePayload::encode`
+                // writes only the cut-set -- the position, the sampled token
+                // and the options were never in it, because P4 used to carry
+                // them alongside. A state that leaves anything out is not a
+                // state, so this is the envelope form, which is the one that
+                // writes every field, and it is what the stage server is
+                // handed anyway.
+                let payload = HopPayload::decode(bytes, self.config.protocol_limits)
+                    .map_err(|error| {
+                        format!("invalid inbound state for {}: {error}", sequence.sequence)
+                    })?
+                    .sequences
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("empty inbound state for {}", sequence.sequence))?;
                 if payload.sequence_id != sequence.sequence {
                     return Err(format!(
                         "inbound state sequence {} does not match {}",
                         payload.sequence_id, sequence.sequence
                     ));
                 }
+                if std::env::var_os("P4_STAGED_TRACE_STATE").is_some() {
+                    eprintln!(
+                        "P4_STATE_IN stage={} seq={} bytes={} position={:?} tokens={:?} descriptors={}",
+                        self.config.stage_begin,
+                        sequence.sequence,
+                        bytes.len(),
+                        payload.position,
+                        payload.initial_tokens,
+                        payload.descriptors.len()
+                    );
+                }
                 Ok(payload)
             }
-            None => Ok(SequencePayload {
+            None => {
+                if std::env::var_os("P4_STAGED_TRACE_STATE").is_some() {
+                    eprintln!(
+                        "P4_STATE_IN stage={} seq={} bytes=none",
+                        self.config.stage_begin, sequence.sequence
+                    );
+                }
+                Ok(SequencePayload {
                 sequence_id: sequence.sequence.clone(),
                 descriptors: Vec::new(),
                 payloads: Vec::new(),
@@ -31,7 +61,8 @@ impl StagedAdapter {
                 position: Some(0),
                 options: sequence.options.clone(),
                 outcome: None,
-            }),
+            })
+            }
         }
     }
 
@@ -198,12 +229,30 @@ impl StagedAdapter {
             let mut result = result;
             match result.outcome.as_ref() {
                 Some(outcome) => {
-                    result.initial_tokens = Some(vec![outcome.token]);
-                    result.position = Some(outcome.position);
+                    let token = outcome.token;
+                    let position = outcome.position;
+                    // A stage that sampled is the end of the chain, and the
+                    // next lap begins at stage 0 from the token rather than
+                    // from anything hidden. Its cut-set describes the layers
+                    // behind it and belongs to nobody ahead, so it does not
+                    // travel: what leaves is the token and where the session
+                    // has reached.
+                    //
+                    // P4 used to drop this on the caller's behalf, which is
+                    // the sort of thing a boundary should not know how to do.
+                    // It is the adapter's to decide and it decides here.
+                    result.descriptors.clear();
+                    result.payloads.clear();
+                    result.initial_tokens = Some(vec![token]);
+                    result.position = Some(position);
                 }
                 None => result.position = Some(carried[index]),
             }
-            let forward = result
+            let forward = HopPayload {
+                phase,
+                sequences: vec![result.clone()],
+                legacy: false,
+            }
                 .encode(self.config.protocol_limits)
                 .map_err(|error| {
                     (
