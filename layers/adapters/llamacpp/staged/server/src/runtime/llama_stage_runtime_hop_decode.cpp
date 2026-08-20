@@ -46,6 +46,24 @@ bool StageRuntime::execute_decode_batch(
     std::vector<protocol::SequencePayload> * outputs,
     std::string * error) {
     if (outputs == nullptr || inputs.size() < 2) return false;
+    // Only a stage that forwards no cut-set, which today is the tail.
+    //
+    // llama.cpp may compute a ubatch in an order of its own — see
+    // `llama_context::decode`, which sorts `logits` and `embd` back into the
+    // order the caller gave and says the reordering is "mostly relevant for
+    // recurrent models". Both models measured here are hybrids with recurrent
+    // layers. Sampling therefore comes out right, because
+    // `llama_get_logits_ith` resolves a batch index through `output_ids`.
+    // The staged cut-set does not: it is a raw graph tensor and nothing puts
+    // its rows back in order, so slicing it by batch position hands a
+    // sequence another sequence's hidden state.
+    //
+    // Measured exactly that way. Batching every stage was correct at widths
+    // of two and three and wrong from four up, and wrong early rather than at
+    // the end; batching only the tail is correct to width seven, which is as
+    // wide as the run produced. Until the cut-set can say which row belongs
+    // to which sequence, only the stage that emits none may batch.
+    if (!tail_stage_) return false;
     if (!loaded()) return fail_hop("stage runtime is not loaded", error);
 
     // Stage 0 starts a lap from token ids and ignores the tail's cut-set;
@@ -108,22 +126,18 @@ bool StageRuntime::execute_decode_batch(
 
     if (!from_tokens && !bind_merged_cut_set(bundles, payloads, error)) return false;
 
-    // A stage that was handed a cut-set decodes an embedding batch: the
-    // hidden state arrives through the staged input, and llama.cpp must not
-    // treat these rows as token ids and look their embeddings up.
-    llama_batch batch = from_tokens
-        ? llama_batch_init(static_cast<int32_t>(rows.size()), 0, 1)
-        : llama_batch_init(static_cast<int32_t>(rows.size()), n_embd, 1);
-    const bool allocated = from_tokens
-        ? batch.token != nullptr
-        : batch.embd != nullptr;
-    if (!allocated || batch.n_seq_id == nullptr ||
+    // A token batch, exactly as the per-sequence path builds one, including
+    // for a stage that consumes a cut-set: the hidden state arrives through
+    // the staged input and the token storage is only what `llama_batch`
+    // requires when `embd` is null. The runtime that came before P4 used an
+    // embedding batch here, but its graph was arranged differently, and the
+    // path this one has to agree with is the one beside it.
+    llama_batch batch = llama_batch_init(
+        static_cast<int32_t>(rows.size()), 0, static_cast<int32_t>(sequence_limit));
+    if (batch.token == nullptr || batch.n_seq_id == nullptr ||
         batch.seq_id == nullptr || batch.logits == nullptr) {
         llama_batch_free(batch);
         return fail_hop("llama.cpp failed to allocate the batched decode batch", error);
-    }
-    if (!from_tokens) {
-        std::memset(batch.embd, 0, sizeof(float) * static_cast<std::size_t>(n_embd) * rows.size());
     }
     // Positions are llama.cpp's to assign, per sequence, from what each
     // sequence's cache already holds — which is what the per-sequence path
@@ -136,7 +150,7 @@ bool StageRuntime::execute_decode_batch(
     batch.n_tokens = static_cast<int32_t>(rows.size());
     for (int32_t i = 0; i < batch.n_tokens; ++i) {
         const auto & row = rows[static_cast<std::size_t>(i)];
-        if (from_tokens) batch.token[i] = row.token;
+        batch.token[i] = row.token;
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = row.slot;
         // Every row is a sequence's own next token, so every row needs logits.
@@ -152,7 +166,7 @@ bool StageRuntime::execute_decode_batch(
         std::fprintf(stderr,
                      "P4_STAGED_DECODE_BATCH_FAILED stage=%d-%d rows=%zu from_tokens=%d n_embd=%d\n",
                      config_.layer_begin, config_.layer_end, rows.size(),
-                     from_tokens ? 1 : 0, n_embd);
+                     from_tokens ? 1 : 0, 0);
         if (error != nullptr) error->clear();
         return false;
     }
