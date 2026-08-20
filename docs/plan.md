@@ -25,6 +25,13 @@ Not working, and known:
 
 - Gemma cannot use the batched decode path: merging along the token axis is a
   concatenation, and concatenating a rank-3 tensor interleaves.
+- **A stage executes every chunk of its work before emitting anything.**
+  `llama_stage_runtime_hop.cpp:152` loops the chunks and appends each one's
+  boundary tensors to a single payload that crosses the wire once, at the end.
+  A 5,000-token prefill runs ten ubatches on stage 0 while every other stage
+  holds nothing, and arrives as one payload of all ten fragments. This is a
+  policy that empties a pipeline, and it is the origin of the 40 MB prefill
+  payload rather than an intrinsic cost of prefill.
 - **A stage can silently mis-slice a cut-set from a peer with a different
   `n_ubatch`.** The receiver recomputes the chunk count from its own
   `n_ubatch` and then checks only that the descriptor count divides by it
@@ -38,130 +45,173 @@ Not working, and known:
   at 18–45% — predate every fix above and were taken at a parallelism too low
   for four stages.
 
-## 1. Mix a prefill with decodes in one execution
+## 1. Make a hop one physical ubatch, and let fragments flow
 
-**The point.** Accepting new work while existing work continues is a mixed
-execution. P4 forbids it today — "a window never mixes lanes" — so a arriving
-prompt waits for a decode window to drain and a decode waits for a prompt.
-upstream `llama-server` has never worked that way: it puts every generating
-slot's sampled token in first and fills the rest of `n_batch` with pending
-prompt tokens.
+**The point.** A stage does not emit until it has executed every chunk of the
+work it was handed. `llama_stage_runtime_hop.cpp:152` loops over the chunks
+and appends each chunk's boundary tensors to one `result.descriptors`, which
+crosses the wire once at the end. A 5,000-token prefill therefore runs ten
+ubatches on stage 0 while stages 1 to N hold nothing, and arrives as one
+payload of every fragment at once — the 40 MB figure in
+[adapter-boundary.md](adapter-boundary.md) §8.7 is this, not an intrinsic cost.
 
-**Why it is safe now.** The output compaction that would make a mixed batch
-unsplittable is `ggml_get_rows(cur, inp_out_ids)`, guarded by
-`il == n_layer - 1` in 100 of the 117 model implementations that use it. A
-stage that forwards a cut-set ends before that layer, so its boundary tensor
-is shaped by the ubatch's token count: one row per token, measured at 49.97
-rows per tensor for a 50-token prefill.
+In a single process that is a reasonable policy; upstream `llama-server` fills
+`n_batch` and lets llama.cpp split it, and the only cost is latency to the
+next scheduling decision. **Across a stage boundary it is a policy that
+empties the pipeline**, because the boundary is where work becomes visible to
+the next card.
 
-**What must be built.**
+So the unit of a scheduler turn must be the unit that crosses the wire:
 
-- Remove the lane separation from the window composer.
-- Add the row-count check: the rows that came back must equal the tokens that
-  went in, and a mismatch refuses the batch rather than splitting it wrongly.
-  Seventeen implementations guard the compaction differently, so this is not
-  optional. It is a statement about the transfer, not about the model.
-- Decide the mix in the adapter, not above it.
+```
+rows in one execution
+  = Σ decode rows  +  Σ prefill fragment rows   ≤  boundary_ubatch
+```
 
-**Done when.** A run whose requests arrive staggered shows prefill rows and
-decode rows in the same `llama_decode`, verified from the hop trace; the four
-verdicts still pass; a Korean answer is still a Korean answer; and the
-row-count check is exercised by a test rather than only by hope.
+`boundary_ubatch` is not a GPU tuning number. It is how much a stage may
+compute before the result becomes the next stage's input, and therefore it is
+also the flow-control unit and the bound on how much boundary memory is in
+flight at once.
+
+**What must be built.** One execution per hop, and the fragment emitted as
+soon as it exists, so that a long prefill streams:
+
+```
+stage 0: prefill fragment 2
+stage 1: prefill fragment 1
+stage 2: decode rows
+```
+
+**Done when.** A 5,000-token prefill crosses the boundary as fragments rather
+than as one payload; a trace shows stage 0 working on fragment N+1 while stage
+1 works on fragment N; boundary bytes in flight per sequence are bounded by
+`boundary_ubatch` rather than by the prompt length; and the answers are still
+answers.
+
+## 2. Put the fragment layout on the staged wire
+
+**The point.** The receiver reconstructs the producer's grouping by dividing.
+`SequencePayload` carries `n_tokens` and nothing about layout
+(`staged/server/src/protocol/protocol.hpp:132`), so the consumer derives its
+own chunk count from its own `n_ubatch` and checks only that the descriptor
+count divides by it. §0 records what that costs.
+
+A bundle **count** is not enough. It cannot express a final fragment shorter
+than the others, and it cannot express two stages with different ubatch
+limits. The layout has to be stated: the rows in each bundle, in order —
+`bundle_rows[]` or an equivalent — so the consumer reads the producer's
+grouping instead of guessing at it.
+
+**What must be built.** The layout field, written by the producer and checked
+by the consumer against what it can execute; a refusal, naming both sides,
+when it cannot.
+
+**And a rule for mixed versions.** A four-node deployment starts four binaries
+and nothing makes them the same build. Both directions have to be decided
+rather than discovered — an old producer to a new consumer, and a new producer
+to an old consumer. Refusing both is defensible and probably right, since the
+alternative is the silent mis-slice of §0 and a deployment that will not start
+beats one that answers wrongly. Whichever is chosen, the refusal names the
+version it saw and the version it wanted, and the staged capability report is
+where that belongs.
+
+**Done when.** A stage whose peer used a different fragment layout is refused
+with a message naming both; a stage meeting the other protocol version is
+refused with a message naming both; both covered by tests that need no GPU.
+
+## 3. Define fragment credit and ordering
+
+**The point.** Streaming fragments breaks an invariant P4 currently relies on:
+one lap per sequence in flight. With fragment N+1 at stage 0 while fragment N
+is at stage 1, a sequence is in two places at once — which is correct for
+prefill fragments and **not** correct for decode, where token T+1 must not
+start before T has landed everywhere.
+
+The invariant therefore has to be restated rather than dropped. Ordering is
+per `(sequence_id, epoch, fragment_index)`: a stage takes a sequence's
+fragments in index order, and a decode lap is still one at a time.
+
+**And credit is not counted in sessions.** A decode row and a 512-row prefill
+fragment are the same "one request" and cost entirely different amounts of
+boundary buffer. Flow control has to be in **rows and boundary bytes**. The
+`ceiling` that P4 keeps admits sessions against the KV pool — that is a
+different budget and it does not bound what is in flight.
+
+**What must be built.** The ordering rule and the credit unit, written down;
+per-stage credit accounting; and what P4 does when credit is exhausted.
+
+**Done when.** Out-of-order fragments are refused rather than executed; a run
+whose prompts are long shows bounded boundary memory rather than growth with
+prompt length; and the credit exhaustion path is exercised by a test.
+
+## 4. Compose one execution in the adapter
+
+**The point.** Only now is mixing worth attempting, and it is a new execution
+path rather than a widening of the existing one. `execute_decode_batch`
+refuses anything but one row per sequence
+(`llama_stage_runtime_hop_decode.cpp:135`), so decode, prefill fragments and
+later MTP verification rows sharing an execution is code that does not exist.
+
+The compaction that would make a mixed batch unsplittable is
+`ggml_get_rows(cur, inp_out_ids)`, guarded by `il == n_layer - 1` in 100 of
+the 117 model implementations that use it, and a stage forwarding a cut-set
+ends before that layer — measured at one row per token. Seventeen guard it
+otherwise, so the row count that came back is checked against the tokens that
+went in, and a mismatch refuses the batch. That is a statement about the
+transfer, not about the model.
+
+**What must be built.** An adapter-internal scheduler that fills one
+`boundary_ubatch` from what it holds: decode rows first, then prefill fragment
+rows within a per-session quantum so one long prompt cannot take the whole
+budget. Remove the lane separation from the P4 composer, which no longer
+decides anything.
+
+**Done when.** A trace shows decode rows and prefill fragment rows in the same
+`llama_decode`; the row-count check is exercised by a test; the four verdicts
+pass; a Korean answer is still a Korean answer; and stage overlap is visible
+rather than asserted.
 
 **Risk.** The prior runtime limited a mixed window to one prefill token per
 session and recorded that dropping the single-session term crashed the
-terminal stage on 2026-08-13. Compaction does not explain that, and it has not
-been reproduced here. If the crash returns, stop and find out why before
-working around it.
+terminal stage on 2026-08-13. Compaction does not explain that and it has not
+been reproduced here. If it returns, stop and find out why.
 
-## 2. Move the rest of batching into the adapter
+## 5. Move the rest of batching into the adapter
 
-**The point.** Width against latency is a backend judgement. upstream spends
-`n_batch` on it; the prior runtime spends a per-session quantum. Neither
-number means anything above an adapter, and P4 currently makes the call with
-none of the information.
-
-**What must be built.**
-
-- P4 forwards sessions as they become ready. The adapter queues them and
-  decides what one physical execution is.
-- Row identity travels inside the adapter's own bytes, so a node can compose
-  an execution from several arrived blocks. Merging is a concatenation;
-  splitting costs 4.45 ms, 28% of stage 0's hop, and stops being necessary.
-- P4 keeps identity and routing, one lap per sequence in flight, the request's
-  bound and `emitted`, cancellation and deadlines, and one number: `ceiling`,
-  which is the KV budget expressed as a session count.
-- Delete the window composer's ceiling handling, lane policy and preference
-  ordering. Their tests move to the adapter.
+**The point.** Width against latency is a backend judgement, and P4 currently
+makes the call with none of the information.
 
 **The contract this replaces, which must be written before any of it is
 built.** `Adapter::start()` today means "this hop, whole, and not before the
-last one finished" (`adapters/adapter/src/lib.rs:49`), and the node decides
-membership. Handing queueing to the adapter is a change to that contract, not
-a deletion of a function, so the following are deliverables of this item and
-not details to settle later:
+last one finished" (`adapters/adapter/src/lib.rs:49`). Handing queueing to the
+adapter changes that contract, so these are deliverables:
 
 - **Ownership.** From which moment does a queued session belong to the
-  adapter, and what is P4 entitled to assume about one it has handed over?
+  adapter, and what may P4 assume about one it has handed over?
 - **Cancellation and deadlines.** A session cancelled or expired after it was
   handed over: who drops it, what happens to the KV slot it holds, and what
-  happens to a result the backend produces for it afterwards. Today the node
-  fences an expired hop and reports it; nothing yet says what fences a queued
-  one.
+  happens to a result produced for it afterwards.
 - **Terminal attribution.** `HopComplete` reports `expected` against
-  `outcomes`, which is how a partial or duplicate completion is caught. With
-  the adapter choosing the set, what does `expected` mean, and what still
-  rejects a completion for a session the node did not hand over?
-- **Backpressure.** The adapter's queue has a bound; who owns it, how is it
-  reported, and what does P4 do when it is reached. The node's outbox is
-  bounded today for exactly this reason and the reason survives.
+  `outcomes`. With the adapter choosing the set, what does `expected` mean,
+  and what still rejects a completion for a session P4 did not hand over?
+- **Backpressure.** Who owns the queue bound, how it is reported, and what P4
+  does when it is reached — in the credit unit of item 3, not in sessions.
 - **Compatibility.** `served` and `mock` implement the current contract.
-  Either they move too, or the trait keeps a path that does not queue, and
-  which it is decides how much of the mock's test surface survives.
+  Either they move too, or the trait keeps a non-queueing path, and which it
+  is decides how much of the mock's test surface survives.
 
-**Done when.** `compose()` no longer exists in the node; the five points above
-are written down and each is covered by a test rather than by intent; a fleet
-run at parallel 32 or more shows execution widths chosen by the adapter and
-varying with arrival, with the width, the queue wait, and the cancelled and
-expired counts visible in the trace; and throughput at parallel 64 on two
-cards is no worse than the 694–713 already measured.
+**Done when.** `compose()` no longer exists in the node; each point above is
+covered by a test rather than by intent; a fleet run shows widths chosen by
+the adapter with the queue wait and the cancelled and expired counts in the
+trace; and throughput at parallel 64 on two cards is no worse than the 694–713
+already measured.
 
 **Watch for.** The one-hop-at-a-time gate goes with this, but it is not the
 bottleneck and removing it will not by itself raise utilisation. Cohort
 structure does that. Do not claim otherwise from a run that also changed the
 parallelism.
 
-## 3. State the bundle count on the wire
-
-**The point.** Chunk grouping is `descriptors.len() / chunks.len()`, correct
-only while both stages run the same `n_ubatch`. Nothing enforces that across a
-boundary.
-
-**What must be built.** A field on the staged `SequencePayload`
-(`staged/server/src/protocol/protocol.hpp`) carrying how many bundles a
-payload holds, written by the producer and checked by the consumer against the
-chunk count it derived. A protocol revision, natural to take with item 2 once
-the adapter owns what a bundle is.
-
-**And a rule for mixed versions, which is the part that is easy to skip.** A
-four-node deployment starts four binaries, and nothing makes them the same
-build. Both directions have to be decided rather than discovered:
-
-- an old producer to a new consumer — no bundle count in the payload;
-- a new producer to an old consumer — a field the reader does not know.
-
-Refusing both is defensible and probably right, because the alternative is a
-silent mis-slice of the kind §0 describes, and a deployment that will not
-start is better than one that answers wrongly. Whichever is chosen, the
-refusal must name the version it saw and the version it wanted, and the
-staged capability report is where that belongs.
-
-**Done when.** A stage whose peer derives a different chunk count is refused
-with a message naming both counts; a stage meeting a payload from the other
-protocol version is refused with a message naming both versions; and both are
-covered by tests that do not need a GPU.
-
-## 4. Re-measure the 35B on four cards
+## 6. Re-measure the 35B on four cards
 
 **The point.** Every figure in §0 for the four-node run predates the work
 above.
@@ -203,7 +253,7 @@ to show the spread rather than one figure; every fixture above recorded with
 it; and an explanation of where the knee is that follows from the cohort
 arithmetic rather than from a guess.
 
-## 5. Split `replies.rs`
+## 7. Split `replies.rs`
 
 703 lines against a 400-line rule, holding four things with different reasons
 to change and about 160 lines of tests. Mechanical. It waits behind the items
