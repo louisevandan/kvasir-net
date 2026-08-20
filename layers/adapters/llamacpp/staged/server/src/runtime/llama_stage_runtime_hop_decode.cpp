@@ -60,11 +60,18 @@ bool StageRuntime::execute_decode_batch(
     //
     // Measured exactly that way. Batching every stage was correct at widths
     // of two and three and wrong from four up, and wrong early rather than at
-    // the end; batching only the tail is correct to width seven, which is as
-    // wide as the run produced. Until the cut-set can say which row belongs
-    // to which sequence, only the stage that emits none may batch.
-    if (!tail_stage_) return false;
+    // the end; batching only the tail was correct to width seven.
+    //
+    // So the question is only whether this model is one llama.cpp reorders
+    // for, and llama.cpp answers it. A recurrent or hybrid model carries the
+    // recurrent memory whose split does the reordering; a plain attention
+    // model does not, and its ubatch keeps the order it was given. A stage
+    // that emits a cut-set may batch when the model is neither.
     if (!loaded()) return fail_hop("stage runtime is not loaded", error);
+    if (!tail_stage_ &&
+        (llama_model_is_recurrent(model_) || llama_model_is_hybrid(model_))) {
+        return false;
+    }
 
     // Stage 0 starts a lap from token ids and ignores the tail's cut-set;
     // every later stage starts from the cut-set it was handed.
