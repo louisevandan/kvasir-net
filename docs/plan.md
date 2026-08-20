@@ -45,36 +45,136 @@ Not working, and known:
   at 18–45% — predate every fix above and were taken at a parallelism too low
   for four stages.
 
-## 1. Make a hop one physical ubatch, and let fragments flow
+## 1. The adapter handoff contract
 
-**The point.** A stage does not emit until it has executed every chunk of the
-work it was handed. `llama_stage_runtime_hop.cpp:152` loops over the chunks
-and appends each chunk's boundary tensors to one `result.descriptors`, which
-crosses the wire once at the end. A 5,000-token prefill therefore runs ten
-ubatches on stage 0 while stages 1 to N hold nothing, and arrives as one
-payload of every fragment at once — the 40 MB figure in
-[adapter-boundary.md](adapter-boundary.md) §8.7 is this, not an intrinsic cost.
+**First, because everything after it invents a policy otherwise.** Items 2 to
+6 all hand work to an adapter and get results back on the adapter's schedule.
+Building any of them before the handoff is defined means whoever builds it
+decides ownership, cancellation and completion by themselves, in code, once
+per item.
 
-In a single process that is a reasonable policy; upstream `llama-server` fills
-`n_batch` and lets llama.cpp split it, and the only cost is latency to the
-next scheduling decision. **Across a stage boundary it is a policy that
-empties the pipeline**, because the boundary is where work becomes visible to
-the next card.
+`Adapter::start()` today means "this hop, whole, and not before the last one
+finished" (`adapters/adapter/src/lib.rs:49`). That is not a detail; it is
+recorded as an invariant with its reason — "A node runs one hop at a time: it
+starts the next only on seeing the previous end; a timer instead would overlap
+them" ([constraints.md](constraints.md)). **This work removes it**, so that
+entry has to be rewritten rather than quietly contradicted, and the reason it
+gives has to be answered: what now prevents two executions overlapping in a
+way nobody observes.
 
-So the unit of a scheduler turn must be the unit that crosses the wire:
+**What must be written down and covered by tests.**
+
+- **Ownership.** From which moment a queued session belongs to the adapter,
+  and what P4 may assume about one it has handed over.
+- **Cancellation and deadlines.** A session cancelled or expired after
+  handover: who drops it, what happens to the KV slot it holds, and what
+  happens to a result the backend produces for it afterwards.
+- **Terminal attribution.** `HopComplete` reports `expected` against
+  `outcomes`, which is how a partial or duplicate completion is caught today.
+  With the adapter choosing the set, what `expected` means, and what still
+  rejects a completion for a session P4 never handed over.
+- **Backpressure.** Who owns the queue bound, how it is reported, what P4 does
+  when it is reached — in rows and bytes, per item 3, not in sessions.
+- **Compatibility.** `served` and `mock` implement the current contract.
+  Either they move too, or the trait keeps a non-queueing path; that choice
+  decides how much of the mock's test surface survives.
+
+**Done when.** Each point above exists as prose and as a test, `constraints.md`
+agrees with the code, and no later item has to decide any of it.
+
+## 2. Fragment input state
+
+**The point.** Stage 0 tokenizes the whole prompt in one hop
+(`llama_stage_runtime_hop.cpp:47`) and then walks it with a local offset. Once
+a hop is one ubatch, that offset has to survive between hops, and
+`fragment_index` with `bundle_rows[]` does not carry it: they describe what
+came out, not where the next execution resumes.
+
+The adapter's opaque continuation state has to hold, at minimum:
+
+- the tokenized prompt, or a source it can be recovered from unchanged;
+- `input_token_offset` and the row count of this fragment;
+- the stage-local KV position;
+- `(epoch, fragment_index)`.
+
+**Two things it must not do.** It must not re-tokenize the prompt on each hop,
+and it must not slice the prompt as a string. A tokenizer result is fixed once
+and a token range is what travels; anything else makes the fragment boundary a
+different boundary on each stage, and the failure is a wrong answer rather
+than an error.
+
+**Done when.** A prompt is tokenized exactly once per request across the whole
+chain, provable from a trace; a fragment resumes at the token the previous one
+ended on; and a test covers a resume across a hop.
+
+## 3. Edge credit
+
+**The point.** Flow control is in rows and boundary bytes, and the reviewable
+mistake is returning credit too early. Credit is not released when a fragment
+is handed to the transport. It is released when the peer has taken it — copied
+or accepted or discarded — and said so. Failure, cancellation, timeout and
+duplicate delivery all have to release the same lease, or the deployment
+leaks credit and stalls without an error.
+
+**The bounds are per edge, not per sequence.** The target state deliberately
+puts one sequence's fragments on several stages at once, so a per-sequence
+byte bound is the wrong shape:
 
 ```
-rows in one execution
-  = Σ decode rows  +  Σ prefill fragment rows   ≤  boundary_ubatch
+per edge      rows ≤ U ,  bytes ≤ B
+per sequence  at most (number of stage edges) × B
+deployment    the sum of every edge's credit
 ```
 
-`boundary_ubatch` is not a GPU tuning number. It is how much a stage may
-compute before the result becomes the next stage's input, and therefore it is
-also the flow-control unit and the bound on how much boundary memory is in
-flight at once.
+`boundary_ubatch` is the row bound `U`. The byte bound `B` is not derivable
+from it: Gemma 4 carries 55 tensors across its boundary and Qwen2.5 carries
+one, so `B` is measured or conservatively estimated per model rather than
+assumed.
 
-**What must be built.** One execution per hop, and the fragment emitted as
-soon as it exists, so that a long prefill streams:
+**Done when.** Credit returns on a peer receipt and on every failure path;
+each edge's rows and bytes in flight are bounded and observable; a run with
+long prompts shows bounded boundary memory rather than growth with prompt
+length; and the exhaustion path is exercised by a test.
+
+## 4. Fragment layout on the staged wire
+
+**The point.** The receiver reconstructs the producer's grouping by dividing:
+`SequencePayload` carries `n_tokens` and nothing about layout
+(`staged/server/src/protocol/protocol.hpp:132`), so the consumer derives a
+chunk count from its own `n_ubatch` and checks only that the descriptor count
+divides by it. §0 records what that costs.
+
+A bundle **count** is not enough either: it cannot express a final fragment
+shorter than the others, nor two stages with different limits. The rows in
+each bundle, in order — `bundle_rows[]` or an equivalent — is what the
+consumer must read instead of guessing.
+
+**And a rule for mixed versions.** A four-node deployment starts four binaries
+and nothing makes them the same build. Both directions have to be decided
+rather than discovered — an old producer to a new consumer, and the reverse.
+Refusing both is defensible and probably right, since the alternative is the
+silent mis-slice of §0, and a deployment that will not start beats one that
+answers wrongly. Whichever is chosen, the refusal names the version it saw and
+the version it wanted; the staged capability report is where that belongs.
+
+**Done when.** A peer with a different layout is refused with a message naming
+both; a peer on the other protocol version is refused with a message naming
+both; both covered by tests that need no GPU.
+
+## 5. Stream fragments, one physical ubatch per hop
+
+**The point.** This is the defect in §0. `llama_stage_runtime_hop.cpp:152`
+loops every chunk and appends each one's boundary tensors to a single payload
+that crosses the wire once, at the end, so a long prefill runs all its ubatches
+on one stage while the rest of the chain holds nothing.
+
+The unit of a scheduler turn becomes the unit that crosses the wire:
+
+```
+rows in one execution  =  Σ decode rows + Σ prefill fragment rows  ≤  U
+```
+
+so that a long prefill flows instead of accumulating:
 
 ```
 stage 0: prefill fragment 2
@@ -82,136 +182,78 @@ stage 1: prefill fragment 1
 stage 2: decode rows
 ```
 
-**Done when.** A 5,000-token prefill crosses the boundary as fragments rather
-than as one payload; a trace shows stage 0 working on fragment N+1 while stage
-1 works on fragment N; boundary bytes in flight per sequence are bounded by
-`boundary_ubatch` rather than by the prompt length; and the answers are still
-answers.
+**Done when.** A 5,000-token prefill crosses as fragments rather than as one
+payload; a trace shows stage 0 on fragment N+1 while stage 1 is on fragment N;
+and the answers are still answers.
 
-## 2. Put the fragment layout on the staged wire
+## 6. A scheduler that does not starve either side
 
-**The point.** The receiver reconstructs the producer's grouping by dividing.
-`SequencePayload` carries `n_tokens` and nothing about layout
-(`staged/server/src/protocol/protocol.hpp:132`), so the consumer derives its
-own chunk count from its own `n_ubatch` and checks only that the descriptor
-count divides by it. §0 records what that costs.
+**The point.** With items 1 to 5 in place, one execution can hold decode rows
+and prefill fragment rows together. The compaction that would make that
+unsplittable is `ggml_get_rows(cur, inp_out_ids)`, guarded by
+`il == n_layer - 1` in 100 of the 117 model implementations that use it, and a
+stage forwarding a cut-set ends before that layer — measured at one row per
+token. Seventeen guard it otherwise, so the rows that came back are checked
+against the tokens that went in and a mismatch refuses the batch. That is a
+statement about the transfer, not about the model.
 
-A bundle **count** is not enough. It cannot express a final fragment shorter
-than the others, and it cannot express two stages with different ubatch
-limits. The layout has to be stated: the rows in each bundle, in order —
-`bundle_rows[]` or an equivalent — so the consumer reads the producer's
-grouping instead of guessing at it.
+`execute_decode_batch` refuses anything but one row per sequence
+(`llama_stage_runtime_hop_decode.cpp:135`), so this is a new execution path
+rather than a widening of the existing one.
 
-**What must be built.** The layout field, written by the producer and checked
-by the consumer against what it can execute; a refusal, naming both sides,
-when it cannot.
+**"Decode first" is not the rule.** It is a latency preference, and as an
+unconditional rule it starves prefill — which this repository already records:
+"Lane preference is bounded: strict priority is a veto, a lap never dispatched
+is a request that never finishes" ([constraints.md](constraints.md)). The
+adapter's scheduler needs at least one of a prefill row reserve, a maximum
+decode share, deadline-aware deficit or age ordering, and a bounded maximum
+wait — and whichever is chosen has to be stated, not implied by the order of
+two loops.
 
-**And a rule for mixed versions.** A four-node deployment starts four binaries
-and nothing makes them the same build. Both directions have to be decided
-rather than discovered — an old producer to a new consumer, and a new producer
-to an old consumer. Refusing both is defensible and probably right, since the
-alternative is the silent mis-slice of §0 and a deployment that will not start
-beats one that answers wrongly. Whichever is chosen, the refusal names the
-version it saw and the version it wanted, and the staged capability report is
-where that belongs.
+**MTP rows are pinned at zero here.** See item 7.
 
-**Done when.** A stage whose peer used a different fragment layout is refused
-with a message naming both; a stage meeting the other protocol version is
-refused with a message naming both; both covered by tests that need no GPU.
-
-## 3. Define fragment credit and ordering
-
-**The point.** Streaming fragments breaks an invariant P4 currently relies on:
-one lap per sequence in flight. With fragment N+1 at stage 0 while fragment N
-is at stage 1, a sequence is in two places at once — which is correct for
-prefill fragments and **not** correct for decode, where token T+1 must not
-start before T has landed everywhere.
-
-The invariant therefore has to be restated rather than dropped. Ordering is
-per `(sequence_id, epoch, fragment_index)`: a stage takes a sequence's
-fragments in index order, and a decode lap is still one at a time.
-
-**And credit is not counted in sessions.** A decode row and a 512-row prefill
-fragment are the same "one request" and cost entirely different amounts of
-boundary buffer. Flow control has to be in **rows and boundary bytes**. The
-`ceiling` that P4 keeps admits sessions against the KV pool — that is a
-different budget and it does not bound what is in flight.
-
-**What must be built.** The ordering rule and the credit unit, written down;
-per-stage credit accounting; and what P4 does when credit is exhausted.
-
-**Done when.** Out-of-order fragments are refused rather than executed; a run
-whose prompts are long shows bounded boundary memory rather than growth with
-prompt length; and the credit exhaustion path is exercised by a test.
-
-## 4. Compose one execution in the adapter
-
-**The point.** Only now is mixing worth attempting, and it is a new execution
-path rather than a widening of the existing one. `execute_decode_batch`
-refuses anything but one row per sequence
-(`llama_stage_runtime_hop_decode.cpp:135`), so decode, prefill fragments and
-later MTP verification rows sharing an execution is code that does not exist.
-
-The compaction that would make a mixed batch unsplittable is
-`ggml_get_rows(cur, inp_out_ids)`, guarded by `il == n_layer - 1` in 100 of
-the 117 model implementations that use it, and a stage forwarding a cut-set
-ends before that layer — measured at one row per token. Seventeen guard it
-otherwise, so the row count that came back is checked against the tokens that
-went in, and a mismatch refuses the batch. That is a statement about the
-transfer, not about the model.
-
-**What must be built.** An adapter-internal scheduler that fills one
-`boundary_ubatch` from what it holds: decode rows first, then prefill fragment
-rows within a per-session quantum so one long prompt cannot take the whole
-budget. Remove the lane separation from the P4 composer, which no longer
-decides anything.
-
-**Done when.** A trace shows decode rows and prefill fragment rows in the same
-`llama_decode`; the row-count check is exercised by a test; the four verdicts
-pass; a Korean answer is still a Korean answer; and stage overlap is visible
-rather than asserted.
+**Done when.** A trace shows decode rows and prefill fragment rows in one
+`llama_decode`; the row-count check is exercised by a test; no arrival waits
+longer than the stated bound under continuous decode load; the four verdicts
+pass; and a Korean answer is still a Korean answer.
 
 **Risk.** The prior runtime limited a mixed window to one prefill token per
 session and recorded that dropping the single-session term crashed the
 terminal stage on 2026-08-13. Compaction does not explain that and it has not
 been reproduced here. If it returns, stop and find out why.
 
-## 5. Move the rest of batching into the adapter
+## 7. MTP candidate blocks
 
-**The point.** Width against latency is a backend judgement, and P4 currently
-makes the call with none of the information.
+**Why it is not part of item 6.** An MTP row is not an independent row. A
+sequence's candidate block is ordered, has target and draft KV, and is the
+unit of rollback; scheduling its rows as if they were decode rows would make a
+partial block possible, and a partial block is unrecoverable state rather than
+a slow answer.
 
-**The contract this replaces, which must be written before any of it is
-built.** `Adapter::start()` today means "this hop, whole, and not before the
-last one finished" (`adapters/adapter/src/lib.rs:49`). Handing queueing to the
-adapter changes that contract, so these are deliverables:
+Until this item is built, the scheduler pins MTP rows at zero. When it is, a
+candidate block is admitted **whole or not at all**, against the remaining row
+and byte credit of item 3.
 
-- **Ownership.** From which moment does a queued session belong to the
-  adapter, and what may P4 assume about one it has handed over?
-- **Cancellation and deadlines.** A session cancelled or expired after it was
-  handed over: who drops it, what happens to the KV slot it holds, and what
-  happens to a result produced for it afterwards.
-- **Terminal attribution.** `HopComplete` reports `expected` against
-  `outcomes`. With the adapter choosing the set, what does `expected` mean,
-  and what still rejects a completion for a session P4 did not hand over?
-- **Backpressure.** Who owns the queue bound, how it is reported, and what P4
-  does when it is reached — in the credit unit of item 3, not in sessions.
-- **Compatibility.** `served` and `mock` implement the current contract.
-  Either they move too, or the trait keeps a non-queueing path, and which it
-  is decides how much of the mock's test surface survives.
+`protocol-mtp.md` is the specification and now describes the current contract;
+its gates A and C are the entry conditions for this item.
 
-**Done when.** `compose()` no longer exists in the node; each point above is
-covered by a test rather than by intent; a fleet run shows widths chosen by
-the adapter with the queue wait and the cancelled and expired counts in the
-trace; and throughput at parallel 64 on two cards is no worse than the 694–713
-already measured.
+## 8. Move the rest of batching into the adapter
 
-**Watch for.** The one-hop-at-a-time gate goes with this, but it is not the
+With items 1 to 6 done, what remains is deleting P4's window composer — its
+ceiling handling, lane policy and preference ordering — and moving the tests
+that guard them to the adapter.
+
+**Done when.** `compose()` no longer exists in the node; a fleet run shows
+widths chosen by the adapter with the queue wait and the cancelled and expired
+counts in the trace; and throughput at parallel 64 on two cards is no worse
+than the 694–713 already measured.
+
+**Watch for.** The one-hop-at-a-time gate goes with item 1, but it is not the
 bottleneck and removing it will not by itself raise utilisation. Cohort
 structure does that. Do not claim otherwise from a run that also changed the
 parallelism.
 
-## 6. Re-measure the 35B on four cards
+## 9. Re-measure the 35B on four cards
 
 **The point.** Every figure in §0 for the four-node run predates the work
 above.
@@ -253,12 +295,12 @@ to show the spread rather than one figure; every fixture above recorded with
 it; and an explanation of where the knee is that follows from the cohort
 arithmetic rather than from a guess.
 
-## 7. Split `replies.rs`
+## 10. Split `replies.rs`
 
 703 lines against a 400-line rule, holding four things with different reasons
-to change and about 160 lines of tests. Mechanical. It waits behind the items
-above because a long file misleads nobody, and the documents that did have
-been fixed.
+to change and about 160 lines of tests. Mechanical. It waits behind the items above
+because a long file misleads nobody, and the documents that did have been
+fixed.
 
 ## Open, unscheduled
 
