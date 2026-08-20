@@ -25,6 +25,9 @@ pub use work::{
 /// Every method is a procedure. Results arrive at the `EventSink`, never as a
 /// return value, so no caller can be written to wait — which is the property
 /// that keeps a hop's duration out of the agent's workers.
+///
+/// See docs/adapter-boundary.md for what crosses this trait's boundary and
+/// why almost nothing does.
 pub trait Adapter: Send + Sync {
     /// Discovers local model facts without changing the loaded deployment.
     /// The profile is opaque to P4 and is interpreted by OUTER and this

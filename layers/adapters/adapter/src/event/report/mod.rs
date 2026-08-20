@@ -101,6 +101,9 @@ pub struct Allocation {
 }
 
 /// What one sequence got out of a hop.
+///
+/// See docs/adapter-boundary.md for what crosses the adapter boundary in
+/// this shape and why almost nothing else does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Outcome {
     pub sequence: SequenceId,

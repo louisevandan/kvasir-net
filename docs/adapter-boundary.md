@@ -26,7 +26,13 @@ so in its own documentation — see §3.
 
 ## 2. What crosses
 
-Toward the backend, one sequence at a time:
+What a node drives is the [`Adapter`](../layers/adapters/adapter/src/lib.rs)
+trait (`apps/p4/layers/adapters/adapter/src/lib.rs:28`); everything below is
+what its `start()` and `EventSink` carry.
+
+Toward the backend, one sequence at a time — the real definition is
+[`Sequence`](../layers/adapters/adapter/src/work/hop/mod.rs)
+(`apps/p4/layers/adapters/adapter/src/work/hop/mod.rs:39`):
 
 ```rust
 pub struct Sequence {
@@ -43,7 +49,9 @@ pub struct Sequence {
 }
 ```
 
-Back from the backend, one per sequence in the completed hop:
+Back from the backend, one per sequence in the completed hop — the real
+definition is [`Outcome`](../layers/adapters/adapter/src/event/report/mod.rs)
+(`apps/p4/layers/adapters/adapter/src/event/report/mod.rs:105`):
 
 ```rust
 pub struct Outcome {
@@ -58,7 +66,9 @@ pub struct Outcome {
 }
 ```
 
-On the wire the same shape appears as `ToNode::Continue { remaining, emitted,
+On the wire the same shape appears as
+[`ToNode::Continue`](../layers/service/src/message/mod.rs)
+(`apps/p4/layers/service/src/message/mod.rs:101`) `{ remaining, emitted,
 options, state }`. `emitted` is P4's own tally of the tokens it has streamed
 against the request's bound — P4 counts its own output rather than asking a
 backend how far along it is.
@@ -99,19 +109,24 @@ used to carry them alongside. Encoding a state with the reduced form produced
 a session that decoded token zero at position zero for ever, answered every
 request, kept every stream in order, and emitted `!!!!!!`. See §6.3.
 
-Two numbers a stage no longer takes from its plan, because neither is tuning
-(`server/src/server/plan.cpp`):
+Two numbers a stage no longer takes from its plan, because neither is tuning —
+both normalised in
+[`plan.cpp`](../layers/adapters/llamacpp/staged/server/src/server/plan.cpp):
 
-- **`n_batch` follows `n_ubatch`.** A lap crosses the wire one ubatch at a
-  time, so a wider batch describes a submission no stage makes — and it is not
-  merely useless. The staged cut-set is bound once per decode, so a batch
-  llama.cpp chooses to split hands the graph a narrower input than the lap it
-  was given. Making the two one number removes that as a possibility rather
-  than leaving it as a case to check.
-- **The cache is unified.** That is what keeps the ubatch meaningful past the
-  prefill: `llama_kv_cache::init_batch` takes `split_simple` for a single
-  stream, so a decode lap that fits the ubatch is one ubatch whichever slots
-  its sequences hold.
+- **`n_batch` follows `n_ubatch`**
+  (`apps/p4/layers/adapters/llamacpp/staged/server/src/server/plan.cpp:264`).
+  A lap crosses the wire one ubatch at a time, so a wider batch describes a
+  submission no stage makes — and it is not merely useless. The staged
+  cut-set is bound once per decode, so a batch llama.cpp chooses to split
+  hands the graph a narrower input than the lap it was given. Making the two
+  one number removes that as a possibility rather than leaving it as a case
+  to check.
+- **The cache is unified**
+  (`apps/p4/layers/adapters/llamacpp/staged/server/src/server/plan.cpp:265`).
+  That is what keeps the ubatch meaningful past the prefill:
+  `llama_kv_cache::init_batch` takes `split_simple` for a single stream, so a
+  decode lap that fits the ubatch is one ubatch whichever slots its sequences
+  hold.
 
 The prior runtime reached the same place from the other direction: its window
 is `min(batch_size, ubatch_size)` (`apps/llama/native/linker-node/inference/
@@ -273,6 +288,52 @@ whether the answer is an answer. Read `sessions-evidence.md`, and use a prompt
 whose correct answer you can recognise — a Korean question found two defects
 that months of ASCII prompts did not.
 
+### Producing a `sessions-evidence.md`
+
+It is not a file the repository ships; nothing writes it unless asked, and no
+copy is checked in.
+
+`p4-drive` writes it only when the environment variable
+`P4_DRIVE_EVIDENCE_FILE` names a destination path, checked once after a run
+finishes
+(`apps/p4/tools/drive/src/main.rs:202`) and written by
+[`report::write_evidence`](../tools/drive/src/report/mod.rs)
+(`apps/p4/tools/drive/src/report/mod.rs:12`) — the full prompt and complete
+response text for every session, plus the aggregate telemetry JSON. Leave the
+variable unset and the run still completes; only this file does not appear.
+
+[`run-local-real-two-stage.ps1`](../tools/scripts/e2e/run-local-real-two-stage.ps1)
+does not set that variable itself. It has to be exported in the same
+PowerShell session before the script runs, because the script starts
+`p4-drive` with `Start-Process`, which inherits the parent session's
+environment rather than a fixed one the script controls. One complete
+reproduction, assuming locally built `p4-agent.exe` / `p4-drive.exe` /
+`p4_staged_server.exe` and a real GGUF model already sit at the script's
+default paths (override with `-AgentBinary` / `-DriveBinary` / `-ServerBinary`
+/ `-Model` otherwise):
+
+```powershell
+$env:P4_DRIVE_EVIDENCE_FILE = 'F:\dev\linkcpp_product\target\real-two-stage-5000\manual-run\sessions-evidence.md'
+New-Item -ItemType Directory -Force -Path (Split-Path $env:P4_DRIVE_EVIDENCE_FILE) | Out-Null
+apps\p4\tools\scripts\e2e\run-local-real-two-stage.ps1 -RunId manual-run -Tokens 200 -PromptTokens 200
+```
+
+It lands exactly where `P4_DRIVE_EVIDENCE_FILE` points — nothing chooses a
+path on its behalf. Pointing it inside the script's own run directory
+(`target\real-two-stage-5000\<RunId>\`) keeps it next to that run's agent and
+drive logs, as the command above does.
+
+Whether git keeps it out: root `.gitignore` has no pattern for `target/` at
+the repository root — only `apps/p4/tools/drive/target/` (the drive crate's
+own Cargo output) and, via `apps/p4/.gitignore`, `apps/p4/target/` are
+ignored, and a blanket `*.log` rule catches the stage servers' own log files.
+None of those match a `.md` file under root `target/`. A `sessions-evidence.md`
+written there is therefore an ordinary **untracked** file: `git status` lists
+it, and it stays out of the repository only because the standing instruction
+here is to stage files by name rather than `git add -A` — not because git
+excludes it. Do not expect to find one already checked in, and do not assume
+`git add -A` would skip it.
+
 ## 7. Known not to work
 
 - **Gemma 4 E2B cannot use batched decode.** Merging along the token axis is a
@@ -289,44 +350,108 @@ that months of ASCII prompts did not.
 
 ## 8. The plan: batching belongs to the adapter
 
-### 8.1 Why
+### 8.1 What actually keeps the cards idle
 
-P4 currently composes each hop (`layers/agent/src/node/window/mod.rs`): it
-picks the members, separates prefill from decode, prefers decode once full, and
-obeys a declared ceiling. It also refuses to hand a node a second hop while one
-is in flight — `is_running()` is `in_adapter() > 0`.
+An earlier draft of this section blamed P4's refusal to hand a node a second
+hop while one is in flight — `is_running()` is `in_adapter() > 0`. That was
+wrong, and the correction matters more than the original claim.
 
-That last rule is the expensive one. A four-stage chain then computes one stage
-at a time, so each card runs for its turn and waits three:
+A chain is serialised by the token dependency, not by that gate. Stage 0
+cannot begin lap N+1 for a session until the token from lap N has come back
+round, and no scheduling choice changes that. What a scheduler *can* change is
+how many **independent cohorts** are in flight at once. If every ready
+sequence goes into one hop, the whole population moves as a single wave: while
+the wave is at stage 1, stages 0, 2 and 3 hold nothing at all, and per-card
+utilisation is bounded by roughly 1/S for an S-stage chain. Nothing about the
+gate causes that. **The composer taking everything that is waiting causes it.**
+
+The measurements in §5.4 say exactly this, and they were misread once already.
+Holding a window open to gather laps raised the mean width from 10.89 to 20.48
+and dropped throughput from 768 to 450 tok/s; graph builds per token improved
+by a third while graph builds per second collapsed from 132 to 51. The narrow
+hops in the `35,1,1` pattern were not waste being cleaned up. **They were the
+several cohorts that kept the chain occupied**, and gathering merged them into
+one.
+
+So the arithmetic a scheduler is working against is:
+
+- one more row in a hop costs **0.04 to 0.08 ms** (§5.2);
+- a stage with nothing to do costs a **whole hop** — 15.8 ms at stage 0, 43.6
+  at the tail (§5.1).
+
+Waiting to widen is therefore almost never right, and **fire with whatever is
+ready** is the policy the numbers support.
+
+### 8.2 A consequence for how a deployment is sized
+
+Filling an S-stage chain needs at least S cohorts in flight. The four-node 35B
+run of §5.6 admitted ten sequences and composed hops of six to seven — about
+one and a half cohorts across four stages, which is the 18–45% utilisation it
+measured, and is what the shape predicts.
+
+Roughly, a deployment wants
 
 ```
-now:    [0] [1] [2] [3] [0] [1] [2] [3]        one at a time
-wanted: [0 lap N+1]
-            [1 lap N]
-                [2 lap N-1]
-                    [3 lap N-2]                all four at once
+parallel  ≳  stages × useful batch width
 ```
 
-A per-card utilisation ceiling of about 25% follows from the structure alone,
-and §5.6 measured 18–45%. Meanwhile §5.2 says the adapter wants the widest
-execution it can get, because rows are nearly free. P4's gate is what stands
-between those two facts.
+At four stages, ten admitted sequences cannot be both wide and spread. That is
+a sizing fact rather than a defect, and it means **the 35B figures should not
+be re-measured at parallel 10.**
 
-### 8.2 What moves
+### 8.3 What the adapter gets that P4 cannot have
+
+Adapter-owned batching does not create the concurrency above — cohort
+structure and the parallelism level do. It buys two other things.
+
+**Mixing a prefill with decodes in one execution.** P4 forbids it today: "a
+window never mixes lanes". Yet accepting new work while existing work
+continues is precisely a mixed execution, and it is what upstream
+`llama-server` does — `server-context.cpp` puts every generating slot's
+sampled token in first and then fills the remainder of `n_batch` with pending
+prompt tokens.
+
+This is safe at a staged boundary, with one check. The output compaction that
+would make a mixed batch unsplittable is `ggml_get_rows(cur, inp_out_ids)`,
+and in 100 of the 117 model implementations that use it, it is guarded by
+`il == n_layer - 1` — the model's final layer. A stage that forwards a cut-set
+ends before that layer, so its boundary tensor is shaped by the ubatch's token
+count and carries one row per token. Measured: a prefill cut-set of 614,047
+bytes over two tensors at `n_embd` 1536 is 49.97 rows per tensor, one per
+token.
+
+Seventeen implementations guard it differently, so the adapter must not assume
+this — it must **check that the rows it got back match the tokens it sent**,
+and refuse the batch otherwise. That is a statement about the transfer, not
+about which model is running, so it belongs at this layer.
+
+The prior runtime concluded the opposite and limited a mixed window to one
+prefill token per session, citing compaction to the sequence count
+(`apps/llama/native/linker-node/inference/session.inc:161`). That reasoning
+holds for a stage whose window contains the final layer and over-generalises
+otherwise. Its second reason — that dropping the single-session term was
+measured on 2026-08-13 and crashed the terminal stage — is not explained by
+compaction and has not been reproduced here; treat it as unexplained until it
+is.
+
+**Choosing width against latency with the numbers in hand.** The marginal cost
+of a row, the size of a prefill chunk and the ubatch ceiling are all backend
+facts. upstream spends `n_batch` on this decision and the prior runtime spends
+a per-session quantum; neither number means anything above an adapter.
+
+### 8.4 What moves
 
 Out of P4: window composition, lane separation, the decode/prefill preference,
-and the one-hop-at-a-time gate. The adapter receives sessions as they become
-ready, queues them, and decides for itself what one physical execution is —
-which is where the knowledge to decide already lives. upstream `llama-server`
-spends `n_batch` on that decision; the prior runtime spends a per-session
-quantum on it (`session.inc:167`, and note the `sessions.size() == 1` term).
-Neither belongs above the adapter.
+and the one-hop-at-a-time gate — the last not because it is the bottleneck but
+because it is a batching decision and batching is leaving.
 
-The existing event shape already fits: `HopComplete { expected, outcomes }`
-reports whatever set the adapter executed. Only the inbound direction changes,
-from a composed window to a stream of ready sessions.
+The adapter receives sessions as they become ready, queues them, and decides
+what one physical execution is. The existing event shape already fits:
+`HopComplete { expected, outcomes }` reports whatever set the adapter ran.
+Only the inbound direction changes, from a composed window to a stream of
+ready sessions.
 
-### 8.3 What P4 keeps
+### 8.5 What P4 keeps
 
 - **Identity and routing.** Which session, and where its output goes next.
 - **One lap per sequence in flight.** If a node computes token T+1 for a
@@ -335,30 +460,30 @@ from a composed window to a stream of ready sessions.
   already states it — "every live sequence has exactly one lap waiting".
 - **The request's bound and terminal accounting**, including `emitted`.
 - **Cancellation and deadlines.**
-- **One number: `ceiling`.** KV is the only budget that accumulates — it is
-  reserved at context creation and lives until the session ends, while the
-  ubatch workspace is reused and the weights are fixed. So the ceiling is the
-  KV budget expressed as a session count, and it is the only thing P4 needs to
-  know about how much a backend can hold.
+- **One number: `ceiling`.** KV is the only budget that accumulates — reserved
+  at context creation, held until the session ends — while the ubatch
+  workspace is reused and the weights are fixed. The ceiling is that budget
+  expressed as a session count, and it is the only thing P4 needs to know
+  about how much a backend can hold.
 
-### 8.4 The two requirements
+### 8.6 The two requirements on the payload
 
-**Row identity must travel in the bytes.** For a node to compose an execution
-from what has arrived, it must be able to take rows from several arrived blocks
-and leave others for later, which means knowing whose each row is. That
-knowledge belongs in the adapter's own payload, not in a P4 field. The
-arithmetic is favourable: merging is a concatenation and splitting is not —
-§5.1 measures the split at 4.45 ms, 28% of stage 0's hop — and what a
-downstream node wants is exactly the cheap direction.
+**Row identity must travel in the bytes.** To compose an execution from what
+has arrived, a node must be able to take rows from several arrived blocks and
+leave others for later, which means knowing whose each row is. That belongs in
+the adapter's own payload, not in a P4 field. The arithmetic favours it:
+merging is a concatenation, splitting is not — §5.1 measures the split at
+4.45 ms, 28% of stage 0's hop — and what a downstream node wants is the cheap
+direction.
 
 **Per-sequence order must hold.** The tokens of one sequence need not share an
-execution, but they must not be reordered. Position travels per row, so this is
-checkable rather than hoped for.
+execution, but they must not be reordered. Position travels per row, so this
+is checkable rather than hoped for.
 
-### 8.5 What decoupling costs
+### 8.7 What decoupling costs
 
-Today one hop is in flight per node, so one boundary payload is in flight.
-Independent stages mean several laps outstanding, each holding bytes:
+Today one hop is in flight per node, so one boundary payload is. Independent
+stages mean several laps outstanding, each holding bytes:
 
 | | per row |
 | --- | ---: |
@@ -366,23 +491,31 @@ Independent stages mean several laps outstanding, each holding bytes:
 | Gemma 40-token prefill, 55 tensors | 614 KB |
 | 5,000-token prefill, one session | **40 MB** |
 
-Decode is free — ten sequences is 80 KB per boundary. **Prefill is the whole of
-the cost**, and it is bounded by how large a prefill chunk the adapter chooses,
-which is a knob the adapter holds. Throughput is a decode problem, so the gain
-is kept and the bill lands somewhere it can be paid.
+Decode is free — ten sequences is 80 KB per boundary. **Prefill is the whole
+of the cost**, and it is bounded by how large a prefill chunk the adapter
+chooses, which is a knob the adapter holds. Throughput is a decode problem, so
+the gain is kept and the bill lands where it can be paid.
 
 ## 9. Sequenced work
 
-1. **Split `replies.rs`.** Mechanical, and the repository rule is explicit.
-2. **Move batching into the adapter.** §8. The largest item, and the one that
-   §5.1, §5.2 and §5.6 all point at.
-3. **State the bundle count on the wire.** §7. A protocol revision; natural to
+1. **Let one execution mix prefill and decode.** §8.3. Drop the lane
+   separation, add the row-count check, and let the adapter decide the mix.
+   This is what "keep accepting work while existing work continues" means in
+   code, and it is the first item because the research that makes it safe is
+   done.
+2. **Move the rest of batching into the adapter.** §8.4 and §8.6, including
+   row identity in the payload.
+3. **State the bundle count on the wire.** §7. A protocol revision, natural to
    take with 2 once the adapter owns what a bundle is.
-4. **Re-measure the 35B on four cards.** Only meaningful after 2.
+4. **Re-measure the 35B on four cards — at a parallelism that suits four
+   stages**, per §8.2. Only meaningful after 2.
+5. **Split `replies.rs`.** §7. The repository rule is explicit, but a
+   700-line file misleads nobody, so it waits behind work that does.
 
-Open, unscheduled: the tail's sampler chain (§5.5, about a third of the ring,
-and the parallel form needs `llama_get_logits_ith` not to mutate); Gemma's
-batched path (§7, needs a merge that can express an interleaved axis).
+Open, unscheduled: the tail's sampler chain (§5.5, about a third of the ring;
+the parallel form needs `llama_get_logits_ith` not to mutate); Gemma's batched
+path (§7, needs a merge that can express an interleaved axis); and the prior
+runtime's unexplained 2026-08-13 terminal-stage crash (§8.3).
 
 ## 10. History
 

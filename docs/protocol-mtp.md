@@ -31,13 +31,17 @@ production execution을 성공으로 판정하지 않으며, 이 문서의 A·B�
 
 ## 핵심 결론
 
-MTP의 accepted boundary는 terminal이 산출한 다음 HOP의 `position`에 이미 반영된다.
+MTP의 accepted boundary는 terminal이 산출한 다음 HOP의
+`SequencePayload.position`에 이미 반영된다. P4의 `Sequence`/`Outcome`은
+position 필드를 갖지 않는다 — position은 staged adapter 자신의
+`SequencePayload`(`apps/p4/layers/adapters/llamacpp/staged/adapter/src/protocol/sequence.inc.rs`)
+안에 있는 값이며, P4 경계에서는 opaque `state`/`forward` bytes로만 오간다.
 따라서 정상적인 CPS 흐름에서는 accepted count를 새 필드로 전파할 필요가 없다.
 실제 blocker는 각 memory backend가 speculative suffix를 부분 롤백할 수 있는지 여부다.
 
 구축은 다음 두 선행 관문을 닫은 뒤 시작한다.
 
-1. `Sequence.position`과 `Outcome.position`의 의미를 문서와 테스트로 고정한다.
+1. staged adapter `SequencePayload.position`의 의미를 문서와 테스트로 고정한다.
 2. 대상 memory backend의 런타임 롤백 capability를 실측한다.
 
 여기에 현재 P4 event 계약의 세 번째 관문이 있다. `SequencePayload.n_tokens`는 HOP
@@ -53,22 +57,29 @@ A·B·C 중 하나라도 닫히지 않으면 `Some(1)` 제거, rollback 호출, 
 ## 1. 위치 계약
 
 현재 숫자 필드가 중간 stage와 terminal에서 서로 다른 권위를 갖는 점을 명문화한다.
-숫자의 기본 의미는 모두 “다음 HOP 입력 행이 시작하는 위치”로 통일한다.
+숫자의 기본 의미는 모두 “다음 HOP 입력 행이 시작하는 위치”로 통일한다. 이 값은 P4의
+`Sequence`/`Outcome`이 아니라 staged adapter의
+[`SequencePayload.position`](../layers/adapters/llamacpp/staged/adapter/src/protocol/sequence.inc.rs)에
+있으며, P4 경계에서는 `Sequence.state`/`Outcome.forward`의 opaque bytes로만 오간다.
 
 | 값 | 의미 | 권위 |
 |---|---|---|
-| `Sequence.position` | 현재 HOP 입력 행이 시작하는 위치 | 현재 HOP의 권위 있는 입력 위치 |
-| terminal `Outcome.position` | terminal이 계산한 다음 HOP 입력 시작 위치 | terminal이 실제 target KV에 커밋한 행 수만큼 전진 |
-| middle `Outcome.position` | terminal 결과를 알 수 없으므로 입력 위치를 그대로 echo | 진행 권위가 아님 |
+| 수신 HOP의 `SequencePayload.position` | 현재 HOP 입력 행이 시작하는 위치 | 현재 HOP의 권위 있는 입력 위치 |
+| terminal이 쓰는 응답 `SequencePayload.position` | terminal이 계산한 다음 HOP 입력 시작 위치 | terminal이 실제 target KV에 커밋한 행 수만큼 전진 |
+| middle이 쓰는 응답 `SequencePayload.position` | terminal 결과를 알 수 없으므로 입력 위치를 그대로 echo | 진행 권위가 아님 |
 
 중간 stage가 position을 자체적으로 전진시키면 안 된다. terminal만 이번 검증 결과를
-알고 다음 HOP의 위치를 계산한다. 따라서 기존의
-`a_middle_stage_preserves_the_global_decode_position` 회귀 테스트는 MTP 다중 행
-경로에서도 유지되어야 한다.
+알고 다음 HOP의 위치를 계산한다. 이 성질은 현재
+`a_middle_stage_preserves_the_global_decode_position` 회귀 테스트
+(`apps/p4/layers/adapters/mock/src/tests/core.rs:282`)가 지킨다. 이 테스트는 더 이상
+P4 레벨 `Sequence.position`/`Outcome.position` 필드를 검사하지 않고, mock 자신의
+opaque `encode_state`/`decode_state` 헬퍼로 `Sequence.state`에 실은 값이
+`Outcome.forward`로 그대로 echo되는지 확인하는 방식으로 같은 성질을 지킨다. 테스트
+이름과 의미는 여전히 유효하며, MTP 다중 행 경로에서도 이 성질은 유지되어야 한다.
 
 이 계약은 “마지막으로 쓴 위치”와 “다음에 쓸 위치”를 혼용하지 않도록 한다. rollback
 경계 계산은 이 계약을 기준으로만 구현하며, stage마다 보유한 이전 speculative 끝과
-새로 도착한 `Sequence.position`을 비교해 결정한다.
+새로 도착한 수신 HOP의 `SequencePayload.position`을 비교해 결정한다.
 
 ## 2. memory backend capability 관문
 

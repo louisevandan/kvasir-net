@@ -35,6 +35,8 @@ pub enum Phase {
     Decode,
 }
 
+/// See docs/adapter-boundary.md for what crosses the adapter boundary in
+/// this shape and why almost nothing else does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sequence {
     pub sequence: SequenceId,
