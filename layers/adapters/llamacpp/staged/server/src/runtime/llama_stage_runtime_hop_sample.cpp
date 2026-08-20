@@ -65,6 +65,13 @@ bool StageRuntime::sample_decode_row(
         emitted = detokenized;
     }
     if (end_of_generation) metadata.stop = "eos";
+    // The same line the per-sequence path prints, so a batched run and an
+    // unbatched one can be counted the same way.
+    if (hop_trace_enabled()) {
+        std::fprintf(stderr, "P4_STAGED_SAMPLE stage=%d-%d seq=%s token=%d eog=%d row=%d\n",
+                     config_.layer_begin, config_.layer_end, input.sequence_id.c_str(),
+                     static_cast<int>(sampled), end_of_generation ? 1 : 0, logits_index);
+    }
     result->outcome = std::move(metadata);
     return true;
 }
