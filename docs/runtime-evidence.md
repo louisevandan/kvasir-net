@@ -1,5 +1,66 @@
 # Runtime evidence
 
+## 2026-08-20: sixty sessions on four GPUs, and the one number that explains them
+
+A 35B model split across four cards on two machines by layer ratio, sixty
+requests of a 5,000-token prompt against 5,000 tokens of answer, ten admitted
+at once. Sixty of sixty completed with every verdict passing.
+
+| | over the run | per session |
+| --- | ---: | ---: |
+| prefill | 19.18 tok/s | 1,996.5 tok/s |
+| generation | 18.20 tok/s | 18.37 tok/s |
+| combined | 37.38 tok/s | — |
+
+Ten sessions at 18.37 tok/s each aggregate to 18.20. **Concurrency is not
+becoming throughput**, and the reason is that a hop carries one sequence:
+35,000 decode laps ran as 35,500 graph executions on the first stage, and
+every retained sample reports one sequence per hop. The device reads a
+stage's weights once per token per session.
+
+The same deployment prefills at 1,996 tok/s per session — same cards, same
+layers, and the only difference is how many tokens are in the call. That
+ratio is what batching a decode lap is worth, and it is the largest single
+number left on the table.
+
+Conditions, evidence and the reproduction line are in
+[`2026-08-20-four-node-35b-service-reference.md`](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-08-20-four-node-35b-service-reference.md).
+
+### The frame limit that hid behind it
+
+A prefill hop carries one F32 cut per token per sequence, so a 5,000-token
+prompt at n_embd 2,048 is 39 MiB for one sequence and a ten-wide window is
+391 MiB. Both the outer P4 frame and the staged local wire capped a body at
+128 MiB, which refused every window past three sequences: 53 of 60 requests
+failed on `HOP envelope too large` while the deployment itself was healthy.
+Both are now two gibibytes. This is a P4-level change and deliberately the
+only one — how large a body a frame may carry is a property of the layer, not
+of a backend.
+
+### What did not work, and why it is recorded
+
+Two attempts at the throughput above were measured and rejected.
+
+**Holding a decode window open to make it wider.** A node sends whatever is
+waiting, so a lap that arrives alone goes alone. Making it wait 30 ms for
+company changed nothing — the graph count moved from 6,208 to 6,209 and
+throughput fell from 19.45 to 16.40 tok/s. Nothing joined, because arrivals
+are paced by the very service being batched: a closed loop, where waiting
+only slows the loop. The rule also had to be declared in the load, which put
+a backend's batching sensibility into P4's protocol; that alone was reason
+enough to take it back out.
+
+**Batching the sequences of one hop inside the stage server** is the right
+layer and the work continues there. It executes — widths of two and three
+against a small model, no `llama_decode` failure and no ubatch split — after
+three corrections that a first attempt gets wrong: a stage consuming a
+cut-set needs an embedding batch rather than a token batch, positions belong
+to llama.cpp because a lap knows only its own index, and a unified KV drops
+the rule that a ubatch admits only consecutive sequence ids. What remains is
+a chain-level defect: with batching on, some sequences stop near the end of
+their generation, which the per-sequence path never does. It is behind
+`P4_STAGED_DECODE_BATCH` until that is found.
+
 ## 2026-08-17: the placement that won on a pipeline does nothing on a wavefront
 
 This machine's record came partly from where the stages sat: the 4080 leading
