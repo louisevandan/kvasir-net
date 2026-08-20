@@ -111,17 +111,35 @@ bool StageRuntime::split_decode_outputs(
         if (descriptor.nbytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
             return fail_hop("staged HOP output is too large", error);
         }
-        // The token axis is what the batch widened. llama.cpp may hand back
-        // more rows than were asked for when it padded the ubatch; the rows
-        // in front are still this lap's, in order.
-        const auto produced = descriptor.dimensions.size() > 1
+        // How many rows the tensor holds is known from the lap, not read off
+        // the descriptor: llama.cpp squeezes the token axis of a single-token
+        // cut, so a rank-1 descriptor says one row while carrying several,
+        // and a lap split on that hands the next stage the whole batch as one
+        // sequence's hidden state. Measured: the next stage refused a 6,144
+        // byte input because it had been sent five rows' worth.
+        //
+        // The bytes still have to divide evenly. They may divide into more
+        // rows than the lap has when llama.cpp padded the ubatch, and the
+        // rows in front are still this lap's, in order.
+        // How many rows the tensor actually holds. The descriptor says so
+        // when it kept its token axis, and llama.cpp may have padded the
+        // ubatch past this lap — the rows in front are still this lap's, in
+        // order, which is what the runtime before P4 also relied on. But it
+        // squeezes that axis for a single-token cut, and then a rank-1
+        // descriptor claims one row while carrying several; the lap's own
+        // count is the truth there.
+        const auto claimed = descriptor.dimensions.size() > 1
             ? static_cast<std::size_t>(descriptor.dimensions[1])
-            : 1;
-        if (produced < rows || produced == 0) {
-            return fail_hop("batched decode output has fewer rows than the lap", error);
-        }
-        if (descriptor.nbytes % produced != 0) {
+            : 0;
+        const auto produced = claimed >= rows ? claimed : rows;
+        if (produced == 0 || descriptor.nbytes % produced != 0) {
             return fail_hop("batched decode output does not divide by its rows", error);
+        }
+        if (hop_trace_enabled()) {
+            std::fprintf(stderr,
+                         "P4_STAGED_DECODE_SPLIT stage=%d-%d rows=%zu claimed=%zu produced=%zu bytes=%llu\n",
+                         config_.layer_begin, config_.layer_end, rows, claimed, produced,
+                         static_cast<unsigned long long>(descriptor.nbytes));
         }
         std::vector<std::uint8_t> whole(static_cast<std::size_t>(descriptor.nbytes));
         if (!llama_linkcpp_output_get(ctx_, index, whole.data(), whole.size())) {
@@ -129,9 +147,14 @@ bool StageRuntime::split_decode_outputs(
         }
         const auto row_bytes = whole.size() / produced;
         for (std::size_t i = 0; i < rows; ++i) {
+            // One row, shaped the way a single-sequence hop's output is
+            // shaped, so the stage that receives it cannot tell this lap was
+            // batched.
             auto row = descriptor;
-            row.dimensions.resize(std::max<std::size_t>(1, row.dimensions.size()));
-            if (row.dimensions.size() > 1) row.dimensions[1] = 1;
+            if (row.dimensions.size() > 1) {
+                row.dimensions[1] = 1;
+                if (row.strides.size() > 1) row.strides[1] = static_cast<std::uint64_t>(row_bytes);
+            }
             row.nbytes = static_cast<std::uint64_t>(row_bytes);
             row.view_offset = 0;
             (*results)[i].descriptors.push_back(std::move(row));
