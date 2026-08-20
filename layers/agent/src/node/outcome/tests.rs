@@ -194,6 +194,45 @@ fn streamed_events_advance_the_wire_sequence_across_laps() {
 }
 
 #[test]
+fn a_lap_that_emits_nothing_leaves_the_wire_sequence_where_it_was() {
+    // The first decode primes the KV cache and produces no text, and a
+    // backend holding a partial multi-byte character produces more such laps
+    // later. None of them is a response event, so none may consume a response
+    // number: a subscriber that sees 106 then 108 cannot tell a producer that
+    // skipped from a transport that dropped.
+    let mut carrier = carrier(1, 0, true);
+    carrier.envelope.event_seq = 4;
+    let Next::LapWithoutToken { lap } = next(&carrier, &outcome("", None), &Plain) else {
+        panic!("a textless unfinished lap continues without reporting");
+    };
+    assert_eq!(lap.envelope.event_seq, 4);
+}
+
+#[test]
+fn the_reply_stream_is_numbered_contiguously_across_empty_laps() {
+    // The whole ring, driven the way a real run drives it: a priming decode,
+    // two tokens, an empty lap between them, then a terminal. What the caller
+    // receives must be 1, 2, 3, 4 with nothing missing.
+    let mut current = carrier(1, 0, true);
+    let mut delivered = Vec::new();
+    for text in ["", "al", "", "pha"] {
+        match next(&current, &outcome(text, None), &Plain) {
+            Next::Lap { token, lap } => {
+                delivered.push(token.envelope.event_seq);
+                current = *lap;
+            }
+            Next::LapWithoutToken { lap } => current = lap,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    let Next::Finish(done) = next(&current, &outcome("", Some("stop")), &Plain) else {
+        panic!("the run ends with a terminal");
+    };
+    delivered.push(done.envelope.event_seq);
+    assert_eq!(delivered, vec![1, 2, 3]);
+}
+
+#[test]
 fn a_single_node_chain_laps_against_itself() {
     // vLLM and SGLang run this way, and a lap of a one-link chain is a decode
     // step on the same node.

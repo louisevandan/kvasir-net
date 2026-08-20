@@ -253,6 +253,28 @@ impl Mock {
         } else {
             requested_position
         };
+        // A lap that ran and said nothing. State moved — the sequence is a lap
+        // further along — but no text left the backend, so neither the token
+        // position nor the turn may advance here. Returning before both is the
+        // whole point: a muted lap must be indistinguishable from one that has
+        // not happened yet, as far as what the caller is owed.
+        if self.terminal
+            && self.profile.mute_every > 0
+            && progress.lifetime.is_multiple_of(self.profile.mute_every)
+        {
+            let carried_position = progress.position;
+            let lifetime = progress.lifetime;
+            return Outcome {
+                sequence: sequence.sequence.clone(),
+                forward: Some(crate::encode_state(
+                    carried_position,
+                    (self.distribution == Distribution::Staged)
+                        .then(|| mock_cut_set(&sequence.sequence, lifetime)),
+                )),
+                text: String::new(),
+                stop: None,
+            };
+        }
         progress.position = progress.position.max(position);
         let lifetime = progress.lifetime;
 

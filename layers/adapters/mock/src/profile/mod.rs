@@ -32,6 +32,16 @@ pub struct Profile {
     /// Bytes this deployment claims per stage, so a report has a shape worth
     /// reading and a stage that reserves far more than its share is visible.
     pub reserved_per_stage: u64,
+    /// Every Nth lap of the terminal stage advances state and reports no text.
+    /// Zero never does it.
+    ///
+    /// Not a fault. A backend holding back the first bytes of a multi-byte
+    /// character has decoded perfectly well and simply has nothing printable
+    /// to hand over yet, and the first decode of a request primes state
+    /// without producing anything at all. Both are ordinary, and both are laps
+    /// that are not response events — which is the distinction P4's reply
+    /// numbering has to keep, so a mock has to be able to state it.
+    pub mute_every: u32,
     pub fault: Fault,
 }
 
@@ -64,6 +74,7 @@ impl Default for Profile {
             trailing_hop: Duration::ZERO,
             prefill_extra: Duration::ZERO,
             reserved_per_stage: 0,
+            mute_every: 0,
             fault: Fault::None,
         }
     }
@@ -81,6 +92,7 @@ impl Profile {
             trailing_hop: scale,
             prefill_extra: scale * 3,
             reserved_per_stage: 188 * 1024 * 1024,
+            mute_every: 0,
             fault: Fault::None,
         }
     }

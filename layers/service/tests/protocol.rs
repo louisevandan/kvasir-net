@@ -200,3 +200,70 @@ fn an_unload_is_reported_and_the_deployment_stops_being_current() {
         );
     });
 }
+
+/// What the reply stream is numbered by.
+///
+/// `event_seq` is the only thing a subscriber has for telling a producer that
+/// said nothing from a transport that lost something: an acknowledgement
+/// retires every unacked frame at or below the number it names, so a hole in
+/// the numbering and a frame that never arrived look exactly alike. A lap of
+/// the ring is therefore not a response event — only a frame the caller
+/// receives is — and a backend that ran nine laps to produce six tokens must
+/// still number those six one to six.
+#[test]
+fn a_lap_that_reports_nothing_does_not_consume_a_reply_number() {
+    runtime().block_on(async {
+        let seen = Outer::default();
+        let outer = start(Arc::new(seen.clone())).await;
+        let agent = start(Arc::new(Standard::new(backends()))).await;
+        place(
+            &agent,
+            &outer,
+            &seen,
+            "n0",
+            "mock-muted",
+            r#"{"layers":"0-19"}"#,
+            4,
+        )
+        .await;
+
+        let single = chain_over(&[(&agent, "n0")]);
+        agent
+            .enqueue(to_node(
+                &single,
+                &outer,
+                "muted",
+                QueueClass::Prefill,
+                ToNode::Execute {
+                    prompt: "질문".into(),
+                    max_tokens: 6,
+                    options: "{}".into(),
+                },
+            ))
+            .unwrap();
+        until(|| {
+            seen.replies("muted")
+                .iter()
+                .any(|reply| matches!(reply, Reply::Done { .. } | Reply::Failed { .. }))
+        })
+        .await;
+
+        let replies = seen.replies("muted");
+        assert!(
+            replies
+                .iter()
+                .any(|reply| matches!(reply, Reply::Done { .. })),
+            "the request ended: {replies:?}"
+        );
+        let sequences = seen.event_sequences("muted");
+        assert!(
+            sequences.len() > 3,
+            "the run has to be long enough to contain a muted lap: {sequences:?}"
+        );
+        assert_eq!(
+            sequences,
+            (1..=sequences.len() as u64).collect::<Vec<u64>>(),
+            "the reply stream skipped a number: {sequences:?} for {replies:?}"
+        );
+    });
+}

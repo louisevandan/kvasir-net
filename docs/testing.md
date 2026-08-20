@@ -51,7 +51,11 @@ sequences it is already carrying complete.
 `node::outcome` — the three cases that are the whole routing behaviour of an
 inference. A middle node hands work on even having produced no text; the end
 either finishes once or reports a token and starts a lap; a token is enqueued
-before the lap it precedes.
+before the lap it precedes. It also owns the reply stream's numbering, and the
+rule there is that `event_seq` counts what the caller received rather than laps
+of the ring: a lap that reported nothing carries the number unchanged, because
+a hole in the numbering is the one thing a subscriber has for detecting a frame
+the transport lost.
 
 `envelope`, `frame`, `message::wire` — round trips, and refusal of every
 truncation, every trailing byte, every unknown tag.
@@ -179,9 +183,9 @@ things, and three defects in this layer survived every level but the fleet.
 | Where | Tests | What it holds |
 | --- | ---: | --- |
 | `p4-protocol` | 50 | Round trips, and refusal of every truncation, trailing byte and unknown tag. Address parsing, advertised-address resolution, chain advance and restart, and the route home a reply falls back on: the chain's first link, never the target that just failed and never this agent. |
-| `p4-agent-core` (unit) | 98 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement, and the relay: an undeliverable frame arrives at the chain's first link, and a relay that fails is the end of it rather than the start of a loop. |
+| `p4-agent-core` (unit) | 100 | The pure decisions — judge, window, outcome — plus the queue, the peer table and its retirement, and the relay: an undeliverable frame arrives at the chain's first link, and a relay that fails is the end of it rather than the start of a loop. Outcome now also holds the reply numbering: a lap that reports nothing leaves `event_seq` where it was, and a run mixing silent laps with tokens is numbered contiguously. |
 | `p4-service` (unit) | 32 | Message encoding with explicit tags, the payload seam, the registry, the machine and status snapshots. |
-| `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. |
+| `p4-mock` | 19 | That the mock honours what it declares: widths, ceilings, per-position cost, the four faults. It can also be asked for a silent lap (`mute_every`) — state advancing with nothing to report, which is what a backend does while it holds the first bytes of a multi-byte character. |
 | `p4-adapter` | 9 | The contract's own small logic, including which id a fork leaves state under. |
 | `p4-llamacpp-served` (unit) | 51 | HTTP framing, SSE, status refusal, chunk shapes including reasoning content, plan parsing, session behaviour, and which of the three backends insists on being told what it serves. Plus what a placement becomes on llama.cpp's command line, that a backend this build cannot start refuses rather than guessing, and that a load's patience is a different number from a token's. |
 | `tests/owns_its_backend.rs` | 4 | That a node owns the process behind it: a share is ready once it has not exited, one that exits while settling is a failure, a backend that gives up is reported rather than waited out through a ten-minute patience, and letting go of one kills it — the last confirmed against the operating system's own process table rather than against our record of it. |
@@ -194,7 +198,7 @@ things, and three defects in this layer survived every level but the fleet.
 | `tests/network.rs` | 7 | The network as the slow thing: latency, jitter that must not reorder, stalls, a narrow link, one bad hop, and a slow link with a slow backend. One test exists only to guard the others — a relay that fell out of the path would leave them passing *faster*. |
 | `tests/topology.rs` | 6 | The model rather than the wiring: a row of relaying agents, a star, a chain revisiting a machine, a partition answered by its deadline, a heal with nothing restarted. The partitions assert they really partitioned. |
 | `tests/resilience.rs` | 7 | What a long-lived listener meets: garbage, truncation, wrong magic and version, an impossible length, a header claiming 900KB then nothing, 600 abandoned connections, frames for a node that does not exist, and a node replaced twenty-four times that must be released each time. |
-| `tests/protocol.rs` | 3 | What a load makes visible: a distributed load watched stage by stage, a stage whose load failed refusing to serve, and an unload. |
+| `tests/protocol.rs` | 4 | What a load makes visible: a distributed load watched stage by stage, a stage whose load failed refusing to serve, and an unload. Plus what the reply stream is numbered by: a lap that reports nothing does not consume a reply number, so a hole in `event_seq` still means a frame was lost. |
 | `tests/protocol_in_flight.rs` | 5 | What can be watched and steered while work runs: locating a request, cancelling one without touching the rest, receiving its replayable terminal failure, being told there was nothing left to stop, and collecting counters from another machine. |
 | `tests/cache.rs` | 4 | The four verbs on one node: persist and restore continuing where it left off, a fork that copies rather than renames, a discard that cannot be repeated, and refusal of what was never persisted. |
 | `tests/cache_in_a_deployment.rs` | 3 | What a cache verb does around itself: the deployment stays bound and serving, and a conversation spread over a chain is persisted and restored on every stage. |
@@ -225,6 +229,18 @@ completed, every verdict passed, no token generated. And a reasoning model
 streams its thinking under a different key, so reading only `content` dropped
 every token of a fourteen-second answer. The stub always answered 200 with
 `content`; nothing about it was wrong, and nothing about it was enough.
+
+**A mock that never does the awkward thing catches nothing about it.** The
+reply stream skipped a number on every lap that produced no text, so a long
+answer arrived with ten holes in its `event_seq` and the fleet's "every stream
+in order" failed. Nothing below the fleet could see it, and not because the
+levels were too shallow: the mock's terminal stage produced text on every lap
+it was not finishing, so the case simply did not exist below a real backend.
+It cost one field — `Profile::mute_every` — to make it expressible, and the
+defect now fails a pure test and a socket test, both in milliseconds. The
+number a verdict fails on is worth printing too: "out of order" was a count
+that named neither which of the two defects it was nor where, and the driver
+was already holding both.
 
 **A test can race the thing it observes.** The cancellation test watched a
 node until it was holding a route and then cancelled it — and lost that race

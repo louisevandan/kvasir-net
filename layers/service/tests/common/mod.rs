@@ -105,6 +105,20 @@ pub fn backends() -> Registry {
             },
         ))
     });
+    // A backend that runs a lap and reports no text on every third one. Not a
+    // fault: it is what a real one does while it holds the first bytes of a
+    // multi-byte character, and what every backend does on the decode that
+    // primes a request. It exists so a test can ask what P4 puts on the wire
+    // when a lap of the ring is not a response event.
+    registry.register_fn("mock-muted", |_| {
+        Arc::new(Mock::terminal(
+            0,
+            Profile {
+                mute_every: 3,
+                ..Profile::default()
+            },
+        ))
+    });
     // A stage that cannot load. Its neighbours load perfectly well, which is
     // what makes a distributed load a transaction rather than a list.
     registry.register_fn("mock-unloadable", |_| {

@@ -29,7 +29,22 @@ pub fn write_evidence(
     document.push_str("\n```\n\n");
     for (index, stream) in outcome.streams.iter().enumerate() {
         document.push_str(&format!("## Session {}\n\n", index + 1));
-        document.push_str(&format!("- request_id: `{}`\n- stream_id: `{}`\n- tokens: {}\n- completed: {}\n- failed: {}\n\n", stream.request_id, stream.stream_id, stream.tokens.len(), stream.done.is_some(), stream.failed.as_deref().unwrap_or("")));
+        document.push_str(&format!(
+            "- request_id: `{}`\n- stream_id: `{}`\n- tokens: {}\n- completed: {}\n- failed: {}\n",
+            stream.request_id,
+            stream.stream_id,
+            stream.tokens.len(),
+            stream.done.is_some(),
+            stream.failed.as_deref().unwrap_or("")
+        ));
+        document.push_str(&format!(
+            "- last_event_seq: {}\n- duplicate_events: {}\n- sequence_gaps: {}\n",
+            stream.last_event_seq, stream.duplicate_events, stream.sequence_gaps
+        ));
+        if !stream.disorder.is_empty() {
+            document.push_str(&format!("- disorder: {}\n", stream.disorder.join("; ")));
+        }
+        document.push('\n');
         document.push_str("### Prompt\n\n");
         document.push_str(&prompt_for_session(prompt, index));
         document.push_str("\n\n### Complete response\n\n");
@@ -119,6 +134,25 @@ pub fn print(
     verdict("every request answered", outcome.unanswered == 0);
     verdict("no request failed", outcome.failed == 0);
     verdict("every stream in order", outcome.out_of_order == 0);
+    // Named where it failed, not merely counted. "Out of order" is two
+    // different defects — a repeat and a hole — and they are produced by
+    // different code; a verdict that does not say which sends the reader to
+    // the wire for something already in hand.
+    for stream in outcome
+        .streams
+        .iter()
+        .filter(|stream| !stream.disorder.is_empty())
+        .take(4)
+    {
+        println!(
+            "    disorder route={} duplicates={} gaps={} last_event_seq={} first: {}",
+            stream.request_id,
+            stream.duplicate_events,
+            stream.sequence_gaps,
+            stream.last_event_seq,
+            stream.disorder.join("; ")
+        );
+    }
     verdict(
         "one terminal per route",
         outcome.completed + outcome.failed == requests,

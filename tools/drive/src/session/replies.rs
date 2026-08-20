@@ -43,6 +43,11 @@ pub struct Stream {
     pub last_event_seq: u64,
     pub duplicate_events: usize,
     pub sequence_gaps: usize,
+    /// Where the order broke, in the words a reader needs to act: whether it
+    /// was a repeat or a hole, and between which two numbers. A count alone
+    /// sends whoever reads it back to the wire to find out which, and that is
+    /// the question the driver is already holding the answer to.
+    pub disorder: Vec<String>,
     /// Monotonic request-to-terminal latency captured by the drive. This is
     /// local evidence and is not part of the P4 wire contract.
     pub latency_us: Option<u64>,
@@ -241,17 +246,44 @@ impl Duties for Replies {
             || stream.return_channel != channel_identity(&frame)
         {
             stream.duplicate_events += 1;
+            note_disorder(
+                stream,
+                format!(
+                    "identity-collision at event_seq={}",
+                    frame.envelope.event_seq
+                ),
+            );
             return;
         }
         if frame.envelope.event_seq > 0 {
             if frame.envelope.event_seq <= stream.last_event_seq {
                 stream.duplicate_events += 1;
+                note_disorder(
+                    stream,
+                    format!(
+                        "duplicate event_seq={} after {}",
+                        frame.envelope.event_seq, stream.last_event_seq
+                    ),
+                );
                 return;
             }
             if stream.last_event_seq > 0
                 && frame.envelope.event_seq != stream.last_event_seq.saturating_add(1)
             {
                 stream.sequence_gaps += 1;
+                note_disorder(
+                    stream,
+                    format!(
+                        "gap {}->{} (missing {})",
+                        stream.last_event_seq,
+                        frame.envelope.event_seq,
+                        frame
+                            .envelope
+                            .event_seq
+                            .saturating_sub(stream.last_event_seq)
+                            .saturating_sub(1)
+                    ),
+                );
             }
             stream.last_event_seq = frame.envelope.event_seq;
         }
@@ -397,6 +429,17 @@ impl Replies {
                 .insert(route.to_owned());
         }
         reply
+    }
+}
+
+/// The first few breaks, not all of them. A stream that lost its numbering
+/// early loses it for every event after, and a report that repeats the same
+/// finding four hundred times buries the one line that says where it began.
+const DISORDER_SAMPLES: usize = 8;
+
+fn note_disorder(stream: &mut Stream, note: String) {
+    if stream.disorder.len() < DISORDER_SAMPLES {
+        stream.disorder.push(note);
     }
 }
 

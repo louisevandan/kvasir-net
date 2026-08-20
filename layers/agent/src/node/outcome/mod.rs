@@ -110,33 +110,39 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
             body: report.failure("chain cannot continue"),
         });
     };
-    let lap = Frame {
-        envelope: {
-            let mut envelope = lap;
-            envelope.event_seq = carrier.envelope.event_seq.saturating_add(1);
-            envelope
-        },
+    // `event_seq` counts response events on the reply stream, not laps of the
+    // chain. A lap that emits nothing must therefore carry the number
+    // unchanged: advancing it there leaves a hole in the only numbering a
+    // subscriber has, and a hole is indistinguishable from a frame the
+    // transport lost — which is precisely the question `event_seq` exists to
+    // answer. Empty laps are not rare enough to wave away: the first decode
+    // primes the backend's state and produces no text at all, and a backend
+    // holding back a partial multi-byte character produces more of them as
+    // the answer runs.
+    let mut lap = Frame {
+        envelope: lap,
         // A decode lap restarts at stage 0. Each stage owns its KV shard, so
         // the previous tail's hidden-state cut-set belongs only to the
         // current lap's stage-to-stage handoff.
         body: report.continue_body(carrier, outcome),
     };
     if outcome.text.is_empty() {
-        Next::LapWithoutToken { lap }
-    } else {
-        Next::Lap {
-            token: Frame {
-                envelope: {
-                    let mut envelope = reply;
-                    envelope.event_seq = carrier.envelope.event_seq.saturating_add(1);
-                    envelope
-                },
-                // The index of this token in what P4 has streamed, which is
-                // the only numbering the requester ever sees.
-                body: report.token(&outcome.text, report.emitted(carrier)),
+        return Next::LapWithoutToken { lap };
+    }
+    let emitted_seq = carrier.envelope.event_seq.saturating_add(1);
+    lap.envelope.event_seq = emitted_seq;
+    Next::Lap {
+        token: Frame {
+            envelope: {
+                let mut envelope = reply;
+                envelope.event_seq = emitted_seq;
+                envelope
             },
-            lap: Box::new(lap),
-        }
+            // The index of this token in what P4 has streamed, which is
+            // the only numbering the requester ever sees.
+            body: report.token(&outcome.text, report.emitted(carrier)),
+        },
+        lap: Box::new(lap),
     }
 }
 
