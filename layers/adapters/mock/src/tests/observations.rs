@@ -208,7 +208,6 @@ fn a_decode_lap_uses_the_carried_position_and_does_not_need_the_tail_cut_set() {
                 initial_tokens: None,
                 remaining: 8,
                 options: r#"{"temperature":0.1}"#.into(),
-                initial_tokens: None,
             }],
         }),
         &recorder,

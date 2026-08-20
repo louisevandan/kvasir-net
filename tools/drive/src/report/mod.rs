@@ -20,7 +20,10 @@ pub fn write_evidence(
     document.push_str("# P4 distributed inference evidence\n\n");
     document.push_str("This file contains the exact prompt and complete response text retained by the drive for every request.\n\n");
     document.push_str(&format!("- elapsed_ms: {}\n", elapsed.as_millis()));
-    document.push_str(&format!("- completed: {}\n- failed: {}\n- unanswered: {}\n- total_tokens: {}\n\n", outcome.completed, outcome.failed, outcome.unanswered, outcome.tokens));
+    document.push_str(&format!(
+        "- completed: {}\n- failed: {}\n- unanswered: {}\n- total_tokens: {}\n\n",
+        outcome.completed, outcome.failed, outcome.unanswered, outcome.tokens
+    ));
     document.push_str("## Aggregate telemetry\n\n```json\n");
     document.push_str(&telemetry.to_json());
     document.push_str("\n```\n\n");

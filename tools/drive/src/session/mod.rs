@@ -384,22 +384,21 @@ impl Session {
             // thing the single-chain driver already measured, twice.
             let chain = &chains[index % chains.len()];
             let route = self.route(&format!("q{index}"));
-            let admitted = loop {
-                self.reconcile_admission();
-                let result = self
-                    .admission
-                    .lock()
-                    .expect("admission lock")
-                    .begin(&route, chain.len());
-                match result {
-                    admission::Admission::Acquired(lease) => break Some(lease),
-                    admission::Admission::Full => unreachable!(
-                        "OUTER admission is unbounded; node capacity belongs to the agent"
-                    ),
-                    admission::Admission::AlreadyActive | admission::Admission::AlreadyTerminal => {
-                        break None;
-                    }
+            // One attempt, not a retry: OUTER's admission is unbounded, so the
+            // only answers are a lease and a route this run already knows
+            // about. Asking again would give the same answer forever.
+            self.reconcile_admission();
+            let admitted = match self
+                .admission
+                .lock()
+                .expect("admission lock")
+                .begin(&route, chain.len())
+            {
+                admission::Admission::Acquired(lease) => Some(lease),
+                admission::Admission::Full => {
+                    unreachable!("OUTER admission is unbounded; node capacity belongs to the agent")
                 }
+                admission::Admission::AlreadyActive | admission::Admission::AlreadyTerminal => None,
             };
             if admitted.is_none() {
                 admission_rejected += 1;

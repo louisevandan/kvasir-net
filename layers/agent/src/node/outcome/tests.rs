@@ -131,9 +131,9 @@ fn a_decode_lap_drops_the_previous_tail_cut_set_before_stage_zero() {
         &first,
         &Outcome {
             sequence: "s1".into(),
-        outbound_cut_set: Some(vec![1, 2]),
-        text: "tok".into(),
-        token: None,
+            outbound_cut_set: Some(vec![1, 2]),
+            text: "tok".into(),
+            token: None,
             position: 1,
             stop: None,
         },
