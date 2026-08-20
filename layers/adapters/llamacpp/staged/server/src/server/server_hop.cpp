@@ -84,16 +84,13 @@ protocol::Frame Session::handle_hop(const protocol::Frame &request) {
     // reshape, and the loop below is what a refusal falls back to.
     bool batched = false;
 #ifdef P4_STAGED_WITH_LLAMA
-    // Off unless asked for. The path itself is right — stage 0 batches a
-    // whole lap today — but llama.cpp splits a batch into ubatches of its own
-    // choosing and the staged cut-set is bound once per decode, so a split
-    // leaves the graph expecting a narrower input than the one handed over,
-    // and an output whose token axis is the ubatch rather than the lap. Both
-    // were measured. Neither is recoverable once a partial batch has moved a
-    // sequence's KV forward, so this stays behind a switch until the cut-set
-    // is bound per ubatch in the compatibility series.
+    // A whole decode lap in one llama_decode. The stage refuses the batch
+    // itself when its own configuration cannot guarantee a single ubatch,
+    // or when the model is one llama.cpp reorders outputs for and this
+    // stage forwards a cut-set; a refusal computes nothing, so the
+    // per-sequence path below still runs the same lap.
     if (llama_runtime_ != nullptr && input.phase == protocol::HopPhase::Decode &&
-        input.sequences.size() > 1 && std::getenv("P4_STAGED_DECODE_BATCH") != nullptr) {
+        input.sequences.size() > 1) {
         std::string batch_error;
         std::vector<protocol::SequencePayload> batch_outputs;
         if (llama_runtime_->execute_decode_batch(input.sequences, &batch_outputs, &batch_error)) {

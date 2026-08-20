@@ -120,6 +120,33 @@ and hand the host a short candidate list instead of the whole vocabulary —
 marked experimental upstream, and incompatible with grammar and with the
 reasoning budget.
 
+## Batching a lap is no longer behind a switch
+
+It was, because llama.cpp splits a batch into ubatches of its own choosing and
+the staged cut-set is bound once per decode, so a split hands the graph a
+narrower input than the lap it was given. That is not a risk to be accepted or
+hoped away — it is a precondition the stage can check about itself:
+
+* `llama_kv_cache` picks `split_simple` when there is a single stream, which
+  is what a unified cache means, and
+* `split_simple` takes consecutive tokens until `n_ubatch` and stops.
+
+So a lap that fits one ubatch on a unified cache cannot be split, and both
+halves are the stage's own configuration. `execute_decode_batch` now refuses
+the batch when either fails, and a refusal computes nothing, so the
+per-sequence path runs the same lap unchanged.
+
+Running the harness with `--kv-unified` removed exercises exactly that refusal:
+
+| | aggregate |
+| --- | ---: |
+| per-sequence, the refusal path | **69.2 tok/s** |
+| batched, the default path | **694 to 713 tok/s** |
+
+Both completed every request with all four verdicts. The refusal is correct and
+the difference is an order of magnitude, which is why this belongs on by
+default rather than behind an environment variable.
+
 ## Reproduction
 
 ```powershell

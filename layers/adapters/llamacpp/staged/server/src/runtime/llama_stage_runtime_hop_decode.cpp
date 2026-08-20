@@ -84,6 +84,22 @@ bool StageRuntime::execute_decode_batch(
         return false;
     }
 
+    // llama.cpp splits a batch into ubatches of its own choosing, and the
+    // staged cut-set is bound once per decode -- a split would leave the
+    // graph expecting a narrower input than the one handed over, and an
+    // output whose token axis is the ubatch rather than the lap. Both were
+    // measured, and neither is recoverable once a partial batch has moved a
+    // sequence's cache forward.
+    //
+    // It cannot happen when the lap fits one ubatch and the cache is
+    // unified: `llama_kv_cache` picks `split_simple` for a single stream,
+    // and `split_simple` takes consecutive tokens until `n_ubatch` and
+    // stops. Both halves are this stage's own configuration, so the lap
+    // asks rather than hopes, and a stage configured any other way keeps
+    // the per-sequence path.
+    if (!params_.kv_unified) return false;
+    if (inputs.size() > static_cast<std::size_t>(llama_n_ubatch(ctx_))) return false;
+
     // Stage 0 starts a lap from token ids and ignores the tail's cut-set;
     // every later stage starts from the cut-set it was handed.
     const bool from_tokens = config_.layer_begin == 0;
