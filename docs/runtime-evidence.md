@@ -1,5 +1,40 @@
 # Runtime evidence
 
+## 2026-08-20: 768 tok/s, once a lap is batched and once generation is measured
+
+Two cards, a 1.5B plain attention model split [0,14) and [14,28), a 32-token
+prompt against 512 generated tokens so that generation is what the clock is
+measuring. Every run completed with all four verdicts.
+
+| Parallel | Aggregate | Per session | Mean hop width |
+| ---: | ---: | ---: | ---: |
+| 16 | **272.7 tok/s** | 52.6 | max 9 |
+| 32 | **550.2 tok/s** | 54.7 | 5.89 (max 19) |
+| 64 | **768.0 tok/s** | 34.0 | 10.89 (max 36) |
+
+**The earlier numbers were a measurement fault, not a performance one.** They
+were taken with a 5,000-token prompt against 24 generated tokens, where
+prefill is 99% of the run and "generation tokens over the run" is not a
+statement about generation. Read that way the same deployment reported 8 to 13
+tok/s.
+
+Sixteen to thirty-two is 2.02x and near linear; thirty-two to sixty-four is
+1.40x with per-session throughput falling from 54.7 to 34.0, which is
+concurrency starting to cost latency. Prefill, which is not batched, stays
+flat across all of it — that is the control that says the difference is the
+decode.
+
+**What is still on the table is width.** Mean hop width is about a sixth of
+the declared concurrency, 10.89 against 64, while the maximum reaches 36. A
+node sends a lap when it arrives and in a chain laps arrive spread out. The
+earlier attempt at holding a window open failed because a hop carried one
+sequence however wide the window was; the table above is the proof that the
+reason has inverted, and whatever gathers laps now belongs in the adapter
+rather than in P4's scheduling.
+
+Conditions and the reproduction line are in
+[`2026-08-20-batched-decode-throughput.md`](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-08-20-batched-decode-throughput.md).
+
 ## 2026-08-20: sixty sessions on four GPUs, and the one number that explains them
 
 A 35B model split across four cards on two machines by layer ratio, sixty
