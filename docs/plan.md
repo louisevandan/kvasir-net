@@ -69,10 +69,25 @@ way nobody observes.
 - **Cancellation and deadlines.** A session cancelled or expired after
   handover: who drops it, what happens to the KV slot it holds, and what
   happens to a result the backend produces for it afterwards.
-- **Terminal attribution.** `HopComplete` reports `expected` against
-  `outcomes`, which is how a partial or duplicate completion is caught today.
-  With the adapter choosing the set, what `expected` means, and what still
-  rejects a completion for a session P4 never handed over.
+- **Completion is all-or-nothing and must stop being so.** The node accepts a
+  `HopComplete` only when `expected_set == outcome_set == in_flight_set`
+  (`agent/src/node/runner/events.rs:196`): every session in flight completes
+  in the same event or the event is invalid. A fragment finishing while its
+  peers continue is not merely unhandled — it **cannot be expressed**. This is
+  the actual change behind "the adapter owns its queue": in-flight becomes a
+  set the adapter draws from and reports against item by item, and what
+  replaces the three-way equality has to reject a completion for a session P4
+  never handed over, a duplicate, and a late one, without requiring the rest
+  of the set to arrive with it.
+- **`Hop.phase` goes, or means nothing.** A hop carries one
+  `Prefill`/`Decode` for every sequence in it
+  (`adapters/adapter/src/work/hop/mod.rs:18`), which makes a mixed execution
+  unrepresentable at the boundary and makes P4 the author of a llama policy.
+  P4 uses it in exactly one place — `reserves_sequence_slots() && phase ==
+  Prefill` (`agent/src/node/runner/mod.rs:516`), an admission question — and
+  that question is per sequence, not per window. The per-sequence answer is
+  already on the wire: `prompt` present means this node begins the work,
+  `state` present means it continues. Nothing else in P4 needs the field.
 - **Backpressure.** Who owns the queue bound, how it is reported, what P4 does
   when it is reached — in rows and bytes, per item 3, not in sessions.
 - **Compatibility.** `served` and `mock` implement the current contract.
@@ -92,13 +107,17 @@ came out, not where the next execution resumes.
 
 The adapter's opaque continuation state has to hold, at minimum:
 
-- the tokenized prompt, or a source it can be recovered from unchanged;
+- the tokenized prompt itself, as a canonical token vector, or a stable
+  handle to one that no path can re-derive;
 - `input_token_offset` and the row count of this fragment;
 - the stage-local KV position;
 - `(epoch, fragment_index)`.
 
 **Two things it must not do.** It must not re-tokenize the prompt on each hop,
-and it must not slice the prompt as a string. A tokenizer result is fixed once
+and it must not slice the prompt as a string. Keeping the source text and
+promising not to re-tokenize is not enough: a handoff, a restore or a retry
+will re-derive it, and a tokenizer is not guaranteed to agree with itself
+across versions. The token vector is the contract. A tokenizer result is fixed once
 and a token range is what travels; anything else makes the fragment boundary a
 different boundary on each stage, and the failure is a wrong answer rather
 than an error.
@@ -131,8 +150,29 @@ from it: Gemma 4 carries 55 tensors across its boundary and Qwen2.5 carries
 one, so `B` is measured or conservatively estimated per model rather than
 assumed.
 
-**Done when.** Credit returns on a peer receipt and on every failure path;
-each edge's rows and bytes in flight are bounded and observable; a run with
+**And both are per edge, negotiated, not per stage and assumed.** Each stage
+takes `n_ubatch` from its own plan and pins `n_batch` to it
+(`staged/server/src/server/plan.cpp:264`); nothing reconciles two stages, so
+today a producer and a consumer can disagree and neither finds out. The edge
+values are `U_edge = min(producer, consumer)` and a `B_edge` for the model and
+cut-set on that edge, agreed when the chain is composed and carried the way
+other stage facts already are — the capability report and `context_identity`
+are where `n_batch`, `n_ubatch`, `n_seq_max` and `kv_unified` already travel.
+A chain that cannot agree does not load.
+
+**A lease needs an identity.** "The same lease" is not a rule until it names
+one. A lease is `(deployment generation, edge, sequence, epoch, fragment)`,
+and the receipt that releases it must be idempotent against that identity, so
+that a retransmission after a timeout and a receipt that arrives after the
+lease was already reclaimed are both safe and neither double-releases. The
+deployment generation is in it because a reconnect must not let a receipt from
+a previous generation release credit in this one.
+
+**Done when.** `U_edge` and `B_edge` are agreed when the chain loads and a
+disagreement refuses the load; credit returns on a peer receipt and on every
+failure path, idempotently against the lease identity, with a test for a
+receipt that arrives twice and one that arrives after a timeout reclaimed the
+lease; each edge’s rows and bytes in flight are bounded and observable; a run with
 long prompts shows bounded boundary memory rather than growth with prompt
 length; and the exhaustion path is exercised by a test.
 
@@ -204,17 +244,28 @@ rather than a widening of the existing one.
 **"Decode first" is not the rule.** It is a latency preference, and as an
 unconditional rule it starves prefill — which this repository already records:
 "Lane preference is bounded: strict priority is a veto, a lap never dispatched
-is a request that never finishes" ([constraints.md](constraints.md)). The
-adapter's scheduler needs at least one of a prefill row reserve, a maximum
-decode share, deadline-aware deficit or age ordering, and a bounded maximum
-wait — and whichever is chosen has to be stated, not implied by the order of
-two loops.
+is a request that never finishes" ([constraints.md](constraints.md)). "At least one of" is not an implementation plan either, so the policy is
+chosen here and may be argued with rather than left open:
+
+- **A prefill reserve.** Whenever any prefill fragment is waiting, at least
+  `R` rows of every execution go to prefill, `R` declared as a fraction of
+  `U_edge`. Decode fills the rest.
+- **A bounded wait, measured in wall clock and including GPU execution.** No
+  waiting item exceeds `W`. A bound counted in scheduler turns is not a bound,
+  because a turn is as long as the execution it contains.
+
+`R` and `W` are declared with the plan, reported in the trace, and chosen from
+the measured hop cost rather than from taste — a hop is 15.8 ms at stage 0 and
+43.6 at the tail, so a `W` below either is not a policy but a promise that
+cannot be kept. Anything more elaborate — deficit round-robin, age ordering —
+is a later change with a measurement behind it, not a starting point.
 
 **MTP rows are pinned at zero here.** See item 7.
 
 **Done when.** A trace shows decode rows and prefill fragment rows in one
-`llama_decode`; the row-count check is exercised by a test; no arrival waits
-longer than the stated bound under continuous decode load; the four verdicts
+`llama_decode`; the row-count check is exercised by a test; under continuous
+decode load a waiting prefill gets its `R` rows and no item waits longer than
+`W`, both measured rather than argued; the four verdicts
 pass; and a Korean answer is still a Korean answer.
 
 **Risk.** The prior runtime limited a mixed window to one prefill token per
