@@ -147,6 +147,29 @@ Run with `P4_AGENT_STATS=1` when something is wrong. Lane depth beside node
 depth says which side of the adapter boundary is slow; the per-node counts say
 at which step a frame stopped existing.
 
+### Arrival shape, on the four-node runner
+
+`tools/scripts/e2e/run-ssh-forwarded-real-four-node.ps1` sends its requests all
+at once by default, which measures a backlog draining. A service is neither
+that nor a trickle, so the shape is stated:
+
+```powershell
+-Requests 60 -InitialBurst 30 -BatchRequests 5 -BatchIntervalMilliseconds 30000
+```
+
+Thirty arrive together, then five more every thirty seconds until sixty have
+been sent. `-VaryPrompts on` gives each request a prompt of its own even when
+`-PromptFile` is set: sixty identical prompts measure a prompt cache rather
+than sixty sessions, and the default only varies when there is no file. Both
+land in `result.json`, because the arrival shape is part of what a run
+measured.
+
+A prompt of an exact token count comes from
+`scripts/validation/tokenizer/llama-token-count.cpp`, built as
+`linker-tokenizer-probe.exe`. Given `--seed-file` it trims a real prompt to
+`--target` tokens against the model's own vocabulary, so what was measured is a
+token count rather than a byte count.
+
 ## What the suite is, file by file
 
 The counts below are the current inventory as of the latest focused run. The

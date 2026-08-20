@@ -14,6 +14,19 @@ param(
     [int]$PromptTokens = 0,
     [int]$Parallel = 0,
     [int]$ArriveMilliseconds = 1,
+    # Arrival shape. A run that sends everything at once measures a backlog
+    # draining; a service measures neither that nor a trickle. `InitialBurst`
+    # requests go out together, then `BatchRequests` more every
+    # `BatchIntervalMilliseconds` until `Requests` have been sent.
+    [int]$InitialBurst = 0,
+    [int]$BatchRequests = 0,
+    [int]$BatchIntervalMilliseconds = 0,
+    # Whether each request carries a prompt of its own. `auto` keeps the old
+    # behaviour — vary only when there is no prompt file — and `on` varies a
+    # prompt file too, which is what a service run needs: sixty identical
+    # prompts measure a prompt cache rather than sixty sessions.
+    [ValidateSet('auto', 'on', 'off')]
+    [string]$VaryPrompts = 'auto',
     [int]$ContextSize = 0,
     [int]$BatchSize = 0,
     [int]$UBatchSize = 0,
@@ -41,6 +54,18 @@ if ($Parallel -lt 0) { throw 'Parallel must be zero or positive.' }
 if ($ArriveMilliseconds -lt 0) { throw 'ArriveMilliseconds must be zero or positive.' }
 if ($MinimumPeakNodeQueue -lt 0 -or $MinimumPeakInAdapter -lt 0) {
     throw 'Minimum overlap thresholds must be zero or positive.'
+}
+if ($InitialBurst -lt 0 -or $BatchRequests -lt 0 -or $BatchIntervalMilliseconds -lt 0) {
+    throw 'InitialBurst, BatchRequests, and BatchIntervalMilliseconds must be zero or positive.'
+}
+if ($InitialBurst -gt 0) {
+    if ($InitialBurst -gt $Requests) { throw 'InitialBurst cannot exceed Requests.' }
+    if ($BatchIntervalMilliseconds -le 0) {
+        throw 'InitialBurst requires a positive BatchIntervalMilliseconds; without it the schedule is a single burst.'
+    }
+    if ($InitialBurst -lt $Requests -and $BatchRequests -le 0) {
+        throw 'InitialBurst smaller than Requests requires a positive BatchRequests.'
+    }
 }
 if ($Requests -gt 4096 -or $Tokens -gt 100000 -or $Parallel -gt 4096 -or $BatchSize -gt 100000 -or $UBatchSize -gt 100000) {
     throw 'Requests, Tokens, Parallel, BatchSize, or UBatchSize exceeds the safe runner limit.'
@@ -383,6 +408,10 @@ Write-Output 'REMOTE_PREPARED'
         $launcherAssignment = "Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $launcherPath) -Value @($(($launcherLines | ForEach-Object { ConvertTo-PowerShellLiteral $_ }) -join ', ')) -Encoding ascii"
         @"
 `$taskName = $(ConvertTo-PowerShellLiteral $taskName)
+# The readiness poll below asks about this agent's port. Without this the
+# comparison is against `$null and the wait always expires, which reported a
+# failure for an agent that was already listening.
+`$port = $port
 $launcherAssignment
 `$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $(ConvertTo-PowerShellLiteral $launcherArgument)
 `$principal = New-ScheduledTaskPrincipal -UserId 'm42-server2\42mob' -LogonType Interactive -RunLevel Limited
@@ -486,6 +515,24 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
     $driverOptionsAssignment = if ($env:P4_DRIVE_OPTIONS) {
         "`$env:P4_DRIVE_OPTIONS = $(ConvertTo-PowerShellLiteral $env:P4_DRIVE_OPTIONS)"
     } else { '' }
+    # The arrival schedule is part of what a run measured, so it is written into
+    # the driver's own environment rather than inherited from whatever shell
+    # started this script.
+    $driverArrivalAssignments = if ($InitialBurst -gt 0) {
+        @(
+            "`$env:P4_DRIVE_INITIAL_BURST = '$InitialBurst'"
+            "`$env:P4_DRIVE_BATCH_REQUESTS = '$BatchRequests'"
+            "`$env:P4_DRIVE_BATCH_INTERVAL_MS = '$BatchIntervalMilliseconds'"
+        ) -join "`n"
+    } else { '' }
+    $vary = switch ($VaryPrompts) {
+        'on' { '1' }
+        'off' { '0' }
+        default { if ([string]::IsNullOrWhiteSpace($PromptFile)) { '1' } else { '0' } }
+    }
+    $driverEvidenceAssignment = if ($env:P4_DRIVE_EVIDENCE_FILE) {
+        "`$env:P4_DRIVE_EVIDENCE_FILE = $(ConvertTo-PowerShellLiteral $env:P4_DRIVE_EVIDENCE_FILE)"
+    } else { '' }
     $driverScript = @"
 `$env:P4_DRIVE_DISCOVER = '1'
 `$env:P4_DRIVE_ARTIFACT = $(ConvertTo-PowerShellLiteral ([System.IO.Path]::GetFileName($LocalModel)))
@@ -493,7 +540,9 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
 `$env:P4_DRIVE_ARRIVE_MS = '$ArriveMilliseconds'
 ${driverTraceAssignment}
 ${driverOptionsAssignment}
-`$env:P4_DRIVE_VARY = '$(if ([string]::IsNullOrWhiteSpace($PromptFile)) { '1' } else { '0' })'
+${driverArrivalAssignments}
+${driverEvidenceAssignment}
+`$env:P4_DRIVE_VARY = '$vary'
 `$env:P4_DRIVE_QUIET_MS = '$QuietMilliseconds'
 `$env:P4_DRIVE_PROMPT = 'Explain why staged inference uses a hidden-state cut.'
 if ('$([string]::IsNullOrWhiteSpace($PromptFile))' -eq 'False') { `$env:P4_DRIVE_PROMPT_FILE = $(ConvertTo-PowerShellLiteral $PromptFile) }
@@ -623,6 +672,11 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         parallel_slots = $parallelSlots
         driver_ceiling = $parallelSlots
         arrive_milliseconds = $ArriveMilliseconds
+        initial_burst = $InitialBurst
+        batch_requests = $BatchRequests
+        batch_interval_milliseconds = $BatchIntervalMilliseconds
+        vary_prompts = $vary -eq '1'
+        prompt_file = $PromptFile
         prompt_tokens = $effectivePromptTokens
         context_size = $planContextSize
         batch_size = $planBatchSize

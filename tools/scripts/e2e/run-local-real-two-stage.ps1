@@ -22,6 +22,14 @@ param(
     [int]$ContextSize = 0,
     [int]$ArriveMilliseconds = 0,
     [int]$QuietMilliseconds = 600000,
+    # How long the load may take before the VRAM guard gives up waiting. A
+    # 35B model read from the NAS is minutes per stage, and the former fixed
+    # 180 seconds was a limit on the network rather than on the deployment.
+    [int]$LoadTimeoutSeconds = 180,
+    # What a stage server is given to become ready and to answer. The
+    # adapter's default is two minutes, which a large model on a share
+    # cannot meet.
+    [int]$StageReadyTimeoutSeconds = 900,
     [int]$BasePort = 52700,
     [string]$AdvertisedHost = '192.168.0.6',
     [switch]$ReuseLoaded,
@@ -54,6 +62,12 @@ function Start-Agent([int]$port, [int]$cuda) {
     $env:P4_STAGED_SERVER_BINARY = $ServerBinary
     $env:P4_MODEL_DIR = [IO.Path]::GetDirectoryName($Model)
     $env:P4_STAGED_LLAMA_INHERIT_STDERR = '1'
+    # A stage server reading a 35B model over the network takes minutes to
+    # answer, and the adapter's own default patience is two. Without this the
+    # load is reported as a backend that never became ready, which is a
+    # statement about the share rather than about the deployment.
+    $env:P4_STAGED_READY_TIMEOUT_SECS = [string]$StageReadyTimeoutSeconds
+    $env:P4_STAGED_IO_TIMEOUT_SECS = [string]$StageReadyTimeoutSeconds
     $env:P4_AGENT_STATS = '1'
     # Bind all local interfaces and advertise a reachable non-loopback address.
     # 127.0.0.1 makes every agent classify itself as local-only, so a stage
@@ -126,11 +140,15 @@ try {
         throw "ContextSize=$ContextSize is smaller than required per-request capacity $requiredContext (PromptTokens=$PromptTokens Tokens=$Tokens Parallel=$Parallel)."
     }
     $plans = @(
-        ('--model "{0}" --layer-begin 0 --layer-end {5} --kv-layer-begin 0 --kv-layer-end {5} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary),
-        ('--model "{0}" --layer-begin {5} --layer-end {6} --kv-layer-begin {5} --kv-layer-end {6} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary,$LayerCount)
+        ('--model "{0}" --layer-begin 0 --layer-end {5} --kv-layer-begin 0 --kv-layer-end {5} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0 --kv-unified' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary),
+        ('--model "{0}" --layer-begin {5} --layer-end {6} --kv-layer-begin {5} --kv-layer-end {6} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0 --kv-unified' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary,$LayerCount)
     )
     $env:P4_DRIVE_DISCOVER = '1'
-    $env:P4_DRIVE_ARTIFACT = 'Qwen2.5-1.5B-Instruct-Q8_0.gguf'
+    # The artifact discovery asks each agent about. Derived from the model
+    # this run was given rather than fixed, because a fixed name asks every
+    # agent about a file that is not there — and a discovery for a missing
+    # artifact never answers, which reads as a deployment that never loaded.
+    $env:P4_DRIVE_ARTIFACT = [IO.Path]::GetFileName($Model)
     $env:P4_DRIVE_CEILING = [string]$Parallel
     $env:P4_DRIVE_ARRIVE_MS = [string]$ArriveMilliseconds
     $env:P4_DRIVE_VARY = if ($VaryPrompts) { '1' } else { '0' }
@@ -142,7 +160,7 @@ try {
     $env:P4_DRIVE_PLAN_1 = $plans[1]
     $chain = "$AdvertisedHost`:$($ports[0]),$AdvertisedHost`:$($ports[1])"
     $drive = Start-Process -FilePath $DriveBinary -ArgumentList @("127.0.0.1:$driverPort",$chain,$Requests,$Tokens,'llamacpp-staged',"127.0.0.1:$driverPort") -WorkingDirectory $p4 -RedirectStandardOutput (Join-Path $out 'drive.log') -RedirectStandardError (Join-Path $out 'drive.err.log') -WindowStyle Hidden -PassThru
-    $loadDeadline = (Get-Date).AddSeconds(180)
+    $loadDeadline = (Get-Date).AddSeconds($LoadTimeoutSeconds)
     do {
         $driveText = if (Test-Path -LiteralPath (Join-Path $out 'drive.log')) {
             Get-Content -LiteralPath (Join-Path $out 'drive.log') -Raw -ErrorAction SilentlyContinue
