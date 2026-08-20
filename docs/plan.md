@@ -25,11 +25,21 @@ Not working, and known:
 
 - Gemma cannot use the batched decode path: merging along the token axis is a
   concatenation, and concatenating a rank-3 tensor interleaves.
-- Chunk grouping assumes both stages run the same `n_ubatch`; a mismatch is
-  refused cleanly rather than corrupting, but nothing states the bundle count
-  on the wire.
+- **A stage can silently mis-slice a cut-set from a peer with a different
+  `n_ubatch`.** The receiver recomputes the chunk count from its own
+  `n_ubatch` and then checks only that the descriptor count divides by it
+  (`llama_stage_runtime_hop.cpp:102`). A producer sending one bundle of 55
+  descriptors to a receiver that computes five chunks passes `55 % 5 == 0` and
+  binds eleven descriptors per chunk, with no error anywhere. Only a mismatch
+  that fails to divide is refused, and that is luck rather than design. The
+  producer's bundle count is not on the wire at all.
 - `tools/drive/src/session/replies.rs` is 703 lines against a 400-line rule.
-- Eight passages in `protocol-mtp.md` still name removed P4 fields.
+- Eight passages in `protocol-mtp.md` still describe removed P4 fields in the
+  present tense — `Sequence.position`, `Outcome.position`, `Outcome.token`,
+  `Continue.token` — at roughly lines 125, 215, 229, 265, 569, 664 and 667.
+  **This is a gate on the MTP work rather than a loose end**: that document is
+  the specification MTP would be built from, and it currently describes a
+  contract that does not exist. Nothing about MTP starts until it is true.
 - The four-node 35B numbers — **37.4 tok/s combined, 18.2 generation**, cards
   at 18–45% — predate every fix above and were taken at a parallelism too low
   for four stages.
@@ -90,10 +100,37 @@ none of the information.
 - Delete the window composer's ceiling handling, lane policy and preference
   ordering. Their tests move to the adapter.
 
-**Done when.** `compose()` no longer exists in the node; a fleet run at
-parallel 32 or more shows execution widths chosen by the adapter and varying
-with arrival, not with a P4 policy; throughput at parallel 64 on two cards is
-no worse than the 694–713 already measured.
+**The contract this replaces, which must be written before any of it is
+built.** `Adapter::start()` today means "this hop, whole, and not before the
+last one finished" (`adapters/adapter/src/lib.rs:49`), and the node decides
+membership. Handing queueing to the adapter is a change to that contract, not
+a deletion of a function, so the following are deliverables of this item and
+not details to settle later:
+
+- **Ownership.** From which moment does a queued session belong to the
+  adapter, and what is P4 entitled to assume about one it has handed over?
+- **Cancellation and deadlines.** A session cancelled or expired after it was
+  handed over: who drops it, what happens to the KV slot it holds, and what
+  happens to a result the backend produces for it afterwards. Today the node
+  fences an expired hop and reports it; nothing yet says what fences a queued
+  one.
+- **Terminal attribution.** `HopComplete` reports `expected` against
+  `outcomes`, which is how a partial or duplicate completion is caught. With
+  the adapter choosing the set, what does `expected` mean, and what still
+  rejects a completion for a session the node did not hand over?
+- **Backpressure.** The adapter's queue has a bound; who owns it, how is it
+  reported, and what does P4 do when it is reached. The node's outbox is
+  bounded today for exactly this reason and the reason survives.
+- **Compatibility.** `served` and `mock` implement the current contract.
+  Either they move too, or the trait keeps a path that does not queue, and
+  which it is decides how much of the mock's test surface survives.
+
+**Done when.** `compose()` no longer exists in the node; the five points above
+are written down and each is covered by a test rather than by intent; a fleet
+run at parallel 32 or more shows execution widths chosen by the adapter and
+varying with arrival, with the width, the queue wait, and the cancelled and
+expired counts visible in the trace; and throughput at parallel 64 on two
+cards is no worse than the 694–713 already measured.
 
 **Watch for.** The one-hop-at-a-time gate goes with this, but it is not the
 bottleneck and removing it will not by itself raise utilisation. Cohort
@@ -106,13 +143,29 @@ parallelism.
 only while both stages run the same `n_ubatch`. Nothing enforces that across a
 boundary.
 
-**What must be built.** A field on the staged `SequencePayload` carrying how
-many bundles a payload holds, written by the producer and checked by the
-consumer. A protocol revision, natural to take with item 2 once the adapter
-owns what a bundle is.
+**What must be built.** A field on the staged `SequencePayload`
+(`staged/server/src/protocol/protocol.hpp`) carrying how many bundles a
+payload holds, written by the producer and checked by the consumer against the
+chunk count it derived. A protocol revision, natural to take with item 2 once
+the adapter owns what a bundle is.
 
-**Done when.** A stage configured with a different `n_ubatch` than its peer is
-refused with a message naming the mismatch, and a test proves it.
+**And a rule for mixed versions, which is the part that is easy to skip.** A
+four-node deployment starts four binaries, and nothing makes them the same
+build. Both directions have to be decided rather than discovered:
+
+- an old producer to a new consumer — no bundle count in the payload;
+- a new producer to an old consumer — a field the reader does not know.
+
+Refusing both is defensible and probably right, because the alternative is a
+silent mis-slice of the kind §0 describes, and a deployment that will not
+start is better than one that answers wrongly. Whichever is chosen, the
+refusal must name the version it saw and the version it wanted, and the
+staged capability report is where that belongs.
+
+**Done when.** A stage whose peer derives a different chunk count is refused
+with a message naming both counts; a stage meeting a payload from the other
+protocol version is refused with a message naming both versions; and both are
+covered by tests that do not need a GPU.
 
 ## 4. Re-measure the 35B on four cards
 
@@ -131,9 +184,30 @@ Ten sequences across four stages is about one and a half cohorts, which is the
 Sweep the parallelism instead, and report utilisation alongside throughput so
 the cohort count is visible rather than inferred.
 
-**Done when.** There is a table of aggregate and per-session throughput against
-parallelism, with card utilisation, and an explanation of where the knee is
-that follows from the cohort arithmetic rather than from a guess.
+**What must be fixed before a number is taken.** A table and a utilisation
+figure do not make a measurement reproducible, and the run this replaces is
+already hard to compare against: its evidence records `parallel=10` and hops
+carrying one sequence
+(`staged/scripts/validation/evidence/2026-08-20-four-node-35b-service-reference.md`).
+Fix and record, per run:
+
+- the model file and its hash, the stage layer split, and the per-card
+  assignment;
+- `n_ctx`, `n_batch`, `n_ubatch`, KV cache type, flash attention, and the
+  declared `ceiling`;
+- the sampler settings, in full, since a run that ends early on EOS is not
+  the same measurement as one that does not;
+- the arrival schedule, the warm-up discarded, and the number of repetitions;
+- the sampling period for card utilisation, because a mean over a period
+  longer than a lap hides exactly the alternation being investigated;
+- what counts as a completed request, judged on the answer and not only on
+  the four verdicts.
+
+**Done when.** A table of aggregate and per-session throughput against
+parallelism, with card utilisation and hop widths beside it, repeated enough
+to show the spread rather than one figure; every fixture above recorded with
+it; and an explanation of where the knee is that follows from the cohort
+arithmetic rather than from a guess.
 
 ## 5. Split `replies.rs`
 
