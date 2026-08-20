@@ -122,7 +122,8 @@ generating edge → stage 0 → stage 1 → … → stage N → terminal
 
 각 stage의 처리 순서는 다음과 같다.
 
-1. 같은 sequence에 대해 저장한 이전 speculative 끝과 새 `Sequence.position`을 비교한다.
+1. 같은 sequence에 대해 저장한 이전 speculative 끝과, `Sequence.state`가 실어 온
+   staged `SequencePayload.position`을 비교한다.
 2. 새 position 이후에 남은 자기 KV/state suffix를 제거하거나 snapshot을 복원한다.
 3. 새 HOP 행을 처리한다.
 4. 이번 HOP에서 자신이 쓴 speculative 끝을 갱신한다.
@@ -212,7 +213,8 @@ restore 또는 재연결이 발생하면 다음 상태를 함께 폐기한다.
 
 ### 선행 관문 A — position contract
 
-- `Sequence.position`/`Outcome.position`의 위 의미를 코드 주석, 문서, 테스트에 고정한다.
+- staged `SequencePayload.position`의 위 의미를 코드 주석, 문서, 테스트에 고정한다.
+  P4는 그 값을 읽지 않으므로 계약은 staged adapter 안에서만 성립한다.
 - middle stage echo와 terminal 다중 행 전진을 별도로 검증한다.
 - MTP 경로에서도 middle position을 보존하는 회귀 테스트를 유지한다.
 
@@ -226,7 +228,10 @@ restore 또는 재연결이 발생하면 다음 상태를 함께 폐기한다.
 ### 선행 관문 C — 외부 event cardinality
 
 - 현재 `HopComplete.expected`는 sequence 집합이고, `outcomes`는 sequence당 하나이며,
-  `Outcome.token`과 `Continue.token`은 각각 단일 token이다.
+  `Outcome.text`는 그 sequence가 이번 hop에서 요청자에게 내보내는 전부다. P4 경계에
+  token이라는 단위는 더 이상 없다. 샘플된 token은 staged `SequencePayload`의
+  `initial_tokens` 안에 있고, 그것은 벡터이므로 "정확히 하나"라는 제약은 필드 이름이
+  아니라 tail이 lap마다 하나만 넣는다는 사실이 지탱한다. MTP는 바로 그 사실을 바꾼다.
 - `n_tokens`를 다중 행으로 확장해도 이 계약이 자동으로 다중 token event가 되지 않음을
   명시한다.
 - 구현 전에 둘 중 하나를 결정한다. (a) 여러 visible token을 기존 event/message
@@ -262,7 +267,7 @@ restore 또는 재연결이 발생하면 다음 상태를 함께 폐기한다.
 
 | 에이전트 | 소유 범위 | 선행 조건 | 산출물 |
 |---|---|---|---|
-| A — position contract | `Sequence.position`/`Outcome.position` 문서 주석, mock middle echo/terminal commit 테스트 | 없음 | position 계약 패치와 off-by-one 테스트 |
+| A — position contract | staged `SequencePayload.position` 문서 주석, mock middle echo/terminal commit 테스트 | 없음 | position 계약 패치와 off-by-one 테스트 |
 | B — capability probe | `PART/RS/FULL/NO` probe, 모델별 evidence, capability 판정 API | 없음 | probe 실행 결과, rollback depth 표, 실패 분류 |
 | C — event cardinality | `HopComplete`/`Outcome`/`Continue`와 다중 row 결과의 외부 투영 정책 | A와 현재 event 계약 확인 | 단일 event 유지 또는 다중 token event 변경의 결정과 회계 테스트 |
 
@@ -565,8 +570,8 @@ MTP head가 `n`개인 경우 한 랩의 논리 흐름은 다음과 같다.
 8. `accepted_count`, `candidate_count`, `committed_count`, `visible_count`를 내부
    결과로 분리한다.
 9. accepted target KV와 sampler state만 다음 랩의 committed state로 남긴다.
-10. 실제 target KV에 쓴 행 수를 `committed_count`로 기록하고, 다음 HOP의
-    `Outcome.position`은 `base + committed_count`로 계산한다. visible token event
+10. 실제 target KV에 쓴 행 수를 `committed_count`로 기록하고, 다음 HOP으로 넘길
+    staged `SequencePayload.position`은 `base + committed_count`로 계산한다. visible token event
     수는 별도로 회계한다. 이 내부 결과를 현재 외부 단일-token 계약으로 투영할지,
     다중-token event/message로 확장할지는 선행 관문 C의 결정에 따른다.
 
@@ -661,10 +666,10 @@ restore가 성공했다는 사실만으로 MTP를 재개할 수 없다. MTP stat
 - capability probe가 실행 불가로 판정됨
 - position regression 또는 rollback 범위 불일치
 - row count와 batch/output descriptor count 불일치
-- 현재 event cardinality 정책과 `HopComplete.outcomes`, `Outcome.token`, `Continue.token`,
-  외부 `Reply` 투영의 불일치
+- 현재 event cardinality 정책과 `HopComplete.outcomes`, `Outcome.text`, staged
+  `SequencePayload.initial_tokens`, 외부 `Reply` 투영의 불일치
 - candidate/accepted/committed/visible 회계가 음수 또는 context limit 초과
-- `Outcome.position`이 실제 target KV commit position과 불일치
+- staged `SequencePayload.position`이 실제 target KV commit position과 불일치
 - sampler가 `LLAMA_TOKEN_NULL`을 반환
 - restore 후 실제 KV max position이 manifest와 불일치
 - 한 sequence의 rollback 실패를 다른 sequence 상태로 전파하려는 시도

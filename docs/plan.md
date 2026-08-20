@@ -34,12 +34,6 @@ Not working, and known:
   that fails to divide is refused, and that is luck rather than design. The
   producer's bundle count is not on the wire at all.
 - `tools/drive/src/session/replies.rs` is 703 lines against a 400-line rule.
-- Eight passages in `protocol-mtp.md` still describe removed P4 fields in the
-  present tense — `Sequence.position`, `Outcome.position`, `Outcome.token`,
-  `Continue.token` — at roughly lines 125, 215, 229, 265, 569, 664 and 667.
-  **This is a gate on the MTP work rather than a loose end**: that document is
-  the specification MTP would be built from, and it currently describes a
-  contract that does not exist. Nothing about MTP starts until it is true.
 - The four-node 35B numbers — **37.4 tok/s combined, 18.2 generation**, cards
   at 18–45% — predate every fix above and were taken at a parallelism too low
   for four stages.
