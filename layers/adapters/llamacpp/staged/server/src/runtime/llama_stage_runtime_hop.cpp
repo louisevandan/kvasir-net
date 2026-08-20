@@ -61,93 +61,58 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
         return fail_hop("invalid staged HOP token count", error);
     }
 
-    // A long prefill may be split by llama.cpp into several ubatches.  The
-    // transport must preserve every cut-set chunk; forwarding only the last
-    // one loses the earlier tokens from every downstream stage's KV cache.
-    // Stage 0 can split token ids directly.  A middle stage receives one
-    // tensor per chunk from the current wire representation.
+    // A long prefill does not cross the wire in one piece. llama.cpp splits a
+    // batch wider than `n_ubatch` into that many graph executions, and a
+    // staged cut-set is bound once per execution, so the producing stage ran
+    // `ceil(n_tokens / n_ubatch)` graphs and sent one cut-set per graph. The
+    // transport must preserve every one of them; forwarding only the last
+    // loses the earlier tokens from every downstream stage's KV cache.
+    //
+    // How the tokens divide is therefore arithmetic on the stated count and
+    // this stage's own ubatch width -- `plan.cpp` makes `n_batch == n_ubatch`
+    // on every stage, so the two stages divide it identically. Nothing about
+    // the division is read out of a tensor axis: which axis of a boundary
+    // tensor counts tokens is the model's business, not this layer's.
     struct Chunk {
         std::size_t token_count = 0;
-        std::size_t descriptor_index = std::numeric_limits<std::size_t>::max();
+        std::size_t descriptor_begin = 0;
+        std::size_t descriptor_count = 0;
         std::size_t token_offset = 0;
     };
-    std::vector<Chunk> chunks;
     // A decode lap always starts at stage 0.  Its native KV already contains
     // the prompt, and the first stage consumes token ids/placeholders rather
     // than the previous lap's tail cut-set.  Re-injecting that cut-set would
     // replay the whole prefill (and can exceed the stage's sequence window).
     const bool ignore_inbound_cut_set = config_.layer_begin == 0
         && phase == protocol::HopPhase::Decode;
-    if (hop_trace_enabled()) {
-        std::fprintf(stderr, "P4_STAGED_HOP_CHUNKS_BEGIN stage=%d-%d phase=%s seq=%s ignore=%d descriptors=%zu\n",
-                     config_.layer_begin, config_.layer_end, hop_phase_name(phase),
-                     input.sequence_id.c_str(), ignore_inbound_cut_set ? 1 : 0,
-                     input.descriptors.size());
-    }
-    if (!ignore_inbound_cut_set && input_tokens.empty() && !input.descriptors.empty()) {
-        // A cut-set can contain one rank-1 hidden tensor per one-token
-        // ubatch.  In that representation the token axis is intentionally
-        // squeezed, so dimensions[0] is the embedding width rather than the
-        // token count.  The explicit logical count is the authoritative
-        // grouping signal; reject only when it cannot prove that each
-        // descriptor represents exactly one token.
-        const bool one_token_per_descriptor =
-            input.n_tokens.has_value() &&
-            input.n_tokens.value() == input.descriptors.size();
-        if (input.descriptors.size() > 1 && !one_token_per_descriptor) {
-            // The current GGML transformer cut-set has one tensor per ubatch.
-            // Refuse ambiguous multi-tensor grouping instead of silently
-            // assigning tensors from different chunks to one graph.
-            for (const auto & descriptor : input.descriptors) {
-                if (descriptor.dimensions.size() < 2) {
-                    return fail_hop("staged HOP multi-chunk descriptor has no token dimension", error);
-                }
-            }
-        }
-        for (std::size_t i = 0; i < input.descriptors.size(); ++i) {
-            const auto & descriptor = input.descriptors[i];
-            if (hop_trace_enabled()) {
-                std::fprintf(stderr, "P4_STAGED_HOP_DESCRIPTOR stage=%d-%d phase=%s seq=%s index=%zu dims=%zu token_dim=%llu bytes=%llu\n",
-                             config_.layer_begin, config_.layer_end, hop_phase_name(phase),
-                             input.sequence_id.c_str(), i, descriptor.dimensions.size(),
-                             descriptor.dimensions.size() > 1 ? static_cast<unsigned long long>(descriptor.dimensions[1]) : 0ULL,
-                             static_cast<unsigned long long>(descriptor.nbytes));
-            }
-            // llama.cpp may squeeze the token axis for a one-token decode
-            // output, exposing the hidden state as [n_embd] instead of
-            // [n_embd, 1].  It is still exactly one executable token.  A
-            // prefill descriptor must retain its explicit second dimension.
-            if (descriptor.dimensions.size() == 1 &&
-                (phase == protocol::HopPhase::Decode || one_token_per_descriptor)) {
-                chunks.push_back({1, i, 0});
-                continue;
-            }
-            if (descriptor.dimensions.size() < 2 || descriptor.dimensions[1] == 0) {
-                return fail_hop("staged HOP cut-set descriptor has invalid token dimension", error);
-            }
-            chunks.push_back({static_cast<std::size_t>(descriptor.dimensions[1]), i, 0});
-        }
-    } else {
-        const auto chunk_size = phase == protocol::HopPhase::Prefill
-            ? std::max<std::size_t>(1, llama_n_ubatch(ctx_)) : token_count;
-        for (std::size_t offset = 0; offset < token_count; offset += chunk_size) {
-            chunks.push_back({std::min(chunk_size, token_count - offset),
-                              std::numeric_limits<std::size_t>::max(), offset});
-        }
-    }
-    if (hop_trace_enabled()) {
-        std::fprintf(stderr, "P4_STAGED_HOP_CHUNKS_DONE stage=%d-%d phase=%s seq=%s chunks=%zu\n",
-                     config_.layer_begin, config_.layer_end, hop_phase_name(phase),
-                     input.sequence_id.c_str(), chunks.size());
+    std::vector<Chunk> chunks;
+    const auto chunk_size = phase == protocol::HopPhase::Prefill
+        ? std::max<std::size_t>(1, llama_n_ubatch(ctx_)) : token_count;
+    for (std::size_t offset = 0; offset < token_count; offset += chunk_size) {
+        chunks.push_back({std::min(chunk_size, token_count - offset), 0, 0, offset});
     }
     if (chunks.empty()) return fail_hop("staged HOP has no executable chunks", error);
-    const auto chunk_tokens = [&chunks]() {
-        std::size_t total = 0;
-        for (const auto & chunk : chunks) total += chunk.token_count;
-        return total;
-    };
-    if (chunk_tokens() != token_count) {
-        return fail_hop("staged HOP cut-set token count does not match payload", error);
+    if (!ignore_inbound_cut_set && input_tokens.empty() && !input.descriptors.empty()) {
+        // A cut-set is a bundle of tensors rather than one. `cut_at` in the
+        // graph patch collects every tensor produced below the boundary and
+        // consumed above it, and how many that is belongs to the model:
+        // gemma4 carries a per-layer input embedding beside the hidden
+        // state. llama.cpp's input matcher wants all of them for one graph,
+        // so a bundle is bound whole, and the bundles arrive in chunk order.
+        if (input.descriptors.size() % chunks.size() != 0) {
+            return fail_hop("staged HOP cut-set is not one bundle per chunk", error);
+        }
+        const auto bundle = input.descriptors.size() / chunks.size();
+        for (std::size_t i = 0; i < chunks.size(); ++i) {
+            chunks[i].descriptor_begin = i * bundle;
+            chunks[i].descriptor_count = bundle;
+        }
+    }
+    if (hop_trace_enabled()) {
+        std::fprintf(stderr, "P4_STAGED_HOP_CHUNKS stage=%d-%d phase=%s seq=%s ignore=%d descriptors=%zu chunks=%zu bundle=%zu\n",
+                     config_.layer_begin, config_.layer_end, hop_phase_name(phase),
+                     input.sequence_id.c_str(), ignore_inbound_cut_set ? 1 : 0,
+                     input.descriptors.size(), chunks.size(), chunks.front().descriptor_count);
     }
     if (hop_trace_enabled()) {
         std::fprintf(stderr, "P4_STAGED_HOP_SEQ_LIMIT_BEGIN stage=%d-%d phase=%s seq=%s\n",
@@ -186,18 +151,25 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
     int32_t last_batch_tokens = 0;
     for (const auto & chunk : chunks) {
         if (hop_trace_enabled()) {
-            std::fprintf(stderr, "P4_STAGED_HOP_CHUNK stage=%d-%d phase=%s seq=%s tokens=%zu descriptor=%zu\n",
+            std::fprintf(stderr, "P4_STAGED_HOP_CHUNK stage=%d-%d phase=%s seq=%s tokens=%zu descriptors=%zu\n",
                          config_.layer_begin, config_.layer_end, hop_phase_name(phase),
-                         input.sequence_id.c_str(), chunk.token_count, chunk.descriptor_index);
+                         input.sequence_id.c_str(), chunk.token_count, chunk.descriptor_count);
         }
         llama_linkcpp_input_clear(ctx_);
-        if (chunk.descriptor_index != std::numeric_limits<std::size_t>::max()) {
-            const auto index = chunk.descriptor_index;
+        for (std::size_t offset = 0; offset < chunk.descriptor_count; ++offset) {
+            const auto index = chunk.descriptor_begin + offset;
             const auto & descriptor = input.descriptors[index];
-            if (index >= input.payloads.size()) {
+            // An alias names an earlier descriptor's storage instead of
+            // carrying bytes of its own; `linkcpp_tensor_desc` reports one
+            // whenever two cut tensors view the same allocation. Resolve it
+            // by the index it states and hand llama.cpp those bytes again,
+            // the way `set_boundary` did in the runtime that came before P4.
+            const auto source = descriptor.has_alias
+                ? static_cast<std::size_t>(descriptor.alias_of) : index;
+            if (source >= input.payloads.size()) {
                 return fail_hop("staged HOP input descriptor has no payload", error);
             }
-            const auto & payload = input.payloads[index];
+            const auto & payload = input.payloads[source];
             if (!payload.has_value() || payload->size() != descriptor.nbytes) {
                 return fail_hop("staged HOP input payload length does not match descriptor", error);
             }
@@ -339,10 +311,14 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
                 } else {
                     metadata.text = detokenized;
                 }
+                // Emit only what is whole. What is left over is the beginning of a
+                // character whose remainder is in the next token, so it is held back
+                // rather than turned into a replacement mark.
+                metadata.text.resize(complete_utf8_prefix(metadata.text));
                 if (!valid_utf8_text(metadata.text)) {
                     metadata.text = "\xEF\xBF\xBD";
                 }
-                emitted = detokenized;
+                emitted += metadata.text;
             }
             if (end_of_generation) metadata.stop = "eos";
             outcome = std::move(metadata);

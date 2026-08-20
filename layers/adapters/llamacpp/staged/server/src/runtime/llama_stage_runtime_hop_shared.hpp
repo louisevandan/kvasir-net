@@ -53,6 +53,28 @@ inline bool valid_utf8_text(const std::string & value) {
     return true;
 }
 
+// How much of `value` is whole UTF-8.
+//
+// A token boundary is not a character boundary. Korean, Japanese, Chinese and
+// emoji are several bytes each and llama.cpp will hand back a piece of one,
+// so a streaming caller that emits whatever arrived turns the tail of every
+// other token into a replacement character. What is incomplete is not
+// corrupt: it is the beginning of something whose remainder is in the next
+// token, so it is held rather than emitted, and the next round sends both.
+inline std::size_t complete_utf8_prefix(const std::string & value) {
+    std::size_t end = value.size();
+    // A continuation byte can only be the tail of a sequence that starts
+    // within the last three bytes; anything longer is not UTF-8 at all.
+    for (std::size_t back = 0; back < 4 && back < end; ++back) {
+        const std::size_t at = end - 1 - back;
+        const auto byte = static_cast<unsigned char>(value[at]);
+        if ((byte & 0xC0) == 0x80) continue;
+        const std::size_t width = byte < 0x80 ? 1 : byte < 0xE0 ? 2 : byte < 0xF0 ? 3 : 4;
+        return at + width <= end ? end : at;
+    }
+    return end;
+}
+
 inline int32_t ggml_type_from_wire(protocol::WireType type) {
     switch (type) {
     case protocol::WireType::F32: return GGML_TYPE_F32;
@@ -122,38 +144,6 @@ inline protocol::Descriptor protocol_descriptor(const llama_linkcpp_tensor_desc 
     descriptor.flags = static_cast<std::uint8_t>(source.flags);
     descriptor.name = source.name;
     return descriptor;
-}
-
-// The rank a staged descriptor must report, which is not a choice.
-//
-// A supplied cut-set is matched to a graph tensor on type, rank, byte count,
-// and the leading `rank` entries of ne and nb — see the input matcher in the
-// compatibility series. The rank it compares against is `ggml_n_dims`, which
-// counts dimensions up to the last one greater than one and is never less
-// than one. So a one-row cut of a 2,048-wide model is rank 1 whatever axis
-// produced it, and a five-row cut is rank 2. Stating it once here keeps the
-// merge and the split from each inventing a rule that happens to fit.
-inline std::size_t ggml_rank(const std::vector<std::uint64_t> & ne) {
-    for (std::size_t axis = ne.size(); axis > 1; --axis) {
-        if (ne[axis - 1] > 1) return axis;
-    }
-    return 1;
-}
-
-// A cut-set row and a merged cut-set are both contiguous, and the matcher
-// compares nb exactly, so the strides are computed from the shape rather than
-// inherited from whichever descriptor this one was derived from.
-inline void make_contiguous(protocol::Descriptor & descriptor, std::uint64_t element_bytes) {
-    const auto rank = ggml_rank(descriptor.dimensions);
-    descriptor.dimensions.resize(rank);
-    descriptor.strides.assign(rank, element_bytes);
-    std::uint64_t stride = element_bytes;
-    for (std::size_t axis = 0; axis < rank; ++axis) {
-        descriptor.strides[axis] = stride;
-        stride *= descriptor.dimensions[axis];
-    }
-    descriptor.nbytes = stride;
-    descriptor.view_offset = 0;
 }
 
 inline bool local_sequence(std::unordered_map<std::string, llama_seq_id> & ids,

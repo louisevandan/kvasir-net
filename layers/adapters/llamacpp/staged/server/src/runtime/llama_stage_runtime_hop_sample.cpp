@@ -70,8 +70,12 @@ bool StageRuntime::sample_decode_row(
         } else {
             metadata.text = detokenized;
         }
+        // Emit only what is whole. What is left over is the beginning of a
+        // character whose remainder is in the next token, so it is held back
+        // rather than turned into a replacement mark.
+        metadata.text.resize(complete_utf8_prefix(metadata.text));
         if (!valid_utf8_text(metadata.text)) metadata.text = "\xEF\xBF\xBD";
-        emitted = detokenized;
+        emitted += metadata.text;
     }
     if (end_of_generation) metadata.stop = "eos";
     // The same line the per-sequence path prints, so a batched run and an

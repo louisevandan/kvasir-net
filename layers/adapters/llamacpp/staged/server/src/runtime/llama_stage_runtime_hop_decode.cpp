@@ -108,6 +108,23 @@ bool StageRuntime::execute_decode_batch(
     const auto n_embd = llama_model_n_embd(model_);
     if (!from_tokens && n_embd <= 0) return false;
 
+    // Whether this stage's cut-set can be cut back into rows by copying byte
+    // ranges is a property of the model and the boundary, not of the lap, so
+    // it is read off the graph this stage has already run rather than found
+    // out after a decode that cannot be taken back. A cut tensor with an
+    // axis above the token axis interleaves the rows — gemma4's per-layer
+    // embedding is [n_embd_per_layer, n_tokens, n_layer] and is rank 3 even
+    // for one token — and no byte range of it is a row. `ggml_n_dims` is
+    // what says so, and llama.cpp reports it in every descriptor.
+    if (!tail_stage_) {
+        const auto previous = llama_linkcpp_output_count(ctx_);
+        for (int32_t i = 0; i < previous; ++i) {
+            llama_linkcpp_tensor_desc descriptor{};
+            if (!llama_linkcpp_output_desc(ctx_, i, &descriptor)) return false;
+            if (descriptor.alias_of < 0 && descriptor.n_dims > 2) return false;
+        }
+    }
+
     std::vector<Row> rows;
     rows.reserve(inputs.size());
     std::vector<std::vector<protocol::Descriptor>> bundles;

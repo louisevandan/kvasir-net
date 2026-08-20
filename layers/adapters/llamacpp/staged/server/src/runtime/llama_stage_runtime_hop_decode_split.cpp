@@ -1,10 +1,17 @@
 // Putting one decode lap's cut-sets together, and taking the result apart.
 //
-// A cut-set is a bundle of tensors rather than one, and they may alias each
-// other, so merging is per tensor position across the rows: the token axis
-// `ne[1]` adds up and everything else must already agree. Splitting is the
-// same in reverse, and it tolerates llama.cpp returning more rows than were
-// asked for — a padded ubatch is still correct for the rows in front of it.
+// Both directions are byte ranges and nothing else. Joining rows means
+// writing their bytes one after another; cutting a lap apart means handing
+// back equal byte ranges of what came out. Neither names an axis, because
+// which axis of a boundary tensor counts tokens is the model's business.
+//
+// That is also the limit of what byte ranges can express: they merge along
+// the token axis only when nothing sits above the token axis in memory.
+// llama.cpp says whether anything does — it reports `ggml_n_dims`, so a
+// one-token cut is rank 1 exactly when its bytes are that one token and
+// nothing else. A shape that is richer interleaves the rows instead, and no
+// byte range of it is a row; such a lap is refused here and the per-sequence
+// path, which never joins anything, runs it correctly.
 //
 // This file knows llama.cpp and nothing else. No P4 type appears here, and
 // nothing it decides is visible above the adapter.
@@ -34,41 +41,45 @@ bool StageRuntime::bind_merged_cut_set(
     llama_linkcpp_input_clear(ctx_);
     for (std::size_t index = 0; index < tensors; ++index) {
         auto merged = bundles.front()[index];
-        // Everything but the token axis has to agree already. A row whose
-        // width or type differs is a different model, not a wider batch.
-        std::uint64_t token_axis = 0;
+        // One row must be one token's bytes and nothing else, or laying the
+        // rows end to end is not a merge. An alias is refused for the same
+        // reason: it carries no bytes, so a merged one would have to name a
+        // storage this join invented.
+        if (merged.dimensions.size() != 1 || merged.strides.size() != 1) return false;
+        if (merged.has_alias) return false;
+        // Every row has to be the same row already. One whose width, type or
+        // layout differs is a different model, not a wider batch.
         std::uint64_t bytes = 0;
         for (std::size_t row = 0; row < bundles.size(); ++row) {
             const auto & descriptor = bundles[row][index];
             if (descriptor.wire_type != merged.wire_type) return false;
-            if (descriptor.has_alias != merged.has_alias) return false;
-            if (descriptor.has_alias && descriptor.alias_of != merged.alias_of) return false;
+            if (descriptor.has_alias) return false;
             if (descriptor.name != merged.name) return false;
-            if (descriptor.dimensions.empty() || merged.dimensions.empty()) return false;
-            if (descriptor.dimensions[0] != merged.dimensions[0]) return false;
-            for (std::size_t axis = 2; axis < descriptor.dimensions.size(); ++axis) {
-                if (axis >= merged.dimensions.size()) return false;
-                if (descriptor.dimensions[axis] != merged.dimensions[axis]) return false;
-            }
-            // A cut-set squeezes the token axis for a single token, so a
-            // missing second dimension counts as one.
-            token_axis += descriptor.dimensions.size() > 1 ? descriptor.dimensions[1] : 1;
+            if (descriptor.dimensions != merged.dimensions) return false;
+            if (descriptor.strides != merged.strides) return false;
+            if (descriptor.nbytes != merged.nbytes) return false;
             bytes += descriptor.nbytes;
         }
-        if (merged.has_alias) continue;
 
-        const auto element_bytes = merged.strides.empty() ? 0 : merged.strides[0];
-        if (element_bytes == 0) return false;
-        merged.dimensions.resize(std::max<std::size_t>(2, merged.dimensions.size()));
-        merged.dimensions[1] = token_axis;
-        make_contiguous(merged, element_bytes);
-        if (merged.nbytes != bytes) return false;
+        // The axis the rows were laid out on is stated, not derived: as many
+        // entries as there are rows, one row's bytes apart. Everything
+        // llama.cpp already said about a row — its type, its width, its
+        // element stride, its name — is carried through untouched, because
+        // its input matcher compares ne and nb against the graph tensor
+        // exactly and a descriptor rebuilt from a rule is a descriptor that
+        // has to be right about a model this layer does not read.
+        const auto row_bytes = merged.nbytes;
+        if (row_bytes == 0) return false;
+        merged.dimensions.push_back(static_cast<std::uint64_t>(bundles.size()));
+        merged.strides.push_back(row_bytes);
+        merged.nbytes = bytes;
+        merged.view_offset = 0;
 
         std::vector<std::uint8_t> joined;
         joined.reserve(static_cast<std::size_t>(bytes));
         for (std::size_t row = 0; row < payloads.size(); ++row) {
             const auto * payload = payloads[row][index];
-            if (payload == nullptr) return false;
+            if (payload == nullptr || payload->size() != row_bytes) return false;
             joined.insert(joined.end(), payload->begin(), payload->end());
         }
         if (joined.size() != bytes) return false;
@@ -110,47 +121,46 @@ bool StageRuntime::split_decode_outputs(
         if (descriptor.nbytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
             return fail_hop("staged HOP output is too large", error);
         }
-        // How many rows the tensor actually holds. The descriptor says so
-        // when it kept its token axis, and llama.cpp may have padded the
-        // ubatch past this lap — the rows in front are still this lap's, in
-        // order, which is what the runtime before P4 also relied on. But it
-        // squeezes that axis for a single-token cut, and then a rank-1
-        // descriptor claims one row while carrying several; the lap's own
-        // count is the truth there.
-        const auto claimed = descriptor.dimensions.size() > 1
-            ? static_cast<std::size_t>(descriptor.dimensions[1])
-            : 0;
-        const auto produced = claimed >= rows ? claimed : rows;
-        if (produced == 0 || descriptor.nbytes % produced != 0) {
+        // How far apart two rows are, and therefore how many the tensor
+        // holds — both read off the layout llama.cpp reported rather than
+        // off an axis this layer would have to name. A lap that was joined
+        // by laying rows end to end comes back the same way, so the distance
+        // between rows is the stride over the axis it was joined on, and
+        // llama.cpp may have padded the ubatch past this lap: the rows in
+        // front are still this lap's, in order, which is what the runtime
+        // before P4 also relied on.
+        if (descriptor.dimensions.size() != 2 || descriptor.strides.size() != 2) {
+            return fail_hop("batched decode output is not rows of one token", error);
+        }
+        const auto row_bytes = static_cast<std::size_t>(descriptor.strides[1]);
+        if (row_bytes == 0 || descriptor.nbytes % row_bytes != 0) {
             return fail_hop("batched decode output does not divide by its rows", error);
+        }
+        const auto produced = static_cast<std::size_t>(descriptor.nbytes / row_bytes);
+        if (produced < rows) {
+            return fail_hop("batched decode output holds fewer rows than the lap", error);
         }
         if (hop_trace_enabled()) {
             std::fprintf(stderr,
-                         "P4_STAGED_DECODE_SPLIT stage=%d-%d rows=%zu claimed=%zu produced=%zu bytes=%llu\n",
-                         config_.layer_begin, config_.layer_end, rows, claimed, produced,
+                         "P4_STAGED_DECODE_SPLIT stage=%d-%d rows=%zu produced=%zu row_bytes=%zu bytes=%llu\n",
+                         config_.layer_begin, config_.layer_end, rows, produced, row_bytes,
                          static_cast<unsigned long long>(descriptor.nbytes));
         }
         std::vector<std::uint8_t> whole(static_cast<std::size_t>(descriptor.nbytes));
         if (!llama_linkcpp_output_get(ctx_, index, whole.data(), whole.size())) {
             return fail_hop("llama.cpp rejected staged HOP output tensor", error);
         }
-        const auto row_bytes = whole.size() / produced;
-        const auto element_bytes = descriptor.strides.empty() ? 0 : descriptor.strides[0];
-        if (element_bytes == 0) return fail_hop("staged HOP output has no element stride", error);
         for (std::size_t i = 0; i < rows; ++i) {
-            // One row, shaped the way a single-sequence hop's output is
-            // shaped, so the stage that receives it cannot tell this lap was
-            // batched.
-            // One row, shaped as the matcher downstream requires: rank is
-            // whatever ggml_n_dims would report for this shape, and the
-            // strides follow from it. A one-row cut is therefore rank 1, and
-            // a rank-2 [n_embd, 1] of the same byte count is refused.
+            // One row is the tensor without the axis the lap was joined on,
+            // and nothing else changes: llama.cpp's own type, width, element
+            // stride and name travel on. That is also exactly the descriptor
+            // a one-token hop produces, so the stage that receives it cannot
+            // tell this lap was batched.
             auto row = descriptor;
-            if (row.dimensions.size() > 1) row.dimensions[1] = 1;
-            make_contiguous(row, element_bytes);
-            if (row.nbytes != static_cast<std::uint64_t>(row_bytes)) {
-                return fail_hop("batched decode row is not the size the split computed", error);
-            }
+            row.dimensions.resize(1);
+            row.strides.resize(1);
+            row.nbytes = static_cast<std::uint64_t>(row_bytes);
+            row.view_offset = 0;
             (*results)[i].descriptors.push_back(std::move(row));
             (*results)[i].payloads.emplace_back(std::vector<std::uint8_t>(
                 whole.begin() + static_cast<std::ptrdiff_t>(i * row_bytes),
