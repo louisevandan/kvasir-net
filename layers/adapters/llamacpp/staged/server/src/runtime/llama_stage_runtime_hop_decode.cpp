@@ -20,6 +20,7 @@
 #include "llama_stage_runtime_hop_shared.hpp"
 #include "request_options.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -46,6 +47,16 @@ bool StageRuntime::execute_decode_batch(
     std::vector<protocol::SequencePayload> * outputs,
     std::string * error) {
     if (outputs == nullptr || inputs.size() < 2) return false;
+    // A hop that costs 18 ms on a stage whose arithmetic is under 2 ms is not
+    // a compute problem, and the phases have to be told apart before anything
+    // is optimised. Decode is asynchronous on CUDA, so the submit and the wait
+    // for it are timed separately.
+    const auto hop_started = std::chrono::steady_clock::now();
+    sampler_chain_nanos_ = 0;
+    detokenize_nanos_ = 0;
+    std::chrono::steady_clock::duration bind_taken{};
+    std::chrono::steady_clock::duration split_taken{};
+    std::chrono::steady_clock::duration sample_taken{};
     // Only a stage that forwards no cut-set, which today is the tail.
     //
     // llama.cpp may compute a ubatch in an order of its own — see
@@ -131,7 +142,11 @@ bool StageRuntime::execute_decode_batch(
         }
     }
 
-    if (!from_tokens && !bind_merged_cut_set(bundles, payloads, error)) return false;
+    if (!from_tokens) {
+        const auto bind_started = std::chrono::steady_clock::now();
+        if (!bind_merged_cut_set(bundles, payloads, error)) return false;
+        bind_taken = std::chrono::steady_clock::now() - bind_started;
+    }
 
     // A token batch, exactly as the per-sequence path builds one, including
     // for a stage that consumes a cut-set: the hidden state arrives through
@@ -167,7 +182,9 @@ bool StageRuntime::execute_decode_batch(
     // per-sequence path can still run the same lap; the error is dropped so
     // the caller takes it.
     std::string decode_error;
+    const auto decode_started = std::chrono::steady_clock::now();
     const bool decoded = decode(batch, &decode_error);
+    const auto decode_ended = std::chrono::steady_clock::now();
     llama_batch_free(batch);
     if (!decoded) {
         std::fprintf(stderr,
@@ -187,8 +204,14 @@ bool StageRuntime::execute_decode_batch(
     // The tail forwards no cut-set: stage 0 starts the next lap from its own
     // token input, so returning these activations would only inflate the
     // reply and make the next lap ambiguous.
-    if (!tail_stage_ && !split_decode_outputs(rows.size(), &results, error)) return false;
+    if (!tail_stage_) {
+        const auto split_started = std::chrono::steady_clock::now();
+        if (!split_decode_outputs(rows.size(), &results, error)) return false;
+        split_taken = std::chrono::steady_clock::now() - split_started;
+    }
+    const auto sync_started = std::chrono::steady_clock::now();
     if (!synchronize_outputs(error)) return false;
+    const auto sync_ended = std::chrono::steady_clock::now();
 
     if (tail_stage_) {
         // Every row must have a logits row of its own. If llama.cpp split the
@@ -204,6 +227,7 @@ bool StageRuntime::execute_decode_batch(
             if (error != nullptr) error->clear();
             return false;
         }
+        const auto sample_started = std::chrono::steady_clock::now();
         for (std::size_t i = 0; i < rows.size(); ++i) {
             results[i].descriptors.clear();
             results[i].payloads.clear();
@@ -211,6 +235,7 @@ bool StageRuntime::execute_decode_batch(
                 return false;
             }
         }
+        sample_taken = std::chrono::steady_clock::now() - sample_started;
     }
 
     for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -219,8 +244,22 @@ bool StageRuntime::execute_decode_batch(
             : static_cast<std::uint64_t>(rows[i].position) + 1;
     }
     if (hop_trace_enabled()) {
-        std::fprintf(stderr, "P4_STAGED_HOP_DECODE_BATCH stage=%d-%d rows=%zu\n",
-                     config_.layer_begin, config_.layer_end, rows.size());
+        const auto micros = [](auto from, auto to) {
+            return static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::microseconds>(to - from).count());
+        };
+        std::fprintf(stderr,
+                     "P4_STAGED_HOP_DECODE_BATCH stage=%d-%d rows=%zu "
+                     "submit_us=%lld sync_us=%lld bind_us=%lld split_us=%lld "
+                     "sample_us=%lld chain_us=%lld detok_us=%lld total_us=%lld\n",
+                     config_.layer_begin, config_.layer_end, rows.size(),
+                     micros(decode_started, decode_ended), micros(sync_started, sync_ended),
+                     micros(hop_started, hop_started + bind_taken),
+                     micros(hop_started, hop_started + split_taken),
+                     micros(hop_started, hop_started + sample_taken),
+                     static_cast<long long>(sampler_chain_nanos_ / 1000),
+                     static_cast<long long>(detokenize_nanos_ / 1000),
+                     micros(hop_started, std::chrono::steady_clock::now()));
     }
     *outputs = std::move(results);
     return true;

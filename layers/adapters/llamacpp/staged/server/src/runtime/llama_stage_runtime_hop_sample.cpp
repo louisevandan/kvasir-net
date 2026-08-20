@@ -9,6 +9,7 @@
 #include "llama_stage_runtime_hop_shared.hpp"
 #include "request_options.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -38,7 +39,11 @@ bool StageRuntime::sample_decode_row(
         found = samplers_.emplace(input.sequence_id, std::move(sampler)).first;
         sampler_options_[input.sequence_id] = input.options;
     }
+    const auto chain_started = std::chrono::steady_clock::now();
     const auto sampled = common_sampler_sample(found->second.get(), ctx_, logits_index);
+    sampler_chain_nanos_ += static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - chain_started).count());
     if (sampled == LLAMA_TOKEN_NULL) {
         return fail_hop("llama.cpp staged sampler returned no token", error);
     }
@@ -53,7 +58,11 @@ bool StageRuntime::sample_decode_row(
     if (!end_of_generation) {
         auto & generated = sampled_tokens_[input.sequence_id];
         generated.push_back(sampled);
+        const auto detokenize_started = std::chrono::steady_clock::now();
         const auto detokenized = common_detokenize(vocab, generated, false);
+        detokenize_nanos_ += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - detokenize_started).count());
         auto & emitted = sampled_texts_[input.sequence_id];
         if (detokenized.size() >= emitted.size() &&
             detokenized.compare(0, emitted.size(), emitted) == 0) {

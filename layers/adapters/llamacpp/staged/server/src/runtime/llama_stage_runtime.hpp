@@ -167,6 +167,11 @@ private:
     common_speculative_ptr mtp_speculative_;
     bool backend_initialized_ = false;
     std::unordered_map<std::string, llama_seq_id> sequence_ids_;
+    // Where a lap's sampling time goes, split so the two halves are not
+    // guessed at: the sampler chain over the whole vocabulary, and the
+    // detokenisation of what it picked.
+    std::uint64_t sampler_chain_nanos_ = 0;
+    std::uint64_t detokenize_nanos_ = 0;
     std::unordered_map<std::string, common_sampler_ptr> samplers_;
     std::unordered_map<std::string, std::string> sampler_options_;
     // Keep generated token history so detokenization happens over the token

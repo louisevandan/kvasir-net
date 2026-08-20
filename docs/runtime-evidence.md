@@ -35,6 +35,37 @@ rather than in P4's scheduling.
 Conditions and the reproduction line are in
 [`2026-08-20-batched-decode-throughput.md`](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-08-20-batched-decode-throughput.md).
 
+## 2026-08-20: a decode hop, taken apart
+
+The paragraph above guesses that the throughput left on the table is in
+whatever gathers laps. It is not. Holding a narrow decode window open for a
+quarter of the node's own last hop raised the mean width from 10.89 to 20.48
+and cost 41% of the throughput, so the hop was instrumented instead.
+
+| | stage 0 — `[0,14)` | tail — `[14,28)` |
+| --- | ---: | ---: |
+| `llama_decode` submit | 11.25 ms | 12.57 ms |
+| wait for outputs | 0.01 ms | 9.50 ms |
+| split the cut-set | 4.45 ms | 0.00 ms |
+| sample | 0.00 ms | 21.40 ms |
+| **hop** | **15.76 ms** | **43.58 ms** |
+
+Two rows cost 8.55 ms and sixty-two cost 13.57 ms, so one more sequence costs
+0.04 to 0.08 ms: **batching a lap already works, and width is not the lever.**
+Splitting the same model 7/21 instead of 14/14 puts the rest at about 3 to 5 ms
+per call plus 0.5 to 0.7 ms per layer — an order of magnitude above what these
+cards' bandwidth explains, because the CUDA graph is never armed. Pinning the
+width so it can be armed cut the tail's submit by 44% and moved the aggregate
+from 712.9 to 671.0 tokens per second: the time left the submit and came back
+in the wait. That change was reverted.
+
+What is left is the tail's sampler chain, 0.396 ms per row over a 151,936-entry
+vocabulary, run one row after another on one thread — about a third of the ring,
+and the adapter's problem rather than P4's.
+
+Conditions, the code references and the reproduction line are in
+[`2026-08-20-decode-hop-cost-decomposition.md`](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-08-20-decode-hop-cost-decomposition.md).
+
 ## 2026-08-20: sixty sessions on four GPUs, and the one number that explains them
 
 A 35B model split across four cards on two machines by layer ratio, sixty
