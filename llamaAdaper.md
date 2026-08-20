@@ -43,6 +43,30 @@ OUTER
 - alias descriptor는 별도 payload를 보내지 않고 유효한 alias 범위만 허용한다.
 - adapter Rust 코드에는 backend FFI를 두지 않고 C++ server가 llama.cpp 헤더와 라이브러리를 직접 사용한다.
 
+### 디코드 배치 (실험, `P4_STAGED_DECODE_BATCH`)
+
+hop 하나가 여러 sequence를 실어와도 stage server는 sequence마다 `llama_decode`를
+따로 불렀다. 그 결과 stage의 가중치를 sequence 수만큼 다시 읽는다 — 4 GPU 실측에서
+디코드 lap 35,000회에 그래프 실행 35,500회, hop당 sequence 1개였다.
+
+배치 경로는 lap 하나를 `llama_batch` 하나로 만든다. 동작을 확인했고(폭 2~3,
+`llama_decode` 실패 0, ubatch 분할 0), 그 과정에서 확정한 세 가지 제약을 지킨다.
+
+- cut-set을 소비하는 stage는 **embedding batch**(`llama_batch_init(n, n_embd, 1)`,
+  `embd`를 0으로 채움)를 쓴다. token batch를 쓰면 그래프가 token embedding을
+  찾으러 가서 입력 형상이 어긋난다.
+- **position은 llama.cpp가 정한다.** staged는 lap 인덱스만 알고, 절대 위치는
+  프롬프트 길이를 포함한다. lap 22를 그대로 넣으면 KV가 뒤로 간 것으로 거절된다.
+- **`--kv-unified`가 필요하다.** 통합이 아니면 ubatch는 sequence id가 연속으로
+  증가하는 것만 받아들여, slot이 흩어진 lap이 조각난다.
+
+이 경로는 다룰 수 없는 모양이면 조용히 거절하고 기존 sequence별 경로로 떨어진다.
+아직 기본 비활성인 이유는 켰을 때 일부 sequence가 생성 후반에 멈추기 때문이며,
+그 결함은 llama.cpp가 아니라 chain 회계 쪽에 있다.
+
+배치·오프로딩·텐서 배치는 전부 이 계층에서 끝난다. P4는 plan을 불투명하게
+취급하므로 이런 최적화가 프로토콜을 바꾸지 않는다.
+
 ### 모델 옵션 전달
 
 - llama.cpp의 개별 옵션을 Rust adapter가 열거하지 않는다.

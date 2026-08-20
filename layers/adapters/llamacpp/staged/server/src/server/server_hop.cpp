@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "server.hpp"
 
 #include <algorithm>
@@ -77,13 +78,41 @@ protocol::Frame Session::handle_hop(const protocol::Frame &request) {
     };
     std::vector<protocol::SequencePayload> outputs;
     outputs.reserve(input.sequences.size());
-    for (const auto &sequence : input.sequences) {
-        protocol::SequencePayload output;
-        std::string hop_error;
-        if (!execute_hop(sequence, input.phase, &output, &hop_error)) {
-            return fail_hop("HOP failed: " + hop_error);
+    // A decode lap is one token per sequence, and running the sequences one
+    // at a time reads this stage's weights once for each of them. Ask for the
+    // whole lap in one batch first; the runtime refuses shapes it cannot
+    // reshape, and the loop below is what a refusal falls back to.
+    bool batched = false;
+#ifdef P4_STAGED_WITH_LLAMA
+    // Off unless asked for. The path itself is right — stage 0 batches a
+    // whole lap today — but llama.cpp splits a batch into ubatches of its own
+    // choosing and the staged cut-set is bound once per decode, so a split
+    // leaves the graph expecting a narrower input than the one handed over,
+    // and an output whose token axis is the ubatch rather than the lap. Both
+    // were measured. Neither is recoverable once a partial batch has moved a
+    // sequence's KV forward, so this stays behind a switch until the cut-set
+    // is bound per ubatch in the compatibility series.
+    if (llama_runtime_ != nullptr && input.phase == protocol::HopPhase::Decode &&
+        input.sequences.size() > 1 && std::getenv("P4_STAGED_DECODE_BATCH") != nullptr) {
+        std::string batch_error;
+        std::vector<protocol::SequencePayload> batch_outputs;
+        if (llama_runtime_->execute_decode_batch(input.sequences, &batch_outputs, &batch_error)) {
+            outputs = std::move(batch_outputs);
+            batched = true;
+        } else if (!batch_error.empty()) {
+            return fail_hop("HOP failed: " + batch_error);
         }
-        outputs.push_back(std::move(output));
+    }
+#endif
+    if (!batched) {
+        for (const auto &sequence : input.sequences) {
+            protocol::SequencePayload output;
+            std::string hop_error;
+            if (!execute_hop(sequence, input.phase, &output, &hop_error)) {
+                return fail_hop("HOP failed: " + hop_error);
+            }
+            outputs.push_back(std::move(output));
+        }
     }
     std::string encoded_body;
     try {

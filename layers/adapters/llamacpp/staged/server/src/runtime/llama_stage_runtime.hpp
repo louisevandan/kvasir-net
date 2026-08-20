@@ -97,6 +97,43 @@ public:
         protocol::SequencePayload * output,
             std::string * error = nullptr);
 
+    // Every sequence of one decode lap, in a single llama_batch.
+    //
+    // A decode lap is one token per sequence, so running them one at a time
+    // reads this stage's weights once per sequence and the device does the
+    // work of a batch of one however many are waiting. Measured on two cards:
+    // 6,000 decode laps against 6,208 graph executions, one sequence each,
+    // with the cards mostly idle. Batching them is the same weights read once
+    // for all of them, and llama.cpp keeps the caches apart by `seq_id`.
+    //
+    // Returns false without touching `outputs` when the batch is not one this
+    // path can take — several tokens for one sequence, a missing cut-set, a
+    // shape it cannot slice. The caller then runs the per-sequence path,
+    // which is always correct and never faster.
+    [[nodiscard]] bool execute_decode_batch(
+        const std::vector<protocol::SequencePayload> & inputs,
+        std::vector<protocol::SequencePayload> * outputs,
+        std::string * error = nullptr);
+
+    // Taking that batch apart again. Row `i` is the sequence that sat at
+    // batch index `i`, in both the cut-set and the logits.
+    // Every row's cut-set as one tensor bundle, bound to the graph. A
+    // cut-set is several tensors that may alias one another, so the merge is
+    // per tensor position across the rows.
+    [[nodiscard]] bool bind_merged_cut_set(
+        const std::vector<std::vector<protocol::Descriptor>> & bundles,
+        const std::vector<std::vector<const std::vector<std::uint8_t> *>> & payloads,
+        std::string * error);
+    [[nodiscard]] bool split_decode_outputs(
+        std::size_t rows,
+        std::vector<protocol::SequencePayload> * results,
+        std::string * error);
+    [[nodiscard]] bool sample_decode_row(
+        const protocol::SequencePayload & input,
+        int32_t logits_index,
+        protocol::SequencePayload * result,
+        std::string * error);
+
     // A server HOP may contain several sequence executions. The batch boundary
     // is kept here so a later sequence failure can release only slots created
     // by this HOP while preserving mappings that existed at its start.
