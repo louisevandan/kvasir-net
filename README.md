@@ -67,6 +67,7 @@ and the reverse puts it here.
 | How a message moves through an agent | [docs/architecture.md](docs/architecture.md) |
 | Invariants and what breaks if they go | [docs/constraints.md](docs/constraints.md) |
 | Decisions, and the defects behind them | [docs/internals.md](docs/internals.md) |
+| What crosses the adapter boundary, what was measured, and what is planned | [docs/adapter-boundary.md](docs/adapter-boundary.md) |
 | Running it and driving a fleet | [docs/usage.md](docs/usage.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 | Distributed mock test plan | [docs/distributed-mock-test-plan.md](docs/distributed-mock-test-plan.md) |
