@@ -11,6 +11,7 @@
 
 #include "llama_stage_runtime_hop_shared.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -56,14 +57,12 @@ bool StageRuntime::bind_merged_cut_set(
         }
         if (merged.has_alias) continue;
 
+        const auto element_bytes = merged.strides.empty() ? 0 : merged.strides[0];
+        if (element_bytes == 0) return false;
         merged.dimensions.resize(std::max<std::size_t>(2, merged.dimensions.size()));
         merged.dimensions[1] = token_axis;
-        merged.strides.resize(merged.dimensions.size());
-        if (merged.strides.size() > 1 && merged.strides[1] == 0) {
-            merged.strides[1] = bundles.front()[index].nbytes;
-        }
-        merged.nbytes = bytes;
-        merged.view_offset = 0;
+        make_contiguous(merged, element_bytes);
+        if (merged.nbytes != bytes) return false;
 
         std::vector<std::uint8_t> joined;
         joined.reserve(static_cast<std::size_t>(bytes));
@@ -111,16 +110,6 @@ bool StageRuntime::split_decode_outputs(
         if (descriptor.nbytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
             return fail_hop("staged HOP output is too large", error);
         }
-        // How many rows the tensor holds is known from the lap, not read off
-        // the descriptor: llama.cpp squeezes the token axis of a single-token
-        // cut, so a rank-1 descriptor says one row while carrying several,
-        // and a lap split on that hands the next stage the whole batch as one
-        // sequence's hidden state. Measured: the next stage refused a 6,144
-        // byte input because it had been sent five rows' worth.
-        //
-        // The bytes still have to divide evenly. They may divide into more
-        // rows than the lap has when llama.cpp padded the ubatch, and the
-        // rows in front are still this lap's, in order.
         // How many rows the tensor actually holds. The descriptor says so
         // when it kept its token axis, and llama.cpp may have padded the
         // ubatch past this lap — the rows in front are still this lap's, in
@@ -146,17 +135,22 @@ bool StageRuntime::split_decode_outputs(
             return fail_hop("llama.cpp rejected staged HOP output tensor", error);
         }
         const auto row_bytes = whole.size() / produced;
+        const auto element_bytes = descriptor.strides.empty() ? 0 : descriptor.strides[0];
+        if (element_bytes == 0) return fail_hop("staged HOP output has no element stride", error);
         for (std::size_t i = 0; i < rows; ++i) {
             // One row, shaped the way a single-sequence hop's output is
             // shaped, so the stage that receives it cannot tell this lap was
             // batched.
+            // One row, shaped as the matcher downstream requires: rank is
+            // whatever ggml_n_dims would report for this shape, and the
+            // strides follow from it. A one-row cut is therefore rank 1, and
+            // a rank-2 [n_embd, 1] of the same byte count is refused.
             auto row = descriptor;
-            if (row.dimensions.size() > 1) {
-                row.dimensions[1] = 1;
-                if (row.strides.size() > 1) row.strides[1] = static_cast<std::uint64_t>(row_bytes);
+            if (row.dimensions.size() > 1) row.dimensions[1] = 1;
+            make_contiguous(row, element_bytes);
+            if (row.nbytes != static_cast<std::uint64_t>(row_bytes)) {
+                return fail_hop("batched decode row is not the size the split computed", error);
             }
-            row.nbytes = static_cast<std::uint64_t>(row_bytes);
-            row.view_offset = 0;
             (*results)[i].descriptors.push_back(std::move(row));
             (*results)[i].payloads.emplace_back(std::vector<std::uint8_t>(
                 whole.begin() + static_cast<std::ptrdiff_t>(i * row_bytes),

@@ -124,6 +124,38 @@ inline protocol::Descriptor protocol_descriptor(const llama_linkcpp_tensor_desc 
     return descriptor;
 }
 
+// The rank a staged descriptor must report, which is not a choice.
+//
+// A supplied cut-set is matched to a graph tensor on type, rank, byte count,
+// and the leading `rank` entries of ne and nb — see the input matcher in the
+// compatibility series. The rank it compares against is `ggml_n_dims`, which
+// counts dimensions up to the last one greater than one and is never less
+// than one. So a one-row cut of a 2,048-wide model is rank 1 whatever axis
+// produced it, and a five-row cut is rank 2. Stating it once here keeps the
+// merge and the split from each inventing a rule that happens to fit.
+inline std::size_t ggml_rank(const std::vector<std::uint64_t> & ne) {
+    for (std::size_t axis = ne.size(); axis > 1; --axis) {
+        if (ne[axis - 1] > 1) return axis;
+    }
+    return 1;
+}
+
+// A cut-set row and a merged cut-set are both contiguous, and the matcher
+// compares nb exactly, so the strides are computed from the shape rather than
+// inherited from whichever descriptor this one was derived from.
+inline void make_contiguous(protocol::Descriptor & descriptor, std::uint64_t element_bytes) {
+    const auto rank = ggml_rank(descriptor.dimensions);
+    descriptor.dimensions.resize(rank);
+    descriptor.strides.assign(rank, element_bytes);
+    std::uint64_t stride = element_bytes;
+    for (std::size_t axis = 0; axis < rank; ++axis) {
+        descriptor.strides[axis] = stride;
+        stride *= descriptor.dimensions[axis];
+    }
+    descriptor.nbytes = stride;
+    descriptor.view_offset = 0;
+}
+
 inline bool local_sequence(std::unordered_map<std::string, llama_seq_id> & ids,
                     llama_seq_id & next, const std::string & id,
                     uint32_t sequence_limit, llama_seq_id * result,
