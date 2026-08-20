@@ -13,10 +13,18 @@ pub const VERSION: u8 = 7;
 
 const HEADER_BYTES: usize = 16;
 const MAX_ENVELOPE_BYTES: usize = 256 * 1024;
-// A 5k-token staged prefill can carry a tens-of-megabytes hidden-state
-// cut-set. Keep the outer P4 frame limit aligned with the staged local wire
-// limit; the latter already bounds allocation and validates the payload.
-const MAX_BODY_BYTES: usize = 128 * 1024 * 1024;
+// A staged prefill hop carries one hidden-state cut per token per sequence,
+// and the cut is F32: a 5,000-token prompt against a 2,048-wide model is
+// 39 MiB for one sequence, so a ten-wide prefill window is 391 MiB. The
+// previous 128 MiB stopped that window at three sequences and refused the
+// rest — measured, as 53 of 60 requests failing on `HOP envelope too large`
+// while the deployment itself was healthy.
+//
+// Two gibibytes, because the header's length field is a `u32` and this has to
+// stay under it with room to spare. It bounds allocation rather than sizing a
+// buffer: nothing reserves this, and the staged local wire limit is the same
+// number so neither side is the one that refuses first.
+const MAX_BODY_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
 /// A frame still in its wire form. The envelope is decoded because every hop
 /// needs it; the body is not, because only its destination does.

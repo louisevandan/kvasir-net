@@ -88,11 +88,17 @@ pub struct ProtocolLimits {
 impl Default for ProtocolLimits {
     fn default() -> Self {
         Self {
-            max_frame_bytes: 128 * 1024 * 1024,
+            // One F32 cut per token per sequence: a 5,000-token prompt at
+            // n_embd 2,048 is 39 MiB for one sequence, so a ten-wide prefill
+            // window is 391 MiB. At 128 MiB the window stopped at three and
+            // the stage server refused the rest. Two gibibytes keeps the
+            // `u32` wire length honest and matches the outer P4 frame limit,
+            // so neither side is the one that refuses first.
+            max_frame_bytes: 2 * 1024 * 1024 * 1024,
             // A 5k-token prefill can produce one outbound cut descriptor per
             // token; keep headroom for larger non-MTP context windows.
             max_descriptors: 16_384,
-            max_payload_bytes: 128 * 1024 * 1024,
+            max_payload_bytes: 2 * 1024 * 1024 * 1024,
             max_name_bytes: 4096,
         }
     }

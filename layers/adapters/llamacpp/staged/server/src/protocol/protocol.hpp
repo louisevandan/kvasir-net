@@ -83,12 +83,19 @@ private:
 };
 
 struct ProtocolLimits {
-    std::size_t max_frame_bytes = 128U * 1024U * 1024U;
+    // One F32 cut per token per sequence: a 5,000-token prompt at n_embd
+    // 2,048 is 39 MiB for one sequence, so a ten-wide prefill window is
+    // 391 MiB. At 128 MiB this refused every window past three sequences.
+    // Two gibibytes stays inside the `uint32` wire length and matches the
+    // Rust adapter and the outer P4 frame, so neither side refuses first.
+    // Splitting a wide hop across several frames is the better answer and is
+    // not built yet; this is the limit until it is.
+    std::size_t max_frame_bytes = 2ULL * 1024 * 1024 * 1024;
     // A 5k-token prefill can produce one outbound cut descriptor per token.
     // Keep headroom for larger non-MTP context windows without changing the
     // fixed-width wire fields.
     std::size_t max_descriptors = 16384;
-    std::size_t max_payload_bytes = 128U * 1024U * 1024U;
+    std::size_t max_payload_bytes = 2ULL * 1024 * 1024 * 1024;
     std::size_t max_name_bytes = 4096;
 };
 
