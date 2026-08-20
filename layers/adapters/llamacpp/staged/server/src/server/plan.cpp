@@ -245,6 +245,25 @@ bool parse_llama_options(int argc, char **argv,
             parsed->speculative_requested = true;
         }
     }
+    // Two numbers a stage does not take from its plan, because neither is
+    // tuning: both are what a staged lap is.
+    //
+    // A batch wider than a ubatch buys a stage nothing. A lap crosses the
+    // wire one ubatch at a time, so the wider number describes a submission
+    // no stage ever makes -- and it is not merely useless. The staged
+    // cut-set is bound once per decode, so a batch llama.cpp chooses to
+    // split hands the graph a narrower input than the lap it was given.
+    // Making the two one number takes that away as a possibility rather
+    // than leaving it as a case to be checked.
+    //
+    // A unified cache is what keeps that number meaningful past the
+    // prefill: `llama_kv_cache` takes `split_simple` for a single stream,
+    // so a decode lap that fits the ubatch is one ubatch whichever slots
+    // its sequences happen to hold. Without it the attention cache is one
+    // stream per sequence and the lap is split by sequence instead.
+    parsed->params.n_batch = parsed->params.n_ubatch;
+    parsed->params.kv_unified = true;
+
     if (parsed->model_path.empty()) parsed->model_path = parsed->params.model.path;
     return true;
 }

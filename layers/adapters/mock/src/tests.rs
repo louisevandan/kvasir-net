@@ -20,10 +20,8 @@ impl Recorder {
 fn sequence(id: &str, remaining: u32) -> Sequence {
     Sequence {
         sequence: id.into(),
-        inbound_cut_set: None,
-        position: 0,
+        state: None,
         prompt: Some("p".into()),
-        initial_tokens: None,
         remaining,
         options: "{}".into(),
     }
@@ -45,10 +43,8 @@ fn named_hop(id: &str, phase: Phase) -> Work {
         phase,
         sequences: vec![Sequence {
             sequence: id.into(),
-            inbound_cut_set: None,
-            position: 0,
+            state: None,
             prompt: Some("p".into()),
-            initial_tokens: None,
             remaining: 4,
             options: "{}".into(),
         }],

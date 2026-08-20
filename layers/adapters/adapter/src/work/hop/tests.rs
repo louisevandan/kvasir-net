@@ -3,10 +3,8 @@ use super::*;
 fn sequence(id: &str) -> Sequence {
     Sequence {
         sequence: id.into(),
-        inbound_cut_set: None,
-        position: 0,
+        state: None,
         prompt: Some("hello".into()),
-        initial_tokens: None,
         remaining: 8,
         options: "{}".into(),
     }
@@ -40,9 +38,9 @@ fn an_empty_window_is_recognised_before_a_backend_sees_it() {
 fn a_later_stage_continues_from_state_rather_than_from_text() {
     let mut continuing = sequence("a");
     continuing.prompt = None;
-    continuing.position = 512;
+    continuing.state = Some(vec![0, 2, 0, 0]);
     assert!(continuing.prompt.is_none());
-    assert_eq!(continuing.position, 512);
+    assert_eq!(continuing.state, Some(vec![0, 2, 0, 0]));
 }
 
 #[test]
@@ -50,25 +48,11 @@ fn a_sequence_can_carry_an_opaque_inbound_cut_set() {
     let payload = vec![0, 7, 9, 255];
     let sequence = Sequence {
         sequence: "stage-1".into(),
-        inbound_cut_set: Some(payload.clone()),
-        position: 12,
+        state: Some(payload.clone()),
         prompt: None,
-        initial_tokens: None,
         remaining: 1,
         options: "{}".into(),
     };
 
-    assert_eq!(sequence.inbound_cut_set, Some(payload));
-}
-
-#[test]
-fn a_cut_set_continuation_keeps_the_original_sequence_context() {
-    let cut_set = vec![0, 7, 9, 255];
-    let original = b"execute-body";
-    let encoded = encode_continuation(&cut_set, original);
-    assert_eq!(
-        decode_continuation(&encoded),
-        Some((cut_set, original.to_vec()))
-    );
-    assert!(decode_continuation(b"P4CUT01\0\0").is_none());
+    assert_eq!(sequence.state, Some(payload));
 }

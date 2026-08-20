@@ -26,6 +26,16 @@ pub trait Payload: Send + Sync {
         carrier.body.clone()
     }
 
+    /// How many tokens P4 has already streamed for this request.
+    ///
+    /// The bound on a request is P4's contract with whoever asked, so P4
+    /// counts its own output rather than reading a backend's idea of how far
+    /// along it is. A vocabulary that does not carry the tally reports none
+    /// and gets the old unbounded behaviour.
+    fn emitted(&self, _carrier: &Frame) -> u32 {
+        0
+    }
+
     /// Reads a frame as a load or an unload, if it is one.
     ///
     /// Lifecycle never batches: materialising a model is one instruction about

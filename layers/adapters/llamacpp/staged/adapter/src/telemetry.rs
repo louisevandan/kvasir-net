@@ -50,7 +50,7 @@ impl RuntimeEvidence {
                 .sequences
                 .iter()
                 .find(|candidate| candidate.sequence == sequence)
-                .map(|candidate| candidate.position)
+                .map(|_| 0u32)
                 .unwrap_or_default();
             let total = state
                 .totals
@@ -135,10 +135,8 @@ mod tests {
             phase,
             sequences: vec![Sequence {
                 sequence: "r1-q0".into(),
-                inbound_cut_set: None,
-                position: 0,
+                state: None,
                 prompt: Some("prompt".into()),
-                initial_tokens: None,
                 remaining: 2,
                 options: "{}".into(),
             }],

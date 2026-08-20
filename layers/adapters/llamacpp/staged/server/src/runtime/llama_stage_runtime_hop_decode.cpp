@@ -79,7 +79,13 @@ bool StageRuntime::execute_decode_batch(
     // model does not, and its ubatch keeps the order it was given. A stage
     // that emits a cut-set may batch when the model is neither.
     if (!loaded()) return fail_hop("stage runtime is not loaded", error);
-    if (!tail_stage_ &&
+    // Kept behind a switch while it is re-measured. The refusal was derived
+    // from runs whose split was sequential; `llama_memory_hybrid::init_batch`
+    // passes `sequential = !unified`, so a unified cache takes that filter
+    // away, and `split_equal` builds its sequence sets in submission order.
+    // Whether the cut-set then comes back in that order is a measurement,
+    // not a deduction.
+    if (!tail_stage_ && std::getenv("P4_STAGED_BATCH_HYBRID") == nullptr &&
         (llama_model_is_recurrent(model_) || llama_model_is_hybrid(model_))) {
         return false;
     }
@@ -91,12 +97,11 @@ bool StageRuntime::execute_decode_batch(
     // measured, and neither is recoverable once a partial batch has moved a
     // sequence's cache forward.
     //
-    // It cannot happen when the lap fits one ubatch and the cache is
-    // unified: `llama_kv_cache` picks `split_simple` for a single stream,
-    // and `split_simple` takes consecutive tokens until `n_ubatch` and
-    // stops. Both halves are this stage's own configuration, so the lap
-    // asks rather than hopes, and a stage configured any other way keeps
-    // the per-sequence path.
+    // A stage's plan is normalised so that neither can happen: `n_batch`
+    // equals `n_ubatch` and the cache is unified. These two lines are the
+    // reading of that, not a second opinion about it -- a stage that
+    // somehow reaches here configured otherwise keeps the per-sequence
+    // path rather than binding a cut-set it cannot honour.
     if (!params_.kv_unified) return false;
     if (inputs.size() > static_cast<std::size_t>(llama_n_ubatch(ctx_))) return false;
 

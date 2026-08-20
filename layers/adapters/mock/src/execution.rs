@@ -67,8 +67,8 @@ impl Mock {
                 .iter()
                 .map(|sequence| SequenceObservation {
                     sequence: sequence.sequence.clone(),
-                    inbound_cut_set: sequence.inbound_cut_set.clone(),
-                    position: sequence.position,
+                    inbound_cut_set: crate::decode_state(sequence.state.as_ref()).1,
+                    position: crate::decode_state(sequence.state.as_ref()).0,
                     prompt: sequence.prompt.clone(),
                     remaining: sequence.remaining,
                     options: sequence.options.clone(),
@@ -226,19 +226,20 @@ impl Mock {
             .or_insert_with(|| Progress {
                 turn: 0,
                 lifetime: 0,
-                position: sequence.position,
+                position: crate::decode_state(sequence.state.as_ref()).0,
             });
         progress.lifetime = progress.lifetime.saturating_add(1);
         // Token position is global to the request, not local to a pipeline
         // stage. Only the terminal stage owns logits and advances it; middle
         // stages must carry the position unchanged or an N-stage ring turns
         // one decode into N position increments and skips visible tokens.
+        let carried = crate::decode_state(sequence.state.as_ref()).0;
         let requested_position = match phase {
             Phase::Prefill | Phase::Decode => {
                 if self.terminal {
-                    sequence.position.saturating_add(1)
+                    carried.saturating_add(1)
                 } else {
-                    sequence.position
+                    carried
                 }
             }
         };
@@ -261,11 +262,12 @@ impl Mock {
             // tokens per lap.
             return Outcome {
                 sequence: sequence.sequence.clone(),
-                outbound_cut_set: (self.distribution == Distribution::Staged)
-                    .then(|| mock_cut_set(&sequence.sequence, lifetime)),
+                forward: Some(crate::encode_state(
+                    position,
+                    (self.distribution == Distribution::Staged)
+                        .then(|| mock_cut_set(&sequence.sequence, lifetime)),
+                )),
                 text: String::new(),
-                token: None,
-                position,
                 stop: None,
             };
         }
@@ -284,15 +286,16 @@ impl Mock {
         };
         Outcome {
             sequence: sequence.sequence.clone(),
-            outbound_cut_set: (self.distribution == Distribution::Staged)
-                .then(|| mock_cut_set(&sequence.sequence, progress.lifetime)),
+            forward: Some(crate::encode_state(
+                output_position,
+                (self.distribution == Distribution::Staged)
+                    .then(|| mock_cut_set(&sequence.sequence, progress.lifetime)),
+            )),
             text: if finished {
                 String::new()
             } else {
                 format!("{}#{output_position} ", sequence.sequence)
             },
-            token: None,
-            position: output_position,
             stop: finished.then(|| "stop".to_string()),
         }
     }

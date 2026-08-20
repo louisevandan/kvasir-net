@@ -52,10 +52,10 @@ fn every_node_message_survives_a_round_trip() {
             options: r#"{"temperature":0.7}"#.into(),
         },
         ToNode::Continue {
-            position: 12,
             remaining: 500,
-            token: Some(12345),
+            emitted: 12,
             options: r#"{"temperature":0}"#.into(),
+            state: vec![0, 1, 2, 250, 255],
         },
         ToNode::Persist {
             sequence: "s0".into(),

@@ -152,7 +152,7 @@ default rather than behind an environment variable.
 ```powershell
 apps\p4\tools\scripts\e2e\run-local-real-two-stage.ps1 `
   -Model 'S:\models\Qwen2.5-1.5B-Instruct-Q8_0.gguf' `
-  -PromptFile 'apps\p4\tools\scripts\e2e\fixtures\prompt-8-tokens.txt' `
+  -PromptFile 'apps\p4\tools\scripts\e2e\fixtures\prompt-tiny.txt' `
   -Requests 64 -Tokens 512 -PromptTokens 32 -Parallel 64 `
   -LayerBoundary 14 -LayerCount 28 -BatchSize 2048 -UBatchSize 512 `
   -MaxSecondaryVramMiB 13000 -ArriveMilliseconds 0 -VaryPrompts

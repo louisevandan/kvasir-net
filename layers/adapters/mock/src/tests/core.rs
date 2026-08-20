@@ -289,10 +289,8 @@ fn a_middle_stage_preserves_the_global_decode_position() {
             phase: Phase::Decode,
             sequences: vec![Sequence {
                 sequence: "s0".into(),
-                inbound_cut_set: None,
-                position: 6,
+                state: Some(crate::encode_state(6, None)),
                 prompt: None,
-                initial_tokens: None,
                 remaining: 3,
                 options: "{}".into(),
             }],
@@ -302,7 +300,7 @@ fn a_middle_stage_preserves_the_global_decode_position() {
     let Some(Event::HopComplete { outcomes, .. }) = recorder.events().pop() else {
         panic!("the middle hop completed");
     };
-    assert_eq!(outcomes[0].position, 6);
+    assert_eq!(crate::decode_state(outcomes[0].forward.as_ref()).0, 6);
     assert!(outcomes[0].text.is_empty());
 }
 

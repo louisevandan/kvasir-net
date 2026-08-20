@@ -250,12 +250,14 @@ impl Served {
             return None;
         };
         match session.token(plan.patience) {
+            // This adapter owns its decode loop behind llama-server's HTTP
+            // surface, so the only thing it has to carry between laps is how
+            // far the stream has come. Four bytes, in its own format, is the
+            // whole of its continuation state.
             Next::Token { text, position } => Some(Outcome {
                 sequence: sequence.sequence.clone(),
-                outbound_cut_set: None,
+                forward: Some(position.to_le_bytes().to_vec()),
                 text,
-                token: None,
-                position,
                 stop: None,
             }),
             Next::Done(reason) => {
@@ -263,10 +265,8 @@ impl Served {
                 self.finished.fetch_add(1, Ordering::Relaxed);
                 Some(Outcome {
                     sequence: sequence.sequence.clone(),
-                    outbound_cut_set: None,
+                    forward: None,
                     text: String::new(),
-                    token: None,
-                    position: sequence.position,
                     stop: Some(reason),
                 })
             }

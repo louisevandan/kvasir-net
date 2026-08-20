@@ -169,22 +169,16 @@ pub fn encode_to_node(message: &ToNode) -> Vec<u8> {
             text(&mut out, options);
         }
         ToNode::Continue {
-            position,
             remaining,
-            token,
+            emitted,
             options,
+            state,
         } => {
             out.push(CONTINUE);
-            number(&mut out, *position);
             number(&mut out, *remaining);
+            number(&mut out, *emitted);
             text(&mut out, options);
-            match token {
-                Some(value) => {
-                    out.push(1);
-                    number(&mut out, *value);
-                }
-                None => out.push(0),
-            }
+            blob(&mut out, state);
         }
         ToNode::Persist { sequence } => {
             out.push(PERSIST);
@@ -248,18 +242,10 @@ pub fn decode_to_node(bytes: &[u8]) -> Decoded<ToNode> {
             options: cursor.text()?,
         },
         CONTINUE => ToNode::Continue {
-            position: cursor.number()?,
             remaining: cursor.number()?,
+            emitted: cursor.number()?,
             options: cursor.text()?,
-            // The token is an optional tail field so old Continue bodies
-            // remain readable by the new service.
-            token: if cursor.remaining() == 0 {
-                None
-            } else if cursor.byte()? == 1 {
-                Some(cursor.number()?)
-            } else {
-                None
-            },
+            state: cursor.blob()?,
         },
         PERSIST => ToNode::Persist {
             sequence: cursor.text()?,
@@ -520,6 +506,14 @@ pub fn decode_reply(bytes: &[u8]) -> Decoded<Reply> {
 fn text(out: &mut Vec<u8>, value: &str) {
     number(out, value.len() as u32);
     out.extend_from_slice(value.as_bytes());
+}
+
+/// Opaque adapter state. Unlike `text` this has no length ceiling of its own:
+/// what a backend needs to carry a session is the backend's business, and the
+/// frame's own limit is the only bound that means anything here.
+fn blob(out: &mut Vec<u8>, value: &[u8]) {
+    number(out, value.len() as u32);
+    out.extend_from_slice(value);
 }
 
 fn wide(out: &mut Vec<u8>, value: u64) {
@@ -822,6 +816,11 @@ impl<'a> Cursor<'a> {
         }
         String::from_utf8(self.take(length)?.to_vec())
             .map_err(|_| Malformed("text must be UTF-8".into()))
+    }
+
+    fn blob(&mut self) -> Decoded<Vec<u8>> {
+        let length = self.number()? as usize;
+        Ok(self.take(length)?.to_vec())
     }
 
     fn take(&mut self, length: usize) -> Decoded<&'a [u8]> {

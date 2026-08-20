@@ -197,7 +197,11 @@ async fn seed(fleet: &Fleet) -> Vec<u32> {
     fleet
         .mocks
         .iter()
-        .map(|mock| mock.hop_observations().last().unwrap().outcomes[0].position)
+        .map(|mock| {
+            let observations = mock.hop_observations();
+            let outcome = &observations.last().unwrap().outcomes[0];
+            p4_mock::decode_observed_position(outcome.forward.as_ref())
+        })
         .collect()
 }
 

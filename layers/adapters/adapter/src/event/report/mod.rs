@@ -104,16 +104,15 @@ pub struct Allocation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Outcome {
     pub sequence: SequenceId,
-    /// Opaque tensor cut-set leaving this sequence's staged hop.
-    /// `None` means the ordinary local outcome.
-    pub outbound_cut_set: Option<Vec<u8>>,
+    /// What this session needs to be carried one step further, as this
+    /// adapter wrote it. It travels to the next node, or back to this one on
+    /// the next lap, and is handed back as `Sequence::state` untouched.
+    ///
+    /// `None` when the session ends here and there is nothing to carry.
+    pub forward: Option<Vec<u8>>,
     /// Empty on a stage that is not where generation lands. Logits exist only
     /// at the end of a chain, so only the node holding that end produces text.
     pub text: String,
-    /// Token sampled by the tail stage for the next decode lap. Internal and
-    /// served adapters leave this absent because they own their decode loop.
-    pub token: Option<i32>,
-    pub position: u32,
     /// Set when this sequence is finished and should not be scheduled again.
     pub stop: Option<String>,
 }

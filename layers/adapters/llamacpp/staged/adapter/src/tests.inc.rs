@@ -133,13 +133,11 @@ mod tests {
         ));
     }
 
-    fn sequence(id: &str, inbound_cut_set: Option<Vec<u8>>) -> p4_adapter::Sequence {
+    fn sequence(id: &str, state: Option<Vec<u8>>) -> p4_adapter::Sequence {
         p4_adapter::Sequence {
             sequence: id.into(),
-            inbound_cut_set,
-            position: 17,
+            state,
             prompt: None,
-            initial_tokens: None,
             remaining: 2,
             options: "{}".into(),
         }
@@ -155,8 +153,8 @@ mod tests {
             n_tokens: None,
             prompt: None,
             initial_tokens: None,
-            position: None,
             options: String::new(),
+            position: Some(0),
             outcome: None,
         }
         .encode(ProtocolLimits::default())
@@ -212,8 +210,8 @@ mod tests {
             n_tokens: None,
             prompt: None,
             initial_tokens: None,
-            position: None,
             options: String::new(),
+            position: Some(0),
             outcome: None,
         }
         .encode(ProtocolLimits::default())
@@ -236,25 +234,24 @@ mod tests {
                 position: 1,
                 stop: None,
             }),
-            p4_adapter::Phase::Decode,
         );
         assert_eq!(outcome.sequence, "tail");
-        assert_eq!(outcome.outbound_cut_set, Some(vec![1, 2, 3]));
+        // The token and the position it reached are the adapter's, and they
+        // travel inside the state rather than beside it.
+        assert_eq!(outcome.forward, Some(vec![1, 2, 3]));
         assert_eq!(outcome.text, "hello");
-        assert_eq!(outcome.position, 1);
         assert_eq!(outcome.stop, None);
     }
 
     #[test]
     fn intermediate_decode_does_not_advance_logical_position() {
         let sequence = sequence("middle", None);
-        let outcome = outcome_from_result(
-            &sequence,
-            Some(vec![1]),
-            None,
-            p4_adapter::Phase::Decode,
-        );
-        assert_eq!(outcome.position, sequence.position);
+        let outcome = outcome_from_result(&sequence, Some(vec![1]), None);
+        // A stage that does not sample says nothing to the requester and
+        // hands its state on. There is no position here to advance or hold:
+        // the position moved inside the state, which is what stops a
+        // four-stage chain spending four of them on one token.
+        assert_eq!(outcome.forward, Some(vec![1]));
         assert!(outcome.text.is_empty());
         assert_eq!(outcome.stop, None);
     }

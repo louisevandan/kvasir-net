@@ -106,8 +106,8 @@ fn run_real_multi_stage_kv(default_boundaries: &[i32], label: &str) {
         payloads: Vec::new(),
         n_tokens: Some(1),
         prompt: None,
-        options: String::new(),
         initial_tokens: None,
+        options: String::new(),
         position: Some(prefill_cuts[0].n_tokens.unwrap_or(0)),
         outcome: None,
     };

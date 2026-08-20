@@ -244,6 +244,14 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         PRIVATE p4_staged_server_core p4_staged_llama_runtime)
     add_test(NAME p4_staged_capability_test COMMAND p4_staged_capability_test)
 
+    add_executable(p4_staged_plan_invariants_test
+        src/server/plan_invariants_test.cpp
+    )
+    target_link_libraries(p4_staged_plan_invariants_test
+        PRIVATE p4_staged_server_core p4_staged_llama_runtime)
+    add_test(NAME p4_staged_plan_invariants_test
+             COMMAND p4_staged_plan_invariants_test)
+
     add_executable(p4_staged_mtp_ownership_test
         src/runtime/llama_stage_mtp_ownership_test.cpp
     )

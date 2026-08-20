@@ -21,21 +21,12 @@ pub struct Bodies;
 
 impl Payload for Bodies {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
-        let (inbound_cut_set, body) = if p4_adapter::is_continuation(&frame.body) {
-            let (cut_set, original) = p4_adapter::decode_continuation(&frame.body)?;
-            (Some(cut_set), original)
-        } else {
-            (None, frame.body.clone())
-        };
-        let text = String::from_utf8_lossy(&body).into_owned();
+        let text = String::from_utf8_lossy(&frame.body).into_owned();
         let (prompt, remaining) = text.rsplit_once('|')?;
-        let first_stage = inbound_cut_set.is_none();
         Some(Sequence {
             sequence: frame.envelope.route.clone(),
-            inbound_cut_set,
-            position: 0,
-            prompt: first_stage.then(|| prompt.to_owned()),
-            initial_tokens: None,
+            state: None,
+            prompt: Some(prompt.to_owned()),
             remaining: remaining.parse().ok()?,
             options: "{}".into(),
         })

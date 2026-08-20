@@ -36,36 +36,13 @@ pub enum Next {
 /// `carrier` is the frame this hop ran for; its chain says where in the order
 /// this node sat, and its reply address says who asked.
 pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
-    // A P4CUT01 marker is a committed wire choice. If it is truncated or its
-    // inner body is invalid, never treat the opaque carrier as an ordinary
-    // Execute body and forward it to another stage. The service boundary
-    // catches this too, but rejecting here prevents a malformed wrapper from
-    // being copied or replaced during an intermediate HOP/LAP.
-    if p4_adapter::is_continuation(&carrier.body)
-        && p4_adapter::decode_continuation(&carrier.body).is_none()
-    {
-        let Some(mut envelope) = carrier.envelope.to_reply() else {
-            return Next::Unheard;
-        };
-        envelope.event_seq = carrier.envelope.event_seq.saturating_add(1);
-        return Next::Finish(Frame {
-            envelope,
-            body: report.failure("malformed P4CUT01 continuation"),
-        });
-    }
     if let Some(onward) = carrier.envelope.to_next_hop() {
         return Next::Hop(Frame {
             envelope: onward,
-            body: outcome.outbound_cut_set.as_deref().map_or_else(
-                || report.continue_body(carrier, outcome),
-                |cut_set| {
-                    let original = report.continue_body(carrier, outcome);
-                    let original = p4_adapter::decode_continuation(&original)
-                        .map(|(_, body)| body)
-                        .unwrap_or(original);
-                    p4_adapter::encode_continuation(cut_set, &original)
-                },
-            ),
+            // Whatever the adapter produced is already inside the body the
+            // payload seam builds. There is nothing to wrap: the state is a
+            // field of the continuation rather than an envelope around it.
+            body: report.continue_body(carrier, outcome),
         });
     }
     // The last node is where generation lands, because logits exist only at
@@ -80,7 +57,9 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
             envelope,
             body: report.finished(
                 outcome.stop.as_deref().unwrap_or_default(),
-                outcome.position,
+                report
+                    .emitted(carrier)
+                    .saturating_add(u32::from(!outcome.text.is_empty())),
             ),
         });
     }
@@ -91,19 +70,24 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
     if let Some(requested) = report.sequence(carrier).map(|sequence| sequence.remaining)
         && requested > 0
     {
-        let final_token_body = (outcome.position == requested)
+        // P4's own tally, and what this hop adds to it. The backend is not
+        // asked how far along it is: the bound belongs to the request, so the
+        // count that enforces it has to be one P4 can make on its own.
+        let counted = report
+            .emitted(carrier)
+            .saturating_add(u32::from(!outcome.text.is_empty()));
+        let final_token_body = (counted == requested)
             .then(|| {
                 report.finished_with_token(
                     "length",
                     requested,
-                    outcome.position.saturating_sub(1),
+                    counted.saturating_sub(1),
                     &outcome.text,
                 )
             })
             .flatten();
-        let at_length = outcome.position > requested
-            || (outcome.position == requested
-                && (outcome.text.is_empty() || final_token_body.is_some()));
+        let at_length = counted > requested
+            || (counted == requested && (outcome.text.is_empty() || final_token_body.is_some()));
         if !at_length {
             // Continue below and start the next decode lap.
         } else {
@@ -114,7 +98,7 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
             }
             return Next::Finish(Frame {
                 envelope,
-                body: report.finished("length", requested.min(outcome.position)),
+                body: report.finished("length", requested.min(counted)),
             });
         }
     }
@@ -147,7 +131,9 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
                     envelope.event_seq = carrier.envelope.event_seq.saturating_add(1);
                     envelope
                 },
-                body: report.token(&outcome.text, outcome.position.saturating_sub(1)),
+                // The index of this token in what P4 has streamed, which is
+                // the only numbering the requester ever sees.
+                body: report.token(&outcome.text, report.emitted(carrier)),
             },
             lap: Box::new(lap),
         }

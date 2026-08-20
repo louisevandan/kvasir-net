@@ -46,7 +46,7 @@ fn observations_preserve_phase_sequence_order_and_output_tail() {
             .iter()
             .map(|outcome| (
                 outcome.sequence.as_str(),
-                outcome.position,
+                crate::decode_state(outcome.forward.as_ref()).0,
                 outcome.is_finished()
             ))
             .collect::<Vec<_>>(),
@@ -60,11 +60,11 @@ fn observations_preserve_phase_sequence_order_and_output_tail() {
             phase: Phase::Decode,
             sequences: vec![
                 Sequence {
-                    position: 1,
+                    state: Some(crate::encode_state(1, None)),
                     ..sequence("s0", 2)
                 },
                 Sequence {
-                    position: 1,
+                    state: Some(crate::encode_state(1, None)),
                     ..sequence("s1", 1)
                 },
             ],
@@ -85,7 +85,7 @@ fn staged_observations_carry_opaque_cut_sets_in_and_out() {
     let inbound = b"real-stage-cut-set".to_vec();
     let mut request = sequence("s0", 2);
     request.prompt = None;
-    request.inbound_cut_set = Some(inbound.clone());
+    request.state = Some(crate::encode_state(0, Some(inbound.clone())));
     mock.start(
         Work::Hop(Hop {
             id: 12,
@@ -98,8 +98,13 @@ fn staged_observations_carry_opaque_cut_sets_in_and_out() {
 
     let observation = &mock.hop_observations()[0];
     assert_eq!(observation.sequences[0].inbound_cut_set, Some(inbound));
+    // The mock reads its own state and finds its own cut-set in it.
     assert_eq!(observation.outcomes.len(), 1);
-    assert!(observation.outcomes[0].outbound_cut_set.is_some());
+    assert!(
+        crate::decode_state(observation.outcomes[0].forward.as_ref())
+            .1
+            .is_some()
+    );
     assert!(observation.outcomes[0].text.is_empty());
     assert!(!observation.outcomes[0].is_finished());
 }
@@ -202,10 +207,8 @@ fn a_decode_lap_uses_the_carried_position_and_does_not_need_the_tail_cut_set() {
             phase: Phase::Decode,
             sequences: vec![Sequence {
                 sequence: "conversation".into(),
-                inbound_cut_set: None,
-                position: 6,
+                state: Some(crate::encode_state(6, None)),
                 prompt: None,
-                initial_tokens: None,
                 remaining: 8,
                 options: r#"{"temperature":0.1}"#.into(),
             }],
@@ -215,7 +218,7 @@ fn a_decode_lap_uses_the_carried_position_and_does_not_need_the_tail_cut_set() {
     let Some(Event::HopComplete { outcomes, .. }) = recorder.events().pop() else {
         panic!("decode lap completed");
     };
-    assert_eq!(outcomes[0].position, 7);
+    assert_eq!(crate::decode_state(outcomes[0].forward.as_ref()).0, 7);
     assert_eq!(outcomes[0].text, "conversation#7 ");
     assert!(!outcomes[0].is_finished());
     assert_eq!(mock.hop_observations()[0].sequences[0].position, 6);

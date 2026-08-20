@@ -1,0 +1,1 @@
+Explain in one sentence why staged inference sends hidden states between layer ranges.

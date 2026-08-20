@@ -168,10 +168,8 @@ fn load(adapter: &Served, seen: &Seen, port: u16) {
 fn sequence(remaining: u32, prompt: Option<&str>) -> Sequence {
     Sequence {
         sequence: "req-1".into(),
-        inbound_cut_set: None,
-        position: 0,
+        state: None,
         prompt: prompt.map(str::to_owned),
-        initial_tokens: None,
         remaining,
         options: r#"{"temperature":0}"#.into(),
     }
@@ -250,7 +248,12 @@ fn a_prefill_then_laps_produce_one_token_each_and_then_stop() {
             Event::HopComplete { outcomes, .. } => outcomes
                 .iter()
                 .find(|outcome| !outcome.text.is_empty())
-                .map(|outcome| outcome.position),
+                .map(|outcome| {
+                    // The served adapter writes its position into its own
+                    // state, four little-endian bytes of it.
+                    let state = outcome.forward.clone().unwrap_or_default();
+                    u32::from_le_bytes(state[..4].try_into().expect("four bytes"))
+                }),
             _ => None,
         })
         .collect();

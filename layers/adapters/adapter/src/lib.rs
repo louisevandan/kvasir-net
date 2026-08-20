@@ -17,7 +17,7 @@ pub mod work;
 pub use event::{Allocation, Event, EventSink, Outcome};
 pub use work::{
     Cache, CacheAction, CacheReceiptState, DeploymentId, Distribution, Hop, Load, Phase, Sequence,
-    SequenceId, Unload, Work, decode_continuation, encode_continuation, is_continuation,
+    SequenceId, Unload, Work,
 };
 
 /// What a node drives.

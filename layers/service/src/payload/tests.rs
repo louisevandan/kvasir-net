@@ -64,35 +64,40 @@ fn sequence_identity_does_not_follow_a_reused_transport_route() {
 }
 
 #[test]
-fn a_staged_cut_set_keeps_sampling_context_for_the_next_node() {
-    let original = encode_to_node(&ToNode::Execute {
-        prompt: "안녕".into(),
-        max_tokens: 64,
+fn a_continuation_hands_the_adapter_its_own_state_back() {
+    let body = encode_to_node(&ToNode::Continue {
+        remaining: 64,
+        emitted: 3,
         options: r#"{"temperature":0.2}"#.into(),
+        state: vec![1, 2, 3],
     });
-    let body = p4_adapter::encode_continuation(&[1, 2, 3], &original);
     let sequence = Bodies::default()
         .sequence(&frame(body))
         .expect("continuation is executable");
-    assert_eq!(sequence.inbound_cut_set, Some(vec![1, 2, 3]));
+    // Byte for byte, and no prompt: a later stage continues from what it
+    // wrote, not from text it would have to tokenize again.
+    assert_eq!(sequence.state, Some(vec![1, 2, 3]));
     assert!(sequence.prompt.is_none());
     assert_eq!(sequence.remaining, 64);
     assert_eq!(sequence.options, r#"{"temperature":0.2}"#);
 }
 
 #[test]
-fn a_continue_token_becomes_stage_zero_initial_input() {
+fn a_continuation_without_state_is_still_executable() {
     let body = encode_to_node(&ToNode::Continue {
-        position: 12,
         remaining: 64,
-        token: Some(12345),
+        emitted: 12,
         options: "{}".into(),
+        state: Vec::new(),
     });
     let sequence = Bodies::default()
         .sequence(&frame(body))
         .expect("continuation is executable");
-    assert_eq!(sequence.position, 12);
-    assert_eq!(sequence.initial_tokens, Some(vec![12345]));
+    // An adapter that needs nothing to continue says so by writing nothing,
+    // and P4 has no opinion about the difference.
+    assert_eq!(sequence.state, Some(Vec::new()));
+    assert!(sequence.prompt.is_none());
+    assert_eq!(sequence.remaining, 64);
 }
 
 #[test]

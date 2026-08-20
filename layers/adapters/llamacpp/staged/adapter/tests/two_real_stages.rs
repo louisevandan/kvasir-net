@@ -67,8 +67,8 @@ fn two_real_stages_forward_prefill_cut_set() {
                 payloads: Vec::new(),
                 n_tokens: None,
                 prompt: Some(format!("{PROMPT} sequence {index}")),
-                options: String::new(),
                 initial_tokens: None,
+                options: String::new(),
                 position: Some(0),
                 outcome: None,
             })

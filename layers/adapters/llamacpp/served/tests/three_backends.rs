@@ -175,10 +175,8 @@ fn one_hop(adapter: &Served, seen: &Seen) {
             phase: Phase::Prefill,
             sequences: vec![Sequence {
                 sequence: "s0".into(),
-                inbound_cut_set: None,
-                position: 0,
+                state: None,
                 prompt: Some("hello".into()),
-                initial_tokens: None,
                 remaining: 4,
                 options: "{}".into(),
             }],

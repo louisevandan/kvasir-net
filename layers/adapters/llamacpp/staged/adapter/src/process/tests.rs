@@ -232,8 +232,8 @@ fn concrete_process_control_round_trips_multiple_hop_results() {
                 n_tokens: None,
                 prompt: None,
                 initial_tokens: None,
-                position: None,
                 options: String::new(),
+                position: Some(0),
                 outcome: None,
             })
             .collect(),

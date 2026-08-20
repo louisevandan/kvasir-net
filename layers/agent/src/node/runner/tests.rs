@@ -29,14 +29,21 @@ impl Adapter for Recording {
         let mut outcomes: Vec<_> = hop
             .sequences
             .iter()
-            .map(|sequence| Outcome {
-                sequence: sequence.sequence.clone(),
-                outbound_cut_set: None,
-                text: "t".into(),
-                token: None,
-                position: sequence.position + 1,
-                stop: (sequence.position + 1 >= self.finish_after as u32)
-                    .then(|| "stop".to_string()),
+            .map(|sequence| {
+                // This stand-in adapter keeps its own count the way a real one
+                // does: in the state P4 hands back to it.
+                let lap = sequence
+                    .state
+                    .as_deref()
+                    .and_then(|state| state.first().copied())
+                    .unwrap_or(0);
+                Outcome {
+                    sequence: sequence.sequence.clone(),
+                    forward: Some(vec![lap.saturating_add(1)]),
+                    text: "t".into(),
+                    stop: (u32::from(lap) + 1 >= self.finish_after as u32)
+                        .then(|| "stop".to_string()),
+                }
             })
             .collect();
         if self.partial {
@@ -62,10 +69,8 @@ impl Payload for Bodies {
     fn sequence(&self, frame: &Frame) -> Option<p4_adapter::Sequence> {
         Some(p4_adapter::Sequence {
             sequence: frame.envelope.route.clone(),
-            inbound_cut_set: None,
-            position: 0,
+            state: None,
             prompt: Some(String::from_utf8_lossy(&frame.body).into_owned()),
-            initial_tokens: None,
             remaining: 4,
             options: "{}".into(),
         })
@@ -392,10 +397,8 @@ impl Adapter for WrongHopDeployment {
                 .iter()
                 .map(|sequence| Outcome {
                     sequence: sequence.sequence.clone(),
-                    outbound_cut_set: None,
+                    forward: None,
                     text: String::new(),
-                    token: None,
-                    position: 1,
                     stop: Some("wrong deployment".into()),
                 })
                 .collect(),
@@ -642,10 +645,8 @@ impl Adapter for LateTimedOutHop {
             expected: vec![sequence.clone()],
             outcomes: vec![Outcome {
                 sequence,
-                outbound_cut_set: None,
+                forward: None,
                 text: String::new(),
-                token: None,
-                position: 1,
                 stop: Some("done".into()),
             }],
         });
@@ -720,10 +721,8 @@ impl Adapter for LifecycleRecording {
                     expected: vec![sequence.clone()],
                     outcomes: vec![Outcome {
                         sequence,
-                        outbound_cut_set: None,
+                        forward: None,
                         text: String::new(),
-                        token: None,
-                        position: 1,
                         stop: Some("done".into()),
                     }],
                 });
@@ -748,10 +747,8 @@ impl Payload for LifecycleBodies {
         }
         Some(p4_adapter::Sequence {
             sequence: frame.envelope.route.clone(),
-            inbound_cut_set: None,
-            position: 0,
+            state: None,
             prompt: Some(String::new()),
-            initial_tokens: None,
             remaining: 1,
             options: "{}".into(),
         })

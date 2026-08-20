@@ -29,10 +29,8 @@ impl Adapter for Instant {
                 .iter()
                 .map(|sequence| Outcome {
                     sequence: sequence.sequence.clone(),
-                    outbound_cut_set: None,
+                    forward: None,
                     text: "t".into(),
-                    token: None,
-                    position: sequence.position + 1,
                     stop: Some("stop".into()),
                 })
                 .collect(),
@@ -47,10 +45,8 @@ impl Payload for Bodies {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
         Some(Sequence {
             sequence: frame.envelope.route.clone(),
-            inbound_cut_set: None,
-            position: 0,
+            state: None,
             prompt: Some(String::from_utf8_lossy(&frame.body).into_owned()),
-            initial_tokens: None,
             remaining: 1,
             options: "{}".into(),
         })

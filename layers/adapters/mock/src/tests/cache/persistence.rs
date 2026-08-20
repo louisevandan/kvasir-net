@@ -34,7 +34,7 @@ fn a_file_backed_restore_preserves_the_next_decode_position_after_reload() {
             deployment: "d".into(),
             phase: Phase::Decode,
             sequences: vec![Sequence {
-                position: 1,
+                state: Some(crate::encode_state(1, None)),
                 ..sequence("conversation", 8)
             }],
         }),
@@ -79,7 +79,7 @@ fn a_file_backed_restore_preserves_the_next_decode_position_after_reload() {
             deployment: "d".into(),
             phase: Phase::Decode,
             sequences: vec![Sequence {
-                position: 2,
+                state: Some(crate::encode_state(2, None)),
                 ..sequence("conversation", 8)
             }],
         }),
@@ -87,7 +87,10 @@ fn a_file_backed_restore_preserves_the_next_decode_position_after_reload() {
     );
     let observations = restored.hop_observations();
     let observation = observations.last().unwrap();
-    assert_eq!(observation.outcomes[0].position, 3);
+    assert_eq!(
+        crate::decode_state(observation.outcomes[0].forward.as_ref()).0,
+        3
+    );
     assert_eq!(observation.outcomes[0].text, "conversation#3 ");
     assert_eq!(restored.cache_state("conversation").bytes, saved.bytes);
     let _ = std::fs::remove_dir_all(root);

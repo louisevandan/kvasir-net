@@ -187,6 +187,36 @@ pub struct Mock {
 
 mod engine;
 
+/// The mock's own continuation format, which is the point of the exercise:
+/// P4 hands `Sequence::state` back untouched, so what a position is and where
+/// it lives is the adapter's to decide. A position and, when the mock is
+/// pretending to be staged, its cut-set behind it.
+pub(crate) fn encode_state(position: u32, cut_set: Option<Vec<u8>>) -> Vec<u8> {
+    let mut bytes = position.to_le_bytes().to_vec();
+    if let Some(cut_set) = cut_set {
+        bytes.extend_from_slice(&cut_set);
+    }
+    bytes
+}
+
+/// The position a mock outcome carried, read back out of the mock's own
+/// state. Tests used to read a P4 field; they read the adapter's format now,
+/// which is the point.
+pub fn decode_observed_position(state: Option<&Vec<u8>>) -> u32 {
+    decode_state(state).0
+}
+
+pub(crate) fn decode_state(state: Option<&Vec<u8>>) -> (u32, Option<Vec<u8>>) {
+    let Some(state) = state else {
+        return (0, None);
+    };
+    let Some((head, rest)) = state.split_at_checked(4) else {
+        return (0, None);
+    };
+    let position = u32::from_le_bytes(head.try_into().expect("four bytes"));
+    (position, (!rest.is_empty()).then(|| rest.to_vec()))
+}
+
 fn mock_cut_set(sequence: &str, lifetime: u32) -> Vec<u8> {
     let mut bytes = b"p4-mock-cut-v1\0".to_vec();
     bytes.extend_from_slice(&(sequence.len() as u32).to_le_bytes());

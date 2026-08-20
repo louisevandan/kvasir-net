@@ -10,8 +10,8 @@ fn prefill_pipeline(
         payloads: Vec::new(),
         n_tokens: None,
         prompt: Some(prompt.to_owned()),
-        options: String::new(),
         initial_tokens: None,
+        options: String::new(),
         position: Some(0),
         outcome: None,
     };

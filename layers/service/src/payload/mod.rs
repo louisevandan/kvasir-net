@@ -26,28 +26,23 @@ impl Bodies {
 
 impl Payload for Bodies {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
-        let (inbound_cut_set, body) = if p4_adapter::is_continuation(&frame.body) {
-            let (cut_set, original) = p4_adapter::decode_continuation(&frame.body)?;
-            (Some(cut_set), original)
-        } else {
-            (None, frame.body.clone())
-        };
-        let decoded = decode_to_node(&body).ok()?;
-        let (prompt, position, remaining, token, options) = match decoded {
+        // A body is either the request as OUTER stated it or whatever the
+        // adapter last produced. Nothing here unwraps the second: it is moved,
+        // not read.
+        let (prompt, remaining, state, options) = match decode_to_node(&frame.body).ok()? {
             ToNode::Execute {
                 prompt,
                 max_tokens,
                 options,
-            } => (Some(prompt), 0, max_tokens, None, options),
+            } => (Some(prompt), max_tokens, None, options),
             ToNode::Continue {
-                position,
                 remaining,
-                token,
                 options,
-            } => (None, position, remaining, token, options),
+                state,
+                ..
+            } => (None, remaining, Some(state), options),
             _ => return None,
         };
-        let first_stage = inbound_cut_set.is_none();
         Some(Sequence {
             // The logical request owns the backend sequence. Route is only a
             // transport/continuation key and may change across reconnect or
@@ -58,47 +53,50 @@ impl Payload for Bodies {
             } else {
                 frame.envelope.request_id.clone()
             },
-            inbound_cut_set,
-            position,
-            // Present on the node that begins the work. A later stage
-            // continues from state it holds, and reads the prompt only because
-            // the same body travels the chain.
-            prompt: first_stage.then_some(prompt).flatten(),
-            initial_tokens: first_stage
-                .then_some(token.map(|value| vec![value as i32]))
-                .flatten(),
+            prompt,
+            state,
             remaining,
             options,
         })
     }
 
     fn continue_body(&self, carrier: &Frame, outcome: &Outcome) -> Vec<u8> {
-        let original = p4_adapter::decode_continuation(&carrier.body)
-            .map(|(_, body)| body)
-            .unwrap_or_else(|| carrier.body.clone());
-        let Ok(message) = decode_to_node(&original) else {
+        let Ok(message) = decode_to_node(&carrier.body) else {
             return carrier.body.clone();
         };
-        let (remaining, options) = match message {
+        let (remaining, emitted, options) = match message {
             ToNode::Execute {
                 max_tokens,
                 options,
                 ..
-            } => (max_tokens, options),
+            } => (max_tokens, 0, options),
             ToNode::Continue {
-                remaining, options, ..
-            } => (remaining, options),
+                remaining,
+                emitted,
+                options,
+                ..
+            } => (remaining, emitted, options),
             _ => return carrier.body.clone(),
         };
         encode_to_node(&ToNode::Continue {
-            position: outcome.position,
-            // This field is the request's total token bound in the existing
-            // P4 contract. Position is the progress state; reducing both
-            // would make the mock and served backends stop early.
+            // The request's total token bound, which is P4's contract with
+            // whoever asked. How far along the session is belongs to the
+            // adapter and travels in `state`.
             remaining,
-            token: outcome.token.and_then(|value| u32::try_from(value).ok()),
+            // One more only when this hop actually produced something for
+            // whoever asked. A stage that forwards state and no text has not
+            // spent any of the request's budget.
+            emitted: emitted.saturating_add(u32::from(!outcome.text.is_empty())),
             options,
+            state: outcome.forward.clone().unwrap_or_default(),
         })
+    }
+
+    fn emitted(&self, carrier: &Frame) -> u32 {
+        match decode_to_node(&carrier.body) {
+            Ok(ToNode::Continue { emitted, .. }) => emitted,
+            _ => 0,
+        }
     }
 
     fn lifecycle(&self, frame: &Frame) -> Option<Work> {

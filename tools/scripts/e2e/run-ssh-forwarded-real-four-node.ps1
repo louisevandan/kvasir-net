@@ -46,6 +46,13 @@ param(
     [switch]$KeepRemoteArtifacts,
     [switch]$KeepLoaded
 )
+
+# A stage's batch is its ubatch. A lap crosses the wire one ubatch at a
+# time, so a wider batch describes a submission no stage makes; the server
+# normalises it either way, and a plan that carries both reads as though it
+# were a choice. The cache is unified for the same reason and is likewise
+# the server's to decide, so neither is sent from here.
+$BatchSize = $UBatchSize
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($Requests -lt 1 -or $Tokens -lt 1) { throw 'Requests and Tokens must be positive.' }

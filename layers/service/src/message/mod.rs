@@ -95,15 +95,18 @@ pub enum ToNode {
         /// Opaque sampling options, passed through whole.
         options: String,
     },
-    /// Internal continuation state emitted after one decode lap. It prevents
-    /// the next lap from restarting the backend sequence at position zero.
+    /// One session, carried a step further. What "a step" is, and what has to
+    /// be remembered to take it, belong to the backend; this says only that
+    /// there is more to do and hands back what the adapter last produced.
     Continue {
-        position: u32,
         remaining: u32,
-        /// The token sampled by the staged tail for the next stage-0 decode.
-        /// Absent for internal/served backends and legacy continuations.
-        token: Option<u32>,
+        /// How many tokens P4 has already streamed for this request. Its own
+        /// tally of its own output, so the bound holds whatever a backend
+        /// does or does not report about itself.
+        emitted: u32,
         options: String,
+        /// Opaque adapter state. P4 moves it and never reads it.
+        state: Vec<u8>,
     },
     /// Write one request's cached state somewhere durable and free the memory.
     ///
