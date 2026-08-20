@@ -498,24 +498,8 @@ the gain is kept and the bill lands where it can be paid.
 
 ## 9. Sequenced work
 
-1. **Let one execution mix prefill and decode.** §8.3. Drop the lane
-   separation, add the row-count check, and let the adapter decide the mix.
-   This is what "keep accepting work while existing work continues" means in
-   code, and it is the first item because the research that makes it safe is
-   done.
-2. **Move the rest of batching into the adapter.** §8.4 and §8.6, including
-   row identity in the payload.
-3. **State the bundle count on the wire.** §7. A protocol revision, natural to
-   take with 2 once the adapter owns what a bundle is.
-4. **Re-measure the 35B on four cards — at a parallelism that suits four
-   stages**, per §8.2. Only meaningful after 2.
-5. **Split `replies.rs`.** §7. The repository rule is explicit, but a
-   700-line file misleads nobody, so it waits behind work that does.
-
-Open, unscheduled: the tail's sampler chain (§5.5, about a third of the ring;
-the parallel form needs `llama_get_logits_ith` not to mutate); Gemma's batched
-path (§7, needs a merge that can express an interleaved axis); and the prior
-runtime's unexplained 2026-08-13 terminal-stage crash (§8.3).
+Moved to [plan.md](plan.md), which states each item, how it is verified,
+and what not to do while building it.
 
 ## 10. History
 
