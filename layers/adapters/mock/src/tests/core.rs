@@ -93,7 +93,7 @@ fn a_generation_is_issued_by_the_adapter_and_advances() {
 fn a_hop_answers_every_sequence_it_was_given() {
     let mock = Mock::terminal(0, Profile::default());
     let recorder = Recorder::default();
-    mock.start(hop(5, Phase::Prefill), &recorder);
+    mock.start(hop(5), &recorder);
 
     let Some(Event::HopComplete { outcomes, .. }) = recorder.events().pop() else {
         panic!("the hop completed");
@@ -109,7 +109,6 @@ fn a_sequence_with_one_token_left_finishes_on_the_following_terminal_lap() {
         Work::Hop(Hop {
             id: 1,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![sequence("s0", 1), sequence("s1", 9)],
         }),
         &recorder,
@@ -129,7 +128,6 @@ fn a_sequence_with_one_token_left_finishes_on_the_following_terminal_lap() {
         Work::Hop(Hop {
             id: 2,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![sequence("s0", 1), sequence("s1", 9)],
         }),
         &recorder,
@@ -147,8 +145,8 @@ fn the_widths_it_was_given_are_recorded_rather_than_chosen() {
     // which is how a test proves batching happened above it.
     let mock = Mock::terminal(0, Profile::default());
     let recorder = Recorder::default();
-    mock.start(hop(3, Phase::Prefill), &recorder);
-    mock.start(hop(7, Phase::Decode), &recorder);
+    mock.start(hop(3), &recorder);
+    mock.start(hop(7), &recorder);
     assert_eq!(mock.widths(), vec![3, 7]);
 }
 
@@ -162,7 +160,6 @@ fn zero_remaining_keeps_llama_first_token_then_reports_the_terminal_tail() {
         Work::Hop(Hop {
             id: 13,
             deployment: "d".into(),
-            phase: Phase::Prefill,
             sequences: vec![request.clone()],
         }),
         &recorder,
@@ -171,7 +168,6 @@ fn zero_remaining_keeps_llama_first_token_then_reports_the_terminal_tail() {
         Work::Hop(Hop {
             id: 14,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![request],
         }),
         &recorder,
@@ -220,7 +216,7 @@ fn a_hop_fault_fails_the_hop() {
         },
     );
     let recorder = Recorder::default();
-    mock.start(hop(2, Phase::Prefill), &recorder);
+    mock.start(hop(2), &recorder);
     assert!(matches!(
         recorder.events().pop(),
         Some(Event::Failed { .. })
@@ -237,7 +233,7 @@ fn silence_answers_nothing_and_leaves_the_deadline_to_do_it() {
         },
     );
     let recorder = Recorder::default();
-    mock.start(hop(2, Phase::Prefill), &recorder);
+    mock.start(hop(2), &recorder);
     assert!(recorder.events().is_empty());
 }
 
@@ -265,7 +261,6 @@ fn only_the_last_stage_produces_a_token() {
         Work::Hop(Hop {
             id: 1,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![sequence("s0", 1)],
         }),
         &recorder,
@@ -286,7 +281,6 @@ fn a_middle_stage_preserves_the_global_decode_position() {
         Work::Hop(Hop {
             id: 2,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![Sequence {
                 sequence: "s0".into(),
                 state: Some(crate::encode_state(6, None)),
@@ -316,7 +310,6 @@ fn a_terminal_stage_counts_across_laps_rather_than_rereading_the_request() {
             Work::Hop(Hop {
                 id: 1,
                 deployment: "d".into(),
-                phase: Phase::Decode,
                 sequences: vec![sequence("s0", 3)],
             }),
             &recorder,
@@ -332,7 +325,7 @@ fn a_terminal_stage_counts_across_laps_rather_than_rereading_the_request() {
 fn a_commit_cannot_rebind_a_prepared_operation_to_another_sequence() {
     let mock = Mock::internal(Profile::default());
     let recorder = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &recorder);
+    mock.start(hop(1), &recorder);
     for (sequence, action) in [
         ("s0", p4_adapter::CacheAction::PreparePersist),
         ("s1", p4_adapter::CacheAction::Commit),

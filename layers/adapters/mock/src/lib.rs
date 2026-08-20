@@ -13,7 +13,7 @@ pub mod cache;
 pub mod profile;
 mod runtime;
 
-use p4_adapter::{Distribution, Outcome, Phase};
+use p4_adapter::{Distribution, Outcome};
 use profile::{Fault, Profile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -42,6 +42,19 @@ pub struct LoadObservation {
     pub capability_expires_at: u64,
 }
 
+/// Whether a sequence's hop was beginning work here or continuing a lap.
+///
+/// The adapter boundary carries no such field: `p4_adapter::Hop` holds only
+/// sequences, because an execution mixing both is a fact about a backend, not
+/// about P4. This is the mock's own derived record of it, kept for
+/// observation the same way a real backend would keep it — from whether the
+/// sequence was already resident, not from a field P4 handed it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HopPhase {
+    Prefill,
+    Decode,
+}
+
 /// The input and output of one mock hop.
 ///
 /// This is deliberately adapter-owned observation. It lets an integration
@@ -50,7 +63,7 @@ pub struct LoadObservation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HopObservation {
     pub hop_id: u64,
-    pub phase: Phase,
+    pub phase: HopPhase,
     pub sequences: Vec<SequenceObservation>,
     pub outcomes: Vec<Outcome>,
 }

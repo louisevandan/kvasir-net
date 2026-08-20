@@ -7,7 +7,7 @@ fn a_prepared_transaction_journal_survives_restart_and_can_be_committed() {
     let _ = std::fs::remove_dir_all(&root);
     let first = Mock::internal_with_cache_dir(Profile::default(), &root);
     let first_events = Recorder::default();
-    first.start(hop(1, Phase::Prefill), &first_events);
+    first.start(hop(1), &first_events);
     first.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),
@@ -135,7 +135,7 @@ fn an_identity_mismatch_does_not_destroy_a_prepared_journal() {
     let _ = std::fs::remove_dir_all(&root);
     let mock = Mock::internal_with_cache_dir(Profile::default(), &root);
     let events = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &events);
+    mock.start(hop(1), &events);
     for (sequence, action) in [
         ("s0", p4_adapter::CacheAction::PreparePersist),
         ("s1", p4_adapter::CacheAction::Commit),
@@ -204,7 +204,7 @@ fn a_tampered_transaction_receipt_is_refused_by_checksum() {
     let _ = std::fs::remove_dir_all(&root);
     let first = Mock::internal_with_cache_dir(Profile::default(), &root);
     let first_events = Recorder::default();
-    first.start(hop(1, Phase::Prefill), &first_events);
+    first.start(hop(1), &first_events);
     first.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),
@@ -259,7 +259,7 @@ fn reconciliation_reports_the_committed_receipt_without_mutating_it() {
     let _ = std::fs::remove_dir_all(&root);
     let mock = Mock::internal_with_cache_dir(Profile::default(), &root);
     let events = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &events);
+    mock.start(hop(1), &events);
     for action in [
         p4_adapter::CacheAction::PreparePersist,
         p4_adapter::CacheAction::Commit,
@@ -303,7 +303,7 @@ fn reconciliation_reports_an_inconsistent_receipt_when_the_manifest_is_tampered(
     let _ = std::fs::remove_dir_all(&root);
     let mock = Mock::internal_with_cache_dir(Profile::default(), &root);
     let events = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &events);
+    mock.start(hop(1), &events);
     for action in [
         p4_adapter::CacheAction::PreparePersist,
         p4_adapter::CacheAction::Commit,

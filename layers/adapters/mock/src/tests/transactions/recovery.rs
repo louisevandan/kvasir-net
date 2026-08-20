@@ -4,7 +4,7 @@ use super::*;
 fn a_prepared_cache_is_not_visible_until_commit_and_abort_keeps_resident_state() {
     let mock = Mock::internal(Profile::default());
     let recorder = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &recorder);
+    mock.start(hop(1), &recorder);
     mock.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),
@@ -27,7 +27,7 @@ fn a_prepared_cache_is_not_visible_until_commit_and_abort_keeps_resident_state()
         }),
         &recorder,
     );
-    mock.start(hop(2, Phase::Decode), &recorder);
+    mock.start(hop(2), &recorder);
     assert!(matches!(
         recorder.events().last(),
         Some(Event::HopComplete { .. })
@@ -40,7 +40,7 @@ fn a_committed_prepared_cache_frees_resident_state_for_restore() {
     let _ = std::fs::remove_dir_all(&root);
     let mock = Mock::internal_with_cache_dir(Profile::default(), &root);
     let recorder = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &recorder);
+    mock.start(hop(1), &recorder);
     for action in [
         p4_adapter::CacheAction::PreparePersist,
         p4_adapter::CacheAction::Commit,
@@ -80,7 +80,7 @@ fn a_committed_prepared_cache_frees_resident_state_for_restore() {
 fn a_partial_restore_receipt_refuses_hop_until_commit() {
     let mock = Mock::internal(Profile::default());
     let recorder = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &recorder);
+    mock.start(hop(1), &recorder);
     mock.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),
@@ -116,7 +116,7 @@ fn a_partial_restore_receipt_refuses_hop_until_commit() {
         }),
         &restore,
     );
-    mock.start(hop(1, Phase::Prefill), &restore);
+    mock.start(hop(1), &restore);
     assert!(
         matches!(
             restore.events().last(),
@@ -137,7 +137,7 @@ fn a_partial_restore_receipt_refuses_hop_until_commit() {
         }),
         &restore,
     );
-    mock.start(hop(1, Phase::Prefill), &restore);
+    mock.start(hop(1), &restore);
     assert!(matches!(
         restore.events().last(),
         Some(Event::HopComplete { .. })

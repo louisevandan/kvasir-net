@@ -4,7 +4,8 @@
 //! staged backend counts tokens; it only relays the backend report already
 //! carried by `StatusSnapshot`.
 
-use p4_adapter::{Hop, Phase};
+use crate::HopPhase;
+use p4_adapter::Hop;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -14,7 +15,7 @@ const RETAINED_SAMPLES: usize = 512;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeSample {
     pub hop_id: u64,
-    pub phase: Phase,
+    pub phase: HopPhase,
     pub sequence: String,
     pub position: u32,
     pub tokens: u32,
@@ -37,6 +38,7 @@ impl RuntimeEvidence {
     pub fn record(
         &self,
         hop: &Hop,
+        phase: HopPhase,
         token_counts: impl IntoIterator<Item = (String, u32)>,
         elapsed: Duration,
     ) {
@@ -54,7 +56,7 @@ impl RuntimeEvidence {
                 .unwrap_or_default();
             let total = state
                 .totals
-                .entry((phase_name(hop.phase).to_owned(), sequence.clone()))
+                .entry((phase_name(phase).to_owned(), sequence.clone()))
                 .or_insert((0, 0));
             total.0 = total.0.saturating_add(u64::from(tokens));
             total.1 = total.1.saturating_add(elapsed_us);
@@ -64,7 +66,7 @@ impl RuntimeEvidence {
             }
             state.samples.push_back(RuntimeSample {
                 hop_id: hop.id,
-                phase: hop.phase,
+                phase,
                 sequence,
                 position,
                 tokens,
@@ -107,10 +109,10 @@ impl RuntimeEvidence {
     }
 }
 
-fn phase_name(phase: Phase) -> &'static str {
+fn phase_name(phase: HopPhase) -> &'static str {
     match phase {
-        Phase::Prefill => "prefill",
-        Phase::Decode => "generation",
+        HopPhase::Prefill => "prefill",
+        HopPhase::Decode => "generation",
     }
 }
 
@@ -124,15 +126,14 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::RuntimeEvidence;
-    use p4_adapter::{Hop, Phase, Sequence};
+    use super::{HopPhase, RuntimeEvidence};
+    use p4_adapter::{Hop, Sequence};
     use std::time::Duration;
 
-    fn hop(phase: Phase) -> Hop {
+    fn hop() -> Hop {
         Hop {
             id: 7,
             deployment: "deployment".into(),
-            phase,
             sequences: vec![Sequence {
                 sequence: "r1-q0".into(),
                 state: None,
@@ -147,7 +148,8 @@ mod tests {
     fn report_preserves_runtime_phase_token_count_and_duration() {
         let evidence = RuntimeEvidence::default();
         evidence.record(
-            &hop(Phase::Prefill),
+            &hop(),
+            HopPhase::Prefill,
             [("r1-q0".into(), 13)],
             Duration::from_micros(2_500),
         );

@@ -15,7 +15,7 @@
 //! name. Nothing about it is llama.cpp's or SGLang's, which is the point — the
 //! adapter is checked against the behaviour, not against a brand.
 
-use p4_adapter::{Adapter, Event, EventSink, Hop, Load, Phase, Sequence, Work};
+use p4_adapter::{Adapter, Event, EventSink, Hop, Load, Sequence, Work};
 use p4_llamacpp_served::Served;
 use p4_llamacpp_served::flavour::Flavour;
 use std::io::{BufRead, BufReader, Write};
@@ -172,7 +172,6 @@ fn one_hop(adapter: &Served, seen: &Seen) {
         Work::Hop(Hop {
             id: 1,
             deployment: "d".into(),
-            phase: Phase::Prefill,
             sequences: vec![Sequence {
                 sequence: "s0".into(),
                 state: None,

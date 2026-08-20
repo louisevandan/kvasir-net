@@ -27,20 +27,18 @@ fn sequence(id: &str, remaining: u32) -> Sequence {
     }
 }
 
-fn hop(width: usize, phase: Phase) -> Work {
+fn hop(width: usize) -> Work {
     Work::Hop(Hop {
         id: 1,
         deployment: "d".into(),
-        phase,
         sequences: (0..width).map(|i| sequence(&format!("s{i}"), 4)).collect(),
     })
 }
 
-fn named_hop(id: &str, phase: Phase) -> Work {
+fn named_hop(id: &str) -> Work {
     Work::Hop(Hop {
         id: 1,
         deployment: "d".into(),
-        phase,
         sequences: vec![Sequence {
             sequence: id.into(),
             state: None,

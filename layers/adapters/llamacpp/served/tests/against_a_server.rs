@@ -9,7 +9,7 @@
 //! is checked separately against the Metal build on the fleet and recorded in
 //! `docs/runtime-evidence.md`; this file is what keeps it honest afterwards.
 
-use p4_adapter::{Adapter, Distribution, Event, EventSink, Hop, Load, Phase, Sequence, Work};
+use p4_adapter::{Adapter, Distribution, Event, EventSink, Hop, Load, Sequence, Work};
 use p4_llamacpp_served::Served;
 use p4_llamacpp_served::flavour::Flavour;
 use std::io::{BufRead, BufReader, Write};
@@ -175,11 +175,10 @@ fn sequence(remaining: u32, prompt: Option<&str>) -> Sequence {
     }
 }
 
-fn hop(phase: Phase, remaining: u32, prompt: Option<&str>) -> Work {
+fn hop(remaining: u32, prompt: Option<&str>) -> Work {
     Work::Hop(Hop {
         id: 1,
         deployment: "d1".into(),
-        phase,
         sequences: vec![sequence(remaining, prompt)],
     })
 }
@@ -219,9 +218,9 @@ fn a_prefill_then_laps_produce_one_token_each_and_then_stop() {
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
-    adapter.start(hop(Phase::Prefill, 5, Some("인사해")), &seen);
+    adapter.start(hop(5, Some("인사해")), &seen);
     for _ in 0..5 {
-        adapter.start(hop(Phase::Decode, 5, None), &seen);
+        adapter.start(hop(5, None), &seen);
     }
 
     assert_eq!(seen.text(), "안녕하세요", "every token arrived, in order");
@@ -275,7 +274,7 @@ fn a_decode_for_a_sequence_that_never_prefilled_is_refused() {
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
-    adapter.start(hop(Phase::Decode, 4, None), &seen);
+    adapter.start(hop(4, None), &seen);
     assert!(
         seen.failure()
             .unwrap_or_default()
@@ -294,8 +293,8 @@ fn an_error_inside_the_stream_is_reported_rather_than_read_as_silence() {
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
-    adapter.start(hop(Phase::Prefill, 8, Some("긴 프롬프트")), &seen);
-    adapter.start(hop(Phase::Decode, 8, None), &seen);
+    adapter.start(hop(8, Some("긴 프롬프트")), &seen);
+    adapter.start(hop(8, None), &seen);
 
     assert!(
         seen.failure()
@@ -317,9 +316,9 @@ fn a_backend_that_hangs_up_ends_the_sequence_instead_of_stranding_it() {
     let seen = Seen::default();
     load(&adapter, &seen, port);
 
-    adapter.start(hop(Phase::Prefill, 8, Some("hello")), &seen);
+    adapter.start(hop(8, Some("hello")), &seen);
     for _ in 0..2 {
-        adapter.start(hop(Phase::Decode, 8, None), &seen);
+        adapter.start(hop(8, None), &seen);
     }
 
     let terminal = seen.events().iter().any(|event| match event {
@@ -335,7 +334,7 @@ fn a_backend_that_hangs_up_ends_the_sequence_instead_of_stranding_it() {
 fn work_on_a_node_that_was_never_loaded_says_so() {
     let adapter = Served::new(Flavour::LlamaCpp);
     let seen = Seen::default();
-    adapter.start(hop(Phase::Prefill, 4, Some("hi")), &seen);
+    adapter.start(hop(4, Some("hi")), &seen);
     assert!(
         seen.failure().unwrap_or_default().contains("never loaded"),
         "{:?}",

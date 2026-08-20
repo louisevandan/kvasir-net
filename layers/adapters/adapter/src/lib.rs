@@ -16,7 +16,7 @@ pub mod work;
 
 pub use event::{Allocation, Event, EventSink, Outcome};
 pub use work::{
-    Cache, CacheAction, CacheReceiptState, DeploymentId, Distribution, Hop, Load, Phase, Sequence,
+    Cache, CacheAction, CacheReceiptState, DeploymentId, Distribution, Hop, Load, Sequence,
     SequenceId, Unload, Work,
 };
 

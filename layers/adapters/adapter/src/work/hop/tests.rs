@@ -15,7 +15,6 @@ fn a_hop_reports_the_width_of_its_window() {
     let hop = Hop {
         id: 1,
         deployment: "d".into(),
-        phase: Phase::Prefill,
         sequences: vec![sequence("a"), sequence("b"), sequence("c")],
     };
     assert_eq!(hop.width(), 3);
@@ -27,7 +26,6 @@ fn an_empty_window_is_recognised_before_a_backend_sees_it() {
     let hop = Hop {
         id: 2,
         deployment: "d".into(),
-        phase: Phase::Decode,
         sequences: Vec::new(),
     };
     assert!(hop.is_empty());

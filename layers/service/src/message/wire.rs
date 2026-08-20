@@ -579,7 +579,7 @@ fn encode_status_snapshot(out: &mut Vec<u8>, snapshot: &crate::status::StatusSna
                 Some(active) => {
                     out.push(1);
                     wide(out, active.id);
-                    out.push(status_phase_tag(active.phase));
+                    out.push(status_lane_tag(active.lane));
                     number(out, active.requests.len() as u32);
                     for request in &active.requests {
                         encode_status_request(out, request);
@@ -647,7 +647,7 @@ fn decode_status_snapshot(cursor: &mut Cursor<'_>) -> Decoded<crate::status::Sta
                 0 => None,
                 1 => {
                     let id = cursor.wide()?;
-                    let phase = status_phase(cursor.tag()?)?;
+                    let lane = status_lane(cursor.tag()?)?;
                     let count = cursor.number()? as usize;
                     let mut requests = Vec::with_capacity(count);
                     for _ in 0..count {
@@ -668,7 +668,7 @@ fn decode_status_snapshot(cursor: &mut Cursor<'_>) -> Decoded<crate::status::Sta
                     };
                     Some(crate::status::ActiveHopSnapshot {
                         id,
-                        phase,
+                        lane,
                         timed_out,
                         requests,
                     })
@@ -753,21 +753,6 @@ fn decode_status_request(cursor: &mut Cursor<'_>) -> Decoded<crate::status::Requ
         lane: status_lane(cursor.tag()?)?,
         deadline_unix_ms: cursor.wide()?,
     })
-}
-
-fn status_phase_tag(phase: p4_adapter::Phase) -> u8 {
-    match phase {
-        p4_adapter::Phase::Prefill => 0,
-        p4_adapter::Phase::Decode => 1,
-    }
-}
-
-fn status_phase(tag: u8) -> Decoded<p4_adapter::Phase> {
-    match tag {
-        0 => Ok(p4_adapter::Phase::Prefill),
-        1 => Ok(p4_adapter::Phase::Decode),
-        other => Err(Malformed(format!("unknown status phase {other}"))),
-    }
 }
 
 struct Cursor<'a> {

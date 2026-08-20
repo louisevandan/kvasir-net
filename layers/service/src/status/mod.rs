@@ -10,7 +10,6 @@
 //! answers how many, never which, and the route that has gone missing is
 //! exactly the one a count cannot show.
 
-use p4_adapter::Phase;
 use p4_agent_core::agent::Agent;
 use p4_protocol::QueueClass;
 use std::sync::Arc;
@@ -81,7 +80,7 @@ pub struct RequestSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveHopSnapshot {
     pub id: u64,
-    pub phase: Phase,
+    pub lane: QueueClass,
     pub timed_out: bool,
     pub requests: Vec<RequestSnapshot>,
 }
@@ -165,7 +164,7 @@ pub async fn typed_snapshot(agent: &Arc<Agent>) -> StatusSnapshot {
                 .collect(),
             active_hop: node.active_hop.map(|hop| ActiveHopSnapshot {
                 id: hop.id,
-                phase: hop.phase,
+                lane: hop.lane,
                 timed_out: hop.timed_out,
                 requests: hop
                     .requests

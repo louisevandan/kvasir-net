@@ -882,3 +882,112 @@ fn a_stray_load_progress_does_not_release_a_running_hop() {
         );
     });
 }
+
+/// An adapter that owns a finite native sequence table (`staged`'s shape):
+/// every hop succeeds immediately, nothing ever finishes, and it never raises
+/// `SequenceReleased` — so a slot, once reserved, stays reserved for the rest
+/// of this test.
+struct Reserving {
+    hops: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl Adapter for Reserving {
+    fn distribution(&self) -> Distribution {
+        Distribution::Staged
+    }
+
+    fn reserves_sequence_slots(&self) -> bool {
+        true
+    }
+
+    fn start(&self, work: Work, events: &dyn EventSink) {
+        let Work::Hop(hop) = work else { return };
+        let sequences: Vec<String> = hop
+            .sequences
+            .iter()
+            .map(|sequence| sequence.sequence.clone())
+            .collect();
+        self.hops.lock().unwrap().push(sequences.clone());
+        let outcomes = hop
+            .sequences
+            .iter()
+            .map(|sequence| Outcome {
+                sequence: sequence.sequence.clone(),
+                forward: Some(vec![1]),
+                text: "t".into(),
+                stop: None,
+            })
+            .collect();
+        events.raise(Event::HopComplete {
+            hop_id: hop.id,
+            deployment: hop.deployment,
+            expected: sequences,
+            outcomes,
+        });
+    }
+}
+
+/// The reservation the runner makes at dispatch time — see
+/// `Node::drain`'s `reserves_sequence_slots` block — is keyed by sequence
+/// identity, not by hop: a sequence already holding a slot must not be
+/// counted a second time just because it comes back for another hop, and a
+/// hop that mentions no new sequence must not consume any of the ceiling.
+///
+/// This is what the removed `Hop::phase == Phase::Prefill` gate used to get
+/// right by accident (only a prefill-lane hop ever reserved), and what
+/// `HashSet::insert`'s return value gets right on purpose: nothing here reads
+/// a phase or a lane to decide whether to reserve, only whether the sequence
+/// was already in the set.
+#[test]
+fn a_sequence_reserves_its_slot_once_and_a_later_hop_does_not_reserve_it_again() {
+    runtime().block_on(async {
+        let (sender, mut _receiver, _) = channel(Lanes::default(), Budget::default());
+        let hops = Arc::new(Mutex::new(Vec::new()));
+        let handle = Node::spawn(
+            Arc::new(Reserving {
+                hops: Arc::clone(&hops),
+            }),
+            Arc::new(Bodies),
+            sender,
+            2,
+        );
+
+        // r0 arrives and reserves the first of two slots.
+        handle.offer(work("r0", 1)).unwrap();
+        settle().await;
+
+        // r0 comes back for a second hop — a decode lap for a sequence that
+        // already holds its slot. If this reserved a second time, only one
+        // slot would remain free instead of two-minus-one.
+        let mut again = work("r0", 1);
+        again.envelope.lane = QueueClass::Decode;
+        handle.offer(again).unwrap();
+        settle().await;
+
+        // r1 is a genuinely new sequence. It must still find its slot free —
+        // proof r0's second hop did not consume one.
+        handle.offer(work("r1", 1)).unwrap();
+        settle().await;
+
+        // r2 is a third new sequence. With both slots now held by r0 and r1,
+        // it must be refused admission and left waiting rather than run.
+        handle.offer(work("r2", 1)).unwrap();
+        settle().await;
+
+        let seen = hops.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec![
+                vec!["r0".to_string()],
+                vec!["r0".to_string()],
+                vec!["r1".to_string()]
+            ],
+            "r0's second hop must not have blocked r1, and r2 must not have run: {seen:?}"
+        );
+        assert_eq!(
+            handle.depth(),
+            1,
+            "r2 must still be waiting for a slot rather than having run"
+        );
+    });
+}

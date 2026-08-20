@@ -4,7 +4,7 @@
 //! surface for this tool. This module is the only place that interprets
 //! `P4_RUNTIME_SAMPLE_V1`; typed status snapshots are consumed as typed values.
 
-use p4_adapter::Phase;
+use p4_protocol::QueueClass;
 use p4_service::status::StatusSnapshot;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -38,7 +38,7 @@ impl TelemetryCollector {
                 generated_at_unix_ms: snapshot.generated_at_unix_ms,
                 depth: node.depth,
                 active_hop_id: active.map(|hop| hop.id),
-                active_phase: active.map(|hop| phase_from_typed(hop.phase)),
+                active_phase: active.map(|hop| phase_from_typed(hop.lane)),
                 active_sequences: active
                     .map(|hop| {
                         hop.requests
@@ -93,10 +93,16 @@ impl TelemetryCollector {
     }
 }
 
-fn phase_from_typed(phase: Phase) -> RuntimePhase {
-    match phase {
-        Phase::Prefill => RuntimePhase::Prefill,
-        Phase::Decode => RuntimePhase::Generation,
+/// `ActiveHopSnapshot::lane` is the queue lane a hop was composed from
+/// (`p4_adapter::Hop` carries no phase of its own — see
+/// `docs/adapter-boundary.md`), and in practice a hop's lane is always
+/// `Prefill` or `Decode`: control and response traffic never reaches this
+/// field. Anything else collapses to `Prefill`, the same default the node
+/// itself used when this lane was still folded into the removed `Phase`.
+fn phase_from_typed(lane: QueueClass) -> RuntimePhase {
+    match lane {
+        QueueClass::Decode => RuntimePhase::Generation,
+        QueueClass::Control | QueueClass::Prefill | QueueClass::Response => RuntimePhase::Prefill,
     }
 }
 

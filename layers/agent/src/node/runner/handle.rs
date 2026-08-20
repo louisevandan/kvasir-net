@@ -228,7 +228,13 @@ pub struct WaitingRequest {
 pub struct ActiveHop {
     pub id: u64,
     pub deployment: String,
-    pub phase: p4_adapter::Phase,
+    /// The queue lane this hop was composed from. `p4_adapter::Hop` carries
+    /// no phase of its own — an execution may hold sequences at different
+    /// points in their lifecycle, which is a fact about a backend, not about
+    /// P4 — so this is what is left for an operator to read: which lane fed
+    /// this hop, exactly as `WaitingRequest::lane` already reports for
+    /// waiting work.
+    pub lane: QueueClass,
     /// Cancellation was requested, but the adapter has not emitted its
     /// terminal event. The node remains occupied while this is true.
     pub timed_out: bool,

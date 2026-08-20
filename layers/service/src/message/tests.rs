@@ -311,7 +311,7 @@ fn a_schema_four_status_snapshot_round_trips_active_hop_phase_and_requests() {
                 waiting_requests: vec![],
                 active_hop: Some(crate::status::ActiveHopSnapshot {
                     id: 77,
-                    phase: p4_adapter::Phase::Decode,
+                    lane: p4_protocol::QueueClass::Decode,
                     timed_out: false,
                     requests: vec![crate::status::RequestSnapshot {
                         route: "active-route".into(),
@@ -366,7 +366,7 @@ fn a_schema_five_status_snapshot_round_trips_timed_out_active_hop() {
                 waiting_requests: vec![],
                 active_hop: Some(crate::status::ActiveHopSnapshot {
                     id: 88,
-                    phase: p4_adapter::Phase::Prefill,
+                    lane: p4_protocol::QueueClass::Prefill,
                     timed_out: true,
                     requests: vec![],
                 }),
@@ -415,7 +415,7 @@ fn a_schema_five_rejects_an_unknown_timeout_marker() {
                 waiting_requests: vec![],
                 active_hop: Some(crate::status::ActiveHopSnapshot {
                     id: 1,
-                    phase: p4_adapter::Phase::Decode,
+                    lane: p4_protocol::QueueClass::Decode,
                     timed_out: false,
                     requests: vec![],
                 }),

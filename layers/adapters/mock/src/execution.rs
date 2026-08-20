@@ -59,9 +59,29 @@ impl Mock {
     pub(crate) fn hop(&self, hop: Hop, events: &dyn EventSink) {
         let began = std::time::Instant::now();
         let first_sequence = hop.sequences.first().map(|s| s.sequence.clone());
+
+        // Whether each sequence is beginning work here or continuing a lap.
+        // `p4_adapter::Hop` carries no phase of its own to read: an execution
+        // holding both is a fact about a backend, not about P4. This node's
+        // own bookkeeping already answers the question a backend would ask
+        // itself instead — a sequence is resident in `produced` exactly when
+        // a hop here has already processed it once.
+        let residency: Vec<bool> = {
+            let produced = self.produced.lock().expect("produced");
+            hop.sequences
+                .iter()
+                .map(|sequence| produced.contains_key(&sequence.sequence))
+                .collect()
+        };
+        let hop_phase = if residency.first().copied().unwrap_or(false) {
+            HopPhase::Decode
+        } else {
+            HopPhase::Prefill
+        };
+
         let observation = HopObservation {
             hop_id: hop.id,
-            phase: hop.phase,
+            phase: hop_phase,
             sequences: hop
                 .sequences
                 .iter()
@@ -93,8 +113,8 @@ impl Mock {
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak_running.fetch_max(now, Ordering::SeqCst);
 
-        let mut valid = Vec::with_capacity(hop.sequences.len());
-        for sequence in hop.sequences {
+        let mut valid: Vec<(p4_adapter::Sequence, bool)> = Vec::with_capacity(hop.sequences.len());
+        for (sequence, resident) in hop.sequences.into_iter().zip(residency) {
             self.options
                 .lock()
                 .expect("options log lock")
@@ -107,11 +127,6 @@ impl Mock {
                     detail: "mock adapter rejected non-object generation options".into(),
                 });
             } else {
-                let resident = self
-                    .produced
-                    .lock()
-                    .expect("produced")
-                    .contains_key(&sequence.sequence);
                 match (resident, self.requires_restore(&sequence.sequence)) {
                     (false, Ok(true)) => events.raise(Event::Failed {
                         deployment: hop.deployment.clone(),
@@ -125,7 +140,7 @@ impl Mock {
                         hop_id: Some(hop.id),
                         detail: format!("mock could not inspect durable cache: {error}"),
                     }),
-                    _ => valid.push(sequence),
+                    _ => valid.push((sequence, !resident)),
                 }
             }
         }
@@ -158,7 +173,7 @@ impl Mock {
         }
         let duration = self
             .profile
-            .hop_cost(self.position, hop.phase == Phase::Prefill);
+            .hop_cost(self.position, hop_phase == HopPhase::Prefill);
         if spin_until(duration, || events.cancelled()) {
             self.running.fetch_sub(1, Ordering::SeqCst);
             events.raise(Event::Failed {
@@ -188,7 +203,7 @@ impl Mock {
         }
         let outcomes = valid
             .iter()
-            .map(|sequence| self.outcome(sequence, hop.phase))
+            .map(|(sequence, is_prefill)| self.outcome(sequence, *is_prefill))
             .collect::<Vec<_>>();
         if let Some(observation) = self
             .hops
@@ -204,7 +219,7 @@ impl Mock {
             hop_id: hop.id,
             expected: valid
                 .iter()
-                .map(|sequence| sequence.sequence.clone())
+                .map(|(sequence, _)| sequence.sequence.clone())
                 .collect(),
             outcomes,
             deployment: hop.deployment,
@@ -216,7 +231,7 @@ impl Mock {
     /// The count is kept here rather than read from the request each lap,
     /// because a request does not carry its own progress back down — a backend
     /// holding a sequence open is what knows how far it has got.
-    fn outcome(&self, sequence: &p4_adapter::Sequence, phase: Phase) -> Outcome {
+    fn outcome(&self, sequence: &p4_adapter::Sequence, is_prefill: bool) -> Outcome {
         // Every stage holds this sequence's attention state for its own layer
         // range — that is what pipeline parallelism is — so every stage counts
         // it as resident. Only the last one counts tokens.
@@ -233,22 +248,22 @@ impl Mock {
         // stage. Only the terminal stage owns logits and advances it; middle
         // stages must carry the position unchanged or an N-stage ring turns
         // one decode into N position increments and skips visible tokens.
+        //
+        // Prefill and a lap compute the same formula here, and always have:
+        // what used to be a two-armed match on the removed `Phase` did the
+        // identical thing in both arms.
         let carried = crate::decode_state(sequence.state.as_ref()).0;
-        let requested_position = match phase {
-            Phase::Prefill | Phase::Decode => {
-                if self.terminal {
-                    carried.saturating_add(1)
-                } else {
-                    carried
-                }
-            }
+        let requested_position = if self.terminal {
+            carried.saturating_add(1)
+        } else {
+            carried
         };
         // Real decode laps carry the preceding outcome position. Older mock
         // fixture paths intentionally keep the body opaque, so they arrive
         // with position zero on every lap. Honor the carried position when it
         // is present, while retaining the resident progress as a compatibility
         // fallback for those opaque fixture requests.
-        let position = if phase == Phase::Decode && self.terminal {
+        let position = if !is_prefill && self.terminal {
             requested_position.max(progress.position.saturating_add(1))
         } else {
             requested_position

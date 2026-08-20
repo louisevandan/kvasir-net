@@ -54,7 +54,7 @@ pub mod session;
 
 use flavour::Flavour;
 use launch::process::Running;
-use p4_adapter::{Adapter, Distribution, Event, EventSink, Hop, Outcome, Phase, Work};
+use p4_adapter::{Adapter, Distribution, Event, EventSink, Hop, Outcome, Work};
 use plan::{Plan, Role};
 use session::{Next, Session};
 use std::collections::{HashMap, HashSet};
@@ -134,9 +134,21 @@ impl Served {
                 ),
             });
         }
-        let refused = match hop.phase {
-            Phase::Prefill => self.open(&plan, &hop, events),
-            Phase::Decode => HashSet::new(),
+        // A sequence carries a prompt exactly when this node begins its work
+        // — the boundary's own rule (`Sequence::prompt` is "present when this
+        // node begins the work"), and exact for `Served`, since an Internal
+        // backend is always the chain's only node. Nothing else needs to be
+        // asked: a sequence without a prompt is already open below.
+        let opening: Vec<p4_adapter::Sequence> = hop
+            .sequences
+            .iter()
+            .filter(|sequence| sequence.prompt.is_some())
+            .cloned()
+            .collect();
+        let refused = if opening.is_empty() {
+            HashSet::new()
+        } else {
+            self.open(&plan, &opening, &hop.deployment, hop.id, events)
         };
         let mut outcomes = Vec::with_capacity(hop.sequences.len());
         for sequence in &hop.sequences {
@@ -171,10 +183,16 @@ impl Served {
     ///
     /// A thread per sequence, bounded by the window, which the declared
     /// ceiling already bounds. Each does one blocking request and ends.
-    fn open(&self, plan: &Plan, hop: &Hop, events: &dyn EventSink) -> HashSet<String> {
+    fn open(
+        &self,
+        plan: &Plan,
+        sequences: &[p4_adapter::Sequence],
+        deployment: &str,
+        hop_id: u64,
+        events: &dyn EventSink,
+    ) -> HashSet<String> {
         let opened: Vec<(String, Result<Session, String>)> = std::thread::scope(|scope| {
-            let threads: Vec<_> = hop
-                .sequences
+            let threads: Vec<_> = sequences
                 .iter()
                 .map(|sequence| {
                     scope.spawn(move || {
@@ -216,9 +234,9 @@ impl Served {
                     self.refused.fetch_add(1, Ordering::Relaxed);
                     refused.insert(sequence.clone());
                     events.raise(Event::Failed {
-                        deployment: hop.deployment.clone(),
+                        deployment: deployment.to_owned(),
                         sequence: Some(sequence),
-                        hop_id: Some(hop.id),
+                        hop_id: Some(hop_id),
                         detail,
                     });
                 }

@@ -74,4 +74,13 @@ pub struct StagedAdapter {
     /// not advertise native transaction receipts. Native-capable servers
     /// persist their receipt in the stage-owned journal.
     transactions: Mutex<HashMap<String, PendingCache>>,
+    /// Sequences this node has already run a hop for. `p4_adapter::Hop`
+    /// carries no phase of its own -- an execution holding both a sequence
+    /// beginning work and one continuing a decode lap is a fact about a
+    /// backend, not about P4 -- so whether a sequence is beginning work
+    /// *here* is this adapter's own question to answer, the same way
+    /// `served` answers it from its open sessions and the mock answers it
+    /// from its produced-token map. A sequence not in this set has not been
+    /// through a hop at this node before; everything else has.
+    active: Mutex<std::collections::HashSet<String>>,
 }

@@ -1,11 +1,11 @@
 use super::model::tps;
 use super::{TelemetryCollector, TelemetryEvidence};
-use p4_adapter::Phase;
+use p4_protocol::QueueClass;
 use p4_service::status::{
     ActiveHopSnapshot, LaneSnapshot, NodeSnapshot, StatusSnapshot, TrafficSnapshot,
 };
 
-fn snapshot(backend: &str, phase: Option<Phase>, depth: usize) -> StatusSnapshot {
+fn snapshot(backend: &str, lane: Option<QueueClass>, depth: usize) -> StatusSnapshot {
     StatusSnapshot {
         schema: 6,
         snapshot_seq: 4,
@@ -39,9 +39,9 @@ fn snapshot(backend: &str, phase: Option<Phase>, depth: usize) -> StatusSnapshot
             waiting: vec![],
             backend: backend.into(),
             waiting_requests: vec![],
-            active_hop: phase.map(|phase| ActiveHopSnapshot {
+            active_hop: lane.map(|lane| ActiveHopSnapshot {
                 id: 8,
-                phase,
+                lane,
                 timed_out: false,
                 requests: vec![],
             }),
@@ -53,8 +53,8 @@ fn snapshot(backend: &str, phase: Option<Phase>, depth: usize) -> StatusSnapshot
 fn parses_samples_uses_typed_status_and_deduplicates_retained_reports() {
     let collector = TelemetryCollector::default();
     let report = "P4_RUNTIME_EVIDENCE_V1 retained=2 dropped=0\nP4_RUNTIME_SAMPLE_V1 hop_id=8 phase=prefill sequence_hex=7330 tokens=10 elapsed_us=2000\nP4_RUNTIME_SAMPLE_V1 hop_id=9 phase=generation sequence_hex=7330 tokens=4 elapsed_us=4000";
-    collector.observe(&snapshot(report, Some(Phase::Prefill), 7));
-    collector.observe(&snapshot(report, Some(Phase::Decode), 11));
+    collector.observe(&snapshot(report, Some(QueueClass::Prefill), 7));
+    collector.observe(&snapshot(report, Some(QueueClass::Decode), 11));
     let evidence = collector.evidence(std::time::Duration::from_millis(20));
     assert_eq!(evidence.samples.len(), 2);
     assert_eq!(evidence.sessions[0].prefill.tps, Some(5_000.0));

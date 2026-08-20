@@ -17,7 +17,7 @@ use crate::node::payload::Payload;
 use crate::node::queue::NodeQueue;
 use crate::node::window::{compose, expired_items};
 use crate::queue::main::Sender;
-use p4_adapter::{Adapter, Hop, Phase, Work};
+use p4_adapter::{Adapter, Hop, Work};
 use p4_protocol::QueueClass;
 use p4_protocol::frame::Frame;
 use std::collections::{HashMap, HashSet};
@@ -503,7 +503,7 @@ impl Node {
             self.counts
                 .claimed
                 .fetch_add(claimed.len(), Ordering::Relaxed);
-            match self.hop(&claimed, window.lane) {
+            match self.hop(&claimed) {
                 Some(hop) => {
                     *self.active_hop.lock().expect("active hop lock") = Some(hop.id);
                     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -513,22 +513,30 @@ impl Node {
                         in_flight.insert(sequence.sequence.clone(), frame.clone());
                     }
                     drop(in_flight);
-                    if self.adapter.reserves_sequence_slots() && hop.phase == Phase::Prefill {
+                    if self.adapter.reserves_sequence_slots() {
+                        // A sequence occupies a backend slot the moment it is
+                        // first handed to an adapter that reserves them, and
+                        // stays there until a `SequenceReleased` event frees
+                        // it. Whether that first hand-off is happening right
+                        // now is answered by `active_sequences` itself: this
+                        // is P4's own bookkeeping, not a fact about the
+                        // backend, so it needs nothing from the hop beyond
+                        // which sequences are in it. A hop already holding a
+                        // reserved sequence — every decode lap — inserts
+                        // nothing new here; `HashSet::insert` reports exactly
+                        // that.
                         let mut active =
                             self.active_sequences.lock().expect("active sequence lock");
-                        active.extend(
-                            hop.sequences
-                                .iter()
-                                .map(|sequence| sequence.sequence.clone()),
-                        );
+                        let newly_reserved: Vec<&str> = hop
+                            .sequences
+                            .iter()
+                            .filter(|sequence| active.insert(sequence.sequence.clone()))
+                            .map(|sequence| sequence.sequence.as_str())
+                            .collect();
                         if std::env::var_os("P4_AGENT_TRACE_SEQUENCE").is_some() {
                             eprintln!(
                                 "P4_AGENT_SEQUENCE_RESERVE routes={} active={} ceiling={}",
-                                hop.sequences
-                                    .iter()
-                                    .map(|sequence| sequence.sequence.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(","),
+                                newly_reserved.join(","),
                                 active.len(),
                                 ceiling
                             );
@@ -537,7 +545,7 @@ impl Node {
                     *self.active_status.lock().expect("active telemetry lock") = Some(ActiveHop {
                         id: hop.id,
                         deployment: hop.deployment.clone(),
-                        phase: hop.phase,
+                        lane: window.lane,
                         timed_out: false,
                         requests: claimed
                             .iter()
@@ -671,7 +679,7 @@ impl Node {
         true
     }
 
-    fn hop(&self, claimed: &[Frame], lane: QueueClass) -> Option<Hop> {
+    fn hop(&self, claimed: &[Frame]) -> Option<Hop> {
         let deployment = self.payload.deployment(claimed.first()?)?;
         let sequences: Vec<_> = claimed
             .iter()
@@ -683,10 +691,6 @@ impl Node {
         Some(Hop {
             id: self.next_hop.fetch_add(1, Ordering::Relaxed),
             deployment,
-            phase: match lane {
-                QueueClass::Decode => Phase::Decode,
-                _ => Phase::Prefill,
-            },
             sequences,
         })
     }

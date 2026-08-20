@@ -20,19 +20,9 @@ pub struct Hop {
     /// a late completion cannot be applied to a newer batch.
     pub id: u64,
     pub deployment: DeploymentId,
-    pub phase: Phase,
     /// The window this hop covers. Its size is the node's decision, bounded by
     /// what the load declared.
     pub sequences: Vec<Sequence>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase {
-    /// The first pass over a prompt.
-    Prefill,
-    /// One further step. On a staged chain a lap of the ring produces one
-    /// token per sequence; on an internal backend the hop does that itself.
-    Decode,
 }
 
 /// See docs/adapter-boundary.md for what crosses the adapter boundary in

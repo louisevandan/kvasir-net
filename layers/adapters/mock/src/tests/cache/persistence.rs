@@ -23,7 +23,6 @@ fn a_file_backed_restore_preserves_the_next_decode_position_after_reload() {
         Work::Hop(Hop {
             id: 21,
             deployment: "d".into(),
-            phase: Phase::Prefill,
             sequences: vec![sequence("conversation", 8)],
         }),
         &events,
@@ -32,7 +31,6 @@ fn a_file_backed_restore_preserves_the_next_decode_position_after_reload() {
         Work::Hop(Hop {
             id: 22,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![Sequence {
                 state: Some(crate::encode_state(1, None)),
                 ..sequence("conversation", 8)
@@ -77,7 +75,6 @@ fn a_file_backed_restore_preserves_the_next_decode_position_after_reload() {
         Work::Hop(Hop {
             id: 23,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![Sequence {
                 state: Some(crate::encode_state(2, None)),
                 ..sequence("conversation", 8)
@@ -102,7 +99,7 @@ fn a_file_backed_cache_survives_a_new_mock_instance() {
     let _ = std::fs::remove_dir_all(&root);
     let first = Mock::internal_with_cache_dir(Profile::default(), &root);
     let recorder = Recorder::default();
-    first.start(hop(1, Phase::Prefill), &recorder);
+    first.start(hop(1), &recorder);
     first.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),
@@ -162,7 +159,7 @@ fn a_tampered_cache_manifest_is_refused_before_restore() {
     let _ = std::fs::remove_dir_all(&root);
     let first = Mock::internal_with_cache_dir(Profile::default(), &root);
     let events = Recorder::default();
-    first.start(hop(1, Phase::Prefill), &events);
+    first.start(hop(1), &events);
     first.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),

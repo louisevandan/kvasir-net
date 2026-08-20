@@ -1,4 +1,4 @@
-type HopSuccess = (Vec<Outcome>, Vec<String>);
+type HopSuccess = (Vec<Outcome>, Vec<String>, bool);
 type HopFailure = (Option<String>, String);
 
 impl StagedAdapter {
@@ -81,9 +81,54 @@ impl StagedAdapter {
             .map(|sequence| self.sequence_payload(sequence))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|detail| (None, detail))?;
-        let phase = match hop.phase {
-            p4_adapter::Phase::Prefill => HopPhase::Prefill,
-            p4_adapter::Phase::Decode => HopPhase::Decode,
+        // Whether a sequence is beginning work here or continuing a decode
+        // lap. The boundary carries no phase for this any more -- an
+        // execution holding both is a fact about a backend, not about P4 --
+        // so it is derived from what this adapter already holds, the same
+        // way `served` derives it from its open sessions and the mock
+        // derives it from its produced-token map.
+        //
+        // Neither wire field answers it in general. `prompt` is absent at a
+        // middle or tail stage even on that sequence's true first hop there,
+        // so it never generalises past the chain head. `SequencePayload::
+        // position` looked like it would and does not: it is P4-relative
+        // progress toward the request's bound, which only a sampled token
+        // ever advances, and the transition hop out of the initial prefill
+        // sweep -- the one that must be sent as Decode so the tail finally
+        // samples -- is exactly the hop where nothing has sampled yet, so it
+        // still reads zero. A real two-stage run traced this: stage 0's
+        // second hop is the first Decode of the run, and its inbound
+        // position was 0, indistinguishable from stage 0's first (Prefill)
+        // hop by that field alone.
+        //
+        // What answers it correctly at every stage is this adapter's own
+        // memory: `self.active` is exactly the sequences that have already
+        // been through a hop at this node. A sequence not in it is
+        // beginning work here right now, whichever node this is and
+        // whichever lap of the chain this is.
+        let is_prefill_per_sequence: Vec<bool> = {
+            let active = self.active.lock().expect("staged active-sequence lock");
+            hop.sequences
+                .iter()
+                .map(|sequence| !active.contains(&sequence.sequence))
+                .collect()
+        };
+        let is_prefill = is_prefill_per_sequence.first().copied().unwrap_or(true);
+        if is_prefill_per_sequence
+            .iter()
+            .any(|&sequence_is_prefill| sequence_is_prefill != is_prefill)
+        {
+            return Err((
+                None,
+                "hop mixes a sequence beginning work with one continuing a decode lap; \
+                 this adapter does not yet support a mixed hop"
+                    .to_owned(),
+            ));
+        }
+        let phase = if is_prefill {
+            HopPhase::Prefill
+        } else {
+            HopPhase::Decode
         };
         let inputs: Vec<SequencePayload> = inputs
             .into_iter()
@@ -94,18 +139,13 @@ impl StagedAdapter {
                 // hidden-state cut-set; forwarding the prompt to them makes
                 // the native runtime tokenize it again and skip/compete with
                 // the descriptor input on the first decode lap.
-                input.prompt = if self.config.stage_begin == 0
-                    && hop.phase == p4_adapter::Phase::Prefill
-                {
+                input.prompt = if self.config.stage_begin == 0 && is_prefill {
                     sequence.prompt.clone()
                 } else {
                     None
                 };
                 input.options = sequence.options.clone();
-                input.n_tokens = match hop.phase {
-                    p4_adapter::Phase::Prefill => input.n_tokens,
-                    p4_adapter::Phase::Decode => Some(1),
-                };
+                input.n_tokens = if is_prefill { input.n_tokens } else { Some(1) };
                 input.outcome = None;
                 input
             })
@@ -162,12 +202,11 @@ impl StagedAdapter {
         }
         self.telemetry.record(
             hop,
+            phase,
             results.iter().map(|result| {
                 (
                     result.sequence_id.clone(),
-                    result.n_tokens.unwrap_or_else(|| {
-                        if hop.phase == p4_adapter::Phase::Decode { 1 } else { 0 }
-                    }),
+                    result.n_tokens.unwrap_or(if is_prefill { 0 } else { 1 }),
                 )
             }),
             started.elapsed(),
@@ -195,7 +234,7 @@ impl StagedAdapter {
             // so they cannot use its resulting position.  They can release
             // after their final useful decode, while the tail keeps its slot
             // for the extra hop that produces the length terminal.
-            let reached_length_terminal = hop.phase == p4_adapter::Phase::Decode
+            let reached_length_terminal = !is_prefill
                 && match result.outcome.as_ref() {
                     // Tail owns the sampled position and must keep its slot
                     // for the extra length-terminal hop.
@@ -206,9 +245,7 @@ impl StagedAdapter {
                 };
             let release_sequence = reached_length_terminal
                 || result.outcome.as_ref().is_some_and(|outcome| outcome.stop.is_some());
-            if std::env::var_os("P4_STAGED_TRACE_SEQUENCE_RELEASE").is_some()
-                && hop.phase == p4_adapter::Phase::Decode
-            {
+            if std::env::var_os("P4_STAGED_TRACE_SEQUENCE_RELEASE").is_some() && !is_prefill {
                 let position = result
                     .outcome
                     .as_ref()
@@ -304,7 +341,20 @@ impl StagedAdapter {
                 released.push(sequence.sequence.clone());
             }
         }
-        Ok((outcomes, released))
+        // Every sequence in this hop has now been through a hop at this
+        // node, whether it began here or continued: `self.active` is what
+        // the next hop's derivation reads, so it has to gain every sequence
+        // this one saw and lose every one this one released.
+        {
+            let mut active = self.active.lock().expect("staged active-sequence lock");
+            for sequence in &hop.sequences {
+                active.insert(sequence.sequence.clone());
+            }
+            for sequence in &released {
+                active.remove(sequence);
+            }
+        }
+        Ok((outcomes, released, is_prefill))
     }
 
     fn hop(&self, hop: p4_adapter::Hop, events: &dyn EventSink) {
@@ -315,8 +365,8 @@ impl StagedAdapter {
             .map(|sequence| sequence.sequence.clone())
             .collect::<Vec<_>>();
         match self.execute_hop(&hop) {
-            Ok((outcomes, released)) => {
-                if hop.phase == p4_adapter::Phase::Prefill {
+            Ok((outcomes, released, is_prefill)) => {
+                if is_prefill {
                     for sequence in &expected {
                         events.raise(Event::SequenceAcquired {
                             deployment: deployment.clone(),

@@ -4,7 +4,7 @@ use super::*;
 fn restore_keeps_the_durable_kv_copy_and_unload_only_frees_resident_state() {
     let mock = Mock::internal(Profile::default());
     let recorder = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &recorder);
+    mock.start(hop(1), &recorder);
     let cache = |action| {
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),
@@ -80,7 +80,7 @@ fn missing_cache_actions_are_refused_without_creating_resident_state() {
 fn a_persisted_sequence_must_restore_before_the_next_hop() {
     let mock = Mock::internal(Profile::default());
     let recorder = Recorder::default();
-    mock.start(hop(1, Phase::Prefill), &recorder);
+    mock.start(hop(1), &recorder);
     mock.start(
         Work::Cache(p4_adapter::Cache {
             deployment: "d".into(),
@@ -93,7 +93,7 @@ fn a_persisted_sequence_must_restore_before_the_next_hop() {
         &recorder,
     );
 
-    mock.start(hop(1, Phase::Decode), &recorder);
+    mock.start(hop(1), &recorder);
     assert!(matches!(
         recorder.events().last(),
         Some(Event::Failed { detail, .. }) if detail.contains("requires Restore before Hop")
@@ -111,7 +111,7 @@ fn a_persisted_sequence_must_restore_before_the_next_hop() {
         }),
         &recorder,
     );
-    mock.start(hop(1, Phase::Decode), &recorder);
+    mock.start(hop(1), &recorder);
     assert!(matches!(
         recorder.events().last(),
         Some(Event::HopComplete { .. })
@@ -160,7 +160,7 @@ fn four_stage_commit_failure_has_no_visible_cache_and_compensates_earlier_stages
     ];
     let recorders = (0..4).map(|_| Recorder::default()).collect::<Vec<_>>();
     for (stage, recorder) in stages.iter().zip(&recorders) {
-        stage.start(named_hop("conversation", Phase::Prefill), recorder);
+        stage.start(named_hop("conversation"), recorder);
     }
     let cache = |operation_id: &str, action: p4_adapter::CacheAction, stage: usize| {
         stages[stage].start(
@@ -215,7 +215,7 @@ fn four_stage_save_unload_reload_restore_preserves_each_shard() {
     let stages = make();
     let recorders = (0..4).map(|_| Recorder::default()).collect::<Vec<_>>();
     for (stage, recorder) in stages.iter().zip(&recorders) {
-        stage.start(named_hop("conversation", Phase::Prefill), recorder);
+        stage.start(named_hop("conversation"), recorder);
     }
     let run_cache =
         |stages: &[Mock], recorders: &[Recorder], op: &str, action: p4_adapter::CacheAction| {

@@ -12,7 +12,6 @@ fn observations_preserve_phase_sequence_order_and_output_tail() {
         Work::Hop(Hop {
             id: 10,
             deployment: "d".into(),
-            phase: Phase::Prefill,
             sequences: vec![first, second],
         }),
         &recorder,
@@ -20,7 +19,7 @@ fn observations_preserve_phase_sequence_order_and_output_tail() {
 
     let observation = &mock.hop_observations()[0];
     assert_eq!(observation.hop_id, 10);
-    assert_eq!(observation.phase, Phase::Prefill);
+    assert_eq!(observation.phase, HopPhase::Prefill);
     assert_eq!(
         observation
             .sequences
@@ -57,7 +56,6 @@ fn observations_preserve_phase_sequence_order_and_output_tail() {
         Work::Hop(Hop {
             id: 11,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![
                 Sequence {
                     state: Some(crate::encode_state(1, None)),
@@ -72,7 +70,7 @@ fn observations_preserve_phase_sequence_order_and_output_tail() {
         &recorder,
     );
     let tail = &mock.hop_observations()[1];
-    assert_eq!(tail.phase, Phase::Decode);
+    assert_eq!(tail.phase, HopPhase::Decode);
     assert_eq!(tail.outcomes[0].text, "s0#2 ");
     assert_eq!(tail.outcomes[1].text, "");
     assert_eq!(tail.outcomes[1].stop.as_deref(), Some("stop"));
@@ -90,7 +88,6 @@ fn staged_observations_carry_opaque_cut_sets_in_and_out() {
         Work::Hop(Hop {
             id: 12,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![request],
         }),
         &recorder,
@@ -147,7 +144,6 @@ fn opaque_plan_and_generation_options_reach_the_mock_boundary() {
         Work::Hop(Hop {
             id: 1,
             deployment: "d".into(),
-            phase: Phase::Prefill,
             sequences: vec![request],
         }),
         &recorder,
@@ -185,7 +181,6 @@ fn malformed_generation_options_are_refused_per_sequence() {
         Work::Hop(Hop {
             id: 1,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![request],
         }),
         &recorder,
@@ -204,7 +199,6 @@ fn a_decode_lap_uses_the_carried_position_and_does_not_need_the_tail_cut_set() {
         Work::Hop(Hop {
             id: 20,
             deployment: "d".into(),
-            phase: Phase::Decode,
             sequences: vec![Sequence {
                 sequence: "conversation".into(),
                 state: Some(crate::encode_state(6, None)),
