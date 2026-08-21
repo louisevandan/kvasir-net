@@ -17,6 +17,20 @@ impl Adapter for StagedAdapter {
 
     fn start(&self, work: Work, events: &dyn EventSink) {
         match work {
+            // `Work::Load` and `Work::Unload` both hold `self.lifecycle`
+            // across `events.raise(..)` below, and `EventSink::raise` is
+            // documented as possibly blocking (`event/sink/mod.rs`), not
+            // guaranteed to return immediately. That is safe today only
+            // because of a fact about the caller, not about this code: the
+            // node's event-draining loop never needs to reacquire an
+            // adapter-internal lock, and it dispatches new work
+            // fire-and-forget rather than calling back into this adapter
+            // synchronously from inside event handling. If a future change
+            // made handling an event call back into this adapter -- for
+            // instance to decide the next hop from inside the same stack
+            // frame that raised the event -- that call would try to lock
+            // `self.lifecycle` again while this frame still holds it, and
+            // this becomes a deadlock rather than a slow path.
             Work::Load(load) => {
                 let mut lifecycle = self.lifecycle.lock().expect("staged lifecycle lock");
                 match lifecycle.load(self.control(&load.plan), self.config.ready_timeout) {
@@ -46,9 +60,28 @@ impl Adapter for StagedAdapter {
             Work::Unload(unload) => {
                 let mut lifecycle = self.lifecycle.lock().expect("staged lifecycle lock");
                 match lifecycle.unload() {
-                    Ok(()) => events.raise(Event::Unloaded {
-                        deployment: unload.deployment,
-                    }),
+                    Ok(()) => {
+                        // `LlamaLifecycle::unload()` only succeeds from
+                        // `LoadState::Loaded` and moves to the terminal
+                        // `Unloaded` (`lifecycle/mod.rs`); `load()` only
+                        // succeeds from `Empty`. So this same
+                        // `LlamaLifecycle` instance can never be loaded
+                        // again, and a node's `Arc<dyn Adapter>` is built
+                        // once at `CreateNode` and never swapped -- there is
+                        // no code path today that reuses this `sequences`
+                        // ledger for a second deployment. This clear exists
+                        // for the reload-in-place path that does not exist
+                        // yet: the day one instance can be loaded a second
+                        // time, it must not inherit this node's residency or
+                        // its tombstones from whatever ran here before it.
+                        self.sequences
+                            .lock()
+                            .expect("staged sequence ledger lock")
+                            .clear();
+                        events.raise(Event::Unloaded {
+                            deployment: unload.deployment,
+                        })
+                    }
                     Err(error) => Self::failed(
                         events,
                         unload.deployment,
@@ -64,6 +97,12 @@ impl Adapter for StagedAdapter {
     }
 
     fn report(&self) -> String {
-        format!("staged lifecycle={:?}\n{}", self.state(), self.telemetry.report())
+        format!(
+            "staged lifecycle={:?}\nP4_STAGED_TOMBSTONE_REJECTED_V1 count={}\nP4_STAGED_TOMBSTONE_EVICTED_V1 count={}\n{}",
+            self.state(),
+            self.tombstone_rejections.load(Ordering::Relaxed),
+            self.tombstone_evictions.load(Ordering::Relaxed),
+            self.telemetry.report()
+        )
     }
 }

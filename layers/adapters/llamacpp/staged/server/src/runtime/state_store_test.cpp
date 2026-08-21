@@ -1,4 +1,5 @@
 #include "state_store.hpp"
+#include "state_store_checksum.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -12,6 +13,9 @@ using staged::protocol::KvPayload;
 using staged::runtime::StateStore;
 
 namespace {
+
+constexpr std::size_t kDigestOffset = 68;
+constexpr std::size_t kDigestBytes = 32;
 
 KvPayload request() {
     KvPayload value;
@@ -28,11 +32,57 @@ KvPayload request() {
     return value;
 }
 
+std::vector<std::uint8_t> read_file(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+void write_file(const std::filesystem::path &path, const std::vector<std::uint8_t> &bytes) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char *>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+}
+
+std::string persisted_digest(const std::vector<std::uint8_t> &file) {
+    static constexpr char hex[] = "0123456789abcdef";
+    assert(file.size() >= kDigestOffset + kDigestBytes);
+    std::string digest;
+    digest.reserve(kDigestBytes * 2);
+    for (std::size_t index = 0; index < kDigestBytes; ++index) {
+        const auto byte = file[kDigestOffset + index];
+        digest.push_back(hex[byte >> 4U]);
+        digest.push_back(hex[byte & 0x0fU]);
+    }
+    return digest;
+}
+
+void replace_digest(std::vector<std::uint8_t> *file, const std::string &digest) {
+    assert(file->size() >= kDigestOffset + kDigestBytes);
+    assert(digest.size() == kDigestBytes * 2);
+    for (std::size_t index = 0; index < kDigestBytes; ++index) {
+        (*file)[kDigestOffset + index] = static_cast<std::uint8_t>(
+            std::stoul(digest.substr(index * 2, 2), nullptr, 16));
+    }
+}
+
 } // namespace
 
 int main() {
+    // Known-answer vectors (FIPS 180-4 Appendix B / widely published test
+    // vectors) pinning StateStore::checksum to standard SHA-256. A prior
+    // build had 3 of 64 round constants transcribed off by one hex digit,
+    // which produced a self-consistent but non-standard digest -- these
+    // vectors are the only thing that can catch that class of bug, since
+    // save/load only ever compare the digest against itself.
     assert(StateStore::checksum({}) ==
            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    assert(StateStore::checksum({'a', 'b', 'c'}) ==
+           "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    {
+        const std::vector<std::uint8_t> million_a(1000000, 'a');
+        assert(StateStore::checksum(million_a) ==
+               "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    }
 
     const auto root = std::filesystem::temp_directory_path() /
         ("p4-staged-state-store-" + std::to_string(
@@ -51,6 +101,35 @@ int main() {
     assert(store.load(payload, &restored, &loaded, &error));
     assert(restored == original);
     assert(loaded.checksum == saved.checksum);
+
+    // A v2 record did not label its digest algorithm. Simulate an actual file
+    // written by the pre-fix implementation by replacing only its persisted
+    // digest, then prove that load accepts exactly that legacy digest and no
+    // other malformed value.
+    const auto path = store.path_for(payload.cache_key);
+    const auto standard_file = read_file(path);
+    assert(persisted_digest(standard_file) == saved.checksum);
+    const auto legacy_checksum = staged::runtime::detail::legacy_checksum_hex(original);
+    assert(legacy_checksum != saved.checksum);
+    auto legacy_file = standard_file;
+    replace_digest(&legacy_file, legacy_checksum);
+    write_file(path, legacy_file);
+    auto legacy_request = payload;
+    legacy_request.expected_checksum = legacy_checksum;
+    assert(store.load(legacy_request, &restored, &loaded, &error));
+    assert(restored == original);
+    assert(loaded.checksum == legacy_checksum);
+    legacy_file[kDigestOffset] ^= 0x01U;
+    write_file(path, legacy_file);
+    assert(!store.load(legacy_request, &restored, nullptr, &error));
+    assert(error == "KV state checksum is invalid");
+
+    // Newly persisted records always retain standard SHA-256 and reject a
+    // legacy receipt checksum.
+    write_file(path, standard_file);
+    assert(store.load(payload, &restored, &loaded, &error));
+    assert(loaded.checksum == saved.checksum);
+    assert(!store.load(legacy_request, &restored, nullptr, &error));
 
     auto wrong = payload;
     wrong.model_identity = "other-model";

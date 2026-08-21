@@ -46,7 +46,9 @@ impl StagedAdapter {
             generation: AtomicU64::new(0),
             telemetry: telemetry::RuntimeEvidence::default(),
             transactions: Mutex::new(HashMap::new()),
-            active: Mutex::new(std::collections::HashSet::new()),
+            sequences: Mutex::new(SequenceLedger::new()),
+            tombstone_rejections: AtomicU64::new(0),
+            tombstone_evictions: AtomicU64::new(0),
         }
     }
 

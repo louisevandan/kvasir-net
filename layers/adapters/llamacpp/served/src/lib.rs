@@ -277,6 +277,7 @@ impl Served {
                 forward: Some(position.to_le_bytes().to_vec()),
                 text,
                 stop: None,
+                terminal_generated: None,
             }),
             Next::Done(reason) => {
                 sessions.remove(&sequence.sequence);
@@ -286,6 +287,7 @@ impl Served {
                     forward: None,
                     text: String::new(),
                     stop: Some(reason),
+                    terminal_generated: None,
                 })
             }
             Next::Failed(detail) => {

@@ -311,7 +311,7 @@ fn a_schema_four_status_snapshot_round_trips_active_hop_phase_and_requests() {
                 waiting_requests: vec![],
                 active_hop: Some(crate::status::ActiveHopSnapshot {
                     id: 77,
-                    lane: p4_protocol::QueueClass::Decode,
+                    lane: crate::status::ActiveHopLane::Decode,
                     timed_out: false,
                     requests: vec![crate::status::RequestSnapshot {
                         route: "active-route".into(),
@@ -366,7 +366,7 @@ fn a_schema_five_status_snapshot_round_trips_timed_out_active_hop() {
                 waiting_requests: vec![],
                 active_hop: Some(crate::status::ActiveHopSnapshot {
                     id: 88,
-                    lane: p4_protocol::QueueClass::Prefill,
+                    lane: crate::status::ActiveHopLane::Prefill,
                     timed_out: true,
                     requests: vec![],
                 }),
@@ -415,7 +415,7 @@ fn a_schema_five_rejects_an_unknown_timeout_marker() {
                 waiting_requests: vec![],
                 active_hop: Some(crate::status::ActiveHopSnapshot {
                     id: 1,
-                    lane: p4_protocol::QueueClass::Decode,
+                    lane: crate::status::ActiveHopLane::Decode,
                     timed_out: false,
                     requests: vec![],
                 }),
@@ -646,6 +646,168 @@ fn tags_are_fixed_so_reordering_a_variant_cannot_change_the_wire() {
     assert_eq!(encode_to_agent(&ToAgent::Inspect)[0], 3);
     assert_eq!(encode_to_node(&ToNode::Unload)[0], 17);
     assert_eq!(encode_reply(&Reply::Released)[0], 35);
+}
+
+/// Schema 6 is a shipped wire format. Its active-hop lane byte has meant
+/// `Prefill -> 0, Decode -> 1` since before `QueueClass` existed, and a peer
+/// already built against schema 6 depends on exactly that. This test pins
+/// the byte directly rather than only round-tripping, because a round trip
+/// alone stays green even if encode and decode drift to the same wrong byte
+/// together — which is precisely how the regression this test guards against
+/// slipped in once already (commit 1aa011086 quietly moved this field onto
+/// the four-value `QueueClass` codec while schema stayed at 6).
+#[test]
+fn schema_six_active_hop_lane_pins_the_shipped_zero_one_wire_bytes() {
+    let build = |lane: crate::status::ActiveHopLane| Reply::StatusSnapshot {
+        snapshot: crate::status::StatusSnapshot {
+            schema: 6,
+            snapshot_seq: 1,
+            generated_at_unix_ms: 2,
+            address: "tcp://lane-pin:1".into(),
+            traffic: crate::status::TrafficSnapshot {
+                forwarded: 0,
+                consumed: 0,
+                to_nodes: 0,
+                unrouted: 0,
+                refused: 0,
+                emergency_lost: 0,
+            },
+            lanes: crate::status::LaneSnapshot {
+                control: 0,
+                prefill: 0,
+                decode: 0,
+                response: 0,
+            },
+            peers: 0,
+            continuations: 0,
+            subscription_pending: 0,
+            subscription_unacked: 0,
+            subscription_dropped: 0,
+            subscription_ack_rejected: 0,
+            nodes: vec![crate::status::NodeSnapshot {
+                node: "n0".into(),
+                depth: 0,
+                running: 0,
+                outbox_lost: 0,
+                waiting: vec![],
+                backend: "mock".into(),
+                waiting_requests: vec![],
+                active_hop: Some(crate::status::ActiveHopSnapshot {
+                    id: 5,
+                    lane,
+                    timed_out: false,
+                    requests: vec![],
+                }),
+            }],
+        },
+    };
+
+    let prefill = encode_reply(&build(crate::status::ActiveHopLane::Prefill));
+    let decode = encode_reply(&build(crate::status::ActiveHopLane::Decode));
+
+    // The two snapshots are identical apart from the lane, so they must be
+    // the same length and differ at exactly one byte: the lane tag itself.
+    // Finding that byte by diffing survives an unrelated field being added
+    // ahead of it in the snapshot, where a hardcoded offset would silently
+    // start comparing the wrong byte instead of failing.
+    assert_eq!(prefill.len(), decode.len());
+    let differences: Vec<(usize, u8, u8)> = prefill
+        .iter()
+        .zip(decode.iter())
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .map(|(index, (&a, &b))| (index, a, b))
+        .collect();
+    assert_eq!(
+        differences.len(),
+        1,
+        "prefill and decode snapshots must differ in exactly one byte"
+    );
+    let (lane_index, prefill_byte, decode_byte) = differences[0];
+    assert_eq!((prefill_byte, decode_byte), (0, 1));
+
+    // Tag 2 in that same position must be rejected outright, not silently
+    // reinterpreted as `Control` the way the shared four-value lane codec
+    // (`status_lane_tag`/`status_lane`, used for `RequestSnapshot::lane`)
+    // would read it.
+    let mut poisoned = prefill.clone();
+    poisoned[lane_index] = 2;
+    assert!(
+        decode_reply(&poisoned)
+            .expect_err("tag 2 is outside the active hop lane's two-value domain")
+            .0
+            .contains("unknown active hop lane 2")
+    );
+
+    // Both values round-trip.
+    let Reply::StatusSnapshot { snapshot } = decode_reply(&prefill).unwrap() else {
+        panic!("expected a status snapshot reply");
+    };
+    assert_eq!(
+        snapshot.nodes[0].active_hop.as_ref().unwrap().lane,
+        crate::status::ActiveHopLane::Prefill
+    );
+    let Reply::StatusSnapshot { snapshot } = decode_reply(&decode).unwrap() else {
+        panic!("expected a status snapshot reply");
+    };
+    assert_eq!(
+        snapshot.nodes[0].active_hop.as_ref().unwrap().lane,
+        crate::status::ActiveHopLane::Decode
+    );
+}
+
+/// A schema 4 `StatusSnapshot` byte-for-byte as a genuinely older binary
+/// would have written it, built by hand from the wire layout rather than
+/// through the current encoder -- so this does not merely prove the current
+/// encoder and decoder agree with each other, which the round-trip tests
+/// above already do. `ActiveHopSnapshot::lane`'s byte has meant
+/// `Prefill -> 0, Decode -> 1` since before `QueueClass` existed, and
+/// `active_hop_lane_tag`/`active_hop_lane` keep exactly that mapping, so
+/// bytes shaped like this are what a pre-fix peer actually put on the wire.
+#[test]
+fn a_hand_built_old_shaped_schema_four_snapshot_decodes_to_the_right_lane() {
+    fn raw_schema_four_snapshot(active_hop_lane_byte: u8) -> Vec<u8> {
+        let mut body = vec![43u8]; // STATUS_SNAPSHOT tag
+        body.extend_from_slice(&4u32.to_le_bytes()); // schema
+        body.extend_from_slice(&1u64.to_le_bytes()); // snapshot_seq
+        body.extend_from_slice(&2u64.to_le_bytes()); // generated_at_unix_ms
+        body.extend_from_slice(&0u32.to_le_bytes()); // address (empty text)
+        for _ in 0..16 {
+            // 15 traffic/lane/peer/continuation/subscription counters, plus
+            // the schema>=2 ack-rejected counter: all zero.
+            body.extend_from_slice(&0u64.to_le_bytes());
+        }
+        body.extend_from_slice(&1u32.to_le_bytes()); // node_count = 1
+        body.extend_from_slice(&0u32.to_le_bytes()); // node name (empty text)
+        body.extend_from_slice(&0u64.to_le_bytes()); // depth
+        body.extend_from_slice(&0u64.to_le_bytes()); // running
+        body.extend_from_slice(&0u32.to_le_bytes()); // backend (empty text)
+        body.extend_from_slice(&0u32.to_le_bytes()); // waiting.len() = 0
+        body.extend_from_slice(&0u32.to_le_bytes()); // waiting_requests.len() = 0 (schema >= 3)
+        body.push(1); // active_hop marker: Some (schema >= 4)
+        body.extend_from_slice(&5u64.to_le_bytes()); // active_hop.id
+        body.push(active_hop_lane_byte); // active_hop.lane, old-style 0/1
+        body.extend_from_slice(&0u32.to_le_bytes()); // active_hop.requests.len() = 0
+        body
+    }
+
+    let Reply::StatusSnapshot { snapshot } = decode_reply(&raw_schema_four_snapshot(0)).unwrap()
+    else {
+        panic!("expected a status snapshot reply");
+    };
+    assert_eq!(
+        snapshot.nodes[0].active_hop.as_ref().unwrap().lane,
+        crate::status::ActiveHopLane::Prefill
+    );
+
+    let Reply::StatusSnapshot { snapshot } = decode_reply(&raw_schema_four_snapshot(1)).unwrap()
+    else {
+        panic!("expected a status snapshot reply");
+    };
+    assert_eq!(
+        snapshot.nodes[0].active_hop.as_ref().unwrap().lane,
+        crate::status::ActiveHopLane::Decode
+    );
 }
 
 #[test]

@@ -20,6 +20,20 @@ bool has_speculative_type(const common_params &params,
            params.speculative.types.end();
 }
 
+// Which family a requested (non-MTP) speculative type belongs to, for the
+// capability report's blocker classification below. This has to key off the
+// requested *type*, not common_params_speculative::has_dft(): that flag is
+// only true once a --model-draft path has actually been resolved, so at
+// parse time (or in a test that requests draft-simple without ever
+// supplying a draft model) it reads false and silently misclassifies every
+// draft-family request as an ngram-family one.
+bool has_draft_family_type(const common_params &params) {
+    return has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE) ||
+           has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3) ||
+           has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH) ||
+           has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK);
+}
+
 bool valid_utf8(const std::string &value) {
     for (std::size_t i = 0; i < value.size();) {
         const auto byte = static_cast<unsigned char>(value[i]);
@@ -274,7 +288,7 @@ CapabilityReport capability_report(const ParsedLlamaOptions &parsed) {
         blocker = "mtp_auxiliary_layers_and_proposal_state";
     } else if (parsed.mtp_requested) {
         blocker = "mtp_auxiliary_layers_not_owned_by_stage";
-    } else if (parsed.speculative_requested && parsed.params.speculative.has_dft()) {
+    } else if (parsed.speculative_requested && has_draft_family_type(parsed.params)) {
         blocker = "draft_context_and_proposal_state_not_in_hop";
     } else if (parsed.speculative_requested) {
         blocker = "proposal_accept_rollback_state_not_in_hop";

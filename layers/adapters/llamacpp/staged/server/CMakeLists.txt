@@ -19,6 +19,19 @@ set(P4_STAGED_LLAMA_BUILD_DIR "" CACHE PATH
 option(P4_STAGED_BUILD_LLAMA "Build the C++ stage runtime against llama.cpp" ON)
 option(P4_STAGED_CUDA "Enable the CUDA backend for the staged llama runtime" OFF)
 
+# The outer build config is Release (/O2 /DNDEBUG per CMAKE_CXX_FLAGS_RELEASE),
+# which turns every <cassert> assert() into a no-op. A prior verification pass
+# found 192 asserts across 7 of the 9 test files silently disarmed by this:
+# ctest reporting all-green proved only that nothing crashed, not that the
+# assertions held. Force assertions live on every test binary from this one
+# place so a newly added test file cannot silently lose them again the way
+# per-file #undef NDEBUG (present in only 2 of the 9 files) already had.
+function(p4_stage_enable_asserts target)
+    target_compile_options(${target} PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UNDEBUG>)
+endfunction()
+
 add_library(p4_staged_protocol STATIC
     src/protocol/protocol.cpp
 )
@@ -62,24 +75,28 @@ add_executable(p4_staged_server_test
     src/server/server_test.cpp
 )
 target_link_libraries(p4_staged_server_test PRIVATE p4_staged_server_core)
+p4_stage_enable_asserts(p4_staged_server_test)
 add_test(NAME p4_staged_server_test COMMAND p4_staged_server_test)
 
 add_executable(p4_staged_protocol_test
     src/protocol/protocol_test.cpp
 )
 target_link_libraries(p4_staged_protocol_test PRIVATE p4_staged_protocol)
+p4_stage_enable_asserts(p4_staged_protocol_test)
 add_test(NAME p4_staged_protocol_test COMMAND p4_staged_protocol_test)
 
 add_executable(p4_staged_runtime_test
     src/runtime/runtime_test.cpp
 )
 target_link_libraries(p4_staged_runtime_test PRIVATE p4_staged_runtime)
+p4_stage_enable_asserts(p4_staged_runtime_test)
 add_test(NAME p4_staged_runtime_test COMMAND p4_staged_runtime_test)
 
 add_executable(p4_staged_state_store_test
     src/runtime/state_store_test.cpp
 )
 target_link_libraries(p4_staged_state_store_test PRIVATE p4_staged_runtime)
+p4_stage_enable_asserts(p4_staged_state_store_test)
 add_test(NAME p4_staged_state_store_test COMMAND p4_staged_state_store_test)
 
 if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
@@ -195,6 +212,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop_decode.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop_decode_split.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop_sample.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop_sample_outcome.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_kv.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_mtp.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_options.cpp"
@@ -226,6 +244,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     )
     target_link_libraries(p4_staged_llama_runtime_compile_test
         PRIVATE p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_llama_runtime_compile_test)
     add_test(NAME p4_staged_llama_runtime_compile_test
              COMMAND p4_staged_llama_runtime_compile_test)
 
@@ -234,6 +253,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     )
     target_link_libraries(p4_staged_request_options_test
         PRIVATE p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_request_options_test)
     add_test(NAME p4_staged_request_options_test
              COMMAND p4_staged_request_options_test)
 
@@ -242,6 +262,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     )
     target_link_libraries(p4_staged_capability_test
         PRIVATE p4_staged_server_core p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_capability_test)
     add_test(NAME p4_staged_capability_test COMMAND p4_staged_capability_test)
 
     add_executable(p4_staged_plan_invariants_test
@@ -249,6 +270,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     )
     target_link_libraries(p4_staged_plan_invariants_test
         PRIVATE p4_staged_server_core p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_plan_invariants_test)
     add_test(NAME p4_staged_plan_invariants_test
              COMMAND p4_staged_plan_invariants_test)
 
@@ -257,6 +279,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     )
     target_link_libraries(p4_staged_mtp_ownership_test
         PRIVATE p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_mtp_ownership_test)
     add_test(NAME p4_staged_mtp_ownership_test
              COMMAND p4_staged_mtp_ownership_test)
 

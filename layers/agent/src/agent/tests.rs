@@ -32,6 +32,7 @@ impl Adapter for Instant {
                     forward: None,
                     text: "t".into(),
                     stop: Some("stop".into()),
+                    terminal_generated: None,
                 })
                 .collect(),
             deployment: hop.deployment,

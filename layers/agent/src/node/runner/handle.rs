@@ -50,6 +50,13 @@ pub struct Counts {
     pub emitted: AtomicUsize,
     pub raised: Arc<AtomicUsize>,
     pub lost: Arc<AtomicUsize>,
+    /// How many times `Sink::raise` found its bounded channel full and had
+    /// to wait (`blocking_send`) instead of returning immediately. Nobody
+    /// currently knows how often that happens; this is the measurement a
+    /// future non-blocking dispatcher will need to justify itself against.
+    /// In-process only -- see `EventSink`'s doc comment for why this must
+    /// not become a wire counter the way `outbox_lost` did.
+    pub blocked: Arc<AtomicUsize>,
     /// Node output frames accepted by the node but lost because the bounded
     /// outbox's downstream queue closed or teardown deliberately interrupted
     /// delivery after its bounded shutdown grace period.

@@ -288,6 +288,7 @@ impl Mock {
                 )),
                 text: String::new(),
                 stop: None,
+                terminal_generated: None,
             };
         }
         progress.position = progress.position.max(position);
@@ -306,6 +307,7 @@ impl Mock {
                 )),
                 text: String::new(),
                 stop: None,
+                terminal_generated: None,
             };
         }
         // The lifetime was already counted above, for every stage. Here only
@@ -334,6 +336,7 @@ impl Mock {
                 format!("{}#{output_position} ", sequence.sequence)
             },
             stop: finished.then(|| "stop".to_string()),
+            terminal_generated: None,
         }
     }
 }

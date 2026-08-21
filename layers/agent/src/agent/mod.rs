@@ -288,7 +288,7 @@ impl Agent {
                 let c = handle.counts();
                 let load = |value: &std::sync::atomic::AtomicUsize| value.load(Ordering::Relaxed);
                 format!(
-                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} invalid_events={} emitted={} raised={} lost={} outbox_lost={} depth={} running={} backend=[{}]",
+                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} invalid_events={} emitted={} raised={} lost={} blocked={} outbox_lost={} depth={} running={} backend=[{}]",
                     load(&c.received),
                     load(&c.queued),
                     load(&c.claimed),
@@ -301,6 +301,7 @@ impl Agent {
                     load(&c.emitted),
                     c.raised.load(Ordering::Relaxed),
                     c.lost.load(Ordering::Relaxed),
+                    c.blocked.load(Ordering::Relaxed),
                     c.outbox_lost.load(Ordering::Relaxed),
                     handle.depth(),
                     handle.in_adapter(),

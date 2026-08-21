@@ -159,6 +159,15 @@ std::string fail_text(const char *message, std::string *error) {
     return message;
 }
 
+std::array<std::uint8_t, kDigestBytes> digest_bytes(const std::string &digest) {
+    std::array<std::uint8_t, kDigestBytes> bytes{};
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        bytes[index] = static_cast<std::uint8_t>(
+            std::stoul(digest.substr(index * 2, 2), nullptr, 16));
+    }
+    return bytes;
+}
+
 std::vector<std::uint8_t> make_file(const protocol::KvPayload &request,
                                     const std::vector<std::uint8_t> &state,
                                     const std::string &digest) {
@@ -319,14 +328,25 @@ bool StateStore::load(const protocol::KvPayload &request,
     }
     state->assign(file.begin() + static_cast<std::ptrdiff_t>(offset), file.end());
     const auto digest = checksum(*state);
-    std::array<std::uint8_t, kDigestBytes> actual{};
-    const auto digest_bytes = [&] { std::array<std::uint8_t, kDigestBytes> value{}; for (std::size_t i=0;i<kDigestBytes;++i) value[i]=static_cast<std::uint8_t>(std::stoul(digest.substr(i*2,2),nullptr,16)); return value; }();
-    actual = digest_bytes;
-    if (!std::equal(actual.begin(), actual.end(), stored_digest)) { fail_text("KV state checksum is invalid", error); return false; }
-    if (!request.expected_checksum.empty() && request.expected_checksum != digest) { fail_text("KV state checksum does not match request", error); return false; }
+    const auto standard_digest = digest_bytes(digest);
+    auto accepted_checksum = digest;
+    if (!std::equal(standard_digest.begin(), standard_digest.end(), stored_digest)) {
+        // Version 2 records did not name their digest algorithm. Accept only
+        // the exact digest produced by the pre-fix implementation, never an
+        // arbitrary mismatch, so legacy state remains recoverable without
+        // weakening corruption detection. A later explicit KV_SAVE rewrites
+        // this state atomically using the standard digest above.
+        const auto legacy = detail::legacy_checksum_hex(*state);
+        const auto legacy_digest = digest_bytes(legacy);
+        if (!std::equal(legacy_digest.begin(), legacy_digest.end(), stored_digest)) {
+            fail_text("KV state checksum is invalid", error); return false;
+        }
+        accepted_checksum = legacy;
+    }
+    if (!request.expected_checksum.empty() && request.expected_checksum != accepted_checksum) { fail_text("KV state checksum does not match request", error); return false; }
     if (info != nullptr) {
         info->bytes = state_len;
-        info->checksum = digest;
+        info->checksum = accepted_checksum;
         info->build_identity = build;
         info->runtime_identity = runtime;
         info->context_identity = context;

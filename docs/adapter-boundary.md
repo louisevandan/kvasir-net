@@ -63,6 +63,8 @@ pub struct Outcome {
     pub text: String,
     /// Set when the sequence is finished and must not be scheduled again.
     pub stop: Option<String>,
+    /// A verified request-level count for a terminal length stop, if any.
+    pub terminal_generated: Option<u32>,
 }
 ```
 
@@ -72,6 +74,16 @@ On the wire the same shape appears as
 options, state }`. `emitted` is P4's own tally of the tokens it has streamed
 against the request's bound — P4 counts its own output rather than asking a
 backend how far along it is.
+
+### Terminal length accounting
+
+[`Outcome::terminal_generated`](../layers/adapters/adapter/src/event/report/mod.rs)
+is absent for ordinary output and every non-length stop. The staged adapter
+sets it only when native `position >= Sequence::remaining` proves its own
+`length` terminal; [`node::outcome::terminal_generated`](../layers/agent/src/node/outcome/mod.rs)
+caps it at that same bound and never applies it to EOS. This preserves visible
+stream text accounting while making `Done.generated` agree with a native length
+terminal that ended on a textless/coalesced decode.
 
 ## 3. What used to cross, and why it was wrong
 

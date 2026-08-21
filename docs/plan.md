@@ -19,7 +19,9 @@ answer:
 - The staged cut-set holds no opinion about the model. Gemma 4 E2B, whose
   boundary carries 55 tensors, answers correctly across a 17/35 layer split;
   Qwen2.5-1.5B, whose boundary carries 1, answers across 14/28.
-- All four driver verdicts pass at parallel 1 and 4.
+- The 2026-08-21 real two-stage Korean `max_tokens=200` fleet run passes all
+  four driver verdicts at parallel 1 and 4; every `Done(reason=length)` reports
+  `generated=200`, matching native telemetry.
 
 Not working, and known:
 

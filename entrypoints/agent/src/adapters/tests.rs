@@ -85,6 +85,6 @@ fn a_present_stage_server_builds_the_concrete_staged_adapter() {
     assert_eq!(adapter.distribution(), Distribution::Staged);
     assert_eq!(
         adapter.report(),
-        "staged lifecycle=Empty\nP4_RUNTIME_EVIDENCE_V1 retained=0 dropped=0\n"
+        "staged lifecycle=Empty\nP4_STAGED_TOMBSTONE_REJECTED_V1 count=0\nP4_STAGED_TOMBSTONE_EVICTED_V1 count=0\nP4_RUNTIME_EVIDENCE_V1 retained=0 dropped=0\n"
     );
 }

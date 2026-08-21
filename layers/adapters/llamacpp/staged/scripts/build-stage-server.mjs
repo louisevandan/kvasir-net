@@ -71,10 +71,14 @@ function importVisualStudioEnvironment(install) {
   if (process.platform !== "win32" || !install) return;
   const devCmd = path.join(install, "Common7", "Tools", "VsDevCmd.bat");
   if (!fs.existsSync(devCmd)) throw new Error(`Visual Studio developer environment is missing: ${devCmd}`);
-  // Invoke by basename from its own directory. Node's Windows argv quoting
-  // escapes embedded quotes before cmd.exe sees them, which breaks a quoted
-  // batch path containing spaces.
-  const command = "VsDevCmd.bat -arch=x64 -host_arch=x64 >nul && set";
+  // Invoke through an explicit relative path from its own directory. Node's
+  // Windows argv quoting escapes embedded quotes before cmd.exe sees them,
+  // which breaks a quoted absolute path containing spaces. A bare basename
+  // does not resolve either: an environment that sets
+  // NoDefaultCurrentDirectoryInExePath drops the current directory from
+  // cmd.exe command resolution, and this machine sets it. A leading `.\`
+  // names that directory outright and needs neither.
+  const command = ".\\VsDevCmd.bat -arch=x64 -host_arch=x64 >nul && set";
   const result = spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", command], {
     cwd: path.dirname(devCmd),
     encoding: "utf8",
@@ -223,6 +227,7 @@ const targets = [
   "p4_staged_protocol_test",
   "p4_staged_runtime_test",
   "p4_staged_state_store_test",
+  "p4_staged_plan_invariants_test",
 ];
 if (!noLlama) targets.push(
   "p4_staged_llama_runtime_compile_test",

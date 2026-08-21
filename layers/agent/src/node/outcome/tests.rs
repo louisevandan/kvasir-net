@@ -45,6 +45,7 @@ fn outcome(text: &str, stop: Option<&str>) -> Outcome {
         forward: None,
         text: text.into(),
         stop: stop.map(Into::into),
+        terminal_generated: None,
     }
 }
 
@@ -74,6 +75,7 @@ fn a_middle_stage_hands_its_state_to_the_next_node() {
         forward: Some(vec![9, 8, 7]),
         text: String::new(),
         stop: None,
+        terminal_generated: None,
     };
 
     let Next::Hop(next) = next(&carrier, &outcome, &Stateful) else {
@@ -93,6 +95,7 @@ fn a_repeated_stage_carries_the_newest_state_rather_than_the_one_before_it() {
             forward: Some(vec![1, 2]),
             text: String::new(),
             stop: None,
+            terminal_generated: None,
         },
         &Stateful,
     ) {
@@ -106,6 +109,7 @@ fn a_repeated_stage_carries_the_newest_state_rather_than_the_one_before_it() {
             forward: Some(vec![3, 4]),
             text: String::new(),
             stop: None,
+            terminal_generated: None,
         },
         &Stateful,
     ) {
@@ -263,6 +267,24 @@ fn a_finished_sequence_produces_exactly_one_terminal() {
     let frames = next(&carrier(2, 1, true), &outcome("", Some("stop")), &Plain).frames();
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].envelope.lane, QueueClass::Response);
+}
+
+#[test]
+fn a_native_length_terminal_cannot_schedule_another_decode_lap() {
+    // The staged adapter commits this stop when native KV position reaches
+    // the request bound even if some decode laps emitted no visible text. The
+    // consumer must therefore produce the terminal alone, never a token/lap
+    // pair that can return to an already-released stage 0 slot.
+    let frames = next(
+        &carrier(1, 0, true),
+        &outcome("한국어 응답", Some("length")),
+        &Plain,
+    )
+    .frames();
+
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].envelope.lane, QueueClass::Response);
+    assert_ne!(frames[0].envelope.lane, QueueClass::Decode);
 }
 
 /// Plain-text reporting, which is what the trait's defaults do.

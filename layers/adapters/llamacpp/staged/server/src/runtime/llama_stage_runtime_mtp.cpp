@@ -18,6 +18,12 @@ bool StageRuntime::execute_mtp_hop(
         const std::vector<std::int32_t> & prompt,
         MtpHopObservation * observation,
         std::string * error) {
+    // Same entry guard as execute_hop/execute_decode_batch (see
+    // hop_memory_dirty() in llama_stage_runtime.hpp). This test-only path is
+    // not reachable from server_hop.cpp or the wire dispatch today, but a
+    // future caller should not have to rediscover that a quarantined runtime
+    // must refuse every decode path, not just the two production ones.
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || mtp_context() == nullptr || mtp_speculative_ == nullptr) {
         return mtp_fail("staged MTP context/driver is not initialized", error);
     }
@@ -47,8 +53,16 @@ bool StageRuntime::execute_mtp_hop(
                          {seq_id}, true);
     }
     std::cerr << "MTP_TEST prefill_decode\n";
-    if (llama_decode(ctx_, prefill) != 0) {
+    const auto prefill_status = decode_status_from_raw(llama_decode(ctx_, prefill));
+    if (prefill_status != DecodeStatus::Success) {
         llama_batch_free(prefill);
+        // This test-only path bypasses execute_hop()/execute_decode_batch()
+        // entirely, so it has no hop_memory_dirty_ guard to trip on a later
+        // call -- but a decode that leaves ubatches processed in the memory
+        // state (Aborted/Fatal) still makes this StageRuntime unsafe for any
+        // ordinary HOP that might run on it afterwards, so it is marked the
+        // same way the ordinary paths do.
+        if (decode_status_leaves_memory_dirty(prefill_status)) hop_memory_dirty_ = true;
         return mtp_fail("llama.cpp failed to decode MTP prefill", error);
     }
     std::cerr << "MTP_TEST prefill_process\n";
@@ -89,8 +103,10 @@ bool StageRuntime::execute_mtp_hop(
                          {seq_id}, true);
     }
     std::cerr << "MTP_TEST verify_decode\n";
-    if (llama_decode(ctx_, verify) != 0) {
+    const auto verify_status = decode_status_from_raw(llama_decode(ctx_, verify));
+    if (verify_status != DecodeStatus::Success) {
         llama_batch_free(verify);
+        if (decode_status_leaves_memory_dirty(verify_status)) hop_memory_dirty_ = true;
         return mtp_fail("llama.cpp failed to decode MTP verify batch", error);
     }
     std::cerr << "MTP_TEST verify_process\n";

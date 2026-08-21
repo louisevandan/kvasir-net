@@ -4,8 +4,7 @@
 //! surface for this tool. This module is the only place that interprets
 //! `P4_RUNTIME_SAMPLE_V1`; typed status snapshots are consumed as typed values.
 
-use p4_protocol::QueueClass;
-use p4_service::status::StatusSnapshot;
+use p4_service::status::{ActiveHopLane, StatusSnapshot};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -99,10 +98,10 @@ impl TelemetryCollector {
 /// `Prefill` or `Decode`: control and response traffic never reaches this
 /// field. Anything else collapses to `Prefill`, the same default the node
 /// itself used when this lane was still folded into the removed `Phase`.
-fn phase_from_typed(lane: QueueClass) -> RuntimePhase {
+fn phase_from_typed(lane: ActiveHopLane) -> RuntimePhase {
     match lane {
-        QueueClass::Decode => RuntimePhase::Generation,
-        QueueClass::Control | QueueClass::Prefill | QueueClass::Response => RuntimePhase::Prefill,
+        ActiveHopLane::Decode => RuntimePhase::Generation,
+        ActiveHopLane::Prefill => RuntimePhase::Prefill,
     }
 }
 

@@ -11,11 +11,100 @@
 #include <process.h>
 #include <string>
 
+namespace staged::llama_runtime {
+
+// Defines the friend declared in llama_stage_runtime.hpp. See that
+// declaration for why this exists instead of a public setter: it is the
+// narrowest way to observe hop_memory_dirty_'s wiring (the entry guards in
+// execute_hop/execute_decode_batch, and unload() clearing it) without a real
+// llama_context, since every production path that sets the flag requires
+// one.
+void test_force_hop_memory_dirty(StageRuntime & runtime, bool value) noexcept {
+    runtime.hop_memory_dirty_ = value;
+}
+
+} // namespace staged::llama_runtime
+
 namespace {
 
 const char * environment_value(const char * name) {
     const auto * value = std::getenv(name);
     return value != nullptr && *value != '\0' ? value : nullptr;
+}
+
+// Real coverage for the StageRuntime wiring around hop_memory_dirty_, not
+// just the pure decode_status.hpp functions runtime_test.cpp already
+// exercises without llama.h. These three run on a never-loaded StageRuntime
+// with the flag forced true through the test-only friend above -- the entry
+// guards sit before any llama.cpp call, so no real model is required. What
+// is NOT covered here: the tail-split check in
+// llama_stage_runtime_hop_decode_split.cpp reverting from a refusal back to
+// fail_hop() after a successful llama_decode(). That path only exists once a
+// real llama_context has produced logits for a partial-stage cut-set; there
+// is no way to reach it without one, and building a fake context would
+// verify the fake rather than the real wiring. Accepted as uncovered by this
+// suite; the SKIP-gated regressions below are the closest thing to it and
+// need P4_STAGED_LLAMA_MODEL to run at all.
+void execute_decode_batch_refuses_when_hop_memory_dirty() {
+    staged::llama_runtime::StageRuntime runtime;
+    assert(!runtime.loaded());
+    staged::llama_runtime::test_force_hop_memory_dirty(runtime, true);
+
+    const std::vector<staged::protocol::SequencePayload> inputs(2);
+    std::vector<staged::protocol::SequencePayload> outputs;
+    std::string error;
+    assert(!runtime.execute_decode_batch(inputs, &outputs, &error));
+    assert(error.find("reload") != std::string::npos);
+}
+
+void execute_hop_refuses_when_hop_memory_dirty() {
+    staged::llama_runtime::StageRuntime runtime;
+    assert(!runtime.loaded());
+    staged::llama_runtime::test_force_hop_memory_dirty(runtime, true);
+
+    staged::protocol::SequencePayload input;
+    staged::protocol::SequencePayload output;
+    std::string error;
+    assert(!runtime.execute_hop(
+        input, staged::protocol::HopPhase::Prefill, &output, &error));
+    assert(error.find("reload") != std::string::npos);
+}
+
+void unload_clears_hop_memory_dirty() {
+    staged::llama_runtime::StageRuntime runtime;
+    staged::llama_runtime::test_force_hop_memory_dirty(runtime, true);
+    assert(runtime.hop_memory_dirty());
+    runtime.unload();
+    assert(!runtime.hop_memory_dirty());
+}
+
+// A quarantined runtime must not let KvSave/KvRestore/KvDrop through either
+// (llama_stage_runtime_kv.cpp): a decode failure gives no way to tell which
+// sequence's KV content is suspect, so persisting or reloading any of them
+// while dirty could round-trip torn state through disk. Same unloaded +
+// forced-dirty seam as the HOP guards above; each of save/restore/drop
+// checks hop_memory_dirty_ before its own loaded() check, so no real model
+// is needed here either.
+void kv_operations_refuse_when_hop_memory_dirty() {
+    staged::llama_runtime::StageRuntime runtime;
+    assert(!runtime.loaded());
+    staged::llama_runtime::test_force_hop_memory_dirty(runtime, true);
+
+    const staged::protocol::KvPayload request;
+    staged::protocol::KvResult result;
+    std::string error;
+
+    error.clear();
+    assert(!runtime.save(request, &result, &error));
+    assert(error.find("reload") != std::string::npos);
+
+    error.clear();
+    assert(!runtime.restore(request, &result, &error));
+    assert(error.find("reload") != std::string::npos);
+
+    error.clear();
+    assert(!runtime.drop(request, &result, &error));
+    assert(error.find("reload") != std::string::npos);
 }
 
 void real_decode_after_restore_regression() {
@@ -232,6 +321,10 @@ int main() {
     assert(error.find("mtp_auxiliary_layers_not_owned_by_stage") !=
            std::string::npos);
     assert(!runtime.loaded());
+    execute_decode_batch_refuses_when_hop_memory_dirty();
+    execute_hop_refuses_when_hop_memory_dirty();
+    unload_clears_hop_memory_dirty();
+    kv_operations_refuse_when_hop_memory_dirty();
     real_decode_after_restore_regression();
     hop_batch_rolls_back_only_new_sequences();
     return 0;

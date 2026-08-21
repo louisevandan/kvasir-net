@@ -43,6 +43,7 @@ impl Adapter for Recording {
                     text: "t".into(),
                     stop: (u32::from(lap) + 1 >= self.finish_after as u32)
                         .then(|| "stop".to_string()),
+                    terminal_generated: None,
                 }
             })
             .collect();
@@ -400,6 +401,7 @@ impl Adapter for WrongHopDeployment {
                     forward: None,
                     text: String::new(),
                     stop: Some("wrong deployment".into()),
+                    terminal_generated: None,
                 })
                 .collect(),
         });
@@ -648,6 +650,7 @@ impl Adapter for LateTimedOutHop {
                 forward: None,
                 text: String::new(),
                 stop: Some("done".into()),
+                terminal_generated: None,
             }],
         });
     }
@@ -724,6 +727,7 @@ impl Adapter for LifecycleRecording {
                         forward: None,
                         text: String::new(),
                         stop: Some("done".into()),
+                        terminal_generated: None,
                     }],
                 });
             }
@@ -916,6 +920,7 @@ impl Adapter for Reserving {
                 forward: Some(vec![1]),
                 text: "t".into(),
                 stop: None,
+                terminal_generated: None,
             })
             .collect();
         events.raise(Event::HopComplete {
@@ -990,4 +995,164 @@ fn a_sequence_reserves_its_slot_once_and_a_later_hop_does_not_reserve_it_again()
             "r2 must still be waiting for a slot rather than having run"
         );
     });
+}
+
+/// `Sink::raise` (`events.rs`) documents an honest `EventSink`: it can block,
+/// and `blocked` is the measurement of how often it actually does. These
+/// pin the three behaviours that measurement depends on -- see Stage 0's
+/// EventSink work.
+mod sink_blocked_counter {
+    use super::*;
+
+    fn counters() -> (Arc<AtomicUsize>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        (
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        )
+    }
+
+    fn unloaded(deployment: &str) -> Event {
+        Event::Unloaded {
+            deployment: deployment.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_send_that_finds_room_immediately_does_not_count_as_blocked() {
+        let (raised, lost, blocked) = counters();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<RaisedEvent>(1);
+        let sink = Sink::new(
+            tx,
+            Arc::clone(&raised),
+            Arc::clone(&lost),
+            Arc::clone(&blocked),
+        );
+
+        sink.raise(unloaded("d0"));
+
+        assert_eq!(raised.load(Ordering::Relaxed), 1);
+        assert_eq!(blocked.load(Ordering::Relaxed), 0);
+        assert_eq!(lost.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_send_that_finds_the_channel_full_counts_as_blocked_and_still_delivers() {
+        let (raised, lost, blocked) = counters();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<RaisedEvent>(1);
+        let sink = Sink::new(
+            tx,
+            Arc::clone(&raised),
+            Arc::clone(&lost),
+            Arc::clone(&blocked),
+        );
+
+        // Fill the one slot so the next raise's try_send is guaranteed Full.
+        sink.raise(unloaded("d0"));
+
+        let waiter = std::thread::spawn(move || sink.raise(unloaded("d1")));
+        // Give the waiter time to observe the full channel and enter
+        // blocking_send before this thread drains a slot to release it --
+        // the same sleep-then-settle pattern the async tests above use for
+        // task-scheduling assumptions.
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            blocked.load(Ordering::Relaxed),
+            1,
+            "the second raise must have observed the channel full before it started waiting"
+        );
+        let _ = rx.blocking_recv();
+        waiter.join().expect("waiting raise must not panic");
+
+        assert_eq!(raised.load(Ordering::Relaxed), 2);
+        assert_eq!(lost.load(Ordering::Relaxed), 0);
+        // Both events actually made it through: blocking is backpressure,
+        // not a drop.
+        assert!(rx.blocking_recv().is_some());
+    }
+
+    #[test]
+    fn a_closed_channel_counts_as_lost_rather_than_panicking() {
+        let (raised, lost, blocked) = counters();
+        let (tx, rx) = tokio::sync::mpsc::channel::<RaisedEvent>(1);
+        drop(rx);
+        let sink = Sink::new(
+            tx,
+            Arc::clone(&raised),
+            Arc::clone(&lost),
+            Arc::clone(&blocked),
+        );
+
+        sink.raise(unloaded("d0"));
+
+        assert_eq!(raised.load(Ordering::Relaxed), 1);
+        assert_eq!(lost.load(Ordering::Relaxed), 1);
+        assert_eq!(blocked.load(Ordering::Relaxed), 0);
+    }
+
+    /// The two tests above each drive one raiser against a channel of
+    /// capacity 1, with the test thread itself relied on to drain in between.
+    /// That leaves the case the doc comment on `EventSink` actually promises
+    /// -- several raisers genuinely racing a bounded channel while a
+    /// consumer drains concurrently -- unexercised. This drives sixteen
+    /// threads at a capacity-1 channel simultaneously and checks the ledger
+    /// balances: every raised event is either received or counted lost, and
+    /// with a receiver that never stops draining until every sender is done,
+    /// nothing may be lost at all.
+    #[test]
+    fn concurrent_raisers_against_a_draining_channel_lose_nothing() {
+        let (raised, lost, blocked) = counters();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<RaisedEvent>(1);
+        let sink = Sink::new(
+            tx,
+            Arc::clone(&raised),
+            Arc::clone(&lost),
+            Arc::clone(&blocked),
+        );
+
+        const RAISERS: usize = 16;
+        const EVENTS_PER_RAISER: usize = 200;
+
+        let drainer = std::thread::spawn(move || {
+            let mut received = 0usize;
+            while received < RAISERS * EVENTS_PER_RAISER {
+                if rx.blocking_recv().is_some() {
+                    received += 1;
+                }
+            }
+            received
+        });
+
+        let raisers: Vec<_> = (0..RAISERS)
+            .map(|id| {
+                let sink = sink.clone();
+                std::thread::spawn(move || {
+                    for sequence in 0..EVENTS_PER_RAISER {
+                        sink.raise(unloaded(&format!("d{id}-{sequence}")));
+                    }
+                })
+            })
+            .collect();
+        for raiser in raisers {
+            raiser.join().expect("a raiser thread must not panic");
+        }
+        let received = drainer.join().expect("the drainer must not panic");
+
+        assert_eq!(raised.load(Ordering::Relaxed), RAISERS * EVENTS_PER_RAISER);
+        assert_eq!(received, RAISERS * EVENTS_PER_RAISER);
+        assert_eq!(
+            lost.load(Ordering::Relaxed),
+            0,
+            "a channel that is always eventually drained must never lose an event"
+        );
+        // `blocked` cannot be asserted to a precise value -- it depends on
+        // how the OS schedules 16 threads against a capacity-1 channel -- but
+        // with that little room it must be nonzero, or this test is not
+        // actually exercising contention.
+        assert!(
+            blocked.load(Ordering::Relaxed) > 0,
+            "a capacity-1 channel under 16-way concurrent load that never blocked would mean \
+             this test is not exercising the contended path it exists to check"
+        );
+    }
 }

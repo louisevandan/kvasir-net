@@ -157,6 +157,11 @@ void StageRuntime::unload() noexcept {
     sampled_texts_.clear();
     next_sequence_id_ = 0;
     tail_stage_ = false;
+    // unload() is the only reset path: load() calls it first on every call,
+    // the destructor calls it, and fail() calls it on every load-time error.
+    // Clearing here means a fresh load() is the only way hop_memory_dirty_
+    // goes back to false, which is the point of it.
+    hop_memory_dirty_ = false;
 }
 
 bool StageRuntime::release_sequence(const std::string & sequence_id,
@@ -195,16 +200,23 @@ bool StageRuntime::release_sequence(const std::string & sequence_id,
     return true;
 }
 
-bool StageRuntime::decode(llama_batch batch, std::string * error) {
-    if (!loaded()) return fail("stage runtime is not loaded", error);
-    const auto result = llama_decode(ctx_, batch);
-    if (result != 0) {
-        if (error != nullptr) {
-            *error = "llama_decode failed with status " + std::to_string(result);
-        }
-        return false;
+DecodeStatus StageRuntime::decode(llama_batch batch, std::string * error) {
+    if (!loaded()) {
+        fail("stage runtime is not loaded", error);
+        // Not a llama_decode() outcome at all -- there is no batch to run.
+        // Fatal is the closest fit: fail() already unloaded the runtime, so
+        // there is nothing for a caller to retry either way.
+        return DecodeStatus::Fatal;
     }
-    return true;
+    const auto raw = llama_decode(ctx_, batch);
+    const auto status = decode_status_from_raw(raw);
+    // The raw status number is kept in the message for every non-success
+    // outcome; callers that need to tell REFUSAL from FAILURE do so from the
+    // returned DecodeStatus, not by parsing this string.
+    if (status != DecodeStatus::Success && error != nullptr) {
+        *error = "llama_decode failed with status " + std::to_string(raw);
+    }
+    return status;
 }
 
 bool StageRuntime::set_input(int32_t index, const void * data, std::size_t size,

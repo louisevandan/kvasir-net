@@ -7,6 +7,7 @@
 pub mod bound;
 pub mod events;
 pub mod handle;
+mod response;
 
 pub use handle::{ActiveHop, Counts, Handle, WaitingRequest};
 
@@ -141,6 +142,7 @@ impl Node {
                 event_tx,
                 Arc::clone(&counts.raised),
                 Arc::clone(&counts.lost),
+                Arc::clone(&counts.blocked),
             ),
             counts: Arc::clone(&counts),
             outbox: outbox_tx,
@@ -525,6 +527,27 @@ impl Node {
                         // reserved sequence — every decode lap — inserts
                         // nothing new here; `HashSet::insert` reports exactly
                         // that.
+                        //
+                        // This insert happens synchronously, before
+                        // `adapter.start(Work::Hop(..))` is even dispatched
+                        // below. If that hop names a sequence the adapter
+                        // has already released and tombstoned (see
+                        // `staged/adapter`'s `SequenceLedger`), the adapter
+                        // will refuse it -- but only once the spawned
+                        // blocking task actually runs and raises
+                        // `Event::Failed`, which is what unwinds this insert
+                        // via `release_active_sequences`. Between this line
+                        // and that event landing, a redelivered
+                        // already-released hop still counts against the
+                        // ceiling here, for the length of that async round
+                        // trip. It self-corrects and does not compound, so
+                        // it is not the correctness defect the tombstone
+                        // exists to close -- but it is not zero, either. The
+                        // real fix is Stage 2's `SessionClose` /
+                        // `SessionClosed` contract, which replaces this
+                        // insert-then-unwind bookkeeping with an accounting
+                        // that does not need a round trip to be right. Not
+                        // this stage's to fix.
                         let mut active =
                             self.active_sequences.lock().expect("active sequence lock");
                         let newly_reserved: Vec<&str> = hop
@@ -694,47 +717,6 @@ impl Node {
             sequences,
         })
     }
-
-    async fn reply(&self, carrier: &Frame, body: Vec<u8>) {
-        let Some(envelope) = carrier.envelope.to_reply() else {
-            return;
-        };
-        // Through the outbox, like every other frame a node produces. A reply
-        // that took the direct path would be the one thing this node can still
-        // lose to a full lane.
-        self.emit(Frame { envelope, body }).await;
-    }
-
-    /// Hands a frame to this node's outbox.
-    ///
-    /// The outbox is drained by a task of its own, which waits for room on the
-    /// agent queue. That waiting is backpressure and belongs somewhere — but
-    /// not here: this is the same task that receives hop completions, and a
-    /// node blocked mid-emit could not observe the hop it is waiting on. The
-    /// outbox is the seam that keeps a full lane from becoming a stall.
-    async fn emit(&self, frame: Frame) {
-        self.counts.emitted.fetch_add(1, Ordering::Relaxed);
-        if *self.outbox_gate.lock().await {
-            self.counts.outbox_lost.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        let mut stop = self.outbox_stop.clone();
-        let sent = tokio::select! {
-            result = self.outbox.send(frame) => result.is_ok(),
-            changed = stop.changed() => !(changed.is_ok() && *stop.borrow()),
-        };
-        if !sent {
-            self.counts.outbox_lost.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    async fn reply_error(&self, carrier: &Frame, detail: &str) {
-        let body = match self.payload.lifecycle(carrier) {
-            Some(Work::Cache(_)) => self.payload.cache_failure(carrier, detail),
-            _ => self.payload.failure(detail),
-        };
-        self.reply(carrier, body).await;
-    }
 }
 
 fn now_unix_ms() -> u64 {
@@ -746,3 +728,6 @@ fn now_unix_ms() -> u64 {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod response_tests;

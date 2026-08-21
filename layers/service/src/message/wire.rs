@@ -579,7 +579,7 @@ fn encode_status_snapshot(out: &mut Vec<u8>, snapshot: &crate::status::StatusSna
                 Some(active) => {
                     out.push(1);
                     wide(out, active.id);
-                    out.push(status_lane_tag(active.lane));
+                    out.push(active_hop_lane_tag(active.lane));
                     number(out, active.requests.len() as u32);
                     for request in &active.requests {
                         encode_status_request(out, request);
@@ -647,7 +647,7 @@ fn decode_status_snapshot(cursor: &mut Cursor<'_>) -> Decoded<crate::status::Sta
                 0 => None,
                 1 => {
                     let id = cursor.wide()?;
-                    let lane = status_lane(cursor.tag()?)?;
+                    let lane = active_hop_lane(cursor.tag()?)?;
                     let count = cursor.number()? as usize;
                     let mut requests = Vec::with_capacity(count);
                     for _ in 0..count {
@@ -734,6 +734,31 @@ fn status_lane(tag: u8) -> Decoded<p4_protocol::QueueClass> {
         2 => Ok(p4_protocol::QueueClass::Decode),
         3 => Ok(p4_protocol::QueueClass::Response),
         other => Err(Malformed(format!("unknown status lane {other}"))),
+    }
+}
+
+/// Codec for `ActiveHopSnapshot::lane`, kept deliberately separate from
+/// `status_lane_tag`/`status_lane` above.
+///
+/// This field's byte has meant `Prefill -> 0, Decode -> 1` since before
+/// `QueueClass` existed, and a shipped schema 6 peer still expects exactly
+/// that. `status_lane_tag` is correct where it is used — `RequestSnapshot`
+/// really is a four-valued field and has always used all four tags — but
+/// reusing it here would widen this field's wire domain out from under any
+/// peer that has already shipped against it. See `ActiveHopLane`'s doc
+/// comment in `crate::status` for the full story.
+fn active_hop_lane_tag(lane: crate::status::ActiveHopLane) -> u8 {
+    match lane {
+        crate::status::ActiveHopLane::Prefill => 0,
+        crate::status::ActiveHopLane::Decode => 1,
+    }
+}
+
+fn active_hop_lane(tag: u8) -> Decoded<crate::status::ActiveHopLane> {
+    match tag {
+        0 => Ok(crate::status::ActiveHopLane::Prefill),
+        1 => Ok(crate::status::ActiveHopLane::Decode),
+        other => Err(Malformed(format!("unknown active hop lane {other}"))),
     }
 }
 

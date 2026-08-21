@@ -111,6 +111,14 @@ std::uint64_t StageRuntime::sequence_token_position(const std::string & sequence
 
 bool StageRuntime::save(const protocol::KvPayload & request, protocol::KvResult * result,
                         std::string * error) {
+    // A decode failure that left processed ubatches in the memory state
+    // (hop_memory_dirty(), see llama_stage_runtime.hpp) makes every
+    // sequence's KV content on this runtime unverifiable, not just the one
+    // that failed -- llama.cpp does not report which sequence a fatal/abort
+    // status actually touched. Persisting anything to disk while quarantined
+    // would let a client KvSave a possibly-torn state and later KvRestore it
+    // as if it were good.
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || result == nullptr || !matches(config_, request, error)) {
         if (error != nullptr && error->empty()) *error = "stage runtime is not loaded";
         return false;
@@ -142,6 +150,10 @@ bool StageRuntime::save(const protocol::KvPayload & request, protocol::KvResult 
 
 bool StageRuntime::restore(const protocol::KvPayload & request, protocol::KvResult * result,
                            std::string * error) {
+    // See save() above: a quarantined runtime's sequence table and local
+    // position bookkeeping are as suspect as its KV content, so KvRestore is
+    // refused along with KvSave/KvDrop until a fresh load() clears it.
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || result == nullptr || !matches(config_, request, error)) {
         if (error != nullptr && error->empty()) *error = "stage runtime is not loaded";
         return false;
@@ -180,6 +192,8 @@ bool StageRuntime::restore(const protocol::KvPayload & request, protocol::KvResu
 
 bool StageRuntime::drop(const protocol::KvPayload & request, protocol::KvResult * result,
                         std::string * error) {
+    // See save() above.
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || result == nullptr || !matches(config_, request, error)) {
         if (error != nullptr && error->empty()) *error = "stage runtime is not loaded";
         return false;

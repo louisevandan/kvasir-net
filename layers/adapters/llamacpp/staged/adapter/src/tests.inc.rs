@@ -241,6 +241,47 @@ mod tests {
         assert_eq!(outcome.forward, Some(vec![1, 2, 3]));
         assert_eq!(outcome.text, "hello");
         assert_eq!(outcome.stop, None);
+        assert_eq!(outcome.terminal_generated, None);
+    }
+
+    #[test]
+    fn native_length_metadata_projects_the_request_bound_not_visible_text_count() {
+        let mut sequence = sequence("tail", None);
+        sequence.remaining = 200;
+        let outcome = outcome_from_result(
+            &sequence,
+            None,
+            Some(OutcomeMetadata {
+                token: 42,
+                text: String::new(),
+                position: 200,
+                stop: Some("length".into()),
+            }),
+        );
+
+        assert_eq!(outcome.terminal_generated, Some(200));
+    }
+
+    #[test]
+    fn malformed_or_eos_metadata_cannot_claim_a_length_terminal_count() {
+        let mut sequence = sequence("tail", None);
+        sequence.remaining = 200;
+        for metadata in [
+            OutcomeMetadata {
+                token: 42,
+                text: String::new(),
+                position: 199,
+                stop: Some("length".into()),
+            },
+            OutcomeMetadata {
+                token: 42,
+                text: String::new(),
+                position: 200,
+                stop: Some("eos".into()),
+            },
+        ] {
+            assert_eq!(outcome_from_result(&sequence, None, Some(metadata)).terminal_generated, None);
+        }
     }
 
     #[test]
@@ -303,5 +344,4 @@ mod tests {
         assert_eq!(thin.initial_tokens, None);
         assert_eq!(thin.position, None);
     }
-
 }

@@ -47,6 +47,13 @@ bool StageRuntime::execute_decode_batch(
     std::vector<protocol::SequencePayload> * outputs,
     std::string * error) {
     if (outputs == nullptr || inputs.size() < 2) return false;
+    // A prior decode on this runtime left processed ubatches in the memory
+    // state with no way to roll them back (see hop_memory_dirty() in
+    // llama_stage_runtime.hpp). Every HOP after that one is refused with a
+    // real error until a fresh load() clears it -- silently continuing would
+    // mean this lap's positions are computed against a cache state nobody
+    // can vouch for.
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     // A hop that costs 18 ms on a stage whose arithmetic is under 2 ms is not
     // a compute problem, and the phases have to be told apart before anything
     // is optimised. Decode is asynchronous on CUDA, so the submit and the wait
@@ -194,7 +201,13 @@ bool StageRuntime::execute_decode_batch(
     if (batch.token == nullptr || batch.n_seq_id == nullptr ||
         batch.seq_id == nullptr || batch.logits == nullptr) {
         llama_batch_free(batch);
-        return fail_hop("llama.cpp failed to allocate the batched decode batch", error);
+        // This runs before llama_decode() below, so nothing has been
+        // computed: a REFUSAL, not a failure. The per-sequence path
+        // allocates a batch sized for one row at a time -- far smaller than
+        // this whole lap's row count -- and can still succeed where this
+        // allocation could not.
+        if (error != nullptr) error->clear();
+        return false;
     }
     // Positions are llama.cpp's to assign, per sequence, from what each
     // sequence's cache already holds — which is what the per-sequence path
@@ -213,20 +226,56 @@ bool StageRuntime::execute_decode_batch(
         // Every row is a sequence's own next token, so every row needs logits.
         batch.logits[i] = 1;
     }
-    // A refusal here is not a failed request. Nothing was computed, so the
-    // per-sequence path can still run the same lap; the error is dropped so
-    // the caller takes it.
+    // A refusal here (NoKvSlot) is not a failed request: llama.cpp restored
+    // the memory state, nothing was computed, and the per-sequence path can
+    // still run the same lap. Every other non-success outcome is a failure
+    // the caller must not retry -- see decode_status.hpp for why.
     std::string decode_error;
     const auto decode_started = std::chrono::steady_clock::now();
-    const bool decoded = decode(batch, &decode_error);
+    const auto decode_status = decode(batch, &decode_error);
     const auto decode_ended = std::chrono::steady_clock::now();
     llama_batch_free(batch);
-    if (!decoded) {
+    // Appends the standard "must be reloaded" line to whatever a failed step
+    // already put in `error`, and marks this runtime unusable until reload.
+    // Shared by every failure below that can only happen once llama_decode()
+    // has already run -- the tail split check, split_decode_outputs,
+    // synchronize_outputs and sample_decode_row -- because all of them mean
+    // the KV cache has moved past what rollback_hop_batch can undo.
+    const auto memory_dirty_failure = [&]() {
+        hop_memory_dirty_ = true;
+        if (error == nullptr) return;
+        if (error->empty()) {
+            *error = hop_memory_dirty_message();
+        } else {
+            *error += "; ";
+            *error += hop_memory_dirty_message();
+        }
+    };
+    if (decode_status != DecodeStatus::Success) {
         std::fprintf(stderr,
-                     "P4_STAGED_DECODE_BATCH_FAILED stage=%d-%d rows=%zu from_tokens=%d n_embd=%d\n",
+                     "P4_STAGED_DECODE_BATCH_FAILED stage=%d-%d rows=%zu from_tokens=%d n_embd=%d status=%d\n",
                      config_.layer_begin, config_.layer_end, rows.size(),
-                     from_tokens ? 1 : 0, 0);
-        if (error != nullptr) error->clear();
+                     from_tokens ? 1 : 0, 0, static_cast<int>(decode_status));
+        if (decode_status_is_refusal(decode_status)) {
+            if (error != nullptr) error->clear();
+            return false;
+        }
+        if (decode_status_leaves_memory_dirty(decode_status)) {
+            // Aborted or Fatal: processed ubatches remain in the memory
+            // state, so this runtime cannot take another HOP until reload.
+            if (error != nullptr) *error = "batched decode failed: " + decode_error;
+            memory_dirty_failure();
+        } else {
+            // InvalidInput: the memory state was restored, but the batch
+            // itself was rejected as malformed. Resubmitting the identical
+            // rows one at a time cannot succeed either -- it would only
+            // repeat the same rejection after paying for it per sequence --
+            // so this is a failure, not a refusal.
+            if (error != nullptr) {
+                *error = "batched decode rejected the input batch and cannot be retried "
+                         "per-sequence with the same rows: " + decode_error;
+            }
+        }
         return false;
     }
 
@@ -241,11 +290,17 @@ bool StageRuntime::execute_decode_batch(
     // reply and make the next lap ambiguous.
     if (!tail_stage_) {
         const auto split_started = std::chrono::steady_clock::now();
-        if (!split_decode_outputs(rows.size(), &results, error)) return false;
+        if (!split_decode_outputs(rows.size(), &results, error)) {
+            memory_dirty_failure();
+            return false;
+        }
         split_taken = std::chrono::steady_clock::now() - split_started;
     }
     const auto sync_started = std::chrono::steady_clock::now();
-    if (!synchronize_outputs(error)) return false;
+    if (!synchronize_outputs(error)) {
+        memory_dirty_failure();
+        return false;
+    }
     const auto sync_ended = std::chrono::steady_clock::now();
 
     if (tail_stage_) {
@@ -255,11 +310,28 @@ bool StageRuntime::execute_decode_batch(
         // which does not fail, it just answers the wrong sequence. Checked
         // rather than assumed, because a wrong token is invisible until a
         // stream stops making sense.
+        //
+        // llama_decode() already returned Success by this point, so the KV
+        // cache has already advanced: this is a failure, not a refusal, and
+        // it is the one that used to be the most damaging to get wrong,
+        // because it is the most likely of these post-decode checks to
+        // actually trip.
+        //
+        // Not covered by llama_stage_runtime_compile_test.cpp's unloaded-
+        // runtime mutation tests: reaching this line needs a real
+        // llama_decode() to have run and produced logits for a specific ubatch
+        // split, which only happens against a real llama_context. Faking one
+        // would test the fake, not this wiring. See that file's comment for
+        // what is covered instead.
         if (llama_get_logits_ith(ctx_, static_cast<int32_t>(rows.size()) - 1) == nullptr) {
             std::fprintf(stderr,
                          "P4_STAGED_DECODE_BATCH_SPLIT stage=%d-%d rows=%zu\n",
                          config_.layer_begin, config_.layer_end, rows.size());
-            if (error != nullptr) error->clear();
+            if (error != nullptr) {
+                *error = "batched decode split into more than one ubatch after llama_decode "
+                         "already advanced the KV cache, so only the last ubatch's logits survived";
+            }
+            memory_dirty_failure();
             return false;
         }
         const auto sample_started = std::chrono::steady_clock::now();
@@ -267,6 +339,7 @@ bool StageRuntime::execute_decode_batch(
             results[i].descriptors.clear();
             results[i].payloads.clear();
             if (!sample_decode_row(*rows[i].input, static_cast<int32_t>(i), &results[i], error)) {
+                memory_dirty_failure();
                 return false;
             }
         }

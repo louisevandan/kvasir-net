@@ -118,6 +118,14 @@ pub struct Outcome {
     pub text: String,
     /// Set when this sequence is finished and should not be scheduled again.
     pub stop: Option<String>,
+    /// The request-level output count committed with a terminal outcome.
+    ///
+    /// This is deliberately not a backend position: an adapter may supply it
+    /// only when it has proved a terminal request contract.  It lets a native
+    /// length terminal account for decode steps that produced no visible text,
+    /// without making P4's normal streaming tally depend on backend state.
+    /// See `docs/adapter-boundary.md#terminal-length-accounting`.
+    pub terminal_generated: Option<u32>,
 }
 
 impl Outcome {

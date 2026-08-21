@@ -174,12 +174,16 @@ n개 만들거나 `Reply::Token`을 n개 내보낼 수 있다는 뜻은 아니�
 
 `accepted_count`는 wire field가 아니다. terminal의 다음 HOP `position`에서 boundary가
 드러나며, stage는 자기 이전 write 끝과 새 position으로 rollback 범위를 유도한다.
-**position은 KV commit 기준이고, token event와 `Done.generated`는 visible 기준이다.**
+**position은 KV commit 기준이고, token event는 visible 기준이다.**
 terminal은 `accepted_count`에서 commit 수를 재구성하지 않고, 실제 target KV에 쓴
 행 수를 `committed_count`로 기록한다. 일반적인 불일치 경로에서는 이 값이
 `accepted_count + 1`이지만, accepted 구간 안에서 EOS 같은 종료 토큰이 발생하면
 추가 sample 행이 없으므로 식이 달라질 수 있다. 반면 `visible_count`는
-`Reply::Token.index`의 단조 증가와 `Done.generated` 회계에만 반영된다.
+`Reply::Token.index`의 단조 증가와 일반 `Done.generated` 회계에 반영된다.
+유일한 예외는 staged native가 `position >= remaining`을 증명한 `length` terminal이다:
+그 `Outcome::terminal_generated`는 request bound를 `Done.generated`으로 보존하며,
+candidate/accepted count를 노출하는 필드가 아니다
+([adapter boundary](adapter-boundary.md#terminal-length-accounting)).
 
 EOS, stop sequence, grammar, cancellation 등으로 accepted 구간 전체가 외부에
 방출되는 것은 아닐 수 있다. 그러므로 후보/채택/가시 토큰을 같은 수로 처리하지 말고,
@@ -434,10 +438,12 @@ accepted count를 운반하지 않는다. 따라서 다중 row 입력을 도입�
   허용하는 다중 토큰 event 표현으로 변환한다.
 - `Reply::Token.index`는 기존 마지막 index 다음부터 연속 증가시킨다.
 - `Done.generated`는 accepted/candidate 수가 아니라 실제 visible token 수를 더한다.
+  단, 검증된 native `length` terminal은 request bound를 보고한다.
 - stop/EOS/grammar/cancel 뒤의 후보 row는 외부 event로 내보내지 않는다.
 
 즉 `Outcome` 하나에 후보 수나 accepted count를 억지로 넣지 않는다. P4 event 변환은
-visible output만 보고, rollback boundary는 다음 HOP의 position으로 전달한다.
+visible output만 보고, 검증된 length bound만 terminal 회계에 사용하며, rollback
+boundary는 다음 HOP의 position으로 전달한다.
 
 ### 10.2 C++ protocol/server: transport 검증과 dispatch
 

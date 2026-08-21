@@ -77,10 +77,51 @@ pub struct RequestSnapshot {
     pub deadline_unix_ms: u64,
 }
 
+/// Schema 6's wire domain for an active hop's lane, kept separate from
+/// `QueueClass` on purpose.
+///
+/// This field used to hold a two-variant `Phase` (`Prefill`/`Decode`) and the
+/// byte on the wire has always been 0/1 for it — a peer running an older
+/// binary decodes exactly those two tags. When `Phase` was folded into the
+/// four-variant `QueueClass`, encoding this field with the shared lane codec
+/// silently widened the domain: an old peer now rejects a decode snapshot
+/// outright (tag 2), and a new peer misreads an old prefill snapshot as
+/// `Control` (both are tag 0) without any error at all. That second failure
+/// is the dangerous one, because nothing about it looks wrong.
+///
+/// `ActiveHopLane` pins the wire domain back to two values in the type
+/// system, so a future widening of `QueueClass` cannot repeat the mistake by
+/// accident — encoding this field only compiles for `Prefill`/`Decode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActiveHopLane {
+    Prefill,
+    Decode,
+}
+
+impl From<QueueClass> for ActiveHopLane {
+    /// Total by construction, because nothing at the node validates the
+    /// envelope lane a peer chose for a frame that ends up composing an
+    /// active hop. In practice an active hop is only ever composed from
+    /// sequence-carrying work, so `Control` and `Response` are not reachable
+    /// here — but "not reachable in practice" is not "cannot arrive", and a
+    /// partial match here would mean a panic on the one input this
+    /// conversion exists to make harmless. Everything that is not `Decode`
+    /// narrows to `Prefill`, which is also schema 6's historical default for
+    /// this field.
+    fn from(lane: QueueClass) -> Self {
+        match lane {
+            QueueClass::Decode => ActiveHopLane::Decode,
+            QueueClass::Control | QueueClass::Prefill | QueueClass::Response => {
+                ActiveHopLane::Prefill
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveHopSnapshot {
     pub id: u64,
-    pub lane: QueueClass,
+    pub lane: ActiveHopLane,
     pub timed_out: bool,
     pub requests: Vec<RequestSnapshot>,
 }
@@ -164,7 +205,12 @@ pub async fn typed_snapshot(agent: &Arc<Agent>) -> StatusSnapshot {
                 .collect(),
             active_hop: node.active_hop.map(|hop| ActiveHopSnapshot {
                 id: hop.id,
-                lane: hop.lane,
+                // `ActiveHop::lane` stays `QueueClass` — it is in-process
+                // telemetry and loses nothing by being four-valued. This is
+                // the one place it crosses onto the wire, so it is the one
+                // place the schema 6 domain has to be narrowed back to two
+                // values. See `ActiveHopLane`'s doc comment for why.
+                lane: ActiveHopLane::from(hop.lane),
                 timed_out: hop.timed_out,
                 requests: hop
                     .requests

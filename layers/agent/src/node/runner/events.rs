@@ -27,13 +27,16 @@ pub(super) struct RaisedEvent {
 
 /// Sends adapter events to the node that owns them.
 ///
-/// Bounded by the node ingress budget. The adapter runs on a blocking thread,
-/// so `blocking_send` applies backpressure without dropping a completion.
+/// Bounded by the node ingress budget. `raise` tries a non-blocking send
+/// first and only falls back to `blocking_send` -- which applies
+/// backpressure rather than dropping a completion -- once the channel is
+/// observed full, so `blocked` counts exactly the sends that had to wait.
 #[derive(Clone)]
 pub(super) struct Sink {
     events: mpsc::Sender<RaisedEvent>,
     raised: Arc<AtomicUsize>,
     lost: Arc<AtomicUsize>,
+    blocked: Arc<AtomicUsize>,
     cancelled: Arc<std::sync::atomic::AtomicBool>,
     token: u64,
 }
@@ -43,11 +46,13 @@ impl Sink {
         events: mpsc::Sender<RaisedEvent>,
         raised: Arc<AtomicUsize>,
         lost: Arc<AtomicUsize>,
+        blocked: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             events,
             raised,
             lost,
+            blocked,
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             token: 0,
         }
@@ -58,6 +63,7 @@ impl Sink {
             events: self.events.clone(),
             raised: Arc::clone(&self.raised),
             lost: Arc::clone(&self.lost),
+            blocked: Arc::clone(&self.blocked),
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             token,
         }
@@ -72,6 +78,7 @@ impl Sink {
             events: self.events.clone(),
             raised: Arc::clone(&self.raised),
             lost: Arc::clone(&self.lost),
+            blocked: Arc::clone(&self.blocked),
             cancelled,
             token,
         }
@@ -81,15 +88,26 @@ impl Sink {
 impl EventSink for Sink {
     fn raise(&self, event: Event) {
         self.raised.fetch_add(1, Ordering::Relaxed);
-        if self
-            .events
-            .blocking_send(RaisedEvent {
-                token: self.token,
-                event,
-            })
-            .is_err()
-        {
-            self.lost.fetch_add(1, Ordering::Relaxed);
+        let raised = RaisedEvent {
+            token: self.token,
+            event,
+        };
+        // A plain `blocking_send` cannot tell a caller whether it had to
+        // wait. Trying a non-blocking send first, and only falling back to
+        // `blocking_send` when that reports the channel full, gives `raise`
+        // the exact same delivery behaviour as before while making the wait
+        // itself observable through `blocked`.
+        match self.events.try_send(raised) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(raised)) => {
+                self.blocked.fetch_add(1, Ordering::Relaxed);
+                if self.events.blocking_send(raised).is_err() {
+                    self.lost.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.lost.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -414,15 +432,13 @@ impl Node {
                 percent,
                 ..
             } => {
-                let carrier = self.lifecycle.lock().expect("lifecycle lock").clone();
                 if !self.accepts_load_event(&deployment) {
                     self.reject_lifecycle_event(
                         "adapter returned load progress for the wrong deployment",
                     )
                     .await;
-                } else if let Some(carrier) = carrier {
-                    self.reply(&carrier, self.payload.progress(stage, percent))
-                        .await;
+                } else {
+                    self.reply_lifecycle_progress(stage, percent).await;
                 }
             }
         }

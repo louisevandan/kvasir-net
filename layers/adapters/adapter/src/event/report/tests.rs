@@ -7,12 +7,14 @@ fn a_stopped_sequence_says_so_rather_than_being_inferred_from_empty_text() {
         forward: None,
         text: String::new(),
         stop: None,
+        terminal_generated: None,
     };
     let stopped = Outcome {
         sequence: "b".into(),
         forward: None,
         text: "done".into(),
         stop: Some("stop".into()),
+        terminal_generated: None,
     };
     // A middle stage produces no text and is not finished; reading emptiness
     // as completion would end every sequence at the first stage.
@@ -42,6 +44,7 @@ fn an_outcome_can_carry_an_opaque_outbound_cut_set() {
         forward: Some(payload.clone()),
         text: String::new(),
         stop: None,
+        terminal_generated: None,
     };
 
     assert_eq!(outcome.forward, Some(payload));

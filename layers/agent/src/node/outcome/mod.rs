@@ -53,14 +53,13 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
     if outcome.is_finished() {
         let mut envelope = reply;
         envelope.event_seq = carrier.envelope.event_seq.saturating_add(1);
+        let observed = report
+            .emitted(carrier)
+            .saturating_add(u32::from(!outcome.text.is_empty()));
+        let generated = terminal_generated(carrier, outcome, report, observed).unwrap_or(observed);
         return Next::Finish(Frame {
             envelope,
-            body: report.finished(
-                outcome.stop.as_deref().unwrap_or_default(),
-                report
-                    .emitted(carrier)
-                    .saturating_add(u32::from(!outcome.text.is_empty())),
-            ),
+            body: report.finished(outcome.stop.as_deref().unwrap_or_default(), generated),
         });
     }
     // The caller asked for a number of tokens, and that number bounds the ring
@@ -146,6 +145,22 @@ pub fn next(carrier: &Frame, outcome: &Outcome, report: &dyn Payload) -> Next {
     }
 }
 
+/// A native terminal count is authoritative only for a validated length stop.
+/// Clamp it to P4's request bound so malformed adapter metadata cannot claim
+/// more output than the caller requested.
+fn terminal_generated(
+    carrier: &Frame,
+    outcome: &Outcome,
+    report: &dyn Payload,
+    observed: u32,
+) -> Option<u32> {
+    (outcome.stop.as_deref() == Some("length"))
+        .then(|| report.sequence(carrier).map(|sequence| sequence.remaining))
+        .flatten()
+        .zip(outcome.terminal_generated)
+        .map(|(bound, generated)| generated.min(bound).max(observed.min(bound)))
+}
+
 impl Next {
     /// The frames this decision puts on the queue, in the order they must be
     /// enqueued. A token precedes its lap so a reader never sees the token of
@@ -160,5 +175,7 @@ impl Next {
     }
 }
 
+#[cfg(test)]
+mod terminal_tests;
 #[cfg(test)]
 mod tests;

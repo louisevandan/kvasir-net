@@ -70,6 +70,17 @@ int main() {
         "--model", "not-loaded.gguf", "--kv-unified"};
     assert(staged::server::parse_llama_options(
         5, argv, unified_tokens, &parsed, &error));
-    assert(parsed.params.n_ctx > 0);
+    // What actually distinguishes "the plan tokens reached common_params_parse"
+    // from "the Windows argv-reconstruction bug silently substituted the real
+    // process argv" is whether --model's value made it into params.model.path:
+    // the real process argv here carries only --port/--bind, no --model at
+    // all, so a collision would leave this empty. n_ctx is not a usable signal
+    // for that: it defaults to 0 ("use the model's trained context") for any
+    // plan that omits --ctx-size, collision or not, since llama.cpp only
+    // resolves it once a real model is loaded -- which this test, using
+    // "not-loaded.gguf", never does. The previous `n_ctx > 0` assertion here
+    // could not have passed for this input regardless of the code under test;
+    // NDEBUG had stripped it since the test was first written.
+    assert(parsed.params.model.path == "not-loaded.gguf");
     return 0;
 }

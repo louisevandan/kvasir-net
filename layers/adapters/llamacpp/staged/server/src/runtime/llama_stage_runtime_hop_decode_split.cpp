@@ -88,7 +88,14 @@ bool StageRuntime::bind_merged_cut_set(
         if (!copy_descriptor(merged, &llama_descriptor, error) ||
             !llama_linkcpp_input_set_tensor(ctx_, &llama_descriptor,
                                             joined.data(), joined.size())) {
-            return fail_hop("llama.cpp rejected the merged decode cut-set", error);
+            // This runs before execute_decode_batch's llama_decode() call, so
+            // nothing has been computed yet: a REFUSAL, not a failure. The
+            // per-sequence path binds one row's cut-set at a time instead of
+            // this merged bundle and can still succeed where the merge could
+            // not -- see the file comment above for the shape this rejects
+            // (anything with something above the token axis).
+            if (error != nullptr) error->clear();
+            return false;
         }
     }
     return true;

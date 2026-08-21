@@ -125,21 +125,48 @@ const defaultTarget = path.join(
   "llama-pipeline-upstream",
   `${upstreamHead.slice(0, 10)}-${manifest.patch_set_sha256.slice(0, 12)}`,
 );
-const targetDir = parseOutputPath() ?? defaultTarget;
+const explicitTarget = parseOutputPath();
+const targetDir = explicitTarget ?? defaultTarget;
 
-if (!fs.existsSync(targetDir)) {
-  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-  runGit(["worktree", "add", "--detach", targetDir, manifest.upstream_commit], upstreamDir);
+function createPreparedSource(destination) {
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  runGit(["worktree", "add", "--detach", destination, manifest.upstream_commit], upstreamDir);
   for (const entry of manifest.patches) {
     const patchPath = path.join(compatibilityDir, entry.file);
-    runGit(["apply", "--check", "--whitespace=nowarn", patchPath], targetDir);
-    runGit(["apply", "--whitespace=nowarn", patchPath], targetDir);
+    runGit(["apply", "--check", "--whitespace=nowarn", patchPath], destination);
+    runGit(["apply", "--whitespace=nowarn", patchPath], destination);
   }
 }
 
-validatePreparedSource(targetDir, manifest);
+function verifiedPreparedSource(destination) {
+  if (!fs.existsSync(destination)) createPreparedSource(destination);
+  validatePreparedSource(destination, manifest);
+  return destination;
+}
+
+let preparedTarget;
+try {
+  preparedTarget = verifiedPreparedSource(targetDir);
+} catch (error) {
+  // A cache worktree is generated output, not a source of compatibility
+  // truth.  Do not delete or reuse a worktree whose diff no longer matches
+  // the manifest: it may be useful forensic evidence and building it would
+  // make an unrecorded llama.cpp mutation authoritative.  An explicit --out
+  // remains strict so callers can ask for an exact path.  The default cache
+  // gets one independently reconstructed, manifest-named recovery worktree.
+  if (explicitTarget) throw error;
+  const recoveredTarget = `${defaultTarget}-verified`;
+  try {
+    preparedTarget = verifiedPreparedSource(recoveredTarget);
+  } catch (recoveryError) {
+    throw new Error(
+      `default prepared source failed verification (${error.message}); `
+      + `independent recovery also failed (${recoveryError.message})`,
+    );
+  }
+}
 const output = {
-  source_dir: targetDir,
+  source_dir: preparedTarget,
   upstream_commit: manifest.upstream_commit,
   compatibility_id: `${upstreamHead.slice(0, 10)}.${manifest.patch_set_sha256}`,
   patch_set_sha256: manifest.patch_set_sha256,

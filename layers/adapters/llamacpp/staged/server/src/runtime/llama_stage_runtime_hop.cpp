@@ -8,7 +8,6 @@
 
 #include "ggml.h"
 #include "llama_stage_runtime_hop_shared.hpp"
-#include "request_options.hpp"
 
 namespace staged::llama_runtime {
 
@@ -20,6 +19,19 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
                                protocol::HopPhase phase,
                                protocol::SequencePayload * output,
                                std::string * error) {
+    // See execute_decode_batch's entry guard and hop_memory_dirty() in
+    // llama_stage_runtime.hpp: a prior decode on this runtime left processed
+    // ubatches in the memory state with no way to roll them back, so every
+    // HOP after that one -- batched or per-sequence -- is refused until a
+    // fresh load() clears it. Checked before loaded() (matching
+    // execute_decode_batch and decode_status.hpp's "every HOP execution path
+    // checks first" comment) rather than after: hop_memory_dirty_ can only be
+    // true while a real load is (or was) in effect, since unload() is the
+    // only place that clears it and it always sets loaded()==false in the
+    // same call, so the two checks never actually compete over a real
+    // runtime state. Putting the guard first is what lets an unloaded
+    // StageRuntime exercise it in a test without a llama_context.
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded()) {
         return fail_hop("stage runtime is not loaded", error);
     }
@@ -204,29 +216,47 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
             batch.seq_id[i][0] = sequence_id;
             batch.logits[i] = i == batch.n_tokens - 1;
         }
-        const bool decoded = decode(batch, error);
+        const auto decode_status = decode(batch, error);
         last_batch_tokens = batch.n_tokens;
         llama_batch_free(batch);
-        if (!decoded) {
+        if (decode_status != DecodeStatus::Success) {
+            // Aborted/Fatal leave processed ubatches in the memory state,
+            // same as the batched decode path -- see decode_status.hpp.
+            // NoKvSlot/InvalidInput restore it, but this per-sequence path
+            // has no fallback beneath it for the caller to retry into, so
+            // the REFUSAL/FAILURE split that matters for the batched path
+            // does not apply here: any non-success ends this HOP either way.
+            if (decode_status_leaves_memory_dirty(decode_status)) {
+                hop_memory_dirty_ = true;
+            }
             if (hop_trace_enabled()) {
-                std::fprintf(stderr, "P4_STAGED_HOP_DECODE_FAIL stage=%d-%d phase=%s seq=%s error=%s\n",
+                std::fprintf(stderr, "P4_STAGED_HOP_DECODE_FAIL stage=%d-%d phase=%s seq=%s status=%d error=%s\n",
                              config_.layer_begin, config_.layer_end, hop_phase_name(phase),
-                             input.sequence_id.c_str(), error != nullptr ? error->c_str() : "none");
+                             input.sequence_id.c_str(), static_cast<int>(decode_status),
+                             error != nullptr ? error->c_str() : "none");
             }
             return false;
         }
-
+        // Everything below this point in the function runs only after a
+        // decode succeeded, so any failure from here on means the KV cache
+        // has already moved past what rollback_hop_batch can undo -- this
+        // runtime must refuse every later HOP until it is reloaded.
         const auto count = llama_linkcpp_output_count(ctx_);
-        if (count < 0) return fail_hop("llama.cpp returned an invalid staged output count", error);
+        if (count < 0) {
+            hop_memory_dirty_ = true;
+            return fail_hop("llama.cpp returned an invalid staged output count", error);
+        }
         const auto base = result.descriptors.size();
         for (int32_t i = 0; i < count; ++i) {
             llama_linkcpp_tensor_desc llama_descriptor{};
             if (!llama_linkcpp_output_desc(ctx_, i, &llama_descriptor)) {
+                hop_memory_dirty_ = true;
                 return fail_hop("llama.cpp could not describe staged HOP output", error);
             }
             auto descriptor = protocol_descriptor(llama_descriptor);
             if (descriptor.has_alias) descriptor.alias_of += static_cast<std::uint32_t>(base);
             if (descriptor.nbytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+                hop_memory_dirty_ = true;
                 return fail_hop("staged HOP output is too large", error);
             }
             result.descriptors.push_back(std::move(descriptor));
@@ -237,13 +267,17 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
                     std::vector<std::uint8_t>(static_cast<std::size_t>(result.descriptors.back().nbytes)));
                 if (!llama_linkcpp_output_get(ctx_, i, result.payloads.back()->data(),
                                               result.payloads.back()->size())) {
+                    hop_memory_dirty_ = true;
                     return fail_hop("llama.cpp rejected staged HOP output tensor", error);
                 }
             }
         }
         // Each output belongs to this chunk. Synchronize before the next
         // decode so an async device-to-host copy cannot be overwritten.
-        if (!synchronize_outputs(error)) return false;
+        if (!synchronize_outputs(error)) {
+            hop_memory_dirty_ = true;
+            return false;
+        }
         if (hop_trace_enabled()) {
             std::fprintf(stderr, "P4_STAGED_HOP_CHUNK_DONE stage=%d-%d phase=%s seq=%s outputs=%d\n",
                          config_.layer_begin, config_.layer_end, hop_phase_name(phase),
@@ -251,78 +285,13 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
         }
     }
 
+    // The sampler step itself is split into sample_hop_outcome() -- see its
+    // doc comment in llama_stage_runtime.hpp -- to keep this file under the
+    // repository's line limit.
     std::optional<protocol::SequencePayload::OutcomeMetadata> outcome;
-    if (tail_stage_) {
-        const auto options_found = sampler_options_.find(input.sequence_id);
-        if (options_found != sampler_options_.end() && options_found->second != input.options) {
-            samplers_.erase(input.sequence_id);
-            sampler_options_.erase(options_found);
-            sampled_tokens_.erase(input.sequence_id);
-            sampled_texts_.erase(input.sequence_id);
-        }
-        auto found = samplers_.find(input.sequence_id);
-        if (found == samplers_.end()) {
-            auto sampling = params_.sampling;
-            if (!apply_request_options(input.options, model_, &sampling, error)) return false;
-            if (hop_trace_enabled()) {
-                std::fprintf(stderr, "P4_STAGED_SAMPLER_OPTIONS stage=%d-%d seq=%s options_bytes=%zu ignore_eos=%d bias_count=%zu\n",
-                             config_.layer_begin, config_.layer_end, input.sequence_id.c_str(),
-                             input.options.size(), sampling.ignore_eos ? 1 : 0,
-                             sampling.logit_bias.size());
-            }
-            common_sampler_ptr sampler(common_sampler_init(model_, sampling));
-            if (!sampler) return fail_hop("llama.cpp failed to create staged sampler", error);
-            if (!input_tokens.empty()) {
-                for (const auto token : input_tokens) {
-                    common_sampler_accept(sampler.get(), token, false);
-                }
-            }
-            found = samplers_.emplace(input.sequence_id, std::move(sampler)).first;
-            sampler_options_[input.sequence_id] = input.options;
-        }
-        if (phase == protocol::HopPhase::Decode) {
-            const auto sampled = common_sampler_sample(found->second.get(), ctx_, last_batch_tokens - 1);
-            if (sampled == LLAMA_TOKEN_NULL) {
-                return fail_hop("llama.cpp staged sampler returned no token", error);
-            }
-            common_sampler_accept(found->second.get(), sampled, true);
-            const auto *vocab = llama_model_get_vocab(model_);
-            if (vocab == nullptr) {
-                return fail_hop("llama.cpp did not expose a sampler vocabulary", error);
-            }
-            protocol::SequencePayload::OutcomeMetadata metadata;
-            metadata.token = static_cast<std::int32_t>(sampled);
-            metadata.position = input.position.value_or(0) + 1;
-            const bool end_of_generation = llama_vocab_is_eog(vocab, sampled);
-            if (hop_trace_enabled()) {
-                std::fprintf(stderr, "P4_STAGED_SAMPLE stage=%d-%d seq=%s token=%d eog=%d ignore_eos=%d\n",
-                             config_.layer_begin, config_.layer_end, input.sequence_id.c_str(),
-                             static_cast<int>(sampled), end_of_generation ? 1 : 0,
-                             input.options.find("ignore_eos") != std::string::npos ? 1 : 0);
-            }
-            if (!end_of_generation) {
-                auto & generated = sampled_tokens_[input.sequence_id];
-                generated.push_back(sampled);
-                const auto detokenized = common_detokenize(vocab, generated, false);
-                auto & emitted = sampled_texts_[input.sequence_id];
-                if (detokenized.size() >= emitted.size() &&
-                    detokenized.compare(0, emitted.size(), emitted) == 0) {
-                    metadata.text = detokenized.substr(emitted.size());
-                } else {
-                    metadata.text = detokenized;
-                }
-                // Emit only what is whole. What is left over is the beginning of a
-                // character whose remainder is in the next token, so it is held back
-                // rather than turned into a replacement mark.
-                metadata.text.resize(complete_utf8_prefix(metadata.text));
-                if (!valid_utf8_text(metadata.text)) {
-                    metadata.text = "\xEF\xBF\xBD";
-                }
-                emitted += metadata.text;
-            }
-            if (end_of_generation) metadata.stop = "eos";
-            outcome = std::move(metadata);
-        }
+    if (tail_stage_ &&
+        !sample_hop_outcome(input, phase, input_tokens, last_batch_tokens, &outcome, error)) {
+        return false;
     }
 
     result.outcome = std::move(outcome);
@@ -342,11 +311,13 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
 
         const auto terminal_count = llama_linkcpp_terminal_count(ctx_);
         if (terminal_count < 0) {
+            hop_memory_dirty_ = true;
             return fail_hop("llama.cpp returned an invalid staged terminal count", error);
         }
         for (int32_t i = 0; i < terminal_count; ++i) {
             llama_linkcpp_tensor_desc llama_descriptor{};
             if (!llama_linkcpp_terminal_desc(ctx_, i, &llama_descriptor)) {
+                hop_memory_dirty_ = true;
                 return fail_hop("llama.cpp could not describe staged terminal output", error);
             }
             auto descriptor = protocol_descriptor(llama_descriptor);
@@ -356,6 +327,7 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
                 continue;
             }
             if (descriptor.nbytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+                hop_memory_dirty_ = true;
                 return fail_hop("staged terminal output is too large", error);
             }
             result.payloads.emplace_back(
@@ -363,12 +335,14 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
             result.descriptors.push_back(std::move(descriptor));
             if (!llama_linkcpp_terminal_get(ctx_, i, result.payloads.back()->data(),
                                             result.payloads.back()->size())) {
+                hop_memory_dirty_ = true;
                 return fail_hop("llama.cpp rejected staged terminal output", error);
             }
         }
     }
 
     if (!synchronize_outputs(error)) {
+        hop_memory_dirty_ = true;
         return false;
     }
     sequence_positions_[input.sequence_id] = result.outcome.has_value()

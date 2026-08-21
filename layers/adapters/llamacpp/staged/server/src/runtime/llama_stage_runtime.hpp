@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -9,6 +10,7 @@
 #include "speculative.h"
 #include "sampling.h"
 #include "llama.h"
+#include "decode_status.hpp"
 #include "kv_bridge.hpp"
 #include "state_store.hpp"
 #include "protocol.hpp"
@@ -59,7 +61,14 @@ public:
         MtpHopObservation * observation,
         std::string * error = nullptr);
 
-    [[nodiscard]] bool decode(llama_batch batch, std::string * error = nullptr);
+    [[nodiscard]] DecodeStatus decode(llama_batch batch, std::string * error = nullptr);
+
+    // Set by any HOP path when a decode (or a step that runs after a
+    // successful one) leaves the KV cache somewhere rollback cannot restore.
+    // See decode_status.hpp: rollback_hop_batch() only releases sequences
+    // the current HOP newly created, so once this is true the only way back
+    // to a clean state is a fresh load(), which starts by calling unload().
+    [[nodiscard]] bool hop_memory_dirty() const noexcept { return hop_memory_dirty_; }
     [[nodiscard]] bool set_input(int32_t index, const void * data, std::size_t size,
                                  std::string * error = nullptr);
     [[nodiscard]] bool get_output(int32_t index, void * data, std::size_t size,
@@ -137,6 +146,17 @@ public:
     // A server HOP may contain several sequence executions. The batch boundary
     // is kept here so a later sequence failure can release only slots created
     // by this HOP while preserving mappings that existed at its start.
+    //
+    // This does NOT undo a decode. It releases sequence-id slots this HOP
+    // newly allocated (see hop_new_sequences_) and restores the round-robin
+    // allocator's cursor; it never restores the KV position of a sequence
+    // that already existed before the HOP started, because llama.cpp does
+    // not expose a way to rewind a sequence's cache to an arbitrary earlier
+    // position after llama_decode() has advanced it. A decode outcome that
+    // leaves processed ubatches in the memory state (DecodeStatus::Aborted,
+    // DecodeStatus::Fatal, or any failure detected after a successful
+    // decode) is therefore not something a rollback can paper over -- see
+    // hop_memory_dirty() above.
     void begin_hop_batch();
     void commit_hop_batch();
     [[nodiscard]] bool rollback_hop_batch(std::string * error = nullptr);
@@ -158,6 +178,18 @@ private:
         const protocol::KvPayload &, std::uint64_t token_position) const;
     [[nodiscard]] std::uint64_t sequence_token_position(
         const std::string & sequence_id) const;
+
+    // The tail-stage sampler step of the per-sequence HOP path (execute_hop),
+    // split out to keep that file under the repository's line limit. Every
+    // llama.cpp call in here runs after execute_hop's own decode() already
+    // returned success, so every failure path sets hop_memory_dirty_.
+    [[nodiscard]] bool sample_hop_outcome(
+        const protocol::SequencePayload & input,
+        protocol::HopPhase phase,
+        const std::vector<llama_token> & input_tokens,
+        int32_t last_batch_tokens,
+        std::optional<protocol::SequencePayload::OutcomeMetadata> * outcome,
+        std::string * error);
 
     common_params params_;
     LoadConfig config_;
@@ -186,6 +218,19 @@ private:
     bool hop_batch_active_ = false;
     llama_seq_id next_sequence_id_ = 0;
     bool tail_stage_ = false;
+    // See hop_memory_dirty() above. Cleared only in unload(), which load()
+    // always calls first, so a fresh load() is the only way back to false.
+    bool hop_memory_dirty_ = false;
+
+    // Test-only seam: the mutation coverage in
+    // llama_stage_runtime_compile_test.cpp for execute_hop's and
+    // execute_decode_batch's entry guards, and for unload() clearing the
+    // flag, needs to observe hop_memory_dirty_ without running a real decode
+    // (an unloaded StageRuntime is enough for the guard tests -- see that
+    // file). A single named friend function keeps the write path out of the
+    // class's real API surface, unlike a public setter any caller could
+    // reach by accident.
+    friend void test_force_hop_memory_dirty(StageRuntime & runtime, bool value) noexcept;
 };
 
 } // namespace staged::llama_runtime

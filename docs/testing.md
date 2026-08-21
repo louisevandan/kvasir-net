@@ -57,6 +57,19 @@ of the ring: a lap that reported nothing carries the number unchanged, because
 a hole in the numbering is the one thing a subscriber has for detecting a frame
 the transport lost.
 
+## Reply sequence contract
+
+[`node/runner/response.rs`](../layers/agent/src/node/runner/response.rs) is the
+single producer boundary for replies that do not come from `node::outcome`:
+local refusal, adapter failure, and lifecycle/cache reply. Its input carrier
+holds the last visible sequence for the route, and each reply is emitted with
+`carrier.event_seq + 1`; a lap that sends no reply does not change its carrier.
+Lifecycle progress retains that increment before its later terminal reply.
+Consequently a staged adapter rejecting a redelivered continuation after token
+`N` sends its `Failed` terminal at `N + 1`, which the drive accepts rather than
+discarding as a duplicate. The producer never repairs ordering by asking the
+drive to accept duplicate frames.
+
 `envelope`, `frame`, `message::wire` — round trips, and refusal of every
 truncation, every trailing byte, every unknown tag.
 
@@ -146,6 +159,12 @@ Four claims, printed as a verdict: every request answered, none failed, every
 stream in order, one terminal per route. Run each chain shape several times
 against long-lived agents — a defect that only appears on the second run
 against the same process is exactly the kind this level exists for.
+
+The final 2026-08-21 two-stage real run used `러스트에 대해 한국어로 설명하라`
+with `max_tokens=200`: parallel 1 completed 1/1 and parallel 4 completed 4/4,
+with zero failed, unanswered, duplicate, or gap events. Every length terminal
+reported `Done.generated=200`, equal to its native generation telemetry; raw
+artifacts are `target/real-two-stage-5000/iteration3-terminal-count-korean-*`.
 
 Run with `P4_AGENT_STATS=1` when something is wrong. Lane depth beside node
 depth says which side of the adapter boundary is slow; the per-node counts say

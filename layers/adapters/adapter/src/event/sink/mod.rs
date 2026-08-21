@@ -6,8 +6,17 @@
 
 use crate::event::report::Event;
 
-/// Implemented by the node's queue. It never blocks and never answers, so an
-/// adapter cannot come to depend on being heard synchronously.
+/// Implemented by the node's queue. It never answers, so an adapter cannot
+/// come to depend on a raised event carrying a reply back.
+///
+/// It is not guaranteed non-blocking: the node's implementation sends into a
+/// bounded channel and can block when that channel is full. Every adapter
+/// today calls it from a thread that is already allowed to block (the one
+/// running the backend's own blocking work), which is what makes this
+/// survivable — an adapter must not assume it can raise an event from a
+/// context that must not block. A dedicated event dispatcher is planned to
+/// take over this path and make the non-blocking guarantee real; until then
+/// this is what actually happens, not what was originally documented here.
 pub trait EventSink: Send + Sync {
     fn raise(&self, event: Event);
 
