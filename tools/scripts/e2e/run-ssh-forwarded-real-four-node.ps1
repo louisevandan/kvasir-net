@@ -629,7 +629,7 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         $completed -eq $Requests -and $failed -eq 0 -and $unanswered -eq 0 -and
         $routes -ge $Requests -and $tokens -gt 0 -and $elapsedMs -ge 0 -and
         $framesPerSecond -gt 0 -and $latencyCompleted -eq $completed -and
-        $latencyP95Ms -ge 0 -and $latencyP99Ms -ge $latencyP95Ms
+        $latencyP95Ms -ge 0 -and $latencyP99Ms -ge $latencyP95Ms -and
         $peak4080VramMiB -ge 0 -and $peak4080VramMiB -le $Max4080VramMiB
     $runPassed = [bool](
         ($driverExitCode -eq 0) -and
