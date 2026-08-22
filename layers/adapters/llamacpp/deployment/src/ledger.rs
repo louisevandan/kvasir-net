@@ -22,6 +22,8 @@ use crate::contract::{
 };
 use std::collections::{HashMap, VecDeque};
 
+mod replay;
+
 /// How many settled submissions stay remembered.
 ///
 /// Only large enough that a resend of something recent is still recognised;
@@ -252,7 +254,14 @@ impl Ledger {
             }
             Event::Rejected(_) => Verdict::ProtocolViolation,
             Event::Produced(produced) if entry.state == SubmissionState::Accepted => {
-                if produced.event_ordinal != entry.next_ordinal {
+                // The server's reconnect journal replays from its retained
+                // head, so an already-delivered prefix is expected after a
+                // socket replacement. Suppress that prefix, but keep a gap
+                // fatal: only ordinals below the next expected one are safe.
+                if produced.event_ordinal < entry.next_ordinal {
+                    return Verdict::Duplicate;
+                }
+                if produced.event_ordinal > entry.next_ordinal {
                     return Verdict::OutOfOrder {
                         expected: entry.next_ordinal,
                         got: produced.event_ordinal,
@@ -353,40 +362,6 @@ impl Ledger {
         if let Some(entry) = self.entries.get_mut(submission_id) {
             entry.cancel_requested = true;
         }
-    }
-
-    /// Submissions whose cancel is still owed to the backend.
-    pub fn cancels_for_replay(&self) -> Vec<SubmissionId> {
-        let mut ids: Vec<SubmissionId> = self
-            .entries
-            .iter()
-            .filter(|(_, entry)| {
-                entry.cancel_requested
-                    && entry.generation == self.generation
-                    && entry.state != SubmissionState::Done
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        ids.sort();
-        ids
-    }
-
-    /// Every submission of the *current* generation this ledger has sent but
-    /// has not yet seen a terminal event for. A reconnect resends exactly
-    /// these, in stable order, and nothing from a superseded generation.
-    pub fn in_flight_for_replay(&self) -> Vec<Submit> {
-        let mut submissions: Vec<&Entry> = self
-            .entries
-            .values()
-            .filter(|entry| {
-                entry.generation == self.generation && entry.state != SubmissionState::Done
-            })
-            .collect();
-        submissions.sort_by(|a, b| a.submit.submission_id.cmp(&b.submit.submission_id));
-        submissions
-            .into_iter()
-            .map(|entry| entry.submit.clone())
-            .collect()
     }
 
     #[cfg(test)]

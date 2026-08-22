@@ -1,6 +1,5 @@
 use super::*;
 use crate::contract::{Accepted, Produced, RejectReason, Rejected, SettleReason, Settled};
-
 fn submit(id: &str) -> Submit {
     submit_gen(id, 1)
 }
@@ -58,7 +57,7 @@ fn two_submissions_are_independently_in_flight_at_once() {
 }
 
 #[test]
-fn produced_ordinals_must_be_contiguous_from_zero() {
+fn produced_replay_is_duplicate_but_a_forward_gap_is_an_error() {
     let mut ledger = Ledger::new(1);
     ledger.begin(submit("s1"));
     ledger.apply(&Event::Accepted(Accepted {
@@ -72,6 +71,15 @@ fn produced_ordinals_must_be_contiguous_from_zero() {
             generated_tokens: 1,
         })),
         Verdict::Apply
+    );
+    assert_eq!(
+        ledger.apply(&Event::Produced(Produced {
+            submission_id: "s1".into(),
+            event_ordinal: 0,
+            text: "a replayed".into(),
+            generated_tokens: 1,
+        })),
+        Verdict::Duplicate
     );
     assert_eq!(
         ledger.apply(&Event::Produced(Produced {
@@ -95,7 +103,6 @@ fn produced_ordinals_must_be_contiguous_from_zero() {
         Verdict::Apply
     );
 }
-
 #[test]
 fn settled_is_accepted_once_and_refused_the_second_time() {
     let mut ledger = Ledger::new(1);
@@ -172,7 +179,6 @@ fn a_full_rejection_is_retained_for_an_adapter_local_retry() {
     );
     assert_eq!(ledger.submission_for_retry("s1"), Some(submit("s1")));
 }
-
 #[test]
 fn unknown_submission_is_refused() {
     let mut ledger = Ledger::new(1);
@@ -183,7 +189,6 @@ fn unknown_submission_is_refused() {
         Verdict::Unknown
     );
 }
-
 #[test]
 fn an_accepted_replayed_after_reconnect_is_not_forwarded_twice() {
     let mut ledger = Ledger::new(1);
@@ -194,7 +199,6 @@ fn an_accepted_replayed_after_reconnect_is_not_forwarded_twice() {
     assert_eq!(ledger.apply(&accepted), Verdict::Apply);
     assert_eq!(ledger.apply(&accepted), Verdict::Duplicate);
 }
-
 #[test]
 fn event_from_a_superseded_generation_is_refused() {
     let mut ledger = Ledger::new(1);
@@ -207,7 +211,6 @@ fn event_from_a_superseded_generation_is_refused() {
         Verdict::StaleGeneration
     );
 }
-
 #[test]
 fn generation_advance_terminalizes_every_live_old_submission() {
     let mut ledger = Ledger::new(1);
@@ -240,14 +243,12 @@ fn generation_advance_terminalizes_every_live_old_submission() {
         ]
     );
 }
-
 #[test]
 fn deployment_generation_never_moves_backwards() {
     let mut ledger = Ledger::new(2);
     assert!(ledger.advance_generation(1).is_empty());
     assert_eq!(ledger.generation(), 2);
 }
-
 #[test]
 fn replay_set_excludes_settled_and_superseded_generation_entries() {
     let mut ledger = Ledger::new(1);
@@ -269,7 +270,6 @@ fn replay_set_excludes_settled_and_superseded_generation_entries() {
     // never settled: it is moot once the generation moved on.
     assert_eq!(ids, vec!["s4"]);
 }
-
 #[test]
 fn replay_order_is_stable_by_submission_id() {
     let mut ledger = Ledger::new(1);

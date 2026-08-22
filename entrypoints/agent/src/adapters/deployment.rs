@@ -34,14 +34,21 @@ const DEFAULT_RECONNECT_BACKOFF: Duration = Duration::from_millis(200);
 /// Connects `p4-llamacpp-deployment`'s client and registers it into
 /// `registry` under `P4_LLAMACPP_DEPLOYMENT_ID`, returning whether it did.
 /// A no-op returning `Ok(false)` when `P4_LLAMACPP_DEPLOYMENT_ADDR` is
-/// unset -- a missing address is a missing capability, exactly as
-/// `register_staged` treats a missing binary, not an error this process
-/// should fail startup over. `sink` is the caller's single long-lived
+/// unset, unless `P4_LLAMACPP_DEPLOYMENT_REQUIRED=1`. Required mode is used
+/// by relay deployments so a missing address fails startup instead of
+/// silently sending the same inference down the legacy hop/window path.
+/// `sink` is the caller's single long-lived
 /// `Arc<dyn Sink>`: every event for every deployment this client ever
 /// raises is delivered there (`p4_adapter::deployment::Client`'s own doc
 /// explains why this cannot be per-submission).
 pub fn attach_deployment(sink: Arc<dyn Sink>, registry: &Registry) -> std::io::Result<bool> {
     let Some(addr) = std::env::var_os("P4_LLAMACPP_DEPLOYMENT_ADDR") else {
+        if std::env::var_os("P4_LLAMACPP_DEPLOYMENT_REQUIRED").is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "P4_LLAMACPP_DEPLOYMENT_REQUIRED is set but P4_LLAMACPP_DEPLOYMENT_ADDR is missing",
+            ));
+        }
         return Ok(false);
     };
     let addr: SocketAddr = addr

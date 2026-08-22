@@ -16,6 +16,7 @@ mod control;
 mod full_retry;
 mod handle;
 mod reader;
+mod release;
 
 use super::permits::Permits;
 use crate::contract::{Command, Event, Generation, RejectReason, Rejected, SubmissionId, Submit};
@@ -285,23 +286,6 @@ impl Pump {
             self.sink.raise(terminal);
         }
         self.current_generation.store(generation, Ordering::SeqCst);
-    }
-
-    fn release_outstanding(&self) {
-        self.outstanding_submissions.fetch_sub(1, Ordering::SeqCst);
-    }
-
-    fn release_submission(&self, submission_id: &str) {
-        if self.remove_live(submission_id) {
-            self.release_outstanding();
-        }
-    }
-
-    fn remove_live(&self, submission_id: &str) -> bool {
-        self.live
-            .lock()
-            .expect("live submissions lock")
-            .remove(submission_id)
     }
 
     fn terminalize_protocol(&mut self, submission_id: &str) {

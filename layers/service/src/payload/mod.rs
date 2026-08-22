@@ -11,7 +11,7 @@ use p4_adapter::deployment::Submit;
 use p4_adapter::{Outcome, Sequence, Work};
 use p4_agent_core::node::payload::Payload;
 use p4_protocol::frame::Frame;
-use serde_json::{Value, json};
+use serde_json::json;
 
 #[derive(Default)]
 pub struct Bodies {
@@ -78,29 +78,21 @@ impl Payload for Bodies {
     /// current link, the same source `deployment` reads; `submission_id`
     /// reuses `sequence`'s own request identity, so a resend of one P4
     /// request still names one submission on the wire (`Submit`'s own doc
-    /// requires this). The chat-completion shape of `request` -- `messages`,
-    /// `max_tokens`, `stream` -- is what `apps/llama`'s submission-stream
-    /// server requires (`parseRingChatRequest`); building it here, rather
-    /// than in the backend-neutral relay that calls this, is the same split
-    /// `served/`'s own `chat::Request::body()` already draws for the hop
-    /// path -- the OpenAI-compatible surface is vocabulary the wire needs to
-    /// agree on, not something the core may invent per adapter.
+    /// requires this). `request` is deliberately backend-neutral here: the
+    /// service carries prompt, token bound, and the opaque option text, while
+    /// the selected deployment client owns any backend API shape. In
+    /// particular, P4 must not manufacture llama/OpenAI `messages` or
+    /// `stream` fields before the adapter boundary.
     fn submission(&self, frame: &Frame) -> Option<Submit> {
         let sequence = self.sequence(frame)?;
         let prompt = sequence.prompt?;
         let deployment_id = self.deployment(frame)?;
         let deployment_generation = frame.envelope.chain.as_ref()?.current().generation;
-        let mut request = json!({
-            "messages": [{ "role": "user", "content": prompt }],
+        let request = json!({
+            "prompt": prompt,
             "max_tokens": sequence.remaining,
-            "stream": true,
+            "options": sequence.options,
         });
-        if let Ok(Value::Object(options)) = serde_json::from_str::<Value>(&sequence.options) {
-            let map = request.as_object_mut().expect("request root is an object");
-            for (key, value) in options {
-                map.insert(key, value);
-            }
-        }
         Some(Submit {
             deployment_id,
             deployment_generation,
@@ -334,5 +326,7 @@ impl Payload for Bodies {
 mod inbound;
 mod outbound;
 
+#[cfg(test)]
+mod submission_tests;
 #[cfg(test)]
 mod tests;

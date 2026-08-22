@@ -35,6 +35,7 @@
 pub mod client;
 pub mod contract;
 pub mod ledger;
+mod request;
 pub mod settled_after_lease_release;
 pub mod transport;
 

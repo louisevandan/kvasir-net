@@ -26,8 +26,9 @@ pub struct Submit {
     /// Backend clients use this to bound their own backpressure retries;
     /// the P4 broker does not interpret capacity or schedule retries.
     pub deadline_unix_ms: u64,
-    /// The request exactly as OUTER stated it. Opaque: a client passes it to
-    /// its backend whole and this crate reads nothing out of it.
+    /// The request as the ingress vocabulary stated it. Opaque to the broker:
+    /// only the selected deployment client may translate it into a backend
+    /// API or native wire shape, and this crate reads nothing out of it.
     pub request: serde_json::Value,
 }
 

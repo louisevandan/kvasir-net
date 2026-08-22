@@ -107,6 +107,7 @@ if (-not [string]::IsNullOrWhiteSpace($RelayDeploymentAddr) -and
 if ([string]::IsNullOrWhiteSpace($RelayDeploymentId)) { throw 'RelayDeploymentId cannot be empty.' }
 $relayRequested = -not [string]::IsNullOrWhiteSpace($RelayDeploymentAddr)
 $relayRuntimeView = $null
+$relayRuntimeAfter = $null
 if ($relayRequested) {
     $encodedDeploymentId = [uri]::EscapeDataString($RelayDeploymentId)
     $relayRuntimeUri = "http://$RelayDeploymentAddr/api/runtime-groups/$encodedDeploymentId"
@@ -610,6 +611,7 @@ Write-Output 'REMOTE_AGENT_LISTENING'
             @(
                 "`$env:P4_LLAMACPP_DEPLOYMENT_ADDR = $(ConvertTo-PowerShellLiteral $RelayDeploymentAddr)"
                 "`$env:P4_LLAMACPP_DEPLOYMENT_ID = $(ConvertTo-PowerShellLiteral $RelayDeploymentId)"
+                "`$env:P4_LLAMACPP_DEPLOYMENT_REQUIRED = '1'"
             ) -join "`n"
         } else { '' }
         $script = @"
@@ -814,6 +816,12 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
     if (-not $bodiesPassed) { Write-Output "NON-EMPTY RESPONSE GATE FAILED: $bodyDetail" }
     $relayDispatches = 0
     $relayAttached = -not $relayRequested
+    $relayNativeBatchPassed = -not $relayRequested
+    $relayBatchStageCount = 0
+    $relayBatchSamples = 0
+    $relaySampledTokens = 0
+    $relayMixedSamples = 0
+    $relayMaxSampledBatchSize = 0
     if ($relayRequested) {
         $relayAgentText = Get-Content -LiteralPath (Join-Path $outputRoot "central-agent-$($localAgentPorts[0]).log") -Raw
         $relayAttached = $relayAgentText -match "(?m)^P4_AGENT_DEPLOYMENT id=$([regex]::Escape($RelayDeploymentId)) attached=true relay=present$"
@@ -824,6 +832,33 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         if (-not $relayAttached -or $relayDispatches -le 0) {
             Write-Output "RELAY GATE FAILED: attached=$relayAttached to_deployment=$relayDispatches"
         }
+        try {
+            $relayRuntimeAfter = Invoke-RestMethod -Uri $relayRuntimeUri -TimeoutSec 10
+            $batchStages = @($relayRuntimeAfter.processes | Where-Object {
+                $null -ne $_.inferenceTelemetry -and
+                $null -ne $_.inferenceTelemetry.batching
+            })
+            $relayBatchStageCount = $batchStages.Count
+            $firstBatchStage = $batchStages | Where-Object {
+                $_.identity.stageIndex -eq 0
+            } | Select-Object -First 1
+            if ($null -ne $firstBatchStage) {
+                $relayBatchSamples = [long]$firstBatchStage.inferenceTelemetry.batching.samples
+                $relaySampledTokens = [long]$firstBatchStage.inferenceTelemetry.batching.sampledTokens
+                $relayMixedSamples = [long]$firstBatchStage.inferenceTelemetry.batching.mixedSamples
+                $relayMaxSampledBatchSize = [int]$firstBatchStage.inferenceTelemetry.batching.maxSampledBatchSize
+            }
+            $relayNativeBatchPassed = $relayRuntimeAfter.phase -eq 'running' -and
+                $relayBatchStageCount -eq 4 -and $relayBatchSamples -gt 0 -and
+                $relaySampledTokens -gt 0 -and $relayMixedSamples -gt 0 -and
+                $relayMaxSampledBatchSize -gt 1
+        } catch {
+            $relayNativeBatchPassed = $false
+            Write-Output "NATIVE BATCH GATE FAILED: $($_.Exception.Message)"
+        }
+        if (-not $relayNativeBatchPassed) {
+            Write-Output "NATIVE BATCH GATE FAILED: stages=$relayBatchStageCount samples=$relayBatchSamples sampled_tokens=$relaySampledTokens mixed_samples=$relayMixedSamples max_sampled_batch=$relayMaxSampledBatchSize"
+        }
     }
     $relayPassed = [bool]($relayAttached -and (-not $relayRequested -or $relayDispatches -gt 0))
     $runPassed = [bool](
@@ -832,7 +867,8 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         $verdictsPassed -and
         [bool]$overlapPassed -and
         $bodiesPassed -and
-        $relayPassed
+        $relayPassed -and
+        $relayNativeBatchPassed
     )
     $result = [pscustomobject]@{
         run_id = $RunId
@@ -879,7 +915,15 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
             to_deployment = $relayDispatches
             runtime_phase = if ($null -ne $relayRuntimeView) { $relayRuntimeView.phase } else { $null }
             runtime_processes = if ($null -ne $relayRuntimeView) { @($relayRuntimeView.process_ids).Count } else { 0 }
-            passed = $relayPassed
+            native_batch = [pscustomobject]@{
+                stage_count = $relayBatchStageCount
+                samples = $relayBatchSamples
+                sampled_tokens = $relaySampledTokens
+                mixed_samples = $relayMixedSamples
+                max_sampled_batch_size = $relayMaxSampledBatchSize
+                passed = $relayNativeBatchPassed
+            }
+            passed = [bool]($relayPassed -and $relayNativeBatchPassed)
         }
         topology = 'central RTX 3090 + central RTX 4080 + remote RTX 3090 x2'
         requests = $Requests

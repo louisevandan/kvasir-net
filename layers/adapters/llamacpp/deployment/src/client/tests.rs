@@ -69,6 +69,43 @@ fn connecting_holds_one_connection_the_client_reuses_for_every_submission() {
 }
 
 #[test]
+fn backend_neutral_request_is_encoded_before_it_enters_the_llama_wire() {
+    let factory = FakeFactory::new();
+    let handle = factory.queue_success();
+    let (client, _sink) = connect(&factory);
+
+    client
+        .try_submit(Submit {
+            deployment_id: client.deployment_id().to_string(),
+            deployment_generation: client.generation(),
+            submission_id: "neutral".into(),
+            deadline_unix_ms: 0,
+            request: json!({
+                "prompt": "러스트를 설명하라",
+                "max_tokens": 64,
+                "options": r#"{"temperature":0.2}"#,
+            }),
+        })
+        .expect("submit");
+    wait_for(|| handle.sent().len() == 1);
+
+    let crate::contract::Command::Submit(sent) = &handle.sent()[0] else {
+        panic!("submit command");
+    };
+    assert_eq!(
+        sent.request,
+        json!({
+            "messages": [{ "role": "user", "content": "러스트를 설명하라" }],
+            "max_tokens": 64,
+            "stream": true,
+            "temperature": 0.2,
+        })
+    );
+    client.close();
+    handle.disconnect();
+}
+
+#[test]
 fn two_submissions_are_in_flight_before_either_settles() {
     let factory = FakeFactory::new();
     let handle = factory.queue_success();

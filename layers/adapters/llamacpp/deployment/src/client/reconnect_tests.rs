@@ -114,6 +114,82 @@ fn reconnect_replays_an_in_flight_submission_exactly_once() {
 }
 
 #[test]
+fn reconnect_suppresses_a_replayed_prefix_and_continues_the_response() {
+    let factory = FakeFactory::new();
+    let handle1 = factory.queue_success();
+    let handle2 = factory.queue_success();
+    let (client, sink) = connect(&factory);
+
+    submit(&client, "s1", "req-1").expect("submit s1");
+    handle1.push_event(Event::Accepted(Accepted {
+        submission_id: "s1".into(),
+    }));
+    handle1.push_event(Event::Produced(Produced {
+        submission_id: "s1".into(),
+        event_ordinal: 0,
+        text: "He".into(),
+        generated_tokens: 1,
+    }));
+    handle1.push_event(Event::Produced(Produced {
+        submission_id: "s1".into(),
+        event_ordinal: 1,
+        text: "llo".into(),
+        generated_tokens: 2,
+    }));
+    wait_for(|| sink.len() == 3);
+
+    handle1.fail_with("connection reset after two tokens");
+    wait_for(|| client.reconnect_count() == 1 && handle2.sent().len() == 1);
+
+    // The server journal has no client resume ordinal, so it replays its
+    // retained prefix before producing new work on the replacement socket.
+    handle2.push_event(Event::Accepted(Accepted {
+        submission_id: "s1".into(),
+    }));
+    for (event_ordinal, text, generated_tokens) in [(0, "He", 1), (1, "llo", 2)] {
+        handle2.push_event(Event::Produced(Produced {
+            submission_id: "s1".into(),
+            event_ordinal,
+            text: text.into(),
+            generated_tokens,
+        }));
+    }
+    handle2.push_event(Event::Produced(Produced {
+        submission_id: "s1".into(),
+        event_ordinal: 2,
+        text: " world".into(),
+        generated_tokens: 3,
+    }));
+    handle2.push_event(Event::Settled(Settled {
+        submission_id: "s1".into(),
+        reason: SettleReason::Stop,
+        generated_tokens: 3,
+    }));
+
+    wait_for(|| sink.len() == 5);
+    let events = sink.events();
+    let body: String = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Produced(produced) => Some(produced.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(body, "Hello world");
+    assert!(matches!(
+        events.last(),
+        Some(Event::Settled(Settled {
+            reason: SettleReason::Stop,
+            generated_tokens: 3,
+            ..
+        }))
+    ));
+
+    client.close();
+    handle2.disconnect();
+}
+
+#[test]
 fn reconnect_does_not_replay_a_submission_that_already_settled() {
     let factory = FakeFactory::new();
     let handle1 = factory.queue_success();

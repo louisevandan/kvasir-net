@@ -131,13 +131,13 @@ fn a_run_in_flight_delivers_its_terminal_on_the_connection_that_replaced_the_dea
         })
         .expect("the submission is enqueued");
 
-    // Wait for the run to actually be under way before breaking anything:
-    // a socket killed before the server started would make this a test of
-    // the plain replay path, which is already covered elsewhere.
+    // Wait until one chunk reached the client before breaking anything. A
+    // cut after only Accepted misses the hard case: the replacement socket
+    // receives the server journal's already-delivered Produced prefix.
     sink.wait_for(Duration::from_secs(10), |events| {
         events
             .iter()
-            .any(|event| matches!(event, Event::Accepted(_)))
+            .any(|event| matches!(event, Event::Produced(produced) if produced.event_ordinal == 0))
     });
 
     // The fixture emits its chunks 60ms apart, so this lands inside the
