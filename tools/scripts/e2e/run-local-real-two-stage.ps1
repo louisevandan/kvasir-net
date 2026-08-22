@@ -133,23 +133,30 @@ function Assert-StageExecution([int[]]$stagePorts) {
     if ($telemetryLine.Count -eq 0) { throw "Stage execution evidence gate failed: no drive telemetry; logs retained at $out" }
     $telemetry = $telemetryLine[0].Line.Substring('P4_DRIVE_TELEMETRY_JSON '.Length) | ConvertFrom-Json
     $missing = @()
+    foreach ($session in @($telemetry.sessions)) {
+        if ([int]$session.logical_prefill_tokens -le 0) {
+            $missing += "$($session.sequence):no-prefill-tokens"
+        }
+    }
     foreach ($stage in @('stage-0', 'tail-1')) {
         $stageSamples = @($telemetry.samples | Where-Object { $_.node -eq $stage })
-        if (@($stageSamples | Where-Object { $_.phase -eq 'prefill' }).Count -eq 0) { $missing += "$stage:no-prefill-telemetry" }
         # Very short smoke runs may finish before the asynchronous telemetry
         # snapshot captures decode. Long-model gates still require it.
-        if ($Tokens -ge 100 -and @($stageSamples | Where-Object { $_.phase -eq 'generation' }).Count -eq 0) { $missing += "$stage:no-generation-telemetry" }
+        if ($Tokens -ge 100 -and @($stageSamples | Where-Object { $_.phase -eq 'generation' }).Count -eq 0) { $missing += "${stage}:no-generation-telemetry" }
     }
     foreach ($port in $stagePorts) {
         $log = Join-Path $out "agent-$port.log"
         if (-not (Test-Path -LiteralPath $log)) {
-            $missing += "$port:no-log"
+            $missing += "${port}:no-log"
             continue
         }
         $samples = @(Select-String -LiteralPath $log -Pattern 'P4_RUNTIME_SAMPLE_V1' -SimpleMatch)
-        if ($samples.Count -eq 0) { $missing += "$port:no-runtime-sample" }
+        if ($samples.Count -eq 0) { $missing += "${port}:no-runtime-sample" }
+        if (@(Select-String -LiteralPath $log -Pattern 'phase=prefill' -SimpleMatch).Count -eq 0) {
+            $missing += "${port}:no-prefill-in-log"
+        }
         $encodeErrors = @(Select-String -LiteralPath $log -Pattern 'P4_AGENT_ENCODE_FAILED' -SimpleMatch)
-        if ($encodeErrors.Count -gt 0) { $missing += "$port:encode-failed=$($encodeErrors.Count)" }
+        if ($encodeErrors.Count -gt 0) { $missing += "${port}:encode-failed=$($encodeErrors.Count)" }
     }
     if ($missing.Count -gt 0) {
         throw "Stage execution evidence gate failed: $($missing -join ', '); logs retained at $out"

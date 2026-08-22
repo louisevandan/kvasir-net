@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param([string]$Matrix, [string]$Csv, [int]$Tokens = 200)
 $ErrorActionPreference = 'Continue'
-$root = 'F:\dev\linkcpp_product'
+# Derived from this script's own location, so a clone anywhere runs it.
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..\..')).Path
 $runner = Join-Path $root 'apps\p4\tools\scripts\e2e\run-local-real-two-stage.ps1'
 $prompt = Join-Path $root '.cache\rust-korean-qwen.txt'
 $agent  = Join-Path $root 'apps\p4\target\release\p4-agent.exe'
@@ -13,11 +14,13 @@ $server = Join-Path $root '.cache\staged-server-cuda-final\Release\p4_staged_ser
 #                           every verdict with zero of these.
 #   logical_gen_tps_wall    service throughput: one count per sequence/phase/hop
 #                           over wall time. THIS is the benchmark number.
-#   stage_compute_gen_tps   every stage's own tokens over its own elapsed, summed.
-#                           On a 2-stage chain it counts one logical token twice,
-#                           so it is not throughput -- but a flat curve here while
-#                           logical_gen_tps_wall rises is the signature of a
-#                           refused batch falling back to per-sequence.
+#   stage_compute_gen_tps   every stage's tokens pooled over every stage's
+#                           elapsed: one ratio over the pooled totals, not a sum
+#                           of per-stage rates. A two-stage chain counts each
+#                           logical token in both stages, so this is compute
+#                           efficiency and never throughput. Flat here while the
+#                           wall figure climbs is the signature of a refused
+#                           batch falling back to per-sequence.
 #   stage_sum_gen_tps_wall  the same stage sum over wall time; kept only so an
 #                           older number can be reconciled, never quoted alone.
 if (-not (Test-Path $Csv)) {
@@ -32,8 +35,17 @@ foreach ($line in (Get-Content -LiteralPath $Matrix)) {
   $par = [int]$f[4]; $req = [int]$f[5]
   $runId = "tps-$name-p$par-$(Get-Date -Format 'HHmmss')"
   Write-Host "RUN $name blocks=$blocks boundary=$boundary parallel=$par requests=$req"
-  Get-Process -Name 'p4-agent','p4-drive','p4_staged_server' -ErrorAction SilentlyContinue |
-    Stop-Process -Force -ErrorAction SilentlyContinue
+  # Killing by image name reaches every P4 process on the machine, including
+  # a deployment somebody else is holding open. Only the ports this sweep is
+  # about to bind are ours to clear.
+  foreach ($busyPort in @(52700, 52701, 52710)) {
+    foreach ($owner in @(Get-NetTCPConnection -State Listen -LocalPort $busyPort -ErrorAction SilentlyContinue)) {
+      $proc = Get-Process -Id $owner.OwningProcess -ErrorAction SilentlyContinue
+      if ($null -ne $proc -and $proc.ProcessName -in @('p4-agent', 'p4-drive', 'p4_staged_server')) {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
   Start-Sleep -Seconds 2
   $out = Join-Path $root "target\real-two-stage-5000\$runId"
   # The runner owns the evidence path and restores the caller's environment,

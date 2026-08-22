@@ -332,15 +332,13 @@ default paths (override with `-AgentBinary` / `-DriveBinary` / `-ServerBinary`
 / `-Model` otherwise):
 
 ```powershell
-$env:P4_DRIVE_EVIDENCE_FILE = 'F:\dev\linkcpp_product\target\real-two-stage-5000\manual-run\sessions-evidence.md'
-New-Item -ItemType Directory -Force -Path (Split-Path $env:P4_DRIVE_EVIDENCE_FILE) | Out-Null
 apps\p4\tools\scripts\e2e\run-local-real-two-stage.ps1 -RunId manual-run -Tokens 200 -PromptTokens 200
 ```
 
-It lands exactly where `P4_DRIVE_EVIDENCE_FILE` points — nothing chooses a
-path on its behalf. Pointing it inside the script's own run directory
-(`target\real-two-stage-5000\<RunId>\`) keeps it next to that run's agent and
-drive logs, as the command above does.
+It lands in that run's own directory (`target\real-two-stage-5000\<RunId>\`),
+next to the run's agent and drive logs, unless `-EvidenceFile` names somewhere
+else. An exported `P4_DRIVE_EVIDENCE_FILE` no longer chooses the path: the
+script overwrites it for the run and restores the caller's value afterwards.
 
 Whether git keeps it out: root `.gitignore` has no pattern for `target/` at
 the repository root — only `apps/p4/tools/drive/target/` (the drive crate's
