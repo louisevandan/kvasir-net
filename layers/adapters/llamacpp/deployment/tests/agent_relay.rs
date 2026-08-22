@@ -29,9 +29,8 @@ use std::time::Duration;
 use support::Fixture;
 
 /// The one seam this test's `Agent` needs a vocabulary for: reading a
-/// prompt-carrying frame's body back into the chat-completion shape
-/// `apps/llama`'s submission-stream server requires
-/// (`parseRingChatRequest`). Mirrors `p4-service`'s real `Bodies::submission`
+/// prompt-carrying frame's body back into the backend-neutral submission
+/// shape the deployment client accepts. Mirrors `p4-service`'s real `Bodies::submission`
 /// in shape; kept local rather than an added dependency on that crate,
 /// which this one has no other reason to reach.
 struct ChatPayload;
@@ -51,9 +50,9 @@ impl Payload for ChatPayload {
             submission_id: frame.envelope.route.clone(),
             deadline_unix_ms: frame.envelope.deadline_unix_ms,
             request: serde_json::json!({
-                "messages": [{ "role": "user", "content": prompt }],
+                "prompt": prompt,
                 "max_tokens": 32,
-                "stream": true,
+                "options": "{}",
             }),
         })
     }

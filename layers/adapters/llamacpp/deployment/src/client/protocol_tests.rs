@@ -36,7 +36,11 @@ fn submit(client: &DeploymentClient, submission_id: &str) {
             deployment_generation: client.generation(),
             submission_id: submission_id.to_owned(),
             deadline_unix_ms: 0,
-            request: json!({ "body": "request" }),
+            request: json!({
+                "prompt": "request",
+                "max_tokens": 4,
+                "options": "{}",
+            }),
         })
         .expect("submit");
 }

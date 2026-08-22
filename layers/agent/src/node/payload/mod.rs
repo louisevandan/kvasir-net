@@ -25,9 +25,11 @@ pub trait Payload: Send + Sync {
     /// acknowledgement -- for a broker relay that diverts it to a registered
     /// deployment client instead of composing a hop.
     ///
-    /// The default is `None` for every vocabulary that has not opted in,
-    /// exactly like every other method here; a relay that finds `None` falls
-    /// back to the existing hop path unchanged. An override is expected to
+    /// The default is `None` for every vocabulary that has not opted in.
+    /// Without a registered deployment client that leaves the existing hop
+    /// path unchanged. With one registered for this frame's deployment,
+    /// `None` is refused rather than silently crossing back into the legacy
+    /// hop path under another lane name. An override is expected to
     /// build the same identity `sequence` would use for this frame (a resend
     /// under one id must remain one submission -- see `Submit`'s own doc),
     /// so `None` here whenever `sequence` would return a `prompt` of `None`

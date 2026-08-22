@@ -28,7 +28,11 @@ fn submit(client: &DeploymentClient, id: &str) -> Result<(), EnqueueError> {
         deployment_generation: client.generation(),
         submission_id: id.to_owned(),
         deadline_unix_ms: 0,
-        request: json!({ "body": "request" }),
+        request: json!({
+            "prompt": "request",
+            "max_tokens": 4,
+            "options": "{}",
+        }),
     })
 }
 

@@ -442,14 +442,14 @@ this — it must **check that the rows it got back match the tokens it sent**,
 and refuse the batch otherwise. That is a statement about the transfer, not
 about which model is running, so it belongs at this layer.
 
-The prior runtime concluded the opposite and limited a mixed window to one
-prefill token per session, citing compaction to the sequence count
-(`apps/llama/native/linker-node/inference/session.inc:161`). That reasoning
-holds for a stage whose window contains the final layer and over-generalises
-otherwise. Its second reason — that dropping the single-session term was
-measured on 2026-08-13 and crashed the terminal stage — is not explained by
-compaction and has not been reproduced here; treat it as unexplained until it
-is.
+The native runtime now enforces that check in `split_boundary_batch`: a
+non-terminal tensor whose returned rows differ from the planned token count is
+rejected. Decode rows enter a mixed window first and Prefill divides the
+remaining ubatch rows. Because multi-token Prefill repeats sequence IDs while
+the shared-memory arena is generation-slotted, repeated-ID windows use the
+bounded TCP boundary path. The 2026-08-13 terminal-stage crash from an earlier
+unguarded attempt is not explained by compaction and remains a real-GPU stress
+gate, not an explanation to assume.
 
 **Choosing width against latency with the numbers in hand.** The marginal cost
 of a row, the size of a prefill chunk and the ubatch ceiling are all backend

@@ -28,7 +28,7 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use support::{CollectingSink, Fixture, chat_request};
+use support::{CollectingSink, Fixture, neutral_request};
 
 /// A TCP relay in front of the fixture whose sockets a test can cut.
 ///
@@ -127,7 +127,7 @@ fn a_run_in_flight_delivers_its_terminal_on_the_connection_that_replaced_the_dea
             deployment_generation: fixture.deployment_generation,
             submission_id: "s-reconnect".into(),
             deadline_unix_ms: 0,
-            request: chat_request(),
+            request: neutral_request(),
         })
         .expect("the submission is enqueued");
 

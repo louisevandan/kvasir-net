@@ -22,7 +22,7 @@ use p4_llamacpp_deployment::transport::TransportFactory;
 use p4_llamacpp_deployment::transport::tcp::TcpTransportFactory;
 use std::sync::Arc;
 use std::time::Duration;
-use support::{CollectingSink, Fixture, chat_request};
+use support::{CollectingSink, Fixture, neutral_request};
 
 #[test]
 fn a_submission_runs_two_in_flight_and_absorbs_full_over_a_real_socket() {
@@ -45,7 +45,7 @@ fn a_submission_runs_two_in_flight_and_absorbs_full_over_a_real_socket() {
                 deployment_generation: fixture.deployment_generation,
                 submission_id: submission_id.into(),
                 deadline_unix_ms: 0,
-                request: chat_request(),
+                request: neutral_request(),
             })
             .expect("try_submit");
     };

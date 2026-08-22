@@ -40,7 +40,11 @@ fn submit(
         deployment_generation: client.generation(),
         submission_id: submission_id.into(),
         deadline_unix_ms: 0,
-        request: json!({ "body": request }),
+        request: json!({
+            "prompt": request,
+            "max_tokens": 4,
+            "options": "{}",
+        }),
     })
 }
 

@@ -489,13 +489,9 @@ impl Agent {
                 // even reaches `payload.submission`: the node lookup below
                 // runs completely unchanged, on the same frame, in the same
                 // order it always has.
-                if let Some(deployment_id) = self.payload.deployment(&frame)
-                    && self.deployments.contains(&deployment_id)
-                    && let Some(submit) = self.payload.submission(&frame)
-                {
-                    self.relay_submit(frame, submit);
+                let Some(frame) = self.relay_registered(frame) else {
                     return;
-                }
+                };
                 let handle = self.nodes.lock().await.get(&id).cloned();
                 match handle {
                     // Moving it in is the whole of the worker's job here. It

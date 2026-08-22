@@ -141,6 +141,39 @@ function Resolve-LocalInputPath([string]$Path) {
     }
     return [System.IO.Path]::GetFullPath($fromCaller)
 }
+function Get-NewestSourceWriteTimeUtc([string[]]$Roots) {
+    $extensions = @('.cpp', '.h', '.inc', '.rs', '.toml', '.ts', '.mjs', '.patch', '.json')
+    $items = foreach ($root in $Roots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction Stop |
+            Where-Object {
+                $_.Extension -in $extensions -and
+                $_.FullName -notmatch '[\\/]target[\\/]' -and
+                $_.FullName -notmatch '[\\/]upstream[\\/]'
+            }
+    }
+    if (@($items).Count -eq 0) {
+        throw "No source files found under: $($Roots -join ', ')"
+    }
+    return ($items | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
+}
+function Get-BinaryEvidence(
+    [string]$Path,
+    [datetime]$NewestSourceWriteTimeUtc,
+    [string]$Label
+) {
+    $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if ($item.LastWriteTimeUtc -lt $NewestSourceWriteTimeUtc) {
+        throw "$Label binary is older than its source: binary=$($item.LastWriteTimeUtc.ToString('o')) source=$($NewestSourceWriteTimeUtc.ToString('o')) path=$($item.FullName)"
+    }
+    [pscustomobject]@{
+        path = $item.FullName
+        bytes = $item.Length
+        sha256 = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        built_utc = $item.LastWriteTimeUtc.ToString('o')
+        newest_source_utc = $NewestSourceWriteTimeUtc.ToString('o')
+    }
+}
 # A build pinned to a fixed date is a trap. The staged server's cut-set
 # contract has changed under it more than once, and an agent built from
 # today's source against a server built before those fixes stalls every
@@ -194,13 +227,6 @@ if ([string]::IsNullOrWhiteSpace($DriveBinary)) {
     if (-not $DriveBinary) { throw "p4-drive.exe not found. Build it with 'cargo build --release --workspace' in apps/p4." }
 }
 $ArtifactDirectory = Resolve-LocalInputPath $ArtifactDirectory
-$stageServerPath = Join-Path $ArtifactDirectory 'p4_staged_server.exe'
-$stageServerStamp = (Get-Item -LiteralPath $stageServerPath -ErrorAction SilentlyContinue).LastWriteTime
-$agentStamp = (Get-Item -LiteralPath $AgentBinary -ErrorAction SilentlyContinue).LastWriteTime
-$driveStamp = (Get-Item -LiteralPath $DriveBinary -ErrorAction SilentlyContinue).LastWriteTime
-Write-Output "BINARIES agent=$AgentBinary built=$agentStamp"
-Write-Output "BINARIES drive=$DriveBinary built=$driveStamp"
-Write-Output "STAGE_SERVER path=$ArtifactDirectory built=$stageServerStamp"
 $AgentBinary = Resolve-LocalInputPath $AgentBinary
 $DriveBinary = Resolve-LocalInputPath $DriveBinary
 $PromptFile = Resolve-LocalInputPath $PromptFile
@@ -208,6 +234,25 @@ $PlacementPlanFile = Resolve-LocalInputPath $PlacementPlanFile
 $agentBinary = $AgentBinary
 $driveBinary = $DriveBinary
 $serverBinary = Join-Path $ArtifactDirectory 'p4_staged_server.exe'
+$p4SourceStamp = Get-NewestSourceWriteTimeUtc @(
+    (Join-Path $projectRoot 'apps\p4\entrypoints'),
+    (Join-Path $projectRoot 'apps\p4\layers'),
+    (Join-Path $projectRoot 'apps\p4\tools\drive')
+)
+$stageSourceStamp = Get-NewestSourceWriteTimeUtc @(
+    (Join-Path $projectRoot 'apps\p4\layers\adapters\llamacpp\staged\server'),
+    (Join-Path $projectRoot 'apps\p4\layers\adapters\llamacpp\staged\compat'),
+    (Join-Path $projectRoot 'apps\p4\layers\adapters\llamacpp\staged\scripts')
+)
+$binaryEvidence = [pscustomobject]@{
+    source_head = (& git.exe -C $projectRoot rev-parse HEAD).Trim()
+    agent = Get-BinaryEvidence $agentBinary $p4SourceStamp 'agent'
+    drive = Get-BinaryEvidence $driveBinary $p4SourceStamp 'drive'
+    stage_server = Get-BinaryEvidence $serverBinary $stageSourceStamp 'stage server'
+}
+Write-Output "BINARIES agent=$($binaryEvidence.agent.path) sha256=$($binaryEvidence.agent.sha256) built=$($binaryEvidence.agent.built_utc)"
+Write-Output "BINARIES drive=$($binaryEvidence.drive.path) sha256=$($binaryEvidence.drive.sha256) built=$($binaryEvidence.drive.built_utc)"
+Write-Output "STAGE_SERVER path=$($binaryEvidence.stage_server.path) sha256=$($binaryEvidence.stage_server.sha256) built=$($binaryEvidence.stage_server.built_utc)"
 $localModelRoot = [System.IO.Path]::GetDirectoryName($LocalModel)
 $remoteModelRoot = [System.IO.Path]::GetDirectoryName($RemoteModel)
 $outputRoot = Join-Path $projectRoot "target\ssh-forwarded-four-node-e2e\$RunId"
@@ -821,6 +866,8 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
     $relayBatchSamples = 0
     $relaySampledTokens = 0
     $relayMixedSamples = 0
+    $relayMultiTokenPrefillSamples = 0
+    $relayMaxPrefillTokensPerSequence = 0
     $relayMaxSampledBatchSize = 0
     if ($relayRequested) {
         $relayAgentText = Get-Content -LiteralPath (Join-Path $outputRoot "central-agent-$($localAgentPorts[0]).log") -Raw
@@ -846,18 +893,22 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
                 $relayBatchSamples = [long]$firstBatchStage.inferenceTelemetry.batching.samples
                 $relaySampledTokens = [long]$firstBatchStage.inferenceTelemetry.batching.sampledTokens
                 $relayMixedSamples = [long]$firstBatchStage.inferenceTelemetry.batching.mixedSamples
+                $relayMultiTokenPrefillSamples = [long]$firstBatchStage.inferenceTelemetry.batching.multiTokenPrefillSamples
+                $relayMaxPrefillTokensPerSequence = [int]$firstBatchStage.inferenceTelemetry.batching.maxPrefillTokensPerSequence
                 $relayMaxSampledBatchSize = [int]$firstBatchStage.inferenceTelemetry.batching.maxSampledBatchSize
             }
             $relayNativeBatchPassed = $relayRuntimeAfter.phase -eq 'running' -and
                 $relayBatchStageCount -eq 4 -and $relayBatchSamples -gt 0 -and
                 $relaySampledTokens -gt 0 -and $relayMixedSamples -gt 0 -and
+                $relayMultiTokenPrefillSamples -gt 0 -and
+                $relayMaxPrefillTokensPerSequence -gt 1 -and
                 $relayMaxSampledBatchSize -gt 1
         } catch {
             $relayNativeBatchPassed = $false
             Write-Output "NATIVE BATCH GATE FAILED: $($_.Exception.Message)"
         }
         if (-not $relayNativeBatchPassed) {
-            Write-Output "NATIVE BATCH GATE FAILED: stages=$relayBatchStageCount samples=$relayBatchSamples sampled_tokens=$relaySampledTokens mixed_samples=$relayMixedSamples max_sampled_batch=$relayMaxSampledBatchSize"
+            Write-Output "NATIVE BATCH GATE FAILED: stages=$relayBatchStageCount samples=$relayBatchSamples sampled_tokens=$relaySampledTokens mixed_samples=$relayMixedSamples multi_token_prefill_samples=$relayMultiTokenPrefillSamples max_prefill_per_sequence=$relayMaxPrefillTokensPerSequence max_sampled_batch=$relayMaxSampledBatchSize"
         }
     }
     $relayPassed = [bool]($relayAttached -and (-not $relayRequested -or $relayDispatches -gt 0))
@@ -874,6 +925,7 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         run_id = $RunId
         exit_code = $driverExitCode
         passed = $runPassed
+        binaries = $binaryEvidence
         metrics = [pscustomobject]@{
             completed = $completed
             failed = $failed
@@ -920,6 +972,8 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
                 samples = $relayBatchSamples
                 sampled_tokens = $relaySampledTokens
                 mixed_samples = $relayMixedSamples
+                multi_token_prefill_samples = $relayMultiTokenPrefillSamples
+                max_prefill_tokens_per_sequence = $relayMaxPrefillTokensPerSequence
                 max_sampled_batch_size = $relayMaxSampledBatchSize
                 passed = $relayNativeBatchPassed
             }

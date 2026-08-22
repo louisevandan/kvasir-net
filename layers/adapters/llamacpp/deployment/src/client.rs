@@ -144,7 +144,8 @@ impl DeploymentClientTrait for DeploymentClient {
         // P4 deliberately hands us a backend-neutral prompt/token/options
         // object. The llama/OpenAI request shape belongs to this adapter and
         // is formed only here, immediately before the adapter-owned queue.
-        submit.request = crate::request::for_llama(&submit.request);
+        submit.request = crate::request::for_llama(&submit.request)
+            .map_err(|message| EnqueueError(message.into()))?;
         self.pump
             .enqueue_submit(submit)
             .map_err(|()| EnqueueError("deployment client queue is full or closed".into()))

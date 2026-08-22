@@ -28,6 +28,28 @@ use std::sync::Weak;
 use std::sync::atomic::Ordering;
 
 impl Agent {
+    /// Routes a node-bound message through the deployment boundary when its
+    /// deployment is registered here. Registered deployment traffic is
+    /// fail-closed: it is either a fresh neutral submission or a refusal; it
+    /// can never drift into the legacy hop scheduler under another lane name.
+    pub(super) fn relay_registered(self: &Arc<Self>, frame: Frame) -> Option<Frame> {
+        let Some(deployment_id) = self.payload.deployment(&frame) else {
+            return Some(frame);
+        };
+        if !self.deployments.contains(&deployment_id) {
+            return Some(frame);
+        }
+        if let Some(submit) = self.payload.submission(&frame) {
+            self.relay_submit(frame, submit);
+        } else {
+            self.answer_locally(
+                frame,
+                "registered deployment rejected non-submission message",
+            );
+        }
+        None
+    }
+
     /// Where a P4 broker relay registers the client(s) `dispatch` calls
     /// `try_submit`/`cancel` on -- `SEALED-CONTRACT.md` §9.1's "select an
     /// adapter instance by `DeploymentId`", and nothing more. Whoever

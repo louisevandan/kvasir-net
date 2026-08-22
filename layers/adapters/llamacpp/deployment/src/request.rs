@@ -9,12 +9,12 @@
 
 use serde_json::{Value, json};
 
-pub(crate) fn for_llama(request: &Value) -> Value {
+pub(crate) fn for_llama(request: &Value) -> Result<Value, &'static str> {
     let Some(prompt) = request.get("prompt").and_then(Value::as_str) else {
-        return request.clone();
+        return Err("llama submission requires a string prompt");
     };
     let Some(max_tokens) = request.get("max_tokens").and_then(Value::as_u64) else {
-        return request.clone();
+        return Err("llama submission requires an unsigned max_tokens");
     };
 
     let mut llama = json!({
@@ -23,18 +23,24 @@ pub(crate) fn for_llama(request: &Value) -> Value {
         "stream": true,
     });
     let Some(options) = request.get("options").and_then(Value::as_str) else {
-        return llama;
+        return Ok(llama);
     };
     let Ok(Value::Object(options)) = serde_json::from_str::<Value>(options) else {
-        return llama;
+        return Err("llama submission options must be a JSON object");
     };
     let fields = llama
         .as_object_mut()
         .expect("llama request root is an object");
     for (key, value) in options {
+        if matches!(
+            key.as_str(),
+            "messages" | "max_tokens" | "stream" | "session_id"
+        ) {
+            return Err("llama submission options contain an adapter-owned field");
+        }
         fields.insert(key, value);
     }
-    llama
+    Ok(llama)
 }
 
 #[cfg(test)]
@@ -46,27 +52,56 @@ mod tests {
         let request = json!({
             "prompt": "러스트를 설명하라",
             "max_tokens": 64,
-            "options": r#"{"temperature":0.2,"stream":false}"#,
+            "options": r#"{"temperature":0.2}"#,
         });
 
         assert_eq!(
             for_llama(&request),
-            json!({
+            Ok(json!({
                 "messages": [{ "role": "user", "content": "러스트를 설명하라" }],
                 "max_tokens": 64,
-                "stream": false,
+                "stream": true,
                 "temperature": 0.2,
-            })
+            }))
         );
     }
 
     #[test]
-    fn a_direct_backend_request_is_not_reinterpreted() {
+    fn a_direct_backend_request_is_rejected_instead_of_bypassing_the_boundary() {
         let request = json!({
             "messages": [{ "role": "user", "content": "direct" }],
             "max_tokens": 4,
             "stream": true,
         });
-        assert_eq!(for_llama(&request), request);
+        assert_eq!(
+            for_llama(&request),
+            Err("llama submission requires a string prompt")
+        );
+    }
+
+    #[test]
+    fn malformed_options_are_rejected_instead_of_silently_dropped() {
+        let request = json!({
+            "prompt": "hello",
+            "max_tokens": 4,
+            "options": "[]",
+        });
+        assert_eq!(
+            for_llama(&request),
+            Err("llama submission options must be a JSON object")
+        );
+    }
+
+    #[test]
+    fn options_cannot_override_adapter_owned_request_fields() {
+        let request = json!({
+            "prompt": "hello",
+            "max_tokens": 4,
+            "options": r#"{"stream":false}"#,
+        });
+        assert_eq!(
+            for_llama(&request),
+            Err("llama submission options contain an adapter-owned field")
+        );
     }
 }

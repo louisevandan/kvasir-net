@@ -35,7 +35,11 @@ fn submit(
         deployment_generation: client.generation(),
         submission_id: submission_id.into(),
         deadline_unix_ms: 0,
-        request: json!({ "body": request }),
+        request: json!({
+            "prompt": request,
+            "max_tokens": 4,
+            "options": "{}",
+        }),
     })
 }
 
@@ -170,7 +174,11 @@ fn full_becomes_terminal_only_after_the_submission_deadline() {
             deployment_generation: client.generation(),
             submission_id: "expired".into(),
             deadline_unix_ms: 1,
-            request: json!({ "body": "request" }),
+            request: json!({
+                "prompt": "request",
+                "max_tokens": 4,
+                "options": "{}",
+            }),
         })
         .expect("enqueue expired submission");
     wait_for(|| handle.sent().len() == 1);

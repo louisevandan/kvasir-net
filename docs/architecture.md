@@ -1,5 +1,21 @@
 # How a message moves
 
+The diagram below is the retained legacy hop path. A registered deployment
+uses the thinner path first:
+
+```
+socket -> P4 route/identity -> bounded deployment client queue
+       -> adapter-owned persistent stream -> adapter scheduler/native Pipeline
+       <- Produced* / Settled <- adapter-owned lifecycle and batching
+```
+
+P4 does not compose Prefill/Decode windows on that path. It validates routing,
+selects the registered deployment and enqueues a backend-neutral submission.
+If an inference frame names a registered deployment but cannot be decoded as a
+fresh submission, it is refused; it never falls through into the hop path.
+The native llama adapter owns admission backpressure, request shaping,
+continuous mixed Prefill/Decode ubatches, sequence slots and Pipeline stages.
+
 ```
 socket ──▶ [ main queue: control | response | decode | prefill ]
                               │

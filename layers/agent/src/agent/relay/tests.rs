@@ -67,6 +67,9 @@ impl Payload for SubmissionPayload {
     }
 
     fn submission(&self, frame: &Frame) -> Option<Submit> {
+        if frame.body == b"not-a-submission" {
+            return None;
+        }
         let deployment_id = self.deployment(frame)?;
         let deployment_generation = frame.envelope.chain.as_ref()?.current().generation;
         Some(Submit {
@@ -252,6 +255,41 @@ fn no_registered_client_leaves_the_hop_path_untouched() {
         // that exactly one hop-path reply arrived, and the relay never fired
         // (`to_deployment() == 0` above), is.
         assert_eq!(seen[0].body, b"stop");
+    });
+}
+
+#[test]
+fn a_registered_deployment_never_falls_back_to_a_hop_for_unknown_work() {
+    runtime().block_on(async {
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        let agent = agent_with(Arc::clone(&seen));
+        agent
+            .create_node("node-1", Arc::new(InstantAdapter), 4)
+            .await;
+        let relay_sink: Arc<dyn DeploymentSink> =
+            Arc::new(AgentDeploymentSink::new(Arc::downgrade(&agent)));
+        let client = Arc::new(ScriptedClient {
+            sink: relay_sink,
+            calls: AtomicUsize::new(0),
+            script: Box::new(|_, _, _| {}),
+        });
+        agent
+            .deployments()
+            .register("dep-1".into(), Arc::clone(&client) as Arc<dyn Client>);
+
+        let mut frame = submission_frame(&agent, "dep-1", 7);
+        frame.body = b"not-a-submission".to_vec();
+        frame.envelope.lane = QueueClass::Control;
+        agent.enqueue(frame).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert_eq!(client.calls.load(Ordering::SeqCst), 0);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].body,
+            b"registered deployment rejected non-submission message"
+        );
     });
 }
 

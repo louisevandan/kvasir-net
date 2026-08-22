@@ -47,9 +47,9 @@ impl Payload for ChatPayload {
             submission_id: frame.envelope.route.clone(),
             deadline_unix_ms: frame.envelope.deadline_unix_ms,
             request: serde_json::json!({
-                "messages": [{ "role": "user", "content": prompt }],
+                "prompt": prompt,
                 "max_tokens": 32,
-                "stream": true,
+                "options": "{}",
             }),
         })
     }

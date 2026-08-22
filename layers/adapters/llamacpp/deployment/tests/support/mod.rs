@@ -186,20 +186,13 @@ impl Sink for CollectingSink {
     }
 }
 
-/// A minimal but valid chat request -- `llama_domain/server`'s
-/// `parseRingChatRequest` requires an object shaped exactly like this
-/// (`messages` a non-empty array of `{role, content}`), which is the whole
-/// reason `Submit.request` must be a JSON object on the wire rather than the
-/// pre-checkpoint string this crate used to send.
+/// The backend-neutral request P4 hands to a deployment client. The client
+/// must turn this into llama's chat request before it reaches the fixture.
 #[allow(dead_code)]
-pub fn chat_request() -> Value {
+pub fn neutral_request() -> Value {
     json!({
-        "messages": [{ "role": "user", "content": "hi" }],
+        "prompt": "hi",
         "max_tokens": 64,
-        "temperature": 0,
-        "top_p": 1,
-        "top_k": 0,
-        "seed": -1,
-        "stream": true
+        "options": "{\"temperature\":0,\"top_p\":1,\"top_k\":0,\"seed\":-1}"
     })
 }
