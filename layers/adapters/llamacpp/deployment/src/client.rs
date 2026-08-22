@@ -15,6 +15,7 @@
 //! what closes the reconnect-loses-a-submission race this crate used to
 //! have.
 
+mod permits;
 mod pump;
 
 use crate::contract::{DeploymentId, EnqueueError, Generation, SubmissionId, Submit};

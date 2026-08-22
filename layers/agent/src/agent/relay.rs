@@ -205,10 +205,14 @@ impl Agent {
     /// fresh -- there is only one source of truth for what this submission
     /// asked for.
     ///
-    /// No backoff cap and no give-up: P4 does not compute a backend's
-    /// remaining capacity (§9.2), so it has no basis for deciding "long
-    /// enough" either. A route already removed (settled, or its client
-    /// rejected it for a real reason) makes this a no-op.
+    /// P4 does not compute a backend's remaining capacity (§9.2), so it has
+    /// no basis for inventing a retry limit either. What it does have is the
+    /// caller's own deadline, already on the envelope: past it, nobody is
+    /// waiting for this answer any more, and retrying a full backend forever
+    /// on behalf of a request that has gone is how a saturated deployment
+    /// stays saturated. A carrier with no deadline set retries without one.
+    /// A route already removed (settled, or its client rejected it for a real
+    /// reason) makes this a no-op.
     fn retry_submission_later(self: &Arc<Self>, submission_id: String) {
         const FULL_RETRY_DELAY: Duration = Duration::from_millis(20);
         let carrier = self
@@ -223,6 +227,17 @@ impl Agent {
         let Some(submit) = self.payload.submission(&carrier) else {
             return;
         };
+        if expired(carrier.envelope.deadline_unix_ms) {
+            let carrier = self
+                .submission_routes
+                .lock()
+                .expect("submission route lock")
+                .remove(&submission_id);
+            if let Some(carrier) = carrier {
+                self.answer_locally(carrier, "deadline passed while the deployment was full");
+            }
+            return;
+        }
         let agent = Arc::clone(self);
         tokio::spawn(async move {
             tokio::time::sleep(FULL_RETRY_DELAY).await;
@@ -344,6 +359,19 @@ impl DeploymentSink for AgentDeploymentSink {
             agent.relay_deployment_event(event);
         }
     }
+}
+
+/// Whether a carrier's deadline has passed. Zero means the caller set none,
+/// which is not the same as one that has already expired.
+fn expired(deadline_unix_ms: u64) -> bool {
+    if deadline_unix_ms == 0 {
+        return false;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or(0);
+    now > deadline_unix_ms
 }
 
 fn settled_reason_str(reason: SettledReason) -> &'static str {

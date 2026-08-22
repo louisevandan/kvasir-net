@@ -9,6 +9,8 @@
 //! resend could have been rebuilt from.
 
 use super::*;
+use p4_adapter::deployment::Rejected as DeploymentRejected;
+use p4_adapter::deployment::RejectedReason as DeploymentRejectedReason;
 use p4_adapter::deployment::Settled as DeploymentSettled;
 use p4_adapter::deployment::SettledReason as DeploymentSettledReason;
 
@@ -164,6 +166,46 @@ fn a_terminal_that_cannot_be_enqueued_keeps_its_route() {
             agent.submission_route_count(),
             1,
             "an undeliverable terminal must not take the route down with it"
+        );
+    });
+}
+
+/// `Full` is retried, but not on behalf of a request that has gone.
+///
+/// P4 has no basis for inventing a retry limit -- it does not compute the
+/// backend's capacity -- but the caller's own deadline is already on the
+/// envelope. Retrying past it keeps a saturated deployment saturated for an
+/// answer nobody is waiting for.
+#[test]
+fn a_full_rejection_stops_being_retried_once_the_caller_s_deadline_has_passed() {
+    runtime().block_on(async {
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        let agent = agent_with(Arc::clone(&seen));
+        agent.deployments().register(
+            "dep-1".into(),
+            Arc::new(CancelRecordingClient {
+                cancelled: Arc::new(StdMutex::new(Vec::new())),
+            }),
+        );
+        let relay_sink: Arc<dyn DeploymentSink> =
+            Arc::new(AgentDeploymentSink::new(Arc::downgrade(&agent)));
+
+        let mut frame = submission_frame(&agent, "dep-1", 1);
+        // Already past: the request this carrier belongs to is gone.
+        frame.envelope.deadline_unix_ms = 1;
+        let submit = SubmissionPayload.submission(&frame).expect("a submission");
+        agent.relay_submit(frame, submit);
+        assert_eq!(agent.submission_route_count(), 1);
+
+        relay_sink.raise(DeploymentEvent::Rejected(DeploymentRejected {
+            submission_id: "route-1".into(),
+            reason: DeploymentRejectedReason::Full,
+        }));
+
+        assert_eq!(
+            agent.submission_route_count(),
+            0,
+            "an expired request must be answered and dropped, not retried forever"
         );
     });
 }

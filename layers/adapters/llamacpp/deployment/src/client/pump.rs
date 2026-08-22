@@ -12,6 +12,7 @@
 //! the reader thread this module also spawns never reaches past
 //! [`PumpHandle::deliver`]. Both funnel into the one channel this loop reads.
 
+use super::permits::Permits;
 use crate::contract::{Command, Event, Generation, SubmissionId, Submit};
 use crate::ledger::{Admission, Ledger, Verdict};
 use crate::transport::{TransportFactory, TransportReader, TransportWriter};
@@ -31,6 +32,14 @@ use std::time::Duration;
 /// promptly is exactly what keeps the caller's thread from blocking on a
 /// socket that is not draining.
 pub(crate) const COMMAND_QUEUE_BOUND: usize = 256;
+
+/// Inbound events the reader may hand over before it has to wait.
+///
+/// Deep enough that an ordinary burst of tokens never touches it, and
+/// finite so a consumer slower than the socket ends up slowing the socket
+/// rather than filling memory. See `super::permits` for why this is a
+/// permit count rather than a channel bound.
+pub(crate) const INBOUND_BOUND: usize = 1024;
 
 // The bound above counts *submissions* only, and the channel itself is
 // unbounded, because control and data cannot share a limit.
@@ -66,6 +75,8 @@ pub(crate) struct PumpHandle {
     reader_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     closed: Arc<AtomicBool>,
     reconnects: Arc<AtomicU64>,
+    /// Held here only so `close` can release a reader blocked on it.
+    inbound: Arc<Permits>,
 }
 
 impl PumpHandle {
@@ -85,6 +96,7 @@ impl PumpHandle {
         let closed = Arc::new(AtomicBool::new(false));
         let reconnects = Arc::new(AtomicU64::new(0));
         let reader_thread = Arc::new(Mutex::new(None));
+        let inbound = Arc::new(Permits::new(INBOUND_BOUND));
 
         let pump = Pump {
             queued_submissions: Arc::clone(&queued_submissions),
@@ -98,11 +110,16 @@ impl PumpHandle {
             link_epoch: 0,
             sender: sender.clone(),
             reader_thread: reader_thread.clone(),
+            inbound: Arc::clone(&inbound),
         };
         let pump_thread = thread::spawn(move || pump.run(receiver));
 
-        *reader_thread.lock().expect("reader thread lock") =
-            Some(spawn_reader(sender.clone(), reader, 0));
+        *reader_thread.lock().expect("reader thread lock") = Some(spawn_reader(
+            sender.clone(),
+            reader,
+            0,
+            Arc::clone(&inbound),
+        ));
 
         Self {
             sender,
@@ -111,6 +128,7 @@ impl PumpHandle {
             reader_thread,
             closed,
             reconnects,
+            inbound,
         }
     }
 
@@ -160,6 +178,9 @@ impl PumpHandle {
     /// connection -- see `DeploymentClient::close`'s own doc.
     pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        // Before the shutdown, not after: a reader waiting for a permit the
+        // pump will now never return would never see the socket close.
+        self.inbound.close();
         let _ = self.sender.send(PumpEvent::Shutdown);
     }
 
@@ -194,17 +215,23 @@ struct Pump {
     queued_submissions: Arc<AtomicUsize>,
     sender: Sender<PumpEvent>,
     reader_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
+    /// Returned one at a time as inbound events are dealt with, which is
+    /// what lets the reader block instead of buffering without limit.
+    inbound: Arc<Permits>,
 }
 
 impl Pump {
     fn run(mut self, receiver: Receiver<PumpEvent>) {
         loop {
             let Ok(event) = receiver.recv() else {
+                // Every sender is gone, so no permit will ever come back.
+                self.inbound.close();
                 return;
             };
             match event {
                 PumpEvent::Shutdown => {
                     self.writer = None;
+                    self.inbound.close();
                     return;
                 }
                 PumpEvent::Submit(submit) => {
@@ -213,6 +240,12 @@ impl Pump {
                 }
                 PumpEvent::Cancel(submission_id) => self.handle_cancel(submission_id),
                 PumpEvent::Inbound { epoch, event } => {
+                    // Returned for a stale event too. A permit is a slot in
+                    // the hand-off, not a statement about the event's
+                    // worth; keeping one back for every frame that arrived
+                    // late would shrink the bound a little at a time until
+                    // the reader never ran again.
+                    self.inbound.release();
                     // A reader this pump has already replaced can still be
                     // holding a decoded event. Its epoch says which link it
                     // came from; anything but the current one is answering
@@ -329,8 +362,12 @@ impl Pump {
                         // reader off for a writer that is already gone.
                         continue;
                     }
-                    *self.reader_thread.lock().expect("reader thread lock") =
-                        Some(spawn_reader(self.sender.clone(), reader, self.link_epoch));
+                    *self.reader_thread.lock().expect("reader thread lock") = Some(spawn_reader(
+                        self.sender.clone(),
+                        reader,
+                        self.link_epoch,
+                        Arc::clone(&self.inbound),
+                    ));
                     return;
                 }
                 Err(_) => thread::sleep(self.backoff),
@@ -348,12 +385,22 @@ fn spawn_reader(
     sender: Sender<PumpEvent>,
     mut reader: Box<dyn TransportReader>,
     epoch: u64,
+    inbound: Arc<Permits>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         loop {
             match reader.recv() {
                 Ok(Some(event)) => {
+                    // Taken before the hand-off and returned by the pump
+                    // once the event is dealt with. When the pump falls
+                    // behind this blocks, `recv` above stops draining the
+                    // socket, and the backend feels it -- which is the
+                    // whole point of bounding this at all.
+                    if !inbound.acquire() {
+                        return;
+                    }
                     if sender.send(PumpEvent::Inbound { epoch, event }).is_err() {
+                        inbound.release();
                         return;
                     }
                 }

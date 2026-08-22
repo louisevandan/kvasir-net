@@ -8,12 +8,23 @@
 //! is authoritative. This ledger exists only so the client itself never
 //! sends a submission twice, never hands a caller a stale-generation or
 //! out-of-order event, and knows what to resend after a reconnect. Nothing
-//! here needs eviction for checkpoint 1: a P4 agent process's lifetime is
-//! one deployment's worth of submissions, not a long-lived multi-tenant
-//! server, so an unbounded map is the honest scope rather than a shortcut.
+//! Terminated submissions are kept as tombstones, capped and evicted
+//! oldest-first ([`TOMBSTONE_CAP`]). They have to be kept at all because a
+//! resend of an id this client already settled must not start a second
+//! execution, and they have to be capped because a run that never stops
+//! would otherwise grow this map for as long as it lasts -- forty sessions
+//! an hour is a leak with a slow fuse, not a bounded working set.
 
 use crate::contract::{Event, Generation, RejectReason, SubmissionId, Submit};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+
+/// How many settled submissions stay remembered.
+///
+/// Only large enough that a resend of something recent is still recognised;
+/// beyond it the backend's own dedup is authoritative anyway
+/// (`SEALED-CONTRACT.md` §5), so forgetting the oldest costs nothing this
+/// client is responsible for.
+pub const TOMBSTONE_CAP: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubmissionState {
@@ -68,6 +79,9 @@ pub enum Admission {
 pub struct Ledger {
     generation: Generation,
     entries: HashMap<SubmissionId, Entry>,
+    /// Terminated ids in the order they terminated, so the oldest is the
+    /// one evicted when the cap is reached.
+    tombstones: VecDeque<SubmissionId>,
 }
 
 impl Ledger {
@@ -75,6 +89,7 @@ impl Ledger {
         Self {
             generation,
             entries: HashMap::new(),
+            tombstones: VecDeque::new(),
         }
     }
 
@@ -151,6 +166,7 @@ impl Ledger {
             }
             Event::Rejected(_) => {
                 entry.state = SubmissionState::Done;
+                self.entomb(submission_id);
                 Verdict::Apply
             }
             Event::Produced(produced) => {
@@ -165,7 +181,30 @@ impl Ledger {
             }
             Event::Settled(_) => {
                 entry.state = SubmissionState::Done;
+                self.entomb(submission_id);
                 Verdict::Apply
+            }
+        }
+    }
+
+    /// How many submissions this ledger is holding, live and tombstoned
+    /// together -- the number that must not grow without limit.
+    pub fn tracked(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Records a submission as terminated and evicts the oldest tombstone
+    /// once the cap is reached, dropping its entry with it.
+    ///
+    /// An evicted id is simply forgotten: a later event about it resolves to
+    /// `Unknown` rather than `AlreadySettled`, and a resend of it is admitted
+    /// as new. Both are the backend's to settle by then, and both are
+    /// preferable to a map that only ever grows.
+    fn entomb(&mut self, submission_id: SubmissionId) {
+        self.tombstones.push_back(submission_id);
+        while self.tombstones.len() > TOMBSTONE_CAP {
+            if let Some(oldest) = self.tombstones.pop_front() {
+                self.entries.remove(&oldest);
             }
         }
     }

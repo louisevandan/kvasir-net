@@ -221,3 +221,36 @@ fn replay_order_is_stable_by_submission_id() {
     let ids: Vec<&str> = replay.iter().map(|s| s.submission_id.as_str()).collect();
     assert_eq!(ids, vec!["a", "b", "c"]);
 }
+
+/// The ledger has to stop growing.
+///
+/// Every settled submission stays remembered so a resend of it cannot start
+/// a second execution, which is right and which is also why this map only
+/// ever grew. A run that keeps starting sessions -- forty an hour, for
+/// hours -- turns that into a leak with a slow fuse.
+#[test]
+fn settled_submissions_are_remembered_but_only_so_many() {
+    let mut ledger = Ledger::new(1);
+    for index in 0..(TOMBSTONE_CAP + 100) {
+        let id = format!("s{index}");
+        ledger.begin(submit(&id));
+        assert_eq!(
+            ledger.apply(&Event::Settled(Settled {
+                submission_id: id.clone(),
+                reason: SettleReason::Stop,
+                generated_tokens: 1,
+            })),
+            Verdict::Apply
+        );
+    }
+
+    assert!(
+        ledger.tracked() <= TOMBSTONE_CAP,
+        "the ledger holds {} entries against a cap of {TOMBSTONE_CAP}",
+        ledger.tracked()
+    );
+    // The recent ones still dedup -- forgetting the oldest is the trade,
+    // forgetting everything would not be.
+    let recent = format!("s{}", TOMBSTONE_CAP + 99);
+    assert_eq!(ledger.begin(submit(&recent)), Admission::AlreadyKnown);
+}
