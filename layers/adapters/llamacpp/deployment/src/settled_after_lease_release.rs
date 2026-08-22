@@ -73,6 +73,7 @@ mod tests {
             deployment_id: "dep".into(),
             deployment_generation: 1,
             submission_id: "s1".into(),
+            deadline_unix_ms: 0,
             request: "req".into(),
         });
 

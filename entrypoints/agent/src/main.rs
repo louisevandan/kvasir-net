@@ -105,10 +105,11 @@ fn watch(agent: Arc<Agent>) {
             // moves. Both should settle; either climbing for hours is a leak
             // rather than load, and neither shows up in a depth reading.
             println!(
-                "P4_AGENT_TRAFFIC forwarded={} consumed={} to_nodes={} unrouted={} refused={} emergency_lost={} peers={} waiting={}",
+                "P4_AGENT_TRAFFIC forwarded={} consumed={} to_nodes={} to_deployment={} unrouted={} refused={} emergency_lost={} peers={} waiting={}",
                 traffic.forwarded,
                 traffic.consumed,
                 traffic.to_nodes,
+                traffic.to_deployment,
                 traffic.unrouted,
                 traffic.refused,
                 traffic.emergency_lost,

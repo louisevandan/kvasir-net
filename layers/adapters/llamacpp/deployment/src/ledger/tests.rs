@@ -16,6 +16,7 @@ fn submit_gen(id: &str, generation: Generation) -> Submit {
         deployment_id: "dep".into(),
         deployment_generation: generation,
         submission_id: id.into(),
+        deadline_unix_ms: 0,
         request: "req".into(),
     }
 }
@@ -26,6 +27,16 @@ fn begin_is_new_once_and_already_known_after() {
     assert_eq!(ledger.begin(submit("s1")), Admission::New);
     assert_eq!(ledger.begin(submit("s1")), Admission::AlreadyKnown);
     assert_eq!(ledger.entry_count(), 1);
+}
+
+#[test]
+fn begin_refuses_a_generation_the_ledger_has_already_superseded() {
+    let mut ledger = Ledger::new(2);
+    assert_eq!(
+        ledger.begin(submit_gen("old", 1)),
+        Admission::StaleGeneration
+    );
+    assert_eq!(ledger.state_of("old"), None);
 }
 
 #[test]
@@ -98,7 +109,7 @@ fn settled_is_accepted_once_and_refused_the_second_time() {
             reason: SettleReason::Stop,
             generated_tokens: 5,
         })),
-        Verdict::Apply
+        Verdict::Terminal
     );
     assert_eq!(
         ledger.apply(&Event::Settled(Settled {
@@ -130,7 +141,7 @@ fn rejected_is_terminal_and_only_happens_before_accepted() {
                 submission_id: "s1".into(),
                 reason,
             })),
-            Verdict::Apply
+            Verdict::Terminal
         );
         assert_eq!(
             ledger.state_of("s1"),
@@ -140,13 +151,9 @@ fn rejected_is_terminal_and_only_happens_before_accepted() {
     }
 }
 
-/// `Full` is the exception, at the ledger's own level.
-///
-/// The id has to be free again or the caller's retry never reaches the
-/// wire -- the client-level proof of that is in `reconnect_tests`; this is
-/// the same rule stated where it is actually implemented.
+/// `Full` stays pending because the deployment client owns its retry.
 #[test]
-fn a_full_rejection_releases_the_id_rather_than_burying_it() {
+fn a_full_rejection_is_retained_for_an_adapter_local_retry() {
     let mut ledger = Ledger::new(1);
     ledger.begin(submit("s1"));
     assert_eq!(
@@ -154,15 +161,16 @@ fn a_full_rejection_releases_the_id_rather_than_burying_it() {
             submission_id: "s1".into(),
             reason: RejectReason::Full,
         })),
-        Verdict::Apply,
-        "the caller still has to hear about the rejection"
+        Verdict::RetryFull,
+        "P4 must not see an intermediate capacity refusal"
     );
-    assert_eq!(ledger.state_of("s1"), None);
+    assert_eq!(ledger.state_of("s1"), Some(SubmissionState::Pending));
     assert_eq!(
         ledger.begin(submit("s1")),
-        Admission::New,
-        "a resend after Full is new work, not a duplicate"
+        Admission::AlreadyKnown,
+        "the client retained the original command for its own retry"
     );
+    assert_eq!(ledger.submission_for_retry("s1"), Some(submit("s1")));
 }
 
 #[test]
@@ -177,6 +185,17 @@ fn unknown_submission_is_refused() {
 }
 
 #[test]
+fn an_accepted_replayed_after_reconnect_is_not_forwarded_twice() {
+    let mut ledger = Ledger::new(1);
+    ledger.begin(submit("s1"));
+    let accepted = Event::Accepted(Accepted {
+        submission_id: "s1".into(),
+    });
+    assert_eq!(ledger.apply(&accepted), Verdict::Apply);
+    assert_eq!(ledger.apply(&accepted), Verdict::Duplicate);
+}
+
+#[test]
 fn event_from_a_superseded_generation_is_refused() {
     let mut ledger = Ledger::new(1);
     ledger.begin(submit("s1"));
@@ -187,6 +206,46 @@ fn event_from_a_superseded_generation_is_refused() {
         })),
         Verdict::StaleGeneration
     );
+}
+
+#[test]
+fn generation_advance_terminalizes_every_live_old_submission() {
+    let mut ledger = Ledger::new(1);
+    ledger.begin(submit("pending"));
+    ledger.begin(submit("accepted"));
+    ledger.apply(&Event::Accepted(Accepted {
+        submission_id: "accepted".into(),
+    }));
+    ledger.apply(&Event::Produced(Produced {
+        submission_id: "accepted".into(),
+        event_ordinal: 0,
+        text: "token".into(),
+        generated_tokens: 1,
+    }));
+
+    let mut terminals = ledger.advance_generation(2);
+    terminals.sort_by(|a, b| a.submission_id().cmp(b.submission_id()));
+    assert_eq!(
+        terminals,
+        vec![
+            Event::Settled(Settled {
+                submission_id: "accepted".into(),
+                reason: SettleReason::Error,
+                generated_tokens: 1,
+            }),
+            Event::Rejected(Rejected {
+                submission_id: "pending".into(),
+                reason: RejectReason::DeploymentClosed,
+            }),
+        ]
+    );
+}
+
+#[test]
+fn deployment_generation_never_moves_backwards() {
+    let mut ledger = Ledger::new(2);
+    assert!(ledger.advance_generation(1).is_empty());
+    assert_eq!(ledger.generation(), 2);
 }
 
 #[test]
@@ -235,12 +294,18 @@ fn settled_submissions_are_remembered_but_only_so_many() {
         let id = format!("s{index}");
         ledger.begin(submit(&id));
         assert_eq!(
+            ledger.apply(&Event::Accepted(Accepted {
+                submission_id: id.clone(),
+            })),
+            Verdict::Apply
+        );
+        assert_eq!(
             ledger.apply(&Event::Settled(Settled {
                 submission_id: id.clone(),
                 reason: SettleReason::Stop,
                 generated_tokens: 1,
             })),
-            Verdict::Apply
+            Verdict::Terminal
         );
     }
 
@@ -252,5 +317,83 @@ fn settled_submissions_are_remembered_but_only_so_many() {
     // The recent ones still dedup -- forgetting the oldest is the trade,
     // forgetting everything would not be.
     let recent = format!("s{}", TOMBSTONE_CAP + 99);
-    assert_eq!(ledger.begin(submit(&recent)), Admission::AlreadyKnown);
+    assert!(matches!(
+        ledger.begin(submit(&recent)),
+        Admission::Replay(_)
+    ));
+}
+
+#[test]
+fn a_tombstone_replays_the_exact_terminal_result() {
+    let mut ledger = Ledger::new(1);
+    ledger.begin(submit("s1"));
+    ledger.apply(&Event::Accepted(Accepted {
+        submission_id: "s1".into(),
+    }));
+    let terminal = Event::Settled(Settled {
+        submission_id: "s1".into(),
+        reason: SettleReason::Length,
+        generated_tokens: 17,
+    });
+    assert_eq!(ledger.apply(&terminal), Verdict::Terminal);
+    assert_eq!(ledger.begin(submit("s1")), Admission::Replay(terminal));
+}
+
+#[test]
+fn full_after_accepted_is_terminalized_as_a_protocol_error() {
+    let mut ledger = Ledger::new(1);
+    ledger.begin(submit("s1"));
+    ledger.apply(&Event::Accepted(Accepted {
+        submission_id: "s1".into(),
+    }));
+    assert_eq!(
+        ledger.apply(&Event::Rejected(Rejected {
+            submission_id: "s1".into(),
+            reason: RejectReason::Full,
+        })),
+        Verdict::ProtocolViolation
+    );
+    assert_eq!(
+        ledger.fail_protocol("s1"),
+        Some(Event::Settled(Settled {
+            submission_id: "s1".into(),
+            reason: SettleReason::Error,
+            generated_tokens: 0,
+        }))
+    );
+}
+
+#[test]
+fn an_ordinal_gap_becomes_an_explicit_error_with_the_received_token_count() {
+    let mut ledger = Ledger::new(1);
+    ledger.begin(submit("s1"));
+    ledger.apply(&Event::Accepted(Accepted {
+        submission_id: "s1".into(),
+    }));
+    ledger.apply(&Event::Produced(Produced {
+        submission_id: "s1".into(),
+        event_ordinal: 0,
+        text: "first".into(),
+        generated_tokens: 1,
+    }));
+    assert_eq!(
+        ledger.apply(&Event::Produced(Produced {
+            submission_id: "s1".into(),
+            event_ordinal: 2,
+            text: "gap".into(),
+            generated_tokens: 3,
+        })),
+        Verdict::OutOfOrder {
+            expected: 1,
+            got: 2,
+        }
+    );
+    assert_eq!(
+        ledger.fail_protocol("s1"),
+        Some(Event::Settled(Settled {
+            submission_id: "s1".into(),
+            reason: SettleReason::Error,
+            generated_tokens: 1,
+        }))
+    );
 }

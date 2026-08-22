@@ -8,8 +8,8 @@
 //! `packages/llama_domain/src/common/protocol/pipeline-submission/` for the
 //! TypeScript twin this must agree with, and `fixtures.json` next to this
 //! file for the canonical shapes both sides accept and the malformed ones
-//! both must reject. The two fixture files are hand-kept in sync; nothing in
-//! this checkpoint generates one from the other.
+//! both must reject. The copies are hand-maintained, and the TypeScript parser
+//! test rejects byte-level drift between them.
 
 use serde_json::{Value, json};
 
@@ -31,6 +31,7 @@ pub fn encode_submit(command: &Submit) -> Value {
         "deployment_id": command.deployment_id,
         "deployment_generation": command.deployment_generation,
         "submission_id": command.submission_id,
+        "deadline_unix_ms": command.deadline_unix_ms,
         "request": command.request,
     })
 }
@@ -85,6 +86,7 @@ pub fn parse_submit(value: &Value) -> Result<Submit, String> {
         deployment_id: require_id(object, "deployment_id")?,
         deployment_generation: require_u64(object, "deployment_generation")?,
         submission_id: require_id(object, "submission_id")?,
+        deadline_unix_ms: require_u64(object, "deadline_unix_ms")?,
         request,
     })
 }

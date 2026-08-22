@@ -22,6 +22,9 @@ pub struct StartOptions<'a> {
     pub prompt: String,
     pub options: String,
     pub quiet: Duration,
+    /// Absolute admission budget carried to the deployment adapter. Unlike
+    /// `quiet`, this bounds how long capacity (`Full`) may defer a request.
+    pub request_deadline: Duration,
     pub arrive: Duration,
     pub vary: bool,
     /// Number of requests sent immediately at the beginning of an inference
@@ -91,6 +94,8 @@ pub struct Session {
     pub(crate) capability_expires_at: u64,
     /// How long nothing may arrive before the driver stops waiting.
     quiet: Duration,
+    /// How long an inference request may wait for adapter capacity.
+    request_deadline: Duration,
     /// Gap between arrivals. Zero sends the whole run at once, which measures a
     /// backlog draining rather than one forming.
     arrive: Duration,
@@ -140,6 +145,7 @@ impl Session {
             prompt,
             options,
             quiet,
+            request_deadline,
             arrive,
             vary,
             initial_burst,
@@ -178,6 +184,7 @@ impl Session {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
             quiet,
+            request_deadline,
             arrive,
             vary,
             // The clock, because it is monotonic across restarts on one machine
@@ -563,6 +570,11 @@ impl Session {
             chain,
             body,
         } = request;
+        let deadline_unix_ms = if matches!(lane, QueueClass::Prefill | QueueClass::Decode) {
+            request_deadline_unix_ms(std::time::SystemTime::now(), self.request_deadline)
+        } else {
+            0
+        };
         self.agent
             .enqueue(Frame {
                 envelope: Envelope {
@@ -576,7 +588,7 @@ impl Session {
                     return_channel: Some(self.return_channel.clone()),
                     ingress_generation: 0,
                     event_seq: 0,
-                    deadline_unix_ms: 0,
+                    deadline_unix_ms,
                     reply_to: Some(self.agent.address().clone()),
                     chain,
                 },
@@ -681,14 +693,31 @@ fn driver_lanes() -> Lanes {
     }
 }
 
+fn request_deadline_unix_ms(now: std::time::SystemTime, budget: Duration) -> u64 {
+    let now_ms = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or_default();
+    u64::try_from(now_ms.saturating_add(budget.as_millis())).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Session, StartOptions};
+    use super::{Session, StartOptions, request_deadline_unix_ms};
     use p4_protocol::frame;
     use p4_protocol::{Envelope, QueueClass, Recipient};
     use p4_service::message::Reply;
     use p4_service::message::wire::encode_reply;
-    use std::time::Duration;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn request_deadline_is_an_absolute_nonzero_wire_timestamp() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        assert_eq!(
+            request_deadline_unix_ms(now, Duration::from_millis(250)),
+            1_000_250
+        );
+    }
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
 
@@ -709,6 +738,7 @@ mod tests {
             prompt: "prompt".into(),
             options: "{}".into(),
             quiet: Duration::from_secs(1),
+            request_deadline: Duration::from_secs(5),
             arrive: Duration::ZERO,
             vary: false,
             initial_burst: 0,

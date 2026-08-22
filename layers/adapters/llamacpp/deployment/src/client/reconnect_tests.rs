@@ -4,9 +4,7 @@
 //! connection; `tests.rs` covers the client's steady-state behaviour.
 
 use super::*;
-use crate::contract::{
-    Accepted, Command, Event, RejectReason, Rejected, SettleReason, Settled, Submit,
-};
+use crate::contract::{Accepted, Command, Event, Produced, SettleReason, Settled, Submit};
 use crate::test_support::RecordingSink;
 use crate::transport::fake::FakeFactory;
 use p4_adapter::deployment::Client as DeploymentClientTrait;
@@ -41,6 +39,7 @@ fn submit(
         deployment_id: client.deployment_id().to_string(),
         deployment_generation: client.generation(),
         submission_id: submission_id.into(),
+        deadline_unix_ms: 0,
         request: json!({ "body": request }),
     })
 }
@@ -169,6 +168,52 @@ fn socket_loss_never_manufactures_a_full_rejection_or_a_settle() {
     handle2.disconnect();
 }
 
+#[test]
+fn reconnect_to_a_new_generation_terminalizes_old_work_before_new_admission() {
+    let factory = FakeFactory::new();
+    let first = factory.queue_success_reporting(1);
+    let second = factory.queue_success_reporting(2);
+    let (client, sink) = connect(&factory);
+
+    submit(&client, "old", "request").expect("submit old generation");
+    first.push_event(Event::Accepted(Accepted {
+        submission_id: "old".into(),
+    }));
+    first.push_event(Event::Produced(Produced {
+        submission_id: "old".into(),
+        event_ordinal: 0,
+        text: "partial".into(),
+        generated_tokens: 1,
+    }));
+    wait_for(|| sink.len() == 2);
+    first.disconnect();
+
+    wait_for(|| client.generation() == 2 && sink.len() == 3);
+    assert!(matches!(
+        sink.events().last(),
+        Some(Event::Settled(Settled {
+            submission_id,
+            reason: SettleReason::Error,
+            generated_tokens: 1,
+        })) if submission_id == "old"
+    ));
+    assert!(
+        second.sent().iter().all(|command| {
+            !matches!(command, Command::Submit(submit) if submit.submission_id == "old")
+        }),
+        "old-generation work must not be replayed"
+    );
+
+    submit(&client, "new", "request").expect("submit new generation");
+    wait_for(|| {
+        second.sent().iter().any(|command| {
+        matches!(command, Command::Submit(submit) if submit.submission_id == "new" && submit.deployment_generation == 2)
+    })
+    });
+    client.close();
+    second.disconnect();
+}
+
 /// Proof obligation from the task: a submission whose enqueue attempt lands
 /// while the pump is mid-reconnect must still be delivered exactly once,
 /// never lost. Before the pump owned reconnect and replay together, a
@@ -230,138 +275,4 @@ fn a_submission_arriving_during_reconnect_is_delivered_exactly_once() {
 
     client.close();
     handle2.disconnect();
-}
-
-/// A cancel that loses its socket write is still owed to the backend.
-///
-/// The caller has already returned by then, so nothing above this client
-/// can retry it. Before the ledger remembered the intent, the reconnect
-/// replayed only the submission and the request went on running against a
-/// caller who had asked it to stop.
-#[test]
-fn a_cancel_whose_write_fails_is_resent_after_the_reconnect() {
-    let factory = FakeFactory::new();
-    let first = factory.queue_success();
-    let second = factory.queue_success();
-    let (client, _sink) = connect(&factory);
-
-    submit(&client, "s-cancel", "body").expect("submit is accepted");
-    wait_for(|| {
-        first
-            .sent()
-            .iter()
-            .any(|command| matches!(command, Command::Submit(_)))
-    });
-
-    // The link breaks in the one way the caller cannot see: the cancel's
-    // own write is what fails.
-    first.fail_writes();
-    client.cancel("s-cancel".into());
-
-    wait_for(|| {
-        second
-            .sent()
-            .iter()
-            .filter(|command| matches!(command, Command::Cancel(_)))
-            .count()
-            == 1
-    });
-
-    let resent = second.sent();
-    assert_eq!(
-        resent
-            .iter()
-            .filter(|command| matches!(command, Command::Cancel(_)))
-            .count(),
-        1,
-        "the owed cancel is resent exactly once, not dropped and not duplicated"
-    );
-}
-
-/// The submission bound is a real bound under concurrent callers.
-///
-/// A load followed by a separate increment lets several threads all read
-/// one below the limit and all pass, so the queue overshoots.
-#[test]
-fn the_submission_bound_holds_when_callers_race() {
-    let factory = FakeFactory::new();
-    let handle = factory.queue_success();
-    handle.block_writes();
-    let (client, _sink) = connect(&factory);
-
-    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let mut threads = Vec::new();
-    for worker in 0..8 {
-        let client = Arc::clone(&client);
-        let accepted = Arc::clone(&accepted);
-        threads.push(thread::spawn(move || {
-            for index in 0..200 {
-                let id = format!("s-{worker}-{index}");
-                if submit(&client, &id, "body").is_ok() {
-                    accepted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                }
-            }
-        }));
-    }
-    for thread in threads {
-        thread.join().expect("worker joins");
-    }
-
-    // One more than the bound is legitimate and not a race: the pump pops a
-    // submission -- decrementing the count -- and then blocks on its write,
-    // which frees exactly one slot. Anything beyond that is two callers
-    // having read the same value and both passed.
-    let total = accepted.load(std::sync::atomic::Ordering::SeqCst);
-    assert!(
-        total <= super::pump::COMMAND_QUEUE_BOUND + 1,
-        "accepted {total} submissions against a bound of {}",
-        super::pump::COMMAND_QUEUE_BOUND
-    );
-}
-
-/// `Full` means "later", so the id it names has to be free again.
-///
-/// The backend refuses a `Full` submission before recording it, so nothing
-/// started and the caller's retry is the first real attempt. While the
-/// ledger kept the entry, that retry was `AlreadyKnown`: nothing reached the
-/// wire, no further event ever arrived, and the request hung forever on a
-/// rejection that was only backpressure.
-#[test]
-fn a_full_rejection_frees_the_id_so_a_resend_reaches_the_wire() {
-    let factory = FakeFactory::new();
-    let handle = factory.queue_success();
-    let (client, sink) = connect(&factory);
-
-    submit(&client, "s-full", "body").expect("first submit is enqueued");
-    wait_for(|| handle.sent().len() == 1);
-
-    handle.push_event(Event::Rejected(Rejected {
-        submission_id: "s-full".into(),
-        reason: RejectReason::Full,
-    }));
-    // The rejection still reaches the caller -- that is what tells it to
-    // retry at all.
-    wait_for(|| sink.len() == 1);
-
-    submit(&client, "s-full", "body").expect("the retry is enqueued");
-    wait_for(|| handle.sent().len() == 2);
-
-    let sent = handle.sent();
-    assert_eq!(
-        sent.iter()
-            .filter(|command| matches!(command, Command::Submit(submit) if submit.submission_id == "s-full"))
-            .count(),
-        2,
-        "the retry after Full must reach the wire, got {sent:?}"
-    );
-
-    // And the freed id behaves like a live submission again: an event about
-    // it is admitted rather than refused as belonging to nothing.
-    handle.push_event(Event::Accepted(Accepted {
-        submission_id: "s-full".into(),
-    }));
-    wait_for(|| sink.len() == 2);
-
-    client.close();
-    handle.disconnect();
 }

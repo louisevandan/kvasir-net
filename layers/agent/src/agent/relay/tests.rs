@@ -2,7 +2,9 @@ use super::*;
 use crate::agent::{Adapter, Agent, Duties, run};
 use crate::node::payload::Payload;
 use crate::queue::lane::{Budget, Lanes};
-use p4_adapter::deployment::{Accepted, Client, EnqueueError, SubmissionId, Submit};
+use p4_adapter::deployment::{
+    Accepted, Client, EnqueueError, RejectedReason, SubmissionId, Submit,
+};
 use p4_adapter::{Distribution, Event, EventSink, Outcome, Sequence, Work};
 use p4_protocol::{Address, QueueClass};
 use p4_protocol::{Chain, Envelope, Link, Recipient};
@@ -71,6 +73,7 @@ impl Payload for SubmissionPayload {
             deployment_id,
             deployment_generation,
             submission_id: frame.envelope.route.clone(),
+            deadline_unix_ms: frame.envelope.deadline_unix_ms,
             request: serde_json::json!({ "prompt": String::from_utf8_lossy(&frame.body) }),
         })
     }
@@ -253,7 +256,7 @@ fn no_registered_client_leaves_the_hop_path_untouched() {
 }
 
 #[test]
-fn full_is_retried_rather_than_answered_as_a_failure() {
+fn a_full_that_reaches_p4_is_terminal_and_is_not_retried_by_p4() {
     runtime().block_on(async {
         let seen = Arc::new(StdMutex::new(Vec::new()));
         let agent = agent_with(Arc::clone(&seen));
@@ -262,35 +265,14 @@ fn full_is_retried_rather_than_answered_as_a_failure() {
         let client = Arc::new(ScriptedClient {
             sink: relay_sink,
             calls: AtomicUsize::new(0),
-            script: Box::new(|call, submit, sink| {
+            script: Box::new(|_, submit, sink| {
                 let id = submit.submission_id.clone();
-                if call == 0 {
-                    // Ordinary backpressure -- SEALED-CONTRACT.md §1/§9.2 --
-                    // never recorded by a client's own ledger, so a retry
-                    // under the same submission_id is the first attempt
-                    // this client actually admits.
-                    sink.raise(DeploymentEvent::Rejected(
-                        p4_adapter::deployment::Rejected {
-                            submission_id: id,
-                            reason: RejectedReason::Full,
-                        },
-                    ));
-                } else {
-                    sink.raise(DeploymentEvent::Accepted(Accepted {
-                        submission_id: id.clone(),
-                    }));
-                    sink.raise(DeploymentEvent::Produced(Produced {
-                        submission_id: id.clone(),
-                        event_ordinal: 0,
-                        text: "ok".into(),
-                        generated_tokens: 1,
-                    }));
-                    sink.raise(DeploymentEvent::Settled(Settled {
+                sink.raise(DeploymentEvent::Rejected(
+                    p4_adapter::deployment::Rejected {
                         submission_id: id,
-                        reason: SettledReason::Stop,
-                        generated_tokens: 1,
-                    }));
-                }
+                        reason: RejectedReason::Full,
+                    },
+                ));
             }),
         });
         agent
@@ -299,30 +281,15 @@ fn full_is_retried_rather_than_answered_as_a_failure() {
 
         agent.enqueue(submission_frame(&agent, "dep-1", 7)).unwrap();
 
-        // Give the first (Full) attempt time to land, but well short of the
-        // retry delay: nothing should have reached the requester yet, and
-        // in particular nothing that looks like a failure.
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        assert!(
-            seen.lock().unwrap().is_empty(),
-            "Full produced no reply at all -- not a failed request the caller can observe"
-        );
-
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
             client.calls.load(Ordering::SeqCst),
-            2,
-            "the same submission was retried exactly once, after the first Full"
+            1,
+            "backend policy must not create a retry in the P4 relay"
         );
         let seen = seen.lock().unwrap();
-        assert_eq!(
-            seen.len(),
-            2,
-            "one token, one terminal -- still no failure reply"
-        );
-        assert_eq!(seen[0].body, b"ok");
-        assert_eq!(seen[1].body, b"stop");
-        assert_eq!(seen[1].envelope.lane, QueueClass::Response);
+        assert_eq!(seen.len(), 1, "the final refusal closes the route once");
+        assert_eq!(seen[0].envelope.lane, QueueClass::Response);
     });
 }
 

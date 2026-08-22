@@ -5,12 +5,10 @@
 //!
 //! Everything about this needed the real server rather than a scripted
 //! client. `Full` is not a fixed answer a stub returns on cue -- it is what
-//! `coordinator.ts` decides from `capacitySnapshot`, and what makes the
-//! retry work is that the client's own ledger releases the id when it sees
-//! one. A stub with no ledger answers every attempt and proves neither
-//! half. The defect this covers was exactly that: the relay retried, the
-//! client answered `AlreadyKnown`, nothing reached the wire, and the
-//! request hung forever on a rejection that only meant "later".
+//! `coordinator.ts` decides from `capacitySnapshot`. The deployment client
+//! retains the pending submission and owns the timed retry; P4 sees only the
+//! eventual terminal result. A stub with no capacity and no client ledger
+//! proves neither half.
 //!
 //! The fixture's capacity is 2 (`cross-wire-fixture.ts`), so three
 //! submissions at once is the smallest arrangement that produces a real
@@ -18,7 +16,6 @@
 
 mod support;
 
-use p4_adapter::deployment::{DeploymentEvent, Rejected, RejectedReason};
 use p4_adapter::deployment::{Sink as DeploymentSink, Submit};
 use p4_agent_core::agent::{Agent, AgentDeploymentSink, Duties, run};
 use p4_agent_core::node::payload::Payload;
@@ -29,7 +26,6 @@ use p4_llamacpp_deployment::transport::tcp::TcpTransportFactory;
 use p4_protocol::frame::Frame;
 use p4_protocol::{Address, Chain, Envelope, Link, QueueClass, Recipient};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use support::Fixture;
@@ -49,6 +45,7 @@ impl Payload for ChatPayload {
             deployment_id,
             deployment_generation,
             submission_id: frame.envelope.route.clone(),
+            deadline_unix_ms: frame.envelope.deadline_unix_ms,
             request: serde_json::json!({
                 "messages": [{ "role": "user", "content": prompt }],
                 "max_tokens": 32,
@@ -67,30 +64,6 @@ impl Duties for Collect {
     }
 }
 
-/// Passes every event through to the relay and counts the `Full` rejections
-/// on the way.
-///
-/// The relay deliberately never shows a `Full` to the requester, so without
-/// this the test has no way to know one happened -- and a run where the
-/// backend simply had room would pass while proving nothing at all.
-struct CountingFull {
-    inner: Arc<dyn DeploymentSink>,
-    full: Arc<AtomicUsize>,
-}
-
-impl DeploymentSink for CountingFull {
-    fn raise(&self, event: DeploymentEvent) {
-        if let DeploymentEvent::Rejected(Rejected {
-            reason: RejectedReason::Full,
-            ..
-        }) = &event
-        {
-            self.full.fetch_add(1, Ordering::SeqCst);
-        }
-        self.inner.raise(event);
-    }
-}
-
 #[tokio::test]
 async fn a_submission_the_backend_refuses_for_capacity_still_completes() {
     let fixture = Fixture::spawn();
@@ -105,11 +78,8 @@ async fn a_submission_the_backend_refuses_for_capacity_still_completes() {
     );
     tokio::spawn(run(Arc::clone(&agent), receiver, in_flight));
 
-    let full = Arc::new(AtomicUsize::new(0));
-    let relay_sink: Arc<dyn DeploymentSink> = Arc::new(CountingFull {
-        inner: Arc::new(AgentDeploymentSink::new(Arc::downgrade(&agent))),
-        full: Arc::clone(&full),
-    });
+    let relay_sink: Arc<dyn DeploymentSink> =
+        Arc::new(AgentDeploymentSink::new(Arc::downgrade(&agent)));
     let factory: Arc<dyn TransportFactory> = Arc::new(TcpTransportFactory::new(fixture.addr));
     let client = DeploymentClient::connect(
         factory,
@@ -184,7 +154,7 @@ async fn a_submission_the_backend_refuses_for_capacity_still_completes() {
     // unchanged on a backend that had room for all three, which is a green
     // light for a retry path that was never exercised.
     assert!(
-        full.load(Ordering::SeqCst) > 0,
+        client.full_retry_count() > 0,
         "the backend never actually refused anything, so nothing here \
          exercised the retry this test exists for"
     );

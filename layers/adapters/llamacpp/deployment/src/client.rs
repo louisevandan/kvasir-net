@@ -21,7 +21,7 @@ mod pump;
 use crate::contract::{DeploymentId, EnqueueError, Generation, SubmissionId, Submit};
 use crate::transport::TransportFactory;
 use p4_adapter::deployment::{Client as DeploymentClientTrait, Sink};
-use pump::{PumpEvent, PumpHandle};
+use pump::PumpHandle;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -86,6 +86,12 @@ impl DeploymentClient {
         self.pump.reconnect_count()
     }
 
+    /// Backend Full responses absorbed and scheduled inside this client.
+    /// Exposed for runtime evidence; these events never reach P4's sink.
+    pub fn full_retry_count(&self) -> u64 {
+        self.pump.full_retry_count()
+    }
+
     /// Moves the deployment forward. Anything already in flight under the
     /// old generation stays refusable (the ledger's fencing returns
     /// `StaleGeneration`, never `Unknown`, for it) but is no longer replayed
@@ -94,9 +100,12 @@ impl DeploymentClient {
     /// travels, ahead of anything this call's caller enqueues next -- see
     /// `pump`'s ordering guarantee.
     pub fn advance_generation(&self, generation: Generation) {
-        self.current_generation.store(generation, Ordering::SeqCst);
-        self.pump
-            .enqueue_control(PumpEvent::AdvanceGeneration(generation));
+        let previous = self
+            .current_generation
+            .fetch_max(generation, Ordering::SeqCst);
+        if generation > previous {
+            self.pump.enqueue_generation(generation);
+        }
     }
 
     /// Stops accepting new work. Does not forcibly interrupt a `recv()`
@@ -133,7 +142,7 @@ impl DeploymentClientTrait for DeploymentClient {
         // that answers nothing rather than like a disagreement.
         submit.deployment_generation = self.generation();
         self.pump
-            .enqueue(PumpEvent::Submit(submit))
+            .enqueue_submit(submit)
             .map_err(|()| EnqueueError("deployment client queue is full or closed".into()))
     }
 
@@ -143,10 +152,14 @@ impl DeploymentClientTrait for DeploymentClient {
     /// the contract itself treats cancel of an unknown/settled submission as
     /// a no-op (`SEALED-CONTRACT.md` §2).
     fn cancel(&self, submission_id: SubmissionId) {
-        self.pump.enqueue_control(PumpEvent::Cancel(submission_id));
+        self.pump.enqueue_cancel(submission_id);
     }
 }
 
+#[cfg(test)]
+mod protocol_tests;
+#[cfg(test)]
+mod pump_policy_tests;
 #[cfg(test)]
 mod reconnect_tests;
 #[cfg(test)]

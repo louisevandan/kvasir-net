@@ -170,14 +170,10 @@ fn a_terminal_that_cannot_be_enqueued_keeps_its_route() {
     });
 }
 
-/// `Full` is retried, but not on behalf of a request that has gone.
-///
-/// P4 has no basis for inventing a retry limit -- it does not compute the
-/// backend's capacity -- but the caller's own deadline is already on the
-/// envelope. Retrying past it keeps a saturated deployment saturated for an
-/// answer nobody is waiting for.
+/// A client emits Full only after its adapter-local retry policy is done.
+/// P4 treats that final typed refusal exactly like every other rejection.
 #[test]
-fn a_full_rejection_stops_being_retried_once_the_caller_s_deadline_has_passed() {
+fn a_final_full_rejection_removes_the_route() {
     runtime().block_on(async {
         let seen = Arc::new(StdMutex::new(Vec::new()));
         let agent = agent_with(Arc::clone(&seen));
@@ -191,7 +187,6 @@ fn a_full_rejection_stops_being_retried_once_the_caller_s_deadline_has_passed() 
             Arc::new(AgentDeploymentSink::new(Arc::downgrade(&agent)));
 
         let mut frame = submission_frame(&agent, "dep-1", 1);
-        // Already past: the request this carrier belongs to is gone.
         frame.envelope.deadline_unix_ms = 1;
         let submit = SubmissionPayload.submission(&frame).expect("a submission");
         agent.relay_submit(frame, submit);
@@ -205,7 +200,7 @@ fn a_full_rejection_stops_being_retried_once_the_caller_s_deadline_has_passed() 
         assert_eq!(
             agent.submission_route_count(),
             0,
-            "an expired request must be answered and dropped, not retried forever"
+            "a final refusal must be answered and dropped, not retried by P4"
         );
     });
 }

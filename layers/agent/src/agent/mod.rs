@@ -15,8 +15,8 @@ use crate::transport::outbound::Peers;
 use crate::worker::judge::{Verdict, judge};
 use p4_adapter::Adapter;
 use p4_adapter::deployment::{
-    DeploymentEvent, Produced, Registry as DeploymentRegistry, Rejected, RejectedReason, Settled,
-    SettledReason, Sink as DeploymentSink,
+    DeploymentEvent, Produced, Registry as DeploymentRegistry, Rejected, Settled, SettledReason,
+    Sink as DeploymentSink,
 };
 use p4_protocol::frame::Frame;
 use p4_protocol::{Address, QueueClass, Recipient};
@@ -86,10 +86,6 @@ pub struct Agent {
     /// every critical section here is a HashMap lookup, never an `.await`,
     /// and `AgentDeploymentSink::raise` is not itself async.
     submission_routes: SyncMutex<HashMap<String, Frame>>,
-    /// Where `Full` retries wait. Started on first use -- see
-    /// `relay::retry` for why this is one thread rather than a task per
-    /// attempt.
-    retries: std::sync::OnceLock<Arc<crate::agent::relay::retry::Retries>>,
 }
 
 impl Agent {
@@ -165,7 +161,6 @@ impl Agent {
             emergency,
             deployments: DeploymentRegistry::new(),
             submission_routes: SyncMutex::new(HashMap::new()),
-            retries: std::sync::OnceLock::new(),
         });
         (agent, receiver, in_flight)
     }
@@ -671,6 +666,7 @@ impl Agent {
             forwarded: self.forwarded.load(Ordering::Relaxed),
             consumed: self.consumed.load(Ordering::Relaxed),
             to_nodes: self.to_nodes.load(Ordering::Relaxed),
+            to_deployment: self.to_deployment.load(Ordering::Relaxed),
             unrouted: self.unrouted.load(Ordering::Relaxed),
             refused: self.refused.load(Ordering::Relaxed),
             emergency_lost: self.emergency_lost.load(Ordering::Relaxed),
@@ -688,6 +684,7 @@ pub struct Traffic {
     pub forwarded: usize,
     pub consumed: usize,
     pub to_nodes: usize,
+    pub to_deployment: usize,
     pub unrouted: usize,
     pub refused: usize,
     pub emergency_lost: usize,

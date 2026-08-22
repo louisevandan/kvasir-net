@@ -21,12 +21,8 @@
 //! submission -- see `AgentDeploymentSink`'s own doc for the ownership shape
 //! that follows from that.
 
-use super::{
-    Agent, DeploymentEvent, DeploymentSink, Produced, Rejected, RejectedReason, Settled,
-    SettledReason,
-};
+use super::{Agent, DeploymentEvent, DeploymentSink, Produced, Rejected, Settled, SettledReason};
 use p4_protocol::frame::Frame;
-use retry::{FULL_RETRY_DELAY, Retries};
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::Ordering;
@@ -142,10 +138,10 @@ impl Agent {
     ///
     /// `Accepted` has no OUTER-facing effect, matching the hop path: neither
     /// acknowledges `Execute` itself, only the first real output does.
-    /// `Rejected { Full }` is ordinary backpressure -- `SEALED-CONTRACT.md`
-    /// §1/§9.2 -- so it is retried rather than answered as a failure; every
-    /// other `Rejected` reason is terminal and answered like any other local
-    /// refusal. `Produced`/`Settled` replay through the exact rule
+    /// Backend-specific backpressure is already resolved behind the client
+    /// boundary. Any `Rejected` that reaches this generic relay is terminal
+    /// and answered like any other local refusal. `Produced`/`Settled` replay
+    /// through the exact rule
     /// `node::runner::response::response_frame` uses for a hop's own
     /// replies -- `carrier.envelope.to_reply()`, `event_seq` advanced by
     /// exactly one per event -- so a requester cannot tell a relayed
@@ -153,10 +149,6 @@ impl Agent {
     fn relay_deployment_event(self: &Arc<Self>, event: DeploymentEvent) {
         match event {
             DeploymentEvent::Accepted(_) => {}
-            DeploymentEvent::Rejected(Rejected {
-                submission_id,
-                reason: RejectedReason::Full,
-            }) => self.retry_submission_later(submission_id),
             DeploymentEvent::Rejected(Rejected {
                 submission_id,
                 reason,
@@ -190,102 +182,6 @@ impl Agent {
                 self.finish_submission_route(&submission_id, body);
             }
         }
-    }
-
-    /// `Rejected { Full }` names ordinary backpressure, not a failed
-    /// request (`SEALED-CONTRACT.md` §1/§9.2), so it is never turned into a
-    /// reply here. Instead the same `Submit` is retried after a short delay
-    /// -- safe because a `Full` rejection is never recorded by a client's
-    /// own ledger (`coordinator.ts`'s `admitSubmission` never calls
-    /// `ledger.begin` before that check), so a resend under the identical
-    /// `submission_id` starts nothing twice; it is simply the first attempt
-    /// this client ever actually admits. Rebuilt from the stored carrier
-    /// rather than an original `Submit` kept around, so a retry always
-    /// reflects the same request a caller would get by decoding the carrier
-    /// fresh -- there is only one source of truth for what this submission
-    /// asked for.
-    ///
-    /// P4 does not compute a backend's remaining capacity (§9.2), so it has
-    /// no basis for inventing a retry limit either. What it does have is the
-    /// caller's own deadline, already on the envelope: past it, nobody is
-    /// waiting for this answer any more, and retrying a full backend forever
-    /// on behalf of a request that has gone is how a saturated deployment
-    /// stays saturated. A carrier with no deadline set retries without one.
-    /// A route already removed (settled, or its client rejected it for a real
-    /// reason) makes this a no-op.
-    fn retry_submission_later(self: &Arc<Self>, submission_id: String) {
-        if self.expire_or_keep(&submission_id) {
-            self.retries().schedule(submission_id, FULL_RETRY_DELAY);
-        }
-    }
-
-    /// The scheduler this agent's `Full` retries wait in, started the first
-    /// time one is needed. Lazily rather than at construction because most
-    /// agents register no deployment client at all and would pay for a
-    /// thread that never wakes.
-    fn retries(self: &Arc<Self>) -> &Arc<Retries> {
-        self.retries
-            .get_or_init(|| Retries::start(Arc::downgrade(self)))
-    }
-
-    /// Whether this submission is still worth offering again.
-    ///
-    /// `false` means it is finished as far as this relay is concerned: the
-    /// route is gone (settled, or refused for a real reason), or the
-    /// caller's deadline has passed and the requester has been told so.
-    fn expire_or_keep(self: &Arc<Self>, submission_id: &str) -> bool {
-        let carrier = self
-            .submission_routes
-            .lock()
-            .expect("submission route lock")
-            .get(submission_id)
-            .cloned();
-        let Some(carrier) = carrier else {
-            return false;
-        };
-        if !expired(carrier.envelope.deadline_unix_ms) {
-            return true;
-        }
-        let carrier = self
-            .submission_routes
-            .lock()
-            .expect("submission route lock")
-            .remove(submission_id);
-        if let Some(carrier) = carrier {
-            self.answer_locally(carrier, "deadline passed while the deployment was full");
-        }
-        false
-    }
-
-    /// One retry attempt, run on the scheduler's thread. Returns whether it
-    /// needs to be attempted again.
-    ///
-    /// `true` only for a local enqueue that failed: the submission never
-    /// reached the wire, so no `Full` will arrive to schedule another
-    /// attempt and nothing but this would ever look at it again. A
-    /// submission that *did* reach the wire returns `false` -- if the
-    /// backend is still full it says so, and that rejection schedules the
-    /// next attempt through the same path the first one took.
-    pub(super) fn attempt_retry(self: &Arc<Self>, submission_id: &str) -> bool {
-        if !self.expire_or_keep(submission_id) {
-            return false;
-        }
-        let carrier = self
-            .submission_routes
-            .lock()
-            .expect("submission route lock")
-            .get(submission_id)
-            .cloned();
-        let Some(carrier) = carrier else {
-            return false;
-        };
-        // Rebuilt from the stored carrier rather than from a `Submit` kept
-        // around, so a retry always says exactly what a fresh decode of the
-        // carrier would: one source of truth for what this asked for.
-        let Some(submit) = self.payload.submission(&carrier) else {
-            return false;
-        };
-        self.deployments.try_submit(submit).is_err()
     }
 
     /// Sends one relay reply for `submission_id` and advances its stored
@@ -397,19 +293,6 @@ impl DeploymentSink for AgentDeploymentSink {
     }
 }
 
-/// Whether a carrier's deadline has passed. Zero means the caller set none,
-/// which is not the same as one that has already expired.
-fn expired(deadline_unix_ms: u64) -> bool {
-    if deadline_unix_ms == 0 {
-        return false;
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_millis() as u64)
-        .unwrap_or(0);
-    now > deadline_unix_ms
-}
-
 fn settled_reason_str(reason: SettledReason) -> &'static str {
     match reason {
         SettledReason::Stop => "stop",
@@ -418,8 +301,6 @@ fn settled_reason_str(reason: SettledReason) -> &'static str {
         SettledReason::Error => "error",
     }
 }
-
-pub(super) mod retry;
 
 #[cfg(test)]
 mod tests;

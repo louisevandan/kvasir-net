@@ -6,6 +6,7 @@ fn a_submit_carries_its_request_opaquely() {
         deployment_id: "dep-1".into(),
         deployment_generation: 3,
         submission_id: "sub-1".into(),
+        deadline_unix_ms: 0,
         request: serde_json::json!({ "prompt": "hello" }),
     };
     assert_eq!(submit.deployment_id, "dep-1");
@@ -27,6 +28,7 @@ fn two_submits_with_the_same_fields_are_equal() {
         deployment_id: "dep-1".into(),
         deployment_generation: 1,
         submission_id: "sub-1".into(),
+        deadline_unix_ms: 0,
         request: serde_json::Value::Null,
     };
     let b = a.clone();

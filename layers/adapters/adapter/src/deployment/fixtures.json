@@ -9,6 +9,7 @@
         "deployment_id": "dep-1",
         "deployment_generation": 3,
         "submission_id": "sub-1",
+        "deadline_unix_ms": 0,
         "request": { "prompt": "hello" }
       },
       "cancel": {
@@ -127,6 +128,14 @@
         "deployment_id": "dep-1",
         "deployment_generation": 3,
         "submission_id": "sub-1"
+      },
+      "submit_missing_deadline": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "submit",
+        "deployment_id": "dep-1",
+        "deployment_generation": 3,
+        "submission_id": "sub-1",
+        "request": {}
       },
       "cancel_missing_submission_id": {
         "protocol": "linker-pipeline-submission-v1",

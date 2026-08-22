@@ -52,6 +52,11 @@ param(
     # used: it persists across calls in one PowerShell process, so a sweep
     # would file every run's text under the first run's path.
     [string]$EvidenceFile = '',
+    # Optional preloaded apps/llama submission server. When set, fresh
+    # inference must leave P4 through this relay; the runner fails unless
+    # agent telemetry proves at least one to_deployment dispatch.
+    [string]$RelayDeploymentAddr = '',
+    [string]$RelayDeploymentId = 'deployment',
     [switch]$KeepRemoteArtifacts,
     [switch]$KeepLoaded
 )
@@ -94,6 +99,28 @@ if ($DriverPort -ne 52000 -or $LocalAgentPortBase -ne 52003 -or $ForwardPortBase
 }
 if ($RunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
     throw 'RunId must contain only letters, digits, dot, underscore, or hyphen (max 64 characters).'
+}
+if (-not [string]::IsNullOrWhiteSpace($RelayDeploymentAddr) -and
+    $RelayDeploymentAddr -notmatch '^[^:\s]+:\d{1,5}$') {
+    throw 'RelayDeploymentAddr must be host:port.'
+}
+if ([string]::IsNullOrWhiteSpace($RelayDeploymentId)) { throw 'RelayDeploymentId cannot be empty.' }
+$relayRequested = -not [string]::IsNullOrWhiteSpace($RelayDeploymentAddr)
+$relayRuntimeView = $null
+if ($relayRequested) {
+    $encodedDeploymentId = [uri]::EscapeDataString($RelayDeploymentId)
+    $relayRuntimeUri = "http://$RelayDeploymentAddr/api/runtime-groups/$encodedDeploymentId"
+    try {
+        $relayRuntimeView = Invoke-RestMethod -Uri $relayRuntimeUri -TimeoutSec 10
+    } catch {
+        throw "Relay deployment preflight failed at ${relayRuntimeUri}: $($_.Exception.Message)"
+    }
+    if ($relayRuntimeView.phase -ne 'running') {
+        throw "Relay deployment '$RelayDeploymentId' is not running (phase=$($relayRuntimeView.phase))."
+    }
+    if (@($relayRuntimeView.process_ids).Count -ne 4) {
+        throw "Relay deployment '$RelayDeploymentId' must own exactly four processes; found $(@($relayRuntimeView.process_ids).Count)."
+    }
 }
 if (-not (Get-Command ssh.exe -ErrorAction SilentlyContinue)) { throw 'ssh.exe is required.' }
 if (-not (Get-Command scp.exe -ErrorAction SilentlyContinue)) { throw 'scp.exe is required.' }
@@ -579,6 +606,12 @@ Write-Output 'REMOTE_AGENT_LISTENING'
         $traceProtocolAssignment = if ($env:P4_STAGED_TRACE_PROTOCOL -and $env:P4_STAGED_TRACE_PROTOCOL -ne '0') {
             "`$env:P4_STAGED_TRACE_PROTOCOL = '1'"
         } else { '' }
+        $relayAssignments = if ($i -eq 0 -and -not [string]::IsNullOrWhiteSpace($RelayDeploymentAddr)) {
+            @(
+                "`$env:P4_LLAMACPP_DEPLOYMENT_ADDR = $(ConvertTo-PowerShellLiteral $RelayDeploymentAddr)"
+                "`$env:P4_LLAMACPP_DEPLOYMENT_ID = $(ConvertTo-PowerShellLiteral $RelayDeploymentId)"
+            ) -join "`n"
+        } else { '' }
         $script = @"
 `$env:CUDA_VISIBLE_DEVICES = '$cuda'
 `$env:P4_STAGED_SERVER_BINARY = $(ConvertTo-PowerShellLiteral $serverBinary)
@@ -587,6 +620,7 @@ Write-Output 'REMOTE_AGENT_LISTENING'
 `$env:P4_STAGED_READY_TIMEOUT_SECS = '900'
 `$env:P4_STAGED_IO_TIMEOUT_SECS = '900'
 `$env:P4_AGENT_STATS = '1'
+$relayAssignments
 $traceHopAssignment
 $traceSequenceReleaseAssignment
 $traceRoutingAssignment
@@ -640,9 +674,28 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
     $driverEvidenceAssignment = if ($env:P4_DRIVE_EVIDENCE_FILE) {
         "`$env:P4_DRIVE_EVIDENCE_FILE = $(ConvertTo-PowerShellLiteral $env:P4_DRIVE_EVIDENCE_FILE)"
     } else { '' }
+    # A relay run targets an already-loaded apps/llama deployment. Creating
+    # and loading the legacy P4 staged nodes as well would double-own the
+    # GPUs and turn the measurement into resource interference. The drive
+    # still generates the same Frames, but its lifecycle operations are
+    # skipped and the first P4 agent relays every fresh Execute wholesale.
+    $driverDeploymentAssignments = if ($relayRequested) {
+        @(
+            "Remove-Item Env:P4_DRIVE_DISCOVER -ErrorAction SilentlyContinue"
+            "Remove-Item Env:P4_DRIVE_ARTIFACT -ErrorAction SilentlyContinue"
+            "`$env:P4_DRIVE_REUSE_LOADED = '1'"
+            "`$env:P4_DRIVE_KEEP_LOADED = '1'"
+        ) -join "`n"
+    } else {
+        @(
+            "Remove-Item Env:P4_DRIVE_REUSE_LOADED -ErrorAction SilentlyContinue"
+            "Remove-Item Env:P4_DRIVE_KEEP_LOADED -ErrorAction SilentlyContinue"
+            "`$env:P4_DRIVE_DISCOVER = '1'"
+            "`$env:P4_DRIVE_ARTIFACT = $(ConvertTo-PowerShellLiteral ([System.IO.Path]::GetFileName($LocalModel)))"
+        ) -join "`n"
+    }
     $driverScript = @"
-`$env:P4_DRIVE_DISCOVER = '1'
-`$env:P4_DRIVE_ARTIFACT = $(ConvertTo-PowerShellLiteral ([System.IO.Path]::GetFileName($LocalModel)))
+$driverDeploymentAssignments
 `$env:P4_DRIVE_CEILING = '$parallelSlots'
 `$env:P4_DRIVE_ARRIVE_MS = '$ArriveMilliseconds'
 ${driverTraceAssignment}
@@ -651,6 +704,7 @@ ${driverArrivalAssignments}
 ${driverEvidenceAssignment}
 `$env:P4_DRIVE_VARY = '$vary'
 `$env:P4_DRIVE_QUIET_MS = '$QuietMilliseconds'
+`$env:P4_DRIVE_REQUEST_DEADLINE_MS = '$([Math]::Max(300000, [long]$QuietMilliseconds * 3))'
 `$env:P4_DRIVE_PROMPT = 'Explain why staged inference uses a hidden-state cut.'
 if ('$([string]::IsNullOrWhiteSpace($PromptFile))' -eq 'False') { `$env:P4_DRIVE_PROMPT_FILE = $(ConvertTo-PowerShellLiteral $PromptFile) }
 if ('$KeepLoaded' -eq 'True') { `$env:P4_DRIVE_KEEP_LOADED = '1' }
@@ -711,8 +765,15 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
     $generationTpsOverRun = Get-DriverMetric 'generation_tps_over_run' $logicalMetricsLine -1
     $averageSessionPrefillTps = Get-DriverMetric 'average_session_prefill_tps' $logicalMetricsLine -1
     $averageSessionGenerationTps = Get-DriverMetric 'average_session_generation_tps' $logicalMetricsLine -1
-    $overlapPassed = $peakNodeQueue -ge $MinimumPeakNodeQueue -and
-        $peakInAdapter -ge $MinimumPeakInAdapter
+    $overlapPassed = if ($relayRequested) {
+        # This is the P4 separation gate: batch depth belongs below the
+        # deployment boundary, so no P4 node or staged adapter queue should
+        # receive the relayed submission.
+        $peakNodeQueue -eq 0 -and $peakInAdapter -eq 0
+    } else {
+        $peakNodeQueue -ge $MinimumPeakNodeQueue -and
+            $peakInAdapter -ge $MinimumPeakInAdapter
+    }
     $verdictsPassed = $true
     foreach ($verdictName in @(
         'every request answered', 'no request failed', 'every stream in order', 'one terminal per route'
@@ -751,12 +812,27 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         $bodyDetail = "no evidence at $script:EvidencePath"
     }
     if (-not $bodiesPassed) { Write-Output "NON-EMPTY RESPONSE GATE FAILED: $bodyDetail" }
+    $relayDispatches = 0
+    $relayAttached = -not $relayRequested
+    if ($relayRequested) {
+        $relayAgentText = Get-Content -LiteralPath (Join-Path $outputRoot "central-agent-$($localAgentPorts[0]).log") -Raw
+        $relayAttached = $relayAgentText -match "(?m)^P4_AGENT_DEPLOYMENT id=$([regex]::Escape($RelayDeploymentId)) attached=true relay=present$"
+        $relaySamples = @([regex]::Matches($relayAgentText, '(?m)^P4_AGENT_TRAFFIC .*?to_deployment=(\d+)'))
+        if ($relaySamples.Count -gt 0) {
+            $relayDispatches = [int](($relaySamples | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Maximum).Maximum)
+        }
+        if (-not $relayAttached -or $relayDispatches -le 0) {
+            Write-Output "RELAY GATE FAILED: attached=$relayAttached to_deployment=$relayDispatches"
+        }
+    }
+    $relayPassed = [bool]($relayAttached -and (-not $relayRequested -or $relayDispatches -gt 0))
     $runPassed = [bool](
         ($driverExitCode -eq 0) -and
         [bool]$metricsPassed -and
         $verdictsPassed -and
         [bool]$overlapPassed -and
-        $bodiesPassed
+        $bodiesPassed -and
+        $relayPassed
     )
     $result = [pscustomobject]@{
         run_id = $RunId
@@ -788,11 +864,22 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
             passed = $metricsPassed
         }
         overlap = [pscustomobject]@{
+            mode = if ($relayRequested) { 'relay-bypass' } else { 'legacy-hop' }
             minimum_peak_node_queue = $MinimumPeakNodeQueue
             minimum_peak_in_adapter = $MinimumPeakInAdapter
             peak_node_queue = $peakNodeQueue
             peak_in_adapter = $peakInAdapter
             passed = $overlapPassed
+        }
+        relay = [pscustomobject]@{
+            requested = $relayRequested
+            deployment_id = $RelayDeploymentId
+            deployment_addr = $RelayDeploymentAddr
+            attached = $relayAttached
+            to_deployment = $relayDispatches
+            runtime_phase = if ($null -ne $relayRuntimeView) { $relayRuntimeView.phase } else { $null }
+            runtime_processes = if ($null -ne $relayRuntimeView) { @($relayRuntimeView.process_ids).Count } else { 0 }
+            passed = $relayPassed
         }
         topology = 'central RTX 3090 + central RTX 4080 + remote RTX 3090 x2'
         requests = $Requests

@@ -1,16 +1,15 @@
 //! A counting semaphore for the pump's inbound events, and the reason one
 //! is needed at all.
 //!
-//! The pump reads commands and inbound events from a single unbounded
-//! channel, which is right for commands -- a cancel that a queue depth
-//! refuses is a request that keeps running against its caller's wishes --
-//! but wrong for events. The backend pushes a `Produced` per token, and if
-//! whatever consumes them is slower than the socket delivers them, an
-//! unbounded channel absorbs the difference in memory until the process
-//! dies. That is not backpressure; it is a leak with a delay on it.
+//! The pump reads commands and inbound events from one std channel. Its
+//! producers must therefore impose their own bounds. The backend pushes a
+//! `Produced` per token, and if whatever consumes them is slower than the
+//! socket delivers them, an unconstrained reader would absorb the difference
+//! in memory until the process dies. That is not backpressure; it is a leak
+//! with a delay on it.
 //!
-//! Bounding the channel itself would put commands and events under one
-//! limit again. Instead the reader thread takes a permit before it hands an
+//! Putting commands and events under one shared limit would let token traffic
+//! discard control intent. Instead the reader thread takes a permit before it hands an
 //! event over and the pump returns it once the event is dealt with, so the
 //! reader blocks when the pump falls behind, its `recv()` stops draining
 //! the socket, and the TCP window closes on the backend. The pressure ends

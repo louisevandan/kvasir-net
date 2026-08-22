@@ -126,6 +126,7 @@ fn a_run_in_flight_delivers_its_terminal_on_the_connection_that_replaced_the_dea
             deployment_id: fixture.deployment_id.clone(),
             deployment_generation: fixture.deployment_generation,
             submission_id: "s-reconnect".into(),
+            deadline_unix_ms: 0,
             request: chat_request(),
         })
         .expect("the submission is enqueued");
@@ -160,6 +161,18 @@ fn a_run_in_flight_delivers_its_terminal_on_the_connection_that_replaced_the_dea
     assert_eq!(
         settled, 1,
         "exactly one terminal reaches the caller across the reconnect: {events:?}"
+    );
+    let produced = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Produced(produced) => Some((produced.event_ordinal, produced.text.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        produced,
+        vec![(0, "He"), (1, "llo")],
+        "the reconnect must recover the complete body with contiguous ordinals"
     );
 
     client.close();

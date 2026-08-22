@@ -28,6 +28,7 @@ fn submit(deployment_id: &str, submission_id: &str) -> Submit {
         deployment_id: deployment_id.into(),
         deployment_generation: 1,
         submission_id: submission_id.into(),
+        deadline_unix_ms: 0,
         request: serde_json::json!({}),
     }
 }

@@ -34,6 +34,7 @@ fn submit(
         deployment_id: client.deployment_id().to_string(),
         deployment_generation: client.generation(),
         submission_id: submission_id.into(),
+        deadline_unix_ms: 0,
         request: json!({ "body": request }),
     })
 }
@@ -101,7 +102,7 @@ fn two_submissions_are_in_flight_before_either_settles() {
 }
 
 #[test]
-fn full_is_delivered_as_a_typed_rejection_not_an_error() {
+fn full_is_retried_inside_the_deployment_client() {
     let factory = FakeFactory::new();
     let handle = factory.queue_success();
     let (client, sink) = connect(&factory);
@@ -111,14 +112,44 @@ fn full_is_delivered_as_a_typed_rejection_not_an_error() {
         submission_id: "s1".into(),
         reason: RejectReason::Full,
     }));
+    wait_for(|| handle.sent().len() == 2);
+    assert_eq!(sink.len(), 0, "intermediate Full must not escape to P4");
+    handle.push_event(Event::Accepted(Accepted {
+        submission_id: "s1".into(),
+    }));
+    wait_for(|| sink.len() == 1);
+    client.close();
+    handle.disconnect();
+}
+
+#[test]
+fn full_becomes_terminal_only_after_the_submission_deadline() {
+    let factory = FakeFactory::new();
+    let handle = factory.queue_success();
+    let (client, sink) = connect(&factory);
+    client
+        .try_submit(Submit {
+            deployment_id: client.deployment_id().to_string(),
+            deployment_generation: client.generation(),
+            submission_id: "expired".into(),
+            deadline_unix_ms: 1,
+            request: json!({ "body": "request" }),
+        })
+        .expect("enqueue expired submission");
+    wait_for(|| handle.sent().len() == 1);
+    handle.push_event(Event::Rejected(Rejected {
+        submission_id: "expired".into(),
+        reason: RejectReason::Full,
+    }));
     wait_for(|| sink.len() == 1);
     assert_eq!(
         sink.events(),
         vec![Event::Rejected(Rejected {
-            submission_id: "s1".into(),
+            submission_id: "expired".into(),
             reason: RejectReason::Full,
         })]
     );
+    assert_eq!(handle.sent().len(), 1, "expired work is never retried");
     client.close();
     handle.disconnect();
 }
@@ -165,12 +196,18 @@ fn event_from_a_superseded_generation_never_reaches_the_sink() {
     handle.push_event(Event::Accepted(Accepted {
         submission_id: "s2".into(),
     }));
-    wait_for(|| sink.len() == 1);
+    wait_for(|| sink.len() == 2);
     assert_eq!(
         sink.events(),
-        vec![Event::Accepted(Accepted {
-            submission_id: "s2".into(),
-        })]
+        vec![
+            Event::Rejected(Rejected {
+                submission_id: "s1".into(),
+                reason: RejectReason::DeploymentClosed,
+            }),
+            Event::Accepted(Accepted {
+                submission_id: "s2".into(),
+            }),
+        ]
     );
     client.close();
     handle.disconnect();

@@ -67,6 +67,7 @@ mod tests {
             deployment_id: "dep".into(),
             deployment_generation: 1,
             submission_id: "sub".into(),
+            deadline_unix_ms: 0,
             request: json!({"prompt": "hi"}),
         });
         write_command(&mut buffer, &command).expect("write");
@@ -88,6 +89,7 @@ mod tests {
             deployment_id: "dep".into(),
             deployment_generation: 1,
             submission_id: "sub".into(),
+            deadline_unix_ms: 0,
             request: json!({"messages": []}),
         });
         let line = encode_command(&command).expect("encode");

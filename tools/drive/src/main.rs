@@ -38,6 +38,8 @@
 //! `P4_DRIVE_QUIET_MS` is how long nothing may arrive before the driver stops
 //! waiting; 30s by default. It is not a budget for the run — an answer takes as
 //! long as it takes, and what says something is wrong is silence, not duration.
+//! `P4_DRIVE_REQUEST_DEADLINE_MS` separately bounds how long adapter capacity
+//! may defer a request before `Full` becomes its terminal result.
 //!
 //! `P4_DRIVE_DISCOVER=1` performs `InspectModel` against every selected agent
 //! before node creation. `P4_DRIVE_ARTIFACT` names its opaque artifact
@@ -100,6 +102,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .and_then(|value| value.parse().ok())
             .unwrap_or(30_000),
     );
+    let default_request_deadline = quiet.saturating_mul(3).max(Duration::from_secs(300));
+    let request_deadline = Duration::from_millis(
+        std::env::var("P4_DRIVE_REQUEST_DEADLINE_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|milliseconds: &u64| *milliseconds > 0)
+            .unwrap_or(default_request_deadline.as_millis() as u64),
+    );
     // Gap between arrivals. Zero — the default — sends the whole run at once,
     // which measures a backlog draining. Real work arrives while earlier work
     // is still running, and the queues behave differently under the two.
@@ -143,6 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         prompt: prompt.clone(),
         options,
         quiet,
+        request_deadline,
         arrive,
         vary,
         initial_burst,

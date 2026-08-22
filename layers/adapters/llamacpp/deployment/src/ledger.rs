@@ -8,6 +8,8 @@
 //! is authoritative. This ledger exists only so the client itself never
 //! sends a submission twice, never hands a caller a stale-generation or
 //! out-of-order event, and knows what to resend after a reconnect. Nothing
+//! outside this process treats it as authoritative.
+//!
 //! Terminated submissions are kept as tombstones, capped and evicted
 //! oldest-first ([`TOMBSTONE_CAP`]). They have to be kept at all because a
 //! resend of an id this client already settled must not start a second
@@ -15,7 +17,9 @@
 //! would otherwise grow this map for as long as it lasts -- forty sessions
 //! an hour is a leak with a slow fuse, not a bounded working set.
 
-use crate::contract::{Event, Generation, RejectReason, SubmissionId, Submit};
+use crate::contract::{
+    Event, Generation, RejectReason, Rejected, SettleReason, Settled, SubmissionId, Submit,
+};
 use std::collections::{HashMap, VecDeque};
 
 /// How many settled submissions stay remembered.
@@ -42,6 +46,9 @@ struct Entry {
     submit: Submit,
     state: SubmissionState,
     next_ordinal: u64,
+    generated_tokens: u32,
+    /// Exact terminal result replayed if P4 resubmits a recently completed id.
+    terminal: Option<Event>,
     /// A cancel this client accepted but may not have got onto the wire.
     ///
     /// A cancel that fails its socket write is not a cancel the caller can
@@ -56,6 +63,15 @@ struct Entry {
 pub enum Verdict {
     /// Genuinely new information; the caller should forward it.
     Apply,
+    /// A terminal event was applied. The pump must release one outstanding
+    /// submission permit after forwarding it.
+    Terminal,
+    /// The backend reported ordinary capacity pressure. The llama client,
+    /// not P4, owns the delayed resend and does not forward this yet.
+    RetryFull,
+    /// A replay repeated information already admitted on the previous
+    /// connection. It is valid on the wire but must not be raised twice.
+    Duplicate,
     /// The submission belongs to a generation this ledger has since moved
     /// past. Refused per `SEALED-CONTRACT.md` §1: "이전 deployment_generation의
     /// 결과는 무조건 stale이다."
@@ -67,13 +83,19 @@ pub enum Verdict {
     /// A `Produced` whose ordinal does not continue the sequence this ledger
     /// has already accepted.
     OutOfOrder { expected: u64, got: u64 },
+    /// The event kind is impossible in the submission's current state.
+    ProtocolViolation,
 }
 
 /// Whether `begin` actually started a new submission.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Admission {
     New,
     AlreadyKnown,
+    /// The id is a retained tombstone; raise its exact terminal result rather
+    /// than accepting a second execution or leaving the new caller waiting.
+    Replay(Event),
+    StaleGeneration,
 }
 
 pub struct Ledger {
@@ -103,9 +125,9 @@ impl Ledger {
     /// real and is now moot" from "this was never real") but are never
     /// replayed on reconnect once they are no longer current -- see
     /// `in_flight_for_replay`.
-    pub fn advance_generation(&mut self, generation: Generation) {
-        if generation == self.generation {
-            return;
+    pub fn advance_generation(&mut self, generation: Generation) -> Vec<Event> {
+        if generation <= self.generation {
+            return Vec::new();
         }
         self.generation = generation;
         // Entries of a superseded generation become tombstones rather than
@@ -118,15 +140,33 @@ impl Ledger {
         let superseded: Vec<SubmissionId> = self
             .entries
             .iter()
-            .filter(|(_, entry)| entry.generation != generation)
+            .filter(|(_, entry)| {
+                entry.generation != generation && entry.state != SubmissionState::Done
+            })
             .map(|(submission_id, _)| submission_id.clone())
             .collect();
+        let mut terminals = Vec::with_capacity(superseded.len());
         for submission_id in superseded {
             if let Some(entry) = self.entries.get_mut(&submission_id) {
+                let terminal = match entry.state {
+                    SubmissionState::Pending => Event::Rejected(Rejected {
+                        submission_id: submission_id.clone(),
+                        reason: RejectReason::DeploymentClosed,
+                    }),
+                    SubmissionState::Accepted => Event::Settled(Settled {
+                        submission_id: submission_id.clone(),
+                        reason: SettleReason::Error,
+                        generated_tokens: entry.generated_tokens,
+                    }),
+                    SubmissionState::Done => unreachable!("filtered above"),
+                };
                 entry.state = SubmissionState::Done;
+                entry.terminal = Some(terminal.clone());
+                terminals.push(terminal);
             }
             self.entomb(submission_id);
         }
+        terminals
     }
 
     /// Registers a new submission, or reports that this `submission_id` is
@@ -135,8 +175,20 @@ impl Ledger {
     /// 않는다": the server's dedup is authoritative, but a client that never
     /// resends in the first place needs no server round trip to prove it.
     pub fn begin(&mut self, submit: Submit) -> Admission {
-        if self.entries.contains_key(&submit.submission_id) {
-            return Admission::AlreadyKnown;
+        if let Some(entry) = self.entries.get(&submit.submission_id) {
+            return if entry.state == SubmissionState::Done {
+                Admission::Replay(
+                    entry
+                        .terminal
+                        .clone()
+                        .expect("every tombstone retains its terminal event"),
+                )
+            } else {
+                Admission::AlreadyKnown
+            };
+        }
+        if submit.deployment_generation != self.generation {
+            return Admission::StaleGeneration;
         }
         self.entries.insert(
             submit.submission_id.clone(),
@@ -145,6 +197,8 @@ impl Ledger {
                 submit,
                 state: SubmissionState::Pending,
                 next_ordinal: 0,
+                generated_tokens: 0,
+                terminal: None,
                 cancel_requested: false,
             },
         );
@@ -171,10 +225,12 @@ impl Ledger {
             return Verdict::AlreadySettled;
         }
         match event {
-            Event::Accepted(_) => {
+            Event::Accepted(_) if entry.state == SubmissionState::Accepted => Verdict::Duplicate,
+            Event::Accepted(_) if entry.state == SubmissionState::Pending => {
                 entry.state = SubmissionState::Accepted;
                 Verdict::Apply
             }
+            Event::Accepted(_) => Verdict::ProtocolViolation,
             // `Full` is the one rejection that is not terminal. The backend
             // refuses it before recording anything (`coordinator.ts` never
             // calls `ledger.begin` ahead of that check), so the submission
@@ -182,16 +238,20 @@ impl Ledger {
             // would make the caller's retry `AlreadyKnown` -- nothing would
             // reach the wire, no further event would ever arrive, and the
             // request would hang forever on a rejection that meant "later".
-            Event::Rejected(rejected) if rejected.reason == RejectReason::Full => {
-                self.entries.remove(&submission_id);
-                Verdict::Apply
+            Event::Rejected(rejected)
+                if rejected.reason == RejectReason::Full
+                    && entry.state == SubmissionState::Pending =>
+            {
+                Verdict::RetryFull
             }
-            Event::Rejected(_) => {
+            Event::Rejected(_) if entry.state == SubmissionState::Pending => {
                 entry.state = SubmissionState::Done;
+                entry.terminal = Some(event.clone());
                 self.entomb(submission_id);
-                Verdict::Apply
+                Verdict::Terminal
             }
-            Event::Produced(produced) => {
+            Event::Rejected(_) => Verdict::ProtocolViolation,
+            Event::Produced(produced) if entry.state == SubmissionState::Accepted => {
                 if produced.event_ordinal != entry.next_ordinal {
                     return Verdict::OutOfOrder {
                         expected: entry.next_ordinal,
@@ -199,14 +259,70 @@ impl Ledger {
                     };
                 }
                 entry.next_ordinal += 1;
+                entry.generated_tokens = produced.generated_tokens;
                 Verdict::Apply
             }
-            Event::Settled(_) => {
+            Event::Produced(_) => Verdict::ProtocolViolation,
+            Event::Settled(_) if entry.state == SubmissionState::Accepted => {
                 entry.state = SubmissionState::Done;
+                entry.terminal = Some(event.clone());
                 self.entomb(submission_id);
-                Verdict::Apply
+                Verdict::Terminal
             }
+            Event::Settled(_) => Verdict::ProtocolViolation,
         }
+    }
+
+    /// The original command retained for an adapter-local Full retry.
+    pub fn submission_for_retry(&self, submission_id: &str) -> Option<Submit> {
+        self.entries.get(submission_id).and_then(|entry| {
+            (entry.generation == self.generation && entry.state == SubmissionState::Pending)
+                .then(|| entry.submit.clone())
+        })
+    }
+
+    /// Turns an expired Full retry into the rejection P4 may relay as a
+    /// terminal refusal. Returns false if the submission already moved on.
+    pub fn finish_full(&mut self, submission_id: &str) -> bool {
+        let Some(entry) = self.entries.get_mut(submission_id) else {
+            return false;
+        };
+        if entry.state != SubmissionState::Pending {
+            return false;
+        }
+        entry.state = SubmissionState::Done;
+        entry.terminal = Some(Event::Rejected(Rejected {
+            submission_id: submission_id.to_string(),
+            reason: RejectReason::Full,
+        }));
+        self.entomb(submission_id.to_string());
+        true
+    }
+
+    /// Converts malformed backend sequencing into one explicit terminal event.
+    /// A partial accepted response settles as an error; a request that never
+    /// reached Accepted is refused as invalid.
+    pub fn fail_protocol(&mut self, submission_id: &str) -> Option<Event> {
+        let entry = self.entries.get_mut(submission_id)?;
+        if entry.state == SubmissionState::Done || entry.generation != self.generation {
+            return None;
+        }
+        let terminal = match entry.state {
+            SubmissionState::Pending => Event::Rejected(Rejected {
+                submission_id: submission_id.to_owned(),
+                reason: RejectReason::Invalid,
+            }),
+            SubmissionState::Accepted => Event::Settled(Settled {
+                submission_id: submission_id.to_owned(),
+                reason: SettleReason::Error,
+                generated_tokens: entry.generated_tokens,
+            }),
+            SubmissionState::Done => unreachable!("checked above"),
+        };
+        entry.state = SubmissionState::Done;
+        entry.terminal = Some(terminal.clone());
+        self.entomb(submission_id.to_owned());
+        Some(terminal)
     }
 
     /// How many submissions this ledger is holding, live and tombstoned
@@ -231,11 +347,6 @@ impl Ledger {
         }
     }
 
-    /// Every submission of the *current* generation this ledger has sent but
-    /// has not yet seen a terminal event for. A reconnect resends exactly
-    /// these, in a stable order, and nothing from a superseded generation --
-    /// resending those would only manufacture a `StaleGeneration` refusal on
-    /// whatever came back.
     /// Records that this submission should be cancelled, so a reconnect can
     /// resend the cancel that never made it onto the wire.
     pub fn request_cancel(&mut self, submission_id: &str) {
@@ -260,6 +371,9 @@ impl Ledger {
         ids
     }
 
+    /// Every submission of the *current* generation this ledger has sent but
+    /// has not yet seen a terminal event for. A reconnect resends exactly
+    /// these, in stable order, and nothing from a superseded generation.
     pub fn in_flight_for_replay(&self) -> Vec<Submit> {
         let mut submissions: Vec<&Entry> = self
             .entries

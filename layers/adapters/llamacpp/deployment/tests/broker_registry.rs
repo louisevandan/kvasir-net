@@ -57,6 +57,7 @@ fn a_p4_registry_dispatches_a_real_submission_through_the_real_client_to_a_real_
             deployment_id: fixture.deployment_id.clone(),
             deployment_generation: fixture.deployment_generation,
             submission_id: "p4-broker-1".into(),
+            deadline_unix_ms: 0,
             request: chat_request(),
         })
         .expect("registry dispatches to the registered client");
@@ -97,6 +98,7 @@ fn a_submission_against_an_unregistered_deployment_id_never_reaches_any_client()
             deployment_id: "nobody-registered-this".into(),
             deployment_generation: 1,
             submission_id: "s1".into(),
+            deadline_unix_ms: 0,
             request: chat_request(),
         })
         .expect_err("no client is registered for this deployment_id");

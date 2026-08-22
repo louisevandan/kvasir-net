@@ -22,6 +22,10 @@ pub struct Submit {
     /// already accepted, is running, or has already settled this id must
     /// answer from what it remembers rather than starting again.
     pub submission_id: SubmissionId,
+    /// Absolute caller deadline in Unix milliseconds. Zero means none.
+    /// Backend clients use this to bound their own backpressure retries;
+    /// the P4 broker does not interpret capacity or schedule retries.
+    pub deadline_unix_ms: u64,
     /// The request exactly as OUTER stated it. Opaque: a client passes it to
     /// its backend whole and this crate reads nothing out of it.
     pub request: serde_json::Value,

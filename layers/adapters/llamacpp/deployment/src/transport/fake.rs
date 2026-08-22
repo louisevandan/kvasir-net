@@ -20,6 +20,7 @@ type Delivery = io::Result<Option<Event>>;
 
 pub struct FakeFactory {
     outcomes: Mutex<VecDeque<Outcome>>,
+    reported_generation: Mutex<Option<u64>>,
 }
 
 enum Outcome {
@@ -29,6 +30,7 @@ enum Outcome {
         fail_writes: Arc<AtomicBool>,
         write_gate: Arc<(Mutex<bool>, Condvar)>,
         rx: Receiver<Delivery>,
+        generation: Option<u64>,
     },
 }
 
@@ -36,12 +38,21 @@ impl FakeFactory {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             outcomes: Mutex::new(VecDeque::new()),
+            reported_generation: Mutex::new(None),
         })
     }
 
     /// Queues the next `connect()` call to succeed, returning a handle the
     /// test uses to drive that specific connection.
     pub fn queue_success(&self) -> FakeLinkHandle {
+        self.queue_success_with_generation(None)
+    }
+
+    pub fn queue_success_reporting(&self, generation: u64) -> FakeLinkHandle {
+        self.queue_success_with_generation(Some(generation))
+    }
+
+    fn queue_success_with_generation(&self, generation: Option<u64>) -> FakeLinkHandle {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let fail_writes = Arc::new(AtomicBool::new(false));
         let write_gate = Arc::new((Mutex::new(false), Condvar::new()));
@@ -54,6 +65,7 @@ impl FakeFactory {
                 fail_writes: fail_writes.clone(),
                 write_gate: write_gate.clone(),
                 rx,
+                generation,
             });
         FakeLinkHandle {
             sent,
@@ -94,15 +106,29 @@ impl TransportFactory for FakeFactory {
                 fail_writes,
                 write_gate,
                 rx,
-            } => Ok((
-                Box::new(FakeWriter {
-                    sent,
-                    fail_writes,
-                    write_gate,
-                }) as Box<dyn TransportWriter>,
-                Box::new(FakeReader { rx }) as Box<dyn TransportReader>,
-            )),
+                generation,
+            } => {
+                *self
+                    .reported_generation
+                    .lock()
+                    .expect("reported generation lock") = generation;
+                Ok((
+                    Box::new(FakeWriter {
+                        sent,
+                        fail_writes,
+                        write_gate,
+                    }) as Box<dyn TransportWriter>,
+                    Box::new(FakeReader { rx }) as Box<dyn TransportReader>,
+                ))
+            }
         }
+    }
+
+    fn reported_generation(&self) -> Option<u64> {
+        *self
+            .reported_generation
+            .lock()
+            .expect("reported generation lock")
     }
 }
 

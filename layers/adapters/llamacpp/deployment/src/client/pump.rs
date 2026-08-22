@@ -8,17 +8,27 @@
 //! reconnect need to resend" -- is decided by whichever [`PumpEvent`] this
 //! loop is holding at the moment, and nothing else touches the writer or the
 //! ledger while it holds it. `try_submit`/`cancel` (`super::DeploymentClient`)
-//! never reach past [`PumpHandle::enqueue`]/[`PumpHandle::enqueue_lossy`];
-//! the reader thread this module also spawns never reaches past
-//! [`PumpHandle::deliver`]. Both funnel into the one channel this loop reads.
+//! never reach past [`PumpHandle`]; the reader thread this module also spawns
+//! never reaches past its bounded inbound permit. Both funnel into the one
+//! channel this loop reads.
+
+mod control;
+mod full_retry;
+mod handle;
+mod reader;
 
 use super::permits::Permits;
-use crate::contract::{Command, Event, Generation, SubmissionId, Submit};
+use crate::contract::{Command, Event, Generation, RejectReason, Rejected, SubmissionId, Submit};
 use crate::ledger::{Admission, Ledger, Verdict};
-use crate::transport::{TransportFactory, TransportReader, TransportWriter};
+use crate::transport::{TransportFactory, TransportWriter};
+use control::ControlMailbox;
+use full_retry::{FullRetries, deadline_expired};
+pub(crate) use handle::PumpHandle;
 use p4_adapter::deployment::Sink;
+use reader::spawn_reader;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -41,170 +51,24 @@ pub(crate) const COMMAND_QUEUE_BOUND: usize = 256;
 /// permit count rather than a channel bound.
 pub(crate) const INBOUND_BOUND: usize = 1024;
 
-// The bound above counts *submissions* only, and the channel itself is
-// unbounded, because control and data cannot share a limit.
-//
-// A submission refused under load is backpressure and the caller is told
-// so. A cancel refused under load is a request that keeps running against
-// its caller's wishes, and a dropped generation advance leaves this client
-// fencing against a value the backend has already moved past -- neither is
-// something a queue depth may decide. Sharing one bounded channel made the
-// depth decide it, so submissions are counted here and control never is.
+// The std channel itself has no capacity primitive, so each producer has a
+// separate structural bound: live submissions are counted above, inbound
+// events consume `INBOUND_BOUND` permits, and controls are coalesced in a
+// bounded mailbox behind one `ControlsReady` wake-up. This preserves cancel
+// and generation intent without letting any producer grow memory without a
+// bound.
 
 pub(crate) enum PumpEvent {
-    Submit(Submit),
-    Cancel(SubmissionId),
+    Submit { submit: Submit, inserted_live: bool },
+    ControlsReady,
     Inbound { epoch: u64, event: Event },
     ConnectionLost { epoch: u64 },
-    AdvanceGeneration(Generation),
     Shutdown,
 }
 
-/// What `DeploymentClient` holds to talk to the pump thread. Cloning the
-/// sender is how the reader thread(s) this module spawns get their own
-/// handle without sharing a lock with `try_submit`/`cancel`'s callers.
-pub(crate) struct PumpHandle {
-    sender: Sender<PumpEvent>,
-    /// Queued submissions, so the bound applies to them alone.
-    queued_submissions: Arc<AtomicUsize>,
-    // Only ever joined from `#[cfg(test)]` code (`join_for_test`) -- a
-    // running client has no need to wait for its own background threads.
-    #[allow(dead_code)]
-    pump_thread: Mutex<Option<JoinHandle<()>>>,
-    #[allow(dead_code)]
-    reader_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
-    closed: Arc<AtomicBool>,
-    reconnects: Arc<AtomicU64>,
-    /// Held here only so `close` can release a reader blocked on it.
-    inbound: Arc<Permits>,
-}
-
-impl PumpHandle {
-    /// Starts the pump thread and the first reader thread, and returns the
-    /// handle a `DeploymentClient` holds for the rest of its life.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn start(
-        factory: Arc<dyn TransportFactory>,
-        sink: Arc<dyn Sink>,
-        writer: Box<dyn TransportWriter>,
-        reader: Box<dyn TransportReader>,
-        generation: Generation,
-        backoff: Duration,
-        current_generation: Arc<AtomicU64>,
-    ) -> Self {
-        let (sender, receiver) = channel();
-        let queued_submissions = Arc::new(AtomicUsize::new(0));
-        let closed = Arc::new(AtomicBool::new(false));
-        let reconnects = Arc::new(AtomicU64::new(0));
-        let reader_thread = Arc::new(Mutex::new(None));
-        let inbound = Arc::new(Permits::new(INBOUND_BOUND));
-
-        let pump = Pump {
-            queued_submissions: Arc::clone(&queued_submissions),
-            factory,
-            sink,
-            writer: Some(writer),
-            ledger: Ledger::new(generation),
-            backoff,
-            closed: closed.clone(),
-            reconnects: reconnects.clone(),
-            link_epoch: 0,
-            current_generation,
-            sender: sender.clone(),
-            reader_thread: reader_thread.clone(),
-            inbound: Arc::clone(&inbound),
-        };
-        let pump_thread = thread::spawn(move || pump.run(receiver));
-
-        *reader_thread.lock().expect("reader thread lock") = Some(spawn_reader(
-            sender.clone(),
-            reader,
-            0,
-            Arc::clone(&inbound),
-        ));
-
-        Self {
-            sender,
-            queued_submissions,
-            pump_thread: Mutex::new(Some(pump_thread)),
-            reader_thread,
-            closed,
-            reconnects,
-            inbound,
-        }
-    }
-
-    /// Non-blocking: a caller on P4's calling thread never waits on this.
-    /// Full is the one refusal this raises; it never touches the writer.
-    pub(crate) fn enqueue(&self, event: PumpEvent) -> Result<(), ()> {
-        if self.closed.load(Ordering::SeqCst) {
-            return Err(());
-        }
-        // Conditional increment has to be one operation: a load followed by
-        // a separate add lets several callers all read 255 and all pass.
-        if self
-            .queued_submissions
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |queued| {
-                (queued < COMMAND_QUEUE_BOUND).then_some(queued + 1)
-            })
-            .is_err()
-        {
-            return Err(());
-        }
-        if self.sender.send(event).is_err() {
-            self.queued_submissions.fetch_sub(1, Ordering::SeqCst);
-            return Err(());
-        }
-        Ok(())
-    }
-
-    /// Best-effort: used for `cancel`, which is infallible by contract, and
-    /// for `advance_generation`, which nothing here needs to refuse -- a
-    /// full queue drops it rather than blocking the caller.
-    /// Control commands are never refused for depth. They are not counted
-    /// against `COMMAND_QUEUE_BOUND` and the channel they use is unbounded,
-    /// so the only way one is lost is a pump that has already stopped.
-    pub(crate) fn enqueue_control(&self, event: PumpEvent) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-        let _ = self.sender.send(event);
-    }
-
-    pub(crate) fn reconnect_count(&self) -> u64 {
-        self.reconnects.load(Ordering::SeqCst)
-    }
-
-    /// Stops accepting new work and asks the pump to shut down. Does not
-    /// forcibly interrupt a `recv()` already blocked on the current
-    /// connection -- see `DeploymentClient::close`'s own doc.
-    pub(crate) fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-        // Before the shutdown, not after: a reader waiting for a permit the
-        // pump will now never return would never see the socket close.
-        self.inbound.close();
-        let _ = self.sender.send(PumpEvent::Shutdown);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn join_for_test(&self) {
-        if let Some(handle) = self.pump_thread.lock().expect("pump thread lock").take() {
-            handle.join().expect("pump thread panicked");
-        }
-        if let Some(handle) = self
-            .reader_thread
-            .lock()
-            .expect("reader thread lock")
-            .take()
-        {
-            handle.join().expect("reader thread panicked");
-        }
-    }
-}
-
-/// The pump's own state, touched by exactly one thread: the one running
-/// [`Pump::run`]. No field here is behind a `Mutex` because nothing else is
-/// ever allowed to reach it.
+/// The pump's authoritative writer and ledger state, touched by exactly one
+/// thread: the one running [`Pump::run`]. The shared `live` set is only a
+/// bounded admission index for cancel; it never decides wire or ledger state.
 struct Pump {
     factory: Arc<dyn TransportFactory>,
     sink: Arc<dyn Sink>,
@@ -213,8 +77,9 @@ struct Pump {
     backoff: Duration,
     closed: Arc<AtomicBool>,
     reconnects: Arc<AtomicU64>,
+    full_retry_count: Arc<AtomicU64>,
     link_epoch: u64,
-    queued_submissions: Arc<AtomicUsize>,
+    outstanding_submissions: Arc<AtomicUsize>,
     /// Shared with `DeploymentClient`, so a generation learned on a
     /// reconnect is what the next caller stamps rather than the value this
     /// process started with.
@@ -224,15 +89,38 @@ struct Pump {
     /// Returned one at a time as inbound events are dealt with, which is
     /// what lets the reader block instead of buffering without limit.
     inbound: Arc<Permits>,
+    /// One due time per Full submission. Kept on this single-owner thread,
+    /// so adapter backpressure cannot create a task or thread per retry.
+    full_retries: FullRetries,
+    controls: Arc<ControlMailbox>,
+    /// Submission ids accepted at the public client boundary and not yet
+    /// terminal. The control mailbox consults the same set so unknown cancel
+    /// floods cannot displace a real cancel from its bounded set.
+    live: Arc<Mutex<HashSet<SubmissionId>>>,
 }
 
 impl Pump {
     fn run(mut self, receiver: Receiver<PumpEvent>) {
         loop {
-            let Ok(event) = receiver.recv() else {
-                // Every sender is gone, so no permit will ever come back.
-                self.inbound.close();
-                return;
+            let event = match self.next_retry_wait() {
+                Some(wait) => match receiver.recv_timeout(wait) {
+                    Ok(event) => event,
+                    Err(RecvTimeoutError::Timeout) => {
+                        self.retry_due_full();
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        self.inbound.close();
+                        return;
+                    }
+                },
+                None => match receiver.recv() {
+                    Ok(event) => event,
+                    Err(_) => {
+                        self.inbound.close();
+                        return;
+                    }
+                },
             };
             match event {
                 PumpEvent::Shutdown => {
@@ -240,11 +128,21 @@ impl Pump {
                     self.inbound.close();
                     return;
                 }
-                PumpEvent::Submit(submit) => {
-                    self.queued_submissions.fetch_sub(1, Ordering::SeqCst);
-                    self.handle_submit(submit);
+                PumpEvent::Submit {
+                    submit,
+                    inserted_live,
+                } => {
+                    self.handle_submit(submit, inserted_live);
                 }
-                PumpEvent::Cancel(submission_id) => self.handle_cancel(submission_id),
+                PumpEvent::ControlsReady => {
+                    let batch = self.controls.drain();
+                    if let Some(generation) = batch.generation {
+                        self.advance_generation(generation);
+                    }
+                    for submission_id in batch.cancels {
+                        self.handle_cancel(submission_id);
+                    }
+                }
                 PumpEvent::Inbound { epoch, event } => {
                     // Returned for a stale event too. A permit is a slot in
                     // the hand-off, not a statement about the event's
@@ -259,10 +157,6 @@ impl Pump {
                     if epoch == self.link_epoch {
                         self.handle_inbound(event);
                     }
-                }
-                PumpEvent::AdvanceGeneration(generation) => {
-                    self.ledger.advance_generation(generation);
-                    self.current_generation.store(generation, Ordering::SeqCst);
                 }
                 PumpEvent::ConnectionLost { epoch } => {
                     if epoch != self.link_epoch {
@@ -281,11 +175,28 @@ impl Pump {
         }
     }
 
-    fn handle_submit(&mut self, submit: Submit) {
-        if self.ledger.begin(submit.clone()) == Admission::New
-            && !self.try_write(Command::Submit(submit))
-        {
-            self.reconnect();
+    fn handle_submit(&mut self, submit: Submit, inserted_live: bool) {
+        let submission_id = submit.submission_id.clone();
+        match self.ledger.begin(submit.clone()) {
+            Admission::New if !self.try_write(Command::Submit(submit)) => self.reconnect(),
+            Admission::New => {}
+            Admission::AlreadyKnown => {
+                self.release_outstanding();
+                if inserted_live {
+                    self.remove_live(&submission_id);
+                }
+            }
+            Admission::Replay(terminal) => {
+                self.release_submission(&submission_id);
+                self.sink.raise(terminal);
+            }
+            Admission::StaleGeneration => {
+                self.release_submission(&submission_id);
+                self.sink.raise(Event::Rejected(Rejected {
+                    submission_id,
+                    reason: RejectReason::DeploymentClosed,
+                }));
+            }
         }
     }
 
@@ -300,9 +211,109 @@ impl Pump {
     }
 
     fn handle_inbound(&mut self, event: Event) {
-        if self.ledger.apply(&event) == Verdict::Apply {
-            self.sink.raise(event);
+        match self.ledger.apply(&event) {
+            Verdict::Apply => {
+                if matches!(&event, Event::Accepted(_)) {
+                    self.full_retries.remove(event.submission_id());
+                }
+                self.sink.raise(event);
+            }
+            Verdict::Terminal => {
+                self.full_retries.remove(event.submission_id());
+                self.release_submission(event.submission_id());
+                self.sink.raise(event);
+            }
+            Verdict::RetryFull => self.handle_full(event),
+            Verdict::ProtocolViolation | Verdict::OutOfOrder { .. } => {
+                self.terminalize_protocol(event.submission_id());
+            }
+            Verdict::StaleGeneration
+            | Verdict::Unknown
+            | Verdict::Duplicate
+            | Verdict::AlreadySettled => {}
         }
+    }
+
+    fn handle_full(&mut self, event: Event) {
+        let submission_id = event.submission_id().clone();
+        let Some(submit) = self.ledger.submission_for_retry(&submission_id) else {
+            self.terminalize_protocol(&submission_id);
+            return;
+        };
+        if deadline_expired(submit.deadline_unix_ms) {
+            if self.ledger.finish_full(&submission_id) {
+                self.release_submission(&submission_id);
+                self.sink.raise(event);
+            }
+            return;
+        }
+        self.full_retries.schedule(submission_id);
+        self.full_retry_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn next_retry_wait(&self) -> Option<Duration> {
+        self.full_retries.next_wait()
+    }
+
+    fn retry_due_full(&mut self) {
+        for submission_id in self.full_retries.take_due() {
+            let Some(submit) = self.ledger.submission_for_retry(&submission_id) else {
+                self.terminalize_protocol(&submission_id);
+                continue;
+            };
+            if deadline_expired(submit.deadline_unix_ms) {
+                if self.ledger.finish_full(&submission_id) {
+                    self.release_submission(&submission_id);
+                    self.sink.raise(Event::Rejected(Rejected {
+                        submission_id,
+                        reason: RejectReason::Full,
+                    }));
+                }
+            } else if !self.try_write(Command::Submit(submit)) {
+                self.reconnect();
+            }
+        }
+    }
+
+    fn advance_generation(&mut self, generation: Generation) {
+        if generation <= self.ledger.generation() {
+            return;
+        }
+        for terminal in self.ledger.advance_generation(generation) {
+            self.full_retries.remove(terminal.submission_id());
+            self.release_submission(terminal.submission_id());
+            self.sink.raise(terminal);
+        }
+        self.current_generation.store(generation, Ordering::SeqCst);
+    }
+
+    fn release_outstanding(&self) {
+        self.outstanding_submissions.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn release_submission(&self, submission_id: &str) {
+        if self.remove_live(submission_id) {
+            self.release_outstanding();
+        }
+    }
+
+    fn remove_live(&self, submission_id: &str) -> bool {
+        self.live
+            .lock()
+            .expect("live submissions lock")
+            .remove(submission_id)
+    }
+
+    fn terminalize_protocol(&mut self, submission_id: &str) {
+        self.full_retries.remove(submission_id);
+        let terminal = self.ledger.fail_protocol(submission_id).unwrap_or_else(|| {
+            Event::Rejected(Rejected {
+                submission_id: submission_id.to_owned(),
+                reason: RejectReason::Invalid,
+            })
+        });
+        self.release_submission(submission_id);
+        self.sink.raise(terminal);
     }
 
     /// Attempts one write over the current connection (or none, if there
@@ -349,8 +360,7 @@ impl Pump {
                     // backend has moved past -- which it would answer
                     // `deployment_closed` for, for ever.
                     if let Some(reported) = self.factory.reported_generation() {
-                        self.ledger.advance_generation(reported);
-                        self.current_generation.store(reported, Ordering::SeqCst);
+                        self.advance_generation(reported);
                     }
                     let replay = self.ledger.in_flight_for_replay();
                     let mut replay_landed = true;
@@ -391,41 +401,4 @@ impl Pump {
             }
         }
     }
-}
-
-/// Reads one connection until it ends, forwarding every event into the
-/// pump's own channel, then reports the loss (tagged with the epoch this
-/// reader was spawned for) and exits. Spawned fresh by the pump on every
-/// connect/reconnect rather than looping across connections itself -- the
-/// pump is what decides whether and how to get a new one.
-fn spawn_reader(
-    sender: Sender<PumpEvent>,
-    mut reader: Box<dyn TransportReader>,
-    epoch: u64,
-    inbound: Arc<Permits>,
-) -> JoinHandle<()> {
-    thread::spawn(move || {
-        loop {
-            match reader.recv() {
-                Ok(Some(event)) => {
-                    // Taken before the hand-off and returned by the pump
-                    // once the event is dealt with. When the pump falls
-                    // behind this blocks, `recv` above stops draining the
-                    // socket, and the backend feels it -- which is the
-                    // whole point of bounding this at all.
-                    if !inbound.acquire() {
-                        return;
-                    }
-                    if sender.send(PumpEvent::Inbound { epoch, event }).is_err() {
-                        inbound.release();
-                        return;
-                    }
-                }
-                Ok(None) | Err(_) => {
-                    let _ = sender.send(PumpEvent::ConnectionLost { epoch });
-                    return;
-                }
-            }
-        }
-    })
 }

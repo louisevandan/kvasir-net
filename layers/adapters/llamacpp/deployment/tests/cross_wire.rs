@@ -15,7 +15,7 @@
 
 mod support;
 
-use p4_adapter::deployment::{Client as DeploymentClientTrait, DeploymentEvent, RejectedReason};
+use p4_adapter::deployment::{Client as DeploymentClientTrait, DeploymentEvent};
 use p4_llamacpp_deployment::DeploymentClient;
 use p4_llamacpp_deployment::contract::Submit;
 use p4_llamacpp_deployment::transport::TransportFactory;
@@ -25,7 +25,7 @@ use std::time::Duration;
 use support::{CollectingSink, Fixture, chat_request};
 
 #[test]
-fn a_submission_runs_accepted_produced_settled_two_in_flight_and_full_over_a_real_socket() {
+fn a_submission_runs_two_in_flight_and_absorbs_full_over_a_real_socket() {
     let fixture = Fixture::spawn();
     let factory: Arc<dyn TransportFactory> = Arc::new(TcpTransportFactory::new(fixture.addr));
     let sink = CollectingSink::new();
@@ -44,6 +44,7 @@ fn a_submission_runs_accepted_produced_settled_two_in_flight_and_full_over_a_rea
                 deployment_id: fixture.deployment_id.clone(),
                 deployment_generation: fixture.deployment_generation,
                 submission_id: submission_id.into(),
+                deadline_unix_ms: 0,
                 request: chat_request(),
             })
             .expect("try_submit");
@@ -60,27 +61,29 @@ fn a_submission_runs_accepted_produced_settled_two_in_flight_and_full_over_a_rea
     });
     assert!(settled_ids(&sink.snapshot()).is_empty());
 
-    // Proof point 3: Full arrives as a typed rejection, decoded from the
-    // wire by the real p4_adapter::deployment::wire parser -- not a string
-    // this test itself had to interpret.
+    // Proof point 3: real capacity pressure stays behind the deployment
+    // client. The third submission is refused while a and b occupy both
+    // leases, then retried by the adapter and completes after one frees.
+    // P4's sink must never observe the intermediate Full.
     submit("c");
     sink.wait_for(Duration::from_secs(10), |events| {
-        rejected_reason(events, "c").is_some()
+        settled_ids(events).len() == 3
     });
-    assert_eq!(
-        rejected_reason(&sink.snapshot(), "c"),
-        Some(RejectedReason::Full)
+    assert!(
+        client.full_retry_count() > 0,
+        "the real backend never reported Full"
+    );
+    assert!(
+        !sink.snapshot().iter().any(|event| matches!(event, DeploymentEvent::Rejected(rejected) if rejected.submission_id == "c")),
+        "adapter-local capacity pressure escaped to P4"
     );
 
     // Proof point 1: the full lifecycle, per submission -- Accepted ->
     // Produced* (contiguous ordinals) -> Settled exactly once.
-    sink.wait_for(Duration::from_secs(10), |events| {
-        settled_ids(events).len() >= 2
-    });
     client.close();
 
     let events = sink.snapshot();
-    for submission_id in ["a", "b"] {
+    for submission_id in ["a", "b", "c"] {
         assert_produced_then_settled(&events, submission_id);
     }
 }
@@ -100,15 +103,6 @@ fn settled_ids(events: &[DeploymentEvent]) -> Vec<String> {
             _ => None,
         })
         .collect()
-}
-
-fn rejected_reason(events: &[DeploymentEvent], submission_id: &str) -> Option<RejectedReason> {
-    events.iter().find_map(|event| match event {
-        DeploymentEvent::Rejected(rejected) if rejected.submission_id == submission_id => {
-            Some(rejected.reason)
-        }
-        _ => None,
-    })
 }
 
 /// Walks every event recorded for `submission_id` and confirms the shape
