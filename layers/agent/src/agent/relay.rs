@@ -26,10 +26,10 @@ use super::{
     SettledReason,
 };
 use p4_protocol::frame::Frame;
+use retry::{FULL_RETRY_DELAY, Retries};
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 impl Agent {
     /// Where a P4 broker relay registers the client(s) `dispatch` calls
@@ -214,42 +214,78 @@ impl Agent {
     /// A route already removed (settled, or its client rejected it for a real
     /// reason) makes this a no-op.
     fn retry_submission_later(self: &Arc<Self>, submission_id: String) {
-        const FULL_RETRY_DELAY: Duration = Duration::from_millis(20);
+        if self.expire_or_keep(&submission_id) {
+            self.retries().schedule(submission_id, FULL_RETRY_DELAY);
+        }
+    }
+
+    /// The scheduler this agent's `Full` retries wait in, started the first
+    /// time one is needed. Lazily rather than at construction because most
+    /// agents register no deployment client at all and would pay for a
+    /// thread that never wakes.
+    fn retries(self: &Arc<Self>) -> &Arc<Retries> {
+        self.retries
+            .get_or_init(|| Retries::start(Arc::downgrade(self)))
+    }
+
+    /// Whether this submission is still worth offering again.
+    ///
+    /// `false` means it is finished as far as this relay is concerned: the
+    /// route is gone (settled, or refused for a real reason), or the
+    /// caller's deadline has passed and the requester has been told so.
+    fn expire_or_keep(self: &Arc<Self>, submission_id: &str) -> bool {
         let carrier = self
             .submission_routes
             .lock()
             .expect("submission route lock")
-            .get(&submission_id)
+            .get(submission_id)
             .cloned();
         let Some(carrier) = carrier else {
-            return;
+            return false;
         };
-        let Some(submit) = self.payload.submission(&carrier) else {
-            return;
-        };
-        if expired(carrier.envelope.deadline_unix_ms) {
-            let carrier = self
-                .submission_routes
-                .lock()
-                .expect("submission route lock")
-                .remove(&submission_id);
-            if let Some(carrier) = carrier {
-                self.answer_locally(carrier, "deadline passed while the deployment was full");
-            }
-            return;
+        if !expired(carrier.envelope.deadline_unix_ms) {
+            return true;
         }
-        let agent = Arc::clone(self);
-        tokio::spawn(async move {
-            tokio::time::sleep(FULL_RETRY_DELAY).await;
-            let still_pending = agent
-                .submission_routes
-                .lock()
-                .expect("submission route lock")
-                .contains_key(&submission_id);
-            if still_pending {
-                let _ = agent.deployments.try_submit(submit);
-            }
-        });
+        let carrier = self
+            .submission_routes
+            .lock()
+            .expect("submission route lock")
+            .remove(submission_id);
+        if let Some(carrier) = carrier {
+            self.answer_locally(carrier, "deadline passed while the deployment was full");
+        }
+        false
+    }
+
+    /// One retry attempt, run on the scheduler's thread. Returns whether it
+    /// needs to be attempted again.
+    ///
+    /// `true` only for a local enqueue that failed: the submission never
+    /// reached the wire, so no `Full` will arrive to schedule another
+    /// attempt and nothing but this would ever look at it again. A
+    /// submission that *did* reach the wire returns `false` -- if the
+    /// backend is still full it says so, and that rejection schedules the
+    /// next attempt through the same path the first one took.
+    pub(super) fn attempt_retry(self: &Arc<Self>, submission_id: &str) -> bool {
+        if !self.expire_or_keep(submission_id) {
+            return false;
+        }
+        let carrier = self
+            .submission_routes
+            .lock()
+            .expect("submission route lock")
+            .get(submission_id)
+            .cloned();
+        let Some(carrier) = carrier else {
+            return false;
+        };
+        // Rebuilt from the stored carrier rather than from a `Submit` kept
+        // around, so a retry always says exactly what a fresh decode of the
+        // carrier would: one source of truth for what this asked for.
+        let Some(submit) = self.payload.submission(&carrier) else {
+            return false;
+        };
+        self.deployments.try_submit(submit).is_err()
     }
 
     /// Sends one relay reply for `submission_id` and advances its stored
@@ -382,6 +418,8 @@ fn settled_reason_str(reason: SettledReason) -> &'static str {
         SettledReason::Error => "error",
     }
 }
+
+pub(super) mod retry;
 
 #[cfg(test)]
 mod tests;

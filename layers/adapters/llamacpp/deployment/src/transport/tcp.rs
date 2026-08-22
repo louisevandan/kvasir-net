@@ -12,10 +12,12 @@
 use super::line_codec::{read_event, write_command};
 use super::upgrade;
 use super::{TransportFactory, TransportReader, TransportWriter};
+use crate::contract::Generation;
 use crate::contract::{Command, Event};
 use p4_adapter::deployment::wire;
 use std::io::{self, BufReader};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::Mutex;
 
 pub struct TcpWriter(TcpStream);
 
@@ -39,27 +41,61 @@ impl TransportReader for TcpReader {
 /// fresh, upgraded socket each time the client asks.
 pub struct TcpTransportFactory {
     addr: SocketAddr,
+    deployment_id: String,
+    /// What the server said this deployment's generation was on the most
+    /// recent handshake. Re-read on every reconnect, so a deployment
+    /// reloaded while this client was away is noticed rather than fenced
+    /// against forever.
+    reported_generation: Mutex<Option<Generation>>,
 }
 
 impl TcpTransportFactory {
     pub fn new(addr: SocketAddr) -> Self {
-        Self { addr }
+        Self::for_deployment(addr, String::new())
+    }
+
+    /// Names the deployment in the handshake, which is what lets the server
+    /// answer with that deployment's generation rather than the client
+    /// having to invent one.
+    pub fn for_deployment(addr: SocketAddr, deployment_id: String) -> Self {
+        Self {
+            addr,
+            deployment_id,
+            reported_generation: Mutex::new(None),
+        }
+    }
+
+    /// The generation the server reported, or `None` if it reported none.
+    pub fn reported_generation(&self) -> Option<Generation> {
+        *self
+            .reported_generation
+            .lock()
+            .expect("reported generation lock")
     }
 }
 
 impl TransportFactory for TcpTransportFactory {
+    fn reported_generation(&self) -> Option<Generation> {
+        TcpTransportFactory::reported_generation(self)
+    }
+
     fn connect(&self) -> io::Result<(Box<dyn TransportWriter>, Box<dyn TransportReader>)> {
         let stream = TcpStream::connect(self.addr)?;
         stream.set_nodelay(true)?;
         let read_half = stream.try_clone()?;
         let mut writer = stream;
         let mut reader = BufReader::new(read_half);
-        upgrade::perform(
+        let generation = upgrade::perform(
             &mut writer,
             &mut reader,
             &self.addr.to_string(),
             wire::PROTOCOL,
+            &self.deployment_id,
         )?;
+        *self
+            .reported_generation
+            .lock()
+            .expect("reported generation lock") = generation;
         Ok((Box::new(TcpWriter(writer)), Box::new(TcpReader(reader))))
     }
 }

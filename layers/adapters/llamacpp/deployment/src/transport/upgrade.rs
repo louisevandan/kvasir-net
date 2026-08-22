@@ -13,6 +13,7 @@
 //! request line and response parsing are unit-testable against in-memory
 //! buffers, with no socket and no `apps/llama` process.
 
+use crate::contract::Generation;
 use std::io::{self, BufRead, Write};
 
 /// The path both the v1 ring-inference stream and this submission stream
@@ -38,9 +39,10 @@ pub fn perform<W: Write, R: BufRead>(
     reader: &mut R,
     host: &str,
     protocol: &str,
-) -> io::Result<()> {
+    deployment_id: &str,
+) -> io::Result<Option<Generation>> {
     let request = format!(
-        "GET {UPGRADE_PATH} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: {protocol}\r\n\r\n"
+        "GET {UPGRADE_PATH} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: {protocol}\r\n{DEPLOYMENT_ID_HEADER}: {deployment_id}\r\n\r\n"
     );
     writer.write_all(request.as_bytes())?;
     writer.flush()?;
@@ -53,18 +55,35 @@ pub fn perform<W: Write, R: BufRead>(
             format!("expected HTTP/1.1 101 Switching Protocols, got {status_line:?}"),
         ));
     }
-    // Drain header lines until the blank line that ends them. Header
-    // content itself is not read for anything -- the status line already
-    // confirmed the protocol switch, and the llama-path server's own
-    // `Upgrade` response header only ever echoes back what this request
-    // asked for.
+    // One header is read rather than drained: the deployment's generation,
+    // which is the backend's to issue and which this client has no other
+    // way to learn. Everything else is still ignored -- the status line
+    // already confirmed the protocol switch, and a server that reports no
+    // generation leaves this `None` rather than inventing one.
+    let mut generation = None;
     loop {
         let mut line = String::new();
         let bytes = read_crlf_line(reader, &mut line)?;
         if bytes == 0 || line.is_empty() {
-            return Ok(());
+            return Ok(generation);
+        }
+        if let Some(value) = header_value(&line, GENERATION_HEADER) {
+            generation = value.trim().parse().ok();
         }
     }
+}
+
+/// The header naming which deployment a socket is being opened for, so the
+/// server can answer with that deployment's own generation.
+pub const DEPLOYMENT_ID_HEADER: &str = "X-P4-Deployment-Id";
+
+/// The header the server answers it with.
+pub const GENERATION_HEADER: &str = "X-P4-Deployment-Generation";
+
+/// Case-insensitive on the name, since HTTP header names are.
+fn header_value<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let (found, value) = line.split_once(':')?;
+    found.eq_ignore_ascii_case(name).then_some(value)
 }
 
 /// Reads one line and strips its trailing `\r\n`/`\n`. Distinct from
@@ -90,7 +109,7 @@ mod tests {
             b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: proto\r\nConnection: Upgrade\r\n\r\n"
                 .to_vec(),
         );
-        perform(&mut written, &mut response, "127.0.0.1:9", "proto").expect("upgrade");
+        perform(&mut written, &mut response, "127.0.0.1:9", "proto", "dep-1").expect("upgrade");
         let text = String::from_utf8(written).expect("utf8");
         assert!(text.starts_with("GET /api/pipeline-inference-stream HTTP/1.1\r\n"));
         assert!(text.contains("Host: 127.0.0.1:9\r\n"));
@@ -103,7 +122,8 @@ mod tests {
         let mut written = Vec::new();
         let mut response =
             Cursor::new(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n".to_vec());
-        let error = perform(&mut written, &mut response, "h", "proto").expect_err("should fail");
+        let error =
+            perform(&mut written, &mut response, "h", "proto", "dep-1").expect_err("should fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
@@ -114,7 +134,7 @@ mod tests {
             b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: proto\r\n\r\n{\"leftover\":true}\n"
                 .to_vec(),
         );
-        perform(&mut written, &mut response, "h", "proto").expect("upgrade");
+        perform(&mut written, &mut response, "h", "proto", "dep-1").expect("upgrade");
         let mut remainder = String::new();
         response.read_line(&mut remainder).expect("read remainder");
         assert_eq!(remainder, "{\"leftover\":true}\n");

@@ -86,6 +86,10 @@ pub struct Agent {
     /// every critical section here is a HashMap lookup, never an `.await`,
     /// and `AgentDeploymentSink::raise` is not itself async.
     submission_routes: SyncMutex<HashMap<String, Frame>>,
+    /// Where `Full` retries wait. Started on first use -- see
+    /// `relay::retry` for why this is one thread rather than a task per
+    /// attempt.
+    retries: std::sync::OnceLock<Arc<crate::agent::relay::retry::Retries>>,
 }
 
 impl Agent {
@@ -161,6 +165,7 @@ impl Agent {
             emergency,
             deployments: DeploymentRegistry::new(),
             submission_routes: SyncMutex::new(HashMap::new()),
+            retries: std::sync::OnceLock::new(),
         });
         (agent, receiver, in_flight)
     }

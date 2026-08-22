@@ -42,7 +42,16 @@ param(
     [string]$StageRanges = '',
     [string]$GpuLayers = '',
     [string]$TensorOverride = '',
+    # A planner result can carry per-stage tensor overrides.  This is how a
+    # heterogeneous M3 plan keeps KV and layer bodies on each rank's GPU
+    # while leaving only the selected expert FFN tensors in host RAM.
+    [string]$PlacementPlanFile = '',
     [string]$LocalGpuDevices = '1,0',
+    # Where the drive retains each request's prompt and complete response.
+    # Defaults per run. An inherited environment value is deliberately not
+    # used: it persists across calls in one PowerShell process, so a sweep
+    # would file every run's text under the first run's path.
+    [string]$EvidenceFile = '',
     [switch]$KeepRemoteArtifacts,
     [switch]$KeepLoaded
 )
@@ -104,8 +113,23 @@ function Resolve-LocalInputPath([string]$Path) {
     }
     return [System.IO.Path]::GetFullPath($fromCaller)
 }
+# A build pinned to a fixed date is a trap. The staged server's cut-set
+# contract has changed under it more than once, and an agent built from
+# today's source against a server built before those fixes stalls every
+# request at its first token with 'stage input cut-set mismatch' -- which
+# reads as a capacity or load failure and is neither. Newest build wins,
+# and the one actually used is printed so a run's evidence says which.
 if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) {
-    $ArtifactDirectory = Join-Path $projectRoot '.cache\staged-server-cuda-real-20260818\Release'
+    $cacheRoot = Join-Path $projectRoot '.cache'
+    $newest = Get-ChildItem -LiteralPath $cacheRoot -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName 'Release\p4_staged_server.exe' } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Sort-Object { (Get-Item -LiteralPath $_).LastWriteTime } -Descending |
+        Select-Object -First 1
+    if (-not $newest) {
+        throw "No p4_staged_server.exe under $cacheRoot. Build one with staged/scripts/build-stage-server.mjs, or pass -ArtifactDirectory."
+    }
+    $ArtifactDirectory = Split-Path -Parent $newest
 }
 if ([string]::IsNullOrWhiteSpace($RemoteAgentRoot)) {
     $RemoteAgentRoot = 'C:\Users\42mob\p4-staged-test'
@@ -113,22 +137,46 @@ if ([string]::IsNullOrWhiteSpace($RemoteAgentRoot)) {
 if ([string]::IsNullOrWhiteSpace($RemoteArtifactDirectory)) {
     $RemoteArtifactDirectory = Join-Path $RemoteAgentRoot "e2e-$RunId"
 }
+# Newest build wins, and the choice is printed. A pinned path here meant
+# every run used binaries from the day that path was written -- so a run
+# reporting 40/40 was evidence about code months old, and none of the
+# changes under test were ever executed.
 if ([string]::IsNullOrWhiteSpace($AgentBinary)) {
-    $AgentBinary = Join-Path $projectRoot 'target\p4-release-validation-remediation27\release\p4-agent.exe'
-    if (-not (Test-Path -LiteralPath $AgentBinary -PathType Leaf)) {
-        $AgentBinary = Join-Path $projectRoot 'target\release\p4-agent.exe'
-    }
+    $AgentBinary = @(
+        (Join-Path $projectRoot 'apps\p4\target\release\p4-agent.exe'),
+        (Join-Path $projectRoot 'target\release\p4-agent.exe'),
+        (Join-Path $projectRoot 'target\p4-release-validation-remediation27\release\p4-agent.exe')
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Sort-Object { (Get-Item -LiteralPath $_).LastWriteTime } -Descending |
+        Select-Object -First 1
+    if (-not $AgentBinary) { throw "p4-agent.exe not found. Build it with 'cargo build --release --workspace' in apps/p4." }
 }
+# Newest build wins, and the choice is printed. A pinned path here meant
+# every run used binaries from the day that path was written -- so a run
+# reporting 40/40 was evidence about code months old, and none of the
+# changes under test were ever executed.
 if ([string]::IsNullOrWhiteSpace($DriveBinary)) {
-    $DriveBinary = Join-Path $projectRoot 'target\p4-release-validation-remediation27\release\p4-drive.exe'
-    if (-not (Test-Path -LiteralPath $DriveBinary -PathType Leaf)) {
-        $DriveBinary = Join-Path $projectRoot 'target\release\p4-drive.exe'
-    }
+    $DriveBinary = @(
+        (Join-Path $projectRoot 'apps\p4\target\release\p4-drive.exe'),
+        (Join-Path $projectRoot 'target\release\p4-drive.exe'),
+        (Join-Path $projectRoot 'target\p4-release-validation-remediation27\release\p4-drive.exe')
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Sort-Object { (Get-Item -LiteralPath $_).LastWriteTime } -Descending |
+        Select-Object -First 1
+    if (-not $DriveBinary) { throw "p4-drive.exe not found. Build it with 'cargo build --release --workspace' in apps/p4." }
 }
 $ArtifactDirectory = Resolve-LocalInputPath $ArtifactDirectory
+$stageServerPath = Join-Path $ArtifactDirectory 'p4_staged_server.exe'
+$stageServerStamp = (Get-Item -LiteralPath $stageServerPath -ErrorAction SilentlyContinue).LastWriteTime
+$agentStamp = (Get-Item -LiteralPath $AgentBinary -ErrorAction SilentlyContinue).LastWriteTime
+$driveStamp = (Get-Item -LiteralPath $DriveBinary -ErrorAction SilentlyContinue).LastWriteTime
+Write-Output "BINARIES agent=$AgentBinary built=$agentStamp"
+Write-Output "BINARIES drive=$DriveBinary built=$driveStamp"
+Write-Output "STAGE_SERVER path=$ArtifactDirectory built=$stageServerStamp"
 $AgentBinary = Resolve-LocalInputPath $AgentBinary
 $DriveBinary = Resolve-LocalInputPath $DriveBinary
 $PromptFile = Resolve-LocalInputPath $PromptFile
+$PlacementPlanFile = Resolve-LocalInputPath $PlacementPlanFile
 $agentBinary = $AgentBinary
 $driveBinary = $DriveBinary
 $serverBinary = Join-Path $ArtifactDirectory 'p4_staged_server.exe'
@@ -195,7 +243,66 @@ function Parse-LocalGpuDevices([string]$Text) {
 $parsedStageRanges = @(Parse-StageRanges $StageRanges)
 $parsedGpuLayers = @(Parse-GpuLayers $GpuLayers)
 $parsedLocalGpuDevices = @(Parse-LocalGpuDevices $LocalGpuDevices)
-$totalModelLayers = $parsedStageRanges[3].End + 1
+$stageTensorOverrides = @($TensorOverride, $TensorOverride, $TensorOverride, $TensorOverride)
+if ($PlacementPlanFile -ne '') {
+    if ($TensorOverride -ne '') {
+        throw 'TensorOverride cannot be combined with PlacementPlanFile; the plan owns stage-specific overrides.'
+    }
+    if (-not (Test-Path -LiteralPath $PlacementPlanFile -PathType Leaf)) {
+        throw "Placement plan file not found: $PlacementPlanFile"
+    }
+    $placementDocument = Get-Content -LiteralPath $PlacementPlanFile -Raw | ConvertFrom-Json
+    $placementPlan = if ($null -ne $placementDocument.plan) { $placementDocument.plan } else { $placementDocument }
+    if ($placementPlan.feasible -ne $true -or $null -eq $placementPlan.placement) {
+        throw 'PlacementPlanFile must contain a feasible plan with placement entries.'
+    }
+    $plannedPlacement = @($placementPlan.placement | Sort-Object { if ($null -ne $_.stage_index) { $_.stage_index } else { $_.node } })
+    if ($plannedPlacement.Count -ne 4) {
+        throw "PlacementPlanFile must contain exactly four stages (found $($plannedPlacement.Count))."
+    }
+    if ($placementPlan.n_ctx -and $ContextSize -gt 0 -and $placementPlan.n_ctx -ne $ContextSize) {
+        throw "PlacementPlanFile n_ctx=$($placementPlan.n_ctx) conflicts with ContextSize=$ContextSize."
+    }
+    if ($placementPlan.n_parallel -and $Parallel -gt 0 -and $placementPlan.n_parallel -ne $Parallel) {
+        throw "PlacementPlanFile n_parallel=$($placementPlan.n_parallel) conflicts with Parallel=$Parallel."
+    }
+    $plannedRanges = New-Object object[] 4
+    $plannedGpuLayers = New-Object int[] 4
+    $plannedOverrides = New-Object string[] 4
+    $plannedModelLayers = [int]$plannedPlacement[-1].layers[1]
+    for ($i = 0; $i -lt 4; $i++) {
+        $entry = $plannedPlacement[$i]
+        if ($entry.n_layers -le 0 -or $null -eq $entry.layers -or @($entry.layers).Count -ne 2) {
+            throw "PlacementPlanFile stage $i has no active contiguous layer window."
+        }
+        $begin = [int]$entry.layers[0]
+        $end = [int]$entry.layers[1]
+        if ($end -le $begin -or ($i -gt 0 -and $plannedRanges[$i - 1].End -ne $begin)) {
+            throw "PlacementPlanFile stage $i does not form a contiguous layer chain."
+        }
+        $plannedRanges[$i] = [pscustomobject]@{ Begin = $begin; End = $end }
+        # llama.cpp's --n-gpu-layers is global (from the final transformer
+        # layer).  Keep that cutoff for the owned window, but explicitly
+        # return every *unowned* block to host RAM.  Without this rule a later
+        # stage's GPU also retains bodies from adjacent stages and can exceed
+        # the heterogeneous 11/23/23/23 GiB plan.
+        $plannedGpuLayers[$i] = $end - $begin
+        $unowned = @(for ($layer = 0; $layer -lt $plannedModelLayers; $layer++) {
+            if ($layer -lt $begin -or $layer -ge $end) { $layer }
+        })
+        $unownedRule = if ($unowned.Count -eq 0) { '' } else {
+            'blk\\.({0})\\..*=CPU' -f ($unowned -join '|')
+        }
+        $plannedOverrides[$i] = @(
+            if ($null -ne $entry.ot -and -not [string]::IsNullOrWhiteSpace([string]$entry.ot)) { [string]$entry.ot }
+            if ($unownedRule -ne '') { $unownedRule }
+        ) -join ','
+    }
+    $parsedStageRanges = @($plannedRanges)
+    $parsedGpuLayers = @($plannedGpuLayers)
+    $stageTensorOverrides = @($plannedOverrides)
+}
+$totalModelLayers = $parsedStageRanges[3].End
 $parallelSlots = if ($Parallel -gt 0) { $Parallel } else { $Requests }
 $effectivePromptTokens = if ($PromptTokens -gt 0) { $PromptTokens } else { 0 }
 $requiredContext = if ($effectivePromptTokens -gt 0) {
@@ -290,11 +397,11 @@ function Wait-Listening([int]$Port, [int]$TimeoutSeconds = 30) {
     } while ((Get-Date) -lt $deadline)
     throw "Timed out waiting for TCP 127.0.0.1:$Port."
 }
-function Plan([int]$Begin, [int]$End, [int]$GpuLayerCount, [string]$Model, [int]$Slots, [int]$Batch, [int]$UBatch, [int]$Context) {
+function Plan([int]$Begin, [int]$End, [int]$GpuLayerCount, [string]$Model, [int]$Slots, [int]$Batch, [int]$UBatch, [int]$Context, [string]$StageTensorOverride) {
     $ownedLayers = $End - $Begin
     if ($GpuLayerCount -gt $ownedLayers) { $GpuLayerCount = $ownedLayers }
     $globalGpuLayers = if ($GpuLayerCount -gt 0) { $totalModelLayers - ($End - $GpuLayerCount) } else { 0 }
-    $overrideSuffix = if ([string]::IsNullOrWhiteSpace($TensorOverride)) { '' } else { ' --override-tensor "{0}"' -f $TensorOverride }
+    $overrideSuffix = if ([string]::IsNullOrWhiteSpace($StageTensorOverride)) { '' } else { ' --override-tensor "{0}"' -f $StageTensorOverride }
     '--model "{0}" --layer-begin {1} --layer-end {2} --kv-layer-begin {1} --kv-layer-end {2} --n-seq-max {3} --batch-size {4} --ubatch-size {5} --ctx-size {6} --n-gpu-layers {7} --device CUDA0 --flash-attn {8} --no-mmap --cache-type-k q8_0 --cache-type-v q8_0{9}' -f $Model, $Begin, $End, $Slots, $Batch, $UBatch, $Context, $globalGpuLayers, $(if ($FlashAttention -eq 1) { 'on' } else { 'off' }), $overrideSuffix
 }
 try {
@@ -446,23 +553,14 @@ Write-Output 'REMOTE_AGENT_LISTENING'
             -WindowStyle Hidden -PassThru
         $localProcesses.Add($remoteProcess)
     }
-    $remoteReady = @"
-`$deadline = (Get-Date).AddSeconds(30)
-foreach (`$port in @($($remoteAgentPorts -join ', '))) {
-    `$connected = `$false
-    do {
-        `$client = [Net.Sockets.TcpClient]::new()
-        try {
-            `$task = `$client.ConnectAsync('127.0.0.1', `$port)
-            if (`$task.Wait(500) -and `$client.Connected) { `$connected = `$true }
-        } catch { } finally { `$client.Dispose() }
-        if (-not `$connected) { Start-Sleep -Milliseconds 250 }
-    } while (-not `$connected -and (Get-Date) -lt `$deadline)
-    if (-not `$connected) { throw ('Remote agent port ' + `$port + ' did not become ready.') }
-}
-Write-Output 'REMOTE_AGENTS_LISTENING'
-"@
-    Invoke-RemotePowerShell $remoteReady | Out-File -LiteralPath (Join-Path $outputRoot 'remote-agent-readiness.log') -Encoding utf8
+    # The remote tasks are InteractiveToken jobs.  An SSH command that
+    # launched such a task can retain inherited handles even after its agent
+    # is listening, so waiting for a second SSH PowerShell process here can
+    # deadlock the runner.  The SSH forwards below are the authoritative
+    # end-to-end readiness check: they prove both the tunnel and the remote
+    # loopback listener that the driver will actually use.
+    'REMOTE_AGENT_READINESS=verified-through-local-ssh-forwards' |
+        Set-Content -LiteralPath (Join-Path $outputRoot 'remote-agent-readiness.log') -Encoding utf8
     foreach ($port in $localForwardPorts) { Wait-Listening $port }
     foreach ($i in 0..1) {
         $cuda = $parsedLocalGpuDevices[$i]
@@ -502,10 +600,10 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
     }
     foreach ($port in $localAgentPorts) { Wait-Listening $port }
     $driverPlans = @(
-        (Plan $parsedStageRanges[0].Begin $parsedStageRanges[0].End $parsedGpuLayers[0] $LocalModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize),
-        (Plan $parsedStageRanges[1].Begin $parsedStageRanges[1].End $parsedGpuLayers[1] $LocalModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize),
-        (Plan $parsedStageRanges[2].Begin $parsedStageRanges[2].End $parsedGpuLayers[2] $RemoteModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize),
-        (Plan $parsedStageRanges[3].Begin $parsedStageRanges[3].End $parsedGpuLayers[3] $RemoteModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize)
+        (Plan $parsedStageRanges[0].Begin $parsedStageRanges[0].End $parsedGpuLayers[0] $LocalModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize $stageTensorOverrides[0]),
+        (Plan $parsedStageRanges[1].Begin $parsedStageRanges[1].End $parsedGpuLayers[1] $LocalModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize $stageTensorOverrides[1]),
+        (Plan $parsedStageRanges[2].Begin $parsedStageRanges[2].End $parsedGpuLayers[2] $RemoteModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize $stageTensorOverrides[2]),
+        (Plan $parsedStageRanges[3].Begin $parsedStageRanges[3].End $parsedGpuLayers[3] $RemoteModel $parallelSlots $planBatchSize $planUBatchSize $planContextSize $stageTensorOverrides[3])
     )
     $chain = '127.0.0.1:{0},127.0.0.1:{1},127.0.0.1:{2},127.0.0.1:{3}' -f `
         $localAgentPorts[0], $localAgentPorts[1], $localForwardPorts[0], $localForwardPorts[1]
@@ -537,6 +635,8 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
         'off' { '0' }
         default { if ([string]::IsNullOrWhiteSpace($PromptFile)) { '1' } else { '0' } }
     }
+    $script:EvidencePath = if ([string]::IsNullOrWhiteSpace($EvidenceFile)) { Join-Path $outputRoot 'evidence.md' } else { $EvidenceFile }
+    $env:P4_DRIVE_EVIDENCE_FILE = $script:EvidencePath
     $driverEvidenceAssignment = if ($env:P4_DRIVE_EVIDENCE_FILE) {
         "`$env:P4_DRIVE_EVIDENCE_FILE = $(ConvertTo-PowerShellLiteral $env:P4_DRIVE_EVIDENCE_FILE)"
     } else { '' }
@@ -631,11 +731,32 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         $framesPerSecond -gt 0 -and $latencyCompleted -eq $completed -and
         $latencyP95Ms -ge 0 -and $latencyP99Ms -ge $latencyP95Ms -and
         $peak4080VramMiB -ge 0 -and $peak4080VramMiB -le $Max4080VramMiB
+    $bodiesPassed = $true
+    $bodyDetail = ''
+    if (Test-Path -LiteralPath $script:EvidencePath) {
+        $evidenceText = Get-Content -LiteralPath $script:EvidencePath -Raw
+        $sections = @([regex]::Split($evidenceText, '(?m)^## Session ') | Select-Object -Skip 1)
+        $bad = @()
+        if ($sections.Count -ne $Requests) { $bad += "session-count=$($sections.Count) expected=$Requests" }
+        for ($si = 0; $si -lt $sections.Count; $si++) {
+            $tok = [regex]::Match($sections[$si], '(?m)^- tokens: (\d+)')
+            $body = [regex]::Match($sections[$si], '(?ms)^### Complete response[ \t]*\r?\n(?<body>.*?)\r?\n---[ \t]*\r?\n?$')
+            $n = if ($tok.Success) { [int]$tok.Groups[1].Value } else { -1 }
+            if ($n -le 0) { $bad += "session$($si+1):tokens=$n" }
+            if (-not $body.Success -or [string]::IsNullOrWhiteSpace($body.Groups['body'].Value)) { $bad += "session$($si+1):empty-body" }
+        }
+        if ($bad.Count -gt 0) { $bodiesPassed = $false; $bodyDetail = ($bad -join ', ') }
+    } else {
+        $bodiesPassed = $false
+        $bodyDetail = "no evidence at $script:EvidencePath"
+    }
+    if (-not $bodiesPassed) { Write-Output "NON-EMPTY RESPONSE GATE FAILED: $bodyDetail" }
     $runPassed = [bool](
         ($driverExitCode -eq 0) -and
         [bool]$metricsPassed -and
         $verdictsPassed -and
-        [bool]$overlapPassed
+        [bool]$overlapPassed -and
+        $bodiesPassed
     )
     $result = [pscustomobject]@{
         run_id = $RunId

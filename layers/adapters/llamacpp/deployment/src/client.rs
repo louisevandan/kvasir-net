@@ -28,7 +28,7 @@ use std::time::Duration;
 
 pub struct DeploymentClient {
     deployment_id: DeploymentId,
-    current_generation: AtomicU64,
+    current_generation: Arc<AtomicU64>,
     pump: PumpHandle,
 }
 
@@ -49,10 +49,23 @@ impl DeploymentClient {
         backoff: Duration,
     ) -> std::io::Result<Arc<Self>> {
         let (writer, reader) = factory.connect()?;
-        let pump = PumpHandle::start(factory, sink, writer, reader, generation, backoff);
+        // What the handshake just reported wins over what the caller
+        // guessed: the generation is the backend's to issue, never this
+        // process's to invent.
+        let generation = factory.reported_generation().unwrap_or(generation);
+        let current_generation = Arc::new(AtomicU64::new(generation));
+        let pump = PumpHandle::start(
+            factory,
+            sink,
+            writer,
+            reader,
+            generation,
+            backoff,
+            Arc::clone(&current_generation),
+        );
         Ok(Arc::new(Self {
             deployment_id,
-            current_generation: AtomicU64::new(generation),
+            current_generation,
             pump,
         }))
     }

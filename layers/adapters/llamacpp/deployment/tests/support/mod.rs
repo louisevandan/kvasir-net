@@ -66,6 +66,19 @@ impl Fixture {
         }
         let fields = parse_ready_line(&line);
 
+        // Keep reading after READY. The fixture logs a line per connection
+        // and per socket error, and a stdout pipe nobody drains fills up --
+        // at which point the fixture's own `console.log` raises EPIPE and
+        // takes the server process down mid-test. The failure looks exactly
+        // like the server crashing on the traffic under test, which is a
+        // long way from where it actually is.
+        std::thread::spawn(move || {
+            let mut discard = String::new();
+            while reader.read_line(&mut discard).unwrap_or(0) > 0 {
+                discard.clear();
+            }
+        });
+
         Self {
             child,
             addr: format!("127.0.0.1:{}", fields.port).parse().expect("addr"),

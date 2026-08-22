@@ -104,7 +104,29 @@ impl Ledger {
     /// replayed on reconnect once they are no longer current -- see
     /// `in_flight_for_replay`.
     pub fn advance_generation(&mut self, generation: Generation) {
+        if generation == self.generation {
+            return;
+        }
         self.generation = generation;
+        // Entries of a superseded generation become tombstones rather than
+        // staying live. They still have to be *findable* -- an event about
+        // one must resolve to `StaleGeneration`, not `Unknown`, so a caller
+        // can tell "this was real and is now moot" from "this was never
+        // real" -- but as live entries they fell outside the cap entirely,
+        // and a deployment reloaded often enough grew this map for as long
+        // as the process lived.
+        let superseded: Vec<SubmissionId> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.generation != generation)
+            .map(|(submission_id, _)| submission_id.clone())
+            .collect();
+        for submission_id in superseded {
+            if let Some(entry) = self.entries.get_mut(&submission_id) {
+                entry.state = SubmissionState::Done;
+            }
+            self.entomb(submission_id);
+        }
     }
 
     /// Registers a new submission, or reports that this `submission_id` is

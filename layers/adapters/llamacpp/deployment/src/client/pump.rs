@@ -90,6 +90,7 @@ impl PumpHandle {
         reader: Box<dyn TransportReader>,
         generation: Generation,
         backoff: Duration,
+        current_generation: Arc<AtomicU64>,
     ) -> Self {
         let (sender, receiver) = channel();
         let queued_submissions = Arc::new(AtomicUsize::new(0));
@@ -108,6 +109,7 @@ impl PumpHandle {
             closed: closed.clone(),
             reconnects: reconnects.clone(),
             link_epoch: 0,
+            current_generation,
             sender: sender.clone(),
             reader_thread: reader_thread.clone(),
             inbound: Arc::clone(&inbound),
@@ -213,6 +215,10 @@ struct Pump {
     reconnects: Arc<AtomicU64>,
     link_epoch: u64,
     queued_submissions: Arc<AtomicUsize>,
+    /// Shared with `DeploymentClient`, so a generation learned on a
+    /// reconnect is what the next caller stamps rather than the value this
+    /// process started with.
+    current_generation: Arc<AtomicU64>,
     sender: Sender<PumpEvent>,
     reader_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     /// Returned one at a time as inbound events are dealt with, which is
@@ -256,6 +262,7 @@ impl Pump {
                 }
                 PumpEvent::AdvanceGeneration(generation) => {
                     self.ledger.advance_generation(generation);
+                    self.current_generation.store(generation, Ordering::SeqCst);
                 }
                 PumpEvent::ConnectionLost { epoch } => {
                     if epoch != self.link_epoch {
@@ -335,6 +342,16 @@ impl Pump {
                     self.reconnects.fetch_add(1, Ordering::SeqCst);
                     self.writer = Some(writer);
                     self.link_epoch += 1;
+                    // Before the replay, not after. A deployment reloads
+                    // while this client is away and the handshake is the
+                    // only place that says so; adopting it first keeps the
+                    // replay from resending work under a generation the
+                    // backend has moved past -- which it would answer
+                    // `deployment_closed` for, for ever.
+                    if let Some(reported) = self.factory.reported_generation() {
+                        self.ledger.advance_generation(reported);
+                        self.current_generation.store(reported, Ordering::SeqCst);
+                    }
                     let replay = self.ledger.in_flight_for_replay();
                     let mut replay_landed = true;
                     for submit in replay {

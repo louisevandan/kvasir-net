@@ -32,6 +32,19 @@ pub trait TransportReader: Send {
 /// halves are the same physical socket as last time.
 pub trait TransportFactory: Send + Sync {
     fn connect(&self) -> io::Result<(Box<dyn TransportWriter>, Box<dyn TransportReader>)>;
+
+    /// The deployment generation the most recent `connect` was told, if this
+    /// transport's handshake carries one.
+    ///
+    /// The generation is the backend's to issue, and a reload happens while
+    /// this client is disconnected -- so a reconnect is the only moment it
+    /// can be learned. A client that goes on fencing against the value it
+    /// started with sends work the backend refuses as `deployment_closed`,
+    /// for as long as the process lives, with nothing in the client able to
+    /// notice.
+    fn reported_generation(&self) -> Option<crate::contract::Generation> {
+        None
+    }
 }
 
 pub mod line_codec;

@@ -8,6 +8,7 @@ use p4_protocol::{Address, QueueClass};
 use p4_protocol::{Chain, Envelope, Link, Recipient};
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicUsize;
+use std::time::Duration;
 
 /// Answers every hop immediately with one token and a terminal -- the
 /// hop-path stand-in these tests use to prove the relay's gate leaves it
