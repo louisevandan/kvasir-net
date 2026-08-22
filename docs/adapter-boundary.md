@@ -315,10 +315,17 @@ response text for every session, plus the aggregate telemetry JSON. Leave the
 variable unset and the run still completes; only this file does not appear.
 
 [`run-local-real-two-stage.ps1`](../tools/scripts/e2e/run-local-real-two-stage.ps1)
-does not set that variable itself. It has to be exported in the same
-PowerShell session before the script runs, because the script starts
-`p4-drive` with `Start-Process`, which inherits the parent session's
-environment rather than a fixed one the script controls. One complete
+now sets it for every run, defaulting to `evidence.md` beside the run's other
+logs, and overridable with `-EvidenceFile`. It deliberately ignores an
+inherited value and restores the caller's environment afterwards: the script
+starts `p4-drive` with `Start-Process`, which inherits the parent session's
+environment, and an exported path persists across `& script.ps1` calls in one
+PowerShell process — so a sweep filed every run's text under the first run's
+path. Retaining the text is not optional: a run whose model samples an
+end-of-generation token on its first step passes all four driver verdicts —
+answered, not failed, in order, one terminal — while returning nothing at
+all, and `Assert-NonEmptyResponses` in the same script is what catches that.
+One complete
 reproduction, assuming locally built `p4-agent.exe` / `p4-drive.exe` /
 `p4_staged_server.exe` and a real GGUF model already sit at the script's
 default paths (override with `-AgentBinary` / `-DriveBinary` / `-ServerBinary`

@@ -34,7 +34,12 @@ param(
     [string]$AdvertisedHost = '192.168.0.6',
     [switch]$ReuseLoaded,
     [switch]$KeepLoaded,
-    [switch]$VaryPrompts
+    [switch]$VaryPrompts,
+    # Where the drive retains each request's prompt and complete response.
+    # Defaults per run. The environment variable is deliberately not read:
+    # it persists across `& script.ps1` calls within one PowerShell process,
+    # so a sweep would file every run's text under the first run's path.
+    [string]$EvidenceFile = ''
 )
 
 # A stage's batch is its ubatch. A lap crosses the wire one ubatch at a
@@ -89,6 +94,38 @@ function Wait-Port([int]$port) {
         Start-Sleep -Milliseconds 250
     } while ((Get-Date) -lt $deadline)
     throw "Agent port $port did not become ready."
+}
+# Not a semantic-correctness gate: a model can answer at length and still be
+# wrong about its subject. This asserts only that every request came back
+# with a terminal and a body somebody could read -- which four passing
+# driver verdicts do not establish. A model that samples an
+# end-of-generation token on its first step answers, in order, with exactly
+# one terminal and no text at all.
+function Assert-NonEmptyResponses([string]$evidencePath, [int]$expectedSessions) {
+    if (-not (Test-Path -LiteralPath $evidencePath)) {
+        throw "Non-empty response gate failed: no evidence at $evidencePath"
+    }
+    $text = Get-Content -LiteralPath $evidencePath -Raw
+    $sections = @([regex]::Split($text, '(?m)^## Session ') | Select-Object -Skip 1)
+    $bad = @()
+    if ($sections.Count -ne $expectedSessions) {
+        $bad += "session-count=$($sections.Count) expected=$expectedSessions"
+    }
+    for ($i = 0; $i -lt $sections.Count; $i++) {
+        $sec = $sections[$i]
+        $tok = [regex]::Match($sec, '(?m)^- tokens: (\d+)')
+        $done = [regex]::Match($sec, '(?m)^- completed: (\w+)')
+        # Anchored on the section separator. An unanchored lazy match ends
+        # on the separator itself, so an empty response reads as content.
+        $body = [regex]::Match($sec, '(?ms)^### Complete response[ \t]*\r?\n(?<body>.*?)\r?\n---[ \t]*\r?\n?$')
+        $n = if ($tok.Success) { [int]$tok.Groups[1].Value } else { -1 }
+        if ($n -le 0) { $bad += "session$($i+1):tokens=$n" }
+        if (-not ($done.Success -and $done.Groups[1].Value -eq 'true')) { $bad += "session$($i+1):not-completed" }
+        if (-not $body.Success -or [string]::IsNullOrWhiteSpace($body.Groups['body'].Value)) { $bad += "session$($i+1):empty-body" }
+    }
+    if ($bad.Count -gt 0) {
+        throw "Non-empty response gate failed: $($bad -join ', '); evidence at $evidencePath"
+    }
 }
 function Assert-StageExecution([int[]]$stagePorts) {
     $driveLog = Join-Path $out 'drive.log'
@@ -162,6 +199,9 @@ try {
     $env:P4_DRIVE_PROMPT_FILE = $PromptFile
     $env:P4_DRIVE_KEEP_LOADED = if ($KeepLoaded) { '1' } else { '0' }
     $env:P4_DRIVE_QUIET_MS = [string]$QuietMilliseconds
+    $script:EvidencePath = if ([string]::IsNullOrWhiteSpace($EvidenceFile)) { Join-Path $out 'evidence.md' } else { $EvidenceFile }
+    $script:PreviousEvidenceEnv = $env:P4_DRIVE_EVIDENCE_FILE
+    $env:P4_DRIVE_EVIDENCE_FILE = $script:EvidencePath
     $env:P4_STAGED_SERVER_BINARY = $ServerBinary
     $env:P4_DRIVE_PLAN_0 = $plans[0]
     $env:P4_DRIVE_PLAN_1 = $plans[1]
@@ -223,9 +263,13 @@ try {
     $driveExitCode = [int]$drive.ExitCode
     if ($driveExitCode -ne 0) { throw "drive exited with $driveExitCode; see $out" }
     Assert-StageExecution $ports
+    Assert-NonEmptyResponses $script:EvidencePath $Requests
     [pscustomobject]@{ run_id=$RunId; passed=$true; output=$out; keep_loaded=[bool]$KeepLoaded; agents=$ports; batch_size=$BatchSize; ubatch_size=$UBatchSize; native_slots=$sequenceCapacity; context_size=$ContextSize; prompt_tokens=$PromptTokens; generation_tokens=$Tokens } |
         ConvertTo-Json -Depth 5 | Set-Content (Join-Path $out 'result.json') -Encoding utf8
 } finally {
+    if (Test-Path Variable:script:PreviousEvidenceEnv) {
+        $env:P4_DRIVE_EVIDENCE_FILE = $script:PreviousEvidenceEnv
+    }
     # Explicit keep-loaded runs are diagnostic/throughput sessions. Preserve
     # the loaded agents even when the driver reports a failed request so the
     # caller can inspect state and continue a controlled follow-up. Ordinary
