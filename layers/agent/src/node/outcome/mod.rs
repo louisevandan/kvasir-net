@@ -9,6 +9,8 @@
 //! Bodies stay opaque. The core never learns what a message means, so a token
 //! carries its text as bytes and nothing here parses them.
 
+pub mod close;
+
 use crate::node::payload::Payload;
 use p4_adapter::Outcome;
 use p4_protocol::frame::Frame;

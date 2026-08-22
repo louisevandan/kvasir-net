@@ -346,6 +346,15 @@ impl Adapter for Served {
                 // "done", or it will believe a conversation was saved.
                 detail: "this backend surface cannot persist sequence state".into(),
             }),
+            // This backend never reserves a native slot
+            // (`reserves_sequence_slots` is the trait default, `false`), so
+            // there is never anything here for a close to release. Still
+            // owed the event: the node's single lifecycle slot is waiting on
+            // it regardless of what the adapter actually held.
+            Work::Close(close) => events.raise(Event::Closed {
+                deployment: close.deployment,
+                sequence: close.sequence,
+            }),
         }
     }
 }

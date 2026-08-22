@@ -16,6 +16,7 @@ impl Payload for Sequences {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
         Some(Sequence {
             sequence: frame.envelope.route.clone(),
+            session_epoch: 0,
             state: None,
             prompt: Some("prompt".into()),
             remaining: 4,

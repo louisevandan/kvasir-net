@@ -50,6 +50,7 @@ fn outer_can_see_which_node_is_holding_which_request() {
                     &format!("req{index}"),
                     QueueClass::Prefill,
                     ToNode::Execute {
+                        session_epoch: 0,
                         prompt: "긴 작업".into(),
                         max_tokens: 6,
                         options: "{}".into(),
@@ -117,6 +118,7 @@ fn one_inference_can_be_cancelled_while_the_rest_carry_on() {
                     route,
                     QueueClass::Prefill,
                     ToNode::Execute {
+                session_epoch: 0,
                         prompt: "대기".into(),
                         max_tokens: 3,
                         options: "{}".into(),
@@ -275,6 +277,7 @@ fn duplicate_cancel_is_idempotent_and_does_not_replay_the_request_terminal() {
                     route,
                     QueueClass::Prefill,
                     ToNode::Execute {
+                session_epoch: 0,
                         prompt: "대기".into(),
                         max_tokens: 3,
                         options: "{}".into(),
@@ -354,6 +357,7 @@ fn cancelling_an_active_hop_does_not_claim_backend_interruption() {
                 "active-cancel",
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "실행 중".into(),
                     max_tokens: 3,
                     options: "{}".into(),
@@ -422,6 +426,7 @@ fn stale_generation_or_return_channel_cannot_remove_a_queued_request() {
                     route,
                     QueueClass::Prefill,
                     ToNode::Execute {
+                session_epoch: 0,
                         prompt: "대기".into(),
                         max_tokens: 3,
                         options: "{}".into(),
@@ -525,6 +530,7 @@ fn cancelling_after_normal_terminal_reports_the_terminal_race() {
                 "finished",
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "끝".into(),
                     max_tokens: 1,
                     options: "{}".into(),
@@ -594,6 +600,7 @@ fn outer_can_collect_traffic_and_queue_statistics() {
                     &format!("r{index}"),
                     QueueClass::Prefill,
                     ToNode::Execute {
+                        session_epoch: 0,
                         prompt: "일".into(),
                         max_tokens: 2,
                         options: "{}".into(),

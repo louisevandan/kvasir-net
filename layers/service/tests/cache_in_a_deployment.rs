@@ -116,6 +116,7 @@ fn a_conversation_spread_over_a_chain_persists_and_restores_on_every_stage() {
             "session",
             QueueClass::Prefill,
             ToNode::Execute {
+                session_epoch: 0,
                 prompt: "긴 대화".into(),
                 max_tokens: 4,
                 options: "{}".into(),
@@ -177,6 +178,7 @@ fn a_conversation_spread_over_a_chain_persists_and_restores_on_every_stage() {
             "session",
             QueueClass::Prefill,
             ToNode::Execute {
+                session_epoch: 0,
                 prompt: "이어서".into(),
                 max_tokens: 3,
                 options: "{}".into(),

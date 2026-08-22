@@ -30,6 +30,18 @@ pub struct Hop {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sequence {
     pub sequence: SequenceId,
+    /// The session `sequence` belongs to, minted once at that session's own
+    /// first admission and carried unchanged through every later hop or lap
+    /// -- see `p4_agent_core::node::payload::Payload::session_epoch` for
+    /// where it is minted and echoed. A sequence id may legitimately be
+    /// reused for a later, unrelated session (`tools/drive`'s
+    /// `Admission::retry` does this on purpose), so an adapter that tracks
+    /// its own residency by sequence id alone cannot tell that reuse apart
+    /// from a redelivery of the session that already released it. `0` is the
+    /// value every caller that has never opted into session identity sends,
+    /// and an adapter that never distinguishes epochs may simply ignore this
+    /// field the way it always has.
+    pub session_epoch: u64,
     /// Present when this node begins the work — the chain's first node, or the
     /// only node on an internal backend. This is the request as OUTER stated
     /// it, which is P4's to hold; everything derived from it is not.

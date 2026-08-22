@@ -423,6 +423,18 @@ impl Session {
                     prompt: self.ask(index),
                     max_tokens: tokens,
                     options: self.options.clone(),
+                    // `ChainLease::attempt` is already exactly this: a value
+                    // minted fresh at this route's own first admission (or
+                    // retried admission -- see `Admission::retry`, which is
+                    // the one place a route's request identity is
+                    // deliberately reused for a new session) and never
+                    // reused for an unrelated session. See
+                    // `p4_service::message::ToNode::Execute::session_epoch`'s
+                    // own doc for what a node does with it.
+                    session_epoch: admitted
+                        .as_ref()
+                        .map(|lease| lease.attempt)
+                        .unwrap_or_default(),
                 }),
             );
             self.trace(format!(

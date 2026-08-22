@@ -201,6 +201,7 @@ fn a_decode_lap_uses_the_carried_position_and_does_not_need_the_tail_cut_set() {
             deployment: "d".into(),
             sequences: vec![Sequence {
                 sequence: "conversation".into(),
+                session_epoch: 0,
                 state: Some(crate::encode_state(6, None)),
                 prompt: None,
                 remaining: 8,

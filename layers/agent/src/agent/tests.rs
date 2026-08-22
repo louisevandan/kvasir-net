@@ -46,6 +46,7 @@ impl Payload for Bodies {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
         Some(Sequence {
             sequence: frame.envelope.route.clone(),
+            session_epoch: 0,
             state: None,
             prompt: Some(String::from_utf8_lossy(&frame.body).into_owned()),
             remaining: 1,

@@ -5,9 +5,9 @@
 //! inside it.
 
 use crate::capability::CapabilityRegistry;
-use crate::message::wire::{decode_to_node, encode_reply, encode_to_node};
-use crate::message::{Reply, ToNode};
-use p4_adapter::{Cache, CacheAction, Load, Outcome, Sequence, Unload, Work};
+use crate::message::ToNode;
+use crate::message::wire::{decode_to_node, encode_to_node};
+use p4_adapter::{Outcome, Sequence, Work};
 use p4_agent_core::node::payload::Payload;
 use p4_protocol::frame::Frame;
 
@@ -29,20 +29,24 @@ impl Payload for Bodies {
         // A body is either the request as OUTER stated it or whatever the
         // adapter last produced. Nothing here unwraps the second: it is moved,
         // not read.
-        let (prompt, remaining, state, options) = match decode_to_node(&frame.body).ok()? {
-            ToNode::Execute {
-                prompt,
-                max_tokens,
-                options,
-            } => (Some(prompt), max_tokens, None, options),
-            ToNode::Continue {
-                remaining,
-                options,
-                state,
-                ..
-            } => (None, remaining, Some(state), options),
-            _ => return None,
-        };
+        let (prompt, remaining, state, options, session_epoch) =
+            match decode_to_node(&frame.body).ok()? {
+                ToNode::Execute {
+                    prompt,
+                    max_tokens,
+                    options,
+                    session_epoch,
+                    ..
+                } => (Some(prompt), max_tokens, None, options, session_epoch),
+                ToNode::Continue {
+                    remaining,
+                    options,
+                    state,
+                    session_epoch,
+                    ..
+                } => (None, remaining, Some(state), options, session_epoch),
+                _ => return None,
+            };
         Some(Sequence {
             // The logical request owns the backend sequence. Route is only a
             // transport/continuation key and may change across reconnect or
@@ -53,6 +57,7 @@ impl Payload for Bodies {
             } else {
                 frame.envelope.request_id.clone()
             },
+            session_epoch,
             prompt,
             state,
             remaining,
@@ -64,18 +69,20 @@ impl Payload for Bodies {
         let Ok(message) = decode_to_node(&carrier.body) else {
             return carrier.body.clone();
         };
-        let (remaining, emitted, options) = match message {
+        let (remaining, emitted, options, session_epoch) = match message {
             ToNode::Execute {
                 max_tokens,
                 options,
+                session_epoch,
                 ..
-            } => (max_tokens, 0, options),
+            } => (max_tokens, 0, options, session_epoch),
             ToNode::Continue {
                 remaining,
                 emitted,
                 options,
+                session_epoch,
                 ..
-            } => (remaining, emitted, options),
+            } => (remaining, emitted, options, session_epoch),
             _ => return carrier.body.clone(),
         };
         encode_to_node(&ToNode::Continue {
@@ -89,6 +96,9 @@ impl Payload for Bodies {
             emitted: emitted.saturating_add(u32::from(!outcome.text.is_empty())),
             options,
             state: outcome.forward.clone().unwrap_or_default(),
+            // Carried unchanged -- see `ToNode::Execute::session_epoch`'s own
+            // doc for why this must never be re-minted on a lap.
+            session_epoch,
         })
     }
 
@@ -101,70 +111,7 @@ impl Payload for Bodies {
 
     fn lifecycle(&self, frame: &Frame) -> Option<Work> {
         let deployment = self.deployment(frame)?;
-        match decode_to_node(&frame.body).ok()? {
-            ToNode::Load {
-                plan,
-                artifact,
-                capability_snapshot_id,
-                capability_expires_at,
-                ..
-            } => Some(Work::Load(Load {
-                deployment,
-                plan,
-                artifact,
-                capability_snapshot_id,
-                capability_expires_at,
-            })),
-            ToNode::Unload => Some(Work::Unload(Unload { deployment })),
-            // Cache instructions are lifecycle-shaped: one instruction about
-            // one thing, run alone rather than batched into a window. That
-            // they are about a sequence and a load is about a deployment makes
-            // no difference to the node, which cares only that they do not
-            // batch.
-            ToNode::Persist { sequence } => {
-                Some(cache(frame, deployment, sequence, CacheAction::Persist))
-            }
-            ToNode::PreparePersist { sequence } => Some(cache(
-                frame,
-                deployment,
-                sequence,
-                CacheAction::PreparePersist,
-            )),
-            ToNode::Restore { sequence } => {
-                Some(cache(frame, deployment, sequence, CacheAction::Restore))
-            }
-            ToNode::PrepareRestore { sequence } => Some(cache(
-                frame,
-                deployment,
-                sequence,
-                CacheAction::PrepareRestore,
-            )),
-            ToNode::Fork { sequence, into } => Some(cache(
-                frame,
-                deployment,
-                sequence,
-                CacheAction::Fork { into },
-            )),
-            ToNode::Discard { sequence } => {
-                Some(cache(frame, deployment, sequence, CacheAction::Discard))
-            }
-            ToNode::PrepareDiscard { sequence } => Some(cache(
-                frame,
-                deployment,
-                sequence,
-                CacheAction::PrepareDiscard,
-            )),
-            ToNode::Commit { sequence } => {
-                Some(cache(frame, deployment, sequence, CacheAction::Commit))
-            }
-            ToNode::Abort { sequence } => {
-                Some(cache(frame, deployment, sequence, CacheAction::Abort))
-            }
-            ToNode::Reconcile { sequence } => {
-                Some(cache(frame, deployment, sequence, CacheAction::Reconcile))
-            }
-            ToNode::Execute { .. } | ToNode::Continue { .. } => None,
-        }
+        inbound::lifecycle_work(frame, deployment)
     }
 
     fn ceiling(&self, frame: &Frame) -> Option<usize> {
@@ -209,22 +156,20 @@ impl Payload for Bodies {
         None
     }
 
-    // The outbound half. Replies are the same vocabulary a caller sent in, so
-    // one decoder reads everything that comes back.
+    // The outbound half -- everything a node writes back -- has its
+    // encoding in `outbound.rs` instead of here, because it changes
+    // independently of what this half reads. Rust allows only one `impl
+    // Payload for Bodies` per crate, so every method still has to be named
+    // in this one block; each body below is a one-line call into that
+    // module, except `cache_failure`, which needs `self.lifecycle` to find
+    // its identity fields before `outbound::cache_failure` can encode them.
 
     fn token(&self, text: &str, index: u32) -> Vec<u8> {
-        encode_reply(&Reply::Token {
-            index,
-            text: text.to_owned(),
-        })
+        outbound::token(text, index)
     }
 
     fn finished(&self, reason: &str, generated: u32) -> Vec<u8> {
-        encode_reply(&Reply::Done {
-            reason: reason.to_owned(),
-            generated,
-            final_token: None,
-        })
+        outbound::finished(reason, generated)
     }
 
     fn finished_with_token(
@@ -234,46 +179,66 @@ impl Payload for Bodies {
         index: u32,
         text: &str,
     ) -> Option<Vec<u8>> {
-        Some(encode_reply(&Reply::Done {
-            reason: reason.to_owned(),
-            generated,
-            final_token: Some((index, text.to_owned())),
-        }))
+        Some(outbound::finished_with_token(
+            reason, generated, index, text,
+        ))
     }
 
     fn failure(&self, detail: &str) -> Vec<u8> {
-        encode_reply(&Reply::Failed {
-            detail: detail.to_owned(),
-        })
+        outbound::failure(detail)
     }
 
     fn cache_failure(&self, frame: &Frame, detail: &str) -> Vec<u8> {
         let Some(Work::Cache(cache)) = self.lifecycle(frame) else {
-            return self.failure(detail);
+            return outbound::failure(detail);
         };
         let Some(link) = frame.envelope.chain.as_ref().map(|chain| chain.current()) else {
-            return self.failure(detail);
+            return outbound::failure(detail);
         };
-        encode_reply(&Reply::CacheFailed {
-            deployment: link.binding.clone(),
-            stage_id: link.node.clone(),
-            generation: link.generation,
-            operation_id: frame.envelope.request_id.clone(),
-            sequence: cache.subject().clone(),
-            detail: detail.to_owned(),
-        })
+        outbound::cache_failure(
+            &link.binding,
+            &link.node,
+            link.generation,
+            &frame.envelope.request_id,
+            cache.subject(),
+            detail,
+        )
     }
 
     fn progress(&self, stage: u32, percent: u32) -> Vec<u8> {
-        encode_reply(&Reply::Progress { stage, percent })
+        outbound::progress(stage, percent)
     }
 
     fn bound(&self, generation: u64) -> Vec<u8> {
-        encode_reply(&Reply::Bound { generation })
+        outbound::bound(generation)
     }
 
     fn released(&self) -> Vec<u8> {
-        encode_reply(&Reply::Released)
+        outbound::released()
+    }
+
+    fn close(&self, sequence: &str, close_id: u64, session_epoch: u64) -> Vec<u8> {
+        outbound::close(sequence, close_id, session_epoch)
+    }
+
+    fn session_closed(&self, sequence: &str, close_id: u64) -> Vec<u8> {
+        outbound::session_closed(sequence, close_id)
+    }
+
+    fn close_identity(&self, frame: &Frame) -> Option<(String, u64)> {
+        outbound::close_identity(frame)
+    }
+
+    fn session_epoch(&self, frame: &Frame) -> Option<u64> {
+        outbound::session_epoch(frame)
+    }
+
+    fn session_closed_ack(&self, frame: &Frame) -> Option<(String, u64)> {
+        outbound::session_closed_ack(frame)
+    }
+
+    fn supports_close(&self) -> bool {
+        true
     }
 
     fn cached(
@@ -286,15 +251,15 @@ impl Payload for Bodies {
         bytes: u64,
         detail: &str,
     ) -> Vec<u8> {
-        encode_reply(&Reply::Cached {
-            deployment: deployment.to_owned(),
-            stage_id: stage_id.to_owned(),
+        outbound::cached(
+            deployment,
+            stage_id,
             generation,
-            operation_id: operation_id.to_owned(),
-            sequence: sequence.to_owned(),
+            operation_id,
+            sequence,
             bytes,
-            detail: detail.to_owned(),
-        })
+            detail,
+        )
     }
 
     fn cache_status(
@@ -308,42 +273,21 @@ impl Payload for Bodies {
         bytes: u64,
         detail: &str,
     ) -> Vec<u8> {
-        encode_reply(&Reply::CacheStatus {
-            deployment: deployment.to_owned(),
-            stage_id: stage_id.to_owned(),
+        outbound::cache_status(
+            deployment,
+            stage_id,
             generation,
-            operation_id: operation_id.to_owned(),
-            sequence: sequence.to_owned(),
-            state: state.to_owned(),
+            operation_id,
+            sequence,
+            state,
             bytes,
-            detail: detail.to_owned(),
-        })
+            detail,
+        )
     }
 }
 
+mod inbound;
+mod outbound;
+
 #[cfg(test)]
 mod tests;
-
-/// One cache instruction, for a node that will run it alone.
-fn cache(frame: &Frame, deployment: String, sequence: String, action: CacheAction) -> Work {
-    let generation = frame
-        .envelope
-        .chain
-        .as_ref()
-        .map(|chain| chain.current().generation)
-        .unwrap_or_default();
-    let stage_id = frame
-        .envelope
-        .chain
-        .as_ref()
-        .map(|chain| chain.current().node.clone())
-        .unwrap_or_default();
-    Work::Cache(Cache {
-        deployment,
-        stage_id,
-        generation,
-        operation_id: frame.envelope.request_id.clone(),
-        sequence,
-        action,
-    })
-}

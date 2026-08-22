@@ -3,6 +3,7 @@ use super::*;
 fn sequence(id: &str) -> Sequence {
     Sequence {
         sequence: id.into(),
+        session_epoch: 0,
         state: None,
         prompt: Some("hello".into()),
         remaining: 8,
@@ -46,6 +47,7 @@ fn a_sequence_can_carry_an_opaque_inbound_cut_set() {
     let payload = vec![0, 7, 9, 255];
     let sequence = Sequence {
         sequence: "stage-1".into(),
+        session_epoch: 0,
         state: Some(payload.clone()),
         prompt: None,
         remaining: 1,

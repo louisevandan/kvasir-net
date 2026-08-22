@@ -178,6 +178,7 @@ async fn seed(fleet: &Fleet) -> Vec<u32> {
             &route,
             QueueClass::Prefill,
             ToNode::Execute {
+                session_epoch: 0,
                 prompt: "seed".into(),
                 max_tokens: 1,
                 options: "{}".into(),
@@ -437,6 +438,7 @@ fn restore_is_ordered_by_sequence_and_blocks_inference_until_complete() {
                 "session",
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "seed".into(),
                     max_tokens: 1,
                     options: "{}".into(),
@@ -468,6 +470,7 @@ fn restore_is_ordered_by_sequence_and_blocks_inference_until_complete() {
                 "active-inference",
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "boundary".into(),
                     max_tokens: 1,
                     options: "{}".into(),
@@ -496,6 +499,7 @@ fn restore_is_ordered_by_sequence_and_blocks_inference_until_complete() {
                 "after-restore",
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "after restore".into(),
                     max_tokens: 1,
                     options: "{}".into(),

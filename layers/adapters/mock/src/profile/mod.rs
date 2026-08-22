@@ -43,6 +43,20 @@ pub struct Profile {
     /// numbering has to keep, so a mock has to be able to state it.
     pub mute_every: u32,
     pub fault: Fault,
+    /// Whether this mock reports `SequenceAcquired`/`SequenceReleased` the
+    /// way `staged` does. Off by default so every existing test that never
+    /// asked for this bookkeeping keeps ignoring it: turning it on without
+    /// also emitting the release side (which a middle stage deliberately
+    /// never does on its own -- see `close.rs`'s doc) would starve the very
+    /// throughput tests this adapter exists to run.
+    pub reserve_slots: bool,
+    /// When set, the terminal stage stops after this many of its own turns
+    /// regardless of `Sequence::remaining`, with `stop: Some("eos")` rather
+    /// than the ordinary length terminal's `"stop"`. Exists to reproduce a
+    /// backend that ends a session well short of its bound -- the case a
+    /// length-terminal prediction can never cover because there is nothing
+    /// to predict from.
+    pub eos_after_turns: Option<u32>,
 }
 
 /// Failures asked for on purpose, each one a terminal state that is otherwise
@@ -63,6 +77,11 @@ pub enum Fault {
     /// Preparation succeeds but commit fails. This is the failure needed to
     /// exercise compensation after an earlier stage has already committed.
     CacheCommit,
+    /// `Work::Close` always fails: the mock's stand-in for a native backend
+    /// that cannot confirm a sequence's release. Exists to reproduce the
+    /// defect where a failed close still let P4's own admission reopen —
+    /// see `agent::node::runner::close_fence`.
+    Close,
 }
 
 impl Default for Profile {
@@ -76,6 +95,8 @@ impl Default for Profile {
             reserved_per_stage: 0,
             mute_every: 0,
             fault: Fault::None,
+            reserve_slots: false,
+            eos_after_turns: None,
         }
     }
 }
@@ -94,6 +115,8 @@ impl Profile {
             reserved_per_stage: 188 * 1024 * 1024,
             mute_every: 0,
             fault: Fault::None,
+            reserve_slots: false,
+            eos_after_turns: None,
         }
     }
 

@@ -133,6 +133,7 @@ fn a_stage_that_fails_to_load_is_reported_and_refuses_to_serve() {
             "infer",
             QueueClass::Prefill,
             ToNode::Execute {
+                session_epoch: 0,
                 prompt: "안녕".into(),
                 max_tokens: 4,
                 options: "{}".into(),
@@ -235,6 +236,7 @@ fn a_lap_that_reports_nothing_does_not_consume_a_reply_number() {
                 "muted",
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "질문".into(),
                     max_tokens: 6,
                     options: "{}".into(),

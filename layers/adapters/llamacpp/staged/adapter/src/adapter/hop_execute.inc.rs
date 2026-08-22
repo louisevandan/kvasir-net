@@ -53,17 +53,25 @@ impl StagedAdapter {
         // hop by that field alone.
         //
         // What answers it correctly at every stage is this adapter's own
-        // memory: `self.sequences`'s `active` set is exactly the sequences
-        // that have already been through a hop at this node. A sequence not
-        // in it is beginning work here right now, whichever node this is and
-        // whichever lap of the chain this is. (A released sequence never
-        // reaches this line -- `reject_released_sequences` above already
-        // turned that case into an error.)
+        // memory: `self.sequences`'s `active` map is exactly the sequences
+        // that have already been through a hop at this node, keyed to the
+        // one session epoch each is currently held under. A sequence not in
+        // it -- or held under a *different* epoch than this hop names -- is
+        // beginning work here right now, whichever node this is and
+        // whichever lap of the chain this is. That second case is what
+        // makes a reused sequence id (`tools/drive`'s `Admission::retry`
+        // reuses one on purpose once a prior session has gone terminal) read
+        // as a fresh admission rather than as a continuation of whatever
+        // session held it before: `active` remembers the epoch, not just the
+        // id, so a new epoch never matches. (A hop naming the *same*
+        // `(sequence, epoch)` this node already released never reaches this
+        // line -- `reject_released_sequences` above already turned that case
+        // into an error.)
         let is_prefill_per_sequence: Vec<bool> = {
             let ledger = self.sequences.lock().expect("staged sequence ledger lock");
             hop.sequences
                 .iter()
-                .map(|sequence| !ledger.active.contains(&sequence.sequence))
+                .map(|sequence| ledger.active.get(&sequence.sequence) != Some(&sequence.session_epoch))
                 .collect()
         };
         let is_prefill = is_prefill_per_sequence.first().copied().unwrap_or(true);
@@ -166,6 +174,14 @@ impl StagedAdapter {
         );
         let mut outcomes = Vec::with_capacity(results.len());
         let mut released = Vec::new();
+        // Parallel to `released`: the epoch each released sequence was
+        // reserved under, so the ledger update below can tombstone the exact
+        // `(sequence, epoch)` pair rather than the id alone. Kept as a
+        // second vector instead of widening `released` itself, because
+        // `released` is also `execute_hop`'s external contract (`HopSuccess`,
+        // read by `hop()` to raise `Event::SequenceReleased`), which has no
+        // use for the epoch and should not have to carry it.
+        let mut released_epochs = Vec::new();
         for (index, (sequence, result)) in hop.sequences.iter().zip(results).enumerate() {
             if result.sequence_id != sequence.sequence {
                 return Err((
@@ -288,6 +304,7 @@ impl StagedAdapter {
                     // visible.
                     if release.body.as_slice() == b"CANCEL rejected: no active HOP" {
                         released.push(sequence.sequence.clone());
+                        released_epochs.push(sequence.session_epoch);
                         continue;
                     }
                     return Err((
@@ -307,21 +324,28 @@ impl StagedAdapter {
                     ));
                 }
                 released.push(sequence.sequence.clone());
+                released_epochs.push(sequence.session_epoch);
             }
         }
         // Every sequence in this hop has now been through a hop at this
         // node, whether it began here or continued: `active` is what the
         // next hop's derivation reads, so it has to gain every sequence this
-        // one saw. Every sequence this one released moves to `released` in
-        // the same critical section, so the two sets can never drift apart
-        // -- see `SequenceLedger`.
+        // one saw, keyed to the epoch this hop itself named for it (not
+        // whatever epoch may have been there before -- a fresh admission
+        // under a new epoch overwrites a stale entry the same way it must
+        // for `is_prefill_per_sequence` above to have derived it as a
+        // Prefill in the first place). Every session this one released moves
+        // to `released` in the same critical section, so the two can never
+        // drift apart -- see `SequenceLedger`.
         {
             let mut ledger = self.sequences.lock().expect("staged sequence ledger lock");
             for sequence in &hop.sequences {
-                ledger.active.insert(sequence.sequence.clone());
+                ledger
+                    .active
+                    .insert(sequence.sequence.clone(), sequence.session_epoch);
             }
-            for sequence in &released {
-                if ledger.release(sequence) {
+            for (sequence, epoch) in released.iter().zip(released_epochs.iter()) {
+                if ledger.release(sequence, *epoch) {
                     self.tombstone_evictions.fetch_add(1, Ordering::Relaxed);
                 }
             }

@@ -230,6 +230,62 @@ impl Agent {
         Some(self.nodes.lock().await.get(id)?.depth())
     }
 
+    /// How many sequences one node's admission gate currently believes it
+    /// holds a native slot for. See `Handle::reserved_sequences`.
+    pub async fn node_reserved(&self, id: &str) -> Option<usize> {
+        Some(self.nodes.lock().await.get(id)?.reserved_sequences())
+    }
+
+    /// How many `SessionClose` frames one node has sent and is still
+    /// waiting to hear `SessionClosed` for. See
+    /// `Handle::pending_session_closes`.
+    pub async fn node_pending_closes(&self, id: &str) -> Option<usize> {
+        Some(self.nodes.lock().await.get(id)?.pending_session_closes())
+    }
+
+    /// How many pending closes one node has given up retrying. See
+    /// `Counts::session_close_abandoned`.
+    pub async fn node_session_close_abandoned(&self, id: &str) -> Option<usize> {
+        Some(
+            self.nodes
+                .lock()
+                .await
+                .get(id)?
+                .counts()
+                .session_close_abandoned
+                .load(Ordering::Relaxed),
+        )
+    }
+
+    /// How many `SessionClosed` answers actually retired a pending close on
+    /// one node. See `Counts::session_closed_acked`.
+    pub async fn node_session_closed_acked(&self, id: &str) -> Option<usize> {
+        Some(
+            self.nodes
+                .lock()
+                .await
+                .get(id)?
+                .counts()
+                .session_closed_acked
+                .load(Ordering::Relaxed),
+        )
+    }
+
+    /// How many `SessionClosed` answers matched nothing pending on one node
+    /// -- stale, already-retired, or contaminated. See
+    /// `Counts::session_closed_stale`.
+    pub async fn node_session_closed_stale(&self, id: &str) -> Option<usize> {
+        Some(
+            self.nodes
+                .lock()
+                .await
+                .get(id)?
+                .counts()
+                .session_closed_stale
+                .load(Ordering::Relaxed),
+        )
+    }
+
     /// Cancels queued work for a route across this agent's nodes.
     ///
     /// Work already inside a backend runs to its hop boundary; cancelling
@@ -288,7 +344,7 @@ impl Agent {
                 let c = handle.counts();
                 let load = |value: &std::sync::atomic::AtomicUsize| value.load(Ordering::Relaxed);
                 format!(
-                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} invalid_events={} emitted={} raised={} lost={} blocked={} outbox_lost={} depth={} running={} backend=[{}]",
+                    "node={id} received={} queued={} claimed={} hops={} completions={} outcomes={} routed={} orphaned={} invalid_events={} emitted={} raised={} lost={} blocked={} outbox_lost={} reserved={} pending_closes={} session_close_abandoned={} session_closed_acked={} session_closed_stale={} depth={} running={} backend=[{}]",
                     load(&c.received),
                     load(&c.queued),
                     load(&c.claimed),
@@ -303,6 +359,23 @@ impl Agent {
                     c.lost.load(Ordering::Relaxed),
                     c.blocked.load(Ordering::Relaxed),
                     c.outbox_lost.load(Ordering::Relaxed),
+                    // `reserved`/`pending_closes` are not counters -- they
+                    // are the admission gate's and the close retry's own
+                    // live state, read the same way `node_reserved`/
+                    // `node_pending_closes` already do -- but an operator
+                    // reading one line per node must see them here too:
+                    // `depth` is queue depth, not reservation, and a close
+                    // stuck at max retries is otherwise invisible outside a
+                    // dedicated accessor nobody watching this line would
+                    // think to call. See `apps/p4/docs/testing.md` and
+                    // `close_fence`'s own doc for why `reserved` staying
+                    // above zero is the visible half of a native close that
+                    // never confirmed its own release.
+                    handle.reserved_sequences(),
+                    handle.pending_session_closes(),
+                    load(&c.session_close_abandoned),
+                    load(&c.session_closed_acked),
+                    load(&c.session_closed_stale),
                     handle.depth(),
                     handle.in_adapter(),
                     // The same words the protocol carries. An operator at the

@@ -50,12 +50,14 @@ fn every_node_message_survives_a_round_trip() {
             prompt: "안녕".into(),
             max_tokens: 500,
             options: r#"{"temperature":0.7}"#.into(),
+            session_epoch: 42,
         },
         ToNode::Continue {
             remaining: 500,
             emitted: 12,
             options: r#"{"temperature":0}"#.into(),
             state: vec![0, 1, 2, 250, 255],
+            session_epoch: 42,
         },
         ToNode::Persist {
             sequence: "s0".into(),
@@ -80,6 +82,15 @@ fn every_node_message_survives_a_round_trip() {
         },
         ToNode::Reconcile {
             sequence: "s0".into(),
+        },
+        ToNode::SessionClose {
+            sequence: "s0".into(),
+            close_id: 7,
+            session_epoch: 42,
+        },
+        ToNode::SessionClosed {
+            sequence: "s0".into(),
+            close_id: 7,
         },
     ] {
         assert_eq!(decode_to_node(&encode_to_node(&message)).unwrap(), message);

@@ -39,6 +39,7 @@ impl Payload for TerminalPayload {
     fn sequence(&self, _: &Frame) -> Option<p4_adapter::Sequence> {
         Some(p4_adapter::Sequence {
             sequence: "terminal".into(),
+            session_epoch: 0,
             prompt: None,
             state: None,
             remaining: self.remaining,

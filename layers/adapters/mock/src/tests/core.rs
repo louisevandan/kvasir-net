@@ -283,6 +283,7 @@ fn a_middle_stage_preserves_the_global_decode_position() {
             deployment: "d".into(),
             sequences: vec![Sequence {
                 sequence: "s0".into(),
+                session_epoch: 0,
                 state: Some(crate::encode_state(6, None)),
                 prompt: None,
                 remaining: 3,

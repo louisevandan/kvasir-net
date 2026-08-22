@@ -35,6 +35,7 @@ mod tests_hop {
     fn sequence(id: &str, state: Option<Vec<u8>>) -> p4_adapter::Sequence {
         p4_adapter::Sequence {
             sequence: id.into(),
+            session_epoch: 0,
             state,
             prompt: None,
             remaining: 2,
@@ -55,10 +56,17 @@ mod tests_hop {
     // no real stage server is needed to exercise everything ahead of that
     // call, which is what these tests are about.
 
+    // Round 3 narrows this test's own contract: rejection here is scoped to
+    // the exact session (`sequence`, `session_epoch`) pair that was
+    // released, not to the sequence id alone. See `tests_session_epoch.
+    // inc.rs` for the companion case -- a *different* epoch reusing this
+    // same id -- and for why that used to be rejected too, wrongly.
     #[test]
-    fn a_released_sequence_that_arrives_again_is_rejected() {
+    fn a_released_sequence_that_arrives_again_under_the_same_epoch_is_rejected() {
         let adapter = adapter();
-        adapter.sequences.lock().unwrap().release("seq-released");
+        adapter.sequences.lock().unwrap().release("seq-released", 0);
+        // `sequence()` builds `session_epoch: 0`, matching the release above
+        // -- a genuine redelivery of the session that already ended here.
         let (returned_sequence, detail) = adapter
             .execute_hop(&hop_for(vec![sequence("seq-released", None)]))
             .unwrap_err();
@@ -114,8 +122,8 @@ mod tests_hop {
             .lock()
             .unwrap()
             .active
-            .insert("seq-active".to_owned());
-        adapter.sequences.lock().unwrap().release("seq-released");
+            .insert("seq-active".to_owned(), 0);
+        adapter.sequences.lock().unwrap().release("seq-released", 0);
 
         let (returned_sequence, detail) = adapter
             .execute_hop(&hop_for(vec![
@@ -144,7 +152,7 @@ mod tests_hop {
     fn the_tombstone_set_stays_bounded() {
         let mut ledger = SequenceLedger::new();
         for index in 0..RELEASED_TOMBSTONE_CAP + 10 {
-            ledger.release(&format!("seq-{index}"));
+            ledger.release(&format!("seq-{index}"), 0);
         }
         assert_eq!(ledger.released.len(), RELEASED_TOMBSTONE_CAP);
         assert_eq!(ledger.released_order.len(), RELEASED_TOMBSTONE_CAP);
@@ -152,12 +160,12 @@ mod tests_hop {
         // released must be gone, and the most recent one must still be a
         // tombstone.
         for index in 0..10 {
-            assert!(!ledger.released.contains(&format!("seq-{index}")));
+            assert!(!ledger.released.contains(&(format!("seq-{index}"), 0)));
         }
         assert!(
             ledger
                 .released
-                .contains(&format!("seq-{}", RELEASED_TOMBSTONE_CAP + 9))
+                .contains(&(format!("seq-{}", RELEASED_TOMBSTONE_CAP + 9), 0))
         );
     }
 
@@ -170,12 +178,12 @@ mod tests_hop {
         let mut ledger = SequenceLedger::new();
         for index in 0..RELEASED_TOMBSTONE_CAP {
             assert!(
-                !ledger.release(&format!("seq-{index}")),
+                !ledger.release(&format!("seq-{index}"), 0),
                 "the cap is not reached until the {RELEASED_TOMBSTONE_CAP}th release"
             );
         }
         assert!(
-            ledger.release("seq-over-cap"),
+            ledger.release("seq-over-cap", 0),
             "the release that pushes past the cap must report the eviction it caused"
         );
     }
@@ -199,9 +207,9 @@ mod tests_hop {
             // Release the sequence under test first, then push it out of the
             // FIFO by releasing enough distinct sequences after it to fill
             // the cap.
-            ledger.release("seq-evicted");
+            ledger.release("seq-evicted", 0);
             for index in 0..RELEASED_TOMBSTONE_CAP {
-                ledger.release(&format!("seq-filler-{index}"));
+                ledger.release(&format!("seq-filler-{index}"), 0);
             }
         }
         assert!(
@@ -210,7 +218,7 @@ mod tests_hop {
                 .lock()
                 .unwrap()
                 .released
-                .contains("seq-evicted"),
+                .contains(&("seq-evicted".to_owned(), 0)),
             "the filler releases must have pushed the sequence under test out of the cap"
         );
 
@@ -263,8 +271,8 @@ mod tests_hop {
         // through `Work::Unload` itself would need a real stage server
         // process, which is outside what this adapter's unit tests start.
         let mut ledger = SequenceLedger::new();
-        ledger.active.insert("seq-active".to_owned());
-        ledger.release("seq-released");
+        ledger.active.insert("seq-active".to_owned(), 0);
+        ledger.release("seq-released", 0);
         assert!(!ledger.active.is_empty());
         assert!(!ledger.released.is_empty());
         assert!(!ledger.released_order.is_empty());
@@ -292,7 +300,7 @@ mod tests_hop {
     #[test]
     fn every_sequence_in_a_failed_hop_gets_its_own_failed_event() {
         let adapter = adapter();
-        adapter.sequences.lock().unwrap().release("seq-b-released");
+        adapter.sequences.lock().unwrap().release("seq-b-released", 0);
 
         let recorder = Recorder::default();
         adapter.hop(
@@ -349,7 +357,7 @@ mod tests_hop {
     #[test]
     fn a_single_sequence_failed_hop_keeps_the_original_detail_unwrapped() {
         let adapter = adapter();
-        adapter.sequences.lock().unwrap().release("seq-alone");
+        adapter.sequences.lock().unwrap().release("seq-alone", 0);
 
         let recorder = Recorder::default();
         adapter.hop(hop_for(vec![sequence("seq-alone", None)]), &recorder);

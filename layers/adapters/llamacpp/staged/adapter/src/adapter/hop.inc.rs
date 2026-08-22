@@ -65,12 +65,20 @@ impl StagedAdapter {
         }
     }
 
-    /// Rejects a hop that names a sequence this node has already released.
+    /// Rejects a hop that names a `(sequence, session_epoch)` this node has
+    /// already released -- a late arrival for a session that has already
+    /// ended here, not merely a reused sequence id. The tombstone is keyed
+    /// on the pair precisely so a *new* session reusing an old sequence id
+    /// (`tools/drive`'s `Admission::retry` does this on purpose once a prior
+    /// session has gone terminal) never collides with it: `released` only
+    /// ever remembers the exact epoch that ended, so a hop naming a fresh
+    /// epoch for that same id is not a match here at all and is read as
+    /// ordinary new work by the residency derivation that follows.
     ///
     /// `release_sequence` in `hop_execute.inc.rs` is a *prediction* --
     /// remaining length and stage position, not an observation that the
     /// backend is actually done -- so a hop can legitimately arrive again
-    /// for a sequence this node already let go. Checked ahead of the
+    /// for a session this node already let go. Checked ahead of the
     /// residency derivation (also in `hop_execute.inc.rs`) so a wrong
     /// prediction (or a redelivery) fails loudly here instead of being read
     /// as brand-new work and sent to the backend as a fresh Prefill, which
@@ -92,7 +100,10 @@ impl StagedAdapter {
     fn reject_released_sequences(&self, hop: &p4_adapter::Hop) -> Result<(), HopFailure> {
         let ledger = self.sequences.lock().expect("staged sequence ledger lock");
         for sequence in &hop.sequences {
-            if ledger.released.contains(&sequence.sequence) {
+            if ledger
+                .released
+                .contains(&(sequence.sequence.clone(), sequence.session_epoch))
+            {
                 self.tombstone_rejections.fetch_add(1, Ordering::Relaxed);
                 return Err((
                     Some(sequence.sequence.clone()),

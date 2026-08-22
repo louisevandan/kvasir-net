@@ -174,6 +174,7 @@ fn one_hop(adapter: &Served, seen: &Seen) {
             deployment: "d".into(),
             sequences: vec![Sequence {
                 sequence: "s0".into(),
+                session_epoch: 0,
                 state: None,
                 prompt: Some("hello".into()),
                 remaining: 4,

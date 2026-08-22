@@ -5,14 +5,17 @@
 //! cancellation remains cooperative at the boundary.
 
 pub mod bound;
+mod close_fence;
 pub mod events;
 pub mod handle;
+mod pending_close;
 mod response;
 
 pub use handle::{ActiveHop, Counts, Handle, WaitingRequest};
 
 use bound::Bound;
 use events::{RaisedEvent, Sink};
+use pending_close::PendingClose;
 
 use crate::node::payload::Payload;
 use crate::node::queue::NodeQueue;
@@ -49,7 +52,21 @@ pub struct Node {
     /// Native staged adapters report which routes occupy backend sequence
     /// slots. The node keeps new prefills queued while those slots are full;
     /// adapters that do not emit the optional events retain the old behavior.
-    active_sequences: Mutex<HashSet<String>>,
+    ///
+    /// Shared with `Handle` (as `reserved_sequences`) so an operator, and a
+    /// test proving a session-close reaches every stage, can read the same
+    /// count the admission gate itself reads rather than a derived guess.
+    ///
+    /// The value is the reservation's `session_epoch` (see
+    /// `Payload::session_epoch`), not merely a presence flag: a sequence id
+    /// is not a session identity, because a caller may legitimately reuse
+    /// one for an unrelated later session, and this map is what lets
+    /// `close_fence` tell that later session's reservation apart from an
+    /// earlier one's late or duplicate close. `0` for a vocabulary that
+    /// tracks no identity at all (`session_epoch` returns `None`), which
+    /// keeps `close_fence`'s checks permanently inert for it -- see that
+    /// module's own doc.
+    active_sequences: Arc<Mutex<HashMap<String, u64>>>,
     /// The adapter execution currently represented by `in_flight`.
     active_hop: Mutex<Option<u64>>,
     active_status: Arc<Mutex<Option<ActiveHop>>>,
@@ -62,6 +79,16 @@ pub struct Node {
     timed_out: Mutex<HashSet<u64>>,
     next_hop: AtomicU64,
     next_event_token: AtomicU64,
+    /// Source of `close_id`, this node's own identity for one `SessionClose`
+    /// occasion. Never shared across two target links -- see
+    /// `outcome::close::session_close_frames`'s own doc for why.
+    next_close_id: AtomicU64,
+    /// Every `SessionClose` this node sent and has not yet seen
+    /// `SessionClosed` for, keyed by the `close_id` it went out with.
+    /// Shared with `Handle` so an operator, and a test proving a lost close
+    /// or a lost ack still converges, can read the same count
+    /// `retry_pending_closes` itself drains from. See `runner::pending_close`.
+    pending_closes: Arc<Mutex<HashMap<u64, PendingClose>>>,
     /// The load or unload in flight, if any. Kept apart from `in_flight`
     /// because it belongs to a deployment rather than to a sequence.
     lifecycle: Mutex<Option<Frame>>,
@@ -122,13 +149,15 @@ impl Node {
         let outbox_lost = Arc::clone(&counts.outbox_lost);
         let outbox_done = outbox_done_tx.clone();
         let queued = out;
+        let active_sequences = Arc::new(Mutex::new(HashMap::new()));
+        let pending_closes = Arc::new(Mutex::new(HashMap::new()));
         let node = Node {
             queue: Arc::clone(&queue),
             adapter,
             payload,
             ceiling: Mutex::new(ceiling.max(1)),
             in_flight: Mutex::new(HashMap::new()),
-            active_sequences: Mutex::new(HashSet::new()),
+            active_sequences: Arc::clone(&active_sequences),
             active_hop: Mutex::new(None),
             active_status: Arc::new(Mutex::new(None)),
             active_cancel: Mutex::new(None),
@@ -136,6 +165,8 @@ impl Node {
             timed_out: Mutex::new(HashSet::new()),
             next_hop: AtomicU64::new(1),
             next_event_token: AtomicU64::new(1),
+            next_close_id: AtomicU64::new(1),
+            pending_closes: Arc::clone(&pending_closes),
             lifecycle: Mutex::new(None),
             bound: Mutex::new(Bound::Never),
             events: Sink::new(
@@ -194,6 +225,8 @@ impl Node {
             counts,
             reporting,
             active,
+            active_sequences,
+            pending_closes,
             admission_closed,
             stop_tx,
             done_tx,
@@ -247,6 +280,30 @@ impl Node {
                 frame = work.recv() => match frame {
                     Some(frame) => {
                         self.counts.received.fetch_add(1, Ordering::Relaxed);
+                        // Checked before anything else a normal frame goes
+                        // through: an acknowledgement is this node's own
+                        // pending-close bookkeeping answering itself, never
+                        // schedulable work, and the admission/queue path
+                        // below has no notion of it at all. See
+                        // `Payload::session_closed_ack`'s own doc for why
+                        // this has to run first rather than fall out of
+                        // `refusal`/`lifecycle`.
+                        if let Some((sequence, close_id)) =
+                            self.payload.session_closed_ack(&frame)
+                        {
+                            self.observe_session_closed(&sequence, close_id).await;
+                            continue;
+                        }
+                        // Checked next, before scheduling, for the same
+                        // reason the ack check above runs first: a close
+                        // naming a session this node's own reservation has
+                        // since moved past is fully answered right here --
+                        // see `close_fence::stale_session_close` -- and must
+                        // never reach the queue, the generation refusal, or
+                        // the adapter at all.
+                        if self.stale_session_close(&frame).await {
+                            continue;
+                        }
                         if let Some(refused) = self.refusal(&frame) {
                             self.reply_error(&frame, &refused).await;
                             continue;
@@ -314,23 +371,49 @@ impl Node {
         *self.active_hop.lock().expect("active hop lock") = None;
         *self.active_status.lock().expect("active status lock") = None;
         self.clear_event_fence();
+        // Stops retrying too. A deleted node has nobody left to hear a close
+        // land, and holding the entries would only make the next deadline
+        // tick busy-loop against a queue nothing drains anymore.
+        self.pending_closes
+            .lock()
+            .expect("pending close lock")
+            .clear();
     }
 
+    /// The earliest of two independent things this loop's timer has to wake
+    /// up for: a hop's own deadline, and a pending close's next retry. They
+    /// are unrelated conditions that happen to share one wakeup mechanism,
+    /// so the minimum of whichever are present is what the sleep is set to;
+    /// `on_deadline` below checks both, unconditionally, on every wakeup.
     fn next_deadline(&self) -> Option<u64> {
-        if !self.timed_out.lock().expect("timeout lock").is_empty() {
-            return None;
-        }
-        self.in_flight
+        let hop_deadline = if self.timed_out.lock().expect("timeout lock").is_empty() {
+            self.in_flight
+                .lock()
+                .expect("in-flight lock")
+                .values()
+                .filter_map(|frame| {
+                    (frame.envelope.deadline_unix_ms > 0).then_some(frame.envelope.deadline_unix_ms)
+                })
+                .min()
+        } else {
+            None
+        };
+        let close_deadline = self
+            .pending_closes
             .lock()
-            .expect("in-flight lock")
+            .expect("pending close lock")
             .values()
-            .filter_map(|frame| {
-                (frame.envelope.deadline_unix_ms > 0).then_some(frame.envelope.deadline_unix_ms)
-            })
-            .min()
+            .map(|pending| pending.next_retry_unix_ms)
+            .min();
+        [hop_deadline, close_deadline].into_iter().flatten().min()
     }
 
     async fn on_deadline(&self) {
+        self.expire_hop_if_due().await;
+        self.retry_pending_closes().await;
+    }
+
+    async fn expire_hop_if_due(&self) {
         let Some(hop_id) = *self.active_hop.lock().expect("active hop lock") else {
             return;
         };
@@ -398,11 +481,26 @@ impl Node {
                     let bound = *self.bound.lock().expect("generation lock");
                     (!bound.admits(cache.generation)).then(|| bound.why(cache.generation))
                 }
+                // Gated the same way as a cache operation and for the same
+                // reason: a close naming a generation this node has since
+                // moved past must not act on the wrong deployment's ledger,
+                // however harmless a stale one would likely be.
+                Work::Close(close) => {
+                    let bound = *self.bound.lock().expect("generation lock");
+                    (!bound.admits(close.generation)).then(|| bound.why(close.generation))
+                }
                 Work::Hop(_) => None,
             };
         }
         let bound = *self.bound.lock().expect("generation lock");
-        (!bound.admits(generation)).then(|| bound.why(generation))
+        if let Some(reason) = (!bound.admits(generation)).then(|| bound.why(generation)) {
+            return Some(reason);
+        }
+        // Only reachable for Hop-shaped work: every lifecycle-shaped frame
+        // already returned above, from the `if let Some(work) = ...` match.
+        // See `close_fence::session_epoch_conflict`'s own doc for what this
+        // refuses and why it is otherwise always `None`.
+        self.session_epoch_conflict(frame)
     }
 
     fn staged_prefill_slots(&self, ceiling: usize) -> usize {
@@ -550,12 +648,21 @@ impl Node {
                         // this stage's to fix.
                         let mut active =
                             self.active_sequences.lock().expect("active sequence lock");
-                        let newly_reserved: Vec<&str> = hop
-                            .sequences
-                            .iter()
-                            .filter(|sequence| active.insert(sequence.sequence.clone()))
-                            .map(|sequence| sequence.sequence.as_str())
-                            .collect();
+                        // The epoch is read from each claimed frame, not
+                        // invented here, and only recorded the first time
+                        // this node reserves a given sequence -- a decode
+                        // lap re-arriving for a sequence already held must
+                        // never overwrite its reservation's identity with
+                        // whatever that lap's own frame happens to carry.
+                        let mut newly_reserved: Vec<&str> = Vec::new();
+                        for (frame, sequence) in claimed.iter().zip(hop.sequences.iter()) {
+                            if active.contains_key(&sequence.sequence) {
+                                continue;
+                            }
+                            let epoch = self.payload.session_epoch(frame).unwrap_or(0);
+                            active.insert(sequence.sequence.clone(), epoch);
+                            newly_reserved.push(sequence.sequence.as_str());
+                        }
                         if std::env::var_os("P4_AGENT_TRACE_SEQUENCE").is_some() {
                             eprintln!(
                                 "P4_AGENT_SEQUENCE_RESERVE routes={} active={} ceiling={}",
@@ -622,7 +729,7 @@ impl Node {
         self.active_sequences
             .lock()
             .expect("active sequence lock")
-            .retain(|active| !sequences.contains(active));
+            .retain(|active, _| !sequences.contains(active));
     }
 
     fn begin_event_fence(&self) -> u64 {

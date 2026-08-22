@@ -66,6 +66,7 @@ pub async fn infer(
             route,
             QueueClass::Prefill,
             ToNode::Execute {
+                session_epoch: 0,
                 prompt: "대화".into(),
                 max_tokens: tokens,
                 options: "{}".into(),

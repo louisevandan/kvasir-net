@@ -93,6 +93,7 @@ impl Adapter for StagedAdapter {
             }
             Work::Hop(hop) => self.hop(hop, events),
             Work::Cache(cache) => self.cache(cache, events),
+            Work::Close(close) => self.close(close, events),
         }
     }
 

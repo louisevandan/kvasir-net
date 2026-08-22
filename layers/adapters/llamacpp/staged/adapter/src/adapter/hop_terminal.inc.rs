@@ -63,13 +63,20 @@ mod terminal_tests {
     #[test]
     fn sequence_release_is_idempotent_and_leaves_one_tombstone() {
         let mut ledger = SequenceLedger::new();
-        ledger.active.insert("sequence".into());
+        ledger.active.insert("sequence".into(), 0);
 
-        assert!(!ledger.release("sequence"));
-        assert!(!ledger.release("sequence"));
+        assert!(!ledger.release("sequence", 0));
+        assert!(!ledger.release("sequence", 0));
 
-        assert!(!ledger.active.contains("sequence"));
-        assert!(ledger.released.contains("sequence"));
-        assert_eq!(ledger.released_order.iter().filter(|id| id.as_str() == "sequence").count(), 1);
+        assert!(!ledger.active.contains_key("sequence"));
+        assert!(ledger.released.contains(&("sequence".to_owned(), 0)));
+        assert_eq!(
+            ledger
+                .released_order
+                .iter()
+                .filter(|(id, epoch)| id == "sequence" && *epoch == 0)
+                .count(),
+            1
+        );
     }
 }

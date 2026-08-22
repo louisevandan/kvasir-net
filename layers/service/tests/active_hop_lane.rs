@@ -51,6 +51,7 @@ fn a_decode_lane_hop_reports_decode_through_the_wire_status_reply() {
                 "decode-req",
                 QueueClass::Decode,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "디코드 랩".into(),
                     max_tokens: 6,
                     options: "{}".into(),

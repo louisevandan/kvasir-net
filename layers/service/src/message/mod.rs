@@ -94,6 +94,18 @@ pub enum ToNode {
         max_tokens: u32,
         /// Opaque sampling options, passed through whole.
         options: String,
+        /// This session's identity, minted here -- the very first hop-shaped
+        /// request for it -- and carried unchanged by every `Continue` that
+        /// follows (see that variant's own field) and by every
+        /// `SessionClose` a chain's tail eventually builds for it. Distinct
+        /// from `SessionClose`'s own `close_id`, which names one
+        /// transmission rather than the session: see
+        /// `p4_agent_core::node::payload::Payload::session_epoch` for why
+        /// both are needed. A caller with nothing meaningful to mint (a
+        /// fixture, a non-chained request) sends `0`; a real chained session
+        /// must not reuse a value across two unrelated sessions that could
+        /// ever share a sequence id.
+        session_epoch: u64,
     },
     /// One session, carried a step further. What "a step" is, and what has to
     /// be remembered to take it, belong to the backend; this says only that
@@ -107,6 +119,9 @@ pub enum ToNode {
         options: String,
         /// Opaque adapter state. P4 moves it and never reads it.
         state: Vec<u8>,
+        /// Echoed back exactly as `Execute` first minted it -- see that
+        /// variant's own doc.
+        session_epoch: u64,
     },
     /// Write one request's cached state somewhere durable and free the memory.
     ///
@@ -152,6 +167,45 @@ pub enum ToNode {
     /// replaying a mutation. The request identity remains in the envelope.
     Reconcile {
         sequence: String,
+    },
+    /// A sequence's session ended at a node further along its chain; this
+    /// node's own reservation for it, if it holds one, is no longer owed.
+    ///
+    /// Never sent by OUTER. P4's own core sends this to every node a
+    /// finished (or orphaned) request's chain named besides the one that
+    /// decided it was over, because that node is the only one to observe the
+    /// backend's own stop and a hop never returns to the others to tell them.
+    /// See `agent::node::outcome::close`.
+    ///
+    /// Acknowledged: the sender keeps this pending and resends it until a
+    /// matching `SessionClosed` arrives or its own bounded retry gives up.
+    /// `close_id` is the sender's own identity for *this* close occasion --
+    /// not the sequence, which a caller may legitimately reuse for an
+    /// unrelated later session (see `tools/drive`'s `Admission::retry`, which
+    /// does exactly that) and so cannot by itself tell a late reply for the
+    /// old session apart from one for the new. Idempotent: a receiver that
+    /// has never heard of `sequence`, or has already closed it, answers with
+    /// `SessionClosed` regardless.
+    SessionClose {
+        sequence: String,
+        close_id: u64,
+        /// The session `sequence` belonged to when this close was built --
+        /// see `Execute::session_epoch`'s own doc. A receiver refuses to act
+        /// on this close's behalf when its own currently held reservation
+        /// for `sequence` names a *different* session, which is what keeps
+        /// a resend that outlives its own session from touching whatever
+        /// reused the same sequence id afterward.
+        session_epoch: u64,
+    },
+    /// Acknowledges one `SessionClose`, naming back the same `sequence` and
+    /// `close_id` so the original sender can retire exactly the pending
+    /// entry this answers and no other -- see `SessionClose`'s own doc for
+    /// why `sequence` alone cannot do that fencing. Sent only in answer to a
+    /// `SessionClose` this node actually processed; never sent
+    /// unprompted.
+    SessionClosed {
+        sequence: String,
+        close_id: u64,
     },
 }
 

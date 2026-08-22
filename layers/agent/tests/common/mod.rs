@@ -3,7 +3,9 @@
 //! Shared by every test in this directory. Each test binary compiles it
 //! separately, so an item one binary does not use is not dead code.
 #![allow(dead_code)]
-use p4_adapter::Sequence;
+pub mod lossy;
+
+use p4_adapter::{Close, Sequence};
 use p4_agent_core::agent::{Agent, Duties, run};
 use p4_agent_core::node::payload::Payload;
 use p4_agent_core::queue::lane::{Budget, Lanes};
@@ -17,6 +19,15 @@ use tokio::net::TcpListener;
 
 /// Reads a body as "prompt|remaining", which is all a hop needs and keeps the
 /// core free of a message catalog.
+///
+/// Deliberately does not implement `lifecycle`/`close`/`supports_close`:
+/// this is the payload every throughput and pipelining test in this
+/// directory shares, and none of them are about session close. Leaving
+/// `supports_close` at its default `false` means those tests never receive
+/// the extra close-broadcast traffic at all -- see that default's own doc
+/// for why sending it to a vocabulary that never asked is actively unsafe,
+/// not merely unnecessary. `session_close.rs` uses `Lifecycle` below
+/// instead, which does opt in.
 pub struct Bodies;
 
 impl Payload for Bodies {
@@ -25,6 +36,7 @@ impl Payload for Bodies {
         let (prompt, remaining) = text.rsplit_once('|')?;
         Some(Sequence {
             sequence: frame.envelope.route.clone(),
+            session_epoch: 0,
             state: None,
             prompt: Some(prompt.to_owned()),
             remaining: remaining.parse().ok()?,
@@ -217,7 +229,9 @@ pub struct Lifecycle;
 
 impl Payload for Lifecycle {
     fn sequence(&self, frame: &Frame) -> Option<Sequence> {
-        Bodies.sequence(frame)
+        let mut sequence = Bodies.sequence(frame)?;
+        sequence.session_epoch = self.session_epoch(frame).unwrap_or(0);
+        Some(sequence)
     }
 
     fn lifecycle(&self, frame: &Frame) -> Option<p4_adapter::Work> {
@@ -232,6 +246,27 @@ impl Payload for Lifecycle {
                 capability_expires_at: 0,
             }));
         }
+        if let Some(rest) = text.strip_prefix("close|") {
+            let mut fields = rest.splitn(3, '|');
+            let sequence = fields.next().unwrap_or_default();
+            let _close_id = fields.next();
+            let session_epoch = fields
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let generation = frame
+                .envelope
+                .chain
+                .as_ref()
+                .map(|chain| chain.current().generation)
+                .unwrap_or_default();
+            return Some(p4_adapter::Work::Close(Close {
+                deployment,
+                generation,
+                sequence: sequence.to_owned(),
+                session_epoch,
+            }));
+        }
         (text == "unload").then_some(p4_adapter::Work::Unload(p4_adapter::Unload { deployment }))
     }
 
@@ -241,6 +276,49 @@ impl Payload for Lifecycle {
             .parse()
             .ok()
     }
+
+    fn close(&self, sequence: &str, close_id: u64, session_epoch: u64) -> Vec<u8> {
+        format!("close|{sequence}|{close_id}|{session_epoch}").into_bytes()
+    }
+
+    fn session_closed(&self, sequence: &str, close_id: u64) -> Vec<u8> {
+        format!("closed|{sequence}|{close_id}").into_bytes()
+    }
+
+    fn close_identity(&self, frame: &Frame) -> Option<(String, u64)> {
+        let text = String::from_utf8_lossy(&frame.body).into_owned();
+        let rest = text.strip_prefix("close|")?;
+        let mut fields = rest.splitn(3, '|');
+        let sequence = fields.next()?.to_owned();
+        let close_id = fields.next()?.parse().ok()?;
+        Some((sequence, close_id))
+    }
+
+    /// Reads the session identity a hop-shaped body (`"epoch|prompt|remaining"`)
+    /// or a close body (`"close|sequence|close_id|epoch"`) carries. See
+    /// `Payload::session_epoch`'s own doc.
+    fn session_epoch(&self, frame: &Frame) -> Option<u64> {
+        let text = String::from_utf8_lossy(&frame.body).into_owned();
+        if let Some(rest) = text.strip_prefix("close|") {
+            return rest.rsplit('|').next()?.parse().ok();
+        }
+        if text.starts_with("load|") || text.starts_with("closed|") || text == "unload" {
+            return None;
+        }
+        let (epoch, _rest) = text.split_once('|')?;
+        epoch.parse().ok()
+    }
+
+    fn session_closed_ack(&self, frame: &Frame) -> Option<(String, u64)> {
+        let text = String::from_utf8_lossy(&frame.body).into_owned();
+        let rest = text.strip_prefix("closed|")?;
+        let (sequence, close_id) = rest.split_once('|')?;
+        Some((sequence.to_owned(), close_id.parse().ok()?))
+    }
+
+    fn supports_close(&self) -> bool {
+        true
+    }
 }
 
 pub async fn start_with(duties: Arc<dyn Duties>, payload: Arc<dyn Payload>) -> Arc<Agent> {
@@ -248,6 +326,34 @@ pub async fn start_with(duties: Arc<dyn Duties>, payload: Arc<dyn Payload>) -> A
     let port = listener.local_addr().unwrap().port();
     let (agent, receiver, in_flight) = Agent::new(
         Address::tcp("127.0.0.1", port),
+        duties,
+        payload,
+        Lanes::default(),
+        Budget::default(),
+    );
+    tokio::spawn(inbox::serve(listener, agent.queue(), 256));
+    tokio::spawn(run(Arc::clone(&agent), receiver, in_flight));
+    agent
+}
+
+/// An agent whose only inbound path runs through `lossy::serve`, which drops
+/// exactly the first frame `drop` matches and passes every other one
+/// through whole. Everything this agent itself *sends* leaves over its own
+/// outbound connections and never touches this relay -- see `lossy::serve`'s
+/// own doc for why that is enough to target one direction of one exchange.
+pub async fn start_with_behind_dropping(
+    duties: Arc<dyn Duties>,
+    payload: Arc<dyn Payload>,
+    drop: Arc<lossy::Drop>,
+) -> Arc<Agent> {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bound = listener.local_addr().unwrap();
+    let relay = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let front = relay.local_addr().unwrap().port();
+    tokio::spawn(lossy::serve(relay, bound.to_string(), drop));
+
+    let (agent, receiver, in_flight) = Agent::new(
+        Address::tcp("127.0.0.1", front),
         duties,
         payload,
         Lanes::default(),

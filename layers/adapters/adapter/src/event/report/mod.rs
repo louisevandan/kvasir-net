@@ -55,6 +55,17 @@ pub enum Event {
         deployment: DeploymentId,
         sequence: SequenceId,
     },
+    /// A `Work::Close` instruction finished. Raised whether or not the
+    /// adapter actually held anything for `sequence` -- an adapter that never
+    /// reserved it, or already released it, still owes this so the node's
+    /// single lifecycle slot is freed. See `Work::Close` for why this exists
+    /// apart from `SequenceReleased`: that event is scoped to an in-flight
+    /// hop's own fence and would be rejected as orphaned if raised from a
+    /// `Close` dispatch, which runs alone the way `Load`/`Unload`/`Cache` do.
+    Closed {
+        deployment: DeploymentId,
+        sequence: SequenceId,
+    },
     /// A cache instruction finished.
     ///
     /// `bytes` is what the durable copy occupies — nought after a discard, and

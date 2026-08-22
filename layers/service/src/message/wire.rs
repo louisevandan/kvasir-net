@@ -44,6 +44,8 @@ const PREPARE_DISCARD: u8 = 25;
 const COMMIT: u8 = 26;
 const ABORT: u8 = 27;
 const RECONCILE: u8 = 29;
+const SESSION_CLOSE: u8 = 30;
+const SESSION_CLOSED: u8 = 31;
 const ACCEPTED: u8 = 32;
 const PROGRESS: u8 = 33;
 const BOUND: u8 = 34;
@@ -162,23 +164,27 @@ pub fn encode_to_node(message: &ToNode) -> Vec<u8> {
             prompt,
             max_tokens,
             options,
+            session_epoch,
         } => {
             out.push(EXECUTE);
             text(&mut out, prompt);
             number(&mut out, *max_tokens);
             text(&mut out, options);
+            wide(&mut out, *session_epoch);
         }
         ToNode::Continue {
             remaining,
             emitted,
             options,
             state,
+            session_epoch,
         } => {
             out.push(CONTINUE);
             number(&mut out, *remaining);
             number(&mut out, *emitted);
             text(&mut out, options);
             blob(&mut out, state);
+            wide(&mut out, *session_epoch);
         }
         ToNode::Persist { sequence } => {
             out.push(PERSIST);
@@ -221,6 +227,21 @@ pub fn encode_to_node(message: &ToNode) -> Vec<u8> {
             out.push(RECONCILE);
             text(&mut out, sequence);
         }
+        ToNode::SessionClose {
+            sequence,
+            close_id,
+            session_epoch,
+        } => {
+            out.push(SESSION_CLOSE);
+            text(&mut out, sequence);
+            wide(&mut out, *close_id);
+            wide(&mut out, *session_epoch);
+        }
+        ToNode::SessionClosed { sequence, close_id } => {
+            out.push(SESSION_CLOSED);
+            text(&mut out, sequence);
+            wide(&mut out, *close_id);
+        }
     }
     out
 }
@@ -240,12 +261,14 @@ pub fn decode_to_node(bytes: &[u8]) -> Decoded<ToNode> {
             prompt: cursor.text()?,
             max_tokens: cursor.number()?,
             options: cursor.text()?,
+            session_epoch: cursor.wide()?,
         },
         CONTINUE => ToNode::Continue {
             remaining: cursor.number()?,
             emitted: cursor.number()?,
             options: cursor.text()?,
             state: cursor.blob()?,
+            session_epoch: cursor.wide()?,
         },
         PERSIST => ToNode::Persist {
             sequence: cursor.text()?,
@@ -278,6 +301,15 @@ pub fn decode_to_node(bytes: &[u8]) -> Decoded<ToNode> {
 
         RECONCILE => ToNode::Reconcile {
             sequence: cursor.text()?,
+        },
+        SESSION_CLOSE => ToNode::SessionClose {
+            sequence: cursor.text()?,
+            close_id: cursor.wide()?,
+            session_epoch: cursor.wide()?,
+        },
+        SESSION_CLOSED => ToNode::SessionClosed {
+            sequence: cursor.text()?,
+            close_id: cursor.wide()?,
         },
         tag => return Err(Malformed(format!("unknown node message {tag}"))),
     };

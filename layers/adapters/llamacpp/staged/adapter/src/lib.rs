@@ -15,7 +15,7 @@ pub use protocol::{
     SequencePayload, WireType,
 };
 
-use p4_adapter::{Adapter, Distribution, Event, EventSink, Outcome, Work};
+use p4_adapter::{Adapter, Close, Distribution, Event, EventSink, Outcome, Work};
 use std::collections::HashMap;
 use std::env;
 use std::net::{SocketAddr, TcpListener};
@@ -33,6 +33,8 @@ include!("adapter/hop.inc.rs");
 include!("adapter/hop_release.inc.rs");
 include!("adapter/hop_terminal.inc.rs");
 include!("adapter/hop_execute.inc.rs");
+include!("adapter/hop_close.inc.rs");
 include!("adapter_trait.inc.rs");
 include!("tests.inc.rs");
 include!("tests_hop.inc.rs");
+include!("tests_session_epoch.inc.rs");

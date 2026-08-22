@@ -6,8 +6,8 @@
 //! batching does, and this moves when the adapter's event vocabulary does.
 
 use super::{Bound, Node};
-use crate::node::outcome::next;
-use p4_adapter::{CacheReceiptState, Event, EventSink, Work};
+use crate::node::outcome::{close, next};
+use p4_adapter::{CacheReceiptState, Close, Event, EventSink, Work};
 use p4_protocol::frame::Frame;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -137,10 +137,17 @@ impl Node {
                     self.counts.invalid_events.fetch_add(1, Ordering::Relaxed);
                     return;
                 }
+                // No frame is available here to read a fresh `session_epoch`
+                // from, but `drain()`'s own synchronous insert (see its own
+                // doc) already recorded one for every sequence this hop
+                // actually dispatched -- this is confirmation of that same
+                // reservation, not a new one, so an entry that already
+                // exists keeps its epoch untouched.
                 self.active_sequences
                     .lock()
                     .expect("active sequence lock")
-                    .insert(sequence);
+                    .entry(sequence)
+                    .or_insert(0);
             }
             Event::SequenceReleased {
                 deployment,
@@ -262,9 +269,20 @@ impl Node {
                         continue;
                     };
                     self.counts.routed.fetch_add(1, Ordering::Relaxed);
-                    for frame in next(carrier, &outcome, self.payload.as_ref()).frames() {
+                    let decision = next(carrier, &outcome, self.payload.as_ref());
+                    for frame in decision.clone().frames() {
                         self.emit(frame).await;
                     }
+                    // A dead end for the chain (`Finish` or `Unheard`) is a
+                    // dead end for every earlier link too, and a hop never
+                    // returns to tell them: see `outcome::close`, which is
+                    // where the four-of-eight stuck admissions this fixes
+                    // came from. Sent after the reply or forwarded hop this
+                    // outcome produces, so that traffic is never delayed
+                    // behind cleanup nobody is waiting on, and kept pending
+                    // until acknowledged -- see `runner::pending_close`.
+                    self.begin_session_closes(carrier, &decision, &outcome.sequence)
+                        .await;
                 }
                 self.drain().await;
             }
@@ -296,6 +314,27 @@ impl Node {
                         return;
                     }
                 }
+                // A `Work::Close` failure is not hop-shaped at all -- it
+                // never populated `in_flight`, since close runs alone the
+                // way every other lifecycle instruction does -- and it means
+                // the opposite thing for `active_sequences` that an ordinary
+                // hop failure does. See `fail_session_close`'s own doc for
+                // why this must branch away before any of the generic
+                // handling below ever runs.
+                let failing_close = self
+                    .lifecycle
+                    .lock()
+                    .expect("lifecycle lock")
+                    .as_ref()
+                    .and_then(|frame| self.payload.lifecycle(frame))
+                    .and_then(|work| match work {
+                        Work::Close(close) => Some(close),
+                        _ => None,
+                    });
+                if let Some(close) = failing_close {
+                    self.fail_session_close(close, detail).await;
+                    return;
+                }
                 let (mut failed, failed_sequences): (Vec<Frame>, HashSet<String>) = {
                     let mut in_flight = self.in_flight.lock().expect("in-flight lock");
                     match sequence {
@@ -312,7 +351,7 @@ impl Node {
                 self.active_sequences
                     .lock()
                     .expect("active sequence lock")
-                    .retain(|active| !failed_sequences.contains(active));
+                    .retain(|active, _| !failed_sequences.contains(active));
                 let remaining = self.in_flight.lock().expect("in-flight lock").len();
                 // A load can fail too, and its caller is waiting on the same
                 // route. Leaving it here would hold the node running forever
@@ -423,6 +462,51 @@ impl Node {
                     .clear();
                 self.finish_lifecycle(self.payload.released()).await
             }
+            // `Work::Close` runs alone, the way `Load`/`Unload`/`Cache` do
+            // (see `Node::start_lifecycle`), which is why this is handled
+            // here rather than beside `SequenceReleased`: that event is
+            // scoped to an in-flight hop's own fence
+            // (`accepts_sequence_event` requires `active_status` and
+            // `in_flight`, neither of which a lifecycle-shaped dispatch
+            // populates) and would reject a `Close`-sourced release as
+            // orphaned. `HashMap::remove` on a sequence this node never
+            // reserved -- or already let go -- is a plain no-op, which is
+            // what makes a redelivered or late close harmless rather than an
+            // error.
+            Event::Closed {
+                deployment,
+                sequence,
+            } => {
+                if !self.accepts_close_event(&deployment, &sequence) {
+                    self.reject_lifecycle_event(
+                        "adapter returned a closed event for the wrong deployment or sequence",
+                    )
+                    .await;
+                    return;
+                }
+                self.active_sequences
+                    .lock()
+                    .expect("active sequence lock")
+                    .remove(&sequence);
+                // Only now -- after the adapter's own release actually
+                // happened, never optimistically -- is there anything true
+                // to acknowledge. `close_identity` recovers `close_id` from
+                // the very `SessionClose` frame this dispatch ran for
+                // (still held in `lifecycle` until `finish_lifecycle_with_ack`
+                // takes it), because the sender who is waiting on it has long
+                // since moved on to other work.
+                let carrier = self.lifecycle.lock().expect("lifecycle lock").clone();
+                let ack = carrier.as_ref().and_then(|carrier| {
+                    let (identity_sequence, close_id) = self.payload.close_identity(carrier)?;
+                    close::session_closed_frame(
+                        carrier,
+                        &identity_sequence,
+                        close_id,
+                        self.payload.as_ref(),
+                    )
+                });
+                self.finish_lifecycle_with_ack(ack).await
+            }
             // Progress is reported as it happens rather than held until the
             // end, because a distributed load's slowest stage is the fact
             // worth seeing early.
@@ -482,6 +566,18 @@ impl Node {
             Some(Work::Unload(unload)) => unload.deployment == deployment,
             _ => false,
         }
+    }
+
+    fn accepts_close_event(&self, deployment: &str, sequence: &str) -> bool {
+        let lifecycle = self.lifecycle.lock().expect("lifecycle lock").clone();
+        let Some(frame) = lifecycle else {
+            return false;
+        };
+        matches!(
+            self.payload.lifecycle(&frame),
+            Some(Work::Close(Close { deployment: bound, sequence: named, .. }))
+                if bound == deployment && named == sequence
+        )
     }
 
     fn accepts_sequence_event(&self, deployment: &str, sequence: &str) -> bool {
@@ -605,6 +701,26 @@ impl Node {
         self.queue.finished();
         if let Some(carrier) = carrier {
             self.reply(&carrier, body).await;
+        }
+        self.drain().await;
+    }
+
+    /// The same teardown, but for `Work::Close`: never a reply to its
+    /// carrier -- that carrier is `SessionClose`, sent by a peer node's own
+    /// core rather than a caller waiting on the OUTER reply path, so
+    /// `reply`/`to_reply` (which would target `origin_agent`) is never the
+    /// right tool -- and instead an optional `SessionClosed` acknowledgement
+    /// addressed straight back at whichever node sent it, built by
+    /// `outcome::close::session_closed_frame`. `None` only for the
+    /// defensive case that function itself documents: a `SessionClose`
+    /// arriving with no chain at all, which `Node::refusal` already refuses
+    /// before lifecycle dispatch.
+    async fn finish_lifecycle_with_ack(&self, ack: Option<Frame>) {
+        self.lifecycle.lock().expect("lifecycle lock").take();
+        self.clear_event_fence();
+        self.queue.finished();
+        if let Some(ack) = ack {
+            self.emit(ack).await;
         }
         self.drain().await;
     }

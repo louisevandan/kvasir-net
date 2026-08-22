@@ -98,6 +98,7 @@ fn a_deployment_is_created_loaded_and_run_entirely_by_message() {
             "infer-1",
             QueueClass::Prefill,
             ToNode::Execute {
+                session_epoch: 0,
                 prompt: "안녕하세요".into(),
                 max_tokens: 4,
                 options: r#"{"temperature":0.2}"#.into(),
@@ -228,6 +229,7 @@ fn many_inferences_across_two_machines_all_answer() {
                 &format!("q{index}"),
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "p".into(),
                     max_tokens: 2,
                     options: "{}".into(),

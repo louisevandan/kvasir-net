@@ -136,6 +136,7 @@ mod tests {
     fn sequence(id: &str, state: Option<Vec<u8>>) -> p4_adapter::Sequence {
         p4_adapter::Sequence {
             sequence: id.into(),
+            session_epoch: 0,
             state,
             prompt: None,
             remaining: 2,

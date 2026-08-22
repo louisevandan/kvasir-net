@@ -20,6 +20,7 @@ impl Recorder {
 fn sequence(id: &str, remaining: u32) -> Sequence {
     Sequence {
         sequence: id.into(),
+        session_epoch: 0,
         state: None,
         prompt: Some("p".into()),
         remaining,
@@ -41,6 +42,7 @@ fn named_hop(id: &str) -> Work {
         deployment: "d".into(),
         sequences: vec![Sequence {
             sequence: id.into(),
+            session_epoch: 0,
             state: None,
             prompt: Some("p".into()),
             remaining: 4,

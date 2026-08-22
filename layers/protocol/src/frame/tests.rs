@@ -61,6 +61,49 @@ fn a_version_that_is_not_ours_is_refused_rather_than_misread() {
 }
 
 #[test]
+fn a_mixed_frame_version_7_and_8_fleet_is_refused_before_any_body_is_read() {
+    // Pins the coordinated-upgrade property the `SessionClose`/`SessionClosed`
+    // ack contract depends on (see `EOS-ACK-BRIEF.md` section 1 and
+    // `docs/protocol.md` section 13.2): a fleet half on the old one-way close
+    // and half on the new acked one must never admit work to each other, in
+    // either direction, rather than run normally until the first early stop
+    // silently leaks a reservation on the stale side.
+    //
+    // The body carried here is deliberately not a valid envelope-adjacent
+    // payload -- it is a handful of bytes nothing in this crate could ever
+    // decode. If either assertion below failed to reject the frame, this
+    // test would still catch it: `decode` would go on to try `wire::decode`
+    // on garbage and fail there too, but for a completely different reason
+    // ("frame version 7 is not 8" vs an envelope decode error). Asserting
+    // the exact message pins that the version check runs first, which is
+    // what lets frame version alone -- without a body catalog and without a
+    // handshake -- fence admission.
+    let garbage_body = vec![0xFFu8; 32];
+
+    // Direction 1: an old (7) peer's frame arrives at this (8) codebase.
+    let mut old_peer_frame = encode(&envelope(), &garbage_body).unwrap();
+    old_peer_frame[4] = 7;
+    let err = decode(&old_peer_frame).unwrap_err();
+    assert_eq!(err.to_string(), "frame version 7 is not 8");
+    assert!(
+        frame_len(&old_peer_frame).is_err(),
+        "rejected before length is even trusted, let alone the body read"
+    );
+
+    // Direction 2: this (8) codebase's own frame, as an old (7) peer would
+    // see it. There is no live v7 decoder left in this tree to call, so this
+    // states the same header check a v7 build carried (`header[4] != 7`)
+    // against a genuine v8-encoded frame, proving the rejection is
+    // symmetric rather than an artifact of which side is "newer".
+    let new_peer_frame = encode(&envelope(), &garbage_body).unwrap();
+    assert_eq!(new_peer_frame[4], VERSION);
+    assert_ne!(
+        new_peer_frame[4], 7,
+        "a v7 reader's own `header[4] != VERSION` check would reject this frame"
+    );
+}
+
+#[test]
 fn a_foreign_magic_is_refused() {
     let mut bytes = encode(&envelope(), b"body").unwrap();
     bytes[0] = b'X';

@@ -119,6 +119,112 @@ pub trait Payload: Send + Sync {
         b"unloaded".to_vec()
     }
 
+    /// Encodes an instruction telling another node of the same chain that
+    /// `sequence` will not be hopped to again, so any slot it reserved for it
+    /// is owed back. Not a reply: the core constructs and sends this itself,
+    /// straight at that node, when a chain's tail decides a sequence is
+    /// finished (or that nobody is left to hear it) -- see
+    /// `node::outcome::close`. `close_id` is the sender's own identity for
+    /// this close occasion, echoed back by `SessionClosed` so the sender can
+    /// fence a late or duplicate answer against the right pending entry --
+    /// see that trait method's own doc for why `sequence` alone cannot do
+    /// this.
+    ///
+    /// `session_epoch` is a different fence for a different confusion:
+    /// `close_id` identifies this *transmission*, so a resend of the exact
+    /// same close still carries the one `close_id` it was first given, but
+    /// nothing about `close_id` says anything about which *session* held
+    /// `sequence` when this close was built. A sequence id can legitimately
+    /// belong to a second, unrelated session later -- `tools/drive`'s
+    /// `Admission::retry` reuses one on purpose -- so a receiver that only
+    /// checked `close_id` could still apply a genuinely old close to a
+    /// reservation a brand new session now holds. `session_epoch` is minted
+    /// once, at that session's own first admission, carried unchanged
+    /// through every hop and lap for it (see `session_epoch`'s own doc), and
+    /// is what the receiver compares against its *own currently held*
+    /// reservation before ever calling its adapter -- see
+    /// `Node::session_epoch_conflict` and `Node::stale_session_close`. The
+    /// default is plain text, matching every other opaque-vocabulary default
+    /// here. Only reachable when `supports_close` says so.
+    fn close(&self, sequence: &str, close_id: u64, session_epoch: u64) -> Vec<u8> {
+        format!("{sequence}:{close_id}:{session_epoch}").into_bytes()
+    }
+
+    /// Encodes the acknowledgement a node sends back after `close`'s
+    /// instruction actually finished at its own adapter -- never
+    /// optimistically, never before. Answers straight at the node that sent
+    /// `close`, not through the OUTER reply path, because the sender's own
+    /// pending-close bookkeeping is what is waiting on it, not a caller. The
+    /// default mirrors `close`'s own plain-text shape.
+    fn session_closed(&self, sequence: &str, close_id: u64) -> Vec<u8> {
+        format!("{sequence}:{close_id}").into_bytes()
+    }
+
+    /// Reads a frame's body back as the `(sequence, close_id)` a `close`
+    /// call produced, if this vocabulary recognizes one. Used by the node
+    /// that receives a close, to recover `close_id` for the acknowledgement
+    /// once its own adapter actually finishes the work -- not from `close`'s
+    /// caller, which has moved on by then.
+    fn close_identity(&self, _frame: &Frame) -> Option<(String, u64)> {
+        None
+    }
+
+    /// Reads a frame's body back as the `(sequence, close_id)` a
+    /// `session_closed` call produced, if this vocabulary recognizes one.
+    ///
+    /// Checked first, before any other frame handling, on every frame a node
+    /// receives: an acknowledgement is P4's own internal bookkeeping traffic
+    /// answering a pending close, never work to schedule, and reading it as
+    /// one would either fence it correctly here or -- for a vocabulary
+    /// permissive enough to read arbitrary bytes as a valid request, which
+    /// several small test fixtures in this tree are -- schedule it as a
+    /// brand-new hop. Default `None`, matching every other opaque-vocabulary
+    /// default here: a vocabulary that never sends `SessionClosed` never
+    /// needs to recognize one either.
+    fn session_closed_ack(&self, _frame: &Frame) -> Option<(String, u64)> {
+        None
+    }
+
+    /// The session identity this frame carries, if this vocabulary tracks
+    /// one: minted once, by whoever sends the very first `Execute` (or
+    /// equivalent hop-shaped request) for a session, and then carried
+    /// unchanged through every later lap or hop of it -- a `Continue`-shaped
+    /// frame must echo back exactly the value its own predecessor carried,
+    /// the way it already echoes `options`. Also read from a `SessionClose`,
+    /// where it names which session the close believes it is naming, as
+    /// opposed to `close_identity`'s `close_id`, which names only the
+    /// transmission.
+    ///
+    /// `None` for ordinary work that carries no identity (a lifecycle frame,
+    /// or a vocabulary that has never opted into this at all) and, on
+    /// purpose, the default for every vocabulary that does not override it:
+    /// `Node::session_epoch_conflict` and `Node::stale_session_close` both
+    /// treat `None` as "nothing to fence", so a fixture that has never heard
+    /// of this keeps exactly its old admission behaviour rather than
+    /// acquiring a new refusal path it never asked for.
+    fn session_epoch(&self, _frame: &Frame) -> Option<u64> {
+        None
+    }
+
+    /// Whether `lifecycle` actually recognizes a body this vocabulary's own
+    /// `close` produces, and reads it back as `Work::Close`.
+    ///
+    /// Default `false`, and load-bearing rather than a formality: a
+    /// vocabulary that has not opted in has, by definition, no `lifecycle`
+    /// arm for it, so a close frame arriving there falls through to
+    /// `sequence`. A vocabulary permissive enough to read arbitrary bytes as
+    /// a valid request -- which several small test fixtures in this tree are
+    /// -- would then schedule the close as a brand-new hop against whatever
+    /// adapter that node has, and if that node is itself a middle stage the
+    /// hop it produces forwards on and finishes again, closing the same
+    /// chain again, without end. `node::outcome::close` checks this before
+    /// building anything, so a vocabulary that never mentions `Work::Close`
+    /// in its own `lifecycle` simply never receives one -- exactly its
+    /// current behaviour, undisturbed.
+    fn supports_close(&self) -> bool {
+        false
+    }
+
     /// A cache instruction finished. `sequence` is the id the state now lives
     /// under, which is the new one after a fork.
     #[allow(clippy::too_many_arguments)]

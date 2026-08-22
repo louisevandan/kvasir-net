@@ -1,6 +1,8 @@
 use super::*;
 use crate::capability::{Capability, CapabilityRegistry};
+use crate::message::Reply;
 use crate::message::wire::{decode_reply, encode_reply, encode_to_node};
+use p4_adapter::CacheAction;
 use p4_protocol::{Address, Chain, Envelope, Link, QueueClass, Recipient};
 
 fn frame(body: Vec<u8>) -> Frame {
@@ -37,6 +39,7 @@ fn an_execute_body_becomes_a_sequence_named_by_its_request() {
         prompt: "안녕".into(),
         max_tokens: 64,
         options: r#"{"temperature":0.2}"#.into(),
+        session_epoch: 1,
     });
     let sequence = Bodies::default()
         .sequence(&frame(body))
@@ -46,6 +49,11 @@ fn an_execute_body_becomes_a_sequence_named_by_its_request() {
     assert_eq!(sequence.prompt.as_deref(), Some("안녕"));
     assert_eq!(sequence.remaining, 64);
     assert_eq!(sequence.options, r#"{"temperature":0.2}"#);
+    assert_eq!(
+        sequence.session_epoch, 1,
+        "the adapter boundary must see the same session identity the wire carries, \
+         not silently drop it"
+    );
 }
 
 #[test]
@@ -54,6 +62,7 @@ fn sequence_identity_does_not_follow_a_reused_transport_route() {
         prompt: "p".into(),
         max_tokens: 4,
         options: "{}".into(),
+        session_epoch: 1,
     });
     let mut request = frame(body);
     request.envelope.route = "reused-route".into();
@@ -70,6 +79,7 @@ fn a_continuation_hands_the_adapter_its_own_state_back() {
         emitted: 3,
         options: r#"{"temperature":0.2}"#.into(),
         state: vec![1, 2, 3],
+        session_epoch: 1,
     });
     let sequence = Bodies::default()
         .sequence(&frame(body))
@@ -89,6 +99,7 @@ fn a_continuation_without_state_is_still_executable() {
         emitted: 12,
         options: "{}".into(),
         state: Vec::new(),
+        session_epoch: 1,
     });
     let sequence = Bodies::default()
         .sequence(&frame(body))
@@ -147,9 +158,29 @@ fn an_execute_declares_no_ceiling() {
         prompt: "p".into(),
         max_tokens: 1,
         options: "{}".into(),
+        session_epoch: 1,
     });
     assert_eq!(Bodies::default().ceiling(&frame(body.clone())), None);
     assert!(Bodies::default().lifecycle(&frame(body)).is_none());
+}
+
+#[test]
+fn a_session_close_carries_its_epoch_into_work_close() {
+    // `session_epoch` is on the wire (frame v8's `SessionClose` body) purely
+    // so the receiving adapter can tell a redelivered close for a session
+    // that has since released and been reused apart from one that still
+    // owns its reservation. Dropping it here -- as this conversion used to
+    // -- means the adapter never gets to make that distinction at all.
+    let body = encode_to_node(&ToNode::SessionClose {
+        sequence: "seq-1".into(),
+        close_id: 7,
+        session_epoch: 42,
+    });
+    let Some(Work::Close(close)) = Bodies::default().lifecycle(&frame(body)) else {
+        panic!("a session close");
+    };
+    assert_eq!(close.sequence, "seq-1");
+    assert_eq!(close.session_epoch, 42);
 }
 
 #[test]

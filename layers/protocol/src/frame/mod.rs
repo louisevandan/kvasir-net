@@ -9,7 +9,15 @@ use crate::envelope::wire;
 use crate::{Envelope, ProtocolError};
 
 pub const MAGIC: [u8; 4] = *b"P4B1";
-pub const VERSION: u8 = 7;
+// 7 -> 8: SessionClose/SessionClosed became an acknowledged contract instead
+// of a one-way broadcast (see `agent::node::outcome::close`), and a fleet
+// half on the old one-way wire and half on the new ack-aware one would run
+// normally right up until the first early stop, then silently leak the
+// stage(s) still on the old side -- exactly the defect an acked contract
+// exists to close. Bumping this is what turns that into an immediate,
+// bidirectional refusal at the frame boundary, before either side reads a
+// byte of body: see `frame_len`'s version check below, which runs first.
+pub const VERSION: u8 = 8;
 
 const HEADER_BYTES: usize = 16;
 const MAX_ENVELOPE_BYTES: usize = 256 * 1024;

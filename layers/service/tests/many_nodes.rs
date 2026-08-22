@@ -116,6 +116,7 @@ fn two_nodes_on_each_agent_are_created_loaded_and_driven() {
                 &route,
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "여러 노드".into(),
                     max_tokens: 5,
                     options: "{}".into(),
@@ -227,6 +228,7 @@ fn nodes_shared_by_two_chains_keep_the_routes_apart() {
                 &format!("S{index}"),
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "짧은".into(),
                     max_tokens: 3,
                     options: "{}".into(),
@@ -239,6 +241,7 @@ fn nodes_shared_by_two_chains_keep_the_routes_apart() {
                 &format!("L{index}"),
                 QueueClass::Prefill,
                 ToNode::Execute {
+                    session_epoch: 0,
                     prompt: "긴".into(),
                     max_tokens: 6,
                     options: "{}".into(),

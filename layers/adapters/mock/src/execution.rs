@@ -201,10 +201,39 @@ impl Mock {
             });
             return;
         }
+        // Mirrors `staged`'s own event order: acquisitions are reported
+        // before the hop's outcomes exist, so admission never has to wait on
+        // this hop finishing to know a slot is taken. Only when
+        // `reserve_slots` is asked for -- every other test keeps not caring
+        // about this bookkeeping.
+        if self.profile.reserve_slots {
+            for (sequence, is_prefill) in &valid {
+                if *is_prefill {
+                    events.raise(Event::SequenceAcquired {
+                        deployment: hop.deployment.clone(),
+                        sequence: sequence.sequence.clone(),
+                    });
+                }
+            }
+        }
         let outcomes = valid
             .iter()
             .map(|(sequence, is_prefill)| self.outcome(sequence, *is_prefill))
             .collect::<Vec<_>>();
+        // Deliberately only the terminal stage's own observed stop, the same
+        // narrow signal `staged`'s tail acts on. A middle stage never raises
+        // this on its own -- reproducing the gap `outcome::close` exists to
+        // fill is the point of turning this on at all.
+        if self.profile.reserve_slots {
+            for outcome in &outcomes {
+                if outcome.stop.is_some() {
+                    events.raise(Event::SequenceReleased {
+                        deployment: hop.deployment.clone(),
+                        sequence: outcome.sequence.clone(),
+                    });
+                }
+            }
+        }
         if let Some(observation) = self
             .hops
             .lock()
@@ -317,7 +346,17 @@ impl Mock {
         // Keep the same first-token-then-terminal shape instead of ending a
         // zero-valued request before it reaches the backend.
         let requested = sequence.remaining.max(1);
-        let finished = progress.turn > requested;
+        // A backend that stops itself well short of `requested` -- ordinary
+        // EOS -- rather than P4's own bound being reached. Kept as its own
+        // condition instead of shrinking `requested`, because a shrunk bound
+        // would also change `at_length`'s accounting in `outcome::next`; this
+        // is meant to look exactly like an unpredictable native stop, not a
+        // smaller request.
+        let eos = self
+            .profile
+            .eos_after_turns
+            .is_some_and(|turns| progress.turn >= turns.max(1));
+        let finished = eos || progress.turn > requested;
         let output_position = if finished {
             position.saturating_sub(1)
         } else {
@@ -335,7 +374,7 @@ impl Mock {
             } else {
                 format!("{}#{output_position} ", sequence.sequence)
             },
-            stop: finished.then(|| "stop".to_string()),
+            stop: finished.then(|| if eos { "eos" } else { "stop" }.to_string()),
             terminal_generated: None,
         }
     }

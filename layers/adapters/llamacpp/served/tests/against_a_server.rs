@@ -168,6 +168,7 @@ fn load(adapter: &Served, seen: &Seen, port: u16) {
 fn sequence(remaining: u32, prompt: Option<&str>) -> Sequence {
     Sequence {
         sequence: "req-1".into(),
+        session_epoch: 0,
         state: None,
         prompt: prompt.map(str::to_owned),
         remaining,

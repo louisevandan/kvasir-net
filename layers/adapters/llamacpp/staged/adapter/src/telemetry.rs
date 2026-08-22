@@ -136,6 +136,7 @@ mod tests {
             deployment: "deployment".into(),
             sequences: vec![Sequence {
                 sequence: "r1-q0".into(),
+                session_epoch: 0,
                 state: None,
                 prompt: Some("prompt".into()),
                 remaining: 2,

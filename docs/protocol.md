@@ -26,7 +26,7 @@ P4 seam을 구현할 수 있어야 한다.
 ## 2. 메시지와 식별자
 
 wire frame은 `apps/p4/layers/protocol/src/envelope/`와
-`apps/p4/layers/protocol/src/frame/`이 정의한다. frame version 7의 핵심
+`apps/p4/layers/protocol/src/frame/`이 정의한다. frame version 8의 핵심
 필드는 다음과 같다.
 
 | 필드 | 의미 | 불변성 |
@@ -335,15 +335,26 @@ ready로 판정하지 않는다.
 | offset | 크기 | 의미 |
 | ---: | ---: | --- |
 | 0 | 4 | magic `P4B1` |
-| 4 | 1 | frame version `7` |
+| 4 | 1 | frame version `8` |
 | 5 | 3 | reserved, 현재 0 |
 | 8 | 4 | envelope byte length (`u32`) |
 | 12 | 4 | body byte length (`u32`) |
 | 16 | 가변 | envelope bytes, 이후 body bytes |
 
-header 전체는 16 byte다. envelope 최대는 256 KiB, body 최대는 1 MiB다.
+header 전체는 16 byte다. envelope 최대는 256 KiB, body 최대는 2 GiB다.
 `frame_len()`은 header가 선언한 전체 길이를 계산하지만 body를 decode하지
 않는다. `decode()`는 실제 입력 길이가 header 계산값과 정확히 같아야 성공한다.
+
+frame version은 body보다 먼저 검사된다 (`frame_len()`이 body를 슬라이스하기
+전에 `header[4] != VERSION`을 확인한다). 이는 새 메시지 카탈로그나 handshake
+없이도 버전만으로 admission을 막을 수 있게 하는 성질이다. 7에서 8로 올린 것은
+§13.2의 `SessionClose`/`SessionClosed`가 acknowledge 계약이 되었기 때문이다
+-- 혼합 fleet(구버전 one-way close, 신버전 acked close)이 정상처럼 돌다가
+첫 조기 종료(EOS well short of the length bound)에서 구버전 쪽 stage의
+reservation만 조용히 누수하는 대신, 양방향 모두 admission 이전에 명확히
+거부되게 하기 위해서다. 무중단 mixed-fleet 업그레이드가 실제로 필요해지면
+frame version 자체가 아니라 agent `HELLO`와 별도 feature set으로 협상한다
+-- 이번 범위가 아니다.
 magic, version, 길이, envelope decode 중 하나라도 실패하면 frame 전체를
 거부한다. `reseal()`은 envelope을 바꾸고 body bytes는 그대로 유지한다.
 
@@ -448,7 +459,7 @@ truncation, invalid UTF-8은 `Malformed`다.
 | ---: | --- | --- | --- |
 | 16 | `Load` | `plan`, `artifact`, `ceiling: u32`, `capability_snapshot_id`, `capability_expires_at: u64` | lifecycle, 단독 실행 |
 | 17 | `Unload` | 없음 | lifecycle, 단독 실행 |
-| 18 | `Execute` | `prompt`, `max_tokens: u32`, `options` | prefill, sequence 시작 |
+| 18 | `Execute` | `prompt`, `max_tokens: u32`, `options`, `session_epoch: u64` | prefill, sequence 시작 |
 | 19 | `Persist` | `sequence` | cache lifecycle, 단독 실행 |
 | 20 | `Restore` | `sequence` | cache lifecycle, 단독 실행 |
 | 21 | `Fork` | `sequence`, `into` | cache lifecycle, 원본 보존 후 새 identity 생성 |
@@ -458,8 +469,10 @@ truncation, invalid UTF-8은 `Malformed`다.
 | 25 | `PrepareDiscard` | `sequence` | transaction prepare |
 | 26 | `Commit` | `sequence` | prepare mutation 적용 |
 | 27 | `Abort` | `sequence` | prepare mutation 취소 |
-| 28 | `Continue` | `remaining: u32`, `emitted: u32`, `options`, `state: bytes` | decode lap의 다음 단계 |
+| 28 | `Continue` | `remaining: u32`, `emitted: u32`, `options`, `state: bytes`, `session_epoch: u64` | decode lap의 다음 단계 |
 | 29 | `Reconcile` | `sequence` | mutation 없이 adapter receipt 조회 |
+| 30 | `SessionClose` | `sequence`, `close_id: u64`, `session_epoch: u64` | lifecycle, 단독 실행, acknowledge 대상 |
+| 31 | `SessionClosed` | `sequence`, `close_id: u64` | acknowledgement, 스케줄되지 않음 |
 
 `Load`의 plan과 `Execute/Continue`의 options는 P4가 해석하지 않는 opaque
 text다. `ceiling`은 load가 선언한 adapter admission ceiling이며 P4가
@@ -473,6 +486,40 @@ prompt를 반복하지 않고 `remaining`, `emitted`, `options`, `state`만 가�
 `remaining`은 원 request의 bound이며 lap마다 보존된다. `emitted`는 P4가 지금까지
 스트리밍한 token 수로, bound를 강제하는 쪽이 자기 출력을 세는 값이다. 세션이
 얼마나 진행되었는지는 backend의 사실이므로 `state` 안에 있고 P4는 읽지 않는다.
+
+`SessionClose`/`SessionClosed`는 OUTER가 보내지 않는다. chain의 tail이 조기
+종료(EOS, length bound 미도달)나 아무도 듣지 않는 종료를 관찰했을 때, P4의
+core가 앞선 모든 link에 직접 보낸다 (`agent::node::outcome::close`). 시퀀스와
+실패 동작은 다음과 같다.
+
+1. tail이 `Next::Finish`/`Next::Unheard`를 결정하면, chain의 앞선 link마다
+   별도 `close_id: u64`를 발급해 `SessionClose`를 보낸다. `close_id`는
+   sender(tail)의 로컬 카운터이지 `sequence`가 아니다 -- `sequence`
+   (=`request_id`)는 호출자가 나중에 다른 세션에서 재사용할 수 있는
+   식별자이므로(`tools/drive`의 `Admission::retry`), 지연되거나 오염된 ack를
+   `sequence`만으로 fence할 수 없다.
+2. 수신 node는 adapter가 실제로 `Event::Closed`를 raise한 **이후에만** 자기
+   reservation을 제거하고, 받은 `close_id`를 그대로 echo하는 `SessionClosed`를
+   돌려보낸다. 낙관적 선반영은 없다.
+3. 수신 node는 idempotent하다: 이미 처리했거나 한 번도 들어본 적 없는
+   `sequence`에 대한 재전송도 항상 `SessionClosed`로 응답한다
+   (`p4_adapter::work::close::Close`가 이를 계약으로 명시한다).
+4. sender는 ack를 받을 때까지 250ms 간격으로 최대 5회(최초 전송 포함) 재전송한다
+   (`agent::node::runner::pending_close`). 5회를 넘기면 해당 `close_id`의
+   pending 항목을 포기하고 `Counts::session_close_abandoned`를 증가시킨다 --
+   sender 자신은 상대 node의 reservation을 보유하지 않으므로 포기 자체가
+   sender 쪽 누수는 아니지만, 상대의 reservation이 영영 정리되지 않을 수
+   있다는 신호를 operator가 볼 수 있게 남긴다.
+5. `SessionClosed`는 `close_id`로만 pending 항목을 찾는다. `close_id`가
+   맞아도 echo된 `sequence`가 다르면 오염된 것으로 간주해 버리고, `close_id`
+   자체가 없으면(이미 정리됨, 이미 포기됨, 이 node가 보낸 적 없음) stale로
+   버린다 -- 둘 다 `Counts::session_closed_stale`을 증가시키고 아무 상태도
+   바꾸지 않는다.
+6. `SessionClosed`는 `Recipient::Node`로, close를 보낸 node에게 직접
+   전달된다. `Envelope::to_reply`(→ `origin_agent`)는 쓰지 않는다 --
+   `origin_agent`는 OUTER로 돌아가는 anchor이고, ack는 OUTER가 아니라 close를
+   보낸 peer node에게 가야 하기 때문이다. 그래서 ack envelope은 `chain`,
+   `origin_agent`, `return_channel`을 비운다.
 
 ### 13.3 reply body (`Reply`)
 

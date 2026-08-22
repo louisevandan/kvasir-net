@@ -1,4 +1,5 @@
 use super::Mock;
+use crate::profile::Fault;
 use p4_adapter::{Adapter, Distribution, Event, EventSink, Work};
 
 impl Adapter for Mock {
@@ -24,6 +25,10 @@ impl Adapter for Mock {
 
     fn distribution(&self) -> Distribution {
         self.distribution
+    }
+
+    fn reserves_sequence_slots(&self) -> bool {
+        self.profile.reserve_slots
     }
 
     fn report(&self) -> String {
@@ -53,6 +58,21 @@ impl Adapter for Mock {
             }
             Work::Hop(hop) => self.hop(hop, events),
             Work::Cache(cache) => self.cache(cache, events),
+            // A middle stage never releases its own reservation here -- that
+            // is exactly the gap this exists to close from the outside. See
+            // `agent::node::outcome::close` for who sends this and when.
+            Work::Close(close) if self.profile.fault == Fault::Close => {
+                events.raise(Event::Failed {
+                    deployment: close.deployment,
+                    sequence: Some(close.sequence),
+                    hop_id: None,
+                    detail: "mock: native sequence release refused".into(),
+                });
+            }
+            Work::Close(close) => events.raise(Event::Closed {
+                deployment: close.deployment,
+                sequence: close.sequence,
+            }),
         }
     }
 }

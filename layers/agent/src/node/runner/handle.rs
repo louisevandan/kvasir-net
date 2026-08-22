@@ -8,8 +8,10 @@
 //! A frame that goes missing leaves no trace in a depth reading, because depth
 //! only shows what is still waiting. The counts are what show it passed.
 
+use super::PendingClose;
 use crate::node::queue::NodeQueue;
 use p4_protocol::{QueueClass, frame::Frame};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use tokio::sync::{mpsc, watch};
@@ -23,6 +25,16 @@ pub struct Handle {
     queue: Arc<NodeQueue>,
     counts: Arc<Counts>,
     active: Arc<std::sync::Mutex<Option<ActiveHop>>>,
+    /// The same set `Node::drain` reads to gate prefill admission -- see its
+    /// own doc there. Exposed read-only so an operator, or a test proving a
+    /// session close actually reached this node, can ask what the admission
+    /// gate itself believes rather than inferring it from throughput.
+    reserved: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+    /// The same map `Node::retry_pending_closes` drains, exposed read-only so
+    /// a test proving a lost close or a lost ack still converges can watch
+    /// it reach zero the same way `reserved_sequences` already does for
+    /// admission.
+    pending_closes: Arc<std::sync::Mutex<HashMap<u64, PendingClose>>>,
     admission_closed: Arc<std::sync::Mutex<bool>>,
     stop: watch::Sender<bool>,
     done: watch::Sender<bool>,
@@ -61,6 +73,20 @@ pub struct Counts {
     /// outbox's downstream queue closed or teardown deliberately interrupted
     /// delivery after its bounded shutdown grace period.
     pub outbox_lost: Arc<AtomicUsize>,
+    /// A pending close that used its last retry attempt without ever seeing
+    /// a `SessionClosed` for it. Not itself a leak on this node -- a close
+    /// sender holds no reservation on the receiving node's behalf -- but the
+    /// visible signal that a peer's own reservation may never clear, which
+    /// is what an operator needs to see instead of an infinite retry or a
+    /// silent drop. See `runner::pending_close`.
+    pub session_close_abandoned: AtomicUsize,
+    /// A `SessionClosed` that matched a still-pending close and retired it.
+    pub session_closed_acked: AtomicUsize,
+    /// A `SessionClosed` that matched nothing pending -- already retired by
+    /// an earlier attempt's answer, already abandoned, or naming a
+    /// `close_id`/`sequence` pairing this node never sent. Idempotent by
+    /// design rather than an error: see `ToNode::SessionClose`'s own doc.
+    pub session_closed_stale: AtomicUsize,
 }
 
 impl Handle {
@@ -71,6 +97,8 @@ impl Handle {
         counts: Arc<Counts>,
         backend: Arc<dyn p4_adapter::Adapter>,
         active: Arc<std::sync::Mutex<Option<ActiveHop>>>,
+        reserved: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+        pending_closes: Arc<std::sync::Mutex<HashMap<u64, PendingClose>>>,
         admission_closed: Arc<std::sync::Mutex<bool>>,
         stop: watch::Sender<bool>,
         done: watch::Sender<bool>,
@@ -83,6 +111,8 @@ impl Handle {
             counts,
             backend,
             active,
+            reserved,
+            pending_closes,
             admission_closed,
             stop,
             done,
@@ -219,6 +249,24 @@ impl Handle {
 
     pub fn active_hop(&self) -> Option<ActiveHop> {
         self.active.lock().expect("active telemetry lock").clone()
+    }
+
+    /// How many sequences this node's admission gate currently believes it
+    /// has a native slot reserved for -- zero for an adapter that never
+    /// reports the optional acquire/release events at all.
+    pub fn reserved_sequences(&self) -> usize {
+        self.reserved.lock().expect("active sequence lock").len()
+    }
+
+    /// How many `SessionClose` frames this node has sent and is still
+    /// waiting to hear `SessionClosed` for. Zero is the converged state a
+    /// close/closed round trip is supposed to reach, whether the first
+    /// attempt landed or a lost frame needed a retry.
+    pub fn pending_session_closes(&self) -> usize {
+        self.pending_closes
+            .lock()
+            .expect("pending close lock")
+            .len()
     }
 }
 

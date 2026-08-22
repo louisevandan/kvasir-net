@@ -68,11 +68,11 @@ impl StagedConfig {
 /// concurrency; it is a guess at "comfortably more than any node has
 /// plausibly seen recently."
 ///
-/// An evicted sequence leaves this detector's reach: `reject_released_sequences`
-/// can only refuse what `released` still remembers, so once eviction has
-/// happened a redelivered hop for that sequence is indistinguishable from
-/// brand-new work and is silently reclassified as a fresh Prefill --
-/// `tests_hop.inc.rs` pins exactly this.
+/// An evicted `(sequence, epoch)` pair leaves this detector's reach:
+/// `reject_released_sequences` can only refuse what `released` still
+/// remembers, so once eviction has happened a redelivered hop for that exact
+/// session is indistinguishable from brand-new work and is silently
+/// reclassified as a fresh Prefill -- `tests_hop.inc.rs` pins exactly this.
 ///
 /// That is a known limitation, not a hidden regression, once what a
 /// post-release arrival *is* is taken into account: it is definitionally a
@@ -84,9 +84,19 @@ impl StagedConfig {
 /// mechanism: it turns a confusing backend crash into a clear refusal for as
 /// long as it remembers, and raising this cap only buys a longer detection
 /// window, never a correctness guarantee the current one is missing.
+///
+/// The cap counts `(sequence, epoch)` pairs, not distinct sequence ids: a
+/// sequence id reused across several sessions (`tools/drive`'s
+/// `Admission::retry` does this on purpose) now tombstones one entry per
+/// session that has actually ended here, not one entry that would otherwise
+/// need clearing before the id could ever be admitted again. That is more
+/// entries per id than before this cap's unit changed, not fewer, so the
+/// same 4096 guess buys a shorter window per id under heavy reuse than it
+/// used to -- a fact for the same operator this counter already serves
+/// (`tombstone_evictions`), not a silent change of what the cap means.
 const RELEASED_TOMBSTONE_CAP: usize = 4096;
 
-/// Sequences this node has already run a hop for, and sequences it has
+/// Sequences this node has already run a hop for, and the sessions it has
 /// released, under one lock.
 ///
 /// `p4_adapter::Hop` carries no phase of its own -- an execution holding
@@ -94,8 +104,15 @@ const RELEASED_TOMBSTONE_CAP: usize = 4096;
 /// about a backend, not about P4 -- so whether a sequence is beginning work
 /// *here* is this adapter's own question to answer, the same way `served`
 /// answers it from its open sessions and the mock answers it from its
-/// produced-token map. A sequence not in `active` has not been through a hop
-/// at this node before; everything else has.
+/// produced-token map. A sequence not in `active`, or present under a
+/// *different* `session_epoch` than the one a hop now names, has not been
+/// through a hop at this node under that session before; everything else
+/// has. The epoch is what lets a reused sequence id be told apart from a
+/// redelivery of the session that used to hold it: `active` maps a sequence
+/// to the one epoch currently reserving it, not merely to a presence flag,
+/// so a hop naming a fresh epoch for an id this node still shows active
+/// under an older one is read as new work rather than folded into whatever
+/// that older session was doing.
 ///
 /// But `release_sequence` in `hop_execute.inc.rs` is a *prediction* built from
 /// remaining length and stage position, not an observation of the backend
@@ -106,34 +123,48 @@ const RELEASED_TOMBSTONE_CAP: usize = 4096;
 /// work -- absence means both "never seen" and "already finished". Losing
 /// that distinction sent a finished sequence back through the backend as a
 /// fresh Prefill and produced `llama_decode failed with status -3`.
-/// `released` is the fix: a sequence leaves `active` and enters `released`
-/// in the same critical section, so the two can never drift apart, and a hop
-/// that names a released sequence is rejected instead of misclassified.
+/// `released` is the fix: a `(sequence, epoch)` pair leaves `active` and
+/// enters `released` in the same critical section, so the two can never
+/// drift apart, and a hop that names an already-released session is
+/// rejected instead of misclassified -- while a hop for the *same sequence
+/// id* under a new epoch never matches that tombstone at all, because the
+/// tombstone names the epoch that ended, not the id alone.
 struct SequenceLedger {
-    active: std::collections::HashSet<String>,
-    released: std::collections::HashSet<String>,
+    active: std::collections::HashMap<String, u64>,
+    released: std::collections::HashSet<(String, u64)>,
     /// Insertion order for `released`, so it can be evicted oldest-first
     /// once it reaches `RELEASED_TOMBSTONE_CAP`.
-    released_order: std::collections::VecDeque<String>,
+    released_order: std::collections::VecDeque<(String, u64)>,
 }
 
 impl SequenceLedger {
     fn new() -> Self {
         Self {
-            active: std::collections::HashSet::new(),
+            active: std::collections::HashMap::new(),
             released: std::collections::HashSet::new(),
             released_order: std::collections::VecDeque::new(),
         }
     }
 
-    /// Moves a sequence from `active` to `released`, bounding `released` to
-    /// `RELEASED_TOMBSTONE_CAP` by evicting the oldest tombstone first.
-    /// Returns whether this call evicted one, so a caller can count it.
-    fn release(&mut self, sequence: &str) -> bool {
-        self.active.remove(sequence);
+    /// Moves `(sequence, epoch)` from `active` to `released`, bounding
+    /// `released` to `RELEASED_TOMBSTONE_CAP` by evicting the oldest
+    /// tombstone first. Returns whether this call evicted one, so a caller
+    /// can count it.
+    ///
+    /// `active`'s entry for `sequence` is removed only when it still names
+    /// this exact `epoch` -- a release naming an epoch that has since been
+    /// superseded by a newer session's reservation for the same sequence id
+    /// must never cancel that newer reservation. This is what keeps a
+    /// belated close (or a hop-driven release) for an old session from
+    /// touching a session that reused its sequence id afterward.
+    fn release(&mut self, sequence: &str, epoch: u64) -> bool {
+        if self.active.get(sequence) == Some(&epoch) {
+            self.active.remove(sequence);
+        }
         let mut evicted = false;
-        if self.released.insert(sequence.to_owned()) {
-            self.released_order.push_back(sequence.to_owned());
+        let key = (sequence.to_owned(), epoch);
+        if self.released.insert(key.clone()) {
+            self.released_order.push_back(key);
             if self.released_order.len() > RELEASED_TOMBSTONE_CAP
                 && let Some(oldest) = self.released_order.pop_front()
             {
