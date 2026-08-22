@@ -79,6 +79,7 @@ version = "0.1.0"
 dependencies = [
  "p4-adapter",
  "p4-agent-core",
+ "p4-llamacpp-deployment",
  "p4-llamacpp-served",
  "p4-llamacpp-staged-adapter",
  "p4-mock",
@@ -95,6 +96,7 @@ dependencies = [
  "p4-link",
  "p4-mock",
  "p4-protocol",
+ "serde_json",
  "tokio",
  "windows-sys",
 ]
@@ -115,6 +117,18 @@ dependencies = [
 name = "p4-link"
 version = "0.1.0"
 dependencies = [
+ "tokio",
+]
+
+[[package]]
+name = "p4-llamacpp-deployment"
+version = "0.1.0"
+dependencies = [
+ "p4-adapter",
+ "p4-agent-core",
+ "p4-protocol",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -153,6 +167,7 @@ dependencies = [
  "p4-agent-core",
  "p4-mock",
  "p4-protocol",
+ "serde_json",
  "tokio",
 ]
 

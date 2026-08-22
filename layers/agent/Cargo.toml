@@ -15,3 +15,4 @@ windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 [dev-dependencies]
 p4-mock = { path = "../adapters/mock" }
 p4-link = { path = "../../tools/link" }
+serde_json = "1.0.151"

@@ -9,7 +9,7 @@
 
 mod adapters;
 
-use p4_agent_core::agent::{Agent, run};
+use p4_agent_core::agent::{Agent, AgentDeploymentSink, run};
 use p4_agent_core::queue::lane::{Budget, Lanes};
 use p4_agent_core::transport::inbox::{self, Subscriptions};
 use p4_protocol::Address;
@@ -44,6 +44,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Budget::default().checked()?,
         subscriptions.clone(),
     );
+
+    // The submission path, stood up beside the hop path rather than
+    // replacing it -- `dispatch` falls back to it for every deployment id
+    // this registry has no client for. Wired after `agent` exists, not
+    // before: `AgentDeploymentSink` replies by calling back into this very
+    // agent, and a `Weak` handle needs something already alive to point at
+    // (see that type's own doc for why `Weak` rather than `Arc`).
+    let relay_sink: Arc<dyn p4_adapter::deployment::Sink> =
+        Arc::new(AgentDeploymentSink::new(Arc::downgrade(&agent)));
+    let deployment_id =
+        std::env::var("P4_LLAMACPP_DEPLOYMENT_ID").unwrap_or_else(|_| "llamacpp".to_string());
+    let deployment_attached =
+        adapters::deployment::attach_deployment(relay_sink, agent.deployments())?;
+    println!("P4_AGENT_DEPLOYMENT id={deployment_id} attached={deployment_attached} relay=present");
 
     println!("P4_AGENT_READY address={own} adapters=[{attached}]");
     if own.is_local_only() {

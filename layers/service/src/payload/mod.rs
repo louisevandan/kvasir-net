@@ -7,9 +7,11 @@
 use crate::capability::CapabilityRegistry;
 use crate::message::ToNode;
 use crate::message::wire::{decode_to_node, encode_to_node};
+use p4_adapter::deployment::Submit;
 use p4_adapter::{Outcome, Sequence, Work};
 use p4_agent_core::node::payload::Payload;
 use p4_protocol::frame::Frame;
+use serde_json::{Value, json};
 
 #[derive(Default)]
 pub struct Bodies {
@@ -62,6 +64,48 @@ impl Payload for Bodies {
             state,
             remaining,
             options,
+        })
+    }
+
+    /// Builds the `Submit` a broker relay sends to a registered deployment
+    /// client for one fresh request, or `None` for anything that is not one
+    /// (a continuation, a lifecycle frame, or a frame this vocabulary does
+    /// not recognise at all) -- `sequence`'s own `prompt: Option<String>`
+    /// already draws exactly this line, so this reuses it rather than
+    /// re-deciding it.
+    ///
+    /// `deployment_id` and `deployment_generation` come from the chain's
+    /// current link, the same source `deployment` reads; `submission_id`
+    /// reuses `sequence`'s own request identity, so a resend of one P4
+    /// request still names one submission on the wire (`Submit`'s own doc
+    /// requires this). The chat-completion shape of `request` -- `messages`,
+    /// `max_tokens`, `stream` -- is what `apps/llama`'s submission-stream
+    /// server requires (`parseRingChatRequest`); building it here, rather
+    /// than in the backend-neutral relay that calls this, is the same split
+    /// `served/`'s own `chat::Request::body()` already draws for the hop
+    /// path -- the OpenAI-compatible surface is vocabulary the wire needs to
+    /// agree on, not something the core may invent per adapter.
+    fn submission(&self, frame: &Frame) -> Option<Submit> {
+        let sequence = self.sequence(frame)?;
+        let prompt = sequence.prompt?;
+        let deployment_id = self.deployment(frame)?;
+        let deployment_generation = frame.envelope.chain.as_ref()?.current().generation;
+        let mut request = json!({
+            "messages": [{ "role": "user", "content": prompt }],
+            "max_tokens": sequence.remaining,
+            "stream": true,
+        });
+        if let Ok(Value::Object(options)) = serde_json::from_str::<Value>(&sequence.options) {
+            let map = request.as_object_mut().expect("request root is an object");
+            for (key, value) in options {
+                map.insert(key, value);
+            }
+        }
+        Some(Submit {
+            deployment_id,
+            deployment_generation,
+            submission_id: sequence.sequence,
+            request,
         })
     }
 

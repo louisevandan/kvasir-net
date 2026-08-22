@@ -14,13 +14,16 @@ use crate::transport::inbox::{SubscriptionMetrics, Subscriptions};
 use crate::transport::outbound::Peers;
 use crate::worker::judge::{Verdict, judge};
 use p4_adapter::Adapter;
+use p4_adapter::deployment::{
+    DeploymentEvent, Produced, Registry as DeploymentRegistry, Rejected, RejectedReason, Settled,
+    SettledReason, Sink as DeploymentSink,
+};
 use p4_protocol::frame::Frame;
 use p4_protocol::{Address, QueueClass, Recipient};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as SyncMutex, OnceLock};
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
 /// What the agent itself does with a message addressed to it.
@@ -43,6 +46,9 @@ pub struct Agent {
     forwarded: AtomicUsize,
     consumed: AtomicUsize,
     to_nodes: AtomicUsize,
+    /// Frames the relay diverted to a registered deployment client instead
+    /// of a node's hop queue. See `dispatch`'s own doc.
+    to_deployment: AtomicUsize,
     unrouted: AtomicUsize,
     refused: AtomicUsize,
     emergency_lost: Arc<AtomicUsize>,
@@ -60,6 +66,26 @@ pub struct Agent {
     /// response lane is full. It prevents a refusal from being silently lost
     /// while keeping the reader non-blocking.
     emergency: mpsc::Sender<Frame>,
+    /// What a P4 broker relay dispatches `Submit`/`Cancel` to, selected by
+    /// `DeploymentId` -- `SEALED-CONTRACT.md` §9.1/§9.4. Empty unless
+    /// something registers a client into it (see `deployments()`), and empty
+    /// is exactly "no relay capability": `dispatch` falls back to the hop
+    /// path for every frame when this holds nothing, so a process that never
+    /// registers a client behaves exactly as it did before this field
+    /// existed.
+    deployments: DeploymentRegistry,
+    /// The carrier frame each in-flight submission's `Produced`/`Settled`
+    /// events must be replayed against, keyed by `Submit::submission_id`.
+    ///
+    /// Owned here, not by the sink a deployment client holds: the sink is
+    /// constructed once, at startup, and outlives any single submission, so
+    /// it cannot itself be where a submission's *current* reply state lives
+    /// -- see `relay_deployment_event`'s own doc for why this table, rather
+    /// than the sink, is the thing that changes on every event. A plain
+    /// `std::sync::Mutex` rather than the node-style `tokio::sync::Mutex`:
+    /// every critical section here is a HashMap lookup, never an `.await`,
+    /// and `AgentDeploymentSink::raise` is not itself async.
+    submission_routes: SyncMutex<HashMap<String, Frame>>,
 }
 
 impl Agent {
@@ -120,6 +146,7 @@ impl Agent {
             forwarded: AtomicUsize::new(0),
             consumed: AtomicUsize::new(0),
             to_nodes: AtomicUsize::new(0),
+            to_deployment: AtomicUsize::new(0),
             unrouted: AtomicUsize::new(0),
             refused: AtomicUsize::new(0),
             emergency_lost,
@@ -132,6 +159,8 @@ impl Agent {
             payload,
             node_queue_depth: budget.depth,
             emergency,
+            deployments: DeploymentRegistry::new(),
+            submission_routes: SyncMutex::new(HashMap::new()),
         });
         (agent, receiver, in_flight)
     }
@@ -301,7 +330,9 @@ impl Agent {
     /// cannot leave later queued stages behind.
     // See docs/protocol-outer.md#단절과-kv-흐름.
     pub async fn cancel_frame(&self, route: &str) -> Option<Frame> {
-        let mut removed = None;
+        // A relayed submission is not in any node's queue, so the scan below
+        // would never find it and the caller would call it already terminal.
+        let mut removed = self.cancel_submission(route);
         self.nodes.lock().await.values().for_each(|handle| {
             if removed.is_none() {
                 removed = handle.cancel_frame(route);
@@ -448,6 +479,23 @@ impl Agent {
                 self.consume(frame).await
             }
             Verdict::Node(id) => {
+                // A registered deployment client takes fresh submission-shaped
+                // work ahead of the node lookup below -- SEALED-CONTRACT.md
+                // §9.4/§9.5: the relay calls a broker's client directly and
+                // never builds a `Submit -> Hop` bridge in either direction.
+                // `deployments.contains` gates this on whether *this frame's*
+                // `deployment_id` has a client at all, so a process that never
+                // registers one (every existing hop-only backend today) never
+                // even reaches `payload.submission`: the node lookup below
+                // runs completely unchanged, on the same frame, in the same
+                // order it always has.
+                if let Some(deployment_id) = self.payload.deployment(&frame)
+                    && self.deployments.contains(&deployment_id)
+                    && let Some(submit) = self.payload.submission(&frame)
+                {
+                    self.relay_submit(frame, submit);
+                    return;
+                }
                 let handle = self.nodes.lock().await.get(&id).cloned();
                 match handle {
                     // Moving it in is the whole of the worker's job here. It
@@ -508,6 +556,15 @@ impl Agent {
         }
     }
 }
+
+// The broker relay -- `dispatch`'s alternative to composing a hop -- is
+// `agent::relay`, not this file: `AgentDeploymentSink`, every method that
+// touches `submission_routes` or `deployments`, and the ordering that lets a
+// late `Produced`/`Settled` find its way back to a requester all live there.
+// See that module's own doc for why, and for the reference-cycle reasoning
+// behind `AgentDeploymentSink` holding a `Weak<Agent>`.
+mod relay;
+pub use relay::AgentDeploymentSink;
 
 /// Drains the queue forever across a pool of workers.
 ///

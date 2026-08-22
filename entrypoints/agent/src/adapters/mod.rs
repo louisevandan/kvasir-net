@@ -5,6 +5,11 @@
 //! above this line — envelope, queue, worker, node, chain — changes for any of
 //! them, which is the property the communication layer was built to have.
 
+// The deployment-submission path. Kept a sibling of the `Hop` registry
+// below rather than replacing it: the old path is the comparison arm the
+// A/B measurement needs before anything is deleted.
+pub mod deployment;
+
 use p4_llamacpp_served::Served;
 use p4_llamacpp_served::flavour::Flavour;
 use p4_llamacpp_staged_adapter::{StagedAdapter, StagedConfig};
@@ -69,6 +74,26 @@ pub fn registry() -> Registry {
             layer_end,
         );
     }
+
+    // `p4-llamacpp-deployment`: a thin client for llama.cpp's v2 submission
+    // stream. Deliberately not registered through this function's
+    // `Registry` -- that one hands out `Arc<dyn p4_adapter::Adapter>`
+    // (`Work`/`Hop`/`EventSink`), and this client does not implement
+    // `Adapter` and never has; it implements `p4_adapter::deployment::Client`
+    // (`try_submit`/`cancel`) directly, with no `Submit -> Hop` bridge in
+    // between (`SEALED-CONTRACT.md` §9.3 -- building that bridge is the
+    // mistake this design deliberately does not repeat). A P4 broker calls
+    // `try_submit`/`cancel` on `p4_adapter::deployment::Registry` --
+    // `DeploymentId` in, the right client's queue reached, nothing else --
+    // and `deployment::attach_deployment` (`deployment.rs`, this directory)
+    // connects the client and registers it, from `P4_LLAMACPP_DEPLOYMENT_*`
+    // environment variables, into whichever `Registry` its caller passes
+    // in -- the same env-gated-capability shape `register_staged` below
+    // uses. That registry is `p4_agent_core::agent::Agent`'s own
+    // (`Agent::deployments`), not one this function returns: the registry
+    // `Agent::dispatch`'s relay actually consults has to be the one it
+    // holds, and `main.rs` is what calls `attach_deployment` once that
+    // agent exists.
 
     registry
 }

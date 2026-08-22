@@ -8,6 +8,7 @@
 //! The core therefore never learns a message catalog. Swapping what a body
 //! means costs one implementation of this trait and touches nothing else.
 
+use p4_adapter::deployment::Submit;
 use p4_adapter::{Outcome, Sequence, Work};
 use p4_protocol::frame::Frame;
 
@@ -18,6 +19,22 @@ pub trait Payload: Send + Sync {
     /// than guessed at, because a malformed body reaching a backend is how a
     /// protocol fault turns into a crash somewhere it cannot be traced.
     fn sequence(&self, frame: &Frame) -> Option<Sequence>;
+
+    /// Reads a frame as the first hop-shaped request of a submission --
+    /// fresh work, not a continuation, a lifecycle instruction, or an
+    /// acknowledgement -- for a broker relay that diverts it to a registered
+    /// deployment client instead of composing a hop.
+    ///
+    /// The default is `None` for every vocabulary that has not opted in,
+    /// exactly like every other method here; a relay that finds `None` falls
+    /// back to the existing hop path unchanged. An override is expected to
+    /// build the same identity `sequence` would use for this frame (a resend
+    /// under one id must remain one submission -- see `Submit`'s own doc),
+    /// so `None` here whenever `sequence` would return a `prompt` of `None`
+    /// too: a continuation is never a new submission.
+    fn submission(&self, _frame: &Frame) -> Option<Submit> {
+        None
+    }
 
     /// Re-encode the logical request for the next decode lap. Vocabulary
     /// owners supply position and remaining-token state while the core keeps

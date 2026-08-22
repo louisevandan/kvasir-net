@@ -1,0 +1,212 @@
+{
+  "protocol": "linker-pipeline-submission-v1",
+  "note": "Canonical wire fixtures for the deployment-submission contract. Hand-kept in sync with the TypeScript twin at packages/llama_domain/src/common/protocol/pipeline-submission/fixtures.json -- nothing generates one from the other in this checkpoint.",
+  "canonical": {
+    "commands": {
+      "submit": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "submit",
+        "deployment_id": "dep-1",
+        "deployment_generation": 3,
+        "submission_id": "sub-1",
+        "request": { "prompt": "hello" }
+      },
+      "cancel": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "cancel",
+        "submission_id": "sub-1"
+      }
+    },
+    "events": {
+      "accepted": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "accepted",
+        "submission_id": "sub-1"
+      },
+      "rejected_full": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "rejected",
+        "submission_id": "sub-1",
+        "reason": "full"
+      },
+      "rejected_conflict": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "rejected",
+        "submission_id": "sub-1",
+        "reason": "conflict"
+      },
+      "rejected_invalid": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "rejected",
+        "submission_id": "sub-1",
+        "reason": "invalid"
+      },
+      "rejected_deployment_closed": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "rejected",
+        "submission_id": "sub-1",
+        "reason": "deployment_closed"
+      },
+      "produced": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "produced",
+        "submission_id": "sub-1",
+        "event_ordinal": 0,
+        "text": "Hello",
+        "generated_tokens": 1
+      },
+      "settled_stop": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "settled",
+        "submission_id": "sub-1",
+        "reason": "stop",
+        "generated_tokens": 5
+      },
+      "settled_length": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "settled",
+        "submission_id": "sub-1",
+        "reason": "length",
+        "generated_tokens": 512
+      },
+      "settled_canceled": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "settled",
+        "submission_id": "sub-1",
+        "reason": "canceled",
+        "generated_tokens": 2
+      },
+      "settled_error": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "settled",
+        "submission_id": "sub-1",
+        "reason": "error",
+        "generated_tokens": 0
+      }
+    }
+  },
+  "malformed": {
+    "commands": {
+      "not_an_object": "just-a-string",
+      "null_value": null,
+      "array_value": [],
+      "submit_wrong_protocol": {
+        "protocol": "other-protocol-v1",
+        "type": "submit",
+        "deployment_id": "dep-1",
+        "deployment_generation": 3,
+        "submission_id": "sub-1",
+        "request": {}
+      },
+      "submit_missing_deployment_id": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "submit",
+        "deployment_generation": 3,
+        "submission_id": "sub-1",
+        "request": {}
+      },
+      "submit_empty_submission_id": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "submit",
+        "deployment_id": "dep-1",
+        "deployment_generation": 3,
+        "submission_id": "",
+        "request": {}
+      },
+      "submit_negative_generation": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "submit",
+        "deployment_id": "dep-1",
+        "deployment_generation": -1,
+        "submission_id": "sub-1",
+        "request": {}
+      },
+      "submit_missing_request": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "submit",
+        "deployment_id": "dep-1",
+        "deployment_generation": 3,
+        "submission_id": "sub-1"
+      },
+      "cancel_missing_submission_id": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "cancel"
+      },
+      "cancel_wrong_type": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "cancels",
+        "submission_id": "sub-1"
+      }
+    },
+    "events": {
+      "not_an_object": "just-a-string",
+      "null_value": null,
+      "array_value": [],
+      "missing_type": {
+        "protocol": "linker-pipeline-submission-v1",
+        "submission_id": "sub-1"
+      },
+      "unknown_type": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "ping",
+        "submission_id": "sub-1"
+      },
+      "wrong_protocol": {
+        "protocol": "other-protocol-v1",
+        "type": "accepted",
+        "submission_id": "sub-1"
+      },
+      "accepted_missing_submission_id": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "accepted"
+      },
+      "rejected_missing_reason": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "rejected",
+        "submission_id": "sub-1"
+      },
+      "rejected_bad_reason": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "rejected",
+        "submission_id": "sub-1",
+        "reason": "unknown"
+      },
+      "produced_negative_ordinal": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "produced",
+        "submission_id": "sub-1",
+        "event_ordinal": -1,
+        "text": "Hello",
+        "generated_tokens": 1
+      },
+      "produced_non_integer_ordinal": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "produced",
+        "submission_id": "sub-1",
+        "event_ordinal": 1.5,
+        "text": "Hello",
+        "generated_tokens": 1
+      },
+      "produced_missing_text": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "produced",
+        "submission_id": "sub-1",
+        "event_ordinal": 0,
+        "generated_tokens": 1
+      },
+      "settled_missing_generated_tokens": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "settled",
+        "submission_id": "sub-1",
+        "reason": "stop"
+      },
+      "settled_bad_reason": {
+        "protocol": "linker-pipeline-submission-v1",
+        "type": "settled",
+        "submission_id": "sub-1",
+        "reason": "bogus",
+        "generated_tokens": 1
+      }
+    }
+  }
+}

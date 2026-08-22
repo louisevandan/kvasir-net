@@ -10,6 +10,7 @@
 //! and SGLang, which own theirs. It does not generalise beyond that, and it
 //! names no backend.
 
+pub mod deployment;
 pub mod event;
 pub mod model;
 pub mod work;
