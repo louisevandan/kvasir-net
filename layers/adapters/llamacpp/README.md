@@ -3,7 +3,7 @@
 | Path | What it is |
 | --- | --- |
 | `served/` | `Distribution::Internal`. Crate `p4-llamacpp-served`. Stock `llama-server` over its HTTP surface — one process holding the whole model, one entry point, so a chain over it is one link. Starts and stops that process when the plan carries a `start`. |
-| `staged/` | `Distribution::Staged`. Splits the model across machines with P4 owning the boundary between layer ranges, which needs llama.cpp internals it does not expose — so an ordered patch series, the script that materialises a verified patched worktree, and the staged Rust/server implementation behind that compatibility boundary. Native transaction parity and production acceptance remain separate gates. |
+| `staged/` | `Distribution::Staged`. Splits the model across machines with the llama.cpp adapter owning layer placement, mutable memory residency, graph cuts, and physical UBATCH scheduling. P4 only delivers independent submissions. The private llama.cpp dependency is isolated in an ordered patch series and a verified patched worktree. See [`docs/llamacpp-stage-memory.md`](../../../docs/llamacpp-stage-memory.md). |
 | `upstream/` | llama.cpp's own repository, cloned by `npm run p4:upstream` and ignored by ours. Used only by `staged/`. |
 
 They are shapes rather than backends, which is why they share a folder. A

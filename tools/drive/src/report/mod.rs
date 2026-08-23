@@ -11,7 +11,8 @@ use std::time::Duration;
 
 pub fn write_evidence(
     path: &str,
-    prompt: &str,
+    prompts: &[String],
+    vary: bool,
     outcome: &Outcome,
     telemetry: &TelemetryEvidence,
     elapsed: Duration,
@@ -21,8 +22,12 @@ pub fn write_evidence(
     document.push_str("This file contains the exact prompt and complete response text retained by the drive for every request.\n\n");
     document.push_str(&format!("- elapsed_ms: {}\n", elapsed.as_millis()));
     document.push_str(&format!(
-        "- completed: {}\n- failed: {}\n- unanswered: {}\n- total_tokens: {}\n\n",
-        outcome.completed, outcome.failed, outcome.unanswered, outcome.tokens
+        "- completed: {}\n- failed: {}\n- unanswered: {}\n- total_tokens: {}\n- wave_active_prior_requests: {:?}\n\n",
+        outcome.completed,
+        outcome.failed,
+        outcome.unanswered,
+        outcome.tokens,
+        outcome.wave_active_prior_requests
     ));
     document.push_str("## Aggregate telemetry\n\n```json\n");
     document.push_str(&telemetry.to_json());
@@ -46,7 +51,7 @@ pub fn write_evidence(
         }
         document.push('\n');
         document.push_str("### Prompt\n\n");
-        document.push_str(&prompt_for_session(prompt, index));
+        document.push_str(&prompt_for_session(prompts, vary, index));
         document.push_str("\n\n### Complete response\n\n");
         document.push_str(&stream.text);
         document.push_str("\n\n---\n\n");
@@ -54,11 +59,16 @@ pub fn write_evidence(
     std::fs::write(path, document).map_err(|error| format!("cannot write evidence {path}: {error}"))
 }
 
-fn prompt_for_session(prompt: &str, index: usize) -> String {
-    if std::env::var("P4_DRIVE_VARY").is_ok_and(|value| value != "0") {
-        format!("Request {}.\n\n{}", index, prompt)
+fn prompt_for_session(prompts: &[String], vary: bool, index: usize) -> String {
+    let prompt = if prompts.len() == 1 {
+        &prompts[0]
     } else {
-        prompt.to_owned()
+        &prompts[index]
+    };
+    if vary && prompts.len() == 1 {
+        format!("Request {index}.\n\n{prompt}")
+    } else {
+        prompt.clone()
     }
 }
 
@@ -100,6 +110,26 @@ pub fn print(
         optional_tps(telemetry.aggregate.average_session_prefill_tps),
         optional_tps(telemetry.aggregate.average_session_generation_tps),
     );
+    if !outcome.wave_active_prior_requests.is_empty() {
+        let overlapping = outcome
+            .wave_active_prior_requests
+            .iter()
+            .filter(|active| **active > 0)
+            .count();
+        let minimum = outcome
+            .wave_active_prior_requests
+            .iter()
+            .copied()
+            .min()
+            .unwrap_or_default();
+        println!(
+            "P4_DRIVE_WAVE_OVERLAP waves={} overlapping={} min_active_prior={} active_prior={:?}",
+            outcome.wave_active_prior_requests.len(),
+            overlapping,
+            minimum,
+            outcome.wave_active_prior_requests
+        );
+    }
 
     if !outcome.stalled.is_empty() {
         println!("  stalled_at_tokens={:?}", outcome.stalled);

@@ -95,6 +95,29 @@ pub fn attach_deployment(sink: Arc<dyn Sink>, registry: &Registry) -> std::io::R
         ));
     };
     client.advance_generation(generation);
+    if std::env::var("P4_AGENT_STATS").is_ok_and(|value| value != "0") {
+        let observed = Arc::downgrade(&client);
+        let observed_id = deployment_id.clone();
+        std::thread::Builder::new()
+            .name("p4-deployment-stats".into())
+            .spawn(move || {
+                while let Some(client) = observed.upgrade() {
+                    let stats = client.stats();
+                    println!(
+                        "P4_AGENT_DEPLOYMENT_STATS id={} queued={} peak_queued={} outstanding={} peak_outstanding={} inbound={} reconnects={} full_retries={}",
+                        observed_id,
+                        stats.queued_submissions,
+                        stats.peak_queued_submissions,
+                        stats.outstanding_submissions,
+                        stats.peak_outstanding_submissions,
+                        stats.inbound_events,
+                        stats.reconnects,
+                        stats.full_retries
+                    );
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            })?;
+    }
     registry.register(deployment_id, client);
     Ok(true)
 }

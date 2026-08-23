@@ -32,13 +32,24 @@ param(
     [int]$UBatchSize = 0,
     [int]$FlashAttention = 0,
     [string]$PromptFile = '',
+    [string]$PromptSetFile = '',
+    # Opaque llama adapter options, stored in a file so the exact sampling
+    # profile under test is reproducible and cannot be corrupted by shell
+    # quoting. An inherited P4_DRIVE_OPTIONS is never trusted.
+    [string]$DriveOptionsFile = '',
     [int]$QuietMilliseconds = 120000,
     [int]$MinimumPeakNodeQueue = 1,
     [int]$MinimumPeakInAdapter = 1,
+    [int]$MinimumPeakMainLane = 0,
+    [int]$MinimumPeakDeploymentQueued = 0,
+    [int]$MinimumPeakDeploymentOutstanding = 0,
+    [int]$MinimumOverlappingWaves = 0,
+    [int]$MinimumActivePriorAtWave = 0,
     [int]$DriverPort = 52000,
     [int]$LocalAgentPortBase = 52003,
     [int]$ForwardPortBase = 53001,
-    [int]$Max4080VramMiB = 9000,
+    [int]$Max4080VramMiB = 12288,
+    [int]$Max3090VramMiB = 23552,
     [string]$StageRanges = '',
     [string]$GpuLayers = '',
     [string]$TensorOverride = '',
@@ -56,7 +67,16 @@ param(
     # inference must leave P4 through this relay; the runner fails unless
     # agent telemetry proves at least one to_deployment dispatch.
     [string]$RelayDeploymentAddr = '',
+    # Optional second host-local supervisor for a deployment whose native
+    # ranks are split across two machines. It must expose the same deployment
+    # id and generation as RelayDeploymentAddr.
+    [string]$RelayPeerAddr = '',
     [string]$RelayDeploymentId = 'deployment',
+    # Serial semantic baseline. This keeps the complete P4 relay and four-rank
+    # native path but makes a mixed Prefill/Decode sample impossible by
+    # construction. All other native, adapter, body, and performance gates stay
+    # active.
+    [switch]$SerialCorrectness,
     [switch]$KeepRemoteArtifacts,
     [switch]$KeepLoaded
 )
@@ -72,9 +92,17 @@ Set-StrictMode -Version Latest
 if ($Requests -lt 1 -or $Tokens -lt 1) { throw 'Requests and Tokens must be positive.' }
 $requestedTokens = $Tokens
 if ($Parallel -lt 0) { throw 'Parallel must be zero or positive.' }
+if ($SerialCorrectness -and ($Requests -ne 1 -or $Parallel -ne 1)) {
+    throw 'SerialCorrectness requires exactly Requests=1 and Parallel=1.'
+}
 if ($ArriveMilliseconds -lt 0) { throw 'ArriveMilliseconds must be zero or positive.' }
-if ($MinimumPeakNodeQueue -lt 0 -or $MinimumPeakInAdapter -lt 0) {
+if ($MinimumPeakNodeQueue -lt 0 -or $MinimumPeakInAdapter -lt 0 -or
+    $MinimumPeakMainLane -lt 0 -or $MinimumPeakDeploymentQueued -lt 0 -or
+    $MinimumPeakDeploymentOutstanding -lt 0) {
     throw 'Minimum overlap thresholds must be zero or positive.'
+}
+if ($MinimumOverlappingWaves -lt 0 -or $MinimumActivePriorAtWave -lt 0) {
+    throw 'Wave overlap thresholds must be zero or positive.'
 }
 if ($InitialBurst -lt 0 -or $BatchRequests -lt 0 -or $BatchIntervalMilliseconds -lt 0) {
     throw 'InitialBurst, BatchRequests, and BatchIntervalMilliseconds must be zero or positive.'
@@ -92,7 +120,9 @@ if ($Requests -gt 4096 -or $Tokens -gt 100000 -or $Parallel -gt 4096 -or $BatchS
     throw 'Requests, Tokens, Parallel, BatchSize, or UBatchSize exceeds the safe runner limit.'
 }
 if ($QuietMilliseconds -lt 1000) { throw 'QuietMilliseconds must be at least 1000.' }
-if ($Max4080VramMiB -lt 1) { throw 'Max4080VramMiB must be positive.' }
+if ($Max4080VramMiB -lt 1 -or $Max3090VramMiB -lt 1) {
+    throw 'GPU VRAM limits must be positive.'
+}
 if ($FlashAttention -notin @(0, 1)) { throw 'FlashAttention must be 0 or 1.' }
 if ($DriverPort -ne 52000 -or $LocalAgentPortBase -ne 52003 -or $ForwardPortBase -ne 53001) {
     throw 'This acceptance runner is restricted to the existing firewall ports: driver 52000, central agents 52003/52004, SSH forwards 53001/53002.'
@@ -104,23 +134,64 @@ if (-not [string]::IsNullOrWhiteSpace($RelayDeploymentAddr) -and
     $RelayDeploymentAddr -notmatch '^[^:\s]+:\d{1,5}$') {
     throw 'RelayDeploymentAddr must be host:port.'
 }
+if (-not [string]::IsNullOrWhiteSpace($RelayPeerAddr) -and
+    $RelayPeerAddr -notmatch '^[^:\s]+:\d{1,5}$') {
+    throw 'RelayPeerAddr must be host:port.'
+}
+if (-not [string]::IsNullOrWhiteSpace($RelayPeerAddr) -and
+    [string]::IsNullOrWhiteSpace($RelayDeploymentAddr)) {
+    throw 'RelayPeerAddr requires RelayDeploymentAddr.'
+}
 if ([string]::IsNullOrWhiteSpace($RelayDeploymentId)) { throw 'RelayDeploymentId cannot be empty.' }
 $relayRequested = -not [string]::IsNullOrWhiteSpace($RelayDeploymentAddr)
 $relayRuntimeView = $null
 $relayRuntimeAfter = $null
+$relayRuntimeViews = @()
+$relayRuntimeAfters = @()
+$relayRuntimeUris = @()
+function Get-RelayPerformanceTotal([object[]]$Views, [string]$Name) {
+    $total = 0.0
+    foreach ($view in $Views) {
+        $performance = $view.PSObject.Properties['performance']
+        if ($null -eq $performance -or $null -eq $performance.Value) { continue }
+        $property = $performance.Value.PSObject.Properties[$Name]
+        if ($null -ne $property -and $null -ne $property.Value) {
+            $total += [double]$property.Value
+        }
+    }
+    return $total
+}
 if ($relayRequested) {
     $encodedDeploymentId = [uri]::EscapeDataString($RelayDeploymentId)
-    $relayRuntimeUri = "http://$RelayDeploymentAddr/api/runtime-groups/$encodedDeploymentId"
-    try {
-        $relayRuntimeView = Invoke-RestMethod -Uri $relayRuntimeUri -TimeoutSec 10
-    } catch {
-        throw "Relay deployment preflight failed at ${relayRuntimeUri}: $($_.Exception.Message)"
+    $relayAddresses = @($RelayDeploymentAddr)
+    if (-not [string]::IsNullOrWhiteSpace($RelayPeerAddr)) { $relayAddresses += $RelayPeerAddr }
+    foreach ($address in $relayAddresses) {
+        $uri = "http://$address/api/runtime-groups/$encodedDeploymentId"
+        try { $view = Invoke-RestMethod -Uri $uri -TimeoutSec 10 } catch {
+            throw "Relay deployment preflight failed at ${uri}: $($_.Exception.Message)"
+        }
+        if ($view.phase -ne 'running') {
+            throw "Relay deployment '$RelayDeploymentId' is not running at $address (phase=$($view.phase))."
+        }
+        $relayRuntimeUris += $uri
+        $relayRuntimeViews += $view
     }
-    if ($relayRuntimeView.phase -ne 'running') {
-        throw "Relay deployment '$RelayDeploymentId' is not running (phase=$($relayRuntimeView.phase))."
+    $relayRuntimeView = $relayRuntimeViews[0]
+    $relayProcesses = @($relayRuntimeViews | ForEach-Object { @($_.processes) })
+    $stageIndices = @($relayProcesses | ForEach-Object { [int]$_.identity.stageIndex } | Sort-Object)
+    $generations = @($relayRuntimeViews | ForEach-Object { [long]$_.deployment_generation } | Sort-Object -Unique)
+    if ($relayProcesses.Count -ne 4 -or ($stageIndices -join ',') -ne '0,1,2,3') {
+        throw "Relay deployment must expose native stages 0,1,2,3 exactly once; found $($stageIndices -join ',')."
     }
-    if (@($relayRuntimeView.process_ids).Count -ne 4) {
-        throw "Relay deployment '$RelayDeploymentId' must own exactly four processes; found $(@($relayRuntimeView.process_ids).Count)."
+    if ($generations.Count -ne 1) {
+        throw "Relay supervisors disagree on deployment generation: $($generations -join ',')."
+    }
+    foreach ($process in $relayProcesses) {
+        $telemetry = $process.PSObject.Properties['inferenceTelemetry']
+        if ($null -ne $telemetry -and $null -ne $telemetry.Value -and
+            [long]$telemetry.Value.batching.samples -ne 0) {
+            throw "Relay deployment is not pristine at stage $($process.identity.stageIndex); batching samples already exist."
+        }
     }
 }
 if (-not (Get-Command ssh.exe -ErrorAction SilentlyContinue)) { throw 'ssh.exe is required.' }
@@ -230,12 +301,22 @@ $ArtifactDirectory = Resolve-LocalInputPath $ArtifactDirectory
 $AgentBinary = Resolve-LocalInputPath $AgentBinary
 $DriveBinary = Resolve-LocalInputPath $DriveBinary
 $PromptFile = Resolve-LocalInputPath $PromptFile
+$PromptSetFile = Resolve-LocalInputPath $PromptSetFile
+$DriveOptionsFile = Resolve-LocalInputPath $DriveOptionsFile
+$hasPromptFile = -not [string]::IsNullOrWhiteSpace($PromptFile)
+$hasPromptSet = -not [string]::IsNullOrWhiteSpace($PromptSetFile)
+if ($hasPromptFile -and $hasPromptSet) {
+    throw 'PromptFile and PromptSetFile are mutually exclusive.'
+}
 $PlacementPlanFile = Resolve-LocalInputPath $PlacementPlanFile
 $agentBinary = $AgentBinary
 $driveBinary = $DriveBinary
 $serverBinary = Join-Path $ArtifactDirectory 'p4_staged_server.exe'
-$p4SourceStamp = Get-NewestSourceWriteTimeUtc @(
+$agentSourceStamp = Get-NewestSourceWriteTimeUtc @(
     (Join-Path $projectRoot 'apps\p4\entrypoints'),
+    (Join-Path $projectRoot 'apps\p4\layers')
+)
+$driveSourceStamp = Get-NewestSourceWriteTimeUtc @(
     (Join-Path $projectRoot 'apps\p4\layers'),
     (Join-Path $projectRoot 'apps\p4\tools\drive')
 )
@@ -246,8 +327,8 @@ $stageSourceStamp = Get-NewestSourceWriteTimeUtc @(
 )
 $binaryEvidence = [pscustomobject]@{
     source_head = (& git.exe -C $projectRoot rev-parse HEAD).Trim()
-    agent = Get-BinaryEvidence $agentBinary $p4SourceStamp 'agent'
-    drive = Get-BinaryEvidence $driveBinary $p4SourceStamp 'drive'
+    agent = Get-BinaryEvidence $agentBinary $agentSourceStamp 'agent'
+    drive = Get-BinaryEvidence $driveBinary $driveSourceStamp 'drive'
     stage_server = Get-BinaryEvidence $serverBinary $stageSourceStamp 'stage server'
 }
 Write-Output "BINARIES agent=$($binaryEvidence.agent.path) sha256=$($binaryEvidence.agent.sha256) built=$($binaryEvidence.agent.built_utc)"
@@ -388,10 +469,44 @@ if ($planContextSize -lt $requiredContext) {
     throw "ContextSize=$planContextSize is smaller than required context $requiredContext (PromptTokens=$effectivePromptTokens Tokens=$Tokens Parallel=$parallelSlots)."
 }
 $planBatchSize = if ($BatchSize -gt 0) { $BatchSize } else { [math]::Max(512, $Tokens) }
-$planUBatchSize = if ($UBatchSize -gt 0) { $UBatchSize } elseif ($PromptFile -ne '') { $planBatchSize } else { 128 }
+$planUBatchSize = if ($UBatchSize -gt 0) { $UBatchSize } elseif ($hasPromptFile -or $hasPromptSet) { $planBatchSize } else { 128 }
 $reservedLocalPorts = @($driverPort) + $localAgentPorts + $localForwardPorts
 if ($PromptFile -ne '' -and -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) {
     throw "Prompt file not found: $PromptFile"
+}
+if ($hasPromptSet) {
+    if (-not (Test-Path -LiteralPath $PromptSetFile -PathType Leaf)) {
+        throw "Prompt set file not found: $PromptSetFile"
+    }
+    $decodedPromptSet = Get-Content -LiteralPath $PromptSetFile -Raw | ConvertFrom-Json
+    # PowerShell 7 preserves a top-level JSON array as one pipeline object,
+    # while Windows PowerShell enumerates it. A foreach expression normalises
+    # both hosts without treating the array itself as one invalid prompt.
+    $promptSet = @(foreach ($prompt in $decodedPromptSet) { $prompt })
+    $invalidPrompts = @($promptSet | Where-Object {
+        $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_)
+    })
+    if ($promptSet.Count -ne $Requests -or $invalidPrompts.Count -gt 0) {
+        throw "PromptSetFile must contain exactly $Requests non-empty JSON strings; found=$($promptSet.Count) invalid=$($invalidPrompts.Count)."
+    }
+}
+$driveOptions = '{}'
+$driveOptionsSha256 = $null
+if (-not [string]::IsNullOrWhiteSpace($DriveOptionsFile)) {
+    if (-not (Test-Path -LiteralPath $DriveOptionsFile -PathType Leaf)) {
+        throw "Drive options file not found: $DriveOptionsFile"
+    }
+    $driveOptions = Get-Content -LiteralPath $DriveOptionsFile -Raw
+    try {
+        $parsedDriveOptions = $driveOptions | ConvertFrom-Json
+    } catch {
+        throw "DriveOptionsFile must contain one JSON object: $($_.Exception.Message)"
+    }
+    if ($null -eq $parsedDriveOptions -or $parsedDriveOptions -is [array] -or
+        $parsedDriveOptions -is [string] -or $parsedDriveOptions -is [ValueType]) {
+        throw 'DriveOptionsFile must contain one JSON object.'
+    }
+    $driveOptionsSha256 = (Get-FileHash -LiteralPath $DriveOptionsFile -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 if (-not (Test-Path -LiteralPath $ArtifactDirectory -PathType Container)) {
     throw "Artifact directory not found: $ArtifactDirectory"
@@ -412,9 +527,12 @@ if ($listeningPorts.Count -gt 0) {
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $remoteLogDirectory = Join-Path $RemoteAgentRoot "e2e-$RunId-logs"
 $localProcesses = [System.Collections.Generic.List[System.Diagnostics.Process]]::new(); $artifactFiles = @()
-$tunnel = $null; $result = $null; $vramSampler = $null
-$vramLog = Join-Path $outputRoot 'vram-4080.csv'
+$tunnel = $null; $result = $null; $vramSampler = $null; $remoteGpuSampler = $null
+$vramLog = Join-Path $outputRoot 'gpu-central.csv'
+$remoteGpuLog = Join-Path $outputRoot 'gpu-remote.csv'
+$gpuSummary = $null
 $peak4080VramMiB = -1
+$peak3090VramMiB = @()
 function ConvertTo-EncodedCommand([string]$Text) {
     [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Text))
 }
@@ -502,10 +620,19 @@ try {
         throw 'nvidia-smi.exe is required to prove the 4080 VRAM guard.'
     }
     $vramSampler = Start-Process -FilePath 'nvidia-smi.exe' -ArgumentList @(
-        '--query-gpu=index,memory.used', '--format=csv,noheader,nounits', '-lms', '200'
-    ) -RedirectStandardOutput $vramLog -RedirectStandardError (Join-Path $outputRoot 'vram-4080.err.log') `
+        '--query-gpu=timestamp,index,uuid,name,utilization.gpu,memory.used,power.draw',
+        '--format=csv,noheader,nounits', '-lms', '250'
+    ) -RedirectStandardOutput $vramLog -RedirectStandardError (Join-Path $outputRoot 'gpu-central.err.log') `
         -WindowStyle Hidden -PassThru
     Assert-RemotePreflight
+    $remoteGpuCommand = @"
+& nvidia-smi.exe '--query-gpu=timestamp,index,uuid,name,utilization.gpu,memory.used,power.draw' '--format=csv,noheader,nounits' '-lms' '250'
+"@
+    $remoteGpuSampler = Start-Process -FilePath 'ssh.exe' -ArgumentList @(
+        '-T', '-o', 'BatchMode=yes', $SshTarget,
+        "powershell.exe -NoProfile -NonInteractive -EncodedCommand $(ConvertTo-EncodedCommand $remoteGpuCommand)"
+    ) -RedirectStandardOutput $remoteGpuLog `
+        -RedirectStandardError (Join-Path $outputRoot 'gpu-remote.err.log') -WindowStyle Hidden -PassThru
     $remotePrepare = @"
 `$ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path $(ConvertTo-PowerShellLiteral $RemoteArtifactDirectory) | Out-Null
@@ -698,9 +825,11 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
     $driverTraceAssignment = if ($env:P4_DRIVE_TRACE -and $env:P4_DRIVE_TRACE -ne '0') {
         "`$env:P4_DRIVE_TRACE = '1'"
     } else { '' }
-    $driverOptionsAssignment = if ($env:P4_DRIVE_OPTIONS) {
-        "`$env:P4_DRIVE_OPTIONS = $(ConvertTo-PowerShellLiteral $env:P4_DRIVE_OPTIONS)"
-    } else { '' }
+    # Always stamp this run's exact value. Leaving the assignment empty would
+    # inherit an unrelated shell's P4_DRIVE_OPTIONS and silently change the
+    # load-time sampler contract.
+    $driverOptionsAssignment =
+        "`$env:P4_DRIVE_OPTIONS = $(ConvertTo-PowerShellLiteral $driveOptions)"
     # The arrival schedule is part of what a run measured, so it is written into
     # the driver's own environment rather than inherited from whatever shell
     # started this script.
@@ -714,7 +843,7 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
     $vary = switch ($VaryPrompts) {
         'on' { '1' }
         'off' { '0' }
-        default { if ([string]::IsNullOrWhiteSpace($PromptFile)) { '1' } else { '0' } }
+        default { if ($hasPromptFile -or $hasPromptSet) { '0' } else { '1' } }
     }
     $script:EvidencePath = if ([string]::IsNullOrWhiteSpace($EvidenceFile)) { Join-Path $outputRoot 'evidence.md' } else { $EvidenceFile }
     $env:P4_DRIVE_EVIDENCE_FILE = $script:EvidencePath
@@ -732,11 +861,13 @@ try { `$child.WaitForExit(); exit `$child.ExitCode } finally { Remove-Item -Lite
             "Remove-Item Env:P4_DRIVE_ARTIFACT -ErrorAction SilentlyContinue"
             "`$env:P4_DRIVE_REUSE_LOADED = '1'"
             "`$env:P4_DRIVE_KEEP_LOADED = '1'"
+            "`$env:P4_DRIVE_DEPLOYMENT_ID = $(ConvertTo-PowerShellLiteral $RelayDeploymentId)"
         ) -join "`n"
     } else {
         @(
             "Remove-Item Env:P4_DRIVE_REUSE_LOADED -ErrorAction SilentlyContinue"
             "Remove-Item Env:P4_DRIVE_KEEP_LOADED -ErrorAction SilentlyContinue"
+            "Remove-Item Env:P4_DRIVE_DEPLOYMENT_ID -ErrorAction SilentlyContinue"
             "`$env:P4_DRIVE_DISCOVER = '1'"
             "`$env:P4_DRIVE_ARTIFACT = $(ConvertTo-PowerShellLiteral ([System.IO.Path]::GetFileName($LocalModel)))"
         ) -join "`n"
@@ -754,6 +885,7 @@ ${driverEvidenceAssignment}
 `$env:P4_DRIVE_REQUEST_DEADLINE_MS = '$([Math]::Max(300000, [long]$QuietMilliseconds * 3))'
 `$env:P4_DRIVE_PROMPT = 'Explain why staged inference uses a hidden-state cut.'
 if ('$([string]::IsNullOrWhiteSpace($PromptFile))' -eq 'False') { `$env:P4_DRIVE_PROMPT_FILE = $(ConvertTo-PowerShellLiteral $PromptFile) }
+if ('$hasPromptSet' -eq 'True') { `$env:P4_DRIVE_PROMPT_SET_FILE = $(ConvertTo-PowerShellLiteral $PromptSetFile) }
 if ('$KeepLoaded' -eq 'True') { `$env:P4_DRIVE_KEEP_LOADED = '1' }
 $($planAssignments -join "`n")
 Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$PID -Encoding ascii
@@ -772,12 +904,37 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
     if ($null -ne $vramSampler -and -not $vramSampler.HasExited) {
         Stop-Process -Id $vramSampler.Id -Force -ErrorAction SilentlyContinue
     }
-    if (Test-Path -LiteralPath $vramLog) {
-        $vramSamples = foreach ($line in @(Get-Content -LiteralPath $vramLog -ErrorAction SilentlyContinue)) {
-            $match = [regex]::Match($line, '^\s*1\s*,\s*(\d+)\s*$')
-            if ($match.Success) { [int]$match.Groups[1].Value }
-        }
-        if (@($vramSamples).Count -gt 0) { $peak4080VramMiB = [int](@($vramSamples | Measure-Object -Maximum).Maximum) }
+    if ($null -ne $remoteGpuSampler -and -not $remoteGpuSampler.HasExited) {
+        Stop-Process -Id $remoteGpuSampler.Id -Force -ErrorAction SilentlyContinue
+    }
+    $gpuSummaryText = & node.exe (Join-Path $projectRoot 'test\benchmarks\direct-pipeline\summarize-gpu-csv.mjs') `
+        $vramLog $remoteGpuLog
+    if ($LASTEXITCODE -ne 0) { throw 'GPU evidence summarization failed.' }
+    $gpuSummaryText | Set-Content -LiteralPath (Join-Path $outputRoot 'gpu-summary.json') -Encoding utf8
+    $gpuSummary = ($gpuSummaryText -join "`n") | ConvertFrom-Json
+    if (@($gpuSummary.devices).Count -ne 4 -or
+        @($gpuSummary.devices | Where-Object {
+            $_.samples -lt 2 -or $null -eq $_.utilization_gpu_percent_mean -or
+            [double]$_.utilization_gpu_percent_mean -le 0
+        }).Count -gt 0) {
+        throw 'GPU evidence must contain active samples from all four devices.'
+    }
+    $gpu4080 = @($gpuSummary.devices | Where-Object { $_.name -match '4080' })
+    if ($gpu4080.Count -eq 1) {
+        $peak4080VramMiB = [int][Math]::Ceiling([double]$gpu4080[0].memory_used_mib_max)
+    }
+    $gpu3090 = @($gpuSummary.devices | Where-Object { $_.name -match '3090' })
+    if ($gpu3090.Count -eq 3) {
+        $peak3090VramMiB = @($gpu3090 | ForEach-Object {
+            [int][Math]::Ceiling([double]$_.memory_used_mib_max)
+        })
+    }
+    $vramLimitsPassed = $peak4080VramMiB -ge 0 -and
+        $peak4080VramMiB -le $Max4080VramMiB -and
+        $peak3090VramMiB.Count -eq 3 -and
+        @($peak3090VramMiB | Where-Object { $_ -gt $Max3090VramMiB }).Count -eq 0
+    if (-not $vramLimitsPassed) {
+        Write-Output "GPU VRAM GATE FAILED: 4080=$peak4080VramMiB/$Max4080VramMiB MiB 3090=[$($peak3090VramMiB -join ',')]/$Max3090VramMiB MiB"
     }
     $driverText = Get-Content -LiteralPath $driverLog -Raw
     $driverExitCode = if (Test-Path -LiteralPath $driverExitCodeFile) {
@@ -812,6 +969,15 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
     $generationTpsOverRun = Get-DriverMetric 'generation_tps_over_run' $logicalMetricsLine -1
     $averageSessionPrefillTps = Get-DriverMetric 'average_session_prefill_tps' $logicalMetricsLine -1
     $averageSessionGenerationTps = Get-DriverMetric 'average_session_generation_tps' $logicalMetricsLine -1
+    $waveOverlapLine = [regex]::Match($driverText, '(?m)^P4_DRIVE_WAVE_OVERLAP[^\r\n]*$').Value
+    $waveCount = [int](Get-DriverMetric 'waves' $waveOverlapLine 0)
+    $overlappingWaves = [int](Get-DriverMetric 'overlapping' $waveOverlapLine 0)
+    $minimumActivePrior = [int](Get-DriverMetric 'min_active_prior' $waveOverlapLine 0)
+    $waveOverlapPassed = $overlappingWaves -ge $MinimumOverlappingWaves -and
+        $minimumActivePrior -ge $MinimumActivePriorAtWave
+    if (-not $waveOverlapPassed) {
+        Write-Output "WAVE OVERLAP GATE FAILED: waves=$waveCount overlapping=$overlappingWaves min_active_prior=$minimumActivePrior required_waves=$MinimumOverlappingWaves required_active=$MinimumActivePriorAtWave"
+    }
     $overlapPassed = if ($relayRequested) {
         # This is the P4 separation gate: batch depth belongs below the
         # deployment boundary, so no P4 node or staged adapter queue should
@@ -838,7 +1004,7 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         $routes -ge $Requests -and $tokens -gt 0 -and $elapsedMs -ge 0 -and
         $framesPerSecond -gt 0 -and $latencyCompleted -eq $completed -and
         $latencyP95Ms -ge 0 -and $latencyP99Ms -ge $latencyP95Ms -and
-        $peak4080VramMiB -ge 0 -and $peak4080VramMiB -le $Max4080VramMiB
+        $vramLimitsPassed
     $bodiesPassed = $true
     $bodyDetail = ''
     if (Test-Path -LiteralPath $script:EvidencePath) {
@@ -851,6 +1017,7 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
             $body = [regex]::Match($sections[$si], '(?ms)^### Complete response[ \t]*\r?\n(?<body>.*?)\r?\n---[ \t]*\r?\n?$')
             $n = if ($tok.Success) { [int]$tok.Groups[1].Value } else { -1 }
             if ($n -le 0) { $bad += "session$($si+1):tokens=$n" }
+            if ($n -ge $requestedTokens) { $bad += "session$($si+1):token-ceiling=$n" }
             if (-not $body.Success -or [string]::IsNullOrWhiteSpace($body.Groups['body'].Value)) { $bad += "session$($si+1):empty-body" }
         }
         if ($bad.Count -gt 0) { $bodiesPassed = $false; $bodyDetail = ($bad -join ', ') }
@@ -869,6 +1036,20 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
     $relayMultiTokenPrefillSamples = 0
     $relayMaxPrefillTokensPerSequence = 0
     $relayMaxSampledBatchSize = 0
+    $relayPeakDeploymentQueued = 0
+    $relayPeakDeploymentOutstanding = 0
+    $relayPerformancePassed = -not $relayRequested
+    $relayCompletedRequests = 0
+    $relayMeasuredRequests = 0
+    $relayPromptTokens = 0
+    $relayPrefillTokens = 0
+    $relayPrefillComputeUs = 0
+    $relayDecodeTokens = 0
+    $relayDecodeComputeUs = 0
+    $relayPrefillComputeTps = 0.0
+    $relayDecodeComputeTps = 0.0
+    $relayAverageSessionPrefillTps = 0.0
+    $relayAverageSessionDecodeTps = 0.0
     if ($relayRequested) {
         $relayAgentText = Get-Content -LiteralPath (Join-Path $outputRoot "central-agent-$($localAgentPorts[0]).log") -Raw
         $relayAttached = $relayAgentText -match "(?m)^P4_AGENT_DEPLOYMENT id=$([regex]::Escape($RelayDeploymentId)) attached=true relay=present$"
@@ -876,30 +1057,121 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         if ($relaySamples.Count -gt 0) {
             $relayDispatches = [int](($relaySamples | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Maximum).Maximum)
         }
+        $deploymentSamples = @([regex]::Matches(
+            $relayAgentText,
+            '(?m)^P4_AGENT_DEPLOYMENT_STATS .*?peak_queued=(\d+).*?peak_outstanding=(\d+)'
+        ))
+        if ($deploymentSamples.Count -gt 0) {
+            $relayPeakDeploymentQueued = [int](($deploymentSamples | ForEach-Object {
+                [int]$_.Groups[1].Value
+            } | Measure-Object -Maximum).Maximum)
+            $relayPeakDeploymentOutstanding = [int](($deploymentSamples | ForEach-Object {
+                [int]$_.Groups[2].Value
+            } | Measure-Object -Maximum).Maximum)
+        }
         if (-not $relayAttached -or $relayDispatches -le 0) {
             Write-Output "RELAY GATE FAILED: attached=$relayAttached to_deployment=$relayDispatches"
         }
         try {
-            $relayRuntimeAfter = Invoke-RestMethod -Uri $relayRuntimeUri -TimeoutSec 10
-            $batchStages = @($relayRuntimeAfter.processes | Where-Object {
-                $null -ne $_.inferenceTelemetry -and
-                $null -ne $_.inferenceTelemetry.batching
+            $relayRuntimeAfters = @($relayRuntimeUris | ForEach-Object {
+                Invoke-RestMethod -Uri $_ -TimeoutSec 10
+            })
+            $relayRuntimeAfter = $relayRuntimeAfters[0]
+            $relayCompletedRequests = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'completed_requests') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'completed_requests')
+            )
+            $relayMeasuredRequests = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'measured_requests') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'measured_requests')
+            )
+            $relayPromptTokens = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'prompt_tokens') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'prompt_tokens')
+            )
+            $relayPrefillTokens = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'prefill_tokens') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'prefill_tokens')
+            )
+            $relayPrefillComputeUs = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'prefill_compute_us') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'prefill_compute_us')
+            )
+            $relayDecodeTokens = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'decode_tokens') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'decode_tokens')
+            )
+            $relayDecodeComputeUs = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'decode_compute_us') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'decode_compute_us')
+            )
+            $prefillRateSum = (Get-RelayPerformanceTotal $relayRuntimeAfters 'session_prefill_wall_tps_sum') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'session_prefill_wall_tps_sum')
+            $prefillRateCount = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'session_prefill_wall_tps_count') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'session_prefill_wall_tps_count')
+            )
+            $decodeRateSum = (Get-RelayPerformanceTotal $relayRuntimeAfters 'session_decode_wall_tps_sum') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'session_decode_wall_tps_sum')
+            $decodeRateCount = [long](
+                (Get-RelayPerformanceTotal $relayRuntimeAfters 'session_decode_wall_tps_count') -
+                (Get-RelayPerformanceTotal $relayRuntimeViews 'session_decode_wall_tps_count')
+            )
+            if ($relayPrefillComputeUs -gt 0) {
+                $relayPrefillComputeTps = $relayPrefillTokens * 1000000.0 / $relayPrefillComputeUs
+            }
+            if ($relayDecodeComputeUs -gt 0) {
+                $relayDecodeComputeTps = $relayDecodeTokens * 1000000.0 / $relayDecodeComputeUs
+            }
+            if ($prefillRateCount -gt 0) {
+                $relayAverageSessionPrefillTps = $prefillRateSum / $prefillRateCount
+            }
+            if ($decodeRateCount -gt 0) {
+                $relayAverageSessionDecodeTps = $decodeRateSum / $decodeRateCount
+            }
+            $relayPerformancePassed = $relayCompletedRequests -eq $Requests -and
+                $relayMeasuredRequests -eq $Requests -and
+                $relayPromptTokens -gt 0 -and $relayPrefillTokens -gt 0 -and
+                $relayPrefillComputeUs -gt 0 -and $relayDecodeTokens -gt 0 -and
+                $relayDecodeComputeUs -gt 0 -and
+                $prefillRateCount -eq $Requests -and $decodeRateCount -eq $Requests
+            $batchStages = @($relayRuntimeAfters | ForEach-Object { @($_.processes) } | Where-Object {
+                $null -ne $_.PSObject.Properties['inferenceTelemetry'] -and
+                $null -ne $_.PSObject.Properties['inferenceTelemetry'].Value
             })
             $relayBatchStageCount = $batchStages.Count
             $firstBatchStage = $batchStages | Where-Object {
                 $_.identity.stageIndex -eq 0
             } | Select-Object -First 1
             if ($null -ne $firstBatchStage) {
-                $relayBatchSamples = [long]$firstBatchStage.inferenceTelemetry.batching.samples
-                $relaySampledTokens = [long]$firstBatchStage.inferenceTelemetry.batching.sampledTokens
-                $relayMixedSamples = [long]$firstBatchStage.inferenceTelemetry.batching.mixedSamples
-                $relayMultiTokenPrefillSamples = [long]$firstBatchStage.inferenceTelemetry.batching.multiTokenPrefillSamples
+                $firstBefore = @($relayProcesses | Where-Object {
+                    $_.identity.stageIndex -eq 0
+                } | Select-Object -First 1)
+                $beforeTelemetry = if ($firstBefore.Count -eq 1) {
+                    $firstBefore[0].PSObject.Properties['inferenceTelemetry']
+                } else { $null }
+                $beforeBatch = if ($null -ne $beforeTelemetry -and $null -ne $beforeTelemetry.Value) {
+                    $beforeTelemetry.Value.batching
+                } else { $null }
+                $relayBatchSamples = [long]$firstBatchStage.inferenceTelemetry.batching.samples -
+                    $(if ($null -ne $beforeBatch) { [long]$beforeBatch.samples } else { 0 })
+                $relaySampledTokens = [long]$firstBatchStage.inferenceTelemetry.batching.sampledTokens -
+                    $(if ($null -ne $beforeBatch) { [long]$beforeBatch.sampledTokens } else { 0 })
+                $relayMixedSamples = [long]$firstBatchStage.inferenceTelemetry.batching.mixedSamples -
+                    $(if ($null -ne $beforeBatch) { [long]$beforeBatch.mixedSamples } else { 0 })
+                $relayMultiTokenPrefillSamples = [long]$firstBatchStage.inferenceTelemetry.batching.multiTokenPrefillSamples -
+                    $(if ($null -ne $beforeBatch) { [long]$beforeBatch.multiTokenPrefillSamples } else { 0 })
                 $relayMaxPrefillTokensPerSequence = [int]$firstBatchStage.inferenceTelemetry.batching.maxPrefillTokensPerSequence
                 $relayMaxSampledBatchSize = [int]$firstBatchStage.inferenceTelemetry.batching.maxSampledBatchSize
             }
-            $relayNativeBatchPassed = $relayRuntimeAfter.phase -eq 'running' -and
+            $batchShapePassed = if ($SerialCorrectness) {
+                $relayMixedSamples -eq 0
+            } else {
+                $relayMixedSamples -gt 0
+            }
+            $relayNativeBatchPassed = @($relayRuntimeAfters | Where-Object { $_.phase -ne 'running' }).Count -eq 0 -and
                 $relayBatchStageCount -eq 4 -and $relayBatchSamples -gt 0 -and
-                $relaySampledTokens -gt 0 -and $relayMixedSamples -gt 0 -and
+                $relaySampledTokens -gt 0 -and $batchShapePassed -and
                 $relayMultiTokenPrefillSamples -gt 0 -and
                 $relayMaxPrefillTokensPerSequence -gt 1 -and
                 $relayMaxSampledBatchSize -gt 1
@@ -910,16 +1182,40 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         if (-not $relayNativeBatchPassed) {
             Write-Output "NATIVE BATCH GATE FAILED: stages=$relayBatchStageCount samples=$relayBatchSamples sampled_tokens=$relaySampledTokens mixed_samples=$relayMixedSamples multi_token_prefill_samples=$relayMultiTokenPrefillSamples max_prefill_per_sequence=$relayMaxPrefillTokensPerSequence max_sampled_batch=$relayMaxSampledBatchSize"
         }
+        if (-not $relayPerformancePassed) {
+            Write-Output "ADAPTER PERFORMANCE GATE FAILED: completed=$relayCompletedRequests measured=$relayMeasuredRequests prompt_tokens=$relayPromptTokens prefill_tokens=$relayPrefillTokens decode_tokens=$relayDecodeTokens"
+        }
+        if ($relayPerformancePassed -and $elapsedMs -gt 0) {
+            # Relay mode deliberately strips inference-phase knowledge from P4.
+            # Populate the common report from adapter-owned measurements instead
+            # of leaving the P4 driver's legacy phase counters at zero/-1.
+            $prefillTpsOverRun = $relayPrefillTokens * 1000.0 / $elapsedMs
+            $generationTpsOverRun = $tokens * 1000.0 / $elapsedMs
+            $averageSessionPrefillTps = $relayAverageSessionPrefillTps
+            $averageSessionGenerationTps = $relayAverageSessionDecodeTps
+        }
     }
     $relayPassed = [bool]($relayAttached -and (-not $relayRequested -or $relayDispatches -gt 0))
+    $mainLanePassed = if ($relayRequested) { $peakMainLane -eq 0 } else {
+        $peakMainLane -ge $MinimumPeakMainLane
+    }
+    $queueEvidencePassed = $mainLanePassed -and
+        $relayPeakDeploymentQueued -ge $MinimumPeakDeploymentQueued -and
+        $relayPeakDeploymentOutstanding -ge $MinimumPeakDeploymentOutstanding
+    if (-not $queueEvidencePassed) {
+        Write-Output "QUEUE EVIDENCE GATE FAILED: main_lane=$peakMainLane deployment_queued=$relayPeakDeploymentQueued deployment_outstanding=$relayPeakDeploymentOutstanding"
+    }
     $runPassed = [bool](
         ($driverExitCode -eq 0) -and
         [bool]$metricsPassed -and
         $verdictsPassed -and
         [bool]$overlapPassed -and
         $bodiesPassed -and
+        $waveOverlapPassed -and
+        $queueEvidencePassed -and
         $relayPassed -and
-        $relayNativeBatchPassed
+        $relayNativeBatchPassed -and
+        $relayPerformancePassed
     )
     $result = [pscustomobject]@{
         run_id = $RunId
@@ -940,6 +1236,9 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
             average_session_generation_tps = $averageSessionGenerationTps
             peak_4080_vram_mib = $peak4080VramMiB
             max_4080_vram_mib = $Max4080VramMiB
+            peak_3090_vram_mib = $peak3090VramMiB
+            max_3090_vram_mib = $Max3090VramMiB
+            gpu = $gpuSummary
             latency = [pscustomobject]@{
                 completed = $latencyCompleted
                 p50_ms = $latencyP50Ms
@@ -958,15 +1257,29 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
             peak_node_queue = $peakNodeQueue
             peak_in_adapter = $peakInAdapter
             passed = $overlapPassed
+            waves = $waveCount
+            overlapping_waves = $overlappingWaves
+            minimum_active_prior = $minimumActivePrior
+            required_overlapping_waves = $MinimumOverlappingWaves
+            required_active_prior = $MinimumActivePriorAtWave
+            wave_passed = $waveOverlapPassed
+            minimum_peak_main_lane = $MinimumPeakMainLane
+            minimum_peak_deployment_queued = $MinimumPeakDeploymentQueued
+            minimum_peak_deployment_outstanding = $MinimumPeakDeploymentOutstanding
+            peak_deployment_queued = $relayPeakDeploymentQueued
+            peak_deployment_outstanding = $relayPeakDeploymentOutstanding
+            queue_evidence_passed = $queueEvidencePassed
         }
         relay = [pscustomobject]@{
             requested = $relayRequested
             deployment_id = $RelayDeploymentId
             deployment_addr = $RelayDeploymentAddr
+            peer_addr = $RelayPeerAddr
             attached = $relayAttached
             to_deployment = $relayDispatches
             runtime_phase = if ($null -ne $relayRuntimeView) { $relayRuntimeView.phase } else { $null }
-            runtime_processes = if ($null -ne $relayRuntimeView) { @($relayRuntimeView.process_ids).Count } else { 0 }
+            runtime_supervisors = $relayRuntimeViews.Count
+            runtime_processes = if ($relayRequested) { $relayProcesses.Count } else { 0 }
             native_batch = [pscustomobject]@{
                 stage_count = $relayBatchStageCount
                 samples = $relayBatchSamples
@@ -977,10 +1290,25 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
                 max_sampled_batch_size = $relayMaxSampledBatchSize
                 passed = $relayNativeBatchPassed
             }
-            passed = [bool]($relayPassed -and $relayNativeBatchPassed)
+            adapter_performance = [pscustomobject]@{
+                completed_requests = $relayCompletedRequests
+                measured_requests = $relayMeasuredRequests
+                prompt_tokens = $relayPromptTokens
+                prefill_tokens = $relayPrefillTokens
+                prefill_compute_us = $relayPrefillComputeUs
+                prefill_compute_tps = $relayPrefillComputeTps
+                decode_tokens = $relayDecodeTokens
+                decode_compute_us = $relayDecodeComputeUs
+                decode_compute_tps = $relayDecodeComputeTps
+                average_session_prefill_wall_tps = $relayAverageSessionPrefillTps
+                average_session_decode_wall_tps = $relayAverageSessionDecodeTps
+                passed = $relayPerformancePassed
+            }
+            passed = [bool]($relayPassed -and $relayNativeBatchPassed -and $relayPerformancePassed)
         }
         topology = 'central RTX 3090 + central RTX 4080 + remote RTX 3090 x2'
         requests = $Requests
+        serial_correctness = [bool]$SerialCorrectness
         tokens_each = $requestedTokens
         parallel_slots = $parallelSlots
         driver_ceiling = $parallelSlots
@@ -990,6 +1318,9 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         batch_interval_milliseconds = $BatchIntervalMilliseconds
         vary_prompts = $vary -eq '1'
         prompt_file = $PromptFile
+        prompt_set_file = $PromptSetFile
+        drive_options_file = $DriveOptionsFile
+        drive_options_sha256 = $driveOptionsSha256
         prompt_tokens = $effectivePromptTokens
         context_size = $planContextSize
         batch_size = $planBatchSize
@@ -1000,12 +1331,15 @@ Set-Content -LiteralPath $(ConvertTo-PowerShellLiteral $driverPidFile) -Value `$
         chain = $chain
         output = $outputRoot
     }
-    $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $outputRoot 'result.json') -Encoding utf8
+    $result | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath (Join-Path $outputRoot 'result.json') -Encoding utf8
     if (-not $result.passed) { throw "Four-node driver or overlap gate failed. See $driverLog and $driverErr." }
 }
 finally {
     if ($null -ne $vramSampler -and -not $vramSampler.HasExited) {
         Stop-Process -Id $vramSampler.Id -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $remoteGpuSampler -and -not $remoteGpuSampler.HasExited) {
+        Stop-Process -Id $remoteGpuSampler.Id -Force -ErrorAction SilentlyContinue
     }
     $preserveLoaded = [bool]($KeepLoaded -and $null -ne $result -and $result.passed); if (-not $preserveLoaded) {
         foreach ($process in $localProcesses) {

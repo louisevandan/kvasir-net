@@ -19,7 +19,8 @@ pub struct StartOptions<'a> {
     pub listen: &'a str,
     pub advertise: Option<&'a str>,
     pub plans: Vec<Vec<String>>,
-    pub prompt: String,
+    pub deployment_id: String,
+    pub prompts: Vec<String>,
     pub options: String,
     pub quiet: Duration,
     /// Absolute admission budget carried to the deployment adapter. Unlike
@@ -76,10 +77,12 @@ pub struct Session {
     /// deployment differ from each other, and two replicas of one deployment
     /// differ again because they sit on different cards.
     plans: Vec<Vec<String>>,
-    /// What every request asks. One prompt for all of them: a driver measures a
-    /// deployment under a shape of work, and varying the prompt would vary the
-    /// thing being measured.
-    prompt: String,
+    /// Opaque deployment identity copied into every chain link. It must match
+    /// the registered deployment client; P4 does not interpret the value.
+    deployment_id: String,
+    /// One exact prompt per request, or one compatibility prompt reused for
+    /// the run. P4 transports these strings but never interprets them.
+    prompts: Vec<String>,
     /// Sampling and generation settings, merged into the backend's request.
     /// Opaque here for the same reason a plan is.
     options: String,
@@ -142,7 +145,8 @@ impl Session {
             listen,
             advertise,
             plans,
-            prompt,
+            deployment_id,
+            prompts,
             options,
             quiet,
             request_deadline,
@@ -171,7 +175,8 @@ impl Session {
             replies,
             return_channel,
             plans,
-            prompt,
+            deployment_id,
+            prompts,
             options,
             artifact: Mutex::new(
                 std::env::var("P4_DRIVE_ARTIFACT").unwrap_or_else(|_| "model".into()),
@@ -215,8 +220,32 @@ impl Session {
     /// Bytes, not tokens. This tool cannot count tokens without knowing the
     /// backend's tokeniser, and guessing a number that reads as authoritative
     /// is worse than reporting the one it actually knows.
-    pub fn prompt_bytes(&self) -> usize {
-        self.prompt.len()
+    pub fn prompt_count(&self) -> usize {
+        self.prompts.len()
+    }
+
+    pub fn prompt_bytes_min(&self) -> usize {
+        self.prompts
+            .iter()
+            .map(String::len)
+            .min()
+            .unwrap_or_default()
+    }
+
+    pub fn prompt_bytes_max(&self) -> usize {
+        self.prompts
+            .iter()
+            .map(String::len)
+            .max()
+            .unwrap_or_default()
+    }
+
+    pub fn prompt_bytes_total(&self) -> usize {
+        self.prompts.iter().map(String::len).sum()
+    }
+
+    pub fn prompts(&self) -> &[String] {
+        &self.prompts
     }
 
     pub(crate) fn telemetry(&self, elapsed: Duration) -> TelemetryEvidence {
@@ -278,9 +307,14 @@ impl Session {
     /// common prefix: appending would leave every request sharing all but its
     /// last line, which is the case that thrashed.
     fn ask(&self, index: usize) -> String {
-        match self.vary {
-            true => format!("Request {index}.\n\n{}", self.prompt),
-            false => self.prompt.clone(),
+        let prompt = if self.prompts.len() == 1 {
+            &self.prompts[0]
+        } else {
+            &self.prompts[index]
+        };
+        match self.vary && self.prompts.len() == 1 {
+            true => format!("Request {index}.\n\n{prompt}"),
+            false => prompt.clone(),
         }
     }
 
@@ -351,7 +385,7 @@ impl Session {
                     // this chain — a stage that is skipped does not renumber
                     // the rest.
                     node: fleet.node_of(deployment, stage),
-                    binding: "deployment".into(),
+                    binding: self.deployment_id.clone(),
                     generation: 1,
                 })
                 .collect();
@@ -368,6 +402,7 @@ impl Session {
 
         let already = self.replies.finished.load(SeqCst);
         let mut admission_rejected = 0;
+        let mut wave_active_prior_requests = Vec::new();
         for index in 0..requests {
             // This schedule belongs to the driver only. It controls when
             // frames enter the agent; it must not be confused with the node
@@ -383,6 +418,13 @@ impl Session {
                 };
                 if boundary {
                     tokio::time::sleep(self.batch_interval).await;
+                    let terminals = self
+                        .replies
+                        .finished
+                        .load(SeqCst)
+                        .saturating_sub(already)
+                        .min(index);
+                    wave_active_prior_requests.push(index.saturating_sub(terminals));
                 }
             }
             // Round robin rather than filling one and moving on. Two replicas
@@ -533,6 +575,7 @@ impl Session {
             running: self.replies.peaks.running.load(SeqCst),
             lane: self.replies.peaks.lane.load(SeqCst),
             samples: self.replies.peaks.samples(),
+            wave_active_prior_requests,
             streams,
         }
     }
@@ -735,7 +778,8 @@ mod tests {
             listen: "127.0.0.1:0",
             advertise: None,
             plans: Vec::new(),
-            prompt: "prompt".into(),
+            deployment_id: "deployment".into(),
+            prompts: vec!["prompt".into()],
             options: "{}".into(),
             quiet: Duration::from_secs(1),
             request_deadline: Duration::from_secs(5),

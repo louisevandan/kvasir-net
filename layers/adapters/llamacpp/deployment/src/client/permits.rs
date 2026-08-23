@@ -75,7 +75,6 @@ impl Permits {
         self.returned.notify_all();
     }
 
-    #[cfg(test)]
     pub(crate) fn available(&self) -> usize {
         self.available.lock().expect("permit lock").available
     }

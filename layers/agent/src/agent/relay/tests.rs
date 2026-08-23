@@ -331,4 +331,37 @@ fn a_full_that_reaches_p4_is_terminal_and_is_not_retried_by_p4() {
     });
 }
 
+#[test]
+fn an_adapter_error_is_a_failed_reply_not_a_normal_done_terminal() {
+    runtime().block_on(async {
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        let agent = agent_with(Arc::clone(&seen));
+        let relay_sink: Arc<dyn DeploymentSink> =
+            Arc::new(AgentDeploymentSink::new(Arc::downgrade(&agent)));
+        let client = Arc::new(ScriptedClient {
+            sink: relay_sink,
+            calls: AtomicUsize::new(0),
+            script: Box::new(|_, submit, sink| {
+                sink.raise(DeploymentEvent::Settled(Settled {
+                    submission_id: submit.submission_id.clone(),
+                    reason: SettledReason::Error,
+                    generated_tokens: 3,
+                }));
+            }),
+        });
+        agent.deployments().register("dep-1".into(), client);
+
+        agent.enqueue(submission_frame(&agent, "dep-1", 7)).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].body, b"submission settled: error");
+        assert_ne!(
+            seen[0].body, b"error",
+            "normal Done used to encode only the reason"
+        );
+    });
+}
+
 mod deliverability;

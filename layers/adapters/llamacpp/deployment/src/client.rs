@@ -32,6 +32,17 @@ pub struct DeploymentClient {
     pump: PumpHandle,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeploymentStats {
+    pub queued_submissions: usize,
+    pub peak_queued_submissions: usize,
+    pub outstanding_submissions: usize,
+    pub peak_outstanding_submissions: usize,
+    pub inbound_events: usize,
+    pub reconnects: u64,
+    pub full_retries: u64,
+}
+
 impl DeploymentClient {
     /// Opens the connection and starts the pump thread (and its first
     /// reader thread) that own it for the client's whole lifetime. `sink` is
@@ -90,6 +101,12 @@ impl DeploymentClient {
     /// Exposed for runtime evidence; these events never reach P4's sink.
     pub fn full_retry_count(&self) -> u64 {
         self.pump.full_retry_count()
+    }
+
+    /// Queue/ledger pressure only. It deliberately exposes no Prefill,
+    /// Decode, UBATCH, rank, KV, or scheduler state to P4.
+    pub fn stats(&self) -> DeploymentStats {
+        self.pump.stats()
     }
 
     /// Moves the deployment forward. Anything already in flight under the

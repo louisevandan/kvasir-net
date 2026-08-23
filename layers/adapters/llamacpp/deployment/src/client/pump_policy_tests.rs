@@ -94,7 +94,13 @@ fn the_submission_bound_holds_when_callers_race() {
     for worker in workers {
         worker.join().expect("worker joins");
     }
-    assert!(accepted.load(std::sync::atomic::Ordering::SeqCst) <= super::pump::COMMAND_QUEUE_BOUND);
+    let accepted = accepted.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(accepted <= super::pump::COMMAND_QUEUE_BOUND);
+    let stats = client.stats();
+    assert_eq!(stats.outstanding_submissions, accepted);
+    assert_eq!(stats.peak_outstanding_submissions, accepted);
+    assert!(stats.peak_queued_submissions > 0);
+    assert!(stats.queued_submissions <= stats.peak_queued_submissions);
 }
 
 #[test]

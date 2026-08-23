@@ -17,6 +17,9 @@ use std::time::Duration;
 pub(crate) struct PumpHandle {
     sender: std::sync::mpsc::Sender<PumpEvent>,
     outstanding: Arc<AtomicUsize>,
+    peak_outstanding: Arc<AtomicUsize>,
+    queued: Arc<AtomicUsize>,
+    peak_queued: Arc<AtomicUsize>,
     #[allow(dead_code)]
     pump_thread: Mutex<Option<JoinHandle<()>>>,
     #[allow(dead_code)]
@@ -42,6 +45,9 @@ impl PumpHandle {
     ) -> Self {
         let (sender, receiver) = channel();
         let outstanding = Arc::new(AtomicUsize::new(0));
+        let peak_outstanding = Arc::new(AtomicUsize::new(0));
+        let queued = Arc::new(AtomicUsize::new(0));
+        let peak_queued = Arc::new(AtomicUsize::new(0));
         let closed = Arc::new(AtomicBool::new(false));
         let reconnects = Arc::new(AtomicU64::new(0));
         let full_retries = Arc::new(AtomicU64::new(0));
@@ -51,6 +57,7 @@ impl PumpHandle {
         let controls = Arc::new(ControlMailbox::new(sender.clone(), Arc::clone(&live)));
         let pump = Pump {
             outstanding_submissions: Arc::clone(&outstanding),
+            queued_submissions: Arc::clone(&queued),
             factory,
             sink,
             writer: Some(writer),
@@ -78,6 +85,9 @@ impl PumpHandle {
         Self {
             sender,
             outstanding,
+            peak_outstanding,
+            queued,
+            peak_queued,
             pump_thread: Mutex::new(Some(pump_thread)),
             reader_thread,
             closed,
@@ -93,15 +103,19 @@ impl PumpHandle {
         if self.closed.load(Ordering::SeqCst) {
             return Err(());
         }
-        if self
-            .outstanding
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-                (count < COMMAND_QUEUE_BOUND).then_some(count + 1)
-            })
-            .is_err()
-        {
-            return Err(());
-        }
+        let outstanding =
+            match self
+                .outstanding
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                    (count < COMMAND_QUEUE_BOUND).then_some(count + 1)
+                }) {
+                Ok(previous) => previous + 1,
+                Err(_) => return Err(()),
+            };
+        self.peak_outstanding
+            .fetch_max(outstanding, Ordering::SeqCst);
+        let queued = self.queued.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak_queued.fetch_max(queued, Ordering::SeqCst);
         let submission_id = submit.submission_id.clone();
         let inserted_live = self
             .live
@@ -116,6 +130,7 @@ impl PumpHandle {
             })
             .is_err()
         {
+            self.queued.fetch_sub(1, Ordering::SeqCst);
             self.outstanding.fetch_sub(1, Ordering::SeqCst);
             if inserted_live {
                 // The pump never saw this id, so it cannot remove it.
@@ -148,6 +163,18 @@ impl PumpHandle {
 
     pub(crate) fn full_retry_count(&self) -> u64 {
         self.full_retries.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn stats(&self) -> super::super::DeploymentStats {
+        super::super::DeploymentStats {
+            queued_submissions: self.queued.load(Ordering::SeqCst),
+            peak_queued_submissions: self.peak_queued.load(Ordering::SeqCst),
+            outstanding_submissions: self.outstanding.load(Ordering::SeqCst),
+            peak_outstanding_submissions: self.peak_outstanding.load(Ordering::SeqCst),
+            inbound_events: INBOUND_BOUND.saturating_sub(self.inbound.available()),
+            reconnects: self.reconnect_count(),
+            full_retries: self.full_retry_count(),
+        }
     }
 
     pub(crate) fn close(&self) {

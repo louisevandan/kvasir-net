@@ -198,9 +198,14 @@ impl Agent {
                 reason,
                 generated_tokens,
             }) => {
-                let body = self
-                    .payload
-                    .finished(settled_reason_str(reason), generated_tokens);
+                let body = match reason {
+                    SettledReason::Stop | SettledReason::Length => self
+                        .payload
+                        .finished(settled_reason_str(reason), generated_tokens),
+                    SettledReason::Canceled | SettledReason::Error => self.payload.failure(
+                        &format!("submission settled: {}", settled_reason_str(reason)),
+                    ),
+                };
                 self.finish_submission_route(&submission_id, body);
             }
         }

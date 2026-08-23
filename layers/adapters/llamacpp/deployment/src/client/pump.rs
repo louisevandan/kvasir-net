@@ -81,6 +81,7 @@ struct Pump {
     full_retry_count: Arc<AtomicU64>,
     link_epoch: u64,
     outstanding_submissions: Arc<AtomicUsize>,
+    queued_submissions: Arc<AtomicUsize>,
     /// Shared with `DeploymentClient`, so a generation learned on a
     /// reconnect is what the next caller stamps rather than the value this
     /// process started with.
@@ -133,6 +134,7 @@ impl Pump {
                     submit,
                     inserted_live,
                 } => {
+                    self.queued_submissions.fetch_sub(1, Ordering::SeqCst);
                     self.handle_submit(submit, inserted_live);
                 }
                 PumpEvent::ControlsReady => {

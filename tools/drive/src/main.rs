@@ -29,11 +29,11 @@
 //! serve keeps the plan opaque here: the alternative is this tool reading a
 //! plan to work out what a stage is for, which is the one thing it must not do.
 //!
-//! `P4_DRIVE_PROMPT_FILE` (or `P4_DRIVE_PROMPT`) is what every request asks,
-//! and `P4_DRIVE_OPTIONS` is the generation settings merged into it. A real
-//! profile is a long prompt against a long answer, and a prompt sized in
-//! thousands of tokens comes from a file so that what was measured is exactly
-//! what was sent.
+//! `P4_DRIVE_PROMPT_SET_FILE` is a JSON array with one exact prompt per
+//! request. `P4_DRIVE_PROMPT_FILE` (or `P4_DRIVE_PROMPT`) remains the
+//! one-prompt compatibility form, and `P4_DRIVE_OPTIONS` is the generation
+//! settings merged into either. Long prompts come from files so what was
+//! measured is exactly what was sent.
 //!
 //! `P4_DRIVE_QUIET_MS` is how long nothing may arrive before the driver stops
 //! waiting; 30s by default. It is not a budget for the run — an answer takes as
@@ -46,6 +46,7 @@
 //! reference and defaults to `model`.
 
 mod fleet;
+mod prompt;
 mod report;
 pub mod session;
 mod telemetry;
@@ -81,17 +82,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("P4_DRIVE_SERVE").ok().as_deref(),
         fleet.stages(),
     )?;
-    // What every request asks, and how it should be generated. A real profile
-    // is a long prompt against a long answer, and neither fits on a command
-    // line — the prompt comes from a file so its size is exactly what was
-    // measured rather than whatever survived a shell.
-    let prompt = match std::env::var("P4_DRIVE_PROMPT_FILE") {
-        Ok(path) => std::fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read {path}: {error}"))?,
-        Err(_) => {
-            std::env::var("P4_DRIVE_PROMPT").unwrap_or_else(|_| "simulated prompt".to_owned())
-        }
-    };
+    // Exact prompts and generation settings. A service profile uses one
+    // prompt per request; a one-prompt file remains useful for compatibility
+    // and cache-specific experiments.
+    let prompts = prompt::load(requests)?;
+    let deployment_id =
+        std::env::var("P4_DRIVE_DEPLOYMENT_ID").unwrap_or_else(|_| "deployment".to_owned());
+    if deployment_id.trim().is_empty() {
+        return Err("P4_DRIVE_DEPLOYMENT_ID cannot be empty".into());
+    }
     let options = std::env::var("P4_DRIVE_OPTIONS").unwrap_or_else(|_| "{}".to_owned());
     // How long nothing may arrive before the driver stops waiting. Not a
     // budget for the run: a five-thousand-token answer takes as long as it
@@ -150,7 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         listen: &listen,
         advertise: advertise.as_deref(),
         plans,
-        prompt: prompt.clone(),
+        deployment_id,
+        prompts,
         options,
         quiet,
         request_deadline,
@@ -162,12 +162,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
     announce(format!(
-        "P4_DRIVE_READY address={} deployments={} stages={} serving={} prompt_bytes={}",
+        "P4_DRIVE_READY address={} deployments={} stages={} serving={} prompts={} prompt_bytes_min={} prompt_bytes_max={} prompt_bytes_total={}",
         session.address(),
         fleet.deployments().len(),
         fleet.stages(),
         serving.len(),
-        session.prompt_bytes()
+        session.prompt_count(),
+        session.prompt_bytes_min(),
+        session.prompt_bytes_max(),
+        session.prompt_bytes_total()
     ));
     if session.address().is_local_only()
         && fleet.addresses().iter().any(|stage| !stage.is_local_only())
@@ -211,7 +214,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     report::print(&outcome, &telemetry, elapsed, requests, tokens);
     if let Ok(path) = std::env::var("P4_DRIVE_EVIDENCE_FILE") {
-        report::write_evidence(&path, &prompt, &outcome, &telemetry, elapsed)?;
+        report::write_evidence(
+            &path,
+            session.prompts(),
+            vary,
+            &outcome,
+            &telemetry,
+            elapsed,
+        )?;
         announce(format!("P4_DRIVE_EVIDENCE path={path}"));
     }
     // Keep-loaded mode is reserved for a follow-up calibration/sustained-load

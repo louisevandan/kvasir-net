@@ -110,6 +110,7 @@ dependencies = [
  "p4-agent-core",
  "p4-protocol",
  "p4-service",
+ "serde_json",
  "tokio",
 ]
 

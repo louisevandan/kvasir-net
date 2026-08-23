@@ -11,7 +11,7 @@
   "nearest_release_tag": "b10242",
   "previous_linker_pin": "4308a4f035791f58ae111f56c39dac598bf476be",
   "previous_official_base": "4308a4f035791f58ae111f56c39dac598bf476be",
-  "patch_set_sha256": "b48fc842be059e408dd1577ce90bad3a3e5827a8451cafd6d48547cd70be9d46",
+  "patch_set_sha256": "7e68fda91f10e45500e8d29877c289b39beaf3fc7c63aa3273c865cacb9d754a",
   "patched_tree": "c70d6bb7420111bf7e9b118013575fa3d4b931f6",
   "patches": [
     {
@@ -69,6 +69,10 @@
     {
       "file": "0014-kv-stage-window.patch",
       "sha256": "c2fe462d40685b6c20921177a4519cb1f530c417336a180bb090624611cee6ba"
+    },
+    {
+      "file": "0015-minimax-m3-dense-gguf.patch",
+      "sha256": "f27e2546dc87fabd581a28335a78897bae8d963a88e27f3ad4594a545b372332"
     }
   ]
 }

@@ -68,6 +68,7 @@ and the reverse puts it here.
 | Invariants and what breaks if they go | [docs/constraints.md](docs/constraints.md) |
 | Decisions, and the defects behind them | [docs/internals.md](docs/internals.md) |
 | What crosses the adapter boundary, and what was measured | [docs/adapter-boundary.md](docs/adapter-boundary.md) |
+| llama.cpp stage memory ownership and legal graph cuts | [docs/llamacpp-stage-memory.md](docs/llamacpp-stage-memory.md) |
 | What is going to be built, in what order, and how each step is known to be done | [docs/plan.md](docs/plan.md) |
 | Running it and driving a fleet | [docs/usage.md](docs/usage.md) |
 | Testing | [docs/testing.md](docs/testing.md) |

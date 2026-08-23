@@ -698,6 +698,9 @@ pub struct Outcome {
     pub running: usize,
     pub lane: usize,
     pub samples: usize,
+    /// Prior requests still active when each scheduled post-burst wave was
+    /// submitted. Every positive entry is direct overlap evidence.
+    pub wave_active_prior_requests: Vec<usize>,
     /// Complete per-request streams retained for evidence output.
     pub streams: Vec<Stream>,
 }
