@@ -128,21 +128,19 @@ key not found in model: minimax-m3.attention.indexer.head_count
 - [`target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/result.json`](../target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/result.json)
 - [`target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/central-agent-52003.err.log`](../target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/central-agent-52003.err.log)
 
-## 현재 진행 중인 M3 호환 작업
+## M3 호환 경계
 
-공식 upstream은 수정하지 않고 별도 prepared tree에서 legacy M3 GGUF dense-attention compatibility를 실험 중이다.
+초기 M3 GGUF의 누락된 MSA 메타데이터를 어댑터가 추론하던 실험 패치는 제거했다. 최신 공식 llama.cpp도 이 변형을 지원하지 않으므로, 로컬 호환층이 모델별 dense fallback을 유지하면 새 모델마다 어댑터를 수정해야 한다.
 
-- 초기 M3 GGUF의 누락된 MSA metadata에는 안전한 기본값을 사용한다.
-- indexer tensor는 optional로 생성한다.
-- `--flash-attn 0` dense path에서는 indexer tensor를 사용하지 않도록 한다.
-- 이 호환층이 로딩을 통과하는지 먼저 확인한 뒤, 그 산출물에 staged ABI를 연결한다.
-
-이 방식은 MSA 정확성이나 sparse-attention 성능을 증명하지 않는다. 목적은 현재 보유한 초기 GGUF를 사용해 staged 분산 로딩/hidden-state 전달 자체를 검증하는 것이다.
+- GGUF 해석과 모델별 memory/graph 선택은 공식 llama.cpp만 수행한다.
+- staged 호환층은 모델명이 아니라 공식 memory 객체의 일반 capability만 소비한다.
+- 공식 llama.cpp가 읽지 못하는 GGUF는 fail-closed로 거부하고, 공식 포맷 GGUF 또는 새 upstream revision을 사용한다.
+- compatibility patch와 native runtime에 architecture 분기나 private model header가 추가되면 preparation 단계가 실패한다.
 
 ## 알려진 문제와 다음 게이트
 
-1. legacy M3 compatibility source가 컴파일되는지 확인한다.
-2. 단일 stage에서 M3 모델 load와 1-token decode를 확인한다.
+1. 공식 llama.cpp가 읽는 GGUF인지 stock runtime에서 먼저 확인한다.
+2. 단일 stage에서 동일 GGUF의 load와 1-token decode를 확인한다.
 3. 중앙 3090·4080 두 stage에서 load와 hop을 확인한다.
 4. 원격 3090×2를 포함한 4-stage 1-token inference를 확인한다.
 5. 4080 VRAM을 11GB 이하로 유지하면서 stage range/GPU layer를 조정한다.
@@ -154,6 +152,6 @@ key not found in model: minimax-m3.attention.indexer.head_count
 ## 주의사항
 
 - `apps/p4/layers/adapters/llamacpp/upstream`은 교체 가능한 공식 llama.cpp 경계이므로 Linker 전용 코드를 넣지 않는다.
-- compatibility 수정은 versioned patch/prepared tree에 둔다.
+- compatibility 수정은 versioned patch/prepared tree에 두되 모델별 해석이나 분기는 넣지 않는다.
 - M3 로딩 오류를 레이어 배치 오류로 해석하지 않는다. 모델 포맷과 runtime 지원 수준을 먼저 맞춘다.
 - 실험 실행은 모두 hidden/background 방식으로 수행하고, 중단 시 중앙/원격 Agent·SSH tunnel·VRAM sampler를 함께 정리한다.

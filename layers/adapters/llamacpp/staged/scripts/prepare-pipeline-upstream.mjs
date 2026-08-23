@@ -5,6 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  validateCompatibilityPatch,
+  validateRuntimeTree,
+} from "./upstream/model-agnostic-boundary.mjs";
 
 // upstream/ and compat/ are siblings of this script inside the adapter that
 // owns them, so they are located from here rather than from the repository.
@@ -78,10 +82,12 @@ function validatePatches(manifest, compatibilityDir) {
   for (const entry of manifest.patches) {
     const patchPath = path.join(compatibilityDir, entry.file);
     if (!fs.existsSync(patchPath)) throw new Error(`missing compatibility patch: ${entry.file}`);
-    const actual = sha256(fs.readFileSync(patchPath));
+    const patch = fs.readFileSync(patchPath);
+    const actual = sha256(patch);
     if (actual !== entry.sha256) {
       throw new Error(`compatibility patch hash mismatch: ${entry.file}`);
     }
+    validateCompatibilityPatch(entry.file, patch.toString("utf8"));
   }
 }
 
@@ -118,6 +124,8 @@ if (manifest.upstream_commit !== upstreamHead) {
 }
 validateOfficialPin(manifest);
 validatePatches(manifest, compatibilityDir);
+validateRuntimeTree(path.join(shapeRoot, "server"));
+validateRuntimeTree(path.join(repoRoot, "apps", "llama", "native", "linker-node"));
 
 const defaultTarget = path.join(
   repoRoot,

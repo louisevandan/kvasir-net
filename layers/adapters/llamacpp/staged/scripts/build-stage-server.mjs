@@ -5,6 +5,7 @@
 // submodule; preparation is delegated to prepare-pipeline-upstream.mjs.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -15,10 +16,21 @@ const repoRoot = path.resolve(stagedRoot, "../../../../../../");
 const serverDir = path.join(stagedRoot, "server");
 const defaultBuildDir = path.join(repoRoot, ".cache", "staged-server-build");
 const noLlama = process.argv.includes("--no-llama");
+const parallel = positiveIntegerArgument(
+  "--parallel", Math.max(1, Math.min(4, os.availableParallelism()))
+);
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(name);
   return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
+}
+
+function positiveIntegerArgument(name, fallback) {
+  const value = Number(argument(name, String(fallback)));
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
 }
 
 function run(command, args, options = {}) {
@@ -235,7 +247,10 @@ if (!noLlama) targets.push(
   "p4_staged_capability_test",
   "p4_staged_mtp_ownership_test",
 );
-run(cmake, ["--build", buildDir, "--config", config, "--target", ...targets]);
+run(cmake, [
+  "--build", buildDir, "--config", config,
+  "--parallel", String(parallel), "--target", ...targets,
+]);
 const runtimeDependencies = copyCudaRuntimeDependencies(cuda, buildDir, config);
 const ctest = resolveCTest(cmake);
 run(ctest, ["--test-dir", buildDir, "-C", config, "--output-on-failure"]);
@@ -248,5 +263,6 @@ process.stdout.write(`${JSON.stringify({
   cuda: Boolean(cuda),
   cuda_root: cuda?.root ?? null,
   cuda_architectures: cuda ? cudaArchitectures : null,
+  parallel,
   runtime_dependencies: runtimeDependencies,
 })}\n`);

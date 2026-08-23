@@ -190,7 +190,10 @@ void real_decode_after_restore_regression() {
     assert(runtime.save(request, &saved, &error) && error.empty());
     assert(llama_memory_seq_pos_max(memory, sequence) == -1);
 
-    assert(runtime.restore(request, &saved, &error) && error.empty());
+    if (!runtime.restore(request, &saved, &error) || !error.empty()) {
+        std::cerr << "KV_RESTORE_FAILED error=" << error << "\n";
+        std::abort();
+    }
     const auto restored_max = llama_memory_seq_pos_max(memory, sequence);
     assert(restored_max == prefill_max);
 
@@ -284,6 +287,7 @@ void hop_batch_rolls_back_only_new_sequences() {
     assert(!runtime.execute_hop(over_capacity, staged::protocol::HopPhase::Prefill,
                                 &output, &error));
     assert(error.find("sequence table is full") != std::string::npos);
+    error.clear();
 
     std::string rollback_error;
     assert(runtime.rollback_hop_batch(&rollback_error));

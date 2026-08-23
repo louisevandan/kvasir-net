@@ -182,7 +182,11 @@ bool StageRuntime::restore(const protocol::KvPayload & request, protocol::KvResu
     const auto actual_position = max_position < 0
         ? 0U : static_cast<std::uint64_t>(max_position) + 1U;
     if (actual_position != restored_position) {
-        if (error != nullptr) *error = "KV restored token position does not match manifest";
+        if (error != nullptr) {
+            *error = "KV restored token position does not match manifest: expected="
+                + std::to_string(restored_position)
+                + " actual=" + std::to_string(actual_position);
+        }
         return false;
     }
     sequence_positions_[request.sequence_id] = restored_position;

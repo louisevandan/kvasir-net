@@ -289,6 +289,8 @@ bool StageRuntime::restore_checkpoint(
     // State import may enqueue asynchronous device copies. The next decode
     // must observe the restored KV before it starts graph execution.
     llama_synchronize(ctx_);
+    sequence_positions_[sequence_id] = checkpoint.pos_max < 0
+        ? 0U : static_cast<std::uint64_t>(checkpoint.pos_max) + 1U;
     return true;
 }
 

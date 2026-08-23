@@ -28,6 +28,12 @@ through every stage.
 The compatibility layer derives behavior from these official paths; it must
 not recreate them with model-name branches:
 
+Preparation enforces this boundary. Compatibility diffs may not modify
+`src/models/` or add `LLM_ARCH_*`/model-implementation casts, and adapter
+runtime sources may not include llama.cpp private model/context/graph/memory
+headers. A model-format workaround is an upstream update or contribution, not
+an adapter branch.
+
 | Upstream source | Contract consumed by the adapter |
 | --- | --- |
 | `src/llama-model.cpp#llama_model::create_memory` | Selects plain KV, iSWA, MSA, DSA/DSV4, recurrent, hybrid, reuse, and cross-context share semantics. |
@@ -135,6 +141,7 @@ For every submitted physical UBATCH, distributed execution is valid only if:
 | Reuse/share | A boundary splitting one reuse component and partial-stage cross-context share are rejected before backend-buffer allocation. | Move the same alias-component result into planner preflight for earlier diagnostics. |
 | Graph cut | Nonresident weight/KV reachability is fatal, but layer provenance still partly falls back to tensor-name parsing. | Consume explicit memory-region provenance. |
 | Planner accounting | Can charge KV by owning layer. | Accept layer-local evidence only after runtime reports resident memory regions. |
+| Frontend utilities | The stage runtime still includes llama.cpp `common.h`, `sampling.h`, and `speculative.h`. This is model-agnostic but remains an upstream-update surface. | Hide these behind one versioned generic bridge; never replace them with adapter-owned model or sampler branches. |
 
 ## Integrated implementation gate
 

@@ -1,96 +1,139 @@
-warning: in the working copy of '.cache/llama-pipeline-upstream/3e3a7a416d-7e68fda91f10/src/llama-memory.h', LF will be replaced by CRLF the next time Git touches it
-diff --git a/src/llama-memory.h b/src/llama-memory.h
-index db95b041f..33995a881 100644
---- a/src/llama-memory.h
-+++ b/src/llama-memory.h
-@@ -41,6 +41,17 @@ llama_memory_status llama_memory_status_combine(llama_memory_status s0, llama_me
- // helper function for checking if a memory status indicates a failure
- bool llama_memory_status_is_fail(llama_memory_status status);
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 0d5720c85a2002631950b87b978b23fe3668f763..2a7f6c4ca5dbbb5f33f9594006b4609324af1830 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -390,6 +390,12 @@ llama_context::llama_context(
  
-+constexpr bool llama_linkcpp_has_partial_stage(
-+        int32_t layer_begin, int32_t layer_end, uint32_t n_layer) {
-+    return layer_begin > 0
-+        || (layer_end >= 0 && layer_end < (int32_t) n_layer);
-+}
-+
-+static_assert(!llama_linkcpp_has_partial_stage(-1, -1, 32));
-+static_assert(!llama_linkcpp_has_partial_stage(0, 32, 32));
-+static_assert( llama_linkcpp_has_partial_stage(0, 16, 32));
-+static_assert( llama_linkcpp_has_partial_stage(16, 32, 32));
-+
- // the interface for managing the memory context during batch processing
- // this interface is implemented per memory type. see:
- //   - llama_kv_cache_context
-@@ -71,6 +82,11 @@ using llama_memory_context_ptr = std::unique_ptr<llama_memory_context_i>;
- // general concept of LLM memory
- // the KV cache is a type of LLM memory, but there can be other types
- struct llama_memory_i {
-+    // See apps/p4/docs/llamacpp-stage-memory.md. A memory implementation must
-+    // opt in only after nonresident tensors are metadata-only and every data,
-+    // update, and state operation is restricted to resident storage.
-+    static constexpr bool linkcpp_stage_residency_supported = false;
-+
-     // this callback is used to filter out layers that should not be included in the cache
-     using layer_filter_cb = std::function<bool(int32_t il)>;
+         memory.reset(model.create_memory(params_mem, cparams));
+         if (memory) {
++            const bool linkcpp_partial_stage = llama_linkcpp_has_partial_stage(
++                model.linkcpp_layer_begin(), model.linkcpp_layer_end(), model.hparams.n_layer());
++            if (linkcpp_partial_stage && !memory->supports_linkcpp_stage_residency()) {
++                throw std::runtime_error(
++                    "llama.cpp memory implementation does not declare stage-local residency support");
++            }
+             memory->set_linkcpp_executor(
+                 model.linkcpp_memory_executor(),
+                 model.linkcpp_memory_executor_user_data(),
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 5bc05e21e3cc14bac54d4034ee11bac77be44e21..0f512feef5c36029a001bbe19a8c3bdb29bc19c9 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -1462,12 +1462,12 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
+     }
+ }
  
-@@ -82,6 +98,10 @@ struct llama_memory_i {
+-void llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
++bool llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
+     const int begin = params.linkcpp_layer_begin;
+     const int end   = params.linkcpp_layer_end;
+     const int n_layer = params.hparams.n_layer();
+     if (begin < 0 || end < 0) {
+-        return;
++        return true;
+     }
+     GGML_ASSERT(0 <= begin && begin < end && end <= n_layer);
  
-     virtual ~llama_memory_i() = default;
+@@ -1725,45 +1725,57 @@ void llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
+         t_embd_pooled = nullptr;
+     }
  
-+    virtual bool supports_linkcpp_stage_residency() const {
-+        return linkcpp_stage_residency_supported;
+-    // Audit: a stage must not keep unowned-layer weights reachable, because a
+-    // reachable weight with no buffer becomes compute-buffer reservation.
+-    // Off unless LINKER_STAGE_REACH_AUDIT is set; it walks every node.
+-    static const bool reach_audit = getenv("LINKER_STAGE_REACH_AUDIT") != nullptr;
+-    if (reach_audit) {
+-        std::unordered_set<const ggml_tensor *> counted;
+-        size_t unowned_bytes = 0, unowned_count = 0, owned_unbuffered = 0;
+-        std::string worst_name;
+-        std::string worst_holder;
+-        size_t worst_bytes = 0;
+-        ggml_tensor ** final_nodes = ggml_graph_nodes(gf);
+-        const int final_count = ggml_graph_n_nodes(gf);
+-        for (int i = 0; i < final_count; ++i) {
+-            for (int j = -1; j < GGML_MAX_SRC; ++j) {
+-                ggml_tensor * t = j < 0 ? final_nodes[i] : final_nodes[i]->src[j];
+-                if (!t || t->buffer != nullptr || !counted.insert(t).second) continue;
+-                const int tl = parse_layer(t);
++    // See apps/p4/docs/llamacpp-stage-memory.md. Nonresident weights and
++    // memory exist only as graph-building metadata. If one remains reachable
++    // after pruning, allowing the backend scheduler to materialize it would
++    // silently recreate another stage's storage.
++    std::unordered_set<const ggml_tensor *> counted;
++    size_t unowned_bytes = 0, unowned_count = 0, owned_unbuffered = 0;
++    std::string worst_name;
++    std::string worst_holder;
++    size_t worst_bytes = 0;
++    std::function<void(ggml_tensor *, const std::string &)> audit_reachable =
++        [&](ggml_tensor * tensor, const std::string & holder) {
++            if (!tensor || !counted.insert(tensor).second) {
++                return;
++            }
++            if (tensor->buffer == nullptr) {
++                const int tl = parse_layer(tensor);
+                 if (tl >= 0 && (tl < begin || tl >= end)) {
+-                    unowned_bytes += ggml_nbytes(t);
++                    const size_t bytes = ggml_nbytes(tensor);
++                    unowned_bytes += bytes;
+                     ++unowned_count;
+-                    if (ggml_nbytes(t) > worst_bytes) {
+-                        worst_bytes = ggml_nbytes(t);
+-                        worst_name = ggml_get_name(t);
+-                        worst_holder = j < 0
+-                            ? std::string("<graph node itself>")
+-                            : std::string(ggml_get_name(final_nodes[i]))
+-                                + " op=" + ggml_op_name(final_nodes[i]->op)
+-                                + " holder_layer=" + std::to_string(layer_of(final_nodes[i]));
++                    if (bytes > worst_bytes) {
++                        worst_bytes = bytes;
++                        worst_name = ggml_get_name(tensor);
++                        worst_holder = holder;
+                     }
+                 } else if (tl >= 0) {
+                     ++owned_unbuffered;
+                 }
+             }
+-        }
++            for (int j = 0; j < GGML_MAX_SRC; ++j) {
++                audit_reachable(tensor->src[j],
++                    std::string(ggml_get_name(tensor))
++                        + " op=" + ggml_op_name(tensor->op)
++                        + " holder_layer=" + std::to_string(layer_of(tensor)));
++            }
++        };
++    ggml_tensor ** final_nodes = ggml_graph_nodes(gf);
++    const int final_count = ggml_graph_n_nodes(gf);
++    for (int i = 0; i < final_count; ++i) {
++        audit_reachable(final_nodes[i], "<graph node itself>");
 +    }
 +
-     void set_linkcpp_executor(
-             llama_linkcpp_memory_executor executor,
-             void * user_data,
-warning: in the working copy of '.cache/llama-pipeline-upstream/3e3a7a416d-7e68fda91f10/src/llama-kv-cache.h', LF will be replaced by CRLF the next time Git touches it
-diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
-index 6cb6dbd2f..4388eed61 100644
---- a/src/llama-kv-cache.h
-+++ b/src/llama-kv-cache.h
-@@ -19,6 +19,8 @@ struct llama_context;
- 
- class llama_kv_cache : public llama_memory_i {
- public:
-+    static constexpr bool linkcpp_stage_residency_supported = true;
++    static const bool reach_audit = getenv("LINKER_STAGE_REACH_AUDIT") != nullptr;
++    if (reach_audit || unowned_count > 0) {
+         LLAMA_LOG_INFO("linkcpp stage reach: layers=[%d,%d) unowned=%zu unowned_mib=%.2f owned_unbuffered=%zu worst=%s worst_mib=%.2f holder=%s\n",
+                 begin, end, unowned_count, (double) unowned_bytes / (1024.0*1024.0),
+                 owned_unbuffered, worst_name.empty() ? "none" : worst_name.c_str(),
+                 (double) worst_bytes / (1024.0*1024.0), worst_holder.empty() ? "none" : worst_holder.c_str());
+     }
 +
-     struct stream_copy_info {
-         bool empty() const {
-             assert(ssrc.size() == sdst.size());
-@@ -120,6 +122,8 @@ public:
-     // llama_memory_i
-     //
++    return unowned_count == 0;
+ }
  
-+    bool supports_linkcpp_stage_residency() const override { return true; }
-+
-     llama_memory_context_ptr init_batch(
-             llama_batch_allocr & balloc,
-             uint32_t n_ubatch,
-@@ -228,6 +232,10 @@ private:
-         // note: can be different from the layer index in the KV cache
-         uint32_t il;
+ bool llm_graph_result::set_linkcpp_inputs(const std::vector<std::vector<uint8_t>> & payloads) {
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 4ab52623d14f33061d73b36a28b63700f7ba0c63..86958575af52368c27c54c9871917d510470a3a1 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -909,7 +909,7 @@ public:
+     void set_linkcpp_tensor_layer(ggml_tensor * tensor, int layer);
+     int get_linkcpp_tensor_layer(const ggml_tensor * tensor) const;
+     void set_outputs(const llm_graph_params & params);
+-    void apply_linkcpp_stage(const llm_graph_params & params);
++    bool apply_linkcpp_stage(const llm_graph_params & params);
  
-+        // Nonresident layers retain tensor metadata for construction of the
-+        // stock full graph, but own no backend storage on this stage.
-+        bool resident;
-+
-         ggml_tensor * k;
-         ggml_tensor * v;
- 
-@@ -267,6 +275,9 @@ private:
-     // ggml contexts for the KV cache along with the allocated backend buffers:
-     std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
- 
-+    // Metadata-only tensors for layers owned by another Pipeline stage.
-+    ggml_context_ptr metadata_ctx;
-+
-     // the current index from where we start searching for a free slot in the ring buffer of KV cells (see find_slot())
-     // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
-     std::vector<uint32_t> v_heads;
-warning: in the working copy of '.cache/llama-pipeline-upstream/3e3a7a416d-7e68fda91f10/src/llama-kv-cache.cpp', LF will be replaced by CRLF the next time Git touches it
+     // try to update the existing graph result using the new graph parameters in order to reuse it
+     // this can only be done if we determine that the resulting graph using the new graph parameters
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index 3b651980e..1b6da1346 100644
+index 3b651980ee35f1a348d4a0abcb6ff6042271b42f..1b6da134639884d40d61bfef8d738612e5c5f0b8 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
 @@ -98,6 +98,20 @@ llama_kv_cache::llama_kv_cache(
@@ -309,27 +352,93 @@ index 3b651980e..1b6da1346 100644
              const uint32_t il = layer.il;
  
              const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
-warning: in the working copy of '.cache/llama-pipeline-upstream/3e3a7a416d-7e68fda91f10/src/llama-context.cpp', LF will be replaced by CRLF the next time Git touches it
-diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 0d5720c85..2a7f6c4ca 100644
---- a/src/llama-context.cpp
-+++ b/src/llama-context.cpp
-@@ -390,6 +390,12 @@ llama_context::llama_context(
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index 6cb6dbd2f9843aa95319660654b7bc3eb5293740..eec94a4d45fbafb8fc6715d70af794b1d7fd7cec 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -19,6 +19,8 @@ struct llama_context;
  
-         memory.reset(model.create_memory(params_mem, cparams));
-         if (memory) {
-+            const bool linkcpp_partial_stage = llama_linkcpp_has_partial_stage(
-+                model.linkcpp_layer_begin(), model.linkcpp_layer_end(), model.hparams.n_layer());
-+            if (linkcpp_partial_stage && !memory->supports_linkcpp_stage_residency()) {
-+                throw std::runtime_error(
-+                    "llama.cpp memory implementation does not declare stage-local residency support");
-+            }
-             memory->set_linkcpp_executor(
-                 model.linkcpp_memory_executor(),
-                 model.linkcpp_memory_executor_user_data(),
-warning: in the working copy of '.cache/llama-pipeline-upstream/3e3a7a416d-7e68fda91f10/src/llama-model.cpp', LF will be replaced by CRLF the next time Git touches it
+ class llama_kv_cache : public llama_memory_i {
+ public:
++    static constexpr bool linkcpp_stage_residency_supported = true;
++
+     struct stream_copy_info {
+         bool empty() const {
+             assert(ssrc.size() == sdst.size());
+@@ -120,6 +122,8 @@ public:
+     // llama_memory_i
+     //
+ 
++    bool supports_linkcpp_stage_residency() const override { return true; }
++
+     llama_memory_context_ptr init_batch(
+             llama_batch_allocr & balloc,
+             uint32_t n_ubatch,
+@@ -228,6 +232,10 @@ private:
+         // note: can be different from the layer index in the KV cache
+         uint32_t il;
+ 
++        // Nonresident layers retain tensor metadata for construction of the
++        // stock full graph, but own no backend storage on this stage.
++        bool resident;
++
+         ggml_tensor * k;
+         ggml_tensor * v;
+ 
+@@ -266,6 +274,8 @@ private:
+ 
+     // ggml contexts for the KV cache along with the allocated backend buffers:
+     std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
++    // Metadata-only tensors for layers owned by another Pipeline stage.
++    ggml_context_ptr metadata_ctx;
+ 
+     // the current index from where we start searching for a free slot in the ring buffer of KV cells (see find_slot())
+     // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
+diff --git a/src/llama-memory.h b/src/llama-memory.h
+index db95b041fa44bc8855c504b13c7328d7b7c3fed0..e6d838b5426668580e50197bb761f5eba613b215 100644
+--- a/src/llama-memory.h
++++ b/src/llama-memory.h
+@@ -40,6 +40,16 @@ llama_memory_status llama_memory_status_combine(llama_memory_status s0, llama_me
+ 
+ // helper function for checking if a memory status indicates a failure
+ bool llama_memory_status_is_fail(llama_memory_status status);
++constexpr bool llama_linkcpp_has_partial_stage(
++        int32_t layer_begin, int32_t layer_end, uint32_t n_layer) {
++    return layer_begin > 0
++        || (layer_end >= 0 && layer_end < (int32_t) n_layer);
++}
++
++static_assert(!llama_linkcpp_has_partial_stage(-1, -1, 32));
++static_assert(!llama_linkcpp_has_partial_stage(0, 32, 32));
++static_assert( llama_linkcpp_has_partial_stage(0, 16, 32));
++static_assert( llama_linkcpp_has_partial_stage(16, 32, 32));
+ 
+ // the interface for managing the memory context during batch processing
+ // this interface is implemented per memory type. see:
+@@ -71,6 +81,11 @@ using llama_memory_context_ptr = std::unique_ptr<llama_memory_context_i>;
+ // general concept of LLM memory
+ // the KV cache is a type of LLM memory, but there can be other types
+ struct llama_memory_i {
++    // See apps/p4/docs/llamacpp-stage-memory.md. A memory implementation must
++    // opt in only after nonresident tensors are metadata-only and every data,
++    // update, and state operation is restricted to resident storage.
++    static constexpr bool linkcpp_stage_residency_supported = false;
++
+     // this callback is used to filter out layers that should not be included in the cache
+     using layer_filter_cb = std::function<bool(int32_t il)>;
+ 
+@@ -81,6 +96,9 @@ struct llama_memory_i {
+     using layer_share_cb = std::function<int32_t(int32_t il)>;
+ 
+     virtual ~llama_memory_i() = default;
++    virtual bool supports_linkcpp_stage_residency() const {
++        return linkcpp_stage_residency_supported;
++    }
+ 
+     void set_linkcpp_executor(
+             llama_linkcpp_memory_executor executor,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 82dad2039..cb87d0d78 100644
+index cae2d4c97ce0dbe08db7713cd4b3581642c2fd83..bad5d139805337ba0448960a8996f533bef7b6f8 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -36,8 +36,21 @@
@@ -354,16 +463,7 @@ index 82dad2039..cb87d0d78 100644
  static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params & params) {
      switch (arch) {
          case LLM_ARCH_LLAMA:
-@@ -2090,7 +2103,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
-             {
-                 const auto & m3 = static_cast<const llama_model_minimax_m3 &>(*this);
-                 if (!m3.has_msa) {
--                    res = new llama_kv_cache(
-+                    res = llama_linkcpp_new_memory<llama_kv_cache>(
-                             *this,
-                             hparams,
-                             params.type_k,
-@@ -2113,7 +2126,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2092,7 +2105,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                  llama_kv_cache::layer_filter_cb filter_idx =
                      [&](int32_t il) { return (uint32_t) il >= hparams.n_layer_dense_lead; };
  
@@ -372,7 +472,7 @@ index 82dad2039..cb87d0d78 100644
                          *this,
                          params.type_k,
                          params.type_v,
-@@ -2139,7 +2152,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2118,7 +2131,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                      llama_kv_cache::layer_filter_cb filter =
                          [&](uint32_t il) { return il >= hparams.n_layer(); };
  
@@ -381,7 +481,7 @@ index 82dad2039..cb87d0d78 100644
                              *this,
                              hparams,
                              params.type_k,
-@@ -2165,7 +2178,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2144,7 +2157,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                      }
                      llama_kv_cache::layer_filter_cb filter_lid = [&](uint32_t il) { return il < hparams.n_layer() && (arch != LLM_ARCH_GLM_DSA || hparams.is_indexer_full(il)); };
  
@@ -390,7 +490,7 @@ index 82dad2039..cb87d0d78 100644
                              *this,
                              params.type_k,
                              params.type_v,
-@@ -2191,7 +2204,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2170,7 +2183,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                          return il >= (int32_t) hparams.n_layer();
                      };
  
@@ -399,7 +499,7 @@ index 82dad2039..cb87d0d78 100644
                              *this,
                              params.type_k,
                              params.type_v,
-@@ -2208,7 +2221,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2187,7 +2200,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                              nullptr,
                              nullptr);
                  } else {
@@ -408,7 +508,7 @@ index 82dad2039..cb87d0d78 100644
                              *this,
                              params.type_k,
                              params.type_v,
-@@ -2231,7 +2244,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2210,7 +2223,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                  if (hparams.dsv4_hc_mult > 0) {
                      GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
  
@@ -417,7 +517,7 @@ index 82dad2039..cb87d0d78 100644
                              *this,
                              params.type_k,
                              params.type_v,
-@@ -2262,7 +2275,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2241,7 +2254,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                      (arch == LLM_ARCH_QWEN3NEXT || arch == LLM_ARCH_QWEN35 || arch == LLM_ARCH_QWEN35MOE);
  
                  if (llm_arch_is_recurrent(arch)) {
@@ -426,7 +526,7 @@ index 82dad2039..cb87d0d78 100644
                              *this,
                              GGML_TYPE_F32,
                              GGML_TYPE_F32,
-@@ -2297,7 +2310,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2276,7 +2289,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
  
                      if (hparams.swa_type != LLAMA_SWA_TYPE_NONE) {
                          // Use hybrid-iswa for hybrid models with SWA
@@ -435,7 +535,7 @@ index 82dad2039..cb87d0d78 100644
                              /* model             */ *this,
                              /* attn_type_k       */ params.type_k,
                              /* attn_type_v       */ params.type_v,
-@@ -2316,7 +2329,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2295,7 +2308,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                              /* filter_attn       */ std::move(filter_attn),
                              /* filter_recr       */ std::move(filter_recr));
                      } else {
@@ -444,7 +544,7 @@ index 82dad2039..cb87d0d78 100644
                              /* model             */ *this,
                              /* attn_type_k       */ params.type_k,
                              /* attn_type_v       */ params.type_v,
-@@ -2382,7 +2395,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2361,7 +2374,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                                  return llama_model_n_layer(model_other) - 1;
                              };
  
@@ -453,7 +553,7 @@ index 82dad2039..cb87d0d78 100644
                                      *this,
                                      params.type_k,
                                      params.type_v,
-@@ -2399,7 +2412,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2378,7 +2391,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                                      reuse,
                                      share);
                          } else {
@@ -462,7 +562,7 @@ index 82dad2039..cb87d0d78 100644
                                      *this,
                                      params.type_k,
                                      params.type_v,
-@@ -2419,7 +2432,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2398,7 +2411,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                      } else {
                          GGML_ASSERT(!hparams.is_swa_any());
  
@@ -471,7 +571,7 @@ index 82dad2039..cb87d0d78 100644
                                  *this,
                                  hparams,
                                  params.type_k,
-@@ -2460,7 +2473,9 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+@@ -2439,7 +2452,9 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
      llm->build_dense_out(dense_2_out_layers, dense_2_out_layers_b, dense_3_out_layers);
  
      llm->res->set_outputs(params);
@@ -482,123 +582,3 @@ index 82dad2039..cb87d0d78 100644
  
      return llm->res->get_gf();
  }
-warning: in the working copy of '.cache/llama-pipeline-upstream/3e3a7a416d-7e68fda91f10/src/llama-graph.h', LF will be replaced by CRLF the next time Git touches it
-diff --git a/src/llama-graph.h b/src/llama-graph.h
-index 4ab52623d..86958575a 100644
---- a/src/llama-graph.h
-+++ b/src/llama-graph.h
-@@ -909,7 +909,7 @@ public:
-     void set_linkcpp_tensor_layer(ggml_tensor * tensor, int layer);
-     int get_linkcpp_tensor_layer(const ggml_tensor * tensor) const;
-     void set_outputs(const llm_graph_params & params);
--    void apply_linkcpp_stage(const llm_graph_params & params);
-+    bool apply_linkcpp_stage(const llm_graph_params & params);
- 
-     // try to update the existing graph result using the new graph parameters in order to reuse it
-     // this can only be done if we determine that the resulting graph using the new graph parameters
-warning: in the working copy of '.cache/llama-pipeline-upstream/3e3a7a416d-7e68fda91f10/src/llama-graph.cpp', LF will be replaced by CRLF the next time Git touches it
-diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 5bc05e21e..0f512feef 100644
---- a/src/llama-graph.cpp
-+++ b/src/llama-graph.cpp
-@@ -1462,12 +1462,12 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
-     }
- }
- 
--void llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
-+bool llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
-     const int begin = params.linkcpp_layer_begin;
-     const int end   = params.linkcpp_layer_end;
-     const int n_layer = params.hparams.n_layer();
-     if (begin < 0 || end < 0) {
--        return;
-+        return true;
-     }
-     GGML_ASSERT(0 <= begin && begin < end && end <= n_layer);
- 
-@@ -1725,45 +1725,57 @@ void llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
-         t_embd_pooled = nullptr;
-     }
- 
--    // Audit: a stage must not keep unowned-layer weights reachable, because a
--    // reachable weight with no buffer becomes compute-buffer reservation.
--    // Off unless LINKER_STAGE_REACH_AUDIT is set; it walks every node.
--    static const bool reach_audit = getenv("LINKER_STAGE_REACH_AUDIT") != nullptr;
--    if (reach_audit) {
--        std::unordered_set<const ggml_tensor *> counted;
--        size_t unowned_bytes = 0, unowned_count = 0, owned_unbuffered = 0;
--        std::string worst_name;
--        std::string worst_holder;
--        size_t worst_bytes = 0;
--        ggml_tensor ** final_nodes = ggml_graph_nodes(gf);
--        const int final_count = ggml_graph_n_nodes(gf);
--        for (int i = 0; i < final_count; ++i) {
--            for (int j = -1; j < GGML_MAX_SRC; ++j) {
--                ggml_tensor * t = j < 0 ? final_nodes[i] : final_nodes[i]->src[j];
--                if (!t || t->buffer != nullptr || !counted.insert(t).second) continue;
--                const int tl = parse_layer(t);
-+    // See apps/p4/docs/llamacpp-stage-memory.md. Nonresident weights and
-+    // memory exist only as graph-building metadata. If one remains reachable
-+    // after pruning, allowing the backend scheduler to materialize it would
-+    // silently recreate another stage's storage.
-+    std::unordered_set<const ggml_tensor *> counted;
-+    size_t unowned_bytes = 0, unowned_count = 0, owned_unbuffered = 0;
-+    std::string worst_name;
-+    std::string worst_holder;
-+    size_t worst_bytes = 0;
-+    std::function<void(ggml_tensor *, const std::string &)> audit_reachable =
-+        [&](ggml_tensor * tensor, const std::string & holder) {
-+            if (!tensor || !counted.insert(tensor).second) {
-+                return;
-+            }
-+            if (tensor->buffer == nullptr) {
-+                const int tl = parse_layer(tensor);
-                 if (tl >= 0 && (tl < begin || tl >= end)) {
--                    unowned_bytes += ggml_nbytes(t);
-+                    const size_t bytes = ggml_nbytes(tensor);
-+                    unowned_bytes += bytes;
-                     ++unowned_count;
--                    if (ggml_nbytes(t) > worst_bytes) {
--                        worst_bytes = ggml_nbytes(t);
--                        worst_name = ggml_get_name(t);
--                        worst_holder = j < 0
--                            ? std::string("<graph node itself>")
--                            : std::string(ggml_get_name(final_nodes[i]))
--                                + " op=" + ggml_op_name(final_nodes[i]->op)
--                                + " holder_layer=" + std::to_string(layer_of(final_nodes[i]));
-+                    if (bytes > worst_bytes) {
-+                        worst_bytes = bytes;
-+                        worst_name = ggml_get_name(tensor);
-+                        worst_holder = holder;
-                     }
-                 } else if (tl >= 0) {
-                     ++owned_unbuffered;
-                 }
-             }
--        }
-+            for (int j = 0; j < GGML_MAX_SRC; ++j) {
-+                audit_reachable(tensor->src[j],
-+                    std::string(ggml_get_name(tensor))
-+                        + " op=" + ggml_op_name(tensor->op)
-+                        + " holder_layer=" + std::to_string(layer_of(tensor)));
-+            }
-+        };
-+    ggml_tensor ** final_nodes = ggml_graph_nodes(gf);
-+    const int final_count = ggml_graph_n_nodes(gf);
-+    for (int i = 0; i < final_count; ++i) {
-+        audit_reachable(final_nodes[i], "<graph node itself>");
-+    }
-+
-+    static const bool reach_audit = getenv("LINKER_STAGE_REACH_AUDIT") != nullptr;
-+    if (reach_audit || unowned_count > 0) {
-         LLAMA_LOG_INFO("linkcpp stage reach: layers=[%d,%d) unowned=%zu unowned_mib=%.2f owned_unbuffered=%zu worst=%s worst_mib=%.2f holder=%s\n",
-                 begin, end, unowned_count, (double) unowned_bytes / (1024.0*1024.0),
-                 owned_unbuffered, worst_name.empty() ? "none" : worst_name.c_str(),
-                 (double) worst_bytes / (1024.0*1024.0), worst_holder.empty() ? "none" : worst_holder.c_str());
-     }
-+
-+    return unowned_count == 0;
- }
- 
- bool llm_graph_result::set_linkcpp_inputs(const std::vector<std::vector<uint8_t>> & payloads) {
-
