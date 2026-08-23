@@ -14,8 +14,7 @@ int main() {
     staged::server::ParsedLlamaOptions parsed;
     std::string error;
     const std::vector<std::string> speculative_types{
-        "draft-simple", "draft-eagle3", "draft-mtp", "draft-dflash",
-        "draft-dspark", "ngram-simple", "ngram-map-k", "ngram-map-k4v",
+        "draft-simple", "draft-mtp", "ngram-simple", "ngram-map-k", "ngram-map-k4v",
         "ngram-mod", "ngram-cache"};
     for (const auto & type : speculative_types) {
         parsed = {};

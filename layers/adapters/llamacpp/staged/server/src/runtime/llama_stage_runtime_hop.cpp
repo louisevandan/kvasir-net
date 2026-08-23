@@ -107,9 +107,9 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
     if (!ignore_inbound_cut_set && input_tokens.empty() && !input.descriptors.empty()) {
         // A cut-set is a bundle of tensors rather than one. `cut_at` in the
         // graph patch collects every tensor produced below the boundary and
-        // consumed above it, and how many that is belongs to the model:
-        // gemma4 carries a per-layer input embedding beside the hidden
-        // state. llama.cpp's input matcher wants all of them for one graph,
+        // consumed above it, and how many that is belongs to the graph.
+        // A boundary may carry auxiliary tensors beside the hidden state.
+        // llama.cpp's input matcher wants all of them for one graph,
         // so a bundle is bound whole, and the bundles arrive in chunk order.
         if (input.descriptors.size() % chunks.size() != 0) {
             return fail_hop("staged HOP cut-set is not one bundle per chunk", error);

@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  officialModelIdentifiers,
   validateCompatibilityPatch,
   validateRuntimeTree,
 } from "./upstream/model-agnostic-boundary.mjs";
@@ -124,8 +125,12 @@ if (manifest.upstream_commit !== upstreamHead) {
 }
 validateOfficialPin(manifest);
 validatePatches(manifest, compatibilityDir);
-validateRuntimeTree(path.join(shapeRoot, "server"));
-validateRuntimeTree(path.join(repoRoot, "apps", "llama", "native", "linker-node"));
+const modelIdentifiers = officialModelIdentifiers(path.join(upstreamDir, "src", "models"));
+validateRuntimeTree(path.join(shapeRoot, "server"), modelIdentifiers);
+validateRuntimeTree(
+  path.join(repoRoot, "apps", "llama", "native", "linker-node"),
+  modelIdentifiers,
+);
 
 const defaultTarget = path.join(
   repoRoot,
