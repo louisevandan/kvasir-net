@@ -102,7 +102,7 @@ function waitForReady(child, timeoutMs) {
 }
 
 function highlightLog(lines) {
-  const interesting = /^(warning:|PLAN_APPLIED|READY port=|llama_model_loader: loaded meta|load_tensors:   CPU_Mapped|llama_context: n_ctx|llama_kv_cache:        CPU KV buffer|sched_reserve:        CPU compute buffer|linkcpp graph stage)/u;
+  const interesting = /^(warning:|PLAN_APPLIED|READY port=|llama_model_loader: loaded meta|load_tensors:   CPU_Mapped|llama_context: n_ctx|llama_kv_cache:.*KV buffer size|sched_reserve:.*compute buffer|linkcpp graph stage)/u;
   return lines.filter((line) => interesting.test(line));
 }
 

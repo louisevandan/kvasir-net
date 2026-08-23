@@ -3,10 +3,11 @@
 The adapter must preserve stock llama.cpp memory semantics while making each
 mutable storage region physically resident on exactly one pipeline stage.
 
-Status: design authority for the staged llama.cpp compatibility layer. The
-current implementation is only conformant for ordinary attention KV after the
-resident-memory change lands; every other memory kind must fail closed until it
-declares the same guarantees.
+Status: design authority for the staged llama.cpp compatibility layer. Plain
+attention KV now separates nonresident metadata from resident buffers. Every
+other memory implementation rejects a partial stage until it explicitly
+declares and implements the same guarantees; an unsplit `[0, n_layer)` model
+remains compatible with upstream behavior.
 
 ## Ownership boundary
 
@@ -128,11 +129,11 @@ For every submitted physical UBATCH, distributed execution is valid only if:
 
 | Surface | Current state | Required change |
 | --- | --- | --- |
-| Weights | Nonresident weights are metadata-only and the GGUF bytes are not loaded. | Keep; make the reachability audit mandatory. |
-| Plain KV | Nonowned layers currently fall back to real CPU KV buffers. | Split metadata from resident buffers and exclude nonresident layers from update/state/data accounting. |
-| iSWA/MSA/DSA/DSV4/recurrent/hybrid | Stage residency is not uniformly declared or enforced. | Fail closed first; implement the same region contract per upstream memory composition. |
-| Reuse/share | Upstream aliases storage but the stage planner has no alias-component constraint. | Reject a boundary that splits one mutable component; reject unproven cross-context share. |
-| Graph cut | Layer provenance partly falls back to tensor-name parsing and the reach audit is optional. | Consume explicit memory-region provenance and make nonresident reachability fatal. |
+| Weights | Nonresident weights are metadata-only and the GGUF bytes are not loaded. | Keep; the reachability audit is now mandatory. |
+| Plain KV | Nonresident K/V tensors are metadata-only; allocation, copy, shift, state I/O, and byte accounting visit resident layers only. | Prove stock/one-stage/multi-stage output equivalence with a real GGUF. |
+| iSWA/MSA/DSA/DSV4/recurrent/hybrid | Partial stages are default-denied by the upstream-selected memory implementation, while an unsplit model remains valid. | Implement the same region contract per upstream memory composition before opting a type in. |
+| Reuse/share | A boundary splitting one reuse component and partial-stage cross-context share are rejected before backend-buffer allocation. | Move the same alias-component result into planner preflight for earlier diagnostics. |
+| Graph cut | Nonresident weight/KV reachability is fatal, but layer provenance still partly falls back to tensor-name parsing. | Consume explicit memory-region provenance. |
 | Planner accounting | Can charge KV by owning layer. | Accept layer-local evidence only after runtime reports resident memory regions. |
 
 ## Integrated implementation gate
