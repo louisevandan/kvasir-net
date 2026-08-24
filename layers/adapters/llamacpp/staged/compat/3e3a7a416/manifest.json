@@ -11,8 +11,8 @@
   "nearest_release_tag": "b10242",
   "previous_linker_pin": "4308a4f035791f58ae111f56c39dac598bf476be",
   "previous_official_base": "4308a4f035791f58ae111f56c39dac598bf476be",
-  "patch_set_sha256": "b88c8131b7574efdf6403a887162049e17d8dd185ea62756fd83a827577eacc6",
-  "patched_tree": "de7d45b272c5b3540634a2b081490b825744e581",
+  "patch_set_sha256": "817426f81c890002708c50c0a5deb6905a3f4348b92198481984d58bf3e88626",
+  "patched_tree": "421a0d61243c52b286707583d484c5ad0e298520",
   "patches": [
     {
       "file": "0001-ggml-backend.patch",
@@ -73,6 +73,10 @@
     {
       "file": "0016-stage-memory-residency.patch",
       "sha256": "7c903f387142445ac50af9022b0e8a4c1baacff9f098b3c36ae381d67ad233dd"
+    },
+    {
+      "file": "0017-recurrent-stage-memory-residency.patch",
+      "sha256": "742006367b4552353343ad5ca798a7a12199ab9cb90f7a9ab0957a9d7b896f1d"
     }
   ]
 }
