@@ -7,6 +7,7 @@ pub mod lifecycle;
 pub mod process;
 mod protocol;
 mod telemetry;
+pub mod v2;
 
 pub use protocol::PROTOCOL_REVISION;
 pub use protocol::{

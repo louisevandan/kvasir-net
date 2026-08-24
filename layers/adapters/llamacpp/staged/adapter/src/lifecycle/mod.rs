@@ -55,13 +55,26 @@ impl<C> LlamaLifecycle<C> {
             .and_then(|server| server.ready_info())
             .is_some_and(|ready| ready.transactions)
     }
+
+    pub fn physical_batch_capable(&self) -> bool {
+        self.server
+            .as_ref()
+            .and_then(|server| server.ready_info())
+            .is_some_and(|ready| ready.physical_batch)
+    }
 }
 
 impl<C: ServerControl> LlamaLifecycle<C> {
     pub fn load(&mut self, control: C, timeout: Duration) -> Result<(), LifecycleError> {
-        if self.state != LoadState::Empty {
+        if !matches!(
+            self.state,
+            LoadState::Empty | LoadState::Unloaded | LoadState::Failed
+        ) {
             return Err(LifecycleError::InvalidState(self.state));
         }
+        // Dropping a failed owner invokes its ServerControl cleanup before a
+        // replacement is installed. Reload never shares a child or socket.
+        self.server.take();
         self.state = LoadState::Loading;
         let mut server = ServerProcess::new(control);
         if let Err(error) = server.start_and_wait_ready(timeout) {
@@ -133,6 +146,7 @@ mod tests {
                     protocol_revision: 1,
                     server_id: "fake".into(),
                     transactions: false,
+                    physical_batch: true,
                 }))
             }
         }
@@ -166,10 +180,22 @@ mod tests {
         assert_eq!(lifecycle.state(), LoadState::Failed);
         assert!(lifecycle.state().is_terminal());
         assert!(lifecycle.has_server());
-        assert!(
-            lifecycle
-                .load(Fake::default(), Duration::from_millis(10))
-                .is_err()
-        );
+        lifecycle
+            .load(Fake::default(), Duration::from_millis(10))
+            .unwrap();
+        assert_eq!(lifecycle.state(), LoadState::Loaded);
+    }
+
+    #[test]
+    fn unloaded_runtime_can_be_loaded_again_as_a_fresh_server() {
+        let mut lifecycle = LlamaLifecycle::default();
+        lifecycle
+            .load(Fake::default(), Duration::from_millis(10))
+            .unwrap();
+        lifecycle.unload().unwrap();
+        lifecycle
+            .load(Fake::default(), Duration::from_millis(10))
+            .unwrap();
+        assert_eq!(lifecycle.state(), LoadState::Loaded);
     }
 }

@@ -13,6 +13,8 @@
 
 pub mod agent;
 pub mod continuation;
+pub mod event_broker;
+pub mod event_node;
 pub mod node;
 pub mod queue;
 pub mod transport;

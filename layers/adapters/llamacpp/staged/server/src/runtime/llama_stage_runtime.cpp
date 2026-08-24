@@ -1,4 +1,5 @@
 #include "llama_stage_runtime.hpp"
+#include "ggml-backend.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +36,24 @@ bool checkpoint_sequence(
 namespace staged::llama_runtime {
 
 StageRuntime::~StageRuntime() { unload(); }
+
+bool StageRuntime::tokenize_prompt(
+        const std::string & prompt,
+        std::vector<std::int32_t> * tokens,
+        std::string * error) const {
+    if (!loaded() || config_.layer_begin != 0 || tokens == nullptr || prompt.empty()) {
+        if (error != nullptr) *error = "invalid first-stage tokenize request";
+        return false;
+    }
+    const auto values = common_tokenize(
+        llama_model_get_vocab(model_), prompt, true, true);
+    if (values.empty()) {
+        if (error != nullptr) *error = "llama.cpp produced an empty prompt";
+        return false;
+    }
+    tokens->assign(values.begin(), values.end());
+    return true;
+}
 
 bool StageRuntime::fail(const char * message, std::string * error) {
     if (error != nullptr) *error = message;
@@ -78,19 +97,10 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     params_.model.path = config_.model_path;
 
     llama_backend_init();
+    // Backend discovery is deliberately delegated to stock ggml. The stage
+    // runtime has no CUDA/Vulkan/HIP/Metal/OpenCL branches of its own.
+    ggml_backend_load_all();
     backend_initialized_ = true;
-    llama_linkcpp_runtime_params runtime_params{};
-    runtime_params.model_path = params_.model.path.c_str();
-    runtime_params.layer_begin = config_.layer_begin;
-    runtime_params.layer_end = config_.layer_end;
-    runtime_params.executor = &StageRuntime::stage_executor;
-    runtime_params.executor_user_data = this;
-    runtime_params.state_executor = &StageRuntime::state_executor;
-    runtime_params.state_executor_user_data = this;
-    if (!llama_linkcpp_runtime_configure(&runtime_params)) {
-        return fail("llama.cpp rejected stage runtime configuration", error);
-    }
-
     auto model_params = common_model_params_to_llama(params_);
     model_params.linkcpp_layer_begin = config_.layer_begin;
     model_params.linkcpp_layer_end = config_.layer_end;
@@ -144,7 +154,6 @@ void StageRuntime::unload() noexcept {
         llama_model_free(model_);
         model_ = nullptr;
     }
-    llama_linkcpp_runtime_clear();
     if (backend_initialized_) {
         llama_backend_free();
         backend_initialized_ = false;
@@ -162,6 +171,8 @@ void StageRuntime::unload() noexcept {
     // Clearing here means a fresh load() is the only way hop_memory_dirty_
     // goes back to false, which is the point of it.
     hop_memory_dirty_ = false;
+    captured_executions_.clear();
+    capture_error_.clear();
 }
 
 bool StageRuntime::release_sequence(const std::string & sequence_id,
@@ -197,6 +208,23 @@ bool StageRuntime::release_sequence(const std::string & sequence_id,
         std::fprintf(stderr, "P4_STAGED_RUNTIME_RELEASE_DONE sequence=%s after=%zu\\n",
                      sequence_id.c_str(), sequence_ids_.size());
     }
+    return true;
+}
+
+bool StageRuntime::release_physical_sequence(
+        const std::string & sequence_key,
+        llama_seq_id sequence_id,
+        std::string * error) {
+    if (!loaded() || sequence_key.empty() || sequence_id < 0
+        || static_cast<std::uint32_t>(sequence_id) >= llama_n_seq_max(ctx_)) {
+        if (error != nullptr) *error = "invalid physical sequence release";
+        return false;
+    }
+    (void) llama_memory_seq_rm(llama_get_memory(ctx_), sequence_id, 0, -1);
+    samplers_.erase(sequence_key);
+    sampler_options_.erase(sequence_key);
+    sampled_tokens_.erase(sequence_key);
+    sampled_texts_.erase(sequence_key);
     return true;
 }
 
@@ -294,12 +322,11 @@ bool StageRuntime::restore_checkpoint(
     return true;
 }
 
-bool StageRuntime::stage_executor(llama_context *,
-                                  const llama_linkcpp_stage_invocation *, void *) {
-    // The C API performs the graph cut and host/device copies. The callback is
-    // deliberately an acknowledgement hook; transport owns the bytes exposed
-    // through llama_linkcpp_output_get().
-    return true;
+bool StageRuntime::stage_executor(llama_context * context,
+                                  const llama_linkcpp_stage_invocation * invocation,
+                                  void * user_data) {
+    auto * runtime = static_cast<StageRuntime *>(user_data);
+    return runtime != nullptr && runtime->capture_execution(context, invocation);
 }
 
 bool StageRuntime::state_executor(llama_linkcpp_state_invocation * invocation,

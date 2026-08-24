@@ -7,10 +7,8 @@ license.workspace = true
 [dependencies]
 p4-adapter = { path = "../../layers/adapters/adapter" }
 p4-agent-core = { path = "../../layers/agent" }
-p4-mock = { path = "../../layers/adapters/mock" }
-p4-llamacpp-deployment = { path = "../../layers/adapters/llamacpp/deployment" }
-p4-llamacpp-served = { path = "../../layers/adapters/llamacpp/served" }
 p4-llamacpp-staged-adapter = { path = "../../layers/adapters/llamacpp/staged/adapter" }
 p4-protocol = { path = "../../layers/protocol" }
-p4-service = { path = "../../layers/service" }
-tokio = { version = "1.48.0", features = ["net", "rt-multi-thread", "signal", "time", "macros"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.48.0", features = ["net", "rt-multi-thread", "signal", "time", "macros", "io-util", "sync"] }

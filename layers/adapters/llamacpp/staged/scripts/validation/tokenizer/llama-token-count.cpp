@@ -24,6 +24,7 @@ struct Options {
     std::filesystem::path model;
     std::filesystem::path output;
     std::filesystem::path seed_file;
+    std::filesystem::path required_suffix_file;
     int target_tokens = 5000;
 };
 
@@ -56,10 +57,12 @@ Options parse_options(int argc, wchar_t ** argv) {
             options.output = value_path;
         } else if (auto value_path = value(L"--seed-file"); !value_path.empty()) {
             options.seed_file = value_path;
+        } else if (auto value_path = value(L"--required-suffix-file"); !value_path.empty()) {
+            options.required_suffix_file = value_path;
         } else if (argument == L"--target" && index + 1 < argc) {
             options.target_tokens = std::stoi(argv[++index]);
         } else {
-            throw std::runtime_error("usage: --artifact-directory <dir> --model <gguf> --output <file> --target <n> [--seed-file <txt>]");
+            throw std::runtime_error("usage: --artifact-directory <dir> --model <gguf> --output <file> --target <n> [--seed-file <txt>] [--required-suffix-file <txt>]");
         }
     }
     if (options.artifact_directory.empty() || options.model.empty() ||
@@ -193,36 +196,42 @@ std::string utf8_prefix(const std::string & text, size_t length) {
 }
 
 std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, bool add_bos,
-                              const std::string & seed, int target, int & repetitions,
-                              std::string & suffix) {
+                              const std::string & seed, const std::string & required_suffix,
+                              int target, int & repetitions, std::string & suffix) {
     if (seed.empty()) throw std::runtime_error("seed file is empty");
-    size_t low = 1;
+    size_t low = 0;
     size_t high = seed.size();
-    if (token_count(api, vocab, seed, add_bos) < target) {
-        throw std::runtime_error("seed file has fewer tokens than target");
+    auto candidate = [&](size_t length, const std::string & adjustment) {
+        return utf8_prefix(seed, length) + adjustment + required_suffix;
+    };
+    if (token_count(api, vocab, required_suffix, add_bos) > target) {
+        throw std::runtime_error("required suffix has more tokens than target");
+    }
+    if (token_count(api, vocab, candidate(high, ""), add_bos) < target) {
+        throw std::runtime_error("seed plus required suffix has fewer tokens than target");
     }
     while (low + 1 < high) {
         const auto middle = low + (high - low) / 2;
-        if (token_count(api, vocab, utf8_prefix(seed, middle), add_bos) < target) {
+        if (token_count(api, vocab, candidate(middle, ""), add_bos) < target) {
             low = middle;
         } else {
             high = middle;
         }
     }
     const auto tails = suffixes();
-    for (size_t length = high; length >= low && length > 0; --length) {
-        const auto prefix = utf8_prefix(seed, length);
+    const auto lower = low > 8 ? low - 8 : 0;
+    for (size_t length = high;; --length) {
         for (const auto & tail : tails) {
-            auto text = prefix + tail;
+            auto text = candidate(length, tail);
             if (token_count(api, vocab, text, add_bos) == target) {
                 repetitions = 1;
                 suffix = tail;
                 return text;
             }
         }
-        if (length == low) break;
+        if (length == lower) break;
     }
-    throw std::runtime_error("seed prefix/suffix search did not find an exact token count");
+    throw std::runtime_error("seed prefix/adjustment/required-suffix search did not find an exact token count");
 }
 
 } // namespace
@@ -250,10 +259,13 @@ int main(int argc, char ** argv) {
         const bool add_bos = api.vocab_get_add_bos(vocab);
         int repetitions = 0;
         std::string suffix;
+        const auto required_suffix = options.required_suffix_file.empty()
+            ? std::string()
+            : read_utf8(options.required_suffix_file);
         const auto fixture = options.seed_file.empty()
             ? make_fixture(api, vocab, add_bos, options.target_tokens, repetitions, suffix)
             : make_seed_fixture(api, vocab, add_bos, read_utf8(options.seed_file),
-                                options.target_tokens, repetitions, suffix);
+                                required_suffix, options.target_tokens, repetitions, suffix);
         std::filesystem::create_directories(options.output.parent_path());
         std::ofstream output(options.output, std::ios::binary);
         if (!output) throw std::runtime_error("could not create fixture: " + options.output.string());
@@ -268,6 +280,7 @@ int main(int argc, char ** argv) {
                   << "UNIT_REPETITIONS=" << repetitions << "\n"
                   << "SUFFIX_BYTES=" << suffix.size() << "\n"
                   << "SEED_FILE=" << options.seed_file.string() << "\n"
+                  << "REQUIRED_SUFFIX_FILE=" << options.required_suffix_file.string() << "\n"
                   << "VOCAB_ONLY=1\n"
                   << "INFERENCE=not-run\n"
                   << "EXPLICIT_UNLOAD=not-called\n";

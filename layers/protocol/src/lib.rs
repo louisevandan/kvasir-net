@@ -10,6 +10,7 @@
 
 pub mod envelope;
 pub mod error;
+pub mod event;
 pub mod frame;
 pub mod lane;
 pub mod return_channel;

@@ -24,6 +24,7 @@ impl ServerControl for Fake {
                 protocol_revision: 1,
                 server_id: "fake".into(),
                 transactions: false,
+                physical_batch: true,
             }))
         } else {
             Ok(None)

@@ -10,6 +10,7 @@
 
 #include "llama_stage_runtime_hop_shared.hpp"
 #include "request_options.hpp"
+#include "request_stops.hpp"
 
 namespace staged::llama_runtime {
 
@@ -83,12 +84,11 @@ bool StageRuntime::sample_hop_outcome(
         generated.push_back(sampled);
         const auto detokenized = common_detokenize(vocab, generated, false);
         auto & emitted = sampled_texts_[input.sequence_id];
-        if (detokenized.size() >= emitted.size() &&
-            detokenized.compare(0, emitted.size(), emitted) == 0) {
-            metadata.text = detokenized.substr(emitted.size());
-        } else {
-            metadata.text = detokenized;
-        }
+        std::vector<std::string> stops;
+        if (!parse_request_stops(input.options, &stops, error)) return false;
+        const auto filtered = filter_request_stops(
+            detokenized, emitted.size(), stops, false);
+        metadata.text = filtered.text;
         // Emit only what is whole. What is left over is the beginning of a
         // character whose remainder is in the next token, so it is held back
         // rather than turned into a replacement mark.
@@ -96,6 +96,16 @@ bool StageRuntime::sample_hop_outcome(
         if (!valid_utf8_text(metadata.text)) {
             metadata.text = "\xEF\xBF\xBD";
         }
+        emitted += metadata.text;
+        if (filtered.stopped) metadata.stop = "stop";
+    } else {
+        const auto detokenized = common_detokenize(
+            vocab, sampled_tokens_[input.sequence_id], false);
+        auto & emitted = sampled_texts_[input.sequence_id];
+        std::vector<std::string> stops;
+        if (!parse_request_stops(input.options, &stops, error)) return false;
+        metadata.text = filter_request_stops(
+            detokenized, emitted.size(), stops, true).text;
         emitted += metadata.text;
     }
     if (end_of_generation) metadata.stop = "eos";

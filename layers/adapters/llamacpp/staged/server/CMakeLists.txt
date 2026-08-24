@@ -50,7 +50,9 @@ target_include_directories(p4_staged_runtime PUBLIC
 
 add_library(p4_staged_server_core STATIC
     src/server/server.cpp
+    src/server/server_session.cpp
     src/server/server_hop.cpp
+    src/server/server_physical.cpp
     src/server/plan.cpp
 )
 target_include_directories(p4_staged_server_core PUBLIC
@@ -126,8 +128,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
             "${_p4_llama_root}/common/Release/llama-common.lib"
             "${_p4_llama_root}/ggml/src/Release/ggml-base.lib"
             "${_p4_llama_root}/ggml/src/Release/ggml-cpu.lib"
-            "${_p4_llama_root}/ggml/src/Release/ggml.lib"
-            "${_p4_llama_root}/ggml/src/ggml-cuda/Release/ggml-cuda.lib")
+            "${_p4_llama_root}/ggml/src/Release/ggml.lib")
             if(NOT EXISTS "${_p4_required}")
                 message(FATAL_ERROR "P4_STAGED_LLAMA_BUILD_DIR is missing: ${_p4_required}")
             endif()
@@ -139,7 +140,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         # libraries. It may be overridden when the cache came from elsewhere.
         set(P4_STAGED_LLAMA_RUNTIME_DIR "${_p4_runtime_dir}" CACHE PATH
             "DLL directory matching P4_STAGED_LLAMA_BUILD_DIR")
-        foreach(_p4_runtime llama.dll llama-common.dll ggml.dll ggml-base.dll ggml-cpu.dll ggml-cuda.dll)
+        foreach(_p4_runtime llama.dll llama-common.dll ggml.dll ggml-base.dll ggml-cpu.dll)
             if(NOT EXISTS "${P4_STAGED_LLAMA_RUNTIME_DIR}/${_p4_runtime}")
                 message(FATAL_ERROR "P4_STAGED_LLAMA_RUNTIME_DIR is missing: ${P4_STAGED_LLAMA_RUNTIME_DIR}/${_p4_runtime}")
             endif()
@@ -151,7 +152,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
             "${P4_STAGED_LLAMA_SOURCE_DIR}/vendor"
             "${P4_STAGED_LLAMA_SOURCE_DIR}/ggml/include"
             "${P4_STAGED_LLAMA_SOURCE_DIR}/ggml/src")
-        foreach(_p4_shared llama llama-common ggml ggml-base ggml-cpu ggml-cuda)
+        foreach(_p4_shared llama llama-common ggml ggml-base ggml-cpu)
             add_library(${_p4_shared} SHARED IMPORTED GLOBAL)
         endforeach()
         set_target_properties(llama PROPERTIES
@@ -174,13 +175,16 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
             IMPORTED_IMPLIB "${_p4_llama_root}/ggml/src/Release/ggml-cpu.lib"
             IMPORTED_LOCATION "${P4_STAGED_LLAMA_RUNTIME_DIR}/ggml-cpu.dll"
             INTERFACE_INCLUDE_DIRECTORIES "${_p4_inc}")
-        set_target_properties(ggml-cuda PROPERTIES
-            IMPORTED_IMPLIB "${_p4_llama_root}/ggml/src/ggml-cuda/Release/ggml-cuda.lib"
-            IMPORTED_LOCATION "${P4_STAGED_LLAMA_RUNTIME_DIR}/ggml-cuda.dll"
-            INTERFACE_INCLUDE_DIRECTORIES "${_p4_inc}")
-        set_property(TARGET ggml PROPERTY INTERFACE_LINK_LIBRARIES "ggml-base;ggml-cpu;ggml-cuda")
+        set_property(TARGET ggml PROPERTY INTERFACE_LINK_LIBRARIES "ggml-base;ggml-cpu")
         set_property(TARGET llama-common PROPERTY INTERFACE_LINK_LIBRARIES "ggml")
         set_property(TARGET llama PROPERTY INTERFACE_LINK_LIBRARIES "llama-common;ggml")
+        # Accelerator plugins are runtime-discovered by ggml_backend_load_all.
+        # An imported relink therefore copies every matching plugin instead of
+        # hard-linking the P4 core to one CUDA target.
+        file(GLOB _p4_backend_runtime_files
+            "${P4_STAGED_LLAMA_RUNTIME_DIR}/ggml-*.dll"
+            "${P4_STAGED_LLAMA_RUNTIME_DIR}/libggml-*.so*"
+            "${P4_STAGED_LLAMA_RUNTIME_DIR}/libggml-*.dylib")
         set(P4_STAGED_LLAMA_IMPORTED ON)
     else()
         # These cache values are scoped to this configure and only affect the
@@ -207,6 +211,10 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
 
     add_library(p4_staged_llama_runtime STATIC
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_sample.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/physical_wire_decode.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/physical_wire_encode.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop_batch.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop_decode.cpp"
@@ -216,6 +224,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_kv.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_mtp.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_options.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_stops.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_options_grammar.cpp"
     )
     target_include_directories(p4_staged_llama_runtime PUBLIC
@@ -248,6 +257,15 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_test(NAME p4_staged_llama_runtime_compile_test
              COMMAND p4_staged_llama_runtime_compile_test)
 
+    add_executable(p4_staged_physical_wire_test
+        src/runtime/physical_wire_test.cpp
+    )
+    target_link_libraries(p4_staged_physical_wire_test
+        PRIVATE p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_physical_wire_test)
+    add_test(NAME p4_staged_physical_wire_test
+             COMMAND p4_staged_physical_wire_test)
+
     add_executable(p4_staged_request_options_test
         src/runtime/request_options_test.cpp
     )
@@ -256,6 +274,15 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     p4_stage_enable_asserts(p4_staged_request_options_test)
     add_test(NAME p4_staged_request_options_test
              COMMAND p4_staged_request_options_test)
+
+    add_executable(p4_staged_request_stops_test
+        src/runtime/request_stops_test.cpp
+    )
+    target_link_libraries(p4_staged_request_stops_test
+        PRIVATE p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_request_stops_test)
+    add_test(NAME p4_staged_request_stops_test
+             COMMAND p4_staged_request_stops_test)
 
     add_executable(p4_staged_capability_test
         src/server/capability_test.cpp
@@ -286,7 +313,8 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     # Keep native DLLs beside each executable. This makes both direct launch
     # and CTest independent of generator-specific PATH handling on Windows.
     function(p4_stage_copy_runtime target)
-        foreach(runtime_target llama llama-common ggml ggml-base ggml-cpu ggml-cuda)
+        foreach(runtime_target llama llama-common ggml ggml-base ggml-cpu
+                ggml-cuda ggml-vulkan ggml-hip ggml-metal ggml-opencl)
             if(TARGET ${runtime_target})
                 add_custom_command(TARGET ${target} POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -294,10 +322,17 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
                         "$<TARGET_FILE_DIR:${target}>")
             endif()
         endforeach()
+        foreach(runtime_file IN LISTS _p4_backend_runtime_files)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${runtime_file}" "$<TARGET_FILE_DIR:${target}>")
+        endforeach()
     endfunction()
 
     p4_stage_copy_runtime(p4_staged_server)
     p4_stage_copy_runtime(p4_staged_server_test)
     p4_stage_copy_runtime(p4_staged_llama_runtime_compile_test)
+    p4_stage_copy_runtime(p4_staged_physical_wire_test)
+    p4_stage_copy_runtime(p4_staged_request_stops_test)
     p4_stage_copy_runtime(p4_staged_mtp_ownership_test)
 endif()

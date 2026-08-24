@@ -54,6 +54,9 @@ public:
 
 private:
     [[nodiscard]] protocol::Frame handle_hop(const protocol::Frame &request);
+    [[nodiscard]] protocol::Frame handle_logical_batch(const protocol::Frame &request);
+    [[nodiscard]] protocol::Frame handle_physical_batch(const protocol::Frame &request);
+    [[nodiscard]] protocol::Frame handle_tokenize(const protocol::Frame &request);
     [[nodiscard]] bool execute_hop(const protocol::SequencePayload &input,
                                    protocol::HopPhase phase,
                                    protocol::SequencePayload *output,
@@ -69,6 +72,7 @@ private:
     llama_runtime::StageRuntime * llama_runtime_ = nullptr;
 #endif
     HopExecutor hop_executor_;
+    std::uint64_t next_physical_execution_id_ = 1;
 };
 
 } // namespace staged::server

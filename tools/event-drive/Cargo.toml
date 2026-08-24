@@ -1,0 +1,12 @@
+[package]
+name = "p4-event-drive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+p4-protocol = { path = "../../layers/protocol" }
+p4-llamacpp-staged-adapter = { path = "../../layers/adapters/llamacpp/staged/adapter" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.48.0", features = ["net", "rt-multi-thread", "macros", "io-util", "time"] }

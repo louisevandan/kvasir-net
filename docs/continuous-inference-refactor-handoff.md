@@ -5,6 +5,12 @@
 바꿨고, 각 증거가 어디까지 증명하며, 다음 작업이 무엇을 통과해야 하는지를
 고정하는 인수인계 기준이다.
 
+> 2026-08-25 update: this document is the historical pre-event-architecture
+> audit baseline. The replacement implementation and its current proof order
+> are authoritative in [P4 self-describing event contract](event-protocol-v2.md).
+> The "current" conclusions below describe the preserved reference branch
+> `codex/p4-pre-event-architecture-reference`, not the replacement branch.
+
 ## 현재 결론
 
 lossless cut-set과 ABI 18 native runtime까지는 구현과 검증이 끝났다. P4는

@@ -29,6 +29,12 @@ enum class Operation : std::uint8_t {
     KvAbort = 13,
     KvReconcile = 14,
     KvReceipt = 15,
+    LogicalBatch = 16,
+    PhysicalBatch = 17,
+    PhysicalResult = 18,
+    Tokenize = 19,
+    Tokenized = 20,
+    PhysicalRelease = 21,
 };
 
 inline constexpr std::uint32_t kKvDirect = 0;

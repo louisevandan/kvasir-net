@@ -24,6 +24,12 @@ pub enum Operation {
     KvAbort = 13,
     KvReconcile = 14,
     KvReceipt = 15,
+    LogicalBatch = 16,
+    PhysicalBatch = 17,
+    PhysicalResult = 18,
+    Tokenize = 19,
+    Tokenized = 20,
+    PhysicalRelease = 21,
 }
 
 impl TryFrom<u8> for Operation {
@@ -46,6 +52,12 @@ impl TryFrom<u8> for Operation {
             13 => Self::KvAbort,
             14 => Self::KvReconcile,
             15 => Self::KvReceipt,
+            16 => Self::LogicalBatch,
+            17 => Self::PhysicalBatch,
+            18 => Self::PhysicalResult,
+            19 => Self::Tokenize,
+            20 => Self::Tokenized,
+            21 => Self::PhysicalRelease,
             _ => return Err(FrameError::UnknownOperation(value)),
         };
         Ok(operation)

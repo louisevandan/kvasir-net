@@ -4,6 +4,8 @@ param(
     [string]$ArtifactDirectory = '',
     [string]$SourceDirectory = '',
     [int]$TargetTokens = 5000,
+    [string]$SeedFile = '',
+    [string]$RequiredSuffixFile = '',
     [string]$OutputDirectory = ''
 )
 
@@ -99,6 +101,14 @@ $probeArguments = @(
     '--output', "`"$fixture`"",
     '--target', "$TargetTokens"
 )
+if (-not [string]::IsNullOrWhiteSpace($SeedFile)) {
+    Require-File $SeedFile 'prompt seed file'
+    $probeArguments += @('--seed-file', "`"$((Resolve-Path $SeedFile).Path)`"")
+}
+if (-not [string]::IsNullOrWhiteSpace($RequiredSuffixFile)) {
+    Require-File $RequiredSuffixFile 'required prompt suffix file'
+    $probeArguments += @('--required-suffix-file', "`"$((Resolve-Path $RequiredSuffixFile).Path)`"")
+}
 $probeProcess = Start-Process -FilePath $probe -ArgumentList $probeArguments `
     -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath `
     -Wait -PassThru -NoNewWindow
@@ -144,6 +154,8 @@ $report = [pscustomobject]@{
     prepared_source_hashes = @($sourceHashes)
     tokenizer_probe = $probe
     tokenizer_mode = 'artifact llama.dll; vocab_only=true; add_bos from GGUF; parse_special=true'
+    seed_file = if ([string]::IsNullOrWhiteSpace($SeedFile)) { $null } else { (Resolve-Path $SeedFile).Path }
+    required_suffix_file = if ([string]::IsNullOrWhiteSpace($RequiredSuffixFile)) { $null } else { (Resolve-Path $RequiredSuffixFile).Path }
     inference = 'not-run'
     explicit_unload = 'not-called'
 } | ConvertTo-Json -Depth 8

@@ -14,8 +14,12 @@
 #include "kv_bridge.hpp"
 #include "state_store.hpp"
 #include "protocol.hpp"
+#include "physical_execution.hpp"
 
 namespace staged::llama_runtime {
+
+struct PhysicalOwner;
+struct PhysicalOutcome;
 
 struct LoadConfig {
     std::string model_path;
@@ -62,6 +66,34 @@ public:
         std::string * error = nullptr);
 
     [[nodiscard]] DecodeStatus decode(llama_batch batch, std::string * error = nullptr);
+
+    // Stage zero submits one logical mixed Prefill/Decode window. llama.cpp
+    // remains authoritative for splitting it into physical ubatches; every
+    // callback invocation and its complete cut-set is returned intact.
+    [[nodiscard]] bool execute_first_batch(
+        const std::vector<LogicalRow> & rows,
+        std::vector<PhysicalExecution> * executions,
+        std::string * error = nullptr);
+    [[nodiscard]] bool tokenize_prompt(
+        const std::string & prompt,
+        std::vector<std::int32_t> * tokens,
+        std::string * error = nullptr) const;
+
+    // A downstream stage replays exactly one physical invocation and binds
+    // the complete cut-set produced by its predecessor.
+    [[nodiscard]] bool execute_physical(
+        const PhysicalExecution & input,
+        PhysicalExecution * output,
+        std::string * error = nullptr);
+    [[nodiscard]] bool sample_physical_outputs(
+        const PhysicalExecution & input,
+        const std::vector<PhysicalOwner> & owners,
+        std::vector<PhysicalOutcome> * outcomes,
+        std::string * error = nullptr);
+    [[nodiscard]] bool release_physical_sequence(
+        const std::string & sequence_key,
+        llama_seq_id sequence_id,
+        std::string * error = nullptr);
 
     // Set by any HOP path when a decode (or a step that runs after a
     // successful one) leaves the KV cache somewhere rollback cannot restore.
@@ -174,6 +206,10 @@ private:
     static bool state_executor(llama_linkcpp_state_invocation *, void * user_data);
 
     bool fail(const char * message, std::string * error);
+    [[nodiscard]] bool capture_execution(
+        llama_context *, const llama_linkcpp_stage_invocation *);
+    [[nodiscard]] bool collect_physical_tensors(
+        bool terminal, std::vector<PhysicalTensor> *, std::string * error);
     [[nodiscard]] protocol::KvPayload manifest_request(
         const protocol::KvPayload &, std::uint64_t token_position) const;
     [[nodiscard]] std::uint64_t sequence_token_position(
@@ -221,6 +257,8 @@ private:
     // See hop_memory_dirty() above. Cleared only in unload(), which load()
     // always calls first, so a fresh load() is the only way back to false.
     bool hop_memory_dirty_ = false;
+    std::vector<PhysicalExecution> captured_executions_;
+    std::string capture_error_;
 
     // Test-only seam: the mutation coverage in
     // llama_stage_runtime_compile_test.cpp for execute_hop's and

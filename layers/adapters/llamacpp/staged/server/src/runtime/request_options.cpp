@@ -164,7 +164,10 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
     bool reasoning_end_fields_seen = false;
     bool reasoning_message_seen = false;
     for (const auto & [key, value] : values.items()) {
-        if (key == "request_tag") {
+        if (key == "stop") {
+            // Parsed by request_stops.cpp. It is response framing, not a
+            // llama.cpp sampler parameter.
+        } else if (key == "request_tag") {
             if (!value.is_string()) return fail(error, "request_tag must be a string");
         } else if (key == "preserved_tokens" || key == "grammar_triggers") {
             // Parsed in a first pass so grammar word triggers can refer to

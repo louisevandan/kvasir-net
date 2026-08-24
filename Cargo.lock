@@ -69,6 +69,7 @@ dependencies = [
 name = "p4-adapter"
 version = "0.1.0"
 dependencies = [
+ "p4-protocol",
  "serde",
  "serde_json",
 ]
@@ -79,12 +80,10 @@ version = "0.1.0"
 dependencies = [
  "p4-adapter",
  "p4-agent-core",
- "p4-llamacpp-deployment",
- "p4-llamacpp-served",
  "p4-llamacpp-staged-adapter",
- "p4-mock",
  "p4-protocol",
- "p4-service",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -110,6 +109,17 @@ dependencies = [
  "p4-agent-core",
  "p4-protocol",
  "p4-service",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "p4-event-drive"
+version = "0.1.0"
+dependencies = [
+ "p4-llamacpp-staged-adapter",
+ "p4-protocol",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -146,6 +156,9 @@ name = "p4-llamacpp-staged-adapter"
 version = "0.1.0"
 dependencies = [
  "p4-adapter",
+ "p4-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

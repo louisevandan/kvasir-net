@@ -23,6 +23,7 @@ pub struct ReadyInfo {
     pub protocol_revision: u16,
     pub server_id: String,
     pub transactions: bool,
+    pub physical_batch: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -165,12 +166,13 @@ impl ProcessServerControl {
                 response.header.operation
             ));
         }
-        let (server_id, transactions) = decode_hello(&response.body)?;
+        let (server_id, transactions, physical_batch) = decode_hello(&response.body)?;
         self.server_id = Some(server_id.clone());
         Ok(Some(ReadyInfo {
             protocol_revision: PROTOCOL_REVISION,
             server_id,
             transactions,
+            physical_batch,
         }))
     }
 }
@@ -286,7 +288,7 @@ impl Drop for ProcessServerControl {
     }
 }
 
-fn decode_hello(body: &[u8]) -> Result<(String, bool), String> {
+fn decode_hello(body: &[u8]) -> Result<(String, bool, bool), String> {
     if body.len() < 2 {
         return Err("stage server HELLO body is truncated".into());
     }
@@ -300,7 +302,8 @@ fn decode_hello(body: &[u8]) -> Result<(String, bool), String> {
     let text = String::from_utf8(id.to_vec())
         .map_err(|_| "stage server HELLO id is not UTF-8".to_owned())?;
     let transactions = text.split(';').any(|field| field == "transactions=1");
-    Ok((text, transactions))
+    let physical_batch = text.split(';').any(|field| field == "physical_batch=1");
+    Ok((text, transactions, physical_batch))
 }
 
 fn is_retryable_io(error: &FrameIoError) -> bool {

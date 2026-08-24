@@ -61,6 +61,7 @@ and the reverse puts it here.
 | What the layer is and why it is shaped this way | [docs/overview.md](docs/overview.md) |
 | Every crate, what it holds, and what is not built | [docs/implementation.md](docs/implementation.md) |
 | The wire and the message vocabulary | [docs/api.md](docs/api.md) |
+| Replacement self-describing event, node, adapter, llama.cpp and proof contract | [docs/event-protocol-v2.md](docs/event-protocol-v2.md) |
 | Protocol audit, return routing, pipeline, options, and KV open decisions | [docs/protocol.md](docs/protocol.md) |
 | OUTER sessions, heartbeat, and KV lifecycle boundary | [docs/protocol-outer.md](docs/protocol-outer.md) |
 | Sealed staged MTP decision and implementation gate | [docs/protocol-mtp.md](docs/protocol-mtp.md) |

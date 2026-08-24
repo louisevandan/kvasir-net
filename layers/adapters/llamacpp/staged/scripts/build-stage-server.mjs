@@ -16,6 +16,13 @@ const repoRoot = path.resolve(stagedRoot, "../../../../../../");
 const serverDir = path.join(stagedRoot, "server");
 const defaultBuildDir = path.join(repoRoot, ".cache", "staged-server-build");
 const noLlama = process.argv.includes("--no-llama");
+const backend = process.argv.includes("--cuda")
+  ? "cuda"
+  : argument("--backend", "cpu").toLowerCase();
+const supportedBackends = new Set(["cpu", "cuda", "vulkan", "hip", "metal", "opencl"]);
+if (!supportedBackends.has(backend)) {
+  throw new Error(`--backend must be one of ${[...supportedBackends].join(", ")}`);
+}
 const parallel = positiveIntegerArgument(
   "--parallel", Math.max(1, Math.min(4, os.availableParallelism()))
 );
@@ -179,7 +186,7 @@ function defaultGenerator(cmake, buildDir) {
 }
 
 const buildDir = path.resolve(argument("--build-dir", defaultBuildDir));
-const cuda = process.argv.includes("--cuda") ? resolveCudaRoot() : null;
+const cuda = backend === "cuda" ? resolveCudaRoot() : null;
 const cudaArchitectures = argument("--cuda-architectures", "75;89");
 const llamaBuildDir = argument("--llama-build-dir", "");
 const llamaRuntimeDir = argument("--llama-runtime-dir", "");
@@ -226,7 +233,16 @@ if (cuda) {
     configureArgs.push(`-DCMAKE_CUDA_COMPILER=${cuda.nvcc}`);
   }
 } else {
-  configureArgs.push("-DP4_STAGED_CUDA=OFF", "-DGGML_CUDA=OFF");
+  configureArgs.push("-DP4_STAGED_CUDA=OFF");
+}
+for (const [name, option] of [
+  ["cuda", "GGML_CUDA"],
+  ["vulkan", "GGML_VULKAN"],
+  ["hip", "GGML_HIP"],
+  ["metal", "GGML_METAL"],
+  ["opencl", "GGML_OPENCL"],
+]) {
+  configureArgs.push(`-D${option}=${backend === name ? "ON" : "OFF"}`);
 }
 if (prepared) configureArgs.push(`-DP4_STAGED_LLAMA_SOURCE_DIR=${prepared.source_dir}`);
 if (llamaBuildDir) configureArgs.push(`-DP4_STAGED_LLAMA_BUILD_DIR=${path.resolve(llamaBuildDir)}`);
@@ -243,7 +259,9 @@ const targets = [
 ];
 if (!noLlama) targets.push(
   "p4_staged_llama_runtime_compile_test",
+  "p4_staged_physical_wire_test",
   "p4_staged_request_options_test",
+  "p4_staged_request_stops_test",
   "p4_staged_capability_test",
   "p4_staged_mtp_ownership_test",
 );
@@ -260,6 +278,7 @@ process.stdout.write(`${JSON.stringify({
   llama: !noLlama,
   cmake,
   generator: generator ?? "existing-cache",
+  backend,
   cuda: Boolean(cuda),
   cuda_root: cuda?.root ?? null,
   cuda_architectures: cuda ? cudaArchitectures : null,

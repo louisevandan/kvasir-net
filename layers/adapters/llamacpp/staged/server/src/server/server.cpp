@@ -3,49 +3,11 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <iostream>
+#include <limits>
 #include <utility>
 
 namespace staged::server {
-
-Session::Session(
-        Capabilities capabilities
-#ifdef P4_STAGED_WITH_LLAMA
-        , llama_runtime::StageRuntime * llama_runtime
-#endif
-        , HopExecutor hop_executor
-        , std::filesystem::path transaction_root
-        )
-    : transaction_store_(std::move(transaction_root))
-    , capabilities_(capabilities)
-#ifdef P4_STAGED_WITH_LLAMA
-    , llama_runtime_(llama_runtime)
-#endif
-    , hop_executor_(std::move(hop_executor))
-{}
-
-bool Session::feed_plan(const std::vector<std::uint8_t> &bytes, std::string *error) {
-    const auto result = runtime_.stdin_plan().feed(bytes.data(), bytes.size());
-    if (!result.ok()) {
-        if (error != nullptr) {
-            *error = "startup plan rejected";
-        }
-        return false;
-    }
-    return true;
-}
-
-protocol::Frame Session::status(protocol::Operation operation,
-                                 const std::string &message) const {
-    return protocol::Frame::make(
-        operation,
-        std::vector<std::uint8_t>(message.begin(), message.end()));
-}
-
-protocol::Frame Session::error(const std::string &message) const {
-    return status(protocol::Operation::Error, message);
-}
 
 namespace {
 
@@ -79,6 +41,7 @@ protocol::Frame Session::handle(const protocol::Frame &request, bool *close_afte
             ";hop=" + std::string(capabilities_.hop ? "1" : "0") +
             ";kv=" + std::string(capabilities_.kv ? "1" : "0") +
             ";transactions=" + std::string(transaction_capability ? "1" : "0") +
+            ";physical_batch=" + std::string(capabilities_.llama_runtime ? "1" : "0") +
             ";request_options=1"
             ";request_options_semantics=n_prev,n_probs,samplers,sampler_seq,temperature,top_k,top_p,min_p,min_keep,typical_p,top_n_sigma,dynatemp_range,dynatemp_exponent,adaptive_target,adaptive_decay,ignore_eos,seed,penalty_last_n,penalty_repeat,penalty_freq,penalty_present,dry_multiplier,dry_base,dry_allowed_length,dry_penalty_last_n,dry_sequence_breakers,xtc_probability,xtc_threshold,mirostat,mirostat_tau,mirostat_eta,grammar,grammar_lazy,grammar_triggers,preserved_tokens,generation_prompt,logit_bias,reasoning_budget_tokens,reasoning_budget_start_tag,reasoning_budget_end_tags,reasoning_budget_end_tag,reasoning_budget_message"
 #ifdef P4_STAGED_WITH_LLAMA
@@ -94,6 +57,34 @@ protocol::Frame Session::handle(const protocol::Frame &request, bool *close_afte
     }
     case Operation::Hop: {
         return handle_hop(request);
+    }
+    case Operation::LogicalBatch:
+        return handle_logical_batch(request);
+    case Operation::PhysicalBatch:
+        return handle_physical_batch(request);
+    case Operation::Tokenize:
+        return handle_tokenize(request);
+    case Operation::PhysicalRelease: {
+#ifdef P4_STAGED_WITH_LLAMA
+        if (llama_runtime_ == nullptr || !llama_runtime_->loaded()
+            || request.body.size() <= 4) {
+            return error("PHYSICAL_RELEASE rejected: invalid runtime or payload");
+        }
+        const std::uint32_t id = static_cast<std::uint32_t>(request.body[0])
+            | static_cast<std::uint32_t>(request.body[1]) << 8U
+            | static_cast<std::uint32_t>(request.body[2]) << 16U
+            | static_cast<std::uint32_t>(request.body[3]) << 24U;
+        const std::string key(request.body.begin() + 4, request.body.end());
+        std::string detail;
+        if (id > static_cast<std::uint32_t>(std::numeric_limits<llama_seq_id>::max())
+            || !llama_runtime_->release_physical_sequence(
+                key, static_cast<llama_seq_id>(id), &detail)) {
+            return error("PHYSICAL_RELEASE failed: " + detail);
+        }
+        return status(Operation::PhysicalRelease, "SEQUENCE_RELEASED");
+#else
+        return error("CAPABILITY_UNAVAILABLE: llama runtime is unavailable");
+#endif
     }
     case Operation::Cancel: {
         // An empty CANCEL retains the original meaning: cancel an active HOP.
@@ -388,6 +379,8 @@ protocol::Frame Session::handle(const protocol::Frame &request, bool *close_afte
     case Operation::HopResult:
     case Operation::KvResult:
     case Operation::KvReceipt:
+    case Operation::PhysicalResult:
+    case Operation::Tokenized:
     case Operation::Error:
         return error("unsupported client operation");
     }

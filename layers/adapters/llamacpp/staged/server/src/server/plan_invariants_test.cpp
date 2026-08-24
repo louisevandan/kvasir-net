@@ -1,11 +1,5 @@
-// The two numbers a stage does not take from its plan.
-//
-// A batch wider than a ubatch describes a submission no stage makes, and one
-// llama.cpp would be free to split -- which the staged cut-set, bound once per
-// decode, cannot survive. A unified cache is what keeps the ubatch meaningful
-// past the prefill. Both are properties of a staged lap rather than tuning, so
-// a plan that says otherwise is normalised rather than obeyed, and this is the
-// test that says so.
+// The logical batch is admitted once and llama.cpp owns its physical ubatch
+// split. A unified cache preserves sequence membership across that split.
 
 #include "plan.hpp"
 
@@ -31,17 +25,16 @@ staged::server::ParsedLlamaOptions parse(const std::vector<std::string> & tokens
 } // namespace
 
 int main() {
-    // A plan that asks for four times the batch it can submit gets the number
-    // it can submit.
+    // A wider logical batch remains wider; llama.cpp splits it physically.
     const auto widened = parse({"--model", "not-loaded.gguf",
                                 "--batch-size", "2048", "--ubatch-size", "512"});
     assert(widened.params.n_ubatch == 512);
-    assert(widened.params.n_batch == widened.params.n_ubatch);
+    assert(widened.params.n_batch == 2048);
 
     // A plan that never mentions the cache still gets a unified one.
     const auto quiet = parse({"--model", "not-loaded.gguf"});
     assert(quiet.params.kv_unified);
-    assert(quiet.params.n_batch == quiet.params.n_ubatch);
+    assert(quiet.params.n_batch >= quiet.params.n_ubatch);
 
     // And asking for it explicitly is neither required nor refused.
     const auto asked = parse({"--model", "not-loaded.gguf", "--kv-unified",

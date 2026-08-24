@@ -10,6 +10,7 @@ members = [
     "layers/adapters/llamacpp/staged/adapter",
     "entrypoints/agent",
     "tools/drive",
+    "tools/event-drive",
     "tools/link",
 ]
 resolver = "2"
