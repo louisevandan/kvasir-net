@@ -276,18 +276,23 @@ bool parse_llama_options(int argc, char **argv,
 }
 
 CapabilityReport capability_report(const ParsedLlamaOptions &parsed) {
+    const bool unsupported_speculative = parsed.params.speculative.has_dft()
+        || std::any_of(
+            parsed.params.speculative.types.begin(),
+            parsed.params.speculative.types.end(),
+            [](const common_speculative_type type) {
+                return type != COMMON_SPECULATIVE_TYPE_NONE
+                    && type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
+            });
+    const bool mtp_execution = parsed.mtp_requested && !unsupported_speculative;
     std::string blocker = "none";
-    if (parsed.mtp_requested && parsed.speculative_requested) {
-        blocker = "mtp_auxiliary_layers_and_proposal_state";
-    } else if (parsed.mtp_requested) {
-        blocker = "mtp_auxiliary_layers_not_owned_by_stage";
-    } else if (parsed.speculative_requested && has_draft_family_type(parsed.params)) {
+    if (unsupported_speculative && has_draft_family_type(parsed.params)) {
         blocker = "draft_context_and_proposal_state_not_in_hop";
-    } else if (parsed.speculative_requested) {
+    } else if (unsupported_speculative) {
         blocker = "proposal_accept_rollback_state_not_in_hop";
     }
     return CapabilityReport{
-        true, true, false, true, false, true,
+        true, true, mtp_execution, true, mtp_execution, true,
         parsed.mtp_requested, parsed.speculative_requested, std::move(blocker)};
 }
 

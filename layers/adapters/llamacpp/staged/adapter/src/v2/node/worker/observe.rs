@@ -14,9 +14,11 @@ impl Worker {
         for capsule in &physical.0 {
             let mut request_ids = HashSet::new();
             let mut sequence_ids = HashSet::new();
-            let mut request_rows = BTreeMap::<String, (usize, usize)>::new();
+            let mut request_rows = BTreeMap::<String, (usize, usize, usize, usize)>::new();
             let mut prefill_rows = 0usize;
             let mut decode_rows = 0usize;
+            let mut verify_rows = 0usize;
+            let mut replay_rows = 0usize;
             for owner in &capsule.owners {
                 request_ids.insert(owner.request_id.as_str());
                 sequence_ids.insert(owner.sequence_id);
@@ -29,6 +31,14 @@ impl Worker {
                         decode_rows += 1;
                         request_rows.entry(owner.request_id.clone()).or_default().1 += 1;
                     }
+                    Phase::Verify => {
+                        verify_rows += 1;
+                        request_rows.entry(owner.request_id.clone()).or_default().2 += 1;
+                    }
+                    Phase::Replay => {
+                        replay_rows += 1;
+                        request_rows.entry(owner.request_id.clone()).or_default().3 += 1;
+                    }
                 }
                 let reply: ReplySpec = serde_json::from_str(&owner.reply).map_err(|_| ())?;
                 if !replies.contains(&reply) {
@@ -40,15 +50,21 @@ impl Worker {
                 rows: capsule.owners.len(),
                 prefill_rows,
                 decode_rows,
+                verify_rows,
+                replay_rows,
                 request_count: request_ids.len(),
                 sequence_count: sequence_ids.len(),
                 requests: request_rows
                     .into_iter()
                     .map(
-                        |(request_id, (prefill_rows, decode_rows))| BatchRequestObservation {
-                            request_id,
-                            prefill_rows,
-                            decode_rows,
+                        |(request_id, (prefill_rows, decode_rows, verify_rows, replay_rows))| {
+                            BatchRequestObservation {
+                                request_id,
+                                prefill_rows,
+                                decode_rows,
+                                verify_rows,
+                                replay_rows,
+                            }
                         },
                     )
                     .collect(),
@@ -56,7 +72,10 @@ impl Worker {
         }
         let mixed_physical_batches = physical_batches
             .iter()
-            .filter(|batch| batch.prefill_rows > 0 && batch.decode_rows > 0)
+            .filter(|batch| {
+                batch.prefill_rows > 0
+                    && batch.decode_rows + batch.verify_rows + batch.replay_rows > 0
+            })
             .count();
         let execution_ids = physical_batches
             .iter()
@@ -65,6 +84,7 @@ impl Worker {
             .join("-");
         let observation = BatchObservation {
             observation_id: format!("{session_id}:{execution_ids}"),
+            load_generation: self.state.load_generation,
             session_id: session_id.to_owned(),
             logical_rows,
             physical_batches,

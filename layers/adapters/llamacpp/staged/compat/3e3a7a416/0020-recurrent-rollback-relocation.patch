@@ -1,0 +1,182 @@
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -364,6 +364,8 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
+     GGML_UNUSED(ubatch);
+ 
+     const int64_t n_rs = mctx->get_n_rs();
++    const int64_t n_extra = n_rs - s_copy_main->ne[0];
++    const uint32_t n_rs_seq = mctx->get_n_rs_seq();
+ 
+     if (s_copy) {
+         GGML_ASSERT(ggml_backend_buffer_is_host(s_copy->buffer));
+@@ -373,6 +375,12 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
+         for (uint32_t i = 0; i < n_rs; ++i) {
+             data[i] = mctx->s_copy(i);
+         }
++        for (uint32_t plane = 1; plane <= n_rs_seq; ++plane) {
++            for (int64_t i = 0; i < n_extra; ++i) {
++                data[n_rs + (plane - 1)*n_extra + i] =
++                    mctx->s_copy_plane(s_copy_main->ne[0] + i, plane);
++            }
++        }
+     }
+ }
+ 
+@@ -384,10 +392,14 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
+ 
+     bool res = true;
+ 
+-    res &= s_copy->ne[0] == mctx->get_n_rs();
++    const int64_t n_rs = mctx->get_n_rs();
++    const int64_t n_extra = n_rs - params.ubatch.n_seqs;
++    const int64_t n_snapshots = n_extra*mctx->get_n_rs_seq();
++    res &= s_copy->ne[0] == n_rs + n_snapshots;
+ 
+     res &= s_copy_main->ne[0]  == params.ubatch.n_seqs;
+-    res &= s_copy_extra->ne[0] == mctx->get_n_rs() - params.ubatch.n_seqs;
++    res &= s_copy_extra->ne[0] == n_extra;
++    res &= s_copy_snapshots->ne[0] == n_snapshots;
+ 
+     res &= head == mctx->get_head();
+     res &= rs_z == mctx->get_rs_z();
+@@ -3781,6 +3793,7 @@ ggml_tensor * llm_graph_context::build_rs(
+         ggml_tensor * s,
+         ggml_tensor * state_copy_main,
+         ggml_tensor * state_copy_extra,
++        ggml_tensor * state_copy_snapshots,
+             int32_t   state_size,
+             int32_t   n_seqs,
+            uint32_t   n_rs,
+@@ -3788,5 +3801,6 @@ ggml_tensor * llm_graph_context::build_rs(
+            uint32_t   rs_size,
+             int32_t   rs_zero,
++           uint32_t   n_rs_seq,
+         const llm_graph_get_rows_fn & get_state_rows) const {
+ 
+     GGML_UNUSED(rs_size);
+@@ -3809,6 +3823,22 @@ ggml_tensor * llm_graph_context::build_rs(
+             states_extra,
+             ggml_view_2d(ctx0, s, state_size, (n_rs - n_seqs), s->nb[1], (rs_head + n_seqs)*s->nb[1])));
+ 
++    // Recurrent speculative rollback snapshots are separate planes indexed
++    // by physical cache cell. Extra (inactive) cells can be relocated by a
++    // batch for other sequences, so carry every snapshot plane alongside the
++    // current plane. Otherwise a later seq_rm() reads another cell's history.
++    const int64_t n_extra = n_rs - n_seqs;
++    for (uint32_t plane = 1; plane <= n_rs_seq; ++plane) {
++        ggml_tensor * indices = ggml_view_1d(ctx0, state_copy_snapshots,
++            n_extra, (plane - 1)*n_extra*state_copy_snapshots->nb[0]);
++        ggml_tensor * snapshots = ggml_get_rows(ctx0, states, indices);
++        ggml_build_forward_expand(gf,
++            ggml_cpy(ctx0,
++                snapshots,
++                ggml_view_2d(ctx0, s, state_size, n_extra, s->nb[1],
++                    (plane*rs_size + rs_head + n_seqs)*s->nb[1])));
++    }
++
+     return output_states;
+ }
+ 
+@@ -3821,13 +3851,17 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
+     auto inp = std::make_unique<llm_graph_input_rs>(mctx_cur);
+ 
+     const int64_t n_rs   = mctx_cur->get_n_rs();
+     const int64_t n_seqs = ubatch.n_seqs;
++    const int64_t n_extra = n_rs - n_seqs;
++    const int64_t n_snapshots = n_extra*mctx_cur->get_n_rs_seq();
+ 
+-    inp->s_copy = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_rs);
++    inp->s_copy = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_rs + n_snapshots);
+     ggml_set_input(inp->s_copy);
+ 
+     inp->s_copy_main  = ggml_view_1d(ctx0, inp->s_copy, n_seqs, 0);
+-    inp->s_copy_extra = ggml_view_1d(ctx0, inp->s_copy, n_rs - n_seqs, n_seqs * inp->s_copy->nb[0]);
++    inp->s_copy_extra = ggml_view_1d(ctx0, inp->s_copy, n_extra, n_seqs * inp->s_copy->nb[0]);
++    inp->s_copy_snapshots = ggml_view_1d(ctx0, inp->s_copy, n_snapshots,
++        n_rs * inp->s_copy->nb[0]);
+ 
+     inp->head = mctx_cur->get_head();
+     inp->rs_z = mctx_cur->get_rs_z();
+@@ -3851,8 +3886,9 @@ ggml_tensor * llm_graph_context::build_rs(
+         const llm_graph_get_rows_fn & get_state_rows) const {
+     const auto * kv_state = inp->mctx;
+ 
+-    return build_rs(s, inp->s_copy_main, inp->s_copy_extra, state_size, n_seqs,
++    return build_rs(s, inp->s_copy_main, inp->s_copy_extra, inp->s_copy_snapshots, state_size, n_seqs,
+                     kv_state->get_n_rs(), kv_state->get_head(), kv_state->get_size(), kv_state->get_rs_z(),
++                    kv_state->get_n_rs_seq(),
+                     get_state_rows);
+ }
+ 
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -284,7 +284,8 @@ public:
+     // views of s_copy, computed once per graph
+     // and shared across layers which use build_rs
+     ggml_tensor * s_copy_main;   // I32 [n_seqs]
+     ggml_tensor * s_copy_extra;  // I32 [n_rs - n_seqs]
++    ggml_tensor * s_copy_snapshots; // I32 [(n_rs - n_seqs) * n_rs_seq]
+ 
+     const llama_memory_recurrent_context * mctx;
+ 
+@@ -1314,12 +1315,14 @@ public:
+             ggml_tensor * s,
+             ggml_tensor * state_copy_main,
+             ggml_tensor * state_copy_extra,
++            ggml_tensor * state_copy_snapshots,
+                 int32_t   state_size,
+                 int32_t   n_seqs,
+                uint32_t   n_rs,
+                uint32_t   rs_head,
+                uint32_t   rs_size,
+                 int32_t   rs_zero,
++               uint32_t   n_rs_seq,
+             const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
+ 
+     llm_graph_input_rs * build_rs_inp() const;
+diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
+--- a/src/llama-memory-recurrent.cpp
++++ b/src/llama-memory-recurrent.cpp
+@@ -1245,6 +1245,10 @@ uint32_t llama_memory_recurrent_context::get_n_rs() const {
+     return is_full ? mem->size : mem->n;
+ }
+ 
++uint32_t llama_memory_recurrent_context::get_n_rs_seq() const {
++    return mem->n_rs_seq;
++}
++
+ uint32_t llama_memory_recurrent_context::get_head() const {
+     return is_full ? 0 : mem->head;
+ }
+@@ -1285,3 +1289,10 @@ int32_t llama_memory_recurrent_context::s_copy(int i) const {
+     }
+     return (int32_t)(idx * mem->size) + src0;
+ }
++
++int32_t llama_memory_recurrent_context::s_copy_plane(int i, uint32_t plane) const {
++    GGML_ASSERT(plane <= mem->n_rs_seq);
++    const uint32_t cell_idx = i + mem->head;
++    const int32_t src0 = mem->cells[cell_idx].src0;
++    return (int32_t)(plane * mem->size) + src0;
++}
+diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
+--- a/src/llama-memory-recurrent.h
++++ b/src/llama-memory-recurrent.h
+@@ -173,6 +173,7 @@ public:
+     //
+ 
+     uint32_t get_n_rs() const;
++    uint32_t get_n_rs_seq() const;
+     uint32_t get_head() const;
+     int32_t  get_rs_z() const;
+     uint32_t get_size() const;
+@@ -181,6 +182,7 @@ public:
+     ggml_tensor * get_s_l(int32_t il) const;
+ 
+     int32_t s_copy(int i) const;
++    int32_t s_copy_plane(int i, uint32_t plane) const;
+ 
+ private:
+     const llama_memory_status status;

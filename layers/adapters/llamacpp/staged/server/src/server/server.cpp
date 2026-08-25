@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
-#include <limits>
 #include <utility>
 
 namespace staged::server {
@@ -64,28 +63,10 @@ protocol::Frame Session::handle(const protocol::Frame &request, bool *close_afte
         return handle_physical_batch(request);
     case Operation::Tokenize:
         return handle_tokenize(request);
-    case Operation::PhysicalRelease: {
-#ifdef P4_STAGED_WITH_LLAMA
-        if (llama_runtime_ == nullptr || !llama_runtime_->loaded()
-            || request.body.size() <= 4) {
-            return error("PHYSICAL_RELEASE rejected: invalid runtime or payload");
-        }
-        const std::uint32_t id = static_cast<std::uint32_t>(request.body[0])
-            | static_cast<std::uint32_t>(request.body[1]) << 8U
-            | static_cast<std::uint32_t>(request.body[2]) << 16U
-            | static_cast<std::uint32_t>(request.body[3]) << 24U;
-        const std::string key(request.body.begin() + 4, request.body.end());
-        std::string detail;
-        if (id > static_cast<std::uint32_t>(std::numeric_limits<llama_seq_id>::max())
-            || !llama_runtime_->release_physical_sequence(
-                key, static_cast<llama_seq_id>(id), &detail)) {
-            return error("PHYSICAL_RELEASE failed: " + detail);
-        }
-        return status(Operation::PhysicalRelease, "SEQUENCE_RELEASED");
-#else
-        return error("CAPABILITY_UNAVAILABLE: llama runtime is unavailable");
-#endif
-    }
+    case Operation::PhysicalSettle:
+        return handle_physical_settle(request);
+    case Operation::PhysicalRelease:
+        return handle_physical_release(request);
     case Operation::Cancel: {
         // An empty CANCEL retains the original meaning: cancel an active HOP.
         // A sequence id body is the post-completion cleanup path used by the

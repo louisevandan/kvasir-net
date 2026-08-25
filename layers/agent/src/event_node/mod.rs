@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub enum EventNodeError {
     AdapterFull,
     AdapterClosed,
-    CompletionClosed,
+    CompletionClosed(String),
     Broker(DispatchError),
 }
 
@@ -51,7 +51,9 @@ impl EventNode {
                             self.broker.dispatch(event).map_err(EventNodeError::Broker)?;
                         }
                         Poll::Empty => continue,
-                        Poll::Closed => return Err(EventNodeError::CompletionClosed),
+                        Poll::Closed => {
+                            return Err(EventNodeError::CompletionClosed(self.adapter.snapshot()));
+                        }
                     }
                 }
             }

@@ -20,6 +20,7 @@ namespace staged::llama_runtime {
 
 struct PhysicalOwner;
 struct PhysicalOutcome;
+struct GeneratedToken;
 
 struct LoadConfig {
     std::string model_path;
@@ -38,6 +39,14 @@ struct MtpHopObservation final {
     std::size_t drafted_tokens = 0;
     std::size_t accepted_tokens = 0;
     bool eos = false;
+};
+
+struct MtpPhysicalSequence final {
+    llama_tokens history;
+    llama_tokens proposal;
+    common_prompt_checkpoint draft_checkpoint;
+    bool replay_pending = false;
+    bool begun = false;
 };
 
 class StageRuntime final : public runtime::KvBridge {
@@ -72,6 +81,7 @@ public:
     // callback invocation and its complete cut-set is returned intact.
     [[nodiscard]] bool execute_first_batch(
         const std::vector<LogicalRow> & rows,
+        const std::vector<PhysicalOwner> & owners,
         std::vector<PhysicalExecution> * executions,
         std::string * error = nullptr);
     [[nodiscard]] bool tokenize_prompt(
@@ -83,7 +93,12 @@ public:
     // the complete cut-set produced by its predecessor.
     [[nodiscard]] bool execute_physical(
         const PhysicalExecution & input,
+        const std::vector<PhysicalOwner> & owners,
         PhysicalExecution * output,
+        std::string * error = nullptr);
+    [[nodiscard]] bool prepare_physical_execution(
+        const PhysicalExecution & input,
+        const std::vector<PhysicalOwner> & owners,
         std::string * error = nullptr);
     [[nodiscard]] bool sample_physical_outputs(
         const PhysicalExecution & input,
@@ -93,6 +108,11 @@ public:
     [[nodiscard]] bool release_physical_sequence(
         const std::string & sequence_key,
         llama_seq_id sequence_id,
+        std::string * error = nullptr);
+    [[nodiscard]] bool settle_physical_sequence(
+        llama_seq_id sequence_id,
+        llama_pos retain_from,
+        bool restore_checkpoint,
         std::string * error = nullptr);
 
     // Set by any HOP path when a decode (or a step that runs after a
@@ -226,6 +246,20 @@ private:
         int32_t last_batch_tokens,
         std::optional<protocol::SequencePayload::OutcomeMetadata> * outcome,
         std::string * error);
+    [[nodiscard]] bool process_physical_mtp(
+        const llama_batch &, const std::vector<PhysicalOwner> &, std::string *);
+    [[nodiscard]] bool sample_physical_mtp(
+        const PhysicalExecution &, const std::vector<PhysicalOwner> &,
+        std::size_t, std::size_t,
+        std::vector<PhysicalOutcome> *, std::string *);
+    [[nodiscard]] bool make_mtp_proposal(
+        const PhysicalOwner &, llama_token, llama_pos, std::uint32_t,
+        std::vector<llama_token> *, std::string *);
+    [[nodiscard]] bool prepare_physical_owners(
+        const std::vector<PhysicalOwner> &, std::string *);
+    [[nodiscard]] bool format_generated_token(
+        const PhysicalOwner &, llama_token, std::uint32_t,
+        GeneratedToken *, std::string *);
 
     common_params params_;
     LoadConfig config_;
@@ -233,6 +267,10 @@ private:
     llama_context * ctx_ = nullptr;
     common_speculative_init_result_ptr mtp_init_;
     common_speculative_ptr mtp_speculative_;
+    common_context_seq_rm_type target_seq_rm_type_ = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
+    common_context_seq_rm_type draft_seq_rm_type_ = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
+    std::unordered_map<llama_seq_id, common_prompt_checkpoint> physical_checkpoints_;
+    std::unordered_map<llama_seq_id, MtpPhysicalSequence> mtp_sequences_;
     bool backend_initialized_ = false;
     std::unordered_map<std::string, llama_seq_id> sequence_ids_;
     // Where a lap's sampling time goes, split so the two halves are not
@@ -247,6 +285,7 @@ private:
     // incomplete UTF-8 byte sequence, which cannot cross the wire as String.
     std::unordered_map<std::string, std::vector<llama_token>> sampled_tokens_;
     std::unordered_map<std::string, std::string> sampled_texts_;
+    std::unordered_map<std::string, std::string> pending_texts_;
     std::unordered_map<std::string, std::uint64_t> sequence_positions_;
     std::unordered_map<std::string, llama_seq_id> hop_sequence_snapshot_;
     std::vector<std::string> hop_new_sequences_;

@@ -80,6 +80,18 @@ bool StageRuntime::execute_mtp_hop(
     }
 
     llama_tokens draft;
+    common_prompt_checkpoint draft_checkpoint;
+    const auto draft_memory = llama_get_memory(mtp_context());
+    const auto draft_pos_min = llama_memory_seq_pos_min(draft_memory, seq_id);
+    const auto draft_pos_max = llama_memory_seq_pos_max(draft_memory, seq_id);
+    draft_checkpoint.update_pos(
+        draft_pos_max >= draft_pos_min ? draft_pos_max - draft_pos_min + 1 : 0,
+        draft_pos_min,
+        draft_pos_max);
+    if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
+        draft_checkpoint.update_dft(
+            mtp_context(), seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+    }
     auto & draft_params = common_speculative_get_draft_params(
         mtp_speculative_.get(), seq_id);
     draft_params = {
@@ -88,6 +100,15 @@ bool StageRuntime::execute_mtp_hop(
     common_speculative_draft(mtp_speculative_.get());
     observation->drafted_tokens = draft.size();
     if (draft.empty()) return mtp_fail("MTP driver produced no proposal token", error);
+    if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
+        draft_checkpoint.load_dft(
+            mtp_context(), seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+        llama_synchronize(mtp_context());
+    }
+    if (!llama_memory_seq_rm(
+            draft_memory, seq_id, draft_checkpoint.pos_max + 1, -1)) {
+        return mtp_fail("llama.cpp rejected post-draft rollback", error);
+    }
 
     llama_batch verify = llama_batch_init(
         static_cast<int32_t>(draft.size() + 1), 0, 1);

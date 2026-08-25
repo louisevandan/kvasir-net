@@ -2,8 +2,9 @@ mod inference;
 mod wire;
 
 use p4_llamacpp_staged_adapter::v2::{
-    BatchObservation, ERROR_CONTENT_TYPE, LOAD_CONTENT_TYPE, LoadCommand, NodeAddress, NodeRole,
-    OutcomePayload, SESSION_CONTENT_TYPE, SessionCommand, UNLOAD_CONTENT_TYPE,
+    BatchObservation, ERROR_CONTENT_TYPE, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand,
+    NodeAddress, NodeRole, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
+    SessionCommand, UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
 };
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
@@ -15,15 +16,13 @@ use tokio::net::TcpStream;
 const CREATE: &str = "application/vnd.p4.node.create-v2+json";
 const DELETE: &str = "application/vnd.p4.node.delete-v2+json";
 const NODE_RESULT: &str = "application/vnd.p4.node.result-v2+json";
-const LOADED: &str = "application/vnd.p4.llamacpp.loaded-v2+json";
-const UNLOADED: &str = "application/vnd.p4.llamacpp.unloaded-v2+json";
-const SESSION_READY: &str = "application/vnd.p4.llamacpp.session-ready-v2+json";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RunConfig {
     pub ingress_agent: String,
     pub channel: String,
     pub connection_generation: u64,
+    pub load_generation: u64,
     pub session_id: String,
     pub request_id: String,
     pub nodes: Vec<NodeConfig>,
@@ -65,6 +64,7 @@ pub struct NodeConfig {
     #[serde(default)]
     pub environment: Vec<(String, String)>,
     pub n_batch: usize,
+    pub n_ubatch: usize,
     pub context_size: usize,
     pub sequence_capacity: u32,
 }
@@ -138,12 +138,14 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
 
     for node in &config.nodes {
         let command = LoadCommand {
+            load_generation: config.load_generation,
             binary: node.binary.clone(),
             endpoint: node.endpoint.clone(),
             plan: node.plan.clone(),
             args: node.args.clone(),
             environment: node.environment.clone(),
             n_batch: node.n_batch,
+            n_ubatch: node.n_ubatch,
             context_size: node.context_size,
             sequence_capacity: node.sequence_capacity,
             ready_timeout_ms: config.timeout_ms,
@@ -158,12 +160,19 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         ))
         .await?;
     }
-    receive_exact(&mut wire, LOADED, config.nodes.len(), config.timeout_ms).await?;
+    receive_exact(
+        &mut wire,
+        LOADED_CONTENT_TYPE,
+        config.nodes.len(),
+        config.timeout_ms,
+    )
+    .await?;
 
     let first = address(&config.nodes[0]);
     for (index, node) in config.nodes.iter().enumerate() {
         let last = index + 1 == config.nodes.len();
         let command = SessionCommand {
+            load_generation: config.load_generation,
             session_id: config.session_id.clone(),
             role: if index == 0 {
                 NodeRole::First
@@ -186,7 +195,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     }
     receive_exact(
         &mut wire,
-        SESSION_READY,
+        SESSION_READY_CONTENT_TYPE,
         config.nodes.len(),
         config.timeout_ms,
     )
@@ -199,12 +208,20 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
             node_endpoint(node)?,
             EventClass::Control,
             UNLOAD_CONTENT_TYPE,
-            Vec::new(),
+            serde_json::to_vec(&UnloadCommand {
+                load_generation: config.load_generation,
+            })?,
             "unload",
         ))
         .await?;
     }
-    receive_exact(&mut wire, UNLOADED, config.nodes.len(), config.timeout_ms).await?;
+    receive_exact(
+        &mut wire,
+        UNLOADED_CONTENT_TYPE,
+        config.nodes.len(),
+        config.timeout_ms,
+    )
+    .await?;
     for node in &config.nodes {
         let payload = serde_json::json!({"node_id":node.node});
         wire.send(sender.event(
@@ -271,9 +288,14 @@ fn validate(config: &RunConfig) -> Result<(), &'static str> {
         || config.max_tokens == 0
         || config.channel.is_empty()
         || config.connection_generation == 0
+        || config.load_generation == 0
         || config.waves.is_empty()
         || config.waves[0].after_ms != 0
         || config.waves.iter().any(|wave| wave.count == 0)
+        || config
+            .nodes
+            .iter()
+            .any(|node| node.n_batch == 0 || node.n_ubatch == 0 || node.n_ubatch > node.n_batch)
         || config
             .waves
             .windows(2)

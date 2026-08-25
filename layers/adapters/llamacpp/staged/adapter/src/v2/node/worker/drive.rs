@@ -4,6 +4,12 @@ use crate::v2::commands::ErrorPayload;
 impl Worker {
     pub(super) fn drive_first_batches(&mut self) -> Result<(), ()> {
         loop {
+            // The scheduler places Verify after ordinary rows.  Keep it the
+            // last physical work admitted until the tail either commits it or
+            // every stage has applied the partial-accept settlement.
+            if self.state.verify_fenced() {
+                return Ok(());
+            }
             let Some(session_id) = self.state.first_session_with_work() else {
                 return Ok(());
             };
@@ -21,7 +27,12 @@ impl Worker {
                 };
                 let available_rows = match phase {
                     Phase::Prefill => request.command.tokens.len() - request.prompt_cursor,
-                    Phase::Decode => 1,
+                    Phase::Decode | Phase::Verify | Phase::Replay => request
+                        .ready
+                        .as_ref()
+                        .expect("ready phase has rows")
+                        .tokens
+                        .len(),
                 };
                 demands.push(Demand {
                     request_id: key.clone(),
@@ -29,6 +40,7 @@ impl Worker {
                     compatibility: session_id.clone(),
                     phase,
                     available_rows,
+                    atomic: matches!(phase, Phase::Verify | Phase::Replay),
                 });
             }
             if demands.is_empty() {
@@ -36,7 +48,11 @@ impl Worker {
             }
             let allocations = self
                 .scheduler
-                .plan(&demands, self.state.batch_capacity)
+                .plan_with_physical_capacity(
+                    &demands,
+                    self.state.batch_capacity,
+                    self.state.physical_capacity,
+                )
                 .map_err(|error| {
                     self.set_snapshot(&format!("scheduler_failed:{error:?}"));
                 })?;
@@ -62,6 +78,7 @@ impl Worker {
                             let position = u32::try_from(index).map_err(|_| ())?;
                             rows.push(LogicalRow {
                                 owner: RowOwner {
+                                    load_generation: self.state.load_generation,
                                     request_id: request.command.request_id.clone(),
                                     sequence_key: allocation.request_id.clone(),
                                     session_id: session_id.clone(),
@@ -74,34 +91,58 @@ impl Worker {
                                     max_tokens: request.command.max_tokens,
                                     generated_tokens: request.generated,
                                     output: index + 1 == request.command.tokens.len(),
+                                    input_token: request.command.tokens[index],
+                                    speculative_id: 0,
+                                    speculative_index: 0,
+                                    speculative_count: 0,
                                     options: request.command.options.clone(),
                                 },
                                 token: request.command.tokens[index],
                             });
                         }
                     }
-                    Phase::Decode => {
-                        let (token, position) = request
-                            .decode
-                            .expect("decode allocation has a pending token");
-                        rows.push(LogicalRow {
-                            owner: RowOwner {
-                                request_id: request.command.request_id.clone(),
-                                sequence_key: allocation.request_id.clone(),
-                                session_id: session_id.clone(),
-                                reply: request.reply.clone(),
-                                sequence_id: request
-                                    .sequence_id
-                                    .expect("work has an admitted sequence"),
-                                phase: Phase::Decode,
-                                position,
-                                max_tokens: request.command.max_tokens,
-                                generated_tokens: request.generated,
-                                output: true,
-                                options: request.command.options.clone(),
-                            },
-                            token,
-                        });
+                    Phase::Decode | Phase::Verify | Phase::Replay => {
+                        let ready = request.ready.as_ref().expect("allocated rows are ready");
+                        if allocation.rows != ready.tokens.len() {
+                            self.set_snapshot("atomic_or_decode_allocation_was_split");
+                            return Err(());
+                        }
+                        let count = u32::try_from(ready.tokens.len()).map_err(|_| ())?;
+                        for (offset, token) in ready.tokens.iter().copied().enumerate() {
+                            let position = ready
+                                .position
+                                .checked_add(u32::try_from(offset).map_err(|_| ())?)
+                                .ok_or(())?;
+                            let speculative =
+                                matches!(allocation.phase, Phase::Verify | Phase::Replay);
+                            rows.push(LogicalRow {
+                                owner: RowOwner {
+                                    load_generation: self.state.load_generation,
+                                    request_id: request.command.request_id.clone(),
+                                    sequence_key: allocation.request_id.clone(),
+                                    session_id: session_id.clone(),
+                                    reply: request.reply.clone(),
+                                    sequence_id: request
+                                        .sequence_id
+                                        .expect("work has an admitted sequence"),
+                                    phase: allocation.phase,
+                                    position,
+                                    max_tokens: request.command.max_tokens,
+                                    generated_tokens: request.generated,
+                                    output: true,
+                                    input_token: token,
+                                    speculative_id: if speculative {
+                                        ready.speculative_id
+                                    } else {
+                                        0
+                                    },
+                                    speculative_index: if speculative { offset as u32 } else { 0 },
+                                    speculative_count: if speculative { count } else { 0 },
+                                    options: request.command.options.clone(),
+                                },
+                                token,
+                            });
+                        }
                     }
                 }
                 updates.push((allocation.request_id, allocation.phase, allocation.rows));
@@ -110,11 +151,17 @@ impl Worker {
             let logical = LogicalBatch(rows).encode().map_err(|error| {
                 self.set_snapshot(&format!("logical_encode_failed:{error:?}"));
             })?;
-            let body = self
-                .stage_request(Operation::LogicalBatch, Operation::PhysicalResult, logical)
-                .map_err(|detail| {
+            let body = match self.stage_request(
+                Operation::LogicalBatch,
+                Operation::PhysicalResult,
+                logical,
+            ) {
+                Ok(body) => body,
+                Err(detail) => {
                     self.set_snapshot(&format!("logical_batch_failed:{detail}"));
-                })?;
+                    return Err(());
+                }
+            };
             let physical = CapsuleSet::decode(&body).map_err(|error| {
                 self.set_snapshot(&format!("physical_result_failed:{error:?}"));
             })?;
@@ -132,16 +179,24 @@ impl Worker {
                 logical_rows,
                 &physical,
             )?;
+            let mut verify_request_id = None;
             for (request_id, phase, count) in updates {
                 let request = self
                     .state
                     .requests
                     .get_mut(&request_id)
                     .expect("successful batch keeps request active");
-                match phase {
-                    Phase::Prefill => request.prompt_cursor += count,
-                    Phase::Decode => request.decode = None,
+                let _ = count;
+                request.in_flight = true;
+                if phase == Phase::Verify && verify_request_id.replace(request_id).is_some() {
+                    self.set_snapshot("physical batch contained multiple verification groups");
+                    return Err(());
                 }
+            }
+            if let Some(request_id) = verify_request_id {
+                self.state
+                    .begin_verify_fence(&request_id)
+                    .map_err(|detail| self.set_snapshot(detail))?;
             }
             self.emit_bytes(
                 &template.expect("non-empty allocation has a template"),
@@ -175,22 +230,26 @@ impl Worker {
                     return Err(());
                 }
                 let ingress = Address::from_str(&reply.ingress_agent).map_err(|_| ())?;
-                let payload = OutcomePayload {
-                    request_id: owner.request_id.clone(),
-                    sequence_id: owner.sequence_id,
-                    token: outcome.token,
-                    text: outcome.text.clone(),
-                    position: outcome.position,
-                    stop: outcome.stop.clone(),
-                };
-                self.emit_reply_json(
-                    base,
-                    reply,
-                    ingress,
-                    EventClass::Output,
-                    OUTPUT_CONTENT_TYPE,
-                    &payload,
-                )?;
+                for generated in &outcome.generated {
+                    let payload = OutcomePayload {
+                        load_generation: owner.load_generation,
+                        session_id: owner.session_id.clone(),
+                        request_id: owner.request_id.clone(),
+                        sequence_id: owner.sequence_id,
+                        token: generated.token,
+                        text: generated.text.clone(),
+                        position: generated.position,
+                        stop: generated.stop.clone(),
+                    };
+                    self.emit_reply_json(
+                        base,
+                        reply.clone(),
+                        ingress.clone(),
+                        EventClass::Output,
+                        OUTPUT_CONTENT_TYPE,
+                        &payload,
+                    )?;
+                }
             }
         }
         self.emit_bytes(

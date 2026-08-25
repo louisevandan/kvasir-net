@@ -11,8 +11,8 @@
   "nearest_release_tag": "b10242",
   "previous_linker_pin": "4308a4f035791f58ae111f56c39dac598bf476be",
   "previous_official_base": "4308a4f035791f58ae111f56c39dac598bf476be",
-  "patch_set_sha256": "817426f81c890002708c50c0a5deb6905a3f4348b92198481984d58bf3e88626",
-  "patched_tree": "421a0d61243c52b286707583d484c5ad0e298520",
+  "patch_set_sha256": "25bb20cd70402f15a20fc82ef87f0f91dbf6d0e9271e5bd4202d6e5490252dc5",
+  "patched_tree": "61fe78fce8ef74d1edcb96d71e989b8655f364e2",
   "patches": [
     {
       "file": "0001-ggml-backend.patch",
@@ -77,6 +77,18 @@
     {
       "file": "0017-recurrent-stage-memory-residency.patch",
       "sha256": "742006367b4552353343ad5ca798a7a12199ab9cb90f7a9ab0957a9d7b896f1d"
+    },
+    {
+      "file": "0018-mtp-tail-stage.patch",
+      "sha256": "e89282741ac09320a35d435b52df4bd6da0d65dd7f64ebdb252556fd6e030492"
+    },
+    {
+      "file": "0019-speculative-sequence-lifecycle.patch",
+      "sha256": "9612b1965a050682dad49c01dafa9b07fc7eb2202eea81114a107df696ee3f22"
+    },
+    {
+      "file": "0020-recurrent-rollback-relocation.patch",
+      "sha256": "ff04fd1d6fab16bd38dfcdb47f1e50b143c888f2c619d83c64747392310c1384"
     }
   ]
 }

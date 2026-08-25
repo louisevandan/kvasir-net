@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <unordered_set>
 
 namespace staged::llama_runtime {
 namespace wire = physical_wire;
@@ -14,24 +15,37 @@ bool read_owner(wire::Cursor & cursor, PhysicalOwner * owner) {
     std::uint8_t phase = 0;
     std::uint8_t output = 0;
     std::uint16_t reserved = 0;
-    return cursor.string(&owner->request_id)
-        && cursor.string(&owner->sequence_key)
-        && cursor.string(&owner->session_id)
-        && cursor.string(&owner->reply)
-        && cursor.u32(&owner->sequence_id)
-        && cursor.byte(&phase) && phase <= 1
-        && cursor.byte(&output) && output <= 1
-        && cursor.u16(&reserved) && reserved == 0
-        && cursor.u32(&owner->position) && owner->position <= INT32_MAX
-        && cursor.u32(&owner->max_tokens) && owner->max_tokens > 0
-        && cursor.u32(&owner->generated_tokens)
-        && owner->generated_tokens < owner->max_tokens
-        && cursor.string(&owner->options)
-        && !owner->request_id.empty() && !owner->sequence_key.empty()
-        && !owner->session_id.empty()
-        && !owner->reply.empty()
-        && (owner->phase = static_cast<PhysicalPhase>(phase), true)
-        && (owner->output = output != 0, true);
+    if (!cursor.u64(&owner->load_generation) || owner->load_generation == 0
+        || !cursor.string(&owner->request_id)
+        || !cursor.string(&owner->sequence_key)
+        || !cursor.string(&owner->session_id)
+        || !cursor.string(&owner->reply)
+        || !cursor.u32(&owner->sequence_id)
+        || !cursor.byte(&phase) || phase > 3
+        || !cursor.byte(&output) || output > 1
+        || !cursor.u16(&reserved) || reserved != 0
+        || !cursor.u32(&owner->position) || owner->position > INT32_MAX
+        || !cursor.u32(&owner->max_tokens) || owner->max_tokens == 0
+        || !cursor.u32(&owner->generated_tokens)
+        || owner->generated_tokens >= owner->max_tokens
+        || !cursor.i32(&owner->input_token)
+        || !cursor.u64(&owner->speculative_id)
+        || !cursor.u32(&owner->speculative_index)
+        || !cursor.u32(&owner->speculative_count)
+        || !cursor.string(&owner->options)
+        || owner->request_id.empty() || owner->sequence_key.empty()
+        || owner->session_id.empty() || owner->reply.empty()) return false;
+    owner->phase = static_cast<PhysicalPhase>(phase);
+    owner->output = output != 0;
+    const bool speculative = owner->phase == PhysicalPhase::Verify
+        || owner->phase == PhysicalPhase::Replay;
+    return (!speculative && owner->speculative_id == 0
+            && owner->speculative_index == 0 && owner->speculative_count == 0)
+        || (speculative && owner->speculative_id != 0
+            && owner->speculative_count != 0
+            && owner->speculative_index < owner->speculative_count
+            && ((owner->phase == PhysicalPhase::Verify && owner->output)
+                || (owner->phase == PhysicalPhase::Replay && !owner->output)));
 }
 
 bool read_tensor(wire::Cursor & cursor, std::size_t index, PhysicalTensor * tensor) {
@@ -113,7 +127,7 @@ bool read_capsule(wire::Cursor & cursor, RoutedPhysicalExecution * result) {
         if (!read_owner(cursor, &result->owners[index])
             || result->owners[index].output != (execution.output[index] != 0)
             || result->owners[index].position
-                != static_cast<std::uint32_t>(execution.positions[index * execution.n_pos])) {
+                != static_cast<std::uint32_t>(execution.positions[index])) {
             return false;
         }
     }
@@ -122,17 +136,41 @@ bool read_capsule(wire::Cursor & cursor, RoutedPhysicalExecution * result) {
         if (!read_tensor(cursor, index, &execution.tensors[index])) return false;
     }
     result->outcomes.resize(outcome_count);
+    std::unordered_set<std::uint32_t> outcome_owners;
     for (auto & outcome : result->outcomes) {
-        std::int32_t token = 0;
+        std::uint32_t generated_count = 0;
+        std::uint32_t proposal_count = 0;
+        std::uint32_t replay_count = 0;
+        std::int32_t retain_from = -1;
         if (!cursor.u32(&outcome.owner_index) || outcome.owner_index >= rows
-            || !cursor.i32(&token) || !cursor.u32(&outcome.position)
-            || !cursor.string(&outcome.text) || !cursor.string(&outcome.stop)) return false;
-        outcome.token = token;
+            || !outcome_owners.insert(outcome.owner_index).second
+            || !cursor.u32(&generated_count) || generated_count > wire::kMaxRows
+            || !cursor.u32(&proposal_count) || proposal_count > wire::kMaxRows
+            || !cursor.u32(&replay_count) || replay_count > wire::kMaxRows
+            || (generated_count == 0 && proposal_count == 0 && replay_count == 0)
+            || !cursor.i32(&retain_from) || retain_from < -1
+            || !cursor.u32(&outcome.replay_position)) return false;
+        const auto & owner = result->owners[outcome.owner_index];
+        if ((retain_from < 0 && (replay_count != 0 || outcome.replay_position != 0))
+            || (retain_from >= 0 && owner.phase != PhysicalPhase::Verify)
+            || (retain_from >= 0 && replay_count == 0 && outcome.replay_position != 0)
+            || (replay_count != 0
+                && static_cast<std::uint64_t>(outcome.replay_position) + replay_count
+                    != static_cast<std::uint64_t>(retain_from))) return false;
+        outcome.retain_from = retain_from;
+        outcome.generated.resize(generated_count);
+        for (auto & generated : outcome.generated) {
+            if (!cursor.i32(&generated.token) || !cursor.u32(&generated.position)
+                || !cursor.string(&generated.text)
+                || !cursor.string(&generated.stop)) return false;
+        }
+        outcome.proposal.resize(proposal_count);
+        for (auto & token : outcome.proposal) if (!cursor.i32(&token)) return false;
+        outcome.replay_tokens.resize(replay_count);
+        for (auto & token : outcome.replay_tokens) if (!cursor.i32(&token)) return false;
     }
     return execution.terminal
-        ? outcome_count == static_cast<std::uint32_t>(std::count_if(
-            execution.output.begin(), execution.output.end(),
-            [](std::int8_t value) { return value != 0; }))
+        ? tensor_count == 0
         : outcome_count == 0 && tensor_count > 0;
 }
 
@@ -148,7 +186,7 @@ bool decode_logical_batch(
     std::uint16_t reserved = 0;
     std::uint32_t count = 0;
     if (!cursor.take(4, &magic) || std::memcmp(magic, "P4LB", 4) != 0
-        || !cursor.u16(&version) || version != 2
+        || !cursor.u16(&version) || version != 3
         || !cursor.u16(&reserved) || reserved != 0
         || !cursor.u32(&count) || count == 0 || count > wire::kMaxRows) {
         return wire::fail("invalid logical batch header", error);
@@ -160,12 +198,13 @@ bool decode_logical_batch(
         std::uint8_t output = 0;
         std::uint16_t row_reserved = 0;
         std::int32_t token = 0;
-        if (!cursor.string(&row.owner.request_id)
+        if (!cursor.u64(&row.owner.load_generation) || row.owner.load_generation == 0
+            || !cursor.string(&row.owner.request_id)
             || !cursor.string(&row.owner.sequence_key)
             || !cursor.string(&row.owner.session_id)
             || !cursor.string(&row.owner.reply)
             || !cursor.u32(&row.owner.sequence_id)
-            || !cursor.byte(&phase) || phase > 1
+            || !cursor.byte(&phase) || phase > 3
             || !cursor.byte(&output) || output > 1
             || !cursor.u16(&row_reserved) || row_reserved != 0
             || !cursor.u32(&row.owner.position) || row.owner.position > INT32_MAX
@@ -173,6 +212,9 @@ bool decode_logical_batch(
             || !cursor.u32(&row.owner.generated_tokens)
             || row.owner.generated_tokens >= row.owner.max_tokens
             || !cursor.i32(&token)
+            || !cursor.u64(&row.owner.speculative_id)
+            || !cursor.u32(&row.owner.speculative_index)
+            || !cursor.u32(&row.owner.speculative_count)
             || !cursor.string(&row.owner.options)
             || row.owner.request_id.empty() || row.owner.sequence_key.empty()
             || row.owner.session_id.empty() || row.owner.reply.empty()) {
@@ -180,7 +222,19 @@ bool decode_logical_batch(
         }
         row.owner.phase = static_cast<PhysicalPhase>(phase);
         row.owner.output = output != 0;
+        row.owner.input_token = token;
         row.token = token;
+        const bool speculative = phase == 2 || phase == 3;
+        if ((!speculative && (row.owner.speculative_id != 0
+                || row.owner.speculative_index != 0
+                || row.owner.speculative_count != 0))
+            || (speculative && (row.owner.speculative_id == 0
+                || row.owner.speculative_count == 0
+                || row.owner.speculative_index >= row.owner.speculative_count))
+            || (phase == 2 && !row.owner.output)
+            || (phase == 3 && row.owner.output)) {
+            return wire::fail("invalid logical speculation row", error);
+        }
     }
     if (!cursor.done()) return wire::fail("logical batch has trailing bytes", error);
     return true;
@@ -196,7 +250,7 @@ bool decode_physical_set(
     std::uint16_t reserved = 0;
     std::uint32_t count = 0;
     if (!cursor.take(4, &magic) || std::memcmp(magic, "P4PB", 4) != 0
-        || !cursor.u16(&version) || version != 2
+        || !cursor.u16(&version) || version != 3
         || !cursor.u16(&reserved) || reserved != 0
         || !cursor.u32(&count) || count == 0 || count > wire::kMaxRows) {
         return wire::fail("invalid physical set header", error);

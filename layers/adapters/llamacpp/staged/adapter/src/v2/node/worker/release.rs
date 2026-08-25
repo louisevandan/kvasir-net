@@ -5,6 +5,14 @@ impl Worker {
         let capsules = CapsuleSet::decode(&event.payload)
             .map_err(|error| format!("invalid tail capsule: {error:?}"))?;
         let session_id = single_session(&capsules)?;
+        if capsules
+            .0
+            .iter()
+            .flat_map(|capsule| &capsule.owners)
+            .any(|owner| owner.load_generation != self.state.load_generation)
+        {
+            return Err("tail load generation is stale".into());
+        }
         let session = self
             .state
             .sessions
@@ -14,34 +22,193 @@ impl Worker {
         if session.command.role != NodeRole::First {
             return Err("tail continuation must target the first node".into());
         }
-        let mut released = Vec::new();
-        for capsule in capsules.0 {
+        let mut completed_rows = std::collections::BTreeMap::<String, (Phase, usize)>::new();
+        for capsule in &capsules.0 {
             if !capsule.terminal {
                 return Err("tail continuation is not terminal".into());
             }
+            for owner in &capsule.owners {
+                let key = request_key(&owner.session_id, &owner.request_id);
+                let entry = completed_rows.entry(key).or_insert((owner.phase, 0));
+                if entry.0 != owner.phase {
+                    return Err("tail continuation mixes request phases".into());
+                }
+                entry.1 += 1;
+            }
+        }
+        let mut released = Vec::new();
+        let mut settlements = Vec::new();
+        let mut resolved_verify_fence = None;
+        let mut outcomes_by_key = std::collections::BTreeMap::new();
+        for capsule in capsules.0 {
             for outcome in capsule.outcomes {
                 let owner = capsule
                     .owners
                     .get(outcome.owner_index as usize)
                     .ok_or_else(|| "tail outcome owner is missing".to_owned())?;
                 let key = request_key(&owner.session_id, &owner.request_id);
-                let Some(request) = self.state.requests.get_mut(&key) else {
-                    continue;
-                };
-                if request.sequence_id != Some(owner.sequence_id) {
-                    return Err("tail sequence does not match the admitted request".into());
-                }
-                request.generated += 1;
-                if outcome.stop.is_some() {
-                    self.state.requests.remove(&key);
-                    released.push(ReleaseSequence {
-                        key,
-                        id: owner.sequence_id,
-                    });
-                } else {
-                    request.decode = Some((outcome.token, outcome.position));
+                if outcomes_by_key
+                    .insert(key, (owner.clone(), outcome))
+                    .is_some()
+                {
+                    return Err("tail returned duplicate request decisions".into());
                 }
             }
+        }
+        for (key, (phase, rows)) in completed_rows {
+            let outcome = outcomes_by_key.remove(&key);
+            let Some(request) = self.state.requests.get_mut(&key) else {
+                continue;
+            };
+            if !request.in_flight {
+                return Err("tail completed a request without an in-flight batch".into());
+            }
+            if phase == Phase::Prefill {
+                request.prompt_cursor = request
+                    .prompt_cursor
+                    .checked_add(rows)
+                    .ok_or_else(|| "prompt cursor overflow".to_owned())?;
+                if request.prompt_cursor > request.command.tokens.len() {
+                    return Err("tail completed more prompt rows than submitted".into());
+                }
+            } else {
+                request.ready = None;
+            }
+            let Some((owner, outcome)) = outcome else {
+                if phase == Phase::Replay {
+                    request.ready = request.after_settlement.take();
+                }
+                request.in_flight = false;
+                continue;
+            };
+            if request.sequence_id != Some(owner.sequence_id) {
+                return Err("tail sequence does not match the admitted request".into());
+            }
+            request.generated = request
+                .generated
+                .checked_add(
+                    u32::try_from(outcome.generated.len())
+                        .map_err(|_| "generated token count overflow".to_owned())?,
+                )
+                .ok_or_else(|| "generated token count overflow".to_owned())?;
+            let stopped = outcome.generated.iter().any(|token| token.stop.is_some());
+            if stopped {
+                self.state.requests.remove(&key);
+                released.push(ReleaseSequence {
+                    key,
+                    id: owner.sequence_id,
+                });
+                continue;
+            }
+            if outcome.retain_from.is_some() && !outcome.replay_tokens.is_empty() {
+                if phase != Phase::Verify
+                    || !outcome.proposal.is_empty()
+                    || owner.speculative_id == 0
+                {
+                    return Err("checkpoint replay decision is inconsistent".into());
+                }
+                request.after_settlement = Some(super::super::state::ReadyRows {
+                    phase: Phase::Replay,
+                    tokens: outcome.replay_tokens.clone(),
+                    position: outcome.replay_position,
+                    speculative_id: owner.speculative_id,
+                });
+                settlements.push(SettlementSequence {
+                    key: key.clone(),
+                    id: owner.sequence_id,
+                    retain_from: outcome
+                        .retain_from
+                        .expect("checkpoint replay has a settlement boundary"),
+                    replay_tokens: outcome.replay_tokens,
+                    replay_position: outcome.replay_position,
+                });
+                continue;
+            }
+            if outcome.proposal.is_empty() {
+                return Err("continuing tail decision has no proposal".into());
+            }
+            let position = if let Some(token) = outcome.generated.last() {
+                token.position
+            } else {
+                outcome
+                    .replay_position
+                    .checked_add(
+                        u32::try_from(outcome.replay_tokens.len())
+                            .map_err(|_| "replay position overflow".to_owned())?,
+                    )
+                    .ok_or_else(|| "replay position overflow".to_owned())?
+            };
+            // The adapter consumes a provider-neutral proposal. A concrete
+            // llama.cpp strategy either returns one target token (ordinary
+            // Decode) or an atomic multi-token proposal (Verify); the queue
+            // layer must not enable or disable a named strategy at runtime.
+            let speculative = outcome.proposal.len() > 1;
+            let speculative_id = if speculative {
+                let value = self.state.next_speculative_id;
+                if value == 0 {
+                    return Err("speculative identity exhausted".into());
+                }
+                self.state.next_speculative_id = value
+                    .checked_add(1)
+                    .ok_or_else(|| "speculative identity exhausted".to_owned())?;
+                value
+            } else {
+                0
+            };
+            let next = super::super::state::ReadyRows {
+                phase: if speculative {
+                    Phase::Verify
+                } else {
+                    Phase::Decode
+                },
+                tokens: if speculative {
+                    outcome.proposal
+                } else {
+                    outcome.proposal.into_iter().take(1).collect()
+                },
+                position,
+                speculative_id,
+            };
+            if let Some(retain_from) = outcome.retain_from {
+                request.after_settlement = Some(next);
+                settlements.push(SettlementSequence {
+                    key: key.clone(),
+                    id: owner.sequence_id,
+                    retain_from,
+                    replay_tokens: outcome.replay_tokens,
+                    replay_position: outcome.replay_position,
+                });
+            } else {
+                request.ready = Some(next);
+                request.in_flight = false;
+                if phase == Phase::Verify {
+                    resolved_verify_fence = Some(key.clone());
+                }
+            }
+        }
+        if !outcomes_by_key.is_empty() {
+            return Err("tail decision has no completed request rows".into());
+        }
+        if !settlements.is_empty() {
+            let command = SettlementCommand {
+                load_generation: self.state.load_generation,
+                session_id: session_id.clone(),
+                sequences: settlements,
+            };
+            self.settle_stage_sequences(&command.sequences)?;
+            self.emit_json(
+                &event,
+                session.next.clone().expect("validated first session next"),
+                EventClass::Control,
+                SETTLE_CONTENT_TYPE,
+                &command,
+            )
+            .map_err(|_| "completion queue is full".to_owned())?;
+        }
+        if let Some(key) = resolved_verify_fence {
+            self.state
+                .finish_verify_fence(&key)
+                .map_err(str::to_owned)?;
         }
         if !released.is_empty() {
             for sequence in &released {
@@ -53,6 +220,7 @@ impl Worker {
                 EventClass::Control,
                 RELEASE_CONTENT_TYPE,
                 &ReleaseCommand {
+                    load_generation: self.state.load_generation,
                     session_id,
                     sequences: released,
                 },
@@ -66,6 +234,9 @@ impl Worker {
         let command: ReleaseCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid release payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
+        if command.load_generation != self.state.load_generation {
+            return Err("release load generation is stale".into());
+        }
         let session = self
             .state
             .sessions
@@ -102,6 +273,9 @@ impl Worker {
         let command: ReleaseCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid release completion payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
+        if command.load_generation != self.state.load_generation {
+            return Err("release completion load generation is stale".into());
+        }
         let session = self
             .state
             .sessions
@@ -122,6 +296,11 @@ impl Worker {
                 return Err("release completion contains a non-owned sequence".into());
             }
             self.state.free_sequences.push_back(sequence.id);
+            if self.state.verify_fence_matches(&sequence.key) {
+                self.state
+                    .finish_verify_fence(&sequence.key)
+                    .map_err(str::to_owned)?;
+            }
         }
         self.admit_pending()?;
         self.emit_json(
@@ -131,6 +310,7 @@ impl Worker {
             RELEASED_CONTENT_TYPE,
             &serde_json::json!({
                 "session_id": command.session_id,
+                "load_generation": command.load_generation,
                 "released": command.sequences.len()
             }),
         )

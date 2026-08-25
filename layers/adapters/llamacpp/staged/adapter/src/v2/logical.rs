@@ -1,7 +1,7 @@
 use super::{Phase, RowOwner};
 
 const MAGIC: &[u8; 4] = b"P4LB";
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 const MAX_ROWS: usize = 65_536;
 const MAX_STRING: usize = 4_096;
 
@@ -37,6 +37,7 @@ impl LogicalBatch {
         put_u32(&mut output, self.0.len() as u32);
         for row in &self.0 {
             validate(row)?;
+            put_u64(&mut output, row.owner.load_generation);
             put_string(&mut output, &row.owner.request_id)?;
             put_string(&mut output, &row.owner.sequence_key)?;
             put_string(&mut output, &row.owner.session_id)?;
@@ -45,6 +46,8 @@ impl LogicalBatch {
             output.push(match row.owner.phase {
                 Phase::Prefill => 0,
                 Phase::Decode => 1,
+                Phase::Verify => 2,
+                Phase::Replay => 3,
             });
             output.push(u8::from(row.owner.output));
             put_u16(&mut output, 0);
@@ -52,6 +55,9 @@ impl LogicalBatch {
             put_u32(&mut output, row.owner.max_tokens);
             put_u32(&mut output, row.owner.generated_tokens);
             put_i32(&mut output, row.token);
+            put_u64(&mut output, row.owner.speculative_id);
+            put_u32(&mut output, row.owner.speculative_index);
+            put_u32(&mut output, row.owner.speculative_count);
             put_string(&mut output, &row.owner.options)?;
         }
         Ok(output)
@@ -75,6 +81,7 @@ impl LogicalBatch {
         }
         let mut rows = Vec::with_capacity(count);
         for _ in 0..count {
+            let load_generation = cursor.u64()?;
             let request_id = cursor.string()?;
             let sequence_key = cursor.string()?;
             let session_id = cursor.string()?;
@@ -83,6 +90,8 @@ impl LogicalBatch {
             let phase = match cursor.byte()? {
                 0 => Phase::Prefill,
                 1 => Phase::Decode,
+                2 => Phase::Verify,
+                3 => Phase::Replay,
                 _ => return Err(LogicalBatchError::InvalidRow),
             };
             let output = match cursor.byte()? {
@@ -97,9 +106,13 @@ impl LogicalBatch {
             let max_tokens = cursor.u32()?;
             let generated_tokens = cursor.u32()?;
             let token = cursor.i32()?;
+            let speculative_id = cursor.u64()?;
+            let speculative_index = cursor.u32()?;
+            let speculative_count = cursor.u32()?;
             let options = cursor.string()?;
             let row = LogicalRow {
                 owner: RowOwner {
+                    load_generation,
                     request_id,
                     sequence_key,
                     session_id,
@@ -110,6 +123,10 @@ impl LogicalBatch {
                     max_tokens,
                     generated_tokens,
                     output,
+                    input_token: token,
+                    speculative_id,
+                    speculative_index,
+                    speculative_count,
                     options,
                 },
                 token,
@@ -126,7 +143,9 @@ impl LogicalBatch {
 
 fn validate(row: &LogicalRow) -> Result<(), LogicalBatchError> {
     let owner = &row.owner;
-    if owner.request_id.is_empty()
+    let speculative = matches!(owner.phase, Phase::Verify | Phase::Replay);
+    if owner.load_generation == 0
+        || owner.request_id.is_empty()
         || owner.sequence_key.is_empty()
         || owner.session_id.is_empty()
         || owner.reply.is_empty()
@@ -138,6 +157,17 @@ fn validate(row: &LogicalRow) -> Result<(), LogicalBatchError> {
         || owner.max_tokens == 0
         || owner.generated_tokens >= owner.max_tokens
         || owner.position > i32::MAX as u32
+        || owner.input_token != row.token
+        || (speculative
+            && (owner.speculative_id == 0
+                || owner.speculative_count == 0
+                || owner.speculative_index >= owner.speculative_count))
+        || (!speculative
+            && (owner.speculative_id != 0
+                || owner.speculative_index != 0
+                || owner.speculative_count != 0))
+        || (owner.phase == Phase::Verify && !owner.output)
+        || (owner.phase == Phase::Replay && owner.output)
     {
         return Err(LogicalBatchError::InvalidRow);
     }
@@ -148,6 +178,9 @@ fn put_u16(output: &mut Vec<u8>, value: u16) {
     output.extend_from_slice(&value.to_le_bytes());
 }
 fn put_u32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+fn put_u64(output: &mut Vec<u8>, value: u64) {
     output.extend_from_slice(&value.to_le_bytes());
 }
 fn put_i32(output: &mut Vec<u8>, value: i32) {
@@ -187,6 +220,9 @@ impl<'a> Cursor<'a> {
     }
     fn u32(&mut self) -> Result<u32, LogicalBatchError> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+    fn u64(&mut self) -> Result<u64, LogicalBatchError> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
     }
     fn i32(&mut self) -> Result<i32, LogicalBatchError> {
         Ok(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))

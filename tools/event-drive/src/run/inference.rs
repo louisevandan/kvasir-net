@@ -162,6 +162,7 @@ where
             .replace("{{request_id}}", &request_id);
         *next_index += 1;
         let command = InferenceCommand {
+            load_generation: config.load_generation,
             session_id: config.session_id.clone(),
             request_id: request_id.clone(),
             tokens: Vec::new(),

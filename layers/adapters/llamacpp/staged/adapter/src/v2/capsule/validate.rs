@@ -34,7 +34,9 @@ impl PhysicalCapsule {
         }
         let mut owner_rows = HashSet::with_capacity(rows);
         for (index, owner) in self.owners.iter().enumerate() {
-            if owner.request_id.is_empty()
+            let speculative = matches!(owner.phase, Phase::Verify | Phase::Replay);
+            if owner.load_generation == 0
+                || owner.request_id.is_empty()
                 || owner.sequence_key.is_empty()
                 || owner.session_id.is_empty()
                 || owner.reply.is_empty()
@@ -47,14 +49,26 @@ impl PhysicalCapsule {
                 || owner.generated_tokens >= owner.max_tokens
                 || owner.position > i32::MAX as u32
                 || owner.output != self.invocation.output[index]
-                || owner.position as i64
-                    != self.invocation.positions[index * self.invocation.n_pos as usize] as i64
+                || owner.position as i64 != self.invocation.positions[index] as i64
+                || (speculative
+                    && (owner.speculative_id == 0
+                        || owner.speculative_count == 0
+                        || owner.speculative_index >= owner.speculative_count))
+                || (!speculative
+                    && (owner.speculative_id != 0
+                        || owner.speculative_index != 0
+                        || owner.speculative_count != 0))
+                || (owner.phase == Phase::Verify && !owner.output)
+                || (owner.phase == Phase::Replay && owner.output)
                 || !owner_rows.insert((owner.sequence_id, owner.position))
             {
                 return Err(CapsuleError::InvalidOwner);
             }
         }
-        if (!self.terminal && self.tensors.is_empty()) || self.tensors.len() > MAX_TENSORS {
+        if (!self.terminal && self.tensors.is_empty())
+            || (self.terminal && !self.tensors.is_empty())
+            || self.tensors.len() > MAX_TENSORS
+        {
             return Err(CapsuleError::InvalidTensor);
         }
         for (index, tensor) in self.tensors.iter().enumerate() {
@@ -79,28 +93,39 @@ impl PhysicalCapsule {
                 None => {}
             }
         }
-        let requested = self
-            .invocation
-            .output
-            .iter()
-            .filter(|value| **value)
-            .count();
-        if (!self.terminal && !self.outcomes.is_empty())
-            || (self.terminal && self.outcomes.len() != requested)
-        {
+        if !self.terminal && !self.outcomes.is_empty() {
             return Err(CapsuleError::InvalidOwner);
         }
         let mut outcome_owners = HashSet::with_capacity(self.outcomes.len());
         for outcome in &self.outcomes {
             let index = outcome.owner_index as usize;
             if index >= rows
-                || !self.invocation.output[index]
                 || !outcome_owners.insert(index)
-                || outcome.text.len() > MAX_STRING
+                || (outcome.generated.is_empty()
+                    && outcome.proposal.is_empty()
+                    && outcome.replay_tokens.is_empty())
                 || outcome
-                    .stop
-                    .as_ref()
-                    .is_some_and(|value| value.len() > MAX_STRING)
+                    .retain_from
+                    .is_some_and(|value| value > i32::MAX as u32)
+                || outcome.generated.iter().any(|generated| {
+                    generated.text.len() > MAX_STRING
+                        || generated
+                            .stop
+                            .as_ref()
+                            .is_some_and(|value| value.len() > MAX_STRING)
+                })
+                || (outcome.retain_from.is_none()
+                    && (!outcome.replay_tokens.is_empty() || outcome.replay_position != 0))
+                || (outcome.retain_from.is_some() && self.owners[index].phase != Phase::Verify)
+                || (outcome.retain_from.is_some()
+                    && if outcome.replay_tokens.is_empty() {
+                        outcome.replay_position != 0
+                    } else {
+                        u32::try_from(outcome.replay_tokens.len())
+                            .ok()
+                            .and_then(|count| outcome.replay_position.checked_add(count))
+                            != outcome.retain_from
+                    })
             {
                 return Err(CapsuleError::InvalidOwner);
             }

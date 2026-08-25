@@ -10,6 +10,17 @@ namespace wire = physical_wire;
 namespace {
 
 bool write_owner(std::vector<std::uint8_t> * output, const PhysicalOwner & owner) {
+    const bool speculative = owner.phase == PhysicalPhase::Verify
+        || owner.phase == PhysicalPhase::Replay;
+    if (owner.load_generation == 0 || owner.position > INT32_MAX
+        || (!speculative && (owner.speculative_id != 0
+            || owner.speculative_index != 0 || owner.speculative_count != 0))
+        || (speculative && (owner.speculative_id == 0
+            || owner.speculative_count == 0
+            || owner.speculative_index >= owner.speculative_count))
+        || (owner.phase == PhysicalPhase::Verify && !owner.output)
+        || (owner.phase == PhysicalPhase::Replay && owner.output)) return false;
+    wire::put_u64(output, owner.load_generation);
     return !owner.request_id.empty() && !owner.sequence_key.empty() && !owner.session_id.empty()
         && !owner.reply.empty()
         && wire::put_string(output, owner.request_id)
@@ -24,6 +35,10 @@ bool write_owner(std::vector<std::uint8_t> * output, const PhysicalOwner & owner
         && owner.max_tokens > 0 && owner.generated_tokens < owner.max_tokens
         && (wire::put_u32(output, owner.max_tokens), true)
         && (wire::put_u32(output, owner.generated_tokens), true)
+        && (wire::put_i32(output, owner.input_token), true)
+        && (wire::put_u64(output, owner.speculative_id), true)
+        && (wire::put_u32(output, owner.speculative_index), true)
+        && (wire::put_u32(output, owner.speculative_count), true)
         && wire::put_string(output, owner.options);
 }
 
@@ -72,15 +87,13 @@ bool write_capsule(
     }
     if (sequence_total != execution.sequence_ids.size()
         || sequence_total > std::numeric_limits<std::uint32_t>::max()) return false;
-    std::size_t requested = 0;
     for (std::size_t index = 0; index < rows; ++index) {
         if (capsule.owners[index].output != (execution.output[index] != 0)
             || capsule.owners[index].position != static_cast<std::uint32_t>(
-                execution.positions[index * execution.n_pos])) return false;
-        if (execution.output[index] != 0) ++requested;
+                execution.positions[index])) return false;
     }
     if ((!execution.terminal && (!capsule.outcomes.empty() || execution.tensors.empty()))
-        || (execution.terminal && capsule.outcomes.size() != requested)) return false;
+        || (execution.terminal && !execution.tensors.empty())) return false;
 
     wire::put_u64(output, capsule.execution_id);
     wire::put_u32(output, execution.terminal ? 1 : 0);
@@ -105,13 +118,39 @@ bool write_capsule(
     }
     for (const auto & outcome : capsule.outcomes) {
         if (outcome.owner_index >= rows
-            || outcome.text.size() > wire::kMaxString
-            || outcome.stop.size() > wire::kMaxString) return false;
+            || (outcome.generated.empty() && outcome.proposal.empty()
+                && outcome.replay_tokens.empty())
+            || outcome.generated.size() > wire::kMaxRows
+            || outcome.proposal.size() > wire::kMaxRows
+            || outcome.replay_tokens.size() > wire::kMaxRows
+            || outcome.retain_from > INT32_MAX
+            || outcome.retain_from < -1
+            || (outcome.retain_from < 0
+                && (!outcome.replay_tokens.empty() || outcome.replay_position != 0))
+            || (outcome.retain_from >= 0
+                && capsule.owners[outcome.owner_index].phase != PhysicalPhase::Verify)
+            || (outcome.retain_from >= 0 && outcome.replay_tokens.empty()
+                && outcome.replay_position != 0)
+            || (!outcome.replay_tokens.empty()
+                && static_cast<std::uint64_t>(outcome.replay_position)
+                    + outcome.replay_tokens.size()
+                    != static_cast<std::uint64_t>(outcome.retain_from))) return false;
         wire::put_u32(output, outcome.owner_index);
-        wire::put_i32(output, outcome.token);
-        wire::put_u32(output, outcome.position);
-        if (!wire::put_string(output, outcome.text)
-            || !wire::put_string(output, outcome.stop)) return false;
+        wire::put_u32(output, static_cast<std::uint32_t>(outcome.generated.size()));
+        wire::put_u32(output, static_cast<std::uint32_t>(outcome.proposal.size()));
+        wire::put_u32(output, static_cast<std::uint32_t>(outcome.replay_tokens.size()));
+        wire::put_i32(output, static_cast<std::int32_t>(outcome.retain_from));
+        wire::put_u32(output, outcome.replay_position);
+        for (const auto & generated : outcome.generated) {
+            if (generated.text.size() > wire::kMaxString
+                || generated.stop.size() > wire::kMaxString) return false;
+            wire::put_i32(output, generated.token);
+            wire::put_u32(output, generated.position);
+            if (!wire::put_string(output, generated.text)
+                || !wire::put_string(output, generated.stop)) return false;
+        }
+        for (const auto token : outcome.proposal) wire::put_i32(output, token);
+        for (const auto token : outcome.replay_tokens) wire::put_i32(output, token);
     }
     return true;
 }
@@ -127,7 +166,7 @@ bool encode_physical_set(
     }
     output->clear();
     output->insert(output->end(), {'P', '4', 'P', 'B'});
-    wire::put_u16(output, 2);
+    wire::put_u16(output, 3);
     wire::put_u16(output, 0);
     wire::put_u32(output, static_cast<std::uint32_t>(capsules.size()));
     for (const auto & capsule : capsules) {

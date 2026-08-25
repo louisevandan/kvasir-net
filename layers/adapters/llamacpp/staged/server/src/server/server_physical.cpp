@@ -17,7 +17,7 @@ bool physical_row_matches(
         const llama_runtime::PhysicalExecution & execution,
         std::size_t row,
         const llama_runtime::LogicalExecutionRow & logical) {
-    const auto position_index = row * execution.n_pos;
+    const auto position_index = row;
     if (position_index >= execution.positions.size()
         || execution.positions[position_index] != static_cast<llama_pos>(logical.owner.position)) {
         return false;
@@ -44,6 +44,68 @@ protocol::Frame physical_error(
 
 } // namespace
 #endif
+
+protocol::Frame Session::handle_physical_settle(
+        const protocol::Frame & request) {
+#ifndef P4_STAGED_WITH_LLAMA
+    (void) request;
+    return error("CAPABILITY_UNAVAILABLE: llama runtime is unavailable");
+#else
+    if (llama_runtime_ == nullptr || !llama_runtime_->loaded()
+        || request.body.size() < 16 || (request.body.size() - 16) % 4 != 0) {
+        return error("PHYSICAL_SETTLE rejected: invalid runtime or payload");
+    }
+    auto read_u32 = [&](std::size_t offset) {
+        return static_cast<std::uint32_t>(request.body[offset])
+            | static_cast<std::uint32_t>(request.body[offset + 1]) << 8U
+            | static_cast<std::uint32_t>(request.body[offset + 2]) << 16U
+            | static_cast<std::uint32_t>(request.body[offset + 3]) << 24U;
+    };
+    const auto id = read_u32(0);
+    const auto retain_from = read_u32(4);
+    const auto replay_position = read_u32(8);
+    const auto replay_count = read_u32(12);
+    if (request.body.size() != 16ULL + 4ULL * replay_count
+        || (replay_count == 0 && replay_position != 0)
+        || (replay_count != 0
+            && static_cast<std::uint64_t>(replay_position) + replay_count != retain_from)
+        || id > static_cast<std::uint32_t>(std::numeric_limits<llama_seq_id>::max())) {
+        return error("PHYSICAL_SETTLE rejected: inconsistent settlement");
+    }
+    std::string detail;
+    if (!llama_runtime_->settle_physical_sequence(
+            static_cast<llama_seq_id>(id), static_cast<llama_pos>(retain_from),
+            false, &detail)) {
+        return error("PHYSICAL_SETTLE failed: " + detail);
+    }
+    return status(protocol::Operation::PhysicalSettle, "SEQUENCE_SETTLED");
+#endif
+}
+
+protocol::Frame Session::handle_physical_release(
+        const protocol::Frame & request) {
+#ifndef P4_STAGED_WITH_LLAMA
+    (void) request;
+    return error("CAPABILITY_UNAVAILABLE: llama runtime is unavailable");
+#else
+    if (llama_runtime_ == nullptr || !llama_runtime_->loaded()
+        || request.body.size() <= 4) {
+        return error("PHYSICAL_RELEASE rejected: invalid runtime or payload");
+    }
+    const std::uint32_t id = static_cast<std::uint32_t>(request.body[0])
+        | static_cast<std::uint32_t>(request.body[1]) << 8U
+        | static_cast<std::uint32_t>(request.body[2]) << 16U
+        | static_cast<std::uint32_t>(request.body[3]) << 24U;
+    const std::string key(request.body.begin() + 4, request.body.end());
+    std::string detail;
+    if (id > static_cast<std::uint32_t>(std::numeric_limits<llama_seq_id>::max())
+        || !llama_runtime_->release_physical_sequence(
+            key, static_cast<llama_seq_id>(id), &detail)) {
+        return error("PHYSICAL_RELEASE failed: " + detail);
+    }
+    return status(protocol::Operation::PhysicalRelease, "SEQUENCE_RELEASED");
+#endif
+}
 
 protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
 #ifndef P4_STAGED_WITH_LLAMA
@@ -76,7 +138,10 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
                         value.owner.output});
     }
     std::vector<llama_runtime::PhysicalExecution> captured;
-    if (!llama_runtime_->execute_first_batch(rows, &captured, &detail)) {
+    std::vector<llama_runtime::PhysicalOwner> owners;
+    owners.reserve(input.size());
+    for (const auto & value : input) owners.push_back(value.owner);
+    if (!llama_runtime_->execute_first_batch(rows, owners, &captured, &detail)) {
         return fail(detail);
     }
     std::vector<bool> used(input.size(), false);
@@ -177,10 +242,11 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
         result.execution_id = capsule.execution_id;
         result.owners = std::move(capsule.owners);
         if (!llama_runtime_->execute_physical(
-                capsule.execution, &result.execution, &detail)) return fail(detail);
+                capsule.execution, result.owners, &result.execution, &detail)) return fail(detail);
         if (result.execution.terminal
             && !llama_runtime_->sample_physical_outputs(
                 result.execution, result.owners, &result.outcomes, &detail)) return fail(detail);
+        if (result.execution.terminal) result.execution.tensors.clear();
         output.push_back(std::move(result));
     }
     std::vector<std::uint8_t> body;

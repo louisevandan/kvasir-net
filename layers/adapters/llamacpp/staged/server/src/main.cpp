@@ -260,7 +260,8 @@ int main(int argc, char **argv) {
     const auto option_capabilities = staged::server::capability_report(parsed_options);
     std::cerr << "CAPABILITY_REPORT " << option_capabilities.serialize() << '\n';
     if (parsed_options.validate_plan) return 0;
-    if (parsed_options.speculative_requested) {
+    if (parsed_options.speculative_requested
+        && !option_capabilities.speculative_execution) {
         std::cerr << "CAPABILITY_UNAVAILABLE: "
                   << option_capabilities.execution_blocker << '\n';
         return 6;

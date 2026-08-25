@@ -321,9 +321,7 @@ int main() {
     config.layer_end = 1;
     std::string error;
     assert(!runtime.load(params, config, &error));
-    assert(error.find("CAPABILITY_UNAVAILABLE") != std::string::npos);
-    assert(error.find("mtp_auxiliary_layers_not_owned_by_stage") !=
-           std::string::npos);
+    assert(error == "llama.cpp failed to load the staged model");
     assert(!runtime.loaded());
     execute_decode_batch_refuses_when_hop_memory_dirty();
     execute_hop_refuses_when_hop_memory_dirty();

@@ -1,4 +1,5 @@
 #include "llama_stage_runtime.hpp"
+#include "physical_wire.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -25,6 +26,36 @@ bool valid_execution(const PhysicalExecution & execution) {
         total += static_cast<std::size_t>(count);
     }
     return total == execution.sequence_ids.size();
+}
+
+bool execution_row_matches_owner(
+        const PhysicalExecution & execution,
+        std::size_t row,
+        const PhysicalOwner & owner) {
+    if (row >= execution.sequence_counts.size()
+        || execution.n_pos == 0) {
+        return false;
+    }
+    // llama_ubatch positions are dimension-major: pos[j*n_tokens + row].
+    // Dimension zero therefore starts at exactly `row`, even when n_pos=4.
+    const auto position_index = row;
+    if (position_index >= execution.positions.size()
+        || execution.positions[position_index] != static_cast<llama_pos>(owner.position)) {
+        return false;
+    }
+    std::size_t sequence_offset = 0;
+    for (std::size_t index = 0; index < row; ++index) {
+        sequence_offset += static_cast<std::size_t>(execution.sequence_counts[index]);
+    }
+    const auto count = static_cast<std::size_t>(execution.sequence_counts[row]);
+    if (sequence_offset > execution.sequence_ids.size()
+        || count > execution.sequence_ids.size() - sequence_offset) {
+        return false;
+    }
+    const auto begin = execution.sequence_ids.begin()
+        + static_cast<std::ptrdiff_t>(sequence_offset);
+    const auto end = begin + static_cast<std::ptrdiff_t>(count);
+    return std::find(begin, end, static_cast<llama_seq_id>(owner.sequence_id)) != end;
 }
 
 } // namespace
@@ -108,13 +139,15 @@ bool StageRuntime::capture_execution(
 
 bool StageRuntime::execute_first_batch(
         const std::vector<LogicalRow> & rows,
+        const std::vector<PhysicalOwner> & owners,
         std::vector<PhysicalExecution> * executions,
         std::string * error) {
     if (!loaded() || config_.layer_begin != 0 || tail_stage_
-        || rows.empty() || executions == nullptr
+        || rows.empty() || owners.size() != rows.size() || executions == nullptr
         || rows.size() > llama_n_batch(ctx_)) {
         return physical_fail("invalid first-stage logical batch", error);
     }
+    if (!prepare_physical_owners(owners, error)) return false;
     captured_executions_.clear();
     capture_error_.clear();
     llama_batch batch = llama_batch_init(
@@ -151,6 +184,54 @@ bool StageRuntime::execute_first_batch(
         captured_executions_.clear();
         return false;
     }
+    const auto atomic = std::find_if(
+        owners.begin(), owners.end(), [](const PhysicalOwner & owner) {
+            return owner.phase == PhysicalPhase::Verify
+                || owner.phase == PhysicalPhase::Replay;
+        });
+    const auto atomic_begin = static_cast<std::size_t>(
+        std::distance(owners.begin(), atomic));
+    const auto atomic_count = atomic == owners.end()
+        ? 0U : static_cast<std::size_t>(atomic->speculative_count);
+    bool atomic_is_terminal = atomic_count == 0;
+    if (atomic_count > 0 && atomic_count <= owners.size() - atomic_begin
+        && atomic_begin + atomic_count == owners.size()
+        && !captured_executions_.empty()) {
+        const auto & execution = captured_executions_.back();
+        const auto physical_rows = execution.sequence_counts.size();
+        atomic_is_terminal = atomic_count <= physical_rows;
+        for (std::size_t offset = 0; atomic_is_terminal && offset < atomic_count; ++offset) {
+            atomic_is_terminal = execution_row_matches_owner(
+                execution, physical_rows - atomic_count + offset,
+                owners[atomic_begin + offset]);
+        }
+    }
+    if (!atomic_is_terminal) {
+        const auto sequence_id = static_cast<llama_seq_id>(atomic->sequence_id);
+        if (!settle_physical_sequence(
+                sequence_id, static_cast<llama_pos>(atomic->position), true, error)) {
+            captured_executions_.clear();
+            return false;
+        }
+        captured_executions_.clear();
+        if (error != nullptr) {
+            *error = "atomic verification/replay group was not the final llama.cpp physical group: "
+                + atomic->sequence_key;
+        }
+        return false;
+    }
+    if (atomic_count > 0 && config_.layer_begin == 0
+        && (atomic->phase == PhysicalPhase::Replay
+            || (atomic->phase == PhysicalPhase::Verify
+                && target_seq_rm_type_ != COMMON_CONTEXT_SEQ_RM_TYPE_FULL
+                && !(target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
+                    && atomic_count - 1 > llama_n_rs_seq(ctx_))))) {
+        // Stage zero takes an unconditional checkpoint only so a physical
+        // ubatch split can be aborted before a cut-set leaves this process.
+        // Once the group is intact, normal PART/RS rollback is sufficient.
+        physical_checkpoints_.erase(
+            static_cast<llama_seq_id>(atomic->sequence_id));
+    }
     std::size_t captured_rows = 0;
     for (const auto & execution : captured_executions_) {
         captured_rows += execution.sequence_counts.size();
@@ -166,12 +247,15 @@ bool StageRuntime::execute_first_batch(
 
 bool StageRuntime::execute_physical(
         const PhysicalExecution & input,
+        const std::vector<PhysicalOwner> & owners,
         PhysicalExecution * output,
         std::string * error) {
     if (!loaded() || config_.layer_begin == 0 || output == nullptr
-        || !valid_execution(input) || input.tensors.empty()) {
+        || !valid_execution(input) || input.tensors.empty()
+        || owners.size() != input.sequence_counts.size()) {
         return physical_fail("invalid downstream physical execution", error);
     }
+    if (!prepare_physical_execution(input, owners, error)) return false;
     llama_linkcpp_input_clear(ctx_);
     for (std::size_t index = 0; index < input.tensors.size(); ++index) {
         const auto & tensor = input.tensors[index];
@@ -193,7 +277,9 @@ bool StageRuntime::execute_physical(
             return physical_fail("llama.cpp rejected the physical cut-set", error);
         }
     }
-    std::vector<llama_token> tokens(input.sequence_counts.size(), 0);
+    std::vector<llama_token> tokens;
+    tokens.reserve(owners.size());
+    for (const auto & owner : owners) tokens.push_back(owner.input_token);
     std::vector<llama_seq_id *> sequence_rows(input.sequence_counts.size());
     std::size_t sequence_offset = 0;
     for (std::size_t row = 0; row < sequence_rows.size(); ++row) {
@@ -219,17 +305,28 @@ bool StageRuntime::execute_physical(
         llama_linkcpp_input_clear(ctx_);
         return physical_fail("llama.cpp failed the downstream physical invocation", error);
     }
+    if (!encoder && !process_physical_mtp(batch, owners, error)) return false;
     *output = input;
     output->tensors.clear();
     output->terminal = tail_stage_;
-    const auto wants_output = std::any_of(input.output.begin(), input.output.end(),
-                                          [](std::int8_t value) { return value != 0; });
-    if (tail_stage_ && !wants_output) return true;
-    if (!collect_physical_tensors(tail_stage_, &output->tensors, error)) return false;
+    // Terminal logits and h_nextn remain inside llama.cpp. Sampling and MTP
+    // consume them in this process; only compact token decisions cross P4.
+    if (tail_stage_) return true;
+    if (!collect_physical_tensors(false, &output->tensors, error)) return false;
     if (output->tensors.empty()) {
         return physical_fail("llama.cpp produced no physical result tensors", error);
     }
     return true;
+}
+
+bool StageRuntime::prepare_physical_execution(
+        const PhysicalExecution & input,
+        const std::vector<PhysicalOwner> & owners,
+        std::string * error) {
+    if (!valid_execution(input) || owners.size() != input.sequence_counts.size()) {
+        return physical_fail("invalid physical preparation", error);
+    }
+    return prepare_physical_owners(owners, error);
 }
 
 } // namespace staged::llama_runtime

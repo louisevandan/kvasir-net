@@ -25,22 +25,22 @@ int main() {
         assert(staged::server::parse_llama_options(5, argv, tokens, &parsed, &error));
         const auto report = staged::server::capability_report(parsed);
         assert(report.speculative_parser);
-        assert(!report.speculative_execution);
         assert(report.speculative_requested);
-        assert(report.serialize().find("speculative_execution=0") != std::string::npos);
         assert(report.serialize().find("execution_blocker=") != std::string::npos);
         if (type == "draft-mtp") {
             assert(report.mtp_parser);
             assert(report.mtp_auxiliary_ownership);
-            assert(!report.mtp_execution);
+            assert(report.mtp_execution);
+            assert(report.speculative_execution);
             assert(report.mtp_requested);
-            assert(report.serialize().find("mtp_execution=0") != std::string::npos);
-            assert(report.execution_blocker ==
-                   "mtp_auxiliary_layers_and_proposal_state");
+            assert(report.serialize().find("mtp_execution=1") != std::string::npos);
+            assert(report.execution_blocker == "none");
         } else if (type.rfind("draft-", 0) == 0) {
+            assert(!report.speculative_execution);
             assert(report.execution_blocker ==
                    "draft_context_and_proposal_state_not_in_hop");
         } else {
+            assert(!report.speculative_execution);
             assert(report.execution_blocker ==
                    "proposal_accept_rollback_state_not_in_hop");
         }

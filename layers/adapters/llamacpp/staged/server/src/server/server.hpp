@@ -56,6 +56,8 @@ private:
     [[nodiscard]] protocol::Frame handle_hop(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_logical_batch(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_physical_batch(const protocol::Frame &request);
+    [[nodiscard]] protocol::Frame handle_physical_settle(const protocol::Frame &request);
+    [[nodiscard]] protocol::Frame handle_physical_release(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_tokenize(const protocol::Frame &request);
     [[nodiscard]] bool execute_hop(const protocol::SequencePayload &input,
                                    protocol::HopPhase phase,

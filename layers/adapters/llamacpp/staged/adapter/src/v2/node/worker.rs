@@ -17,6 +17,7 @@ mod control;
 mod drive;
 mod observe;
 mod release;
+mod settlement;
 
 pub enum WorkerInput {
     Event(Event),
@@ -51,23 +52,29 @@ impl Worker {
     }
 
     pub fn run(mut self) {
-        while let Ok(WorkerInput::Event(event)) = self.receiver.recv() {
+        let mut failed = false;
+        'worker: while let Ok(WorkerInput::Event(event)) = self.receiver.recv() {
             if self.handle(event).is_err() {
+                failed = true;
                 break;
             }
             while let Ok(WorkerInput::Event(event)) = self.receiver.try_recv() {
                 if self.handle(event).is_err() {
-                    return;
+                    failed = true;
+                    break 'worker;
                 }
             }
             if self.drive_first_batches().is_err() {
+                failed = true;
                 break;
             }
         }
         if matches!(self.lifecycle.state(), crate::lifecycle::LoadState::Loaded) {
             let _ = self.lifecycle.unload();
         }
-        self.set_snapshot("closed");
+        if !failed {
+            self.set_snapshot("closed");
+        }
     }
 
     fn handle(&mut self, event: Event) -> Result<(), ()> {
@@ -81,6 +88,8 @@ impl Worker {
             TAIL_BATCH_CONTENT_TYPE => self.tail(event.clone()),
             RELEASE_CONTENT_TYPE => self.release(event.clone()),
             RELEASED_CONTENT_TYPE => self.released(event.clone()),
+            SETTLE_CONTENT_TYPE => self.settle(event.clone()),
+            SETTLED_CONTENT_TYPE => self.settled(event.clone()),
             _ => Err(format!(
                 "unsupported llama adapter content type {content_type}"
             )),
@@ -96,6 +105,9 @@ impl Worker {
         let mut command: InferenceCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid inference payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
+        if command.load_generation != self.state.load_generation {
+            return Err("inference load generation is stale".into());
+        }
         let session = self
             .state
             .sessions
@@ -140,7 +152,9 @@ impl Worker {
                 template: event,
                 reply,
                 prompt_cursor: 0,
-                decode: None,
+                ready: None,
+                after_settlement: None,
+                in_flight: false,
                 generated: 0,
             },
         );
@@ -153,6 +167,14 @@ impl Worker {
         let input = CapsuleSet::decode(&event.payload)
             .map_err(|error| format!("invalid physical capsule: {error:?}"))?;
         let session_id = single_session(&input)?;
+        if input
+            .0
+            .iter()
+            .flat_map(|capsule| &capsule.owners)
+            .any(|owner| owner.load_generation != self.state.load_generation)
+        {
+            return Err("physical batch load generation is stale".into());
+        }
         let session = self
             .state
             .sessions

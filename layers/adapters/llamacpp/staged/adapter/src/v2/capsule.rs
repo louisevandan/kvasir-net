@@ -1,10 +1,12 @@
 use super::Phase;
 mod cursor;
+mod decode;
 mod validate;
 use cursor::Cursor;
+use decode::read_capsule;
 
 const MAGIC: &[u8; 4] = b"P4PB";
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 const MAX_ROWS: usize = 65_536;
 const MAX_TENSORS: usize = 16_384;
 const MAX_CAPSULES: usize = 65_536;
@@ -25,6 +27,7 @@ pub struct Invocation {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RowOwner {
+    pub load_generation: u64,
     pub request_id: String,
     pub sequence_key: String,
     pub session_id: String,
@@ -35,16 +38,32 @@ pub struct RowOwner {
     pub max_tokens: u32,
     pub generated_tokens: u32,
     pub output: bool,
+    pub input_token: i32,
+    pub speculative_id: u64,
+    pub speculative_index: u32,
+    pub speculative_count: u32,
     pub options: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedToken {
+    pub token: i32,
+    pub text: String,
+    pub position: u32,
+    pub stop: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhysicalOutcome {
     pub owner_index: u32,
-    pub token: i32,
-    pub text: String,
-    pub position: u32,
-    pub stop: Option<String>,
+    pub generated: Vec<GeneratedToken>,
+    /// The already sampled base token followed by optional llama.cpp proposal tokens.
+    pub proposal: Vec<i32>,
+    /// Remove target memory in [retain_from, +inf) before the next proposal.
+    pub retain_from: Option<u32>,
+    /// Non-empty when a full-memory target must restore and replay these rows.
+    pub replay_tokens: Vec<i32>,
+    pub replay_position: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +181,7 @@ fn put_capsule(out: &mut Vec<u8>, capsule: &PhysicalCapsule) -> Result<(), Capsu
         out.push(u8::from(*value));
     }
     for owner in &capsule.owners {
+        put_u64(out, owner.load_generation);
         put_string(out, &owner.request_id)?;
         put_string(out, &owner.sequence_key)?;
         put_string(out, &owner.session_id)?;
@@ -170,12 +190,18 @@ fn put_capsule(out: &mut Vec<u8>, capsule: &PhysicalCapsule) -> Result<(), Capsu
         out.push(match owner.phase {
             Phase::Prefill => 0,
             Phase::Decode => 1,
+            Phase::Verify => 2,
+            Phase::Replay => 3,
         });
         out.push(u8::from(owner.output));
         put_u16(out, 0);
         put_u32(out, owner.position);
         put_u32(out, owner.max_tokens);
         put_u32(out, owner.generated_tokens);
+        put_i32(out, owner.input_token);
+        put_u64(out, owner.speculative_id);
+        put_u32(out, owner.speculative_index);
+        put_u32(out, owner.speculative_count);
         put_string(out, &owner.options)?;
     }
     for tensor in &capsule.tensors {
@@ -198,153 +224,25 @@ fn put_capsule(out: &mut Vec<u8>, capsule: &PhysicalCapsule) -> Result<(), Capsu
     }
     for outcome in &capsule.outcomes {
         put_u32(out, outcome.owner_index);
-        put_i32(out, outcome.token);
-        put_u32(out, outcome.position);
-        put_string(out, &outcome.text)?;
-        put_string(out, outcome.stop.as_deref().unwrap_or(""))?;
+        put_u32(out, outcome.generated.len() as u32);
+        put_u32(out, outcome.proposal.len() as u32);
+        put_u32(out, outcome.replay_tokens.len() as u32);
+        put_i32(out, outcome.retain_from.map_or(-1, |value| value as i32));
+        put_u32(out, outcome.replay_position);
+        for generated in &outcome.generated {
+            put_i32(out, generated.token);
+            put_u32(out, generated.position);
+            put_string(out, &generated.text)?;
+            put_string(out, generated.stop.as_deref().unwrap_or(""))?;
+        }
+        for token in &outcome.proposal {
+            put_i32(out, *token);
+        }
+        for token in &outcome.replay_tokens {
+            put_i32(out, *token);
+        }
     }
     Ok(())
-}
-
-fn read_capsule(cursor: &mut Cursor<'_>) -> Result<PhysicalCapsule, CapsuleError> {
-    let execution_id = cursor.u64()?;
-    let capsule_flags = cursor.u32()?;
-    if capsule_flags & !1 != 0 {
-        return Err(CapsuleError::InvalidInvocation);
-    }
-    let terminal = capsule_flags & 1 != 0;
-    let flags = cursor.u32()?;
-    let n_seq_tokens = cursor.u32()?;
-    let n_seqs = cursor.u32()?;
-    let n_seqs_unq = cursor.u32()?;
-    let n_pos = cursor.u32()?;
-    let rows = cursor.u32()? as usize;
-    let sequence_total = cursor.u32()? as usize;
-    let tensor_count = cursor.u32()? as usize;
-    let outcome_count = cursor.u32()? as usize;
-    if rows == 0 || rows > MAX_ROWS || tensor_count > MAX_TENSORS {
-        return Err(CapsuleError::LimitExceeded);
-    }
-    let position_count = rows
-        .checked_mul(n_pos as usize)
-        .ok_or(CapsuleError::IntegerOverflow)?;
-    let positions = (0..position_count)
-        .map(|_| cursor.i32())
-        .collect::<Result<_, _>>()?;
-    let sequence_counts = (0..rows).map(|_| cursor.u32()).collect::<Result<_, _>>()?;
-    let sequence_ids = (0..sequence_total)
-        .map(|_| cursor.i32())
-        .collect::<Result<_, _>>()?;
-    let output = cursor.take(rows)?.iter().map(|value| *value != 0).collect();
-    let mut owners = Vec::with_capacity(rows);
-    for _ in 0..rows {
-        let request_id = cursor.string()?;
-        let sequence_key = cursor.string()?;
-        let session_id = cursor.string()?;
-        let reply = cursor.string()?;
-        let sequence_id = cursor.u32()?;
-        let phase = match cursor.byte()? {
-            0 => Phase::Prefill,
-            1 => Phase::Decode,
-            _ => return Err(CapsuleError::InvalidOwner),
-        };
-        let owner_output = match cursor.byte()? {
-            0 => false,
-            1 => true,
-            _ => return Err(CapsuleError::InvalidOwner),
-        };
-        if cursor.u16()? != 0 {
-            return Err(CapsuleError::InvalidOwner);
-        }
-        let position = cursor.u32()?;
-        let max_tokens = cursor.u32()?;
-        let generated_tokens = cursor.u32()?;
-        let options = cursor.string()?;
-        owners.push(RowOwner {
-            request_id,
-            sequence_key,
-            session_id,
-            reply,
-            sequence_id,
-            phase,
-            position,
-            max_tokens,
-            generated_tokens,
-            output: owner_output,
-            options,
-        });
-    }
-    let mut tensors = Vec::with_capacity(tensor_count);
-    for _ in 0..tensor_count {
-        let tensor_type = cursor.i32()?;
-        let dimensions_count = cursor.byte()? as usize;
-        if cursor.take(3)? != [0, 0, 0] || dimensions_count == 0 || dimensions_count > 4 {
-            return Err(CapsuleError::InvalidTensor);
-        }
-        let dimensions = (0..dimensions_count)
-            .map(|_| cursor.i64())
-            .collect::<Result<_, _>>()?;
-        let strides = (0..dimensions_count)
-            .map(|_| cursor.u64())
-            .collect::<Result<_, _>>()?;
-        let nbytes = cursor.u64()?;
-        let view_offset = cursor.u64()?;
-        let alias_raw = cursor.i32()?;
-        if alias_raw < -1 {
-            return Err(CapsuleError::InvalidTensor);
-        }
-        let name = cursor.string()?;
-        let data_size =
-            usize::try_from(cursor.u64()?).map_err(|_| CapsuleError::IntegerOverflow)?;
-        let data = cursor.take(data_size)?.to_vec();
-        tensors.push(Tensor {
-            descriptor: TensorDescriptor {
-                tensor_type,
-                dimensions,
-                strides,
-                nbytes,
-                view_offset,
-                alias_of: (alias_raw >= 0).then_some(alias_raw as u32),
-                name,
-            },
-            data,
-        });
-    }
-    let mut outcomes = Vec::with_capacity(outcome_count);
-    for _ in 0..outcome_count {
-        let owner_index = cursor.u32()?;
-        let token = cursor.i32()?;
-        let position = cursor.u32()?;
-        let text = cursor.string()?;
-        let stop_value = cursor.string()?;
-        outcomes.push(PhysicalOutcome {
-            owner_index,
-            token,
-            text,
-            position,
-            stop: (!stop_value.is_empty()).then_some(stop_value),
-        });
-    }
-    let capsule = PhysicalCapsule {
-        execution_id,
-        terminal,
-        invocation: Invocation {
-            flags,
-            n_seq_tokens,
-            n_seqs,
-            n_seqs_unq,
-            n_pos,
-            positions,
-            sequence_counts,
-            sequence_ids,
-            output,
-        },
-        owners,
-        tensors,
-        outcomes,
-    };
-    capsule.validate()?;
-    Ok(capsule)
 }
 
 fn put_u16(out: &mut Vec<u8>, value: u16) {

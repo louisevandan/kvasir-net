@@ -71,17 +71,13 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     const bool mtp_requested = std::find(
         params.speculative.types.begin(), params.speculative.types.end(),
         COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
-    const bool speculative_requested = mtp_requested ||
-        params.speculative.has_dft() || std::any_of(
+    const bool unsupported_speculative = params.speculative.has_dft() || std::any_of(
             params.speculative.types.begin(), params.speculative.types.end(),
             [](const common_speculative_type type) {
-                return type != COMMON_SPECULATIVE_TYPE_NONE;
+                return type != COMMON_SPECULATIVE_TYPE_NONE
+                    && type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
             });
-    if (speculative_requested && !config.mtp_ownership_probe) {
-        if (mtp_requested) {
-            return fail("CAPABILITY_UNAVAILABLE: "
-                        "mtp_auxiliary_layers_not_owned_by_stage", error);
-        }
+    if (unsupported_speculative) {
         if (params.speculative.has_dft()) {
             return fail("CAPABILITY_UNAVAILABLE: "
                         "draft_context_and_proposal_state_not_in_hop", error);
@@ -120,12 +116,17 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     if (ctx_ == nullptr) {
         return fail("llama.cpp failed to create the staged context", error);
     }
+    tail_stage_ = config_.layer_end >= llama_model_n_layer(model_);
+    const bool bounded_remove = llama_n_rs_seq(ctx_) > 0;
+    const bool full_remove = llama_model_is_recurrent(model_)
+        || llama_model_is_hybrid(model_);
+    target_seq_rm_type_ = bounded_remove ? COMMON_CONTEXT_SEQ_RM_TYPE_RS
+        : (full_remove ? COMMON_CONTEXT_SEQ_RM_TYPE_FULL
+                       : COMMON_CONTEXT_SEQ_RM_TYPE_PART);
 
-    // This diagnostic path proves that the pinned common speculative driver
-    // can create the second MTP context against the staged full-tail target.
-    // It deliberately stops before proposal/verification so the production
-    // capability remains mtp_execution=0 until HOP rollback is implemented.
-    if (mtp_requested && config.mtp_ownership_probe) {
+    // The tail owns the stock llama.cpp MTP context and speculative driver.
+    // Non-tail stages never load auxiliary MTP tensors or interpret proposals.
+    if (mtp_requested && tail_stage_) {
         auto mtp_params = common_base_params_to_speculative(params_);
         mtp_init_ = common_speculative_init_from_params(mtp_params, model_, ctx_);
         if (mtp_init_ == nullptr || mtp_init_->context() == nullptr) {
@@ -133,19 +134,28 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
         }
         params_.speculative.draft.ctx_tgt = ctx_;
         params_.speculative.draft.ctx_dft = mtp_init_->context();
-        mtp_speculative_.reset(common_speculative_init(params_.speculative, 1));
+        mtp_speculative_.reset(common_speculative_init(
+            params_.speculative, llama_n_seq_max(ctx_)));
         if (mtp_speculative_ == nullptr) {
             return fail("llama.cpp failed to initialize the staged MTP driver", error);
         }
+        draft_seq_rm_type_ = llama_n_rs_seq(mtp_init_->context()) > 0
+            ? COMMON_CONTEXT_SEQ_RM_TYPE_RS
+            : ((llama_model_is_recurrent(model_)
+                    || llama_model_is_hybrid(model_))
+                ? COMMON_CONTEXT_SEQ_RM_TYPE_FULL
+                : COMMON_CONTEXT_SEQ_RM_TYPE_PART);
     }
-
-    tail_stage_ = config_.layer_end >= llama_model_n_layer(model_);
     return true;
 }
 
 void StageRuntime::unload() noexcept {
     mtp_speculative_.reset();
     mtp_init_.reset();
+    physical_checkpoints_.clear();
+    mtp_sequences_.clear();
+    target_seq_rm_type_ = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
+    draft_seq_rm_type_ = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
     if (ctx_ != nullptr) {
         llama_free(ctx_);
         ctx_ = nullptr;
@@ -164,6 +174,7 @@ void StageRuntime::unload() noexcept {
     sampler_options_.clear();
     sampled_tokens_.clear();
     sampled_texts_.clear();
+    pending_texts_.clear();
     next_sequence_id_ = 0;
     tail_stage_ = false;
     // unload() is the only reset path: load() calls it first on every call,
@@ -195,6 +206,7 @@ bool StageRuntime::release_sequence(const std::string & sequence_id,
         sampler_options_.erase(sequence_id);
         sampled_tokens_.erase(sequence_id);
         sampled_texts_.erase(sequence_id);
+        pending_texts_.erase(sequence_id);
         return true;
     }
     (void) llama_memory_seq_rm(llama_get_memory(ctx_), found->second, 0, -1);
@@ -204,6 +216,7 @@ bool StageRuntime::release_sequence(const std::string & sequence_id,
     sampler_options_.erase(sequence_id);
     sampled_tokens_.erase(sequence_id);
     sampled_texts_.erase(sequence_id);
+    pending_texts_.erase(sequence_id);
     if (std::getenv("P4_STAGED_TRACE_SEQUENCE_RELEASE") != nullptr) {
         std::fprintf(stderr, "P4_STAGED_RUNTIME_RELEASE_DONE sequence=%s after=%zu\\n",
                      sequence_id.c_str(), sequence_ids_.size());
@@ -220,11 +233,23 @@ bool StageRuntime::release_physical_sequence(
         if (error != nullptr) *error = "invalid physical sequence release";
         return false;
     }
-    (void) llama_memory_seq_rm(llama_get_memory(ctx_), sequence_id, 0, -1);
+    if (!llama_memory_seq_rm(llama_get_memory(ctx_), sequence_id, 0, -1)) {
+        if (error != nullptr) *error = "llama.cpp rejected target sequence release";
+        return false;
+    }
+    if (mtp_context() != nullptr && !llama_memory_seq_rm(
+            llama_get_memory(mtp_context()), sequence_id, 0, -1)) {
+        if (error != nullptr) *error = "llama.cpp rejected MTP sequence release";
+        return false;
+    }
+    common_speculative_end(mtp_speculative_.get(), sequence_id);
     samplers_.erase(sequence_key);
     sampler_options_.erase(sequence_key);
     sampled_tokens_.erase(sequence_key);
     sampled_texts_.erase(sequence_key);
+    pending_texts_.erase(sequence_key);
+    physical_checkpoints_.erase(sequence_id);
+    mtp_sequences_.erase(sequence_id);
     return true;
 }
 
@@ -333,7 +358,8 @@ bool StageRuntime::state_executor(llama_linkcpp_state_invocation * invocation,
                                   void * user_data) {
     auto * runtime = static_cast<StageRuntime *>(user_data);
     if (runtime == nullptr || invocation == nullptr || invocation->version != 1
-        || invocation->ctx != runtime->ctx_
+        || (invocation->ctx != runtime->ctx_
+            && invocation->ctx != runtime->mtp_context())
         || (invocation->flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) != 0) {
         return false;
     }

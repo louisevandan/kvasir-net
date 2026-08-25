@@ -212,7 +212,9 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_library(p4_staged_llama_runtime STATIC
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_sample.cpp"
+         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_sample.cpp"
+         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_mtp.cpp"
+         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_mtp_process.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/physical_wire_decode.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/physical_wire_encode.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_hop.cpp"

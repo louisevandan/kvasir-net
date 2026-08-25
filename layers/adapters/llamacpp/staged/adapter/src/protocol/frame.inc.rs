@@ -30,6 +30,7 @@ pub enum Operation {
     Tokenize = 19,
     Tokenized = 20,
     PhysicalRelease = 21,
+    PhysicalSettle = 22,
 }
 
 impl TryFrom<u8> for Operation {
@@ -58,6 +59,7 @@ impl TryFrom<u8> for Operation {
             19 => Self::Tokenize,
             20 => Self::Tokenized,
             21 => Self::PhysicalRelease,
+            22 => Self::PhysicalSettle,
             _ => return Err(FrameError::UnknownOperation(value)),
         };
         Ok(operation)

@@ -14,6 +14,26 @@ struct CompletingAdapter {
     target: Endpoint,
 }
 
+struct ClosedAdapter;
+
+impl NodeAdapter for ClosedAdapter {
+    fn kind(&self) -> &str {
+        "closed-test"
+    }
+    fn try_offer(&self, _event: Event) -> Result<(), OfferError> {
+        Err(OfferError::Closed)
+    }
+    fn try_take(&self) -> Poll {
+        Poll::Closed
+    }
+    fn poll_take(&self, _context: &mut Context<'_>) -> TaskPoll<Poll> {
+        TaskPoll::Ready(Poll::Closed)
+    }
+    fn snapshot(&self) -> String {
+        "logical_batch_failed:native exited 17".into()
+    }
+}
+
 impl NodeAdapter for CompletingAdapter {
     fn kind(&self) -> &str {
         "test"
@@ -95,4 +115,22 @@ async fn node_moves_adapter_completion_back_to_agent_without_callback_reentry() 
         .unwrap();
     assert_eq!(completed.payload, vec![9]);
     task.abort();
+}
+
+#[tokio::test]
+async fn closed_completion_reports_the_adapter_failure_snapshot() {
+    let own = Address::tcp("127.0.0.1", 52001);
+    let (agent_tx, _agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(1);
+    let (outbound_tx, _outbound_rx) = bounded_queue(1);
+    let (_node_tx, node_rx) = bounded_queue(1);
+    let broker = Arc::new(EventBroker::new(own, agent_tx, outer_tx, outbound_tx, 1));
+    let error = EventNode::new(Arc::new(ClosedAdapter), node_rx, broker)
+        .run()
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        EventNodeError::CompletionClosed("logical_batch_failed:native exited 17".into())
+    );
 }

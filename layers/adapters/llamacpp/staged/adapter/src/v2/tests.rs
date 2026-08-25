@@ -1,5 +1,11 @@
 use super::*;
 
+#[test]
+fn unload_requires_an_explicit_model_generation() {
+    assert!(UnloadCommand { load_generation: 0 }.validate().is_err());
+    assert!(UnloadCommand { load_generation: 7 }.validate().is_ok());
+}
+
 fn capsule() -> PhysicalCapsule {
     PhysicalCapsule {
         execution_id: 7,
@@ -17,6 +23,7 @@ fn capsule() -> PhysicalCapsule {
         },
         owners: vec![
             RowOwner {
+                load_generation: 1,
                 request_id: "r1".into(),
                 sequence_key: "s1".into(),
                 session_id: "pipeline-a".into(),
@@ -27,9 +34,14 @@ fn capsule() -> PhysicalCapsule {
                 max_tokens: 500,
                 generated_tokens: 4,
                 output: true,
+                input_token: 41,
+                speculative_id: 0,
+                speculative_index: 0,
+                speculative_count: 0,
                 options: "{}".into(),
             },
             RowOwner {
+                load_generation: 1,
                 request_id: "r2".into(),
                 sequence_key: "s2".into(),
                 session_id: "pipeline-a".into(),
@@ -40,6 +52,10 @@ fn capsule() -> PhysicalCapsule {
                 max_tokens: 500,
                 generated_tokens: 0,
                 output: false,
+                input_token: 42,
+                speculative_id: 0,
+                speculative_index: 0,
+                speculative_count: 0,
                 options: "{}".into(),
             },
         ],
@@ -62,6 +78,32 @@ fn capsule() -> PhysicalCapsule {
 #[test]
 fn physical_capsule_round_trips_exact_invocation_and_owners() {
     let expected = CapsuleSet(vec![capsule()]);
+    let encoded = expected.encode().unwrap();
+    assert_eq!(CapsuleSet::decode(&encoded).unwrap(), expected);
+}
+
+#[test]
+fn checkpoint_only_outcome_round_trips_without_premature_tokens() {
+    let mut replay = capsule();
+    replay.terminal = true;
+    replay.tensors.clear();
+    replay.invocation.positions.truncate(1);
+    replay.invocation.sequence_counts.truncate(1);
+    replay.invocation.sequence_ids.truncate(1);
+    replay.invocation.output.truncate(1);
+    replay.owners.truncate(1);
+    replay.owners[0].phase = Phase::Verify;
+    replay.owners[0].speculative_id = 17;
+    replay.owners[0].speculative_count = 1;
+    replay.outcomes.push(PhysicalOutcome {
+        owner_index: 0,
+        generated: Vec::new(),
+        proposal: Vec::new(),
+        retain_from: Some(7),
+        replay_tokens: vec![41, 99, 100],
+        replay_position: 4,
+    });
+    let expected = CapsuleSet(vec![replay]);
     let encoded = expected.encode().unwrap();
     assert_eq!(CapsuleSet::decode(&encoded).unwrap(), expected);
 }
@@ -105,7 +147,78 @@ fn demand(sequence_id: u32, phase: Phase, rows: usize) -> Demand {
         compatibility: "completion|tokens|no-lora".into(),
         phase,
         available_rows: rows,
+        atomic: matches!(phase, Phase::Verify | Phase::Replay),
     }
+}
+
+#[test]
+fn speculative_verify_is_allocated_as_one_physical_transaction() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![demand(0, Phase::Verify, 5), demand(1, Phase::Prefill, 20)];
+    let plan = scheduler.plan(&demands, 10).unwrap();
+    assert_eq!(plan.last().unwrap().phase, Phase::Verify);
+    assert_eq!(plan.last().unwrap().rows, 5);
+    assert_eq!(plan[0].phase, Phase::Prefill);
+    assert_eq!(plan[0].rows, 5);
+    assert_eq!(
+        scheduler.plan(&[demand(0, Phase::Verify, 9)], 8),
+        Err(SchedulerError::AtomicDemandExceedsCapacity)
+    );
+}
+
+#[test]
+fn atomic_group_trails_ordinary_rows_in_the_same_ubatch() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![
+        demand(0, Phase::Verify, 5),
+        demand(1, Phase::Prefill, 20),
+        demand(2, Phase::Decode, 1),
+    ];
+    let mixed = scheduler
+        .plan_with_physical_capacity(&demands, 16, 12)
+        .unwrap();
+    assert_eq!(mixed.last().unwrap().phase, Phase::Verify);
+    assert_eq!(mixed.last().unwrap().rows, 5);
+    assert!(
+        mixed
+            .iter()
+            .all(|allocation| allocation.phase != Phase::Decode)
+    );
+    assert!(
+        mixed
+            .iter()
+            .any(|allocation| allocation.phase == Phase::Prefill)
+    );
+    assert_eq!(
+        mixed
+            .iter()
+            .map(|allocation| allocation.rows)
+            .sum::<usize>(),
+        10
+    );
+    assert!(mixed.iter().all(|allocation| allocation.rows == 5));
+}
+
+#[test]
+fn settlement_replay_must_end_exactly_at_retain_boundary() {
+    let valid = SettlementCommand {
+        load_generation: 1,
+        session_id: "pipeline-a".into(),
+        sequences: vec![SettlementSequence {
+            key: "request".into(),
+            id: 0,
+            retain_from: 12,
+            replay_tokens: vec![1, 2],
+            replay_position: 10,
+        }],
+    };
+    assert_eq!(valid.validate(), Ok(()));
+    let mut invalid = valid.clone();
+    invalid.sequences[0].replay_position = 9;
+    assert!(invalid.validate().is_err());
+    invalid.sequences[0].replay_tokens.clear();
+    invalid.sequences[0].replay_position = 1;
+    assert!(invalid.validate().is_err());
 }
 
 #[test]
