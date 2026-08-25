@@ -74,25 +74,32 @@ bool StageRuntime::prepare_physical_owners(
 }
 
 bool StageRuntime::make_mtp_proposal(
-        const PhysicalOwner & owner,
+        llama_seq_id sequence_id,
+        std::uint32_t generated_before,
+        std::uint32_t max_tokens,
         llama_token sampled,
         llama_pos sampled_position,
         std::uint32_t generated_now,
         std::vector<llama_token> * proposal,
         std::string * error) {
     if (proposal == nullptr || mtp_speculative_ == nullptr || mtp_context() == nullptr
-        || owner.sequence_id >= llama_n_seq_max(ctx_) || sampled_position < 0) {
+        || sequence_id < 0
+        || static_cast<std::uint32_t>(sequence_id) >= llama_n_seq_max(ctx_)
+        || sampled_position < 0) {
         return mtp_fail("invalid MTP proposal request", error);
     }
-    auto & sequence = mtp_sequences_[owner.sequence_id];
+    auto & sequence = mtp_sequences_[sequence_id];
+    if (!sequence.begun || sequence.pending_proposal.has_value()) {
+        return mtp_fail("MTP proposal preceded prompt completion or settlement", error);
+    }
     sequence.proposal.clear();
     proposal->clear();
     proposal->push_back(sampled);
-    if (owner.generated_tokens > owner.max_tokens
-        || generated_now > owner.max_tokens - owner.generated_tokens) {
+    if (generated_before > max_tokens
+        || generated_now > max_tokens - generated_before) {
         return mtp_fail("MTP generated-token accounting overflow", error);
     }
-    const auto remaining = owner.max_tokens - owner.generated_tokens - generated_now;
+    const auto remaining = max_tokens - generated_before - generated_now;
     const auto physical_draft_max = llama_n_ubatch(ctx_) > 0
         ? llama_n_ubatch(ctx_) - 1 : 0;
     const auto request_draft_max = remaining > 0 ? remaining - 1 : 0;
@@ -102,7 +109,7 @@ bool StageRuntime::make_mtp_proposal(
         return true;
     }
     auto & params = common_speculative_get_draft_params(
-        mtp_speculative_.get(), owner.sequence_id);
+        mtp_speculative_.get(), sequence_id);
     params = {
         true,
         static_cast<std::int32_t>(draft_max),
@@ -112,14 +119,14 @@ bool StageRuntime::make_mtp_proposal(
         &sequence.proposal,
     };
     const auto memory = llama_get_memory(mtp_context());
-    const auto pos_min = llama_memory_seq_pos_min(memory, owner.sequence_id);
-    const auto pos_max = llama_memory_seq_pos_max(memory, owner.sequence_id);
+    const auto pos_min = llama_memory_seq_pos_min(memory, sequence_id);
+    const auto pos_max = llama_memory_seq_pos_max(memory, sequence_id);
     sequence.draft_checkpoint.clear();
     sequence.draft_checkpoint.update_pos(
         pos_max >= pos_min ? pos_max - pos_min + 1 : 0, pos_min, pos_max);
     if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
         sequence.draft_checkpoint.update_dft(
-            mtp_context(), owner.sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+            mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
     }
     common_speculative_draft(mtp_speculative_.get());
     if (sequence.proposal.size() > draft_max) {
@@ -127,18 +134,18 @@ bool StageRuntime::make_mtp_proposal(
     }
     if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
         sequence.draft_checkpoint.load_dft(
-            mtp_context(), owner.sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+            mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
         llama_synchronize(mtp_context());
     }
     if (!llama_memory_seq_rm(
-            memory, owner.sequence_id, sequence.draft_checkpoint.pos_max + 1, -1)) {
+            memory, sequence_id, sequence.draft_checkpoint.pos_max + 1, -1)) {
         return mtp_fail("llama.cpp rejected post-draft rollback", error);
     }
     proposal->insert(proposal->end(), sequence.proposal.begin(), sequence.proposal.end());
     if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
         && sequence.proposal.size() > llama_n_rs_seq(mtp_context())) {
         sequence.draft_checkpoint.update_dft(
-            mtp_context(), owner.sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+            mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
     }
     sequence.proposal = *proposal;
     return true;
@@ -207,6 +214,7 @@ bool StageRuntime::sample_physical_mtp(
     }
     llama_tokens draft(submitted.begin() + 1, submitted.end());
     const bool replay = first.phase == PhysicalPhase::Replay;
+    const auto n_rollback_max = submitted.size() - 1;
     auto sampler_checkpoint = physical_checkpoints_.find(first.sequence_id)
             != physical_checkpoints_.end()
         ? common_sampler_ptr(common_sampler_clone(sampler_it->second.get()))
@@ -229,11 +237,19 @@ bool StageRuntime::sample_physical_mtp(
         || accepted.size() != submitted.size())) {
         return mtp_fail("MTP checkpoint replay diverged", error);
     }
-    const bool checkpoint_replay = !replay
-        && accepted.size() < submitted.size()
-        && physical_checkpoints_.find(first.sequence_id)
-            != physical_checkpoints_.end();
+    const auto n_rollback = submitted.size() - accepted.size();
+    if (n_rollback > n_rollback_max) {
+        return mtp_fail("MTP rollback exceeds the submitted draft", error);
+    }
+    const bool use_checkpoint = target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL
+        || (target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
+            && n_rollback > llama_n_rs_seq(ctx_));
+    const bool checkpoint_replay = !replay && n_rollback > 0 && use_checkpoint;
     if (checkpoint_replay) {
+        if (physical_checkpoints_.find(first.sequence_id) == physical_checkpoints_.end()
+            || !sampler_checkpoint) {
+            return mtp_fail("MTP rollback requires a missing checkpoint", error);
+        }
         sampler_it->second = std::move(sampler_checkpoint);
         auto & sequence = sequence_it->second;
         sequence.proposal.clear();
@@ -257,6 +273,9 @@ bool StageRuntime::sample_physical_mtp(
         mtp_speculative_.get(), first.sequence_id,
         static_cast<std::uint16_t>(accepted.size() - 1));
     auto & sequence = sequence_it->second;
+    if (sequence.pending_proposal.has_value()) {
+        return mtp_fail("MTP verification overlapped an unsettled proposal", error);
+    }
     sequence.replay_pending = false;
     sequence.history.insert(
         sequence.history.end(), submitted.begin(),
@@ -286,7 +305,7 @@ bool StageRuntime::sample_physical_mtp(
         outcome.generated.push_back(std::move(generated));
         if (stopped) break;
     }
-    if (!stopped && accepted.size() < submitted.size()) {
+    if (!stopped && n_rollback > 0) {
         if (accepted.size() > std::numeric_limits<std::uint32_t>::max()
             || first.position > std::numeric_limits<std::uint32_t>::max()
                 - static_cast<std::uint32_t>(accepted.size())) {
@@ -294,60 +313,25 @@ bool StageRuntime::sample_physical_mtp(
         }
         const auto retain = first.position + static_cast<std::uint32_t>(accepted.size());
         outcome.retain_from = retain;
-        if (mtp_context() != nullptr && !llama_memory_seq_rm(
-                llama_get_memory(mtp_context()), first.sequence_id, retain, -1)) {
-            return mtp_fail("llama.cpp rejected draft settlement", error);
-        }
+        sequence.pending_proposal = MtpPendingProposal{
+            accepted.back(),
+            static_cast<llama_pos>(outcome.generated.back().position),
+            first.generated_tokens,
+            static_cast<std::uint32_t>(outcome.generated.size()),
+            first.max_tokens,
+        };
     } else {
         physical_checkpoints_.erase(first.sequence_id);
     }
-    if (!stopped) {
+    if (!stopped && n_rollback == 0) {
         if (!make_mtp_proposal(
-                first, accepted.back(), outcome.generated.back().position,
+                static_cast<llama_seq_id>(first.sequence_id),
+                first.generated_tokens, first.max_tokens,
+                accepted.back(), outcome.generated.back().position,
                 static_cast<std::uint32_t>(outcome.generated.size()),
                 &outcome.proposal, error)) return false;
     }
     outcomes->push_back(std::move(outcome));
-    return true;
-}
-
-bool StageRuntime::settle_physical_sequence(
-        llama_seq_id sequence_id,
-        llama_pos retain_from,
-        bool restore_checkpoint,
-        std::string * error) {
-    if (!loaded() || sequence_id < 0 || retain_from < 0
-        || static_cast<std::uint32_t>(sequence_id) >= llama_n_seq_max(ctx_)) {
-        return mtp_fail("invalid physical settlement", error);
-    }
-    auto checkpoint = physical_checkpoints_.find(sequence_id);
-    if (restore_checkpoint || checkpoint != physical_checkpoints_.end()) {
-        if (checkpoint == physical_checkpoints_.end()) {
-            return mtp_fail("physical settlement checkpoint is missing", error);
-        }
-        checkpoint->second.load_tgt(
-            ctx_, sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-        llama_synchronize(ctx_);
-        physical_checkpoints_.erase(checkpoint);
-    } else if (!llama_memory_seq_rm(
-            llama_get_memory(ctx_), sequence_id, retain_from, -1)) {
-        return mtp_fail("llama.cpp rejected physical settlement", error);
-    }
-    if (auto found = mtp_sequences_.find(sequence_id); found != mtp_sequences_.end()) {
-        auto & sequence = found->second;
-        if (!sequence.draft_checkpoint.data_dft.empty()) {
-            sequence.draft_checkpoint.load_dft(
-                mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-            llama_synchronize(mtp_context());
-        } else if (mtp_context() != nullptr && !llama_memory_seq_rm(
-                llama_get_memory(mtp_context()), sequence_id, retain_from, -1)) {
-            return mtp_fail("llama.cpp rejected draft settlement", error);
-        }
-        if (!sequence.replay_pending) {
-            const auto keep = static_cast<std::size_t>(retain_from);
-            if (sequence.history.size() > keep) sequence.history.resize(keep);
-        }
-    }
     return true;
 }
 

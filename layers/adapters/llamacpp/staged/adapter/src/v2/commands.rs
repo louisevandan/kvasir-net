@@ -203,6 +203,10 @@ pub struct SettlementSequence {
     #[serde(default)]
     pub replay_tokens: Vec<i32>,
     pub replay_position: u32,
+    /// Provider-neutral continuation produced only by the terminal concrete
+    /// adapter after every pipeline stage has applied this settlement.
+    #[serde(default)]
+    pub proposal: Vec<i32>,
 }
 
 impl SettlementCommand {
@@ -212,6 +216,7 @@ impl SettlementCommand {
             || self.sequences.is_empty()
             || self.sequences.iter().any(|value| {
                 value.key.is_empty()
+                    || (!value.replay_tokens.is_empty() && !value.proposal.is_empty())
                     || if value.replay_tokens.is_empty() {
                         value.replay_position != 0
                     } else {

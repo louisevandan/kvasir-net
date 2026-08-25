@@ -89,7 +89,10 @@ bool StageRuntime::sample_physical_outputs(
         if (generated.stop.empty()) {
             if (mtp_speculative_ != nullptr) {
                 if (!make_mtp_proposal(
-                        owners[index], token, position,
+                        static_cast<llama_seq_id>(owners[index].sequence_id),
+                        owners[index].generated_tokens,
+                        owners[index].max_tokens,
+                        token, position,
                         1,
                         &outcome.proposal, error)) return false;
             } else {

@@ -210,6 +210,7 @@ fn settlement_replay_must_end_exactly_at_retain_boundary() {
             retain_from: 12,
             replay_tokens: vec![1, 2],
             replay_position: 10,
+            proposal: Vec::new(),
         }],
     };
     assert_eq!(valid.validate(), Ok(()));
@@ -219,6 +220,15 @@ fn settlement_replay_must_end_exactly_at_retain_boundary() {
     invalid.sequences[0].replay_tokens.clear();
     invalid.sequences[0].replay_position = 1;
     assert!(invalid.validate().is_err());
+
+    let mut completed = valid.clone();
+    completed.sequences[0].replay_tokens.clear();
+    completed.sequences[0].replay_position = 0;
+    completed.sequences[0].proposal = vec![3, 4];
+    assert_eq!(completed.validate(), Ok(()));
+    completed.sequences[0].replay_tokens = vec![1, 2];
+    completed.sequences[0].replay_position = 10;
+    assert!(completed.validate().is_err());
 }
 
 #[test]

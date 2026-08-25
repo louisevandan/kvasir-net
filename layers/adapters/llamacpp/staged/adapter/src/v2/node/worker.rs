@@ -16,6 +16,7 @@ use std::time::Duration;
 mod control;
 mod drive;
 mod observe;
+mod proposal;
 mod release;
 mod settlement;
 

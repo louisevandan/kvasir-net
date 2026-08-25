@@ -16,9 +16,14 @@ pub struct RequestState {
     pub reply: String,
     pub prompt_cursor: usize,
     pub ready: Option<ReadyRows>,
-    pub after_settlement: Option<ReadyRows>,
+    pub after_settlement: Option<SettlementContinuation>,
     pub in_flight: bool,
     pub generated: u32,
+}
+
+pub enum SettlementContinuation {
+    Proposal { position: u32 },
+    Replay(ReadyRows),
 }
 
 #[derive(Clone, Debug)]

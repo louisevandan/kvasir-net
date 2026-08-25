@@ -41,10 +41,19 @@ struct MtpHopObservation final {
     bool eos = false;
 };
 
+struct MtpPendingProposal final {
+    llama_token sampled = LLAMA_TOKEN_NULL;
+    llama_pos sampled_position = -1;
+    std::uint32_t generated_before = 0;
+    std::uint32_t generated_now = 0;
+    std::uint32_t max_tokens = 0;
+};
+
 struct MtpPhysicalSequence final {
     llama_tokens history;
     llama_tokens proposal;
     common_prompt_checkpoint draft_checkpoint;
+    std::optional<MtpPendingProposal> pending_proposal;
     bool replay_pending = false;
     bool begun = false;
 };
@@ -111,8 +120,9 @@ public:
         std::string * error = nullptr);
     [[nodiscard]] bool settle_physical_sequence(
         llama_seq_id sequence_id,
-        llama_pos retain_from,
+        llama_pos rollback_from,
         bool restore_checkpoint,
+        std::vector<llama_token> * proposal,
         std::string * error = nullptr);
 
     // Set by any HOP path when a decode (or a step that runs after a
@@ -253,7 +263,8 @@ private:
         std::size_t, std::size_t,
         std::vector<PhysicalOutcome> *, std::string *);
     [[nodiscard]] bool make_mtp_proposal(
-        const PhysicalOwner &, llama_token, llama_pos, std::uint32_t,
+        llama_seq_id, std::uint32_t, std::uint32_t,
+        llama_token, llama_pos, std::uint32_t,
         std::vector<llama_token> *, std::string *);
     [[nodiscard]] bool prepare_physical_owners(
         const std::vector<PhysicalOwner> &, std::string *);

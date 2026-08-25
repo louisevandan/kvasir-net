@@ -73,12 +73,29 @@ protocol::Frame Session::handle_physical_settle(
         return error("PHYSICAL_SETTLE rejected: inconsistent settlement");
     }
     std::string detail;
+    std::vector<llama_token> proposal;
+    const auto rollback_from = replay_count == 0 ? retain_from : replay_position;
     if (!llama_runtime_->settle_physical_sequence(
-            static_cast<llama_seq_id>(id), static_cast<llama_pos>(retain_from),
-            false, &detail)) {
+            static_cast<llama_seq_id>(id), static_cast<llama_pos>(rollback_from),
+            replay_count != 0, &proposal, &detail)) {
         return error("PHYSICAL_SETTLE failed: " + detail);
     }
-    return status(protocol::Operation::PhysicalSettle, "SEQUENCE_SETTLED");
+    if (proposal.size() > std::numeric_limits<std::uint32_t>::max()) {
+        return error("PHYSICAL_SETTLE failed: proposal is too large");
+    }
+    std::vector<std::uint8_t> body;
+    body.reserve(4 + proposal.size() * 4);
+    const auto count = static_cast<std::uint32_t>(proposal.size());
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        body.push_back(static_cast<std::uint8_t>(count >> shift));
+    }
+    for (const auto token : proposal) {
+        const auto value = static_cast<std::uint32_t>(token);
+        for (unsigned shift = 0; shift < 32; shift += 8) {
+            body.push_back(static_cast<std::uint8_t>(value >> shift));
+        }
+    }
+    return protocol::Frame::make(protocol::Operation::PhysicalSettle, std::move(body));
 #endif
 }
 

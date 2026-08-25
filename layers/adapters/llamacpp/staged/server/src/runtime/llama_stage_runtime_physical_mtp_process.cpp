@@ -21,12 +21,6 @@ bool StageRuntime::process_physical_mtp(
             if (error != nullptr) *error = "MTP owner sequence is outside the loaded context";
             return false;
         }
-        auto & sequence = mtp_sequences_[owner.sequence_id];
-        if (!sequence.begun) {
-            common_speculative_begin(
-                mtp_speculative_.get(), owner.sequence_id, sequence.history);
-            sequence.begun = true;
-        }
     }
 
     // A non-first pipeline stage receives embeddings, while upstream MTP's
@@ -59,9 +53,22 @@ bool StageRuntime::process_physical_mtp(
         return false;
     }
     for (const auto & owner : owners) {
+        auto & sequence = mtp_sequences_[owner.sequence_id];
         if (owner.phase == PhysicalPhase::Prefill
             || owner.phase == PhysicalPhase::Decode) {
-            mtp_sequences_[owner.sequence_id].history.push_back(owner.input_token);
+            sequence.history.push_back(owner.input_token);
+        }
+        if (owner.phase == PhysicalPhase::Prefill && owner.output) {
+            if (sequence.begun) {
+                if (error != nullptr) *error = "speculative generation began more than once";
+                return false;
+            }
+            common_speculative_begin(
+                mtp_speculative_.get(), owner.sequence_id, sequence.history);
+            sequence.begun = true;
+        } else if (owner.phase != PhysicalPhase::Prefill && !sequence.begun) {
+            if (error != nullptr) *error = "speculative work preceded prompt completion";
+            return false;
         }
     }
     return true;

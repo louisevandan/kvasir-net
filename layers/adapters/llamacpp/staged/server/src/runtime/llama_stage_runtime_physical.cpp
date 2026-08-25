@@ -208,8 +208,10 @@ bool StageRuntime::execute_first_batch(
     }
     if (!atomic_is_terminal) {
         const auto sequence_id = static_cast<llama_seq_id>(atomic->sequence_id);
+        std::vector<llama_token> ignored_proposal;
         if (!settle_physical_sequence(
-                sequence_id, static_cast<llama_pos>(atomic->position), true, error)) {
+                sequence_id, static_cast<llama_pos>(atomic->position), true,
+                &ignored_proposal, error)) {
             captured_executions_.clear();
             return false;
         }

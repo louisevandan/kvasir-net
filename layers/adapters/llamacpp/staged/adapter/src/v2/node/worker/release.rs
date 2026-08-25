@@ -76,7 +76,15 @@ impl Worker {
             }
             let Some((owner, outcome)) = outcome else {
                 if phase == Phase::Replay {
-                    request.ready = request.after_settlement.take();
+                    request.ready = match request.after_settlement.take() {
+                        Some(super::super::state::SettlementContinuation::Replay(rows)) => {
+                            Some(rows)
+                        }
+                        Some(super::super::state::SettlementContinuation::Proposal { .. }) => {
+                            return Err("replay completed with a proposal continuation".into());
+                        }
+                        None => None,
+                    };
                 }
                 request.in_flight = false;
                 continue;
@@ -107,12 +115,15 @@ impl Worker {
                 {
                     return Err("checkpoint replay decision is inconsistent".into());
                 }
-                request.after_settlement = Some(super::super::state::ReadyRows {
-                    phase: Phase::Replay,
-                    tokens: outcome.replay_tokens.clone(),
-                    position: outcome.replay_position,
-                    speculative_id: owner.speculative_id,
-                });
+                request.after_settlement =
+                    Some(super::super::state::SettlementContinuation::Replay(
+                        super::super::state::ReadyRows {
+                            phase: Phase::Replay,
+                            tokens: outcome.replay_tokens.clone(),
+                            position: outcome.replay_position,
+                            speculative_id: owner.speculative_id,
+                        },
+                    ));
                 settlements.push(SettlementSequence {
                     key: key.clone(),
                     id: owner.sequence_id,
@@ -121,10 +132,11 @@ impl Worker {
                         .expect("checkpoint replay has a settlement boundary"),
                     replay_tokens: outcome.replay_tokens,
                     replay_position: outcome.replay_position,
+                    proposal: Vec::new(),
                 });
                 continue;
             }
-            if outcome.proposal.is_empty() {
+            if outcome.proposal.is_empty() && outcome.retain_from.is_none() {
                 return Err("continuing tail decision has no proposal".into());
             }
             let position = if let Some(token) = outcome.generated.last() {
@@ -142,44 +154,26 @@ impl Worker {
             // llama.cpp strategy either returns one target token (ordinary
             // Decode) or an atomic multi-token proposal (Verify); the queue
             // layer must not enable or disable a named strategy at runtime.
-            let speculative = outcome.proposal.len() > 1;
-            let speculative_id = if speculative {
-                let value = self.state.next_speculative_id;
-                if value == 0 {
-                    return Err("speculative identity exhausted".into());
-                }
-                self.state.next_speculative_id = value
-                    .checked_add(1)
-                    .ok_or_else(|| "speculative identity exhausted".to_owned())?;
-                value
-            } else {
-                0
-            };
-            let next = super::super::state::ReadyRows {
-                phase: if speculative {
-                    Phase::Verify
-                } else {
-                    Phase::Decode
-                },
-                tokens: if speculative {
-                    outcome.proposal
-                } else {
-                    outcome.proposal.into_iter().take(1).collect()
-                },
-                position,
-                speculative_id,
-            };
             if let Some(retain_from) = outcome.retain_from {
-                request.after_settlement = Some(next);
+                if !outcome.proposal.is_empty() {
+                    return Err("settlement decision created a proposal before settlement".into());
+                }
+                request.after_settlement =
+                    Some(super::super::state::SettlementContinuation::Proposal { position });
                 settlements.push(SettlementSequence {
                     key: key.clone(),
                     id: owner.sequence_id,
                     retain_from,
                     replay_tokens: outcome.replay_tokens,
                     replay_position: outcome.replay_position,
+                    proposal: Vec::new(),
                 });
             } else {
-                request.ready = Some(next);
+                request.ready = Some(super::proposal::ready_from_proposal(
+                    &mut self.state.next_speculative_id,
+                    outcome.proposal,
+                    position,
+                )?);
                 request.in_flight = false;
                 if phase == Phase::Verify {
                     resolved_verify_fence = Some(key.clone());
@@ -190,12 +184,19 @@ impl Worker {
             return Err("tail decision has no completed request rows".into());
         }
         if !settlements.is_empty() {
-            let command = SettlementCommand {
+            let mut command = SettlementCommand {
                 load_generation: self.state.load_generation,
                 session_id: session_id.clone(),
                 sequences: settlements,
             };
-            self.settle_stage_sequences(&command.sequences)?;
+            self.settle_stage_sequences(&mut command.sequences)?;
+            if command
+                .sequences
+                .iter()
+                .any(|sequence| !sequence.proposal.is_empty())
+            {
+                return Err("first-stage settlement produced a proposal".into());
+            }
             self.emit_json(
                 &event,
                 session.next.clone().expect("validated first session next"),
