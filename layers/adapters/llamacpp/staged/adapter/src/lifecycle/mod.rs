@@ -62,6 +62,10 @@ impl<C> LlamaLifecycle<C> {
             .and_then(|server| server.ready_info())
             .is_some_and(|ready| ready.physical_batch)
     }
+
+    pub fn ready_info(&self) -> Option<&crate::process::ReadyInfo> {
+        self.server.as_ref().and_then(|server| server.ready_info())
+    }
 }
 
 impl<C: ServerControl> LlamaLifecycle<C> {
@@ -147,6 +151,10 @@ mod tests {
                     server_id: "fake".into(),
                     transactions: false,
                     physical_batch: true,
+                    n_ctx: 512,
+                    n_batch: 64,
+                    n_ubatch: 64,
+                    n_seq_max: 1,
                 }))
             }
         }

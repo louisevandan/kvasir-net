@@ -74,6 +74,18 @@ public:
     [[nodiscard]] const LoadConfig & config() const noexcept { return config_; }
     [[nodiscard]] llama_context * context() const noexcept { return ctx_; }
     [[nodiscard]] const llama_model * model() const noexcept { return model_; }
+    [[nodiscard]] std::uint32_t context_size() const noexcept {
+        return ctx_ == nullptr ? 0 : llama_n_ctx(ctx_);
+    }
+    [[nodiscard]] std::uint32_t batch_size() const noexcept {
+        return ctx_ == nullptr ? 0 : llama_n_batch(ctx_);
+    }
+    [[nodiscard]] std::uint32_t ubatch_size() const noexcept {
+        return ctx_ == nullptr ? 0 : llama_n_ubatch(ctx_);
+    }
+    [[nodiscard]] std::uint32_t sequence_capacity() const noexcept {
+        return ctx_ == nullptr ? 0 : llama_n_seq_max(ctx_);
+    }
     [[nodiscard]] llama_context * mtp_context() const noexcept {
         return mtp_init_ == nullptr ? nullptr : mtp_init_->context();
     }
@@ -131,6 +143,7 @@ public:
     // the current HOP newly created, so once this is true the only way back
     // to a clean state is a fresh load(), which starts by calling unload().
     [[nodiscard]] bool hop_memory_dirty() const noexcept { return hop_memory_dirty_; }
+    void quarantine_physical_memory() noexcept { hop_memory_dirty_ = true; }
     [[nodiscard]] bool set_input(int32_t index, const void * data, std::size_t size,
                                  std::string * error = nullptr);
     [[nodiscard]] bool get_output(int32_t index, void * data, std::size_t size,

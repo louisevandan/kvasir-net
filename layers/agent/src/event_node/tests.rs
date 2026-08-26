@@ -70,7 +70,7 @@ fn event(own: &Address) -> Event {
             correlation_id: "request".into(),
             causation_id: None,
             source: Endpoint::outer(own.clone(), "outer", 1),
-            target: Endpoint::node(own.clone(), "n1"),
+            target: Endpoint::node(own.clone(), "n1", 1),
             return_route: None,
             class: EventClass::Control,
             sequence: 1,
@@ -96,18 +96,21 @@ async fn node_moves_adapter_completion_back_to_agent_without_callback_reentry() 
         outbound_tx,
         8,
     ));
-    broker.register_node("n1", node_tx).unwrap();
+    broker.register_node("n1", 1, node_tx).unwrap();
     let (publisher, mailbox) = completion_mailbox(4);
     let adapter = Arc::new(CompletingAdapter {
         publisher,
         mailbox,
-        source: Endpoint::node(own.clone(), "n1"),
+        source: Endpoint::node(own.clone(), "n1", 1),
         target: Endpoint::agent(own.clone()),
     });
     let task = tokio::spawn(EventNode::new(adapter, node_rx, Arc::clone(&broker)).run());
     assert_eq!(
         broker.dispatch(event(&own)).unwrap(),
-        DispatchOutcome::Enqueued(Delivery::Node("n1".into()))
+        DispatchOutcome::Enqueued(Delivery::Node {
+            node: "n1".into(),
+            generation: 1,
+        })
     );
     let completed = tokio::time::timeout(std::time::Duration::from_secs(1), agent_rx.recv())
         .await

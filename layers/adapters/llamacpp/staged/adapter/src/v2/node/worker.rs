@@ -15,6 +15,7 @@ use std::time::Duration;
 
 mod control;
 mod drive;
+mod emit;
 mod observe;
 mod proposal;
 mod release;
@@ -274,7 +275,7 @@ fn node_endpoint(value: &NodeAddress) -> Result<Endpoint, String> {
     if value.node.is_empty() {
         return Err("node identity is empty".into());
     }
-    Ok(Endpoint::node(agent, value.node.clone()))
+    Ok(Endpoint::node(agent, value.node.clone(), value.generation))
 }
 
 fn reply_target(event: &Event) -> Endpoint {

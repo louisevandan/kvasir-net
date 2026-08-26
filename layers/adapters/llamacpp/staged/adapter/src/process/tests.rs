@@ -25,6 +25,10 @@ impl ServerControl for Fake {
                 server_id: "fake".into(),
                 transactions: false,
                 physical_batch: true,
+                n_ctx: 512,
+                n_batch: 64,
+                n_ubatch: 64,
+                n_seq_max: 1,
             }))
         } else {
             Ok(None)
@@ -118,7 +122,9 @@ fn concrete_process_control_sends_plan_hello_and_unload_then_reaps_child() {
         .expect("hello succeeds")
         .expect("server became ready");
     assert_eq!(ready.protocol_revision, PROTOCOL_REVISION);
-    assert_eq!(ready.server_id, "test-child");
+    assert!(ready.server_id.starts_with("test-child;"));
+    assert_eq!((ready.n_ctx, ready.n_batch, ready.n_ubatch), (512, 64, 64));
+    assert_eq!(ready.n_seq_max, 1);
     control.shutdown().expect("unload reaps child");
     assert!(control.pid().is_none());
 
@@ -278,7 +284,9 @@ fn child_server() {
     assert_eq!(hello.header.operation, Operation::Hello);
     let response = Frame::new(Operation::Hello, {
         let mut body = PROTOCOL_REVISION.to_le_bytes().to_vec();
-        body.extend_from_slice(b"test-child");
+        body.extend_from_slice(
+            b"test-child;physical_batch=1;n_ctx=512;n_batch=64;n_ubatch=64;n_seq_max=1",
+        );
         body
     })
     .expect("HELLO response");

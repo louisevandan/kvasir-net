@@ -19,6 +19,7 @@ using staged::protocol::KvResult;
 using staged::protocol::KvReceipt;
 using staged::protocol::KvReceiptState;
 using staged::protocol::kKvPersist;
+using staged::protocol::kProtocolRevision;
 
 namespace {
 
@@ -37,7 +38,8 @@ void round_trip_uses_little_endian_header() {
     const auto encoded = frame.encode(ProtocolLimits{});
     assert(encoded.size() == 16);
     assert(encoded[0] == 'L' && encoded[1] == 'C' && encoded[2] == 'P' && encoded[3] == '4');
-    assert(encoded[4] == 1 && encoded[5] == 0);
+    assert(encoded[4] == static_cast<std::uint8_t>(kProtocolRevision));
+    assert(encoded[5] == static_cast<std::uint8_t>(kProtocolRevision >> 8U));
     assert(encoded[6] == static_cast<std::uint8_t>(Operation::Hop));
     assert(encoded[8] == 4 && encoded[9] == 0 && encoded[10] == 0 && encoded[11] == 0);
     assert(Frame::decode(encoded, ProtocolLimits{}).body == frame.body);

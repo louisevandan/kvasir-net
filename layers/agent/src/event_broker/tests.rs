@@ -39,7 +39,7 @@ fn fixture(capacity: usize) -> Fixture {
     let (outbound_tx, outbound) = bounded_queue(capacity);
     let (node_tx, node) = bounded_queue(capacity);
     let broker = EventBroker::new(own.clone(), agent_tx, outer_tx, outbound_tx, 8);
-    broker.register_node("n1", node_tx).unwrap();
+    broker.register_node("n1", 1, node_tx).unwrap();
     Fixture {
         broker,
         own,
@@ -57,9 +57,9 @@ fn target_alone_selects_all_four_destinations() {
     let source = Endpoint::agent(f.remote.clone());
     let targets = [
         Endpoint::agent(f.own.clone()),
-        Endpoint::node(f.own.clone(), "n1"),
+        Endpoint::node(f.own.clone(), "n1", 1),
         Endpoint::outer(f.own.clone(), "outer", 1),
-        Endpoint::node(f.remote.clone(), "n2"),
+        Endpoint::node(f.remote.clone(), "n2", 1),
     ];
     for (index, target) in targets.into_iter().enumerate() {
         f.broker
@@ -149,4 +149,54 @@ fn a_new_event_cannot_move_a_source_sequence_backwards() {
             incoming: 1,
         })
     );
+}
+
+#[test]
+fn recreated_node_has_a_new_source_sequence_domain_and_rejects_stale_targets() {
+    let f = fixture(4);
+    let target = Endpoint::agent(f.own.clone());
+    f.broker
+        .dispatch(event(
+            "old-generation",
+            Endpoint::node(f.own.clone(), "n1", 1),
+            target.clone(),
+            2,
+        ))
+        .unwrap();
+
+    assert!(f.broker.unregister_node("n1", 1).unwrap());
+    let (reused_sender, _reused_receiver) = bounded_queue(1);
+    assert_eq!(
+        f.broker.register_node("n1", 1, reused_sender),
+        Err(DispatchError::StaleNode {
+            node: "n1".into(),
+            current_generation: 1,
+            incoming_generation: 1,
+        })
+    );
+    let (new_sender, mut new_receiver) = bounded_queue(1);
+    f.broker.register_node("n1", 2, new_sender).unwrap();
+
+    f.broker
+        .dispatch(event(
+            "new-generation",
+            Endpoint::node(f.own.clone(), "n1", 2),
+            target,
+            1,
+        ))
+        .unwrap();
+    assert_eq!(
+        f.broker.dispatch(event(
+            "stale-target",
+            Endpoint::agent(f.remote.clone()),
+            Endpoint::node(f.own.clone(), "n1", 1),
+            1,
+        )),
+        Err(DispatchError::StaleNode {
+            node: "n1".into(),
+            current_generation: 2,
+            incoming_generation: 1,
+        })
+    );
+    assert!(new_receiver.try_recv().is_err());
 }

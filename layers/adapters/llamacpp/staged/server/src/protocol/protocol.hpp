@@ -10,7 +10,7 @@
 
 namespace staged::protocol {
 
-inline constexpr std::uint16_t kProtocolRevision = 1;
+inline constexpr std::uint16_t kProtocolRevision = 2;
 inline constexpr std::size_t kHeaderBytes = 12;
 
 enum class Operation : std::uint8_t {

@@ -1,5 +1,4 @@
 use super::*;
-use crate::v2::commands::ErrorPayload;
 
 impl Worker {
     pub(super) fn drive_first_batches(&mut self) -> Result<(), ()> {
@@ -61,6 +60,7 @@ impl Worker {
             }
             let mut rows = Vec::new();
             let mut updates = Vec::new();
+            let mut batch_events = Vec::new();
             let mut template = None;
             for allocation in allocations {
                 let request = self
@@ -71,6 +71,7 @@ impl Worker {
                 if template.is_none() {
                     template = Some(request.template.clone());
                 }
+                batch_events.push(request.template.clone());
                 match allocation.phase {
                     Phase::Prefill => {
                         for offset in 0..allocation.rows {
@@ -148,9 +149,19 @@ impl Worker {
                 updates.push((allocation.request_id, allocation.phase, allocation.rows));
             }
             let logical_rows = rows.len();
-            let logical = LogicalBatch(rows).encode().map_err(|error| {
-                self.set_snapshot(&format!("logical_encode_failed:{error:?}"));
-            })?;
+            let logical = match LogicalBatch(rows).encode() {
+                Ok(logical) => logical,
+                Err(error) => {
+                    let detail = format!("logical batch encoding failed: {error:?}");
+                    self.set_snapshot(&format!("logical_encode_failed:{error:?}"));
+                    self.emit_batch_errors(
+                        &batch_events,
+                        "LLAMA_LOGICAL_BATCH_ENCODE_FAILED",
+                        &detail,
+                    )?;
+                    return Err(());
+                }
+            };
             let body = match self.stage_request(
                 Operation::LogicalBatch,
                 Operation::PhysicalResult,
@@ -159,16 +170,32 @@ impl Worker {
                 Ok(body) => body,
                 Err(detail) => {
                     self.set_snapshot(&format!("logical_batch_failed:{detail}"));
+                    self.emit_batch_errors(&batch_events, "LLAMA_LOGICAL_BATCH_FAILED", &detail)?;
                     return Err(());
                 }
             };
-            let physical = CapsuleSet::decode(&body).map_err(|error| {
-                self.set_snapshot(&format!("physical_result_failed:{error:?}"));
-            })?;
-            if single_session(&physical).map_err(|_| ())? != session_id
+            let physical = match CapsuleSet::decode(&body) {
+                Ok(physical) => physical,
+                Err(error) => {
+                    let detail = format!("physical result decoding failed: {error:?}");
+                    self.set_snapshot(&format!("physical_result_failed:{error:?}"));
+                    self.emit_batch_errors(
+                        &batch_events,
+                        "LLAMA_PHYSICAL_RESULT_INVALID",
+                        &detail,
+                    )?;
+                    return Err(());
+                }
+            };
+            if single_session(&physical).ok().as_deref() != Some(session_id.as_str())
                 || physical.0.iter().any(|capsule| capsule.terminal)
             {
                 self.set_snapshot("physical_result_identity_failed");
+                self.emit_batch_errors(
+                    &batch_events,
+                    "LLAMA_PHYSICAL_RESULT_INVALID",
+                    "physical result identity or stage role is invalid",
+                )?;
                 return Err(());
             }
             self.emit_batch_observation(
@@ -190,13 +217,20 @@ impl Worker {
                 request.in_flight = true;
                 if phase == Phase::Verify && verify_request_id.replace(request_id).is_some() {
                     self.set_snapshot("physical batch contained multiple verification groups");
+                    self.emit_batch_errors(
+                        &batch_events,
+                        "LLAMA_PHYSICAL_RESULT_INVALID",
+                        "physical batch contained multiple verification groups",
+                    )?;
                     return Err(());
                 }
             }
             if let Some(request_id) = verify_request_id {
-                self.state
-                    .begin_verify_fence(&request_id)
-                    .map_err(|detail| self.set_snapshot(detail))?;
+                if let Err(detail) = self.state.begin_verify_fence(&request_id) {
+                    self.set_snapshot(detail);
+                    self.emit_batch_errors(&batch_events, "LLAMA_VERIFY_FENCE_FAILED", detail)?;
+                    return Err(());
+                }
             }
             self.emit_bytes(
                 &template.expect("non-empty allocation has a template"),
@@ -259,134 +293,5 @@ impl Worker {
             TAIL_BATCH_CONTENT_TYPE,
             body,
         )
-    }
-
-    pub(super) fn emit_reply_json<T: Serialize>(
-        &mut self,
-        base: &Event,
-        reply: ReplySpec,
-        ingress: Address,
-        class: EventClass,
-        content_type: &str,
-        value: &T,
-    ) -> Result<(), ()> {
-        let payload = serde_json::to_vec(value).map_err(|_| ())?;
-        let sequence = self.state.next_event;
-        self.state.next_event = self.state.next_event.checked_add(1).ok_or(())?;
-        let target = Endpoint::outer(ingress, reply.channel.clone(), reply.connection_generation);
-        let mut envelope = base.envelope.next(
-            derived_event_id(base, sequence),
-            self.endpoint.clone(),
-            target,
-            class,
-            sequence,
-            content_type,
-        );
-        envelope.correlation_id = reply.correlation_id;
-        envelope.return_route = match &envelope.target {
-            Endpoint::Outer(route) => Some(route.clone()),
-            _ => unreachable!(),
-        };
-        envelope.deadline_unix_ms = reply.deadline_unix_ms;
-        self.publisher
-            .try_publish(Event { envelope, payload })
-            .map_err(|_| {
-                self.set_snapshot("completion_queue_full");
-            })
-    }
-
-    pub(super) fn emit_error(
-        &mut self,
-        base: &Event,
-        code: &str,
-        detail: String,
-    ) -> Result<(), ()> {
-        self.emit_json(
-            base,
-            reply_target(base),
-            EventClass::Output,
-            ERROR_CONTENT_TYPE,
-            &ErrorPayload {
-                code: code.into(),
-                detail,
-            },
-        )
-    }
-
-    pub(super) fn emit_json<T: Serialize>(
-        &mut self,
-        base: &Event,
-        target: Endpoint,
-        class: EventClass,
-        content_type: &str,
-        value: &T,
-    ) -> Result<(), ()> {
-        let payload = serde_json::to_vec(value).map_err(|_| ())?;
-        self.emit_bytes(base, target, class, content_type, payload)
-    }
-
-    pub(super) fn emit_bytes(
-        &mut self,
-        base: &Event,
-        target: Endpoint,
-        class: EventClass,
-        content_type: &str,
-        payload: Vec<u8>,
-    ) -> Result<(), ()> {
-        let sequence = self.state.next_event;
-        self.state.next_event = self.state.next_event.checked_add(1).ok_or(())?;
-        let envelope = base.envelope.next(
-            derived_event_id(base, sequence),
-            self.endpoint.clone(),
-            target,
-            class,
-            sequence,
-            content_type,
-        );
-        self.publisher
-            .try_publish(Event { envelope, payload })
-            .map_err(|_| {
-                self.set_snapshot("completion_queue_full");
-            })
-    }
-}
-
-fn derived_event_id(base: &Event, sequence: u64) -> String {
-    format!("{}:llamacpp:{sequence}", base.envelope.event_id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use p4_protocol::Address;
-    use p4_protocol::event::{Envelope, EventClass};
-
-    fn input(id: &str) -> Event {
-        let address = Address::tcp("127.0.0.1", 1);
-        Event {
-            envelope: Envelope {
-                protocol_version: Envelope::VERSION,
-                event_id: id.into(),
-                correlation_id: "same-correlation".into(),
-                causation_id: None,
-                source: Endpoint::agent(address.clone()),
-                target: Endpoint::agent(address),
-                return_route: None,
-                class: EventClass::Control,
-                sequence: 1,
-                deadline_unix_ms: None,
-                adapter_kind: Some("llamacpp".into()),
-                payload_content_type: "test".into(),
-            },
-            payload: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn different_causal_events_cannot_generate_the_same_completion_id() {
-        assert_ne!(
-            derived_event_id(&input("node-a-load"), 1),
-            derived_event_id(&input("node-b-load"), 1)
-        );
     }
 }

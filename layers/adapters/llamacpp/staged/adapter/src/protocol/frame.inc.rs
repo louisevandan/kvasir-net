@@ -4,7 +4,7 @@ const HEADER_BYTES: usize = 12;
 
 /// The first revision of the adapter/server wire. All integers are little
 /// endian so the C++ peer does not depend on host byte order.
-pub const PROTOCOL_REVISION: u16 = 1;
+pub const PROTOCOL_REVISION: u16 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]

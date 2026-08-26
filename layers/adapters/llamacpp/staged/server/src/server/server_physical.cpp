@@ -134,9 +134,15 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     }
     const auto active = runtime_.begin_hop();
     if (!active.ok()) return error("LOGICAL_BATCH rejected: invalid session state");
+    bool executed = false;
     auto fail = [&](const std::string & detail) {
+        auto failure = detail;
+        if (executed) {
+            llama_runtime_->quarantine_physical_memory();
+            failure += ";memory_dirty=1;action=reload";
+        }
         (void) runtime_.cancel();
-        return physical_error(*this, "LOGICAL_BATCH failed: " + detail);
+        return physical_error(*this, "LOGICAL_BATCH failed: " + failure);
     };
     std::vector<llama_runtime::LogicalExecutionRow> input;
     std::string detail;
@@ -161,6 +167,7 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     if (!llama_runtime_->execute_first_batch(rows, owners, &captured, &detail)) {
         return fail(detail);
     }
+    executed = true;
     std::vector<bool> used(input.size(), false);
     std::vector<llama_runtime::RoutedPhysicalExecution> output;
     output.reserve(captured.size());
@@ -243,9 +250,15 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
     }
     const auto active = runtime_.begin_hop();
     if (!active.ok()) return error("PHYSICAL_BATCH rejected: invalid session state");
+    bool executed = false;
     auto fail = [&](const std::string & detail) {
+        auto failure = detail;
+        if (executed) {
+            llama_runtime_->quarantine_physical_memory();
+            failure += ";memory_dirty=1;action=reload";
+        }
         (void) runtime_.cancel();
-        return physical_error(*this, "PHYSICAL_BATCH failed: " + detail);
+        return physical_error(*this, "PHYSICAL_BATCH failed: " + failure);
     };
     std::vector<llama_runtime::RoutedPhysicalExecution> input;
     std::string detail;
@@ -260,6 +273,7 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
         result.owners = std::move(capsule.owners);
         if (!llama_runtime_->execute_physical(
                 capsule.execution, result.owners, &result.execution, &detail)) return fail(detail);
+        executed = true;
         if (result.execution.terminal
             && !llama_runtime_->sample_physical_outputs(
                 result.execution, result.owners, &result.outcomes, &detail)) return fail(detail);

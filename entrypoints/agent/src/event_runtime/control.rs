@@ -11,13 +11,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::task::JoinHandle;
 
-const CREATE: &str = "application/vnd.p4.node.create-v2+json";
-const DELETE: &str = "application/vnd.p4.node.delete-v2+json";
-const RESULT: &str = "application/vnd.p4.node.result-v2+json";
+const CREATE: &str = "application/vnd.p4.node.create-v3+json";
+const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
+const RESULT: &str = "application/vnd.p4.node.result-v3+json";
 
 #[derive(Deserialize)]
 struct CreateNode {
     node_id: String,
+    node_generation: u64,
     adapter_kind: String,
     #[serde(default = "default_capacity")]
     queue_capacity: usize,
@@ -28,6 +29,7 @@ struct CreateNode {
 #[derive(Deserialize)]
 struct DeleteNode {
     node_id: String,
+    node_generation: u64,
 }
 
 fn default_capacity() -> usize {
@@ -35,6 +37,7 @@ fn default_capacity() -> usize {
 }
 
 struct NodeOwner {
+    generation: u64,
     adapter: Arc<dyn NodeAdapter>,
     task: JoinHandle<()>,
 }
@@ -68,14 +71,21 @@ fn create(
 ) -> Result<String, String> {
     let command: CreateNode = serde_json::from_slice(&event.payload)
         .map_err(|error| format!("invalid node create payload: {error}"))?;
-    if command.node_id.is_empty() || command.queue_capacity == 0 || command.completion_capacity == 0
+    if command.node_id.is_empty()
+        || command.node_generation == 0
+        || command.queue_capacity == 0
+        || command.completion_capacity == 0
     {
         return Err("node id and positive queue capacities are required".into());
     }
     if nodes.contains_key(&command.node_id) {
         return Err("node already exists".into());
     }
-    let endpoint = Endpoint::node(own.clone(), command.node_id.clone());
+    let endpoint = Endpoint::node(
+        own.clone(),
+        command.node_id.clone(),
+        command.node_generation,
+    );
     let adapter: Arc<dyn NodeAdapter> = match command.adapter_kind.as_str() {
         "llamacpp" => Arc::new(LlamaNodeAdapter::new(
             endpoint,
@@ -86,7 +96,7 @@ fn create(
     };
     let (sender, inbound) = bounded_queue(command.queue_capacity);
     broker
-        .register_node(command.node_id.clone(), sender)
+        .register_node(command.node_id.clone(), command.node_generation, sender)
         .map_err(|error| error.to_string())?;
     let node = EventNode::new(Arc::clone(&adapter), inbound, Arc::clone(broker));
     let id = command.node_id.clone();
@@ -95,7 +105,14 @@ fn create(
             eprintln!("P4_EVENT_NODE_STOPPED node={id} error={error:?}");
         }
     });
-    nodes.insert(command.node_id.clone(), NodeOwner { adapter, task });
+    nodes.insert(
+        command.node_id.clone(),
+        NodeOwner {
+            generation: command.node_generation,
+            adapter,
+            task,
+        },
+    );
     Ok(command.node_id)
 }
 
@@ -106,18 +123,23 @@ async fn remove(
 ) -> Result<String, String> {
     let command: DeleteNode = serde_json::from_slice(&event.payload)
         .map_err(|error| format!("invalid node delete payload: {error}"))?;
-    let state = nodes
+    let owner = nodes
         .get(&command.node_id)
-        .ok_or_else(|| "node does not exist".to_owned())?
-        .adapter
-        .snapshot();
+        .ok_or_else(|| "node does not exist".to_owned())?;
+    if owner.generation != command.node_generation {
+        return Err(format!(
+            "node generation is stale; current={} incoming={}",
+            owner.generation, command.node_generation
+        ));
+    }
+    let state = owner.adapter.snapshot();
     if !matches!(state.as_str(), "empty" | "unloaded" | "closed") {
         return Err(format!(
             "node must be unloaded before deletion; state={state}"
         ));
     }
     broker
-        .unregister_node(&command.node_id)
+        .unregister_node(&command.node_id, command.node_generation)
         .map_err(|error| error.to_string())?;
     let owner = nodes.remove(&command.node_id).expect("checked node exists");
     owner.task.abort();

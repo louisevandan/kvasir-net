@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct NodeAddress {
     pub agent: String,
     pub node: String,
+    pub generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -29,15 +30,15 @@ impl SessionCommand {
             || self.session_id.is_empty()
             || self.first.agent.is_empty()
             || self.first.node.is_empty()
+            || self.first.generation == 0
         {
             return Err("session identity and first node are required");
         }
         match self.role {
             NodeRole::First | NodeRole::Middle
-                if self
-                    .next
-                    .as_ref()
-                    .is_none_or(|next| next.agent.is_empty() || next.node.is_empty()) =>
+                if self.next.as_ref().is_none_or(|next| {
+                    next.agent.is_empty() || next.node.is_empty() || next.generation == 0
+                }) =>
             {
                 Err("non-tail session requires a next node")
             }
@@ -60,6 +61,7 @@ pub struct LoadCommand {
     pub n_batch: usize,
     pub n_ubatch: usize,
     pub context_size: usize,
+    pub total_context_size: usize,
     pub sequence_capacity: u32,
     #[serde(default = "default_ready_timeout")]
     pub ready_timeout_ms: u64,

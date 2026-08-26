@@ -66,6 +66,17 @@ inline bool decode_status_is_success(DecodeStatus status) {
     return status == DecodeStatus::Success;
 }
 
+inline const char * decode_status_name(DecodeStatus status) {
+    switch (status) {
+    case DecodeStatus::Success: return "success";
+    case DecodeStatus::NoKvSlot: return "no_kv_slot";
+    case DecodeStatus::Aborted: return "aborted";
+    case DecodeStatus::InvalidInput: return "invalid_input";
+    case DecodeStatus::Fatal: return "fatal";
+    }
+    return "unknown";
+}
+
 // NoKvSlot is the only non-success outcome that computed nothing and left
 // the cache exactly as it was, so it is the only one where the per-sequence
 // path may legitimately redo the identical lap. InvalidInput also restores

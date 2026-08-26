@@ -23,7 +23,11 @@ pub struct OuterEndpoint {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Endpoint {
     Agent(Address),
-    Node { agent: Address, node: NodeId },
+    Node {
+        agent: Address,
+        node: NodeId,
+        generation: u64,
+    },
     Outer(OuterEndpoint),
 }
 
@@ -32,10 +36,11 @@ impl Endpoint {
         Self::Agent(address)
     }
 
-    pub fn node(agent: Address, node: impl Into<NodeId>) -> Self {
+    pub fn node(agent: Address, node: impl Into<NodeId>, generation: u64) -> Self {
         Self::Node {
             agent,
             node: node.into(),
+            generation,
         }
     }
 
@@ -64,6 +69,9 @@ impl Endpoint {
         match self {
             Self::Node { node, .. } if node.is_empty() => {
                 Err(ProtocolError::new("node endpoint requires a node id"))
+            }
+            Self::Node { generation: 0, .. } => {
+                Err(ProtocolError::new("node endpoint requires a generation"))
             }
             Self::Outer(outer) if outer.channel.is_empty() => {
                 Err(ProtocolError::new("outer endpoint requires a channel"))
@@ -101,7 +109,7 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    pub const VERSION: u16 = 2;
+    pub const VERSION: u16 = 3;
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.protocol_version != Self::VERSION {

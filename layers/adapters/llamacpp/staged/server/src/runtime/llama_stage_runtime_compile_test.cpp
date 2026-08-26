@@ -78,6 +78,13 @@ void unload_clears_hop_memory_dirty() {
     assert(!runtime.hop_memory_dirty());
 }
 
+void quarantine_marks_hop_memory_dirty() {
+    staged::llama_runtime::StageRuntime runtime;
+    assert(!runtime.hop_memory_dirty());
+    runtime.quarantine_physical_memory();
+    assert(runtime.hop_memory_dirty());
+}
+
 // A quarantined runtime must not let KvSave/KvRestore/KvDrop through either
 // (llama_stage_runtime_kv.cpp): a decode failure gives no way to tell which
 // sequence's KV content is suspect, so persisting or reloading any of them
@@ -326,6 +333,7 @@ int main() {
     execute_decode_batch_refuses_when_hop_memory_dirty();
     execute_hop_refuses_when_hop_memory_dirty();
     unload_clears_hop_memory_dirty();
+    quarantine_marks_hop_memory_dirty();
     kv_operations_refuse_when_hop_memory_dirty();
     real_decode_after_restore_regression();
     hop_batch_rolls_back_only_new_sequences();

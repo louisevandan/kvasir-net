@@ -44,7 +44,17 @@ protocol::Frame Session::handle(const protocol::Frame &request, bool *close_afte
             ";request_options=1"
             ";request_options_semantics=n_prev,n_probs,samplers,sampler_seq,temperature,top_k,top_p,min_p,min_keep,typical_p,top_n_sigma,dynatemp_range,dynatemp_exponent,adaptive_target,adaptive_decay,ignore_eos,seed,penalty_last_n,penalty_repeat,penalty_freq,penalty_present,dry_multiplier,dry_base,dry_allowed_length,dry_penalty_last_n,dry_sequence_breakers,xtc_probability,xtc_threshold,mirostat,mirostat_tau,mirostat_eta,grammar,grammar_lazy,grammar_triggers,preserved_tokens,generation_prompt,logit_bias,reasoning_budget_tokens,reasoning_budget_start_tag,reasoning_budget_end_tags,reasoning_budget_end_tag,reasoning_budget_message"
 #ifdef P4_STAGED_WITH_LLAMA
+            + ";n_ctx=" + std::to_string(
+                llama_runtime_ == nullptr ? 0 : llama_runtime_->context_size())
+            + ";n_batch=" + std::to_string(
+                llama_runtime_ == nullptr ? 0 : llama_runtime_->batch_size())
+            + ";n_ubatch=" + std::to_string(
+                llama_runtime_ == nullptr ? 0 : llama_runtime_->ubatch_size())
+            + ";n_seq_max=" + std::to_string(
+                llama_runtime_ == nullptr ? 0 : llama_runtime_->sequence_capacity())
             + ";" + capabilities_.llama_options.serialize()
+#else
+            + ";n_ctx=0;n_batch=0;n_ubatch=0;n_seq_max=0"
 #endif
             ;
         std::vector<std::uint8_t> body{

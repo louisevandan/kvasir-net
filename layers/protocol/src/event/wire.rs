@@ -1,7 +1,7 @@
 use super::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
 use crate::{Address, ProtocolError};
 
-const MAGIC: [u8; 4] = *b"P4E2";
+const MAGIC: [u8; 4] = *b"P4E3";
 const MAX_TEXT: usize = 256 * 1024;
 const MAX_PAYLOAD: usize = 2 * 1024 * 1024 * 1024;
 
@@ -93,10 +93,15 @@ fn put_endpoint(out: &mut Vec<u8>, endpoint: &Endpoint) -> Result<(), ProtocolEr
             out.push(0);
             put_text(out, &address.to_string())?;
         }
-        Endpoint::Node { agent, node } => {
+        Endpoint::Node {
+            agent,
+            node,
+            generation,
+        } => {
             out.push(1);
             put_text(out, &agent.to_string())?;
             put_text(out, node)?;
+            put_u64(out, *generation);
         }
         Endpoint::Outer(outer) => {
             out.push(2);
@@ -231,6 +236,7 @@ impl<'a> Cursor<'a> {
             1 => Ok(Endpoint::Node {
                 agent: self.address()?,
                 node: self.text()?,
+                generation: self.u64()?,
             }),
             2 => self.outer().map(Endpoint::Outer),
             _ => Err(ProtocolError::new("unknown endpoint kind")),

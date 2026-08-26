@@ -1,73 +1,25 @@
+mod config;
 mod inference;
 mod wire;
 
+pub use config::{ArrivalWave, RunConfig};
+use config::{address, node_endpoint, validate};
+
 use p4_llamacpp_staged_adapter::v2::{
     BatchObservation, ERROR_CONTENT_TYPE, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand,
-    NodeAddress, NodeRole, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
-    SessionCommand, UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
+    NodeRole, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE, SessionCommand,
+    UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
 };
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 
-const CREATE: &str = "application/vnd.p4.node.create-v2+json";
-const DELETE: &str = "application/vnd.p4.node.delete-v2+json";
-const NODE_RESULT: &str = "application/vnd.p4.node.result-v2+json";
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct RunConfig {
-    pub ingress_agent: String,
-    pub channel: String,
-    pub connection_generation: u64,
-    pub load_generation: u64,
-    pub session_id: String,
-    pub request_id: String,
-    pub nodes: Vec<NodeConfig>,
-    #[serde(default)]
-    pub prompt: String,
-    #[serde(default)]
-    pub prompts: Vec<String>,
-    pub max_tokens: u32,
-    #[serde(default = "default_waves")]
-    pub waves: Vec<ArrivalWave>,
-    #[serde(default)]
-    pub options: String,
-    #[serde(default = "default_timeout")]
-    pub timeout_ms: u64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ArrivalWave {
-    pub after_ms: u64,
-    pub count: usize,
-}
-
-fn default_waves() -> Vec<ArrivalWave> {
-    vec![ArrivalWave {
-        after_ms: 0,
-        count: 1,
-    }]
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct NodeConfig {
-    pub agent: String,
-    pub node: String,
-    pub binary: String,
-    pub endpoint: String,
-    pub plan: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub environment: Vec<(String, String)>,
-    pub n_batch: usize,
-    pub n_ubatch: usize,
-    pub context_size: usize,
-    pub sequence_capacity: u32,
-}
+const CREATE: &str = "application/vnd.p4.node.create-v3+json";
+const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
+const NODE_RESULT: &str = "application/vnd.p4.node.result-v3+json";
 
 #[derive(Debug, Serialize)]
 pub struct RunArtifact {
@@ -96,10 +48,6 @@ pub struct RequestArtifact {
     pub outcomes: Vec<OutcomePayload>,
 }
 
-fn default_timeout() -> u64 {
-    600_000
-}
-
 pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::error::Error>> {
     validate(&config)?;
     let ingress = Address::from_str(&config.ingress_agent)?;
@@ -116,7 +64,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
 
     for node in &config.nodes {
         let payload = serde_json::json!({
-            "node_id":node.node,"adapter_kind":"llamacpp",
+            "node_id":node.node,"node_generation":node.generation,"adapter_kind":"llamacpp",
             "queue_capacity":65536,"completion_capacity":65536,
         });
         wire.send(sender.event(
@@ -147,6 +95,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
             n_batch: node.n_batch,
             n_ubatch: node.n_ubatch,
             context_size: node.context_size,
+            total_context_size: node.total_context_size,
             sequence_capacity: node.sequence_capacity,
             ready_timeout_ms: config.timeout_ms,
             io_timeout_ms: config.timeout_ms,
@@ -223,7 +172,9 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     )
     .await?;
     for node in &config.nodes {
-        let payload = serde_json::json!({"node_id":node.node});
+        let payload = serde_json::json!({
+            "node_id":node.node,"node_generation":node.generation
+        });
         wire.send(sender.event(
             Endpoint::agent(Address::from_str(&node.agent)?),
             EventClass::Control,
@@ -276,48 +227,6 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         elapsed_ms: run.elapsed_ms,
         error: run.error,
     })
-}
-
-fn validate(config: &RunConfig) -> Result<(), &'static str> {
-    let request_count: usize = config.waves.iter().map(|wave| wave.count).sum();
-    if config.nodes.len() < 2
-        || (config.prompt.is_empty()
-            && (config.prompts.len() != request_count
-                || config.prompts.iter().any(String::is_empty)))
-        || (!config.prompts.is_empty() && config.prompts.len() != request_count)
-        || config.max_tokens == 0
-        || config.channel.is_empty()
-        || config.connection_generation == 0
-        || config.load_generation == 0
-        || config.waves.is_empty()
-        || config.waves[0].after_ms != 0
-        || config.waves.iter().any(|wave| wave.count == 0)
-        || config
-            .nodes
-            .iter()
-            .any(|node| node.n_batch == 0 || node.n_ubatch == 0 || node.n_ubatch > node.n_batch)
-        || config
-            .waves
-            .windows(2)
-            .any(|pair| pair[0].after_ms >= pair[1].after_ms)
-    {
-        return Err("run requires nodes, prompt, token budget, OUTER identity and ordered waves");
-    }
-    Ok(())
-}
-
-fn address(node: &NodeConfig) -> NodeAddress {
-    NodeAddress {
-        agent: node.agent.clone(),
-        node: node.node.clone(),
-    }
-}
-
-fn node_endpoint(node: &NodeConfig) -> Result<Endpoint, p4_protocol::ProtocolError> {
-    Ok(Endpoint::node(
-        Address::from_str(&node.agent)?,
-        node.node.clone(),
-    ))
 }
 
 async fn receive_exact<R, W>(
@@ -377,7 +286,7 @@ impl Sender {
         Event {
             envelope: Envelope {
                 protocol_version: Envelope::VERSION,
-                event_id: format!("outer:{}:{sequence}", self.outer.channel),
+                event_id: outer_event_id(&self.outer, sequence),
                 correlation_id: correlation.into(),
                 causation_id: None,
                 source: Endpoint::Outer(self.outer.clone()),
@@ -391,5 +300,31 @@ impl Sender {
             },
             payload,
         }
+    }
+}
+
+fn outer_event_id(outer: &OuterEndpoint, sequence: u64) -> String {
+    format!(
+        "outer:{}:{}:{}:{sequence}",
+        outer.ingress_agent, outer.channel, outer.connection_generation
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outer_event_identity_includes_the_ingress_agent() {
+        let first = OuterEndpoint {
+            ingress_agent: Address::tcp("127.0.0.1", 52001),
+            channel: "shared".into(),
+            connection_generation: 1,
+        };
+        let second = OuterEndpoint {
+            ingress_agent: Address::tcp("127.0.0.1", 52002),
+            ..first.clone()
+        };
+        assert_ne!(outer_event_id(&first, 1), outer_event_id(&second, 1));
     }
 }

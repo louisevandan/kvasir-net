@@ -8,7 +8,7 @@ fn sample() -> Event {
             event_id: "event-2".into(),
             correlation_id: "request-1".into(),
             causation_id: Some("event-1".into()),
-            source: Endpoint::node(Address::tcp("10.0.0.3", 52001), "tail"),
+            source: Endpoint::node(Address::tcp("10.0.0.3", 52001), "tail", 7),
             target: Endpoint::outer(ingress.clone(), "outer-7", 9),
             return_route: Some(OuterEndpoint {
                 ingress_agent: ingress,
@@ -37,7 +37,7 @@ fn next_event_preserves_return_route_but_not_source() {
     let next = event.envelope.next(
         "event-3",
         event.envelope.target.clone(),
-        Endpoint::node(Address::tcp("10.0.0.2", 52001), "first"),
+        Endpoint::node(Address::tcp("10.0.0.2", 52001), "first", 5),
         EventClass::Data,
         5,
         "application/vnd.p4.llamacpp.decode-v1",
@@ -61,6 +61,15 @@ fn outer_generation_and_channel_are_mandatory() {
     let mut event = sample();
     if let Endpoint::Outer(outer) = &mut event.envelope.target {
         outer.connection_generation = 0;
+    }
+    assert!(event.validate().is_err());
+}
+
+#[test]
+fn node_generation_is_part_of_the_wire_identity_and_is_mandatory() {
+    let mut event = sample();
+    if let Endpoint::Node { generation, .. } = &mut event.envelope.source {
+        *generation = 0;
     }
     assert!(event.validate().is_err());
 }

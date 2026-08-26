@@ -29,7 +29,7 @@ pub enum DispatchOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Delivery {
     Agent,
-    Node(String),
+    Node { node: String, generation: u64 },
     Outer,
     Outbound(Address),
 }
@@ -38,8 +38,16 @@ pub enum Delivery {
 pub enum DispatchError {
     Invalid(String),
     ConflictingDuplicate,
-    SequenceRegression { previous: u64, incoming: u64 },
+    SequenceRegression {
+        previous: u64,
+        incoming: u64,
+    },
     UnknownNode(String),
+    StaleNode {
+        node: String,
+        current_generation: u64,
+        incoming_generation: u64,
+    },
     Full(Delivery),
     Closed(Delivery),
     Poisoned,
@@ -58,8 +66,15 @@ pub struct EventBroker {
     agent: EventSender,
     outer: EventSender,
     outbound: EventSender,
-    nodes: RwLock<HashMap<String, EventSender>>,
+    nodes: RwLock<HashMap<String, NodeRoute>>,
+    node_generations: Mutex<HashMap<String, u64>>,
     ledger: Mutex<EventLedger>,
+}
+
+#[derive(Clone)]
+struct NodeRoute {
+    generation: u64,
+    sender: EventSender,
 }
 
 impl EventBroker {
@@ -77,6 +92,7 @@ impl EventBroker {
             outer,
             outbound,
             nodes: RwLock::new(HashMap::new()),
+            node_generations: Mutex::new(HashMap::new()),
             ledger: Mutex::new(EventLedger::new(duplicate_window)),
         }
     }
@@ -84,26 +100,51 @@ impl EventBroker {
     pub fn register_node(
         &self,
         node: impl Into<String>,
+        generation: u64,
         sender: EventSender,
     ) -> Result<(), DispatchError> {
         let node = node.into();
-        if node.is_empty() {
-            return Err(DispatchError::Invalid("node id cannot be empty".into()));
+        if node.is_empty() || generation == 0 {
+            return Err(DispatchError::Invalid(
+                "node id and generation are required".into(),
+            ));
         }
-        self.nodes
-            .write()
-            .map_err(|_| DispatchError::Poisoned)?
-            .insert(node, sender);
+        let mut generations = self
+            .node_generations
+            .lock()
+            .map_err(|_| DispatchError::Poisoned)?;
+        if let Some(current) = generations.get(&node)
+            && generation <= *current
+        {
+            return Err(DispatchError::StaleNode {
+                node,
+                current_generation: *current,
+                incoming_generation: generation,
+            });
+        }
+        let mut nodes = self.nodes.write().map_err(|_| DispatchError::Poisoned)?;
+        if nodes.contains_key(&node) {
+            return Err(DispatchError::Invalid("node is already registered".into()));
+        }
+        nodes.insert(node.clone(), NodeRoute { generation, sender });
+        generations.insert(node, generation);
         Ok(())
     }
 
-    pub fn unregister_node(&self, node: &str) -> Result<bool, DispatchError> {
-        Ok(self
-            .nodes
-            .write()
-            .map_err(|_| DispatchError::Poisoned)?
-            .remove(node)
-            .is_some())
+    pub fn unregister_node(&self, node: &str, generation: u64) -> Result<bool, DispatchError> {
+        let mut nodes = self.nodes.write().map_err(|_| DispatchError::Poisoned)?;
+        let Some(route) = nodes.get(node) else {
+            return Ok(false);
+        };
+        if route.generation != generation {
+            return Err(DispatchError::StaleNode {
+                node: node.to_owned(),
+                current_generation: route.generation,
+                incoming_generation: generation,
+            });
+        }
+        nodes.remove(node);
+        Ok(true)
     }
 
     pub fn dispatch(&self, event: Event) -> Result<DispatchOutcome, DispatchError> {
@@ -135,15 +176,27 @@ impl EventBroker {
         match target {
             Endpoint::Agent(_) => Ok((Delivery::Agent, self.agent.clone())),
             Endpoint::Outer(_) => Ok((Delivery::Outer, self.outer.clone())),
-            Endpoint::Node { node, .. } => {
-                let sender = self
-                    .nodes
-                    .read()
-                    .map_err(|_| DispatchError::Poisoned)?
+            Endpoint::Node {
+                node, generation, ..
+            } => {
+                let nodes = self.nodes.read().map_err(|_| DispatchError::Poisoned)?;
+                let route = nodes
                     .get(node)
-                    .cloned()
                     .ok_or_else(|| DispatchError::UnknownNode(node.clone()))?;
-                Ok((Delivery::Node(node.clone()), sender))
+                if route.generation != *generation {
+                    return Err(DispatchError::StaleNode {
+                        node: node.clone(),
+                        current_generation: route.generation,
+                        incoming_generation: *generation,
+                    });
+                }
+                Ok((
+                    Delivery::Node {
+                        node: node.clone(),
+                        generation: *generation,
+                    },
+                    route.sender.clone(),
+                ))
             }
         }
     }

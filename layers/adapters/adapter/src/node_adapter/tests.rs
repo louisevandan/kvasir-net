@@ -10,7 +10,7 @@ fn event(id: &str) -> Event {
             correlation_id: "request".into(),
             causation_id: None,
             source: Endpoint::agent(Address::tcp("127.0.0.1", 52001)),
-            target: Endpoint::node(Address::tcp("127.0.0.1", 52001), "node"),
+            target: Endpoint::node(Address::tcp("127.0.0.1", 52001), "node", 1),
             return_route: None,
             class: EventClass::Control,
             sequence: 1,

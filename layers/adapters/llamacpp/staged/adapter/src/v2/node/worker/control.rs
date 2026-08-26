@@ -10,6 +10,7 @@ impl Worker {
             || command.n_ubatch == 0
             || command.n_ubatch > command.n_batch
             || command.context_size == 0
+            || command.total_context_size == 0
             || command.sequence_capacity == 0
         {
             return Err(
@@ -18,6 +19,16 @@ impl Worker {
         }
         if command.load_generation == 0 {
             return Err("load generation must be non-zero".into());
+        }
+        let reserved_context = command
+            .context_size
+            .checked_mul(command.sequence_capacity as usize)
+            .ok_or_else(|| "per-sequence context reservation overflows".to_owned())?;
+        if reserved_context > command.total_context_size {
+            return Err(format!(
+                "total context {} cannot reserve {} sequences x {} tokens",
+                command.total_context_size, command.sequence_capacity, command.context_size
+            ));
         }
         let endpoint = SocketAddr::from_str(&command.endpoint)
             .map_err(|error| format!("invalid local stage endpoint: {error}"))?;
@@ -54,6 +65,15 @@ impl Worker {
             let _ = self.lifecycle.unload();
             return Err("stage server did not negotiate physical_batch=1".into());
         }
+        let ready = self
+            .lifecycle
+            .ready_info()
+            .cloned()
+            .ok_or_else(|| "loaded stage omitted readiness capabilities".to_owned())?;
+        if let Err(detail) = validate_ready_capacities(&command, &ready) {
+            let _ = self.lifecycle.unload();
+            return Err(detail);
+        }
         self.state.batch_capacity = command.n_batch;
         self.state.physical_capacity = command.n_ubatch;
         self.state.context_size = command.context_size;
@@ -68,7 +88,16 @@ impl Worker {
             reply_target(&event),
             EventClass::Telemetry,
             LOADED_CONTENT_TYPE,
-            &serde_json::json!({"state":"loaded","load_generation":command.load_generation,"n_batch":command.n_batch,"n_ubatch":command.n_ubatch}),
+            &serde_json::json!({
+                "state":"loaded",
+                "load_generation":command.load_generation,
+                "n_batch":ready.n_batch,
+                "n_ubatch":ready.n_ubatch,
+                "n_ctx":ready.n_ctx,
+                "n_seq_max":ready.n_seq_max,
+                "per_sequence_context":command.context_size,
+                "reserved_context":reserved_context
+            }),
         )
         .map_err(|_| "completion queue is full".to_owned())
     }
@@ -132,5 +161,81 @@ impl Worker {
             &serde_json::json!({"session_id":id,"state":"ready","load_generation":self.state.load_generation}),
         )
         .map_err(|_| "completion queue is full".to_owned())
+    }
+}
+
+fn validate_ready_capacities(
+    command: &LoadCommand,
+    ready: &crate::process::ReadyInfo,
+) -> Result<(), String> {
+    if ready.n_ctx < command.total_context_size
+        || ready.n_batch < command.n_batch
+        || ready.n_ubatch < command.n_ubatch
+        || ready.n_seq_max < command.sequence_capacity
+    {
+        return Err(format!(
+            "stage capacity is below the declared load contract: actual n_ctx={} n_batch={} n_ubatch={} n_seq_max={}; required n_ctx={} n_batch={} n_ubatch={} n_seq_max={}",
+            ready.n_ctx,
+            ready.n_batch,
+            ready.n_ubatch,
+            ready.n_seq_max,
+            command.total_context_size,
+            command.n_batch,
+            command.n_ubatch,
+            command.sequence_capacity
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command() -> LoadCommand {
+        LoadCommand {
+            load_generation: 1,
+            binary: "server".into(),
+            endpoint: "127.0.0.1:1".into(),
+            plan: "plan".into(),
+            args: Vec::new(),
+            environment: Vec::new(),
+            n_batch: 512,
+            n_ubatch: 64,
+            context_size: 1_200,
+            total_context_size: 12_000,
+            sequence_capacity: 10,
+            ready_timeout_ms: 1,
+            io_timeout_ms: 1,
+        }
+    }
+
+    fn ready() -> crate::process::ReadyInfo {
+        crate::process::ReadyInfo {
+            protocol_revision: 1,
+            server_id: "ready".into(),
+            transactions: false,
+            physical_batch: true,
+            n_ctx: 12_000,
+            n_batch: 512,
+            n_ubatch: 64,
+            n_seq_max: 10,
+        }
+    }
+
+    #[test]
+    fn declared_parallel_context_fits_actual_llama_capacity() {
+        assert_eq!(validate_ready_capacities(&command(), &ready()), Ok(()));
+    }
+
+    #[test]
+    fn per_sequence_context_cannot_be_mistaken_for_total_llama_context() {
+        let mut actual = ready();
+        actual.n_ctx = 1_200;
+        assert!(
+            validate_ready_capacities(&command(), &actual)
+                .unwrap_err()
+                .contains("actual n_ctx=1200")
+        );
     }
 }

@@ -142,6 +142,7 @@ bool StageRuntime::execute_first_batch(
         const std::vector<PhysicalOwner> & owners,
         std::vector<PhysicalExecution> * executions,
         std::string * error) {
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || config_.layer_begin != 0 || tail_stage_
         || rows.empty() || owners.size() != rows.size() || executions == nullptr
         || rows.size() > llama_n_batch(ctx_)) {
@@ -172,14 +173,27 @@ bool StageRuntime::execute_first_batch(
         batch.seq_id[index][0] = row.sequence_id;
         batch.logits[index] = row.output ? 1 : 0;
     }
-    const auto raw = llama_model_has_encoder(model_)
-        ? llama_encode(ctx_, batch) : llama_decode(ctx_, batch);
+    const bool encoder = llama_model_has_encoder(model_);
+    const auto raw = encoder ? llama_encode(ctx_, batch) : llama_decode(ctx_, batch);
     llama_batch_free(batch);
     if (raw != 0 || captured_executions_.empty()) {
+        const auto status = decode_status_from_raw(raw);
+        const bool capture_missing = captured_executions_.empty();
+        const bool memory_dirty = (!encoder && decode_status_leaves_memory_dirty(status))
+            || (raw == 0 && capture_missing);
+        hop_memory_dirty_ = hop_memory_dirty_ || memory_dirty;
         if (error != nullptr) {
-            *error = capture_error_.empty()
-                ? "llama.cpp failed the first-stage logical batch"
-                : capture_error_;
+            *error = "llama.cpp first-stage logical batch failed"
+                ";operation=" + std::string(encoder ? "encode" : "decode")
+                + ";raw_status=" + std::to_string(raw)
+                + ";status=" + std::string(
+                    encoder ? (raw == 0 ? "success" : "error")
+                            : decode_status_name(status))
+                + ";captured_ubatches=" + std::to_string(captured_executions_.size())
+                + ";capture_missing=" + std::string(capture_missing ? "1" : "0")
+                + ";memory_dirty=" + std::string(memory_dirty ? "1" : "0")
+                + ";action=" + std::string(memory_dirty ? "reload" : "do_not_retry_blindly");
+            if (!capture_error_.empty()) *error += ";capture_error=" + capture_error_;
         }
         captured_executions_.clear();
         return false;
@@ -212,13 +226,16 @@ bool StageRuntime::execute_first_batch(
         if (!settle_physical_sequence(
                 sequence_id, static_cast<llama_pos>(atomic->position), true,
                 &ignored_proposal, error)) {
+            hop_memory_dirty_ = true;
+            if (error != nullptr) *error += ";memory_dirty=1;action=reload";
             captured_executions_.clear();
             return false;
         }
+        hop_memory_dirty_ = true;
         captured_executions_.clear();
         if (error != nullptr) {
             *error = "atomic verification/replay group was not the final llama.cpp physical group: "
-                + atomic->sequence_key;
+                + atomic->sequence_key + ";memory_dirty=1;action=reload";
         }
         return false;
     }
@@ -239,8 +256,11 @@ bool StageRuntime::execute_first_batch(
         captured_rows += execution.sequence_counts.size();
     }
     if (captured_rows != rows.size()) {
+        hop_memory_dirty_ = true;
         captured_executions_.clear();
-        return physical_fail("llama.cpp physical ubatches omitted logical rows", error);
+        return physical_fail(
+            "llama.cpp physical ubatches omitted logical rows;memory_dirty=1;action=reload",
+            error);
     }
     *executions = std::move(captured_executions_);
     captured_executions_.clear();
@@ -252,6 +272,7 @@ bool StageRuntime::execute_physical(
         const std::vector<PhysicalOwner> & owners,
         PhysicalExecution * output,
         std::string * error) {
+    if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || config_.layer_begin == 0 || output == nullptr
         || !valid_execution(input) || input.tensors.empty()
         || owners.size() != input.sequence_counts.size()) {
@@ -302,21 +323,48 @@ bool StageRuntime::execute_physical(
         return physical_fail("unsupported physical invocation flags", error);
     }
     const auto raw = encoder ? llama_encode(ctx_, batch) : llama_decode(ctx_, batch);
-    if (raw != 0 || llama_linkcpp_input_count(ctx_)
-        != static_cast<std::int32_t>(input.tensors.size())) {
+    const bool input_mismatch = llama_linkcpp_input_count(ctx_)
+        != static_cast<std::int32_t>(input.tensors.size());
+    if (raw != 0 || input_mismatch) {
+        const auto status = decode_status_from_raw(raw);
+        const bool memory_dirty = (!encoder && decode_status_leaves_memory_dirty(status))
+            || (raw == 0 && input_mismatch);
+        hop_memory_dirty_ = hop_memory_dirty_ || memory_dirty;
         llama_linkcpp_input_clear(ctx_);
-        return physical_fail("llama.cpp failed the downstream physical invocation", error);
+        if (error != nullptr) {
+            *error = "llama.cpp downstream physical invocation failed"
+                ";operation=" + std::string(encoder ? "encode" : "decode")
+                + ";raw_status=" + std::to_string(raw)
+                + ";status=" + std::string(
+                    encoder ? (raw == 0 ? "success" : "error")
+                            : decode_status_name(status))
+                + ";input_mismatch=" + std::string(input_mismatch ? "1" : "0")
+                + ";memory_dirty=" + std::string(memory_dirty ? "1" : "0")
+                + ";action=" + std::string(memory_dirty ? "reload" : "do_not_retry_blindly");
+        }
+        return false;
     }
-    if (!encoder && !process_physical_mtp(batch, owners, error)) return false;
+    if (!encoder && !process_physical_mtp(batch, owners, error)) {
+        hop_memory_dirty_ = true;
+        if (error != nullptr) *error += ";memory_dirty=1;action=reload";
+        return false;
+    }
     *output = input;
     output->tensors.clear();
     output->terminal = tail_stage_;
     // Terminal logits and h_nextn remain inside llama.cpp. Sampling and MTP
     // consume them in this process; only compact token decisions cross P4.
     if (tail_stage_) return true;
-    if (!collect_physical_tensors(false, &output->tensors, error)) return false;
+    if (!collect_physical_tensors(false, &output->tensors, error)) {
+        hop_memory_dirty_ = true;
+        if (error != nullptr) *error += ";memory_dirty=1;action=reload";
+        return false;
+    }
     if (output->tensors.empty()) {
-        return physical_fail("llama.cpp produced no physical result tensors", error);
+        hop_memory_dirty_ = true;
+        return physical_fail(
+            "llama.cpp produced no physical result tensors;memory_dirty=1;action=reload",
+            error);
     }
     return true;
 }
