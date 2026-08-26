@@ -58,6 +58,16 @@ struct MtpPhysicalSequence final {
     bool begun = false;
 };
 
+struct MtpDraftRequest final {
+    llama_seq_id sequence_id = -1;
+    std::uint32_t generated_before = 0;
+    std::uint32_t max_tokens = 0;
+    llama_token sampled = LLAMA_TOKEN_NULL;
+    llama_pos sampled_position = -1;
+    std::uint32_t generated_now = 0;
+    std::size_t outcome_index = 0;
+};
+
 class StageRuntime final : public runtime::KvBridge {
 public:
     StageRuntime() = default;
@@ -85,6 +95,10 @@ public:
     }
     [[nodiscard]] std::uint32_t sequence_capacity() const noexcept {
         return ctx_ == nullptr ? 0 : llama_n_seq_max(ctx_);
+    }
+    [[nodiscard]] bool requires_equal_sequence_ubatch() const noexcept {
+        return model_ != nullptr
+            && (llama_model_is_recurrent(model_) || llama_model_is_hybrid(model_));
     }
     [[nodiscard]] llama_context * mtp_context() const noexcept {
         return mtp_init_ == nullptr ? nullptr : mtp_init_->context();
@@ -274,12 +288,17 @@ private:
     [[nodiscard]] bool sample_physical_mtp(
         const PhysicalExecution &, const std::vector<PhysicalOwner> &,
         std::size_t, std::size_t,
-        std::vector<PhysicalOutcome> *, std::string *);
+        std::vector<PhysicalOutcome> *, std::vector<MtpDraftRequest> *, std::string *);
     [[nodiscard]] bool make_mtp_proposal(
         llama_seq_id, std::uint32_t, std::uint32_t,
         llama_token, llama_pos, std::uint32_t,
         std::vector<llama_token> *, std::string *);
+    [[nodiscard]] bool make_mtp_proposals(
+        const std::vector<MtpDraftRequest> &,
+        std::vector<PhysicalOutcome> *, std::string *);
     [[nodiscard]] bool prepare_physical_owners(
+        const std::vector<PhysicalOwner> &, std::string *);
+    [[nodiscard]] bool validate_physical_atomic_round(
         const std::vector<PhysicalOwner> &, std::string *);
     [[nodiscard]] bool format_generated_token(
         const PhysicalOwner &, llama_token, std::uint32_t,

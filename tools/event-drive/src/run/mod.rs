@@ -44,6 +44,8 @@ pub struct RequestArtifact {
     pub completed_ms: Option<u128>,
     pub prefill_rows: usize,
     pub decode_rows: usize,
+    pub verify_rows: usize,
+    pub replay_rows: usize,
     pub response: String,
     pub outcomes: Vec<OutcomePayload>,
 }
@@ -202,6 +204,8 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
                     .ok_or("batch observation references an unknown request")?;
                 request.prefill_rows += measured.prefill_rows;
                 request.decode_rows += measured.decode_rows;
+                request.verify_rows += measured.verify_rows;
+                request.replay_rows += measured.replay_rows;
             }
         }
     }

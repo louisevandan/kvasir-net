@@ -1,6 +1,6 @@
 use super::super::{InferenceCommand, NodeRole, SessionCommand};
 use p4_protocol::event::{Endpoint, Event};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Clone)]
 pub struct PipelineSession {
@@ -55,12 +55,15 @@ pub struct AdapterState {
     pub free_sequences: VecDeque<u32>,
     pub batch_capacity: usize,
     pub physical_capacity: usize,
+    pub equal_sequence_ubatch: bool,
+    pub max_atomic_sequences: usize,
+    pub atomic_batch_exclusive: bool,
     pub context_size: usize,
     pub sequence_capacity: u32,
     pub next_event: u64,
     pub load_generation: u64,
     pub next_speculative_id: u64,
-    verify_fence: Option<String>,
+    verify_fence: BTreeSet<String>,
 }
 
 impl Default for AdapterState {
@@ -72,30 +75,40 @@ impl Default for AdapterState {
             free_sequences: VecDeque::new(),
             batch_capacity: 0,
             physical_capacity: 0,
+            equal_sequence_ubatch: false,
+            max_atomic_sequences: 0,
+            atomic_batch_exclusive: false,
             context_size: 0,
             sequence_capacity: 0,
             next_event: 1,
             load_generation: 0,
             next_speculative_id: 1,
-            verify_fence: None,
+            verify_fence: BTreeSet::new(),
         }
     }
 }
 
 impl AdapterState {
     pub fn verify_fenced(&self) -> bool {
-        self.verify_fence.is_some()
+        !self.verify_fence.is_empty()
     }
 
     pub fn verify_fence_matches(&self, request_key: &str) -> bool {
-        self.verify_fence.as_deref() == Some(request_key)
+        self.verify_fence.contains(request_key)
     }
 
-    pub fn begin_verify_fence(&mut self, request_key: &str) -> Result<(), &'static str> {
-        if request_key.is_empty() || self.verify_fence.is_some() {
+    pub fn begin_verify_fence(&mut self, request_keys: &[String]) -> Result<(), &'static str> {
+        if !self.verify_fence.is_empty() {
             return Err("a speculative verification fence is already active");
         }
-        self.verify_fence = Some(request_key.to_owned());
+        let keys: BTreeSet<_> = request_keys.iter().cloned().collect();
+        if keys.is_empty()
+            || keys.len() != request_keys.len()
+            || keys.iter().any(|request_key| request_key.is_empty())
+        {
+            return Err("speculative verification fence identities are invalid");
+        }
+        self.verify_fence = keys;
         Ok(())
     }
 
@@ -103,12 +116,12 @@ impl AdapterState {
         if !self.verify_fence_matches(request_key) {
             return Err("speculative verification fence identity changed");
         }
-        self.verify_fence = None;
+        self.verify_fence.remove(request_key);
         Ok(())
     }
 
     pub fn clear_verify_fence(&mut self) {
-        self.verify_fence = None;
+        self.verify_fence.clear();
     }
 
     pub fn first_session_with_work(&self) -> Option<String> {
@@ -125,15 +138,38 @@ mod tests {
     use super::AdapterState;
 
     #[test]
-    fn verification_fence_is_single_owner_and_identity_bound() {
+    fn verification_fence_tracks_every_owner_until_the_round_resolves() {
         let mut state = AdapterState::default();
         assert!(!state.verify_fenced());
-        assert_eq!(state.begin_verify_fence("session\0request-a"), Ok(()));
+        let keys = vec![
+            "session\0request-a".to_owned(),
+            "session\0request-b".to_owned(),
+        ];
+        assert_eq!(state.begin_verify_fence(&keys), Ok(()));
         assert!(state.verify_fence_matches("session\0request-a"));
-        assert!(!state.verify_fence_matches("session\0request-b"));
-        assert!(state.begin_verify_fence("session\0request-b").is_err());
-        assert!(state.finish_verify_fence("session\0request-b").is_err());
+        assert!(state.verify_fence_matches("session\0request-b"));
+        assert!(
+            state
+                .begin_verify_fence(&["session\0request-c".to_owned()])
+                .is_err()
+        );
         assert_eq!(state.finish_verify_fence("session\0request-a"), Ok(()));
+        assert!(state.verify_fenced());
+        assert!(state.finish_verify_fence("session\0request-a").is_err());
+        assert_eq!(state.finish_verify_fence("session\0request-b"), Ok(()));
+        assert!(!state.verify_fenced());
+    }
+
+    #[test]
+    fn verification_fence_rejects_empty_or_duplicate_owners() {
+        let mut state = AdapterState::default();
+        assert!(state.begin_verify_fence(&[]).is_err());
+        assert!(state.begin_verify_fence(&[String::new()]).is_err());
+        assert!(
+            state
+                .begin_verify_fence(&["request".to_owned(), "request".to_owned()])
+                .is_err()
+        );
         assert!(!state.verify_fenced());
     }
 }

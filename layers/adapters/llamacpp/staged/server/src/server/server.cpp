@@ -52,9 +52,15 @@ protocol::Frame Session::handle(const protocol::Frame &request, bool *close_afte
                 llama_runtime_ == nullptr ? 0 : llama_runtime_->ubatch_size())
             + ";n_seq_max=" + std::to_string(
                 llama_runtime_ == nullptr ? 0 : llama_runtime_->sequence_capacity())
+            + ";equal_sequence_ubatch=" + std::string(
+                llama_runtime_ != nullptr
+                    && llama_runtime_->requires_equal_sequence_ubatch() ? "1" : "0")
+            + ";max_atomic_sequences=" + std::to_string(
+                llama_runtime_ == nullptr ? 0 : llama_runtime_->sequence_capacity())
+            + ";atomic_batch_exclusive=0"
             + ";" + capabilities_.llama_options.serialize()
 #else
-            + ";n_ctx=0;n_batch=0;n_ubatch=0;n_seq_max=0"
+            + ";n_ctx=0;n_batch=0;n_ubatch=0;n_seq_max=0;equal_sequence_ubatch=0;max_atomic_sequences=0;atomic_batch_exclusive=0"
 #endif
             ;
         std::vector<std::uint8_t> body{

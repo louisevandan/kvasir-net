@@ -187,6 +187,8 @@ where
                 completed_ms: None,
                 prefill_rows: 0,
                 decode_rows: 0,
+                verify_rows: 0,
+                replay_rows: 0,
                 response: String::new(),
                 outcomes: Vec::new(),
             },

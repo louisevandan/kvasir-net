@@ -73,84 +73,6 @@ bool StageRuntime::prepare_physical_owners(
     return true;
 }
 
-bool StageRuntime::make_mtp_proposal(
-        llama_seq_id sequence_id,
-        std::uint32_t generated_before,
-        std::uint32_t max_tokens,
-        llama_token sampled,
-        llama_pos sampled_position,
-        std::uint32_t generated_now,
-        std::vector<llama_token> * proposal,
-        std::string * error) {
-    if (proposal == nullptr || mtp_speculative_ == nullptr || mtp_context() == nullptr
-        || sequence_id < 0
-        || static_cast<std::uint32_t>(sequence_id) >= llama_n_seq_max(ctx_)
-        || sampled_position < 0) {
-        return mtp_fail("invalid MTP proposal request", error);
-    }
-    auto & sequence = mtp_sequences_[sequence_id];
-    if (!sequence.begun || sequence.pending_proposal.has_value()) {
-        return mtp_fail("MTP proposal preceded prompt completion or settlement", error);
-    }
-    sequence.proposal.clear();
-    proposal->clear();
-    proposal->push_back(sampled);
-    if (generated_before > max_tokens
-        || generated_now > max_tokens - generated_before) {
-        return mtp_fail("MTP generated-token accounting overflow", error);
-    }
-    const auto remaining = max_tokens - generated_before - generated_now;
-    const auto physical_draft_max = llama_n_ubatch(ctx_) > 0
-        ? llama_n_ubatch(ctx_) - 1 : 0;
-    const auto request_draft_max = remaining > 0 ? remaining - 1 : 0;
-    const auto draft_max = std::min(physical_draft_max, request_draft_max);
-    if (draft_max == 0) {
-        sequence.proposal = *proposal;
-        return true;
-    }
-    auto & params = common_speculative_get_draft_params(
-        mtp_speculative_.get(), sequence_id);
-    params = {
-        true,
-        static_cast<std::int32_t>(draft_max),
-        sampled_position,
-        sampled,
-        &sequence.history,
-        &sequence.proposal,
-    };
-    const auto memory = llama_get_memory(mtp_context());
-    const auto pos_min = llama_memory_seq_pos_min(memory, sequence_id);
-    const auto pos_max = llama_memory_seq_pos_max(memory, sequence_id);
-    sequence.draft_checkpoint.clear();
-    sequence.draft_checkpoint.update_pos(
-        pos_max >= pos_min ? pos_max - pos_min + 1 : 0, pos_min, pos_max);
-    if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
-        sequence.draft_checkpoint.update_dft(
-            mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-    }
-    common_speculative_draft(mtp_speculative_.get());
-    if (sequence.proposal.size() > draft_max) {
-        sequence.proposal.resize(draft_max);
-    }
-    if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
-        sequence.draft_checkpoint.load_dft(
-            mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-        llama_synchronize(mtp_context());
-    }
-    if (!llama_memory_seq_rm(
-            memory, sequence_id, sequence.draft_checkpoint.pos_max + 1, -1)) {
-        return mtp_fail("llama.cpp rejected post-draft rollback", error);
-    }
-    proposal->insert(proposal->end(), sequence.proposal.begin(), sequence.proposal.end());
-    if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
-        && sequence.proposal.size() > llama_n_rs_seq(mtp_context())) {
-        sequence.draft_checkpoint.update_dft(
-            mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-    }
-    sequence.proposal = *proposal;
-    return true;
-}
-
 bool StageRuntime::format_generated_token(
         const PhysicalOwner & owner,
         llama_token token,
@@ -190,11 +112,13 @@ bool StageRuntime::sample_physical_mtp(
         std::size_t begin,
         std::size_t end,
         std::vector<PhysicalOutcome> * outcomes,
+        std::vector<MtpDraftRequest> * draft_requests,
         std::string * error) {
     if (begin >= end || end > owners.size()
         || (owners[begin].phase != PhysicalPhase::Verify
             && owners[begin].phase != PhysicalPhase::Replay)
-        || outcomes == nullptr || input.output.size() != owners.size()
+        || outcomes == nullptr || draft_requests == nullptr
+        || input.output.size() != owners.size()
         || end > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
         return mtp_fail("invalid MTP verification sample", error);
     }
@@ -324,12 +248,14 @@ bool StageRuntime::sample_physical_mtp(
         physical_checkpoints_.erase(first.sequence_id);
     }
     if (!stopped && n_rollback == 0) {
-        if (!make_mtp_proposal(
+        draft_requests->push_back(MtpDraftRequest{
                 static_cast<llama_seq_id>(first.sequence_id),
                 first.generated_tokens, first.max_tokens,
-                accepted.back(), outcome.generated.back().position,
+                accepted.back(),
+                static_cast<llama_pos>(outcome.generated.back().position),
                 static_cast<std::uint32_t>(outcome.generated.size()),
-                &outcome.proposal, error)) return false;
+                outcomes->size(),
+        });
     }
     outcomes->push_back(std::move(outcome));
     return true;

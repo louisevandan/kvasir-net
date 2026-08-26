@@ -18,6 +18,8 @@ bool StageRuntime::sample_physical_outputs(
         return false;
     }
     outcomes->clear();
+    outcomes->reserve(rows);
+    std::vector<MtpDraftRequest> draft_requests;
     for (const auto & owner : owners) {
         const auto options_found = sampler_options_.find(owner.sequence_key);
         if (options_found != sampler_options_.end()
@@ -50,7 +52,8 @@ bool StageRuntime::sample_physical_outputs(
             if (owners[index].speculative_index != 0 || count == 0
                 || count > rows - index
                 || !sample_physical_mtp(
-                    input, owners, index, index + count, outcomes, error)) {
+                    input, owners, index, index + count,
+                    outcomes, &draft_requests, error)) {
                 if (error != nullptr && error->empty()) {
                     *error = "invalid mixed MTP physical group";
                 }
@@ -88,13 +91,14 @@ bool StageRuntime::sample_physical_outputs(
         }
         if (generated.stop.empty()) {
             if (mtp_speculative_ != nullptr) {
-                if (!make_mtp_proposal(
+                draft_requests.push_back(MtpDraftRequest{
                         static_cast<llama_seq_id>(owners[index].sequence_id),
                         owners[index].generated_tokens,
                         owners[index].max_tokens,
-                        token, position,
+                        token, static_cast<llama_pos>(position),
                         1,
-                        &outcome.proposal, error)) return false;
+                        outcomes->size(),
+                });
             } else {
                 outcome.proposal.push_back(generated.token);
             }
@@ -103,7 +107,7 @@ bool StageRuntime::sample_physical_outputs(
         outcomes->push_back(std::move(outcome));
         ++index;
     }
-    return true;
+    return make_mtp_proposals(draft_requests, outcomes, error);
 }
 
 } // namespace staged::llama_runtime

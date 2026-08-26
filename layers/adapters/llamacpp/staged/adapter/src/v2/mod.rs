@@ -39,4 +39,6 @@ pub const BATCH_OBSERVATION_CONTENT_TYPE: &str =
 pub const ERROR_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.error-v2+json";
 
 #[cfg(test)]
+mod scheduler_mixed_tests;
+#[cfg(test)]
 mod tests;

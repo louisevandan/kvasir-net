@@ -88,7 +88,7 @@ function validatePatches(manifest, compatibilityDir) {
     if (actual !== entry.sha256) {
       throw new Error(`compatibility patch hash mismatch: ${entry.file}`);
     }
-    validateCompatibilityPatch(entry.file, patch.toString("utf8"));
+    validateCompatibilityPatch(entry.file, patch.toString("utf8"), entry.official_upstream_port);
   }
 }
 

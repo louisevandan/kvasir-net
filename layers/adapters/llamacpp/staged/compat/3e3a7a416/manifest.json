@@ -11,8 +11,8 @@
   "nearest_release_tag": "b10242",
   "previous_linker_pin": "4308a4f035791f58ae111f56c39dac598bf476be",
   "previous_official_base": "4308a4f035791f58ae111f56c39dac598bf476be",
-  "patch_set_sha256": "25bb20cd70402f15a20fc82ef87f0f91dbf6d0e9271e5bd4202d6e5490252dc5",
-  "patched_tree": "61fe78fce8ef74d1edcb96d71e989b8655f364e2",
+  "patch_set_sha256": "a276424a8939abccc38863fc2ba370529441504615d76b410aac54a5759c5bff",
+  "patched_tree": "355c68ca29fcfe79126d003fc8cd618209adb7f1",
   "patches": [
     {
       "file": "0001-ggml-backend.patch",
@@ -88,7 +88,12 @@
     },
     {
       "file": "0020-recurrent-rollback-relocation.patch",
-      "sha256": "ff04fd1d6fab16bd38dfcdb47f1e50b143c888f2c619d83c64747392310c1384"
+      "sha256": "2c9e3fd922b1bdc0788b1550e85328321f905d020e1b808c38aeb1eb388fbd6c",
+      "official_upstream_port": {
+        "repository": "https://github.com/ggml-org/llama.cpp.git",
+        "pull_request": "https://github.com/ggml-org/llama.cpp/pull/25004",
+        "commit": "7ff2fd83e9794efffd0190652aadd3924820e6e5"
+      }
     }
   ]
 }

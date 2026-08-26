@@ -38,7 +38,7 @@ impl Worker {
         }
         let mut released = Vec::new();
         let mut settlements = Vec::new();
-        let mut resolved_verify_fence = None;
+        let mut resolved_verify_fences = Vec::new();
         let mut outcomes_by_key = std::collections::BTreeMap::new();
         for capsule in capsules.0 {
             for outcome in capsule.outcomes {
@@ -176,7 +176,7 @@ impl Worker {
                 )?);
                 request.in_flight = false;
                 if phase == Phase::Verify {
-                    resolved_verify_fence = Some(key.clone());
+                    resolved_verify_fences.push(key.clone());
                 }
             }
         }
@@ -206,7 +206,7 @@ impl Worker {
             )
             .map_err(|_| "completion queue is full".to_owned())?;
         }
-        if let Some(key) = resolved_verify_fence {
+        for key in resolved_verify_fences {
             self.state
                 .finish_verify_fence(&key)
                 .map_err(str::to_owned)?;

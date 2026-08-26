@@ -76,6 +76,9 @@ impl Worker {
         }
         self.state.batch_capacity = command.n_batch;
         self.state.physical_capacity = command.n_ubatch;
+        self.state.equal_sequence_ubatch = ready.equal_sequence_ubatch;
+        self.state.max_atomic_sequences = ready.max_atomic_sequences;
+        self.state.atomic_batch_exclusive = ready.atomic_batch_exclusive;
         self.state.context_size = command.context_size;
         self.state.sequence_capacity = command.sequence_capacity;
         self.state.free_sequences = (0..command.sequence_capacity).collect();
@@ -95,6 +98,9 @@ impl Worker {
                 "n_ubatch":ready.n_ubatch,
                 "n_ctx":ready.n_ctx,
                 "n_seq_max":ready.n_seq_max,
+                "equal_sequence_ubatch":ready.equal_sequence_ubatch,
+                "max_atomic_sequences":ready.max_atomic_sequences,
+                "atomic_batch_exclusive":ready.atomic_batch_exclusive,
                 "per_sequence_context":command.context_size,
                 "reserved_context":reserved_context
             }),
@@ -119,6 +125,9 @@ impl Worker {
         self.state.free_sequences.clear();
         self.state.batch_capacity = 0;
         self.state.physical_capacity = 0;
+        self.state.equal_sequence_ubatch = false;
+        self.state.max_atomic_sequences = 0;
+        self.state.atomic_batch_exclusive = false;
         self.state.context_size = 0;
         self.state.sequence_capacity = 0;
         self.state.load_generation = 0;
@@ -172,13 +181,15 @@ fn validate_ready_capacities(
         || ready.n_batch < command.n_batch
         || ready.n_ubatch < command.n_ubatch
         || ready.n_seq_max < command.sequence_capacity
+        || ready.max_atomic_sequences == 0
     {
         return Err(format!(
-            "stage capacity is below the declared load contract: actual n_ctx={} n_batch={} n_ubatch={} n_seq_max={}; required n_ctx={} n_batch={} n_ubatch={} n_seq_max={}",
+            "stage capacity is below the declared load contract: actual n_ctx={} n_batch={} n_ubatch={} n_seq_max={} max_atomic_sequences={}; required n_ctx={} n_batch={} n_ubatch={} n_seq_max={}",
             ready.n_ctx,
             ready.n_batch,
             ready.n_ubatch,
             ready.n_seq_max,
+            ready.max_atomic_sequences,
             command.total_context_size,
             command.n_batch,
             command.n_ubatch,
@@ -216,6 +227,9 @@ mod tests {
             server_id: "ready".into(),
             transactions: false,
             physical_batch: true,
+            equal_sequence_ubatch: false,
+            max_atomic_sequences: 10,
+            atomic_batch_exclusive: false,
             n_ctx: 12_000,
             n_batch: 512,
             n_ubatch: 64,

@@ -28,34 +28,16 @@ bool valid_execution(const PhysicalExecution & execution) {
     return total == execution.sequence_ids.size();
 }
 
-bool execution_row_matches_owner(
-        const PhysicalExecution & execution,
-        std::size_t row,
-        const PhysicalOwner & owner) {
-    if (row >= execution.sequence_counts.size()
-        || execution.n_pos == 0) {
-        return false;
-    }
-    // llama_ubatch positions are dimension-major: pos[j*n_tokens + row].
-    // Dimension zero therefore starts at exactly `row`, even when n_pos=4.
-    const auto position_index = row;
-    if (position_index >= execution.positions.size()
-        || execution.positions[position_index] != static_cast<llama_pos>(owner.position)) {
-        return false;
-    }
-    std::size_t sequence_offset = 0;
-    for (std::size_t index = 0; index < row; ++index) {
-        sequence_offset += static_cast<std::size_t>(execution.sequence_counts[index]);
-    }
-    const auto count = static_cast<std::size_t>(execution.sequence_counts[row]);
-    if (sequence_offset > execution.sequence_ids.size()
-        || count > execution.sequence_ids.size() - sequence_offset) {
-        return false;
-    }
-    const auto begin = execution.sequence_ids.begin()
-        + static_cast<std::ptrdiff_t>(sequence_offset);
-    const auto end = begin + static_cast<std::ptrdiff_t>(count);
-    return std::find(begin, end, static_cast<llama_seq_id>(owner.sequence_id)) != end;
+bool valid_equal_sequence_ubatch(
+        const std::vector<LogicalRow> & rows, std::uint32_t capacity) {
+    if (rows.size() > capacity) return false;
+    std::unordered_map<llama_seq_id, std::size_t> widths;
+    for (const auto & row : rows) ++widths[row.sequence_id];
+    if (widths.empty()) return false;
+    const auto width = widths.begin()->second;
+    return std::all_of(widths.begin(), widths.end(), [width](const auto & entry) {
+        return entry.second == width;
+    });
 }
 
 } // namespace
@@ -148,6 +130,18 @@ bool StageRuntime::execute_first_batch(
         || rows.size() > llama_n_batch(ctx_)) {
         return physical_fail("invalid first-stage logical batch", error);
     }
+    // llama.cpp routes recurrent and hybrid memories through split_equal().
+    // Unequal per-sequence widths therefore become several physical graphs;
+    // the final subset can have a shape that is not the staged cut-set shape
+    // admitted by P4. Reject it before CUDA/Metal/Vulkan/OpenCL execution. The
+    // adapter negotiates this requirement and must submit exactly one equal
+    // physical UBATCH instead.
+    if (requires_equal_sequence_ubatch()
+        && !valid_equal_sequence_ubatch(rows, llama_n_ubatch(ctx_))) {
+        return physical_fail(
+            "recurrent/hybrid logical batch violates equal physical UBATCH contract",
+            error);
+    }
     if (!prepare_physical_owners(owners, error)) return false;
     captured_executions_.clear();
     capture_error_.clear();
@@ -198,59 +192,7 @@ bool StageRuntime::execute_first_batch(
         captured_executions_.clear();
         return false;
     }
-    const auto atomic = std::find_if(
-        owners.begin(), owners.end(), [](const PhysicalOwner & owner) {
-            return owner.phase == PhysicalPhase::Verify
-                || owner.phase == PhysicalPhase::Replay;
-        });
-    const auto atomic_begin = static_cast<std::size_t>(
-        std::distance(owners.begin(), atomic));
-    const auto atomic_count = atomic == owners.end()
-        ? 0U : static_cast<std::size_t>(atomic->speculative_count);
-    bool atomic_is_terminal = atomic_count == 0;
-    if (atomic_count > 0 && atomic_count <= owners.size() - atomic_begin
-        && atomic_begin + atomic_count == owners.size()
-        && !captured_executions_.empty()) {
-        const auto & execution = captured_executions_.back();
-        const auto physical_rows = execution.sequence_counts.size();
-        atomic_is_terminal = atomic_count <= physical_rows;
-        for (std::size_t offset = 0; atomic_is_terminal && offset < atomic_count; ++offset) {
-            atomic_is_terminal = execution_row_matches_owner(
-                execution, physical_rows - atomic_count + offset,
-                owners[atomic_begin + offset]);
-        }
-    }
-    if (!atomic_is_terminal) {
-        const auto sequence_id = static_cast<llama_seq_id>(atomic->sequence_id);
-        std::vector<llama_token> ignored_proposal;
-        if (!settle_physical_sequence(
-                sequence_id, static_cast<llama_pos>(atomic->position), true,
-                &ignored_proposal, error)) {
-            hop_memory_dirty_ = true;
-            if (error != nullptr) *error += ";memory_dirty=1;action=reload";
-            captured_executions_.clear();
-            return false;
-        }
-        hop_memory_dirty_ = true;
-        captured_executions_.clear();
-        if (error != nullptr) {
-            *error = "atomic verification/replay group was not the final llama.cpp physical group: "
-                + atomic->sequence_key + ";memory_dirty=1;action=reload";
-        }
-        return false;
-    }
-    if (atomic_count > 0 && config_.layer_begin == 0
-        && (atomic->phase == PhysicalPhase::Replay
-            || (atomic->phase == PhysicalPhase::Verify
-                && target_seq_rm_type_ != COMMON_CONTEXT_SEQ_RM_TYPE_FULL
-                && !(target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
-                    && atomic_count - 1 > llama_n_rs_seq(ctx_))))) {
-        // Stage zero takes an unconditional checkpoint only so a physical
-        // ubatch split can be aborted before a cut-set leaves this process.
-        // Once the group is intact, normal PART/RS rollback is sufficient.
-        physical_checkpoints_.erase(
-            static_cast<llama_seq_id>(atomic->sequence_id));
-    }
+    if (!validate_physical_atomic_round(owners, error)) return false;
     std::size_t captured_rows = 0;
     for (const auto & execution : captured_executions_) {
         captured_rows += execution.sequence_counts.size();

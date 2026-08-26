@@ -175,7 +175,7 @@ fn atomic_group_trails_ordinary_rows_in_the_same_ubatch() {
         demand(2, Phase::Decode, 1),
     ];
     let mixed = scheduler
-        .plan_with_physical_capacity(&demands, 16, 12)
+        .plan_with_physical_capacity(&demands, 16, 12, false, 10, false)
         .unwrap();
     assert_eq!(mixed.last().unwrap().phase, Phase::Verify);
     assert_eq!(mixed.last().unwrap().rows, 5);
@@ -197,6 +197,147 @@ fn atomic_group_trails_ordinary_rows_in_the_same_ubatch() {
         10
     );
     assert!(mixed.iter().all(|allocation| allocation.rows == 5));
+}
+
+#[test]
+fn one_generation_round_batches_multiple_verify_sequences() {
+    let mut scheduler = Scheduler::new();
+    let demands: Vec<_> = (0..10).map(|id| demand(id, Phase::Verify, 4)).collect();
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 64, 64, true, 10, false)
+        .unwrap();
+    assert_eq!(plan.len(), 10);
+    assert_eq!(plan.iter().map(|row| row.rows).sum::<usize>(), 40);
+    assert!(
+        plan.iter()
+            .all(|row| row.phase == Phase::Verify && row.rows == 4)
+    );
+}
+
+#[test]
+fn recurrent_mixed_generation_round_is_one_contiguous_ubatch() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![
+        demand(0, Phase::Verify, 4),
+        demand(1, Phase::Prefill, 20),
+        demand(2, Phase::Verify, 4),
+        demand(3, Phase::Prefill, 20),
+    ];
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 16, 16, true, 10, false)
+        .unwrap();
+    assert_eq!(
+        plan.iter().map(|row| row.sequence_id).collect::<Vec<_>>(),
+        vec![0, 1, 2, 3]
+    );
+    assert_eq!(
+        plan.iter().filter(|row| row.phase == Phase::Verify).count(),
+        2
+    );
+    assert_eq!(
+        plan.iter()
+            .filter(|row| row.phase == Phase::Prefill)
+            .count(),
+        2
+    );
+    assert_eq!(plan.iter().map(|row| row.rows).sum::<usize>(), 16);
+    assert!(plan.iter().all(|row| row.rows == 4));
+}
+
+#[test]
+fn generation_round_does_not_mix_recurrent_width_classes() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![
+        demand(0, Phase::Verify, 4),
+        demand(1, Phase::Verify, 3),
+        demand(2, Phase::Verify, 4),
+    ];
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 16, 16, true, 10, false)
+        .unwrap();
+    assert_eq!(plan.len(), 1);
+    assert_eq!(plan[0].sequence_id, 0);
+    assert!(plan.iter().all(|row| row.rows == 4));
+}
+
+#[test]
+fn recurrent_atomic_round_stops_at_a_sequence_id_gap() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![
+        demand(2, Phase::Verify, 4),
+        demand(3, Phase::Prefill, 20),
+        demand(4, Phase::Verify, 4),
+        demand(6, Phase::Prefill, 20),
+    ];
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 16, 16, true, 10, false)
+        .unwrap();
+    assert_eq!(
+        plan.iter().map(|row| row.sequence_id).collect::<Vec<_>>(),
+        vec![2, 3, 4]
+    );
+    assert!(plan.iter().all(|row| row.rows == 4));
+}
+
+#[test]
+fn recurrent_prefill_is_one_equal_physical_ubatch() {
+    let mut scheduler = Scheduler::new();
+    let demands: Vec<_> = (0..10)
+        .map(|id| demand(9 - id, Phase::Prefill, 500))
+        .collect();
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 512, 64, true, 10, false)
+        .unwrap();
+    assert_eq!(plan.len(), 10);
+    assert!(plan.iter().all(|row| row.rows == 6));
+    assert_eq!(plan.iter().map(|row| row.rows).sum::<usize>(), 60);
+    assert!(
+        plan.windows(2)
+            .all(|rows| rows[0].sequence_id < rows[1].sequence_id)
+    );
+}
+
+#[test]
+fn recurrent_mixed_prefill_decode_uses_common_single_row_width() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![
+        demand(0, Phase::Decode, 1),
+        demand(1, Phase::Prefill, 500),
+        demand(2, Phase::Prefill, 500),
+    ];
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 512, 64, true, 10, false)
+        .unwrap();
+    assert_eq!(plan.len(), 3);
+    assert!(plan.iter().all(|row| row.rows == 1));
+}
+
+#[test]
+fn negotiated_atomic_limit_serializes_staged_mtp_verification() {
+    let mut scheduler = Scheduler::new();
+    let demands: Vec<_> = (0..10).map(|id| demand(id, Phase::Verify, 4)).collect();
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 512, 64, true, 1, false)
+        .unwrap();
+    assert_eq!(plan.len(), 1);
+    assert_eq!(plan[0].phase, Phase::Verify);
+    assert_eq!(plan[0].rows, 4);
+}
+
+#[test]
+fn negotiated_atomic_exclusivity_rejects_ordinary_cobatching() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![
+        demand(0, Phase::Verify, 4),
+        demand(1, Phase::Prefill, 500),
+        demand(2, Phase::Decode, 1),
+    ];
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 512, 64, true, 1, true)
+        .unwrap();
+    assert_eq!(plan.len(), 1);
+    assert_eq!(plan[0].phase, Phase::Verify);
+    assert_eq!(plan[0].rows, 4);
 }
 
 #[test]
@@ -229,83 +370,4 @@ fn settlement_replay_must_end_exactly_at_retain_boundary() {
     completed.sequences[0].replay_tokens = vec![1, 2];
     completed.sequences[0].replay_position = 10;
     assert!(completed.validate().is_err());
-}
-
-#[test]
-fn decode_rows_are_reserved_then_prefill_fills_the_same_capsule() {
-    let mut scheduler = Scheduler::new();
-    let demands = vec![
-        demand(0, Phase::Decode, 1),
-        demand(1, Phase::Decode, 1),
-        demand(2, Phase::Prefill, 20),
-        demand(3, Phase::Prefill, 20),
-    ];
-    let plan = scheduler.plan(&demands, 10).unwrap();
-    assert_eq!(plan.iter().map(|row| row.rows).sum::<usize>(), 10);
-    assert_eq!(
-        plan.iter()
-            .filter(|row| row.phase == Phase::Decode)
-            .map(|row| row.rows)
-            .sum::<usize>(),
-        2
-    );
-    assert_eq!(
-        plan.iter()
-            .filter(|row| row.phase == Phase::Prefill)
-            .map(|row| row.rows)
-            .sum::<usize>(),
-        8
-    );
-}
-
-#[test]
-fn ten_parallel_slots_can_form_a_mixed_physical_batch() {
-    let mut scheduler = Scheduler::new();
-    let demands: Vec<_> = (0..10)
-        .map(|id| {
-            if id < 5 {
-                demand(id, Phase::Decode, 1)
-            } else {
-                demand(id, Phase::Prefill, 500)
-            }
-        })
-        .collect();
-    let plan = scheduler.plan(&demands, 32).unwrap();
-    assert_eq!(plan.len(), 10);
-    assert_eq!(plan.iter().map(|row| row.rows).sum::<usize>(), 32);
-    assert_eq!(
-        plan.iter().filter(|row| row.phase == Phase::Decode).count(),
-        5
-    );
-    assert_eq!(
-        plan.iter()
-            .filter(|row| row.phase == Phase::Prefill)
-            .count(),
-        5
-    );
-}
-
-#[test]
-fn cursor_rotates_the_first_prefill_residual() {
-    let mut scheduler = Scheduler::new();
-    let demands = vec![
-        demand(0, Phase::Prefill, 5),
-        demand(1, Phase::Prefill, 5),
-        demand(2, Phase::Prefill, 5),
-    ];
-    let first = scheduler.plan(&demands, 4).unwrap();
-    let second = scheduler.plan(&demands, 4).unwrap();
-    assert_eq!(first[0].sequence_id, 0);
-    assert_eq!(second[0].sequence_id, 1);
-}
-
-#[test]
-fn incompatible_rows_are_rejected_before_batch_construction() {
-    let mut scheduler = Scheduler::new();
-    let mut demands = vec![demand(0, Phase::Decode, 1), demand(1, Phase::Prefill, 5)];
-    demands[1].compatibility = "embedding|tokens|no-lora".into();
-    assert_eq!(
-        scheduler.plan(&demands, 8),
-        Err(SchedulerError::MixedCompatibility)
-    );
 }

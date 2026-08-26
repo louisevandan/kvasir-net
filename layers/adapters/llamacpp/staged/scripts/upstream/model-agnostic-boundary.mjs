@@ -27,8 +27,14 @@ function addedLines(patch) {
     .map((line) => line.slice(1));
 }
 
-export function validateCompatibilityPatch(file, patch) {
-  if (/^diff --git a\/src\/models\//mu.test(patch)) {
+function isOfficialUpstreamPort(provenance) {
+  return provenance?.repository === "https://github.com/ggml-org/llama.cpp.git"
+    && /^https:\/\/github\.com\/ggml-org\/llama\.cpp\/pull\/[1-9][0-9]*$/u.test(provenance.pull_request)
+    && /^[0-9a-f]{40}$/u.test(provenance.commit);
+}
+
+export function validateCompatibilityPatch(file, patch, provenance = null) {
+  if (/^diff --git a\/src\/models\//mu.test(patch) && !isOfficialUpstreamPort(provenance)) {
     throw new Error(`${file} changes a model implementation; update official llama.cpp instead`);
   }
   for (const line of addedLines(patch)) {

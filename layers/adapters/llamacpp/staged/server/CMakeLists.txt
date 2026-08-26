@@ -212,8 +212,10 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_library(p4_staged_llama_runtime STATIC
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_atomic.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_sample.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_mtp.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_mtp_draft.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_mtp_process.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_mtp_settle.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/physical_wire_decode.cpp"
@@ -313,6 +315,16 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_test(NAME p4_staged_mtp_ownership_test
              COMMAND p4_staged_mtp_ownership_test)
 
+    # Build the official upstream recurrent rollback regression against the
+    # exact compatibility source used by P4. It is run explicitly with a real
+    # recurrent model, so it is not registered as a model-free CTest.
+    add_executable(p4_staged_upstream_recurrent_rollback_test
+        "${P4_STAGED_LLAMA_SOURCE_DIR}/tests/test-recurrent-state-rollback.cpp"
+    )
+    target_link_libraries(p4_staged_upstream_recurrent_rollback_test
+        PRIVATE llama llama-common)
+    p4_stage_enable_asserts(p4_staged_upstream_recurrent_rollback_test)
+
     # Keep native DLLs beside each executable. This makes both direct launch
     # and CTest independent of generator-specific PATH handling on Windows.
     function(p4_stage_copy_runtime target)
@@ -338,4 +350,5 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     p4_stage_copy_runtime(p4_staged_physical_wire_test)
     p4_stage_copy_runtime(p4_staged_request_stops_test)
     p4_stage_copy_runtime(p4_staged_mtp_ownership_test)
+    p4_stage_copy_runtime(p4_staged_upstream_recurrent_rollback_test)
 endif()

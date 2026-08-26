@@ -24,6 +24,9 @@ pub struct ReadyInfo {
     pub server_id: String,
     pub transactions: bool,
     pub physical_batch: bool,
+    pub equal_sequence_ubatch: bool,
+    pub max_atomic_sequences: usize,
+    pub atomic_batch_exclusive: bool,
     pub n_ctx: usize,
     pub n_batch: usize,
     pub n_ubatch: usize,
@@ -302,15 +305,24 @@ fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
         .map_err(|_| "stage server HELLO id is not UTF-8".to_owned())?;
     let transactions = text.split(';').any(|field| field == "transactions=1");
     let physical_batch = text.split(';').any(|field| field == "physical_batch=1");
+    let equal_sequence_ubatch = text
+        .split(';')
+        .any(|field| field == "equal_sequence_ubatch=1");
+    let atomic_batch_exclusive = text
+        .split(';')
+        .any(|field| field == "atomic_batch_exclusive=1");
     Ok(ReadyInfo {
         protocol_revision: PROTOCOL_REVISION,
         n_ctx: capability_number(&text, "n_ctx")?,
         n_batch: capability_number(&text, "n_batch")?,
         n_ubatch: capability_number(&text, "n_ubatch")?,
         n_seq_max: capability_number(&text, "n_seq_max")?,
+        max_atomic_sequences: capability_number(&text, "max_atomic_sequences")?,
         server_id: text,
         transactions,
         physical_batch,
+        equal_sequence_ubatch,
+        atomic_batch_exclusive,
     })
 }
 

@@ -51,6 +51,9 @@ impl Worker {
                     &demands,
                     self.state.batch_capacity,
                     self.state.physical_capacity,
+                    self.state.equal_sequence_ubatch,
+                    self.state.max_atomic_sequences,
+                    self.state.atomic_batch_exclusive,
                 )
                 .map_err(|error| {
                     self.set_snapshot(&format!("scheduler_failed:{error:?}"));
@@ -206,7 +209,7 @@ impl Worker {
                 logical_rows,
                 &physical,
             )?;
-            let mut verify_request_id = None;
+            let mut verify_request_ids = Vec::new();
             for (request_id, phase, count) in updates {
                 let request = self
                     .state
@@ -215,18 +218,12 @@ impl Worker {
                     .expect("successful batch keeps request active");
                 let _ = count;
                 request.in_flight = true;
-                if phase == Phase::Verify && verify_request_id.replace(request_id).is_some() {
-                    self.set_snapshot("physical batch contained multiple verification groups");
-                    self.emit_batch_errors(
-                        &batch_events,
-                        "LLAMA_PHYSICAL_RESULT_INVALID",
-                        "physical batch contained multiple verification groups",
-                    )?;
-                    return Err(());
+                if phase == Phase::Verify {
+                    verify_request_ids.push(request_id);
                 }
             }
-            if let Some(request_id) = verify_request_id {
-                if let Err(detail) = self.state.begin_verify_fence(&request_id) {
+            if !verify_request_ids.is_empty() {
+                if let Err(detail) = self.state.begin_verify_fence(&verify_request_ids) {
                     self.set_snapshot(detail);
                     self.emit_batch_errors(&batch_events, "LLAMA_VERIFY_FENCE_FAILED", detail)?;
                     return Err(());

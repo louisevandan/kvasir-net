@@ -25,6 +25,9 @@ impl ServerControl for Fake {
                 server_id: "fake".into(),
                 transactions: false,
                 physical_batch: true,
+                equal_sequence_ubatch: false,
+                max_atomic_sequences: 1,
+                atomic_batch_exclusive: false,
                 n_ctx: 512,
                 n_batch: 64,
                 n_ubatch: 64,
@@ -285,7 +288,7 @@ fn child_server() {
     let response = Frame::new(Operation::Hello, {
         let mut body = PROTOCOL_REVISION.to_le_bytes().to_vec();
         body.extend_from_slice(
-            b"test-child;physical_batch=1;n_ctx=512;n_batch=64;n_ubatch=64;n_seq_max=1",
+            b"test-child;physical_batch=1;equal_sequence_ubatch=0;max_atomic_sequences=1;atomic_batch_exclusive=0;n_ctx=512;n_batch=64;n_ubatch=64;n_seq_max=1",
         );
         body
     })

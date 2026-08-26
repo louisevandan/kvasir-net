@@ -25,6 +25,30 @@ test("model implementation patches are rejected", () => {
   ].join("\n")), /update official llama\.cpp instead/u);
 });
 
+test("an identified official upstream port may update its model-side graph writer", () => {
+  assert.doesNotThrow(() => validateCompatibilityPatch("backport.patch", [
+    "diff --git a/src/models/future.cpp b/src/models/future.cpp",
+    "+++ b/src/models/future.cpp",
+    "+auto state = build_generic_state_carry();",
+  ].join("\n"), {
+    repository: "https://github.com/ggml-org/llama.cpp.git",
+    pull_request: "https://github.com/ggml-org/llama.cpp/pull/25004",
+    commit: "7ff2fd83e9794efffd0190652aadd3924820e6e5",
+  }));
+});
+
+test("official upstream provenance does not permit architecture branches", () => {
+  assert.throws(() => validateCompatibilityPatch("backport.patch", [
+    "diff --git a/src/models/future.cpp b/src/models/future.cpp",
+    "+++ b/src/models/future.cpp",
+    "+if (arch == LLM_ARCH_FUTURE) return special_memory();",
+  ].join("\n"), {
+    repository: "https://github.com/ggml-org/llama.cpp.git",
+    pull_request: "https://github.com/ggml-org/llama.cpp/pull/25004",
+    commit: "7ff2fd83e9794efffd0190652aadd3924820e6e5",
+  }), /adds model or architecture knowledge/u);
+});
+
 test("architecture branches in compatibility patches are rejected", () => {
   assert.throws(() => validateCompatibilityPatch("branch.patch", [
     "diff --git a/src/llama-model.cpp b/src/llama-model.cpp",

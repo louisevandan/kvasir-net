@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -40,10 +40,11 @@ pub enum SchedulerError {
 
 /// llama.cpp-compatible mixed-batch planner.
 ///
-/// One call fills one logical llama batch up to `llama_n_batch`. llama.cpp may
-/// split it at `n_ubatch`; the stage callback, not this planner, is the
-/// authority for those physical capsules. Decode consumes one row first; the
-/// remaining rows are water-filled across Prefill in rotating order.
+/// Attention models fill one logical llama batch up to `llama_n_batch` and
+/// allow llama.cpp to split it at `n_ubatch`. Recurrent/hybrid models negotiate
+/// equal per-sequence widths, so one call constructs exactly one physical
+/// UBATCH instead. Decode consumes one row first; ordinary attention Prefill
+/// uses the remaining rows in rotating water-fill order.
 pub struct Scheduler {
     cursor: usize,
 }
@@ -62,7 +63,7 @@ impl Scheduler {
         demands: &[Demand],
         capacity: usize,
     ) -> Result<Vec<Allocation>, SchedulerError> {
-        self.plan_with_physical_capacity(demands, capacity, capacity)
+        self.plan_with_physical_capacity(demands, capacity, capacity, false, usize::MAX, false)
     }
 
     pub fn plan_with_physical_capacity(
@@ -70,8 +71,11 @@ impl Scheduler {
         demands: &[Demand],
         ordinary_capacity: usize,
         physical_capacity: usize,
+        equal_sequence_ubatch: bool,
+        max_atomic_sequences: usize,
+        atomic_batch_exclusive: bool,
     ) -> Result<Vec<Allocation>, SchedulerError> {
-        if ordinary_capacity == 0 || physical_capacity == 0 {
+        if ordinary_capacity == 0 || physical_capacity == 0 || max_atomic_sequences == 0 {
             return Err(SchedulerError::ZeroCapacity);
         }
         if demands.is_empty() {
@@ -84,13 +88,21 @@ impl Scheduler {
         // rollback snapshots belong to the most recent UBATCH until the tail
         // resolves verification, so no later UBATCH may follow it.
         if has_atomic {
-            self.plan_atomic_window(demands, physical_capacity)
+            self.plan_atomic_window(
+                demands,
+                physical_capacity,
+                equal_sequence_ubatch,
+                max_atomic_sequences,
+                atomic_batch_exclusive,
+            )
+        } else if equal_sequence_ubatch {
+            self.plan_equal_ordinary(demands, physical_capacity)
         } else {
             self.plan_ordinary(demands, ordinary_capacity)
         }
     }
 
-    fn plan_atomic_window(
+    fn plan_equal_ordinary(
         &mut self,
         demands: &[Demand],
         capacity: usize,
@@ -98,41 +110,170 @@ impl Scheduler {
         let start = self.cursor % demands.len();
         let order: Vec<usize> = (0..demands.len())
             .map(|offset| (start + offset) % demands.len())
+            .take(capacity)
             .collect();
-        let atomic = order
+        // A decode row fixes the common width at one. Otherwise share the
+        // physical capacity across every admitted prompt and cap the width at
+        // the shortest remaining prompt. This is the fullest possible equal
+        // UBATCH for that fair participant set; unused remainder smaller than
+        // the participant count cannot be assigned without causing another
+        // llama.cpp split_equal() graph.
+        let width = if order
+            .iter()
+            .any(|index| demands[*index].phase == Phase::Decode)
+        {
+            1
+        } else {
+            let shared = capacity / order.len();
+            order
+                .iter()
+                .map(|index| demands[*index].available_rows)
+                .min()
+                .unwrap_or(1)
+                .min(shared)
+        };
+        self.cursor = (start + 1) % demands.len();
+        let mut allocations: Vec<_> = order
+            .into_iter()
+            .map(|index| Allocation {
+                request_id: demands[index].request_id.clone(),
+                sequence_id: demands[index].sequence_id,
+                phase: demands[index].phase,
+                rows: width,
+            })
+            .collect();
+        // Stable physical membership is independent of map insertion order.
+        allocations.sort_by_key(|allocation| allocation.sequence_id);
+        Ok(allocations)
+    }
+
+    fn plan_atomic_window(
+        &mut self,
+        demands: &[Demand],
+        capacity: usize,
+        equal_sequence_ubatch: bool,
+        max_atomic_sequences: usize,
+        atomic_batch_exclusive: bool,
+    ) -> Result<Vec<Allocation>, SchedulerError> {
+        let start = self.cursor % demands.len();
+        let order: Vec<usize> = (0..demands.len())
+            .map(|offset| (start + offset) % demands.len())
+            .collect();
+        let first_atomic = order
             .iter()
             .copied()
             .find(|index| demands[*index].atomic)
             .expect("atomic window has an atomic demand");
-        let width = demands[atomic].available_rows;
+        let width = demands[first_atomic].available_rows;
         if width > capacity {
             return Err(SchedulerError::AtomicDemandExceedsCapacity);
         }
 
-        // llama_memory_recurrent asks split_equal() to take the same number
-        // of rows from every participating sequence.  A shorter or longer
-        // ordinary allocation would therefore leave either Verify or the
-        // ordinary sequence in a later physical UBATCH.  Admit only equal
-        // widths so this logical batch is mechanically one physical UBATCH.
-        let mut selected = Vec::new();
-        let mut used = width;
+        // One generation round may contain several independent speculative
+        // sequences. Keep every allocation at the selected width so an atomic
+        // group is never split by llama.cpp.
+        let mut atomic = Vec::new();
+        let mut used = 0usize;
         for index in order
             .iter()
             .copied()
-            .filter(|index| !demands[*index].atomic)
+            .filter(|index| demands[*index].atomic && demands[*index].available_rows == width)
+            .take(max_atomic_sequences)
         {
-            let demand = &demands[index];
-            let compatible_width = match demand.phase {
-                Phase::Prefill => demand.available_rows >= width,
-                Phase::Decode => width == 1,
-                Phase::Verify | Phase::Replay => false,
+            let Some(next) = used.checked_add(width) else {
+                break;
             };
-            if compatible_width && used.checked_add(width).is_some_and(|next| next <= capacity) {
-                selected.push(index);
-                used += width;
+            if next > capacity {
+                break;
             }
+            atomic.push(index);
+            used = next;
         }
-        selected.push(atomic);
+        debug_assert!(!atomic.is_empty());
+
+        let ordinary_compatible = |demand: &Demand| {
+            !atomic_batch_exclusive
+                && !demand.atomic
+                && match demand.phase {
+                    Phase::Prefill => demand.available_rows >= width,
+                    Phase::Decode => width == 1,
+                    Phase::Verify | Phase::Replay => false,
+                }
+        };
+        let selected = if equal_sequence_ubatch {
+            // split_equal(sequential=true) admits only consecutive sequence
+            // ids. Build one contiguous, ascending run around the rotating
+            // atomic seed; a missing or incompatible id is a hard UBATCH
+            // boundary and must not be discovered after GPU submission.
+            let candidates: HashMap<u32, usize> = demands
+                .iter()
+                .enumerate()
+                .filter(|(_, demand)| {
+                    (demand.atomic && demand.available_rows == width) || ordinary_compatible(demand)
+                })
+                .map(|(index, demand)| (demand.sequence_id, index))
+                .collect();
+            let mut selected = vec![first_atomic];
+            let mut low = demands[first_atomic].sequence_id;
+            let mut high = low;
+            let mut atomic_count = 1usize;
+            let max_sequences = capacity / width;
+            let mut lower_open = true;
+            let mut upper_open = true;
+            while selected.len() < max_sequences && (lower_open || upper_open) {
+                let mut added = false;
+                if lower_open {
+                    let next = low
+                        .checked_sub(1)
+                        .and_then(|id| candidates.get(&id).copied());
+                    if let Some(index) = next.filter(|index| {
+                        !demands[*index].atomic || atomic_count < max_atomic_sequences
+                    }) {
+                        low -= 1;
+                        atomic_count += usize::from(demands[index].atomic);
+                        selected.insert(0, index);
+                        added = true;
+                    } else {
+                        lower_open = false;
+                    }
+                }
+                if selected.len() < max_sequences && upper_open {
+                    let next = high
+                        .checked_add(1)
+                        .and_then(|id| candidates.get(&id).copied());
+                    if let Some(index) = next.filter(|index| {
+                        !demands[*index].atomic || atomic_count < max_atomic_sequences
+                    }) {
+                        high += 1;
+                        atomic_count += usize::from(demands[index].atomic);
+                        selected.push(index);
+                        added = true;
+                    } else {
+                        upper_open = false;
+                    }
+                }
+                if !added {
+                    break;
+                }
+            }
+            selected
+        } else {
+            let mut selected = Vec::new();
+            if !atomic_batch_exclusive {
+                for index in order
+                    .iter()
+                    .copied()
+                    .filter(|index| ordinary_compatible(&demands[*index]))
+                {
+                    if used.checked_add(width).is_some_and(|next| next <= capacity) {
+                        selected.push(index);
+                        used += width;
+                    }
+                }
+            }
+            selected.extend(atomic);
+            selected
+        };
         self.cursor = (start + 1) % demands.len();
         Ok(selected
             .into_iter()
