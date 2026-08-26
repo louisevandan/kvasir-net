@@ -22,6 +22,8 @@ pub struct RunConfig {
     pub waves: Vec<ArrivalWave>,
     #[serde(default)]
     pub options: String,
+    #[serde(default)]
+    pub pre_inference_hold_ms: u64,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
 }
@@ -73,6 +75,7 @@ pub(super) fn validate(config: &RunConfig) -> Result<(), &'static str> {
         || config.channel.is_empty()
         || config.connection_generation == 0
         || config.load_generation == 0
+        || config.pre_inference_hold_ms > 120_000
         || config.waves.is_empty()
         || config.waves[0].after_ms != 0
         || config.waves.iter().any(|wave| wave.count == 0)

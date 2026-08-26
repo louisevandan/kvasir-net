@@ -13,6 +13,7 @@ use p4_llamacpp_staged_adapter::v2::{
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
 use serde::Serialize;
+use std::io::Write;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
@@ -151,6 +152,16 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         config.timeout_ms,
     )
     .await?;
+
+    if config.pre_inference_hold_ms > 0 {
+        println!(
+            "P4_EVENT_GATE_LOADED nodes={} pre_inference_hold_ms={}",
+            config.nodes.len(),
+            config.pre_inference_hold_ms
+        );
+        std::io::stdout().flush()?;
+        tokio::time::sleep(Duration::from_millis(config.pre_inference_hold_ms)).await;
+    }
 
     let run = inference::drive(&config, &mut wire, &mut sender).await?;
 
