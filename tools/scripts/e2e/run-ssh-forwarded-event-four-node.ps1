@@ -268,7 +268,8 @@ $memoryPlans = @($config.nodes | ForEach-Object {
     if ($deviceEntries.Count -ne 1 -or $hostEntries.Count -ne 1) { throw "Node $($_.node) did not produce one device and one host memory entry." }
     $availableDevice = ([int64]$device.cap - [int64]$device.target.memory_used_mib -
         [int64]$DeviceRuntimeReserveMiB) * 1MB
-    if ([uint64]$deviceEntries[0].required -gt [uint64][Math]::Max(0, $availableDevice)) {
+    if ($availableDevice -lt 0 -or
+        [uint64]$deviceEntries[0].required -gt [uint64]$availableDevice) {
         throw "Node $($_.node) exceeds its GPU cap before allocation: required=$($deviceEntries[0].required) available=$availableDevice."
     }
     [pscustomobject]@{node=$_.node;agent=$_.agent;target_gpu=$device.target;plan=$plan}

@@ -10,20 +10,55 @@ function ConvertTo-P4PowerShellLiteral([string]$Text) {
 }
 
 function Invoke-P4RemotePowerShell([string]$Target, [string]$Script) {
-    $encoded = ConvertTo-P4EncodedCommand $Script
-    $priorErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    $leaf = ".p4-remote-$([Guid]::NewGuid().ToString('N')).ps1"
+    $localScript = Join-Path ([IO.Path]::GetTempPath()) $leaf
+    [IO.File]::WriteAllText($localScript, $Script, [Text.UTF8Encoding]::new($true))
+    $copyOutput = & scp.exe -q -o BatchMode=yes $localScript "$Target`:$leaf" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $localScript -Force -ErrorAction SilentlyContinue
+        throw "Remote script copy failed with exit $LASTEXITCODE`: $($copyOutput -join [Environment]::NewLine)"
+    }
+    $runner = @"
+`$ErrorActionPreference='Stop'
+try {
+    & (Join-Path `$env:USERPROFILE $(ConvertTo-P4PowerShellLiteral $leaf))
+} catch {
+    [Console]::Error.WriteLine((`$_ | Out-String))
+    exit 1
+}
+"@
     try {
-        $output = & ssh.exe -T -o BatchMode=yes -o ConnectTimeout=15 $Target `
-            "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded" 2>&1
-        $exitCode = $LASTEXITCODE
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = 'ssh.exe'
+        foreach ($argument in @('-T','-o','BatchMode=yes','-o','ConnectTimeout=15',$Target,
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $(ConvertTo-P4EncodedCommand $runner)")) {
+            $start.ArgumentList.Add($argument)
+        }
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $start
+        if (-not $process.Start()) { throw 'Failed to start remote PowerShell transport.' }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            throw "Remote command failed with exit code $($process.ExitCode). stdout=$stdout stderr=$stderr"
+        }
+        if (-not [string]::IsNullOrEmpty($stdout)) {
+            @($stdout.TrimEnd("`r","`n") -split '\r?\n')
+        }
     } finally {
-        $ErrorActionPreference = $priorErrorAction
+        $cleanup = "Remove-Item -LiteralPath (Join-Path `$env:USERPROFILE $(ConvertTo-P4PowerShellLiteral $leaf)) -Force -ErrorAction SilentlyContinue"
+        $encodedCleanup = ConvertTo-P4EncodedCommand $cleanup
+        & ssh.exe -T -o BatchMode=yes -o ConnectTimeout=15 $Target `
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $encodedCleanup" *> $null
+        Remove-Item -LiteralPath $localScript -Force -ErrorAction SilentlyContinue
     }
-    if ($exitCode -ne 0) {
-        throw "Remote command failed with exit code ${exitCode}: $($output -join [Environment]::NewLine)"
-    }
-    @($output)
 }
 
 function Start-P4LocalEventAgent {
@@ -246,7 +281,8 @@ function Invoke-P4RemoteStageMemoryPlan {
     $inputBytes[2] = [byte](($length -shr 16) -band 0xff)
     $inputBytes[3] = [byte](($length -shr 24) -band 0xff)
     [Buffer]::BlockCopy($planBytes, 0, $inputBytes, 4, $planBytes.Length)
-    $inputBase64 = [Convert]::ToBase64String($inputBytes)
+    $localInputFile = [IO.Path]::GetTempFileName()
+    [IO.File]::WriteAllBytes($localInputFile, $inputBytes)
     $lines = @(
         '@echo off',
         'setlocal',
@@ -256,10 +292,13 @@ function Invoke-P4RemoteStageMemoryPlan {
         ('>"{0}" echo %errorlevel%' -f $exitFile)
     )
     $encodedLines = ($lines | ForEach-Object { ConvertTo-P4PowerShellLiteral $_ }) -join ', '
-    $script = @"
+    $prepare = @"
 `$ErrorActionPreference='Stop'; `$ProgressPreference='SilentlyContinue'
 New-Item -ItemType Directory -Force -Path $(ConvertTo-P4PowerShellLiteral $RunDirectory) | Out-Null
-[IO.File]::WriteAllBytes($(ConvertTo-P4PowerShellLiteral $inputFile),[Convert]::FromBase64String($(ConvertTo-P4PowerShellLiteral $inputBase64)))
+Remove-Item -LiteralPath $(ConvertTo-P4PowerShellLiteral $inputFile) -Force -ErrorAction SilentlyContinue
+"@
+    $script = @"
+`$ErrorActionPreference='Stop'; `$ProgressPreference='SilentlyContinue'
 Set-Content -LiteralPath $(ConvertTo-P4PowerShellLiteral $launcher) -Value @($encodedLines) -Encoding ascii
 `$old=Get-ScheduledTask -TaskName $(ConvertTo-P4PowerShellLiteral $TaskName) -ErrorAction SilentlyContinue
 if(`$null -ne `$old){Stop-ScheduledTask -InputObject `$old -ErrorAction SilentlyContinue;Unregister-ScheduledTask -InputObject `$old -Confirm:`$false}
@@ -283,6 +322,12 @@ if(-not[int]::TryParse((Get-Content -LiteralPath $(ConvertTo-P4PowerShellLiteral
 [ordered]@{exit_code=`$exitCode;stdout=[Convert]::ToBase64String([IO.File]::ReadAllBytes($(ConvertTo-P4PowerShellLiteral $stdoutFile)));stderr=[Convert]::ToBase64String([IO.File]::ReadAllBytes($(ConvertTo-P4PowerShellLiteral $stderrFile)))}|ConvertTo-Json -Compress
 "@
     try {
+        Invoke-P4RemotePowerShell $Target $prepare | Out-Null
+        $remoteInputFile = $inputFile -replace '\\','/'
+        $copyOutput = & scp.exe -q -o BatchMode=yes $localInputFile "$Target`:$remoteInputFile" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Remote memory-plan input copy failed with exit $LASTEXITCODE`: $($copyOutput -join [Environment]::NewLine)"
+        }
         $remoteOutput = @(Invoke-P4RemotePowerShell $Target $script)
         $json = $remoteOutput | Where-Object { $_.TrimStart().StartsWith('{') } | Select-Object -Last 1
         if ([string]::IsNullOrWhiteSpace($json)) { throw 'Remote memory inspector returned no result.' }
@@ -307,6 +352,7 @@ if(`$null -ne `$task){Stop-ScheduledTask -InputObject `$task -ErrorAction Silent
 Remove-Item -LiteralPath @($(($files | ForEach-Object { ConvertTo-P4PowerShellLiteral $_ }) -join ',')) -Force -ErrorAction SilentlyContinue
 "@
         try { Invoke-P4RemotePowerShell $Target $cleanup | Out-Null } catch {}
+        Remove-Item -LiteralPath $localInputFile -Force -ErrorAction SilentlyContinue
     }
 }
 

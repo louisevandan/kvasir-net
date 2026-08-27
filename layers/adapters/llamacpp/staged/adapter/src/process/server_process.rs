@@ -47,7 +47,10 @@ impl<C: ServerControl> ServerProcess<C> {
                     self.state = ProcessState::TimedOut;
                     return Err(ProcessError::ReadyTimeout(timeout));
                 }
-                Ok(None) => std::thread::yield_now(),
+                Ok(None) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    std::thread::sleep(remaining.min(Duration::from_millis(50)));
+                }
                 Err(error) => {
                     self.state = ProcessState::Crashed;
                     return Err(ProcessError::ReadyFailed(error));

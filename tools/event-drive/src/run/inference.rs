@@ -89,9 +89,13 @@ where
                             return Err("output arrived after a terminal outcome".into());
                         }
                         identity.output(&event, &outcome, request.outcomes.last())?;
+                        let observed_ms = started.elapsed().as_millis();
+                        if request.first_output_ms.is_none() {
+                            request.first_output_ms = Some(observed_ms);
+                        }
                         request.response.push_str(&outcome.text);
                         if outcome.stop.is_some() {
-                            request.completed_ms = Some(started.elapsed().as_millis());
+                            request.completed_ms = Some(observed_ms);
                             completed += 1;
                         }
                         request.outcomes.push(outcome);
@@ -199,11 +203,16 @@ where
                 request_id,
                 prompt,
                 arrival_ms: started.elapsed().as_millis(),
+                first_output_ms: None,
                 completed_ms: None,
                 prefill_rows: 0,
                 decode_rows: 0,
                 verify_rows: 0,
                 replay_rows: 0,
+                prefill_elapsed_ms: None,
+                generation_elapsed_ms: None,
+                logical_prefill_tps: None,
+                logical_generation_tps: None,
                 response: String::new(),
                 outcomes: Vec::new(),
             },

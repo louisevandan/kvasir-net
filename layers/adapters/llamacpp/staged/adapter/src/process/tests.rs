@@ -104,6 +104,16 @@ fn hello_contract_errors_retain_the_actual_server_identity() {
 }
 
 #[test]
+fn stage_socket_identity_rejects_a_tcp_self_connection() {
+    let endpoint: SocketAddr = "127.0.0.1:52104".parse().expect("valid endpoint");
+    assert!(core::is_self_connection(endpoint, endpoint));
+    assert!(!core::is_self_connection(
+        "127.0.0.1:61234".parse().expect("valid local endpoint"),
+        endpoint,
+    ));
+}
+
+#[test]
 fn concrete_process_control_sends_plan_hello_and_unload_then_reaps_child() {
     if env::var_os("STAGED_ADAPTER_CHILD_SERVER").is_some() {
         child_server();

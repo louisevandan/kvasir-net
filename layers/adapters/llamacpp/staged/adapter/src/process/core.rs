@@ -60,8 +60,7 @@ pub trait ServerControl {
     fn shutdown(&mut self) -> Result<(), String>;
 }
 
-/// Configuration for one stage-server process. The adapter receives the
-/// opaque plan from OUTER and forwards its bytes unchanged to this process.
+/// One stage-server process; the adapter forwards OUTER's opaque plan unchanged.
 #[derive(Clone, Debug)]
 pub struct ServerLaunch {
     pub binary: PathBuf,
@@ -89,7 +88,6 @@ impl ServerLaunch {
     }
 }
 
-/// The concrete OS process/socket owner used by the staged adapter.
 pub struct ProcessServerControl {
     launch: ServerLaunch,
     child: Option<Child>,
@@ -138,6 +136,16 @@ impl ProcessServerControl {
                 }
                 Err(error) => return Err(format!("cannot connect to stage server: {error}")),
             };
+            let local_endpoint = stream
+                .local_addr()
+                .map_err(|error| format!("cannot read stage socket local endpoint: {error}"))?;
+            let peer_endpoint = stream
+                .peer_addr()
+                .map_err(|error| format!("cannot read stage socket peer endpoint: {error}"))?;
+            // A dynamic-range target can echo HELLO through a self-connection.
+            if is_self_connection(local_endpoint, peer_endpoint) {
+                return Ok(None);
+            }
             stream
                 .set_read_timeout(Some(self.launch.io_timeout))
                 .map_err(|error| format!("cannot configure stage socket: {error}"))?;
@@ -263,8 +271,6 @@ impl ServerControl for ProcessServerControl {
             }
         }
         self.stream.take();
-        // Closing stdin is the abnormal-parent signal only after UNLOAD has
-        // been sent. It also guarantees cleanup if the server has no response.
         self.plan_stdin.take();
 
         if let Some(mut child) = self.child.take() {
@@ -365,6 +371,10 @@ where
                 text.len()
             )
         })
+}
+
+pub(super) fn is_self_connection(local_endpoint: SocketAddr, peer_endpoint: SocketAddr) -> bool {
+    local_endpoint == peer_endpoint
 }
 
 fn is_retryable_io(error: &FrameIoError) -> bool {

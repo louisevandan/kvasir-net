@@ -4,6 +4,7 @@ mod inference;
 mod inference_identity;
 #[cfg(test)]
 mod inference_identity_tests;
+mod load;
 mod replies;
 mod wire;
 
@@ -11,9 +12,8 @@ pub use config::{AcceptanceConfig, ArrivalWave, ResponseExpectation, RunConfig};
 use config::{address, node_endpoint, validate};
 
 use p4_llamacpp_staged_adapter::v2::{
-    BatchObservation, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand, NodeRole,
-    OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE, SessionCommand,
-    UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
+    BatchObservation, NodeRole, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
+    SessionCommand, UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
 };
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
@@ -49,13 +49,36 @@ pub struct RequestArtifact {
     pub request_id: String,
     pub prompt: String,
     pub arrival_ms: u128,
+    pub first_output_ms: Option<u128>,
     pub completed_ms: Option<u128>,
     pub prefill_rows: usize,
     pub decode_rows: usize,
     pub verify_rows: usize,
     pub replay_rows: usize,
+    pub prefill_elapsed_ms: Option<u128>,
+    pub generation_elapsed_ms: Option<u128>,
+    pub logical_prefill_tps: Option<f64>,
+    pub logical_generation_tps: Option<f64>,
     pub response: String,
     pub outcomes: Vec<OutcomePayload>,
+}
+
+fn per_second(rows: usize, elapsed_ms: u128) -> Option<f64> {
+    (elapsed_ms > 0).then(|| rows as f64 * 1_000.0 / elapsed_ms as f64)
+}
+
+fn finish_phase_metrics(request: &mut RequestArtifact) {
+    let Some(first_output_ms) = request.first_output_ms else {
+        return;
+    };
+    let prefill_elapsed_ms = first_output_ms.saturating_sub(request.arrival_ms);
+    request.prefill_elapsed_ms = Some(prefill_elapsed_ms);
+    request.logical_prefill_tps = per_second(request.prefill_rows, prefill_elapsed_ms);
+    if let Some(completed_ms) = request.completed_ms {
+        let generation_elapsed_ms = completed_ms.saturating_sub(first_output_ms);
+        request.generation_elapsed_ms = Some(generation_elapsed_ms);
+        request.logical_generation_tps = per_second(request.decode_rows, generation_elapsed_ms);
+    }
 }
 
 pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::error::Error>> {
@@ -97,44 +120,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     )
     .await?;
 
-    // LOAD is deliberately serialized by the Outer. Each stage's llama.cpp
-    // no-alloc memory plan must observe allocations retained by earlier stages;
-    // concurrent launches on one host could all pass against the same stale
-    // free-memory snapshot and overcommit the physical host.
-    for node in &config.nodes {
-        let command = LoadCommand {
-            load_generation: config.load_generation,
-            binary: node.binary.clone(),
-            endpoint: node.endpoint.clone(),
-            plan: node.plan.clone(),
-            args: node.args.clone(),
-            environment: node.environment.clone(),
-            n_batch: node.n_batch,
-            n_ubatch: node.n_ubatch,
-            context_size: node.context_size,
-            total_context_size: node.total_context_size,
-            sequence_capacity: node.sequence_capacity,
-            ready_timeout_ms: config.timeout_ms,
-            io_timeout_ms: config.timeout_ms,
-        };
-        let event = sender.event(
-            node_endpoint(node)?,
-            EventClass::Control,
-            LOAD_CONTENT_TYPE,
-            serde_json::to_vec(&command)?,
-            "load",
-        );
-        let expected = vec![ExpectedReply::from_request(&event)];
-        wire.send(event).await?;
-        receive_exact(
-            &mut wire,
-            LOADED_CONTENT_TYPE,
-            expected,
-            "load",
-            config.timeout_ms,
-        )
-        .await?;
-    }
+    load::drive(&config, &mut wire, &mut sender).await?;
 
     let first = address(&config.nodes[0]);
     let mut session_replies = Vec::with_capacity(config.nodes.len());
@@ -245,6 +231,9 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
             }
         }
     }
+    for request in &mut requests {
+        finish_phase_metrics(request);
+    }
     let acceptance = acceptance::evaluate(&config, &requests);
     let structurally_complete = run.error.is_none()
         && run.completed_count == run.request_count
@@ -334,5 +323,31 @@ mod tests {
             ..first.clone()
         };
         assert_ne!(outer_event_id(&first, 1), outer_event_id(&second, 1));
+    }
+
+    #[test]
+    fn phase_metrics_use_first_output_as_the_prefill_decode_boundary() {
+        let mut request = RequestArtifact {
+            request_id: "request".into(),
+            prompt: "prompt".into(),
+            arrival_ms: 10,
+            first_output_ms: Some(210),
+            completed_ms: Some(1_210),
+            prefill_rows: 500,
+            decode_rows: 100,
+            verify_rows: 0,
+            replay_rows: 0,
+            prefill_elapsed_ms: None,
+            generation_elapsed_ms: None,
+            logical_prefill_tps: None,
+            logical_generation_tps: None,
+            response: String::new(),
+            outcomes: Vec::new(),
+        };
+        finish_phase_metrics(&mut request);
+        assert_eq!(request.prefill_elapsed_ms, Some(200));
+        assert_eq!(request.generation_elapsed_ms, Some(1_000));
+        assert_eq!(request.logical_prefill_tps, Some(2_500.0));
+        assert_eq!(request.logical_generation_tps, Some(100.0));
     }
 }
