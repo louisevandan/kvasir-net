@@ -146,10 +146,12 @@ function buildPlan(input) {
     "--kv-layer-end", `${end}`,
     "--n-seq-max", `${input.parallel}`,
     "--spec-type", input.speculativeType,
-    // P4 physical-v2 preserves llama.cpp's exact UBATCH sequence membership;
-    // it does not need a unified KV cache.  Make the stock per-sequence mode
-    // explicit so MiniMax M3 keeps its MSA path under parallel load.
-    "--no-kv-unified",
+    // This OUTER plan deliberately selects llama.cpp's unified cache. It lets
+    // split_simple() pack unequal Prefill and Decode contributions into the
+    // same physical UBATCH; physical-v2 then forwards that exact membership
+    // to every downstream stage. This is a batching policy, not a model-load
+    // workaround.
+    "--kv-unified",
     "--batch-size", `${input.nBatch}`,
     "--ubatch-size", `${input.nUbatch}`,
     "--ctx-size", `${input.totalContextSize}`,

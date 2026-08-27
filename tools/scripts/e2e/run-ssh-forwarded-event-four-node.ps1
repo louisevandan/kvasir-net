@@ -258,10 +258,9 @@ $memoryPlans = @($config.nodes | ForEach-Object {
     }
     $shape = $plan.execution_shape
     if ($null -eq $shape -or $shape.n_ctx_seq -lt $_.context_size -or
-        $shape.n_ctx -ne ($shape.n_ctx_seq * $shape.n_seq_max) -or
         $shape.n_ctx -lt $_.total_context_size -or $shape.n_batch -ne $_.n_batch -or
         $shape.n_ubatch -ne $_.n_ubatch -or
-        $shape.n_seq_max -ne $_.sequence_capacity -or $shape.kv_unified -ne $false) {
+        $shape.n_seq_max -ne $_.sequence_capacity -or $shape.kv_unified -ne $true) {
         throw "Node $($_.node) no-allocation execution shape differs from its load contract: $($shape | ConvertTo-Json -Compress)."
     }
     $deviceEntries = @($plan.entries | Where-Object scope -eq 'device')

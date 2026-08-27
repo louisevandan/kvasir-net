@@ -61,7 +61,10 @@ impl Worker {
                 Duration::from_millis(command.ready_timeout_ms),
             )
         })
-        .map_err(|error| format!("stage load failed: {error:?}"))?;
+        // Reaching READY includes process start, plan validation, model tensor
+        // loading, context construction and capability negotiation. Do not
+        // collapse every failure in that sequence into a model-load claim.
+        .map_err(|error| format!("stage runtime initialization failed: {error:?}"))?;
         if !self.lifecycle.physical_batch_capable() {
             let _ = self.lifecycle.unload();
             return Err("stage server did not negotiate physical_batch=1".into());
