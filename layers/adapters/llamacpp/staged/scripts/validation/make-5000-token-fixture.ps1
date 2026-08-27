@@ -155,7 +155,7 @@ $report = [pscustomobject]@{
     prepared_source_dirty_paths = @($sourceStatus)
     prepared_source_hashes = @($sourceHashes)
     tokenizer_probe = $probe
-    tokenizer_mode = 'artifact llama.dll; vocab_only=true; add_bos from GGUF; parse_special=true'
+    tokenizer_mode = 'artifact llama.dll; vocab_only=true; add_special=true; parse_special=true; BOS/EOS policies from GGUF'
     semantic_boundary = [bool]$SemanticBoundary
     seed_file = if ([string]::IsNullOrWhiteSpace($SeedFile)) { $null } else { (Resolve-Path $SeedFile).Path }
     required_suffix_file = if ([string]::IsNullOrWhiteSpace($RequiredSuffixFile)) { $null } else { (Resolve-Path $RequiredSuffixFile).Path }

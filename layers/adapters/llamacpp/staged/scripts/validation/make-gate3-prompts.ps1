@@ -145,6 +145,8 @@ $expectations | ConvertTo-Json -Depth 6 |
     Set-Content -LiteralPath $responsesPath -Encoding utf8NoBOM
 $manifest | ConvertTo-Json -Depth 6 |
     Set-Content -LiteralPath (Join-Path $OutputDirectory 'manifest.json') -Encoding utf8NoBOM
+$manifestPath = Join-Path $OutputDirectory 'manifest.json'
+$templateReportPath = Join-Path $OutputDirectory 'template-report.json'
 [pscustomobject]@{
     status = 'passed'
     model = (Resolve-Path $Model).Path
@@ -154,6 +156,10 @@ $manifest | ConvertTo-Json -Depth 6 |
     distinct_prompts = $fixturePaths.Count
     prompts_json = (Resolve-Path $promptPath).Path
     response_expectations_json = (Resolve-Path $responsesPath).Path
+    prompts_json_sha256 = (Get-FileHash -LiteralPath $promptPath -Algorithm SHA256).Hash
+    response_expectations_json_sha256 = (Get-FileHash -LiteralPath $responsesPath -Algorithm SHA256).Hash
+    manifest_sha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+    template_report_sha256 = (Get-FileHash -LiteralPath $templateReportPath -Algorithm SHA256).Hash
     acceptance = [pscustomobject]@{
         minimum_generated_tokens = $MinimumGeneratedTokens
         expected_prefill_rows = $TargetTokens
@@ -161,8 +167,12 @@ $manifest | ConvertTo-Json -Depth 6 |
         responses_file = (Resolve-Path $responsesPath).Path
     }
     prompt_layout = 'model GGUF Jinja template; coherent Rust reference; semantic-boundary exact-token padding; long structured answer'
-    tokenizer_mode = 'artifact llama.dll; vocab_only=true; add_bos from GGUF; parse_special=true'
+    tokenizer_mode = 'artifact llama.dll; vocab_only=true; add_special=true; parse_special=true; BOS/EOS policies from GGUF'
     template_mode = 'artifact llama-common.dll; model metadata Jinja; add_generation_prompt=true'
+    generator_source_sha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+    tokenizer_source_sha256 = (Get-FileHash -LiteralPath `
+        (Join-Path $PSScriptRoot 'tokenizer\llama-token-count.cpp') -Algorithm SHA256).Hash
+    template_renderer_source_sha256 = (Get-FileHash -LiteralPath $templateScript -Algorithm SHA256).Hash
 } | ConvertTo-Json -Depth 8 |
     Set-Content -LiteralPath (Join-Path $OutputDirectory 'report.json') -Encoding utf8NoBOM
 Write-Output "GATE3_PROMPTS status=passed tokens=$TargetTokens requests=$RequestCount distinct=$($fixturePaths.Count) output=$OutputDirectory"

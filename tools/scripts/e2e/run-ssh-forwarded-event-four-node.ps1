@@ -9,12 +9,13 @@ param(
     [string]$LocalModel = 'S:\models\unsloth\MiniMax-M3-GGUF\MiniMax-M3-UD-Q5_K_S-00001-of-00008.gguf',
     [string]$RemoteModel = 'S:\models\unsloth\MiniMax-M3-GGUF\MiniMax-M3-UD-Q5_K_S-00001-of-00008.gguf',
     [string]$PlacementPlanFile = '',
-    [string]$PromptsFile = 'target\p4-minimax-m3-semantic-fixture-40\prompts.json',
-    [string]$ResponsesFile = 'target\p4-minimax-m3-semantic-fixture-40\response-expectations.json',
+    [string]$PromptsFile = 'target\p4-minimax-m3-semantic-fixture-40-current\prompts.json',
+    [string]$ResponsesFile = 'target\p4-minimax-m3-semantic-fixture-40-current\response-expectations.json',
     [string]$OptionsFile = 'target\p4-minimax-m3-gate-20260827\options.json',
     [int]$Requests = 1,
     [int]$Parallel = 1,
     [int]$ContextSize = 1200,
+    [int]$PromptTokens = 500,
     [int]$Tokens = 500,
     [int]$BatchSize = 512,
     [int]$UBatchSize = 512,
@@ -30,12 +31,11 @@ param(
     [switch]$SerialCorrectness,
     [switch]$KeepRemoteArtifacts
 )
-
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..\..')).Path
 Import-Module (Join-Path $PSScriptRoot 'event-four-node-runtime.psm1') -Force
-
+Import-Module (Join-Path $PSScriptRoot 'event-four-node-fixture.psm1') -Force
 function Resolve-Input([string]$Value) {
     if ([IO.Path]::IsPathRooted($Value)) { return $Value }
     [IO.Path]::GetFullPath((Join-Path $projectRoot $Value))
@@ -45,7 +45,8 @@ function Assert-File([string]$Value, [string]$Name) {
 }
 function Get-LatestWrite([string[]]$Roots) {
     $files = @($Roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File } |
-        Where-Object { $_.Extension -in @('.rs','.cpp','.h','.inc','.patch','.json') })
+        Where-Object { $_.Name -eq 'CMakeLists.txt' -or
+            $_.Extension -in @('.rs','.cpp','.h','.hpp','.inc','.patch','.json','.cmake') })
     if ($files.Count -eq 0) { throw 'Source freshness roots contain no files.' }
     ($files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
 }
@@ -112,7 +113,9 @@ if ($RunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw 'RunId is inva
 if ([string]::IsNullOrWhiteSpace($PlacementPlanFile)) {
     throw 'PlacementPlanFile is required and must be planned for this exact context and parallel width.'
 }
-if ($Requests -lt 1 -or $Parallel -lt 1 -or $ContextSize -lt 1 -or $Tokens -lt 1) { throw 'Request capacities must be positive.' }
+if ($Requests -lt 1 -or $Parallel -lt 1 -or $ContextSize -lt 1 -or
+    $PromptTokens -lt 1 -or $Tokens -lt 1) { throw 'Request capacities must be positive.' }
+if ($PromptTokens + $Tokens -gt $ContextSize) { throw 'Prompt plus output budget exceeds per-sequence context.' }
 if ($SerialCorrectness -and ($Requests -ne 1 -or $Parallel -ne 1)) { throw 'SerialCorrectness requires Requests=1 and Parallel=1.' }
 if ($UBatchSize -lt 1 -or $UBatchSize -gt $BatchSize) { throw 'UBatchSize must be positive and no greater than BatchSize.' }
 if ($DeviceRuntimeReserveMiB -lt 256) { throw 'DeviceRuntimeReserveMiB must leave at least 256 MiB.' }
@@ -146,7 +149,12 @@ Assert-Fresh $stageServer @((Join-Path $projectRoot 'apps\p4\layers\adapters\lla
 
 $outputRoot = Join-Path $projectRoot "target\p4-event-four-node\$RunId"
 if (Test-Path -LiteralPath $outputRoot) { throw "Run output already exists: $outputRoot" }
+$fixtureProvenance = Assert-P4FixtureProvenance -PromptsFile $PromptsFile `
+    -ResponsesFile $ResponsesFile -ArtifactDirectory $ArtifactDirectory -Model $LocalModel `
+    -RequestCount $Requests -PromptTokens $PromptTokens
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+$fixtureProvenance | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `
+    (Join-Path $outputRoot 'fixture-provenance.json') -Encoding utf8
 $remoteRoot = "C:\Users\42mob\p4-event-$RunId"
 $remoteTasks = @(
     "P4-Event-$RunId-agent-53001",
@@ -213,7 +221,7 @@ $spec = [ordered]@{
     request_count=$Requests;parallel=$Parallel;context_size=$ContextSize;n_batch=$BatchSize;n_ubatch=$UBatchSize;max_tokens=$Tokens
     speculative_type=$SpeculativeType
     prompts_file=$PromptsFile;responses_file=$ResponsesFile;placement_file=$PlacementPlanFile;options_file=$OptionsFile;waves=$waves
-    flash_attention=($FlashAttention -eq 1);pre_inference_hold_ms=30000;minimum_generated_tokens=180;expected_prefill_rows=500
+    flash_attention=($FlashAttention -eq 1);pre_inference_hold_ms=30000;minimum_generated_tokens=180;expected_prefill_rows=$PromptTokens
     allowed_stop_reasons=@('eos','length');timeout_ms=7200000
     stages=@(
         [ordered]@{agent='tcp://127.0.0.1:52003';node='stage-0';binary=$stageServer;endpoint='127.0.0.1:52103';model=$LocalModel;cuda_visible_devices=$local4080[0].uuid},
@@ -269,8 +277,8 @@ $memoryPlans = @($config.nodes | ForEach-Object {
 $localOs = Get-CimInstance Win32_OperatingSystem
 $remoteBefore = Get-Content -LiteralPath (Join-Path $outputRoot 'remote-system-before.json') -Raw | ConvertFrom-Json
 $hostAvailable = @{
-    'tcp://127.0.0.1:52003'=([uint64]$localOs.FreePhysicalMemory * 1KB) - ([uint64]$HostMemoryReserveMiB * 1MB)
-    'tcp://127.0.0.1:53001'=([uint64]$remoteBefore.free_physical_kib * 1KB) - ([uint64]$HostMemoryReserveMiB * 1MB)
+    'tcp://127.0.0.1:52003'=Get-P4AvailableHostBytes ([uint64]$localOs.FreePhysicalMemory) ([uint64]$HostMemoryReserveMiB) 'local host'
+    'tcp://127.0.0.1:53001'=Get-P4AvailableHostBytes ([uint64]$remoteBefore.free_physical_kib) ([uint64]$HostMemoryReserveMiB) 'remote host'
 }
 foreach ($agent in $hostAvailable.Keys) {
     $required = [uint64](($memoryPlans | Where-Object agent -eq $agent | ForEach-Object {
@@ -341,7 +349,7 @@ try {
         reportable_performance=$false
         run_id=$RunId
         source_head=(& git.exe -C $projectRoot rev-parse HEAD).Trim()
-        requests=$Requests;parallel=$Parallel;context_size=$ContextSize;tokens=$Tokens
+        requests=$Requests;parallel=$Parallel;context_size=$ContextSize;prompt_tokens=$PromptTokens;tokens=$Tokens
         kernel_power_41_before=$kernelPowerBefore;kernel_power_41_after=$kernelPowerAfter
         binaries=[ordered]@{
             agent=(Get-FileHash $AgentBinary -Algorithm SHA256).Hash.ToLowerInvariant()

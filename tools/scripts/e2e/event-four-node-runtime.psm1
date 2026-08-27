@@ -164,6 +164,16 @@ Write-Output `$event.RecordId
     $record
 }
 
+function Get-P4AvailableHostBytes([uint64]$FreePhysicalKiB, [uint64]$ReserveMiB,
+        [string]$HostName) {
+    $freeBytes = $FreePhysicalKiB * [uint64]1KB
+    $reserveBytes = $ReserveMiB * [uint64]1MB
+    if ($freeBytes -le $reserveBytes) {
+        throw "$HostName free physical memory does not exceed its required reserve."
+    }
+    [uint64]($freeBytes - $reserveBytes)
+}
+
 function Invoke-P4StageMemoryPlan {
     param(
         [Parameter(Mandatory)][string]$Binary,
@@ -312,4 +322,5 @@ function Stop-P4ProcessTree([System.Diagnostics.Process]$Process) {
 Export-ModuleMember -Function ConvertTo-P4EncodedCommand,ConvertTo-P4PowerShellLiteral,`
     Invoke-P4RemotePowerShell,Start-P4LocalEventAgent,Wait-P4LocalEventAgent,`
     Start-P4RemoteEventAgent,Wait-P4RemoteEventAgent,Get-P4RemoteKernelPowerRecord,`
-    Invoke-P4StageMemoryPlan,Invoke-P4RemoteStageMemoryPlan,Stop-P4ProcessTree
+    Get-P4AvailableHostBytes,Invoke-P4StageMemoryPlan,Invoke-P4RemoteStageMemoryPlan,`
+    Stop-P4ProcessTree

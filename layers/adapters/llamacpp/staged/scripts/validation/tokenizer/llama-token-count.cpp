@@ -18,7 +18,6 @@
 #include <vector>
 
 namespace {
-
 void discard_llama_log(enum ggml_log_level, const char *, void *) {}
 
 struct Options {
@@ -31,7 +30,6 @@ struct Options {
     int target_tokens = 0;
     bool semantic_boundary = false;
 };
-
 #if defined(_WIN32)
 template <typename Function>
 Function load_symbol(HMODULE library, const char * name) {
@@ -170,6 +168,7 @@ struct LlamaApi {
     decltype(&llama_model_load_from_file) model_load_from_file = nullptr;
     decltype(&llama_model_get_vocab) model_get_vocab = nullptr;
     decltype(&llama_vocab_get_add_bos) vocab_get_add_bos = nullptr;
+    decltype(&llama_vocab_get_add_eos) vocab_get_add_eos = nullptr;
     decltype(&llama_tokenize) tokenize = nullptr;
 #endif
 };
@@ -190,6 +189,7 @@ LlamaApi load_api(const std::filesystem::path & artifact_directory) {
     api.model_load_from_file = load_symbol<decltype(api.model_load_from_file)>(library, "llama_model_load_from_file");
     api.model_get_vocab = load_symbol<decltype(api.model_get_vocab)>(library, "llama_model_get_vocab");
     api.vocab_get_add_bos = load_symbol<decltype(api.vocab_get_add_bos)>(library, "llama_vocab_get_add_bos");
+    api.vocab_get_add_eos = load_symbol<decltype(api.vocab_get_add_eos)>(library, "llama_vocab_get_add_eos");
     api.tokenize = load_symbol<decltype(api.tokenize)>(library, "llama_tokenize");
     return api;
 #else
@@ -198,22 +198,25 @@ LlamaApi load_api(const std::filesystem::path & artifact_directory) {
 #endif
 }
 
-int token_count(const LlamaApi & api, const llama_vocab * vocab, const std::string & text, bool add_bos) {
+int token_count(const LlamaApi & api, const llama_vocab * vocab, const std::string & text,
+                bool add_special) {
     if (text.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
         throw std::runtime_error("prompt is too large for llama_tokenize");
     }
     const auto text_length = static_cast<int32_t>(text.size());
-    const auto required = api.tokenize(vocab, text.data(), text_length, nullptr, 0, add_bos, true);
+    const auto required = api.tokenize(
+        vocab, text.data(), text_length, nullptr, 0, add_special, true);
     if (required == std::numeric_limits<int32_t>::min()) throw std::runtime_error("tokenization overflow");
     const auto capacity = required < 0 ? -required : required;
     if (capacity == 0) return 0;
     std::vector<llama_token> tokens(static_cast<size_t>(capacity));
-    const auto actual = api.tokenize(vocab, text.data(), text_length, tokens.data(), capacity, add_bos, true);
+    const auto actual = api.tokenize(
+        vocab, text.data(), text_length, tokens.data(), capacity, add_special, true);
     if (actual < 0) throw std::runtime_error("tokenization failed after sizing pass");
     return actual;
 }
 
-std::string make_fixture(const LlamaApi & api, const llama_vocab * vocab, bool add_bos,
+std::string make_fixture(const LlamaApi & api, const llama_vocab * vocab, bool add_special,
                          int target, int & repetitions, std::string & suffix) {
     const std::string prefix = "Deterministic tokenizer calibration for the staged CUDA artifact.\n\n";
     const std::string unit = "The patched pipeline keeps this sentence stable while validating the prompt boundary. ";
@@ -222,21 +225,21 @@ std::string make_fixture(const LlamaApi & api, const llama_vocab * vocab, bool a
     auto candidate = [&](int count, const std::string & tail) {
         return prefix + repeat(unit, count) + tail;
     };
-    while (token_count(api, vocab, candidate(high, ""), add_bos) < target) {
+    while (token_count(api, vocab, candidate(high, ""), add_special) < target) {
         low = high;
         high *= 2;
         if (high > 1'000'000) throw std::runtime_error("could not reach target token count");
     }
     while (low + 1 < high) {
         const int middle = low + (high - low) / 2;
-        if (token_count(api, vocab, candidate(middle, ""), add_bos) < target) low = middle;
+        if (token_count(api, vocab, candidate(middle, ""), add_special) < target) low = middle;
         else high = middle;
     }
     const auto tails = suffixes();
     for (int count = low; count >= std::max(0, low - 4); --count) {
         for (const auto & tail : tails) {
             auto text = candidate(count, tail);
-            if (token_count(api, vocab, text, add_bos) == target) {
+            if (token_count(api, vocab, text, add_special) == target) {
                 repetitions = count;
                 suffix = tail;
                 return text;
@@ -254,7 +257,7 @@ std::string utf8_prefix(const std::string & text, size_t length) {
     return text.substr(0, length);
 }
 
-std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, bool add_bos,
+std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, bool add_special,
                                const std::string & seed, const std::string & required_suffix,
                                int target, bool semantic_boundary,
                                int & repetitions, std::string & suffix) {
@@ -264,20 +267,20 @@ std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, b
     auto candidate = [&](size_t length, const std::string & adjustment) {
         return utf8_prefix(seed, length) + adjustment + required_suffix;
     };
-    if (token_count(api, vocab, required_suffix, add_bos) > target) {
+    if (token_count(api, vocab, required_suffix, add_special) > target) {
         throw std::runtime_error("required suffix has more tokens than target");
     }
-    if (token_count(api, vocab, candidate(high, ""), add_bos) < target) {
+    if (token_count(api, vocab, candidate(high, ""), add_special) < target) {
         throw std::runtime_error("seed plus required suffix has fewer tokens than target");
     }
     if (semantic_boundary) {
         const auto lengths = semantic_prefix_lengths(seed);
         const auto adjustments = semantic_adjustments();
         for (auto item = lengths.rbegin(); item != lengths.rend(); ++item) {
-            if (token_count(api, vocab, candidate(*item, ""), add_bos) > target) continue;
+            if (token_count(api, vocab, candidate(*item, ""), add_special) > target) continue;
             for (const auto & adjustment : adjustments) {
                 auto text = candidate(*item, adjustment);
-                const auto count = token_count(api, vocab, text, add_bos);
+                const auto count = token_count(api, vocab, text, add_special);
                 if (count == target) {
                     repetitions = 1;
                     suffix = adjustment;
@@ -290,7 +293,7 @@ std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, b
     }
     while (low + 1 < high) {
         const auto middle = low + (high - low) / 2;
-        if (token_count(api, vocab, candidate(middle, ""), add_bos) < target) {
+        if (token_count(api, vocab, candidate(middle, ""), add_special) < target) {
             low = middle;
         } else {
             high = middle;
@@ -301,7 +304,7 @@ std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, b
     for (size_t length = high;; --length) {
         for (const auto & tail : tails) {
             auto text = candidate(length, tail);
-            if (token_count(api, vocab, text, add_bos) == target) {
+            if (token_count(api, vocab, text, add_special) == target) {
                 repetitions = 1;
                 suffix = tail;
                 return text;
@@ -336,15 +339,23 @@ int main(int argc, char ** argv) {
         if (model == nullptr) throw std::runtime_error("vocab-only GGUF load failed");
         const auto * vocab = api.model_get_vocab(model);
         const bool add_bos = api.vocab_get_add_bos(vocab);
+        const bool add_eos = api.vocab_get_add_eos(vocab);
+        // Match llama-server and the staged adapter exactly. Both request
+        // special-token handling; the vocabulary decides whether BOS/EOS are
+        // actually inserted for this model.
+        constexpr bool add_special = true;
         if (!options.input_file.empty()) {
-            const auto verified = token_count(api, vocab, read_utf8(options.input_file), add_bos);
+            const auto verified = token_count(
+                api, vocab, read_utf8(options.input_file), add_special);
             if (verified != options.target_tokens) {
                 throw std::runtime_error("input token count does not match target: " +
                                          std::to_string(verified));
             }
             std::cout << "TOKEN_COUNT=" << verified << "\n"
                       << "INPUT_FILE=" << options.input_file.string() << "\n"
-                      << "ADD_BOS=" << (add_bos ? 1 : 0) << "\n"
+                      << "ADD_SPECIAL=1\n"
+                      << "VOCAB_ADD_BOS=" << (add_bos ? 1 : 0) << "\n"
+                      << "VOCAB_ADD_EOS=" << (add_eos ? 1 : 0) << "\n"
                       << "PARSE_SPECIAL=1\n";
             return 0;
         }
@@ -354,8 +365,8 @@ int main(int argc, char ** argv) {
             ? std::string()
             : read_utf8(options.required_suffix_file);
         const auto fixture = options.seed_file.empty()
-            ? make_fixture(api, vocab, add_bos, options.target_tokens, repetitions, suffix)
-            : make_seed_fixture(api, vocab, add_bos, read_utf8(options.seed_file),
+            ? make_fixture(api, vocab, add_special, options.target_tokens, repetitions, suffix)
+            : make_seed_fixture(api, vocab, add_special, read_utf8(options.seed_file),
                                 required_suffix, options.target_tokens, options.semantic_boundary,
                                 repetitions, suffix);
         std::filesystem::create_directories(options.output.parent_path());
@@ -363,11 +374,13 @@ int main(int argc, char ** argv) {
         if (!output) throw std::runtime_error("could not create fixture: " + options.output.string());
         output.write(fixture.data(), static_cast<std::streamsize>(fixture.size()));
         output.close();
-        const auto verified = token_count(api, vocab, read_utf8(options.output), add_bos);
+        const auto verified = token_count(api, vocab, read_utf8(options.output), add_special);
         if (verified != options.target_tokens) throw std::runtime_error("fixture verification mismatch");
         std::cout << "TOKEN_COUNT=" << verified << "\n"
                   << "PROMPT_BYTES=" << fixture.size() << "\n"
-                  << "ADD_BOS=" << (add_bos ? 1 : 0) << "\n"
+                  << "ADD_SPECIAL=1\n"
+                  << "VOCAB_ADD_BOS=" << (add_bos ? 1 : 0) << "\n"
+                  << "VOCAB_ADD_EOS=" << (add_eos ? 1 : 0) << "\n"
                   << "PARSE_SPECIAL=1\n"
                   << "UNIT_REPETITIONS=" << repetitions << "\n"
                   << "SUFFIX_BYTES=" << suffix.size() << "\n"
