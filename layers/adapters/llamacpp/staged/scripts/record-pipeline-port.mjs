@@ -135,6 +135,7 @@ const candidateTree = git(["rev-parse", "HEAD^{tree}"], candidate).stdout.trim()
 replayAndVerify(target, patches, candidateTree);
 
 const targetDirectory = path.join(compatibilityRoot, target.slice(0, 9));
+const sourceReadme = fs.readFileSync(path.join(sourceDirectory, "README.md"), "utf8");
 if (fs.existsSync(targetDirectory)) {
   if (!options.replace) {
     throw new Error(`target compatibility directory already exists: ${path.relative(repoRoot, targetDirectory)}`);
@@ -166,7 +167,6 @@ const next = nextManifest(manifest, {
   observedAt: new Date().toISOString(),
 });
 fs.writeFileSync(path.join(targetDirectory, "manifest.json"), `${JSON.stringify(next, null, 2)}\n`);
-const sourceReadme = fs.readFileSync(path.join(sourceDirectory, "README.md"), "utf8");
 fs.writeFileSync(
   path.join(targetDirectory, "README.md"),
   sourceReadme.replace(manifest.upstream_commit.slice(0, 9), target.slice(0, 9)),

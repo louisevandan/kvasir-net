@@ -1,5 +1,5 @@
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139a41113e3 100644
+index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..964e347a7d8f3b272f071136fe14c0c001055b75 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
 @@ -16,13 +16,45 @@
@@ -230,8 +230,12 @@ index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139
  
      t_sampled.clear();
      t_sampled_probs.clear();
-@@ -1337,7 +1410,12 @@ void llm_graph_result::reset() {
+@@ -1335,9 +1408,16 @@ void llm_graph_result::reset() {
+     params = {};
+ 
      inputs.clear();
++    linkcpp_input_tensors.clear();
++    linkcpp_claimed_input_tensors.clear();
      fused_nodes.clear();
  
 -    buf_compute_meta.resize(ggml_tensor_overhead()*max_nodes + ggml_graph_overhead_custom(max_nodes, false));
@@ -244,7 +248,7 @@ index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139
  
      ggml_init_params params = {
          /*.mem_size   =*/ buf_compute_meta.size(),
-@@ -1350,8 +1428,17 @@ void llm_graph_result::reset() {
+@@ -1350,8 +1430,24 @@ void llm_graph_result::reset() {
      gf = ggml_new_graph_custom(ctx_compute.get(), max_nodes, false);
  }
  
@@ -260,10 +264,17 @@ index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139
 +        if (skip_terminal_output_input && input->is_terminal_output_input()) {
 +            continue;
 +        }
++        const auto tensors = linkcpp_input_tensors.find(input.get());
++        if (tensors != linkcpp_input_tensors.end()
++            && !tensors->second.empty()
++            && std::none_of(tensors->second.begin(), tensors->second.end(),
++                [](const ggml_tensor * tensor) { return tensor && tensor->buffer; })) {
++            continue;
++        }
          input->set_input(ubatch);
      }
  }
-@@ -1400,6 +1487,324 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
+@@ -1400,6 +1496,324 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
      }
  }
  
@@ -588,7 +599,23 @@ index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139
  bool llm_graph_result::can_reuse(const llm_graph_params & params) {
      if (!this->params.allow_reuse(params)) {
          if (debug > 1) {
-@@ -2114,6 +2519,14 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+@@ -1433,6 +1847,15 @@ bool llm_graph_result::can_reuse(const llm_graph_params & params) {
+ }
+ 
+ llm_graph_input_i * llm_graph_result::add_input(llm_graph_input_ptr input) {
++    std::vector<ggml_tensor *> tensors;
++    for (ggml_tensor * tensor = ggml_get_first_tensor(ctx_compute.get()); tensor != nullptr;
++         tensor = ggml_get_next_tensor(ctx_compute.get(), tensor)) {
++        if ((tensor->flags & GGML_TENSOR_FLAG_INPUT) != 0
++            && linkcpp_claimed_input_tensors.insert(tensor).second) {
++            tensors.push_back(tensor);
++        }
++    }
++    linkcpp_input_tensors.emplace(input.get(), std::move(tensors));
+     inputs.emplace_back(std::move(input));
+     return inputs.back().get();
+ }
+@@ -2114,6 +2537,14 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
      ggml_tensor * up = nullptr;
      ggml_tensor * experts = nullptr;
  
@@ -603,7 +630,7 @@ index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139
      if (gate_up_exps) {
          // merged gate_up path: one mul_mat_id, then split into gate and up views
          ggml_tensor * gate_up = build_lora_mm_id(gate_up_exps, cur, selected_experts, up_exps_s); // [n_ff*2, n_expert_used, n_tokens]
-@@ -2263,6 +2676,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+@@ -2263,6 +2694,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
          experts = ggml_add_id(ctx0, experts, down_exps_b, selected_experts);
          cb(experts, "ffn_moe_down_biased", il);
      }
@@ -611,7 +638,7 @@ index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139
  
      if (!weight_before_ffn) {
          experts = ggml_mul(ctx0, experts, weights);
-@@ -2321,13 +2735,16 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
+@@ -2321,13 +2753,16 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
      inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd_inp, ubatch.n_tokens);
      cb(inp->embd, "inp_embd", -1);
      ggml_set_input(inp->embd);
@@ -630,7 +657,7 @@ index 8fca8e1bc0efaa09cddcebec6ee974d81e92c80e..39a674f1b6616ff7c68f35cf6091a139
          auto & cur = inps[0];
  
          cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
-@@ -2353,6 +2770,8 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
+@@ -2353,6 +2788,8 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
          if (n_embd_inp != n_embd) {
              cur = ggml_pad(ctx0, cur, hparams.n_embd_inp() - n_embd, 0, 0, 0);
          }

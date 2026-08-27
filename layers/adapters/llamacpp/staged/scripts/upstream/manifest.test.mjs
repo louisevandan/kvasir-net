@@ -69,6 +69,13 @@ test("a bump records the pin it was derived from", () => {
   assert.equal(manifest.upstream_subject, identity.subject);
 });
 
+test("re-recording one official target preserves its original lineage", () => {
+  const manifest = bumped({ target: BASE });
+  assert.equal(manifest.upstream_commit, BASE);
+  assert.equal(manifest.previous_linker_pin, previous.previous_linker_pin);
+  assert.equal(manifest.previous_official_base, previous.previous_official_base);
+});
+
 test("a bump never rewrites the official repository or the schema", () => {
   const manifest = bumped();
   assert.equal(manifest.upstream_repository, OFFICIAL_REPOSITORY);

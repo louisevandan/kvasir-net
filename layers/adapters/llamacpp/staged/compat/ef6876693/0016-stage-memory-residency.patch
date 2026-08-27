@@ -16,10 +16,10 @@ index a6bf016ccce1e4d8afdd36c89cf6792908cc529c..1b6fe0d0aa74d0c61a7bd8adb79f320c
                  model.linkcpp_memory_executor(),
                  model.linkcpp_memory_executor_user_data(),
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 39a674f1b6616ff7c68f35cf6091a139a41113e3..f868a899318f59926dfc565bfbcd00441885e3dd 100644
+index 964e347a7d8f3b272f071136fe14c0c001055b75..1054c26668abb6ca05540cac62191a28aed4a743 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -1487,12 +1487,12 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
+@@ -1496,12 +1496,12 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
      }
  }
  
@@ -34,7 +34,7 @@ index 39a674f1b6616ff7c68f35cf6091a139a41113e3..f868a899318f59926dfc565bfbcd0044
      }
      GGML_ASSERT(0 <= begin && begin < end && end <= n_layer);
  
-@@ -1750,45 +1750,57 @@ void llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
+@@ -1759,45 +1759,57 @@ void llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
          t_embd_pooled = nullptr;
      }
  
@@ -120,10 +120,10 @@ index 39a674f1b6616ff7c68f35cf6091a139a41113e3..f868a899318f59926dfc565bfbcd0044
  
  bool llm_graph_result::set_linkcpp_inputs(const std::vector<std::vector<uint8_t>> & payloads) {
 diff --git a/src/llama-graph.h b/src/llama-graph.h
-index aaed381bc40a2feb0436d280d1daea8567d2dcda..0763c614a5b22dfb309776d041d2293738a2a9ed 100644
+index 3399bc1baf6b297434bb70a47e9d3a8c2f15211a..720c0b54f70ae4dee37cbc65f762143e9ad0bf65 100644
 --- a/src/llama-graph.h
 +++ b/src/llama-graph.h
-@@ -943,7 +943,7 @@ public:
+@@ -944,7 +944,7 @@ public:
      void set_linkcpp_tensor_layer(ggml_tensor * tensor, int layer);
      int get_linkcpp_tensor_layer(const ggml_tensor * tensor) const;
      void set_outputs(const llm_graph_params & params);

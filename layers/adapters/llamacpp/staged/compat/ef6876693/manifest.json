@@ -12,12 +12,12 @@
   "upstream_commit": "ef6876693f058169161143dc8e301ac104b45373",
   "upstream_commit_date": "2026-08-27T11:46:51Z",
   "upstream_subject": "qwen4exp: bias the QSA selection per block, not per cell",
-  "observed_at": "2026-08-27T12:44:46.118Z",
+  "observed_at": "2026-08-27T13:50:17.724Z",
   "nearest_release_tag": "b10645",
   "previous_linker_pin": "d7a2074112d27649303fa107eb8c94db1ee435f3",
   "previous_official_base": "d7a2074112d27649303fa107eb8c94db1ee435f3",
-  "patch_set_sha256": "17f940a75ce965d170277ffc841d05a9af770c1ffa760fadb3b47956dcb801d7",
-  "patched_tree": "8a6e4af4663c166b6a23695a78ebf644f2cbdac8",
+  "patch_set_sha256": "fc4ea84be3fade29b8b9608aaa6784e24d26203364ac26bf81fc0a2a6ef263c2",
+  "patched_tree": "e52130198632097169fbc1eecd14656cca43888b",
   "patches": [
     {
       "file": "0001-ggml-backend.patch",
@@ -41,11 +41,11 @@
     },
     {
       "file": "0006-llama-graph.patch",
-      "sha256": "49f597da9068a5a422592d929db9d8bc1973910f6ae626f42437b5a5f03053a5"
+      "sha256": "8a9cf16d3f2b08a8ce53506b443c0c8365e17708a31c92d58a3b3b9be24b6d01"
     },
     {
       "file": "0007-llama-graph-header.patch",
-      "sha256": "9b38458a769d5a7441e89e001ece98ccd37373436a1525e49f89c484ad5b2438"
+      "sha256": "6022982000024e7dacd2f4af6fa3d83878873d4e1b7dfdff15a0782bbb36ca19"
     },
     {
       "file": "0008-llama-memory-header.patch",
@@ -86,7 +86,7 @@
     },
     {
       "file": "0016-stage-memory-residency.patch",
-      "sha256": "dcba293a566c5da6f9d1eb50752001855821be8246791ef70f25dc0a38c59dae"
+      "sha256": "67356bbfe88669e180548a61e334d3c34721987083aa5e4488cd462b286a3fe6"
     },
     {
       "file": "0017-recurrent-stage-memory-residency.patch",
@@ -94,7 +94,7 @@
     },
     {
       "file": "0018-mtp-tail-stage.patch",
-      "sha256": "294159588c010d2c1f8eca07e66960b8ce4364093df7d90412fa9f9466a4c63c"
+      "sha256": "da9ea12930edb16ebd115d0c44b67e27aa5e1eb30cca3135a888db497ae766cc"
     },
     {
       "file": "0019-speculative-sequence-lifecycle.patch",
@@ -102,7 +102,7 @@
     },
     {
       "file": "0020-recurrent-rollback-relocation.patch",
-      "sha256": "c23dc252d0552f33cb3b637216117d803e537614474cc38b60d72717bfe32917",
+      "sha256": "16d1531c658332b170455456029478d235599450d7e8f6944165d0d5d9f80eba",
       "official_upstream_port": {
         "repository": "https://github.com/ggml-org/llama.cpp.git",
         "pull_request": "https://github.com/ggml-org/llama.cpp/pull/25004",

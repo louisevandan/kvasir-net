@@ -1,5 +1,5 @@
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 67a076b8558825fa742ed9e82d3727f47303b72a..9232b51d8425db3c7c0d5c508e5d4ff7c243cbdc 100644
+index 8fa67ffd2228f806bf80a427ca9911a445c33688..445b5b96ed8bd7053db43cab450a3f57f9b782fc 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
 @@ -363,22 +363,69 @@ void llm_graph_input_cls::set_input(const llama_ubatch * ubatch) {
@@ -176,7 +176,7 @@ index 67a076b8558825fa742ed9e82d3727f47303b72a..9232b51d8425db3c7c0d5c508e5d4ff7
  
      res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
      res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
-@@ -3890,15 +3916,28 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
+@@ -3908,15 +3934,28 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
  
      auto inp = std::make_unique<llm_graph_input_rs>(mctx_cur);
  
@@ -209,10 +209,10 @@ index 67a076b8558825fa742ed9e82d3727f47303b72a..9232b51d8425db3c7c0d5c508e5d4ff7
      inp->rs_z = mctx_cur->get_rs_z();
  
 diff --git a/src/llama-graph.h b/src/llama-graph.h
-index 0763c614a5b22dfb309776d041d2293738a2a9ed..88dbc36056bb676a18240102fd70530b1ee0c84f 100644
+index 720c0b54f70ae4dee37cbc65f762143e9ad0bf65..4e15ab4bd4d4b2ad490575acbae4ae7e5ae30384 100644
 --- a/src/llama-graph.h
 +++ b/src/llama-graph.h
-@@ -288,6 +288,11 @@ public:
+@@ -289,6 +289,11 @@ public:
      ggml_tensor * s_copy_main;   // I32 [n_seqs]
      ggml_tensor * s_copy_extra;  // I32 [n_rs - n_seqs]
  

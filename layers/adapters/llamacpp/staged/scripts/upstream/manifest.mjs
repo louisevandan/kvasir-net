@@ -33,6 +33,7 @@ export function nextManifest(previous, next) {
       throw new Error(`patch ${patch.file} has an invalid sha256`);
     }
   }
+  const replacingSameTarget = previous.upstream_commit === target;
   return {
     ...previous,
     upstream_repository: OFFICIAL_REPOSITORY,
@@ -41,8 +42,12 @@ export function nextManifest(previous, next) {
     upstream_subject: identity.subject,
     observed_at: observedAt,
     nearest_release_tag: identity.tag,
-    previous_linker_pin: previous.upstream_commit,
-    previous_official_base: previous.upstream_commit,
+    previous_linker_pin: replacingSameTarget
+      ? previous.previous_linker_pin
+      : previous.upstream_commit,
+    previous_official_base: replacingSameTarget
+      ? previous.previous_official_base
+      : previous.upstream_commit,
     patch_set_sha256: patchSetSha256,
     patched_tree: patchedTree,
     patches,

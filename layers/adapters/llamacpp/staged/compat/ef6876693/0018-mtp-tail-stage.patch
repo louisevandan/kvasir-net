@@ -17,10 +17,10 @@ index 1b6fe0d0aa74d0c61a7bd8adb79f320ca3d26730..a5f0fc1cacdd93baa43bc18f0d036757
          const auto * stage_payloads = &linkcpp_input_payloads;
          std::vector<std::vector<uint8_t>> ordered_payloads;
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index f868a899318f59926dfc565bfbcd00441885e3dd..67a076b8558825fa742ed9e82d3727f47303b72a 100644
+index 1054c26668abb6ca05540cac62191a28aed4a743..8fa67ffd2228f806bf80a427ca9911a445c33688 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -1491,6 +1491,12 @@ bool llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
+@@ -1500,6 +1500,12 @@ bool llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
      const int begin = params.linkcpp_layer_begin;
      const int end   = params.linkcpp_layer_end;
      const int n_layer = params.hparams.n_layer();

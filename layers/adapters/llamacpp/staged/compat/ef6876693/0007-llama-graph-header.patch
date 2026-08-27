@@ -1,16 +1,17 @@
 diff --git a/src/llama-graph.h b/src/llama-graph.h
-index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea8567d2dcda 100644
+index b388e028cb53ff669a09a092e68f0ada16a4c08f..3399bc1baf6b297434bb70a47e9d3a8c2f15211a 100644
 --- a/src/llama-graph.h
 +++ b/src/llama-graph.h
-@@ -11,6 +11,7 @@
+@@ -11,6 +11,8 @@
  #include <set>
  #include <functional>
  #include <map>
 +#include <unordered_map>
++#include <unordered_set>
  
  struct ggml_cgraph;
  struct ggml_context;
-@@ -108,6 +109,9 @@ public:
+@@ -108,6 +110,9 @@ public:
  
      virtual void set_input(const llama_ubatch * ubatch) = 0;
  
@@ -20,7 +21,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      // return true if the resulting input tensors using the provided graph parameters would be
      //   the same as the previous input tensors that we have currently stored in the object
      virtual bool can_reuse(const llm_graph_params & params) {
-@@ -130,6 +134,8 @@ public:
+@@ -130,6 +135,8 @@ public:
  
      void set_input(const llama_ubatch * ubatch) override;
  
@@ -29,7 +30,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      bool can_reuse(const llm_graph_params & params) override;
  
      ggml_tensor * tokens = nullptr; // I32 [n_batch]
-@@ -146,6 +152,8 @@ public:
+@@ -146,6 +153,8 @@ public:
  
      void set_input(const llama_ubatch * ubatch) override;
  
@@ -38,7 +39,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      bool can_reuse(const llm_graph_params & params) override;
  
      ggml_tensor * tokens = nullptr; // I32 [n_batch]
-@@ -223,6 +231,8 @@ public:
+@@ -223,6 +232,8 @@ public:
  
      void set_input(const llama_ubatch * ubatch) override;
  
@@ -47,7 +48,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      bool can_reuse(const llm_graph_params & params) override;
  
      ggml_tensor * out_ids; // I32 [n_outputs]
-@@ -240,6 +250,8 @@ public:
+@@ -240,6 +251,8 @@ public:
  
      void set_input(const llama_ubatch * ubatch) override;
  
@@ -56,7 +57,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      ggml_tensor * mean; // F32 [n_batch, n_batch]
  
      const llama_cparams cparams;
-@@ -252,6 +264,8 @@ public:
+@@ -252,6 +265,8 @@ public:
  
      void set_input(const llama_ubatch * ubatch) override;
  
@@ -65,7 +66,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      ggml_tensor * cls; // I32 [n_batch]
  
      const llama_cparams cparams;
-@@ -748,6 +762,7 @@ public:
+@@ -748,6 +763,7 @@ public:
      virtual ~llm_graph_input_sampling() = default;
  
      void set_input(const llama_ubatch * ubatch) override;
@@ -73,7 +74,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      bool can_reuse(const llm_graph_params & params) override;
  
      std::map<llama_seq_id, llama_sampler *> samplers;
-@@ -805,6 +820,9 @@ struct llm_graph_params {
+@@ -805,6 +821,9 @@ struct llm_graph_params {
  
      uint32_t n_outputs;
  
@@ -83,7 +84,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      llm_graph_cb cb;
  
      llm_graph_result * res;
-@@ -825,6 +843,9 @@ struct llm_graph_params {
+@@ -825,6 +844,9 @@ struct llm_graph_params {
                  (ubatch.token && other.ubatch.token && ubatch.embd && other.ubatch.embd)
              );
  
@@ -93,7 +94,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
          // when we split the batch using "equal_seqs" we have to verify that the participating sequences are the same
          //   the reason is because the set of attention streams would be different for different sequences
          if (can_reuse_ubatch && ubatch.equal_seqs()) {
-@@ -896,12 +917,16 @@ public:
+@@ -896,12 +918,16 @@ public:
      virtual ~llm_graph_result() = default;
  
      ggml_tensor * get_inp_tokens()  const { return t_inp_tokens; }
@@ -110,7 +111,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
  
      ggml_cgraph  * get_gf()  const { return gf; }
      ggml_context * get_ctx() const { return ctx_compute.get(); }
-@@ -910,8 +935,15 @@ public:
+@@ -910,8 +936,15 @@ public:
  
      void reset();
  
@@ -127,7 +128,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
  
      // try to update the existing graph result using the new graph parameters in order to reuse it
      // this can only be done if we determine that the resulting graph using the new graph parameters
-@@ -930,6 +962,7 @@ public:
+@@ -930,6 +963,7 @@ public:
  
      // important graph nodes
      ggml_tensor * t_inp_tokens  = nullptr;
@@ -135,7 +136,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
      ggml_tensor * t_inp_embd    = nullptr; // [n_embd_inp, n_tokens]
      ggml_tensor * t_logits      = nullptr;
      ggml_tensor * t_embd        = nullptr;
-@@ -937,6 +970,10 @@ public:
+@@ -937,6 +971,10 @@ public:
      ggml_tensor * t_h_nextn     = nullptr; // [n_embd, n_outputs] hidden state before final output norm
  
      std::vector<ggml_tensor *> t_layer_inp;
@@ -146,7 +147,7 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
  
      std::vector<ggml_tensor *> t_sampled;
      std::vector<ggml_tensor *> t_sampled_probs;
-@@ -963,6 +1000,10 @@ private:
+@@ -963,6 +1001,16 @@ private:
  
      // env: LLAMA_GRAPH_RESULT_DEBUG
      int debug = 0;
@@ -154,6 +155,12 @@ index b388e028cb53ff669a09a092e68f0ada16a4c08f..aaed381bc40a2feb0436d280d1daea85
 +    // Exact layer ownership recorded by the architecture-neutral graph build
 +    // callback. Dependency inference is only a fallback for unlabelled nodes.
 +    std::unordered_map<const ggml_tensor *, int> linkcpp_tensor_layers;
++
++    // Every graph input object claims the input tensors created immediately
++    // before it is registered. Stage pruning can then suppress initialization
++    // when all of that object's tensors were intentionally left unallocated.
++    std::unordered_map<const llm_graph_input_i *, std::vector<ggml_tensor *>> linkcpp_input_tensors;
++    std::unordered_set<ggml_tensor *> linkcpp_claimed_input_tensors;
  };
  
  using llm_graph_result_ptr = std::unique_ptr<llm_graph_result>;
