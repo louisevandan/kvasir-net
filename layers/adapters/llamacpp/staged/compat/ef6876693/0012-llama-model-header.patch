@@ -1,0 +1,21 @@
+diff --git a/src/llama-model.h b/src/llama-model.h
+index e101de29941c7d4230e925876f4406d7a1d77625..ed1259bfbb007c37708ac817d714467440738ecb 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -717,6 +717,16 @@ struct llama_model {
+ 
+     uint32_t n_gpu_layers() const;
+     llama_split_mode split_mode() const;
++    int32_t linkcpp_layer_begin() const { return params.linkcpp_layer_begin; }
++    int32_t linkcpp_layer_end()   const { return params.linkcpp_layer_end; }
++    int32_t linkcpp_kv_gpu_layer_start() const { return params.linkcpp_kv_gpu_layer_start; }
++    int32_t linkcpp_kv_gpu_layer_end() const { return params.linkcpp_kv_gpu_layer_end; }
++    llama_linkcpp_stage_executor linkcpp_stage_executor() const { return params.linkcpp_stage_executor; }
++    void * linkcpp_stage_executor_user_data() const { return params.linkcpp_stage_executor_user_data; }
++    llama_linkcpp_memory_executor linkcpp_memory_executor() const { return params.linkcpp_memory_executor; }
++    void * linkcpp_memory_executor_user_data() const { return params.linkcpp_memory_executor_user_data; }
++    llama_linkcpp_state_executor linkcpp_state_executor() const { return params.linkcpp_state_executor; }
++    void * linkcpp_state_executor_user_data() const { return params.linkcpp_state_executor_user_data; }
+ 
+     std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const;
+ 

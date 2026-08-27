@@ -1,0 +1,52 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 1b6fe0d0aa74d0c61a7bd8adb79f320ca3d26730..a5f0fc1cacdd93baa43bc18f0d03675718d00ac9 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1389,10 +1389,11 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+         //const auto t_start_us = ggml_time_us();
+ 
+         // FIXME this call causes a crash if any model inputs were not used in the graph and were therefore not allocated
++        const bool linkcpp_mtp_graph = gtype == LLM_GRAPH_TYPE_DECODER_MTP;
+         res->set_inputs(
+             &ubatch,
+-            model.linkcpp_layer_begin() > 0,
+-            model.linkcpp_layer_end() >= 0
++            !linkcpp_mtp_graph && model.linkcpp_layer_begin() > 0,
++            !linkcpp_mtp_graph && model.linkcpp_layer_end() >= 0
+                 && model.linkcpp_layer_end() < (int32_t) model.hparams.n_layer());
+         const auto * stage_payloads = &linkcpp_input_payloads;
+         std::vector<std::vector<uint8_t>> ordered_payloads;
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index f868a899318f59926dfc565bfbcd00441885e3dd..67a076b8558825fa742ed9e82d3727f47303b72a 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -1491,6 +1491,12 @@ bool llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
+     const int begin = params.linkcpp_layer_begin;
+     const int end   = params.linkcpp_layer_end;
+     const int n_layer = params.hparams.n_layer();
++    // The MTP context executes the auxiliary NextN graph entirely on the
++    // tail stage. It is not a slice of the target trunk and therefore has no
++    // inter-stage cut-set to prune or bind.
++    if (params.gtype == LLM_GRAPH_TYPE_DECODER_MTP) {
++        return true;
++    }
+     if (begin < 0 || end < 0) {
+         return true;
+     }
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 6881272a1f38802a624f5f5f03404d26544e4880..dcbd6e45dac372205fcf53edc494679475eea048 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1208,7 +1208,11 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+                     linkcpp_owned = linkcpp_layer_begin <= tn.bid && tn.bid < linkcpp_layer_end;
+                 }
+             } else if (info.layer == LLM_TENSOR_LAYER_INPUT) {
+-                linkcpp_owned = linkcpp_layer_begin == 0;
++                // The target trunk consumes token embeddings on stage zero.
++                // An MTP tail may also need the stock embedding as a fallback
++                // when the GGUF does not provide a dedicated NextN embedding.
++                linkcpp_owned = linkcpp_layer_begin == 0 ||
++                    (load_mtp && linkcpp_layer_end == (int32_t) hparams.n_layer());
+             } else if (info.layer == LLM_TENSOR_LAYER_OUTPUT) {
+                 // Auxiliary NextN blocks are part of n_layer_all but not the
+                 // normal decode graph. The stage ending at n_layer() owns the

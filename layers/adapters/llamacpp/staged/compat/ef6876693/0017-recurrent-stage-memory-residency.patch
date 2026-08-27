@@ -1,0 +1,224 @@
+diff --git a/src/llama-memory-hybrid.h b/src/llama-memory-hybrid.h
+index 484eafb749910567b8c50ec36d46bdb678c75426..2c04be3f4869b9e51b334232434df9c5c99f3e61 100644
+--- a/src/llama-memory-hybrid.h
++++ b/src/llama-memory-hybrid.h
+@@ -18,6 +18,8 @@
+ 
+ class llama_memory_hybrid : public llama_memory_i {
+ public:
++    static constexpr bool linkcpp_stage_residency_supported = true;
++
+     llama_memory_hybrid(
+         const llama_model & model,
+                             /* attn */
+@@ -47,6 +49,8 @@ public:
+     // llama_memory_i
+     //
+ 
++    bool supports_linkcpp_stage_residency() const override { return true; }
++
+     llama_memory_context_ptr init_batch(
+             llama_batch_allocr & balloc,
+             uint32_t n_ubatch,
+diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
+index 4e77ad04594c2c81bb24124011cc4ba55c9e8d5e..586957e6e7c1e2cc7e18a5a3c474c25ce4e761c7 100644
+--- a/src/llama-memory-recurrent.cpp
++++ b/src/llama-memory-recurrent.cpp
+@@ -46,6 +46,13 @@ llama_memory_recurrent::llama_memory_recurrent(
+     };
+     std::map<ggml_backend_buffer_type_t, ggml_context_ptr, ggml_backend_buft_comparator> ctx_map;
+ 
++    const bool linkcpp_stage = model.linkcpp_layer_begin() >= 0
++        && model.linkcpp_layer_end() >= model.linkcpp_layer_begin();
++    const auto is_stage_resident = [&](int32_t il) {
++        return !linkcpp_stage
++            || (model.linkcpp_layer_begin() <= il && il < model.linkcpp_layer_end());
++    };
++
+     // create a context for each buffer type
+     auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
+         auto it = ctx_map.find(buft);
+@@ -70,9 +77,23 @@ llama_memory_recurrent::llama_memory_recurrent(
+         return it->second.get();
+     };
+ 
++    auto ctx_for_meta = [&]() -> ggml_context * {
++        if (!ctx_meta) {
++            ggml_init_params params = {
++                // R and S per layer, plus Qwen4Exp's optional PLE conv row.
++                /*.mem_size   =*/ size_t((hparams.ple_conv_state() > 0 ? 3u : 2u)*n_layer*ggml_tensor_overhead()),
++                /*.mem_buffer =*/ NULL,
++                /*.no_alloc   =*/ true,
++            };
++            ctx_meta.reset(ggml_init(params));
++        }
++        return ctx_meta.get();
++    };
++
+     r_l.resize(n_layer);
+     s_l.resize(n_layer);
+     p_l.resize(n_layer);
++    resident_l.resize(n_layer, false);
+ 
+     for (int i = 0; i < n_layer; i++) {
+         if (filter && !filter(i)) {
+@@ -80,11 +101,14 @@ llama_memory_recurrent::llama_memory_recurrent(
+             continue;
+         }
+ 
+-        const char * dev_name = "CPU";
++        const bool resident = is_stage_resident(i);
++        resident_l[i] = resident;
++
++        const char * dev_name = resident ? "CPU" : "metadata-only";
+ 
+         ggml_backend_buffer_type_t buft = ggml_backend_cpu_buffer_type();
+ 
+-        if (offload) {
++        if (resident && offload) {
+             auto * dev = model.dev_layer(i);
+             buft = ggml_backend_dev_buffer_type(dev);
+ 
+@@ -93,7 +117,7 @@ llama_memory_recurrent::llama_memory_recurrent(
+ 
+         LLAMA_LOG_DEBUG("%s, layer %3d: dev = %s\n", __func__, i, dev_name);
+ 
+-        ggml_context * ctx = ctx_for_buft(buft);
++        ggml_context * ctx = resident ? ctx_for_buft(buft) : ctx_for_meta();
+         if (!ctx) {
+             throw std::runtime_error("failed to create ggml context for rs cache");
+         }
+@@ -731,9 +755,9 @@ size_t llama_memory_recurrent::total_size() const {
+ size_t llama_memory_recurrent::size_r_bytes() const {
+     size_t size_r_bytes = 0;
+ 
+-    for (const auto & r : r_l) {
+-        if (r != nullptr) {
+-            size_r_bytes += ggml_nbytes(r);
++    for (size_t il = 0; il < r_l.size(); ++il) {
++        if (resident_l[il] && r_l[il] != nullptr) {
++            size_r_bytes += ggml_nbytes(r_l[il]);
+         }
+     }
+ 
+@@ -743,9 +767,9 @@ size_t llama_memory_recurrent::size_r_bytes() const {
+ size_t llama_memory_recurrent::size_s_bytes() const {
+     size_t size_s_bytes = 0;
+ 
+-    for (const auto & s : s_l) {
+-        if (s != nullptr) {
+-            size_s_bytes += ggml_nbytes(s);
++    for (size_t il = 0; il < s_l.size(); ++il) {
++        if (resident_l[il] && s_l[il] != nullptr) {
++            size_s_bytes += ggml_nbytes(s_l[il]);
+         }
+     }
+ 
+@@ -755,9 +779,9 @@ size_t llama_memory_recurrent::size_s_bytes() const {
+ size_t llama_memory_recurrent::size_p_bytes() const {
+     size_t size_p_bytes = 0;
+ 
+-    for (const auto & p : p_l) {
+-        if (p != nullptr) {
+-            size_p_bytes += ggml_nbytes(p);
++    for (size_t il = 0; il < p_l.size(); ++il) {
++        if (resident_l[il] && p_l[il] != nullptr) {
++            size_p_bytes += ggml_nbytes(p_l[il]);
+         }
+     }
+ 
+@@ -906,7 +930,7 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
+     // Get whole range at a time
+     for (uint32_t il = 0; il < n_layer; ++il) {
+         // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
+-        if (r_l[il] == nullptr) continue;
++        if (!resident_l[il] || r_l[il] == nullptr) continue;
+ 
+         // Write R tensor type
+         const int32_t r_type_i = (int32_t)r_l[il]->type;
+@@ -939,7 +963,7 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
+     if (!s_trans) {
+         for (uint32_t il = 0; il < n_layer; ++il) {
+             // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
+-            if (s_l[il] == nullptr) continue;
++            if (!resident_l[il] || s_l[il] == nullptr) continue;
+ 
+             // Write S tensor type
+             const int32_t s_type_i = (int32_t)s_l[il]->type;
+@@ -962,7 +986,7 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
+         const uint32_t mem_size = size;
+         for (uint32_t il = 0; il < n_layer; ++il) {
+             // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
+-            if (s_l[il] == nullptr) continue;
++            if (!resident_l[il] || s_l[il] == nullptr) continue;
+ 
+             const uint32_t n_embd_s = hparams.n_embd_s();
+ 
+@@ -1108,7 +1132,7 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
+     // For each layer, read the keys for each cell, one row is one cell, read as one contiguous block
+     for (uint32_t il = 0; il < n_layer; ++il) {
+         // skip null layers
+-        if (r_l[il] == nullptr) continue;
++        if (!resident_l[il] || r_l[il] == nullptr) continue;
+ 
+         // Read type of key
+         int32_t r_type_i_ref;
+@@ -1151,7 +1175,7 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
+     if (!s_trans) {
+         for (uint32_t il = 0; il < n_layer; ++il) {
+             // skip null layers
+-            if (s_l[il] == nullptr) continue;
++            if (!resident_l[il] || s_l[il] == nullptr) continue;
+ 
+             // Read type of value
+             int32_t s_type_i_ref;
+@@ -1181,7 +1205,7 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
+         // For each layer, read the values for each cell (transposed)
+         for (uint32_t il = 0; il < n_layer; ++il) {
+             // skip null layers
+-            if (s_l[il] == nullptr) continue;
++            if (!resident_l[il] || s_l[il] == nullptr) continue;
+ 
+             const uint32_t n_embd_s = hparams.n_embd_s();
+ 
+diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
+index 4abb3f5cf5c09611844dff5361ca36e51ff9c07f..16cc07416eb579731aa58cebaddc3070f12bcbd6 100644
+--- a/src/llama-memory-recurrent.h
++++ b/src/llama-memory-recurrent.h
+@@ -16,6 +16,8 @@
+ //       see the implementation of llama_kv_cache_context_i for an example how to do it
+ class llama_memory_recurrent : public llama_memory_i {
+ public:
++    static constexpr bool linkcpp_stage_residency_supported = true;
++
+     llama_memory_recurrent(
+             const llama_model & model,
+                     ggml_type   type_r,
+@@ -32,6 +34,8 @@ public:
+     // llama_memory_i
+     //
+ 
++    bool supports_linkcpp_stage_residency() const override { return true; }
++
+     llama_memory_context_ptr init_batch(
+             llama_batch_allocr & balloc,
+             uint32_t n_ubatch,
+@@ -113,6 +117,7 @@ public:
+     std::vector<ggml_tensor *> s_l;
+     // a second conv history that must stay replicated across devices, so it cannot share the r row
+     std::vector<ggml_tensor *> p_l;
++    std::vector<bool> resident_l;
+ 
+ private:
+     //const llama_model & model;
+@@ -123,6 +128,10 @@ private:
+     // ggml contexts for the KV cache along with the allocated backend buffers:
+     std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
+ 
++    // Nonresident layers still need R/S tensor metadata while the stock full
++    // graph is built. This context is deliberately never backend-allocated.
++    ggml_context_ptr ctx_meta;
++
+     size_t total_size() const;
+ 
+     size_t size_r_bytes() const;

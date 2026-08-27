@@ -1,0 +1,22 @@
+diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
+index 96c9d338b1cdb6be9bb2020703914bdc36ea2e80..5d902685175f4b0d9c2b571af3e6384d658dc168 100644
+--- a/src/llama-model-loader.h
++++ b/src/llama-model-loader.h
+@@ -81,6 +81,9 @@ struct llama_model_loader {
+     bool check_tensors;
+     bool no_alloc;
+     bool load_mtp;
++    bool partial_load = false;
++    int32_t linkcpp_layer_begin = -1;
++    int32_t linkcpp_layer_end   = -1;
+ 
+     llama_files files;
+     llama_ftype ftype;
+@@ -101,6 +104,7 @@ struct llama_model_loader {
+     llama_model_set_tensor_data_t set_tensor_data;
+     void * set_tensor_data_ud;
+     std::vector<ggml_context_ptr> contexts;
++    ggml_context_ptr linkcpp_metadata_ctx;
+ 
+     std::string arch_name;
+     LLM_KV      llm_kv    = LLM_KV(LLM_ARCH_UNKNOWN);

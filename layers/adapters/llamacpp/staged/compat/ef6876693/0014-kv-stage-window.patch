@@ -1,0 +1,35 @@
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 920b914fdbcc388871848e1957e56dd82007f2c0..eb85cd97d0cd3e297c993cac152b5c059f653cac 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -213,11 +213,25 @@ llama_kv_cache::llama_kv_cache(
+ 
+         ggml_backend_buffer_type_t buft = ggml_backend_cpu_buffer_type();
+ 
+-        if (offload) {
+-            auto * dev = model.dev_layer(il);
+-            buft = ggml_backend_dev_buffer_type(dev);
+-
+-            dev_name = ggml_backend_dev_name(dev);
++        const bool linkcpp_owned = model.linkcpp_layer_begin() < 0 ||
++            (model.linkcpp_layer_begin() <= (int32_t) il &&
++             (int32_t) il < model.linkcpp_layer_end());
++        const int32_t kv_gpu_layer_start = model.linkcpp_kv_gpu_layer_start();
++        const int32_t kv_gpu_layer_end = model.linkcpp_kv_gpu_layer_end();
++        const bool managed_kv = kv_gpu_layer_start >= 0 &&
++            kv_gpu_layer_end >= kv_gpu_layer_start;
++
++        if (offload && (managed_kv || linkcpp_owned)) {
++            auto * dev = managed_kv
++                ? (int32_t) il >= kv_gpu_layer_start && (int32_t) il < kv_gpu_layer_end &&
++                        !model.devices.empty()
++                    ? model.devices.front().dev
++                    : nullptr
++                : model.dev_layer(il);
++            if (dev != nullptr) {
++                buft = ggml_backend_dev_buffer_type(dev);
++                dev_name = ggml_backend_dev_name(dev);
++            }
+         }
+ 
+         LLAMA_LOG_DEBUG("%s: layer %3d: dev = %s\n", __func__, il, dev_name);

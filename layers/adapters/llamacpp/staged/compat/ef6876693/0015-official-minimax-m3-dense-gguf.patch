@@ -1,0 +1,165 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 57502f887e8a9aae7494f6e641f03507547da9f8..10cbd92e1e1359be5ecc28b0bf09c6cef6c4b6b8 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2306,7 +2306,27 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+             } break;
+         case LLM_ARCH_MINIMAX_M3:
+             {
+-                // sparse (MSA) layers carry an indexer key cache, but leading dense layers do not
++                if (hparams.indexer_n_head == 0) {
++                    res = new llama_kv_cache(
++                            *this,
++                            hparams,
++                            params.type_k,
++                            params.type_v,
++                            !cparams.flash_attn,
++                            cparams.offload_kqv,
++                            cparams.kv_unified,
++                            cparams.n_ctx_seq,
++                            cparams.n_seq_max,
++                            1,
++                            hparams.n_swa,
++                            hparams.swa_type,
++                            nullptr,
++                            nullptr,
++                            nullptr,
++                            nullptr);
++                    break;
++                }
++                // Sparse (MSA) layers carry an indexer key cache, but leading dense layers do not.
+                 llama_kv_cache::layer_filter_cb filter_idx =
+                     [&](int32_t il) { return (uint32_t) il >= hparams.n_layer_dense_lead; };
+ 
+diff --git a/src/models/minimax-m3.cpp b/src/models/minimax-m3.cpp
+index 1ba699d01665345a078e875d2d74671289befe35..44c5dc677b70d8a239f272eb0b470e2843379554 100644
+--- a/src/models/minimax-m3.cpp
++++ b/src/models/minimax-m3.cpp
+@@ -1,8 +1,9 @@
+ #include "models.h"
+ #include "llama-kv-cache-msa.h"
+ #include <cmath>
+-#include <vector>
+ #include <cstdint>
++#include <stdexcept>
++#include <vector>
+ 
+ // MiniMax-M3: MiniMax-M2 style GQA (per-head QK-norm, partial rotary) with
+ // DeepSeek-V3 leading-dense + routed/shared experts (sigmoid gating, routed scaling),
+@@ -18,12 +19,33 @@ void llama_model_minimax_m3::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_EXPERT_WEIGHTS_SCALE,        hparams.expert_weights_scale, false);
+     ml.get_key(LLM_KV_EXPERT_WEIGHTS_NORM,         hparams.expert_weights_norm, false);
+     ml.get_key(LLM_KV_EXPERT_GATING_FUNC,          hparams.expert_gating_func);
+-    ml.get_key(LLM_KV_ATTENTION_INDEXER_HEAD_COUNT,    hparams.indexer_n_head);
+-    ml.get_key(LLM_KV_ATTENTION_INDEXER_KEY_LENGTH,    hparams.indexer_head_size);
+-    ml.get_key(LLM_KV_ATTENTION_INDEXER_TOP_K,         hparams.indexer_top_k);
+-    ml.get_key(LLM_KV_ATTENTION_INDEXER_BLOCK_SIZE,    hparams.indexer_block_size);
+-    ml.get_key(LLM_KV_ATTENTION_INDEXER_LOCAL_BLOCKS,  hparams.indexer_local_blocks);
+-    msa_p = { (int) hparams.indexer_block_size, (int) hparams.indexer_top_k, (int) hparams.indexer_local_blocks };
++    const bool has_index_heads = ml.get_key(
++            LLM_KV_ATTENTION_INDEXER_HEAD_COUNT, hparams.indexer_n_head, false);
++    const bool has_index_size = ml.get_key(
++            LLM_KV_ATTENTION_INDEXER_KEY_LENGTH, hparams.indexer_head_size, false);
++    const bool has_index_top_k = ml.get_key(
++            LLM_KV_ATTENTION_INDEXER_TOP_K, hparams.indexer_top_k, false);
++    const bool has_index_block = ml.get_key(
++            LLM_KV_ATTENTION_INDEXER_BLOCK_SIZE, hparams.indexer_block_size, false);
++    const bool has_index_local = ml.get_key(
++            LLM_KV_ATTENTION_INDEXER_LOCAL_BLOCKS, hparams.indexer_local_blocks, false);
++    const int index_metadata_count = has_index_heads + has_index_size + has_index_top_k
++            + has_index_block + has_index_local;
++    if (index_metadata_count != 0 && index_metadata_count != 5) {
++        throw std::runtime_error("incomplete MiniMax MSA indexer metadata");
++    }
++    const bool has_msa = index_metadata_count == 5;
++    if (has_msa) {
++        if (hparams.indexer_n_head == 0 || hparams.indexer_head_size == 0
++                || hparams.indexer_top_k == 0 || hparams.indexer_block_size == 0) {
++            throw std::runtime_error("invalid zero-valued MiniMax MSA indexer metadata");
++        }
++        msa_p = {
++            (int) hparams.indexer_block_size,
++            (int) hparams.indexer_top_k,
++            (int) hparams.indexer_local_blocks,
++        };
++    }
+ 
+     GGML_ASSERT(hparams.indexer_block_size > 0); // avoid div by zero
+ 
+@@ -37,6 +59,7 @@ void llama_model_minimax_m3::load_arch_tensors(llama_model_loader &) {
+     LLAMA_LOAD_LOCALS;
+     const int64_t n_expert_shared = hparams.n_expert_shared;
+     const int64_t n_ff_exp        = hparams.n_ff_exp;
++    const bool has_msa            = hparams.indexer_n_head != 0;
+ 
+     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+ 
+@@ -75,11 +98,13 @@ void llama_model_minimax_m3::load_arch_tensors(llama_model_loader &) {
+             layer.ffn_down_shexp = create_tensor(tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {        n_ff_exp * n_expert_shared, n_embd}, 0);
+             layer.ffn_up_shexp   = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {n_embd, n_ff_exp * n_expert_shared}, 0);
+ 
+-            // indexer
+-            layer.index_q_proj = create_tensor(tn(LLM_TENSOR_INDEXER_Q_PROJ, "weight", i), {n_embd, hparams.indexer_n_head * hparams.indexer_head_size}, 0);
+-            layer.index_k_proj = create_tensor(tn(LLM_TENSOR_INDEXER_K_PROJ, "weight", i), {n_embd, hparams.indexer_head_size}, 0);
+-            layer.index_q_norm = create_tensor(tn(LLM_TENSOR_INDEXER_Q_NORM, "weight", i), {hparams.indexer_head_size}, 0);
+-            layer.index_k_norm = create_tensor(tn(LLM_TENSOR_INDEXER_K_NORM, "weight", i), {hparams.indexer_head_size}, 0);
++            if (has_msa) {
++                // indexer
++                layer.index_q_proj = create_tensor(tn(LLM_TENSOR_INDEXER_Q_PROJ, "weight", i), {n_embd, hparams.indexer_n_head * hparams.indexer_head_size}, 0);
++                layer.index_k_proj = create_tensor(tn(LLM_TENSOR_INDEXER_K_PROJ, "weight", i), {n_embd, hparams.indexer_head_size}, 0);
++                layer.index_q_norm = create_tensor(tn(LLM_TENSOR_INDEXER_Q_NORM, "weight", i), {hparams.indexer_head_size}, 0);
++                layer.index_k_norm = create_tensor(tn(LLM_TENSOR_INDEXER_K_NORM, "weight", i), {hparams.indexer_head_size}, 0);
++            }
+         }
+     }
+ }
+@@ -227,18 +252,26 @@ llama_model_minimax_m3::graph::graph(const llama_model & model, const llm_graph_
+     // interleaves slots and would silently break block anchoring so it falls back to dense.
+     const bool fa_on       = cparams.flash_attn;
+     const bool streams_ok  = cparams.n_seq_max == 1 || !cparams.kv_unified;
+-    const bool msa_enabled = fa_on && streams_ok;
+-
+-    auto * inp_attn = build_attn_inp_kv_msa(msa_enabled);
++    const bool has_msa     = hparams.indexer_n_head != 0;
++    const bool msa_enabled = has_msa && fa_on && streams_ok;
++
++    llm_graph_input_attn_kv_msa * inp_attn_msa = nullptr;
++    llm_graph_input_attn_kv * inp_attn = nullptr;
++    if (has_msa) {
++        inp_attn_msa = build_attn_inp_kv_msa(msa_enabled);
++        inp_attn = inp_attn_msa;
++    } else {
++        inp_attn = build_attn_inp_kv();
++    }
+ 
+     static bool warned_no_fa = false;
+-    if (!fa_on && !warned_no_fa) {
++    if (has_msa && !fa_on && !warned_no_fa) {
+         LLAMA_LOG_WARN("%s: flash attention disabled; MSA requires it -> running DENSE attention "
+                        "(output may be degraded). Enable flash attention for MSA.\n", __func__);
+         warned_no_fa = true;
+     }
+     static bool warned_unified = false;
+-    if (fa_on && !streams_ok && !warned_unified) {
++    if (has_msa && fa_on && !streams_ok && !warned_unified) {
+         LLAMA_LOG_WARN("%s: unified KV cache with n_seq_max > 1; MSA needs per-sequence streams "
+                        "-> running DENSE attention. Output may be degraded. Drop --kv-unified to enable MSA.\n", __func__);
+         warned_unified = true;
+@@ -251,7 +284,7 @@ llama_model_minimax_m3::graph::graph(const llama_model & model, const llm_graph_
+     ggml_tensor * msa_mf  = nullptr;   // F32 copy of the FA mask for the final mask add
+     int64_t n_kv = 0, n_ps = 0, nblk = 0, ns = 1, n_tps = 0;
+     bool msa_decode = false;           // gather (1 token per stream) vs mask
+-    const int     blk = mm.msa_p.blk;
++    const int     blk = has_msa ? mm.msa_p.blk : 0;
+     const int64_t Hd  = hparams.indexer_n_head;   // one indexer head per GQA group
+ 
+     if (msa_enabled) {
+@@ -350,7 +383,7 @@ llama_model_minimax_m3::graph::graph(const llama_model & model, const llm_graph_
+                 const auto * mctx_msa_l = static_cast<const llama_kv_cache_msa_context *>(mctx);
+                 const auto * mctx_cur = mctx_msa_l->get_base();
+                 const auto * mctx_idx = mctx_msa_l->get_idx();
+-                ggml_build_forward_expand(gf, mctx_idx->cpy_k(ctx0, ik, inp_attn->get_k_idxs_idx(), il));
++                ggml_build_forward_expand(gf, mctx_idx->cpy_k(ctx0, ik, inp_attn_msa->get_k_idxs_idx(), il));
+                 ggml_tensor * ik_kv = mctx_idx->get_k(ctx0, il);
+ 
+                 if (inp_attn->self_k_rot) {
