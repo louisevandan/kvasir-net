@@ -149,7 +149,9 @@ fn process_control_round_trips_real_llama_plan_hello_hop_kv_and_unload() {
             prompt: None,
             initial_tokens: None,
             options: REQUEST_OPTIONS.into(),
-            position: Some(0),
+            // Match the real adapter handoff: Prefill's returned position is
+            // the authoritative continuation cursor for the first Decode.
+            position: Some(prefill_position),
             outcome: None,
         }],
         legacy: false,

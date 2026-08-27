@@ -1,4 +1,4 @@
-# llama.cpp compatibility layer fe2adf0e7
+# llama.cpp compatibility layer d7a207411
 
 This directory is the only Linker-owned patch boundary for the official
 `ggml-org/llama.cpp` commit recorded in `manifest.json`.
@@ -17,8 +17,8 @@ This directory is the only Linker-owned patch boundary for the official
 2. Prove an unchanged stock `ggml-rpc-server` and `llama-server` build.
 3. Port this ordered patch set in a temporary worktree. Preserve new official
    model and scheduler behavior when resolving conflicts.
-4. Replace this versioned directory and update `manifest.json`, including the
-   patch hashes and the canonical applied diff hash.
+4. Record the port with `record-pipeline-port.mjs`, including each patch hash,
+   the canonical applied diff hash, and the independently replayed tree.
 5. Run the preparer twice: the first run must create and patch; the second must
    validate and reuse the same generated source path.
 6. Build stock and Pipeline artifacts independently, then validate real

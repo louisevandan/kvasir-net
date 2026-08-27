@@ -1,0 +1,131 @@
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 9b22cb05f29bc702c5aef4b7075ed3c9266fa91a..a08748c58f0cf7165363e85a973a10818732b47a 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1098,6 +1098,38 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+         return it->second.get();
+     };
+ 
++    auto linkcpp_metadata_tensor = [&](const ggml_tensor & t_meta, int tensor_flags) -> ggml_tensor * {
++        if (!linkcpp_metadata_ctx) {
++            int max_n_tensors = n_tensors;
++            max_n_tensors += 1;
++            max_n_tensors += hparams.n_layer()*2;
++            const size_t ctx_size = ggml_tensor_overhead()*max_n_tensors;
++            ggml_init_params params = {
++                /*.mem_size   =*/ ctx_size,
++                /*.mem_buffer =*/ NULL,
++                /*.no_alloc   =*/ true,
++            };
++            linkcpp_metadata_ctx.reset(ggml_init(params));
++            if (!linkcpp_metadata_ctx) {
++                throw std::runtime_error(format("failed to create linkcpp metadata context"));
++            }
++        }
++        if (tensor_flags & TENSOR_DUPLICATED) {
++            if (ggml_tensor * existing = ggml_get_tensor(linkcpp_metadata_ctx.get(), ggml_get_name(&t_meta));
++                existing && existing->type == t_meta.type && ggml_are_same_shape(existing, &t_meta)) {
++                return existing;
++            }
++        }
++        ggml_tensor * tensor = ggml_dup_tensor(linkcpp_metadata_ctx.get(), &t_meta);
++        ggml_set_name(tensor, ggml_get_name(&t_meta));
++        if (!(tensor_flags & TENSOR_DUPLICATED)) {
++            n_created++;
++        }
++        return tensor;
++    };
++
++    bool linkcpp_owned = true;
++
+     auto buft_for_tensor = [&](ggml_tensor * t_meta) -> ggml_backend_buffer_type_t {
+         if (!t_meta) {
+             if (flags & TENSOR_NOT_REQUIRED) {
+@@ -1155,6 +1187,40 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+             }
+         }
+ 
++        if (linkcpp_layer_begin >= 0 && linkcpp_layer_end >= linkcpp_layer_begin) {
++            if (info.layer == LLM_TENSOR_LAYER_REPEATING) {
++                // NextN/MTP tensors are represented as repeating tensors with
++                // block ids in the auxiliary range [n_layer, n_layer_all).
++                // They are consumed only by the MTP context after the normal
++                // trunk, so the normal tail stage owns them as a diagnostic
++                // load slice. They must never be assigned to an interior
++                // stage: that stage cannot execute the MTP proposal context.
++                const bool is_nextn_auxiliary = load_mtp &&
++                    tn.bid >= (int32_t) hparams.n_layer();
++                if (is_nextn_auxiliary) {
++                    linkcpp_owned = linkcpp_layer_end == (int32_t) hparams.n_layer();
++                } else {
++                    linkcpp_owned = linkcpp_layer_begin <= tn.bid && tn.bid < linkcpp_layer_end;
++                }
++            } else if (info.layer == LLM_TENSOR_LAYER_INPUT) {
++                linkcpp_owned = linkcpp_layer_begin == 0;
++            } else if (info.layer == LLM_TENSOR_LAYER_OUTPUT) {
++                // Auxiliary NextN blocks are part of n_layer_all but not the
++                // normal decode graph. The stage ending at n_layer() owns the
++                // terminal tensors used by that graph.
++                linkcpp_owned = linkcpp_layer_end == (int32_t) hparams.n_layer();
++            }
++            partial_load = true;
++        }
++
++        // The complete tensor metadata is still needed while an architecture
++        // builds its stock graph. Non-owned tensors are never assigned a
++        // backend buffer, loaded from the GGUF, or exposed as resident model
++        // tensors; apply_linkcpp_stage prunes their graph nodes before compute.
++        if (!linkcpp_owned) {
++            return nullptr;
++        }
++
+         // select the buffer type for this tensor
+         const buft_list_t * buft_list;
+         switch (info.layer) {
+@@ -1269,6 +1335,9 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+         ggml_set_name(&t_meta, tn.str().c_str());
+ 
+         ggml_backend_buffer_type_t buft = buft_for_tensor(&t_meta);
++        if (!linkcpp_owned) {
++            return linkcpp_metadata_tensor(t_meta, flags);
++        }
+         GGML_ASSERT(buft != nullptr);
+         ggml_context * ctx = ctx_for_buft(buft);
+         ggml_tensor * ret = ggml_dup_tensor(ctx, &t_meta);
+@@ -1299,6 +1368,9 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+     GGML_ASSERT(ggml_nbytes(&t_meta) == ggml_nbytes(cur));
+ 
+     ggml_backend_buffer_type_t buft = buft_for_tensor(&t_meta);
++    if (!linkcpp_owned) {
++        return linkcpp_metadata_tensor(t_meta, flags);
++    }
+     if (buft == nullptr) {
+         return nullptr;
+     }
+@@ -1372,9 +1444,23 @@ void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps
+         }
+     }
+ 
+-    // compute the total size of all tensors for progress reporting
+-    for (const auto & it : weights_map) {
+-        size_data += ggml_nbytes(it.second.tensor);
++    // A partial stage loads only tensors assigned to backend contexts. The
++    // separate metadata context deliberately has no backend buffer and is not
++    // included here, so progress reaches 100% exactly when rank-local weights
++    // are resident.
++    if (partial_load) {
++        size_data = 0;
++        for (const auto & [_, ctx] : ctx_map) {
++            for (ggml_tensor * tensor = ggml_get_first_tensor(ctx.get()); tensor; tensor = ggml_get_next_tensor(ctx.get(), tensor)) {
++                if (get_weight(ggml_get_name(tensor))) {
++                    size_data += ggml_nbytes(tensor);
++                }
++            }
++        }
++    } else {
++        for (const auto & it : weights_map) {
++            size_data += ggml_nbytes(it.second.tensor);
++        }
+     }
+ }
+ 

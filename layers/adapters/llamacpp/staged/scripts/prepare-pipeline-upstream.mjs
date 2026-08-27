@@ -64,7 +64,7 @@ function validateOfficialPin(manifest) {
     throw new Error(`upstream HEAD ${head} does not match ${manifest.upstream_commit}`);
   }
   if (runGit(["status", "--porcelain"], upstreamDir).trim()) {
-    throw new Error("official upstream submodule is dirty");
+    throw new Error("official upstream checkout is dirty");
   }
   const intrusion = spawnSync(
     "git",

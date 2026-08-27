@@ -1,0 +1,66 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index c34700ff563b56abae16367e61dea5f9b52dc0a9..9d1e3e7328983e331f75904c67b552da618f5e95 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1645,7 +1645,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+             }
+         }
+     }
+-    ml.done_getting_tensors();
++    ml.done_getting_tensors(ml.partial_load);
+ 
+     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
+     // If sidecar scales exist, the output weight must be an actual output tensor.
+@@ -1660,7 +1660,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+         }
+     }
+ 
+-    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
++    // A stage references sparse windows inside a shared GGUF. If mmap is
++    // selected as a fallback, disable whole-shard readahead; managed Pipeline
++    // launches use eager rank-local buffers instead.
++    ml.init_mappings(!ml.partial_load, use_mlock ? &pimpl->mlock_mmaps : nullptr);
+     pimpl->mappings.reserve(ml.mappings.size());
+ 
+     // create the backend buffers
+@@ -1754,6 +1757,15 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+         ctx_buf_maps.emplace_back(ctx, buf_map);
+     }
+ 
++    if (ml.linkcpp_metadata_ctx) {
++        // Keep shape/type metadata alive for the architecture graph, but do
++        // not attach a backend buffer. Non-owned weights are pruned before
++        // scheduling and must never become resident or retain graph state.
++        pimpl->ctxs_bufs.emplace_back(
++            std::move(ml.linkcpp_metadata_ctx),
++            std::vector<ggml_backend_buffer_ptr>{});
++    }
++
+     if (llama_supports_gpu_offload()) {
+         const int n_gpu = std::min(n_gpu_layers, n_layer_all);
+ 
+@@ -2615,6 +2627,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+     llm->build_dense_out(dense_2_out_layers, dense_2_out_layers_b, dense_3_out_layers);
+ 
+     llm->res->set_outputs(params);
++    llm->res->apply_linkcpp_stage(params);
+ 
+     return llm->res->get_gf();
+ }
+@@ -2642,6 +2655,16 @@ llama_model_params llama_model_default_params() {
+         /*.no_host                     =*/ false,
+         /*.no_alloc                    =*/ false,
+         /*.load_mtp                    =*/ false,
++        /*.linkcpp_layer_begin         =*/ -1,
++        /*.linkcpp_layer_end           =*/ -1,
++        /*.linkcpp_kv_gpu_layer_start  =*/ -1,
++        /*.linkcpp_kv_gpu_layer_end    =*/ -1,
++        /*.linkcpp_stage_executor      =*/ nullptr,
++        /*.linkcpp_stage_executor_user_data =*/ nullptr,
++        /*.linkcpp_memory_executor     =*/ nullptr,
++        /*.linkcpp_memory_executor_user_data =*/ nullptr,
++        /*.linkcpp_state_executor      =*/ nullptr,
++        /*.linkcpp_state_executor_user_data =*/ nullptr,
+     };
+ 
+     return result;

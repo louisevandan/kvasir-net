@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // Configure and build the staged C++ server against a prepared compatibility
-// worktree. This script owns no upstream source and never changes the pinned
-// submodule; preparation is delegated to prepare-pipeline-upstream.mjs.
+// worktree. This script owns no upstream source and never changes the official
+// checkout; preparation is delegated to prepare-pipeline-upstream.mjs.
 
 import fs from "node:fs";
 import os from "node:os";

@@ -6,7 +6,7 @@
 //   node apps/p4/layers/adapters/llamacpp/staged/scripts/bump-pipeline-upstream.mjs <ref> [--apply] [--from <sha9>]
 //
 // Without --apply this only reports, per patch, whether it still applies.
-// The submodule pin is never moved here: moving it changes what everyone
+// The official checkout is never moved here: moving it changes what everyone
 // builds, so it stays an explicit human action printed after a clean replay.
 //
 // Manifest shape and adoption rules live in ./upstream/manifest.mjs.
@@ -108,7 +108,7 @@ function record(target, identity, sourceDirectory, manifest, worktree) {
   const patches = manifest.patches.map((entry) => {
     const contents = fs.readFileSync(path.join(sourceDirectory, entry.file));
     fs.writeFileSync(path.join(directory, entry.file), contents);
-    return { file: entry.file, sha256: sha256(contents) };
+    return { ...entry, sha256: sha256(contents) };
   });
   const diff = git(["diff", "--binary", "--full-index"], worktree, { binary: true }).stdout;
   git(["add", "-A"], worktree);
