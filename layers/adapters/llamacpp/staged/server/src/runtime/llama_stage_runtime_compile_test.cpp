@@ -25,6 +25,8 @@ void test_force_hop_memory_dirty(StageRuntime & runtime, bool value) noexcept {
 
 } // namespace staged::llama_runtime
 
+void run_stage_memory_plan_tests();
+
 namespace {
 
 const char * environment_value(const char * name) {
@@ -122,6 +124,8 @@ void real_decode_after_restore_regression() {
     }
 
     staged::llama_runtime::LoadConfig config;
+    config.memory_topology.kind =
+        staged::llama_runtime::MemoryTopologyKind::Discrete;
     config.model_path = model_path;
     config.model_identity = model_path;
     config.layer_begin = 0;
@@ -251,6 +255,8 @@ void hop_batch_rolls_back_only_new_sequences() {
     }
 
     staged::llama_runtime::LoadConfig config;
+    config.memory_topology.kind =
+        staged::llama_runtime::MemoryTopologyKind::Discrete;
     config.model_path = model_path;
     config.model_identity = model_path;
     config.layer_begin = 0;
@@ -323,17 +329,20 @@ int main() {
     common_params params;
     params.speculative.types = {COMMON_SPECULATIVE_TYPE_DRAFT_MTP};
     staged::llama_runtime::LoadConfig config;
+    config.memory_topology.kind =
+        staged::llama_runtime::MemoryTopologyKind::Discrete;
     config.model_path = "not-loaded.gguf";
     config.layer_begin = 0;
     config.layer_end = 1;
     std::string error;
     assert(!runtime.load(params, config, &error));
-    assert(error == "llama.cpp failed to load the staged model");
+    assert(error == "llama.cpp failed to create the no-alloc model plan");
     assert(!runtime.loaded());
     execute_decode_batch_refuses_when_hop_memory_dirty();
     execute_hop_refuses_when_hop_memory_dirty();
     unload_clears_hop_memory_dirty();
     quarantine_marks_hop_memory_dirty();
+    run_stage_memory_plan_tests();
     kv_operations_refuse_when_hop_memory_dirty();
     real_decode_after_restore_regression();
     hop_batch_rolls_back_only_new_sequences();

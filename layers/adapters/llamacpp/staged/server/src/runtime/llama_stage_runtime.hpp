@@ -15,25 +15,13 @@
 #include "state_store.hpp"
 #include "protocol.hpp"
 #include "physical_execution.hpp"
+#include "stage_memory_plan.hpp"
 
 namespace staged::llama_runtime {
 
 struct PhysicalOwner;
 struct PhysicalOutcome;
 struct GeneratedToken;
-
-struct LoadConfig {
-    std::string model_path;
-    int32_t layer_begin = 0;
-    int32_t layer_end = 0;
-    int32_t kv_gpu_layer_start = 0;
-    int32_t kv_gpu_layer_end = 0;
-    std::string model_identity;
-    std::string kv_root;
-    // Test-only compatibility probe: load the MTP auxiliary weights in the
-    // normal tail stage without claiming proposal/accept execution support.
-    bool mtp_ownership_probe = false;
-};
 
 struct MtpHopObservation final {
     std::size_t drafted_tokens = 0;
@@ -95,6 +83,9 @@ public:
     }
     [[nodiscard]] std::uint32_t sequence_capacity() const noexcept {
         return ctx_ == nullptr ? 0 : llama_n_seq_max(ctx_);
+    }
+    [[nodiscard]] bool kv_unified() const noexcept {
+        return params_.kv_unified;
     }
     [[nodiscard]] bool requires_equal_sequence_ubatch() const noexcept {
         return model_ != nullptr
@@ -302,7 +293,7 @@ private:
         const std::vector<PhysicalOwner> &, std::string *);
     [[nodiscard]] bool format_generated_token(
         const PhysicalOwner &, llama_token, std::uint32_t,
-        GeneratedToken *, std::string *);
+        bool terminal_after_token, GeneratedToken *, std::string *);
 
     common_params params_;
     LoadConfig config_;

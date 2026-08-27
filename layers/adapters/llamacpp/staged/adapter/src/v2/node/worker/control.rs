@@ -55,12 +55,13 @@ impl Worker {
         launch.ready_timeout = Duration::from_millis(command.ready_timeout_ms);
         launch.io_timeout = Duration::from_millis(command.io_timeout_ms);
         self.set_snapshot("loading");
-        self.lifecycle
-            .load(
+        with_host_load_gate(|| {
+            self.lifecycle.load(
                 ProcessServerControl::new(launch),
                 Duration::from_millis(command.ready_timeout_ms),
             )
-            .map_err(|error| format!("stage load failed: {error:?}"))?;
+        })
+        .map_err(|error| format!("stage load failed: {error:?}"))?;
         if !self.lifecycle.physical_batch_capable() {
             let _ = self.lifecycle.unload();
             return Err("stage server did not negotiate physical_batch=1".into());
@@ -202,6 +203,10 @@ fn validate_ready_capacities(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+    use std::time::Duration;
 
     fn command() -> LoadCommand {
         LoadCommand {
@@ -251,5 +256,33 @@ mod tests {
                 .unwrap_err()
                 .contains("actual n_ctx=1200")
         );
+    }
+
+    #[test]
+    fn concrete_node_loads_are_serialized_across_one_agent() {
+        let entered = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(3));
+        let workers = (0..2)
+            .map(|_| {
+                let entered = Arc::clone(&entered);
+                let peak = Arc::clone(&peak);
+                let start = Arc::clone(&start);
+                thread::spawn(move || {
+                    start.wait();
+                    with_host_load_gate(|| {
+                        let current = entered.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(current, Ordering::SeqCst);
+                        thread::sleep(Duration::from_millis(10));
+                        entered.fetch_sub(1, Ordering::SeqCst);
+                    });
+                })
+            })
+            .collect::<Vec<_>>();
+        start.wait();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), 1);
     }
 }

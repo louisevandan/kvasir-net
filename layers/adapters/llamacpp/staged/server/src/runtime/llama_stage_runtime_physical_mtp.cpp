@@ -77,6 +77,7 @@ bool StageRuntime::format_generated_token(
         const PhysicalOwner & owner,
         llama_token token,
         std::uint32_t position,
+        bool terminal_after_token,
         GeneratedToken * generated,
         std::string * error) {
     if (generated == nullptr) return mtp_fail("generated token output is null", error);
@@ -89,9 +90,12 @@ bool StageRuntime::format_generated_token(
     if (!eog) pending += common_token_to_piece(vocab, token, false);
     std::vector<std::string> stops;
     if (!parse_request_stops(owner.options, &stops, error)) return false;
-    const auto filtered = filter_request_stops(pending, 0, stops, eog);
+    const auto filtered = filter_request_stops(
+        pending, 0, stops, eog || terminal_after_token);
     generated->text = filtered.text;
-    if (!eog) generated->text.resize(complete_utf8_prefix(generated->text));
+    if (!eog && !terminal_after_token) {
+        generated->text.resize(complete_utf8_prefix(generated->text));
+    }
     const auto consumed = generated->text.size();
     if (!valid_utf8_text(generated->text)) generated->text = "\xEF\xBF\xBD";
     pending.erase(0, std::min(pending.size(), consumed));
@@ -217,12 +221,15 @@ bool StageRuntime::sample_physical_mtp(
             return mtp_fail("MTP output position overflow", error);
         }
         const auto position = first.position + offset + 1;
+        const bool length_stop = first.generated_tokens
+            + outcome.generated.size() + 1 >= first.max_tokens;
         GeneratedToken generated;
-        if (!format_generated_token(first, accepted[index], position, &generated, error)) {
+        if (!format_generated_token(
+                first, accepted[index], position, length_stop,
+                &generated, error)) {
             return false;
         }
-        if (generated.stop.empty()
-            && first.generated_tokens + outcome.generated.size() + 1 >= first.max_tokens) {
+        if (generated.stop.empty() && length_stop) {
             generated.stop = "length";
         }
         stopped = stopped || !generated.stop.empty();

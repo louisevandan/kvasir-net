@@ -191,8 +191,8 @@ try {
         throw "ContextSize=$ContextSize is smaller than required per-request capacity $requiredContext (PromptTokens=$PromptTokens Tokens=$Tokens Parallel=$Parallel)."
     }
     $plans = @(
-        ('--model "{0}" --layer-begin 0 --layer-end {5} --kv-layer-begin 0 --kv-layer-end {5} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary),
-        ('--model "{0}" --layer-begin {5} --layer-end {6} --kv-layer-begin {5} --kv-layer-end {6} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary,$LayerCount)
+        ('--model "{0}" --memory-topology discrete --layer-begin 0 --layer-end {5} --kv-layer-begin 0 --kv-layer-end {5} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary),
+        ('--model "{0}" --memory-topology discrete --layer-begin {5} --layer-end {6} --kv-layer-begin {5} --kv-layer-end {6} --n-seq-max {1} --batch-size {2} --ubatch-size {3} --ctx-size {4} --device CUDA0 --flash-attn 0' -f $Model,$sequenceCapacity,$BatchSize,$UBatchSize,$ContextSize,$LayerBoundary,$LayerCount)
     )
     $env:P4_DRIVE_DISCOVER = '1'
     # The artifact discovery asks each agent about. Derived from the model

@@ -95,7 +95,7 @@ function portAccepts(port) {
 }
 
 function launch(port) {
-  const plan = `--model "${model}" --layer-begin 0 --layer-end ${layerEnd} --ctx-size 256 --batch-size 32 --ubatch-size 32 --parallel 1 --n-gpu-layers 0 --flash-attn 0`;
+  const plan = `--model "${model}" --memory-topology discrete --layer-begin 0 --layer-end ${layerEnd} --ctx-size 256 --batch-size 32 --ubatch-size 32 --parallel 1 --n-gpu-layers 0 --flash-attn 0`;
   const bytes = Buffer.from(plan, "utf8");
   const prefix = Buffer.alloc(4);
   prefix.writeUInt32LE(bytes.length);

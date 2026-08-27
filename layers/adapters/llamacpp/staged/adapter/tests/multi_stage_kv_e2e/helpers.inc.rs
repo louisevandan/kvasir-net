@@ -142,9 +142,12 @@ fn launch_stage(
     let endpoint = listener.local_addr().expect("read stage endpoint");
     drop(listener);
     let model_text = model.to_string_lossy();
+    let memory_topology = env::var("P4_STAGED_MEMORY_TOPOLOGY")
+        .expect("P4_STAGED_MEMORY_TOPOLOGY must describe the physical memory pool");
     let plan = format!(
         "--model {} --layer-begin {begin} --layer-end {end} --n-seq-max 1 \
-         --ctx-size 512 --flash-attn 0 --temp 0 --seed 1 --model-identity {} \
+         --memory-topology {memory_topology} --ctx-size 512 --flash-attn 0 \
+         --temp 0 --seed 1 --model-identity {} \
          --kv-root {} {}",
         quote_plan_value(&model_text),
         quote_plan_value(&model_text),

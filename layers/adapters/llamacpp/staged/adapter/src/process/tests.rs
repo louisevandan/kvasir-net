@@ -91,6 +91,19 @@ fn ready_timeout_is_terminal() {
 }
 
 #[test]
+fn hello_contract_errors_retain_the_actual_server_identity() {
+    let mut body = PROTOCOL_REVISION.to_le_bytes().to_vec();
+    body.extend_from_slice(b"READY;physical_batch=1");
+    let error = core::decode_hello(&body).expect_err("n_ctx is required");
+    assert!(error.contains("HELLO omits n_ctx"), "{error}");
+    assert!(
+        error.contains("server_id=\"READY;physical_batch=1\""),
+        "{error}"
+    );
+    assert!(error.contains("hello_id_bytes=22"), "{error}");
+}
+
+#[test]
 fn concrete_process_control_sends_plan_hello_and_unload_then_reaps_child() {
     if env::var_os("STAGED_ADAPTER_CHILD_SERVER").is_some() {
         child_server();

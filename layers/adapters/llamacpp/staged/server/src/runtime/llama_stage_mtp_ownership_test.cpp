@@ -27,6 +27,8 @@ int main() {
     config.model_path = model;
     config.layer_begin = 0;
     config.layer_end = layer_end;
+    config.memory_topology.kind =
+        staged::llama_runtime::MemoryTopologyKind::Discrete;
     config.mtp_ownership_probe = true;
 
     staged::llama_runtime::StageRuntime runtime;

@@ -19,13 +19,17 @@
 
 namespace {
 
+void discard_llama_log(enum ggml_log_level, const char *, void *) {}
+
 struct Options {
     std::filesystem::path artifact_directory;
     std::filesystem::path model;
     std::filesystem::path output;
     std::filesystem::path seed_file;
     std::filesystem::path required_suffix_file;
-    int target_tokens = 5000;
+    std::filesystem::path input_file;
+    int target_tokens = 0;
+    bool semantic_boundary = false;
 };
 
 #if defined(_WIN32)
@@ -59,15 +63,20 @@ Options parse_options(int argc, wchar_t ** argv) {
             options.seed_file = value_path;
         } else if (auto value_path = value(L"--required-suffix-file"); !value_path.empty()) {
             options.required_suffix_file = value_path;
+        } else if (auto value_path = value(L"--input-file"); !value_path.empty()) {
+            options.input_file = value_path;
         } else if (argument == L"--target" && index + 1 < argc) {
             options.target_tokens = std::stoi(argv[++index]);
+        } else if (argument == L"--semantic-boundary") {
+            options.semantic_boundary = true;
         } else {
-            throw std::runtime_error("usage: --artifact-directory <dir> --model <gguf> --output <file> --target <n> [--seed-file <txt>] [--required-suffix-file <txt>]");
+            throw std::runtime_error("usage: --artifact-directory <dir> --model <gguf> --target <n> (--input-file <txt> | --output <file> [--seed-file <txt>] [--required-suffix-file <txt>] [--semantic-boundary])");
         }
     }
-    if (options.artifact_directory.empty() || options.model.empty() ||
-        options.output.empty() || options.target_tokens <= 0) {
-        throw std::runtime_error("artifact directory, model, output, and positive target are required");
+    if (options.artifact_directory.empty() || options.model.empty() || options.target_tokens <= 0
+        || (options.input_file.empty() && options.output.empty())
+        || (!options.input_file.empty() && !options.output.empty())) {
+        throw std::runtime_error("artifact directory, model, positive target, and exactly one input or output are required");
     }
     return options;
 }
@@ -104,9 +113,58 @@ std::vector<std::string> suffixes() {
     return result;
 }
 
+std::vector<std::string> semantic_adjustments() {
+    const std::vector<std::string> terms{
+        "ownership", "borrowing", "lifetimes", "references", "mutability", "moves",
+        "cloning", "traits", "generics", "enums", "patterns", "results", "options",
+        "iterators", "closures", "futures", "threads", "channels", "safety", "modules",
+        "crates", "features", "macros", "testing", "formatting", "documentation",
+        "cargo", "compiler", "types", "values", "bindings", "scopes", "methods",
+        "associated types", "bounds", "errors", "ownership transfer", "shared access",
+        "exclusive access", "destructuring", "matching", "conversion", "collections",
+        "strings", "slices", "vectors", "hash maps", "smart pointers", "interior mutability",
+        "reference counting", "synchronization", "asynchronous work", "pinning", "polling",
+        "drop order", "resource cleanup", "zero-cost abstractions", "static dispatch",
+        "dynamic dispatch", "type inference", "exhaustiveness", "memory safety", "data races",
+    };
+    const std::vector<std::string> introductions{
+        "\nLength-control glossary: ",
+        "\nThe length-control glossary contains: ",
+        "\nFor deterministic length accounting, the glossary lists: ",
+    };
+    std::vector<std::string> result{""};
+    for (const auto & introduction : introductions) {
+        std::string value = introduction;
+        for (size_t index = 0; index < terms.size(); ++index) {
+            if (index > 0) value += ", ";
+            value += terms[index];
+            result.push_back(value + ".");
+        }
+    }
+    return result;
+}
+
+std::vector<size_t> semantic_prefix_lengths(const std::string & seed) {
+    std::vector<size_t> result;
+    for (size_t index = 0; index < seed.size(); ++index) {
+        const char value = seed[index];
+        if (value != '.' && value != '?' && value != '!' && value != ':' && value != ';') {
+            continue;
+        }
+        size_t end = index + 1;
+        while (end < seed.size() && (seed[end] == ' ' || seed[end] == '\r' || seed[end] == '\n')) {
+            ++end;
+        }
+        result.push_back(end);
+    }
+    if (result.empty() || result.back() != seed.size()) result.push_back(seed.size());
+    return result;
+}
+
 struct LlamaApi {
 #if defined(_WIN32)
     HMODULE library = nullptr;
+    decltype(&llama_log_set) log_set = nullptr;
     decltype(&llama_model_default_params) model_default_params = nullptr;
     decltype(&llama_backend_init) backend_init = nullptr;
     decltype(&llama_model_load_from_file) model_load_from_file = nullptr;
@@ -126,6 +184,7 @@ LlamaApi load_api(const std::filesystem::path & artifact_directory) {
     }
     LlamaApi api;
     api.library = library;
+    api.log_set = load_symbol<decltype(api.log_set)>(library, "llama_log_set");
     api.model_default_params = load_symbol<decltype(api.model_default_params)>(library, "llama_model_default_params");
     api.backend_init = load_symbol<decltype(api.backend_init)>(library, "llama_backend_init");
     api.model_load_from_file = load_symbol<decltype(api.model_load_from_file)>(library, "llama_model_load_from_file");
@@ -196,8 +255,9 @@ std::string utf8_prefix(const std::string & text, size_t length) {
 }
 
 std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, bool add_bos,
-                              const std::string & seed, const std::string & required_suffix,
-                              int target, int & repetitions, std::string & suffix) {
+                               const std::string & seed, const std::string & required_suffix,
+                               int target, bool semantic_boundary,
+                               int & repetitions, std::string & suffix) {
     if (seed.empty()) throw std::runtime_error("seed file is empty");
     size_t low = 0;
     size_t high = seed.size();
@@ -209,6 +269,24 @@ std::string make_seed_fixture(const LlamaApi & api, const llama_vocab * vocab, b
     }
     if (token_count(api, vocab, candidate(high, ""), add_bos) < target) {
         throw std::runtime_error("seed plus required suffix has fewer tokens than target");
+    }
+    if (semantic_boundary) {
+        const auto lengths = semantic_prefix_lengths(seed);
+        const auto adjustments = semantic_adjustments();
+        for (auto item = lengths.rbegin(); item != lengths.rend(); ++item) {
+            if (token_count(api, vocab, candidate(*item, ""), add_bos) > target) continue;
+            for (const auto & adjustment : adjustments) {
+                auto text = candidate(*item, adjustment);
+                const auto count = token_count(api, vocab, text, add_bos);
+                if (count == target) {
+                    repetitions = 1;
+                    suffix = adjustment;
+                    return text;
+                }
+                if (count < target && adjustment == adjustments.back()) break;
+            }
+        }
+        throw std::runtime_error("semantic-boundary search did not find an exact token count");
     }
     while (low + 1 < high) {
         const auto middle = low + (high - low) / 2;
@@ -250,6 +328,7 @@ int main(int argc, char ** argv) {
         throw std::runtime_error("Windows artifact probe required");
 #endif
         auto api = load_api(options.artifact_directory);
+        api.log_set(discard_llama_log, nullptr);
         api.backend_init();
         auto model_params = api.model_default_params();
         model_params.vocab_only = true;
@@ -257,6 +336,18 @@ int main(int argc, char ** argv) {
         if (model == nullptr) throw std::runtime_error("vocab-only GGUF load failed");
         const auto * vocab = api.model_get_vocab(model);
         const bool add_bos = api.vocab_get_add_bos(vocab);
+        if (!options.input_file.empty()) {
+            const auto verified = token_count(api, vocab, read_utf8(options.input_file), add_bos);
+            if (verified != options.target_tokens) {
+                throw std::runtime_error("input token count does not match target: " +
+                                         std::to_string(verified));
+            }
+            std::cout << "TOKEN_COUNT=" << verified << "\n"
+                      << "INPUT_FILE=" << options.input_file.string() << "\n"
+                      << "ADD_BOS=" << (add_bos ? 1 : 0) << "\n"
+                      << "PARSE_SPECIAL=1\n";
+            return 0;
+        }
         int repetitions = 0;
         std::string suffix;
         const auto required_suffix = options.required_suffix_file.empty()
@@ -265,7 +356,8 @@ int main(int argc, char ** argv) {
         const auto fixture = options.seed_file.empty()
             ? make_fixture(api, vocab, add_bos, options.target_tokens, repetitions, suffix)
             : make_seed_fixture(api, vocab, add_bos, read_utf8(options.seed_file),
-                                required_suffix, options.target_tokens, repetitions, suffix);
+                                required_suffix, options.target_tokens, options.semantic_boundary,
+                                repetitions, suffix);
         std::filesystem::create_directories(options.output.parent_path());
         std::ofstream output(options.output, std::ios::binary);
         if (!output) throw std::runtime_error("could not create fixture: " + options.output.string());
@@ -279,6 +371,7 @@ int main(int argc, char ** argv) {
                   << "PARSE_SPECIAL=1\n"
                   << "UNIT_REPETITIONS=" << repetitions << "\n"
                   << "SUFFIX_BYTES=" << suffix.size() << "\n"
+                  << "SEMANTIC_BOUNDARY=" << (options.semantic_boundary ? 1 : 0) << "\n"
                   << "SEED_FILE=" << options.seed_file.string() << "\n"
                   << "REQUIRED_SUFFIX_FILE=" << options.required_suffix_file.string() << "\n"
                   << "VOCAB_ONLY=1\n"

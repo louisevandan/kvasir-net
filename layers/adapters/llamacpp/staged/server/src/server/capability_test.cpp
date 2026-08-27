@@ -21,7 +21,7 @@ int main() {
         error.clear();
         const std::vector<std::string> tokens{
             "--model", "not-loaded.gguf", "--bind", "127.0.0.1",
-            "--spec-type", type};
+            "--spec-type", type, "--memory-topology", "discrete"};
         assert(staged::server::parse_llama_options(5, argv, tokens, &parsed, &error));
         const auto report = staged::server::capability_report(parsed);
         assert(report.speculative_parser);
@@ -50,7 +50,7 @@ int main() {
     error.clear();
     const std::vector<std::string> ordinary_tokens{
         "--model", "not-loaded.gguf", "--bind", "127.0.0.1",
-        "--spec-type", "none"};
+        "--spec-type", "none", "--memory-topology", "discrete"};
     assert(staged::server::parse_llama_options(
         5, argv, ordinary_tokens, &parsed, &error));
     const auto ordinary = staged::server::capability_report(parsed);
@@ -66,7 +66,8 @@ int main() {
     parsed = {};
     error.clear();
     const std::vector<std::string> unified_tokens{
-        "--model", "not-loaded.gguf", "--kv-unified"};
+        "--model", "not-loaded.gguf", "--kv-unified",
+        "--memory-topology", "discrete"};
     assert(staged::server::parse_llama_options(
         5, argv, unified_tokens, &parsed, &error));
     // What actually distinguishes "the plan tokens reached common_params_parse"

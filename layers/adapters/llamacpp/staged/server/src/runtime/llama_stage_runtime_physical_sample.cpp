@@ -83,10 +83,12 @@ bool StageRuntime::sample_physical_outputs(
             return false;
         }
         const auto position = owners[index].position + 1;
+        const bool length_stop =
+            owners[index].generated_tokens + 1 >= owners[index].max_tokens;
         if (!format_generated_token(
-                owners[index], token, position, &generated, error)) return false;
-        if (generated.stop.empty()
-            && owners[index].generated_tokens + 1 >= owners[index].max_tokens) {
+                owners[index], token, position, length_stop,
+                &generated, error)) return false;
+        if (generated.stop.empty() && length_stop) {
             generated.stop = "length";
         }
         if (generated.stop.empty()) {

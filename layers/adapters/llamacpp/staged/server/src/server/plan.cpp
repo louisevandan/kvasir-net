@@ -103,12 +103,56 @@ bool parse_i32_value(const std::string &value, std::int32_t *result,
     return true;
 }
 
+bool parse_memory_topology(
+        const std::string & value,
+        staged::llama_runtime::MemoryTopology * result,
+        std::string * error) {
+    using staged::llama_runtime::MemoryTopologyKind;
+    if (result->kind != MemoryTopologyKind::Unspecified) {
+        if (error != nullptr) *error = "--memory-topology cannot be repeated";
+        return false;
+    }
+    if (value == "discrete") {
+        result->kind = MemoryTopologyKind::Discrete;
+        return true;
+    }
+    constexpr const char * prefix = "host-shared:";
+    if (value.rfind(prefix, 0) != 0 || value.size() == std::char_traits<char>::length(prefix)) {
+        if (error != nullptr) {
+            *error = "--memory-topology requires discrete or host-shared:<device-indices>";
+        }
+        return false;
+    }
+    std::size_t begin = std::char_traits<char>::length(prefix);
+    while (begin < value.size()) {
+        const auto end = value.find(',', begin);
+        std::int32_t index = -1;
+        if (!parse_i32_value(value.substr(begin, end - begin), &index,
+                             "--memory-topology", error) || index < 0 ||
+            std::find(result->host_shared_devices.begin(),
+                      result->host_shared_devices.end(), index) !=
+                result->host_shared_devices.end()) {
+            if (error != nullptr && (error->empty() || index < 0)) {
+                *error = "--memory-topology device indices must be unique and non-negative";
+            }
+            return false;
+        }
+        result->host_shared_devices.push_back(index);
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    result->kind = MemoryTopologyKind::HostShared;
+    return true;
+}
+
 bool stage_only(const std::string &name) {
     return name == "--port" || name == "--bind" ||
            name == "--layer-begin" || name == "--layer-end" ||
            name == "--kv-layer-begin" || name == "--kv-layer-end" ||
            name == "--kv-root" || name == "--model-identity" ||
-           name == "--stage-only" || name == "--validate-plan";
+           name == "--memory-topology" ||
+           name == "--stage-only" || name == "--validate-plan" ||
+           name == "--inspect-memory-plan";
 }
 
 bool parse_stage_option(const std::string &name, const std::string &value,
@@ -121,12 +165,14 @@ bool parse_stage_option(const std::string &name, const std::string &value,
         }
         return true;
     }
-    if (name == "--stage-only" || name == "--validate-plan") {
+    if (name == "--stage-only" || name == "--validate-plan" ||
+        name == "--inspect-memory-plan") {
         if (has_value) {
             if (error != nullptr) *error = name + " does not take a value";
             return false;
         }
         if (name == "--validate-plan") parsed->validate_plan = true;
+        if (name == "--inspect-memory-plan") parsed->inspect_memory_plan = true;
         return true;
     }
     if (name == "--model") {
@@ -150,6 +196,13 @@ bool parse_stage_option(const std::string &name, const std::string &value,
         if (!has_value) { if (error != nullptr) *error = "--model-identity requires a value"; return false; }
         parsed->model_identity = value;
         return true;
+    }
+    if (name == "--memory-topology") {
+        if (!has_value) {
+            if (error != nullptr) *error = "--memory-topology requires a value";
+            return false;
+        }
+        return parse_memory_topology(value, &parsed->memory_topology, error);
     }
     return false;
 }
@@ -226,6 +279,13 @@ bool parse_llama_options(int argc, char **argv,
         return true;
     };
     if (!consume(process_args) || !consume(plan_tokens)) return false;
+    if (parsed->memory_topology.kind ==
+        staged::llama_runtime::MemoryTopologyKind::Unspecified) {
+        if (error != nullptr) {
+            *error = "startup plan requires explicit --memory-topology";
+        }
+        return false;
+    }
     // On Windows common_params_parse reconstructs UTF-8 argv when the
     // supplied argc equals the process command-line argc.  The plan is
     // intentionally supplied through stdin, so that reconstruction would
@@ -250,6 +310,19 @@ bool parse_llama_options(int argc, char **argv,
         }
         return false;
     }
+    // llama_new_context_with_model rejects this combination after the model
+    // and every selected tensor have already been loaded.  It is a plan
+    // invariant, not a model-dependent capability: quantized V is consumed by
+    // the flash-attention kernels.  Reject it here so an OUTER-supplied opaque
+    // plan cannot turn a deterministic argument error into an expensive load
+    // failure on every node.
+    if (ggml_is_quantized(parsed->params.cache_type_v) &&
+        parsed->params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED) {
+        if (error != nullptr) {
+            *error = "quantized V cache requires flash attention; use --flash-attn on or an unquantized V cache";
+        }
+        return false;
+    }
     parsed->mtp_requested = has_speculative_type(
         parsed->params, COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
     parsed->speculative_requested = parsed->mtp_requested ||
@@ -266,10 +339,12 @@ bool parse_llama_options(int argc, char **argv,
     // Downstream nodes replay those capsules without reconstructing them.
     // Collapsing n_batch to n_ubatch here silently disabled that mechanism.
     //
-    // Keep the unified cache because a physical capsule may contain rows from
-    // several active sequences and must retain the same sequence membership
-    // at every stage.
-    parsed->params.kv_unified = true;
+    // Preserve llama.cpp's requested KV topology.  The physical-v2 boundary
+    // captures the exact ubatch positions and sequence memberships produced by
+    // llama.cpp and replays that capsule at every downstream stage, so it does
+    // not require a unified cache.  Forcing one here also changes model
+    // semantics: MiniMax M3 requires per-sequence streams when n_seq_max > 1
+    // and otherwise falls back from MSA to dense attention.
 
     if (parsed->model_path.empty()) parsed->model_path = parsed->params.model.path;
     return true;

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <unordered_set>
 #include <utility>
 
 namespace staged::llama_runtime {
@@ -141,6 +142,26 @@ bool StageRuntime::execute_first_batch(
         return physical_fail(
             "recurrent/hybrid logical batch violates equal physical UBATCH contract",
             error);
+    }
+    // The downstream owner reconstruction key is the exact pair emitted by
+    // llama.cpp's ubatch callback.  Prove it is one-to-one before submitting
+    // any graph instead of letting a malformed logical batch make the first
+    // matching owner depend on scan order.
+    std::unordered_set<std::uint64_t> row_identities;
+    for (std::size_t index = 0; index < rows.size(); ++index) {
+        const auto & row = rows[index];
+        const auto & owner = owners[index];
+        if (row.position < 0 || row.sequence_id < 0
+            || static_cast<std::uint64_t>(row.position) != owner.position
+            || static_cast<std::uint32_t>(row.sequence_id) != owner.sequence_id) {
+            return physical_fail("logical row and owner identity differ", error);
+        }
+        const auto identity = static_cast<std::uint64_t>(
+            static_cast<std::uint32_t>(row.sequence_id)) << 32U
+            | static_cast<std::uint32_t>(row.position);
+        if (!row_identities.insert(identity).second) {
+            return physical_fail("logical batch repeats a sequence position", error);
+        }
     }
     if (!prepare_physical_owners(owners, error)) return false;
     captured_executions_.clear();

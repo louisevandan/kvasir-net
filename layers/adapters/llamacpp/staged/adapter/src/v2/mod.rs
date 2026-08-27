@@ -12,8 +12,9 @@ pub use capsule::{
 };
 pub use commands::{
     BatchObservation, BatchRequestObservation, InferenceCommand, LoadCommand, NodeAddress,
-    NodeRole, OutcomePayload, PhysicalBatchObservation, ReleaseCommand, ReleaseSequence, ReplySpec,
-    SessionCommand, SettlementCommand, SettlementSequence, UnloadCommand,
+    NodeRole, OutcomePayload, PhysicalBatchObservation, ReleaseCommand, ReleaseSequence,
+    ReleasedPayload, ReplySpec, SessionCommand, SettlementCommand, SettlementSequence,
+    UnloadCommand,
 };
 pub use logical::{LogicalBatch, LogicalBatchError, LogicalRow};
 pub use node::LlamaNodeAdapter;

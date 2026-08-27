@@ -1,12 +1,13 @@
+use super::inference_identity::{InferenceIdentity, insert_observation};
 use super::wire::EventWire;
 use super::{ArrivalWave, RequestArtifact, RunConfig, Sender, node_endpoint};
 use p4_llamacpp_staged_adapter::v2::{
     BATCH_OBSERVATION_CONTENT_TYPE, BatchObservation, ERROR_CONTENT_TYPE, InferenceCommand,
     OUTPUT_CONTENT_TYPE, OutcomePayload, PREFILL_CONTENT_TYPE, RELEASED_CONTENT_TYPE,
+    ReleasedPayload,
 };
 use p4_protocol::event::EventClass;
-use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -19,11 +20,6 @@ pub struct InferenceResult {
     pub batch_observations: Vec<BatchObservation>,
     pub elapsed_ms: u128,
     pub error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Released {
-    released: usize,
 }
 
 pub async fn drive<R, W>(
@@ -48,6 +44,9 @@ where
     let mut released = 0usize;
     let mut failure = None;
     let mut observations = BTreeMap::new();
+    let mut known_requests = BTreeSet::new();
+    let mut seen_event_ids = BTreeSet::new();
+    let identity = InferenceIdentity::new(config, &sender.outer)?;
 
     loop {
         while next_wave < config.waves.len()
@@ -59,6 +58,7 @@ where
                 total,
                 &mut next_index,
                 &mut requests,
+                &mut known_requests,
                 wire,
                 sender,
                 started,
@@ -75,43 +75,54 @@ where
             overall
         };
         match wire.receive(read_until).await {
-            Ok(event) => match event.envelope.payload_content_type.as_str() {
-                OUTPUT_CONTENT_TYPE => {
-                    let outcome: OutcomePayload = serde_json::from_slice(&event.payload)?;
-                    let request = requests
-                        .get_mut(&outcome.request_id)
-                        .ok_or("output references a request that was not submitted")?;
-                    if request.completed_ms.is_some() {
-                        return Err("output arrived after a terminal outcome".into());
+            Ok(event) => {
+                if !seen_event_ids.insert(event.envelope.event_id.clone()) {
+                    return Err("duplicate inference event identity".into());
+                }
+                match event.envelope.payload_content_type.as_str() {
+                    OUTPUT_CONTENT_TYPE => {
+                        let outcome: OutcomePayload = serde_json::from_slice(&event.payload)?;
+                        let request = requests
+                            .get_mut(&outcome.request_id)
+                            .ok_or("output references a request that was not submitted")?;
+                        if request.completed_ms.is_some() {
+                            return Err("output arrived after a terminal outcome".into());
+                        }
+                        identity.output(&event, &outcome, request.outcomes.last())?;
+                        request.response.push_str(&outcome.text);
+                        if outcome.stop.is_some() {
+                            request.completed_ms = Some(started.elapsed().as_millis());
+                            completed += 1;
+                        }
+                        request.outcomes.push(outcome);
                     }
-                    request.response.push_str(&outcome.text);
-                    if outcome.stop.is_some() {
-                        request.completed_ms = Some(started.elapsed().as_millis());
-                        completed += 1;
+                    RELEASED_CONTENT_TYPE => {
+                        let value: ReleasedPayload = serde_json::from_slice(&event.payload)?;
+                        identity.released(&event, &value, &known_requests)?;
+                        released = released
+                            .checked_add(value.released)
+                            .ok_or("released request count overflow")?;
+                        if released > total {
+                            return Err("too many requests were released".into());
+                        }
                     }
-                    request.outcomes.push(outcome);
-                }
-                RELEASED_CONTENT_TYPE => {
-                    let value: Released = serde_json::from_slice(&event.payload)?;
-                    released = released
-                        .checked_add(value.released)
-                        .ok_or("released request count overflow")?;
-                    if released > total {
-                        return Err("too many requests were released".into());
+                    BATCH_OBSERVATION_CONTENT_TYPE => {
+                        let observation: BatchObservation = serde_json::from_slice(&event.payload)?;
+                        identity.observation(&event, &observation, &known_requests)?;
+                        insert_observation(&mut observations, observation)?;
+                    }
+                    ERROR_CONTENT_TYPE => {
+                        identity.error(&event, &known_requests)?;
+                        failure = Some(String::from_utf8_lossy(&event.payload).into_owned());
+                        break;
+                    }
+                    other => {
+                        return Err(
+                            format!("unexpected inference event content type: {other}").into()
+                        );
                     }
                 }
-                BATCH_OBSERVATION_CONTENT_TYPE => {
-                    let observation: BatchObservation = serde_json::from_slice(&event.payload)?;
-                    observations
-                        .entry(observation.observation_id.clone())
-                        .or_insert(observation);
-                }
-                ERROR_CONTENT_TYPE => {
-                    failure = Some(String::from_utf8_lossy(&event.payload).into_owned());
-                    break;
-                }
-                _ => {}
-            },
+            }
             Err(error)
                 if error.kind() == io::ErrorKind::TimedOut && next_wave < config.waves.len() =>
             {
@@ -137,6 +148,7 @@ async fn send_wave<R, W>(
     total: usize,
     next_index: &mut usize,
     requests: &mut BTreeMap<String, RequestArtifact>,
+    known_requests: &mut BTreeSet<String>,
     wire: &mut EventWire<R, W>,
     sender: &mut Sender,
     started: Instant,
@@ -178,6 +190,9 @@ where
             &request_id,
         ))
         .await?;
+        if !known_requests.insert(request_id.clone()) {
+            return Err("duplicate submitted request identity".into());
+        }
         requests.insert(
             request_id.clone(),
             RequestArtifact {

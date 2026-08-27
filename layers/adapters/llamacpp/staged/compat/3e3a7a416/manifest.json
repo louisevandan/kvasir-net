@@ -11,8 +11,8 @@
   "nearest_release_tag": "b10242",
   "previous_linker_pin": "4308a4f035791f58ae111f56c39dac598bf476be",
   "previous_official_base": "4308a4f035791f58ae111f56c39dac598bf476be",
-  "patch_set_sha256": "a276424a8939abccc38863fc2ba370529441504615d76b410aac54a5759c5bff",
-  "patched_tree": "355c68ca29fcfe79126d003fc8cd618209adb7f1",
+  "patch_set_sha256": "b5a70a476d9590eb0556555e45c670922506c26658e83574a42e200a23c6a987",
+  "patched_tree": "e28f9bc9093fcf5aba50d406a1fbfc3e6ca8647d",
   "patches": [
     {
       "file": "0001-ggml-backend.patch",
@@ -71,6 +71,15 @@
       "sha256": "c2fe462d40685b6c20921177a4519cb1f530c417336a180bb090624611cee6ba"
     },
     {
+      "file": "0015-official-minimax-m3-dense-gguf.patch",
+      "sha256": "34cee394a688bcdf479cb12a902d33aff50bfec80a5370fd0ecddc60a5ee8dc4",
+      "official_upstream_port": {
+        "repository": "https://github.com/ggml-org/llama.cpp.git",
+        "pull_request": "https://github.com/ggml-org/llama.cpp/pull/24523",
+        "commit": "d694e85ba70f96942f55deb63f92c243a231053a"
+      }
+    },
+    {
       "file": "0016-stage-memory-residency.patch",
       "sha256": "7c903f387142445ac50af9022b0e8a4c1baacff9f098b3c36ae381d67ad233dd"
     },
@@ -94,6 +103,10 @@
         "pull_request": "https://github.com/ggml-org/llama.cpp/pull/25004",
         "commit": "7ff2fd83e9794efffd0190652aadd3924820e6e5"
       }
+    },
+    {
+      "file": "0021-stage-noalloc-memory-breakdown.patch",
+      "sha256": "81502b468529e09b75eca9c74914631ccf7b971d0b6d2aa12460b1adb7bd3de0"
     }
   ]
 }

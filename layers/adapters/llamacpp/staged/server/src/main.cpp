@@ -6,6 +6,7 @@
 
 #include "server.hpp"
 #include "server/plan.hpp"
+#include "server/startup_plan.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -92,25 +93,6 @@ struct Socket final {
     }
 };
 
-bool read_stdin_exact(std::uint8_t *destination, std::size_t size) {
-    std::size_t offset = 0;
-    while (offset < size && std::cin.good()) {
-        std::cin.read(reinterpret_cast<char *>(destination + offset),
-                      static_cast<std::streamsize>(size - offset));
-        const auto count = static_cast<std::size_t>(std::cin.gcount());
-        offset += count;
-        if (count == 0) break;
-    }
-    return offset == size;
-}
-
-std::uint32_t read_u32_le(const std::uint8_t *bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) |
-           (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-           (static_cast<std::uint32_t>(bytes[2]) << 16U) |
-           (static_cast<std::uint32_t>(bytes[3]) << 24U);
-}
-
 bool wait_readable(socket_type socket, std::atomic<bool> &parent_alive) {
     while (parent_alive.load()) {
         fd_set readable;
@@ -154,7 +136,7 @@ bool receive_frame(socket_type socket, staged::protocol::Frame &frame,
                    std::atomic<bool> &parent_alive) {
     std::vector<std::uint8_t> header(kHeaderBytes);
     if (!receive_all(socket, header.data(), header.size(), parent_alive)) return false;
-    const auto body_bytes = read_u32_le(header.data() + 8);
+    const auto body_bytes = staged::server::read_u32_le(header.data() + 8);
     if (body_bytes > staged::protocol::ProtocolLimits{}.max_frame_bytes - kHeaderBytes) {
         return false;
     }
@@ -226,17 +208,18 @@ int main(int argc, char **argv) {
     }
 
     std::uint8_t length_bytes[4]{};
-    if (!read_stdin_exact(length_bytes, sizeof(length_bytes))) {
+    if (!staged::server::read_stdin_exact(length_bytes, sizeof(length_bytes))) {
         std::cerr << "startup plan prefix is incomplete\n";
         return 3;
     }
-    const auto plan_size = static_cast<std::size_t>(read_u32_le(length_bytes));
+    const auto plan_size = static_cast<std::size_t>(
+        staged::server::read_u32_le(length_bytes));
     if (plan_size > kMaxPlanBytes) {
         std::cerr << "startup plan is too large\n";
         return 3;
     }
     std::vector<std::uint8_t> plan(plan_size);
-    if (!read_stdin_exact(plan.data(), plan.size())) {
+    if (!staged::server::read_stdin_exact(plan.data(), plan.size())) {
         std::cerr << "startup plan is incomplete\n";
         return 3;
     }
@@ -260,6 +243,28 @@ int main(int argc, char **argv) {
     const auto option_capabilities = staged::server::capability_report(parsed_options);
     std::cerr << "CAPABILITY_REPORT " << option_capabilities.serialize() << '\n';
     if (parsed_options.validate_plan) return 0;
+    staged::llama_runtime::LoadConfig parsed_load_config;
+    parsed_load_config.model_path = parsed_options.model_path;
+    parsed_load_config.layer_begin = parsed_options.layer_begin;
+    parsed_load_config.layer_end = parsed_options.layer_end;
+    parsed_load_config.kv_gpu_layer_start = parsed_options.kv_layer_begin;
+    parsed_load_config.kv_gpu_layer_end = parsed_options.kv_layer_end;
+    parsed_load_config.kv_root = parsed_options.kv_root;
+    parsed_load_config.model_identity = parsed_options.model_identity;
+    parsed_load_config.memory_topology = parsed_options.memory_topology;
+    if (parsed_options.inspect_memory_plan) {
+        staged::llama_runtime::StageMemoryPlan memory_plan;
+        std::string memory_error;
+        if (!staged::llama_runtime::inspect_stage_memory(
+                parsed_options.params, parsed_load_config, &memory_plan, &memory_error)) {
+            std::cerr << memory_error << '\n';
+            return 7;
+        }
+        std::cerr << "MEMORY_PLAN "
+                  << staged::llama_runtime::serialize_stage_memory_plan(memory_plan)
+                  << '\n';
+        return memory_plan.complete && memory_plan.fits_current_free ? 0 : 7;
+    }
     if (parsed_options.speculative_requested
         && !option_capabilities.speculative_execution) {
         std::cerr << "CAPABILITY_UNAVAILABLE: "
@@ -275,15 +280,8 @@ int main(int argc, char **argv) {
 #endif
 #ifdef P4_STAGED_WITH_LLAMA
     if (!parsed_options.model_path.empty()) {
-        staged::llama_runtime::LoadConfig load_config;
-        load_config.model_path = parsed_options.model_path;
-        load_config.layer_begin = parsed_options.layer_begin;
-        load_config.layer_end = parsed_options.layer_end;
-        load_config.kv_gpu_layer_start = parsed_options.kv_layer_begin;
-        load_config.kv_gpu_layer_end = parsed_options.kv_layer_end;
-        load_config.kv_root = parsed_options.kv_root;
+        auto load_config = parsed_load_config;
         transaction_root = load_config.kv_root;
-        load_config.model_identity = parsed_options.model_identity;
         auto runtime = std::make_unique<staged::llama_runtime::StageRuntime>();
         std::string load_error;
         if (!runtime->load(std::move(parsed_options.params), load_config, &load_error)) {

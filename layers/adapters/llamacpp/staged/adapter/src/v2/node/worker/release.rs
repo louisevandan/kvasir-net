@@ -309,11 +309,11 @@ impl Worker {
             reply_target(&event),
             EventClass::Telemetry,
             RELEASED_CONTENT_TYPE,
-            &serde_json::json!({
-                "session_id": command.session_id,
-                "load_generation": command.load_generation,
-                "released": command.sequences.len()
-            }),
+            &ReleasedPayload {
+                session_id: command.session_id,
+                load_generation: command.load_generation,
+                released: command.sequences.len(),
+            },
         )
         .map_err(|_| "completion queue is full".to_owned())
     }

@@ -5,6 +5,7 @@
 
 #ifdef P4_STAGED_WITH_LLAMA
 #include "common.h"
+#include "stage_memory_plan.hpp"
 
 namespace staged::server {
 
@@ -17,7 +18,9 @@ struct ParsedLlamaOptions final {
     std::int32_t kv_layer_end = 0;
     std::string kv_root;
     std::string model_identity;
+    staged::llama_runtime::MemoryTopology memory_topology;
     bool validate_plan = false;
+    bool inspect_memory_plan = false;
     bool mtp_requested = false;
     bool speculative_requested = false;
 };

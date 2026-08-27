@@ -1,0 +1,15 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1743,5 +1743,11 @@ std::map<ggml_backend_buffer_type_t, size_t> llama_model::memory_breakdown() con
+     std::map<ggml_backend_buffer_type_t, size_t> ret;
+     for (const auto & [ctx, bufs] : pimpl->ctxs_bufs) {
++        // A Pipeline stage retains non-owned tensor shapes in a metadata-only
++        // context. It deliberately has no backend buffer and therefore no
++        // resident bytes to include in either the planned or actual total.
++        if (bufs.empty()) {
++            continue;
++        }
+         if (hparams.no_alloc) {
+             GGML_ASSERT(bufs.size() == 1);
+             ggml_backend_buffer_t buf = bufs[0].get();

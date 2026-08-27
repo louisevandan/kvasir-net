@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 mod control;
@@ -20,6 +20,20 @@ mod observe;
 mod proposal;
 mod release;
 mod settlement;
+
+// One Agent owns every concrete llama.cpp node on a machine. Loading is the
+// only lifecycle transition that must be admitted host-wide: each child first
+// performs llama.cpp's no_alloc memory plan and then keeps the real allocation
+// alive. Serializing that transition makes the next node inspect memory after
+// the previous node's allocation is visible, without blocking the Agent event
+// broker or any already-loaded node's inference worker.
+static HOST_LOAD_GATE: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn with_host_load_gate<T>(operation: impl FnOnce() -> T) -> T {
+    let gate = HOST_LOAD_GATE.get_or_init(|| Mutex::new(()));
+    let _guard = gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    operation()
+}
 
 pub enum WorkerInput {
     Event(Event),

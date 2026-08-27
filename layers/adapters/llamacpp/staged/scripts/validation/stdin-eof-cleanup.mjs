@@ -117,7 +117,7 @@ async function main() {
   if (!fs.existsSync(model)) throw new Error(`model not found: ${model}`);
   if (!fs.existsSync(executable)) throw new Error(`stage server not found: ${executable}`);
   const port = await availablePort();
-  const plan = `--model "${model}" --layer-begin 0 --layer-end ${layerEnd} --ctx-size 128 --batch-size 32 --ubatch-size 32 --parallel 1 --n-gpu-layers 0 --flash-attn 0`;
+  const plan = `--model "${model}" --memory-topology discrete --layer-begin 0 --layer-end ${layerEnd} --ctx-size 128 --batch-size 32 --ubatch-size 32 --parallel 1 --n-gpu-layers 0 --flash-attn 0`;
   const planBytes = Buffer.from(plan, "utf8");
   const prefix = Buffer.alloc(4);
   prefix.writeUInt32LE(planBytes.length);

@@ -1,0 +1,247 @@
+use super::{RunConfig, config::node_endpoint};
+use p4_llamacpp_staged_adapter::v2::{BatchObservation, OutcomePayload, ReleasedPayload};
+use p4_protocol::event::{Endpoint, Event, EventClass, OuterEndpoint};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(super) struct InferenceIdentity {
+    outer: Endpoint,
+    outer_route: OuterEndpoint,
+    first: Endpoint,
+    tail: Endpoint,
+    nodes: Vec<Endpoint>,
+    load_generation: u64,
+    session_id: String,
+    first_output_position: Option<usize>,
+}
+
+impl InferenceIdentity {
+    pub(super) fn new(
+        config: &RunConfig,
+        outer: &OuterEndpoint,
+    ) -> Result<Self, p4_protocol::ProtocolError> {
+        let endpoints = config
+            .nodes
+            .iter()
+            .map(node_endpoint)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            outer: Endpoint::Outer(outer.clone()),
+            outer_route: outer.clone(),
+            first: endpoints.first().expect("validated run has nodes").clone(),
+            tail: endpoints.last().expect("validated run has nodes").clone(),
+            nodes: endpoints,
+            load_generation: config.load_generation,
+            session_id: config.session_id.clone(),
+            first_output_position: config.acceptance.expected_prefill_rows,
+        })
+    }
+
+    pub(super) fn output(
+        &self,
+        event: &Event,
+        outcome: &OutcomePayload,
+        previous: Option<&OutcomePayload>,
+    ) -> Result<(), String> {
+        self.route(event, &self.tail, EventClass::Output, &outcome.request_id)?;
+        if outcome.load_generation != self.load_generation || outcome.session_id != self.session_id
+        {
+            return Err("output load or session identity is stale".into());
+        }
+        if previous.is_none()
+            && self
+                .first_output_position
+                .is_some_and(|position| outcome.position as usize != position)
+        {
+            return Err("first output position does not follow the exact prefill boundary".into());
+        }
+        if let Some(prior) = previous {
+            if outcome.sequence_id != prior.sequence_id {
+                return Err("output changed sequence identity within one request".into());
+            }
+            if prior.position.checked_add(1) != Some(outcome.position) {
+                return Err("output token positions are not contiguous".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn released(
+        &self,
+        event: &Event,
+        payload: &ReleasedPayload,
+        known_requests: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        self.route_known_request(event, &self.first, EventClass::Telemetry, known_requests)?;
+        payload.validate().map_err(str::to_owned)?;
+        if payload.load_generation != self.load_generation || payload.session_id != self.session_id
+        {
+            return Err("release completion load or session identity is stale".into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn observation(
+        &self,
+        event: &Event,
+        observation: &BatchObservation,
+        known_requests: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        self.route_known_request(event, &self.first, EventClass::Telemetry, known_requests)?;
+        if observation.load_generation != self.load_generation
+            || observation.session_id != self.session_id
+            || observation.observation_id.is_empty()
+            || observation.logical_rows == 0
+            || observation.physical_batches.is_empty()
+        {
+            return Err("batch observation identity or dimensions are invalid".into());
+        }
+        let mut mixed = 0usize;
+        let mut observed_rows = 0usize;
+        let execution_ids = observation
+            .physical_batches
+            .iter()
+            .map(|batch| batch.execution_id)
+            .collect::<BTreeSet<_>>();
+        if execution_ids.len() != observation.physical_batches.len() {
+            return Err("batch observation repeats a physical execution".into());
+        }
+        for batch in &observation.physical_batches {
+            let request_ids = batch
+                .requests
+                .iter()
+                .map(|request| request.request_id.as_str())
+                .collect::<BTreeSet<_>>();
+            let measured = batch
+                .requests
+                .iter()
+                .try_fold([0usize; 5], |mut totals, request| {
+                    if !known_requests.contains(&request.request_id) {
+                        return Err("batch observation references an unknown request".to_owned());
+                    }
+                    let values = [
+                        request.prefill_rows,
+                        request.decode_rows,
+                        request.verify_rows,
+                        request.replay_rows,
+                    ];
+                    if values.iter().all(|value| *value == 0) {
+                        return Err("batch observation contains an empty request".to_owned());
+                    }
+                    for (index, value) in values.into_iter().enumerate() {
+                        totals[index + 1] = totals[index + 1]
+                            .checked_add(value)
+                            .ok_or_else(|| "batch observation row count overflow".to_owned())?;
+                        totals[0] = totals[0]
+                            .checked_add(value)
+                            .ok_or_else(|| "batch observation row count overflow".to_owned())?;
+                    }
+                    Ok(totals)
+                })?;
+            observed_rows = observed_rows
+                .checked_add(batch.rows)
+                .ok_or_else(|| "batch observation row count overflow".to_owned())?;
+            if batch.execution_id == 0
+                || batch.rows == 0
+                || batch.rows != measured[0]
+                || batch.prefill_rows != measured[1]
+                || batch.decode_rows != measured[2]
+                || batch.verify_rows != measured[3]
+                || batch.replay_rows != measured[4]
+                || batch.request_count != request_ids.len()
+                || batch.requests.len() != request_ids.len()
+                || batch.sequence_count == 0
+                || batch.sequence_count > batch.rows
+            {
+                return Err("physical batch observation is internally inconsistent".into());
+            }
+            if batch.prefill_rows > 0
+                && batch.decode_rows + batch.verify_rows + batch.replay_rows > 0
+            {
+                mixed += 1;
+            }
+        }
+        if mixed != observation.mixed_physical_batches {
+            return Err("mixed physical batch count is inconsistent".into());
+        }
+        if observed_rows != observation.logical_rows {
+            return Err("logical and physical batch row counts differ".into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn error(
+        &self,
+        event: &Event,
+        known_requests: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        if !self.nodes.contains(&event.envelope.source) {
+            return Err("inference error source is not a configured node".into());
+        }
+        self.route_known_request_source_agnostic(event, EventClass::Output, known_requests)
+    }
+
+    fn route_known_request(
+        &self,
+        event: &Event,
+        source: &Endpoint,
+        class: EventClass,
+        known_requests: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        if !known_requests.contains(&event.envelope.correlation_id) {
+            return Err("inference event correlation is not a submitted request".into());
+        }
+        self.route(event, source, class, &event.envelope.correlation_id)
+    }
+
+    fn route_known_request_source_agnostic(
+        &self,
+        event: &Event,
+        class: EventClass,
+        known_requests: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        if !known_requests.contains(&event.envelope.correlation_id) {
+            return Err("inference event correlation is not a submitted request".into());
+        }
+        if event.envelope.target != self.outer
+            || event.envelope.class != class
+            || event.envelope.causation_id.is_none()
+            || event.envelope.adapter_kind.as_deref() != Some("llamacpp")
+            || event.envelope.return_route.as_ref() != Some(&self.outer_route)
+        {
+            return Err("inference event route is not self-consistent".into());
+        }
+        Ok(())
+    }
+
+    fn route(
+        &self,
+        event: &Event,
+        source: &Endpoint,
+        class: EventClass,
+        correlation: &str,
+    ) -> Result<(), String> {
+        self.route_known_request_source_agnostic(
+            event,
+            class,
+            &BTreeSet::from([correlation.to_owned()]),
+        )?;
+        if event.envelope.source != *source || event.envelope.correlation_id != correlation {
+            return Err("inference event source or correlation is incorrect".into());
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn insert_observation(
+    observations: &mut BTreeMap<String, BatchObservation>,
+    observation: BatchObservation,
+) -> Result<(), String> {
+    if let Some(existing) = observations.get(&observation.observation_id) {
+        if existing != &observation {
+            return Err("duplicate observation identity changed its payload".into());
+        }
+    } else {
+        observations.insert(observation.observation_id.clone(), observation);
+    }
+    Ok(())
+}

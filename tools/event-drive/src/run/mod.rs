@@ -1,21 +1,27 @@
+mod acceptance;
 mod config;
 mod inference;
+mod inference_identity;
+#[cfg(test)]
+mod inference_identity_tests;
+mod replies;
 mod wire;
 
-pub use config::{ArrivalWave, RunConfig};
+pub use config::{AcceptanceConfig, ArrivalWave, ResponseExpectation, RunConfig};
 use config::{address, node_endpoint, validate};
 
 use p4_llamacpp_staged_adapter::v2::{
-    BatchObservation, ERROR_CONTENT_TYPE, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand,
-    NodeRole, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE, SessionCommand,
+    BatchObservation, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand, NodeRole,
+    OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE, SessionCommand,
     UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
 };
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
+use replies::{ExpectedReply, receive_exact};
 use serde::Serialize;
 use std::io::Write;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::net::TcpStream;
 
 const CREATE: &str = "application/vnd.p4.node.create-v3+json";
@@ -25,6 +31,7 @@ const NODE_RESULT: &str = "application/vnd.p4.node.result-v3+json";
 #[derive(Debug, Serialize)]
 pub struct RunArtifact {
     pub passed: bool,
+    pub acceptance: acceptance::AcceptanceSummary,
     pub prompt: String,
     pub response: String,
     pub outcomes: Vec<OutcomePayload>,
@@ -65,28 +72,35 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     };
     let mut sender = Sender::new(outer);
 
+    let mut create_replies = Vec::with_capacity(config.nodes.len());
     for node in &config.nodes {
         let payload = serde_json::json!({
             "node_id":node.node,"node_generation":node.generation,"adapter_kind":"llamacpp",
             "queue_capacity":65536,"completion_capacity":65536,
         });
-        wire.send(sender.event(
+        let event = sender.event(
             Endpoint::agent(Address::from_str(&node.agent)?),
             EventClass::Control,
             CREATE,
             serde_json::to_vec(&payload)?,
             "create",
-        ))
-        .await?;
+        );
+        create_replies.push(ExpectedReply::from_request(&event));
+        wire.send(event).await?;
     }
     receive_exact(
         &mut wire,
         NODE_RESULT,
-        config.nodes.len(),
+        create_replies,
+        "create",
         config.timeout_ms,
     )
     .await?;
 
+    // LOAD is deliberately serialized by the Outer. Each stage's llama.cpp
+    // no-alloc memory plan must observe allocations retained by earlier stages;
+    // concurrent launches on one host could all pass against the same stale
+    // free-memory snapshot and overcommit the physical host.
     for node in &config.nodes {
         let command = LoadCommand {
             load_generation: config.load_generation,
@@ -103,24 +117,27 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
             ready_timeout_ms: config.timeout_ms,
             io_timeout_ms: config.timeout_ms,
         };
-        wire.send(sender.event(
+        let event = sender.event(
             node_endpoint(node)?,
             EventClass::Control,
             LOAD_CONTENT_TYPE,
             serde_json::to_vec(&command)?,
             "load",
-        ))
+        );
+        let expected = vec![ExpectedReply::from_request(&event)];
+        wire.send(event).await?;
+        receive_exact(
+            &mut wire,
+            LOADED_CONTENT_TYPE,
+            expected,
+            "load",
+            config.timeout_ms,
+        )
         .await?;
     }
-    receive_exact(
-        &mut wire,
-        LOADED_CONTENT_TYPE,
-        config.nodes.len(),
-        config.timeout_ms,
-    )
-    .await?;
 
     let first = address(&config.nodes[0]);
+    let mut session_replies = Vec::with_capacity(config.nodes.len());
     for (index, node) in config.nodes.iter().enumerate() {
         let last = index + 1 == config.nodes.len();
         let command = SessionCommand {
@@ -136,19 +153,21 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
             next: (!last).then(|| address(&config.nodes[index + 1])),
             first: first.clone(),
         };
-        wire.send(sender.event(
+        let event = sender.event(
             node_endpoint(node)?,
             EventClass::Control,
             SESSION_CONTENT_TYPE,
             serde_json::to_vec(&command)?,
             "session",
-        ))
-        .await?;
+        );
+        session_replies.push(ExpectedReply::from_request(&event));
+        wire.send(event).await?;
     }
     receive_exact(
         &mut wire,
         SESSION_READY_CONTENT_TYPE,
-        config.nodes.len(),
+        session_replies,
+        "session",
         config.timeout_ms,
     )
     .await?;
@@ -165,8 +184,9 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
 
     let run = inference::drive(&config, &mut wire, &mut sender).await?;
 
+    let mut unload_replies = Vec::with_capacity(config.nodes.len());
     for node in &config.nodes {
-        wire.send(sender.event(
+        let event = sender.event(
             node_endpoint(node)?,
             EventClass::Control,
             UNLOAD_CONTENT_TYPE,
@@ -174,33 +194,38 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
                 load_generation: config.load_generation,
             })?,
             "unload",
-        ))
-        .await?;
+        );
+        unload_replies.push(ExpectedReply::from_request(&event));
+        wire.send(event).await?;
     }
     receive_exact(
         &mut wire,
         UNLOADED_CONTENT_TYPE,
-        config.nodes.len(),
+        unload_replies,
+        "unload",
         config.timeout_ms,
     )
     .await?;
+    let mut delete_replies = Vec::with_capacity(config.nodes.len());
     for node in &config.nodes {
         let payload = serde_json::json!({
             "node_id":node.node,"node_generation":node.generation
         });
-        wire.send(sender.event(
+        let event = sender.event(
             Endpoint::agent(Address::from_str(&node.agent)?),
             EventClass::Control,
             DELETE,
             serde_json::to_vec(&payload)?,
             "delete",
-        ))
-        .await?;
+        );
+        delete_replies.push(ExpectedReply::from_request(&event));
+        wire.send(event).await?;
     }
     receive_exact(
         &mut wire,
         NODE_RESULT,
-        config.nodes.len(),
+        delete_replies,
+        "delete",
         config.timeout_ms,
     )
     .await?;
@@ -220,11 +245,13 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
             }
         }
     }
+    let acceptance = acceptance::evaluate(&config, &requests);
+    let structurally_complete = run.error.is_none()
+        && run.completed_count == run.request_count
+        && run.released_count == run.request_count;
     Ok(RunArtifact {
-        passed: run.error.is_none()
-            && run.completed_count == run.request_count
-            && run.released_count == run.request_count
-            && requests.iter().all(|request| !request.response.is_empty()),
+        passed: structurally_complete && acceptance.passed,
+        acceptance,
         prompt: config.prompt,
         response: requests
             .first()
@@ -242,40 +269,6 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         elapsed_ms: run.elapsed_ms,
         error: run.error,
     })
-}
-
-async fn receive_exact<R, W>(
-    wire: &mut wire::EventWire<R, W>,
-    content_type: &str,
-    count: usize,
-    timeout_ms: u64,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    R: tokio::io::AsyncRead + Unpin,
-    W: tokio::io::AsyncWrite + Unpin,
-{
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    let mut received = 0;
-    while received < count {
-        let event = wire.receive(deadline).await?;
-        if event.envelope.payload_content_type == ERROR_CONTENT_TYPE {
-            return Err(String::from_utf8_lossy(&event.payload).into_owned().into());
-        }
-        if event.envelope.payload_content_type == content_type {
-            if content_type == NODE_RESULT {
-                let result: serde_json::Value = serde_json::from_slice(&event.payload)?;
-                if result.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-                    let detail = result
-                        .get("detail")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("node control failed");
-                    return Err(detail.to_owned().into());
-                }
-            }
-            received += 1;
-        }
-    }
-    Ok(())
 }
 
 pub(super) struct Sender {

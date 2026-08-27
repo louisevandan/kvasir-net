@@ -50,6 +50,7 @@ target_include_directories(p4_staged_runtime PUBLIC
 
 add_library(p4_staged_server_core STATIC
     src/server/server.cpp
+    src/server/server_hello.cpp
     src/server/server_session.cpp
     src/server/server_hop.cpp
     src/server/server_physical.cpp
@@ -67,6 +68,7 @@ target_link_libraries(p4_staged_server_core PUBLIC
 
 add_executable(p4_staged_server
     src/main.cpp
+    src/server/startup_plan.cpp
 )
 target_link_libraries(p4_staged_server PRIVATE p4_staged_server_core)
 if(WIN32)
@@ -211,6 +213,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
 
     add_library(p4_staged_llama_runtime STATIC
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_checkpoint.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_atomic.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/llama_stage_runtime_physical_sample.cpp"
@@ -231,12 +234,16 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_options.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_stops.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_options_grammar.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/stage_memory_plan.cpp"
     )
     target_include_directories(p4_staged_llama_runtime PUBLIC
         src/runtime
         src/protocol
         "${P4_STAGED_LLAMA_SOURCE_DIR}/include"
         "${P4_STAGED_LLAMA_SOURCE_DIR}/common"
+    )
+    target_include_directories(p4_staged_llama_runtime PRIVATE
+        "${P4_STAGED_LLAMA_SOURCE_DIR}/src"
     )
     target_link_libraries(p4_staged_llama_runtime PUBLIC
         llama
@@ -247,6 +254,9 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     target_compile_definitions(p4_staged_llama_runtime PRIVATE
         P4_STAGED_LLAMA_UPSTREAM_COMMIT=\"${P4_STAGED_LLAMA_UPSTREAM_COMMIT}\"
     )
+    target_compile_definitions(p4_staged_server_core PRIVATE
+        P4_STAGED_LLAMA_UPSTREAM_COMMIT=\"${P4_STAGED_LLAMA_UPSTREAM_COMMIT}\"
+    )
 
     target_link_libraries(p4_staged_server_core PUBLIC p4_staged_llama_runtime)
     # server.cpp is compiled into the core library, so the llama bridge
@@ -255,6 +265,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
 
     add_executable(p4_staged_llama_runtime_compile_test
         src/runtime/llama_stage_runtime_compile_test.cpp
+        src/runtime/stage_memory_plan_test.cpp
     )
     target_link_libraries(p4_staged_llama_runtime_compile_test
         PRIVATE p4_staged_llama_runtime)

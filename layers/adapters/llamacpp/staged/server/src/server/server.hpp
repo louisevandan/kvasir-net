@@ -53,6 +53,7 @@ public:
     [[nodiscard]] runtime::State state() const noexcept { return runtime_.state(); }
 
 private:
+    [[nodiscard]] protocol::Frame handle_hello();
     [[nodiscard]] protocol::Frame handle_hop(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_logical_batch(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_physical_batch(const protocol::Frame &request);

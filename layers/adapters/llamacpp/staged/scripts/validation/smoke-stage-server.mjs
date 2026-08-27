@@ -112,7 +112,11 @@ async function main() {
   const timeoutMs = Number(argument("--timeout-ms", "45000"));
   const gpuLayers = Number(argument("--n-gpu-layers", "0"));
   const device = argument("--device", "");
+  const memoryTopology = argument("--memory-topology", "");
   const planSuffix = argument("--plan-suffix", "").trim();
+  if (!/^(discrete|host-shared:\d+(,\d+)*)$/u.test(memoryTopology)) {
+    throw new Error("--memory-topology must explicitly describe the physical memory pool");
+  }
   if (!fs.existsSync(model)) throw new Error(`model not found: ${model}`);
   if (!fs.existsSync(executable)) throw new Error(`stage server executable not found: ${executable}`);
   const { readPlannerModel } = await import("llama_domain/server");
@@ -121,7 +125,7 @@ async function main() {
   const layerEnd = Number(argument("--layer-end", String(modelInfo.nLayer)));
   const port = Number(argument("--port", String(await availablePort())));
   const deviceArg = device ? ` --device ${device}` : "";
-  const plan = `--model "${model}" --layer-begin ${layerBegin} --layer-end ${layerEnd} --ctx-size 128 --batch-size 32 --ubatch-size 32 --parallel 1 --n-gpu-layers ${gpuLayers}${deviceArg} --flash-attn 0${planSuffix ? ` ${planSuffix}` : ""}`;
+  const plan = `--model "${model}" --memory-topology ${memoryTopology} --layer-begin ${layerBegin} --layer-end ${layerEnd} --ctx-size 128 --batch-size 32 --ubatch-size 32 --parallel 1 --n-gpu-layers ${gpuLayers}${deviceArg} --flash-attn 0${planSuffix ? ` ${planSuffix}` : ""}`;
   const planBytes = Buffer.from(plan, "utf8");
   const prefix = Buffer.alloc(4);
   prefix.writeUInt32LE(planBytes.length);

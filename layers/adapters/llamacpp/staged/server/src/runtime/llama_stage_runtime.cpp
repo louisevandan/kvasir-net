@@ -5,33 +5,8 @@
 #include <cstdlib>
 
 #include <algorithm>
+#include <iostream>
 #include <utility>
-
-namespace {
-
-bool checkpoint_sequence(
-        std::unordered_map<std::string, llama_seq_id> & ids,
-        llama_seq_id & next,
-        const std::string & id,
-        uint32_t sequence_limit,
-        llama_seq_id * result,
-        std::string * error) {
-    const auto found = ids.find(id);
-    if (found != ids.end()) {
-        *result = found->second;
-        return true;
-    }
-    if (next < 0 || static_cast<uint64_t>(next) >= sequence_limit) {
-        if (error != nullptr) *error = "staged checkpoint sequence table is full";
-        return false;
-    }
-    const auto value = next++;
-    ids.emplace(id, value);
-    *result = value;
-    return true;
-}
-
-} // namespace
 
 namespace staged::llama_runtime {
 
@@ -97,11 +72,21 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     // runtime has no CUDA/Vulkan/HIP/Metal/OpenCL branches of its own.
     ggml_backend_load_all();
     backend_initialized_ = true;
-    auto model_params = common_model_params_to_llama(params_);
-    model_params.linkcpp_layer_begin = config_.layer_begin;
-    model_params.linkcpp_layer_end = config_.layer_end;
-    model_params.linkcpp_kv_gpu_layer_start = config_.kv_gpu_layer_start;
-    model_params.linkcpp_kv_gpu_layer_end = config_.kv_gpu_layer_end;
+    StageMemoryPlan planned_memory;
+    std::string memory_error;
+    if (!inspect_stage_memory_with_initialized_backend(
+            params_, config_, &planned_memory, &memory_error)) {
+        if (error != nullptr) *error = memory_error;
+        unload();
+        return false;
+    }
+    std::cerr << "MEMORY_PLAN " << serialize_stage_memory_plan(planned_memory) << '\n';
+    if (!planned_memory.fits_current_free) {
+        if (error != nullptr) *error = "staged memory plan exceeds currently free memory";
+        unload();
+        return false;
+    }
+    auto model_params = make_stage_model_params(params_, config_);
     model_params.linkcpp_stage_executor = &StageRuntime::stage_executor;
     model_params.linkcpp_stage_executor_user_data = this;
     model_params.linkcpp_state_executor = &StageRuntime::state_executor;
@@ -111,7 +96,7 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
         return fail("llama.cpp failed to load the staged model", error);
     }
 
-    auto context_params = common_context_params_to_llama(params_);
+    auto context_params = make_stage_context_params(params_);
     ctx_ = llama_init_from_model(model_, context_params);
     if (ctx_ == nullptr) {
         return fail("llama.cpp failed to create the staged context", error);
@@ -145,6 +130,20 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
                     || llama_model_is_hybrid(model_))
                 ? COMMON_CONTEXT_SEQ_RM_TYPE_FULL
                 : COMMON_CONTEXT_SEQ_RM_TYPE_PART);
+    }
+    StageMemoryPlan actual_memory;
+    if (!measure_stage_memory(
+            model_, ctx_, mtp_context(), config_.memory_topology,
+            params_.kv_unified, &actual_memory, &memory_error)) {
+        if (error != nullptr) *error = memory_error;
+        unload();
+        return false;
+    }
+    std::cerr << "MEMORY_ACTUAL " << serialize_stage_memory_plan(actual_memory) << '\n';
+    if (!same_stage_memory_allocation(planned_memory, actual_memory, &memory_error)) {
+        if (error != nullptr) *error = memory_error;
+        unload();
+        return false;
     }
     return true;
 }
@@ -294,56 +293,6 @@ bool StageRuntime::synchronize_outputs(std::string * error) const {
         if (error != nullptr) *error = "llama.cpp failed to synchronize stage outputs";
         return false;
     }
-    return true;
-}
-
-bool StageRuntime::save_checkpoint(const std::string & sequence_id,
-                                   common_prompt_checkpoint * checkpoint,
-                                   std::string * error) {
-    if (!loaded() || checkpoint == nullptr) {
-        return fail("stage runtime is not loaded or checkpoint is null", error);
-    }
-    llama_seq_id seq = 0;
-    if (!checkpoint_sequence(sequence_ids_, next_sequence_id_, sequence_id,
-                             llama_n_seq_max(ctx_), &seq, error)) {
-        return false;
-    }
-    const auto memory = llama_get_memory(ctx_);
-    const auto pos_min = llama_memory_seq_pos_min(memory, seq);
-    const auto pos_max = llama_memory_seq_pos_max(memory, seq);
-    checkpoint->clear();
-    checkpoint->update_pos(pos_max >= pos_min ? pos_max - pos_min + 1 : 0,
-                           pos_min, pos_max);
-    checkpoint->update_tgt(ctx_, seq, LLAMA_STATE_SEQ_FLAGS_NONE);
-    if (checkpoint->data_tgt.empty()) {
-        return fail("llama native checkpoint is empty", error);
-    }
-    return true;
-}
-
-bool StageRuntime::restore_checkpoint(
-        const std::string & sequence_id,
-        const common_prompt_checkpoint & checkpoint,
-        std::string * error) {
-    if (!loaded() || checkpoint.data_tgt.empty()) {
-        return fail("stage runtime is not loaded or checkpoint is empty", error);
-    }
-    llama_seq_id seq = 0;
-    if (!checkpoint_sequence(sequence_ids_, next_sequence_id_, sequence_id,
-                             llama_n_seq_max(ctx_), &seq, error)) {
-        return false;
-    }
-    const auto restored = llama_state_seq_set_data_ext(
-        ctx_, checkpoint.data_tgt.data(), checkpoint.data_tgt.size(), seq,
-        LLAMA_STATE_SEQ_FLAGS_NONE);
-    if (restored != checkpoint.data_tgt.size()) {
-        return fail("llama native checkpoint restore failed", error);
-    }
-    // State import may enqueue asynchronous device copies. The next decode
-    // must observe the restored KV before it starts graph execution.
-    llama_synchronize(ctx_);
-    sequence_positions_[sequence_id] = checkpoint.pos_max < 0
-        ? 0U : static_cast<std::uint64_t>(checkpoint.pos_max) + 1U;
     return true;
 }
 

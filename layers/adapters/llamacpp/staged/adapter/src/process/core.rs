@@ -173,7 +173,18 @@ impl ProcessServerControl {
                 response.header.operation
             ));
         }
-        let ready = decode_hello(&response.body)?;
+        let ready = decode_hello(&response.body).map_err(|error| {
+            let pid = self
+                .child
+                .as_ref()
+                .map(|child| child.id().to_string())
+                .unwrap_or_else(|| "none".to_owned());
+            format!(
+                "{error}; endpoint={}; child_pid={pid}; binary={}",
+                self.launch.endpoint,
+                self.launch.binary.display()
+            )
+        })?;
         self.server_id = Some(ready.server_id.clone());
         Ok(Some(ready))
     }
@@ -290,9 +301,12 @@ impl Drop for ProcessServerControl {
     }
 }
 
-fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
+pub(super) fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
     if body.len() < 2 {
-        return Err("stage server HELLO body is truncated".into());
+        return Err(format!(
+            "stage server HELLO body is truncated; body_bytes={}",
+            body.len()
+        ));
     }
     let revision = u16::from_le_bytes([body[0], body[1]]);
     if revision != PROTOCOL_REVISION {
@@ -301,8 +315,13 @@ fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
         ));
     }
     let id = if body.len() == 2 { &[][..] } else { &body[2..] };
-    let text = String::from_utf8(id.to_vec())
-        .map_err(|_| "stage server HELLO id is not UTF-8".to_owned())?;
+    let text = String::from_utf8(id.to_vec()).map_err(|error| {
+        format!(
+            "stage server HELLO id is not UTF-8; body_bytes={}; valid_up_to={}",
+            body.len(),
+            error.utf8_error().valid_up_to()
+        )
+    })?;
     let transactions = text.split(';').any(|field| field == "transactions=1");
     let physical_batch = text.split(';').any(|field| field == "physical_batch=1");
     let equal_sequence_ubatch = text
@@ -333,9 +352,19 @@ where
     let prefix = format!("{name}=");
     text.split(';')
         .find_map(|field| field.strip_prefix(&prefix))
-        .ok_or_else(|| format!("stage server HELLO omits {name}"))?
+        .ok_or_else(|| {
+            format!(
+                "stage server HELLO omits {name}; hello_id_bytes={}; server_id={text:?}",
+                text.len()
+            )
+        })?
         .parse()
-        .map_err(|_| format!("stage server HELLO has invalid {name}"))
+        .map_err(|_| {
+            format!(
+                "stage server HELLO has invalid {name}; hello_id_bytes={}; server_id={text:?}",
+                text.len()
+            )
+        })
 }
 
 fn is_retryable_io(error: &FrameIoError) -> bool {

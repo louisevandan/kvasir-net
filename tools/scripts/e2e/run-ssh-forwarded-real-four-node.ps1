@@ -593,7 +593,7 @@ function Plan([int]$Begin, [int]$End, [int]$GpuLayerCount, [string]$Model, [int]
     if ($GpuLayerCount -gt $ownedLayers) { $GpuLayerCount = $ownedLayers }
     $globalGpuLayers = if ($GpuLayerCount -gt 0) { $totalModelLayers - ($End - $GpuLayerCount) } else { 0 }
     $overrideSuffix = if ([string]::IsNullOrWhiteSpace($StageTensorOverride)) { '' } else { ' --override-tensor "{0}"' -f $StageTensorOverride }
-    '--model "{0}" --layer-begin {1} --layer-end {2} --kv-layer-begin {1} --kv-layer-end {2} --n-seq-max {3} --batch-size {4} --ubatch-size {5} --ctx-size {6} --n-gpu-layers {7} --device CUDA0 --flash-attn {8} --no-mmap --cache-type-k q8_0 --cache-type-v q8_0{9}' -f $Model, $Begin, $End, $Slots, $Batch, $UBatch, $Context, $globalGpuLayers, $(if ($FlashAttention -eq 1) { 'on' } else { 'off' }), $overrideSuffix
+    '--model "{0}" --memory-topology discrete --layer-begin {1} --layer-end {2} --kv-layer-begin {1} --kv-layer-end {2} --n-seq-max {3} --batch-size {4} --ubatch-size {5} --ctx-size {6} --n-gpu-layers {7} --device CUDA0 --flash-attn {8} --no-mmap --cache-type-k q8_0 --cache-type-v q8_0{9}' -f $Model, $Begin, $End, $Slots, $Batch, $UBatch, $Context, $globalGpuLayers, $(if ($FlashAttention -eq 1) { 'on' } else { 'off' }), $overrideSuffix
 }
 try {
     $artifactFiles = @((Get-Item -LiteralPath $agentBinary)) + @(Get-ChildItem -LiteralPath $ArtifactDirectory -File | Where-Object {

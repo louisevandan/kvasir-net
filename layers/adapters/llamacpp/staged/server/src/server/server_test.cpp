@@ -56,6 +56,15 @@ static void unsupported_capabilities_are_explicit() {
     load_plan(session);
     const auto hello = session.handle(Frame::make(Operation::Hello, {}));
     assert(hello.header.operation == Operation::Hello);
+    assert(hello.body.size() > 2);
+    assert(hello.body[0] == (staged::protocol::kProtocolRevision & 0xffU));
+    assert(hello.body[1] == (staged::protocol::kProtocolRevision >> 8U));
+    const std::string capabilities(hello.body.begin() + 2, hello.body.end());
+    for (const auto * required : {
+             ";n_ctx=", ";n_batch=", ";n_ubatch=", ";n_seq_max=",
+             ";max_atomic_sequences=", ";upstream="}) {
+        assert(capabilities.find(required) != std::string::npos);
+    }
     const auto hop = session.handle(Frame::make(Operation::Hop, {}));
     assert(hop.header.operation == Operation::Error);
 }

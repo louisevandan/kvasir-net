@@ -177,6 +177,22 @@ pub struct ReleaseSequence {
     pub id: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ReleasedPayload {
+    pub load_generation: u64,
+    pub session_id: String,
+    pub released: usize,
+}
+
+impl ReleasedPayload {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.load_generation == 0 || self.session_id.is_empty() || self.released == 0 {
+            return Err("release completion requires load, session and count");
+        }
+        Ok(())
+    }
+}
+
 impl ReleaseCommand {
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.load_generation == 0

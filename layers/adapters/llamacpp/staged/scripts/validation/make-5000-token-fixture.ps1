@@ -6,6 +6,7 @@ param(
     [int]$TargetTokens = 5000,
     [string]$SeedFile = '',
     [string]$RequiredSuffixFile = '',
+    [switch]$SemanticBoundary,
     [string]$OutputDirectory = ''
 )
 
@@ -109,6 +110,7 @@ if (-not [string]::IsNullOrWhiteSpace($RequiredSuffixFile)) {
     Require-File $RequiredSuffixFile 'required prompt suffix file'
     $probeArguments += @('--required-suffix-file', "`"$((Resolve-Path $RequiredSuffixFile).Path)`"")
 }
+if ($SemanticBoundary) { $probeArguments += '--semantic-boundary' }
 $probeProcess = Start-Process -FilePath $probe -ArgumentList $probeArguments `
     -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath `
     -Wait -PassThru -NoNewWindow
@@ -154,6 +156,7 @@ $report = [pscustomobject]@{
     prepared_source_hashes = @($sourceHashes)
     tokenizer_probe = $probe
     tokenizer_mode = 'artifact llama.dll; vocab_only=true; add_bos from GGUF; parse_special=true'
+    semantic_boundary = [bool]$SemanticBoundary
     seed_file = if ([string]::IsNullOrWhiteSpace($SeedFile)) { $null } else { (Resolve-Path $SeedFile).Path }
     required_suffix_file = if ([string]::IsNullOrWhiteSpace($RequiredSuffixFile)) { $null } else { (Resolve-Path $RequiredSuffixFile).Path }
     inference = 'not-run'

@@ -19,7 +19,7 @@ const KV_ROOT_ENV: &str = "P4_STAGED_LLAMA_KV_ROOT";
 const REQUEST_OPTIONS: &str = r#"{"temperature":0,"request_tag":"gate5-options"}"#;
 
 #[test]
-#[ignore = "real llama.cpp model E2E; set P4_STAGED_LLAMA_SERVER_BINARY and P4_STAGED_LLAMA_MODEL, then pass --ignored"]
+#[ignore = "real llama.cpp model E2E; set server, model and P4_STAGED_MEMORY_TOPOLOGY, then pass --ignored"]
 fn process_control_round_trips_real_llama_plan_hello_hop_kv_and_unload() {
     let Some(binary) = required_file(SERVER_BINARY_ENV, "C++ llama staged server binary") else {
         return;
@@ -41,9 +41,12 @@ fn process_control_round_trips_real_llama_plan_hello_hop_kv_and_unload() {
     let kv_root = KvRoot::from_environment();
     let model_identity = model.to_string_lossy().into_owned();
     let extra_args = env::var("P4_STAGED_LLAMA_PLAN_EXTRA_ARGS").unwrap_or_default();
+    let memory_topology = env::var("P4_STAGED_MEMORY_TOPOLOGY")
+        .expect("P4_STAGED_MEMORY_TOPOLOGY must describe the physical memory pool");
     let plan = format!(
         "--model {} --layer-begin {layer_begin} --layer-end {layer_end} \
-        --n-seq-max 1 --ctx-size 512 --temp 0 --seed 1 --model-identity {} --kv-root {} {}",
+        --memory-topology {memory_topology} --n-seq-max 1 --ctx-size 512 \
+        --temp 0 --seed 1 --model-identity {} --kv-root {} {}",
         quote_plan_value(&model_identity),
         quote_plan_value(&model_identity),
         quote_plan_value(&kv_root.path.to_string_lossy()),

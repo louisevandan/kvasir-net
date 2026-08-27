@@ -15,7 +15,7 @@ const executable = path.resolve(arg("--executable", ".cache/staged-server-llama/
 if (!fs.existsSync(executable)) throw new Error(`stage server executable not found: ${executable}`);
 async function run(validateOnly) {
   const plan = Buffer.from(
-    `${validateOnly ? "--validate-plan " : ""}--model ${JSON.stringify(arg("--model", "not-loaded.gguf"))} --spec-type draft-mtp`,
+    `${validateOnly ? "--validate-plan " : ""}--model ${JSON.stringify(arg("--model", "not-loaded.gguf"))} --memory-topology ${arg("--memory-topology", "discrete")} --spec-type draft-mtp`,
     "utf8",
   );
   const prefix = Buffer.alloc(4);

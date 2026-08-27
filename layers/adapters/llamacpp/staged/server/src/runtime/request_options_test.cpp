@@ -67,6 +67,8 @@ int main() {
     }
 
     staged::llama_runtime::LoadConfig config;
+    config.memory_topology.kind =
+        staged::llama_runtime::MemoryTopologyKind::Discrete;
     config.model_path = model_path;
     config.model_identity = model_path;
     config.layer_begin = 0;
