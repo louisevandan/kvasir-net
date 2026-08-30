@@ -1,5 +1,17 @@
 # Testing
 
+## Documentation gate
+
+Run before changing any Markdown:
+
+```bash
+npm run docs-lint        # recursive: mixed EOL, retired phrases, claim ownership, README index
+npm run test:docs-lint   # fixture self-tests for the gate itself
+```
+
+Both must pass. The gate encodes review outcomes: retired phrases and
+claim-ownership entries in tools/scripts/docs-lint.mjs are permanent.
+
 ```bash
 cargo test --workspace          # from apps/p4
 cargo fmt --all -- --check

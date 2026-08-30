@@ -1,5 +1,9 @@
 # The plan
 
+> 2026-08-30 update: adapter restructuring is now planned in
+> [adapter-restructure-plan.md](adapter-restructure-plan.md); this document
+> predates the event-v2 architecture and is kept as history.
+
 What is going to be built, in what order, and how each step is known to be
 done. Written 2026-08-21.
 

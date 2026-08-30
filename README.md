@@ -70,10 +70,16 @@ and the reverse puts it here.
 | Decisions, and the defects behind them | [docs/internals.md](docs/internals.md) |
 | What crosses the adapter boundary, and what was measured | [docs/adapter-boundary.md](docs/adapter-boundary.md) |
 | llama.cpp stage memory ownership and legal graph cuts | [docs/llamacpp-stage-memory.md](docs/llamacpp-stage-memory.md) |
+| Adapter restructure plan: defect ledger, target layering, phases and acceptance | [docs/adapter-restructure-plan.md](docs/adapter-restructure-plan.md) |
+| Adapter batching layers: ledger, admission, composition, proof, and KV/persistence coupling | [docs/adapter-batching-layers.md](docs/adapter-batching-layers.md) |
+| KV persisted-state store convention: record identity, directory layout, lifetime | [docs/kv-state-store-convention.md](docs/kv-state-store-convention.md) |
 | Continuous inference refactor status, evidence, and remaining gates | [docs/continuous-inference-refactor-handoff.md](docs/continuous-inference-refactor-handoff.md) |
-| What is going to be built, in what order, and how each step is known to be done | [docs/plan.md](docs/plan.md) |
+| The 2026-08-21 build plan (historical; superseded by the adapter restructure plan) | [docs/plan.md](docs/plan.md) |
 | Running it and driving a fleet | [docs/usage.md](docs/usage.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 | Distributed mock test plan | [docs/distributed-mock-test-plan.md](docs/distributed-mock-test-plan.md) |
+| Deployment-owned adapter submission contract | [docs/deployment-adapter-contract.md](docs/deployment-adapter-contract.md) |
+| OUTER acceptance test plan | [docs/outer-acceptance-test-plan.md](docs/outer-acceptance-test-plan.md) |
+| 256-session local pipeline optimization evidence | [docs/p4-256-optimization.md](docs/p4-256-optimization.md) |
 | Measured behaviour of the backend below | [docs/runtime-evidence.md](docs/runtime-evidence.md) |
 | The revision that produced all this | [P4_REVISION_PLAN.md](P4_REVISION_PLAN.md) |
