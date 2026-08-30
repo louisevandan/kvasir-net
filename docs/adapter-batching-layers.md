@@ -126,6 +126,33 @@ ubatch 콜백 멤버십을 캡처하며, 하류는 재도출 없이 재생한다
 직접 줄인다: 홉당 cut-set 텐서를 연속 버퍼 하나로 합쳐 전송하는 것,
 통과만 하는 텐서를 매 홉 재전송하지 않는 것.
 
+## 동시성의 세 축
+
+llama.cpp의 `-np`는 역사적으로 KV 분할 수·server slot 수·동시 추론 폭을
+한 숫자에 묶었고, unified KV가 첫 번째 의미를 지운 뒤에도 나머지 둘은
+묶여 있다(upstream discussion 22401이 정확히 이 분리를 요구한다). 이
+계약은 처음부터 셋을 분리한다.
+
+| 축 | 뜻 | 소유 |
+| --- | --- | --- |
+| `kv_capacity` | 공유 셀 풀의 논리 용량(n_ctx) | 저장 규약·OUTER 계획 |
+| `max_resident_sequences` | KV에 상태를 살려 둘 수 있는 세션 수 | L1 등록부 + L2 수용. 백엔드 `n_seq_max` capability가 상한 |
+| `decode_parallelism` | 이번 스텝의 UBATCH에 태울 시퀀스 수 | L3가 스텝마다 선택. runnable 수와 행 예산이 상한 |
+
+KV 상주와 연산 동시성은 별개의 차원이다: 20개 세션이 상주해도 스텝에는
+4개만 태울 수 있고, 노드는 전달된 membership만 실행하므로(멤버십 재생
+불변식) 이 두 값은 노드별 개념이 아니라 **코디네이터 소유**다.
+
+단서 두 가지가 실측에서 나왔다. 첫째, `max_resident`는 공짜가 아니다 —
+SWA 캐시 셀 수는 `n_swa×n_seq_max+n_ubatch`로 이 값에 비례하고(실측
+12,800셀), sampler graph 메타데이터 예산도 활성 시퀀스에 비례한다(256세션
+실험의 368바이트 부족 사건). 상주 한도는 셀 회계에 자기 비용 항을 갖는다.
+둘째, 현행 OUTER 플랜은 `parallel` 하나로 `--n-seq-max`와 스케줄러 폭을
+함께 정한다 — 분리는 계획 P3의 수용·점유 구현에서 일어난다.
+
+고정 slot 수를 없앤 "상주 시퀀스 등록부 + runnable 스케줄러"가 unified
+KV의 논리적 종착점이며, 그것이 정확히 L1과 L3다.
+
 ## 영속화 프로토콜
 
 `p4-adapter`의 `CacheAction`(PreparePersist/Persist/PrepareRestore/

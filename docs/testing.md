@@ -9,8 +9,11 @@ npm run docs-lint        # recursive: mixed EOL, retired phrases, claim ownershi
 npm run test:docs-lint   # fixture self-tests for the gate itself
 ```
 
-Both must pass. The gate encodes review outcomes: retired phrases and
-claim-ownership entries in tools/scripts/docs-lint.mjs are permanent.
+Both must pass, and `cargo test --workspace` enforces the gate through
+`entrypoints/agent/tests/docs_lint.rs`. The gate encodes review outcomes:
+retired phrases and claim-ownership entries in tools/scripts/docs-lint.mjs
+are permanent. It is a literal-string canary — semantic restatements are
+still review's job.
 
 ```bash
 cargo test --workspace          # from apps/p4

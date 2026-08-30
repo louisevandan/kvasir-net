@@ -59,7 +59,7 @@ test("a docs page missing from the README index fails", () => {
   const dir = fixture({ "README.md": "no index\n", "docs/lost.md": "# lost\n" });
   const result = run(dir);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /not indexed/);
+  assert.match(result.stderr, /no actual link/);
 });
 
 test("vendored and build directories are skipped", () => {
@@ -70,4 +70,24 @@ test("vendored and build directories are skipped", () => {
   });
   const result = run(dir);
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("a source-file anchor without ::symbol fails (R2)", () => {
+  const dir = fixture({
+    "README.md": "| a | [docs/a.md](docs/a.md) |\n",
+    "docs/a.md": "the behaviour lives in `server.cpp` @ df5b9ce7 today\n",
+  });
+  const result = run(dir);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /lacks ::symbol/);
+});
+
+test("README naming a docs page without an actual link fails", () => {
+  const dir = fixture({
+    "README.md": "mentions lost.md by name only\n",
+    "docs/lost.md": "# lost\n",
+  });
+  const result = run(dir);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /no actual link/);
 });
