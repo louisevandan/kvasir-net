@@ -25,6 +25,7 @@ const SKIP_DIRS = new Set([".git", "node_modules", "target", "tmp_dummy", "upstr
 const RETIRED = [
   { phrase: "하나라도 실패 → Abort", reason: "2026-08-31 review: commit 단계에서 성립하지 않음 — 2PC 수렴 규칙 표를 참조하라" },
   { phrase: "원장 부재의 증거", reason: "2026-08-31 review: D4 원인은 미규명 — 원장은 검출 수단이지 원인 단정이 아니다" },
+  { phrase: "복원 → 요청 프롬프트와 LCP 대조", reason: "2026-08-31 7차: 순서 역전 — LCP는 상태 import 전에 tokens.bin으로 판정한다(복원 판정 사다리)" },
 ];
 
 // R1 mechanical check: a claim lives in exactly one file; any other file must
@@ -33,6 +34,7 @@ const OWNED_CLAIMS = [
   { needle: "P-1 → P0 → P1a", owner: "docs/adapter-restructure-plan.md", what: "단계 순서" },
   { needle: "Persist는 roll-forward", owner: "docs/kv-state-store-convention.md", what: "2PC 수렴 방향" },
   { needle: "committed ≥1 + prepared 잔여", owner: "docs/kv-state-store-convention.md", what: "2PC 수렴 표" },
+  { needle: "canonical binary encoding", owner: "docs/kv-state-store-convention.md", what: "모델 정체성 인코딩" },
 ];
 
 // R2 anchor form: `path::symbol` @ short-commit. A backtick span naming a

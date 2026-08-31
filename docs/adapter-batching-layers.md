@@ -171,15 +171,10 @@ Restore/Reconcile)과 `CacheReceiptState`가 이미 이 구조를 계약한다.
 세션 상태는 노드 4개에 조각나 있으므로(`stage_id`, `operation_id`,
 `generation`) 모든 영속·복원은 다단계 조율이다.
 
-```
-Persist:  L2 victim 선정 → PreparePersist ×4 → 전원 Prepared → Commit
-          → 각 노드 seq_rm → 원장 Persisted{pos}, 셀 반환
-Restore:  재요청 SessionKey 매칭 + 토큰 이력 LCP → 셀 선확보 →
-          PrepareRestore ×4 → pos 검증 ×4 → Commit → Resident
-          → suffix만 프리필
-실패:     수렴은 [kv-state-store-convention.md](kv-state-store-convention.md)의
-          2PC 수렴 규칙이 단독 소유한다. 여기서는 재서술하지 않는다.
-```
+영속·복원·절단의 실행 순서(복원 판정 사다리 포함)와 2PC 수렴 규칙은
+[kv-state-store-convention.md](kv-state-store-convention.md)가 단독
+소유한다. 이전 판이 여기 두었던 흐름 요약이 규약과 어긋나게 낡는 것이
+7차 리뷰에서 확인되어, 요약 자체를 제거했다.
 
 현행 구현(`llama_stage_runtime_kv.cpp`)은 저장 후 `seq_rm`, 복원 후
 `llama_synchronize` + 위치 대조까지 갖췄다. 남은 결함: 노드당 128MB

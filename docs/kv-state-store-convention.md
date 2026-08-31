@@ -26,7 +26,7 @@ magic/버전/정체성/SHA-256/원자적 publish)은 구현이 이미 갖고 있
 
 ## 저장 단위: 무엇이 하나의 레코드인가
 
-**샤드 레코드 = (model_id × cut_id × kv_format) × (session_key × position)**
+**샤드 레코드 = (base_model_id × cut_id × kv_format) × (session_key × kv_variant_id × position)**
 
 로딩 ID(`load_generation`)는 레코드 정체성이 아니다. 같은 모델을 같은
 레이어 구성으로 재로딩한 노드는 기존 레코드를 재사용한다. 세대는
@@ -36,7 +36,7 @@ magic/버전/정체성/SHA-256/원자적 publish)은 구현이 이미 갖고 있
 
 | 등급 | 항목 | 불일치 시 |
 | --- | --- | --- |
-| 레이아웃 정체성 (경로에 새김) | model_id, 레이어 범위 [b,e), K/V 타입, v_trans/flash, 메모리 계열, **state_abi_id** | 다른 레코드. 재사용 불가 |
+| 레이아웃 정체성 (경로에 새김) | base_model_id, 레이어 범위 [b,e), K/V 타입, v_trans/flash, 메모리 계열, **state_abi_id** | 다른 레코드. 재사용 불가 |
 | 수용 조건 (복원 시 검사) | position < n_ctx_seq, 셀 여유, 슬롯 여유 | 거부하되 레코드 보존 |
 | 참고 정보 (기록만) | build_identity, 저장 시 n_batch/n_ubatch/n_seq_max | 경고 로그 |
 
@@ -49,9 +49,16 @@ build 출처와 상태 호환성은 별개의 축이다 — patch-set 전체 해
 
 - `build_id` (참고 정보): upstream commit + patch_set_sha256 + backend
   provenance. 진단·증거용이지 정체성이 아니다.
-- `state_abi_id` (레이아웃 정체성, 경로 파생에 포함): 시퀀스 상태의
-  **직렬화 의미**가 바뀔 때만 수동 증가시키는 P4 소유 정수. patch 변경
-  중 직렬화에 닿는 것만 이 값을 올린다.
+- `state_abi_id` (레이아웃 정체성, 경로 파생에 포함): 시퀀스 상태
+  직렬화의 호환성 세대. **compat manifest가 소유**하며 임의 수동 입력은
+  금지다. 실제 상태 바이트는 `llama_state_seq_get_data_ext()` 아래 각
+  upstream 메모리 계열의 `state_write/state_read`가 만들므로 **P4 패치가
+  안 바뀌어도 upstream pull이 형식을 바꿀 수 있다.** 따라서 매 pin마다
+  상태 호환 게이트를 통과해야 한다: 메모리 계열별로 (pin N-1 writer →
+  pin N reader) 복원과 (N writer → N reader) 기준 실행을 비교 — 상태
+  바이트 구조·position·후속 logits/토큰 일치. 실패하면 manifest의
+  state_abi_id 증가가 강제된다. 게이트는 소형 고정 fixture 모델과
+  계열별 골든 상태(저장소 시험 자산)로 실행한다.
 - `backend_layout_id` (레코드 수준, meta에 기록·복원 시 대조): 상태가
   실제 사용한 device/buffer-type/배치의 정규화 fingerprint. llama.cpp는
   한 실행 안에서도 복수 device·CPU fallback·tensor별 buffer override를
@@ -63,26 +70,31 @@ build 출처와 상태 호환성은 별개의 축이다 — patch-set 전체 해
 `cut_id` 경로 성분은 레이아웃 정체성만으로 파생한다 — build_id가 섞이면
 같은 과잉 고정이 경로에서 재발한다.
 
-## model_id 정의
+## 모델 정체성: base_model_id × kv_variant_id
 
-- 정체성 = **GGUF 파일 전체 바이트의 SHA-256.** 분할 GGUF는 파일명
-  `-%05d-of-%05d`의 part 인덱스 오름차순으로 각 part의 raw digest
-  32바이트를 이어 붙인 바이트열의 SHA-256이다. 헤더·텐서 테이블·크기만으로는
-  텐서 데이터가 다른 두 파일이 같은 ID가 되므로 정체성이 될 수 없다.
-- 경로 성분도 **전체 64 hex**다. 16 hex 축약은 잘못된 Restore는 못 만들지만
-  같은 64-bit prefix의 두 모델이 한 디렉터리를 차지하는 공존성 결함을
-  만든다. 경로 길이는 Windows 장경로(LongPathsEnabled) 지원을 전제하고
-  kv_root는 짧게 잡는다. `meta.json`과 복원 대조도 전체 digest.
-- **검증 정책: load마다 전체 재계산이 기본이다.** 크기+mtime 사이드카는
-  내용 증명이 아니므로 production 경로에서 재계산을 대체할 수 **없다**.
-  대체가 허용되는 유일한 형태는 수집 시 전체 해시를 검증한
-  content-addressed artifact manifest다.
-- 로드가 여러 아티팩트를 이름하면(mmproj, LoRA 어댑터 등) model_id는 그
-  **전체 집합**의 digest 목록(로드 인자 순서)에 대한 SHA-256이다. LoRA는
-  가중치를 바꾸므로 어댑터 집합이 다르면 KV도 다른 레코드다.
-- 부정 시험(P-1 통과 조건): 동일 크기 1바이트 텐서 변조 → 복원 거부를
-  **캐시 부재 경로와 조작된 사이드카 존재 경로 양쪽에서** 확인한다.
+단일 model_id로는 KV에 영향을 주는 아티팩트 전부를 식별하지 못한다 —
+LoRA는 digest 외에 scale이, control vector는 scale·layer range가 KV를
+바꾸고, llama.cpp는 context의 LoRA 집합·scale을 런타임에 바꿀 수 있다.
+둘로 나눈다.
 
+- `base_model_id` (경로 성분, 전체 64 hex): base GGUF 전체 바이트의
+  SHA-256(분할 GGUF는 `-%05d-of-%05d` part 인덱스 오름차순으로 각 part
+  digest 32바이트를 이은 목록의 SHA-256). tokenizer 정체성은 base 파일
+  digest가 보증한다. 헤더·텐서 테이블·크기 요약은 텐서 데이터가 달라도
+  같아질 수 있으므로 정체성이 될 수 없다.
+- `kv_variant_id` (레코드 수준, meta 기록·복원 대조): KV에 영향을 주는
+  부가 아티팩트의 canonical binary encoding에 대한 SHA-256.
+  v1 = `(version u32, count u32, entry*)`,
+  entry = `(role u8 ∈ {mmproj, lora, control_vector}, digest 32B,
+  scale f32-bits u32, layer_begin i32, layer_end i32)`,
+  role·digest 순 정렬(순서 무관 canonical). 동적 LoRA 변경이 허용되는
+  배포에서 kv_variant_id는 로드가 아니라 **세션/레코드 정체성**이다.
+- 검증 정책: load마다 전체 재계산이 기본이다. 크기+mtime 사이드카는 내용
+  증명이 아니므로 production 경로에서 재계산을 대체할 수 없고, 수집 시
+  전체 해시를 검증한 content-addressed manifest만 대체할 수 있다.
+- 부정 시험(P-1 통과 조건): base 1바이트 텐서 변조(캐시 부재·조작된
+  사이드카 양쪽 경로), LoRA scale 변경, mmproj 변조, control-vector range
+  변경 → 복원 거부; 엔트리 순서만 바꾼 입력 → 동일 id.
 ## session_key 계약 (sk-v1)
 
 - 형식은 **필수**다: `sk1:<owner>/<conversation>`.
@@ -104,7 +116,9 @@ build 출처와 상태 호환성은 별개의 축이다 — patch-set 전체 해
 - 경로 성분: `sk-v1/<sha256(raw key 바이트열) 전체 64 hex>` — 계약 버전이
   경로에 있다. 계약 변경은 `sk-v2` 경로로만 한다.
 - `meta.json`에 raw 키와 전체 digest를 저장하고, 복원 전 raw 키 바이트
-  일치 + model_id·cut_id·kv_format 전체 대조를 요구한다.
+  일치 + base_model_id·kv_variant_id·cut_id·kv_format 전체 대조를 요구한다.
+  유일성 범위는 `(base_model_id × cut_id)` 트리 내다 — 다른 모델·다른
+  컷의 같은 키는 다른 레코드다.
 - 부정 시험: 잘못된 UTF-8 / 빈 키 / 513바이트(접두 포함) / `sk1:` 없음 /
   구분자 없음 / 공백만의 owner 또는 conversation → 거부; conversation에
   `/`가 든 키는 수용되고 첫 `/`에서만 분할됨을 확인; NFC/NFD만 다른 두 키
@@ -117,13 +131,14 @@ state·tokens·meta는 셋이 하나의 레코드다. 부분 조합(새 KV + 이
 tokens 등)이 존재할 수 없도록 **불변 세대 디렉터리 + 원자 포인터**를 쓴다.
 
 ```
-<kv_root>/v2/<model_id 64hex>/<cut_id>/
+<kv_root>/v2/<base_model_id 64hex>/<cut_id>/
   sessions/sk-v1/<sk-digest 64hex>/
     gen-<n>/                # 불변 번들. 생성 후 내부 파일 수정 금지
       state.lkv             # (128MB 초과 시 state-<k>.part, 열린 항목)
       tokens.bin            # 프롬프트+생성 전체 토큰 ID, LE i32 나열
       meta.json             # position, record_generation=n, state/tokens 각
-                            # SHA-256, raw session_key, 전체 model digest,
+                            # SHA-256, raw session_key, base_model_id,
+                            # kv_variant_id,
                             # cut_id, kv_format, saved_at
     MANIFEST                # 원자 포인터: {generation, meta_sha256}
     CONTROL                 # 권위 epoch·generation, 원자 교체
@@ -139,11 +154,27 @@ tokens 등)이 존재할 수 없도록 **불변 세대 디렉터리 + 원자 포
 - 영수증은 `(record_generation, position, state_sha256, tokens_sha256)`을
   결속한다. LCP 증거와 KV position의 결속이 영수증 수준에서 증명된다.
 - LCP 최종 판정은 `tokens.bin` 바이트 비교다(70K 토큰 ≈ 280KB). 체인
-  digest는 선택 가속일 뿐이다. tokenizer 결속은 model_id가 보증한다.
+  digest는 선택 가속일 뿐이다. tokenizer 결속은 base_model_id가 보증한다.
+
+## kv_root 토폴로지
+
+잠금·rename·텔레메트리 계약의 전제이므로 축을 명시한다.
+
+- **기본(권장): 노드 전용 로컬 디스크.** CONTROL·lock 상호배제는 단일
+  호스트 OS 원자성(exclusive create)으로 성립하고, boot_id·pid 생존을
+  로컬에서 판정할 수 있어 stale 권위 문제가 소거된다. cut_id 경로 분리는
+  한 머신에 여러 스테이지가 사는 배포(현행 로컬 4노드)를 위한 것이다.
+  코디네이터는 어느 토폴로지에서도 저장소 파일을 직접 읽지 않는다 —
+  입력은 항상 와이어 텔레메트리다.
+- **공유 볼륨(SMB/NFS 등): 조건부 지원.** 해당 볼륨에서 exclusive
+  create·replace rename·flush·lock 가시성을 실증하는 storage capability
+  gate와, 내구 heartbeat 또는 외부 lease 서비스 같은 membership 권위를
+  모두 요구한다. 없으면 미지원이며 로드를 거부한다.
+- P0 장애 시험에 "분할 → stale-break → 구 writer 복귀"를 포함한다.
 
 ## 세션 샤드 직렬화
 
-- 직렬화 단위는 operation이 아니라 **(model_id, cut_id, sk-digest)** 다.
+- 직렬화 단위는 operation이 아니라 **(base_model_id, cut_id, sk-digest)** 다.
 - 권위 있는 epoch은 lease가 아니라 내구 `CONTROL = {epoch, generation}`
   레코드가 소유한다. **rename 단독은 CAS가 아니다** — 두 경쟁자가 같은
   epoch을 읽고 각자 원자 교체에 성공할 수 있다. CONTROL 갱신은
@@ -154,7 +185,18 @@ tokens 등)이 존재할 수 없도록 **불변 세대 디렉터리 + 원자 포
   로컬 pid 검사로 판정할 수 없으므로, host_instance_id(노드 설치 시 고유
   난수)와 boot_id(부팅마다 갱신)가 소유자를 식별한다. stale lock은 소유
   노드의 부재·재부팅을 확인한 뒤 CONTROL epoch 검사와 함께만 파기한다
-  (crash recovery 계약). lease 획득은 이 임계구역에서
+  (crash recovery 계약).
+- 각 lock에는 임의 `lock_token`을 부여하고, release는 **현재 lock 파일의
+  token이 내 token일 때만** 삭제한다 — stale-break 뒤 복귀한 구 소유자가
+  새 소유자의 lock을 지우는 사고를 막는다.
+- **stale 판정의 권위**: 소유자 식별은 누가 잡았는가만 말하고, 죽었는지
+  네트워크 분할인지는 말하지 못한다. `acquired_at`은 호스트 시계 편차
+  때문에 단독 권위가 될 수 없다. 권위는 배포 토폴로지가 정하며(아래
+  kv_root 토폴로지), 권위가 불확실하면 자동 break는 금지다.
+- 층 분리 원칙: **잠금은 liveness(경합·중복 작업 감소)용이고 안전성은
+  store_epoch 결속이 보장한다.** 단 CONTROL epoch 부여 자체는 진짜
+  상호배제를 요구하므로, 그 상호배제가 성립하지 않는 배포는 지원하지
+  않는다(로드 거부). lease 획득은 이 임계구역에서
   epoch+1을 내구 기록한 뒤에만 성립하고, 그 다음 `lease.json`
   `{operation_id, kind, epoch, acquired_at}`을 쓴다. lease 삭제·재생성만으로는
   이전 소유자의 늦은 publish를 막지 못한다.
@@ -203,11 +245,18 @@ capability로 보고하고, TrimTo prepare는 각 스테이지의 trim_support�
 롤백 범위를 attest한다. 하나라도 대상 position을 감당할 수 없으면
 TrimTo를 발행하지 않고 **전체 재프리필로 강등**한다.
 
-영속 레코드는 상주보다 앞서 있을 수 있다(레코드 position > 절단된 상주
-position — TrimTo는 상주만 자르고 레코드는 다음 Persist가 대체한다).
-따라서 Restore는 항상 `복원 → 요청 프롬프트와 LCP 대조 → 필요 시
-TrimTo`의 순서를 강제하며, LCP 대조 없이 복원된 suffix 위에서 디코드를
-시작하는 것은 금지다.
+영속 레코드는 상주보다 앞서 있을 수 있고(레코드 position > 마지막 절단
+position), `tokens.bin`은 상태 import 없이 읽을 수 있다. 따라서 복원
+판정은 **import 전에** 끝낸다:
+
+1. meta·tokens 검증(체크섬·정체성 대조) 후 요청 프롬프트와 LCP 계산
+2. LCP = 레코드 position(정확한 접두) → 셀 예약 → Restore → suffix 프리필
+3. LCP < 레코드 position(분기) ∧ 전 스테이지 trim 가능 → 예약 → Restore
+   → TrimTo(LCP) → suffix 프리필
+4. 분기 ∧ 어느 스테이지든 trim 불가 → **Restore 자체를 생략**하고 전체
+   재프리필 — 죽은 suffix를 import했다 지우는 낭비와 부분 실패 경로를
+   없앤다
+5. 어떤 경로든 LCP 판정 없이 복원된 suffix 위에서 디코드 시작 금지
 
 ## 2PC 수렴 규칙
 
@@ -244,6 +293,22 @@ P2에서 이 판정으로 교체된다.
 Aborting 중 committed 발견을 즉시 실패로 접는다 — 그 시험은 현행 동작의
 고정이지 이 표의 구현이 아니다. Persist roll-forward와 Restore rollback
 경로는 llama 지식 없는 백엔드 중립 코어 수정으로 추가한다(계획 원칙 1).
+
+## 예약 2PC
+
+다중 노드 셀 예약과 다중 샤드 lease 획득의 "실패 시 전부 해제"는
+네트워크가 정상일 때만 성립하는 문장이다. 예약은 2PC로 정의한다.
+
+- Prepare: `(reservation_id, session_key, requested_cells, ttl)`.
+  TTL은 절대 시각이 아니라 **각 노드가 Prepare를 수신한 시점 기준의 로컬
+  단조 시계**로 평가한다 — 호스트 시계 편차를 권위에서 배제한다.
+- 전 스테이지 Prepared → Commit. Abort/Release는 멱등이다.
+- **Prepared 예약도 수용 회계에 포함**되며 텔레메트리의 `reserved_cells`
+  필드로 코디네이터에 보인다 — 안 보이면 over-admit이 예약 경로로 재발한다.
+- 코디네이터 재시작은 Reconcile로 미결 예약을 수렴시키고, 통신 단절 시
+  각 노드는 로컬 TTL로 자동 회수한다.
+- 장애 시험: partial prepare, release 유실, 코디네이터 사망 — 어느
+  경우에도 예약 잔류 0(TTL 회수 확인).
 
 ## 수명 규약
 
