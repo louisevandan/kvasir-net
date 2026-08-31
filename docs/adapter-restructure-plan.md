@@ -102,10 +102,10 @@ edge별 row·byte credit, ACK/중복/timeout에서의 idempotent 반환, 순서�
 | P1b | D4 수정: 안정 재현 → 원인 규명 → 실제 수명/네이티브 상태 수정 | D4 | 스트레스 C(40요청, 슬롯 재사용) 반복 통과 |
 | P2 | `kv=1` 왕복 + **fault gate**. 선행 구현: PreparePersist의 내구 staged 번들, `Committing` 증거 기반 판정(어댑터 Reconcile의 Inconsistent 축약 교체), 수렴 표의 백엔드 중립 코어 수정 — 표는 [kv-state-store-convention.md](kv-state-store-convention.md) 소유. fault gate: 각 스테이지 commit 전·중·후 실패, 부작용 완료·finalize 전 종료(=Committing 복구), 부분 committed+부분 prepared 재조정, 코디네이터 재시작 후 명시적 수렴, 세션 경합 4종(Persist↔Restore, Persist↔Discard, Restore↔GC, 이중 Persist). 정체성 완화 **행렬**: {n_batch, n_ubatch, n_seq_max, n_ctx_seq, kv_unified} × {K/V 형식, flash/v_trans} × {같은 compat 재빌드, 다른 revision} × {소스 backend × 대상 backend} — 통과 항목만 등급 인하, 나머지 fail-closed | D2, D6, D14, D16, D18 | 전 fault gate 통과(Committing 각 지점 포함); 세션 경합 시험에서 교차 손상 0; 재로딩 후 복원 성공; 행렬 결과 문서화 |
 | P2.5 | n_ubatch 정적 보정: P5 측정 기준값 확정 (자동 최적화는 P7) | D8 일부 | 보정값으로 기준 워크로드 재측정·기록 |
-| P3 | L2 수용·점유: 셀 인지 수용 + TTL Persist + 재요청 Restore + LCP(`TrimTo` 2PC 포함) + 동시성 세 축 분리(max_resident/decode_parallelism — 축 계약은 [adapter-batching-layers.md](adapter-batching-layers.md) 소유). **P2 fault gate 통과가 전제** | D5, D11 | 예측 최악 셀 선예약 — 다중 노드는 예약 2PC(규약 소유: prepared 회계 포함, 로컬 단조 TTL 회수, 멱등 release), 부족 시 대기/거절, over-admit 0(prepared 포함); 분기 프롬프트에서 전 스테이지 TrimTo attest 전 프리필 시작 0건; 헤비+숏 혼합에서 무고 세션 실패 0; TTFT 분포 개선 |
+| P3 | L2 수용·점유: 셀 인지 수용 + 스냅샷 명령 이행(Persist/`Checkpoint` 신설/`SnapshotList` 신설/RestoreInto 확장/Fork/Discard — 어휘와 의미는 규약 소유, 트리거 정책은 전부 OUTER) + 재요청 Restore + LCP(`TrimTo` 2PC 포함) + 동시성 세 축 분리(max_resident/decode_parallelism — 축 계약은 [adapter-batching-layers.md](adapter-batching-layers.md) 소유). **P2 fault gate 통과가 전제** | D5, D11 | 예측 최악 셀 선예약 — 다중 노드는 예약 2PC(규약 소유: prepared 회계 포함, 로컬 단조 TTL 회수, 멱등 release), 부족 시 대기/거절, over-admit 0(prepared 포함); 분기 프롬프트에서 전 스테이지 TrimTo attest 전 프리필 시작 0건; 헤비+숏 혼합에서 무고 세션 실패 0; TTFT 분포 개선 |
 | P4 | L3 전략 크레이트 추출 + 기록 트레이스 골든 재생 | — | 기존 trace 재생 결과 동일 |
 | P4.5 | fragment credit 계약 구현: `(generation, edge, sequence, stream_epoch, fragment)` 정체성, edge별 row·byte credit — `U_edge = min(producer, consumer)` 협상, `B_edge`는 모델·cut별 합의, 불일치 시 load 거부 — idempotent 반환, 순서·취소 규칙, 큐·RSS 상한 | D1 전제 | 중복·timeout·취소 fault test 통과; credit 누수 0; credit exhaustion 시험 통과; long-prompt 경계 메모리 상한 준수 실측 |
-| P5 | 파이프라인 깊이>1 (프리필 청크 연속 투입부터) | D1 | GPU util 상승, 혼합 배치 발생, ITL 비악화, **경계 메모리·큐 깊이 상한 준수** |
+| P5 | 파이프라인 깊이>1 (프리필 청크 연속 투입부터). 스냅샷 정합 펜스는 전 파이프라인 정지가 아니라 **대상 시퀀스 드레인**으로 좁힌다(정산 판정은 fragment credit) | D1 | GPU util 상승, 혼합 배치 발생, ITL 비악화, **경계 메모리·큐 깊이 상한 준수**; 시퀀스 드레인 중 타 시퀀스 스텝 지속 |
 | P6 | cut-set 연속 버퍼 합치기, 통과 텐서 재전송 생략 | D7 | 스텝 고정비 감소 실측 |
 | P7 | 청크 persist(D10), SWA V(D9), n_ubatch 자동 최적화, DENIED 계열 3축 감사 | D8~D10 | 계열별 감사 문서 + 로드 성공 |
 
@@ -203,6 +203,17 @@ llama.cpp의 추상층(llama/ggml 인터페이스)과 구상 백엔드(CPU/CUDA/
 | h | 복원의 셀 선확보가 4노드 각각의 비동기 해제에 걸림 | P3 셀 예약을 전 노드 all-or-release로 명시(아래 P3 항목) |
 | i | recurrent 앵커가 저장소 커밋 형식 | upstream pin 형식으로 정정, R2에 규칙 추가 |
 
+### 방향 확정: 스냅샷 명령 모델 (2026-08-31)
+
+영속화 트리거를 TTL로 좁혔던 것을 정정했다. 분기 워크로드(기존 KV를
+영속화·복사해 새 세션으로 트리 분기)가 일상 연산이므로, 어댑터는 명령
+어휘(Persist/Checkpoint/SnapshotList/RestoreInto/Fork/Discard/Unload)의
+이행만 소유하고 **모든 트리거 정책은 OUTER**가 소유한다. 이 과정에서
+기존 계약과의 실제 충돌 하나를 확인했다: `CacheAction::Persist`의
+"한 동사" 논증은 상주를 유지하는 족적(Checkpoint) 용례를 보지 못했다.
+`Fork {into}`는 계약이 이미 분기를 예견한 부분이다. 상세는 규약의
+"스냅샷 명령 모델" 절이 소유한다.
+
 ### 7차 리뷰 반영 + 자체 감사 (2026-08-31)
 
 EOL 수리는 승인되었고, 리뷰가 clean pin 직접 적용으로 aggregate
@@ -236,6 +247,22 @@ EOL 수리는 승인되었고, 리뷰가 clean pin 직접 적용으로 aggregate
 
 **U0·P-1 완료는 여전히 주장하지 않는다.** 병행 가능 범위는 session_key
 wire·하네스 이관이며, base×variant 구현은 이 계약의 리뷰 승인 후다.
+
+## known open surface
+
+다음 리뷰가 지적할 것으로 스스로 예상하는 미해결 표면이다. 여기 등재된
+항목의 지적은 "새 발견"이 아니라 "등재 확인"으로 판정한다.
+
+| # | 표면 | 예정 소유 |
+| --- | --- | --- |
+| O1 | 텔레메트리 채널 자체의 계약 부재 — reserved_cells·last_access·세션 점유를 어느 이벤트로, 어떤 주기·순서 보장으로 나르는지 | P1a |
+| O2 | U0 ③의 stage ABI가 "제거하라"뿐 — P4 소유 versioned ABI의 실제 표면(함수·타입) 미정의 | U0 설계 산출물 |
+| O3 | 상태 게이트 fixture의 계열 커버리지 — kv_cache/iswa/hybrid/recurrent 각각의 소형 골든 모델 실재 미확인 | P2 준비 |
+| O4 | 예약 2PC와 세션 lease의 관계 — 예약이 lease를 전제하는지, 두 조율 계층의 획득 순서 | P0 |
+| O5 | session_key wire 확장이 정말 어댑터 content-type 안에서 끝나는지 — 구현 전 미검증 | P-1 |
+| O6 | `Checkpoint`·`SnapshotList`·RestoreInto의 계약 문면 — 방향은 확정(스냅샷 명령 모델), p4-adapter 동사 추가의 정확한 시그니처와 2PC 결합 미작성 | P-1 계약, P3 구현 |
+| O7 | resident 계층 체크포인트(tier)의 capability 협상 | P7 |
+| O8 | 코디네이터의 스냅샷 원장 복구 — SnapshotList 교집합으로 OUTER 재시작 후 상태 재구성하는 절차 | P3 |
 
 ## 검토 수렴 규약
 

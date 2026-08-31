@@ -26,7 +26,9 @@ magic/버전/정체성/SHA-256/원자적 publish)은 구현이 이미 갖고 있
 
 ## 저장 단위: 무엇이 하나의 레코드인가
 
-**샤드 레코드 = (base_model_id × cut_id × kv_format) × (session_key × kv_variant_id × position)**
+**샤드 레코드 = (base_model_id × cut_id × kv_format) × (session_key ×
+snapshot_key × kv_variant_id × position)** — 한 세션은 서로 다른 키의
+영속 족적을 여러 개 가질 수 있다.
 
 로딩 ID(`load_generation`)는 레코드 정체성이 아니다. 같은 모델을 같은
 레이어 구성으로 재로딩한 노드는 기존 레코드를 재사용한다. 세대는
@@ -133,15 +135,17 @@ tokens 등)이 존재할 수 없도록 **불변 세대 디렉터리 + 원자 포
 ```
 <kv_root>/v2/<base_model_id 64hex>/<cut_id>/
   sessions/sk-v1/<sk-digest 64hex>/
-    gen-<n>/                # 불변 번들. 생성 후 내부 파일 수정 금지
+    snap-v1/<snapshot_key digest 64hex>/   # 명명된 족적. 키 문법·경로
+                            # digest 규칙은 session_key 계약을 재사용
+      gen-<n>/              # 불변 번들. 생성 후 내부 파일 수정 금지
       state.lkv             # (128MB 초과 시 state-<k>.part, 열린 항목)
       tokens.bin            # 프롬프트+생성 전체 토큰 ID, LE i32 나열
       meta.json             # position, record_generation=n, state/tokens 각
                             # SHA-256, raw session_key, base_model_id,
                             # kv_variant_id,
-                            # cut_id, kv_format, saved_at
-    MANIFEST                # 원자 포인터: {generation, meta_sha256}
-    CONTROL                 # 권위 epoch·generation, 원자 교체
+                            # cut_id, kv_format, raw snapshot_key, saved_at
+      MANIFEST              # snapshot별 원자 포인터: {generation, meta_sha256}
+    CONTROL                 # 세션 권위 epoch·generation, 원자 교체
     ACCESS                  # 조언적 최근 접근 시각 {last_access, epoch}, 원자 교체
     lease.json              # 세션 샤드 단일 작성자 lease
   receipts/<operation_id>.receipt
@@ -294,6 +298,42 @@ Aborting 중 committed 발견을 즉시 실패로 접는다 — 그 시험은 �
 고정이지 이 표의 구현이 아니다. Persist roll-forward와 Restore rollback
 경로는 llama 지식 없는 백엔드 중립 코어 수정으로 추가한다(계획 원칙 1).
 
+## 스냅샷 명령 모델 (2026-08-31 방향 확정)
+
+영속화의 트리거는 타임아웃 하나가 아니다. 분기 에이전트 워크로드에서
+"기존 KV를 영속화해 복사한 새 세션으로 트리를 분기"하는 것은 일상
+연산이고(LM Studio mlx-engine agentic workloads, llama.cpp/LM Studio의
+Context Checkpoints가 같은 방향의 선례), **정책 — 언제·무엇을·왜 — 은
+전부 OUTER 소유**다. 어댑터·노드는 자발적으로 영속화·언로드하지 않으며,
+다음 명령 어휘를 이행만 한다. TTL·quota·분기 시점은 모두 OUTER가 이
+어휘로 표현하는 정책이다.
+
+| OUTER 명령 | `CacheAction` 대응 | 상태 |
+| --- | --- | --- |
+| 세션 S를 키 K로 영속화하고 **상주 해제** | `Persist` (+2PC Prepare) | 있음 — cache_key를 시퀀스 복사가 아니라 OUTER 지정 snapshot key로 바꾸는 수정 필요(`cache_direct.inc.rs::cache_key` @ 87ec1317) |
+| 세션 S를 키 K로 영속화하되 **상주 유지**(족적 남기고 계속) | **`Checkpoint` 신설 필요** | 없음 — 현행 `Persist` 주석은 "resident로 두는 persist는 아무것도 해제하지 않으므로 한 동사"라고 논증하는데(`work/cache/mod.rs::CacheAction::Persist` @ 87ec1317), 이 논증은 분기 족적 용례를 보지 못했다 |
+| 세션 S의 영속 키 목록 | **`SnapshotList` 신설 필요** | 없음 — `Reconcile`은 단일 operation 영수증 조회다. 노드별 목록을 코디네이터가 교집합하고, 일부 cut에만 있는 스냅샷은 Inconsistent로 보고(사용 불가) |
+| 세션 S의 키 K로 **세션 T를 로딩**(디스크 분기) | `Restore`를 target 지정으로 확장 | 부분 — 현행 Restore는 "같은 id로"다. target은 상주 상태가 비어 있어야 하며, 복원 판정 사다리가 T의 요청 프롬프트에 대해 그대로 적용된다 |
+| 상주 세션의 즉시 분기(메모리 복사) | `Fork { into }` | **있음** — "copies rather than aliases" 계약 그대로 |
+| 세션 언로드(영속 없이 해제) | 기존 release 경로 | 있음 |
+| 키 K 폐기 | `Discard` (+2PC) | 있음 |
+
+- 스냅샷은 **불변**이다. 같은 키로의 재영속화는 그 키의 gen-N 체인이
+  받는다(supersede = 키 내부 CAS). 서로 다른 키는 서로를 대체하지 않는다.
+- 디스크 분기(RestoreInto)는 레코드를 복사하지 않는다 — 불변 번들을
+  읽어 T의 상주로 import할 뿐이고, 이후 T의 영속화는 T의 세션 디렉터리에
+  쓴다. import 완료 후 원본 스냅샷과의 의존은 없다(Discard 안전).
+- 배치 결합: Checkpoint·Persist·Fork는 대상 시퀀스가 **정지점**(in-flight
+  행 없음, 전 스테이지 정산)에 있을 때만 실행된다. 펜스와 삽입 일정은
+  batching 계약([adapter-batching-layers.md](adapter-batching-layers.md)
+  불변식 11)이 소유한다.
+- 세션 lease·CONTROL·epoch는 세션 수준 그대로다 — 같은 세션의 서로 다른
+  스냅샷 연산도 직렬화된다(단순함 우선; 병목이 실측되면 그때 키 단위로
+  세분한다).
+- 확장(열린 항목): `snapshot_tier = durable | resident` — resident 계층은
+  디스크를 거치지 않는 고속 체크포인트(LM Studio Context Checkpoints
+  유형)로, capability 협상 뒤에만 노출한다.
+
 ## 예약 2PC
 
 다중 노드 셀 예약과 다중 샤드 lease 획득의 "실패 시 전부 해제"는
@@ -324,6 +364,8 @@ Aborting 중 committed 발견을 즉시 실패로 접는다 — 그 시험은 �
   고아 `gen-*`은 **노출 없이 격리 또는 GC**한다 — publish되지 않은 세대를
   재색인으로 살리는 것은 금지다.
 - 새 publish 성공(=MANIFEST CAS 성공) 후 구세대 삭제.
+- 어댑터는 어떤 스냅샷도 **자발적으로 만들거나 지우지 않는다** — TTL
+  판단을 포함한 모든 트리거는 OUTER의 명령이다.
 - 노출된 레코드의 삭제는 항상 **코디네이터가 발행하는 4-스테이지 Discard
   2PC**다. 세션 레코드는 여러 cut의 샤드 집합이므로 각 노드가 ACCESS만
   보고 독립 삭제하면 partial-absent 상태를 만든다. TTL·quota victim
