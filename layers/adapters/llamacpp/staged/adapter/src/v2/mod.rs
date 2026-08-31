@@ -5,6 +5,7 @@ mod commands;
 mod logical;
 mod node;
 mod scheduler;
+mod session_key;
 
 pub use capsule::{
     CapsuleError, CapsuleSet, GeneratedToken, Invocation, PhysicalCapsule, PhysicalOutcome,
@@ -17,6 +18,7 @@ pub use commands::{
     UnloadCommand,
 };
 pub use logical::{LogicalBatch, LogicalBatchError, LogicalRow};
+pub use session_key::{SessionKey, SessionKeyError};
 pub use node::LlamaNodeAdapter;
 pub use scheduler::{Allocation, Demand, Phase, Scheduler, SchedulerError};
 
