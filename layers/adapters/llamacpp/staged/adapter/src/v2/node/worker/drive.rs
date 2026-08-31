@@ -9,6 +9,34 @@ impl Worker {
             if self.state.verify_fenced() {
                 return Ok(());
             }
+            // Arrival-phase coalescing. A batch is planned from whatever is
+            // ready at this instant, so a group of requests that once arrived
+            // together keeps re-forming with exactly those members: measured
+            // over a continuous-arrival run, 4,483 physical batches carried
+            // only 38 distinct membership sets, 2.84 rows each. Groups born at
+            // different times never merge because each is in flight while the
+            // others become ready.
+            //
+            // Coalescing holds a plan back until enough sequences are ready to
+            // share one batch. Waiting for full quiescence (threshold beyond
+            // the sequence count) maximises width but costs all pipeline
+            // depth; measured on the continuous-arrival scenario it widened
+            // batches 2.84 -> 10.56 rows and took mixed batches 2 -> 19, yet
+            // cost 12% of throughput because a step is not fixed-cost enough
+            // for width alone to pay for the lost depth. A finite threshold
+            // keeps both: batches stay at least this wide, and the rest of the
+            // active set stays in flight behind them.
+            //
+            // The wait is never indefinite. Every in-flight sequence returns an
+            // outcome, each outcome re-enters this loop, and the threshold is
+            // ignored once nothing is in flight - so a residual set smaller
+            // than the threshold still drains.
+            if self.state.min_batch_rows > 1
+                && self.state.any_in_flight()
+                && self.state.ready_row_count() < self.state.min_batch_rows
+            {
+                return Ok(());
+            }
             let Some(session_id) = self.state.first_session_with_work() else {
                 return Ok(());
             };

@@ -36,8 +36,11 @@ const base = {
   devices: GEMMA4_DEVICES,
   model: MODEL,
   binary: BINARY,
-  ingress: "tcp://127.0.0.1:52203",
-  endpointBase: 52_211,
+  // Below the Windows dynamic port range (49152+), so an outbound
+  // ephemeral connection cannot take the port from under the agent, and
+  // outside every netsh excluded range on this machine.
+  ingress: "tcp://127.0.0.1:42003",
+  endpointBase: 42_011,
   nBatch: 512,
   nUbatch: 512,
   context: 2048,

@@ -63,6 +63,10 @@ pub struct AdapterState {
     pub next_event: u64,
     pub load_generation: u64,
     pub next_speculative_id: u64,
+    /// Hold a plan back until this many rows are ready, so a batch stops
+    /// re-forming the arrival group it was born in. 0 or 1 disables the wait.
+    /// See `Worker::drive_first_batches`.
+    pub min_batch_rows: usize,
     verify_fence: BTreeSet<String>,
 }
 
@@ -83,6 +87,10 @@ impl Default for AdapterState {
             next_event: 1,
             load_generation: 0,
             next_speculative_id: 1,
+            min_batch_rows: std::env::var("P4_STAGED_MIN_BATCH_ROWS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
             verify_fence: BTreeSet::new(),
         }
     }
@@ -122,6 +130,21 @@ impl AdapterState {
 
     pub fn clear_verify_fence(&mut self) {
         self.verify_fence.clear();
+    }
+
+    /// Whether any admitted request is still crossing the pipeline.
+    pub fn any_in_flight(&self) -> bool {
+        self.requests.values().any(|request| request.in_flight)
+    }
+
+    /// Rows a plan could carry right now. Decode contributes one row per ready
+    /// sequence; a pending prompt is counted as one because the scheduler
+    /// gives every prompt a row before water-filling the remainder.
+    pub fn ready_row_count(&self) -> usize {
+        self.requests
+            .values()
+            .filter(|request| request.phase().is_some())
+            .count()
     }
 
     pub fn first_session_with_work(&self) -> Option<String> {
