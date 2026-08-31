@@ -42,6 +42,17 @@ layers 13..34, so no stage boundary may fall inside that region. See
 
 ## Requirements
 
+Build the staged server for the compute capabilities actually present, not
+the script default:
+
+```bash
+node layers/adapters/llamacpp/staged/scripts/build-stage-server.mjs --cuda --cuda-architectures 86;89
+```
+
+The default `75;89` leaves an sm_86 card (RTX 3090) without native code, which
+this harness measured as 19.9 -> 6.15 tok/s while still producing a meaningful
+answer - the reason meaning and throughput are judged separately.
+
 A CUDA build of the staged server at `target/p4-staged-cuda/`, release builds
 of `p4-agent` and `p4-event-drive`, the model at the path in
 [`scenarios.mjs`](scenarios.mjs), and two NVIDIA devices. Port 52203 is used
