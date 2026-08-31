@@ -95,7 +95,7 @@ edge별 row·byte credit, ACK/중복/timeout에서의 idempotent 반환, 순서�
 
 | 단계 | 내용 | 해소 | 수용 기준 |
 | --- | --- | --- | --- |
-| U0 | llama 호환 경계: ① clean upstream pin 복구·pristine 검증(공식 prepare 통과) ② HELLO에 stage_abi·`build_id`(patch_set_sha256 포함)·활성 backend/device·`trim_support`·`state_abi_id`·backend layout 결속 ③ server의 llama 비공개 헤더 의존 제거(public `llama.h` + P4 소유 versioned stage ABI만; 내부 접근은 compat 구현 안으로) ④ 패치 큐 3분할(stage hook / upstream fix / model feature) ⑤ backend conformance 감사 3축 등재 ⑥ CPU conformance 매 pin 필수; production backend는 release manifest의 `required_backend_set` 선언 기준 — 현행 배포 target은 CUDA로 **한정 명시**하고, 선언된 전 backend가 plugin/version·device capability·실제 buffer placement 증거와 함께 통과해야 승격 ⑦ cross-backend Persist/Restore는 행렬 통과 전 fail-closed | D19, D20, D21, D22 | ① pin에서 공식 prepare 통과 — 양쪽 autocrlf의 깨끗한 checkout fixture 포함, patch_set_sha256·patched_tree 재검증·재기록, dirty 포트 시도는 폐기가 아니라 분기로 보존 ② 같은 upstream·다른 patch-set 두 빌드를 HELLO로 구분 + 협상값(trim_support·state_abi_id·backend layout)이 실측 능력과 일치하는 시험 ③ server include 빌드 게이트로 비공개 헤더 0건 ④ 전 패치 `stage_hook\|upstream_fix\|model_feature` 분류 — 미분류 0건, 묶음별 독립 적용 시험, upstream에 흡수된 fix 자동 검출·제거, stage hook의 허용 파일·심볼 범위 명세 ⑤ 감사 3축과 수치 동등성 기준 문서화 ⑥ CPU conformance 현행 pin 통과 + `required_backend_set` 선언·검증 절차 정의(현행 선언 = {CPU, CUDA}) ⑦ cross-backend 복원 거부를 부정 시험으로 확인 |
+| U0 | llama 호환 경계: ① clean upstream pin 복구·pristine 검증(공식 prepare 통과) ② HELLO에 stage_abi·`build_id`(patch_set_sha256 포함)·활성 backend/device·`trim_support`·`state_abi_id`·backend layout 결속 ③ server의 llama 비공개 헤더 의존 제거(public `llama.h` + P4 소유 versioned stage ABI만; 내부 접근은 compat 구현 안으로) ④ 패치 큐 3분할(stage hook / upstream fix / model feature) ⑤ backend conformance 감사 3축 등재 ⑥ backend 게이트는 release manifest의 `required_backend_set` 선언 기준이다 — 집합에는 CPU 기준선이 항상 포함되고 배포가 주장하는 production backend가 더해진다(현행 선언 = {CPU 기준선, CUDA production}). 선언된 전 backend가 plugin/version·device capability·실제 buffer placement 증거와 함께 통과해야 승격 ⑦ cross-backend Persist/Restore는 행렬 통과 전 fail-closed | D19, D20, D21, D22 | ① pin에서 공식 prepare 통과 — 양쪽 autocrlf의 깨끗한 checkout fixture 포함, patch_set_sha256·patched_tree 재검증·재기록, dirty 포트 시도는 폐기가 아니라 분기로 보존 ② 같은 upstream·다른 patch-set 두 빌드를 HELLO로 구분 + 협상값(trim_support·state_abi_id·backend layout)이 실측 능력과 일치하는 시험 ③ server include 빌드 게이트로 비공개 헤더 0건 ④ 전 패치 `stage_hook\|upstream_fix\|model_feature` 분류 — 미분류 0건, 묶음별 독립 적용 시험, upstream에 흡수된 fix 자동 검출·제거, stage hook의 허용 파일·심볼 범위 명세 ⑤ 감사 3축과 수치 동등성 기준 문서화 ⑥ `required_backend_set` 선언·검증 절차 정의 — 현행 선언 {CPU 기준선, CUDA production} 중 CPU 축은 현행 pin에서 통과; CUDA 축 통과는 U0 완료 조건이 아니라 production 승격 조건 ⑦ cross-backend 복원 거부를 부정 시험으로 확인 |
 | P-1 | 고정 작업: `base_model_id × kv_variant_id` 계약 확정(정의는 규약이 단독 소유, 구현 착수는 계약 승인 후), `session_key`·prefix 증거의 계약 5요소(정규화·유일성 범위·버전·비교 규칙·부정 시험) 문서화, `session_key` wire 필드(어댑터 content-type + OUTER 전달), 하네스를 versioned `test/benchmarks/`로 이관, 증거 규약(commit·compat manifest·spec 전문·환경·요약기 버전·artifact checksum) | D15 일부 | 하네스가 저장소에서 재실행 가능; D4 실패 증거 재확보·보존; base_model_id·kv_variant_id가 load/restore 경로에 결속되고 base 1바이트 변조 시험이 **캐시 부재·조작된 사이드카 양쪽 경로에서 통과**; LoRA scale·mmproj·control-vector 변조 거부 + 엔트리 순서 무관 시험 통과; session_key가 OUTER→어댑터→저장→재시작 Restore까지 동일 값으로 왕복; 다른 request_id의 같은 session_key 재사용 성공; 같은 request_id의 다른 session_key 별칭 거부 |
 | P0 | 상태 **및 영수증** 네임스페이스: `v2/<model_id>/<cut_id>/{sessions,receipts,tmp}`, 덮어쓰기 정체성 대조, meta.json(saved_at·session_key·digest 결속) + 조언적 ACCESS 분리 + CONTROL epoch CAS | D3, D13, D17 | 동일 `operation_id`로 4개 cut 동시 Prepare/Commit/Reconcile 성공; 충돌 save 거부; gen-N 번들 + MANIFEST CAS publish의 각 단계 crash 시험에서 항상 완전한 번들만 노출; 세션 lease 원자 획득·epoch fencing 동작 |
 | P1a | 행동 없는 원장: 매핑·상주·슬롯 수명 **관찰**과 불변식 위반 검출 + 시퀀스별 backend position·사용 셀 텔레메트리 신설 | D12; D5는 측정 전제만(해소는 P3) | 로드 전 노드별 KV 예측 = 실할당 ±1%; 이벤트별 원장-텔레메트리 대조 일치 |
@@ -105,7 +105,7 @@ edge별 row·byte credit, ACK/중복/timeout에서의 idempotent 반환, 순서�
 | P3 | L2 수용·점유: 셀 인지 수용 + 스냅샷 명령 이행(Persist/`Checkpoint` 신설/`SnapshotList` 신설/RestoreInto 확장/Fork/Discard — 어휘와 의미는 규약 소유, 트리거 정책은 전부 OUTER) + 재요청 Restore + LCP(`TrimTo` 2PC 포함) + 동시성 세 축 분리(max_resident/decode_parallelism — 축 계약은 [adapter-batching-layers.md](adapter-batching-layers.md) 소유). **P2 fault gate 통과가 전제** | D5, D11 | 예측 최악 셀 선예약 — 다중 노드는 예약 2PC(규약 소유: prepared 회계 포함, 로컬 단조 TTL 회수, 멱등 release), 부족 시 대기/거절, over-admit 0(prepared 포함); 분기 프롬프트에서 전 스테이지 TrimTo attest 전 프리필 시작 0건; 헤비+숏 혼합에서 무고 세션 실패 0; TTFT 분포 개선 |
 | P4 | L3 전략 크레이트 추출 + 기록 트레이스 골든 재생 | — | 기존 trace 재생 결과 동일 |
 | P4.5 | fragment credit 계약 구현: `(generation, edge, sequence, stream_epoch, fragment)` 정체성, edge별 row·byte credit — `U_edge = min(producer, consumer)` 협상, `B_edge`는 모델·cut별 합의, 불일치 시 load 거부 — idempotent 반환, 순서·취소 규칙, 큐·RSS 상한 | D1 전제 | 중복·timeout·취소 fault test 통과; credit 누수 0; credit exhaustion 시험 통과; long-prompt 경계 메모리 상한 준수 실측 |
-| P5 | 파이프라인 깊이>1 (프리필 청크 연속 투입부터). 스냅샷 정합 펜스는 전 파이프라인 정지가 아니라 **대상 시퀀스 드레인**으로 좁힌다(정산 판정은 fragment credit) | D1 | GPU util 상승, 혼합 배치 발생, ITL 비악화, **경계 메모리·큐 깊이 상한 준수**; 시퀀스 드레인 중 타 시퀀스 스텝 지속 |
+| P5 | 파이프라인 깊이>1 (프리필 청크 연속 투입부터). 스냅샷 정합 펜스는 전 파이프라인 정지가 아니라 **대상 시퀀스 드레인**으로 좁힌다(정산 증거는 credit이 아니라 stage별 `SequenceQuiesced` attest — O9) | D1 | GPU util 상승, 혼합 배치 발생, ITL 비악화, **경계 메모리·큐 깊이 상한 준수**; 시퀀스 드레인 중 타 시퀀스 스텝 지속 |
 | P6 | cut-set 연속 버퍼 합치기, 통과 텐서 재전송 생략 | D7 | 스텝 고정비 감소 실측 |
 | P7 | 청크 persist(D10), SWA V(D9), n_ubatch 자동 최적화, DENIED 계열 3축 감사 | D8~D10 | 계열별 감사 문서 + 로드 성공 |
 
@@ -203,6 +203,26 @@ llama.cpp의 추상층(llama/ggml 인터페이스)과 구상 백엔드(CPU/CUDA/
 | h | 복원의 셀 선확보가 4노드 각각의 비동기 해제에 걸림 | P3 셀 예약을 전 노드 all-or-release로 명시(아래 P3 항목) |
 | i | recurrent 앵커가 저장소 커밋 형식 | upstream pin 형식으로 정정, R2에 규칙 추가 |
 
+### 8차 리뷰 반영 + 저장 계층 방향 (2026-08-31)
+
+8차 판정: 승인 보류 — 정확성 차단점 3, 계약 불일치 2. O1~O8은 중복
+계산되지 않았다(등재 제도가 의도대로 동작).
+
+| 판정 | 처리 |
+| --- | --- |
+| Checkpoint 논거 타당하나 동사 중복 지양 | `Snapshot{after_commit: KeepResident\|ReleaseResident}` 한 형상으로 수용 |
+| 무복사 분기는 조건부 | 3조건(동일 storage domain·호환 cut·전 스테이지 완료 후 절연) + read-pin(O10) 명문화 |
+| fragment credit은 정지점 증거가 아님 | 확인 — plan.md §3이 credit 반환을 "peer가 인수"로 정의. `SequenceQuiesced` attest로 교체, O9 등재 |
+| SnapshotList 키 교집합 부족(O8 등재 확인) | 교집합 단위를 논리 스냅샷 튜플로 정정 |
+| backend set 문면 모순(미닫힘 판정) | U0 ⑥ 양쪽 셀 통일 — {CPU 기준선, CUDA production}, CUDA 통과는 승격 조건 |
+| state ABI 게이트·예약 2PC 조건부 닫힘 | O3(fixture 실재)·O4(예약 수명+TTL 경합) 문구 확장으로 조건 등재 |
+
+추가 방향 지시(저장 계층): 영속화 목적지는 디스크만이 아니다 —
+`tier = durable | ram | resident`를 규약에 신설했다. ram 계층은 과부하
+공정 스왑(일부 KV를 RAM으로 내리고 다른 요청 처리 후 재적재)을 위한
+휘발 계층으로, 크래시 수렴은 Absent(손상 아님), cross-pin ABI 부담 없음,
+호스트 바이트는 별도 수용 회계 축(O11). 스왑 정책은 전부 OUTER 명령이다.
+
 ### 방향 확정: 스냅샷 명령 모델 (2026-08-31)
 
 영속화 트리거를 TTL로 좁혔던 것을 정정했다. 분기 워크로드(기존 KV를
@@ -258,11 +278,14 @@ wire·하네스 이관이며, base×variant 구현은 이 계약의 리뷰 승�
 | O1 | 텔레메트리 채널 자체의 계약 부재 — reserved_cells·last_access·세션 점유를 어느 이벤트로, 어떤 주기·순서 보장으로 나르는지 | P1a |
 | O2 | U0 ③의 stage ABI가 "제거하라"뿐 — P4 소유 versioned ABI의 실제 표면(함수·타입) 미정의 | U0 설계 산출물 |
 | O3 | 상태 게이트 fixture의 계열 커버리지 — kv_cache/iswa/hybrid/recurrent 각각의 소형 골든 모델 실재 미확인 | P2 준비 |
-| O4 | 예약 2PC와 세션 lease의 관계 — 예약이 lease를 전제하는지, 두 조율 계층의 획득 순서 | P0 |
+| O4 | 예약 2PC와 세션 lease의 관계 — 예약이 lease를 전제하는지, 두 조율 계층의 획득 순서, 예약 수명 `Prepared→Committed→Consumed/Released`와 TTL 만료·Commit 경합의 승자 규칙 | P0 |
 | O5 | session_key wire 확장이 정말 어댑터 content-type 안에서 끝나는지 — 구현 전 미검증 | P-1 |
-| O6 | `Checkpoint`·`SnapshotList`·RestoreInto의 계약 문면 — 방향은 확정(스냅샷 명령 모델), p4-adapter 동사 추가의 정확한 시그니처와 2PC 결합 미작성 | P-1 계약, P3 구현 |
+| O6 | `Snapshot{after_commit}`·`SnapshotList`·RestoreInto의 계약 문면 — 방향은 확정(스냅샷 명령 모델), p4-adapter 동사의 정확한 시그니처·2PC 결합·**Fork와 snapshot key의 immutable-ID/mutable-ref 선택** 미작성 | P-1 계약, P3 구현 |
 | O7 | resident 계층 체크포인트(tier)의 capability 협상 | P7 |
-| O8 | 코디네이터의 스냅샷 원장 복구 — SnapshotList 교집합으로 OUTER 재시작 후 상태 재구성하는 절차 | P3 |
+| O8 | 코디네이터의 스냅샷 원장 복구 — 교집합 단위는 키가 아니라 논리 스냅샷 튜플(규약 정정 완료), OUTER 재시작 후 재구성 절차 자체는 미작성 | P3 |
+| O9 | Sequence quiescence — credit와 별개의 stage별 `SequenceQuiesced` attest 계약(credit 반환은 인수 증거이지 compute/KV 완료가 아님, plan.md §3) | P4.5 |
+| O10 | Snapshot storage domain·read pin — source·target lease, 동시 Discard 차단, 노드 이동·cross-domain 복사 경로 | P3 |
+| O11 | durable/ram-byte admission — 노드별 디스크·호스트 RAM 예약, ENOSPC partial-prepare 수렴, OUTER 가용량 텔레메트리 | P3 |
 
 ## 검토 수렴 규약
 

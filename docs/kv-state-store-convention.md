@@ -312,17 +312,23 @@ Context Checkpoints가 같은 방향의 선례), **정책 — 언제·무엇을�
 | --- | --- | --- |
 | 세션 S를 키 K로 영속화하고 **상주 해제** | `Persist` (+2PC Prepare) | 있음 — cache_key를 시퀀스 복사가 아니라 OUTER 지정 snapshot key로 바꾸는 수정 필요(`cache_direct.inc.rs::cache_key` @ 87ec1317) |
 | 세션 S를 키 K로 영속화하되 **상주 유지**(족적 남기고 계속) | **`Checkpoint` 신설 필요** | 없음 — 현행 `Persist` 주석은 "resident로 두는 persist는 아무것도 해제하지 않으므로 한 동사"라고 논증하는데(`work/cache/mod.rs::CacheAction::Persist` @ 87ec1317), 이 논증은 분기 족적 용례를 보지 못했다 |
-| 세션 S의 영속 키 목록 | **`SnapshotList` 신설 필요** | 없음 — `Reconcile`은 단일 operation 영수증 조회다. 노드별 목록을 코디네이터가 교집합하고, 일부 cut에만 있는 스냅샷은 Inconsistent로 보고(사용 불가) |
+| 세션 S의 영속 키 목록 | **`SnapshotList` 신설 필요** | 없음 — `Reconcile`은 단일 operation 영수증 조회다. 교집합 단위는 키가 아니라 **논리 스냅샷**이다 — `{snapshot ref generation, operation_id, position, tokens_digest, state_abi_id, kv_variant_id}` 전 필드 일치. 필드 불일치·부분 존재는 Inconsistent(사용 불가) |
 | 세션 S의 키 K로 **세션 T를 로딩**(디스크 분기) | `Restore`를 target 지정으로 확장 | 부분 — 현행 Restore는 "같은 id로"다. target은 상주 상태가 비어 있어야 하며, 복원 판정 사다리가 T의 요청 프롬프트에 대해 그대로 적용된다 |
 | 상주 세션의 즉시 분기(메모리 복사) | `Fork { into }` | **있음** — "copies rather than aliases" 계약 그대로 |
 | 세션 언로드(영속 없이 해제) | 기존 release 경로 | 있음 |
 | 키 K 폐기 | `Discard` (+2PC) | 있음 |
 
+- `Persist`/`Checkpoint`는 별도 상태기가 아니라
+  `Snapshot { after_commit: KeepResident | ReleaseResident }` 한 형상으로
+  구현한다 — durable publish까지 동일하고 후조건만 다르다(8차 리뷰 권고
+  수용; llama.cpp 업데이트 표면 최소화).
 - 스냅샷은 **불변**이다. 같은 키로의 재영속화는 그 키의 gen-N 체인이
   받는다(supersede = 키 내부 CAS). 서로 다른 키는 서로를 대체하지 않는다.
-- 디스크 분기(RestoreInto)는 레코드를 복사하지 않는다 — 불변 번들을
-  읽어 T의 상주로 import할 뿐이고, 이후 T의 영속화는 T의 세션 디렉터리에
-  쓴다. import 완료 후 원본 스냅샷과의 의존은 없다(Discard 안전).
+- 디스크 분기(RestoreInto)는 레코드를 복사하지 않는다 — 조건부다:
+  ① 같은 storage domain에서 읽고 ② cut·정체성 호환이 성립하며 ③ **전
+  스테이지 import 완료 후에만** 원본과의 관계를 끊는다. 그 전의 원본
+  Discard는 read-pin이 막아야 하고(O10), 노드 이동·cross-domain은 복사
+  경로다. 이후 T의 영속화는 T의 세션 디렉터리에 쓴다.
 - 배치 결합: Checkpoint·Persist·Fork는 대상 시퀀스가 **정지점**(in-flight
   행 없음, 전 스테이지 정산)에 있을 때만 실행된다. 펜스와 삽입 일정은
   batching 계약([adapter-batching-layers.md](adapter-batching-layers.md)
@@ -330,9 +336,31 @@ Context Checkpoints가 같은 방향의 선례), **정책 — 언제·무엇을�
 - 세션 lease·CONTROL·epoch는 세션 수준 그대로다 — 같은 세션의 서로 다른
   스냅샷 연산도 직렬화된다(단순함 우선; 병목이 실측되면 그때 키 단위로
   세분한다).
-- 확장(열린 항목): `snapshot_tier = durable | resident` — resident 계층은
-  디스크를 거치지 않는 고속 체크포인트(LM Studio Context Checkpoints
-  유형)로, capability 협상 뒤에만 노출한다.
+### 저장 계층 (tier)
+
+스냅샷 명령은 `tier` 인자를 갖는다 — 목적지는 디스크만이 아니다.
+
+| tier | 매체 | 생존성 | 용도 |
+| --- | --- | --- | --- |
+| durable | SSD — 이 규약의 파일 기계장치 전체 적용 | 프로세스·재부팅 생존 | 장기 족적, 세션 이동 |
+| ram | 호스트 CPU 메모리 — 파일 기계장치 미적용, 프로세스 내 보관 | **휘발**: 프로세스 종료로 소멸 | 과부하 공정 스왑: 일부 세션 KV를 RAM으로 내리고 다른 요청을 처리한 뒤 재적재 |
+| resident | backend(VRAM) 내 체크포인트 | 컨텍스트 수명 | 고속 롤백·분기 (O7, capability 협상 후) |
+
+- ram 계층: `llama_state_seq` 바이트를 파일 대신 호스트 메모리에 보관한다
+  — llama-server의 `--cache-ram`/idle-slot offload가 같은 방향의 선례다.
+  크래시 수렴은 **Absent이지 Inconsistent가 아니다**: 휘발 계층의 소실은
+  손상이 아니라 부재다. 재시작을 건너 살지 않으므로 cross-pin state ABI
+  부담도 없다. 영수증은 tier를 기록하고, ram 레코드를 가리키는 영수증은
+  재시작 후 Absent로 해소된다.
+- ram 바이트는 GPU 셀과 별개의 수용 회계 축이다(호스트 바이트;
+  MEMORY_ACTUAL host 항목과 텔레메트리로 보고). durable 디스크 바이트
+  예산과 함께 O11이 소유한다.
+- 스왑 정책은 전부 OUTER 명령이다: 스왑 아웃 =
+  `Snapshot{tier=ram, ReleaseResident}`, 스왑 인 = `Restore(ram)`. 배치
+  정합 펜스(불변식 11)가 동일하게 적용된다.
+- 이로써 `max_resident`는 논리적으로 초과 가능해진다 — GPU 셀 상한은
+  "동시 상주" 상한이지 "살아있는 세션" 상한이 아니게 되고, 스왑 왕복
+  비용과 TTFT 영향의 트레이드오프는 OUTER 정책의 몫이다.
 
 ## 예약 2PC
 
