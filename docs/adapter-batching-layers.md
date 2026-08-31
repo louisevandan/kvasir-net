@@ -196,8 +196,13 @@ Restore:  재요청 SessionKey 매칭 + 토큰 이력 LCP → 셀 선확보 →
   (인덱서 등)가 position만 키로 쓰면 시퀀스 간 충돌한다(qwen4exp 사례).
 - 축 C — backend conformance: llama 추상층 아래의 구상 백엔드(CPU/CUDA/
   Metal/…)가 `{memory_family × backend}` 조합에서 load, cut 텐서
-  alias/view, batch split, Persist/Restore, TrimTo, deterministic logits
-  동등성을 통과해야 한다. 추상층이 같아도 구상 백엔드의 버퍼 레이아웃과
+  alias/view, batch split, Persist/Restore, TrimTo, **수치 동등성**을
+  통과해야 한다. bit-for-bit logits 동일성은 llama.cpp 자신도
+  backend·배치 구성 간에 보장하지 않으므로, 판정 가능한 기준으로
+  정의한다: 고정 모델·프롬프트·seed에서 dtype/backend별 NMSE와
+  절대/상대 오차 한계, greedy 토큰열(또는 top-k 순서) 일치. 같은
+  backend의 Persist→Restore 왕복과 cross-backend 이동은 서로 다른 별도
+  기준을 갖는다. 추상층이 같아도 구상 백엔드의 버퍼 레이아웃과
   연산 경로는 다르고, 이 동등성은 public llama.cpp 계약이 아니다.
   CPU는 매 pin 필수, production 백엔드는 승격 전 필수(계획 U0).
 

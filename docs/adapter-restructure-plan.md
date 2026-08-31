@@ -26,7 +26,7 @@
    링크하지 않고 HELLO 협상값·GGUF 파생값·캘리브레이션 상수만 본다 —
    "pull 후 값만 바뀐다"는 이 층에만 성립한다. native compat 계층의
    갱신은 매 pin 의미 기반 rebase이며(d7a207411→d7bd3bfc dry-run 5/24
-   충돌 — 5차 리뷰 관측), 그 비용은 U0의 per-pin 호환성 게이트와 패치 큐
+   충돌 — 6차 회차 자체 재현), 그 비용은 U0의 per-pin 호환성 게이트와 패치 큐
    3분할이 소유한다.
 3. **fail-closed 유지.** 미감사 메모리 계열(msa/dsa/dsv4/hybrid_iswa)은
    로드 거부. 모델 확장은 3축 감사(스테이지 잔존성 ∧ unified 시퀀스 분리
@@ -73,9 +73,10 @@ checkout이 pin(d7a207411)을 벗어나(d7bd3bfc, dirty tree) 공식 prepare가
 | D16 | 세션 단위 직렬화 부재: 잠금이 operation_id 단위라 같은 세션의 Persist/Restore/Discard/GC가 동시 실행 가능 | `transaction_store.cpp::TransactionStore::Lease` @ df5b9ce7 |
 | D17 | 레코드 번들 비원자: state/tokens/meta의 부분 조합이 가능하고 LCP 증거와 KV position의 결속을 증명할 수 없음 | 규약 문서 결함 표 |
 | D18 | `Committing` 미정의: commit은 Committing 내구 기록→부작용→Committed인데 어댑터 Reconcile이 Committing을 Inconsistent로 축약; Prepare는 staged 사본 없이 영수증만 씀 | `protocol.hpp::KvReceiptState` 정의, `server.cpp::Session::handle` KvCommit 분기, `transaction_store.cpp::TransactionStore::prepare` @ df5b9ce7 |
-| D19 | native compat 갱신 취약: 24개 패치·27개 upstream 파일, d7a207411→d7bd3bfc dry-run에서 5개 충돌(5차 리뷰 관측). 큐가 stage hook/upstream fix/model feature 미분리이고 `ggml-backend.cpp`·RPC까지 패치해 llama 계층 아래를 침범 | compat/d7a207411 큐 |
+| D19 | native compat 갱신 취약: 24개 패치·27개 upstream 파일, d7a207411→d7bd3bfc 재생에서 5개 충돌(0010, 0013, 0016, 0017, 0018 — `bump-pipeline-upstream.mjs --from d7a207411` clean-worktree 재생으로 자체 재현). 큐가 stage hook/upstream fix/model feature 미분리이고 `ggml-backend.cpp`·RPC까지 패치해 llama 계층 아래를 침범 | compat/d7a207411 큐 |
 | D20 | stage server가 llama 비공개 헤더에 결합: CMake가 upstream `src/`를 PRIVATE include로 열고 `stage_memory_plan.cpp`가 `llama-cpp.h`·`llama-ext.h`를 직접 포함 → public ABI와 무관하게 내부 리팩터링마다 파손 | `server/CMakeLists.txt`(P4_STAGED_LLAMA_SOURCE_DIR/src), `runtime/stage_memory_plan.cpp` 상단 include @ 87ec1317 |
-| D21 | HELLO가 실행물을 식별 못 함: upstream commit만 노출 — 같은 commit·다른 patch-set 빌드가 동일하게 보이고, stage_abi·활성 backend/device·trim_support·state_format 부재 | `server/server_hello.cpp`(capabilities 문자열) @ 87ec1317 |
+| D21 | HELLO가 실행물을 식별 못 함: upstream commit만 노출 — 같은 commit·다른 patch-set 빌드가 동일하게 보이고, stage_abi·활성 backend/device·trim_support·state_abi 부재 | `server/server_hello.cpp`(capabilities 문자열) @ 87ec1317 |
+| D22 | compat manifest가 체크아웃 EOL에 종속: 0001~0021은 CRLF 바이트 해시, 0022~0024는 LF 해시로 기록돼 어떤 autocrlf 설정의 깨끗한 checkout도 검증 실패, fixture 자체 시험 14/15 | 6차 회차 수정 — `.gitattributes`(`*.patch text eol=lf`) + 전체 LF 재해시, validate 통과·자체 시험 6/6. patch_set_sha256·patched_tree 재검증은 U0 ①의 clean-pin prepare가 수행 |
 
 ## 목표 구조 (요약)
 
@@ -85,7 +86,7 @@ L0 큐 → L1 원장 → L2 수용·점유 → L3 구성 전략 → L4 증명 �
 
 레코드 정체성 = (모델×컷×포맷)×(session_key×위치), 로딩ID 아님.
 파이프라인 깊이 확장은 `in_flight: bool`을 풀기 전에 **fragment credit
-계약**이 선행한다 — `(generation, edge, sequence, epoch, fragment)` 정체성,
+계약**이 선행한다 — `(generation, edge, sequence, stream_epoch, fragment)` 정체성,
 edge별 row·byte credit, ACK/중복/timeout에서의 idempotent 반환, 순서·취소
 규칙, 큐·RSS 상한. 규범 내용은 P4.5 행이 전부 담으며, [plan.md](plan.md) §3은 역사적 근거
 링크로만 남는다.
@@ -94,16 +95,16 @@ edge별 row·byte credit, ACK/중복/timeout에서의 idempotent 반환, 순서�
 
 | 단계 | 내용 | 해소 | 수용 기준 |
 | --- | --- | --- | --- |
-| U0 | llama 호환 경계: ① clean upstream pin 복구·pristine 검증(공식 prepare 통과) ② HELLO에 stage_abi·patch_set_sha256·활성 backend/device·`trim_support`·`state_format` 결속 ③ server의 llama 비공개 헤더 의존 제거(public `llama.h` + P4 소유 versioned stage ABI만; 내부 접근은 compat 구현 안으로) ④ 패치 큐 3분할(stage hook / upstream fix / model feature) ⑤ backend conformance 감사 3축 등재 ⑥ CPU conformance 매 pin 필수, production 백엔드는 승격 전 필수 ⑦ cross-backend Persist/Restore는 행렬 통과 전 fail-closed | D19, D20, D21 | 공식 prepare가 pin에서 통과; 같은 upstream·다른 patch-set 두 빌드를 HELLO로 구분하는 시험 통과; server include 검사(빌드 게이트)로 비공개 헤더 0건; CPU conformance가 현행 pin 통과 |
+| U0 | llama 호환 경계: ① clean upstream pin 복구·pristine 검증(공식 prepare 통과) ② HELLO에 stage_abi·`build_id`(patch_set_sha256 포함)·활성 backend/device·`trim_support`·`state_abi_id`·backend layout 결속 ③ server의 llama 비공개 헤더 의존 제거(public `llama.h` + P4 소유 versioned stage ABI만; 내부 접근은 compat 구현 안으로) ④ 패치 큐 3분할(stage hook / upstream fix / model feature) ⑤ backend conformance 감사 3축 등재 ⑥ CPU conformance 매 pin 필수, production 백엔드는 승격 전 필수 ⑦ cross-backend Persist/Restore는 행렬 통과 전 fail-closed | D19, D20, D21, D22 | ① pin에서 공식 prepare 통과 — 양쪽 autocrlf의 깨끗한 checkout fixture 포함, patch_set_sha256·patched_tree 재검증·재기록, dirty 포트 시도는 폐기가 아니라 분기로 보존 ② 같은 upstream·다른 patch-set 두 빌드를 HELLO로 구분 + 협상값(trim_support·state_abi_id·backend layout)이 실측 능력과 일치하는 시험 ③ server include 빌드 게이트로 비공개 헤더 0건 ④ 전 패치 `stage_hook\|upstream_fix\|model_feature` 분류 — 미분류 0건, 묶음별 독립 적용 시험, upstream에 흡수된 fix 자동 검출·제거, stage hook의 허용 파일·심볼 범위 명세 ⑤ 감사 3축과 수치 동등성 기준 문서화 ⑥ CPU conformance 현행 pin 통과 + production backend(CUDA) 승격 기준·시험 정의 ⑦ cross-backend 복원 거부를 부정 시험으로 확인 |
 | P-1 | 고정 작업: `model_id` = 전체 GGUF SHA-256 확정, `session_key`·prefix 증거의 계약 5요소(정규화·유일성 범위·버전·비교 규칙·부정 시험) 문서화, `session_key` wire 필드(어댑터 content-type + OUTER 전달), 하네스를 versioned `test/benchmarks/`로 이관, 증거 규약(commit·compat manifest·spec 전문·환경·요약기 버전·artifact checksum) | D15 일부 | 하네스가 저장소에서 재실행 가능; D4 실패 증거 재확보·보존; model_id 해시가 load/restore 경로에 결속되고 1바이트 변조 시험이 **캐시 부재·조작된 사이드카 양쪽 경로에서 통과**; session_key가 OUTER→어댑터→저장→재시작 Restore까지 동일 값으로 왕복; 다른 request_id의 같은 session_key 재사용 성공; 같은 request_id의 다른 session_key 별칭 거부 |
 | P0 | 상태 **및 영수증** 네임스페이스: `v2/<model_id>/<cut_id>/{sessions,receipts,tmp}`, 덮어쓰기 정체성 대조, meta.json(saved_at·session_key·digest 결속) + 조언적 ACCESS 분리 + CONTROL epoch CAS | D3, D13, D17 | 동일 `operation_id`로 4개 cut 동시 Prepare/Commit/Reconcile 성공; 충돌 save 거부; gen-N 번들 + MANIFEST CAS publish의 각 단계 crash 시험에서 항상 완전한 번들만 노출; 세션 lease 원자 획득·epoch fencing 동작 |
 | P1a | 행동 없는 원장: 매핑·상주·슬롯 수명 **관찰**과 불변식 위반 검출 + 시퀀스별 backend position·사용 셀 텔레메트리 신설 | D12; D5는 측정 전제만(해소는 P3) | 로드 전 노드별 KV 예측 = 실할당 ±1%; 이벤트별 원장-텔레메트리 대조 일치 |
 | P1b | D4 수정: 안정 재현 → 원인 규명 → 실제 수명/네이티브 상태 수정 | D4 | 스트레스 C(40요청, 슬롯 재사용) 반복 통과 |
 | P2 | `kv=1` 왕복 + **fault gate**. 선행 구현: PreparePersist의 내구 staged 번들, `Committing` 증거 기반 판정(어댑터 Reconcile의 Inconsistent 축약 교체), 수렴 표의 백엔드 중립 코어 수정 — 표는 [kv-state-store-convention.md](kv-state-store-convention.md) 소유. fault gate: 각 스테이지 commit 전·중·후 실패, 부작용 완료·finalize 전 종료(=Committing 복구), 부분 committed+부분 prepared 재조정, 코디네이터 재시작 후 명시적 수렴, 세션 경합 4종(Persist↔Restore, Persist↔Discard, Restore↔GC, 이중 Persist). 정체성 완화 **행렬**: {n_batch, n_ubatch, n_seq_max, n_ctx_seq, kv_unified} × {K/V 형식, flash/v_trans} × {같은 compat 재빌드, 다른 revision} × {소스 backend × 대상 backend} — 통과 항목만 등급 인하, 나머지 fail-closed | D2, D6, D14, D16, D18 | 전 fault gate 통과(Committing 각 지점 포함); 세션 경합 시험에서 교차 손상 0; 재로딩 후 복원 성공; 행렬 결과 문서화 |
 | P2.5 | n_ubatch 정적 보정: P5 측정 기준값 확정 (자동 최적화는 P7) | D8 일부 | 보정값으로 기준 워크로드 재측정·기록 |
-| P3 | L2 수용·점유: 셀 인지 수용 + TTL Persist + 재요청 Restore + LCP(`TrimTo` 2PC 포함) + 동시성 세 축 분리(max_resident/decode_parallelism — 축 계약은 [adapter-batching-layers.md](adapter-batching-layers.md) 소유). **P2 fault gate 통과가 전제** | D5, D11 | 예측 최악 셀 선예약, 부족 시 대기/거절, over-admit 0; 분기 프롬프트에서 전 스테이지 TrimTo attest 전 프리필 시작 0건; 헤비+숏 혼합에서 무고 세션 실패 0; TTFT 분포 개선 |
+| P3 | L2 수용·점유: 셀 인지 수용 + TTL Persist + 재요청 Restore + LCP(`TrimTo` 2PC 포함) + 동시성 세 축 분리(max_resident/decode_parallelism — 축 계약은 [adapter-batching-layers.md](adapter-batching-layers.md) 소유). **P2 fault gate 통과가 전제** | D5, D11 | 예측 최악 셀 선예약 — 다중 노드에서는 전 스테이지 all-or-release 예약(부분 예약 잔류 금지), 부족 시 대기/거절, over-admit 0; 분기 프롬프트에서 전 스테이지 TrimTo attest 전 프리필 시작 0건; 헤비+숏 혼합에서 무고 세션 실패 0; TTFT 분포 개선 |
 | P4 | L3 전략 크레이트 추출 + 기록 트레이스 골든 재생 | — | 기존 trace 재생 결과 동일 |
-| P4.5 | fragment credit 계약 구현: `(generation, edge, sequence, epoch, fragment)` 정체성, edge별 row·byte credit — `U_edge = min(producer, consumer)` 협상, `B_edge`는 모델·cut별 합의, 불일치 시 load 거부 — idempotent 반환, 순서·취소 규칙, 큐·RSS 상한 | D1 전제 | 중복·timeout·취소 fault test 통과; credit 누수 0; credit exhaustion 시험 통과; long-prompt 경계 메모리 상한 준수 실측 |
+| P4.5 | fragment credit 계약 구현: `(generation, edge, sequence, stream_epoch, fragment)` 정체성, edge별 row·byte credit — `U_edge = min(producer, consumer)` 협상, `B_edge`는 모델·cut별 합의, 불일치 시 load 거부 — idempotent 반환, 순서·취소 규칙, 큐·RSS 상한 | D1 전제 | 중복·timeout·취소 fault test 통과; credit 누수 0; credit exhaustion 시험 통과; long-prompt 경계 메모리 상한 준수 실측 |
 | P5 | 파이프라인 깊이>1 (프리필 청크 연속 투입부터) | D1 | GPU util 상승, 혼합 배치 발생, ITL 비악화, **경계 메모리·큐 깊이 상한 준수** |
 | P6 | cut-set 연속 버퍼 합치기, 통과 텐서 재전송 생략 | D7 | 스텝 고정비 감소 실측 |
 | P7 | 청크 persist(D10), SWA V(D9), n_ubatch 자동 최적화, DENIED 계열 3축 감사 | D8~D10 | 계열별 감사 문서 + 로드 성공 |
@@ -169,6 +170,39 @@ llama.cpp의 추상층(llama/ggml 인터페이스)과 구상 백엔드(CPU/CUDA/
 **P-1 완료 판정과 native 실측은 U0 통과 전 불가하다.** 차기 리뷰 판정
 대상이다.
 
+### 6차 리뷰 반영 + 자체 감사 (2026-08-31)
+
+6차부터는 지적 반영과 함께 **전체 계획 논리성 자체 감사**를 회차 산출물로
+포함한다.
+
+리뷰 5건:
+
+| 차단 결함 | 처리 |
+| --- | --- |
+| compat manifest EOL 종속 | **수정 완료** — `.gitattributes` + LF 재해시(21건), validate 통과, fixture 6/6. clean-checkout 이중 autocrlf fixture와 patch_set/patched_tree 재기록은 U0 ① 수용 기준 |
+| CONTROL 비교·publish 분리 경합 | 규약 — 비교와 publish를 같은 임계구역으로; lock 소유자 `{host_instance_id, boot_id, pid, operation_id}`; stale-break 늦은 writer 시험 P0 추가 |
+| U0 내용·기준 불일치 | U0 수용 기준을 7항목 전부로 확장(분류 강제·미분류 0·흡수 fix 검출·허용 범위·승격 기준·cross-backend 부정 시험) |
+| compatibility_id 과잉 고정 재도입 | 정체성 4분할 — build_id(참고) / state_abi_id(경로) / backend_layout_id(meta 대조) / 복원 행렬. cut_id는 build 출처 배제 |
+| "deterministic logits" 판정 불능 | 수치 동등성으로 교체 — NMSE·오차 한계·greedy 토큰열 기준, 같은-backend 왕복과 cross-backend 별도 기준 |
+
+정정: "dirty upstream이라 dry-run 자체 재현 불가"는 오류였다 — bump
+스크립트는 clean worktree를 만들며, 6차 회차에서 5/24 충돌(0010, 0013,
+0016, 0017, 0018)을 자체 재현했다.
+
+자체 감사 발견(리뷰가 지적하지 않은 구멍):
+
+| # | 구멍 | 처리 |
+| --- | --- | --- |
+| a | 다중 샤드 연산의 lease 획득 순서 미정 → 교착 가능 | 규약 — stage_index 오름차순 전순서, 실패 시 전부 해제 |
+| b | `epoch` 용어 충돌(저장소 fencing vs P4.5 fragment) | store_epoch/stream_epoch로 분리 명명 |
+| c | U0 ② 필드가 4분할 정체성과 불일치(state_format 단일값) | U0 필드 목록을 build_id/state_abi_id/backend layout으로 갱신 |
+| d | model_id가 단일 GGUF 전제 — mmproj·LoRA 미포함 | 아티팩트 집합 digest로 확장, LoRA 집합 상이 = 다른 레코드 |
+| e | TrimTo 후 영속 레코드가 상주보다 앞설 수 있음 → 복원이 죽은 suffix 부활 위험 | Restore에 `복원→LCP 대조→TrimTo` 순서 강제 명문화 |
+| f | 코디네이터가 노드 로컬 ACCESS 파일을 읽을 수 없음 | victim 선정 입력은 와이어 텔레메트리로, ACCESS는 로컬 영속화로 역할 분리 |
+| g | cut_id 파생에 build 출처 혼입 가능성 | 레이아웃 정체성만으로 파생함을 명문화 |
+| h | 복원의 셀 선확보가 4노드 각각의 비동기 해제에 걸림 | P3 셀 예약을 전 노드 all-or-release로 명시(아래 P3 항목) |
+| i | recurrent 앵커가 저장소 커밋 형식 | upstream pin 형식으로 정정, R2에 규칙 추가 |
+
 ## 검토 수렴 규약
 
 반복 리뷰가 같은 종류의 결함을 다시 찾지 않게 하는 규칙이다.
@@ -177,7 +211,9 @@ llama.cpp의 추상층(llama/ggml 인터페이스)과 구상 백엔드(CPU/CUDA/
   다른 문서는 링크한다. 중복 서술이 낡는 것이 이번 회차 충돌의 원인이었다.
 - R2 **코드 앵커 의무**: 코드 행동을 서술하는 문장은 `path::symbol @
   short-commit` 앵커를 달거나, 검증 전이면 "목표 계약"으로 명시한다.
-  line 번호 단독 앵커는 코드 이동으로 부패하므로 쓰지 않는다.
+  line 번호 단독 앵커는 코드 이동으로 부패하므로 쓰지 않는다. upstream
+  파일 앵커는 저장소 커밋이 아니라 **upstream pin 커밋**으로 적는다.
+  lint는 `@` 형태만 검사하므로 앵커 없는 신규 주장의 검출은 리뷰 몫이다.
 - R3 **이름에는 계약**: 새 식별자·키·digest는 정규화, 유일성 범위, 버전,
   비교 규칙, 부정 시험의 5요소가 정의되기 전에는 이름만 올릴 수 없다.
 - R4 **단계 동사 규율**: 단계-결함 연결은 측정/재현/수정/검증 중 하나의

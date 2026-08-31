@@ -36,15 +36,32 @@ magic/버전/정체성/SHA-256/원자적 publish)은 구현이 이미 갖고 있
 
 | 등급 | 항목 | 불일치 시 |
 | --- | --- | --- |
-| 레이아웃 정체성 (경로에 새김) | model_id, 레이어 범위 [b,e), K/V 타입, v_trans/flash, 메모리 계열, **state_format, backend_family, compatibility_id(patch_set_sha256)** | 다른 레코드. 재사용 불가 |
+| 레이아웃 정체성 (경로에 새김) | model_id, 레이어 범위 [b,e), K/V 타입, v_trans/flash, 메모리 계열, **state_abi_id** | 다른 레코드. 재사용 불가 |
 | 수용 조건 (복원 시 검사) | position < n_ctx_seq, 셀 여유, 슬롯 여유 | 거부하되 레코드 보존 |
 | 참고 정보 (기록만) | build_identity, 저장 시 n_batch/n_ubatch/n_seq_max | 경고 로그 |
 
 등급 인하는 계획 P2의 검증 행렬을 통과한 항목에만 적용하며, 통과 전에는
-현행 완전 일치(fail-closed)를 유지한다. backend 축이 엄격인 이유:
-CPU에서 저장한 시퀀스 상태 바이트를 CUDA나 Metal에서 복원할 수 있는지는
-public llama.cpp 계약이 아니다. `소스 backend × 대상 backend` 왕복
-실증(P2 행렬)을 통과한 조합만 이동을 허용한다.
+현행 완전 일치(fail-closed)를 유지한다.
+
+build 출처와 상태 호환성은 별개의 축이다 — patch-set 전체 해시를
+정체성으로 쓰면 로깅 한 줄 바뀐 빌드가 전 영속 레코드를 죽이는 D6의
+재판이 된다. 넷으로 분리한다.
+
+- `build_id` (참고 정보): upstream commit + patch_set_sha256 + backend
+  provenance. 진단·증거용이지 정체성이 아니다.
+- `state_abi_id` (레이아웃 정체성, 경로 파생에 포함): 시퀀스 상태의
+  **직렬화 의미**가 바뀔 때만 수동 증가시키는 P4 소유 정수. patch 변경
+  중 직렬화에 닿는 것만 이 값을 올린다.
+- `backend_layout_id` (레코드 수준, meta에 기록·복원 시 대조): 상태가
+  실제 사용한 device/buffer-type/배치의 정규화 fingerprint. llama.cpp는
+  한 실행 안에서도 복수 device·CPU fallback·tensor별 buffer override를
+  허용하므로 단일 `backend_family` 값으로는 표현되지 않는다.
+- 복원 허용 = `state_abi_id 일치 ∧ (source_layout → target_layout)이 P2
+  검증 행렬 통과`. cross-layout 이동성은 public llama.cpp 계약이 아니므로
+  왕복 실증 전 fail-closed다.
+
+`cut_id` 경로 성분은 레이아웃 정체성만으로 파생한다 — build_id가 섞이면
+같은 과잉 고정이 경로에서 재발한다.
 
 ## model_id 정의
 
@@ -60,6 +77,9 @@ public llama.cpp 계약이 아니다. `소스 backend × 대상 backend` 왕복
   내용 증명이 아니므로 production 경로에서 재계산을 대체할 수 **없다**.
   대체가 허용되는 유일한 형태는 수집 시 전체 해시를 검증한
   content-addressed artifact manifest다.
+- 로드가 여러 아티팩트를 이름하면(mmproj, LoRA 어댑터 등) model_id는 그
+  **전체 집합**의 digest 목록(로드 인자 순서)에 대한 SHA-256이다. LoRA는
+  가중치를 바꾸므로 어댑터 집합이 다르면 KV도 다른 레코드다.
 - 부정 시험(P-1 통과 조건): 동일 크기 1바이트 텐서 변조 → 복원 거부를
   **캐시 부재 경로와 조작된 사이드카 존재 경로 양쪽에서** 확인한다.
 
@@ -129,16 +149,32 @@ tokens 등)이 존재할 수 없도록 **불변 세대 디렉터리 + 원자 포
   epoch을 읽고 각자 원자 교체에 성공할 수 있다. CONTROL 갱신은
   `control.lock`의 exclusive create(POSIX `O_CREAT|O_EXCL`, Windows
   `CREATE_NEW`)로 상호배제한 임계구역 안에서 read → 기대값 비교 → tmp
-  기록·fsync → rename으로 수행한다. lock 파일은 {pid, acquired_at}을
-  담고, stale lock은 소유 프로세스 부재를 확인한 뒤 CONTROL epoch 검사와
-  함께만 파기한다(crash recovery 계약). lease 획득은 이 임계구역에서
+  기록·fsync → rename으로 수행한다. lock 파일은 `{host_instance_id, boot_id, pid, operation_id, acquired_at}`을
+  담는다 — 공유 볼륨에서 pid는 호스트 간 중복되고 원격 프로세스 생존은
+  로컬 pid 검사로 판정할 수 없으므로, host_instance_id(노드 설치 시 고유
+  난수)와 boot_id(부팅마다 갱신)가 소유자를 식별한다. stale lock은 소유
+  노드의 부재·재부팅을 확인한 뒤 CONTROL epoch 검사와 함께만 파기한다
+  (crash recovery 계약). lease 획득은 이 임계구역에서
   epoch+1을 내구 기록한 뒤에만 성립하고, 그 다음 `lease.json`
   `{operation_id, kind, epoch, acquired_at}`을 쓴다. lease 삭제·재생성만으로는
   이전 소유자의 늦은 publish를 막지 못한다.
-- **모든 publish**(MANIFEST 교체, staged 승격, 영수증 finalize)는
-  `(expected_epoch, expected_generation)`을 결속하고 불일치를 거부한다 —
-  generation 단독 CAS로는 새 lease 이후의 stale writer를 막지 못한다.
+- **비교와 publish는 한 임계구역이다.** MANIFEST 교체·staged 승격·영수증
+  finalize는 `CONTROL 읽기 → (expected_epoch, expected_generation) 비교 →
+  publish`를 같은 세션 잠금 안에서 수행한다. 비교만 잠금 안에서 하고
+  publish를 밖에서 하면, 그 사이 새 writer가 epoch을 올린 뒤 구 writer의
+  rename이 성공하는 경합이 남는다. generation 단독 CAS로는 새 lease
+  이후의 stale writer를 막지 못한다.
+- P0 장애 시험에 "stale-break 후 늦게 복귀한 구 writer의 publish가
+  거부됨"을 포함한다.
 - Persist·Restore·Discard·TrimTo·GC·ACCESS 갱신은 lease 하에서만 진행한다.
+- 다중 샤드 연산은 세션의 전 cut lease를 **stage_index 오름차순**으로
+  획득하고, 하나라도 실패하면 획득분을 전부 해제한 뒤 재시도한다 — 획득
+  순서의 전순서가 교착을 막는다. "세션당 코디네이터 하나"는 OUTER 단일
+  권한 원칙에서 오는 전제이고, 위반 시의 방어선이 이 잠금 순서와 epoch
+  fencing이다.
+- 용어: 이 문서의 epoch은 세션 저장소 fencing epoch(`store_epoch`)이다.
+  파이프라인 fragment 정체성의 `stream_epoch`(계획 P4.5)과는 다른
+  개념이며 이름을 공유하지 않는다.
 - `record_generation`은 단조 증가하고 모든 publish는 기대 generation
   CAS다. 늦게 끝난 낮은 position Persist는 CAS 실패로 폐기된다 —
   "supersede"는 규칙이 아니라 이 CAS의 결과다.
@@ -159,13 +195,19 @@ suffix 프리필을 시작한다. 일부 스테이지만 잘린 상태의 프리
 소유한다.
 
 TrimTo는 모든 메모리 계열에서 가능한 연산이 아니다. recurrent 상태는
-임의 suffix 절단이 불가능하고(`llama-memory-recurrent.cpp::seq_rm` —
+임의 suffix 절단이 불가능하고(`llama-memory-recurrent.cpp::seq_rm` @ upstream d7a20741 —
 "can't have a state partially erased at the end"), 부분 롤백은 보관된
 스냅샷 깊이 안에서 단일 사용으로만 성공하며 그 밖은 false를 반환한다.
 따라서 스테이지는 `trim_support = arbitrary | bounded:<depth> | none`을
 capability로 보고하고, TrimTo prepare는 각 스테이지의 trim_support와 남은
 롤백 범위를 attest한다. 하나라도 대상 position을 감당할 수 없으면
 TrimTo를 발행하지 않고 **전체 재프리필로 강등**한다.
+
+영속 레코드는 상주보다 앞서 있을 수 있다(레코드 position > 절단된 상주
+position — TrimTo는 상주만 자르고 레코드는 다음 Persist가 대체한다).
+따라서 Restore는 항상 `복원 → 요청 프롬프트와 LCP 대조 → 필요 시
+TrimTo`의 순서를 강제하며, LCP 대조 없이 복원된 suffix 위에서 디코드를
+시작하는 것은 금지다.
 
 ## 2PC 수렴 규칙
 
@@ -208,7 +250,11 @@ Aborting 중 committed 발견을 즉시 실패로 접는다 — 그 시험은 �
 - 접근 시각은 불변 번들 밖의 `ACCESS` 파일이 담는다(원자 교체, 단조
   최대값, 조언적). 불변 `meta.json` 안에 두면 접근마다 불변성이 깨지거나
   접근 회계가 내용 세대와 뒤섞인다. GC는 ACCESS를 읽고, 손상 시 가장
-  오래된 것으로 간주한다.
+  오래된 것으로 간주한다. 단 ACCESS는 **노드 로컬 디스크**에 있으므로
+  코디네이터의 victim 선정 입력은 파일 읽기가 아니라 어댑터가 와이어로
+  올리는 세션별 `{last_access, position, bytes}` 텔레메트리다(D12의 점유
+  보고와 같은 채널). ACCESS 파일은 그 텔레메트리의 재시작 생존용 로컬
+  영속화일 뿐이다.
 - 부팅 시 `tmp/` 잔재 제거. MANIFEST 또는 유효 영수증이 증명하지 않는
   고아 `gen-*`은 **노출 없이 격리 또는 GC**한다 — publish되지 않은 세대를
   재색인으로 살리는 것은 금지다.
