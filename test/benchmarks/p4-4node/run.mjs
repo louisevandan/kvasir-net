@@ -81,37 +81,56 @@ function metrics(artifact) {
 
 async function main() {
   const [name, ...rest] = process.argv.slice(2);
-  if (!name) throw new Error("usage: run.mjs <scenario> [--out DIR]");
+  if (!name) throw new Error("usage: run.mjs <scenario> [--target local|remote] [--out DIR]");
   const outIndex = rest.indexOf("--out");
-  const spec = scenario(name);
+  const targetIndex = rest.indexOf("--target");
+  const target = targetIndex >= 0 ? rest[targetIndex + 1] : "local";
+  const spec = scenario(name, target);
   const outDir = path.resolve(
-    outIndex >= 0 ? rest[outIndex + 1] : path.join(root, "target", "p4-4node", name),
+    outIndex >= 0 ? rest[outIndex + 1]
+      : path.join(root, "target", "p4-4node", target === "local" ? name : `${name}-${target}`),
   );
 
   const { file: configPath } = writeConfig(spec, outDir);
   const artifactPath = path.join(outDir, "artifact.json");
   const ingress = new URL(spec.ingress);
 
-  const agent = spawn(path.join(root, "target", "release", "p4-agent.exe"),
-    [`${ingress.hostname}:${ingress.port}`], {
-      cwd: root,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, P4_AGENT_STATS: "1", P4_STAGED_LLAMA_INHERIT_STDERR: "1" },
-    });
-  const agentOutput = collect(agent);
+  // A remote target already has its agent running as an interactive scheduled
+  // task (remote-agent.mjs), because only a process owned by the logged-on
+  // user sees the mapped drive the model lives on.
+  const agent = spec.target === "remote" ? null
+    : spawn(path.join(root, "target", "release", "p4-agent.exe"),
+      [`${ingress.hostname}:${ingress.port}`], {
+        cwd: root,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, P4_AGENT_STATS: "1", P4_STAGED_LLAMA_INHERIT_STDERR: "1" },
+      });
+  const agentOutput = agent ? collect(agent) : { stdout: "", stderr: "" };
+  // The remote host answers only SSH, so the drive reaches its agent through
+  // a forward held open for the run.
+  const tunnel = spec.tunnel
+    ? spawn("ssh", ["-N", "-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
+        // The load command carries a large plan and the outcome stream is
+        // chatty; a forward left at defaults resets under that traffic.
+        "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=240",
+        "-o", "TCPKeepAlive=yes", "-o", "IPQoS=throughput",
+        "-L", `${spec.tunnel.localPort}:127.0.0.1:${spec.tunnel.remotePort}`, spec.tunnel.host],
+        { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+    : null;
   let sampler;
   let samplerOutput = { stdout: "" };
   let driveOutput = { stdout: "", stderr: "" };
   let failure;
 
   try {
-    await waitForReady(agent, agentOutput, 20_000);
-    sampler = spawn("nvidia-smi", [
+    if (agent) await waitForReady(agent, agentOutput, 20_000);
+    if (tunnel) await new Promise((resolve) => setTimeout(resolve, 3_000));
+    sampler = spec.target === "remote" ? null : spawn("nvidia-smi", [
       "--query-gpu=timestamp,index,name,utilization.gpu,memory.used,power.draw",
       "--format=csv,noheader,nounits", "-lms", "250",
     ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    samplerOutput = collect(sampler);
+    if (sampler) samplerOutput = collect(sampler);
 
     const drive = spawn(path.join(root, "target", "release", "p4-event-drive.exe"),
       [configPath, artifactPath], { cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -126,6 +145,7 @@ async function main() {
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentOutput.stderr, "utf8");
     fs.writeFileSync(path.join(outDir, "drive.stderr.log"), driveOutput.stderr, "utf8");
     await stopChild(agent);
+    await stopChild(tunnel);
   }
 
   if (failure) {
@@ -138,6 +158,7 @@ async function main() {
   const verdict = judgeArtifact(artifact);
   const report = {
     scenario: spec.name,
+    target: spec.target,
     description: spec.description,
     structural: {
       passed: artifact.passed,

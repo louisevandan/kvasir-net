@@ -24,12 +24,16 @@ export const ACCEPTANCE_PROMPT = gemma4Turn(ACCEPTANCE_QUESTION);
 // may fall inside it, which fixes a four-node split at 5/4/4/22.
 export const GEMMA4_CUTS = [[0, 5], [5, 9], [9, 13], [13, 35]];
 
-// nvidia-smi index 0 = RTX 3090, 1 = RTX 4080. Stages 0-1 on the 3090,
-// stages 2-3 on the 4080.
+// Two stages per card. Locally that is a 3090 and a 4080; on the remote host
+// it is two 3090s. Either way the split is four stages over two devices.
 export const GEMMA4_DEVICES = ["0", "0", "1", "1"];
 
+// The model path is the same on either host: S: is a mapped drive that an
+// SSH logon cannot see but a process owned by the logged-on user can, which
+// is why the remote agent runs as an interactive scheduled task.
 export const MODEL = "S:\\models\\unsloth\\gemma-4-E2B-it-GGUF\\gemma-4-E2B-it-Q8_0.gguf";
 export const BINARY = "F:\\dev\\p4\\target\\p4-staged-cuda\\p4_staged_server.exe";
+export const REMOTE_BINARY = "C:\\Users\\42mob\\p4-remote\\staged\\p4_staged_server.exe";
 
 const base = {
   cuts: GEMMA4_CUTS,
@@ -89,11 +93,30 @@ export const SCENARIOS = {
   },
 };
 
-export function scenario(name) {
+/// Where the four stages run. `local` uses this machine; `remote` uses the
+/// two-3090 host, whose agent must already be started by remote-agent.mjs.
+export const TARGETS = {
+  local: { ingress: "tcp://127.0.0.1:42003", binary: BINARY },
+  // The remote host answers SSH and nothing else - ICMP and the agent port are
+  // both blocked - so the drive reaches it through a local SSH forward rather
+  // than directly. The agent still advertises its own LAN address because the
+  // stage servers it spawns talk to each other on the remote side.
+  remote: {
+    ingress: "tcp://127.0.0.1:42003",
+    binary: REMOTE_BINARY,
+    tunnel: { host: "42mob@192.168.0.29", localPort: 42003, remotePort: 42003 },
+  },
+};
+
+export function scenario(name, target = "local") {
   const value = SCENARIOS[name];
   if (!value) {
     throw new Error(`unknown scenario ${name}; known: ${Object.keys(SCENARIOS).join(", ")}`);
   }
+  const placement = TARGETS[target];
+  if (!placement) {
+    throw new Error(`unknown target ${target}; known: ${Object.keys(TARGETS).join(", ")}`);
+  }
   const requestCount = value.waves.reduce((total, wave) => total + wave.count, 0);
-  return { name, requestCount, ...value };
+  return { name, target, requestCount, ...value, ...placement };
 }

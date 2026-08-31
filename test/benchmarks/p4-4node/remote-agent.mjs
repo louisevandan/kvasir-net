@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+// Starts and stops the four-node harness's agent on a remote Windows host.
+//
+//   node remote-agent.mjs start|stop|status [--host USER@HOST] [--port N]
+//
+// The agent must run as an interactive scheduled task rather than under the
+// SSH session: a non-interactive SSH logon does not see the host's mapped
+// network drives, so a model on S: is invisible to anything SSH launches while
+// being perfectly visible to a process the logged-on user owns. This is the
+// same launch shape run-ssh-forwarded-real-four-node.ps1 uses.
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const [command, ...rest] = process.argv.slice(2);
+const argument = (name, fallback) => {
+  const index = rest.indexOf(name);
+  return index >= 0 && rest[index + 1] ? rest[index + 1] : fallback;
+};
+
+const host = argument("--host", "42mob@192.168.0.29");
+const port = Number(argument("--port", "42003"));
+const user = argument("--user", "m42-server2\\42mob");
+const root = argument("--root", "C:\\Users\\42mob\\p4-remote");
+const taskName = `p4-4node-agent-${port}`;
+
+if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+  throw new Error("--port must be a TCP port");
+}
+
+const launcher = `${root}\\run-agent-${port}.cmd`;
+const agent = `${root}\\p4-agent.exe`;
+const log = `${root}\\agent-${port}.log`;
+const err = `${root}\\agent-${port}.err.log`;
+// The agent must advertise the address the drive uses to reach it, which is
+// the tunnel entrance on the driving machine, not the remote LAN address:
+// event endpoints are matched by value, so an agent that calls itself
+// 192.168.0.29 while the drive addressed 127.0.0.1 rejects its own traffic.
+// The stage servers it spawns are all local to the remote host, so they are
+// unaffected by this choice.
+const advertised = argument("--advertise", "127.0.0.1");
+
+// The script is passed base64-encoded. SSH concatenates its remote command
+// with the login shell in between, so pipes, quotes and semicolons in a
+// PowerShell one-liner are re-split before PowerShell ever sees them;
+// -EncodedCommand is the only form that survives both layers intact.
+function ssh(script) {
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const result = spawnSync("ssh", ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host,
+    `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`],
+    { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  return { status: result.status, out: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() };
+}
+
+// Written locally and copied rather than echoed through PowerShell: quotes
+// survive neither the SSH command line nor PowerShell quoting intact, and a
+// mangled quote produces a launcher that cannot find its own executable.
+function copyLauncher() {
+  const text = [
+    "@echo off",
+    `cd /d ${root}`,
+    // Stage-server stderr is inherited so a load failure on the remote side
+    // lands in this log instead of being discarded into the null device.
+    "set P4_STAGED_LLAMA_INHERIT_STDERR=1",
+    "set P4_AGENT_STATS=1",
+    // Redirections go first: cmd strips them in place and leaves the gap,
+    // which reaches the program as an extra empty argument - the advertised
+    // address then parsed as blank and the agent refused every connection.
+    `1>"${log}" 2>"${err}" "${agent}" 0.0.0.0:${port} tcp://${advertised}:${port}`,
+    "",
+  ].join("\r\n");
+  const local = path.join(os.tmpdir(), `p4-4node-run-agent-${port}.cmd`);
+  fs.writeFileSync(local, text, "ascii");
+  const destination = `${host}:${launcher.replace(/\\/g, "/")}`;
+  const copy = spawnSync("scp", ["-o", "BatchMode=yes", "-q", local, destination],
+    { encoding: "utf8" });
+  if (copy.status !== 0) throw new Error(`launcher copy failed: ${copy.stderr ?? ""}`);
+}
+
+const START = [
+  // The launcher path has no spaces by construction, so it needs no inner
+  // quoting - and quoting it here is what made cmd exit 1 while the very same
+  // command line worked when run by hand.
+  `$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c ${launcher}' -WorkingDirectory '${root}';`,
+  `$principal = New-ScheduledTaskPrincipal -UserId '${user}' -LogonType Interactive -RunLevel Limited;`,
+  `$settings = New-ScheduledTaskSettingsSet -Hidden;`,
+  `schtasks.exe /delete /tn ${taskName} /f *> $null;`,
+  `Register-ScheduledTask -TaskName ${taskName} -Action $action -Principal $principal -Settings $settings | Out-Null;`,
+  `Start-ScheduledTask -TaskName ${taskName};`,
+  `$deadline = (Get-Date).AddSeconds(30);`,
+  `do {`,
+  `  $ready = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq ${port} });`,
+  `  if ($ready.Count -eq 0) { Start-Sleep -Milliseconds 250 }`,
+  `} while ($ready.Count -eq 0 -and (Get-Date) -lt $deadline);`,
+  `if ($ready.Count -eq 0) { Get-Content -LiteralPath '${err}' -ErrorAction SilentlyContinue | Select-Object -Last 20; throw 'remote agent did not listen' }`,
+  `Write-Output 'REMOTE_AGENT_LISTENING'`,
+].join(" ");
+
+const STOP = [
+  `schtasks.exe /end /tn ${taskName} *> $null;`,
+  `schtasks.exe /delete /tn ${taskName} /f *> $null;`,
+  `Get-Process p4-agent -ErrorAction SilentlyContinue | Stop-Process -Force;`,
+  `Get-Process p4_staged_server -ErrorAction SilentlyContinue | Stop-Process -Force;`,
+  `Write-Output 'REMOTE_AGENT_STOPPED'`,
+].join(" ");
+
+const STATUS = [
+  `$listen = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq ${port} }).Count;`,
+  `$procs = @(Get-Process p4-agent, p4_staged_server -ErrorAction SilentlyContinue).Count;`,
+  `Write-Output ('listening=' + $listen + ' processes=' + $procs);`,
+  `if (Test-Path '${err}') { Write-Output '--- stderr tail ---'; Get-Content -LiteralPath '${err}' -Tail 15 }`,
+].join(" ");
+
+const scripts = { start: START, stop: STOP, status: STATUS };
+if (!scripts[command]) {
+  process.stderr.write("usage: remote-agent.mjs start|stop|status [--host USER@HOST] [--port N]\n");
+  process.exitCode = 1;
+} else {
+  if (command === "start") copyLauncher();
+  const { status, out } = ssh(scripts[command]);
+  process.stdout.write(`${out}\n`);
+  if (status !== 0) process.exitCode = 1;
+}
