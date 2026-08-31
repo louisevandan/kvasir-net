@@ -1,0 +1,20 @@
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 9232b51d8425db3c7c0d5c508e5d4ff7c243cbdc..bc80ce3a654dc816502a3ec162e2bfb1d197258d 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -1724,7 +1724,14 @@ bool llm_graph_result::apply_linkcpp_stage(const llm_graph_params & params) {
+             ggml_tensor * input = ggml_new_tensor(
+                 ctx_compute.get(), original->type, ggml_n_dims(original), original->ne);
+             memcpy(input->nb, original->nb, sizeof(input->nb));
+-            ggml_format_name(input, "linkcpp_in_%zu_%s", cut_index, ggml_get_name(original));
++            // The substitute keeps the original name because the name is the
++            // wire identity of a cut tensor. A tensor this stage only carries
++            // -- a per-layer input read by a later layer, say -- is replaced
++            // in t_linkcpp_outputs just below and forwarded onward, and the
++            // next stage matches an arriving descriptor against the name its
++            // own graph built. Decorating the name here leaves every
++            // pass-through tensor unmatchable downstream.
++            ggml_format_name(input, "%s", ggml_get_name(original));
+             ggml_set_input(input);
+             t_linkcpp_input_nodes.push_back(input);
+             for (ggml_tensor *& outgoing : t_linkcpp_outputs) {

@@ -1,0 +1,26 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index f62fd100f2b5c6bc1dbc7f44fe9a43889d7c5fa1..137e7fc4c9f40273322147e82f9fe0eb4ce81d35 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1443,7 +1443,20 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+         }
+         if (!res->set_linkcpp_inputs(*stage_payloads)) {
+             LLAMA_LOG_ERROR("%s: linkcpp stage input cut-set mismatch: expected=%zu received=%zu\n",
+-                    __func__, res->get_linkcpp_inputs().size(), stage_payloads->size());
++                    __func__, res->get_linkcpp_inputs().size(), linkcpp_input_payload_descs.size());
++            // Porting a model whose stages exchange more than a hidden state
++            // fails here, and the expected side alone does not say which
++            // producer tensor went missing. Print both sides once.
++            for (const ggml_tensor * tensor : res->get_linkcpp_inputs()) {
++                LLAMA_LOG_ERROR("%s:   expected name=%s type=%d bytes=%zu ne=[%lld,%lld]\n",
++                        __func__, ggml_get_name(tensor), (int) tensor->type, ggml_nbytes(tensor),
++                        (long long) tensor->ne[0], (long long) tensor->ne[1]);
++            }
++            for (const auto & desc : linkcpp_input_payload_descs) {
++                LLAMA_LOG_ERROR("%s:   received name=%s type=%d bytes=%zu ne=[%lld,%lld]\n",
++                        __func__, desc.name, (int) desc.type, desc.nbytes,
++                        (long long) desc.ne[0], (long long) desc.ne[1]);
++            }
+             ret = GGML_STATUS_FAILED;
+             return nullptr;
+         }
