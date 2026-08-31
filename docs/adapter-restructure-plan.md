@@ -22,15 +22,27 @@
    고정이다)는 부분 Restore를 재시작 후 즉시 실패 처리하고 Aborting 중
    committed 영수증을 실패로 접으므로, 그대로는 P2의 all-resident/all-persisted
    수렴을 통과할 수 없다. 수렴 방향 표는 저장 규약 문서가 소유한다.
-2. **llama.cpp 업데이트 내성.** 전략·원장·정책 코드는 llama.cpp에 링크하지
-   않고 HELLO 협상값·GGUF 파생값·캘리브레이션 상수만 본다.
+2. **llama.cpp 계층 분리 내성.** 정책 코드(전략·원장·수용)는 llama.cpp에
+   링크하지 않고 HELLO 협상값·GGUF 파생값·캘리브레이션 상수만 본다 —
+   "pull 후 값만 바뀐다"는 이 층에만 성립한다. native compat 계층의
+   갱신은 매 pin 의미 기반 rebase이며(d7a207411→d7bd3bfc dry-run 5/24
+   충돌 — 5차 리뷰 관측), 그 비용은 U0의 per-pin 호환성 게이트와 패치 큐
+   3분할이 소유한다.
 3. **fail-closed 유지.** 미감사 메모리 계열(msa/dsa/dsv4/hybrid_iswa)은
-   로드 거부. 영속 정체성 완화도 P2 검증 행렬을 통과한 항목만 내린다.
+   로드 거부. 모델 확장은 3축 감사(스테이지 잔존성 ∧ unified 시퀀스 분리
+   ∧ backend conformance) 통과가 조건이고, 영속 정체성 완화도 P2 검증
+   행렬을 통과한 항목만 내린다.
 4. **메커니즘이 정책보다 먼저, 측정이 최적화보다 먼저.** 그리고 **장애
    경로가 검증되기 전에 그 위의 자동 정책을 켜지 않는다** — P2 fault gate
    통과 전 P3의 자동 TTL 축출 금지.
 
-## 현재 상태 — 동작하는 것
+## 현재 상태 — 과거 관측 (재현성 주의)
+
+아래는 2026-08-30의 로컬 관측이다. 5차 리뷰 시점의 체크아웃은 이를
+재현하지 못했다 — compat 0022~0024와 manifest가 미추적이었고, upstream
+checkout이 pin(d7a207411)을 벗어나(d7bd3bfc, dirty tree) 공식 prepare가
+`no compatibility manifest`로 실패했다. 이번 회차에 패치 큐와 manifest를
+추적했으며, upstream pin 복구와 pristine 검증은 U0 수용 기준이다.
 
 - 4노드(3090×2 + 4080×2) gemma-4-E2B가 event-v2 경로로 40/40 완주.
   iSWA 스테이지 잔존성 옵트인 + 통과 텐서 정체성 수정(compat 0022~0024).
@@ -61,6 +73,9 @@
 | D16 | 세션 단위 직렬화 부재: 잠금이 operation_id 단위라 같은 세션의 Persist/Restore/Discard/GC가 동시 실행 가능 | `transaction_store.cpp::TransactionStore::Lease` @ df5b9ce7 |
 | D17 | 레코드 번들 비원자: state/tokens/meta의 부분 조합이 가능하고 LCP 증거와 KV position의 결속을 증명할 수 없음 | 규약 문서 결함 표 |
 | D18 | `Committing` 미정의: commit은 Committing 내구 기록→부작용→Committed인데 어댑터 Reconcile이 Committing을 Inconsistent로 축약; Prepare는 staged 사본 없이 영수증만 씀 | `protocol.hpp::KvReceiptState` 정의, `server.cpp::Session::handle` KvCommit 분기, `transaction_store.cpp::TransactionStore::prepare` @ df5b9ce7 |
+| D19 | native compat 갱신 취약: 24개 패치·27개 upstream 파일, d7a207411→d7bd3bfc dry-run에서 5개 충돌(5차 리뷰 관측). 큐가 stage hook/upstream fix/model feature 미분리이고 `ggml-backend.cpp`·RPC까지 패치해 llama 계층 아래를 침범 | compat/d7a207411 큐 |
+| D20 | stage server가 llama 비공개 헤더에 결합: CMake가 upstream `src/`를 PRIVATE include로 열고 `stage_memory_plan.cpp`가 `llama-cpp.h`·`llama-ext.h`를 직접 포함 → public ABI와 무관하게 내부 리팩터링마다 파손 | `server/CMakeLists.txt`(P4_STAGED_LLAMA_SOURCE_DIR/src), `runtime/stage_memory_plan.cpp` 상단 include @ 87ec1317 |
+| D21 | HELLO가 실행물을 식별 못 함: upstream commit만 노출 — 같은 commit·다른 patch-set 빌드가 동일하게 보이고, stage_abi·활성 backend/device·trim_support·state_format 부재 | `server/server_hello.cpp`(capabilities 문자열) @ 87ec1317 |
 
 ## 목표 구조 (요약)
 
@@ -79,21 +94,24 @@ edge별 row·byte credit, ACK/중복/timeout에서의 idempotent 반환, 순서�
 
 | 단계 | 내용 | 해소 | 수용 기준 |
 | --- | --- | --- | --- |
+| U0 | llama 호환 경계: ① clean upstream pin 복구·pristine 검증(공식 prepare 통과) ② HELLO에 stage_abi·patch_set_sha256·활성 backend/device·`trim_support`·`state_format` 결속 ③ server의 llama 비공개 헤더 의존 제거(public `llama.h` + P4 소유 versioned stage ABI만; 내부 접근은 compat 구현 안으로) ④ 패치 큐 3분할(stage hook / upstream fix / model feature) ⑤ backend conformance 감사 3축 등재 ⑥ CPU conformance 매 pin 필수, production 백엔드는 승격 전 필수 ⑦ cross-backend Persist/Restore는 행렬 통과 전 fail-closed | D19, D20, D21 | 공식 prepare가 pin에서 통과; 같은 upstream·다른 patch-set 두 빌드를 HELLO로 구분하는 시험 통과; server include 검사(빌드 게이트)로 비공개 헤더 0건; CPU conformance가 현행 pin 통과 |
 | P-1 | 고정 작업: `model_id` = 전체 GGUF SHA-256 확정, `session_key`·prefix 증거의 계약 5요소(정규화·유일성 범위·버전·비교 규칙·부정 시험) 문서화, `session_key` wire 필드(어댑터 content-type + OUTER 전달), 하네스를 versioned `test/benchmarks/`로 이관, 증거 규약(commit·compat manifest·spec 전문·환경·요약기 버전·artifact checksum) | D15 일부 | 하네스가 저장소에서 재실행 가능; D4 실패 증거 재확보·보존; model_id 해시가 load/restore 경로에 결속되고 1바이트 변조 시험이 **캐시 부재·조작된 사이드카 양쪽 경로에서 통과**; session_key가 OUTER→어댑터→저장→재시작 Restore까지 동일 값으로 왕복; 다른 request_id의 같은 session_key 재사용 성공; 같은 request_id의 다른 session_key 별칭 거부 |
 | P0 | 상태 **및 영수증** 네임스페이스: `v2/<model_id>/<cut_id>/{sessions,receipts,tmp}`, 덮어쓰기 정체성 대조, meta.json(saved_at·session_key·digest 결속) + 조언적 ACCESS 분리 + CONTROL epoch CAS | D3, D13, D17 | 동일 `operation_id`로 4개 cut 동시 Prepare/Commit/Reconcile 성공; 충돌 save 거부; gen-N 번들 + MANIFEST CAS publish의 각 단계 crash 시험에서 항상 완전한 번들만 노출; 세션 lease 원자 획득·epoch fencing 동작 |
 | P1a | 행동 없는 원장: 매핑·상주·슬롯 수명 **관찰**과 불변식 위반 검출 + 시퀀스별 backend position·사용 셀 텔레메트리 신설 | D12; D5는 측정 전제만(해소는 P3) | 로드 전 노드별 KV 예측 = 실할당 ±1%; 이벤트별 원장-텔레메트리 대조 일치 |
 | P1b | D4 수정: 안정 재현 → 원인 규명 → 실제 수명/네이티브 상태 수정 | D4 | 스트레스 C(40요청, 슬롯 재사용) 반복 통과 |
-| P2 | `kv=1` 왕복 + **fault gate**. 선행 구현: PreparePersist의 내구 staged 번들, `Committing` 증거 기반 판정(어댑터 Reconcile의 Inconsistent 축약 교체), 수렴 표의 백엔드 중립 코어 수정 — 표는 [kv-state-store-convention.md](kv-state-store-convention.md) 소유. fault gate: 각 스테이지 commit 전·중·후 실패, 부작용 완료·finalize 전 종료(=Committing 복구), 부분 committed+부분 prepared 재조정, 코디네이터 재시작 후 명시적 수렴, 세션 경합 4종(Persist↔Restore, Persist↔Discard, Restore↔GC, 이중 Persist). 정체성 완화 **행렬**: {n_batch, n_ubatch, n_seq_max, n_ctx_seq, kv_unified} × {K/V 형식, flash/v_trans} × {같은 compat 재빌드, 다른 revision} — 통과 항목만 등급 인하, 나머지 fail-closed | D2, D6, D14, D16, D18 | 전 fault gate 통과(Committing 각 지점 포함); 세션 경합 시험에서 교차 손상 0; 재로딩 후 복원 성공; 행렬 결과 문서화 |
+| P2 | `kv=1` 왕복 + **fault gate**. 선행 구현: PreparePersist의 내구 staged 번들, `Committing` 증거 기반 판정(어댑터 Reconcile의 Inconsistent 축약 교체), 수렴 표의 백엔드 중립 코어 수정 — 표는 [kv-state-store-convention.md](kv-state-store-convention.md) 소유. fault gate: 각 스테이지 commit 전·중·후 실패, 부작용 완료·finalize 전 종료(=Committing 복구), 부분 committed+부분 prepared 재조정, 코디네이터 재시작 후 명시적 수렴, 세션 경합 4종(Persist↔Restore, Persist↔Discard, Restore↔GC, 이중 Persist). 정체성 완화 **행렬**: {n_batch, n_ubatch, n_seq_max, n_ctx_seq, kv_unified} × {K/V 형식, flash/v_trans} × {같은 compat 재빌드, 다른 revision} × {소스 backend × 대상 backend} — 통과 항목만 등급 인하, 나머지 fail-closed | D2, D6, D14, D16, D18 | 전 fault gate 통과(Committing 각 지점 포함); 세션 경합 시험에서 교차 손상 0; 재로딩 후 복원 성공; 행렬 결과 문서화 |
 | P2.5 | n_ubatch 정적 보정: P5 측정 기준값 확정 (자동 최적화는 P7) | D8 일부 | 보정값으로 기준 워크로드 재측정·기록 |
 | P3 | L2 수용·점유: 셀 인지 수용 + TTL Persist + 재요청 Restore + LCP(`TrimTo` 2PC 포함) + 동시성 세 축 분리(max_resident/decode_parallelism — 축 계약은 [adapter-batching-layers.md](adapter-batching-layers.md) 소유). **P2 fault gate 통과가 전제** | D5, D11 | 예측 최악 셀 선예약, 부족 시 대기/거절, over-admit 0; 분기 프롬프트에서 전 스테이지 TrimTo attest 전 프리필 시작 0건; 헤비+숏 혼합에서 무고 세션 실패 0; TTFT 분포 개선 |
 | P4 | L3 전략 크레이트 추출 + 기록 트레이스 골든 재생 | — | 기존 trace 재생 결과 동일 |
 | P4.5 | fragment credit 계약 구현: `(generation, edge, sequence, epoch, fragment)` 정체성, edge별 row·byte credit — `U_edge = min(producer, consumer)` 협상, `B_edge`는 모델·cut별 합의, 불일치 시 load 거부 — idempotent 반환, 순서·취소 규칙, 큐·RSS 상한 | D1 전제 | 중복·timeout·취소 fault test 통과; credit 누수 0; credit exhaustion 시험 통과; long-prompt 경계 메모리 상한 준수 실측 |
 | P5 | 파이프라인 깊이>1 (프리필 청크 연속 투입부터) | D1 | GPU util 상승, 혼합 배치 발생, ITL 비악화, **경계 메모리·큐 깊이 상한 준수** |
 | P6 | cut-set 연속 버퍼 합치기, 통과 텐서 재전송 생략 | D7 | 스텝 고정비 감소 실측 |
-| P7 | 청크 persist(D10), SWA V(D9), n_ubatch 자동 최적화, DENIED 계열 2축 감사 | D8~D10 | 계열별 감사 문서 + 로드 성공 |
+| P7 | 청크 persist(D10), SWA V(D9), n_ubatch 자동 최적화, DENIED 계열 3축 감사 | D8~D10 | 계열별 감사 문서 + 로드 성공 |
 
-순서: **P-1 → P0 → P1a → P1b → P2 → P2.5 → P3 → P4 → P4.5 → P5 → P6 → P7.**
-P0~P2가 안전·검증, P3~P4 정책, P4.5~P6 성능, P7 확장이다.
+순서: **U0 → P-1 → P0 → P1a → P1b → P2 → P2.5 → P3 → P4 → P4.5 → P5 →
+P6 → P7.** P-1의 model 해시·session_key wire·하네스 이관은 U0와 병행
+가능하나, **P-1 완료 판정과 native 실측은 U0 통과가 전제**다. U0~P2가
+안전·검증, P3~P4 정책, P4.5~P6 성능, P7 확장이다.
 
 ## 계약 보정 회차 (2026-08-31, 3차 리뷰)
 
@@ -129,6 +147,28 @@ P0~P2가 안전·검증, P3~P4 정책, P4.5~P6 성능, P7 확장이다.
 색인 요구(미색인=오류)의 의도된 결과다. 동시성 세 축 계약(외부 피드백)을
 batching 문서에 추가했다. **P-1 착수 가부는 여전히 차기 리뷰가 판정한다.**
 
+### 5차 리뷰 반영 (2026-08-31)
+
+llama.cpp의 추상층(llama/ggml 인터페이스)과 구상 백엔드(CPU/CUDA/Metal)
+분리를 계획에 결속했다.
+
+| 차단 결함 | 처리 |
+| --- | --- |
+| "값만 바뀐다" 과잉 주장 | 원칙 2를 두 층으로 분리 — 정책 계층만 값-독립, native compat은 매 pin rebase(5/24 충돌 관측). per-pin 게이트·큐 3분할은 U0 소유 |
+| stage server의 비공개 헤더 결합 | D20 등재, U0 ③(P4 소유 versioned stage ABI 뒤로 이동) |
+| HELLO 식별력 부족 | D21 등재, U0 ② 필드 목록 확정 |
+| 정체성 backend 축 부재 | 규약 레이아웃 정체성에 state_format·backend_family·compatibility_id 추가, P2 행렬에 소스×대상 backend 축 |
+| 동시성 소유권 오서술 | batching 문서 — 요청값(코디네이터)/물리 상한(스테이지별 min) 2층 분리, `n_seq_max`는 구성값의 echo임을 명시 |
+| 모델 게이트 2축 → 3축 | backend conformance 축 추가(CPU 매 pin 필수) |
+| CONTROL rename≠CAS | 규약 — `control.lock` exclusive-create 임계구역 + crash recovery 계약으로 교체 |
+| TrimTo family capability | 규약 — `trim_support = arbitrary\|bounded\|none` attest, 불가 시 전체 재프리필 강등(recurrent 실코드 앵커) |
+| quota GC shard-local 위험 | 규약 — 노출 레코드 삭제는 코디네이터 Discard 2PC만, 로컬 GC는 orphan 한정 |
+| 재현성 | "동작하는 것" 절을 과거 관측으로 재표기, compat 큐·manifest 추적 커밋, upstream pin 복구는 U0 수용 기준 |
+| lint의 untracked 오염 | 공식 모드를 `git ls-files` 추적 파일 기준으로 전환, `--all` 분리 |
+
+**P-1 완료 판정과 native 실측은 U0 통과 전 불가하다.** 차기 리뷰 판정
+대상이다.
+
 ## 검토 수렴 규약
 
 반복 리뷰가 같은 종류의 결함을 다시 찾지 않게 하는 규칙이다.
@@ -148,7 +188,9 @@ batching 문서에 추가했다. **P-1 착수 가부는 여전히 차기 리뷰�
   코드 앵커를 오류로 거부하며, `cargo test --workspace`가 이 검사를
   실행한다(entrypoints/agent/tests/docs_lint.rs). 한계도 계약이다:
   이것은 **문자열 canary**라서 의미를 바꾼 재서술은 잡지 못하고, 그 검출은
-  리뷰의 몫이다. CI/pre-commit 연결은 아직 없다.
+  리뷰의 몫이다. 공식 모드는 `git ls-files` 기준 추적 Markdown만 검사해
+  무관한 untracked 초안이 게이트와 커밋 범위를 오염시키지 않게 하고,
+  `--all`이 파일시스템 전체 검사다. CI/pre-commit 연결은 아직 없다.
 - R6 **피드백 변환 규칙**: 리뷰 지적은 (a) 앵커 달린 주장 수정, (b) 실행
   가능한 시험·게이트, (c) 소유 단계가 있는 열린 결정 중 하나로 변환해서만
   닫는다. 텍스트 수정만으로 닫지 않는다.

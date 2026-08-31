@@ -36,12 +36,15 @@ magic/버전/정체성/SHA-256/원자적 publish)은 구현이 이미 갖고 있
 
 | 등급 | 항목 | 불일치 시 |
 | --- | --- | --- |
-| 레이아웃 정체성 (경로에 새김) | model_id, 레이어 범위 [b,e), K/V 타입, v_trans/flash, 메모리 계열 | 다른 레코드. 재사용 불가 |
+| 레이아웃 정체성 (경로에 새김) | model_id, 레이어 범위 [b,e), K/V 타입, v_trans/flash, 메모리 계열, **state_format, backend_family, compatibility_id(patch_set_sha256)** | 다른 레코드. 재사용 불가 |
 | 수용 조건 (복원 시 검사) | position < n_ctx_seq, 셀 여유, 슬롯 여유 | 거부하되 레코드 보존 |
 | 참고 정보 (기록만) | build_identity, 저장 시 n_batch/n_ubatch/n_seq_max | 경고 로그 |
 
 등급 인하는 계획 P2의 검증 행렬을 통과한 항목에만 적용하며, 통과 전에는
-현행 완전 일치(fail-closed)를 유지한다.
+현행 완전 일치(fail-closed)를 유지한다. backend 축이 엄격인 이유:
+CPU에서 저장한 시퀀스 상태 바이트를 CUDA나 Metal에서 복원할 수 있는지는
+public llama.cpp 계약이 아니다. `소스 backend × 대상 backend` 왕복
+실증(P2 행렬)을 통과한 조합만 이동을 허용한다.
 
 ## model_id 정의
 
@@ -121,9 +124,15 @@ tokens 등)이 존재할 수 없도록 **불변 세대 디렉터리 + 원자 포
 ## 세션 샤드 직렬화
 
 - 직렬화 단위는 operation이 아니라 **(model_id, cut_id, sk-digest)** 다.
-- 권위 있는 epoch은 lease가 아니라 내구 `CONTROL` 레코드가 소유한다:
-  `CONTROL = {epoch, generation}` 원자 교체 파일이다. lease 획득은
-  CONTROL의 epoch+1 CAS(내구 완료)가 선행하고, 그 뒤에만 `lease.json`
+- 권위 있는 epoch은 lease가 아니라 내구 `CONTROL = {epoch, generation}`
+  레코드가 소유한다. **rename 단독은 CAS가 아니다** — 두 경쟁자가 같은
+  epoch을 읽고 각자 원자 교체에 성공할 수 있다. CONTROL 갱신은
+  `control.lock`의 exclusive create(POSIX `O_CREAT|O_EXCL`, Windows
+  `CREATE_NEW`)로 상호배제한 임계구역 안에서 read → 기대값 비교 → tmp
+  기록·fsync → rename으로 수행한다. lock 파일은 {pid, acquired_at}을
+  담고, stale lock은 소유 프로세스 부재를 확인한 뒤 CONTROL epoch 검사와
+  함께만 파기한다(crash recovery 계약). lease 획득은 이 임계구역에서
+  epoch+1을 내구 기록한 뒤에만 성립하고, 그 다음 `lease.json`
   `{operation_id, kind, epoch, acquired_at}`을 쓴다. lease 삭제·재생성만으로는
   이전 소유자의 늦은 publish를 막지 못한다.
 - **모든 publish**(MANIFEST 교체, staged 승격, 영수증 finalize)는
@@ -148,6 +157,15 @@ suffix 프리필을 시작한다. 일부 스테이지만 잘린 상태의 프리
 영수증에 (position, tokens_sha256, epoch)를 기록하며, 부분 커밋의 수렴은
 2PC 표의 TrimTo 행(roll-forward)이 소유한다. 구현 단계는 계획 P3이
 소유한다.
+
+TrimTo는 모든 메모리 계열에서 가능한 연산이 아니다. recurrent 상태는
+임의 suffix 절단이 불가능하고(`llama-memory-recurrent.cpp::seq_rm` —
+"can't have a state partially erased at the end"), 부분 롤백은 보관된
+스냅샷 깊이 안에서 단일 사용으로만 성공하며 그 밖은 false를 반환한다.
+따라서 스테이지는 `trim_support = arbitrary | bounded:<depth> | none`을
+capability로 보고하고, TrimTo prepare는 각 스테이지의 trim_support와 남은
+롤백 범위를 attest한다. 하나라도 대상 position을 감당할 수 없으면
+TrimTo를 발행하지 않고 **전체 재프리필로 강등**한다.
 
 ## 2PC 수렴 규칙
 
@@ -195,11 +213,16 @@ Aborting 중 committed 발견을 즉시 실패로 접는다 — 그 시험은 �
   고아 `gen-*`은 **노출 없이 격리 또는 GC**한다 — publish되지 않은 세대를
   재색인으로 살리는 것은 금지다.
 - 새 publish 성공(=MANIFEST CAS 성공) 후 구세대 삭제.
-- Discard(명시적) 또는 quota GC(last_access 오래된 순, lease 하에서만)로만
-  삭제.
+- 노출된 레코드의 삭제는 항상 **코디네이터가 발행하는 4-스테이지 Discard
+  2PC**다. 세션 레코드는 여러 cut의 샤드 집합이므로 각 노드가 ACCESS만
+  보고 독립 삭제하면 partial-absent 상태를 만든다. TTL·quota victim
+  선정은 코디네이터 소유이며 ACCESS는 그 입력이다.
+- 로컬 GC는 MANIFEST가 노출하지 않는 고아 세대와 tmp 잔재 정리로
+  한정한다.
 
 ## 남는 열린 항목
 
 - 128MB 초과 번들의 `state-<k>.part` 경계·체크섬 규약.
 - 수용-조건 등급 인하 대상의 실증 행렬(계획 P2 소유).
-- DENIED 메모리 계열의 보조 상태 수용은 2축 감사 통과 이후.
+- DENIED 메모리 계열의 보조 상태 수용은 3축 감사(backend conformance
+  포함) 통과 이후.

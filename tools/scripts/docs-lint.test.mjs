@@ -91,3 +91,18 @@ test("README naming a docs page without an actual link fails", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /no actual link/);
 });
+
+test("git mode ignores untracked files; --all sweeps them", () => {
+  const dir = fixture({
+    "README.md": "| a | [docs/a.md](docs/a.md) |\n",
+    "docs/a.md": "# a\n",
+  });
+  const git = (...argv) => spawnSync("git", ["-C", dir, ...argv], { encoding: "utf8" });
+  git("init", "-q");
+  git("add", "README.md", "docs/a.md");
+  fs.writeFileSync(path.join(dir, "docs", "draft.md"), "untracked \uc6d0\uc7a5 \ubd80\uc7ac\uc758 \uc99d\uac70\n");
+  const tracked = run(dir);
+  assert.equal(tracked.status, 0, tracked.stderr);
+  const swept = spawnSync(process.execPath, [lint, dir, "--all"], { encoding: "utf8" });
+  assert.equal(swept.status, 1);
+});

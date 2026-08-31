@@ -9,11 +9,15 @@
 // (upstream/), build output (target/), and VCS internals are excluded.
 // This is a literal-string canary: it cannot catch a semantic restatement in
 // different words — that remains review's job.
-// Usage: node tools/scripts/docs-lint.mjs [ROOT]   (ROOT defaults to cwd)
+// Usage: node tools/scripts/docs-lint.mjs [ROOT] [--all]
+//   default: git-tracked Markdown only; --all: every Markdown on disk.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const root = path.resolve(process.argv[2] ?? ".");
+const args = process.argv.slice(2);
+const sweepAll = args.includes("--all");
+const root = path.resolve(args.find((a) => a !== "--all") ?? ".");
 const SKIP_DIRS = new Set([".git", "node_modules", "target", "tmp_dummy", "upstream"]);
 
 // Retirement is permanent; never delete entries. Each names the review that
@@ -46,7 +50,15 @@ function walk(dir, out) {
   return out;
 }
 
-const files = walk(root, []);
+function trackedMarkdown(dir) {
+  const result = spawnSync("git", ["-C", dir, "ls-files", "--", "*.md"], { encoding: "utf8" });
+  if (result.status !== 0) return null;
+  return result.stdout.split(/\r?\n/).filter(Boolean).map((f) => path.join(dir, f));
+}
+// Official mode checks git-tracked Markdown so an unrelated untracked draft
+// cannot fail the gate or force its way into a scoped commit. --all sweeps
+// the filesystem; outside a git tree we fall back to the sweep.
+const files = sweepAll ? walk(root, []) : (trackedMarkdown(root) ?? walk(root, []));
 const readmePath = path.join(root, "README.md");
 const readme = fs.existsSync(readmePath) ? fs.readFileSync(readmePath, "utf8") : null;
 let errors = 0;

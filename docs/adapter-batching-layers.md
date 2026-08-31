@@ -136,12 +136,23 @@ llama.cpp의 `-np`는 역사적으로 KV 분할 수·server slot 수·동시 추
 | 축 | 뜻 | 소유 |
 | --- | --- | --- |
 | `kv_capacity` | 공유 셀 풀의 논리 용량(n_ctx) | 저장 규약·OUTER 계획 |
-| `max_resident_sequences` | KV에 상태를 살려 둘 수 있는 세션 수 | L1 등록부 + L2 수용. 백엔드 `n_seq_max` capability가 상한 |
+| `max_resident_sequences` | KV에 상태를 살려 둘 수 있는 세션 수 | L1 등록부 + L2 수용. 요청값은 코디네이터, 물리 상한은 스테이지별 교집합(아래) |
 | `decode_parallelism` | 이번 스텝의 UBATCH에 태울 시퀀스 수 | L3가 스텝마다 선택. runnable 수와 행 예산이 상한 |
 
 KV 상주와 연산 동시성은 별개의 차원이다: 20개 세션이 상주해도 스텝에는
-4개만 태울 수 있고, 노드는 전달된 membership만 실행하므로(멤버십 재생
-불변식) 이 두 값은 노드별 개념이 아니라 **코디네이터 소유**다.
+4개만 태울 수 있고, 노드는 전달된 membership만 실행한다(멤버십 재생
+불변식). 다만 소유는 두 층으로 갈린다 — **요청값**은 코디네이터가 정하고
+**물리 상한**은 스테이지마다 다르다:
+
+```
+effective_resident     = min_i( stage_i의 상주 용량 )
+effective_decode_width = min_i( stage_i의 n_ubatch·backend 상한, edge credit )
+```
+
+CUDA 3090 스테이지와 Metal/CPU 스테이지를 같은 값으로 간주할 수 없다.
+또한 `n_seq_max`는 백엔드가 발견해 보고하는 고유 capability가 아니라
+OUTER가 컨텍스트 생성 시 설정한 **구성값**이며, HELLO는 그것을 되돌려줄
+뿐이다 — 발견이 아니라 계약의 echo다.
 
 단서 두 가지가 실측에서 나왔다. 첫째, `max_resident`는 공짜가 아니다 —
 SWA 캐시 셀 수는 `n_swa×n_seq_max+n_ubatch`로 이 값에 비례하고(실측
@@ -174,29 +185,43 @@ Restore:  재요청 SessionKey 매칭 + 토큰 이력 LCP → 셀 선확보 →
 `llama_synchronize` + 위치 대조까지 갖췄다. 남은 결함: 노드당 128MB
 상한(장문 세션은 청크 persist 필요), `--kv-root` 미지정으로 `kv=0`.
 
-## 모델 다양성: 2축 게이트
+## 모델 다양성: 3축 게이트
 
-전략 모듈 등록 조건은 두 감사의 교집합이다.
+전략 모듈이 존재할 조건은 세 감사의 교집합이다.
 
 - 축 A — 스테이지 분할: `linkcpp_stage_residency_supported` 옵트인.
   현재 OPT-IN: kv_cache, kv_cache_iswa, memory_hybrid, memory_recurrent.
   DENIED: msa, dsa, dsv4, hybrid_iswa.
 - 축 B — unified 시퀀스 분리: KV는 KQ mask로 분리되지만 보조 상태
   (인덱서 등)가 position만 키로 쓰면 시퀀스 간 충돌한다(qwen4exp 사례).
-  KV 외 상태를 가진 모델은 이 감사를 별도로 통과해야 한다.
+- 축 C — backend conformance: llama 추상층 아래의 구상 백엔드(CPU/CUDA/
+  Metal/…)가 `{memory_family × backend}` 조합에서 load, cut 텐서
+  alias/view, batch split, Persist/Restore, TrimTo, deterministic logits
+  동등성을 통과해야 한다. 추상층이 같아도 구상 백엔드의 버퍼 레이아웃과
+  연산 경로는 다르고, 이 동등성은 public llama.cpp 계약이 아니다.
+  CPU는 매 pin 필수, production 백엔드는 승격 전 필수(계획 U0).
 
-미통과 모델은 지금처럼 로드 시점 fail-closed로 거부된다. 이 게이트가
-전략 계층을 "모든 모델을 덮는 하나의 휴리스틱" 강박에서 해방시킨다.
-
+미통과 조합은 지금처럼 로드 시점 fail-closed로 거부된다.
 ## llama.cpp 업데이트 내성
 
-전략 크레이트는 llama.cpp에 링크하지 않는다. 보는 것은 세 가지뿐이다:
-HELLO 협상값, GGUF 파생 셀 단가표, 캘리브레이션 상수. llama.cpp가
-풀업데이트되어 compat patch set이 갈리면 **값이 갈리고 코드는 갈리지
-않는다**. 배치 위치는 `layers/adapters/llamacpp/batching/`(신규 크레이트,
-의존성 최소) — staged adapter가 소비하고, 기록된 `batch_observations`
-아티팩트를 재생하는 골든 테스트로 GPU 없이 검증한다.
+두 층을 구분한다. "pull 후 값만 바뀌고 코드는 안 바뀐다"는 주장은 아래
+첫 층에만 성립한다.
 
+- **정책 계층(전략·원장·수용)**: llama.cpp에 링크하지 않고 HELLO 협상값,
+  GGUF 파생 단가표, 캘리브레이션 상수만 본다. upstream이 갈리면 값이
+  갈리고 이 코드는 갈리지 않는다.
+- **native compat 계층**: llama core 내부(context·graph·memory·loader)를
+  패치하므로 갱신은 값 변경이 아니라 **매 pin 의미 기반 rebase**다.
+  d7a207411→d7bd3bfc dry-run에서 24개 패치 중 5개가 충돌했다(5차 리뷰
+  관측: model-loader header, public API impl, stage/recurrent residency,
+  MTP tail). 이 비용은 per-pin 호환성 게이트(공식 prepare + conformance)가
+  소유하고, 패치 큐는 stage hook / 독립 upstream fix / 모델·speculative
+  feature 포트의 3분할로 관리해 독립 수정 하나의 upstream 흡수가 전체
+  포팅과 함께 충돌하지 않게 한다(계획 U0).
+
+배치 위치는 `layers/adapters/llamacpp/batching/`(신규 크레이트, 의존성
+최소) — staged adapter가 소비하고, 기록된 `batch_observations` 아티팩트를
+재생하는 골든 테스트로 GPU 없이 검증한다.
 ## 실패 이력의 층별 귀속
 
 | 관측된 실패 | 귀속 층 |
