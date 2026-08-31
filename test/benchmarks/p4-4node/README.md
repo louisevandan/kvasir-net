@@ -55,6 +55,6 @@ answer - the reason meaning and throughput are judged separately.
 
 A CUDA build of the staged server at `target/p4-staged-cuda/`, release builds
 of `p4-agent` and `p4-event-drive`, the model at the path in
-[`scenarios.mjs`](scenarios.mjs), and two NVIDIA devices. Port 52203 is used
-because the default 52003 falls inside a Windows excluded port range on this
-machine.
+[`scenarios.mjs`](scenarios.mjs), and two NVIDIA devices. Ports start at 42003,
+below the Windows dynamic range (49152+), so an outbound ephemeral connection
+cannot take the port from under the agent.
