@@ -1,0 +1,3 @@
+# Compatibility patches are hashed by raw bytes in the manifest; pin them to
+# canonical LF so a fresh checkout is identical under any core.autocrlf.
+*.patch text eol=lf
