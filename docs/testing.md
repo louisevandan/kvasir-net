@@ -1,5 +1,18 @@
 # Testing
 
+## Compatibility queue gates
+
+```bash
+node layers/adapters/llamacpp/staged/scripts/validation/validate-compat-manifest.mjs --manifest <manifest>
+node layers/adapters/llamacpp/staged/scripts/validation/validate-patch-classification.mjs --manifest <manifest>
+node --test layers/adapters/llamacpp/staged/scripts/validation/validate-patch-classification.test.mjs
+```
+
+The first checks patch hashes and the ABI contract. The second enforces the
+tri-split every patch declares - stage_hook, upstream_fix, model_feature -
+and the paths each class may touch, which is what keeps an upstream_fix
+droppable on its own once upstream absorbs it.
+
 ## Documentation gate
 
 Run before changing any Markdown:
