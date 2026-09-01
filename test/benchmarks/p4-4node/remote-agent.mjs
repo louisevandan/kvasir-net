@@ -52,6 +52,12 @@ if (!Number.isInteger(minBatchRows) || minBatchRows < 0) {
   throw new Error("--min-batch-rows must be a non-negative integer");
 }
 
+// One line per generated token, on a stderr four stage servers already share.
+// It is what separated "the adapter never produced this position" from "the
+// adapter produced it and something downstream ate it", so it stays available
+// - but a run that is not chasing a gap should not pay for it.
+const tracePositions = rest.includes("--trace-positions");
+
 // The script is passed base64-encoded. SSH concatenates its remote command
 // with the login shell in between, so pipes, quotes and semicolons in a
 // PowerShell one-liner are re-split before PowerShell ever sees them;
@@ -83,9 +89,9 @@ function copyLauncher() {
     // so without this trace a run can only observe that the adapter did not
     // reject it. The log this writes is collected as run evidence.
     "set P4_STAGED_TRACE_SESSION_KEY=1",
-    // Position gaps at the OUTER are being separated from position gaps at
-    // the source; see the plan's open surface.
-    "set P4_STAGED_TRACE_OUTPUT_POSITION=1",
+    // Presence is what the adapter tests, so an unwanted trace has to be
+    // absent rather than set to zero.
+    ...(tracePositions ? ["set P4_STAGED_TRACE_OUTPUT_POSITION=1"] : []),
     `set P4_STAGED_MIN_BATCH_ROWS=${minBatchRows}`,
     // Redirections go first: cmd strips them in place and leaves the gap,
     // which reaches the program as an extra empty argument - the advertised
