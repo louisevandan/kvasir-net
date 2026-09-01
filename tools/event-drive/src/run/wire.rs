@@ -5,6 +5,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_FRAME: usize = 2 * 1024 * 1024 * 1024;
 const HEADER: usize = 4;
+/// Parsed bytes tolerated before the buffer is compacted.
+const RECLAIM: usize = 1024 * 1024;
 
 /// A framed event stream whose reads survive being timed out.
 ///
@@ -25,6 +27,11 @@ pub struct EventWire<R, W> {
     reader: R,
     writer: W,
     buffer: Vec<u8>,
+    /// How far into `buffer` the parsed frames reach. Draining from the
+    /// front instead would memmove the whole remainder once per frame, which
+    /// on a run carrying tens of thousands of events is enough backpressure
+    /// to change how the far side batches.
+    cursor: usize,
 }
 
 impl<R, W> EventWire<R, W>
@@ -37,6 +44,7 @@ where
             reader,
             writer,
             buffer: Vec::new(),
+            cursor: 0,
         }
     }
 
@@ -74,23 +82,31 @@ where
 
     /// One whole frame if the buffer holds one, leaving the remainder in place.
     fn take_frame(&mut self) -> io::Result<Option<Event>> {
-        if self.buffer.len() < HEADER {
+        // Reclaim only once the parsed prefix is worth reclaiming, so the
+        // copy is amortised instead of paid per frame.
+        if self.cursor > 0 && (self.cursor >= RECLAIM || self.cursor == self.buffer.len()) {
+            self.buffer.drain(..self.cursor);
+            self.cursor = 0;
+        }
+        let available = self.buffer.len() - self.cursor;
+        if available < HEADER {
             return Ok(None);
         }
         let size = u32::from_le_bytes([
-            self.buffer[0],
-            self.buffer[1],
-            self.buffer[2],
-            self.buffer[3],
+            self.buffer[self.cursor],
+            self.buffer[self.cursor + 1],
+            self.buffer[self.cursor + 2],
+            self.buffer[self.cursor + 3],
         ]) as usize;
         if size == 0 || size > MAX_FRAME {
             return Err(io::Error::other("invalid event size"));
         }
-        if self.buffer.len() < HEADER + size {
+        if available < HEADER + size {
             return Ok(None);
         }
-        let event = decode(&self.buffer[HEADER..HEADER + size]).map_err(io::Error::other)?;
-        self.buffer.drain(..HEADER + size);
+        let start = self.cursor + HEADER;
+        let event = decode(&self.buffer[start..start + size]).map_err(io::Error::other)?;
+        self.cursor = start + size;
         Ok(Some(event))
     }
 }
