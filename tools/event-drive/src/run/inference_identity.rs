@@ -59,7 +59,13 @@ impl InferenceIdentity {
                 return Err("output changed sequence identity within one request".into());
             }
             if prior.position.checked_add(1) != Some(outcome.position) {
-                return Err("output token positions are not contiguous".into());
+                // Named, because the interesting part of a gap is which
+                // request and which two positions: a repeat, a skip and a
+                // rewind are three different defects behind one sentence.
+                return Err(format!(
+                    "output token positions are not contiguous: request {} sequence {} went {} -> {}",
+                    outcome.request_id, outcome.sequence_id, prior.position, outcome.position
+                ));
             }
         }
         Ok(())

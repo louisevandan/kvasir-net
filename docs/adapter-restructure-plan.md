@@ -362,6 +362,7 @@ P-1 인수 기준의 나머지 절반은 그때까지 미충족으로 남는다.
 | O9 | Sequence quiescence — credit와 별개의 stage별 `SequenceQuiesced` attest 계약(credit 반환은 인수 증거이지 compute/KV 완료가 아님, plan.md §3) | P4.5 |
 | O10 | Snapshot storage domain·read pin — source·target lease, 동시 Discard 차단, 노드 이동·cross-domain 복사 경로 | P3 |
 | O11 | durable/ram-byte admission — 노드별 디스크·호스트 RAM 예약, ENOSPC partial-prepare 수렴, OUTER 가용량 텔레메트리 | P3 |
+| O12 | 한 실행을 마친 원격 에이전트가 두 번째 실행을 받지 못한 관측 1건 — 스테이지가 뜨지 않고 에이전트 로그에 수신 흔적도 없이 드라이브가 timeout_ms까지 대기(2026-09-01, 재기동 후 동일 시나리오는 정상). 원인 미확정: 로드 세대 전환의 어댑터 상태인지 터널·연결 수명인지 분리되지 않음. 현재 하네스는 실행마다 에이전트를 재기동해 회피한다 | 미배정 |
 
 ## 검토 수렴 규약
 
