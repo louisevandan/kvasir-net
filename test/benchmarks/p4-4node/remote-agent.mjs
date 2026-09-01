@@ -62,6 +62,11 @@ if (!Number.isInteger(minBatchRows) || minBatchRows < 0) {
 // - but a run that is not chasing a gap should not pay for it.
 const tracePositions = rest.includes("--trace-positions");
 
+// Exists so the harness can be tested against an adapter that records
+// nothing. A run in this state must fail: before the fence it passed, by
+// reading an earlier run's records for the same request ids.
+const noSessionKeyTrace = rest.includes("--no-session-key-trace");
+
 // The script is passed base64-encoded. SSH concatenates its remote command
 // with the login shell in between, so pipes, quotes and semicolons in a
 // PowerShell one-liner are re-split before PowerShell ever sees them;
@@ -92,7 +97,7 @@ function copyLauncher() {
     // The conversation key an OUTER mints is not echoed anywhere on the wire,
     // so without this trace a run can only observe that the adapter did not
     // reject it. The log this writes is collected as run evidence.
-    "set P4_STAGED_TRACE_SESSION_KEY=1",
+    ...(noSessionKeyTrace ? [] : ["set P4_STAGED_TRACE_SESSION_KEY=1"]),
     `set P4_RECORD_FILE=${record}`,
     // Presence is what the adapter tests, so an unwanted trace has to be
     // absent rather than set to zero.

@@ -156,10 +156,24 @@ async fn connect(address: &Address) -> io::Result<ConnectionSender> {
     Ok(sender)
 }
 
+/// Writes queued events to one socket.
+///
+/// This is where an event is actually delivered, which is why the failure
+/// goes to the record channel: `P4_EVENT_OUTER_MISSING` counts what never
+/// reached this queue, and reporting only that would let a run whose socket
+/// died mid-write read as having delivered everything. The count of events
+/// abandoned in the queue is part of the record for the same reason.
 async fn write_loop<W: AsyncWrite + Unpin>(mut writer: W, mut receiver: mpsc::Receiver<Event>) {
     while let Some(event) = receiver.recv().await {
         if let Err(error) = write_event(&mut writer, &event).await {
-            eprintln!("P4_EVENT_WRITE_FAILED error={error}");
+            receiver.close();
+            let mut abandoned = 0u64;
+            while receiver.try_recv().is_ok() {
+                abandoned += 1;
+            }
+            p4_llamacpp_staged_adapter::v2::record::record(&format!(
+                "P4_EVENT_WRITE_FAILED abandoned={abandoned} error={error}"
+            ));
             break;
         }
     }

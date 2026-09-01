@@ -13,12 +13,23 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 static SINK: Mutex<Option<std::fs::File>> = Mutex::new(None);
+/// Set once any record fails to reach the file, and never cleared: a channel
+/// that dropped one record cannot be trusted for the rest of the run.
+static FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Appends one record. A line is written in a single call so it cannot be
 /// interleaved with the next one.
+/// Appends one record. A line is written in a single call so it cannot be
+/// interleaved with the next one.
+///
+/// A failure to write is itself recorded - into the file when the file is
+/// what failed, this is impossible, so onto stderr and into a flag the
+/// harness reads. A silently dropped record makes `delivery=0` mean "the
+/// channel is dead" and "nothing was lost" at once.
 pub fn record(line: &str) {
     let Some(path) = std::env::var_os("P4_RECORD_FILE") else {
         eprintln!("{line}");
@@ -29,20 +40,38 @@ pub fn record(line: &str) {
         // A poisoned sink means another thread panicked mid-record; the
         // terminal is still a place to say this.
         Err(_) => {
-            eprintln!("{line}");
+            FAILED.store(true, Ordering::Relaxed);
+            eprintln!("P4_RECORD_CHANNEL_FAILED reason=poisoned line={line}");
             return;
         }
     };
     if sink.is_none() {
-        *sink = OpenOptions::new().create(true).append(true).open(&path).ok();
-    }
-    match sink.as_mut() {
-        Some(file) => {
-            let _ = file.write_all(format!("{line}\n").as_bytes());
-            let _ = file.flush();
+        match OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(file) => *sink = Some(file),
+            Err(error) => {
+                FAILED.store(true, Ordering::Relaxed);
+                eprintln!("P4_RECORD_CHANNEL_FAILED reason=open error={error}");
+                eprintln!("{line}");
+                return;
+            }
         }
-        None => eprintln!("{line}"),
     }
+    let file = sink.as_mut().expect("sink is open");
+    if let Err(error) = file
+        .write_all(format!("{line}
+").as_bytes())
+        .and_then(|()| file.flush())
+    {
+        FAILED.store(true, Ordering::Relaxed);
+        eprintln!("P4_RECORD_CHANNEL_FAILED reason=write error={error}");
+        eprintln!("{line}");
+    }
+}
+
+/// Whether any record failed to reach the file. The harness asks so a run
+/// whose evidence channel died cannot read as a run that lost nothing.
+pub fn channel_failed() -> bool {
+    FAILED.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]

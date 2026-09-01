@@ -30,14 +30,23 @@ const PRIVATE = /^(llama-(?!cpp\.h$)[a-z0-9-]+\.h|ggml-impl\.h|ggml-backend-impl
 /// llama.cpp's convenience library. Unstable, but load-bearing here.
 const UNSTABLE = /^(common|sampling|speculative|arg|log|chat)\.h$/;
 
-/// The files that depend on llama.cpp's `common/`, split by how much the
-/// dependency costs.
+/// The files that depend on llama.cpp's `common/`, split by what each costs.
 ///
-/// A header's dependency reaches every translation unit that includes it, so
-/// U0 (3b)'s criterion is that this list reaches empty. A `.cpp` in the
-/// runtime target may use the convenience library - it is what the runtime
-/// is for - so that list is tracked, not driven to zero. Moving an entry from
-/// the first list to the second is the work.
+/// **Both lists end at zero.** U0 (3) says the server keeps public `llama.h`
+/// and P4's own ABI, with internal access inside the compat implementation;
+/// `common/` is upstream's convenience library, it changes freely, and every
+/// file naming it is a file an upstream bump can break. Six implementation
+/// files is a blast radius, not a resting place.
+///
+/// They are split because they are paid in that order, not because the second
+/// is permitted. A header's dependency reaches every translation unit that
+/// includes it, so headers come first and are the nearer gate.
+///
+/// Neither list is enforced by the compiler yet: CMake still puts llama.cpp's
+/// `common` on the runtime target's PUBLIC include path, so this script is
+/// all that stands there. Making that path private to the facade is part of
+/// finishing (3b), and only then does the rule become true rather than
+/// merely checked.
 export const UNSTABLE_HEADER_DEBT = [
   "runtime/llama_stage_runtime.hpp",
   "runtime/stage_memory_plan.hpp",

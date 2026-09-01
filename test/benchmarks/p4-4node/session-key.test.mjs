@@ -51,3 +51,22 @@ test("a repeated admission under the same key collapses", () => {
   assert.equal(admittedKeys(log).size, 2);
   assert.equal(checkSessionKeys(config, ids, log).passed, true);
 });
+
+test("records this run did not ask for fail it", () => {
+  // A reader seeing somebody else's records cannot testify about this run,
+  // including about the keys it did find. This passed before 2026-09-02.
+  const log = `${goodLog}\r\nP4_SESSION_KEY_ADMITTED request=req-999 key=sk1:p4-4node/smoke-req-999`;
+  const result = checkSessionKeys(config, ids, log);
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.unexpected, ["req-999"]);
+});
+
+test("one expected key among forty strangers fails", () => {
+  const strangers = Array.from({ length: 40 }, (_, index) =>
+    `P4_SESSION_KEY_ADMITTED request=old-${index} key=sk1:p4-4node/smoke-old-${index}`);
+  const log = ["P4_SESSION_KEY_ADMITTED request=req key=sk1:p4-4node/smoke-req", ...strangers].join("\n");
+  const result = checkSessionKeys({ session_key_template: "sk1:p4-4node/smoke-{{request_id}}" }, ["req"], log);
+  assert.equal(result.passed, false);
+  assert.equal(result.checked, 1);
+  assert.equal(result.observed, 41);
+});

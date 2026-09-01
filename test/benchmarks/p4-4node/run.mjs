@@ -12,18 +12,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeArtifact } from "./judge.mjs";
-import { beginRun, defaultRunsDir, collectEvidence, newRunId, promoteRun } from "./evidence.mjs";
+import {
+  agreesWithExpected,
+  beginRun,
+  collectEvidence,
+  currentCompatManifest,
+  defaultRunsDir,
+  newRunId,
+  promoteRun,
+} from "./evidence.mjs";
+import { beginFence, endFence, fencedRecords } from "./fence.mjs";
 import { checkDelivery } from "./delivery.mjs";
 import { checkSessionKeys } from "./session-key.mjs";
 import {
   fetchRemoteAgentLog,
   fetchRemoteRecord,
+  appendRemoteFence,
   openTunnel,
   proveTunnelIdentity,
   remoteImageDigests,
   remoteLauncher,
   remoteAgentLogLength,
-  remoteRecordLength,
   startRemoteGpuSampler,
 } from "./remote.mjs";
 import { scenario } from "./scenarios.mjs";
@@ -136,8 +145,8 @@ async function main() {
   let driveOutput = { stdout: "", stderr: "" };
   let agentLog = "";
   let record = "";
+  let fenced = false;
   let agentLogFrom = 0;
-  let recordFrom = 0;
   let failure;
 
   try {
@@ -146,8 +155,7 @@ async function main() {
       root,
       runId,
       spec,
-      compatManifest: path.join(root, "layers", "adapters", "llamacpp", "staged",
-        "compat", "557614e02", "manifest.json"),
+      compatManifest: currentCompatManifest(root),
     });
     if (spec.tunnel) {
       // Opening the forward is not proof it is ours: a bind failure leaves a
@@ -157,7 +165,10 @@ async function main() {
       identity = proveTunnelIdentity(spec.tunnel.host, spec.tunnel.remotePort);
       // Marks where this run's share of the appended agent log starts.
       agentLogFrom = remoteAgentLogLength(spec.tunnel);
-      recordFrom = remoteRecordLength(spec.tunnel);
+      // Marks this run in the record file instead of computing an offset:
+      // an offset still returns the whole file when the run wrote nothing.
+      appendRemoteFence(spec.tunnel, beginFence(runId));
+      fenced = true;
       // Hashed on the far side, so the evidence names what ran rather than
       // what this machine happens to have built, and carries the launcher
       // the agent's policy knobs live in.
@@ -195,8 +206,9 @@ async function main() {
     // Evidence comes from the record file, which has one writer. The agent
     // log is kept for what it is good for - reading what happened - and is
     // not what the verdict rests on.
+    if (fenced) appendRemoteFence(spec.tunnel, endFence(runId));
     record = spec.target === "remote" && spec.tunnel
-      ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom })
+      ? fetchRemoteRecord(spec.tunnel)
       : agentOutput.stderr;
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
     fs.writeFileSync(path.join(outDir, "agent.record.log"), record, "utf8");
@@ -231,11 +243,22 @@ async function main() {
   // adapter's own trace rather than against anything in the reply.
   // Tokens the relay dropped were generated and paid for; a run that lost
   // them did not do what it reports.
-  const delivery = checkDelivery(record);
+  // Four stages of the same wrong build agree with each other perfectly, so
+  // their agreement is checked against what the checkout pins, not only
+  // against each other.
+  const build = agreesWithExpected(evidence?.compat, artifact.build);
+
+  // Only what this run wrote counts. A file that cannot be cut at this run's
+  // fences is not thin evidence, it is somebody else's.
+  const fence = spec.target === "remote"
+    ? fencedRecords(record, runId)
+    : { ok: true, records: record.split(/\r?\n/), reason: "" };
+  const mine = fence.records.join("\n");
+  const delivery = checkDelivery(mine);
   const sessionKeys = checkSessionKeys(
     JSON.parse(fs.readFileSync(configPath, "utf8")),
     artifact.requests.map((request) => request.request_id),
-    record,
+    mine,
   );
   const report = {
     run_id: runId,
@@ -246,7 +269,7 @@ async function main() {
     host: identity,
     // Which llama.cpp every stage reported, taken from the stages rather
     // than from what this machine happens to have built.
-    build: artifact.build,
+    build: { ...artifact.build, matches_pin: build.ok, mismatch: build.reason },
     description: spec.description,
     structural: {
       passed: artifact.passed,
@@ -257,18 +280,20 @@ async function main() {
     meaning: { passed: verdict.passed, meaningful: verdict.meaningful, total: verdict.total },
     session_keys: sessionKeys,
     delivery,
+    records: { fenced: fence.ok, reason: fence.reason, lines: fence.records.length },
     metrics: metrics(artifact),
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
     rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
   };
   fs.writeFileSync(path.join(outDir, "evidence.json"),
-    `${JSON.stringify({ ...evidence, finished_at: new Date().toISOString() }, null, 2)}\n`, "utf8");
+    `${JSON.stringify({ ...evidence, expected_build: evidence?.compat ?? null, observed_build: artifact.build, finished_at: new Date().toISOString() }, null, 2)}\n`, "utf8");
   fs.writeFileSync(path.join(outDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   const promoted = run.working === run.final ? run : promoteRun(run);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   process.stdout.write(`evidence: ${promoted.directory ?? run.final}\n`);
 
-  if (!artifact.passed || !verdict.passed || !sessionKeys.passed || !delivery.passed) {
+  if (!artifact.passed || !verdict.passed || !sessionKeys.passed
+    || !delivery.passed || !build.ok || !fence.ok) {
     process.stderr.write("P4_4NODE_NOT_ACCEPTED\n");
     process.exitCode = 1;
   }

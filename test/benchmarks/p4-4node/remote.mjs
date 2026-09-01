@@ -192,26 +192,42 @@ export function startRemoteGpuSampler(host) {
 /// id, so a line another run wrote would otherwise satisfy this run's check.
 /// Taking the length first and reading from it makes the evidence this run's.
 export function remoteAgentLogLength({ host, remotePort, root }) {
-  const file = `${root}\\agent-${remotePort}.err.log`;
-  const { out } = remotePowerShell(host,
-    `$p = '${file}'; if (Test-Path -LiteralPath $p) { Write-Output ((Get-Item -LiteralPath $p).Length) } else { Write-Output 0 }`);
+  const { status, out } = remotePowerShell(host,
+    `$p = '${root}\\agent-${remotePort}.err.log'; if (Test-Path -LiteralPath $p) { Write-Output ((Get-Item -LiteralPath $p).Length) } else { Write-Output 0 }`);
+  // A failed probe used to become Number("") = 0, which reads the whole file
+  // from the start - the offset silently doing the opposite of its job.
   const value = Number(out.trim());
-  return Number.isInteger(value) && value >= 0 ? value : 0;
+  if (status !== 0 || out.trim() === "" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`could not measure the remote agent log: ${out.slice(0, 200) || "no output"}`);
+  }
+  return value;
 }
 
 /// The agent's record file: the evidence channel, with no other writers.
-export function fetchRemoteRecord({ host, remotePort, root, fromByte = 0 }) {
-  return readRemoteFile(host, recordPath(root, remotePort), fromByte);
+export function fetchRemoteRecord({ host, remotePort, root }) {
+  return readRemoteFile(host, recordPath(root, remotePort), 0);
 }
 
-/// Byte length of the record file now. The agent appends across runs and a
-/// scenario reuses its request ids, so a record another run wrote would
-/// otherwise satisfy this run's check.
-export function remoteRecordLength({ host, remotePort, root }) {
-  const { out } = remotePowerShell(host,
-    `$p = '${recordPath(root, remotePort)}'; if (Test-Path -LiteralPath $p) { Write-Output ((Get-Item -LiteralPath $p).Length) } else { Write-Output 0 }`);
-  const value = Number(out.trim());
-  return Number.isInteger(value) && value >= 0 ? value : 0;
+/// Writes one fence line into the record file.
+///
+/// The harness marks its own run rather than computing an offset: reading
+/// "from byte N" still returns the whole file when the run wrote nothing,
+/// which is the failure being investigated. Append mode is what keeps this
+/// from tearing the agent's concurrent writes.
+export function appendRemoteFence({ host, remotePort, root }, line) {
+  const { status, out } = remotePowerShell(host, [
+    `$p = '${recordPath(root, remotePort)}'`,
+    "try {",
+    "  $s = [System.IO.File]::Open($p, 'Append', 'Write', 'ReadWrite')",
+    "  $w = New-Object System.IO.StreamWriter($s)",
+    `  $w.WriteLine('${line}')`,
+    "  $w.Close(); $s.Close()",
+    "  Write-Output 'P4_FENCE_OK'",
+    "} catch { Write-Output ('P4_FENCE_ERROR ' + $_.Exception.Message) }",
+  ].join("\n"), 60_000);
+  if (status !== 0 || !out.includes("P4_FENCE_OK")) {
+    throw new Error(`could not fence the record file: ${out.slice(0, 200) || "no output"}`);
+  }
 }
 
 function recordPath(root, remotePort) {
@@ -234,7 +250,11 @@ function readRemoteFile(host, file, fromByte) {
     `$p = '${file}'`,
     "try {",
     "  $s = [System.IO.File]::Open($p, 'Open', 'Read', 'ReadWrite')",
-    `  if ($s.Length -gt ${fromByte}) { $null = $s.Seek(${fromByte}, 'Begin') }`,
+    // Equality means this run appended nothing, which must read as nothing -
+    // not as the whole file. Shrinking means the file was replaced under us,
+    // which no offset can describe.
+    `  if ($s.Length -lt ${fromByte}) { throw 'record shrank below the recorded offset' }`,
+    `  $null = $s.Seek(${fromByte}, 'Begin')`,
     "  $r = New-Object System.IO.StreamReader($s)",
     "  $t = $r.ReadToEnd(); $r.Close(); $s.Close()",
     "  Write-Output 'P4_REMOTE_LOG_BEGIN'; Write-Output $t",

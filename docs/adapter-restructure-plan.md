@@ -97,7 +97,7 @@ llama.cpp는 하루에 한 번이 아니라 **하루 평균 17.5커밋**을 낸�
 
 | 단계 | 결과 |
 | --- | --- |
-| 충돌 가능 지점 | 우리 파일 3개가 상류에서 변경(`common/speculative.cpp` -52, `src/llama-context.cpp` +25/-9, `src/llama-kv-cache.cpp` -64) |
+| 충돌 가능 지점 | 우리 파일 3개가 상류에서 변경 — `git diff --numstat 557614e02..0eadefebd`: `common/speculative.cpp` +6/-46, `src/llama-context.cpp` +19/-6, `src/llama-kv-cache.cpp` +26/-38 |
 | 큐 리베이스 (24패치) | **24/24 clean** — 에스컬레이션 0, 수동 개입 0 |
 | pristine 재생 검증 | 24/24 clean |
 | 패치 분류 게이트 | valid — hook 18 / fix 2 / model 4 (분류 변동 없음) |
@@ -105,7 +105,7 @@ llama.cpp는 하루에 한 번이 아니라 **하루 평균 17.5커밋**을 낸�
 | CPU 빌드 + CTest | 11/11 (real-model 하위 4건은 SKIP) |
 | CUDA 빌드 + CTest | 11/11, sm_86/sm_89 |
 | 4노드 실기 (3090x2) | smoke 1/1 · mixed 40/40 · service 40/40, 전부 의미 판정 통과 |
-| P4 정책 계층(Rust)·C++ 소스 변경 | **0** |
+| compat 포트 성립에 필요한 C++·정책 소스 변경 | **0** — 같은 커밋의 Rust·하네스 변경은 증거 채널 수정이며 포트와 무관 |
 
 패치 큐 크기의 추이는 13(08-03) → 21(08-05) → 24(08-27) → 24(08-31) → 24(09-01)로,
 **최근 세 pin 연속 24개 고정**이다. 큐가 누적되지 않는다는 것이 계층 분리의 실질적
@@ -113,6 +113,11 @@ llama.cpp는 하루에 한 번이 아니라 **하루 평균 17.5커밋**을 낸�
 
 **다만 한 번의 관측이다.** 18커밋은 짧은 표류이고, 앞선 69커밋 표류에서는 fuzz 3·
 3-way 2가 필요했다. 무충돌이 일반 성질이라고 주장하지 않는다.
+재현 명령을 남긴다. 커밋 수는 `git log --since="21 days ago" --format=%H origin/master`
+(21×24h rolling window, 2026-09-01 08:00 UTC 기준), 변경량은 21일 전 base commit 대비
+`git diff --shortstat <base>..origin/master -- <패치 파일 27개>`, 일자 집계는 KST 달력
+기준이다. base·종료 SHA와 시간대를 밝히지 않으면 같은 수치가 재현되지 않는다.
+
 
 ## 실측: 새 pin 채택 (2026-08-31, U0 ①)
 
@@ -368,7 +373,7 @@ U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서
 | 조각 | 상태 | 근거 |
 | --- | --- | --- |
 | ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
-| ③b llama.cpp `common/` 격리 | **미성립** | 런타임 공개 헤더가 `common_params`를 값으로 받고 `common_prompt_checkpoint`·`common_speculative_ptr`를 멤버로 보유. 10개 파일이 `common/`에 의존하며 게이트가 그 목록을 고정해 증가만 막는다 |
+| ③b llama.cpp `common/` 격리 | **미성립** | 런타임 공개 헤더가 `common_params`를 값으로 받고 `common_prompt_checkpoint`·`common_speculative_ptr`를 멤버로 보유. 헤더 3개·구현 6개가 `common/`에 의존한다(2026-09-02). 게이트는 헤더를 0으로 몰고 구현 목록의 증가를 막지만, **CMake의 `common` include 경로가 아직 PUBLIC**이라 컴파일러는 아무것도 강제하지 않는다 |
 | ③c P4 소유 versioned stage ABI | 미착수 | — |
 | ② `patch_set` 왕복 | 성립 | prepare 스탬프 → CMake → HELLO → loaded 텔레메트리 → OUTER, 실행 산출물에 기록 |
 | ② 스테이지 불일치 거부 | 성립 | 상이 patch-set 거부 + 빌드를 못 대는 스테이지 거부(fail-closed, 명시 환경변수로만 우회) |

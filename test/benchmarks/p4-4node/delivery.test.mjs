@@ -6,7 +6,9 @@ const target = 'OuterEndpoint { channel: "p4-4node-mixed" }';
 
 test("a clean log passes", () => {
   const result = checkDelivery("P4_EVENT_CONNECTION_STOPPED error=eof\nnothing else\n");
-  assert.deepEqual(result, { passed: true, counted: 0, uncounted: 0, endpoints: [] });
+  assert.deepEqual(result, {
+    passed: true, counted: 0, uncounted: 0, write_failures: 0, abandoned: 0, endpoints: [],
+  });
 });
 
 test("the running total is taken, not the line count", () => {
@@ -37,4 +39,21 @@ test("an agent too old to count still fails the run", () => {
 test("the discard the 2026-09-01 mixed run produced is caught", () => {
   const log = `P4_EVENT_WRITE_FAILED error=os error 10053\nP4_EVENT_OUTER_MISSING discarded=55 target=${target}`;
   assert.equal(checkDelivery(log).counted, 55);
+});
+
+test("a failed socket write fails the run even with nothing discarded", () => {
+  // The queue accepted these events. Accepted is not delivered.
+  const log = "P4_EVENT_WRITE_FAILED abandoned=17 error=os error 10053";
+  const result = checkDelivery(log);
+  assert.equal(result.passed, false);
+  assert.equal(result.write_failures, 1);
+  assert.equal(result.abandoned, 17);
+  assert.equal(result.counted, 0);
+});
+
+test("a clean run reports both losses as zero", () => {
+  const result = checkDelivery("P4_SESSION_KEY_ADMITTED request=req key=k");
+  assert.equal(result.passed, true);
+  assert.equal(result.abandoned, 0);
+  assert.equal(result.write_failures, 0);
 });

@@ -32,25 +32,32 @@ export function admittedKeys(agentLog) {
   return admitted;
 }
 
-/// Compares the two. `checked` is what the verdict actually rests on: zero
-/// means the trace was absent, which is not a pass.
-export function checkSessionKeys(config, requestIds, agentLog) {
+/// Compares the two, and demands they are the same set.
+///
+/// Presence of the expected keys is not enough. A record the run did not
+/// ask for means the reader is looking at somebody else's records - a stale
+/// file, a concurrent run - and a reader in that state cannot testify about
+/// this run at all, including about the keys it did find. A 2026-09-01 smoke
+/// run reported one key checked and forty-one observed and passed.
+export function checkSessionKeys(config, requestIds, records) {
   const expected = expectedKeys(config, requestIds);
   if (expected.size === 0) {
-    return { applicable: false, passed: true, checked: 0, mismatches: [] };
+    return { applicable: false, passed: true, checked: 0, observed: 0, mismatches: [], unexpected: [] };
   }
-  const admitted = admittedKeys(agentLog);
+  const admitted = admittedKeys(records);
   const mismatches = [];
   for (const [requestId, key] of expected) {
     const seen = admitted.get(requestId);
     if (seen === undefined) mismatches.push({ request_id: requestId, expected: key, admitted: null });
     else if (seen !== key) mismatches.push({ request_id: requestId, expected: key, admitted: seen });
   }
+  const unexpected = [...admitted.keys()].filter((requestId) => !expected.has(requestId));
   return {
     applicable: true,
-    passed: mismatches.length === 0 && admitted.size > 0,
+    passed: mismatches.length === 0 && unexpected.length === 0 && admitted.size === expected.size,
     checked: expected.size,
     observed: admitted.size,
     mismatches: mismatches.slice(0, 5),
+    unexpected: unexpected.slice(0, 5),
   };
 }
