@@ -151,9 +151,29 @@ function createPreparedSource(destination) {
   }
 }
 
+/// P4's own provenance stamp, which the build reads and the pristine check
+/// must not see. It is generated output living inside a tree whose whole
+/// contract is "nothing here but the tracked compatibility diff", so it is
+/// removed before verifying and written back after.
+const COMPAT_STAMP = ".p4-compat.json";
+
+function writeCompatStamp(destination) {
+  fs.writeFileSync(
+    path.join(destination, COMPAT_STAMP),
+    `${JSON.stringify({
+      upstream_commit: manifest.upstream_commit,
+      patch_set_sha256: manifest.patch_set_sha256,
+      patched_tree: manifest.patched_tree,
+    }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 function verifiedPreparedSource(destination) {
+  fs.rmSync(path.join(destination, COMPAT_STAMP), { force: true });
   if (!fs.existsSync(destination)) createPreparedSource(destination);
   validatePreparedSource(destination, manifest);
+  writeCompatStamp(destination);
   return destination;
 }
 
@@ -178,20 +198,6 @@ try {
     );
   }
 }
-// Stamped into the tree, not just printed, because the build configures from
-// the source directory alone: without this the stage server can report which
-// upstream commit it was built from but not which patch set was on top of it,
-// and two builds that differ only in the queue are indistinguishable at HELLO.
-fs.writeFileSync(
-  path.join(preparedTarget, ".p4-compat.json"),
-  `${JSON.stringify({
-    upstream_commit: manifest.upstream_commit,
-    patch_set_sha256: manifest.patch_set_sha256,
-    patched_tree: manifest.patched_tree,
-  }, null, 2)}\n`,
-  "utf8",
-);
-
 const output = {
   source_dir: preparedTarget,
   upstream_commit: manifest.upstream_commit,
