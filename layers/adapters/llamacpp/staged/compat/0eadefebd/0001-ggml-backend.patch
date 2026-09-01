@@ -1,0 +1,52 @@
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index ffe20b9d05b27df85fae936d6304eea4ad788deb..9aed949ffb9640de8248791e7d9726d9388d58dc 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -1338,17 +1338,39 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
+                             break;
+                         }
+                     }
+-                    // check if the split has too many inputs
+-                    // FIXME: count the number of inputs instead of only checking when full
+-                    if (split->n_inputs >= split->inputs_capacity) {
+-                        const size_t id = hash_id(src);
+-                        int src_backend_id = sched->hv_tensor_backend_ids[id];
+-                        bool supported = ggml_backend_sched_buffer_supported(sched, src, cur_backend_id);
+-                        if (src_backend_id != cur_backend_id && tensor_id_copy(id, cur_backend_id, 0) == NULL && !supported) {
+-                            need_new_split = true;
++                }
++
++                // One graph node can introduce multiple cross-backend inputs.
++                // Checking only when the split is already exactly full lets the
++                // insertion loop below jump from (max - 1) to (max + N) and hit
++                // its bounds assertion. Count the unique copies this node would
++                // add and begin a new split before that can happen.
++                int n_new_inputs = 0;
++                for (int j = 0; j < GGML_MAX_SRC; j++) {
++                    struct ggml_tensor * src = node->src[j];
++                    if (src == NULL) {
++                        continue;
++                    }
++                    const size_t id = hash_id(src);
++                    const int src_backend_id = sched->hv_tensor_backend_ids[id];
++                    if (src_backend_id == cur_backend_id
++                            || tensor_id_copy(id, cur_backend_id, 0) != NULL
++                            || ggml_backend_sched_buffer_supported(sched, src, cur_backend_id)) {
++                        continue;
++                    }
++                    bool already_counted = false;
++                    for (int k = 0; k < j; k++) {
++                        already_counted = node->src[k] == src;
++                        if (already_counted) {
+                             break;
+                         }
+                     }
++                    if (!already_counted) {
++                        n_new_inputs++;
++                    }
++                }
++                if (split->n_inputs + n_new_inputs > split->inputs_capacity) {
++                    need_new_split = true;
+                 }
+             }
+ 

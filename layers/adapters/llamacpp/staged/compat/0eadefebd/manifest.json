@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "abi_revision": "pipeline-abi-v1",
+  "required_artifact_symbols": [
+    "llama_linkcpp_runtime_configure",
+    "llama_linkcpp_runtime_clear"
+  ],
+  "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
+  "upstream_branch": "master",
+  "upstream_commit": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
+  "upstream_commit_date": "2026-09-01T06:24:49+02:00",
+  "upstream_subject": "qwen4exp: support recurrent state rollback (#28123)",
+  "observed_at": "2026-09-01T08:00:00Z",
+  "nearest_release_tag": "b10731",
+  "previous_linker_pin": "557614e0296ff4a5b6f649737a65ae2076eea2fd",
+  "previous_official_base": "557614e0296ff4a5b6f649737a65ae2076eea2fd",
+  "patch_set_sha256": "3cfc636181e4ee1033249b8f7ca4d50156174138bf07c2797a476f4c42ab8c47",
+  "patched_tree": "c81ecd4fff7c93a1f637d63733c0387f0b6bf157",
+  "patches": [
+    {
+      "file": "0001-ggml-backend.patch",
+      "sha256": "022863e8a92d5b5e4ec257677e8d57ec668d4e289a0c3144cee906b29feeff5c",
+      "layer": "upstream_fix"
+    },
+    {
+      "file": "0002-ggml-rpc.patch",
+      "sha256": "98993447fe8b1c66b012d13ddae374b32b9506b1e1ac378a96175d4c72c2aeb2",
+      "layer": "upstream_fix"
+    },
+    {
+      "file": "0003-public-pipeline-abi.patch",
+      "sha256": "33b42df46b057e94d7e010974b7419374c7038dfd2a41ba1cbc05784cc09649e",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0004-llama-context.patch",
+      "sha256": "0d402edbb91c1fa6aea687d73f72ad53e603afcdfc782eff78e2f068dad2ea8c",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0005-llama-context-header.patch",
+      "sha256": "e3c0647b9ad8a273a094b7fd60579c4636d44ed289841718186a3aa00ca51c94",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0006-llama-graph.patch",
+      "sha256": "f4fc2c89fa4902dfb7749a2ee372c080e4d7ba14ed62dc3f54508de5a5baa2a1",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0007-llama-graph-header.patch",
+      "sha256": "9b38458a769d5a7441e89e001ece98ccd37373436a1525e49f89c484ad5b2438",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0008-llama-memory-header.patch",
+      "sha256": "51df4e2f32ca46b5079db417de75e421d5fccc9573275c3a7cde845cd705ca4e",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0009-model-loader.patch",
+      "sha256": "6b851d55676739298e6ef22e068fee6ef3fb659cdb8d50a693b0d8098df410e1",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0010-model-loader-header.patch",
+      "sha256": "ec3ff678198ff3ccad2014a63df9b2d647aeaf877f28e61ef53dc00038b2c94a",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0011-llama-model.patch",
+      "sha256": "1c53441beb3e322b168043c223f0d9c626604faa643995d806f1600796e4fe6c",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0012-llama-model-header.patch",
+      "sha256": "94369903dd7d8a4b985f21f7b79bcb83df5df5dda777ae39b7865da2d470bd9c",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0013-llama-api-implementation.patch",
+      "sha256": "c18346cace7cb83c6dd74a6b92a001bb2321cfa9f6f3c72f5726479d29c5b22f",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0014-kv-stage-window.patch",
+      "sha256": "2425ceb28725330eb37ca7c6788c92070d60ed03a349e92c949669616496896d",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0015-official-minimax-m3-dense-gguf.patch",
+      "sha256": "dc4cf202d0225acfb80dd8caa37252452c806d20bb1198c2b6b1db7d042dba86",
+      "official_upstream_port": {
+        "repository": "https://github.com/ggml-org/llama.cpp.git",
+        "pull_request": "https://github.com/ggml-org/llama.cpp/pull/24523",
+        "commit": "d694e85ba70f96942f55deb63f92c243a231053a"
+      },
+      "layer": "model_feature"
+    },
+    {
+      "file": "0016-stage-memory-residency.patch",
+      "sha256": "ed2953cda7e39eced8f0b8b77fb0b337437d5e75d51aae66a6cbc93adcb80ca3",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0017-recurrent-stage-memory-residency.patch",
+      "sha256": "f69acf2baefa5020c782f1df810c3858c0227ca141c2a3844ae2b4b7c7c31889",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0018-mtp-tail-stage.patch",
+      "sha256": "3c268788ce7ee513ccc5dbf5153fc202d4ded41bf4996d7124eeac8846a3ac1c",
+      "layer": "model_feature"
+    },
+    {
+      "file": "0019-speculative-sequence-lifecycle.patch",
+      "sha256": "19fd97a9bf48e90ed8df59ea933e9bbd22d7b305a431b5732611cc4f1bc522e8",
+      "layer": "model_feature"
+    },
+    {
+      "file": "0020-recurrent-rollback-relocation.patch",
+      "sha256": "6bb42fea9406a2092fccbd8631c8e39cb9327e2f9a5bc84193e192f1ad7f1d26",
+      "official_upstream_port": {
+        "repository": "https://github.com/ggml-org/llama.cpp.git",
+        "pull_request": "https://github.com/ggml-org/llama.cpp/pull/25004",
+        "commit": "7ff2fd83e9794efffd0190652aadd3924820e6e5"
+      },
+      "layer": "model_feature"
+    },
+    {
+      "file": "0021-stage-noalloc-memory-breakdown.patch",
+      "sha256": "6a4b1a6efbd76eb754b3c808a60bc5fc4201991e7fa8f90a1cec71dbc6c5235d",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0022-iswa-stage-memory-residency.patch",
+      "sha256": "71f4f36af8af789887593d78ad8880b307c41a5cd6ceaef8c64d4bcb72b406fc",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0023-stage-passthrough-cut-identity.patch",
+      "sha256": "46d183259a97320956661cd603240c1a0b255f169d7b27c3854673caebcd3c68",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0024-stage-cut-mismatch-diagnostic.patch",
+      "sha256": "bc63a71c27b8c79e41604909bf0e6c0395f23232eff814f14841ff6b89d1eabb",
+      "layer": "stage_hook"
+    }
+  ]
+}

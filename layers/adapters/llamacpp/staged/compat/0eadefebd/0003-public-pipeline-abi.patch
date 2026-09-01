@@ -1,0 +1,197 @@
+diff --git a/include/llama.h b/include/llama.h
+index ef7a012c43a1ea53992d0c1c291c9ee311ef75fd..1ceb07a247c98c9726a52ad039e3982ce1965055 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -270,6 +270,107 @@ extern "C" {
+         int8_t       *  logits;   // TODO: rename this to "output"
+     } llama_batch;
+ 
++    enum llama_linkcpp_stage_flags {
++        LLAMA_LINKCPP_STAGE_FLAG_ENCODER = 1u << 0,
++    };
++
++    // A non-owning view of the exact micro-batch being executed. All pointers
++    // remain valid only for the duration of the stage executor callback.
++    struct llama_linkcpp_stage_invocation {
++        uint32_t version;
++        uint32_t flags;
++        uint32_t n_tokens;
++        uint32_t n_seq_tokens;
++        uint32_t n_seqs;
++        uint32_t n_seqs_unq;
++        uint32_t n_pos;
++        uint32_t reserved;
++        const llama_pos     * pos;
++        const int32_t       * n_seq_id;
++        llama_seq_id * const * seq_id;
++        const int8_t        * output;
++    };
++
++    typedef bool (*llama_linkcpp_stage_executor)(
++            struct llama_context * ctx,
++            const struct llama_linkcpp_stage_invocation * invocation,
++            void * user_data);
++
++    // linkcpp MoE expert dispatch (private fork): for the flagged layer, the routed
++    // expert FFN is handed to `fn` instead of being computed locally, so experts can
++    // live on other nodes. The router stays authoritative; only the mul_mat_id expert
++    // block is relocated. `fn` fills experts_out [n_embd, n_expert_used, n_tokens] from
++    // cur [n_embd, n_tokens] and sel [n_expert_used, n_tokens]. layer=-1 disables.
++    // See docs/design/moe-expert-sharding.md.
++    typedef bool (*llama_linkcpp_moe_dispatch_t)(
++            int32_t il, int32_t n_embd, int32_t n_expert_used, int32_t n_tokens,
++            const float * cur, const int32_t * sel, float * experts_out, void * user_data);
++
++    LLAMA_API void llama_linkcpp_set_moe_dispatch(
++            llama_linkcpp_moe_dispatch_t fn, void * user_data, int32_t layer);
++
++    enum llama_linkcpp_memory_op {
++        LLAMA_LINKCPP_MEMORY_CLEAR = 1,
++        LLAMA_LINKCPP_MEMORY_SEQ_RM,
++        LLAMA_LINKCPP_MEMORY_SEQ_CP,
++        LLAMA_LINKCPP_MEMORY_SEQ_KEEP,
++        LLAMA_LINKCPP_MEMORY_SEQ_ADD,
++        LLAMA_LINKCPP_MEMORY_SEQ_DIV,
++    };
++
++    struct llama_linkcpp_memory_invocation {
++        uint32_t version;
++        uint32_t op;
++        llama_seq_id seq_id_src;
++        llama_seq_id seq_id_dst;
++        llama_pos p0;
++        llama_pos p1;
++        int32_t value;
++        uint32_t reserved;
++    };
++
++    typedef bool (*llama_linkcpp_memory_executor)(
++            const struct llama_linkcpp_memory_invocation * invocation,
++            void * user_data);
++
++    enum llama_linkcpp_state_op {
++        LLAMA_LINKCPP_STATE_SEQ_GET_SIZE = 1,
++        LLAMA_LINKCPP_STATE_SEQ_GET_DATA,
++        LLAMA_LINKCPP_STATE_SEQ_SET_DATA,
++    };
++
++    // Opaque per-sequence state transport. The adapter never interprets the
++    // state bytes produced by llama.cpp memory implementations.
++    struct llama_linkcpp_state_invocation {
++        uint32_t version;
++        uint32_t op;
++        struct llama_context * ctx;
++        llama_seq_id seq_id;
++        uint32_t flags;
++        uint32_t reserved;
++        const uint8_t * input;
++        size_t input_size;
++        uint8_t * output;
++        size_t output_capacity;
++        size_t result_size;
++    };
++
++    typedef bool (*llama_linkcpp_state_executor)(
++            struct llama_linkcpp_state_invocation * invocation,
++            void * user_data);
++
++    struct llama_linkcpp_runtime_params {
++        const char * model_path;
++        int32_t layer_begin;
++        int32_t layer_end;
++        llama_linkcpp_stage_executor executor;
++        void * executor_user_data;
++        llama_linkcpp_memory_executor memory_executor;
++        void * memory_executor_user_data;
++        llama_linkcpp_state_executor state_executor;
++        void * state_executor_user_data;
++    };
++
+     enum llama_model_kv_override_type {
+         LLAMA_KV_OVERRIDE_TYPE_INT,
+         LLAMA_KV_OVERRIDE_TYPE_FLOAT,
+@@ -347,6 +448,35 @@ extern "C" {
+         bool no_host;         // bypass host buffer allowing extra buffers to be used
+         bool no_alloc;        // only load metadata and simulate memory allocations
+         bool load_mtp;        // whether to load MTP layers
++
++        // linkcpp stage runtime: load only [linkcpp_layer_begin, linkcpp_layer_end).
++        // Both values must be negative for the normal upstream full-model path.
++        int32_t linkcpp_layer_begin;
++        int32_t linkcpp_layer_end;
++        int32_t linkcpp_kv_gpu_layer_start;
++        int32_t linkcpp_kv_gpu_layer_end;
++        llama_linkcpp_stage_executor linkcpp_stage_executor;
++        void * linkcpp_stage_executor_user_data;
++        llama_linkcpp_memory_executor linkcpp_memory_executor;
++        void * linkcpp_memory_executor_user_data;
++        llama_linkcpp_state_executor linkcpp_state_executor;
++        void * linkcpp_state_executor_user_data;
++    };
++
++    // linkcpp generic graph cut-set tensor descriptor. This experimental ABI
++    // is versioned by linkcpp-stage-v3 and intentionally contains no model-
++    // architecture fields. alias_of references an earlier tensor carrying the
++    // same storage bytes, or -1 when this descriptor owns its payload.
++    struct llama_linkcpp_tensor_desc {
++        int32_t  type;
++        int32_t  n_dims;
++        int64_t  ne[4];
++        uint64_t nb[4];
++        uint64_t nbytes;
++        uint64_t view_offset;
++        int32_t  alias_of;
++        uint32_t flags;
++        char     name[64];
+     };
+ 
+     struct llama_sampler_seq_config {
+@@ -472,6 +602,14 @@ extern "C" {
+     // TODO: update API to start accepting pointers to params structs (https://github.com/ggml-org/llama.cpp/discussions/9172)
+     LLAMA_API struct llama_model_params          llama_model_default_params(void);
+     LLAMA_API struct llama_context_params        llama_context_default_params(void);
++
++    // Configure one process-local distributed target before loading it through
++    // an unmodified llama.cpp front end such as llama-server. The exact model
++    // path match prevents draft, projector, and router models from inheriting
++    // the stage window accidentally.
++    LLAMA_API bool llama_linkcpp_runtime_configure(
++            const struct llama_linkcpp_runtime_params * params);
++    LLAMA_API void llama_linkcpp_runtime_clear(void);
+     LLAMA_API struct llama_sampler_chain_params  llama_sampler_chain_default_params(void);
+     LLAMA_API struct llama_model_quantize_params llama_model_quantize_default_params(void);
+ 
+@@ -991,6 +1129,33 @@ extern "C" {
+             struct llama_context * ctx,
+               struct llama_batch   batch);
+ 
++    LLAMA_API int32_t llama_linkcpp_input_count (const struct llama_context * ctx);
++    LLAMA_API int32_t llama_linkcpp_output_count(const struct llama_context * ctx);
++    LLAMA_API int32_t llama_linkcpp_terminal_count(const struct llama_context * ctx);
++    LLAMA_API bool llama_linkcpp_input_desc (
++            const struct llama_context * ctx, int32_t index, struct llama_linkcpp_tensor_desc * desc);
++    LLAMA_API bool llama_linkcpp_output_desc(
++            const struct llama_context * ctx, int32_t index, struct llama_linkcpp_tensor_desc * desc);
++    LLAMA_API bool llama_linkcpp_terminal_desc(
++            const struct llama_context * ctx, int32_t index, struct llama_linkcpp_tensor_desc * desc);
++    LLAMA_API bool llama_linkcpp_input_set(
++            struct llama_context * ctx, int32_t index, const void * data, size_t size);
++    LLAMA_API bool llama_linkcpp_input_set_tensor(
++            struct llama_context * ctx,
++            const struct llama_linkcpp_tensor_desc * desc,
++            const void * data,
++            size_t size);
++    LLAMA_API void llama_linkcpp_input_clear(struct llama_context * ctx);
++    LLAMA_API bool llama_linkcpp_output_get(
++            const struct llama_context * ctx, int32_t index, void * data, size_t size);
++    // output_get only queues backend copies. Call once after reading a complete
++    // cut-set before inspecting its host buffers.
++    LLAMA_API bool llama_linkcpp_output_synchronize(const struct llama_context * ctx);
++    LLAMA_API bool llama_linkcpp_terminal_get(
++            const struct llama_context * ctx, int32_t index, void * data, size_t size);
++    LLAMA_API bool llama_linkcpp_terminal_set(
++            struct llama_context * ctx, int32_t index, const void * data, size_t size);
++
+     // Set the number of threads used for decoding
+     // n_threads is the number of threads used for generation (single token)
+     // n_threads_batch is the number of threads used for prompt and batch processing (multiple tokens)

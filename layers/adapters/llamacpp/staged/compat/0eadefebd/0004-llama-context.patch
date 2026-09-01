@@ -1,0 +1,620 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index a920c4231143c70520bc8b3ae4ae2404f6f489af..a46067ffe3e0d65c8ec1a3edc6588b23968c797b 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -393,6 +393,12 @@ llama_context::llama_context(
+         };
+ 
+         memory.reset(model.create_memory(params_mem, cparams));
++        if (memory) {
++            memory->set_linkcpp_executor(
++                model.linkcpp_memory_executor(),
++                model.linkcpp_memory_executor_user_data(),
++                cparams.n_seq_max == 1);
++        }
+     }
+ 
+     // init backends
+@@ -1385,7 +1391,63 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+         //const auto t_start_us = ggml_time_us();
+ 
+         // FIXME this call causes a crash if any model inputs were not used in the graph and were therefore not allocated
+-        res->set_inputs(&ubatch);
++        res->set_inputs(
++            &ubatch,
++            model.linkcpp_layer_begin() > 0,
++            model.linkcpp_layer_end() >= 0
++                && model.linkcpp_layer_end() < (int32_t) model.hparams.n_layer());
++        const auto * stage_payloads = &linkcpp_input_payloads;
++        std::vector<std::vector<uint8_t>> ordered_payloads;
++        if (!linkcpp_input_payload_descs.empty()
++            && linkcpp_input_payload_descs.size() == linkcpp_input_payloads.size()) {
++            const auto & expected = res->get_linkcpp_inputs();
++            std::vector<bool> used(linkcpp_input_payloads.size(), false);
++            ordered_payloads.reserve(expected.size());
++            stage_payloads = &ordered_payloads;
++            for (const ggml_tensor * tensor : expected) {
++                size_t found = linkcpp_input_payloads.size();
++                for (size_t i = 0; i < linkcpp_input_payloads.size(); ++i) {
++                    const auto & desc = linkcpp_input_payload_descs[i];
++                    if (!used[i]
++                        && desc.type == (int32_t) tensor->type
++                        && desc.n_dims == ggml_n_dims(tensor)
++                        && desc.nbytes == ggml_nbytes(tensor)
++                        && memcmp(desc.ne, tensor->ne,
++                                  sizeof(desc.ne[0]) * (size_t) desc.n_dims) == 0
++                        && memcmp(desc.nb, tensor->nb,
++                                  sizeof(desc.nb[0]) * (size_t) desc.n_dims) == 0
++                        && strcmp(desc.name, ggml_get_name(tensor)) == 0) {
++                        found = i;
++                        break;
++                    }
++                }
++                if (found == linkcpp_input_payloads.size()) {
++                    LLAMA_LOG_ERROR(
++                            "%s: unmatched linkcpp stage input: name=%s type=%d dims=%d bytes=%zu "
++                            "ne=[%lld,%lld,%lld,%lld] nb=[%zu,%zu,%zu,%zu]\n",
++                            __func__, ggml_get_name(tensor), (int) tensor->type, ggml_n_dims(tensor),
++                            ggml_nbytes(tensor),
++                            (long long) tensor->ne[0], (long long) tensor->ne[1],
++                            (long long) tensor->ne[2], (long long) tensor->ne[3],
++                            tensor->nb[0], tensor->nb[1], tensor->nb[2], tensor->nb[3]);
++                    ordered_payloads.clear();
++                    break;
++                }
++                used[found] = true;
++                ordered_payloads.push_back(linkcpp_input_payloads[found]);
++            }
++            if (ordered_payloads.size() != expected.size()
++                || expected.size() != linkcpp_input_payloads.size()) {
++                ordered_payloads.clear();
++                ordered_payloads.emplace_back();
++            }
++        }
++        if (!res->set_linkcpp_inputs(*stage_payloads)) {
++            LLAMA_LOG_ERROR("%s: linkcpp stage input cut-set mismatch: expected=%zu received=%zu\n",
++                    __func__, res->get_linkcpp_inputs().size(), stage_payloads->size());
++            ret = GGML_STATUS_FAILED;
++            return nullptr;
++        }
+ 
+         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
+     }
+@@ -1397,11 +1459,161 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+         return nullptr;
+     }
+ 
++    if (model.linkcpp_stage_executor()
++        && model.linkcpp_layer_begin() == 0
++        && model.linkcpp_layer_end() >= 0
++        && model.linkcpp_layer_end() < (int32_t) model.hparams.n_layer()) {
++        const llama_linkcpp_stage_invocation invocation = {
++            /*.version      =*/ 1,
++            /*.flags        =*/ gtype == LLM_GRAPH_TYPE_ENCODER ? (uint32_t) LLAMA_LINKCPP_STAGE_FLAG_ENCODER : 0u,
++            /*.n_tokens     =*/ ubatch.n_tokens,
++            /*.n_seq_tokens =*/ ubatch.n_seq_tokens,
++            /*.n_seqs       =*/ ubatch.n_seqs,
++            /*.n_seqs_unq   =*/ ubatch.n_seqs_unq,
++            /*.n_pos        =*/ ubatch.n_pos,
++            /*.reserved     =*/ 0,
++            /*.pos          =*/ ubatch.pos,
++            /*.n_seq_id     =*/ ubatch.n_seq_id,
++            /*.seq_id       =*/ ubatch.seq_id,
++            /*.output       =*/ ubatch.output,
++        };
++        if (!model.linkcpp_stage_executor()(this, &invocation, model.linkcpp_stage_executor_user_data())) {
++            LLAMA_LOG_ERROR("%s: linkcpp stage executor failed\n", __func__);
++            ret = GGML_STATUS_FAILED;
++            return nullptr;
++        }
++    }
++
+     ret = GGML_STATUS_SUCCESS;
+ 
+     return res;
+ }
+ 
++static std::pair<const ggml_tensor *, uint64_t> linkcpp_tensor_storage(const ggml_tensor * tensor) {
++    uint64_t offset = 0;
++    while (tensor && tensor->view_src) {
++        offset += tensor->view_offs;
++        tensor = tensor->view_src;
++    }
++    return { tensor, offset };
++}
++
++static bool linkcpp_tensor_desc(
++        const ggml_tensor * tensor,
++        const std::vector<ggml_tensor *> & tensors,
++        int32_t index,
++        llama_linkcpp_tensor_desc * desc) {
++    if (!tensor || !desc) return false;
++    memset(desc, 0, sizeof(*desc));
++    desc->type = (int32_t) tensor->type;
++    desc->n_dims = ggml_n_dims(tensor);
++    memcpy(desc->ne, tensor->ne, sizeof(desc->ne));
++    memcpy(desc->nb, tensor->nb, sizeof(desc->nb));
++    desc->nbytes = ggml_nbytes(tensor);
++    const auto storage = linkcpp_tensor_storage(tensor);
++    desc->view_offset = storage.second;
++    desc->alias_of = -1;
++    for (int32_t i = 0; i < index; ++i) {
++        const ggml_tensor * other = tensors[i];
++        const auto other_storage = linkcpp_tensor_storage(other);
++        if (storage == other_storage
++            && tensor->type == other->type
++            && ggml_are_same_shape(tensor, other)
++            && memcmp(tensor->nb, other->nb, sizeof(tensor->nb)) == 0) {
++            desc->alias_of = i;
++            break;
++        }
++    }
++    snprintf(desc->name, sizeof(desc->name), "%s", ggml_get_name(tensor));
++    return true;
++}
++
++int32_t llama_context::linkcpp_input_count() const {
++    return (int32_t) gf_res_prev->get_linkcpp_inputs().size();
++}
++
++int32_t llama_context::linkcpp_output_count() const {
++    return (int32_t) gf_res_prev->get_linkcpp_outputs().size();
++}
++
++int32_t llama_context::linkcpp_terminal_count() const {
++    return (int32_t) gf_res_prev->get_linkcpp_terminals().size();
++}
++
++bool llama_context::linkcpp_input_desc(int32_t index, llama_linkcpp_tensor_desc * desc) const {
++    const auto & tensors = gf_res_prev->get_linkcpp_inputs();
++    return index >= 0 && index < (int32_t) tensors.size()
++        && linkcpp_tensor_desc(tensors[index], tensors, index, desc);
++}
++
++bool llama_context::linkcpp_output_desc(int32_t index, llama_linkcpp_tensor_desc * desc) const {
++    const auto & tensors = gf_res_prev->get_linkcpp_outputs();
++    return index >= 0 && index < (int32_t) tensors.size()
++        && linkcpp_tensor_desc(tensors[index], tensors, index, desc);
++}
++
++bool llama_context::linkcpp_terminal_desc(int32_t index, llama_linkcpp_tensor_desc * desc) const {
++    const auto & tensors = gf_res_prev->get_linkcpp_terminals();
++    return index >= 0 && index < (int32_t) tensors.size()
++        && linkcpp_tensor_desc(tensors[index], tensors, index, desc);
++}
++
++bool llama_context::linkcpp_input_set(int32_t index, const void * data, size_t size) {
++    if (index < 0 || !data) return false;
++    if (linkcpp_input_payloads.size() <= (size_t) index) {
++        linkcpp_input_payloads.resize((size_t) index + 1);
++    }
++    linkcpp_input_payloads[index].assign((const uint8_t *) data, (const uint8_t *) data + size);
++    linkcpp_input_payload_descs.clear();
++    return true;
++}
++
++bool llama_context::linkcpp_input_set_tensor(
++        const llama_linkcpp_tensor_desc * desc, const void * data, size_t size) {
++    if (!desc || !data || size != desc->nbytes) return false;
++    linkcpp_input_payload_descs.push_back(*desc);
++    linkcpp_input_payloads.emplace_back(
++        (const uint8_t *) data, (const uint8_t *) data + size);
++    return true;
++}
++
++void llama_context::linkcpp_input_clear() {
++    linkcpp_input_payloads.clear();
++    linkcpp_input_payload_descs.clear();
++}
++
++bool llama_context::linkcpp_output_get(int32_t index, void * data, size_t size) const {
++    const auto & tensors = gf_res_prev->get_linkcpp_outputs();
++    if (index < 0 || index >= (int32_t) tensors.size() || !data
++        || size != ggml_nbytes(tensors[index]) || tensors[index]->buffer == nullptr) return false;
++    ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), tensors[index]);
++    if (!backend) return false;
++    ggml_backend_tensor_get_async(backend, tensors[index], data, 0, size);
++    return true;
++}
++
++bool llama_context::linkcpp_output_synchronize() const {
++    ggml_backend_sched_synchronize(sched.get());
++    return true;
++}
++
++bool llama_context::linkcpp_terminal_get(int32_t index, void * data, size_t size) const {
++    const auto & tensors = gf_res_prev->get_linkcpp_terminals();
++    if (index < 0 || index >= (int32_t) tensors.size() || !data
++        || size != ggml_nbytes(tensors[index]) || tensors[index]->buffer == nullptr) return false;
++    ggml_backend_sched_synchronize(sched.get());
++    ggml_backend_tensor_get(tensors[index], data, 0, size);
++    return true;
++}
++
++bool llama_context::linkcpp_terminal_set(int32_t index, const void * data, size_t size) {
++    const auto & tensors = gf_res_prev->get_linkcpp_terminals();
++    if (index < 0 || index >= (int32_t) tensors.size() || !data
++        || size != ggml_nbytes(tensors[index]) || tensors[index]->buffer == nullptr) return false;
++    ggml_backend_tensor_set(tensors[index], data, 0, size);
++    return true;
++}
++
+ int llama_context::encode(const llama_batch & batch_inp) {
+     // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
+     // so accept either present rather than requiring exactly one.
+@@ -1822,8 +2034,23 @@ int llama_context::decode(const llama_batch & batch_inp) {
+         }
+ 
+         ggml_status status;
+-
+-        const auto * res = process_ubatch(ubatch, ctx_type_to_graph_type(cparams.ctx_type), mctx.get(), status);
++        llama_ubatch stage_ubatch = ubatch;
++        std::vector<int8_t> stage_output;
++        const bool force_stage_output = n_outputs == 0
++            && model.linkcpp_stage_executor()
++            && model.linkcpp_layer_begin() == 0
++            && model.linkcpp_layer_end() >= 0
++            && model.linkcpp_layer_end() < (int32_t) model.hparams.n_layer();
++        if (force_stage_output) {
++            stage_output.assign(ubatch.output, ubatch.output + ubatch.n_tokens);
++            stage_output.back() = 1;
++            stage_ubatch.output = stage_output.data();
++            n_outputs = 1;
++        }
++
++        const auto * res = process_ubatch(
++            stage_ubatch, ctx_type_to_graph_type(cparams.ctx_type), mctx.get(), status);
++        if (force_stage_output) n_outputs = 0;
+ 
+         if (!res) {
+             // the last ubatch failed or was aborted -> remove all positions of that ubatch from the memory module
+@@ -2329,6 +2556,21 @@ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
+         }
+     }
+ 
++    // A stage builds the complete architecture graph before pruning it to its
++    // resident layer window. Scale the stock architecture budget by the exact
++    // window ratio without teaching the compatibility layer any model names.
++    const int32_t stage_begin = model.linkcpp_layer_begin();
++    const int32_t stage_end   = model.linkcpp_layer_end();
++    if (stage_begin >= 0 && stage_end > stage_begin) {
++        const uint32_t owned = (uint32_t) (stage_end - stage_begin);
++        const uint32_t stage_scale = (model.hparams.n_layer() + owned - 1) / owned;
++        if (stage_scale > 1) {
++            res = res > std::numeric_limits<uint32_t>::max() / stage_scale
++                ? std::numeric_limits<uint32_t>::max()
++                : res * stage_scale;
++        }
++    }
++
+     uint32_t n_sampling_nodes = 0;
+     uint32_t n_sampling_nodes_max = 0;
+     for (const auto & [seq_id, sampler] : sampling.samplers) {
+@@ -2482,7 +2724,9 @@ llm_graph_params llama_context::graph_params(
+         /*.cross       =*/ &cross,
+         /*.samplers    =*/ sampling.samplers,
+         /*.n_outputs   =*/ n_outputs,
+-        /*.cb          =*/ graph_get_cb(),
++        /*.linkcpp_layer_begin =*/ model.linkcpp_layer_begin(),
++        /*.linkcpp_layer_end   =*/ model.linkcpp_layer_end(),
++        /*.cb          =*/ graph_get_cb(res),
+         /*.res         =*/ res,
+     };
+ }
+@@ -2516,10 +2760,11 @@ ggml_status llama_context::graph_compute(
+     return status;
+ }
+ 
+-llm_graph_cb llama_context::graph_get_cb() const {
+-    return [&](const llama_ubatch & ubatch, ggml_tensor * cur, const char * name, int il) {
++llm_graph_cb llama_context::graph_get_cb(llm_graph_result * res) const {
++    return [&, res](const llama_ubatch & ubatch, ggml_tensor * cur, const char * name, int il) {
+         if (il >= 0) {
+             ggml_format_name(cur, "%s-%d", name, il);
++            res->set_linkcpp_tensor_layer(cur, il);
+         } else {
+             ggml_set_name(cur, name);
+         }
+@@ -3062,13 +3307,46 @@ size_t llama_context::state_set_data(const uint8_t * src, size_t size) {
+ 
+ static constexpr uint32_t io_magic = 0xaf143cd8;
+ 
++static constexpr uint32_t linkcpp_seq_state_magic = 0x3153514c; // LQS1
++
++struct linkcpp_seq_state_header {
++    uint32_t magic;
++    uint32_t version;
++    uint32_t flags;
++    uint32_t reserved;
++    uint64_t local_size;
++    uint64_t remote_size;
++};
++
++static_assert(sizeof(linkcpp_seq_state_header) == 32, "linkcpp sequence state header ABI");
++
+ size_t llama_context::state_seq_get_size(llama_seq_id seq_id, llama_state_seq_flags flags) {
+     llama_io_write_dummy io(flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE);
+     try {
+         io.write(&io_magic, sizeof(io_magic));
+         io.write(&seq_id, sizeof(seq_id));
+-
+-        return state_seq_write_data(io, seq_id, flags);
++        const size_t local_size = state_seq_write_data(io, seq_id, flags);
++        auto executor = model.linkcpp_state_executor();
++        if (!executor) {
++            return local_size;
++        }
++        if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
++            LLAMA_LOG_ERROR("%s: distributed on-device state snapshots are unsupported\n", __func__);
++            return 0;
++        }
++        llama_linkcpp_state_invocation invocation = {
++            1, LLAMA_LINKCPP_STATE_SEQ_GET_SIZE, this, seq_id, flags, 0,
++            nullptr, 0, nullptr, 0, 0,
++        };
++        if (!executor(&invocation, model.linkcpp_state_executor_user_data())) {
++            return 0;
++        }
++        if (local_size > std::numeric_limits<size_t>::max() - sizeof(linkcpp_seq_state_header)
++            || invocation.result_size > std::numeric_limits<size_t>::max()
++                - sizeof(linkcpp_seq_state_header) - local_size) {
++            return 0;
++        }
++        return sizeof(linkcpp_seq_state_header) + local_size + invocation.result_size;
+     } catch (const std::exception & err) {
+         LLAMA_LOG_ERROR("%s: error getting state size: %s\n", __func__, err.what());
+         return 0;
+@@ -3076,6 +3354,41 @@ size_t llama_context::state_seq_get_size(llama_seq_id seq_id, llama_state_seq_fl
+ }
+ 
+ size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, size_t size, llama_state_seq_flags flags) {
++    auto executor = model.linkcpp_state_executor();
++    if (executor) {
++        if (!dst || size < sizeof(linkcpp_seq_state_header)
++            || (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE)) return 0;
++        llama_io_write_dummy dummy(false);
++        try {
++            dummy.write(&io_magic, sizeof(io_magic));
++            dummy.write(&seq_id, sizeof(seq_id));
++            const size_t local_size = state_seq_write_data(dummy, seq_id, flags);
++            if (local_size > size - sizeof(linkcpp_seq_state_header)) return 0;
++            const size_t remote_capacity = size - sizeof(linkcpp_seq_state_header) - local_size;
++            llama_linkcpp_state_invocation invocation = {
++                1, LLAMA_LINKCPP_STATE_SEQ_GET_DATA, this, seq_id, flags, 0,
++                nullptr, 0,
++                dst + sizeof(linkcpp_seq_state_header) + local_size,
++                remote_capacity, 0,
++            };
++            if (!executor(&invocation, model.linkcpp_state_executor_user_data())
++                || invocation.result_size > remote_capacity) return 0;
++            llama_io_write_host local_io(dst + sizeof(linkcpp_seq_state_header), local_size);
++            local_io.write(&io_magic, sizeof(io_magic));
++            local_io.write(&seq_id, sizeof(seq_id));
++            if (state_seq_write_data(local_io, seq_id, flags) != local_size) return 0;
++            const linkcpp_seq_state_header header = {
++                linkcpp_seq_state_magic, 1, flags, 0,
++                (uint64_t) local_size, (uint64_t) invocation.result_size,
++            };
++            memcpy(dst, &header, sizeof(header));
++            return sizeof(header) + local_size + invocation.result_size;
++        } catch (const std::exception & err) {
++            LLAMA_LOG_ERROR("%s: error saving distributed state: %s\n", __func__, err.what());
++            return 0;
++        }
++    }
++
+     std::unique_ptr<llama_io_write_i> io;
+     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
+         io = std::make_unique<llama_io_write_device>(dst, size, mem_storage[seq_id]);
+@@ -3095,6 +3408,40 @@ size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, siz
+ }
+ 
+ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size, llama_state_seq_flags flags) {
++    auto executor = model.linkcpp_state_executor();
++    if (executor) {
++        if (!src || size < sizeof(linkcpp_seq_state_header)
++            || (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE)) return 0;
++        linkcpp_seq_state_header header{};
++        memcpy(&header, src, sizeof(header));
++        if (header.magic != linkcpp_seq_state_magic || header.version != 1
++            || header.flags != flags || header.reserved
++            || header.local_size > SIZE_MAX || header.remote_size > SIZE_MAX
++            || header.local_size > size - sizeof(header)
++            || header.remote_size != size - sizeof(header) - (size_t) header.local_size) return 0;
++        const auto * local = src + sizeof(header);
++        const auto * remote = local + (size_t) header.local_size;
++        try {
++            llama_io_read_host local_io(local, (size_t) header.local_size);
++            uint32_t magic_read = 0;
++            local_io.read(&magic_read, sizeof(magic_read));
++            if (io_magic != magic_read) return 0;
++            llama_seq_id seq_id_read = -1;
++            local_io.read(&seq_id_read, sizeof(seq_id_read));
++            if (state_seq_read_data(local_io, seq_id, flags) != (size_t) header.local_size) return 0;
++            llama_linkcpp_state_invocation invocation = {
++                1, LLAMA_LINKCPP_STATE_SEQ_SET_DATA, this, seq_id, flags, 0,
++                remote, (size_t) header.remote_size, nullptr, 0, 0,
++            };
++            if (!executor(&invocation, model.linkcpp_state_executor_user_data())
++                || invocation.result_size != (size_t) header.remote_size) return 0;
++            return size;
++        } catch (const std::exception & err) {
++            LLAMA_LOG_ERROR("%s: error loading distributed state: %s\n", __func__, err.what());
++            return 0;
++        }
++    }
++
+     std::unique_ptr<llama_io_read_i> io;
+     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
+         // create a temporary io to read the magic and the src seq_id
+@@ -3527,7 +3874,11 @@ void llama_context::opt_epoch_iter(
+             ggml_opt_prepare_alloc(opt_ctx, ctx_compute_opt, gf, res->get_inp_tokens(), res->get_logits());
+             ggml_opt_alloc(opt_ctx, train);
+ 
+-            res->set_inputs(&ubatch);
++            res->set_inputs(
++                &ubatch,
++                model.linkcpp_layer_begin() > 0,
++                model.linkcpp_layer_end() >= 0
++                    && model.linkcpp_layer_end() < (int32_t) model.hparams.n_layer());
+             {
+                 struct ggml_tensor * labels = ggml_opt_labels(opt_ctx);
+                 GGML_ASSERT(labels->ne[1] == n_ubatch);
+@@ -4001,6 +4352,12 @@ void llama_memory_clear(llama_memory_t mem, bool data) {
+     }
+ 
+     mem->clear(data);
++    const llama_linkcpp_memory_invocation invocation = {
++        1, LLAMA_LINKCPP_MEMORY_CLEAR, 0, 0, 0, 0, data ? 1 : 0, 0,
++    };
++    if (!mem->notify_linkcpp(invocation)) {
++        LLAMA_LOG_ERROR("%s: linkcpp memory clear forwarding failed\n", __func__);
++    }
+ }
+ 
+ bool llama_memory_seq_rm(
+@@ -4012,7 +4369,21 @@ bool llama_memory_seq_rm(
+         return true;
+     }
+ 
+-    return mem->seq_rm(seq_id, p0, p1);
++    if (mem->linkcpp_should_clear_full_sequence(seq_id, p0, p1)) {
++        mem->clear(true);
++        const llama_linkcpp_memory_invocation invocation = {
++            1, LLAMA_LINKCPP_MEMORY_CLEAR, 0, 0, 0, 0, 1, 0,
++        };
++        return mem->notify_linkcpp(invocation);
++    }
++
++    if (!mem->seq_rm(seq_id, p0, p1)) {
++        return false;
++    }
++    const llama_linkcpp_memory_invocation invocation = {
++        1, LLAMA_LINKCPP_MEMORY_SEQ_RM, seq_id, 0, p0, p1, 0, 0,
++    };
++    return mem->notify_linkcpp(invocation);
+ }
+ 
+ void llama_memory_seq_cp(
+@@ -4026,6 +4397,12 @@ void llama_memory_seq_cp(
+     }
+ 
+     mem->seq_cp(seq_id_src, seq_id_dst, p0, p1);
++    const llama_linkcpp_memory_invocation invocation = {
++        1, LLAMA_LINKCPP_MEMORY_SEQ_CP, seq_id_src, seq_id_dst, p0, p1, 0, 0,
++    };
++    if (!mem->notify_linkcpp(invocation)) {
++        LLAMA_LOG_ERROR("%s: linkcpp memory copy forwarding failed\n", __func__);
++    }
+ }
+ 
+ void llama_memory_seq_keep(
+@@ -4036,6 +4413,12 @@ void llama_memory_seq_keep(
+     }
+ 
+     mem->seq_keep(seq_id);
++    const llama_linkcpp_memory_invocation invocation = {
++        1, LLAMA_LINKCPP_MEMORY_SEQ_KEEP, seq_id, 0, 0, 0, 0, 0,
++    };
++    if (!mem->notify_linkcpp(invocation)) {
++        LLAMA_LOG_ERROR("%s: linkcpp memory keep forwarding failed\n", __func__);
++    }
+ }
+ 
+ void llama_memory_seq_add(
+@@ -4049,6 +4432,12 @@ void llama_memory_seq_add(
+     }
+ 
+     mem->seq_add(seq_id, p0, p1, delta);
++    const llama_linkcpp_memory_invocation invocation = {
++        1, LLAMA_LINKCPP_MEMORY_SEQ_ADD, seq_id, 0, p0, p1, delta, 0,
++    };
++    if (!mem->notify_linkcpp(invocation)) {
++        LLAMA_LOG_ERROR("%s: linkcpp memory add forwarding failed\n", __func__);
++    }
+ }
+ 
+ void llama_memory_seq_div(
+@@ -4062,6 +4451,12 @@ void llama_memory_seq_div(
+     }
+ 
+     mem->seq_div(seq_id, p0, p1, d);
++    const llama_linkcpp_memory_invocation invocation = {
++        1, LLAMA_LINKCPP_MEMORY_SEQ_DIV, seq_id, 0, p0, p1, d, 0,
++    };
++    if (!mem->notify_linkcpp(invocation)) {
++        LLAMA_LOG_ERROR("%s: linkcpp memory divide forwarding failed\n", __func__);
++    }
+ }
+ 
+ llama_pos llama_memory_seq_pos_min(
+@@ -4233,6 +4628,69 @@ int32_t llama_decode(
+     return ret;
+ }
+ 
++int32_t llama_linkcpp_input_count(const llama_context * ctx) {
++    return ctx ? ctx->linkcpp_input_count() : -1;
++}
++
++int32_t llama_linkcpp_output_count(const llama_context * ctx) {
++    return ctx ? ctx->linkcpp_output_count() : -1;
++}
++
++int32_t llama_linkcpp_terminal_count(const llama_context * ctx) {
++    return ctx ? ctx->linkcpp_terminal_count() : -1;
++}
++
++bool llama_linkcpp_input_desc(
++        const llama_context * ctx, int32_t index, llama_linkcpp_tensor_desc * desc) {
++    return ctx && ctx->linkcpp_input_desc(index, desc);
++}
++
++bool llama_linkcpp_output_desc(
++        const llama_context * ctx, int32_t index, llama_linkcpp_tensor_desc * desc) {
++    return ctx && ctx->linkcpp_output_desc(index, desc);
++}
++
++bool llama_linkcpp_terminal_desc(
++        const llama_context * ctx, int32_t index, llama_linkcpp_tensor_desc * desc) {
++    return ctx && ctx->linkcpp_terminal_desc(index, desc);
++}
++
++bool llama_linkcpp_input_set(
++        llama_context * ctx, int32_t index, const void * data, size_t size) {
++    return ctx && ctx->linkcpp_input_set(index, data, size);
++}
++
++bool llama_linkcpp_input_set_tensor(
++        llama_context * ctx,
++        const llama_linkcpp_tensor_desc * desc,
++        const void * data,
++        size_t size) {
++    return ctx && ctx->linkcpp_input_set_tensor(desc, data, size);
++}
++
++void llama_linkcpp_input_clear(llama_context * ctx) {
++    if (ctx) ctx->linkcpp_input_clear();
++}
++
++bool llama_linkcpp_output_get(
++        const llama_context * ctx, int32_t index, void * data, size_t size) {
++    return ctx && ctx->linkcpp_output_get(index, data, size);
++}
++
++bool llama_linkcpp_output_synchronize(const llama_context * ctx) {
++    return ctx && ctx->linkcpp_output_synchronize();
++}
++
++bool llama_linkcpp_terminal_get(
++        const llama_context * ctx, int32_t index, void * data, size_t size) {
++    return ctx && ctx->linkcpp_terminal_get(index, data, size);
++}
++
++bool llama_linkcpp_terminal_set(
++        llama_context * ctx, int32_t index, const void * data, size_t size) {
++    return ctx && ctx->linkcpp_terminal_set(index, data, size);
++}
++
+ //
+ // perf
+ //

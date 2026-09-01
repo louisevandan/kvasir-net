@@ -115,7 +115,12 @@ pub async fn deliver_outer(mut receiver: EventReceiver, connections: OuterConnec
         if !delivered {
             let total = discarded.entry(target.clone()).or_insert(0);
             *total += 1;
-            eprintln!("P4_EVENT_OUTER_MISSING discarded={total} target={target:?}");
+            // To the record file, not stderr: the discard count is read back
+            // as a run's delivery verdict, and stderr is shared with four
+            // stage servers that can tear a line in half.
+            p4_llamacpp_staged_adapter::v2::record::record(&format!(
+                "P4_EVENT_OUTER_MISSING discarded={total} target={target:?}"
+            ));
         }
     }
 }

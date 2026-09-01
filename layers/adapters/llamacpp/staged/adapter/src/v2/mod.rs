@@ -4,6 +4,7 @@ mod capsule;
 mod commands;
 mod logical;
 mod node;
+pub mod record;
 mod scheduler;
 mod session_key;
 #[cfg(test)]

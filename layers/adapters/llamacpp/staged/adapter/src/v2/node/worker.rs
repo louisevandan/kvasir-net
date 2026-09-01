@@ -153,11 +153,11 @@ impl Worker {
             // adapter holds. Nothing else on the wire carries it back, so
             // without this the round trip is only an absence of rejection.
             if std::env::var_os("P4_STAGED_TRACE_SESSION_KEY").is_some() {
-                eprintln!(
+                crate::v2::record::record(&format!(
                     "P4_SESSION_KEY_ADMITTED request={} key={}",
                     command.request_id,
                     command.session_key.as_deref().unwrap_or("-")
-                );
+                ));
             }
             self.state
                 .remember_session_key(scope, command.session_key.clone());

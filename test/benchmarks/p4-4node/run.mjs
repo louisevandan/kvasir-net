@@ -17,6 +17,7 @@ import { checkDelivery } from "./delivery.mjs";
 import { checkSessionKeys } from "./session-key.mjs";
 import {
   fetchRemoteAgentLog,
+  fetchRemoteRecord,
   openTunnel,
   proveTunnelIdentity,
   remoteImageDigests,
@@ -133,6 +134,7 @@ async function main() {
   let samplerOutput = { stdout: "" };
   let driveOutput = { stdout: "", stderr: "" };
   let agentLog = "";
+  let record = "";
   let agentLogFrom = 0;
   let failure;
 
@@ -187,7 +189,14 @@ async function main() {
     agentLog = spec.target === "remote" && spec.tunnel
       ? fetchRemoteAgentLog({ ...spec.tunnel, fromByte: agentLogFrom })
       : agentOutput.stderr;
+    // Evidence comes from the record file, which has one writer. The agent
+    // log is kept for what it is good for - reading what happened - and is
+    // not what the verdict rests on.
+    record = spec.target === "remote" && spec.tunnel
+      ? fetchRemoteRecord(spec.tunnel)
+      : agentOutput.stderr;
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
+    fs.writeFileSync(path.join(outDir, "agent.record.log"), record, "utf8");
     fs.writeFileSync(path.join(outDir, "drive.stderr.log"), driveOutput.stderr, "utf8");
     await stopChild(agent);
     await stopChild(tunnel);
@@ -197,7 +206,7 @@ async function main() {
     // The relay's discard count belongs in the failure too: a drive that
     // stopped on a position gap is usually reporting a delivery loss, and
     // the two records read very differently.
-    const lost = checkDelivery(agentLog);
+    const lost = checkDelivery(record);
     fs.writeFileSync(path.join(outDir, "failure.json"),
       `${JSON.stringify({ run_id: runId, failure, delivery: lost, evidence }, null, 2)}\n`, "utf8");
     const discarded = lost.passed
@@ -219,11 +228,11 @@ async function main() {
   // adapter's own trace rather than against anything in the reply.
   // Tokens the relay dropped were generated and paid for; a run that lost
   // them did not do what it reports.
-  const delivery = checkDelivery(agentLog);
+  const delivery = checkDelivery(record);
   const sessionKeys = checkSessionKeys(
     JSON.parse(fs.readFileSync(configPath, "utf8")),
     artifact.requests.map((request) => request.request_id),
-    agentLog,
+    record,
   );
   const report = {
     run_id: runId,

@@ -199,14 +199,23 @@ export function remoteAgentLogLength({ host, remotePort, root }) {
   return Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
+/// The agent's record file: the evidence channel, with no other writers.
+export function fetchRemoteRecord({ host, remotePort, root }) {
+  return readRemoteFile(host, `${root}\\agent-${remotePort}.record.log`, 0);
+}
+
 export function fetchRemoteAgentLog({ host, remotePort, root, fromByte = 0 }) {
-  const file = `${root}\\agent-${remotePort}.err.log`;
-  // Read through an explicitly shared handle: the agent still holds the file
-  // open for writing, and Get-Content would fail on the sharing mode. The
-  // outcome is reported on stdout because a PowerShell error record reaches
-  // this side as CLIXML on stderr, where it is indistinguishable from noise -
-  // a silent empty read once looked exactly like an adapter that dropped the
-  // field it was being asked about.
+  return readRemoteFile(host, `${root}\\agent-${remotePort}.err.log`, fromByte);
+}
+
+/// Reads one remote file from a byte offset.
+///
+/// Through an explicitly shared handle: the agent holds these open for
+/// writing and Get-Content would fail on the sharing mode. The outcome is
+/// reported on stdout because a PowerShell error record reaches this side as
+/// CLIXML on stderr, where it is indistinguishable from noise - a silent
+/// empty read once looked exactly like the dropped field it was investigating.
+function readRemoteFile(host, file, fromByte) {
   const { out } = remotePowerShell(host, [
     `$p = '${file}'`,
     "try {",
@@ -219,7 +228,7 @@ export function fetchRemoteAgentLog({ host, remotePort, root, fromByte = 0 }) {
   ].join("\n"), 120_000);
   const begin = out.indexOf("P4_REMOTE_LOG_BEGIN");
   if (begin < 0) {
-    throw new Error(`remote agent log unreadable: ${out.slice(0, 200) || "no output"}`);
+    throw new Error(`remote file unreadable: ${out.slice(0, 200) || "no output"}`);
   }
   return out.slice(begin + "P4_REMOTE_LOG_BEGIN".length).replace(/^\r?\n/, "");
 }

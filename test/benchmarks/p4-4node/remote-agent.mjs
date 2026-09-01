@@ -35,6 +35,10 @@ const descriptor = `${root}\\agent-${port}.descriptor.json`;
 const agent = `${root}\\p4-agent.exe`;
 const log = `${root}\\agent-${port}.log`;
 const err = `${root}\\agent-${port}.err.log`;
+// Records read back as evidence go here, alone. The agent inherits its stage
+// servers' stderr so a load failure is not swallowed, which means four
+// unsynchronised writers share that file and can tear a record in half.
+const record = `${root}\\agent-${port}.record.log`;
 // The agent must advertise the address the drive uses to reach it, which is
 // the tunnel entrance on the driving machine, not the remote LAN address:
 // event endpoints are matched by value, so an agent that calls itself
@@ -89,6 +93,7 @@ function copyLauncher() {
     // so without this trace a run can only observe that the adapter did not
     // reject it. The log this writes is collected as run evidence.
     "set P4_STAGED_TRACE_SESSION_KEY=1",
+    `set P4_RECORD_FILE=${record}`,
     // Presence is what the adapter tests, so an unwanted trace has to be
     // absent rather than set to zero.
     ...(tracePositions ? ["set P4_STAGED_TRACE_OUTPUT_POSITION=1"] : []),
