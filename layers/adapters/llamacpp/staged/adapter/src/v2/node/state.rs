@@ -48,6 +48,12 @@ impl RequestState {
     }
 }
 
+/// One request identity, qualified by the load and session it belongs to.
+pub type SessionKeyScope = (u64, String, String);
+
+/// How many admitted identities a node remembers for the alias check.
+pub const SESSION_KEY_WINDOW: usize = 65_536;
+
 pub struct AdapterState {
     pub sessions: BTreeMap<String, PipelineSession>,
     pub requests: BTreeMap<String, RequestState>,
@@ -68,9 +74,19 @@ pub struct AdapterState {
     /// See `Worker::drive_first_batches`.
     pub min_batch_rows: usize,
     /// The conversation each request identity was admitted under, so a repeat
-    /// of that identity cannot silently move to another conversation. Keyed by
-    /// request_id because that is what an OUTER reuses across turns.
-    pub session_keys: BTreeMap<String, Option<String>>,
+    /// of that identity cannot silently move to another conversation.
+    ///
+    /// Scoped by `(load_generation, session_id, request_id)`: a request id is
+    /// only unique inside one pipeline session of one load, and keying on the
+    /// id alone bound a later load's request to an earlier load's conversation.
+    /// Cleared on unload with the rest of the load's state, and bounded, because
+    /// a node that serves for weeks would otherwise keep one entry per request
+    /// it ever saw. What falls out of the window stops being checked - the
+    /// alternative is durable authority for the alias, which belongs to the
+    /// state store rather than to a node's memory.
+    pub session_keys: BTreeMap<SessionKeyScope, Option<String>>,
+    /// Admission order, so the oldest entry is the one the window drops.
+    session_key_order: VecDeque<SessionKeyScope>,
     verify_fence: BTreeSet<String>,
 }
 
@@ -92,6 +108,7 @@ impl Default for AdapterState {
             load_generation: 0,
             next_speculative_id: 1,
             session_keys: BTreeMap::new(),
+            session_key_order: VecDeque::new(),
             min_batch_rows: std::env::var("P4_STAGED_MIN_BATCH_ROWS")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -102,6 +119,26 @@ impl Default for AdapterState {
 }
 
 impl AdapterState {
+    /// Records the conversation this identity was admitted under, dropping the
+    /// oldest once the window is full.
+    pub fn remember_session_key(&mut self, scope: SessionKeyScope, key: Option<String>) {
+        if self.session_keys.insert(scope.clone(), key).is_none() {
+            self.session_key_order.push_back(scope);
+        }
+        while self.session_key_order.len() > SESSION_KEY_WINDOW {
+            if let Some(oldest) = self.session_key_order.pop_front() {
+                self.session_keys.remove(&oldest);
+            }
+        }
+    }
+
+    /// Forgets every admitted identity. Called on unload: the load generation
+    /// they were scoped to is over.
+    pub fn forget_session_keys(&mut self) {
+        self.session_keys.clear();
+        self.session_key_order.clear();
+    }
+
     pub fn verify_fenced(&self) -> bool {
         !self.verify_fence.is_empty()
     }
@@ -163,7 +200,7 @@ impl AdapterState {
 
 #[cfg(test)]
 mod tests {
-    use super::AdapterState;
+    use super::{AdapterState, SESSION_KEY_WINDOW, SessionKeyScope};
 
     #[test]
     fn verification_fence_tracks_every_owner_until_the_round_resolves() {
@@ -199,6 +236,80 @@ mod tests {
                 .is_err()
         );
         assert!(!state.verify_fenced());
+    }
+
+    fn scope(load: u64, session: &str, request: &str) -> SessionKeyScope {
+        (load, session.to_owned(), request.to_owned())
+    }
+
+    #[test]
+    fn one_request_identity_keeps_the_conversation_it_was_admitted_under() {
+        let mut state = AdapterState::default();
+        let first = scope(1, "pipeline", "req-001");
+        state.remember_session_key(first.clone(), Some("sk1:owner/conv-a".to_owned()));
+        assert_eq!(
+            state.session_keys.get(&first).and_then(Option::as_deref),
+            Some("sk1:owner/conv-a")
+        );
+    }
+
+    #[test]
+    fn the_same_request_id_in_another_session_is_a_different_identity() {
+        // Keyed on the id alone, these two collided, and the second turn of
+        // one conversation could be refused because an unrelated session had
+        // used the same request id.
+        let mut state = AdapterState::default();
+        state.remember_session_key(scope(1, "pipeline-a", "req-001"), Some("sk1:owner/a".into()));
+        state.remember_session_key(scope(1, "pipeline-b", "req-001"), Some("sk1:owner/b".into()));
+        assert_eq!(state.session_keys.len(), 2);
+    }
+
+    #[test]
+    fn a_later_load_does_not_inherit_an_earlier_load_s_conversations() {
+        let mut state = AdapterState::default();
+        state.remember_session_key(scope(1, "pipeline", "req-001"), Some("sk1:owner/a".into()));
+        assert!(state.session_keys.get(&scope(2, "pipeline", "req-001")).is_none());
+    }
+
+    #[test]
+    fn unload_forgets_the_generation_it_was_scoped_to() {
+        let mut state = AdapterState::default();
+        state.remember_session_key(scope(1, "pipeline", "req-001"), Some("sk1:owner/a".into()));
+        state.forget_session_keys();
+        assert!(state.session_keys.is_empty());
+    }
+
+    #[test]
+    fn the_window_bounds_what_a_long_lived_node_remembers() {
+        // A node that serves for weeks would otherwise keep one entry per
+        // request it ever saw.
+        let mut state = AdapterState::default();
+        for index in 0..SESSION_KEY_WINDOW + 8 {
+            state.remember_session_key(
+                scope(1, "pipeline", &format!("req-{index}")),
+                Some("sk1:owner/conv".to_owned()),
+            );
+        }
+        assert_eq!(state.session_keys.len(), SESSION_KEY_WINDOW);
+        assert!(state.session_keys.get(&scope(1, "pipeline", "req-0")).is_none());
+        assert!(
+            state
+                .session_keys
+                .get(&scope(1, "pipeline", &format!("req-{}", SESSION_KEY_WINDOW + 7)))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn re_admitting_one_identity_does_not_age_the_window_twice() {
+        let mut state = AdapterState::default();
+        let only = scope(1, "pipeline", "req-001");
+        state.remember_session_key(only.clone(), Some("sk1:owner/a".into()));
+        state.remember_session_key(only.clone(), Some("sk1:owner/a".into()));
+        assert_eq!(state.session_keys.len(), 1);
+        state.forget_session_keys();
+        state.remember_session_key(only, Some("sk1:owner/a".into()));
+        assert_eq!(state.session_keys.len(), 1);
     }
 }
 

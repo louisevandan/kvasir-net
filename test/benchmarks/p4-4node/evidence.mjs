@@ -88,14 +88,18 @@ export function collectEvidence({ root, runId, spec, compatManifest, remote }) {
 
 /// Opens a run directory. Refuses to reuse one, so a report can never be a
 /// mixture of two attempts.
-export function beginRun(root, runId) {
-  const runs = path.join(root, "target", "p4-4node", "runs");
-  const final = path.join(runs, runId);
+export function beginRun(runsDir, runId) {
+  const final = path.join(runsDir, runId);
   const working = `${final}.tmp`;
   if (fs.existsSync(final)) throw new Error(`run ${runId} already exists`);
   fs.rmSync(working, { recursive: true, force: true });
   fs.mkdirSync(working, { recursive: true });
   return { working, final };
+}
+
+/// Where runs live under a repository root.
+export function defaultRunsDir(root) {
+  return path.join(root, "target", "p4-4node", "runs");
 }
 
 /// Checksums every file and promotes the directory atomically.

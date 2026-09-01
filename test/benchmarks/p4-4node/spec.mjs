@@ -47,7 +47,25 @@ function buildPlan({ model, begin, end, totalLayers, parallel, nBatch, nUbatch, 
   return tokens.join(" ");
 }
 
+/// This run's incarnation number, worn by its connection, its nodes and its
+/// load alike - they are three views of one thing.
+///
+/// Reusing it is not a detail. An agent keeps a high-water mark per node so
+/// a superseded incarnation can never come back, and it keeps a duplicate
+/// window a quarter of a million events deep keyed by the connection's own
+/// identity. A second run that calls itself generation 1 is therefore either
+/// refused as stale or, worse, silently swallowed as a repeat of the first
+/// run's opening command - which reads as a hang, because nothing was
+/// delivered and nothing was refused.
+///
+/// Seconds since the epoch: monotonic on one machine, distinct for any two
+/// runs a person could start in sequence.
+function runGeneration() {
+  return Math.floor(Date.now() / 1000);
+}
+
 export function buildConfig(spec, options = {}) {
+  const generation = runGeneration();
   const totalLayers = spec.cuts.at(-1)[1];
   const totalContext = spec.context * spec.parallel;
   const ingress = new URL(spec.ingress);
@@ -55,7 +73,7 @@ export function buildConfig(spec, options = {}) {
   const nodes = spec.cuts.map(([begin, end], index) => ({
     agent: spec.ingress,
     node: `node-${index}`,
-    generation: 1,
+    generation,
     binary: spec.binary,
     endpoint: `${ingress.hostname}:${spec.endpointBase + index}`,
     plan: buildPlan({
@@ -87,8 +105,8 @@ export function buildConfig(spec, options = {}) {
   return {
     ingress_agent: spec.ingress,
     channel: `p4-4node-${spec.name}`,
-    connection_generation: 1,
-    load_generation: 1,
+    connection_generation: generation,
+    load_generation: generation,
     session_id: `session-${spec.name}`,
     request_id: "req",
     nodes,

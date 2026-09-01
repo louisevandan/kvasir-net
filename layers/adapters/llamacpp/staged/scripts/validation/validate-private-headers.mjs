@@ -17,7 +17,34 @@ import path from "node:path";
 
 // Anything under llama.cpp's src/ is private. The two public headers live in
 // include/, and ggml's public surface is its own `ggml*.h` set.
+//
+// `common/` is a third thing: shipped, but a convenience library for
+// llama.cpp's own tools rather than an API, and it moves freely between
+// versions. It is not confinable today - the stage runtime's public header
+// takes `common_params` by value and holds `common_prompt_checkpoint` and
+// `common_speculative_ptr` as members - so it is measured instead: the files
+// that depend on it are listed, and the gate fails when a new one appears.
+// That is the difference between a debt and a leak.
 const PRIVATE = /^(llama-(?!cpp\.h$)[a-z0-9-]+\.h|ggml-impl\.h|ggml-backend-impl\.h|ggml-common\.h)$/;
+
+/// llama.cpp's convenience library. Unstable, but load-bearing here.
+const UNSTABLE = /^(common|sampling|speculative|arg|log|chat)\.h$/;
+
+/// The files that depend on `common/` as of 2026-09-01. This list is debt,
+/// not permission: U0 (3b) is to move these behind a P4-owned facade, and
+/// until then the gate's job is to stop the list from growing.
+export const UNSTABLE_DEBT = [
+  "main.cpp",
+  "runtime/llama_stage_runtime.hpp",
+  "runtime/request_options.cpp",
+  "runtime/request_options.hpp",
+  "runtime/request_options_grammar.hpp",
+  "runtime/request_stops.cpp",
+  "runtime/stage_memory_plan.cpp",
+  "runtime/stage_memory_plan.hpp",
+  "server/plan.cpp",
+  "server/plan.hpp",
+];
 
 /// The single file allowed to cross, relative to the scanned root.
 export const PERMITTED = path.join("compat", "p4_llama_compat.cpp");
@@ -37,14 +64,41 @@ export function sources(root) {
 
 /// Every private-header include in one file, as `{ header, line }`.
 export function privateIncludes(text) {
+  return includesMatching(text, PRIVATE);
+}
+
+/// Includes of llama.cpp's convenience library in one file.
+export function unstableIncludes(text) {
+  return includesMatching(text, UNSTABLE);
+}
+
+function includesMatching(text, pattern) {
   const found = [];
   text.split(/\r?\n/).forEach((line, index) => {
     const match = /^\s*#\s*include\s*[<"]([^">]+)[">]/.exec(line);
     if (!match) return;
     const header = path.basename(match[1]);
-    if (PRIVATE.test(header)) found.push({ header, line: index + 1 });
+    if (pattern.test(header)) found.push({ header, line: index + 1 });
   });
   return found;
+}
+
+/// Files depending on `common/` that the debt list does not already name,
+/// and names in the list that no longer depend on it. Both are failures: the
+/// first is the list growing, the second is a stale record of a debt paid.
+export function unstableDrift(root, files = sources(root), debt = UNSTABLE_DEBT) {
+  const seen = new Set();
+  for (const file of files) {
+    if (unstableIncludes(fs.readFileSync(file, "utf8")).length > 0) {
+      seen.add(path.relative(root, file).split(path.sep).join("/"));
+    }
+  }
+  const known = new Set(debt);
+  return {
+    added: [...seen].filter((file) => !known.has(file)).sort(),
+    paid: [...known].filter((file) => !seen.has(file)).sort(),
+    total: seen.size,
+  };
 }
 
 /// Violations are private includes outside the one permitted file. A missing
@@ -77,8 +131,22 @@ function main() {
     process.exitCode = 1;
     return;
   }
+  const drift = unstableDrift(root);
+  if (drift.added.length > 0 || drift.paid.length > 0) {
+    for (const file of drift.added) {
+      process.stderr.write(`${file}: new dependency on llama.cpp's common/;`
+        + " route it through a P4-owned facade (U0 3b)\n");
+    }
+    for (const file of drift.paid) {
+      process.stderr.write(`${file}: no longer depends on common/;`
+        + " remove it from UNSTABLE_DEBT\n");
+    }
+    process.exitCode = 1;
+    return;
+  }
   process.stdout.write(`private-headers: ${sources(root).length} files clean,`
-    + ` crossings confined to ${PERMITTED}\n`);
+    + ` crossings confined to ${PERMITTED};`
+    + ` ${drift.total} file(s) still on llama.cpp common/ (U0 3b debt)\n`);
 }
 
 import { pathToFileURL } from "node:url";

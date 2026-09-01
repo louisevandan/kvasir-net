@@ -137,6 +137,9 @@ impl Worker {
         self.state.context_size = 0;
         self.state.sequence_capacity = 0;
         self.state.load_generation = 0;
+        // The ledger was scoped to that load generation; it has nothing left
+        // to say about the next one.
+        self.state.forget_session_keys();
         self.state.next_speculative_id = 1;
         self.state.clear_verify_fence();
         self.set_snapshot("unloaded");

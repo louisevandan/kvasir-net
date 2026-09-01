@@ -139,7 +139,12 @@ impl Worker {
         // A conversation may span many requests, but one request identity may
         // not change which conversation it belongs to: that would attach this
         // turn's KV to a record another conversation owns.
-        if let Some(previous) = self.state.session_keys.get(&command.request_id) {
+        let scope = (
+            self.state.load_generation,
+            command.session_id.clone(),
+            command.request_id.clone(),
+        );
+        if let Some(previous) = self.state.session_keys.get(&scope) {
             if previous.as_deref() != command.session_key.as_deref() {
                 return Err("request identity reappeared under a different session key".into());
             }
@@ -155,8 +160,7 @@ impl Worker {
                 );
             }
             self.state
-                .session_keys
-                .insert(command.request_id.clone(), command.session_key.clone());
+                .remember_session_key(scope, command.session_key.clone());
         }
         let route = event
             .envelope

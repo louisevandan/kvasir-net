@@ -12,13 +12,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeArtifact } from "./judge.mjs";
-import { beginRun, collectEvidence, newRunId, promoteRun } from "./evidence.mjs";
+import { beginRun, defaultRunsDir, collectEvidence, newRunId, promoteRun } from "./evidence.mjs";
 import { checkDelivery } from "./delivery.mjs";
 import { checkSessionKeys } from "./session-key.mjs";
 import {
   fetchRemoteAgentLog,
   openTunnel,
   proveTunnelIdentity,
+  remoteImageDigests,
+  remoteLauncher,
   remoteAgentLogLength,
   startRemoteGpuSampler,
 } from "./remote.mjs";
@@ -97,9 +99,14 @@ async function main() {
   const target = targetIndex >= 0 ? rest[targetIndex + 1] : "local";
   const spec = scenario(name, target);
   const runId = newRunId();
+  // --out chooses where the run's directory lives, not whether it gets one.
+  // Pointing it at a bare path used to make working and final the same
+  // directory, which skipped both the refusal to reuse a directory and the
+  // MANIFEST that makes the result checkable - so the runs most likely to be
+  // pointed somewhere specific were the ones with no evidence contract.
   const run = outIndex >= 0
-    ? { working: path.resolve(rest[outIndex + 1]), final: path.resolve(rest[outIndex + 1]) }
-    : beginRun(root, runId);
+    ? beginRun(path.resolve(rest[outIndex + 1]), runId)
+    : beginRun(defaultRunsDir(root), runId);
   const outDir = run.working;
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -146,7 +153,15 @@ async function main() {
       identity = proveTunnelIdentity(spec.tunnel.host, spec.tunnel.remotePort);
       // Marks where this run's share of the appended agent log starts.
       agentLogFrom = remoteAgentLogLength(spec.tunnel);
-      evidence.remote = { host: spec.tunnel.host, ...identity };
+      // Hashed on the far side, so the evidence names what ran rather than
+      // what this machine happens to have built, and carries the launcher
+      // the agent's policy knobs live in.
+      evidence.remote = {
+        host: spec.tunnel.host,
+        ...identity,
+        images: remoteImageDigests(spec.tunnel),
+        launcher: remoteLauncher(spec.tunnel),
+      };
     }
     sampler = spec.target === "remote"
       ? startRemoteGpuSampler(spec.tunnel.host)
@@ -188,7 +203,11 @@ async function main() {
     const discarded = lost.passed
       ? ""
       : `relay discarded ${lost.counted + lost.uncounted} event(s) to the OUTER\n`;
-    process.stderr.write(`P4_4NODE_FAILED ${failure}\nrun ${runId} at ${outDir}\n${discarded}`
+    // A failure is evidence too, and the failures are the runs most likely to
+    // be argued over later. Promoting them gives them the same MANIFEST and
+    // the same refusal to be edited in place that a pass gets.
+    const promotedFailure = run.working === run.final ? run : promoteRun(run);
+    process.stderr.write(`P4_4NODE_FAILED ${failure}\nrun ${runId} at ${promotedFailure.directory ?? run.final}\n${discarded}`
       + `${driveOutput.stderr.trim().slice(-3000)}\n`);
     process.exitCode = 1;
     return;

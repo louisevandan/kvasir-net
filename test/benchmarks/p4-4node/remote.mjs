@@ -99,6 +99,67 @@ export function proveTunnelIdentity(host, remotePort) {
   return identity;
 }
 
+/// The launcher the remote agent was started from, verbatim, with its digest.
+///
+/// The agent's policy knobs - the coalescing threshold above all - live in
+/// its environment, and an environment is not reconstructible after the fact:
+/// a later restart with different flags leaves no trace of what the measured
+/// run was configured with. A throughput number whose policy cannot be
+/// recovered from its own evidence is not a measurement of anything.
+export function remoteLauncher({ host, remotePort, root }) {
+  const file = `${root}\\run-agent-${remotePort}.cmd`;
+  const script = [
+    `$p = '${file}';`,
+    "if (Test-Path -LiteralPath $p) {",
+    "  Write-Output ('launcher_sha256=' + (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLower());",
+    "  Write-Output 'launcher_begin';",
+    "  Get-Content -LiteralPath $p;",
+    "}",
+  ].join("\n");
+  const { out, err, status } = remotePowerShell(host, script);
+  if (status !== 0) throw new Error(`remote launcher read failed: ${err || out}`);
+  const begin = out.indexOf("launcher_begin");
+  if (begin < 0) throw new Error(`no launcher at ${file}`);
+  const digest = /launcher_sha256=([0-9a-f]{64})/.exec(out);
+  return {
+    path: file,
+    sha256: digest ? digest[1] : null,
+    // Verbatim, because the knobs are `set` lines in it and a summary would
+    // be a second thing to keep in step with the first.
+    text: out.slice(begin + "launcher_begin".length).replace(/^\r?\n/, ""),
+  };
+}
+
+/// Hashes the files the remote agent is actually running, on the remote host.
+///
+/// Hashing the local `target/` copies proves what this machine built, not
+/// what the far side executed. The two agree only because a person ran scp
+/// between them, and "a person ran scp" is not evidence. So the agent's own
+/// image path is taken from the live process, and the stage runtime beside it
+/// is hashed too - by the host that owns them.
+export function remoteImageDigests({ host, remotePort, root }) {
+  const script = [
+    `$own = @(Get-NetTCPConnection -State Listen -LocalPort ${remotePort} -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique);`,
+    "$agent = @($own | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue } | Where-Object { $_.ProcessName -eq 'p4-agent' })[0];",
+    "if ($agent) { Write-Output ('agent_path=' + $agent.Path); Write-Output ('agent_sha256=' + (Get-FileHash -Algorithm SHA256 -LiteralPath $agent.Path).Hash.ToLower()) }",
+    `$staged = '${root}\\staged';`,
+    "foreach ($name in @('p4_staged_server.exe','ggml-cuda.dll','llama.dll','ggml-base.dll')) {",
+    "  $file = Join-Path $staged $name;",
+    "  if (Test-Path -LiteralPath $file) { Write-Output ($name + '_sha256=' + (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()) }",
+    "}",
+  ].join("\n");
+  const { out, err, status } = remotePowerShell(host, script);
+  if (status !== 0) throw new Error(`remote image digest failed: ${err || out}`);
+  const digests = Object.fromEntries(out.split(/\r?\n/).filter(Boolean).map((line) => {
+    const index = line.indexOf("=");
+    return [line.slice(0, index), line.slice(index + 1)];
+  }));
+  if (!digests.agent_sha256) {
+    throw new Error(`no running agent image to hash on ${host}`);
+  }
+  return digests;
+}
+
 /// Samples the remote GPUs for the duration of the run. Returns a handle whose
 /// `stop()` yields the CSV, so a remote run carries the same evidence a local
 /// one does.

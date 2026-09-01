@@ -334,14 +334,22 @@ EOL 수리는 승인되었고, 리뷰가 clean pin 직접 적용으로 aggregate
 | ε | prepared 예약이 회계에 안 보이면 over-admit 재발 | 텔레메트리 reserved_cells 필드 추가 |
 | ζ | kv_root가 공유인지 노드 로컬인지 미정 — 잠금 계약 전체가 조건부였음 | 토폴로지 축 신설: 기본=노드 전용 로컬(권위 문제 소거), 공유 볼륨은 storage capability gate + membership 권위 필수 |
 
-U0 ②·③의 각 일부는 2026-09-01에 성립했다. ③은 컴파일러가 강제한다 —
-`p4_llama_compat`만 llama의 `src/`를 include path에 갖고, 두 번째 침범은
-C1083으로 빌드가 실패한다(실제로 넣어 확인). ②는 `patch_set`이 prepare의
-트리 스탬프 → CMake → HELLO → 어댑터 loaded 텔레메트리 → OUTER까지
-실값으로 왕복하고, 드라이브가 스테이지 간 불일치를 거부한다. **나머지
-②는 미충족** — `stage_abi_id`·`state_abi_id`·backend layout·`trim_support`는
-아직 HELLO에 없고, 따라서 합성 `build_id`도 만들지 않았다: 입력이 갖춰지기
-전에 만든 합성 식별자는 구분하지 못하는 것을 구분한다고 주장하게 된다.
+U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서는 안 되며, 정확한
+분해는 다음이다.
+
+| 조각 | 상태 | 근거 |
+| --- | --- | --- |
+| ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
+| ③b llama.cpp `common/` 격리 | **미성립** | 런타임 공개 헤더가 `common_params`를 값으로 받고 `common_prompt_checkpoint`·`common_speculative_ptr`를 멤버로 보유. 10개 파일이 `common/`에 의존하며 게이트가 그 목록을 고정해 증가만 막는다 |
+| ③c P4 소유 versioned stage ABI | 미착수 | — |
+| ② `patch_set` 왕복 | 성립 | prepare 스탬프 → CMake → HELLO → loaded 텔레메트리 → OUTER, 실행 산출물에 기록 |
+| ② 스테이지 불일치 거부 | 성립 | 상이 patch-set 거부 + 빌드를 못 대는 스테이지 거부(fail-closed, 명시 환경변수로만 우회) |
+| ② `stage_abi_id`·`state_abi_id`·backend layout·`trim_support` | 미착수 | 따라서 합성 `build_id`도 만들지 않았다 — 입력이 갖춰지기 전의 합성 식별자는 구분하지 못하는 것을 구분한다고 주장하게 된다 |
+
+같은 pin으로 빌드된 CPU/CUDA는 현재 `patch_set`이 같으므로 **동일 빌드로 취급된다**.
+backend·plugin·device·buffer layout 축이 HELLO에 없기 때문이며, 이는 ②의 남은
+부분이 닫히기 전까지 유효한 구멍이다.
+
 
 **U0·P-1 완료는 여전히 주장하지 않는다.** 병행 가능 범위는 session_key
 wire·하네스 이관이며, base×variant 구현은 이 계약의 리뷰 승인 후다.

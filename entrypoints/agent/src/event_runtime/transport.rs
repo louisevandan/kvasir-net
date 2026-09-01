@@ -1,4 +1,4 @@
-use p4_agent_core::event_broker::{EventBroker, EventReceiver};
+use p4_agent_core::event_broker::{DispatchOutcome, EventBroker, EventReceiver};
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Event, OuterEndpoint, decode, encode};
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ pub async fn accept(
                 let id = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
                 eprintln!("P4_EVENT_CONNECTION_OPENED connection={id} peer={peer}");
                 tokio::spawn(async move {
-                    let result = serve(stream, broker, connections).await;
+                    let result = serve(id, stream, broker, connections).await;
                     match result {
                         Ok(()) => eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} peer={peer} error=none"),
                         Err(error) => eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} peer={peer} error={error}"),
@@ -48,6 +48,7 @@ pub async fn accept(
 }
 
 async fn serve(
+    id: u64,
     stream: TcpStream,
     broker: Arc<EventBroker>,
     connections: OuterConnections,
@@ -65,7 +66,16 @@ async fn serve(
                 .await
                 .insert(route.clone(), sender.clone());
         }
-        broker.dispatch(event).map_err(io::Error::other)?;
+        // A suppressed duplicate is not delivered and not refused, so a
+        // sender waiting on the reply waits for its whole timeout with
+        // nothing to read. That is correct idempotency and an unreadable
+        // failure at the same time, so it is at least said out loud: an
+        // OUTER that reuses a connection identity across connections lands
+        // here, with its opening command dropped as already seen.
+        let event_id = event.envelope.event_id.clone();
+        if broker.dispatch(event).map_err(io::Error::other)? == DispatchOutcome::Duplicate {
+            eprintln!("P4_EVENT_DUPLICATE_SUPPRESSED connection={id} event_id={event_id}");
+        }
     }
 }
 

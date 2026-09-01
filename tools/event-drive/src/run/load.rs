@@ -91,13 +91,32 @@ fn build_identity(payload: &[u8]) -> Result<BuildIdentity, Box<dyn std::error::E
 /// plan. The upstream commit alone does not settle it: two builds can share
 /// it and differ in every behaviour the patch queue touches.
 ///
-/// `unknown` is tolerated - an older stage server predates the field - but
-/// only uniformly: a pipeline where some stages answer and others do not is
-/// already a mixed pipeline.
+/// A stage that does not name its build fails the check. Uniform `unknown`
+/// used to pass, on the reasoning that an older stage server predates the
+/// field - but four different legacy binaries all answer `unknown`, so that
+/// reasoning let exactly the mixed pipeline this exists to catch through the
+/// gate. A run that cannot name its own build is not attributable, and an
+/// unattributable measurement is the thing this whole mechanism is for.
+///
+/// `P4_DRIVE_ALLOW_UNIDENTIFIED_BUILD` reopens it for driving a stage server
+/// too old to answer - deliberately, and visibly in the environment, rather
+/// than as a silent fallback.
 fn agree(builds: &[BuildIdentity]) -> Result<(), Box<dyn std::error::Error>> {
     let Some(first) = builds.first() else {
         return Ok(());
     };
+    let unidentified = std::env::var_os("P4_DRIVE_ALLOW_UNIDENTIFIED_BUILD").is_some();
+    if !unidentified
+        && let Some(nameless) = builds
+            .iter()
+            .find(|build| build.upstream_commit == "unknown" || build.patch_set == "unknown")
+    {
+        return Err(format!(
+            "stage does not name its build: upstream {} patch_set {}; set P4_DRIVE_ALLOW_UNIDENTIFIED_BUILD to drive it anyway",
+            nameless.upstream_commit, nameless.patch_set
+        )
+        .into());
+    }
     if let Some(other) = builds.iter().find(|build| *build != first) {
         return Err(format!(
             "pipeline stages are different builds: upstream {} patch_set {} against upstream {} patch_set {}",
@@ -177,9 +196,19 @@ mod tests {
     }
 
     #[test]
-    fn stages_that_all_predate_the_field_are_tolerated() {
+    fn a_pipeline_that_cannot_name_its_build_is_refused() {
+        // Four different legacy binaries all answer `unknown`, so tolerating
+        // uniform `unknown` admitted exactly the mixed pipeline this check
+        // exists to catch.
         let builds = vec![build("unknown", "unknown"), build("unknown", "unknown")];
-        assert!(agree(&builds).is_ok());
+        let error = agree(&builds).expect_err("unidentified build");
+        assert!(error.to_string().contains("does not name its build"), "{error}");
+    }
+
+    #[test]
+    fn one_named_stage_beside_an_unnamed_one_is_refused() {
+        let builds = vec![build("557614e02", "00e66c6b"), build("unknown", "unknown")];
+        assert!(agree(&builds).is_err());
     }
 
     #[test]
