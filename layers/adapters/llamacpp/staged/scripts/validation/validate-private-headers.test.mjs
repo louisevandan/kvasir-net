@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { PERMITTED, UNSTABLE_DEBT, privateIncludes, sources, unstableDrift, unstableIncludes, violations } from "./validate-private-headers.mjs";
+import { PERMITTED, UNSTABLE_DEBT, UNSTABLE_HEADER_DEBT, UNSTABLE_SOURCE_DEBT, privateIncludes, sources, unstableDrift, unstableIncludes, violations } from "./validate-private-headers.mjs";
 
 function tree(files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "p4-private-headers-"));
@@ -89,4 +89,15 @@ test("the recorded debt is the surface the repository actually has", () => {
   assert.deepEqual(drift.added, []);
   assert.deepEqual(drift.paid, []);
   assert.equal(drift.total, UNSTABLE_DEBT.length);
+});
+
+
+test("the two debt lists are disjoint and split by extension", () => {
+  // The split is the criterion: headers must reach zero, sources need only
+  // stay deliberate. A file in the wrong list makes the count say nothing.
+  for (const file of UNSTABLE_HEADER_DEBT) assert.match(file, /.hpp$/);
+  for (const file of UNSTABLE_SOURCE_DEBT) assert.match(file, /.cpp$/);
+  const both = UNSTABLE_HEADER_DEBT.filter((f) => UNSTABLE_SOURCE_DEBT.includes(f));
+  assert.deepEqual(both, []);
+  assert.equal(UNSTABLE_DEBT.length, UNSTABLE_HEADER_DEBT.length + UNSTABLE_SOURCE_DEBT.length);
 });

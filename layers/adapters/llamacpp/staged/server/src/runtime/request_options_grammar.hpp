@@ -6,7 +6,14 @@
 
 #include <nlohmann/json.hpp>
 
-#include "common.h"
+// llama.cpp's public header, which `common.h` used to drag in behind it -
+// the vocabulary and token types below come from here, not from the
+// convenience library.
+#include "llama.h"
+
+// Named only inside a vector this header declares but never sizes, so the
+// declaration is enough; see request_options.hpp (U0 3b).
+struct common_grammar_trigger;
 
 namespace staged::llama_runtime {
 

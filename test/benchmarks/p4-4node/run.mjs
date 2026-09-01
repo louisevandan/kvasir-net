@@ -23,6 +23,7 @@ import {
   remoteImageDigests,
   remoteLauncher,
   remoteAgentLogLength,
+  remoteRecordLength,
   startRemoteGpuSampler,
 } from "./remote.mjs";
 import { scenario } from "./scenarios.mjs";
@@ -136,6 +137,7 @@ async function main() {
   let agentLog = "";
   let record = "";
   let agentLogFrom = 0;
+  let recordFrom = 0;
   let failure;
 
   try {
@@ -155,6 +157,7 @@ async function main() {
       identity = proveTunnelIdentity(spec.tunnel.host, spec.tunnel.remotePort);
       // Marks where this run's share of the appended agent log starts.
       agentLogFrom = remoteAgentLogLength(spec.tunnel);
+      recordFrom = remoteRecordLength(spec.tunnel);
       // Hashed on the far side, so the evidence names what ran rather than
       // what this machine happens to have built, and carries the launcher
       // the agent's policy knobs live in.
@@ -193,7 +196,7 @@ async function main() {
     // log is kept for what it is good for - reading what happened - and is
     // not what the verdict rests on.
     record = spec.target === "remote" && spec.tunnel
-      ? fetchRemoteRecord(spec.tunnel)
+      ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom })
       : agentOutput.stderr;
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
     fs.writeFileSync(path.join(outDir, "agent.record.log"), record, "utf8");

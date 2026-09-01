@@ -2,7 +2,11 @@
 
 #include <string>
 
-#include "common.h"
+// Only named as a pointer here, so the declaration is enough. Including
+// llama.cpp's `common.h` would put its whole convenience surface - which
+// moves freely between upstream versions - into every translation unit that
+// wants to read a request's options (U0 3b).
+struct common_params_sampling;
 #include "llama.h"
 
 namespace staged::llama_runtime {

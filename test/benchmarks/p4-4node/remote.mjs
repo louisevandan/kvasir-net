@@ -200,8 +200,22 @@ export function remoteAgentLogLength({ host, remotePort, root }) {
 }
 
 /// The agent's record file: the evidence channel, with no other writers.
-export function fetchRemoteRecord({ host, remotePort, root }) {
-  return readRemoteFile(host, `${root}\\agent-${remotePort}.record.log`, 0);
+export function fetchRemoteRecord({ host, remotePort, root, fromByte = 0 }) {
+  return readRemoteFile(host, recordPath(root, remotePort), fromByte);
+}
+
+/// Byte length of the record file now. The agent appends across runs and a
+/// scenario reuses its request ids, so a record another run wrote would
+/// otherwise satisfy this run's check.
+export function remoteRecordLength({ host, remotePort, root }) {
+  const { out } = remotePowerShell(host,
+    `$p = '${recordPath(root, remotePort)}'; if (Test-Path -LiteralPath $p) { Write-Output ((Get-Item -LiteralPath $p).Length) } else { Write-Output 0 }`);
+  const value = Number(out.trim());
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function recordPath(root, remotePort) {
+  return `${root}\\agent-${remotePort}.record.log`;
 }
 
 export function fetchRemoteAgentLog({ host, remotePort, root, fromByte = 0 }) {

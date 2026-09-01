@@ -1,5 +1,9 @@
 #include "request_options_grammar.hpp"
 
+// The convenience library stays in the translation unit that needs it. Its
+// header no longer forces it on everything downstream (U0 3b).
+#include "common.h"
+
 #include <cstdint>
 
 namespace staged::llama_runtime {
