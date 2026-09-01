@@ -43,6 +43,15 @@ const err = `${root}\\agent-${port}.err.log`;
 // unaffected by this choice.
 const advertised = argument("--advertise", "127.0.0.1");
 
+// Batch coalescing is an adapter policy read from the environment at start,
+// so an A/B over it is an agent restart rather than a config edit. 0 or 1
+// leaves the scheduler planning whatever is ready; see the batching layers
+// document for why that is the default.
+const minBatchRows = Number(argument("--min-batch-rows", "0"));
+if (!Number.isInteger(minBatchRows) || minBatchRows < 0) {
+  throw new Error("--min-batch-rows must be a non-negative integer");
+}
+
 // The script is passed base64-encoded. SSH concatenates its remote command
 // with the login shell in between, so pipes, quotes and semicolons in a
 // PowerShell one-liner are re-split before PowerShell ever sees them;
@@ -77,6 +86,7 @@ function copyLauncher() {
     // Position gaps at the OUTER are being separated from position gaps at
     // the source; see the plan's open surface.
     "set P4_STAGED_TRACE_OUTPUT_POSITION=1",
+    `set P4_STAGED_MIN_BATCH_ROWS=${minBatchRows}`,
     // Redirections go first: cmd strips them in place and leaves the gap,
     // which reaches the program as an extra empty argument - the advertised
     // address then parsed as blank and the agent refused every connection.
