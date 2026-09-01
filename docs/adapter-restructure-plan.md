@@ -337,6 +337,13 @@ EOL 수리는 승인되었고, 리뷰가 clean pin 직접 적용으로 aggregate
 **U0·P-1 완료는 여전히 주장하지 않는다.** 병행 가능 범위는 session_key
 wire·하네스 이관이며, base×variant 구현은 이 계약의 리뷰 승인 후다.
 
+session_key wire의 현재 실증 범위는 **OUTER→어댑터 편도**다. 3090×2 원격
+4노드 실행에서 하네스가 발급한 키와 어댑터가 admission 시점에 보유한 키가
+같음을 어댑터 자신의 트레이스로 대조했고, 같은 request_id가 다른 키로
+재등장하면 admission이 거부한다. **저장·재시작 Restore 구간은 아직 없다** —
+그 왕복은 상태 네임스페이스(P0)와 스냅샷 명령(P3)이 생긴 뒤에야 성립하며,
+P-1 인수 기준의 나머지 절반은 그때까지 미충족으로 남는다.
+
 ## known open surface
 
 다음 리뷰가 지적할 것으로 스스로 예상하는 미해결 표면이다. 여기 등재된
@@ -348,7 +355,7 @@ wire·하네스 이관이며, base×variant 구현은 이 계약의 리뷰 승�
 | O2 | U0 ③의 stage ABI가 "제거하라"뿐 — P4 소유 versioned ABI의 실제 표면(함수·타입) 미정의 | U0 설계 산출물 |
 | O3 | 상태 게이트 fixture의 계열 커버리지 — kv_cache/iswa/hybrid/recurrent 각각의 소형 골든 모델 실재 미확인 | P2 준비 |
 | O4 | 예약 2PC와 세션 lease의 관계 — 예약이 lease를 전제하는지, 두 조율 계층의 획득 순서, 예약 수명 `Prepared→Committed→Consumed/Released`와 TTL 만료·Commit 경합의 승자 규칙 | P0 |
-| O5 | session_key wire 확장이 정말 어댑터 content-type 안에서 끝나는지 — 구현 전 미검증 | P-1 |
+| O5 | ~~session_key wire 확장이 정말 어댑터 content-type 안에서 끝나는지~~ — 해소: 필드는 어댑터의 `InferenceCommand` 안에서만 살고 P4 프로토콜은 불변, 4노드 원격 실행이 OUTER가 발급한 값과 어댑터가 보유한 값의 동일성을 증명 | P-1 |
 | O6 | `Snapshot{after_commit}`·`SnapshotList`·RestoreInto의 계약 문면 — 방향은 확정(스냅샷 명령 모델), p4-adapter 동사의 정확한 시그니처·2PC 결합·**Fork와 snapshot key의 immutable-ID/mutable-ref 선택** 미작성 | P-1 계약, P3 구현 |
 | O7 | resident 계층 체크포인트(tier)의 capability 협상 | P7 |
 | O8 | 코디네이터의 스냅샷 원장 복구 — 교집합 단위는 키가 아니라 논리 스냅샷 튜플(규약 정정 완료), OUTER 재시작 후 재구성 절차 자체는 미작성 | P3 |

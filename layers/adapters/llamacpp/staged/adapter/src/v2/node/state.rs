@@ -67,6 +67,10 @@ pub struct AdapterState {
     /// re-forming the arrival group it was born in. 0 or 1 disables the wait.
     /// See `Worker::drive_first_batches`.
     pub min_batch_rows: usize,
+    /// The conversation each request identity was admitted under, so a repeat
+    /// of that identity cannot silently move to another conversation. Keyed by
+    /// request_id because that is what an OUTER reuses across turns.
+    pub session_keys: BTreeMap<String, Option<String>>,
     verify_fence: BTreeSet<String>,
 }
 
@@ -87,6 +91,7 @@ impl Default for AdapterState {
             next_event: 1,
             load_generation: 0,
             next_speculative_id: 1,
+            session_keys: BTreeMap::new(),
             min_batch_rows: std::env::var("P4_STAGED_MIN_BATCH_ROWS")
                 .ok()
                 .and_then(|value| value.parse().ok())

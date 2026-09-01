@@ -136,6 +136,28 @@ impl Worker {
         if self.state.requests.contains_key(&key) {
             return Err("request identity is already active".into());
         }
+        // A conversation may span many requests, but one request identity may
+        // not change which conversation it belongs to: that would attach this
+        // turn's KV to a record another conversation owns.
+        if let Some(previous) = self.state.session_keys.get(&command.request_id) {
+            if previous.as_deref() != command.session_key.as_deref() {
+                return Err("request identity reappeared under a different session key".into());
+            }
+        } else {
+            // Traced so a run can prove the key OUTER minted is the key this
+            // adapter holds. Nothing else on the wire carries it back, so
+            // without this the round trip is only an absence of rejection.
+            if std::env::var_os("P4_STAGED_TRACE_SESSION_KEY").is_some() {
+                eprintln!(
+                    "P4_SESSION_KEY_ADMITTED request={} key={}",
+                    command.request_id,
+                    command.session_key.as_deref().unwrap_or("-")
+                );
+            }
+            self.state
+                .session_keys
+                .insert(command.request_id.clone(), command.session_key.clone());
+        }
         let route = event
             .envelope
             .return_route

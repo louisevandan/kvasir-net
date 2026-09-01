@@ -6,6 +6,8 @@ mod logical;
 mod node;
 mod scheduler;
 mod session_key;
+#[cfg(test)]
+mod session_key_wire_tests;
 
 pub use capsule::{
     CapsuleError, CapsuleSet, GeneratedToken, Invocation, PhysicalCapsule, PhysicalOutcome,

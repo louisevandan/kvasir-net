@@ -13,7 +13,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeArtifact } from "./judge.mjs";
 import { beginRun, collectEvidence, newRunId, promoteRun } from "./evidence.mjs";
-import { openTunnel, proveTunnelIdentity, startRemoteGpuSampler } from "./remote.mjs";
+import { checkSessionKeys } from "./session-key.mjs";
+import {
+  fetchRemoteAgentLog,
+  openTunnel,
+  proveTunnelIdentity,
+  remoteAgentLogLength,
+  startRemoteGpuSampler,
+} from "./remote.mjs";
 import { scenario } from "./scenarios.mjs";
 import { writeConfig } from "./spec.mjs";
 
@@ -117,6 +124,8 @@ async function main() {
   let sampler;
   let samplerOutput = { stdout: "" };
   let driveOutput = { stdout: "", stderr: "" };
+  let agentLog = "";
+  let agentLogFrom = 0;
   let failure;
 
   try {
@@ -134,6 +143,8 @@ async function main() {
       // remote. The identity probe makes the far side confirm it.
       ({ child: tunnel } = await openTunnel(spec.tunnel));
       identity = proveTunnelIdentity(spec.tunnel.host, spec.tunnel.remotePort);
+      // Marks where this run's share of the appended agent log starts.
+      agentLogFrom = remoteAgentLogLength(spec.tunnel);
       evidence.remote = { host: spec.tunnel.host, ...identity };
     }
     sampler = spec.target === "remote"
@@ -155,7 +166,12 @@ async function main() {
     if (spec.target === "remote" && sampler) samplerOutput = { stdout: await sampler.stop() };
     else await stopChild(sampler);
     fs.writeFileSync(path.join(outDir, "gpu.csv"), samplerOutput.stdout, "utf8");
-    fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentOutput.stderr, "utf8");
+    // A remote run has no local agent, so its agent log has to be pulled from
+    // the far side to land in the same file a local run writes.
+    agentLog = spec.target === "remote" && spec.tunnel
+      ? fetchRemoteAgentLog({ ...spec.tunnel, fromByte: agentLogFrom })
+      : agentOutput.stderr;
+    fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
     fs.writeFileSync(path.join(outDir, "drive.stderr.log"), driveOutput.stderr, "utf8");
     await stopChild(agent);
     await stopChild(tunnel);
@@ -172,6 +188,13 @@ async function main() {
 
   const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
   const verdict = judgeArtifact(artifact);
+  // The conversation key is one-way traffic, so it is proved against the
+  // adapter's own trace rather than against anything in the reply.
+  const sessionKeys = checkSessionKeys(
+    JSON.parse(fs.readFileSync(configPath, "utf8")),
+    artifact.requests.map((request) => request.request_id),
+    agentLog,
+  );
   const report = {
     run_id: runId,
     scenario: spec.name,
@@ -187,6 +210,7 @@ async function main() {
       released: artifact.released_count,
     },
     meaning: { passed: verdict.passed, meaningful: verdict.meaningful, total: verdict.total },
+    session_keys: sessionKeys,
     metrics: metrics(artifact),
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
     rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
@@ -198,7 +222,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   process.stdout.write(`evidence: ${promoted.directory ?? run.final}\n`);
 
-  if (!artifact.passed || !verdict.passed) {
+  if (!artifact.passed || !verdict.passed || !sessionKeys.passed) {
     process.stderr.write("P4_4NODE_NOT_ACCEPTED\n");
     process.exitCode = 1;
   }

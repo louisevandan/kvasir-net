@@ -311,7 +311,7 @@ incorrect response into a pass.
 `tools/event-drive` accepts either one prompt/template or an exact prompt list.
 Each request artifact retains its submitted prompt, decoded response, physical
 Prefill/Decode row totals, arrival/completion time and token outcomes. The
-reproducible local wrapper at `test/benchmarks/p4-event-gate/run.mjs` derives
+reproducible local wrapper at `../test/benchmarks/p4-event-gate/run.mjs` derives
 the agent address from the run config, waits for READY, samples every NVIDIA
 device at 250 ms, preserves raw and summarized GPU evidence, and cleans up the
 agent on both success and failure.
@@ -335,7 +335,7 @@ The exact final artifacts are `target/p4-event-v2/gate1-cuda-artifact.json`,
 `gate2-cuda-artifact.json`, and `gate3-cuda-final-artifact.json`, with adjacent
 resolved config, GPU CSV/JSON and process logs. Their immutable hashes and the
 two mixed physical UBATCH row maps are retained in
-[`test/benchmarks/p4-event-gate/proof-2026-08-25.json`](../../../test/benchmarks/p4-event-gate/proof-2026-08-25.json).
+[`test/benchmarks/p4-event-gate/proof-2026-08-25.json`](../test/benchmarks/p4-event-gate/proof-2026-08-25.json).
 These ignored runtime artifacts prove local mixed-batch ability; they do not by
 themselves prove remote/TUF operation, every llama.cpp backend, or a globally
 optimal placement.

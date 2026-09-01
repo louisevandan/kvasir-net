@@ -80,8 +80,12 @@ version = "0.1.0"
 dependencies = [
  "p4-adapter",
  "p4-agent-core",
+ "p4-llamacpp-deployment",
+ "p4-llamacpp-served",
  "p4-llamacpp-staged-adapter",
+ "p4-mock",
  "p4-protocol",
+ "p4-service",
  "serde",
  "serde_json",
  "tokio",

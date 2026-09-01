@@ -20,6 +20,7 @@ fn config() -> RunConfig {
         nodes: vec![node("first"), node("tail")],
         prompt: "prompt".into(),
         prompts: Vec::new(),
+        session_key_template: String::new(),
         max_tokens: 8,
         waves: vec![ArrivalWave {
             after_ms: 0,

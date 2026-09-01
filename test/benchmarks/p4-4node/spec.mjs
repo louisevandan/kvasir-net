@@ -93,6 +93,11 @@ export function buildConfig(spec, options = {}) {
     request_id: "req",
     nodes,
     prompts: Array(spec.requestCount).fill(ACCEPTANCE_PROMPT),
+    // Each request is its own conversation here: the acceptance prompt is a
+    // single turn, so sharing one key across them would claim a continuity
+    // that does not exist. An OUTER serving a real chat would reuse the key
+    // across the turns of that chat instead.
+    session_key_template: `sk1:p4-4node/${spec.name}-{{request_id}}`,
     max_tokens: spec.maxTokens,
     waves: spec.waves,
     options: JSON.stringify({ temperature: 0.2, top_p: 0.9, top_k: 20, seed: 7 }),

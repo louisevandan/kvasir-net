@@ -176,6 +176,16 @@ where
             .options
             .replace("{{request_index}}", &request_index.to_string())
             .replace("{{request_id}}", &request_id);
+        // Minting the conversation identity is OUTER work: only OUTER knows
+        // which turns belong to the same conversation, and the adapter only
+        // enforces the grammar and refuses a request identity that changes
+        // conversations.
+        let session_key = (!config.session_key_template.is_empty()).then(|| {
+            config
+                .session_key_template
+                .replace("{{request_index}}", &request_index.to_string())
+                .replace("{{request_id}}", &request_id)
+        });
         *next_index += 1;
         let command = InferenceCommand {
             load_generation: config.load_generation,
@@ -184,6 +194,7 @@ where
             tokens: Vec::new(),
             prompt: Some(prompt.clone()),
             options,
+            session_key,
             max_tokens: config.max_tokens,
         };
         wire.send(sender.event(

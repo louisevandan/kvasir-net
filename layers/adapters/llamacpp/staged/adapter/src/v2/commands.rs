@@ -101,6 +101,17 @@ pub struct InferenceCommand {
     pub prompt: Option<String>,
     #[serde(default)]
     pub options: String,
+    /// The durable conversation this request belongs to.
+    ///
+    /// `session_id` names a pipeline session and `request_id` names one turn;
+    /// neither identifies "the same conversation" across a restart, which is
+    /// what a persisted KV record has to be keyed by. Optional on the wire so
+    /// an OUTER that never persists need not mint one, but when present it
+    /// must parse as `sk1:<owner>/<conversation>` - see [`SessionKey`].
+    ///
+    /// [`SessionKey`]: crate::v2::SessionKey
+    #[serde(default)]
+    pub session_key: Option<String>,
     pub max_tokens: u32,
 }
 
@@ -116,7 +127,20 @@ impl InferenceCommand {
         if self.tokens.is_empty() == self.prompt.as_ref().is_none_or(String::is_empty) {
             return Err("exactly one non-empty prompt or token vector is required");
         }
+        // A malformed key is refused here rather than carried: it would reach
+        // the store as a path component, and two conversations that collide
+        // there cannot be told apart afterwards by comparing bytes.
+        if let Some(raw) = &self.session_key {
+            crate::v2::SessionKey::parse(raw).map_err(crate::v2::SessionKeyError::as_str)?;
+        }
         Ok(())
+    }
+
+    /// The validated conversation identity, if this request carries one.
+    pub fn parsed_session_key(&self) -> Option<crate::v2::SessionKey> {
+        self.session_key
+            .as_deref()
+            .and_then(|raw| crate::v2::SessionKey::parse(raw).ok())
     }
 }
 

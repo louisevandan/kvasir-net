@@ -48,7 +48,11 @@ const advertised = argument("--advertise", "127.0.0.1");
 // PowerShell one-liner are re-split before PowerShell ever sees them;
 // -EncodedCommand is the only form that survives both layers intact.
 function ssh(script) {
-  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  // Progress records become CLIXML on stderr over a non-interactive SSH
+  // channel, which buries the real output; silencing them at the source is
+  // cheaper than filtering a multi-kilobyte block back out.
+  const encoded = Buffer.from(`$ProgressPreference = 'SilentlyContinue';
+${script}`, "utf16le").toString("base64");
   const result = spawnSync("ssh", ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host,
     `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`],
     { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
@@ -66,6 +70,10 @@ function copyLauncher() {
     // lands in this log instead of being discarded into the null device.
     "set P4_STAGED_LLAMA_INHERIT_STDERR=1",
     "set P4_AGENT_STATS=1",
+    // The conversation key an OUTER mints is not echoed anywhere on the wire,
+    // so without this trace a run can only observe that the adapter did not
+    // reject it. The log this writes is collected as run evidence.
+    "set P4_STAGED_TRACE_SESSION_KEY=1",
     // Redirections go first: cmd strips them in place and leaves the gap,
     // which reaches the program as an extra empty argument - the advertised
     // address then parsed as blank and the agent refused every connection.

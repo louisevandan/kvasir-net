@@ -17,6 +17,12 @@ pub struct RunConfig {
     pub prompt: String,
     #[serde(default)]
     pub prompts: Vec<String>,
+    /// Conversation identity this OUTER mints per request. Takes the same
+    /// `{{request_id}}` and `{{request_index}}` substitutions the prompt does,
+    /// so a run can give every request its own conversation or share one
+    /// across turns. Empty means this OUTER does not persist.
+    #[serde(default)]
+    pub session_key_template: String,
     pub max_tokens: u32,
     #[serde(default = "default_waves")]
     pub waves: Vec<ArrivalWave>,
@@ -189,6 +195,7 @@ mod tests {
             ],
             prompt: "prompt".into(),
             prompts: Vec::new(),
+            session_key_template: String::new(),
             max_tokens: 500,
             waves: default_waves(),
             options: String::new(),

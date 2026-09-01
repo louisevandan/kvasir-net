@@ -14,7 +14,11 @@ import { spawn, spawnSync } from "node:child_process";
 /// because SSH concatenates its remote command with the login shell, which
 /// re-splits pipes and quotes before PowerShell ever sees them.
 export function remotePowerShell(host, script, timeoutMs = 60_000) {
-  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  // Progress records become CLIXML on stderr over a non-interactive SSH
+  // channel, which buries the real output; silencing them at the source is
+  // cheaper than filtering a multi-kilobyte block back out.
+  const encoded = Buffer.from(`$ProgressPreference = 'SilentlyContinue';
+${script}`, "utf16le").toString("base64");
   const result = spawnSync("ssh", ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host,
     `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: timeoutMs });
@@ -112,4 +116,49 @@ export function startRemoteGpuSampler(host) {
       return csv;
     },
   };
+}
+
+/// Pulls the remote agent's stderr so a remote run's evidence names what the
+/// far side logged, not only what the drive saw. The session-key trace lives
+/// here and nowhere else: the key an OUTER mints is never echoed on the wire.
+///
+/// Throws when the log cannot be read at all: an unreadable log and an adapter
+/// that dropped the field produce the same empty string, and only one of those
+/// is a run this harness may pass.
+/// Byte length of the remote agent log right now.
+///
+/// The agent appends across runs and the smoke scenario reuses one request
+/// id, so a line another run wrote would otherwise satisfy this run's check.
+/// Taking the length first and reading from it makes the evidence this run's.
+export function remoteAgentLogLength({ host, remotePort, root }) {
+  const file = `${root}\\agent-${remotePort}.err.log`;
+  const { out } = remotePowerShell(host,
+    `$p = '${file}'; if (Test-Path -LiteralPath $p) { Write-Output ((Get-Item -LiteralPath $p).Length) } else { Write-Output 0 }`);
+  const value = Number(out.trim());
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+export function fetchRemoteAgentLog({ host, remotePort, root, fromByte = 0 }) {
+  const file = `${root}\\agent-${remotePort}.err.log`;
+  // Read through an explicitly shared handle: the agent still holds the file
+  // open for writing, and Get-Content would fail on the sharing mode. The
+  // outcome is reported on stdout because a PowerShell error record reaches
+  // this side as CLIXML on stderr, where it is indistinguishable from noise -
+  // a silent empty read once looked exactly like an adapter that dropped the
+  // field it was being asked about.
+  const { out } = remotePowerShell(host, [
+    `$p = '${file}'`,
+    "try {",
+    "  $s = [System.IO.File]::Open($p, 'Open', 'Read', 'ReadWrite')",
+    `  if ($s.Length -gt ${fromByte}) { $null = $s.Seek(${fromByte}, 'Begin') }`,
+    "  $r = New-Object System.IO.StreamReader($s)",
+    "  $t = $r.ReadToEnd(); $r.Close(); $s.Close()",
+    "  Write-Output 'P4_REMOTE_LOG_BEGIN'; Write-Output $t",
+    "} catch { Write-Output ('P4_REMOTE_LOG_ERROR ' + $_.Exception.Message) }",
+  ].join("\n"), 120_000);
+  const begin = out.indexOf("P4_REMOTE_LOG_BEGIN");
+  if (begin < 0) {
+    throw new Error(`remote agent log unreadable: ${out.slice(0, 200) || "no output"}`);
+  }
+  return out.slice(begin + "P4_REMOTE_LOG_BEGIN".length).replace(/^\r?\n/, "");
 }

@@ -33,7 +33,8 @@ export const GEMMA4_DEVICES = ["0", "0", "1", "1"];
 // is why the remote agent runs as an interactive scheduled task.
 export const MODEL = "S:\\models\\unsloth\\gemma-4-E2B-it-GGUF\\gemma-4-E2B-it-Q8_0.gguf";
 export const BINARY = "F:\\dev\\p4\\target\\p4-staged-cuda\\p4_staged_server.exe";
-export const REMOTE_BINARY = "C:\\Users\\42mob\\p4-remote\\staged\\p4_staged_server.exe";
+export const REMOTE_ROOT = "C:\\Users\\42mob\\p4-remote";
+export const REMOTE_BINARY = `${REMOTE_ROOT}\\staged\\p4_staged_server.exe`;
 
 const base = {
   cuts: GEMMA4_CUTS,
@@ -99,12 +100,19 @@ export const TARGETS = {
   local: { ingress: "tcp://127.0.0.1:42003", binary: BINARY },
   // The remote host answers SSH and nothing else - ICMP and the agent port are
   // both blocked - so the drive reaches it through a local SSH forward rather
-  // than directly. The agent still advertises its own LAN address because the
-  // stage servers it spawns talk to each other on the remote side.
+  // than directly. The agent advertises the tunnel entrance rather than its own
+  // LAN address: event endpoints are matched by value, so an agent calling
+  // itself 192.168.0.29 rejects traffic the drive addressed to 127.0.0.1. The
+  // stage servers it spawns are all local to the remote host either way.
   remote: {
     ingress: "tcp://127.0.0.1:42003",
     binary: REMOTE_BINARY,
-    tunnel: { host: "42mob@192.168.0.29", localPort: 42003, remotePort: 42003 },
+    tunnel: {
+      host: "42mob@192.168.0.29",
+      localPort: 42003,
+      remotePort: 42003,
+      root: REMOTE_ROOT,
+    },
   },
 };
 

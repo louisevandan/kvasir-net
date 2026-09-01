@@ -1,0 +1,78 @@
+{
+  "schema": "p4-event-gate-proof/v1",
+  "recorded_at": "2026-08-25",
+  "upstream_llamacpp_commit": "3e3a7a416d6588597523c792fc5874a543d59ed9",
+  "model": {
+    "path": "S:\\models\\Qwen2.5-1.5B-Instruct-Q8_0.gguf",
+    "sha256": "7185d306cf45956c8c017cd0d3b05ecc6bc18b3ea8eb5c240dce40e87563db7f"
+  },
+  "runtime": {
+    "server_sha256": "1cf5c3b09f868a4e4ac4b148d777880abfc7e5554ecd4c8307ad25d697304c64",
+    "llama_dll_sha256": "fd14f4c56f4c36e40ca2f66efc90e067729a2b64b5c8c04551a2d6e5d4c43cd6"
+  },
+  "artifacts": {
+    "gate1_sha256": "b87a6bf308804adcd6fa9f5fce1d922ae0ac89a8e753f930582aaac27c059c52",
+    "gate2_sha256": "5bd366fce5ab4eb6f6bd964a47ba6d512a7d8eed9abd838be931e9ecd9e47843",
+    "gate3_sha256": "3ad063022501cd14419639401770e5f57cf6467df4c18aa5417b55cf468a6bed",
+    "gate3_resolved_config_sha256": "4a39c05c31e5c90cc139064c693facca585864e74946cf41af185cf1ca4f4afe",
+    "gate3_prompt_report_sha256": "ca77a84ed1b9f4326d53c9e1cce5a96928a9c59f0fb3cf0dcb8d5638dab7dde6",
+    "gate3_gpu_summary_sha256": "de069e3ec547e74b2fb7bd8df8133db30ad9995691c64bc1fe5478dd1ef56751",
+    "gate3_gpu_samples_sha256": "87a8cc9901ff994921122fc03641ca1d0718c35209b9a019894a07c53169f79f"
+  },
+  "gate3": {
+    "context_per_request": 1200,
+    "parallel": 10,
+    "prompt_tokens_per_request": 500,
+    "max_output_tokens": 500,
+    "arrival_waves": [
+      { "at_ms": 0, "requests": 20 },
+      { "at_ms": 30000, "requests": 10 },
+      { "at_ms": 60000, "requests": 10 },
+      { "at_ms": 90000, "requests": 10 }
+    ],
+    "submitted": 50,
+    "completed": 50,
+    "released": 50,
+    "elapsed_ms": 92475,
+    "batch_observations": 397,
+    "physical_ubatches": 743,
+    "mixed_physical_ubatches": [
+      {
+        "execution_id": 159,
+        "rows": 64,
+        "prefill_rows": 63,
+        "decode_rows": 1,
+        "request_ids": [16, 20]
+      },
+      {
+        "execution_id": 166,
+        "rows": 56,
+        "prefill_rows": 53,
+        "decode_rows": 3,
+        "request_ids": [17, 18, 19, 20]
+      }
+    ],
+    "manual_semantic_verdict": {
+      "passed": 50,
+      "failed": 0,
+      "all_terminal_reason": "eog",
+      "all_prompts_preserved_request_identity": true,
+      "long_answers_exactly_matched_expected_text": true
+    },
+    "gpu": [
+      {
+        "name": "NVIDIA GeForce RTX 3090",
+        "samples": 418,
+        "max_utilization_percent": 57,
+        "max_used_memory_mib": 1599
+      },
+      {
+        "name": "NVIDIA GeForce RTX 4080",
+        "samples": 418,
+        "max_utilization_percent": 37,
+        "max_used_memory_mib": 3210
+      }
+    ]
+  },
+  "claim_boundary": "This proves correct mixed Prefill/Decode physical UBATCH construction on the local two-stage CUDA topology. It does not prove global maximum efficiency, remote/TUF execution, or every backend at runtime."
+}
