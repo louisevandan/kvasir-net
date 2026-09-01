@@ -7,7 +7,7 @@ pub(super) async fn drive<R, W>(
     config: &RunConfig,
     wire: &mut wire::EventWire<R, W>,
     sender: &mut Sender,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<BuildIdentity, Box<dyn std::error::Error>>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
@@ -55,14 +55,17 @@ where
         }
     }
     agree(&builds)?;
-    Ok(())
+    Ok(builds.into_iter().next().unwrap_or(BuildIdentity {
+        upstream_commit: "unknown".into(),
+        patch_set: "unknown".into(),
+    }))
 }
 
 /// What one stage reported it was built from.
-#[derive(Debug, Eq, PartialEq)]
-struct BuildIdentity {
-    upstream_commit: String,
-    patch_set: String,
+#[derive(Debug, Eq, PartialEq, serde::Serialize)]
+pub(super) struct BuildIdentity {
+    pub upstream_commit: String,
+    pub patch_set: String,
 }
 
 fn build_identity(payload: &[u8]) -> Result<BuildIdentity, Box<dyn std::error::Error>> {

@@ -334,6 +334,15 @@ EOL 수리는 승인되었고, 리뷰가 clean pin 직접 적용으로 aggregate
 | ε | prepared 예약이 회계에 안 보이면 over-admit 재발 | 텔레메트리 reserved_cells 필드 추가 |
 | ζ | kv_root가 공유인지 노드 로컬인지 미정 — 잠금 계약 전체가 조건부였음 | 토폴로지 축 신설: 기본=노드 전용 로컬(권위 문제 소거), 공유 볼륨은 storage capability gate + membership 권위 필수 |
 
+U0 ②·③의 각 일부는 2026-09-01에 성립했다. ③은 컴파일러가 강제한다 —
+`p4_llama_compat`만 llama의 `src/`를 include path에 갖고, 두 번째 침범은
+C1083으로 빌드가 실패한다(실제로 넣어 확인). ②는 `patch_set`이 prepare의
+트리 스탬프 → CMake → HELLO → 어댑터 loaded 텔레메트리 → OUTER까지
+실값으로 왕복하고, 드라이브가 스테이지 간 불일치를 거부한다. **나머지
+②는 미충족** — `stage_abi_id`·`state_abi_id`·backend layout·`trim_support`는
+아직 HELLO에 없고, 따라서 합성 `build_id`도 만들지 않았다: 입력이 갖춰지기
+전에 만든 합성 식별자는 구분하지 못하는 것을 구분한다고 주장하게 된다.
+
 **U0·P-1 완료는 여전히 주장하지 않는다.** 병행 가능 범위는 session_key
 wire·하네스 이관이며, base×variant 구현은 이 계약의 리뷰 승인 후다.
 

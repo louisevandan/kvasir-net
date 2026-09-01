@@ -213,6 +213,9 @@ async function main() {
     // Which machine actually served the run, taken from the far side rather
     // than from the scenario name.
     host: identity,
+    // Which llama.cpp every stage reported, taken from the stages rather
+    // than from what this machine happens to have built.
+    build: artifact.build,
     description: spec.description,
     structural: {
       passed: artifact.passed,

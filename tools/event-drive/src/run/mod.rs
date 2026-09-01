@@ -31,6 +31,10 @@ const NODE_RESULT: &str = "application/vnd.p4.node.result-v3+json";
 #[derive(Debug, Serialize)]
 pub struct RunArtifact {
     pub passed: bool,
+    /// Which llama.cpp build every stage of this pipeline reported.
+    /// Recorded because a measurement is only attributable to the code
+    /// that produced it, and the upstream commit alone does not name that.
+    pub build: load::BuildIdentity,
     pub acceptance: acceptance::AcceptanceSummary,
     pub prompt: String,
     pub response: String,
@@ -120,7 +124,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     )
     .await?;
 
-    load::drive(&config, &mut wire, &mut sender).await?;
+    let build = load::drive(&config, &mut wire, &mut sender).await?;
 
     let first = address(&config.nodes[0]);
     let mut session_replies = Vec::with_capacity(config.nodes.len());
@@ -240,6 +244,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         && run.released_count == run.request_count;
     Ok(RunArtifact {
         passed: structurally_complete && acceptance.passed,
+        build,
         acceptance,
         prompt: config.prompt,
         response: requests
