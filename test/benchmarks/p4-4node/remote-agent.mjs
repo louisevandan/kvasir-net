@@ -31,6 +31,7 @@ if (!Number.isInteger(port) || port < 1024 || port > 65535) {
 }
 
 const launcher = `${root}\\run-agent-${port}.cmd`;
+const descriptor = `${root}\\agent-${port}.descriptor.json`;
 const agent = `${root}\\p4-agent.exe`;
 const log = `${root}\\agent-${port}.log`;
 const err = `${root}\\agent-${port}.err.log`;
@@ -95,7 +96,17 @@ const START = [
   `  if ($ready.Count -eq 0) { Start-Sleep -Milliseconds 250 }`,
   `} while ($ready.Count -eq 0 -and (Get-Date) -lt $deadline);`,
   `if ($ready.Count -eq 0) { Get-Content -LiteralPath '${err}' -ErrorAction SilentlyContinue | Select-Object -Last 20; throw 'remote agent did not listen' }`,
-  `Write-Output 'REMOTE_AGENT_LISTENING'`,
+  // A descriptor records what this harness started, so stop identifies its
+  // own process instead of inferring ownership from whoever holds the port
+  // later. Measured: 'schtasks /end' does leave the process alive long
+  // enough for a port lookup to work, but depending on that ordering is
+  // fragile and says nothing about whose agent it is.
+  `$own = @(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique);`,
+  `$proc = @($own | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue } | Where-Object { $_.ProcessName -eq 'p4-agent' })[0];`,
+  `if (-not $proc) { throw 'no p4-agent owns the port after start' };`,
+  `$desc = [ordered]@{ task = '${taskName}'; port = ${port}; pid = $proc.Id; path = $proc.Path; started_at = $proc.StartTime.ToString('o'); host = $env:COMPUTERNAME };`,
+  `$desc | ConvertTo-Json -Compress | Set-Content -LiteralPath '${descriptor}' -Encoding ascii;`,
+  `Write-Output ('REMOTE_AGENT_LISTENING pid=' + $proc.Id + ' host=' + $env:COMPUTERNAME)`,
 ].join(" ");
 
 // Stops only what this harness started. Killing every p4-agent and
@@ -105,8 +116,16 @@ const START = [
 const STOP = [
   `schtasks.exe /end /tn ${taskName} *> $null;`,
   `schtasks.exe /delete /tn ${taskName} /f *> $null;`,
-  `$owner = @(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique);`,
-  `$agents = @($owner | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue } | Where-Object { $_.ProcessName -eq 'p4-agent' });`,
+  // Ownership comes from the descriptor written at start and is re-verified
+  // against the live process: a pid alone can have been recycled onto
+  // someone else's program, and killing that would be a stop this harness
+  // is not entitled to make.
+  `$agents = @();`,
+  `if (Test-Path '${descriptor}') {`,
+  `  $d = Get-Content -LiteralPath '${descriptor}' -Raw | ConvertFrom-Json;`,
+  `  $p = Get-Process -Id $d.pid -ErrorAction SilentlyContinue;`,
+  `  if ($p -and $p.Path -eq $d.path -and $p.StartTime.ToString('o') -eq $d.started_at) { $agents = @($p) }`,
+  `}`,
   `$stages = @();`,
   `foreach ($a in $agents) { $stages += @(Get-CimInstance Win32_Process -Filter \"ParentProcessId=$($a.Id)\" -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'p4_staged_server.exe' }) }`,
   `foreach ($s in $stages) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }`,

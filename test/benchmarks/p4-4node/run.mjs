@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeArtifact } from "./judge.mjs";
+import { beginRun, collectEvidence, newRunId, promoteRun } from "./evidence.mjs";
 import { openTunnel, proveTunnelIdentity, startRemoteGpuSampler } from "./remote.mjs";
 import { scenario } from "./scenarios.mjs";
 import { writeConfig } from "./spec.mjs";
@@ -87,12 +88,14 @@ async function main() {
   const targetIndex = rest.indexOf("--target");
   const target = targetIndex >= 0 ? rest[targetIndex + 1] : "local";
   const spec = scenario(name, target);
-  const outDir = path.resolve(
-    outIndex >= 0 ? rest[outIndex + 1]
-      : path.join(root, "target", "p4-4node", target === "local" ? name : `${name}-${target}`),
-  );
+  const runId = newRunId();
+  const run = outIndex >= 0
+    ? { working: path.resolve(rest[outIndex + 1]), final: path.resolve(rest[outIndex + 1]) }
+    : beginRun(root, runId);
+  const outDir = run.working;
+  fs.mkdirSync(outDir, { recursive: true });
 
-  const { file: configPath } = writeConfig(spec, outDir);
+  const { file: configPath } = writeConfig(spec, outDir, { run_id: runId });
   const artifactPath = path.join(outDir, "artifact.json");
   const ingress = new URL(spec.ingress);
 
@@ -110,6 +113,7 @@ async function main() {
   const agentOutput = agent ? collect(agent) : { stdout: "", stderr: "" };
   let tunnel = null;
   let identity = null;
+  let evidence = null;
   let sampler;
   let samplerOutput = { stdout: "" };
   let driveOutput = { stdout: "", stderr: "" };
@@ -117,12 +121,20 @@ async function main() {
 
   try {
     if (agent) await waitForReady(agent, agentOutput, 20_000);
+    evidence = collectEvidence({
+      root,
+      runId,
+      spec,
+      compatManifest: path.join(root, "layers", "adapters", "llamacpp", "staged",
+        "compat", "557614e02", "manifest.json"),
+    });
     if (spec.tunnel) {
       // Opening the forward is not proof it is ours: a bind failure leaves a
       // previous forward holding the port and the run would still look
       // remote. The identity probe makes the far side confirm it.
       ({ child: tunnel } = await openTunnel(spec.tunnel));
       identity = proveTunnelIdentity(spec.tunnel.host, spec.tunnel.remotePort);
+      evidence.remote = { host: spec.tunnel.host, ...identity };
     }
     sampler = spec.target === "remote"
       ? startRemoteGpuSampler(spec.tunnel.host)
@@ -150,7 +162,10 @@ async function main() {
   }
 
   if (failure) {
-    process.stderr.write(`P4_4NODE_FAILED ${failure}\n${driveOutput.stderr.trim().slice(-3000)}\n`);
+    fs.writeFileSync(path.join(outDir, "failure.json"),
+      `${JSON.stringify({ run_id: runId, failure, evidence }, null, 2)}\n`, "utf8");
+    process.stderr.write(`P4_4NODE_FAILED ${failure}\nrun ${runId} at ${outDir}\n`
+      + `${driveOutput.stderr.trim().slice(-3000)}\n`);
     process.exitCode = 1;
     return;
   }
@@ -158,6 +173,7 @@ async function main() {
   const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
   const verdict = judgeArtifact(artifact);
   const report = {
+    run_id: runId,
     scenario: spec.name,
     target: spec.target,
     // Which machine actually served the run, taken from the far side rather
@@ -175,8 +191,12 @@ async function main() {
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
     rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
   };
+  fs.writeFileSync(path.join(outDir, "evidence.json"),
+    `${JSON.stringify({ ...evidence, finished_at: new Date().toISOString() }, null, 2)}\n`, "utf8");
   fs.writeFileSync(path.join(outDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  const promoted = run.working === run.final ? run : promoteRun(run);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  process.stdout.write(`evidence: ${promoted.directory ?? run.final}\n`);
 
   if (!artifact.passed || !verdict.passed) {
     process.stderr.write("P4_4NODE_NOT_ACCEPTED\n");
