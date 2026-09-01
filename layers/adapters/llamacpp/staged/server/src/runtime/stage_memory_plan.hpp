@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "common.h"
+#include "compat/p4_llama_compat.hpp"
 #include "llama.h"
 
 namespace staged::llama_runtime {
@@ -79,23 +79,23 @@ struct StageMemoryPlan final {
 };
 
 [[nodiscard]] llama_model_params make_stage_model_params(
-    common_params & params,
+    p4_llama_compat::LlamaPlan & params,
     const LoadConfig & config);
 
 [[nodiscard]] llama_context_params make_stage_context_params(
-    const common_params & params);
+    const p4_llama_compat::LlamaPlan & params);
 
 // This is the one private llama.cpp compatibility boundary for allocation
 // planning. It deliberately uses backend buffer/device identities rather than
 // naming CUDA, Vulkan, HIP, Metal, OpenCL, or any other concrete backend.
 [[nodiscard]] bool inspect_stage_memory(
-    common_params params,
+    const p4_llama_compat::LlamaPlan & params,
     const LoadConfig & config,
     StageMemoryPlan * result,
     std::string * error = nullptr);
 
 [[nodiscard]] bool inspect_stage_memory_with_initialized_backend(
-    common_params params,
+    const p4_llama_compat::LlamaPlan & params,
     const LoadConfig & config,
     StageMemoryPlan * result,
     std::string * error = nullptr);

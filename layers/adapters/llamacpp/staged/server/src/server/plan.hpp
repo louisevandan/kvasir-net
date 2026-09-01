@@ -4,13 +4,16 @@
 #include <vector>
 
 #ifdef P4_STAGED_WITH_LLAMA
-#include "common.h"
+#include "compat/p4_llama_compat.hpp"
 #include "stage_memory_plan.hpp"
 
 namespace staged::server {
 
 struct ParsedLlamaOptions final {
-    common_params params;
+    // Opaque: sixty-six of this plan's fields are consumed by llama.cpp's
+    // own conversion functions and only six are named by P4, so the struct
+    // is carried whole rather than mirrored. See LlamaPlan.
+    p4_llama_compat::LlamaPlan params;
     std::string model_path;
     std::int32_t layer_begin = 0;
     std::int32_t layer_end = 0;

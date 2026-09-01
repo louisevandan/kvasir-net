@@ -10,6 +10,10 @@
 
 #include "arg.h"
 
+// This file parses llama.cpp's own CLI, so it is one of the places that
+// legitimately knows what a common_params is.
+#include "compat/p4_llama_compat_internal.hpp"
+
 namespace staged::server {
 namespace {
 
@@ -296,12 +300,16 @@ bool parse_llama_options(int argc, char **argv,
     while (static_cast<int>(common_args.size()) == argc) {
         common_args.emplace_back("--log-disable");
     }
+    // One reference for this whole region: this file drives llama.cpp's own
+    // argument parser, so it is one of the places that legitimately holds
+    // the struct. Everything downstream sees only the opaque plan.
+    common_params & parsed_params = p4_llama_compat::plan_params(parsed->params);
     std::vector<char *> pointers;
     pointers.reserve(common_args.size() + 1);
     for (auto &arg : common_args) pointers.push_back(arg.data());
     pointers.push_back(nullptr);
     if (!common_params_parse(static_cast<int>(common_args.size()), pointers.data(),
-                             parsed->params, LLAMA_EXAMPLE_SERVER, nullptr)) {
+                             parsed_params, LLAMA_EXAMPLE_SERVER, nullptr)) {
         if (error != nullptr) {
             *error = "common_params_parse rejected startup plan; forwarded args=";
             for (const auto & arg : common_args) {
@@ -316,18 +324,18 @@ bool parse_llama_options(int argc, char **argv,
     // the flash-attention kernels.  Reject it here so an OUTER-supplied opaque
     // plan cannot turn a deterministic argument error into an expensive load
     // failure on every node.
-    if (ggml_is_quantized(parsed->params.cache_type_v) &&
-        parsed->params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED) {
+    if (ggml_is_quantized(parsed_params.cache_type_v) &&
+        parsed_params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED) {
         if (error != nullptr) {
             *error = "quantized V cache requires flash attention; use --flash-attn on or an unquantized V cache";
         }
         return false;
     }
     parsed->mtp_requested = has_speculative_type(
-        parsed->params, COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
+        parsed_params, COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
     parsed->speculative_requested = parsed->mtp_requested ||
-        parsed->params.speculative.has_dft();
-    for (const auto type : parsed->params.speculative.types) {
+        parsed_params.speculative.has_dft();
+    for (const auto type : parsed_params.speculative.types) {
         if (type != COMMON_SPECULATIVE_TYPE_NONE) {
             parsed->speculative_requested = true;
         }
@@ -346,22 +354,23 @@ bool parse_llama_options(int argc, char **argv,
     // semantics: MiniMax M3 requires per-sequence streams when n_seq_max > 1
     // and otherwise falls back from MSA to dense attention.
 
-    if (parsed->model_path.empty()) parsed->model_path = parsed->params.model.path;
+    if (parsed->model_path.empty()) parsed->model_path = parsed_params.model.path;
     return true;
 }
 
 CapabilityReport capability_report(const ParsedLlamaOptions &parsed) {
-    const bool unsupported_speculative = parsed.params.speculative.has_dft()
+    const common_params & parsed_params = p4_llama_compat::plan_params(parsed.params);
+    const bool unsupported_speculative = parsed_params.speculative.has_dft()
         || std::any_of(
-            parsed.params.speculative.types.begin(),
-            parsed.params.speculative.types.end(),
+            parsed_params.speculative.types.begin(),
+            parsed_params.speculative.types.end(),
             [](const common_speculative_type type) {
                 return type != COMMON_SPECULATIVE_TYPE_NONE
                     && type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
             });
     const bool mtp_execution = parsed.mtp_requested && !unsupported_speculative;
     std::string blocker = "none";
-    if (unsupported_speculative && has_draft_family_type(parsed.params)) {
+    if (unsupported_speculative && has_draft_family_type(parsed_params)) {
         blocker = "draft_context_and_proposal_state_not_in_hop";
     } else if (unsupported_speculative) {
         blocker = "proposal_accept_rollback_state_not_in_hop";

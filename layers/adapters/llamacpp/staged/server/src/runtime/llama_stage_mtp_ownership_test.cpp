@@ -1,4 +1,5 @@
 #include "llama_stage_runtime.hpp"
+#include "compat/p4_llama_compat_internal.hpp"
 
 #include <cassert>
 #include <cstdlib>
@@ -17,7 +18,8 @@ int main() {
     const int layer_end = end_value == nullptr ? 24 : std::atoi(end_value);
     assert(layer_end > 0);
 
-    common_params params;
+    p4_llama_compat::LlamaPlan plan;
+    common_params & params = p4_llama_compat::plan_params(plan);
     params.model.path = model;
     params.n_ctx = 512;
     params.n_batch = 64;
@@ -33,7 +35,7 @@ int main() {
 
     staged::llama_runtime::StageRuntime runtime;
     std::string error;
-    if (!runtime.load(std::move(params), config, &error)) {
+    if (!runtime.load(std::move(plan), config, &error)) {
         std::cerr << "FAIL: MTP auxiliary ownership probe could not load: "
                   << error << '\n';
         return 1;

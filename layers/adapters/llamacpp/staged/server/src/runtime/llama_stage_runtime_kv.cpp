@@ -96,9 +96,9 @@ protocol::KvPayload StageRuntime::manifest_request(
         + ";n_batch=" + std::to_string(llama_n_batch(ctx_))
         + ";n_ubatch=" + std::to_string(llama_n_ubatch(ctx_))
         + ";n_seq_max=" + std::to_string(llama_n_seq_max(ctx_))
-        + ";kv_unified=" + (params_.kv_unified ? "1" : "0");
-    manifest.kv_format = "K=" + std::to_string(static_cast<int>(params_.cache_type_k))
-        + ";V=" + std::to_string(static_cast<int>(params_.cache_type_v))
+        + ";kv_unified=" + (params_.kv_unified() ? "1" : "0");
+    manifest.kv_format = "K=" + std::to_string(static_cast<int>(params_.cache_type_k()))
+        + ";V=" + std::to_string(static_cast<int>(params_.cache_type_v()))
         + ";flags=" + std::to_string(request.flags);
     manifest.token_position = token_position;
     return manifest;

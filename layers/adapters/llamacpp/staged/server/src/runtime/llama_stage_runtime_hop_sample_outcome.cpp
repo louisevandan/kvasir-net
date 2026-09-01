@@ -9,6 +9,9 @@
 // and hop_memory_dirty() in llama_stage_runtime.hpp).
 
 #include "llama_stage_runtime_hop_shared.hpp"
+
+// The sampler and speculative APIs still take llama.cpp's struct.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "request_options.hpp"
 #include "request_stops.hpp"
 
@@ -32,7 +35,7 @@ bool StageRuntime::sample_hop_outcome(
     }
     auto found = samplers_.find(input.sequence_id);
     if (found == samplers_.end()) {
-        auto sampling = params_.sampling;
+        auto sampling = p4_llama_compat::plan_params(params_).sampling;
         if (!apply_request_options(input.options, model_, &sampling, error)) {
             hop_memory_dirty_ = true;
             return false;

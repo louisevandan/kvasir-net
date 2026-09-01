@@ -1,4 +1,8 @@
 #include "llama_stage_runtime.hpp"
+
+// The sampler and speculative APIs still take the struct, so this file is
+// one of the runtime's remaining common/ debt entries.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "ggml-backend.h"
 
 #include <cstdio>
@@ -36,7 +40,7 @@ bool StageRuntime::fail(const char * message, std::string * error) {
     return false;
 }
 
-bool StageRuntime::load(common_params params, const LoadConfig & config,
+bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & config,
                         std::string * error) {
     unload();
     if (config.model_path.empty() || config.layer_begin < 0 ||
@@ -44,16 +48,16 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
         return fail("invalid stage load configuration", error);
     }
     const bool mtp_requested = std::find(
-        params.speculative.types.begin(), params.speculative.types.end(),
-        COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
-    const bool unsupported_speculative = params.speculative.has_dft() || std::any_of(
-            params.speculative.types.begin(), params.speculative.types.end(),
+        p4_llama_compat::plan_params(params).speculative.types.begin(), p4_llama_compat::plan_params(params).speculative.types.end(),
+        COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != p4_llama_compat::plan_params(params).speculative.types.end();
+    const bool unsupported_speculative = p4_llama_compat::plan_params(params).speculative.has_dft() || std::any_of(
+            p4_llama_compat::plan_params(params).speculative.types.begin(), p4_llama_compat::plan_params(params).speculative.types.end(),
             [](const common_speculative_type type) {
                 return type != COMMON_SPECULATIVE_TYPE_NONE
                     && type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
             });
     if (unsupported_speculative) {
-        if (params.speculative.has_dft()) {
+        if (p4_llama_compat::plan_params(params).speculative.has_dft()) {
             return fail("CAPABILITY_UNAVAILABLE: "
                         "draft_context_and_proposal_state_not_in_hop", error);
         }
@@ -65,7 +69,7 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     sequence_ids_.clear();
     sequence_positions_.clear();
     next_sequence_id_ = 0;
-    params_.model.path = config_.model_path;
+    p4_llama_compat::plan_params(params_).model.path = config_.model_path;
 
     llama_backend_init();
     // Backend discovery is deliberately delegated to stock ggml. The stage
@@ -91,7 +95,7 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     model_params.linkcpp_stage_executor_user_data = this;
     model_params.linkcpp_state_executor = &StageRuntime::state_executor;
     model_params.linkcpp_state_executor_user_data = this;
-    model_ = llama_model_load_from_file(params_.model.path.c_str(), model_params);
+    model_ = llama_model_load_from_file(p4_llama_compat::plan_params(params_).model.path.c_str(), model_params);
     if (model_ == nullptr) {
         return fail("llama.cpp failed to load the staged model", error);
     }
@@ -112,15 +116,15 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     // The tail owns the stock llama.cpp MTP context and speculative driver.
     // Non-tail stages never load auxiliary MTP tensors or interpret proposals.
     if (mtp_requested && tail_stage_) {
-        auto mtp_params = common_base_params_to_speculative(params_);
+        auto mtp_params = common_base_params_to_speculative(p4_llama_compat::plan_params(params_));
         mtp_init_ = common_speculative_init_from_params(mtp_params, model_, ctx_);
         if (mtp_init_ == nullptr || mtp_init_->context() == nullptr) {
             return fail("llama.cpp failed to create the staged MTP context", error);
         }
-        params_.speculative.draft.ctx_tgt = ctx_;
-        params_.speculative.draft.ctx_dft = mtp_init_->context();
+        p4_llama_compat::plan_params(params_).speculative.draft.ctx_tgt = ctx_;
+        p4_llama_compat::plan_params(params_).speculative.draft.ctx_dft = mtp_init_->context();
         mtp_speculative_.reset(common_speculative_init(
-            params_.speculative, llama_n_seq_max(ctx_)));
+            p4_llama_compat::plan_params(params_).speculative, llama_n_seq_max(ctx_)));
         if (mtp_speculative_ == nullptr) {
             return fail("llama.cpp failed to initialize the staged MTP driver", error);
         }
@@ -134,7 +138,7 @@ bool StageRuntime::load(common_params params, const LoadConfig & config,
     StageMemoryPlan actual_memory;
     if (!measure_stage_memory(
             model_, ctx_, mtp_context(), config_.memory_topology,
-            params_.kv_unified, &actual_memory, &memory_error)) {
+            params_.kv_unified(), &actual_memory, &memory_error)) {
         if (error != nullptr) *error = memory_error;
         unload();
         return false;

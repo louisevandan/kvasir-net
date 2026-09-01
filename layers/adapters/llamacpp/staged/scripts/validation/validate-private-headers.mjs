@@ -28,7 +28,11 @@ import path from "node:path";
 const PRIVATE = /^(llama-(?!cpp\.h$)[a-z0-9-]+\.h|ggml-impl\.h|ggml-backend-impl\.h|ggml-common\.h)$/;
 
 /// llama.cpp's convenience library. Unstable, but load-bearing here.
-const UNSTABLE = /^(common|sampling|speculative|arg|log|chat)\.h$/;
+// `p4_llama_compat_internal.hpp` counts as a `common/` dependency because
+// that is exactly what it is: the header a file includes to say it still
+// needs the struct. Counting only direct `common.h` includes would let the
+// debt look paid the moment it was routed through one more file.
+const UNSTABLE = /^(common|sampling|speculative|arg|log|chat)\.h$|^p4_llama_compat_internal.hpp$/;
 
 /// The files that depend on llama.cpp's `common/`, split by what each costs.
 ///
@@ -47,23 +51,38 @@ const UNSTABLE = /^(common|sampling|speculative|arg|log|chat)\.h$/;
 /// all that stands there. Making that path private to the facade is part of
 /// finishing (3b), and only then does the rule become true rather than
 /// merely checked.
+/// The facade: the files allowed to know llama.cpp's convenience library.
+/// Not debt - this is where the debt is being moved to.
+export const FACADE = [
+  "compat/p4_llama_compat.cpp",
+  "compat/p4_llama_compat_internal.hpp",
+];
+
 export const UNSTABLE_HEADER_DEBT = [
   "runtime/llama_stage_runtime.hpp",
-  "runtime/stage_memory_plan.hpp",
-  "server/plan.hpp",
 ];
 
-/// Implementation files that use it. Tracked so the set stays deliberate.
+/// Implementation files that still name it directly.
 export const UNSTABLE_SOURCE_DEBT = [
   "main.cpp",
+  "runtime/llama_stage_mtp_ownership_test.cpp",
+  "runtime/llama_stage_runtime.cpp",
+  "runtime/llama_stage_runtime_compile_test.cpp",
+  "runtime/llama_stage_runtime_hop_decode.cpp",
+  "runtime/llama_stage_runtime_hop_sample.cpp",
+  "runtime/llama_stage_runtime_hop_sample_outcome.cpp",
+  "runtime/llama_stage_runtime_mtp.cpp",
+  "runtime/llama_stage_runtime_physical_sample.cpp",
   "runtime/request_options.cpp",
   "runtime/request_options_grammar.cpp",
+  "runtime/request_options_test.cpp",
   "runtime/request_stops.cpp",
   "runtime/stage_memory_plan.cpp",
+  "server/capability_test.cpp",
   "server/plan.cpp",
+  "server/plan_invariants_test.cpp",
 ];
 
-/// Both lists together, for the drift check.
 export const UNSTABLE_DEBT = [...UNSTABLE_HEADER_DEBT, ...UNSTABLE_SOURCE_DEBT];
 
 /// The single file allowed to cross, relative to the scanned root.
@@ -113,6 +132,9 @@ export function unstableDrift(root, files = sources(root), debt = UNSTABLE_DEBT)
       seen.add(path.relative(root, file).split(path.sep).join("/"));
     }
   }
+  // The facade is where the dependency is supposed to live, so it is neither
+  // debt nor drift.
+  for (const file of FACADE) seen.delete(file);
   const known = new Set(debt);
   return {
     added: [...seen].filter((file) => !known.has(file)).sort(),

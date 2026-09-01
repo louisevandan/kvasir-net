@@ -7,6 +7,9 @@
 // was batched.
 
 #include "llama_stage_runtime_hop_shared.hpp"
+
+// The sampler and speculative APIs still take llama.cpp's struct.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "request_options.hpp"
 #include "request_stops.hpp"
 
@@ -33,7 +36,7 @@ bool StageRuntime::sample_decode_row(
     }
     auto found = samplers_.find(input.sequence_id);
     if (found == samplers_.end()) {
-        auto sampling = params_.sampling;
+        auto sampling = p4_llama_compat::plan_params(params_).sampling;
         if (!apply_request_options(input.options, model_, &sampling, error)) return false;
         common_sampler_ptr sampler(common_sampler_init(model_, sampling));
         if (!sampler) return fail_hop("llama.cpp failed to create staged sampler", error);

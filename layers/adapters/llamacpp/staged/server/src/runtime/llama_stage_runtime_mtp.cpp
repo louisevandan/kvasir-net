@@ -1,5 +1,8 @@
 #include "llama_stage_runtime.hpp"
 
+// The sampler and speculative APIs still take llama.cpp's struct.
+#include "compat/p4_llama_compat_internal.hpp"
+
 #include <algorithm>
 #include <iostream>
 
@@ -73,7 +76,7 @@ bool StageRuntime::execute_mtp_hop(
     llama_batch_free(prefill);
 
     common_speculative_begin(mtp_speculative_.get(), seq_id, prompt_without_last);
-    common_sampler_ptr sampler(common_sampler_init(model_, params_.sampling));
+    common_sampler_ptr sampler(common_sampler_init(model_, p4_llama_compat::plan_params(params_).sampling));
     if (!sampler) return mtp_fail("failed to create MTP target sampler", error);
     for (const auto token : prompt_without_last) {
         common_sampler_accept(sampler.get(), token, false);

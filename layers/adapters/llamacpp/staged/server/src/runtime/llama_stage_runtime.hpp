@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common.h"
+#include "compat/p4_llama_compat.hpp"
 #include "speculative.h"
 #include "sampling.h"
 #include "llama.h"
@@ -63,12 +63,11 @@ public:
     StageRuntime & operator=(const StageRuntime &) = delete;
     ~StageRuntime();
 
-    [[nodiscard]] bool load(common_params params, const LoadConfig & config,
+    [[nodiscard]] bool load(p4_llama_compat::LlamaPlan params, const LoadConfig & config,
                             std::string * error = nullptr);
     void unload() noexcept;
 
     [[nodiscard]] bool loaded() const noexcept { return model_ != nullptr && ctx_ != nullptr; }
-    [[nodiscard]] const common_params & params() const noexcept { return params_; }
     [[nodiscard]] const LoadConfig & config() const noexcept { return config_; }
     [[nodiscard]] llama_context * context() const noexcept { return ctx_; }
     [[nodiscard]] const llama_model * model() const noexcept { return model_; }
@@ -85,7 +84,7 @@ public:
         return ctx_ == nullptr ? 0 : llama_n_seq_max(ctx_);
     }
     [[nodiscard]] bool kv_unified() const noexcept {
-        return params_.kv_unified;
+        return params_.kv_unified();
     }
     [[nodiscard]] bool requires_equal_sequence_ubatch() const noexcept {
         return model_ != nullptr
@@ -295,7 +294,7 @@ private:
         const PhysicalOwner &, llama_token, std::uint32_t,
         bool terminal_after_token, GeneratedToken *, std::string *);
 
-    common_params params_;
+    p4_llama_compat::LlamaPlan params_;
     LoadConfig config_;
     llama_model * model_ = nullptr;
     llama_context * ctx_ = nullptr;

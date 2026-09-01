@@ -1,4 +1,5 @@
 #include "llama_stage_runtime.hpp"
+#include "compat/p4_llama_compat_internal.hpp"
 #include "request_options.hpp"
 
 #ifdef NDEBUG
@@ -73,7 +74,8 @@ int main() {
     config.model_identity = model_path;
     config.layer_begin = 0;
     config.layer_end = 28;
-    common_params params;
+    p4_llama_compat::LlamaPlan plan;
+    common_params & params = p4_llama_compat::plan_params(plan);
     params.n_ctx = 512;
     params.n_batch = 512;
     params.n_ubatch = 512;
@@ -83,7 +85,7 @@ int main() {
     params.sampling.temp = 0.0f;
     staged::llama_runtime::StageRuntime runtime;
     std::string error;
-    assert(runtime.load(params, config, &error) && error.empty());
+    assert(runtime.load(std::move(plan), config, &error) && error.empty());
 
     common_params_sampling sampler_options = params.sampling;
     const std::string extended_options = R"({

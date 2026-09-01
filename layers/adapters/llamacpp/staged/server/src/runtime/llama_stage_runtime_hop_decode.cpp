@@ -18,6 +18,9 @@
 //     returning more rows than were asked for.
 
 #include "llama_stage_runtime_hop_shared.hpp"
+
+// The sampler and speculative APIs still take llama.cpp's struct.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "request_options.hpp"
 
 #include <chrono>
@@ -106,7 +109,7 @@ bool StageRuntime::execute_decode_batch(
     // reading of that, not a second opinion about it -- a stage that
     // somehow reaches here configured otherwise keeps the per-sequence
     // path rather than binding a cut-set it cannot honour.
-    if (!params_.kv_unified) return false;
+    if (!params_.kv_unified()) return false;
     if (inputs.size() > static_cast<std::size_t>(llama_n_ubatch(ctx_))) return false;
 
     // Stage 0 starts a lap from token ids and ignores the tail's cut-set;

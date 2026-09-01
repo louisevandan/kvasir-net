@@ -1,4 +1,5 @@
 #include "llama_stage_runtime.hpp"
+#include "compat/p4_llama_compat_internal.hpp"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -137,7 +138,8 @@ void real_decode_after_restore_regression() {
     std::filesystem::create_directories(root);
     config.kv_root = root.string();
 
-    common_params params;
+    p4_llama_compat::LlamaPlan plan;
+    common_params & params = p4_llama_compat::plan_params(plan);
     params.n_ctx = 512;
     params.n_batch = 512;
     params.n_ubatch = 512;
@@ -148,7 +150,7 @@ void real_decode_after_restore_regression() {
 
     staged::llama_runtime::StageRuntime runtime;
     std::string error;
-    assert(runtime.load(params, config, &error) && error.empty());
+    assert(runtime.load(std::move(plan), config, &error) && error.empty());
 
     staged::protocol::SequencePayload prefill;
     prefill.sequence_id = "kv-restore-regression";
@@ -262,7 +264,8 @@ void hop_batch_rolls_back_only_new_sequences() {
     config.layer_begin = 0;
     config.layer_end = 28;
 
-    common_params params;
+    p4_llama_compat::LlamaPlan plan;
+    common_params & params = p4_llama_compat::plan_params(plan);
     params.n_ctx = 512;
     params.n_batch = 512;
     params.n_ubatch = 512;
@@ -273,7 +276,7 @@ void hop_batch_rolls_back_only_new_sequences() {
 
     staged::llama_runtime::StageRuntime runtime;
     std::string error;
-    assert(runtime.load(params, config, &error) && error.empty());
+    assert(runtime.load(std::move(plan), config, &error) && error.empty());
     assert(llama_n_seq_max(runtime.context()) == 2);
 
     staged::protocol::SequencePayload existing;
@@ -326,7 +329,8 @@ void hop_batch_rolls_back_only_new_sequences() {
 int main() {
     staged::llama_runtime::StageRuntime runtime;
     assert(!runtime.loaded());
-    common_params params;
+    p4_llama_compat::LlamaPlan plan;
+    common_params & params = p4_llama_compat::plan_params(plan);
     params.speculative.types = {COMMON_SPECULATIVE_TYPE_DRAFT_MTP};
     staged::llama_runtime::LoadConfig config;
     config.memory_topology.kind =
@@ -335,7 +339,7 @@ int main() {
     config.layer_begin = 0;
     config.layer_end = 1;
     std::string error;
-    assert(!runtime.load(params, config, &error));
+    assert(!runtime.load(std::move(plan), config, &error));
     assert(error == "llama.cpp failed to create the no-alloc model plan");
     assert(!runtime.loaded());
     execute_decode_batch_refuses_when_hop_memory_dirty();

@@ -31,10 +31,8 @@ using staged::llama_runtime::LoadConfig;
 using staged::llama_runtime::StageMemoryEntry;
 using staged::llama_runtime::StageMemoryPlan;
 
-bool has_mtp(const common_params & params) {
-    return std::find(
-        params.speculative.types.begin(), params.speculative.types.end(),
-        COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
+bool has_mtp(const p4_llama_compat::LlamaPlan & params) {
+    return params.requests_draft_mtp();
 }
 
 StageMemoryEntry device_entry(ggml_backend_dev_t device, std::size_t index) {
@@ -194,10 +192,10 @@ std::string json_escape(const std::string & value) {
 namespace staged::llama_runtime {
 
 llama_model_params make_stage_model_params(
-        common_params & params,
+        p4_llama_compat::LlamaPlan & params,
         const LoadConfig & config) {
-    params.model.path = config.model_path;
-    auto result = common_model_params_to_llama(params);
+    params.set_model_path(config.model_path);
+    auto result = params.to_model_params();
     result.linkcpp_layer_begin = config.layer_begin;
     result.linkcpp_layer_end = config.layer_end;
     result.linkcpp_kv_gpu_layer_start = config.kv_gpu_layer_start;
@@ -205,15 +203,17 @@ llama_model_params make_stage_model_params(
     return result;
 }
 
-llama_context_params make_stage_context_params(const common_params & params) {
-    return common_context_params_to_llama(params);
+llama_context_params make_stage_context_params(const p4_llama_compat::LlamaPlan & params) {
+    return params.to_context_params();
 }
 
 bool inspect_stage_memory_with_initialized_backend(
-        common_params params,
+        const p4_llama_compat::LlamaPlan & plan,
         const LoadConfig & config,
         StageMemoryPlan * result,
         std::string * error) {
+    // A measurement pass rewrites the model path, so it works on its own copy.
+    p4_llama_compat::LlamaPlan params = plan.clone();
     if (result == nullptr || config.model_path.empty() || config.layer_begin < 0 ||
         config.layer_end <= config.layer_begin) {
         if (error != nullptr) *error = "invalid stage memory-plan configuration";
@@ -245,7 +245,7 @@ bool inspect_stage_memory_with_initialized_backend(
                 }
                 return false;
             }
-            auto mtp_params = common_base_params_to_speculative(params);
+            auto mtp_params = params.speculative_plan();
             auto mtp_context_params = make_stage_context_params(mtp_params);
             mtp_context_params.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
             mtp_context_params.n_rs_seq = 0;
@@ -259,7 +259,7 @@ bool inspect_stage_memory_with_initialized_backend(
         }
         return measure_stage_memory(
             model.get(), context.get(), speculative_context.get(),
-            config.memory_topology, params.kv_unified, result, error);
+            config.memory_topology, params.kv_unified(), result, error);
     } catch (const std::exception & exception) {
         if (error != nullptr) *error = std::string("llama.cpp memory planning failed: ") + exception.what();
         return false;
@@ -267,14 +267,14 @@ bool inspect_stage_memory_with_initialized_backend(
 }
 
 bool inspect_stage_memory(
-        common_params params,
+        const p4_llama_compat::LlamaPlan & plan,
         const LoadConfig & config,
         StageMemoryPlan * result,
         std::string * error) {
     llama_backend_init();
     ggml_backend_load_all();
     const bool ok = inspect_stage_memory_with_initialized_backend(
-        std::move(params), config, result, error);
+        plan, config, result, error);
     llama_backend_free();
     return ok;
 }

@@ -238,7 +238,7 @@ int main(int argc, char **argv) {
         std::cerr << "startup plan parsing failed: " << plan_parse_error << '\n';
         return 3;
     }
-    std::cerr << "PLAN_APPLIED n_parallel=" << parsed_options.params.n_parallel
+    std::cerr << "PLAN_APPLIED n_parallel=" << parsed_options.params.n_parallel()
               << " model=" << parsed_options.model_path << '\n';
     const auto option_capabilities = staged::server::capability_report(parsed_options);
     std::cerr << "CAPABILITY_REPORT " << option_capabilities.serialize() << '\n';
