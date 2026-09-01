@@ -10,7 +10,7 @@ pub(super) async fn receive_exact<R, W>(
     expected: Vec<ExpectedReply>,
     correlation_id: &str,
     timeout_ms: u64,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<Vec<Event>, Box<dyn std::error::Error>>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
@@ -20,6 +20,10 @@ where
         .into_iter()
         .map(|item| (item.causation_id, item.source))
         .collect();
+    // The replies are returned rather than counted: what a stage says about
+    // itself when it comes up is the only place a caller can compare stages
+    // against each other.
+    let mut collected = Vec::new();
     while !remaining.is_empty() {
         let event = wire.receive(deadline).await?;
         if event.envelope.payload_content_type == ERROR_CONTENT_TYPE {
@@ -37,9 +41,10 @@ where
                     return Err(detail.to_owned().into());
                 }
             }
+            collected.push(event);
         }
     }
-    Ok(())
+    Ok(collected)
 }
 
 fn consume_expected_reply(

@@ -120,6 +120,20 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         set(P4_STAGED_LLAMA_UPSTREAM_COMMIT "unknown")
     endif()
 
+    # The patch set on top of that commit. Written into the prepared tree by
+    # prepare-pipeline-upstream.mjs, because the commit alone cannot tell two
+    # builds apart when the queue is what differs - which is exactly the case
+    # a per-pin compatibility gate has to catch.
+    set(P4_STAGED_LLAMA_PATCH_SET "unknown")
+    if(EXISTS "${P4_STAGED_LLAMA_SOURCE_DIR}/.p4-compat.json")
+        file(READ "${P4_STAGED_LLAMA_SOURCE_DIR}/.p4-compat.json" P4_STAGED_COMPAT_JSON)
+        string(JSON P4_STAGED_COMPAT_PATCH_SET ERROR_VARIABLE P4_STAGED_COMPAT_ERROR
+               GET "${P4_STAGED_COMPAT_JSON}" patch_set_sha256)
+        if(P4_STAGED_COMPAT_PATCH_SET AND NOT P4_STAGED_COMPAT_PATCH_SET MATCHES "NOTFOUND")
+            set(P4_STAGED_LLAMA_PATCH_SET "${P4_STAGED_COMPAT_PATCH_SET}")
+        endif()
+    endif()
+
     if(P4_STAGED_LLAMA_BUILD_DIR)
         # A relink deliberately reuses only an already-built llama.cpp ABI.
         # The source tree is still required for headers and provenance, but
@@ -263,9 +277,11 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     )
     target_compile_definitions(p4_staged_llama_runtime PRIVATE
         P4_STAGED_LLAMA_UPSTREAM_COMMIT=\"${P4_STAGED_LLAMA_UPSTREAM_COMMIT}\"
+        P4_STAGED_LLAMA_PATCH_SET=\"${P4_STAGED_LLAMA_PATCH_SET}\"
     )
     target_compile_definitions(p4_staged_server_core PRIVATE
         P4_STAGED_LLAMA_UPSTREAM_COMMIT=\"${P4_STAGED_LLAMA_UPSTREAM_COMMIT}\"
+        P4_STAGED_LLAMA_PATCH_SET=\"${P4_STAGED_LLAMA_PATCH_SET}\"
     )
 
     target_link_libraries(p4_staged_server_core PUBLIC p4_staged_llama_runtime)

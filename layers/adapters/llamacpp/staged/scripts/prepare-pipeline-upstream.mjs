@@ -178,6 +178,20 @@ try {
     );
   }
 }
+// Stamped into the tree, not just printed, because the build configures from
+// the source directory alone: without this the stage server can report which
+// upstream commit it was built from but not which patch set was on top of it,
+// and two builds that differ only in the queue are indistinguishable at HELLO.
+fs.writeFileSync(
+  path.join(preparedTarget, ".p4-compat.json"),
+  `${JSON.stringify({
+    upstream_commit: manifest.upstream_commit,
+    patch_set_sha256: manifest.patch_set_sha256,
+    patched_tree: manifest.patched_tree,
+  }, null, 2)}\n`,
+  "utf8",
+);
+
 const output = {
   source_dir: preparedTarget,
   upstream_commit: manifest.upstream_commit,

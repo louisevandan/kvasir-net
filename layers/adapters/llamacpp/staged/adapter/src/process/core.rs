@@ -31,6 +31,12 @@ pub struct ReadyInfo {
     pub n_batch: usize,
     pub n_ubatch: usize,
     pub n_seq_max: u32,
+    /// Which llama.cpp this stage was built from: the upstream commit and
+    /// the patch queue applied on top of it. The commit alone does not
+    /// identify a build - two stages can share it and differ in every
+    /// behaviour the queue touches - so both travel and both are compared.
+    pub upstream_commit: String,
+    pub patch_set: String,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -343,12 +349,27 @@ pub(super) fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
         n_ubatch: capability_number(&text, "n_ubatch")?,
         n_seq_max: capability_number(&text, "n_seq_max")?,
         max_atomic_sequences: capability_number(&text, "max_atomic_sequences")?,
+        upstream_commit: capability_text(&text, "upstream"),
+        patch_set: capability_text(&text, "patch_set"),
         server_id: text,
         transactions,
         physical_batch,
         equal_sequence_ubatch,
         atomic_batch_exclusive,
     })
+}
+
+/// A named capability field, or `unknown` when the stage did not report one.
+/// Absence is reported rather than refused: an older stage server predates
+/// the field, and refusing it here would turn a provenance gap into a load
+/// failure at the wrong layer.
+fn capability_text(text: &str, name: &str) -> String {
+    let prefix = format!("{name}=");
+    text.split(';')
+        .find_map(|field| field.strip_prefix(&prefix))
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_owned()
 }
 
 fn capability_number<T>(text: &str, name: &str) -> Result<T, String>

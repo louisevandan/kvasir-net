@@ -105,6 +105,8 @@ impl Worker {
                 "equal_sequence_ubatch":ready.equal_sequence_ubatch,
                 "max_atomic_sequences":ready.max_atomic_sequences,
                 "atomic_batch_exclusive":ready.atomic_batch_exclusive,
+                "upstream_commit":ready.upstream_commit,
+                "patch_set":ready.patch_set,
                 "per_sequence_context":command.context_size,
                 "reserved_context":reserved_context
             }),
@@ -242,6 +244,8 @@ mod tests {
             n_batch: 512,
             n_ubatch: 64,
             n_seq_max: 10,
+            upstream_commit: "fixture-upstream".into(),
+            patch_set: "fixture-patch-set".into(),
         }
     }
 

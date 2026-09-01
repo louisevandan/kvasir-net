@@ -64,7 +64,10 @@ async fn a_timeout_mid_frame_loses_nothing() {
 
     let mut received = Vec::new();
     loop {
-        match wire.receive(Instant::now() + Duration::from_millis(60)).await {
+        match wire
+            .receive(Instant::now() + Duration::from_millis(60))
+            .await
+        {
             Ok(event) => received.push(event.envelope.sequence),
             Err(error) if error.kind() == io::ErrorKind::TimedOut => break,
             Err(error) => panic!("unexpected error: {error}"),
@@ -103,7 +106,10 @@ async fn repeated_timeouts_do_not_desync_the_stream() {
 
     let mut received = Vec::new();
     while received.len() < 4 {
-        match wire.receive(Instant::now() + Duration::from_millis(2)).await {
+        match wire
+            .receive(Instant::now() + Duration::from_millis(2))
+            .await
+        {
             Ok(event) => received.push(event.envelope.sequence),
             Err(error) if error.kind() == io::ErrorKind::TimedOut => continue,
             Err(error) => panic!("unexpected error: {error}"),

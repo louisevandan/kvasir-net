@@ -158,6 +158,8 @@ mod tests {
                     n_batch: 64,
                     n_ubatch: 64,
                     n_seq_max: 1,
+                    upstream_commit: "fixture-upstream".into(),
+                    patch_set: "fixture-patch-set".into(),
                 }))
             }
         }
