@@ -98,12 +98,20 @@ const START = [
   `Write-Output 'REMOTE_AGENT_LISTENING'`,
 ].join(" ");
 
+// Stops only what this harness started. Killing every p4-agent and
+// p4_staged_server on the host would take down anyone else using the machine,
+// which is not a stop this tool is entitled to make - so the agent is found by
+// the port it was told to bind, and the stage servers by being its children.
 const STOP = [
   `schtasks.exe /end /tn ${taskName} *> $null;`,
   `schtasks.exe /delete /tn ${taskName} /f *> $null;`,
-  `Get-Process p4-agent -ErrorAction SilentlyContinue | Stop-Process -Force;`,
-  `Get-Process p4_staged_server -ErrorAction SilentlyContinue | Stop-Process -Force;`,
-  `Write-Output 'REMOTE_AGENT_STOPPED'`,
+  `$owner = @(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique);`,
+  `$agents = @($owner | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue } | Where-Object { $_.ProcessName -eq 'p4-agent' });`,
+  `$stages = @();`,
+  `foreach ($a in $agents) { $stages += @(Get-CimInstance Win32_Process -Filter \"ParentProcessId=$($a.Id)\" -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'p4_staged_server.exe' }) }`,
+  `foreach ($s in $stages) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }`,
+  `foreach ($a in $agents) { Stop-Process -Id $a.Id -Force -ErrorAction SilentlyContinue }`,
+  `Write-Output ('REMOTE_AGENT_STOPPED agents=' + $agents.Count + ' stages=' + $stages.Count)`,
 ].join(" ");
 
 const STATUS = [

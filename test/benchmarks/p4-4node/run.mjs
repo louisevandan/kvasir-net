@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeArtifact } from "./judge.mjs";
+import { openTunnel, proveTunnelIdentity, startRemoteGpuSampler } from "./remote.mjs";
 import { scenario } from "./scenarios.mjs";
 import { writeConfig } from "./spec.mjs";
 
@@ -107,17 +108,8 @@ async function main() {
         env: { ...process.env, P4_AGENT_STATS: "1", P4_STAGED_LLAMA_INHERIT_STDERR: "1" },
       });
   const agentOutput = agent ? collect(agent) : { stdout: "", stderr: "" };
-  // The remote host answers only SSH, so the drive reaches its agent through
-  // a forward held open for the run.
-  const tunnel = spec.tunnel
-    ? spawn("ssh", ["-N", "-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
-        // The load command carries a large plan and the outcome stream is
-        // chatty; a forward left at defaults resets under that traffic.
-        "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=240",
-        "-o", "TCPKeepAlive=yes", "-o", "IPQoS=throughput",
-        "-L", `${spec.tunnel.localPort}:127.0.0.1:${spec.tunnel.remotePort}`, spec.tunnel.host],
-        { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
-    : null;
+  let tunnel = null;
+  let identity = null;
   let sampler;
   let samplerOutput = { stdout: "" };
   let driveOutput = { stdout: "", stderr: "" };
@@ -125,12 +117,20 @@ async function main() {
 
   try {
     if (agent) await waitForReady(agent, agentOutput, 20_000);
-    if (tunnel) await new Promise((resolve) => setTimeout(resolve, 3_000));
-    sampler = spec.target === "remote" ? null : spawn("nvidia-smi", [
+    if (spec.tunnel) {
+      // Opening the forward is not proof it is ours: a bind failure leaves a
+      // previous forward holding the port and the run would still look
+      // remote. The identity probe makes the far side confirm it.
+      ({ child: tunnel } = await openTunnel(spec.tunnel));
+      identity = proveTunnelIdentity(spec.tunnel.host, spec.tunnel.remotePort);
+    }
+    sampler = spec.target === "remote"
+      ? startRemoteGpuSampler(spec.tunnel.host)
+      : spawn("nvidia-smi", [
       "--query-gpu=timestamp,index,name,utilization.gpu,memory.used,power.draw",
       "--format=csv,noheader,nounits", "-lms", "250",
     ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    if (sampler) samplerOutput = collect(sampler);
+    if (sampler && spec.target !== "remote") samplerOutput = collect(sampler);
 
     const drive = spawn(path.join(root, "target", "release", "p4-event-drive.exe"),
       [configPath, artifactPath], { cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -140,7 +140,8 @@ async function main() {
   } catch (error) {
     failure = error.message;
   } finally {
-    await stopChild(sampler);
+    if (spec.target === "remote" && sampler) samplerOutput = { stdout: await sampler.stop() };
+    else await stopChild(sampler);
     fs.writeFileSync(path.join(outDir, "gpu.csv"), samplerOutput.stdout, "utf8");
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentOutput.stderr, "utf8");
     fs.writeFileSync(path.join(outDir, "drive.stderr.log"), driveOutput.stderr, "utf8");
@@ -159,6 +160,9 @@ async function main() {
   const report = {
     scenario: spec.name,
     target: spec.target,
+    // Which machine actually served the run, taken from the far side rather
+    // than from the scenario name.
+    host: identity,
     description: spec.description,
     structural: {
       passed: artifact.passed,
