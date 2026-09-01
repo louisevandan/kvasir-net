@@ -242,12 +242,22 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         "${P4_STAGED_LLAMA_SOURCE_DIR}/include"
         "${P4_STAGED_LLAMA_SOURCE_DIR}/common"
     )
-    target_include_directories(p4_staged_llama_runtime PRIVATE
+    # llama.cpp's src/ is private. Only the compat unit gets it on its include
+    # path, so a second file reaching for a private header fails to compile
+    # rather than merely failing review (U0 (3)).
+    add_library(p4_llama_compat STATIC
+        "${CMAKE_CURRENT_LIST_DIR}/src/compat/p4_llama_compat.cpp"
+    )
+    target_include_directories(p4_llama_compat PUBLIC src)
+    target_include_directories(p4_llama_compat PRIVATE
         "${P4_STAGED_LLAMA_SOURCE_DIR}/src"
     )
+    target_link_libraries(p4_llama_compat PUBLIC llama)
+    target_include_directories(p4_staged_llama_runtime PRIVATE src)
     target_link_libraries(p4_staged_llama_runtime PUBLIC
         llama
         llama-common
+        p4_llama_compat
         p4_staged_runtime
         p4_staged_protocol
     )

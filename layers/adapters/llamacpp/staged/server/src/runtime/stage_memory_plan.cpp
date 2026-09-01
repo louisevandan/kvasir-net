@@ -2,7 +2,7 @@
 
 #include "ggml-backend.h"
 #include "llama-cpp.h"
-#include "llama-ext.h"
+#include "compat/p4_llama_compat.hpp"
 #include "speculative.h"
 
 #include <algorithm>
@@ -143,15 +143,15 @@ bool add_breakdown(
         bool include_model,
         StageMemoryPlan * result,
         std::string * error) {
-    const auto breakdown = llama_get_memory_breakdown(context);
-    const std::size_t device_count = llama_model_n_devices(model);
-    for (const auto & [buffer_type, memory] : breakdown) {
+    const auto breakdown = p4_llama_compat::memory_breakdown(context);
+    const std::size_t device_count = p4_llama_compat::model_device_count(model);
+    for (const auto & measured : breakdown) {
         StageMemoryEntry * entry = &result->entries.back();
-        if (!ggml_backend_buft_is_host(buffer_type)) {
-            auto * device = ggml_backend_buft_get_device(buffer_type);
+        if (!ggml_backend_buft_is_host(measured.buffer_type)) {
+            auto * device = ggml_backend_buft_get_device(measured.buffer_type);
             entry = nullptr;
             for (std::size_t index = 0; index < device_count; ++index) {
-                if (device == llama_model_get_device(model, static_cast<int>(index))) {
+                if (device == p4_llama_compat::model_device(model, index)) {
                     entry = &result->entries[index];
                     break;
                 }
@@ -161,9 +161,9 @@ bool add_breakdown(
                 return false;
             }
         }
-        if (include_model) entry->model += memory.model;
-        entry->context += memory.context;
-        entry->compute += memory.compute;
+        if (include_model) entry->model += measured.model;
+        entry->context += measured.context;
+        entry->compute += measured.compute;
     }
     return true;
 }
@@ -291,7 +291,7 @@ bool measure_stage_memory(
         if (error != nullptr) *error = "cannot measure an unloaded stage";
         return false;
     }
-    const std::size_t device_count = llama_model_n_devices(model);
+    const std::size_t device_count = p4_llama_compat::model_device_count(model);
     if (!valid_memory_topology(memory_topology, device_count, error)) return false;
     result->memory_topology = memory_topology;
     result->execution_shape = StageExecutionShape{
@@ -300,7 +300,7 @@ bool measure_stage_memory(
     result->entries.clear();
     result->entries.reserve(device_count + 1);
     for (std::size_t index = 0; index < device_count; ++index) {
-        auto * device = llama_model_get_device(model, static_cast<int>(index));
+        auto * device = p4_llama_compat::model_device(model, index);
         result->entries.push_back(device_entry(device, index));
     }
     result->entries.push_back(host_entry());

@@ -300,6 +300,16 @@ impl Worker {
                         position: generated.position,
                         stop: generated.stop.clone(),
                     };
+                    // What this node handed to the relay. A gap the OUTER
+                    // sees is either a position this node never produced or
+                    // one it produced and something between here and there
+                    // dropped; only comparing the two tells which.
+                    if std::env::var_os("P4_STAGED_TRACE_OUTPUT_POSITION").is_some() {
+                        eprintln!(
+                            "P4_OUTPUT_EMITTED request={} sequence={} position={}",
+                            payload.request_id, payload.sequence_id, payload.position
+                        );
+                    }
                     self.emit_reply_json(
                         base,
                         reply.clone(),

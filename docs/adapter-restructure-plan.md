@@ -363,6 +363,7 @@ P-1 인수 기준의 나머지 절반은 그때까지 미충족으로 남는다.
 | O10 | Snapshot storage domain·read pin — source·target lease, 동시 Discard 차단, 노드 이동·cross-domain 복사 경로 | P3 |
 | O11 | durable/ram-byte admission — 노드별 디스크·호스트 RAM 예약, ENOSPC partial-prepare 수렴, OUTER 가용량 텔레메트리 | P3 |
 | O12 | 한 실행을 마친 원격 에이전트가 두 번째 실행을 받지 못한 관측 1건 — 스테이지가 뜨지 않고 에이전트 로그에 수신 흔적도 없이 드라이브가 timeout_ms까지 대기(2026-09-01, 재기동 후 동일 시나리오는 정상). 원인 미확정: 로드 세대 전환의 어댑터 상태인지 터널·연결 수명인지 분리되지 않음. 현재 하네스는 실행마다 에이전트를 재기동해 회피한다 | 미배정 |
+| O13 | OUTER 전달 손실이 조용하다 — `deliver_outer`는 경로가 없거나 그 write loop이 끝난 뒤 이벤트를 로그 한 줄로 폐기한다. 2026-09-01 mixed 실행에서 어댑터가 19~121을 빠짐없이 방출했는데 OUTER는 94→119를 받았고, 어댑터 로그의 `P4_EVENT_OUTER_MISSING` 55건이 그 사이를 설명했다. 죽은 경로 축출과 폐기 계수는 적용했고 하네스가 이를 판정에 결속했으나, **끊긴 OUTER 연결 너머로 P4가 출력 전달을 약속하는지**는 계약 미정 — at-most-once면 손실이 정상이고 at-least-once면 재개 지점과 버퍼 소유가 필요하다 | 미배정(계약 먼저) |
 
 ## 검토 수렴 규약
 

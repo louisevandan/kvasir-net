@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeArtifact } from "./judge.mjs";
 import { beginRun, collectEvidence, newRunId, promoteRun } from "./evidence.mjs";
+import { checkDelivery } from "./delivery.mjs";
 import { checkSessionKeys } from "./session-key.mjs";
 import {
   fetchRemoteAgentLog,
@@ -178,9 +179,16 @@ async function main() {
   }
 
   if (failure) {
+    // The relay's discard count belongs in the failure too: a drive that
+    // stopped on a position gap is usually reporting a delivery loss, and
+    // the two records read very differently.
+    const lost = checkDelivery(agentLog);
     fs.writeFileSync(path.join(outDir, "failure.json"),
-      `${JSON.stringify({ run_id: runId, failure, evidence }, null, 2)}\n`, "utf8");
-    process.stderr.write(`P4_4NODE_FAILED ${failure}\nrun ${runId} at ${outDir}\n`
+      `${JSON.stringify({ run_id: runId, failure, delivery: lost, evidence }, null, 2)}\n`, "utf8");
+    const discarded = lost.passed
+      ? ""
+      : `relay discarded ${lost.counted + lost.uncounted} event(s) to the OUTER\n`;
+    process.stderr.write(`P4_4NODE_FAILED ${failure}\nrun ${runId} at ${outDir}\n${discarded}`
       + `${driveOutput.stderr.trim().slice(-3000)}\n`);
     process.exitCode = 1;
     return;
@@ -190,6 +198,9 @@ async function main() {
   const verdict = judgeArtifact(artifact);
   // The conversation key is one-way traffic, so it is proved against the
   // adapter's own trace rather than against anything in the reply.
+  // Tokens the relay dropped were generated and paid for; a run that lost
+  // them did not do what it reports.
+  const delivery = checkDelivery(agentLog);
   const sessionKeys = checkSessionKeys(
     JSON.parse(fs.readFileSync(configPath, "utf8")),
     artifact.requests.map((request) => request.request_id),
@@ -211,6 +222,7 @@ async function main() {
     },
     meaning: { passed: verdict.passed, meaningful: verdict.meaningful, total: verdict.total },
     session_keys: sessionKeys,
+    delivery,
     metrics: metrics(artifact),
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
     rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
@@ -222,7 +234,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   process.stdout.write(`evidence: ${promoted.directory ?? run.final}\n`);
 
-  if (!artifact.passed || !verdict.passed || !sessionKeys.passed) {
+  if (!artifact.passed || !verdict.passed || !sessionKeys.passed || !delivery.passed) {
     process.stderr.write("P4_4NODE_NOT_ACCEPTED\n");
     process.exitCode = 1;
   }

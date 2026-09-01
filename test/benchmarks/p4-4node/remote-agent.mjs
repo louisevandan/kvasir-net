@@ -74,6 +74,9 @@ function copyLauncher() {
     // so without this trace a run can only observe that the adapter did not
     // reject it. The log this writes is collected as run evidence.
     "set P4_STAGED_TRACE_SESSION_KEY=1",
+    // Position gaps at the OUTER are being separated from position gaps at
+    // the source; see the plan's open surface.
+    "set P4_STAGED_TRACE_OUTPUT_POSITION=1",
     // Redirections go first: cmd strips them in place and leaves the gap,
     // which reaches the program as an extra empty argument - the advertised
     // address then parsed as blank and the agent refused every connection.

@@ -3,10 +3,14 @@ use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Event, OuterEndpoint, decode, encode};
 use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, mpsc};
+
+/// Serial number for accepted connections, so log lines can name one.
+static CONNECTIONS: AtomicU64 = AtomicU64::new(1);
 
 const CONNECTION_CAPACITY: usize = 65_536;
 const MAX_FRAME: usize = 2 * 1024 * 1024 * 1024;
@@ -22,12 +26,19 @@ pub async fn accept(
 ) {
     loop {
         match listener.accept().await {
-            Ok((stream, _)) => {
+            Ok((stream, peer)) => {
                 let broker = Arc::clone(&broker);
                 let connections = connections.clone();
+                // Named so a connection that ends mid-run can be told from
+                // the one still carrying the run: a 2026-09-01 four-node run
+                // lost output to a close that no log line could attribute.
+                let id = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+                eprintln!("P4_EVENT_CONNECTION_OPENED connection={id} peer={peer}");
                 tokio::spawn(async move {
-                    if let Err(error) = serve(stream, broker, connections).await {
-                        eprintln!("P4_EVENT_CONNECTION_STOPPED error={error}");
+                    let result = serve(stream, broker, connections).await;
+                    match result {
+                        Ok(()) => eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} peer={peer} error=none"),
+                        Err(error) => eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} peer={peer} error={error}"),
                     }
                 });
             }
@@ -58,15 +69,43 @@ async fn serve(
     }
 }
 
+/// Writes events to the OUTER that owns each target endpoint.
+///
+/// An undeliverable event is *lost*, and the loss is visible to nobody but
+/// this log line unless it is counted: a 2026-09-01 four-node run under
+/// continuous arrivals dropped 24 consecutive Output events here and the
+/// only reason anyone noticed was the drive's own position-contiguity check.
+/// So each discard is counted per endpoint and reported as a running total,
+/// and a route whose write side has gone is evicted rather than left in the
+/// map to swallow everything addressed to it until the OUTER happens to send
+/// something that re-registers it.
+///
+/// Counting is not delivery. Whether P4 owes an OUTER its output across a
+/// broken connection is a contract question this layer cannot settle alone;
+/// see the restructure plan's open surface.
 pub async fn deliver_outer(mut receiver: EventReceiver, connections: OuterConnections) {
+    let mut discarded: HashMap<OuterEndpoint, u64> = HashMap::new();
     while let Some(event) = receiver.recv().await {
         let Endpoint::Outer(target) = event.envelope.target.clone() else {
             continue;
         };
         let sender = connections.0.lock().await.get(&target).cloned();
-        match sender {
-            Some(sender) if sender.send(event).await.is_ok() => {}
-            _ => eprintln!("P4_EVENT_OUTER_MISSING target={target:?}"),
+        let delivered = match sender {
+            Some(sender) => {
+                let sent = sender.send(event).await.is_ok();
+                if !sent {
+                    // The write loop behind this sender is gone. Leaving the
+                    // entry keeps every later event going to a closed channel.
+                    connections.0.lock().await.remove(&target);
+                }
+                sent
+            }
+            None => false,
+        };
+        if !delivered {
+            let total = discarded.entry(target.clone()).or_insert(0);
+            *total += 1;
+            eprintln!("P4_EVENT_OUTER_MISSING discarded={total} target={target:?}");
         }
     }
 }
