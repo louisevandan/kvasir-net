@@ -204,8 +204,13 @@ export function remoteAgentLogLength({ host, remotePort, root }) {
 }
 
 /// The agent's record file: the evidence channel, with no other writers.
-export function fetchRemoteRecord({ host, remotePort, root, fromByte = 0 }) {
-  return readRemoteFile(host, recordPath(root, remotePort), fromByte);
+/// Exactly the bytes a run appended: `[fromByte, toByte)`.
+///
+/// Reading to the end of the file instead would fold in whatever the agent
+/// wrote after the run's closing length was taken - the closing offset would
+/// name a boundary without being one.
+export function fetchRemoteRecord({ host, remotePort, root, fromByte = 0, toByte = null }) {
+  return readRemoteRange(host, recordPath(root, remotePort), fromByte, toByte);
 }
 
 /// The record file's length right now.
@@ -260,6 +265,46 @@ function readRemoteFile(host, file, fromByte) {
   const begin = out.indexOf("P4_REMOTE_LOG_BEGIN");
   if (begin < 0) {
     throw new Error(`remote file unreadable: ${out.slice(0, 200) || "no output"}`);
+  }
+  return out.slice(begin + "P4_REMOTE_LOG_BEGIN".length).replace(/^\r?\n/, "");
+}
+
+/// Reads one byte range of a remote file.
+///
+/// `toByte` of null means to the end. A range that does not end on a line
+/// boundary is refused rather than truncated mid-record: half a record is
+/// not evidence, and silently dropping it would hide the very interleaving
+/// this channel exists to avoid.
+function readRemoteRange(host, file, fromByte, toByte) {
+  const length = toByte === null ? -1 : toByte - fromByte;
+  if (length !== -1 && length < 0) {
+    throw new Error(`record range ends before it begins: ${fromByte}..${toByte}`);
+  }
+  if (length === 0) return "";
+  const { out } = remotePowerShell(host, [
+    `$p = '${file}'`,
+    "try {",
+    "  $s = [System.IO.File]::Open($p, 'Open', 'Read', 'ReadWrite')",
+    `  if ($s.Length -lt ${fromByte}) { throw 'record shrank below the opening offset' }`,
+    `  $null = $s.Seek(${fromByte}, 'Begin')`,
+    `  $want = ${length}`,
+    "  if ($want -lt 0) { $want = $s.Length - $s.Position }",
+    "  if ($s.Position + $want -gt $s.Length) { throw 'record range runs past the file' }",
+    "  $buffer = New-Object byte[] $want",
+    "  $read = 0",
+    "  while ($read -lt $want) {",
+    "    $step = $s.Read($buffer, $read, $want - $read)",
+    "    if ($step -le 0) { throw 'record range ended early' }",
+    "    $read += $step",
+    "  }",
+    "  $s.Close()",
+    "  Write-Output 'P4_REMOTE_LOG_BEGIN'",
+    "  Write-Output ([System.Text.Encoding]::UTF8.GetString($buffer))",
+    "} catch { Write-Output ('P4_REMOTE_LOG_ERROR ' + $_.Exception.Message) }",
+  ].join("\n"), 120_000);
+  const begin = out.indexOf("P4_REMOTE_LOG_BEGIN");
+  if (begin < 0) {
+    throw new Error(`remote record range unreadable: ${out.slice(0, 200) || "no output"}`);
   }
   return out.slice(begin + "P4_REMOTE_LOG_BEGIN".length).replace(/^\r?\n/, "");
 }

@@ -1,8 +1,5 @@
 #include "llama_stage_runtime.hpp"
 
-// The sampler and speculative APIs still take llama.cpp's struct.
-#include "compat/p4_llama_compat_internal.hpp"
-
 #include <algorithm>
 #include <iostream>
 
@@ -71,7 +68,7 @@ bool StageRuntime::execute_mtp_hop(
     std::cerr << "MTP_TEST prefill_process\n";
     if (!mtp_speculative_.process(prefill)) {
         llama_batch_free(prefill);
-        return mtp_fail("common_speculative_process failed for MTP prefill", error);
+        return mtp_fail("the speculative driver rejected the MTP prefill batch", error);
     }
     llama_batch_free(prefill);
 
@@ -135,7 +132,7 @@ bool StageRuntime::execute_mtp_hop(
     std::cerr << "MTP_TEST verify_process\n";
     if (!mtp_speculative_.process(verify)) {
         llama_batch_free(verify);
-        return mtp_fail("common_speculative_process failed for MTP verify", error);
+        return mtp_fail("the speculative driver rejected the MTP verify batch", error);
     }
 
     std::cerr << "MTP_TEST sample_accept\n";

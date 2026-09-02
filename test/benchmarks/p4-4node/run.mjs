@@ -213,7 +213,7 @@ async function main() {
       recordTo = remoteRecordLength(spec.tunnel);
     }
     record = spec.target === "remote" && spec.tunnel
-      ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom })
+      ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom, toByte: recordTo })
       : agentOutput.stderr;
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
     fs.writeFileSync(path.join(outDir, "agent.record.log"), record, "utf8");

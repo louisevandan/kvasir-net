@@ -373,8 +373,8 @@ U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서
 | 조각 | 상태 | 근거 |
 | --- | --- | --- |
 | ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
-| ③b llama.cpp `common/` 격리 | **중간 게이트 통과** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm을 모두 P4 소유 핸들로 감쌌고, 이제 헤더가 `common/`을 포함하면 게이트가 **실패**한다(실제로 넣어 확인). 구현 17개는 남아 있고 이것이 종착점이다 — upstream의 `llama-common` 타깃이 자기 디렉터리를 PUBLIC으로 내보내므로, 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다. **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다** |
-| ② 빌드 신원 | **부분** | `upstream_commit`·`patch_set`·`backend_inventory` 셋이 prepare의 트리 스탬프와 ggml 런타임 레지스트리에서 HELLO → 어댑터 텔레메트리 → OUTER까지 실값으로 왕복하고, 드라이브가 하나라도 스테이지 간에 다르면 추론 전에 거부한다(3090×2 실행이 `CUDA[CUDA0]` 보고). `stage_abi_id`·`state_abi_id`·`trim_support`는 아직 없고, 따라서 합성 `build_id`도 만들지 않았다 — 입력이 갖춰지기 전의 합성 식별자는 구분하지 못하는 것을 구분한다고 주장하게 된다 |
+| ③b llama.cpp `common/` 격리 | **중간 게이트 통과, 완료 아님** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm·MTP 브링업을 모두 P4 소유 핸들과 연산 뒤로 옮겼고, 헤더가 `common/`을 포함하면 게이트가 **실패**한다(주입해 확인). **구현 9개가 남아 있고 이것이 종착점이다** — 플랜 파싱 4, 요청 옵션 파싱 2, 시험 3. upstream의 `llama-common`이 자기 디렉터리를 PUBLIC으로 내보내므로 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다: **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다.** 현재 runtime 타깃이 여전히 `llama-common`을 링크하므로 경계는 닫히지 않았다 |
+| ② 빌드 신원 | **부분** | `upstream_commit`·`patch_set`·`backend_inventory` 셋이 prepare의 트리 스탬프와 ggml 런타임 레지스트리에서 HELLO → 어댑터 텔레메트리 → OUTER까지 실값으로 왕복한다(3090×2 실행이 `CPU[CPU]|CUDA[CUDA0]` 전체를 보고). `agree()`는 어댑터 크레이트에 있고 `unknown`을 fail-closed로 거부하지만, **실제 호출자는 event-drive 하나뿐이라 제품 로드 경로가 규칙을 강제하지는 않는다** — 파이프라인 전체를 모으는 코디네이터 API가 이 저장소에 없다. `stage_abi_id`·`state_abi_id`·`trim_support`도 없고, 따라서 합성 `build_id`도 만들지 않았다 |
 
 **정정 (2026-09-02)**: 이 문서는 앞서 실행이 `CUDA[CUDA0]` 하나만 보고한 것을
 "각 스테이지가 `CUDA_VISIBLE_DEVICES`로 장치 하나만 보기 때문"이라고 설명했다.
@@ -398,6 +398,14 @@ device를 열거할 뿐, 모델 텐서·KV·compute buffer가 실제로 어디�
 각 스테이지가 장치 하나만 보는 것은 사실이지만, 그것은 물리 GPU를 구분하지
 못한다는 별개의 한계다 — 실행 증거의 placement와 GPU UUID가 따로 기록한다.
 
+
+**아직 강제되지 않는 것**: `agree()`가 어댑터에 있다는 것과 제품이 그것을 부른다는 것은
+다르다. 지금 이 규칙을 부르는 비시험 호출자는 `tools/event-drive` 하나이고, 어댑터의 LOAD
+수신 경로는 자기 스테이지의 신원을 텔레메트리에 실어 보낼 뿐 파이프라인을 모으지 않는다.
+제품 OUTER가 이 API를 부르지 않아도 컴파일되고 실행되므로 계약이 구조적으로 강제되지
+않는다. 닫으려면 **식별을 통과한 타입만 추론 단계로 넘어갈 수 있게** 하거나, OUTER가
+선언한 기대 신원을 LOAD가 실어 보내 각 스테이지가 자기 것을 대조하게 해야 한다 —
+둘 다 계약 결정이라 구현 전에 정해야 한다.
 
 **③b 잔여 작업** (2026-09-02 갱신): tokenize 5개·sampler 9개·speculative 9개를
 모두 facade로 옮겼다. 남은 `common_*` 이름은 세 곳에 모인다 — 플랜 파싱

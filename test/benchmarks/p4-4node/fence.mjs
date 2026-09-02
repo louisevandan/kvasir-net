@@ -1,21 +1,20 @@
-// Cuts one run's records out of a file the agent appends to across runs.
+// Decides whether a run's slice of the record file is usable as evidence.
 //
-// Offsets were the first attempt and one offset is not enough: reading
-// "from byte N" returns the whole file when the run wrote nothing, which is
-// exactly the failure being investigated. Writing a fence into the file was
-// the second attempt and it broke the invariant it depended on - the record
-// file is declared to have one writer, and the harness became a second.
+// The bytes themselves are cut on the far side, by reading exactly
+// `[begin, end)` - the two lengths the harness took around the run. Reading
+// to the end of the file instead would fold in whatever the agent wrote
+// after the closing length was taken, which would make `end` a name for a
+// boundary rather than a boundary.
 //
-// Two offsets, taken by the harness into its own record, settle it. The
-// run's records are the bytes between them: a run that wrote nothing has
-// begin == end and yields nothing, and neither endpoint is a write into the
-// agent's file.
+// What is left for this file is the part a byte range cannot express: a
+// range that begins or ends inside a record. Half a record is not evidence,
+// and accepting it would hide exactly the interleaving the single-writer
+// record file exists to prevent.
 
-/// The slice of a record file that belongs to one run.
+/// Checks the slice and splits it into records.
 ///
 /// Returns `{ ok, records, reason }`. `records` is only meaningful when
-/// `ok`; a file that shrank below the opening offset was replaced under us,
-/// which no offset can describe.
+/// `ok`.
 export function fencedRecords(text, begin, end) {
   if (!Number.isInteger(begin) || !Number.isInteger(end) || begin < 0) {
     return { ok: false, records: [], reason: "run boundaries were not recorded" };
@@ -25,6 +24,14 @@ export function fencedRecords(text, begin, end) {
       ok: false,
       records: [],
       reason: `record file shrank from ${begin} to ${end} during the run`,
+    };
+  }
+  if (text !== "" && !text.endsWith("\n")) {
+    // The closing length landed inside a record the agent was still writing.
+    return {
+      ok: false,
+      records: [],
+      reason: "run boundary fell inside a record; the agent had not finished writing",
     };
   }
   const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
