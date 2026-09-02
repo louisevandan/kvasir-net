@@ -29,6 +29,8 @@ import {
   fetchRemoteAgentLog,
   fetchRemoteRecord,
   remoteRecordLength,
+  remoteRecordFailure,
+  clearRemoteRecordFailure,
   openTunnel,
   proveTunnelIdentity,
   remoteImageDigests,
@@ -148,6 +150,7 @@ async function main() {
   let record = { text: "", endsOnRecord: true };
   let recordFrom = 0;
   let recordTo = 0;
+  let channelFailure = null;
   let agentLogFrom = 0;
   let failure;
 
@@ -160,7 +163,7 @@ async function main() {
       compatManifest: currentCompatManifest(root),
     });
     // A hash says a diff existed; the diff says which one.
-    evidence.dirty_diff_file = preserveDirtyDiff(root, outDir);
+    evidence.dirty_evidence = preserveDirtyDiff(root, outDir);
     if (spec.tunnel) {
       // Opening the forward is not proof it is ours: a bind failure leaves a
       // previous forward holding the port and the run would still look
@@ -171,6 +174,8 @@ async function main() {
       agentLogFrom = remoteAgentLogLength(spec.tunnel);
       // Marks this run in the record file instead of computing an offset:
       // an offset still returns the whole file when the run wrote nothing.
+      // This run's channel status is its own, not the last run's.
+      clearRemoteRecordFailure(spec.tunnel);
       recordFrom = remoteRecordLength(spec.tunnel);
       // Hashed on the far side, so the evidence names what ran rather than
       // what this machine happens to have built, and carries the launcher
@@ -211,6 +216,7 @@ async function main() {
     // not what the verdict rests on.
     if (spec.target === "remote" && spec.tunnel) {
       recordTo = remoteRecordLength(spec.tunnel);
+      channelFailure = remoteRecordFailure(spec.tunnel);
     }
     record = spec.target === "remote" && spec.tunnel
       ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom, toByte: recordTo })
@@ -262,7 +268,13 @@ async function main() {
   const delivery = checkDelivery(mine);
   // A dead record channel makes every count above zero for the wrong reason,
   // and it says so on the one channel still working.
-  const channelFailures = recordChannelFailures(agentLog);
+  // Two paths to the same fact, and the run needs only one of them to speak.
+  // The marker file is independent of the stage servers' shared stderr; the
+  // stderr line is what a person watching a terminal sees.
+  const channelFailures = [
+    ...(channelFailure === null ? [] : [channelFailure]),
+    ...recordChannelFailures(agentLog),
+  ];
   const sessionKeys = checkSessionKeys(
     JSON.parse(fs.readFileSync(configPath, "utf8")),
     artifact.requests.map((request) => request.request_id),

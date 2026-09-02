@@ -220,6 +220,31 @@ export function fetchRemoteRecord({ host, remotePort, root, fromByte = 0, toByte
 /// fence into the file itself would have made the harness a second writer of
 /// a file declared to have one, and nothing orders an external append against
 /// the agent's own.
+/// Whether the agent marked its record channel as failed, and why.
+///
+/// Read from a file beside the record file rather than from stderr: the
+/// announcement must not travel on the channel four stage servers share,
+/// which is the one that tore a record in half.
+export function remoteRecordFailure({ host, remotePort, root }) {
+  const marker = `${recordPath(root, remotePort)}.failed`;
+  const { status, out } = remotePowerShell(host,
+    `$p = '${marker}';`
+    + " if (Test-Path -LiteralPath $p) { Write-Output ('P4_RECORD_FAILED ' + (Get-Content -LiteralPath $p -Raw)) }"
+    + " else { Write-Output 'P4_RECORD_OK' }");
+  if (status !== 0 || (!out.includes("P4_RECORD_OK") && !out.includes("P4_RECORD_FAILED"))) {
+    throw new Error(`could not read the record channel's status: ${out.slice(0, 200) || "no output"}`);
+  }
+  return out.includes("P4_RECORD_FAILED")
+    ? out.slice(out.indexOf("P4_RECORD_FAILED")).trim()
+    : null;
+}
+
+/// Clears a previous run's failure marker, so this run's status is its own.
+export function clearRemoteRecordFailure({ host, remotePort, root }) {
+  const marker = `${recordPath(root, remotePort)}.failed`;
+  remotePowerShell(host, `Remove-Item -LiteralPath '${marker}' -Force -ErrorAction SilentlyContinue`);
+}
+
 export function remoteRecordLength({ host, remotePort, root }) {
   const { status, out } = remotePowerShell(host,
     `$p = '${recordPath(root, remotePort)}';`

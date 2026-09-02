@@ -92,17 +92,55 @@ export function agreesWithExpected(expected, observed) {
   return { ok: true, reason: "" };
 }
 
-/// Writes the uncommitted diff beside the run, when there is one.
+/// Writes what the working tree adds to its commit, beside the run.
 ///
-/// Its hash alone says a diff existed, not what it was: a run recorded
-/// against a dirty tree could not be reproduced from the commit it names.
-/// Returns the file's name, or null for a clean tree.
+/// A hash says a diff existed, not what it was: a run recorded against a
+/// dirty tree could not be reproduced from the commit it names. Three things
+/// are needed for that and `git diff` alone gives one of them - binary
+/// changes need `--binary`, and a file git has never seen is in no diff at
+/// all, so untracked files are listed with their hashes.
+///
+/// Listing rather than copying: an untracked file can be a model or a build
+/// output, and a run directory is not the place for either. The list says
+/// what was there and what it hashed to, which is enough to tell whether a
+/// later tree matches.
+///
+/// Returns what it wrote, or null for a clean tree.
 export function preserveDirtyDiff(root, directory) {
-  const diff = git(root, ["diff", "HEAD"]);
-  if (diff.trim() === "") return null;
-  const name = "dirty.diff";
-  fs.writeFileSync(path.join(directory, name), diff, "utf8");
-  return name;
+  const diff = git(root, ["diff", "--binary", "HEAD"]);
+  const untracked = git(root, ["ls-files", "--others", "--exclude-standard"])
+    .split(/\r?\n/)
+    .filter((name) => name.trim() !== "");
+  if (diff.trim() === "" && untracked.length === 0) return null;
+  const written = {};
+  if (diff.trim() !== "") {
+    fs.writeFileSync(path.join(directory, "dirty.diff"), diff, "utf8");
+    written.diff = "dirty.diff";
+  }
+  if (untracked.length > 0) {
+    const listed = untracked.map((name) => {
+      const full = path.join(root, name);
+      let sha256 = null;
+      let bytes = null;
+      try {
+        const content = fs.readFileSync(full);
+        sha256 = crypto.createHash("sha256").update(content).digest("hex");
+        bytes = content.length;
+      } catch {
+        // Unreadable is itself worth recording: the tree held something the
+        // run could not account for.
+      }
+      return { path: name, sha256, bytes };
+    });
+    fs.writeFileSync(
+      path.join(directory, "untracked.json"),
+      `${JSON.stringify(listed, null, 2)}
+`,
+      "utf8",
+    );
+    written.untracked = "untracked.json";
+  }
+  return written;
 }
 
 export function collectEvidence({ root, runId, spec, compatManifest, remote }) {
