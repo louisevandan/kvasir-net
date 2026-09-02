@@ -280,7 +280,7 @@ function readRemoteRange(host, file, fromByte, toByte) {
   if (length !== -1 && length < 0) {
     throw new Error(`record range ends before it begins: ${fromByte}..${toByte}`);
   }
-  if (length === 0) return "";
+  if (length === 0) return { text: "", endsOnRecord: true };
   const { out } = remotePowerShell(host, [
     `$p = '${file}'`,
     "try {",
@@ -298,6 +298,10 @@ function readRemoteRange(host, file, fromByte, toByte) {
     "    $read += $step",
     "  }",
     "  $s.Close()",
+    // Asked here, where the bytes are still intact: the transport trims
+    // trailing whitespace, so a newline cannot be checked on this side.
+    "  $whole = $want -eq 0 -or $buffer[$want - 1] -eq 10",
+    "  Write-Output ('P4_REMOTE_RANGE_WHOLE=' + [int]$whole)",
     "  Write-Output 'P4_REMOTE_LOG_BEGIN'",
     "  Write-Output ([System.Text.Encoding]::UTF8.GetString($buffer))",
     "} catch { Write-Output ('P4_REMOTE_LOG_ERROR ' + $_.Exception.Message) }",
@@ -306,5 +310,8 @@ function readRemoteRange(host, file, fromByte, toByte) {
   if (begin < 0) {
     throw new Error(`remote record range unreadable: ${out.slice(0, 200) || "no output"}`);
   }
-  return out.slice(begin + "P4_REMOTE_LOG_BEGIN".length).replace(/^\r?\n/, "");
+  return {
+    text: out.slice(begin + "P4_REMOTE_LOG_BEGIN".length).replace(/^\r?\n/, ""),
+    endsOnRecord: out.includes("P4_REMOTE_RANGE_WHOLE=1"),
+  };
 }

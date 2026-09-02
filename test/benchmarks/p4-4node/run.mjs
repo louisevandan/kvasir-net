@@ -145,7 +145,7 @@ async function main() {
   let samplerOutput = { stdout: "" };
   let driveOutput = { stdout: "", stderr: "" };
   let agentLog = "";
-  let record = "";
+  let record = { text: "", endsOnRecord: true };
   let recordFrom = 0;
   let recordTo = 0;
   let agentLogFrom = 0;
@@ -214,9 +214,9 @@ async function main() {
     }
     record = spec.target === "remote" && spec.tunnel
       ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom, toByte: recordTo })
-      : agentOutput.stderr;
+      : { text: agentOutput.stderr, endsOnRecord: true };
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
-    fs.writeFileSync(path.join(outDir, "agent.record.log"), record, "utf8");
+    fs.writeFileSync(path.join(outDir, "agent.record.log"), record.text, "utf8");
     fs.writeFileSync(path.join(outDir, "drive.stderr.log"), driveOutput.stderr, "utf8");
     await stopChild(agent);
     await stopChild(tunnel);
@@ -226,7 +226,7 @@ async function main() {
     // The relay's discard count belongs in the failure too: a drive that
     // stopped on a position gap is usually reporting a delivery loss, and
     // the two records read very differently.
-    const lost = checkDelivery(record);
+    const lost = checkDelivery(record.text);
     fs.writeFileSync(path.join(outDir, "failure.json"),
       `${JSON.stringify({ run_id: runId, failure, delivery: lost, evidence }, null, 2)}\n`, "utf8");
     const discarded = lost.passed
