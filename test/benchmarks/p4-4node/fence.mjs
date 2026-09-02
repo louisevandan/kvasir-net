@@ -17,7 +17,7 @@
 /// trimmed: half a record is not evidence, and accepting it would hide the
 /// interleaving the single-writer record file exists to prevent.
 export function fencedRecords(slice, begin, end) {
-  const { text, endsOnRecord } = slice;
+  const { text, beginsOnRecord = true, endsOnRecord } = slice;
   if (!Number.isInteger(begin) || !Number.isInteger(end) || begin < 0) {
     return { ok: false, records: [], reason: "run boundaries were not recorded" };
   }
@@ -26,6 +26,15 @@ export function fencedRecords(slice, begin, end) {
       ok: false,
       records: [],
       reason: `record file shrank from ${begin} to ${end} during the run`,
+    };
+  }
+  if (beginsOnRecord === false) {
+    // The opening length landed inside a record, so this run's first line
+    // would be the tail of somebody else's.
+    return {
+      ok: false,
+      records: [],
+      reason: "run began inside a record the agent was still writing",
     };
   }
   if (!endsOnRecord) {

@@ -39,8 +39,10 @@ const UNSTABLE = /^(common|sampling|speculative|arg|log|chat)\.h$|^p4_llama_comp
 /// **Both lists end at zero.** U0 (3) says the server keeps public `llama.h`
 /// and P4's own ABI, with internal access inside the compat implementation;
 /// `common/` is upstream's convenience library, it changes freely, and every
-/// file naming it is a file an upstream bump can break. Six implementation
-/// files is a blast radius, not a resting place.
+/// file naming it is a file an upstream bump can break. The remaining
+/// implementation files are a blast radius, not a resting place - the count
+/// is in the lists below rather than in this sentence, so it cannot go
+/// stale the way it did.
 ///
 /// They are split because they are paid in that order, not because the second
 /// is permitted. A header's dependency reaches every translation unit that
@@ -70,7 +72,6 @@ export const UNSTABLE_SOURCE_DEBT = [
   "runtime/request_options.cpp",
   "runtime/request_options_grammar.cpp",
   "runtime/request_options_test.cpp",
-  "runtime/request_stops.cpp",
   "server/capability_test.cpp",
   "server/plan.cpp",
   "server/plan_invariants_test.cpp",

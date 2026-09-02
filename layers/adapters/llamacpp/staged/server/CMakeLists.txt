@@ -252,7 +252,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     )
     # llama.cpp's common/ is deliberately not listed here. It still arrives,
     # because upstream's own `llama-common` target exports its directory
-    # PUBLIC and the fourteen files that still call into that library have to
+    # PUBLIC and the files that still call into that library have to
     # link it - so the include and the link end together, when the last call
     # moves behind the facade. Not adding it a second time at least means P4
     # is not the one granting it.

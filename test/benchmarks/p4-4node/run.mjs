@@ -105,6 +105,19 @@ function metrics(artifact) {
   };
 }
 
+/// The local agent's record file, in the shape the remote read returns.
+///
+/// A local run writes its own file for the reason a remote one does - the
+/// stage servers' stderr is inherited here too - so it is read from disk
+/// rather than scraped out of that shared stream. The file is created fresh
+/// per run directory, so the whole of it belongs to this run and there is no
+/// range to cut.
+function readLocalRecord(file) {
+  if (!fs.existsSync(file)) return { text: "", endsOnRecord: true };
+  const text = fs.readFileSync(file, "utf8");
+  return { text, endsOnRecord: text === "" || text.endsWith("\n") };
+}
+
 async function main() {
   const [name, ...rest] = process.argv.slice(2);
   if (!name) throw new Error("usage: run.mjs <scenario> [--target local|remote] [--out DIR]");
@@ -137,7 +150,16 @@ async function main() {
         cwd: root,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, P4_AGENT_STATS: "1", P4_STAGED_LLAMA_INHERIT_STDERR: "1" },
+        env: {
+          ...process.env,
+          P4_AGENT_STATS: "1",
+          P4_STAGED_LLAMA_INHERIT_STDERR: "1",
+          P4_STAGED_TRACE_SESSION_KEY: "1",
+          // Its own file, for the reason the remote agent has one: the
+          // stage servers' stderr is inherited here too, and a record
+          // read back from a shared channel has already been torn once.
+          P4_RECORD_FILE: path.join(outDir, "agent.record.log"),
+        },
       });
   const agentOutput = agent ? collect(agent) : { stdout: "", stderr: "" };
   let tunnel = null;
@@ -220,7 +242,7 @@ async function main() {
     }
     record = spec.target === "remote" && spec.tunnel
       ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom, toByte: recordTo })
-      : { text: agentOutput.stderr, endsOnRecord: true };
+      : readLocalRecord(path.join(outDir, "agent.record.log"));
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
     fs.writeFileSync(path.join(outDir, "agent.record.log"), record.text, "utf8");
     fs.writeFileSync(path.join(outDir, "drive.stderr.log"), driveOutput.stderr, "utf8");
@@ -263,7 +285,7 @@ async function main() {
   // fences is not thin evidence, it is somebody else's.
   const fence = spec.target === "remote"
     ? fencedRecords(record, recordFrom, recordTo)
-    : { ok: true, records: record.split(/\r?\n/), reason: "" };
+    : { ok: true, records: record.text.split(/\r?\n/).filter((l) => l.trim() !== ""), reason: "" };
   const mine = fence.records.join("\n");
   const delivery = checkDelivery(mine);
   // A dead record channel makes every count above zero for the wrong reason,

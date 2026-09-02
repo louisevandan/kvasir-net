@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <vector>
 
@@ -398,5 +399,14 @@ struct SpeculativeSetup final {
 /// the speculative structures still reached the runtime.
 [[nodiscard]] SpeculativeSetup bring_up_speculative(
     LlamaPlan & plan, llama_model * model, llama_context * context, std::uint32_t sequences);
+
+/// Where `text` starts a prefix of `stop`, or npos.
+///
+/// A one-line helper from the convenience library, wrapped rather than
+/// reimplemented so the two cannot disagree about what counts as a partial
+/// match. It is here because it was the last thing keeping request_stops.cpp
+/// on the debt list, and unlike the CLI and option grammars around it, it
+/// needed no contract decision to move.
+[[nodiscard]] std::size_t find_partial_stop(std::string_view text, std::string_view stop);
 
 }  // namespace p4_llama_compat

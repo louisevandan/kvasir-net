@@ -1,8 +1,6 @@
 #include "request_stops.hpp"
 
-// string_find_partial_stop lives in the convenience library, which exports
-// more than the common_ prefix - the reason this file is still debt.
-#include "common.h"
+#include "compat/p4_llama_compat.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -78,7 +76,7 @@ StopFilterResult filter_request_stops(const std::string & generated,
     }
     if (!stopped && !end_of_generation) {
         for (const auto & stop : stops) {
-            const auto partial = string_find_partial_stop(generated, stop);
+            const auto partial = p4_llama_compat::find_partial_stop(generated, stop);
             if (partial != std::string::npos) end = std::min(end, partial);
         }
     }

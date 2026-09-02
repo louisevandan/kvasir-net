@@ -407,14 +407,26 @@ device를 열거할 뿐, 모델 텐서·KV·compute buffer가 실제로 어디�
 선언한 기대 신원을 LOAD가 실어 보내 각 스테이지가 자기 것을 대조하게 해야 한다 —
 둘 다 계약 결정이라 구현 전에 정해야 한다.
 
-**③b 잔여 작업** (2026-09-02 갱신): tokenize 5개·sampler 9개·speculative 9개를
-모두 facade로 옮겼다. 남은 `common_*` 이름은 세 곳에 모인다 — 플랜 파싱
-(`common_params_parse`·`common_args`, plan.cpp), 요청 옵션 파싱
-(`common_sampler_types_from_*`·`common_grammar_trigger`, request_options*.cpp),
-그리고 시험이 파서 결과를 직접 확인하는 곳이다. 셋 다 llama.cpp의 CLI·옵션
-문법을 다루는 코드이므로, 다음 경계는 함수 이동이 아니라 **P4가 자기 옵션
-문법을 갖고 llama.cpp 문법으로 번역하는 것**이다 — 그것은 계약 결정이라
-구현 전에 문서로 정해야 한다.
+**③b 잔여 9건의 실제 분류** (2026-09-02, 파일 단위 재확인): 앞서 이 문서는 아홉 건을
+"모두 CLI·옵션 문법이라 계약 결정이 먼저"라고 묶었다. **틀렸다.** 실제로는:
+
+| 파일 | 무엇을 쓰는가 | 옮기는 데 계약이 필요한가 |
+| --- | --- | --- |
+| `server/plan.cpp` | `common_params_parse`·`common_args`·`common_speculative_type` | 예 — llama.cpp CLI 문법 자체 |
+| `runtime/request_options.cpp` | `common_sampler_types_from_*`·옵션 필드 | 예 — 요청 옵션 문법 |
+| `runtime/request_options_grammar.cpp` | `common_grammar_trigger` | 예 — 문법 트리거 표현 |
+| `runtime/request_stops.cpp` | `string_find_partial_stop` | **아니다** — 단순 헬퍼, 감싸면 끝 |
+| 시험 5건 | 파서 결과를 직접 확인 | 아니다 — facade 관측값으로 바꾸면 된다 |
+
+즉 계약이 걸린 것은 **운영 3건**뿐이고, 나머지 6건은 지금도 옮길 수 있다. 그리고
+`plan.cpp`가 아직 `common_speculative_type`·`has_dft()`를 직접 읽으므로 **"sampler·
+speculative API 변화가 compat.cpp 한 곳에서 멈춘다"는 아직 사실이 아니다** — 런타임에
+대해서는 참이고 플랜 파싱에 대해서는 거짓이다.
+
+경계도 llama.cpp CLI 전체를 복제하는 것이 아니다. 최소 추종 비용의 형태는 P4 소유
+typed plan/request 계약을 두고, `common_params_parse`와 sampler·grammar 변환을 compat
+타깃 안에 두며, 시험이 raw `common_params` 대신 facade 관측값을 검증하는 것이다.
+
 
 핸들이 소유권만이 아니라 연산도 가져갔으므로, sampler·speculative API 변경은
 이제 `p4_llama_compat.cpp` 한 곳에서 멈춘다. draft 배치 의미를 한 번 깨뜨렸다가

@@ -420,4 +420,8 @@ SpeculativeSetup bring_up_speculative(
     return setup;
 }
 
+std::size_t find_partial_stop(std::string_view text, std::string_view stop) {
+    return string_find_partial_stop(text, stop);
+}
+
 }  // namespace p4_llama_compat

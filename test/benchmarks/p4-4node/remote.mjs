@@ -9,6 +9,7 @@
 // trace that says nothing about the GPUs that did the work.
 
 import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 
 /// Runs one PowerShell script on the remote host. Passed base64-encoded
 /// because SSH concatenates its remote command with the login shell, which
@@ -305,12 +306,18 @@ function readRemoteRange(host, file, fromByte, toByte) {
   if (length !== -1 && length < 0) {
     throw new Error(`record range ends before it begins: ${fromByte}..${toByte}`);
   }
-  if (length === 0) return { text: "", endsOnRecord: true };
-  const { out } = remotePowerShell(host, [
+  const { status, out } = remotePowerShell(host, [
     `$p = '${file}'`,
     "try {",
     "  $s = [System.IO.File]::Open($p, 'Open', 'Read', 'ReadWrite')",
     `  if ($s.Length -lt ${fromByte}) { throw 'record shrank below the opening offset' }`,
+    // A range beginning inside a record would take that record's tail for
+    // this run's first one, so both ends are checked, not just the last.
+    `  $head = ${fromByte} -eq 0`,
+    `  if (-not $head) {`,
+    `    $null = $s.Seek(${fromByte} - 1, 'Begin')`,
+    "    $head = $s.ReadByte() -eq 10",
+    "  }",
     `  $null = $s.Seek(${fromByte}, 'Begin')`,
     `  $want = ${length}`,
     "  if ($want -lt 0) { $want = $s.Length - $s.Position }",
@@ -323,20 +330,49 @@ function readRemoteRange(host, file, fromByte, toByte) {
     "    $read += $step",
     "  }",
     "  $s.Close()",
-    // Asked here, where the bytes are still intact: the transport trims
-    // trailing whitespace, so a newline cannot be checked on this side.
-    "  $whole = $want -eq 0 -or $buffer[$want - 1] -eq 10",
-    "  Write-Output ('P4_REMOTE_RANGE_WHOLE=' + [int]$whole)",
-    "  Write-Output 'P4_REMOTE_LOG_BEGIN'",
-    "  Write-Output ([System.Text.Encoding]::UTF8.GetString($buffer))",
-    "} catch { Write-Output ('P4_REMOTE_LOG_ERROR ' + $_.Exception.Message) }",
+    "  $tail = $want -eq 0 -or $buffer[$want - 1] -eq 10",
+    // Base64 with a length and a digest, because the range is only exact if
+    // it arrives exact: text transport trims, re-encodes and re-wraps.
+    "  $sha = [System.Security.Cryptography.SHA256]::Create().ComputeHash($buffer)",
+    "  Write-Output ('P4_RANGE_HEAD=' + [int]$head)",
+    "  Write-Output ('P4_RANGE_TAIL=' + [int]$tail)",
+    "  Write-Output ('P4_RANGE_BYTES=' + $want)",
+    "  Write-Output ('P4_RANGE_SHA256=' + [BitConverter]::ToString($sha).Replace('-','').ToLower())",
+    "  Write-Output ('P4_RANGE_BASE64=' + [Convert]::ToBase64String($buffer))",
+    "} catch { Write-Output ('P4_RANGE_ERROR ' + $_.Exception.Message) }",
   ].join("\n"), 120_000);
-  const begin = out.indexOf("P4_REMOTE_LOG_BEGIN");
-  if (begin < 0) {
+  return decodeRange(status, out, fromByte, toByte);
+}
+
+/// Turns the far side's answer back into bytes, refusing anything that did
+/// not survive the journey intact.
+function decodeRange(status, out, fromByte, toByte) {
+  const field = (name) => {
+    const marker = `P4_RANGE_${name}=`;
+    const at = out.indexOf(marker);
+    if (at < 0) return null;
+    const rest = out.slice(at + marker.length);
+    const stop = rest.search(/[\r\n]/);
+    return stop < 0 ? rest : rest.slice(0, stop);
+  };
+  const encoded = field("BASE64");
+  if (status !== 0 || encoded === null) {
     throw new Error(`remote record range unreadable: ${out.slice(0, 200) || "no output"}`);
   }
+  const bytes = Buffer.from(encoded, "base64");
+  const declared = Number(field("BYTES"));
+  if (bytes.length !== declared) {
+    throw new Error(`record range lost bytes in transit: ${bytes.length} of ${declared}`);
+  }
+  const digest = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (digest !== field("SHA256")) {
+    throw new Error("record range digest does not match what the far side read");
+  }
   return {
-    text: out.slice(begin + "P4_REMOTE_LOG_BEGIN".length).replace(/^\r?\n/, ""),
-    endsOnRecord: out.includes("P4_REMOTE_RANGE_WHOLE=1"),
+    text: bytes.toString("utf8"),
+    beginsOnRecord: field("HEAD") === "1",
+    endsOnRecord: field("TAIL") === "1",
+    from: fromByte,
+    to: toByte,
   };
 }

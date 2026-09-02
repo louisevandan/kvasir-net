@@ -39,3 +39,25 @@ test("blank lines are not records", () => {
   const result = fencedRecords(whole("a\n\n\r\nb"), 0, 8);
   assert.deepEqual(result.records, ["a", "b"]);
 });
+
+test("a slice that begins inside a record is refused", () => {
+  // The opening length landed mid-write, so the first line here would be the
+  // tail of a record another run owns.
+  const result = fencedRecords(
+    { text: "key=mine\nP4_SESSION_KEY_ADMITTED request=req key=next\n", beginsOnRecord: false, endsOnRecord: true },
+    100,
+    160,
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /began inside a record/);
+});
+
+test("a slice whose boundaries are both clean is accepted", () => {
+  const result = fencedRecords(
+    { text: "P4_SESSION_KEY_ADMITTED request=req key=mine\n", beginsOnRecord: true, endsOnRecord: true },
+    100,
+    145,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.records.length, 1);
+});
