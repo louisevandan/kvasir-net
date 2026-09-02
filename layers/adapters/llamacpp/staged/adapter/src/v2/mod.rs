@@ -1,5 +1,6 @@
 //! Self-describing-event llama.cpp adapter primitives.
 
+mod build_identity;
 mod capsule;
 mod commands;
 mod logical;
@@ -21,6 +22,7 @@ pub use commands::{
     UnloadCommand,
 };
 pub use logical::{LogicalBatch, LogicalBatchError, LogicalRow};
+pub use build_identity::{BuildDisagreement, BuildIdentity, UNIDENTIFIED, agree};
 pub use session_key::{SessionKey, SessionKeyError};
 pub use node::LlamaNodeAdapter;
 pub use scheduler::{Allocation, Demand, Phase, Scheduler, SchedulerError};

@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 mod core;
 mod server_process;
 #[cfg(test)]
+mod hello_wire_tests;
+#[cfg(test)]
 mod tests;
 
 pub use core::{

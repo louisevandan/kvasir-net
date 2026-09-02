@@ -354,17 +354,25 @@ public:
     [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
 };
 
-/// Which backends this build actually loaded, and which devices they offer.
+/// Which ggml backends and devices are registered in this process.
 ///
-/// A stage's answer depends on the backend that runs it, so a HELLO that
-/// names only the model and the patch set cannot tell a CPU build from a
-/// CUDA one - and a pipeline that mixes them agrees on every field it
-/// reports while computing on different hardware. Built from ggml's public
-/// registry rather than from what the build system was told to compile:
-/// what was linked and what loads at runtime are different questions.
+/// An inventory, not a layout: it enumerates what the registry offers, not
+/// where the model's tensors, the KV cache and the compute buffers actually
+/// ended up. A run that placed everything on CUDA and a run that fell back
+/// to host buffers report the same inventory. Binding persisted state to
+/// this value would be binding it to the wrong thing; that needs a separate
+/// identity taken from the placement itself.
 ///
-/// Format: `reg[dev,dev];reg[dev]`, registries in load order. Stable enough
-/// to compare across stages, and readable enough to say what differed.
-std::string backend_layout();
+/// What it does separate is a CPU build from a CUDA one, and a process that
+/// registered two devices from one that registered one.
+///
+/// Format: `reg[dev,dev]|reg[dev]`, registries sorted by name so a different
+/// plugin load order is not a different inventory. Every name is percent
+/// escaped, because this value travels inside a `;`-delimited, `=`-keyed
+/// capability string and a registry named with either would otherwise
+/// become a field of its own - which is exactly what happened on
+/// 2026-09-02, when `CUDA[CUDA0];CPU[CPU]` reached the adapter as
+/// `CUDA[CUDA0]` and the CPU registry became a nameless capability.
+std::string backend_inventory();
 
 }  // namespace p4_llama_compat

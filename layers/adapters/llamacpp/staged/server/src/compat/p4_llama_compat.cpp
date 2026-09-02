@@ -333,26 +333,56 @@ const common_prompt_checkpoint & checkpoint_of(const PromptCheckpoint & checkpoi
     return checkpoint.impl().checkpoint;
 }
 
-std::string backend_layout() {
-    std::string layout;
+namespace {
+
+/// Percent escapes anything that would be read as capability-string
+/// punctuation, so a backend name cannot end a field or start another.
+std::string escape_capability_value(const char * text) {
+    if (text == nullptr) return "?";
+    static const char * const digits = "0123456789ABCDEF";
+    std::string escaped;
+    for (const unsigned char ch : std::string(text)) {
+        const bool punctuation = ch == ';' || ch == '=' || ch == '|'
+            || ch == ',' || ch == '[' || ch == ']' || ch == '%';
+        if (punctuation || ch < 0x20) {
+            escaped += '%';
+            escaped += digits[ch >> 4];
+            escaped += digits[ch & 0x0F];
+        } else {
+            escaped += static_cast<char>(ch);
+        }
+    }
+    return escaped;
+}
+
+}  // namespace
+
+std::string backend_inventory() {
+    std::vector<std::string> entries;
     const auto registries = ggml_backend_reg_count();
+    entries.reserve(registries);
     for (std::size_t index = 0; index < registries; ++index) {
         auto * registry = ggml_backend_reg_get(index);
         if (registry == nullptr) continue;
-        if (!layout.empty()) layout += ';';
-        const auto * name = ggml_backend_reg_name(registry);
-        layout += name == nullptr ? "?" : name;
-        layout += '[';
+        std::string entry = escape_capability_value(ggml_backend_reg_name(registry));
+        entry += '[';
         const auto devices = ggml_backend_reg_dev_count(registry);
         for (std::size_t device_index = 0; device_index < devices; ++device_index) {
-            if (device_index > 0) layout += ',';
+            if (device_index > 0) entry += ',';
             auto * device = ggml_backend_reg_dev_get(registry, device_index);
-            const auto * device_name = device == nullptr ? nullptr : ggml_backend_dev_name(device);
-            layout += device_name == nullptr ? "?" : device_name;
+            entry += escape_capability_value(device == nullptr ? nullptr : ggml_backend_dev_name(device));
         }
-        layout += ']';
+        entry += ']';
+        entries.push_back(std::move(entry));
     }
-    return layout;
+    // Sorted, so a different plugin load order is not a different inventory.
+    std::sort(entries.begin(), entries.end());
+    std::string inventory;
+    for (const auto & entry : entries) {
+        if (!inventory.empty()) inventory += '|';
+        inventory += entry;
+    }
+    return inventory;
 }
 
 }  // namespace p4_llama_compat

@@ -18,6 +18,7 @@ import {
   collectEvidence,
   currentCompatManifest,
   defaultRunsDir,
+  preserveDirtyDiff,
   newRunId,
   promoteRun,
 } from "./evidence.mjs";
@@ -157,6 +158,8 @@ async function main() {
       spec,
       compatManifest: currentCompatManifest(root),
     });
+    // A hash says a diff existed; the diff says which one.
+    evidence.dirty_diff_file = preserveDirtyDiff(root, outDir);
     if (spec.tunnel) {
       // Opening the forward is not proof it is ours: a bind failure leaves a
       // previous forward holding the port and the run would still look

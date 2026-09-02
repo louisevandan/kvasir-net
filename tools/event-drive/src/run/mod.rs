@@ -34,7 +34,7 @@ pub struct RunArtifact {
     /// Which llama.cpp build every stage of this pipeline reported.
     /// Recorded because a measurement is only attributable to the code
     /// that produced it, and the upstream commit alone does not name that.
-    pub build: load::BuildIdentity,
+    pub build: p4_llamacpp_staged_adapter::v2::BuildIdentity,
     pub acceptance: acceptance::AcceptanceSummary,
     pub prompt: String,
     pub response: String,

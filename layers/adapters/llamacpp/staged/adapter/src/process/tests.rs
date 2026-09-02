@@ -34,7 +34,7 @@ impl ServerControl for Fake {
                 n_seq_max: 1,
                 upstream_commit: "fixture-upstream".into(),
                 patch_set: "fixture-patch-set".into(),
-                backend_layout: "fixture-backend".into(),
+                backend_inventory: "fixture-backend".into(),
             }))
         } else {
             Ok(None)

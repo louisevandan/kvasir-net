@@ -107,7 +107,7 @@ impl Worker {
                 "atomic_batch_exclusive":ready.atomic_batch_exclusive,
                 "upstream_commit":ready.upstream_commit,
                 "patch_set":ready.patch_set,
-                "backend_layout":ready.backend_layout,
+                "backend_inventory":ready.backend_inventory,
                 "per_sequence_context":command.context_size,
                 "reserved_context":reserved_context
             }),
@@ -250,7 +250,7 @@ mod tests {
             n_seq_max: 10,
             upstream_commit: "fixture-upstream".into(),
             patch_set: "fixture-patch-set".into(),
-            backend_layout: "fixture-backend".into(),
+            backend_inventory: "fixture-backend".into(),
         }
     }
 

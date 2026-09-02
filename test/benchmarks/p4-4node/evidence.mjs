@@ -92,6 +92,19 @@ export function agreesWithExpected(expected, observed) {
   return { ok: true, reason: "" };
 }
 
+/// Writes the uncommitted diff beside the run, when there is one.
+///
+/// Its hash alone says a diff existed, not what it was: a run recorded
+/// against a dirty tree could not be reproduced from the commit it names.
+/// Returns the file's name, or null for a clean tree.
+export function preserveDirtyDiff(root, directory) {
+  const diff = git(root, ["diff", "HEAD"]);
+  if (diff.trim() === "") return null;
+  const name = "dirty.diff";
+  fs.writeFileSync(path.join(directory, name), diff, "utf8");
+  return name;
+}
+
 export function collectEvidence({ root, runId, spec, compatManifest, remote }) {
   const dirty = git(root, ["diff", "HEAD"]);
   const staged = path.join(root, "target", "p4-staged-cuda");
