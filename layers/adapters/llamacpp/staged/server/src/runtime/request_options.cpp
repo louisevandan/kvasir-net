@@ -137,12 +137,15 @@ bool parse_logit_bias(const json & value, const llama_vocab * vocab,
 } // namespace
 
 bool apply_request_options(const std::string & raw, const llama_model * model,
-                           common_params_sampling * sampling,
+                           p4_llama_compat::SamplingOptions * sampling_handle,
                            std::string * error) {
+    // One reference for this function: it drives llama.cpp's own option
+    // parser, which is why this file is a debt entry.
     if (raw.empty()) return true;
-    if (model == nullptr || sampling == nullptr) {
+    if (model == nullptr || sampling_handle == nullptr) {
         return fail(error, "request sampler options require a loaded model");
     }
+    common_params_sampling & sampling = p4_llama_compat::sampling_of(*sampling_handle);
     json values;
     try {
         values = json::parse(raw);
@@ -155,13 +158,13 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
     if (vocab == nullptr) return fail(error, "request sampler options require a vocabulary");
     if (values.contains("preserved_tokens") &&
         !parse_preserved_tokens(values.at("preserved_tokens"), vocab,
-                                &sampling->preserved_tokens, error)) {
+                                &sampling.preserved_tokens, error)) {
         return false;
     }
     if (values.contains("grammar_triggers") &&
         !parse_grammar_triggers(values.at("grammar_triggers"), vocab,
-                                sampling->preserved_tokens,
-                                &sampling->grammar_triggers, error)) {
+                                sampling.preserved_tokens,
+                                &sampling.grammar_triggers, error)) {
         return false;
     }
     bool reasoning_fields_seen = false;
@@ -178,108 +181,108 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
             // preserved tokens regardless of JSON member order.
         } else if (key == "grammar_lazy") {
             if (!value.is_boolean()) return fail(error, "grammar_lazy must be boolean");
-            sampling->grammar_lazy = value.get<bool>();
+            sampling.grammar_lazy = value.get<bool>();
         } else if (key == "generation_prompt") {
             if (!value.is_string()) return fail(error, "generation_prompt must be a string");
-            sampling->generation_prompt = value.get<std::string>();
+            sampling.generation_prompt = value.get<std::string>();
         } else if (key == "n_prev") {
-            if (!non_negative_integer(value, &sampling->n_prev)) return fail(error, "n_prev must be a non-negative integer");
+            if (!non_negative_integer(value, &sampling.n_prev)) return fail(error, "n_prev must be a non-negative integer");
         } else if (key == "n_probs") {
-            if (!non_negative_integer(value, &sampling->n_probs)) return fail(error, "n_probs must be a non-negative integer");
+            if (!non_negative_integer(value, &sampling.n_probs)) return fail(error, "n_probs must be a non-negative integer");
         } else if (key == "samplers") {
-            if (!sampler_names(value, &sampling->samplers)) return fail(error, "samplers must be an array of known names");
+            if (!sampler_names(value, &sampling.samplers)) return fail(error, "samplers must be an array of known names");
         } else if (key == "sampler_seq" || key == "sampling_seq") {
             if (!value.is_string()) return fail(error, "sampler_seq must be a string");
-            sampling->samplers = common_sampler_types_from_chars(value.get<std::string>());
+            sampling.samplers = common_sampler_types_from_chars(value.get<std::string>());
         } else if (key == "top_n_sigma") {
-            if (!finite_number(value, &sampling->top_n_sigma)) return fail(error, "top_n_sigma must be finite");
+            if (!finite_number(value, &sampling.top_n_sigma)) return fail(error, "top_n_sigma must be finite");
         } else if (key == "dynatemp_range") {
-            if (!finite_number(value, &sampling->dynatemp_range) || sampling->dynatemp_range < 0.0f) return fail(error, "dynatemp_range must be finite and non-negative");
+            if (!finite_number(value, &sampling.dynatemp_range) || sampling.dynatemp_range < 0.0f) return fail(error, "dynatemp_range must be finite and non-negative");
         } else if (key == "dynatemp_exponent") {
-            if (!finite_number(value, &sampling->dynatemp_exponent) || sampling->dynatemp_exponent <= 0.0f) return fail(error, "dynatemp_exponent must be finite and positive");
+            if (!finite_number(value, &sampling.dynatemp_exponent) || sampling.dynatemp_exponent <= 0.0f) return fail(error, "dynatemp_exponent must be finite and positive");
         } else if (key == "adaptive_target") {
-            if (!finite_number(value, &sampling->adaptive_target) || sampling->adaptive_target > 1.0f) return fail(error, "adaptive_target must be finite and at most 1");
+            if (!finite_number(value, &sampling.adaptive_target) || sampling.adaptive_target > 1.0f) return fail(error, "adaptive_target must be finite and at most 1");
         } else if (key == "adaptive_decay") {
-            if (!probability(value, &sampling->adaptive_decay)) return fail(error, "adaptive_decay must be between 0 and 1");
+            if (!probability(value, &sampling.adaptive_decay)) return fail(error, "adaptive_decay must be between 0 and 1");
         } else if (key == "ignore_eos") {
             if (!value.is_boolean()) return fail(error, "ignore_eos must be boolean");
-            sampling->ignore_eos = value.get<bool>();
+            sampling.ignore_eos = value.get<bool>();
         } else if (key == "temperature" || key == "temp") {
-            if (!finite_number(value, &sampling->temp) || sampling->temp < 0.0f) {
+            if (!finite_number(value, &sampling.temp) || sampling.temp < 0.0f) {
                 return fail(error, "temperature must be a finite non-negative number");
             }
         } else if (key == "top_k") {
             if (!value.is_number_integer()) return fail(error, "top_k must be an integer");
-            sampling->top_k = value.get<int32_t>();
+            sampling.top_k = value.get<int32_t>();
         } else if (key == "top_p") {
-            if (!finite_number(value, &sampling->top_p) || sampling->top_p < 0.0f || sampling->top_p > 1.0f) {
+            if (!finite_number(value, &sampling.top_p) || sampling.top_p < 0.0f || sampling.top_p > 1.0f) {
                 return fail(error, "top_p must be a number between 0 and 1");
             }
         } else if (key == "min_p") {
-            if (!probability(value, &sampling->min_p)) return fail(error, "min_p must be a number between 0 and 1");
+            if (!probability(value, &sampling.min_p)) return fail(error, "min_p must be a number between 0 and 1");
         } else if (key == "min_keep") {
-            if (!non_negative_integer(value, &sampling->min_keep)) {
+            if (!non_negative_integer(value, &sampling.min_keep)) {
                 return fail(error, "min_keep must be a non-negative integer");
             }
         } else if (key == "typical_p" || key == "typ_p") {
-            if (!probability(value, &sampling->typ_p)) {
+            if (!probability(value, &sampling.typ_p)) {
                 return fail(error, "typical_p must be a number between 0 and 1");
             }
         } else if (key == "penalty_last_n" || key == "repeat_last_n") {
-            if (!non_negative_integer(value, &sampling->penalty_last_n)) {
+            if (!non_negative_integer(value, &sampling.penalty_last_n)) {
                 return fail(error, "penalty_last_n must be a non-negative integer");
             }
         } else if (key == "penalty_repeat" || key == "repeat_penalty") {
-            if (!finite_number(value, &sampling->penalty_repeat) ||
-                sampling->penalty_repeat <= 0.0f) {
+            if (!finite_number(value, &sampling.penalty_repeat) ||
+                sampling.penalty_repeat <= 0.0f) {
                 return fail(error, "penalty_repeat must be finite and greater than 0");
             }
         } else if (key == "penalty_freq" || key == "frequency_penalty") {
-            if (!finite_number(value, &sampling->penalty_freq)) {
+            if (!finite_number(value, &sampling.penalty_freq)) {
                 return fail(error, "penalty_freq must be finite");
             }
         } else if (key == "penalty_present" || key == "presence_penalty") {
-            if (!finite_number(value, &sampling->penalty_present)) {
+            if (!finite_number(value, &sampling.penalty_present)) {
                 return fail(error, "penalty_present must be finite");
             }
         } else if (key == "dry_multiplier") {
-            if (!finite_number(value, &sampling->dry_multiplier) || sampling->dry_multiplier < 0.0f) {
+            if (!finite_number(value, &sampling.dry_multiplier) || sampling.dry_multiplier < 0.0f) {
                 return fail(error, "dry_multiplier must be finite and non-negative");
             }
         } else if (key == "dry_base") {
-            if (!finite_number(value, &sampling->dry_base) || sampling->dry_base <= 0.0f) {
+            if (!finite_number(value, &sampling.dry_base) || sampling.dry_base <= 0.0f) {
                 return fail(error, "dry_base must be finite and greater than 0");
             }
         } else if (key == "dry_allowed_length") {
-            if (!non_negative_integer(value, &sampling->dry_allowed_length)) {
+            if (!non_negative_integer(value, &sampling.dry_allowed_length)) {
                 return fail(error, "dry_allowed_length must be a non-negative integer");
             }
         } else if (key == "dry_penalty_last_n") {
-            if (!non_negative_integer(value, &sampling->dry_penalty_last_n)) {
+            if (!non_negative_integer(value, &sampling.dry_penalty_last_n)) {
                 return fail(error, "dry_penalty_last_n must be a non-negative integer");
             }
         } else if (key == "dry_sequence_breakers") {
-            if (!string_array(value, &sampling->dry_sequence_breakers)) {
+            if (!string_array(value, &sampling.dry_sequence_breakers)) {
                 return fail(error, "dry_sequence_breakers must be an array of strings");
             }
         } else if (key == "xtc_probability") {
-            if (!probability(value, &sampling->xtc_probability)) {
+            if (!probability(value, &sampling.xtc_probability)) {
                 return fail(error, "xtc_probability must be a number between 0 and 1");
             }
         } else if (key == "xtc_threshold") {
-            if (!probability(value, &sampling->xtc_threshold)) {
+            if (!probability(value, &sampling.xtc_threshold)) {
                 return fail(error, "xtc_threshold must be a number between 0 and 1");
             }
         } else if (key == "mirostat") {
-            if (!integer_value(value, &sampling->mirostat) || sampling->mirostat < 0 || sampling->mirostat > 2) {
+            if (!integer_value(value, &sampling.mirostat) || sampling.mirostat < 0 || sampling.mirostat > 2) {
                 return fail(error, "mirostat must be 0, 1, or 2");
             }
         } else if (key == "mirostat_tau") {
-            if (!finite_number(value, &sampling->mirostat_tau) || sampling->mirostat_tau < 0.0f) {
+            if (!finite_number(value, &sampling.mirostat_tau) || sampling.mirostat_tau < 0.0f) {
                 return fail(error, "mirostat_tau must be finite and non-negative");
             }
         } else if (key == "mirostat_eta") {
-            if (!finite_number(value, &sampling->mirostat_eta) || sampling->mirostat_eta < 0.0f) {
+            if (!finite_number(value, &sampling.mirostat_eta) || sampling.mirostat_eta < 0.0f) {
                 return fail(error, "mirostat_eta must be finite and non-negative");
             }
         } else if (key == "seed") {
@@ -288,37 +291,37 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
             }
             const auto seed = value.get<int64_t>();
             if (seed < 0) return fail(error, "seed must be non-negative");
-            sampling->seed = static_cast<uint32_t>(seed);
+            sampling.seed = static_cast<uint32_t>(seed);
         } else if (key == "grammar") {
             if (!value.is_string() || value.get<std::string>().empty()) {
                 return fail(error, "grammar must be a non-empty string");
             }
-            sampling->grammar = {COMMON_GRAMMAR_TYPE_USER, value.get<std::string>()};
+            sampling.grammar = {COMMON_GRAMMAR_TYPE_USER, value.get<std::string>()};
         } else if (key == "logit_bias") {
-            sampling->logit_bias.clear();
-            if (!parse_logit_bias(value, vocab, &sampling->logit_bias, error)) return false;
+            sampling.logit_bias.clear();
+            if (!parse_logit_bias(value, vocab, &sampling.logit_bias, error)) return false;
         } else if (key == "reasoning_budget_tokens") {
             if (!value.is_number_integer()) return fail(error, "reasoning_budget_tokens must be an integer");
             const auto budget = value.get<int64_t>();
             if (budget < -1 || budget > std::numeric_limits<int32_t>::max()) {
                 return fail(error, "reasoning_budget_tokens is out of range");
             }
-            sampling->reasoning_budget_tokens = static_cast<int32_t>(budget);
+            sampling.reasoning_budget_tokens = static_cast<int32_t>(budget);
             reasoning_fields_seen = true;
         } else if (key == "reasoning_budget_start_tag") {
             if (!value.is_string() || value.get<std::string>().empty()) {
                 return fail(error, "reasoning_budget_start_tag must be a non-empty string");
             }
-            sampling->reasoning_budget_start = p4_llama_compat::tokenize(
+            sampling.reasoning_budget_start = p4_llama_compat::tokenize(
                 vocab, value.get<std::string>(), false, true);
             reasoning_fields_seen = true;
         } else if (key == "reasoning_budget_end_tags" || key == "reasoning_budget_end_tag") {
-            sampling->reasoning_budget_end.clear();
+            sampling.reasoning_budget_end.clear();
             if (key == "reasoning_budget_end_tag") {
                 if (!value.is_string() || value.get<std::string>().empty()) {
                     return fail(error, "reasoning_budget_end_tag must be a non-empty string");
                 }
-                sampling->reasoning_budget_end.push_back(p4_llama_compat::tokenize(
+                sampling.reasoning_budget_end.push_back(p4_llama_compat::tokenize(
                     vocab, value.get<std::string>(), false, true));
             } else {
                 if (!value.is_array()) return fail(error, "reasoning_budget_end_tags must be an array");
@@ -326,18 +329,18 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
                     if (!tag.is_string() || tag.get<std::string>().empty()) {
                         return fail(error, "reasoning_budget_end_tags must contain non-empty strings");
                     }
-                    sampling->reasoning_budget_end.push_back(p4_llama_compat::tokenize(
+                    sampling.reasoning_budget_end.push_back(p4_llama_compat::tokenize(
                         vocab, tag.get<std::string>(), false, true));
                 }
             }
-            if (sampling->reasoning_budget_end.empty()) {
+            if (sampling.reasoning_budget_end.empty()) {
                 return fail(error, "reasoning budget requires at least one end tag");
             }
             reasoning_fields_seen = true;
             reasoning_end_fields_seen = true;
         } else if (key == "reasoning_budget_message") {
             if (!value.is_string()) return fail(error, "reasoning_budget_message must be a string");
-            sampling->reasoning_budget_message = value.get<std::string>();
+            sampling.reasoning_budget_message = value.get<std::string>();
             reasoning_fields_seen = true;
             reasoning_message_seen = true;
         } else {
@@ -345,19 +348,19 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
         }
     }
     if (reasoning_fields_seen && (reasoning_end_fields_seen || reasoning_message_seen)) {
-        if (sampling->reasoning_budget_end.empty()) {
+        if (sampling.reasoning_budget_end.empty()) {
             return fail(error, "reasoning budget message/end tag requires end tags");
         }
-        sampling->reasoning_budget_forced = sampling->reasoning_budget_end.front();
-        if (!sampling->reasoning_budget_message.empty()) {
+        sampling.reasoning_budget_forced = sampling.reasoning_budget_end.front();
+        if (!sampling.reasoning_budget_message.empty()) {
             const auto message_tokens = p4_llama_compat::tokenize(
-                vocab, sampling->reasoning_budget_message, false, true);
-            sampling->reasoning_budget_forced.insert(
-                sampling->reasoning_budget_forced.begin(),
+                vocab, sampling.reasoning_budget_message, false, true);
+            sampling.reasoning_budget_forced.insert(
+                sampling.reasoning_budget_forced.begin(),
                 message_tokens.begin(), message_tokens.end());
         }
     }
-    if (sampling->ignore_eos) {
+    if (sampling.ignore_eos) {
         // common_init_from_params() prepares this bias for the startup
         // sampler, but request-level samplers are created afresh in the tail.
         // Carry the same EOG suppression into that per-sequence sampler so
@@ -365,9 +368,9 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
         for (llama_token token = 0; token < llama_vocab_n_tokens(vocab); ++token) {
             if (!llama_vocab_is_eog(vocab, token)) continue;
             const auto exists = std::any_of(
-                sampling->logit_bias.begin(), sampling->logit_bias.end(),
+                sampling.logit_bias.begin(), sampling.logit_bias.end(),
                 [token](const llama_logit_bias & bias) { return bias.token == token; });
-            if (!exists) sampling->logit_bias.push_back({token, -std::numeric_limits<float>::infinity()});
+            if (!exists) sampling.logit_bias.push_back({token, -std::numeric_limits<float>::infinity()});
         }
     }
     return true;

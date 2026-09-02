@@ -245,7 +245,7 @@ bool StageRuntime::release_physical_sequence(
         if (error != nullptr) *error = "llama.cpp rejected MTP sequence release";
         return false;
     }
-    common_speculative_end(p4_llama_compat::raw(mtp_speculative_), sequence_id);
+    mtp_speculative_.end(sequence_id);
     samplers_.erase(sequence_key);
     sampler_options_.erase(sequence_key);
     sampled_tokens_.erase(sequence_key);

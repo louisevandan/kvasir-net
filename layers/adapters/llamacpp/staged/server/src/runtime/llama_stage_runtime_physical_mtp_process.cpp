@@ -49,7 +49,7 @@ bool StageRuntime::process_physical_mtp(
         token_batch.seq_id[index][0] = static_cast<llama_seq_id>(owner.sequence_id);
         token_batch.logits[index] = 0;
     }
-    const bool processed = common_speculative_process(p4_llama_compat::raw(mtp_speculative_), token_batch);
+    const bool processed = mtp_speculative_.process(token_batch);
     llama_batch_free(token_batch);
     if (!processed) {
         if (error != nullptr) *error = "llama.cpp rejected target MTP token metadata";
@@ -66,8 +66,7 @@ bool StageRuntime::process_physical_mtp(
                 if (error != nullptr) *error = "speculative generation began more than once";
                 return false;
             }
-            common_speculative_begin(
-                p4_llama_compat::raw(mtp_speculative_), owner.sequence_id, sequence.history);
+            mtp_speculative_.begin(owner.sequence_id, sequence.history);
             sequence.begun = true;
         } else if (owner.phase != PhysicalPhase::Prefill && !sequence.begun) {
             if (error != nullptr) *error = "speculative work preceded prompt completion";

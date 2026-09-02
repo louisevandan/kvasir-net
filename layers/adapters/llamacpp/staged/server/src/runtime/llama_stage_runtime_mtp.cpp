@@ -69,17 +69,18 @@ bool StageRuntime::execute_mtp_hop(
         return mtp_fail("llama.cpp failed to decode MTP prefill", error);
     }
     std::cerr << "MTP_TEST prefill_process\n";
-    if (!common_speculative_process(p4_llama_compat::raw(mtp_speculative_), prefill)) {
+    if (!mtp_speculative_.process(prefill)) {
         llama_batch_free(prefill);
         return mtp_fail("common_speculative_process failed for MTP prefill", error);
     }
     llama_batch_free(prefill);
 
-    common_speculative_begin(p4_llama_compat::raw(mtp_speculative_), seq_id, prompt_without_last);
-    common_sampler_ptr sampler(common_sampler_init(model_, p4_llama_compat::plan_params(params_).sampling));
-    if (!sampler) return mtp_fail("failed to create MTP target sampler", error);
+    mtp_speculative_.begin(seq_id, prompt_without_last);
+    auto sampling = params_.sampling_options();
+    auto sampler = p4_llama_compat::Sampler::create(model_, sampling);
+    if (!sampler.valid()) return mtp_fail("failed to create MTP target sampler", error);
     for (const auto token : prompt_without_last) {
-        common_sampler_accept(sampler.get(), token, false);
+        sampler.accept(token, false);
     }
 
     std::vector<llama_token> draft;
@@ -95,12 +96,10 @@ bool StageRuntime::execute_mtp_hop(
         draft_checkpoint.save_draft(
             mtp_context(), seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
     }
-    auto & draft_params = common_speculative_get_draft_params(
-        p4_llama_compat::raw(mtp_speculative_), seq_id);
-    draft_params = {
-        true, 1, n_past, id_last, &prompt_without_last, &draft};
+    mtp_speculative_.draft(seq_id, p4_llama_compat::DraftRequest{
+        true, 1, n_past, id_last, &prompt_without_last, &draft});
     std::cerr << "MTP_TEST draft\n";
-    common_speculative_draft(p4_llama_compat::raw(mtp_speculative_));
+    
     observation->drafted_tokens = draft.size();
     if (draft.empty()) return mtp_fail("MTP driver produced no proposal token", error);
     if (draft_seq_rm_type_ == p4_llama_compat::SeqRemoval::FullOnly) {
@@ -134,14 +133,13 @@ bool StageRuntime::execute_mtp_hop(
         return mtp_fail("llama.cpp failed to decode MTP verify batch", error);
     }
     std::cerr << "MTP_TEST verify_process\n";
-    if (!common_speculative_process(p4_llama_compat::raw(mtp_speculative_), verify)) {
+    if (!mtp_speculative_.process(verify)) {
         llama_batch_free(verify);
         return mtp_fail("common_speculative_process failed for MTP verify", error);
     }
 
     std::cerr << "MTP_TEST sample_accept\n";
-    const auto accepted = common_sampler_sample_and_accept_n(
-        sampler.get(), ctx_, draft);
+    const auto accepted = sampler.sample_and_accept_n(ctx_, draft);
     llama_batch_free(verify);
     if (accepted.empty()) return mtp_fail("MTP sampler returned no token", error);
 
@@ -151,8 +149,7 @@ bool StageRuntime::execute_mtp_hop(
     observation->eos = std::any_of(
         accepted.begin(), accepted.end(),
         [vocab](const llama_token token) { return llama_vocab_is_eog(vocab, token); });
-    common_speculative_accept(
-        p4_llama_compat::raw(mtp_speculative_), seq_id,
+    mtp_speculative_.accept(seq_id,
         static_cast<uint16_t>(observation->accepted_tokens));
     return true;
 }

@@ -37,6 +37,23 @@ ggml_backend_dev_t model_device(const llama_model * model, std::size_t index) {
     return llama_model_get_device(model, static_cast<int>(index));
 }
 
+struct SamplingOptions::Impl final {
+    common_params_sampling options;
+};
+
+SamplingOptions::SamplingOptions() : impl_(std::make_unique<Impl>()) {}
+SamplingOptions::~SamplingOptions() = default;
+SamplingOptions::SamplingOptions(SamplingOptions &&) noexcept = default;
+SamplingOptions & SamplingOptions::operator=(SamplingOptions &&) noexcept = default;
+bool SamplingOptions::ignores_end_of_generation() const noexcept { return impl_->options.ignore_eos; }
+std::size_t SamplingOptions::logit_bias_count() const noexcept { return impl_->options.logit_bias.size(); }
+
+SamplingOptions SamplingOptions::clone() const {
+    SamplingOptions copy;
+    copy.impl_->options = impl_->options;
+    return copy;
+}
+
 // The plan, held whole. Everything below is the only place that knows what
 // a `common_params` looks like.
 struct LlamaPlan::Impl final {
@@ -62,6 +79,12 @@ LlamaPlan LlamaPlan::clone() const {
 int LlamaPlan::n_parallel() const noexcept { return impl_->params.n_parallel; }
 
 void LlamaPlan::set_model_path(const std::string & path) { impl_->params.model.path = path; }
+
+SamplingOptions LlamaPlan::sampling_options() const {
+    SamplingOptions options;
+    options.impl().options = impl_->params.sampling;
+    return options;
+}
 
 llama_model_params LlamaPlan::to_model_params() const {
     return common_model_params_to_llama(impl_->params);
@@ -181,6 +204,39 @@ Sampler & Sampler::operator=(Sampler &&) noexcept = default;
 bool Sampler::valid() const noexcept { return impl_->sampler != nullptr; }
 void Sampler::reset() { impl_->sampler.reset(); }
 
+Sampler Sampler::create(const llama_model * model, SamplingOptions & options) {
+    Sampler sampler;
+    sampler.impl_->sampler.reset(common_sampler_init(model, options.impl().options));
+    return sampler;
+}
+
+Sampler Sampler::clone() const {
+    Sampler copy;
+    if (impl_->sampler != nullptr) {
+        copy.impl_->sampler.reset(common_sampler_clone(impl_->sampler.get()));
+    }
+    return copy;
+}
+
+void Sampler::accept(llama_token token, bool accept_grammar) {
+    common_sampler_accept(impl_->sampler.get(), token, accept_grammar);
+}
+
+llama_token Sampler::sample(llama_context * context, int index) {
+    return common_sampler_sample(impl_->sampler.get(), context, index);
+}
+
+std::vector<llama_token> Sampler::sample_and_accept_n(
+        llama_context * context, const std::vector<llama_token> & draft) {
+    return common_sampler_sample_and_accept_n(impl_->sampler.get(), context, draft);
+}
+
+std::vector<llama_token> Sampler::sample_and_accept_n(
+        llama_context * context, const std::vector<int> & indices,
+        const std::vector<llama_token> & draft) {
+    return common_sampler_sample_and_accept_n(impl_->sampler.get(), context, indices, draft);
+}
+
 struct Speculative::Impl final {
     common_speculative_ptr speculative;
 };
@@ -191,6 +247,41 @@ Speculative::Speculative(Speculative &&) noexcept = default;
 Speculative & Speculative::operator=(Speculative &&) noexcept = default;
 bool Speculative::valid() const noexcept { return impl_->speculative != nullptr; }
 void Speculative::reset() { impl_->speculative.reset(); }
+
+void Speculative::begin(llama_seq_id seq_id, const std::vector<llama_token> & prompt) {
+    common_speculative_begin(impl_->speculative.get(), seq_id, prompt);
+}
+
+bool Speculative::process(const llama_batch & batch) {
+    return common_speculative_process(impl_->speculative.get(), batch);
+}
+
+void Speculative::configure_draft(llama_seq_id seq_id, const DraftRequest & request) {
+    auto & params = common_speculative_get_draft_params(impl_->speculative.get(), seq_id);
+    params.drafting = request.drafting;
+    params.n_max = request.max_tokens;
+    params.n_past = request.n_past;
+    params.id_last = request.last_token;
+    params.prompt = request.prompt;
+    params.result = request.result;
+}
+
+void Speculative::run_draft() {
+    common_speculative_draft(impl_->speculative.get());
+}
+
+void Speculative::draft(llama_seq_id seq_id, const DraftRequest & request) {
+    configure_draft(seq_id, request);
+    run_draft();
+}
+
+void Speculative::accept(llama_seq_id seq_id, std::uint16_t accepted) {
+    common_speculative_accept(impl_->speculative.get(), seq_id, accepted);
+}
+
+void Speculative::end(llama_seq_id seq_id) {
+    common_speculative_end(impl_->speculative.get(), seq_id);
+}
 
 struct SpeculativeInit::Impl final {
     common_speculative_init_result_ptr init;
@@ -220,6 +311,13 @@ void adopt(Speculative & speculative, common_speculative_ptr owned) {
 common_speculative_init_result * raw(SpeculativeInit & init) { return init.impl().init.get(); }
 void adopt(SpeculativeInit & init, common_speculative_init_result_ptr owned) {
     init.impl().init = std::move(owned);
+}
+
+common_params_sampling & sampling_of(SamplingOptions & options) {
+    return options.impl().options;
+}
+const common_params_sampling & sampling_of(const SamplingOptions & options) {
+    return options.impl().options;
 }
 
 Sampler make_sampler(common_sampler_ptr owned) {

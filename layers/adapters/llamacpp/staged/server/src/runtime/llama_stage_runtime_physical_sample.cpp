@@ -34,18 +34,18 @@ bool StageRuntime::sample_physical_outputs(
         }
         auto found = samplers_.find(owner.sequence_key);
         if (found == samplers_.end()) {
-            auto sampling = p4_llama_compat::plan_params(params_).sampling;
+            auto sampling = params_.sampling_options();
             if (!apply_request_options(owner.options, model_, &sampling, error)) return false;
-            common_sampler_ptr sampler(common_sampler_init(model_, sampling));
-            if (!sampler) {
+            auto sampler = p4_llama_compat::Sampler::create(model_, sampling);
+            if (!sampler.valid()) {
                 if (error != nullptr) *error = "llama.cpp failed to create physical sampler";
                 return false;
             }
-            found = samplers_.emplace(owner.sequence_key, p4_llama_compat::make_sampler(std::move(sampler))).first;
+            found = samplers_.emplace(owner.sequence_key, std::move(sampler)).first;
             sampler_options_[owner.sequence_key] = owner.options;
         }
         if (owner.phase == PhysicalPhase::Prefill) {
-            common_sampler_accept(p4_llama_compat::raw(found->second), owner.input_token, false);
+            found->second.accept(owner.input_token, false);
         }
     }
     for (std::size_t index = 0; index < rows;) {
@@ -71,13 +71,12 @@ bool StageRuntime::sample_physical_outputs(
         }
         auto sampler = samplers_.find(owners[index].sequence_key);
         if (sampler == samplers_.end()) return false;
-        const auto token = common_sampler_sample(
-            p4_llama_compat::raw(sampler->second), ctx_, static_cast<std::int32_t>(index));
+        const auto token = sampler->second.sample(ctx_, static_cast<std::int32_t>(index));
         if (token == LLAMA_TOKEN_NULL) {
             if (error != nullptr) *error = "llama.cpp returned no physical token";
             return false;
         }
-        common_sampler_accept(p4_llama_compat::raw(sampler->second), token, true);
+        sampler->second.accept(token, true);
         PhysicalOutcome outcome;
         outcome.owner_index = static_cast<std::uint32_t>(index);
         GeneratedToken generated;

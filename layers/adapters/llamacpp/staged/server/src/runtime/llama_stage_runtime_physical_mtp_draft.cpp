@@ -96,16 +96,13 @@ bool StageRuntime::make_mtp_proposals(
             sequence.proposal = proposal;
             continue;
         }
-        auto & params = common_speculative_get_draft_params(
-            p4_llama_compat::raw(mtp_speculative_), request.sequence_id);
-        params = {
+        mtp_speculative_.configure_draft(request.sequence_id, p4_llama_compat::DraftRequest{
             true,
             static_cast<std::int32_t>(draft_max),
             request.sampled_position,
             request.sampled,
             &sequence.history,
-            &sequence.proposal,
-        };
+            &sequence.proposal,});
         const auto memory = llama_get_memory(mtp_context());
         const auto pos_min = llama_memory_seq_pos_min(memory, request.sequence_id);
         const auto pos_max = llama_memory_seq_pos_max(memory, request.sequence_id);
@@ -123,7 +120,7 @@ bool StageRuntime::make_mtp_proposals(
     if (prepared.empty()) return true;
     // Upstream llama.cpp consumes every dparams entry whose `drafting` flag is
     // set and constructs one backend-neutral batch for those sequences.
-    common_speculative_draft(p4_llama_compat::raw(mtp_speculative_));
+    mtp_speculative_.run_draft();
 
     std::string first_error;
     const auto memory = llama_get_memory(mtp_context());

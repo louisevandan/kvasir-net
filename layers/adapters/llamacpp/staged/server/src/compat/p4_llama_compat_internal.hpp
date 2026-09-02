@@ -29,6 +29,11 @@ void adopt(Speculative & speculative, common_speculative_ptr owned);
 common_speculative_init_result * raw(SpeculativeInit & init);
 void adopt(SpeculativeInit & init, common_speculative_init_result_ptr owned);
 
+/// The sampling options themselves, for the file that drives llama.cpp's
+/// own option parser.
+common_params_sampling & sampling_of(SamplingOptions & options);
+const common_params_sampling & sampling_of(const SamplingOptions & options);
+
 /// Wraps an owned sampler so it can be stored where the header may not name
 /// llama.cpp's type.
 Sampler make_sampler(common_sampler_ptr owned);

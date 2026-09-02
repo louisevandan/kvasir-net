@@ -2,11 +2,9 @@
 
 #include <string>
 
-// Only named as a pointer here, so the declaration is enough. Including
-// llama.cpp's `common.h` would put its whole convenience surface - which
-// moves freely between upstream versions - into every translation unit that
-// wants to read a request's options (U0 3b).
-struct common_params_sampling;
+// The options a request adjusts, as a P4 handle: llama.cpp owns the field
+// set and grows it, so it is carried whole rather than named here.
+#include "compat/p4_llama_compat.hpp"
 #include "llama.h"
 
 namespace staged::llama_runtime {
@@ -16,7 +14,7 @@ namespace staged::llama_runtime {
 // listed in this file.
 bool apply_request_options(const std::string & raw,
                            const llama_model * model,
-                           common_params_sampling * sampling,
+                           p4_llama_compat::SamplingOptions * sampling,
                            std::string * error);
 
 } // namespace staged::llama_runtime

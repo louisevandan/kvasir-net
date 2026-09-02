@@ -87,7 +87,9 @@ int main() {
     std::string error;
     assert(runtime.load(std::move(plan), config, &error) && error.empty());
 
-    common_params_sampling sampler_options = params.sampling;
+    auto sampler_options = plan.sampling_options();
+    // The test reads the fields the parser wrote, so it opens the handle.
+    common_params_sampling & sampled = p4_llama_compat::sampling_of(sampler_options);
     const std::string extended_options = R"({
         "n_prev": 20,
         "n_probs": 3,
@@ -118,29 +120,29 @@ int main() {
     })";
     assert(staged::llama_runtime::apply_request_options(
         extended_options, runtime.model(), &sampler_options, &error));
-    assert(sampler_options.n_prev == 20);
-    assert(sampler_options.n_probs == 3);
-    assert(sampler_options.samplers.size() == 3);
-    assert(sampler_options.min_p == 0.04f);
-    assert(sampler_options.min_keep == 2);
-    assert(sampler_options.typ_p == 0.8f);
-    assert(sampler_options.top_n_sigma == 2.0f);
-    assert(sampler_options.dynatemp_range == 0.2f);
-    assert(sampler_options.dynatemp_exponent == 1.1f);
-    assert(sampler_options.adaptive_target == 0.4f);
-    assert(sampler_options.adaptive_decay == 0.8f);
-    assert(sampler_options.ignore_eos);
-    assert(sampler_options.penalty_last_n == 12);
-    assert(sampler_options.penalty_repeat == 1.15f);
-    assert(sampler_options.penalty_freq == 0.2f);
-    assert(sampler_options.penalty_present == 0.1f);
-    assert(sampler_options.dry_allowed_length == 3);
-    assert(sampler_options.dry_penalty_last_n == 24);
-    assert(sampler_options.dry_sequence_breakers.size() == 3);
-    assert(sampler_options.xtc_probability == 0.25f);
-    assert(sampler_options.mirostat == 2);
-    assert(sampler_options.mirostat_tau == 4.0f);
-    assert(sampler_options.mirostat_eta == 0.2f);
+    assert(sampled.n_prev == 20);
+    assert(sampled.n_probs == 3);
+    assert(sampled.samplers.size() == 3);
+    assert(sampled.min_p == 0.04f);
+    assert(sampled.min_keep == 2);
+    assert(sampled.typ_p == 0.8f);
+    assert(sampled.top_n_sigma == 2.0f);
+    assert(sampled.dynatemp_range == 0.2f);
+    assert(sampled.dynatemp_exponent == 1.1f);
+    assert(sampled.adaptive_target == 0.4f);
+    assert(sampled.adaptive_decay == 0.8f);
+    assert(sampled.ignore_eos);
+    assert(sampled.penalty_last_n == 12);
+    assert(sampled.penalty_repeat == 1.15f);
+    assert(sampled.penalty_freq == 0.2f);
+    assert(sampled.penalty_present == 0.1f);
+    assert(sampled.dry_allowed_length == 3);
+    assert(sampled.dry_penalty_last_n == 24);
+    assert(sampled.dry_sequence_breakers.size() == 3);
+    assert(sampled.xtc_probability == 0.25f);
+    assert(sampled.mirostat == 2);
+    assert(sampled.mirostat_tau == 4.0f);
+    assert(sampled.mirostat_eta == 0.2f);
     assert(!staged::llama_runtime::apply_request_options(
         R"({"mirostat":3})", runtime.model(), &sampler_options, &error));
     std::cout << "REQUEST_OPTIONS_EXTENDED_PARSE_OK\n";
@@ -165,14 +167,15 @@ int main() {
     grammar_options["grammar_triggers"] = nlohmann::ordered_json::array({
         nlohmann::ordered_json{{"type", 2}, {"value", "^<tool>"}}
     });
-    common_params_sampling grammar_sampling = params.sampling;
+    auto grammar_sampling = plan.sampling_options();
+    common_params_sampling & grammar_sampled = p4_llama_compat::sampling_of(grammar_sampling);
     assert(staged::llama_runtime::apply_request_options(
         grammar_options.dump(), runtime.model(), &grammar_sampling, &error));
-    assert(grammar_sampling.grammar_lazy);
-    assert(grammar_sampling.generation_prompt == "assistant");
-    assert(grammar_sampling.preserved_tokens.count(preserved_token) == 1);
-    assert(grammar_sampling.grammar_triggers.size() == 1);
-    assert(grammar_sampling.grammar_triggers[0].type == COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN);
+    assert(grammar_sampled.grammar_lazy);
+    assert(grammar_sampled.generation_prompt == "assistant");
+    assert(grammar_sampled.preserved_tokens.count(preserved_token) == 1);
+    assert(grammar_sampled.grammar_triggers.size() == 1);
+    assert(grammar_sampled.grammar_triggers[0].type == COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN);
     std::cout << "REQUEST_OPTIONS_GRAMMAR_TRIGGER_PARSE_OK"
               << " preserved_token=" << preserved_token << "\n";
 

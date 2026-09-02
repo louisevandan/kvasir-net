@@ -35,7 +35,7 @@ bool StageRuntime::sample_hop_outcome(
     }
     auto found = samplers_.find(input.sequence_id);
     if (found == samplers_.end()) {
-        auto sampling = p4_llama_compat::plan_params(params_).sampling;
+        auto sampling = params_.sampling_options();
         if (!apply_request_options(input.options, model_, &sampling, error)) {
             hop_memory_dirty_ = true;
             return false;
@@ -43,30 +43,30 @@ bool StageRuntime::sample_hop_outcome(
         if (hop_trace_enabled()) {
             std::fprintf(stderr, "P4_STAGED_SAMPLER_OPTIONS stage=%d-%d seq=%s options_bytes=%zu ignore_eos=%d bias_count=%zu\n",
                          config_.layer_begin, config_.layer_end, input.sequence_id.c_str(),
-                         input.options.size(), sampling.ignore_eos ? 1 : 0,
-                         sampling.logit_bias.size());
+                         input.options.size(), sampling.ignores_end_of_generation() ? 1 : 0,
+                         sampling.logit_bias_count());
         }
-        common_sampler_ptr sampler(common_sampler_init(model_, sampling));
-        if (!sampler) {
+        auto sampler = p4_llama_compat::Sampler::create(model_, sampling);
+        if (!sampler.valid()) {
             hop_memory_dirty_ = true;
             return fail_hop("llama.cpp failed to create staged sampler", error);
         }
         if (!input_tokens.empty()) {
             for (const auto token : input_tokens) {
-                common_sampler_accept(sampler.get(), token, false);
+                sampler.accept(token, false);
             }
         }
-        found = samplers_.emplace(input.sequence_id, p4_llama_compat::make_sampler(std::move(sampler))).first;
+        found = samplers_.emplace(input.sequence_id, std::move(sampler)).first;
         sampler_options_[input.sequence_id] = input.options;
     }
     if (phase != protocol::HopPhase::Decode) return true;
 
-    const auto sampled = common_sampler_sample(p4_llama_compat::raw(found->second), ctx_, last_batch_tokens - 1);
+    const auto sampled = found->second.sample(ctx_, last_batch_tokens - 1);
     if (sampled == LLAMA_TOKEN_NULL) {
         hop_memory_dirty_ = true;
         return fail_hop("llama.cpp staged sampler returned no token", error);
     }
-    common_sampler_accept(p4_llama_compat::raw(found->second), sampled, true);
+    found->second.accept(sampled, true);
     const auto *vocab = llama_model_get_vocab(model_);
     if (vocab == nullptr) {
         hop_memory_dirty_ = true;

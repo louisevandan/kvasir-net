@@ -149,10 +149,10 @@ bool StageRuntime::sample_physical_mtp(
     const auto n_rollback_max = submitted.size() - 1;
     auto sampler_checkpoint = physical_checkpoints_.find(first.sequence_id)
             != physical_checkpoints_.end()
-        ? common_sampler_ptr(common_sampler_clone(p4_llama_compat::raw(sampler_it->second)))
-        : common_sampler_ptr{};
+        ? sampler_it->second.clone()
+        : p4_llama_compat::Sampler{};
     if (!replay && physical_checkpoints_.find(first.sequence_id)
-            != physical_checkpoints_.end() && !sampler_checkpoint) {
+            != physical_checkpoints_.end() && !sampler_checkpoint.valid()) {
         return mtp_fail("MTP sampler checkpoint failed", error);
     }
     std::vector<std::int32_t> logits;
@@ -160,8 +160,7 @@ bool StageRuntime::sample_physical_mtp(
     for (auto index = begin; index < end; ++index) {
         logits.push_back(static_cast<std::int32_t>(index));
     }
-    auto accepted = common_sampler_sample_and_accept_n(
-        p4_llama_compat::raw(sampler_it->second), ctx_, logits, draft);
+    auto accepted = sampler_it->second.sample_and_accept_n(ctx_, logits, draft);
     if (accepted.empty() || accepted.size() > submitted.size()) {
         return mtp_fail("llama.cpp returned an invalid MTP acceptance", error);
     }
@@ -179,10 +178,10 @@ bool StageRuntime::sample_physical_mtp(
     const bool checkpoint_replay = !replay && n_rollback > 0 && use_checkpoint;
     if (checkpoint_replay) {
         if (physical_checkpoints_.find(first.sequence_id) == physical_checkpoints_.end()
-            || !sampler_checkpoint) {
+            || !sampler_checkpoint.valid()) {
             return mtp_fail("MTP rollback requires a missing checkpoint", error);
         }
-        p4_llama_compat::adopt(sampler_it->second, std::move(sampler_checkpoint));
+        sampler_it->second = std::move(sampler_checkpoint);
         auto & sequence = sequence_it->second;
         sequence.proposal.clear();
         sequence.proposal.push_back(submitted.front());
@@ -201,8 +200,7 @@ bool StageRuntime::sample_physical_mtp(
         outcomes->push_back(std::move(outcome));
         return true;
     }
-    common_speculative_accept(
-        p4_llama_compat::raw(mtp_speculative_), first.sequence_id,
+    mtp_speculative_.accept(first.sequence_id,
         static_cast<std::uint16_t>(accepted.size() - 1));
     auto & sequence = sequence_it->second;
     if (sequence.pending_proposal.has_value()) {

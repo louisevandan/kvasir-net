@@ -44,6 +44,31 @@ std::size_t model_device_count(const llama_model * model);
 /// The i-th backend device of this model, or nullptr when out of range.
 ggml_backend_dev_t model_device(const llama_model * model, std::size_t index);
 
+/// Sampling options, held whole for the same reason the plan is: upstream
+/// owns the field set and grows it.
+class SamplingOptions final {
+public:
+    SamplingOptions();
+    ~SamplingOptions();
+    SamplingOptions(SamplingOptions &&) noexcept;
+    SamplingOptions & operator=(SamplingOptions &&) noexcept;
+    SamplingOptions(const SamplingOptions &) = delete;
+    SamplingOptions & operator=(const SamplingOptions &) = delete;
+    [[nodiscard]] SamplingOptions clone() const;
+
+    /// Two values a stage trace reports, so a trace need not open the struct.
+    [[nodiscard]] bool ignores_end_of_generation() const noexcept;
+    [[nodiscard]] std::size_t logit_bias_count() const noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+public:
+    [[nodiscard]] Impl & impl() noexcept { return *impl_; }
+    [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
+};
+
 /// A llama.cpp startup plan, held whole and never mirrored.
 ///
 /// The measurement that decided this shape: the stage server reads six
@@ -87,6 +112,9 @@ public:
     /// The one field P4 writes: measurement passes point the plan at the
     /// model the load config names.
     void set_model_path(const std::string & path);
+
+    /// A copy of this plan's sampling options, which a request then adjusts.
+    [[nodiscard]] SamplingOptions sampling_options() const;
 
     /// Conversions, which return llama.cpp's public types.
     [[nodiscard]] llama_model_params to_model_params() const;
@@ -200,6 +228,31 @@ public:
 /// entry, which is the point: the list is the work remaining.
 class Sampler final {
 public:
+    /// Creates a sampler for this model from these options, or an invalid
+    /// handle if llama.cpp refuses.
+    /// Non-const because llama.cpp mutates the options while initialising -
+    /// it resolves defaults and caches derived state into them.
+    [[nodiscard]] static Sampler create(const llama_model * model, SamplingOptions & options);
+
+    /// An independent copy, used to checkpoint a sequence's sampler state.
+    [[nodiscard]] Sampler clone() const;
+
+    /// Feeds a token back in. `accept_grammar` is false while replaying
+    /// tokens the sampler did not choose.
+    void accept(llama_token token, bool accept_grammar);
+
+    /// Samples one token from the logits at `index`.
+    [[nodiscard]] llama_token sample(llama_context * context, int index);
+
+    /// Samples and accepts across a draft, returning what was accepted.
+    /// The same over a draft whose logits are the batch's own order.
+    [[nodiscard]] std::vector<llama_token> sample_and_accept_n(
+        llama_context * context, const std::vector<llama_token> & draft);
+
+    [[nodiscard]] std::vector<llama_token> sample_and_accept_n(
+        llama_context * context, const std::vector<int> & indices,
+        const std::vector<llama_token> & draft);
+
     Sampler();
     ~Sampler();
     Sampler(Sampler &&) noexcept;
@@ -218,8 +271,47 @@ public:
     [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
 };
 
+/// What P4 asks of one draft round.
+///
+/// Mirrored rather than carried, because unlike a plan this is closed and
+/// P4 owns the meaning of every field: it decides how far to draft, from
+/// which position, after which token, over which prompt, and where the
+/// result goes.
+struct DraftRequest final {
+    bool drafting = true;
+    std::int32_t max_tokens = -1;
+    llama_pos n_past = 0;
+    llama_token last_token = 0;
+    const std::vector<llama_token> * prompt = nullptr;
+    std::vector<llama_token> * result = nullptr;
+};
+
 class Speculative final {
 public:
+    /// Starts a sequence's speculative history.
+    void begin(llama_seq_id seq_id, const std::vector<llama_token> & prompt);
+
+    /// Feeds a decoded batch in. False when the driver rejected it.
+    [[nodiscard]] bool process(const llama_batch & batch);
+
+    /// Configures one sequence for the next draft round without running it.
+    /// Upstream drafts every configured sequence in a single batch, so a
+    /// caller with several sequences configures each and then runs once -
+    /// running per sequence would be a different computation.
+    void configure_draft(llama_seq_id seq_id, const DraftRequest & request);
+
+    /// Runs one draft round over everything configured.
+    void run_draft();
+
+    /// Configures this one sequence and runs immediately.
+    void draft(llama_seq_id seq_id, const DraftRequest & request);
+
+    /// Reports how many of the drafted tokens were accepted.
+    void accept(llama_seq_id seq_id, std::uint16_t accepted);
+
+    /// Drops a sequence's speculative state.
+    void end(llama_seq_id seq_id);
+
     Speculative();
     ~Speculative();
     Speculative(Speculative &&) noexcept;

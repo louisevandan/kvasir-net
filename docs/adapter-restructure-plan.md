@@ -375,17 +375,20 @@ U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서
 | ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
 | ③b llama.cpp `common/` 격리 | **중간 게이트 통과** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm을 모두 P4 소유 핸들로 감쌌고, 이제 헤더가 `common/`을 포함하면 게이트가 **실패**한다(실제로 넣어 확인). 구현 17개는 남아 있고 이것이 종착점이다 — upstream의 `llama-common` 타깃이 자기 디렉터리를 PUBLIC으로 내보내므로, 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다. **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다** |
 
-**③b 잔여 작업의 실측 크기** (2026-09-02 갱신): tokenize 계열 5개는 facade로 옮겼고,
-남은 것은 sampler 9개·speculative 9개다. 이 둘은 실제 서브시스템이라 facade가
-수명주기를 소유해야 하고, 지금은 핸들(`Sampler`·`Speculative`·`SpeculativeInit`)이
-소유권만 가져간 상태 — 호출 자체는 아직 구현 파일에 있다. 그 호출이 옮겨갈 때
-구현 부채와 링크가 함께 사라진다.
+**③b 잔여 작업** (2026-09-02 갱신): tokenize 5개·sampler 9개·speculative 9개를
+모두 facade로 옮겼다. 남은 `common_*` 이름은 세 곳에 모인다 — 플랜 파싱
+(`common_params_parse`·`common_args`, plan.cpp), 요청 옵션 파싱
+(`common_sampler_types_from_*`·`common_grammar_trigger`, request_options*.cpp),
+그리고 시험이 파서 결과를 직접 확인하는 곳이다. 셋 다 llama.cpp의 CLI·옵션
+문법을 다루는 코드이므로, 다음 경계는 함수 이동이 아니라 **P4가 자기 옵션
+문법을 갖고 llama.cpp 문법으로 번역하는 것**이다 — 그것은 계약 결정이라
+구현 전에 문서로 정해야 한다.
 
-세 계열로 갈린다 — tokenize 계열 5개(`common_tokenize`·`common_detokenize`·
-`common_token_to_piece`·`common_batch_add`, 공개 `llama.h`의 얇은 편의 래퍼),
-sampler 계열 9개, speculative 계열 9개. 앞의 계열은 감싸는 대신 공개 API를
-직접 부르면 의존이 **이동이 아니라 소멸**한다. 뒤의 두 계열은 실제 서브시스템이라
-facade가 그 수명주기를 소유해야 한다.
+핸들이 소유권만이 아니라 연산도 가져갔으므로, sampler·speculative API 변경은
+이제 `p4_llama_compat.cpp` 한 곳에서 멈춘다. draft 배치 의미를 한 번 깨뜨렸다가
+되돌린 것이 이 이동의 실제 위험을 보여 준다 — upstream은 설정된 모든 시퀀스를
+한 배치로 draft하는데, 시퀀스별 `draft()`로 바꾸면 다른 계산이 된다. facade는
+`configure_draft`와 `run_draft`를 나눠 그 구분을 타입으로 남긴다.
 
 조사 자체도 한 번 반증됐다. `common_*` 접두만 세었더니 `string_find_partial_stop`
 같은 심볼을 놓쳤고, include를 지우자 컴파일러가 그것을 알려 주었다. 편의
