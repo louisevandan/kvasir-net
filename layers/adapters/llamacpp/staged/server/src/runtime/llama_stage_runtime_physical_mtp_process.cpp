@@ -1,4 +1,7 @@
 #include "llama_stage_runtime.hpp"
+
+// Still calls llama.cpp's sampler or speculative API directly.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "physical_wire.hpp"
 
 #include <limits>
@@ -9,7 +12,7 @@ bool StageRuntime::process_physical_mtp(
         const llama_batch & target_batch,
         const std::vector<PhysicalOwner> & owners,
         std::string * error) {
-    if (!tail_stage_ || mtp_speculative_ == nullptr) return true;
+    if (!tail_stage_ || !mtp_speculative_.valid()) return true;
     if (owners.empty()
         || owners.size() != static_cast<std::size_t>(target_batch.n_tokens)
         || owners.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
@@ -46,7 +49,7 @@ bool StageRuntime::process_physical_mtp(
         token_batch.seq_id[index][0] = static_cast<llama_seq_id>(owner.sequence_id);
         token_batch.logits[index] = 0;
     }
-    const bool processed = common_speculative_process(mtp_speculative_.get(), token_batch);
+    const bool processed = common_speculative_process(p4_llama_compat::raw(mtp_speculative_), token_batch);
     llama_batch_free(token_batch);
     if (!processed) {
         if (error != nullptr) *error = "llama.cpp rejected target MTP token metadata";
@@ -64,7 +67,7 @@ bool StageRuntime::process_physical_mtp(
                 return false;
             }
             common_speculative_begin(
-                mtp_speculative_.get(), owner.sequence_id, sequence.history);
+                p4_llama_compat::raw(mtp_speculative_), owner.sequence_id, sequence.history);
             sequence.begun = true;
         } else if (owner.phase != PhysicalPhase::Prefill && !sequence.begun) {
             if (error != nullptr) *error = "speculative work preceded prompt completion";

@@ -41,11 +41,11 @@ bool StageRuntime::sample_physical_outputs(
                 if (error != nullptr) *error = "llama.cpp failed to create physical sampler";
                 return false;
             }
-            found = samplers_.emplace(owner.sequence_key, std::move(sampler)).first;
+            found = samplers_.emplace(owner.sequence_key, p4_llama_compat::make_sampler(std::move(sampler))).first;
             sampler_options_[owner.sequence_key] = owner.options;
         }
         if (owner.phase == PhysicalPhase::Prefill) {
-            common_sampler_accept(found->second.get(), owner.input_token, false);
+            common_sampler_accept(p4_llama_compat::raw(found->second), owner.input_token, false);
         }
     }
     for (std::size_t index = 0; index < rows;) {
@@ -72,12 +72,12 @@ bool StageRuntime::sample_physical_outputs(
         auto sampler = samplers_.find(owners[index].sequence_key);
         if (sampler == samplers_.end()) return false;
         const auto token = common_sampler_sample(
-            sampler->second.get(), ctx_, static_cast<std::int32_t>(index));
+            p4_llama_compat::raw(sampler->second), ctx_, static_cast<std::int32_t>(index));
         if (token == LLAMA_TOKEN_NULL) {
             if (error != nullptr) *error = "llama.cpp returned no physical token";
             return false;
         }
-        common_sampler_accept(sampler->second.get(), token, true);
+        common_sampler_accept(p4_llama_compat::raw(sampler->second), token, true);
         PhysicalOutcome outcome;
         outcome.owner_index = static_cast<std::uint32_t>(index);
         GeneratedToken generated;
@@ -95,7 +95,7 @@ bool StageRuntime::sample_physical_outputs(
             generated.stop = "length";
         }
         if (generated.stop.empty()) {
-            if (mtp_speculative_ != nullptr) {
+            if (mtp_speculative_.valid()) {
                 draft_requests.push_back(MtpDraftRequest{
                         static_cast<llama_seq_id>(owners[index].sequence_id),
                         owners[index].generated_tokens,

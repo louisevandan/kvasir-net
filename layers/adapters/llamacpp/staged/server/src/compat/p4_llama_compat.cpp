@@ -1,6 +1,7 @@
 #include "p4_llama_compat.hpp"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 #include "p4_llama_compat_internal.hpp"
 
@@ -9,6 +10,7 @@
 
 // The convenience library, on this side of the wall only.
 #include "common.h"
+#include "sampling.h"
 #include "speculative.h"
 
 namespace p4_llama_compat {
@@ -110,6 +112,127 @@ std::string token_to_piece(const llama_vocab * vocab, llama_token token, bool sp
 void batch_add(llama_batch & batch, llama_token token, llama_pos pos,
                const std::vector<llama_seq_id> & seq_ids, bool logits) {
     common_batch_add(batch, token, pos, seq_ids, logits);
+}
+
+// Held in agreement by the compiler rather than by anyone remembering to
+// check. If upstream renumbers or inserts a case, this stops building here
+// instead of silently changing what a stage believes it may drop.
+static_assert(static_cast<int>(SeqRemoval::Unsupported) == COMMON_CONTEXT_SEQ_RM_TYPE_NO);
+static_assert(static_cast<int>(SeqRemoval::Partial) == COMMON_CONTEXT_SEQ_RM_TYPE_PART);
+static_assert(static_cast<int>(SeqRemoval::FullOnly) == COMMON_CONTEXT_SEQ_RM_TYPE_FULL);
+static_assert(static_cast<int>(SeqRemoval::RecurrentBounded) == COMMON_CONTEXT_SEQ_RM_TYPE_RS);
+
+SeqRemoval sequence_removal(llama_context * context) {
+    return static_cast<SeqRemoval>(common_context_can_seq_rm(context));
+}
+
+struct PromptCheckpoint::Impl final {
+    common_prompt_checkpoint checkpoint;
+};
+
+PromptCheckpoint::PromptCheckpoint() : impl_(std::make_unique<Impl>()) {}
+PromptCheckpoint::~PromptCheckpoint() = default;
+PromptCheckpoint::PromptCheckpoint(PromptCheckpoint &&) noexcept = default;
+PromptCheckpoint & PromptCheckpoint::operator=(PromptCheckpoint &&) noexcept = default;
+
+std::int64_t PromptCheckpoint::n_tokens() const noexcept { return impl_->checkpoint.n_tokens; }
+llama_pos PromptCheckpoint::pos_max() const noexcept { return impl_->checkpoint.pos_max; }
+std::size_t PromptCheckpoint::size() const noexcept { return impl_->checkpoint.size(); }
+bool PromptCheckpoint::empty() const noexcept { return impl_->checkpoint.empty(); }
+void PromptCheckpoint::clear() { impl_->checkpoint.clear(); }
+
+const std::vector<std::uint8_t> & PromptCheckpoint::target_state() const noexcept {
+    return impl_->checkpoint.data_tgt;
+}
+std::vector<std::uint8_t> & PromptCheckpoint::target_state() noexcept {
+    return impl_->checkpoint.data_tgt;
+}
+const std::vector<std::uint8_t> & PromptCheckpoint::draft_state() const noexcept {
+    return impl_->checkpoint.data_dft;
+}
+std::vector<std::uint8_t> & PromptCheckpoint::draft_state() noexcept {
+    return impl_->checkpoint.data_dft;
+}
+
+void PromptCheckpoint::update_positions(std::int64_t n_tokens, llama_pos pos_min, llama_pos pos_max) {
+    impl_->checkpoint.update_pos(n_tokens, pos_min, pos_max);
+}
+void PromptCheckpoint::save_target(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    impl_->checkpoint.update_tgt(context, seq_id, flags);
+}
+void PromptCheckpoint::save_draft(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    impl_->checkpoint.update_dft(context, seq_id, flags);
+}
+void PromptCheckpoint::load_target(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    impl_->checkpoint.load_tgt(context, seq_id, flags);
+}
+void PromptCheckpoint::load_draft(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    impl_->checkpoint.load_dft(context, seq_id, flags);
+}
+
+struct Sampler::Impl final {
+    common_sampler_ptr sampler;
+};
+
+Sampler::Sampler() : impl_(std::make_unique<Impl>()) {}
+Sampler::~Sampler() = default;
+Sampler::Sampler(Sampler &&) noexcept = default;
+Sampler & Sampler::operator=(Sampler &&) noexcept = default;
+bool Sampler::valid() const noexcept { return impl_->sampler != nullptr; }
+void Sampler::reset() { impl_->sampler.reset(); }
+
+struct Speculative::Impl final {
+    common_speculative_ptr speculative;
+};
+
+Speculative::Speculative() : impl_(std::make_unique<Impl>()) {}
+Speculative::~Speculative() = default;
+Speculative::Speculative(Speculative &&) noexcept = default;
+Speculative & Speculative::operator=(Speculative &&) noexcept = default;
+bool Speculative::valid() const noexcept { return impl_->speculative != nullptr; }
+void Speculative::reset() { impl_->speculative.reset(); }
+
+struct SpeculativeInit::Impl final {
+    common_speculative_init_result_ptr init;
+};
+
+SpeculativeInit::SpeculativeInit() : impl_(std::make_unique<Impl>()) {}
+SpeculativeInit::~SpeculativeInit() = default;
+SpeculativeInit::SpeculativeInit(SpeculativeInit &&) noexcept = default;
+SpeculativeInit & SpeculativeInit::operator=(SpeculativeInit &&) noexcept = default;
+bool SpeculativeInit::valid() const noexcept { return impl_->init != nullptr; }
+void SpeculativeInit::reset() { impl_->init.reset(); }
+
+llama_context * SpeculativeInit::context() const noexcept {
+    return impl_->init == nullptr ? nullptr : impl_->init->context();
+}
+
+common_sampler * raw(Sampler & sampler) { return sampler.impl().sampler.get(); }
+void adopt(Sampler & sampler, common_sampler_ptr owned) {
+    sampler.impl().sampler = std::move(owned);
+}
+
+common_speculative * raw(Speculative & speculative) { return speculative.impl().speculative.get(); }
+void adopt(Speculative & speculative, common_speculative_ptr owned) {
+    speculative.impl().speculative = std::move(owned);
+}
+
+common_speculative_init_result * raw(SpeculativeInit & init) { return init.impl().init.get(); }
+void adopt(SpeculativeInit & init, common_speculative_init_result_ptr owned) {
+    init.impl().init = std::move(owned);
+}
+
+Sampler make_sampler(common_sampler_ptr owned) {
+    Sampler sampler;
+    adopt(sampler, std::move(owned));
+    return sampler;
+}
+
+common_prompt_checkpoint & checkpoint_of(PromptCheckpoint & checkpoint) {
+    return checkpoint.impl().checkpoint;
+}
+const common_prompt_checkpoint & checkpoint_of(const PromptCheckpoint & checkpoint) {
+    return checkpoint.impl().checkpoint;
 }
 
 }  // namespace p4_llama_compat

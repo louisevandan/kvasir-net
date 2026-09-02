@@ -24,7 +24,7 @@ bool StageRuntime::settle_physical_sequence(
     proposal->clear();
     auto checkpoint = physical_checkpoints_.find(sequence_id);
     if (restore_checkpoint && checkpoint != physical_checkpoints_.end()) {
-        checkpoint->second.load_tgt(
+        checkpoint->second.load_target(
             ctx_, sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
         llama_synchronize(ctx_);
     } else if (!llama_memory_seq_rm(
@@ -36,8 +36,8 @@ bool StageRuntime::settle_physical_sequence(
     }
     if (auto found = mtp_sequences_.find(sequence_id); found != mtp_sequences_.end()) {
         auto & sequence = found->second;
-        if (restore_checkpoint && !sequence.draft_checkpoint.data_dft.empty()) {
-            sequence.draft_checkpoint.load_dft(
+        if (restore_checkpoint && !sequence.draft_checkpoint.draft_state().empty()) {
+            sequence.draft_checkpoint.load_draft(
                 mtp_context(), sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
             llama_synchronize(mtp_context());
         } else if (mtp_context() != nullptr && !llama_memory_seq_rm(

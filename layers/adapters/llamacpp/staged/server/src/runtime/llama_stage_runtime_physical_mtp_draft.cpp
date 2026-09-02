@@ -1,4 +1,7 @@
 #include "llama_stage_runtime.hpp"
+
+// Still calls llama.cpp's sampler or speculative API directly.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "physical_wire.hpp"
 
 #include <algorithm>
@@ -47,7 +50,7 @@ bool StageRuntime::make_mtp_proposals(
         std::vector<PhysicalOutcome> * outcomes,
         std::string * error) {
     if (requests.empty()) return true;
-    if (outcomes == nullptr || mtp_speculative_ == nullptr || mtp_context() == nullptr) {
+    if (outcomes == nullptr || !mtp_speculative_.valid() || mtp_context() == nullptr) {
         return draft_fail("invalid batched MTP proposal request", error);
     }
 
@@ -94,7 +97,7 @@ bool StageRuntime::make_mtp_proposals(
             continue;
         }
         auto & params = common_speculative_get_draft_params(
-            mtp_speculative_.get(), request.sequence_id);
+            p4_llama_compat::raw(mtp_speculative_), request.sequence_id);
         params = {
             true,
             static_cast<std::int32_t>(draft_max),
@@ -107,10 +110,10 @@ bool StageRuntime::make_mtp_proposals(
         const auto pos_min = llama_memory_seq_pos_min(memory, request.sequence_id);
         const auto pos_max = llama_memory_seq_pos_max(memory, request.sequence_id);
         sequence.draft_checkpoint.clear();
-        sequence.draft_checkpoint.update_pos(
+        sequence.draft_checkpoint.update_positions(
             pos_max >= pos_min ? pos_max - pos_min + 1 : 0, pos_min, pos_max);
-        if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
-            sequence.draft_checkpoint.update_dft(
+        if (draft_seq_rm_type_ == p4_llama_compat::SeqRemoval::FullOnly) {
+            sequence.draft_checkpoint.save_draft(
                 mtp_context(), request.sequence_id,
                 LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
         }
@@ -120,7 +123,7 @@ bool StageRuntime::make_mtp_proposals(
     if (prepared.empty()) return true;
     // Upstream llama.cpp consumes every dparams entry whose `drafting` flag is
     // set and constructs one backend-neutral batch for those sequences.
-    common_speculative_draft(mtp_speculative_.get());
+    common_speculative_draft(p4_llama_compat::raw(mtp_speculative_));
 
     std::string first_error;
     const auto memory = llama_get_memory(mtp_context());
@@ -131,24 +134,24 @@ bool StageRuntime::make_mtp_proposals(
             sequence.proposal.resize(item.draft_max);
         }
         const auto draft_count = sequence.proposal.size();
-        if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
-            sequence.draft_checkpoint.load_dft(
+        if (draft_seq_rm_type_ == p4_llama_compat::SeqRemoval::FullOnly) {
+            sequence.draft_checkpoint.load_draft(
                 mtp_context(), request.sequence_id,
                 LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
             llama_synchronize(mtp_context());
         }
         if (!llama_memory_seq_rm(
                 memory, request.sequence_id,
-                sequence.draft_checkpoint.pos_max + 1, -1)
+                sequence.draft_checkpoint.pos_max() + 1, -1)
             && first_error.empty()) {
             first_error = "llama.cpp rejected post-draft rollback";
         }
         auto & proposal = (*outcomes)[request.outcome_index].proposal;
         proposal.insert(
             proposal.end(), sequence.proposal.begin(), sequence.proposal.end());
-        if (draft_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
+        if (draft_seq_rm_type_ == p4_llama_compat::SeqRemoval::RecurrentBounded
             && draft_count > llama_n_rs_seq(mtp_context())) {
-            sequence.draft_checkpoint.update_dft(
+            sequence.draft_checkpoint.save_draft(
                 mtp_context(), request.sequence_id,
                 LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
         }

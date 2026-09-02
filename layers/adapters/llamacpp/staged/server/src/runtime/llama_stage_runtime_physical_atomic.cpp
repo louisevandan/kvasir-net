@@ -110,8 +110,8 @@ bool StageRuntime::validate_physical_atomic_round(
         if (config_.layer_begin == 0
             && (first.phase == PhysicalPhase::Replay
             || (first.phase == PhysicalPhase::Verify
-                && target_seq_rm_type_ != COMMON_CONTEXT_SEQ_RM_TYPE_FULL
-                && !(target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
+                && target_seq_rm_type_ != p4_llama_compat::SeqRemoval::FullOnly
+                && !(target_seq_rm_type_ == p4_llama_compat::SeqRemoval::RecurrentBounded
                     && count - 1 > llama_n_rs_seq(ctx_))))) {
             // Stage zero's unconditional checkpoint only guards against a
             // physical split. Normal PART/RS rollback owns intact groups.

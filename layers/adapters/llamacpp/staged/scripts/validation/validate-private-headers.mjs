@@ -58,8 +58,9 @@ export const FACADE = [
   "compat/p4_llama_compat_internal.hpp",
 ];
 
+/// Empty since 2026-09-02, and the gate keeps it that way: a header naming
+/// llama.cpp's convenience library is now a failure, not an entry.
 export const UNSTABLE_HEADER_DEBT = [
-  "runtime/llama_stage_runtime.hpp",
 ];
 
 /// Implementation files that still name it directly.
@@ -70,6 +71,9 @@ export const UNSTABLE_SOURCE_DEBT = [
   "runtime/llama_stage_runtime_hop_sample.cpp",
   "runtime/llama_stage_runtime_hop_sample_outcome.cpp",
   "runtime/llama_stage_runtime_mtp.cpp",
+  "runtime/llama_stage_runtime_physical_mtp.cpp",
+  "runtime/llama_stage_runtime_physical_mtp_draft.cpp",
+  "runtime/llama_stage_runtime_physical_mtp_process.cpp",
   "runtime/llama_stage_runtime_physical_sample.cpp",
   "runtime/request_options.cpp",
   "runtime/request_options_grammar.cpp",
@@ -171,6 +175,15 @@ function main() {
     return;
   }
   const drift = unstableDrift(root);
+  const headerDebt = drift.added.filter((file) => file.endsWith(".hpp"));
+  if (headerDebt.length > 0) {
+    for (const file of headerDebt) {
+      process.stderr.write(`${file}: a header may no longer depend on llama.cpp's`
+        + " common/ - that dependency reaches every translation unit including it\n");
+    }
+    process.exitCode = 1;
+    return;
+  }
   if (drift.added.length > 0 || drift.paid.length > 0) {
     for (const file of drift.added) {
       process.stderr.write(`${file}: new dependency on llama.cpp's common/;`

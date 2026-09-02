@@ -165,10 +165,10 @@ void real_decode_after_restore_regression() {
     const auto prefill_max = llama_memory_seq_pos_max(memory, sequence);
     assert(prefill_max == static_cast<llama_pos>(*cut.n_tokens) - 1);
 
-    common_prompt_checkpoint native_checkpoint;
+    p4_llama_compat::PromptCheckpoint native_checkpoint;
     assert(runtime.save_checkpoint(prefill.sequence_id, &native_checkpoint, &error));
     assert(!native_checkpoint.empty());
-    assert(native_checkpoint.n_tokens == static_cast<int64_t>(*cut.n_tokens));
+    assert(native_checkpoint.n_tokens() == static_cast<int64_t>(*cut.n_tokens));
 
     staged::protocol::SequencePayload checkpoint_decode = cut;
     checkpoint_decode.descriptors.clear();
@@ -191,7 +191,7 @@ void real_decode_after_restore_regression() {
     assert(llama_memory_seq_pos_max(memory, sequence) == prefill_max);
     std::cout << "NATIVE_CONTEXT_CHECKPOINT_RESTORE_OK"
               << " bytes=" << native_checkpoint.size()
-              << " n_tokens=" << native_checkpoint.n_tokens << "\n";
+              << " n_tokens=" << native_checkpoint.n_tokens() << "\n";
 
     staged::protocol::KvPayload request;
     request.sequence_id = prefill.sequence_id;

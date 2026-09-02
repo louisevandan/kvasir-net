@@ -7,8 +7,6 @@
 #include <vector>
 
 #include "compat/p4_llama_compat.hpp"
-#include "speculative.h"
-#include "sampling.h"
 #include "llama.h"
 #include "decode_status.hpp"
 #include "kv_bridge.hpp"
@@ -38,9 +36,9 @@ struct MtpPendingProposal final {
 };
 
 struct MtpPhysicalSequence final {
-    llama_tokens history;
-    llama_tokens proposal;
-    common_prompt_checkpoint draft_checkpoint;
+    std::vector<llama_token> history;
+    std::vector<llama_token> proposal;
+    p4_llama_compat::PromptCheckpoint draft_checkpoint;
     std::optional<MtpPendingProposal> pending_proposal;
     bool replay_pending = false;
     bool begun = false;
@@ -91,7 +89,7 @@ public:
             && (llama_model_is_recurrent(model_) || llama_model_is_hybrid(model_));
     }
     [[nodiscard]] llama_context * mtp_context() const noexcept {
-        return mtp_init_ == nullptr ? nullptr : mtp_init_->context();
+        return !mtp_init_.valid() ? nullptr : mtp_init_.context();
     }
     // Test-only full-tail path. The ordinary HOP remains unchanged.
     [[nodiscard]] bool execute_mtp_hop(
@@ -159,11 +157,11 @@ public:
     // speculative/draft context are intentionally outside this slice.
     [[nodiscard]] bool save_checkpoint(
         const std::string & sequence_id,
-        common_prompt_checkpoint * checkpoint,
+        p4_llama_compat::PromptCheckpoint * checkpoint,
         std::string * error = nullptr);
     [[nodiscard]] bool restore_checkpoint(
         const std::string & sequence_id,
-        const common_prompt_checkpoint & checkpoint,
+        const p4_llama_compat::PromptCheckpoint & checkpoint,
         std::string * error = nullptr);
 
     [[nodiscard]] bool save(const protocol::KvPayload &, protocol::KvResult *,
@@ -298,11 +296,11 @@ private:
     LoadConfig config_;
     llama_model * model_ = nullptr;
     llama_context * ctx_ = nullptr;
-    common_speculative_init_result_ptr mtp_init_;
-    common_speculative_ptr mtp_speculative_;
-    common_context_seq_rm_type target_seq_rm_type_ = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
-    common_context_seq_rm_type draft_seq_rm_type_ = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
-    std::unordered_map<llama_seq_id, common_prompt_checkpoint> physical_checkpoints_;
+    p4_llama_compat::SpeculativeInit mtp_init_;
+    p4_llama_compat::Speculative mtp_speculative_;
+    p4_llama_compat::SeqRemoval target_seq_rm_type_ = p4_llama_compat::SeqRemoval::Partial;
+    p4_llama_compat::SeqRemoval draft_seq_rm_type_ = p4_llama_compat::SeqRemoval::Partial;
+    std::unordered_map<llama_seq_id, p4_llama_compat::PromptCheckpoint> physical_checkpoints_;
     std::unordered_map<llama_seq_id, MtpPhysicalSequence> mtp_sequences_;
     bool backend_initialized_ = false;
     std::unordered_map<std::string, llama_seq_id> sequence_ids_;
@@ -311,7 +309,7 @@ private:
     // detokenisation of what it picked.
     std::uint64_t sampler_chain_nanos_ = 0;
     std::uint64_t detokenize_nanos_ = 0;
-    std::unordered_map<std::string, common_sampler_ptr> samplers_;
+    std::unordered_map<std::string, p4_llama_compat::Sampler> samplers_;
     std::unordered_map<std::string, std::string> sampler_options_;
     // Keep generated token history so detokenization happens over the token
     // stream, not one piece at a time. A single llama token may contain an

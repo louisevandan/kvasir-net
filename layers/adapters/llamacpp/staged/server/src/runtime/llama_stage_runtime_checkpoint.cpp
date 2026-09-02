@@ -29,7 +29,7 @@ bool checkpoint_sequence(
 namespace staged::llama_runtime {
 
 bool StageRuntime::save_checkpoint(const std::string & sequence_id,
-                                   common_prompt_checkpoint * checkpoint,
+                                   p4_llama_compat::PromptCheckpoint * checkpoint,
                                    std::string * error) {
     if (!loaded() || checkpoint == nullptr) {
         return fail("stage runtime is not loaded or checkpoint is null", error);
@@ -43,10 +43,10 @@ bool StageRuntime::save_checkpoint(const std::string & sequence_id,
     const auto pos_min = llama_memory_seq_pos_min(memory, seq);
     const auto pos_max = llama_memory_seq_pos_max(memory, seq);
     checkpoint->clear();
-    checkpoint->update_pos(pos_max >= pos_min ? pos_max - pos_min + 1 : 0,
+    checkpoint->update_positions(pos_max >= pos_min ? pos_max - pos_min + 1 : 0,
                            pos_min, pos_max);
-    checkpoint->update_tgt(ctx_, seq, LLAMA_STATE_SEQ_FLAGS_NONE);
-    if (checkpoint->data_tgt.empty()) {
+    checkpoint->save_target(ctx_, seq, LLAMA_STATE_SEQ_FLAGS_NONE);
+    if (checkpoint->target_state().empty()) {
         return fail("llama native checkpoint is empty", error);
     }
     return true;
@@ -54,9 +54,9 @@ bool StageRuntime::save_checkpoint(const std::string & sequence_id,
 
 bool StageRuntime::restore_checkpoint(
         const std::string & sequence_id,
-        const common_prompt_checkpoint & checkpoint,
+        const p4_llama_compat::PromptCheckpoint & checkpoint,
         std::string * error) {
-    if (!loaded() || checkpoint.data_tgt.empty()) {
+    if (!loaded() || checkpoint.target_state().empty()) {
         return fail("stage runtime is not loaded or checkpoint is empty", error);
     }
     llama_seq_id seq = 0;
@@ -65,16 +65,16 @@ bool StageRuntime::restore_checkpoint(
         return false;
     }
     const auto restored = llama_state_seq_set_data_ext(
-        ctx_, checkpoint.data_tgt.data(), checkpoint.data_tgt.size(), seq,
+        ctx_, checkpoint.target_state().data(), checkpoint.target_state().size(), seq,
         LLAMA_STATE_SEQ_FLAGS_NONE);
-    if (restored != checkpoint.data_tgt.size()) {
+    if (restored != checkpoint.target_state().size()) {
         return fail("llama native checkpoint restore failed", error);
     }
     // State import may enqueue asynchronous device copies. The next decode
     // must observe the restored KV before it starts graph execution.
     llama_synchronize(ctx_);
-    sequence_positions_[sequence_id] = checkpoint.pos_max < 0
-        ? 0U : static_cast<std::uint64_t>(checkpoint.pos_max) + 1U;
+    sequence_positions_[sequence_id] = checkpoint.pos_max() < 0
+        ? 0U : static_cast<std::uint64_t>(checkpoint.pos_max()) + 1U;
     return true;
 }
 

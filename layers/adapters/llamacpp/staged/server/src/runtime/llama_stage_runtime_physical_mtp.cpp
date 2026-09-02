@@ -1,4 +1,7 @@
 #include "llama_stage_runtime.hpp"
+
+// Clones a sampler, which is still llama.cpp's own API.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "compat/p4_llama_compat.hpp"
 #include "llama_stage_runtime_hop_shared.hpp"
 #include "physical_wire.hpp"
@@ -51,8 +54,8 @@ bool StageRuntime::prepare_physical_owners(
         if (first.phase == PhysicalPhase::Verify
             || (first.phase == PhysicalPhase::Replay && config_.layer_begin == 0)) {
             const bool checkpoint = config_.layer_begin == 0
-                || target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL
-                || (target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
+                || target_seq_rm_type_ == p4_llama_compat::SeqRemoval::FullOnly
+                || (target_seq_rm_type_ == p4_llama_compat::SeqRemoval::RecurrentBounded
                     && count - 1 > llama_n_rs_seq(ctx_));
             if (checkpoint) {
                 auto & value = physical_checkpoints_[first.sequence_id];
@@ -60,11 +63,11 @@ bool StageRuntime::prepare_physical_owners(
                 const auto pos_min = llama_memory_seq_pos_min(memory, first.sequence_id);
                 const auto pos_max = llama_memory_seq_pos_max(memory, first.sequence_id);
                 value.clear();
-                value.update_pos(
+                value.update_positions(
                     pos_max >= pos_min ? pos_max - pos_min + 1 : 0, pos_min, pos_max);
-                value.update_tgt(
+                value.save_target(
                     ctx_, first.sequence_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                if (value.data_tgt.empty()) {
+                if (value.target_state().empty()) {
                     return mtp_fail("target checkpoint is empty", error);
                 }
             }
@@ -133,7 +136,7 @@ bool StageRuntime::sample_physical_mtp(
     if (sequence_it == mtp_sequences_.end() || sampler_it == samplers_.end()) {
         return mtp_fail("MTP verification state is missing", error);
     }
-    llama_tokens submitted;
+    std::vector<llama_token> submitted;
     submitted.reserve(end - begin);
     for (auto index = begin; index < end; ++index) {
         submitted.push_back(owners[index].input_token);
@@ -141,12 +144,12 @@ bool StageRuntime::sample_physical_mtp(
     if (sequence_it->second.proposal != submitted || submitted.empty()) {
         return mtp_fail("MTP proposal identity or contents changed in flight", error);
     }
-    llama_tokens draft(submitted.begin() + 1, submitted.end());
+    std::vector<llama_token> draft(submitted.begin() + 1, submitted.end());
     const bool replay = first.phase == PhysicalPhase::Replay;
     const auto n_rollback_max = submitted.size() - 1;
     auto sampler_checkpoint = physical_checkpoints_.find(first.sequence_id)
             != physical_checkpoints_.end()
-        ? common_sampler_ptr(common_sampler_clone(sampler_it->second.get()))
+        ? common_sampler_ptr(common_sampler_clone(p4_llama_compat::raw(sampler_it->second)))
         : common_sampler_ptr{};
     if (!replay && physical_checkpoints_.find(first.sequence_id)
             != physical_checkpoints_.end() && !sampler_checkpoint) {
@@ -158,7 +161,7 @@ bool StageRuntime::sample_physical_mtp(
         logits.push_back(static_cast<std::int32_t>(index));
     }
     auto accepted = common_sampler_sample_and_accept_n(
-        sampler_it->second.get(), ctx_, logits, draft);
+        p4_llama_compat::raw(sampler_it->second), ctx_, logits, draft);
     if (accepted.empty() || accepted.size() > submitted.size()) {
         return mtp_fail("llama.cpp returned an invalid MTP acceptance", error);
     }
@@ -170,8 +173,8 @@ bool StageRuntime::sample_physical_mtp(
     if (n_rollback > n_rollback_max) {
         return mtp_fail("MTP rollback exceeds the submitted draft", error);
     }
-    const bool use_checkpoint = target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_FULL
-        || (target_seq_rm_type_ == COMMON_CONTEXT_SEQ_RM_TYPE_RS
+    const bool use_checkpoint = target_seq_rm_type_ == p4_llama_compat::SeqRemoval::FullOnly
+        || (target_seq_rm_type_ == p4_llama_compat::SeqRemoval::RecurrentBounded
             && n_rollback > llama_n_rs_seq(ctx_));
     const bool checkpoint_replay = !replay && n_rollback > 0 && use_checkpoint;
     if (checkpoint_replay) {
@@ -179,7 +182,7 @@ bool StageRuntime::sample_physical_mtp(
             || !sampler_checkpoint) {
             return mtp_fail("MTP rollback requires a missing checkpoint", error);
         }
-        sampler_it->second = std::move(sampler_checkpoint);
+        p4_llama_compat::adopt(sampler_it->second, std::move(sampler_checkpoint));
         auto & sequence = sequence_it->second;
         sequence.proposal.clear();
         sequence.proposal.push_back(submitted.front());
@@ -199,7 +202,7 @@ bool StageRuntime::sample_physical_mtp(
         return true;
     }
     common_speculative_accept(
-        mtp_speculative_.get(), first.sequence_id,
+        p4_llama_compat::raw(mtp_speculative_), first.sequence_id,
         static_cast<std::uint16_t>(accepted.size() - 1));
     auto & sequence = sequence_it->second;
     if (sequence.pending_proposal.has_value()) {

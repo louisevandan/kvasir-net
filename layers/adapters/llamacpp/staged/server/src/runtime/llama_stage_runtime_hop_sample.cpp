@@ -40,18 +40,18 @@ bool StageRuntime::sample_decode_row(
         if (!apply_request_options(input.options, model_, &sampling, error)) return false;
         common_sampler_ptr sampler(common_sampler_init(model_, sampling));
         if (!sampler) return fail_hop("llama.cpp failed to create staged sampler", error);
-        found = samplers_.emplace(input.sequence_id, std::move(sampler)).first;
+        found = samplers_.emplace(input.sequence_id, p4_llama_compat::make_sampler(std::move(sampler))).first;
         sampler_options_[input.sequence_id] = input.options;
     }
     const auto chain_started = std::chrono::steady_clock::now();
-    const auto sampled = common_sampler_sample(found->second.get(), ctx_, logits_index);
+    const auto sampled = common_sampler_sample(p4_llama_compat::raw(found->second), ctx_, logits_index);
     sampler_chain_nanos_ += static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - chain_started).count());
     if (sampled == LLAMA_TOKEN_NULL) {
         return fail_hop("llama.cpp staged sampler returned no token", error);
     }
-    common_sampler_accept(found->second.get(), sampled, true);
+    common_sampler_accept(p4_llama_compat::raw(found->second), sampled, true);
     const auto *vocab = llama_model_get_vocab(model_);
     if (vocab == nullptr) return fail_hop("llama.cpp did not expose a sampler vocabulary", error);
 

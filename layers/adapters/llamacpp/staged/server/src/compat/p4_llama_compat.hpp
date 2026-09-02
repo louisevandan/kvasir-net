@@ -18,8 +18,10 @@
 #include "ggml-backend.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 #include <vector>
 
 namespace p4_llama_compat {
@@ -131,5 +133,133 @@ std::string token_to_piece(const llama_vocab * vocab, llama_token token, bool sp
 /// its logits are wanted.
 void batch_add(llama_batch & batch, llama_token token, llama_pos pos,
                const std::vector<llama_seq_id> & seq_ids, bool logits);
+
+/// What a context can do when asked to drop part of a sequence.
+///
+/// P4's own, mirroring upstream's four cases. An enum is the one shape worth
+/// mirroring: it is closed, it is small, and a static assertion can hold the
+/// two in agreement - which is not true of a struct with sixty-six fields.
+enum class SeqRemoval {
+    Unsupported,  ///< no memory module; seq_rm is not available at all
+    Partial,      ///< an arbitrary range of a sequence can be dropped
+    FullOnly,     ///< only a whole sequence can be dropped
+    RecurrentBounded,  ///< partial, but bounded by n_rs_seq
+};
+
+/// What this context supports, asked of llama.cpp.
+SeqRemoval sequence_removal(llama_context * context);
+
+/// A prompt checkpoint: the saved state a sequence can be rewound to.
+///
+/// Opaque for the same reason the plan is - it carries serialised context
+/// state whose layout is upstream's business. P4 stores one per sequence and
+/// names only what it does with it.
+class PromptCheckpoint final {
+public:
+    PromptCheckpoint();
+    ~PromptCheckpoint();
+    PromptCheckpoint(PromptCheckpoint &&) noexcept;
+    PromptCheckpoint & operator=(PromptCheckpoint &&) noexcept;
+    PromptCheckpoint(const PromptCheckpoint &) = delete;
+    PromptCheckpoint & operator=(const PromptCheckpoint &) = delete;
+
+    [[nodiscard]] std::int64_t n_tokens() const noexcept;
+    [[nodiscard]] llama_pos pos_max() const noexcept;
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
+    void clear();
+
+    /// The serialised target and draft state. P4 moves these bytes across
+    /// the wire; it does not interpret them.
+    [[nodiscard]] const std::vector<std::uint8_t> & target_state() const noexcept;
+    [[nodiscard]] std::vector<std::uint8_t> & target_state() noexcept;
+    [[nodiscard]] const std::vector<std::uint8_t> & draft_state() const noexcept;
+    [[nodiscard]] std::vector<std::uint8_t> & draft_state() noexcept;
+
+    void update_positions(std::int64_t n_tokens, llama_pos pos_min, llama_pos pos_max);
+    void save_target(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags);
+    void save_draft(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags);
+    void load_target(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags);
+    void load_draft(llama_context * context, llama_seq_id seq_id, llama_state_seq_flags flags);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+public:
+    [[nodiscard]] Impl & impl() noexcept { return *impl_; }
+    [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
+};
+
+/// A sampler, a speculative driver, and the result of initialising one.
+///
+/// Owning handles rather than the upstream smart pointers, so that a header
+/// naming one of these does not name llama.cpp's convenience library. The
+/// underlying pointer is reached through `p4_llama_compat_internal.hpp` by
+/// the files that still call those APIs directly - each such file is a debt
+/// entry, which is the point: the list is the work remaining.
+class Sampler final {
+public:
+    Sampler();
+    ~Sampler();
+    Sampler(Sampler &&) noexcept;
+    Sampler & operator=(Sampler &&) noexcept;
+    Sampler(const Sampler &) = delete;
+    Sampler & operator=(const Sampler &) = delete;
+    [[nodiscard]] bool valid() const noexcept;
+    void reset();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+public:
+    [[nodiscard]] Impl & impl() noexcept { return *impl_; }
+    [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
+};
+
+class Speculative final {
+public:
+    Speculative();
+    ~Speculative();
+    Speculative(Speculative &&) noexcept;
+    Speculative & operator=(Speculative &&) noexcept;
+    Speculative(const Speculative &) = delete;
+    Speculative & operator=(const Speculative &) = delete;
+    [[nodiscard]] bool valid() const noexcept;
+    void reset();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+public:
+    [[nodiscard]] Impl & impl() noexcept { return *impl_; }
+    [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
+};
+
+/// What initialising a speculative driver produced, including the draft
+/// context it owns.
+class SpeculativeInit final {
+public:
+    SpeculativeInit();
+    ~SpeculativeInit();
+    SpeculativeInit(SpeculativeInit &&) noexcept;
+    SpeculativeInit & operator=(SpeculativeInit &&) noexcept;
+    SpeculativeInit(const SpeculativeInit &) = delete;
+    SpeculativeInit & operator=(const SpeculativeInit &) = delete;
+    [[nodiscard]] bool valid() const noexcept;
+    void reset();
+    /// The draft model's context, which P4 measures and drives.
+    [[nodiscard]] llama_context * context() const noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+public:
+    [[nodiscard]] Impl & impl() noexcept { return *impl_; }
+    [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
+};
 
 }  // namespace p4_llama_compat

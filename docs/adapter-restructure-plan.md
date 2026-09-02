@@ -373,9 +373,14 @@ U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서
 | 조각 | 상태 | 근거 |
 | --- | --- | --- |
 | ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
-| ③b llama.cpp `common/` 격리 | **부분** | 계획을 통째로 나르는 `LlamaPlan` facade 도입으로 헤더 1개·구현 14개(2026-09-02). 조사 결과 **CMake만으로는 끝낼 수 없다** — upstream의 `llama-common` 타깃이 자기 디렉터리를 PUBLIC으로 내보내므로, 그 라이브러리를 호출하는 파일이 남아 링크하는 한 include 경로도 따라온다. 즉 **include와 link는 함께 끝난다**: 마지막 `common_*` 호출이 facade로 옮겨갈 때. P4가 그 경로를 한 번 더 얹던 중복 부여는 제거했다 |
+| ③b llama.cpp `common/` 격리 | **중간 게이트 통과** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm을 모두 P4 소유 핸들로 감쌌고, 이제 헤더가 `common/`을 포함하면 게이트가 **실패**한다(실제로 넣어 확인). 구현 17개는 남아 있고 이것이 종착점이다 — upstream의 `llama-common` 타깃이 자기 디렉터리를 PUBLIC으로 내보내므로, 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다. **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다** |
 
-**③b 잔여 작업의 실측 크기** (2026-09-02): 남은 `common_*` 호출은 고유 25개이고
+**③b 잔여 작업의 실측 크기** (2026-09-02 갱신): tokenize 계열 5개는 facade로 옮겼고,
+남은 것은 sampler 9개·speculative 9개다. 이 둘은 실제 서브시스템이라 facade가
+수명주기를 소유해야 하고, 지금은 핸들(`Sampler`·`Speculative`·`SpeculativeInit`)이
+소유권만 가져간 상태 — 호출 자체는 아직 구현 파일에 있다. 그 호출이 옮겨갈 때
+구현 부채와 링크가 함께 사라진다.
+
 세 계열로 갈린다 — tokenize 계열 5개(`common_tokenize`·`common_detokenize`·
 `common_token_to_piece`·`common_batch_add`, 공개 `llama.h`의 얇은 편의 래퍼),
 sampler 계열 9개, speculative 계열 9개. 앞의 계열은 감싸는 대신 공개 API를

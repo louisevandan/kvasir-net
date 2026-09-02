@@ -1,4 +1,7 @@
 #include "request_options.hpp"
+
+// Still calls llama.cpp's sampler or speculative API directly.
+#include "compat/p4_llama_compat_internal.hpp"
 #include "compat/p4_llama_compat.hpp"
 
 #include <algorithm>
