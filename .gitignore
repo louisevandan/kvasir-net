@@ -1,4 +1,59 @@
+# Build output. The Rust target directory also holds the four-node harness's
+# run artefacts (target/p4-4node/runs), which are per-run evidence: they belong
+# to the machine that produced them, not to the repository.
 /target/
+/.cache/
+**/build/
+**/cmake-build-*/
+**/CMakeFiles/
+CMakeCache.txt
 
 # The pinned llama.cpp checkout is fetched, not vendored.
 layers/adapters/llamacpp/upstream/
+
+# Compiled and linked artefacts, wherever they land. Nothing built belongs in
+# the tree: a binary in git is a binary nobody can attribute to a source state.
+*.exe
+*.dll
+*.lib
+*.exp
+*.ilk
+*.pdb
+*.obj
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.node
+*.wasm
+*.class
+*.jar
+*.rlib
+*.rmeta
+
+# Test and run output. Plans and reports that are written deliberately are
+# tracked; what a run leaves behind is not.
+*.log
+*.tmp
+tmp_*/
+/test/**/runs/
+/test/**/output/
+**/*.rej
+**/*.orig
+
+# Package manager and tooling caches.
+node_modules/
+.pnpm-store/
+.turbo/
+__pycache__/
+*.pyc
+
+# Editor and OS noise.
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
