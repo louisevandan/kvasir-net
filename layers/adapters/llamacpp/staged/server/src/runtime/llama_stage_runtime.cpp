@@ -1,8 +1,5 @@
 #include "llama_stage_runtime.hpp"
 
-// The sampler and speculative APIs still take the struct, so this file is
-// one of the runtime's remaining common/ debt entries.
-#include "compat/p4_llama_compat_internal.hpp"
 #include "ggml-backend.h"
 
 #include <cstdio>
@@ -47,17 +44,10 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
         config.layer_end <= config.layer_begin) {
         return fail("invalid stage load configuration", error);
     }
-    const bool mtp_requested = std::find(
-        p4_llama_compat::plan_params(params).speculative.types.begin(), p4_llama_compat::plan_params(params).speculative.types.end(),
-        COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != p4_llama_compat::plan_params(params).speculative.types.end();
-    const bool unsupported_speculative = p4_llama_compat::plan_params(params).speculative.has_dft() || std::any_of(
-            p4_llama_compat::plan_params(params).speculative.types.begin(), p4_llama_compat::plan_params(params).speculative.types.end(),
-            [](const common_speculative_type type) {
-                return type != COMMON_SPECULATIVE_TYPE_NONE
-                    && type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
-            });
+    const bool mtp_requested = params.requests_draft_mtp();
+    const bool unsupported_speculative = params.requests_unsupported_speculative();
     if (unsupported_speculative) {
-        if (p4_llama_compat::plan_params(params).speculative.has_dft()) {
+        if (params.has_speculative_model()) {
             return fail("CAPABILITY_UNAVAILABLE: "
                         "draft_context_and_proposal_state_not_in_hop", error);
         }
@@ -69,7 +59,7 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
     sequence_ids_.clear();
     sequence_positions_.clear();
     next_sequence_id_ = 0;
-    p4_llama_compat::plan_params(params_).model.path = config_.model_path;
+    params_.set_model_path(config_.model_path);
 
     llama_backend_init();
     // Backend discovery is deliberately delegated to stock ggml. The stage
@@ -95,7 +85,7 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
     model_params.linkcpp_stage_executor_user_data = this;
     model_params.linkcpp_state_executor = &StageRuntime::state_executor;
     model_params.linkcpp_state_executor_user_data = this;
-    model_ = llama_model_load_from_file(p4_llama_compat::plan_params(params_).model.path.c_str(), model_params);
+    model_ = llama_model_load_from_file(params_.model_path().c_str(), model_params);
     if (model_ == nullptr) {
         return fail("llama.cpp failed to load the staged model", error);
     }
@@ -116,18 +106,11 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
     // The tail owns the stock llama.cpp MTP context and speculative driver.
     // Non-tail stages never load auxiliary MTP tensors or interpret proposals.
     if (mtp_requested && tail_stage_) {
-        auto mtp_params = common_base_params_to_speculative(p4_llama_compat::plan_params(params_));
-        p4_llama_compat::adopt(mtp_init_, common_speculative_init_from_params(mtp_params, model_, ctx_));
-        if (!mtp_init_.valid() || mtp_init_.context() == nullptr) {
-            return fail("llama.cpp failed to create the staged MTP context", error);
-        }
-        p4_llama_compat::plan_params(params_).speculative.draft.ctx_tgt = ctx_;
-        p4_llama_compat::plan_params(params_).speculative.draft.ctx_dft = mtp_init_.context();
-        p4_llama_compat::adopt(mtp_speculative_, common_speculative_ptr(common_speculative_init(
-            p4_llama_compat::plan_params(params_).speculative, llama_n_seq_max(ctx_))));
-        if (!mtp_speculative_.valid()) {
-            return fail("llama.cpp failed to initialize the staged MTP driver", error);
-        }
+        auto setup = p4_llama_compat::bring_up_speculative(
+            params_, model_, ctx_, llama_n_seq_max(ctx_));
+        if (!setup.failure.empty()) return fail(setup.failure.c_str(), error);
+        mtp_init_ = std::move(setup.init);
+        mtp_speculative_ = std::move(setup.driver);
         draft_seq_rm_type_ = llama_n_rs_seq(mtp_init_.context()) > 0
             ? p4_llama_compat::SeqRemoval::RecurrentBounded
             : ((llama_model_is_recurrent(model_)

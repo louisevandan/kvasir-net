@@ -1,7 +1,5 @@
 #include "llama_stage_runtime.hpp"
 
-// The sampler and speculative APIs still take llama.cpp's struct.
-#include "compat/p4_llama_compat_internal.hpp"
 #include "physical_wire.hpp"
 #include "request_options.hpp"
 

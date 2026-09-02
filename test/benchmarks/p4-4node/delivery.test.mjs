@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkDelivery, discards } from "./delivery.mjs";
+import { checkDelivery, discards, recordChannelFailures } from "./delivery.mjs";
 
 const target = 'OuterEndpoint { channel: "p4-4node-mixed" }';
 
@@ -56,4 +56,21 @@ test("a clean run reports both losses as zero", () => {
   assert.equal(result.passed, true);
   assert.equal(result.abandoned, 0);
   assert.equal(result.write_failures, 0);
+});
+
+test("a dead record channel is reported, not counted as clean", () => {
+  // With no records written every count is zero for the wrong reason, so the
+  // adapter says so on stderr and the run reads that instead.
+  const log = [
+    "some stage output",
+    "P4_RECORD_CHANNEL_FAILED reason=write error=disk full",
+    "P4_SESSION_KEY_ADMITTED request=req key=k",
+  ].join("\n");
+  assert.deepEqual(recordChannelFailures(log), [
+    "P4_RECORD_CHANNEL_FAILED reason=write error=disk full",
+  ]);
+});
+
+test("a healthy channel reports nothing", () => {
+  assert.deepEqual(recordChannelFailures("P4_SESSION_KEY_ADMITTED request=req key=k"), []);
 });

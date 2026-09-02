@@ -127,6 +127,12 @@ public:
     /// asked here rather than by walking a vector of upstream enums.
     [[nodiscard]] bool requests_draft_mtp() const noexcept;
 
+    /// Whether the plan asks for a speculative method this stage server does
+    /// not implement. Asked here so the set of methods P4 supports is stated
+    /// in one place, rather than as a walk over upstream's enum at the call
+    /// site - which is how a new enumerator becomes silently supported.
+    [[nodiscard]] bool requests_unsupported_speculative() const noexcept;
+
     /// Whether a draft model was asked for at all.
     [[nodiscard]] bool has_speculative_model() const noexcept;
 
@@ -374,5 +380,23 @@ public:
 /// 2026-09-02, when `CUDA[CUDA0];CPU[CPU]` reached the adapter as
 /// `CUDA[CUDA0]` and the CPU registry became a nameless capability.
 std::string backend_inventory();
+
+/// What bringing up a draft model produced.
+struct SpeculativeSetup final {
+    SpeculativeInit init;
+    Speculative driver;
+    /// Empty when it came up; otherwise why it did not.
+    std::string failure;
+};
+
+/// Brings up the draft model and its speculative driver for this plan.
+///
+/// The whole sequence lives here because every step of it is llama.cpp's:
+/// deriving the draft plan from the target's, creating the draft context,
+/// writing the two contexts back into the plan, and initialising the driver
+/// over the result. Leaving any of it outside meant an upstream change to
+/// the speculative structures still reached the runtime.
+[[nodiscard]] SpeculativeSetup bring_up_speculative(
+    LlamaPlan & plan, llama_model * model, llama_context * context, std::uint32_t sequences);
 
 }  // namespace p4_llama_compat

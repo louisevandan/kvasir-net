@@ -1,7 +1,5 @@
 #include "llama_stage_runtime.hpp"
 
-// Clones a sampler, which is still llama.cpp's own API.
-#include "compat/p4_llama_compat_internal.hpp"
 #include "compat/p4_llama_compat.hpp"
 #include "llama_stage_runtime_hop_shared.hpp"
 #include "physical_wire.hpp"

@@ -44,6 +44,19 @@ export function discards(agentLog) {
 /// the relay discarded, `abandoned` what a failed socket write took with it,
 /// and `uncounted` covers an agent too old to count - still a failure, just
 /// one whose size is only a line tally.
+/// The adapter announces a failed record write on stderr, because the file
+/// it would otherwise use is the thing that failed. A run whose evidence
+/// channel died must not read as a run that lost nothing: with no records
+/// written, every count here is zero for the wrong reason.
+const CHANNEL_FAILED = /^P4_RECORD_CHANNEL_FAILED /;
+
+export function recordChannelFailures(agentLog) {
+  return agentLog
+    .split(/\r?\n/)
+    .filter((line) => CHANNEL_FAILED.test(line.trim()))
+    .slice(0, 5);
+}
+
 export function checkDelivery(records) {
   const { totals, uncounted } = discards(records);
   const counted = [...totals.values()].reduce((sum, value) => sum + value, 0);

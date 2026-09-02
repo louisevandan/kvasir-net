@@ -106,6 +106,18 @@ bool LlamaPlan::requests_draft_mtp() const noexcept {
         != types.end();
 }
 
+bool LlamaPlan::requests_unsupported_speculative() const noexcept {
+    const auto & speculative = impl_->params.speculative;
+    if (speculative.has_dft()) return true;
+    return std::any_of(
+        speculative.types.begin(), speculative.types.end(),
+        [](const common_speculative_type type) {
+            // Draft-MTP is the one this stage server implements.
+            return type != COMMON_SPECULATIVE_TYPE_NONE
+                && type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
+        });
+}
+
 bool LlamaPlan::has_speculative_model() const noexcept {
     // Upstream owns the answer to "is there a draft model"; asking the field
     // directly is how a rename becomes our problem.
@@ -383,6 +395,29 @@ std::string backend_inventory() {
         inventory += entry;
     }
     return inventory;
+}
+
+SpeculativeSetup bring_up_speculative(
+        LlamaPlan & plan, llama_model * model, llama_context * context,
+        std::uint32_t sequences) {
+    SpeculativeSetup setup;
+    auto & params = plan.impl().params;
+    auto draft_params = common_base_params_to_speculative(params);
+    adopt(setup.init, common_speculative_init_from_params(draft_params, model, context));
+    if (!setup.init.valid() || setup.init.context() == nullptr) {
+        setup.failure = "llama.cpp failed to create the staged MTP context";
+        return setup;
+    }
+    // The driver reads both contexts out of the plan, so they are written
+    // back before it is created.
+    params.speculative.draft.ctx_tgt = context;
+    params.speculative.draft.ctx_dft = setup.init.context();
+    adopt(setup.driver,
+          common_speculative_ptr(common_speculative_init(params.speculative, sequences)));
+    if (!setup.driver.valid()) {
+        setup.failure = "llama.cpp failed to initialize the staged MTP driver";
+    }
+    return setup;
 }
 
 }  // namespace p4_llama_compat

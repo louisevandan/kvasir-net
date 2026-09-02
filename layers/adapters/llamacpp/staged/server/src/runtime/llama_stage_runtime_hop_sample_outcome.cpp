@@ -10,8 +10,6 @@
 
 #include "llama_stage_runtime_hop_shared.hpp"
 
-// The sampler and speculative APIs still take llama.cpp's struct.
-#include "compat/p4_llama_compat_internal.hpp"
 #include "request_options.hpp"
 #include "request_stops.hpp"
 

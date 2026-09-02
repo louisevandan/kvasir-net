@@ -1,7 +1,5 @@
 #include "llama_stage_runtime.hpp"
 
-// Still calls llama.cpp's sampler or speculative API directly.
-#include "compat/p4_llama_compat_internal.hpp"
 #include "physical_wire.hpp"
 
 #include <algorithm>

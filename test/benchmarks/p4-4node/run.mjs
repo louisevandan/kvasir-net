@@ -22,13 +22,13 @@ import {
   newRunId,
   promoteRun,
 } from "./evidence.mjs";
-import { beginFence, endFence, fencedRecords } from "./fence.mjs";
-import { checkDelivery } from "./delivery.mjs";
+import { fencedRecords } from "./fence.mjs";
+import { checkDelivery, recordChannelFailures } from "./delivery.mjs";
 import { checkSessionKeys } from "./session-key.mjs";
 import {
   fetchRemoteAgentLog,
   fetchRemoteRecord,
-  appendRemoteFence,
+  remoteRecordLength,
   openTunnel,
   proveTunnelIdentity,
   remoteImageDigests,
@@ -146,7 +146,8 @@ async function main() {
   let driveOutput = { stdout: "", stderr: "" };
   let agentLog = "";
   let record = "";
-  let fenced = false;
+  let recordFrom = 0;
+  let recordTo = 0;
   let agentLogFrom = 0;
   let failure;
 
@@ -170,8 +171,7 @@ async function main() {
       agentLogFrom = remoteAgentLogLength(spec.tunnel);
       // Marks this run in the record file instead of computing an offset:
       // an offset still returns the whole file when the run wrote nothing.
-      appendRemoteFence(spec.tunnel, beginFence(runId));
-      fenced = true;
+      recordFrom = remoteRecordLength(spec.tunnel);
       // Hashed on the far side, so the evidence names what ran rather than
       // what this machine happens to have built, and carries the launcher
       // the agent's policy knobs live in.
@@ -209,9 +209,11 @@ async function main() {
     // Evidence comes from the record file, which has one writer. The agent
     // log is kept for what it is good for - reading what happened - and is
     // not what the verdict rests on.
-    if (fenced) appendRemoteFence(spec.tunnel, endFence(runId));
+    if (spec.target === "remote" && spec.tunnel) {
+      recordTo = remoteRecordLength(spec.tunnel);
+    }
     record = spec.target === "remote" && spec.tunnel
-      ? fetchRemoteRecord(spec.tunnel)
+      ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom })
       : agentOutput.stderr;
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
     fs.writeFileSync(path.join(outDir, "agent.record.log"), record, "utf8");
@@ -254,10 +256,13 @@ async function main() {
   // Only what this run wrote counts. A file that cannot be cut at this run's
   // fences is not thin evidence, it is somebody else's.
   const fence = spec.target === "remote"
-    ? fencedRecords(record, runId)
+    ? fencedRecords(record, recordFrom, recordTo)
     : { ok: true, records: record.split(/\r?\n/), reason: "" };
   const mine = fence.records.join("\n");
   const delivery = checkDelivery(mine);
+  // A dead record channel makes every count above zero for the wrong reason,
+  // and it says so on the one channel still working.
+  const channelFailures = recordChannelFailures(agentLog);
   const sessionKeys = checkSessionKeys(
     JSON.parse(fs.readFileSync(configPath, "utf8")),
     artifact.requests.map((request) => request.request_id),
@@ -283,6 +288,7 @@ async function main() {
     meaning: { passed: verdict.passed, meaningful: verdict.meaningful, total: verdict.total },
     session_keys: sessionKeys,
     delivery,
+    record_channel_failures: channelFailures,
     records: { fenced: fence.ok, reason: fence.reason, lines: fence.records.length },
     metrics: metrics(artifact),
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
@@ -296,7 +302,7 @@ async function main() {
   process.stdout.write(`evidence: ${promoted.directory ?? run.final}\n`);
 
   if (!artifact.passed || !verdict.passed || !sessionKeys.passed
-    || !delivery.passed || !build.ok || !fence.ok) {
+    || !delivery.passed || !build.ok || !fence.ok || channelFailures.length > 0) {
     process.stderr.write("P4_4NODE_NOT_ACCEPTED\n");
     process.exitCode = 1;
   }

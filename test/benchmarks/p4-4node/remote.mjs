@@ -204,30 +204,27 @@ export function remoteAgentLogLength({ host, remotePort, root }) {
 }
 
 /// The agent's record file: the evidence channel, with no other writers.
-export function fetchRemoteRecord({ host, remotePort, root }) {
-  return readRemoteFile(host, recordPath(root, remotePort), 0);
+export function fetchRemoteRecord({ host, remotePort, root, fromByte = 0 }) {
+  return readRemoteFile(host, recordPath(root, remotePort), fromByte);
 }
 
-/// Writes one fence line into the record file.
+/// The record file's length right now.
 ///
-/// The harness marks its own run rather than computing an offset: reading
-/// "from byte N" still returns the whole file when the run wrote nothing,
-/// which is the failure being investigated. Append mode is what keeps this
-/// from tearing the agent's concurrent writes.
-export function appendRemoteFence({ host, remotePort, root }, line) {
-  const { status, out } = remotePowerShell(host, [
-    `$p = '${recordPath(root, remotePort)}'`,
-    "try {",
-    "  $s = [System.IO.File]::Open($p, 'Append', 'Write', 'ReadWrite')",
-    "  $w = New-Object System.IO.StreamWriter($s)",
-    `  $w.WriteLine('${line}')`,
-    "  $w.Close(); $s.Close()",
-    "  Write-Output 'P4_FENCE_OK'",
-    "} catch { Write-Output ('P4_FENCE_ERROR ' + $_.Exception.Message) }",
-  ].join("\n"), 60_000);
-  if (status !== 0 || !out.includes("P4_FENCE_OK")) {
-    throw new Error(`could not fence the record file: ${out.slice(0, 200) || "no output"}`);
+/// The harness marks a run by taking this before the drive starts and again
+/// after it ends: the run's records are exactly the bytes between. Writing a
+/// fence into the file itself would have made the harness a second writer of
+/// a file declared to have one, and nothing orders an external append against
+/// the agent's own.
+export function remoteRecordLength({ host, remotePort, root }) {
+  const { status, out } = remotePowerShell(host,
+    `$p = '${recordPath(root, remotePort)}';`
+    + " if (Test-Path -LiteralPath $p) { Write-Output ((Get-Item -LiteralPath $p).Length) }"
+    + " else { Write-Output 0 }");
+  const value = Number(out.trim());
+  if (status !== 0 || out.trim() === "" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`could not measure the remote record file: ${out.slice(0, 200) || "no output"}`);
   }
+  return value;
 }
 
 function recordPath(root, remotePort) {

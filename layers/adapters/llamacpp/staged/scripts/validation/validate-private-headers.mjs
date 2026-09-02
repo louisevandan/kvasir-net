@@ -66,15 +66,8 @@ export const UNSTABLE_HEADER_DEBT = [
 /// Implementation files that still name it directly.
 export const UNSTABLE_SOURCE_DEBT = [
   "runtime/llama_stage_mtp_ownership_test.cpp",
-  "runtime/llama_stage_runtime.cpp",
   "runtime/llama_stage_runtime_compile_test.cpp",
-  "runtime/llama_stage_runtime_hop_sample.cpp",
-  "runtime/llama_stage_runtime_hop_sample_outcome.cpp",
   "runtime/llama_stage_runtime_mtp.cpp",
-  "runtime/llama_stage_runtime_physical_mtp.cpp",
-  "runtime/llama_stage_runtime_physical_mtp_draft.cpp",
-  "runtime/llama_stage_runtime_physical_mtp_process.cpp",
-  "runtime/llama_stage_runtime_physical_sample.cpp",
   "runtime/request_options.cpp",
   "runtime/request_options_grammar.cpp",
   "runtime/request_options_test.cpp",
