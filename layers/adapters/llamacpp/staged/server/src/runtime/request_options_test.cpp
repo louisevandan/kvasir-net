@@ -149,9 +149,9 @@ int main() {
     llama_token preserved_token = LLAMA_TOKEN_NULL;
     std::string preserved_piece;
     for (llama_token token = 0; token < llama_vocab_n_tokens(vocab); ++token) {
-        const auto piece = common_token_to_piece(vocab, token, true);
+        const auto piece = p4_llama_compat::token_to_piece(vocab, token, true);
         if (piece.empty()) continue;
-        if (common_tokenize(vocab, piece, false, true).size() == 1) {
+        if (p4_llama_compat::tokenize(vocab, piece, false, true).size() == 1) {
             preserved_token = token;
             preserved_piece = piece;
             break;
@@ -202,7 +202,7 @@ int main() {
     const auto reasoning = decode_request(
         runtime, "request-options-reasoning", reasoning_options,
         *reasoning_prefill.n_tokens + 1, &error);
-    const auto expected_forced = common_tokenize(
+    const auto expected_forced = p4_llama_compat::tokenize(
         llama_model_get_vocab(runtime.model()), "</think>", false, true);
     assert(!expected_forced.empty());
     std::cerr << "REQUEST_OPTIONS_REASONING_BUDGET0 forced="

@@ -3,7 +3,6 @@
 #include "ggml-backend.h"
 #include "llama-cpp.h"
 #include "compat/p4_llama_compat.hpp"
-#include "speculative.h"
 
 #include <algorithm>
 #include <exception>

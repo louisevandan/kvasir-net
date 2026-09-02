@@ -1,4 +1,5 @@
 #include "request_options.hpp"
+#include "compat/p4_llama_compat.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -84,7 +85,7 @@ bool append_token_bias(const json & token_value, float bias,
         return true;
     }
     if (token_value.is_string()) {
-        for (const auto token : common_tokenize(
+        for (const auto token : p4_llama_compat::tokenize(
                  vocab, token_value.get<std::string>(), false)) {
             output->push_back({token, bias});
         }
@@ -305,7 +306,7 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
             if (!value.is_string() || value.get<std::string>().empty()) {
                 return fail(error, "reasoning_budget_start_tag must be a non-empty string");
             }
-            sampling->reasoning_budget_start = common_tokenize(
+            sampling->reasoning_budget_start = p4_llama_compat::tokenize(
                 vocab, value.get<std::string>(), false, true);
             reasoning_fields_seen = true;
         } else if (key == "reasoning_budget_end_tags" || key == "reasoning_budget_end_tag") {
@@ -314,7 +315,7 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
                 if (!value.is_string() || value.get<std::string>().empty()) {
                     return fail(error, "reasoning_budget_end_tag must be a non-empty string");
                 }
-                sampling->reasoning_budget_end.push_back(common_tokenize(
+                sampling->reasoning_budget_end.push_back(p4_llama_compat::tokenize(
                     vocab, value.get<std::string>(), false, true));
             } else {
                 if (!value.is_array()) return fail(error, "reasoning_budget_end_tags must be an array");
@@ -322,7 +323,7 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
                     if (!tag.is_string() || tag.get<std::string>().empty()) {
                         return fail(error, "reasoning_budget_end_tags must contain non-empty strings");
                     }
-                    sampling->reasoning_budget_end.push_back(common_tokenize(
+                    sampling->reasoning_budget_end.push_back(p4_llama_compat::tokenize(
                         vocab, tag.get<std::string>(), false, true));
                 }
             }
@@ -346,7 +347,7 @@ bool apply_request_options(const std::string & raw, const llama_model * model,
         }
         sampling->reasoning_budget_forced = sampling->reasoning_budget_end.front();
         if (!sampling->reasoning_budget_message.empty()) {
-            const auto message_tokens = common_tokenize(
+            const auto message_tokens = p4_llama_compat::tokenize(
                 vocab, sampling->reasoning_budget_message, false, true);
             sampling->reasoning_budget_forced.insert(
                 sampling->reasoning_budget_forced.begin(),

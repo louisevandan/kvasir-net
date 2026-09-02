@@ -1,4 +1,5 @@
 #include "request_options_grammar.hpp"
+#include "compat/p4_llama_compat.hpp"
 
 // The convenience library stays in the translation unit that needs it. Its
 // header no longer forces it on everything downstream (U0 3b).
@@ -36,7 +37,7 @@ bool parse_preserved_tokens(const json & value, const llama_vocab * vocab,
         if (!item.is_string()) {
             return fail(error, "preserved_tokens must contain strings");
         }
-        const auto ids = common_tokenize(vocab, item.get<std::string>(), false, true);
+        const auto ids = p4_llama_compat::tokenize(vocab, item.get<std::string>(), false, true);
         if (ids.size() != 1) {
             return fail(error, "each preserved_tokens entry must encode to one token");
         }
@@ -77,7 +78,7 @@ bool parse_grammar_triggers(const json & value, const llama_vocab * vocab,
         }
         if (trigger.value.empty()) return fail(error, "grammar trigger value is empty");
         if (trigger.type == COMMON_GRAMMAR_TRIGGER_TYPE_WORD) {
-            const auto ids = common_tokenize(vocab, trigger.value, false, true);
+            const auto ids = p4_llama_compat::tokenize(vocab, trigger.value, false, true);
             if (ids.size() == 1) {
                 if (preserved.find(ids.front()) == preserved.end()) {
                     return fail(error, "grammar word trigger must be preserved_tokens");

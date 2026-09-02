@@ -1,6 +1,7 @@
 #include "p4_llama_compat.hpp"
 
 #include <algorithm>
+#include <vector>
 #include "p4_llama_compat_internal.hpp"
 
 // The one permitted crossing. See the header for why it is only here.
@@ -91,5 +92,24 @@ bool LlamaPlan::has_speculative_model() const noexcept {
 /// the public one stays free of the type; every use is a debt entry.
 common_params & plan_params(LlamaPlan & plan) { return plan.impl().params; }
 const common_params & plan_params(const LlamaPlan & plan) { return plan.impl().params; }
+
+std::vector<llama_token> tokenize(const llama_vocab * vocab, const std::string & text,
+                                  bool add_special, bool parse_special) {
+    return common_tokenize(vocab, text, add_special, parse_special);
+}
+
+std::string detokenize(const llama_vocab * vocab, const std::vector<llama_token> & tokens,
+                       bool special) {
+    return common_detokenize(vocab, tokens, special);
+}
+
+std::string token_to_piece(const llama_vocab * vocab, llama_token token, bool special) {
+    return common_token_to_piece(vocab, token, special);
+}
+
+void batch_add(llama_batch & batch, llama_token token, llama_pos pos,
+               const std::vector<llama_seq_id> & seq_ids, bool logits) {
+    common_batch_add(batch, token, pos, seq_ids, logits);
+}
 
 }  // namespace p4_llama_compat

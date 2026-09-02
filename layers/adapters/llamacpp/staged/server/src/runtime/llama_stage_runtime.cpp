@@ -24,7 +24,7 @@ bool StageRuntime::tokenize_prompt(
         if (error != nullptr) *error = "invalid first-stage tokenize request";
         return false;
     }
-    const auto values = common_tokenize(
+    const auto values = p4_llama_compat::tokenize(
         llama_model_get_vocab(model_), prompt, true, true);
     if (values.empty()) {
         if (error != nullptr) *error = "llama.cpp produced an empty prompt";

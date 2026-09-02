@@ -1,4 +1,5 @@
 #include "llama_stage_runtime.hpp"
+#include "compat/p4_llama_compat.hpp"
 #include "llama_stage_runtime_hop_shared.hpp"
 #include "physical_wire.hpp"
 #include "request_stops.hpp"
@@ -87,7 +88,7 @@ bool StageRuntime::format_generated_token(
     generated->position = position;
     const bool eog = llama_vocab_is_eog(vocab, token);
     auto & pending = pending_texts_[owner.sequence_key];
-    if (!eog) pending += common_token_to_piece(vocab, token, false);
+    if (!eog) pending += p4_llama_compat::token_to_piece(vocab, token, false);
     std::vector<std::string> stops;
     if (!parse_request_stops(owner.options, &stops, error)) return false;
     const auto filtered = filter_request_stops(

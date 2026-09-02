@@ -1,11 +1,13 @@
 #include "request_stops.hpp"
 
+// string_find_partial_stop lives in the convenience library, which exports
+// more than the common_ prefix - the reason this file is still debt.
+#include "common.h"
+
 #include <algorithm>
 #include <limits>
 
 #include <nlohmann/json.hpp>
-
-#include "common.h"
 
 namespace staged::llama_runtime {
 

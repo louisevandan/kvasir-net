@@ -52,7 +52,7 @@ bool StageRuntime::execute_mtp_hop(
         return mtp_fail("llama.cpp failed to allocate MTP prefill batch", error);
     }
     for (int32_t i = 0; i < n_past; ++i) {
-        common_batch_add(prefill, all_tokens[static_cast<std::size_t>(i)], i,
+        p4_llama_compat::batch_add(prefill, all_tokens[static_cast<std::size_t>(i)], i,
                          {seq_id}, true);
     }
     std::cerr << "MTP_TEST prefill_decode\n";
@@ -121,9 +121,9 @@ bool StageRuntime::execute_mtp_hop(
         llama_batch_free(verify);
         return mtp_fail("llama.cpp failed to allocate MTP verify batch", error);
     }
-    common_batch_add(verify, id_last, n_past, {seq_id}, true);
+    p4_llama_compat::batch_add(verify, id_last, n_past, {seq_id}, true);
     for (std::size_t i = 0; i < draft.size(); ++i) {
-        common_batch_add(verify, draft[i], n_past + static_cast<int32_t>(i) + 1,
+        p4_llama_compat::batch_add(verify, draft[i], n_past + static_cast<int32_t>(i) + 1,
                          {seq_id}, true);
     }
     std::cerr << "MTP_TEST verify_decode\n";

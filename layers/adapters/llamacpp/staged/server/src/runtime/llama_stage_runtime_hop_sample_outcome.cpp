@@ -85,7 +85,7 @@ bool StageRuntime::sample_hop_outcome(
     if (!end_of_generation) {
         auto & generated = sampled_tokens_[input.sequence_id];
         generated.push_back(sampled);
-        const auto detokenized = common_detokenize(vocab, generated, false);
+        const auto detokenized = p4_llama_compat::detokenize(vocab, generated, false);
         auto & emitted = sampled_texts_[input.sequence_id];
         std::vector<std::string> stops;
         if (!parse_request_stops(input.options, &stops, error)) return false;
@@ -102,7 +102,7 @@ bool StageRuntime::sample_hop_outcome(
         emitted += metadata.text;
         if (filtered.stopped) metadata.stop = "stop";
     } else {
-        const auto detokenized = common_detokenize(
+        const auto detokenized = p4_llama_compat::detokenize(
             vocab, sampled_tokens_[input.sequence_id], false);
         auto & emitted = sampled_texts_[input.sequence_id];
         std::vector<std::string> stops;

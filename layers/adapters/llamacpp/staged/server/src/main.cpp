@@ -24,7 +24,6 @@
 #include <vector>
 
 #ifdef P4_STAGED_WITH_LLAMA
-#include "arg.h"
 #include "llama_stage_runtime.hpp"
 #endif
 

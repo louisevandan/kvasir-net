@@ -1,4 +1,5 @@
 #include "llama_stage_runtime.hpp"
+#include "compat/p4_llama_compat.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -56,7 +57,7 @@ bool StageRuntime::execute_hop(const protocol::SequencePayload & input,
         if (vocab == nullptr) {
             return fail_hop("llama.cpp did not expose a tokenizer vocabulary", error);
         }
-        input_tokens = common_tokenize(vocab, *input.prompt, true, true);
+        input_tokens = p4_llama_compat::tokenize(vocab, *input.prompt, true, true);
         if (input_tokens.empty()) {
             return fail_hop("llama.cpp tokenizer produced no input tokens", error);
         }

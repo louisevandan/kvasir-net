@@ -373,7 +373,19 @@ U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서
 | 조각 | 상태 | 근거 |
 | --- | --- | --- |
 | ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
-| ③b llama.cpp `common/` 격리 | **미성립** | 런타임 공개 헤더가 `common_params`를 값으로 받고 `common_prompt_checkpoint`·`common_speculative_ptr`를 멤버로 보유. 헤더 3개·구현 6개가 `common/`에 의존한다(2026-09-02). 게이트는 헤더를 0으로 몰고 구현 목록의 증가를 막지만, **CMake의 `common` include 경로가 아직 PUBLIC**이라 컴파일러는 아무것도 강제하지 않는다 |
+| ③b llama.cpp `common/` 격리 | **부분** | 계획을 통째로 나르는 `LlamaPlan` facade 도입으로 헤더 1개·구현 14개(2026-09-02). 조사 결과 **CMake만으로는 끝낼 수 없다** — upstream의 `llama-common` 타깃이 자기 디렉터리를 PUBLIC으로 내보내므로, 그 라이브러리를 호출하는 파일이 남아 링크하는 한 include 경로도 따라온다. 즉 **include와 link는 함께 끝난다**: 마지막 `common_*` 호출이 facade로 옮겨갈 때. P4가 그 경로를 한 번 더 얹던 중복 부여는 제거했다 |
+
+**③b 잔여 작업의 실측 크기** (2026-09-02): 남은 `common_*` 호출은 고유 25개이고
+세 계열로 갈린다 — tokenize 계열 5개(`common_tokenize`·`common_detokenize`·
+`common_token_to_piece`·`common_batch_add`, 공개 `llama.h`의 얇은 편의 래퍼),
+sampler 계열 9개, speculative 계열 9개. 앞의 계열은 감싸는 대신 공개 API를
+직접 부르면 의존이 **이동이 아니라 소멸**한다. 뒤의 두 계열은 실제 서브시스템이라
+facade가 그 수명주기를 소유해야 한다.
+
+조사 자체도 한 번 반증됐다. `common_*` 접두만 세었더니 `string_find_partial_stop`
+같은 심볼을 놓쳤고, include를 지우자 컴파일러가 그것을 알려 주었다. 편의
+라이브러리의 표면은 접두사로 정의되지 않는다.
+
 | ③c P4 소유 versioned stage ABI | 미착수 | — |
 | ② `patch_set` 왕복 | 성립 | prepare 스탬프 → CMake → HELLO → loaded 텔레메트리 → OUTER, 실행 산출물에 기록 |
 | ② 스테이지 불일치 거부 | 성립 | 상이 patch-set 거부 + 빌드를 못 대는 스테이지 거부(fail-closed, 명시 환경변수로만 우회) |

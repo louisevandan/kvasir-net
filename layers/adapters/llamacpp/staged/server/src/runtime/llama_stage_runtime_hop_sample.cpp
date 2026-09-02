@@ -63,7 +63,7 @@ bool StageRuntime::sample_decode_row(
         auto & generated = sampled_tokens_[input.sequence_id];
         generated.push_back(sampled);
         const auto detokenize_started = std::chrono::steady_clock::now();
-        const auto detokenized = common_detokenize(vocab, generated, false);
+        const auto detokenized = p4_llama_compat::detokenize(vocab, generated, false);
         detokenize_nanos_ += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - detokenize_started).count());
@@ -81,7 +81,7 @@ bool StageRuntime::sample_decode_row(
         emitted += metadata.text;
         if (filtered.stopped) metadata.stop = "stop";
     } else {
-        const auto detokenized = common_detokenize(
+        const auto detokenized = p4_llama_compat::detokenize(
             vocab, sampled_tokens_[input.sequence_id], false);
         auto & emitted = sampled_texts_[input.sequence_id];
         std::vector<std::string> stops;

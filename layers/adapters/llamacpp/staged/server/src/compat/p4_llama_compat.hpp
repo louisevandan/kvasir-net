@@ -111,4 +111,25 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+/// Tokenisation, routed through here rather than called directly.
+///
+/// These four are thin conveniences over `llama.h`'s own tokenise and
+/// detokenise entry points - the ones that size a buffer, call again, and
+/// return a container. Wrapping them confines the dependency today;
+/// reimplementing them over the public API would remove it entirely, and
+/// that step needs a golden comparison rather than an assumption that two
+/// buffer-sizing loops agree on every edge.
+std::vector<llama_token> tokenize(const llama_vocab * vocab, const std::string & text,
+                                  bool add_special, bool parse_special = false);
+
+std::string detokenize(const llama_vocab * vocab, const std::vector<llama_token> & tokens,
+                       bool special = true);
+
+std::string token_to_piece(const llama_vocab * vocab, llama_token token, bool special = true);
+
+/// Appends one token to a batch, with its position, sequences and whether
+/// its logits are wanted.
+void batch_add(llama_batch & batch, llama_token token, llama_pos pos,
+               const std::vector<llama_seq_id> & seq_ids, bool logits);
+
 }  // namespace p4_llama_compat

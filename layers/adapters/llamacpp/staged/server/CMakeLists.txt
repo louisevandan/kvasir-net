@@ -250,11 +250,16 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_options_grammar.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/stage_memory_plan.cpp"
     )
+    # llama.cpp's common/ is deliberately not listed here. It still arrives,
+    # because upstream's own `llama-common` target exports its directory
+    # PUBLIC and the fourteen files that still call into that library have to
+    # link it - so the include and the link end together, when the last call
+    # moves behind the facade. Not adding it a second time at least means P4
+    # is not the one granting it.
     target_include_directories(p4_staged_llama_runtime PUBLIC
         src/runtime
         src/protocol
         "${P4_STAGED_LLAMA_SOURCE_DIR}/include"
-        "${P4_STAGED_LLAMA_SOURCE_DIR}/common"
     )
     # llama.cpp's src/ is private. Only the compat unit gets it on its include
     # path, so a second file reaching for a private header fails to compile
