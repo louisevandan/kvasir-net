@@ -37,6 +37,11 @@ pub struct ReadyInfo {
     /// behaviour the queue touches - so both travel and both are compared.
     pub upstream_commit: String,
     pub patch_set: String,
+    /// Which ggml backends this stage actually loaded, and their devices.
+    /// A stage's answer depends on the hardware that produced it, so two
+    /// stages agreeing on the model and the patch set can still be a CPU
+    /// build and a CUDA build.
+    pub backend_layout: String,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -351,6 +356,7 @@ pub(super) fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
         max_atomic_sequences: capability_number(&text, "max_atomic_sequences")?,
         upstream_commit: capability_text(&text, "upstream"),
         patch_set: capability_text(&text, "patch_set"),
+        backend_layout: capability_text(&text, "backend_layout"),
         server_id: text,
         transactions,
         physical_batch,

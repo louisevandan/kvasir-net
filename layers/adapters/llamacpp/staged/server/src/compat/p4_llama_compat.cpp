@@ -333,4 +333,26 @@ const common_prompt_checkpoint & checkpoint_of(const PromptCheckpoint & checkpoi
     return checkpoint.impl().checkpoint;
 }
 
+std::string backend_layout() {
+    std::string layout;
+    const auto registries = ggml_backend_reg_count();
+    for (std::size_t index = 0; index < registries; ++index) {
+        auto * registry = ggml_backend_reg_get(index);
+        if (registry == nullptr) continue;
+        if (!layout.empty()) layout += ';';
+        const auto * name = ggml_backend_reg_name(registry);
+        layout += name == nullptr ? "?" : name;
+        layout += '[';
+        const auto devices = ggml_backend_reg_dev_count(registry);
+        for (std::size_t device_index = 0; device_index < devices; ++device_index) {
+            if (device_index > 0) layout += ',';
+            auto * device = ggml_backend_reg_dev_get(registry, device_index);
+            const auto * device_name = device == nullptr ? nullptr : ggml_backend_dev_name(device);
+            layout += device_name == nullptr ? "?" : device_name;
+        }
+        layout += ']';
+    }
+    return layout;
+}
+
 }  // namespace p4_llama_compat

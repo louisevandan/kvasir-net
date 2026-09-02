@@ -374,6 +374,13 @@ U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서
 | --- | --- | --- |
 | ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
 | ③b llama.cpp `common/` 격리 | **중간 게이트 통과** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm을 모두 P4 소유 핸들로 감쌌고, 이제 헤더가 `common/`을 포함하면 게이트가 **실패**한다(실제로 넣어 확인). 구현 17개는 남아 있고 이것이 종착점이다 — upstream의 `llama-common` 타깃이 자기 디렉터리를 PUBLIC으로 내보내므로, 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다. **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다** |
+| ② 빌드 신원 | **부분** | `upstream_commit`·`patch_set`·`backend_layout` 셋이 prepare의 트리 스탬프와 ggml 런타임 레지스트리에서 HELLO → 어댑터 텔레메트리 → OUTER까지 실값으로 왕복하고, 드라이브가 하나라도 스테이지 간에 다르면 추론 전에 거부한다(3090×2 실행이 `CUDA[CUDA0]` 보고). `stage_abi_id`·`state_abi_id`·`trim_support`는 아직 없고, 따라서 합성 `build_id`도 만들지 않았다 — 입력이 갖춰지기 전의 합성 식별자는 구분하지 못하는 것을 구분한다고 주장하게 된다 |
+
+**`backend_layout`이 구분하지 못하는 것**: 각 스테이지는 `CUDA_VISIBLE_DEVICES`로
+장치 하나만 보므로, 물리적으로 다른 GPU에 놓인 두 스테이지가 똑같이 `CUDA[CUDA0]`을
+보고한다. 이 필드는 **CPU 빌드와 CUDA 빌드, 그리고 보이는 장치 수**를 가르지
+**어느 물리 GPU인지는 가르지 않는다**. 그것은 실행 증거의 placement와 원격 GPU
+UUID가 따로 기록한다 — 한 필드가 둘 다 한다고 주장하지 않는다.
 
 **③b 잔여 작업** (2026-09-02 갱신): tokenize 5개·sampler 9개·speculative 9개를
 모두 facade로 옮겼다. 남은 `common_*` 이름은 세 곳에 모인다 — 플랜 파싱

@@ -354,4 +354,17 @@ public:
     [[nodiscard]] const Impl & impl() const noexcept { return *impl_; }
 };
 
+/// Which backends this build actually loaded, and which devices they offer.
+///
+/// A stage's answer depends on the backend that runs it, so a HELLO that
+/// names only the model and the patch set cannot tell a CPU build from a
+/// CUDA one - and a pipeline that mixes them agrees on every field it
+/// reports while computing on different hardware. Built from ggml's public
+/// registry rather than from what the build system was told to compile:
+/// what was linked and what loads at runtime are different questions.
+///
+/// Format: `reg[dev,dev];reg[dev]`, registries in load order. Stable enough
+/// to compare across stages, and readable enough to say what differed.
+std::string backend_layout();
+
 }  // namespace p4_llama_compat

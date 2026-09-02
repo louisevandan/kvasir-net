@@ -58,6 +58,7 @@ where
     Ok(builds.into_iter().next().unwrap_or(BuildIdentity {
         upstream_commit: "unknown".into(),
         patch_set: "unknown".into(),
+        backend_layout: "unknown".into(),
     }))
 }
 
@@ -66,6 +67,10 @@ where
 pub(super) struct BuildIdentity {
     pub upstream_commit: String,
     pub patch_set: String,
+    /// Which ggml backends the stage loaded. Two stages can share a source
+    /// identity and still be a CPU build and a CUDA build - they would agree
+    /// on every other field while computing on different hardware.
+    pub backend_layout: String,
 }
 
 fn build_identity(payload: &[u8]) -> Result<BuildIdentity, Box<dyn std::error::Error>> {
@@ -80,6 +85,7 @@ fn build_identity(payload: &[u8]) -> Result<BuildIdentity, Box<dyn std::error::E
     Ok(BuildIdentity {
         upstream_commit: field("upstream_commit"),
         patch_set: field("patch_set"),
+        backend_layout: field("backend_layout"),
     })
 }
 
@@ -119,8 +125,15 @@ fn agree(builds: &[BuildIdentity]) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(other) = builds.iter().find(|build| *build != first) {
         return Err(format!(
-            "pipeline stages are different builds: upstream {} patch_set {} against upstream {} patch_set {}",
-            first.upstream_commit, first.patch_set, other.upstream_commit, other.patch_set
+            "pipeline stages are different builds: \
+             upstream {} patch_set {} backend {} \
+             against upstream {} patch_set {} backend {}",
+            first.upstream_commit,
+            first.patch_set,
+            first.backend_layout,
+            other.upstream_commit,
+            other.patch_set,
+            other.backend_layout
         )
         .into());
     }
@@ -159,9 +172,14 @@ mod tests {
     }
 
     fn build(upstream: &str, patch_set: &str) -> BuildIdentity {
+        backend_build(upstream, patch_set, "CUDA[CUDA0,CUDA1];CPU[CPU]")
+    }
+
+    fn backend_build(upstream: &str, patch_set: &str, backend: &str) -> BuildIdentity {
         BuildIdentity {
             upstream_commit: upstream.into(),
             patch_set: patch_set.into(),
+            backend_layout: backend.into(),
         }
     }
 
@@ -220,6 +238,30 @@ mod tests {
     }
 
     #[test]
+    fn one_source_identity_on_two_different_backends_is_refused() {
+        // The case source identity cannot see: the same commit and the same
+        // patch queue, built once for CPU and once for CUDA. Every other
+        // field agrees while the two stages compute on different hardware.
+        let builds = vec![
+            backend_build("557614e02", "00e66c6b", "CUDA[CUDA0];CPU[CPU]"),
+            backend_build("557614e02", "00e66c6b", "CPU[CPU]"),
+        ];
+        let error = agree(&builds).expect_err("mixed backends");
+        assert!(error.to_string().contains("backend"), "{error}");
+    }
+
+    #[test]
+    fn the_same_backend_with_different_devices_is_refused() {
+        // Two CUDA builds, one of which enumerated a second GPU: the stage
+        // that sees one device cannot run the placement the other planned.
+        let builds = vec![
+            backend_build("557614e02", "00e66c6b", "CUDA[CUDA0,CUDA1]"),
+            backend_build("557614e02", "00e66c6b", "CUDA[CUDA0]"),
+        ];
+        assert!(agree(&builds).is_err());
+    }
+
+    #[test]
     fn an_empty_pipeline_has_nothing_to_disagree_about() {
         assert!(agree(&[]).is_ok());
     }
@@ -228,13 +270,13 @@ mod tests {
     fn a_payload_without_the_fields_reads_as_unknown() {
         let payload = br#"{"state":"loaded","load_generation":1}"#;
         let identity = build_identity(payload).expect("parse");
-        assert_eq!(identity, build("unknown", "unknown"));
+        assert_eq!(identity, backend_build("unknown", "unknown", "unknown"));
     }
 
     #[test]
     fn a_payload_with_the_fields_is_read_verbatim() {
-        let payload = br#"{"upstream_commit":"557614e02","patch_set":"00e66c6b"}"#;
+        let payload = br#"{"upstream_commit":"557614e02","patch_set":"00e66c6b","backend_layout":"CPU[CPU]"}"#;
         let identity = build_identity(payload).expect("parse");
-        assert_eq!(identity, build("557614e02", "00e66c6b"));
+        assert_eq!(identity, backend_build("557614e02", "00e66c6b", "CPU[CPU]"));
     }
 }
