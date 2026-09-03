@@ -140,6 +140,30 @@ export const SCENARIOS = {
     })),
   },
 
+  // The same load with the tail alone on a card.
+  //
+  // Throughput across ten runs correlates with one thing at r=0.92: the share
+  // of the run during which two or more stages are computing at once. Not
+  // batch width, which is mildly negative. The stage cost fits 54.7 ms per
+  // batch plus 3.04 ms per layer, so the 22-layer tail costs 121 ms against
+  // 63 for a 4-layer stage - and under the default placement that tail shares
+  // GPU1 with stage 2, so the two contend exactly when they should overlap.
+  // The 5/4/4/22 cut cannot move (gemma-4-E2B shares KV over layers 13..34),
+  // but the placement can.
+  prefill_mix_tail_alone: {
+    ...base,
+    description: "96 sequences, mixed prefill, three light stages on one card and the tail on the other",
+    devices: ["0", "0", "0", "1"],
+    parallel: 96,
+    context: 2560,
+    maxTokens: 200,
+    promptFor: mixedPrefillPrompt,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 12,
+    })),
+  },
+
   // Concurrency pressure. `service` and `mixed` were built to prove the path,
   // not to saturate it: their steady-state active set is about 16 to 40, so a
   // 512-wide UBATCH could never be more than a few percent full whatever the

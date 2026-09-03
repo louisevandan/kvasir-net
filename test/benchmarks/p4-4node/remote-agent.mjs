@@ -55,6 +55,13 @@ const minBatchRows = Number(argument("--min-batch-rows", "0"));
 if (!Number.isInteger(minBatchRows) || minBatchRows < 0) {
   throw new Error("--min-batch-rows must be a non-negative integer");
 }
+// The other issue policy: hold the head while this many batches are in the
+// pipeline, so rows that would queue at the tail merge at the head instead.
+// 0 leaves it off.
+const maxOpenBatches = Number(argument("--max-open-batches", "0"));
+if (!Number.isInteger(maxOpenBatches) || maxOpenBatches < 0) {
+  throw new Error("--max-open-batches must be a non-negative integer");
+}
 
 // One line per generated token, on a stderr four stage servers already share.
 // It is what separated "the adapter never produced this position" from "the
@@ -103,6 +110,7 @@ function copyLauncher() {
     // absent rather than set to zero.
     ...(tracePositions ? ["set P4_STAGED_TRACE_OUTPUT_POSITION=1"] : []),
     `set P4_STAGED_MIN_BATCH_ROWS=${minBatchRows}`,
+    `set P4_STAGED_MAX_OPEN_BATCHES=${maxOpenBatches}`,
     // Redirections go first: cmd strips them in place and leaves the gap,
     // which reaches the program as an extra empty argument - the advertised
     // address then parsed as blank and the agent refused every connection.

@@ -38,6 +38,31 @@ impl Worker {
                 self.gate_refusals = self.gate_refusals.saturating_add(1);
                 return Ok(());
             }
+            // Tail-aware issue. The stage spans put the lap in the tail's
+            // mailbox: a batch that reached node 3 while it was busy waited
+            // 128 ms (p50) for the previous one, and 63% of them did. Each
+            // batch costs the tail about 55 ms before its first layer, so a
+            // queue of batches at the tail is fixed cost paid several times
+            // for rows that could have shared one payment. Holding the plan
+            // here while that many batches are already in the pipeline lets
+            // the rows that would have queued at the tail merge into one
+            // wider batch at the head instead - the wait is the same wait,
+            // moved to where it widens something. It is not a row threshold:
+            // when the pipeline has room the plan goes at once, however thin,
+            // so depth is kept; the earlier quiescence experiment lost 26% by
+            // waiting for width regardless of room.
+            //
+            // Never indefinite for the same reason as above: every open
+            // execution ends in a terminal capsule that re-enters this loop
+            // and removes itself, and the gate is ignored once nothing is in
+            // flight.
+            if self.state.max_open_batches > 0
+                && self.state.any_in_flight()
+                && self.state.open_executions.len() >= self.state.max_open_batches
+            {
+                self.gate_refusals = self.gate_refusals.saturating_add(1);
+                return Ok(());
+            }
             let Some(session_id) = self.state.first_session_with_work() else {
                 return Ok(());
             };
@@ -243,6 +268,9 @@ impl Worker {
                     "physical result identity or stage role is invalid",
                 )?;
                 return Err(());
+            }
+            for capsule in &physical.0 {
+                self.state.open_executions.insert(capsule.execution_id);
             }
             self.emit_batch_observation(
                 &template

@@ -114,3 +114,112 @@ shows up as the hop.
 So the bottleneck is the tail stage's per-batch cost, most of which is fixed,
 and the batches reach it one at a time. Width was never the lever; batch
 *count at the tail* is.
+
+## A tail-aware issue gate, and why it is not demonstrated
+
+The spans said the lap sits in the tail's mailbox, so the first node gained
+`P4_STAGED_MAX_OPEN_BATCHES`: hold the plan while that many batches are
+already in the pipeline, so rows that would queue at the tail merge at the
+head instead. Unlike a row threshold it never waits for width - when the
+pipeline has room the plan goes at once however thin.
+
+Swept on `prefill_mix` in the order 0, 2, 3, 4 it looked decisive: 190.9,
+204.9, 209.1, 231.6 gen tok/s, monotone, +21% at the top. **That was run
+order.** Re-run interleaved (4, 0, 4, 0, 8) the ordering vanishes:
+
+| setting | n | mean gen tok/s | samples |
+| --- | ---: | ---: | --- |
+| 0 (off) | 4 | 196.7 | 190.8, 170.8, 216.9, 208.1 |
+| 2 | 1 | 204.9 | |
+| 3 | 1 | 209.1 | |
+| 4 | 3 | 216.2 | 231.6, 208.1, 208.9 |
+| 8 | 1 | 193.9 | |
+
+The control's own range is 170.8 to 216.9 - 27% - and its best beats both
+later samples of the setting that had looked best. The gate is not shown to
+help or hurt. It stays, defaulted off, because it is the only knob that
+bounds pipeline depth and one result from it survives: capping depth at 2
+(from a natural 2.5-3, peak 8) cost nothing, 204.9 against a control mean of
+196.7. Depth is not what the throughput is made of.
+
+## What throughput is made of
+
+Correlation of gen tok/s against every pipeline metric, over those ten runs:
+
+| metric | r |
+| --- | ---: |
+| **share of run with two or more stages computing** | **+0.923** |
+| tail node busy share | +0.684 |
+| physical batches | +0.213 |
+| open-execution depth | +0.121 |
+| **batch width** | **-0.211** |
+
+Width is mildly *negative*. Every earlier result now reads the same way: six
+times the width moved utilisation by nothing, cutting depth to a quarter cost
+nothing, and the loosest gate was the worst run. The quantity to maximise is
+concurrent stage occupancy, and no policy tried so far moves it much - it
+ranged 53.6% to 83.8% across runs of identical configuration.
+
+That points at the stage balance rather than the schedule. At 54.7 ms fixed
+plus 3.04 ms per layer the 22-layer tail costs 121 ms against 63 for a
+4-layer stage, and under the default placement that tail shares GPU1 with
+stage 2 - the two contend exactly when they should overlap. The cut cannot
+move (gemma-4-E2B shares KV across layers 13..34) but the placement can, so
+`prefill_mix_tail_alone` puts the three light stages on one card and the tail
+on the other.
+
+## Giving the tail its own card
+
+Eight runs, interleaved and with the block order reversed halfway so a
+session trend cannot masquerade as a result. Same binary, gate off.
+
+| | tail alone (n=4) | default (n=4) | difference |
+| --- | ---: | ---: | ---: |
+| gen tok/s | 212.84 +/- 8.07 | 207.23 +/- 12.15 | +2.7% |
+| total rows/s | 524.89 +/- 19.91 | 511.05 +/- 29.97 | +2.7% |
+| tail busy | 85.92 +/- 4.86 | 77.88 +/- 6.43 | +10.3% |
+| tail stage ms | 95.5 +/- 10.92 | 109.45 +/- 11.14 | **-12.7%** |
+| batch width | 58.68 +/- 9.46 | 72.2 +/- 10.12 | -18.7% |
+
+tail alone: 204.75, 212.46, 223.93, 210.22. default: 199.63, 198.27, 224.67,
+206.36.
+
+**The placement makes the tail faster and busier and does not demonstrably
+make the pipeline faster.** Tail stage time falls 12.7% and tail occupancy
+rises 10.3% in every pairing, but the throughput distributions overlap - the
+best default run (224.67) beats three of the four tail-alone runs. On the
+first two pairs it read as +4.8%; four pairs put it at +2.7% inside the
+spread. Not shown.
+
+Batch width fell 19% while throughput did not fall, which is the third
+independent time width has moved one way and throughput the other.
+
+## The session drifts, and that is why the first sweep lied
+
+Across all eighteen `prefill_mix` runs of the day, run order correlates with
+tail busy share at r=0.696 and with batch width at r=-0.700: later runs have
+a busier tail and narrower batches whatever policy they were testing. Any
+comparison run in sequence inherits that slope, which is exactly the +21% the
+first gate sweep reported and the interleaved re-run erased. Every policy
+claim from here needs interleaving; a sequential sweep is not evidence.
+
+## The one durable finding
+
+Over those eighteen runs - four issue policies, two placements, throughput
+from 170.8 to 231.6 tok/s:
+
+| metric | r with gen tok/s |
+| --- | ---: |
+| **share of run with two or more stages computing** | **+0.891** |
+| tail busy share | +0.667 |
+| first-node busy share | +0.521 |
+| physical batches | +0.347 |
+| open-execution depth | +0.330 |
+| **batch width** | **-0.357** |
+| **UBATCH fill** | **-0.357** |
+
+Concurrent stage occupancy explains the throughput; width and fill are
+mildly against it. That holds across policies rather than being produced by
+one, which is what makes it worth building on. What is not yet known is what
+*sets* that occupancy: neither issue policy nor placement moved it reliably,
+and it varied 53.6% to 85.3% between runs of identical configuration.

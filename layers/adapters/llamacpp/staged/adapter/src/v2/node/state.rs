@@ -73,6 +73,19 @@ pub struct AdapterState {
     /// re-forming the arrival group it was born in. 0 or 1 disables the wait.
     /// See `Worker::drive_first_batches`.
     pub min_batch_rows: usize,
+    /// Hold a plan back while this many batches are somewhere in the pipeline.
+    /// 0 disables it. See `Worker::drive_first_batches` for why this, and not
+    /// a row threshold, is the lever the stage spans point at.
+    pub max_open_batches: usize,
+    /// Executions this first node has issued whose terminal capsule has not
+    /// come back from the tail. Keyed by the stage server's execution id,
+    /// which is unique within one load; an entry is added when the node's
+    /// own stage returns the physical result and removed by `Worker::tail`
+    /// when the terminal capsule carrying that id arrives. Bounded by
+    /// `max_open_batches` when the gate is on and by the active set when it
+    /// is off - nothing is issued without a ready row. Cleared with the rest
+    /// of the state on a new load.
+    pub open_executions: BTreeSet<u64>,
     /// The conversation each request identity was admitted under, so a repeat
     /// of that identity cannot silently move to another conversation.
     ///
@@ -113,6 +126,11 @@ impl Default for AdapterState {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
+            max_open_batches: std::env::var("P4_STAGED_MAX_OPEN_BATCHES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+            open_executions: BTreeSet::new(),
             verify_fence: BTreeSet::new(),
         }
     }
