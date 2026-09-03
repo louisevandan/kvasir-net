@@ -3,7 +3,7 @@
 // sequence membership instead of changing llama.cpp policy.
 
 #include "plan.hpp"
-#include "compat/p4_llama_compat_internal.hpp"
+#include "compat/p4_llama_compat.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -55,25 +55,25 @@ int main() {
     // A wider logical batch remains wider; llama.cpp splits it physically.
     const auto widened = parse({"--model", "not-loaded.gguf",
                                 "--batch-size", "2048", "--ubatch-size", "512"});
-    assert(p4_llama_compat::plan_params(widened.params).n_ubatch == 512);
-    assert(p4_llama_compat::plan_params(widened.params).n_batch == 2048);
+    assert(widened.params.n_ubatch() == 512);
+    assert(widened.params.n_batch() == 2048);
 
     // Keep llama.cpp's stock per-sequence cache default.
     const auto quiet = parse({"--model", "not-loaded.gguf"});
-    assert(!p4_llama_compat::plan_params(quiet.params).kv_unified);
-    assert(p4_llama_compat::plan_params(quiet.params).n_batch >= p4_llama_compat::plan_params(quiet.params).n_ubatch);
+    assert(!quiet.params.kv_unified());
+    assert(quiet.params.n_batch() >= quiet.params.n_ubatch());
 
     // Both stock switches remain plan-owned; the adapter must not override
     // either one after parsing.
     const auto asked = parse({"--model", "not-loaded.gguf", "--kv-unified",
                               "--batch-size", "512", "--ubatch-size", "512"});
-    assert(p4_llama_compat::plan_params(asked.params).kv_unified);
-    assert(p4_llama_compat::plan_params(asked.params).n_batch == 512);
-    assert(p4_llama_compat::plan_params(asked.params).n_batch == p4_llama_compat::plan_params(asked.params).n_ubatch);
+    assert(asked.params.kv_unified());
+    assert(asked.params.n_batch() == 512);
+    assert(asked.params.n_batch() == asked.params.n_ubatch());
     const auto separated = parse({"--model", "not-loaded.gguf", "--no-kv-unified",
                                   "--n-seq-max", "10"});
-    assert(!p4_llama_compat::plan_params(separated.params).kv_unified);
-    assert(p4_llama_compat::plan_params(separated.params).n_parallel == 10);
+    assert(!separated.params.kv_unified());
+    assert(separated.params.n_parallel() == 10);
 
     // llama.cpp cannot create a context with a quantized V cache when flash
     // attention is explicitly disabled. Catch the invalid opaque plan before
@@ -88,11 +88,11 @@ int main() {
     const auto portable = parse({"--model", "not-loaded.gguf",
                                  "--cache-type-v", "f16",
                                  "--flash-attn", "off"});
-    assert(p4_llama_compat::plan_params(portable.params).cache_type_v == GGML_TYPE_F16);
+    assert(portable.params.cache_type_v() == GGML_TYPE_F16);
     const auto compact = parse({"--model", "not-loaded.gguf",
                                 "--cache-type-v", "q8_0",
                                 "--flash-attn", "on"});
-    assert(p4_llama_compat::plan_params(compact.params).cache_type_v == GGML_TYPE_Q8_0);
+    assert(compact.params.cache_type_v() == GGML_TYPE_Q8_0);
     const auto memory_plan = parse({"--model", "not-loaded.gguf",
                                     "--inspect-memory-plan"});
     assert(memory_plan.inspect_memory_plan);

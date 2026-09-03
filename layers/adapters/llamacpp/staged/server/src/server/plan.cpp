@@ -8,35 +8,8 @@
 #include <algorithm>
 #include <utility>
 
-#include "arg.h"
-
-// This file parses llama.cpp's own CLI, so it is one of the places that
-// legitimately knows what a common_params is.
-#include "compat/p4_llama_compat_internal.hpp"
-
 namespace staged::server {
 namespace {
-
-bool has_speculative_type(const common_params &params,
-                          common_speculative_type type) {
-    return std::find(params.speculative.types.begin(),
-                     params.speculative.types.end(), type) !=
-           params.speculative.types.end();
-}
-
-// Which family a requested (non-MTP) speculative type belongs to, for the
-// capability report's blocker classification below. This has to key off the
-// requested *type*, not common_params_speculative::has_dft(): that flag is
-// only true once a --model-draft path has actually been resolved, so at
-// parse time (or in a test that requests draft-simple without ever
-// supplying a draft model) it reads false and silently misclassifies every
-// draft-family request as an ngram-family one.
-bool has_draft_family_type(const common_params &params) {
-    return has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE) ||
-           has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3) ||
-           has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH) ||
-           has_speculative_type(params, COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK);
-}
 
 bool valid_utf8(const std::string &value) {
     for (std::size_t i = 0; i < value.size();) {
@@ -300,16 +273,9 @@ bool parse_llama_options(int argc, char **argv,
     while (static_cast<int>(common_args.size()) == argc) {
         common_args.emplace_back("--log-disable");
     }
-    // One reference for this whole region: this file drives llama.cpp's own
-    // argument parser, so it is one of the places that legitimately holds
-    // the struct. Everything downstream sees only the opaque plan.
-    common_params & parsed_params = p4_llama_compat::plan_params(parsed->params);
-    std::vector<char *> pointers;
-    pointers.reserve(common_args.size() + 1);
-    for (auto &arg : common_args) pointers.push_back(arg.data());
-    pointers.push_back(nullptr);
-    if (!common_params_parse(static_cast<int>(common_args.size()), pointers.data(),
-                             parsed_params, LLAMA_EXAMPLE_SERVER, nullptr)) {
+    // The argument grammar is llama.cpp's and the call to it lives in the
+    // compat unit; this file's business is which arguments to hand over.
+    if (!parsed->params.parse_arguments(common_args)) {
         if (error != nullptr) {
             *error = "common_params_parse rejected startup plan; forwarded args=";
             for (const auto & arg : common_args) {
@@ -324,22 +290,14 @@ bool parse_llama_options(int argc, char **argv,
     // the flash-attention kernels.  Reject it here so an OUTER-supplied opaque
     // plan cannot turn a deterministic argument error into an expensive load
     // failure on every node.
-    if (ggml_is_quantized(parsed_params.cache_type_v) &&
-        parsed_params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED) {
+    if (parsed->params.quantized_v_without_flash_attention()) {
         if (error != nullptr) {
             *error = "quantized V cache requires flash attention; use --flash-attn on or an unquantized V cache";
         }
         return false;
     }
-    parsed->mtp_requested = has_speculative_type(
-        parsed_params, COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
-    parsed->speculative_requested = parsed->mtp_requested ||
-        parsed_params.speculative.has_dft();
-    for (const auto type : parsed_params.speculative.types) {
-        if (type != COMMON_SPECULATIVE_TYPE_NONE) {
-            parsed->speculative_requested = true;
-        }
-    }
+    parsed->mtp_requested = parsed->params.requests_draft_mtp();
+    parsed->speculative_requested = parsed->params.requests_any_speculative();
     // n_batch is the logical admission width and n_ubatch is llama.cpp's
     // physical graph width. They must remain distinct: the first stage sends
     // one mixed logical batch to llama_decode(), and the compatibility
@@ -354,23 +312,15 @@ bool parse_llama_options(int argc, char **argv,
     // semantics: MiniMax M3 requires per-sequence streams when n_seq_max > 1
     // and otherwise falls back from MSA to dense attention.
 
-    if (parsed->model_path.empty()) parsed->model_path = parsed_params.model.path;
+    if (parsed->model_path.empty()) parsed->model_path = parsed->params.model_path();
     return true;
 }
 
 CapabilityReport capability_report(const ParsedLlamaOptions &parsed) {
-    const common_params & parsed_params = p4_llama_compat::plan_params(parsed.params);
-    const bool unsupported_speculative = parsed_params.speculative.has_dft()
-        || std::any_of(
-            parsed_params.speculative.types.begin(),
-            parsed_params.speculative.types.end(),
-            [](const common_speculative_type type) {
-                return type != COMMON_SPECULATIVE_TYPE_NONE
-                    && type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
-            });
+    const bool unsupported_speculative = parsed.params.requests_unsupported_speculative();
     const bool mtp_execution = parsed.mtp_requested && !unsupported_speculative;
     std::string blocker = "none";
-    if (unsupported_speculative && has_draft_family_type(parsed_params)) {
+    if (unsupported_speculative && parsed.params.requests_draft_family()) {
         blocker = "draft_context_and_proposal_state_not_in_hop";
     } else if (unsupported_speculative) {
         blocker = "proposal_accept_rollback_state_not_in_hop";

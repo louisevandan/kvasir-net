@@ -11,6 +11,7 @@
 // The convenience library, on this side of the wall only.
 #include "common.h"
 #include "sampling.h"
+#include "arg.h"
 #include "speculative.h"
 
 namespace p4_llama_compat {
@@ -70,11 +71,26 @@ bool LlamaPlan::kv_unified() const noexcept { return impl_->params.kv_unified; }
 ggml_type LlamaPlan::cache_type_k() const noexcept { return impl_->params.cache_type_k; }
 ggml_type LlamaPlan::cache_type_v() const noexcept { return impl_->params.cache_type_v; }
 
+bool LlamaPlan::parse_arguments(const std::vector<std::string> & arguments) {
+    // The parser takes a mutable argv, so the strings are copied rather than
+    // handed the caller's storage to rewrite.
+    std::vector<std::string> owned = arguments;
+    std::vector<char *> pointers;
+    pointers.reserve(owned.size() + 1);
+    for (auto & argument : owned) pointers.push_back(argument.data());
+    pointers.push_back(nullptr);
+    return common_params_parse(static_cast<int>(owned.size()), pointers.data(),
+                               impl_->params, LLAMA_EXAMPLE_SERVER, nullptr);
+}
+
 LlamaPlan LlamaPlan::clone() const {
     LlamaPlan copy;
     copy.impl_->params = impl_->params;
     return copy;
 }
+
+int LlamaPlan::n_batch() const noexcept { return impl_->params.n_batch; }
+int LlamaPlan::n_ubatch() const noexcept { return impl_->params.n_ubatch; }
 
 int LlamaPlan::n_parallel() const noexcept { return impl_->params.n_parallel; }
 
@@ -98,6 +114,33 @@ LlamaPlan LlamaPlan::speculative_plan() const {
     LlamaPlan draft;
     draft.impl_->params = common_base_params_to_speculative(impl_->params);
     return draft;
+}
+
+bool LlamaPlan::quantized_v_without_flash_attention() const noexcept {
+    return ggml_is_quantized(impl_->params.cache_type_v)
+        && impl_->params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED;
+}
+
+bool LlamaPlan::requests_any_speculative() const noexcept {
+    if (impl_->params.speculative.has_dft()) return true;
+    return std::any_of(
+        impl_->params.speculative.types.begin(), impl_->params.speculative.types.end(),
+        [](const common_speculative_type type) {
+            return type != COMMON_SPECULATIVE_TYPE_NONE;
+        });
+}
+
+bool LlamaPlan::requests_draft_family() const noexcept {
+    // Deliberately not `has_dft()`: that is only true once a draft model
+    // path has been resolved, so a plan asking for draft-simple without one
+    // reads false and is misclassified as an ngram request.
+    const auto & types = impl_->params.speculative.types;
+    return std::any_of(types.begin(), types.end(), [](const common_speculative_type type) {
+        return type == COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE
+            || type == COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3
+            || type == COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH
+            || type == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK;
+    });
 }
 
 bool LlamaPlan::requests_draft_mtp() const noexcept {

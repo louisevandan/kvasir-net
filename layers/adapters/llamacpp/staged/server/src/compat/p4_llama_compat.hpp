@@ -101,10 +101,27 @@ public:
     [[nodiscard]] ggml_type cache_type_k() const noexcept;
     [[nodiscard]] ggml_type cache_type_v() const noexcept;
 
+    /// Fills this plan from llama.cpp's own argument grammar.
+    ///
+    /// The grammar stays llama.cpp's - P4 hands it the arguments and takes
+    /// the result - but the call lives here, so a change to the parser's
+    /// signature or to what it fills reaches one translation unit. Deciding
+    /// that P4 should own a grammar of its own and translate is a larger
+    /// step and a separate one; this is only about where the call is made.
+    ///
+    /// `false` when llama.cpp rejected the arguments.
+    [[nodiscard]] bool parse_arguments(const std::vector<std::string> & arguments);
+
     /// A deep copy. Not a copy constructor, because copying a plan is a
     /// deliberate act - a measurement pass that mutates its own copy - and
     /// not something that should happen by passing one to a function.
     [[nodiscard]] LlamaPlan clone() const;
+
+    /// The batch widths the plan asked for. P4 reports both in HELLO and
+    /// refuses a load whose stage cannot meet them, so they are its values
+    /// to read - not a mirror of upstream's field set.
+    [[nodiscard]] int n_batch() const noexcept;
+    [[nodiscard]] int n_ubatch() const noexcept;
 
     /// How many sequences the plan asked for. P4 reports this; llama.cpp
     /// derives its own capacity from the same field.
@@ -123,6 +140,25 @@ public:
 
     /// The draft model's plan, which is another whole `common_params`.
     [[nodiscard]] LlamaPlan speculative_plan() const;
+
+    /// Whether the plan pairs a quantized V cache with flash attention off.
+    /// llama.cpp rejects that combination only after the model and every
+    /// selected tensor have been loaded, so P4 asks before paying for the
+    /// load - and asks here, because both halves of the question are
+    /// upstream's.
+    [[nodiscard]] bool quantized_v_without_flash_attention() const noexcept;
+
+    /// Whether the plan asks for any speculative method at all.
+    [[nodiscard]] bool requests_any_speculative() const noexcept;
+
+    /// Whether the plan asks for a draft-model method other than MTP.
+    ///
+    /// Distinguishes "needs a draft context and proposal state" from
+    /// "needs an ngram cache", which is what P4 reports as the blocker. Asked
+    /// here so the list of draft-family enumerators lives beside the enum it
+    /// belongs to; upstream adding one is then a compile-time visit to this
+    /// function rather than a silent misclassification at the call site.
+    [[nodiscard]] bool requests_draft_family() const noexcept;
 
     /// Whether the plan asks for draft-MTP. A question P4 asks, so it is
     /// asked here rather than by walking a vector of upstream enums.

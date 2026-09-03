@@ -72,9 +72,6 @@ export const UNSTABLE_SOURCE_DEBT = [
   "runtime/request_options.cpp",
   "runtime/request_options_grammar.cpp",
   "runtime/request_options_test.cpp",
-  "server/capability_test.cpp",
-  "server/plan.cpp",
-  "server/plan_invariants_test.cpp",
 ];
 
 export const UNSTABLE_DEBT = [...UNSTABLE_HEADER_DEBT, ...UNSTABLE_SOURCE_DEBT];

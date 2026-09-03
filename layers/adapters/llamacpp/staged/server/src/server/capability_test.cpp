@@ -1,5 +1,5 @@
 #include "plan.hpp"
-#include "compat/p4_llama_compat_internal.hpp"
+#include "compat/p4_llama_compat.hpp"
 
 #include <cassert>
 #include <string>
@@ -82,6 +82,6 @@ int main() {
     // "not-loaded.gguf", never does. The previous `n_ctx > 0` assertion here
     // could not have passed for this input regardless of the code under test;
     // NDEBUG had stripped it since the test was first written.
-    assert(p4_llama_compat::plan_params(parsed.params).model.path == "not-loaded.gguf");
+    assert(parsed.params.model_path() == "not-loaded.gguf");
     return 0;
 }

@@ -373,7 +373,7 @@ U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서
 | 조각 | 상태 | 근거 |
 | --- | --- | --- |
 | ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
-| ③b llama.cpp `common/` 격리 | **중간 게이트 통과, 완료 아님** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm·MTP 브링업을 모두 P4 소유 핸들과 연산 뒤로 옮겼고, 헤더가 `common/`을 포함하면 게이트가 **실패**한다(주입해 확인). **구현 9개가 남아 있고 이것이 종착점이다** — 플랜 파싱 4, 요청 옵션 파싱 2, 시험 3. upstream의 `llama-common`이 자기 디렉터리를 PUBLIC으로 내보내므로 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다: **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다.** 현재 runtime 타깃이 여전히 `llama-common`을 링크하므로 경계는 닫히지 않았다 |
+| ③b llama.cpp `common/` 격리 | **중간 게이트 통과, 완료 아님** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm·MTP 브링업을 모두 P4 소유 핸들과 연산 뒤로 옮겼고, 헤더가 `common/`을 포함하면 게이트가 **실패**한다(주입해 확인). **구현 5개가 남아 있다**(2026-09-03 실측) — 요청 옵션 파싱 2, 시험 3. 플랜 파싱 4는 닫혔다: 파서 호출이 `LlamaPlan::parse_arguments()`로 들어가면서 `server/plan.cpp`가 `common/`에서 완전히 떨어졌다. upstream의 `llama-common`이 자기 디렉터리를 PUBLIC으로 내보내므로 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다: **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다.** 현재 runtime 타깃이 여전히 `llama-common`을 링크하므로 경계는 닫히지 않았다 |
 | ② 빌드 신원 | **부분** | `upstream_commit`·`patch_set`·`backend_inventory` 셋이 prepare의 트리 스탬프와 ggml 런타임 레지스트리에서 HELLO → 어댑터 텔레메트리 → OUTER까지 실값으로 왕복한다(3090×2 실행이 `CPU[CPU]|CUDA[CUDA0]` 전체를 보고). `agree()`는 어댑터 크레이트에 있고 `unknown`을 fail-closed로 거부하지만, **실제 호출자는 event-drive 하나뿐이라 제품 로드 경로가 규칙을 강제하지는 않는다** — 파이프라인 전체를 모으는 코디네이터 API가 이 저장소에 없다. `stage_abi_id`·`state_abi_id`·`trim_support`도 없고, 따라서 합성 `build_id`도 만들지 않았다 |
 
 **정정 (2026-09-02)**: 이 문서는 앞서 실행이 `CUDA[CUDA0]` 하나만 보고한 것을
@@ -422,6 +422,25 @@ device를 열거할 뿐, 모델 텐서·KV·compute buffer가 실제로 어디�
 `plan.cpp`가 아직 `common_speculative_type`·`has_dft()`를 직접 읽으므로 **"sampler·
 speculative API 변화가 compat.cpp 한 곳에서 멈춘다"는 아직 사실이 아니다** — 런타임에
 대해서는 참이고 플랜 파싱에 대해서는 거짓이다.
+
+**③c 그 표를 실행해 본 결과** (2026-09-03): 위 표에서 "지금도 옮길 수 있다"고 센 6건
+중 **4건만 실제로 옮겨졌다** — `request_stops.cpp`, `capability_test.cpp`,
+`plan_invariants_test.cpp`, 그리고 표가 "계약 필요"로 분류했던 `server/plan.cpp`.
+표의 예측이 양쪽 모두 틀렸으므로 그대로 적는다.
+
+* `plan.cpp`는 계약이 필요 없었다. 필요한 것은 파서 *문법*이 아니라 파서 *호출 위치*를
+  옮기는 것이었고, `LlamaPlan::parse_arguments()`가 그 호출을 가져가자 남은 것은 술어
+  네 개뿐이었다. 문법은 여전히 llama.cpp의 것이다 — 바뀐 것은 누가 그것을 부르느냐다.
+  `common_speculative_type`을 직접 읽던 마지막 지점이 사라졌으므로, 이제 **"sampler·
+  speculative API 변화가 compat.cpp 한 곳에서 멈춘다"가 플랜 파싱에 대해서도 참이다.**
+* 시험 5건 중 3건은 정직하게 옮길 수 없다. `request_options_test.cpp`는 sampling 필드
+  27개를 확인하는데, 옮기면 그 27개를 facade에 그대로 복제해야 한다 — 경계가 아니라
+  거울이다. `compile_test.cpp`·`mtp_ownership_test.cpp`는 파서가 있는
+  `p4_staged_server_core`에 링크하지 않고 `p4_staged_llama_runtime`만 링크한다. 시험을
+  통과시키려고 그 링크를 추가하는 것은 계층을 거꾸로 세우는 일이다.
+
+측정된 잔여 부채는 헤더 0 / 소스 5이며, 그중 **운영 파일은 요청 옵션 문법 2건**
+(`request_options.cpp`, `request_options_grammar.cpp`)뿐이다. 나머지 3건은 위의 시험이다.
 
 경계도 llama.cpp CLI 전체를 복제하는 것이 아니다. 최소 추종 비용의 형태는 P4 소유
 typed plan/request 계약을 두고, `common_params_parse`와 sampler·grammar 변환을 compat
