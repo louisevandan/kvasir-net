@@ -74,6 +74,7 @@ impl Worker {
             if demands.is_empty() {
                 return Ok(());
             }
+            let ingress_unix_ms = super::observe::unix_ms();
             let ready_rows = self.state.available_row_count();
             let ready_sequences = self.state.ready_row_count();
             let idle_ms = self
@@ -202,6 +203,7 @@ impl Worker {
                 }
             };
             let stage_started = std::time::Instant::now();
+            let start_unix_ms = super::observe::unix_ms();
             let body = match self.stage_request(
                 Operation::LogicalBatch,
                 Operation::PhysicalResult,
@@ -215,6 +217,7 @@ impl Worker {
                 }
             };
             let stage_ms = stage_started.elapsed().as_millis() as u64;
+            let end_unix_ms = super::observe::unix_ms();
             self.last_stage_done = Some(std::time::Instant::now());
             self.gate_refusals = 0;
             let physical = match CapsuleSet::decode(&body) {
@@ -249,6 +252,14 @@ impl Worker {
                 logical_rows,
                 &physical,
                 BatchPacing { stage_ms, idle_ms, idle_gated, ready_rows, ready_sequences },
+            )?;
+            self.emit_stage_span(
+                &template.clone().expect("non-empty allocation has a template"),
+                &session_id,
+                &physical,
+                ingress_unix_ms,
+                start_unix_ms,
+                end_unix_ms,
             )?;
             let mut verify_request_ids = Vec::new();
             for (request_id, phase, count) in updates {

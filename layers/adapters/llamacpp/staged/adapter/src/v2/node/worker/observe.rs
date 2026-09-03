@@ -110,3 +110,61 @@ impl Worker {
         Ok(())
     }
 }
+
+/// Milliseconds since the Unix epoch, for a span other processes will read.
+pub(super) fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+impl Worker {
+    /// Reports one node's handling of one batch to every outer that owns a
+    /// row in it. Emitted by first, middle and last nodes alike, which is the
+    /// point: the first node's own pacing was measured before this and could
+    /// not say what the other three were doing at the time.
+    pub(super) fn emit_stage_span(
+        &mut self,
+        base: &Event,
+        session_id: &str,
+        physical: &CapsuleSet,
+        ingress_unix_ms: u64,
+        start_unix_ms: u64,
+        end_unix_ms: u64,
+    ) -> Result<(), ()> {
+        // One span per node per batch. It is routed by a request correlation
+        // because that is how the outer admits telemetry, but the span is
+        // about the batch, so any one owner will do - the first. A version
+        // that told every owner produced a span per request per node per
+        // batch: 155,112 of them for 1,768 batches, and a 70 MB artifact.
+        let rows = physical.0.iter().map(|capsule| capsule.owners.len()).sum::<usize>();
+        let Some(owner) = physical.0.iter().flat_map(|capsule| &capsule.owners).next() else {
+            return Ok(());
+        };
+        let reply: ReplySpec = serde_json::from_str(&owner.reply).map_err(|_| ())?;
+        let replies = vec![reply];
+        let span = StageSpan {
+            load_generation: self.state.load_generation,
+            session_id: session_id.to_owned(),
+            execution_ids: physical.0.iter().map(|capsule| capsule.execution_id).collect(),
+            rows,
+            ingress_unix_ms,
+            start_unix_ms,
+            end_unix_ms,
+            forward_unix_ms: unix_ms(),
+        };
+        for reply in replies {
+            let ingress = Address::from_str(&reply.ingress_agent).map_err(|_| ())?;
+            self.emit_reply_json(
+                base,
+                reply,
+                ingress,
+                EventClass::Telemetry,
+                STAGE_SPAN_CONTENT_TYPE,
+                &span,
+            )?;
+        }
+        Ok(())
+    }
+}

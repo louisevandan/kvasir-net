@@ -77,10 +77,40 @@ is roughly 540 ms, and the measured per-session lap under load is 559 ms. The
 lap is stage time. Width, coalescing and arrival shape are no longer where the
 throughput is.
 
-## Not yet shown
+## Every stage timed (run 161030Z-60fa5980, `prefill_mix`, gate off)
 
-Only the first node is timed. Overlap between stages - the same execution
-open on two nodes at once, and the peak number of executions in flight - is
-inferred from lap time over submission interval (about 3.6) and not traced.
-That needs a per-stage span with a shared dispatch identity, which is the
-next instrument.
+Each node now reports `[ingress, start, end, forward]` per batch on the host
+wall clock, keyed by the batch's execution ids, so the four stages can be laid
+side by side. 1,159 batches, all four spans present for every one. 192/192
+passed; 190.85 gen tok/s, 470.65 total rows/s; GPU 17.4% / 25.8%.
+
+| node | layers | busy | stage ms mean / p50 / p90 | ms per layer |
+| ---: | ---: | ---: | --- | ---: |
+| 0 | 5 | 44.4% | 76.6 / 68 / 134 | 15.3 |
+| 1 | 4 | 37.3% | 64.4 / 48 / 121 | 16.1 |
+| 2 | 4 | 36.5% | 63.0 / 47 / 101 | 15.8 |
+| 3 | 22 | **70.2%** | 121.2 / 94 / 185 | 5.5 |
+
+**The pipeline does overlap.** Two or more stages were inside their stage
+server at the same instant for 68.5% of the run, all four at once at the peak,
+and 2.96 executions were open on average (peak 8). The wavefront the earlier
+record could only infer is traced.
+
+**Stage time is mostly not layers.** A least-squares fit of mean stage time
+against layer count gives **54.7 ms per batch fixed + 3.04 ms per layer**: the
+22-layer tail costs 121 ms and a 4-layer stage 63 ms. Four stages pay the fixed
+part four times a lap - about 219 ms of the 325 ms a lap spends computing.
+
+**The lap is 510 ms mean (p50 376), decomposed:** 325 ms in stage servers,
+185 ms between them. Of the between-stage time, the hop into the tail is
+129.8 ms mean against 18.5 and 29.9 ms for the other two hops. That is not
+transfer: when a batch left node 2 while node 3 was idle the hop took 2 ms
+(p50, n=427); when node 3 was busy it took 128 ms (p50, n=732), the tail's
+residual service (97 ms p50) plus up to five batches already queued. 63% of
+batches found the tail busy. `queue_ms` at the node reads zero because the
+wait happens before the worker stamps ingress - it is the mailbox, and it
+shows up as the hop.
+
+So the bottleneck is the tail stage's per-batch cost, most of which is fixed,
+and the batches reach it one at a time. Width was never the lever; batch
+*count at the tail* is.

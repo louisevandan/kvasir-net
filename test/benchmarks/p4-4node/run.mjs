@@ -111,7 +111,107 @@ function spread(values) {
   };
 }
 
-function metrics(artifact, ubatch) {
+/// What the stage spans say about the pipeline as a whole.
+///
+/// Every node reports [ingress, start, end, forward] per batch on a shared
+/// wall clock, so this can answer what the first node's own pacing could not:
+/// how busy each stage was, how long a batch queued at each stage before its
+/// server took it, how many executions were open across the pipeline at
+/// once, and for what share of the run two or more stages were computing at
+/// the same instant. A pipeline with no overlap has a peak depth of 1 and a
+/// concurrent-busy share of zero whatever its batch widths say.
+function pipeline(spans, nodeCount) {
+  if (!spans || spans.length === 0) return null;
+  // One span per node per batch. An earlier agent reported the same span
+  // once per request it carried; folding over the distinct set keeps a
+  // report from that artifact honest, and a stream of a hundred thousand
+  // spans out of a spread call.
+  const distinct = new Map();
+  for (const span of spans) {
+    distinct.set(`${span.node}:${span.execution_ids.join(",")}:${span.start_unix_ms}`, span);
+  }
+  spans = [...distinct.values()];
+  let t0 = Infinity;
+  let t1 = -Infinity;
+  for (const span of spans) {
+    if (span.ingress_unix_ms < t0) t0 = span.ingress_unix_ms;
+    if (span.forward_unix_ms > t1) t1 = span.forward_unix_ms;
+  }
+  const wall = Math.max(1, t1 - t0);
+  const stages = Array.from({ length: nodeCount }, () => ({ busy: 0, stage: [], queue: [], batches: 0 }));
+  for (const span of spans) {
+    const stage = stages[span.node];
+    if (!stage) continue;
+    stage.batches += 1;
+    stage.busy += span.end_unix_ms - span.start_unix_ms;
+    stage.stage.push(span.end_unix_ms - span.start_unix_ms);
+    stage.queue.push(span.start_unix_ms - span.ingress_unix_ms);
+  }
+  // Depth: executions open anywhere in the pipeline, by execution id, from
+  // the first node's ingress to the last node's forward.
+  const open = new Map();
+  for (const span of spans) {
+    for (const id of span.execution_ids) {
+      const range = open.get(id) ?? { from: Infinity, to: -Infinity };
+      range.from = Math.min(range.from, span.ingress_unix_ms);
+      range.to = Math.max(range.to, span.forward_unix_ms);
+      open.set(id, range);
+    }
+  }
+  const edges = [];
+  for (const range of open.values()) {
+    edges.push([range.from, 1]);
+    edges.push([range.to, -1]);
+  }
+  edges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let depth = 0;
+  let depthPeak = 0;
+  let depthArea = 0;
+  let last = edges.length ? edges[0][0] : 0;
+  for (const [at, delta] of edges) {
+    depthArea += depth * (at - last);
+    last = at;
+    depth += delta;
+    if (depth > depthPeak) depthPeak = depth;
+  }
+  // Concurrency: share of the run during which at least two stages were
+  // inside their stage server at the same instant.
+  const busyEdges = [];
+  for (const span of spans) {
+    busyEdges.push([span.start_unix_ms, 1]);
+    busyEdges.push([span.end_unix_ms, -1]);
+  }
+  busyEdges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let busy = 0;
+  let anyBusy = 0;
+  let twoBusy = 0;
+  let busyPeak = 0;
+  last = busyEdges.length ? busyEdges[0][0] : 0;
+  for (const [at, delta] of busyEdges) {
+    if (busy >= 1) anyBusy += at - last;
+    if (busy >= 2) twoBusy += at - last;
+    last = at;
+    busy += delta;
+    if (busy > busyPeak) busyPeak = busy;
+  }
+  return {
+    span_wall_s: Number((wall / 1000).toFixed(2)),
+    spans: spans.length,
+    stages: stages.map((stage, index) => ({
+      node: index,
+      batches: stage.batches,
+      busy_pct: Number(((100 * stage.busy) / wall).toFixed(1)),
+      stage_ms: spread(stage.stage),
+      queue_ms: spread(stage.queue),
+    })),
+    depth_peak: depthPeak,
+    depth_mean: Number((depthArea / wall).toFixed(2)),
+    any_stage_busy_pct: Number(((100 * anyBusy) / wall).toFixed(1)),
+    two_or_more_busy_pct: Number(((100 * twoBusy) / wall).toFixed(1)),
+    stages_busy_peak: busyPeak,
+  };
+}
+function metrics(artifact, ubatch, nodeCount) {
   const rows = [];
   let batches = 0;
   let mixed = 0;
@@ -159,6 +259,7 @@ function metrics(artifact, ubatch) {
     // never-positive result as a clean sweep; it proved nothing.
     ready_rows_left: spread(readyGap),
     ready_sequences: spread(readySequences),
+    pipeline: pipeline(artifact.stage_spans, nodeCount),
   };
 }
 
@@ -402,7 +503,7 @@ async function main() {
     record_channel_failures: channelFailures,
     agent_stopped: agentStopped,
     records: { fenced: fence.ok, reason: fence.reason, lines: fence.records.length },
-    metrics: metrics(artifact, spec.nUbatch),
+    metrics: metrics(artifact, spec.nUbatch, spec.cuts.length),
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
     rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
   };

@@ -214,6 +214,34 @@ pub struct BatchObservation {
     pub ready_sequences: usize,
 }
 
+/// What one node did with one batch, on a wall clock.
+///
+/// Batch widths cannot say whether the pipeline overlaps: a first node that
+/// submits rarely could be starved, gated, or simply slow, and nothing the
+/// first node reports can show a middle node working at the same time. Every
+/// node emits one of these per batch, keyed by the execution ids the batch
+/// carries - the same ids on every stage - so the drive can lay the stages
+/// side by side and count how many executions are open at once. Wall clock
+/// rather than a monotonic one because the stages are separate processes;
+/// the comparison is only as good as their clocks agree, which on one host
+/// is well under a millisecond.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct StageSpan {
+    pub load_generation: u64,
+    pub session_id: String,
+    /// The execution ids of the physical batches this span covers.
+    pub execution_ids: Vec<u64>,
+    pub rows: usize,
+    /// The batch reached this node (a first node: the plan was started).
+    pub ingress_unix_ms: u64,
+    /// The node handed the batch to its stage server.
+    pub start_unix_ms: u64,
+    /// The stage server returned.
+    pub end_unix_ms: u64,
+    /// The result left this node for the next one, or for the outer.
+    pub forward_unix_ms: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ReleaseCommand {
     pub load_generation: u64,

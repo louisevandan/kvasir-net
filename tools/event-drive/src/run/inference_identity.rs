@@ -1,5 +1,5 @@
 use super::{RunConfig, config::node_endpoint};
-use p4_llamacpp_staged_adapter::v2::{BatchObservation, OutcomePayload, ReleasedPayload};
+use p4_llamacpp_staged_adapter::v2::{BatchObservation, OutcomePayload, ReleasedPayload, StageSpan};
 use p4_protocol::event::{Endpoint, Event, EventClass, OuterEndpoint};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -186,8 +186,35 @@ impl InferenceIdentity {
         self.route_known_request_source_agnostic(event, EventClass::Output, known_requests)
     }
 
-    fn route_known_request(
+    /// A stage span may come from any node of the pipeline; the source names
+    /// which, and the answer is its index. The four timestamps must be in
+    /// order, or the span is not a span.
+    pub(super) fn span(
         &self,
+        event: &Event,
+        span: &StageSpan,
+        known_requests: &BTreeSet<String>,
+    ) -> Result<usize, String> {
+        self.route_known_request_source_agnostic(event, EventClass::Telemetry, known_requests)?;
+        let node = self
+            .nodes
+            .iter()
+            .position(|node| *node == event.envelope.source)
+            .ok_or_else(|| "stage span source is not a pipeline node".to_owned())?;
+        if span.load_generation != self.load_generation
+            || span.session_id != self.session_id
+            || span.execution_ids.is_empty()
+            || span.rows == 0
+            || span.ingress_unix_ms > span.start_unix_ms
+            || span.start_unix_ms > span.end_unix_ms
+            || span.end_unix_ms > span.forward_unix_ms
+        {
+            return Err("stage span identity or timestamps are invalid".into());
+        }
+        Ok(node)
+    }
+
+    fn route_known_request(        &self,
         event: &Event,
         source: &Endpoint,
         class: EventClass,

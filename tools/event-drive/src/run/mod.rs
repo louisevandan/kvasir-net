@@ -28,6 +28,14 @@ const CREATE: &str = "application/vnd.p4.node.create-v3+json";
 const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
 const NODE_RESULT: &str = "application/vnd.p4.node.result-v3+json";
 
+/// One node's span for one batch, with which node it came from.
+#[derive(Debug, Serialize)]
+pub struct StageSpanArtifact {
+    pub node: usize,
+    #[serde(flatten)]
+    pub span: p4_llamacpp_staged_adapter::v2::StageSpan,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RunArtifact {
     pub passed: bool,
@@ -44,6 +52,7 @@ pub struct RunArtifact {
     pub released_count: usize,
     pub requests: Vec<RequestArtifact>,
     pub batch_observations: Vec<BatchObservation>,
+    pub stage_spans: Vec<StageSpanArtifact>,
     pub elapsed_ms: u128,
     pub error: Option<String>,
 }
@@ -260,6 +269,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         released_count: run.released_count,
         requests,
         batch_observations: run.batch_observations,
+        stage_spans: run.stage_spans,
         elapsed_ms: run.elapsed_ms,
         error: run.error,
     })

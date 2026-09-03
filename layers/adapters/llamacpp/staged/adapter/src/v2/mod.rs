@@ -18,7 +18,7 @@ pub use capsule::{
 pub use commands::{
     BatchObservation, BatchRequestObservation, InferenceCommand, LoadCommand, NodeAddress,
     NodeRole, OutcomePayload, PhysicalBatchObservation, ReleaseCommand, ReleaseSequence,
-    ReleasedPayload, ReplySpec, SessionCommand, SettlementCommand, SettlementSequence,
+    ReleasedPayload, ReplySpec, SessionCommand, SettlementCommand, SettlementSequence, StageSpan,
     UnloadCommand,
 };
 pub use logical::{LogicalBatch, LogicalBatchError, LogicalRow};
@@ -44,6 +44,7 @@ pub const SETTLED_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.settled-v3+j
 pub const OUTPUT_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.output-v3+json";
 pub const BATCH_OBSERVATION_CONTENT_TYPE: &str =
     "application/vnd.p4.llamacpp.batch-observation-v3+json";
+pub const STAGE_SPAN_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.stage-span-v3+json";
 pub const ERROR_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.error-v2+json";
 
 #[cfg(test)]

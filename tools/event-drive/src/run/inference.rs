@@ -4,7 +4,7 @@ use super::{ArrivalWave, RequestArtifact, RunConfig, Sender, node_endpoint};
 use p4_llamacpp_staged_adapter::v2::{
     BATCH_OBSERVATION_CONTENT_TYPE, BatchObservation, ERROR_CONTENT_TYPE, InferenceCommand,
     OUTPUT_CONTENT_TYPE, OutcomePayload, PREFILL_CONTENT_TYPE, RELEASED_CONTENT_TYPE,
-    ReleasedPayload,
+    ReleasedPayload, STAGE_SPAN_CONTENT_TYPE, StageSpan,
 };
 use p4_protocol::event::EventClass;
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +18,7 @@ pub struct InferenceResult {
     pub released_count: usize,
     pub requests: Vec<RequestArtifact>,
     pub batch_observations: Vec<BatchObservation>,
+    pub stage_spans: Vec<super::StageSpanArtifact>,
     pub elapsed_ms: u128,
     pub error: Option<String>,
 }
@@ -44,6 +45,7 @@ where
     let mut released = 0usize;
     let mut failure = None;
     let mut observations = BTreeMap::new();
+    let mut spans = Vec::new();
     let mut known_requests = BTreeSet::new();
     let mut seen_event_ids = BTreeSet::new();
     let identity = InferenceIdentity::new(config, &sender.outer)?;
@@ -115,6 +117,11 @@ where
                         identity.observation(&event, &observation, &known_requests)?;
                         insert_observation(&mut observations, observation)?;
                     }
+                    STAGE_SPAN_CONTENT_TYPE => {
+                        let span: StageSpan = serde_json::from_slice(&event.payload)?;
+                        let node = identity.span(&event, &span, &known_requests)?;
+                        spans.push(super::StageSpanArtifact { node, span });
+                    }
                     ERROR_CONTENT_TYPE => {
                         identity.error(&event, &known_requests)?;
                         failure = Some(String::from_utf8_lossy(&event.payload).into_owned());
@@ -141,6 +148,7 @@ where
         released_count: released,
         requests: requests.into_values().collect(),
         batch_observations: observations.into_values().collect(),
+        stage_spans: spans,
         elapsed_ms: started.elapsed().as_millis(),
         error: failure,
     })

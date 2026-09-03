@@ -230,6 +230,7 @@ impl Worker {
     }
 
     fn physical(&mut self, event: Event) -> Result<(), String> {
+        let ingress_unix_ms = observe::unix_ms();
         let input = CapsuleSet::decode(&event.payload)
             .map_err(|error| format!("invalid physical capsule: {error:?}"))?;
         let session_id = single_session(&input)?;
@@ -257,14 +258,16 @@ impl Worker {
         {
             return Err("terminal capsule cannot be replayed".into());
         }
+        let start_unix_ms = observe::unix_ms();
         let body = self.stage_request(
             Operation::PhysicalBatch,
             Operation::PhysicalResult,
             event.payload.clone(),
         )?;
+        let end_unix_ms = observe::unix_ms();
         let result = CapsuleSet::decode(&body)
             .map_err(|error| format!("invalid physical result: {error:?}"))?;
-        match session.command.role {
+        let forwarded = match session.command.role {
             NodeRole::Middle => self.emit_bytes(
                 &event,
                 session.next.expect("validated middle next"),
@@ -272,10 +275,13 @@ impl Worker {
                 PHYSICAL_BATCH_CONTENT_TYPE,
                 body,
             ),
-            NodeRole::Last => self.emit_tail_results(&event, &session, result, body),
+            NodeRole::Last => self.emit_tail_results(&event, &session, result.clone(), body),
             NodeRole::First => unreachable!(),
         }
-        .map_err(|_| "completion queue is full".to_owned())
+        .map_err(|_| "completion queue is full".to_owned());
+        forwarded?;
+        self.emit_stage_span(&event, &session_id, &result, ingress_unix_ms, start_unix_ms, end_unix_ms)
+            .map_err(|_| "completion queue is full".to_owned())
     }
 
     fn stage_request(
