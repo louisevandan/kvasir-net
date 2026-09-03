@@ -53,3 +53,22 @@ test("an empty range is still checked", () => {
   assert.equal(range.text, "");
   assert.equal(range.endsOnRecord, true);
 });
+
+test("a missing length is refused, even when the payload is empty", () => {
+  // Number(null) is 0 and an empty payload is 0 bytes, so this used to agree
+  // with itself - and an empty range is what a run that recorded nothing
+  // looks like.
+  const lines = answer({ text: "" }).split("\n").filter((line) => !line.startsWith("P4_RANGE_BYTES="));
+  assert.throws(() => decodeRange(0, lines.join("\n"), 100, 100), /missing BYTES/);
+});
+
+test("each required field is required", () => {
+  for (const name of ["HEAD", "TAIL", "BYTES", "SHA256", "BASE64"]) {
+    const lines = answer().split("\n").filter((line) => !line.startsWith(`P4_RANGE_${name}=`));
+    assert.throws(
+      () => decodeRange(0, lines.join("\n"), 0, 8),
+      new RegExp(`missing ${name}`),
+      `${name} must be required`,
+    );
+  }
+});

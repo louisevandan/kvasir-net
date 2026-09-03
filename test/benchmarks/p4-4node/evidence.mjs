@@ -153,9 +153,12 @@ export function preserveWorkingTree(capture, directory) {
 /// untracked-only tree gets read as clean.
 export function captureWorkingTree(root) {
   const diff = git(root, ["diff", "--binary", "HEAD"]);
-  const untracked = git(root, ["ls-files", "--others", "--exclude-standard"])
-    .split(/\r?\n/)
-    .filter((name) => name.trim() !== "")
+  // `-z` because a path is not a line: git quotes non-ASCII names unless
+  // asked otherwise, and a name may contain anything but NUL. Splitting on
+  // newlines both mangles those names and loses any that contain one.
+  const untracked = git(root, ["ls-files", "-z", "--others", "--exclude-standard"])
+    .split(String.fromCharCode(0))
+    .filter((name) => name !== "")
     .sort()
     .map((name) => {
       const full = path.join(root, name);
@@ -175,9 +178,16 @@ export function captureWorkingTree(root) {
   if (diff.trim() === "" && untracked.length === 0) {
     return { id: null, clean: true, diff: "", untracked: [] };
   }
+  // Length-prefixed, because `name sha` joined by a separator is ambiguous:
+  // a name containing the separator - or a space - lets two different trees
+  // produce the same string, and a working-tree identity that collides is
+  // worse than none.
   const manifest = untracked
-    .map((entry) => `${entry.path} ${entry.sha256 ?? "unreadable"}`)
-    .join("|");
+    .map((entry) => {
+      const name = Buffer.from(entry.path, "utf8");
+      return `${name.length}:${name.toString("utf8")}:${entry.sha256 ?? "unreadable"}`;
+    })
+    .join("");
   const id = crypto.createHash("sha256")
     .update(`diff:${diff}`)
     .update("|untracked:")

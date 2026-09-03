@@ -355,14 +355,23 @@ export function decodeRange(status, out, fromByte, toByte) {
     const stop = rest.search(/[\r\n]/);
     return stop < 0 ? rest : rest.slice(0, stop);
   };
-  const encoded = field("BASE64");
-  if (status !== 0 || encoded === null) {
-    throw new Error(`remote record range unreadable: ${out.slice(0, 200) || "no output"}`);
+  // Every field is required. A missing BYTES became Number(null) = 0, which
+  // an empty payload then matched: a malformed answer passed as an empty
+  // range, and an empty range is exactly what a run that recorded nothing
+  // looks like.
+  const missing = ["HEAD", "TAIL", "BYTES", "SHA256", "BASE64"].filter(
+    (name) => field(name) === null,
+  );
+  if (status !== 0 || missing.length > 0) {
+    throw new Error(
+      `remote record range unreadable${missing.length > 0 ? ` (missing ${missing.join(", ")})` : ""}:`
+      + ` ${out.slice(0, 200) || "no output"}`,
+    );
   }
-  const bytes = Buffer.from(encoded, "base64");
+  const bytes = Buffer.from(field("BASE64"), "base64");
   const declared = Number(field("BYTES"));
-  if (bytes.length !== declared) {
-    throw new Error(`record range lost bytes in transit: ${bytes.length} of ${declared}`);
+  if (!Number.isInteger(declared) || bytes.length !== declared) {
+    throw new Error(`record range lost bytes in transit: ${bytes.length} of ${field("BYTES")}`);
   }
   const digest = crypto.createHash("sha256").update(bytes).digest("hex");
   if (digest !== field("SHA256")) {

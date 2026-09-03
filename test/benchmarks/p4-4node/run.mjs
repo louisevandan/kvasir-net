@@ -68,13 +68,21 @@ async function waitForReady(child, state, timeoutMs) {
   throw new Error(`agent READY timeout: ${state.stderr || state.stdout}`);
 }
 
+/// Stops a child and says whether it actually stopped.
+///
+/// The timeout used to be silent, so a process still running after three
+/// seconds looked the same as one that had exited - and the agent's record
+/// is read straight after this returns. A record read from a process that
+/// is still writing is the race the closing offset exists to close.
 async function stopChild(child) {
-  if (!child || child.exitCode !== null) return;
+  if (!child) return true;
+  if (child.exitCode !== null) return true;
   child.kill();
-  await Promise.race([
-    waitForExit(child).catch(() => undefined),
-    new Promise((resolve) => setTimeout(resolve, 3_000)),
+  const exited = await Promise.race([
+    waitForExit(child).then(() => true).catch(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
   ]);
+  return exited && child.exitCode !== null;
 }
 
 function metrics(artifact) {
@@ -183,6 +191,7 @@ async function main() {
   let recordFrom = 0;
   let recordTo = 0;
   let channelFailure = null;
+  let agentStopped = true;
   let agentLogFrom = 0;
   let failure;
 
@@ -243,7 +252,7 @@ async function main() {
     // The agent is stopped before its record is read, so what is read is
     // everything it was going to write. Reading first and stopping after
     // leaves a race between the last record and the closing length.
-    await stopChild(agent);
+    agentStopped = await stopChild(agent);
     agentLog = spec.target === "remote" && spec.tunnel
       ? fetchRemoteAgentLog({ ...spec.tunnel, fromByte: agentLogFrom })
       : agentOutput.stderr;
@@ -342,6 +351,7 @@ async function main() {
     session_keys: sessionKeys,
     delivery,
     record_channel_failures: channelFailures,
+    agent_stopped: agentStopped,
     records: { fenced: fence.ok, reason: fence.reason, lines: fence.records.length },
     metrics: metrics(artifact),
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
@@ -355,7 +365,7 @@ async function main() {
   process.stdout.write(`evidence: ${promoted.directory ?? run.final}\n`);
 
   if (!artifact.passed || !verdict.passed || !sessionKeys.passed
-    || !delivery.passed || !build.ok || !fence.ok || channelFailures.length > 0) {
+    || !delivery.passed || !build.ok || !fence.ok || channelFailures.length > 0 || !agentStopped) {
     process.stderr.write("P4_4NODE_NOT_ACCEPTED\n");
     process.exitCode = 1;
   }
