@@ -14,7 +14,7 @@ node test/benchmarks/p4-4node/run.mjs mixed      # continuous arrivals
 node --test test/benchmarks/p4-4node/judge.test.mjs   # no GPU required
 ```
 
-Artifacts land in `target/p4-4node/<scenario>/`: `config.json` (the resolved
+Artifacts land in `target/p4-4node/runs/<run-id>/`: `config.json` (the resolved
 OUTER plan), `artifact.json` (per-request rows, timings, outcomes),
 `report.json` (structural + meaning verdict and batch metrics), `gpu.csv`,
 and the stage logs.

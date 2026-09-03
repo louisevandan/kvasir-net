@@ -346,7 +346,7 @@ function readRemoteRange(host, file, fromByte, toByte) {
 
 /// Turns the far side's answer back into bytes, refusing anything that did
 /// not survive the journey intact.
-function decodeRange(status, out, fromByte, toByte) {
+export function decodeRange(status, out, fromByte, toByte) {
   const field = (name) => {
     const marker = `P4_RANGE_${name}=`;
     const at = out.indexOf(marker);

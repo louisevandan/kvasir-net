@@ -18,7 +18,7 @@ import {
   collectEvidence,
   currentCompatManifest,
   defaultRunsDir,
-  preserveDirtyDiff,
+  preserveWorkingTree,
   newRunId,
   promoteRun,
 } from "./evidence.mjs";
@@ -112,6 +112,16 @@ function metrics(artifact) {
 /// rather than scraped out of that shared stream. The file is created fresh
 /// per run directory, so the whole of it belongs to this run and there is no
 /// range to cut.
+/// Whether the local agent marked its record channel as failed.
+///
+/// The same independent path the remote run reads, for the same reason: the
+/// announcement must not travel on the stderr the stage servers share.
+function readLocalRecordFailure(file) {
+  const marker = `${file}.failed`;
+  if (!fs.existsSync(marker)) return null;
+  return `P4_RECORD_FAILED ${fs.readFileSync(marker, "utf8").trim()}`;
+}
+
 function readLocalRecord(file) {
   if (!fs.existsSync(file)) return { text: "", endsOnRecord: true };
   const text = fs.readFileSync(file, "utf8");
@@ -185,7 +195,7 @@ async function main() {
       compatManifest: currentCompatManifest(root),
     });
     // A hash says a diff existed; the diff says which one.
-    evidence.dirty_evidence = preserveDirtyDiff(root, outDir);
+    evidence.dirty_evidence = preserveWorkingTree(evidence.working_tree, outDir);
     if (spec.tunnel) {
       // Opening the forward is not proof it is ours: a bind failure leaves a
       // previous forward holding the port and the run would still look
@@ -230,6 +240,10 @@ async function main() {
     fs.writeFileSync(path.join(outDir, "gpu.csv"), samplerOutput.stdout, "utf8");
     // A remote run has no local agent, so its agent log has to be pulled from
     // the far side to land in the same file a local run writes.
+    // The agent is stopped before its record is read, so what is read is
+    // everything it was going to write. Reading first and stopping after
+    // leaves a race between the last record and the closing length.
+    await stopChild(agent);
     agentLog = spec.target === "remote" && spec.tunnel
       ? fetchRemoteAgentLog({ ...spec.tunnel, fromByte: agentLogFrom })
       : agentOutput.stderr;
@@ -239,14 +253,20 @@ async function main() {
     if (spec.target === "remote" && spec.tunnel) {
       recordTo = remoteRecordLength(spec.tunnel);
       channelFailure = remoteRecordFailure(spec.tunnel);
+      record = fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom, toByte: recordTo });
+    } else {
+      // The same two questions, asked of the local file: a run's own record,
+      // and whether the channel that wrote it stayed alive. Asking only
+      // remotely is how the local path kept reading its verdict off the
+      // stderr four stage servers share.
+      const localRecord = path.join(outDir, "agent.record.log");
+      record = readLocalRecord(localRecord);
+      recordFrom = 0;
+      recordTo = record.text.length;
+      channelFailure = readLocalRecordFailure(localRecord);
     }
-    record = spec.target === "remote" && spec.tunnel
-      ? fetchRemoteRecord({ ...spec.tunnel, fromByte: recordFrom, toByte: recordTo })
-      : readLocalRecord(path.join(outDir, "agent.record.log"));
     fs.writeFileSync(path.join(outDir, "agent.stderr.log"), agentLog, "utf8");
-    fs.writeFileSync(path.join(outDir, "agent.record.log"), record.text, "utf8");
     fs.writeFileSync(path.join(outDir, "drive.stderr.log"), driveOutput.stderr, "utf8");
-    await stopChild(agent);
     await stopChild(tunnel);
   }
 
@@ -281,11 +301,10 @@ async function main() {
   // against each other.
   const build = agreesWithExpected(evidence?.compat, artifact.build);
 
-  // Only what this run wrote counts. A file that cannot be cut at this run's
-  // fences is not thin evidence, it is somebody else's.
-  const fence = spec.target === "remote"
-    ? fencedRecords(record, recordFrom, recordTo)
-    : { ok: true, records: record.text.split(/\r?\n/).filter((l) => l.trim() !== ""), reason: "" };
+  // Only what this run wrote counts, and the same check decides that either
+  // way. The local branch used to return ok unconditionally, so a record cut
+  // in half read as a clean slice - the boundary was computed and discarded.
+  const fence = fencedRecords(record, recordFrom, recordTo);
   const mine = fence.records.join("\n");
   const delivery = checkDelivery(mine);
   // A dead record channel makes every count above zero for the wrong reason,
