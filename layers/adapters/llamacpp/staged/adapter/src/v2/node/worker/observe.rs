@@ -8,6 +8,7 @@ impl Worker {
         session_id: &str,
         logical_rows: usize,
         physical: &CapsuleSet,
+        pacing: BatchPacing,
     ) -> Result<(), ()> {
         let mut replies = Vec::new();
         let mut physical_batches = Vec::with_capacity(physical.0.len());
@@ -89,6 +90,11 @@ impl Worker {
             logical_rows,
             physical_batches,
             mixed_physical_batches,
+            stage_ms: pacing.stage_ms,
+            idle_ms: pacing.idle_ms,
+            idle_gated: pacing.idle_gated,
+            ready_rows: pacing.ready_rows,
+            ready_sequences: pacing.ready_sequences,
         };
         for reply in replies {
             let ingress = Address::from_str(&reply.ingress_agent).map_err(|_| ())?;

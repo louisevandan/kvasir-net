@@ -1,5 +1,23 @@
 # Runtime evidence
 
+## 2026-09-03: under load the batch fills and the GPU still does not
+
+Every acceptance run before this day had arrival coalescing switched off and
+an active set of 16 to 40, so a 512-row UBATCH could not be more than a few
+percent full whatever the scheduler did. Raising the active set to 256 and
+the arrival rate to 32 a second takes throughput from 166 to 436 tok/s and the
+batch to its 512-row cap; a mixed-prefill scenario (prompts of 19 to 1,290
+rows) puts prefill and decode in the same physical batch 100 times in 1,348.
+GPU utilisation moves from 42% to 45% summed across both cards through all of
+it. The first node is timed for the first time: its own five layers take 54
+to 64 ms a batch, which scaled to 35 layers is the measured 559 ms lap. The
+throughput is in the stage step, not in the batching. A field that was
+reported as "the scheduler leaves nothing" turned out to be an identity and
+is corrected in the record.
+
+Runs, numbers and the correction are in
+[`2026-09-03-load-and-batching.md`](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-03-load-and-batching.md).
+
 ## 2026-08-20: 768 tok/s, once a lap is batched and once generation is measured
 
 Two cards, a 1.5B plain attention model split [0,14) and [14,28), a 32-token

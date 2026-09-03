@@ -85,11 +85,47 @@ async function stopChild(child) {
   return exited && child.exitCode !== null;
 }
 
-function metrics(artifact) {
+/// The share of the UBATCH a batch actually carried.
+///
+/// `rows_per_batch` alone cannot say whether the pipeline is full, because a
+/// wide batch on a wide UBATCH is still mostly empty. The plan's own width is
+/// the denominator, so this is the number the batching work is trying to move.
+function fill(rows, ubatch) {
+  if (!ubatch || rows.length === 0) return null;
+  const total = rows.reduce((sum, value) => sum + value, 0);
+  return Number(((100 * total) / rows.length / ubatch).toFixed(2));
+}
+
+/// Percentiles over a sorted copy, so a single slow batch cannot pass for the
+/// common case and a common case cannot hide a stall.
+function spread(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = (fraction) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))];
+  const total = sorted.reduce((sum, value) => sum + value, 0);
+  return {
+    mean: Number((total / sorted.length).toFixed(1)),
+    p50: at(0.5),
+    p90: at(0.9),
+    max: sorted[sorted.length - 1],
+  };
+}
+
+function metrics(artifact, ubatch) {
   const rows = [];
   let batches = 0;
   let mixed = 0;
+  const stage = [];
+  const idle = [];
+  const gated = [];
+  const readyGap = [];
+  const readySequences = [];
   for (const observation of artifact.batch_observations ?? []) {
+    stage.push(observation.stage_ms ?? 0);
+    idle.push(observation.idle_ms ?? 0);
+    gated.push(observation.idle_gated ?? 0);
+    readyGap.push((observation.ready_rows ?? 0) - (observation.logical_rows ?? 0));
+    readySequences.push(observation.ready_sequences ?? 0);
     for (const batch of observation.physical_batches ?? []) {
       batches += 1;
       rows.push(batch.rows);
@@ -110,6 +146,19 @@ function metrics(artifact) {
     rows_per_batch: batches > 0 ? Number((totalRows / batches).toFixed(2)) : null,
     ms_per_batch: batches > 0 ? Number(((seconds * 1000) / batches).toFixed(1)) : null,
     mixed_batches: mixed,
+    ubatch_fill_pct: fill(rows, ubatch),
+    // The first node: how long its own stage held each batch, how long it
+    // stood still before planning the next, and whether the coalescing
+    // threshold or an empty ready set is what it was standing still for.
+    first_node_stage_ms: spread(stage),
+    first_node_idle_ms: spread(idle),
+    first_node_gate_refusals: gated.reduce((sum, value) => sum + value, 0),
+    // Token rows the ready set held minus the rows the batch carried: a
+    // positive number is the scheduler leaving work on the floor. An earlier
+    // version of this subtracted from the ready *request* count and read the
+    // never-positive result as a clean sweep; it proved nothing.
+    ready_rows_left: spread(readyGap),
+    ready_sequences: spread(readySequences),
   };
 }
 
@@ -353,7 +402,7 @@ async function main() {
     record_channel_failures: channelFailures,
     agent_stopped: agentStopped,
     records: { fenced: fence.ok, reason: fence.reason, lines: fence.records.length },
-    metrics: metrics(artifact),
+    metrics: metrics(artifact, spec.nUbatch),
     sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
     rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
   };

@@ -186,6 +186,32 @@ pub struct BatchObservation {
     pub logical_rows: usize,
     pub physical_batches: Vec<PhysicalBatchObservation>,
     pub mixed_physical_batches: usize,
+    /// How long this node's own stage server held the batch: the
+    /// LogicalBatch -> PhysicalResult round trip, which is this node's layers
+    /// and nothing downstream.
+    #[serde(default)]
+    pub stage_ms: u64,
+    /// How long this node had nothing to submit before planning this batch,
+    /// measured from the moment the previous batch's stage call returned. A
+    /// first node that is keeping up shows a small number here; a large one
+    /// says the node was waiting, and `idle_gated` says whether it was
+    /// waiting on work or on the coalescing threshold.
+    #[serde(default)]
+    pub idle_ms: u64,
+    /// How many times the coalescing threshold turned the drive loop away
+    /// during that idle gap. Zero means the node had no work to plan.
+    #[serde(default)]
+    pub idle_gated: u64,
+    /// Token rows the ready set held at the instant this batch was planned -
+    /// every remaining prompt token and every ready decode token, not a
+    /// request count. Compare with the batch's own rows: a positive gap is
+    /// the scheduler, not the arrival pattern, deciding the width.
+    #[serde(default)]
+    pub ready_rows: usize,
+    /// Requests that were eligible at that instant, which is the quantity
+    /// the coalescing gate compares its threshold against.
+    #[serde(default)]
+    pub ready_sequences: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

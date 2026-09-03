@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod control;
 mod drive;
@@ -39,6 +39,23 @@ pub enum WorkerInput {
     Event(Event),
 }
 
+
+/// What the first node was doing between one batch and the next.
+///
+/// A staged pipeline is supposed to let the first node start the next batch
+/// while the tail is still finishing the last one. Whether it actually does
+/// is not visible from batch widths: a node that submits rarely could be
+/// held by the coalescing threshold, or simply have nothing ready because
+/// every sequence is still travelling. These three numbers separate those.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct BatchPacing {
+    pub stage_ms: u64,
+    pub idle_ms: u64,
+    pub idle_gated: u64,
+    pub ready_rows: usize,
+    pub ready_sequences: usize,
+}
+
 pub struct Worker {
     endpoint: Endpoint,
     receiver: mpsc::Receiver<WorkerInput>,
@@ -47,6 +64,11 @@ pub struct Worker {
     lifecycle: LlamaLifecycle<ProcessServerControl>,
     scheduler: Scheduler,
     state: AdapterState,
+    /// When this node last finished a stage call, so the next batch can
+    /// report how long the node stood still before planning it.
+    last_stage_done: Option<Instant>,
+    /// Coalescing refusals since that moment.
+    gate_refusals: u64,
 }
 
 impl Worker {
@@ -64,6 +86,8 @@ impl Worker {
             lifecycle: LlamaLifecycle::default(),
             scheduler: Scheduler::new(),
             state: AdapterState::default(),
+            last_stage_done: None,
+            gate_refusals: 0,
         }
     }
 

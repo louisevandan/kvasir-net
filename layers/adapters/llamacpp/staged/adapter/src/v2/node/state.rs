@@ -189,6 +189,26 @@ impl AdapterState {
             .count()
     }
 
+    /// Rows the ready set actually holds: every remaining prompt token and
+    /// every ready decode, verify or replay token. `ready_row_count` counts
+    /// requests, which is what the coalescing gate wants; this is what a
+    /// report wants when it asks whether the scheduler left rows behind, and
+    /// the two were confused once - a report subtracted planned rows from
+    /// the request count and read the negative result as a clean sweep.
+    pub fn available_row_count(&self) -> usize {
+        self.requests
+            .values()
+            .filter_map(|request| {
+                request.phase().map(|phase| match phase {
+                    super::super::Phase::Prefill => {
+                        request.command.tokens.len() - request.prompt_cursor
+                    }
+                    _ => request.ready.as_ref().map_or(0, |ready| ready.tokens.len()),
+                })
+            })
+            .sum()
+    }
+
     pub fn first_session_with_work(&self) -> Option<String> {
         self.requests.values().find_map(|request| {
             let session = self.sessions.get(&request.command.session_id)?;

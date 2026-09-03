@@ -35,6 +35,7 @@ impl Worker {
                 && self.state.any_in_flight()
                 && self.state.ready_row_count() < self.state.min_batch_rows
             {
+                self.gate_refusals = self.gate_refusals.saturating_add(1);
                 return Ok(());
             }
             let Some(session_id) = self.state.first_session_with_work() else {
@@ -73,6 +74,13 @@ impl Worker {
             if demands.is_empty() {
                 return Ok(());
             }
+            let ready_rows = self.state.available_row_count();
+            let ready_sequences = self.state.ready_row_count();
+            let idle_ms = self
+                .last_stage_done
+                .map(|at| at.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            let idle_gated = self.gate_refusals;
             let allocations = self
                 .scheduler
                 .plan_with_physical_capacity(
@@ -193,6 +201,7 @@ impl Worker {
                     return Err(());
                 }
             };
+            let stage_started = std::time::Instant::now();
             let body = match self.stage_request(
                 Operation::LogicalBatch,
                 Operation::PhysicalResult,
@@ -205,6 +214,9 @@ impl Worker {
                     return Err(());
                 }
             };
+            let stage_ms = stage_started.elapsed().as_millis() as u64;
+            self.last_stage_done = Some(std::time::Instant::now());
+            self.gate_refusals = 0;
             let physical = match CapsuleSet::decode(&body) {
                 Ok(physical) => physical,
                 Err(error) => {
@@ -236,6 +248,7 @@ impl Worker {
                 &session_id,
                 logical_rows,
                 &physical,
+                BatchPacing { stage_ms, idle_ms, idle_gated, ready_rows, ready_sequences },
             )?;
             let mut verify_request_ids = Vec::new();
             for (request_id, phase, count) in updates {

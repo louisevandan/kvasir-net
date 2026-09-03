@@ -110,7 +110,11 @@ export function buildConfig(spec, options = {}) {
     session_id: `session-${spec.name}`,
     request_id: "req",
     nodes,
-    prompts: Array(spec.requestCount).fill(ACCEPTANCE_PROMPT),
+    // A scenario may vary its prompts by request index; the default is the
+    // acceptance prompt for every request, which every earlier run used.
+    prompts: spec.promptFor
+      ? Array.from({ length: spec.requestCount }, (_, index) => spec.promptFor(index))
+      : Array(spec.requestCount).fill(ACCEPTANCE_PROMPT),
     // Each request is its own conversation here: the acceptance prompt is a
     // single turn, so sharing one key across them would claim a continuity
     // that does not exist. An OUTER serving a real chat would reuse the key
