@@ -651,8 +651,19 @@ fn dropping_the_adapter_returns_even_with_an_undrained_completion_mailbox() {
         for sequence in 0..4 {
             let _ = adapter.try_offer(malformed_load(&endpoint, sequence));
         }
-        // Give the worker time to fill the one slot and start waiting on it.
-        std::thread::sleep(Duration::from_millis(50));
+        // Wait for the worker to actually be waiting on a full mailbox, rather
+        // than for a duration that might be enough: the snapshot says so, and
+        // a sleep would leave this test passing for the wrong reason on a slow
+        // machine and flaking on a fast one.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !adapter.snapshot().starts_with("completion_queue_full:waiting") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the worker never reached a full completion mailbox: {}",
+                adapter.snapshot(),
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         drop(adapter);
         let _ = done.send(());
     });

@@ -44,8 +44,13 @@ impl NodeAdapter for CompletingAdapter {
         // The completion this stands in for is derived from the event, so a
         // full publisher hands the original back the way a real adapter does.
         let offered = event.clone();
+        // A completion derives its id from the event it answers: two
+        // completions sharing one id are a conflicting duplicate to the
+        // broker ledger, which is a property of this stand-in and not of the
+        // node under test.
+        let completion_id = format!("complete-{}", event.envelope.event_id);
         let envelope = event.envelope.next(
-            "complete",
+            &completion_id,
             self.source.clone(),
             self.target.clone(),
             EventClass::Telemetry,
@@ -255,4 +260,79 @@ async fn a_full_adapter_holds_the_event_instead_of_failing_the_node() {
     assert_eq!(taken[0].payload, event(&own).payload);
     assert!(!task.is_finished());
     task.abort();
+}
+
+/// A full destination holds the completion; it does not end the node.
+///
+/// The other tests here cover one hop each. This one runs the chain the
+/// review asked for - adapter completion, mailbox, node, broker destination -
+/// with the destination at capacity one, because that is where a computed
+/// token was being dropped and the node ended for a queue about to drain.
+#[tokio::test]
+async fn a_full_destination_holds_the_completion_and_the_node_survives() {
+    let own = Address::tcp("127.0.0.1", 52001);
+    // One slot, and nothing takes from it until this test says so.
+    let (agent_tx, mut agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(4);
+    let (outbound_tx, _outbound_rx) = bounded_queue(4);
+    let (node_tx, node_rx) = bounded_queue(4);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        8,
+    ));
+    broker.register_node("n1", 1, node_tx).unwrap();
+    let (publisher, mailbox) = completion_mailbox(4);
+    let adapter = Arc::new(CompletingAdapter {
+        publisher,
+        mailbox,
+        source: Endpoint::node(own.clone(), "n1", 1),
+        target: Endpoint::agent(own.clone()),
+    });
+    let task = tokio::spawn(EventNode::new(adapter, node_rx, Arc::clone(&broker)).run());
+
+    // Two requests, so the adapter answers with two completions and the
+    // second finds the one slot taken.
+    let mut first = event(&own);
+    first.envelope.event_id = "first".into();
+    let mut second = event(&own);
+    second.envelope.event_id = "second".into();
+    second.envelope.correlation_id = "second".into();
+    second.envelope.sequence = 2;
+    broker.dispatch(first).unwrap();
+    broker.dispatch(second).unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !task.is_finished(),
+        "a full destination must not end the node",
+    );
+
+    // Draining the slot lets the held completion through.
+    let delivered = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut seen = Vec::new();
+        while seen.len() < 2 {
+            match agent_rx.recv().await {
+                Some(event) => seen.push(event),
+                None => break,
+            }
+        }
+        seen
+    })
+    .await
+    .expect("both completions should arrive once there is room");
+    assert_eq!(delivered.len(), 2, "held once, delivered once");
+    assert!(delivered.iter().all(|event| event.payload == vec![9]));
+    assert!(!task.is_finished());
+
+    // And a node that is waiting can still be torn down promptly.
+    task.abort();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .is_ok(),
+        "a node waiting on a destination must still stop",
+    );
 }
