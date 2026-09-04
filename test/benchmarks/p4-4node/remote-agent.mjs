@@ -68,6 +68,10 @@ const maxIssueRows = Number(argument("--max-issue-rows", "0"));
 if (!Number.isInteger(maxIssueRows) || maxIssueRows < 0) {
   throw new Error("--max-issue-rows must be a non-negative integer");
 }
+const stepTrace = process.argv.includes("--step-trace");
+// Threads the tail samples with. 1 restores the serial sampler exactly, which
+// is the control for the parallel one; unset lets the stage choose.
+const sampleThreads = argument("--sample-threads", "");
 
 // One line per generated token, on a stderr four stage servers already share.
 // It is what separated "the adapter never produced this position" from "the
@@ -118,6 +122,11 @@ function copyLauncher() {
     `set P4_STAGED_MIN_BATCH_ROWS=${minBatchRows}`,
     `set P4_STAGED_MAX_OPEN_BATCHES=${maxOpenBatches}`,
     `set P4_STAGED_MAX_ISSUE_ROWS=${maxIssueRows}`,
+    // One line per stage step with its four parts, on the stderr this
+    // launcher already collects. Off unless asked for: it is a line per
+    // batch per node.
+    ...(stepTrace ? ["set P4_STAGED_TRACE_STEP=1"] : []),
+    ...(sampleThreads ? [`set P4_STAGED_SAMPLE_THREADS=${sampleThreads}`] : []),
     // Redirections go first: cmd strips them in place and leaves the gap,
     // which reaches the program as an extra empty argument - the advertised
     // address then parsed as blank and the agent refused every connection.

@@ -285,3 +285,85 @@ The order of these three sections is the record of the mistake: a
 correlation over runs where the suspected cause was actually an effect, a
 conclusion drawn from it, and the experiment that inverted both signs. The
 first two are left standing rather than rewritten.
+
+## Where the per-batch cost actually is (2026-09-04)
+
+`P4_STAGED_TRACE_STEP` times a stage step in four parts on the stderr the
+harness already collects. One run of `prefill_mix`, 6,716 steps, widths 2 to
+512:
+
+| part | first node | middle | tail |
+| --- | ---: | ---: | ---: |
+| frame parse | 0.04 ms | 0.54 ms | 0.54 ms |
+| `llama_decode` | 49.2 | 37.8 | 40.1 |
+| owner matching | 0.07 | - | - |
+| sampling | - | 0 | **46.9** |
+| response encode | 2.13 | 1.18 | 1.18 |
+
+Parsing, owner matching and encoding are together under 3 ms and are not the
+34 ms. The cost is `llama_decode` and, on the tail, sampling - which is the
+larger of the two. Binned by width, the tail costs 0.11 ms per row to run its
+22 layers and **0.29 ms per row to choose the token**: the sampler is 2.7x
+the transformer. The vocabulary is at least 249,157 (largest token id
+observed in the run's own outcomes) and `common_sampler_sample` builds a
+candidate array that size per row, one row after another on one thread.
+
+The 2026-08-20 record called this "about a third of the ring, and the
+adapter's problem rather than P4's". It is now half.
+
+## Sampling the rows in parallel
+
+Each output row has its own sampler keyed by sequence, so the loop
+parallelises. The pass refuses rather than assumes: Verify and Replay rows go
+through the MTP path and stay sequential, a repeated sequence key inside one
+batch abandons the parallel pass because one row's `accept` is the next row's
+state, and fewer than eight output rows stays serial. Threads default to a
+quarter of the host's cores because four stage servers share the machine.
+`P4_STAGED_SAMPLE_THREADS=1` restores the previous behaviour exactly and is
+the control.
+
+Eight runs, interleaved, block order reversed halfway:
+
+| | parallel (n=4) | serial (n=4) | |
+| --- | ---: | ---: | ---: |
+| gen tok/s | 213.45 +/- 8.09 | 194.06 +/- 6.54 | **+10.0%** |
+| total rows/s | 526.39 +/- 19.95 | 478.56 +/- 16.12 | +10.0% |
+| per-session tok/s | 2.46 +/- 0.12 | 2.23 +/- 0.08 | +10.3% |
+| tail stage ms | 105.63 +/- 2.0 | 118.3 +/- 13.28 | -10.7% |
+
+parallel: 204.7, 208.9, 217.8, 222.4. serial: 188.1, 189.6, 196.2, 202.3.
+**The distributions do not overlap** - the slowest parallel run beats the
+fastest serial one - and all eight passed 192/192 on structure and meaning.
+This is the first change in this record whose effect survives interleaving.
+
+Parallel runs happened to form wider batches, and a wider batch amortises
+cost, so the comparison is repeated at matched widths:
+
+| width band | serial sample ms | parallel sample ms | |
+| --- | ---: | ---: | ---: |
+| 9-16 | 23.4 | 16.8 | -28.3% |
+| 17-32 | 42.3 | 24.7 | -41.7% |
+| 33-64 | 74.8 | 38.4 | -48.7% |
+| 65-128 | 102.0 | 58.7 | -42.4% |
+| 129-512 | 161.5 | 145.3 | -10.0% |
+
+Two caveats belong with that table. `llama_decode` is not parallelised and
+should be unchanged between the arms, but moves -1% to -30% band by band,
+so a per-band figure carries run-to-run noise and the throughput comparison
+above is the reliable one. And the 129-512 band barely improves because its
+`sample_us` is mostly not sampling: those are prefill batches, where only the
+last row of each prompt has an output, and the time goes to constructing a
+sampler for each newly seen sequence - a serial cost by necessity, since it
+writes the sampler table. That construction is a separate target.
+
+## A correctness check that could not be run
+
+The intended proof was that parallel sampling changes no token: each row uses
+its own sampler, so the output should be identical. It is not testable here -
+**the two serial runs disagree with each other**. Batch composition varies
+between runs, which varies the ubatch split, which varies the order of
+floating-point reduction, which moves logits enough to change a sampled
+token. The pipeline is non-deterministic run to run independently of this
+change. The acceptance bar that did apply is the judge: 192/192 structure and
+meaning in all eight runs. A real identity test needs a fixture that pins
+batch composition, and there is not one.

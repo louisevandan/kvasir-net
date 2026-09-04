@@ -4,6 +4,9 @@
 #include "physical_wire.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <utility>
 #endif
@@ -12,6 +15,28 @@ namespace staged::server {
 
 #ifdef P4_STAGED_WITH_LLAMA
 namespace {
+
+// A step's parts, on stderr, so the 34 ms per batch that dominates a
+// narrow-batch run can be attributed.
+//
+// The adapter measures a batch's whole stage call and a fit across widths
+// puts it at 34.2 ms per batch plus 1.051 ms per row, which is why a wide
+// batch is 3.4x more efficient per row. That fit says nothing about which
+// of decoding the request, running the graph, matching owners and encoding
+// the reply the 34 ms is. These four timers do.
+//
+// Off unless P4_STAGED_TRACE_STEP is set. Written to the stderr the stage
+// servers already share with the agent, which the harness collects.
+bool step_trace_enabled() {
+    static const bool enabled = std::getenv("P4_STAGED_TRACE_STEP") != nullptr;
+    return enabled;
+}
+
+using step_clock = std::chrono::steady_clock;
+
+std::int64_t step_us(step_clock::time_point from, step_clock::time_point to) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(to - from).count();
+}
 
 bool physical_row_matches(
         const llama_runtime::PhysicalExecution & execution,
@@ -144,11 +169,13 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
         (void) runtime_.cancel();
         return physical_error(*this, "LOGICAL_BATCH failed: " + failure);
     };
+    const auto step_began = step_clock::now();
     std::vector<llama_runtime::LogicalExecutionRow> input;
     std::string detail;
     if (!llama_runtime::decode_logical_batch(request.body, &input, &detail)) {
         return fail(detail);
     }
+    const auto step_parsed = step_clock::now();
     std::vector<llama_runtime::LogicalRow> rows;
     rows.reserve(input.size());
     for (const auto & value : input) {
@@ -167,6 +194,7 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     if (!llama_runtime_->execute_first_batch(rows, owners, &captured, &detail)) {
         return fail(detail);
     }
+    const auto step_executed = step_clock::now();
     executed = true;
     std::vector<bool> used(input.size(), false);
     std::vector<llama_runtime::RoutedPhysicalExecution> output;
@@ -200,8 +228,21 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     if (std::find(used.begin(), used.end(), false) != used.end()) {
         return fail("logical rows were omitted from physical ubatches");
     }
+    const auto step_matched = step_clock::now();
     std::vector<std::uint8_t> body;
     if (!llama_runtime::encode_physical_set(output, &body, &detail)) return fail(detail);
+    const auto step_encoded = step_clock::now();
+    if (step_trace_enabled()) {
+        std::fprintf(stderr,
+            "P4_STAGED_STEP role=first rows=%zu parse_us=%lld decode_us=%lld"
+            " match_us=%lld encode_us=%lld bytes=%zu\n",
+            input.size(),
+            static_cast<long long>(step_us(step_began, step_parsed)),
+            static_cast<long long>(step_us(step_parsed, step_executed)),
+            static_cast<long long>(step_us(step_executed, step_matched)),
+            static_cast<long long>(step_us(step_matched, step_encoded)),
+            body.size());
+    }
     if (!runtime_.finish_hop().ok()) return fail("session transition failed");
     return protocol::Frame::make(protocol::Operation::PhysicalResult, std::move(body));
 #endif
@@ -260,28 +301,50 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
         (void) runtime_.cancel();
         return physical_error(*this, "PHYSICAL_BATCH failed: " + failure);
     };
+    const auto step_began = step_clock::now();
     std::vector<llama_runtime::RoutedPhysicalExecution> input;
     std::string detail;
     if (!llama_runtime::decode_physical_set(request.body, &input, &detail)) {
         return fail(detail);
     }
+    const auto step_parsed = step_clock::now();
+    std::int64_t decode_us = 0;
+    std::int64_t sample_us = 0;
+    std::size_t step_rows = 0;
     std::vector<llama_runtime::RoutedPhysicalExecution> output;
     output.reserve(input.size());
     for (auto & capsule : input) {
         llama_runtime::RoutedPhysicalExecution result;
         result.execution_id = capsule.execution_id;
         result.owners = std::move(capsule.owners);
+        step_rows += result.owners.size();
+        const auto capsule_began = step_clock::now();
         if (!llama_runtime_->execute_physical(
                 capsule.execution, result.owners, &result.execution, &detail)) return fail(detail);
+        const auto capsule_executed = step_clock::now();
+        decode_us += step_us(capsule_began, capsule_executed);
         executed = true;
         if (result.execution.terminal
             && !llama_runtime_->sample_physical_outputs(
                 result.execution, result.owners, &result.outcomes, &detail)) return fail(detail);
+        sample_us += step_us(capsule_executed, step_clock::now());
         if (result.execution.terminal) result.execution.tensors.clear();
         output.push_back(std::move(result));
     }
+    const auto step_ready = step_clock::now();
     std::vector<std::uint8_t> body;
     if (!llama_runtime::encode_physical_set(output, &body, &detail)) return fail(detail);
+    if (step_trace_enabled()) {
+        std::fprintf(stderr,
+            "P4_STAGED_STEP role=downstream rows=%zu parse_us=%lld decode_us=%lld"
+            " sample_us=%lld encode_us=%lld bytes=%zu\n",
+            step_rows,
+            static_cast<long long>(step_us(step_began, step_parsed)),
+            static_cast<long long>(decode_us),
+            static_cast<long long>(sample_us),
+            static_cast<long long>(step_us(step_ready, step_clock::now())),
+            body.size());
+    }
     if (!runtime_.finish_hop().ok()) return fail("session transition failed");
     return protocol::Frame::make(protocol::Operation::PhysicalResult, std::move(body));
 #endif
