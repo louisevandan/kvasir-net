@@ -24,7 +24,11 @@ export const DEFAULT_CRITERIA = {
   minimumHangulRatio: 0.3,
   minimumDistinctTerms: 4,
   maximumRepeatRatio: 0.35,
-  allowedStops: ["eos", "length"],
+  // A stop string is a finish, not a fault. The drive-side acceptance was
+  // widened for scenarios that supply them; this list is the judge's own and
+  // was missed, so a run that ended exactly where OUTER asked it to still
+  // failed here.
+  allowedStops: ["eos", "length", "stop"],
 };
 
 // Fraction of 12-character shingles that are duplicates. Degenerate loops

@@ -16,7 +16,8 @@ function quote(value) {
 /// CPU so their GGUF bytes are never loaded here; `--kv-unified` is what lets
 /// split_simple() pack unequal Prefill and Decode rows into one physical
 /// UBATCH, which is a batching policy rather than a load workaround.
-function buildPlan({ model, begin, end, totalLayers, parallel, nBatch, nUbatch, totalContext }) {
+function buildPlan({ model, begin, end, totalLayers, parallel, nBatch, nUbatch, totalContext,
+                    flashAttn, cacheTypeK, cacheTypeV }) {
   const unowned = [];
   for (let layer = 0; layer < totalLayers; layer += 1) {
     if (layer < begin || layer >= end) unowned.push(layer);
@@ -36,10 +37,13 @@ function buildPlan({ model, begin, end, totalLayers, parallel, nBatch, nUbatch, 
     "--ctx-size", `${totalContext}`,
     "--n-gpu-layers", `${totalLayers - begin}`,
     "--device", "CUDA0",
-    "--flash-attn", "off",
+    // Flash attention and the cache types are the model's business, not the
+    // harness's: a 2B model with an unquantised V cache is cheap and a 40
+    // layer one is not. Defaults are what every scenario used before.
+    "--flash-attn", flashAttn ?? "off",
     "--no-mmap",
-    "--cache-type-k", "q8_0",
-    "--cache-type-v", "f16",
+    "--cache-type-k", cacheTypeK ?? "q8_0",
+    "--cache-type-v", cacheTypeV ?? "f16",
   ];
   if (unowned.length) {
     tokens.push("--override-tensor", quote(`blk\\.(${unowned.join("|")})\\..*=CPU`));
@@ -85,6 +89,9 @@ export function buildConfig(spec, options = {}) {
       nBatch: spec.nBatch,
       nUbatch: spec.nUbatch,
       totalContext,
+      flashAttn: spec.flashAttn,
+      cacheTypeK: spec.cacheTypeK,
+      cacheTypeV: spec.cacheTypeV,
     }),
     args: [],
     environment: [
@@ -122,13 +129,26 @@ export function buildConfig(spec, options = {}) {
     session_key_template: `sk1:p4-4node/${spec.name}-{{request_id}}`,
     max_tokens: spec.maxTokens,
     waves: spec.waves,
-    options: JSON.stringify({ temperature: 0.2, top_p: 0.9, top_k: 20, seed: 7 }),
+    // Sampling is the same everywhere; stop strings are the model's, because
+    // where a turn ends is a property of the template a model was trained on
+    // and this is the layer that owns the template.
+    options: JSON.stringify({
+      temperature: 0.2,
+      top_p: 0.9,
+      top_k: 20,
+      seed: 7,
+      ...(spec.stops ? { stop: spec.stops } : {}),
+      ...(spec.reasoning ?? {}),
+    }),
     pre_inference_hold_ms: spec.preInferenceHoldMs,
     // Structural acceptance only. Whether the answer means anything is
     // judged by judge.mjs, which the drive cannot express.
     acceptance: {
       minimum_generated_tokens: 1,
-      allowed_stop_reasons: ["eos", "length"],
+      // A scenario that supplies stop strings will terminate on them, and
+      // that is a clean finish rather than a fault: the first run with them
+      // completed 64/64 and was still failed here for seven "stop"s.
+      allowed_stop_reasons: spec.stops ? ["eos", "length", "stop"] : ["eos", "length"],
       responses: Array.from({ length: spec.requestCount }, () => ({})),
     },
     timeout_ms: spec.timeoutMs,

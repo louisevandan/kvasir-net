@@ -7,6 +7,8 @@
 #include <atomic>
 #include <cstdlib>
 #include <limits>
+#include <map>
+#include <utility>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -25,24 +27,54 @@ namespace {
 /// source names tensor contracts, not the model that produced a measurement.
 constexpr std::size_t PARALLEL_SAMPLE_THRESHOLD = 8;
 
-/// Threads to sample with, or 1 to keep the loop serial.
+/// Threads to sample with. **Serial unless asked for, and asking is unsafe.**
 ///
-/// `P4_STAGED_SAMPLE_THREADS` overrides, and 1 restores the previous
-/// behaviour exactly - which is how the A/B is taken.
+/// Threading this loop measured +10% on a 2B model and the arms did not
+/// overlap, but the measurement does not establish that it is correct. Each
+/// row has its own sampler, yet every worker calls
+/// `common_sampler_sample(ctx_, ...)` on the *same* context, and upstream
+/// enters it through `llama_synchronize()`, which updates `t_eval_us`,
+/// `n_eval` and `n_queued_tokens` without a lock, and through
+/// `get_logits_ith()`, which calls `output_reorder()` and swaps rows of
+/// `logits.data` in place. Two workers doing that at once is a data race on
+/// the buffer the answer is read from. A run passing its judge is not
+/// evidence of its absence.
+///
+/// So the default is 1. `P4_STAGED_SAMPLE_THREADS=N` turns it on for the
+/// experiment that has to come first: synchronise the context once on one
+/// thread, take an immutable copy of the logits, and only then let
+/// independent samplers run on it - with a fixed seed, fixed batch
+/// membership, and a thread sanitiser over the shared context.
 std::size_t sample_thread_limit() {
     static const std::size_t limit = [] {
         if (const char * requested = std::getenv("P4_STAGED_SAMPLE_THREADS")) {
             const auto value = std::strtoul(requested, nullptr, 10);
             if (value >= 1) return static_cast<std::size_t>(value);
         }
-        const auto available = std::thread::hardware_concurrency();
-        if (available == 0) return std::size_t{1};
-        // Four stage servers share this host, so a stage takes a quarter of
-        // the cores rather than claiming all of them and fighting the other
-        // three for the same schedule.
-        return std::max<std::size_t>(1, available / 4);
+        return std::size_t{1};
     }();
     return limit;
+}
+
+/// Runs `work(slot)` for every slot below `count` across the sampler threads.
+///
+/// The caller guarantees the slots are independent; nothing here checks that.
+template <typename Work>
+void across_sample_threads(std::size_t count, Work && work) {
+    const auto workers = std::min(sample_thread_limit(), count);
+    std::atomic<std::size_t> next{0};
+    const auto claim = [&] {
+        for (;;) {
+            const auto slot = next.fetch_add(1, std::memory_order_relaxed);
+            if (slot >= count) return;
+            work(slot);
+        }
+    };
+    std::vector<std::thread> pool;
+    pool.reserve(workers > 0 ? workers - 1 : 0);
+    for (std::size_t worker = 1; worker < workers; ++worker) pool.emplace_back(claim);
+    claim();
+    for (auto & thread : pool) thread.join();
 }
 
 } // namespace
@@ -61,6 +93,8 @@ bool StageRuntime::sample_physical_outputs(
     outcomes->clear();
     outcomes->reserve(rows);
     std::vector<MtpDraftRequest> draft_requests;
+    // Prompt tokens to fold into each sequence's sampler, in row order.
+    std::map<std::string, std::vector<llama_token>> prefill_accepts;
     for (const auto & owner : owners) {
         const auto options_found = sampler_options_.find(owner.sequence_key);
         if (options_found != sampler_options_.end()
@@ -83,8 +117,21 @@ bool StageRuntime::sample_physical_outputs(
             sampler_options_[owner.sequence_key] = owner.options;
         }
         if (owner.phase == PhysicalPhase::Prefill) {
-            found->second.accept(owner.input_token, false);
+            prefill_accepts[owner.sequence_key].push_back(owner.input_token);
         }
+    }
+    // A prompt's tokens enter the sampler's history before its first real
+    // sample, and that is a walk of the sampler chain per token rather than a
+    // push. Grouping the tokens by sequence and running the groups in parallel
+    // was tried and reverted: the sampling time of prefill-dominated batches
+    // was 165.1 and 161.2 ms serial against 166.2 and 156.7 ms threaded, which
+    // is no difference. One request can contribute over a thousand prompt rows
+    // to a batch, so the longest group sets the parallel time and there is
+    // nothing to win. Kept serial.
+    for (const auto & entry : prefill_accepts) {
+        auto sampler = samplers_.find(entry.first);
+        if (sampler == samplers_.end()) return false;
+        for (const auto token : entry.second) sampler->second.accept(token, false);
     }
     // Choose the tokens first, in parallel, then run the bookkeeping loop
     // below unchanged.
@@ -118,31 +165,20 @@ bool StageRuntime::sample_physical_outputs(
     }
     if (!parallel_rows.empty()) {
         parallel_tokens.assign(parallel_rows.size(), LLAMA_TOKEN_NULL);
-        const auto workers = std::min(sample_thread_limit(), parallel_rows.size());
-        std::atomic<std::size_t> next{0};
         std::atomic<bool> missing_sampler{false};
-        const auto claim = [&] {
-            for (;;) {
-                const auto slot = next.fetch_add(1, std::memory_order_relaxed);
-                if (slot >= parallel_rows.size()) return;
-                const auto index = parallel_rows[slot];
-                auto sampler = samplers_.find(owners[index].sequence_key);
-                if (sampler == samplers_.end()) {
-                    missing_sampler.store(true, std::memory_order_relaxed);
-                    return;
-                }
-                // Each row reads its own logits slice and mutates only its
-                // own sampler; `samplers_` itself is not written here, every
-                // entry having been created in the loop above.
-                parallel_tokens[slot] =
-                    sampler->second.sample(ctx_, static_cast<std::int32_t>(index));
+        across_sample_threads(parallel_rows.size(), [&](std::size_t slot) {
+            const auto index = parallel_rows[slot];
+            auto sampler = samplers_.find(owners[index].sequence_key);
+            if (sampler == samplers_.end()) {
+                missing_sampler.store(true, std::memory_order_relaxed);
+                return;
             }
-        };
-        std::vector<std::thread> pool;
-        pool.reserve(workers - 1);
-        for (std::size_t worker = 1; worker < workers; ++worker) pool.emplace_back(claim);
-        claim();
-        for (auto & thread : pool) thread.join();
+            // Each row reads its own logits slice and mutates only its own
+            // sampler; `samplers_` itself is not written here, every entry
+            // having been created in the loop above.
+            parallel_tokens[slot] =
+                sampler->second.sample(ctx_, static_cast<std::int32_t>(index));
+        });
         if (missing_sampler.load(std::memory_order_relaxed)) return false;
     }
     std::size_t parallel_cursor = 0;

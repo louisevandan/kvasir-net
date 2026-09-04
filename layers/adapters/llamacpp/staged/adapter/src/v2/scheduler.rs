@@ -112,12 +112,28 @@ impl Scheduler {
             .map(|offset| (start + offset) % demands.len())
             .take(capacity)
             .collect();
-        // A decode row fixes the common width at one. Otherwise share the
-        // physical capacity across every admitted prompt and cap the width at
-        // the shortest remaining prompt. This is the fullest possible equal
-        // UBATCH for that fair participant set; unused remainder smaller than
-        // the participant count cannot be assigned without causing another
-        // llama.cpp split_equal() graph.
+        // On a model whose memory forces equal per-sequence widths, one
+        // decode row makes the common width one - a decode has exactly one
+        // row to give. Mixing a prompt into that batch therefore sends one
+        // row of a prompt that had thousands ready.
+        //
+        // Measured on a 35B hybrid: 944.6 rows ready on average at plan time
+        // against 9.85 issued, with 54% of plans leaving rows behind and the
+        // commonest widths 8, 2, 16 and 4. The prompts were not waiting for
+        // arrivals; they were being cut to one row each by a decode sharing
+        // their batch.
+        //
+        // So the participants are decided before the width is: if any decode
+        // is ready, this batch is the decodes, and the prompts wait for the
+        // next one, where they can share a wide equal UBATCH. Both keep
+        // moving because every batch admits one cohort or the other and the
+        // round-robin cursor below advances either way.
+        let decoding: Vec<usize> = order
+            .iter()
+            .copied()
+            .filter(|index| demands[*index].phase == Phase::Decode)
+            .collect();
+        let order = if decoding.is_empty() { order } else { decoding };
         let width = if order
             .iter()
             .any(|index| demands[*index].phase == Phase::Decode)

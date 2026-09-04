@@ -167,6 +167,13 @@ fn observation() -> BatchObservation {
             ],
         }],
         mixed_physical_batches: 1,
+        // The first node's pacing, which this fixture does not exercise: the
+        // identity check reads dimensions and routing, not timings.
+        stage_ms: 0,
+        idle_ms: 0,
+        idle_gated: 0,
+        ready_rows: 0,
+        ready_sequences: 0,
     }
 }
 

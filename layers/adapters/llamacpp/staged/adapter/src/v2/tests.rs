@@ -297,8 +297,17 @@ fn recurrent_prefill_is_one_equal_physical_ubatch() {
     );
 }
 
+/// On a model that forces equal per-sequence widths, a batch carries decodes
+/// or prompts and not both.
+///
+/// This test used to assert the opposite - that a ready decode set the common
+/// width to one and the prompts came along at one row each. That is what the
+/// scheduler did, and on a 35B hybrid it meant 944.6 rows ready at plan time
+/// against 9.85 issued, with 54% of plans leaving rows behind. The prompts
+/// were not short of work; they were being cut to a decode's width. The
+/// contract changed on that measurement, so this test changed with it.
 #[test]
-fn recurrent_mixed_prefill_decode_uses_common_single_row_width() {
+fn recurrent_ready_decode_takes_the_batch_and_leaves_prompts_whole() {
     let mut scheduler = Scheduler::new();
     let demands = vec![
         demand(0, Phase::Decode, 1),
@@ -308,8 +317,28 @@ fn recurrent_mixed_prefill_decode_uses_common_single_row_width() {
     let plan = scheduler
         .plan_with_physical_capacity(&demands, 512, 64, true, 10, false)
         .unwrap();
-    assert_eq!(plan.len(), 3);
-    assert!(plan.iter().all(|row| row.rows == 1));
+    // The decode alone, at its own width of one - not two prompts sliced to it.
+    assert_eq!(plan.len(), 1);
+    assert_eq!(plan[0].sequence_id, 0);
+    assert_eq!(plan[0].rows, 1);
+    assert_eq!(plan[0].phase, Phase::Decode);
+}
+
+/// And with no decode ready the prompts get the whole UBATCH between them,
+/// which is the width the previous contract was throwing away.
+#[test]
+fn recurrent_prompts_without_a_decode_share_a_wide_equal_ubatch() {
+    let mut scheduler = Scheduler::new();
+    let demands = vec![
+        demand(1, Phase::Prefill, 500),
+        demand(2, Phase::Prefill, 500),
+    ];
+    let plan = scheduler
+        .plan_with_physical_capacity(&demands, 512, 64, true, 10, false)
+        .unwrap();
+    assert_eq!(plan.len(), 2);
+    // 64 rows of physical capacity across two participants, equal widths.
+    assert!(plan.iter().all(|row| row.rows == 32));
 }
 
 #[test]

@@ -1,5 +1,30 @@
 # Runtime evidence
 
+## 2026-09-04: a 35B says the small model was distorting it, and the scheduler was
+## throwing work away
+
+On gemma-4-E2B the sampler cost 2.7x the transformer layers, which is what made
+parallelising it worth 10%. On a 35B over 40 layers the ratio inverts - layers
+cost 1.25 to 1.6x the sampler - so that result belongs to the 2B model and is
+now quoted with its condition.
+
+The 35B also exposed a scheduler defect the small model could not. Its memory
+forces equal per-sequence UBATCH widths, and the scheduler let one ready decode
+row set that common width to one - so a prompt with a thousand rows ready went
+one row per batch. Measured: 934.8 token rows ready at plan time against 9.85
+issued. Deciding the participants before the width - decodes take their own
+batch, prompts share a wide one - moves total throughput 90.13 to 127.77
+rows/s, prefill batches to 367 rows mean and 512 max, and rows left behind to
+32.1. Concurrent stage occupancy and GPU utilisation both fell while it did.
+
+The parallel sampler is defaulted back to serial: every worker calls
+`common_sampler_sample` on one `llama_context`, which reorders the logits
+buffer in place. Passing judges is not proof that no race occurred.
+
+Runs, the three harness faults behind the judge failures, and what is still
+unmeasured are in
+[`2026-09-04-35b-and-the-width-collapse.md`](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-04-35b-and-the-width-collapse.md).
+
 ## 2026-09-03: under load the batch fills and the GPU still does not
 
 Every acceptance run before this day had arrival coalescing switched off and

@@ -115,11 +115,17 @@ function spread(values) {
 ///
 /// Every node reports [ingress, start, end, forward] per batch on a shared
 /// wall clock, so this can answer what the first node's own pacing could not:
-/// how busy each stage was, how long a batch queued at each stage before its
-/// server took it, how many executions were open across the pipeline at
-/// once, and for what share of the run two or more stages were computing at
-/// the same instant. A pipeline with no overlap has a peak depth of 1 and a
-/// concurrent-busy share of zero whatever its batch widths say.
+/// how long each stage held a batch, how long a batch waited at a stage
+/// before its server took it, and how many executions were open across the
+/// pipeline at once.
+///
+/// **These are service spans, not device time.** The span covers the whole
+/// stage RPC - CUDA wait, CPU sampling, cut-set copy and serialisation are
+/// all inside it - so `busy_pct` is occupancy of a stage server, not of a
+/// GPU. With two stages to a card, four of them can read as busy at once on
+/// two devices; `stages_busy_peak` counts open stage calls and cannot mean
+/// four simultaneous GPU computations. Device time needs a per-device CUDA
+/// span, which nothing here collects.
 function pipeline(spans, nodeCount) {
   if (!spans || spans.length === 0) return null;
   // One span per node per batch. An earlier agent reported the same span
@@ -200,15 +206,15 @@ function pipeline(spans, nodeCount) {
     stages: stages.map((stage, index) => ({
       node: index,
       batches: stage.batches,
-      busy_pct: Number(((100 * stage.busy) / wall).toFixed(1)),
+      service_pct: Number(((100 * stage.busy) / wall).toFixed(1)),
       stage_ms: spread(stage.stage),
       queue_ms: spread(stage.queue),
     })),
     depth_peak: depthPeak,
     depth_mean: Number((depthArea / wall).toFixed(2)),
-    any_stage_busy_pct: Number(((100 * anyBusy) / wall).toFixed(1)),
-    two_or_more_busy_pct: Number(((100 * twoBusy) / wall).toFixed(1)),
-    stages_busy_peak: busyPeak,
+    any_stage_open_pct: Number(((100 * anyBusy) / wall).toFixed(1)),
+    two_or_more_open_pct: Number(((100 * twoBusy) / wall).toFixed(1)),
+    stages_open_peak: busyPeak,
   };
 }
 function metrics(artifact, ubatch, nodeCount) {

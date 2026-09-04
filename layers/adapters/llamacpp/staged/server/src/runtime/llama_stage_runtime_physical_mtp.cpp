@@ -95,11 +95,30 @@ bool StageRuntime::format_generated_token(
     const auto filtered = filter_request_stops(
         pending, 0, stops, eog || terminal_after_token);
     generated->text = filtered.text;
-    if (!eog && !terminal_after_token) {
-        generated->text.resize(complete_utf8_prefix(generated->text));
-    }
+    // Hold an incomplete character back for the next token - and drop it when
+    // there is no next token.
+    //
+    // A token boundary is not a character boundary, so the tail of a piece can
+    // be the first bytes of a character whose remainder is in the token after
+    // it. Trimming to the complete prefix is right either way: at a terminal
+    // there is no token after it, and bytes that were never a whole character
+    // cannot become one by being emitted.
+    //
+    // This used to skip the trim at a terminal, meaning to flush whatever was
+    // pending. A 35B run stopping on its length budget mid-character then
+    // failed `valid_utf8_text`, and the line below replaced the *whole*
+    // 1,396-character answer with one replacement character - which the judge
+    // reads as a token split across a stage boundary, and it was neither a
+    // split nor a stage.
+    generated->text.resize(complete_utf8_prefix(generated->text));
     const auto consumed = generated->text.size();
-    if (!valid_utf8_text(generated->text)) generated->text = "\xEF\xBF\xBD";
+    // An incomplete tail was just trimmed, so anything still invalid here is
+    // corrupt rather than unfinished - and trimming corruption away would
+    // hand the judge a clean-looking answer with the damage cut out of it.
+    // Refuse instead.
+    if (!valid_utf8_text(generated->text)) {
+        return mtp_fail("detokenised text is not valid UTF-8 after trimming", error);
+    }
     pending.erase(0, std::min(pending.size(), consumed));
     if (filtered.stopped) {
         generated->stop = "stop";
