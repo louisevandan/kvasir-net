@@ -7,6 +7,13 @@ use p4_adapter::node_adapter::{NodeAdapter, OfferError, Poll};
 use p4_protocol::event::Event;
 use std::future::poll_fn;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// How long the node waits before offering a held event again when the
+/// adapter is full and has produced nothing to drain. Short enough that
+/// backpressure does not become latency, long enough that a full adapter
+/// costs no CPU.
+const HELD_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventNodeError {
@@ -48,19 +55,32 @@ impl EventNode {
                     Ok(()) => {}
                     Err(OfferError::Full(event)) => {
                         held = Some(event);
-                        // Take one completion, then try again. `Empty` means the
-                        // waker is registered and nothing is ready, so yield
-                        // rather than spin on it.
-                        match poll_fn(|context| self.adapter.poll_take(context)).await {
-                            Poll::Event(event) => {
-                                self.broker.dispatch(event).map_err(EventNodeError::Broker)?;
+                        // Wait for whichever comes first: a completion, which
+                        // is what frees the adapter's room, or a short
+                        // interval after which the offer is worth retrying.
+                        //
+                        // Both halves are load-bearing. Awaiting the completion
+                        // alone blocks for good when the adapter is full and
+                        // has produced nothing - a test hung on exactly that.
+                        // Yielding instead of sleeping spins a core at full
+                        // tilt, which the same test showed before this.
+                        tokio::select! {
+                            completion = poll_fn(|context| self.adapter.poll_take(context)) => {
+                                match completion {
+                                    Poll::Event(event) => {
+                                        self.broker
+                                            .dispatch(event)
+                                            .map_err(EventNodeError::Broker)?;
+                                    }
+                                    Poll::Empty => {}
+                                    Poll::Closed => {
+                                        return Err(EventNodeError::CompletionClosed(
+                                            self.adapter.snapshot(),
+                                        ));
+                                    }
+                                }
                             }
-                            Poll::Empty => tokio::task::yield_now().await,
-                            Poll::Closed => {
-                                return Err(EventNodeError::CompletionClosed(
-                                    self.adapter.snapshot(),
-                                ));
-                            }
+                            () = tokio::time::sleep(HELD_RETRY_INTERVAL) => {}
                         }
                         continue;
                     }

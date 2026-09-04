@@ -36,15 +36,30 @@ inline const char * hop_phase_name(protocol::HopPhase phase) {
     return phase == protocol::HopPhase::Prefill ? "prefill" : "decode";
 }
 
+// Whether every byte of `value` belongs to a whole, legal character.
+//
+// This decides whether detokenised text is corrupt, and corrupt text is
+// refused rather than emitted, so a gap here is a gap in that refusal. It
+// had three, all from deriving the width before deciding the byte could
+// lead at all: 0x80..0xBF are continuations with nothing to continue and
+// were read as two-byte leads, 0xC0 and 0xC1 spell an ASCII value in two
+// bytes, and 0xF5 and above are past the last code point. A unit test on
+// this function found them; nothing in the pipeline had.
 inline bool valid_utf8_text(const std::string & value) {
     for (std::size_t i = 0; i < value.size();) {
         const auto byte = static_cast<unsigned char>(value[i]);
-        std::size_t width = byte < 0x80 ? 1 : byte < 0xE0 ? 2 : byte < 0xF0 ? 3 : 4;
-        if (width == 1) { ++i; continue; }
-        if (i + width > value.size() || (byte == 0xE0 && static_cast<unsigned char>(value[i + 1]) < 0xA0) ||
-            (byte == 0xED && static_cast<unsigned char>(value[i + 1]) >= 0xA0) ||
-            (byte == 0xF0 && static_cast<unsigned char>(value[i + 1]) < 0x90) ||
-            (byte == 0xF4 && static_cast<unsigned char>(value[i + 1]) >= 0x90)) return false;
+        if (byte < 0x80) { ++i; continue; }
+        if (byte < 0xC2 || byte > 0xF4) return false;
+        const std::size_t width = byte < 0xE0 ? 2 : byte < 0xF0 ? 3 : 4;
+        if (i + width > value.size()) return false;
+        const auto next = static_cast<unsigned char>(value[i + 1]);
+        // The four ranges where a legal lead still admits an illegal second
+        // byte: an overlong three-byte form, a UTF-16 surrogate, an overlong
+        // four-byte form, and a code point above U+10FFFF.
+        if ((byte == 0xE0 && next < 0xA0) || (byte == 0xED && next >= 0xA0)
+            || (byte == 0xF0 && next < 0x90) || (byte == 0xF4 && next >= 0x90)) {
+            return false;
+        }
         for (std::size_t j = 1; j < width; ++j) {
             if ((static_cast<unsigned char>(value[i + j]) & 0xC0) != 0x80) return false;
         }

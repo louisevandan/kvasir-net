@@ -334,6 +334,15 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_test(NAME p4_staged_request_stops_test
              COMMAND p4_staged_request_stops_test)
 
+    add_executable(p4_staged_utf8_boundary_test
+        src/runtime/utf8_boundary_test.cpp
+    )
+    target_link_libraries(p4_staged_utf8_boundary_test
+        PRIVATE p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_utf8_boundary_test)
+    add_test(NAME p4_staged_utf8_boundary_test
+             COMMAND p4_staged_utf8_boundary_test)
+
     add_executable(p4_staged_capability_test
         src/server/capability_test.cpp
     )

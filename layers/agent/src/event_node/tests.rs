@@ -5,6 +5,8 @@ use p4_adapter::node_adapter::{
 };
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll as TaskPoll};
 
 struct CompletingAdapter {
@@ -139,4 +141,106 @@ async fn closed_completion_reports_the_adapter_failure_snapshot() {
         error,
         EventNodeError::CompletionClosed("logical_batch_failed:native exited 17".into())
     );
+}
+
+/// An adapter with no room until it is given some.
+///
+/// `refusals` counts how many times it turned an event away, so a test can
+/// tell "the node retried" from "the node gave up", and `accepted` holds what
+/// it finally took so the test can prove the event was not dropped on the way.
+struct FullAdapter {
+    room: Arc<AtomicBool>,
+    refusals: Arc<AtomicUsize>,
+    accepted: Arc<Mutex<Vec<Event>>>,
+}
+
+impl NodeAdapter for FullAdapter {
+    fn kind(&self) -> &str {
+        "full-test"
+    }
+    fn try_offer(&self, event: Event) -> Result<(), OfferError> {
+        if self.room.load(Ordering::SeqCst) {
+            self.accepted.lock().unwrap().push(event);
+            Ok(())
+        } else {
+            self.refusals.fetch_add(1, Ordering::SeqCst);
+            Err(OfferError::Full(event))
+        }
+    }
+    fn try_take(&self) -> Poll {
+        Poll::Empty
+    }
+    fn poll_take(&self, _context: &mut Context<'_>) -> TaskPoll<Poll> {
+        // An empty mailbox is pending, not ready-with-nothing: a real one
+        // registers the waker and says nothing until a completion arrives.
+        // Returning `Ready(Empty)` here would make the node's select spin.
+        TaskPoll::Pending
+    }
+    fn snapshot(&self) -> String {
+        "full".into()
+    }
+}
+
+/// A full adapter is backpressure, not a dead node.
+///
+/// `OfferError::Full` used to end the task with `AdapterFull`: one burst that
+/// outran the adapter stopped the pipeline for good. The node now keeps the
+/// event, stops reading inbound, and retries - so this asserts three things
+/// the old code failed: the task is still running while the adapter is full,
+/// the event is delivered once room appears, and it is delivered whole rather
+/// than dropped.
+#[tokio::test]
+async fn a_full_adapter_holds_the_event_instead_of_failing_the_node() {
+    let own = Address::tcp("127.0.0.1", 52001);
+    let (agent_tx, _agent_rx) = bounded_queue(4);
+    let (outer_tx, _outer_rx) = bounded_queue(4);
+    let (outbound_tx, _outbound_rx) = bounded_queue(4);
+    let (node_tx, node_rx) = bounded_queue(4);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        8,
+    ));
+    broker.register_node("n1", 1, node_tx).unwrap();
+
+    let room = Arc::new(AtomicBool::new(false));
+    let refusals = Arc::new(AtomicUsize::new(0));
+    let accepted = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(FullAdapter {
+        room: Arc::clone(&room),
+        refusals: Arc::clone(&refusals),
+        accepted: Arc::clone(&accepted),
+    });
+    let task = tokio::spawn(EventNode::new(adapter, node_rx, Arc::clone(&broker)).run());
+
+    broker.dispatch(event(&own)).unwrap();
+
+    // Let it turn the event away several times over. The node waits a
+    // millisecond between attempts, so this is time rather than yields.
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert!(
+        refusals.load(Ordering::SeqCst) > 1,
+        "the node should retry a full adapter, not offer once",
+    );
+    assert!(!task.is_finished(), "a full adapter must not end the node");
+    assert!(accepted.lock().unwrap().is_empty());
+
+    room.store(true, Ordering::SeqCst);
+    let delivered = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if !accepted.lock().unwrap().is_empty() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    assert!(delivered.is_ok(), "the held event should go through once there is room");
+    let taken = accepted.lock().unwrap();
+    assert_eq!(taken.len(), 1, "held once, delivered once");
+    assert_eq!(taken[0].payload, event(&own).payload);
+    assert!(!task.is_finished());
+    task.abort();
 }
