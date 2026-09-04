@@ -11,15 +11,20 @@ one stage a card (175.00 against 131.96 total rows/s) and the 2B gains 42.4%
 layers cost 78 to 149 ms more per lap when cut into four - two extra
 crossings at about the per-batch fixed cost measured from the width fit.
 
-**Two corrections to how that was first written.** Every arm passed
+**Three corrections to how that was first written.** Every arm passed
 *structurally* - 64/64 and 192/192 completed and released - but the 35B arms
-scored 58 to 60 of 64 on the meaning judge, all four of them, because this
-model reasons in English over a long prompt. "Every arm passing its judge"
-was wrong. And the 2B's 42.4% is not the boundary count alone: the four-stage
-cut puts 9 and 26 layers on the two cards while the two-stage cut puts 13 and
-22, so removing two crossings and rebalancing the cards are measured
-together there. The 35B's 32.6% is clean of that - both arms place 20 layers
-a card - and is the number to lean on.
+scored 55 to 64 of 64 on the meaning judge, varying by run rather than by
+configuration. "Every arm passing its judge" was wrong.
+
+The 2B's 42.4% was two effects reported as one. Holding the load equal at 13
+and 22 layers a card and changing only the boundary count gives **+22.3%**
+(639.66 against 522.87 total rows/s); holding the boundaries at four and
+rebalancing 9/26 to 13/22 gives **+19.2%** (522.87 against 438.88). Both
+measured over four interleaved runs from a clean tree, all 192/192.
+
+And re-running the 35B pair from committed source gives **+45.4%** (176.31
+against 121.27) rather than 32.6%, with 20 layers a card in both arms - that
+pair measures the boundary effect on its own and is the number to lean on.
 
 GPU utilisation was identical across the 35B arms at ~33% while throughput
 differed by a third, which is the fourth time that number has failed to track

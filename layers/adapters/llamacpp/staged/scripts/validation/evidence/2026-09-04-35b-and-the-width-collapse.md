@@ -176,11 +176,36 @@ the same KV region that forces the four-node split. Four interleaved runs of
 | GPU utilisation, summed | 48.9, 45.0 | 41.0, 38.3 |
 
 **+42.4%** - but not of the boundary count alone. The four-stage cut leaves 9
-layers on one card and 26 on the other; the two-stage cut leaves 13 and 22.
-Removing two crossings and rebalancing the cards are measured together here,
-and the first two-stage run came from a different working tree besides. The
-35B pair is the clean one: 20 layers a card in both arms, same tree, same
-binary. Both models therefore say the same
+layers on one card and 26 on the other; the two-stage cut leaves 13 and 22, so
+removing two crossings and rebalancing the cards were measured together, and
+the first two-stage run came from a different working tree besides.
+
+### Separating the two
+
+`prefill_mix_tail_alone` already was the control and had been built for a
+different question: it keeps four stages but places them 0,0,0,1, which puts
+13 layers on one card and 22 on the other - exactly the two-stage load. Same
+concurrency, context, prompts and arrivals; only the boundary count differs.
+Four interleaved runs, every tree clean, all four 192/192 on structure and
+meaning:
+
+| | boundaries | layers per card | total rows/s |
+| --- | ---: | --- | ---: |
+| two stages | 2 | 13/22 | 653.85, 625.47 -> **639.66** |
+| four stages, rebalanced | 4 | 13/22 | 490.26, 555.48 -> **522.87** |
+| four stages, as shipped | 4 | 9/26 | **438.88** |
+
+So the 42.4% is two effects of similar size:
+
+- **removing two boundaries: +22.3%** (639.66 against 522.87, load held equal)
+- **rebalancing the cards: +19.2%** (522.87 against 438.88, boundaries held equal)
+
+Reporting them as one number was wrong, and only about half of it was the
+partition. The 35B pair remains the clean measurement of the boundary effect
+on its own - 20 layers a card in both arms - and it is larger there, +45.4%
+from the committed source.
+
+Both models therefore say the same
 thing, and the 2B says it louder: the harness has been paying for two extra
 stage crossings a lap since it was written, 129 to 149 ms of them here.
 
