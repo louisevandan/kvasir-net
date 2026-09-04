@@ -1,5 +1,26 @@
 # Runtime evidence
 
+## 2026-09-04: four stages on two cards costs a third to a half of the throughput
+
+The harness has cut every model into four stages since it was written, two to a
+card. Two cards give two independent execution lanes, and the fourth stage adds
+a full set of per-batch fixed cost to a lane that cannot overlap. Measured by
+running the same work at both depths, interleaved: the 35B gains **32.6%** at
+one stage a card (175.00 against 131.96 total rows/s) and the 2B gains
+**42.4%** (624.98 against 438.88), with every arm passing its judge and the
+distributions not overlapping. The same layers cost 78 to 149 ms more per lap
+when cut into four - two extra crossings at about the per-batch fixed cost
+measured from the width fit.
+
+GPU utilisation was identical across the 35B arms at ~33% while throughput
+differed by a third, which is the fourth time that number has failed to track
+the work done.
+
+**Partition to the number of independent execution lanes, then stop.** The
+four-node split is named for gemma-4-E2B's shared KV region, which is a
+constraint on where a boundary may fall - never a measurement that four stages
+were better.
+
 ## 2026-09-04: a 35B says the small model was distorting it, and the scheduler was
 ## throwing work away
 

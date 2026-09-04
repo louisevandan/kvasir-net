@@ -319,6 +319,58 @@ export const SCENARIOS = {
     })),
   },
 
+  // The 2B load at one stage a card, to see whether the partition rule is
+  // about the model or about the hardware.
+  //
+  // gemma-4-E2B shares KV across layers 13..34, so no boundary may fall inside
+  // that region - which allows exactly one two-way cut, [0,13) and [13,35).
+  // The four-node split exists because of that constraint, not because four
+  // stages were measured to be better.
+  prefill_mix_2stage: {
+    ...base,
+    description: "96 sequences, mixed prefill, one stage a card",
+    cuts: [[0, 13], [13, 35]],
+    devices: ["0", "1"],
+    parallel: 96,
+    context: 2560,
+    maxTokens: 200,
+    promptFor: mixedPrefillPrompt,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 12,
+    })),
+  },
+
+  // The same 35B load with one stage a card instead of two.
+  //
+  // Four stages over two GPUs gives two independent execution lanes and four
+  // sets of per-batch fixed cost - a frame decode, a llama_decode, a cut-set
+  // copy and a process hop, each paid four times a lap where the hardware can
+  // only overlap two. The stage-span metrics cannot settle this: they cover
+  // whole stage RPCs, so four of them read as open at once on two devices.
+  // Running the same work at the depth the cards actually provide does settle
+  // it. Same model, cut, context, arrivals and prompts; only the partition
+  // changes.
+  prefill_mix_35b_2stage: {
+    ...base,
+    description: "35B, one stage a card, 32 sequences, mixed prefill",
+    model: MODEL_35B,
+    cuts: [[0, 20], [20, 40]],
+    devices: ["0", "1"],
+    stops: STOPS_35B,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 32,
+    context: 2560,
+    maxTokens: 600,
+    promptFor: mixedPrefillPromptNoThinking,
+    waves: Array.from({ length: 8 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 8,
+    })),
+  },
+
   // Concurrency pressure. `service` and `mixed` were built to prove the path,
   // not to saturate it: their steady-state active set is about 16 to 40, so a
   // 512-wide UBATCH could never be more than a few percent full whatever the

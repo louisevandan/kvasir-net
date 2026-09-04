@@ -36,7 +36,17 @@ placement, capacity and the llama.cpp plan text, and it applies the gemma-4
 chat template — the staged server tokenizes prompt text verbatim and owns no
 template. P4 carries the plan as an opaque string.
 
-The four-node split is fixed at 5/4/4/22 because gemma-4-E2B shares KV across
+## Four stages is a name, not a recommendation
+
+Measured 2026-09-04: on two cards, one stage a card beats two stages a card by
+**42% on gemma-4-E2B** (624.98 against 438.88 total rows/s) and **33% on a 35B**
+(175.00 against 131.96), interleaved, with every arm passing its judge. Two
+cards give two independent execution lanes; a third and fourth stage add a full
+set of per-batch fixed cost to lanes that cannot overlap. Partition to the
+lanes the hardware has, then stop - `prefill_mix_2stage` and
+`prefill_mix_35b_2stage` are those configurations.
+
+The split below is fixed at 5/4/4/22 because gemma-4-E2B shares KV across
 layers 13..34, so no stage boundary may fall inside that region. See
 [docs/llamacpp-stage-memory.md](../../../docs/llamacpp-stage-memory.md).
 

@@ -120,12 +120,72 @@ over a long prompt, so the scenario is not yet an acceptance gate. What is
 solid is the *delta*: rows-left-behind 934.8 -> 32.1 and prefill width 9.85 ->
 367 are structural counts, not timings, and they reproduce across three runs.
 
-## Still open
+## Four stages on two cards is over-partitioning
 
 Two stages share each card, so there are two independent execution lanes and
-four sets of per-batch fixed cost. The report's stage spans cover the whole
-stage RPC - CUDA wait, sampling, serialisation - so they are service time, not
-device time, and are renamed `service_pct` / `two_or_more_open_pct` /
-`stages_open_peak` to stop them reading as GPU concurrency. Whether one stage
-a card beats two is unmeasured, and so is the comparison against stock
-llama.cpp on a single card.
+four sets of per-batch fixed cost. The stage spans cannot settle that - they
+cover whole stage RPCs, so four read as open at once on two devices, and they
+are renamed `service_pct` / `two_or_more_open_pct` / `stages_open_peak` for
+that reason. Running the same work at the depth the cards actually provide
+does settle it. Same model, same 40 layers, same context, arrivals and
+prompts; only the partition changes: `[0,20),[20,40)` on one card each,
+against `[0,10),[10,20),[20,30),[30,40)` at two stages a card.
+
+Four interleaved runs:
+
+| | one stage a card | two stages a card |
+| --- | ---: | ---: |
+| total rows/s | 173.79, 176.21 | 127.38, 136.54 |
+| mean | **175.00** | 131.96 |
+| gen tok/s | **117.58** | 88.88 |
+| wall (s) | 317.6, 321.4 | 439.9, 412.8 |
+| stage ms, per lap | 81 + 89 = **170** | 56+61+62+69 = **248** |
+| GPU utilisation, summed | 32.9, 33.2 | 32.8, 31.3 |
+
+**+32.6% for halving the number of stages**, with no overlap between the arms
+and both passing 64/64 structurally. The same forty layers cost 78 to 88 ms
+more per lap when they are cut into four - two extra stage crossings at about
+44 ms each, which is the per-batch fixed cost measured earlier from the width
+fit. And GPU utilisation is identical at ~33% in both arms while throughput
+differs by a third: the fourth independent time that number has failed to
+track the work done.
+
+So the partition should follow the hardware, not a node count: **stages are
+worth having up to the number of independent execution lanes, and past that
+each one adds a full set of per-batch fixed cost for lanes that cannot
+overlap.** Two processes on one card do not pipeline; they contend.
+
+The four-node split in this harness exists because gemma-4-E2B shares KV over
+layers 13..34 and no boundary may fall inside that region - a model
+constraint, never a measurement that four stages were better.
+
+## And the same on the 2B, larger
+
+gemma-4-E2B allows exactly one two-way cut, `[0,13)` and `[13,35)`, because of
+the same KV region that forces the four-node split. Four interleaved runs of
+`prefill_mix`, all four passing 192/192 on structure and meaning:
+
+| | one stage a card | two stages a card |
+| --- | ---: | ---: |
+| total rows/s | 664.33, 585.63 | 446.43, 431.33 |
+| mean | **624.98** | 438.88 |
+| gen tok/s | **251.51** | 176.62 |
+| stage ms, per lap | 200, 240 | 329, 389 |
+| GPU utilisation, summed | 48.9, 45.0 | 41.0, 38.3 |
+
+**+42.4%**, and the arms do not overlap. Both models therefore say the same
+thing, and the 2B says it louder: the harness has been paying for two extra
+stage crossings a lap since it was written, 129 to 149 ms of them here.
+
+The rule to carry forward: **partition to the number of independent execution
+lanes, then stop.** A second process on the same card is not a second lane -
+it adds a full set of per-batch fixed cost and contends for the device it
+already had. The four-node harness is named for a model constraint, and the
+count was never measured until now.
+
+## Still open
+
+The comparison against stock llama.cpp on a single card is not run. The 35B
+does not fit on one 3090 with usable context, so that baseline needs the small
+model, and it answers a different question from this one: what the adapter and
+the boundary cost, rather than what the partition costs.
