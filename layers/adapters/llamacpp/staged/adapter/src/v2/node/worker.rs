@@ -3,7 +3,7 @@ use super::state::{AdapterState, PipelineSession, RequestState, request_key};
 use crate::lifecycle::LlamaLifecycle;
 use crate::process::{ProcessServerControl, ServerLaunch};
 use crate::{Frame, Operation};
-use p4_adapter::node_adapter::CompletionPublisher;
+use p4_adapter::node_adapter::{CompletionPublisher, PublishError};
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Event, EventClass};
 use serde::Serialize;
@@ -12,6 +12,11 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
+
+/// How long the worker waits for room in the completion mailbox before
+/// offering again. The reader is the node task on the same process, so this
+/// is a drain in progress rather than a stall.
+const COMPLETION_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 
 mod control;
 mod drive;
@@ -218,9 +223,10 @@ impl Worker {
                 template: event,
                 reply,
                 prompt_cursor: 0,
+                prompt_issued: 0,
                 ready: None,
                 after_settlement: None,
-                in_flight: false,
+                outstanding: 0,
                 generated: 0,
             },
         );

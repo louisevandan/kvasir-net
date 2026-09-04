@@ -61,16 +61,22 @@ impl Worker {
             let Some(request) = self.state.requests.get_mut(&key) else {
                 continue;
             };
-            if !request.in_flight {
-                return Err("tail completed a request without an in-flight batch".into());
+            if request.outstanding == 0 {
+                return Err("tail completed a request with no fragment in flight".into());
             }
+            request.outstanding -= 1;
             if phase == Phase::Prefill {
                 request.prompt_cursor = request
                     .prompt_cursor
                     .checked_add(rows)
                     .ok_or_else(|| "prompt cursor overflow".to_owned())?;
-                if request.prompt_cursor > request.command.tokens.len() {
-                    return Err("tail completed more prompt rows than submitted".into());
+                // The settled cursor may never pass what was issued: fragments
+                // return in the order they went out, so a cursor beyond the
+                // issue point means the tail settled rows nobody sent.
+                if request.prompt_cursor > request.prompt_issued
+                    || request.prompt_cursor > request.command.tokens.len()
+                {
+                    return Err("tail completed more prompt rows than were issued".into());
                 }
             } else {
                 request.ready = None;
@@ -87,7 +93,6 @@ impl Worker {
                         None => None,
                     };
                 }
-                request.in_flight = false;
                 continue;
             };
             if request.sequence_id != Some(owner.sequence_id) {
@@ -175,7 +180,6 @@ impl Worker {
                     outcome.proposal,
                     position,
                 )?);
-                request.in_flight = false;
                 if phase == Phase::Verify {
                     resolved_verify_fences.push(key.clone());
                 }

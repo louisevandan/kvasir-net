@@ -1,5 +1,5 @@
 use super::*;
-use super::node::state::AdapterState;
+use super::node::state::{AdapterState, ReadyRows, RequestState};
 
 #[test]
 fn unload_requires_an_explicit_model_generation() {
@@ -495,4 +495,128 @@ fn the_open_batch_ledger_does_not_survive_a_load() {
     assert_eq!(state.open_batches.len(), 1);
     state.open_batches.clear();
     assert_eq!(state.open_batches.len(), 0, "the load path clears this");
+}
+
+/// A request in the shape the worker builds, for tests about its readiness.
+fn request_state(tokens: Vec<i32>) -> RequestState {
+    let own = p4_protocol::Address::tcp("127.0.0.1", 42001);
+    let node = p4_protocol::event::Endpoint::node(own.clone(), "n0", 1);
+    RequestState {
+        command: InferenceCommand {
+            load_generation: 1,
+            session_id: "session".into(),
+            request_id: "request".into(),
+            tokens,
+            prompt: None,
+            options: String::new(),
+            session_key: None,
+            max_tokens: 16,
+        },
+        sequence_id: Some(0),
+        template: p4_protocol::event::Event {
+            envelope: p4_protocol::event::Envelope {
+                protocol_version: p4_protocol::event::Envelope::VERSION,
+                event_id: "e1".into(),
+                correlation_id: "request".into(),
+                causation_id: None,
+                source: node.clone(),
+                target: node,
+                return_route: None,
+                class: p4_protocol::event::EventClass::Data,
+                sequence: 1,
+                deadline_unix_ms: None,
+                adapter_kind: Some("llamacpp".into()),
+                payload_content_type: "application/test".into(),
+            },
+            payload: Vec::new(),
+        },
+        reply: String::new(),
+        prompt_cursor: 0,
+        prompt_issued: 0,
+        ready: None,
+        after_settlement: None,
+        outstanding: 0,
+        generated: 0,
+    }
+}
+
+/// A prompt with a fragment in flight can issue the next one; a decode cannot.
+///
+/// The distinction is the whole point. A prompt's tokens are all known, so a
+/// second chunk can follow the first into the pipeline. A decode's next row is
+/// whatever the tail samples from this one, so it must wait however generous
+/// the limit is.
+///
+/// Measured before this existed: 92 of 192 requests took two or more laps to
+/// prefill and some took eleven, while the first node stood idle for a third
+/// of the run.
+#[test]
+fn a_prompt_may_have_several_fragments_in_flight_and_a_decode_may_not() {
+    let mut prompt = request_state(vec![1; 1000]);
+    // Nothing issued: runnable at any limit.
+    assert_eq!(prompt.phase_within(1), Some(Phase::Prefill));
+    assert_eq!(prompt.phase_within(4), Some(Phase::Prefill));
+
+    // One fragment of 512 rows is out.
+    prompt.prompt_issued = 512;
+    prompt.outstanding = 1;
+    assert_eq!(prompt.phase_within(1), None, "one fragment is the old behaviour");
+    assert_eq!(
+        prompt.phase_within(2),
+        Some(Phase::Prefill),
+        "the rest of a known prompt does not need the first chunk back",
+    );
+
+    // Two out, and the limit is two.
+    prompt.prompt_issued = 1000;
+    prompt.outstanding = 2;
+    assert_eq!(prompt.phase_within(2), None, "nothing left to issue anyway");
+
+    // A decode is capped at one however generous the limit.
+    let mut decode = request_state(vec![1; 8]);
+    decode.prompt_issued = 8;
+    decode.prompt_cursor = 8;
+    decode.ready = Some(ReadyRows {
+        phase: Phase::Decode,
+        tokens: vec![7],
+        position: 8,
+        speculative_id: 0,
+    });
+    assert_eq!(decode.phase_within(8), Some(Phase::Decode));
+    decode.outstanding = 1;
+    assert_eq!(
+        decode.phase_within(8),
+        None,
+        "the next token is not known until this one is sampled",
+    );
+}
+
+/// The settled cursor trails the issued one and never passes it.
+///
+/// Two cursors is the cost of letting a prompt run ahead of its settlements,
+/// and the invariant that makes them safe is that settlement can only ever
+/// catch up: rows come back in the order they went out, so a settled cursor
+/// beyond the issue point would mean the tail settled rows nobody sent.
+#[test]
+fn the_settled_prompt_cursor_never_passes_the_issued_one() {
+    let mut prompt = request_state(vec![1; 1000]);
+    prompt.prompt_issued = 512;
+    prompt.outstanding = 1;
+    prompt.prompt_issued += 488;
+    prompt.outstanding += 1;
+    assert_eq!(prompt.prompt_issued, 1000);
+
+    // Settlement of the first fragment.
+    prompt.prompt_cursor += 512;
+    prompt.outstanding -= 1;
+    assert!(prompt.prompt_cursor <= prompt.prompt_issued);
+    assert_eq!(prompt.phase_within(4), None, "the prompt is fully issued");
+
+    // And of the second.
+    prompt.prompt_cursor += 488;
+    prompt.outstanding -= 1;
+    assert_eq!(prompt.prompt_cursor, prompt.prompt_issued);
+    assert_eq!(prompt.outstanding, 0);
+    // Prompt done and no decode row yet: nothing to do until the tail sends one.
+    assert_eq!(prompt.phase_within(4), None);
 }

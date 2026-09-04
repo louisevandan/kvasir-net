@@ -41,11 +41,7 @@ impl Worker {
             _ => unreachable!(),
         };
         envelope.deadline_unix_ms = reply.deadline_unix_ms;
-        self.publisher
-            .try_publish(Event { envelope, payload })
-            .map_err(|_| {
-                self.set_snapshot("completion_queue_full");
-            })
+        self.publish_or_wait(Event { envelope, payload })
     }
 
     pub(super) fn emit_error(
@@ -96,11 +92,36 @@ impl Worker {
             sequence,
             content_type,
         );
-        self.publisher
-            .try_publish(Event { envelope, payload })
-            .map_err(|_| {
-                self.set_snapshot("completion_queue_full");
-            })
+        self.publish_or_wait(Event { envelope, payload })
+    }
+
+    /// Publishes a completion, waiting for room rather than dropping it.
+    ///
+    /// The other direction of this pipe learned to hold an event when the
+    /// adapter was full; this one used to discard the completion and fail the
+    /// worker, which loses a token that has already been computed and ends
+    /// the node for a queue that was about to drain. A closed mailbox is
+    /// still fatal - nothing will ever read it - and only that is.
+    ///
+    /// This runs on the worker's own thread, which owns no lock and holds no
+    /// llama context between events, so blocking here backs the pressure up
+    /// to the node's inbound queue rather than into the stage server.
+    fn publish_or_wait(&mut self, event: Event) -> Result<(), ()> {
+        let mut pending = event;
+        loop {
+            match self.publisher.try_publish(pending) {
+                Ok(()) => return Ok(()),
+                Err(PublishError::Full(event)) => {
+                    self.set_snapshot("completion_queue_full:waiting");
+                    pending = event;
+                    std::thread::sleep(COMPLETION_RETRY_INTERVAL);
+                }
+                Err(PublishError::Closed(_)) => {
+                    self.set_snapshot("completion_queue_closed");
+                    return Err(());
+                }
+            }
+        }
     }
 }
 

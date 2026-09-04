@@ -74,7 +74,7 @@ impl Worker {
                     .requests
                     .get_mut(&sequence.key)
                     .ok_or_else(|| "settled request is no longer active".to_owned())?;
-                if request.sequence_id != Some(sequence.id) || !request.in_flight {
+                if request.sequence_id != Some(sequence.id) || request.outstanding == 0 {
                     return Err("settled sequence does not match the in-flight request".into());
                 }
                 request
@@ -112,7 +112,7 @@ impl Worker {
                     .get_mut(&sequence.key)
                     .expect("settled request was validated above");
                 request.ready = Some(ready);
-                request.in_flight = false;
+                request.outstanding = request.outstanding.saturating_sub(1);
             }
             if self.state.verify_fence_matches(&sequence.key) {
                 self.state

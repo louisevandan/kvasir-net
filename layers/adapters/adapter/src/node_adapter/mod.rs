@@ -6,7 +6,7 @@
 
 mod mailbox;
 
-pub use mailbox::{CompletionMailbox, CompletionPublisher, completion_mailbox};
+pub use mailbox::{CompletionMailbox, CompletionPublisher, completion_mailbox, PublishError};
 use p4_protocol::event::Event;
 use std::task::{Context, Poll as TaskPoll};
 

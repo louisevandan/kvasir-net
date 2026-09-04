@@ -219,10 +219,22 @@ async fn a_full_adapter_holds_the_event_instead_of_failing_the_node() {
 
     // Let it turn the event away several times over. The node waits a
     // millisecond between attempts, so this is time rather than yields.
-    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    let window = std::time::Duration::from_millis(200);
+    tokio::time::sleep(window).await;
+    let attempts = refusals.load(Ordering::SeqCst);
+    assert!(attempts > 1, "the node should retry a full adapter, not offer once");
+    // And an upper bound, because retrying is not the same as spinning.
+    //
+    // An earlier version of this fix retried with `yield_now`, which passed
+    // the lower bound above and burned a core flat - 739 seconds of CPU in
+    // 12.5 minutes of wall clock, found by looking at the process rather than
+    // by this test. At one attempt per millisecond a 200 ms window admits
+    // about 200; ten times that is loose enough for a slow machine and tight
+    // enough that a spin, which manages hundreds of thousands, cannot pass.
+    let ceiling = 10 * (window.as_millis() as usize);
     assert!(
-        refusals.load(Ordering::SeqCst) > 1,
-        "the node should retry a full adapter, not offer once",
+        attempts < ceiling,
+        "retrying a full adapter should wait between attempts: {attempts} in {window:?}",
     );
     assert!(!task.is_finished(), "a full adapter must not end the node");
     assert!(accepted.lock().unwrap().is_empty());

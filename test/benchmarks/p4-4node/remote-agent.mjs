@@ -68,6 +68,10 @@ const maxIssueRows = Number(argument("--max-issue-rows", "0"));
 if (!Number.isInteger(maxIssueRows) || maxIssueRows < 0) {
   throw new Error("--max-issue-rows must be a non-negative integer");
 }
+// How many fragments of one prompt may be in the pipeline at once. 1 is what
+// the adapter did before the knob existed: a prompt waits a full lap between
+// chunks even though all its tokens are known.
+const prefillFragments = argument("--prefill-fragments", "");
 const stepTrace = process.argv.includes("--step-trace");
 // Threads the tail samples with. 1 restores the serial sampler exactly, which
 // is the control for the parallel one; unset lets the stage choose.
@@ -122,6 +126,7 @@ function copyLauncher() {
     `set P4_STAGED_MIN_BATCH_ROWS=${minBatchRows}`,
     `set P4_STAGED_MAX_OPEN_BATCHES=${maxOpenBatches}`,
     `set P4_STAGED_MAX_ISSUE_ROWS=${maxIssueRows}`,
+    ...(prefillFragments ? [`set P4_STAGED_PREFILL_FRAGMENTS=${prefillFragments}`] : []),
     // One line per stage step with its four parts, on the stderr this
     // launcher already collects. Off unless asked for: it is a line per
     // batch per node.

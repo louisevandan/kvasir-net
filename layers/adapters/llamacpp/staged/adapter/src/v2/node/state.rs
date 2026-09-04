@@ -14,10 +14,27 @@ pub struct RequestState {
     pub sequence_id: Option<u32>,
     pub template: Event,
     pub reply: String,
+    /// Prompt tokens the tail has settled. Advanced when a fragment comes
+    /// back, and it is what the request has actually prefilled.
     pub prompt_cursor: usize,
+    /// Prompt tokens already issued into the pipeline, settled or not.
+    ///
+    /// Separate from `prompt_cursor` because a prompt may have more than one
+    /// fragment travelling at once: rows are cut from here on issue and the
+    /// cursor catches up on settlement. With a fragment limit of one the two
+    /// never diverge, which is what the pipeline did before this existed.
+    pub prompt_issued: usize,
     pub ready: Option<ReadyRows>,
     pub after_settlement: Option<SettlementContinuation>,
-    pub in_flight: bool,
+    /// Fragments of this request in the pipeline right now.
+    ///
+    /// A decode has to be one: the next token is not known until this one has
+    /// been sampled at the tail. A prompt does not - its tokens are all known
+    /// - so a long one can have several fragments in flight and stop waiting
+    /// a whole lap between chunks. Measured on a 2B run, 92 of 192 requests
+    /// took two or more laps to prefill and some took eleven, while the first
+    /// node stood idle for 33% of the wall clock.
+    pub outstanding: u32,
     pub generated: u32,
 }
 
@@ -35,16 +52,27 @@ pub struct ReadyRows {
 }
 
 impl RequestState {
-    pub fn phase(&self) -> Option<super::super::Phase> {
+    /// What this request could contribute to the next batch, if anything.
+    ///
+    /// `fragment_limit` is how many fragments of one prompt may be in the
+    /// pipeline at once; anything but a prompt is capped at one whatever it
+    /// says, because the next decode row depends on this one's outcome.
+    pub fn phase_within(&self, fragment_limit: u32) -> Option<super::super::Phase> {
         self.sequence_id?;
-        if self.in_flight {
+        if self.prompt_issued < self.command.tokens.len() {
+            return (self.outstanding < fragment_limit.max(1))
+                .then_some(super::super::Phase::Prefill);
+        }
+        if self.outstanding > 0 {
             return None;
         }
-        if self.prompt_cursor < self.command.tokens.len() {
-            Some(super::super::Phase::Prefill)
-        } else {
-            self.ready.as_ref().map(|value| value.phase)
-        }
+        self.ready.as_ref().map(|value| value.phase)
+    }
+
+    /// The single-fragment reading, for callers that only ask whether this
+    /// request is runnable at all.
+    pub fn phase(&self) -> Option<super::super::Phase> {
+        self.phase_within(1)
     }
 }
 
@@ -82,6 +110,10 @@ pub struct AdapterState {
     /// that occupies a single stage at a time. 0 disables it. See
     /// `Worker::drive_first_batches`.
     pub max_issue_rows: usize,
+    /// Fragments of one prompt allowed in the pipeline at once. 1 is the
+    /// behaviour this adapter had before the field existed: a prompt waits a
+    /// full lap between chunks even though all its tokens are known.
+    pub prefill_fragments: u32,
     /// Batches this first node has issued whose capsules have not all come
     /// back from the tail, as batch ordinal -> the execution ids it produced.
     ///
@@ -150,6 +182,11 @@ impl Default for AdapterState {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
+            prefill_fragments: std::env::var("P4_STAGED_PREFILL_FRAGMENTS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .filter(|value| *value >= 1)
+                .unwrap_or(1),
             verify_fence: BTreeSet::new(),
         }
     }
@@ -213,7 +250,7 @@ impl AdapterState {
 
     /// Whether any admitted request is still crossing the pipeline.
     pub fn any_in_flight(&self) -> bool {
-        self.requests.values().any(|request| request.in_flight)
+        self.requests.values().any(|request| request.outstanding > 0)
     }
 
     /// Rows a plan could carry right now. Decode contributes one row per ready
@@ -222,7 +259,7 @@ impl AdapterState {
     pub fn ready_row_count(&self) -> usize {
         self.requests
             .values()
-            .filter(|request| request.phase().is_some())
+            .filter(|request| request.phase_within(self.prefill_fragments).is_some())
             .count()
     }
 
@@ -236,9 +273,9 @@ impl AdapterState {
         self.requests
             .values()
             .filter_map(|request| {
-                request.phase().map(|phase| match phase {
+                request.phase_within(self.prefill_fragments).map(|phase| match phase {
                     super::super::Phase::Prefill => {
-                        request.command.tokens.len() - request.prompt_cursor
+                        request.command.tokens.len() - request.prompt_issued
                     }
                     _ => request.ready.as_ref().map_or(0, |ready| ready.tokens.len()),
                 })
@@ -271,9 +308,11 @@ impl AdapterState {
     }
 
     pub fn first_session_with_work(&self) -> Option<String> {
+        let limit = self.prefill_fragments;
         self.requests.values().find_map(|request| {
             let session = self.sessions.get(&request.command.session_id)?;
-            (session.command.role == NodeRole::First && request.phase().is_some())
+            (session.command.role == NodeRole::First
+                && request.phase_within(limit).is_some())
                 .then(|| request.command.session_id.clone())
         })
     }

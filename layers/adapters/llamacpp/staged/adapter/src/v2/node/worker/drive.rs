@@ -75,11 +75,11 @@ impl Worker {
                 if request.command.session_id != session_id {
                     continue;
                 }
-                let Some(phase) = request.phase() else {
+                let Some(phase) = request.phase_within(self.state.prefill_fragments) else {
                     continue;
                 };
                 let available_rows = match phase {
-                    Phase::Prefill => request.command.tokens.len() - request.prompt_cursor,
+                    Phase::Prefill => request.command.tokens.len() - request.prompt_issued,
                     Phase::Decode | Phase::Verify | Phase::Replay => request
                         .ready
                         .as_ref()
@@ -160,7 +160,7 @@ impl Worker {
                 match allocation.phase {
                     Phase::Prefill => {
                         for offset in 0..allocation.rows {
-                            let index = request.prompt_cursor + offset;
+                            let index = request.prompt_issued + offset;
                             let position = u32::try_from(index).map_err(|_| ())?;
                             rows.push(LogicalRow {
                                 owner: RowOwner {
@@ -315,8 +315,14 @@ impl Worker {
                     .requests
                     .get_mut(&request_id)
                     .expect("successful batch keeps request active");
-                let _ = count;
-                request.in_flight = true;
+                // Prompt rows leave the request as they are issued, so the next
+                // fragment is cut from where this one ended rather than waiting
+                // for the tail to say where that was. The settled cursor still
+                // only moves on settlement.
+                if phase == Phase::Prefill {
+                    request.prompt_issued = request.prompt_issued.saturating_add(count);
+                }
+                request.outstanding = request.outstanding.saturating_add(1);
                 if phase == Phase::Verify {
                     verify_request_ids.push(request_id);
                 }

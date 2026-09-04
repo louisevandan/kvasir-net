@@ -9,8 +9,22 @@ pub struct CompletionPublisher {
     waker: Arc<Mutex<Option<Waker>>>,
 }
 
+/// Why a completion could not be put in the mailbox, with the event back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PublishError {
+    /// No room now. Worth waiting for; the reader will drain it.
+    Full(Event),
+    /// Nothing will read this mailbox again.
+    Closed(Event),
+}
+
 impl CompletionPublisher {
-    pub fn try_publish(&self, event: Event) -> Result<(), Event> {
+    /// Puts a completion in the mailbox, or hands it back with the reason.
+    ///
+    /// The reason matters: a full queue is worth waiting on and a closed one
+    /// never will be, and returning one `Err(Event)` for both left the only
+    /// caller unable to do anything but drop the event and fail.
+    pub fn try_publish(&self, event: Event) -> Result<(), PublishError> {
         match self.sender.try_send(event) {
             Ok(()) => {
                 if let Ok(mut waker) = self.waker.lock()
@@ -20,9 +34,8 @@ impl CompletionPublisher {
                 }
                 Ok(())
             }
-            Err(mpsc::TrySendError::Full(event) | mpsc::TrySendError::Disconnected(event)) => {
-                Err(event)
-            }
+            Err(mpsc::TrySendError::Full(event)) => Err(PublishError::Full(event)),
+            Err(mpsc::TrySendError::Disconnected(event)) => Err(PublishError::Closed(event)),
         }
     }
 }
