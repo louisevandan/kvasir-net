@@ -143,7 +143,9 @@ Four interleaved runs:
 | GPU utilisation, summed | 32.9, 33.2 | 32.8, 31.3 |
 
 **+32.6% for halving the number of stages**, with no overlap between the arms
-and both passing 64/64 structurally. The same forty layers cost 78 to 88 ms
+and both passing 64/64 structurally - and 58 to 60 of 64 on the meaning
+judge in all four arms, which is why this scenario is still not an
+acceptance gate. The same forty layers cost 78 to 88 ms
 more per lap when they are cut into four - two extra stage crossings at about
 44 ms each, which is the per-batch fixed cost measured earlier from the width
 fit. And GPU utilisation is identical at ~33% in both arms while throughput
@@ -173,7 +175,12 @@ the same KV region that forces the four-node split. Four interleaved runs of
 | stage ms, per lap | 200, 240 | 329, 389 |
 | GPU utilisation, summed | 48.9, 45.0 | 41.0, 38.3 |
 
-**+42.4%**, and the arms do not overlap. Both models therefore say the same
+**+42.4%** - but not of the boundary count alone. The four-stage cut leaves 9
+layers on one card and 26 on the other; the two-stage cut leaves 13 and 22.
+Removing two crossings and rebalancing the cards are measured together here,
+and the first two-stage run came from a different working tree besides. The
+35B pair is the clean one: 20 layers a card in both arms, same tree, same
+binary. Both models therefore say the same
 thing, and the 2B says it louder: the harness has been paying for two extra
 stage crossings a lap since it was written, 129 to 149 ms of them here.
 

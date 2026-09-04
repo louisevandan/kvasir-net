@@ -142,6 +142,14 @@ export function mixedPrefillPrompt(index) {
 /// harness is called four-node - a name that comes from where gemma-4-E2B
 /// allows a boundary, not from a measurement.
 ///
+/// **This produces a legal cut, not the best one.** Layers are dealt evenly
+/// where the constraint allows, and even layers are not even cost: the first
+/// stage carries the embedding and `layers/agent/tests/pipelining.rs` fixes
+/// 16/24 over 20/20 for exactly that reason, while the 35B's own two-stage
+/// runs measured 81.4 ms against 90.2 ms. Choosing the cut belongs to a
+/// later step that reads measured stage time, memory and transfer cost; this
+/// only says where a boundary may go and hands back a reasonable seed.
+///
 /// `forbidden` is the region no boundary may fall inside, as `[begin, end)`.
 /// A model that shares KV across a span of layers reads them as one storage
 /// region: gemma-4-E2B shares over 13..34, so `[13, 35)` is forbidden and the
@@ -171,6 +179,17 @@ export function cutForLanes(totalLayers, lanes, forbidden) {
   };
   if (!forbidden) return even(0, totalLayers, lanes);
   const [from, to] = forbidden;
+  // A region that is empty, inverted or off the end is not a constraint, it
+  // is a mistake - and an unchecked one produced `[[0,35],[35,35]]` from
+  // `cutForLanes(35, 2, [35, 35])`: an empty last stage, from a function whose
+  // whole point is to refuse what the constraint cannot give.
+  if (![from, to].every((edge) => Number.isInteger(edge))
+    || from < 0 || from >= to || to > totalLayers) {
+    throw new Error(
+      `a shared region must be integer [begin, end) inside 0..${totalLayers}, not` +
+        ` [${from}, ${to})`,
+    );
+  }
   // A shared region is one storage region: it is a whole stage, not a place
   // to put a boundary. A first version dealt the layers evenly and then
   // pushed offending boundaries back to the region's start, where the second
@@ -189,6 +208,14 @@ export function cutForLanes(totalLayers, lanes, forbidden) {
 ///
 /// One stage a device: that is what an independent execution lane is, and
 /// measuring past it cost a third to a half of the throughput.
+/// **A device ordinal is a stand-in for a lane, not a definition of one.**
+/// Two entries differ here only as strings, so this cannot tell `CUDA:0` on
+/// two hosts apart, or CUDA 0 from CPU 0, or MIG instances, Metal devices,
+/// NUMA domains, a stage spread over several GPUs, or tensors that fell back
+/// to host buffers. The adapter says as much: `backend_inventory` enumerates
+/// registries and explicitly is not placement, and the `execution_layout_id`
+/// that would carry real placement is unimplemented. This is a benchmark
+/// harness on one host with two identical cards, and it is only sound there.
 export const LANES = ["0", "1"];
 
 /// A scenario's placement, derived rather than written.
@@ -285,11 +312,11 @@ export const REMOTE_BINARY = `${REMOTE_ROOT}\\staged\\p4_staged_server.exe`;
 const base = {
   cuts: GEMMA4_CUTS,
   devices: GEMMA4_DEVICES,
-  // Two stages a card, which measurement says is the slower arm - kept because
-  // it is the arm the lane-derived scenarios are compared against, and every
-  // earlier run in the evidence used it. New work should take its placement
-  // from placeOnLanes instead.
-  allowOversubscribedDevices: true,
+  // Placement is deliberately absent here. Putting the oversubscription
+  // exception in `base` made every scenario inherit it, including the
+  // two-stage ones that do not oversubscribe at all - so the function
+  // defaulted to refusing while the catalogue defaulted to allowing. Each
+  // four-stage arm now says so for itself.
   model: MODEL,
   binary: BINARY,
   // Below the Windows dynamic port range (49152+), so an outbound
@@ -310,6 +337,10 @@ export const SCENARIOS = {
   // once, and mean it. Every later scenario is this plus pressure.
   smoke: {
     ...base,
+    // Two stages a card: the slower arm, kept because it is what the
+    // lane-derived scenarios are compared against and what every earlier
+    // run in the evidence used.
+    allowOversubscribedDevices: true,
     description: "single request, four stages, meaningful answer",
     parallel: 4,
     maxTokens: 400,
@@ -329,6 +360,10 @@ export const SCENARIOS = {
   // 2,840 MiB base leaves headroom on a 24 GiB card.
   prefill_mix: {
     ...base,
+    // Two stages a card: the slower arm, kept because it is what the
+    // lane-derived scenarios are compared against and what every earlier
+    // run in the evidence used.
+    allowOversubscribedDevices: true,
     description: "96 sequences, mixed prefill sizes, 12 arrivals every second",
     parallel: 96,
     context: 2560,
@@ -352,6 +387,10 @@ export const SCENARIOS = {
   // but the placement can.
   prefill_mix_tail_alone: {
     ...base,
+    // Two stages a card: the slower arm, kept because it is what the
+    // lane-derived scenarios are compared against and what every earlier
+    // run in the evidence used.
+    allowOversubscribedDevices: true,
     description: "96 sequences, mixed prefill, three light stages on one card and the tail on the other",
     devices: ["0", "0", "0", "1"],
     parallel: 96,
@@ -370,7 +409,9 @@ export const SCENARIOS = {
     description: "35B over four stages on two cards, one request",
     model: MODEL_35B,
     cuts: CUTS_35B,
-    stops: STOPS_35B,
+    allowOversubscribedDevices: true,
+    stops: STOPS_35B,
+
     flashAttn: "on",
     cacheTypeK: "q8_0",
     cacheTypeV: "q8_0",
@@ -388,7 +429,9 @@ export const SCENARIOS = {
     description: "35B, 32 sequences, mixed prefill sizes, 8 arrivals every second",
     model: MODEL_35B,
     cuts: CUTS_35B,
-    stops: STOPS_35B,
+    allowOversubscribedDevices: true,
+    stops: STOPS_35B,
+
     flashAttn: "on",
     cacheTypeK: "q8_0",
     cacheTypeV: "q8_0",
@@ -470,6 +513,10 @@ export const SCENARIOS = {
   // can ever use and cap concurrency on memory instead of on scheduling.
   pressure: {
     ...base,
+    // Two stages a card: the slower arm, kept because it is what the
+    // lane-derived scenarios are compared against and what every earlier
+    // run in the evidence used.
+    allowOversubscribedDevices: true,
     description: "256 sequences, 32 arrivals every second for 16 s",
     parallel: 256,
     context: 512,
@@ -484,6 +531,10 @@ export const SCENARIOS = {
   // limited by the active set or by something that does not scale with it.
   pressure_128: {
     ...base,
+    // Two stages a card: the slower arm, kept because it is what the
+    // lane-derived scenarios are compared against and what every earlier
+    // run in the evidence used.
+    allowOversubscribedDevices: true,
     description: "128 sequences, 16 arrivals every second for 16 s",
     parallel: 128,
     context: 512,
@@ -498,6 +549,10 @@ export const SCENARIOS = {
   // amortization of the fixed per-step cost that the 2026-08-30 runs found.
   service: {
     ...base,
+    // Two stages a card: the slower arm, kept because it is what the
+    // lane-derived scenarios are compared against and what every earlier
+    // run in the evidence used.
+    allowOversubscribedDevices: true,
     description: "40 requests, 20 at once then 10 every 30 s, parallel 40",
     parallel: 40,
     maxTokens: 1000,
@@ -513,6 +568,10 @@ export const SCENARIOS = {
   // continuous wave exercises the mixed-batch path fairly.
   mixed: {
     ...base,
+    // Two stages a card: the slower arm, kept because it is what the
+    // lane-derived scenarios are compared against and what every earlier
+    // run in the evidence used.
+    allowOversubscribedDevices: true,
     description: "continuous arrivals, prefill and decode co-resident",
     parallel: 24,
     maxTokens: 300,

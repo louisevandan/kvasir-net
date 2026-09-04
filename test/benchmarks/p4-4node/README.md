@@ -39,8 +39,11 @@ template. P4 carries the plan as an opaque string.
 ## Four stages is a name, not a recommendation
 
 Measured 2026-09-04: on two cards, one stage a card beats two stages a card by
-**42% on gemma-4-E2B** (624.98 against 438.88 total rows/s) and **33% on a 35B**
-(175.00 against 131.96), interleaved, with every arm passing its judge. Two
+**33% on a 35B** (175.00 against 131.96 total rows/s) with 20 layers a card in
+both arms, and by 42% on gemma-4-E2B (624.98 against 438.88) where the cut also
+rebalances the cards from 9/26 to 13/22, so that number mixes two effects. The
+arms are interleaved and do not overlap; all passed structurally, and the 35B
+arms scored 58-60/64 on meaning, which is the model over a long prompt. Two
 cards give two independent execution lanes; a third and fourth stage add a full
 set of per-batch fixed cost to lanes that cannot overlap. Partition to the
 lanes the hardware has, then stop - `prefill_mix_2stage` and

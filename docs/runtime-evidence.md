@@ -6,11 +6,20 @@ The harness has cut every model into four stages since it was written, two to a
 card. Two cards give two independent execution lanes, and the fourth stage adds
 a full set of per-batch fixed cost to a lane that cannot overlap. Measured by
 running the same work at both depths, interleaved: the 35B gains **32.6%** at
-one stage a card (175.00 against 131.96 total rows/s) and the 2B gains
-**42.4%** (624.98 against 438.88), with every arm passing its judge and the
-distributions not overlapping. The same layers cost 78 to 149 ms more per lap
-when cut into four - two extra crossings at about the per-batch fixed cost
-measured from the width fit.
+one stage a card (175.00 against 131.96 total rows/s) and the 2B gains 42.4%
+(624.98 against 438.88), with the distributions not overlapping. The same
+layers cost 78 to 149 ms more per lap when cut into four - two extra
+crossings at about the per-batch fixed cost measured from the width fit.
+
+**Two corrections to how that was first written.** Every arm passed
+*structurally* - 64/64 and 192/192 completed and released - but the 35B arms
+scored 58 to 60 of 64 on the meaning judge, all four of them, because this
+model reasons in English over a long prompt. "Every arm passing its judge"
+was wrong. And the 2B's 42.4% is not the boundary count alone: the four-stage
+cut puts 9 and 26 layers on the two cards while the two-stage cut puts 13 and
+22, so removing two crossings and rebalancing the cards are measured
+together there. The 35B's 32.6% is clean of that - both arms place 20 layers
+a card - and is the number to lean on.
 
 GPU utilisation was identical across the 35B arms at ~33% while throughput
 differed by a third, which is the fourth time that number has failed to track
