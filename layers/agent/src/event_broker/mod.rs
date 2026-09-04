@@ -48,7 +48,15 @@ pub enum DispatchError {
         current_generation: u64,
         incoming_generation: u64,
     },
-    Full(Delivery),
+    /// The destination queue is full, and the event comes back with it.
+    ///
+    /// It carries the event because the caller's only correct answer is to
+    /// keep it and try again - the ledger commits on success only and
+    /// `inspect` reads without recording, so a retry is the same dispatch
+    /// rather than a duplicate. Returning the delivery alone left the one
+    /// caller with nothing to retry, so it failed the node instead and lost
+    /// a completion that had already been computed.
+    Full(Delivery, Box<Event>),
     Closed(Delivery),
     Poisoned,
 }
@@ -163,7 +171,9 @@ impl EventBroker {
                 ledger.commit(event);
                 Ok(DispatchOutcome::Enqueued(delivery))
             }
-            Err(mpsc::error::TrySendError::Full(_)) => Err(DispatchError::Full(delivery)),
+            Err(mpsc::error::TrySendError::Full(returned)) => {
+                Err(DispatchError::Full(delivery, Box::new(returned)))
+            }
             Err(mpsc::error::TrySendError::Closed(_)) => Err(DispatchError::Closed(delivery)),
         }
     }

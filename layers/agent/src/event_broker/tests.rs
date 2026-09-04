@@ -86,10 +86,13 @@ fn a_full_queue_is_reported_without_a_blocking_fallback() {
     f.broker
         .dispatch(event("e1", source.clone(), target.clone(), 1))
         .unwrap();
-    assert_eq!(
-        f.broker.dispatch(event("e2", source, target, 2)),
-        Err(DispatchError::Full(Delivery::Agent))
-    );
+    // The event comes back with the refusal so the caller can retry it.
+    let refused = f.broker.dispatch(event("e2", source, target, 2));
+    let Err(DispatchError::Full(delivery, returned)) = refused else {
+        panic!("a full destination should return the event: {refused:?}");
+    };
+    assert_eq!(delivery, Delivery::Agent);
+    assert_eq!(returned.envelope.event_id, "e2");
 }
 
 #[test]
@@ -103,7 +106,7 @@ fn a_full_offer_does_not_consume_identity_or_sequence() {
     let pending = event("e2", source, target, 2);
     assert!(matches!(
         f.broker.dispatch(pending.clone()),
-        Err(DispatchError::Full(_))
+        Err(DispatchError::Full(..))
     ));
     f.agent.try_recv().unwrap();
     assert!(matches!(

@@ -112,6 +112,14 @@ impl Worker {
             match self.publisher.try_publish(pending) {
                 Ok(()) => return Ok(()),
                 Err(PublishError::Full(event)) => {
+                    if self.shutting_down.load(Ordering::SeqCst) {
+                        // The reader is going away, so the room this is
+                        // waiting for will never come. Abandoning the
+                        // completion loses a token; waiting for it hangs the
+                        // shutdown, which loses the node.
+                        self.set_snapshot("completion_queue_full:abandoned_at_shutdown");
+                        return Err(());
+                    }
                     self.set_snapshot("completion_queue_full:waiting");
                     pending = event;
                     std::thread::sleep(COMPLETION_RETRY_INTERVAL);
@@ -175,6 +183,7 @@ mod tests {
             receiver,
             publisher,
             Arc::new(Mutex::new("loaded".into())),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
         let mut first = input("request-a");
         first.envelope.return_route = Some(OuterEndpoint {

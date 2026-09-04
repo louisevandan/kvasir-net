@@ -620,3 +620,67 @@ fn the_settled_prompt_cursor_never_passes_the_issued_one() {
     // Prompt done and no decode row yet: nothing to do until the tail sends one.
     assert_eq!(prompt.phase_within(4), None);
 }
+
+/// Dropping the adapter finishes, even with a completion mailbox nobody drained.
+///
+/// The worker waits for room rather than throwing a computed token away, and
+/// that wait has to end when the reader is leaving. It could not: `Drop`
+/// closed the inbound channel and joined the worker, but the mailbox receiver
+/// is a field of the adapter and so outlives `drop` - the worker never saw
+/// `Closed`, retried for ever, and the join never returned. The two waited on
+/// each other.
+///
+/// This drives the deadlock: a mailbox of capacity one, filled and never
+/// read, then a load that makes the worker publish. Without the shutdown flag
+/// the drop below does not return and this test hangs rather than failing.
+#[test]
+fn dropping_the_adapter_returns_even_with_an_undrained_completion_mailbox() {
+    use p4_adapter::node_adapter::NodeAdapter;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (done, finished) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let own = p4_protocol::Address::tcp("127.0.0.1", 42101);
+        let endpoint = p4_protocol::event::Endpoint::node(own, "n0", 1);
+        // One slot in the mailbox, and nothing ever takes from it.
+        let adapter = super::node::LlamaNodeAdapter::new(endpoint.clone(), 8, 1);
+
+        // Anything the worker answers goes to the mailbox. A malformed load is
+        // enough: the reply is an error event, which still has to be published.
+        for sequence in 0..4 {
+            let _ = adapter.try_offer(malformed_load(&endpoint, sequence));
+        }
+        // Give the worker time to fill the one slot and start waiting on it.
+        std::thread::sleep(Duration::from_millis(50));
+        drop(adapter);
+        let _ = done.send(());
+    });
+
+    assert!(
+        finished.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "dropping the adapter must not wait on a worker that is waiting on it",
+    );
+    worker.join().expect("the driving thread should finish");
+}
+
+/// A load command the worker will refuse, so it answers with an error event.
+fn malformed_load(endpoint: &p4_protocol::event::Endpoint, sequence: u64) -> p4_protocol::event::Event {
+    p4_protocol::event::Event {
+        envelope: p4_protocol::event::Envelope {
+            protocol_version: p4_protocol::event::Envelope::VERSION,
+            event_id: format!("load-{sequence}"),
+            correlation_id: format!("request-{sequence}"),
+            causation_id: None,
+            source: endpoint.clone(),
+            target: endpoint.clone(),
+            return_route: None,
+            class: p4_protocol::event::EventClass::Control,
+            sequence,
+            deadline_unix_ms: None,
+            adapter_kind: Some("llamacpp".into()),
+            payload_content_type: LOAD_CONTENT_TYPE.into(),
+        },
+        payload: b"{}".to_vec(),
+    }
+}

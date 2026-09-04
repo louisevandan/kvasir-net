@@ -10,6 +10,7 @@ use serde::Serialize;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
@@ -74,6 +75,8 @@ pub struct Worker {
     last_stage_done: Option<Instant>,
     /// Coalescing refusals since that moment.
     gate_refusals: u64,
+    /// Set when the adapter is going away; ends a wait for mailbox room.
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -82,6 +85,7 @@ impl Worker {
         receiver: mpsc::Receiver<WorkerInput>,
         publisher: CompletionPublisher,
         snapshot: Arc<Mutex<String>>,
+        shutting_down: Arc<AtomicBool>,
     ) -> Self {
         Self {
             endpoint,
@@ -93,6 +97,7 @@ impl Worker {
             state: AdapterState::default(),
             last_stage_done: None,
             gate_refusals: 0,
+            shutting_down,
         }
     }
 

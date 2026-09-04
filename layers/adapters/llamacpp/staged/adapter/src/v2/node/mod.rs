@@ -1,6 +1,7 @@
 use self::worker::{Worker, WorkerInput};
 use p4_adapter::node_adapter::{NodeAdapter, OfferError, Poll, completion_mailbox};
 use p4_protocol::event::{Endpoint, Event};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll as TaskPoll};
 use std::thread::JoinHandle;
@@ -14,6 +15,17 @@ pub struct LlamaNodeAdapter {
     sender: Option<mpsc::SyncSender<WorkerInput>>,
     mailbox: Arc<p4_adapter::node_adapter::CompletionMailbox>,
     snapshot: Arc<Mutex<String>>,
+    /// Set before the worker is joined, so a worker waiting for room in a
+    /// full completion mailbox stops waiting.
+    ///
+    /// Without it the two wait on each other: `Drop` closes the inbound
+    /// channel and joins, but the mailbox receiver is a field of this struct
+    /// and so outlives `drop`, so the worker never sees `Closed` and retries
+    /// for ever. Closing the receiver first would work too and is worse - a
+    /// completion still in the mailbox would be dropped by a reader that had
+    /// gone, where this way the worker abandons only the one it is holding
+    /// and says so in its snapshot.
+    shutting_down: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -27,14 +39,20 @@ impl LlamaNodeAdapter {
         let (publisher, mailbox) = completion_mailbox(completion_capacity);
         let snapshot = Arc::new(Mutex::new("empty".to_owned()));
         let worker_snapshot = Arc::clone(&snapshot);
+        let shutting_down = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutting_down);
         let worker = std::thread::Builder::new()
             .name("p4-llamacpp-node".into())
-            .spawn(move || Worker::new(endpoint, receiver, publisher, worker_snapshot).run())
+            .spawn(move || {
+                Worker::new(endpoint, receiver, publisher, worker_snapshot, worker_shutdown)
+                    .run()
+            })
             .expect("llama adapter worker thread must start");
         Self {
             sender: Some(sender),
             mailbox,
             snapshot,
+            shutting_down,
             worker: Mutex::new(Some(worker)),
         }
     }
@@ -76,6 +94,9 @@ impl NodeAdapter for LlamaNodeAdapter {
 
 impl Drop for LlamaNodeAdapter {
     fn drop(&mut self) {
+        // Before the join, not after: a worker waiting for mailbox room has
+        // to be told to stop waiting, or the join never returns.
+        self.shutting_down.store(true, Ordering::SeqCst);
         self.sender.take();
         if let Ok(mut worker) = self.worker.lock()
             && let Some(worker) = worker.take()

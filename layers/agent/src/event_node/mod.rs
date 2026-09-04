@@ -42,6 +42,29 @@ impl EventNode {
         }
     }
 
+    /// Hands a completion to the broker, waiting for room rather than failing.
+    ///
+    /// The same argument as the inbound side: a destination queue that is full
+    /// now will drain, and ending the node for it loses a completion that has
+    /// already been computed. Only a closed destination is fatal.
+    ///
+    /// Retrying is safe because the ledger commits on success and `inspect`
+    /// reads without recording, so the second attempt is the same dispatch and
+    /// not a duplicate.
+    async fn dispatch_or_wait(&self, event: Event) -> Result<(), EventNodeError> {
+        let mut pending = event;
+        loop {
+            match self.broker.dispatch(pending) {
+                Ok(_) => return Ok(()),
+                Err(DispatchError::Full(_, returned)) => {
+                    pending = *returned;
+                    tokio::time::sleep(HELD_RETRY_INTERVAL).await;
+                }
+                Err(error) => return Err(EventNodeError::Broker(error)),
+            }
+        }
+    }
+
     pub async fn run(mut self) -> Result<(), EventNodeError> {
         // An event the adapter had no room for. While one is held the node
         // stops reading inbound and only drains completions - which is what
@@ -67,11 +90,7 @@ impl EventNode {
                         tokio::select! {
                             completion = poll_fn(|context| self.adapter.poll_take(context)) => {
                                 match completion {
-                                    Poll::Event(event) => {
-                                        self.broker
-                                            .dispatch(event)
-                                            .map_err(EventNodeError::Broker)?;
-                                    }
+                                    Poll::Event(event) => self.dispatch_or_wait(event).await?,
                                     Poll::Empty => {}
                                     Poll::Closed => {
                                         return Err(EventNodeError::CompletionClosed(
@@ -99,7 +118,7 @@ impl EventNode {
                 completion = poll_fn(|context| self.adapter.poll_take(context)) => {
                     match completion {
                         Poll::Event(event) => {
-                            self.broker.dispatch(event).map_err(EventNodeError::Broker)?;
+                            self.dispatch_or_wait(event).await?;
                         }
                         Poll::Empty => continue,
                         Poll::Closed => {
