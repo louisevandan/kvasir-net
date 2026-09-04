@@ -58,7 +58,7 @@ impl Worker {
             // flight.
             if self.state.max_open_batches > 0
                 && self.state.any_in_flight()
-                && self.state.open_executions.len() >= self.state.max_open_batches
+                && self.state.open_batches.len() >= self.state.max_open_batches
             {
                 self.gate_refusals = self.gate_refusals.saturating_add(1);
                 return Ok(());
@@ -289,9 +289,8 @@ impl Worker {
                 )?;
                 return Err(());
             }
-            for capsule in &physical.0 {
-                self.state.open_executions.insert(capsule.execution_id);
-            }
+            self.state
+                .open_batch(physical.0.iter().map(|capsule| capsule.execution_id));
             self.emit_batch_observation(
                 &template
                     .clone()

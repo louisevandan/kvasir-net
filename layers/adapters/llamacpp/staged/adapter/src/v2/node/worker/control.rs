@@ -89,7 +89,7 @@ impl Worker {
         self.state.load_generation = command.load_generation;
         self.state.next_speculative_id = 1;
         self.state.clear_verify_fence();
-        self.state.open_executions.clear();
+        self.state.open_batches.clear();
         self.set_snapshot("loaded");
         self.emit_json(
             &event,
@@ -144,7 +144,7 @@ impl Worker {
         self.state.forget_session_keys();
         self.state.next_speculative_id = 1;
         self.state.clear_verify_fence();
-        self.state.open_executions.clear();
+        self.state.open_batches.clear();
         self.set_snapshot("unloaded");
         self.emit_json(
             &event,

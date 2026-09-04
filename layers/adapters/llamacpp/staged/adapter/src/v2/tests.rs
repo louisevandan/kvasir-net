@@ -1,4 +1,5 @@
 use super::*;
+use super::node::state::AdapterState;
 
 #[test]
 fn unload_requires_an_explicit_model_generation() {
@@ -324,22 +325,22 @@ fn recurrent_ready_decode_takes_the_batch_and_leaves_prompts_whole() {
     assert_eq!(plan[0].phase, Phase::Decode);
 }
 
-/// A prompt is never starved by a decode that keeps arriving.
+/// The cohort split alternates, *given* that an issued decode leaves the
+/// ready set.
 ///
-/// Splitting the cohorts means a ready decode takes the batch, so the
-/// question the split raises is whether a prompt ever gets one. It does,
-/// because a decode that has been issued is in flight and stops being ready
-/// until the tail returns it - the adapter clears `in_flight` there, and
-/// `phase()` returns `None` while it is set. This walks that: issue, retire
-/// the decode from the ready set as the pipeline would, and the prompts get
-/// the next batch at full width.
+/// **This models the retirement rather than exercising it.** The decode is
+/// removed from the demand list here by the test; in the adapter it leaves
+/// because `in_flight` is set on issue and `phase()` returns `None` while it
+/// is set, and it comes back when the tail clears the flag. What this fixes
+/// is the scheduler half: given a ready set with no decode in it, the prompts
+/// get a full-width batch rather than a decode's width.
 ///
-/// It matters most with a depth bound in force. `max_open_batches = 1` is the
-/// tightest the gate allows, and it holds the head while one batch is out -
-/// so decode and prompt batches strictly alternate rather than the decodes
-/// running away with the pipeline.
+/// A worker-level test - real gate, real in-flight transitions, a decode
+/// arriving continuously - would settle bounded starvation under the combined
+/// policy, and there is no worker harness to write it in yet. Until there is,
+/// the no-starvation claim rests on the state machine being read, not run.
 #[test]
-fn recurrent_prompts_are_not_starved_by_a_stream_of_decodes() {
+fn recurrent_cohorts_alternate_when_the_issued_decode_retires() {
     let mut scheduler = Scheduler::new();
     let prompts = [demand(1, Phase::Prefill, 500), demand(2, Phase::Prefill, 500)];
     let mut prompt_batches = 0;
@@ -447,4 +448,51 @@ fn settlement_replay_must_end_exactly_at_retain_boundary() {
     completed.sequences[0].replay_tokens = vec![1, 2];
     completed.sequences[0].replay_position = 10;
     assert!(completed.validate().is_err());
+}
+
+/// The depth bound counts batches, and a batch that splits cannot exceed it.
+///
+/// The gate is checked before a batch is planned, and llama.cpp decides
+/// afterwards how many physical ubatches it becomes. Counting execution ids
+/// let three open ids admit a batch that split into four and hold seven; one
+/// entry per issued batch makes the bound mean what it says.
+#[test]
+fn the_open_batch_ledger_counts_batches_not_executions() {
+    let mut state = AdapterState::default();
+    assert_eq!(state.open_batches.len(), 0);
+
+    // One batch that llama.cpp split into four physical ubatches.
+    state.open_batch([11, 12, 13, 14]);
+    assert_eq!(state.open_batches.len(), 1, "four capsules are still one batch");
+
+    state.open_batch([21]);
+    assert_eq!(state.open_batches.len(), 2);
+
+    // The tail returns the split batch one capsule at a time; the batch stays
+    // open until its last capsule is back.
+    for execution in [11, 12, 13] {
+        state.close_execution(execution);
+        assert_eq!(state.open_batches.len(), 2, "a partly returned batch is open");
+    }
+    state.close_execution(14);
+    assert_eq!(state.open_batches.len(), 1);
+
+    state.close_execution(21);
+    assert_eq!(state.open_batches.len(), 0);
+
+    // A capsule that belongs to no open batch is ignored rather than
+    // corrupting the ledger - a duplicate terminal capsule must not open a
+    // slot that was never taken.
+    state.close_execution(21);
+    assert_eq!(state.open_batches.len(), 0);
+}
+
+/// A new load clears the ledger, so a stale batch cannot hold a slot forever.
+#[test]
+fn the_open_batch_ledger_does_not_survive_a_load() {
+    let mut state = AdapterState::default();
+    state.open_batch([1, 2]);
+    assert_eq!(state.open_batches.len(), 1);
+    state.open_batches.clear();
+    assert_eq!(state.open_batches.len(), 0, "the load path clears this");
 }

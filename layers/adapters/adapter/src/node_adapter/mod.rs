@@ -10,9 +10,16 @@ pub use mailbox::{CompletionMailbox, CompletionPublisher, completion_mailbox};
 use p4_protocol::event::Event;
 use std::task::{Context, Poll as TaskPoll};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// Not `Copy` any more: `Full` carries the event back so the caller can hold
+// it and retry, and an event is not a trivially copyable value.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OfferError {
-    Full,
+    /// The adapter has no room right now, and hands the event back.
+    ///
+    /// It carries the event because the caller's only correct response is to
+    /// keep it and try again: dropping it loses work, and failing the node
+    /// turns a busy adapter into a dead pipeline.
+    Full(Event),
     Closed,
 }
 

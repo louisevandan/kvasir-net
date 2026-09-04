@@ -111,6 +111,16 @@ bool StageRuntime::sample_hop_outcome(
         if (!parse_request_stops(input.options, &stops, error)) return false;
         metadata.text = filter_request_stops(
             detokenized, emitted.size(), stops, true).text;
+        // The same check the streaming branch makes. A terminal token is not a
+        // reason to skip it: the text still comes from a detokeniser, bytes that
+        // were never a whole character cannot become one now that generation has
+        // stopped, and emitting them would put a replacement mark - the judge's
+        // signal for a token split across a stage boundary - into a finished
+        // answer. Trim what is incomplete, refuse what is corrupt.
+        metadata.text.resize(complete_utf8_prefix(metadata.text));
+        if (!valid_utf8_text(metadata.text)) {
+            return fail_hop("detokenised text is not valid UTF-8 after trimming", error);
+        }
         emitted += metadata.text;
     }
     if (end_of_generation) metadata.stop = "eos";

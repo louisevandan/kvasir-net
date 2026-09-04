@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll as TaskPoll};
 use std::thread::JoinHandle;
 
-mod state;
+// Visible to the crate so the open-batch ledger can be tested on the real
+// state machine rather than on a copy of its arithmetic.
+pub(crate) mod state;
 mod worker;
 
 pub struct LlamaNodeAdapter {
@@ -49,7 +51,10 @@ impl NodeAdapter for LlamaNodeAdapter {
         };
         match sender.try_send(WorkerInput::Event(event)) {
             Ok(()) => Ok(()),
-            Err(mpsc::TrySendError::Full(_)) => Err(OfferError::Full),
+            Err(mpsc::TrySendError::Full(WorkerInput::Event(event))) => {
+                Err(OfferError::Full(event))
+            }
+            Err(mpsc::TrySendError::Full(_)) => Err(OfferError::Closed),
             Err(mpsc::TrySendError::Disconnected(_)) => Err(OfferError::Closed),
         }
     }

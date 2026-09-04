@@ -24,7 +24,7 @@ impl Worker {
         }
         let mut completed_rows = std::collections::BTreeMap::<String, (Phase, usize)>::new();
         for capsule in &capsules.0 {
-            self.state.open_executions.remove(&capsule.execution_id);
+            self.state.close_execution(capsule.execution_id);
             if !capsule.terminal {
                 return Err("tail continuation is not terminal".into());
             }

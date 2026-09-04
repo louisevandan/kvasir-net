@@ -39,6 +39,9 @@ impl NodeAdapter for CompletingAdapter {
         "test"
     }
     fn try_offer(&self, event: Event) -> Result<(), OfferError> {
+        // The completion this stands in for is derived from the event, so a
+        // full publisher hands the original back the way a real adapter does.
+        let offered = event.clone();
         let envelope = event.envelope.next(
             "complete",
             self.source.clone(),
@@ -52,7 +55,7 @@ impl NodeAdapter for CompletingAdapter {
                 envelope,
                 payload: vec![9],
             })
-            .map_err(|_| OfferError::Full)
+            .map_err(|_| OfferError::Full(offered))
     }
     fn try_take(&self) -> Poll {
         self.mailbox.try_take()

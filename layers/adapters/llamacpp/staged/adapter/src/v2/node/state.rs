@@ -82,15 +82,24 @@ pub struct AdapterState {
     /// that occupies a single stage at a time. 0 disables it. See
     /// `Worker::drive_first_batches`.
     pub max_issue_rows: usize,
-    /// Executions this first node has issued whose terminal capsule has not
-    /// come back from the tail. Keyed by the stage server's execution id,
-    /// which is unique within one load; an entry is added when the node's
-    /// own stage returns the physical result and removed by `Worker::tail`
-    /// when the terminal capsule carrying that id arrives. Bounded by
-    /// `max_open_batches` when the gate is on and by the active set when it
-    /// is off - nothing is issued without a ready row. Cleared with the rest
-    /// of the state on a new load.
-    pub open_executions: BTreeSet<u64>,
+    /// Batches this first node has issued whose capsules have not all come
+    /// back from the tail, as batch ordinal -> the execution ids it produced.
+    ///
+    /// Keyed by batch rather than by execution because the bound is checked
+    /// before a batch is planned and llama.cpp decides afterwards how many
+    /// physical ubatches it becomes: a set of execution ids could be three
+    /// under a bound of four, admit a batch that split into four, and hold
+    /// seven. One entry per issued batch makes the bound exact.
+    ///
+    /// An entry is added when this node's own stage returns the physical
+    /// result, and an execution id is removed by `Worker::tail` when the
+    /// terminal capsule carrying it arrives; the batch goes when its last
+    /// capsule does. Bounded by `max_open_batches` when the gate is on and by
+    /// the active set when it is off - nothing is issued without a ready row.
+    /// Cleared with the rest of the state on a new load.
+    pub open_batches: BTreeMap<u64, BTreeSet<u64>>,
+    /// The ordinal the next issued batch takes.
+    pub next_open_batch: u64,
     /// The conversation each request identity was admitted under, so a repeat
     /// of that identity cannot silently move to another conversation.
     ///
@@ -135,7 +144,8 @@ impl Default for AdapterState {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
-            open_executions: BTreeSet::new(),
+            open_batches: BTreeMap::new(),
+            next_open_batch: 1,
             max_issue_rows: std::env::var("P4_STAGED_MAX_ISSUE_ROWS")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -234,6 +244,30 @@ impl AdapterState {
                 })
             })
             .sum()
+    }
+
+    /// Records a batch's capsules as outstanding and returns nothing: the
+    /// gate reads `open_batches.len()`, which is now one per issued batch.
+    pub fn open_batch(&mut self, executions: impl IntoIterator<Item = u64>) {
+        let ordinal = self.next_open_batch;
+        self.next_open_batch = self.next_open_batch.wrapping_add(1);
+        self.open_batches.insert(ordinal, executions.into_iter().collect());
+    }
+
+    /// Retires one capsule, and its batch once the batch has no capsules left.
+    pub fn close_execution(&mut self, execution_id: u64) {
+        let emptied: Vec<u64> = self
+            .open_batches
+            .iter_mut()
+            .filter_map(|(ordinal, executions)| {
+                executions.remove(&execution_id).then_some(*ordinal)
+            })
+            .collect();
+        for ordinal in emptied {
+            if self.open_batches.get(&ordinal).is_some_and(BTreeSet::is_empty) {
+                self.open_batches.remove(&ordinal);
+            }
+        }
     }
 
     pub fn first_session_with_work(&self) -> Option<String> {
