@@ -94,8 +94,12 @@ bool StageRuntime::sample_hop_outcome(
         // character whose remainder is in the next token, so it is held back
         // rather than turned into a replacement mark.
         metadata.text.resize(complete_utf8_prefix(metadata.text));
+        // Anything still invalid after that trim is corruption, not an
+        // unfinished character - and replacing the whole text with U+FFFD both
+        // hides it and emits the exact mark the acceptance judge uses to catch
+        // a token split across a stage boundary. Refuse instead.
         if (!valid_utf8_text(metadata.text)) {
-            metadata.text = "\xEF\xBF\xBD";
+            return fail_hop("detokenised text is not valid UTF-8 after trimming", error);
         }
         emitted += metadata.text;
         if (filtered.stopped) metadata.stop = "stop";

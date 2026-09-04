@@ -196,3 +196,30 @@ The comparison against stock llama.cpp on a single card is not run. The 35B
 does not fit on one 3090 with usable context, so that baseline needs the small
 model, and it answers a different question from this one: what the adapter and
 the boundary cost, rather than what the partition costs.
+
+## Re-run from the committed source
+
+The four A/B runs above ran from a working tree that carried the harness
+changes they were measuring. Repeated at `1d9185a41`, with the deployed
+binaries hash-checked against the local build before the block started:
+
+| | one stage a card | two stages a card |
+| --- | ---: | ---: |
+| total rows/s | 177.02, 175.60 | 119.36, 123.18 |
+| mean | **176.31** | 121.27 |
+| gen tok/s | 118.54, 117.41 | 80.14, 82.73 |
+| layers per card | 20/20 | 20/20 |
+| structural | 64/64 in all four | |
+| meaning | 58/64, 55/64 | 59/64, **64/64** |
+
+**+45.4%**, larger than the 32.6% measured before, with the same 20 layers a
+card in both arms. The partition result holds and strengthens.
+
+Two things belong in the record rather than out of it. Only the first run has
+a clean tree: the other three were taken while source for the next commit was
+being edited, which is a discipline failure of mine - the binaries were fixed
+and hash-verified before the block, so the numbers are attributable to this
+commit's build, but only one run meets strict clean-commit acceptance. And one
+four-stage run scored 64/64 on meaning where its sibling scored 59/64, so the
+meaning judge varies run to run rather than by configuration; it is not a
+property of the partition.

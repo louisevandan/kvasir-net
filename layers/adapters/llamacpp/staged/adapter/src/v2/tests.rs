@@ -324,6 +324,54 @@ fn recurrent_ready_decode_takes_the_batch_and_leaves_prompts_whole() {
     assert_eq!(plan[0].phase, Phase::Decode);
 }
 
+/// A prompt is never starved by a decode that keeps arriving.
+///
+/// Splitting the cohorts means a ready decode takes the batch, so the
+/// question the split raises is whether a prompt ever gets one. It does,
+/// because a decode that has been issued is in flight and stops being ready
+/// until the tail returns it - the adapter clears `in_flight` there, and
+/// `phase()` returns `None` while it is set. This walks that: issue, retire
+/// the decode from the ready set as the pipeline would, and the prompts get
+/// the next batch at full width.
+///
+/// It matters most with a depth bound in force. `max_open_batches = 1` is the
+/// tightest the gate allows, and it holds the head while one batch is out -
+/// so decode and prompt batches strictly alternate rather than the decodes
+/// running away with the pipeline.
+#[test]
+fn recurrent_prompts_are_not_starved_by_a_stream_of_decodes() {
+    let mut scheduler = Scheduler::new();
+    let prompts = [demand(1, Phase::Prefill, 500), demand(2, Phase::Prefill, 500)];
+    let mut prompt_batches = 0;
+    let mut decode_batches = 0;
+    for round in 0..6 {
+        // A decode becomes ready every round; the prompts are always ready.
+        let ready: Vec<_> = std::iter::once(demand(0, Phase::Decode, 1))
+            .chain(prompts.iter().cloned())
+            .collect();
+        let plan = scheduler
+            .plan_with_physical_capacity(&ready, 512, 64, true, 10, false)
+            .unwrap();
+        assert!(!plan.is_empty(), "round {round} planned nothing");
+        if plan[0].phase == Phase::Decode {
+            decode_batches += 1;
+            // The decode is now in flight, so the next round has only prompts.
+            let without = prompts.to_vec();
+            let next = scheduler
+                .plan_with_physical_capacity(&without, 512, 64, true, 10, false)
+                .unwrap();
+            assert_eq!(next.len(), 2, "both prompts should share the batch");
+            assert!(
+                next.iter().all(|row| row.rows == 32),
+                "prompts should get the whole UBATCH, not a decode's width",
+            );
+            prompt_batches += 1;
+        }
+    }
+    assert_eq!(decode_batches, 6, "a ready decode should take every batch it can");
+    assert_eq!(prompt_batches, 6, "and the prompts should get one whenever it is out");
+}
+
 /// And with no decode ready the prompts get the whole UBATCH between them,
 /// which is the width the previous contract was throwing away.
 #[test]
