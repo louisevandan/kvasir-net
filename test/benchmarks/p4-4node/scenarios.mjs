@@ -127,6 +127,89 @@ export function mixedPrefillPrompt(index) {
   return backgroundPrompt(PREFILL_MIX[index % PREFILL_MIX.length]);
 }
 
+/// Cuts a model across the execution lanes the hardware actually has.
+///
+/// Measured 2026-09-04, interleaved, every arm passing its judge: one stage a
+/// card beats two stages a card by 42% on gemma-4-E2B (624.98 against 438.88
+/// total rows/s) and 33% on a 35B (175.00 against 131.96). Two cards give two
+/// independent lanes; a third and fourth stage add a full set of per-batch
+/// fixed cost - frame decode, `llama_decode`, cut-set copy, process hop - to
+/// lanes that cannot overlap, 78 to 149 ms a lap here. Two processes on one
+/// card do not pipeline, they contend.
+///
+/// So a scenario names its devices and its model, and the split follows. It
+/// used to name the split too, and every scenario wrote four because the
+/// harness is called four-node - a name that comes from where gemma-4-E2B
+/// allows a boundary, not from a measurement.
+///
+/// `forbidden` is the region no boundary may fall inside, as `[begin, end)`.
+/// A model that shares KV across a span of layers reads them as one storage
+/// region: gemma-4-E2B shares over 13..34, so `[13, 35)` is forbidden and the
+/// only two-way cut is `[0,13)` and `[13,35)`. Layers are dealt as evenly as
+/// the constraint allows, and a boundary that would land inside the region is
+/// pushed to its start.
+export function cutForLanes(totalLayers, lanes, forbidden) {
+  if (!Number.isInteger(totalLayers) || totalLayers < 1) {
+    throw new Error('cutForLanes needs a positive layer count');
+  }
+  if (!Number.isInteger(lanes) || lanes < 1 || lanes > totalLayers) {
+    throw new Error('cutForLanes needs between one lane and one lane per layer');
+  }
+  // Without a shared region every boundary is legal, so deal the layers out
+  // as evenly as they divide.
+  const even = (from, to, parts) => {
+    const span = to - from;
+    if (parts > span) {
+      throw new Error(`cannot cut ${span} layers into ${parts} stages`);
+    }
+    const edges = [from];
+    for (let part = 1; part < parts; part += 1) {
+      edges.push(from + Math.round((part * span) / parts));
+    }
+    edges.push(to);
+    return edges.slice(0, -1).map((begin, index) => [begin, edges[index + 1]]);
+  };
+  if (!forbidden) return even(0, totalLayers, lanes);
+  const [from, to] = forbidden;
+  // A shared region is one storage region: it is a whole stage, not a place
+  // to put a boundary. A first version dealt the layers evenly and then
+  // pushed offending boundaries back to the region's start, where the second
+  // one collided with the first; the region has to be reserved before the
+  // rest is divided, not repaired afterwards.
+  if (to !== totalLayers) {
+    throw new Error(
+      'cutForLanes only handles a shared region that runs to the last layer',
+    );
+  }
+  if (lanes === 1) return [[0, totalLayers]];
+  return [...even(0, from, lanes - 1), [from, totalLayers]];
+}
+
+/// The devices this harness may use, in the order a stage is dealt one.
+///
+/// One stage a device: that is what an independent execution lane is, and
+/// measuring past it cost a third to a half of the throughput.
+export const LANES = ["0", "1"];
+
+/// A scenario's placement, derived rather than written.
+///
+/// Give it the model's layer count and its shared-KV region, and it returns
+/// the `cuts` and `devices` a scenario used to spell out by hand. Every
+/// scenario wrote four stages because the harness is called four-node;
+/// nothing checked that four was a good number until it was measured, and it
+/// was not.
+export function placeOnLanes(totalLayers, forbidden, lanes = LANES) {
+  return {
+    cuts: cutForLanes(totalLayers, lanes.length, forbidden),
+    devices: [...lanes],
+  };
+}
+/// gemma-4-E2B: 35 layers, KV shared over 13..34.
+export const GEMMA4_LAYERS = 35;
+export const GEMMA4_SHARED_KV = [13, 35];
+
+/// The 35B: 40 layers, no shared region to avoid.
+export const ORNITH35B_LAYERS = 40;
 export const GEMMA4_CUTS = [[0, 5], [5, 9], [9, 13], [13, 35]];
 
 // Two stages per card. Locally that is a 3090 and a 4080; on the remote host
@@ -202,6 +285,11 @@ export const REMOTE_BINARY = `${REMOTE_ROOT}\\staged\\p4_staged_server.exe`;
 const base = {
   cuts: GEMMA4_CUTS,
   devices: GEMMA4_DEVICES,
+  // Two stages a card, which measurement says is the slower arm - kept because
+  // it is the arm the lane-derived scenarios are compared against, and every
+  // earlier run in the evidence used it. New work should take its placement
+  // from placeOnLanes instead.
+  allowOversubscribedDevices: true,
   model: MODEL,
   binary: BINARY,
   // Below the Windows dynamic port range (49152+), so an outbound
@@ -329,8 +417,7 @@ export const SCENARIOS = {
   prefill_mix_2stage: {
     ...base,
     description: "96 sequences, mixed prefill, one stage a card",
-    cuts: [[0, 13], [13, 35]],
-    devices: ["0", "1"],
+    ...placeOnLanes(GEMMA4_LAYERS, GEMMA4_SHARED_KV),
     parallel: 96,
     context: 2560,
     maxTokens: 200,
@@ -355,8 +442,7 @@ export const SCENARIOS = {
     ...base,
     description: "35B, one stage a card, 32 sequences, mixed prefill",
     model: MODEL_35B,
-    cuts: [[0, 20], [20, 40]],
-    devices: ["0", "1"],
+    ...placeOnLanes(ORNITH35B_LAYERS),
     stops: STOPS_35B,
     flashAttn: "on",
     cacheTypeK: "q8_0",

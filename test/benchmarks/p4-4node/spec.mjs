@@ -68,7 +68,25 @@ function runGeneration() {
   return Math.floor(Date.now() / 1000);
 }
 
+/// Whether a placement gives every stage a device of its own.
+///
+/// Two stages on one card are not two lanes - they contend for one, and each
+/// pays a full set of per-batch fixed cost. Measured 2026-09-04: one stage a
+/// card beat two by 42% on gemma-4-E2B and 33% on a 35B, interleaved, every
+/// arm passing. A scenario may still oversubscribe deliberately - the
+/// `prefill_mix` family does, because it is the arm that measurement
+/// compares against - but it says so, and the default is refused.
+function oversubscribed(devices) {
+  return new Set(devices).size < devices.length;
+}
+
 export function buildConfig(spec, options = {}) {
+  if (oversubscribed(spec.devices) && !spec.allowOversubscribedDevices) {
+    throw new Error(
+      `placement puts ${spec.devices.length} stages on ${new Set(spec.devices).size}` +
+        ' devices; set allowOversubscribedDevices to measure that deliberately',
+    );
+  }
   const generation = runGeneration();
   const totalLayers = spec.cuts.at(-1)[1];
   const totalContext = spec.context * spec.parallel;
