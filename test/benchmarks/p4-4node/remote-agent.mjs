@@ -62,6 +62,12 @@ const maxOpenBatches = Number(argument("--max-open-batches", "0"));
 if (!Number.isInteger(maxOpenBatches) || maxOpenBatches < 0) {
   throw new Error("--max-open-batches must be a non-negative integer");
 }
+// The width side of the same question: cap the rows one issued batch may
+// carry so the ready set travels as several batches. 0 leaves it off.
+const maxIssueRows = Number(argument("--max-issue-rows", "0"));
+if (!Number.isInteger(maxIssueRows) || maxIssueRows < 0) {
+  throw new Error("--max-issue-rows must be a non-negative integer");
+}
 
 // One line per generated token, on a stderr four stage servers already share.
 // It is what separated "the adapter never produced this position" from "the
@@ -111,6 +117,7 @@ function copyLauncher() {
     ...(tracePositions ? ["set P4_STAGED_TRACE_OUTPUT_POSITION=1"] : []),
     `set P4_STAGED_MIN_BATCH_ROWS=${minBatchRows}`,
     `set P4_STAGED_MAX_OPEN_BATCHES=${maxOpenBatches}`,
+    `set P4_STAGED_MAX_ISSUE_ROWS=${maxIssueRows}`,
     // Redirections go first: cmd strips them in place and leaves the gap,
     // which reaches the program as an extra empty argument - the advertised
     // address then parsed as blank and the agent refused every connection.

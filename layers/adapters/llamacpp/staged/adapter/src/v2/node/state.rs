@@ -77,6 +77,11 @@ pub struct AdapterState {
     /// 0 disables it. See `Worker::drive_first_batches` for why this, and not
     /// a row threshold, is the lever the stage spans point at.
     pub max_open_batches: usize,
+    /// Cap the rows one issued batch may carry, so a ready set becomes
+    /// several batches that travel the pipeline together instead of one
+    /// that occupies a single stage at a time. 0 disables it. See
+    /// `Worker::drive_first_batches`.
+    pub max_issue_rows: usize,
     /// Executions this first node has issued whose terminal capsule has not
     /// come back from the tail. Keyed by the stage server's execution id,
     /// which is unique within one load; an entry is added when the node's
@@ -131,6 +136,10 @@ impl Default for AdapterState {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
             open_executions: BTreeSet::new(),
+            max_issue_rows: std::env::var("P4_STAGED_MAX_ISSUE_ROWS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
             verify_fence: BTreeSet::new(),
         }
     }

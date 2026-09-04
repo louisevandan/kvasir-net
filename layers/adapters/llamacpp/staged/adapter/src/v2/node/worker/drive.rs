@@ -107,12 +107,32 @@ impl Worker {
                 .map(|at| at.elapsed().as_millis() as u64)
                 .unwrap_or(0);
             let idle_gated = self.gate_refusals;
+            // Issue width. Across eighteen runs of one scenario throughput
+            // tracked the share of the run with two or more stages computing
+            // (r=0.891) and ran mildly *against* batch width (r=-0.357) and
+            // UBATCH fill. A ready set issued as one wide batch occupies one
+            // stage at a time; the same rows issued as several narrower
+            // batches can be on several stages at once, and a sequence's
+            // next token needs the whole lap either way. Capping the width
+            // here trades the per-batch cost - about 55 ms before the first
+            // layer - for that overlap, and which way the trade goes is the
+            // measurement this knob exists to take.
+            //
+            // Never applied while a speculative transaction is pending: a
+            // Verify or Replay allocation must stay whole inside one UBATCH,
+            // and the scheduler reserves it against the full capacity.
+            let atomic_pending = demands.iter().any(|demand| demand.atomic);
+            let issue_cap = if self.state.max_issue_rows == 0 || atomic_pending {
+                usize::MAX
+            } else {
+                self.state.max_issue_rows
+            };
             let allocations = self
                 .scheduler
                 .plan_with_physical_capacity(
                     &demands,
-                    self.state.batch_capacity,
-                    self.state.physical_capacity,
+                    self.state.batch_capacity.min(issue_cap),
+                    self.state.physical_capacity.min(issue_cap),
                     self.state.equal_sequence_ubatch,
                     self.state.max_atomic_sequences,
                     self.state.atomic_batch_exclusive,

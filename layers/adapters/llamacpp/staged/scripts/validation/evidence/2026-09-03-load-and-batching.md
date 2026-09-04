@@ -223,3 +223,65 @@ mildly against it. That holds across policies rather than being produced by
 one, which is what makes it worth building on. What is not yet known is what
 *sets* that occupancy: neither issue policy nor placement moved it reliably,
 and it varied 53.6% to 85.3% between runs of identical configuration.
+
+**Everything in the paragraph above is backwards. See the next section.**
+
+## The correlation was reverse causation (2026-09-04)
+
+In all eighteen runs above, batch width was an *output*: the first node
+plans from whatever is ready, so a run that happens to be going fast drains
+its ready set faster and forms narrower batches. Reading width as a cause
+and concurrent occupancy as the lever inverted both.
+
+`P4_STAGED_MAX_ISSUE_ROWS` caps the rows one issued batch may carry, which
+makes width an input. Eight interleaved runs of `prefill_mix`, caps 0, 24,
+0, 24, 0, 12, 0, 48:
+
+| cap | total rows/s | width | two-or-more busy | GPU0/GPU1 | mixed batches |
+| ---: | ---: | ---: | ---: | --- | ---: |
+| 0 | 544.25 | 79.7 | 81.1% | 18.6/27.0 | 98 |
+| 24 | **290.88** | 19.8 | 89.0% | 23.8/29.1 | 2,490 |
+| 0 | 494.07 | 77.0 | 74.5% | 18.3/25.0 | 100 |
+| 24 | **277.37** | 16.2 | 94.6% | 25.7/31.0 | 2,508 |
+| 0 | 545.54 | 57.4 | 84.2% | 20.2/30.4 | 102 |
+| 12 | **198.10** | 8.2 | 95.4% | 26.7/32.1 | 3,698 |
+| 0 | 473.74 | 97.7 | 67.3% | 17.3/26.0 | 92 |
+| 48 | **253.55** | 11.3 | 93.7% | 26.4/39.7 | 1,057 |
+
+Every metric this record had been treating as the goal improved, and
+throughput fell by half. Concurrent occupancy reached 95.4%, GPU utilisation
+its highest ever measured, mixed batches 3,698 against 98 - while total row
+throughput went from 544 to 198. With width controlled the correlations
+invert: width **+0.898**, concurrent occupancy **-0.060**.
+
+The cause is a per-batch cost that narrow batches pay over and over. Fitting
+the tail's step time against width across these eight runs:
+
+**tail step = 34.2 ms per batch + 1.051 ms per row**
+
+| width | tail step | rows per ms |
+| ---: | ---: | ---: |
+| 8.2 | 39.3 ms | 0.208 |
+| 16.2 | 55.2 ms | 0.293 |
+| 19.8 | 60.4 ms | 0.327 |
+| 57.4 | 91.4 ms | 0.628 |
+| 79.7 | 115.3 ms | 0.691 |
+| 97.7 | 138.7 ms | 0.705 |
+
+A wide batch is 3.4x more efficient per row than a narrow one, and the
+curve is still climbing at width 98 - it has not reached the point where
+the 1.05 ms per row dominates the 34 ms per batch. Busy stages were busy
+paying that fixed cost repeatedly, which is why occupancy rose while work
+fell.
+
+So the lever is the 34 ms, twice over: amortise it with width, or remove
+it. Width is bounded by what has arrived - the earlier coalescing
+experiments show waiting for it costs depth - so the 34 ms itself is the
+target, and it has not been decomposed. `stage_ms` covers frame receive,
+`llama_decode`, cut-set extraction from the device and the response, and
+nothing measured so far says which of the four it is.
+
+The order of these three sections is the record of the mistake: a
+correlation over runs where the suspected cause was actually an effect, a
+conclusion drawn from it, and the experiment that inverted both signs. The
+first two are left standing rather than rewritten.
