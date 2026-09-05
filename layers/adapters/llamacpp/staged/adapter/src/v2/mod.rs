@@ -50,4 +50,8 @@ pub const ERROR_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.error-v2+json"
 #[cfg(test)]
 mod scheduler_mixed_tests;
 #[cfg(test)]
+mod simulator;
+#[cfg(test)]
+mod simulator_tests;
+#[cfg(test)]
 mod tests;

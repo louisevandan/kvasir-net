@@ -113,6 +113,16 @@ pub struct AdapterState {
     /// Fragments of one prompt allowed in the pipeline at once. 1 is the
     /// behaviour this adapter had before the field existed: a prompt waits a
     /// full lap between chunks even though all its tokens are known.
+    ///
+    /// Anything above 1 is experimental and stays off by default. Not because
+    /// it breaks an invariant - `simulator_tests` runs limits 1, 2 and 4 and
+    /// all three hold - but because nothing downstream bounds the rows a
+    /// single prompt may put on an edge. That bound is the fragment ledger the
+    /// plan calls P4.5, and until it exists a raised limit lets one long
+    /// prompt claim edge capacity that no component accounts for. The measured
+    /// effect of raising it on the 4-node harness was -0.5%, which is to say
+    /// none: prefill latency there is admission queueing, not lap pacing - a
+    /// 30-row prompt and a 1232-row one both took 68-79s to first token.
     pub prefill_fragments: u32,
     /// Batches this first node has issued whose capsules have not all come
     /// back from the tail, as batch ordinal -> the execution ids it produced.

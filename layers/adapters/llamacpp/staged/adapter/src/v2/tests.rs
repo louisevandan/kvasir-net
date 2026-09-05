@@ -498,7 +498,7 @@ fn the_open_batch_ledger_does_not_survive_a_load() {
 }
 
 /// A request in the shape the worker builds, for tests about its readiness.
-fn request_state(tokens: Vec<i32>) -> RequestState {
+pub(super) fn request_state(tokens: Vec<i32>) -> RequestState {
     let own = p4_protocol::Address::tcp("127.0.0.1", 42001);
     let node = p4_protocol::event::Endpoint::node(own.clone(), "n0", 1);
     RequestState {

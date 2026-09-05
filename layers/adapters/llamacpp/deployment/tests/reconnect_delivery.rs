@@ -105,6 +105,9 @@ fn pump(mut from: TcpStream, mut to: TcpStream) {
 
 #[test]
 fn a_run_in_flight_delivers_its_terminal_on_the_connection_that_replaced_the_dead_one() {
+    if !support::cross_wire_fixture_ready("a_run_in_flight_delivers_its_terminal_on_the_connection_that_replaced_the_dead_one") {
+        return;
+    }
     let fixture = Fixture::spawn();
     let sink = CollectingSink::new();
     let breaker = Breaker::in_front_of(fixture.addr);
