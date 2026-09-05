@@ -298,19 +298,30 @@ fn splitting_a_run_does_not_rewind_the_clock() {
     // starvation test splits a run to admit a request midway, which is exactly
     // the shape that hid it - it counts batches, so the tick values it
     // recorded were wrong and nothing looked at them.
+    // The load has to still be running when the split falls, or the second
+    // call has nothing to issue and the test passes against the bug. The
+    // first version used two short requests that finished in 21 ticks and
+    // split at 25, so its second half was a no-op: reverting the fix left it
+    // green. These generate for a long time and the split lands mid-flight.
     let build = || {
         let mut simulation = Simulation::new(PipelineShape::default());
-        simulation.admit("a", 300, 5);
-        simulation.admit("b", 40, 5);
+        simulation.admit("a", 300, 60);
+        simulation.admit("b", 40, 60);
         simulation
     };
 
     let mut whole = build();
-    whole.run(60);
+    whole.run(200);
 
     let mut split = build();
-    split.run(25);
-    split.run(35);
+    let used = split.run(80);
+    assert_eq!(used, 80, "the first half must still be running at the split");
+    let at_split = split.trace.len();
+    split.run(120);
+    assert!(
+        split.trace.len() > at_split,
+        "the second half issued nothing, so this proves nothing about its ticks",
+    );
 
     assert!(whole.violations.is_empty(), "{:#?}", whole.violations);
     assert!(split.violations.is_empty(), "{:#?}", split.violations);
@@ -322,5 +333,41 @@ fn splitting_a_run_does_not_rewind_the_clock() {
     assert_eq!(
         format!("{:?}", whole.issued_decodes),
         format!("{:?}", split.issued_decodes),
+    );
+}
+
+#[test]
+fn a_ledger_that_drifts_is_reported_and_the_run_gives_up() {
+    // The error path, as a test rather than as a one-off probe.
+    //
+    // Every other test here asserts an empty violation list, which says
+    // nothing about whether a broken model is reported at all. It is worth its
+    // own test twice over: the per-request cross-check that catches this was
+    // written, seen passing, and then absent from the commit that claimed it;
+    // and before the cap existed, a run in this state spent its whole budget
+    // re-deriving the same failure and had to be killed.
+    let mut simulation = Simulation::new(PipelineShape::default());
+    simulation.drop_decode_outstanding = true;
+    simulation.admit("a", 100, 20);
+    simulation.admit("b", 30, 20);
+    let budget = 4000;
+    let used = simulation.run(budget);
+
+    let rules: Vec<&str> = simulation
+        .violations
+        .iter()
+        .map(|violation| violation.rule)
+        .collect();
+    assert!(
+        rules.contains(&"outstanding counts the fragments in flight"),
+        "a counter that disagrees with the fragments in flight must be named: {rules:?}",
+    );
+    assert!(
+        used < budget,
+        "the run spent its whole budget of {budget} ticks on a model already known broken",
+    );
+    assert!(
+        used < 100,
+        "the run took {used} ticks to give up; the cap is meant to stop it promptly",
     );
 }

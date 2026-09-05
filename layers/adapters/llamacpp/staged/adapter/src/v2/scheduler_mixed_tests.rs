@@ -172,3 +172,70 @@ fn serving_a_prompt_does_not_stall_the_decodes() {
         "the prompt took {prefill_plans} of 64 plans; the decodes took {decode_plans}",
     );
 }
+
+/// Every waiting prompt advances, not just the prompt cohort.
+///
+/// The cohort bound above is satisfied by a scheduler that serves the same
+/// eight prompts on every prompt turn and never the ninth. That is what the
+/// shipped one did: the cohort decision and the member rotation shared the
+/// global cursor, which steps once per plan while the prompts get every
+/// ninth, so with eighteen demands the prompt turns landed on two starting
+/// offsets forever. Seventeen ready prompts, nine hundred plans, sixteen of
+/// them fifty rows in and one still at zero.
+///
+/// So this asserts per request - every prompt makes progress, and none goes
+/// longer than a stated gap without being selected - rather than counting
+/// prompt batches, which the defect left untouched at a hundred.
+#[test]
+fn every_waiting_prompt_advances_not_just_the_prompt_cohort() {
+    let capacity = 8;
+    let prompts = 17;
+    let sequences = prompts + 1;
+    let plans = 900;
+    let mut scheduler = Scheduler::new();
+    // Rows are decremented as they are served, so a scheduler cannot pass by
+    // handing the same prompt the same rows forever.
+    let mut remaining = vec![2000usize; sequences];
+    let mut progress = vec![0usize; sequences];
+    let mut last_served = vec![0usize; sequences];
+    let mut longest_gap = vec![0usize; sequences];
+
+    for plan in 0..plans {
+        let demands: Vec<Demand> = (0..sequences)
+            .map(|index| {
+                if index == 0 {
+                    demand(0, Phase::Decode, 1)
+                } else {
+                    demand(index as u32, Phase::Prefill, remaining[index])
+                }
+            })
+            .collect();
+        let allocations = scheduler
+            .plan_with_physical_capacity(&demands, capacity, capacity, true, 16, false)
+            .expect("a ready set plans");
+        for allocation in &allocations {
+            let index = allocation.sequence_id as usize;
+            if allocation.phase != Phase::Prefill {
+                continue;
+            }
+            remaining[index] = remaining[index].saturating_sub(allocation.rows);
+            progress[index] += allocation.rows;
+            longest_gap[index] = longest_gap[index].max(plan - last_served[index]);
+            last_served[index] = plan;
+        }
+    }
+
+    let stalled: Vec<usize> = (1..sequences).filter(|index| progress[*index] == 0).collect();
+    assert!(
+        stalled.is_empty(),
+        "{plans} plans left prompts {stalled:?} at zero rows; the rest reached {progress:?}",
+    );
+    // A prompt cohort every ninth plan, eight members a turn, seventeen
+    // prompts: a little over two turns to come round, so about twenty plans.
+    // Stated with room, because the point is that the gap is bounded at all.
+    let worst = (1..sequences).map(|index| longest_gap[index]).max().unwrap();
+    assert!(
+        worst <= 40,
+        "a ready prompt went {worst} plans without being selected; gaps {longest_gap:?}",
+    );
+}

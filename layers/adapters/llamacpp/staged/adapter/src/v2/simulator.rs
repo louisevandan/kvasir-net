@@ -102,6 +102,14 @@ pub(super) struct Simulation {
     seen_ids: std::collections::HashSet<u64>,
     /// Logical time, carried across calls to `run`.
     now: usize,
+    /// Skip the `outstanding` increment for decode fragments.
+    ///
+    /// The one deliberate way to break this model from outside it, so the
+    /// error path has a test of its own. Every other test here asserts that a
+    /// correct run reports nothing, which says nothing about whether a broken
+    /// one is reported at all - and the checks that catch it were once
+    /// written, seen passing, and absent from the commit.
+    pub drop_decode_outstanding: bool,
     settled_rows: usize,
     issued_rows: usize,
     pub trace: Vec<IssuedBatch>,
@@ -123,6 +131,7 @@ impl Simulation {
             expected_decode: std::collections::HashMap::new(),
             seen_ids: std::collections::HashSet::new(),
             now: 0,
+            drop_decode_outstanding: false,
             settled_rows: 0,
             issued_rows: 0,
             trace: Vec::new(),
@@ -289,6 +298,7 @@ impl Simulation {
 
         let mut rows = Vec::new();
         let mut issue_faults = Vec::new();
+        let drop_outstanding = self.drop_decode_outstanding;
         let expected_prompt = &mut self.expected_prompt;
         let expected_decode = &mut self.expected_decode;
         let seen_ids = &mut self.seen_ids;
@@ -356,7 +366,9 @@ impl Simulation {
                 self.issued_decodes
                     .push((allocation.request_id.clone(), position));
             }
-            request.outstanding += 1;
+            if allocation.phase == Phase::Prefill || !drop_outstanding {
+                request.outstanding += 1;
+            }
             self.issued_rows += allocation.rows;
             self.issued_ids.push(id);
             if let Some((from, to)) = token_range {

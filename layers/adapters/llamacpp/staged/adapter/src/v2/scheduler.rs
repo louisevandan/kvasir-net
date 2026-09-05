@@ -67,6 +67,10 @@ pub struct Scheduler {
     cursor: usize,
     /// Consecutive decode-only batches issued while a prompt was waiting.
     decode_runs: u32,
+    /// The sequence id each cohort resumes from, kept apart from the cohort
+    /// decision above so a served cohort means a served request.
+    prefill_resume: u32,
+    decode_resume: u32,
 }
 
 impl Scheduler {
@@ -74,6 +78,8 @@ impl Scheduler {
         Self {
             cursor: 0,
             decode_runs: 0,
+            prefill_resume: 0,
+            decode_resume: 0,
         }
     }
 
@@ -177,13 +183,48 @@ impl Scheduler {
             self.decode_runs += 1;
             false
         };
-        // Members after the cohort: the same rotation, filtered to it, so a
-        // cohort larger than the batch still turns over between calls.
-        let order: Vec<usize> = (0..demands.len())
-            .map(|offset| (start + offset) % demands.len())
+        // Members after the cohort, from a rotation that belongs to the
+        // cohort and advances by whom it actually served.
+        //
+        // Sharing the global cursor with the cohort decision made the whole
+        // bound apply to the cohort and to nobody in it. The cursor moves one
+        // step per plan and the prompts get every ninth, so with eighteen
+        // demands the prompt turns landed on two starting offsets forever -
+        // and a request that both windows missed never moved: seventeen ready
+        // prompts over nine hundred plans, sixteen of them fifty rows in, one
+        // of them still at zero. A cohort being served is not a request being
+        // served.
+        //
+        // The resume point is a sequence id rather than an index, because the
+        // demand list is rebuilt every plan and an index means a different
+        // request from one call to the next.
+        let mut cohort: Vec<usize> = (0..demands.len())
             .filter(|index| (demands[*index].phase != Phase::Decode) == serve_prefills)
+            .collect();
+        cohort.sort_by_key(|index| demands[*index].sequence_id);
+        let resume = if serve_prefills {
+            self.prefill_resume
+        } else {
+            self.decode_resume
+        };
+        let first = cohort
+            .iter()
+            .position(|index| demands[*index].sequence_id >= resume)
+            .unwrap_or(0);
+        let order: Vec<usize> = (0..cohort.len())
+            .map(|offset| cohort[(first + offset) % cohort.len()])
             .take(capacity)
             .collect();
+        // Past the last one served, so the next turn starts with whoever this
+        // one could not fit.
+        if let Some(last) = order.last() {
+            let next = demands[*last].sequence_id.wrapping_add(1);
+            if serve_prefills {
+                self.prefill_resume = next;
+            } else {
+                self.decode_resume = next;
+            }
+        }
         let width = if order
             .iter()
             .any(|index| demands[*index].phase == Phase::Decode)
