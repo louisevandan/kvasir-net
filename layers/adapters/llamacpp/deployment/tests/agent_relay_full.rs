@@ -66,9 +66,6 @@ impl Duties for Collect {
 
 #[tokio::test]
 async fn a_submission_the_backend_refuses_for_capacity_still_completes() {
-    if !support::cross_wire_fixture_ready("a_submission_the_backend_refuses_for_capacity_still_completes") {
-        return;
-    }
     let fixture = Fixture::spawn();
 
     let seen = Arc::new(Mutex::new(Vec::new()));

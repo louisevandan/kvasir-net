@@ -132,36 +132,11 @@ pub fn fixture_script() -> PathBuf {
     apps_llama_dir().join("src/server/pipeline-runtime-manager/submission-v2/cross-wire-fixture.ts")
 }
 
-/// Whether this machine has the `apps/llama` checkout these tests drive.
-///
-/// Five integration tests here run the other repository's real v2 submission
-/// server as a child process over a real socket. They are the only tests in
-/// this workspace that need a second checkout, and on a machine without one
-/// they used to fail - five red targets reporting an environment fact, which
-/// is how a suite gets ignored. So they skip instead, and say so.
-///
-/// `P4_CROSS_WIRE_REQUIRED=1` turns the skip back into a failure, so a machine
-/// that is supposed to have the checkout cannot pass by not having it.
-#[allow(dead_code)]
-pub fn cross_wire_fixture_ready(test: &str) -> bool {
-    let script = fixture_script();
-    if script.exists() {
-        return true;
-    }
-    let required = std::env::var("P4_CROSS_WIRE_REQUIRED")
-        .map(|value| value != "0" && !value.is_empty())
-        .unwrap_or(false);
-    assert!(
-        !required,
-        "P4_CROSS_WIRE_REQUIRED is set but the apps/llama checkout is missing: {}",
-        script.display(),
-    );
-    eprintln!(
-        "SKIP {test}: needs the apps/llama checkout at {} (set P4_CROSS_WIRE_REQUIRED=1 to make this a failure)",
-        script.display(),
-    );
-    false
-}
+// These targets are built only under the `cross-wire-fixture` feature, which
+// is the caller saying the `apps/llama` checkout is present. So a missing
+// checkout is a failure here, not a skip: the alternative - returning early
+// from the body - is counted by libtest as a pass, and five tests that never
+// executed were reported inside a total of 839 passing.
 
 fn apps_llama_dir() -> PathBuf {
     // Deliberately not canonicalized: on Windows, `canonicalize()` returns a

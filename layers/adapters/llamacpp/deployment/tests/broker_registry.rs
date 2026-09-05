@@ -26,9 +26,6 @@ use support::{CollectingSink, Fixture, neutral_request};
 
 #[test]
 fn a_p4_registry_dispatches_a_real_submission_through_the_real_client_to_a_real_backend() {
-    if !support::cross_wire_fixture_ready("a_p4_registry_dispatches_a_real_submission_through_the_real_client_to_a_real_backend") {
-        return;
-    }
     let fixture = Fixture::spawn();
     let factory: Arc<dyn TransportFactory> = Arc::new(TcpTransportFactory::new(fixture.addr));
     let sink = CollectingSink::new();

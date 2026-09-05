@@ -26,9 +26,6 @@ use support::{CollectingSink, Fixture, neutral_request};
 
 #[test]
 fn a_submission_runs_two_in_flight_and_absorbs_full_over_a_real_socket() {
-    if !support::cross_wire_fixture_ready("a_submission_runs_two_in_flight_and_absorbs_full_over_a_real_socket") {
-        return;
-    }
     let fixture = Fixture::spawn();
     let factory: Arc<dyn TransportFactory> = Arc::new(TcpTransportFactory::new(fixture.addr));
     let sink = CollectingSink::new();

@@ -143,8 +143,13 @@ fn the_shipped_default_reproduces_its_recorded_trace() {
         prefill_fragments: 1,
         equal_sequence_ubatch: false,
     });
-    simulation.admit("long", 20, 1);
-    simulation.admit("short", 4, 1);
+    // Three tokens each, so the trace carries decode rounds rather than only
+    // the prefill. At one token it carried a decode that should never have
+    // existed - the prefill arm generated past `max_tokens` - and the golden
+    // recorded it as correct behaviour, which is what a snapshot of a wrong
+    // model buys you.
+    simulation.admit("long", 20, 3);
+    simulation.admit("short", 4, 3);
     simulation.run(200);
     assert!(simulation.violations.is_empty(), "{:#?}", simulation.violations);
 
@@ -161,9 +166,15 @@ fn the_shipped_default_reproduces_its_recorded_trace() {
         GOLDEN_LIMIT_ONE,
         "the scheduler's decisions changed",
     );
+
+    // And the positions those decodes fed, because the trace above carries
+    // row counts only. A prompt of 20 decodes at 20, 21, 22; one of 4 at 4, 5,
+    // 6. The shipped simulator issued 20 then 22, and nothing could see it.
+    let positions = format!("{:?}", simulation.issued_decodes);
+    assert_eq!(positions, GOLDEN_POSITIONS, "decode positions changed");
 }
 
-const GOLDEN_LIMIT_ONE: &str = "[(0, [(\"long\", Prefill, 20), (\"short\", Prefill, 4)]), (2, [(\"short\", Decode, 1), (\"long\", Decode, 1)])]";
+const GOLDEN_LIMIT_ONE: &str = "[(0, [(\"long\", Prefill, 20), (\"short\", Prefill, 4)]), (2, [(\"short\", Decode, 1), (\"long\", Decode, 1)]), (4, [(\"long\", Decode, 1), (\"short\", Decode, 1)])]";
 
 #[test]
 fn a_ready_decode_does_not_cut_a_prompt_to_a_single_row() {
@@ -206,5 +217,73 @@ fn a_ready_decode_does_not_cut_a_prompt_to_a_single_row() {
          over {} batches; a decode is cutting it to its own width",
         mean,
         prefill.len(),
+    );
+}
+
+/// Recorded from the corrected model: each request steps by one from the end
+/// of its own prompt. The shipped simulator produced 20 then 22 for `long`.
+const GOLDEN_POSITIONS: &str = "[(\"short\", Some(4)), (\"long\", Some(20)), (\"long\", Some(21)), (\"short\", Some(5))]";
+
+#[test]
+fn a_prompt_is_admitted_within_a_bounded_number_of_issue_opportunities() {
+    // The counter-example the finishing test could not state.
+    //
+    // Its decodes ended after two hundred tokens each, so a scheduler that
+    // deferred every prompt until the last decode finished still passed. Give
+    // the decodes no end and stagger them so one is ready at every issue
+    // point, and the shipped cohort split issued a hundred batches carrying
+    // zero prompt rows - not slowly, never.
+    //
+    // The contract is not eventual completion. It is that a prompt which is
+    // ready, against decodes that never stop, is admitted within a bounded
+    // number of chances.
+    let mut simulation = Simulation::new(PipelineShape {
+        equal_sequence_ubatch: true,
+        ..PipelineShape::default()
+    });
+    for index in 0..4 {
+        // Staggered prompt lengths so their readiness overlaps rather than
+        // lining up, and a token budget that outlives the run.
+        simulation.admit(&format!("endless-{index}"), 4 + index * 3, 100_000);
+    }
+    // They have to be decoding *before* the prompt arrives. Admitting it
+    // alongside them made this test pass against a scheduler with no bound at
+    // all: on the first tick nothing is decoding yet, so the prompt went out
+    // in batch zero and the assertion below never exercised the rule.
+    simulation.run(40);
+    assert_clean(&simulation, "warm-up");
+    let before = simulation.trace.len();
+    simulation.admit("prompt", 2000, 1);
+    simulation.run(100);
+    assert_clean(&simulation, "endless decode load");
+
+    let opportunities = simulation.trace.len() - before;
+    let first_prompt_batch = simulation.trace[before..]
+        .iter()
+        .position(|batch| batch.rows.iter().any(|(id, _, _)| id == "prompt"));
+    let Some(first) = first_prompt_batch else {
+        panic!(
+            "{opportunities} batches were issued and none carried a prompt row; \
+             a ready prompt is starved for as long as the decodes keep coming",
+        );
+    };
+    // PREFILL_PATIENCE is 8, so the ninth batch at the latest is the prompt's.
+    // Counted from the first batch in which the prompt was actually a
+    // candidate, which is batch zero here - it is ready from admission.
+    assert!(
+        first < 9,
+        "the prompt waited {first} batches of {opportunities} before its first row",
+    );
+
+    let prompt_rows: usize = simulation
+        .trace
+        .iter()
+        .flat_map(|batch| batch.rows.iter())
+        .filter(|(id, phase, _)| id == "prompt" && *phase == Phase::Prefill)
+        .map(|(_, _, rows)| *rows)
+        .sum();
+    assert!(
+        prompt_rows > 0,
+        "{opportunities} issue opportunities carried {prompt_rows} prompt rows",
     );
 }

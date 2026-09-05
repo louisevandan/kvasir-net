@@ -45,13 +45,36 @@ pub enum SchedulerError {
 /// equal per-sequence widths, so one call constructs exactly one physical
 /// UBATCH instead. Decode consumes one row first; ordinary attention Prefill
 /// uses the remaining rows in rotating water-fill order.
+/// Batches the decodes may take in a row while a prompt is waiting.
+///
+/// The cohort split below hands a batch to the decodes whenever any decode is
+/// ready. Left alone that is unbounded: a set of sequences whose readiness
+/// overlaps keeps a decode ready at every issue point, and a prompt with two
+/// thousand rows ready is never selected at all - not slowly, never. The
+/// existing starvation test could not see it because its decodes ended after
+/// two hundred tokens each, so deferring every prompt until they finished
+/// still counted as finishing.
+///
+/// So the split gets a patience. After this many consecutive batches given to
+/// decodes with a prompt waiting, the next batch is the prompts. The decodes
+/// keep eight batches in nine, which is why the number is 8 rather than 1: the
+/// point is a bound, not a share. What it buys is a statement that can be
+/// tested - a waiting prompt is admitted within nine issue opportunities -
+/// where before there was none.
+const PREFILL_PATIENCE: u32 = 8;
+
 pub struct Scheduler {
     cursor: usize,
+    /// Consecutive decode-only batches issued while a prompt was waiting.
+    decode_runs: u32,
 }
 
 impl Scheduler {
     pub fn new() -> Self {
-        Self { cursor: 0 }
+        Self {
+            cursor: 0,
+            decode_runs: 0,
+        }
     }
 
     pub fn cursor(&self) -> usize {
@@ -128,12 +151,31 @@ impl Scheduler {
         // next one, where they can share a wide equal UBATCH. Both keep
         // moving because every batch admits one cohort or the other and the
         // round-robin cursor below advances either way.
+        // The patience above turns that into a bound rather than a rule: the
+        // decodes take the batch, but not forever while a prompt waits.
         let decoding: Vec<usize> = order
             .iter()
             .copied()
             .filter(|index| demands[*index].phase == Phase::Decode)
             .collect();
-        let order = if decoding.is_empty() { order } else { decoding };
+        let prefilling: Vec<usize> = order
+            .iter()
+            .copied()
+            .filter(|index| demands[*index].phase != Phase::Decode)
+            .collect();
+        let order = if decoding.is_empty() {
+            self.decode_runs = 0;
+            order
+        } else if prefilling.is_empty() {
+            self.decode_runs = 0;
+            decoding
+        } else if self.decode_runs >= PREFILL_PATIENCE {
+            self.decode_runs = 0;
+            prefilling
+        } else {
+            self.decode_runs += 1;
+            decoding
+        };
         let width = if order
             .iter()
             .any(|index| demands[*index].phase == Phase::Decode)

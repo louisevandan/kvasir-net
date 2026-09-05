@@ -89,6 +89,8 @@ pub(super) struct Simulation {
     issued_ids: Vec<u64>,
     /// Prompt ranges issued per request, in issue order.
     issued_ranges: Vec<(String, usize, usize)>,
+    /// Every decode row issued, in order, as (request, input position).
+    pub issued_decodes: Vec<(String, Option<u32>)>,
     settled_rows: usize,
     issued_rows: usize,
     pub trace: Vec<IssuedBatch>,
@@ -105,6 +107,7 @@ impl Simulation {
             next_fragment: 1,
             issued_ids: Vec::new(),
             issued_ranges: Vec::new(),
+            issued_decodes: Vec::new(),
             settled_rows: 0,
             issued_rows: 0,
             trace: Vec::new(),
@@ -186,20 +189,25 @@ impl Simulation {
                     // generated token, exactly as the real settlement does.
                     if request.prompt_cursor == request.command.tokens.len() {
                         request.generated += 1;
-                        request.ready = Some(ready_decode(request.prompt_cursor as u32));
                     }
                 }
-                _ => {
-                    request.generated += 1;
-                    request.ready = if request.generated < request.command.max_tokens {
-                        Some(ready_decode(
-                            request.command.tokens.len() as u32 + request.generated,
-                        ))
-                    } else {
-                        None
-                    };
-                }
+                _ => request.generated += 1,
             }
+            // One rule for both, because there is one: a settlement produces a
+            // token, and the next input row is that token at its own position.
+            //
+            // Writing it twice got both halves wrong. The prefill arm set a
+            // ready row without asking whether the limit was already reached,
+            // so `max_tokens = 1` generated two; and the decode arm derived
+            // the position as `prompt + generated`, which is one past the
+            // token just produced - a 20-token prompt decoded at 20 and then
+            // at 22, skipping 21. Neither showed up in a trace that carries no
+            // positions and a check that counted no tokens.
+            request.ready = if request.generated < request.command.max_tokens {
+                Some(ready_decode(next_input_position(request)))
+            } else {
+                None
+            };
         }
     }
 
@@ -264,6 +272,11 @@ impl Simulation {
                 request.prompt_issued += allocation.rows;
                 (from, request.prompt_issued)
             });
+            if allocation.phase != Phase::Prefill {
+                let position = request.ready.as_ref().map(|ready| ready.position);
+                self.issued_decodes
+                    .push((allocation.request_id.clone(), position));
+            }
             request.outstanding += 1;
             self.issued_rows += allocation.rows;
             self.issued_ids.push(id);
@@ -353,6 +366,80 @@ impl Simulation {
                     detail: format!("{id}: {decodes} decode fragments"),
                 });
             }
+
+            // The request's own counter against the fragments that exist.
+            //
+            // `issued = settled + travelling` is a whole-simulation sum, and
+            // the same code maintains all three terms, so a per-request ledger
+            // that drifts cancels out of it. Dropping an `outstanding += 1`
+            // and issuing again left two fragments travelling against a count
+            // of one and every check passed - which is the exact class of
+            // defect this file exists to catch.
+            let mine = self
+                .in_flight
+                .iter()
+                .filter(|fragment| fragment.request == *id)
+                .count();
+            if request.outstanding as usize != mine {
+                found.push(Violation {
+                    tick,
+                    rule: "outstanding counts the fragments in flight",
+                    detail: format!(
+                        "{id}: counter {} against {mine} travelling",
+                        request.outstanding
+                    ),
+                });
+            }
+
+            // The fragment limit is a limit, not a hint.
+            let prefills = self
+                .in_flight
+                .iter()
+                .filter(|fragment| fragment.request == *id && fragment.phase == Phase::Prefill)
+                .count();
+            if prefills > self.shape.prefill_fragments as usize {
+                found.push(Violation {
+                    tick,
+                    rule: "prompt fragments in flight stay within the limit",
+                    detail: format!(
+                        "{id}: {prefills} travelling against a limit of {}",
+                        self.shape.prefill_fragments
+                    ),
+                });
+            }
+
+            // A request stops at the tokens it asked for. The real server
+            // raises `stop=\"length\"` at the limit and the worker releases the
+            // sequence; nothing here may generate past it.
+            if request.generated > request.command.max_tokens {
+                found.push(Violation {
+                    tick,
+                    rule: "generated never passes max_tokens",
+                    detail: format!(
+                        "{id}: {} generated against a limit of {}",
+                        request.generated, request.command.max_tokens
+                    ),
+                });
+            }
+
+            // Decode positions start at the end of the prompt and step by one.
+            let mut expected = request.command.tokens.len() as u32;
+            for (owner, position) in &self.issued_decodes {
+                if owner != id {
+                    continue;
+                }
+                match position {
+                    Some(actual) if *actual == expected => expected += 1,
+                    other => {
+                        found.push(Violation {
+                            tick,
+                            rule: "decode positions advance by one from the prompt",
+                            detail: format!("{id}: expected {expected}, got {other:?}"),
+                        });
+                        expected += 1;
+                    }
+                }
+            }
         }
 
         // Prompt fragments tile their prompt: in order, no gap, no overlap.
@@ -375,6 +462,16 @@ impl Simulation {
 
         self.violations.extend(found);
     }
+}
+
+/// The position of the row a request feeds next.
+///
+/// The prompt occupies `0 .. prompt`, so the token the prefill produced sits
+/// at `prompt` and is the first decode input. Each settled decode advances by
+/// exactly one. `generated` counts tokens produced, so the last one is at
+/// `prompt + generated - 1`, and that is what goes back in.
+fn next_input_position(request: &RequestState) -> u32 {
+    request.command.tokens.len() as u32 + request.generated - 1
 }
 
 fn ready_decode(position: u32) -> ReadyRows {

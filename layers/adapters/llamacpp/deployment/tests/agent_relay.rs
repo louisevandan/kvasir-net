@@ -69,9 +69,6 @@ impl Duties for Collect {
 
 #[tokio::test]
 async fn a_real_inbound_frame_streams_tokens_and_one_terminal_through_the_relay() {
-    if !support::cross_wire_fixture_ready("a_real_inbound_frame_streams_tokens_and_one_terminal_through_the_relay") {
-        return;
-    }
     let fixture = Fixture::spawn();
 
     let seen = Arc::new(Mutex::new(Vec::new()));
