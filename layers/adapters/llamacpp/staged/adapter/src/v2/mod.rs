@@ -26,6 +26,8 @@ pub use build_identity::{BuildDisagreement, BuildIdentity, UNIDENTIFIED, agree};
 pub use session_key::{SessionKey, SessionKeyError};
 pub use node::LlamaNodeAdapter;
 pub use scheduler::{Allocation, Demand, Phase, Scheduler, SchedulerError};
+#[cfg(test)]
+pub(crate) use scheduler::PREFILL_PATIENCE;
 
 pub const LOAD_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.load-v3+json";
 pub const LOADED_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.loaded-v3+json";

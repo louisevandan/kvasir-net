@@ -89,3 +89,86 @@ fn incompatible_rows_are_rejected_before_batch_construction() {
         Err(SchedulerError::MixedCompatibility)
     );
 }
+
+/// A ready prompt is selected within `PREFILL_PATIENCE + 1` plans, whatever
+/// the ratio of ready sequences to batch capacity.
+///
+/// The first version of this bound was vacuous. It read "is a prompt waiting?"
+/// from the capacity-truncated candidate window, so with more ready sequences
+/// than room, the rotation carried the prompt out of the window, the code
+/// cleared the counter, and the prompt was never selected at all. The three
+/// cases below are the three that matter: fewer ready sequences than the batch
+/// holds, exactly as many, and more - and only the last one exposed it.
+#[test]
+fn a_ready_prompt_is_selected_within_the_patience_at_every_ratio() {
+    for decoders in [4usize, 7, 8, 16, 64] {
+        let capacity = 8;
+        let mut scheduler = Scheduler::new();
+        let mut demands: Vec<Demand> = (0..decoders)
+            .map(|index| demand(index as u32, Phase::Decode, 1))
+            .collect();
+        demands.push(demand(decoders as u32, Phase::Prefill, 2000));
+
+        // The prompt is ready and stays ready: nothing here consumes it, so a
+        // scheduler that never selects it will simply never select it.
+        let mut plans_until_prompt = None;
+        for plan in 0..64 {
+            let allocations = scheduler
+                .plan_with_physical_capacity(&demands, capacity, capacity, true, 16, false)
+                .expect("a ready set plans");
+            if allocations
+                .iter()
+                .any(|allocation| allocation.phase == Phase::Prefill && allocation.rows > 0)
+            {
+                plans_until_prompt = Some(plan);
+                break;
+            }
+        }
+        let Some(plans) = plans_until_prompt else {
+            panic!(
+                "{decoders} ready decodes and a capacity of {capacity}: 64 plans selected the \
+                 prompt zero times",
+            );
+        };
+        assert!(
+            plans <= PREFILL_PATIENCE as usize,
+            "{decoders} ready decodes: the prompt waited {plans} plans",
+        );
+    }
+}
+
+/// Serving the prompts does not stall the decodes either.
+///
+/// The bound above is one-directional on its own: a scheduler that always
+/// chose the prompts would pass it. This is the other half, and together they
+/// say every cohort is served within a bounded number of plans.
+#[test]
+fn serving_a_prompt_does_not_stall_the_decodes() {
+    let capacity = 8;
+    let mut scheduler = Scheduler::new();
+    let mut demands: Vec<Demand> = (0..16)
+        .map(|index| demand(index, Phase::Decode, 1))
+        .collect();
+    demands.push(demand(16, Phase::Prefill, 2000));
+
+    let mut decode_plans = 0;
+    let mut prefill_plans = 0;
+    for _ in 0..64 {
+        let allocations = scheduler
+            .plan_with_physical_capacity(&demands, capacity, capacity, true, 16, false)
+            .expect("a ready set plans");
+        if allocations.iter().any(|a| a.phase == Phase::Prefill) {
+            prefill_plans += 1;
+        } else {
+            decode_plans += 1;
+        }
+    }
+    assert_eq!(prefill_plans + decode_plans, 64);
+    // Eight decode plans for every prompt plan, which is what a patience of
+    // eight means. Stated as a range so the constant can move without this
+    // test becoming a copy of it.
+    assert!(
+        (6..=10).contains(&prefill_plans),
+        "the prompt took {prefill_plans} of 64 plans; the decodes took {decode_plans}",
+    );
+}

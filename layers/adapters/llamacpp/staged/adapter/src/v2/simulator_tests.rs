@@ -287,3 +287,40 @@ fn a_prompt_is_admitted_within_a_bounded_number_of_issue_opportunities() {
         "{opportunities} issue opportunities carried {prompt_rows} prompt rows",
     );
 }
+
+#[test]
+fn splitting_a_run_does_not_rewind_the_clock() {
+    // `run(A + B)` and `run(A); run(B)` must trace the same thing.
+    //
+    // They did not: `run` restarted its loop at zero every call, so the second
+    // half re-used tick numbers the first had already spent while the
+    // fragments in flight and the request states carried straight on. The
+    // starvation test splits a run to admit a request midway, which is exactly
+    // the shape that hid it - it counts batches, so the tick values it
+    // recorded were wrong and nothing looked at them.
+    let build = || {
+        let mut simulation = Simulation::new(PipelineShape::default());
+        simulation.admit("a", 300, 5);
+        simulation.admit("b", 40, 5);
+        simulation
+    };
+
+    let mut whole = build();
+    whole.run(60);
+
+    let mut split = build();
+    split.run(25);
+    split.run(35);
+
+    assert!(whole.violations.is_empty(), "{:#?}", whole.violations);
+    assert!(split.violations.is_empty(), "{:#?}", split.violations);
+    assert_eq!(
+        format!("{:?}", whole.trace),
+        format!("{:?}", split.trace),
+        "a split run traced different ticks from the same inputs",
+    );
+    assert_eq!(
+        format!("{:?}", whole.issued_decodes),
+        format!("{:?}", split.issued_decodes),
+    );
+}

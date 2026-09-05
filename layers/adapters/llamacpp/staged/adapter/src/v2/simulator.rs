@@ -24,6 +24,9 @@
 use super::node::state::{ReadyRows, RequestState};
 use super::scheduler::{Demand, Phase, Scheduler};
 
+/// Violations a run collects before it gives up.
+const VIOLATION_CAP: usize = 16;
+
 /// How the virtual pipeline behaves. All of it is deterministic.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PipelineShape {
@@ -91,6 +94,14 @@ pub(super) struct Simulation {
     issued_ranges: Vec<(String, usize, usize)>,
     /// Every decode row issued, in order, as (request, input position).
     pub issued_decodes: Vec<(String, Option<u32>)>,
+    /// Where each prompt is expected to resume, compared at issue time.
+    expected_prompt: std::collections::HashMap<String, usize>,
+    /// The position each request is expected to decode next.
+    expected_decode: std::collections::HashMap<String, u32>,
+    /// Fragment ids handed out, so a reuse is caught where it happens.
+    seen_ids: std::collections::HashSet<u64>,
+    /// Logical time, carried across calls to `run`.
+    now: usize,
     settled_rows: usize,
     issued_rows: usize,
     pub trace: Vec<IssuedBatch>,
@@ -108,6 +119,10 @@ impl Simulation {
             issued_ids: Vec::new(),
             issued_ranges: Vec::new(),
             issued_decodes: Vec::new(),
+            expected_prompt: std::collections::HashMap::new(),
+            expected_decode: std::collections::HashMap::new(),
+            seen_ids: std::collections::HashSet::new(),
+            now: 0,
             settled_rows: 0,
             issued_rows: 0,
             trace: Vec::new(),
@@ -128,13 +143,31 @@ impl Simulation {
 
     /// Runs until every request has finished or `budget` ticks have passed.
     /// Returns the number of ticks used.
+    /// The logical time is cumulative: a second call continues where the
+    /// first stopped. It used to restart at zero, so splitting a run to admit
+    /// a request midway rewound the clock while the fragments in flight and
+    /// the request states carried on - `run(20); run(20)` traced ticks
+    /// 0,4,8,12,16,0,4,8,12,16. Nothing asserted on a tick value, so no test
+    /// could see it, and every arrival time, wait and deadline built on it
+    /// afterwards would have been wrong.
     pub fn run(&mut self, budget: usize) -> usize {
-        for tick in 0..budget {
+        let start = self.now;
+        for tick in start..start + budget {
+            self.now = tick + 1;
             self.advance(tick);
             self.issue(tick);
             self.check(tick);
+            // A broken model stops here rather than spending its whole budget
+            // re-deriving the same failure. A settlement that finds nothing
+            // outstanding never advances its request, so `finished` never
+            // becomes true, and a run that should have reported one defect in
+            // a millisecond instead ran to its budget and had to be killed -
+            // a checker that hangs on what it exists to report.
+            if self.violations.len() >= VIOLATION_CAP {
+                return tick + 1 - start;
+            }
             if self.finished() {
-                return tick + 1;
+                return tick + 1 - start;
             }
         }
         budget
@@ -255,6 +288,10 @@ impl Simulation {
         };
 
         let mut rows = Vec::new();
+        let mut issue_faults = Vec::new();
+        let expected_prompt = &mut self.expected_prompt;
+        let expected_decode = &mut self.expected_decode;
+        let seen_ids = &mut self.seen_ids;
         for allocation in allocations {
             if allocation.rows == 0 {
                 continue;
@@ -262,6 +299,15 @@ impl Simulation {
             let stages = self.shape.stages;
             let id = self.next_fragment;
             self.next_fragment += 1;
+            // Incremental, because sorting every id ever issued on every tick
+            // was the same rescan as the two below it.
+            if !seen_ids.insert(id) {
+                issue_faults.push(Violation {
+                    tick,
+                    rule: "a fragment id is never reused",
+                    detail: format!("fragment {id} issued twice"),
+                });
+            }
             let (_, request) = self
                 .requests
                 .iter_mut()
@@ -272,8 +318,41 @@ impl Simulation {
                 request.prompt_issued += allocation.rows;
                 (from, request.prompt_issued)
             });
-            if allocation.phase != Phase::Prefill {
+            // Compared here rather than in `check`, because here it is one
+            // comparison and there it was a rescan of every row ever issued,
+            // per request, per tick.
+            if allocation.phase == Phase::Prefill {
+                let from = token_range.expect("a prefill carries a range").0;
+                let expected = expected_prompt
+                    .entry(allocation.request_id.clone())
+                    .or_insert(0);
+                if from != *expected {
+                    issue_faults.push(Violation {
+                        tick,
+                        rule: "prompt fragments tile the prompt in order",
+                        detail: format!(
+                            "{}: expected {expected}, got {from}",
+                            allocation.request_id
+                        ),
+                    });
+                }
+                *expected = request.prompt_issued;
+            } else {
                 let position = request.ready.as_ref().map(|ready| ready.position);
+                let expected = expected_decode
+                    .entry(allocation.request_id.clone())
+                    .or_insert(request.command.tokens.len() as u32);
+                if position != Some(*expected) {
+                    issue_faults.push(Violation {
+                        tick,
+                        rule: "decode positions advance by one from the prompt",
+                        detail: format!(
+                            "{}: expected {expected}, got {position:?}",
+                            allocation.request_id
+                        ),
+                    });
+                }
+                *expected += 1;
                 self.issued_decodes
                     .push((allocation.request_id.clone(), position));
             }
@@ -298,6 +377,7 @@ impl Simulation {
                 remaining_stages: stages,
             });
         }
+        self.violations.extend(issue_faults);
         if !rows.is_empty() {
             self.trace.push(IssuedBatch { tick, rows });
         }
@@ -320,18 +400,6 @@ impl Simulation {
             });
         }
 
-        // A fragment id is used once.
-        let mut seen = self.issued_ids.clone();
-        seen.sort_unstable();
-        let before = seen.len();
-        seen.dedup();
-        if seen.len() != before {
-            found.push(Violation {
-                tick,
-                rule: "a fragment id is never reused",
-                detail: format!("{} issued, {} distinct", before, seen.len()),
-            });
-        }
 
         for (id, request) in &self.requests {
             // The settled cursor trails the issued one and neither passes the prompt.
@@ -422,42 +490,7 @@ impl Simulation {
                 });
             }
 
-            // Decode positions start at the end of the prompt and step by one.
-            let mut expected = request.command.tokens.len() as u32;
-            for (owner, position) in &self.issued_decodes {
-                if owner != id {
-                    continue;
-                }
-                match position {
-                    Some(actual) if *actual == expected => expected += 1,
-                    other => {
-                        found.push(Violation {
-                            tick,
-                            rule: "decode positions advance by one from the prompt",
-                            detail: format!("{id}: expected {expected}, got {other:?}"),
-                        });
-                        expected += 1;
-                    }
-                }
-            }
-        }
 
-        // Prompt fragments tile their prompt: in order, no gap, no overlap.
-        for (id, _) in &self.requests {
-            let mut expect = 0usize;
-            for (owner, from, to) in &self.issued_ranges {
-                if owner != id {
-                    continue;
-                }
-                if *from != expect {
-                    found.push(Violation {
-                        tick,
-                        rule: "prompt fragments tile the prompt in order",
-                        detail: format!("{id}: expected {expect}, got [{from},{to})"),
-                    });
-                }
-                expect = *to;
-            }
         }
 
         self.violations.extend(found);

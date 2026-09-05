@@ -61,7 +61,7 @@ pub enum SchedulerError {
 /// point is a bound, not a share. What it buys is a statement that can be
 /// tested - a waiting prompt is admitted within nine issue opportunities -
 /// where before there was none.
-const PREFILL_PATIENCE: u32 = 8;
+pub const PREFILL_PATIENCE: u32 = 8;
 
 pub struct Scheduler {
     cursor: usize,
@@ -131,10 +131,6 @@ impl Scheduler {
         capacity: usize,
     ) -> Result<Vec<Allocation>, SchedulerError> {
         let start = self.cursor % demands.len();
-        let order: Vec<usize> = (0..demands.len())
-            .map(|offset| (start + offset) % demands.len())
-            .take(capacity)
-            .collect();
         // On a model whose memory forces equal per-sequence widths, one
         // decode row makes the common width one - a decode has exactly one
         // row to give. Mixing a prompt into that batch therefore sends one
@@ -153,29 +149,41 @@ impl Scheduler {
         // round-robin cursor below advances either way.
         // The patience above turns that into a bound rather than a rule: the
         // decodes take the batch, but not forever while a prompt waits.
-        let decoding: Vec<usize> = order
-            .iter()
-            .copied()
-            .filter(|index| demands[*index].phase == Phase::Decode)
-            .collect();
-        let prefilling: Vec<usize> = order
-            .iter()
-            .copied()
-            .filter(|index| demands[*index].phase != Phase::Decode)
-            .collect();
-        let order = if decoding.is_empty() {
+        //
+        // Which cohort is waiting is read from every eligible demand, not from
+        // the capacity window. Deciding it from the window is what made the
+        // first bound vacuous: with eight ready decodes, one ready prompt and
+        // room for eight, the rotation carried the prompt out of the window
+        // every ninth call, the code read that as "no prompt is waiting" and
+        // cleared the counter, and nine hundred issue opportunities selected
+        // the prompt zero times. A request that is waiting must not have its
+        // wait forgotten because this particular batch could not have fit it.
+        //
+        // So the cohort is chosen first, over the whole set, and the members
+        // are drawn from it afterwards - which is also the order the comment
+        // above claims: participants before width.
+        let ready_decodes = demands.iter().any(|demand| demand.phase == Phase::Decode);
+        let ready_prefills = demands.iter().any(|demand| demand.phase != Phase::Decode);
+        let serve_prefills = if !ready_decodes {
             self.decode_runs = 0;
-            order
-        } else if prefilling.is_empty() {
+            true
+        } else if !ready_prefills {
             self.decode_runs = 0;
-            decoding
+            false
         } else if self.decode_runs >= PREFILL_PATIENCE {
             self.decode_runs = 0;
-            prefilling
+            true
         } else {
             self.decode_runs += 1;
-            decoding
+            false
         };
+        // Members after the cohort: the same rotation, filtered to it, so a
+        // cohort larger than the batch still turns over between calls.
+        let order: Vec<usize> = (0..demands.len())
+            .map(|offset| (start + offset) % demands.len())
+            .filter(|index| (demands[*index].phase != Phase::Decode) == serve_prefills)
+            .take(capacity)
+            .collect();
         let width = if order
             .iter()
             .any(|index| demands[*index].phase == Phase::Decode)

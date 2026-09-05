@@ -90,20 +90,5 @@ fn a_p4_registry_dispatches_a_real_submission_through_the_real_client_to_a_real_
     client.close();
 }
 
-#[test]
-fn a_submission_against_an_unregistered_deployment_id_never_reaches_any_client() {
-    let registry: Registry = Registry::new();
-    let error = registry
-        .try_submit(Submit {
-            deployment_id: "nobody-registered-this".into(),
-            deployment_generation: 1,
-            submission_id: "s1".into(),
-            deadline_unix_ms: 0,
-            request: neutral_request(),
-        })
-        .expect_err("no client is registered for this deployment_id");
-    assert_eq!(
-        error,
-        p4_adapter::deployment::DispatchError::UnknownDeployment
-    );
-}
+// The registry-refusal test that needed no fixture moved to
+// `registry_rejection.rs`, so a default run keeps it.
