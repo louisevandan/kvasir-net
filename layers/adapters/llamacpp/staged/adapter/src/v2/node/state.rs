@@ -51,7 +51,84 @@ pub struct ReadyRows {
     pub speculative_id: u64,
 }
 
+/// Why a settlement could not be applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettlementRefusal {
+    /// The tail settled a fragment this request never had out.
+    NothingInFlight,
+    /// More prompt rows came back than were issued.
+    MoreRowsThanIssued,
+    CursorOverflow,
+}
+
+impl SettlementRefusal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NothingInFlight => "tail completed a request with no fragment in flight",
+            Self::MoreRowsThanIssued => "tail completed more prompt rows than were issued",
+            Self::CursorOverflow => "prompt cursor overflow",
+        }
+    }
+}
+
 impl RequestState {
+    /// The bookkeeping one settled fragment does, in the one place that does it.
+    ///
+    /// The worker and the simulator each had their own copy of this. They were
+    /// not the same: the worker refuses a settlement with nothing in flight and
+    /// refuses a cursor past what was issued, and the simulator - which exists
+    /// to catch exactly that class of drift - checked neither, so a settlement
+    /// against an empty ledger was a violation it recorded and carried on from
+    /// rather than a state it could not enter. Two implementations of one
+    /// transition means the selector can agree while the execution semantics
+    /// diverge, which is the thing being tested here.
+    ///
+    /// What stays out of this is the token the engine produced. The worker
+    /// reads it from the tail's outcome and the simulator models it, and those
+    /// are genuinely different jobs - so `generated`, `ready` and the
+    /// speculative continuations are set by the caller, after this returns.
+    /// What is shared is the part that must never disagree: how many fragments
+    /// are out, and how far the prompt has actually settled.
+    pub fn settle_fragment(
+        &mut self,
+        phase: super::super::Phase,
+        rows: usize,
+    ) -> Result<(), SettlementRefusal> {
+        // Everything is checked before anything is written, so a refusal
+        // leaves the request exactly as it was. The first version decremented
+        // `outstanding` and then checked the row bound, so a refused
+        // settlement still consumed a fragment - and the unit test written
+        // beside it asserted the count it observed while its own comment said
+        // the opposite. It took driving a real capsule through the worker to
+        // notice, which is the argument for doing that.
+        if self.outstanding == 0 {
+            return Err(SettlementRefusal::NothingInFlight);
+        }
+        let cursor = if phase == super::super::Phase::Prefill {
+            let cursor = self
+                .prompt_cursor
+                .checked_add(rows)
+                .ok_or(SettlementRefusal::CursorOverflow)?;
+            // Fragments return in the order they went out, so a cursor beyond
+            // the issue point means the tail settled rows nobody sent.
+            if cursor > self.prompt_issued || cursor > self.command.tokens.len() {
+                return Err(SettlementRefusal::MoreRowsThanIssued);
+            }
+            Some(cursor)
+        } else {
+            None
+        };
+
+        self.outstanding -= 1;
+        match cursor {
+            Some(cursor) => self.prompt_cursor = cursor,
+            // The row this request would have fed next is superseded by
+            // whatever the caller derives from the outcome.
+            None => self.ready = None,
+        }
+        Ok(())
+    }
+
     /// What this request could contribute to the next batch, if anything.
     ///
     /// `fragment_limit` is how many fragments of one prompt may be in the

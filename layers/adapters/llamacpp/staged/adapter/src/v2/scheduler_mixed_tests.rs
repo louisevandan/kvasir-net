@@ -197,7 +197,9 @@ fn every_waiting_prompt_advances_not_just_the_prompt_cohort() {
     // handing the same prompt the same rows forever.
     let mut remaining = vec![2000usize; sequences];
     let mut progress = vec![0usize; sequences];
-    let mut last_served = vec![0usize; sequences];
+    // `None` until first served, so the wait before a request is ever chosen
+    // counts as a gap rather than as zero.
+    let mut last_served: Vec<Option<usize>> = vec![None; sequences];
     let mut longest_gap = vec![0usize; sequences];
 
     for plan in 0..plans {
@@ -220,8 +222,9 @@ fn every_waiting_prompt_advances_not_just_the_prompt_cohort() {
             }
             remaining[index] = remaining[index].saturating_sub(allocation.rows);
             progress[index] += allocation.rows;
-            longest_gap[index] = longest_gap[index].max(plan - last_served[index]);
-            last_served[index] = plan;
+            let since = plan - last_served[index].unwrap_or(0);
+            longest_gap[index] = longest_gap[index].max(since);
+            last_served[index] = Some(plan);
         }
     }
 
@@ -230,9 +233,19 @@ fn every_waiting_prompt_advances_not_just_the_prompt_cohort() {
         stalled.is_empty(),
         "{plans} plans left prompts {stalled:?} at zero rows; the rest reached {progress:?}",
     );
+    // The gap has three parts and the last one is the easy one to lose: a
+    // request served once at the start and starved for the rest of the run
+    // has a non-zero progress and no recorded gap, because a gap was only
+    // written when it came round again. Close it against the end of the run.
+    for index in 1..sequences {
+        let since = plans - last_served[index].unwrap_or(0);
+        longest_gap[index] = longest_gap[index].max(since);
+    }
     // A prompt cohort every ninth plan, eight members a turn, seventeen
-    // prompts: a little over two turns to come round, so about twenty plans.
-    // Stated with room, because the point is that the gap is bounded at all.
+    // prompts: three cohort turns to come round in the worst case, so about
+    // twenty-seven plans - which is what it measures. Stated with room,
+    // because the point is that the gap is bounded at all, and the bound is
+    // the cohort period times the turns a request waits, not the period.
     let worst = (1..sequences).map(|index| longest_gap[index]).max().unwrap();
     assert!(
         worst <= 40,

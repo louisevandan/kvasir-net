@@ -105,3 +105,6 @@ impl Drop for LlamaNodeAdapter {
         }
     }
 }
+
+#[cfg(test)]
+mod worker_tests;

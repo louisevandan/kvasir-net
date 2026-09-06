@@ -58,9 +58,21 @@ pub enum SchedulerError {
 /// So the split gets a patience. After this many consecutive batches given to
 /// decodes with a prompt waiting, the next batch is the prompts. The decodes
 /// keep eight batches in nine, which is why the number is 8 rather than 1: the
-/// point is a bound, not a share. What it buys is a statement that can be
-/// tested - a waiting prompt is admitted within nine issue opportunities -
-/// where before there was none.
+/// point is a bound, not a share.
+///
+/// What this bounds is when the prompt *cohort* is next served - nine plans.
+/// An individual prompt waits that period times the turns it takes to come
+/// round within the cohort, which is the cohort size over the batch width:
+/// seventeen ready prompts at eight a batch is three turns, and the measured
+/// worst gap there is 27 plans, not 9. The per-request bound is the one the
+/// tests assert; this constant is only one factor in it.
+///
+/// And all of it is counted in planning opportunities. It says nothing about
+/// wall-clock time to first token, which also depends on how fast the
+/// pipeline settles what it issued.
+///
+/// 8 is not a measured value. It is the smallest thing that makes the bound
+/// exist; nothing has judged it against throughput on real hardware.
 pub const PREFILL_PATIENCE: u32 = 8;
 
 pub struct Scheduler {

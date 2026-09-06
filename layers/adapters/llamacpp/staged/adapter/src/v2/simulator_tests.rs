@@ -4,7 +4,7 @@
 //! none of them needs a machine with two cards or twenty minutes of wall clock.
 
 use super::scheduler::Phase;
-use super::simulator::{PipelineShape, Simulation};
+use super::simulator::{PipelineShape, Simulation, ready_decode};
 
 /// One tick of a golden trace: when it was issued, and what it carried.
 type TracedTick = (usize, Vec<(String, Phase, usize)>);
@@ -370,4 +370,56 @@ fn a_ledger_that_drifts_is_reported_and_the_run_gives_up() {
         used < 100,
         "the run took {used} ticks to give up; the cap is meant to stop it promptly",
     );
+}
+
+#[test]
+fn the_worker_and_this_model_settle_through_one_transition() {
+    // The extraction, asserted rather than assumed.
+    //
+    // Before it, the worker refused a settlement with nothing in flight and a
+    // cursor past what was issued, and this model checked neither - it
+    // recorded a violation and carried on into a state the worker could never
+    // reach. A selector that agrees means nothing if the execution semantics
+    // are two implementations.
+    use super::node::state::SettlementRefusal;
+    use super::scheduler::Phase;
+
+    let mut request = crate::v2::tests::request_state(vec![7; 10]);
+
+    // Nothing out: refused, and the request is untouched.
+    assert_eq!(
+        request.settle_fragment(Phase::Prefill, 4),
+        Err(SettlementRefusal::NothingInFlight),
+    );
+    assert_eq!(request.prompt_cursor, 0);
+    assert_eq!(request.outstanding, 0);
+
+    // More rows back than went out: refused, and the cursor does not move.
+    request.outstanding = 1;
+    request.prompt_issued = 4;
+    assert_eq!(
+        request.settle_fragment(Phase::Prefill, 6),
+        Err(SettlementRefusal::MoreRowsThanIssued),
+    );
+    assert_eq!(request.prompt_cursor, 0);
+    // A refusal consumed no fragment: the caller still has one to account for.
+    //
+    // This line used to assert 0 - the value the implementation produced,
+    // beneath a comment saying the opposite - because the check ran after the
+    // decrement. A worker test driving a real capsule is what found it.
+    assert_eq!(request.outstanding, 1);
+
+    // What was issued: accepted.
+    request.outstanding = 1;
+    assert_eq!(request.settle_fragment(Phase::Prefill, 4), Ok(()));
+    assert_eq!(request.prompt_cursor, 4);
+    assert_eq!(request.outstanding, 0);
+
+    // A decode settlement clears the row it was feeding, and the caller
+    // derives the next one - from the tail's outcome in the worker, from the
+    // model here.
+    request.outstanding = 1;
+    request.ready = Some(ready_decode(10));
+    assert_eq!(request.settle_fragment(Phase::Decode, 1), Ok(()));
+    assert!(request.ready.is_none());
 }

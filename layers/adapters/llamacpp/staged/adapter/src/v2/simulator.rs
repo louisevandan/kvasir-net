@@ -214,26 +214,25 @@ impl Simulation {
                 });
                 continue;
             };
-            if request.outstanding == 0 {
+            // The worker's transition, not a copy of it. Its refusals are
+            // this model's violations, so a settlement the worker would
+            // reject over the wire is one this run cannot silently absorb.
+            if let Err(refusal) = request.settle_fragment(fragment.phase, fragment.rows) {
                 self.violations.push(Violation {
                     tick,
-                    rule: "a settlement matches an outstanding fragment",
-                    detail: format!("{} settled with nothing in flight", fragment.request),
+                    rule: "a settlement is one the worker would accept",
+                    detail: format!("{}: {}", fragment.request, refusal.as_str()),
                 });
                 continue;
             }
-            request.outstanding -= 1;
             self.settled_rows += fragment.rows;
-            match fragment.phase {
-                Phase::Prefill => {
-                    request.prompt_cursor += fragment.rows;
-                    // The prompt is complete: the tail hands back the first
-                    // generated token, exactly as the real settlement does.
-                    if request.prompt_cursor == request.command.tokens.len() {
-                        request.generated += 1;
-                    }
-                }
-                _ => request.generated += 1,
+            // A settled fragment produced a token. The worker reads that from
+            // the tail's outcome; here it is modelled, which is why it is on
+            // this side of the shared transition rather than inside it.
+            if fragment.phase != Phase::Prefill
+                || request.prompt_cursor == request.command.tokens.len()
+            {
+                request.generated += 1;
             }
             // One rule for both, because there is one: a settlement produces a
             // token, and the next input row is that token at its own position.
@@ -519,7 +518,7 @@ fn next_input_position(request: &RequestState) -> u32 {
     request.command.tokens.len() as u32 + request.generated - 1
 }
 
-fn ready_decode(position: u32) -> ReadyRows {
+pub(super) fn ready_decode(position: u32) -> ReadyRows {
     ReadyRows {
         phase: Phase::Decode,
         tokens: vec![11],

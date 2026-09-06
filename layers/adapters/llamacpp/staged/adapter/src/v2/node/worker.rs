@@ -101,6 +101,31 @@ impl Worker {
         }
     }
 
+    /// Test-only handles on the parts a settlement touches.
+    ///
+    /// `tail` and `state` are `pub(super)` and the tests live in this module,
+    /// but a worker cannot be built from outside without them being reachable
+    /// by name - and the alternative, making the fields public, would widen
+    /// them for everyone.
+    #[cfg(test)]
+    pub(super) fn state_for_test(&mut self) -> &mut AdapterState {
+        &mut self.state
+    }
+
+    #[cfg(test)]
+    pub(super) fn tail_for_test(&mut self, event: Event) -> Result<(), String> {
+        self.tail(event)
+    }
+
+    #[cfg(test)]
+    pub(super) fn request_for_test(&self) -> &super::state::RequestState {
+        self.state
+            .requests
+            .values()
+            .next()
+            .expect("the test inserted one request")
+    }
+
     pub fn run(mut self) {
         let mut failed = false;
         'worker: while let Ok(WorkerInput::Event(event)) = self.receiver.recv() {

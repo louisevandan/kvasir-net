@@ -61,26 +61,11 @@ impl Worker {
             let Some(request) = self.state.requests.get_mut(&key) else {
                 continue;
             };
-            if request.outstanding == 0 {
-                return Err("tail completed a request with no fragment in flight".into());
-            }
-            request.outstanding -= 1;
-            if phase == Phase::Prefill {
-                request.prompt_cursor = request
-                    .prompt_cursor
-                    .checked_add(rows)
-                    .ok_or_else(|| "prompt cursor overflow".to_owned())?;
-                // The settled cursor may never pass what was issued: fragments
-                // return in the order they went out, so a cursor beyond the
-                // issue point means the tail settled rows nobody sent.
-                if request.prompt_cursor > request.prompt_issued
-                    || request.prompt_cursor > request.command.tokens.len()
-                {
-                    return Err("tail completed more prompt rows than were issued".into());
-                }
-            } else {
-                request.ready = None;
-            }
+            // The one implementation of this transition; the simulator calls
+            // the same one.
+            request
+                .settle_fragment(phase, rows)
+                .map_err(|refusal| refusal.as_str().to_owned())?;
             let Some((owner, outcome)) = outcome else {
                 if phase == Phase::Replay {
                     request.ready = match request.after_settlement.take() {
