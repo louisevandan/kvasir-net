@@ -2806,3 +2806,60 @@ RELEASED 뒤에는 원 제출별 receipt가 필요하다. cap1 전달 슬롯에 
 마지막 검증 라운드는 아직 사용하지 않았으며, 부분 API를 확인하기 위해 새 라운드를 만들지 않는다.
 전체 비무시 변경은 미검증 WIP로 커밋한다. 모델·원문로그·일회성 도구·바이너리를 Git에 추가하거나
 원격/GPU/C++/push를 실행한 것은 아니다.
+
+## 전달 큐와 필수 결과 보존 공간 — 정적 검토 WIP (2026-09-07)
+
+기준 HEAD는 `bcbadf101`이다. 이 절의 수정은 **컴파일·실행시험·변이·docs-lint 미실행**이며,
+수정 전 봉인 실행13의1254/1/7을 이번 소스 결과로 재사용하지 않는다. 마지막 검증 회차도 미사용이다.
+기존 actor cap1/cap8·14입력/6결과·native/회복 oracle는 변경하지 않았다. 새 장기 원자료도 생성하지 않았다.
+
+### 코드 변경과 정적 결정
+
+- 실제 mailbox의 delivery queue_capacity와 retained count/bytes를 분리했다. 기존 두 생성자는
+  count 상한을 양쪽에 동일하게 적용하며 새 `completion_mailbox_with_limits`만 별도 한도를 받는다.
+  reserved publication도 실제 queue Full에서는 원 Event allocation과 선형 예약을 그대로 반환한다.
+  owned dequeue는 queue slot만 반환하고 보관 claim을 유지한다. 수신 성공 전 transfer 실패는 양쪽
+  claim을 보존한다. 이것은 수신 측 원격 grant나 actor 순환의 전체 수용 계약이 아니다.
+- ordinary Full에서 임시 예약을 만들었다 파기하면 자신을 깨워 재시도하는 loop가 생길 수 있으므로
+  queue admission과 일반 claim 확보를 Storage→Budget 순서로 같은 push 구간에 뒀다. 영구적인
+  단일 Event byte 초과는 queue Full보다 먼저 판정한다. 새 큐 크기나 실험 threshold를 선택하지 않았다.
+- `mailbox_group.rs`는 알려진 Event footprint 목록의 count+bytes를 같은 임계구역에서 확보한다.
+  각 항목·합산·실제 배열 backing 크기를 checked 연산하고, 준비 후 Closed/경합을 다시 검사한다.
+  budget commit 전에는 active Claim을 만들지 않아 사전 실패가 다른 소유자의 공간을 반환하지 않는다.
+  commit 이후에는 이미 확보된 배열에 claim만 설치하며 fallible allocation이나 caller callback이 없다.
+- 배열 capacity를 claim과 별도로 과금한다. 그룹 항목을 꺼내도 배열은 남기 때문에 count-only에는
+  새 group API를 허용하지 않았다. 동시 준비 중 임시 배열은 이 성공한 보존 공간 한도 밖이며 RSS
+  예산 완료라 하지 않는다. Event 미래 상한의 정확성은 호출자 계약이고 실제 생산자 연결은 아직 없다.
+- 독립 정적 감수에서 그룹 항목별 알림 중 첫 panic→unwind의 다음 알림이라는 이중 호출 반례를
+  발견했다. 미사용 항목/배열 회계를 먼저 반환하고 마지막 한 번만 통지하도록 고정했다. 새 owned
+  dequeue의 동일 경로도 확인해 Claim은 unwind 중 회계만 반환한다. 첫 panic은 숨기지 않는다.
+  callback 위반 뒤 전달/진행이나 임의 RawWaker destructor까지 안전하다는 보장은 하지 않는다.
+
+### 신규 회귀 oracle와 제거 변이 계획 — 실행 전
+
+| 실제 경로 | 작성 수 | 판정 / 제거하면 실패해야 할 동작 |
+| --- | --- | --- |
+| group 예약·cap1 순차 전달 | 1 |3개 결과를 실제 저장소에 원자 예약, Full 무변이, 독립 retirement, 빈 배열 비용 유지 / queue와 retained 재결합 |
+| group 입력/용량 거부 | 3 |빈 목록·마지막 overflow·permanent TooLarge·count-only·일시 Full 무변이와 같은 입력 재수용 / 부분 claim 설치 또는 배열 과금 누락 |
+| group 경합/닫힘 | 3 |최종 commit 전 close·ordinary 경쟁·동시 group1개만 승인 / 최종 검사 제거 |
+| group 정리/owned dequeue callback | 3 |잠금 밖 한 번 통지, 다른 소유 claim 보존, 첫 panic 전파·재호출0 / quiet cleanup·unwind guard 제거 |
+| queue/retained 실제 전달 | 3 |queue1/retained3, dequeue wake paired control, destination Full의 양쪽 claim / Full에서 claim 반환 또는 원 Event 교체 |
+| ordinary 거부·생성자 | 3 |Full3회 snapshot/wake0, Full이어도 영구 TooLarge, queue/retained0 거부 / 임시 claim 자기 wake·검사 순서 역전 |
+
+새 시험은 `mailbox_group_tests.rs`10개와 `mailbox_queue_storage_tests.rs`6개다. 원본 Event equality와
+payload allocation, permit identity와 실제 storage snapshot을 함께 대조한다. callback 반례는
+첫 호출만 panic하게 해 제거 변이가 프로세스 abort가 아닌 재호출 횟수 단언 실패로 드러나게 했다.
+동시 group 시험의5초 채널 guard는 실행 실패를 유한하게 보고하기 위한 것이지 시계 독립 진행 증거가 아니다.
+표의 변이도 **예정**이며 아직 실행하거나 통과를 보고한 것이 아니다.
+
+### 현재 한계와 Git 포함 판단
+
+변경은 backend 중립 `p4-adapter` 저장소와 그 실제 경로 시험, 소유 계약/로드맵/증거 색인에 한정한다.
+새 API를 사용하는 제품 producer/owned consumer·broker dedupe byte 비용·원격 수용 grant·native
+가변 결과 bound·통합 input/capacity/shutdown pump는 미완이다. wire/llama/native/모델은 변경하지 않았다.
+현재 HELLO row/seq limit와 frame 수신 cap을 native 출력 사전 메모리 bound로 오독하지 않는다.
+전체 순환 교착 해결이나 최종 웨이브 성과로 승격할 수 없다. 다음 순서는 로드맵의 최신 기록만 따른다.
+
+유지할 구현·회귀 시험·간결한 계약/진행 기록만 전체 WIP 체크포인트에 포함한다. 생성 로그·중복
+manifest·일회성 도구·모델·바이너리는 기존 ignore 경로에 남긴다. 새 시험 파일은 필수 oracle이므로
+ignore하지 않으며, 다른 머신에서 원자료를 재열람하는 B8 조건은 여전히 미충족이다.

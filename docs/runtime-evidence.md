@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: 전달 큐와 필수 결과 보존 공간 — 정적 검토 WIP
+
+`bcbadf101` 뒤 로컬 queue/retained 한도 분리와 알려진 fan-out의 원자적 그룹 예약을 작성했다.
+신규 oracle16개는 **컴파일·실행·변이 미실행**이며 actor 교착 해결 증거가 아니다. 마지막 검증
+라운드는 미사용이다. 실제 변경과 연결하지 않은 경계는
+[저장소 분리 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
 ## 2026-09-07: committed 송신물 고정 — 정적 검토 WIP
 
 `7f402aba5` 뒤 committed FIFO의 완전한 Event 보존·미할당 ID 의무와 broker Full 원본 반환을

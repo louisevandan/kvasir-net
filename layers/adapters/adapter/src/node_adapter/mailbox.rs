@@ -6,6 +6,10 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, Poll as TaskPoll, Waker};
 
+#[path = "mailbox_group.rs"]
+mod group;
+pub use group::{CompletionReservationGroup, GroupReserveError};
+
 pub struct CompletionPublisher {
     receiver: Arc<Mutex<Storage>>,
     budget: Arc<Mutex<Budget>>,
@@ -108,6 +112,7 @@ pub enum MailboxBuildError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReservedPublishReason {
+    Full,
     Closed,
     WrongMailbox,
     TooSmall { required: usize, reserved: usize },
@@ -130,12 +135,14 @@ pub struct RetainedTransferError {
 
 struct Storage {
     queue: VecDeque<Entry>,
+    queue_capacity: usize,
     closed: bool,
     publishers: usize,
     backing_bytes: usize,
 }
 
 struct Budget {
+    // Includes queued Events, held completions and unpublished reservations.
     capacity: usize,
     byte_limit: Option<usize>,
     used_count: usize,
@@ -161,17 +168,38 @@ struct Claim {
     budget: Arc<Mutex<Budget>>,
     capacity: Arc<Mutex<CapacityState>>,
     bytes: usize,
+    active: bool,
+}
+
+impl Claim {
+    // Group cleanup retires all of its owned storage before the one callback.
+    // The explicit state also prevents field Drop from returning it twice if
+    // that callback unwinds. Normal single-claim Drop keeps its existing wake.
+    fn release_quiet(&mut self) -> bool {
+        if !self.active {
+            return false;
+        }
+        let mut budget = self.budget.lock().unwrap_or_else(|e| e.into_inner());
+        let next_count = budget
+            .used_count
+            .checked_sub(1)
+            .expect("claim owns one entry");
+        let next_bytes = budget
+            .used_bytes
+            .checked_sub(self.bytes)
+            .expect("claim owns its bytes");
+        budget.used_count = next_count;
+        budget.used_bytes = next_bytes;
+        self.active = false;
+        true
+    }
 }
 
 impl Drop for Claim {
     fn drop(&mut self) {
-        {
-            let mut budget = self.budget.lock().unwrap_or_else(|e| e.into_inner());
-            debug_assert!(budget.used_count > 0 && budget.used_bytes >= self.bytes);
-            budget.used_count -= 1;
-            budget.used_bytes -= self.bytes;
+        if self.release_quiet() && !std::thread::panicking() {
+            notify_capacity(&self.capacity, false);
         }
-        notify_capacity(&self.capacity, false);
     }
 }
 
@@ -263,7 +291,10 @@ pub enum OwnedPoll {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompletionStorageSnapshot {
+    /// Retained storage count, including reservations and owned dequeues.
     pub capacity: usize,
+    /// Delivery queue slots; these can be fewer than retained storage claims.
+    pub queue_capacity: usize,
     pub byte_limit: Option<usize>,
     pub retained_count: usize,
     pub retained_bytes: usize,
@@ -293,6 +324,8 @@ impl Clone for CompletionPublisher {
 impl CompletionPublisher {
     /// Register before testing capacity and retain while waiting. Wake means
     /// retry, not reservation. Callbacks must be short/nonblocking/nonpanicking.
+    /// A violating callback's first panic propagates; claim destruction during
+    /// unwind still returns storage but does not invoke capacity callbacks again.
     pub fn capacity_listener(
         &self,
         waker: &Waker,
@@ -320,9 +353,10 @@ impl CompletionPublisher {
         })
     }
 
-    /// Reserve exactly one actual queue slot and the supplied Event footprint
-    /// plus COMPLETION_ENTRY_OVERHEAD_BYTES. The same budget backs ordinary
-    /// publications, outstanding reservations and dequeued owned completions.
+    /// Reserve exactly one retained storage claim and the supplied Event
+    /// footprint plus COMPLETION_ENTRY_OVERHEAD_BYTES. The same budget backs
+    /// ordinary publications, reservations and dequeued owned completions.
+    /// This does not reserve an immediate delivery queue slot.
     pub fn try_reserve(
         &self,
         count: usize,
@@ -365,6 +399,7 @@ impl CompletionPublisher {
                 budget: Arc::clone(&self.budget),
                 capacity: Arc::clone(&self.capacity),
                 bytes,
+                active: true,
             },
         })
     }
@@ -378,43 +413,69 @@ impl CompletionPublisher {
             Ok(bytes) => bytes,
             Err(_) => return Err(PublishError::CostOverflow(event)),
         };
-        let reservation = match self.try_reserve(1, bytes) {
-            Ok(reservation) => reservation,
-            Err(ReserveError::Closed) => return Err(PublishError::Closed(event)),
-            Err(ReserveError::Full) => return Err(PublishError::Full(event)),
-            Err(ReserveError::TooLarge { required, limit }) => {
-                return Err(PublishError::TooLarge {
-                    event,
-                    required,
-                    limit,
-                });
-            }
-            Err(ReserveError::CostOverflow | ReserveError::InvalidCount) => {
-                return Err(PublishError::CostOverflow(event));
-            }
+        let Some(claim_bytes) = bytes.checked_add(COMPLETION_ENTRY_OVERHEAD_BYTES) else {
+            return Err(PublishError::CostOverflow(event));
         };
-        self.publish_entry(event, reservation, false)
-            .map_err(|error| {
-                let event = error.event;
-                drop(error.reservation);
-                match error.reason {
-                    ReservedPublishReason::Closed => PublishError::Closed(event),
-                    ReservedPublishReason::TooSmall { required, reserved } => {
-                        PublishError::TooLarge {
-                            event,
-                            required,
-                            limit: reserved,
-                        }
-                    }
-                    ReservedPublishReason::CostOverflow | ReservedPublishReason::WrongMailbox => {
-                        PublishError::CostOverflow(event)
-                    }
+        {
+            let Ok(mut storage) = self.receiver.lock() else {
+                return Err(PublishError::Closed(event));
+            };
+            if storage.closed {
+                return Err(PublishError::Closed(event));
+            }
+            {
+                let Ok(budget) = self.budget.lock() else {
+                    return Err(PublishError::Closed(event));
+                };
+                if budget.closed {
+                    return Err(PublishError::Closed(event));
                 }
-            })
+                if let Some(limit) = budget.byte_limit.filter(|&limit| claim_bytes > limit) {
+                    return Err(PublishError::TooLarge {
+                        event,
+                        required: claim_bytes,
+                        limit,
+                    });
+                }
+            }
+            // An impossible Event stays a permanent rejection even if another
+            // Event currently occupies every delivery slot.
+            if storage.queue.len() >= storage.queue_capacity {
+                return Err(PublishError::Full(event));
+            }
+            // Storage -> Budget is also the snapshot/close lock order. Reserve
+            // only after delivery admission, while that slot cannot be taken.
+            // A temporary claim dropped on Full would wake this same rejected
+            // publisher, turning a retry into a self-wake loop.
+            let reservation = match self.try_reserve(1, bytes) {
+                Ok(reservation) => reservation,
+                Err(ReserveError::Closed) => return Err(PublishError::Closed(event)),
+                Err(ReserveError::Full) => return Err(PublishError::Full(event)),
+                Err(ReserveError::TooLarge { required, limit }) => {
+                    return Err(PublishError::TooLarge {
+                        event,
+                        required,
+                        limit,
+                    });
+                }
+                Err(ReserveError::CostOverflow | ReserveError::InvalidCount) => {
+                    return Err(PublishError::CostOverflow(event));
+                }
+            };
+            debug_assert!(storage.queue.len() < storage.queue.capacity());
+            storage.queue.push_back(Entry {
+                event,
+                claim: reservation.claim,
+                reserved: false,
+            });
+        }
+        wake_reader(&self.waker);
+        Ok(())
     }
 
-    /// Successful reservation prevents ordinary Full; closure, wrong mailbox
-    /// or a too-large Event return both original Event and original permission.
+    /// The reservation retains storage while delivery queue slots are busy.
+    /// Full, closure, wrong mailbox or a too-large Event return both the exact
+    /// original Event and its original permission for retry or explicit abort.
     pub fn publish_reserved(
         &self,
         event: Event,
@@ -468,8 +529,15 @@ impl CompletionPublisher {
                     reason: ReservedPublishReason::Closed,
                 });
             }
-            // The permit counted this entry before admission and ordinary
-            // producers use the same count. No growth is needed on this push.
+            if storage.queue.len() >= storage.queue_capacity {
+                return Err(ReservedPublishError {
+                    event,
+                    reservation,
+                    reason: ReservedPublishReason::Full,
+                });
+            }
+            // Delivery admission and push share this lock. The configured
+            // queue bound, not allocator rounding, prevents backing growth.
             debug_assert!(storage.queue.len() < storage.queue.capacity());
             storage.queue.push_back(Entry {
                 event,
@@ -513,18 +581,35 @@ impl CompletionMailbox {
     }
 
     pub fn try_take_owned(&self) -> OwnedPoll {
-        let entry = {
+        let (entry, queue_was_full, queue_capacity) = {
             let Ok(mut storage) = self.receiver.lock() else {
                 return OwnedPoll::Closed;
             };
+            let queue_was_full = storage.queue.len() == storage.queue_capacity;
+            let queue_capacity = storage.queue_capacity;
             match storage.queue.pop_front() {
-                Some(entry) => entry,
+                Some(entry) => (entry, queue_was_full, queue_capacity),
                 None if storage.closed || storage.publishers == 0 => return OwnedPoll::Closed,
                 None => return OwnedPoll::Empty,
             }
         };
+        // With separate limits a reserved publisher may only lack a queue
+        // slot. Dequeue frees that slot, but keeps the Event's storage claim.
+        // Equal-limit compatibility mailboxes cannot have such a waiter when
+        // the queue is full: all retained claims are already queued. Their
+        // capacity notification remains tied to claim retirement.
+        let queue_waiter_can_progress = queue_was_full
+            && self
+                .budget
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .capacity
+                > queue_capacity;
+        if queue_waiter_can_progress {
+            notify_capacity(&self.capacity, false);
+        }
         // A nonblocking owned drainer may reveal an ordinary front to the one
-        // registered legacy reader. This is a reader wake, not freed capacity.
+        // registered legacy reader. This is separate from the capacity wake.
         wake_reader(&self.waker);
         OwnedPoll::Event(RetainedCompletion {
             event: Some(entry.event),
@@ -537,6 +622,7 @@ impl CompletionMailbox {
         let budget = self.budget.lock().unwrap_or_else(|e| e.into_inner());
         CompletionStorageSnapshot {
             capacity: budget.capacity,
+            queue_capacity: storage.queue_capacity,
             byte_limit: budget.byte_limit,
             retained_count: budget.used_count,
             retained_bytes: budget.used_bytes,
@@ -618,7 +704,8 @@ impl CompletionMailbox {
 /// Count-only compatibility constructor. It does not declare a retained-byte
 /// bound. Owned dequeue still retains the count claim until retire/transfer.
 pub fn completion_mailbox(capacity: usize) -> (CompletionPublisher, Arc<CompletionMailbox>) {
-    build_mailbox(capacity, None).expect("completion mailbox capacity/allocation must be valid")
+    build_mailbox(capacity, capacity, None)
+        .expect("completion mailbox capacity/allocation must be valid")
 }
 
 /// Event-footprint plus entry-overhead claim budget, not allocator/RSS/native
@@ -627,22 +714,36 @@ pub fn completion_mailbox_with_budget(
     capacity: usize,
     retained_bytes: usize,
 ) -> Result<(CompletionPublisher, Arc<CompletionMailbox>), MailboxBuildError> {
-    build_mailbox(capacity, Some(retained_bytes))
+    build_mailbox(capacity, capacity, Some(retained_bytes))
+}
+
+/// Separate bounded delivery slots from retained storage claims. This permits
+/// several pre-reserved results to pass through a smaller queue one at a time;
+/// Full leaves both Event and reservation with the publisher. The retained
+/// byte bound covers Event footprints and entry overhead, not allocator/RSS/
+/// native memory. Fixed queue backing is reported separately.
+pub fn completion_mailbox_with_limits(
+    queue_capacity: usize,
+    retained_capacity: usize,
+    retained_bytes: usize,
+) -> Result<(CompletionPublisher, Arc<CompletionMailbox>), MailboxBuildError> {
+    build_mailbox(queue_capacity, retained_capacity, Some(retained_bytes))
 }
 
 fn build_mailbox(
-    count: usize,
+    queue_capacity: usize,
+    retained_capacity: usize,
     byte_limit: Option<usize>,
 ) -> Result<(CompletionPublisher, Arc<CompletionMailbox>), MailboxBuildError> {
-    if count == 0 {
+    if queue_capacity == 0 || retained_capacity == 0 {
         return Err(MailboxBuildError::InvalidCapacity);
     }
-    count
+    queue_capacity
         .checked_mul(std::mem::size_of::<Entry>())
         .ok_or(MailboxBuildError::StorageOverflow)?;
     let mut queue = VecDeque::new();
     queue
-        .try_reserve_exact(count)
+        .try_reserve_exact(queue_capacity)
         .map_err(|_| MailboxBuildError::AllocationFailed)?;
     let backing_bytes = queue
         .capacity()
@@ -650,12 +751,13 @@ fn build_mailbox(
         .ok_or(MailboxBuildError::StorageOverflow)?;
     let receiver = Arc::new(Mutex::new(Storage {
         queue,
+        queue_capacity,
         closed: false,
         publishers: 1,
         backing_bytes,
     }));
     let budget = Arc::new(Mutex::new(Budget {
-        capacity: count,
+        capacity: retained_capacity,
         byte_limit,
         used_count: 0,
         used_bytes: 0,
@@ -712,3 +814,7 @@ mod tests;
 #[cfg(test)]
 #[path = "mailbox_reservation_tests.rs"]
 mod reservation_tests;
+
+#[cfg(test)]
+#[path = "mailbox_queue_storage_tests.rs"]
+mod queue_storage_tests;

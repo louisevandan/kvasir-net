@@ -11,10 +11,11 @@ pub use event_cost::{ResourceCostError, retained_event_bytes};
 
 pub use mailbox::{
     COMPLETION_ENTRY_OVERHEAD_BYTES, CapacityListenError, CapacityRegistration, CompletionMailbox,
-    CompletionPublisher, CompletionReservation, CompletionStorageSnapshot, MAX_CAPACITY_LISTENERS,
-    MailboxBuildError, OwnedPoll, PublishError, ReserveError, ReservedPublishError,
-    ReservedPublishReason, RetainedCompletion, RetainedTransferError, completion_mailbox,
-    completion_mailbox_with_budget,
+    CompletionPublisher, CompletionReservation, CompletionReservationGroup,
+    CompletionStorageSnapshot, GroupReserveError, MAX_CAPACITY_LISTENERS, MailboxBuildError,
+    OwnedPoll, PublishError, ReserveError, ReservedPublishError, ReservedPublishReason,
+    RetainedCompletion, RetainedTransferError, completion_mailbox, completion_mailbox_with_budget,
+    completion_mailbox_with_limits,
 };
 use p4_protocol::event::Event;
 use std::task::{Context, Poll as TaskPoll};
