@@ -12,8 +12,8 @@
 4. [P4·어댑터·llama.cpp 계층 격리 계약](docs/layer-isolation-contract.md)
 5. [전체 문서 안내도와 권위](docs/document-map.md)
 
-최초 감사 기준은 `a9e1967fc`다. 그 뒤 미커밋 구현의 완료 범위와 다음 행동은
-[로드맵의 최신 진행 기록](docs/distributed-batching-roadmap.md)을 확인한다. 이 색인에 상태표를 복제하지 않는다.
+최초 감사 기준은 `a9e1967fc`다. **검증된 진전·미검증 변경·구현 중단 지점과 재개 조건**은
+[로드맵 맨 앞의 현재 상태](docs/distributed-batching-roadmap.md#current-status)를 확인한다. 이 색인에 상태표를 복제하지 않는다.
 과거 U/P 단계표·성공 수치·Chain/Hop 설명을 현재 구현의 완료 증거로 사용하지 않는다.
 
 The communication layer for distributed inference. Agents carry work between

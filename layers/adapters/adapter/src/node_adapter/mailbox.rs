@@ -1,5 +1,5 @@
 use super::{Poll, retained_event_bytes};
-use p4_protocol::event::Event;
+use p4_protocol::event::{Envelope, Event};
 use std::collections::{BTreeMap, VecDeque};
 #[cfg(test)]
 use std::sync::mpsc;
@@ -660,6 +660,42 @@ pub struct CompletionMailbox {
 }
 
 impl CompletionMailbox {
+    /// Inspect the ordinary front without removing it or returning its claim.
+    /// Reserved entries remain opaque to this legacy raw-Event path. None is
+    /// not a disconnect signal, and no queue entry behind the front is read.
+    pub fn peek_completion(&self) -> Option<Envelope> {
+        let storage = self.receiver.lock().ok()?;
+        let entry = storage.queue.front()?;
+        if entry.reserved {
+            return None;
+        }
+        Some(entry.event.envelope.clone())
+    }
+
+    /// Match and remove the ordinary front under the same storage lock. A
+    /// stale/mismatched peek has no queue, accounting or notification effect.
+    /// As with try_take, successful removal returns raw ownership, not a
+    /// retained storage claim or downstream delivery acknowledgement.
+    pub fn try_take_completion_matching(&self, expected: &Envelope) -> Poll {
+        let entry = {
+            let Ok(mut storage) = self.receiver.lock() else {
+                return Poll::Closed;
+            };
+            match storage.queue.front() {
+                Some(entry) if entry.reserved || &entry.event.envelope != expected => {
+                    return Poll::Empty;
+                }
+                Some(_) => {}
+                None if storage.closed || storage.publishers == 0 => return Poll::Closed,
+                None => return Poll::Empty,
+            }
+            storage.queue.pop_front().expect("matched front remains locked")
+        };
+        let Entry { event, claim, .. } = entry;
+        drop(claim); // Capacity callbacks run outside Storage/Budget locks.
+        Poll::Event(event)
+    }
+
     /// Legacy queue-only ownership. A reserved front is NOT removed, skipped
     /// or converted to a raw Event. Use the owned API for reserved messages.
     /// There is one logical polling reader; mixing modes is not a scheduler.
@@ -924,3 +960,7 @@ mod queue_storage_tests;
 #[cfg(test)]
 #[path = "mailbox_deferred_tests.rs"]
 mod deferred_tests;
+
+#[cfg(test)]
+#[path = "mailbox_matching_tests.rs"]
+mod matching_tests;

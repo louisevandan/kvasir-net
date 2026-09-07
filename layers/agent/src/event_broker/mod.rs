@@ -7,9 +7,9 @@ mod ledger;
 
 use ledger::{EventLedger, LedgerVerdict};
 use p4_protocol::Address;
-use p4_protocol::event::{Endpoint, Event};
+use p4_protocol::event::{Endpoint, Envelope, Event};
 use std::collections::HashMap;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::mpsc;
 
 pub type EventSender = mpsc::Sender<Event>;
@@ -114,7 +114,96 @@ struct NodeRoute {
     sender: EventSender,
 }
 
+/// A synchronous front-dispatch ticket. It is never kept across an await or
+/// used as a future native-result/remote-receiver credit. Existing receipts
+/// are pinned so exact duplicate inspection still precedes destination Full.
+pub(crate) struct CompletionDispatch {
+    envelope: Envelope,
+    kind: CompletionDispatchKind,
+}
+
+enum CompletionDispatchKind {
+    Existing(Arc<Event>),
+    Destination {
+        delivery: Delivery,
+        sender: EventSender,
+        permit: mpsc::OwnedPermit<Event>,
+    },
+}
+
 impl EventBroker {
+    /// Reserve the actual destination before the adapter relinquishes an
+    /// independent ordinary completion. No broker lock survives this call.
+    pub(crate) fn reserve_completion(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<CompletionDispatch, DispatchError> {
+        envelope.validate().map_err(|error| DispatchError::Invalid(error.to_string()))?;
+        let existing = self.ledger.lock().map_err(|_| DispatchError::Poisoned)?
+            .inspect_completion_header(envelope)?;
+        let kind = if let Some(receipt) = existing {
+            CompletionDispatchKind::Existing(receipt)
+        } else {
+            let (delivery, sender) = self.destination(&envelope.target)?;
+            let permit = sender.clone().try_reserve_owned().map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => DispatchError::Full(delivery.clone()),
+                mpsc::error::TrySendError::Closed(_) => DispatchError::Closed(delivery.clone()),
+            })?;
+            CompletionDispatchKind::Destination { delivery, sender, permit }
+        };
+        Ok(CompletionDispatch { envelope: envelope.clone(), kind })
+    }
+
+    pub(crate) fn dispatch_completion(
+        &self,
+        ticket: CompletionDispatch,
+        event: Event,
+    ) -> Result<DispatchOutcome, DispatchFailure> {
+        if event.envelope != ticket.envelope {
+            return Err(DispatchFailure::new(
+                DispatchError::Invalid("completion front changed after reservation".into()), event));
+        }
+        if let Err(error) = event.validate() {
+            return Err(DispatchFailure::new(DispatchError::Invalid(error.to_string()), event));
+        }
+        let (delivery, sender, permit) = match ticket.kind {
+            CompletionDispatchKind::Existing(receipt) => {
+                // The independent receipt was present when this synchronous
+                // operation began. Pinning it prevents concurrent window eviction
+                // from changing a Duplicate into a new delivery or requiring space.
+                return if receipt.as_ref() == &event {
+                    Ok(DispatchOutcome::Duplicate)
+                } else {
+                    Err(DispatchFailure::new(DispatchError::ConflictingDuplicate, event))
+                };
+            }
+            CompletionDispatchKind::Destination { delivery, sender, permit } => (delivery, sender, permit),
+        };
+        let mut ledger = match self.ledger.lock() {
+            Ok(ledger) => ledger,
+            Err(_) => return Err(DispatchFailure::new(DispatchError::Poisoned, event)),
+        };
+        match ledger.inspect(&event) {
+            Ok(LedgerVerdict::Duplicate) => return Ok(DispatchOutcome::Duplicate),
+            Ok(LedgerVerdict::New) => {}
+            Err(error) => return Err(DispatchFailure::new(error, event)),
+        }
+        // A slot is not routing authority: registration may have changed
+        // between the front probe and this commit, even without an await.
+        let current = match self.destination(&event.envelope.target) {
+            Ok((current_delivery, current_sender))
+                if current_delivery == delivery && current_sender.same_channel(&sender) => current_sender,
+            Ok(_) => return Err(DispatchFailure::new(
+                DispatchError::Invalid("completion destination changed after reservation".into()), event)),
+            Err(error) => return Err(DispatchFailure::new(error, event)),
+        };
+        drop(current);
+        let receipt = event.clone();
+        permit.send(event);
+        ledger.commit(receipt);
+        Ok(DispatchOutcome::Enqueued(delivery))
+    }
+
     pub fn new(
         own: Address,
         agent: EventSender,

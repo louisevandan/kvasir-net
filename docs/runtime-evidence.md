@@ -3,6 +3,14 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: 구현 중단·증거 경계 재정리
+
+새 컴파일/시험/변이/실기 결과를 만들지 않고 기존 Git과 원집계를 대조했다. 마지막 실행은
+`capacity-slice-20260907-13`의1254/1/7이며 현재 후보 결과가 아니다. 그 뒤 WIP와 독립 completion
+진행 후보를 통과 구현으로 세지 않는다. 검증된 진전·현재 중단 상태·남은 작업의 단독 요약은
+[로드맵 §0](distributed-batching-roadmap.md#current-status), 원문 경로와 후보 범위는
+[정산 증거의 중단 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)이 소유한다.
+
 ## 2026-09-07: 요청 입력의 불변 공유 — 정적 검토 WIP
 
 `f5aa09675` 뒤 실제 handler의 대여, RequestState 후보의 입력 공유, drive 관측/오류 원본 보존을

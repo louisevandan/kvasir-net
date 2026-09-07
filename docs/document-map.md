@@ -7,7 +7,7 @@
 ## 1. 새 세션에서 읽을 것
 
 1. [AGENTS.md](../AGENTS.md): 저장소 작업·검증·보고 규칙.
-2. [분산 배치 로드맵](distributed-batching-roadmap.md): 최우선 목표, 감사된 상태, 다음 작업, 단계 간 의존.
+2. [분산 배치 로드맵의 현재 상태](distributed-batching-roadmap.md#current-status): 검증된 진전/미검증 작업/중단과 재개 조건. 시간순 기록의 옛 “다음”부터 실행하지 않는다.
 3. [분산 배치 검증 규약](distributed-batching-verification.md): 결정론적 반례와 실기 승인 조건.
 4. [계층 격리 계약](layer-isolation-contract.md): P4/어댑터/native/llama/backend 책임과 upstream 충격 흡수.
 5. 아래 분야 소유 문서와 실제 구현 경로: 지금 고치는 계약만 필요한 만큼 읽는다.

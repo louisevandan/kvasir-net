@@ -375,3 +375,6 @@ fn changing_destination_does_not_create_a_new_source_correlation_order_domain() 
 
 #[path = "failure_tests.rs"]
 mod failure_tests;
+
+#[path = "completion_tests.rs"]
+mod completion_tests;

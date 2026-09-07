@@ -3100,3 +3100,47 @@ raw Arc/COW 우회는 추가하지 않았다. 정적 검토에서 차단점 미�
 임의 상한을 만들지 않았다. 이것을 제품 ResourceBudget 완료 또는 owned 성공 연결이라고 쓰지 않는다.
 다음 실행 순서는 로드맵만 소유한다. 유지할 소스·필수 회귀·소유 문서를 전부 WIP로 남기고 생성물은
 기존 ignore에 둔다. C++/모델/GPU/원격 실행·push·성능/최종 다중 컴퓨터 승격은 이번 범위에 없다.
+
+## 2026-09-07 중단 기록 — 새 검증 없이 현황 문서화
+
+사용자가 구현 전진을 중단하고 확실한 진전/남은 일 정리를 요청했다. 이후에는 문서만 갱신하며
+새 소스 수정·컴파일·시험·변이·배포·실기를 진행하지 않는다. 현재 요약과 재개 조건의 소유자는
+[로드맵 §0](../../../../../../../docs/distributed-batching-roadmap.md#current-status)이다.
+
+### 다시 대조한 실제 자료
+
+- Git HEAD `6fe10eb104b783f6ea5cacbc2e549a0a7e504677`; RED 보존 `393a6c23e` 뒤 WIP7개.
+  이 구간 `git diff --stat 393a6c23e..6fe10eb10`은55파일 +7589/-709이며 실행된 성과량이 아니다.
+- `target/capacity-slice-20260907-{09,12,13}/workspace-result.json`을 다시 읽었다.
+  앞 둘은 각각1253/0/7, 마지막은1254/1/7·exit101이다. 다른 봉인의 결과를 합산하지 않는다.
+- 실행13 로그에서 T10/T11/T12·실제 simulator malformed arrival·genuine ACK 및 speculative
+  소비 시험의 통과를 대조했다. 이들은 당시 정합성 진전이며 현재 WIP의 검증은 아니다.
+- `target/ack-service-mutations-20260907-01/verification.json`은25시험 baseline/restored25/0,
+  ACK 서비스 제거20/5, 나머지4변이 각각24/1과 실제 재컴파일을 기록한다. 이번에 재실행하지 않았다.
+- 실행13의 cap1 마지막 정상 진행만 실패했다. cap8과 외부 C1~C6 6개 복구 후14입력·6결과·
+  SESSION_READY8개·native 정산 oracle 통과를 정상 진행 성공으로 바꾸지 않는다.
+
+### 중단 전에 작성한 독립 completion 후보 — 전부 미검증
+
+실제 수정 후보는 `EventNode::forward_independent_front`,
+`EventBroker::{reserve_completion,dispatch_completion}`, `EventLedger::inspect_completion_header`,
+`NodeAdapter::{peek_completion,try_take_completion_matching}`와 mailbox/Llama 위임이다.
+다른 source/correlation의 ordinary front에 실제 목적지 슬롯을 확보한 뒤 원본을 이동시키고,
+같은 순서 영역·Full·바뀐 front는 유지한다. exact receipt pin과 terminal 세 원본 반환을 포함한다.
+이 정적 설계는 새 큐 한도/SESSION 전용 규칙/전체 owned·byte 보장과 다르다.
+
+작성한 기본 회귀는 broker12개, mailbox4개, EventNode4개다. actor wrapper에도 실제 API를 연결했고
+head를 poll하지 않은 상태의 capacity0·genuine RELEASED pending identity와 C1의 실제 OUTER 도착을
+동시에 요구하는 예방 witness를 추가했다. 이는 **도착을 검사할 코드**이지 도착 관측 결과가 아니다.
+기존cap1/cap8·14입력/6결과/8응답·정상 진행/외부 복구 분리·timeout 구분은 유지 대상이다.
+
+예정했던 독립 진행 제거·동일 순서 검사 제거·front 일치 검사 제거 변이는 실행하지 않았다.
+새 후보의 compile/전체 통과/actor GREEN/소스·EXE 봉인은 없다. 검증 예산은2회 사용·1회 미사용이며
+이번 문서화 때문에 재시작하거나 소비하지 않는다. root와 정적 검토자 모두 추가 실행을 중단했다.
+
+### 보존의 의미
+
+보존할 것은 이미 작성한 운영 후보·필수 회귀·이 문서를 포함한 소유 문서다. 보존 커밋은
+**미검증 중단 스냅샷**이며 기능 완료 커밋이 아니다. 구현 중단 후 코드 기대값/용량/입력을 바꾸지
+않는다. 생성 소스 사본·로그·EXE·모델은 기존 ignore 경로에 유지하며 Git에 추가하지 않는다.
+로컬 원문을 다른 머신에서 재열람할 장기 보관은 계속 미충족이다. 이번에는 외부 업로드/push도 없다.

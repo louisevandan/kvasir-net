@@ -10,6 +10,7 @@ use p4_agent_core::event_broker::{
     bounded_queue,
 };
 use p4_agent_core::event_node::{EventNode, EventNodeFailure};
+use p4_protocol::event::Envelope;
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::Condvar;
@@ -165,6 +166,14 @@ impl NodeAdapter for ObservedAdapter {
             .map(|value| self.observe_take(value, true))
     }
 
+    fn peek_completion(&self) -> Option<Envelope> {
+        self.inner.peek_completion()
+    }
+
+    fn try_take_completion_matching(&self, envelope: &Envelope) -> Poll {
+        self.observe_take(self.inner.try_take_completion_matching(envelope), true)
+    }
+
     fn snapshot(&self) -> String {
         self.inner.snapshot()
     }
@@ -202,6 +211,7 @@ struct Ring {
     received: Vec<Event>,
     submissions: Vec<Event>,
     outer_polls: usize,
+    head_frozen_full: bool,
 }
 
 impl Ring {
@@ -334,6 +344,7 @@ impl Ring {
             received: Vec::new(),
             submissions: Vec::new(),
             outer_polls: 0,
+            head_frozen_full: false,
         }
     }
 
@@ -353,6 +364,10 @@ impl Ring {
     }
 
     async fn step(&mut self, nodes: &[usize]) {
+        if self.head_frozen_full {
+            assert!(!nodes.contains(&0), "the held-R witness must not poll head");
+            assert_eq!(self.senders[0].capacity(), 0);
+        }
         for gate in &self.gates {
             gate.assert_healthy();
         }
@@ -367,6 +382,12 @@ impl Ring {
         tokio::time::sleep(Duration::from_millis(1)).await;
         for gate in &self.gates {
             gate.assert_healthy();
+        }
+        if self.head_frozen_full {
+            assert_eq!(
+                self.senders[0].capacity(), 0,
+                "R's actual destination never acquired space during prevention"
+            );
         }
     }
 
@@ -438,6 +459,72 @@ impl Ring {
                 event.envelope.payload_content_type == content
                     && event.envelope.correlation_id == correlation
             })
+    }
+
+    fn authentic_held_release(&self, commands: &[InferenceCommand]) -> Event {
+        assert!(self.head_frozen_full);
+        assert_eq!(self.senders[0].capacity(), 0);
+        let head = self.adapters[0].trace.lock().unwrap();
+        let tail = self.adapters[1].trace.lock().unwrap();
+        assert_eq!(head.taken, head.node_taken, "no external recovery yet");
+        assert_eq!(tail.taken, tail.node_taken, "no external recovery yet");
+        assert_eq!(
+            head.node_taken.last().unwrap().envelope.payload_content_type,
+            PHYSICAL_BATCH_CONTENT_TYPE
+        );
+        let releases: Vec<_> = tail.node_taken.iter().filter(|event| {
+            event.envelope.payload_content_type == RELEASED_CONTENT_TYPE
+                && event.envelope.correlation_id == "R"
+        }).collect();
+        assert_eq!(releases.len(), 1);
+        let event = releases[0];
+        assert_eq!(event.envelope.source, endpoint(1));
+        assert_eq!(event.envelope.target, endpoint(0));
+        let release: ReleaseCommand = serde_json::from_slice(&event.payload).unwrap();
+        assert_eq!(release.sequences.len(), 1);
+        assert_eq!(release.sequences[0].key, request_key("loop-session", "R"));
+        let states = self.states[0].lock().unwrap();
+        let held = states.iter().rev()
+            .find(|view| view.point == "blocked_non_ack_held").unwrap();
+        let pending = held.pending[&request_key("loop-session", "R")];
+        assert_eq!(
+            pending,
+            (release.sequences[0].id, release.sequences[0].incarnation,
+                release.sequences[0].operation_id),
+            "genuine ACK matches exact head-owned release identity"
+        );
+        assert_eq!(release.load_generation, 1);
+        assert_eq!(release.session_id, "loop-session");
+        assert!(!held.free.contains(&pending.0), "R's slot remains pending release");
+        assert!(held.requests.contains(&request_key("loop-session", "Q")));
+        for command in &commands[2..] {
+            assert!(
+                !held.requests.contains(&request_key("loop-session", &command.request_id)),
+                "held/queued PREFILL must not already have entered request state"
+            );
+        }
+        event.clone()
+    }
+
+    fn normal_c1_passed_held_release(&self, control: &Event, release: &Event) -> bool {
+        assert!(self.head_frozen_full);
+        assert_eq!(self.senders[0].capacity(), 0);
+        let trace = self.adapters[1].trace.lock().unwrap();
+        assert_eq!(trace.taken, trace.node_taken, "only actual EventNode dequeue is eligible");
+        let Some(index) = trace.node_taken.iter().position(|event| {
+            event.envelope.payload_content_type == SESSION_READY_CONTENT_TYPE
+                && event.envelope.correlation_id == control.envelope.correlation_id
+        }) else { return false; };
+        let response = &trace.node_taken[index];
+        assert!(trace.node_taken[..index].iter().any(|event| event == release));
+        assert_eq!(response.envelope.causation_id.as_deref(), Some(control.envelope.event_id.as_str()));
+        assert_eq!(response.envelope.source, endpoint(1));
+        assert_eq!(response.envelope.target, control.envelope.source);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response.payload).unwrap(),
+            serde_json::json!({"session_id":"loop-session", "state":"ready", "load_generation":1})
+        );
+        self.received.iter().any(|event| event == response)
     }
 
     fn complete(&self, commands: &[InferenceCommand]) -> bool {
@@ -698,6 +785,13 @@ async fn scenario(capacity: usize) {
         .await;
     }
     ring.submit(inputs[5].clone(), &[0]).await;
+    if capacity == 1 {
+        assert_eq!(ring.senders[0].capacity(), 0);
+        // Until the witness below is captured, only tail is polled. Head's
+        // real destination queue stays full, so an observed RELEASED(R)
+        // cannot have been delivered or retired behind our observation.
+        ring.head_frozen_full = true;
+    }
     ring.gates[1].open();
     ring.until(
         "authentic RELEASED(R) really left tail mailbox",
@@ -705,12 +799,14 @@ async fn scenario(capacity: usize) {
         |ring| ring.taken_type(1, RELEASED_CONTENT_TYPE, "R"),
     )
     .await;
+    let held_release = (capacity == 1).then(|| ring.authentic_held_release(&commands));
     for control in &controls[3..] {
         ring.submit(control.clone(), &[1]).await;
     }
     if capacity == 1 {
-        ring.until("tail held C3 and input/actor retain C4/C5", &[1], |ring| {
-            ring.adapters[1].snapshot() == "completion_queue_full:waiting"
+        let held_release = held_release.as_ref().unwrap();
+        ring.until("tail saturation or genuine C1 progress past held R", &[1], |ring| {
+            let saturated = ring.adapters[1].snapshot() == "completion_queue_full:waiting"
                 && ring.accepted(1, &controls[3])
                 && ring.refused(1, &controls[4])
                 && ring.senders.iter().all(|sender| sender.capacity() == 0)
@@ -718,9 +814,12 @@ async fn scenario(capacity: usize) {
                     .lock()
                     .unwrap()
                     .iter()
-                    .any(|view| view.point == "blocked_non_ack_held")
+                    .any(|view| view.point == "blocked_non_ack_held");
+            saturated || ring.normal_c1_passed_held_release(&controls[0], held_release)
         })
         .await;
+        assert_eq!(ring.authentic_held_release(&commands), *held_release);
+        let prevented = ring.normal_c1_passed_held_release(&controls[0], held_release);
         // Observe actual publication order; never infer this from stale prose.
         let head = ring.adapters[0].trace.lock().unwrap();
         let tail = ring.adapters[1].trace.lock().unwrap();
@@ -728,16 +827,10 @@ async fn scenario(capacity: usize) {
             head.taken.last().unwrap().envelope.payload_content_type,
             PHYSICAL_BATCH_CONTENT_TYPE
         );
-        assert_eq!(
-            tail.taken.last().unwrap().envelope.payload_content_type,
-            RELEASED_CONTENT_TYPE
-        );
-        assert_eq!(tail.taken.last().unwrap().envelope.source, endpoint(1));
-        assert_eq!(tail.taken.last().unwrap().envelope.target, endpoint(0));
-        let release: ReleaseCommand =
-            serde_json::from_slice(&tail.taken.last().unwrap().payload).unwrap();
-        assert_eq!(release.sequences.len(), 1);
-        assert_eq!(release.sequences[0].key, request_key("loop-session", "R"));
+        if !prevented {
+            assert_eq!(tail.taken.last(), Some(held_release));
+        }
+        println!("ACTOR_RING_PREVENTION capacity={capacity} normal_c1={prevented}");
         for (index, trace) in [&*head, &*tail].into_iter().enumerate() {
             println!(
                 "ACTOR_RING_OWNERS capacity={capacity} node={index} broker_capacity={} accepted={:?} refused={:?} node_taken={:?}",
@@ -758,38 +851,8 @@ async fn scenario(capacity: usize) {
                     .collect::<Vec<_>>()
             );
         }
-        let states = ring.states[0].lock().unwrap();
-        let held = states
-            .iter()
-            .rev()
-            .find(|view| view.point == "blocked_non_ack_held")
-            .unwrap();
-        let pending = held.pending[&request_key("loop-session", "R")];
-        assert_eq!(
-            pending,
-            (
-                release.sequences[0].id,
-                release.sequences[0].incarnation,
-                release.sequences[0].operation_id
-            ),
-            "genuine ACK matches exact head-owned release identity"
-        );
-        assert_eq!(release.load_generation, 1);
-        assert_eq!(release.session_id, "loop-session");
-        assert!(
-            !held.free.contains(&pending.0),
-            "R's slot is still owned by pending release"
-        );
-        assert!(held.requests.contains(&request_key("loop-session", "Q")));
-        for command in &commands[2..] {
-            assert!(
-                !held
-                    .requests
-                    .contains(&request_key("loop-session", &command.request_id)),
-                "held/queued PREFILL must not already have entered request state"
-            );
-        }
     }
+    ring.head_frozen_full = false;
     ring.drain_outer();
     let before = ring.native_snapshot();
     let outer_before = ring.outer_polls;

@@ -17,7 +17,7 @@ pub use mailbox::{
     ReservedPublishError, ReservedPublishReason, RetainedCompletion, RetainedTransferError,
     completion_mailbox, completion_mailbox_with_budget, completion_mailbox_with_limits,
 };
-use p4_protocol::event::Event;
+use p4_protocol::event::{Envelope, Event};
 use std::task::{Context, Poll as TaskPoll};
 
 // Every refusal returns ownership. Full may be retried; Closed requires an
@@ -43,15 +43,29 @@ pub enum Poll {
 
 /// Stateful concrete runtime owned by one abstract P4 node.
 ///
-/// `try_offer` and `try_take` are the only event movement operations. They are
-/// non-blocking by contract. Load, inference and unload completion are output
-/// events, never return values from these calls.
+/// Event movement operations are non-blocking by contract. Load, inference
+/// and unload completion are output events, never return values from these
+/// calls. Completion inspection never removes an event.
 pub trait NodeAdapter: Send + Sync {
     fn kind(&self) -> &str;
 
     fn try_offer(&self, event: Event) -> Result<(), OfferError>;
 
     fn try_take(&self) -> Poll;
+
+    /// Inspect only the next ordinary completion's envelope without consuming
+    /// it. None also permits adapters that do not implement conditional drain;
+    /// callers must not interpret it as a closed mailbox or look past its front.
+    fn peek_completion(&self) -> Option<Envelope> {
+        None
+    }
+
+    /// Remove the ordinary front only if its entire envelope still matches.
+    /// This never scans ahead or consumes a reserved completion. The default
+    /// leaves ownership untouched; it must not fall back to unconditional take.
+    fn try_take_completion_matching(&self, _expected: &Envelope) -> Poll {
+        Poll::Empty
+    }
 
     /// Registers the node task for an adapter-completion wakeup. Concrete
     /// adapters with an asynchronous worker override this; the default keeps

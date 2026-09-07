@@ -139,8 +139,8 @@ regression, missing/stale route, poisoned lock, destination Full or Closed.
 It is not a reconstructed duplicate. Registration/unregistration have no input
 Event and continue to return the pure `DispatchError` reason.
 
-`EventNode::run` returns `EventNodeFailure { error, held_input, held_output }`
-on terminal failure. Both already-held directions remain owned by that result,
+`EventNode::run` returns `EventNodeFailure { error, held_input, held_output, completion_at_failure }`
+on terminal failure. Every already-held direction remains owned by that result,
 including a held input when output dispatch fails. Full retries keep the same
 value. A completed production node task retains this result in `NodeOwner`'s
 join handle instead of logging and immediately discarding it. Operational
@@ -161,6 +161,30 @@ retained-byte budget. In particular, moving a producer's storage claim into
 the duplicate ledger would incorrectly retain producer capacity until receipt
 eviction. The owned handoff and notification/commit requirements are owned by
 the [batching boundary contract](adapter-batching-layers.md#broker-책임-이전과-정확한-중복-보관--연결-시-지켜야-할-목표-계약).
+
+### Independent completion progress
+
+Status (2026-09-07): **unverified working candidate, implementation work paused**.
+The paths below are written but have not been compiled or executed. This section
+does not certify actor progress; current status is owned by the roadmap §0.
+
+A blocked output does not impose ordering on a different `(source, correlation)`.
+The node may inspect the ordinary completion front's Envelope, reserve its actual
+destination slot, then remove that front only if its entire Envelope still matches.
+Full or a changed front leaves the original untouched. This adds neither another
+ordinary queue nor capacity, payload inspection, SESSION special cases, or scanning.
+The same source/correlation cannot bypass, even when its destination differs.
+
+The reservation is synchronous and never survives an await. Envelope validity and
+sequence are checked before destination pressure. An existing ID pins an independent
+exact receipt, so Duplicate/ConflictingDuplicate precede Full/Closed even if that
+receipt is concurrently evicted. Commit validates the actual Event and rechecks the
+ledger, current destination generation and channel. No broker lock spans mailbox
+dequeue or its capacity callback; the existing raw send notification under ledger
+lock is unchanged. A terminal candidate is returned as `completion_at_failure`
+alongside the held input/output. A reserved front cannot be unwrapped through this
+ordinary API. This removes independent-stream head-of-line blocking only: it does
+not prove same-stream cycle progress, byte budgets, remote acceptance or shutdown.
 
 ## Node lifecycle
 

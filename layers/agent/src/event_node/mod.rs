@@ -22,7 +22,7 @@ pub enum EventNodeError {
     Broker(DispatchError),
 }
 
-/// Terminal node failure together with both events still owned by this task.
+/// Terminal node failure together with every event still owned by this task.
 ///
 /// A refusal is not retirement: the caller now owns these unchanged values
 /// and must account for their outcome. This boundary preserves existing Event
@@ -32,6 +32,10 @@ pub struct EventNodeFailure {
     pub error: EventNodeError,
     pub held_input: Option<Box<Event>>,
     pub held_output: Option<Box<Event>>,
+    /// At most one independent front can be removed after its destination is
+    /// reserved. A terminal validation/routing race retains it alongside the
+    /// older blocked output; it is never another ordinary holding queue.
+    pub completion_at_failure: Option<Box<Event>>,
 }
 
 pub struct EventNode {
@@ -41,6 +45,32 @@ pub struct EventNode {
 }
 
 impl EventNode {
+    /// This helper is synchronous: no destination permit or receipt pin may
+    /// cross an await. It neither executes adapter work nor reads its payload.
+    fn forward_independent_front(&self, blocked: &Event) -> Result<(), (EventNodeError, Option<Box<Event>>)> {
+        let Some(front) = self.adapter.peek_completion() else { return Ok(()); };
+        if front.source == blocked.envelope.source
+            && front.correlation_id == blocked.envelope.correlation_id {
+            return Ok(());
+        }
+        let reserved = self.broker.reserve_completion(&front);
+        if matches!(&reserved, Err(DispatchError::Full(_))) {
+            // The original remains in its real mailbox. Do not create a
+            // second held output just to discover another full destination.
+            return Ok(());
+        }
+        match self.adapter.try_take_completion_matching(&front) {
+            Poll::Empty => Ok(()), // a changed front never consumes its replacement
+            Poll::Closed => Err((EventNodeError::CompletionClosed(self.adapter.snapshot()), None)),
+            Poll::Event(event) => match reserved {
+                Ok(ticket) => self.broker.dispatch_completion(ticket, event)
+                    .map(|_| ())
+                    .map_err(|failure| (EventNodeError::Broker(failure.error), Some(failure.event))),
+                Err(error) => Err((EventNodeError::Broker(error), Some(Box::new(event)))),
+            },
+        }
+    }
+
     pub fn new(
         adapter: Arc<dyn NodeAdapter>,
         inbound: EventReceiver,
@@ -76,6 +106,7 @@ impl EventNode {
                                     error: EventNodeError::Broker(error),
                                     held_input: held_input.map(Box::new),
                                     held_output: held_output.map(Box::new),
+                                    completion_at_failure: None,
                                 });
                             }
                         }
@@ -92,9 +123,19 @@ impl EventNode {
                             error: EventNodeError::AdapterClosed,
                             held_input: held_input.map(Box::new),
                             held_output: held_output.map(Box::new),
+                            completion_at_failure: None,
                         });
                     }
                 }
+            }
+            if let Some(blocked) = held_output.as_ref()
+                && let Err((error, completion_at_failure)) = self.forward_independent_front(blocked) {
+                return Err(EventNodeFailure {
+                    error,
+                    held_input: held_input.map(Box::new),
+                    held_output: held_output.map(Box::new),
+                    completion_at_failure,
+                });
             }
             if input_closed && held_input.is_none() && held_output.is_none() {
                 // Preserve the existing input-close contract, but never drop
@@ -121,6 +162,7 @@ impl EventNode {
                                 error: EventNodeError::CompletionClosed(self.adapter.snapshot()),
                                 held_input: held_input.map(Box::new),
                                 held_output: held_output.map(Box::new),
+                                completion_at_failure: None,
                             });
                         }
                     }

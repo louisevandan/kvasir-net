@@ -1,6 +1,6 @@
 use self::worker::{Worker, WorkerInput};
 use p4_adapter::node_adapter::{NodeAdapter, OfferError, Poll, completion_mailbox};
-use p4_protocol::event::{Endpoint, Event};
+use p4_protocol::event::{Endpoint, Envelope, Event};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll as TaskPoll};
@@ -94,6 +94,14 @@ impl NodeAdapter for LlamaNodeAdapter {
 
     fn try_take(&self) -> Poll {
         self.mailbox.try_take()
+    }
+
+    fn peek_completion(&self) -> Option<Envelope> {
+        self.mailbox.peek_completion()
+    }
+
+    fn try_take_completion_matching(&self, expected: &Envelope) -> Poll {
+        self.mailbox.try_take_completion_matching(expected)
     }
 
     fn poll_take(&self, context: &mut Context<'_>) -> TaskPoll<Poll> {

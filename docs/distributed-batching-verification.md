@@ -157,6 +157,17 @@ outcome 헤더/생성 토큰의 최소 wire 크기와 현재 cursor 잔량으로
 안전장치로 중단시킬 수 있어야 하며 개발 호스트의 OOM을 검증 방법으로 쓰지 않는다. 원본 payload
 길이, 파싱 객체 capacity, 일시 직렬화 복사, allocator overhead와 전체 RSS는 다른 계수다.
 
+아래 독립 completion 시험은 2026-09-07 중단 시점에 **작성만 된 미실행 후보**다. 재개/실행 예산은
+로드맵 §0을 따르며, 이미 GREEN이거나 지금 실행하라는 뜻이 아니다.
+T22/T23의 독립 completion 진행은 실제 EventNode와 실제 목적지 슬롯으로 검사한다. 다른 correlation은
+슬롯 확보 뒤에만 원본을 제거하고, 같은 source/correlation은 목적지가 달라도 앞지르지 못한다.
+Full·front 불일치는 원본 allocation·원장·슬롯을 보존하며 terminal은 기존 양방향 보류물과 후보를
+모두 반환한다. broker는 중복/충돌, eviction 중 receipt pin, 잘못된 Envelope·sequence의 거부 우선순위,
+세대·채널 변경과 예약 취소를 따로 검사한다. actor 예방 분기는 head 미poll·목적지 capacity0을
+유지한 채 genuine R의 전체 pending identity와 정상 C1의 실제 OUTER 전달을 함께 증언해야 한다.
+14입력·6결과·8응답·native·최종 normal_progress 판정은 줄이지 않는다. 독립 진행 제거, 같은 순서
+영역 검사 제거, front 일치 검사 제거 변이를 별도 checkout/실제 재컴파일로 검출한다.
+
 T22/T23의 **중립 공간 통지**는 위 actor 시험과 구분한다. listener 등록→실제 offer 재시도 순서를
 고정하고 등록 전/중/후의 drain·close를 배리어로 검사한다. 마지막 publisher 종료는 빈 reader의
 Pending을 깨워 Closed로 만들며, buffered Event는 먼저 소비돼야 한다. 마지막 receiver 종료는
