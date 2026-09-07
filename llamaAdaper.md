@@ -1,5 +1,8 @@
 # llama.cpp Adapter 구현 요약
 
+> 문서 지위 (2026-09-06): **역사·구 계획**. 당시 계획/관측을 보존한다. 현재 상태·실행 순서·승격 기준으로 사용하지 않는다.
+> 현재 목표·상태·순서는 [실행 로드맵](docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](docs/document-map.md)를 따른다.
+
 이 문서는 이 세션에서 확인·구현한 P4의 llama.cpp 어댑터와 staged runtime의 현재 상태를 요약한다. `MTP`는 현재 테스트 범위에서 제외한다.
 
 ## 구조

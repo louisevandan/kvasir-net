@@ -6,11 +6,24 @@ use cursor::Cursor;
 use decode::read_capsule;
 
 const MAGIC: &[u8; 4] = b"P4PB";
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
 const MAX_ROWS: usize = 65_536;
 const MAX_TENSORS: usize = 16_384;
 const MAX_CAPSULES: usize = 65_536;
-const MAX_STRING: usize = 4_096;
+pub(super) const MAX_STRING: usize = 4_096;
+
+/// Bounds of the existing LB/PB v4 row strings, also enforced before admission.
+/// Measure the actual serialized reply, not its unescaped source fields. This
+/// is a wire check; interpretation of options remains the native parser's job.
+pub(super) fn validate_reply_options(reply: &str, options: &str) -> Result<(), &'static str> {
+    if reply.is_empty() || reply.len() > MAX_STRING {
+        return Err("serialized reply exceeds row wire limit or is empty");
+    }
+    if options.len() > MAX_STRING {
+        return Err("request options exceed row wire limit");
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Invocation {
@@ -28,6 +41,7 @@ pub struct Invocation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RowOwner {
     pub load_generation: u64,
+    pub incarnation: u64,
     pub request_id: String,
     pub sequence_key: String,
     pub session_id: String,
@@ -43,6 +57,17 @@ pub struct RowOwner {
     pub speculative_index: u32,
     pub speculative_count: u32,
     pub options: String,
+}
+
+impl RowOwner {
+    pub(crate) fn has_canonical_request_identity(&self) -> bool {
+        !self.session_id.is_empty()
+            && !self.request_id.is_empty()
+            && !self.session_id.contains('\0')
+            && !self.request_id.contains('\0')
+            && self.sequence_key.split_once('\0')
+                == Some((self.session_id.as_str(), self.request_id.as_str()))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,6 +207,7 @@ fn put_capsule(out: &mut Vec<u8>, capsule: &PhysicalCapsule) -> Result<(), Capsu
     }
     for owner in &capsule.owners {
         put_u64(out, owner.load_generation);
+        put_u64(out, owner.incarnation);
         put_string(out, &owner.request_id)?;
         put_string(out, &owner.sequence_key)?;
         put_string(out, &owner.session_id)?;

@@ -19,13 +19,48 @@ use std::time::{Duration, Instant};
 /// is a drain in progress rather than a stall.
 const COMPLETION_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 
+/// Actor service bound, not a throughput-tuned batch width or an environment
+/// knob. Count the event received by blocking recv in this same turn budget.
+const INGRESS_EVENT_QUANTUM: usize = 32;
+
+mod ack_service;
 mod control;
+mod control_dispatch;
+#[cfg(test)]
+mod control_dispatch_effect_tests;
+#[cfg(test)]
+mod control_progress_tests;
 mod drive;
+#[cfg(test)]
+mod effect_representation_tests;
+mod effects;
 mod emit;
+#[cfg(test)]
+mod incarnation_tests;
+#[cfg(test)]
+mod loop_tests;
+mod obligations;
 mod observe;
+#[cfg(test)]
+mod observe_tests;
+mod outcome;
+mod physical;
+#[cfg(test)]
+mod physical_replay_tests;
 mod proposal;
 mod release;
+#[cfg(test)]
+mod release_notification_tests;
+#[cfg(test)]
+mod release_tests;
+#[cfg(test)]
+mod session_tests;
 mod settlement;
+mod shutdown;
+#[cfg(test)]
+mod stage_tests;
+#[cfg(test)]
+mod turn_tests;
 
 // One Agent owns every concrete llama.cpp node on a machine. Loading is the
 // only lifecycle transition that must be admitted host-wide: each child first
@@ -45,7 +80,6 @@ pub enum WorkerInput {
     Event(Event),
 }
 
-
 /// What the first node was doing between one batch and the next.
 ///
 /// A staged pipeline is supposed to let the first node start the next batch
@@ -62,14 +96,26 @@ pub(super) struct BatchPacing {
     pub ready_sequences: usize,
 }
 
+#[cfg(test)]
+type IssueObserver = Arc<dyn Fn(&'static str, &AdapterState) + Send + Sync>;
+
 pub struct Worker {
     endpoint: Endpoint,
     receiver: mpsc::Receiver<WorkerInput>,
     publisher: CompletionPublisher,
     snapshot: Arc<Mutex<String>>,
-    lifecycle: LlamaLifecycle<ProcessServerControl>,
+    lifecycle: LlamaLifecycle<Box<dyn crate::process::ServerControl + Send>>,
     scheduler: Scheduler,
     state: AdapterState,
+    effects: std::collections::VecDeque<effects::CommittedEffect>,
+    effects_fenced: bool,
+    // Full servicing may retire existing ACKs, but never admits another
+    // command. One FIFO obstruction and one diagnostic are the only new
+    // input retention slots; neither is a general-purpose side queue.
+    held_input: Option<Event>,
+    deferred_ack_error: Option<(p4_protocol::event::Envelope, String)>,
+    active_publications: usize,
+    active_effect_ids: u64,
     /// When this node last finished a stage call, so the next batch can
     /// report how long the node stood still before planning it.
     last_stage_done: Option<Instant>,
@@ -77,9 +123,27 @@ pub struct Worker {
     gate_refusals: u64,
     /// Set when the adapter is going away; ends a wait for mailbox room.
     shutting_down: Arc<AtomicBool>,
+    #[cfg(test)]
+    issue_observer: Option<IssueObserver>,
 }
 
 impl Worker {
+    /// Transport routing does not establish an adapter stage's semantic role.
+    /// Expected endpoints are installed from SESSION, never from this event.
+    fn require_stage_source(
+        &self,
+        event: &Event,
+        expected: &Endpoint,
+        operation: &str,
+    ) -> Result<(), String> {
+        if &event.envelope.source != expected || event.envelope.target != self.endpoint {
+            return Err(format!(
+                "{operation} route does not match the declared pipeline"
+            ));
+        }
+        Ok(())
+    }
+
     pub fn new(
         endpoint: Endpoint,
         receiver: mpsc::Receiver<WorkerInput>,
@@ -95,10 +159,30 @@ impl Worker {
             lifecycle: LlamaLifecycle::default(),
             scheduler: Scheduler::new(),
             state: AdapterState::default(),
+            effects: std::collections::VecDeque::new(),
+            effects_fenced: false,
+            held_input: None,
+            deferred_ack_error: None,
+            active_publications: 0,
+            active_effect_ids: 0,
             last_stage_done: None,
             gate_refusals: 0,
             shutting_down,
+            #[cfg(test)]
+            issue_observer: None,
         }
+    }
+
+    /// Inject at the existing native Frame boundary, preserving lifecycle and
+    /// worker execution. This does not exercise LOAD event parsing/capacity
+    /// validation; that remains a separate integration obligation.
+    #[cfg(test)]
+    fn with_stage_for_test(
+        mut self,
+        stage: Box<dyn crate::process::ServerControl + Send>,
+    ) -> Result<Self, crate::lifecycle::LifecycleError> {
+        self.lifecycle.load(stage, Duration::from_millis(100))?;
+        Ok(self)
     }
 
     /// Test-only handles on the parts a settlement touches.
@@ -118,6 +202,32 @@ impl Worker {
     }
 
     #[cfg(test)]
+    pub(super) fn handle_for_test(&mut self, event: Event) -> Result<(), ()> {
+        self.handle(event)
+    }
+
+    #[cfg(test)]
+    pub(super) fn emit_tail_results_for_test(
+        &mut self,
+        base: &Event,
+        session: &PipelineSession,
+        result: CapsuleSet,
+        body: Vec<u8>,
+    ) -> Result<(), ()> {
+        self.emit_tail_results(base, session, result, body)
+    }
+
+    #[cfg(test)]
+    pub(super) fn effects_for_test(&self) -> (usize, bool) {
+        (self.effects.len(), self.effects_fenced)
+    }
+
+    #[cfg(test)]
+    pub(super) fn effect_intents_for_test(&self) -> String {
+        format!("{:?}", self.effects)
+    }
+
+    #[cfg(test)]
     pub(super) fn request_for_test(&self) -> &super::state::RequestState {
         self.state
             .requests
@@ -126,33 +236,91 @@ impl Worker {
             .expect("the test inserted one request")
     }
 
-    pub fn run(mut self) {
-        let mut failed = false;
-        'worker: while let Ok(WorkerInput::Event(event)) = self.receiver.recv() {
-            if self.handle(event).is_err() {
-                failed = true;
-                break;
-            }
-            while let Ok(WorkerInput::Event(event)) = self.receiver.try_recv() {
-                if self.handle(event).is_err() {
-                    failed = true;
-                    break 'worker;
-                }
-            }
-            if self.drive_first_batches().is_err() {
-                failed = true;
-                break;
-            }
-        }
-        if matches!(self.lifecycle.state(), crate::lifecycle::LoadState::Loaded) {
-            let _ = self.lifecycle.unload();
-        }
-        if !failed {
-            self.set_snapshot("closed");
+    #[cfg(test)]
+    fn observe_issue_state(&self, point: &'static str) {
+        if let Some(observer) = &self.issue_observer {
+            observer(point, &self.state);
         }
     }
 
+    pub fn run(mut self) {
+        let mut failed = false;
+        let mut issued = false;
+        let reason = 'worker: loop {
+            if self.shutting_down.load(Ordering::Acquire) {
+                break "shutdown_requested";
+            }
+            let mut handled = 0;
+            if !issued {
+                // No self-generated progress remains. recv also catches input
+                // arriving after the preceding Empty check without a lost wake.
+                let input = self
+                    .held_input
+                    .take()
+                    .map(WorkerInput::Event)
+                    .map(Ok)
+                    .unwrap_or_else(|| self.receiver.recv());
+                let Ok(WorkerInput::Event(event)) = input else {
+                    break "input_closed";
+                };
+                if self.shutting_down.load(Ordering::Acquire) {
+                    break "shutdown_requested";
+                }
+                if self.handle(event).is_err() {
+                    failed = true;
+                    break "failed";
+                }
+                handled = 1;
+            }
+            while handled < INGRESS_EVENT_QUANTUM {
+                if self.shutting_down.load(Ordering::Acquire) {
+                    break 'worker "shutdown_requested";
+                }
+                let input = self
+                    .held_input
+                    .take()
+                    .map(WorkerInput::Event)
+                    .map(Ok)
+                    .unwrap_or_else(|| self.receiver.try_recv());
+                match input {
+                    Ok(WorkerInput::Event(event)) => {
+                        if self.handle(event).is_err() {
+                            failed = true;
+                            break 'worker "failed";
+                        }
+                        handled += 1;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    // Closed is cancellation of this worker's input, not
+                    // permission to start another irreversible native issue.
+                    Err(mpsc::TryRecvError::Disconnected) => break 'worker "input_closed",
+                }
+            }
+            issued = match self.drive_one_batch() {
+                Ok(issued) => issued,
+                Err(()) => {
+                    failed = true;
+                    break "failed";
+                }
+            };
+            // A successful non-output prefill is progress too. Continue even
+            // with an empty inbox, but reconsider input before the next issue.
+        };
+        #[cfg(test)]
+        self.observe_issue_state("run_stopping");
+        self.finish_run(reason, failed);
+    }
+
     fn handle(&mut self, event: Event) -> Result<(), ()> {
+        if self.effects_fenced
+            || self
+                .state
+                .prepared_issue
+                .as_ref()
+                .is_some_and(|issue| issue.progress == super::state::IssueProgress::Uncertain)
+        {
+            return Err(());
+        }
         let content_type = event.envelope.payload_content_type.as_str();
         let result = match content_type {
             LOAD_CONTENT_TYPE => self.load(event.clone()),
@@ -173,6 +341,11 @@ impl Worker {
             self.set_snapshot(&format!("failed:{detail}"));
             self.emit_error(&event, "LLAMA_ADAPTER_EVENT_REJECTED", detail)?;
         }
+        if self.effects_fenced {
+            return Err(());
+        }
+        self.enqueue_deferred_ack_error()?;
+        self.flush_effects().map_err(|_| ())?;
         Ok(())
     }
 
@@ -188,11 +361,47 @@ impl Worker {
             .sessions
             .get(&command.session_id)
             .ok_or_else(|| "inference session is not configured".to_owned())?;
-        if session.command.role != NodeRole::First {
+        if session.command.role() != NodeRole::First {
             return Err("prefill must target the first node".into());
         }
+        let submitted_route = event
+            .envelope
+            .return_route
+            .as_ref()
+            .ok_or("inference requires an OUTER return route")?;
+        if event.envelope.source != Endpoint::Outer(submitted_route.clone()) {
+            return Err("inference source does not match its OUTER return route".into());
+        }
+        if event.envelope.target != self.endpoint {
+            return Err("inference target does not name this worker endpoint".into());
+        }
+        // A generic event may carry strings that the approved-output/issue
+        // identity cannot encode. Reject them before Tokenize, admission
+        // records or native KV, not by stopping the worker after execution.
+        super::super::issue_witness::validate_submission_identity(
+            &event.envelope.target,
+            submitted_route,
+            command.load_generation,
+            &command.session_id,
+            &command.request_id,
+            &event.envelope.event_id,
+        )
+        .map_err(str::to_owned)?;
+        let reply = serde_json::to_string(&ReplySpec {
+            ingress_agent: submitted_route.ingress_agent.to_string(),
+            channel: submitted_route.channel.clone(),
+            connection_generation: submitted_route.connection_generation,
+            correlation_id: event.envelope.correlation_id.clone(),
+            deadline_unix_ms: event.envelope.deadline_unix_ms,
+        })
+        .map_err(|error| format!("cannot encode reply specification: {error}"))?;
+        // Both codecs keep the same byte limit. Refuse before session-key
+        // records, Tokenize, slot/incarnation admission or native execution.
+        super::super::capsule::validate_reply_options(&reply, &command.options)
+            .map_err(str::to_owned)?;
         let key = request_key(&command.session_id, &command.request_id);
-        if self.state.requests.contains_key(&key) {
+        if self.state.requests.contains_key(&key) || self.state.pending_releases.contains_key(&key)
+        {
             return Err("request identity is already active".into());
         }
         // A conversation may span many requests, but one request identity may
@@ -221,19 +430,6 @@ impl Worker {
             self.state
                 .remember_session_key(scope, command.session_key.clone());
         }
-        let route = event
-            .envelope
-            .return_route
-            .as_ref()
-            .ok_or_else(|| "inference requires an OUTER return route".to_owned())?;
-        let reply = serde_json::to_string(&ReplySpec {
-            ingress_agent: route.ingress_agent.to_string(),
-            channel: route.channel.clone(),
-            connection_generation: route.connection_generation,
-            correlation_id: event.envelope.correlation_id.clone(),
-            deadline_unix_ms: event.envelope.deadline_unix_ms,
-        })
-        .map_err(|error| format!("cannot encode reply specification: {error}"))?;
         if let Some(prompt) = command.prompt.take() {
             command.tokens = self.tokenize(prompt)?;
         }
@@ -245,10 +441,16 @@ impl Worker {
         {
             return Err("prompt plus max_tokens exceeds loaded per-sequence context".into());
         }
+        let incarnation = self.state.next_incarnation;
+        let next_incarnation = incarnation
+            .checked_add(1)
+            .filter(|_| incarnation != 0)
+            .ok_or("request incarnation exhausted")?;
         self.state.requests.insert(
             key.clone(),
             RequestState {
                 command,
+                incarnation,
                 sequence_id: None,
                 template: event,
                 reply,
@@ -258,66 +460,13 @@ impl Worker {
                 after_settlement: None,
                 outstanding: 0,
                 generated: 0,
+                issued_work: None,
             },
         );
+        self.state.next_incarnation = next_incarnation;
         self.state.pending.push_back(key);
         self.admit_pending()?;
         Ok(())
-    }
-
-    fn physical(&mut self, event: Event) -> Result<(), String> {
-        let ingress_unix_ms = observe::unix_ms();
-        let input = CapsuleSet::decode(&event.payload)
-            .map_err(|error| format!("invalid physical capsule: {error:?}"))?;
-        let session_id = single_session(&input)?;
-        if input
-            .0
-            .iter()
-            .flat_map(|capsule| &capsule.owners)
-            .any(|owner| owner.load_generation != self.state.load_generation)
-        {
-            return Err("physical batch load generation is stale".into());
-        }
-        let session = self
-            .state
-            .sessions
-            .get(&session_id)
-            .ok_or_else(|| "physical batch session is not configured".to_owned())?
-            .clone();
-        if session.command.role == NodeRole::First {
-            return Err("physical cut-set cannot target the first node".into());
-        }
-        if input
-            .0
-            .iter()
-            .any(|capsule| capsule.terminal || !capsule.outcomes.is_empty())
-        {
-            return Err("terminal capsule cannot be replayed".into());
-        }
-        let start_unix_ms = observe::unix_ms();
-        let body = self.stage_request(
-            Operation::PhysicalBatch,
-            Operation::PhysicalResult,
-            event.payload.clone(),
-        )?;
-        let end_unix_ms = observe::unix_ms();
-        let result = CapsuleSet::decode(&body)
-            .map_err(|error| format!("invalid physical result: {error:?}"))?;
-        let forwarded = match session.command.role {
-            NodeRole::Middle => self.emit_bytes(
-                &event,
-                session.next.expect("validated middle next"),
-                EventClass::Data,
-                PHYSICAL_BATCH_CONTENT_TYPE,
-                body,
-            ),
-            NodeRole::Last => self.emit_tail_results(&event, &session, result.clone(), body),
-            NodeRole::First => unreachable!(),
-        }
-        .map_err(|_| "completion queue is full".to_owned());
-        forwarded?;
-        self.emit_stage_span(&event, &session_id, &result, ingress_unix_ms, start_unix_ms, end_unix_ms)
-            .map_err(|_| "completion queue is full".to_owned())
     }
 
     fn stage_request(
@@ -327,14 +476,41 @@ impl Worker {
         body: Vec<u8>,
     ) -> Result<Vec<u8>, String> {
         let request = Frame::new(operation, body).map_err(|error| error.to_string())?;
-        let response = self
-            .lifecycle
-            .request(request)
-            .map_err(|error| format!("stage request failed: {error:?}"))?;
+        // Drop may be signalled while planning or decoding a command. This is
+        // the final observation before entering native; it cannot interrupt a
+        // synchronous call that has already begun.
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err("native request refused after shutdown was observed".into());
+        }
+        let mutating = matches!(
+            operation,
+            Operation::LogicalBatch
+                | Operation::PhysicalBatch
+                | Operation::PhysicalSettle
+                | Operation::PhysicalRelease
+        );
+        if mutating && self.effects_fenced {
+            return Err("native mutation is fenced".into());
+        }
+        let response = self.lifecycle.request(request).map_err(|error| {
+            // The native wire does not distinguish rejection-before-execution
+            // from a response lost after execution. Do not issue more work or
+            // automatically retry an ambiguous mutating operation.
+            if mutating {
+                self.effects_fenced = true;
+            }
+            format!("stage request failed: {error:?}")
+        })?;
         if response.header.operation == Operation::Error {
+            if mutating {
+                self.effects_fenced = true;
+            }
             return Err(String::from_utf8_lossy(&response.body).into_owned());
         }
         if response.header.operation != expected {
+            if mutating {
+                self.effects_fenced = true;
+            }
             return Err(format!(
                 "stage returned unexpected {:?}",
                 response.header.operation

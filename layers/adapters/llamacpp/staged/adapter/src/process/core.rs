@@ -21,6 +21,8 @@ impl ProcessState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadyInfo {
     pub protocol_revision: u16,
+    /// Zero means an older server, never support for identity-bound mutation.
+    pub physical_identity_revision: u16,
     pub server_id: String,
     pub transactions: bool,
     pub physical_batch: bool,
@@ -70,6 +72,26 @@ pub trait ServerControl {
         Err("stage server request channel is unavailable".into())
     }
     fn shutdown(&mut self) -> Result<(), String>;
+}
+
+// Keep injection at the adapter's existing process/wire boundary. Neither
+// the scheduler nor the backend-neutral P4 node needs a native engine type.
+impl<T: ServerControl + ?Sized> ServerControl for Box<T> {
+    fn start(&mut self) -> Result<(), String> {
+        (**self).start()
+    }
+
+    fn wait_ready(&mut self, deadline: Instant) -> Result<Option<ReadyInfo>, String> {
+        (**self).wait_ready(deadline)
+    }
+
+    fn request(&mut self, request: Frame) -> Result<Frame, String> {
+        (**self).request(request)
+    }
+
+    fn shutdown(&mut self) -> Result<(), String> {
+        (**self).shutdown()
+    }
 }
 
 /// One stage-server process; the adapter forwards OUTER's opaque plan unchanged.
@@ -350,6 +372,13 @@ pub(super) fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
         .any(|field| field == "atomic_batch_exclusive=1");
     Ok(ReadyInfo {
         protocol_revision: PROTOCOL_REVISION,
+        physical_identity_revision: text
+            .split(';')
+            .find_map(|field| field.strip_prefix("physical_identity_revision="))
+            .map(str::parse::<u16>)
+            .transpose()
+            .map_err(|_| "invalid physical identity revision".to_owned())?
+            .unwrap_or(0),
         n_ctx: capability_number(&text, "n_ctx")?,
         n_batch: capability_number(&text, "n_batch")?,
         n_ubatch: capability_number(&text, "n_ubatch")?,

@@ -7,6 +7,7 @@
 // here rather than being written twice and drifting apart.
 
 #include "llama_stage_runtime.hpp"
+#include "utf8_text.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -45,28 +46,7 @@ inline const char * hop_phase_name(protocol::HopPhase phase) {
 // were read as two-byte leads, 0xC0 and 0xC1 spell an ASCII value in two
 // bytes, and 0xF5 and above are past the last code point. A unit test on
 // this function found them; nothing in the pipeline had.
-inline bool valid_utf8_text(const std::string & value) {
-    for (std::size_t i = 0; i < value.size();) {
-        const auto byte = static_cast<unsigned char>(value[i]);
-        if (byte < 0x80) { ++i; continue; }
-        if (byte < 0xC2 || byte > 0xF4) return false;
-        const std::size_t width = byte < 0xE0 ? 2 : byte < 0xF0 ? 3 : 4;
-        if (i + width > value.size()) return false;
-        const auto next = static_cast<unsigned char>(value[i + 1]);
-        // The four ranges where a legal lead still admits an illegal second
-        // byte: an overlong three-byte form, a UTF-16 surrogate, an overlong
-        // four-byte form, and a code point above U+10FFFF.
-        if ((byte == 0xE0 && next < 0xA0) || (byte == 0xED && next >= 0xA0)
-            || (byte == 0xF0 && next < 0x90) || (byte == 0xF4 && next >= 0x90)) {
-            return false;
-        }
-        for (std::size_t j = 1; j < width; ++j) {
-            if ((static_cast<unsigned char>(value[i + j]) & 0xC0) != 0x80) return false;
-        }
-        i += width;
-    }
-    return true;
-}
+using runtime::valid_utf8_text;
 
 // How much of `value` is whole UTF-8.
 //

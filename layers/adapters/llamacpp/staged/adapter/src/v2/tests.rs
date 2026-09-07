@@ -1,5 +1,5 @@
-use super::*;
 use super::node::state::{AdapterState, ReadyRows, RequestState};
+use super::*;
 
 #[test]
 fn unload_requires_an_explicit_model_generation() {
@@ -24,9 +24,10 @@ fn capsule() -> PhysicalCapsule {
         },
         owners: vec![
             RowOwner {
+                incarnation: 1,
                 load_generation: 1,
                 request_id: "r1".into(),
-                sequence_key: "s1".into(),
+                sequence_key: "pipeline-a\0r1".into(),
                 session_id: "pipeline-a".into(),
                 reply: "reply-1".into(),
                 sequence_id: 3,
@@ -42,9 +43,10 @@ fn capsule() -> PhysicalCapsule {
                 options: "{}".into(),
             },
             RowOwner {
+                incarnation: 1,
                 load_generation: 1,
                 request_id: "r2".into(),
-                sequence_key: "s2".into(),
+                sequence_key: "pipeline-a\0r2".into(),
                 session_id: "pipeline-a".into(),
                 reply: "reply-2".into(),
                 sequence_id: 8,
@@ -342,7 +344,10 @@ fn recurrent_ready_decode_takes_the_batch_and_leaves_prompts_whole() {
 #[test]
 fn recurrent_cohorts_alternate_when_the_issued_decode_retires() {
     let mut scheduler = Scheduler::new();
-    let prompts = [demand(1, Phase::Prefill, 500), demand(2, Phase::Prefill, 500)];
+    let prompts = [
+        demand(1, Phase::Prefill, 500),
+        demand(2, Phase::Prefill, 500),
+    ];
     let mut prompt_batches = 0;
     let mut decode_batches = 0;
     for round in 0..6 {
@@ -369,8 +374,14 @@ fn recurrent_cohorts_alternate_when_the_issued_decode_retires() {
             prompt_batches += 1;
         }
     }
-    assert_eq!(decode_batches, 6, "a ready decode should take every batch it can");
-    assert_eq!(prompt_batches, 6, "and the prompts should get one whenever it is out");
+    assert_eq!(
+        decode_batches, 6,
+        "a ready decode should take every batch it can"
+    );
+    assert_eq!(
+        prompt_batches, 6,
+        "and the prompts should get one whenever it is out"
+    );
 }
 
 /// And with no decode ready the prompts get the whole UBATCH between them,
@@ -424,7 +435,9 @@ fn settlement_replay_must_end_exactly_at_retain_boundary() {
         load_generation: 1,
         session_id: "pipeline-a".into(),
         sequences: vec![SettlementSequence {
-            key: "request".into(),
+            incarnation: 1,
+            operation_id: 1,
+            key: "pipeline-a\0request".into(),
             id: 0,
             retain_from: 12,
             replay_tokens: vec![1, 2],
@@ -459,49 +472,141 @@ fn settlement_replay_must_end_exactly_at_retain_boundary() {
 #[test]
 fn the_open_batch_ledger_counts_batches_not_executions() {
     let mut state = AdapterState::default();
+    state.load_generation = 1;
     assert_eq!(state.open_batches.len(), 0);
 
-    // One batch that llama.cpp split into four physical ubatches.
-    state.open_batch([11, 12, 13, 14]);
-    assert_eq!(state.open_batches.len(), 1, "four capsules are still one batch");
+    // This is an issued-authority/receipt unit test, not a worker scheduling
+    // gate. Request meaning is exercised separately through Worker::tail.
+    let split = CapsuleSet(
+        (11..=14)
+            .map(|id| ledger_prefill_capsule(id, (id - 11) as u32, false))
+            .collect(),
+    );
+    state.register_issued_batch(&split).unwrap();
+    assert_eq!(
+        state.open_batches.len(),
+        1,
+        "four capsules are still one batch"
+    );
 
-    state.open_batch([21]);
+    state
+        .register_issued_batch(&CapsuleSet(vec![ledger_prefill_capsule(21, 4, false)]))
+        .unwrap();
     assert_eq!(state.open_batches.len(), 2);
 
     // The tail returns the split batch one capsule at a time; the batch stays
-    // open until its last capsule is back.
+    // open until its last capsule is back. Preparing a return does not write
+    // authority; this raw ledger test commits only after inspecting the plan.
     for execution in [11, 12, 13] {
-        state.close_execution(execution);
-        assert_eq!(state.open_batches.len(), 2, "a partly returned batch is open");
+        let returned = CapsuleSet(vec![ledger_prefill_capsule(
+            execution,
+            (execution - 11) as u32,
+            true,
+        )]);
+        let plan = state.flights.prepare_return(&returned).unwrap();
+        assert!(plan.fragments.is_empty());
+        state.commit_flight_return(plan);
+        assert_eq!(
+            state.open_batches.len(),
+            2,
+            "a partly returned batch is open"
+        );
     }
-    state.close_execution(14);
+    let last = CapsuleSet(vec![ledger_prefill_capsule(14, 3, true)]);
+    let plan = state.flights.prepare_return(&last).unwrap();
+    assert_eq!(
+        plan.fragments.len(),
+        1,
+        "the whole logical request fragment settles once"
+    );
+    state.commit_flight_return(plan);
     assert_eq!(state.open_batches.len(), 1);
 
-    state.close_execution(21);
+    let next = CapsuleSet(vec![ledger_prefill_capsule(21, 4, true)]);
+    let plan = state.flights.prepare_return(&next).unwrap();
+    assert_eq!(plan.fragments.len(), 1);
+    state.commit_flight_return(plan);
     assert_eq!(state.open_batches.len(), 0);
 
-    // A capsule that belongs to no open batch is ignored rather than
-    // corrupting the ledger - a duplicate terminal capsule must not open a
-    // slot that was never taken.
-    state.close_execution(21);
+    // A proven duplicate is idempotent; an unknown execution is not a
+    // duplicate and must be refused, without manufacturing a free slot.
+    let before = state.flights.clone();
+    let duplicate = state.flights.prepare_return(&next).unwrap();
+    assert!(duplicate.fragments.is_empty());
+    state.commit_flight_return(duplicate);
+    assert_eq!(state.flights, before);
+    assert!(
+        state
+            .flights
+            .prepare_return(&CapsuleSet(vec![ledger_prefill_capsule(99, 4, true)]))
+            .is_err()
+    );
     assert_eq!(state.open_batches.len(), 0);
 }
 
-/// A new load clears the ledger, so a stale batch cannot hold a slot forever.
+/// The reset primitive clears both pending authority and duplicate receipts.
+/// This does not exercise the production LOAD route; the worker lifecycle
+/// gate must prove that route invokes the primitive at the correct barrier.
 #[test]
-fn the_open_batch_ledger_does_not_survive_a_load() {
+fn the_flight_reset_clears_issued_and_receipt_authority() {
     let mut state = AdapterState::default();
-    state.open_batch([1, 2]);
+    state.load_generation = 1;
+    let issued = CapsuleSet(vec![
+        ledger_prefill_capsule(1, 0, false),
+        ledger_prefill_capsule(2, 1, false),
+    ]);
+    state.register_issued_batch(&issued).unwrap();
+    let partial = CapsuleSet(vec![ledger_prefill_capsule(1, 0, true)]);
+    let plan = state.flights.prepare_return(&partial).unwrap();
+    state.commit_flight_return(plan);
     assert_eq!(state.open_batches.len(), 1);
-    state.open_batches.clear();
-    assert_eq!(state.open_batches.len(), 0, "the load path clears this");
+    state.clear_flights();
+    assert_eq!(state.open_batches.len(), 0);
+    assert!(
+        state.flights.prepare_return(&partial).is_err(),
+        "old receipt is not fresh authority"
+    );
+    assert_eq!(state.flights, Default::default());
+}
+
+fn ledger_prefill_capsule(execution: u64, position: u32, terminal: bool) -> PhysicalCapsule {
+    let mut value = capsule();
+    value.execution_id = execution;
+    value.terminal = terminal;
+    value.owners.truncate(1);
+    let owner = &mut value.owners[0];
+    owner.sequence_key = super::node::state::request_key(&owner.session_id, &owner.request_id);
+    owner.phase = Phase::Prefill;
+    owner.position = position;
+    owner.output = false;
+    value.invocation = Invocation {
+        flags: 0,
+        n_seq_tokens: 1,
+        n_seqs: 1,
+        n_seqs_unq: 1,
+        n_pos: 1,
+        positions: vec![position as i32],
+        sequence_counts: vec![1],
+        sequence_ids: vec![owner.sequence_id as i32],
+        output: vec![false],
+    };
+    if terminal {
+        value.tensors.clear();
+    }
+    value
 }
 
 /// A request in the shape the worker builds, for tests about its readiness.
 pub(super) fn request_state(tokens: Vec<i32>) -> RequestState {
     let own = p4_protocol::Address::tcp("127.0.0.1", 42001);
     let node = p4_protocol::event::Endpoint::node(own.clone(), "n0", 1);
+    let outer = p4_protocol::event::OuterEndpoint {
+        ingress_agent: own,
+        channel: "request-tests".into(),
+        connection_generation: 1,
+    };
     RequestState {
+        incarnation: 1,
         command: InferenceCommand {
             load_generation: 1,
             session_id: "session".into(),
@@ -519,9 +624,9 @@ pub(super) fn request_state(tokens: Vec<i32>) -> RequestState {
                 event_id: "e1".into(),
                 correlation_id: "request".into(),
                 causation_id: None,
-                source: node.clone(),
+                source: p4_protocol::event::Endpoint::Outer(outer.clone()),
                 target: node,
-                return_route: None,
+                return_route: Some(outer.clone()),
                 class: p4_protocol::event::EventClass::Data,
                 sequence: 1,
                 deadline_unix_ms: None,
@@ -530,13 +635,20 @@ pub(super) fn request_state(tokens: Vec<i32>) -> RequestState {
             },
             payload: Vec::new(),
         },
-        reply: String::new(),
+        reply: serde_json::to_string(&ReplySpec {
+            ingress_agent: outer.ingress_agent.to_string(),
+            channel: outer.channel,
+            connection_generation: outer.connection_generation,
+            correlation_id: "request".into(),
+            deadline_unix_ms: None,
+        }).unwrap(),
         prompt_cursor: 0,
         prompt_issued: 0,
         ready: None,
         after_settlement: None,
         outstanding: 0,
         generated: 0,
+        issued_work: None,
     }
 }
 
@@ -560,7 +672,11 @@ fn a_prompt_may_have_several_fragments_in_flight_and_a_decode_may_not() {
     // One fragment of 512 rows is out.
     prompt.prompt_issued = 512;
     prompt.outstanding = 1;
-    assert_eq!(prompt.phase_within(1), None, "one fragment is the old behaviour");
+    assert_eq!(
+        prompt.phase_within(1),
+        None,
+        "one fragment is the old behaviour"
+    );
     assert_eq!(
         prompt.phase_within(2),
         Some(Phase::Prefill),
@@ -656,7 +772,10 @@ fn dropping_the_adapter_returns_even_with_an_undrained_completion_mailbox() {
         // a sleep would leave this test passing for the wrong reason on a slow
         // machine and flaking on a fast one.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !adapter.snapshot().starts_with("completion_queue_full:waiting") {
+        while !adapter
+            .snapshot()
+            .starts_with("completion_queue_full:waiting")
+        {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the worker never reached a full completion mailbox: {}",
@@ -676,7 +795,10 @@ fn dropping_the_adapter_returns_even_with_an_undrained_completion_mailbox() {
 }
 
 /// A load command the worker will refuse, so it answers with an error event.
-fn malformed_load(endpoint: &p4_protocol::event::Endpoint, sequence: u64) -> p4_protocol::event::Event {
+fn malformed_load(
+    endpoint: &p4_protocol::event::Endpoint,
+    sequence: u64,
+) -> p4_protocol::event::Event {
     p4_protocol::event::Event {
         envelope: p4_protocol::event::Envelope {
             protocol_version: p4_protocol::event::Envelope::VERSION,

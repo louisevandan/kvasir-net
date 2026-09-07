@@ -262,7 +262,29 @@ static void completed_hop_accepts_racing_empty_cancel() {
     assert(session->state() == staged::runtime::State::Ready);
 }
 
+static void physical_binding_is_explicit_and_blocks_legacy_mutation() {
+    Session session;
+    load_plan(session);
+    const auto hello = session.handle(Frame::make(Operation::Hello, {}));
+    const std::string capabilities(hello.body.begin() + 2, hello.body.end());
+    assert(capabilities.find(";physical_identity_revision=1") != std::string::npos);
+    const std::vector<std::uint8_t> generation{7, 0, 0, 0, 0, 0, 0, 0};
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        const auto bound = session.handle(Frame::make(Operation::BindLoad, generation));
+        assert(bound.header.operation == Operation::BindLoad && bound.body == generation);
+    }
+    auto different = generation;
+    different[0] = 8;
+    assert(session.handle(Frame::make(Operation::BindLoad, different)).header.operation == Operation::Error);
+    for (const auto operation : {Operation::Hop, Operation::Cancel, Operation::KvRestore, Operation::KvCommit}) {
+        const auto result = session.handle(Frame::make(operation, {}));
+        assert(result.header.operation == Operation::Error);
+        assert(std::string(result.body.begin(), result.body.end()).find("rejects legacy mutation") != std::string::npos);
+    }
+}
+
 int main() {
+    physical_binding_is_explicit_and_blocks_legacy_mutation();
     transaction_lease_fences_same_operation();
     hello_requires_plan();
     unsupported_capabilities_are_explicit();

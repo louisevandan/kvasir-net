@@ -17,8 +17,10 @@ impl Worker {
                 "load requires generation, binary, opaque plan, batch/ubatch, context and sequence capacity".into(),
             );
         }
-        if command.load_generation == 0 {
-            return Err("load generation must be non-zero".into());
+        if command.load_generation == 0
+            || command.load_generation <= self.state.last_load_generation
+        {
+            return Err("load generation must be fresh and non-zero".into());
         }
         let reserved_context = command
             .context_size
@@ -57,7 +59,7 @@ impl Worker {
         self.set_snapshot("loading");
         with_host_load_gate(|| {
             self.lifecycle.load(
-                ProcessServerControl::new(launch),
+                Box::new(ProcessServerControl::new(launch)),
                 Duration::from_millis(command.ready_timeout_ms),
             )
         })
@@ -78,6 +80,7 @@ impl Worker {
             let _ = self.lifecycle.unload();
             return Err(detail);
         }
+        self.bind_loaded_identity(command.load_generation)?;
         self.state.batch_capacity = command.n_batch;
         self.state.physical_capacity = command.n_ubatch;
         self.state.equal_sequence_ubatch = ready.equal_sequence_ubatch;
@@ -89,7 +92,13 @@ impl Worker {
         self.state.load_generation = command.load_generation;
         self.state.next_speculative_id = 1;
         self.state.clear_verify_fence();
-        self.state.open_batches.clear();
+        self.state.clear_flights();
+        // This is after the native BindLoad echo, not lazy authority minted
+        // from an untrusted first physical capsule. Unload leaves it unbound.
+        self.state.physical_receives =
+            super::super::physical_receive::PhysicalReceiveLedger::new(command.load_generation)?;
+        self.effects.clear();
+        self.effects_fenced = false;
         self.set_snapshot("loaded");
         self.emit_json(
             &event,
@@ -99,6 +108,7 @@ impl Worker {
             &serde_json::json!({
                 "state":"loaded",
                 "load_generation":command.load_generation,
+                "physical_identity_revision":ready.physical_identity_revision,
                 "n_batch":ready.n_batch,
                 "n_ubatch":ready.n_ubatch,
                 "n_ctx":ready.n_ctx,
@@ -116,6 +126,32 @@ impl Worker {
         .map_err(|_| "completion queue is full".to_owned())
     }
 
+    // This is the production LOAD-to-native boundary, not a readiness-only
+    // predicate. No physical slot can be admitted before its exact bind echo.
+    fn bind_loaded_identity(&mut self, generation: u64) -> Result<(), String> {
+        if generation == 0 || generation <= self.state.last_load_generation {
+            return Err("load generation must be fresh and non-zero".into());
+        }
+        if self
+            .lifecycle
+            .ready_info()
+            .is_none_or(|ready| ready.physical_identity_revision != 1)
+        {
+            let _ = self.lifecycle.unload();
+            return Err("stage omitted physical_identity_revision=1".into());
+        }
+        // Burn the attempted generation even if the bind reply is lost.
+        self.state.last_load_generation = generation;
+        let bind = generation.to_le_bytes().to_vec();
+        let acknowledgement =
+            self.stage_request(Operation::BindLoad, Operation::BindLoad, bind.clone());
+        if acknowledgement.as_ref() != Ok(&bind) {
+            let _ = self.lifecycle.unload();
+            return Err("native load identity binding failed".into());
+        }
+        Ok(())
+    }
+
     pub(super) fn unload(&mut self, event: Event) -> Result<(), String> {
         let command: UnloadCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid unload payload: {error}"))?;
@@ -123,10 +159,18 @@ impl Worker {
         if command.load_generation != self.state.load_generation {
             return Err("unload load generation is stale".into());
         }
+        // UNLOAD is not cancellation or an implicit cluster drain. Preserve
+        // locally accepted work, including downstream KV with no head request
+        // record. The worker serializes this preflight with native execution.
+        self.require_idle_unload()?;
         self.set_snapshot("unloading");
-        self.lifecycle
-            .unload()
-            .map_err(|error| format!("stage unload failed: {error:?}"))?;
+        if let Err(error) = self.lifecycle.unload() {
+            // Native cleanup may have partially happened. Unlike a busy
+            // preflight rejection, this cannot resume the old loaded session
+            // or acknowledge queued input. handle() reports and exits fenced.
+            self.effects_fenced = true;
+            return Err(format!("stage unload failed: {error:?}"));
+        }
         self.state.sessions.clear();
         self.state.requests.clear();
         self.state.pending.clear();
@@ -144,7 +188,9 @@ impl Worker {
         self.state.forget_session_keys();
         self.state.next_speculative_id = 1;
         self.state.clear_verify_fence();
-        self.state.open_batches.clear();
+        self.state.clear_flights();
+        self.effects.clear();
+        self.effects_fenced = false;
         self.set_snapshot("unloaded");
         self.emit_json(
             &event,
@@ -163,25 +209,48 @@ impl Worker {
         if command.load_generation != self.state.load_generation {
             return Err("session load generation is stale".into());
         }
-        let first = node_endpoint(&command.first)?;
-        let next = command.next.as_ref().map(node_endpoint).transpose()?;
+        let stages = command
+            .stages
+            .iter()
+            .map(node_endpoint)
+            .collect::<Result<Vec<_>, _>>()?;
+        if stages[command.stage_index] != self.endpoint || event.envelope.target != self.endpoint {
+            return Err("session local index does not name this worker endpoint".into());
+        }
+        let first = stages[0].clone();
+        let last = stages.last().expect("validated pipeline").clone();
+        let next = stages.get(command.stage_index + 1).cloned();
+        let previous = command
+            .stage_index
+            .checked_sub(1)
+            .map(|index| stages[index].clone());
         let id = command.session_id.clone();
-        self.state.sessions.insert(
-            id.clone(),
-            PipelineSession {
-                command,
-                next,
-                first,
-            },
-        );
-        self.emit_json(
+        if let Some(existing) = self.state.sessions.get(&id) {
+            if existing.command != command {
+                return Err("a live pipeline session cannot change its owner or route".into());
+            }
+        }
+        let response = self.prepare_json_emission(
             &event,
             reply_target(&event),
             EventClass::Telemetry,
             SESSION_READY_CONTENT_TYPE,
             &serde_json::json!({"session_id":id,"state":"ready","load_generation":self.state.load_generation}),
-        )
-        .map_err(|_| "completion queue is full".to_owned())
+        )?;
+        // The response is fully prepared without changing next_event. No
+        // emitter, native work, await, or yield intervenes before its ID commit.
+        self.state.sessions.insert(
+            id,
+            PipelineSession {
+                command,
+                next,
+                first,
+                previous,
+                last,
+            },
+        );
+        self.publish_prepared_emission(response)
+            .map_err(|_| "prepared session ready event could not be published".to_owned())
     }
 }
 
@@ -239,6 +308,7 @@ mod tests {
 
     fn ready() -> crate::process::ReadyInfo {
         crate::process::ReadyInfo {
+            physical_identity_revision: 1,
             protocol_revision: 1,
             server_id: "ready".into(),
             transactions: false,
@@ -270,6 +340,151 @@ mod tests {
                 .unwrap_err()
                 .contains("actual n_ctx=1200")
         );
+    }
+
+    #[derive(Clone, Copy)]
+    enum BindReply {
+        Echo,
+        OtherGeneration,
+        Lost,
+    }
+
+    struct BindingStage {
+        revision: u16,
+        reply: BindReply,
+        calls: Arc<Mutex<Vec<(Operation, Vec<u8>)>>>,
+        shutdowns: Arc<AtomicUsize>,
+    }
+
+    impl crate::process::ServerControl for BindingStage {
+        fn start(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn wait_ready(&mut self, _: Instant) -> Result<Option<crate::process::ReadyInfo>, String> {
+            let mut capabilities = ready();
+            capabilities.physical_identity_revision = self.revision;
+            Ok(Some(capabilities))
+        }
+        fn request(&mut self, request: Frame) -> Result<Frame, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((request.header.operation, request.body.clone()));
+            if request.header.operation != Operation::BindLoad {
+                return Err("unexpected pre-bind mutation".into());
+            }
+            match self.reply {
+                BindReply::Lost => Err("bound but reply lost".into()),
+                BindReply::Echo => {
+                    Frame::new(Operation::BindLoad, request.body).map_err(|e| e.to_string())
+                }
+                BindReply::OtherGeneration => {
+                    Frame::new(Operation::BindLoad, 99u64.to_le_bytes().to_vec())
+                        .map_err(|e| e.to_string())
+                }
+            }
+        }
+        fn shutdown(&mut self) -> Result<(), String> {
+            self.shutdowns.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn binding_worker(
+        revision: u16,
+        reply: BindReply,
+    ) -> (
+        Worker,
+        Arc<Mutex<Vec<(Operation, Vec<u8>)>>>,
+        Arc<AtomicUsize>,
+    ) {
+        let (_sender, receiver) = mpsc::channel();
+        let (publisher, _mailbox) = p4_adapter::node_adapter::completion_mailbox(8);
+        let mut worker = Worker::new(
+            Endpoint::node(Address::tcp("127.0.0.1", 43001), "bind", 1),
+            receiver,
+            publisher,
+            Arc::new(Mutex::new(String::new())),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let shutdowns = Arc::new(AtomicUsize::new(0));
+        worker
+            .lifecycle
+            .load(
+                Box::new(BindingStage {
+                    revision,
+                    reply,
+                    calls: Arc::clone(&calls),
+                    shutdowns: Arc::clone(&shutdowns),
+                }),
+                Duration::from_millis(10),
+            )
+            .unwrap();
+        (worker, calls, shutdowns)
+    }
+
+    #[test]
+    fn product_load_binds_exact_identity_before_any_slot_admission() {
+        let (mut worker, calls, shutdowns) = binding_worker(1, BindReply::Echo);
+        worker.bind_loaded_identity(7).unwrap();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![(Operation::BindLoad, 7u64.to_le_bytes().to_vec())]
+        );
+        assert_eq!(worker.state.last_load_generation, 7);
+        assert_eq!(
+            worker.state.load_generation, 0,
+            "LOAD installs capacity only after this boundary"
+        );
+        assert!(worker.state.free_sequences.is_empty());
+        assert_eq!(shutdowns.load(Ordering::SeqCst), 0);
+        for stale in [0, 6, 7] {
+            assert!(worker.bind_loaded_identity(stale).is_err());
+        }
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            1,
+            "stale binds never reach native"
+        );
+    }
+
+    #[test]
+    fn absent_or_unknown_identity_capability_cannot_use_physical_batch_support() {
+        for revision in [0, 2] {
+            let (mut worker, calls, shutdowns) = binding_worker(revision, BindReply::Echo);
+            assert!(worker.lifecycle.physical_batch_capable());
+            assert!(
+                worker
+                    .bind_loaded_identity(7)
+                    .unwrap_err()
+                    .contains("physical_identity_revision")
+            );
+            assert!(calls.lock().unwrap().is_empty());
+            assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
+            assert_eq!(worker.state.load_generation, 0);
+        }
+    }
+
+    #[test]
+    fn changed_or_lost_bind_reply_closes_native_and_burns_the_attempted_generation() {
+        for reply in [BindReply::OtherGeneration, BindReply::Lost] {
+            let (mut worker, calls, shutdowns) = binding_worker(1, reply);
+            assert!(
+                worker
+                    .bind_loaded_identity(7)
+                    .unwrap_err()
+                    .contains("binding failed")
+            );
+            assert_eq!(calls.lock().unwrap().len(), 1);
+            assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
+            assert_eq!(worker.state.last_load_generation, 7);
+            assert_eq!(worker.state.load_generation, 0);
+            assert!(worker.state.free_sequences.is_empty());
+            assert!(!worker.lifecycle.has_server());
+            assert!(worker.bind_loaded_identity(7).is_err());
+            assert_eq!(calls.lock().unwrap().len(), 1);
+        }
     }
 
     #[test]

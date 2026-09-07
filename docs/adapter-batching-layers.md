@@ -1,18 +1,24 @@
 # 어댑터 배치 레이어링 계약
 
-llama.cpp 어댑터가 자기 큐를 배치로 소비하는 방식을 층으로 나누는 설계
-계약이다. 2026-08-30의 4노드 gemma-4-E2B 실측과 코드 감사를 근거로 하며,
-P4 코어(프로토콜·에이전트·서비스)는 이 문서의 어떤 개념도 알지 못한다.
-배치는 어댑터의 사정이고, OUTER는 소켓 클라이언트로서 계획을 텍스트로
-전달할 뿐이다.
+> 문서 지위 (2026-09-06): **분야 계약·구현과 구별**. 소유 분야의 계약/목표를 읽되 구현 완료로 간주하지 않는다. 현재 개발 순서와 충돌하면 로드맵의 명시적 이관을 따른다.
+> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
-## 근거 관측
+llama.cpp 어댑터가 자기 큐를 배치로 소비하는 목표 레이어 계약이다. 이 문서의
+L0~L5가 전부 구현됐다는 뜻은 아니다. 현재 코드 상태·단계는
+[분산 배치 로드맵](distributed-batching-roadmap.md), 실행 검증은
+[검증 규약](distributed-batching-verification.md)이 소유한다.
+OUTER는 모델·토폴로지·SLO·요청 도착·스냅샷 트리거를 정하고 어댑터는 적격 행과
+배치를 구성한다. P4 코어에 llama 전용 배치/KV 규칙을 넣지 않는다.
+P4 전체와 native/llama/backend의 허용 의존·타입·빌드 경계는
+[계층 격리 계약](layer-isolation-contract.md)이 소유한다. 아래 L0~L5는 그 안의 배치 의미론이다.
+
+## 과거 관측 — 현재 상태나 병목의 확정이 아님
 
 | 관측 | 값 | 함의 |
 | --- | --- | --- |
-| 스텝 시간이 행 수와 무관 | 12.8행 105.1ms, 18.2행 96.1ms | 고정비(cut-set 전송)가 스텝을 지배 |
+| 스텝 시간이 행 수와 무관했던 표본 | 12.8행 105.1ms, 18.2행 96.1ms | 고정비 후보; 전송/계산/샘플링/대기를 분해하기 전 원인 미확정 |
 | 홉당 cut-set 폭 | gemma-4: 31/27/23 텐서, 스텝당 81 전송 | 모델별 상수. Qwen 계열은 1 |
-| 혼합 물리 배치 | 수천 개 중 0~2개 | 파이프라인 깊이 1이 원인. 전략 평가 자체가 불성립 |
+| 혼합 물리 배치 | 당시 수천 개 중 0~2개 | 멤버십 합류 관측; 이것만으로 pipeline 깊이를 판정하지 않음 |
 | 노드별 KV (동일 n_ctx) | 173.5 / 63.3 / 157.7 / 126.1 MB | 셀 단가는 노드별. 병목은 가장 비싼 노드 |
 | compute buffer | 1,412MB@ubatch512 ↔ 386MB@128, KV의 8배 | 배치 폭이 VRAM 지배 knob |
 | 40요청 슬롯 재사용 | `output token positions are not contiguous` | 원장의 불변식 검출 대상. 원인 미규명 — 규명·수정은 계획 P1b |
@@ -21,21 +27,27 @@ P4 코어(프로토콜·에이전트·서비스)는 이 문서의 어떤 개념�
 
 ## 전략이 지켜야 할 불변식
 
-1. **상주 전제**: 행 (s, p)는 s의 0..p-1 KV(및 모델별 보조 상태)가 **모든
-   스테이지에** 상주할 때만 유효하다. 배치에 토큰이 있어도 KV에 없으면
-   무용하다.
-2. **증명 없는 제출 금지**: 디코드 실패는 `hop_memory_dirty_`를 세워
-   재적재를 요구한다. 시도-후-철회 전략은 불가능하다.
-3. **in-flight 불변**: 제출된 멤버십은 전 노드에 복제된다. 자원을 쥔 큐
-   항목은 완료 또는 Persist로만 회수한다.
-4. 준비된 디코드 행은 강제다(이미 셀을 쥐고 있다). 폭은 1(MTP 3~4).
-5. verify/replay 원자 창은 분할 불가, 해소 전 후속 UBATCH 금지.
-6. recurrent/hybrid는 등폭. 디코드 1행이 폭을 1로 붕괴시킨다.
+1. **상주/의존 전제**: 행 (s,p)가 각 스테이지에서 실행되기 전에 그 스테이지의
+   필요한 prefix KV·보조 상태가 유효해야 한다. 여러 prefill fragment의 동시 비행은
+   선행 fragment의 stage별 실행 순서를 증명해야 하며, 모든 행의 발행 전에 전 pipeline을 비우라는 뜻이 아니다.
+2. **증명 없는 제출 금지**: 실행 실패 후 KV가 보존됐다고 가정하지 않는다.
+   native의 dirty/불확실 결과는 격리·복구 계약을 따른다. speculative한 시도 후 로컬 counter만 철회하는 것은 금지다.
+3. **in-flight 불변**: 제출된 멤버십과 위치를 발행 기록에 결속한다. 완료·취소·실패의
+   정산/해제 증거 없이 자원을 회수하지 않는다. Persist가 진행 중 compute의 해제 증거를 대신하지 않는다.
+4. 준비 decode는 bounded service를 받아야 하지만 capacity를 넘는 전원을 매 배치에 넣을 수는 없다.
+   일반 decode의 의존 행은 1개이며 speculative/verify의 폭과 원자성은 capability와 실제 proposal에 따른다.
+5. verify/replay 원자 창은 합의된 단위로만 처리하고 해소 전 **같은 시퀀스의 의존 후속 작업**을 금지한다.
+   무관한 시퀀스까지 전 pipeline barrier로 막는 규칙은 아니다.
+6. `equal_sequence_ubatch`를 요구하는 memory 계열은 등폭을 지킨다. 디코드 1행과
+   긴 프리필을 무조건 동승시켜 전체 프리필 폭이 1로 붕괴하지 않게 한다.
 7. 프리필 행은 소유 노드 전부에 목적지 셀이 있어야 한다. 예산은 가장
    빡빡한 노드의 남은 셀이다.
-8. Restore는 전부-아니면-전무, 단독 실행, (깊이 1인 동안) 배타적이다.
-9. 배치 내 sampling/lora 정체성 균일(`compatibility`).
-10. 모든 행·복원은 `load_generation`에 결속된다. 세대 교차 복원 금지.
+8. Restore는 전 stage의 검증/장벽 후에만 runnable로 공개한다. 부분 실패 수렴은 저장 규약을 따르며,
+   대상 시퀀스 quiescence와 native context의 실제 배타 요구를 구분한다.
+9. 배치 안의 engine/model/LoRA/shape 호환성을 대조한다. 현행 `compatibility`가 더 엄격하게 묶는
+   sampler 옵션을 완화하려면 시퀀스별 sampler 독립성과 정상 출력 시험이 먼저다.
+10. 실행과 반환은 load/sequence generation에 결속한다. 영속 레코드의 재적재 허용 여부는
+    실행 세대와 별개인 저장 정체성·호환 행렬로 결정한다([저장 규약](kv-state-store-convention.md)).
 11. **스냅샷 정합 펜스**: Checkpoint·Persist·Fork는 대상 시퀀스의
     in-flight 행이 전무하고 전 스테이지가 정산된 정지점에서만 실행된다 —
     배치 도중 export된 스냅샷은 position이 모호한 오답이다. 캐시 연산은
@@ -50,7 +62,7 @@ P4 코어(프로토콜·에이전트·서비스)는 이 문서의 어떤 개념�
 ```
 L0  큐          (기존) 도착·보류. 정책 없음.
 L1  원장        ID 매핑, 상주 상태, 셀 회계의 단일 진실
-L2  수용·점유    분 단위: 수용 / 축출(Persist) / 복원(Restore) 결정
+L2  수용·점유    요청 수용/예약과 OUTER의 영속·복원 명령 이행
 L3  구성        스텝 단위: demand → allocation. 모델군별 전략 모듈
 L4  증명        제출 전 형태 증명 + 멤버십 캡처 (기존 강화)
 L5  전송        (기존) cut-set 전송, 하류 재생. 효율화 대상
@@ -61,59 +73,312 @@ L5  전송        (기존) cut-set 전송, 하류 재생. 효율화 대상
 무엇이 어디에 있는지에 대한 단일 진실. 다른 모든 층은 원장을 읽고,
 상태 전이는 원장만 쓴다.
 
-- ID 매핑: `request_id → SessionKey → adapter sequence_id → 노드별 local
-  llama_seq`. OUTER `request_id`는 요청마다 새롭고, 세션 연속성은
-  SessionKey가 진다.
+- ID 매핑: 외부 request ID·SessionKey·adapter incarnation·노드별 slot은 별도 축이다.
+  SessionKey는 대화 연속성, incarnation은 한 번의 실행 소유권이다. 완료 후 같은 request ID와
+  slot의 재사용을 금지하는 것으로 늦은 메시지 문제를 우회하지 않는다. 아래 실행 소유권 계약을 따른다.
 - 스테이지별 상주 상태: `Resident{pos} | Persisting{op} | Persisted{pos,
-  manifest} | Restoring{op} | Absent | Inconsistent`. 배치 적격 조건은
-  "전 스테이지 Resident이고 pos 일치"다.
-- 셀 회계: GGUF 메타에서 파생한 노드별 셀 단가표(full 1,568B, SWA 784B,
-  reuse 0, recurrent 0/cell)와 사용·잔여 셀. 실측 대조 오차 0.1MB.
+  manifest} | Restoring{op} | Absent | Inconsistent`. 각 stage의 완료 frontier와 비행 중 구간을 함께 보존한다.
+  정상 wavefront에서는 stage별 pos가 다를 수 있다. 발행마다 전 stage pos 일치를 요구해 pipeline을 직렬화하지 않는다.
+  해당 stage 실행 전에 필요한 prefix/보조 상태가 유효하고 선행 작업 순서가 보장되는지를 검사한다.
+- 셀 회계: 모델·cut·backend/layout별 파생/실측 단가와 used/reserved/free를 결속한다.
+  recurrent가 token-cell 방식이 아니더라도 보조 state/buffer bytes는 별도로 예약하며 0 메모리로 해석하지 않는다.
 - 토큰 이력(또는 위치별 해시): 재요청 프롬프트와 영속 KV의 LCP 판정 근거.
-- 시퀀스 슬롯 수명: 전 스테이지 release 정산 전 재배정 금지. 40요청
-  position 불연속 결함이 이 규칙의 부재를 증명한다.
+- 시퀀스 슬롯 수명: 전 스테이지 release 정산 전 재배정 금지. 과거 40요청
+  position 불연속은 재현·원인 감사 대상이지 이 규칙 부재의 인과 증거가 아니다.
+
+#### 승인된 출력의 발행자
+
+현재 adapter OUTPUT 계약에서 꼬리는 native 결과를 head에 반환하고, head의 원장 검증·commit 뒤에만
+OUTER 출력이 발행된다. 따라서 OUTPUT의 envelope source는 정산을 소유한 **configured first endpoint**다.
+OUTER는 agent 주소·node ID·node generation을 포함한 해당 endpoint 전체와 load/session/request,
+target/return route·correlation·position을 대조한다. 꼬리도 configured node라는 이유로 동시 허용하지 않는다.
+native 계산 위치와 출력 승인 권위를 구분하며, broker가 llama 토큰을 해석하거나 source를 바꾸지 않는다.
+별도 head 승인 receipt 없이 꼬리 직접 출력으로 돌아가는 것은 이 계약의 우회다.
+
+생산자/소비자 회귀는 같은 의미의 wire fixture를 양쪽 실제 경로에 결속한다. 현재 worker가 만들어내는
+출력도 대조하지 않는 고정 fixture 소비 시험만으로 경계 일치를 승인하지 않는다. 불안정한 envelope 필드를
+투영에서 뺄 때의 조건·부정 시험은 검증 규약 T20을 따른다. 이 source 대조 자체는 사용자 수신 ACK나
+model 품질·수량·해제 멤버십의 완전한 검증이 아니다.
+
+#### OUTER의 sampled 출력 예산과 fresh-prefill 관측 대조
+
+`tools/event-drive/src/run/output_budget.rs::validate_output`은 제출 max_tokens를 sampled OUTPUT
+개수에 적용한다. 빈 text의 EOS도 한 개이며, 상한에서 terminal이 필요하고 length는 정확히 상한에서만
+성립한다. stop/eos는 상한 이내 조기 종료가 가능하고 다른 종료 문자열은 자동 승인하지 않는다.
+`inference.rs::drive`는 요청 응답/토큰 목록에 추가하기 전에 검사한다. 최종 acceptance도 보존된 전체
+outcome을 다시 검사하며, 응답 절단이나 EOS 삭제로 상한 위반을 감추지 않는다. 프로토콜상 정상인
+빈 EOS 하나의 출력은 비어 있지 않은 정상 응답/최소 생성량이라는 별도 품질 게이트를 만족하지 않는다.
+
+현재 event-drive는 위치 0에서 시작하는 새 PREFILL 요청을 실행한다. `inference_evidence.rs::apply_observations`가
+서로 다른 프롬프트의 승인된 관측을 요청별로 집계하고 첫 OUTPUT 위치와 대조한다. 동일 observation ID의
+동일 payload는 한 번만 세고, 다른 observation ID로 같은 physical execution을 재사용하면 거부한다.
+전체 요청 후보의 검증과 checked 합산이 끝난 뒤에만 artifact 행 수를 설치한다. OUTPUT 뒤에 오는 관측도
+완료/해제 경계 전이면 허용하지만, 그 경계에서 관측이 없거나 위치와 다르면 성공 artifact를 반환하지 않는다.
+execute에서 다시 합산하지 않는다. 선택적 공통 expected_prefill_rows는 추가 workload 조건이지 이 대조의 대체가 아니다.
+이 관측은 head가 보고한 fresh-prefill 작업량이며 별도 native tokenizer/KV 증명, 재개/Restore의 원점,
+OUTER 실시간 사용자 전달 ACK 또는 아래 별도의 해제 멤버십 원장을 대신하지 않는다.
+
+#### 해제 완료 권위와 소유자별 통지 — 현재 run의 정상 종료만 부분 구현
+
+`worker/release.rs::Worker::tail`/`released`, `worker/effects.rs`, `completion.rs`와 OUTER의
+`run/inference.rs`/`release_ledger.rs`를 함께 이관했다. 아래는 후속 미커밋 작업 트리의 **정상 sampled
+stop/eos/length 종료, 같은 run 수명** 계약이다. OUTPUT 없는 실패·Cancel, 재시작·재연결·내구 전달,
+전체 다중 OUTER 관측까지 완료한 것은 아니다. P4 broker는 이 모델 의미를 소유하지 않는다.
+
+**현재 SESSION wire** (`commands.rs::SessionCommand`, `worker/control.rs::Worker::session`,
+`worker.rs::Worker::require_stage_source`, 후속 미커밋 작업 트리):
+
+- SESSION/SESSION_READY content-type은 **v4**다. SESSION은 `load_generation`, `session_id`,
+  전체 순서 `stages: [{agent,node,generation}, ...]`, 수신 노드의 `stage_index`를 필수로 받는다.
+  별도의 role/first/next 선언은 제거했으며 최상위 unknown 필드와 구 v3 명령은 거부한다.
+- 노드 주소·nonzero generation·중복 없는 정체성·유효한 index를 검사하고, index의 전체 endpoint와
+  실제 worker 및 envelope target이 같아야 설치한다. 같은 agent/node의 서로 다른 generation도
+  동시에 다른 stage로 선언할 수 없다. 이미 설치된 같은 session의 다른 선언은 거부한다.
+- first/previous/next/terminal은 설치한 순서에서만 파생한다. PHYSICAL/RELEASE/SETTLE의 source는
+  previous, TAIL/RELEASED/SETTLED의 source는 terminal의 전체 endpoint여야 하며 target도 실제 worker여야 한다.
+  검사는 원장/KV/슬롯/출력 변경 전에 수행한다. 특히 head의 next와 terminal은 3-stage에서 다르다.
+- `tools/event-drive/src/run/mod.rs::session_events`는 실제 실행 루프가 사용하는 생산 경로이며
+  모든 노드에 같은 순서와 자기 index를 보낸다. 수신 노드별 검증만으로 fleet 전체가 같은 선언을
+  받았다는 합의, 사용자/네트워크 인증, process 재시작 후 freshness를 증명하지 않는다.
+- 현재 stage 경로는 별도 head/tail이 필요한 **2개 이상**만 지원한다. 이는 단일 stage 새 구현이
+  없다는 제한이지 장치당 노드 수나 필요한 모델/KV 노드를 줄이라는 배치 정책이 아니다.
+
+**현재 OUTER wire와 처리 순서**:
+
+- `ApprovedOutputPayload`의 OUTPUT content-type은 **v4**다. 기존 OutcomePayload 필드에
+  `submission_event_id`, nonzero `incarnation`, 선택적 `release_operation_id`를 더했다. terminal에만
+  nonzero operation이 있고 nonterminal에는 없다. operation은 head가 RELEASE를 만들 때 정하며,
+  출력 전에 후보 전체를 검증한다. OUTPUT 승인 자체는 전 stage KV 해제 완료가 아니다.
+- OUTER 통지는 별도 **release-receipt-v1**의 `ReleaseReceipt {load_generation, session_id, members}`다.
+  member는 `{request_id, submission_event_id, sequence_id, incarnation, operation_id}`이며 빈 목록,
+  중복 request/slot, 잘못된 신원과 unknown 필드를 거부한다. 내부 RELEASED v4는 여전히 stage 간
+  ReleaseCommand ACK이고 OUTER receipt가 아니다. scalar-only DTO는 제거했고 구 OUTPUT v3·
+  scalar/internal ACK를 현재 OUTER 완료 증명으로 소비하지 않는다.
+- 실제 `send_wave`는 송신할 PREFILL event ID를 **send 전에** 등록한다. 송신 실패는 해당 run의 실패이며
+  같은 attempt/sequence로 되감지 않는다. head PREFILL은 source가 원본 return_route의 OUTER와 같고
+  target이 실제 head인지 기억/수용 전에 검사한다. 이 필드 대조를 peer 인증으로 부르지 않는다.
+- OUTER는 기존 route/예산/위치 검증을 통과한 첫 OUTPUT으로 slot/incarnation을 고정하고, terminal
+  OUTPUT에서만 release member 기대를 보존한다. receipt가 먼저 오면 거부한다. 새로운 무제한
+  reorder queue로 순서를 감추지 않는다. receipt 전체 대조가 끝난 뒤에만 신규 해제를 반영한다.
+- fresh envelope의 정확한 member 재전달은 신규 해제 **0**이다. 같은 event ID 재전달은 기존 OUTER
+  envelope 정책대로 거부한다. 변경된 replay와 A 정상/B 무효는 전량 거부한다. 현재 event-drive의
+  correlation은 제출 request ID이며 receipt의 member에 속해야 한다. generic 어댑터는 임의의 정상
+  correlation을 보존하므로 이 OUTER 구현의 선택을 P4 전체 문법으로 올리지 않는다.
+- `RequestArtifact`는 실제 송신 attempt, terminal에서 보존한 기대 member, receipt 반영 여부를 남긴다.
+  최종 acceptance의 일치 검사는 보존 artifact의 일관성 재검사다. 원시 receipt 전체 재검증이나
+  외부의 서명/인증 증명이 아니며, 실제 소비 경로의 검사를 대체하지 않는다.
+
+- **제출 권위**: OUTER가 송신 전에 확정한 request attempt를 저장하고 head가 원본 제출과 결속한다.
+  durable session_key, request 문자열, 빈 slot, 처음 받은 receipt는 attempt 권위가 아니다. 현재 envelope
+  event_id를 쓸 때에도 발급 OUTER 전체 endpoint/connection generation과 load/session 범위를 포함한다.
+  같은 connection generation과 sequence를 새 Sender에서 재사용하면 restart freshness가 없으므로,
+  그 수명 문제를 해결하기 전에는 현재 run 안의 결속만 증명했다고 기록한다.
+- **계산/해제 권위**: head가 발급·보존한 slot/incarnation과 release operation을 실제 terminal 승인에
+  결속한다. OUTER의 해제 기대 신원은 해제 receipt보다 먼저 제출/승인 경계에서 확정한다. receipt의
+  operation을 그대로 자신의 기대값으로 설치하는 대조는 금지한다. terminal 전에 해제 통지부터 받는
+  순서의 처리 계약도 명시하며, count를 증가시키고 나중에 검증하지 않는다.
+- **스테이지 증거**: SESSION에서 독립 확정한 ordered pipeline의 predecessor/successor/first/terminal
+  endpoint와 load/session 세대에 내부 control/ACK를 결속한다. 마지막 ACK의 발신 source를 읽어
+  terminal을 새로 등록하지 않는다. configured middle 또는 외부 발신자는 pending member를 정확히
+  알고 있어도 전 stage 정산 증거를 대신하지 못한다. endpoint 대조는 논리 역할 검증이며 전송 인증의 대체는 아니다.
+- **멤버십**: 정상 receipt는 명시된 요청 시도 집합을 운반하고 consumer는 제출/terminal 기대 집합과
+  원자적으로 대조한다. A의 중복은 B의 완료가 되지 않는다. unknown/stale/변형 member가 하나라도 있으면
+  다른 member의 완료 수·슬롯·예약·효과도 적용하지 않는다. 여러 요청을 묶은 정상 control/receipt는 유지한다.
+- **라우팅/효과 수명**: 요청을 resident에서 지우기 전에 pending release에 원래 ReplySpec과 제출 참조를
+  보존한다. 필요한 작은 신원/경로 메타데이터를 추출하며 긴 prompt payload 전체를 해제 대기 동안 다시
+  보유하지 않는다. 통지는 해당 소유자 전체 route/correlation/deadline으로만 보낸다. 여러 소유자의 native release
+  batching과 OUTER 통지 묶음은 다르며 단일 physical base의 route로 통지를 몰지 않는다. 각 통지 의도를
+  상태 commit과 함께 보존하고, emit 실패 후에도 미발행 부분이 남아야 한다. KV가 이미 해제됐다는 이유로
+  통지 실패를 성공 또는 새 native 재해제 요청으로 바꾸지 않는다. enqueue 성공과 OUTER ACK는 별도다.
+
+`PendingRelease`는 실제 RELEASE identity와 원본 Envelope·ReplySpec만 보존한다. prompt payload를
+다시 들고 있지 않다. ACK 후보 전체의 source/member/admission과 원본 source/target/return_route/
+correlation/deadline 대조를 끝낸 뒤, **전체 ReplySpec이 같은 경우만** 영수증을 묶는다. 같은 OUTER라도
+correlation/deadline이 다르면 별개 통지다. 슬롯 반환·pending 제거와 notification intent를 commit하고,
+emit 실패 시 아직 발행하지 못한 intent를 남기고 fence한다. 이미 발행한 통지는 되돌리거나 다시 native
+해제하지 않는다. 현재 Full은 대기·재시도, Closed/ID exhaustion은 보존·fence이지 재연결 복구가 아니다.
+
+같은 connection generation에서 Sender를 다시 만들거나 Worker/load를 재시작하는 freshness는 아직
+없다. 동시 동일 request_id를 여러 OUTER가 쓰는 것도 현재 request_key 범위에서 지원하지 않는다.
+이것과 OUTPUT 없는 Cancel/실패의 승인, bounded outbox·graceful drain은 목표 계약으로 남는다.
+판정/반례는 검증 규약, 작업 순서는 현재 로드맵만 소유한다.
+
+같은 다중 OUTER 배치의 관측도 별도 결속이 필요하다. 이관 전 `worker/observe.rs::Worker::emit_batch_observation`은
+모든 ReplySpec에 전체 requests 관측을 보내고, `inference_identity.rs::InferenceIdentity::observation`은
+자기 제출 집합 밖의 request를 거부한다. `emit_stage_span`은 첫 owner에게만 보낸다. 그러므로 OUTPUT의
+소유자별 라우팅만으로 다중 OUTER 관측이 성립했다고 하지 않는다. **목표 계약**은 full route별 허가된
+요청 투영과 physical execution 전체 작업량을 명시적으로 구별하는 것이다. 외부 request를 조용히 무시하거나
+전체 행 수를 소유 행 수로 바꿔 계측을 왜곡하지 않는다. 각 route에는 자신의 요청 관측을, 선언된 계측
+수신자에는 execution별 전체 통계를 한 번씩 제공한다. 같은 route의 요청마다 전체 span을 복제해 생긴
+양을 새로운 계산으로 세지 않는다. 투영/통계 버전의 producer와 consumer가 함께 통과하기 전에는 미완이다.
+
+#### 소유자별 관측과 발행 증거의 완결 — 계약과 버전별 이관
+
+이관 전 `inference.rs::drive`는 마지막 terminal와 해제 통지를 받은 직후 종료했으며, head/downstream은
+Forward/TAIL을 발행한 뒤 관측을 보낼 수 있다. 따라서 정상 관측이 늦게 와도 놓칠 수 있다. 또한
+받은 head 관측의 execution마다 stage span을 검사하는 것만으로는 **head 관측과 span을 통째로
+누락한 실행**을 발견할 수 없다. 아래는 그 두 공백을 함께 닫는 계약이다. OUTPUT v4와 구 관측은
+이 계약을 구현하지 않았다. 후속 작업 트리의 wire 이관은 아래 버전 절, 검증 상태는 로드맵 최신 기록을 따른다.
+
+- 물리 전체 rows/phase 합·logical 폭·request/sequence 수·RPC 시간은 global 값으로 유지하고,
+  각 full OuterEndpoint의 `owned_requests` 투영을 분리한다. head는 원제출 event ID·slot/incarnation을
+  자기 RequestState와 대조해 붙인다. correlation/deadline은 해당 route의 실제 원본 ReplySpec에서
+  결정적으로 선택한 carrier이며, 다른 소유 요청 전체의 identity/deadline을 대신하지 않는다.
+- downstream span의 소유자는 execution별 request/slot/incarnation으로 보고하고 trusted head의
+  원제출 결속 및 승인 OUTPUT과 join한다. native RowOwner나 P4 envelope에 상위 보고 정책을 넣지 않는다.
+  새 native 실행만 span을 만들며 cached replay를 새 계산으로 계수하지 않는다.
+- 발행 원장에 요청 시도별 **고정 크기 issued-work witness**를 둔다. 실제 승인된 logical issue마다
+  count와 SHA-256 chain을 갱신한다. 입력에는 버전화된 도메인, head/OUTER endpoint,
+  load/session/원제출/request/slot/incarnation, logical ordinal, 해당 요청의 실제 physical execution
+  집합 및 phase/정확한 position 구간 목록/행 membership을 결속한다. min/max/count만으로 중간
+  위치를 생략하지 않는다. 시간·수신 순서·JSON 객체 필드 순서·platform hash는 identity가 아니다.
+  바이트 encoding과 정렬 순서는 wire 이관 전에 독립 literal 양·음성 vector로 고정하며, canonical
+  encoding 없이 해시 이름만 추가하지 않는다. 소유 membership 증거가 전체 RPC 시간까지 인증하는 것은 아니다.
+- 해당 요청이 없는 issue 때문에 ordinal에 간격이 생기는 것은 정상이다. 요청별 strict increase와
+  같은 issue의 canonical physical/member 순서로 계산한다. 조각 수와 logical issue 수를 혼동하지 않는다.
+  Verify/Replay의 정상 위치 재사용은 phase와 ordinal/execution으로 구분한다. count/phase 합만으로는
+  같은 수의 다른 execution/range 교체를 검출하지 못하므로 충분한 결속이 아니다.
+- head의 `accept_prepared_issue`에서 split/소유자/witness 후보 및 overflow를 **원장 commit 전에**
+  전량 검사한다. 이미 prepared된 요청 후보에 작은 witness를 설치하고 flight/요청 상태를 비실패 구간에서
+  함께 확정한다. plan·native 시작·실패·Uncertain·관측 송신 성공에 count를 증가시키지 않는다. 매 발행마다
+  과거 execution 목록/프롬프트를 다시 복제하는 방식으로 증거를 구현하지 않는다.
+- 정상 terminal 승인 OUTPUT의 **새 버전**에 최종 witness를 결속한다. 별도 송신된 관측이 자기 기대
+  count/digest를 정하지 않게 하며, 기존 출력/해제 권위 사슬과 함께 producer/consumer를 이관한다.
+  현 v4를 조용히 확장하거나 구 캡처에 사후 증거를 붙이지 않는다. 이 hash는 무결성 대조이지 네트워크
+  peer 인증·내구 outbox·재시작 freshness·KV 정지점 증명이 아니다.
+- 모든 관측 수신자를 사전 검증한 뒤 작은 effect intent로 보존한다. Full/Closed/번호 고갈로 미전송
+  관측을 버리지 않고 기존 fence/재시도 계약을 적용한다. 관측 실패 때문에 native를 다시 실행하지 않는다.
+- OUTER 완료는 terminal/해제뿐 아니라 witness와 자기 소유 execution의 전 stage coverage가 함께
+  성립할 때다. Missing은 기존 overall deadline까지 수집, 충돌은 즉시 거부, Complete 후보만 최종 반영한다.
+  head와 stage 관측 역순을 허용하며 반복 전체 이력 재검사를 피한다. 오류를 null/빈 통계로 바꿔 승인하지 않는다.
+- span identity는 configured stage·load/session·canonical fresh execution 집합이다. 시각은 key가 아니라
+  대조할 body다. 정확한 재전달은 무증가, 같은 identity의 다른 body 또는 다른 그룹에 겹친 execution은
+  conflict다. 필요한 coverage는 해당 OUTER가 소유한 execution에 한정하며 B-only 계산을 A에 요구하지 않는다.
+- 한 OUTER 자료의 범위는 **owner-visible physical work**다. B-only batch가 없는 자료를 전체 fleet의
+  총비용/활용률이라고 하지 않는다. 여러 owner 자료를 합칠 때도 같은 물리 계산은 한 번만 집계한다.
+  stage RPC span과 실제 GPU 시간, 검증된 clock 오차 범위의 비교와 미검증 cross-host 비교를 구분한다.
+
+실행 순서는 로드맵의 현재 단계만 소유하며, 부정·지연·생산/소비·비용 시험은 검증 규약 T20/T25/T57/T58을 따른다.
+
+##### 내부 issued-work v1 — 2026-09-07 작업 트리의 구현 범위
+
+`v2/issue_witness.rs::IssueWitness`와 `node/state.rs::AdapterState::accept_prepared_issue`에 위 계약의
+내부 승인 증거를 먼저 구현했다. L1의 요청 시도별 고정 크기 값이며 정책·P4 중립 코어·native/llama/backend가
+증거를 독립 갱신하지 않는다. 생산 의존 `sha2`는 concrete staged adapter에만 추가했다. 이 내부 추출
+자체는 native ABI 변경이 아니며, 후속 노출은 아래 별도 wire 버전을 사용한다. 소스 기준과 실행 결과는 증거 기록을 따른다.
+
+정규 입력은 아래와 같다. 이 절이 encoding의 소유자이며 다른 문서는 이를 참조한다.
+
+- 모든 정수는 명시 폭의 little-endian이고 문자열은 `u32` UTF-8 바이트 길이 뒤 원문이다. NUL/빈 식별자,
+  잘못된 endpoint 및 0 generation/incarnation은 거부한다. 주소는 P4 `Address`의 display→parse 왕복이
+  동일한 표현을 사용하며 DNS 해석·대소문자 접기·서로 다른 IP 표기를 임의로 동치화하지 않는다.
+- seed는 `P4_ISSUE_AUTHORITY_V1` 뒤 NUL 1바이트, head 주소·node·generation(u64), OUTER 주소·channel·
+  connection_generation(u64), load(u64), session·request·원제출 event ID, sequence_id(u32), incarnation(u64)
+  순서의 SHA-256이다. 원본 return_route/source/target과 ReplySpec의 route/correlation/deadline도 대조한다.
+  입력 필드 일치는 peer 인증이 아니다.
+- issue는 `P4_ISSUED_WORK_V1` 뒤 NUL 1바이트, 이전 digest(32바이트), 다음 요청별 count(u64), logical
+  ordinal(u64), execution 수(u32), 각 execution ID(u64)·row 수(u32)·각 row의 phase(u8)·position(u32)
+  순서다. execution ID 오름차순, row는 `(phase, position)` 오름차순으로 정렬한다. phase는
+  Prefill=0/Decode=1/Verify=2/Replay=3이다. 양쪽 정렬은 수신 배열 순서를 권위로 만들지 않는다.
+- 한 issue 안의 0/중복 execution, 빈 실행/행 집합, 반복 `(phase, position)`은 거부한다. 요청별 ordinal은
+  strict increase이며 요청이 없는 issue의 간격은 허용한다. 다른 issue의 Verify/Replay 위치 재사용은
+  정상이다. 같은 개수·최소/최대 위치만 보존한 다른 중간 위치 또는 execution 교체도 다른 digest다.
+- 상태 자체는 seed32+digest32+count8+last_ordinal8의 **80바이트 Copy 값**이다. Option/RequestState
+  전체의 크기가 80바이트라는 뜻은 아니다. 현재 issue의 owner 행만 모아 검증·정렬하며 과거 실행 이력은
+  저장하지 않는다. 기존 RequestState/plan의 프롬프트 clone 비용까지 해결한 것은 아니다.
+- `accept_prepared_issue`는 모든 요청의 witness 후보를 먼저 만들고 flight 등록이 성공한 뒤 요청에
+  설치한다. 후순위 owner 오류·overflow·flight 등록 거부는 committed/prepared 후보 모두 보존한다.
+  prepare/begin/Uncertain·selector 부기·정산·전달 재시도는 witness를 증가시키지 않는다. 저수준
+  `register_issued_batch`만 직접 호출해도 요청 증거는 생기지 않는다.
+
+`validate_submission_identity`는 원본 제출의 공통 형식을 PREFILL에서 토큰화·세션키 기록·admission보다
+먼저 검사한다. 원장 승인 때도 같은 검사를 재사용한다. 아직 배정되지 않은 slot/incarnation을 가짜 값으로
+채워 witness를 미리 생성하지 않는다. NUL 식별자의 adapter 거부 뒤 같은 worker의 정상 요청은 계속된다.
+정상 Unicode·별도의 correlation ID는 허용한다. 후속 `capsule.rs::validate_reply_options`는 실제 serialized
+ReplySpec과 원문 options에 기존 LB/PB v4의 4096 UTF-8 byte 상한을 적용하며 Logical/Physical 검증과
+PREFILL이 공유한다. reply는 nonempty, options는 empty도 허용한다. 정확히 4096은 유효하고 JSON escape
+이전 필드 길이·문자 수·trim한 options 길이로 대신하지 않는다. PREFILL은 세션키 기록·Tokenize·slot/
+incarnation 수용 전에 이 검사를 한다. wire 버전/한도·native parser 의미는 바꾸지 않았다. canonical
+session/request/key는 기존 명령/owner 검사를 유지한다. 이 형식 검사만으로 다른 admission/자원 거부의
+원자성까지 구현됐다는 뜻은 아니다.
+
+##### OUTPUT v5 / BATCH_OBSERVATION v4 / STAGE_SPAN v4 이관 계약
+
+이 절은 이번 작업 트리의 producer/consumer 이관이 따라야 할 명세다. 일부 하위 시험 통과를 전체
+관측 게이트·최종 성능 승격으로 읽지 않는다. 현재 통과 범위/미완은 로드맵과 날짜별 증거가 소유한다.
+
+- `ApprovedOutputPayload.issued_work`는 정상 sampled terminal에서만 필수다. revision=1,
+  issue_count/last_ordinal은 u64, authority_digest/digest는 각각 **정확히 32개의 u8 배열**이다.
+  unknown 필드/revision, count=0, last_ordinal<count, nonterminal에 proof 존재를 거부한다.
+  flat OUTPUT의 명시 decode DTO는 unknown 필드를 거부하며 serde flatten의 느슨한 역직렬화에 의존하지 않는다.
+- head는 terminal 정산 후보에서 원래 RequestState의 witness와 원제출 authority를 대조한 뒤 복사한다.
+  요청 제거·flight 정산·출력 효과 commit 전에 실패할 수 있는 검사를 마친다. 반환/telemetry에서 새
+  witness를 만들거나 저수준 flight 등록에 가짜 witness를 붙이지 않는다. 기존 v3/v4 캡처는 불변으로 보존한다.
+- BatchObservation은 logical_ordinal과 물리 전체 통계를 유지한다. 각 물리 execution의
+  `owned_requests`에는 request/submission_event_id/sequence_id/incarnation/request_issue_index와
+  정확한 `rows:[{phase,position}]`를 싣는다. phase wire는 prefill/decode/verify/replay만 허용한다.
+  요청별 index는 head가 실제 승인한 count와 같아야 한다. 관측의 index가 terminal 기대 총량은 아니다.
+- 소유자 투영은 파싱한 full OuterEndpoint별 하나다. 동일 OUTER의 다른 correlation은 중복 전체
+  관측을 만들지 않는다. carrier는 그 route의 원래 ReplySpec 중 실제 행 순서에서 처음 만난 것을
+  선택하며 모든 구성원의 route/provenance를 먼저 검증한다. foreign 요청 ID를 싣지 않고, foreign
+  행이 포함된 물리 전체 counts를 해당 OUTER 행 수로 줄이지 않는다.
+- StageSpan의 execution_ids와 executions의 key 집합은 같아야 한다. execution별 owned_requests는
+  request/sequence_id/incarnation만 보낸다. downstream이 모르는 submission event ID를 꾸며 넣지 않는다.
+  Fresh만 새 span으로 보고하며 cached-only replay는 새 계산 span을 내지 않는다.
+- 준비된 관측은 ForwardObserved 효과와 함께 보존한다. **로컬 completion mailbox가 Forward를
+  수용한 직후** 시각을 한 번 고정해 Telemetry intent로 바꾼다. 이는 네트워크 송신/원격 수신 시각이 아니다.
+  Full 동안 동일 이벤트를 기다리고, Closed/ID 고갈이면 미발행 intent와 고정 시각을 보존·fence한다.
+  자동 재연결·crash 복구·내구 전달 또는 bounded 전체 RSS를 이 효과 큐만으로 주장하지 않는다.
+- OUTER는 실제 송신한 제출 권위에 관측을 결속한다. 요청별 issue_index의 역순 수신을 보관하고
+  연속 prefix가 될 때 각 issue를 한 번 해시한다. OUTPUT 승인 owner와 terminal chain이 맞아야 완료다.
+  execution별 owned membership과 선언 stage coverage도 별도로 대조한다. 관측보다 먼저 온 span은
+  잠정 증거이지 스스로 head의 기대 집합을 만들 수 있는 권한이 아니다.
+- 종료/해제까지의 기존 `elapsed_ms`는 그 경계에서 latch한다. 추가 관측 대기가 끝난 시각은
+  `telemetry_complete_elapsed_ms`로 별도 기록한다. 정상 응답 토큰량과 기존 TPS 분모를 조용히 바꾸지 않는다.
+  Missing은 원래 overall deadline까지, Invalid는 즉시 실패이며 성공한 완결 후보만 행 합계를 적용한다.
+
+DTO와 canonical 검증 API는 concrete llama adapter 소유다. P4 공용 protocol/core, native RowOwner,
+llama.cpp/ggml/CUDA 타입에 보고 정책을 넣지 않는다. peer 인증·restart freshness·KV 정지점·실제 GPU
+시간·다중 컴퓨터 성과는 이 wire의 보장 범위 밖이다.
 
 ### L2 수용·점유 (admission)
 
-느린 축(분). 한 번의 결정이 수 분간 셀을 묶는다.
+요청 도착·완료·취소·메모리 변동 시 동작한다. 점유는 오래 유지될 수 있지만
+수용 반응을 분 단위로 지연시키는 계약은 아니다.
 
-- 수용: `빈 슬롯 ∧ 가장 빡빡한 노드의 남은 셀 ≥ 프롬프트+max_tokens`.
-  오버커밋 비율(출발점 0.5)은 셀 수에만 적용하고 단가에는 적용하지
-  않는다. 단가는 계산 가능한 값이지 추정 대상이 아니다.
+- 수용: 슬롯뿐 아니라 전 stage의 모델별 최악 셀/보조 상태 예산과 queue/byte/token 상한을 검사한다.
+  prepared 예약도 사용량에 포함한다. 실측/감사되지 않은 단가와 오버커밋 비율을 사실로 쓰지 않는다.
 - 축출·체크포인트: L2는 **정책을 갖지 않는다.** 언제 어떤 세션을 어떤
   키로 영속화·체크포인트·폐기할지는 전부 OUTER의 명령이고(스냅샷 명령
   모델은 [kv-state-store-convention.md](kv-state-store-convention.md)
   소유), L2는 명령의 이행과 그 셀 회계만 담당한다. TTL은 OUTER가 이
   어휘로 표현하는 정책 중 하나일 뿐이다.
-- 복원: 재요청의 SessionKey가 Persisted에 매칭되면 Restore를 스케줄한다.
-  전량 셀 선확보, 단독 실행. 복원 후 초과 suffix만 프리필.
-- 공정성: ITL은 같은 UBATCH 동승으로 자동 공정하다. TTFT가 수용 정책의
-  산물이다(실측: parallel 10→40에서 TTFT p50 207.9s→1.4s). 셀이 남는 동안
-  "많이 받는 것"이 속도와 공정을 동시에 만족하며, 충돌은 셀 고갈
-  시점에만 생긴다. 그때의 우선순위는 축출 > 대기 > 거절이다.
+- 복원: OUTER 명령과 [저장 규약](kv-state-store-convention.md)의 복원 판정 사다리·셀 예약·정지점 계약을 따른다.
+- 공정성: admission 대기와 runnable 대기를 분리한다. 요청별 age/deadline/최대 미선택 간격을
+  검증한다. 같은 UBATCH 동승이나 셀 여유만으로 ITL/TTFT가 자동 공정하다고 가정하지 않는다.
+  부족 시 queue/reject 또는 승인된 OUTER 스냅샷 정책을 이행하며 자동 축출은 장애 게이트 전 비활성이다.
 
 ### L3 구성 (strategy)
 
-스텝 축(~100ms). 순수 함수로 유지한다 — 입력은 전부 데이터, 출력은
+매 발행 기회에서 동작한다. 순수 함수로 유지한다 — 입력은 전부 데이터, 출력은
 할당. 그래야 기록된 트레이스로 재생·검증할 수 있다.
 
 ```
 plan(demands,            // 원장이 상주 전제를 통과시킨 것만
-     row_budget,         // n_batch / n_ubatch
+     row_budget,         // 논리 n_batch, physical n_ubatch를 각각 보존
      cell_budget,        // 가장 빡빡한 노드의 남은 셀
-     pending_cache_ops,  // 복원·영속·체크포인트·분기: 단독 실행 배리어라
-                         // 스텝을 통째로 가져가고, 대상 시퀀스 펜스를 요구
+     pending_cache_ops,  // 대상 시퀀스 펜스 + 실제 context 배타 요구
      shape_rules,        // HELLO 협상값
      cost_model)         // 모델별 고정비·행당비
-  → allocations
+  → allocations + proposed fairness delta
 ```
 
 전략은 trait 뒤의 모델군별 모듈이다. 선택 키는 HELLO capability와 GGUF
 메타(memory family, equal_sequence_ubatch, swa, shared_kv, nextn …)이며
 모델명 하드코딩은 금지한다.
 
-- `waterfill` (기본 attention+unified): 디코드 전원 선점 → 대기 프롬프트
-  1행씩 → 회전 커서 잔여 채움. 현행 `plan_ordinary`가 이것이다.
+- `waterfill` (기본 attention+unified): 적격 decode와 대기 프리필을 제한된 row budget과
+  요청별 service bound 안에서 배분하고 회전한다. 현행 `plan_ordinary`는 출발점이며 완성된 공정성 증명이 아니다.
 - `equal_width` (recurrent/hybrid): 등폭 강제. 디코드가 폭을 1로
   붕괴시키므로 프리필 전용 스텝과 디코드 전용 스텝을 분리하는 편이 낫다.
 - `atomic` (MTP/speculative): 원자 창 + 펜스. 다른 전략과 합성된다.
@@ -121,9 +386,14 @@ plan(demands,            // 원장이 상주 전제를 통과시킨 것만
   SGLang RadixAttention은 참조 대상이나, 노드별 셀 단가가 다르다는 조건이
   우리 고유의 추가 제약이다.
 
-채움 규칙은 "꽉 채운다"가 아니라 **"고정비 대비 한계 이득이 양수인 동안
-채운다"**로 적는다. 지금은 고정비가 지배하므로 꽉 채우는 것과 같고,
-cut-set 합치기·깊이 개선 후에는 자동으로 프리필 상한이 SLO에 걸린다.
+채움은 shape·의존성·credit·KV·요청별 지연 bound를 먼저 만족해야 한다.
+그 안에서 폭과 issue 빈도를 실제 비용으로 비교한다. 현재 고정비가 모든 모델에서 지배한다거나
+넓은 배치가 항상 최선이라고 가정하지 않는다. 탐색·승격은 검증 규약의 고정 토폴로지 A/B로 판정한다.
+
+계획 후보 생성은 정책 상태를 바꾸지 않는다. L4/발행 원장이 승인한 경우에만 후보의 회전·cohort
+delta를 commit한다. 새 계획이 이미 commit되어 revision이 바뀐 오래된 후보는 재사용하지 않는다.
+거부된 후보로 공정성 순번을 소모하지 않는 것과, 실제 수신 루프가 유한한 발행 기회를 주는 것은
+별도 조건이다. selector 시험만으로 무제한 input drain의 기아를 부정할 수 없다.
 
 ### L4 증명 (proof)
 
@@ -134,9 +404,220 @@ ubatch 콜백 멤버십을 캡처하며, 하류는 재도출 없이 재생한다
 
 ### L5 전송 (기존, 효율화 대상)
 
-전략의 소관이 아니나 비용 모델의 최대 항이다. 두 가지가 고정비를
-직접 줄인다: 홉당 cut-set 텐서를 연속 버퍼 하나로 합쳐 전송하는 것,
-통과만 하는 텐서를 매 홉 재전송하지 않는 것.
+전략과 구분되는 비용 항이다. cut-set packing과 불필요한 재전송 제거는 후보이며,
+실제 다중 머신에서 serialize/copy/network/queue 시간을 분리해 우선순위를 정한다.
+텐서 값·alias/view·membership 손실 없이 동등성 게이트를 통과해야 한다.
+
+## 실행 소유권과 native 제어 결속 — 2026-09-06 작업 트리 계약
+
+이 절은 실행 wire와 메모리 내 소유권의 단독 정의다. 저장 캐시의 정체성/내구 epoch를 대신하지 않는다.
+구현 근거는 adapter의 `v2/node/ownership.rs::StageOwners`, `v2/control_identity.rs`,
+native의 `runtime/physical_authority.hpp::PhysicalAuthority`다. 현재 검증 범위는
+[정산 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)의 최신 기록을 따른다.
+
+- 실행 소유자는 `(load_generation, session_id, sequence_key, sequence_id, incarnation)`이다.
+  incarnation은 0이 아닌 head 발행 단조 ID이며 같은 key/slot 재사용 때 새 값이 필요하다.
+  native slot은 한 active 소유자만 가진다. 새로운 소유권은 빈/해제 슬롯의 Prefill position 0에서만 시작한다.
+- LB/PB codec은 revision **4**, owner의 `load_generation` 뒤에 LE u64 incarnation을 싣는다.
+  physical/tail/release/released/settle/settled content-type도 v4다. 옛 codec을 자동 변환하지 않는다.
+  `ReleaseSequence`·`SettlementSequence`의 incarnation과 operation_id는 필수, 0과 누락은 거부한다.
+- identity 지원은 HELLO의 `physical_identity_revision=1`로 따로 협상한다. physical batch 지원만으로
+  추론하지 않는다. event 제품 LOAD는 capability 확인 뒤 **BindLoad(opcode 23)**에 LE u64 generation을
+  보내 정확한 echo를 받은 후에만 용량/슬롯을 공개한다. bind 실패/다른 echo/응답 유실은 native를 닫는다.
+  같은 worker에서는 시도한 generation도 소모하여 재사용/감소를 거부한다.
+- native의 BindLoad는 현재 Session에 명시적으로 load identity를 결속한다. 첫 PHYSICAL 소유자를 보고
+  암묵적으로 bind하지 않는다. bound mode에서는 bare slot Cancel·legacy Hop·기존 KV mutation 우회가
+  실행 권한을 얻지 못한다. 해당 state 기능 재활성화에는 같은 소유권을 따르는 별도 통합이 필요하다.
+- native 제어 prefix는 `P4ID | revision:u16=1 | reserved:u16=0 | load:u64 | incarnation:u64 |
+  operation:u64 | slot:u32 | session:(len:u32,UTF8) | key:(len:u32,UTF8)`이며 정수는 LE다.
+  key는 정확한 `session + NUL + request`이다. session/request 내부 NUL을 허용하지 않는다.
+  RELEASE body/응답은 정확한 prefix다. SETTLE은 prefix 뒤 retain/replay_position/count(u32)와
+  replay token(i32) 배열, 응답은 같은 prefix 뒤 proposal count/token 배열이다. 짧음·trailing·다른 echo는 거부한다.
+- 연산 ID는 head가 승인된 정산 후보에 배정한다. 각 슬롯의 최신 `(operation, 요청 본문, 결과 본문)`만
+  재생할 수 있다. 같은 ID/본문은 native 추가 실행 없이 동일 결과, 같은 ID/다른 본문·종류는 conflict,
+  더 오래된 연산/다른 incarnation은 무효다. 해제 후 새 소유자가 들어오면 옛 제어 receipt로 새 KV를 만질 수 없다.
+- 해제된 incarnation high-water는 다른 session이 슬롯을 임시 사용해도 잊지 않는다. 상한 때문에
+  watermark를 버리지 않고 신규 수용을 거부한다. 이 정책은 안전성을 위한 한정 메모리 계약이며
+  오래 실행할 때 무제한 신규 session을 지원한다는 뜻이 아니다.
+- 슬롯별 최신 control receipt의 요청/응답 각각 1MiB, 전체 64MiB, watermark 65,536개가 현재의
+  안전 상한이다. 여러 sequence를 담은 control은 첫 native 호출 전에 전체 최악 응답 공간을 검사한다.
+  정확한 Replay는 추가 예약이 없고, New의 기존 receipt를 뺀 양수 증가분만 합산한다. 뒤 연산의
+  예정된 축소를 앞 연산에 미리 대출하지 않는다. 이 검사는 한 worker의 직렬 명령 안에서만 유효하다.
+
+### PHYSICAL 수신 receipt — 2026-09-07 후속 작업 트리 계약
+
+`v2/node/physical_receive.rs::PhysicalReceiveLedger`는 중간/꼬리의 `Worker::physical`에서 native 호출
+**전에** 사용한다. head terminal 정산이나 SETTLE/RELEASE receipt와는 다른 원장이다.
+
+- 실행 번호 발급자는 head의 native Session이다. 수신 key는 수신 load 안의
+  `(SESSION.first의 전체 Endpoint(agent,node,generation), execution_id)`다. 이미 설정된 session 경로에서
+  발급 권위를 가져오며 incoming event ID나 payload의 자칭 issuer를 사용하지 않는다.
+  같은 head의 다른 session/body로 ID를 재사용하면 conflict지만, 다른 head의 같은 숫자는 별개 정상 실행이다.
+- 이벤트 전체 입력을 먼저 검증한다. canonical 입력 바이트에는 invocation·소유 행·incarnation·tensor가 모두
+  결속된다. Fresh만 native에 보내고, 보존된 정확한 Replay는 기존 응답을 돌려준다. 혼합 이벤트의 출력은
+  원래 구성원 순서로 조립한다. 뒤 conflict가 앞 Fresh의 owner/ID/native 효과를 먼저 소비하면 실패다.
+- native 진입 직전에 Fresh를 Running으로 등록한다. 결과 membership/role이 다르거나 응답 유실/실행 오류면
+  해당 시도의 모든 Fresh는 Uncertain이고 worker를 fence한다. 이미 바뀐 KV를 rollback했다고 보고하지 않는다.
+- 완료 receipt의 canonical 입력+결과 바이트 합계 64MiB/4096개, 전체 Seen ID 65,536개,
+  발급 권위 1024개가 현재 안전 상한이다. 큰 정상 응답은 한 번 전달할 수 있으나 보존 불가하면 Expired다.
+  active input·encoding 임시 메모리·publisher intent·전체 RSS는 이 cache 예산에 포함된 것으로 주장하지 않는다.
+- 숫자 수신 창은 head별 65,536이며 최고 ID에서 창 밖으로 밀린 ID는 미도착 gap도 포함해 거부한다.
+  다른 head의 ID 진행으로 그 창을 움직이지 않는다. cache 퇴출 뒤 재계산하거나 issuer 기억을 자동 폐기하여
+  과거 ID를 새 작업으로 되살리지 않는다. 신규 identity 상한 초과는 사전 거부한다.
+- 보장은 **같은 Worker/load 수명에서 보존 중인 정확한 재전달의 native 추가 실행 0**과 만료 후 fail-closed다.
+  cache/창/issuer 상한은 아직 재시도 기간·edge credit·재연결 계약과 협상되지 않았다. 이를 무손실 재전달 또는
+  장애 후 exactly-once로 승인하지 않는다. B3에서 유효 재시도 기간과 보존/역압/명시 만료를 결속해야 한다.
+- Replay만 있는 이벤트는 stage 소유권을 새로 획득하지 않고 계산 span도 추가하지 않는다. 해제/슬롯 재사용 후
+  옛 결과를 재응답하는 것과 옛 KV를 다시 계산하는 것을 구분한다.
+
+**이 receipt만으로 보장하지 않는 것:** 새 PHYSICAL ID의 행 순서는 아래 별도 frontier가 담당한다.
+credit, 모든 이벤트의 다중 native 원자 실행, crash 후 내구 receipt/outbox 복원은 별도다. 제어 preflight가 성공했어도 뒤 native 호출이
+불확실하게 실패하면 이미 실행한 KV를 rollback했다고 하지 않고 fence한다. worker/native 프로세스의
+재시작을 가로지르는 load/run epoch 권위도 아직 없다. fresh fleet identity와 재접속/이전 세대 차단을
+구현하기 전에는 이 메모리 내 guard를 restart exactly-once로 승격하지 않는다.
+
+이 변경은 **adapter-owned protocol 의미의 의도적 버전 변경**이다. P4 공용 envelope나 CUDA/ggml에
+요청 개념을 넣지 않았으며, llama.cpp API 변경에 끌려 올라온 필드도 아니다. 반대로 이것만으로
+stage ABI/state ABI/actual placement/공통 타입 격리의 B5 게이트가 완성되는 것은 아니다.
+
+### stage KV frontier — 수신 ID와 별개인 위치·phase 계약
+
+`v2/node/frontier.rs::StageFrontiers`는 순수 어댑터 원장이다. llama/ggml/backend 타입이나
+native 호출을 갖지 않는다. 같은 slot의 load/session/key/incarnation, 다음 KV 입력 위치,
+생성 토큰 수·예산·options/reply, 미결 Verify와 허가된 Replay를 함께 검사한다.
+`Worker::drive_one_batch`의 실제 발행과 downstream `Worker::physical`, SETTLE/RELEASE가 소비한다.
+native C++의 `PhysicalAuthority` 자체가 이 위치 검사를 수행한다는 뜻은 아니다.
+
+| 현재 상태 / 입력 | 승인 조건과 다음 상태 |
+| --- | --- |
+| 새 소유자 / Prefill | 위치 0부터, 연속 입력. 마지막 output 표식 전에는 생성량 0. output은 그 요청의 마지막 prompt 행 한 번만 |
+| 계속 Prefill / Prefill | 바로 다음 위치만. 이미 final 표식을 처리한 뒤 Prefill로 회귀 금지 |
+| Ready / Decode·Verify | 정확한 다음 위치·생성량·예산. Decode는 1행, Verify는 분할하지 않는 새 speculative round |
+| Verify 계산 후 전량 수용 | 별도 SETTLE 없이 다음 연속 append가 head/middle에 전량 수용을 확인. tail은 실제 outcome으로 확인 |
+| Verify 부분 수용 / SETTLE | 진행 중 Verify 범위 안의 유효 경계만. tail에서는 직전 rollback outcome과 정확히 일치. 새 operation ID만으로 임의 trim 금지 |
+| checkpoint SETTLE / Replay | 실제 복원 끝은 `replay_position`. `retain_from`은 앞으로 다시 채울 끝. 같은 round·정확한 token 배열·범위를 한 번만 Replay |
+| 종료 / RELEASE | 이미 검증한 제어 identity·receipt와 결속해 slot frontier 삭제. 새 incarnation 수용 권위는 StageOwners watermark가 유지 |
+
+Replay의 wire `output=false`는 내부 logits 계산을 금지하거나 실제 생성 결과가 없다는 뜻이 아니다.
+checkpoint Verify의 미확정 결과는 출력하지 않고, 허가된 Replay가 재계산·확인한 결과를 한 번 출력한다.
+native 배치의 logits 요청 mask와 logical/capsule output mask는 별도 의미다. 엔진에 필요한 logits를
+요청하더라도 원래 owner/capsule의 logical mask를 바꾸지 않는다. 이 번역은 native 어댑터의 책임이며
+순수 원장·배치 정책에 llama_batch 필드나 backend 타입을 넣지 않는다. 실제 logits/샘플러/checkpoint
+정상성은 native 모델 시험으로, adapter의 생성량·위치·제어 정산은 actual worker 시험으로 구분한다.
+
+tail에서 다음 발행은 이전 sampler가 반환한 **전체 proposal token 배열**과 Decode/Verify 구분에
+일치해야 한다. head/middle은 tail proposal을 직접 보지 않으므로 동일한 token 증명을 주장하지 않는다.
+continuation의 proposal/replay 길이는 요청의 남은 token budget뿐 아니라 로드된 atomic physical
+capacity 안이어야 한다. tail PHYSICAL과 native SETTLE 응답의 승인 전에 대조하며, head 반환
+승인도 독립 대조한다. 폭을 잘라 정답을 바꾸거나 head의 뒤늦은 거부로 stage 승인을 대신하지 않는다.
+native 효과 뒤 위반은 성공 receipt/frontier/forward 없이 fence한다. PHYSICAL의 Fresh 결과 묶음에
+정상 앞부분과 잘못된 뒤 결과가 있으면 Fresh 전체를 Uncertain으로 남긴다. 이미 실행한 native
+KV/sampler를 롤백했다는 뜻이 아니다. 정확한 전역 배포 폭 협상·placement는 별도 로드 계약이다.
+이미 완성된 ID의 정확한 재전달은 frontier를 재전진시키지 않는다. 늦은 gap은 사전 거부하며,
+그 거부가 자동 재정렬·재시도·무손실 전달을 구현한 것은 아니다.
+
+whole-event Fresh/control 대조는 첫 native 효과 전에 끝낸다. 사전 거부는 owner·frontier·receipt·
+출력 의도·native KV 모두 보존한다. delta는 touched slot만 들고 slot revision으로 stale/ABA를 거부한다.
+native 응답의 row membership·outcome/proposal까지 확인한 뒤 commit하며, 성공 opcode 뒤 잘못된
+응답이나 결과 불명은 fence다. 그 뒤의 오류를 사전 거부와 같은 rollback 보장으로 보고하지 않는다.
+현재 worker는 native 호출 중 load/다른 상태 변경이 끼어들지 않는 직렬 소비자다. 이 전제가 바뀌면
+reservation/commit 원자성을 다시 검증해야 한다. 이 원장도 restart 내구성·edge credit·전체 RSS 상한이 아니다.
+
+### 명시적 UNLOAD와 실패 정리의 구분
+
+정상 worker에 대한 UNLOAD는 현재 load의 **로컬 정지점에서만** native 소유권을 해제한다.
+요청/수용 대기, 발행 준비/비행, pending SETTLE·RELEASE, Verify fence, 미발행 효과,
+stage owner/frontier의 활성 KV, 수신 Running/Uncertain이 남으면 native 호출 전에 busy로 거부한다.
+middle의 requests가 0인 것만으로 정지했다고 하지 않는다. 완료 receipt와 Released tombstone은
+진행 중 KV가 아니며, 그것만 남은 idle UNLOAD를 영원히 막지 않는다.
+
+busy는 호출자에게 상관 ID가 일치하는 명시 오류를 보내고 원장/KV/발행 효과를 보존한다.
+기존 작업의 반환·정산·해제는 계속 처리할 수 있어야 한다. 성공은 local quiescence + native
+cleanup 성공 뒤에만 UNLOADED로 보고한다. 이미 publish된 출력의 OUTER 도착이나 상대 stage의
+정지까지 보증하지 않으며, 클러스터 전체 drain의 완료 증거로 사용할 수 없다.
+
+이미 effects/native 결과 불명으로 fenced된 worker는 정상 busy 경로와 다르다. 현재 run의
+실패 정리는 잔량·원래 오류를 보존하고 실패로 종료할 수 있으며 UNLOADED 성공을 내지 않는다.
+정상 UNLOAD의 native cleanup 자체가 실패해도 복구 가능 busy로 바꾸지 않는다. 부분 종료된
+엔진에 후속 요청/SESSION/재로드를 계속 승인하지 않고 실패 경계를 유지해야 한다.
+강제 종료·요청 Cancel·분산 Drain은 별도 명령/상태 계약이며 UNLOAD의 성공 어휘에 섞지 않는다.
+
+### 출력 포화 중 제어 진행 — 양보 가능한 effect pump의 목표 계약
+
+**아래는 아직 구현 완료가 아닌 목표 계약이다.** 현재 `worker/emit.rs::Worker::publish_or_wait`는
+Full에서 worker 스레드를 점유한다. capacity 통지를 추가하는 것과 worker가 다른 입력을 처리하는
+것은 별개다. 실행 결과·단계 상태·적용 순서는 로드맵과 증거 기록이 소유한다.
+
+- **고정 송신물**: 출력·관측·제어·오류·LOAD/SESSION/UNLOAD 응답을 동일한 보존 규칙으로 처리한다.
+  Event의 ID/sequence·본문·수신자·상관 정보는 한 번만 배정한다. Full이 돌려준 Event를 그대로
+  재시도하며 재직렬화·ID 재발급·native 재실행으로 대체하지 않는다. Forward 승인 뒤 고정한
+  관측 시각도 후속 recipient 대기 때문에 다시 쓰지 않는다.
+- **응답 표현 가능성과 상태 승인**: session 경로를 설치하기 전에 정확한 응답의 직렬화·ID 발급·
+  수신 codec 표현 가능성을 확인한다. 개별 필드 길이 검사만으로 합산 envelope 검사를 대신하지
+  않는다. 준비 실패는 권한/ID를 소비하지 않으며, 별도 진단 ID를 소비하는 handle 거부와 구분한다.
+  현재 SESSION 준비물은 동기 호출 구간 전용이다. 준비 성공이 queue 공간 확보 또는 Closed 후
+  분산 rollback을 의미하지 않는다. 일반 오류 응답에도 같은 원칙을 이관해야 하지만 현재 구현
+  여부는 로드맵을 따른다. encode/decode의 일시 복제 비용은 전체 retained-byte 예산이 아니다.
+- **예약과 양보**: 효과 개수와 보존 바이트의 합계 예산을 모두 검사한다. 하나의 TAIL/ACK가 만드는
+  전체 효과를 검증·예약한 뒤 기존 whole-event 원자 commit을 유지한다. native 호출 전에는 그 결과와
+  실패를 보존할 공간도 확보한다. 직렬화 wire 길이만 세면서 보존된 base/payload 복사 비용을 제외하면
+  bounded RSS 증명이 아니다. 기존 큰 wire 한도를 임의로 줄여 통과시키지 않는다.
+- **자원 선언과 한도의 종류**: `n_batch`/`n_seq_max`/mailbox 개수에서 adapter 전체 byte 예산을
+  유도하지 않는다. OUTER가 정한 호스트 자원 정책을 composition root에서 adapter-local 설정으로
+  전달한다. 보존 효과·보류 입력·native 임시 메모리·미래 반환/통지·실패 진단의 count/byte 영역을
+  수치로 선언하고 합산한다. 이는 P4 코어에 llama 지식을 넣는 필드도 native wire 포맷 상한의 축소도
+  아니다. 자원 정책의 기본값은 명시·검증해야 하며, 정상 한 발행의 최대 의무조차 예약할 수 없으면
+  native 호출 전에 명시 보류/거부한다. `n_batch`를 몰래 낮추거나 결과를 받은 뒤 버리지 않는다.
+- **미래 통지의 ID 여력**: RELEASE를 발행하기 전에 원본 제출별 receipt의 최악 count/bytes와
+  미래 Event 발급 **개수**를 pending 권위에 예약한다. 실제 sequence 번호를 미리 배정하지 않는다.
+  그렇지 않으면 뒤늦은 receipt가 이미 발행한 출력보다 작은 sequence를 갖는다. 일반 새 송신은
+  남은 ID 공간에서 약속된 발급 개수를 제외한 몫만 쓰며, ACK는 검증된 whole-group 예약을 실제
+  단조 ID와 고정 송신물로 전환한다. 합계 초과·overflow·잘못된 ACK는 예약/slot/원장을 소비하지 않는다.
+  native 불확실 결과에서 예약을 반환하거나 ACK 도착 때 처음 일반 용량을 요구하지 않는다.
+- **보존 수명**: 예산 원장·고정 outbox·ID 여력은 load가 아니라 Worker 수명에 속한다.
+  LOAD/UNLOAD가 미전송 구세대 응답을 `clear`로 지우면 실패다. UNLOAD의 성공 응답은 native 정리
+  전에 준비·예약하고, 성공 뒤에도 원래 원인의 불변 송신물로 남긴다. 동적 HELLO를 읽어야 만드는
+  LOADED는 bootstrap/native 임시 공간과 성공·실패 응답의 상한을 먼저 확보한다. 실제 frame 수신·
+  파싱의 일시 복사도 예약 대상이며, 발행이 Uncertain이면 의무가 사라진 것으로 회계하지 않는다.
+  비용에는 큐에서 꺼내 실행 중인 effect도 포함한다. VecDeque 길이가 줄었다고 그 메모리를 반환하지 않는다.
+- **압력의 위치**: 미전송 효과가 남으면 새 native issue를 계속 쌓지 않는다. 입력 보류 자체도 유한한
+  count/byte 예산에 포함한다. 반복 SESSION·오류·PREFILL을 별도 무상한 큐로 옮기지 않는다. 이미
+  승인된 작업의 반환/ACK용 용량과 일반 새 입력의 용량을 구분하고, 그 예약 권한은 L1/L2가 소유한다.
+  모든 큐가 찬 순환망의 진행은 이 국소 pump가 아니라 end-to-end credit/제어 용량 계약까지 필요하다.
+  단일 입력 FIFO 앞의 새 요청이 Full로 보류된 상황은 이미 adapter에 수용된 ACK와 다르다.
+  유한 parked queue만으로 무제한 새 입력 뒤 ACK의 진행을 증명하지 않는다. 반환 입력의 예약된
+  수용 경로와 broker/edge credit를 함께 검증해야 end-to-end 포화 해소라고 부를 수 있다.
+- **제어 실행 권위**: head의 pending Release/Settlement는 등록만으로 완료 권한이 되지 않는다.
+  `Queued → LocalApplied → ForwardAccepted`에 해당하는 단조 상태를 가지며, 정상 ACK는 정확한
+  load/session/key/slot/incarnation/operation과 마지막 상태를 모두 만족해야 적용한다. local native
+  응답 검증·owner/frontier commit 뒤에만 LocalApplied, 다음 stage로 보낼 정확한 Event의 mailbox
+  수용 뒤에만 ForwardAccepted다. 한 command의 모든 구성원을 먼저 대조한 뒤 함께 갱신한다.
+  이 mailbox 승인은 전송 단계 증거이지 원격 KV 완료가 아니다. 슬롯 반환은 전 stage 적용을
+  체인으로 결속한 꼬리의 단일 ACK가 별도로 성립한 뒤다. 오래된 effect callback이 새 incarnation이나
+  다른 operation을 승격하면 실패다.
+- **replay와 역할**: native control receipt는 LocalApplied의 근거만 제공하고 ForwardAccepted를
+  대신하지 않는다. 정확한 native replay는 native 호출 0회로 상태를 유지하며 이전 단계로 낮추지 않는다.
+  head pending 상태를 중간/꼬리에도 억지로 만들지 않는다. 중간/꼬리는 자신의 native receipt와
+  미전송 Forward를 보존한다. 퇴역 후 ACK의 현행 거부를 이 변경에 끼워 멱등 성공으로 바꾸지 않는다.
+  SETTLED는 꼬리의 정상 proposal이 추가될 수 있으므로 송신 SETTLE body와 바이트 동일성을 요구하지
+  않는다. 기존 identity/retain/replay 대조와 Proposal/Replay 의미 검증 위에 전송 단계를 추가한다.
+- **native 원자 구간**: 현행 `StageOwners::validate_control_batch`는 예약이 아닌 읽기 검사다.
+  그 검사와 같은 command의 local native loop 사이에는 다른 command를 끼워 넣지 않는다. 첫 pump는
+  외부 전송 대기에서만 양보한다. native loop도 turn quantum으로 분할하려면 receipt 예산 예약과
+  candidate revision 계약을 먼저 구현·검증한다. 전송 단계 필드만으로 그 예약이 생기지 않는다.
+- **검증 ticket의 수명**: 현재 head의 local/forward ticket은 서로 다른 private 타입이며,
+  동일 worker의 동기 prepare→effect→commit 구간에서만 유효하다. ticket을 Full 너머 보관하는
+  예약으로 사용하지 않는다. 양보 후 재송신은 현재 load/session·원래 제어 구성원·route를 다시
+  검증해야 하며, 퇴역한 key나 새 incarnation에 과거 ticket을 적용하지 않는다.
+- **대기와 실패**: 입력 도착·출력 공간·shutdown을 함께 관찰하며 등록과 재검사 사이의 wake 유실을
+  막는다. 공간 통지는 예약도 전송 성공도 아니므로 실제 offer 결과를 다시 확인한다. Full은 Pending,
+  Closed/ID 고갈/불명 native 결과는 각각 명시 실패다. native 실행 금지와 남은 진단 송신 수명을
+  분리해 ERROR를 큐에 넣자마자 worker 종료로 버리는 회귀를 금지한다. 종료 deadline 뒤 미전송물은
+  완료가 아니라 명시 abandonment로 기록한다. 내구 재연결/분산 Drain을 구현했다고 하지 않는다.
+
+중립 mailbox는 opaque Event의 소유와 공간/종료 통지만 제공한다. 효과 예산·제어 실행 단계·KV
+정산은 어댑터 안에 남긴다. 시험은 검증 규약 T22~T26을 따르며, 정상 ACK 진행만 고치면서 조기 ACK를
+허용하거나 모든 입력을 막아 메모리 상한만 통과하는 구현도 실패해야 한다.
 
 ## 측정: 배치 폭 대 파이프라인 깊이 (2026-08-31, 2026-09-01 재측정)
 
@@ -224,11 +705,11 @@ clean인 것은 50.40 하나뿐이고 나머지 다섯은 서로 다른 dirty di
 읽어야 하며, 이것이 HELLO에 `patch_set`을 넣고 실행이 기대 pin과 대조하게
 만든 이유다.
 
-**남는 진짜 레버 (2026-09-03 정정)**: 이 문단은 앞서 "왕복 지연을 줄이는 것,
+**과거 비용 해석 (현재의 보편 결론이 아님)**: 이 문단은 앞서 "왕복 지연을 줄이는 것,
 즉 홉당 cut-set 전송 비용(D7/P6)"이라고 적었다. **전송이 아니다.** 스테이지별
 span을 재 보니 노드 2→3 홉은 꼬리가 비어 있을 때 **2 ms**(p50)이고 바쁠 때
 **128 ms**이며, 배치의 63%가 바쁜 꼬리를 만난다. 130 ms 평균은 전송이 아니라
-꼬리 앞 대기다. 전송 자체는 이미 싸다.
+꼬리 앞 대기가 크게 섞여 있었다. 이 특정 링크/모델 관측으로 다중 머신 전송이 항상 싸다고 결론내리지 않는다.
 
 **(2026-09-04 정정) 그 다음 문단이 틀렸다.** 아래 상관은 폭이 *결과*인 실행들에서
 잰 것이다 — 첫 노드는 준비된 것으로 계획하므로, 빠른 실행일수록 준비 집합이 빨리
@@ -237,7 +718,7 @@ span을 재 보니 노드 2→3 홉은 꼬리가 비어 있을 때 **2 ms**(p50)
 −0.060**이다. 상한 12에서 동시 계산 95.4%·GPU 사용률 최고·혼합 배치 3,698건을
 달성하고 총 처리량은 544 → 198 rows/s로 떨어졌다.
 
-진짜 레버는 **배치당 고정비**다. 꼬리(22층) 스텝시간은 폭에 대해
+이 실험에서 유력한 후보는 **배치당 고정비**였다. 꼬리(22층) 스텝시간은 폭에 대해
 **34.2 ms/배치 + 1.051 ms/행**이고, 폭 8에서 0.208 행/ms, 폭 98에서 0.705 행/ms로
 **넓은 배치가 행당 3.4배 효율적**이다. 곡선은 폭 98에서도 아직 오르는 중이다.
 바쁜 스테이지는 그 고정비를 반복해서 내느라 바빴을 뿐이다.
@@ -259,7 +740,9 @@ span을 재 보니 노드 2→3 홉은 꼬리가 비어 있을 때 **2 ms**(p50)
 0.11 ms, 토큰을 고르는 데 **행당 0.29 ms**로 샘플러가 트랜스포머의 2.7배다.
 어휘가 249,157 이상이고 후보 배열을 행마다 단일 스레드로 만들기 때문이다.
 
-**그래서 샘플러를 행 단위로 병렬화했다.** 교차 8회(블록 순서 반전)에서
+**과거 병렬 sampler 실험이며 운영 승격 증거가 아니다.** 공유 llama_context의
+synchronize/output reorder 안전성이 미검증이므로 현재 기본 직렬을 유지한다.
+당시 교차 8회(블록 순서 반전)에서
 생성 TPS 194.06±6.54 → **213.45±8.09 (+10.0%)**, 폭을 맞춘 비교에서 샘플링
 −28%~−49%(9~128행 구간). **분포가 겹치지 않는다** — 최저 병렬 204.7이 최고 직렬
 202.3보다 높다. 8회 모두 192/192 통과. 이 기록에서 교차 검증을 견딘 첫 변경이다.
@@ -321,7 +804,7 @@ KV의 논리적 종착점이며, 그것이 정확히 L1과 L3다.
 
 `p4-adapter`의 `CacheAction`(PreparePersist/Persist/PrepareRestore/
 Restore/Reconcile)과 `CacheReceiptState`가 이미 이 구조를 계약한다.
-세션 상태는 노드 4개에 조각나 있으므로(`stage_id`, `operation_id`,
+세션 상태는 참여 노드 N개에 조각나므로(`stage_id`, `operation_id`,
 `generation`) 모든 영속·복원은 다단계 조율이다.
 
 영속·복원·절단의 실행 순서(복원 판정 사다리 포함)와 2PC 수렴 규칙은
@@ -372,15 +855,14 @@ Restore/Reconcile)과 `CacheReceiptState`가 이미 이 구조를 계약한다.
   feature 포트의 3분할로 관리해 독립 수정 하나의 upstream 흡수가 전체
   포팅과 함께 충돌하지 않게 한다(계획 U0).
 
-배치 위치는 `layers/adapters/llamacpp/batching/`(신규 크레이트, 의존성
-최소) — staged adapter가 소비하고, 기록된 `batch_observations` 아티팩트를
-재생하는 골든 테스트로 GPU 없이 검증한다.
+현재 구현은 staged adapter의 `src/v2/`에 있다. 기전과 정책을 실제로 공유하고 검증한 뒤
+별도 크레이트가 의존성 경계를 개선하는지 결정한다. 크레이트 생성·골든 재생만으로 공유 전이 완료를 주장하지 않는다.
 ## 실패 이력의 층별 귀속
 
 | 관측된 실패 | 귀속 층 |
 | --- | --- |
 | 40요청 position 불연속 (슬롯 재사용) | L1이 불변식 위반을 검출; 원인 규명·수정은 계획 P1b |
-| 혼합 배치 0건 | 전제 — 파이프라인 깊이 1 |
+| 혼합 배치 0건 | 합류/shape/도착/정책 관측; 깊이와 실제 device overlap은 별도 계측 |
 | gemma-4 로드 거부 후 5GB 로드 낭비 | L1 단가표 + 로드 전 preflight |
 | Qwen3.6 VRAM 초과 사후 발견 | L1 단가표 (로드 전 계산) |
 | cut-set 81전송 고정비 | L5 + cost_model |
@@ -389,5 +871,5 @@ Restore/Reconcile)과 `CacheReceiptState`가 이미 이 구조를 계약한다.
 
 ## 도입 순서
 
-단계·순서·수용 기준은 [adapter-restructure-plan.md](adapter-restructure-plan.md)가
+단계·순서·수용 기준은 [분산 배치 로드맵](distributed-batching-roadmap.md)이
 단독 소유한다. 이 문서는 L0~L5 계약만 소유하며 순서를 재서술하지 않는다.

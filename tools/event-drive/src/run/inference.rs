@@ -1,10 +1,11 @@
-use super::inference_identity::{InferenceIdentity, insert_observation};
+use super::evidence_ledger::{EvidenceLedger, EvidenceStatus, SubmittedAuthority};
+use super::inference_identity::InferenceIdentity;
 use super::wire::EventWire;
 use super::{ArrivalWave, RequestArtifact, RunConfig, Sender, node_endpoint};
 use p4_llamacpp_staged_adapter::v2::{
-    BATCH_OBSERVATION_CONTENT_TYPE, BatchObservation, ERROR_CONTENT_TYPE, InferenceCommand,
-    OUTPUT_CONTENT_TYPE, OutcomePayload, PREFILL_CONTENT_TYPE, RELEASED_CONTENT_TYPE,
-    ReleasedPayload, STAGE_SPAN_CONTENT_TYPE, StageSpan,
+    ApprovedOutputPayload, BATCH_OBSERVATION_CONTENT_TYPE, BatchObservation, ERROR_CONTENT_TYPE,
+    InferenceCommand, OUTPUT_CONTENT_TYPE, PREFILL_CONTENT_TYPE, RELEASE_RECEIPT_CONTENT_TYPE,
+    ReleaseReceipt, STAGE_SPAN_CONTENT_TYPE, StageSpan,
 };
 use p4_protocol::event::EventClass;
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,6 +13,7 @@ use std::io;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+#[derive(Debug)]
 pub struct InferenceResult {
     pub request_count: usize,
     pub completed_count: usize,
@@ -20,6 +22,7 @@ pub struct InferenceResult {
     pub batch_observations: Vec<BatchObservation>,
     pub stage_spans: Vec<super::StageSpanArtifact>,
     pub elapsed_ms: u128,
+    pub telemetry_complete_elapsed_ms: Option<u128>,
     pub error: Option<String>,
 }
 
@@ -44,13 +47,22 @@ where
     let mut completed = 0usize;
     let mut released = 0usize;
     let mut failure = None;
-    let mut observations = BTreeMap::new();
-    let mut spans = Vec::new();
+    let mut evidence = EvidenceLedger::new(config.nodes.len());
+    let mut release_elapsed_ms = None;
+    let mut telemetry_complete_elapsed_ms = None;
     let mut known_requests = BTreeSet::new();
     let mut seen_event_ids = BTreeSet::new();
+    let mut submissions = super::release_ledger::SubmissionLedger::default();
     let identity = InferenceIdentity::new(config, &sender.outer)?;
 
     loop {
+        if Instant::now() >= overall {
+            return Err(format!(
+                "inference overall deadline expired with observation evidence {:?}",
+                evidence.status()
+            )
+            .into());
+        }
         while next_wave < config.waves.len()
             && started.elapsed() >= Duration::from_millis(config.waves[next_wave].after_ms)
         {
@@ -61,6 +73,8 @@ where
                 &mut next_index,
                 &mut requests,
                 &mut known_requests,
+                &mut submissions,
+                &mut evidence,
                 wire,
                 sender,
                 started,
@@ -69,7 +83,14 @@ where
             next_wave += 1;
         }
         if completed == total && released == total {
-            break;
+            // Never include a late-telemetry wait in the established throughput
+            // denominator. Missing evidence waits only to the original deadline.
+            release_elapsed_ms.get_or_insert_with(|| started.elapsed().as_millis());
+            if evidence.status() == EvidenceStatus::Complete {
+                evidence.apply_counts(&mut requests);
+                telemetry_complete_elapsed_ms = Some(started.elapsed().as_millis());
+                break;
+            }
         }
         let read_until = if next_wave < config.waves.len() {
             overall.min(started + Duration::from_millis(config.waves[next_wave].after_ms))
@@ -83,14 +104,25 @@ where
                 }
                 match event.envelope.payload_content_type.as_str() {
                     OUTPUT_CONTENT_TYPE => {
-                        let outcome: OutcomePayload = serde_json::from_slice(&event.payload)?;
+                        let approved: ApprovedOutputPayload =
+                            serde_json::from_slice(&event.payload)?;
+                        let outcome = &approved.outcome;
                         let request = requests
                             .get_mut(&outcome.request_id)
                             .ok_or("output references a request that was not submitted")?;
                         if request.completed_ms.is_some() {
                             return Err("output arrived after a terminal outcome".into());
                         }
-                        identity.output(&event, &outcome, request.outcomes.last())?;
+                        identity.output(&event, outcome, request.outcomes.last())?;
+                        super::output_budget::validate_output(
+                            config.max_tokens,
+                            request.outcomes.len(),
+                            outcome,
+                        )?;
+                        let release_approval = submissions.prepare_output(&approved)?;
+                        evidence.output(&event, &approved)?;
+                        let expected_release = release_approval.expected.clone();
+                        submissions.commit_output(release_approval);
                         let observed_ms = started.elapsed().as_millis();
                         if request.first_output_ms.is_none() {
                             request.first_output_ms = Some(observed_ms);
@@ -98,29 +130,41 @@ where
                         request.response.push_str(&outcome.text);
                         if outcome.stop.is_some() {
                             request.completed_ms = Some(observed_ms);
+                            request.release_member = expected_release;
+                            request.issued_work = approved.issued_work;
                             completed += 1;
                         }
-                        request.outcomes.push(outcome);
+                        request.outcomes.push(approved.outcome);
                     }
-                    RELEASED_CONTENT_TYPE => {
-                        let value: ReleasedPayload = serde_json::from_slice(&event.payload)?;
+                    RELEASE_RECEIPT_CONTENT_TYPE => {
+                        let value: ReleaseReceipt = serde_json::from_slice(&event.payload)?;
                         identity.released(&event, &value, &known_requests)?;
+                        let newly_released = submissions.apply_receipt(&value)?;
                         released = released
-                            .checked_add(value.released)
+                            .checked_add(newly_released.len())
                             .ok_or("released request count overflow")?;
                         if released > total {
                             return Err("too many requests were released".into());
+                        }
+                        for member in newly_released {
+                            requests
+                                .get_mut(&member.request_id)
+                                .expect("registered receipt member")
+                                .released = true;
+                        }
+                        if completed == total && released == total {
+                            release_elapsed_ms.get_or_insert_with(|| started.elapsed().as_millis());
                         }
                     }
                     BATCH_OBSERVATION_CONTENT_TYPE => {
                         let observation: BatchObservation = serde_json::from_slice(&event.payload)?;
                         identity.observation(&event, &observation, &known_requests)?;
-                        insert_observation(&mut observations, observation)?;
+                        evidence.observation(&event, observation)?;
                     }
                     STAGE_SPAN_CONTENT_TYPE => {
                         let span: StageSpan = serde_json::from_slice(&event.payload)?;
                         let node = identity.span(&event, &span, &known_requests)?;
-                        spans.push(super::StageSpanArtifact { node, span });
+                        evidence.span(&event, node, span)?;
                     }
                     ERROR_CONTENT_TYPE => {
                         identity.error(&event, &known_requests)?;
@@ -135,21 +179,38 @@ where
                 }
             }
             Err(error)
-                if error.kind() == io::ErrorKind::TimedOut && next_wave < config.waves.len() =>
+                if error.kind() == io::ErrorKind::TimedOut
+                    && next_wave < config.waves.len()
+                    && Instant::now() < overall =>
             {
                 continue;
             }
-            Err(error) => return Err(error.into()),
+            Err(error) if error.kind() == io::ErrorKind::TimedOut && Instant::now() >= overall => {
+                return Err(format!(
+                    "inference overall deadline expired with observation evidence {:?}",
+                    evidence.status()
+                )
+                .into());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "inference observation evidence {:?}; receive failed: {error}",
+                    evidence.status()
+                )
+                .into());
+            }
         }
     }
+    let (batch_observations, stage_spans) = evidence.into_artifacts();
     Ok(InferenceResult {
         request_count: total,
         completed_count: completed,
         released_count: released,
         requests: requests.into_values().collect(),
-        batch_observations: observations.into_values().collect(),
-        stage_spans: spans,
-        elapsed_ms: started.elapsed().as_millis(),
+        batch_observations,
+        stage_spans,
+        elapsed_ms: release_elapsed_ms.unwrap_or_else(|| started.elapsed().as_millis()),
+        telemetry_complete_elapsed_ms,
         error: failure,
     })
 }
@@ -161,6 +222,8 @@ async fn send_wave<R, W>(
     next_index: &mut usize,
     requests: &mut BTreeMap<String, RequestArtifact>,
     known_requests: &mut BTreeSet<String>,
+    submissions: &mut super::release_ledger::SubmissionLedger,
+    evidence: &mut EvidenceLedger,
     wire: &mut EventWire<R, W>,
     sender: &mut Sender,
     started: Instant,
@@ -205,21 +268,29 @@ where
             session_key,
             max_tokens: config.max_tokens,
         };
-        wire.send(sender.event(
+        let event = sender.event(
             node_endpoint(&config.nodes[0])?,
             EventClass::Data,
             PREFILL_CONTENT_TYPE,
             serde_json::to_vec(&command)?,
             &request_id,
-        ))
-        .await?;
-        if !known_requests.insert(request_id.clone()) {
+        );
+        if known_requests.contains(&request_id) || requests.contains_key(&request_id) {
             return Err("duplicate submitted request identity".into());
         }
+        let authority = SubmittedAuthority::from_event(&event, &command)?;
+        submissions.register(&request_id, &event.envelope.event_id)?;
+        evidence.register(authority.clone());
+        known_requests.insert(request_id.clone());
         requests.insert(
             request_id.clone(),
             RequestArtifact {
                 request_id,
+                submission_event_id: event.envelope.event_id.clone(),
+                submission_authority: Some(authority),
+                issued_work: None,
+                release_member: None,
+                released: false,
                 prompt,
                 arrival_ms: started.elapsed().as_millis(),
                 first_output_ms: None,
@@ -236,6 +307,118 @@ where
                 outcomes: Vec::new(),
             },
         );
+        // A failed send may already have reached the peer. This run aborts;
+        // neither its registered attempt nor Sender's identity is rewound.
+        wire.send(event).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use p4_protocol::{Address, event::OuterEndpoint};
+    use std::pin::Pin;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::task::{Context, Poll};
+
+    struct FailedWriter(Arc<AtomicUsize>);
+
+    impl AsyncWrite for FailedWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "scripted send failure",
+            )))
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_retains_the_registered_attempt_and_never_resends_a_duplicate_request() {
+        let node = serde_json::json!({
+            "agent": "tcp://127.0.0.1:53000", "node": "head", "generation": 1,
+            "binary": "unused", "endpoint": "tcp://127.0.0.1:53001", "plan": "unused",
+            "n_batch": 8, "n_ubatch": 8, "context_size": 8,
+            "total_context_size": 8, "sequence_capacity": 1,
+        });
+        let config: RunConfig = serde_json::from_value(serde_json::json!({
+            "ingress_agent": "tcp://127.0.0.1:53000", "channel": "send-test", "connection_generation": 7,
+            "load_generation": 1, "session_id": "s", "request_id": "r", "nodes": [node],
+            "prompt": "Normal prompt.", "max_tokens": 1,
+        })).unwrap();
+        let mut sender = Sender::new(OuterEndpoint {
+            ingress_agent: Address::tcp("127.0.0.1", 53000),
+            channel: "send-test".into(),
+            connection_generation: 7,
+        });
+        let mut requests = BTreeMap::new();
+        let mut known = BTreeSet::new();
+        let mut ledger = super::super::release_ledger::SubmissionLedger::default();
+        let mut evidence = EvidenceLedger::new(config.nodes.len());
+        let writes = Arc::new(AtomicUsize::new(0));
+        let mut wire = EventWire::new(&[][..], FailedWriter(Arc::clone(&writes)));
+        let wave = ArrivalWave {
+            after_ms: 0,
+            count: 1,
+        };
+        let mut index = 0;
+        let error = send_wave(
+            &config,
+            &wave,
+            1,
+            &mut index,
+            &mut requests,
+            &mut known,
+            &mut ledger,
+            &mut evidence,
+            &mut wire,
+            &mut sender,
+            Instant::now(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "scripted send failure");
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            requests["r"].submission_event_id,
+            "outer:tcp://127.0.0.1:53000:send-test:7:1"
+        );
+        assert_eq!(sender.sequence, 2);
+        assert!(known.contains("r"));
+        assert!(!requests["r"].released && requests["r"].release_member.is_none());
+        assert!(ledger.register("r", "new-attempt").is_err());
+        let before = serde_json::to_value(&requests).unwrap();
+        let error = send_wave(
+            &config,
+            &wave,
+            1,
+            &mut index,
+            &mut requests,
+            &mut known,
+            &mut ledger,
+            &mut evidence,
+            &mut wire,
+            &mut sender,
+            Instant::now(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "duplicate submitted request identity");
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        assert_eq!(serde_json::to_value(&requests).unwrap(), before);
+    }
 }

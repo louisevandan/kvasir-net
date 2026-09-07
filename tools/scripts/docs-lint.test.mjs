@@ -106,3 +106,28 @@ test("git mode ignores untracked files; --all sweeps them", () => {
   const swept = spawnSync(process.execPath, [lint, dir, "--all"], { encoding: "utf8" });
   assert.equal(swept.status, 1);
 });
+
+function mappedFixture(catalog) {
+  return fixture({
+    "README.md": "[a](docs/a.md) [map](docs/document-map.md)\n",
+    "docs/a.md": "# a\n",
+    "docs/document-map.md": catalog,
+  });
+}
+
+test("document map covers every in-scope page including itself", () => {
+  const result = run(mappedFixture("[root](../README.md) [a](a.md) [self](document-map.md)\n"));
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("document map missing a page fails even when README indexes it", () => {
+  const result = run(mappedFixture("[root](../README.md) [self](document-map.md)\n"));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unlisted document docs\/a\.md/);
+});
+
+test("document map with a broken target fails", () => {
+  const result = run(mappedFixture("[root](../README.md) [a](a.md) [self](document-map.md) [lost](lost.md)\n"));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing target lost\.md/);
+});

@@ -57,4 +57,8 @@ impl<'a> Cursor<'a> {
     pub(super) fn done(&self) -> bool {
         self.offset == self.bytes.len()
     }
+
+    pub(super) fn remaining(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
 }

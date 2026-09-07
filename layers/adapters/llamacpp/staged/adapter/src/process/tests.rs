@@ -22,6 +22,7 @@ impl ServerControl for Fake {
         if self.polls > self.ready_after {
             Ok(Some(ReadyInfo {
                 protocol_revision: 1,
+                physical_identity_revision: 1,
                 server_id: "fake".into(),
                 transactions: false,
                 physical_batch: true,

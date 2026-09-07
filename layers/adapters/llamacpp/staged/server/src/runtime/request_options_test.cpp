@@ -1,6 +1,7 @@
 #include "llama_stage_runtime.hpp"
 #include "compat/p4_llama_compat_internal.hpp"
 #include "request_options.hpp"
+#include "request_options_test_plan.hpp"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -85,9 +86,13 @@ int main() {
     params.sampling.temp = 0.0f;
     staged::llama_runtime::StageRuntime runtime;
     std::string error;
-    assert(runtime.load(std::move(plan), config, &error) && error.empty());
+    staged::test::RequestOptionsSnapshots snapshots;
+    assert(staged::test::consume_request_options_plan(std::move(plan),
+        [&](p4_llama_compat::LlamaPlan consumed) {
+            return runtime.load(std::move(consumed), config, &error);
+        }, &snapshots) && error.empty());
 
-    auto sampler_options = plan.sampling_options();
+    auto & sampler_options = snapshots.sampler;
     // The test reads the fields the parser wrote, so it opens the handle.
     common_params_sampling & sampled = p4_llama_compat::sampling_of(sampler_options);
     const std::string extended_options = R"({
@@ -167,7 +172,7 @@ int main() {
     grammar_options["grammar_triggers"] = nlohmann::ordered_json::array({
         nlohmann::ordered_json{{"type", 2}, {"value", "^<tool>"}}
     });
-    auto grammar_sampling = plan.sampling_options();
+    auto & grammar_sampling = snapshots.grammar;
     common_params_sampling & grammar_sampled = p4_llama_compat::sampling_of(grammar_sampling);
     assert(staged::llama_runtime::apply_request_options(
         grammar_options.dump(), runtime.model(), &grammar_sampling, &error));

@@ -1,5 +1,8 @@
 # The plan
 
+> 문서 지위 (2026-09-06): **역사·구 계획**. 당시 계획/관측을 보존한다. 현재 상태·실행 순서·승격 기준으로 사용하지 않는다.
+> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+
 > 2026-08-30 update: adapter restructuring is now planned in
 > [adapter-restructure-plan.md](adapter-restructure-plan.md); this document
 > predates the event-v2 architecture and is kept as history.

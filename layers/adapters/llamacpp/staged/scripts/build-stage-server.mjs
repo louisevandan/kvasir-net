@@ -255,14 +255,18 @@ const targets = [
   "p4_staged_protocol_test",
   "p4_staged_runtime_test",
   "p4_staged_state_store_test",
-  "p4_staged_plan_invariants_test",
+  "p4_staged_physical_authority_test",
 ];
 if (!noLlama) targets.push(
   "p4_staged_llama_runtime_compile_test",
   "p4_staged_physical_wire_test",
+  "p4_staged_physical_logits_consumer_test",
   "p4_staged_request_options_test",
+  "p4_staged_plan_lifetime_test",
   "p4_staged_request_stops_test",
+  "p4_staged_utf8_boundary_test",
   "p4_staged_capability_test",
+  "p4_staged_plan_invariants_test",
   "p4_staged_mtp_ownership_test",
 );
 run(cmake, [

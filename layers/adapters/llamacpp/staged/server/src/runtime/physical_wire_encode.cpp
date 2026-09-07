@@ -1,5 +1,6 @@
 #include "physical_wire.hpp"
 #include "physical_wire_cursor.hpp"
+#include "physical_authority.hpp"
 
 #include <cstring>
 #include <limits>
@@ -12,7 +13,7 @@ namespace {
 bool write_owner(std::vector<std::uint8_t> * output, const PhysicalOwner & owner) {
     const bool speculative = owner.phase == PhysicalPhase::Verify
         || owner.phase == PhysicalPhase::Replay;
-    if (owner.load_generation == 0 || owner.position > INT32_MAX
+    if (owner.load_generation == 0 || owner.incarnation == 0 || owner.position > INT32_MAX
         || (!speculative && (owner.speculative_id != 0
             || owner.speculative_index != 0 || owner.speculative_count != 0))
         || (speculative && (owner.speculative_id == 0
@@ -21,7 +22,9 @@ bool write_owner(std::vector<std::uint8_t> * output, const PhysicalOwner & owner
         || (owner.phase == PhysicalPhase::Verify && !owner.output)
         || (owner.phase == PhysicalPhase::Replay && owner.output)) return false;
     wire::put_u64(output, owner.load_generation);
-    return !owner.request_id.empty() && !owner.sequence_key.empty() && !owner.session_id.empty()
+    wire::put_u64(output, owner.incarnation);
+    return runtime::canonical_physical_request_identity(owner.session_id,
+            owner.sequence_key, owner.request_id)
         && !owner.reply.empty()
         && wire::put_string(output, owner.request_id)
         && wire::put_string(output, owner.sequence_key)
@@ -166,7 +169,7 @@ bool encode_physical_set(
     }
     output->clear();
     output->insert(output->end(), {'P', '4', 'P', 'B'});
-    wire::put_u16(output, 3);
+    wire::put_u16(output, 4);
     wire::put_u16(output, 0);
     wire::put_u32(output, static_cast<std::uint32_t>(capsules.size()));
     for (const auto & capsule : capsules) {

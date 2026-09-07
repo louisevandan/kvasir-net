@@ -31,6 +31,7 @@ pub enum Operation {
     Tokenized = 20,
     PhysicalRelease = 21,
     PhysicalSettle = 22,
+    BindLoad = 23,
 }
 
 impl TryFrom<u8> for Operation {
@@ -60,6 +61,7 @@ impl TryFrom<u8> for Operation {
             20 => Self::Tokenized,
             21 => Self::PhysicalRelease,
             22 => Self::PhysicalSettle,
+            23 => Self::BindLoad,
             _ => return Err(FrameError::UnknownOperation(value)),
         };
         Ok(operation)
@@ -267,7 +269,6 @@ impl From<FrameError> for FrameIoError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-
 
 pub struct Descriptor {
     pub wire_type: WireType,

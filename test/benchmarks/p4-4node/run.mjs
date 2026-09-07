@@ -128,15 +128,52 @@ function spread(values) {
 /// span, which nothing here collects.
 function pipeline(spans, nodeCount) {
   if (!spans || spans.length === 0) return null;
-  // One span per node per batch. An earlier agent reported the same span
-  // once per request it carried; folding over the distinct set keeps a
-  // report from that artifact honest, and a stream of a hundred thousand
-  // spans out of a spread call.
+  // Identity excludes timestamps: a changed time is conflicting evidence,
+  // not another execution. This is one configured OUTER/pipeline artifact,
+  // not a fleet merge of distinct recipient projections.
   const distinct = new Map();
+  const executionGroups = new Map();
   for (const span of spans) {
-    distinct.set(`${span.node}:${span.execution_ids.join(",")}:${span.start_unix_ms}`, span);
+    if (!Number.isSafeInteger(span.node) || span.node < 0 || span.node >= nodeCount
+      || !Number.isSafeInteger(span.load_generation) || span.load_generation <= 0
+      || typeof span.session_id !== "string" || span.session_id.length === 0
+      || !Array.isArray(span.execution_ids) || span.execution_ids.length === 0
+      || span.execution_ids.some((id) => !Number.isSafeInteger(id) || id <= 0)
+      || new Set(span.execution_ids).size !== span.execution_ids.length) {
+      throw new Error("invalid stage-span identity in report artifact");
+    }
+    const ids = [...span.execution_ids].sort((a, b) => a - b);
+    const scope = JSON.stringify([span.load_generation, span.session_id, span.node]);
+    const key = JSON.stringify([scope, ids]);
+    const canonical = {
+      ...span,
+      execution_ids: ids,
+      executions: span.executions?.map((execution) => ({
+        execution_id: execution.execution_id,
+        owned_requests: [...execution.owned_requests].sort((a, b) =>
+          (a.request_id < b.request_id ? -1 : a.request_id > b.request_id ? 1 : 0)
+          || a.sequence_id - b.sequence_id || a.incarnation - b.incarnation),
+      })).sort((a, b) => a.execution_id - b.execution_id),
+    };
+    // Object insertion order is not a wire identity. Compare only the span
+    // contract's values; the Rust receiver separately rejects unknown fields.
+    const body = JSON.stringify([
+      canonical.rows, canonical.ingress_unix_ms, canonical.start_unix_ms,
+      canonical.end_unix_ms, canonical.forward_unix_ms,
+      canonical.executions?.map((e) => [e.execution_id,
+        e.owned_requests.map((r) => [r.request_id, r.sequence_id, r.incarnation])]),
+    ]);
+    const previous = distinct.get(key);
+    if (previous && previous.body !== body) throw new Error("conflicting stage-span body in report artifact");
+    for (const id of ids) {
+      const executionKey = JSON.stringify([scope, id]);
+      const previousGroup = executionGroups.get(executionKey);
+      if (previousGroup && previousGroup !== key) throw new Error("stage execution appears in overlapping span groups");
+      executionGroups.set(executionKey, key);
+    }
+    distinct.set(key, { body, span: canonical });
   }
-  spans = [...distinct.values()];
+  spans = [...distinct.values()].map((entry) => entry.span);
   let t0 = Infinity;
   let t1 = -Infinity;
   for (const span of spans) {
@@ -158,10 +195,11 @@ function pipeline(spans, nodeCount) {
   const open = new Map();
   for (const span of spans) {
     for (const id of span.execution_ids) {
-      const range = open.get(id) ?? { from: Infinity, to: -Infinity };
+      const execution = JSON.stringify([span.load_generation, span.session_id, id]);
+      const range = open.get(execution) ?? { from: Infinity, to: -Infinity };
       range.from = Math.min(range.from, span.ingress_unix_ms);
       range.to = Math.max(range.to, span.forward_unix_ms);
-      open.set(id, range);
+      open.set(execution, range);
     }
   }
   const edges = [];
@@ -217,7 +255,7 @@ function pipeline(spans, nodeCount) {
     stages_open_peak: busyPeak,
   };
 }
-function metrics(artifact, ubatch, nodeCount) {
+export function metrics(artifact, ubatch, nodeCount) {
   const rows = [];
   let batches = 0;
   let mixed = 0;
@@ -235,19 +273,70 @@ function metrics(artifact, ubatch, nodeCount) {
     for (const batch of observation.physical_batches ?? []) {
       batches += 1;
       rows.push(batch.rows);
-      if (batch.prefill_rows > 0 && batch.decode_rows > 0) mixed += 1;
+      if (batch.prefill_rows > 0
+        && (batch.decode_rows > 0 || batch.verify_rows > 0 || batch.replay_rows > 0)) mixed += 1;
     }
   }
   const seconds = (artifact.elapsed_ms ?? 0) / 1000;
   const decode = artifact.requests.reduce((sum, r) => sum + (r.decode_rows ?? 0), 0);
   const prefill = artifact.requests.reduce((sum, r) => sum + (r.prefill_rows ?? 0), 0);
   const totalRows = rows.reduce((sum, value) => sum + value, 0);
+  let sampled = 0;
+  let emptyTerminalEos = 0;
+  let textBearingOutputs = 0;
+  for (const request of artifact.requests) {
+    if (!Array.isArray(request.outcomes)) {
+      throw new Error(`request ${request.request_id} has no preserved OUTPUT array`);
+    }
+    // Actual drive appends one outcome only after its route, position, sampled
+    // budget and submission checks. Token IDs, not text size or physical phase
+    // rows, are the sampled units. A UTF-8 fragment can legitimately emit "".
+    sampled += request.outcomes.length;
+    for (const outcome of request.outcomes) {
+      if (typeof outcome.text !== "string") {
+        throw new Error(`request ${request.request_id} has an invalid OUTPUT text`);
+      }
+      if (outcome.text.length > 0) textBearingOutputs += 1;
+    }
+    const terminal = request.outcomes.at(-1);
+    if (terminal?.stop === "eos" && terminal.text === "") emptyTerminalEos += 1;
+  }
+  // Same counting rule as event-drive acceptance::evaluate_request: only a
+  // final empty EOS is removed. Empty nonterminal/length/stop output still
+  // consumed a sampled token; nonempty EOS is not silently stripped either.
+  const generated = sampled - emptyTerminalEos;
+  const perSecond = (count) => seconds > 0 ? Number((count / seconds).toFixed(2)) : null;
   return {
+    metrics_version: 2,
+    scope: "current_outer_run",
+    // Current Rust elapsed_ms reaches release, not last terminal OUTPUT.
+    // This is not the H4 useful-TPS window or a model-quality acceptance gate.
+    denominator: "drive_elapsed_through_release",
     wall_s: Number(seconds.toFixed(2)),
+    telemetry_complete_wall_s: artifact.telemetry_complete_elapsed_ms == null
+      ? null : Number((artifact.telemetry_complete_elapsed_ms / 1000).toFixed(2)),
     prefill_rows: prefill,
     decode_rows: decode,
-    generation_tps: seconds > 0 ? Number((decode / seconds).toFixed(2)) : null,
-    total_tps: seconds > 0 ? Number(((decode + prefill) / seconds).toFixed(2)) : null,
+    sampled_tokens: sampled,
+    empty_terminal_eos_tokens: emptyTerminalEos,
+    generated_tokens: generated,
+    text_bearing_output_events: textBearingOutputs,
+    sampled_output_tps: perSecond(sampled),
+    generation_tps: perSecond(generated),
+    // Explicit migration: these are the unchanged v1 calculations, not token
+    // generation. Archived reports are not rewritten or silently reclassified.
+    legacy_row_rates: {
+      generation_tps: perSecond(decode),
+      total_tps: perSecond(decode + prefill),
+    },
+    definitions: {
+      sampled_tokens: "one per preserved approved OUTPUT, including empty terminal EOS",
+      generated_tokens: "sampled_tokens minus one final empty EOS per request; matches Rust acceptance counting",
+      text_bearing_output_events: "OUTPUT events with nonempty text; not visible or retokenized token count",
+      generation_tps: "generated_tokens per drive elapsed second, before model-quality approval",
+      legacy_row_rates: "v1 generation_tps=decode rows/s; total_tps=(prefill+decode) rows/s, excluding Verify/Replay",
+      per_request_logical_generation_tps: "Rust request field is not migrated: decode_rows/generation_elapsed_ms",
+    },
     physical_batches: batches,
     rows_per_batch: batches > 0 ? Number((totalRows / batches).toFixed(2)) : null,
     ms_per_batch: batches > 0 ? Number(((seconds * 1000) / batches).toFixed(1)) : null,
@@ -266,6 +355,38 @@ function metrics(artifact, ubatch, nodeCount) {
     ready_rows_left: spread(readyGap),
     ready_sequences: spread(readySequences),
     pipeline: pipeline(artifact.stage_spans, nodeCount),
+  };
+}
+
+// The live run and the model-free report tests use this same artifact consumer.
+// It does not create an acceptance verdict; structural and meaning gates remain
+// separate from measurements, which alone never approve a run.
+export function buildReport({
+  runId, spec, identity, artifact, build, verdict, sessionKeys, delivery,
+  channelFailures, agentStopped, fence,
+}) {
+  return {
+    run_id: runId,
+    scenario: spec.name,
+    target: spec.target,
+    host: identity,
+    build: { ...artifact.build, matches_pin: build.ok, mismatch: build.reason },
+    description: spec.description,
+    structural: {
+      passed: artifact.passed,
+      requests: artifact.request_count,
+      completed: artifact.completed_count,
+      released: artifact.released_count,
+    },
+    meaning: { passed: verdict.passed, meaningful: verdict.meaningful, total: verdict.total },
+    session_keys: sessionKeys,
+    delivery,
+    record_channel_failures: channelFailures,
+    agent_stopped: agentStopped,
+    records: { fenced: fence.ok, reason: fence.reason, lines: fence.records.length },
+    metrics: metrics(artifact, spec.nUbatch, spec.cuts.length),
+    sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
+    rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
   };
 }
 
@@ -486,33 +607,10 @@ async function main() {
     artifact.requests.map((request) => request.request_id),
     mine,
   );
-  const report = {
-    run_id: runId,
-    scenario: spec.name,
-    target: spec.target,
-    // Which machine actually served the run, taken from the far side rather
-    // than from the scenario name.
-    host: identity,
-    // Which llama.cpp every stage reported, taken from the stages rather
-    // than from what this machine happens to have built.
-    build: { ...artifact.build, matches_pin: build.ok, mismatch: build.reason },
-    description: spec.description,
-    structural: {
-      passed: artifact.passed,
-      requests: artifact.request_count,
-      completed: artifact.completed_count,
-      released: artifact.released_count,
-    },
-    meaning: { passed: verdict.passed, meaningful: verdict.meaningful, total: verdict.total },
-    session_keys: sessionKeys,
-    delivery,
-    record_channel_failures: channelFailures,
-    agent_stopped: agentStopped,
-    records: { fenced: fence.ok, reason: fence.reason, lines: fence.records.length },
-    metrics: metrics(artifact, spec.nUbatch, spec.cuts.length),
-    sample_answer: artifact.requests[0]?.response?.slice(0, 400) ?? "",
-    rejected: verdict.results.filter((r) => !r.meaningful).slice(0, 5),
-  };
+  const report = buildReport({
+    runId, spec, identity, artifact, build, verdict, sessionKeys, delivery,
+    channelFailures, agentStopped, fence,
+  });
   fs.writeFileSync(path.join(outDir, "evidence.json"),
     `${JSON.stringify({ ...evidence, expected_build: evidence?.compat ?? null, observed_build: artifact.build, finished_at: new Date().toISOString() }, null, 2)}\n`, "utf8");
   fs.writeFileSync(path.join(outDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -527,7 +625,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`P4_4NODE_FAILED ${error.message}\n`);
-  process.exitCode = 1;
-});
+// Importing the actual report consumer must not start an agent, GPU sampler or
+// remote connection. Direct invocation keeps the existing acceptance run.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    process.stderr.write(`P4_4NODE_FAILED ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

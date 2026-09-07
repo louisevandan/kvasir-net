@@ -17,6 +17,7 @@ enum class PhysicalPhase : std::uint8_t {
 
 struct PhysicalOwner final {
     std::uint64_t load_generation = 0;
+    std::uint64_t incarnation = 0;
     std::string request_id;
     std::string sequence_key;
     std::string session_id;

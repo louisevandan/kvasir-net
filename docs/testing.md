@@ -1,5 +1,29 @@
 # Testing
 
+> 문서 지위 (2026-09-06): **게이트 실행 안내**. 기존 경로/옵션별 명령 안내다. 현재 필수 판정은 분산 배치 검증 규약이 소유한다.
+> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+
+## 현재 분산 배치의 필수 게이트
+
+현재 목표의 시험·mutation·실기 웨이브 판정은
+[분산 배치 검증 규약](distributed-batching-verification.md)이 소유한다.
+아래는 경로별 기존 시험의 참고 목록이며, Chain/Hop 시험을 event worker의 증명으로 세지 않는다.
+전체 집계는 `cargo test --workspace --no-fail-fast`로 최종 종료 후 계산한다.
+새 필수 시험을 skip/feature로 숨기거나 “실행 안 함”을 통과로 세지 않는다.
+
+2026-09-06 실행 소유권 후속 slice의 재실행 명령은 다음과 같다. 시험의 보장 범위/수치는
+[정산 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)를 따른다.
+
+```bash
+cargo test -p p4-llamacpp-staged-adapter --lib
+node --test layers/adapters/llamacpp/staged/scripts/build-stage-server.test.mjs
+ctest --test-dir <fresh-native-build> -C Release --output-on-failure
+```
+
+공식 native builder는 authority·UTF-8 시험을 포함한 해당 분기의 모든 CTest target을 빌드해야 한다.
+builder 시험은 source/imported/no-llama 분기의 실제 target 선택을 검사하되 외부 빌드 도구는 대체한다.
+이는 imported native relink 또는 CUDA/Metal 실제 빌드를 수행한 증거가 아니다.
+
 ## Compatibility queue gates
 
 ```bash
@@ -18,8 +42,9 @@ droppable on its own once upstream absorbs it.
 Run before changing any Markdown:
 
 ```bash
-npm run docs-lint        # recursive: mixed EOL, retired phrases, claim ownership, README index
+npm run docs-lint        # tracked Markdown: EOL, canaries, README and document-map links
 npm run test:docs-lint   # fixture self-tests for the gate itself
+node tools/scripts/docs-lint.mjs --all  # also inspect new, not-yet-tracked docs
 ```
 
 Both must pass, and `cargo test --workspace` enforces the gate through
@@ -28,10 +53,12 @@ retired phrases and claim-ownership entries in tools/scripts/docs-lint.mjs
 are permanent. The default mode checks git-tracked Markdown only (pass --all to sweep
 the filesystem), so an unrelated untracked draft cannot fail the gate.
 It is a literal-string canary — semantic restatements are
-still review's job.
+still review's job. The document-map coverage/missing-target checks have their
+own positive and negative fixtures. Navigation checks do not certify current
+source behaviour or execute the roadmap's T/I/K/H gates.
 
 ```bash
-cargo test --workspace          # from apps/p4
+cargo test --workspace --no-fail-fast  # repository root
 cargo fmt --all -- --check
 ```
 

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -36,6 +37,9 @@ pub enum SchedulerError {
     MixedCompatibility,
     InvalidDemand,
     AtomicDemandExceedsCapacity,
+    ForeignPlan,
+    StalePlan,
+    PolicyRevisionExhausted,
 }
 
 /// llama.cpp-compatible mixed-batch planner.
@@ -60,14 +64,15 @@ pub enum SchedulerError {
 /// keep eight batches in nine, which is why the number is 8 rather than 1: the
 /// point is a bound, not a share.
 ///
-/// What this bounds is when the prompt *cohort* is next served - nine plans.
+/// What this bounds is when the prompt *cohort* is next served - nine accepted
+/// batches. A refused or cancelled candidate does not spend that bound.
 /// An individual prompt waits that period times the turns it takes to come
 /// round within the cohort, which is the cohort size over the batch width:
 /// seventeen ready prompts at eight a batch is three turns, and the measured
-/// worst gap there is 27 plans, not 9. The per-request bound is the one the
+/// worst gap there is 27 accepted batches, not 9. The per-request bound is the one the
 /// tests assert; this constant is only one factor in it.
 ///
-/// And all of it is counted in planning opportunities. It says nothing about
+/// And all of it is counted in accepted planning opportunities. It says nothing about
 /// wall-clock time to first token, which also depends on how fast the
 /// pipeline settles what it issued.
 ///
@@ -75,7 +80,148 @@ pub enum SchedulerError {
 /// exist; nothing has judged it against throughput on real hardware.
 pub const PREFILL_PATIENCE: u32 = 8;
 
+/// A prepared selection does not spend fairness until its issue is accepted.
+/// Dropping it cancels policy preparation without a compensating transition.
+/// Allocation contents and next-policy state are deliberately read-only.
+#[derive(Debug)]
+pub struct PreparedPlan {
+    origin: Arc<()>,
+    revision: u64,
+    allocations: Vec<Allocation>,
+    next: PolicyState,
+}
+
+impl PreparedPlan {
+    pub fn allocations(&self) -> &[Allocation] {
+        &self.allocations
+    }
+}
+
+/// L3 owns selection fairness only, not request state, native execution or KV.
+/// The sole mutator must keep a validated candidate current until issue commit.
 pub struct Scheduler {
+    state: PolicyState,
+    revision: u64,
+    origin: Arc<()>,
+}
+
+impl Scheduler {
+    pub fn new() -> Self {
+        Self {
+            state: PolicyState::new(),
+            revision: 0,
+            origin: Arc::new(()),
+        }
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.state.cursor
+    }
+
+    pub fn prepare_plan(
+        &self,
+        demands: &[Demand],
+        capacity: usize,
+    ) -> Result<PreparedPlan, SchedulerError> {
+        self.prepare_plan_with_physical_capacity(
+            demands,
+            capacity,
+            capacity,
+            false,
+            usize::MAX,
+            false,
+        )
+    }
+
+    pub fn prepare_plan_with_physical_capacity(
+        &self,
+        demands: &[Demand],
+        ordinary_capacity: usize,
+        physical_capacity: usize,
+        equal_sequence_ubatch: bool,
+        max_atomic_sequences: usize,
+        atomic_batch_exclusive: bool,
+    ) -> Result<PreparedPlan, SchedulerError> {
+        let mut next = self.state.clone();
+        let allocations = next.plan_with_physical_capacity(
+            demands,
+            ordinary_capacity,
+            physical_capacity,
+            equal_sequence_ubatch,
+            max_atomic_sequences,
+            atomic_batch_exclusive,
+        )?;
+        if !allocations.is_empty() && self.revision == u64::MAX {
+            return Err(SchedulerError::PolicyRevisionExhausted);
+        }
+        Ok(PreparedPlan {
+            origin: Arc::clone(&self.origin),
+            revision: self.revision,
+            allocations,
+            next,
+        })
+    }
+
+    /// This validates policy authority only. Request/range/credit authority
+    /// remains with the issue ledger and must be checked separately.
+    pub fn validate_prepared(&self, plan: &PreparedPlan) -> Result<(), SchedulerError> {
+        if !Arc::ptr_eq(&self.origin, &plan.origin) {
+            return Err(SchedulerError::ForeignPlan);
+        }
+        if self.revision != plan.revision {
+            return Err(SchedulerError::StalePlan);
+        }
+        if !plan.allocations.is_empty() && self.revision == u64::MAX {
+            return Err(SchedulerError::PolicyRevisionExhausted);
+        }
+        Ok(())
+    }
+
+    /// Called only after the planned rows have actually been accepted. Empty
+    /// selections are no-ops: they are not a fairness service opportunity.
+    pub fn commit_plan(&mut self, plan: PreparedPlan) -> Result<Vec<Allocation>, SchedulerError> {
+        self.validate_prepared(&plan)?;
+        if !plan.allocations.is_empty() {
+            self.state = plan.next;
+            self.revision += 1; // Checked before any policy write.
+        }
+        Ok(plan.allocations)
+    }
+
+    /// Immediate-accept convenience for selector-only callers and tests.
+    /// Native callers must use prepare/validate/commit around issue acceptance.
+    pub fn plan(
+        &mut self,
+        demands: &[Demand],
+        capacity: usize,
+    ) -> Result<Vec<Allocation>, SchedulerError> {
+        let plan = self.prepare_plan(demands, capacity)?;
+        self.commit_plan(plan)
+    }
+
+    pub fn plan_with_physical_capacity(
+        &mut self,
+        demands: &[Demand],
+        ordinary_capacity: usize,
+        physical_capacity: usize,
+        equal_sequence_ubatch: bool,
+        max_atomic_sequences: usize,
+        atomic_batch_exclusive: bool,
+    ) -> Result<Vec<Allocation>, SchedulerError> {
+        let plan = self.prepare_plan_with_physical_capacity(
+            demands,
+            ordinary_capacity,
+            physical_capacity,
+            equal_sequence_ubatch,
+            max_atomic_sequences,
+            atomic_batch_exclusive,
+        )?;
+        self.commit_plan(plan)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PolicyState {
     cursor: usize,
     /// Consecutive decode-only batches issued while a prompt was waiting.
     decode_runs: u32,
@@ -85,8 +231,8 @@ pub struct Scheduler {
     decode_resume: u32,
 }
 
-impl Scheduler {
-    pub fn new() -> Self {
+impl PolicyState {
+    fn new() -> Self {
         Self {
             cursor: 0,
             decode_runs: 0,
@@ -95,19 +241,7 @@ impl Scheduler {
         }
     }
 
-    pub fn cursor(&self) -> usize {
-        self.cursor
-    }
-
-    pub fn plan(
-        &mut self,
-        demands: &[Demand],
-        capacity: usize,
-    ) -> Result<Vec<Allocation>, SchedulerError> {
-        self.plan_with_physical_capacity(demands, capacity, capacity, false, usize::MAX, false)
-    }
-
-    pub fn plan_with_physical_capacity(
+    fn plan_with_physical_capacity(
         &mut self,
         demands: &[Demand],
         ordinary_capacity: usize,
@@ -508,3 +642,7 @@ impl Default for Scheduler {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[path = "scheduler_tests.rs"]
+mod transaction_tests;

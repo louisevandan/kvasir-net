@@ -1,9 +1,9 @@
+use super::capsule::{MAX_STRING, validate_reply_options};
 use super::{Phase, RowOwner};
 
 const MAGIC: &[u8; 4] = b"P4LB";
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
 const MAX_ROWS: usize = 65_536;
-const MAX_STRING: usize = 4_096;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogicalRow {
@@ -38,6 +38,7 @@ impl LogicalBatch {
         for row in &self.0 {
             validate(row)?;
             put_u64(&mut output, row.owner.load_generation);
+            put_u64(&mut output, row.owner.incarnation);
             put_string(&mut output, &row.owner.request_id)?;
             put_string(&mut output, &row.owner.sequence_key)?;
             put_string(&mut output, &row.owner.session_id)?;
@@ -82,6 +83,7 @@ impl LogicalBatch {
         let mut rows = Vec::with_capacity(count);
         for _ in 0..count {
             let load_generation = cursor.u64()?;
+            let incarnation = cursor.u64()?;
             let request_id = cursor.string()?;
             let sequence_key = cursor.string()?;
             let session_id = cursor.string()?;
@@ -113,6 +115,7 @@ impl LogicalBatch {
             let row = LogicalRow {
                 owner: RowOwner {
                     load_generation,
+                    incarnation,
                     request_id,
                     sequence_key,
                     session_id,
@@ -145,15 +148,12 @@ fn validate(row: &LogicalRow) -> Result<(), LogicalBatchError> {
     let owner = &row.owner;
     let speculative = matches!(owner.phase, Phase::Verify | Phase::Replay);
     if owner.load_generation == 0
-        || owner.request_id.is_empty()
-        || owner.sequence_key.is_empty()
-        || owner.session_id.is_empty()
-        || owner.reply.is_empty()
+        || owner.incarnation == 0
+        || !owner.has_canonical_request_identity()
+        || validate_reply_options(&owner.reply, &owner.options).is_err()
         || owner.request_id.len() > MAX_STRING
         || owner.sequence_key.len() > MAX_STRING
         || owner.session_id.len() > MAX_STRING
-        || owner.reply.len() > MAX_STRING
-        || owner.options.len() > MAX_STRING
         || owner.max_tokens == 0
         || owner.generated_tokens >= owner.max_tokens
         || owner.position > i32::MAX as u32
@@ -176,6 +176,236 @@ fn validate(row: &LogicalRow) -> Result<(), LogicalBatchError> {
 
 fn put_u16(output: &mut Vec<u8>, value: u16) {
     output.extend_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(test)]
+mod identity_wire_tests {
+    use super::*;
+    use crate::v2::{CapsuleSet, GeneratedToken, Invocation, PhysicalCapsule, PhysicalOutcome};
+
+    fn row() -> LogicalRow {
+        LogicalRow {
+            token: 42,
+            owner: RowOwner {
+                load_generation: 1,
+                incarnation: 9,
+                request_id: "request-1".into(),
+                sequence_key: "pipeline-a\0request-1".into(),
+                session_id: "pipeline-a".into(),
+                reply: "reply-1".into(),
+                sequence_id: 3,
+                phase: Phase::Decode,
+                position: 9,
+                max_tokens: 500,
+                generated_tokens: 4,
+                output: true,
+                input_token: 42,
+                speculative_id: 0,
+                speculative_index: 0,
+                speculative_count: 0,
+                options: "{}".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn logical_v4_binds_a_nonzero_incarnation_at_the_agreed_offset() {
+        let expected = LogicalBatch(vec![row()]);
+        let mut bytes = expected.encode().unwrap();
+        assert_eq!(&bytes[4..6], &4u16.to_le_bytes());
+        assert_eq!(&bytes[20..28], &9u64.to_le_bytes());
+        assert_eq!(LogicalBatch::decode(&bytes).unwrap(), expected);
+        bytes[4] = 3;
+        assert!(matches!(
+            LogicalBatch::decode(&bytes),
+            Err(LogicalBatchError::UnsupportedVersion(3))
+        ));
+        bytes[4] = 4;
+        bytes[20..28].fill(0);
+        assert!(LogicalBatch::decode(&bytes).is_err());
+        let mut invalid = expected;
+        invalid.0[0].owner.incarnation = 0;
+        assert!(invalid.encode().is_err());
+    }
+
+    #[test]
+    fn physical_v4_preserves_incarnation_and_refuses_legacy_or_zero_identity() {
+        let owner = row().owner;
+        let expected = CapsuleSet(vec![PhysicalCapsule {
+            execution_id: 7,
+            terminal: true,
+            invocation: Invocation {
+                flags: 0,
+                n_seq_tokens: 1,
+                n_seqs: 1,
+                n_seqs_unq: 1,
+                n_pos: 1,
+                positions: vec![9],
+                sequence_counts: vec![1],
+                sequence_ids: vec![3],
+                output: vec![true],
+            },
+            owners: vec![owner],
+            tensors: Vec::new(),
+            outcomes: vec![PhysicalOutcome {
+                owner_index: 0,
+                generated: vec![GeneratedToken {
+                    token: 99,
+                    text: "ok".into(),
+                    position: 10,
+                    stop: None,
+                }],
+                proposal: Vec::new(),
+                retain_from: None,
+                replay_tokens: Vec::new(),
+                replay_position: 0,
+            }],
+        }]);
+        let mut bytes = expected.encode().unwrap();
+        assert_eq!(&bytes[4..6], &4u16.to_le_bytes());
+        assert_eq!(CapsuleSet::decode(&bytes).unwrap(), expected);
+        bytes[4] = 3;
+        assert!(CapsuleSet::decode(&bytes).is_err());
+        let mut invalid = expected;
+        invalid.0[0].owners[0].incarnation = 0;
+        assert!(invalid.encode().is_err());
+    }
+
+    #[test]
+    fn both_row_codecs_bind_the_exact_session_and_request_names() {
+        use crate::v2::CapsuleError;
+        let good = row();
+        let capsule = |owner: RowOwner| PhysicalCapsule {
+            execution_id: 7,
+            terminal: true,
+            invocation: Invocation {
+                flags: 0,
+                n_seq_tokens: 1,
+                n_seqs: 1,
+                n_seqs_unq: 1,
+                n_pos: 1,
+                positions: vec![9],
+                sequence_counts: vec![1],
+                sequence_ids: vec![3],
+                output: vec![true],
+            },
+            owners: vec![owner],
+            tensors: Vec::new(),
+            outcomes: Vec::new(),
+        };
+        assert!(capsule(good.owner.clone()).validate().is_ok());
+        let mut bad = Vec::new();
+        for key in [
+            "different\0request-1",
+            "pipeline-a\0",
+            "pipeline-a\0request-1\0suffix",
+            "sequence-1",
+        ] {
+            let mut candidate = good.clone();
+            candidate.owner.sequence_key = key.into();
+            bad.push(candidate);
+        }
+        let mut candidate = good.clone();
+        candidate.owner.request_id = "request-2".into();
+        bad.push(candidate);
+        let mut candidate = good.clone();
+        candidate.owner.session_id = "pipe\0line".into();
+        candidate.owner.sequence_key = "pipe\0line\0request-1".into();
+        bad.push(candidate);
+        for candidate in bad {
+            assert_eq!(
+                LogicalBatch(vec![candidate.clone()]).encode(),
+                Err(LogicalBatchError::InvalidRow)
+            );
+            assert_eq!(
+                capsule(candidate.owner).validate(),
+                Err(CapsuleError::InvalidOwner)
+            );
+        }
+        // Mutate bytes only after a valid encode, so decode refusal is tested
+        // independently of the encoder. First session-prefix byte in the key.
+        let mut wire = LogicalBatch(vec![good.clone()]).encode().unwrap();
+        let key_at = 28 + 2 + good.owner.request_id.len() + 2;
+        wire[key_at] = b'x';
+        assert_eq!(
+            LogicalBatch::decode(&wire),
+            Err(LogicalBatchError::InvalidRow)
+        );
+        wire[key_at] = 0xff;
+        assert_eq!(
+            LogicalBatch::decode(&wire),
+            Err(LogicalBatchError::InvalidUtf8)
+        );
+    }
+
+    #[test]
+    fn reply_and_options_wire_limits_preserve_exact_utf8_bytes() {
+        // Literal contract boundary, independent of the production constant.
+        for size in [4_095, 4_096, 4_097] {
+            for options in [false, true] {
+                for multibyte in [false, true] {
+                    let text = if multibyte {
+                        let mut value = "한".repeat(size / 3);
+                        value.push_str(&"x".repeat(size % 3));
+                        value
+                    } else {
+                        "x".repeat(size)
+                    };
+                    assert_eq!(text.len(), size);
+                    let mut logical = row();
+                    if options {
+                        logical.owner.options = text;
+                    } else {
+                        logical.owner.reply = text;
+                    }
+                    let physical = CapsuleSet(vec![PhysicalCapsule {
+                        execution_id: 7,
+                        terminal: true,
+                        invocation: Invocation {
+                            flags: 0,
+                            n_seq_tokens: 1,
+                            n_seqs: 1,
+                            n_seqs_unq: 1,
+                            n_pos: 1,
+                            positions: vec![9],
+                            sequence_counts: vec![1],
+                            sequence_ids: vec![3],
+                            output: vec![true],
+                        },
+                        owners: vec![logical.owner.clone()],
+                        tensors: Vec::new(),
+                        outcomes: Vec::new(),
+                    }]);
+                    let logical = LogicalBatch(vec![logical]);
+                    if size <= 4_096 {
+                        assert_eq!(
+                            LogicalBatch::decode(&logical.encode().unwrap()).unwrap(),
+                            logical
+                        );
+                        assert_eq!(
+                            CapsuleSet::decode(&physical.encode().unwrap()).unwrap(),
+                            physical
+                        );
+                    } else {
+                        assert_eq!(logical.encode(), Err(LogicalBatchError::InvalidRow));
+                        assert_eq!(
+                            physical.0[0].validate(),
+                            Err(crate::v2::CapsuleError::InvalidOwner)
+                        );
+                        assert!(physical.encode().is_err());
+                    }
+                }
+            }
+        }
+        let mut empty_options = row();
+        empty_options.owner.options.clear();
+        assert!(LogicalBatch(vec![empty_options.clone()]).encode().is_ok());
+        empty_options.owner.reply.clear();
+        assert_eq!(
+            LogicalBatch(vec![empty_options]).encode(),
+            Err(LogicalBatchError::InvalidRow)
+        );
+    }
 }
 fn put_u32(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_le_bytes());

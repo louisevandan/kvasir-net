@@ -10,6 +10,7 @@
 #include "kv_bridge.hpp"
 #include "runtime.hpp"
 #include "transaction_store.hpp"
+#include "physical_authority.hpp"
 
 #ifdef P4_STAGED_WITH_LLAMA
 #include "llama_stage_runtime.hpp"
@@ -54,6 +55,7 @@ public:
 
 private:
     [[nodiscard]] protocol::Frame handle_hello();
+    [[nodiscard]] protocol::Frame handle_bind_load(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_hop(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_logical_batch(const protocol::Frame &request);
     [[nodiscard]] protocol::Frame handle_physical_batch(const protocol::Frame &request);
@@ -69,6 +71,7 @@ private:
                                           const std::string &message) const;
 
     runtime::Runtime runtime_;
+    runtime::PhysicalAuthority physical_authority_;
     runtime::TransactionStore transaction_store_;
     Capabilities capabilities_;
 #ifdef P4_STAGED_WITH_LLAMA

@@ -147,6 +147,7 @@ mod tests {
                 Err("crashed".into())
             } else {
                 Ok(Some(crate::process::ReadyInfo {
+                    physical_identity_revision: 1,
                     protocol_revision: 1,
                     server_id: "fake".into(),
                     transactions: false,

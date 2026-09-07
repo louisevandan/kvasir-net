@@ -39,6 +39,7 @@ target_include_directories(p4_staged_protocol PUBLIC src/protocol)
 
 add_library(p4_staged_runtime STATIC
     src/runtime/runtime.cpp
+    src/runtime/physical_authority.cpp
     src/runtime/state_store.cpp
     src/runtime/state_store_checksum.cpp
     src/runtime/transaction_store.cpp
@@ -102,6 +103,11 @@ add_executable(p4_staged_state_store_test
 target_link_libraries(p4_staged_state_store_test PRIVATE p4_staged_runtime)
 p4_stage_enable_asserts(p4_staged_state_store_test)
 add_test(NAME p4_staged_state_store_test COMMAND p4_staged_state_store_test)
+
+add_executable(p4_staged_physical_authority_test src/runtime/physical_authority_test.cpp)
+target_link_libraries(p4_staged_physical_authority_test PRIVATE p4_staged_runtime)
+p4_stage_enable_asserts(p4_staged_physical_authority_test)
+add_test(NAME p4_staged_physical_authority_test COMMAND p4_staged_physical_authority_test)
 
 if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     if(NOT EXISTS "${P4_STAGED_LLAMA_SOURCE_DIR}/CMakeLists.txt")
@@ -316,6 +322,21 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_test(NAME p4_staged_physical_wire_test
              COMMAND p4_staged_physical_wire_test)
 
+    # Compile the production physical consumer with test-only native API
+    # interception. This checks the actual llama_batch construction without
+    # loading a model; it does not replace the linked runtime/model tests.
+    add_executable(p4_staged_physical_logits_consumer_test
+        src/runtime/physical_logits_consumer_test.cpp)
+    target_include_directories(p4_staged_physical_logits_consumer_test PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime"
+        "${CMAKE_CURRENT_LIST_DIR}/src/protocol"
+        "${CMAKE_CURRENT_LIST_DIR}/src"
+        "${P4_STAGED_LLAMA_SOURCE_DIR}/include"
+        "${P4_STAGED_LLAMA_SOURCE_DIR}/ggml/include")
+    p4_stage_enable_asserts(p4_staged_physical_logits_consumer_test)
+    add_test(NAME p4_staged_physical_logits_consumer_test
+             COMMAND p4_staged_physical_logits_consumer_test)
+
     add_executable(p4_staged_request_options_test
         src/runtime/request_options_test.cpp
     )
@@ -324,6 +345,13 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     p4_stage_enable_asserts(p4_staged_request_options_test)
     add_test(NAME p4_staged_request_options_test
              COMMAND p4_staged_request_options_test)
+
+    add_executable(p4_staged_plan_lifetime_test src/runtime/plan_lifetime_test.cpp)
+    target_link_libraries(p4_staged_plan_lifetime_test PRIVATE p4_staged_llama_runtime)
+    p4_stage_enable_asserts(p4_staged_plan_lifetime_test)
+    add_test(NAME p4_staged_plan_lifetime_test COMMAND p4_staged_plan_lifetime_test)
+    set_tests_properties(p4_staged_plan_lifetime_test PROPERTIES
+        PASS_REGULAR_EXPRESSION "PLAN_LIFETIME_OK: snapshots precede consuming load")
 
     add_executable(p4_staged_request_stops_test
         src/runtime/request_stops_test.cpp
@@ -403,6 +431,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     p4_stage_copy_runtime(p4_staged_llama_runtime_compile_test)
     p4_stage_copy_runtime(p4_staged_physical_wire_test)
     p4_stage_copy_runtime(p4_staged_request_stops_test)
+    p4_stage_copy_runtime(p4_staged_plan_lifetime_test)
     p4_stage_copy_runtime(p4_staged_mtp_ownership_test)
     p4_stage_copy_runtime(p4_staged_upstream_recurrent_rollback_test)
 endif()

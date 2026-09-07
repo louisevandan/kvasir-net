@@ -8,6 +8,14 @@ use std::thread::JoinHandle;
 
 // Visible to the crate so the open-batch ledger can be tested on the real
 // state machine rather than on a copy of its arithmetic.
+pub(crate) mod flight;
+pub(crate) mod frontier;
+#[cfg(test)]
+mod issue_tests;
+#[cfg(test)]
+mod issue_witness_tests;
+pub(crate) mod ownership;
+pub(crate) mod physical_receive;
 pub(crate) mod state;
 mod worker;
 
@@ -44,8 +52,14 @@ impl LlamaNodeAdapter {
         let worker = std::thread::Builder::new()
             .name("p4-llamacpp-node".into())
             .spawn(move || {
-                Worker::new(endpoint, receiver, publisher, worker_snapshot, worker_shutdown)
-                    .run()
+                Worker::new(
+                    endpoint,
+                    receiver,
+                    publisher,
+                    worker_snapshot,
+                    worker_shutdown,
+                )
+                .run()
             })
             .expect("llama adapter worker thread must start");
         Self {

@@ -1,6 +1,8 @@
 #include "server.hpp"
 
+#ifdef P4_STAGED_WITH_LLAMA
 #include "compat/p4_llama_compat.hpp"
+#endif
 
 #include <cstdlib>
 #include <iostream>
@@ -38,6 +40,7 @@ protocol::Frame Session::handle_hello() {
         ";kv=" + std::string(capabilities_.kv ? "1" : "0") +
         ";transactions=" + std::string(transaction_capability ? "1" : "0") +
         ";physical_batch=" + std::string(capabilities_.llama_runtime ? "1" : "0") +
+        ";physical_identity_revision=1" +
         ";upstream=" P4_STAGED_LLAMA_UPSTREAM_COMMIT +
         ";patch_set=" P4_STAGED_LLAMA_PATCH_SET +
 #ifdef P4_STAGED_WITH_LLAMA

@@ -31,9 +31,24 @@ protocol::Frame Session::handle(const protocol::Frame &request, bool *close_afte
     }
 
     using protocol::Operation;
+    // Binding opts this process into identity-bound physical mutation. Legacy
+    // HOP/KV/CANCEL bodies carry no incarnation and must not bypass authority.
+    if (physical_authority_.bound()
+        && request.header.operation != Operation::Hello
+        && request.header.operation != Operation::BindLoad
+        && request.header.operation != Operation::Tokenize
+        && request.header.operation != Operation::LogicalBatch
+        && request.header.operation != Operation::PhysicalBatch
+        && request.header.operation != Operation::PhysicalSettle
+        && request.header.operation != Operation::PhysicalRelease
+        && request.header.operation != Operation::Unload) {
+        return error("identity-bound physical mode rejects legacy mutation");
+    }
     switch (request.header.operation) {
     case Operation::Hello:
         return handle_hello();
+    case Operation::BindLoad:
+        return handle_bind_load(request);
     case Operation::Hop: {
         return handle_hop(request);
     }

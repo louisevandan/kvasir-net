@@ -4,7 +4,7 @@
 //! none of them needs a machine with two cards or twenty minutes of wall clock.
 
 use super::scheduler::Phase;
-use super::simulator::{PipelineShape, Simulation, ready_decode};
+use super::simulator::{ArrivalCorruption, PipelineShape, Simulation, ready_decode};
 
 /// One tick of a golden trace: when it was issued, and what it carried.
 type TracedTick = (usize, Vec<(String, Phase, usize)>);
@@ -32,7 +32,10 @@ fn a_mixed_load_holds_every_invariant() {
     }
     let ticks = simulation.run(4000);
     assert_clean(&simulation, "mixed load");
-    assert!(ticks < 4000, "every request should finish; used {ticks} ticks");
+    assert!(
+        ticks < 4000,
+        "every request should finish; used {ticks} ticks"
+    );
 }
 
 #[test]
@@ -48,7 +51,10 @@ fn a_recurrent_model_holds_them_too() {
     }
     let ticks = simulation.run(6000);
     assert_clean(&simulation, "recurrent load");
-    assert!(ticks < 6000, "every request should finish; used {ticks} ticks");
+    assert!(
+        ticks < 6000,
+        "every request should finish; used {ticks} ticks"
+    );
 }
 
 #[test]
@@ -110,18 +116,31 @@ fn one_fragment_makes_a_prompt_wait_a_whole_lap_and_more_do_not() {
         });
         simulation.admit("only", 260, 1);
         simulation.run(4000);
-        assert!(simulation.violations.is_empty(), "{:#?}", simulation.violations);
+        assert!(
+            simulation.violations.is_empty(),
+            "{:#?}",
+            simulation.violations
+        );
         simulation
             .trace
             .iter()
-            .filter(|batch| batch.rows.iter().any(|(_, phase, _)| *phase == Phase::Prefill))
+            .filter(|batch| {
+                batch
+                    .rows
+                    .iter()
+                    .any(|(_, phase, _)| *phase == Phase::Prefill)
+            })
             .map(|batch| batch.tick)
             .collect::<Vec<_>>()
     };
 
     let serial = issue_ticks(1);
     let overlapped = issue_ticks(4);
-    assert_eq!(serial.len(), overlapped.len(), "the same rows are issued either way");
+    assert_eq!(
+        serial.len(),
+        overlapped.len(),
+        "the same rows are issued either way"
+    );
     let serial_span = serial.last().unwrap() - serial.first().unwrap();
     let overlapped_span = overlapped.last().unwrap() - overlapped.first().unwrap();
     assert!(
@@ -151,7 +170,11 @@ fn the_shipped_default_reproduces_its_recorded_trace() {
     simulation.admit("long", 20, 3);
     simulation.admit("short", 4, 3);
     simulation.run(200);
-    assert!(simulation.violations.is_empty(), "{:#?}", simulation.violations);
+    assert!(
+        simulation.violations.is_empty(),
+        "{:#?}",
+        simulation.violations
+    );
 
     let trace: Vec<TracedTick> = simulation
         .trace
@@ -162,8 +185,7 @@ fn the_shipped_default_reproduces_its_recorded_trace() {
     // Recorded from the shipped scheduler. A change here is a change in
     // scheduling, and has to be explained rather than accepted.
     assert_eq!(
-        rendered,
-        GOLDEN_LIMIT_ONE,
+        rendered, GOLDEN_LIMIT_ONE,
         "the scheduler's decisions changed",
     );
 
@@ -222,7 +244,8 @@ fn a_ready_decode_does_not_cut_a_prompt_to_a_single_row() {
 
 /// Recorded from the corrected model: each request steps by one from the end
 /// of its own prompt. The shipped simulator produced 20 then 22 for `long`.
-const GOLDEN_POSITIONS: &str = "[(\"short\", Some(4)), (\"long\", Some(20)), (\"long\", Some(21)), (\"short\", Some(5))]";
+const GOLDEN_POSITIONS: &str =
+    "[(\"short\", Some(4)), (\"long\", Some(20)), (\"long\", Some(21)), (\"short\", Some(5))]";
 
 #[test]
 fn a_prompt_is_admitted_within_a_bounded_number_of_issue_opportunities() {
@@ -315,7 +338,10 @@ fn splitting_a_run_does_not_rewind_the_clock() {
 
     let mut split = build();
     let used = split.run(80);
-    assert_eq!(used, 80, "the first half must still be running at the split");
+    assert_eq!(
+        used, 80,
+        "the first half must still be running at the split"
+    );
     let at_split = split.trace.len();
     split.run(120);
     assert!(
@@ -373,8 +399,9 @@ fn a_ledger_that_drifts_is_reported_and_the_run_gives_up() {
 }
 
 #[test]
-fn the_worker_and_this_model_settle_through_one_transition() {
-    // The extraction, asserted rather than assumed.
+fn request_settlement_refusals_are_locally_transactional() {
+    // Unit scope only: this does not prove the simulator calls this method.
+    // The malformed-arrival tests below exercise that actual consumer path.
     //
     // Before it, the worker refused a settlement with nothing in flight and a
     // cursor past what was issued, and this model checked neither - it
@@ -422,4 +449,172 @@ fn the_worker_and_this_model_settle_through_one_transition() {
     request.ready = Some(ready_decode(10));
     assert_eq!(request.settle_fragment(Phase::Decode, 1), Ok(()));
     assert!(request.ready.is_none());
+}
+
+#[test]
+fn a_malformed_arrival_preserves_the_simulation_ledger_and_request() {
+    // T17/R-C: this travels through Simulation::advance, not a direct call to
+    // RequestState. Replacing advance's shared settlement with unchecked
+    // cursor/counter bookkeeping must fail this consumer-path regression.
+    let mut simulation = Simulation::new(PipelineShape {
+        stages: 2,
+        batch_capacity: 4,
+        physical_capacity: 4,
+        ..PipelineShape::default()
+    });
+    simulation.admit("prompt", 10, 2);
+    assert_eq!(simulation.run(1), 1);
+    assert_eq!(
+        simulation.trace[0].rows,
+        vec![("prompt".into(), Phase::Prefill, 4)]
+    );
+    let before = simulation.settlement_snapshot();
+    simulation.corrupt_next_arrival("prompt", ArrivalCorruption::Rows(6));
+    simulation.run(2);
+
+    assert!(
+        simulation.violations.iter().any(|violation| {
+            violation.rule == "a settlement is one the worker would accept"
+                && violation.detail == "prompt: tail completed more prompt rows than were issued"
+        }),
+        "the actual shared transition did not reject: {:?}",
+        simulation.violations
+    );
+    assert_eq!(
+        simulation.settlement_snapshot(),
+        before,
+        "a rejected arrival must consume neither request progress nor its issued fragment"
+    );
+}
+
+#[test]
+fn a_wrong_range_arrival_cannot_settle_the_right_number_of_rows() {
+    let mut simulation = Simulation::new(PipelineShape {
+        stages: 2,
+        batch_capacity: 4,
+        physical_capacity: 4,
+        ..PipelineShape::default()
+    });
+    simulation.admit("prompt", 10, 2);
+    simulation.run(1);
+    let before = simulation.settlement_snapshot();
+    simulation.corrupt_next_arrival("prompt", ArrivalCorruption::PromptRange(1, 5));
+    simulation.run(2);
+
+    assert!(
+        simulation
+            .violations
+            .iter()
+            .any(|violation| { violation.rule == "a returned fragment matches its issued range" }),
+        "the fake stage returned [1,5), but only [0,4) was issued: {:?}",
+        simulation.violations
+    );
+    assert_eq!(
+        simulation.settlement_snapshot(),
+        before,
+        "equal row counts cannot authorize a different range"
+    );
+}
+
+#[test]
+fn one_bad_arrival_preserves_every_member_then_explicit_redelivery_can_finish() {
+    // This simulator treats arrivals at one tick as one model event. The
+    // event is atomic even when its first member would generate a token and
+    // its second member is bad. This does not stand in for the wire grouping
+    // tests of Worker::tail; the model has no physical capsule splitter.
+    for bad_index in [0, 1] {
+        for corruption in [
+            ArrivalCorruption::Rows(6),
+            ArrivalCorruption::Rows(2),
+            ArrivalCorruption::PromptRange(1, 5),
+        ] {
+            let mut simulation = Simulation::new(PipelineShape {
+                stages: 2,
+                batch_capacity: 8,
+                physical_capacity: 8,
+                ..PipelineShape::default()
+            });
+            simulation.admit("a", 4, 2);
+            simulation.admit("b", 4, 2);
+            simulation.run(1);
+            assert_eq!(simulation.trace[0].rows.len(), 2);
+            assert!(
+                simulation.trace[0]
+                    .rows
+                    .iter()
+                    .all(|(_, _, rows)| *rows == 4)
+            );
+            let bad_request = simulation.trace[0].rows[bad_index].0.clone();
+            let before = simulation.settlement_snapshot();
+            simulation.corrupt_next_arrival(&bad_request, corruption.clone());
+            simulation.run(2);
+
+            assert_eq!(
+                simulation.violations.len(),
+                1,
+                "one refused arrival event must preserve the other ledger invariants"
+            );
+            assert_eq!(
+                simulation.settlement_snapshot(),
+                before,
+                "member {bad_index} with {corruption:?} partially committed its arrival group"
+            );
+
+            // Refusal retains ownership, does not underflow stages_left, and
+            // does not turn the original payload into a successful redelivery.
+            simulation.run(2);
+            assert_eq!(simulation.violations.len(), 3);
+            assert_eq!(simulation.settlement_snapshot(), before);
+
+            simulation.clear_arrival_corruption(&bad_request);
+            let failures = simulation.violations.len();
+            let ticks = simulation.run(100);
+            assert!(
+                ticks < 100,
+                "valid redelivery should let both requests finish"
+            );
+            assert_eq!(
+                simulation.violations.len(),
+                failures,
+                "valid redelivery introduced an accounting or token/position error"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_invalid_planned_issue_cannot_publish_any_members() {
+    // The selector emits four legal rows for each request, then this fake
+    // transport asks to issue six for one of them. This must reach and fail
+    // the real shared issue transition, before ids/rows/trace are committed.
+    for bad_request in ["a", "b"] {
+        let mut simulation = Simulation::new(PipelineShape {
+            batch_capacity: 8,
+            physical_capacity: 8,
+            ..PipelineShape::default()
+        });
+        simulation.admit("a", 4, 2);
+        simulation.admit("b", 4, 2);
+        let before = simulation.settlement_snapshot();
+        simulation.corrupt_next_issue(bad_request, 6);
+        simulation.run(1);
+        assert!(
+            simulation.violations.iter().any(|violation| {
+                violation.rule == "an issue is one the worker would accept"
+                    && violation.detail
+                        == format!("{bad_request}: issue exceeds remaining prompt rows")
+            }),
+            "the shared issue transition must refuse: {:?}",
+            simulation.violations
+        );
+        assert_eq!(
+            simulation.settlement_snapshot(),
+            before,
+            "invalid issue of {bad_request} committed other batch members"
+        );
+        assert!(
+            simulation.trace.is_empty(),
+            "a refused plan is not an issued batch"
+        );
+    }
 }

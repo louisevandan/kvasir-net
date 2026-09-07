@@ -10,7 +10,7 @@ constexpr std::array<std::uint8_t, 4> kTokenCountMagic{'N', 'T', 'O', 'K'};
 
 [[nodiscard]] Operation operation_from_byte(std::uint8_t value) {
     if (value < static_cast<std::uint8_t>(Operation::Hello) ||
-        value > static_cast<std::uint8_t>(Operation::PhysicalSettle)) {
+        value > static_cast<std::uint8_t>(Operation::BindLoad)) {
         throw ProtocolError(ErrorCode::UnknownOperation,
                             value_message("unknown operation", value));
     }

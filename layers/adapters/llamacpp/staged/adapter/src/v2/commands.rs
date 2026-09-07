@@ -16,34 +16,53 @@ pub enum NodeRole {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SessionCommand {
     pub load_generation: u64,
     pub session_id: String,
-    pub role: NodeRole,
-    pub next: Option<NodeAddress>,
-    pub first: NodeAddress,
+    /// Ordered logical pipeline, declared by OUTER before any stage work.
+    /// Device placement and native model cuts are separate contracts.
+    pub stages: Vec<NodeAddress>,
+    /// The recipient's index, checked against its complete endpoint at install.
+    pub stage_index: usize,
 }
 
 impl SessionCommand {
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.load_generation == 0
-            || self.session_id.is_empty()
-            || self.first.agent.is_empty()
-            || self.first.node.is_empty()
-            || self.first.generation == 0
+        if self.load_generation == 0 || self.session_id.is_empty() || self.session_id.contains('\0')
         {
-            return Err("session identity and first node are required");
+            return Err("session load and identity are required");
         }
-        match self.role {
-            NodeRole::First | NodeRole::Middle
-                if self.next.as_ref().is_none_or(|next| {
-                    next.agent.is_empty() || next.node.is_empty() || next.generation == 0
-                }) =>
-            {
-                Err("non-tail session requires a next node")
+        // The current staged execution path requires distinct head and tail.
+        // A one-stage engine path is not created by accepting an empty next.
+        if self.stages.len() < 2 || self.stage_index >= self.stages.len() {
+            return Err("session requires an ordered pipeline and a valid local index");
+        }
+        let mut identities = std::collections::HashSet::new();
+        for stage in &self.stages {
+            let address = stage
+                .agent
+                .parse::<p4_protocol::Address>()
+                .map_err(|_| "session stage address is invalid")?;
+            if stage.node.is_empty() || stage.node.contains('\0') || stage.generation == 0 {
+                return Err("session stage identity is invalid");
             }
-            NodeRole::Last if self.next.is_some() => Err("tail session cannot carry a next node"),
-            _ => Ok(()),
+            // Two generations of one node cannot be two simultaneous stages.
+            if !identities.insert((address.to_string(), stage.node.as_str())) {
+                return Err("session repeats a node identity");
+            }
+        }
+        Ok(())
+    }
+
+    /// Only called for a validated, installed command.
+    pub fn role(&self) -> NodeRole {
+        if self.stage_index == 0 {
+            NodeRole::First
+        } else if self.stage_index + 1 == self.stages.len() {
+            NodeRole::Last
+        } else {
+            NodeRole::Middle
         }
     }
 }
@@ -120,6 +139,14 @@ impl InferenceCommand {
         if self.load_generation == 0
             || self.session_id.is_empty()
             || self.request_id.is_empty()
+            || self.session_id.contains('\0')
+            || self.request_id.contains('\0')
+            || self
+                .session_id
+                .len()
+                .checked_add(1)
+                .and_then(|n| n.checked_add(self.request_id.len()))
+                .is_none_or(|n| n > 4096)
             || self.max_tokens == 0
         {
             return Err("inference identity and max_tokens are required");
@@ -157,6 +184,7 @@ pub struct OutcomePayload {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PhysicalBatchObservation {
     pub execution_id: u64,
     pub rows: usize,
@@ -166,12 +194,20 @@ pub struct PhysicalBatchObservation {
     pub replay_rows: usize,
     pub request_count: usize,
     pub sequence_count: usize,
-    pub requests: Vec<BatchRequestObservation>,
+    /// Recipient-owned detail only; other counters remain physical-global.
+    pub owned_requests: Vec<BatchRequestObservation>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct BatchRequestObservation {
     pub request_id: String,
+    pub submission_event_id: String,
+    pub sequence_id: u32,
+    pub incarnation: u64,
+    /// Accepted per-request chain index, never a telemetry-derived total.
+    pub request_issue_index: u64,
+    pub rows: Vec<super::IssuedRow>,
     pub prefill_rows: usize,
     pub decode_rows: usize,
     pub verify_rows: usize,
@@ -179,10 +215,12 @@ pub struct BatchRequestObservation {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct BatchObservation {
     pub observation_id: String,
     pub load_generation: u64,
     pub session_id: String,
+    pub logical_ordinal: u64,
     pub logical_rows: usize,
     pub physical_batches: Vec<PhysicalBatchObservation>,
     pub mixed_physical_batches: usize,
@@ -226,11 +264,13 @@ pub struct BatchObservation {
 /// the comparison is only as good as their clocks agree, which on one host
 /// is well under a millisecond.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct StageSpan {
     pub load_generation: u64,
     pub session_id: String,
     /// The execution ids of the physical batches this span covers.
     pub execution_ids: Vec<u64>,
+    pub executions: Vec<StageExecutionObservation>,
     pub rows: usize,
     /// The batch reached this node (a first node: the plan was started).
     pub ingress_unix_ms: u64,
@@ -240,6 +280,21 @@ pub struct StageSpan {
     pub end_unix_ms: u64,
     /// The result left this node for the next one, or for the outer.
     pub forward_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StageExecutionObservation {
+    pub execution_id: u64,
+    pub owned_requests: Vec<StageRequestObservation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StageRequestObservation {
+    pub request_id: String,
+    pub sequence_id: u32,
+    pub incarnation: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -253,22 +308,8 @@ pub struct ReleaseCommand {
 pub struct ReleaseSequence {
     pub key: String,
     pub id: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ReleasedPayload {
-    pub load_generation: u64,
-    pub session_id: String,
-    pub released: usize,
-}
-
-impl ReleasedPayload {
-    pub fn validate(&self) -> Result<(), &'static str> {
-        if self.load_generation == 0 || self.session_id.is_empty() || self.released == 0 {
-            return Err("release completion requires load, session and count");
-        }
-        Ok(())
-    }
+    pub incarnation: u64,
+    pub operation_id: u64,
 }
 
 impl ReleaseCommand {
@@ -276,7 +317,13 @@ impl ReleaseCommand {
         if self.load_generation == 0
             || self.session_id.is_empty()
             || self.sequences.is_empty()
-            || self.sequences.iter().any(|value| value.key.is_empty())
+            || self.session_id.contains('\0')
+            || self.sequences.iter().any(|value| {
+                value.key.is_empty()
+                    || value.incarnation == 0
+                    || value.operation_id == 0
+                    || !value.key.starts_with(&format!("{}\0", self.session_id))
+            })
         {
             return Err("release requires a session and sequence identities");
         }
@@ -295,6 +342,8 @@ pub struct SettlementCommand {
 pub struct SettlementSequence {
     pub key: String,
     pub id: u32,
+    pub incarnation: u64,
+    pub operation_id: u64,
     pub retain_from: u32,
     #[serde(default)]
     pub replay_tokens: Vec<i32>,
@@ -309,9 +358,13 @@ impl SettlementCommand {
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.load_generation == 0
             || self.session_id.is_empty()
+            || self.session_id.contains('\0')
             || self.sequences.is_empty()
             || self.sequences.iter().any(|value| {
                 value.key.is_empty()
+                    || value.incarnation == 0
+                    || value.operation_id == 0
+                    || !value.key.starts_with(&format!("{}\0", self.session_id))
                     || (!value.replay_tokens.is_empty() && !value.proposal.is_empty())
                     || if value.replay_tokens.is_empty() {
                         value.replay_position != 0
@@ -342,4 +395,101 @@ pub struct ReplySpec {
     pub connection_generation: u64,
     pub correlation_id: String,
     pub deadline_unix_ms: Option<u64>,
+}
+
+#[cfg(test)]
+mod observation_wire_tests {
+    use super::*;
+
+    fn observation() -> serde_json::Value {
+        serde_json::json!({
+            "observation_id":"s:2:11", "load_generation":7, "session_id":"s",
+            "logical_ordinal":2, "logical_rows":4, "mixed_physical_batches":0,
+            "physical_batches":[{
+                "execution_id":11,"rows":4,"prefill_rows":4,"decode_rows":0,
+                "verify_rows":0,"replay_rows":0,"request_count":2,"sequence_count":2,
+                "owned_requests":[{
+                    "request_id":"a","submission_event_id":"sent-a","sequence_id":0,
+                    "incarnation":3,"request_issue_index":1,
+                    "rows":[{"phase":"prefill","position":0},{"phase":"prefill","position":1}],
+                    "prefill_rows":2,"decode_rows":0,"verify_rows":0,"replay_rows":0
+                }]
+            }]
+        })
+    }
+
+    #[test]
+    fn observation_wire_separates_owned_detail_from_physical_global_counts() {
+        let wire = observation();
+        let value: BatchObservation = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(value.logical_rows, 4);
+        assert_eq!(value.physical_batches[0].rows, 4);
+        assert_eq!(value.physical_batches[0].owned_requests[0].rows.len(), 2);
+        for path in [
+            vec!["unexpected"],
+            vec!["physical_batches", "0", "unexpected"],
+            vec!["physical_batches", "0", "owned_requests", "0", "unexpected"],
+        ] {
+            let mut changed = wire.clone();
+            let mut cursor = &mut changed;
+            for component in &path[..path.len() - 1] {
+                cursor = match component.parse::<usize>() {
+                    Ok(index) => &mut cursor[index],
+                    Err(_) => &mut cursor[*component],
+                };
+            }
+            cursor[*path.last().unwrap()] = true.into();
+            assert!(serde_json::from_value::<BatchObservation>(changed).is_err());
+        }
+        let mut old = wire;
+        old.as_object_mut().unwrap().remove("logical_ordinal");
+        assert!(serde_json::from_value::<BatchObservation>(old).is_err());
+    }
+
+    #[test]
+    fn legacy_request_totals_cannot_replace_exact_owner_rows_or_issue_identity() {
+        for field in [
+            "submission_event_id",
+            "sequence_id",
+            "incarnation",
+            "request_issue_index",
+            "rows",
+        ] {
+            let mut changed = observation();
+            changed["physical_batches"][0]["owned_requests"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(
+                serde_json::from_value::<BatchObservation>(changed).is_err(),
+                "missing {field}"
+            );
+        }
+        let mut old = observation();
+        let detail = old["physical_batches"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("owned_requests")
+            .unwrap();
+        old["physical_batches"][0]["requests"] = detail;
+        assert!(serde_json::from_value::<BatchObservation>(old).is_err());
+    }
+
+    #[test]
+    fn stage_wire_requires_execution_owners_and_forbids_invented_submission_field() {
+        let wire = serde_json::json!({
+            "load_generation":7,"session_id":"s","execution_ids":[11],"rows":4,
+            "executions":[{"execution_id":11,"owned_requests":[{"request_id":"a","sequence_id":0,"incarnation":3}]}],
+            "ingress_unix_ms":10,"start_unix_ms":11,"end_unix_ms":12,"forward_unix_ms":13
+        });
+        let value: StageSpan = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(value).unwrap(), wire);
+        let mut old = wire.clone();
+        old.as_object_mut().unwrap().remove("executions");
+        assert!(serde_json::from_value::<StageSpan>(old).is_err());
+        let mut invented = wire;
+        invented["executions"][0]["owned_requests"][0]["submission_event_id"] =
+            "not-known-downstream".into();
+        assert!(serde_json::from_value::<StageSpan>(invented).is_err());
+    }
 }

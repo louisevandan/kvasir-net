@@ -5,6 +5,7 @@
 //   3. a claim owned by one document appearing in another (R1, mechanical);
 //   4. a docs/*.md page the README does not actually link;
 //   5. a code anchor of the form `path.ext` @ hash with no ::symbol (R2).
+//   6. a present document-map omitting an in-scope page or linking a missing file.
 // Scope: every project-owned Markdown file, recursively. Vendored llama.cpp
 // (upstream/), build output (target/), and VCS internals are excluded.
 // This is a literal-string canary: it cannot catch a semantic restatement in
@@ -88,6 +89,29 @@ for (const file of files) {
   if (readme !== null && /^docs\/[^/]+\.md$/.test(rel)
       && !readme.includes(`](docs/${path.basename(rel)})`)) {
     fail(`${rel}: README has no actual link ](docs/${path.basename(rel)})`);
+  }
+}
+
+// Optional for small/older fixtures, required by the repository's own docs.
+// This validates navigation only, never a page's semantic role or correctness.
+const mapPath = path.join(root, "docs", "document-map.md");
+if (fs.existsSync(mapPath)) {
+  const catalog = fs.readFileSync(mapPath, "utf8");
+  const linked = new Set();
+  for (const match of catalog.matchAll(/\]\(([^)\r\n]+)\)/g)) {
+    const href = match[1].replace(/^<|>$/g, "");
+    if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(href)) continue;
+    const target = path.resolve(path.dirname(mapPath), href.split("#")[0]);
+    if (!fs.existsSync(target)) {
+      fail(`docs/document-map.md: missing target ${href}`);
+    } else {
+      linked.add(target);
+    }
+  }
+  for (const file of files) {
+    if (!linked.has(path.resolve(file))) {
+      fail(`docs/document-map.md: unlisted document ${path.relative(root, file).replaceAll("\\", "/")}`);
+    }
   }
 }
 

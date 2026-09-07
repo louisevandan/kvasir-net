@@ -1,5 +1,8 @@
 # P4 distributed mock test plan
 
+> 문서 지위 (2026-09-06): **부분 시험 계획**. 해당 mock/OUTER 경로의 계획이다. 초대형 모델 실기 수용 전체를 대신하지 않는다.
+> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+
 목표: 중앙 PC와 `m42-server2`의 RTX 3090×2 Windows 11 환경에서, 실제
 llama.cpp를 사용하지 않고 `p4-mock`을 어댑터로 사용해 discovery부터
 분산 load, 다중 inference, queue/backpressure, monitoring, cache, failure

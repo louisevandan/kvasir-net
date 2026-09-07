@@ -1,5 +1,8 @@
 # OUTER 세션과 KV 수명주기
 
+> 문서 지위 (2026-09-06): **분야 계약·구현과 구별**. 소유 분야의 계약/목표를 읽되 구현 완료로 간주하지 않는다. 현재 개발 순서와 충돌하면 로드맵의 명시적 이관을 따른다.
+> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+
 ## 상태와 범위
 
 이 문서는 OUTER 연결 단절, heartbeat, inference 중지, KV Persist/Restore/Discard,

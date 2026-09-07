@@ -1,170 +1,380 @@
 use super::*;
-use std::collections::{BTreeMap, HashSet};
+use p4_protocol::event::{Envelope, OuterEndpoint};
+use std::collections::{BTreeMap, BTreeSet};
 
-impl Worker {
-    pub(super) fn emit_batch_observation(
-        &mut self,
-        base: &Event,
-        session_id: &str,
-        logical_rows: usize,
-        physical: &CapsuleSet,
-        pacing: BatchPacing,
-    ) -> Result<(), ()> {
-        let mut replies = Vec::new();
-        let mut physical_batches = Vec::with_capacity(physical.0.len());
-        for capsule in &physical.0 {
-            let mut request_ids = HashSet::new();
-            let mut sequence_ids = HashSet::new();
-            let mut request_rows = BTreeMap::<String, (usize, usize, usize, usize)>::new();
-            let mut prefill_rows = 0usize;
-            let mut decode_rows = 0usize;
-            let mut verify_rows = 0usize;
-            let mut replay_rows = 0usize;
-            for owner in &capsule.owners {
-                request_ids.insert(owner.request_id.as_str());
-                sequence_ids.insert(owner.sequence_id);
-                match owner.phase {
-                    Phase::Prefill => {
-                        prefill_rows += 1;
-                        request_rows.entry(owner.request_id.clone()).or_default().0 += 1;
-                    }
-                    Phase::Decode => {
-                        decode_rows += 1;
-                        request_rows.entry(owner.request_id.clone()).or_default().1 += 1;
-                    }
-                    Phase::Verify => {
-                        verify_rows += 1;
-                        request_rows.entry(owner.request_id.clone()).or_default().2 += 1;
-                    }
-                    Phase::Replay => {
-                        replay_rows += 1;
-                        request_rows.entry(owner.request_id.clone()).or_default().3 += 1;
-                    }
-                }
-                let reply: ReplySpec = serde_json::from_str(&owner.reply).map_err(|_| ())?;
-                if !replies.contains(&reply) {
-                    replies.push(reply);
-                }
-            }
-            physical_batches.push(PhysicalBatchObservation {
-                execution_id: capsule.execution_id,
-                rows: capsule.owners.len(),
-                prefill_rows,
-                decode_rows,
-                verify_rows,
-                replay_rows,
-                request_count: request_ids.len(),
-                sequence_count: sequence_ids.len(),
-                requests: request_rows
-                    .into_iter()
-                    .map(
-                        |(request_id, (prefill_rows, decode_rows, verify_rows, replay_rows))| {
-                            BatchRequestObservation {
-                                request_id,
-                                prefill_rows,
-                                decode_rows,
-                                verify_rows,
-                                replay_rows,
-                            }
-                        },
-                    )
-                    .collect(),
-            });
+#[derive(Clone, Debug)]
+pub(super) enum TelemetryPayload {
+    Batch(BatchObservation),
+    Span(StageSpan),
+}
+
+/// Fully prepared recipient-owned data; only the local forward timestamp is
+/// filled after forwarding. No request/engine state is read while publishing.
+#[derive(Clone, Debug)]
+pub(super) struct PreparedTelemetry {
+    pub base: Envelope,
+    pub reply: ReplySpec,
+    pub ingress: Address,
+    pub payload: TelemetryPayload,
+}
+
+impl PreparedTelemetry {
+    pub(super) fn forwarded_at(&mut self, stamp: u64) {
+        if let TelemetryPayload::Span(span) = &mut self.payload {
+            span.forward_unix_ms = stamp;
         }
-        let mixed_physical_batches = physical_batches
-            .iter()
-            .filter(|batch| {
-                batch.prefill_rows > 0
-                    && batch.decode_rows + batch.verify_rows + batch.replay_rows > 0
-            })
-            .count();
-        let execution_ids = physical_batches
-            .iter()
-            .map(|batch| batch.execution_id.to_string())
-            .collect::<Vec<_>>()
-            .join("-");
-        let observation = BatchObservation {
-            observation_id: format!("{session_id}:{execution_ids}"),
-            load_generation: self.state.load_generation,
-            session_id: session_id.to_owned(),
-            logical_rows,
-            physical_batches,
-            mixed_physical_batches,
-            stage_ms: pacing.stage_ms,
-            idle_ms: pacing.idle_ms,
-            idle_gated: pacing.idle_gated,
-            ready_rows: pacing.ready_rows,
-            ready_sequences: pacing.ready_sequences,
-        };
-        for reply in replies {
-            let ingress = Address::from_str(&reply.ingress_agent).map_err(|_| ())?;
-            self.emit_reply_json(
-                base,
-                reply,
-                ingress,
-                EventClass::Telemetry,
-                BATCH_OBSERVATION_CONTENT_TYPE,
-                &observation,
-            )?;
+    }
+    fn validate_encoding(&self) -> Result<(), String> {
+        match &self.payload {
+            TelemetryPayload::Batch(value) => serde_json::to_vec(value),
+            TelemetryPayload::Span(value) => serde_json::to_vec(value),
         }
-        Ok(())
+        .map(|_| ())
+        .map_err(|e| format!("observation encoding failed: {e}"))
     }
 }
 
-/// Milliseconds since the Unix epoch, for a span other processes will read.
+struct Recipient {
+    route: OuterEndpoint,
+    base: Envelope,
+    reply: ReplySpec,
+    owners: BTreeMap<String, Option<String>>,
+}
+
+impl Worker {
+    fn observation_recipients(
+        &self,
+        base: &Event,
+        session: &str,
+        rows: &[&RowOwner],
+        head: bool,
+    ) -> Result<Vec<Recipient>, String> {
+        let mut recipients: Vec<Recipient> = Vec::new();
+        let mut identities = BTreeMap::new();
+        for owner in rows {
+            if owner.load_generation != self.state.load_generation
+                || owner.session_id != session
+                || !owner.has_canonical_request_identity()
+                || owner.incarnation == 0
+            {
+                return Err("observation row identity is invalid".into());
+            }
+            let reply: ReplySpec = serde_json::from_str(&owner.reply)
+                .map_err(|_| "observation reply contract is invalid")?;
+            if reply.channel.is_empty()
+                || reply.channel.contains('\0')
+                || reply.ingress_agent.contains('\0')
+                || reply.correlation_id.is_empty()
+                || reply.connection_generation == 0
+            {
+                return Err("observation reply contract is incomplete".into());
+            }
+            let ingress = Address::from_str(&reply.ingress_agent)
+                .map_err(|_| "observation reply ingress is invalid")?;
+            let route = OuterEndpoint {
+                ingress_agent: ingress,
+                channel: reply.channel.clone(),
+                connection_generation: reply.connection_generation,
+            };
+            Endpoint::Outer(route.clone())
+                .validate()
+                .map_err(|e| e.to_string())?;
+            let identity = (owner.sequence_id, owner.incarnation, reply.clone());
+            if identities
+                .insert(owner.sequence_key.clone(), identity.clone())
+                .is_some_and(|old| old != identity)
+            {
+                return Err("observation request has inconsistent ownership".into());
+            }
+            let (carrier, submission) = if head {
+                let request = self
+                    .state
+                    .requests
+                    .get(&owner.sequence_key)
+                    .ok_or("observation request is missing")?;
+                let authority = request.issue_authority()?;
+                if authority.head != self.endpoint
+                    || authority.outer != route
+                    || authority.load_generation != owner.load_generation
+                    || authority.session_id != owner.session_id
+                    || authority.request_id != owner.request_id
+                    || authority.sequence_id != owner.sequence_id
+                    || authority.incarnation != owner.incarnation
+                    || request.reply != owner.reply
+                {
+                    return Err("observation row differs from the original submission".into());
+                }
+                (
+                    request.template.envelope.clone(),
+                    Some(authority.submission_event_id),
+                )
+            } else {
+                // The physical wire has no original submission event ID.
+                // OUTER joins these owners to the head's approved attempt.
+                (base.envelope.clone(), None)
+            };
+            let index = match recipients.iter().position(|group| group.route == route) {
+                Some(index) => index,
+                None => {
+                    recipients.push(Recipient {
+                        route,
+                        base: carrier,
+                        reply,
+                        owners: BTreeMap::new(),
+                    });
+                    recipients.len() - 1
+                }
+            };
+            recipients[index]
+                .owners
+                .insert(owner.sequence_key.clone(), submission);
+        }
+        Ok(recipients)
+    }
+
+    pub(super) fn validate_observation_rows(
+        &self,
+        base: &Event,
+        session: &str,
+        rows: &[&RowOwner],
+        head: bool,
+    ) -> Result<(), String> {
+        self.observation_recipients(base, session, rows, head)
+            .map(|_| ())
+    }
+
+    /// Predicted indices are candidates, not approval. The committed witness
+    /// is independently compared before any forward/observation publication.
+    pub(super) fn prepare_batch_observation(
+        &self,
+        base: &Event,
+        session: &str,
+        ordinal: u64,
+        logical_rows: usize,
+        physical: &CapsuleSet,
+        pacing: BatchPacing,
+    ) -> Result<Vec<PreparedTelemetry>, String> {
+        if ordinal == 0 {
+            return Err("observation issue ordinal is zero".into());
+        }
+        let rows = physical
+            .0
+            .iter()
+            .flat_map(|c| &c.owners)
+            .collect::<Vec<_>>();
+        let recipients = self.observation_recipients(base, session, &rows, true)?;
+        let mut deliveries = Vec::new();
+        for recipient in recipients {
+            let mut batches = Vec::new();
+            for capsule in &physical.0 {
+                let mut requests = BTreeMap::<String, BatchRequestObservation>::new();
+                let mut request_ids = BTreeSet::new();
+                let mut sequence_ids = BTreeSet::new();
+                let mut counts = [0; 4];
+                for owner in &capsule.owners {
+                    request_ids.insert(&owner.request_id);
+                    sequence_ids.insert(owner.sequence_id);
+                    counts[phase_index(owner.phase)] += 1;
+                    let Some(submission) = recipient.owners.get(&owner.sequence_key) else {
+                        continue;
+                    };
+                    let request = self
+                        .state
+                        .requests
+                        .get(&owner.sequence_key)
+                        .ok_or("observation request disappeared")?;
+                    let index = request
+                        .issued_work
+                        .map(|w| w.issue_count())
+                        .unwrap_or(0)
+                        .checked_add(1)
+                        .ok_or("observation issue index overflow")?;
+                    let detail = requests
+                        .entry(owner.sequence_key.clone())
+                        .or_insert_with(|| BatchRequestObservation {
+                            request_id: owner.request_id.clone(),
+                            submission_event_id: submission.clone().expect("head authority"),
+                            sequence_id: owner.sequence_id,
+                            incarnation: owner.incarnation,
+                            request_issue_index: index,
+                            rows: Vec::new(),
+                            prefill_rows: 0,
+                            decode_rows: 0,
+                            verify_rows: 0,
+                            replay_rows: 0,
+                        });
+                    detail.rows.push(IssuedRow {
+                        phase: owner.phase,
+                        position: owner.position,
+                    });
+                    match owner.phase {
+                        Phase::Prefill => detail.prefill_rows += 1,
+                        Phase::Decode => detail.decode_rows += 1,
+                        Phase::Verify => detail.verify_rows += 1,
+                        Phase::Replay => detail.replay_rows += 1,
+                    }
+                }
+                for detail in requests.values_mut() {
+                    detail
+                        .rows
+                        .sort_by_key(|row| (phase_index(row.phase), row.position));
+                }
+                batches.push(PhysicalBatchObservation {
+                    execution_id: capsule.execution_id,
+                    rows: capsule.owners.len(),
+                    prefill_rows: counts[0],
+                    decode_rows: counts[1],
+                    verify_rows: counts[2],
+                    replay_rows: counts[3],
+                    request_count: request_ids.len(),
+                    sequence_count: sequence_ids.len(),
+                    owned_requests: requests.into_values().collect(),
+                });
+            }
+            let ids = batches
+                .iter()
+                .map(|b| b.execution_id.to_string())
+                .collect::<Vec<_>>()
+                .join("-");
+            let observation = BatchObservation {
+                observation_id: format!("{session}:{ordinal}:{ids}"),
+                load_generation: self.state.load_generation,
+                session_id: session.to_owned(),
+                logical_ordinal: ordinal,
+                logical_rows,
+                mixed_physical_batches: batches
+                    .iter()
+                    .filter(|b| {
+                        b.prefill_rows > 0 && b.decode_rows + b.verify_rows + b.replay_rows > 0
+                    })
+                    .count(),
+                physical_batches: batches,
+                stage_ms: pacing.stage_ms,
+                idle_ms: pacing.idle_ms,
+                idle_gated: pacing.idle_gated,
+                ready_rows: pacing.ready_rows,
+                ready_sequences: pacing.ready_sequences,
+            };
+            let delivery = PreparedTelemetry {
+                base: recipient.base,
+                reply: recipient.reply,
+                ingress: recipient.route.ingress_agent,
+                payload: TelemetryPayload::Batch(observation),
+            };
+            delivery.validate_encoding()?;
+            deliveries.push(delivery);
+        }
+        Ok(deliveries)
+    }
+
+    pub(super) fn validate_accepted_observations(
+        &self,
+        deliveries: &[PreparedTelemetry],
+    ) -> Result<(), String> {
+        for delivery in deliveries {
+            let TelemetryPayload::Batch(batch) = &delivery.payload else {
+                continue;
+            };
+            for detail in batch
+                .physical_batches
+                .iter()
+                .flat_map(|b| &b.owned_requests)
+            {
+                let request = self
+                    .state
+                    .requests
+                    .get(&request_key(&batch.session_id, &detail.request_id))
+                    .ok_or("accepted observation request is missing")?;
+                let witness = request
+                    .issued_work
+                    .ok_or("accepted observation has no witness")?;
+                if witness.last_ordinal() != batch.logical_ordinal
+                    || witness.issue_count() != detail.request_issue_index
+                {
+                    return Err("observation index differs from the accepted issue witness".into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn prepare_stage_span(
+        &self,
+        base: &Event,
+        session: &str,
+        physical: &CapsuleSet,
+        ingress_unix_ms: u64,
+        start_unix_ms: u64,
+        end_unix_ms: u64,
+        head: bool,
+    ) -> Result<Vec<PreparedTelemetry>, String> {
+        let rows = physical
+            .0
+            .iter()
+            .flat_map(|c| &c.owners)
+            .collect::<Vec<_>>();
+        let recipients = self.observation_recipients(base, session, &rows, head)?;
+        let mut deliveries = Vec::new();
+        for recipient in recipients {
+            let executions = physical
+                .0
+                .iter()
+                .map(|capsule| {
+                    let mut owners = BTreeMap::new();
+                    for owner in &capsule.owners {
+                        if recipient.owners.contains_key(&owner.sequence_key) {
+                            owners.insert(
+                                owner.sequence_key.clone(),
+                                StageRequestObservation {
+                                    request_id: owner.request_id.clone(),
+                                    sequence_id: owner.sequence_id,
+                                    incarnation: owner.incarnation,
+                                },
+                            );
+                        }
+                    }
+                    StageExecutionObservation {
+                        execution_id: capsule.execution_id,
+                        owned_requests: owners.into_values().collect(),
+                    }
+                })
+                .collect();
+            let span = StageSpan {
+                load_generation: self.state.load_generation,
+                session_id: session.to_owned(),
+                execution_ids: physical.0.iter().map(|c| c.execution_id).collect(),
+                executions,
+                rows: rows.len(),
+                ingress_unix_ms,
+                start_unix_ms,
+                end_unix_ms,
+                forward_unix_ms: 0,
+            };
+            let delivery = PreparedTelemetry {
+                base: recipient.base,
+                reply: recipient.reply,
+                ingress: recipient.route.ingress_agent,
+                payload: TelemetryPayload::Span(span),
+            };
+            delivery.validate_encoding()?;
+            deliveries.push(delivery);
+        }
+        Ok(deliveries)
+    }
+}
+
+fn phase_index(phase: Phase) -> usize {
+    match phase {
+        Phase::Prefill => 0,
+        Phase::Decode => 1,
+        Phase::Verify => 2,
+        Phase::Replay => 3,
+    }
+}
+/// Cross-process timestamp; clock synchronization is a separate prerequisite.
 pub(super) fn unix_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
-}
-
-impl Worker {
-    /// Reports one node's handling of one batch to every outer that owns a
-    /// row in it. Emitted by first, middle and last nodes alike, which is the
-    /// point: the first node's own pacing was measured before this and could
-    /// not say what the other three were doing at the time.
-    pub(super) fn emit_stage_span(
-        &mut self,
-        base: &Event,
-        session_id: &str,
-        physical: &CapsuleSet,
-        ingress_unix_ms: u64,
-        start_unix_ms: u64,
-        end_unix_ms: u64,
-    ) -> Result<(), ()> {
-        // One span per node per batch. It is routed by a request correlation
-        // because that is how the outer admits telemetry, but the span is
-        // about the batch, so any one owner will do - the first. A version
-        // that told every owner produced a span per request per node per
-        // batch: 155,112 of them for 1,768 batches, and a 70 MB artifact.
-        let rows = physical.0.iter().map(|capsule| capsule.owners.len()).sum::<usize>();
-        let Some(owner) = physical.0.iter().flat_map(|capsule| &capsule.owners).next() else {
-            return Ok(());
-        };
-        let reply: ReplySpec = serde_json::from_str(&owner.reply).map_err(|_| ())?;
-        let replies = vec![reply];
-        let span = StageSpan {
-            load_generation: self.state.load_generation,
-            session_id: session_id.to_owned(),
-            execution_ids: physical.0.iter().map(|capsule| capsule.execution_id).collect(),
-            rows,
-            ingress_unix_ms,
-            start_unix_ms,
-            end_unix_ms,
-            forward_unix_ms: unix_ms(),
-        };
-        for reply in replies {
-            let ingress = Address::from_str(&reply.ingress_agent).map_err(|_| ())?;
-            self.emit_reply_json(
-                base,
-                reply,
-                ingress,
-                EventClass::Telemetry,
-                STAGE_SPAN_CONTENT_TYPE,
-                &span,
-            )?;
-        }
-        Ok(())
-    }
 }

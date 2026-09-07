@@ -1,10 +1,16 @@
 mod acceptance;
 mod config;
+#[cfg(test)]
+mod consumer_budget_boundary_tests;
+mod evidence_ledger;
 mod inference;
+pub use evidence_ledger::SubmittedAuthority;
 mod inference_identity;
 #[cfg(test)]
 mod inference_identity_tests;
 mod load;
+mod output_budget;
+mod release_ledger;
 mod replies;
 mod wire;
 
@@ -12,7 +18,7 @@ pub use config::{AcceptanceConfig, ArrivalWave, ResponseExpectation, RunConfig};
 use config::{address, node_endpoint, validate};
 
 use p4_llamacpp_staged_adapter::v2::{
-    BatchObservation, NodeRole, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
+    BatchObservation, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
     SessionCommand, UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
 };
 use p4_protocol::Address;
@@ -54,12 +60,18 @@ pub struct RunArtifact {
     pub batch_observations: Vec<BatchObservation>,
     pub stage_spans: Vec<StageSpanArtifact>,
     pub elapsed_ms: u128,
+    pub telemetry_complete_elapsed_ms: Option<u128>,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct RequestArtifact {
     pub request_id: String,
+    pub submission_event_id: String,
+    pub submission_authority: Option<SubmittedAuthority>,
+    pub issued_work: Option<p4_llamacpp_staged_adapter::v2::IssuedWorkProof>,
+    pub release_member: Option<p4_llamacpp_staged_adapter::v2::ReleaseMember>,
+    pub released: bool,
     pub prompt: String,
     pub arrival_ms: u128,
     pub first_output_ms: Option<u128>,
@@ -135,30 +147,8 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
 
     let build = load::drive(&config, &mut wire, &mut sender).await?;
 
-    let first = address(&config.nodes[0]);
     let mut session_replies = Vec::with_capacity(config.nodes.len());
-    for (index, node) in config.nodes.iter().enumerate() {
-        let last = index + 1 == config.nodes.len();
-        let command = SessionCommand {
-            load_generation: config.load_generation,
-            session_id: config.session_id.clone(),
-            role: if index == 0 {
-                NodeRole::First
-            } else if last {
-                NodeRole::Last
-            } else {
-                NodeRole::Middle
-            },
-            next: (!last).then(|| address(&config.nodes[index + 1])),
-            first: first.clone(),
-        };
-        let event = sender.event(
-            node_endpoint(node)?,
-            EventClass::Control,
-            SESSION_CONTENT_TYPE,
-            serde_json::to_vec(&command)?,
-            "session",
-        );
+    for event in session_events(&config, &mut sender)? {
         session_replies.push(ExpectedReply::from_request(&event));
         wire.send(event).await?;
     }
@@ -230,25 +220,14 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     .await?;
 
     let mut requests = run.requests;
-    for observation in &run.batch_observations {
-        for batch in &observation.physical_batches {
-            for measured in &batch.requests {
-                let request = requests
-                    .iter_mut()
-                    .find(|request| request.request_id == measured.request_id)
-                    .ok_or("batch observation references an unknown request")?;
-                request.prefill_rows += measured.prefill_rows;
-                request.decode_rows += measured.decode_rows;
-                request.verify_rows += measured.verify_rows;
-                request.replay_rows += measured.replay_rows;
-            }
-        }
-    }
+    // drive installs the validated per-request observation totals once.
+    // Re-aggregating here would double count the same physical work.
     for request in &mut requests {
         finish_phase_metrics(request);
     }
     let acceptance = acceptance::evaluate(&config, &requests);
     let structurally_complete = run.error.is_none()
+        && run.telemetry_complete_elapsed_ms.is_some()
         && run.completed_count == run.request_count
         && run.released_count == run.request_count;
     Ok(RunArtifact {
@@ -271,8 +250,36 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         batch_observations: run.batch_observations,
         stage_spans: run.stage_spans,
         elapsed_ms: run.elapsed_ms,
+        telemetry_complete_elapsed_ms: run.telemetry_complete_elapsed_ms,
         error: run.error,
     })
+}
+
+/// The actual execute path uses this builder. It declares the same complete
+/// logical topology to each recipient, changing only that recipient's index.
+/// Physical device placement and transport delivery are not performed here.
+fn session_events(
+    config: &RunConfig,
+    sender: &mut Sender,
+) -> Result<Vec<Event>, Box<dyn std::error::Error>> {
+    let stages = config.nodes.iter().map(address).collect::<Vec<_>>();
+    let mut events = Vec::with_capacity(config.nodes.len());
+    for (index, node) in config.nodes.iter().enumerate() {
+        let command = SessionCommand {
+            load_generation: config.load_generation,
+            session_id: config.session_id.clone(),
+            stages: stages.clone(),
+            stage_index: index,
+        };
+        events.push(sender.event(
+            node_endpoint(node)?,
+            EventClass::Control,
+            SESSION_CONTENT_TYPE,
+            serde_json::to_vec(&command)?,
+            "session",
+        ));
+    }
+    Ok(events)
 }
 
 pub(super) struct Sender {
@@ -326,6 +333,227 @@ fn outer_event_id(outer: &OuterEndpoint, sequence: u64) -> String {
 mod tests {
     use super::*;
 
+    fn three_stage_session_config() -> RunConfig {
+        let nodes = [
+            ("tcp://127.0.0.1:53101", "head", 3),
+            ("tcp://127.0.0.2:53102", "middle", 7),
+            ("tcp://127.0.0.3:53103", "tail", 11),
+        ]
+        .into_iter()
+        .map(|(agent, node, generation)| config::NodeConfig {
+            agent: agent.into(),
+            node: node.into(),
+            generation,
+            binary: "not-started".into(),
+            endpoint: "tcp://127.0.0.1:53999".into(),
+            plan: "not-loaded".into(),
+            args: Vec::new(),
+            environment: Vec::new(),
+            n_batch: 8,
+            n_ubatch: 8,
+            context_size: 16,
+            total_context_size: 16,
+            sequence_capacity: 1,
+        })
+        .collect();
+        RunConfig {
+            ingress_agent: "tcp://127.0.0.1:53100".into(),
+            channel: "session-builder".into(),
+            connection_generation: 17,
+            load_generation: 23,
+            session_id: "ordered-pipeline".into(),
+            request_id: "not-issued".into(),
+            nodes,
+            prompt: "not-inferred".into(),
+            prompts: Vec::new(),
+            session_key_template: String::new(),
+            max_tokens: 2,
+            waves: vec![ArrivalWave {
+                after_ms: 0,
+                count: 1,
+            }],
+            options: String::new(),
+            pre_inference_hold_ms: 0,
+            acceptance: AcceptanceConfig::default(),
+            timeout_ms: 1000,
+        }
+    }
+
+    fn session_builder_fixture() -> (Vec<Event>, OuterEndpoint) {
+        let config = three_stage_session_config();
+        validate(&config).unwrap();
+        let outer = OuterEndpoint {
+            ingress_agent: Address::tcp("127.0.0.1", 53100),
+            channel: "session-builder".into(),
+            connection_generation: 17,
+        };
+        let mut sender = Sender::new(outer.clone());
+        // LOAD/CREATE already consume IDs in execute. The SESSION builder
+        // must preserve its caller's stream, not create a new Sender.
+        let prior = sender.event(
+            Endpoint::Agent(outer.ingress_agent.clone()),
+            EventClass::Control,
+            CREATE,
+            Vec::new(),
+            "create",
+        );
+        let events = session_events(&config, &mut sender).unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(sender.sequence, 5);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.envelope.event_id != prior.envelope.event_id)
+        );
+        (events, outer)
+    }
+
+    #[test]
+    fn session_builder_declares_the_full_ordered_v4_pipeline_to_each_recipient() {
+        let (events, outer) = session_builder_fixture();
+        let stages = serde_json::json!([
+            {"agent":"tcp://127.0.0.1:53101","node":"head","generation":3},
+            {"agent":"tcp://127.0.0.2:53102","node":"middle","generation":7},
+            {"agent":"tcp://127.0.0.3:53103","node":"tail","generation":11}
+        ]);
+        let roles = [
+            p4_llamacpp_staged_adapter::v2::NodeRole::First,
+            p4_llamacpp_staged_adapter::v2::NodeRole::Middle,
+            p4_llamacpp_staged_adapter::v2::NodeRole::Last,
+        ];
+        let mut ids = std::collections::BTreeSet::new();
+        for (index, event) in events.iter().enumerate() {
+            let bytes = p4_protocol::event::encode(event).unwrap();
+            assert_eq!(p4_protocol::event::decode(&bytes).unwrap(), *event);
+            assert_eq!(
+                event.envelope.payload_content_type,
+                "application/vnd.p4.llamacpp.session-v4+json"
+            );
+            assert_eq!(event.envelope.source, Endpoint::Outer(outer.clone()));
+            assert_eq!(event.envelope.return_route, Some(outer.clone()));
+            assert_eq!(event.envelope.class, EventClass::Control);
+            assert_eq!(event.envelope.correlation_id, "session");
+            assert_eq!(event.envelope.causation_id, None);
+            assert_eq!(event.envelope.adapter_kind.as_deref(), Some("llamacpp"));
+            assert_eq!(event.envelope.sequence, index as u64 + 2);
+            assert!(ids.insert(event.envelope.event_id.clone()));
+            let expected_stage = &stages[index];
+            assert_eq!(
+                event.envelope.target,
+                Endpoint::node(
+                    Address::from_str(expected_stage["agent"].as_str().unwrap()).unwrap(),
+                    expected_stage["node"].as_str().unwrap(),
+                    expected_stage["generation"].as_u64().unwrap()
+                )
+            );
+            let body: serde_json::Value = serde_json::from_slice(&event.payload).unwrap();
+            // Exact JSON excludes old independent role/first/next fields and
+            // prevents head->tail shortcutting from erasing the middle stage.
+            assert_eq!(
+                body,
+                serde_json::json!({
+                    "load_generation":23,"session_id":"ordered-pipeline",
+                    "stages":stages,"stage_index":index
+                })
+            );
+            let command: SessionCommand = serde_json::from_slice(&event.payload).unwrap();
+            command.validate().unwrap();
+            assert_eq!(command.role(), roles[index]);
+        }
+    }
+
+    fn session_ready_event(request: &Event, index: usize) -> Event {
+        let sources = [
+            Endpoint::node(Address::tcp("127.0.0.1", 53101), "head", 3),
+            Endpoint::node(Address::tcp("127.0.0.2", 53102), "middle", 7),
+            Endpoint::node(Address::tcp("127.0.0.3", 53103), "tail", 11),
+        ];
+        let mut reply = request.clone();
+        reply.envelope.event_id = format!("fixture-ready-{index}");
+        reply.envelope.causation_id = Some(request.envelope.event_id.clone());
+        reply.envelope.source = sources[index].clone();
+        reply.envelope.target = request.envelope.source.clone();
+        reply.envelope.payload_content_type =
+            "application/vnd.p4.llamacpp.session-ready-v4+json".into();
+        reply.payload = Vec::new();
+        reply
+    }
+
+    // Uses the production reply consumer over bounded in-memory EventWire.
+    // No execute TCP/bootstrap, stage process, model or GPU is exercised.
+    async fn consume_session_replies(
+        events: &[Event],
+        replies: Vec<Event>,
+    ) -> Result<Vec<Event>, Box<dyn std::error::Error>> {
+        let (client, peer) = tokio::io::duplex(4096);
+        let (reader, writer) = tokio::io::split(client);
+        let (peer_reader, peer_writer) = tokio::io::split(peer);
+        let mut wire = wire::EventWire::new(reader, writer);
+        let producer = tokio::spawn(async move {
+            let mut peer = wire::EventWire::new(peer_reader, peer_writer);
+            for event in replies {
+                peer.send(event).await.unwrap();
+            }
+        });
+        let result = receive_exact(
+            &mut wire,
+            SESSION_READY_CONTENT_TYPE,
+            events.iter().map(ExpectedReply::from_request).collect(),
+            "session",
+            1000,
+        )
+        .await;
+        producer.await.unwrap();
+        result
+    }
+
+    #[tokio::test]
+    async fn session_builder_replies_match_each_original_event_and_stage_in_any_order() {
+        let (events, _) = session_builder_fixture();
+        assert_eq!(
+            SESSION_READY_CONTENT_TYPE,
+            "application/vnd.p4.llamacpp.session-ready-v4+json"
+        );
+        let replies = (0..3)
+            .rev()
+            .map(|index| session_ready_event(&events[index], index))
+            .collect();
+        assert_eq!(
+            consume_session_replies(&events, replies)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn session_builder_cannot_accept_another_stage_or_repeated_submission_reply() {
+        for duplicate in [false, true] {
+            let (events, _) = session_builder_fixture();
+            let first = session_ready_event(&events[0], 0);
+            let mut second = session_ready_event(&events[1], 1);
+            if duplicate {
+                second.envelope.causation_id = first.envelope.causation_id.clone();
+            } else {
+                second.envelope.source = first.envelope.source.clone();
+            }
+            let error = consume_session_replies(&events, vec![first, second])
+                .await
+                .err()
+                .expect("reply authority must not be transferable")
+                .to_string();
+            assert!(
+                error.contains(if duplicate {
+                    "duplicate or unknown causation_id"
+                } else {
+                    "source mismatch"
+                }),
+                "wrong refusal: {error}"
+            );
+        }
+    }
+
     #[test]
     fn outer_event_identity_includes_the_ingress_agent() {
         let first = OuterEndpoint {
@@ -344,6 +572,11 @@ mod tests {
     fn phase_metrics_use_first_output_as_the_prefill_decode_boundary() {
         let mut request = RequestArtifact {
             request_id: "request".into(),
+            submission_event_id: "sent-request".into(),
+            submission_authority: None,
+            issued_work: None,
+            release_member: None,
+            released: false,
             prompt: "prompt".into(),
             arrival_ms: 10,
             first_output_ms: Some(210),

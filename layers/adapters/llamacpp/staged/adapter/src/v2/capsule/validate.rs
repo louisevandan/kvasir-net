@@ -36,15 +36,12 @@ impl PhysicalCapsule {
         for (index, owner) in self.owners.iter().enumerate() {
             let speculative = matches!(owner.phase, Phase::Verify | Phase::Replay);
             if owner.load_generation == 0
-                || owner.request_id.is_empty()
-                || owner.sequence_key.is_empty()
-                || owner.session_id.is_empty()
-                || owner.reply.is_empty()
+                || owner.incarnation == 0
+                || !owner.has_canonical_request_identity()
+                || validate_reply_options(&owner.reply, &owner.options).is_err()
                 || owner.request_id.len() > MAX_STRING
                 || owner.sequence_key.len() > MAX_STRING
                 || owner.session_id.len() > MAX_STRING
-                || owner.reply.len() > MAX_STRING
-                || owner.options.len() > MAX_STRING
                 || owner.max_tokens == 0
                 || owner.generated_tokens >= owner.max_tokens
                 || owner.position > i32::MAX as u32

@@ -23,7 +23,7 @@ pub fn evaluate(config: &RunConfig, requests: &[RequestArtifact]) -> AcceptanceS
         .enumerate()
         .map(|(index, request)| {
             let expectation = config.acceptance.responses.get(index);
-            evaluate_request(&config.acceptance, expectation, request)
+            evaluate_request(&config.acceptance, expectation, request, config.max_tokens)
         })
         .collect::<Vec<_>>();
     AcceptanceSummary {
@@ -36,6 +36,7 @@ fn evaluate_request(
     acceptance: &AcceptanceConfig,
     expectation: Option<&ResponseExpectation>,
     request: &RequestArtifact,
+    max_tokens: u32,
 ) -> RequestAcceptance {
     let mut failures = Vec::new();
     let sampled_tokens = request.outcomes.len();
@@ -52,8 +53,51 @@ fn evaluate_request(
         .and_then(|value| value.minimum_generated_tokens)
         .unwrap_or(acceptance.minimum_generated_tokens);
 
+    // Recheck the complete preserved artifact, not only the last output or a
+    // claimed completed timestamp. Online acceptance calls this same guard.
+    // Nothing is stripped or truncated when an over-budget token is found.
+    let mut terminal_seen = false;
+    for (emitted, outcome) in request.outcomes.iter().enumerate() {
+        if terminal_seen {
+            failures.push("output arrived after a terminal outcome".into());
+        }
+        if let Err(error) = super::output_budget::validate_output(max_tokens, emitted, outcome) {
+            failures.push(error);
+        }
+        terminal_seen |= outcome.stop.is_some();
+    }
+    if terminal.is_none() {
+        failures.push("output stream ended without a terminal outcome".into());
+    }
+    if request.prefill_rows == 0 {
+        failures.push("request has no measured prefill boundary".into());
+    }
+    match request.outcomes.first() {
+        None => failures.push("request did not emit any output".into()),
+        Some(first) if first.position as usize != request.prefill_rows => failures.push(format!(
+            "first output position {} does not equal measured prefill rows {}",
+            first.position, request.prefill_rows
+        )),
+        Some(_) => {}
+    }
+
     if request.completed_ms.is_none() {
         failures.push("request did not emit a terminal outcome".into());
+    }
+    if request.submission_event_id.is_empty() || !request.released {
+        failures.push("request has no acknowledged submission release".into());
+    }
+    if request.release_member.as_ref().is_none_or(|member| {
+        member.request_id != request.request_id
+            || member.submission_event_id != request.submission_event_id
+            || member.incarnation == 0
+            || member.operation_id == 0
+            || request
+                .outcomes
+                .last()
+                .is_none_or(|last| member.sequence_id != last.sequence_id)
+    }) {
+        failures.push("request has no matching terminal release member".into());
     }
     if request.response.is_empty() {
         failures.push("response is empty".into());
@@ -137,6 +181,19 @@ mod tests {
     use super::*;
     use p4_llamacpp_staged_adapter::v2::OutcomePayload;
 
+    fn config(max_tokens: u32) -> RunConfig {
+        // Acceptance does not open a connection or create a deployment. Keep
+        // its input shape real without fabricating an unrelated node fixture.
+        serde_json::from_value(serde_json::json!({
+            "ingress_agent": "tcp://127.0.0.1:52000",
+            "channel": "outer", "connection_generation": 1,
+            "load_generation": 1, "session_id": "session", "request_id": "request",
+            "nodes": [], "prompt": "prompt", "max_tokens": max_tokens,
+            "acceptance": {"minimum_generated_tokens": 1}
+        }))
+        .unwrap()
+    }
+
     fn request(response: &str, token_count: usize, stop: &str) -> RequestArtifact {
         let mut outcomes = (0..token_count)
             .map(|position| OutcomePayload {
@@ -146,13 +203,24 @@ mod tests {
                 sequence_id: 0,
                 token: position as i32,
                 text: "x".into(),
-                position: position as u32,
+                position: 500 + position as u32,
                 stop: None,
             })
             .collect::<Vec<_>>();
         outcomes.last_mut().unwrap().stop = Some(stop.into());
         RequestArtifact {
             request_id: "request".into(),
+            submission_event_id: "sent-request".into(),
+            submission_authority: None,
+            issued_work: None,
+            release_member: Some(p4_llamacpp_staged_adapter::v2::ReleaseMember {
+                request_id: "request".into(),
+                submission_event_id: "sent-request".into(),
+                sequence_id: 0,
+                incarnation: 1,
+                operation_id: 1,
+            }),
+            released: true,
             prompt: "prompt".into(),
             arrival_ms: 0,
             first_output_ms: Some(1),
@@ -178,7 +246,7 @@ mod tests {
             allowed_stop_reasons: vec!["eos".into()],
             responses: Vec::new(),
         };
-        let result = evaluate_request(&acceptance, None, &request("b", 1, "eos"));
+        let result = evaluate_request(&acceptance, None, &request("b", 1, "eos"), 200);
         assert!(!result.passed);
         assert!(result.failures[0].contains("below 180"));
     }
@@ -201,7 +269,134 @@ mod tests {
             &acceptance,
             Some(&expectation),
             &request("ownership and borrow", 3, "eos"),
+            200,
         );
         assert!(result.passed, "{:?}", result.failures);
+    }
+
+    #[test]
+    fn acceptance_rejects_two_sampled_outputs_for_a_one_token_request() {
+        let request = request("xx", 2, "length");
+        let result = evaluate(&config(1), &[request]);
+        assert!(
+            !result.passed,
+            "max_tokens=1 must not approve two sampled outputs"
+        );
+        assert_eq!(result.requests[0].sampled_tokens, 2);
+        assert!(
+            result.requests[0]
+                .failures
+                .iter()
+                .any(|failure| failure == "output sampled token count 2 exceeds max_tokens 1")
+        );
+    }
+
+    #[test]
+    fn acceptance_rechecks_early_length_unknown_stop_and_missing_terminal() {
+        for (stop, expected) in [
+            (
+                "length",
+                "length stop arrived before max_tokens: sampled 1 of 3",
+            ),
+            ("timeout", "output stop reason is unknown: timeout"),
+        ] {
+            let result = evaluate(&config(3), &[request("x", 1, stop)]);
+            assert!(!result.passed);
+            assert_eq!(result.requests[0].failures, [expected]);
+        }
+        let mut incomplete = request("x", 1, "eos");
+        incomplete.outcomes[0].stop = None;
+        // A fabricated completed timestamp cannot substitute for a terminal.
+        let result = evaluate(&config(3), &[incomplete]);
+        assert!(!result.passed);
+        assert_eq!(
+            result.requests[0].failures,
+            ["output stream ended without a terminal outcome"]
+        );
+    }
+
+    #[test]
+    fn acceptance_preserves_early_stop_exact_length_and_visible_eos_accounting() {
+        for (max_tokens, count, stop) in [(3, 1, "stop"), (3, 1, "eos"), (3, 3, "length")] {
+            let result = evaluate(&config(max_tokens), &[request("visible", count, stop)]);
+            assert!(result.passed, "{:?}", result.requests[0].failures);
+            assert_eq!(result.requests[0].sampled_tokens, count);
+        }
+        let mut eos = request("visible", 2, "eos");
+        eos.outcomes.last_mut().unwrap().text.clear();
+        let result = evaluate(&config(2), &[eos]);
+        assert!(result.passed, "{:?}", result.requests[0].failures);
+        assert_eq!(result.requests[0].sampled_tokens, 2);
+        assert_eq!(result.requests[0].generated_tokens, 1);
+    }
+
+    #[test]
+    fn acceptance_rejects_outputs_after_an_earlier_stop_without_discarding_them() {
+        let mut after_stop = request("xx", 2, "eos");
+        after_stop.outcomes[0].stop = Some("stop".into());
+        let result = evaluate(&config(3), &[after_stop]);
+        assert!(!result.passed);
+        assert_eq!(result.requests[0].sampled_tokens, 2);
+        assert_eq!(
+            result.requests[0].failures,
+            ["output arrived after a terminal outcome"]
+        );
+    }
+
+    #[test]
+    fn acceptance_requires_first_output_at_the_measured_nonzero_prefill_boundary() {
+        let mut wrong_position = request("x", 1, "eos");
+        wrong_position.outcomes[0].position = 501;
+        let result = evaluate(&config(3), &[wrong_position]);
+        assert!(!result.passed);
+        assert_eq!(
+            result.requests[0].failures,
+            ["first output position 501 does not equal measured prefill rows 500"]
+        );
+
+        let mut missing_boundary = request("x", 1, "eos");
+        missing_boundary.prefill_rows = 0;
+        missing_boundary.outcomes[0].position = 0;
+        let result = evaluate(&config(3), &[missing_boundary]);
+        assert!(!result.passed);
+        assert_eq!(
+            result.requests[0].failures,
+            ["request has no measured prefill boundary"]
+        );
+
+        let mut missing_output = request("x", 1, "eos");
+        missing_output.outcomes.clear();
+        let result = evaluate(&config(3), &[missing_output]);
+        assert!(!result.passed);
+        assert!(
+            result.requests[0]
+                .failures
+                .iter()
+                .any(|failure| failure == "request did not emit any output")
+        );
+    }
+
+    #[test]
+    fn acceptance_requires_preserved_submission_and_exact_release_evidence() {
+        for mutation in 0..7 {
+            let mut value = request("normal", 1, "eos");
+            match mutation {
+                0 => value.submission_event_id.clear(),
+                1 => value.released = false,
+                2 => value.release_member = None,
+                3 => value.release_member.as_mut().unwrap().request_id = "other".into(),
+                4 => value.release_member.as_mut().unwrap().submission_event_id = "old".into(),
+                5 => value.release_member.as_mut().unwrap().sequence_id += 1,
+                _ => value.release_member.as_mut().unwrap().operation_id = 0,
+            }
+            let result = evaluate(&config(1), &[value]);
+            assert!(!result.passed, "release evidence mutation {mutation}");
+            assert!(
+                result.requests[0]
+                    .failures
+                    .iter()
+                    .any(|value| value.contains("release"))
+            );
+        }
     }
 }

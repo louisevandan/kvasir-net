@@ -1,5 +1,191 @@
 # Runtime evidence
 
+> 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
+> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+
+## 2026-09-07: 전체 WIP 체크포인트 — ACK 서비스 통합, 회귀9개 미해결
+
+제한된 ACK-only prepare/commit과 송신 재검증·ID 의무 대조를 통합한399입력 봉인의 전체 집계는
+**1236 passed/9 failed/7 ignored**, cargo101이다. 기존 actual Full ACK 반례는 통과했지만
+구체 오류와 commit 전/후 고갈을 구분하는 기존 회귀9개는 실패하므로 완료나 단계 승격이 아니다.
+사용자 지시로 누적 소스·시험·문서를 모두 WIP 커밋에 포함한다. 정확한 실패 목록·다음 행동·
+봉인과 범위는 [체크포인트 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
+## 2026-09-07: 효과 보존 표현·할당 전 검사 — 당시 ACK 기아 미해결
+
+모든 committed effect의 base를 Envelope로 이관하고, 큰 forward 본문과 관측의 소유권을
+실제 flush/mailbox에서 이동·실패 복구하도록 했다. 캡슐의 불가능한 outcome/generated 선언은
+Vec 예약 전에 거부한다. 최종397 Rust 입력 봉인의 전체 집계는 **1244 passed/1 failed/7 ignored**,
+cargo101이며 기존 실제 completion Full ACK 기아가 유일한 실패다. 13개 추가 회귀와 소스·변이는
+[정산 증거의 효과 보존 표현 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+전체 RSS/예약·비동기 pump·정상 모델 응답·성능 개선을 증명한 것은 아니다. 실기는 실행하지 않았다.
+
+## 2026-09-07: SESSION 응답 준비 — ID·표현 가능성 실패 원자화
+
+응답을 만들 수 없는데 먼저 session 권한을 설치하는 ID 고갈/합산 envelope 반례를 각각 독립
+복사본에서 재현했다. SESSION만 응답 준비→권한 설치→ID commit→기존 송신으로 이관하고,
+기존 정상 wire와 Unicode를 포함한 소비 회귀12개를 유지했다. 최종396 입력 봉인의 전체 집계는
+**1231 passed/1 failed/7 ignored**, cargo exit101이다. 실패는 기존 actual Full ACK 기아 그대로다.
+정확한 RED/범위/소스·변이는
+[정산 증거의 SESSION 응답 준비 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+일반 ERROR fallback·전체 outbox/native 예산·비동기 pump는 미완이며, 모델/GPU 실기는 하지 않았다.
+
+## 2026-09-07: head 제어의 적용·전송 권위 — 실제 ACK 기아는 미해결
+
+pending 등록, local native 적용, 다음 stage 송신 수용을 분리했다. 조기 ACK 소비의 수정 전2개 RED와
+후속6개 소비 회귀, native Frame/receipt/frontier·completion을 지나는9개 효과 시험을 구분해 보존했다.
+최종 Rust396 입력 봉인의 전체 집계는 **1225 passed/1 failed/7 ignored**, cargo exit101이다.
+실패는 기존 actual Worker의 completion Full ACK 기아다. 이번에 actor pump를 구현한 것은 아니다.
+실제 범위·원문·변이·소스 대조는
+[정산 증거의 head 제어 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+모델 없는 소비 경로 증거이며 실제 llama/GPU·VRAM-only/RAM 오프로딩 웨이브나 다중 컴퓨터 증명이 아니다.
+
+## 2026-09-07: completion Full의 실제 ACK 기아·중립 공간 통지 — 필수 RED 남음
+
+actual worker에서 출력 공간이 없을 때 정상 해제 ACK가 입력에 들어와도 처리되지 않는 반례를 고정했다.
+공간 복구 뒤 기존 출력·해제·관측 완결은 유지됐다. 중립 mailbox의 종료 wake·참조 수명은 수정하고
+공간 통지와 새 회귀14개를 추가했지만 actor pump에는 아직 연결하지 않았다. 최종 원본 Rust393 봉인에서
+전체1210 passed/1 failed/7 ignored이며, 실패는 새 필수 ACK 진행 시험이다. 이전 green 집계를
+현재 상태로 인용하지 않는다. 소스별 결과·독립 변이·남은 한계는
+[정산 증거의 completion Full 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)에 보존한다.
+모델/GPU·VRAM-only/RAM 오프로딩·다중 컴퓨터 성과는 아니며 현재 순서와 다음 행동은 로드맵이 소유한다.
+
+## 2026-09-07: OUTPUT 발행 증거·소유 관측·실제 소비 완료 — 부분 구현
+
+새 OUTPUT v5/관측 v4 생산·소비를 함께 이관했다. actual worker의 기존 출력/KV/해제 검사를 유지하고
+새 원문 캡처7건·독립 발행 기대량·actual drive의 전체 issue/stage 대조를 검사했다. 검수에서 발견한
+empty-owner 미확인 실행의 거짓 완료도 실제 반례와 독립 변이로 고정했다. 원본 Rust1196/0/7 ignored,
+JS90/0, 독립 복사본12개 arm·source391 봉인 및 정확한 증명 한계는
+[정산 증거의 OUTPUT·관측 이관 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+정상 출력/해제와 늦은 관측의 시간 분모는 분리했다. 실제 모델 tokenizer·GPU 웨이브·전체 broker/drain·
+VRAM-only/RAM 오프로딩·다중 컴퓨터 성과는 아니며 단계 상태와 다음 행동은 로드맵만 소유한다.
+
+## 2026-09-07: 제출 문자열 경계 — 실제 worker와 모델 없는 native codec
+
+직렬화된 반환 정보/옵션의 초과 입력이 요청 등록 뒤 worker를 종료시키는 반례를 입구 거부로 수정했다.
+기존 byte 한도·정상 Unicode/escape/원문 옵션·정상 출력/KV/해제 oracle를 유지하며 독립 복사본 변이를 검사했다.
+Rust 전체 집계와 모델 없는 native codec의 경계·assert 활성·한도 변경 검출은
+[정산 증거의 제출 문자열 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)에 보존한다.
+전체 CTest/native engine·모델/GPU 웨이브 증거가 아니며 OUTPUT/관측 이관도 아직 남는다.
+
+## 2026-09-07: 내부 발행 증거와 제출 입구 — 부분 구현
+
+실제 L1 승인에 요청별 고정 크기 witness를 결속하고 독립 literal, 실제 worker 2/4/8-stage,
+실패 원자성·포화·재전달 및 재컴파일 변이를 검증했다. 추가 NUL 제출 반례는 native 뒤 worker 종료를
+재현한 뒤 입구 거부로 바꾸고 정상 재제출까지 시험했다. 소스별 집계와 정확한 증명 범위는
+[정산 증거의 내부 witness 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+OUTPUT/관측 완결은 미이관이며 모델·GPU·VRAM-only/RAM 오프로딩 실기 성과가 아니다.
+
+## 2026-09-07: 보고 지표 분리와 관측 완결 감사 — 실기 미실행
+
+실제 하네스 report 소비 경로에서 생성 토큰과 계산 행, Verify/Replay 혼합을 구분하는 버전화된
+수식을 구현했다. 새 report 회귀11, 확장 JS86/0, 변경 없는 Rust379 소스에서 전체1122/0/7 ignored를
+확인했다. 구 수식 RED·독립 변이·분모/품질 한계는
+[정산 증거의 보고 지표 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+관측 소유권·완결 witness는 코드 감사 뒤 명세만 보강했으며 아직 구현하지 않았다. 자원 단계 순서와
+RAM 분류는 H0에 결속돼 있지만 모델 적재·GPU/VRAM-only/RAM 오프로딩 실기는 이번에 실행하지 않았다.
+
+## 2026-09-07: 요청별 해제 증명·소유자 통지 — 현재 run의 정상 종료
+
+실제 제출→terminal 승인→명시 해제 집합을 생산/소비 양쪽에서 결속했다. 다중 OUTER actual worker,
+알림 포화/실패 시 intent 보존, 실제 캡처 소비와 독립 변이를 확인했다. Rust1122/0/7 ignored,
+소스379 봉인·JS75/0과 증명 범위는
+[정산 증거의 요청별 해제 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+전체 다중 OUTER 관측·재시작 freshness·출력 없는 종료·내구 전달은 미완이며 실제 모델/GPU/
+VRAM-only/RAM 오프로딩 성과가 아니다. 다음 작업과 단계 상태는 로드맵만 소유한다.
+
+## 2026-09-07: SESSION 선언·해제 ACK 발신자 검증 — 부분 구현
+
+중간 노드 ACK가 슬롯을 반환하는 구코드 반례를 실제 broker/worker 및 별도 3-stage run에서 고정했다.
+SESSION 생산·설치와 stage source/target 검사를 함께 이관하고, 정상 ACK 재개 뒤 기존 출력/KV 검사를 유지했다.
+원본 Rust 1090/0/7 ignored, 소스 374파일 봉인, 양방향 guard 변이와 OUTER 생산 변이는
+[정산 증거의 SESSION 권위 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+scalar 해제 집합·소유자별 통지/관측·알림 의도 보존은 미해결이다. 전송 인증이나 실제 모델/GPU·
+VRAM-only/RAM 오프로딩 실기 성과로 확대하지 않는다.
+
+## 2026-09-07: OUTPUT 예산·요청별 fresh-prefill 소비 검증 — 부분 구현
+
+실제 drive의 출력 적용 전 sampled 예산과 최종 경계의 요청별 관측 대조를 구현했다. actual producer의
+기존 wire 출력은 보존하고 실제 관측을 독립 workload 상수와 비교한다. 소비 경로 호출 제거·생산 관측
+오분류를 독립 재컴파일 변이로 검증했다. 소스 373파일 봉인·1076/0/7 ignored 집계·실행 범위와 제외한
+stale-EXE 시도는 [정산 증거의 OUTPUT 예산 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+scalar RELEASED 멤버십은 여전히 미해결이다. Restore/LCP·독립 native 토큰화·실제 네트워크/GPU·
+VRAM-only/RAM 오프로딩 또는 성능 승격 증거는 아니다.
+
+## 2026-09-07: head 승인 출력의 생산·소비 계약 — 부분 구현
+
+actual Worker::run의 encoded OUTPUT과 현재 producer, 실제 OUTER drive를 공용 fixture로 결속했다.
+잘못된 tail/any-node 허용과 경로 검증 제거를 독립 변이로 검사한다. 전체 소스/집계·정규화 한계·
+다음 소비자 반례 세 건은 [정산 증거의 head OUTPUT 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+source 승인만의 수리이며 해제 집합·상한·요청별 첫 위치의 전체 승인 정확성은 아직 미완이다.
+native 모델/GPU·실제 네트워크·VRAM-only/RAM 오프로딩 성과가 아니다.
+
+## 2026-09-07: busy UNLOAD 보존·native 종료 실패 fence — 부분 구현
+
+실제 run에서 ordinary/speculative의 미완 작업을 성공 UNLOAD로 지우던 반례와 native 종료 실패 뒤
+새 SESSION을 승인하던 반례를 고정했다. 거부 뒤 정상 완주·idle 성공 및 독립 생산 변이를 검사했다.
+범위·원문·소스/실행파일·전체 집계는 [정산 증거의 UNLOAD 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+Cancel/Drain·OUTER 전달·실제 OS cleanup·모델/GPU 또는 VRAM-only/RAM 오프로딩 성과는 아니다.
+
+## 2026-09-07: speculative actual run·native Replay 소비 경계 — 부분 구현
+
+전량 수용·부분 SETTLE·checkpoint Replay를 actual Worker::run 2/4스테이지로 검사하고,
+생산 소비 변이를 검출했다. fake 성공과 별개로 native logits 요청 누락을 찾았으며 실제 배치
+생성 코드의 모델 없는 소비 시험과 llama 빌드 범위를 따로 기록한다. 원문·소스/실행파일·집계와
+다음 UNLOAD RED는 [정산 증거의 speculative 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+실제 llama sampler/checkpoint·GPU 모델 또는 VRAM-only/RAM 오프로딩 강한 웨이브 성과는 아니다.
+
+## 2026-09-07: 유한 actor 기회·종료 실패 보존 — 부분 구현
+
+지속 입력이 head의 계산 기회를 무한히 미루는 반례와, 계산이 입력/제어를 추월하는 경로를
+실제 Worker::run으로 검사했다. 중지/EOF, 잔존 원장 조회, cleanup 실패의 정상 종료 오표시와
+기존 거부 사유 유실도 회귀로 고정했다. 독립 변이·원문·소스/집계는
+[정산 증거의 유한 actor 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+전체 graceful drain·speculative full-loop·GPU 또는 RAM 오프로딩 웨이브 성과는 아니다.
+
+## 2026-09-07: continuation 폭·actual run-loop·양방향 Full — 부분 구현
+
+native proposal 폭 위반의 실제 소비자 거부, 2/4/8개의 actual Worker::run 웨이브,
+중립 EventNode/broker의 양방향 포화 반례와 복구를 검증했다. 소스 동결·원문·변이·정확한
+집계와 제한은 [정산 증거의 최신 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+계산 엔진은 fake이며 실제 모델 품질·GPU/RAM 오프로딩 성능이나 전체 credit/drain 증명이 아니다.
+
+## 2026-09-07: stage KV frontier — 당시 부분 구현, 추가 P1 반례 유지
+
+새 execution ID로 위치·phase를 우회하는 반례를 실제 워커에서 재현한 뒤, 순수 frontier와
+head/중간/꼬리 소비 경로를 결속했다. 전체 집계·소스 동결·독립 변이 6종과 원본 GREEN 밖의
+proposal 폭 상한 RED 두 경로는 [최신 정산 증거의 마지막 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+전체 run-loop나 native/GPU 모델·RAM 오프로딩·다중 컴퓨터 실기 성과로 승인하지 않는다.
+
+## 2026-09-07: PHYSICAL 재전달·opaque plan 수명 — 부분 구현
+
+같은 HEAD의 후속 미커밋 작업 트리에서 actual middle/tail과 수신 원장을 연결했다.
+보존 중인 정확한 재전달·발급 head 구분·Fresh 부분 실행·native 결과 불명 fence를 검사했다.
+모델 없는 plan 수명 회귀 시험도 추가했다. source/변이/실행 및 모델 경로 생략은
+[정산 증거의 후속 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+GPU/RAM 오프로딩 또는 실제 모델 웨이브 성과가 아니다. 현재 자원·다음 행동은 로드맵이 소유한다.
+
+## 2026-09-06: B1 발행/정산과 최소 가짜 stage 연결 — 미완
+
+HEAD `a9e1967fc` + 미커밋 어댑터/시험/문서 변경에서 CPU-only 검증했다.
+전체 Rust는 914 passed / 0 failed / 7 ignored(57 summary, exit 0), 하네스 57 passed다.
+발행 expected membership, 이벤트 전체 정산, head 승인 뒤 output intent, native 사후 오류 fence를
+보강했다. **전 홉 멱등·요청 incarnation·전체 worker 루프·credit·native/GPU 성능 완료가 아니다.**
+시험별 범위·변이·소스 식별·남은 결함은
+[최신 정산 구현 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)의 마지막 절을 따른다.
+단계 상태/다음 행동은 [로드맵](distributed-batching-roadmap.md)에만 기록한다.
+
+## 2026-09-06: 최초 감사 기준과 증거의 지위
+
+현재 목표·상태·실행 순서는 [분산 배치 로드맵](distributed-batching-roadmap.md),
+실기 승인 규칙은 [검증 규약](distributed-batching-verification.md)이 소유한다.
+아래 수치는 해당 날짜·모델·토폴로지·소스의 관측이지 현재 초대형 다중 머신 제품의 완료 증거가 아니다.
+
+- `a9e1967fc` 코드 감사: Rust 844 passed / 0 failed / 7 ignored, 하네스 57 passed.
+- 최초 감사에서는 요청별 부기 공유만 확인했으며 이벤트 전체 정산·발행 identity/range 대조·실제 simulator 거부 시험이 미완이었다. 후속 상태는 위 최신 기록을 따른다.
+- [정산 감사의 반례와 재현 조건](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+- 이번 기록은 GPU 실측이 아니다. 최종 다중 컴퓨터·초대형 모델·강한 웨이브의 정상 응답/성능은 아직 미증명.
+
 ## 2026-09-04: four stages on two cards costs a third to a half of the throughput
 
 The harness has cut every model into four stages since it was written, two to a
@@ -30,10 +216,11 @@ GPU utilisation was identical across the 35B arms at ~33% while throughput
 differed by a third, which is the fourth time that number has failed to track
 the work done.
 
-**Partition to the number of independent execution lanes, then stop.** The
-four-node split is named for gemma-4-E2B's shared KV region, which is a
-constraint on where a boundary may fall - never a measurement that four stages
-were better.
+**2026-09-06 interpretation correction:** these arms compared specific process
+placements on two devices. They do not establish a maximum node count or prove
+that processes sharing a device can never overlap useful work. Model/KV capacity,
+legal cuts and multi-host deployment determine the required topology. Keep that
+topology fixed when claiming a batching-policy gain; study placement separately.
 
 ## 2026-09-04: a 35B says the small model was distorting it, and the scheduler was
 ## throwing work away

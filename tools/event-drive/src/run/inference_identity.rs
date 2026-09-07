@@ -1,13 +1,12 @@
 use super::{RunConfig, config::node_endpoint};
-use p4_llamacpp_staged_adapter::v2::{BatchObservation, OutcomePayload, ReleasedPayload, StageSpan};
+use p4_llamacpp_staged_adapter::v2::{BatchObservation, OutcomePayload, ReleaseReceipt, StageSpan};
 use p4_protocol::event::{Endpoint, Event, EventClass, OuterEndpoint};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 pub(super) struct InferenceIdentity {
     outer: Endpoint,
     outer_route: OuterEndpoint,
     first: Endpoint,
-    tail: Endpoint,
     nodes: Vec<Endpoint>,
     load_generation: u64,
     session_id: String,
@@ -28,7 +27,6 @@ impl InferenceIdentity {
             outer: Endpoint::Outer(outer.clone()),
             outer_route: outer.clone(),
             first: endpoints.first().expect("validated run has nodes").clone(),
-            tail: endpoints.last().expect("validated run has nodes").clone(),
             nodes: endpoints,
             load_generation: config.load_generation,
             session_id: config.session_id.clone(),
@@ -42,7 +40,10 @@ impl InferenceIdentity {
         outcome: &OutcomePayload,
         previous: Option<&OutcomePayload>,
     ) -> Result<(), String> {
-        self.route(event, &self.tail, EventClass::Output, &outcome.request_id)?;
+        // Native sampling happens at the tail, but only the head commits the
+        // issued membership and publishes approved output. A tail-origin event
+        // would bypass that settlement authority, even on a configured route.
+        self.route(event, &self.first, EventClass::Output, &outcome.request_id)?;
         if outcome.load_generation != self.load_generation || outcome.session_id != self.session_id
         {
             return Err("output load or session identity is stale".into());
@@ -74,11 +75,20 @@ impl InferenceIdentity {
     pub(super) fn released(
         &self,
         event: &Event,
-        payload: &ReleasedPayload,
+        payload: &ReleaseReceipt,
         known_requests: &BTreeSet<String>,
     ) -> Result<(), String> {
         self.route_known_request(event, &self.first, EventClass::Telemetry, known_requests)?;
         payload.validate().map_err(str::to_owned)?;
+        // This producer registers correlation=request_id before send. A known
+        // but unrelated request cannot lend its envelope to another receipt.
+        if !payload
+            .members
+            .iter()
+            .any(|member| member.request_id == event.envelope.correlation_id)
+        {
+            return Err("release receipt correlation is not one of its members".into());
+        }
         if payload.load_generation != self.load_generation || payload.session_id != self.session_id
         {
             return Err("release completion load or session identity is stale".into());
@@ -96,6 +106,7 @@ impl InferenceIdentity {
         if observation.load_generation != self.load_generation
             || observation.session_id != self.session_id
             || observation.observation_id.is_empty()
+            || observation.logical_ordinal == 0
             || observation.logical_rows == 0
             || observation.physical_batches.is_empty()
         {
@@ -113,49 +124,96 @@ impl InferenceIdentity {
         }
         for batch in &observation.physical_batches {
             let request_ids = batch
-                .requests
+                .owned_requests
                 .iter()
                 .map(|request| request.request_id.as_str())
                 .collect::<BTreeSet<_>>();
-            let measured = batch
-                .requests
+            let slots = batch
+                .owned_requests
                 .iter()
-                .try_fold([0usize; 5], |mut totals, request| {
-                    if !known_requests.contains(&request.request_id) {
-                        return Err("batch observation references an unknown request".to_owned());
-                    }
-                    let values = [
-                        request.prefill_rows,
-                        request.decode_rows,
-                        request.verify_rows,
-                        request.replay_rows,
-                    ];
-                    if values.iter().all(|value| *value == 0) {
-                        return Err("batch observation contains an empty request".to_owned());
-                    }
-                    for (index, value) in values.into_iter().enumerate() {
-                        totals[index + 1] = totals[index + 1]
-                            .checked_add(value)
-                            .ok_or_else(|| "batch observation row count overflow".to_owned())?;
-                        totals[0] = totals[0]
-                            .checked_add(value)
-                            .ok_or_else(|| "batch observation row count overflow".to_owned())?;
-                    }
-                    Ok(totals)
-                })?;
+                .map(|request| request.sequence_id)
+                .collect::<BTreeSet<_>>();
+            let measured =
+                batch
+                    .owned_requests
+                    .iter()
+                    .try_fold([0usize; 5], |mut totals, request| {
+                        if !known_requests.contains(&request.request_id) {
+                            return Err(
+                                "batch observation references an unknown request".to_owned()
+                            );
+                        }
+                        if request.submission_event_id.is_empty()
+                            || request.incarnation == 0
+                            || request.request_issue_index == 0
+                            || request.rows.is_empty()
+                        {
+                            return Err(
+                                "batch observation contains invalid owned issue identity".into()
+                            );
+                        }
+                        let mut actual = [0usize; 4];
+                        let mut unique = BTreeSet::new();
+                        for row in &request.rows {
+                            let phase = match row.phase {
+                                p4_llamacpp_staged_adapter::v2::Phase::Prefill => 0,
+                                p4_llamacpp_staged_adapter::v2::Phase::Decode => 1,
+                                p4_llamacpp_staged_adapter::v2::Phase::Verify => 2,
+                                p4_llamacpp_staged_adapter::v2::Phase::Replay => 3,
+                            };
+                            if !unique.insert((phase, row.position)) {
+                                return Err("batch observation repeats an owned row".into());
+                            }
+                            actual[phase] += 1;
+                        }
+                        let values = [
+                            request.prefill_rows,
+                            request.decode_rows,
+                            request.verify_rows,
+                            request.replay_rows,
+                        ];
+                        if values != actual {
+                            return Err(
+                                "batch observation owned counters differ from issued rows".into()
+                            );
+                        }
+                        if values.iter().all(|value| *value == 0) {
+                            return Err("batch observation contains an empty request".to_owned());
+                        }
+                        for (index, value) in values.into_iter().enumerate() {
+                            totals[index + 1] = totals[index + 1]
+                                .checked_add(value)
+                                .ok_or_else(|| "batch observation row count overflow".to_owned())?;
+                            totals[0] = totals[0]
+                                .checked_add(value)
+                                .ok_or_else(|| "batch observation row count overflow".to_owned())?;
+                        }
+                        Ok(totals)
+                    })?;
             observed_rows = observed_rows
                 .checked_add(batch.rows)
                 .ok_or_else(|| "batch observation row count overflow".to_owned())?;
             if batch.execution_id == 0
                 || batch.rows == 0
-                || batch.rows != measured[0]
-                || batch.prefill_rows != measured[1]
-                || batch.decode_rows != measured[2]
-                || batch.verify_rows != measured[3]
-                || batch.replay_rows != measured[4]
-                || batch.request_count != request_ids.len()
-                || batch.requests.len() != request_ids.len()
+                || batch.rows
+                    != batch
+                        .prefill_rows
+                        .checked_add(batch.decode_rows)
+                        .and_then(|v| v.checked_add(batch.verify_rows))
+                        .and_then(|v| v.checked_add(batch.replay_rows))
+                        .ok_or("physical batch row count overflow")?
+                || batch.rows < measured[0]
+                || batch.prefill_rows < measured[1]
+                || batch.decode_rows < measured[2]
+                || batch.verify_rows < measured[3]
+                || batch.replay_rows < measured[4]
+                || batch.request_count < request_ids.len()
+                || batch.request_count == 0
+                || batch.request_count > batch.rows
+                || batch.owned_requests.len() != request_ids.len()
+                || batch.owned_requests.len() != slots.len()
                 || batch.sequence_count == 0
+                || batch.sequence_count < slots.len()
                 || batch.sequence_count > batch.rows
             {
                 return Err("physical batch observation is internally inconsistent".into());
@@ -171,6 +229,21 @@ impl InferenceIdentity {
         }
         if observed_rows != observation.logical_rows {
             return Err("logical and physical batch row counts differ".into());
+        }
+        if observation
+            .physical_batches
+            .iter()
+            .all(|batch| batch.owned_requests.is_empty())
+        {
+            return Err("batch observation has no recipient-owned request".into());
+        }
+        if !observation
+            .physical_batches
+            .iter()
+            .flat_map(|batch| &batch.owned_requests)
+            .any(|request| request.request_id == event.envelope.correlation_id)
+        {
+            return Err("batch observation carrier is not a recipient-owned member".into());
         }
         Ok(())
     }
@@ -211,10 +284,50 @@ impl InferenceIdentity {
         {
             return Err("stage span identity or timestamps are invalid".into());
         }
+        let ids = span.execution_ids.iter().copied().collect::<BTreeSet<_>>();
+        let detailed = span
+            .executions
+            .iter()
+            .map(|execution| execution.execution_id)
+            .collect::<BTreeSet<_>>();
+        if ids.len() != span.execution_ids.len()
+            || ids.contains(&0)
+            || ids != detailed
+            || detailed.len() != span.executions.len()
+        {
+            return Err("stage span execution membership is invalid".into());
+        }
+        let mut any_owned = false;
+        for execution in &span.executions {
+            let mut requests = BTreeSet::new();
+            let mut slots = BTreeSet::new();
+            for owner in &execution.owned_requests {
+                any_owned = true;
+                if !known_requests.contains(&owner.request_id)
+                    || owner.incarnation == 0
+                    || !requests.insert(&owner.request_id)
+                    || !slots.insert(owner.sequence_id)
+                {
+                    return Err("stage span owned request membership is invalid".into());
+                }
+            }
+        }
+        if !any_owned {
+            return Err("stage span has no recipient-owned request".into());
+        }
+        if !span
+            .executions
+            .iter()
+            .flat_map(|execution| &execution.owned_requests)
+            .any(|owner| owner.request_id == event.envelope.correlation_id)
+        {
+            return Err("stage span carrier is not a recipient-owned member".into());
+        }
         Ok(node)
     }
 
-    fn route_known_request(        &self,
+    fn route_known_request(
+        &self,
         event: &Event,
         source: &Endpoint,
         class: EventClass,
@@ -263,18 +376,4 @@ impl InferenceIdentity {
         }
         Ok(())
     }
-}
-
-pub(super) fn insert_observation(
-    observations: &mut BTreeMap<String, BatchObservation>,
-    observation: BatchObservation,
-) -> Result<(), String> {
-    if let Some(existing) = observations.get(&observation.observation_id) {
-        if existing != &observation {
-            return Err("duplicate observation identity changed its payload".into());
-        }
-    } else {
-        observations.insert(observation.observation_id.clone(), observation);
-    }
-    Ok(())
 }

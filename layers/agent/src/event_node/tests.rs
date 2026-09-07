@@ -227,7 +227,10 @@ async fn a_full_adapter_holds_the_event_instead_of_failing_the_node() {
     let window = std::time::Duration::from_millis(200);
     tokio::time::sleep(window).await;
     let attempts = refusals.load(Ordering::SeqCst);
-    assert!(attempts > 1, "the node should retry a full adapter, not offer once");
+    assert!(
+        attempts > 1,
+        "the node should retry a full adapter, not offer once"
+    );
     // And an upper bound, because retrying is not the same as spinning.
     //
     // An earlier version of this fix retried with `yield_now`, which passed
@@ -254,7 +257,10 @@ async fn a_full_adapter_holds_the_event_instead_of_failing_the_node() {
         }
     })
     .await;
-    assert!(delivered.is_ok(), "the held event should go through once there is room");
+    assert!(
+        delivered.is_ok(),
+        "the held event should go through once there is room"
+    );
     let taken = accepted.lock().unwrap();
     assert_eq!(taken.len(), 1, "held once, delivered once");
     assert_eq!(taken[0].payload, event(&own).payload);
@@ -335,4 +341,453 @@ async fn a_full_destination_holds_the_completion_and_the_node_survives() {
             .is_ok(),
         "a node waiting on a destination must still stop",
     );
+}
+
+/// No backend semantics or echo/dedup implementation live in this adapter.
+/// Every accepted event is retained verbatim; the completion mailbox is a
+/// separate bounded queue that the test populates with already-computed work.
+struct DuplexProbeAdapter {
+    mailbox: Arc<CompletionMailbox>,
+    accepted: Arc<Mutex<Vec<Event>>>,
+    taken: AtomicUsize,
+}
+
+impl DuplexProbeAdapter {
+    fn observed(&self, value: Poll) -> Poll {
+        if matches!(&value, Poll::Event(_)) {
+            self.taken.fetch_add(1, Ordering::SeqCst);
+        }
+        value
+    }
+}
+
+impl NodeAdapter for DuplexProbeAdapter {
+    fn kind(&self) -> &str {
+        "opaque-duplex-test"
+    }
+
+    fn try_offer(&self, event: Event) -> Result<(), OfferError> {
+        self.accepted.lock().unwrap().push(event);
+        Ok(())
+    }
+
+    fn try_take(&self) -> Poll {
+        self.observed(self.mailbox.try_take())
+    }
+
+    fn poll_take(&self, context: &mut Context<'_>) -> TaskPoll<Poll> {
+        self.mailbox
+            .poll_take(context)
+            .map(|value| self.observed(value))
+    }
+}
+
+fn duplex_event(id: &str, source: Endpoint, target: Endpoint, payload: &[u8]) -> Event {
+    Event {
+        envelope: Envelope {
+            protocol_version: Envelope::VERSION,
+            event_id: id.into(),
+            correlation_id: format!("correlation-{id}"),
+            causation_id: None,
+            source,
+            target,
+            return_route: None,
+            class: EventClass::Data,
+            sequence: 1,
+            deadline_unix_ms: None,
+            adapter_kind: Some("opaque-duplex-test".into()),
+            payload_content_type: "application/octet-stream".into(),
+        },
+        payload: payload.to_vec(),
+    }
+}
+
+/// This is a specific duplex liveness obligation, not a proof that arbitrary
+/// completely-full cyclic networks are deadlock-free. Both adapters here can
+/// accept their inbound events, so draining input creates real destination
+/// capacity. General cyclic credit/reserved-control capacity is a later gate.
+#[tokio::test]
+async fn bidirectional_full_completions_do_not_block_input_that_frees_the_ring() {
+    use std::future::Future;
+
+    let own = Address::tcp("127.0.0.1", 52041);
+    let (agent_tx, _agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(1);
+    let (outbound_tx, _outbound_rx) = bounded_queue(1);
+    let (a_tx, a_rx) = bounded_queue(1);
+    let (b_tx, b_rx) = bounded_queue(1);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        32,
+    ));
+    broker.register_node("a", 3, a_tx.clone()).unwrap();
+    broker.register_node("b", 7, b_tx.clone()).unwrap();
+    let a = Endpoint::node(own.clone(), "a", 3);
+    let b = Endpoint::node(own.clone(), "b", 7);
+    let into_a = duplex_event(
+        "input-a",
+        Endpoint::outer(own.clone(), "client-a", 1),
+        a.clone(),
+        &[0, 0xff, 1, 0],
+    );
+    let into_b = duplex_event(
+        "input-b",
+        Endpoint::outer(own.clone(), "client-b", 1),
+        b.clone(),
+        &[0xfe, 2, 0, 3],
+    );
+    let completion_a = duplex_event("a-to-b", a.clone(), b.clone(), &[7, 0, 0xf8, 9]);
+    let completion_b = duplex_event("b-to-a", b, a, &[0x80, 0, 6, 5]);
+    let (a_publisher, a_mailbox) = completion_mailbox(1);
+    let (b_publisher, b_mailbox) = completion_mailbox(1);
+    a_publisher.try_publish(completion_a.clone()).unwrap();
+    b_publisher.try_publish(completion_b.clone()).unwrap();
+    let accepted_a = Arc::new(Mutex::new(Vec::new()));
+    let accepted_b = Arc::new(Mutex::new(Vec::new()));
+    let adapter_a = Arc::new(DuplexProbeAdapter {
+        mailbox: a_mailbox,
+        accepted: Arc::clone(&accepted_a),
+        taken: AtomicUsize::new(0),
+    });
+    let adapter_b = Arc::new(DuplexProbeAdapter {
+        mailbox: b_mailbox,
+        accepted: Arc::clone(&accepted_b),
+        taken: AtomicUsize::new(0),
+    });
+
+    // Reserve only capacity, not an event: recv is Pending while dispatch is
+    // Full. This makes completion the only ready select arm on the first poll,
+    // regardless of Tokio's randomized branch order. No event uses permit.send.
+    let a_reservation = a_tx.try_reserve().unwrap();
+    let b_reservation = b_tx.try_reserve().unwrap();
+    for (input, expected_node, generation) in [(&into_a, "a", 3), (&into_b, "b", 7)] {
+        let Err(DispatchError::Full(delivery, returned)) = broker.dispatch(input.clone()) else {
+            panic!("the initial destination must actually be full");
+        };
+        assert_eq!(
+            delivery,
+            Delivery::Node {
+                node: expected_node.into(),
+                generation
+            }
+        );
+        assert_eq!(
+            *returned, *input,
+            "Full must preserve the complete event bytes"
+        );
+    }
+    let mut run_a = Box::pin(EventNode::new(adapter_a.clone(), a_rx, Arc::clone(&broker)).run());
+    let mut run_b = Box::pin(EventNode::new(adapter_b.clone(), b_rx, Arc::clone(&broker)).run());
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run_a.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run_b.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert_eq!(adapter_a.taken.load(Ordering::SeqCst), 1);
+    assert_eq!(adapter_b.taken.load(Ordering::SeqCst), 1);
+    assert!(accepted_a.lock().unwrap().is_empty());
+    assert!(accepted_b.lock().unwrap().is_empty());
+
+    // Neither future runs between freeing the reservations and broker routing
+    // these inputs. All payloads enter through normal target/ledger validation.
+    drop(a_reservation);
+    drop(b_reservation);
+    assert!(matches!(
+        broker.dispatch(into_a.clone()),
+        Ok(DispatchOutcome::Enqueued(_))
+    ));
+    assert!(matches!(
+        broker.dispatch(into_b.clone()),
+        Ok(DispatchOutcome::Enqueued(_))
+    ));
+    let progress = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            assert!(
+                poll_fn(|cx| TaskPoll::Ready(run_a.as_mut().poll(cx)))
+                    .await
+                    .is_pending()
+            );
+            assert!(
+                poll_fn(|cx| TaskPoll::Ready(run_b.as_mut().poll(cx)))
+                    .await
+                    .is_pending()
+            );
+            if accepted_a.lock().unwrap().len() >= 2 && accepted_b.lock().unwrap().len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    assert!(
+        progress.is_ok(),
+        "pending outbound completions must not prevent each node from accepting the input that frees its peer: a={}, b={}",
+        accepted_a.lock().unwrap().len(),
+        accepted_b.lock().unwrap().len()
+    );
+    assert_eq!(
+        *accepted_a.lock().unwrap(),
+        vec![into_a, completion_b.clone()]
+    );
+    assert_eq!(
+        *accepted_b.lock().unwrap(),
+        vec![into_b, completion_a.clone()]
+    );
+    assert_eq!(adapter_a.taken.load(Ordering::SeqCst), 1);
+    assert_eq!(adapter_b.taken.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        broker.dispatch(completion_a),
+        Ok(DispatchOutcome::Duplicate)
+    );
+    assert_eq!(
+        broker.dispatch(completion_b),
+        Ok(DispatchOutcome::Duplicate)
+    );
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run_a.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run_b.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert_eq!(
+        accepted_a.lock().unwrap().len(),
+        2,
+        "no duplicate acceptance"
+    );
+    assert_eq!(
+        accepted_b.lock().unwrap().len(),
+        2,
+        "no duplicate acceptance"
+    );
+}
+
+#[tokio::test]
+async fn a_held_full_completion_reports_a_destination_that_closes() {
+    use std::future::Future;
+
+    let own = Address::tcp("127.0.0.1", 52042);
+    let (agent_tx, _agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(1);
+    let (outbound_tx, _outbound_rx) = bounded_queue(1);
+    let (a_tx, a_rx) = bounded_queue(1);
+    let (b_tx, b_rx) = bounded_queue(1);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        8,
+    ));
+    broker.register_node("a", 3, a_tx).unwrap();
+    broker.register_node("b", 7, b_tx.clone()).unwrap();
+    let completion = duplex_event(
+        "closed-destination",
+        Endpoint::node(own.clone(), "a", 3),
+        Endpoint::node(own, "b", 7),
+        &[0, 0xff, 4, 0],
+    );
+    let (publisher, mailbox) = completion_mailbox(1);
+    publisher.try_publish(completion.clone()).unwrap();
+    let accepted = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(DuplexProbeAdapter {
+        mailbox,
+        accepted: Arc::clone(&accepted),
+        taken: AtomicUsize::new(0),
+    });
+    let reservation = b_tx.try_reserve().unwrap();
+    let mut run = Box::pin(EventNode::new(adapter.clone(), a_rx, Arc::clone(&broker)).run());
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert_eq!(adapter.taken.load(Ordering::SeqCst), 1);
+    assert!(accepted.lock().unwrap().is_empty());
+    drop(b_rx);
+    drop(reservation);
+    let result = tokio::time::timeout(Duration::from_secs(1), run)
+        .await
+        .expect("a closed destination must not remain in the Full retry loop");
+    let closed = DispatchError::Closed(Delivery::Node {
+        node: "b".into(),
+        generation: 7,
+    });
+    assert_eq!(result, Err(EventNodeError::Broker(closed.clone())));
+    assert_eq!(
+        broker.dispatch(completion),
+        Err(closed),
+        "the rejected completion must not have been committed as a duplicate"
+    );
+    assert!(accepted.lock().unwrap().is_empty());
+}
+
+struct BoundedDuplexProbe {
+    inner: DuplexProbeAdapter,
+    room: AtomicBool,
+    refusals: AtomicUsize,
+}
+
+impl NodeAdapter for BoundedDuplexProbe {
+    fn kind(&self) -> &str {
+        self.inner.kind()
+    }
+    fn try_offer(&self, event: Event) -> Result<(), OfferError> {
+        if !self.room.load(Ordering::SeqCst) {
+            self.refusals.fetch_add(1, Ordering::SeqCst);
+            return Err(OfferError::Full(event));
+        }
+        self.inner.try_offer(event)
+    }
+    fn try_take(&self) -> Poll {
+        self.inner.try_take()
+    }
+    fn poll_take(&self, context: &mut Context<'_>) -> TaskPoll<Poll> {
+        self.inner.poll_take(context)
+    }
+}
+
+#[tokio::test]
+async fn held_input_and_output_leave_the_second_event_in_each_bounded_queue() {
+    use std::future::Future;
+
+    let own = Address::tcp("127.0.0.1", 52043);
+    let (agent_tx, _agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(1);
+    let (outbound_tx, _outbound_rx) = bounded_queue(1);
+    let (a_tx, a_rx) = bounded_queue(1);
+    let (b_tx, mut b_rx) = bounded_queue(1);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        16,
+    ));
+    broker.register_node("a", 3, a_tx).unwrap();
+    broker.register_node("b", 7, b_tx.clone()).unwrap();
+    let a = Endpoint::node(own.clone(), "a", 3);
+    let b = Endpoint::node(own.clone(), "b", 7);
+    let mut inputs = Vec::new();
+    let mut outputs = Vec::new();
+    for sequence in 1..=3 {
+        let mut input = duplex_event(
+            &format!("bounded-input-{sequence}"),
+            Endpoint::outer(own.clone(), "client", 1),
+            a.clone(),
+            &[0, 0xff, sequence as u8],
+        );
+        input.envelope.sequence = sequence;
+        inputs.push(input);
+        let mut output = duplex_event(
+            &format!("bounded-output-{sequence}"),
+            a.clone(),
+            b.clone(),
+            &[sequence as u8, 0x80, 0],
+        );
+        output.envelope.sequence = sequence;
+        outputs.push(output);
+    }
+    let (publisher, mailbox) = completion_mailbox(1);
+    publisher.try_publish(outputs[0].clone()).unwrap();
+    broker.dispatch(inputs[0].clone()).unwrap();
+    let accepted = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(BoundedDuplexProbe {
+        inner: DuplexProbeAdapter {
+            mailbox,
+            accepted: Arc::clone(&accepted),
+            taken: AtomicUsize::new(0),
+        },
+        room: AtomicBool::new(false),
+        refusals: AtomicUsize::new(0),
+    });
+    let destination_reservation = b_tx.try_reserve().unwrap();
+    let mut run = Box::pin(EventNode::new(adapter.clone(), a_rx, Arc::clone(&broker)).run());
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert!(
+        adapter.refusals.load(Ordering::SeqCst) > 0,
+        "the first input is held"
+    );
+    assert_eq!(
+        adapter.inner.taken.load(Ordering::SeqCst),
+        1,
+        "the first completion is held"
+    );
+
+    broker.dispatch(inputs[1].clone()).unwrap();
+    publisher.try_publish(outputs[1].clone()).unwrap();
+    for _ in 0..16 {
+        assert!(
+            poll_fn(|cx| TaskPoll::Ready(run.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(accepted.lock().unwrap().is_empty());
+    assert_eq!(
+        adapter.inner.taken.load(Ordering::SeqCst),
+        1,
+        "a held output must prevent consuming a second completion"
+    );
+    let Err(DispatchError::Full(delivery, returned)) = broker.dispatch(inputs[2].clone()) else {
+        panic!("the second input must still occupy the capacity-one inbound queue");
+    };
+    assert_eq!(
+        delivery,
+        Delivery::Node {
+            node: "a".into(),
+            generation: 3
+        }
+    );
+    assert_eq!(*returned, inputs[2]);
+    assert_eq!(
+        publisher.try_publish(outputs[2].clone()),
+        Err(p4_adapter::node_adapter::PublishError::Full(
+            outputs[2].clone()
+        )),
+        "the second completion must still occupy the capacity-one mailbox"
+    );
+
+    // This test creates room explicitly. It does not assert that a completely
+    // saturated cyclic network can always create its own spare capacity.
+    drop(destination_reservation);
+    adapter.room.store(true, Ordering::SeqCst);
+    let delivered = tokio::time::timeout(Duration::from_secs(1), async {
+        let mut delivered = Vec::new();
+        loop {
+            assert!(
+                poll_fn(|cx| TaskPoll::Ready(run.as_mut().poll(cx)))
+                    .await
+                    .is_pending()
+            );
+            while let Ok(event) = b_rx.try_recv() {
+                delivered.push(event);
+            }
+            if accepted.lock().unwrap().len() >= 2 && delivered.len() >= 2 {
+                return delivered;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("each held event and its queued successor must progress when room returns");
+    assert_eq!(*accepted.lock().unwrap(), inputs[..2]);
+    assert_eq!(delivered, outputs[..2]);
+    assert_eq!(adapter.inner.taken.load(Ordering::SeqCst), 2);
 }

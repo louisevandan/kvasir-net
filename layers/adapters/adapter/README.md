@@ -1,7 +1,36 @@
 # Adapter interface
 
+> 문서 지위 (2026-09-06): **구성요소 안내**. 해당 경로의 API·구조 안내다. 과거 service 경로와 현재 event 경로는 실제 호출자로 구분한다.
+> 현재 목표·상태·순서는 [실행 로드맵](../../../docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](../../../docs/document-map.md)를 따른다.
+
 What a node asks of whatever executes its work. `layers/adapters/*` implement
 it; nothing here names a backend.
+
+## Current event boundary
+
+`src/node_adapter/` owns the backend-neutral `NodeAdapter` and completion mailbox.
+`try_offer` / `try_take` / `try_publish` move opaque P4 events without blocking;
+Full returns the undelivered event and Closed is a distinct outcome. The adapter,
+not this crate, interprets model-specific content types and completion meaning.
+
+The mailbox's capacity listener is a bounded, RAII notification registration.
+Register before attempting publication, keep the registration while waiting,
+and retry the actual operation after a wake. A wake reserves no slot and proves
+neither delivery nor KV completion. Combining this notification with input and
+shutdown is the concrete actor's responsibility; adding the API alone does not
+remove a worker's blocking wait. Callback code runs synchronously outside mailbox
+locks and must be short, nonblocking and nonpanicking.
+
+One logical asynchronous reader is supported. Sender closure wakes that reader
+after disconnection; buffered events remain readable before Closed. Receiver
+closure wakes capacity waiters after disconnection. These are local mailbox
+lifetime rules, not a distributed graceful-drain protocol.
+
+This crate depends on `p4-protocol`, `serde`, and `serde_json`; it has no llama.cpp
+or device-backend dependency. Adding opaque transport notification does not give
+P4's common layer authority over the adapter's flight ledger or batch policy.
+
+## Service Work API (not the event worker)
 
 Folders are cut by what changes them, not by size.
 
@@ -14,7 +43,7 @@ Folders are cut by what changes them, not by size.
 | `src/event/sink/` | How an event travels. | Ideally never. |
 | `src/lib.rs` | The trait itself. | Rarely. |
 
-The hop is the only execution unit. A node hands the adapter one hop and is
+In this service API, the hop is the execution unit. A node hands the adapter one hop and is
 told when that hop ends; between hops the node drains its own queue. That is
 where deadlines and cancellation are decided, because there is no way to
 interrupt a hop in progress and no need for one — not starting the next hop is
@@ -24,5 +53,6 @@ A hop carries a batch of sequences rather than one, because the cohort window
 is the shape the workload actually has. Load reports progress per stage since a
 model is distributed as layer ranges and the slowest stage decides completion.
 
-This crate has no dependencies, including on `p4-protocol`. An adapter that
-needs a P4 message type is reaching past its own contract.
+The service hop description is not evidence that the current event worker has
+the same deadline, cancellation, queue-drain or completion behavior. Follow the
+actual caller and the roadmap's current verification record.

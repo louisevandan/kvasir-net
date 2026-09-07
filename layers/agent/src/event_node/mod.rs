@@ -10,9 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// How long the node waits before offering a held event again when the
-/// adapter is full and has produced nothing to drain. Short enough that
-/// backpressure does not become latency, long enough that a full adapter
-/// costs no CPU.
+/// adapter or broker destination is full. This bounds idle retry frequency;
+/// it still incurs timer work and is not a capacity-notification mechanism.
 const HELD_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,90 +41,58 @@ impl EventNode {
         }
     }
 
-    /// Hands a completion to the broker, waiting for room rather than failing.
-    ///
-    /// The same argument as the inbound side: a destination queue that is full
-    /// now will drain, and ending the node for it loses a completion that has
-    /// already been computed. Only a closed destination is fatal.
-    ///
-    /// Retrying is safe because the ledger commits on success and `inspect`
-    /// reads without recording, so the second attempt is the same dispatch and
-    /// not a duplicate.
-    async fn dispatch_or_wait(&self, event: Event) -> Result<(), EventNodeError> {
-        let mut pending = event;
-        loop {
-            match self.broker.dispatch(pending) {
-                Ok(_) => return Ok(()),
-                Err(DispatchError::Full(_, returned)) => {
-                    pending = *returned;
-                    tokio::time::sleep(HELD_RETRY_INTERVAL).await;
-                }
-                Err(error) => return Err(EventNodeError::Broker(error)),
-            }
-        }
-    }
-
     pub async fn run(mut self) -> Result<(), EventNodeError> {
-        // An event the adapter had no room for. While one is held the node
-        // stops reading inbound and only drains completions - which is what
-        // frees the adapter's room - so the pressure stays upstream instead of
-        // arriving here as a dead node. A full adapter used to end the task
-        // with `AdapterFull`, turning a busy pipeline into a stopped one.
-        let mut held: Option<Event> = None;
+        // Retain at most one event in each direction. Waiting exclusively on
+        // an outbound Full deadlocks two nodes whose own inbound queues need
+        // draining to make room for one another. Neither Full commits the
+        // broker ledger nor consumes the adapter input; retry the exact event.
+        // This is not a general proof for a fully saturated cyclic network:
+        // adapters may also be Full. End-to-end credits remain a separate gate.
+        let mut held_input: Option<Event> = None;
+        let mut held_output: Option<Event> = None;
+        let mut input_closed = false;
         loop {
-            if let Some(event) = held.take() {
+            if let Some(event) = held_output.take() {
+                match self.broker.dispatch(event) {
+                    Ok(_) => {}
+                    Err(DispatchError::Full(_, returned)) => held_output = Some(*returned),
+                    Err(error) => return Err(EventNodeError::Broker(error)),
+                }
+            }
+            if let Some(event) = held_input.take() {
                 match self.adapter.try_offer(event) {
                     Ok(()) => {}
-                    Err(OfferError::Full(event)) => {
-                        held = Some(event);
-                        // Wait for whichever comes first: a completion, which
-                        // is what frees the adapter's room, or a short
-                        // interval after which the offer is worth retrying.
-                        //
-                        // Both halves are load-bearing. Awaiting the completion
-                        // alone blocks for good when the adapter is full and
-                        // has produced nothing - a test hung on exactly that.
-                        // Yielding instead of sleeping spins a core at full
-                        // tilt, which the same test showed before this.
-                        tokio::select! {
-                            completion = poll_fn(|context| self.adapter.poll_take(context)) => {
-                                match completion {
-                                    Poll::Event(event) => self.dispatch_or_wait(event).await?,
-                                    Poll::Empty => {}
-                                    Poll::Closed => {
-                                        return Err(EventNodeError::CompletionClosed(
-                                            self.adapter.snapshot(),
-                                        ));
-                                    }
-                                }
-                            }
-                            () = tokio::time::sleep(HELD_RETRY_INTERVAL) => {}
-                        }
-                        continue;
-                    }
+                    Err(OfferError::Full(event)) => held_input = Some(event),
                     Err(OfferError::Closed) => return Err(EventNodeError::AdapterClosed),
                 }
             }
+            if input_closed && held_input.is_none() && held_output.is_none() {
+                // Preserve the existing input-close contract, but never drop
+                // an event already held here. Adapter-wide graceful drain is
+                // not implied by this local transport completion.
+                return Ok(());
+            }
             tokio::select! {
-                inbound = self.inbound.recv() => {
-                    let Some(event) = inbound else { return Ok(()); };
-                    match self.adapter.try_offer(event) {
-                        Ok(()) => {}
-                        Err(OfferError::Full(event)) => held = Some(event),
-                        Err(OfferError::Closed) => return Err(EventNodeError::AdapterClosed),
+                inbound = self.inbound.recv(), if !input_closed && held_input.is_none() => {
+                    match inbound {
+                        Some(event) => held_input = Some(event),
+                        None => input_closed = true,
                     }
                 }
-                completion = poll_fn(|context| self.adapter.poll_take(context)) => {
+                completion = poll_fn(|context| self.adapter.poll_take(context)), if held_output.is_none() => {
                     match completion {
-                        Poll::Event(event) => {
-                            self.dispatch_or_wait(event).await?;
-                        }
-                        Poll::Empty => continue,
+                        Poll::Event(event) => held_output = Some(event),
+                        // Correct mailbox implementations return Pending and
+                        // register a waker. Defensively avoid spinning on an
+                        // adapter that instead reports Ready(Empty).
+                        Poll::Empty => tokio::time::sleep(HELD_RETRY_INTERVAL).await,
                         Poll::Closed => {
                             return Err(EventNodeError::CompletionClosed(self.adapter.snapshot()));
                         }
                     }
                 }
+                () = tokio::time::sleep(HELD_RETRY_INTERVAL),
+                    if held_input.is_some() || held_output.is_some() => {}
             }
         }
     }

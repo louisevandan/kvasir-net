@@ -19,16 +19,42 @@ const BASE: &str = "READY;llama_runtime=1;hop=1;kv=1;transactions=1;physical_bat
 ;n_ctx=2048;n_batch=512;n_ubatch=512;n_seq_max=4;max_atomic_sequences=4";
 
 #[test]
+fn physical_identity_revision_is_never_inferred_from_physical_batch() {
+    assert_eq!(
+        decode_hello(&hello(BASE))
+            .unwrap()
+            .physical_identity_revision,
+        0
+    );
+    assert_eq!(
+        decode_hello(&hello(&format!("{BASE};physical_identity_revision=1")))
+            .unwrap()
+            .physical_identity_revision,
+        1
+    );
+    assert!(
+        decode_hello(&hello(&format!(
+            "{BASE};physical_identity_revision=invalid"
+        )))
+        .is_err()
+    );
+}
+
+#[test]
 fn a_multi_registry_inventory_survives_the_wire() {
     // The 2026-09-02 defect, in the form the stage server actually sent it.
-    let text = format!("{BASE};upstream=557614e02;patch_set=00e66c6b;backend_inventory=CPU[CPU]|CUDA[CUDA0]");
+    let text = format!(
+        "{BASE};upstream=557614e02;patch_set=00e66c6b;backend_inventory=CPU[CPU]|CUDA[CUDA0]"
+    );
     let ready = decode_hello(&hello(&text)).expect("decode");
     assert_eq!(ready.backend_inventory, "CPU[CPU]|CUDA[CUDA0]");
 }
 
 #[test]
 fn a_field_after_the_inventory_is_still_its_own_field() {
-    let text = format!("{BASE};backend_inventory=CPU[CPU]|CUDA[CUDA0,CUDA1];upstream=557614e02;patch_set=00e66c6b");
+    let text = format!(
+        "{BASE};backend_inventory=CPU[CPU]|CUDA[CUDA0,CUDA1];upstream=557614e02;patch_set=00e66c6b"
+    );
     let ready = decode_hello(&hello(&text)).expect("decode");
     assert_eq!(ready.backend_inventory, "CPU[CPU]|CUDA[CUDA0,CUDA1]");
     assert_eq!(ready.upstream_commit, "557614e02");

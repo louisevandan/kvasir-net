@@ -15,6 +15,14 @@ bool physical_fail(const char * message, std::string * error) {
     return false;
 }
 
+bool needs_native_logits(bool logical_output, const PhysicalOwner & owner) {
+    // Replay carries already accepted inputs and keeps output=false on the
+    // wire. sample_physical_mtp nevertheless verifies/samples every Replay
+    // row after checkpoint restoration. The llama graph must produce those
+    // logits; logical ownership flags are not the native logits request mask.
+    return logical_output || owner.phase == PhysicalPhase::Replay;
+}
+
 bool valid_execution(const PhysicalExecution & execution) {
     const auto rows = execution.sequence_counts.size();
     if (rows == 0 || execution.n_pos == 0 || execution.n_pos > 4
@@ -186,7 +194,7 @@ bool StageRuntime::execute_first_batch(
         batch.pos[index] = row.position;
         batch.n_seq_id[index] = 1;
         batch.seq_id[index][0] = row.sequence_id;
-        batch.logits[index] = row.output ? 1 : 0;
+        batch.logits[index] = needs_native_logits(row.output, owners[index]) ? 1 : 0;
     }
     const bool encoder = llama_model_has_encoder(model_);
     const auto raw = encoder ? llama_encode(ctx_, batch) : llama_decode(ctx_, batch);
@@ -273,12 +281,19 @@ bool StageRuntime::execute_physical(
             input.sequence_ids.data() + sequence_offset);
         sequence_offset += static_cast<std::size_t>(input.sequence_counts[row]);
     }
+    // Keep the received capsule immutable. In particular, Replay remains
+    // output=false when forwarded, even though this native invocation needs
+    // every Replay row's logits at the terminal stage.
+    auto native_logits = input.output;
+    for (std::size_t row = 0; row < native_logits.size(); ++row) {
+        native_logits[row] = needs_native_logits(input.output[row] != 0, owners[row]) ? 1 : 0;
+    }
     llama_batch batch{
         static_cast<std::int32_t>(input.sequence_counts.size()),
         tokens.data(), nullptr,
         const_cast<llama_pos *>(input.positions.data()),
         const_cast<std::int32_t *>(input.sequence_counts.data()),
-        sequence_rows.data(), const_cast<std::int8_t *>(input.output.data())};
+        sequence_rows.data(), native_logits.data()};
     const bool encoder = (input.flags & LLAMA_LINKCPP_STAGE_FLAG_ENCODER) != 0;
     if ((input.flags & ~LLAMA_LINKCPP_STAGE_FLAG_ENCODER) != 0
         || (encoder && !llama_model_has_encoder(model_))) {

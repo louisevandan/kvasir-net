@@ -1,5 +1,5 @@
 use super::super::{InferenceCommand, NodeRole, SessionCommand};
-use p4_protocol::event::{Endpoint, Event};
+use p4_protocol::event::{Endpoint, Envelope, Event};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Clone)]
@@ -7,10 +7,14 @@ pub struct PipelineSession {
     pub command: SessionCommand,
     pub next: Option<Endpoint>,
     pub first: Endpoint,
+    pub previous: Option<Endpoint>,
+    pub last: Endpoint,
 }
 
+#[derive(Clone)]
 pub struct RequestState {
     pub command: InferenceCommand,
+    pub incarnation: u64,
     pub sequence_id: Option<u32>,
     pub template: Event,
     pub reply: String,
@@ -21,25 +25,78 @@ pub struct RequestState {
     ///
     /// Separate from `prompt_cursor` because a prompt may have more than one
     /// fragment travelling at once: rows are cut from here on issue and the
-    /// cursor catches up on settlement. With a fragment limit of one the two
-    /// never diverge, which is what the pipeline did before this existed.
+    /// cursor catches up on settlement. Even with limit one they differ while
+    /// that fragment is travelling; limit one only forbids a second fragment.
     pub prompt_issued: usize,
     pub ready: Option<ReadyRows>,
     pub after_settlement: Option<SettlementContinuation>,
     /// Fragments of this request in the pipeline right now.
     ///
     /// A decode has to be one: the next token is not known until this one has
-    /// been sampled at the tail. A prompt does not - its tokens are all known
-    /// - so a long one can have several fragments in flight and stop waiting
-    /// a whole lap between chunks. Measured on a 2B run, 92 of 192 requests
-    /// took two or more laps to prefill and some took eleven, while the first
-    /// node stood idle for 33% of the wall clock.
+    /// been sampled at the tail. A prompt's tokens are all known, so a long
+    /// one can have several fragments in flight. This counter is
+    /// neither a physical execution count nor a pending KV acknowledgement.
+    /// Multi-fragment performance and edge capacity need separate validation.
     pub outstanding: u32,
     pub generated: u32,
+    /// Head-approved physical work, not plan attempts or observation sends.
+    /// Fixed size regardless of generation length. None until the first
+    /// native result is admitted into the flight ledger. Wire completion
+    /// evidence is a separate producer/consumer migration.
+    pub issued_work: Option<super::super::issue_witness::IssueWitness>,
 }
 
+/// Original request provenance survives resident removal. No prompt/tensor
+/// payload is copied into release bookkeeping.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingRelease {
+    pub sequence: super::super::ReleaseSequence,
+    pub original: Envelope,
+    pub reply: super::super::ReplySpec,
+    pub dispatch: ControlDispatch,
+}
+
+/// Local effect progress is not the downstream KV acknowledgement. Pending
+/// registration alone must not authorize an ACK when the effect pump yields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum ControlDispatchPhase {
+    Queued,
+    LocalApplied,
+    ForwardAccepted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ControlDispatch {
+    pub load_generation: u64,
+    pub session_id: String,
+    pub phase: ControlDispatchPhase,
+}
+
+impl ControlDispatch {
+    pub fn queued(load_generation: u64, session_id: String) -> Self {
+        Self {
+            load_generation,
+            session_id,
+            phase: ControlDispatchPhase::Queued,
+        }
+    }
+
+    pub fn allows_ack(&self, load_generation: u64, session_id: &str) -> bool {
+        self.load_generation == load_generation
+            && self.session_id == session_id
+            && self.phase == ControlDispatchPhase::ForwardAccepted
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PendingSettlement {
+    pub sequence: super::super::SettlementSequence,
+    pub dispatch: ControlDispatch,
+}
+
+#[derive(Clone)]
 pub enum SettlementContinuation {
-    Proposal { position: u32 },
+    Proposal { position: u32, token: i32 },
     Replay(ReadyRows),
 }
 
@@ -72,6 +129,89 @@ impl SettlementRefusal {
 }
 
 impl RequestState {
+    /// The original submission is the authority for the head's issued-work
+    /// witness. A reply returned in a capsule cannot choose a new identity.
+    pub(crate) fn issue_authority(
+        &self,
+    ) -> Result<super::super::issue_witness::IssueAuthority, String> {
+        let envelope = &self.template.envelope;
+        let outer = envelope
+            .return_route
+            .as_ref()
+            .ok_or("issued work requires the original OUTER route")?;
+        if envelope.source != Endpoint::Outer(outer.clone())
+            || !matches!(envelope.target, Endpoint::Node { .. })
+        {
+            return Err("issued work submission source or target differs from its owner".into());
+        }
+        let reply: super::super::ReplySpec = serde_json::from_str(&self.reply)
+            .map_err(|_| "issued work has an invalid original reply")?;
+        if reply
+            .ingress_agent
+            .parse::<p4_protocol::Address>()
+            .ok()
+            .as_ref()
+            != Some(&outer.ingress_agent)
+            || reply.channel != outer.channel
+            || reply.connection_generation != outer.connection_generation
+            || reply.correlation_id != envelope.correlation_id
+            || reply.deadline_unix_ms != envelope.deadline_unix_ms
+        {
+            return Err("issued work reply differs from the original submission".into());
+        }
+        Ok(super::super::issue_witness::IssueAuthority {
+            head: envelope.target.clone(),
+            outer: outer.clone(),
+            load_generation: self.command.load_generation,
+            session_id: self.command.session_id.clone(),
+            request_id: self.command.request_id.clone(),
+            submission_event_id: envelope.event_id.clone(),
+            sequence_id: self
+                .sequence_id
+                .ok_or("issued work requires an admitted slot")?,
+            incarnation: self.incarnation,
+        })
+    }
+
+    /// Accepted logical issue, shared by the real worker and its model. Plan
+    /// generation does not call this; acceptance advances these counters once.
+    pub fn issue_fragment(
+        &mut self,
+        phase: super::super::Phase,
+        rows: usize,
+    ) -> Result<(), &'static str> {
+        if rows == 0 || self.sequence_id.is_none() || self.after_settlement.is_some() {
+            return Err("issue requires admitted rows without a pending KV settlement");
+        }
+        let outstanding = self
+            .outstanding
+            .checked_add(1)
+            .ok_or("fragment count overflow")?;
+        let issued = if phase == super::super::Phase::Prefill {
+            let end = self
+                .prompt_issued
+                .checked_add(rows)
+                .ok_or("prompt issue overflow")?;
+            if end > self.command.tokens.len() {
+                return Err("issue exceeds remaining prompt rows");
+            }
+            end
+        } else {
+            if self.outstanding != 0
+                || self.prompt_cursor != self.command.tokens.len()
+                || !self
+                    .ready
+                    .as_ref()
+                    .is_some_and(|ready| ready.phase == phase && ready.tokens.len() == rows)
+            {
+                return Err("issue does not match ready decode or atomic rows");
+            }
+            self.prompt_issued
+        };
+        self.prompt_issued = issued;
+        self.outstanding = outstanding;
+        Ok(())
+    }
     /// The bookkeeping one settled fragment does, in the one place that does it.
     ///
     /// The worker and the simulator each had their own copy of this. They were
@@ -159,6 +299,28 @@ pub type SessionKeyScope = (u64, String, String);
 /// How many admitted identities a node remembers for the alias check.
 pub const SESSION_KEY_WINDOW: usize = 65_536;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IssueProgress {
+    Prepared,
+    AwaitingNative,
+    Uncertain,
+}
+
+pub struct PreparedIssue {
+    pub ordinal: u64,
+    pub progress: IssueProgress,
+    pub logical: super::super::logical::LogicalBatch,
+    candidates: BTreeMap<String, RequestState>,
+    verify_keys: Vec<String>,
+}
+
+impl PreparedIssue {
+    #[cfg(test)]
+    pub(crate) fn candidate_requests(&self) -> &BTreeMap<String, RequestState> {
+        &self.candidates
+    }
+}
+
 pub struct AdapterState {
     pub sessions: BTreeMap<String, PipelineSession>,
     pub requests: BTreeMap<String, RequestState>,
@@ -173,14 +335,20 @@ pub struct AdapterState {
     pub sequence_capacity: u32,
     pub next_event: u64,
     pub load_generation: u64,
+    pub last_load_generation: u64,
+    pub next_incarnation: u64,
+    pub next_control_operation: u64,
+    pub stage_owners: super::ownership::StageOwners,
+    pub stage_frontiers: super::frontier::StageFrontiers,
+    pub physical_receives: super::physical_receive::PhysicalReceiveLedger,
     pub next_speculative_id: u64,
     /// Hold a plan back until this many rows are ready, so a batch stops
     /// re-forming the arrival group it was born in. 0 or 1 disables the wait.
     /// See `Worker::drive_first_batches`.
     pub min_batch_rows: usize,
     /// Hold a plan back while this many batches are somewhere in the pipeline.
-    /// 0 disables it. See `Worker::drive_first_batches` for why this, and not
-    /// a row threshold, is the lever the stage spans point at.
+    /// 0 disables it. This is an experimental limit, not edge credit and not
+    /// a measured universal optimum.
     pub max_open_batches: usize,
     /// Cap the rows one issued batch may carry, so a ready set becomes
     /// several batches that travel the pipeline together instead of one
@@ -191,15 +359,9 @@ pub struct AdapterState {
     /// behaviour this adapter had before the field existed: a prompt waits a
     /// full lap between chunks even though all its tokens are known.
     ///
-    /// Anything above 1 is experimental and stays off by default. Not because
-    /// it breaks an invariant - `simulator_tests` runs limits 1, 2 and 4 and
-    /// all three hold - but because nothing downstream bounds the rows a
-    /// single prompt may put on an edge. That bound is the fragment ledger the
-    /// plan calls P4.5, and until it exists a raised limit lets one long
-    /// prompt claim edge capacity that no component accounts for. The measured
-    /// effect of raising it on the 4-node harness was -0.5%, which is to say
-    /// none: prefill latency there is admission queueing, not lap pacing - a
-    /// 30-row prompt and a 1232-row one both took 68-79s to first token.
+    /// Anything above 1 is experimental and stays off by default. Simulator
+    /// checks are not downstream row/byte credit, native KV ordering or a
+    /// performance proof. The executable roadmap's credit gate owns promotion.
     pub prefill_fragments: u32,
     /// Batches this first node has issued whose capsules have not all come
     /// back from the tail, as batch ordinal -> the execution ids it produced.
@@ -210,13 +372,17 @@ pub struct AdapterState {
     /// under a bound of four, admit a batch that split into four, and hold
     /// seven. One entry per issued batch makes the bound exact.
     ///
-    /// An entry is added when this node's own stage returns the physical
-    /// result, and an execution id is removed by `Worker::tail` when the
-    /// terminal capsule carrying it arrives; the batch goes when its last
-    /// capsule does. Bounded by `max_open_batches` when the gate is on and by
-    /// the active set when it is off - nothing is issued without a ready row.
-    /// Cleared with the rest of the state on a new load.
+    /// Read-only compatibility view rebuilt from FlightLedger after authority
+    /// registration or validated settlement. Partial physical receipts keep
+    /// their logical fragment open. This count is not a byte-memory bound or
+    /// a KV quiescence witness. Cleared with authority on a new load.
     pub open_batches: BTreeMap<u64, BTreeSet<u64>>,
+    pub flights: super::flight::FlightLedger,
+    pub prepared_issue: Option<PreparedIssue>,
+    /// Stopped request identities awaiting the all-stage release return. A
+    /// vacant numeric slot alone is never authority for a RELEASED command.
+    pub pending_releases: BTreeMap<String, PendingRelease>,
+    pub pending_settlements: BTreeMap<String, PendingSettlement>,
     /// The ordinal the next issued batch takes.
     pub next_open_batch: u64,
     /// The conversation each request identity was admitted under, so a repeat
@@ -264,6 +430,16 @@ impl Default for AdapterState {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
             open_batches: BTreeMap::new(),
+            flights: super::flight::FlightLedger::default(),
+            prepared_issue: None,
+            pending_releases: BTreeMap::new(),
+            pending_settlements: BTreeMap::new(),
+            last_load_generation: 0,
+            next_incarnation: 1,
+            next_control_operation: 1,
+            stage_owners: super::ownership::StageOwners::default(),
+            stage_frontiers: super::frontier::StageFrontiers::default(),
+            physical_receives: super::physical_receive::PhysicalReceiveLedger::default(),
             next_open_batch: 1,
             max_issue_rows: std::env::var("P4_STAGED_MAX_ISSUE_ROWS")
                 .ok()
@@ -280,6 +456,202 @@ impl Default for AdapterState {
 }
 
 impl AdapterState {
+    pub fn prepare_issue(
+        &mut self,
+        logical: super::super::logical::LogicalBatch,
+    ) -> Result<(), String> {
+        if self.prepared_issue.is_some() {
+            return Err("a native issue remains unresolved".into());
+        }
+        if self.next_open_batch == 0 {
+            return Err("logical issue identity is zero".into());
+        }
+        self.next_open_batch
+            .checked_add(1)
+            .ok_or_else(|| "logical issue identity exhausted".to_owned())?;
+        if logical.0.is_empty() {
+            return Err("logical issue has no rows".into());
+        }
+        let mut grouped = BTreeMap::<String, Vec<&super::super::logical::LogicalRow>>::new();
+        for row in &logical.0 {
+            if row.owner.load_generation != self.load_generation {
+                return Err("logical issue belongs to a different load".into());
+            }
+            grouped
+                .entry(row.owner.sequence_key.clone())
+                .or_default()
+                .push(row);
+        }
+        let mut candidates = BTreeMap::new();
+        let mut verify_keys = Vec::new();
+        for (key, rows) in grouped {
+            let mut candidate = self
+                .requests
+                .get(&key)
+                .ok_or_else(|| "issue request is missing".to_owned())?
+                .clone();
+            super::flight::validate_planned_request(&candidate, &rows)?;
+            let phase = rows[0].owner.phase;
+            candidate
+                .issue_fragment(phase, rows.len())
+                .map_err(str::to_owned)?;
+            if phase == super::super::Phase::Verify {
+                verify_keys.push(key.clone());
+            }
+            candidates.insert(key, candidate);
+        }
+        if !verify_keys.is_empty() && self.verify_fenced() {
+            return Err("a speculative verification fence is already active".into());
+        }
+        self.prepared_issue = Some(PreparedIssue {
+            ordinal: self.next_open_batch,
+            progress: IssueProgress::Prepared,
+            logical,
+            candidates,
+            verify_keys,
+        });
+        Ok(())
+    }
+
+    pub fn begin_native_issue(&mut self) -> Result<(), String> {
+        let prepared = self
+            .prepared_issue
+            .as_mut()
+            .ok_or("native issue has no prepared plan")?;
+        if prepared.progress != IssueProgress::Prepared {
+            return Err("native issue was already attempted".into());
+        }
+        prepared.progress = IssueProgress::AwaitingNative;
+        Ok(())
+    }
+
+    pub fn cancel_prepared_issue(&mut self) -> Result<(), String> {
+        let prepared = self
+            .prepared_issue
+            .as_ref()
+            .ok_or("there is no prepared issue")?;
+        if prepared.progress != IssueProgress::Prepared {
+            return Err("an attempted native issue requires reconciliation".into());
+        }
+        self.prepared_issue = None;
+        Ok(())
+    }
+
+    pub fn mark_issue_uncertain(&mut self) {
+        if let Some(prepared) = self.prepared_issue.as_mut()
+            && prepared.progress == IssueProgress::AwaitingNative
+        {
+            prepared.progress = IssueProgress::Uncertain;
+        }
+    }
+
+    pub fn accept_prepared_issue(
+        &mut self,
+        set: &super::super::capsule::CapsuleSet,
+    ) -> Result<(), String> {
+        let prepared = self
+            .prepared_issue
+            .as_ref()
+            .ok_or_else(|| "physical result has no prepared issue".to_owned())?;
+        if prepared.progress != IssueProgress::AwaitingNative {
+            return Err("physical result has no pending native attempt".into());
+        }
+        super::flight::validate_split(&prepared.logical, set)?;
+        if prepared.ordinal != self.next_open_batch {
+            return Err("prepared issue identity changed".into());
+        }
+        // All fallible witness work precedes the flight commit. Group only
+        // this approved result's rows; neither prompt/tensors nor previous
+        // execution history are copied into these small candidates.
+        use super::super::issue_witness::{IssueWitness, IssuedExecution, IssuedRow, IssuedWork};
+        let mut by_request = BTreeMap::<String, BTreeMap<u64, Vec<IssuedRow>>>::new();
+        for capsule in &set.0 {
+            for owner in &capsule.owners {
+                by_request
+                    .entry(owner.sequence_key.clone())
+                    .or_default()
+                    .entry(capsule.execution_id)
+                    .or_default()
+                    .push(IssuedRow {
+                        phase: owner.phase,
+                        position: owner.position,
+                    });
+            }
+        }
+        if by_request.len() != prepared.candidates.len() {
+            return Err("issued work does not cover the prepared request set".into());
+        }
+        let mut witnesses = BTreeMap::new();
+        for (key, request) in &prepared.candidates {
+            let authority = request.issue_authority()?;
+            let previous = match request.issued_work {
+                Some(witness) => witness,
+                None => IssueWitness::new(&authority).map_err(str::to_owned)?,
+            };
+            let executions = by_request
+                .remove(key)
+                .ok_or("issued work is missing a prepared request")?
+                .into_iter()
+                .map(|(execution_id, rows)| IssuedExecution { execution_id, rows })
+                .collect();
+            let work = IssuedWork {
+                logical_ordinal: prepared.ordinal,
+                executions,
+            };
+            let witness = previous
+                .advanced(&authority, &work)
+                .map_err(str::to_owned)?;
+            witnesses.insert(key.clone(), witness);
+        }
+        self.register_issued_batch(set)?;
+        let prepared = self
+            .prepared_issue
+            .take()
+            .expect("prepared issue was validated");
+        for (key, mut request) in prepared.candidates {
+            request.issued_work = Some(
+                witnesses
+                    .remove(&key)
+                    .expect("all witness candidates validated"),
+            );
+            self.requests.insert(key, request);
+        }
+        if !prepared.verify_keys.is_empty() {
+            self.begin_verify_fence(&prepared.verify_keys)
+                .expect("issue fence validated before native execution");
+        }
+        Ok(())
+    }
+
+    pub fn register_issued_batch(
+        &mut self,
+        set: &super::super::capsule::CapsuleSet,
+    ) -> Result<u64, String> {
+        let ordinal = self.next_open_batch;
+        let next = ordinal
+            .checked_add(1)
+            .ok_or_else(|| "logical issue identity exhausted".to_owned())?;
+        self.flights.register(ordinal, self.load_generation, set)?;
+        self.next_open_batch = next;
+        self.open_batches = self.flights.open_batches();
+        Ok(ordinal)
+    }
+
+    pub fn commit_flight_return(&mut self, plan: super::flight::ReturnPlan) {
+        self.flights.commit_return(plan);
+        self.open_batches = self.flights.open_batches();
+    }
+
+    pub fn clear_flights(&mut self) {
+        self.flights = super::flight::FlightLedger::default();
+        self.open_batches.clear();
+        self.prepared_issue = None;
+        self.pending_releases.clear();
+        self.pending_settlements.clear();
+        self.stage_owners = super::ownership::StageOwners::default();
+        self.stage_frontiers = super::frontier::StageFrontiers::default();
+        self.physical_receives = super::physical_receive::PhysicalReceiveLedger::default();
+    }
     /// Records the conversation this identity was admitted under, dropping the
     /// oldest once the window is full.
     pub fn remember_session_key(&mut self, scope: SessionKeyScope, key: Option<String>) {
@@ -337,7 +709,9 @@ impl AdapterState {
 
     /// Whether any admitted request is still crossing the pipeline.
     pub fn any_in_flight(&self) -> bool {
-        self.requests.values().any(|request| request.outstanding > 0)
+        self.requests
+            .values()
+            .any(|request| request.outstanding > 0)
     }
 
     /// Rows a plan could carry right now. Decode contributes one row per ready
@@ -360,46 +734,23 @@ impl AdapterState {
         self.requests
             .values()
             .filter_map(|request| {
-                request.phase_within(self.prefill_fragments).map(|phase| match phase {
-                    super::super::Phase::Prefill => {
-                        request.command.tokens.len() - request.prompt_issued
-                    }
-                    _ => request.ready.as_ref().map_or(0, |ready| ready.tokens.len()),
-                })
+                request
+                    .phase_within(self.prefill_fragments)
+                    .map(|phase| match phase {
+                        super::super::Phase::Prefill => {
+                            request.command.tokens.len() - request.prompt_issued
+                        }
+                        _ => request.ready.as_ref().map_or(0, |ready| ready.tokens.len()),
+                    })
             })
             .sum()
-    }
-
-    /// Records a batch's capsules as outstanding and returns nothing: the
-    /// gate reads `open_batches.len()`, which is now one per issued batch.
-    pub fn open_batch(&mut self, executions: impl IntoIterator<Item = u64>) {
-        let ordinal = self.next_open_batch;
-        self.next_open_batch = self.next_open_batch.wrapping_add(1);
-        self.open_batches.insert(ordinal, executions.into_iter().collect());
-    }
-
-    /// Retires one capsule, and its batch once the batch has no capsules left.
-    pub fn close_execution(&mut self, execution_id: u64) {
-        let emptied: Vec<u64> = self
-            .open_batches
-            .iter_mut()
-            .filter_map(|(ordinal, executions)| {
-                executions.remove(&execution_id).then_some(*ordinal)
-            })
-            .collect();
-        for ordinal in emptied {
-            if self.open_batches.get(&ordinal).is_some_and(BTreeSet::is_empty) {
-                self.open_batches.remove(&ordinal);
-            }
-        }
     }
 
     pub fn first_session_with_work(&self) -> Option<String> {
         let limit = self.prefill_fragments;
         self.requests.values().find_map(|request| {
             let session = self.sessions.get(&request.command.session_id)?;
-            (session.command.role == NodeRole::First
-                && request.phase_within(limit).is_some())
+            (session.command.role() == NodeRole::First && request.phase_within(limit).is_some())
                 .then(|| request.command.session_id.clone())
         })
     }
@@ -466,8 +817,14 @@ mod tests {
         // one conversation could be refused because an unrelated session had
         // used the same request id.
         let mut state = AdapterState::default();
-        state.remember_session_key(scope(1, "pipeline-a", "req-001"), Some("sk1:owner/a".into()));
-        state.remember_session_key(scope(1, "pipeline-b", "req-001"), Some("sk1:owner/b".into()));
+        state.remember_session_key(
+            scope(1, "pipeline-a", "req-001"),
+            Some("sk1:owner/a".into()),
+        );
+        state.remember_session_key(
+            scope(1, "pipeline-b", "req-001"),
+            Some("sk1:owner/b".into()),
+        );
         assert_eq!(state.session_keys.len(), 2);
     }
 
@@ -475,7 +832,12 @@ mod tests {
     fn a_later_load_does_not_inherit_an_earlier_load_s_conversations() {
         let mut state = AdapterState::default();
         state.remember_session_key(scope(1, "pipeline", "req-001"), Some("sk1:owner/a".into()));
-        assert!(state.session_keys.get(&scope(2, "pipeline", "req-001")).is_none());
+        assert!(
+            state
+                .session_keys
+                .get(&scope(2, "pipeline", "req-001"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -498,11 +860,20 @@ mod tests {
             );
         }
         assert_eq!(state.session_keys.len(), SESSION_KEY_WINDOW);
-        assert!(state.session_keys.get(&scope(1, "pipeline", "req-0")).is_none());
         assert!(
             state
                 .session_keys
-                .get(&scope(1, "pipeline", &format!("req-{}", SESSION_KEY_WINDOW + 7)))
+                .get(&scope(1, "pipeline", "req-0"))
+                .is_none()
+        );
+        assert!(
+            state
+                .session_keys
+                .get(&scope(
+                    1,
+                    "pipeline",
+                    &format!("req-{}", SESSION_KEY_WINDOW + 7)
+                ))
                 .is_some()
         );
     }

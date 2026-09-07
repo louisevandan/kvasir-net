@@ -1,5 +1,6 @@
 #include "physical_wire.hpp"
 #include "physical_wire_cursor.hpp"
+#include "physical_authority.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -16,6 +17,7 @@ bool read_owner(wire::Cursor & cursor, PhysicalOwner * owner) {
     std::uint8_t output = 0;
     std::uint16_t reserved = 0;
     if (!cursor.u64(&owner->load_generation) || owner->load_generation == 0
+        || !cursor.u64(&owner->incarnation) || owner->incarnation == 0
         || !cursor.string(&owner->request_id)
         || !cursor.string(&owner->sequence_key)
         || !cursor.string(&owner->session_id)
@@ -33,8 +35,8 @@ bool read_owner(wire::Cursor & cursor, PhysicalOwner * owner) {
         || !cursor.u32(&owner->speculative_index)
         || !cursor.u32(&owner->speculative_count)
         || !cursor.string(&owner->options)
-        || owner->request_id.empty() || owner->sequence_key.empty()
-        || owner->session_id.empty() || owner->reply.empty()) return false;
+        || !runtime::canonical_physical_request_identity(owner->session_id,
+            owner->sequence_key, owner->request_id) || owner->reply.empty()) return false;
     owner->phase = static_cast<PhysicalPhase>(phase);
     owner->output = output != 0;
     const bool speculative = owner->phase == PhysicalPhase::Verify
@@ -186,7 +188,7 @@ bool decode_logical_batch(
     std::uint16_t reserved = 0;
     std::uint32_t count = 0;
     if (!cursor.take(4, &magic) || std::memcmp(magic, "P4LB", 4) != 0
-        || !cursor.u16(&version) || version != 3
+        || !cursor.u16(&version) || version != 4
         || !cursor.u16(&reserved) || reserved != 0
         || !cursor.u32(&count) || count == 0 || count > wire::kMaxRows) {
         return wire::fail("invalid logical batch header", error);
@@ -199,6 +201,7 @@ bool decode_logical_batch(
         std::uint16_t row_reserved = 0;
         std::int32_t token = 0;
         if (!cursor.u64(&row.owner.load_generation) || row.owner.load_generation == 0
+            || !cursor.u64(&row.owner.incarnation) || row.owner.incarnation == 0
             || !cursor.string(&row.owner.request_id)
             || !cursor.string(&row.owner.sequence_key)
             || !cursor.string(&row.owner.session_id)
@@ -216,8 +219,8 @@ bool decode_logical_batch(
             || !cursor.u32(&row.owner.speculative_index)
             || !cursor.u32(&row.owner.speculative_count)
             || !cursor.string(&row.owner.options)
-            || row.owner.request_id.empty() || row.owner.sequence_key.empty()
-            || row.owner.session_id.empty() || row.owner.reply.empty()) {
+            || !runtime::canonical_physical_request_identity(row.owner.session_id,
+                row.owner.sequence_key, row.owner.request_id) || row.owner.reply.empty()) {
             return wire::fail("invalid logical batch row", error);
         }
         row.owner.phase = static_cast<PhysicalPhase>(phase);
@@ -250,7 +253,7 @@ bool decode_physical_set(
     std::uint16_t reserved = 0;
     std::uint32_t count = 0;
     if (!cursor.take(4, &magic) || std::memcmp(magic, "P4PB", 4) != 0
-        || !cursor.u16(&version) || version != 3
+        || !cursor.u16(&version) || version != 4
         || !cursor.u16(&reserved) || reserved != 0
         || !cursor.u32(&count) || count == 0 || count > wire::kMaxRows) {
         return wire::fail("invalid physical set header", error);

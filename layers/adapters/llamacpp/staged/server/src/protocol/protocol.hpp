@@ -36,6 +36,7 @@ enum class Operation : std::uint8_t {
     Tokenized = 20,
     PhysicalRelease = 21,
     PhysicalSettle = 22,
+    BindLoad = 23,
 };
 
 inline constexpr std::uint32_t kKvDirect = 0;

@@ -1,5 +1,8 @@
 # llama.cpp compatibility layer 4308a4f03
 
+> 문서 지위 (2026-09-06): **pin별 호환 기록**. 해당 pin의 패치 설명이다. 현재 pin과 backend 승격은 실제 manifest 및 게이트로 확인한다.
+> 현재 목표·상태·순서는 [실행 로드맵](../../../../../../docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](../../../../../../docs/document-map.md)를 따른다.
+
 This directory is the only Linker-owned patch boundary for the official
 `ggml-org/llama.cpp` commit recorded in `manifest.json`.
 

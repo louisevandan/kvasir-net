@@ -17,9 +17,8 @@
 //! and whether the two ever disagree.
 //!
 //! Deliberately not here: transport, credit accounting, timeouts,
-//! cancellation, reconnection. Those belong to the fragment ledger the plan
-//! calls P4.5, and modelling them before that contract exists would be the same
-//! mistake at a different layer.
+//! cancellation, reconnection. This is a selector/completion model, not the
+//! real event-worker harness required by the distributed batching roadmap.
 
 use super::node::state::{ReadyRows, RequestState};
 use super::scheduler::{Demand, Phase, Scheduler};
@@ -68,6 +67,42 @@ pub(super) struct Fragment {
     pub remaining_stages: usize,
 }
 
+/// Changes a fake stage's returned payload, not the fragment issued to it.
+/// This whole module is test-only; no runtime fault control is exposed.
+#[derive(Clone, Debug)]
+pub(super) enum ArrivalCorruption {
+    Rows(usize),
+    PromptRange(usize, usize),
+}
+
+/// The settlement state, excluding the passage of virtual time. Comparing
+/// this before/after a refused arrival checks the ledger as well as cursors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SettlementSnapshot {
+    requests: Vec<RequestSnapshot>,
+    flights: Vec<Fragment>,
+    issued_rows: usize,
+    settled_rows: usize,
+    next_fragment: u64,
+    issued_ids: Vec<u64>,
+    issued_ranges: Vec<(String, usize, usize)>,
+    issued_decodes: Vec<(String, Option<u32>)>,
+    expected_prompt: std::collections::HashMap<String, usize>,
+    expected_decode: std::collections::HashMap<String, u32>,
+    seen_ids: std::collections::HashSet<u64>,
+    trace: Vec<IssuedBatch>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RequestSnapshot {
+    id: String,
+    prompt_cursor: usize,
+    prompt_issued: usize,
+    outstanding: u32,
+    generated: u32,
+    ready: Option<(Phase, Vec<i32>, u32, u64)>,
+}
+
 /// What one tick issued, for a golden trace.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct IssuedBatch {
@@ -102,9 +137,11 @@ pub(super) struct Simulation {
     seen_ids: std::collections::HashSet<u64>,
     /// Logical time, carried across calls to `run`.
     now: usize,
+    arrival_corruptions: std::collections::HashMap<u64, ArrivalCorruption>,
+    issue_corruptions: std::collections::HashMap<String, usize>,
     /// Skip the `outstanding` increment for decode fragments.
     ///
-    /// The one deliberate way to break this model from outside it, so the
+    /// A deliberate way to break this model from outside it, so the
     /// error path has a test of its own. Every other test here asserts that a
     /// correct run reports nothing, which says nothing about whether a broken
     /// one is reported at all - and the checks that catch it were once
@@ -131,6 +168,8 @@ impl Simulation {
             expected_decode: std::collections::HashMap::new(),
             seen_ids: std::collections::HashSet::new(),
             now: 0,
+            arrival_corruptions: std::collections::HashMap::new(),
+            issue_corruptions: std::collections::HashMap::new(),
             drop_decode_outstanding: false,
             settled_rows: 0,
             issued_rows: 0,
@@ -150,6 +189,84 @@ impl Simulation {
         self.requests.push((id.to_owned(), state));
     }
 
+    pub fn corrupt_next_arrival(&mut self, request: &str, corruption: ArrivalCorruption) {
+        let fragment = self
+            .in_flight
+            .iter()
+            .find(|fragment| fragment.request == request)
+            .expect("fault injection requires an actually issued fragment");
+        assert!(
+            self.arrival_corruptions
+                .insert(fragment.id, corruption)
+                .is_none()
+        );
+    }
+
+    /// Corrupt a planned row count before it reaches the shared issue
+    /// transition. The selected request must still pass the real issue path.
+    pub fn corrupt_next_issue(&mut self, request: &str, rows: usize) {
+        assert!(self.requests.iter().any(|(id, _)| id == request));
+        assert!(
+            self.issue_corruptions
+                .insert(request.to_owned(), rows)
+                .is_none()
+        );
+    }
+
+    /// A subsequent fake-stage delivery contains the original issued data.
+    /// Refusing a malformed delivery never silently repairs it on the next tick.
+    pub fn clear_arrival_corruption(&mut self, request: &str) {
+        let fragment = self
+            .in_flight
+            .iter()
+            .find(|fragment| fragment.request == request)
+            .expect("the refused fragment must still exist");
+        assert!(self.arrival_corruptions.remove(&fragment.id).is_some());
+    }
+
+    pub fn settlement_snapshot(&self) -> SettlementSnapshot {
+        SettlementSnapshot {
+            requests: self
+                .requests
+                .iter()
+                .map(|(id, request)| RequestSnapshot {
+                    id: id.clone(),
+                    prompt_cursor: request.prompt_cursor,
+                    prompt_issued: request.prompt_issued,
+                    outstanding: request.outstanding,
+                    generated: request.generated,
+                    ready: request.ready.as_ref().map(|ready| {
+                        (
+                            ready.phase,
+                            ready.tokens.clone(),
+                            ready.position,
+                            ready.speculative_id,
+                        )
+                    }),
+                })
+                .collect(),
+            flights: self
+                .in_flight
+                .iter()
+                .map(|fragment| {
+                    let mut settled_state = fragment.clone();
+                    settled_state.remaining_stages = 0;
+                    settled_state
+                })
+                .collect(),
+            issued_rows: self.issued_rows,
+            settled_rows: self.settled_rows,
+            next_fragment: self.next_fragment,
+            issued_ids: self.issued_ids.clone(),
+            issued_ranges: self.issued_ranges.clone(),
+            issued_decodes: self.issued_decodes.clone(),
+            expected_prompt: self.expected_prompt.clone(),
+            expected_decode: self.expected_decode.clone(),
+            seen_ids: self.seen_ids.clone(),
+            trace: self.trace.clone(),
+        }
+    }
+
     /// Runs until every request has finished or `budget` ticks have passed.
     /// Returns the number of ticks used.
     /// The logical time is cumulative: a second call continues where the
@@ -163,8 +280,9 @@ impl Simulation {
         let start = self.now;
         for tick in start..start + budget {
             self.now = tick + 1;
-            self.advance(tick);
-            self.issue(tick);
+            if self.advance(tick) {
+                self.issue(tick);
+            }
             self.check(tick);
             // A broken model stops here rather than spending its whole budget
             // re-deriving the same failure. A settlement that finds nothing
@@ -190,20 +308,33 @@ impl Simulation {
             })
     }
 
-    /// Moves every fragment one stage, and settles the ones that reach the tail.
-    fn advance(&mut self, tick: usize) {
+    /// Moves fragments, then treats this tick's arriving group as one model
+    /// settlement event. Validate all candidate effects before committing any.
+    /// This is a model event, not proof of real wire/physical event grouping.
+    fn advance(&mut self, tick: usize) -> bool {
         let mut arrived = Vec::new();
         for fragment in &mut self.in_flight {
-            fragment.remaining_stages -= 1;
+            fragment.remaining_stages = fragment.remaining_stages.saturating_sub(1);
             if fragment.remaining_stages == 0 {
                 arrived.push(fragment.clone());
             }
         }
-        self.in_flight.retain(|fragment| fragment.remaining_stages > 0);
+        if arrived.is_empty() {
+            return true;
+        }
 
-        for fragment in arrived {
-            let Some((_, request)) = self
-                .requests
+        let mut candidates = self.requests.clone();
+        let mut settled_rows = 0;
+        for issued in &arrived {
+            let mut fragment = issued.clone();
+            match self.arrival_corruptions.get(&fragment.id) {
+                Some(ArrivalCorruption::Rows(rows)) => fragment.rows = *rows,
+                Some(ArrivalCorruption::PromptRange(from, to)) => {
+                    fragment.token_range = Some((*from, *to));
+                }
+                None => {}
+            }
+            let Some((_, request)) = candidates
                 .iter_mut()
                 .find(|(id, _)| *id == fragment.request)
             else {
@@ -212,20 +343,42 @@ impl Simulation {
                     rule: "settled fragment belongs to a live request",
                     detail: format!("{} is not admitted", fragment.request),
                 });
-                continue;
+                return false;
             };
+            let before_cursor = request.prompt_cursor;
             // The worker's transition, not a copy of it. Its refusals are
             // this model's violations, so a settlement the worker would
-            // reject over the wire is one this run cannot silently absorb.
+            // reject cannot silently advance this model. Only a candidate is
+            // changed here: a later bad member must also preserve earlier ones.
             if let Err(refusal) = request.settle_fragment(fragment.phase, fragment.rows) {
                 self.violations.push(Violation {
                     tick,
                     rule: "a settlement is one the worker would accept",
                     detail: format!("{}: {}", fragment.request, refusal.as_str()),
                 });
-                continue;
+                return false;
             }
-            self.settled_rows += fragment.rows;
+            if fragment.rows != issued.rows
+                || fragment.token_range != issued.token_range
+                || (fragment.phase == Phase::Prefill
+                    && fragment.token_range != Some((before_cursor, request.prompt_cursor)))
+            {
+                self.violations.push(Violation {
+                    tick,
+                    rule: "a returned fragment matches its issued range",
+                    detail: format!(
+                        "{}: fragment {} issued {:?}/{} rows, returned {:?}/{} rows",
+                        fragment.request,
+                        fragment.id,
+                        issued.token_range,
+                        issued.rows,
+                        fragment.token_range,
+                        fragment.rows,
+                    ),
+                });
+                return false;
+            }
+            settled_rows += fragment.rows;
             // A settled fragment produced a token. The worker reads that from
             // the tail's outcome; here it is modelled, which is why it is on
             // this side of the shared transition rather than inside it.
@@ -250,6 +403,16 @@ impl Simulation {
                 None
             };
         }
+        // Nothing below can refuse. Request progress, fragment ownership and
+        // row accounting move together only after every arrival was accepted.
+        self.requests = candidates;
+        self.settled_rows += settled_rows;
+        for fragment in &arrived {
+            self.arrival_corruptions.remove(&fragment.id);
+        }
+        self.in_flight
+            .retain(|fragment| fragment.remaining_stages > 0);
+        true
     }
 
     /// Plans one batch from whatever is ready and sends it into the pipeline.
@@ -279,7 +442,7 @@ impl Simulation {
         if demands.is_empty() {
             return;
         }
-        let Ok(allocations) = self.scheduler.plan_with_physical_capacity(
+        let Ok(policy) = self.scheduler.prepare_plan_with_physical_capacity(
             &demands,
             self.shape.batch_capacity,
             self.shape.physical_capacity,
@@ -295,16 +458,55 @@ impl Simulation {
             return;
         };
 
-        let mut rows = Vec::new();
-        let mut issue_faults = Vec::new();
-        let drop_outstanding = self.drop_decode_outstanding;
-        let expected_prompt = &mut self.expected_prompt;
-        let expected_decode = &mut self.expected_decode;
-        let seen_ids = &mut self.seen_ids;
-        for allocation in allocations {
+        // A plan is not an accepted issue. The same transition as the worker
+        // validates all members on candidates before any request, fragment id,
+        // trace or row accounting is committed. The selector's fairness delta
+        // is a candidate too, and is accepted with the same successful issue.
+        let mut candidates = self.requests.clone();
+        let mut prepared = Vec::new();
+        for mut allocation in policy.allocations().iter().cloned() {
             if allocation.rows == 0 {
                 continue;
             }
+            if let Some(rows) = self.issue_corruptions.get(&allocation.request_id) {
+                allocation.rows = *rows;
+            }
+            let (_, request) = candidates
+                .iter_mut()
+                .find(|(id, _)| *id == allocation.request_id)
+                .expect("allocation names an admitted request");
+            let from = request.prompt_issued;
+            if let Err(refusal) = request.issue_fragment(allocation.phase, allocation.rows) {
+                self.violations.push(Violation {
+                    tick,
+                    rule: "an issue is one the worker would accept",
+                    detail: format!("{}: {refusal}", allocation.request_id),
+                });
+                return;
+            }
+            // Deliberate test-only corruption follows the accepted shared
+            // transition; it must not become another implementation of issue.
+            if allocation.phase != Phase::Prefill && self.drop_decode_outstanding {
+                request.outstanding -= 1;
+            }
+            let token_range =
+                (allocation.phase == Phase::Prefill).then_some((from, request.prompt_issued));
+            prepared.push((allocation, token_range));
+        }
+        self.scheduler
+            .validate_prepared(&policy)
+            .expect("sole selector owner retained prepared revision");
+        self.requests = candidates;
+        self.scheduler
+            .commit_plan(policy)
+            .expect("validated policy remained unchanged during candidate validation");
+
+        let mut rows = Vec::new();
+        let mut issue_faults = Vec::new();
+        let expected_prompt = &mut self.expected_prompt;
+        let expected_decode = &mut self.expected_decode;
+        let seen_ids = &mut self.seen_ids;
+        for (allocation, token_range) in prepared {
             let stages = self.shape.stages;
             let id = self.next_fragment;
             self.next_fragment += 1;
@@ -319,14 +521,9 @@ impl Simulation {
             }
             let (_, request) = self
                 .requests
-                .iter_mut()
+                .iter()
                 .find(|(name, _)| *name == allocation.request_id)
                 .expect("allocation names an admitted request");
-            let token_range = (allocation.phase == Phase::Prefill).then(|| {
-                let from = request.prompt_issued;
-                request.prompt_issued += allocation.rows;
-                (from, request.prompt_issued)
-            });
             // Compared here rather than in `check`, because here it is one
             // comparison and there it was a rescan of every row ever issued,
             // per request, per tick.
@@ -364,9 +561,6 @@ impl Simulation {
                 *expected += 1;
                 self.issued_decodes
                     .push((allocation.request_id.clone(), position));
-            }
-            if allocation.phase == Phase::Prefill || !drop_outstanding {
-                request.outstanding += 1;
             }
             self.issued_rows += allocation.rows;
             self.issued_ids.push(id);
@@ -410,7 +604,6 @@ impl Simulation {
                 ),
             });
         }
-
 
         for (id, request) in &self.requests {
             // The settled cursor trails the issued one and neither passes the prompt.
@@ -500,8 +693,6 @@ impl Simulation {
                     ),
                 });
             }
-
-
         }
 
         self.violations.extend(found);

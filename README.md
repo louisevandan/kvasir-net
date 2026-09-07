@@ -1,7 +1,27 @@
 # P4
 
+## 현재 개발 목표와 새 세션 시작점
+
+최우선 목표는 **초대형 모델을 여러 물리 컴퓨터의 분산 노드에서 실행하고,
+강한 연속 요청 웨이브에 정상 응답을 내면서 유효 생성 TPS와 GPU 활용을 최대화하는 것**이다.
+단위 시험·작은 모델·한 호스트의 여러 프로세스는 최종 성과 증명이 아니다.
+
+1. [새 세션 규칙](AGENTS.md)
+2. [현재 상태와 전체 실행 로드맵](docs/distributed-batching-roadmap.md)
+3. [결정론적 시험·실기 웨이브 수용 규약](docs/distributed-batching-verification.md)
+4. [P4·어댑터·llama.cpp 계층 격리 계약](docs/layer-isolation-contract.md)
+5. [전체 문서 안내도와 권위](docs/document-map.md)
+
+최초 감사 기준은 `a9e1967fc`다. 그 뒤 미커밋 구현의 완료 범위와 다음 행동은
+[로드맵의 최신 진행 기록](docs/distributed-batching-roadmap.md)을 확인한다. 이 색인에 상태표를 복제하지 않는다.
+과거 U/P 단계표·성공 수치·Chain/Hop 설명을 현재 구현의 완료 증거로 사용하지 않는다.
+
 The communication layer for distributed inference. Agents carry work between
 machines; a concrete adapter runs it.
+
+llama.cpp 어댑터와 CUDA·CPU·Metal backend는 같은 추상층이 아니다.
+각 층의 책임과 업데이트 수정 허용 범위는 [계층 격리 계약](docs/layer-isolation-contract.md)이 소유하며,
+include 수뿐 아니라 상태 변경 권한·public 타입·간접 링크·codec·의미 회귀로 검증한다.
 
 One process type: the agent. There is no controller and no node process — a
 node lives inside an agent, and an agent reaching another agent is the same
@@ -13,35 +33,37 @@ OUTER ──▶ entry agent ──┬──▶ agent ──▶ node ──▶ ad
                         └──▶ agent ──▶ node ──▶ adapter ──▶ backend
 ```
 
-## Attaching a backend
+## Backend boundary
 
-This is the whole of it:
+The backend-specific implementation belongs behind the adapter boundary.
+The following registry sketch describes the older service integration; the
+current event implementation and its LOAD/identity obligations are mapped in
+the current roadmap. Registering a factory alone does not prove integration.
 
 ```rust
 // entrypoints/agent/src/adapters/mod.rs
 registry.register_fn("llamacpp", |node| Arc::new(LlamaCpp::new(node)));
 ```
 
-plus one implementation of [`p4_adapter::Adapter`](layers/adapters/adapter). Nothing
-else changes — not the wire, not the queue, not the worker, not the node, not
-the chain. See [layers/adapters/README.md](layers/adapters/README.md) for what
-an adapter owes and for the backend HTTP contracts.
+See [layers/adapters/README.md](layers/adapters/README.md) for the scoped interface
+guide. A new backend must also pass the applicable current conformance and
+worker tests; native engine capability is not scheduling policy.
 
 ## Running it
 
-```bash
-p4-agent 0.0.0.0:52001 THIS_HOST  # one per machine
-p4-drive 0.0.0.0:52003 HOST_A:52001,HOST_B:52001 1000 64 mock-instant THIS_HOST:52003
+```text
+p4-agent 0.0.0.0:52001 tcp://THIS_HOST:52001
+p4-event-drive CONFIG.json ARTIFACT.json
 ```
 
 The second argument is what a process calls itself, and every reply is
 addressed to it — across machines it has to be an address the others can reach.
 
-`P4_AGENT_STATS=1` makes an agent print, once a second, its lane depths, its
-node depths, and counts for every step at which a frame could go missing. Two
-of those numbers answer the question this layer exists to make answerable: a
-shallow agent queue beside a deep node queue puts a slowdown below the adapter,
-and the reverse puts it here.
+`CONFIG.json` must describe the actual fleet/model/workload. The
+[development harness](test/benchmarks/p4-4node/README.md) generates existing
+development configurations; it does not yet enforce the final multi-host wave
+contract. `P4_AGENT_SERVICE_RUNTIME` and `p4-drive` select the older service
+comparison path. Its queue statistics are not proof of the default event path.
 
 ## Layout
 
@@ -52,12 +74,17 @@ and the reverse puts it here.
 | [`layers/service`](layers/service) | Body vocabulary, the agent's own duties, and the adapter registry. |
 | [`layers/adapters`](layers/adapters) | The contract and everyone who implements it: [`adapter/`](layers/adapters/adapter) is what a node asks of a backend, with no dependencies and no backend names; the rest are backends. `mock` ships in every build. |
 | [`entrypoints/agent`](entrypoints/agent) | The process. |
-| [`tools/drive`](tools/drive) | Drives a fleet and reports a verdict. |
+| [`tools/event-drive`](tools/event-drive) | Current event-path development driver. |
+| [`tools/drive`](tools/drive) | Historical service-path comparison driver. |
 
 ## Documents
 
 | Goal | File |
 | --- | --- |
+| 현재 목표·감사 상태·개발 순서의 단독 소유 | [docs/distributed-batching-roadmap.md](docs/distributed-batching-roadmap.md) |
+| 시험 제약·mutation·다중 머신 강한 웨이브·정상 응답·성능 승인 | [docs/distributed-batching-verification.md](docs/distributed-batching-verification.md) |
+| P4/어댑터 층별 책임·native 경계·잦은 llama.cpp 업데이트 충격 흡수 | [docs/layer-isolation-contract.md](docs/layer-isolation-contract.md) |
+| 모든 문서의 지위·계약 소유·새 세션 읽기 순서 | [docs/document-map.md](docs/document-map.md) |
 | What the layer is and why it is shaped this way | [docs/overview.md](docs/overview.md) |
 | Every crate, what it holds, and what is not built | [docs/implementation.md](docs/implementation.md) |
 | The wire and the message vocabulary | [docs/api.md](docs/api.md) |
@@ -70,11 +97,11 @@ and the reverse puts it here.
 | Decisions, and the defects behind them | [docs/internals.md](docs/internals.md) |
 | What crosses the adapter boundary, and what was measured | [docs/adapter-boundary.md](docs/adapter-boundary.md) |
 | llama.cpp stage memory ownership and legal graph cuts | [docs/llamacpp-stage-memory.md](docs/llamacpp-stage-memory.md) |
-| Adapter restructure plan: defect ledger, target layering, phases and acceptance | [docs/adapter-restructure-plan.md](docs/adapter-restructure-plan.md) |
+| Historical U/P backlog, defect history and contracts; not current execution order | [docs/adapter-restructure-plan.md](docs/adapter-restructure-plan.md) |
 | Adapter batching layers: ledger, admission, composition, proof, and KV/persistence coupling | [docs/adapter-batching-layers.md](docs/adapter-batching-layers.md) |
 | KV persisted-state store convention: record identity, directory layout, lifetime | [docs/kv-state-store-convention.md](docs/kv-state-store-convention.md) |
-| Continuous inference refactor status, evidence, and remaining gates | [docs/continuous-inference-refactor-handoff.md](docs/continuous-inference-refactor-handoff.md) |
-| The 2026-08-21 build plan (historical; superseded by the adapter restructure plan) | [docs/plan.md](docs/plan.md) |
+| Historical pre-event refactor handoff; not current status | [docs/continuous-inference-refactor-handoff.md](docs/continuous-inference-refactor-handoff.md) |
+| Historical build plan; current order belongs to the distributed batching roadmap | [docs/plan.md](docs/plan.md) |
 | Running it and driving a fleet | [docs/usage.md](docs/usage.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 | Distributed mock test plan | [docs/distributed-mock-test-plan.md](docs/distributed-mock-test-plan.md) |

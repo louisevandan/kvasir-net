@@ -13,6 +13,21 @@
 
 namespace staged::server {
 
+protocol::Frame Session::handle_bind_load(const protocol::Frame & request) {
+    if (request.body.size() != 8 || runtime_.state() != runtime::State::Ready) {
+        return error("BIND_LOAD rejected: invalid state or payload");
+    }
+    std::uint64_t generation = 0;
+    for (unsigned i = 0; i < 8; ++i) generation |= std::uint64_t(request.body[i]) << (i * 8U);
+    std::uint32_t capacity = 1;
+#ifdef P4_STAGED_WITH_LLAMA
+    if (llama_runtime_ != nullptr) capacity = llama_runtime_->sequence_capacity();
+#endif
+    std::string detail;
+    if (!physical_authority_.bind(generation, capacity, &detail)) return error(detail);
+    return protocol::Frame::make(protocol::Operation::BindLoad, request.body);
+}
+
 #ifdef P4_STAGED_WITH_LLAMA
 namespace {
 
@@ -67,6 +82,12 @@ protocol::Frame physical_error(
         std::vector<std::uint8_t>(detail.begin(), detail.end()));
 }
 
+runtime::PhysicalAdmission admission(const llama_runtime::PhysicalOwner & owner) {
+    return {{owner.load_generation, owner.incarnation, owner.sequence_id,
+        owner.session_id, owner.sequence_key},
+        owner.phase == llama_runtime::PhysicalPhase::Prefill && owner.position == 0};
+}
+
 } // namespace
 #endif
 
@@ -76,9 +97,15 @@ protocol::Frame Session::handle_physical_settle(
     (void) request;
     return error("CAPABILITY_UNAVAILABLE: llama runtime is unavailable");
 #else
-    if (llama_runtime_ == nullptr || !llama_runtime_->loaded()
-        || request.body.size() < 16 || (request.body.size() - 16) % 4 != 0) {
+    if (llama_runtime_ == nullptr || !llama_runtime_->loaded()) {
         return error("PHYSICAL_SETTLE rejected: invalid runtime or payload");
+    }
+    runtime::PhysicalControlIdentity control;
+    std::string detail;
+    if (!runtime::decode_physical_control_identity(request.body, &control, &detail)) return error(detail);
+    const auto prefix = control.prefix_bytes;
+    if (request.body.size() - prefix < 12 || (request.body.size() - prefix - 12) % 4 != 0) {
+        return error("PHYSICAL_SETTLE rejected: truncated identity-bound payload");
     }
     auto read_u32 = [&](std::size_t offset) {
         return static_cast<std::uint32_t>(request.body[offset])
@@ -86,30 +113,39 @@ protocol::Frame Session::handle_physical_settle(
             | static_cast<std::uint32_t>(request.body[offset + 2]) << 16U
             | static_cast<std::uint32_t>(request.body[offset + 3]) << 24U;
     };
-    const auto id = read_u32(0);
-    const auto retain_from = read_u32(4);
-    const auto replay_position = read_u32(8);
-    const auto replay_count = read_u32(12);
-    if (request.body.size() != 16ULL + 4ULL * replay_count
+    const auto id = control.identity.slot;
+    const auto retain_from = read_u32(prefix);
+    const auto replay_position = read_u32(prefix + 4);
+    const auto replay_count = read_u32(prefix + 8);
+    if (request.body.size() != prefix + 12ULL + 4ULL * replay_count
+        || retain_from > std::uint32_t(std::numeric_limits<llama_pos>::max())
         || (replay_count == 0 && replay_position != 0)
         || (replay_count != 0
             && static_cast<std::uint64_t>(replay_position) + replay_count != retain_from)
         || id > static_cast<std::uint32_t>(std::numeric_limits<llama_seq_id>::max())) {
         return error("PHYSICAL_SETTLE rejected: inconsistent settlement");
     }
-    std::string detail;
+    std::vector<std::uint8_t> cached;
+    const auto decision = physical_authority_.prepare_control(control, false, request.body, &cached, &detail);
+    if (decision == runtime::PhysicalAuthority::ControlDecision::Rejected) return error(detail);
+    if (decision == runtime::PhysicalAuthority::ControlDecision::Replay) {
+        return protocol::Frame::make(protocol::Operation::PhysicalSettle, std::move(cached));
+    }
     std::vector<llama_token> proposal;
     const auto rollback_from = replay_count == 0 ? retain_from : replay_position;
     if (!llama_runtime_->settle_physical_sequence(
             static_cast<llama_seq_id>(id), static_cast<llama_pos>(rollback_from),
             replay_count != 0, &proposal, &detail)) {
+        physical_authority_.fence();
         return error("PHYSICAL_SETTLE failed: " + detail);
     }
-    if (proposal.size() > std::numeric_limits<std::uint32_t>::max()) {
+    if (proposal.size() > std::numeric_limits<std::uint32_t>::max()
+        || proposal.size() > (runtime::PhysicalAuthority::max_control_bytes - prefix - 4) / 4) {
+        physical_authority_.fence();
         return error("PHYSICAL_SETTLE failed: proposal is too large");
     }
-    std::vector<std::uint8_t> body;
-    body.reserve(4 + proposal.size() * 4);
+    std::vector<std::uint8_t> body(request.body.begin(), request.body.begin() + prefix);
+    body.reserve(prefix + 4 + proposal.size() * 4);
     const auto count = static_cast<std::uint32_t>(proposal.size());
     for (unsigned shift = 0; shift < 32; shift += 8) {
         body.push_back(static_cast<std::uint8_t>(count >> shift));
@@ -120,6 +156,7 @@ protocol::Frame Session::handle_physical_settle(
             body.push_back(static_cast<std::uint8_t>(value >> shift));
         }
     }
+    physical_authority_.commit_control(control, false, request.body, body);
     return protocol::Frame::make(protocol::Operation::PhysicalSettle, std::move(body));
 #endif
 }
@@ -130,22 +167,29 @@ protocol::Frame Session::handle_physical_release(
     (void) request;
     return error("CAPABILITY_UNAVAILABLE: llama runtime is unavailable");
 #else
-    if (llama_runtime_ == nullptr || !llama_runtime_->loaded()
-        || request.body.size() <= 4) {
+    if (llama_runtime_ == nullptr || !llama_runtime_->loaded()) {
         return error("PHYSICAL_RELEASE rejected: invalid runtime or payload");
     }
-    const std::uint32_t id = static_cast<std::uint32_t>(request.body[0])
-        | static_cast<std::uint32_t>(request.body[1]) << 8U
-        | static_cast<std::uint32_t>(request.body[2]) << 16U
-        | static_cast<std::uint32_t>(request.body[3]) << 24U;
-    const std::string key(request.body.begin() + 4, request.body.end());
     std::string detail;
+    runtime::PhysicalControlIdentity control;
+    if (!runtime::decode_physical_control_identity(request.body, &control, &detail)
+        || control.prefix_bytes != request.body.size()) return error("PHYSICAL_RELEASE rejected: invalid identity-bound payload");
+    const auto id = control.identity.slot;
+    const auto & key = control.identity.key;
+    std::vector<std::uint8_t> cached;
+    const auto decision = physical_authority_.prepare_control(control, true, request.body, &cached, &detail);
+    if (decision == runtime::PhysicalAuthority::ControlDecision::Rejected) return error(detail);
+    if (decision == runtime::PhysicalAuthority::ControlDecision::Replay) {
+        return protocol::Frame::make(protocol::Operation::PhysicalRelease, std::move(cached));
+    }
     if (id > static_cast<std::uint32_t>(std::numeric_limits<llama_seq_id>::max())
         || !llama_runtime_->release_physical_sequence(
             key, static_cast<llama_seq_id>(id), &detail)) {
+        physical_authority_.fence();
         return error("PHYSICAL_RELEASE failed: " + detail);
     }
-    return status(protocol::Operation::PhysicalRelease, "SEQUENCE_RELEASED");
+    physical_authority_.commit_control(control, true, request.body, request.body);
+    return protocol::Frame::make(protocol::Operation::PhysicalRelease, request.body);
 #endif
 }
 
@@ -163,6 +207,7 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     auto fail = [&](const std::string & detail) {
         auto failure = detail;
         if (executed) {
+            physical_authority_.fence();
             llama_runtime_->quarantine_physical_memory();
             failure += ";memory_dirty=1;action=reload";
         }
@@ -191,6 +236,14 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     std::vector<llama_runtime::PhysicalOwner> owners;
     owners.reserve(input.size());
     for (const auto & value : input) owners.push_back(value.owner);
+    std::vector<runtime::PhysicalAdmission> identities;
+    identities.reserve(owners.size());
+    for (const auto & owner : owners) identities.push_back(admission(owner));
+    runtime::PhysicalAuthority::RowsPlan owner_plan;
+    if (!physical_authority_.prepare_rows(identities, &owner_plan, &detail)) return fail(detail);
+    // Once a native attempt starts, even a failed response may follow KV or
+    // checkpoint side effects. Never silently return to an unowned empty slot.
+    executed = true;
     if (!llama_runtime_->execute_first_batch(rows, owners, &captured, &detail)) {
         return fail(detail);
     }
@@ -244,6 +297,7 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
             body.size());
     }
     if (!runtime_.finish_hop().ok()) return fail("session transition failed");
+    physical_authority_.commit_rows(owner_plan);
     return protocol::Frame::make(protocol::Operation::PhysicalResult, std::move(body));
 #endif
 }
@@ -295,6 +349,7 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
     auto fail = [&](const std::string & detail) {
         auto failure = detail;
         if (executed) {
+            physical_authority_.fence();
             llama_runtime_->quarantine_physical_memory();
             failure += ";memory_dirty=1;action=reload";
         }
@@ -307,6 +362,12 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
     if (!llama_runtime::decode_physical_set(request.body, &input, &detail)) {
         return fail(detail);
     }
+    std::vector<runtime::PhysicalAdmission> identities;
+    for (const auto & capsule : input) {
+        for (const auto & owner : capsule.owners) identities.push_back(admission(owner));
+    }
+    runtime::PhysicalAuthority::RowsPlan owner_plan;
+    if (!physical_authority_.prepare_rows(identities, &owner_plan, &detail)) return fail(detail);
     const auto step_parsed = step_clock::now();
     std::int64_t decode_us = 0;
     std::int64_t sample_us = 0;
@@ -319,6 +380,7 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
         result.owners = std::move(capsule.owners);
         step_rows += result.owners.size();
         const auto capsule_began = step_clock::now();
+        executed = true;
         if (!llama_runtime_->execute_physical(
                 capsule.execution, result.owners, &result.execution, &detail)) return fail(detail);
         const auto capsule_executed = step_clock::now();
@@ -346,6 +408,7 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
             body.size());
     }
     if (!runtime_.finish_hop().ok()) return fail("session transition failed");
+    physical_authority_.commit_rows(owner_plan);
     return protocol::Frame::make(protocol::Operation::PhysicalResult, std::move(body));
 #endif
 }

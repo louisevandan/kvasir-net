@@ -1,5 +1,11 @@
 # llama.cpp, where it is llama.cpp's alone
 
+현재 native/llama/backend의 책임과 잦은 upstream 변경을 흡수할 강제 경계는
+[계층 격리 계약](../../../docs/layer-isolation-contract.md)을 따른다.
+
+> 문서 지위 (2026-09-06): **구성요소 안내**. 해당 경로의 API·구조 안내다. 과거 service 경로와 현재 event 경로는 실제 호출자로 구분한다.
+> 현재 목표·상태·순서는 [실행 로드맵](../../../docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](../../../docs/document-map.md)를 따른다.
+
 | Path | What it is |
 | --- | --- |
 | `served/` | `Distribution::Internal`. Crate `p4-llamacpp-served`. Stock `llama-server` over its HTTP surface — one process holding the whole model, one entry point, so a chain over it is one link. Starts and stops that process when the plan carries a `start`. |

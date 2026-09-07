@@ -1,5 +1,8 @@
 # Current non-MTP options four-node regression
 
+> 문서 지위 (2026-09-06): **날짜·환경 한정 증거**. 본문 날짜/커밋/모델/토폴로지의 관측이다. 현재 구현이나 다른 분산 환경의 완료 증거가 아니다.
+> 현재 목표·상태·순서는 [실행 로드맵](../../../../../../../docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](../../../../../../../docs/document-map.md)를 따른다.
+
 The CUDA stage server was rebuilt after the request sampler extension
 (`grammar_lazy`, `grammar_triggers`, `preserved_tokens`, and
 `generation_prompt`) and copied to the test nodes without compiling there.
