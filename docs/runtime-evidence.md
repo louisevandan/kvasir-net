@@ -3,6 +3,15 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: 실제 broker/node/worker 순환 포화 — 수정 전 필수 RED
+
+`f13e2560b`의 운영 코드에 actual actor 시험 두 개와 dev 배선만 추가했다. 정상 SESSION/추론14입력에서
+cap1은 OUTER를 비워도 정지했고 cap8 동일 입력은 통과했다. 별도 외부 복구 뒤 입력/출력/native KV/
+해제 보존 검사는 통과했지만 정상 진행은 실패다. 전체 Rust1254/1/7 ignored,57summary·cargo101이며
+유일한 실패는 cap1의 마지막 정상 진행 단언이다. 실행 소스400개·EXE·원문·시간/소유/복구 한계는
+[actor 순환 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)가 소유한다.
+운영 수정과 섞지 않은 RED 체크포인트이며 B2/B3 완료·remote/GPU 실기·최종 성능 증명이 아니다.
+
 ## 2026-09-07: 외부 감수 대조 — 원자료 Git 심사와 작업 범위 점검
 
 감수의1236/9/7은 첫 WIP 시점이며 이후 `96c90f99e`의1253/0/7과 구분한다. 이번 작은 정리는

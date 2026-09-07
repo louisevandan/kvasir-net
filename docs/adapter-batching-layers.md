@@ -196,7 +196,10 @@ stop/eos/length 종료, 같은 run 수명** 계약이다. OUTPUT 없는 실패·
 correlation/deadline 대조를 끝낸 뒤, **전체 ReplySpec이 같은 경우만** 영수증을 묶는다. 같은 OUTER라도
 correlation/deadline이 다르면 별개 통지다. 슬롯 반환·pending 제거와 notification intent를 commit하고,
 emit 실패 시 아직 발행하지 못한 intent를 남기고 fence한다. 이미 발행한 통지는 되돌리거나 다시 native
-해제하지 않는다. 현재 Full은 대기·재시도, Closed/ID exhaustion은 보존·fence이지 재연결 복구가 아니다.
+해제하지 않는다. commit 전 ID 의무 검사에서 여력이 부족하거나 합계가 넘으면 반환 후보 전체를
+거부하고 요청·원장·예약·효과를 보존한다. 이미 commit된 효과의 발행에서 Full은 동일 송신물
+대기·재시도이며, Closed 또는 사후 ID 발급 실패는 미발행 intent 보존·fence다. 사전 거부의
+부분 적용이나 재연결 복구로 해석하지 않는다.
 
 같은 connection generation에서 Sender를 다시 만들거나 Worker/load를 재시작하는 freshness는 아직
 없다. 동시 동일 request_id를 여러 OUTER가 쓰는 것도 현재 request_key 범위에서 지원하지 않는다.
@@ -574,6 +577,10 @@ Full에서 worker 스레드를 점유한다. capacity 통지를 추가하는 것
   남은 ID 공간에서 약속된 발급 개수를 제외한 몫만 쓰며, ACK는 검증된 whole-group 예약을 실제
   단조 ID와 고정 송신물로 전환한다. 합계 초과·overflow·잘못된 ACK는 예약/slot/원장을 소비하지 않는다.
   native 불확실 결과에서 예약을 반환하거나 ACK 도착 때 처음 일반 용량을 요구하지 않는다.
+  현재 `worker/obligations.rs::Worker::ensure_event_id_obligations`는 queued 효과·활성 후속 관측·
+  미래 해제 영수증·보류 진단의 **ID 발급 개수**를 대조한다. count/byte 공간 예약은 아니다.
+  일반 발행은 prepare_issue와 native 호출 전에 검사하며, native 시도 뒤 결과 불명은 사전
+  거부로 되돌리지 않고 Uncertain으로 유지한다.
 - **보존 수명**: 예산 원장·고정 outbox·ID 여력은 load가 아니라 Worker 수명에 속한다.
   LOAD/UNLOAD가 미전송 구세대 응답을 `clear`로 지우면 실패다. UNLOAD의 성공 응답은 native 정리
   전에 준비·예약하고, 성공 뒤에도 원래 원인의 불변 송신물로 남긴다. 동적 HELLO를 읽어야 만드는
@@ -587,6 +594,12 @@ Full에서 worker 스레드를 점유한다. capacity 통지를 추가하는 것
   단일 입력 FIFO 앞의 새 요청이 Full로 보류된 상황은 이미 adapter에 수용된 ACK와 다르다.
   유한 parked queue만으로 무제한 새 입력 뒤 ACK의 진행을 증명하지 않는다. 반환 입력의 예약된
   수용 경로와 broker/edge credit를 함께 검증해야 end-to-end 포화 해소라고 부를 수 있다.
+  예약은 수신 측 실제 공간에 근거하고 어댑터가 원인 작업·필수 반환 의무를 결속한다. 중립 전달층은
+  opaque 권한의 대상·세대·소유·count/bytes만 이행하며 llama content-type을 해석하지 않는다.
+  현재 broker의 `(source, correlation)` 순서를 유지한다. 후속 ACK가 앞선 동일 순서 영역의
+  송신물을 추월하게 하거나 sender가 쓴 EventClass::Control을 예약 권한으로 인정하지 않는다.
+  반환 credit은 수용 공간의 책임 이전이지 KV 정산 증거가 아니다. 이는 목표 계약의 제약이며
+  새 grant API/wire가 구현됐다는 뜻이 아니다.
 - **제어 실행 권위**: head의 pending Release/Settlement는 등록만으로 완료 권한이 되지 않는다.
   `Queued → LocalApplied → ForwardAccepted`에 해당하는 단조 상태를 가지며, 정상 ACK는 정확한
   load/session/key/slot/incarnation/operation과 마지막 상태를 모두 만족해야 적용한다. local native

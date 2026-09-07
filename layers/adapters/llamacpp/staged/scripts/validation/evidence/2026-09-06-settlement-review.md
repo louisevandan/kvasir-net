@@ -2617,3 +2617,79 @@ Full이 되면 C3을 보류하며 C4~C6으로 나머지 입력 공간을 채우�
 검사할 질문이다. 강제 종료나 시험이 외부에서 여유를 주는 것으로 정상 해제 완료를 대체하지 않는다.
 아직 이 순서를 실제 EventNode·broker·Worker로 실행하지 않았으며, 순수 PREFILL 웨이브만으로
 같은 상태에 도달한다고 증명한 것도 아니다. 구현 전에 도달성·정상 진행 oracle부터 고정한다.
+
+## 실제 actor 순환 반례 — 수정 전 봉인 (2026-09-07)
+
+### 실행 전 고정한 범위와 oracle
+
+기준 HEAD `f13e2560b`에 test-only actor_ring.rs와 Cargo dev 배선만 추가한다. 운영 코드는
+바꾸지 않는다. 두 시험은 같은14개 원본 입력(SESSION8개, 정상 추론6개)을 실제 broker/node/
+adapter/worker에 전달한다. native Frame 처리와 유한 지연만 fake이며 post-LOAD 상태에서 시작한다.
+이것은 자연어/llama/GPU/remote 실기 또는 모든 스케줄에 대한 교착 자유 증명이 아니다.
+
+| 필수 시험 | 수정 전 예상 | 독립 판정 |
+| --- | --- | --- |
+| `event_actor_ring_saturated_normal_ingress_must_progress_without_external_dequeue` | 마지막 정상 진행 단언 RED | cap1의 실제 보류 소유자/Full, genuine RELEASED의 pending operation 일치, OUTER 계속 배출, native 진행0 |
+| `event_actor_ring_same_normal_ingress_completes_with_capacity_eight` | GREEN | 같은 입력·동일 출력 oracle, 외부 completion dequeue 없이 완주 |
+
+cap1의 보류 소유자 표와 유한 입력 순서는 바로 앞 후보 절 그대로다. 시험은 실제 수용/Full 반환의
+전체 Event 동등성, source/target/load/session/slot/incarnation/operation, R 슬롯 미반환과 H1~H4
+미수용 상태를 대조한다. 단순 완료 수만 검사하지 않는다. 별도 외부 복구 뒤에는 입력14개 전부
+실제 adapter에서 정확히 한 번 수용, 요청별 token1000/position1/text/stop=length, native 입력
+[(0,10)] 한 번, 두 stage의 각 KV 해제 한 번과 잔량0, SESSION_READY8개를 검사한다.
+
+**정상 진행과 외부 복구는 분리**한다. 공정한 node polling100회 뒤 정상 완료 여부를 먼저 고정한다.
+실제 OS worker와1ms 타이머를 쓰므로100회는 논리 시계 독립 증명이 아니다. 실제 대기 고리의 소유자
+관측·native 상태 불변·OUTER 배출 및 정상 대조를 함께 읽는다. 이후 알려진 C1~C6 SESSION_READY만
+최대6개 외부에서 꺼내 원본 그대로 broker로 전달할 수 있다. 다른 correlation의 PHYSICAL/TAIL/
+관측을 꺼내 순서를 바꾸지 않는다. 이 복구가 성공해도 정상 진행 RED를 GREEN으로 바꾸지 않는다.
+보강 전 외부 감수의 “C1 한 개로 복구”를 이번 소스의 관측으로 인용하지 않는다.
+
+native gate의10초 만료는 sticky 실패이며 각 poll/완료에서 별도 fixture-expired 단언으로 검사한다.
+setup/finish3초 초과, gate 만료, EventNode 종료 또는 컴파일 실패는 예정된 liveness RED가 아니다.
+Drop은 모든 native gate를 먼저 열고 실제 adapter worker를 join하지만 graceful 분산 Drain은 아니다.
+
+### 검증 묶음과 시행착오 점검
+
+요청한3라운드 상한 중 앞 실행12가 첫째, 이번13이 둘째다. 실행 전에 위 정상·포화·복구 oracle,
+입력 및 문서 형식을 고정하고 Rust/Cargo/fixture와 문서 소스를 봉인한다. 전체 실행 명령은
+`cargo test --workspace --no-fail-fast --locked`이며 actor 두 시험도 기본 목록에 포함된다.
+예상 밖 실패는 분리 기록하고, 기대값을 바꿔 같은 묶음을 다시 돌리지 않는다. 이번은 운영 fix가
+없으므로 fix 제거 변이를 주장하지 않는다. 원자료는 무시 경로의 로컬 증거로 보존하고 Git에는
+회귀 시험·필수 배선·계약·이 기록만 넣는다. 장기 외부 재열람은 계속 미충족이다.
+
+### 두 번째 라운드 실제 결과 — 예정된 RED 한 건
+
+`target/capacity-slice-20260907-13/`에400개 Rust/Cargo/fixture 입력을 봉인했다. source SHA256은
+`4a353e02335162a53371df334f8bd55b53742745392178cfb99ec1dc8ddb49eb`다. 실행 전후 입력 목록과
+전체 bytes/hash가 동일하며 함께 읽힌 변경 문서4개의 SHA256도 전후 동일했다. 종료 뒤 이 결과
+기록과 색인만 추가한다. 로그는 `workspace.log`, 집계는 `workspace-result.json`이다.
+
+- 명령: `cargo test --workspace --no-fail-fast --locked`.
+- 시간: 2026-09-07 04:29:42~04:32:06 UTC. cargo exit101,57summary.
+- 전체 **1254 passed/1 failed/7 ignored**. staged lib480/1, 실행2.21초.
+- 유일한 실패는 위 cap1 시험의 `actor_ring.rs` 마지막 `normal_progress` 단언이다. cap8 대조는 PASS.
+- native gate 만료·setup/finish timeout·EventNode 종료·컴파일 오류는 없었다. 복구 뒤 전체14입력/
+  6결과/native 해제 oracle는 마지막 단언 전에 전부 통과했다. 외부 복구는 실제로 C1~C6 **6개**였다.
+- 로그 SHA256: `a2889eef868a1b68ab732df88c7afd46ff4aa38416b0ad31848886eb318f9ce7`.
+- 실제 staged lib 재컴파일 로그와 실행 EXE `p4_llamacpp_staged_adapter-60c4f56e88389385.exe`를 대조했다.
+  EXE SHA256: `78aa35288537e0960ebe0a6dbe1e85ca3a9dd9ef325e916f81288cdfcf08c26d`.
+  검증 당시 EXE는 proof 디렉터리에 별도 보존한다. source/로그/EXE 모두 로컬 증거이며 장기 보존은 아니다.
+
+로컬 집계기의 `expected_red_only`는 **이전 국소 ACK 시험 이름**을 찾는 필드라 false다. 이번에는
+`workspace-any`로 전체 실패/exit를 그대로 보존했고 위 실제 유일 실패 이름·단언을 직접 대조했다.
+false를 PASS로 바꾸거나 실패 시험을 ignore하지 않았다. 집계기 수정이나 재실행은 하지 않는다.
+하네스·C++·GPU·remote·변이 재실행은 이 전체 Rust 결과에 포함하지 않는다.
+
+### 코드 판정과 체크포인트
+
+`EventNode::run`은 held_output 뒤 completion 수신을 멈추고 held_input 뒤 broker 수신을 멈춘다.
+`Worker::service_blocked_ack`는 held non-ACK 뒤 수신을 멈춘다. 이 소유 관계에서 두 방향이 모두
+포화하면 타이머 wake만 반복해도 어느 소비자도 공간을 만들지 못한다. 위 실행은 유한 정상 입력으로
+그 상태의 도달·정지·보존 복구를 관측한 반례이며 무손실 또는 교착 자유의 전역 증명은 아니다.
+
+수정 위치는 기존 B2/B3 목표의 원인 작업별 후속 공간 보장이다. 단일 ACK 예외 확장은 선택하지 않는다.
+ID 사전 거부/사후 intent 보존 구분은 배치 계약의 기존 소유 절에, actor 시험의 dev-only 중립 API/
+tokio 사용 범위는 격리 계약에 명시했다. production normal/build 의존은 바뀌지 않았다.
+**운영 수정 없이 필수 RED를 별도 전체 커밋**으로 보존하며 후속 운영 수정은 이 커밋 뒤에 시작한다.
+세 라운드를 새 이름으로 초기화하지 않고 마지막 후보 확인은 재설계가 닫힌 뒤에만 한다.

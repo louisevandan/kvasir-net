@@ -13,6 +13,7 @@ use p4_protocol::event::{Envelope, OuterEndpoint};
 use std::collections::{BTreeMap, VecDeque};
 use std::thread::JoinHandle;
 
+mod actor_ring;
 mod effect_backpressure;
 mod issue_witness;
 mod observation_contract;

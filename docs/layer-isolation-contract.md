@@ -190,6 +190,10 @@ raw ggml ordinal을 엔진 중립 의미로 해석하거나 서로 다른 pin에
 
 - protocol/agent/adapter-contract crate는 concrete backend에 normal dependency를 갖지 않는다.
   등록은 entrypoint에서 하고, pure scheduler/ledger 시험은 llama checkout·GPU·네트워크 없이 빌드된다.
+- concrete adapter의 통합 시험 전용 target은 dev-dependency로 중립 EventBroker/EventNode의 공개
+  API와 tokio runtime·동기화·시간 primitive를 사용할 수 있다. 실제 전달 경계의 시험 조립이며
+  production 의존 역전이나 agent private API 접근 허용이 아니다. normal/build 의존과 구별하고
+  pure 원장/정책 시험의 llama·GPU·network 독립성은 유지한다.
 - native consumer target에 upstream `src/`, `common/`, `ggml/src`가 직접 또는 transitive include로 노출되지 않게 한다.
   `target_include_directories` 문장에서 지웠더라도 연결 타깃의 INTERFACE가 다시 퍼뜨리면 미완이다.
 - full source build와 imported-library/relink를 **둘 다** 검사한다. 한 경로에서 PRIVATE인 것으로 다른 경로를 승인하지 않는다.
