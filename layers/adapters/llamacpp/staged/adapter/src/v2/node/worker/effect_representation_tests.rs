@@ -1,7 +1,7 @@
 //! Actual prepare_outputs/flush_effects/mailbox consumers with no native stage.
 //! Pointer assertions observe ownership of nonempty Vec/String allocations,
 //! not throughput, RSS bounds, actor resumption, or native execution safety.
-use super::effects::CommittedEffect;
+use super::effects::{CommittedEffect, PublicationAfter};
 use super::observe::{PreparedTelemetry, TelemetryPayload};
 use super::*;
 use p4_adapter::node_adapter::{CompletionMailbox, Poll, completion_mailbox};
@@ -265,6 +265,7 @@ fn failed_forward_restores_the_same_body_telemetry_and_queued_suffix() {
         let allocation = body.as_ptr();
         let deliveries = vec![telemetry(&base, "first"), telemetry(&base, "second")];
         let delivery_allocation = deliveries.as_ptr();
+        let deliveries_before = format!("{deliveries:?}");
         worker.effects.push_back(CommittedEffect::ForwardObserved {
             base: base.clone(),
             target: endpoint("next"),
@@ -275,6 +276,7 @@ fn failed_forward_restores_the_same_body_telemetry_and_queued_suffix() {
         });
         worker.effects.extend(outputs(&input(0), &["suffix"]));
         let before = format!("{:?}", worker.effects);
+        let suffix_before = format!("{:?}", worker.effects[1]);
         let mut mailbox = Some(mailbox);
         match failure {
             "closed" => drop(mailbox.take()),
@@ -291,12 +293,37 @@ fn failed_forward_restores_the_same_body_telemetry_and_queued_suffix() {
             "committed physical result could not be delivered"
         );
         assert!(worker.effects_fenced);
-        assert_eq!(format!("{:?}", worker.effects), before, "{failure}");
-        let CommittedEffect::ForwardObserved {
-            body, telemetry, ..
-        } = &worker.effects[0]
-        else {
-            panic!()
+        assert_eq!(worker.effects.len(), 2);
+        assert_eq!(format!("{:?}", worker.effects[1]), suffix_before);
+        let (body, telemetry) = if failure == "id-exhausted" {
+            // No Event can be materialized, so the untouched DTO remains.
+            assert_eq!(format!("{:?}", worker.effects), before);
+            let CommittedEffect::ForwardObserved {
+                body, telemetry, ..
+            } = &worker.effects[0]
+            else {
+                panic!("ID exhaustion must preserve the unmaterialized intent")
+            };
+            (body, telemetry)
+        } else {
+            let CommittedEffect::Publication {
+                event,
+                after: PublicationAfter::Observed(telemetry),
+            } = &worker.effects[0]
+            else {
+                panic!("a failed publication must keep its already allocated Event")
+            };
+            let mut expected_envelope = base.clone();
+            expected_envelope.event_id = format!("tail-cause:llamacpp:{old_id}");
+            expected_envelope.causation_id = Some("tail-cause".into());
+            expected_envelope.source = endpoint("head");
+            expected_envelope.target = endpoint("next");
+            expected_envelope.class = EventClass::Data;
+            expected_envelope.sequence = old_id;
+            expected_envelope.payload_content_type = PHYSICAL_BATCH_CONTENT_TYPE.into();
+            assert_eq!(event.envelope, expected_envelope);
+            assert_eq!(event.payload, vec![71; 32768]);
+            (&event.payload, telemetry)
         };
         assert_eq!(
             body.as_ptr(),
@@ -307,6 +334,11 @@ fn failed_forward_restores_the_same_body_telemetry_and_queued_suffix() {
             telemetry.as_ptr(),
             delivery_allocation,
             "{failure}: original observation allocations"
+        );
+        assert_eq!(
+            format!("{telemetry:?}"),
+            deliveries_before,
+            "all recipients, provenance and observation fields remain unchanged"
         );
         for delivery in telemetry {
             let TelemetryPayload::Span(span) = &delivery.payload else {
@@ -415,17 +447,69 @@ fn failed_output_keeps_its_original_text_and_remaining_output_order() {
             payload.outcome.text.as_ptr()
         })
         .collect::<Vec<_>>();
-    let before = format!("{:?}", worker.effects);
+    let CommittedEffect::Output {
+        base,
+        reply,
+        ingress,
+        payload,
+    } = &worker.effects[0]
+    else {
+        panic!()
+    };
+    let expected_payload = serde_json::to_vec(payload).unwrap();
+    let suffix_before = format!("{:?}", worker.effects[1]);
+    let old_id = worker.state.next_event;
+    let mut expected_envelope = base.clone();
+    expected_envelope.event_id = format!("tail-cause:llamacpp:{old_id}");
+    expected_envelope.causation_id = Some("tail-cause".into());
+    expected_envelope.source = endpoint("head");
+    expected_envelope.target = Endpoint::outer(
+        ingress.clone(),
+        reply.channel.clone(),
+        reply.connection_generation,
+    );
+    expected_envelope.class = EventClass::Output;
+    expected_envelope.sequence = old_id;
+    expected_envelope.payload_content_type = OUTPUT_CONTENT_TYPE.into();
+    expected_envelope.correlation_id = reply.correlation_id.clone();
+    expected_envelope.deadline_unix_ms = reply.deadline_unix_ms;
+    let Endpoint::Outer(route) = &expected_envelope.target else {
+        unreachable!()
+    };
+    expected_envelope.return_route = Some(route.clone());
     assert_eq!(
         worker.flush_effects().unwrap_err(),
         "committed output could not be delivered"
     );
     assert!(worker.effects_fenced);
-    assert_eq!(format!("{:?}", worker.effects), before);
-    for (index, effect) in worker.effects.iter().enumerate() {
-        let CommittedEffect::Output { payload, .. } = effect else {
-            panic!()
-        };
-        assert_eq!(payload.outcome.text.as_ptr(), original_text[index]);
-    }
+    assert_eq!(worker.effects.len(), 2);
+    let CommittedEffect::Publication {
+        event,
+        after: PublicationAfter::OutputTrace { .. },
+    } = &worker.effects[0]
+    else {
+        panic!("serialized output must survive as its exact Event, not a mutable DTO")
+    };
+    assert_eq!(event.envelope, expected_envelope);
+    assert_eq!(event.payload, expected_payload);
+    assert_eq!(
+        event.envelope.event_id,
+        format!("tail-cause:llamacpp:{old_id}")
+    );
+    assert_eq!(event.envelope.sequence, old_id);
+    assert_eq!(event.envelope.payload_content_type, OUTPUT_CONTENT_TYPE);
+    let frozen = event.clone();
+    let allocation = event.payload.as_ptr();
+    assert_eq!(format!("{:?}", worker.effects[1]), suffix_before);
+    let CommittedEffect::Output { payload, .. } = &worker.effects[1] else {
+        panic!()
+    };
+    assert_eq!(payload.outcome.text.as_ptr(), original_text[1]);
+    assert!(worker.flush_effects().is_err());
+    let CommittedEffect::Publication { event, .. } = &worker.effects[0] else {
+        panic!()
+    };
+    assert_eq!(event, &frozen);
+    assert_eq!(event.payload.as_ptr(), allocation);
+    assert_eq!(worker.state.next_event, old_id + 1);
 }

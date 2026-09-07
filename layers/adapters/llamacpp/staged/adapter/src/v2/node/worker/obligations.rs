@@ -15,9 +15,18 @@ pub(super) fn effect_event_count(
 }
 
 impl CommittedEffect {
+    /// IDs still owed, not Event count or retained-byte capacity. A frozen
+    /// Publication already consumed its own ID exactly once.
     pub(super) fn event_count(&self) -> Result<u64, String> {
         match self {
             Self::Settle { .. } | Self::Release { .. } => Ok(0),
+            Self::Publication { after, .. } => match after {
+                super::effects::PublicationAfter::Observed(telemetry) => {
+                    u64::try_from(telemetry.len())
+                        .map_err(|_| "completion obligation count overflow".into())
+                }
+                _ => Ok(0),
+            },
             Self::ForwardObserved { telemetry, .. } => u64::try_from(telemetry.len())
                 .ok()
                 .and_then(|count| count.checked_add(1))

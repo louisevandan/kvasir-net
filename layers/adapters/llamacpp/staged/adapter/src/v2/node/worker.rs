@@ -48,6 +48,8 @@ mod physical;
 #[cfg(test)]
 mod physical_replay_tests;
 mod proposal;
+#[cfg(test)]
+mod publication_tests;
 mod release;
 #[cfg(test)]
 mod release_notification_tests;

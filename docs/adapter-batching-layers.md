@@ -632,6 +632,34 @@ Full에서 worker 스레드를 점유한다. capacity 통지를 추가하는 것
 정산은 어댑터 안에 남긴다. 시험은 검증 규약 T22~T26을 따르며, 정상 ACK 진행만 고치면서 조기 ACK를
 허용하거나 모든 입력을 막아 메모리 상한만 통과하는 구현도 실패해야 한다.
 
+#### 고정 송신물과 미할당 ID 의무 — 제한된 구현 계약
+
+`worker/effects.rs::Worker::flush_effects`의 committed FIFO는 현재 선두만 직렬화·checked ID
+발급한 뒤 `Publication { event, after }`로 바꾼다. 실제 구현의 실행 여부는 로드맵/증거가 소유한다.
+이 구분은 내부 표현 계약이며 wire 버전이나 순서 영역을 바꾸지 않는다.
+
+| 실패/전이 지점 | 보존할 것 | 미할당 ID 의무 |
+| --- | --- | --- |
+| 직렬화·ID·사전 head 권한 검사 실패 | 원 DTO/본문·기존 FIFO·native 상태 | 원래 개수 유지, ID 미소비 |
+| Event 생성 성공 | 정확한 envelope·ID·sequence·payload와 after-action | 자신의 ID만 소모, 후속 몫 유지 |
+| Full | 같은 Event로 재시도, 현재 head 권한 재검증 | 추가 ID 미소비 |
+| Closed·영구 초과·종료 중 Full | 같은 Event를 FIFO 선두에 반환하고 fence | 이미 발급한 ID는 되돌리지 않음 |
+| ForwardObserved 수용 | forward는 제거, 한 번 고정한 시각의 관측을 원 순서로 배치 | 아직 생성하지 않은 관측 N개 |
+
+따라서 `next_event + 미할당 의무`는 Event 생성으로 변하지 않는다. 일반 Publication의 미할당 몫은
+0이고 Observed Publication은 N이다. `active_effect_ids`에는 materialize 이후의 N을 모두 넣어
+Full 중 ACK/진단이 그 몫을 쓰지 못하게 한다. 이는 **공간 예약 수나 Event 보관 수가 아니다.**
+원래 intent에 남아 있던 관측의 recipient/provenance/payload 전체와 queued suffix를 보존한다.
+실패 후 자동 fence 해제·native 재실행·재연결 replay는 허가하지 않는다. 시험의 수동 재접속은
+같은 Event의 보존 여부를 확인할 뿐 운영 복구 API가 아니다.
+
+범위는 committed Output/ReleaseReceipt/Forward/HeadControl/Observed/Telemetry다. LOAD·SESSION·
+UNLOAD·일반 error의 직접 송신 경로는 아직 이 보존 표현으로 이관하지 않았다. 기존 동기 대기와
+raw EventNode 소비도 남아 있으므로 고정 송신물 보존을 비동기 pump·end-to-end 예약으로 읽지 않는다.
+broker의 실제 destination `try_reserve`는 즉시 dispatch 한 번의 슬롯이며 미래/native/remote
+grant가 아니다. Full의 원본 allocation 반환만 보강됐고 성공 경로의 큐/중복 원장 복사와 Closed
+원본 비반환은 별도 미완이다.
+
 #### 로컬 완료 저장소 예약 — 범위가 제한된 구현 계약
 
 이 절은 `node_adapter/mailbox.rs`의 로컬 저장소 API만 소유한다. 현재 구현/실행 여부와 다음 순서는

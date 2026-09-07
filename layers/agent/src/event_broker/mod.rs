@@ -166,15 +166,21 @@ impl EventBroker {
         }
 
         let (delivery, sender) = self.destination(&event.envelope.target)?;
-        match sender.try_send(event.clone()) {
-            Ok(()) => {
+        // Obtain this actual destination slot before making the successful
+        // delivery's ledger/queue copies. Full must return the original owned
+        // value, including spare allocation capacity, not a freshly cloned
+        // substitute. This short synchronous permit is not a future-result,
+        // retained-byte or remote-receiver reservation.
+        match sender.try_reserve() {
+            Ok(permit) => {
+                permit.send(event.clone());
                 ledger.commit(event);
                 Ok(DispatchOutcome::Enqueued(delivery))
             }
-            Err(mpsc::error::TrySendError::Full(returned)) => {
-                Err(DispatchError::Full(delivery, Box::new(returned)))
+            Err(mpsc::error::TrySendError::Full(())) => {
+                Err(DispatchError::Full(delivery, Box::new(event)))
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(DispatchError::Closed(delivery)),
+            Err(mpsc::error::TrySendError::Closed(())) => Err(DispatchError::Closed(delivery)),
         }
     }
 

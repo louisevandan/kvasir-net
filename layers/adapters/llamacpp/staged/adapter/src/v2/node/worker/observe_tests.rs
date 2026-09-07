@@ -592,13 +592,19 @@ fn closed_before_forward_retains_unstamped_result_and_all_recipients() {
     });
     assert!(worker.flush_effects().is_err());
     assert_eq!(worker.effects.len(), 1);
-    let CommittedEffect::ForwardObserved {
-        body, telemetry, ..
+    let CommittedEffect::Publication {
+        event,
+        after: super::effects::PublicationAfter::Observed(telemetry),
     } = &worker.effects[0]
     else {
         panic!()
     };
-    assert_eq!(body, &bytes);
+    assert_eq!(event.payload, bytes);
+    assert_eq!(event.envelope.target, endpoint("last"));
+    assert_eq!(
+        event.envelope.payload_content_type,
+        PHYSICAL_BATCH_CONTENT_TYPE
+    );
     assert_eq!(telemetry.len(), 2);
     for delivery in telemetry {
         let TelemetryPayload::Span(span) = &delivery.payload else {
@@ -752,8 +758,23 @@ fn closed_after_one_observer_preserves_only_unsent_payload_with_the_same_forward
     assert!(worker.flush_effects().unwrap_err().contains("observation"));
     assert!(worker.effects_fenced);
     assert_eq!(worker.effects.len(), 1);
-    let CommittedEffect::Telemetry(delivery) = &worker.effects[0] else {
+    let CommittedEffect::Publication {
+        event,
+        after: super::effects::PublicationAfter::Telemetry,
+    } = &worker.effects[0]
+    else {
         panic!("lost suffix")
     };
-    assert_eq!(delivery_snapshot(delivery), saved);
+    assert_eq!(event.payload, saved);
+    assert_eq!(event.envelope.target, Endpoint::Outer(route("b", 1)));
+    assert_eq!(event.envelope.sequence, 100);
+    let frozen = event.clone();
+    let allocation = event.payload.as_ptr();
+    assert!(worker.flush_effects().is_err());
+    let CommittedEffect::Publication { event, .. } = &worker.effects[0] else {
+        panic!("lost frozen suffix")
+    };
+    assert_eq!(event, &frozen);
+    assert_eq!(event.payload.as_ptr(), allocation);
+    assert_eq!(worker.state.next_event, 101);
 }

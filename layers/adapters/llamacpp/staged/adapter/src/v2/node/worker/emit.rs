@@ -75,19 +75,26 @@ impl Worker {
         Ok(())
     }
 
-    pub(super) fn emit_reply_envelope_json<T: Serialize>(
+    /// Freeze the reply Event once at its committed FIFO position. This only
+    /// spends the pre-existing event-ID obligation; it does not reserve storage
+    /// or grant authority to replay an uncertain operation.
+    pub(super) fn materialize_reply_envelope_json<T: Serialize>(
         &mut self,
         base: &Envelope,
-        reply: ReplySpec,
-        ingress: Address,
+        reply: &ReplySpec,
+        ingress: &Address,
         class: EventClass,
         content_type: &str,
         value: &T,
-    ) -> Result<(), ()> {
+    ) -> Result<Event, ()> {
         let payload = serde_json::to_vec(value).map_err(|_| ())?;
         let sequence = self.state.next_event;
-        self.state.next_event = self.state.next_event.checked_add(1).ok_or(())?;
-        let target = Endpoint::outer(ingress, reply.channel.clone(), reply.connection_generation);
+        let next_event = sequence.checked_add(1).ok_or(())?;
+        let target = Endpoint::outer(
+            ingress.clone(),
+            reply.channel.clone(),
+            reply.connection_generation,
+        );
         let mut envelope = base.next(
             derived_envelope_event_id(base, sequence),
             self.endpoint.clone(),
@@ -96,13 +103,42 @@ impl Worker {
             sequence,
             content_type,
         );
-        envelope.correlation_id = reply.correlation_id;
+        envelope.correlation_id = reply.correlation_id.clone();
         envelope.return_route = match &envelope.target {
             Endpoint::Outer(route) => Some(route.clone()),
             _ => unreachable!(),
         };
         envelope.deadline_unix_ms = reply.deadline_unix_ms;
-        self.publish_or_wait(Event { envelope, payload })
+        self.state.next_event = next_event;
+        Ok(Event { envelope, payload })
+    }
+
+    /// Move the exact body only after checked ID allocation succeeds. No
+    /// publisher, native call, or input servicing occurs while constructing it.
+    pub(super) fn materialize_envelope_bytes(
+        &mut self,
+        base: &Envelope,
+        target: Endpoint,
+        class: EventClass,
+        content_type: &str,
+        payload: &mut Vec<u8>,
+    ) -> Result<Event, ()> {
+        let sequence = self.state.next_event;
+        let next_event = sequence.checked_add(1).ok_or(())?;
+        let envelope = base.next(
+            derived_envelope_event_id(base, sequence),
+            self.endpoint.clone(),
+            target,
+            class,
+            sequence,
+            content_type,
+        );
+        let event = Event {
+            envelope,
+            payload: std::mem::take(payload),
+        };
+        self.state.next_event = next_event;
+        Ok(event)
     }
 
     pub(super) fn emit_error(
@@ -150,57 +186,28 @@ impl Worker {
             .map_err(|_| ())
     }
 
-    /// Effect publication owns the frame body on success and returns that
-    /// same body on failure. The generic Event API above keeps its historical
-    /// unit error. ID allocation and blocking Full retry remain unchanged.
+    /// Compatibility path for direct, non-committed responses. Committed
+    /// effects instead retain a fully materialized Event through publish_kind.
+    /// This direct API retains its historical body-only error contract.
     pub(super) fn emit_envelope_bytes_retaining(
         &mut self,
         base: &Envelope,
         target: Endpoint,
         class: EventClass,
         content_type: &str,
-        payload: Vec<u8>,
+        mut payload: Vec<u8>,
     ) -> Result<(), Vec<u8>> {
-        self.emit_retaining_kind(base, target, class, content_type, payload, false)
-    }
-
-    pub(super) fn emit_head_control_retaining(
-        &mut self,
-        base: &Envelope,
-        target: Endpoint,
-        class: EventClass,
-        content_type: &str,
-        payload: Vec<u8>,
-    ) -> Result<(), Vec<u8>> {
-        self.emit_retaining_kind(base, target, class, content_type, payload, true)
-    }
-
-    fn emit_retaining_kind(
-        &mut self,
-        base: &Envelope,
-        target: Endpoint,
-        class: EventClass,
-        content_type: &str,
-        payload: Vec<u8>,
-        head_control: bool,
-    ) -> Result<(), Vec<u8>> {
-        // A queued effect consumes its existing share here. The whole-group
-        // check belongs before commit, not after a prefix already executed.
-        // Retain checked_add below for late ID corruption/failure injection.
-        let sequence = self.state.next_event;
-        let Some(next_event) = sequence.checked_add(1) else {
-            return Err(payload);
-        };
-        self.state.next_event = next_event;
-        let envelope = base.next(
-            derived_envelope_event_id(base, sequence),
-            self.endpoint.clone(),
+        let event = match self.materialize_envelope_bytes(
+            base,
             target,
             class,
-            sequence,
             content_type,
-        );
-        self.publish_kind(Event { envelope, payload }, head_control)
+            &mut payload,
+        ) {
+            Ok(event) => event,
+            Err(()) => return Err(payload),
+        };
+        self.publish_kind(event, false)
             .map_err(|event| event.payload)
     }
 
@@ -225,7 +232,7 @@ impl Worker {
         self.publish_kind(event, false)
     }
 
-    fn publish_kind(&mut self, event: Event, head_control: bool) -> Result<(), Event> {
+    pub(super) fn publish_kind(&mut self, event: Event, head_control: bool) -> Result<(), Event> {
         // One unchanged Event stays owned here throughout Full. ACK servicing
         // cannot recursively publish, execute native, or issue another batch.
         debug_assert_eq!(self.active_publications, 0);
@@ -276,6 +283,8 @@ impl Worker {
                     if self.service_blocked_ack().is_err() {
                         return Err(pending);
                     }
+                    #[cfg(test)]
+                    self.observe_issue_state("publication_full_after_ack");
                     std::thread::sleep(COMPLETION_RETRY_INTERVAL);
                 }
                 Err(PublishError::Closed(event)) => {

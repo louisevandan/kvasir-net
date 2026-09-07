@@ -702,12 +702,30 @@ fn full_control_replay_revalidates_its_ticket_after_ack_retirement() {
         sender.send(WorkerInput::Event(acknowledgement)).unwrap();
 
         let replay = f.forward_effect();
-        let original = format!("{replay:?}");
-        let CommittedEffect::ForwardHeadControl { body, .. } = &replay else {
+        let CommittedEffect::ForwardHeadControl {
+            base,
+            target,
+            class,
+            content_type,
+            body,
+        } = &replay
+        else {
             unreachable!()
         };
         let original_allocation = body.as_ptr() as usize;
         let replay_id = f.worker.state.next_event;
+        let mut expected_envelope = base.clone();
+        expected_envelope.event_id = format!("{}:llamacpp:{replay_id}", base.event_id);
+        expected_envelope.causation_id = Some(base.event_id.clone());
+        expected_envelope.source = f.worker.endpoint.clone();
+        expected_envelope.target = target.clone();
+        expected_envelope.class = *class;
+        expected_envelope.sequence = replay_id;
+        expected_envelope.payload_content_type = (*content_type).into();
+        let expected_replay = Event {
+            envelope: expected_envelope,
+            payload: body.clone(),
+        };
         f.worker.effects.push_back(replay);
         let snapshot = Arc::clone(&f.worker.snapshot);
         let shutdown = Arc::clone(&f.worker.shutting_down);
@@ -807,11 +825,15 @@ fn full_control_replay_revalidates_its_ticket_after_ack_retirement() {
                 assert_eq!(f.worker.effects.len(), 1);
             }
         }
-        assert_eq!(format!("{:?}", f.worker.effects[0]), original);
-        let CommittedEffect::ForwardHeadControl { body, .. } = &f.worker.effects[0] else {
-            panic!("the stale original intent must be retained")
+        let CommittedEffect::Publication {
+            event,
+            after: super::effects::PublicationAfter::HeadControl,
+        } = &f.worker.effects[0]
+        else {
+            panic!("the stale original Event must be retained without a reusable authority ticket")
         };
-        assert_eq!(body.as_ptr() as usize, original_allocation);
+        assert_eq!(event, &expected_replay);
+        assert_eq!(event.payload.as_ptr() as usize, original_allocation);
         let occupied = recovered_occupant.unwrap_or_else(|| {
             let Poll::Event(event) = mailbox.as_ref().unwrap().try_take() else {
                 panic!("historical completion must remain in the mailbox")
@@ -848,6 +870,30 @@ fn closed_mailbox_or_event_id_exhaustion_cannot_promote_locally_applied_controls
             }
             f.worker.effects.push_back(f.forward_effect());
             let queued = format!("{:?}", f.worker.effects);
+            let CommittedEffect::ForwardHeadControl {
+                base,
+                target,
+                class,
+                content_type,
+                body,
+            } = &f.worker.effects[0]
+            else {
+                panic!()
+            };
+            let mut expected_envelope = base.clone();
+            let old_id = f.worker.state.next_event;
+            expected_envelope.event_id = format!("{}:llamacpp:{old_id}", base.event_id);
+            expected_envelope.causation_id = Some(base.event_id.clone());
+            expected_envelope.source = f.worker.endpoint.clone();
+            expected_envelope.target = target.clone();
+            expected_envelope.class = *class;
+            expected_envelope.sequence = old_id;
+            expected_envelope.payload_content_type = (*content_type).into();
+            let expected_event = Event {
+                envelope: expected_envelope,
+                payload: body.clone(),
+            };
+            let allocation = body.as_ptr();
             assert!(
                 f.worker
                     .flush_effects()
@@ -860,7 +906,21 @@ fn closed_mailbox_or_event_id_exhaustion_cannot_promote_locally_applied_controls
                 assert_eq!(f.phase(slot), ControlDispatchPhase::LocalApplied);
             }
             assert_eq!(*f.trace.lock().unwrap(), native);
-            assert_eq!(format!("{:?}", f.worker.effects), queued);
+            if closed {
+                assert_eq!(f.worker.effects.len(), 1);
+                let CommittedEffect::Publication {
+                    event,
+                    after: super::effects::PublicationAfter::HeadControl,
+                } = &f.worker.effects[0]
+                else {
+                    panic!("closed publication lost its fixed Event")
+                };
+                assert_eq!(event, &expected_event);
+                assert_eq!(event.payload.as_ptr(), allocation);
+                assert_eq!(f.worker.state.next_event, old_id + 1);
+            } else {
+                assert_eq!(format!("{:?}", f.worker.effects), queued);
+            }
             assert!(f.worker.effects_fenced);
             if !closed {
                 assert_eq!(f.worker.state.next_event, u64::MAX);

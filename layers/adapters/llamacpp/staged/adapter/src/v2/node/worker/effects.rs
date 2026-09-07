@@ -7,6 +7,12 @@ use std::collections::VecDeque;
 
 #[derive(Debug)]
 pub(super) enum CommittedEffect {
+    /// Exact wire-level value retained across final publication failures.
+    /// IDs and payload bytes are never regenerated from a DTO on retry.
+    Publication {
+        event: Event,
+        after: PublicationAfter,
+    },
     Output {
         base: Envelope,
         reply: ReplySpec,
@@ -56,181 +62,142 @@ pub(super) enum CommittedEffect {
     },
 }
 
+/// A materialized Event has already spent its event-ID share. The after-action
+/// contains only work that becomes eligible AFTER mailbox acceptance. This is
+/// neither a storage reservation nor a native-operation reconciliation token.
+#[derive(Debug)]
+pub(super) enum PublicationAfter {
+    OutputTrace {
+        request_id: String,
+        sequence_id: u32,
+        position: u32,
+    },
+    ReleaseReceipt,
+    Forward,
+    HeadControl,
+    Observed(Vec<super::observe::PreparedTelemetry>),
+    Telemetry,
+}
+
+impl PublicationAfter {
+    pub(super) fn failure_message(&self) -> &'static str {
+        match self {
+            Self::OutputTrace { .. } => "committed output could not be delivered",
+            Self::ReleaseReceipt => "committed release receipt could not be delivered",
+            Self::Forward => "committed control could not be delivered",
+            Self::HeadControl => "committed head control could not be delivered",
+            Self::Observed(_) => "committed physical result could not be delivered",
+            Self::Telemetry => "committed observation could not be delivered",
+        }
+    }
+}
+
 impl Worker {
     pub(super) fn flush_effects(&mut self) -> Result<(), String> {
         if self.effects_fenced {
             return Err("committed effects are fenced after an uncertain failure".into());
         }
-        // Still synchronous: splitting this loop into actor turns must not
-        // interleave one command's native controls without group reservation.
-        // The popped active effect remains owned by this call. A future byte
-        // or count budget must count it too, not only the queued suffix.
+        // Still synchronous: no async actor, native group reservation, or byte
+        // budget is established here. The popped effect remains owned until it
+        // either moves into the real mailbox or returns to the same FIFO head.
         while let Some(mut effect) = self.effects.pop_front() {
-            self.active_effect_ids = effect.event_count()?.saturating_sub(1);
-            let mut after_forward = None;
-            let result = match &mut effect {
-                CommittedEffect::Output {
-                    base,
-                    reply,
-                    ingress,
-                    payload,
-                } => self
-                    .emit_reply_envelope_json(
-                        base,
-                        reply.clone(),
-                        ingress.clone(),
-                        EventClass::Output,
-                        OUTPUT_CONTENT_TYPE,
-                        payload,
-                    )
-                    .map_err(|_| "committed output could not be delivered".to_owned())
-                    .map(|()| {
-                        if std::env::var_os("P4_STAGED_TRACE_OUTPUT_POSITION").is_some() {
-                            crate::v2::record::record(&format!(
-                                "P4_OUTPUT_EMITTED request={} sequence={} position={}",
-                                payload.outcome.request_id,
-                                payload.outcome.sequence_id,
-                                payload.outcome.position,
-                            ));
-                        }
-                    }),
-                CommittedEffect::ReleaseReceipt {
-                    base,
-                    reply,
-                    ingress,
-                    payload,
-                } => self
-                    .emit_reply_envelope_json(
-                        base,
-                        reply.clone(),
-                        ingress.clone(),
-                        EventClass::Telemetry,
-                        RELEASE_RECEIPT_CONTENT_TYPE,
-                        payload,
-                    )
-                    .map_err(|_| "committed release receipt could not be delivered".to_owned()),
-                CommittedEffect::Forward {
-                    base,
-                    target,
-                    class,
-                    content_type,
-                    body,
-                } => self
-                    .emit_effect_body(base, target.clone(), *class, content_type, body)
-                    .map_err(|_| "committed control could not be delivered".to_owned()),
-                CommittedEffect::ForwardHeadControl {
-                    base,
-                    target,
-                    class,
-                    content_type,
-                    body,
-                } => self
-                    .prepare_head_control_forward(target, content_type, body)
-                    .and_then(|_| {
-                        if *class != EventClass::Control {
-                            return Err("head control forward has the wrong event class".into());
-                        }
-                        match self.emit_head_control_retaining(
-                            base,
-                            target.clone(),
-                            *class,
-                            content_type,
-                            std::mem::take(body),
-                        ) {
-                            Ok(()) => Ok(()),
-                            Err(unsent) => {
-                                *body = unsent;
-                                Err("committed head control could not be delivered".to_owned())
-                            }
-                        }
-                    }),
-                CommittedEffect::Settle {
-                    load_generation,
-                    session_id,
-                    sequence,
-                } => self
-                    .prepare_head_settle(*load_generation, session_id, sequence)
-                    .and_then(|ticket| {
-                        // Native settlement fills proposal on its input. Keep
-                        // this control candidate separate so a malformed reply
-                        // cannot mutate the retained original intent.
-                        let mut sequences = vec![sequence.clone()];
-                        self.settle_stage_sequences(&mut sequences)?;
-                        if sequences[0].proposal.is_empty() {
-                            self.complete_head_local(ticket);
-                            Ok(())
-                        } else {
-                            Err("first-stage settlement produced a proposal".into())
-                        }
-                    }),
-                CommittedEffect::Release {
-                    load_generation,
-                    session_id,
-                    sequence,
-                } => self
-                    .prepare_head_release(*load_generation, session_id, sequence)
-                    .and_then(|ticket| {
-                        self.release_stage_sequence(sequence)?;
-                        self.complete_head_local(ticket);
-                        Ok(())
-                    }),
-                CommittedEffect::ForwardObserved {
-                    base,
-                    target,
-                    class,
-                    content_type,
-                    body,
-                    telemetry,
-                } => self
-                    .emit_effect_body(base, target.clone(), *class, content_type, body)
-                    .map_err(|_| "committed physical result could not be delivered".to_owned())
-                    .map(|()| {
-                        let stamp = super::observe::unix_ms();
-                        for delivery in telemetry.iter_mut() {
-                            delivery.forwarded_at(stamp);
-                        }
-                        after_forward = Some(std::mem::take(telemetry));
-                    }),
-                CommittedEffect::Telemetry(delivery) => match &delivery.payload {
-                    super::observe::TelemetryPayload::Batch(payload) => self
-                        .emit_reply_envelope_json(
-                            &delivery.base,
-                            delivery.reply.clone(),
-                            delivery.ingress.clone(),
-                            EventClass::Telemetry,
-                            BATCH_OBSERVATION_CONTENT_TYPE,
-                            payload,
-                        ),
-                    super::observe::TelemetryPayload::Span(payload) => self
-                        .emit_reply_envelope_json(
-                            &delivery.base,
-                            delivery.reply.clone(),
-                            delivery.ingress.clone(),
-                            EventClass::Telemetry,
-                            STAGE_SPAN_CONTENT_TYPE,
-                            payload,
-                        ),
-                }
-                .map_err(|_| "committed observation could not be delivered".to_owned()),
-            };
-            self.active_effect_ids = 0;
-            if let Err(error) = result {
-                // Restore the same owned intent, not a cloned DTO. Forward
-                // bytes have been returned to it by emit_effect_body. An
-                // engine response may be lost after it acted; replay requires
-                // operation reconciliation,
-                // which this native wire does not yet provide.
+            if let Err(error) = self.materialize_effect(&mut effect) {
                 self.effects.push_front(effect);
                 self.effects_fenced = true;
                 return Err(error);
             }
-            if let Some(telemetry) = after_forward {
-                // Forward succeeded. Retain the fixed payloads before trying
-                // any recipient; a later failure must not repeat forwarding.
-                for delivery in telemetry.into_iter().rev() {
-                    self.effects
-                        .push_front(CommittedEffect::Telemetry(delivery));
+            // The current Publication already owns an ID. Its deferred
+            // observations still owe IDs; subtracting one here would hide one
+            // of those obligations while Full services an incoming ACK.
+            self.active_effect_ids = match effect.event_count() {
+                Ok(count) => count,
+                Err(error) => {
+                    self.effects.push_front(effect);
+                    self.effects_fenced = true;
+                    return Err(error);
                 }
+            };
+            let result = match effect {
+                CommittedEffect::Publication { event, after } => {
+                    let head_control = matches!(&after, PublicationAfter::HeadControl);
+                    match self.publish_kind(event, head_control) {
+                        Ok(()) => Ok(Some(after)),
+                        Err(event) => {
+                            let error = after.failure_message().to_owned();
+                            Err((CommittedEffect::Publication { event, after }, error))
+                        }
+                    }
+                }
+                mut native => {
+                    let result = match &mut native {
+                        CommittedEffect::Settle {
+                            load_generation,
+                            session_id,
+                            sequence,
+                        } => self
+                            .prepare_head_settle(*load_generation, session_id, sequence)
+                            .and_then(|ticket| {
+                                // Native can act before a reply is lost. Do not
+                                // replace its original intent with a mutable reply.
+                                let mut sequences = vec![sequence.clone()];
+                                self.settle_stage_sequences(&mut sequences)?;
+                                if sequences[0].proposal.is_empty() {
+                                    self.complete_head_local(ticket);
+                                    Ok(())
+                                } else {
+                                    Err("first-stage settlement produced a proposal".into())
+                                }
+                            }),
+                        CommittedEffect::Release {
+                            load_generation,
+                            session_id,
+                            sequence,
+                        } => self
+                            .prepare_head_release(*load_generation, session_id, sequence)
+                            .and_then(|ticket| {
+                                self.release_stage_sequence(sequence)?;
+                                self.complete_head_local(ticket);
+                                Ok(())
+                            }),
+                        _ => unreachable!("publication intents were materialized before execution"),
+                    };
+                    result.map(|()| None).map_err(|error| (native, error))
+                }
+            };
+            self.active_effect_ids = 0;
+            match result {
+                Err((effect, error)) => {
+                    // Retain the SAME Event, including its envelope and ID.
+                    // Full already retries that Event inside publish_kind.
+                    // Closed/shutdown/permanent failure does not authorize
+                    // replay, ID reallocation, or automatic fence removal.
+                    self.effects.push_front(effect);
+                    self.effects_fenced = true;
+                    return Err(error);
+                }
+                Ok(Some(PublicationAfter::Observed(telemetry))) => {
+                    let stamp = super::observe::unix_ms();
+                    // The forward itself is gone only after acceptance. Freeze
+                    // one timestamp and preserve recipient order before trying
+                    // any observation; their failures cannot repeat forwarding.
+                    for mut delivery in telemetry.into_iter().rev() {
+                        delivery.forwarded_at(stamp);
+                        self.effects
+                            .push_front(CommittedEffect::Telemetry(delivery));
+                    }
+                }
+                Ok(Some(PublicationAfter::OutputTrace {
+                    request_id,
+                    sequence_id,
+                    position,
+                })) => {
+                    if std::env::var_os("P4_STAGED_TRACE_OUTPUT_POSITION").is_some() {
+                        crate::v2::record::record(&format!(
+                            "P4_OUTPUT_EMITTED request={request_id} sequence={sequence_id} position={position}",
+                        ));
+                    }
+                }
+                Ok(_) => {}
             }
             self.enqueue_deferred_ack_error()
                 .map_err(|_| "deferred ACK diagnostic could not be retained".to_owned())?;
@@ -238,30 +205,129 @@ impl Worker {
         Ok(())
     }
 
-    /// Move a frame body into publication. On failure the same allocation is
-    /// returned to its original intent; a successful publication owns it now.
-    /// This remains synchronous and does not add a resumable actor reservation.
-    fn emit_effect_body(
-        &mut self,
-        base: &Envelope,
-        target: Endpoint,
-        class: EventClass,
-        content_type: &str,
-        body: &mut Vec<u8>,
-    ) -> Result<(), ()> {
-        match self.emit_envelope_bytes_retaining(
-            base,
-            target,
-            class,
-            content_type,
-            std::mem::take(body),
-        ) {
-            Ok(()) => Ok(()),
-            Err(unsent) => {
-                *body = unsent;
-                Err(())
+    /// Materialize ONLY the current FIFO head. Serialization and checked ID
+    /// allocation finish before replacing the intent; no native call, publish,
+    /// ACK service, or yield intervenes. A failure before replacement preserves
+    /// the original intent. An already frozen Event never gets another ID.
+    fn materialize_effect(&mut self, effect: &mut CommittedEffect) -> Result<(), String> {
+        let (event, after) = match effect {
+            CommittedEffect::Output {
+                base,
+                reply,
+                ingress,
+                payload,
+            } => {
+                let after = PublicationAfter::OutputTrace {
+                    request_id: payload.outcome.request_id.clone(),
+                    sequence_id: payload.outcome.sequence_id,
+                    position: payload.outcome.position,
+                };
+                let event = self
+                    .materialize_reply_envelope_json(
+                        base,
+                        reply,
+                        ingress,
+                        EventClass::Output,
+                        OUTPUT_CONTENT_TYPE,
+                        payload,
+                    )
+                    .map_err(|_| after.failure_message().to_owned())?;
+                (event, after)
             }
-        }
+            CommittedEffect::ReleaseReceipt {
+                base,
+                reply,
+                ingress,
+                payload,
+            } => {
+                let after = PublicationAfter::ReleaseReceipt;
+                let event = self
+                    .materialize_reply_envelope_json(
+                        base,
+                        reply,
+                        ingress,
+                        EventClass::Telemetry,
+                        RELEASE_RECEIPT_CONTENT_TYPE,
+                        payload,
+                    )
+                    .map_err(|_| after.failure_message().to_owned())?;
+                (event, after)
+            }
+            CommittedEffect::Forward {
+                base,
+                target,
+                class,
+                content_type,
+                body,
+            } => {
+                let after = PublicationAfter::Forward;
+                let event = self
+                    .materialize_envelope_bytes(base, target.clone(), *class, content_type, body)
+                    .map_err(|_| after.failure_message().to_owned())?;
+                (event, after)
+            }
+            CommittedEffect::ForwardHeadControl {
+                base,
+                target,
+                class,
+                content_type,
+                body,
+            } => {
+                // Retain the original pre-publication validation order. This
+                // ticket is deliberately not stored across any Full servicing.
+                self.prepare_head_control_forward(target, content_type, body)?;
+                if *class != EventClass::Control {
+                    return Err("head control forward has the wrong event class".into());
+                }
+                let after = PublicationAfter::HeadControl;
+                let event = self
+                    .materialize_envelope_bytes(base, target.clone(), *class, content_type, body)
+                    .map_err(|_| after.failure_message().to_owned())?;
+                (event, after)
+            }
+            CommittedEffect::ForwardObserved {
+                base,
+                target,
+                class,
+                content_type,
+                body,
+                telemetry,
+            } => {
+                let event = self
+                    .materialize_envelope_bytes(base, target.clone(), *class, content_type, body)
+                    .map_err(|_| "committed physical result could not be delivered".to_owned())?;
+                (event, PublicationAfter::Observed(std::mem::take(telemetry)))
+            }
+            CommittedEffect::Telemetry(delivery) => {
+                let event = match &delivery.payload {
+                    super::observe::TelemetryPayload::Batch(payload) => self
+                        .materialize_reply_envelope_json(
+                            &delivery.base,
+                            &delivery.reply,
+                            &delivery.ingress,
+                            EventClass::Telemetry,
+                            BATCH_OBSERVATION_CONTENT_TYPE,
+                            payload,
+                        ),
+                    super::observe::TelemetryPayload::Span(payload) => self
+                        .materialize_reply_envelope_json(
+                            &delivery.base,
+                            &delivery.reply,
+                            &delivery.ingress,
+                            EventClass::Telemetry,
+                            STAGE_SPAN_CONTENT_TYPE,
+                            payload,
+                        ),
+                }
+                .map_err(|_| "committed observation could not be delivered".to_owned())?;
+                (event, PublicationAfter::Telemetry)
+            }
+            CommittedEffect::Publication { .. }
+            | CommittedEffect::Settle { .. }
+            | CommittedEffect::Release { .. } => return Ok(()),
+        };
+        *effect = CommittedEffect::Publication { event, after };
+        Ok(())
     }
 
     pub(super) fn prepare_outputs(

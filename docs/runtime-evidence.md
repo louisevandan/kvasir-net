@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: committed 송신물 고정 — 정적 검토 WIP
+
+`7f402aba5` 뒤 committed FIFO의 완전한 Event 보존·미할당 ID 의무와 broker Full 원본 반환을
+변경했다. 실제 소비 시험8개 작성과 기존 실패 표현 시험의 의미 보존 이관은 **실행하지 않았다**.
+컴파일·변이·전체 집계가 없으며 actor RED 해결/예약 연결/최종 성과로 승격하지 않는다.
+정적 검토·oracle 보강·범위는 [고정 송신물 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
 ## 2026-09-07: 로컬 완료 저장소 예약 — 실행 전 WIP
 
 `393a6c23e`의 RED 뒤 실제 완료 저장소·비용 회계·owned 전달 API와 소비 거부 시험을 작성했다.

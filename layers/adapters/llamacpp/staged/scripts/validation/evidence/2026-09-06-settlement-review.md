@@ -2741,3 +2741,68 @@ wire version·native 결과 상한·product byte 설정은 그대로다. count-o
 라운드를 이 기반 API 확인용으로 사용하지 않는다. 이번에는 결과 로그/해시 생성물을 추가하지 않았다.
 사용자 지시에 따라 전체 비무시 소스·시험·관련 문서를 **미검증 WIP 체크포인트**로 함께 커밋한다.
 현재 순서와 다음 첫 행동은 로드맵만 소유하며 B3/전체 교착/최종 실기 완료를 주장하지 않는다.
+
+## 고정 committed 송신물 — 정적 검토 WIP (2026-09-07)
+
+기준 HEAD는 `7f402aba5`다. 현재 변경의 **컴파일·시험·변이·docs-lint는 미실행**이며 새 source/binary
+봉인이나 통과 수가 없다. 서식 정리와 코드 대조만 했다. 실행13의1254/1/7은 수정 전 소스의 결과다.
+
+### 변경 범위와 결정 근거
+
+- `effects.rs::Worker::flush_effects`는 FIFO 선두를 완전한 Event로 한 번 만들고 최종 실패에도
+  envelope/ID/sequence/payload와 after-action을 함께 보존한다. 기존 Full loop 자체는 이미 원 Event를
+  유지했다. Closed/shutdown 뒤 body만 돌리거나 DTO만 남던 경계를 이관한 것이지 Full 동작 발견이 아니다.
+- `obligations.rs::CommittedEffect::event_count`는 아직 발급하지 않은 몫이다. ForwardObserved의1+N이
+  materialize 뒤 next_event+1과 미할당N으로 바뀐다. Full 중 활성N을 다시1감산하면 진단이 관측 몫을
+  쓸 수 있으므로 감산하지 않는다. 이 합 보존과 head ticket의 매 시도 재검증을 독립 정적 검토했다.
+- broker는 목적지의 실제 슬롯을 확보한 뒤 수용용 복사를 한다. Full은 원본 Event의 spare capacity와
+  allocation까지 돌려준다. 성공 시 큐/ledger 복사·Closed 원본 비반환·전역 순서 영역은 그대로다.
+- ID/직렬화 실패는 원 DTO 보존, Event 생성 후 전송 실패는 완전한 Publication 보존으로 표현을 나눴다.
+  기존 시험의 입력·ID 경계·native/slot/fence·실제 수신물 기준은 바꾸지 않았다. 이관 중 전체 telemetry
+  대조와 Output envelope 대조가 빠질 수 있음을 독립 검토자가 지적해 실행 전에 둘 다 보강했다.
+- release_notification 시험은 Closed 뒤 첫 항목이 고정 Event임을 명시하고 원 pending provenance로 만든
+  기대 Event 전체와 wire를 대조한다. ID 발급 전 실패는 여전히 원 DTO만 허용한다. 둘 중 아무 표현이나
+  허용하는 느슨한 단언으로 바꾸지 않았다. 원래 조기 거부와 post-commit 거부는 그대로 구분한다.
+
+### 작성한 신규 시험과 예정된 제거 변이 — 전부 미실행
+
+실제 `flush_effects`→completion mailbox의 `publication_tests.rs` 6개와 broker 시험2개다.
+시험용 fence 해제/수신기 교체는 운영 재연결 API가 아니며 native 완료를 합성하지 않는다.
+
+| 시험/범위 | 고정한 판정 | 나중에 제거할 동작 |
+| --- | --- | --- |
+| final_forward_failures | Closed/Full-at-shutdown/TooLarge 원 Event·ID·allocation·FIFO, 수동 재개 뒤 정확한 한 번 전달 | 실패 뒤 Event 대신 DTO 재생성 |
+| reply_publications | Output/Receipt/Telemetry 전체 reply/envelope/payload, 이미 발급한 ID 재소비0 | frozen Event의 ID 재발급 |
+| unallocated_id_failure | 발급 전 의도 전체 보존, Observed 미할당1+N→N | Publication을 다시1+N으로 회계 |
+| active_frozen_forward | 실제 Full/invalid ACK에서 후속 observation N개 몫을 진단이 소비하지 못함 | 활성N에서 잘못된1감산 |
+| accepted_forward | forward 성공 뒤 observation 실패/재개에 무재forward·고정 timestamp/ID/allocation | observation 실패에서 forward 복원/시각 재설정 |
+| native_precondition | native 사전 권한 거부에서 원 intent·미생성 suffix·fence 유지 | 거부 시 intent 제거/후속 materialize |
+| broker Full | 같은 원본 allocation3회 반환 후 실제 수용·Duplicate | Full에서 원본 대신 clone 반환 |
+| broker order domain | 같은 source/correlation의 다른 목적지에도 순서 위반 거부; 동일 입력의 올바른 순서 성공 | 목적지별 순서 원장으로 변경 |
+
+Full/ACK 시험은 실제 소비 뒤 test-only 관측점에서 mailbox를 닫는다. 누락된 관측점/회귀가 무한
+대기가 되지 않도록5초 guard를 두고, 실제 관측점 도달을 별도 단언한다. 이는 시계 독립 liveness 증명이
+아니다. 기존 실제 native 성공/실패/불명 결과/ACK 퇴역 검사는 control_dispatch_effect_tests가 유지한다.
+
+기존 실패 표현 이관은 effect_representation/observe/control_dispatch_effect/release_notification의
+4개 시험 파일에만 적용했다. 전체 DTO Debug 대신 필요한 wire Event 전체와 아직 미생성 suffix/관측
+전체를 비교한다. 변경 전부터 있던 ID/전달순서/원본 allocation/정산/native oracle를 지우지 않는다.
+
+### 아직 연결되지 않은 경계와 증명 제한
+
+이 코드는 동기 publication이고 byte/native 결과 예약이나 actor 입력 양보는 아니다. SESSION/error
+직접 응답·EventNode raw 소비·remote serve/pump·전달 grant·Cancel/Drain은 여전히 별도다.
+actor_ring.rs의 cap1/cap8·14입력/6결과·full recovery oracle는 변경하지 않았다. 정상 수용을 모두
+차단하거나 completion 큐를 늘려 RED를 숨기지 않는다. 제품 예약 생산자도 아직 활성화하지 않는다.
+
+정적 fan-out 계산에서 SESSION은1, head issue는PHYSICAL+BatchObservation+Span의3, tail physical은
+TAIL+Span의2를 만든다. head TAIL은 stopped owner별OUTPUT와 native RELEASE 및 command를 만들고,
+RELEASED 뒤에는 원 제출별 receipt가 필요하다. cap1 전달 슬롯에 이 전체를 선예약하면 정상 작업도
+시작하지 못하므로 effect 보존 공간과 transfer 슬롯을 분리해야 한다. 이 값은 해당 fake2stage fixture의
+경로 계산이며 일반 모델/실제 배치 수/byte 상한을 증명하지 않는다.
+
+같은 source/correlation의 PHYSICAL와 뒤의 OUTER 관측은 목적지가 달라도 순서를 공유한다.
+따라서 destination 우회나 ACK 우선 lane만으로 해결할 수 없다. 다음 구현 순서는 로드맵이 소유한다.
+마지막 검증 라운드는 아직 사용하지 않았으며, 부분 API를 확인하기 위해 새 라운드를 만들지 않는다.
+전체 비무시 변경은 미검증 WIP로 커밋한다. 모델·원문로그·일회성 도구·바이너리를 Git에 추가하거나
+원격/GPU/C++/push를 실행한 것은 아니다.

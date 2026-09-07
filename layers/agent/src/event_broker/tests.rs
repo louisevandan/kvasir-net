@@ -203,3 +203,86 @@ fn recreated_node_has_a_new_source_sequence_domain_and_rejects_stale_targets() {
     );
     assert!(new_receiver.try_recv().is_err());
 }
+
+#[test]
+fn full_returns_the_original_allocations_on_every_retry_before_exact_acceptance() {
+    let mut f = fixture(1);
+    let source = Endpoint::agent(f.remote.clone());
+    let target = Endpoint::agent(f.own.clone());
+    f.broker
+        .dispatch(event("prefix", source.clone(), target.clone(), 1))
+        .unwrap();
+    let mut pending = event("pending", source, target, 2);
+    pending.payload = Vec::with_capacity(8192);
+    pending.payload.extend_from_slice(&[0, 255, 128, 7]);
+    pending.envelope.event_id.reserve(1024);
+    let payload_ptr = pending.payload.as_ptr();
+    let payload_capacity = pending.payload.capacity();
+    let id_ptr = pending.envelope.event_id.as_ptr();
+    let id_capacity = pending.envelope.event_id.capacity();
+    let expected = pending.clone();
+    for _ in 0..3 {
+        let Err(DispatchError::Full(Delivery::Agent, returned)) = f.broker.dispatch(pending) else {
+            panic!("the occupied destination must refuse without taking ownership");
+        };
+        assert_eq!(*returned, expected);
+        assert_eq!(returned.payload.as_ptr(), payload_ptr);
+        assert_eq!(returned.payload.capacity(), payload_capacity);
+        assert_eq!(returned.envelope.event_id.as_ptr(), id_ptr);
+        assert_eq!(returned.envelope.event_id.capacity(), id_capacity);
+        pending = *returned;
+    }
+    assert_eq!(f.agent.try_recv().unwrap().envelope.event_id, "prefix");
+    assert_eq!(
+        f.broker.dispatch(pending),
+        Ok(DispatchOutcome::Enqueued(Delivery::Agent))
+    );
+    assert_eq!(f.agent.try_recv().unwrap(), expected);
+    assert_eq!(f.broker.dispatch(expected), Ok(DispatchOutcome::Duplicate));
+    assert!(f.agent.try_recv().is_err());
+}
+
+#[test]
+fn changing_destination_does_not_create_a_new_source_correlation_order_domain() {
+    let mut f = fixture(1);
+    let source = Endpoint::node(f.remote.clone(), "producer", 1);
+    let mut physical = event(
+        "physical",
+        source.clone(),
+        Endpoint::node(f.own.clone(), "n1", 1),
+        1,
+    );
+    physical.envelope.class = EventClass::Data;
+    let mut observation = event(
+        "observation",
+        source.clone(),
+        Endpoint::outer(f.own.clone(), "sink", 1),
+        2,
+    );
+    observation.envelope.class = EventClass::Telemetry;
+    let ordered_first = physical.clone();
+    let ordered_second = observation.clone();
+    f.broker.dispatch(observation.clone()).unwrap();
+    assert_eq!(
+        f.broker.dispatch(physical.clone()),
+        Err(DispatchError::SequenceRegression {
+            previous: 2,
+            incoming: 1,
+        })
+    );
+    assert!(f.node.try_recv().is_err());
+    assert_eq!(f.outer.try_recv().unwrap(), observation);
+
+    // An independent correlation is a different order domain. It must not
+    // be rejected merely because the source or destinations are shared.
+    physical.envelope.correlation_id = "independent".into();
+    f.broker.dispatch(physical.clone()).unwrap();
+    assert_eq!(f.node.try_recv().unwrap(), physical);
+
+    // Same exact inputs in their valid order remain a positive control.
+    let mut control = fixture(1);
+    control.broker.dispatch(ordered_first.clone()).unwrap();
+    control.broker.dispatch(ordered_second.clone()).unwrap();
+    assert_eq!(control.node.try_recv().unwrap(), ordered_first);
+    assert_eq!(control.outer.try_recv().unwrap(), ordered_second);
+}

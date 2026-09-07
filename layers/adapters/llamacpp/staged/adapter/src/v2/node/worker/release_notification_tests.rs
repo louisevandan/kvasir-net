@@ -154,9 +154,43 @@ fn assert_received(event: &Event, name: &str) {
     assert_eq!(actual, receipt(name));
 }
 
-fn assert_retained(worker: &Worker, names: &[&str]) {
+fn expected_receipt_event(worker: &Worker, name: &str, sequence: u64) -> Event {
+    let pending = &worker.state.pending_releases[&owner(name).key];
+    let mut envelope = pending.original.clone();
+    envelope.event_id = format!("original-submission-{name}:llamacpp:{sequence}");
+    envelope.causation_id = Some(format!("original-submission-{name}"));
+    envelope.source = worker.endpoint.clone();
+    envelope.target = route(name);
+    envelope.class = EventClass::Telemetry;
+    envelope.sequence = sequence;
+    envelope.payload_content_type = RELEASE_RECEIPT_CONTENT_TYPE.into();
+    Event {
+        envelope,
+        payload: serde_json::to_vec(&receipt(name)).unwrap(),
+    }
+}
+
+fn assert_retained(worker: &Worker, names: &[&str], first_publication: Option<&Event>) {
     assert_eq!(worker.effects.len(), names.len());
-    for (effect, name) in worker.effects.iter().zip(names) {
+    for (index, (effect, name)) in worker.effects.iter().zip(names).enumerate() {
+        if index == 0
+            && let Some(expected) = first_publication
+        {
+            let super::effects::CommittedEffect::Publication {
+                event,
+                after: super::effects::PublicationAfter::ReleaseReceipt,
+            } = effect
+            else {
+                panic!("publication failure must preserve its already allocated receipt Event")
+            };
+            assert_eq!(event, expected);
+            assert_received(event, name);
+            assert_eq!(
+                p4_protocol::event::encode(event).unwrap(),
+                p4_protocol::event::encode(expected).unwrap()
+            );
+            continue;
+        }
         let super::effects::CommittedEffect::ReleaseReceipt {
             base,
             reply,
@@ -200,13 +234,14 @@ fn assert_duplicate_preserves_commit(worker: &mut Worker, calls: &AtomicUsize) {
 #[test]
 fn first_closed_receipt_retains_all_committed_member_intents_without_native_reexecution() {
     let (mut worker, calls) = prepared();
+    let expected = expected_receipt_event(&worker, "a", worker.state.next_event);
     let (publisher, mailbox) = completion_mailbox(1);
     worker.publisher = publisher;
     drop(mailbox);
     assert!(worker.released(ack()).is_err());
     assert_committed(&worker, &calls);
     assert!(worker.effects_fenced);
-    assert_retained(&worker, &["a", "b"]);
+    assert_retained(&worker, &["a", "b"], Some(&expected));
     assert_duplicate_preserves_commit(&mut worker, &calls);
 }
 
@@ -240,6 +275,7 @@ impl Wake for CloseAfterFirst {
 #[test]
 fn closing_after_one_receipt_keeps_only_the_unpublished_exact_intent() {
     let (mut worker, calls) = prepared();
+    let expected = expected_receipt_event(&worker, "b", worker.state.next_event + 1);
     let (publisher, mailbox) = completion_mailbox(1);
     worker.publisher = publisher;
     let observed = Arc::new(Mutex::new(Vec::new()));
@@ -257,7 +293,7 @@ fn closing_after_one_receipt_keeps_only_the_unpublished_exact_intent() {
     let observed = observed.lock().unwrap();
     assert_eq!(observed.len(), 1);
     assert_received(&observed[0], "a");
-    assert_retained(&worker, &["b"]);
+    assert_retained(&worker, &["b"], Some(&expected));
     assert_duplicate_preserves_commit(&mut worker, &calls);
 }
 
@@ -282,7 +318,7 @@ fn receipt_event_identity_exhaustion_preserves_every_unpublished_committed_inten
         if let Some(event) = events.first() {
             assert_received(event, "a");
         }
-        assert_retained(&worker, &pending);
+        assert_retained(&worker, &pending, None);
         assert_eq!(worker.state.next_event, u64::MAX);
         assert_duplicate_preserves_commit(&mut worker, &calls);
     }
