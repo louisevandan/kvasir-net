@@ -679,8 +679,9 @@ Full 중 ACK/진단이 그 몫을 쓰지 못하게 한다. 이는 **공간 예�
 UNLOAD·일반 error의 직접 송신 경로는 아직 이 보존 표현으로 이관하지 않았다. 기존 동기 대기와
 raw EventNode 소비도 남아 있으므로 고정 송신물 보존을 비동기 pump·end-to-end 예약으로 읽지 않는다.
 broker의 실제 destination `try_reserve`는 즉시 dispatch 한 번의 슬롯이며 미래/native/remote
-grant가 아니다. Full의 원본 allocation 반환만 보강됐고 성공 경로의 큐/중복 원장 복사와 Closed
-원본 비반환은 별도 미완이다.
+grant가 아니다. raw 실패의 원본 반환은
+[중립 event 계약](event-protocol-v2.md#local-refusal-ownership--limited-implementation-boundary)이 소유한다.
+성공 경로의 큐/중복 원장 복사·owned claim 이전은 별도 미완이다.
 
 #### 로컬 완료 저장소 예약 — 범위가 제한된 구현 계약
 

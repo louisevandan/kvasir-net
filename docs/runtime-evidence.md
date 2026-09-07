@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: 실제 전달 거부의 원본 소유권 — 정적 검토 WIP
+
+`2b1d1d539` 뒤 broker/adapter/node의 canonical 오류 반환과 제품 node task 보존을 변경했다.
+신규 oracle9개는 **컴파일·시험·변이 미실행**이며, 성공 경로의 공간 claim 이관·actor 교착 해결을
+주장하지 않는다. 원본/할당/원장/양방향 보류물의 소비 대조와 남은 terminal 수명은
+[거부 소유권 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
 ## 2026-09-07: PREFILL 수용 연결의 선행 원자성 — 정적 검토 WIP
 
 `d8fff7d27` 뒤 PREFILL의 조기 key 기억과 요청 삽입 후 FIFO 검사를 준비→확정으로 분리했다.

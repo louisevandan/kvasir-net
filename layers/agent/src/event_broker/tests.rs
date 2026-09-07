@@ -88,7 +88,11 @@ fn a_full_queue_is_reported_without_a_blocking_fallback() {
         .unwrap();
     // The event comes back with the refusal so the caller can retry it.
     let refused = f.broker.dispatch(event("e2", source, target, 2));
-    let Err(DispatchError::Full(delivery, returned)) = refused else {
+    let Err(DispatchFailure {
+        error: DispatchError::Full(delivery),
+        event: returned,
+    }) = refused
+    else {
         panic!("a full destination should return the event: {refused:?}");
     };
     assert_eq!(delivery, Delivery::Agent);
@@ -106,7 +110,10 @@ fn a_full_offer_does_not_consume_identity_or_sequence() {
     let pending = event("e2", source, target, 2);
     assert!(matches!(
         f.broker.dispatch(pending.clone()),
-        Err(DispatchError::Full(..))
+        Err(DispatchFailure {
+            error: DispatchError::Full(..),
+            ..
+        })
     ));
     f.agent.try_recv().unwrap();
     assert!(matches!(
@@ -132,8 +139,11 @@ fn exact_duplicates_are_idempotent_but_changed_bytes_are_rejected() {
     let mut conflict = original;
     conflict.payload.push(9);
     assert_eq!(
-        f.broker.dispatch(conflict),
-        Err(DispatchError::ConflictingDuplicate)
+        f.broker.dispatch(conflict.clone()),
+        Err(DispatchFailure {
+            error: DispatchError::ConflictingDuplicate,
+            event: Box::new(conflict),
+        })
     );
 }
 
@@ -145,11 +155,15 @@ fn a_new_event_cannot_move_a_source_sequence_backwards() {
     f.broker
         .dispatch(event("e2", source.clone(), target.clone(), 2))
         .unwrap();
+    let regressing = event("e1", source, target, 1);
     assert_eq!(
-        f.broker.dispatch(event("e1", source, target, 1)),
-        Err(DispatchError::SequenceRegression {
-            previous: 2,
-            incoming: 1,
+        f.broker.dispatch(regressing.clone()),
+        Err(DispatchFailure {
+            error: DispatchError::SequenceRegression {
+                previous: 2,
+                incoming: 1
+            },
+            event: Box::new(regressing),
         })
     );
 }
@@ -188,17 +202,21 @@ fn recreated_node_has_a_new_source_sequence_domain_and_rejects_stale_targets() {
             1,
         ))
         .unwrap();
+    let stale = event(
+        "stale-target",
+        Endpoint::agent(f.remote.clone()),
+        Endpoint::node(f.own.clone(), "n1", 1),
+        1,
+    );
     assert_eq!(
-        f.broker.dispatch(event(
-            "stale-target",
-            Endpoint::agent(f.remote.clone()),
-            Endpoint::node(f.own.clone(), "n1", 1),
-            1,
-        )),
-        Err(DispatchError::StaleNode {
-            node: "n1".into(),
-            current_generation: 2,
-            incoming_generation: 1,
+        f.broker.dispatch(stale.clone()),
+        Err(DispatchFailure {
+            error: DispatchError::StaleNode {
+                node: "n1".into(),
+                current_generation: 2,
+                incoming_generation: 1,
+            },
+            event: Box::new(stale),
         })
     );
     assert!(new_receiver.try_recv().is_err());
@@ -222,7 +240,11 @@ fn full_returns_the_original_allocations_on_every_retry_before_exact_acceptance(
     let id_capacity = pending.envelope.event_id.capacity();
     let expected = pending.clone();
     for _ in 0..3 {
-        let Err(DispatchError::Full(Delivery::Agent, returned)) = f.broker.dispatch(pending) else {
+        let Err(DispatchFailure {
+            error: DispatchError::Full(Delivery::Agent),
+            event: returned,
+        }) = f.broker.dispatch(pending)
+        else {
             panic!("the occupied destination must refuse without taking ownership");
         };
         assert_eq!(*returned, expected);
@@ -265,9 +287,12 @@ fn changing_destination_does_not_create_a_new_source_correlation_order_domain() 
     f.broker.dispatch(observation.clone()).unwrap();
     assert_eq!(
         f.broker.dispatch(physical.clone()),
-        Err(DispatchError::SequenceRegression {
-            previous: 2,
-            incoming: 1,
+        Err(DispatchFailure {
+            error: DispatchError::SequenceRegression {
+                previous: 2,
+                incoming: 1
+            },
+            event: Box::new(physical.clone()),
         })
     );
     assert!(f.node.try_recv().is_err());
@@ -286,3 +311,6 @@ fn changing_destination_does_not_create_a_new_source_correlation_order_domain() 
     assert_eq!(control.node.try_recv().unwrap(), ordered_first);
     assert_eq!(control.outer.try_recv().unwrap(), ordered_second);
 }
+
+#[path = "failure_tests.rs"]
+mod failure_tests;

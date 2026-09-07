@@ -1,6 +1,6 @@
 use p4_adapter::node_adapter::NodeAdapter;
 use p4_agent_core::event_broker::{EventBroker, EventReceiver, bounded_queue};
-use p4_agent_core::event_node::EventNode;
+use p4_agent_core::event_node::{EventNode, EventNodeFailure};
 use p4_llamacpp_staged_adapter::v2::LlamaNodeAdapter;
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass};
@@ -39,7 +39,9 @@ fn default_capacity() -> usize {
 struct NodeOwner {
     generation: u64,
     adapter: Arc<dyn NodeAdapter>,
-    task: JoinHandle<()>,
+    // A completed task retains its failure and held Events until this handle
+    // is consumed/dropped. This is in-memory ownership, not restart recovery.
+    task: JoinHandle<Result<(), EventNodeFailure>>,
 }
 
 pub async fn run(own: Address, broker: Arc<EventBroker>, mut receiver: EventReceiver) {
@@ -56,9 +58,13 @@ pub async fn run(own: Address, broker: Arc<EventBroker>, mut receiver: EventRece
             Err(detail) => json!({"ok":false,"detail":detail}),
         };
         if let Ok(reply) = reply(&own, &event, &sequence, payload)
-            && let Err(error) = broker.dispatch(reply)
+            && let Err(failure) = broker.dispatch(reply)
         {
-            eprintln!("P4_EVENT_CONTROL_REPLY_FAILED error={error}");
+            // The broker returns the original reply on every refusal. This
+            // current control loop still discards it after logging: a bounded
+            // reply outbox and receiver acceptance are not implemented here.
+            // Log only the reason, never the returned Event/payload.
+            eprintln!("P4_EVENT_CONTROL_REPLY_FAILED error={}", failure.error);
         }
     }
 }
@@ -101,9 +107,11 @@ fn create(
     let node = EventNode::new(Arc::clone(&adapter), inbound, Arc::clone(broker));
     let id = command.node_id.clone();
     let task = tokio::spawn(async move {
-        if let Err(error) = node.run().await {
-            eprintln!("P4_EVENT_NODE_STOPPED node={id} error={error:?}");
+        let result = node.run().await;
+        if let Err(failure) = &result {
+            eprintln!("P4_EVENT_NODE_STOPPED node={id} error={:?}", failure.error);
         }
+        result
     });
     nodes.insert(
         command.node_id.clone(),
@@ -142,6 +150,9 @@ async fn remove(
         .unregister_node(&command.node_id, command.node_generation)
         .map_err(|error| error.to_string())?;
     let owner = nodes.remove(&command.node_id).expect("checked node exists");
+    // Preserve the existing unloaded-node deletion behavior. Aborting and
+    // dropping this handle can discard a retained failure/held Events; the
+    // adapter snapshot is not a graceful transport drain or a durable receipt.
     owner.task.abort();
     tokio::task::spawn_blocking(move || drop(owner.adapter))
         .await

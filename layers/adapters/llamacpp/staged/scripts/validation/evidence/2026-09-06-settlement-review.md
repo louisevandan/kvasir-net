@@ -2930,3 +2930,60 @@ parser/GPU 실패 주입이나 Loaded 복구가 아니다. 성공 token 경로�
 다음 구현 순서의 단독 소유자는 로드맵이다. 이번 변경은 운영 함수2개 파일·새 필수 회귀/배선·관련
 소유 계약/진행/증거만 전체 미검증 WIP로 보존한다. generated proof·모델·바이너리·임시 도구는 기존
 ignore 경로에 둔다. remote/GPU/C++ 실행이나 push를 하지 않았고 최종 웨이브 성과 승격은 없다.
+
+## 실제 전달 거부의 원본 소유권 — 정적 검토 WIP (2026-09-07)
+
+기준 HEAD `2b1d1d5398e182eeb0a6532f384ce8203257918c`에서 성공/실패 소비 경계를 추적했다.
+기존 `EventBroker::dispatch`의 Full만 원 Event를 돌려주고 나머지는 소비했으며, EventNode terminal은
+다른 방향에 이미 보류한 Event도 버렸다. `control::create`의 spawned task는 오류를 로그한 뒤 결과를
+버렸다. 이번 수정은 **이 실제 거부 반환과 소비 경로**이며 성공 경로의 공간 claim 연결은 아직 아니다.
+
+### 구현과 정적 대조
+
+- broker의 모든 Err가 move-only `DispatchFailure { error, event: Box<Event> }`를 반환한다. validate→
+  정확 duplicate/sequence→destination→실제 queue slot→성공 ledger commit의 기존 순서는 유지한다.
+  register/unregister는 입력 Event가 없어 기존 순수 DispatchError다. 동작 분류와 wire는 바뀌지 않는다.
+- 실제 llama `try_offer`는 sender 부재/Disconnected에서도 원 Event를 반환한다. Full도 원래처럼 같은
+  값이다. EventNode의 terminal은 `EventNodeFailure`로 양쪽 held 원본을 모두 넘긴다. payload를 복사해
+  대신 돌려주거나 실패를 Full로 재분류하지 않는다. Box는 실패 반환값의 inline 크기만 줄인다.
+- 제품 `NodeOwner`가 `JoinHandle<Result<(), EventNodeFailure>>`를 유지하며 spawned task는 reason을
+  borrow해 로그한 뒤 결과를 반환한다. 이 handle의 수명 내 보존이지 durable outbox나 재시작 복구가 아니다.
+  DELETE의 abort/handle 폐기·프로세스 종료, 아직 읽지 않은 큐와 adapter 내부 작업의 drain은 별개다.
+- control reply loop와 remote serve/pump의 최종 폐기는 남아 있다. 새 broker 오류가 원문을 갖는다는
+  이유로 그 미완을 숨기지 않는다. Display/운영 로그는 reason만 출력해 전체 사용자 payload를 찍지 않는다.
+
+독립 정적 검토는 오류 종류/호출자, nested test 접근, Box의 원 allocation 보존, poison guard 수명,
+양성 대조의 correlation/sequence를 대조했다. 컴파일·실행·변이의 대체 증거로 세지 않는다.
+
+### 작성한 회귀9개 — 전부 미실행
+
+| 경로 | 수 | 고정한 판정 / 예정된 제거 변이 |
+| --- | --- | --- |
+| canonical broker dispatch |4| invalid envelope·missing/stale/Closed·conflict/regression·poison의 원 Event/value/allocation/비용·전체 ledger 불변, 가능한 원인 정정 후 실제 수용 / clone 대체·사전 ledger commit |
+| actual EventNode loop |3| adapter Closed 입력, broker Closed 출력+이미 held 입력, completion Closed held 입력의 원 allocation 반환 / 어느 한 방향을 terminal에서 버림 |
+| actual LlamaNodeAdapter::try_offer |2| sender None/Disconnected 원본 반환, Full 뒤 같은 Event의 정확한 한 번 수용 / Closed에서 소비·Full에서 copy 반환 |
+
+broker4개는 `event_broker/failure_tests.rs`, node3개는 기존 `event_node/tests.rs`, adapter2개는
+`node/offer_tests.rs`다. 기존 test API 이관은 정확한 실패 원인과 원문 대조를 유지했다. 실제 actor
+`ObservedAdapter`도 같은 canonical 타입을 전달하며 14입력/6결과/cap1·cap8/timeout/정상 진행 oracle는
+변경하지 않았다. 원본 actor RED가 GREEN이 됐다고 하지 않는다.
+
+node 시험은 입력이 이미 held됨을 실제 loop poll로 확정한 뒤 completion/Closed를 발생시킨다. 수신
+채널에 실제로 이동시킨 allocation을 대조하며 broker 성공 시 복사된 값과 호출자 원본을 혼동하지 않는다.
+1초 guard는 유한 실패 보고용이지 모든 CI 지연이나 시계 독립 liveness 증명이 아니다. poison 해제는
+시험의 원인 정정이며 운영 자동 복구가 아니다. NodeOwner handle의 제품 수명은 코드로 대조했으나
+CREATE/DELETE 전체 소비 시험이나 자동 복구 검증은 이번 신규9개 범위에 포함되지 않는다.
+
+### 검증 지위와 남은 경계
+
+컴파일·시험·변이·docs-lint/C++/GPU/원격은 **미실행**이다. 서식 정리와 diff 대조만 하며 새 실행
+소스/바이너리 봉인이나 결과 수를 만들지 않는다. 마지막 실행13의1254/1/7은 수정 전 소스에만 귀속한다.
+검증2회 사용·마지막1회 미사용이고 완성 후보 전 부분 API 확인으로 마지막 회차를 소비하지 않는다.
+
+소유형 성공 전달에는 producer/held/destination/WorkerInput뿐 아니라 장기 RequestState 원문 보관,
+독립 exact dedupe 비용·잠금 밖 callback, causal 필수 결과/반환 선예약, blocked worker 대기가 모두
+남아 있다. remote는 local acceptance/socket written/receiver acceptance를 구별해야 하며 현재 하네스의
+한 agent 다중 노드를 agent 간 outbound 검증으로 쓰지 않는다. 최종 목표·다음 순서는 로드맵이 소유한다.
+
+운영 코드·실제 소비 회귀·소유 문서만 전체 미검증 체크포인트에 포함한다. generated proof와 일회성
+도구·모델·바이너리는 ignore 경로에 유지하며 push하지 않는다. byte admission·전체 교착·실기 TPS 완료는 아니다.

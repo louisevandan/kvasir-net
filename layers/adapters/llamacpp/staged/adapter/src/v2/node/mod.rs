@@ -79,14 +79,16 @@ impl NodeAdapter for LlamaNodeAdapter {
 
     fn try_offer(&self, event: Event) -> Result<(), OfferError> {
         let Some(sender) = &self.sender else {
-            return Err(OfferError::Closed);
+            return Err(OfferError::Closed(event));
         };
         match sender.try_send(WorkerInput::Event(event)) {
             Ok(()) => Ok(()),
             Err(mpsc::TrySendError::Full(WorkerInput::Event(event))) => {
                 Err(OfferError::Full(event))
             }
-            Err(mpsc::TrySendError::Disconnected(_)) => Err(OfferError::Closed),
+            Err(mpsc::TrySendError::Disconnected(WorkerInput::Event(event))) => {
+                Err(OfferError::Closed(event))
+            }
         }
     }
 
@@ -121,3 +123,6 @@ impl Drop for LlamaNodeAdapter {
 
 #[cfg(test)]
 mod worker_tests;
+
+#[cfg(test)]
+mod offer_tests;

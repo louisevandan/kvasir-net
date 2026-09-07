@@ -6,9 +6,10 @@ use super::*;
 use crate::v2::node::LlamaNodeAdapter;
 use p4_adapter::node_adapter::{NodeAdapter, OfferError};
 use p4_agent_core::event_broker::{
-    DispatchError, DispatchOutcome, EventBroker, EventReceiver, EventSender, bounded_queue,
+    DispatchError, DispatchFailure, DispatchOutcome, EventBroker, EventReceiver, EventSender,
+    bounded_queue,
 };
-use p4_agent_core::event_node::{EventNode, EventNodeError};
+use p4_agent_core::event_node::{EventNode, EventNodeFailure};
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::Condvar;
@@ -147,7 +148,9 @@ impl NodeAdapter for ObservedAdapter {
                     .entry(original.envelope.event_id)
                     .or_default() += 1;
             }
-            Err(OfferError::Closed) => {}
+            Err(OfferError::Closed(returned)) => {
+                assert_eq!(*returned, original, "Closed returns unchanged ownership");
+            }
         }
         result
     }
@@ -175,7 +178,7 @@ struct StateView {
     requests: Vec<String>,
 }
 
-type NodeFuture = Pin<Box<dyn Future<Output = Result<(), EventNodeError>> + Send>>;
+type NodeFuture = Pin<Box<dyn Future<Output = Result<(), EventNodeFailure>> + Send>>;
 type NativeView = (
     usize,
     usize,
@@ -388,7 +391,10 @@ impl Ring {
                     self.submissions.push(original);
                     return;
                 }
-                Err(DispatchError::Full(_, event)) => {
+                Err(DispatchFailure {
+                    error: DispatchError::Full(_),
+                    event,
+                }) => {
                     assert_eq!(*event, original);
                     returned = *event;
                 }

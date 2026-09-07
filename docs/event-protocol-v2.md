@@ -86,8 +86,10 @@ The agent worker reads only `target`:
 The outbound I/O pump may wait for socket readiness. Waiting is confined to
 transport ownership; it never pins an agent worker or a node/adapter callback.
 When a bounded queue has no credit, `offer` returns a typed overflow result.
-The producer emits or records a failure event according to the event class; it
-does not fall back to a blocking send.
+Temporary Full returns the original event for bounded retention and retry; it
+is not an inference rejection. Permanent refusal also returns ownership for an
+explicit failure disposition. Sender-declared event class does not grant extra
+capacity. Neither case falls back to a blocking send in the broker.
 
 There are no response futures, paired continuations, synchronous ACK waits or
 callback re-entry in P4 business code. Event loops may sleep waiting for their
@@ -120,13 +122,37 @@ decide that two events can share a physical batch.
 Adapter entry points enqueue and return:
 
 ```text
-try_offer(AdapterEvent) -> Accepted | Full | Closed
+try_offer(AdapterEvent) -> Accepted | Full(original Event) | Closed(original Event)
 try_take(AdapterProducedEvent) -> Empty | Event
 snapshot() -> opaque, cheap, non-blocking status
 ```
 
 The adapter never borrows an event sink whose implementation may block. It
 owns a bounded completion queue drained by the node event loop.
+
+### Local refusal ownership — limited implementation boundary
+
+The canonical `EventBroker::dispatch` returns `DispatchFailure { error, event }`
+on **every** refusal: invalid envelope, conflicting duplicate, sequence
+regression, missing/stale route, poisoned lock, destination Full or Closed.
+`event` is the original boxed value and retains its allocation capacities.
+It is not a reconstructed duplicate. Registration/unregistration have no input
+Event and continue to return the pure `DispatchError` reason.
+
+`EventNode::run` returns `EventNodeFailure { error, held_input, held_output }`
+on terminal failure. Both already-held directions remain owned by that result,
+including a held input when output dispatch fails. Full retries keep the same
+value. A completed production node task retains this result in `NodeOwner`'s
+join handle instead of logging and immediately discarding it. Operational
+logging reads the reason only, not the user payload in the returned value.
+
+This is **raw Event failure ownership**, not the completed retained-byte/credit
+handoff. It does not drain unread queues, acknowledge remote receipt, preserve
+state across process restart, or guarantee graceful shutdown. Explicit task
+abort/handle disposal can still discard local ownership. The current agent
+control reply loop and remote pumps do not yet retain all terminal failures;
+returning the Event from the broker alone does not close those consumers.
+Execution status and tests belong to the roadmap/evidence, not this contract.
 
 ## Node lifecycle
 
@@ -283,8 +309,11 @@ The implementation must reject rather than guess when any of these is true:
 - stage-local memory cannot represent the stock model's memory kind;
 - backend runtime reports load/decode/transport failure.
 
-Every rejection creates a telemetry/failure event addressed to the declared
-OUTER return route when that route is valid.
+Semantic adapter rejection owes a telemetry/failure event addressed to the
+valid declared OUTER return route. This is not a promise that a full or closed
+transport can deliver such an event: its storage and failure disposition must
+be preserved independently. Temporary queue Full must not be converted into a
+new semantic failure event, and a transport callback must not interpret payloads.
 
 ## Proof order
 

@@ -7,6 +7,7 @@ pub(super) enum LedgerVerdict {
     Duplicate,
 }
 
+#[cfg_attr(test, derive(Debug))]
 pub(super) struct EventLedger {
     limit: usize,
     order: VecDeque<String>,

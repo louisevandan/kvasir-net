@@ -20,8 +20,8 @@ pub use mailbox::{
 use p4_protocol::event::Event;
 use std::task::{Context, Poll as TaskPoll};
 
-// Not `Copy` any more: `Full` carries the event back so the caller can hold
-// it and retry, and an event is not a trivially copyable value.
+// Every refusal returns ownership. Full may be retried; Closed requires an
+// explicit failure disposition rather than silently consuming the Event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OfferError {
     /// The adapter has no room right now, and hands the event back.
@@ -30,7 +30,8 @@ pub enum OfferError {
     /// keep it and try again: dropping it loses work, and failing the node
     /// turns a busy adapter into a dead pipeline.
     Full(Event),
-    Closed,
+    /// The adapter can no longer accept this Event; the original is returned.
+    Closed(Event),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

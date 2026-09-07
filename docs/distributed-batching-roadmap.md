@@ -6,7 +6,7 @@
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
 [문서 안내도](document-map.md)가 소유한다. 최초 문서 이관과 후속 구현을 구분한다.
 기준 커밋의 감사는 §3, **후속 구현·체크포인트와 다음 행동은 마지막 진행 기록**을 따른다.
-최신 진행 기록은 [수용 연결 전 PREFILL 거부 원자성](#2026-09-07-후속-구현--수용-연결-전-prefill-거부-원자성)이다.
+최신 진행 기록은 [실제 전달 거부의 원본 소유권](#2026-09-07-후속-구현--실제-전달-거부의-원본-소유권)이다.
 이전 진행 기록 안의 “다음”은 당시의 순서이며 현재 지시가 아니다. 현재 반례와 단계 상태는 최신 기록을 우선한다.
 
 ## 1. 완료해야 할 제품 목표
@@ -1338,3 +1338,30 @@ remote acceptance까지의 기존 미완 표면은 그대로다. 국소 PREFILL 
 마지막 회차를 사용한다. 새 손잡이·큐 증설·실패 입력 축소로 진행 조건을 바꾸지 않는다. 유지할 소스·
 시험·소유 문서만 전체 미검증 체크포인트에 포함하고 생성물은 ignore한다. GPU/원격/모델/C++/push는
 이번 작업에서 실행하지 않았으며 최종 강한 웨이브 성과는 미완이다.
+
+### 2026-09-07 후속 구현 — 실제 전달 거부의 원본 소유권
+
+앞 PREFILL WIP는 `2b1d1d539`에 보존했다. 이번 연결 감사는 raw/owned 경계를 실제 호출자 전체로
+추적했다. 중간에서 Event를 복사하고 claim을 버리는 opt-in 다리와, source claim을 exact dedupe
+원장 수명에 묶는 안을 배제했다. 성공 경로 전체의 소유형 이관은 아직 하지 않았다.
+
+실제 먼저 바꾼 것은 **canonical 거부 반환과 그 소비자**다. broker가 모든 거부의 원 Event를 반환하고,
+adapter 입력 Closed도 원본을 돌려주며, EventNode terminal은 양방향 보류물을 반환한다. 제품 node
+task가 그 결과를 보존하게 연결했다. 정확한 수명/미완 범위는
+[중립 event 계약](event-protocol-v2.md#local-refusal-ownership--limited-implementation-boundary)이 소유한다.
+이것은 raw Event 보존이지 공간 claim 이관이나 actor 교착 GREEN이 아니다.
+
+broker4개·실제 node loop3개·llama try_offer2개 회귀를 작성했고 기존 API 시험을 새 반환값에 맞춰
+원인/원문 대조를 유지했다. 원본 actor14입력/6결과/cap1·cap8/timeout/oracle는 그대로다.
+**컴파일·시험·변이 미실행 WIP; B1/B2/B5 IN_PROGRESS, B3 end-to-end 미완**이다.
+마지막 실제 결과1254/1/7은 수정 전 봉인 소스만 증명하며, 검증2회 사용·마지막1회 미사용이다.
+
+다음 첫 행동은 이제 실패 원본을 반환하는 이 실제 경계에서 canonical 소유형 성공 경로를 이관하는
+것이다. producer/held input·output/destination/WorkerInput/장기 request 원문을 함께 잇고, 정확한
+중복 사본의 독립 비용 및 잠금 밖 알림을 유지한다. raw fallback이나 `handle(event.clone()); retire()`는
+장기 보관 사본을 무과금으로 남겨 승인하지 않는다. 그다음이 아니라 **같은 후보의 승격 조건으로**
+원인 작업의 필수 결과/반환 공간과 input/capacity/shutdown pump를 연결해야 cap1 진행을 판정한다.
+native 결과 사전 bound·remote grant/acceptance·정상 prompt 웨이브는 계속 미완이다.
+
+유지할 운영 변경·필수 회귀·소유 문서만 전체 미검증 체크포인트에 포함하고 생성물은 ignore한다.
+이번에 remote/GPU/native/C++/push 실행은 없고, 새 한도나 정상 입력을 줄이는 정책을 추가하지 않았다.

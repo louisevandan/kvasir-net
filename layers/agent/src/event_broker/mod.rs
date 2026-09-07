@@ -48,15 +48,9 @@ pub enum DispatchError {
         current_generation: u64,
         incoming_generation: u64,
     },
-    /// The destination queue is full, and the event comes back with it.
-    ///
-    /// It carries the event because the caller's only correct answer is to
-    /// keep it and try again - the ledger commits on success only and
-    /// `inspect` reads without recording, so a retry is the same dispatch
-    /// rather than a duplicate. Returning the delivery alone left the one
-    /// caller with nothing to retry, so it failed the node instead and lost
-    /// a completion that had already been computed.
-    Full(Delivery, Box<Event>),
+    /// Temporary destination pressure. The enclosing DispatchFailure returns
+    /// the original Event, as it does for every permanent dispatch refusal.
+    Full(Delivery),
     Closed(Delivery),
     Poisoned,
 }
@@ -68,6 +62,41 @@ impl std::fmt::Display for DispatchError {
 }
 
 impl std::error::Error for DispatchError {}
+
+/// A refused dispatch never consumes its input. The failure owns the exact
+/// original allocation, not a reserialized/cloned replacement. It is not
+/// Clone: callers explicitly retry, retain, or terminate its ownership.
+///
+/// This is a local failure-ownership boundary, not a retained-byte claim or
+/// proof of remote delivery. Registration errors have no input Event and
+/// continue to return DispatchError directly.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DispatchFailure {
+    pub error: DispatchError,
+    pub event: Box<Event>,
+}
+
+impl DispatchFailure {
+    fn new(error: DispatchError, event: Event) -> Self {
+        Self {
+            error,
+            event: Box::new(event),
+        }
+    }
+}
+
+impl std::fmt::Display for DispatchFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Do not write a failed user's complete payload to operational logs.
+        std::fmt::Display::fmt(&self.error, formatter)
+    }
+}
+
+impl std::error::Error for DispatchFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
 
 pub struct EventBroker {
     own: Address,
@@ -155,17 +184,27 @@ impl EventBroker {
         Ok(true)
     }
 
-    pub fn dispatch(&self, event: Event) -> Result<DispatchOutcome, DispatchError> {
-        event
-            .validate()
-            .map_err(|error| DispatchError::Invalid(error.to_string()))?;
-        let mut ledger = self.ledger.lock().map_err(|_| DispatchError::Poisoned)?;
-        match ledger.inspect(&event)? {
-            LedgerVerdict::Duplicate => return Ok(DispatchOutcome::Duplicate),
-            LedgerVerdict::New => {}
+    pub fn dispatch(&self, event: Event) -> Result<DispatchOutcome, DispatchFailure> {
+        if let Err(error) = event.validate() {
+            return Err(DispatchFailure::new(
+                DispatchError::Invalid(error.to_string()),
+                event,
+            ));
+        }
+        let mut ledger = match self.ledger.lock() {
+            Ok(ledger) => ledger,
+            Err(_) => return Err(DispatchFailure::new(DispatchError::Poisoned, event)),
+        };
+        match ledger.inspect(&event) {
+            Ok(LedgerVerdict::Duplicate) => return Ok(DispatchOutcome::Duplicate),
+            Ok(LedgerVerdict::New) => {}
+            Err(error) => return Err(DispatchFailure::new(error, event)),
         }
 
-        let (delivery, sender) = self.destination(&event.envelope.target)?;
+        let (delivery, sender) = match self.destination(&event.envelope.target) {
+            Ok(destination) => destination,
+            Err(error) => return Err(DispatchFailure::new(error, event)),
+        };
         // Obtain this actual destination slot before making the successful
         // delivery's ledger/queue copies. Full must return the original owned
         // value, including spare allocation capacity, not a freshly cloned
@@ -178,9 +217,11 @@ impl EventBroker {
                 Ok(DispatchOutcome::Enqueued(delivery))
             }
             Err(mpsc::error::TrySendError::Full(())) => {
-                Err(DispatchError::Full(delivery, Box::new(event)))
+                Err(DispatchFailure::new(DispatchError::Full(delivery), event))
             }
-            Err(mpsc::error::TrySendError::Closed(())) => Err(DispatchError::Closed(delivery)),
+            Err(mpsc::error::TrySendError::Closed(())) => {
+                Err(DispatchFailure::new(DispatchError::Closed(delivery), event))
+            }
         }
     }
 

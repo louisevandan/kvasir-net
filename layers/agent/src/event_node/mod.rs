@@ -22,6 +22,18 @@ pub enum EventNodeError {
     Broker(DispatchError),
 }
 
+/// Terminal node failure together with both events still owned by this task.
+///
+/// A refusal is not retirement: the caller now owns these unchanged values
+/// and must account for their outcome. This boundary preserves existing Event
+/// ownership, not count/byte reservations, graceful drain or remote delivery.
+#[derive(Debug)]
+pub struct EventNodeFailure {
+    pub error: EventNodeError,
+    pub held_input: Option<Box<Event>>,
+    pub held_output: Option<Box<Event>>,
+}
+
 pub struct EventNode {
     adapter: Arc<dyn NodeAdapter>,
     inbound: EventReceiver,
@@ -41,7 +53,7 @@ impl EventNode {
         }
     }
 
-    pub async fn run(mut self) -> Result<(), EventNodeError> {
+    pub async fn run(mut self) -> Result<(), EventNodeFailure> {
         // Retain at most one event in each direction. Waiting exclusively on
         // an outbound Full deadlocks two nodes whose own inbound queues need
         // draining to make room for one another. Neither Full commits the
@@ -55,15 +67,33 @@ impl EventNode {
             if let Some(event) = held_output.take() {
                 match self.broker.dispatch(event) {
                     Ok(_) => {}
-                    Err(DispatchError::Full(_, returned)) => held_output = Some(*returned),
-                    Err(error) => return Err(EventNodeError::Broker(error)),
+                    Err(failure) => {
+                        held_output = Some(*failure.event);
+                        match failure.error {
+                            DispatchError::Full(_) => {}
+                            error => {
+                                return Err(EventNodeFailure {
+                                    error: EventNodeError::Broker(error),
+                                    held_input: held_input.map(Box::new),
+                                    held_output: held_output.map(Box::new),
+                                });
+                            }
+                        }
+                    }
                 }
             }
             if let Some(event) = held_input.take() {
                 match self.adapter.try_offer(event) {
                     Ok(()) => {}
                     Err(OfferError::Full(event)) => held_input = Some(event),
-                    Err(OfferError::Closed) => return Err(EventNodeError::AdapterClosed),
+                    Err(OfferError::Closed(event)) => {
+                        held_input = Some(event);
+                        return Err(EventNodeFailure {
+                            error: EventNodeError::AdapterClosed,
+                            held_input: held_input.map(Box::new),
+                            held_output: held_output.map(Box::new),
+                        });
+                    }
                 }
             }
             if input_closed && held_input.is_none() && held_output.is_none() {
@@ -87,7 +117,11 @@ impl EventNode {
                         // adapter that instead reports Ready(Empty).
                         Poll::Empty => tokio::time::sleep(HELD_RETRY_INTERVAL).await,
                         Poll::Closed => {
-                            return Err(EventNodeError::CompletionClosed(self.adapter.snapshot()));
+                            return Err(EventNodeFailure {
+                                error: EventNodeError::CompletionClosed(self.adapter.snapshot()),
+                                held_input: held_input.map(Box::new),
+                                held_output: held_output.map(Box::new),
+                            });
                         }
                     }
                 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::event_broker::{Delivery, DispatchOutcome, bounded_queue};
+use crate::event_broker::{Delivery, DispatchFailure, DispatchOutcome, bounded_queue};
 use p4_adapter::node_adapter::{
     CompletionMailbox, CompletionPublisher, OfferError, Poll, completion_mailbox,
 };
@@ -22,8 +22,8 @@ impl NodeAdapter for ClosedAdapter {
     fn kind(&self) -> &str {
         "closed-test"
     }
-    fn try_offer(&self, _event: Event) -> Result<(), OfferError> {
-        Err(OfferError::Closed)
+    fn try_offer(&self, event: Event) -> Result<(), OfferError> {
+        Err(OfferError::Closed(event))
     }
     fn try_take(&self) -> Poll {
         Poll::Closed
@@ -143,9 +143,10 @@ async fn closed_completion_reports_the_adapter_failure_snapshot() {
         .await
         .unwrap_err();
     assert_eq!(
-        error,
+        error.error,
         EventNodeError::CompletionClosed("logical_batch_failed:native exited 17".into())
     );
+    assert!(error.held_input.is_none() && error.held_output.is_none());
 }
 
 /// An adapter with no room until it is given some.
@@ -464,7 +465,11 @@ async fn bidirectional_full_completions_do_not_block_input_that_frees_the_ring()
     let a_reservation = a_tx.try_reserve().unwrap();
     let b_reservation = b_tx.try_reserve().unwrap();
     for (input, expected_node, generation) in [(&into_a, "a", 3), (&into_b, "b", 7)] {
-        let Err(DispatchError::Full(delivery, returned)) = broker.dispatch(input.clone()) else {
+        let Err(DispatchFailure {
+            error: DispatchError::Full(delivery),
+            event: returned,
+        }) = broker.dispatch(input.clone())
+        else {
             panic!("the initial destination must actually be full");
         };
         assert_eq!(
@@ -624,12 +629,16 @@ async fn a_held_full_completion_reports_a_destination_that_closes() {
         node: "b".into(),
         generation: 7,
     });
-    assert_eq!(result, Err(EventNodeError::Broker(closed.clone())));
+    let failure = result.unwrap_err();
+    assert_eq!(failure.error, EventNodeError::Broker(closed.clone()));
+    assert!(failure.held_input.is_none());
+    assert_eq!(failure.held_output.as_deref(), Some(&completion));
+    let rejected = broker.dispatch(completion.clone()).unwrap_err();
     assert_eq!(
-        broker.dispatch(completion),
-        Err(closed),
+        rejected.error, closed,
         "the rejected completion must not have been committed as a duplicate"
     );
+    assert_eq!(*rejected.event, completion);
     assert!(accepted.lock().unwrap().is_empty());
 }
 
@@ -745,7 +754,11 @@ async fn held_input_and_output_leave_the_second_event_in_each_bounded_queue() {
         1,
         "a held output must prevent consuming a second completion"
     );
-    let Err(DispatchError::Full(delivery, returned)) = broker.dispatch(inputs[2].clone()) else {
+    let Err(DispatchFailure {
+        error: DispatchError::Full(delivery),
+        event: returned,
+    }) = broker.dispatch(inputs[2].clone())
+    else {
         panic!("the second input must still occupy the capacity-one inbound queue");
     };
     assert_eq!(
@@ -790,4 +803,236 @@ async fn held_input_and_output_leave_the_second_event_in_each_bounded_queue() {
     assert_eq!(*accepted.lock().unwrap(), inputs[..2]);
     assert_eq!(delivered, outputs[..2]);
     assert_eq!(adapter.inner.taken.load(Ordering::SeqCst), 2);
+}
+
+/// Completion is permanently Pending so the input-Closed branch is the only
+/// terminal cause. ClosedAdapter above deliberately tests completion closure.
+struct InputClosedAdapter;
+
+impl NodeAdapter for InputClosedAdapter {
+    fn kind(&self) -> &str {
+        "input-closed-test"
+    }
+    fn try_offer(&self, event: Event) -> Result<(), OfferError> {
+        Err(OfferError::Closed(event))
+    }
+    fn try_take(&self) -> Poll {
+        Poll::Empty
+    }
+}
+
+fn with_spare_allocation(mut event: Event) -> Event {
+    event.payload.reserve(31);
+    event.envelope.event_id.reserve(47);
+    event.validate().unwrap();
+    event
+}
+
+fn allocation(event: &Event) -> (usize, usize, usize, usize) {
+    (
+        event.payload.as_ptr() as usize,
+        event.payload.capacity(),
+        event.envelope.event_id.as_ptr() as usize,
+        event.envelope.event_id.capacity(),
+    )
+}
+
+#[tokio::test]
+async fn adapter_closed_returns_the_original_inbound_allocation() {
+    let own = Address::tcp("127.0.0.1", 52044);
+    let (agent_tx, _agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(1);
+    let (outbound_tx, _outbound_rx) = bounded_queue(1);
+    let (node_tx, node_rx) = bounded_queue(1);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        8,
+    ));
+    broker.register_node("n1", 1, node_tx.clone()).unwrap();
+    let input = with_spare_allocation(event(&own));
+    let expected = input.clone();
+    let original_allocation = allocation(&input);
+    // Move into the real EventReceiver. A successful broker dispatch makes
+    // its own queue/ledger copies; this test starts at EventNode ownership.
+    node_tx.try_send(input).unwrap();
+    let failure = tokio::time::timeout(
+        Duration::from_secs(1),
+        EventNode::new(Arc::new(InputClosedAdapter), node_rx, broker).run(),
+    )
+    .await
+    .expect("an input-Closed adapter must terminate its node")
+    .unwrap_err();
+    assert_eq!(failure.error, EventNodeError::AdapterClosed);
+    let returned = failure
+        .held_input
+        .as_deref()
+        .expect("rejected input is owned");
+    assert_eq!(returned, &expected);
+    assert_eq!(allocation(returned), original_allocation);
+    assert!(failure.held_output.is_none());
+}
+
+#[tokio::test]
+async fn broker_closed_returns_both_already_held_allocations() {
+    use std::future::Future;
+
+    let own = Address::tcp("127.0.0.1", 52045);
+    let (agent_tx, _agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(1);
+    let (outbound_tx, _outbound_rx) = bounded_queue(1);
+    let (a_tx, a_rx) = bounded_queue(1);
+    let (b_tx, b_rx) = bounded_queue(1);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        8,
+    ));
+    broker.register_node("a", 3, a_tx.clone()).unwrap();
+    broker.register_node("b", 7, b_tx.clone()).unwrap();
+    let a = Endpoint::node(own.clone(), "a", 3);
+    let input = with_spare_allocation(duplex_event(
+        "terminal-input",
+        Endpoint::outer(own.clone(), "client", 1),
+        a.clone(),
+        &[0xff, 0, 3],
+    ));
+    let expected_input = input.clone();
+    let input_allocation = allocation(&input);
+    let output = with_spare_allocation(duplex_event(
+        "terminal-output",
+        a,
+        Endpoint::node(own, "b", 7),
+        &[7, 0x80, 0],
+    ));
+    let expected_output = output.clone();
+    let output_allocation = allocation(&output);
+    let (publisher, mailbox) = completion_mailbox(1);
+    let accepted = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(BoundedDuplexProbe {
+        inner: DuplexProbeAdapter {
+            mailbox,
+            accepted: Arc::clone(&accepted),
+            taken: AtomicUsize::new(0),
+        },
+        room: AtomicBool::new(false),
+        refusals: AtomicUsize::new(0),
+    });
+    a_tx.try_send(input).unwrap();
+    let mut run = Box::pin(EventNode::new(adapter.clone(), a_rx, Arc::clone(&broker)).run());
+    // Input is the only ready branch. Establish ownership before making the
+    // completion available, independently of select's randomized branch order.
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert!(adapter.refusals.load(Ordering::SeqCst) > 0);
+    assert_eq!(adapter.inner.taken.load(Ordering::SeqCst), 0);
+    let reservation = b_tx.try_reserve().unwrap();
+    publisher.try_publish(output).unwrap();
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert_eq!(adapter.inner.taken.load(Ordering::SeqCst), 1);
+    assert_eq!(b_tx.capacity(), 0);
+    assert!(accepted.lock().unwrap().is_empty());
+
+    drop(b_rx);
+    drop(reservation);
+    let failure = tokio::time::timeout(Duration::from_secs(1), run)
+        .await
+        .expect("Closed must terminate the established Full retry")
+        .unwrap_err();
+    let closed = DispatchError::Closed(Delivery::Node {
+        node: "b".into(),
+        generation: 7,
+    });
+    assert_eq!(failure.error, EventNodeError::Broker(closed.clone()));
+    let input = failure
+        .held_input
+        .as_deref()
+        .expect("prior held input is owned");
+    assert_eq!(input, &expected_input);
+    assert_eq!(allocation(input), input_allocation);
+    let output = failure
+        .held_output
+        .as_deref()
+        .expect("rejected output is owned");
+    assert_eq!(output, &expected_output);
+    assert_eq!(allocation(output), output_allocation);
+    assert!(accepted.lock().unwrap().is_empty());
+    let rejected = broker.dispatch(*failure.held_output.unwrap()).unwrap_err();
+    assert_eq!(
+        rejected.error, closed,
+        "terminal failure did not commit a duplicate"
+    );
+    assert_eq!(*rejected.event, expected_output);
+    assert_eq!(allocation(&rejected.event), output_allocation);
+}
+
+#[tokio::test]
+async fn completion_closed_returns_the_already_held_input_allocation() {
+    use std::future::Future;
+
+    let own = Address::tcp("127.0.0.1", 52046);
+    let (agent_tx, _agent_rx) = bounded_queue(1);
+    let (outer_tx, _outer_rx) = bounded_queue(1);
+    let (outbound_tx, _outbound_rx) = bounded_queue(1);
+    let (node_tx, node_rx) = bounded_queue(1);
+    let broker = Arc::new(EventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        8,
+    ));
+    broker.register_node("n1", 1, node_tx.clone()).unwrap();
+    let input = with_spare_allocation(event(&own));
+    let expected = input.clone();
+    let original_allocation = allocation(&input);
+    let (publisher, mailbox) = completion_mailbox(1);
+    let accepted = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(BoundedDuplexProbe {
+        inner: DuplexProbeAdapter {
+            mailbox,
+            accepted: Arc::clone(&accepted),
+            taken: AtomicUsize::new(0),
+        },
+        room: AtomicBool::new(false),
+        refusals: AtomicUsize::new(0),
+    });
+    node_tx.try_send(input).unwrap();
+    let mut run = Box::pin(EventNode::new(adapter.clone(), node_rx, broker).run());
+    assert!(
+        poll_fn(|cx| TaskPoll::Ready(run.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert!(adapter.refusals.load(Ordering::SeqCst) > 0);
+    assert_eq!(adapter.inner.taken.load(Ordering::SeqCst), 0);
+    assert_eq!(adapter.snapshot(), "");
+    drop(publisher);
+    let failure = tokio::time::timeout(Duration::from_secs(1), run)
+        .await
+        .expect("completion closure must wake the actual node loop")
+        .unwrap_err();
+    assert_eq!(
+        failure.error,
+        EventNodeError::CompletionClosed(String::new())
+    );
+    let returned = failure
+        .held_input
+        .as_deref()
+        .expect("prior held input is owned");
+    assert_eq!(returned, &expected);
+    assert_eq!(allocation(returned), original_allocation);
+    assert!(failure.held_output.is_none());
+    assert!(accepted.lock().unwrap().is_empty());
 }
