@@ -318,6 +318,74 @@ fn actual_head_projects_by_full_outer_not_correlation_and_binds_accepted_index()
 }
 
 #[test]
+fn head_id_shortage_precedes_prepared_issue_and_exact_room_still_runs() {
+    let (mut worker, mailbox, calls) = fixture(true);
+    worker.handle(submission("a", route("a", 1))).unwrap();
+    worker.state.next_event = u64::MAX - 2;
+    let request_bookkeeping = |worker: &Worker| {
+        worker
+            .state
+            .requests
+            .iter()
+            .map(|(key, r)| {
+                (
+                    key.clone(),
+                    r.incarnation,
+                    r.sequence_id,
+                    r.prompt_cursor,
+                    r.prompt_issued,
+                    r.outstanding,
+                    r.generated,
+                    format!("{:?}", r.ready),
+                    format!("{:?}", r.issued_work),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before_requests = request_bookkeeping(&worker);
+    let before_owners = format!("{:?}", worker.state.stage_owners);
+    let before_frontiers = format!("{:?}", worker.state.stage_frontiers);
+    for _ in 0..2 {
+        assert_eq!(worker.drive_one_batch(), Err(()));
+        assert!(
+            worker.state.prepared_issue.is_none(),
+            "refusal cannot leave a prepared issue"
+        );
+        assert_eq!(request_bookkeeping(&worker), before_requests);
+        assert_eq!(format!("{:?}", worker.state.stage_owners), before_owners);
+        assert_eq!(
+            format!("{:?}", worker.state.stage_frontiers),
+            before_frontiers
+        );
+        assert_eq!(worker.state.flights.active_counts(), (0, 0));
+        assert_eq!(worker.state.next_event, u64::MAX - 2);
+        assert!(worker.effects.is_empty());
+        assert!(calls.lock().unwrap().is_empty());
+        assert!(drain(&mailbox).is_empty());
+    }
+    // One physical forward + one BatchObservation + one StageSpan, all from
+    // the actual head drive/codec consumer. No native work ran in either refusal.
+    worker.state.next_event = u64::MAX - 3;
+    assert_eq!(worker.drive_one_batch(), Ok(true));
+    assert_eq!(*calls.lock().unwrap(), [Operation::LogicalBatch]);
+    let events = drain(&mailbox);
+    assert_eq!(events.len(), 3);
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| e.envelope.sequence)
+            .collect::<Vec<_>>(),
+        [u64::MAX - 3, u64::MAX - 2, u64::MAX - 1]
+    );
+    let observation: BatchObservation = serde_json::from_slice(&events[1].payload).unwrap();
+    assert_eq!(
+        (observation.logical_ordinal, observation.logical_rows),
+        (1, 1)
+    );
+    assert_eq!(worker.state.next_event, u64::MAX);
+}
+
+#[test]
 fn head_rejects_inconsistent_original_reply_before_native_or_issue_in_both_orders() {
     for bad_first in [false, true] {
         let (mut worker, mailbox, calls) = fixture(true);

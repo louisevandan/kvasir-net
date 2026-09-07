@@ -2456,3 +2456,88 @@ native HELLO 자원 모델은 이 한 반례 수정의 직렬 선행이 아니�
 완료되지 않았다. fixture 공통 준비·복구 helper만 추출됐다. 기존 단언은 보존했으며 신규 미실행을
 통과로 세지 않는다. 추가 설계 시험·독립 변이·capacity wake·일반 byte 예산·EventNode credit·
 Cancel/Drain·GPU 웨이브는 미완이다. C++/JS 하네스·모델·원격 실행·push는 이번 통합에서 수행하지 않았다.
+
+## 두 번째 전체 체크포인트 — 제한된 ACK 진행 검증 (2026-09-07)
+
+첫 중간 커밋 `2e9451a5cb349740982db3e7478b6c9beb1440d3`은 누적196파일 전체를 보존했고,
+커밋 직후 비무시 변경/미추적0을 확인했다. 이번 기록은 그 이후 수정과 검증이며, 당시 회귀9개를
+통과했다고 소급하지 않는다. 소스·시험·문서 변경은 이번에도 전부 다음 체크포인트에 포함한다.
+
+### 수정의 논리와 경계
+
+1. 최초 head control preflight는 구체 오류와 ID 보존을 책임지고, 매 offer 직전 검사는 Full 중
+   ACK가 바꾼 현재 권위를 책임진다. 어느 하나를 다른 하나로 대체하지 않는다. ACK가 은퇴시킨
+   historical control replay는 원래 본문/의도를 복구하고 fenced된다. 무해한 성공으로 흡수되지는 않는다.
+2. 의무의 사전 검사는 **commit 전**이며, 이미 commit된 효과는 자기 몫을 소비한다. 후자의
+   직렬화마다 전체 몫을 다시 요구하지 않는다. 그래도 실제 ID의 checked_add는 유지하여 commit
+   뒤 ID 장애/손상이 나면 전달하지 않은 의도를 보존한다. 직접 응답은 미래 몫을 빌리지 못한다.
+3. RELEASED의 N개 pending을 G개 원래 소유자 receipt로 전환할 때 `G <= N`이다. queued effects,
+   active ForwardObserved의 아직 구체화하지 않은 관측, 미래 receipt, 보류 진단의 합을 검사한다.
+   실제 Event sequence는 FIFO 발행물 구체화에서만 소비한다. 이 산식은 ID 개수이지 RAM 예약이 아니다.
+4. TAIL의 반환 후보·효과를 전량 검사한 뒤 commit한다. 기존 OUTPUT/receipt 고갈 시험은 이제
+   실제 commit 후에 장애를 주입하며 원래의 의도 보존/재정산 금지 단언을 유지한다. 별도 사전
+   부족 시험이 전체 요청·원장·slot·effect·ID·mailbox/native 효과의 보존과 정확한 여유량의 성공을 검사한다.
+5. head native 결과의 의무 검사도 prepare_issue **전**이다. 부족한 채 두 번 재시도해도 prepared
+   issue/flight/요청/owner/frontier/native를 바꾸지 않으며, 정확한3개 ID 여유에서는 첫 logical ordinal1로 실행한다.
+
+### 새 실제 소비 시험8개
+
+모든 시험은 기본 staged lib 집합에 들어가며 ignored/feature 제외로 숨기지 않았다.
+
+| 시험 이름 | 실제 소비와 보장 |
+| --- | --- |
+| `completion_full_defers_one_bad_ack_error_without_blocking_the_genuine_ack` | Worker::run, 실제 B OUTPUT으로 Full; 잘못된 ACK의 원래 provenance/JSON 진단1개를 보존하면서 정상 ACK는 공간 복구 전에 commit, native 증가0; 복구 후 정상 OUTPUT/KV/receipt 유지 |
+| `completion_full_holds_a_non_ack_without_reading_past_it_then_recovers_fifo` | Worker::run, C PREFILL→정상 ACK 순서를 보관하며 Full 안에서 C 실행/ACK 추월0; 복구 후 C가 ACK보다 먼저 수용되고 모두 정상 완주 |
+| `b2_completion_full_settles_both_speculative_continuations_without_native_reentry` | 실제 모든 stage의 SETTLE 후 보류한 ACK와 실제 SESSION_READY 두 건으로 Full; Direct/Checkpoint 각각 정산만 먼저 적용하고 native 이력 불변; 기존 literal 토큰/위치/KV oracle 유지 |
+| `full_control_replay_revalidates_its_ticket_after_ack_retirement` | 실제 flush/native Frame/mailbox; RELEASE/SETTLE replay Full 중 ACK가 권위를 제거하면 stale 재전달0·추가 native0·원본 body allocation/intent 보존. 시작 KV와 ACK echo는 단일-worker 주입이며 다중-stage ACK 생성 증명 아님 |
+| `head_id_shortage_precedes_prepared_issue_and_exact_room_still_runs` | 실제 head handle/drive/codec. 사전부족2회 상태보존과 정확한3개 ID 양성 실행 |
+| `receipt_id_shortage_before_commit_preserves_ack_and_slot_authority` | 실제 RELEASED consumer. 사전 전체 거부, native/통지0, pending/slot/ID 보존 |
+| `direct_responses_cannot_spend_ids_owed_to_pending_receipts` | 직접 ERROR가 pending2개의 몫을 소비하지 못함; 이어 실제 ACK가 자기 몫으로 owner별 receipt2개 발행 |
+| `output_id_obligations_refuse_whole_return_before_commit_and_accept_exact_room` | 실제 TAIL decoder/flight consumer. OUTPUT2개 전체의 사전부족 원자 거부와 정확한2개 ID 성공 |
+
+기존 `completion_full_cannot_starve_a_genuine_release_acknowledgement`의 긍정 복구·출력·정산
+단언은 유지했다. Full/ACK 서비스는 새 native 계산을 발행하지 않는다. 기존 non-ACK FIFO 앞단과
+두 번째 오류 뒤의 ACK 진행은 범위 밖이다. stale replay의 fenced 수렴 또한 완전한 재연결/drain은 아니다.
+
+### 봉인된 전체 실행
+
+- 원본: `target/capacity-slice-20260907-09/source/` 및 `source.json`, Rust/Cargo/fixture399개.
+- 입력 SHA-256: `b50af68ed3760f10b04b1cb88eb6e5ccfaf0d3d7a4f1c079d082c9a6079e2ea6`.
+- 명령: `cargo test --workspace --no-fail-fast --locked`.
+- 결과: **1253 passed /0 failed /7 ignored**, 최종57 summary, exit0. staged lib은479/0.
+- 실행 전후 소스 동일. 원문: `target/capacity-slice-20260907-09/workspace.log`.
+- 원문 SHA-256: `54525d9de589023a710b47894e7f458a833c739991bc4ad0c235a3c2bf5a4715`.
+- 전체 실행은2026-09-07 03:01:47~03:04:09 UTC. C++/JS 실기 하네스/모델/GPU 실행이 아니다.
+- 후속 문서 게이트: tracked/all 각각79파일 clean, 자체12/12, cargo 문서1/1.
+  private-header 문자열 게이트81파일 clean, common 부채0 header/5 source(기존 부채 유지).
+  이는 C++ 재빌드나 의미 호환 증명이 아니다. 원문은 같은 proof의 `gates.json`과 개별 log다.
+
+### 독립 복사본 변이5종
+
+`target/ack-service-mutations-20260907-01/verification.json`과 각 arm의 source/log/manifest/EXE가
+원문이다. 전체399입력과 Cargo.lock/fixture를 복사하고 매 arm 실제 staged 재컴파일·새 EXE 해시와
+25개 시험 이름 동일성을 검사했다. 원본 변경0, 최종 복사본 exact 복원, compile 실패/timeout을
+검출로 세지 않음. arm별 소스와 EXE를 보존한다. runner는 해당 proof 안 `runner.mjs`다.
+
+| arm | passed/failed | 제거한 불변식 |
+| --- | --- | --- |
+| baseline |25/0|없음|
+| ack-service-omitted |20/5|Full 안에서 ACK 소비|
+| id-check-after-issue |24/1|ID 거부가 issue 준비보다 선행|
+| future-receipt-omitted |24/1|pending receipt의 미래 몫|
+| diagnostic-blocks-valid-ack |24/1|진단1개 보류 중에도 정상 ACK는 처리|
+| head-recheck-omitted |24/1|각 offer 직전 현재 권위 검사|
+| restored |25/0|봉인 원본으로 복원|
+
+기본 회귀의 재현은 `cargo test -p p4-llamacpp-staged-adapter --lib --locked`로 실행한다.
+변이는 독립 복사본에만 위 한 가지 변경을 적용하고 동일25시험을 유지한다. 필터는 `completion_full_`,
+`full_control_replay_revalidates_`, `head_id_shortage_`, `v2::node::worker::release_notification_tests`,
+`v2::node::worker_tests::t23_`, `v2::node::worker_tests::output_id_obligations_`,
+`v2::node::worker::effect_representation_tests`다. 원본을 checkout/reset으로 되돌리는 방식은 금지한다.
+
+### 승격하지 않는 것
+
+국소 ACK 기아와 이번 ID/효과 소비 회귀를 닫았을 뿐 B1/B2/B5 전체 완료가 아니다. byte/RSS/
+native 결과 공간의 예약, 통합 capacity wake, non-ACK 뒤 반환 경로, EventNode/broker credit,
+graceful Cancel/Drain은 남아 있다. 최종 출력 품질/TPS/GPU 활용 또는 다중 컴퓨터 실기는 이 증거에
+없다. 다음 첫 행동과 전체 순서는 실행 로드맵의 최신 진행 기록만 소유한다.

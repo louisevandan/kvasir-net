@@ -1043,13 +1043,12 @@ fn t23_output_event_id_exhaustion_keeps_the_intent_without_publishing_or_resettl
     let (requests, capsules) = output_ready_fragments(1);
     let (mut worker, mailbox) = worker_and_mailbox(requests);
     register_issue(&mut worker, &capsules);
+    worker
+        .tail_commit_for_test(tail_event("id-exhausted", capsules.clone()))
+        .unwrap();
+    // Delivery fault after commit, not a shortage before the transaction.
     worker.state_for_test().next_event = u64::MAX;
-
-    assert!(
-        worker
-            .tail_for_test(tail_event("id-exhausted", capsules.clone()))
-            .is_err()
-    );
+    assert!(worker.flush_for_test().is_err());
     assert_outputs_committed_once(&mut worker, 1);
     assert_eq!(worker.effects_for_test(), (1, true));
     assert_eq!(worker.state_for_test().next_event, u64::MAX);
@@ -1066,6 +1065,40 @@ fn t23_output_event_id_exhaustion_keeps_the_intent_without_publishing_or_resettl
     );
     assert_eq!(bookkeeping(&mut worker), after_failure);
     assert_eq!(mailbox.try_take(), Poll::Empty);
+}
+
+#[test]
+fn output_id_obligations_refuse_whole_return_before_commit_and_accept_exact_room() {
+    for (next, accepted) in [(u64::MAX - 1, false), (u64::MAX - 2, true)] {
+        let (requests, capsules) = output_ready_fragments(2);
+        let (mut worker, mailbox) = worker_and_mailbox(requests);
+        register_issue(&mut worker, &capsules);
+        worker.state_for_test().next_event = next;
+        let before = bookkeeping(&mut worker);
+        let result = worker.tail_commit_for_test(tail_event("id-preflight", capsules));
+        if accepted {
+            result.unwrap();
+            assert_outputs_committed_once(&mut worker, 2);
+            assert_eq!(worker.effects_for_test(), (2, false));
+            assert_eq!(
+                worker.state_for_test().next_event,
+                next,
+                "reserve count, not sequence numbers"
+            );
+            worker.flush_for_test().unwrap();
+            for id in [next, next + 1] {
+                let Poll::Event(event) = mailbox.try_take() else {
+                    panic!("committed output missing")
+                };
+                assert_eq!(event.envelope.sequence, id);
+            }
+        } else {
+            assert!(result.unwrap_err().contains("event ID is exhausted"));
+            assert_eq!(bookkeeping(&mut worker), before);
+            assert_eq!(worker.effects_for_test(), (0, false));
+        }
+        assert_eq!(mailbox.try_take(), Poll::Empty);
+    }
 }
 
 #[test]

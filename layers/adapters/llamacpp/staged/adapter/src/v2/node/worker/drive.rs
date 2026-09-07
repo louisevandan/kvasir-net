@@ -292,17 +292,20 @@ impl Worker {
                 return Err(());
             }
         };
-        if let Err(detail) = self.state.prepare_issue(planned) {
-            self.set_snapshot(&format!("issue_prepare_failed:{detail}"));
-            return Err(());
-        }
-        let stage_started = std::time::Instant::now();
         let ids = u64::try_from(logical_rows)
             .ok()
             .and_then(|n| n.checked_mul(2))
             .and_then(|n| n.checked_add(1))
             .ok_or(())?;
         self.ensure_event_id_obligations(ids, 0).map_err(|_| ())?;
+        // ID shortage is a refusal, not an uncertain native issue. Check it
+        // before even preparing the issue so a later retry sees identical
+        // request, scheduler, flight and native authority.
+        if let Err(detail) = self.state.prepare_issue(planned) {
+            self.set_snapshot(&format!("issue_prepare_failed:{detail}"));
+            return Err(());
+        }
+        let stage_started = std::time::Instant::now();
         let start_unix_ms = super::observe::unix_ms();
         self.state.begin_native_issue().map_err(|_| ())?;
         #[cfg(test)]

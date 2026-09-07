@@ -46,7 +46,7 @@ impl Worker {
         self.state
             .next_event
             .checked_add(count)
-            .ok_or("completion event ID obligations are exhausted")?;
+            .ok_or("completion event ID is exhausted by committed obligations")?;
         Ok(())
     }
 }

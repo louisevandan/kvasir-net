@@ -624,6 +624,215 @@ fn accepted_whole_control_forward_promotes_every_member_after_exact_event_delive
 }
 
 #[test]
+fn full_control_replay_revalidates_its_ticket_after_ack_retirement() {
+    for kind in [Kind::Release, Kind::Settle] {
+        let mut f = fixture(kind, ReplyMode::Exact, 1);
+        // The ready head/KV and, for SETTLE, its post-Verify continuation are
+        // explicit fixture injection. Local native apply and forward acceptance
+        // below are real consumers, not injected dispatch-phase transitions.
+        if matches!(kind, Kind::Settle) {
+            let mut request = crate::v2::tests::request_state(vec![11]);
+            request.command.request_id = "request-0".into();
+            request.sequence_id = Some(0);
+            request.prompt_cursor = 1;
+            request.prompt_issued = 1;
+            request.generated = 2;
+            request.after_settlement =
+                Some(crate::v2::node::state::SettlementContinuation::Proposal {
+                    position: 2,
+                    token: 31,
+                });
+            f.worker.state.requests.insert(key(0), request);
+            f.worker.state.begin_verify_fence(&[key(0)]).unwrap();
+        }
+        f.local();
+        let native = f.trace.lock().unwrap().clone();
+        assert_eq!(native.calls.len(), 1);
+        let (publisher, mailbox) = completion_mailbox(1);
+        f.worker.publisher = publisher;
+        f.mailbox = Some(mailbox);
+        f.worker.effects.push_back(f.forward_effect());
+        f.worker.flush_effects().unwrap();
+        assert_eq!(f.phase(0), ControlDispatchPhase::ForwardAccepted);
+        assert!(f.worker.effects.is_empty());
+
+        // Reuse the exact Event accepted by the real forward path as the one
+        // occupying capacity. This is not an arbitrary synthetic Full filler.
+        let mailbox = f.mailbox.take().unwrap();
+        let Poll::Event(historical) = mailbox.try_take() else {
+            panic!("historical forward was not actually published")
+        };
+        let historical_wire = p4_protocol::event::encode(&historical).unwrap();
+        assert_eq!(
+            p4_protocol::event::decode(&historical_wire).unwrap(),
+            historical
+        );
+        f.worker.publisher.try_publish(historical.clone()).unwrap();
+
+        // This single-worker fixture constructs a valid tail ACK from the
+        // actual accepted command. Its production codec/source/ACK consumer
+        // are exercised; no remote or multi-stage ACK generation is claimed.
+        let mut acknowledgement = historical.clone();
+        acknowledgement.envelope.event_id = "tail-ack-for-historical-forward".into();
+        acknowledgement.envelope.sequence += 100;
+        acknowledgement.envelope.source = f.worker.state.sessions["session"].last.clone();
+        acknowledgement.envelope.target = f.worker.endpoint.clone();
+        acknowledgement.envelope.causation_id = Some(historical.envelope.event_id.clone());
+        match kind {
+            Kind::Release => {
+                acknowledgement.envelope.payload_content_type = RELEASED_CONTENT_TYPE.into();
+                let command: ReleaseCommand =
+                    serde_json::from_slice(&acknowledgement.payload).unwrap();
+                assert_eq!(command.sequences, vec![release_sequence(0)]);
+            }
+            Kind::Settle => {
+                acknowledgement.envelope.payload_content_type = SETTLED_CONTENT_TYPE.into();
+                let mut command: SettlementCommand =
+                    serde_json::from_slice(&acknowledgement.payload).unwrap();
+                assert_eq!(command.sequences, vec![settle_sequence(0)]);
+                command.sequences[0].proposal = vec![31];
+                command.validate().unwrap();
+                acknowledgement.payload = serde_json::to_vec(&command).unwrap();
+            }
+        }
+        let wire = p4_protocol::event::encode(&acknowledgement).unwrap();
+        let acknowledgement = p4_protocol::event::decode(&wire).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        f.worker.receiver = receiver;
+        sender.send(WorkerInput::Event(acknowledgement)).unwrap();
+
+        let replay = f.forward_effect();
+        let original = format!("{replay:?}");
+        let CommittedEffect::ForwardHeadControl { body, .. } = &replay else {
+            unreachable!()
+        };
+        let original_allocation = body.as_ptr() as usize;
+        let replay_id = f.worker.state.next_event;
+        f.worker.effects.push_back(replay);
+        let snapshot = Arc::clone(&f.worker.snapshot);
+        let shutdown = Arc::clone(&f.worker.shutting_down);
+        let (done, finished) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            // Catch stale-ticket assert panics so the mutation reports an
+            // ordinary bounded test failure and returns the worker for audit.
+            let outcome =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.worker.flush_effects()));
+            let _ = done.send((f, outcome));
+        });
+        let mut mailbox = Some(mailbox);
+        let mut recovered_occupant = None;
+        let completed = match finished.recv_timeout(Duration::from_secs(1)) {
+            Ok(completed) => completed,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // A removed revalidation can wait forever on Full. Giving it
+                // room exposes stale reforward/assert behavior without hanging
+                // the test or relaxing the no-reforward expectation below.
+                let Poll::Event(occupied) = mailbox.as_ref().unwrap().try_take() else {
+                    panic!("a blocked replay lost the historical completion")
+                };
+                recovered_occupant = Some(occupied);
+                match finished.recv_timeout(Duration::from_secs(1)) {
+                    Ok(completed) => completed,
+                    Err(_) => {
+                        shutdown.store(true, Ordering::SeqCst);
+                        drop(mailbox.take());
+                        finished
+                            .recv_timeout(Duration::from_secs(2))
+                            .expect("flush did not return after bounded shutdown and Closed")
+                    }
+                }
+            }
+            Err(error) => panic!("effect worker exited without returning its result: {error}"),
+        };
+        thread
+            .join()
+            .expect("effect fixture thread must be collected");
+        drop(sender);
+        let (mut f, outcome) = completed;
+        assert_eq!(
+            snapshot.lock().unwrap().as_str(),
+            "completion_queue_full:waiting",
+            "the replay must encounter actual Full before consuming the ACK"
+        );
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(_) => panic!("{kind:?}: a stale pre-Full ticket panicked after ACK retirement"),
+        };
+        assert_eq!(
+            outcome,
+            Err("committed head control could not be delivered".into())
+        );
+        assert!(f.worker.effects_fenced);
+        assert_eq!(
+            *f.trace.lock().unwrap(),
+            native,
+            "ACK service must not repeat native apply"
+        );
+        assert_eq!(f.worker.state.next_event, replay_id + 1);
+        assert_eq!(f.worker.active_publications, 0);
+        assert!(f.worker.deferred_ack_error.is_none());
+        assert!(f.worker.held_input.is_none());
+        assert!(f.worker.state.pending_releases.is_empty());
+        assert!(f.worker.state.pending_settlements.is_empty());
+        match kind {
+            Kind::Release => {
+                assert_eq!(
+                    f.worker
+                        .state
+                        .free_sequences
+                        .iter()
+                        .copied()
+                        .collect::<Vec<_>>(),
+                    [0]
+                );
+                assert_eq!(f.worker.effects.len(), 2);
+                assert!(matches!(
+                    f.worker.effects[1],
+                    CommittedEffect::ReleaseReceipt { .. }
+                ));
+            }
+            Kind::Settle => {
+                let request = &f.worker.state.requests[&key(0)];
+                assert_eq!(request.generated, 2);
+                assert!(request.after_settlement.is_none());
+                let ready = request
+                    .ready
+                    .as_ref()
+                    .expect("ACK must commit its continuation");
+                assert_eq!(
+                    (ready.phase, ready.position, ready.tokens.as_slice()),
+                    (Phase::Decode, 2, &[31][..])
+                );
+                assert!(!f.worker.state.verify_fenced());
+                assert_eq!(f.worker.effects.len(), 1);
+            }
+        }
+        assert_eq!(format!("{:?}", f.worker.effects[0]), original);
+        let CommittedEffect::ForwardHeadControl { body, .. } = &f.worker.effects[0] else {
+            panic!("the stale original intent must be retained")
+        };
+        assert_eq!(body.as_ptr() as usize, original_allocation);
+        let occupied = recovered_occupant.unwrap_or_else(|| {
+            let Poll::Event(event) = mailbox.as_ref().unwrap().try_take() else {
+                panic!("historical completion must remain in the mailbox")
+            };
+            event
+        });
+        assert_eq!(
+            p4_protocol::event::encode(&occupied).unwrap(),
+            historical_wire
+        );
+        assert!(
+            matches!(mailbox.as_ref().unwrap().try_take(), Poll::Empty),
+            "the stale replay must not be forwarded after its ACK removed authority"
+        );
+        assert!(f.worker.flush_effects().unwrap_err().contains("fenced"));
+        assert_eq!(*f.trace.lock().unwrap(), native);
+        assert!(matches!(mailbox.as_ref().unwrap().try_take(), Poll::Empty));
+    }
+}
+
+#[test]
 fn closed_mailbox_or_event_id_exhaustion_cannot_promote_locally_applied_controls() {
     for kind in [Kind::Release, Kind::Settle] {
         for closed in [false, true] {

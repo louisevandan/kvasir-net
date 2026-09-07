@@ -495,6 +495,9 @@ struct Harness {
     // Only the exact deliberately invalid submission may return an error.
     // The child test checks the actual error code/detail and all side effects.
     expected_submission_error: Option<Event>,
+    // One deliberately invalid ACK may yield exactly this error/provenance.
+    // Consumed on delivery; a duplicate or any unrelated error still fails.
+    expected_ack_error: Option<(Event, serde_json::Value)>,
     accepted: observation_contract::Accepted,
 }
 
@@ -713,6 +716,7 @@ impl Harness {
                 )
             }),
             expected_submission_error: None,
+            expected_ack_error: None,
             accepted,
         }
     }
@@ -741,7 +745,35 @@ impl Harness {
                     break;
                 };
                 let event = event_wire(event);
+                let accepted_ack_error = event.envelope.payload_content_type == ERROR_CONTENT_TYPE
+                    && self
+                        .expected_ack_error
+                        .as_ref()
+                        .is_some_and(|(input, body)| {
+                            event.envelope.class == EventClass::Output
+                                && event.envelope.source == input.envelope.target
+                                && event.envelope.target == reply_target(input)
+                                && event.envelope.return_route == input.envelope.return_route
+                                && event.envelope.correlation_id == input.envelope.correlation_id
+                                && event.envelope.deadline_unix_ms
+                                    == input.envelope.deadline_unix_ms
+                                && event.envelope.causation_id.as_deref()
+                                    == Some(input.envelope.event_id.as_str())
+                                && event.envelope.event_id
+                                    == format!(
+                                        "{}:llamacpp:{}",
+                                        input.envelope.event_id, event.envelope.sequence
+                                    )
+                                && serde_json::from_slice::<serde_json::Value>(&event.payload)
+                                    .ok()
+                                    .as_ref()
+                                    == Some(body)
+                        });
+                if accepted_ack_error {
+                    self.expected_ack_error.take();
+                }
                 if event.envelope.payload_content_type == ERROR_CONTENT_TYPE
+                    && !accepted_ack_error
                     && !self
                         .expected_unload_error
                         .as_ref()

@@ -32,6 +32,8 @@ impl Worker {
             SETTLED_CONTENT_TYPE => self.settled(event.clone()),
             _ => {
                 self.held_input = Some(event);
+                #[cfg(test)]
+                self.observe_issue_state("blocked_non_ack_held");
                 return Ok(());
             }
         };

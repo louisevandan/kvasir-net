@@ -202,6 +202,16 @@ impl Worker {
     }
 
     #[cfg(test)]
+    pub(super) fn tail_commit_for_test(&mut self, event: Event) -> Result<(), String> {
+        self.tail_without_flush(event)
+    }
+
+    #[cfg(test)]
+    pub(super) fn flush_for_test(&mut self) -> Result<(), String> {
+        self.flush_effects()
+    }
+
+    #[cfg(test)]
     pub(super) fn handle_for_test(&mut self, event: Event) -> Result<(), ()> {
         self.handle(event)
     }

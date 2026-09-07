@@ -267,8 +267,11 @@ fn receipt_event_identity_exhaustion_preserves_every_unpublished_committed_inten
         let (mut worker, calls) = prepared();
         let (publisher, mailbox) = completion_mailbox(2);
         worker.publisher = publisher;
+        // Inject loss of ID space after the actual ACK transaction committed.
+        // A pre-commit shortage is a different, stronger refusal tested below.
+        worker.released_without_flush(ack()).unwrap();
         worker.state.next_event = next;
-        assert!(worker.released(ack()).is_err());
+        assert!(worker.flush_effects().is_err());
         assert_committed(&worker, &calls);
         assert!(worker.effects_fenced);
         let mut events = Vec::new();
@@ -283,6 +286,54 @@ fn receipt_event_identity_exhaustion_preserves_every_unpublished_committed_inten
         assert_eq!(worker.state.next_event, u64::MAX);
         assert_duplicate_preserves_commit(&mut worker, &calls);
     }
+}
+
+#[test]
+fn receipt_id_shortage_before_commit_preserves_ack_and_slot_authority() {
+    for next in [u64::MAX, u64::MAX - 1] {
+        let (mut worker, calls) = prepared();
+        let (publisher, mailbox) = completion_mailbox(2);
+        worker.publisher = publisher;
+        worker.state.next_event = next;
+        let pending = worker.state.pending_releases.clone();
+        let free = worker.state.free_sequences.clone();
+        let error = worker.released(ack()).unwrap_err();
+        assert!(error.contains("event ID is exhausted"), "{error}");
+        assert_eq!(worker.state.pending_releases, pending);
+        assert_eq!(worker.state.free_sequences, free);
+        assert_eq!(worker.state.next_event, next);
+        assert!(worker.effects.is_empty() && !worker.effects_fenced);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(mailbox.try_take(), Poll::Empty);
+    }
+}
+
+#[test]
+fn direct_responses_cannot_spend_ids_owed_to_pending_receipts() {
+    let (mut worker, calls) = prepared();
+    let (publisher, mailbox) = completion_mailbox(2);
+    worker.publisher = publisher;
+    worker.state.next_event = u64::MAX - 2;
+    let pending = worker.state.pending_releases.clone();
+    assert!(
+        worker
+            .emit_error(&ack(), "EXTRA", "unreserved response".into())
+            .is_err()
+    );
+    assert_eq!(worker.state.next_event, u64::MAX - 2);
+    assert_eq!(worker.state.pending_releases, pending);
+    assert_eq!(mailbox.try_take(), Poll::Empty);
+    worker.released(ack()).unwrap();
+    assert_committed(&worker, &calls);
+    for (name, id) in [("a", u64::MAX - 2), ("b", u64::MAX - 1)] {
+        let Poll::Event(event) = mailbox.try_take() else {
+            panic!("reserved receipt missing")
+        };
+        assert_received(&event, name);
+        assert_eq!(event.envelope.sequence, id);
+    }
+    assert_eq!(worker.state.next_event, u64::MAX);
+    assert!(worker.effects.is_empty());
 }
 
 fn wait_until_waiting(snapshot: &Mutex<String>) {

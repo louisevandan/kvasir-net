@@ -11,6 +11,13 @@ struct PreparedReleaseAck {
 
 impl Worker {
     pub(super) fn tail(&mut self, event: Event) -> Result<(), String> {
+        self.tail_without_flush(event)?;
+        self.flush_effects()
+    }
+
+    // Whole-return authority and intent commit. Emission is a separate
+    // consumer, also allowing late delivery faults to be tested after commit.
+    pub(super) fn tail_without_flush(&mut self, event: Event) -> Result<(), String> {
         if self.effects_fenced {
             return Err("committed effects are fenced".into());
         }
@@ -248,7 +255,7 @@ impl Worker {
         }
         self.state.commit_flight_return(plan);
         self.effects.extend(effects);
-        self.flush_effects()
+        Ok(())
     }
 
     fn validate_flight_counts(

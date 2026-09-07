@@ -85,7 +85,6 @@ impl Worker {
         value: &T,
     ) -> Result<(), ()> {
         let payload = serde_json::to_vec(value).map_err(|_| ())?;
-        self.ensure_event_id_obligations(1, 0).map_err(|_| ())?;
         let sequence = self.state.next_event;
         self.state.next_event = self.state.next_event.checked_add(1).ok_or(())?;
         let target = Endpoint::outer(ingress, reply.channel.clone(), reply.connection_generation);
@@ -144,6 +143,9 @@ impl Worker {
         content_type: &str,
         payload: Vec<u8>,
     ) -> Result<(), ()> {
+        // Direct responses have no committed effect claim. They must not
+        // spend the IDs already owed to a queued suffix or future receipt.
+        self.ensure_event_id_obligations(1, 0).map_err(|_| ())?;
         self.emit_envelope_bytes_retaining(&base.envelope, target, class, content_type, payload)
             .map_err(|_| ())
     }
@@ -182,9 +184,9 @@ impl Worker {
         payload: Vec<u8>,
         head_control: bool,
     ) -> Result<(), Vec<u8>> {
-        if self.ensure_event_id_obligations(1, 0).is_err() {
-            return Err(payload);
-        }
+        // A queued effect consumes its existing share here. The whole-group
+        // check belongs before commit, not after a prefix already executed.
+        // Retain checked_add below for late ID corruption/failure injection.
         let sequence = self.state.next_event;
         let Some(next_event) = sequence.checked_add(1) else {
             return Err(payload);

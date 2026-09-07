@@ -186,6 +186,8 @@ impl Worker {
                 .finish_verify_fence(&key)
                 .expect("validated unique KV settlement fence remains present");
         }
+        #[cfg(test)]
+        self.observe_issue_state("after_settlement_committed");
         Ok(())
     }
 

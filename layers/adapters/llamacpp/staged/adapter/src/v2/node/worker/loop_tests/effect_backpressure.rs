@@ -217,6 +217,204 @@ fn native_calls(h: &Harness) -> Vec<(usize, usize, usize, usize, usize)> {
         .collect()
 }
 
+fn send_actual(h: &Harness, event: Event) {
+    h.nodes[0]
+        .sender
+        .as_ref()
+        .unwrap()
+        .try_send(WorkerInput::Event(event_wire(event)))
+        .unwrap_or_else(|_| panic!("the exact fixture input must fit the real input queue"));
+}
+
+fn wait_views(views: &Views, predicate: impl Fn(&[ReleaseView]) -> bool) -> Vec<ReleaseView> {
+    let (history, changed) = &**views;
+    let (history, _) = changed
+        .wait_timeout_while(
+            history.lock().unwrap(),
+            Duration::from_millis(200),
+            |history| !predicate(history),
+        )
+        .unwrap();
+    history.clone()
+}
+
+#[test]
+fn completion_full_defers_one_bad_ack_error_without_blocking_the_genuine_ack() {
+    let FullRelease {
+        mut h,
+        a,
+        b,
+        acknowledgement,
+        acknowledgement_bytes,
+        views,
+        key_a,
+        slot_a,
+    } = full_with_pending_release();
+    let native_before = native_calls(&h);
+    let mut invalid = acknowledgement.clone();
+    invalid.envelope.event_id.push_str(":wrong-operation");
+    invalid.envelope.sequence += 100_000;
+    let mut command: ReleaseCommand = serde_json::from_slice(&invalid.payload).unwrap();
+    command.sequences[0].operation_id += 1;
+    assert_eq!(command.validate(), Ok(()));
+    invalid.payload = serde_json::to_vec(&command).unwrap();
+    let invalid_bytes = p4_protocol::event::encode(&invalid).unwrap();
+    assert_eq!(event_wire(invalid.clone()), invalid);
+    assert_ne!(invalid.payload, acknowledgement.payload);
+    let expected_error = serde_json::json!({
+        "code": "LLAMA_ADAPTER_EVENT_REJECTED",
+        "detail": "release completion contains a non-owned sequence",
+    });
+    h.expected_ack_error = Some((invalid.clone(), expected_error.clone()));
+    send_actual(&h, invalid.clone());
+    assert_eq!(
+        p4_protocol::event::encode(&acknowledgement).unwrap(),
+        acknowledgement_bytes
+    );
+    send_actual(&h, acknowledgement);
+
+    let before_room = wait_views(&views, |history| committed_a(history, &key_a, slot_a));
+    let processed_before_room = committed_a(&before_room, &key_a, slot_a);
+    let native_before_room = native_calls(&h);
+    assert!(!h.nodes[0].thread.as_ref().unwrap().is_finished());
+    assert_eq!(h.outputs.len(), 1, "B's occupying OUTPUT remains unread");
+    assert!(
+        h.received
+            .iter()
+            .all(|event| event.envelope.payload_content_type != ERROR_CONTENT_TYPE)
+    );
+    assert_eq!(p4_protocol::event::encode(&invalid).unwrap(), invalid_bytes);
+
+    // Recover even on the old blocking implementation, retaining all original
+    // token/KV/release/observation oracles before asserting the new guarantee.
+    release_output_space(&mut h, &b);
+    h.finish(&[a, b]);
+    h.until("the exact deferred ACK diagnostic was delivered", |h| {
+        h.expected_ack_error.is_none()
+    });
+    release_notifications::assert_complete(&h);
+    assert_unique_wire(&h);
+    let errors = h
+        .received
+        .iter()
+        .filter(|event| event.envelope.payload_content_type == ERROR_CONTENT_TYPE)
+        .collect::<Vec<_>>();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&errors[0].payload).unwrap(),
+        expected_error
+    );
+    assert_eq!(
+        errors[0].envelope.causation_id.as_deref(),
+        Some(invalid.envelope.event_id.as_str())
+    );
+    assert_eq!(errors[0].envelope.source, invalid.envelope.target);
+    assert_eq!(errors[0].envelope.target, reply_target(&invalid));
+    assert_eq!(
+        native_before_room, native_before,
+        "servicing a rejected and accepted ACK must issue no native operation"
+    );
+    assert!(
+        processed_before_room,
+        "one deferred invalid-ACK error blocked the following genuine ACK while B still occupied the completion mailbox"
+    );
+    println!(
+        "invalid_then_genuine_ack: processed_before_room={processed_before_room}; errors={}; outputs={}; native_before={native_before:?}; native_before_room={native_before_room:?}",
+        errors.len(),
+        h.outputs.len()
+    );
+}
+
+#[test]
+fn completion_full_holds_a_non_ack_without_reading_past_it_then_recovers_fifo() {
+    let FullRelease {
+        mut h,
+        a,
+        b,
+        acknowledgement,
+        acknowledgement_bytes,
+        views,
+        key_a,
+        slot_a,
+    } = full_with_pending_release();
+    let c = request("held-input-must-not-be-lost", 7, 3);
+    let input_c = submission_event(&c, h.next_submission, default_route());
+    h.next_submission += 1;
+    let c_bytes = p4_protocol::event::encode(&input_c).unwrap();
+    h.submissions.push(input_c.clone());
+    let key_c = request_key("loop-session", &c.request_id);
+    let native_before = native_calls(&h);
+    send_actual(&h, input_c.clone());
+    assert_eq!(
+        p4_protocol::event::encode(&acknowledgement).unwrap(),
+        acknowledgement_bytes
+    );
+    send_actual(&h, acknowledgement);
+
+    // The hook only observes the actual non-ACK-to-held_input boundary. It
+    // neither injects state nor models dispatch. ACK bypass behind a held
+    // ordinary input is deliberately outside this slice's progress guarantee.
+    let before_room = wait_views(&views, |history| {
+        history
+            .iter()
+            .any(|view| view.point == "blocked_non_ack_held")
+    });
+    let held_before_room = before_room
+        .iter()
+        .any(|view| view.point == "blocked_non_ack_held");
+    let ack_before_room = committed_a(&before_room, &key_a, slot_a);
+    let c_admitted_before_room = before_room
+        .iter()
+        .any(|view| view.requests.contains(&key_c));
+    let native_before_room = native_calls(&h);
+    assert!(!h.nodes[0].thread.as_ref().unwrap().is_finished());
+    assert_eq!(h.outputs.len(), 1);
+    assert_eq!(p4_protocol::event::encode(&input_c).unwrap(), c_bytes);
+
+    release_output_space(&mut h, &b);
+    h.finish(&[a, b, c]);
+    release_notifications::assert_complete(&h);
+    assert_unique_wire(&h);
+    assert!(
+        h.received
+            .iter()
+            .all(|event| event.envelope.payload_content_type != ERROR_CONTENT_TYPE)
+    );
+    let after = views.0.lock().unwrap().clone();
+    let ack_commit = after
+        .iter()
+        .find(|view| {
+            view.point == "after_release_committed"
+                && !view.pending.contains_key(&key_a)
+                && view.free.contains(&slot_a)
+        })
+        .expect("A must eventually retire through its authentic ACK");
+    assert!(
+        ack_commit.requests.contains(&key_c),
+        "held PREFILL C must be consumed before the ACK behind it, not discarded or moved after it"
+    );
+    assert!(
+        held_before_room,
+        "the actual Full service never reached its held non-ACK boundary"
+    );
+    assert!(
+        !ack_before_room,
+        "Full service read past the held non-ACK and reordered input"
+    );
+    assert!(
+        !c_admitted_before_room,
+        "holding non-ACK input must not execute/admit it inside Full service"
+    );
+    assert_eq!(
+        native_before_room, native_before,
+        "holding non-ACK input must not start native work"
+    );
+    println!(
+        "non_ack_before_genuine_ack: held_before_room={held_before_room}; ack_before_room={ack_before_room}; outputs={}; native_before={native_before:?}; native_before_room={native_before_room:?}",
+        h.outputs.len()
+    );
+}
+
 #[test]
 fn completion_full_cannot_starve_a_genuine_release_acknowledgement() {
     let FullRelease {

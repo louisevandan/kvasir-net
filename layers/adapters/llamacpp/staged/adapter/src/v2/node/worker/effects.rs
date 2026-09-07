@@ -124,19 +124,26 @@ impl Worker {
                     class,
                     content_type,
                     body,
-                } => match self.emit_head_control_retaining(
-                    base,
-                    target.clone(),
-                    *class,
-                    content_type,
-                    std::mem::take(body),
-                ) {
-                    Ok(()) => Ok(()),
-                    Err(unsent) => {
-                        *body = unsent;
-                        Err("committed head control could not be delivered".to_owned())
-                    }
-                },
+                } => self
+                    .prepare_head_control_forward(target, content_type, body)
+                    .and_then(|_| {
+                        if *class != EventClass::Control {
+                            return Err("head control forward has the wrong event class".into());
+                        }
+                        match self.emit_head_control_retaining(
+                            base,
+                            target.clone(),
+                            *class,
+                            content_type,
+                            std::mem::take(body),
+                        ) {
+                            Ok(()) => Ok(()),
+                            Err(unsent) => {
+                                *body = unsent;
+                                Err("committed head control could not be delivered".to_owned())
+                            }
+                        }
+                    }),
                 CommittedEffect::Settle {
                     load_generation,
                     session_id,

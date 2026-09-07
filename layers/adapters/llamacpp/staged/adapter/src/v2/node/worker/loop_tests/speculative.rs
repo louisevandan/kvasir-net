@@ -751,6 +751,221 @@ fn b2_speculative_checkpoint_replay_restores_before_reappend_and_emits_only_afte
 }
 
 #[test]
+fn b2_completion_full_settles_both_speculative_continuations_without_native_reentry() {
+    for scenario in [Scenario::Direct, Scenario::Checkpoint] {
+        let command = request("partial", 3, 4);
+        let key = request_key("loop-session", &command.request_id);
+        let observed = Arc::new((
+            Mutex::new(None::<serde_json::Value>),
+            std::sync::Condvar::new(),
+        ));
+        let captured = Arc::clone(&observed);
+        let observer: IssueObserver = Arc::new(move |point, state| {
+            if point != "after_settlement_committed" {
+                return;
+            }
+            let request = &state.requests[&key];
+            let ready = request
+                .ready
+                .as_ref()
+                .expect("settled continuation is ready");
+            let view = serde_json::json!({
+                "pending": state.pending_settlements.len(),
+                "fenced": state.verify_fenced(),
+                "outstanding": request.outstanding,
+                "generated": request.generated,
+                "after_settlement": request.after_settlement.is_some(),
+                "phase": format!("{:?}", ready.phase),
+                "position": ready.position,
+                "tokens": ready.tokens,
+                "speculative_id": ready.speculative_id,
+            });
+            let (slot, changed) = &*captured;
+            let mut slot = slot.lock().unwrap();
+            assert!(slot.is_none(), "one genuine SETTLED commits only once");
+            *slot = Some(view);
+            changed.notify_all();
+        });
+        let submission = submission_event(&command, 1, default_route());
+        let mut h = Harness::observed_events(
+            2,
+            2,
+            1,
+            &[submission],
+            0,
+            Some(scenario),
+            Some(observer),
+            None,
+        );
+        h.hold_control = Some((SETTLED_CONTENT_TYPE.into(), 0));
+        h.until(
+            "all native stages settled and the genuine SETTLED is held",
+            |h| h.held_control.len() == 1,
+        );
+        let acknowledgement = h.held_control.pop_front().unwrap();
+        let ack_bytes = p4_protocol::event::encode(&acknowledgement).unwrap();
+        assert_eq!(acknowledgement.envelope.source, endpoint(1));
+        assert_eq!(acknowledgement.envelope.target, endpoint(0));
+        let ack: SettlementCommand = serde_json::from_slice(&acknowledgement.payload).unwrap();
+        assert_eq!(ack.sequences.len(), 1);
+        assert_eq!(ack.sequences[0].key, request_key("loop-session", "partial"));
+        for node in &h.nodes {
+            assert_eq!(
+                node.native
+                    .lock()
+                    .unwrap()
+                    .speculative
+                    .settles
+                    .values()
+                    .sum::<usize>(),
+                1
+            );
+        }
+        h.pump_for(Duration::from_millis(20));
+        assert!(h.pending.is_empty());
+        assert_eq!(h.nodes[0].mailbox.try_take(), Poll::Empty);
+        assert!(observed.0.lock().unwrap().is_none());
+        let outputs_before = h.outputs.len();
+        assert_eq!(
+            outputs_before,
+            if scenario == Scenario::Direct { 2 } else { 1 }
+        );
+        let native_before: Vec<_> = h
+            .nodes
+            .iter()
+            .map(|node| format!("{:?}", *node.native.lock().unwrap()))
+            .collect();
+
+        // Genuine idempotent SESSION commands create both completions; no
+        // synthetic filler or request/frontier state is inserted by the test.
+        let session = SessionCommand {
+            load_generation: 1,
+            session_id: "loop-session".into(),
+            stages: (0..2).map(node_address).collect(),
+            stage_index: 0,
+        };
+        let sessions: Vec<_> = ["full-settled-ready-a", "full-settled-ready-b"]
+            .into_iter()
+            .map(|name| {
+                event_wire(event(
+                    0,
+                    name,
+                    SESSION_CONTENT_TYPE,
+                    serde_json::to_vec(&session).unwrap(),
+                ))
+            })
+            .collect();
+        // Only the observational sticky status is reset, after genuine ACK
+        // withholding and an empty mailbox have both been independently seen.
+        *h.nodes[0].snapshot.lock().unwrap() = "fixture:awaiting_SESSION_pressure".into();
+        h.paused_completions[0] = true;
+        for input in &sessions {
+            h.nodes[0]
+                .sender
+                .as_ref()
+                .unwrap()
+                .try_send(WorkerInput::Event(input.clone()))
+                .unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while h.nodes[0].snapshot.lock().unwrap().as_str() != "completion_queue_full:waiting" {
+            assert!(
+                Instant::now() < deadline,
+                "actual SESSION publication never reached Full"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            p4_protocol::event::encode(&acknowledgement).unwrap(),
+            ack_bytes
+        );
+        h.nodes[0]
+            .sender
+            .as_ref()
+            .unwrap()
+            .try_send(WorkerInput::Event(event_wire(acknowledgement)))
+            .unwrap();
+        let (slot, changed) = &*observed;
+        let (view, _) = changed
+            .wait_timeout_while(slot.lock().unwrap(), Duration::from_millis(200), |view| {
+                view.is_none()
+            })
+            .unwrap();
+        let before_room = view.clone();
+        drop(view);
+        let native_before_room: Vec<_> = h
+            .nodes
+            .iter()
+            .map(|node| format!("{:?}", *node.native.lock().unwrap()))
+            .collect();
+        assert!(!h.nodes[0].thread.as_ref().unwrap().is_finished());
+        assert_eq!(h.outputs.len(), outputs_before);
+
+        // Recover first even on the old blocking consumer, then retain every
+        // existing literal token/text/position/KV/release/observation oracle.
+        let Poll::Event(occupied) = h.nodes[0].mailbox.try_take() else {
+            panic!("Full must contain the first real SESSION_READY");
+        };
+        let occupied = event_wire(occupied);
+        assert_eq!(
+            occupied.envelope.payload_content_type,
+            SESSION_READY_CONTENT_TYPE
+        );
+        assert_eq!(
+            occupied.envelope.causation_id.as_deref(),
+            Some(sessions[0].envelope.event_id.as_str())
+        );
+        h.received.push(occupied);
+        h.paused_completions[0] = false;
+        h.hold_control = None;
+        finish(&mut h, scenario, &[command]);
+        for input in &sessions {
+            let replies: Vec<_> = h
+                .received
+                .iter()
+                .filter(|output| {
+                    output.envelope.causation_id.as_deref()
+                        == Some(input.envelope.event_id.as_str())
+                })
+                .collect();
+            assert_eq!(replies.len(), 1);
+            assert_eq!(
+                replies[0].envelope.payload_content_type,
+                SESSION_READY_CONTENT_TYPE
+            );
+            assert_eq!(replies[0].envelope.source, endpoint(0));
+            assert_eq!(replies[0].envelope.target, reply_target(input));
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&replies[0].payload).unwrap(),
+                serde_json::json!({"session_id":"loop-session", "state":"ready", "load_generation":1})
+            );
+        }
+        assert_eq!(
+            native_before_room, native_before,
+            "SETTLED service must perform no native work while completion remains Full"
+        );
+        let view =
+            before_room.expect("genuine SETTLED must commit before output capacity is restored");
+        assert_eq!(view["pending"], 0);
+        assert_eq!(view["fenced"], false);
+        assert_eq!(view["outstanding"], 0);
+        assert_eq!(view["after_settlement"], false);
+        assert!(view["speculative_id"].as_u64().unwrap() > 0);
+        if scenario == Scenario::Direct {
+            assert_eq!(view["generated"], 2);
+            assert_eq!(view["phase"], "Verify");
+            assert_eq!(view["position"], 4);
+            assert_eq!(view["tokens"], serde_json::json!([1001, 1002]));
+        } else {
+            assert_eq!(view["generated"], 1);
+            assert_eq!(view["phase"], "Replay");
+            assert_eq!(view["position"], 3);
+            assert_eq!(view["tokens"], serde_json::json!([1000, 1001]));
+        }
+    }
+}
+
+#[test]
 fn b2_speculative_unload_refuses_head_settlement_with_no_physical_flights_then_resumes() {
     for stages in [2, 4] {
         let command = request("unload-head-partial", 3, 4);

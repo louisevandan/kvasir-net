@@ -3,7 +3,17 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
-## 2026-09-07: 전체 WIP 체크포인트 — ACK 서비스 통합, 회귀9개 미해결
+## 2026-09-07: 두 번째 전체 체크포인트 — 제한된 ACK 진행 검증
+
+첫 전체 WIP `2e9451a5c`의 회귀9개를 해소하고 실제 소비 시험8개를 추가했다. 봉인399입력의
+전체 집계는 **1253 passed/0 failed/7 ignored**, 57 summary·cargo0이다. 독립 복사본의25시험은
+baseline/복원25/0, ACK 서비스 제거20/5, 그 외 ID 순서·미래 영수증·진단 차단·head 재검증 제거는
+각24/1이다. 모든 arm을 실제 재컴파일했고 원본 소스·시험 집합은 보존했다.
+실제 Worker Full 중 RELEASED 및 Direct/Checkpoint SETTLED의 국소 진행 증거다. non-ACK 뒤 우회,
+전역 byte/RSS·capacity wake·Cancel/Drain·GPU/성능을 증명하지 않는다. 정확한 범위·원문·재현은
+[두 번째 체크포인트 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
+## 2026-09-07: 전체 WIP 체크포인트 — 당시 ACK 서비스 통합, 회귀9개 미해결
 
 제한된 ACK-only prepare/commit과 송신 재검증·ID 의무 대조를 통합한399입력 봉인의 전체 집계는
 **1236 passed/9 failed/7 ignored**, cargo101이다. 기존 actual Full ACK 반례는 통과했지만
