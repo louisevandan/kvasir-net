@@ -210,7 +210,9 @@ impl Worker {
     /// adapter was full; this one used to discard the completion and fail the
     /// worker, which loses a token that has already been computed and ends
     /// the node for a queue that was about to drain. A closed mailbox is
-    /// still fatal - nothing will ever read it - and only that is.
+    /// still fatal - nothing will ever read it. A single completion larger
+    /// than the entire storage budget is permanent too: waiting cannot make
+    /// that value fit. These errors return the original Event to the caller.
     ///
     /// This runs on the worker's own thread, which owns no lock and holds no
     /// llama context between events, so blocking here backs the pressure up
@@ -278,6 +280,14 @@ impl Worker {
                 }
                 Err(PublishError::Closed(event)) => {
                     self.set_snapshot("completion_queue_closed");
+                    return Err(event);
+                }
+                Err(PublishError::TooLarge { event, .. }) => {
+                    self.set_snapshot("completion_storage_budget_exceeded");
+                    return Err(event);
+                }
+                Err(PublishError::CostOverflow(event)) => {
+                    self.set_snapshot("completion_storage_cost_overflow");
                     return Err(event);
                 }
             }
@@ -358,6 +368,45 @@ mod tests {
             derived_event_id(&input("node-a-load"), 1),
             derived_event_id(&input("node-b-load"), 1)
         );
+    }
+
+    #[test]
+    fn an_impossible_completion_cost_is_not_misclassified_as_full_at_shutdown() {
+        let address = Address::tcp("127.0.0.1", 1);
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let (publisher, mailbox) =
+            p4_adapter::node_adapter::completion_mailbox_with_budget(1, 0).unwrap();
+        let snapshot = Arc::new(Mutex::new("loaded".into()));
+        let mut worker = Worker::new(
+            Endpoint::node(address, "node", 1),
+            receiver,
+            publisher,
+            Arc::clone(&snapshot),
+            // The guard makes a wrong Full classification terminate too,
+            // with a different snapshot. A mutation must fail an assertion,
+            // not leave this synchronous worker test spinning forever.
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        );
+        let mut event = input("too-large");
+        event.payload = Vec::with_capacity(1024);
+        event.payload.extend_from_slice(&[0, 255, 128]);
+        let pointer = event.payload.as_ptr();
+        let capacity = event.payload.capacity();
+        let expected = event.clone();
+        let next_event = worker.state.next_event;
+        let returned = worker.publish_or_retain(event).unwrap_err();
+        assert_eq!(returned, expected);
+        assert_eq!(returned.payload.as_ptr(), pointer);
+        assert_eq!(returned.payload.capacity(), capacity);
+        assert_eq!(worker.state.next_event, next_event);
+        assert_eq!(worker.active_publications, 0);
+        assert_eq!(mailbox.storage_snapshot().retained_count, 0);
+        assert_eq!(mailbox.storage_snapshot().retained_bytes, 0);
+        assert_eq!(
+            snapshot.lock().unwrap().as_str(),
+            "completion_storage_budget_exceeded"
+        );
+        assert_eq!(mailbox.try_take(), Poll::Empty);
     }
 
     #[test]

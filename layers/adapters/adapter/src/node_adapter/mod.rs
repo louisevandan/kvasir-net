@@ -4,11 +4,17 @@
 //! content types registered for its adapter kind and publishes new events to
 //! its own bounded completion mailbox.
 
+mod event_cost;
 mod mailbox;
 
+pub use event_cost::{ResourceCostError, retained_event_bytes};
+
 pub use mailbox::{
-    CapacityListenError, CapacityRegistration, CompletionMailbox, CompletionPublisher,
-    MAX_CAPACITY_LISTENERS, PublishError, completion_mailbox,
+    COMPLETION_ENTRY_OVERHEAD_BYTES, CapacityListenError, CapacityRegistration, CompletionMailbox,
+    CompletionPublisher, CompletionReservation, CompletionStorageSnapshot, MAX_CAPACITY_LISTENERS,
+    MailboxBuildError, OwnedPoll, PublishError, ReserveError, ReservedPublishError,
+    ReservedPublishReason, RetainedCompletion, RetainedTransferError, completion_mailbox,
+    completion_mailbox_with_budget,
 };
 use p4_protocol::event::Event;
 use std::task::{Context, Poll as TaskPoll};

@@ -632,6 +632,38 @@ Full에서 worker 스레드를 점유한다. capacity 통지를 추가하는 것
 정산은 어댑터 안에 남긴다. 시험은 검증 규약 T22~T26을 따르며, 정상 ACK 진행만 고치면서 조기 ACK를
 허용하거나 모든 입력을 막아 메모리 상한만 통과하는 구현도 실패해야 한다.
 
+#### 로컬 완료 저장소 예약 — 범위가 제한된 구현 계약
+
+이 절은 `node_adapter/mailbox.rs`의 로컬 저장소 API만 소유한다. 현재 구현/실행 여부와 다음 순서는
+로드맵·증거 기록을 따른다. 분산 grant, native 결과 예산 또는 B3 완료 계약으로 확대 해석하지 않는다.
+
+- 비용은 `retained_event_bytes`가 Event의 inline 크기와 모든 독립 String/Vec의 **capacity**를 합산한다.
+  wire 길이·len·같은 문자열의 중복 제거로 바꾸지 않는다. entry 부기는 claim에 추가하고 실제 사전
+  할당된 큐 backing은 snapshot에서 따로 보고한다. allocator/waker/native 임시 메모리·RSS는 이 수치 밖이다.
+- 예약·일반 publication·큐 보관·owned dequeue는 실제 같은 저장소의 count/byte 원장을 쓴다.
+  현재 예약 API는 Event 한 개만 확보한다. 임의 count의 원자적 그룹 예약은 구현하지 않았다.
+- count-only 기존 생성자는 byte 상한을 선언하지 않는다. byte 예산 생성자를 일부 시험에서 썼다는
+  이유로 composition root나 제품 Worker의 byte 제한이 활성화됐다고 하지 않는다.
+
+| 전이 | Event 소유자 | 저장소 claim | 실패/취소 규칙 |
+| --- | --- | --- | --- |
+| reserve | 아직 생산 전일 수 있음 | move-only 예약이 실제 공간을 점유 | Full은 일시 부족, 전체 한도 초과/비용 overflow는 영구 거부; 취소는 정확한 몫 반환 |
+| publish_reserved | 큐로 이동 | 원래 예약을 큐가 인수 | 잘못된 저장소·예약보다 큰 값·Closed는 원본 Event와 예약을 모두 반환 |
+| take_owned | RetainedCompletion | 큐에서 빠져도 계속 점유 | raw Event 추출로 회계 책임을 지울 수 없음 |
+| transfer | 새 실제 저장소로 이동 | 새 저장소 수용 성공 뒤에만 옛 claim 반환 | 실패하면 원본 Event·옛 claim·새 예약을 모두 보존 |
+| retire | Event 폐기 | Event를 먼저 파기한 뒤 반환 | transport 수용/KV 정산/내구 완료와 다른 전이 |
+
+예약된 front를 기존 raw `try_take/poll_take`가 소비하거나 건너뛰지 않는다. **예약 생산자와 owned
+소비자·책임 이전을 함께 연결해야** 하며, 생산자만 먼저 운영에 켜면 정지한다. 기존 raw 소비는 큐에서
+꺼낼 때 queue claim만 반환하므로 이후 EventNode의 보관 비용까지 추적하는 API가 아니다.
+이 권한은 로컬 실제 저장소에 귀속되며 sender의 EventClass, source 인증, peer generation 또는 wire 권한을 대신하지 않는다.
+
+단일 native 작업이 여러 필수 Event를 만들면 completion capacity=1에 그 전체 슬롯을 미리 요구하는
+것만으로는 정상 진행할 수 없다. 후속 효과 보존 공간과 전달 큐 슬롯을 구분하고 실제 수신 측의 책임
+이전까지 연결해야 한다. 이 한계를 큐 증설·SESSION 금지·기존 cap1 정상 입력 축소로 숨기지 않는다.
+RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급하는 것도 금지한다. 앞선 효과가
+먼저 ID를 소비할 수 있으므로, 고정 Event의 한 번 발급은 실제 순서가 확정된 outbox 전이에서 이행한다.
+
 ## 측정: 배치 폭 대 파이프라인 깊이 (2026-08-31, 2026-09-01 재측정)
 
 도착 위상 파편화와 그 교정을 4노드 하네스로 A/B 측정했다. 결과는 이 계약의

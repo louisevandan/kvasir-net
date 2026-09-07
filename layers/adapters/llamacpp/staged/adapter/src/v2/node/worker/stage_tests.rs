@@ -1667,6 +1667,238 @@ fn aggregate_release_receipt_budget_refuses_before_the_first_native_effect() {
     assert_control_batch_reserves_all_receipts_before_native(true);
 }
 
+fn assert_release_uses_the_last_available_event_id(role: NodeRole, event: &Event) {
+    let mut fixture = fixture_at(ResponseMode::ReleaseExactStatus, role);
+    let mut identities = establish_two_native_owners(&mut fixture);
+    identities.reverse();
+    let (mut same_input, controls) = budget_control_input(&identities, true);
+    same_input.envelope.target = fixture.worker.endpoint.clone();
+    assert_eq!(
+        &same_input, event,
+        "the control arm must consume the same Event"
+    );
+    let command: ReleaseCommand = serde_json::from_slice(&event.payload).unwrap();
+    command.validate().unwrap();
+    assert_eq!(
+        command
+            .sequences
+            .iter()
+            .map(|sequence| sequence.id)
+            .collect::<Vec<_>>(),
+        [1, 0],
+        "forwarding must retain command order, not sort by slot"
+    );
+    let session = fixture.worker.state.sessions["session"].clone();
+    assert_eq!(Some(&event.envelope.source), session.previous.as_ref());
+    fixture.worker.state.next_event = u64::MAX - 1;
+    fixture.handle(event.clone()).unwrap();
+    assert!(!fixture.worker.effects_fenced);
+    assert_eq!(
+        fixture.trace.lock().unwrap().native_operations,
+        [
+            Operation::PhysicalBatch,
+            Operation::PhysicalRelease,
+            Operation::PhysicalRelease
+        ]
+    );
+    // The fake removes the independently decoded (slot, key, incarnation).
+    // Releasing either owner twice cannot satisfy both this map and the calls.
+    assert!(fixture.trace.lock().unwrap().native_kv.is_empty());
+    for (identity, operation, body) in controls {
+        assert_eq!(
+            fixture
+                .worker
+                .state
+                .stage_owners
+                .check_control(&identity, operation, &body)
+                .unwrap(),
+            super::super::ownership::ControlCheck::Replay(body)
+        );
+    }
+    let mut expected = event.clone();
+    expected.envelope.event_id = format!("{}:llamacpp:{}", event.envelope.event_id, u64::MAX - 1);
+    expected.envelope.causation_id = Some(event.envelope.event_id.clone());
+    expected.envelope.source = fixture.worker.endpoint.clone();
+    expected.envelope.sequence = u64::MAX - 1;
+    if let Some(next) = session.next {
+        expected.envelope.target = next;
+        expected.envelope.class = EventClass::Control;
+        expected.envelope.payload_content_type = RELEASE_CONTENT_TYPE.into();
+    } else {
+        expected.envelope.target = session.first;
+        expected.envelope.class = EventClass::Telemetry;
+        expected.envelope.payload_content_type = RELEASED_CONTENT_TYPE.into();
+    }
+    let emitted = drain(&fixture.mailbox);
+    assert_eq!(
+        emitted,
+        [expected.clone()],
+        "the entire exact successor is the oracle"
+    );
+    assert_eq!(
+        p4_protocol::event::encode(&emitted[0]).unwrap(),
+        p4_protocol::event::encode(&expected).unwrap()
+    );
+    assert_eq!(fixture.worker.state.next_event, u64::MAX);
+    assert!(fixture.worker.effects.is_empty());
+}
+
+fn assert_release_id_refusal_precedes_native(role: NodeRole, with_prefix: bool) {
+    let mut fixture = fixture_at(ResponseMode::ReleaseExactStatus, role);
+    let mut identities = establish_two_native_owners(&mut fixture);
+    identities.reverse();
+    let (mut event, _) = budget_control_input(&identities, true);
+    event.envelope.target = fixture.worker.endpoint.clone();
+    let command: ReleaseCommand = serde_json::from_slice(&event.payload).unwrap();
+    command.validate().unwrap();
+    if with_prefix {
+        // Explicit method-level retained-prefix case, not a claim that the
+        // current synchronous run loop accepts RELEASE during another flush.
+        let session = &fixture.worker.state.sessions["session"];
+        let (target, class, content_type) = if let Some(next) = &session.next {
+            (next.clone(), EventClass::Control, RELEASE_CONTENT_TYPE)
+        } else {
+            (
+                session.first.clone(),
+                EventClass::Telemetry,
+                RELEASED_CONTENT_TYPE,
+            )
+        };
+        fixture
+            .worker
+            .effects
+            .push_back(super::effects::CommittedEffect::Forward {
+                base: input("older-release", vec![1]).envelope,
+                target,
+                class,
+                content_type,
+                body: event.payload.clone(),
+            });
+    }
+    fixture.worker.state.next_event = if with_prefix { u64::MAX - 1 } else { u64::MAX };
+    let next_before = fixture.worker.state.next_event;
+    let owners_before = fixture.worker.state.stage_owners.clone();
+    let frontiers_before = format!("{:?}", fixture.worker.state.stage_frontiers);
+    let effects_before = format!("{:?}", fixture.worker.effects);
+    let flights_before = fixture.worker.state.flights.clone();
+    let native_before = fixture.trace.lock().unwrap().native_operations.clone();
+    let kv_before = fixture.trace.lock().unwrap().native_kv.clone();
+    assert!(fixture.handle(event.clone()).is_err());
+    assert_eq!(
+        fixture.worker.snapshot.lock().unwrap().as_str(),
+        "failed:completion event ID is exhausted by committed obligations",
+        "a malformed command or missing stage authority is not this counterexample"
+    );
+    assert!(
+        !fixture.worker.effects_fenced,
+        "no native mutation became uncertain"
+    );
+    assert_eq!(fixture.worker.state.next_event, next_before);
+    assert_eq!(fixture.worker.state.stage_owners, owners_before);
+    assert_eq!(
+        format!("{:?}", fixture.worker.state.stage_frontiers),
+        frontiers_before
+    );
+    assert_eq!(format!("{:?}", fixture.worker.effects), effects_before);
+    assert_eq!(fixture.worker.state.flights, flights_before);
+    assert_eq!(
+        fixture.trace.lock().unwrap().native_operations,
+        native_before
+    );
+    assert_eq!(fixture.trace.lock().unwrap().native_kv, kv_before);
+    // The error itself has no unreserved ID either. It must not steal the
+    // retained prefix's last ID, nor flush that prefix after this refusal.
+    assert!(drain(&fixture.mailbox).is_empty());
+    assert_release_uses_the_last_available_event_id(role, &event);
+}
+
+#[test]
+fn release_event_id_exhaustion_refuses_the_whole_valid_group_before_native() {
+    for role in [NodeRole::Middle, NodeRole::Last] {
+        assert_release_id_refusal_precedes_native(role, false);
+    }
+}
+
+#[test]
+fn release_preserves_the_last_id_already_owed_to_a_retained_prefix() {
+    for role in [NodeRole::Middle, NodeRole::Last] {
+        assert_release_id_refusal_precedes_native(role, true);
+    }
+}
+
+#[test]
+fn release_one_id_covers_every_native_member_and_the_exact_ordered_successor() {
+    for role in [NodeRole::Middle, NodeRole::Last] {
+        let mut fixture = fixture_at(ResponseMode::ReleaseExactStatus, role);
+        let mut identities = establish_two_native_owners(&mut fixture);
+        identities.reverse();
+        let (mut event, _) = budget_control_input(&identities, true);
+        event.envelope.target = fixture.worker.endpoint.clone();
+        assert_release_uses_the_last_available_event_id(role, &event);
+    }
+}
+
+#[test]
+fn release_native_failure_retains_uncertainty_without_emitting_its_successor() {
+    for role in [NodeRole::Middle, NodeRole::Last] {
+        let mut fixture = fixture_at(ResponseMode::ReleaseWrongStatus, role);
+        let mut identities = establish_two_native_owners(&mut fixture);
+        identities.reverse();
+        let (mut event, _) = budget_control_input(&identities, true);
+        event.envelope.target = fixture.worker.endpoint.clone();
+        assert_release_uses_the_last_available_event_id(role, &event);
+        fixture.worker.state.next_event = u64::MAX - 1;
+        let owners_before = fixture.worker.state.stage_owners.clone();
+        let frontiers_before = format!("{:?}", fixture.worker.state.stage_frontiers);
+        let effects_before = format!("{:?}", fixture.worker.effects);
+        let mut expected_kv = fixture.trace.lock().unwrap().native_kv.clone();
+        let first = &identities[0];
+        assert!(
+            expected_kv
+                .remove(&(
+                    first.sequence_id,
+                    first.sequence_key.clone(),
+                    first.incarnation
+                ))
+                .is_some()
+        );
+        assert!(fixture.handle(event.clone()).is_err());
+        assert!(fixture.worker.effects_fenced);
+        assert_eq!(fixture.trace.lock().unwrap().native_kv, expected_kv);
+        assert_eq!(
+            fixture.trace.lock().unwrap().native_operations,
+            [Operation::PhysicalBatch, Operation::PhysicalRelease],
+            "the first native failure must stop the remaining member"
+        );
+        assert_eq!(fixture.worker.state.stage_owners, owners_before);
+        assert_eq!(
+            format!("{:?}", fixture.worker.state.stage_frontiers),
+            frontiers_before
+        );
+        assert_eq!(format!("{:?}", fixture.worker.effects), effects_before);
+        let emitted = drain(&fixture.mailbox);
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].envelope.payload_content_type, ERROR_CONTENT_TYPE);
+        assert!(
+            std::str::from_utf8(&emitted[0].payload)
+                .unwrap()
+                .contains("physical release acknowledgement is invalid")
+        );
+        assert_eq!(emitted[0].envelope.sequence, u64::MAX - 1);
+        assert_eq!(fixture.worker.state.next_event, u64::MAX);
+        assert!(fixture.handle(event).is_err());
+        assert!(fixture.worker.flush_effects().is_err());
+        assert!(fixture.worker.drive_first_batches().is_err());
+        assert!(fixture.worker.effects_fenced);
+        assert_eq!(fixture.trace.lock().unwrap().native_kv, expected_kv);
+        assert_eq!(
+            fixture.trace.lock().unwrap().native_operations,
+            [Operation::PhysicalBatch, Operation::PhysicalRelease]
+        );
+        assert!(drain(&fixture.mailbox).is_empty());
+    }
+}
+
 fn physical_event_from_head(head: &mut Fixture, requests: &[(&str, Vec<i32>)]) -> Event {
     let mut capsules = Vec::new();
     for (name, tokens) in requests {

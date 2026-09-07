@@ -190,6 +190,9 @@ raw ggml ordinal을 엔진 중립 의미로 해석하거나 서로 다른 pin에
 
 - protocol/agent/adapter-contract crate는 concrete backend에 normal dependency를 갖지 않는다.
   등록은 entrypoint에서 하고, pure scheduler/ledger 시험은 llama checkout·GPU·네트워크 없이 빌드된다.
+- 중립 완료 저장소는 불투명 Event의 실제 보존 비용·move-only 공간 소유·통지를 제공할 수 있다.
+  native 작업이 만드는 필수 결과의 수/상한·flight/KV 권한은 어댑터가 결정한다. 저장소 예약을
+  source 인증·분산 wire grant·KV 완료로 사용하지 않는다. 세부 소유 전이는 배치 계약의 로컬 저장소 절을 따른다.
 - concrete adapter의 통합 시험 전용 target은 dev-dependency로 중립 EventBroker/EventNode의 공개
   API와 tokio runtime·동기화·시간 primitive를 사용할 수 있다. 실제 전달 경계의 시험 조립이며
   production 의존 역전이나 agent private API 접근 허용이 아니다. normal/build 의존과 구별하고

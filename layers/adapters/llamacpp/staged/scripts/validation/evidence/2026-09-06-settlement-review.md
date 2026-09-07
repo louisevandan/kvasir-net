@@ -2693,3 +2693,51 @@ ID 사전 거부/사후 intent 보존 구분은 배치 계약의 기존 소유 �
 tokio 사용 범위는 격리 계약에 명시했다. production normal/build 의존은 바뀌지 않았다.
 **운영 수정 없이 필수 RED를 별도 전체 커밋**으로 보존하며 후속 운영 수정은 이 커밋 뒤에 시작한다.
 세 라운드를 새 이름으로 초기화하지 않고 마지막 후보 확인은 재설계가 닫힌 뒤에만 한다.
+
+## 로컬 완료 저장소 예약 기반 — 실행 전 WIP (2026-09-07)
+
+기준 HEAD는 `393a6c23e`다. source/binary 봉인 또는 새 실행 결과가 아닌 **구현/정적 검토 기록**이다.
+이 체크포인트는 검증 전 진행 보존이며 RED를 GREEN으로 바꾸었다는 보고가 아니다.
+
+### 변경과 정적 판정
+
+- 중립 `node_adapter/event_cost.rs`는 Event/Envelope/Endpoint/Address를 exhaustive 분해한다.
+  inline 및 독립 String/Vec capacity의 checked 합산이며 직렬화나 clone은 하지 않는다.
+- `node_adapter/mailbox.rs`는 실제 사전 할당 큐와 ordinary/reserved/owned의 count/bytes를
+  동일 원장에 연결한다. move-only 예약, 원본+예약 거부 반환, dequeue 이후 claim 유지,
+  새 실제 저장소 수용 후 책임 이전, Event 먼저 폐기 후 claim 반환을 구현했다.
+- 단일 비용 초과는 TooLarge, 단일 산술 overflow는 CostOverflow, 다른 소유물 때문에 현재
+  부족한 경우는 Full이다. 실제 worker publication match도 영구 오류를 재시도하지 않고
+  원본 Event를 호출자로 돌려준다. 그 이후 기존 호출자의 실패/보존 한계는 이번에 일반 해결하지 않았다.
+- lock 순서는 Storage→Budget이며 reserve는 Budget을 해제한 뒤 Storage에 들어간다.
+  waker 호출/소멸·Event/claim 소멸은 잠금 밖이다. 이는 두 검토자의 정적 경로 확인이며 실행 증명이 아니다.
+- RELEASE의 native 전 ID 고갈·기존 prefix 의무·마지막 ID 정상 전달·native 부분 실패 oracle를
+  기존 실제 handle/native fixture에 추가했다. RELEASE 운영 코드 자체는 이번에 수정하지 않았다.
+
+### 작성했지만 실행하지 않은 시험
+
+| 범위 | 작성 수 | 판정할 계약 |
+| --- | --- | --- |
+| Event 보존 비용 | 5 | inline 한 번, 모든 필드 capacity, 중첩 독립 할당, spare Vec, checked overflow |
+| 실제 mailbox 예약 | 14 | count/bytes·취소·wrong receiver·too-small·close·owned/transfer·lost wake·경쟁 |
+| 실제 Worker publication | 1 | 영구 초과는 원본 allocation을 반환하며 Full/shutdown으로 오분류하지 않음 |
+| 실제 RELEASE handle | 4 | 거부 전 native0/보존, 동일 Event 정상 대조, 정확한 successor, 부분 실패 fence |
+
+Worker 영구 오류 시험은 shutdown guard로 잘못된 Full 구현도 유한하게 종료시킨다. 영구 오류와
+shutdown abandonment의 snapshot을 구분하므로 잘못된 재시도 분기는 단언 실패가 되어야 한다.
+RELEASE의 retained-prefix 경우는 직접 method 경로이며 현 동기 run loop가 flush 도중 그 명령을
+수용한다는 주장이 아니다. 정상 대조는 정렬되지 않은 두 owner와 exact Event/wire를 검사한다.
+
+기존 mailbox_tests.rs·actor_ring.rs의 입력/기대는 변경0이다. 기존 1ms worker 대기·원격 serve/pump·
+wire version·native 결과 상한·product byte 설정은 그대로다. count-only 생성자는 제품의 byte 한도
+선언이 아니다. reserved front를 legacy 소비자로 전달하면 정지하므로 새 예약 생산자는 운영에서
+활성화하지 않았다. 단일 작업의 다중 결과를 cap1 슬롯 전부에 선예약하는 것으로 진행을 보장할 수도 없다.
+
+### 검증 지위와 보존
+
+이번 변경에 대한 컴파일/단위/전체/변이/docs-lint/C++/GPU 실행은 **모두 미실행**이다. 실행 전
+계약과 코드 대조·서식 정리만 했다. 마지막 고정 검증 라운드는 사용하지 않았고 현재 통과 수를 만들지 않는다.
+기존 실행13의1254/1/7은 그 봉인 소스의 결과다. 후보 전체의 수용/반환 연결이 완성되기 전에 마지막
+라운드를 이 기반 API 확인용으로 사용하지 않는다. 이번에는 결과 로그/해시 생성물을 추가하지 않았다.
+사용자 지시에 따라 전체 비무시 소스·시험·관련 문서를 **미검증 WIP 체크포인트**로 함께 커밋한다.
+현재 순서와 다음 첫 행동은 로드맵만 소유하며 B3/전체 교착/최종 실기 완료를 주장하지 않는다.

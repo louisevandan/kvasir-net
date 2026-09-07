@@ -3,6 +3,14 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: 로컬 완료 저장소 예약 — 실행 전 WIP
+
+`393a6c23e`의 RED 뒤 실제 완료 저장소·비용 회계·owned 전달 API와 소비 거부 시험을 작성했다.
+정적 검토와 서식 정리만 했고 **컴파일·실행시험·변이는 하지 않았다**. 제품의 예약 생산/owned 소비
+연결과 actor 교착 수정은 미완이다. 과거 통과 수를 이번 소스에 귀속하지 않는다.
+구현 범위·미실행 시험·체크포인트는
+[로컬 저장소 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
 ## 2026-09-07: 실제 broker/node/worker 순환 포화 — 수정 전 필수 RED
 
 `f13e2560b`의 운영 코드에 actual actor 시험 두 개와 dev 배선만 추가했다. 정상 SESSION/추론14입력에서
