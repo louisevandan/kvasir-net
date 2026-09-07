@@ -2863,3 +2863,70 @@ payload allocation, permit identity와 실제 storage snapshot을 함께 대조�
 유지할 구현·회귀 시험·간결한 계약/진행 기록만 전체 WIP 체크포인트에 포함한다. 생성 로그·중복
 manifest·일회성 도구·모델·바이너리는 기존 ignore 경로에 남긴다. 새 시험 파일은 필수 oracle이므로
 ignore하지 않으며, 다른 머신에서 원자료를 재열람하는 B8 조건은 여전히 미충족이다.
+
+## PREFILL 수용 연결의 선행 원자성 — 정적 검토 WIP (2026-09-07)
+
+기준 HEAD는 `d8fff7d2712de2bd90daed4c0de8292662761246`이다. 실제 producer/owned consumer 연결을
+읽으며 발견한 **코드상의 거부 전이**를 먼저 분리했다. 이번에는 컴파일·시험·변이·docs-lint를 실행하지
+않았다. 새 봉인 소스/바이너리/실행 로그와 통과 수는 없다. 검증2회 사용·마지막1회 미사용 상태다.
+실행13의1254/1/7은 그때 봉인한 수정 전 소스에만 귀속한다.
+
+### 수정 전 경로와 수정 지점
+
+`worker.rs::Worker::prefill` @ `d8fff7d27`은 session key를 기억한 뒤 Tokenize/context/incarnation을
+검사했다. 요청 삽입·incarnation 증가·pending 추가 뒤 `admit_pending`이 거부하는 경로도 있었다.
+따라서 일반 요청 처리 함수를 그대로 포화 중 수용 경로에 연결하면 실패한 admission이 기억/요청을
+남긴다. 이 절의 반례는 **실행한 RED가 아니라 정적 경로 분석**이다. 실행 전/제거 변이 증명은 남아 있다.
+
+이번 코드는 새 요청을 기존 pending 뒤에 가상으로 붙여 이번 배정 접두 전체를 검사하고, incarnation·
+Tokenize·context까지 통과한 뒤 첫 admission 쓰기를 한다. 기존 ACK의 prefix 검사와 같은 validator를
+쓰되 ACK의 입력/검사 범위를 넓히지 않았다. 확정 구간에는 새 Result 거부/handler/yield/publication이
+없으며 ADMITTED 기록은 확정 뒤다. 오류 우선순위 변경과 보장하지 않는 자원 범위는
+[L2 소유 계약](../../../../../../../docs/adapter-batching-layers.md#l2-수용점유-admission)을 따른다.
+
+### 작성한 실제 consumer oracle7개 — 실행·변이는 아직 없음
+
+`worker/session_tests.rs`의 기존 SESSION fixture 아래 `prefill_admission_tests.rs`를 연결했다.
+native가 설치되지 않은 fixture이므로 Tokenize 요청 거부 외에는 token 입력으로 실제 prefill/handle을
+지난다. Event는 기존 wire codec으로 encode/decode한다. 기존 시험 내용/기대값은 변경하지 않았다.
+
+| 시험 | 거부/정상 입력과 고정한 판정 |
+| --- | --- |
+| context_refusal | context32에서 prompt32+max1 거부; 동일 request를 prompt31+max1 및 다른 session key로 정상 수용 |
+| zero_or_exhausted_incarnation | incarnation0/MAX 모두 무변이 거부; 값만7로 고쳐 동일 입력 수용 |
+| invalid_free_slot | 정상 기존 pending 뒤 새 후보, 범위 밖/중복 free id가 접두 전체를 거부; 슬롯만 고쳐 FIFO 배정 |
+| a_free_slot_that_is_still_owned | 기존 요청 소유 id를 free에 다시 넣어도 이중 배정0; free 수정 뒤 기존/새 요청의 소유 분리 |
+| an_invalid_later_pending_member | 정상 첫 pending 뒤 missing/이미 소유한 두 번째가 있으면 첫 요청도 미배정; 원인 수정 뒤3개 FIFO 배정 |
+| tokenize_failure | 실제 tokenize→Empty lifecycle.request 거부에서 admission 보존; 같은 request의 token 입력 수용 |
+| two_available_slots | pending2개+새1개, free2개일 때 기존2개 먼저 배정하고 새 요청만 대기, 원본 Event·incarnation 유지 |
+
+각 거부는 direct 호출의 admission/원장 snapshot 및 next_event 불변, 실제 handle의 정확한 ERROR
+Event1개와 next_event+1, 원인 수정 뒤 재제출을 함께 검사한다. 일반 handle의 상태 문자열은
+`failed:<detail>`로 바뀌므로 **전체 Worker 불변**이라 하지 않는다. private session_key_order와
+기록 파일 출력 자체는 검사하지 않으며 전역 환경변수를 조작하지 않는다. Tokenize 사례는 native
+parser/GPU 실패 주입이나 Loaded 복구가 아니다. 성공 token 경로도 native 없는 fixture 그대로다.
+
+예정된 변이는 session key 기억/ADMITTED를 검증 앞으로 되돌림, 요청 삽입 뒤 FIFO 검증으로 되돌림,
+배정 접두의 후기 구성원 검사 제거, 기존 pending 대신 신규 요청을 먼저 배정하는 것이다. 기록 파일을
+관측하지 않는 현 oracle가 ADMITTED 출력 시점만의 변이까지 검출한다고 주장하지 않는다. 최소한 key
+조기 기억과 post-insert 거부 변이가 실제 consumer의 상태 보존 단언에서 실패해야 승격할 수 있다.
+
+### 실제 연결 경로 감사와 범위
+
+독립 정적 검토에서 테스트 모듈 가시성/타입, ERROR의 envelope·ID·detail, Empty Tokenize의 lifecycle
+상태와 동일 접두 검사를 대조했다. 이는 컴파일러나 실행 결과의 대체 증거가 아니다.
+
+- raw Event 수신은 broker/node만이 아니라 `entrypoints/agent/src/event_runtime/{mod,control,transport}.rs`,
+  transport ConnectionSender와 adapter WorkerInput/held_input에도 남아 있다. producer만 예약형으로
+  바꾸거나 중간 raw 다리에서 claim을 버리면 소비자 보존 공간은 추적되지 않는다.
+- broker는 성공 시 큐용 사본과 exact 중복 원장을 만든다. 중복 원장에 source claim을 붙이면 정상
+  count-window 퇴역까지 producer가 묶인다. 독립 중복 비용과 callback의 ledger 잠금 밖 retirement가
+  필요하다. count-window 이후에도 byte가 영구 부족한 경우를 destination Full로 기다리게 하지 않는다.
+- 실제 remote serve는 dispatch 실패 시 연결을 끝내고, outbound/outer pump 및 connection writer는
+  로컬 owned claim/원격 acceptance로 아직 이관되지 않았다. socket write 완료는 수신 공간 증거가 아니다.
+- 현재 수정은 byte grant·원인별 필수 출력 예약·blocked worker pump·native 결과 사전 bound를 만들지
+  않는다. actor cap1/cap8의 입력·완료·native/외부 복구 oracle는 그대로이며 교착 해결을 주장하지 않는다.
+
+다음 구현 순서의 단독 소유자는 로드맵이다. 이번 변경은 운영 함수2개 파일·새 필수 회귀/배선·관련
+소유 계약/진행/증거만 전체 미검증 WIP로 보존한다. generated proof·모델·바이너리·임시 도구는 기존
+ignore 경로에 둔다. remote/GPU/C++ 실행이나 push를 하지 않았고 최종 웨이브 성과 승격은 없다.

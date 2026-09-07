@@ -681,3 +681,6 @@ fn prefill_owner_declarations_are_checked_before_remembering_or_admitting_the_at
         assert_eq!(request.template.envelope.event_id, "original-submission");
     }
 }
+
+#[path = "prefill_admission_tests.rs"]
+mod prefill_admission_tests;

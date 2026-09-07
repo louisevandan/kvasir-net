@@ -412,7 +412,9 @@ impl Worker {
         super::super::capsule::validate_reply_options(&reply, &command.options)
             .map_err(str::to_owned)?;
         let key = request_key(&command.session_id, &command.request_id);
-        if self.state.requests.contains_key(&key) || self.state.pending_releases.contains_key(&key)
+        if self.state.requests.contains_key(&key)
+            || self.state.pending_releases.contains_key(&key)
+            || self.state.pending.contains(&key)
         {
             return Err("request identity is already active".into());
         }
@@ -424,25 +426,24 @@ impl Worker {
             command.session_id.clone(),
             command.request_id.clone(),
         );
+        let remember_key = !self.state.session_keys.contains_key(&scope);
         if let Some(previous) = self.state.session_keys.get(&scope) {
             if previous.as_deref() != command.session_key.as_deref() {
                 return Err("request identity reappeared under a different session key".into());
             }
-        } else {
-            // Traced so a run can prove the key OUTER minted is the key this
-            // adapter holds. Nothing else on the wire carries it back, so
-            // without this the round trip is only an absence of rejection.
-            if std::env::var_os("P4_STAGED_TRACE_SESSION_KEY").is_some() {
-                crate::v2::record::record(&format!(
-                    "P4_SESSION_KEY_ADMITTED request={} key={}",
-                    command.request_id,
-                    command.session_key.as_deref().unwrap_or("-")
-                ));
-            }
-            self.state
-                .remember_session_key(scope, command.session_key.clone());
         }
+        // Validate the future pending prefix WITHOUT inserting this request.
+        // A rejection must not remember a key, consume an incarnation, or
+        // leave a request behind for the scheduler to execute later.
+        let incarnation = self.state.next_incarnation;
+        let next_incarnation = incarnation
+            .checked_add(1)
+            .filter(|_| incarnation != 0)
+            .ok_or("request incarnation exhausted")?;
+        let admission_count = self.prepare_prefill_admission(&key)?;
         if let Some(prompt) = command.prompt.take() {
+            // Tokenize is a synchronous native query, not KV issue.
+            // Its failure still must leave all request admission state alone.
             command.tokens = self.tokenize(prompt)?;
         }
         if command
@@ -453,11 +454,23 @@ impl Worker {
         {
             return Err("prompt plus max_tokens exceeds loaded per-sequence context".into());
         }
-        let incarnation = self.state.next_incarnation;
-        let next_incarnation = incarnation
-            .checked_add(1)
-            .filter(|_| incarnation != 0)
-            .ok_or("request incarnation exhausted")?;
+        let admission_record = (remember_key
+            && std::env::var_os("P4_STAGED_TRACE_SESSION_KEY").is_some())
+        .then(|| {
+            format!(
+                "P4_SESSION_KEY_ADMITTED request={} key={}",
+                command.request_id,
+                command.session_key.as_deref().unwrap_or("-")
+            )
+        });
+        // First admission write. This is still the sole worker mutator: no
+        // handler, publication or yield intervenes before commit_admission.
+        // Future request-storage reservation must also precede this line;
+        // these validation checks do not establish a count/byte memory budget.
+        if remember_key {
+            self.state
+                .remember_session_key(scope, command.session_key.clone());
+        }
         self.state.requests.insert(
             key.clone(),
             RequestState {
@@ -477,7 +490,11 @@ impl Worker {
         );
         self.state.next_incarnation = next_incarnation;
         self.state.pending.push_back(key);
-        self.admit_pending()?;
+        self.commit_admission(admission_count);
+        if let Some(record) = admission_record {
+            // This record says ADMITTED, not merely parsed or attempted.
+            crate::v2::record::record(&record);
+        }
         Ok(())
     }
 

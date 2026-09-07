@@ -526,7 +526,27 @@ impl Worker {
         Ok(())
     }
 
-    fn commit_admission(&mut self, count: usize) {
+    /// Validate the same FIFO prefix that adding one new request would admit.
+    /// The candidate does not yet exist in requests/pending and owns no slot.
+    /// This is not a durable ticket: the sole worker commits without yielding.
+    pub(super) fn prepare_prefill_admission(&self, key: &str) -> Result<usize, String> {
+        if self.state.requests.contains_key(key)
+            || self.state.pending.iter().any(|existing| existing == key)
+        {
+            return Err("new pending request identity is already present".into());
+        }
+        let pending_count = self
+            .state
+            .pending
+            .len()
+            .checked_add(1)
+            .ok_or("pending request count overflow")?;
+        let slots: Vec<_> = self.state.free_sequences.iter().copied().collect();
+        self.validate_admission_candidate(&slots, Some(key))?;
+        Ok(slots.len().min(pending_count))
+    }
+
+    pub(super) fn commit_admission(&mut self, count: usize) {
         for _ in 0..count {
             let sequence_id = self
                 .state
@@ -548,9 +568,18 @@ impl Worker {
     }
 
     fn validate_admission(&self, slots: &[u32]) -> Result<(), String> {
+        self.validate_admission_candidate(slots, None)
+    }
+
+    fn validate_admission_candidate(
+        &self,
+        slots: &[u32],
+        new_key: Option<&str>,
+    ) -> Result<(), String> {
         let mut keys = std::collections::BTreeSet::new();
         let mut ids = std::collections::BTreeSet::new();
-        for (id, key) in slots.iter().zip(&self.state.pending) {
+        let pending = self.state.pending.iter().map(String::as_str).chain(new_key);
+        for (id, key) in slots.iter().zip(pending) {
             if *id >= self.state.sequence_capacity
                 || !ids.insert(*id)
                 || !keys.insert(key)
@@ -561,6 +590,11 @@ impl Worker {
                     .any(|request| request.sequence_id == Some(*id))
             {
                 return Err("admission slot or pending request is duplicated".into());
+            }
+            if new_key == Some(key) {
+                // The proposed RequestState is constructed with sequence_id
+                // None only after every fallible admission check succeeds.
+                continue;
             }
             let request = self
                 .state

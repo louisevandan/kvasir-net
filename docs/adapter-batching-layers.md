@@ -361,6 +361,28 @@ llama.cpp/ggml/CUDA 타입에 보고 정책을 넣지 않는다. peer 인증·re
   검증한다. 같은 UBATCH 동승이나 셀 여유만으로 ITL/TTFT가 자동 공정하다고 가정하지 않는다.
   부족 시 queue/reject 또는 승인된 OUTER 스냅샷 정책을 이행하며 자동 축출은 장애 게이트 전 비활성이다.
 
+#### PREFILL의 준비와 확정 — 수용 거부 원자성의 제한된 구현
+
+위 L2의 전체 자원 계약과 달리 현재 `worker.rs::Worker::prefill`의 변경은 **요청 상태의
+Result 거부 전이**만 다룬다. 실행·검증 여부는 로드맵/증거 기록을 따른다.
+
+- 명령/owner/문자열/기존 identity 검증 뒤 incarnation과 추가될 pending FIFO 접두를 먼저 검사한다.
+  `release.rs::Worker::prepare_prefill_admission`은 기존 pending 뒤 새 후보를 가상으로 붙여,
+  이번에 실제로 배정할 슬롯/요청 전체를 검증한다. ACK의 기존 접두 검사도 같은 validator를 쓰며
+  전체 대기열의 다른 구간을 새로 거부하지 않는다. 새 후보가 이미 pending에 있으면 거부한다.
+- Tokenize와 prompt+max_tokens 검증까지 성공한 뒤에만 session key 기억, 요청 삽입, incarnation
+  증가, pending 추가와 검증된 FIFO 배정을 확정한다. sole worker에서 그 사이 다른 handler/yield/
+  publication은 없다. `P4_SESSION_KEY_ADMITTED` 기록은 확정 뒤에만 낸다.
+- 오류 우선순위는 바뀐다. identity 검증 뒤 과거 Tokenize→context→incarnation→admission 순서가
+  incarnation→admission→Tokenize→context가 된다. 이미 무효인 수용 상태로 불필요한 native 조회를
+  하지 않기 위한 fail-fast이며, 여러 오류가 겹친 입력의 메시지가 그대로라고 주장하지 않는다.
+- Tokenize는 동기 native 조회이며 KV 발행이 아니다. 조회 실패에서 요청 수용 상태를 보존하는 것과
+  native/lifecycle의 모든 내부 상태가 불변이라는 것은 다르다. 일반 ERROR의 정확한 1회 발행과 ID
+  소비는 거부 진단 효과로 별도 검사한다. allocator panic·기록 채널 실패까지 롤백하는 계약은 아니다.
+- 이 준비 결과는 비동기 보류를 가로질러 쓸 수 있는 durable ticket이나 공간 claim이 아니다.
+  실제 request/출력/미래 반환의 count·byte 예약은 여전히 첫 쓰기 **전**에 연결해야 한다.
+  이 수정만으로 bounded admission, blocked-input 소비 또는 actor 교착 해결을 선언하지 않는다.
+
 ### L3 구성 (strategy)
 
 매 발행 기회에서 동작한다. 순수 함수로 유지한다 — 입력은 전부 데이터, 출력은
@@ -707,6 +729,25 @@ destructor의 안전까지 보증하지 않는다. callback은 여전히 비차�
 이전까지 연결해야 한다. 이 한계를 큐 증설·SESSION 금지·기존 cap1 정상 입력 축소로 숨기지 않는다.
 RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급하는 것도 금지한다. 앞선 효과가
 먼저 ID를 소비할 수 있으므로, 고정 Event의 한 번 발급은 실제 순서가 확정된 outbox 전이에서 이행한다.
+
+#### broker 책임 이전과 정확한 중복 보관 — 연결 시 지켜야 할 목표 계약
+
+현재 `event_broker::EventBroker::dispatch`는 성공하면 destination과 중복 원장에 Event를 각각
+보관한다. 따라서 producer claim을 원장에 옮겨 넣는 것은 비용 분리가 아니다. 정확한 중복 원장의
+퇴역까지 producer 공간이 묶여 새로운 순환 대기가 생긴다. 다음 조건은 **미구현 연결 계약**이다.
+
+- destination의 실제 저장 claim과 exact Event 중복 사본의 독립 비용을 성공 commit 전에 확보한다.
+  모든 실패에서 원 Event/producer claim을 반환하고 원장은 그대로 둔다. 원본의 책임 이전은 양쪽
+  수용 뒤에만 끝난다. receiver가 dequeue한 뒤도 보관 중이라면 destination claim을 유지한다.
+- 기존 비교는 Event 전체 equality이며 순서 영역은 `(source, correlation)`이다. hash-only 비교나
+  byte 부족 시 조기 eviction으로 바꾸지 않는다. count-window의 정상 eviction을 반영한 최종 비용이
+  한도를 넘으면 destination dequeue를 기다리는 일시 Full이 아니다. 저장 정책/명시 한도의 영구
+  거부로 구분한다. 이것을 해제할 수 없는 capacity waiter를 등록하지 않는다.
+- source claim의 retirement/capacity callback은 broker ledger 잠금 **밖**이어야 한다. 단지
+  `transfer_to` 호출을 ledger 잠금 안에 감싸면 성공 뒤 claim Drop의 재진입으로 잠길 수 있다.
+- 일반 `EventSender/Receiver`뿐 아니라 connection writer, EventNode 보류물, adapter input과 worker
+  보류물까지 책임이 이어져야 한다. 중간에서 raw Event를 꺼내 claim을 바로 버리는 다리는 큐 한도만
+  증명한다. remote write 성공은 receiver 수용 증거가 아니며 별도 grant/acceptance 계약이 필요하다.
 
 ## 측정: 배치 폭 대 파이프라인 깊이 (2026-08-31, 2026-09-01 재측정)
 
