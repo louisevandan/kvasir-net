@@ -337,16 +337,16 @@ impl Worker {
         }
         let content_type = event.envelope.payload_content_type.as_str();
         let result = match content_type {
-            LOAD_CONTENT_TYPE => self.load(event.clone()),
-            UNLOAD_CONTENT_TYPE => self.unload(event.clone()),
-            SESSION_CONTENT_TYPE => self.session(event.clone()),
-            PREFILL_CONTENT_TYPE => self.prefill(event.clone()),
-            PHYSICAL_BATCH_CONTENT_TYPE => self.physical(event.clone()),
-            TAIL_BATCH_CONTENT_TYPE => self.tail(event.clone()),
-            RELEASE_CONTENT_TYPE => self.release(event.clone()),
-            RELEASED_CONTENT_TYPE => self.released(event.clone()),
-            SETTLE_CONTENT_TYPE => self.settle(event.clone()),
-            SETTLED_CONTENT_TYPE => self.settled(event.clone()),
+            LOAD_CONTENT_TYPE => self.load(&event),
+            UNLOAD_CONTENT_TYPE => self.unload(&event),
+            SESSION_CONTENT_TYPE => self.session(&event),
+            PREFILL_CONTENT_TYPE => self.prefill(&event),
+            PHYSICAL_BATCH_CONTENT_TYPE => self.physical(&event),
+            TAIL_BATCH_CONTENT_TYPE => self.tail(&event),
+            RELEASE_CONTENT_TYPE => self.release(&event),
+            RELEASED_CONTENT_TYPE => self.released(&event),
+            SETTLE_CONTENT_TYPE => self.settle(&event),
+            SETTLED_CONTENT_TYPE => self.settled(&event),
             _ => Err(format!(
                 "unsupported llama adapter content type {content_type}"
             )),
@@ -363,7 +363,8 @@ impl Worker {
         Ok(())
     }
 
-    fn prefill(&mut self, event: Event) -> Result<(), String> {
+    fn prefill(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
+        let event = event.borrow();
         let mut command: InferenceCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid inference payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
@@ -475,20 +476,7 @@ impl Worker {
         }
         self.state.requests.insert(
             key.clone(),
-            RequestState {
-                command,
-                incarnation,
-                sequence_id: None,
-                template: event,
-                reply,
-                prompt_cursor: 0,
-                prompt_issued: 0,
-                ready: None,
-                after_settlement: None,
-                outstanding: 0,
-                generated: 0,
-                issued_work: None,
-            },
+            RequestState::new(command, event.clone(), reply, incarnation, None),
         );
         self.state.next_incarnation = next_incarnation;
         self.state.pending.push_back(key);

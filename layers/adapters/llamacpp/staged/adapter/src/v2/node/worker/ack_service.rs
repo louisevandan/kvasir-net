@@ -28,8 +28,8 @@ impl Worker {
             }
         };
         let result = match event.envelope.payload_content_type.as_str() {
-            RELEASED_CONTENT_TYPE => self.released_without_flush(event.clone()),
-            SETTLED_CONTENT_TYPE => self.settled(event.clone()),
+            RELEASED_CONTENT_TYPE => self.released_without_flush(&event),
+            SETTLED_CONTENT_TYPE => self.settled(&event),
             _ => {
                 self.held_input = Some(event);
                 #[cfg(test)]

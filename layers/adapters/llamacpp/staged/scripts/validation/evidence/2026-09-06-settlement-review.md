@@ -3044,3 +3044,59 @@ malformed 진단 발행 허용이다. 어느 변이도 이번에 실행했다고
 유지할 운영 코드·필수 회귀·소유 문서만 전체 WIP 체크포인트에 포함한다. 생성 proof·임시 도구·모델·
 바이너리는 기존 ignore에 남긴다. 새로운 규약 문서는 만들지 않았다. 남은 순서는 로드맵 최신 기록만
 따르며 C++/원격/GPU/모델 실행·push와 최종 웨이브 성과 승격은 이번 범위에 없다.
+
+## 요청 입력의 불변 공유 — 정적 검토 WIP (2026-09-07)
+
+기준 HEAD `f5aa09675119f377a92accfb9fe67b87eeef07a0`. 이번 내용은 실제 코드의 소유/수명 대조와
+작성한 oracle이며 **실행 증거가 아니다**. 컴파일·시험·변이·docs-lint를 실행하지 않았다. 수정 전
+실행13의1254/1/7, 검증2회 사용·마지막1회 미사용을 유지한다. 새 결과 수나 봉인 바이너리는 없다.
+
+### 변경 전 전제와 제한된 변경
+
+- `worker.rs::Worker::handle`은 분기마다 전체 Event를 clone해 handler에 주었다. blocked ACK
+  경로도 같은 복사를 했다. 이제 원본은 호출자에 남고 handler는 대여한다. 실패 진단과 held_input의
+  원본 수명, ACK no-flush/native 금지 순서는 그대로다.
+- `node/state.rs::RequestState`는 command(tokens/options)/template/reply를 직접 소유했으므로
+  실제 prepare_issue/tail/settled의 후보 clone이 큰 입력도 복제했다. private Arc의 RequestInput으로
+  묶고 readonly Deref를 제공했다. 진행 상태는 기존 독립 candidate이고 생산용 가변 접근자는 없다.
+- `worker/drive.rs::Worker::drive_one_batch`의 template·batch_events는 매 발행에 full Event를
+  각각 복제했다. 이제 SharedRequestInput을 보유하고 관측/오류 발행은 원 template를 참조한다.
+  `emit_batch_errors`는 Borrow<Event>로 모든 기존 소유자의 진단을 같은 FIFO에 준비한다.
+- PHYSICAL/RELEASE/SETTLE 후속 effect의 base는 동일 ingress envelope의 clone이다. tail 출력과
+  PendingRelease는 계속 원 RequestState/template의 authority를 쓴다. 현재 ACK 출처로 바꾸지 않았다.
+- PREFILL의 `RequestState::new(command, event.clone(), ...)`는 여전히 입구 복사1회를 수행한다.
+  raw 원본의 선형 claim 이전은 아니다. ReadyRows/continuation/RowOwner/native 결과 복사와 초기
+  파싱 비용은 남으며 zero-copy·T19/T45 비용 전체 완료·메모리 상한·actor GREEN을 주장하지 않는다.
+
+기존 fixture의 직접 불변 필드 쓰기는 test-only COW로, 임시 fixture field move는 명시 clone으로
+이관했다. 원 입력·주입 횟수·단언·거부 이유를 바꾸지 않았다. RequestInput의 Clone 자체도 시험
+빌드에만 존재한다. 이 시험용 복사를 생산 반복 복제 제거 수치에 섞지 않는다.
+
+### 신규 oracle3개 — 모두 미실행
+
+`node/issue_tests.rs`에 다음 판정을 작성했다. equality만으로 이전 deep clone도 통과하므로
+Arc·tokens/payload/options/reply allocation의 동일성을 함께 요구한다.
+
+| 시험 | 소비와 판정 |
+| --- | --- |
+| `actual_issue_candidates_share_input_through_refusal_and_acceptance` | 실제 prepare→잘못된 split accept 거부→정상 accept; 원본/후보 allocation 공유, 값 불변, 거부 시 전체 상태 보존 |
+| `a_later_invalid_issue_member_preserves_every_original_input_and_progress` | 앞 후보 뒤의 잘못된 owner에서 전체 prepare 거부; 원 입력/진행 불변, 잔류 후보 소유자 없음; 수정 원인으로 정상 재준비 |
+| `shared_input_outlives_independent_progress_and_retires_with_its_last_owner` | 정산 후보 진행 격리·거부 보존, 시험 COW의 분리, 별도 읽기 소유자가 남은 수명과 마지막 Drop |
+
+이 세 시험은 실제 issue prepare/accept와 RequestState 정산을 소비하지만 실제 Worker::run 전체의
+메모리 계측/진행 시험은 아니다. handler borrowing과 drive는 기존 consumer 시험의 다음 실행 대상이며
+이번에 새 실행으로 입증했다고 세지 않는다. 공유 clone을 deep clone으로 바꾸거나 후보가 원본 입력을
+변경하게 하는 제거 변이는 예정일 뿐 미실시다. 원 actor의 cap1/cap8·14입력·6결과·외부 dequeue0·
+native·timeout oracle는 변경하지 않았다.
+
+### 정적 대조와 checkpoint 범위
+
+독립 정적 검토는 모든 변경 handler의 source/target 권한, borrow 수명, ACK와 native 전이 순서,
+drive가 self.state 변경 중에도 원본을 소유하는지, fixture의 동등 이관을 대조했다. production DerefMut/
+raw Arc/COW 우회는 추가하지 않았다. 정적 검토에서 차단점 미발견은 컴파일·실행 보증이 아니다.
+
+제품의 현재 queue_capacity/completion_capacity는 count 선언이고 byte/retained/receipt 예산을
+대체하지 못한다. 계약 소유 문서에 숫자/기본값/미선언 처리 방침이 정해져 있지 않아, 행 수·queue count로
+임의 상한을 만들지 않았다. 이것을 제품 ResourceBudget 완료 또는 owned 성공 연결이라고 쓰지 않는다.
+다음 실행 순서는 로드맵만 소유한다. 유지할 소스·필수 회귀·소유 문서를 전부 WIP로 남기고 생성물은
+기존 ignore에 둔다. C++/모델/GPU/원격 실행·push·성능/최종 다중 컴퓨터 승격은 이번 범위에 없다.

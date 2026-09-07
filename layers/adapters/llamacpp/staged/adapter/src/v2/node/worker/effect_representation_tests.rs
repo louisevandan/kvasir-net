@@ -27,7 +27,7 @@ fn fixture(capacity: usize) -> (Worker, Arc<CompletionMailbox>) {
 }
 
 fn input(payload_size: usize) -> Event {
-    let mut event = crate::v2::tests::request_state(vec![11]).template;
+    let mut event = crate::v2::tests::request_state(vec![11]).template.clone();
     event.envelope.event_id = "tail-cause".into();
     event.envelope.source = endpoint("tail");
     event.envelope.target = endpoint("head");
@@ -44,7 +44,7 @@ fn owner() -> RowOwner {
         request_id: "request".into(),
         sequence_key: request_key("session", "request"),
         session_id: "session".into(),
-        reply: request.reply,
+        reply: request.reply.clone(),
         sequence_id: 0,
         phase: Phase::Decode,
         position: 10,

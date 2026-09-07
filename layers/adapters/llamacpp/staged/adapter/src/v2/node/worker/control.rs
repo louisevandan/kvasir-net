@@ -1,7 +1,8 @@
 use super::*;
 
 impl Worker {
-    pub(super) fn load(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn load(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
+        let event = event.borrow();
         let command: LoadCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid load payload: {error}"))?;
         if command.binary.is_empty()
@@ -152,7 +153,8 @@ impl Worker {
         Ok(())
     }
 
-    pub(super) fn unload(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn unload(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
+        let event = event.borrow();
         let command: UnloadCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid unload payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
@@ -202,7 +204,8 @@ impl Worker {
         .map_err(|_| "completion queue is full".to_owned())
     }
 
-    pub(super) fn session(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn session(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
+        let event = event.borrow();
         let command: SessionCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid session payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;

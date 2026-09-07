@@ -215,9 +215,9 @@ impl Fixture {
 
 fn input(id: &str) -> Event {
     let mut request = crate::v2::tests::request_state(vec![7]);
-    request.command.request_id = "reused".into();
-    request.command.max_tokens = 1;
-    let mut event = request.template;
+    request.input_mut_for_test().command.request_id = "reused".into();
+    request.input_mut_for_test().command.max_tokens = 1;
+    let mut event = request.template.clone();
     event.envelope.event_id = id.into();
     event.envelope.correlation_id = id.into();
     event.envelope.payload_content_type = PREFILL_CONTENT_TYPE.into();

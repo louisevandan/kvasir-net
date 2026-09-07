@@ -28,7 +28,7 @@ fn worker(capacity: usize) -> (Worker, Arc<CompletionMailbox>) {
 }
 
 fn cause() -> Event {
-    let mut event = crate::v2::tests::request_state(vec![11]).template;
+    let mut event = crate::v2::tests::request_state(vec![11]).template.clone();
     event.envelope.event_id = "fixed-cause".into();
     event.envelope.correlation_id = "physical-correlation".into();
     event.envelope.source = endpoint("tail");

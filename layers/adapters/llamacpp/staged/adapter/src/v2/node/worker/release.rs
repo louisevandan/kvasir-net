@@ -10,14 +10,18 @@ struct PreparedReleaseAck {
 }
 
 impl Worker {
-    pub(super) fn tail(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn tail(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
         self.tail_without_flush(event)?;
         self.flush_effects()
     }
 
     // Whole-return authority and intent commit. Emission is a separate
     // consumer, also allowing late delivery faults to be tested after commit.
-    pub(super) fn tail_without_flush(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn tail_without_flush(
+        &mut self,
+        event: impl std::borrow::Borrow<Event>,
+    ) -> Result<(), String> {
+        let event = event.borrow();
         if self.effects_fenced {
             return Err("committed effects are fenced".into());
         }
@@ -277,7 +281,8 @@ impl Worker {
         Ok(())
     }
 
-    pub(super) fn release(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn release(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
+        let event = event.borrow();
         let command: ReleaseCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid release payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
@@ -338,7 +343,7 @@ impl Worker {
         };
         self.effects
             .push_back(super::effects::CommittedEffect::Forward {
-                base: event.envelope,
+                base: event.envelope.clone(),
                 target,
                 class,
                 content_type,
@@ -347,7 +352,10 @@ impl Worker {
         self.flush_effects()
     }
 
-    pub(super) fn released(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn released(
+        &mut self,
+        event: impl std::borrow::Borrow<Event>,
+    ) -> Result<(), String> {
         self.released_without_flush(event)?;
         self.flush_effects()
     }
@@ -355,13 +363,21 @@ impl Worker {
     /// Consume the complete, validated ACK and retain every receipt intent.
     /// Publication and any newly runnable native work belong to the caller's
     /// effect/issue gates, never to this settlement-only entry point.
-    pub(super) fn released_without_flush(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn released_without_flush(
+        &mut self,
+        event: impl std::borrow::Borrow<Event>,
+    ) -> Result<(), String> {
+        let event = event.borrow();
         let prepared = self.prepare_release_ack(event)?;
         self.commit_release_ack(prepared);
         Ok(())
     }
 
-    fn prepare_release_ack(&self, event: Event) -> Result<PreparedReleaseAck, String> {
+    fn prepare_release_ack(
+        &self,
+        event: impl std::borrow::Borrow<Event>,
+    ) -> Result<PreparedReleaseAck, String> {
+        let event = event.borrow();
         let command: ReleaseCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid release completion payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;

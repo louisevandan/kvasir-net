@@ -440,8 +440,8 @@ fn fixture_at(mode: ResponseMode, role: NodeRole) -> Fixture {
 
 fn input(name: &str, tokens: Vec<i32>) -> Event {
     let mut request = crate::v2::tests::request_state(tokens);
-    request.command.request_id = name.into();
-    let mut event = request.template;
+    request.input_mut_for_test().command.request_id = name.into();
+    let mut event = request.template.clone();
     event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "first", 1);
     event.envelope.event_id = format!("input-{name}");
     event.envelope.correlation_id = name.into();

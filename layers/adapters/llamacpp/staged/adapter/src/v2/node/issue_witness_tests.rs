@@ -35,22 +35,36 @@ fn authority(name: &str, sequence: u32) -> IssueAuthority {
 fn request(name: &str, sequence: u32) -> RequestState {
     let mut request = crate::v2::tests::request_state((10..18).collect());
     let authority = authority(name, sequence);
-    request.command.session_id = SESSION.into();
-    request.command.request_id = name.into();
-    request.command.options = "{}".into();
-    request.command.max_tokens = 8;
+    request.input_mut_for_test().command.session_id = SESSION.into();
+    request.input_mut_for_test().command.request_id = name.into();
+    request.input_mut_for_test().command.options = "{}".into();
+    request.input_mut_for_test().command.max_tokens = 8;
     request.incarnation = authority.incarnation;
     request.sequence_id = Some(sequence);
-    request.template.envelope.event_id = authority.submission_event_id;
-    request.template.envelope.correlation_id = name.into();
-    request.template.envelope.source = Endpoint::Outer(authority.outer.clone());
-    request.template.envelope.target = authority.head;
-    request.template.envelope.return_route = Some(authority.outer.clone());
-    request.template.envelope.class = EventClass::Data;
-    request.template.envelope.payload_content_type = PREFILL_CONTENT_TYPE.into();
-    request.template.envelope.deadline_unix_ms = Some(123456789);
-    request.template.payload = serde_json::to_vec(&request.command).unwrap();
-    request.reply = serde_json::to_string(&ReplySpec {
+    request.input_mut_for_test().template.envelope.event_id = authority.submission_event_id;
+    request
+        .input_mut_for_test()
+        .template
+        .envelope
+        .correlation_id = name.into();
+    request.input_mut_for_test().template.envelope.source =
+        Endpoint::Outer(authority.outer.clone());
+    request.input_mut_for_test().template.envelope.target = authority.head;
+    request.input_mut_for_test().template.envelope.return_route = Some(authority.outer.clone());
+    request.input_mut_for_test().template.envelope.class = EventClass::Data;
+    request
+        .input_mut_for_test()
+        .template
+        .envelope
+        .payload_content_type = PREFILL_CONTENT_TYPE.into();
+    request
+        .input_mut_for_test()
+        .template
+        .envelope
+        .deadline_unix_ms = Some(123456789);
+    let payload = serde_json::to_vec(&request.command).unwrap();
+    request.input_mut_for_test().template.payload = payload;
+    request.input_mut_for_test().reply = serde_json::to_string(&ReplySpec {
         ingress_agent: authority.outer.ingress_agent.to_string(),
         channel: authority.outer.channel,
         connection_generation: authority.outer.connection_generation,

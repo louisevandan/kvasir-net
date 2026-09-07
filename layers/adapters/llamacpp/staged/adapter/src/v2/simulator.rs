@@ -183,8 +183,8 @@ impl Simulation {
     pub fn admit(&mut self, id: &str, prompt: usize, generate: u32) {
         let sequence = self.requests.len() as u32;
         let mut state = crate::v2::tests::request_state(vec![7; prompt]);
-        state.command.request_id = id.to_owned();
-        state.command.max_tokens = generate;
+        state.input_mut_for_test().command.request_id = id.to_owned();
+        state.input_mut_for_test().command.max_tokens = generate;
         state.sequence_id = Some(sequence);
         self.requests.push((id.to_owned(), state));
     }

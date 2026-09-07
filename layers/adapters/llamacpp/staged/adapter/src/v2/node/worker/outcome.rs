@@ -304,26 +304,19 @@ mod tests {
                 speculative_count: if atomic { rows as u32 } else { 0 },
             })
             .collect();
+        let mut request = RequestState::new(command, event, "reply".into(), 1, Some(0));
+        request.prompt_cursor = if phase == Phase::Prefill { 0 } else { 4 };
+        request.prompt_issued = 4;
+        request.ready = (phase != Phase::Prefill).then_some(ReadyRows {
+            phase,
+            tokens: vec![7; rows],
+            position: first_position,
+            speculative_id: if atomic { 3 } else { 0 },
+        });
+        request.outstanding = 1;
+        request.generated = generated;
         (
-            RequestState {
-                incarnation: 1,
-                issued_work: None,
-                command,
-                sequence_id: Some(0),
-                template: event,
-                reply: "reply".into(),
-                prompt_cursor: if phase == Phase::Prefill { 0 } else { 4 },
-                prompt_issued: 4,
-                ready: (phase != Phase::Prefill).then_some(ReadyRows {
-                    phase,
-                    tokens: vec![7; rows],
-                    position: first_position,
-                    speculative_id: if atomic { 3 } else { 0 },
-                }),
-                after_settlement: None,
-                outstanding: 1,
-                generated,
-            },
+            request,
             SettledFragment {
                 key,
                 owners,
@@ -403,7 +396,7 @@ mod tests {
     #[test]
     fn max_one_first_token_stops_without_creating_decode() {
         let (mut request, mut fragment) = fixture(Phase::Prefill, 4);
-        request.command.max_tokens = 1;
+        request.input_mut_for_test().command.max_tokens = 1;
         for owner in &mut fragment.owners {
             owner.max_tokens = 1;
         }

@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: 요청 입력의 불변 공유 — 정적 검토 WIP
+
+`f5aa09675` 뒤 실제 handler의 대여, RequestState 후보의 입력 공유, drive 관측/오류 원본 보존을
+변경했다. 신규 oracle3개와 기존 fixture 이관은 **컴파일·시험·변이 미실행**이다. PREFILL 입구 복사와
+raw/owned claim 경계는 남아 있으며 actor 진행성·메모리 상한·성능 증거가 아니다. 상세는
+[입력 공유 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
 ## 2026-09-07: 직접 응답 FIFO와 알림 경계 — 정적 검토 WIP
 
 `658c9cded` 뒤 직접 응답의 FIFO/오류 보존, 실제 enqueue의 지연 알림, broker 성공 원본/영수증 분리를

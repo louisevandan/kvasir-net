@@ -11,15 +11,19 @@ use serde_json::{Value, json};
 
 fn request(name: &str, sequence: u32, tokens: Vec<i32>) -> RequestState {
     let mut request = crate::v2::tests::request_state(tokens);
-    request.command.request_id = name.into();
-    request.command.options = "{\"temperature\":0.0}".into();
-    request.command.max_tokens = 8;
+    request.input_mut_for_test().command.request_id = name.into();
+    request.input_mut_for_test().command.options = "{\"temperature\":0.0}".into();
+    request.input_mut_for_test().command.max_tokens = 8;
     request.sequence_id = Some(sequence);
-    request.template.envelope.event_id = format!("submit-{name}");
-    request.template.envelope.correlation_id = name.into();
+    request.input_mut_for_test().template.envelope.event_id = format!("submit-{name}");
+    request
+        .input_mut_for_test()
+        .template
+        .envelope
+        .correlation_id = name.into();
     let mut reply: crate::v2::ReplySpec = serde_json::from_str(&request.reply).unwrap();
     reply.correlation_id = name.into();
-    request.reply = serde_json::to_string(&reply).unwrap();
+    request.input_mut_for_test().reply = serde_json::to_string(&reply).unwrap();
     request
 }
 
@@ -476,4 +480,191 @@ fn t18_execution_high_water_never_wraps_or_reuses_an_accepted_id() {
         );
         assert_eq!(snapshot(&state), before);
     }
+}
+
+/// A production candidate must not deep-copy its admission payload. Pointer
+/// identity is intentional: value equality alone also accepts the old clone.
+fn input_allocations(request: &RequestState) -> (*const i32, *const u8, *const u8, *const u8) {
+    (
+        request.command.tokens.as_ptr(),
+        request.template.payload.as_ptr(),
+        request.command.options.as_ptr(),
+        request.reply.as_ptr(),
+    )
+}
+
+fn fixture_with_input_bytes() -> (AdapterState, LogicalBatch) {
+    let (mut state, logical) = fixture();
+    for request in state.requests.values_mut() {
+        let payload = serde_json::to_vec(&request.command).unwrap();
+        request.input_mut_for_test().template.payload = payload;
+        assert!(!request.command.tokens.is_empty());
+        assert!(!request.template.payload.is_empty());
+        assert!(!request.command.options.is_empty());
+        assert!(!request.reply.is_empty());
+    }
+    (state, logical)
+}
+
+#[test]
+fn actual_issue_candidates_share_input_through_refusal_and_acceptance() {
+    let (mut state, logical) = fixture_with_input_bytes();
+    let originals: std::collections::BTreeMap<_, _> = state
+        .requests
+        .iter()
+        .map(|(key, request)| {
+            (
+                key.clone(),
+                (
+                    std::sync::Arc::clone(request.input_for_test()),
+                    input_allocations(request),
+                ),
+            )
+        })
+        .collect();
+    let input_values = format!("{originals:?}");
+    state.prepare_issue(logical.clone()).unwrap();
+    let prepared = state.prepared_issue.as_ref().unwrap();
+    for (key, candidate) in prepared.candidate_requests() {
+        let current = &state.requests[key];
+        assert!(std::sync::Arc::ptr_eq(
+            current.input_for_test(),
+            candidate.input_for_test()
+        ));
+        assert_eq!(input_allocations(candidate), originals[key].1);
+        assert_eq!((current.prompt_issued, current.outstanding), (0, 0));
+        assert_eq!((candidate.prompt_issued, candidate.outstanding), (2, 1));
+    }
+    state.begin_native_issue().unwrap();
+    let before_refusal = snapshot(&state);
+    let mut bad = split(&logical, 11);
+    bad.0[2].owners[0].input_token += 1;
+    assert!(state.accept_prepared_issue(&bad).is_err());
+    assert_eq!(snapshot(&state), before_refusal);
+    for (key, candidate) in state.prepared_issue.as_ref().unwrap().candidate_requests() {
+        assert!(std::sync::Arc::ptr_eq(
+            candidate.input_for_test(),
+            &originals[key].0
+        ));
+        assert_eq!(input_allocations(candidate), originals[key].1);
+    }
+    state.accept_prepared_issue(&split(&logical, 11)).unwrap();
+    for (key, request) in &state.requests {
+        assert!(std::sync::Arc::ptr_eq(
+            request.input_for_test(),
+            &originals[key].0
+        ));
+        assert_eq!(input_allocations(request), originals[key].1);
+        assert_eq!((request.prompt_issued, request.outstanding), (2, 1));
+    }
+    assert_eq!(format!("{originals:?}"), input_values);
+}
+
+#[test]
+fn a_later_invalid_issue_member_preserves_every_original_input_and_progress() {
+    let (mut state, logical) = fixture_with_input_bytes();
+    let originals: std::collections::BTreeMap<_, _> = state
+        .requests
+        .iter()
+        .map(|(key, request)| {
+            (
+                key.clone(),
+                (
+                    std::sync::Arc::clone(request.input_for_test()),
+                    input_allocations(request),
+                ),
+            )
+        })
+        .collect();
+    let before = snapshot(&state);
+    let mut bad = logical.clone();
+    // The earlier request is valid and has already produced a pure candidate
+    // when the later owner's token is rejected. Nothing may be committed.
+    bad.0.last_mut().unwrap().owner.input_token += 1;
+    assert!(state.prepare_issue(bad).is_err());
+    assert_eq!(snapshot(&state), before);
+    assert!(state.prepared_issue.is_none());
+    for (key, request) in &state.requests {
+        assert!(std::sync::Arc::ptr_eq(
+            request.input_for_test(),
+            &originals[key].0
+        ));
+        assert_eq!(input_allocations(request), originals[key].1);
+        assert_eq!(
+            std::sync::Arc::strong_count(request.input_for_test()),
+            2,
+            "the rejected candidate retained an extra input owner"
+        );
+    }
+    state.prepare_issue(logical).unwrap();
+    for (key, candidate) in state.prepared_issue.as_ref().unwrap().candidate_requests() {
+        assert!(std::sync::Arc::ptr_eq(
+            candidate.input_for_test(),
+            &originals[key].0
+        ));
+    }
+}
+
+#[test]
+fn shared_input_outlives_independent_progress_and_retires_with_its_last_owner() {
+    let mut original = request("independent", 0, vec![11, 12]);
+    let body = serde_json::to_vec(&original.command).unwrap();
+    original.input_mut_for_test().template.payload = body;
+    original.prompt_issued = 2;
+    original.prompt_cursor = 2;
+    original.outstanding = 1;
+    original.ready = Some(ReadyRows {
+        phase: Phase::Decode,
+        tokens: vec![13],
+        position: 2,
+        speculative_id: 0,
+    });
+    let allocations = input_allocations(&original);
+    let weak = std::sync::Arc::downgrade(original.input_for_test());
+    let shared = original.shared_input();
+    let borrowed: &p4_protocol::event::Event = std::borrow::Borrow::borrow(&shared);
+    assert_eq!(borrowed.payload.as_ptr(), allocations.1);
+    let mut candidate = original.clone();
+    assert!(std::sync::Arc::ptr_eq(
+        original.input_for_test(),
+        candidate.input_for_test()
+    ));
+    // The sole mutation escape exists only for fixtures, and must explicitly
+    // detach rather than rewrite another candidate's admission authority.
+    let mut fixture_variant = original.clone();
+    fixture_variant.input_mut_for_test().command.tokens[0] = 99;
+    assert!(!std::sync::Arc::ptr_eq(
+        original.input_for_test(),
+        fixture_variant.input_for_test()
+    ));
+    assert_eq!(original.command.tokens, vec![11, 12]);
+    assert_eq!(candidate.command.tokens, vec![11, 12]);
+    drop(fixture_variant);
+    candidate.settle_fragment(Phase::Decode, 1).unwrap();
+    assert_eq!(candidate.outstanding, 0);
+    assert!(candidate.ready.is_none());
+    assert_eq!(original.outstanding, 1);
+    assert_eq!(original.ready.as_ref().unwrap().tokens, vec![13]);
+    assert_eq!(
+        candidate.settle_fragment(Phase::Decode, 1),
+        Err(super::state::SettlementRefusal::NothingInFlight)
+    );
+    assert_eq!(input_allocations(&candidate), allocations);
+    assert_eq!(candidate.outstanding, 0);
+    assert!(candidate.ready.is_none());
+    drop(original);
+    assert_eq!(candidate.command.tokens, vec![11, 12]);
+    assert_eq!(input_allocations(&candidate), allocations);
+    drop(candidate);
+    assert!(
+        weak.upgrade().is_some(),
+        "the worker's shared provenance is still live"
+    );
+    assert_eq!(shared.command.tokens, vec![11, 12]);
+    assert_eq!(shared.template.payload.as_ptr(), allocations.1);
+    drop(shared);
+    assert!(
+        weak.upgrade().is_none(),
+        "the immutable input outlived its last owner"
+    );
 }

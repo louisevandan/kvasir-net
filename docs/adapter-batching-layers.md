@@ -788,6 +788,23 @@ RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급
 과거 Frame runtime을 이 표의 Event 경로로 세지 않는다. 같은 Event wire를 읽는 OUTER가 존재한다는
 것도 원격 acceptance 증거가 아니다. 이관 상태와 실행 순서는 로드맵이 단독 소유한다.
 
+#### 불변 수용 입력과 가변 진행 후보
+
+수용 정규화가 끝난 command(tokens/options 포함), 원본 Event, reply 출처는 이후 후보 전이의
+변경 대상이 아니다. `RequestState` 복사는 이 입력을 공유하고 prompt/ready/outstanding 등 진행
+상태만 독립적으로 복사한다. 생산 경로에는 공유 입력의 가변 접근자·copy-on-write를 제공하지 않는다.
+발행 중 관측/오류 보고가 원 요청보다 오래 살아야 하면 읽기 전용 공유 소유자를 유지한다. 정당성은
+원본 요청에 있으며 현재 PHYSICAL/TAIL/ACK의 출처로 바꾸지 않는다.
+
+공유 allocation은 복제 가능한 **데이터 소유권**이지 선형 transport claim 또는 공간 예약이 아니다.
+후속 owned 이관에서 이 둘을 같은 Arc에 숨겨 회계를 생략하지 않는다. wire 원문과 파싱한 tokens가
+처음 생성될 때의 별도 비용, ready/continuation/RowOwner 및 native 결과 비용도 남는다. 공유 후
+복사가 줄었다는 사실로 byte admission·RSS 상한·배치 처리량을 승인하지 않는다.
+
+시험 fixture의 불변 입력 변조는 명시적인 test-only COW로만 허용한다. 후보의 원본 공유/진행 격리와
+거부 후 원상보존을 allocation 동일성과 값 대조로 함께 검사한다. 마지막 읽기 소유자가 남아 있는 동안
+입력이 유효해야 하고, 마지막 소유자가 사라지면 퇴역해야 한다. 실제 소비와 실행 지위는 증거가 소유한다.
+
 ## 측정: 배치 폭 대 파이프라인 깊이 (2026-08-31, 2026-09-01 재측정)
 
 도착 위상 파편화와 그 교정을 4노드 하네스로 A/B 측정했다. 결과는 이 계약의

@@ -41,7 +41,7 @@ pub(super) fn fixture() -> (Worker, Arc<CompletionMailbox>) {
     );
     worker.state.load_generation = 1;
     worker.state.sequence_capacity = 4;
-    let mut install = crate::v2::tests::request_state(vec![7]).template;
+    let mut install = crate::v2::tests::request_state(vec![7]).template.clone();
     install.envelope.event_id = "release-test-install-session".into();
     install.envelope.source = Endpoint::outer(Address::tcp("127.0.0.1", 42001), "release-owner", 1);
     install.envelope.target = endpoint;
@@ -94,7 +94,10 @@ pub(super) fn fixture() -> (Worker, Arc<CompletionMailbox>) {
 
 pub(super) fn pending(sequence: ReleaseSequence) -> super::super::state::PendingRelease {
     let request_id = sequence.key.split_once('\0').unwrap().1;
-    let mut original = crate::v2::tests::request_state(vec![7]).template.envelope;
+    let mut original = crate::v2::tests::request_state(vec![7])
+        .template
+        .envelope
+        .clone();
     original.event_id = format!("original-submission-{request_id}");
     original.correlation_id = "release-owned-pair".into();
     original.source = Endpoint::outer(Address::tcp("127.0.0.1", 42001), "release-owner", 1);
@@ -127,7 +130,7 @@ pub(super) fn pending(sequence: ReleaseSequence) -> super::super::state::Pending
 }
 
 pub(super) fn event(sequences: Vec<ReleaseSequence>) -> Event {
-    let mut event = crate::v2::tests::request_state(vec![7]).template;
+    let mut event = crate::v2::tests::request_state(vec![7]).template.clone();
     event.envelope.source = graph()[2].clone();
     event.envelope.target = graph()[0].clone();
     event.envelope.class = EventClass::Telemetry;
@@ -199,8 +202,8 @@ fn unowned_release_and_late_bad_member_leave_every_slot_and_fence_unchanged() {
 fn release_acknowledgement_reuses_only_owned_slots_once() {
     let (mut worker, mailbox) = fixture();
     let mut waiting = crate::v2::tests::request_state(vec![7]);
-    waiting.command.session_id = "pipeline".into();
-    waiting.command.request_id = "waiting".into();
+    waiting.input_mut_for_test().command.session_id = "pipeline".into();
+    waiting.input_mut_for_test().command.request_id = "waiting".into();
     waiting.sequence_id = None;
     let key = request_key("pipeline", "waiting");
     worker.state.requests.insert(key.clone(), waiting);
@@ -300,8 +303,8 @@ fn business_snapshot(worker: &Worker) -> serde_json::Value {
 fn release_source_probe(source: Endpoint, tag: &str, should_reject: bool) {
     let (mut worker, mailbox) = fixture();
     let mut waiting = crate::v2::tests::request_state(vec![7]);
-    waiting.command.session_id = "pipeline".into();
-    waiting.command.request_id = "waiting".into();
+    waiting.input_mut_for_test().command.session_id = "pipeline".into();
+    waiting.input_mut_for_test().command.request_id = "waiting".into();
     waiting.sequence_id = None;
     let waiting_key = request_key("pipeline", "waiting");
     worker.state.requests.insert(waiting_key.clone(), waiting);

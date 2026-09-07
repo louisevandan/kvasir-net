@@ -39,7 +39,7 @@ fn fixture(name: &str) -> (Worker, Arc<CompletionMailbox>) {
 }
 
 fn event(worker: &Worker, command: &SessionCommand) -> Event {
-    let mut event = crate::v2::tests::request_state(vec![7]).template;
+    let mut event = crate::v2::tests::request_state(vec![7]).template.clone();
     event.envelope.target = worker.endpoint.clone();
     event.envelope.payload_content_type = SESSION_CONTENT_TYPE.into();
     event.payload = serde_json::to_vec(command).unwrap();

@@ -70,11 +70,11 @@ fn route(channel: &str, generation: u64) -> OuterEndpoint {
 }
 fn submission(id: &str, outer: OuterEndpoint) -> Event {
     let mut request = crate::v2::tests::request_state(vec![7]);
-    request.command.load_generation = 1;
-    request.command.session_id = "observe".into();
-    request.command.request_id = id.into();
-    request.command.max_tokens = 2;
-    let mut event = request.template;
+    request.input_mut_for_test().command.load_generation = 1;
+    request.input_mut_for_test().command.session_id = "observe".into();
+    request.input_mut_for_test().command.request_id = id.into();
+    request.input_mut_for_test().command.max_tokens = 2;
+    let mut event = request.template.clone();
     event.envelope.event_id = format!("submit-{id}");
     event.envelope.correlation_id = format!("correlation-{id}");
     event.envelope.source = Endpoint::Outer(outer.clone());
@@ -396,7 +396,7 @@ fn head_rejects_inconsistent_original_reply_before_native_or_issue_in_both_order
         let request = worker.state.requests.get_mut(&key).unwrap();
         let mut altered: ReplySpec = serde_json::from_str(&request.reply).unwrap();
         altered.correlation_id = "different-valid-correlation".into();
-        request.reply = serde_json::to_string(&altered).unwrap();
+        request.input_mut_for_test().reply = serde_json::to_string(&altered).unwrap();
         assert_eq!(worker.drive_one_batch(), Err(()));
         assert!(calls.lock().unwrap().is_empty());
         assert!(

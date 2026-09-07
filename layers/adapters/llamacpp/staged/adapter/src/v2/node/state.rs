@@ -1,6 +1,7 @@
 use super::super::{InferenceCommand, NodeRole, SessionCommand};
 use p4_protocol::event::{Endpoint, Envelope, Event};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct PipelineSession {
@@ -11,13 +12,42 @@ pub struct PipelineSession {
     pub last: Endpoint,
 }
 
-#[derive(Clone)]
-pub struct RequestState {
+/// Normalized admission data. Native tokenization, when needed, finishes
+/// before construction; later issue/settlement candidates only share it.
+/// This owns no transport claim or resource reservation.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone))]
+pub struct RequestInput {
     pub command: InferenceCommand,
-    pub incarnation: u64,
-    pub sequence_id: Option<u32>,
     pub template: Event,
     pub reply: String,
+}
+
+/// Read-only input ownership for worker-side provenance and batch diagnostics.
+/// Clone shares one allocation; it neither duplicates payload nor mints a
+/// transport/resource claim. The Arc itself is not exposed to production.
+#[derive(Clone)]
+pub(crate) struct SharedRequestInput(Arc<RequestInput>);
+
+impl std::ops::Deref for SharedRequestInput {
+    type Target = RequestInput;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<Event> for SharedRequestInput {
+    fn borrow(&self) -> &Event {
+        &self.0.template
+    }
+}
+
+#[derive(Clone)]
+pub struct RequestState {
+    input: Arc<RequestInput>,
+    pub incarnation: u64,
+    pub sequence_id: Option<u32>,
     /// Prompt tokens the tail has settled. Advanced when a fragment comes
     /// back, and it is what the request has actually prefilled.
     pub prompt_cursor: usize,
@@ -44,6 +74,14 @@ pub struct RequestState {
     /// native result is admitted into the flight ledger. Wire completion
     /// evidence is a separate producer/consumer migration.
     pub issued_work: Option<super::super::issue_witness::IssueWitness>,
+}
+
+impl std::ops::Deref for RequestState {
+    type Target = RequestInput;
+
+    fn deref(&self) -> &Self::Target {
+        &self.input
+    }
 }
 
 /// Original request provenance survives resident removal. No prompt/tensor
@@ -129,6 +167,47 @@ impl SettlementRefusal {
 }
 
 impl RequestState {
+    pub(crate) fn shared_input(&self) -> SharedRequestInput {
+        SharedRequestInput(Arc::clone(&self.input))
+    }
+
+    pub fn new(
+        command: InferenceCommand,
+        template: Event,
+        reply: String,
+        incarnation: u64,
+        sequence_id: Option<u32>,
+    ) -> Self {
+        Self {
+            input: Arc::new(RequestInput {
+                command,
+                template,
+                reply,
+            }),
+            incarnation,
+            sequence_id,
+            prompt_cursor: 0,
+            prompt_issued: 0,
+            ready: None,
+            after_settlement: None,
+            outstanding: 0,
+            generated: 0,
+            issued_work: None,
+        }
+    }
+
+    /// Test fixtures intentionally alter submitted identities/options. Make
+    /// that copy-on-write explicit without granting production mutation.
+    #[cfg(test)]
+    pub(crate) fn input_mut_for_test(&mut self) -> &mut RequestInput {
+        Arc::make_mut(&mut self.input)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn input_for_test(&self) -> &Arc<RequestInput> {
+        &self.input
+    }
+
     /// The original submission is the authority for the head's issued-work
     /// witness. A reply returned in a capsule cannot choose a new identity.
     pub(crate) fn issue_authority(

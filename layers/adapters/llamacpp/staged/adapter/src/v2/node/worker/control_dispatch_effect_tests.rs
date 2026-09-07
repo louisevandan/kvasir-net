@@ -178,7 +178,7 @@ fn settle_sequence(slot: u32) -> SettlementSequence {
 }
 
 fn rows(slot: u32, phase: Phase, start: u32, generated: u32, tokens: &[i32]) -> Vec<RowOwner> {
-    let reply = crate::v2::tests::request_state(vec![11]).reply;
+    let reply = crate::v2::tests::request_state(vec![11]).reply.clone();
     tokens
         .iter()
         .enumerate()
@@ -307,7 +307,7 @@ fn fixture(kind: Kind, mode: ReplyMode, count: u32) -> Fixture {
             last: next,
         },
     );
-    let mut base = crate::v2::tests::request_state(vec![11]).template;
+    let mut base = crate::v2::tests::request_state(vec![11]).template.clone();
     base.envelope.event_id = "dispatch-origin".into();
     base.envelope.target = endpoint;
     let reply: ReplySpec =
@@ -632,7 +632,7 @@ fn full_control_replay_revalidates_its_ticket_after_ack_retirement() {
         // below are real consumers, not injected dispatch-phase transitions.
         if matches!(kind, Kind::Settle) {
             let mut request = crate::v2::tests::request_state(vec![11]);
-            request.command.request_id = "request-0".into();
+            request.input_mut_for_test().command.request_id = "request-0".into();
             request.sequence_id = Some(0);
             request.prompt_cursor = 1;
             request.prompt_issued = 1;

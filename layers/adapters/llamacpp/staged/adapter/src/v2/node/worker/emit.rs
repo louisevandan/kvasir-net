@@ -115,7 +115,7 @@ impl Worker {
 
     pub(super) fn emit_batch_errors(
         &mut self,
-        bases: &[Event],
+        bases: &[impl std::borrow::Borrow<Event>],
         code: &str,
         detail: &str,
     ) -> Result<(), ()> {
@@ -126,6 +126,7 @@ impl Worker {
         self.ensure_event_id_obligations(count, 0).map_err(|_| ())?;
         let mut prepared = Vec::with_capacity(bases.len());
         for base in bases {
+            let base = base.borrow();
             let body = serde_json::to_vec(&ErrorPayload {
                 code: code.into(),
                 detail: detail.into(),

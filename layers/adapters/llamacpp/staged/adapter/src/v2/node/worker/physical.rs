@@ -4,7 +4,11 @@
 use super::*;
 
 impl Worker {
-    pub(super) fn physical(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn physical(
+        &mut self,
+        event: impl std::borrow::Borrow<Event>,
+    ) -> Result<(), String> {
+        let event = event.borrow();
         let ingress_unix_ms = observe::unix_ms();
         let input = CapsuleSet::decode(&event.payload)
             .map_err(|error| format!("invalid physical capsule: {error:?}"))?;
@@ -193,7 +197,7 @@ impl Worker {
         };
         self.effects
             .push_back(effects::CommittedEffect::ForwardObserved {
-                base: event.envelope,
+                base: event.envelope.clone(),
                 target,
                 class: EventClass::Data,
                 content_type,

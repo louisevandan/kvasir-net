@@ -136,7 +136,7 @@ mod tests {
             assert!(serde_json::from_value::<ReleaseSequence>(old.clone()).is_err());
             assert!(serde_json::from_value::<SettlementSequence>(old).is_err());
         }
-        let mut command = crate::v2::tests::request_state(vec![7]).command;
+        let mut command = crate::v2::tests::request_state(vec![7]).command.clone();
         command.session_id = "s".into();
         command.request_id = "r".repeat(4094);
         assert!(

@@ -173,9 +173,9 @@ impl Worker {
                 .get(&allocation.request_id)
                 .expect("scheduler allocation references active request");
             if template.is_none() {
-                template = Some(request.template.clone());
+                template = Some(request.shared_input());
             }
-            batch_events.push(request.template.clone());
+            batch_events.push(request.shared_input());
             match allocation.phase {
                 Phase::Prefill => {
                     for offset in 0..allocation.rows {
@@ -252,9 +252,10 @@ impl Worker {
         let planned = LogicalBatch(rows);
         let owner_rows: Vec<_> = planned.0.iter().map(|row| &row.owner).collect();
         self.validate_observation_rows(
-            template
+            &template
                 .as_ref()
-                .expect("non-empty allocation has a template"),
+                .expect("non-empty allocation has a template")
+                .template,
             &session_id,
             &owner_rows,
             true,
@@ -372,9 +373,10 @@ impl Worker {
             .expect("native issue remains prepared")
             .ordinal;
         let prepare_telemetry = || -> Result<Vec<super::observe::PreparedTelemetry>, String> {
-            let base = template
+            let base = &template
                 .as_ref()
-                .expect("non-empty allocation has a template");
+                .expect("non-empty allocation has a template")
+                .template;
             let mut telemetry = self.prepare_batch_observation(
                 base,
                 &session_id,
@@ -436,6 +438,7 @@ impl Worker {
                 base: template
                     .as_ref()
                     .expect("non-empty allocation has a template")
+                    .template
                     .envelope
                     .clone(),
                 target: session.next.expect("validated first session has next"),

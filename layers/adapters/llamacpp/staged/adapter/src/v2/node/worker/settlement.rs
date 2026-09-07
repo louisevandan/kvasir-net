@@ -1,7 +1,8 @@
 use super::*;
 
 impl Worker {
-    pub(super) fn settle(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn settle(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
+        let event = event.borrow();
         let mut command: SettlementCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid settlement payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
@@ -49,7 +50,7 @@ impl Worker {
         };
         self.effects
             .push_back(super::effects::CommittedEffect::Forward {
-                base: event.envelope,
+                base: event.envelope.clone(),
                 target,
                 class: EventClass::Control,
                 content_type,
@@ -58,7 +59,8 @@ impl Worker {
         self.flush_effects()
     }
 
-    pub(super) fn settled(&mut self, event: Event) -> Result<(), String> {
+    pub(super) fn settled(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {
+        let event = event.borrow();
         let command: SettlementCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid settlement completion payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
@@ -326,10 +328,10 @@ mod tests {
 
     fn pending(name: &str, id: u32, replay: bool) -> RequestState {
         let mut request = crate::v2::tests::request_state(vec![7; 4]);
-        request.command.session_id = "pipeline".into();
-        request.command.request_id = name.into();
-        request.command.load_generation = 1;
-        request.command.max_tokens = 16;
+        request.input_mut_for_test().command.session_id = "pipeline".into();
+        request.input_mut_for_test().command.request_id = name.into();
+        request.input_mut_for_test().command.load_generation = 1;
+        request.input_mut_for_test().command.max_tokens = 16;
         request.sequence_id = Some(id);
         request.prompt_cursor = 4;
         request.prompt_issued = 4;

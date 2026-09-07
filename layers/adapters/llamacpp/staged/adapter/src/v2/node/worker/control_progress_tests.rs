@@ -202,10 +202,10 @@ fn settlement_fixture() -> (Worker, Arc<CompletionMailbox>, Vec<SettlementSequen
     let mut acknowledgements = Vec::new();
     for (name, id, replay) in [("a", 0, false), ("b", 1, true)] {
         let mut request = crate::v2::tests::request_state(vec![7; 4]);
-        request.command.session_id = "pipeline".into();
-        request.command.request_id = name.into();
-        request.command.load_generation = 1;
-        request.command.max_tokens = 16;
+        request.input_mut_for_test().command.session_id = "pipeline".into();
+        request.input_mut_for_test().command.request_id = name.into();
+        request.input_mut_for_test().command.load_generation = 1;
+        request.input_mut_for_test().command.max_tokens = 16;
         request.sequence_id = Some(id);
         request.prompt_cursor = 4;
         request.prompt_issued = 4;
@@ -253,7 +253,7 @@ fn settlement_fixture() -> (Worker, Arc<CompletionMailbox>, Vec<SettlementSequen
 }
 
 fn settlement_event(worker: &Worker, sequences: Vec<SettlementSequence>) -> Event {
-    let mut event = crate::v2::tests::request_state(vec![7]).template;
+    let mut event = crate::v2::tests::request_state(vec![7]).template.clone();
     event.envelope.source = worker.state.sessions["pipeline"].last.clone();
     event.envelope.target = worker.endpoint.clone();
     event.envelope.class = EventClass::Control;

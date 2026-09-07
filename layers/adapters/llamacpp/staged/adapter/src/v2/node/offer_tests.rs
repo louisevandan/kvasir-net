@@ -14,7 +14,7 @@ fn adapter(sender: Option<mpsc::SyncSender<WorkerInput>>) -> LlamaNodeAdapter {
 }
 
 fn input() -> Event {
-    let mut event = crate::v2::tests::request_state(vec![7]).template;
+    let mut event = crate::v2::tests::request_state(vec![7]).template.clone();
     event.payload.reserve(4096);
     event.payload.extend_from_slice(&[0, 255, 128, 7]);
     event.envelope.event_id.reserve(512);

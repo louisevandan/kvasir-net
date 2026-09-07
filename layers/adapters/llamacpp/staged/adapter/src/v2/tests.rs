@@ -605,9 +605,8 @@ pub(super) fn request_state(tokens: Vec<i32>) -> RequestState {
         channel: "request-tests".into(),
         connection_generation: 1,
     };
-    RequestState {
-        incarnation: 1,
-        command: InferenceCommand {
+    RequestState::new(
+        InferenceCommand {
             load_generation: 1,
             session_id: "session".into(),
             request_id: "request".into(),
@@ -617,8 +616,7 @@ pub(super) fn request_state(tokens: Vec<i32>) -> RequestState {
             session_key: None,
             max_tokens: 16,
         },
-        sequence_id: Some(0),
-        template: p4_protocol::event::Event {
+        p4_protocol::event::Event {
             envelope: p4_protocol::event::Envelope {
                 protocol_version: p4_protocol::event::Envelope::VERSION,
                 event_id: "e1".into(),
@@ -635,21 +633,17 @@ pub(super) fn request_state(tokens: Vec<i32>) -> RequestState {
             },
             payload: Vec::new(),
         },
-        reply: serde_json::to_string(&ReplySpec {
+        serde_json::to_string(&ReplySpec {
             ingress_agent: outer.ingress_agent.to_string(),
             channel: outer.channel,
             connection_generation: outer.connection_generation,
             correlation_id: "request".into(),
             deadline_unix_ms: None,
-        }).unwrap(),
-        prompt_cursor: 0,
-        prompt_issued: 0,
-        ready: None,
-        after_settlement: None,
-        outstanding: 0,
-        generated: 0,
-        issued_work: None,
-    }
+        })
+        .unwrap(),
+        1,
+        Some(0),
+    )
 }
 
 /// A prompt with a fragment in flight can issue the next one; a decode cannot.

@@ -15,7 +15,7 @@ fn fixture() -> (Worker, Arc<CompletionMailbox>) {
 fn session_input(worker: &Worker, id: &str) -> Event {
     let mut command = worker.state.sessions["pipeline"].command.clone();
     command.session_id = "direct-session".into();
-    let mut input = crate::v2::tests::request_state(vec![7]).template;
+    let mut input = crate::v2::tests::request_state(vec![7]).template.clone();
     input.envelope.event_id = id.into();
     input.envelope.correlation_id = "one-source-one-correlation".into();
     input.envelope.target = worker.endpoint.clone();

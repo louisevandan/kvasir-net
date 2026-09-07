@@ -143,7 +143,7 @@ fn prefill_capsule(rows: usize) -> Event {
         tensors: Vec::new(),
         outcomes: Vec::new(),
     }]);
-    let mut event = crate::v2::tests::request_state(vec![7; 1]).template;
+    let mut event = crate::v2::tests::request_state(vec![7; 1]).template.clone();
     event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "n1", 1);
     event.envelope.target = Endpoint::node(Address::tcp("127.0.0.1", 42001), "n0", 1);
     event.payload = capsules.encode().expect("a capsule set encodes");
@@ -155,11 +155,11 @@ fn the_worker_refuses_a_settlement_for_rows_it_never_issued() {
     // Four rows were issued; the tail returns six. The refusal has to survive
     // the whole path, not just exist in the transition.
     let mut request = crate::v2::tests::request_state(vec![7; 10]);
-    request.command.session_id = SESSION.into();
-    request.command.request_id = REQUEST.into();
+    request.input_mut_for_test().command.session_id = SESSION.into();
+    request.input_mut_for_test().command.request_id = REQUEST.into();
     request.outstanding = 1;
     request.prompt_issued = 4;
-    request.reply = "reply".into();
+    request.input_mut_for_test().reply = "reply".into();
     let mut worker = worker_with(request);
     register_issue(&mut worker, &[partial_prefill(REQUEST, 0, 1, 0, 4)]);
 
@@ -181,8 +181,8 @@ fn the_worker_refuses_a_settlement_for_rows_it_never_issued() {
 #[test]
 fn the_worker_refuses_a_settlement_with_nothing_in_flight() {
     let mut request = crate::v2::tests::request_state(vec![7; 10]);
-    request.command.session_id = SESSION.into();
-    request.command.request_id = REQUEST.into();
+    request.input_mut_for_test().command.session_id = SESSION.into();
+    request.input_mut_for_test().command.request_id = REQUEST.into();
     request.outstanding = 0;
     request.prompt_issued = 4;
     let mut worker = worker_with(request);
@@ -197,11 +197,11 @@ fn the_worker_refuses_a_settlement_with_nothing_in_flight() {
 #[test]
 fn the_worker_accepts_the_rows_it_issued() {
     let mut request = crate::v2::tests::request_state(vec![7; 10]);
-    request.command.session_id = SESSION.into();
-    request.command.request_id = REQUEST.into();
+    request.input_mut_for_test().command.session_id = SESSION.into();
+    request.input_mut_for_test().command.request_id = REQUEST.into();
     request.outstanding = 1;
     request.prompt_issued = 4;
-    request.reply = "reply".into();
+    request.input_mut_for_test().reply = "reply".into();
     let mut worker = worker_with(request);
     register_issue(&mut worker, &[partial_prefill(REQUEST, 0, 1, 0, 4)]);
 
@@ -218,10 +218,10 @@ fn the_worker_accepts_the_rows_it_issued() {
 // from the returned capsule. Editing a return must never edit its authority.
 fn issued_request(name: &str, sequence_id: u32, rows: usize) -> RequestState {
     let mut request = crate::v2::tests::request_state(vec![7; 20]);
-    request.command.session_id = SESSION.into();
-    request.command.request_id = name.into();
+    request.input_mut_for_test().command.session_id = SESSION.into();
+    request.input_mut_for_test().command.request_id = name.into();
     request.sequence_id = Some(sequence_id);
-    request.reply = "reply".into();
+    request.input_mut_for_test().reply = "reply".into();
     request.outstanding = 1;
     request.prompt_issued = rows;
     request
@@ -251,7 +251,7 @@ fn partial_prefill(
 }
 
 fn tail_event(id: &str, capsules: Vec<PhysicalCapsule>) -> Event {
-    let mut event = crate::v2::tests::request_state(vec![7]).template;
+    let mut event = crate::v2::tests::request_state(vec![7]).template.clone();
     event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "n1", 1);
     event.envelope.target = Endpoint::node(Address::tcp("127.0.0.1", 42001), "n0", 1);
     event.envelope.event_id = id.into();
@@ -384,7 +384,7 @@ fn t11_one_bad_request_rejects_the_whole_tail_in_either_capsule_order() {
 fn t11_a_late_outcome_error_cannot_settle_any_other_request() {
     let a = issued_request("a", 0, 4);
     let mut b = issued_request("b", 1, 4);
-    b.command.tokens = vec![7; 4];
+    b.input_mut_for_test().command.tokens = vec![7; 4];
     let (mut worker, mailbox) = worker_and_mailbox(vec![a, b]);
     let mut b_capsule = partial_prefill("b", 1, 12, 0, 4);
     b_capsule.owners[3].output = true;
@@ -790,8 +790,8 @@ fn t14_later_logical_prefill_waits_for_the_earlier_range_before_settling() {
 #[test]
 fn t12_tail_publishes_only_to_the_head_then_head_publishes_the_token_once() {
     let mut request = issued_request(REQUEST, 0, 4);
-    request.command.tokens = vec![7; 4];
-    request.reply = serde_json::to_string(&crate::v2::ReplySpec {
+    request.input_mut_for_test().command.tokens = vec![7; 4];
+    request.input_mut_for_test().reply = serde_json::to_string(&crate::v2::ReplySpec {
         ingress_agent: Address::tcp("127.0.0.1", 42001).to_string(),
         channel: "wave-output".into(),
         connection_generation: 7,
@@ -895,8 +895,8 @@ fn output_ready_fragments(count: usize) -> (Vec<RequestState>, Vec<PhysicalCapsu
     for index in 0..count {
         let name = format!("output-{index}");
         let mut request = issued_request(&name, index as u32, 4);
-        request.command.tokens = vec![7; 4];
-        request.reply = serde_json::to_string(&crate::v2::ReplySpec {
+        request.input_mut_for_test().command.tokens = vec![7; 4];
+        request.input_mut_for_test().reply = serde_json::to_string(&crate::v2::ReplySpec {
             ingress_agent: Address::tcp("127.0.0.1", 42001).to_string(),
             channel: "wave-output".into(),
             connection_generation: 7,
@@ -932,7 +932,7 @@ fn output_ready_fragments(count: usize) -> (Vec<RequestState>, Vec<PhysicalCapsu
 #[test]
 fn terminal_return_cannot_mint_a_witness_from_registered_capsules() {
     let (mut requests, mut capsules) = output_ready_fragments(1);
-    requests[0].command.max_tokens = 1;
+    requests[0].input_mut_for_test().command.max_tokens = 1;
     for owner in &mut capsules[0].owners {
         owner.max_tokens = 1;
     }

@@ -279,7 +279,7 @@ impl Fixture {
 }
 
 fn base_event(id: &str) -> Event {
-    let mut event = crate::v2::tests::request_state(vec![7]).template;
+    let mut event = crate::v2::tests::request_state(vec![7]).template.clone();
     event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "first", 1);
     event.envelope.event_id = id.into();
     event.envelope.correlation_id = "physical-request".into();
