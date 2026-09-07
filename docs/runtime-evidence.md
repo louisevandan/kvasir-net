@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-07: 직접 응답 FIFO와 알림 경계 — 정적 검토 WIP
+
+`658c9cded` 뒤 직접 응답의 FIFO/오류 보존, 실제 enqueue의 지연 알림, broker 성공 원본/영수증 분리를
+작성했다. **컴파일·시험·변이는 미실행**이며 actor 교착 GREEN·owned 성공 전달 전체·성능 증거가 아니다.
+최대 미래 ID 폭으로 인한 수용 범위 차이와 동일 malformed 입력의 시험 정정, 신규 oracle 범위는
+[정적 변경 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
+
 ## 2026-09-07: 실제 전달 거부의 원본 소유권 — 정적 검토 WIP
 
 `2b1d1d539` 뒤 broker/adapter/node의 canonical 오류 반환과 제품 node task 보존을 변경했다.

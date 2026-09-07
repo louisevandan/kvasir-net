@@ -30,6 +30,8 @@ mod control_dispatch;
 mod control_dispatch_effect_tests;
 #[cfg(test)]
 mod control_progress_tests;
+#[cfg(test)]
+mod direct_emission_tests;
 mod drive;
 #[cfg(test)]
 mod effect_representation_tests;

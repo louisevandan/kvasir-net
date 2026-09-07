@@ -224,6 +224,74 @@ impl CompletionReservation {
     }
 }
 
+/// Move-only completion of an already accepted enqueue. Call `notify` exactly
+/// once, after releasing all caller locks, to wake the destination reader and
+/// any source-capacity waiters. A successful deferred transfer keeps its old
+/// source claim until this receipt is consumed or dropped; destination storage
+/// already owns the Event and its independent claim.
+///
+/// Dropping this receipt quietly retires the old source claim but deliberately
+/// sends no notification and does not undo enqueue. Omitted notification can
+/// stall a reader and is a caller liveness error, not a storage leak. The receipt
+/// captures only a weak reader slot, not a caller Waker; Drop neither clears a
+/// later registration nor executes its destructor. Notifications are local
+/// storage signals, not delivery, source authentication or KV completion.
+/// Deferral does not hide the accepted Event: an independently polling reader
+/// may dequeue it before `notify`. A callback panic cannot undo acceptance and
+/// must not be interpreted by the caller as permission to resend the Event.
+///
+/// ```compile_fail
+/// use p4_adapter::node_adapter::DeferredCompletionNotification;
+/// fn duplicate(receipt: DeferredCompletionNotification) {
+///     let _copy = receipt.clone();
+/// }
+/// ```
+#[must_use = "an accepted deferred enqueue must be notified after caller locks are released"]
+pub struct DeferredCompletionNotification {
+    reader: Weak<Mutex<Option<Waker>>>,
+    source_claim: Option<Claim>,
+}
+
+impl std::fmt::Debug for DeferredCompletionNotification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeferredCompletionNotification")
+            .field("source_claim_pending", &self.source_claim.is_some())
+            .finish()
+    }
+}
+
+impl DeferredCompletionNotification {
+    /// Return all old-source accounting before the first callback. Callbacks
+    /// retain the existing nonpanicking contract: a first panic propagates,
+    /// with no second callback or duplicate accounting return during unwind.
+    pub fn notify(mut self) {
+        let source_capacity = self
+            .source_claim
+            .as_ref()
+            .map(|claim| Arc::clone(&claim.capacity));
+        self.release_source_quiet();
+        if let Some(reader) = self.reader.upgrade() {
+            wake_reader(&reader);
+        }
+        if let Some(capacity) = source_capacity {
+            notify_capacity(&capacity, false);
+        }
+    }
+
+    fn release_source_quiet(&mut self) {
+        if let Some(mut claim) = self.source_claim.take() {
+            claim.release_quiet();
+            drop(claim); // Inactive: Drop cannot run a capacity callback.
+        }
+    }
+}
+
+impl Drop for DeferredCompletionNotification {
+    fn drop(&mut self) {
+        self.release_source_quiet();
+    }
+}
+
 /// Owns the immutable Event and its charge even after dequeue. There is no
 /// uncharged into_event escape. retire destroys the Event; transfer_to
 /// releases this claim only after the next real queue accepted its own claim.
@@ -252,16 +320,29 @@ impl RetainedCompletion {
         drop(self);
     }
     pub fn transfer_to(
-        mut self,
+        self,
         destination: &CompletionPublisher,
         reservation: CompletionReservation,
     ) -> Result<(), RetainedTransferError> {
+        self.transfer_to_deferred(destination, reservation)?
+            .notify();
+        Ok(())
+    }
+
+    /// Commit only destination ownership here. The success receipt retains
+    /// the old claim until notification outside caller locks (or quiet Drop).
+    /// Every refusal returns the exact Event plus both original claims.
+    pub fn transfer_to_deferred(
+        mut self,
+        destination: &CompletionPublisher,
+        reservation: CompletionReservation,
+    ) -> Result<DeferredCompletionNotification, RetainedTransferError> {
         let event = self.event.take().expect("retained Event is owned");
-        match destination.publish_reserved(event, reservation) {
-            Ok(()) => {
-                // The receiver now owns Event+new claim; only then release ours.
-                drop(self.claim.take());
-                Ok(())
+        match destination.publish_reserved_deferred(event, reservation) {
+            Ok(mut notification) => {
+                // The receiver owns Event+new claim before ours may retire.
+                notification.source_claim = self.claim.take();
+                Ok(notification)
             }
             Err(error) => {
                 self.event = Some(error.event);
@@ -409,6 +490,16 @@ impl CompletionPublisher {
     /// after returning it to a legacy caller. An individually impossible cost
     /// is permanent TooLarge/CostOverflow, never a capacity wait disguised as Full.
     pub fn try_publish(&self, event: Event) -> Result<(), PublishError> {
+        self.try_publish_deferred(event)?.notify();
+        Ok(())
+    }
+
+    /// Uses the same actual enqueue as ordinary publication, but does not
+    /// invoke the reader until the success receipt is explicitly notified.
+    pub fn try_publish_deferred(
+        &self,
+        event: Event,
+    ) -> Result<DeferredCompletionNotification, PublishError> {
         let bytes = match retained_event_bytes(&event) {
             Ok(bytes) => bytes,
             Err(_) => return Err(PublishError::CostOverflow(event)),
@@ -416,7 +507,7 @@ impl CompletionPublisher {
         let Some(claim_bytes) = bytes.checked_add(COMPLETION_ENTRY_OVERHEAD_BYTES) else {
             return Err(PublishError::CostOverflow(event));
         };
-        {
+        let notification = {
             let Ok(mut storage) = self.receiver.lock() else {
                 return Err(PublishError::Closed(event));
             };
@@ -462,15 +553,9 @@ impl CompletionPublisher {
                     return Err(PublishError::CostOverflow(event));
                 }
             };
-            debug_assert!(storage.queue.len() < storage.queue.capacity());
-            storage.queue.push_back(Entry {
-                event,
-                claim: reservation.claim,
-                reserved: false,
-            });
-        }
-        wake_reader(&self.waker);
-        Ok(())
+            self.enqueue_locked(&mut storage, event, reservation, false)
+        };
+        Ok(notification)
     }
 
     /// The reservation retains storage while delivery queue slots are busy.
@@ -481,15 +566,17 @@ impl CompletionPublisher {
         event: Event,
         reservation: CompletionReservation,
     ) -> Result<(), ReservedPublishError> {
-        self.publish_entry(event, reservation, true)
+        self.publish_reserved_deferred(event, reservation)?.notify();
+        Ok(())
     }
 
-    fn publish_entry(
+    /// Accept into the real bounded queue without invoking caller code. The
+    /// returned receipt must be notified outside all caller-held locks.
+    pub fn publish_reserved_deferred(
         &self,
         event: Event,
         reservation: CompletionReservation,
-        reserved: bool,
-    ) -> Result<(), ReservedPublishError> {
+    ) -> Result<DeferredCompletionNotification, ReservedPublishError> {
         let reason = if !Arc::ptr_eq(&self.budget, &reservation.claim.budget) {
             Some(ReservedPublishReason::WrongMailbox)
         } else {
@@ -514,7 +601,7 @@ impl CompletionPublisher {
                 reason,
             });
         }
-        {
+        let notification = {
             let Ok(mut storage) = self.receiver.lock() else {
                 return Err(ReservedPublishError {
                     event,
@@ -536,17 +623,32 @@ impl CompletionPublisher {
                     reason: ReservedPublishReason::Full,
                 });
             }
-            // Delivery admission and push share this lock. The configured
-            // queue bound, not allocator rounding, prevents backing growth.
-            debug_assert!(storage.queue.len() < storage.queue.capacity());
-            storage.queue.push_back(Entry {
-                event,
-                claim: reservation.claim,
-                reserved,
-            });
+            self.enqueue_locked(&mut storage, event, reservation, true)
+        };
+        Ok(notification)
+    }
+
+    // Both publication modes reach this one actual store after all rejection
+    // checks. Delivery admission and push share Storage; no callback, Waker
+    // clone/drop or recoverable fallible step follows before it is unlocked.
+    fn enqueue_locked(
+        &self,
+        storage: &mut Storage,
+        event: Event,
+        reservation: CompletionReservation,
+        reserved: bool,
+    ) -> DeferredCompletionNotification {
+        debug_assert!(storage.queue.len() < storage.queue_capacity);
+        debug_assert!(storage.queue.len() < storage.queue.capacity());
+        storage.queue.push_back(Entry {
+            event,
+            claim: reservation.claim,
+            reserved,
+        });
+        DeferredCompletionNotification {
+            reader: Arc::downgrade(&self.waker),
+            source_claim: None,
         }
-        wake_reader(&self.waker);
-        Ok(())
     }
 }
 
@@ -818,3 +920,7 @@ mod reservation_tests;
 #[cfg(test)]
 #[path = "mailbox_queue_storage_tests.rs"]
 mod queue_storage_tests;
+
+#[cfg(test)]
+#[path = "mailbox_deferred_tests.rs"]
+mod deferred_tests;

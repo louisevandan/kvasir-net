@@ -19,7 +19,9 @@ impl CommittedEffect {
     /// Publication already consumed its own ID exactly once.
     pub(super) fn event_count(&self) -> Result<u64, String> {
         match self {
-            Self::Settle { .. } | Self::Release { .. } => Ok(0),
+            // A failed direct wire preflight is permanently non-publishable:
+            // ownership remains, but it must not pretend to owe a future ID.
+            Self::Settle { .. } | Self::Release { .. } | Self::UndeliverableDirect { .. } => Ok(0),
             Self::Publication { after, .. } => match after {
                 super::effects::PublicationAfter::Observed(telemetry) => {
                     u64::try_from(telemetry.len())

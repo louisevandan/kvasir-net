@@ -2,21 +2,90 @@ use super::*;
 use crate::v2::commands::ErrorPayload;
 use p4_protocol::event::Envelope;
 
-/// A SESSION response prepared for immediate use by this sole worker mutator.
-/// It does not reserve asynchronous queue capacity, bytes, or future effects.
-/// No emitter, await, or yield may intervene between preparation and commit.
-pub(super) struct PreparedEmission {
-    event: Event,
-    next_event: u64,
+/// Unnumbered direct-response ownership. A failed wire preflight retains these
+/// exact parts, but never grants them publication authority.
+#[derive(Debug)]
+pub(super) struct DirectEmission {
+    pub(super) base: Envelope,
+    pub(super) source: Endpoint,
+    pub(super) target: Endpoint,
+    pub(super) class: EventClass,
+    pub(super) content_type: String,
+    pub(super) body: Vec<u8>,
+    diagnostic: bool,
+}
+
+/// The complete body and all envelope fields have passed a wire round-trip
+/// with the widest usable future sequence. The actual ID is assigned ONLY at
+/// the committed FIFO head. This is not a storage/byte reservation.
+#[derive(Debug)]
+pub(super) struct PreparedEmission(DirectEmission);
+
+impl PreparedEmission {
+    #[cfg(test)]
+    pub(super) fn intent_for_test(&self) -> &DirectEmission {
+        &self.0
+    }
+
+    pub(super) fn is_diagnostic(&self) -> bool {
+        self.0.diagnostic
+    }
+
+    pub(super) fn materialize(&mut self, sequence: u64) -> Event {
+        let intent = &mut self.0;
+        Event {
+            envelope: intent.base.next(
+                derived_envelope_event_id(&intent.base, sequence),
+                intent.source.clone(),
+                intent.target.clone(),
+                intent.class,
+                sequence,
+                intent.content_type.clone(),
+            ),
+            payload: std::mem::take(&mut intent.body),
+        }
+    }
+}
+
+impl DirectEmission {
+    fn prepare(mut self) -> Result<PreparedEmission, (Self, String)> {
+        // MAX itself cannot be issued because the counter must advance by one.
+        // Every other issued decimal ID is no wider than this validation ID;
+        // all other fields and the serialized body remain immutable.
+        let sequence = u64::MAX - 1;
+        let event = Event {
+            envelope: self.base.next(
+                derived_envelope_event_id(&self.base, sequence),
+                self.source.clone(),
+                self.target.clone(),
+                self.class,
+                sequence,
+                self.content_type.clone(),
+            ),
+            payload: std::mem::take(&mut self.body),
+        };
+        let result = p4_protocol::event::encode(&event)
+            .map_err(|error| format!("completion event cannot be encoded: {error}"))
+            .and_then(|wire| {
+                let decoded = p4_protocol::event::decode(&wire)
+                    .map_err(|error| format!("completion event cannot be decoded: {error}"))?;
+                if decoded != event {
+                    return Err("completion event changed during its wire round-trip".into());
+                }
+                Ok(())
+            });
+        self.body = event.payload;
+        match result {
+            Ok(()) => Ok(PreparedEmission(self)),
+            Err(detail) => Err((self, detail)),
+        }
+    }
 }
 
 impl Worker {
-    /// SESSION currently is the sole consumer. Preserve its exact existing
-    /// payload/envelope construction, but perform fallible work before its
-    /// routing authority is installed. Encode alone is insufficient: a large
-    /// original ID is repeated as derived ID and causation, while the decoder
-    /// also bounds their combined envelope. This temporary round-trip cost is
-    /// validation, not a retained-byte reservation or a general wire repair.
+    /// SESSION performs all response interpretation before installing routing
+    /// authority. Earlier FIFO suffixes may still owe IDs, so preparation must
+    /// neither choose the actual sequence nor consume its counter.
     pub(super) fn prepare_json_emission<T: Serialize>(
         &self,
         base: &Event,
@@ -28,39 +97,20 @@ impl Worker {
         self.ensure_event_id_obligations(1, 0)?;
         let payload = serde_json::to_vec(value)
             .map_err(|error| format!("completion payload serialization failed: {error}"))?;
-        let sequence = self.state.next_event;
-        let next_event = sequence
-            .checked_add(1)
-            .ok_or("completion event ID is exhausted")?;
-        let envelope = base.envelope.next(
-            derived_event_id(base, sequence),
-            self.endpoint.clone(),
-            target,
-            class,
-            sequence,
-            content_type,
-        );
-        let event = Event { envelope, payload };
-        let wire = p4_protocol::event::encode(&event)
-            .map_err(|error| format!("completion event cannot be encoded: {error}"))?;
-        let decoded = p4_protocol::event::decode(&wire)
-            .map_err(|error| format!("completion event cannot be decoded: {error}"))?;
-        if decoded != event {
-            return Err("completion event changed during its wire round-trip".into());
-        }
-        Ok(PreparedEmission { event, next_event })
+        self.direct_intent(base, target, class, content_type, payload, false)
+            .prepare()
+            .map_err(|(_, detail)| detail)
     }
 
-    /// Called immediately after the infallible SESSION authority commit.
-    /// Publication still uses the existing blocking Full/Closed behavior;
-    /// once committed, a later publication failure does not roll back SESSION.
+    /// Called immediately after the infallible SESSION authority commit. The
+    /// prepared body joins the same FIFO as all preceding committed effects.
+    /// A later publication failure retains that effect; it does not roll back
+    /// SESSION or manufacture a differently numbered response.
     pub(super) fn publish_prepared_emission(
         &mut self,
         prepared: PreparedEmission,
     ) -> Result<(), ()> {
-        debug_assert_eq!(self.state.next_event, prepared.event.envelope.sequence);
-        self.state.next_event = prepared.next_event;
-        self.publish_or_wait(prepared.event)
+        self.commit_direct_effects(vec![effects::CommittedEffect::Direct(prepared)], false)
     }
 
     pub(super) fn emit_batch_errors(
@@ -69,10 +119,30 @@ impl Worker {
         code: &str,
         detail: &str,
     ) -> Result<(), ()> {
-        for base in bases {
-            self.emit_error(base, code, detail.to_owned())?;
+        if bases.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let count = u64::try_from(bases.len()).map_err(|_| ())?;
+        self.ensure_event_id_obligations(count, 0).map_err(|_| ())?;
+        let mut prepared = Vec::with_capacity(bases.len());
+        for base in bases {
+            let body = serde_json::to_vec(&ErrorPayload {
+                code: code.into(),
+                detail: detail.into(),
+            })
+            .map_err(|_| ())?;
+            prepared.push(Self::direct_effect(self.direct_intent(
+                base,
+                reply_target(base),
+                EventClass::Output,
+                ERROR_CONTENT_TYPE,
+                body,
+                true,
+            )));
+        }
+        // Every failed computation owner is retained before trying the first
+        // delivery. Closed on owner one must not lose the remaining owners.
+        self.commit_direct_effects(prepared, true)
     }
 
     /// Freeze the reply Event once at its committed FIFO position. This only
@@ -147,16 +217,21 @@ impl Worker {
         code: &str,
         detail: String,
     ) -> Result<(), ()> {
-        self.emit_json(
+        let body = serde_json::to_vec(&ErrorPayload {
+            code: code.into(),
+            detail,
+        })
+        .map_err(|_| ())?;
+        self.ensure_event_id_obligations(1, 0).map_err(|_| ())?;
+        let effect = Self::direct_effect(self.direct_intent(
             base,
             reply_target(base),
             EventClass::Output,
             ERROR_CONTENT_TYPE,
-            &ErrorPayload {
-                code: code.into(),
-                detail,
-            },
-        )
+            body,
+            true,
+        ));
+        self.commit_direct_effects(vec![effect], true)
     }
 
     pub(super) fn emit_json<T: Serialize>(
@@ -179,36 +254,101 @@ impl Worker {
         content_type: &str,
         payload: Vec<u8>,
     ) -> Result<(), ()> {
-        // Direct responses have no committed effect claim. They must not
-        // spend the IDs already owed to a queued suffix or future receipt.
+        // Admission owns one future ID, not a number allocated ahead of an
+        // older effect. Permanent failure preserves the whole intent/Event.
         self.ensure_event_id_obligations(1, 0).map_err(|_| ())?;
-        self.emit_envelope_bytes_retaining(&base.envelope, target, class, content_type, payload)
-            .map_err(|_| ())
-    }
-
-    /// Compatibility path for direct, non-committed responses. Committed
-    /// effects instead retain a fully materialized Event through publish_kind.
-    /// This direct API retains its historical body-only error contract.
-    pub(super) fn emit_envelope_bytes_retaining(
-        &mut self,
-        base: &Envelope,
-        target: Endpoint,
-        class: EventClass,
-        content_type: &str,
-        mut payload: Vec<u8>,
-    ) -> Result<(), Vec<u8>> {
-        let event = match self.materialize_envelope_bytes(
+        let effect = Self::direct_effect(self.direct_intent(
             base,
             target,
             class,
             content_type,
-            &mut payload,
-        ) {
-            Ok(event) => event,
-            Err(()) => return Err(payload),
+            payload,
+            false,
+        ));
+        self.commit_direct_effects(vec![effect], false)
+    }
+
+    fn direct_intent(
+        &self,
+        base: &Event,
+        target: Endpoint,
+        class: EventClass,
+        content_type: &str,
+        body: Vec<u8>,
+        diagnostic: bool,
+    ) -> DirectEmission {
+        DirectEmission {
+            base: base.envelope.clone(),
+            source: self.endpoint.clone(),
+            target,
+            class,
+            content_type: content_type.into(),
+            body,
+            diagnostic,
+        }
+    }
+
+    fn direct_effect(intent: DirectEmission) -> effects::CommittedEffect {
+        match intent.prepare() {
+            Ok(prepared) => effects::CommittedEffect::Direct(prepared),
+            Err((intent, detail)) => {
+                effects::CommittedEffect::UndeliverableDirect { intent, detail }
+            }
+        }
+    }
+
+    fn commit_direct_effects(
+        &mut self,
+        prepared: Vec<effects::CommittedEffect>,
+        diagnostic: bool,
+    ) -> Result<(), ()> {
+        if prepared.is_empty() {
+            return Ok(());
+        }
+        // This decision belongs to this freshly prepared diagnostic group,
+        // BEFORE append. A retained failed Publication/native prefix must not
+        // be replayed merely because another diagnostic arrives afterward.
+        let fenced_diagnostic = diagnostic
+            && self.effects_fenced
+            && self.effects.is_empty()
+            && self.active_publications == 0
+            && self.active_effect_ids == 0;
+        let count = prepared.len();
+        let invalid = prepared.iter().find_map(|effect| match effect {
+            effects::CommittedEffect::UndeliverableDirect { detail, .. } => Some(detail.clone()),
+            _ => None,
+        });
+        self.effects.extend(prepared);
+        if let Some(detail) = invalid {
+            self.effects_fenced = true;
+            let previous = self.snapshot.lock().map(|s| s.clone()).unwrap_or_default();
+            self.set_snapshot(&format!("{previous};direct_response_invalid:{detail}"));
+            return Err(());
+        }
+        if self.effects_fenced && !fenced_diagnostic {
+            return Err(());
+        }
+        if self.active_publications != 0 {
+            // The outer publisher owns the current FIFO head and its ID
+            // shares. Never recurse into it or consume the appended suffix.
+            return Ok(());
+        }
+        let previous =
+            diagnostic.then(|| self.snapshot.lock().map(|s| s.clone()).unwrap_or_default());
+        let result = if fenced_diagnostic {
+            self.flush_terminal_diagnostics(count)
+        } else {
+            self.flush_effects()
         };
-        self.publish_kind(event, false)
-            .map_err(|event| event.payload)
+        if result.is_err()
+            && let Some(previous) = previous
+        {
+            let failure = self.snapshot.lock().map(|s| s.clone()).unwrap_or_default();
+            if failure != previous {
+                self.set_snapshot(&format!("{previous};direct_diagnostic_failed:{failure}"));
+            }
+        }
+        result.map_err(|_| ())
     }
 
     /// Publishes a completion, waiting for room rather than dropping it.
@@ -224,10 +364,7 @@ impl Worker {
     /// This runs on the worker's own thread, which owns no lock and holds no
     /// llama context between events, so blocking here backs the pressure up
     /// to the node's inbound queue rather than into the stage server.
-    fn publish_or_wait(&mut self, event: Event) -> Result<(), ()> {
-        self.publish_or_retain(event).map_err(|_| ())
-    }
-
+    #[cfg(test)]
     fn publish_or_retain(&mut self, event: Event) -> Result<(), Event> {
         self.publish_kind(event, false)
     }
@@ -335,6 +472,7 @@ impl Worker {
     }
 }
 
+#[cfg(test)]
 fn derived_event_id(base: &Event, sequence: u64) -> String {
     derived_envelope_event_id(&base.envelope, sequence)
 }

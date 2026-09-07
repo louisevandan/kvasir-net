@@ -206,14 +206,21 @@ impl EventBroker {
             Err(error) => return Err(DispatchFailure::new(error, event)),
         };
         // Obtain this actual destination slot before making the successful
-        // delivery's ledger/queue copies. Full must return the original owned
+        // delivery's independent ledger copy. Full must return the original owned
         // value, including spare allocation capacity, not a freshly cloned
         // substitute. This short synchronous permit is not a future-result,
         // retained-byte or remote-receiver reservation.
         match sender.try_reserve() {
             Ok(permit) => {
-                permit.send(event.clone());
-                ledger.commit(event);
+                // Successful delivery moves the same allocation that Full
+                // returns on refusal. The long-lived exact-deduplication
+                // receipt owns a separate copy, not the sender's spare
+                // allocation or its future retained-storage permission.
+                // This is still the raw queue API: count/byte claims and
+                // notification outside the ledger lock remain to be wired.
+                let receipt = event.clone();
+                permit.send(event);
+                ledger.commit(receipt);
                 Ok(DispatchOutcome::Enqueued(delivery))
             }
             Err(mpsc::error::TrySendError::Full(())) => {

@@ -228,27 +228,37 @@ fn handle_undecodable_ready_does_not_install_session_authority() {
     worker.state.next_event = 41;
     let input = input_whose_ready_envelope_cannot_round_trip(&worker);
     let before = emission_snapshot(&worker);
-    worker.handle(input).unwrap();
+    worker.handle(input.clone()).unwrap_err();
     let after = emission_snapshot(&worker);
     assert_eq!(after.sessions, before.sessions);
-    assert_eq!(after.effects, before.effects);
-    assert_eq!(after.effects_fenced, before.effects_fenced);
+    assert!(after.effects_fenced);
     assert_eq!(after.lifecycle, before.lifecycle);
     assert!(!after.has_server);
-    // Existing handle rejection semantics consume one diagnostic event ID.
-    // Generic ERROR emission is not migrated here; with this huge original ID
-    // its fallback envelope is still not wire-decodable. We assert only that
-    // no SESSION_READY was sent, not successful remote error delivery.
-    assert_eq!(after.next_event, before.next_event + 1);
-    let diagnostic = response(&mailbox);
-    assert_eq!(diagnostic.envelope.payload_content_type, ERROR_CONTENT_TYPE);
-    let payload: ErrorPayload = serde_json::from_slice(&diagnostic.payload).unwrap();
+    // This exact input also makes its ERROR envelope undecodable. Retain the
+    // diagnostic and provenance instead of pretending a malformed response
+    // was delivered; no response number has been assigned.
+    assert_eq!(after.next_event, before.next_event);
+    assert_eq!(worker.effects.len(), 1);
+    let super::effects::CommittedEffect::UndeliverableDirect { intent, detail } =
+        &worker.effects[0]
+    else {
+        panic!("the failed ERROR preflight must remain owned")
+    };
+    assert_eq!(intent.base, input.envelope);
+    assert_eq!(intent.source, worker.endpoint);
+    assert_eq!(intent.target, reply_target(&input));
+    assert_eq!(intent.class, EventClass::Output);
+    assert_eq!(intent.content_type, ERROR_CONTENT_TYPE);
+    assert!(detail.contains("completion event cannot be decoded"));
+    let payload: ErrorPayload = serde_json::from_slice(&intent.body).unwrap();
+    assert_eq!(payload.code, "LLAMA_ADAPTER_EVENT_REJECTED");
     assert!(
         payload
             .detail
             .contains("completion event cannot be decoded")
     );
     assert!(matches!(mailbox.try_take(), Poll::Empty));
+    assert_eq!(worker.ensure_event_id_obligations(0, 0), Ok(()));
 }
 
 #[test]

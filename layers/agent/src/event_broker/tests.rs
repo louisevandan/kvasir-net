@@ -259,9 +259,70 @@ fn full_returns_the_original_allocations_on_every_retry_before_exact_acceptance(
         f.broker.dispatch(pending),
         Ok(DispatchOutcome::Enqueued(Delivery::Agent))
     );
-    assert_eq!(f.agent.try_recv().unwrap(), expected);
+    let accepted = f.agent.try_recv().unwrap();
+    assert_eq!(accepted, expected);
+    assert_eq!(accepted.payload.as_ptr(), payload_ptr);
+    assert_eq!(accepted.payload.capacity(), payload_capacity);
+    assert_eq!(accepted.envelope.event_id.as_ptr(), id_ptr);
+    assert_eq!(accepted.envelope.event_id.capacity(), id_capacity);
     assert_eq!(f.broker.dispatch(expected), Ok(DispatchOutcome::Duplicate));
     assert!(f.agent.try_recv().is_err());
+}
+
+#[test]
+fn each_successful_destination_owns_the_original_independently_of_exact_deduplication() {
+    let mut f = fixture(4);
+    let targets = [
+        Endpoint::agent(f.own.clone()),
+        Endpoint::node(f.own.clone(), "n1", 1),
+        Endpoint::outer(f.own.clone(), "outer", 1),
+        Endpoint::node(f.remote.clone(), "n2", 1),
+    ];
+    for (index, target) in targets.into_iter().enumerate() {
+        let mut input = event(
+            &format!("original-{index}"),
+            Endpoint::agent(f.remote.clone()),
+            target,
+            index as u64 + 1,
+        );
+        input.payload = Vec::with_capacity(8192);
+        input.payload.extend_from_slice(&[0, 255, 128, 7]);
+        input.envelope.event_id.reserve(1024);
+        let payload_pointer = input.payload.as_ptr();
+        let payload_capacity = input.payload.capacity();
+        let id_pointer = input.envelope.event_id.as_ptr();
+        let id_capacity = input.envelope.event_id.capacity();
+        let expected = input.clone();
+        assert!(matches!(
+            f.broker.dispatch(input),
+            Ok(DispatchOutcome::Enqueued(_))
+        ));
+        let mut delivered = match index {
+            0 => f.agent.try_recv().unwrap(),
+            1 => f.node.try_recv().unwrap(),
+            2 => f.outer.try_recv().unwrap(),
+            3 => f.outbound.try_recv().unwrap(),
+            _ => unreachable!(),
+        };
+        assert_eq!(delivered, expected);
+        assert_eq!(delivered.payload.as_ptr(), payload_pointer);
+        assert_eq!(delivered.payload.capacity(), payload_capacity);
+        assert_eq!(delivered.envelope.event_id.as_ptr(), id_pointer);
+        assert_eq!(delivered.envelope.event_id.capacity(), id_capacity);
+        // The raw recipient can mutate its value. That must neither mutate
+        // the exact receipt nor turn a conflicting retry into a duplicate.
+        delivered.payload[0] ^= 1;
+        let failure = f.broker.dispatch(delivered).unwrap_err();
+        assert_eq!(failure.error, DispatchError::ConflictingDuplicate);
+        assert_eq!(failure.event.payload.as_ptr(), payload_pointer);
+        assert_eq!(f.broker.dispatch(expected), Ok(DispatchOutcome::Duplicate));
+    }
+    for receiver in [&mut f.agent, &mut f.node, &mut f.outer, &mut f.outbound] {
+        assert!(
+            receiver.try_recv().is_err(),
+            "duplicate/conflict must not re-enqueue"
+        );
+    }
 }
 
 #[test]

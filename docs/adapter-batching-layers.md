@@ -569,7 +569,7 @@ cleanup 성공 뒤에만 UNLOADED로 보고한다. 이미 publish된 출력의 O
 
 ### 출력 포화 중 제어 진행 — 양보 가능한 effect pump의 목표 계약
 
-**아래는 아직 구현 완료가 아닌 목표 계약이다.** 현재 `worker/emit.rs::Worker::publish_or_wait`는
+**아래는 아직 구현 완료가 아닌 목표 계약이다.** 현재 `worker/emit.rs::Worker::wait_for_publication`은
 Full에서 worker 스레드를 점유한다. capacity 통지를 추가하는 것과 worker가 다른 입력을 처리하는
 것은 별개다. 실행 결과·단계 상태·적용 순서는 로드맵과 증거 기록이 소유한다.
 
@@ -580,9 +580,13 @@ Full에서 worker 스레드를 점유한다. capacity 통지를 추가하는 것
 - **응답 표현 가능성과 상태 승인**: session 경로를 설치하기 전에 정확한 응답의 직렬화·ID 발급·
   수신 codec 표현 가능성을 확인한다. 개별 필드 길이 검사만으로 합산 envelope 검사를 대신하지
   않는다. 준비 실패는 권한/ID를 소비하지 않으며, 별도 진단 ID를 소비하는 handle 거부와 구분한다.
-  현재 SESSION 준비물은 동기 호출 구간 전용이다. 준비 성공이 queue 공간 확보 또는 Closed 후
-  분산 rollback을 의미하지 않는다. 일반 오류 응답에도 같은 원칙을 이관해야 하지만 현재 구현
-  여부는 로드맵을 따른다. encode/decode의 일시 복제 비용은 전체 retained-byte 예산이 아니다.
+  SESSION은 권한 승인 전에 body와 최대 발급 가능 ID 폭의 envelope를 검증하되, 실제 번호는
+  앞선 지연 관측까지 지나간 FIFO 선두에서만 배정한다. 준비 성공이 queue 공간 확보 또는 Closed 후
+  분산 rollback을 의미하지 않는다. 일반 오류의 envelope도 표현 불가능하면 잘못된 wire를 보내지
+  않고 진단 의도와 실패 원인을 보존한다. encode/decode의 일시 복제 비용은 전체 retained-byte 예산이 아니다.
+  최대 ID 폭 검사는 수용 영역을 보수적으로 줄인다. 현재 짧은 번호로는 맞아도 향후20자리 번호에서
+  codec 한도를 넘는 경계 입력은 승인하지 않는다. 이 차이는 단순 호출 위치 이관이 아니며, 같은 입력에
+  대한 현재 번호의 codec 성공과 최대 번호의 거부를 모두 검사한다. 실제 번호 선소비로 우회하지 않는다.
 - **예약과 양보**: 효과 개수와 보존 바이트의 합계 예산을 모두 검사한다. 하나의 TAIL/ACK가 만드는
   전체 효과를 검증·예약한 뒤 기존 whole-event 원자 commit을 유지한다. native 호출 전에는 그 결과와
   실패를 보존할 공간도 확보한다. 직렬화 wire 길이만 세면서 보존된 base/payload 복사 비용을 제외하면
@@ -675,9 +679,16 @@ Full 중 ACK/진단이 그 몫을 쓰지 못하게 한다. 이는 **공간 예�
 실패 후 자동 fence 해제·native 재실행·재연결 replay는 허가하지 않는다. 시험의 수동 재접속은
 같은 Event의 보존 여부를 확인할 뿐 운영 복구 API가 아니다.
 
-범위는 committed Output/ReleaseReceipt/Forward/HeadControl/Observed/Telemetry다. LOAD·SESSION·
-UNLOAD·일반 error의 직접 송신 경로는 아직 이 보존 표현으로 이관하지 않았다. 기존 동기 대기와
-raw EventNode 소비도 남아 있으므로 고정 송신물 보존을 비동기 pump·end-to-end 예약으로 읽지 않는다.
+LOAD·SESSION·UNLOAD·일반 오류도 미번호 직접 응답 의도를 같은 FIFO에 넣고, 선두에서 고정
+Publication으로 만든다. 앞선 ForwardObserved의 후속 관측은 뒤에 들어온 응답보다 먼저 번호를
+얻는다. batch 오류는 첫 전달 실패 때문에 나머지 참여 요청의 진단 의도 자체를 잃지 않아야 한다.
+표현 불가능한 진단 의도는 발행 가능한 Event인 것처럼 취급하지 않고 비발행 실패로 보존한다.
+
+native fence 뒤의 진단에는 두 경우가 있다. **기존 효과 prefix가 없는** 상태에서 생긴 종료 진단
+하나만 보내는 것은 새 native 실행이 아니며 기존 fence를 해제하지 않는다. 기존 미전달/불확실 효과가
+있으면 진단은 그 뒤에 보존한다. 그 효과를 재실행하거나 고정 sequence를 가진 송신물을 추월하지 않는다.
+기존 동기 Full 대기와 raw EventNode 소비는 남아 있으므로 이 보존 표현을 비동기 pump·end-to-end
+예약으로 읽지 않는다. LOAD/UNLOAD native 이전 결과 공간 확보도 이 표현 변경만으로 완료되지 않는다.
 broker의 실제 destination `try_reserve`는 즉시 dispatch 한 번의 슬롯이며 미래/native/remote
 grant가 아니다. raw 실패의 원본 반환은
 [중립 event 계약](event-protocol-v2.md#local-refusal-ownership--limited-implementation-boundary)이 소유한다.
@@ -725,6 +736,18 @@ waiter에게 통지하되 claim은 유지한다. 일반 발행의 queue Full은 
 회계만 반환하며 추가 capacity callback은 생략한다. panic 이후의 전달·진행이나 임의 RawWaker
 destructor의 안전까지 보증하지 않는다. callback은 여전히 비차단·비panic 계약을 지켜야 한다.
 
+`try_publish_deferred`·`publish_reserved_deferred`·`transfer_to_deferred`는 같은 실제 enqueue를
+수행한 뒤 move-only `DeferredCompletionNotification`을 반환한다. 기존 즉시 알림 API도 같은
+enqueue 뒤 이 반환물의 `notify`를 소비한다. 반환물은 호출자가 모든 잠금을 놓은 뒤 한 번 소비하며,
+transfer의 옛 source 회계를 먼저 반환한 다음 reader/capacity callback을 호출한다. Drop은 source
+회계만 조용히 반환하고 enqueue를 취소하거나 알림을 대신 실행하지 않는다. `notify` 누락은 메모리
+누수가 아니라 진행 계약 위반이다. 반환물은 Waker 자체가 아니라 약한 등록 슬롯 참조를 보관한다.
+
+**알림 지연은 가시성 장벽이 아니다.** 이미 실행 중인 reader는 notify 전에도 수용된 Event를 읽을
+수 있다. callback panic을 enqueue 실패나 재전송 허가로 해석하지 않는다. 현재 raw broker는 아직
+이 deferred 경계를 소비하지 않으므로, 이 API 변경만으로 broker 원장 잠금 밖 알림이 성립했다고
+하지 않는다. 실제 broker/owned receiver 이관이 남아 있다.
+
 단일 native 작업이 여러 필수 Event를 만들면 completion capacity=1에 그 전체 슬롯을 미리 요구하는
 것만으로는 정상 진행할 수 없다. 후속 효과 보존 공간과 전달 큐 슬롯을 구분하고 실제 수신 측의 책임
 이전까지 연결해야 한다. 이 한계를 큐 증설·SESSION 금지·기존 cap1 정상 입력 축소로 숨기지 않는다.
@@ -749,6 +772,21 @@ RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급
 - 일반 `EventSender/Receiver`뿐 아니라 connection writer, EventNode 보류물, adapter input과 worker
   보류물까지 책임이 이어져야 한다. 중간에서 raw Event를 꺼내 claim을 바로 버리는 다리는 큐 한도만
   증명한다. remote write 성공은 receiver 수용 증거가 아니며 별도 grant/acceptance 계약이 필요하다.
+
+실제 소유형 이관의 필수 연결 범위는 아래와 같다. **완료 목록이 아니라 연결 누락을 판정하는 표**다.
+한 줄만 opt-in으로 바꾸고 다음 소비자가 raw 복사본을 장기 보관하게 해서는 승인하지 않는다.
+
+| 제품 경계 | 같은 수명 안에서 반드시 보존할 대상 |
+| --- | --- |
+| `event_runtime::{run,control::create}` → broker queue/ledger | 실제 목적지 예산, 원본과 독립 중복 사본, 거부·eviction의 비용 |
+| `EventNode` → `NodeAdapter` → `WorkerInput` | 양방향 held 값, offer 거부, 완료 dequeue, terminal 반환의 owner |
+| worker → `RequestState`·`PendingRelease`·후속 effect | 장기 원문/파싱 결과의 비용, 후보 복사의 공유 범위, terminal 뒤 해제 출처 |
+| `effects`/`emit`/`ack_service` → completion | 고정 Event·후속 관측·진단이 실제 저장소에 수용되기 전까지의 claim |
+| control reply·`NodeOwner` 수명 | broker 거부, 완료 task 결과, DELETE/Drop의 보존 또는 명시적 종료 판정 |
+| transport 수신 → broker → connection writer | 프레임/디코드 임시 공간, Full, 송신 실패·결과 불명, 원격 수용 전 책임 |
+
+과거 Frame runtime을 이 표의 Event 경로로 세지 않는다. 같은 Event wire를 읽는 OUTER가 존재한다는
+것도 원격 acceptance 증거가 아니다. 이관 상태와 실행 순서는 로드맵이 단독 소유한다.
 
 ## 측정: 배치 폭 대 파이프라인 깊이 (2026-08-31, 2026-09-01 재측정)
 

@@ -855,8 +855,8 @@ async fn adapter_closed_returns_the_original_inbound_allocation() {
     let input = with_spare_allocation(event(&own));
     let expected = input.clone();
     let original_allocation = allocation(&input);
-    // Move into the real EventReceiver. A successful broker dispatch makes
-    // its own queue/ledger copies; this test starts at EventNode ownership.
+    // Move into the real EventReceiver. This test starts at EventNode
+    // ownership; broker receipt/allocation behavior has separate oracles.
     node_tx.try_send(input).unwrap();
     let failure = tokio::time::timeout(
         Duration::from_secs(1),

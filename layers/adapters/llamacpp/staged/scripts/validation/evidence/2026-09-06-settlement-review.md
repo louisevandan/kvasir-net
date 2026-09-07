@@ -2987,3 +2987,60 @@ CREATE/DELETE 전체 소비 시험이나 자동 복구 검증은 이번 신규9�
 
 운영 코드·실제 소비 회귀·소유 문서만 전체 미검증 체크포인트에 포함한다. generated proof와 일회성
 도구·모델·바이너리는 ignore 경로에 유지하며 push하지 않는다. byte admission·전체 교착·실기 TPS 완료는 아니다.
+
+## 직접 응답 FIFO와 알림 경계 — 정적 검토 WIP (2026-09-07)
+
+기준 HEAD `658c9cded723b17d8d1b422748f3c8ff733406cd`. 이번 변경은 **실행 결과에 맞춘 수정이 아닌
+실제 소유권/순서/종료 경로의 정적 대조**다. 컴파일·시험·변이·docs-lint를 실행하지 않았으며 신규
+실행 로그·통과 수·봉인 바이너리는 없다. 수정 전 실행13의1254/1/7과 검증2회 사용·마지막1회 미사용을
+유지한다. 정적 대조는 실행 증명을 대체하지 않으며 이 체크포인트는 미검증 WIP다.
+
+### 실제 코드 변경
+
+- `EventBroker::dispatch` 성공 큐에 원 allocation을 이동하고 exact dedupe에는 독립 사본을 둔다.
+  실패·중복 순서 검사는 유지한다. raw 큐이고 알림이 아직 ledger 잠금 안에서 일어나므로 owned
+  수용/잠금 밖 알림의 제품 완료가 아니다. claim을 중복 사본에 붙여 퇴역까지 producer를 묶지 않는다.
+- 실제 mailbox enqueue와 이후 reader/capacity 알림을 분리했다. 기존 즉시 publication/transfer도
+  같은 enqueue 뒤 명시 notify를 사용한다. Drop/콜백 panic의 회계·가시성 제약은 배치 계약이 소유한다.
+  broker가 이 deferred API를 사용하는 것은 아직 아니며, 새 알림 API만으로 순환 대기가 풀리지 않는다.
+- 직접 LOAD/SESSION/UNLOAD/오류 응답은 미번호 intent→FIFO 선두의 고정 Event→실제 mailbox로 간다.
+  앞선 ForwardObserved의 관측 suffix가 뒤의 응답보다 먼저 번호를 얻는다. 첫 Closed가 뒤 참여자의
+  batch 진단을 없애지 않도록 전체 진단을 먼저 보존한다. Full 동기 대기는 그대로다.
+- native 실패가 이미 fence를 세웠어도 기존 effect prefix가 없으면 새 종료 진단만 보낼 수 있다.
+  prefix가 있으면 뒤에 보존할 뿐 기존 효과를 replay하거나 fence를 해제하지 않는다. 기존 실제
+  native 실패의 ERROR1 시험은 변경하지 않는다. 진단 전송 실패 때 원래 snapshot 원인도 보존한다.
+- wire 준비물은 최대 발급 가능 ID 폭으로 round-trip한다. 현재 짧은 ID만으로는 맞던 경계 크기를
+  거부할 수 있으므로 단순 리팩터가 아니다. SESSION 권한/ID 쓰기 전 거부와 정상 작은 입력을 함께
+  검사한다. 표현 불가능한 오류는 `UndeliverableDirect`로 원문/실패 이유를 보존하고 ID0개를 요구한다.
+
+### 작성한 consumer oracle — 실행·제거 변이는 미실시
+
+| 실제 경로 | 파일 / 확인할 조건 |
+| --- | --- |
+| broker 성공/정확 dedupe | 기존 Full 재시도 시험을 성공 allocation까지 강화; 신규1개가 agent/node/outer/outbound 원 allocation·수신자 변조와 독립 영수증·중복 무재발행을 검사 |
+| actual mailbox | `mailbox_deferred_tests.rs`9개: 즉시/예약 enqueue, transfer, Full/영구 거부, receipt Drop, reader/source callback panic, publisher 종료, notify 전 dequeue; move-only compile-fail 예제도 미실행 |
+| actual direct emit/SESSION/FIFO | `direct_emission_tests.rs`8개: 지연 관측 앞지르기 금지, Closed의 전체 Event/allocation, 미래 ID 폭, 실제 번호 고갈, 빈 prefix 진단/기존 prefix 보존, 첫 Closed 뒤 모든 실패 소유자 보존, 전체 ID 부족의 원자 거부/단일 진단 정상 대조 |
+| 기존 SESSION handle | `handle_undecodable_ready_does_not_install_session_authority`의 동일140,000자 ID 입력 유지; malformed ERROR 발행 성공을 무발행·무ID소비·진단 보존·fence로 정정 |
+
+새 SESSION fixture는 실제 post-LOAD 상태지만 native 서버를 설치하지 않는다. FIFO 앞 PHYSICAL는
+codec/순서 대조용이며 native 실행 증거가 아니다. Closed 뒤 시험 내부 publisher 교체/fence 해제는
+보존된 동일 Event 대조일 뿐 운영 복구 기능이 아니다. 미래 ID 경계는 codec envelope 길이에서 산술로
+만들며 실패 길이를 탐색하지 않는다. broker/노드/actor 테스트 입력의 정상 요청 수·큐 용량을 줄이지 않는다.
+active publication 도중 Direct append 자체의 재진입 전용 oracle는 없고, source capacity callback의
+caller-lock 재진입도 별도 신규 oracle가 아니다. 이 둘을 실제 통과 경로에 포함했다고 세지 않는다.
+
+예정된 제거 변이는 큐에 원본 대신 복사본 이동, enqueue 중 조기 callback, source 회계 이중 반환,
+직접 응답 FIFO 우회/ID 선발급, 첫 batch 진단 Closed에서 뒤 소유자 폐기, native fence 전면 해제,
+malformed 진단 발행 허용이다. 어느 변이도 이번에 실행했다고 주장하지 않는다. 기존 actor cap1/cap8의
+14입력/6결과/native/외부 dequeue0 판정은 변경하지 않았다.
+
+### 다음 연결과 Git 포함 범위
+
+독립 정적 검토는 broker receipt·원 allocation, mailbox 알림/Drop/panic, direct 종료 진단의 기존
+회귀 의도와 수용 범위 차이를 대조했다. canonical owned 성공 경로의 필수 연결 표를 배치 계약에
+남겼다. raw 호환 다리에서 claim을 버리지 않고 장기 RequestState/해제 출처/파싱 복사 비용까지
+추적해야 한다. control/transport의 terminal 소비와 원격 acceptance는 여전히 미완이다.
+
+유지할 운영 코드·필수 회귀·소유 문서만 전체 WIP 체크포인트에 포함한다. 생성 proof·임시 도구·모델·
+바이너리는 기존 ignore에 남긴다. 새로운 규약 문서는 만들지 않았다. 남은 순서는 로드맵 최신 기록만
+따르며 C++/원격/GPU/모델 실행·push와 최종 웨이브 성과 승격은 이번 범위에 없다.

@@ -7,6 +7,14 @@ use std::collections::VecDeque;
 
 #[derive(Debug)]
 pub(super) enum CommittedEffect {
+    /// Wire-prevalidated direct response, without an assigned Event ID.
+    Direct(super::emit::PreparedEmission),
+    /// Failed preflight is retained for diagnosis, never made publishable by
+    /// clearing a fence or retrying a different envelope/ID.
+    UndeliverableDirect {
+        intent: super::emit::DirectEmission,
+        detail: String,
+    },
     /// Exact wire-level value retained across final publication failures.
     /// IDs and payload bytes are never regenerated from a DTO on retry.
     Publication {
@@ -67,6 +75,9 @@ pub(super) enum CommittedEffect {
 /// neither a storage reservation nor a native-operation reconciliation token.
 #[derive(Debug)]
 pub(super) enum PublicationAfter {
+    Direct {
+        diagnostic: bool,
+    },
     OutputTrace {
         request_id: String,
         sequence_id: u32,
@@ -82,6 +93,10 @@ pub(super) enum PublicationAfter {
 impl PublicationAfter {
     pub(super) fn failure_message(&self) -> &'static str {
         match self {
+            Self::Direct { diagnostic: true } => "committed diagnostic could not be delivered",
+            Self::Direct { diagnostic: false } => {
+                "committed direct response could not be delivered"
+            }
             Self::OutputTrace { .. } => "committed output could not be delivered",
             Self::ReleaseReceipt => "committed release receipt could not be delivered",
             Self::Forward => "committed control could not be delivered",
@@ -94,13 +109,35 @@ impl PublicationAfter {
 
 impl Worker {
     pub(super) fn flush_effects(&mut self) -> Result<(), String> {
-        if self.effects_fenced {
+        self.flush_effects_inner(None)
+    }
+
+    /// Only a freshly appended diagnostic group whose OLD prefix was empty
+    /// may use this mode. Keep the native fence set throughout; never process
+    /// a native effect, earlier failed publication, or subsequently added work.
+    pub(super) fn flush_terminal_diagnostics(&mut self, count: usize) -> Result<(), String> {
+        self.flush_effects_inner(Some(count))
+    }
+
+    fn flush_effects_inner(&mut self, mut diagnostic_count: Option<usize>) -> Result<(), String> {
+        if self.effects_fenced && diagnostic_count.is_none() {
             return Err("committed effects are fenced after an uncertain failure".into());
         }
         // Still synchronous: no async actor, native group reservation, or byte
         // budget is established here. The popped effect remains owned until it
         // either moves into the real mailbox or returns to the same FIFO head.
         while let Some(mut effect) = self.effects.pop_front() {
+            if let Some(remaining) = diagnostic_count {
+                if remaining == 0 {
+                    self.effects.push_front(effect);
+                    return Ok(());
+                }
+                if !matches!(&effect, CommittedEffect::Direct(prepared) if prepared.is_diagnostic())
+                {
+                    self.effects.push_front(effect);
+                    return Err("terminal diagnostic cannot replay a preceding effect".into());
+                }
+            }
             if let Err(error) = self.materialize_effect(&mut effect) {
                 self.effects.push_front(effect);
                 self.effects_fenced = true;
@@ -199,6 +236,13 @@ impl Worker {
                 }
                 Ok(_) => {}
             }
+            if let Some(remaining) = diagnostic_count.as_mut() {
+                *remaining -= 1;
+                if *remaining == 0 {
+                    return Ok(());
+                }
+                continue;
+            }
             self.enqueue_deferred_ack_error()
                 .map_err(|_| "deferred ACK diagnostic could not be retained".to_owned())?;
         }
@@ -211,6 +255,21 @@ impl Worker {
     /// the original intent. An already frozen Event never gets another ID.
     fn materialize_effect(&mut self, effect: &mut CommittedEffect) -> Result<(), String> {
         let (event, after) = match effect {
+            CommittedEffect::Direct(prepared) => {
+                // Check before moving the body. Rejected allocation preserves
+                // the exact unnumbered prepared response and all earlier IDs.
+                let sequence = self.state.next_event;
+                let next_event = sequence
+                    .checked_add(1)
+                    .ok_or("completion event ID is exhausted")?;
+                let after = PublicationAfter::Direct {
+                    diagnostic: prepared.is_diagnostic(),
+                };
+                let event = prepared.materialize(sequence);
+                self.state.next_event = next_event;
+                (event, after)
+            }
+            CommittedEffect::UndeliverableDirect { detail, .. } => return Err(detail.clone()),
             CommittedEffect::Output {
                 base,
                 reply,

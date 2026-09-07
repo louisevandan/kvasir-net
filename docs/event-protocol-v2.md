@@ -154,6 +154,14 @@ control reply loop and remote pumps do not yet retain all terminal failures;
 returning the Event from the broker alone does not close those consumers.
 Execution status and tests belong to the roadmap/evidence, not this contract.
 
+The raw success path moves the original allocation to the destination and
+stores an independent Event copy for exact duplicate comparison. Receiver
+mutation cannot alter that receipt. This does not establish either store's
+retained-byte budget. In particular, moving a producer's storage claim into
+the duplicate ledger would incorrectly retain producer capacity until receipt
+eviction. The owned handoff and notification/commit requirements are owned by
+the [batching boundary contract](adapter-batching-layers.md#broker-책임-이전과-정확한-중복-보관--연결-시-지켜야-할-목표-계약).
+
 ## Node lifecycle
 
 ### Create
@@ -198,10 +206,13 @@ For a linear llama.cpp pipeline the adapter payload projects the topology:
 | middle | next Node, OUTER return route |
 | last | first Node for decode continuation, OUTER return route |
 
-The previous node is not session state: an input event states its source. The
-tail creates two independent event streams: token/output events to OUTER and
-decode-continuation events to the first node. Monitoring is a third stream and
-must never be encoded as output.
+The adapter derives expected predecessor/first/last roles from the declared
+session; an incoming source field alone is not execution authority. The tail
+produces engine results, but head settlement approval owns user-visible output
+authorization. P4 does not infer either from routing or a queue acknowledgement.
+The exact session, settlement and output rules are owned by the
+[adapter batching contract](adapter-batching-layers.md). Monitoring remains
+separate from user output.
 
 Prefill input and decode continuation are distinct operations in the llama.cpp
 adapter protocol. They are not P4 queue classes. Another adapter may use a

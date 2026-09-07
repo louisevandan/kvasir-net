@@ -237,8 +237,9 @@ impl Worker {
             SESSION_READY_CONTENT_TYPE,
             &serde_json::json!({"session_id":id,"state":"ready","load_generation":self.state.load_generation}),
         )?;
-        // The response is fully prepared without changing next_event. No
-        // emitter, native work, await, or yield intervenes before its ID commit.
+        // The body and widest future envelope are prevalidated without
+        // assigning an ID. No handler/native work/yield separates authority
+        // commit from appending that same response behind the existing FIFO.
         self.state.sessions.insert(
             id,
             PipelineSession {

@@ -6,7 +6,7 @@
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
 [문서 안내도](document-map.md)가 소유한다. 최초 문서 이관과 후속 구현을 구분한다.
 기준 커밋의 감사는 §3, **후속 구현·체크포인트와 다음 행동은 마지막 진행 기록**을 따른다.
-최신 진행 기록은 [실제 전달 거부의 원본 소유권](#2026-09-07-후속-구현--실제-전달-거부의-원본-소유권)이다.
+최신 진행 기록은 [직접 응답 FIFO와 알림 경계](#2026-09-07-후속-구현--직접-응답-fifo와-알림-경계)다.
 이전 진행 기록 안의 “다음”은 당시의 순서이며 현재 지시가 아니다. 현재 반례와 단계 상태는 최신 기록을 우선한다.
 
 ## 1. 완료해야 할 제품 목표
@@ -1365,3 +1365,29 @@ native 결과 사전 bound·remote grant/acceptance·정상 prompt 웨이브는 
 
 유지할 운영 변경·필수 회귀·소유 문서만 전체 미검증 체크포인트에 포함하고 생성물은 ignore한다.
 이번에 remote/GPU/native/C++/push 실행은 없고, 새 한도나 정상 입력을 줄이는 정책을 추가하지 않았다.
+
+### 2026-09-07 후속 구현 — 직접 응답 FIFO와 알림 경계
+
+앞 거부 소유권 WIP는 `658c9cded`다. 이번에는 성공 전달의 원본/중복 사본을 분리하고, 실제 completion
+enqueue 뒤 알림을 분리했으며, LOAD/SESSION/UNLOAD/오류 응답도 기존 committed FIFO에 연결했다.
+**canonical owned 성공 전달 전체를 이관한 것은 아니다.** 실제 broker는 아직 raw 큐를 사용한다.
+
+정적 대조에서 기존 native 오류1개 발행을 잃지 않는 좁은 종료 진단 경계와, batch 첫 Closed 뒤
+나머지 진단 보존을 함께 검사했다. 최대 미래 ID 폭의 사전 검증은 경계 입력의 수용 범위를 보수적으로
+줄이는 계약 변경이다. 기존 malformed ERROR 발행을 성공으로 세던 시험은 같은 입력으로 무발행·
+무권한 승인·진단 보존을 요구하도록 고쳤다. 계약/필수 연결 범위는 [배치 계약](adapter-batching-layers.md),
+oracle와 한계는 [정산 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)가 소유한다.
+
+**B1/B2/B5 IN_PROGRESS, B3 end-to-end 미완; 컴파일·시험·변이 미실행 WIP**다.
+검증2회 사용·마지막1회 미사용이며 기존1254/1/7은 수정 전 결과다. actor14입력/6결과/cap1·cap8은
+변경하지 않았다. 국소 API·직접 응답 보존으로 actor GREEN이나 성능 개선을 주장하지 않는다.
+
+다음 첫 행동은 **배치 계약의 필수 연결 표를 실제 owned 소비로 닫는 것**이다. 새 보조 API만 추가하는
+단계를 반복하지 않는다. `EventSender/Receiver`와 제품 저장소 생성, EventNode/NodeAdapter/WorkerInput,
+장기 request/해제 출처, control/connection terminal 소비를 같은 변경 범위로 추적한다. source claim과
+독립 dedupe 비용을 분리하고, 잠금 밖 알림·필수 결과/반환 선예약·input/capacity/shutdown pump를 함께
+완료해야 고정 actor 반례의 진행을 판정한다. native 가변 결과 bound·remote acceptance는 별도 미완이며
+raw fallback이나 row 임의 배수로 숨기지 않는다. 부분 컴파일/시험으로 마지막 회차를 소비하지 않는다.
+
+이번 소스·회귀·소유 문서는 전체 WIP 체크포인트로 보존하며 생성물은 ignore한다. 원격/GPU/C++/push는
+실행하지 않았다. 최종 강한 웨이브·정상 응답·VRAM-only 이후 RAM 오프로딩 승격 목표는 그대로다.
