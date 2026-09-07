@@ -17,7 +17,7 @@ function quote(value) {
 /// split_simple() pack unequal Prefill and Decode rows into one physical
 /// UBATCH, which is a batching policy rather than a load workaround.
 function buildPlan({ model, begin, end, totalLayers, parallel, nBatch, nUbatch, totalContext,
-                    flashAttn, cacheTypeK, cacheTypeV }) {
+                    flashAttn, cacheTypeK, cacheTypeV, mmap, overrideTensors }) {
   const unowned = [];
   for (let layer = 0; layer < totalLayers; layer += 1) {
     if (layer < begin || layer >= end) unowned.push(layer);
@@ -41,12 +41,22 @@ function buildPlan({ model, begin, end, totalLayers, parallel, nBatch, nUbatch, 
     // harness's: a 2B model with an unquantised V cache is cheap and a 40
     // layer one is not. Defaults are what every scenario used before.
     "--flash-attn", flashAttn ?? "off",
-    "--no-mmap",
+    // RAM-offload scenarios keep mmap on so several stage processes on one
+    // host share the page cache instead of each reading the file into RAM.
+    ...(mmap ? [] : ["--no-mmap"]),
     "--cache-type-k", cacheTypeK ?? "q8_0",
     "--cache-type-v", cacheTypeV ?? "f16",
   ];
-  if (unowned.length) {
-    tokens.push("--override-tensor", quote(`blk\\.(${unowned.join("|")})\\..*=CPU`));
+  // Unowned layers are pushed to CPU as before. `overrideTensors` adds
+  // patterns for weights this stage owns but deliberately keeps and computes
+  // on CPU (RAM offload, e.g. MoE experts); each entry is already
+  // "<regex>=<buffer type>" text.
+  const overrides = [
+    ...(unowned.length ? [`blk\\.(${unowned.join("|")})\\..*=CPU`] : []),
+    ...(overrideTensors ?? []),
+  ];
+  if (overrides.length) {
+    tokens.push("--override-tensor", quote(overrides.join(",")));
   }
   return tokens.join(" ");
 }
@@ -110,6 +120,8 @@ export function buildConfig(spec, options = {}) {
       flashAttn: spec.flashAttn,
       cacheTypeK: spec.cacheTypeK,
       cacheTypeV: spec.cacheTypeV,
+      mmap: spec.mmap,
+      overrideTensors: spec.overrideTensors,
     }),
     args: [],
     environment: [

@@ -99,6 +99,51 @@ The split below is fixed at 5/4/4/22 because gemma-4-E2B shares KV across
 layers 13..34, so no stage boundary may fall inside that region. See
 [docs/llamacpp-stage-memory.md](../../../docs/llamacpp-stage-memory.md).
 
+## Larger models and RAM offload (2026-09-07)
+
+Three scenarios extend the ladder past the 2B/35B VRAM-only arms. They are
+development arms on the approved 3090x2 host, not the roadmap's final
+multi-computer proof, and the harness still does not enforce H0~H7.
+
+| Scenario | Model (from `S:\models`) | Placement | What it isolates |
+| --- | --- | --- | --- |
+| `vram_31b_2stage` | gemma-4-31B-it Q5_K_S, dense, 60 layers | 36/24 layers on two cards | a dense model that only fits by splitting |
+| `offload_35b_moe_2stage` | Ornith-1.0-35B Q5_K_S (qwen35moe, 256 experts) | 20/20 layers, routed experts on CPU | expert offload against `prefill_mix_35b_2stage`, same cut |
+| `offload_122b_moe_2stage` | Qwen3.5-122B-A10B Q5_K_S (75.9 GiB of experts) | 25/24 layers, experts on CPU | a model that only fits with RAM offload |
+
+A one-stage baseline of the offload layout was tried and cannot run:
+`p4-event-drive` refuses a config with fewer than two nodes. On 2026-09-07
+the 122B two-stage arm loaded both stages (about 39 GiB of experts in host
+RAM and 3 GiB on each card) and then the tail stage exited: its planned host
+compute buffer did not equal the reserved one
+(`stage_memory_plan.cpp`, "planned and actual memory differ at entry 1"), so
+that arm has no throughput figure yet.
+
+Two spec fields carry the offload into the plan. `mmap: true` drops
+`--no-mmap`; the offload arms keep it `false`, because with the GGUF on the
+S: SMB share the mmapped experts faulted in page by page during the first
+prefill and the run stalled (2026-09-07, one stage execution in 30 minutes).
+`--no-mmap` reads only the owned experts, sequentially, into host RAM at
+load, and the offload arms allow 60 minutes for that. `overrideTensors` appends
+`"<regex>=<buffer>"` patterns to the existing unowned-layer
+`--override-tensor`; `EXPERTS_TO_CPU` keeps every `ffn_{up,down,gate}_exps`
+tensor on CPU and computes it there, which is what llama.cpp's `--cpu-moe`
+does. Routers, attention, norms, embeddings and the KV cache stay on the
+GPU. Classification of a run as `vram_only` or `ram_offload` follows the
+actual placement the stage logs report, not these option names.
+
+The Ornith-1.0-35B GGUF declares a ChatML template with `<|im_end|>` as EOS
+(read from `tokenizer.chat_template` and `tokenizer.ggml.eos_token_id` on
+2026-09-07). `prefill_mix_35b_2stage` still sends it gemma-4 turns and gemma
+stops, which is the arm every earlier 35B figure used; the offload arms use
+`chatmlTurn` and `STOPS_CHATML`, so their meaning verdicts are not comparable
+with that arm's 55-64/64 history. `gemma-4-31B-it` uses the same turn format
+as the 2B.
+
+A run that fails before UNLOAD leaves its stage servers registered in a
+remote agent, and the next run then fails with `node already exists`. Restart
+the agent with `remote-agent.mjs stop` and `start` between such runs.
+
 ## Requirements
 
 Build the staged server for the compute capabilities actually present, not

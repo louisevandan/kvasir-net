@@ -18,6 +18,38 @@
 그 뒤의 독립 completion 진행 후보도 작성돼 있으나 검증하지 않았다. 보존 커밋 여부와 무관하게
 이 후보 및 아래 WIP는 **실행 검증 전**이다.
 
+### 0.0 2026-09-07 저녁 — 사용자 재개 지시 후 실제 확인 결과 (검증됨)
+
+사용자가 "실제 확인 후 계속/변경 판단, 실측으로 TPS·배치 포화·GPU 사용률 보고"를 지시해 위 §0.1~0.6의
+미검증 항목을 실행했다. 원자료·해시·명령은
+[2026-09-07 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-07-head-verification-and-3090x2-ladder.md)가 소유한다.
+
+| 항목 | 결과 | 지위 |
+| --- | --- | --- |
+| HEAD `2ed9b71d4` release 빌드 | 성공 | 검증됨 |
+| HEAD `cargo test --workspace` | **컴파일 실패**(`issue_witness_tests.rs:409`, `RequestState`는 `Deref`만 구현), 시험 0개 실행 | 검증됨(결함) |
+| 그 크레이트 제외 워크스페이스 | 849/0/0 | 검증됨 |
+| 독립 워크트리 + 시험 1줄 수정 후 staged adapter | 512/0/7, **cap1 actor ring 진행 시험 통과**, cap8 통과 | 검증됨(HEAD 자체 아님) |
+| cap1 후보 제거 변이(`forward_independent_front` 무력화) | cap1 실패, cap8 통과 | 검증됨(변이 1종) |
+| 원격 3090×2, HEAD Release 바이너리, 09-04와 같은 launcher | 35B VRAM-only 117.07 gen TPS(기준선 116.9~118.5와 동일), 2B 2-stage 189.75, 31B dense 2-stage 71.59 수락 | 검증됨 |
+| GPU 사용률·배치 포화 | 모든 arm 평균 7~29%, 0% 표본 18~62%, ubatch 채움 2.7~20% | 검증됨(미개선) |
+| `pressure` 512요청 | 두 호스트 모두 완료 뒤 UNLOAD `unload is busy; active_owners=256`, 09-03 통과 대비 **회귀** | 검증됨(새 반례) |
+| RAM 오프로딩 arm(원격, expert→CPU `--no-mmap`) | 35B MoE 43.19 gen TPS 수락·의미 64/64(ChatML), VRAM-only 117.07의 0.37배. Qwen3.5-122B-A10B는 두 stage 로드(host 38.3/39.0 GiB)까지 됐으나 tail이 `stage_memory_plan.cpp:358` host compute 계획≠실제로 exit 5 → **BLOCKED**, TPS 미측정. S: mmap 오프로딩은 페이지 폴트로 정지(30분에 stage 실행 1회) | 검증됨/BLOCKED |
+
+**판단: 계획을 바꾸지 않고 B1/B2를 계속하되 첫 행동을 바꾼다.** 후보는 cap1을 실제로 고쳤고 성능을 깨지
+않았다. 그러나 (1) HEAD가 시험 컴파일이 안 되고, (2) `pressure`가 새 UNLOAD 회귀를 냈으며, (3) 유효 TPS와
+GPU 활용은 이번 변경 전후가 같다. 재개 순서는 §0.5의 1번 앞에 다음을 둔다.
+
+1. `issue_witness_tests.rs`의 대입을 `input_mut_for_test()`로 고쳐 HEAD `--workspace` 전체 집계를 회복한다.
+2. `pressure` 반례를 실제 소비 경로 회귀로 봉인하고 `stage_owners`/`stage_frontiers`가 정산 뒤 해제되지 않는지,
+   `2e9451a5c`의 검사가 과잉인지 판정한다. 실패 run이 남긴 stage가 다음 run을 막는 원격 정리도 하네스에 넣는다.
+3. 하네스 `prefill_mix_35b_2stage`가 ChatML 모델에 gemma turn을 보내는 문제를 H1 수용 전에 고친다.
+4. RAM 오프로딩 확장(B6/B7의 자원 단계 3)은 tail stage의 host compute buffer 계획≠실제 판정
+   (`stage_memory_plan.cpp:358`)을 먼저 해결해야 122B급 측정이 가능하다. `p4-event-drive`의 2노드 최소 조건 때문에
+   1-stage 오프로딩 기준선은 지금 표현할 수 없다.
+5. 그 뒤 §0.5 1~6을 그대로 진행한다. GPU 유휴(0% 표본 18~62%)와 ubatch 채움은 B4/H5의 대상이지
+   이번 후보의 성과가 아니다.
+
 ### 0.1 결론과 확실한 증거 경계
 
 **정합성 기반과 실제 결함 재현은 전진했다. 그러나 완성된 분산 인플라이트 배치, 최근 수정의

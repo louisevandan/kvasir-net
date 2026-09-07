@@ -127,6 +127,30 @@ export function mixedPrefillPrompt(index) {
   return backgroundPrompt(PREFILL_MIX[index % PREFILL_MIX.length]);
 }
 
+// ChatML, as the Qwen3.5 family (qwen35 / qwen35moe / qwen4exp, and the
+// Ornith-1.0-35B fine-tune, whose GGUF template is ChatML with <|im_end|> as
+// EOS) formats a turn. Read from the GGUF `tokenizer.chat_template` on
+// 2026-09-07; BOS is not added by these tokenizers, so nothing is written here.
+export function chatmlTurn(question) {
+  return `<|im_start|>user\n${question}<|im_end|>\n<|im_start|>assistant\n`;
+}
+
+function backgroundBody(lines) {
+  if (lines === 0) return ACCEPTANCE_QUESTION;
+  const body = [];
+  for (let index = 0; index < lines; index += 1) {
+    body.push(`${index + 1}. ${BACKGROUND[index % BACKGROUND.length]}`);
+  }
+  return `${body.join("\n")}\n\n위 배경을 참고하여, ${ACCEPTANCE_QUESTION}`;
+}
+
+/// The same heavy-tailed prefill mix as `mixedPrefillPrompt`, in ChatML.
+export function mixedPrefillPromptChatml(index) {
+  return chatmlTurn(backgroundBody(PREFILL_MIX[index % PREFILL_MIX.length]));
+}
+
+export const STOPS_CHATML = ["<|im_end|>", "<|im_start|>"];
+
 /// Cuts a model across the execution lanes the hardware actually has.
 ///
 /// Measured 2026-09-04, interleaved, every arm passing its judge: one stage a
@@ -304,6 +328,33 @@ export const NO_THINKING_35B = {
   reasoning_budget_start_tag: "<think>",
   reasoning_budget_end_tags: ["</think>"],
 };
+
+// 2026-09-07 local resource ladder (RTX 3090 24 GiB + RTX 4080 16 GiB, 256 GiB
+// host RAM). GGUF headers read that day: gemma-4-31B is dense, 60 layers,
+// 19.7 GiB; Qwen3.5-122B-A10B is qwen35moe, 49 blocks of which one is a
+// NextN (MTP) layer (`nextn_predict_layers=1`), so the trunk llama.cpp cuts
+// is 48 layers - a cut ending at 49 trips `apply_linkcpp_stage`'s
+// `end <= n_layer` assert. 256 experts (8 used), 82.2 GiB of which 75.9 GiB
+// are routed experts. Both live on the S: share,
+// which the stage processes read through mmap (from the central PC that
+// share measured about 64 MB/s, so a load is minutes, not seconds).
+export const MODEL_31B =
+  "S:\\models\\unsloth\\gemma-4-31B-it-GGUF\\gemma-4-31B-it-Q5_K_S.gguf";
+export const GEMMA4_31B_LAYERS = 60;
+export const MODEL_122B =
+  "S:\\models\\unsloth\\Qwen3.5-122B-A10B-MTP-GGUF\\Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf";
+export const QWEN35_122B_LAYERS = 48;
+
+/// Every routed-expert weight of every owned layer stays on CPU and is
+/// computed there (what llama.cpp's --cpu-moe does), written as an
+/// override pattern so it composes with the unowned-layer pattern. Routers,
+/// attention, norms, embeddings and the KV cache stay on the GPU.
+export const EXPERTS_TO_CPU = ["blk\\..*\\.ffn_(up|down|gate)_exps.*=CPU"];
+
+/// ChatML with the thinking block already closed, the Qwen3 convention.
+export function mixedPrefillPromptChatmlNoThinking(index) {
+  return `${mixedPrefillPromptChatml(index)}<think>\n\n</think>\n\n`;
+}
 
 export const BINARY = "F:\\dev\\p4\\target\\p4-staged-cuda\\p4_staged_server.exe";
 export const REMOTE_ROOT = "C:\\Users\\42mob\\p4-remote";
@@ -497,6 +548,92 @@ export const SCENARIOS = {
     waves: Array.from({ length: 8 }, (_, index) => ({
       after_ms: index * 1_000,
       count: 8,
+    })),
+  },
+
+  // ---- 2026-09-07 local resource ladder (3090 + 4080) ----
+  //
+  // VRAM-only, a dense 31B split unevenly so the 16 GiB card holds 24 of the
+  // 60 layers. Same mixed prefill and gemma-4 template as the 2B arms.
+  vram_31b_2stage: {
+    ...base,
+    description: "gemma-4-31B dense, VRAM-only, two stages 36/24 layers, 16 sequences, mixed prefill",
+    model: MODEL_31B,
+    cuts: [[0, 36], [36, 60]],
+    devices: ["0", "1"],
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 16,
+    context: 2048,
+    maxTokens: 400,
+    promptFor: mixedPrefillPrompt,
+    waves: Array.from({ length: 8 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 4,
+    })),
+  },
+
+  // The same 35B MoE as prefill_mix_35b_2stage, but with its routed experts
+  // kept and computed on CPU (RAM offload), mmap on, and the ChatML template
+  // its GGUF declares (prefill_mix_35b_2stage sends gemma-4 turns to it).
+  offload_35b_moe_2stage: {
+    ...base,
+    description: "35B MoE, experts on CPU, one stage a card, 32 sequences, mixed prefill (ChatML)",
+    model: MODEL_35B,
+    ...placeOnLanes(ORNITH35B_LAYERS),
+    // mmap stays off: with the GGUF on the S: SMB share, mmapped experts
+    // fault in page by page during the first prefill and the run stalled
+    // (2026-09-07: one stage execution in 30 minutes). --no-mmap reads the
+    // owned experts sequentially at load into host RAM instead.
+    mmap: false,
+    overrideTensors: EXPERTS_TO_CPU,
+    // Load from the share plus CPU expert compute do not fit the 30-minute
+    // default.
+    timeoutMs: 3_600_000,
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 32,
+    context: 2560,
+    maxTokens: 600,
+    promptFor: mixedPrefillPromptChatmlNoThinking,
+    waves: Array.from({ length: 8 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 8,
+    })),
+  },
+
+  // RAM offload proper: a 122B-A10B MoE whose 76 GiB of experts cannot fit
+  // the cards, cut across both. A one-stage baseline of the same offload
+  // layout is not expressible here: p4-event-drive refuses a run with fewer
+  // than two nodes (`run/config.rs::validate`).
+  offload_122b_moe_2stage: {
+    ...base,
+    description: "Qwen3.5-122B-A10B MoE, experts on CPU, one stage a card, 16 sequences, mixed prefill (ChatML)",
+    model: MODEL_122B,
+    ...placeOnLanes(QWEN35_122B_LAYERS),
+    // mmap stays off: with the GGUF on the S: SMB share, mmapped experts
+    // fault in page by page during the first prefill and the run stalled
+    // (2026-09-07: one stage execution in 30 minutes). --no-mmap reads the
+    // owned experts sequentially at load into host RAM instead.
+    mmap: false,
+    overrideTensors: EXPERTS_TO_CPU,
+    // Load from the share plus CPU expert compute do not fit the 30-minute
+    // default.
+    timeoutMs: 3_600_000,
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 16,
+    context: 2048,
+    maxTokens: 300,
+    promptFor: mixedPrefillPromptChatmlNoThinking,
+    waves: Array.from({ length: 8 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 4,
     })),
   },
 
