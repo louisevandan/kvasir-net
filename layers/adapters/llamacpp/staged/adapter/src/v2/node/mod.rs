@@ -86,7 +86,6 @@ impl NodeAdapter for LlamaNodeAdapter {
             Err(mpsc::TrySendError::Full(WorkerInput::Event(event))) => {
                 Err(OfferError::Full(event))
             }
-            Err(mpsc::TrySendError::Full(_)) => Err(OfferError::Closed),
             Err(mpsc::TrySendError::Disconnected(_)) => Err(OfferError::Closed),
         }
     }

@@ -2541,3 +2541,79 @@ Cancel/Drain·GPU 웨이브는 미완이다. C++/JS 하네스·모델·원격 �
 native 결과 공간의 예약, 통합 capacity wake, non-ACK 뒤 반환 경로, EventNode/broker credit,
 graceful Cancel/Drain은 남아 있다. 최종 출력 품질/TPS/GPU 활용 또는 다중 컴퓨터 실기는 이 증거에
 없다. 다음 첫 행동과 전체 순서는 실행 로드맵의 최신 진행 기록만 소유한다.
+
+## 외부 감수 대조와 Git 포함 심사 (2026-09-07)
+
+### 시간과 검증 범위
+
+외부 감수의11:43~11:45 스냅샷은 첫 WIP의1236 passed/9 failed/7 ignored와 일치한다.
+그 뒤 `96c90f99e`의1253/0/7 및399봉인 입력 대조와 혼동하지 않는다. ACK 서비스의
+국소 GREEN과 변이5종은 앞 절에 기록돼 있지만 ResourceBudget/byte/RSS 완료는 아니다.
+현재 `native_calls`와 `requests`는 Full 중 native 불변 및 보류 PREFILL의 FIFO 복구 단언에
+쓰이므로 미사용이라는 옛 지적을 근거로 제거하지 않았다.
+
+이번 코드 차이는 두 가지다. 단일 WorkerInput::Event를 이미 처리한 뒤의 도달 불가 Full(_)
+분기를 제거했다. 또 `cancel_prepared_issue`를 시험 빌드로 한정했고 기존 시험 호출4개는
+유지했다. 성공한 prepare_issue와 begin_native_issue 사이에 yield/일반 취소 분기는 없다.
+이것은 운영 Cancel 구현이나 실제 도달 가능한 Full의 Closed 오분류 수정이 아니다.
+native 시도 후 불명 상태를 취소로 되돌리는 동작도 추가하지 않았다.
+
+중간 실행 `target/capacity-slice-20260907-10`은1253/0/7이었다. 이후 주석 표현을 정밀화한
+최종 Rust399입력 SHA256은 `c56ff070e61aec2a857d6b0a6113842ab04ee650b69d3855d74be6efb90a4d23`다.
+`target/capacity-slice-20260907-11`의 전체 실행은 **1252/1/7**,57summary·cargo101이다.
+실패는 문서2개의 혼합 EOL이며, 문서 형식 정리 전에 전체 시험을 시작한 절차 오류다.
+원문 SHA256은 `e5a43fb4b2071801bb8ca7d9f4f61f2b9ece2364eddc7cced104be9eab39f148`다.
+하네스는 `node --test`에 `test/benchmarks/p4-4node/**/*.test.mjs`의 실제 파일 목록을 전달해
+**72 passed/0 failed/0 skipped**를 확인했다. C++·GPU·원격 배포·push는 실행하지 않았다.
+이 정리에 대한 변이5종 재실행도 주장하지 않는다. 그것은 앞 체크포인트의 별도 증거다.
+
+문서 형식 정리 후 **요청된3라운드 상한 중 추가1라운드**를
+`target/capacity-slice-20260907-12`로 실행했다. 위와 동일한 Rust399입력에서
+`cargo test --workspace --no-fail-fast --locked`는 **1253 passed/0 failed/7 ignored**,
+57summary·cargo0이다(04:00:53~04:02:58 UTC). 원문 SHA256은
+`276c791ccdeb3fa4ca85efc5bd76e9462a5c12cf3f0743857ce0be7641a68ad1`다.
+같은 묶음은 docs-lint 기본/전체79파일, 자체시험12/12, cargo docs1/1,
+private-header81파일·common 부채0header/5source, 하네스72/0/0skipped를 확인했다.
+Rust 입력의 실행 전후 내용은 동일하다. 실행 중에는 입력을 편집하지 않았으며 종료 뒤에는
+이 결과 기록만 추가하고 문서 형식/색인을 다시 확인한다. 이번 비동작 정리는 첫 라운드에서
+통과해 둘째/셋째 반복을 하지 않는다. 앞의 문서 실패 원문은 보존한다. 아직 미구현인 순환
+대기 수정이나 분산 배치 전체가 이1라운드로 완료됐다는 뜻은 아니다.
+
+### 보관 결정
+
+약1.06MB·36파일의 생성 묶음과 특정 커밋 전용104줄 보관 도구를 만들었지만 **Git 포함을 철회**했다.
+대부분은399소스 원장의 반복이며, 원문 해시 검사는 당시 EXE·환경·경로 독립 재실행을 복구하지 않는다.
+이것을 배치 개발의 새 공용 도구로 확장하지 않는다. 삭제 없이
+`target/unpublished-ack-archive-20260907-01/`로 옮겼으며 기존 `/target/` 무시 규칙을 확인했다.
+보존된 `bundle/manifest.json` SHA256은
+`35fc1d91f0405f6f8c69c52209ec6a4d755477efbc3565a2dace2fe66581563e`다.
+원 실행 결과와 변이 원자료 경로는 앞 절 그대로다. 이들은 **로컬 보존일 뿐 장기 증거가 아니다**.
+다른 경로에서35원문/399Git내용 대조와 사본 변조 거부를 확인했어도 시험 재실행이 아니므로,
+검증 규약의 다른 머신 재열람/재현 항목은 미충족이다. 외부 저장소로 업로드하지 않았다.
+Git에는 실제 소스·회귀 시험과 이 간결한 기록을 유지한다. 새 JSON/보관 도구/원문 복제는 넣지 않는다.
+
+### 다음 반례의 코드상 후보 — 실행된 RED 아님
+
+근거는 `layers/agent/src/event_node/mod.rs::EventNode::run` @ 96c90f99e의 보류 출력 뒤
+completion 수신 제한, `layers/adapters/llamacpp/staged/adapter/src/v2/node/worker/ack_service.rs::Worker::service_blocked_ack` @ 96c90f99e의
+nonACK 보류 뒤 수신 제한이다. `entrypoints/agent/src/event_runtime/control.rs::create` @ 96c90f99e는
+broker 입력과 worker 입력을 각각 같은 선언 용량으로 만든다. 기존 duplex 시험의
+`layers/agent/src/event_node/tests.rs::DuplexProbeAdapter::try_offer` @ 96c90f99e는 항상 성공한다.
+
+후보 입력은 두 노드H/T, 각 큐 용량1, 정상 요청R의 RELEASE, 정상 요청Q의 PHYSICAL,
+추가 정상 PREFILL H1~H4, 동일한 설치 내용의 SESSION 재전달 C1~C6이다. R의 유한 native
+RELEASE 중 T 입력을 C1~C3으로 채워 Q의 송신을 보류시키고, H 입력을 H1~H4로 채운다.
+R의 진짜 RELEASED도 H 앞에서 보류된다. T가 C1 응답으로 완료큐를 채우고 C2 응답에서
+Full이 되면 C3을 보류하며 C4~C6으로 나머지 입력 공간을 채우는 유한 순서가 후보이다.
+
+| 공간 | H | T |
+| --- | --- | --- |
+| EventNode 보류 출력 | PHYSICAL(Q)→T | RELEASED(R)→H |
+| broker 입력 / EventNode 보류 입력 | H4 / H3 | C6 / C5 |
+| worker 입력 / worker 보류 입력 | H2 / H1 | C4 / C3 |
+| 완료큐 / Full 송신 | Q 관측 / Q StageSpan | C1 SESSION_READY / C2 SESSION_READY |
+
+정상 OUTER 소비와 모든 태스크의 공정한 재개 뒤에도 내부에서 공간을 만들 수 있는지가
+검사할 질문이다. 강제 종료나 시험이 외부에서 여유를 주는 것으로 정상 해제 완료를 대체하지 않는다.
+아직 이 순서를 실제 EventNode·broker·Worker로 실행하지 않았으며, 순수 PREFILL 웨이브만으로
+같은 상태에 도달한다고 증명한 것도 아니다. 구현 전에 도달성·정상 진행 oracle부터 고정한다.

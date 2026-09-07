@@ -525,6 +525,10 @@ impl AdapterState {
         Ok(())
     }
 
+    // State-machine tests can abandon a candidate before native starts. The
+    // production drive enters begin_native_issue immediately after successful
+    // prepare_issue, without yielding; this is not an operational Cancel.
+    #[cfg(test)]
     pub fn cancel_prepared_issue(&mut self) -> Result<(), String> {
         let prepared = self
             .prepared_issue
