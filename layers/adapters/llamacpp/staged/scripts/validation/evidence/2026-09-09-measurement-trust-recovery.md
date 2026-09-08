@@ -108,6 +108,74 @@ old predicate (exitCode !== null) -> false
 lib test 타깃 전체가 무너져 `cargo test --workspace`가 종료 101·실행 시험 0이었다.
 `input_mut_for_test()`로 복사를 명시했다. `DerefMut`은 여전히 없고 제품 경로는 바뀌지 않았다.
 
+## 5. `pressure` 재판정 — 미판정이던 원인이 확정됐다
+
+수정 직후 같은 시나리오를 돌렸고, **고친 것이 곧바로 답을 내놓았다.**
+
+실행 `20260908T194141Z-410fb9bb` (`target/pressure-20260909/`).
+호스트는 **로컬 RTX 3090 + RTX 4080**이다. 보존된 3090×2 실행과 **다른 하드웨어**이므로 처리량 비교에
+쓰지 않는다. 여기서 판정하는 것은 제어 평면 상태이지 성능이 아니다.
+빌드 `0eadefebd3` + patch set `961bd89cd119`(0025 포함), stage 4개, 시퀀스 정원 256, 요청 512.
+
+### 이번에는 산출물이 남았다
+
+예전에는 UNLOAD 거부가 전파되어 산출물 파일 자체가 없었다. 이번에는 두 오류가 분리돼 기록됐다.
+
+| 필드 | 값 |
+| --- | --- |
+| `error` | `LLAMA_ADAPTER_EVENT_REJECTED` / **`stage control batch total receipt budget is exhausted`** |
+| `cleanup_error` | `unload is busy;work={...}` |
+| `request_count` / `completed_count` / `released_count` | 512 / 96 / **0** |
+
+UNLOAD 거부가 함께 실은 작업 스냅샷이 결정적이다.
+
+```json
+{"requests":0,"pending":0,"pending_releases":0,"pending_settlements":0,
+ "flight_batches":0,"flight_executions":0,"open_batch_view":0,"effects":0,
+ "active_owners":256,"active_frontiers":256}
+```
+
+**비행 중인 작업이 하나도 없다.** owner와 frontier 256개만 남아 있다.
+
+### 원인 사슬
+
+1. `validate_control_batch`의 제품 호출자는 `worker/release.rs:324`와 `worker/settlement.rs:246`
+   **둘뿐이다.** 즉 예산에 걸린 것은 **해제·정산 경로 자신**이다.
+2. 그래서 96개 요청이 `release_member`와 `issued_work`를 받고도 `released`는 **0개**다.
+   해제가 실행된 적이 없다.
+3. 해제가 없으므로 owner·frontier 슬롯이 계속 점유된다: 256/256.
+4. `require_idle_unload`는 owner가 0이 아니면 거부한다. 그 함수의 주석이 스스로 밝히듯 이것은
+   **"explicit, healthy-worker UNLOAD"의 preflight**이며 실패 정리는 별도 경로다.
+
+**판정: UNLOAD 거부는 원인이 아니라 결과다.** 해제되지 않은 상태가 방치돼 새는 것이 아니라,
+**해제 자체가 용량 한계에 막혀 시작되지 못했다.**
+
+### 그 용량 한계
+
+`ownership.rs`의 두 상수다.
+
+| 상수 | 값 | 쓰임 |
+| --- | ---: | --- |
+| `MAX_CONTROL_BYTES` | 1 MiB | 제어 1건의 **최대 응답**을 native 실행 전에 예약 |
+| `MAX_RECEIPT_BYTES` | 64 MiB | 누적 receipt 총량 상한 |
+
+행마다 실제 크기가 아니라 최악 응답 1 MiB를 예약하므로, 누적분이 0이어도 **제어 batch는 약 64행에서
+상한에 닿는다.** 시퀀스 정원 256에서 전폭 해제·정산은 구조적으로 이 한계를 넘는다.
+
+행 단위 거부 자체는 의도된 설계이고 시험도 있다(`ownership.rs:763`, `stage_tests.rs:1608`:
+어떤 native 효과보다 먼저 거부하고 아무것도 소비하지 않는다). 문제는 거부 동작이 아니라
+**두 상수의 조합이 resident 256과 양립하지 않는다는 것**이다.
+
+### 아직 확정하지 않은 것
+
+- 거부된 해제 batch의 **실제 폭**은 이 산출물에 기록되지 않는다. 64행 상한은 상수에서 계산한 예측이며,
+  관측된 폭으로 확인하지 않았다.
+- 보존된 3090×2 실행(`active_owners=224/256`)이 **같은 원인**이었는지는 증명되지 않았다.
+  그 실행들은 최초 오류를 남기지 못했다.
+- 이 실행은 512 요청 중 96개만 완료한 채 131.4 s에 중단됐다. 처리량 수치를 인용하지 않는다.
+- 따라서 §0.5 3번(수용·비행 budget)은 resident 상향의 선행조건으로 남는다. 예산을 세우기 전에
+  resident를 올리면 같은 벽에 다시 닿는다.
+
 ## 종합 결과
 
 | 항목 | 값 |
