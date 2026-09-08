@@ -14,8 +14,8 @@
   "nearest_release_tag": "b10731",
   "previous_linker_pin": "557614e0296ff4a5b6f649737a65ae2076eea2fd",
   "previous_official_base": "557614e0296ff4a5b6f649737a65ae2076eea2fd",
-  "patch_set_sha256": "3cfc636181e4ee1033249b8f7ca4d50156174138bf07c2797a476f4c42ab8c47",
-  "patched_tree": "c81ecd4fff7c93a1f637d63733c0387f0b6bf157",
+  "patch_set_sha256": "961bd89cd1197cef0d683f22d99d9451e25aba5eba5f360dac6aaa792b993d81",
+  "patched_tree": "660114df5e9060736bbee42e793029151fb671eb",
   "patches": [
     {
       "file": "0001-ggml-backend.patch",
@@ -146,6 +146,11 @@
       "file": "0024-stage-cut-mismatch-diagnostic.patch",
       "sha256": "bc63a71c27b8c79e41604909bf0e6c0395f23232eff814f14841ff6b89d1eabb",
       "layer": "stage_hook"
+    },
+    {
+      "file": "0025-noalloc-reserve-size-max.patch",
+      "sha256": "a8f51e0da3d4a56ad349f02d23958939e39879fa5150cab4925870cb682224c5",
+      "layer": "upstream_fix"
     }
   ]
 }

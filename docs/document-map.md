@@ -117,6 +117,7 @@
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-04-35b-and-the-width-collapse.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-04-35b-and-the-width-collapse.md) | 날짜·환경 한정 증거 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md) | 기준 커밋 검수 증거 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-07-head-verification-and-3090x2-ladder.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-07-head-verification-and-3090x2-ladder.md) | HEAD `2ed9b71d4` 컴파일·시험·변이 판정과 3090×2 실기 사다리 증거 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-08-noalloc-plan-underestimate.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-08-noalloc-plan-underestimate.md) | `no_alloc` 메모리 계획의 compute 과소 보고 결함과 `0025` 수정 증거 |
 | [layers/adapters/llamacpp/staged/scripts/validation/README.md](../layers/adapters/llamacpp/staged/scripts/validation/README.md) | 구성요소 안내 |
 | [layers/adapters/llamacpp/staged/server/tests/contract/README.md](../layers/adapters/llamacpp/staged/server/tests/contract/README.md) | 구성요소 안내 |
 | [layers/adapters/README.md](../layers/adapters/README.md) | 구성요소 안내 |

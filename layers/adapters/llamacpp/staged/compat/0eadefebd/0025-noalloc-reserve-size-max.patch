@@ -1,0 +1,80 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index eb5ea08f3ba34d096e2c0ec8e7d889a938a29099..b38ce4fe36e362819771b263ccb4ab8a6c7d7260 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -640,10 +640,31 @@
+ 
+     const uint32_t n_outputs_pp = std::min(n_tokens, cparams.n_outputs_max);
+ 
++    // With no_alloc nothing is allocated, so the expected size of each buffer
++    // has to be measured on every reserve and kept at its maximum. The
++    // allocating path reads the size back from the scheduler below, after all
++    // three graphs have been reserved and each buffer has grown to fit the
++    // largest of them. Measuring only the first pp graph therefore reports
++    // less memory than the same model really uses whenever the tg graph or the
++    // second pp reserve needs more, which is what a caller sizing a machine
++    // from the estimate would then get wrong.
++    std::vector<size_t> buf_size_measured(backend_ptrs.size(), 0);
++    size_t * const measured = model.hparams.no_alloc ? buf_size_measured.data() : nullptr;
++    const auto keep_measured_max = [&]() {
++        if (!model.hparams.no_alloc) {
++            return;
++        }
++        for (size_t i = 0; i < backend_buf_exp_size.size(); ++i) {
++            if (buf_size_measured[i] > backend_buf_exp_size[i]) {
++                backend_buf_exp_size[i] = buf_size_measured[i];
++            }
++        }
++    };
++
+     // reserve pp (prompt processing) graph first so that buffers are only allocated once
+     {
+         auto * gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get(),
+-                model.hparams.no_alloc, model.hparams.no_alloc ? backend_buf_exp_size.data() : nullptr);
++                model.hparams.no_alloc, measured);
+         if (!gf) {
+             if (cparams.pipeline_parallel) {
+                 LLAMA_LOG_WARN("%s: compute buffer allocation failed, retrying without pipeline parallelism\n", __func__);
+@@ -656,17 +677,21 @@
+             }
+         }
+ 
++        keep_measured_max();
++
+         n_splits_pp = ggml_backend_sched_get_n_splits(sched.get());
+         n_nodes_pp  = ggml_graph_n_nodes(gf);
+     }
+ 
+     // reserve with tg (token generation) graph to get the number of splits and nodes
+     {
+-        auto * gf = graph_reserve(n_seqs, n_seqs, n_seqs, mctx.get(), model.hparams.no_alloc);
++        auto * gf = graph_reserve(n_seqs, n_seqs, n_seqs, mctx.get(), model.hparams.no_alloc, measured);
+         if (!gf) {
+             throw std::runtime_error("failed to allocate compute tg buffers");
+         }
+ 
++        keep_measured_max();
++
+         n_splits_tg = ggml_backend_sched_get_n_splits(sched.get());
+         n_nodes_tg  = ggml_graph_n_nodes(gf);
+     }
+@@ -680,15 +705,17 @@
+             case LLM_ARCH_MINIMAX_01:
+                 // the `inp_diag_decay` tensor size scales with `n_seq_tokens^2` which
+                 // makes `n_seqs == 1` use more memory for the compute graph compared to `n_seqs > 1`
+-                gf = graph_reserve(n_tokens, 1,      n_outputs_pp, mctx.get(), model.hparams.no_alloc);
++                gf = graph_reserve(n_tokens, 1,      n_outputs_pp, mctx.get(), model.hparams.no_alloc, measured);
+                 break;
+             default:
+-                gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get(), model.hparams.no_alloc);
++                gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get(), model.hparams.no_alloc, measured);
+         };
+ 
+         if (!gf) {
+             throw std::runtime_error("failed to allocate compute pp buffers");
+         }
++
++        keep_measured_max();
+     }
+ 
+     for (size_t i = 0; i < backend_ptrs.size(); ++i) {
