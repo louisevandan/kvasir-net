@@ -252,10 +252,21 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
 1. ~~시험 전용 접근자로 HEAD lib test 컴파일 복구.~~ **2026-09-09 완료** (`2e865ff51`).
    E0594로 종료 101·실행 시험 0이던 상태에서 **1,361 passed / 0 failed / 7 ignored**로 회복했다.
    회귀 없이 스케줄러를 만지지 않았다. 남은 2~3번이 성능 측정의 잔여 선행조건이다.
-2. `run/mod.rs:174`가 UNLOAD 전에 `InferenceResult::error`와 부분 결과·정산 상태를 보존하도록 고치고,
-   primary/cleanup 오류를 따로 기록한다. `run.mjs::stopChild`의 신호 종료 오판도 고친다.
-   **UNLOAD guard를 완화해 통과시키지 않는다.**
-3. `pressure`(resident 256) 재판정. 최초 오류가 UNLOAD busy에 덮이는 한 원인은 계속 미판정이다.
+2. ~~`run/mod.rs`가 UNLOAD 전에 `InferenceResult::error`와 부분 결과·정산 상태를 보존하도록 고치고,
+   primary/cleanup 오류를 따로 기록한다. `run.mjs::stopChild`의 신호 종료 오판도 고친다.~~
+   **2026-09-09 완료** (`d8203e373`).
+   - teardown을 분리하고 반환형을 `Result`가 아닌 `Option<String>`으로 두었다. `?`로 전파할 수 없으므로
+     **원래 결함을 다시 쓰면 컴파일 오류**다(E0277로 확인). 시험이 아니라 타입이 막는다.
+   - `error`(실행 자신의 최초 실패)와 `cleanup_error`를 분리했고 산출물은 항상 기록된다.
+     **UNLOAD guard는 그대로다.** 정리 실패는 여전히 실행을 실패시키며, 양성 대조를 둔 시험이 이를 고정한다.
+   - `stopChild`: `kill()`은 신호를 보내므로 정상 종료도 `exitCode`가 null이다. 이 환경에서
+     `code=null signal=SIGTERM`으로 재현했다. **모든 정상 정지가 정지 실패로 보고되어**
+     `agent_stopped=false`가 실행을 실패시키고 있었다.
+   - 시험 7개(event-drive 3 + stopChild 4). 각각 변이로 판별력을 확인했다. 워크스페이스 1,364 passed.
+3. `pressure`(resident 256) 재판정. **선행 결함은 해소됐으나 GPU 호스트가 필요해 미실행이다.**
+   이제 실패해도 산출물이 남고 최초 오류가 `error`에, UNLOAD 거부가 `cleanup_error`에 따로 기록된다.
+   그 두 필드로 해제 누수인지 추론 중단 뒤의 정상 거부인지 분류한다. 판정 전에는 회귀로도 정상으로도
+   부르지 않는다.
 4. ~~`drive.rs:130`의 철회된 상관관계 인용을 09-04 결과로 교체한다.~~ **2026-09-09 완료** (`2bc8f93cd`).
    주석만 바뀌었고 `cargo check --lib` 통과.
 
