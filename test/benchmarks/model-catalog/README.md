@@ -61,6 +61,37 @@ node test/benchmarks/model-catalog/render.mjs --results target/model-catalog/pla
 `vram_only`/`expert_cpu`/`dense_ffn_cpu` 분류는 옵션 이름이 아니라 stage 로그가 보고한 실제 버퍼
 배치로 확정한다. 검증 규약 H0의 `resource_tier` 판정도 같은 원칙을 쓴다.
 
+## 두 대의 측정 기기
+
+| 기기 | GPU | RAM | 역할 |
+| --- | --- | --- | --- |
+| `M42-SERVER2` | RTX 3090 24 GiB ×2 | 256 GiB | 기본 프로브 호스트. `remote-probe.mjs`가 대화형 예약 작업으로 구동 |
+| `hikaTR` | RTX 3090 24 GiB + RTX 4080 16 GiB | 256 GiB | 원격이 로그아웃됐을 때의 대체. `local-probe.mjs`가 직접 구동 |
+
+카드가 다르므로 두 기기의 값을 같은 열에 섞지 않는다. 각 실행 기록의 `machine` 필드로 구분한다.
+4080이 16 GiB이므로 컨텍스트 상한은 로컬이 먼저 걸린다.
+
+## 다른 배치 전략과의 대조
+
+같은 모델을 P4 stage 분할이 아니라 단일 llama.cpp 프로세스로 올릴 수도 있다. 2026-09-07 사용자가
+`hikaTR`에서 Hy3를 그렇게 적재한 구성은 아래와 같다. 기록해 두는 이유는 같은 하드웨어에서 같은
+모델이 전혀 다른 메모리 배치를 가질 수 있음을 보여주기 때문이다.
+
+```text
+-m C:\hy3\Hy3-Q5_K_S-00001-of-00006.gguf -c 100000 -ngl auto -t 24 -b 2048 -ub 512 -np 1
+-fa on -ctk q8_0 -ctv q8_0 --load-mode none --kv-offload --host 127.0.0.1 --port 8088
+--split-mode layer --device CUDA0,CUDA1 --fit on --fit-device-limit 10500,23000
+```
+
+한 프로세스가 `--split-mode layer`로 두 카드를 쓰고 `--fit`이 장치 한도(약 10.5 GB와 23 GB)에
+맞춰 나머지를 CPU로 흘린다. 같은 100k 컨텍스트를 P4 stage 2분할 + `expert_cpu`로 올리면 GPU
+합계 24.52 GiB(카드당 12.06/12.46), 호스트 184.5 GiB였다. 배치 전략이 다르면 어느 쪽이 병목인지도
+달라지므로, 어떤 값을 인용하든 전략을 함께 적는다.
+
+`--fit-device-limit`은 P4가 고정한 llama.cpp 핀에 없다. 핀에는 `--fit`, `--fit-print`,
+`--fit-target`(장치별 여유 마진)이 있다. 나머지 옵션은 stage 전용 옵션이 아니므로 startup plan에
+그대로 실어 llama.cpp 파서로 전달된다.
+
 ## 주의
 
 - 공유 드라이브에서 `--no-mmap`을 쓴다. mmap은 SMB에서 페이지 폴트로 적재가 사실상 멈춘다.
@@ -69,4 +100,10 @@ node test/benchmarks/model-catalog/render.mjs --results target/model-catalog/pla
 - gemma-4는 13층부터 KV를 공유하므로 그 구간 안에서 stage를 자르지 않는다.
 - `fits_current_free`는 **그 stage 하나**의 판정이다. 여러 stage를 동시에 올릴 때의 host RAM은
   `runs[].totals.host_required_bytes`로 판단한다.
+- 큰 모델의 stage는 가중치를 CUDA pinned 호스트 메모리로 잡는다(Hy3는 stage당 약 92 GiB).
+  프로세스가 죽어도 즉시 반환되지 않아, 곧바로 다음 적재를 시작하면
+  `ggml_cuda_host_malloc: ... resource already mapped`로 실패한다. 프로브는 다음 작업 전에
+  여유 메모리가 회복될 때까지 기다린다. 운영에서 모델을 교체할 때도 같은 대기가 필요하다.
+- 같은 이유로 방금 종료한 stage가 모델 파일 핸들을 아직 쥐고 있을 수 있다. 파일 열기 실패
+  (`Permission denied`)는 파일 손상이 아니라 이 지연일 수 있으므로 재시도로 구분한다.
 - 이 폴더는 적재 가능성과 메모리 실측을 기록할 뿐, 응답 품질이나 처리량을 승인하지 않는다.

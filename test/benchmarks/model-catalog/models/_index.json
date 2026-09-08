@@ -335,9 +335,9 @@
     "file_gib": 191.884,
     "trunk_layers": 80,
     "experts": 192,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 12,
+    "loaded": 3,
+    "max_loaded_context": 102400
   },
   {
     "id": "MiMo-V2.5-GGUF_MiMo-V2.5-UD-Q5_K_S",
