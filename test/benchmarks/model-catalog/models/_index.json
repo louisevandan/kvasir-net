@@ -165,9 +165,9 @@
     "file_gib": 23.229,
     "trunk_layers": 40,
     "experts": 256,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "nex-agi_Nex-N2-mini-GGUF_nex-agi_Nex-N2-mini-Q5_K_L",
@@ -225,9 +225,9 @@
     "file_gib": 31.279,
     "trunk_layers": 52,
     "experts": 128,
-    "runs": 6,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 10,
+    "loaded": 4,
+    "max_loaded_context": 1048576
   },
   {
     "id": "Qwen3-Coder-Next-GGUF_Qwen3-Coder-Next-UD-Q5_K_S",
@@ -245,9 +245,9 @@
     "file_gib": 76.98,
     "trunk_layers": 48,
     "experts": 256,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Mistral-Medium-3.5-128B-GGUF_Mistral-Medium-3.5-128B-Q5_K_S",
@@ -255,9 +255,9 @@
     "file_gib": 80.265,
     "trunk_layers": 88,
     "experts": null,
-    "runs": 8,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 11,
+    "loaded": 2,
+    "max_loaded_context": 32768
   },
   {
     "id": "Qwen3.5-122B-A10B-MTP-GGUF_Qwen3.5-122B-A10B-UD-Q5_K_S",
@@ -265,9 +265,9 @@
     "file_gib": 82.245,
     "trunk_layers": 48,
     "experts": 256,
-    "runs": 7,
-    "loaded": 1,
-    "max_loaded_context": 4096
+    "runs": 11,
+    "loaded": 5,
+    "max_loaded_context": 262144
   },
   {
     "id": "NVIDIA-Nemotron-3-Super-120B-A12B-GGUF_NVIDIA-Nemotron-3-Super-120B-A12B-UD-Q5_K_S",

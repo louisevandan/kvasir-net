@@ -45,6 +45,173 @@
   "runs": [
     {
       "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S__expert_cpu__ctx4096__s2__seq1",
+      "mode": "load",
+      "at": "2026-09-08T11:30:21.769Z",
+      "strategy": "expert_cpu",
+      "context": 4096,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": true,
+      "host_free_before_bytes": 229358149632,
+      "host_free_after_bytes": 229215391744,
+      "host_total_bytes": 274727415808,
+      "totals": {
+        "device_model_bytes": 2054292480,
+        "device_context_bytes": 106037248,
+        "device_compute_bytes": 915417216,
+        "device_required_bytes": 3075746944,
+        "host_model_bytes": 22876767744,
+        "host_context_bytes": 4390912,
+        "host_compute_bytes": 563871808,
+        "host_required_bytes": 23445030464
+      },
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            20
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 103744,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 4096,
+            "n_ctx_seq": 4096,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 756969984,
+              "context_bytes": 53018624,
+              "compute_bytes": 394272896,
+              "required_bytes": 1204261504,
+              "free_bytes": 23257415680,
+              "total_bytes": 25769279488
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11655078656,
+              "context_bytes": 2195456,
+              "compute_bytes": 538312736,
+              "required_bytes": 12195586848,
+              "free_bytes": 204685443072,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   376.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   513.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =   721.90 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 11115.15 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =    21.25 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   376.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   513.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 376.0079 MiB, matches expectation of 376.0079 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is 513.3750 MiB, matches expectation of 513.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 42 (with bs=1)"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            20,
+            40
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 107379,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 4096,
+            "n_ctx_seq": 4096,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 1297322496,
+              "context_bytes": 53018624,
+              "compute_bytes": 521144320,
+              "required_bytes": 1871485440,
+              "free_bytes": 13931380736,
+              "total_bytes": 17170956288
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11221689088,
+              "context_bytes": 2195456,
+              "compute_bytes": 25559072,
+              "required_bytes": 11249443616,
+              "free_bytes": 217289445376,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   497.00 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =    24.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =  1237.22 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 10701.84 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =    21.25 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   497.00 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =    24.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 497.0020 MiB, matches expectation of 497.0020 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is  24.3750 MiB, matches expectation of  24.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 42 (with bs=1)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S__expert_cpu__ctx4096__s2__seq1",
       "mode": "plan",
       "at": "2026-09-08T04:17:19.755Z",
       "strategy": "expert_cpu",
@@ -186,6 +353,173 @@
           ],
           "error": [
             "print_info: rope_finetuned        = unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S__expert_cpu__ctx32768__s2__seq1",
+      "mode": "load",
+      "at": "2026-09-08T11:30:34.793Z",
+      "strategy": "expert_cpu",
+      "context": 32768,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": true,
+      "host_free_before_bytes": 229195227136,
+      "host_free_after_bytes": 229172875264,
+      "host_total_bytes": 274727415808,
+      "totals": {
+        "device_model_bytes": 2054292480,
+        "device_context_bytes": 417988608,
+        "device_compute_bytes": 944777344,
+        "device_required_bytes": 3417058432,
+        "host_model_bytes": 22876767744,
+        "host_context_bytes": 4390912,
+        "host_compute_bytes": 622592064,
+        "host_required_bytes": 23503750720
+      },
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            20
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 8007,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 32768,
+            "n_ctx_seq": 32768,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 756969984,
+              "context_bytes": 208994304,
+              "compute_bytes": 423633024,
+              "required_bytes": 1389597312,
+              "free_bytes": 23072866304,
+              "total_bytes": 25769279488
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11655078656,
+              "context_bytes": 2195456,
+              "compute_bytes": 567672864,
+              "required_bytes": 12224946976,
+              "free_bytes": 204824571904,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   404.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   541.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =   721.90 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 11115.15 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =   170.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   404.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   541.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 404.0079 MiB, matches expectation of 404.0079 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is 541.3750 MiB, matches expectation of 541.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 42 (with bs=1)"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            20,
+            40
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 7911,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 32768,
+            "n_ctx_seq": 32768,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 1297322496,
+              "context_bytes": 208994304,
+              "compute_bytes": 521144320,
+              "required_bytes": 2027461120,
+              "free_bytes": 13776191488,
+              "total_bytes": 17170956288
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11221689088,
+              "context_bytes": 2195456,
+              "compute_bytes": 54919200,
+              "required_bytes": 11278803744,
+              "free_bytes": 204893138944,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   497.00 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =    52.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =  1237.22 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 10701.84 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =   170.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   497.00 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =    52.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 497.0020 MiB, matches expectation of 497.0020 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is  52.3750 MiB, matches expectation of  52.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 42 (with bs=1)"
           ]
         }
       ]
@@ -339,6 +673,173 @@
     },
     {
       "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S__expert_cpu__ctx102400__s2__seq1",
+      "mode": "load",
+      "at": "2026-09-08T11:30:47.804Z",
+      "strategy": "expert_cpu",
+      "context": 102400,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": true,
+      "host_free_before_bytes": 229219270656,
+      "host_free_after_bytes": 229233700864,
+      "host_total_bytes": 274727415808,
+      "totals": {
+        "device_model_bytes": 2054292480,
+        "device_context_bytes": 1175584768,
+        "device_compute_bytes": 1059078400,
+        "device_required_bytes": 4288955648,
+        "host_model_bytes": 22876767744,
+        "host_context_bytes": 4390912,
+        "host_compute_bytes": 765198400,
+        "host_required_bytes": 23646357056
+      },
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            20
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 7978,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 102400,
+            "n_ctx_seq": 102400,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 756969984,
+              "context_bytes": 587792384,
+              "compute_bytes": 528490624,
+              "required_bytes": 1873252992,
+              "free_bytes": 22588424192,
+              "total_bytes": 25769279488
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11655078656,
+              "context_bytes": 2195456,
+              "compute_bytes": 638976032,
+              "required_bytes": 12296250144,
+              "free_bytes": 204787208192,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   504.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   609.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =   721.90 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 11115.15 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =   531.25 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   504.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   609.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 504.0079 MiB, matches expectation of 504.0079 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is 609.3750 MiB, matches expectation of 609.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 42 (with bs=1)"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            20,
+            40
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 7983,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 102400,
+            "n_ctx_seq": 102400,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 1297322496,
+              "context_bytes": 587792384,
+              "compute_bytes": 530587776,
+              "required_bytes": 2415702656,
+              "free_bytes": 13386121216,
+              "total_bytes": 17170956288
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11221689088,
+              "context_bytes": 2195456,
+              "compute_bytes": 126222368,
+              "required_bytes": 11350106912,
+              "free_bytes": 205125591040,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   506.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   120.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =  1237.22 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 10701.84 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =   531.25 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   506.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   120.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 506.0079 MiB, matches expectation of 506.0079 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is 120.3750 MiB, matches expectation of 120.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 42 (with bs=1)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S__expert_cpu__ctx102400__s2__seq1",
       "mode": "plan",
       "at": "2026-09-08T04:17:33.173Z",
       "strategy": "expert_cpu",
@@ -480,6 +981,173 @@
           ],
           "error": [
             "print_info: rope_finetuned        = unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S__expert_cpu__ctx262144__s2__seq1",
+      "mode": "load",
+      "at": "2026-09-08T11:31:00.778Z",
+      "strategy": "expert_cpu",
+      "context": 262144,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": true,
+      "host_free_before_bytes": 229235204096,
+      "host_free_after_bytes": 229240545280,
+      "host_total_bytes": 274727415808,
+      "totals": {
+        "device_model_bytes": 2054292480,
+        "device_context_bytes": 2913599488,
+        "device_compute_bytes": 2038448384,
+        "device_required_bytes": 7006340352,
+        "host_model_bytes": 22876767744,
+        "host_context_bytes": 4390912,
+        "host_compute_bytes": 1092354112,
+        "host_required_bytes": 23973512768
+      },
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            20
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 7959,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 262144,
+            "n_ctx_seq": 262144,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 756969984,
+              "context_bytes": 1456799744,
+              "compute_bytes": 1019224192,
+              "required_bytes": 3232993920,
+              "free_bytes": 21229469696,
+              "total_bytes": 25769279488
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11655078656,
+              "context_bytes": 2195456,
+              "compute_bytes": 802553888,
+              "required_bytes": 12459828000,
+              "free_bytes": 204695945216,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   972.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   765.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =   721.90 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 11115.15 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =  1360.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   972.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   765.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 972.0079 MiB, matches expectation of 972.0079 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is 765.3750 MiB, matches expectation of 765.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1923",
+            "sched_reserve: graph splits = 81 (with bs=512), 42 (with bs=1)"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            20,
+            40
+          ],
+          "outcome": "exit:0",
+          "elapsed_ms": 7750,
+          "measured": "actual",
+          "plan_equals_actual": true,
+          "execution_shape": {
+            "n_ctx": 262144,
+            "n_ctx_seq": 262144,
+            "n_batch": 512,
+            "n_ubatch": 512,
+            "n_seq_max": 1,
+            "kv_unified": true
+          },
+          "fits_current_free": true,
+          "entries": [
+            {
+              "scope": "device",
+              "name": "CUDA0",
+              "model_bytes": 1297322496,
+              "context_bytes": 1456799744,
+              "compute_bytes": 1019224192,
+              "required_bytes": 3773346432,
+              "free_bytes": 12029263872,
+              "total_bytes": 17170956288
+            },
+            {
+              "scope": "host",
+              "name": "host",
+              "model_bytes": 11221689088,
+              "context_bytes": 2195456,
+              "compute_bytes": 289800224,
+              "required_bytes": 11513684768,
+              "free_bytes": 205104410624,
+              "total_bytes": 274727415808
+            }
+          ],
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   972.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   276.38 MiB",
+            "load_tensors:        CUDA0 model buffer size =  1237.22 MiB",
+            "load_tensors:    CUDA_Host model buffer size = 10701.84 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.95 MiB",
+            "llama_kv_cache:      CUDA0 KV buffer size =  1360.00 MiB",
+            "llama_memory_recurrent:        CPU RS buffer size =     2.09 MiB",
+            "llama_memory_recurrent:      CUDA0 RS buffer size =    29.31 MiB",
+            "sched_reserve:      CUDA0 compute buffer size =   972.01 MiB",
+            "sched_reserve:  CUDA_Host compute buffer size =   276.38 MiB",
+            "~llama_context:      CUDA0 compute buffer size is 972.0079 MiB, matches expectation of 972.0079 MiB",
+            "~llama_context:  CUDA_Host compute buffer size is 276.3750 MiB, matches expectation of 276.3750 MiB"
+          ],
+          "graph": [
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 43 (with bs=1)",
+            "sched_reserve: worst-case: n_tokens = 512, n_seqs = 1, n_outputs = 1",
+            "sched_reserve: graph nodes  = 1926",
+            "sched_reserve: graph splits = 80 (with bs=512), 42 (with bs=1)"
           ]
         }
       ]
@@ -632,5 +1300,10 @@
       ]
     }
   ],
-  "loaded_contexts": []
+  "loaded_contexts": [
+    4096,
+    32768,
+    102400,
+    262144
+  ]
 }
