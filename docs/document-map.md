@@ -127,6 +127,7 @@
 | [P4_REVISION_PLAN.md](../P4_REVISION_PLAN.md) | 역사·구 계획 |
 | [README.md](../README.md) | 진입점 |
 | [test/benchmarks/p4-4node/README.md](../test/benchmarks/p4-4node/README.md) | 개발 하네스 안내 |
+| [test/benchmarks/model-catalog/README.md](../test/benchmarks/model-catalog/README.md) | OUTER 모델 적재 파라미터와 메모리 실측 카탈로그 |
 | [tools/README.md](../tools/README.md) | 구성요소 안내 |
 
 ## 4. 유지 규칙
