@@ -275,9 +275,9 @@
     "file_gib": 83.556,
     "trunk_layers": 88,
     "experts": 512,
-    "runs": 6,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 10,
+    "loaded": 4,
+    "max_loaded_context": 1048576
   },
   {
     "id": "Qwen3.8-Flash-Next-GGUF_Qwen3.8-Flash-Next-UD-Q4_K_XL",
@@ -285,9 +285,9 @@
     "file_gib": 103.688,
     "trunk_layers": 48,
     "experts": 512,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Step-3.7-Flash-GGUF_Step-3.7-Flash-UD-Q5_K_M",
@@ -295,9 +295,9 @@
     "file_gib": 136.435,
     "trunk_layers": 45,
     "experts": 288,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "MiniMax-M2.7-GGUF_MiniMax-M2.7-UD-Q5_K_S",
@@ -305,9 +305,9 @@
     "file_gib": 148.12,
     "trunk_layers": 62,
     "experts": 256,
-    "runs": 3,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 6,
+    "loaded": 3,
+    "max_loaded_context": 102400
   },
   {
     "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL",
@@ -345,9 +345,9 @@
     "file_gib": 201.446,
     "trunk_layers": 48,
     "experts": 256,
-    "runs": 6,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 10,
+    "loaded": 4,
+    "max_loaded_context": 1048576
   },
   {
     "id": "nex-agi_Nex-N2-Pro-GGUF_nex-agi_Nex-N2-Pro-Q5_K_S",
