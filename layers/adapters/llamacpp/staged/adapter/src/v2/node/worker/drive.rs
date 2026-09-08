@@ -127,16 +127,22 @@ impl Worker {
             .map(|at| at.elapsed().as_millis() as u64)
             .unwrap_or(0);
         let idle_gated = self.gate_refusals;
-        // Issue width. Across eighteen runs of one scenario throughput
-        // tracked the share of the run with two or more stages computing
-        // (r=0.891) and ran mildly *against* batch width (r=-0.357) and
-        // UBATCH fill. A ready set issued as one wide batch occupies one
-        // stage at a time; the same rows issued as several narrower
-        // batches can be on several stages at once, and a sequence's
-        // next token needs the whole lap either way. Capping the width
-        // here trades the per-batch cost - about 55 ms before the first
-        // layer - for that overlap, and which way the trade goes is the
-        // measurement this knob exists to take.
+        // Issue width. An earlier note here read a correlation across
+        // eighteen runs as evidence that width hurt and stage overlap
+        // helped. That was reverse causation and is retracted: see
+        // scripts/validation/evidence/2026-09-03-load-and-batching.md,
+        // "The correlation was reverse causation (2026-09-04)". Capping
+        // width directly drove total row throughput down from 544 to 198
+        // rows/s while stage overlap rose to 95.4% - busy stages were
+        // busy paying a per-batch cost repeatedly. With width controlled
+        // the signs invert: width +0.898, overlap -0.060.
+        //
+        // The cost a batch pays is 34.2 ms per batch plus 1.051 ms per
+        // row, so a wide batch is 3.4x more efficient per row and the
+        // curve is still climbing at width 98. Narrowing here is a way
+        // to spend more of that fixed cost for the same work. The knob
+        // stays because bounding width is still occasionally needed, but
+        // it is not a throughput lever and overlap is not a target.
         //
         // Never applied while a speculative transaction is pending: a
         // Verify or Replay allocation must stay whole inside one UBATCH,
