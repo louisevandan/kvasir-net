@@ -12,6 +12,8 @@ mod load;
 mod output_budget;
 mod release_ledger;
 mod replies;
+#[cfg(test)]
+mod teardown_preserves_failure_tests;
 mod wire;
 
 pub use config::{AcceptanceConfig, ArrivalWave, ResponseExpectation, RunConfig};
@@ -24,10 +26,12 @@ use p4_llamacpp_staged_adapter::v2::{
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
 use replies::{ExpectedReply, receive_exact};
+use wire::EventWire;
 use serde::Serialize;
 use std::io::Write;
 use std::str::FromStr;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
 const CREATE: &str = "application/vnd.p4.node.create-v3+json";
@@ -61,7 +65,13 @@ pub struct RunArtifact {
     pub stage_spans: Vec<StageSpanArtifact>,
     pub elapsed_ms: u128,
     pub telemetry_complete_elapsed_ms: Option<u128>,
+    /// The run's own first failure. Survives a failing cleanup.
     pub error: Option<String>,
+    /// UNLOAD/DELETE failure, kept apart from `error` so a refused
+    /// teardown cannot be mistaken for the reason the run failed - and so
+    /// the reverse, a teardown refused *because* inference already broke,
+    /// stays visible next to the break that caused it.
+    pub cleanup_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -173,6 +183,105 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
 
     let run = inference::drive(&config, &mut wire, &mut sender).await?;
 
+    // Teardown must not destroy the run it is tearing down. When inference
+    // fails the node can still hold owners, UNLOAD then refuses with
+    // "unload is busy; active_owners=N/M", and propagating that with `?`
+    // discarded `run` whole - the first error, every request, output and
+    // settlement record with it - so the caller wrote no artifact at all.
+    // That is why the pressure scenario's first failure was unjudgeable.
+    //
+    // The guard is untouched and a refused teardown still fails the run.
+    // Only the reporting changes: both errors are kept, and the artifact
+    // is always written.
+    let cleanup_error = teardown(&config, &mut wire, &mut sender).await;
+
+    Ok(assemble(config, build, run, cleanup_error))
+}
+
+/// Build the artifact from whatever the run produced, including nothing.
+///
+/// Separated from `execute` so the assembly can be exercised against a real
+/// failed run: the defect this replaced was not in any single expression but
+/// in the control flow that skipped all of it.
+fn assemble(
+    config: RunConfig,
+    build: p4_llamacpp_staged_adapter::v2::BuildIdentity,
+    run: inference::InferenceResult,
+    cleanup_error: Option<String>,
+) -> RunArtifact {
+    let mut requests = run.requests;
+    // drive installs the validated per-request observation totals once.
+    // Re-aggregating here would double count the same physical work.
+    for request in &mut requests {
+        finish_phase_metrics(request);
+    }
+    let acceptance = acceptance::evaluate(&config, &requests);
+    // A refused teardown still fails the run. The guard is not relaxed;
+    // the failure is merely reported next to the run's own instead of
+    // replacing it.
+    let structurally_complete = run.error.is_none()
+        && cleanup_error.is_none()
+        && run.telemetry_complete_elapsed_ms.is_some()
+        && run.completed_count == run.request_count
+        && run.released_count == run.request_count;
+    RunArtifact {
+        passed: structurally_complete && acceptance.passed,
+        build,
+        acceptance,
+        prompt: config.prompt,
+        response: requests
+            .first()
+            .map(|value| value.response.clone())
+            .unwrap_or_default(),
+        outcomes: requests
+            .first()
+            .map(|value| value.outcomes.clone())
+            .unwrap_or_default(),
+        request_count: run.request_count,
+        completed_count: run.completed_count,
+        released_count: run.released_count,
+        requests,
+        batch_observations: run.batch_observations,
+        stage_spans: run.stage_spans,
+        elapsed_ms: run.elapsed_ms,
+        telemetry_complete_elapsed_ms: run.telemetry_complete_elapsed_ms,
+        error: run.error,
+        cleanup_error,
+    }
+}
+
+/// UNLOAD then DELETE every node, returning the failure rather than raising
+/// it.
+///
+/// Deliberately not a `Result`. The defect this replaced was a `?` at the
+/// call site: a refused UNLOAD propagated and took the entire run with it.
+/// With no `Result` to propagate there is no `?` to write, so that edit
+/// cannot be made again by accident. Tests can pin what `assemble` does with
+/// the two errors, but only the type can pin that `assemble` is reached.
+async fn teardown<R, W>(
+    config: &RunConfig,
+    wire: &mut EventWire<R, W>,
+    sender: &mut Sender,
+) -> Option<String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    match teardown_nodes(config, wire, sender).await {
+        Ok(()) => None,
+        Err(error) => Some(error.to_string()),
+    }
+}
+
+async fn teardown_nodes<R, W>(
+    config: &RunConfig,
+    wire: &mut EventWire<R, W>,
+    sender: &mut Sender,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut unload_replies = Vec::with_capacity(config.nodes.len());
     for node in &config.nodes {
         let event = sender.event(
@@ -188,7 +297,7 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         wire.send(event).await?;
     }
     receive_exact(
-        &mut wire,
+        wire,
         UNLOADED_CONTENT_TYPE,
         unload_replies,
         "unload",
@@ -211,48 +320,14 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         wire.send(event).await?;
     }
     receive_exact(
-        &mut wire,
+        wire,
         NODE_RESULT,
         delete_replies,
         "delete",
         config.timeout_ms,
     )
     .await?;
-
-    let mut requests = run.requests;
-    // drive installs the validated per-request observation totals once.
-    // Re-aggregating here would double count the same physical work.
-    for request in &mut requests {
-        finish_phase_metrics(request);
-    }
-    let acceptance = acceptance::evaluate(&config, &requests);
-    let structurally_complete = run.error.is_none()
-        && run.telemetry_complete_elapsed_ms.is_some()
-        && run.completed_count == run.request_count
-        && run.released_count == run.request_count;
-    Ok(RunArtifact {
-        passed: structurally_complete && acceptance.passed,
-        build,
-        acceptance,
-        prompt: config.prompt,
-        response: requests
-            .first()
-            .map(|value| value.response.clone())
-            .unwrap_or_default(),
-        outcomes: requests
-            .first()
-            .map(|value| value.outcomes.clone())
-            .unwrap_or_default(),
-        request_count: run.request_count,
-        completed_count: run.completed_count,
-        released_count: run.released_count,
-        requests,
-        batch_observations: run.batch_observations,
-        stage_spans: run.stage_spans,
-        elapsed_ms: run.elapsed_ms,
-        telemetry_complete_elapsed_ms: run.telemetry_complete_elapsed_ms,
-        error: run.error,
-    })
+    Ok(())
 }
 
 /// The actual execute path uses this builder. It declares the same complete

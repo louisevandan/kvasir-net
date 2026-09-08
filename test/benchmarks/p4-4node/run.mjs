@@ -74,15 +74,27 @@ async function waitForReady(child, state, timeoutMs) {
 /// seconds looked the same as one that had exited - and the agent's record
 /// is read straight after this returns. A record read from a process that
 /// is still writing is the race the closing offset exists to close.
-async function stopChild(child) {
+///
+/// A process stopped by a signal has `exitCode === null` and `signalCode`
+/// set, and `kill()` sends a signal. Asking for `exitCode` alone therefore
+/// called every successful stop a failure to stop - the normal path, not an
+/// edge case - and `agent_stopped: false` failed the whole run at the end
+/// of a run that had otherwise succeeded.
+export async function stopChild(child) {
   if (!child) return true;
-  if (child.exitCode !== null) return true;
+  if (stopped(child)) return true;
   child.kill();
   const exited = await Promise.race([
     waitForExit(child).then(() => true).catch(() => true),
     new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
   ]);
-  return exited && child.exitCode !== null;
+  return exited && stopped(child);
+}
+
+/// Exited on its own, or was stopped by a signal. Either way it is not
+/// running, which is the only thing the caller needs to know.
+function stopped(child) {
+  return child.exitCode !== null || child.signalCode !== null;
 }
 
 /// The share of the UBATCH a batch actually carried.
