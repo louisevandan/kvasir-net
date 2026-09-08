@@ -59,9 +59,21 @@ function allocation(plan) {
 }
 
 const perModel = new Map();
+/// Every job id encodes what the job was, so a record stays readable even when
+/// its job file has been overwritten by a later sweep round.
+function fromId(id) {
+  const [modelId, strategy, ...rest] = id.split('__');
+  const tail = rest.join('__');
+  const context = Number((tail.match(/ctx(\d+)/) ?? [])[1]) || null;
+  const stageCount = Number((tail.match(/s(\d+)/) ?? [])[1]) || null;
+  const seqMax = Number((tail.match(/seq(\d+)/) ?? [])[1]) || null;
+  return { modelId, strategy, context, stageCount, seqMax };
+}
+
 for (const record of records) {
   const job = jobsById.get(record.id);
-  const modelId = job?.model_id ?? record.id.split('__')[0];
+  const parsed = fromId(record.id);
+  const modelId = job?.model_id ?? parsed.modelId;
   if (!perModel.has(modelId)) perModel.set(modelId, []);
   const stages = record.stages.map((stage, index) => {
     const source = stage.actual ?? stage.plan;
@@ -94,11 +106,16 @@ for (const record of records) {
     id: record.id,
     mode: record.mode,
     at: record.at,
-    strategy: job?.strategy ?? null,
-    context: job?.context ?? null,
-    seq_max: job?.seq_max ?? null,
+    strategy: job?.strategy ?? parsed.strategy ?? null,
+    context: job?.context ?? parsed.context ?? null,
+    seq_max: job?.seq_max ?? parsed.seqMax ?? null,
     stage_count: record.stages.length,
-    ok: stages.every((s) => s.outcome === 'loaded' || s.outcome === 'exit:0'),
+    // A load counts only when the server measured the allocation it actually
+    // made. The server exits 0 when its stdin closes after a good load, so the
+    // exit code alone does not separate that from a plan-only pass.
+    ok: record.mode === 'load'
+      ? stages.every((s) => s.measured === 'actual')
+      : stages.every((s) => s.entries && (s.outcome === 'loaded' || s.outcome === 'exit:0')),
     host_free_before_bytes: record.host_free_before,
     host_free_after_bytes: record.host_free_after,
     host_total_bytes: record.host_total,

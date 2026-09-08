@@ -5,9 +5,9 @@
     "file_gib": 0.776,
     "trunk_layers": 24,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Qwen3.5-2B-MTP-GGUF_Qwen3.5-2B-Q5_K_S",
@@ -15,9 +15,9 @@
     "file_gib": 1.335,
     "trunk_layers": 24,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Qwen_Qwen2.5-1.5B-Instruct-Q8_0",
@@ -25,9 +25,9 @@
     "file_gib": 1.533,
     "trunk_layers": 28,
     "experts": null,
-    "runs": 2,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 4,
+    "loaded": 2,
+    "max_loaded_context": 32768
   },
   {
     "id": "NVIDIA-Nemotron-3-Nano-4B-GGUF_NVIDIA-Nemotron-3-Nano-4B-Q5_K_M",
@@ -35,9 +35,9 @@
     "file_gib": 2.943,
     "trunk_layers": 42,
     "experts": null,
-    "runs": 6,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 10,
+    "loaded": 4,
+    "max_loaded_context": 1048576
   },
   {
     "id": "Bonsai-27B-GGUF_Bonsai-27B-Q1_0",
@@ -45,9 +45,9 @@
     "file_gib": 3.542,
     "trunk_layers": 64,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Qwen3.5-4B-MTP-GGUF_Qwen3.5-4B-Q8_0",
@@ -55,9 +55,9 @@
     "file_gib": 4.294,
     "trunk_layers": 32,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Qwen3-Embedding-8B-GGUF_Qwen3-Embedding-8B-Q4_K_M",
@@ -65,9 +65,9 @@
     "file_gib": 4.356,
     "trunk_layers": 36,
     "experts": null,
-    "runs": 2,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 4,
+    "loaded": 2,
+    "max_loaded_context": 32768
   },
   {
     "id": "gemma-4-E2B-it-GGUF_gemma-4-E2B-it-Q8_0",
@@ -75,9 +75,9 @@
     "file_gib": 4.702,
     "trunk_layers": 35,
     "experts": null,
-    "runs": 3,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 9,
+    "loaded": 4,
+    "max_loaded_context": 102400
   },
   {
     "id": "Qwen3.5-9B-MTP-GGUF_Qwen3.5-9B-Q5_K_S",
@@ -85,9 +85,9 @@
     "file_gib": 6.109,
     "trunk_layers": 32,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 12,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "gemma-4-12b-it-GGUF_gemma-4-12b-it-UD-Q8_K_XL",
@@ -95,9 +95,9 @@
     "file_gib": 12.701,
     "trunk_layers": 48,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 12,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "gemma-4-31B-it-qat-GGUF_gemma-4-31B-it-qat-UD-Q4_K_XL",
@@ -105,9 +105,9 @@
     "file_gib": 16.1,
     "trunk_layers": 60,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 7,
+    "loaded": 3,
+    "max_loaded_context": 102400
   },
   {
     "id": "Qwen3.8-27B-GGUF_Qwen3.8-27B-UD-Q5_K_S",
@@ -115,9 +115,9 @@
     "file_gib": 17.384,
     "trunk_layers": 64,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "gemma-4-31B-it-GGUF_gemma-4-31B-it-Q5_K_S",
@@ -125,9 +125,9 @@
     "file_gib": 19.674,
     "trunk_layers": 60,
     "experts": null,
-    "runs": 8,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 12,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "NVIDIA-Nemotron-3-Nano-30B-A3B-GGUF_NVIDIA-Nemotron-3-Nano-30B-A3B-Q4_K_M",
@@ -135,9 +135,9 @@
     "file_gib": 20.882,
     "trunk_layers": 52,
     "experts": 128,
-    "runs": 6,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 10,
+    "loaded": 4,
+    "max_loaded_context": 1048576
   },
   {
     "id": "Qwen3.6-27B-MTP-GGUF_Qwen3.6-27B-Q6_K",
@@ -145,9 +145,9 @@
     "file_gib": 21.313,
     "trunk_layers": 64,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Qwen3.8-27B-NVFP4-MTP-GGUF_Qwen3.8-27B-NVFP4-MTP-HIGHEST",
@@ -155,9 +155,9 @@
     "file_gib": 21.593,
     "trunk_layers": 64,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S",
@@ -175,9 +175,9 @@
     "file_gib": 23.592,
     "trunk_layers": 40,
     "experts": 256,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF_NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q5_K_S",
@@ -185,9 +185,9 @@
     "file_gib": 24.423,
     "trunk_layers": 52,
     "experts": 128,
-    "runs": 6,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 10,
+    "loaded": 4,
+    "max_loaded_context": 1048576
   },
   {
     "id": "Qwen3.6-27B-Claude-Mythos-Distilled-MTP-GGUF_Qwen3.6-27B-Claude-Mythos-Distilled.Q8_0",
@@ -195,9 +195,9 @@
     "file_gib": 27.052,
     "trunk_layers": 64,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Qwen3.8-27B-Uncensored-OrcaRouter-GGUF_Qwen3.8-27B-Uncensored-OrcaRouter-Q8_0",
@@ -205,9 +205,9 @@
     "file_gib": 27.052,
     "trunk_layers": 64,
     "experts": null,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Muse-Glimmer-30B-GGUF_Muse-Glimmer-30B-UD-Q8_K_XL",
@@ -215,9 +215,9 @@
     "file_gib": 30.082,
     "trunk_layers": 52,
     "experts": null,
-    "runs": 6,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 9,
+    "loaded": 3,
+    "max_loaded_context": 102400
   },
   {
     "id": "NVIDIA-Nemotron-3-Nano-30B-A3B-GGUF_NVIDIA-Nemotron-3-Nano-30B-A3B-Q8_0",
@@ -235,9 +235,9 @@
     "file_gib": 51.986,
     "trunk_layers": 48,
     "experts": 512,
-    "runs": 4,
-    "loaded": 0,
-    "max_loaded_context": null
+    "runs": 8,
+    "loaded": 4,
+    "max_loaded_context": 262144
   },
   {
     "id": "Laguna-S-2.1-GGUF_Laguna-S-2.1-UD-Q5_K_S",
@@ -265,7 +265,7 @@
     "file_gib": 82.245,
     "trunk_layers": 48,
     "experts": 256,
-    "runs": 5,
+    "runs": 7,
     "loaded": 1,
     "max_loaded_context": 4096
   },

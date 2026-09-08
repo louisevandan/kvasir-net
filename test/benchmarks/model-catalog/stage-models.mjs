@@ -27,13 +27,14 @@ const dest = argument('--dest', 'D:\\models');
 const inventoryFile = argument('--inventory', path.join('target', 'model-catalog', 'inventory.json'));
 const root = argument('--root', 'C:\\Users\\42mob\\p4-remote');
 const remoteDir = `${root}\\probe`;
-const taskName = 'p4-model-stage-copy';
+const taskName = `p4-model-stage-copy-${argument('--run-name', 'main')}`;
 const user = argument('--user', 'm42-server2\\42mob');
-const launcher = `${remoteDir}\\stage-copy.cmd`;
-// A run gets its own log. A previous run's cmd can outlive its scheduled task
-// and keep the old file open, and then the next task dies instantly because its
-// output redirection cannot be created.
 const runTag = argument('--run', new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14));
+// Task, launcher and log all carry the run's own name. With one fixed set of
+// names a second staging run deletes the first run's scheduled task and
+// overwrites the script its cmd is still reading, killing it mid-copy, and a
+// leftover cmd keeps the old log open so the next task dies on its redirection.
+const launcher = `${remoteDir}\\stage-copy-${runTag}.cmd`;
 const logRemote = `${remoteDir}\\stage-copy-${runTag}.log`;
 const logGlob = `${remoteDir}\\stage-copy-*.log`;
 
@@ -60,6 +61,12 @@ if (command === 'copy') {
     const target = `${dest}\\${model.repository}`;
     const names = model.files.map((file) => `"${path.basename(file)}"`).join(' ');
     lines.push(`echo COPY ${model.id}`);
+    // /J is unbuffered: measured 112 MB/s against 80 MB/s buffered on this
+    // link. Its cost is that a destination file is set to full length before
+    // the data arrives, so a run killed mid-file leaves a full-size file with
+    // partial contents that the next run would skip on size. `stop` therefore
+    // deletes the directory of whichever model was in flight.
+    lines.push(`echo INFLIGHT ${model.repository}`);
     lines.push(`robocopy "${model.directory}" "${target}" ${names} /J /NP /NJH /NJS /R:2 /W:5`);
     lines.push('if %ERRORLEVEL% GEQ 8 echo COPY_FAILED %ERRORLEVEL% ' + model.id);
   }
@@ -69,12 +76,18 @@ if (command === 'copy') {
   const copy = spawnSync('scp', ['-o', 'BatchMode=yes', '-q', localCmd, `${host}:${launcher.replace(/\\/g, '/')}`],
     { encoding: 'utf8' });
   if (copy.status !== 0) throw new Error(`launcher copy failed: ${copy.stderr ?? ''}`);
+  // Deleting a scheduled task does not kill the cmd it already started, so a
+  // second run would leave two robocopy chains writing the same destination
+  // files. Refuse instead, unless the caller says to take over.
+  if (!process.argv.includes('--force')) {
+    const busy = ssh("@(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'cmd.exe' -and $_.CommandLine -like '*stage-copy-*.cmd*' -and $_.CommandLine -notlike '*powershell*' }).Count").out.trim();
+    if (busy !== '0') {
+      process.stderr.write(`a staging copy is already running (${busy} process(es)); stop it first or pass --force
+`);
+      process.exit(1);
+    }
+  }
   const start = [
-    // A leftover robocopy from an earlier run would both share the link and
-    // hold the previous log open, so clear it before registering the task.
-    'Get-Process robocopy -ErrorAction SilentlyContinue | Stop-Process -Force;',
-    "Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | Where-Object { $_.CommandLine -like '*stage-copy*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue };",
-    'Start-Sleep -Seconds 2;',
     `$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c ${launcher} > ${logRemote} 2>&1' -WorkingDirectory '${remoteDir}';`,
     `$principal = New-ScheduledTaskPrincipal -UserId '${user}' -LogonType Interactive -RunLevel Limited;`,
     '$settings = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit ([TimeSpan]::FromHours(24));',
@@ -97,6 +110,22 @@ if (command === 'copy') {
     "$d = Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='D:'\"; Write-Output ('dest_free_gib=' + [math]::Round($d.FreeSpace/1GB))",
   ].join(' ');
   process.stdout.write(`${ssh(script).out}\n`);
+} else if (command === 'remove') {
+  // Reclaim the host's SSD as soon as a model's loads are recorded. The copy
+  // walks its list once and never returns to a model it has passed, so
+  // deleting behind it is safe while it is still running.
+  const ids = (argument('--models', '') || '').split(',').filter(Boolean);
+  if (!ids.length) throw new Error('remove needs --models <id,id>');
+  const inventory = JSON.parse(fs.readFileSync(inventoryFile, 'utf8'));
+  const dirs = ids.map((id) => {
+    const model = inventory.models.find((m) => m.id === id);
+    if (!model) throw new Error('unknown model ' + id);
+    return path.join(dest, model.repository);
+  });
+  // One SSH command line has a length limit, so remove in small batches.
+  const script = dirs.slice(0, 4).map((dir) => "$d = '" + dir + "'; if (Test-Path -LiteralPath $d) { $n = (Get-ChildItem -LiteralPath $d -Recurse -File | Measure-Object -Sum Length); Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue; Write-Output ('REMOVED ' + $d + ' gib=' + [math]::Round($n.Sum/1GB,1)) };").join(' ')
+    + " $f = (Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='D:'\").FreeSpace; Write-Output ('dest_free_gib=' + [math]::Round($f/1GB))";
+  process.stdout.write(`${ssh(script).out}\n`);
 } else if (command === 'list') {
   const script = `Get-ChildItem -LiteralPath '${dest}' -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName + ' ' + $_.Length }`;
   process.stdout.write(`${ssh(script).out}\n`);
@@ -104,8 +133,14 @@ if (command === 'copy') {
   const script = [
     `schtasks.exe /end /tn ${taskName} *> $null;`,
     `schtasks.exe /delete /tn ${taskName} /f *> $null;`,
+    // Whatever model was mid-copy has a full-size but partly written file, and
+    // a later run would skip it on size. Remove that model's directory so the
+    // next run copies it again from the start.
+    `$log = Get-ChildItem -Path '${logGlob}' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1;`,
+    "$inflight = if ($log) { (Select-String -LiteralPath $log.FullName -Pattern 'INFLIGHT (.+)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim() } else { $null };",
+    `if ($inflight) { $dir = Join-Path '${dest}' $inflight; if (Test-Path $dir) { Remove-Item $dir -Recurse -Force; Write-Output ('DISCARDED ' + $dir) } };`,
     'Get-Process robocopy -ErrorAction SilentlyContinue | Stop-Process -Force;',
-    "Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | Where-Object { $_.CommandLine -like '*stage-copy*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue };",
+    "Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | Where-Object { $_.CommandLine -like '*stage-copy-*.cmd*' -and $_.CommandLine -notlike '*powershell*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue };",
     "Write-Output 'STOPPED'",
   ].join(' ');
   process.stdout.write(`${ssh(script).out}\n`);
