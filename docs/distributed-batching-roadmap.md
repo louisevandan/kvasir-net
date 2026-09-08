@@ -290,7 +290,9 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
 - 모든 미발행 구간의 eligible/admitted/in-flight 수와 거절 사유. `idle_gated=0`은 두 gate의 거절이
   없다는 뜻일 뿐 모든 발행 불가 사유를 계측한 값이 아니다.
 - 기존 STEP trace로 폭 2 / 중간 / 30에서 head·tail을 parse·decode·sampler·encode로 나눈다.
-  1 ms 단위 원인을 보려면 ms 절삭보다 세밀한 단위와 trace 오버헤드 대조가 함께 필요하다.
+  **새로 만들 것이 없다.** 타이머는 `server_physical.cpp:34`에, 스위치는 `remote-agent.mjs:75`의
+  `--step-trace`(→ `P4_STAGED_TRACE_STEP=1`)에 이미 있다. 1 ms 단위 원인을 보려면 ms 절삭보다
+  세밀한 단위와 trace 오버헤드 대조가 함께 필요하다.
 - 올바른 ChatML template와 정상 응답 검사를 고정한 35B VRAM 기준선을 새로 봉인한 뒤에 잰다.
   현재 117.07은 heuristic judge 60/64인 품질 판정 전 값이다.
 
