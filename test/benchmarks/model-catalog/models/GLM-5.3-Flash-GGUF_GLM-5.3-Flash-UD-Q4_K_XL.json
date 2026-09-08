@@ -1,0 +1,435 @@
+{
+  "schema": "p4-model-catalog/1",
+  "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL",
+  "identity": {
+    "publisher": "unsloth",
+    "repository": "GLM-5.3-Flash-GGUF",
+    "base_name": "GLM-5.3-Flash-UD-Q4_K_XL",
+    "architecture": "glm5next",
+    "name": "GLM 5.3 Flash",
+    "size_label": "288x10B",
+    "files": [
+      "S:\\models\\unsloth\\GLM-5.3-Flash-GGUF\\GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+      "S:\\models\\unsloth\\GLM-5.3-Flash-GGUF\\GLM-5.3-Flash-UD-Q4_K_XL-00002-of-00006.gguf",
+      "S:\\models\\unsloth\\GLM-5.3-Flash-GGUF\\GLM-5.3-Flash-UD-Q4_K_XL-00003-of-00006.gguf",
+      "S:\\models\\unsloth\\GLM-5.3-Flash-GGUF\\GLM-5.3-Flash-UD-Q4_K_XL-00004-of-00006.gguf",
+      "S:\\models\\unsloth\\GLM-5.3-Flash-GGUF\\GLM-5.3-Flash-UD-Q4_K_XL-00005-of-00006.gguf",
+      "S:\\models\\unsloth\\GLM-5.3-Flash-GGUF\\GLM-5.3-Flash-UD-Q4_K_XL-00006-of-00006.gguf"
+    ],
+    "first_shard": "S:\\models\\unsloth\\GLM-5.3-Flash-GGUF\\GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+    "file_bytes": 199707321347,
+    "file_gib": 185.992
+  },
+  "shape": {
+    "block_count": 46,
+    "nextn_predict_layers": 1,
+    "trunk_layers": 45,
+    "expert_count": 288,
+    "expert_used_count": 8,
+    "embedding_length": 4096,
+    "context_length": 1048576,
+    "head_count_kv": {
+      "array": 46,
+      "sample": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    "key_length": 512,
+    "value_length": 512,
+    "full_attention_interval": null,
+    "tensor_bytes": 199697800568,
+    "expert_bytes": 189857267712,
+    "other_block_bytes": 8492440952,
+    "non_block_bytes": 1348091904
+  },
+  "prompt": {
+    "eos_token_id": 154820,
+    "bos_token_id": 154822,
+    "chat_template_markers": [
+      "<think>",
+      "</think>"
+    ]
+  },
+  "runs": [
+    {
+      "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL__expert_cpu__ctx4096__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:25:11.862Z",
+      "strategy": "expert_cpu",
+      "context": 4096,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245799014400,
+      "host_free_after_bytes": 245779681280,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            23
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 2186,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            23,
+            45
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 2189,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL__expert_cpu__ctx32768__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:25:17.492Z",
+      "strategy": "expert_cpu",
+      "context": 32768,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245805977600,
+      "host_free_after_bytes": 245811441664,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            23
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 585,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            23,
+            45
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 621,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL__expert_cpu__ctx102400__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:25:23.112Z",
+      "strategy": "expert_cpu",
+      "context": 102400,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245808865280,
+      "host_free_after_bytes": 245808357376,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            23
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 589,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            23,
+            45
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 600,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL__expert_cpu__ctx262144__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:25:28.710Z",
+      "strategy": "expert_cpu",
+      "context": 262144,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245806587904,
+      "host_free_after_bytes": 245810327552,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            23
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 582,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            23,
+            45
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 559,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL__expert_cpu__ctx524288__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:25:34.293Z",
+      "strategy": "expert_cpu",
+      "context": 524288,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245808590848,
+      "host_free_after_bytes": 245812346880,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            23
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 523,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            23,
+            45
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 562,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL__expert_cpu__ctx1048576__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:25:39.918Z",
+      "strategy": "expert_cpu",
+      "context": 1048576,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245808689152,
+      "host_free_after_bytes": 245809319936,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            23
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 583,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            23,
+            45
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 608,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  58:            tokenizer.ggml.unknown_token_id u32              = 154820",
+            "llama_model_load: error loading model: unknown model architecture: 'glm5next'",
+            "llama_model_load_from_file_impl: failed to load model",
+            "llama.cpp failed to create the no-alloc model plan"
+          ]
+        }
+      ]
+    }
+  ],
+  "loaded_contexts": []
+}

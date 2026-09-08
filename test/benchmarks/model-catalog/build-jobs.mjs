@@ -27,6 +27,7 @@ const only = argument('--only', null);
 const skip = argument('--skip', null);
 const maxBytes = Number(argument('--max-gib', '0')) * 2 ** 30;
 const out = argument('--out', path.join('target', 'model-catalog', `${mode}-jobs.json`));
+const localRoot = argument('--local-root', null);
 const timeout = Number(argument('--timeout-s', mode === 'plan' ? '900' : '5400'));
 
 const inventory = JSON.parse(fs.readFileSync(inventoryFile, 'utf8'));
@@ -62,6 +63,15 @@ function cuts(layers, count, sharedFrom = null) {
   return [...even(0, sharedFrom, count - 1), [sharedFrom, layers]];
 }
 
+/// Where the probe host should read this model from. Staging a model on the
+/// host's own SSD turns every later load into a local read; the share is a
+/// 1 Gbps link that a four-context sweep would otherwise cross four times.
+function modelPath(model) {
+  if (!localRoot) return model.first_shard;
+  const name = model.first_shard.split('\\').pop();
+  return `${localRoot}\\${model.repository}\\${name}`;
+}
+
 function planTokens(model, cut, layers, context, strategy) {
   const [begin, end] = cut;
   const unowned = [];
@@ -71,7 +81,7 @@ function planTokens(model, cut, layers, context, strategy) {
   if (strategy === 'expert_cpu') overrides.push(EXPERTS_TO_CPU);
   if (strategy === 'dense_ffn_cpu') overrides.push(DENSE_FFN_TO_CPU);
   const tokens = [
-    '--model', `"${model.first_shard}"`,
+    '--model', `"${modelPath(model)}"`,
     '--memory-topology', 'discrete',
     '--layer-begin', `${begin}`,
     '--layer-end', `${end}`,

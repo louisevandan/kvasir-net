@@ -1,0 +1,412 @@
+[
+  {
+    "id": "Qwen3.5-0.8B-MTP-GGUF_Qwen3.5-0.8B-Q8_0",
+    "architecture": "qwen35",
+    "file_gib": 0.776,
+    "trunk_layers": 24,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.5-2B-MTP-GGUF_Qwen3.5-2B-Q5_K_S",
+    "architecture": "qwen35",
+    "file_gib": 1.335,
+    "trunk_layers": 24,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen_Qwen2.5-1.5B-Instruct-Q8_0",
+    "architecture": "qwen2",
+    "file_gib": 1.533,
+    "trunk_layers": 28,
+    "experts": null,
+    "runs": 2,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "NVIDIA-Nemotron-3-Nano-4B-GGUF_NVIDIA-Nemotron-3-Nano-4B-Q5_K_M",
+    "architecture": "nemotron_h",
+    "file_gib": 2.943,
+    "trunk_layers": 42,
+    "experts": null,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Bonsai-27B-GGUF_Bonsai-27B-Q1_0",
+    "architecture": "qwen35",
+    "file_gib": 3.542,
+    "trunk_layers": 64,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.5-4B-MTP-GGUF_Qwen3.5-4B-Q8_0",
+    "architecture": "qwen35",
+    "file_gib": 4.294,
+    "trunk_layers": 32,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3-Embedding-8B-GGUF_Qwen3-Embedding-8B-Q4_K_M",
+    "architecture": "qwen3",
+    "file_gib": 4.356,
+    "trunk_layers": 36,
+    "experts": null,
+    "runs": 2,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "gemma-4-E2B-it-GGUF_gemma-4-E2B-it-Q8_0",
+    "architecture": "gemma4",
+    "file_gib": 4.702,
+    "trunk_layers": 35,
+    "experts": null,
+    "runs": 3,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.5-9B-MTP-GGUF_Qwen3.5-9B-Q5_K_S",
+    "architecture": "qwen35",
+    "file_gib": 6.109,
+    "trunk_layers": 32,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "gemma-4-12b-it-GGUF_gemma-4-12b-it-UD-Q8_K_XL",
+    "architecture": "gemma4",
+    "file_gib": 12.701,
+    "trunk_layers": 48,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "gemma-4-31B-it-qat-GGUF_gemma-4-31B-it-qat-UD-Q4_K_XL",
+    "architecture": "gemma4",
+    "file_gib": 16.1,
+    "trunk_layers": 60,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.8-27B-GGUF_Qwen3.8-27B-UD-Q5_K_S",
+    "architecture": "qwen35",
+    "file_gib": 17.384,
+    "trunk_layers": 64,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "gemma-4-31B-it-GGUF_gemma-4-31B-it-Q5_K_S",
+    "architecture": "gemma4",
+    "file_gib": 19.674,
+    "trunk_layers": 60,
+    "experts": null,
+    "runs": 8,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "NVIDIA-Nemotron-3-Nano-30B-A3B-GGUF_NVIDIA-Nemotron-3-Nano-30B-A3B-Q4_K_M",
+    "architecture": "nemotron_h_moe",
+    "file_gib": 20.882,
+    "trunk_layers": 52,
+    "experts": 128,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.6-27B-MTP-GGUF_Qwen3.6-27B-Q6_K",
+    "architecture": "qwen35",
+    "file_gib": 21.313,
+    "trunk_layers": 64,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.8-27B-NVFP4-MTP-GGUF_Qwen3.8-27B-NVFP4-MTP-HIGHEST",
+    "architecture": "qwen35",
+    "file_gib": 21.593,
+    "trunk_layers": 64,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Ornith-1.0-35B-GGUF_Ornith-1.0-35B-UD-Q5_K_S",
+    "architecture": "qwen35moe",
+    "file_gib": 23.229,
+    "trunk_layers": 40,
+    "experts": 256,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "nex-agi_Nex-N2-mini-GGUF_nex-agi_Nex-N2-mini-Q5_K_L",
+    "architecture": "qwen35moe",
+    "file_gib": 23.592,
+    "trunk_layers": 40,
+    "experts": 256,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF_NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q5_K_S",
+    "architecture": "nemotron_h_moe",
+    "file_gib": 24.423,
+    "trunk_layers": 52,
+    "experts": 128,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.6-27B-Claude-Mythos-Distilled-MTP-GGUF_Qwen3.6-27B-Claude-Mythos-Distilled.Q8_0",
+    "architecture": "qwen35",
+    "file_gib": 27.052,
+    "trunk_layers": 64,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.8-27B-Uncensored-OrcaRouter-GGUF_Qwen3.8-27B-Uncensored-OrcaRouter-Q8_0",
+    "architecture": "qwen35",
+    "file_gib": 27.052,
+    "trunk_layers": 64,
+    "experts": null,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Muse-Glimmer-30B-GGUF_Muse-Glimmer-30B-UD-Q8_K_XL",
+    "architecture": "muse-glimmer",
+    "file_gib": 30.082,
+    "trunk_layers": 52,
+    "experts": null,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "NVIDIA-Nemotron-3-Nano-30B-A3B-GGUF_NVIDIA-Nemotron-3-Nano-30B-A3B-Q8_0",
+    "architecture": "nemotron_h_moe",
+    "file_gib": 31.279,
+    "trunk_layers": 52,
+    "experts": 128,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3-Coder-Next-GGUF_Qwen3-Coder-Next-UD-Q5_K_S",
+    "architecture": "qwen3next",
+    "file_gib": 51.986,
+    "trunk_layers": 48,
+    "experts": 512,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Laguna-S-2.1-GGUF_Laguna-S-2.1-UD-Q5_K_S",
+    "architecture": "laguna",
+    "file_gib": 76.98,
+    "trunk_layers": 48,
+    "experts": 256,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Mistral-Medium-3.5-128B-GGUF_Mistral-Medium-3.5-128B-Q5_K_S",
+    "architecture": "mistral3",
+    "file_gib": 80.265,
+    "trunk_layers": 88,
+    "experts": null,
+    "runs": 8,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.5-122B-A10B-MTP-GGUF_Qwen3.5-122B-A10B-UD-Q5_K_S",
+    "architecture": "qwen35moe",
+    "file_gib": 82.245,
+    "trunk_layers": 48,
+    "experts": 256,
+    "runs": 5,
+    "loaded": 1,
+    "max_loaded_context": 4096
+  },
+  {
+    "id": "NVIDIA-Nemotron-3-Super-120B-A12B-GGUF_NVIDIA-Nemotron-3-Super-120B-A12B-UD-Q5_K_S",
+    "architecture": "nemotron_h_moe",
+    "file_gib": 83.556,
+    "trunk_layers": 88,
+    "experts": 512,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Qwen3.8-Flash-Next-GGUF_Qwen3.8-Flash-Next-UD-Q4_K_XL",
+    "architecture": "qwen4exp",
+    "file_gib": 103.688,
+    "trunk_layers": 48,
+    "experts": 512,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Step-3.7-Flash-GGUF_Step-3.7-Flash-UD-Q5_K_M",
+    "architecture": "step35",
+    "file_gib": 136.435,
+    "trunk_layers": 45,
+    "experts": 288,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "MiniMax-M2.7-GGUF_MiniMax-M2.7-UD-Q5_K_S",
+    "architecture": "minimax-m2",
+    "file_gib": 148.12,
+    "trunk_layers": 62,
+    "experts": 256,
+    "runs": 3,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL",
+    "architecture": "deepseek4",
+    "file_gib": 150.753,
+    "trunk_layers": 43,
+    "experts": 256,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "GLM-5.3-Flash-GGUF_GLM-5.3-Flash-UD-Q4_K_XL",
+    "architecture": "glm5next",
+    "file_gib": 185.992,
+    "trunk_layers": 45,
+    "experts": 288,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "Hy3-GGUF_Hy3-Q5_K_S",
+    "architecture": "hy_v3",
+    "file_gib": 191.884,
+    "trunk_layers": 80,
+    "experts": 192,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "MiMo-V2.5-GGUF_MiMo-V2.5-UD-Q5_K_S",
+    "architecture": "mimo2",
+    "file_gib": 201.446,
+    "trunk_layers": 48,
+    "experts": 256,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "nex-agi_Nex-N2-Pro-GGUF_nex-agi_Nex-N2-Pro-Q5_K_S",
+    "architecture": "qwen35moe",
+    "file_gib": 255.177,
+    "trunk_layers": 60,
+    "experts": 512,
+    "runs": 4,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S",
+    "architecture": "minimax-m3",
+    "file_gib": 278.239,
+    "trunk_layers": 60,
+    "experts": 128,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "NVIDIA-Nemotron-3-Ultra-550B-A55B-GGUF_NVIDIA-Nemotron-3-Ultra-550B-A55B-UD-Q5_K_S",
+    "architecture": "nemotron_h_moe",
+    "file_gib": 364.797,
+    "trunk_layers": 108,
+    "experts": 512,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "GLM-5.3-GGUF_GLM-5.3-UD-Q4_K_XL",
+    "architecture": "glm-dsa",
+    "file_gib": 435.197,
+    "trunk_layers": 78,
+    "experts": 256,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "MiMo-V2.5-Pro-GGUF_MiMo-V2.5-Pro-UD-IQ4_NL",
+    "architecture": "mimo2",
+    "file_gib": 466.841,
+    "trunk_layers": 70,
+    "experts": 384,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  },
+  {
+    "id": "GLM-5.2-GGUF_GLM-5.2-UD-Q5_K_S",
+    "architecture": "glm-dsa",
+    "file_gib": 491.048,
+    "trunk_layers": 78,
+    "experts": 256,
+    "runs": 6,
+    "loaded": 0,
+    "max_loaded_context": null
+  }
+]

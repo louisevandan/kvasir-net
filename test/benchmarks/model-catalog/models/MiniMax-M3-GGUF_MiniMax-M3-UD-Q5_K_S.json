@@ -1,0 +1,398 @@
+{
+  "schema": "p4-model-catalog/1",
+  "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S",
+  "identity": {
+    "publisher": "unsloth",
+    "repository": "MiniMax-M3-GGUF",
+    "base_name": "MiniMax-M3-UD-Q5_K_S",
+    "architecture": "minimax-m3",
+    "name": "Minimax-M3",
+    "size_label": "128x16B",
+    "files": [
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00001-of-00008.gguf",
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00002-of-00008.gguf",
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00003-of-00008.gguf",
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00004-of-00008.gguf",
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00005-of-00008.gguf",
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00006-of-00008.gguf",
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00007-of-00008.gguf",
+      "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00008-of-00008.gguf"
+    ],
+    "first_shard": "S:\\models\\unsloth\\MiniMax-M3-GGUF\\MiniMax-M3-UD-Q5_K_S-00001-of-00008.gguf",
+    "file_bytes": 298756339264,
+    "file_gib": 278.239
+  },
+  "shape": {
+    "block_count": 60,
+    "nextn_predict_layers": 0,
+    "trunk_layers": 60,
+    "expert_count": 128,
+    "expert_used_count": 4,
+    "embedding_length": 6144,
+    "context_length": 1048576,
+    "head_count_kv": 4,
+    "key_length": 128,
+    "value_length": 128,
+    "full_attention_interval": null,
+    "tensor_bytes": 298748035584,
+    "expert_bytes": 284984082432,
+    "other_block_bytes": 11151892992,
+    "non_block_bytes": 2612060160
+  },
+  "prompt": {
+    "eos_token_id": 200020,
+    "bos_token_id": 200019,
+    "chat_template_markers": []
+  },
+  "runs": [
+    {
+      "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S__expert_cpu__ctx4096__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:27:21.743Z",
+      "strategy": "expert_cpu",
+      "context": 4096,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245807054848,
+      "host_free_after_bytes": 245800968192,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            30
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 3208,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            30,
+            60
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 3127,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S__expert_cpu__ctx32768__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:27:28.073Z",
+      "strategy": "expert_cpu",
+      "context": 32768,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245802606592,
+      "host_free_after_bytes": 245794975744,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            30
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1320,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            30,
+            60
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1223,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S__expert_cpu__ctx102400__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:27:34.311Z",
+      "strategy": "expert_cpu",
+      "context": 102400,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245721165824,
+      "host_free_after_bytes": 245795201024,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            30
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1183,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            30,
+            60
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1223,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S__expert_cpu__ctx262144__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:27:40.589Z",
+      "strategy": "expert_cpu",
+      "context": 262144,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245800648704,
+      "host_free_after_bytes": 245803032576,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            30
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1203,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            30,
+            60
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1264,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S__expert_cpu__ctx524288__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:27:46.940Z",
+      "strategy": "expert_cpu",
+      "context": 524288,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245803393024,
+      "host_free_after_bytes": 245801156608,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            30
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1344,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            30,
+            60
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1275,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "MiniMax-M3-GGUF_MiniMax-M3-UD-Q5_K_S__expert_cpu__ctx1048576__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:27:53.158Z",
+      "strategy": "expert_cpu",
+      "context": 1048576,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245804924928,
+      "host_free_after_bytes": 245798969344,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            30
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1143,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            30,
+            60
+          ],
+          "outcome": "exit:3221226505",
+          "elapsed_ms": 1193,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [],
+          "graph": [],
+          "error": [
+            "llama_model_loader: - kv  37:            tokenizer.ggml.unknown_token_id u32              = 16474",
+            "F:\\.cache\\llama-pipeline-upstream\\0eadefebd3-961bd89cd119\\src\\models\\minimax-m3.cpp:50: GGML_ASSERT(hparams.indexer_block_size > 0) failed"
+          ]
+        }
+      ]
+    }
+  ],
+  "loaded_contexts": []
+}

@@ -52,6 +52,12 @@ function entries(plan) {
   }));
 }
 
+/// The fields `same_stage_memory_allocation` compares, in its order.
+function allocation(plan) {
+  if (!plan?.entries) return null;
+  return plan.entries.map((e) => [e.scope, e.name, e.model, e.context, e.compute]);
+}
+
 const perModel = new Map();
 for (const record of records) {
   const job = jobsById.get(record.id);
@@ -67,8 +73,11 @@ for (const record of records) {
       outcome: stage.outcome,
       elapsed_ms: stage.elapsed_ms,
       measured: stage.actual ? 'actual' : (stage.plan ? 'plan' : 'none'),
+      // The stage server compares scope, name and the three allocation sizes.
+      // Free memory is not part of that: it falls as the weights load, so the
+      // plan and the measurement never see the same value and never should.
       plan_equals_actual: stage.plan && stage.actual
-        ? JSON.stringify(entries(stage.plan)) === JSON.stringify(entries(stage.actual))
+        ? JSON.stringify(allocation(stage.plan)) === JSON.stringify(allocation(stage.actual))
         : null,
       execution_shape: source?.execution_shape ?? null,
       fits_current_free: source?.fits_current_free ?? null,

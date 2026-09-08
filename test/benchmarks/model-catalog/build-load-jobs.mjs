@@ -26,9 +26,11 @@ const maxGib = Number(argument('--max-gib', '100000'));
 const timeout = Number(argument('--timeout-s', '7200'));
 const ladder = argument('--ladder', '4096,32768,102400').split(',').map(Number);
 const policy = argument('--policy', 'auto');
+const localRoot = argument('--local-root', null);
 
 const inventory = JSON.parse(fs.readFileSync(inventoryFile, 'utf8'));
 const size = new Map(inventory.models.map((m) => [m.id, m.file_bytes ?? 0]));
+const byId = new Map(inventory.models.map((m) => [m.id, m]));
 
 const planJobs = new Map();
 for (const file of jobFiles) {
@@ -45,6 +47,19 @@ for (const file of fitFiles) {
   }
 }
 
+/// Point a plan template at the host's local copy of the model. The share is a
+/// 1 Gbps link and a four-context sweep would cross it four times per model.
+function localise(stage, model) {
+  if (!localRoot) return stage;
+  const plan = [...stage.plan];
+  const index = plan.indexOf('--model');
+  if (index >= 0) {
+    const name = plan[index + 1].replace(/"/g, '').split('\\').pop();
+    plan[index + 1] = `"${localRoot}\\${model.repository}\\${name}"`;
+  }
+  return { ...stage, plan };
+}
+
 const jobs = [];
 for (const [modelId, fit] of best) {
   const bytes = size.get(modelId) ?? 0;
@@ -59,8 +74,10 @@ for (const [modelId, fit] of best) {
     const source = fit.entries.find((e) => e.context === context);
     const template = planJobs.get(source?.id ?? '');
     if (!template) continue;
+    const model = byId.get(modelId);
     jobs.push({
       ...template,
+      stages: template.stages.map((stage) => localise(stage, model)),
       id: template.id.replace('__ctx', '__load__ctx'),
       mode: 'load',
       timeout_s: timeout,

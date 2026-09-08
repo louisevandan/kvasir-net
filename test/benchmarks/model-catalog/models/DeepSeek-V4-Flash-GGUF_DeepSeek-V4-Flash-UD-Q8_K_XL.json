@@ -1,0 +1,458 @@
+{
+  "schema": "p4-model-catalog/1",
+  "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL",
+  "identity": {
+    "publisher": "unsloth",
+    "repository": "DeepSeek-V4-Flash-GGUF",
+    "base_name": "DeepSeek-V4-Flash-UD-Q8_K_XL",
+    "architecture": "deepseek4",
+    "name": "Deepseek-V4-Flash",
+    "size_label": "256x8.4B",
+    "files": [
+      "S:\\models\\unsloth\\DeepSeek-V4-Flash-GGUF\\DeepSeek-V4-Flash-UD-Q8_K_XL-00001-of-00005.gguf",
+      "S:\\models\\unsloth\\DeepSeek-V4-Flash-GGUF\\DeepSeek-V4-Flash-UD-Q8_K_XL-00002-of-00005.gguf",
+      "S:\\models\\unsloth\\DeepSeek-V4-Flash-GGUF\\DeepSeek-V4-Flash-UD-Q8_K_XL-00003-of-00005.gguf",
+      "S:\\models\\unsloth\\DeepSeek-V4-Flash-GGUF\\DeepSeek-V4-Flash-UD-Q8_K_XL-00004-of-00005.gguf",
+      "S:\\models\\unsloth\\DeepSeek-V4-Flash-GGUF\\DeepSeek-V4-Flash-UD-Q8_K_XL-00005-of-00005.gguf"
+    ],
+    "first_shard": "S:\\models\\unsloth\\DeepSeek-V4-Flash-GGUF\\DeepSeek-V4-Flash-UD-Q8_K_XL-00001-of-00005.gguf",
+    "file_bytes": 161869614720,
+    "file_gib": 150.753
+  },
+  "shape": {
+    "block_count": 43,
+    "nextn_predict_layers": 0,
+    "trunk_layers": 43,
+    "expert_count": 256,
+    "expert_used_count": 6,
+    "embedding_length": 4096,
+    "context_length": 1048576,
+    "head_count_kv": 1,
+    "key_length": 512,
+    "value_length": 512,
+    "full_attention_interval": null,
+    "tensor_bytes": 161864270172,
+    "expert_bytes": 147169738752,
+    "other_block_bytes": 12576129352,
+    "non_block_bytes": 2118402068
+  },
+  "prompt": {
+    "eos_token_id": 1,
+    "bos_token_id": 0,
+    "chat_template_markers": [
+      "<think>",
+      "</think>"
+    ]
+  },
+  "runs": [
+    {
+      "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL__expert_cpu__ctx4096__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:24:33.420Z",
+      "strategy": "expert_cpu",
+      "context": 4096,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245809586176,
+      "host_free_after_bytes": 245810839552,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            22
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 2401,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            22,
+            43
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 2433,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL__expert_cpu__ctx32768__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:24:39.711Z",
+      "strategy": "expert_cpu",
+      "context": 32768,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245780123648,
+      "host_free_after_bytes": 245731573760,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            22
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1251,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            22,
+            43
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1269,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL__expert_cpu__ctx102400__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:24:45.969Z",
+      "strategy": "expert_cpu",
+      "context": 102400,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245806714880,
+      "host_free_after_bytes": 245808021504,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            22
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1207,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            22,
+            43
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1231,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL__expert_cpu__ctx262144__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:24:52.229Z",
+      "strategy": "expert_cpu",
+      "context": 262144,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245808955392,
+      "host_free_after_bytes": 245806190592,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            22
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1214,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            22,
+            43
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1242,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL__expert_cpu__ctx524288__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:24:58.469Z",
+      "strategy": "expert_cpu",
+      "context": 524288,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245810323456,
+      "host_free_after_bytes": 245804773376,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            22
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1191,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            22,
+            43
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1219,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DeepSeek-V4-Flash-GGUF_DeepSeek-V4-Flash-UD-Q8_K_XL__expert_cpu__ctx1048576__s2__seq1",
+      "mode": "plan",
+      "at": "2026-09-08T04:25:04.650Z",
+      "strategy": "expert_cpu",
+      "context": 1048576,
+      "seq_max": 1,
+      "stage_count": 2,
+      "ok": false,
+      "host_free_before_bytes": 245808230400,
+      "host_free_after_bytes": 245794574336,
+      "host_total_bytes": 274561966080,
+      "totals": null,
+      "stages": [
+        {
+          "stage": 0,
+          "device": "0",
+          "cut": [
+            0,
+            22
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1127,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        },
+        {
+          "stage": 1,
+          "device": "1",
+          "cut": [
+            22,
+            43
+          ],
+          "outcome": "exit:7",
+          "elapsed_ms": 1166,
+          "measured": "none",
+          "plan_equals_actual": null,
+          "execution_shape": null,
+          "fits_current_free": null,
+          "entries": null,
+          "buffers": [
+            "load_tensors:        CUDA0 model buffer size =     0.00 MiB",
+            "load_tensors:    CUDA_Host model buffer size =     0.00 MiB",
+            "llama_context:  CUDA_Host  output buffer size =     0.49 MiB"
+          ],
+          "graph": [],
+          "error": [
+            "print_info: rope_finetuned        = unknown",
+            "llama_init_from_model: failed to initialize the context: llama.cpp memory implementation is not safe for stage-local residency",
+            "llama.cpp failed to create the no-alloc context plan"
+          ]
+        }
+      ]
+    }
+  ],
+  "loaded_contexts": []
+}
