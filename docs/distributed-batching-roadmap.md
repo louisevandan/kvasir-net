@@ -27,7 +27,7 @@
 | 항목 | 결과 | 지위 |
 | --- | --- | --- |
 | HEAD `2ed9b71d4` release 빌드 | 성공 | 검증됨 |
-| HEAD `cargo test --workspace` | **컴파일 실패**(`issue_witness_tests.rs:409`, `RequestState`는 `Deref`만 구현), 시험 0개 실행 | 검증됨(결함) |
+| HEAD `cargo test --workspace` | 2026-09-07 시점 **컴파일 실패**(`issue_witness_tests.rs:409`, `RequestState`는 `Deref`만 구현), 시험 0개 실행. **2026-09-09 `input_mut_for_test()`로 복구: 1,361 passed / 0 failed / 7 ignored** | 해결됨 |
 | 그 크레이트 제외 워크스페이스 | 849/0/0 | 검증됨 |
 | 독립 워크트리 + 시험 1줄 수정 후 staged adapter | 512/0/7, **cap1 actor ring 진행 시험 통과**, cap8 통과 | 검증됨(HEAD 자체 아님) |
 | cap1 후보 제거 변이(`forward_independent_front` 무력화) | cap1 실패, cap8 통과 | 검증됨(변이 1종) |
@@ -42,7 +42,9 @@
 않았다. 그러나 (1) HEAD가 시험 컴파일이 안 되고, (2) `pressure`가 UNLOAD busy로 끝나는데 원인을 가릴 수
 없으며, (3) 처리량과 GPU 활용은 이번 변경 전후가 같다. 재개 순서는 §0.5의 1번 앞에 다음을 둔다.
 
-1. `issue_witness_tests.rs`의 대입을 `input_mut_for_test()`로 고쳐 HEAD `--workspace` 전체 집계를 회복한다.
+1. ~~`issue_witness_tests.rs`의 대입을 `input_mut_for_test()`로 고쳐 HEAD `--workspace` 전체 집계를 회복한다.~~
+   **2026-09-09 완료.** 1,361 passed / 0 failed / 7 ignored, staged adapter lib 512 passed.
+   `DerefMut`은 여전히 없고 제품 경로는 바뀌지 않았다.
 2. 판정을 가리는 하네스·drive 결함을 먼저 고친다. `run/mod.rs`가 UNLOAD 전에 `InferenceResult::error`와
    부분 결과를 보존하게 하고, `run.mjs::stopChild`가 신호 종료를 정지로 인정하게 하며, 실패 경로에서
    원격 stage를 정리한다. 각각 실패하는 시험을 먼저 남긴다.
@@ -241,19 +243,21 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
 
 **따라서 결론이 반대로 바뀐다.** 겹침·UBATCH 채움률은 여전히 목표가 아니지만, 폭을 기각해서도 안 된다.
 **지렛대는 batch당 고정비이고, 이를 줄이는 길은 폭으로 상각하거나 샘플러 자체를 고치는 것이다.**
-`drive.rs:130`의 주석은 철회된 해석을 아직 인용하고 있으므로 P-2에서 함께 고친다.
+그 주석은 `2bc8f93cd`에서 09-04 결과로 교체했다. 코드에 남은 철회된 인용은 없다.
 
 #### P-2. 먼저 복구해야 하는 측정 신뢰 (§0.0의 1~3과 같은 항목)
 
-성능 판정을 시작하기 전에 끝낸다. 세 가지 모두 **성능 실험의 결과를 못 읽게 만들기** 때문이다.
-현재 HEAD는 `cargo test --workspace`가 `issue_witness_tests.rs:409` E0594로 종료 101, 실행 시험 0이다.
+성능 판정을 시작하기 전에 끝낸다. 모두 **성능 실험의 결과를 못 읽게 만들기** 때문이다.
 
-1. 시험 전용 접근자로 HEAD lib test 컴파일 복구. 회귀 없이 스케줄러를 만지지 않는다.
+1. ~~시험 전용 접근자로 HEAD lib test 컴파일 복구.~~ **2026-09-09 완료** (`2e865ff51`).
+   E0594로 종료 101·실행 시험 0이던 상태에서 **1,361 passed / 0 failed / 7 ignored**로 회복했다.
+   회귀 없이 스케줄러를 만지지 않았다. 남은 2~3번이 성능 측정의 잔여 선행조건이다.
 2. `run/mod.rs:174`가 UNLOAD 전에 `InferenceResult::error`와 부분 결과·정산 상태를 보존하도록 고치고,
    primary/cleanup 오류를 따로 기록한다. `run.mjs::stopChild`의 신호 종료 오판도 고친다.
    **UNLOAD guard를 완화해 통과시키지 않는다.**
 3. `pressure`(resident 256) 재판정. 최초 오류가 UNLOAD busy에 덮이는 한 원인은 계속 미판정이다.
-4. `drive.rs:130`의 철회된 상관관계 인용을 09-04 결과로 교체한다.
+4. ~~`drive.rs:130`의 철회된 상관관계 인용을 09-04 결과로 교체한다.~~ **2026-09-09 완료** (`2bc8f93cd`).
+   주석만 바뀌었고 `cargo check --lib` 통과.
 
 #### P-3. 무엇을 기다렸는가 — 30행과 2행 집단의 반복
 
