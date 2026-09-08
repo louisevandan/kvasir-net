@@ -31,24 +31,32 @@
 | 그 크레이트 제외 워크스페이스 | 849/0/0 | 검증됨 |
 | 독립 워크트리 + 시험 1줄 수정 후 staged adapter | 512/0/7, **cap1 actor ring 진행 시험 통과**, cap8 통과 | 검증됨(HEAD 자체 아님) |
 | cap1 후보 제거 변이(`forward_independent_front` 무력화) | cap1 실패, cap8 통과 | 검증됨(변이 1종) |
-| 원격 3090×2, HEAD Release 바이너리, 09-04와 같은 launcher | 35B VRAM-only 117.07 gen TPS(기준선 116.9~118.5와 동일), 2B 2-stage 189.75, 31B dense 2-stage 71.59 수락 | 검증됨 |
-| GPU 사용률·배치 포화 | 모든 arm 평균 7~29%, 0% 표본 18~62%, ubatch 채움 2.7~20% | 검증됨(미개선) |
-| `pressure` 512요청 | 두 호스트 모두 완료 뒤 UNLOAD `unload is busy; active_owners=256`, 09-03 통과 대비 **회귀** | 검증됨(새 반례) |
-| RAM 오프로딩 arm(원격, expert→CPU `--no-mmap`) | 35B MoE 43.19 gen TPS 수락·의미 64/64(ChatML), VRAM-only 117.07의 0.37배. Qwen3.5-122B-A10B는 두 stage 로드(host 38.3/39.0 GiB)까지 됐으나 tail이 `stage_memory_plan.cpp:358` host compute 계획≠실제로 exit 5 → **BLOCKED**, TPS 미측정. S: mmap 오프로딩은 페이지 폴트로 정지(30분에 stage 실행 1회) | 검증됨/BLOCKED |
+| 원격 3090×2, HEAD Release 바이너리, 09-04와 같은 launcher | **품질 판정 전** 35B VRAM-only 117.07 gen TPS(옛 계산식 116.87, 09-04 기준선 116.9~118.5와 동일), 2B 2-stage 189.75, 31B dense 2-stage 71.59. 35B는 거부 4건을 빼면 109.70 | 검증됨(비회귀 관측, paired A/B 아님) |
+| GPU 사용률·배치 포화 | 적재·정리를 뺀 stage 실행창 평균 GPU0/1: 2B 32.9/38.1%, 35B 29.3/30.7%, 31B 42.5/34.4%, 35B 오프로딩 21.8/21.6%(전체 캡처는 15~29%). 실행창 0% 표본 1.0~29.1%. 35B decode 평균 15.80행·prefill 374.37행 | 검증됨(미개선, 유휴 원인 미분해) |
+| `pressure` 512요청 | 두 호스트 모두 UNLOAD `unload is busy; active_owners=224/256` 거부. 다만 drive가 최초 추론 오류를 UNLOAD 실패로 덮으므로 **해제 누수인지 추론 중단 뒤 정상 거부인지 판정 불가** | 미판정(선행 결함 수정 필요) |
+| RAM 오프로딩 arm(원격, expert→CPU `--no-mmap`) | 35B MoE 43.19 gen TPS 수락·judge 64/64(ChatML), 품질 판정 전 117.07의 0.37배. Qwen3.5-122B-A10B는 두 stage 로드(host 38.3/39.0 GiB)까지 됐으나 tail이 `stage_memory_plan.cpp:358` host compute 계획≠실제로 exit 5 → **BLOCKED**, TPS 미측정. S: mmap 오프로딩은 페이지 폴트로 정지(30분에 stage 실행 1회) | 검증됨/BLOCKED |
+| 하네스·drive 결함(2026-09-08 검토) | 최초 추론 오류가 UNLOAD 실패에 덮임, `stopChild`가 신호 종료를 정지 실패로 오판(재현 13 ms), 실패 run의 stage가 원격 agent에 잔존 | 검증됨(결함) |
+| `judge.mjs` 의미 판정 | 길이·한글 비율·용어·반복·stop 휴리스틱. 31B는 32/32가 thought 표식과 `length` stop, 3건은 코드 펜스가 잘린 채 통과 | 검증됨(의미 승인 아님) |
 
 **판단: 계획을 바꾸지 않고 B1/B2를 계속하되 첫 행동을 바꾼다.** 후보는 cap1을 실제로 고쳤고 성능을 깨지
-않았다. 그러나 (1) HEAD가 시험 컴파일이 안 되고, (2) `pressure`가 새 UNLOAD 회귀를 냈으며, (3) 유효 TPS와
-GPU 활용은 이번 변경 전후가 같다. 재개 순서는 §0.5의 1번 앞에 다음을 둔다.
+않았다. 그러나 (1) HEAD가 시험 컴파일이 안 되고, (2) `pressure`가 UNLOAD busy로 끝나는데 원인을 가릴 수
+없으며, (3) 처리량과 GPU 활용은 이번 변경 전후가 같다. 재개 순서는 §0.5의 1번 앞에 다음을 둔다.
 
 1. `issue_witness_tests.rs`의 대입을 `input_mut_for_test()`로 고쳐 HEAD `--workspace` 전체 집계를 회복한다.
-2. `pressure` 반례를 실제 소비 경로 회귀로 봉인하고 `stage_owners`/`stage_frontiers`가 정산 뒤 해제되지 않는지,
-   `2e9451a5c`의 검사가 과잉인지 판정한다. 실패 run이 남긴 stage가 다음 run을 막는 원격 정리도 하네스에 넣는다.
-3. 하네스 `prefill_mix_35b_2stage`가 ChatML 모델에 gemma turn을 보내는 문제를 H1 수용 전에 고친다.
-4. RAM 오프로딩 확장(B6/B7의 자원 단계 3)은 tail stage의 host compute buffer 계획≠실제 판정
+2. 판정을 가리는 하네스·drive 결함을 먼저 고친다. `run/mod.rs`가 UNLOAD 전에 `InferenceResult::error`와
+   부분 결과를 보존하게 하고, `run.mjs::stopChild`가 신호 종료를 정지로 인정하게 하며, 실패 경로에서
+   원격 stage를 정리한다. 각각 실패하는 시험을 먼저 남긴다.
+3. 그 뒤 `pressure`를 재실행해 UNLOAD busy가 해제 누수인지 추론 중단 뒤의 정상 거부인지 판정한다.
+   `stage_owners`/`stage_frontiers`가 정산 뒤 해제되지 않는지, `2e9451a5c`의 검사가 과잉인지는
+   그 재판정 결과로 정한다. 판정 전에는 회귀로도 정상으로도 부르지 않는다.
+4. 하네스 `prefill_mix_35b_2stage`가 ChatML 모델에 gemma turn을 보내는 문제를 H1 수용 전에 고친다.
+   `judge.mjs` 휴리스틱만으로 H1을 통과시키지 않는다. 표식·절단 응답 검사를 함께 정의한다.
+5. RAM 오프로딩 확장(B6/B7의 자원 단계 3)은 tail stage의 host compute buffer 계획≠실제 판정
    (`stage_memory_plan.cpp:358`)을 먼저 해결해야 122B급 측정이 가능하다. `p4-event-drive`의 2노드 최소 조건 때문에
    1-stage 오프로딩 기준선은 지금 표현할 수 없다.
-5. 그 뒤 §0.5 1~6을 그대로 진행한다. GPU 유휴(0% 표본 18~62%)와 ubatch 채움은 B4/H5의 대상이지
-   이번 후보의 성과가 아니다.
+6. 그 뒤 §0.5 1~6을 그대로 진행한다. GPU 유휴와 ubatch 채움은 B4/H5의 대상이지 이번 후보의 성과가 아니다.
+   유휴를 주장하려면 같은 분석창에서 **준비된 합법적 행과 장치 유휴를 함께 담은 trace**가 필요하다.
+   전체 캡처 사용률·phase 혼합 ubatch 채움은 그 근거가 아니다.
 
 ### 0.1 결론과 확실한 증거 경계
 
