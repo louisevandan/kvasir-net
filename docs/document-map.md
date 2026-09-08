@@ -119,6 +119,7 @@
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-07-head-verification-and-3090x2-ladder.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-07-head-verification-and-3090x2-ladder.md) | HEAD `2ed9b71d4` 컴파일·시험·변이 판정과 3090×2 실기 사다리 증거 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-08-noalloc-plan-underestimate.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-08-noalloc-plan-underestimate.md) | `no_alloc` 메모리 계획의 compute 과소 보고 결함과 `0025` 수정 증거 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-08-model-load-catalog.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-08-model-load-catalog.md) | 모델 33종 실기 적재와 컨텍스트별 메모리 실측 보고 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-measurement-trust-recovery.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-measurement-trust-recovery.md) | 철회된 폭 상관관계 정정과 측정을 가리던 세 결함의 수정 증거 |
 | [layers/adapters/llamacpp/staged/scripts/validation/README.md](../layers/adapters/llamacpp/staged/scripts/validation/README.md) | 구성요소 안내 |
 | [layers/adapters/llamacpp/staged/server/tests/contract/README.md](../layers/adapters/llamacpp/staged/server/tests/contract/README.md) | 구성요소 안내 |
 | [layers/adapters/README.md](../layers/adapters/README.md) | 구성요소 안내 |
