@@ -406,10 +406,15 @@ fn refused_physical_split_preserves_committed_and_prepared_witnesses() {
 #[test]
 fn later_bad_original_provenance_cannot_commit_the_first_requests_witness() {
     let (mut state, _) = fixture(true);
+    // RequestState shares its input behind an Arc and exposes it read-only,
+    // so this fixture has to ask for the copy-on-write explicitly. Mutating
+    // through Deref would silently need DerefMut, which production must not
+    // have.
     state
         .requests
         .get_mut(&request_key(SESSION, "b"))
         .unwrap()
+        .input_mut_for_test()
         .template
         .envelope
         .return_route = None;
