@@ -73,6 +73,16 @@ if (!Number.isInteger(maxIssueRows) || maxIssueRows < 0) {
 // chunks even though all its tokens are known.
 const prefillFragments = argument("--prefill-fragments", "");
 const stepTrace = process.argv.includes("--step-trace");
+// An Interactive task needs somebody logged on to run at all. That is the
+// right default, because the model usually sits on a mapped drive and only a
+// logged-on user's process can open one. A host sitting at its login screen
+// has neither, and then the only way to run there is to stage the weights on
+// its local disk and start the agent without a session - which is what this
+// does. S4U runs as the same user with no stored password and no network
+// credentials, so it reaches local paths and mapped drives stay invisible:
+// pass --model to point the run at the staged copy, or the stage server will
+// fail to open the scenario's own path.
+const noSession = process.argv.includes("--no-session");
 // Threads the tail samples with. 1 restores the serial sampler exactly, which
 // is the control for the parallel one; unset lets the stage choose.
 const sampleThreads = argument("--sample-threads", "");
@@ -151,7 +161,7 @@ const START = [
   // quoting - and quoting it here is what made cmd exit 1 while the very same
   // command line worked when run by hand.
   `$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c ${launcher}' -WorkingDirectory '${root}';`,
-  `$principal = New-ScheduledTaskPrincipal -UserId '${user}' -LogonType Interactive -RunLevel Limited;`,
+  `$principal = New-ScheduledTaskPrincipal -UserId '${user}' -LogonType ${noSession ? "S4U" : "Interactive"} -RunLevel Limited;`,
   `$settings = New-ScheduledTaskSettingsSet -Hidden;`,
   `schtasks.exe /delete /tn ${taskName} /f *> $null;`,
   `Register-ScheduledTask -TaskName ${taskName} -Action $action -Principal $principal -Settings $settings | Out-Null;`,

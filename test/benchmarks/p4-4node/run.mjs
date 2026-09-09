@@ -427,11 +427,27 @@ function readLocalRecord(file) {
 
 async function main() {
   const [name, ...rest] = process.argv.slice(2);
-  if (!name) throw new Error("usage: run.mjs <scenario> [--target local|remote] [--out DIR]");
+  if (!name) {
+    throw new Error(
+      "usage: run.mjs <scenario> [--target local|remote] [--out DIR] [--model PATH]");
+  }
   const outIndex = rest.indexOf("--out");
   const targetIndex = rest.indexOf("--target");
   const target = targetIndex >= 0 ? rest[targetIndex + 1] : "local";
+  const modelIndex = rest.indexOf("--model");
   const spec = scenario(name, target);
+  // Where the weights are is a property of the host, not of the scenario. The
+  // scenarios name a path on a mapped drive, which only a process owned by the
+  // logged-on user can open; a host sitting at its login screen has no such
+  // process, and staging the file on its local disk is then the only way to
+  // run there at all. The scenario's own model stays the default, and the
+  // override is recorded in the config the run archives, so an artifact still
+  // names the weights it used.
+  if (modelIndex >= 0) {
+    const override = rest[modelIndex + 1];
+    if (!override) throw new Error("--model needs a path");
+    spec.model = override;
+  }
   const runId = newRunId();
   // --out chooses where the run's directory lives, not whether it gets one.
   // Pointing it at a bare path used to make working and final the same
