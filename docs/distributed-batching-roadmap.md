@@ -280,20 +280,21 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
      `agent_stopped=false`가 실행을 실패시키고 있었다.
    - 시험 7개(event-drive 3 + stopChild 4). 각각 변이로 판별력을 확인했다. 워크스페이스 1,364 passed.
 3. ~~`pressure`(resident 256) 재판정.~~ **2026-09-09 판정 완료.**
-   수정 직후 로컬(3090 + 4080, 보존 실행과 다른 하드웨어)에서 재실행했다. 이번에는 산출물이 남았고
-   두 오류가 분리됐다.
+   수정 직후 **3090×2에서 두 번** 재실행했다(가중치 스테이징본, 그리고 시나리오 원래의 `S:` 경로).
+   두 실행 모두 산출물이 남았고 두 오류가 분리됐으며 같은 실패를 재현했다.
    - `error` = **`stage control batch total receipt budget is exhausted`**.
      `validate_control_batch`의 제품 호출자는 `release.rs:324`와 `settlement.rs:246` 둘뿐이므로,
      걸린 것은 **해제·정산 경로 자신**이다.
    - `cleanup_error` = `unload is busy`. 그 작업 스냅샷은 **비행 작업이 전부 0이고**
-     `active_owners`/`active_frontiers`만 256이다. 512 요청 중 96개가 release member를 받고도
-     `released`는 0개다.
+     `active_owners`/`active_frontiers`만 남는다(두 실행에서 224와 256). 512 요청 중 96개/64개가
+     release member를 받고도 `released`는 **양쪽 다 0개**다. 보존된 09-07 실행의 `224/256`과
+     같은 범위다.
    - **판정: UNLOAD 거부는 원인이 아니라 결과다.** 방치된 상태가 새는 것이 아니라 **해제가 용량
      한계에 막혀 시작되지 못했다.** 한계는 `ownership.rs`의 `MAX_CONTROL_BYTES`(1 MiB, 행마다
      최악 응답을 예약)와 `MAX_RECEIPT_BYTES`(64 MiB, 누적 상한)의 조합이며, 제어 batch는 약 64행에서
      상한에 닿는다. resident 256의 전폭 해제는 구조적으로 이를 넘는다.
-   - 미확정: 거부된 batch의 실제 폭(64행은 상수에서 계산한 예측), 보존된 3090×2 실행의 원인이
-     같은지 여부. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-measurement-trust-recovery.md)
+   - 미확정: 거부된 batch의 실제 폭(64행은 상수에서 계산한 예측), 완료 수와 owner 수가 실행마다
+     흔들리는 이유, 보존된 09-07 실행이 같은 경로를 밟았는지 여부. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-measurement-trust-recovery.md)
    - **따라서 §0.5 3번(수용·비행 budget)이 resident 상향의 선행조건으로 확정됐다.** 예산을 세우기
      전에 resident를 올리면 같은 벽에 다시 닿는다. P-4의 resident 축은 그 뒤에 온다.
 4. ~~`drive.rs:130`의 철회된 상관관계 인용을 09-04 결과로 교체한다.~~ **2026-09-09 완료** (`2bc8f93cd`).
