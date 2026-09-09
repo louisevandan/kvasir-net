@@ -253,9 +253,11 @@ struct Approved {
 /// What the peer does to the run once every OUTPUT has been delivered and
 /// before any release receipt is.
 ///
-/// That point is chosen because it is the shape the 2026-09-09 pressure
-/// failures actually had: outputs approved, nothing released. It is also the
-/// only point where "what the run keeps" has something to keep.
+/// That point is chosen because it is where a preserved run has the most to
+/// keep and where three different faults can be compared against each other.
+/// It is **not** a reproduction of the 2026-09-09 failures: those wrote no
+/// artifact, so how far they had got is unknown. These are synthetic
+/// counterexamples for the contract, not history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fault {
     /// The peer drops its half of the connection.
@@ -273,6 +275,15 @@ async fn exercise(case: Case) -> Result<Approved, String> {
         Err(run) => Err(run.error.unwrap_or_else(|| {
             unreachable!("a run without a fault and without an error is approved")
         })),
+    }
+}
+
+/// The run a refusal left behind, for cases whose subject is what it kept
+/// rather than what it refused.
+async fn refused_run(case: Case) -> inference::InferenceResult {
+    match exercise_with(case, None).await {
+        Ok(_) => panic!("{case:?}: this case must be refused"),
+        Err(run) => run,
     }
 }
 
@@ -1019,12 +1030,12 @@ async fn a_known_unrelated_submission_cannot_carry_another_requests_observation_
 
 /// What a broken run still owns.
 ///
-/// The 2026-09-09 four-stage pressure failures produced no `artifact.json` at
-/// all: the consumer accumulated outputs, completions and stage evidence, then
-/// a transport error propagated and every one of them went with it, so the
-/// first cause could not be separated from the teardown that followed. These
-/// drive the same production consumer to real approvals and then break it
-/// three different ways, and fix that the run comes back rather than vanishing.
+/// The 2026-09-09 failures produced no `artifact.json` at all: whatever the
+/// consumer had accumulated went with the error it propagated, so the first
+/// cause could not be separated from what followed - and how far any of those
+/// runs had got is now unknowable. These drive the same production consumer
+/// to real approvals and then break it three different ways, and fix that the
+/// run comes back rather than vanishing.
 mod partial_results {
     use super::*;
 
@@ -1172,6 +1183,52 @@ mod partial_results {
         assert!(
             !artifact.passed,
             "a run that broke still fails; preserving it must not pass it"
+        );
+    }
+}
+
+/// Attribution follows the evidence, not the verdict.
+///
+/// `DuplicateAOnly` is refused for its receipt, and its release therefore
+/// stops short - but every observation and span for both requests has already
+/// arrived, so the ledger can prove each request's rows. Reporting zero there
+/// would be reporting a number nobody measured, and `evidence_missing` would
+/// be null with nothing to explain the zeros.
+#[tokio::test]
+async fn complete_evidence_attributes_rows_even_when_the_run_failed_with_a_release_outstanding() {
+    let run = refused_run(Case::DuplicateAOnly).await;
+    assert!(
+        run.error.is_some(),
+        "the case is chosen because it is refused"
+    );
+    assert_eq!(run.completed_count, 2);
+    assert_eq!(
+        run.released_count, 1,
+        "the refused receipt leaves one sequence unreleased"
+    );
+    assert_eq!(
+        run.evidence_missing, None,
+        "the observations and spans for both requests did arrive"
+    );
+    for request in &run.requests {
+        assert!(
+            request.prefill_rows > 0 && request.decode_rows > 0,
+            "{}: complete evidence proves its rows, so they may not read zero: \
+             prefill={} decode={}",
+            request.request_id,
+            request.prefill_rows,
+            request.decode_rows
+        );
+    }
+    // The other half of the contract: when the evidence is not complete the
+    // zeros are the absence of evidence, and the field says so.
+    let broken = faulted(Case::Normal, Fault::Cut).await;
+    assert!(broken.evidence_missing.is_some());
+    for request in &broken.requests {
+        assert_eq!(
+            (request.prefill_rows, request.decode_rows),
+            (0, 0),
+            "unattributed rows stay zero, and evidence_missing explains them"
         );
     }
 }

@@ -98,7 +98,8 @@ where
                 // denominator. Missing evidence waits only to the original deadline.
                 release_elapsed_ms.get_or_insert_with(|| started.elapsed().as_millis());
                 if evidence.status() == EvidenceStatus::Complete {
-                    evidence.apply_counts(&mut requests);
+                    // The counts are installed once, after the loop, for both
+                    // outcomes. This branch owns only the timestamp.
                     telemetry_complete_elapsed_ms = Some(started.elapsed().as_millis());
                     break;
                 }
@@ -229,8 +230,21 @@ where
     if let Err(error) = outcome {
         failure.get_or_insert_with(|| error.to_string());
     }
+    // Attribution follows the evidence, not the verdict. Evidence that is
+    // complete proves every request's rows whether or not the run went on to
+    // fail, be refused, or leave sequences unreleased - and a failed run that
+    // reported zero rows for requests its own observations account for was
+    // reporting a number nobody measured.
+    //
+    // `evidence_missing` is therefore the reader's contract: `None` means
+    // these row counts are attributed and final; `Some` means they are
+    // unattributed, and their zeros are the absence of evidence rather than
+    // the absence of work.
     let evidence_missing = match evidence.status() {
-        EvidenceStatus::Complete => None,
+        EvidenceStatus::Complete => {
+            evidence.apply_counts(&mut requests);
+            None
+        }
         EvidenceStatus::Missing {
             requests,
             stage_executions,
@@ -239,10 +253,6 @@ where
             stage_executions,
         }),
     };
-    // Per-request row counts are installed only by `apply_counts`, which the
-    // ledger allows only when the evidence is complete. A failed run keeps
-    // its outputs and receipts; its per-request row totals stay zero, and
-    // `evidence_missing` says why.
     let (batch_observations, stage_spans) = evidence.into_artifacts();
     Ok(InferenceResult {
         request_count: total,
@@ -477,5 +487,92 @@ mod tests {
         assert_eq!(error.to_string(), "duplicate submitted request identity");
         assert_eq!(writes.load(Ordering::SeqCst), 1);
         assert_eq!(serde_json::to_value(&requests).unwrap(), before);
+    }
+
+    /// Writes that succeed a fixed number of times and fail after that.
+    struct WriterFailingAfter {
+        remaining: usize,
+    }
+
+    impl AsyncWrite for WriterFailingAfter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buffer: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            if self.remaining == 0 {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "scripted send failure",
+                )));
+            }
+            self.remaining -= 1;
+            Poll::Ready(Ok(buffer.len()))
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// A write that fails may still have arrived, so the request it carried is
+    /// neither delivered nor unsent. The wave it was in stops, so the waves
+    /// behind it were never attempted at all. Those are three different
+    /// states and the artifact has to tell them apart - a run that reports
+    /// "two requests, both missing" cannot say whether the peer saw them.
+    #[tokio::test]
+    async fn a_wave_that_fails_mid_write_separates_delivered_uncertain_and_unsubmitted() {
+        let node = serde_json::json!({
+            "agent": "tcp://127.0.0.1:53100", "node": "head", "generation": 1,
+            "binary": "unused", "endpoint": "tcp://127.0.0.1:53101", "plan": "unused",
+            "n_batch": 8, "n_ubatch": 8, "context_size": 8,
+            "total_context_size": 8, "sequence_capacity": 4,
+        });
+        let config: RunConfig = serde_json::from_value(serde_json::json!({
+            "ingress_agent": "tcp://127.0.0.1:53100", "channel": "partial-wave",
+            "connection_generation": 7, "load_generation": 1, "session_id": "s",
+            "request_id": "r",
+            "nodes": [node.clone(), node],
+            "prompt": "Normal prompt.", "max_tokens": 1,
+            "waves": [{"after_ms": 0, "count": 2}, {"after_ms": 0, "count": 2}],
+            "timeout_ms": 1_000,
+        }))
+        .unwrap();
+        let mut sender = Sender::new(OuterEndpoint {
+            ingress_agent: Address::tcp("127.0.0.1", 53100),
+            channel: "partial-wave".into(),
+            connection_generation: 7,
+        });
+        // Each event is one length write plus one body write, so the second
+        // request's body is what fails.
+        let mut wire = EventWire::new(&[][..], WriterFailingAfter { remaining: 3 });
+
+        let run = drive(&config, &mut wire, &mut sender)
+            .await
+            .expect("a send failure ends the run, it does not erase it");
+        assert_eq!(
+            run.error.as_deref(),
+            Some("scripted send failure"),
+            "the write failure is the run's first error"
+        );
+        assert_eq!(run.request_count, 4);
+        assert_eq!(run.requests.len(), 2, "only the first wave was attempted");
+
+        let artifact = super::super::assemble(config, Default::default(), run, None);
+        assert_eq!(
+            artifact.submissions,
+            super::super::SubmissionSummary {
+                configured: 4,
+                delivered: 1,
+                uncertain: 1,
+                unsubmitted: 2,
+                incomplete: 2,
+                unreleased: 2,
+            },
+            "one write landed, one is unknown, and the second wave never ran"
+        );
+        assert!(!artifact.passed);
     }
 }
