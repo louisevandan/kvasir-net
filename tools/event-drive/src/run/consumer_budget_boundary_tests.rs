@@ -250,8 +250,55 @@ struct Approved {
     acceptance: acceptance::AcceptanceSummary,
 }
 
+/// What the peer does to the run once every OUTPUT has been delivered and
+/// before any release receipt is.
+///
+/// That point is chosen because it is the shape the 2026-09-09 pressure
+/// failures actually had: outputs approved, nothing released. It is also the
+/// only point where "what the run keeps" has something to keep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fault {
+    /// The peer drops its half of the connection.
+    Cut,
+    /// The peer holds the connection and sends nothing more, until the run's
+    /// own overall deadline expires.
+    Stall,
+    /// The peer keeps sending, but sends something the consumer must refuse.
+    Invalid,
+}
+
 async fn exercise(case: Case) -> Result<Approved, String> {
-    let config = config(case);
+    match exercise_with(case, None).await {
+        Ok(approved) => approved,
+        Err(run) => Err(run.error.unwrap_or_else(|| {
+            unreachable!("a run without a fault and without an error is approved")
+        })),
+    }
+}
+
+/// Drive the same production path, then break it. Returns the run itself
+/// rather than a message: the subject is what the run still owns.
+async fn faulted(case: Case, fault: Fault) -> inference::InferenceResult {
+    match exercise_with(case, Some(fault)).await {
+        Ok(_) => panic!("{case:?}/{fault:?}: the injected fault did not fail the run"),
+        Err(run) => run,
+    }
+}
+
+/// `Ok` carries the normal outcome, `Err` the run a fault or a refusal left
+/// behind. Both are outcomes of the same production consumer.
+#[allow(clippy::result_large_err)]
+async fn exercise_with(
+    case: Case,
+    fault: Option<Fault>,
+) -> Result<Result<Approved, String>, inference::InferenceResult> {
+    let mut config = config(case);
+    if fault == Some(Fault::Stall) {
+        // Short enough that the test does not wait on a two second deadline,
+        // long enough that every output is delivered before it expires.
+        config.timeout_ms = 400;
+    }
+    let config = config;
     config::validate(&config).unwrap();
     let count = config.waves[0].count;
     let head = node_endpoint(&config.nodes[0]).unwrap();
@@ -498,11 +545,39 @@ async fn exercise(case: Case) -> Result<Approved, String> {
             // OUTPUT established its independently checked expectation.
             events.insert(0, receipts.remove(0));
         }
+        // Where the outputs end and the releases begin: the injection point.
+        let receipt_start = events.len();
         events.extend(receipts);
         // The complete script fits the bounded duplex buffer even when drive
         // rejects early. This avoids making peer BrokenPipe a rejection oracle.
         let mut first_receipt_serial = None;
-        for (base, class, content_type, payload) in events {
+        for (position, (base, class, content_type, payload)) in events.into_iter().enumerate() {
+            if fault.is_some() && position == receipt_start {
+                match fault {
+                    // Dropping the wire closes the peer half. The consumer
+                    // sees the read fail, which is the shape a reset remote
+                    // connection has.
+                    Some(Fault::Cut) => return,
+                    Some(Fault::Stall) => {
+                        tokio::time::sleep(Duration::from_millis(900)).await;
+                        return;
+                    }
+                    Some(Fault::Invalid) => {
+                        wire.send(response(
+                            &base,
+                            &head,
+                            serial,
+                            EventClass::Telemetry,
+                            "application/vnd.p4.test.not-an-inference-event+json",
+                            b"{}".to_vec(),
+                        ))
+                        .await
+                        .unwrap();
+                        return;
+                    }
+                    None => {}
+                }
+            }
             let mut event_serial = serial;
             if matches!(case, Case::DuplicateReceiptEnvelope)
                 && content_type == RELEASE_RECEIPT_CONTENT_TYPE
@@ -576,11 +651,21 @@ async fn exercise(case: Case) -> Result<Approved, String> {
         .await
         .map_err(|error| error.to_string());
     peer_task.await.unwrap();
-    let run = result?;
+    let run = match result {
+        Ok(run) => run,
+        // Only the pre-submission checks still fail this way; nothing has
+        // been accumulated yet when they do.
+        Err(error) => return Ok(Err(error)),
+    };
+    // A refusal after the first submission ends the run and is reported on
+    // the result instead of discarding it. The run comes back either way.
+    if run.error.is_some() {
+        return Err(run);
+    }
     // Aggregation belongs to production drive. Do not repair its result here
     // or count accepted observations a second time in the test.
     let acceptance = acceptance::evaluate(&config, &run.requests);
-    Ok(Approved { run, acceptance })
+    Ok(Ok(Approved { run, acceptance }))
 }
 
 async fn approved(case: Case) -> Approved {
@@ -910,7 +995,10 @@ async fn a_future_wave_cannot_extend_the_overall_evidence_deadline_or_send_after
         );
     };
     let (result, ()) = tokio::join!(inference::drive(&config, &mut wire, &mut sender), peer);
-    let error = result.unwrap_err().to_string();
+    let run = result.expect("an expired deadline ends the run, it does not erase it");
+    let error = run
+        .error
+        .expect("the expired deadline is the run's failure");
     assert!(error.contains("overall deadline expired"), "{error}");
     assert_eq!(sender.sequence, 2, "exactly one submitted event was minted");
 }
@@ -927,4 +1015,163 @@ async fn a_known_unrelated_submission_cannot_carry_another_requests_observation_
         &["carrier is not a recipient-owned member"],
     )
     .await;
+}
+
+/// What a broken run still owns.
+///
+/// The 2026-09-09 four-stage pressure failures produced no `artifact.json` at
+/// all: the consumer accumulated outputs, completions and stage evidence, then
+/// a transport error propagated and every one of them went with it, so the
+/// first cause could not be separated from the teardown that followed. These
+/// drive the same production consumer to real approvals and then break it
+/// three different ways, and fix that the run comes back rather than vanishing.
+mod partial_results {
+    use super::*;
+
+    /// Every OUTPUT was approved before the fault and no receipt after it, so
+    /// a preserved run has exactly this shape. It is also the shape the real
+    /// failure had: completions without releases.
+    fn assert_outputs_survived(run: &inference::InferenceResult, fault: Fault) {
+        assert_eq!(
+            run.request_count, 2,
+            "{fault:?}: the run still knows how many requests it submitted"
+        );
+        assert_eq!(
+            run.completed_count, 2,
+            "{fault:?}: completions approved before the fault are kept"
+        );
+        assert_eq!(
+            run.released_count, 0,
+            "{fault:?}: nothing was released, and nothing may be invented"
+        );
+        assert_eq!(run.requests.len(), 2);
+        for request in &run.requests {
+            assert!(
+                !request.outcomes.is_empty() && !request.response.is_empty(),
+                "{fault:?}: {} kept its approved outputs",
+                request.request_id
+            );
+            assert!(
+                request.completed_ms.is_some(),
+                "{fault:?}: {} kept its terminal outcome",
+                request.request_id
+            );
+            assert!(
+                !request.released,
+                "{fault:?}: {} was never released",
+                request.request_id
+            );
+            assert_eq!(
+                request.submission,
+                crate::run::SubmissionState::Delivered,
+                "{fault:?}: {} was written to the wire without error",
+                request.request_id
+            );
+        }
+        assert!(
+            run.evidence_missing.is_some(),
+            "{fault:?}: the run stopped before its evidence was complete, and says so"
+        );
+        // apply_counts runs only on complete evidence, so the per-request row
+        // totals stay zero here. evidence_missing is what explains that.
+        assert!(
+            !run.batch_observations.is_empty(),
+            "{fault:?}: observations approved before the fault are kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cut_connection_after_the_outputs_keeps_them() {
+        let run = faulted(Case::Normal, Fault::Cut).await;
+        let error = run.error.clone().expect("a cut connection fails the run");
+        assert!(
+            error.contains("receive failed"),
+            "the transport failure is the run's first error: {error}"
+        );
+        assert_outputs_survived(&run, Fault::Cut);
+    }
+
+    #[tokio::test]
+    async fn an_expired_deadline_after_the_outputs_keeps_them() {
+        let run = faulted(Case::Normal, Fault::Stall).await;
+        let error = run
+            .error
+            .clone()
+            .expect("an expired deadline fails the run");
+        assert!(
+            error.contains("overall deadline expired"),
+            "a stall is reported as the deadline it expired, not as a transport error: {error}"
+        );
+        assert_outputs_survived(&run, Fault::Stall);
+    }
+
+    #[tokio::test]
+    async fn an_invalid_event_after_the_outputs_keeps_them_without_accepting_it() {
+        let clean = approved(Case::Normal).await;
+        let run = faulted(Case::Normal, Fault::Invalid).await;
+        let error = run.error.clone().expect("an unusable event fails the run");
+        assert!(
+            error.contains("unexpected inference event content type"),
+            "the refusal names what it refused: {error}"
+        );
+        assert_outputs_survived(&run, Fault::Invalid);
+        // Preserving what was valid must not mean accepting what was not.
+        assert!(
+            run.batch_observations.len() < clean.run.batch_observations.len()
+                || run.stage_spans.len() < clean.run.stage_spans.len(),
+            "the refused event arrived before the rest of the evidence, so a \
+             preserved run must hold less of it than a complete one"
+        );
+        assert!(
+            run.stage_spans.is_empty(),
+            "the spans came after the injection point and none may be invented"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_unload_after_a_broken_run_reports_both_and_still_fails() {
+        const UNLOAD_REFUSAL: &str = "unload is busy; active_owners=2/2";
+        let run = faulted(Case::Normal, Fault::Cut).await;
+        let first = run.error.clone().expect("the run failed on its own first");
+        let artifact = assemble(
+            config(Case::Normal),
+            Default::default(),
+            run,
+            Some(UNLOAD_REFUSAL.to_string()),
+        );
+
+        assert_eq!(
+            artifact.error.as_deref(),
+            Some(first.as_str()),
+            "the run's own first failure is what it is judged on"
+        );
+        assert_eq!(
+            artifact.cleanup_error.as_deref(),
+            Some(UNLOAD_REFUSAL),
+            "a teardown refused because the run already broke stays in its own field"
+        );
+        assert_eq!(
+            artifact.completed_count, 2,
+            "the artifact exists and carries the completions"
+        );
+        assert_eq!(artifact.released_count, 0);
+        assert_eq!(
+            artifact.submissions,
+            crate::run::SubmissionSummary {
+                configured: 2,
+                delivered: 2,
+                uncertain: 0,
+                unsubmitted: 0,
+                incomplete: 0,
+                unreleased: 2,
+            },
+            "the artifact says where every request got to"
+        );
+        assert!(artifact.evidence_missing.is_some());
+        // main.rs writes the artifact and then exits 1 on exactly this.
+        assert!(
+            !artifact.passed,
+            "a run that broke still fails; preserving it must not pass it"
+        );
+    }
 }

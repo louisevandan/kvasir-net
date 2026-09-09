@@ -212,6 +212,7 @@ mod tests {
             request_id: "request".into(),
             submission_event_id: "sent-request".into(),
             submission_authority: None,
+            submission: crate::run::SubmissionState::Delivered,
             issued_work: None,
             release_member: Some(p4_llamacpp_staged_adapter::v2::ReleaseMember {
                 request_id: "request".into(),

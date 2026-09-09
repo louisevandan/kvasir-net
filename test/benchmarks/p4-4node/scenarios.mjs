@@ -689,11 +689,12 @@ export const SCENARIOS = {
   // over its stage-execution window, and a first-node stage time of 78.4,
   // 57.9, 57.6 and 149.9 ms for stages owning 5, 4, 4 and 22 layers. Fitting
   // a line through the two four-layer stages and the twenty-two-layer one
-  // puts about 37 ms of that on per-stage fixed cost - a frame decode, a
-  // llama_decode, a cut-set copy and a process hop - which four stages pay
-  // four times a lap on two cards that can only overlap two. This arm pays it
-  // twice. Same model, resident set, arrivals, context and prompts; only the
-  // partition changes, so the difference is attributable.
+  // has an intercept near 37 ms. That intercept is an empirical fit across
+  // stages of different widths, roles and card sharing, not a measured
+  // per-stage fixed cost and not time that removing a stage returns. What it
+  // supports is running the experiment: same model, resident set, arrivals,
+  // context and prompts, only the partition changes, so whatever difference
+  // appears is attributable to the partition even though its cause is not.
   pressure_2stage: {
     ...base,
     description: "256 sequences, one stage a card, 32 arrivals every second for 16 s",
@@ -835,9 +836,14 @@ export const SCENARIOS = {
   // four every 125 ms gave a median decode width of 24 against 32, 4,526
   // physical batches against 2,430, and 223.10 generation TPS against
   // 289.79). Identical requests that arrive together decode in lockstep and
-  // issue together, so the burst is what creates width and smoothing it
-  // destroys it. If that is the mechanism, a bigger burst at the same rate
-  // should widen further without anyone waiting for it.
+  // issue together, which is a candidate mechanism for where width comes
+  // from; this arm tests it at the same arrival rate.
+  //
+  // It did not simply continue. 64 every two seconds measured 313.80 TPS at
+  // width 51.12; 128 every four seconds measured 302.49 at width 53.65, so
+  // width alone does not explain throughput. Neither shape is an optimum -
+  // each is one run of one arrival pattern, and changing the pattern changes
+  // the workload rather than improving the system under a fixed one.
   pressure_35b_burst: {
     ...base,
     description: "35B, one stage a card, 160 sequences, 64 arrivals every 2 s for 16 s",

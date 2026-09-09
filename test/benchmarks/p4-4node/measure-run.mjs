@@ -80,8 +80,16 @@ console.log(
   `throughput: prefill_rows=${total("prefill_rows")} decode_rows=${total("decode_rows")} `
   + `verify_rows=${total("verify_rows")} replay_rows=${total("replay_rows")}`,
 );
+// One value per request: that request's generation time divided by its decode
+// rows. The quantiles below are therefore over per-request MEANS, not over
+// individual token gaps - a request whose tokens arrived unevenly is hidden
+// inside its own average. A real ITL distribution needs per-token arrival
+// times, which the artifact does not carry.
 const perToken = requests.map((r) => r.generation_elapsed_ms / Math.max(1, r.decode_rows));
-console.log(`latency: inter-token ms p50=${r1(q(perToken, 0.5))} p90=${r1(q(perToken, 0.9))}`);
+console.log(
+  `latency: mean inter-token ms per request, p50=${r1(q(perToken, 0.5))} p90=${r1(q(perToken, 0.9))}`
+  + " (distribution of per-request means, not of token gaps)",
+);
 // TTFT by arrival rank, because a run whose arrivals exceed the resident set
 // has two populations and their median is a number nobody waited.
 const byArrival = [...requests].sort((a, b) => a.arrival_ms - b.arrival_ms);
@@ -190,9 +198,13 @@ for (const g of [...new Set(samples.map((s) => s.gpu))].sort()) {
   const whole = samples.filter((s) => s.gpu === g).map((s) => s.util);
   const window = ordered.slice(first, last + 1).map((e) => e[g]).filter(Boolean);
   const util = window.map((s) => s.util);
+  // utilization.gpu is the share of the sample period in which at least one
+  // kernel was resident. It is not SM occupancy and not a share of the card's
+  // arithmetic. A sample that is never 0% therefore does not mean the card was
+  // never idle - only that no whole sample period passed with nothing on it.
   console.log(
-    `gpu${g}: util whole=${r1(mean(whole))}% window mean=${r1(mean(util))}% p50=${q(util, 0.5)}% `
-    + `p90=${q(util, 0.9)}% max=${q(util, 1)}% at-zero=${util.filter((u) => u === 0).length}/${util.length}`,
+    `gpu${g}: kernel-active whole=${r1(mean(whole))}% window mean=${r1(mean(util))}% p50=${q(util, 0.5)}% `
+    + `p90=${q(util, 0.9)}% max=${q(util, 1)}% samples-at-zero=${util.filter((u) => u === 0).length}/${util.length}`,
   );
   console.log(
     `gpu${g}: power window mean=${r1(mean(window.map((s) => s.watt)))} W max=${q(window.map((s) => s.watt), 1)} W `

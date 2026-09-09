@@ -65,8 +65,17 @@ pub struct RunArtifact {
     pub stage_spans: Vec<StageSpanArtifact>,
     pub elapsed_ms: u128,
     pub telemetry_complete_elapsed_ms: Option<u128>,
-    /// The run's own first failure. Survives a failing cleanup.
+    /// The run's own first failure. Survives a failing cleanup, and now also
+    /// survives itself: a refusal after the first submission ends the run and
+    /// is reported here beside everything the run had already approved.
     pub error: Option<String>,
+    /// What observation evidence was still outstanding when the run ended.
+    /// A run that stopped because evidence never arrived and a run that had
+    /// everything and refused something else are different failures.
+    pub evidence_missing: Option<MissingEvidence>,
+    /// Where the run's requests actually got to. A failed run is not a run
+    /// with nothing in it, and "not submitted" is not "submitted and lost".
+    pub submissions: SubmissionSummary,
     /// UNLOAD/DELETE failure, kept apart from `error` so a refused
     /// teardown cannot be mistaken for the reason the run failed - and so
     /// the reverse, a teardown refused *because* inference already broke,
@@ -74,11 +83,47 @@ pub struct RunArtifact {
     pub cleanup_error: Option<String>,
 }
 
+/// Whether this request's submission reached the wire.
+///
+/// A write that fails may still have arrived, so the two states are
+/// "written without error" and "unknown" - never "not sent". The identity is
+/// spent either way and the run never reuses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmissionState {
+    Delivered,
+    Uncertain,
+}
+
+/// The evidence a run was still waiting for when it ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct MissingEvidence {
+    pub requests: usize,
+    pub stage_executions: usize,
+}
+
+/// Counts derived from the requests the run built, so a failed artifact says
+/// what happened to each request rather than only that the run failed.
+///
+/// `delivered + uncertain + unsubmitted` is the configured request count.
+/// `incomplete` and `unreleased` count only requests that were submitted at
+/// all, and a request can be both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SubmissionSummary {
+    pub configured: usize,
+    pub delivered: usize,
+    pub uncertain: usize,
+    pub unsubmitted: usize,
+    pub incomplete: usize,
+    pub unreleased: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RequestArtifact {
     pub request_id: String,
     pub submission_event_id: String,
     pub submission_authority: Option<SubmittedAuthority>,
+    pub submission: SubmissionState,
     pub issued_work: Option<p4_llamacpp_staged_adapter::v2::IssuedWorkProof>,
     pub release_member: Option<p4_llamacpp_staged_adapter::v2::ReleaseMember>,
     pub released: bool,
@@ -216,6 +261,25 @@ fn assemble(
         finish_phase_metrics(request);
     }
     let acceptance = acceptance::evaluate(&config, &requests);
+    let submissions = SubmissionSummary {
+        configured: run.request_count,
+        delivered: requests
+            .iter()
+            .filter(|request| request.submission == SubmissionState::Delivered)
+            .count(),
+        uncertain: requests
+            .iter()
+            .filter(|request| request.submission == SubmissionState::Uncertain)
+            .count(),
+        // A wave that never ran leaves no request behind, so what is missing
+        // from the map is what was never attempted.
+        unsubmitted: run.request_count.saturating_sub(requests.len()),
+        incomplete: requests
+            .iter()
+            .filter(|request| request.completed_ms.is_none())
+            .count(),
+        unreleased: requests.iter().filter(|request| !request.released).count(),
+    };
     // A refused teardown still fails the run. The guard is not relaxed;
     // the failure is merely reported next to the run's own instead of
     // replacing it.
@@ -246,6 +310,8 @@ fn assemble(
         elapsed_ms: run.elapsed_ms,
         telemetry_complete_elapsed_ms: run.telemetry_complete_elapsed_ms,
         error: run.error,
+        evidence_missing: run.evidence_missing,
+        submissions,
         cleanup_error,
     }
 }
@@ -649,6 +715,7 @@ mod tests {
             request_id: "request".into(),
             submission_event_id: "sent-request".into(),
             submission_authority: None,
+            submission: SubmissionState::Delivered,
             issued_work: None,
             release_member: None,
             released: false,

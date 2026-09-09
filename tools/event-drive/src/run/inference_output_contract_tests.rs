@@ -216,7 +216,15 @@ async fn consume_delayed(
         }
     };
     let (result, ()) = tokio::join!(inference::drive(&config, &mut wire, &mut sender), peer);
-    result.map_err(|error| error.to_string())
+    // A refusal after the first submission ends the run and is reported on
+    // the result rather than discarding it. These cases judge what is
+    // refused, so they read the refusal from there; what a refused run keeps
+    // is fixed by `partial_result_preservation_tests`.
+    let run = result.map_err(|error| error.to_string())?;
+    match run.error {
+        Some(error) => Err(error),
+        None => Ok(run),
+    }
 }
 
 #[tokio::test]
