@@ -1,0 +1,26 @@
+diff --git a/src/llama-kv-cache-iswa.h b/src/llama-kv-cache-iswa.h
+index 7dab6eaa82c8f631f44e87956f5be95d86d3713f..45b68eca85bcbe5ac357c21d6a7eb87584d187d1 100644
+--- a/src/llama-kv-cache-iswa.h
++++ b/src/llama-kv-cache-iswa.h
+@@ -13,6 +13,12 @@
+ 
+ class llama_kv_cache_iswa : public llama_memory_i {
+ public:
++    // Owns no storage of its own: every data, update and state operation
++    // below forwards to kv_base and kv_swa, which are both llama_kv_cache and
++    // already keep nonresident layers metadata-only. A boundary that would
++    // split a reused KV region is refused by the constructor of those two.
++    static constexpr bool linkcpp_stage_residency_supported = true;
++
+     llama_kv_cache_iswa(
+             const llama_model & model,
+                     ggml_type   type_k,
+@@ -54,6 +60,8 @@ public:
+     // llama_memory_i
+     //
+ 
++    bool supports_linkcpp_stage_residency() const override { return true; }
++
+     llama_memory_context_ptr init_batch(
+             llama_batch_allocr & balloc,
+             uint32_t n_ubatch,

@@ -1,0 +1,70 @@
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 2db381d58086d2fcbd182974bfffb3d4c56bab81..5f6d5d0712d875767fdcf5ae1f0ecc48a0d8413a 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -171,6 +171,9 @@ struct common_speculative_impl {
+ 
+     virtual void accept(llama_seq_id seq_id, uint16_t n_accepted, bool is_other) = 0;
+ 
++    // Called after the request has released this reusable sequence slot.
++    virtual void end(llama_seq_id /*seq_id*/) {}
++
+     // (optional) serialize/restore per-seq internal state (e.g. eagle3's deferred boundary).
+     virtual bool get_state(llama_seq_id /*seq_id*/, std::vector<uint8_t> & /*data*/) const { return false; }
+     virtual void set_state(llama_seq_id /*seq_id*/, const std::vector<uint8_t> & /*data*/) {}
+@@ -1758,6 +1761,21 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+         const size_t row_bytes = (size_t) n_embd * sizeof(float);
+         std::memcpy(pending_h[seq_id].data(), verify_h[seq_id].data() + (size_t) i_h * n_embd, row_bytes);
+     }
++    void end(llama_seq_id seq_id) override {
++        if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
++            return;
++        }
++        std::fill(pending_h[seq_id].begin(), pending_h[seq_id].end(), 0.0f);
++        verify_h[seq_id].clear();
++        verify_h_rows[seq_id] = 0;
++        i_last[seq_id] = -1;
++        i_batch_beg[seq_id] = -1;
++        i_batch_end[seq_id] = -1;
++        if (seq_id < (llama_seq_id) chain_h.size()) {
++            chain_h[seq_id].clear();
++        }
++        common_sampler_reset(smpls[seq_id].get());
++    }
+ };
+ 
+ // state of self-speculation (simple implementation, not ngram-map)
+@@ -2763,6 +2781,18 @@ void common_speculative_free(common_speculative * spec) {
+     delete spec;
+ }
+ 
++void common_speculative_end(common_speculative * spec, llama_seq_id seq_id) {
++    if (spec == nullptr || seq_id < 0 || seq_id >= (llama_seq_id) spec->dparams.size()) {
++        return;
++    }
++
++    spec->dparams[seq_id] = {};
++    spec->impl_last[seq_id] = nullptr;
++    for (auto & impl : spec->impls) {
++        impl->end(seq_id);
++    }
++}
++
+ common_speculative_draft_params & common_speculative_get_draft_params(
+         common_speculative * spec,
+         llama_seq_id seq_id) {
+diff --git a/common/speculative.h b/common/speculative.h
+index 22505891f7efac13c45c07227f6f6aacc8f7e672..b1447608d55b7776cfbac2e8a50815e050ca2381 100644
+--- a/common/speculative.h
++++ b/common/speculative.h
+@@ -50,6 +50,10 @@ common_speculative * common_speculative_init(common_params_speculative & params,
+ 
+ void common_speculative_free(common_speculative * spec);
+ 
++// Forget all request-scoped state owned by one reusable sequence slot.
++// The caller must remove the target and draft context memory separately.
++void common_speculative_end(common_speculative * spec, llama_seq_id seq_id);
++
+ struct common_speculative_draft_params {
+     // this flag is used to chain the drafts through all the available implementations
+     // after the first successful draft from an implementation, we set it

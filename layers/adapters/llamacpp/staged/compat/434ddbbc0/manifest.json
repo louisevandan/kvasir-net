@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "abi_revision": "pipeline-abi-v1",
+  "required_artifact_symbols": [
+    "llama_linkcpp_runtime_configure",
+    "llama_linkcpp_runtime_clear"
+  ],
+  "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
+  "upstream_branch": "master",
+  "upstream_commit": "434ddbbc0e30522e897670681e503b797c12b7c1",
+  "upstream_commit_date": "2026-09-09T19:46:28Z",
+  "upstream_subject": "ci: fix sanitizer tests (#28583)",
+  "observed_at": "2026-09-09T20:14:18.026Z",
+  "nearest_release_tag": "b10883",
+  "previous_linker_pin": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
+  "previous_official_base": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
+  "patch_set_sha256": "a22eed7eea2c49ea30f97fc353193d1eb3c24b7e6461514619ed6c3b73103675",
+  "patched_tree": "d07413951cb24a696324f1fe34483a7887573460",
+  "patches": [
+    {
+      "file": "0002-ggml-rpc.patch",
+      "sha256": "4a5ae85ddd3dbf5ad902c7654bd670ba802f2d15d261bd301c10e085ec72242a",
+      "layer": "upstream_fix"
+    },
+    {
+      "file": "0003-public-pipeline-abi.patch",
+      "sha256": "aa3113e9c542d31434badfd863a8845c7f89b2e534012f45cbc677db3afd8749",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0004-llama-context.patch",
+      "sha256": "0d8af94e3c0d1be961e4472907512de3469ee7557ed45ddbab1924fc57a12e06",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0005-llama-context-header.patch",
+      "sha256": "e3c0647b9ad8a273a094b7fd60579c4636d44ed289841718186a3aa00ca51c94",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0006-llama-graph.patch",
+      "sha256": "8bd13f30140d911b98b503a0f38943ab9a1d42ca21f79f0c7af663127f34c7bc",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0007-llama-graph-header.patch",
+      "sha256": "8246b50638bf1885952ddaef0f77e2f1b5c09c3a57c1c0a7d604f7788a0b1da7",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0008-llama-memory-header.patch",
+      "sha256": "51df4e2f32ca46b5079db417de75e421d5fccc9573275c3a7cde845cd705ca4e",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0009-model-loader.patch",
+      "sha256": "6a20e2d4ce73929e52f1f86368a0f70559a1ac649a0f9b00f599a21ac10d5961",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0010-model-loader-header.patch",
+      "sha256": "ec3ff678198ff3ccad2014a63df9b2d647aeaf877f28e61ef53dc00038b2c94a",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0011-llama-model.patch",
+      "sha256": "af4d3fb2218315548962d557ba1aea29626777c636bd201269bd0d037665fb93",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0012-llama-model-header.patch",
+      "sha256": "a11989ef1ec070e517661672533ac03ecc041e42654e1c3f6f07a25face0313e",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0013-llama-api-implementation.patch",
+      "sha256": "67b4906a15e6c5563db8a465ade6053163f7cd43a60fedbe7db885d7be1b2b10",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0014-kv-stage-window.patch",
+      "sha256": "0e2e99cefd3d92f89bf8cbfe2768634321703c5b59bddcd492eaed5121f6d9a4",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0015-official-minimax-m3-dense-gguf.patch",
+      "sha256": "44596e5d1af4e0290265da546144c6cd5e6de3b48a8145a727de0d87d400b093",
+      "official_upstream_port": {
+        "repository": "https://github.com/ggml-org/llama.cpp.git",
+        "pull_request": "https://github.com/ggml-org/llama.cpp/pull/24523",
+        "commit": "d694e85ba70f96942f55deb63f92c243a231053a"
+      },
+      "layer": "model_feature"
+    },
+    {
+      "file": "0016-stage-memory-residency.patch",
+      "sha256": "7a1dfa5b6cd40c2a200b60b1698265f74b49b4c36587e3f9bcba1cc0e3a5a408",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0017-recurrent-stage-memory-residency.patch",
+      "sha256": "f69acf2baefa5020c782f1df810c3858c0227ca141c2a3844ae2b4b7c7c31889",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0018-mtp-tail-stage.patch",
+      "sha256": "51a01c3051941b5c2c95816433d3a93dbd5531f4700568b49e95aa8afa0a5985",
+      "layer": "model_feature"
+    },
+    {
+      "file": "0019-speculative-sequence-lifecycle.patch",
+      "sha256": "fd11fd870226011434077602b016199bb36c1aa407bbd94c9cc7cd969a8ccdd0",
+      "layer": "model_feature"
+    },
+    {
+      "file": "0020-recurrent-rollback-relocation.patch",
+      "sha256": "f0ca1b953e81b0bd6920ade228db4cb39dd58ba56e58d635cefae4adaf001c6b",
+      "official_upstream_port": {
+        "repository": "https://github.com/ggml-org/llama.cpp.git",
+        "pull_request": "https://github.com/ggml-org/llama.cpp/pull/25004",
+        "commit": "7ff2fd83e9794efffd0190652aadd3924820e6e5"
+      },
+      "layer": "model_feature"
+    },
+    {
+      "file": "0021-stage-noalloc-memory-breakdown.patch",
+      "sha256": "030cbbe8f134e5dbbf56daa74d23aab14edfffdccd26fe2c0b44e37ba9639f30",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0022-iswa-stage-memory-residency.patch",
+      "sha256": "71f4f36af8af789887593d78ad8880b307c41a5cd6ceaef8c64d4bcb72b406fc",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0023-stage-passthrough-cut-identity.patch",
+      "sha256": "8c97855a3d59792d70302d7160592ea5c7cbf44473f206cf06143c4877de21d7",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0024-stage-cut-mismatch-diagnostic.patch",
+      "sha256": "69ea4e070b48948f7ceb7001563c21b777d0a936802cede1a86d1058fec105da",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0025-noalloc-reserve-size-max.patch",
+      "sha256": "1ee11f2f774ceb1e5d3c8ae174c25accc07cda039a6b6cdc14b3fe4487a909a4",
+      "layer": "upstream_fix"
+    },
+    {
+      "file": "0026-noalloc-recurrent-residency.patch",
+      "sha256": "2d71fadafaac9d9dee447ec923a58babcd6e9c44650d611200e5488a28a5053d",
+      "layer": "upstream_fix"
+    }
+  ],
+  "superseded_patches": [
+    {
+      "file": "0001-ggml-backend.patch",
+      "upstream_commit": "992cb503cdacf691ef06c332d05243bc7807257b",
+      "reason": "Upstream dynamically grows split input storage; dedicated runtime regression pending."
+    }
+  ]
+}

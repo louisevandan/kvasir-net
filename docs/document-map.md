@@ -48,6 +48,7 @@
 | 문서 | 지위 |
 | --- | --- |
 | [AGENTS.md](../AGENTS.md) | 새 세션 규칙 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md) | fleet/NAS 실측과 최신 upstream 통합의 진행·미승인 게이트 |
 | [docs/adapter-batching-layers.md](adapter-batching-layers.md) | 분야 계약·구현과 구별 |
 | [docs/adapter-boundary.md](adapter-boundary.md) | 분야 계약·구현과 구별 |
 | [docs/adapter-restructure-plan.md](adapter-restructure-plan.md) | 역사·구 계획 |

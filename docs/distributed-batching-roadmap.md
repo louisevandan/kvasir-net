@@ -10,7 +10,27 @@
 
 <a id="current-status"></a>
 
-## 0. 현재 상태 — v0.9.0 후보 보존, 정식 봉인 BLOCKED
+## 0. 현재 상태 — 후보 보존 및 별도 fleet·upstream 통합 진행
+
+### 0.-2 사용자 추가 지시 — 전체 장비와 최신 upstream (2026-09-10)
+
+v0.9.0 후보와 기존 게이트는 보존한다. 사용자가 Spark, TUF, Mac mini 두 대, Ubuntu 노트북,
+이 PC 등을 NAS와 연결하고, 개별 모델 실행 → 모든 컴퓨터를 잇는 대형 모델 실행 → 최신 llama.cpp
+업데이트 성공을 지시했다. 이 지시가 과거의 한 호스트 자원 제한과 다음 버전 대기 순서보다 우선한다.
+개발 checkout은 `F:/dev/p4-fleet-20260910`, branch `codex/fleet-latest-20260910`이며 릴리즈 후보는 수정하지 않는다.
+
+1. NAS의 실제 모델 읽기와 장비별 도구·메모리·사용 중인 서비스·포트를 확인한다. TUF SSH 인증,
+   Mac .20 NAS 인증, M42 interactive logon은 사용자 입력을 기다리며 나머지 작업은 계속한다.
+2. 최신 관측 pin `434ddbbc0`의 호환 패치를 재생하고 CUDA·Metal·CPU 빌드 및 실제 소비 경로 회귀를 검증한다.
+   기존 split 입력 패치의 upstream 대체를 경계 입력으로 검증한다. 재생만으로 채택하지 않는다.
+3. 각 장비에서 NAS의 적합한 모델을 실제로 실행하고 완결 응답·배치·해제·사용 메모리를 남긴다.
+   Spark/Mac의 통합 메모리는 host와 GPU로 중복 합산하지 않는다.
+4. 사용 중인 19001 서비스를 보존하고 가능한 P4 포트의 장비 간 연결을 검증한다. 합법적 컷과
+   stage별 실제 계획으로 대형 모델을 모든 대상 컴퓨터에 분산한다. 작은 모델이나 일부 장비 성공으로 대체하지 않는다.
+5. 정상 프롬프트·완결 응답·연속 웨이브·실제 placement·실행 ID와 바이너리 해시로 판정한다.
+   B2/B3 예산 부재 등 기존 제약을 기록하며 resident 상향 서비스 승인은 별도 게이트로 유지한다.
+
+현재 사실과 열린 게이트는 [fleet/upstream 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)를 따른다.
 
 ### 0.-1 이번 버전 마감 상태 (2026-09-10)
 

@@ -2,6 +2,8 @@
 
 ## 현재 개발 목표와 새 세션 시작점
 
+[Fleet 및 최신 upstream 통합 증거](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)
+
 **릴리즈:** [v0.9.0 릴리즈 노트](docs/release/v0.9.0.md) — 검증한 것의 봉인이며 §7 최종 체크리스트의 달성이 아니다.
 
 최우선 목표는 **초대형 모델을 여러 물리 컴퓨터의 분산 노드에서 실행하고,
