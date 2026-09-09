@@ -138,6 +138,30 @@ Control/mutant binary SHA256: `9395a408a266943a9b4e1ebde25fea7ae9c5afe21985fc8c0
 Full source/object/archive hashes and commands are in `host-memory-mutation-result.log`.
 That diagnostic used a hash-verified model copy on Mac `.20`; it does not establish that Mac's NAS connection.
 
+## Shared compute buffer sizing
+
+Mac rerun `20260909T212421997Z` passed buffer ownership but exposed a second, independent mismatch: planned host compute 768,237,568 bytes versus actual 384,118,784 bytes.
+BLAS and CPU use the same physical compute buffer. `ggml_gallocr_get_buffer_size` counts that allocation only at its first index, while `ggml_gallocr_reserve_n_size` counted the same allocator at every index.
+The equality gate correctly rejected LOAD and remains unchanged.
+
+Patch `0027-noalloc-shared-buffer-size.patch` makes the no-alloc size report use the same allocation identity, before any real buffer exists.
+The mandatory runtime compile test exercises the real allocator with one, two and three references to the CPU buffer type.
+It verifies no tensor storage exists after measurement, compares every reported size with actual allocation, then allocates and computes 257 independently checked sums.
+Before the fix, Windows measured index 1 as 2,112 bytes while actual was 0 (`reserve-size-red-consumer.log`).
+The first test draft did not compile because it used an unavailable graph leaf-count accessor; that result is not the failure counterexample. The corrected test uses the two explicitly constructed leaves and then demonstrates the runtime mismatch.
+
+An independent copied ggml tree on Mac passed the control and failed after removing duplicate detection (exit -6).
+Recompiled `libggml-base` SHA256 before/after: `89dde2582f38b1d18f0784e5ff43aa791e23069723f9aecde8bc87cfb887d2e9` / `3af3b0278826adf2e60417245a28d89756d0909a6f0195ca5aa9026258216c21`.
+Probe SHA256: `f396c8409a5ea3736614a7c068f985b4848d87bf76564b7c9ffa0ec0abf6b52f`; full commands and source hashes are in `reserve-size-mutation-result.log` and the independent build directory.
+
+Current queue: 26 active patches, 4 upstream fixes / 18 stage hooks / 4 model features.
+Patch-set SHA256: `ff1468f6187f0e70e2970f73c0d0ca489d7b8bd4465b583ec1b6305cbee56f3b`; patched tree: `44493ca7ab53699ecc012e915be10da5ad7c7b1f`.
+Fresh replay, manifest/classification and private-header checks pass (83 files; no new private/common crossing).
+Windows, Spark, Ubuntu and Mac `.20` pass 16/16 CTests on this queue; Mac `.21` receives the verified Mac runtime package before its next model rerun.
+The Windows existing prepared directory was updated only after checking its full old patch digest, then verified with strict explicit `prepare-pipeline-upstream --out` against the new digest before building. Its old hash-bearing directory name is not its current identity.
+
+The byte-preserving monolithic reference (`--binary-file`, same 64-token first prompt) reproduces the small model's Korean/formatting problems; the earlier newline-stripping reference is excluded. This observation does not establish numerical equivalence across batch shapes or certify the staged output quality.
+
 ## Local evidence and reproduction
 
 Raw discovery, NAS inventories, compiler versions, conflicts and rebase logs are under `F:/dev/p4/target/fleet-20260910`.

@@ -14,8 +14,8 @@
   "nearest_release_tag": "b10883",
   "previous_linker_pin": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
   "previous_official_base": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
-  "patch_set_sha256": "a22eed7eea2c49ea30f97fc353193d1eb3c24b7e6461514619ed6c3b73103675",
-  "patched_tree": "d07413951cb24a696324f1fe34483a7887573460",
+  "patch_set_sha256": "ff1468f6187f0e70e2970f73c0d0ca489d7b8bd4465b583ec1b6305cbee56f3b",
+  "patched_tree": "44493ca7ab53699ecc012e915be10da5ad7c7b1f",
   "patches": [
     {
       "file": "0002-ggml-rpc.patch",
@@ -150,6 +150,11 @@
     {
       "file": "0026-noalloc-recurrent-residency.patch",
       "sha256": "2d71fadafaac9d9dee447ec923a58babcd6e9c44650d611200e5488a28a5053d",
+      "layer": "upstream_fix"
+    },
+    {
+      "file": "0027-noalloc-shared-buffer-size.patch",
+      "sha256": "695aba02aba9d1efed5b79d5f91d4b8d36c8746e18c1368588355ce557b783d3",
       "layer": "upstream_fix"
     }
   ],

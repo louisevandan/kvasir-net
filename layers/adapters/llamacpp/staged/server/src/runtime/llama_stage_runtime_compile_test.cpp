@@ -32,6 +32,7 @@ void test_force_hop_memory_dirty(StageRuntime & runtime, bool value) noexcept {
 } // namespace staged::llama_runtime
 
 void run_stage_memory_plan_tests();
+void run_ggml_reserve_size_tests();
 
 namespace {
 
@@ -359,6 +360,7 @@ int main() {
     unload_clears_hop_memory_dirty();
     quarantine_marks_hop_memory_dirty();
     run_stage_memory_plan_tests();
+    run_ggml_reserve_size_tests();
     kv_operations_refuse_when_hop_memory_dirty();
     real_decode_after_restore_regression();
     hop_batch_rolls_back_only_new_sequences();

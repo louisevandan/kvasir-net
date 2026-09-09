@@ -306,6 +306,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_executable(p4_staged_llama_runtime_compile_test
         src/runtime/llama_stage_runtime_compile_test.cpp
         src/runtime/stage_memory_plan_test.cpp
+        src/runtime/ggml_reserve_size_test.cpp
     )
     target_link_libraries(p4_staged_llama_runtime_compile_test
         PRIVATE p4_staged_llama_runtime)
