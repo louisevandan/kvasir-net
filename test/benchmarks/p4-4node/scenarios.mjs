@@ -151,6 +151,25 @@ export function mixedPrefillPromptChatml(index) {
 
 export const STOPS_CHATML = ["<|im_end|>", "<|im_start|>"];
 
+/// ChatML with the thinking block already closed, as this family's own
+/// template writes it.
+///
+/// Read from Ornith-1.0-35B's GGUF `tokenizer.chat_template` on 2026-09-09:
+/// after `<|im_start|>assistant\n` the template emits `<think>\n` by default
+/// and `<think>\n\n</think>\n\n` when `enable_thinking` is false. P4 owns no
+/// template, so OUTER writes the second form itself. The exact newlines
+/// matter - this is the string the model was tuned to see, not an
+/// approximation of it.
+export function chatmlTurnClosedThinking(question) {
+  return `${chatmlTurn(question)}<think>\n\n</think>\n\n`;
+}
+
+/// The acceptance question in that form, for scenarios whose prompt does not
+/// vary by request.
+export function acceptancePromptChatmlNoThinking() {
+  return chatmlTurnClosedThinking(ACCEPTANCE_QUESTION);
+}
+
 /// Cuts a model across the execution lanes the hardware actually has.
 ///
 /// Measured 2026-09-04, interleaved, every arm passing its judge: one stage a
@@ -658,6 +677,116 @@ export const SCENARIOS = {
     parallel: 256,
     context: 512,
     maxTokens: 200,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 32,
+    })),
+  },
+
+  // `pressure` at the depth the cards actually provide.
+  //
+  // The four-stage arm above measured 15.95% UBATCH fill and 21.4/31.9% GPU
+  // over its stage-execution window, and a first-node stage time of 78.4,
+  // 57.9, 57.6 and 149.9 ms for stages owning 5, 4, 4 and 22 layers. Fitting
+  // a line through the two four-layer stages and the twenty-two-layer one
+  // puts about 37 ms of that on per-stage fixed cost - a frame decode, a
+  // llama_decode, a cut-set copy and a process hop - which four stages pay
+  // four times a lap on two cards that can only overlap two. This arm pays it
+  // twice. Same model, resident set, arrivals, context and prompts; only the
+  // partition changes, so the difference is attributable.
+  pressure_2stage: {
+    ...base,
+    description: "256 sequences, one stage a card, 32 arrivals every second for 16 s",
+    ...placeOnLanes(GEMMA4_LAYERS, GEMMA4_SHARED_KV),
+    parallel: 256,
+    context: 512,
+    maxTokens: 200,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 32,
+    })),
+  },
+
+  // The same pressure on a model that is not 2B, in the template its own
+  // GGUF declares, with thinking closed before it can open.
+  //
+  // **The resident set here is bounded by recurrent state, not by context.**
+  // This 35B is a hybrid: of its 40 layers only ten hold an attention KV
+  // cache, and the rest hold a recurrent state that is per sequence and does
+  // not shrink with the context length. Measured on 2026-09-09 at 256
+  // sequences, one stage of twenty layers reported
+  // `llama_memory_recurrent: size = 8040.00 MiB (256 cells, 40 layers,
+  // 256 seqs)` against `llama_kv_cache: size = 680.00 MiB (131072 cells)` -
+  // 31.4 MiB a sequence of recurrent state against 5.3 MiB of KV. The stage
+  // refused the load: plan 19.72 GiB required against 15.43 GiB free. Ninety
+  // six sequences is what fits with the weights beside it, so cutting the
+  // per-sequence context would not have bought a single extra sequence.
+  pressure_35b: {
+    ...base,
+    description: "35B, one stage a card, 96 sequences, 32 arrivals every second for 16 s",
+    model: MODEL_35B,
+    ...placeOnLanes(ORNITH35B_LAYERS),
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 96,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 32,
+    })),
+  },
+
+  // The same 35B pressure over four stages on the same two cards.
+  //
+  // This is not only the partition experiment. The staged server refuses a
+  // load whose plan does not fit the memory free at that moment, and the plan
+  // counts a stage's whole share of the weights - so a two-stage split of a
+  // 23 GiB model leaves little room for recurrent state and caps the resident
+  // set near a hundred. Four stages halve each stage's share, so the same two
+  // cards admit the resident set the 2B arms run at. Both variables move at
+  // once here; `pressure_35b_4stage_96` holds the resident set at
+  // `pressure_35b`'s so the partition can be read alone.
+  pressure_35b_4stage: {
+    ...base,
+    allowOversubscribedDevices: true,
+    description: "35B, two stages a card, 256 sequences, 32 arrivals every second for 16 s",
+    model: MODEL_35B,
+    cuts: CUTS_35B,
+    devices: ["0", "0", "1", "1"],
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 256,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 32,
+    })),
+  },
+
+  // The partition on its own: four stages at `pressure_35b`'s resident set.
+  pressure_35b_4stage_96: {
+    ...base,
+    allowOversubscribedDevices: true,
+    description: "35B, two stages a card, 96 sequences, 32 arrivals every second for 16 s",
+    model: MODEL_35B,
+    cuts: CUTS_35B,
+    devices: ["0", "0", "1", "1"],
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 96,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
     waves: Array.from({ length: 16 }, (_, index) => ({
       after_ms: index * 1_000,
       count: 32,

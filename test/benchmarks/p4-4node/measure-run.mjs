@@ -159,12 +159,33 @@ const stamps = [...new Set(samples.map((s) => s.t))];
 const byStamp = new Map(stamps.map((t) => [t, {}]));
 for (const s of samples) byStamp.get(s.t)[s.gpu] = s;
 const ordered = stamps.map((t) => byStamp.get(t));
-// Exclude the model-load head and the teardown tail mechanically: the window
-// runs from the first timestamp where either card exceeds 5% to the last.
-const busy = ordered.map((e) => Math.max(...Object.values(e).map((s) => s.util)) > 5);
-const first = busy.indexOf(true);
-const last = busy.lastIndexOf(true);
-console.log(`gpu: ${stamps.length} timestamps ${stamps[0]} .. ${stamps[stamps.length - 1]}; >5% window = ${first}..${last}`);
+// The stage-execution window, the one the 2026-09-07 ladder reported: from
+// the earliest span ingress to the latest forward. Model load and teardown
+// are outside it, and it is defined by the run rather than by a threshold on
+// the thing being measured. The sampler writes remote local time (KST) with
+// no zone, so the offset is applied explicitly rather than inherited from
+// whatever machine reads this file.
+const KST = 9 * 3600 * 1000;
+const sampleMs = (t) => {
+  const [date, clock] = t.split(" ");
+  const [y, mo, d] = date.split("/").map(Number);
+  const [h, mi, s] = clock.split(":");
+  return Date.UTC(y, mo - 1, d, Number(h), Number(mi), 0) + Math.round(Number(s) * 1000) - KST;
+};
+const spans = artifact.stage_spans;
+const from = Math.min(...spans.map((s) => s.ingress_unix_ms));
+const to = Math.max(...spans.map((s) => s.forward_unix_ms));
+const inWindow = ordered.map((e) => {
+  const ms = sampleMs(Object.values(e)[0].t);
+  return ms >= from && ms <= to;
+});
+const first = inWindow.indexOf(true);
+const last = inWindow.lastIndexOf(true);
+console.log(
+  `gpu: ${stamps.length} timestamps ${stamps[0]} .. ${stamps[stamps.length - 1]}; `
+  + `stage-execution window = samples ${first}..${last} (${r1((to - from) / 1000)} s of spans)`,
+);
+if (first < 0) throw new Error("no GPU sample falls inside the stage-execution window");
 for (const g of [...new Set(samples.map((s) => s.gpu))].sort()) {
   const whole = samples.filter((s) => s.gpu === g).map((s) => s.util);
   const window = ordered.slice(first, last + 1).map((e) => e[g]).filter(Boolean);

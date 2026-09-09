@@ -21,7 +21,8 @@ node test/benchmarks/p4-4node/measure-run.mjs target/pressure-remote-receipt-fix
 | --- | --- |
 | 모델 | `S:\models\unsloth\gemma-4-E2B-it-GGUF\gemma-4-E2B-it-Q8_0.gguf` |
 | 절단 | 4 stage `[0,5) [5,9) [9,13) [13,35)`, device `0,0,1,1` — **카드 하나에 노드 둘** |
-| 오프로딩 | `blk.5`–`blk.34`를 CPU로 (`--override-tensor`) |
+| 층 배분 | 5 / 4 / 4 / **22** — gemma-4-E2B가 13..34를 KV 공유 구역으로 두어 그 안에 경계를 둘 수 없다 |
+| 오프로딩 | **없다(VRAM-only).** 각 stage의 `--override-tensor`는 **자기가 소유하지 않은 층**을 CPU로 보내는 staging 기법이며(node-3은 `blk.(0..12)`), RAM 오프로딩이 아니다 |
 | resident | `n-seq-max` 256, per-sequence context 512, `batch/ubatch` 512 |
 | 워크로드 | 512 요청, 1초마다 32건씩 16웨이브, `max_tokens` 200 |
 
@@ -128,8 +129,15 @@ stage별 점유:
 | B service | 41.8 % | 30.8 % | 30.4 % | **78.5 %** |
 
 `any_stage_open` 95.7 % / 95.9 %, `two_or_more_open` 62.2 % / 65.8 %.
-**tail 한 stage가 나머지의 2.5배를 쓴다.** 09-04의 35B 분해에서 tail 비용의 절반이 sampler였던
-것과 방향이 같지만, **이 모델·이 구성에서 그 내역은 아직 재지 않았다.** STEP trace 없이 단정하지 않는다.
+
+**tail이 느린 첫 번째 이유는 sampler가 아니라 층 수다.** 이 절단은 5 / 4 / 4 / **22**층이다.
+네 stage 시간에 `고정비 + 층수 × 층당비용`을 맞추면(4층 57.9 ms와 22층 149.9 ms를 지나는 직선)
+층당 5.11 ms, **stage당 고정비 약 37 ms**가 나온다. 4층인 node2의 57.6 ms가 이 선 위에 있고,
+node0은 예측 63 ms보다 15 ms 크다(임베딩·입력 처리). **tail의 149.9 ms는 22층으로 대부분 설명된다.**
+09-04 35B 분해의 sampler 비중을 여기에 그대로 옮기지 않는다. 이 구성의 내역은 STEP trace로 재야 한다.
+
+이 적합이 말하는 다른 것: **stage마다 약 37 ms의 고정비가 있고 네 stage는 한 랩에 그것을 네 번 낸다.**
+카드는 둘뿐이라 그중 둘만 겹칠 수 있다. 이것이 `pressure_2stage` 실험의 근거다.
 
 ## 4. GPU 사용률
 
