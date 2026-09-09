@@ -387,8 +387,10 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
      지점이라는 증거도 없다.
      [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-partial-result-preservation.md)
 
-7. **계획 모드의 recurrent 할당 수정.** 코드·적용·컴파일 **2026-09-10 완료**,
-   **동작 검증 미완(CUDA 빌드와 원격 3090×2 필요).**
+7. **계획 모드의 recurrent 할당 수정.** 코드·적용·컴파일 **2026-09-10 완료**, 실기 게이트 **통과**
+   (r96·r256에서 계획 pass RS 0.00 MiB, r256 admitted·완주, 넘치는 구성은 계속 거부 —
+   [릴리즈 게이트](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md)).
+   **host/device별 계획=실제 전항 대조와 attention·hybrid 무회귀는 다음 버전.**
    - 상류 `llama_kv_cache`는 `no_alloc`에서 크기 0 dummy 버퍼를 쓰고 `memory_breakdown()`도
      정렬을 반영한 예상 크기를 보고한다. `llama_memory_recurrent`는 **둘 다 하지 않아** 계획을
      세우는 동안 recurrent 상태를 실제로 할당하고, 그 뒤 줄어든 `free`를 그 비용이 포함된
@@ -436,7 +438,7 @@ upstream_fix 4 · stage_hook 18 · model_feature 4), patch classification valid,
 
 | 턴 | 할 일 | 완료 조건(전부 실측·기록) |
 | ---: | --- | --- |
-| **1** | **릴리즈 트리에서 CUDA 산출물 재빌드·원격 배포·실기 게이트.** `build-stage-server.mjs --cuda --cuda-architectures "86;89"`(Ninja는 `-DCMAKE_BUILD_TYPE=Release` 재구성 필요), flat copy 교체, 원격 `p4-remote/staged` 배포, `p4-agent.exe` 배포, 배포 전후 해시 기록. 실기: ① `smoke`, ② `pressure`(2B), ③ `pressure_35b`(r96) — 셋 다 512/512/512 또는 1/1/1, 두 오류 null. ④ 0026 게이트: 2-stage r256 35B 적재에서 계획 pass의 `RS buffer size = 0.00 MiB`와 `MEMORY_PLAN` context 값이 0025 때와 같은지, 실제 적재 뒤 최대 VRAM, 추론·UNLOAD 통과. ⑤ 실제로 넘치는 구성(예: 2-stage r512)은 **계속 거부**. ④·⑤ 중 하나라도 실패하면 0026 제외 분기 | 네 실행의 `evidence.json` 해시가 로컬 빌드 해시와 일치. 결과를 `evidence/2026-09-1x-release-gate.md`에 실행 ID·해시·판정으로 기록 |
+| ~~**1**~~ | **완료(2026-09-10).** 재빌드(Release, CTest 15/15)·배포(해시 일치)·게이트 5종 통과, **0026 포함 확정.** 계획 pass가 ubatch 4096에서 model 0.60 GiB·compute 0.39 GiB 과소 보고하는 편차를 발견해 알려진 제약으로 넘긴다. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md). 원래 정의: **릴리즈 트리에서 CUDA 산출물 재빌드·원격 배포·실기 게이트.** `build-stage-server.mjs --cuda --cuda-architectures "86;89"`(Ninja는 `-DCMAKE_BUILD_TYPE=Release` 재구성 필요), flat copy 교체, 원격 `p4-remote/staged` 배포, `p4-agent.exe` 배포, 배포 전후 해시 기록. 실기: ① `smoke`, ② `pressure`(2B), ③ `pressure_35b`(r96) — 셋 다 512/512/512 또는 1/1/1, 두 오류 null. ④ 0026 게이트: 2-stage r256 35B 적재에서 계획 pass의 `RS buffer size = 0.00 MiB`와 `MEMORY_PLAN` context 값이 0025 때와 같은지, 실제 적재 뒤 최대 VRAM, 추론·UNLOAD 통과. ⑤ 실제로 넘치는 구성(예: 2-stage r512)은 **계속 거부**. ④·⑤ 중 하나라도 실패하면 0026 제외 분기 | 네 실행의 `evidence.json` 해시가 로컬 빌드 해시와 일치. 결과를 `evidence/2026-09-1x-release-gate.md`에 실행 ID·해시·판정으로 기록 |
 | **2** | **릴리즈 문서와 버전.** `docs/release/v0.9.0.md`(또는 CHANGELOG): 포함 변경(수용 예산·부분 결과 보존·귀속·CLI 산출물·측정 도구·시나리오·0026), **검증된 것**(실행 ID·해시 포함), **검증하지 않은 것**(§7 전항, H0~H7, 다중 호스트, 서비스 승인, TPS 개선, 최적값), **알려진 제약**(B2/B3 예산 부재, r160 TTFT 중앙값 93.9 초의 backlog, 모든 pressure 응답이 `length`, 휴리스틱 judge, 요청별 평균 ITL, `outstanding > 0` 의존, 한 호스트·sm_86·Windows만 시험), 지원 구성(통과한 시나리오·모델·절단·resident 그대로), 재현 명령(§6 + `measure-run.mjs`). 버전 bump, README에 릴리즈 포인터, document-map 등록. 전체 게이트 재실행(§6 전부 + CTest는 릴리즈 build dir에서) | docs-lint clean, 워크스페이스·하네스 전부 통과, 문서의 모든 숫자가 산출물 파일에서 복사됨 |
 | **3** | **봉인과 tag.** 트리 clean 확인 → 최종 커밋의 바이너리 해시를 릴리즈 노트에 다시 복사 → 증거 번들 디렉터리(실행 4개의 `MANIFEST.sha256` 사본과 총합 해시) → annotated tag `v0.9.0`(메시지에 증거 문서 경로·해시) → 원격 호스트를 배포 해시 상태로 유지하고 에이전트 정지 → 로드맵 §0에 "v0.9.0 봉인" 상태표와 **다음 버전 첫 행동**(P-3d 2번) 기록 | `git describe --tags`가 `v0.9.0`, `git status` clean, tag 메시지의 해시 = 배포 파일 해시 |
 

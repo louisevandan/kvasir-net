@@ -889,20 +889,25 @@ export const SCENARIOS = {
   },
 
   // The other half of that gate: a configuration that genuinely does not fit
-  // must still be refused. 512 sequences of recurrent state at 32.0 MiB each
-  // is 16 GiB beside 10.5 GiB of weights on a 24 GiB card. A plan that admits
-  // this has stopped planning.
-  release_35b_r512_must_refuse: {
+  // must still be refused BY THE MEMORY PLAN. A first attempt used 512
+  // sequences and was refused before any plan existed - llama.cpp caps
+  // n_seq_max at 256 - so it proved the cap, not the plan. This one stays
+  // under the cap and grows what the plan actually counts: the ubatch
+  // compute reservation and the attention KV, until required exceeds the
+  // card. A plan that admits this has stopped planning.
+  release_35b_must_refuse: {
     ...base,
-    description: "35B, one stage a card, 512 sequences - must be refused by the memory plan",
+    description: "35B, one stage a card, 256 sequences, ubatch 4096 - must be refused by the memory plan",
     model: MODEL_35B,
     ...placeOnLanes(ORNITH35B_LAYERS),
     stops: STOPS_CHATML,
     flashAttn: "on",
     cacheTypeK: "q8_0",
     cacheTypeV: "q8_0",
-    parallel: 512,
-    context: 512,
+    nBatch: 4096,
+    nUbatch: 4096,
+    parallel: 256,
+    context: 1024,
     maxTokens: 200,
     promptFor: acceptancePromptChatmlNoThinking,
     waves: [{ after_ms: 0, count: 32 }],
