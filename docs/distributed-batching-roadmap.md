@@ -18,6 +18,24 @@
 그 뒤의 독립 completion 진행 후보도 작성돼 있으나 검증하지 않았다. 보존 커밋 여부와 무관하게
 이 후보 및 아래 WIP는 **실행 검증 전**이다.
 
+### 0.-1 v0.9.0 봉인 (2026-09-10)
+
+이 lineage의 첫 tag다. **검증한 것의 봉인이지 §7 최종 체크리스트의 달성이 아니다.**
+무엇을 주장하고 무엇을 주장하지 않는지는 [릴리즈 노트](release/v0.9.0.md)가 소유한다.
+
+| 항목 | 상태 |
+| --- | --- |
+| 실기 게이트 5종 (3090×2, 릴리즈 트리 재빌드 산출물) | 통과 — [게이트 문서](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md) |
+| compat 패치 0026 | 포함(게이트 통과). 계획=실제 편차(ubatch 4096)는 알려진 제약 |
+| 워크스페이스 / node 시험 / docs-lint / 검증기 | 1,374 / 0 / 7 · 94 / 0 · clean · valid |
+| 배포 상태 | `m42-server2`에 릴리즈 해시 배포, 에이전트 정지, 이전 배포본 백업 |
+| 번들 | `evidence/bundles/v0.9.0/`, 총합 `d4162b89…` |
+| 미달성 | H0~H7, 다중 물리 호스트, 서비스 승인, TPS 개선, resident 상향 승인 — 노트의 "검증하지 않은 것" |
+
+**다음 버전의 첫 행동은 P-3d 2번**(no-alloc 동작 검증의 나머지: host/device별 계획=실제 전항 대조와
+attention·hybrid 무회귀, 그리고 ubatch 4096에서 드러난 계획 과소 보고의 원인)이다.
+그다음이 B2/B3 수용·반환 예산이며, resident 상향은 그 뒤에 온다.
+
 ### 0.0 2026-09-07 저녁 — 사용자 재개 지시 후 실제 확인 결과 (검증됨)
 
 사용자가 "실제 확인 후 계속/변경 판단, 실측으로 TPS·배치 포화·GPU 사용률 보고"를 지시해 위 §0.1~0.6의
@@ -439,8 +457,8 @@ upstream_fix 4 · stage_hook 18 · model_feature 4), patch classification valid,
 | 턴 | 할 일 | 완료 조건(전부 실측·기록) |
 | ---: | --- | --- |
 | ~~**1**~~ | **완료(2026-09-10).** 재빌드(Release, CTest 15/15)·배포(해시 일치)·게이트 5종 통과, **0026 포함 확정.** 계획 pass가 ubatch 4096에서 model 0.60 GiB·compute 0.39 GiB 과소 보고하는 편차를 발견해 알려진 제약으로 넘긴다. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md). 원래 정의: **릴리즈 트리에서 CUDA 산출물 재빌드·원격 배포·실기 게이트.** `build-stage-server.mjs --cuda --cuda-architectures "86;89"`(Ninja는 `-DCMAKE_BUILD_TYPE=Release` 재구성 필요), flat copy 교체, 원격 `p4-remote/staged` 배포, `p4-agent.exe` 배포, 배포 전후 해시 기록. 실기: ① `smoke`, ② `pressure`(2B), ③ `pressure_35b`(r96) — 셋 다 512/512/512 또는 1/1/1, 두 오류 null. ④ 0026 게이트: 2-stage r256 35B 적재에서 계획 pass의 `RS buffer size = 0.00 MiB`와 `MEMORY_PLAN` context 값이 0025 때와 같은지, 실제 적재 뒤 최대 VRAM, 추론·UNLOAD 통과. ⑤ 실제로 넘치는 구성(예: 2-stage r512)은 **계속 거부**. ④·⑤ 중 하나라도 실패하면 0026 제외 분기 | 네 실행의 `evidence.json` 해시가 로컬 빌드 해시와 일치. 결과를 `evidence/2026-09-1x-release-gate.md`에 실행 ID·해시·판정으로 기록 |
-| **2** | **릴리즈 문서와 버전.** `docs/release/v0.9.0.md`(또는 CHANGELOG): 포함 변경(수용 예산·부분 결과 보존·귀속·CLI 산출물·측정 도구·시나리오·0026), **검증된 것**(실행 ID·해시 포함), **검증하지 않은 것**(§7 전항, H0~H7, 다중 호스트, 서비스 승인, TPS 개선, 최적값), **알려진 제약**(B2/B3 예산 부재, r160 TTFT 중앙값 93.9 초의 backlog, 모든 pressure 응답이 `length`, 휴리스틱 judge, 요청별 평균 ITL, `outstanding > 0` 의존, 한 호스트·sm_86·Windows만 시험), 지원 구성(통과한 시나리오·모델·절단·resident 그대로), 재현 명령(§6 + `measure-run.mjs`). 버전 bump, README에 릴리즈 포인터, document-map 등록. 전체 게이트 재실행(§6 전부 + CTest는 릴리즈 build dir에서) | docs-lint clean, 워크스페이스·하네스 전부 통과, 문서의 모든 숫자가 산출물 파일에서 복사됨 |
-| **3** | **봉인과 tag.** 트리 clean 확인 → 최종 커밋의 바이너리 해시를 릴리즈 노트에 다시 복사 → 증거 번들 디렉터리(실행 4개의 `MANIFEST.sha256` 사본과 총합 해시) → annotated tag `v0.9.0`(메시지에 증거 문서 경로·해시) → 원격 호스트를 배포 해시 상태로 유지하고 에이전트 정지 → 로드맵 §0에 "v0.9.0 봉인" 상태표와 **다음 버전 첫 행동**(P-3d 2번) 기록 | `git describe --tags`가 `v0.9.0`, `git status` clean, tag 메시지의 해시 = 배포 파일 해시 |
+| ~~**2**~~ | **완료(2026-09-10, `db7370e86`).** 원래 정의: **릴리즈 문서와 버전.** `docs/release/v0.9.0.md`(또는 CHANGELOG): 포함 변경(수용 예산·부분 결과 보존·귀속·CLI 산출물·측정 도구·시나리오·0026), **검증된 것**(실행 ID·해시 포함), **검증하지 않은 것**(§7 전항, H0~H7, 다중 호스트, 서비스 승인, TPS 개선, 최적값), **알려진 제약**(B2/B3 예산 부재, r160 TTFT 중앙값 93.9 초의 backlog, 모든 pressure 응답이 `length`, 휴리스틱 judge, 요청별 평균 ITL, `outstanding > 0` 의존, 한 호스트·sm_86·Windows만 시험), 지원 구성(통과한 시나리오·모델·절단·resident 그대로), 재현 명령(§6 + `measure-run.mjs`). 버전 bump, README에 릴리즈 포인터, document-map 등록. 전체 게이트 재실행(§6 전부 + CTest는 릴리즈 build dir에서) | docs-lint clean, 워크스페이스·하네스 전부 통과, 문서의 모든 숫자가 산출물 파일에서 복사됨 |
+| ~~**3**~~ | **완료(2026-09-10, tag `v0.9.0`).** 원래 정의: **봉인과 tag.** 트리 clean 확인 → 최종 커밋의 바이너리 해시를 릴리즈 노트에 다시 복사 → 증거 번들 디렉터리(실행 4개의 `MANIFEST.sha256` 사본과 총합 해시) → annotated tag `v0.9.0`(메시지에 증거 문서 경로·해시) → 원격 호스트를 배포 해시 상태로 유지하고 에이전트 정지 → 로드맵 §0에 "v0.9.0 봉인" 상태표와 **다음 버전 첫 행동**(P-3d 2번) 기록 | `git describe --tags`가 `v0.9.0`, `git status` clean, tag 메시지의 해시 = 배포 파일 해시 |
 
 **다음 버전으로 넘기는 것(릴리즈 노트의 "미포함" 절과 동일).** P-3d의 2~5(no-alloc 동작 검증 전체,
 B2/B3 예산, 정상 응답 기준선·원인 계측, H5 최적화), H0~H7 실기 계약, 다중 물리 호스트, K gate,

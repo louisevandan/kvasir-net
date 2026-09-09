@@ -87,6 +87,11 @@
 "r96·160·256 host/device별 계획=실제 대조" 항목이 이 편차를 다룬다. #3·#4(ubatch 512)에서는 계획
 pass와 실제 pass의 `required`가 각각 14.01·19.72로 같았다.
 
+## 번들
+
+실행 5개의 `MANIFEST.sha256`을 `bundles/v0.9.0/`에 복사했다(41개 파일 해시). `SHA256SUMS`의 sha256은
+`d4162b89f3f97bdcb9bf85b442b00a9091b4c114ec160b5191ab695c358cb2e1`이다. 원본은 `target/release-gate-v090/`.
+
 ## 판정
 
 턴 1 완료 조건을 모두 충족한다. #1~#4 통과, 5′ 거부, 네 통과 실행의 `evidence.json` 해시가 배포 해시와
