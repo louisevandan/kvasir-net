@@ -14,8 +14,8 @@
   "nearest_release_tag": "b10731",
   "previous_linker_pin": "557614e0296ff4a5b6f649737a65ae2076eea2fd",
   "previous_official_base": "557614e0296ff4a5b6f649737a65ae2076eea2fd",
-  "patch_set_sha256": "961bd89cd1197cef0d683f22d99d9451e25aba5eba5f360dac6aaa792b993d81",
-  "patched_tree": "660114df5e9060736bbee42e793029151fb671eb",
+  "patch_set_sha256": "f37f181c9d38afed04993921b30470dd69d8cfd5d232d05405f384a01439e738",
+  "patched_tree": "7d66751252406ad0e952409355c5cc0a34530c55",
   "patches": [
     {
       "file": "0001-ggml-backend.patch",
@@ -150,6 +150,11 @@
     {
       "file": "0025-noalloc-reserve-size-max.patch",
       "sha256": "a8f51e0da3d4a56ad349f02d23958939e39879fa5150cab4925870cb682224c5",
+      "layer": "upstream_fix"
+    },
+    {
+      "file": "0026-noalloc-recurrent-residency.patch",
+      "sha256": "2d71fadafaac9d9dee447ec923a58babcd6e9c44650d611200e5488a28a5053d",
       "layer": "upstream_fix"
     }
   ]

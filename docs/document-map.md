@@ -124,6 +124,7 @@
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-pressure-measured-baseline.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-pressure-measured-baseline.md) | 처음 완주한 `pressure`의 응답·TPS·배치 포화·GPU 실측 기준선 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-saturation-and-utilisation.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-saturation-and-utilisation.md) | 모델 크기·분할·resident·발행 정책·도착 패턴을 바꾼 포화·사용률 실험 10회 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-partial-result-preservation.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-partial-result-preservation.md) | 실패한 실행이 부분 결과를 잃던 결함의 원인 확정·수정·변이 검증 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-noalloc-recurrent-residency.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-noalloc-recurrent-residency.md) | 계획 모드가 recurrent 상태를 실제 할당하던 상류 결함의 원인 확정과 compat 패치 |
 | [layers/adapters/llamacpp/staged/scripts/validation/README.md](../layers/adapters/llamacpp/staged/scripts/validation/README.md) | 구성요소 안내 |
 | [layers/adapters/llamacpp/staged/server/tests/contract/README.md](../layers/adapters/llamacpp/staged/server/tests/contract/README.md) | 구성요소 안내 |
 | [layers/adapters/README.md](../layers/adapters/README.md) | 구성요소 안내 |

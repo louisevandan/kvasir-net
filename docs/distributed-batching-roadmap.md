@@ -387,6 +387,34 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
      지점이라는 증거도 없다.
      [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-partial-result-preservation.md)
 
+7. **계획 모드의 recurrent 할당 수정.** 코드·적용·컴파일 **2026-09-10 완료**,
+   **동작 검증 미완(CUDA 빌드와 원격 3090×2 필요).**
+   - 상류 `llama_kv_cache`는 `no_alloc`에서 크기 0 dummy 버퍼를 쓰고 `memory_breakdown()`도
+     정렬을 반영한 예상 크기를 보고한다. `llama_memory_recurrent`는 **둘 다 하지 않아** 계획을
+     세우는 동안 recurrent 상태를 실제로 할당하고, 그 뒤 줄어든 `free`를 그 비용이 포함된
+     `required`와 비교했다. compat 패치 `0026-noalloc-recurrent-residency.patch`로 두 곳을 맞췄다.
+   - **fit 검사를 없애거나 `free`를 보정하지 않았다.** 공간이 실제로 부족한 구성은 계속 거부한다.
+   - 26개 패치 적용·경계 검사·준비 트리 diff 해시(`f37f181c…`)·ABI 심볼 통과, CPU Release에서
+     `llama.dll` 링크 성공. 고정 pin checkout은 손대지 않았다(작업은 분리된 worktree).
+   - **다음 단계이자 완료 조건:** 계획용 RS 실제 할당 소멸을 backend 초기화 비용과 구분해 확인,
+     r96·160·256의 host/device별 계획=실제 대조, attention·recurrent·hybrid 무회귀,
+     **실제로 부족한 구성의 거부 유지**, 수정 뒤 r256의 실제 적재·최대 메모리·추론·UNLOAD 별도 통과.
+     [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-noalloc-recurrent-residency.md)
+
+#### P-3d. 결정된 작업 순서 (2026-09-10)
+
+| 순서 | 할 일 | 완료 조건 |
+| ---: | --- | --- |
+| ~~1~~ | ~~실패의 부분 결과 보존~~ | **완료**(P-2 6번). 귀속은 증거를 따르고, 실제 CLI가 산출물을 쓰고 1로 끝나는 것까지 고정 |
+| 2 | **no-alloc recurrent 동작 검증** | 위 7번의 완료 조건 다섯 가지 |
+| 3 | **B2/B3 수용·반환 예산 연결** | 첫 수용 쓰기 이전부터 pending 개수·바이트·토큰과 필수 반환 공간 확보. 거부·취소·실패에서 원장·예약·출력 권위 보존과 정확히 한 번의 정산. 포화 중에도 기존 요청은 반환까지 진행 |
+| 4 | **정상 응답 기준선과 원인 계측** | 완결 응답과 고정 도착 패턴을 봉인하고, 발행 불가 사유별 대기와 STEP trace의 parse/decode/sample/encode를 함께 남긴 뒤 반복 A/B |
+| 5 | **근거가 있는 최적화** | H5대로 같은 모델·토폴로지·resident·KV·입력에서 정책 하나만. 8쌍 반복과 holdout, 유효 TPS 중앙 개선 ≥5 %, 신뢰구간 하한 >0, TTFT·ITL SLO |
+
+**resident 상향은 3번 뒤에 온다.** r256 적재 성공은 서비스 승인이 아니다.
+**`state.rs`의 `outstanding > 0` 검사는 유지한다** — 다음 decode는 앞 토큰의 결과를 필요로 하므로
+이 검사를 없애 적격 행을 늘리는 것은 최적화가 아니라 의존성 위반이다.
+
 #### P-3b. `pressure`의 실측 기준선 (2026-09-09, 검증됨)
 
 `pressure`가 처음 완주했으므로 이제 이 시나리오에도 실측 기준선이 있다. 두 실행에서 재계산했고
