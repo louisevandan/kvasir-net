@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-07. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-10 — 릴리즈 후보 보존, 최종 실기 BLOCKED. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,31 +10,31 @@
 
 <a id="current-status"></a>
 
-## 0. 2026-09-07 중단 시점 — 검증된 진전과 남은 일
+## 0. 현재 상태 — v0.9.0 후보 보존, 정식 봉인 BLOCKED
 
-사용자가 구현 전진 대신 **지금까지 확실히 전진한 것과 앞으로 할 일의 문서화**를 요청했다.
-이에 구현·컴파일·시험·변이·실기 실행을 중단했다. 아래 계획은 재개 시 사용할 인수인계이며
-자동 실행 지시가 아니다. 문서 작성 전 HEAD는 `6fe10eb104b783f6ea5cacbc2e549a0a7e504677`이다.
-그 뒤의 독립 completion 진행 후보도 작성돼 있으나 검증하지 않았다. 보존 커밋 여부와 무관하게
-이 후보 및 아래 WIP는 **실행 검증 전**이다.
+### 0.-1 이번 버전 마감 상태 (2026-09-10)
 
-### 0.-1 v0.9.0 봉인 (2026-09-10)
+코드 수정과 로컬 검증·패키징은 마감했다. **정식 릴리즈 승인과 다음 버전 개발을 구분한다.**
+Windows Update의 계획 재시작으로 최신 r256 실기가 중단됐고, 재시작 뒤 42mob 로그인 세션이 없다.
+로그인 복구 후 남은 두 게이트만 판정하면 된다. 하위 09-07 중단·WIP 기록은 당시 이력이지 현재 HEAD의 상태가 아니다.
 
-이 lineage의 첫 tag다. **검증한 것의 봉인이지 §7 최종 체크리스트의 달성이 아니다.**
-무엇을 주장하고 무엇을 주장하지 않는지는 [릴리즈 노트](release/v0.9.0.md)가 소유한다.
-
-| 항목 | 상태 |
+| 항목 | 현재 결과 |
 | --- | --- |
-| 실기 게이트 5종 (3090×2, 릴리즈 트리 재빌드 산출물) | 통과 — [게이트 문서](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md) |
-| compat 패치 0026 | 포함(게이트 통과). ubatch 4096의 과소 보고 주장은 서로 다른 stage를 비교한 오류로 철회 |
-| 워크스페이스 / node 시험 / docs-lint / 검증기 | 1,374 / 0 / 7 · 94 / 0 · clean · valid |
-| 배포 상태 | `m42-server2`에 릴리즈 해시 배포, 에이전트 정지, 이전 배포본 백업 |
-| 번들 | `evidence/bundles/v0.9.0/`, 총합 `d4162b89…` |
-| 미달성 | H0~H7, 다중 물리 호스트, 서비스 승인, TPS 개선, resident 상향 승인 — 노트의 "검증하지 않은 것" |
+| 수정 commit | `3302591fc`: PLAN/ACTUAL 분리, Ninja Release/Debug 전달, 실제 서버 옆 CUDA runtime 복사 |
+| 로컬 검증 | workspace 1,374/0/7, Node 146/0, CTest 15/15, docs-lint 91 clean, compat 26 valid, private headers 81 clean |
+| 새 0.9.0 agent/drive 실기 | smoke·2B pressure·35B r96 PASS, 완료/해제/UNLOAD |
+| 남은 게이트 | r256 OS 재시작 중단(실패 보존), must_refuse 미실행 — **BLOCKED** |
+| 실제 후보 보관 | runtime/source/evidence ZIP, 10개 실행 원자료·실패/성공·변이 로그, SHA256SUMS/RELEASE-STATUS.json |
+| tag / 원격 | 기존 미공개 tag는 archive ref에 보존, 정식 재봉인/push 보류. agent/stage 정지, 기존 배포 백업 유지 |
+| 미달성 | H0~H7·다중 호스트·서비스 승인·TPS 개선·resident 상향 승인 |
 
-**다음 버전의 첫 행동은 P-3d 2번**(no-alloc 동작 검증의 나머지: host/device별 계획=실제 전항 대조와
-attention·hybrid 무회귀)이다.
-그다음이 B2/B3 수용·반환 예산이며, resident 상향은 그 뒤에 온다.
+현재 남은 첫 행동은 **42mob 로그인과 S: 접근 복구 → 동일 binary r256·must_refuse 판정 → 최종 tag**다.
+소스·실행 ID·해시·후보 위치는 [릴리즈 노트](release/v0.9.0.md)와
+[게이트 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md)를 따른다. 실패 입력·상한·judge를 완화하지 않는다.
+
+그 후 **다음 버전**은 P-3d 2번의 남은 no-alloc 모델/backend 행렬부터다.
+해당 2B·35B r96/r256의 각 stage host/device 계획=실제 대조는 끝났고 r160·다른 조합은 남았다.
+그다음 B2/B3 수용·반환 예산 → 정상 응답 기준선·원인 trace → H5이며, resident 상향 서비스 평가는 B2/B3 뒤다.
 
 ### 0.0 2026-09-07 저녁 — 사용자 재개 지시 후 실제 확인 결과 (검증됨)
 
@@ -408,7 +408,8 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
 7. **계획 모드의 recurrent 할당 수정.** 코드·적용·컴파일 **2026-09-10 완료**, 실기 게이트 **통과**
    (r96·r256에서 계획 pass RS 0.00 MiB, r256 admitted·완주, 넘치는 구성은 계속 거부 —
    [릴리즈 게이트](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md)).
-   **host/device별 계획=실제 전항 대조와 attention·hybrid 무회귀는 다음 버전.**
+   **해당 2B·35B의 각 stage host/device 계획=실제는 마감 감사에서 대조 완료.**
+   r160 및 다른 모델/backend 무회귀는 다음 버전. 새 binary r256 완주는 OS 재시작으로 재판정이 남았다.
    - 상류 `llama_kv_cache`는 `no_alloc`에서 크기 0 dummy 버퍼를 쓰고 `memory_breakdown()`도
      정렬을 반영한 예상 크기를 보고한다. `llama_memory_recurrent`는 **둘 다 하지 않아** 계획을
      세우는 동안 recurrent 상태를 실제로 할당하고, 그 뒤 줄어든 `free`를 그 비용이 포함된
@@ -435,34 +436,21 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
 **`state.rs`의 `outstanding > 0` 검사는 유지한다** — 다음 decode는 앞 토큰의 결과를 필요로 하므로
 이 검사를 없애 적격 행을 늘리는 것은 최적화가 아니라 의존성 위반이다.
 
-#### P-3e. 이번 버전 마감 계획 — 세 턴 안에 릴리즈로 완결 (2026-09-10 수립)
+#### P-3e. 이번 버전 마감 — 로컬 완료, 외부 실기 BLOCKED
 
-**원칙.** 릴리즈는 "무엇을 검증했는가"의 봉인이지 §7 최종 체크리스트의 달성이 아니다. 이 lineage에는
-tag가 없고(`v0.8.x`는 다른 lineage, HEAD의 조상이 아님) 워크스페이스 버전은 `0.1.0`이다.
-릴리즈 노트에는 **증거 문서가 있는 것만** 적고, H0~H7·다중 호스트·서비스 승인·TPS 개선·최적값은
-**미달성으로 명시**한다. 매 턴 끝에 커밋하고 트리를 clean으로 둔다. push는 별도 권한이다.
+사용자 결정은 v0.9.0, 0026은 필수 실기 통과 시 포함이다. 초기 게이트 통과 뒤 마감 감사에서
+분석 도구·공식 Release builder·바이너리 재빌드·원자료 보관을 보완했다(`3302591fc`).
 
-**결정이 필요한 두 가지(기본값 제시).**
+| 마감 단위 | 상태 |
+| --- | --- |
+| 코드·회귀·빌드 | 완료. 회귀 7개와 독립 변이, workspace 1,374/0/7, Node 전체 146/0, CTest 15/15 |
+| 새 binary 실기 | smoke·pressure·35B r96 통과. r256은 Windows Update 계획 재시작으로 중단됐고 부분 artifact 보존 |
+| 문서·원자료·패키지 | 후보로 보존. PLAN/ACTUAL 과소 보고 오독 철회, 10개 실행 원자료 포함, 불완전 게이트 명시 |
+| 정식 tag·릴리즈 승인 | **BLOCKED**: 42mob 로그인 복구 뒤 r256 재판정·must_refuse → 증거 갱신 → annotated v0.9.0 |
 
-| 결정 | 기본값 | 대안 |
-| --- | --- | --- |
-| 버전 번호 | **`v0.9.0`** — tag 계열을 잇되 §7 미달을 1.0 미만으로 표시. 턴 2에서 `Cargo.toml`·`package.json`을 0.9.0으로 올려 바이너리가 스스로 말하게 한다 | `v0.1.0`(현 Cargo 값 그대로) |
-| compat 패치 0026 포함 여부 | **포함하되 턴 1의 실기 게이트를 통과할 때만.** 실패하면 manifest를 0025로 되돌리고 0026은 "다음 버전"으로 넘기며 결함 자체는 알려진 제약으로 기록 | 처음부터 제외 |
-
-**측정된 현재 게이트 상태(2026-09-10, `94a81a2f9`).** 워크스페이스 1,374 / 0 / 7,
-하네스·스크립트 node 시험 94 / 0, docs-lint 89 clean, compat manifest valid(26 patches:
-upstream_fix 4 · stage_hook 18 · model_feature 4), patch classification valid, private headers 81 clean.
-로컬·원격의 `p4_staged_server.exe`(`b66beffb…`)는 **0025까지의 트리에서 빌드된 것**이라 0026이 들어 있지 않다.
-
-| 턴 | 할 일 | 완료 조건(전부 실측·기록) |
-| ---: | --- | --- |
-| ~~**1**~~ | **완료(2026-09-10).** 재빌드(Release, CTest 15/15)·배포(해시 일치)·게이트 5종 통과, **0026 포함 확정.** 마감 감사에서 ubatch 4096의 과소 보고 주장을 철회했다. head PLAN/ACTUAL은 일치하며 tail의 별도 PLAN이 실제 적재 전에 거부했다. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md). 원래 정의: **릴리즈 트리에서 CUDA 산출물 재빌드·원격 배포·실기 게이트.** `build-stage-server.mjs --cuda --cuda-architectures "86;89"`(Ninja는 `-DCMAKE_BUILD_TYPE=Release` 재구성 필요), flat copy 교체, 원격 `p4-remote/staged` 배포, `p4-agent.exe` 배포, 배포 전후 해시 기록. 실기: ① `smoke`, ② `pressure`(2B), ③ `pressure_35b`(r96) — 셋 다 512/512/512 또는 1/1/1, 두 오류 null. ④ 0026 게이트: 2-stage r256 35B 적재에서 계획 pass의 `RS buffer size = 0.00 MiB`와 `MEMORY_PLAN` context 값이 0025 때와 같은지, 실제 적재 뒤 최대 VRAM, 추론·UNLOAD 통과. ⑤ 실제로 넘치는 구성(예: 2-stage r512)은 **계속 거부**. ④·⑤ 중 하나라도 실패하면 0026 제외 분기 | 네 실행의 `evidence.json` 해시가 로컬 빌드 해시와 일치. 결과를 `evidence/2026-09-1x-release-gate.md`에 실행 ID·해시·판정으로 기록 |
-| ~~**2**~~ | **완료(2026-09-10, `db7370e86`).** 원래 정의: **릴리즈 문서와 버전.** `docs/release/v0.9.0.md`(또는 CHANGELOG): 포함 변경(수용 예산·부분 결과 보존·귀속·CLI 산출물·측정 도구·시나리오·0026), **검증된 것**(실행 ID·해시 포함), **검증하지 않은 것**(§7 전항, H0~H7, 다중 호스트, 서비스 승인, TPS 개선, 최적값), **알려진 제약**(B2/B3 예산 부재, r160 TTFT 중앙값 93.9 초의 backlog, 모든 pressure 응답이 `length`, 휴리스틱 judge, 요청별 평균 ITL, `outstanding > 0` 의존, 한 호스트·sm_86·Windows만 시험), 지원 구성(통과한 시나리오·모델·절단·resident 그대로), 재현 명령(§6 + `measure-run.mjs`). 버전 bump, README에 릴리즈 포인터, document-map 등록. 전체 게이트 재실행(§6 전부 + CTest는 릴리즈 build dir에서) | docs-lint clean, 워크스페이스·하네스 전부 통과, 문서의 모든 숫자가 산출물 파일에서 복사됨 |
-| ~~**3**~~ | **완료(2026-09-10, tag `v0.9.0`).** 원래 정의: **봉인과 tag.** 트리 clean 확인 → 최종 커밋의 바이너리 해시를 릴리즈 노트에 다시 복사 → 증거 번들 디렉터리(실행 4개의 `MANIFEST.sha256` 사본과 총합 해시) → annotated tag `v0.9.0`(메시지에 증거 문서 경로·해시) → 원격 호스트를 배포 해시 상태로 유지하고 에이전트 정지 → 로드맵 §0에 "v0.9.0 봉인" 상태표와 **다음 버전 첫 행동**(P-3d 2번) 기록 | `git describe --tags`가 `v0.9.0`, `git status` clean, tag 메시지의 해시 = 배포 파일 해시 |
-
-**다음 버전으로 넘기는 것(릴리즈 노트의 "미포함" 절과 동일).** P-3d의 2~5(no-alloc 동작 검증 전체,
-B2/B3 예산, 정상 응답 기준선·원인 계측, H5 최적화), H0~H7 실기 계약, 다중 물리 호스트, K gate,
-122B급 확장, RAM 오프로딩 성능. **resident 상향은 이 버전에서 하지 않는다.**
+기존 미공개 tag는 archive ref와 원자료로 보존한다. 새 후보를 정식 통과로 바꾸거나 초기 바이너리 검증을 승계하지 않는다.
+원격 OS 업데이트·로그인·드라이버 설정은 변경하지 않았다. push는 별도 권한이다.
+다음 버전의 B2/B3·정상 응답 기준선·원인 계측·최적화를 이번 마감에 추가하지 않는다.
 
 #### P-3b. `pressure`의 실측 기준선 (2026-09-09, 검증됨)
 

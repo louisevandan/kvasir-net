@@ -1,7 +1,11 @@
 # 2026-09-10 — 계획 모드가 recurrent 상태를 실제로 할당하던 결함
 
 종류: 결함 원인 확정·수정(상류 compat 패치)·적용/컴파일 검증.
-**메모리 계획과 실제 할당의 대조, 실기 적재·추론 검증은 아직이며 CUDA 빌드와 원격 실행이 필요하다.**
+**후속 상태:** 초기 CUDA Release 게이트는 r96/r256 적재·추론·UNLOAD와 부족 구성 거부를 통과했고,
+해당 2B·35B의 각 stage host/device model/context/compute 계획=실제도 대조했다.
+새 0.9.0 Rust binary로 r96은 통과했으나 r256이 Windows Update 재시작으로 중단돼 최종 봉인은 BLOCKED다.
+[릴리즈 게이트](2026-09-10-release-gate-v0.9.0.md)가 최신 판정을 소유한다.
+아래 미실행 목록은 최초 수정 시점의 기록이며, r160·다른 모델/backend 행렬은 다음 버전이다.
 기준 HEAD `ea202000a`. 현재 작업 순서는 [로드맵](../../../../../../../docs/distributed-batching-roadmap.md)이 소유한다.
 
 ## 원인 — 상류 자신이 두 메모리에서 다르게 한다

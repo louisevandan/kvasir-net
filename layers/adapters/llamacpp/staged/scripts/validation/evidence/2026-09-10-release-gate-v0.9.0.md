@@ -1,4 +1,7 @@
-# 2026-09-10 — v0.9.0 릴리즈 게이트 (턴 1)
+# 2026-09-10 — v0.9.0 초기 게이트와 마감 재검증
+
+**현재 상태: 릴리즈 후보 보존 완료, 정식 봉인 BLOCKED.** 새 agent/drive의 r256 실행이 Windows Update 재시작으로 중단됐다.
+로그인 복구 뒤 r256 재판정과 메모리 부족 거부 게이트가 남았다. 아래 최초 게이트와 최신 마감 기록을 구분한다.
 
 종류: 릴리즈 트리에서 재빌드한 산출물의 실기 게이트. 성능 증거가 아니다.
 기준 커밋 `890417a77`, 작업 트리 clean. 로드맵 P-3e 턴 1의 완료 조건을 이 문서가 판정한다.
@@ -48,7 +51,7 @@
 | 3 | `pressure_35b` (35B, 2 stage, r96) | `20260909T175343Z-5ca4c41f` | 512 / 512 / 512 | null / null | 278.27 | **통과** |
 | 4 | `release_35b_r256` (35B, 2 stage, r256) — 0026 | `20260909T180528Z-f8972a0c` | 512 / 512 / 512 | null / null | 330.12 | **통과** — 아래 0026 근거 |
 | 5 | `release_35b_r512_must_refuse` | `20260909T181615Z-55018c0d` | 적재 거부 | `n_seq_max must be <= 256` | — | **무효** — 계획에 닿기 전 llama.cpp 상한에서 거부됐으므로 계획의 거부 증거가 아니다 |
-| 5′ | `release_35b_must_refuse` (r256, ctx 1024, ubatch 4096) — 0026 | `20260909T181846Z-6c01faf4` | 적재 거부 (artifact 없음, 추론 전 거부) | `staged memory plan exceeds currently free memory` | — | **통과** — `fits_current_free=false`로 거부. 단, 아래 편차 참조 |
+| 5′ | `release_35b_must_refuse` (r256, ctx 1024, ubatch 4096) — 0026 | `20260909T181846Z-6c01faf4` | 적재 거부 (artifact 없음, 추론 전 거부) | `staged memory plan exceeds currently free memory` | — | **통과** — `fits_current_free=false`로 거부. 아래 stage 구분 정정 참조 |
 
 #3·#4의 응답은 직접 검사했다: `<think>` 유출 0/512, ChatML 마커 유출 0/512, 서로 다른 응답 375·373/512,
 최다 반복 24자 창 0.06·0.11(마크다운 구조), 종료는 전부 `length`(고정 길이 부하시험).
@@ -66,7 +69,7 @@
 | 5′ tail `MEMORY_PLAN` | 같음 | **0.00 MiB** | 22.76 | 8.66 | **23.64** | **false → 실제 적재 전 거부** |
 
 #3·#4 모두 계획 pass(plan #1)의 `CPU RS buffer`·`CUDA0 RS buffer`가 **0.00 MiB**로 찍히고, 그다음의
-실제 pass(plan #2)에서 09-09와 같은 2,814 MiB·7,504 MiB가 실제로 잡힌다. `context`는 0025 때와 같은
+실제 pass(`MEMORY_ACTUAL`, record #2)에서 09-09와 같은 2,814 MiB·7,504 MiB가 실제로 잡힌다. `context`는 0025 때와 같은
 3.00·7.99 GiB로 보고되어 **정렬을 포함한 예상 크기 보고가 유지**됐고, `free`는 22.76 GiB로 카드 초기
 여유 그대로다. 09-09에 `required 19.72 > free 15.43`으로 거부됐던 #4 구성이 같은 `required 19.72`에
 `free 22.76`으로 **admitted**됐고, 그 뒤 실제 적재·512건 추론·해제·UNLOAD까지 끝났다.
@@ -96,33 +99,95 @@ tail PLAN이다. head의 model/context/compute는 각각 11,276,284,416 / 9,294,
 검사한다. 수정 전 3 실패 → 수정 후 3 통과, 별도 복사본에서 ACTUAL 처리를 제거하면 3 실패다.
 Node 실행 파일과 각 해석 소스의 SHA256, 원본 실패·통과 로그는 마감 원자료에 보존한다.
 
-## 번들
+## 마감 재검증 — 소스 3302591fc, 정식 봉인 BLOCKED
 
-### 마감 재검증
+기능·시험 수정 커밋 `3302591fc7e2a69298cfa0b2e9c9378629cf293b`, 최종 네 시도 모두 clean 트리다.
+이후 후보 보존 커밋은 문서·manifest와 해시 파일 줄바꿈 규칙만 바꾼다. 기존 미공개 v0.9.0 tag는 archive ref로 보존하며,
+새 바이너리의 필수 게이트가 남은 상태에서 정식 tag로 재봉인하지 않는다. push는 하지 않았다.
 
-초기 로컬 tag 뒤 마감 감사에서 분석 도구와 릴리즈 빌드 절차를 보완했다. `build-stage-server.mjs`는
-configure에 `CMAKE_BUILD_TYPE`을 전달하고, CUDA 런타임(cublas/cublasLt/cudart)을 실제 서버 exe
-옆에 복사한다. 실제 builder를 실행하되 외부 process/filesystem 경계만 대체한 회귀 4개를 추가했다.
-Release/Debug configure 연결을 제거한 독립 변이는 2 실패, 복사 위치를 다시 Release 폴더로 고정한
-변이는 1 실패다. 기존 native 소스와 compat 패치는 변경하지 않았다.
+### 완료한 수정·검증
 
-버전 0.9.0의 Rust 실행 파일은 자체 build directory에서 `cargo build --release --locked
--p p4-agent -p p4-event-drive`로 다시 빌드했다. 새 실행 파일의 실기 게이트 및 배포 해시는
-최종 봉인 기록으로 보충한다. 이 중간 기록은 이전 바이너리의 검증을 새 바이너리에 승계하지 않는다.
+- `plan-lines.mjs`: PLAN/ACTUAL 종류를 그대로 기록하고 각 경계에서 버퍼 로그를 비운다.
+  실제 head RS를 다음 tail PLAN에 붙이던 오류를 고쳤다. 실제 CLI 회귀 3개: 수정 전 3 실패 → 수정 후 3 통과,
+  독립 복사본에서 ACTUAL 처리를 제거하면 3 실패.
+- `build-stage-server.mjs`: configure에 `CMAKE_BUILD_TYPE`을 전달하고 cublas/cublasLt/cudart를 실제 서버 exe 옆에 복사한다.
+  실제 builder를 실행하고 외부 process/filesystem 경계만 대체하는 회귀 4개를 추가했다.
+  독립 변이: configure 연결 제거 2 실패, 복사 위치를 Release 폴더로 고정 1 실패.
+  모든 해석 소스 및 Node exe SHA256과 실패/성공 로그를 보존했다.
+- 공식 builder를 실제 CUDA Release cache에서 재실행: Release configure, Ninja `no work to do`, **CTest 15/15**,
+  runtime copy 완료. native 소스와 compat 26개 패치는 초기 CUDA 빌드 뒤 바뀌지 않았다.
+- 버전 0.9.0의 Rust agent/drive는 별도 `CARGO_TARGET_DIR`에서 `cargo build --release --locked
+  -p p4-agent -p p4-event-drive`로 재빌드했다. 새 agent를 원격에 배포하고 새 drive로 아래 실기를 실행했다.
+- 전체 workspace 최종 실행: **1,374 passed / 0 failed / 7 ignored / 0 filtered**.
+  첫 실행은 README 혼합 줄바꿈 때문에 docs_lint 1개 실패했고, CRLF 수정 후 전체 재실행이 통과했다.
+  `workspace.log`와 `workspace-final.log` 모두 보존했다.
+- Node 전체 **146 passed / 0 failed / 0 skipped**. 기존 보고와 같은 범위는 94→101(+7개 회귀),
+  나머지 45개는 compat/upstream 검증기 시험을 이번 집계에 추가한 것이다.
+  docs-lint **91 files clean**, compat manifest·patch classification **26 valid**, private headers **81 clean**.
 
-실행 5개의 `MANIFEST.sha256`을 `bundles/v0.9.0/`에 복사했다(41개 파일 해시). `SHA256SUMS`의 sha256은
-`d4162b89f3f97bdcb9bf85b442b00a9091b4c114ec160b5191ab695c358cb2e1`이다. 원본은 `target/release-gate-v090/`.
+| 파일 | 실제 배포/실행 SHA256 |
+| --- | --- |
+| `ggml-cuda.dll` | `8a8ed0d4b3938cf634e01e10ff75a475355ed61f57f0a152492aa38eab896c97` |
+| `llama.dll` | `90f21982c2e354c92ddda16edd1de4abe1d6445e529a1ad17b85df8201480a1b` |
+| `p4_staged_server.exe` | `fd06c12237083c5e247108e3b3704aa9d7b205c3ee022d6e812f05c408fd9487` |
+| `p4-agent.exe` | `4316965abe718bf2feb6b895586824f3b51a74512ae69110699a2e4724d9a543` |
+| `p4-event-drive.exe` | `44cc922603ddd1b5e4874590cd2bcb6b595d70a9b90c6e456197ec2c8cda8bf3` |
 
-## 판정
+권위 필드는 원격 이미지 `evidence.remote.images`, 로컬 drive `evidence.binaries.drive_sha256`다.
+generic `binaries.server_sha256`·`ggml_cuda_sha256`는 기존 로컬 cache b66beffb/3452e117 값이므로 원격 실행 이미지로 읽지 않는다.
+`deployment.json`의 staged 파일/DLL 10개와 agent/drive 해시, 각 실행의 실제 원격 이미지·소스·clean 상태 및
+원본 MANIFEST를 `audit-runs.mjs`로 다시 대조했다.
 
-턴 1 완료 조건을 모두 충족한다. #1~#4 통과, 5′ 거부, 네 통과 실행의 `evidence.json` 해시가 배포 해시와
-일치, 작업 트리의 dirt는 문서 2파일뿐. **compat 패치 0026은 v0.9.0에 포함한다.**
-포함의 근거는 #3·#4·5′의 계획 기록이다. 위 과소 보고 주장은 철회했으며 5′는 tail의 사전 거부를 입증한다.
+### 최신 실행 결과
 
-## 이 문서가 주장하지 않는 것
+| 시나리오 | 실행 ID | req/completed/released | 판정 |
+| --- | --- | --- | --- |
+| smoke | `20260909T190252Z-b9e2cef9` | 1/1/1 | PASS, error/cleanup_error null |
+| pressure (2B r256) | `20260909T190458Z-bfde8e1d` | 512/512/512 | PASS, error/cleanup_error null |
+| pressure_35b (r96) | `20260909T191117Z-853157c9` | 512/512/512 | PASS, error/cleanup_error null |
+| release_35b_r256 | `20260909T192319Z-f82b070a` | 512/0/0 | OS 계획 재시작으로 중단된 실패. 재판정 필요 |
+| release_35b_must_refuse | 새 바이너리로 미실행 | — | BLOCKED, 로그인 복구 필요 |
 
-- r256 적재·완주는 resident 256의 서비스 승인이 아니다. 그 평가는 B2/B3 예산 뒤에 온다.
-- 여기의 TPS는 참고 기록이며 개선 주장이 아니다. 같은 시나리오의 09-09 값과 나란히 두더라도
-  단회 비교다.
-- 0026 완료 조건 가운데 host/device별 계획=실제 전항 대조와 attention·hybrid 무회귀는 이 게이트의
-  범위 밖이며 다음 버전이다.
+최신 r96은 102,400 생성 token / 385.142 s = 265.88 raw TPS이며, 전체 GPU 캡처 최대 `memory.used`는
+15,646 MiB다. 수치의 분모는 `artifact.elapsed_ms`, 분자는 OUTPUT token 수이며 품질 통과 TPS/개선율이 아니다.
+smoke는 400 token length 종료 1건, 두 pressure는 200 token length 종료 각 512건이다.
+초기 통과·최신 통과·최신 중단의 할당 완료 stage 모두 같은 stage의 PLAN/ACTUAL을 짝지어 host/device
+model/context/compute를 바이트 단위로 대조했고 일치한다. 이것은 해당 구성의 점별 대조이며 전체 모델/backend 무회귀는 아니다.
+
+### r256 중단의 원인과 부분 결과
+
+실행은 512개 delivered, completed/released 0, **승인된 OUTPUT token 16,896개**를 부분 artifact로 보존했다.
+최초 추론 오류는 stage 연결의 os error 10054이고 cleanup_error도 별도로 남았다.
+`evidence_missing={requests:512,stage_executions:2}` 때문에 요청별 행 수는 0이며 출력 token 증거와 혼동하지 않는다.
+두 stage 모두 적재는 끝났고 PLAN/ACTUAL 값이 일치했다. 중단 실행의 전체 캡처 최대 VRAM은 21,486 MiB다.
+이 실행의 부분 TPS를 처리량 승인에 쓰지 않는다.
+
+Windows System 이벤트 1074 원문:
+
+- **19:29:29.082 UTC**: `MoUsoCoreWorker.exe`, 계획된 OS 서비스 팩 재시작(0x80020010), SYSTEM.
+- 19:29:29.582 UTC: nvlddmkm 이벤트 153. 이를 먼저 GPU 결함의 원인으로 단정하지 않는다.
+- **19:32:21.868 UTC**: `TrustedInstaller.exe`, 계획된 OS 업그레이드 재시작(0x80020003).
+- 19:32:56 UTC 이후 boot, SSH 복구. 로그온 사용자 0, agent/stage process 0을 확인했다.
+
+따라서 이 시도는 **Windows Update 계획 재시작으로 중단된 실패**로 분류한다. 통과로 집계하거나 삭제하지 않는다.
+`r256-restart-initiator.json`·`r256-driver-events.json`·`r256-host-restart.json`에 XML·시각을 보존했다.
+최초 조사에서 WER가 과거 dump를 재보고한 항목은 이번 BlueScreen의 증거로 쓰지 않는다.
+마감용 일회성 wrapper가 `evidence.json` 부재를 읽은 ENOENT는 후속 오류이고, 최초 오류는 보존된 artifact에 있다.
+
+### 후보 보관과 재개
+
+- 원자료 **10개 실행**(초기 6, 마감 4)을 보존한다. 무효 r512와 OS 재시작 중단도 포함한다.
+  Git `bundles/v0.9.0/`의 10개 MANIFEST 사본에는 75개 파일 해시가 있고,
+  `sha256(SHA256SUMS)=e57b49a793512aba19328b0c6876687221def3fe8096cef09c58b6d1d932d959`다.
+- 후보 runtime/source/evidence ZIP과 `RELEASE-STATUS.json`·`SHA256SUMS`를
+  `F:/dev/p4-releases/v0.9.0/` 및 원격 `C:/Users/42mob/p4-remote/releases/v0.9.0/`에 보관한다.
+  runtime의 실제 import에 필요한 Microsoft VC++ x64 runtime/Windows UCRT와 NVIDIA driver는 환경 의존성이며,
+  CUDA DLL·의존 라이선스·내부 검증 스크립트는 포함한다. 모델 가중치는 포함하지 않는다.
+- 기존 tag 객체는 `refs/archive/v0.9.0-pre-close-20260910` 및 원자료에 보존했다.
+  후보 archive의 소스 commit은 외부 상태 JSON이 결속하며 **정식 릴리즈 tag/push는 보류**한다.
+- **재개의 첫 행동:** 42mob 대화형 Windows 로그인과 S: 접근 확인 → OS/driver/파일 해시 확인 →
+  동일 binary/시나리오로 r256 재판정 및 must_refuse 실행 → 새 결과를 현재 실패와 함께 기록 → 최종 annotated v0.9.0.
+  Windows Update 정책·드라이버·로그인 설정은 변경하지 않았다.
+
+H0~H7·다중 물리 호스트·정상 완결 응답·서비스 승인·TPS 개선은 미달성이다.
+다음 버전 개발은 no-alloc 나머지 모델/backend 행렬 → B2/B3 → 정상 응답/원인 trace → H5 순서로 이관한다.

@@ -1,3 +1,6 @@
 # Compatibility patches are hashed by raw bytes in the manifest; pin them to
 # canonical LF so a fresh checkout is identical under any core.autocrlf.
 *.patch text eol=lf
+# Release manifests are hashed as raw bytes across Windows checkouts.
+*.sha256 text eol=lf
+SHA256SUMS text eol=lf
