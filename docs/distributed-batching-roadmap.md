@@ -368,6 +368,27 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
 - 올바른 ChatML template와 정상 응답 검사를 고정한 35B VRAM 기준선을 새로 봉인한 뒤에 잰다.
   현재 117.07은 heuristic judge 60/64인 품질 판정 전 값이다.
 
+#### P-3b. `pressure`의 실측 기준선 (2026-09-09, 검증됨)
+
+`pressure`가 처음 완주했으므로 이제 이 시나리오에도 실측 기준선이 있다. 두 실행에서 재계산했고
+숫자는 [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-pressure-measured-baseline.md)가
+소유한다. 재현은 `node test/benchmarks/p4-4node/measure-run.mjs <run dir>`이다.
+
+| 지표 | 실측 | 목표 대비 |
+| --- | --- | --- |
+| 응답 | 512/512가 한국어 TypeScript 설명, 반복 붕괴 없음. 그러나 **512/512가 `max_tokens` 200에서 잘렸다** | **정상 응답 증거로 쓸 수 없다.** 완결 예산·stop 조건을 갖춘 별도 실행이 필요하다 |
+| 생성 TPS | 382.15 / 401.75 | 비교 기준선 없음(이전에 완주한 적이 없다) |
+| UBATCH 채움률 | **15.95 % / 17.02 %** (폭 평균 81.65·87.13 / 512) | 목표에서 가장 먼 지표 |
+| decode 폭 최대 | **160** (resident 256인데) | 천장이 정책이 아니다 — `idle_gated=0`, `ready_rows_left` p50·p90 0 |
+| GPU 창 평균 | gpu0 18.8 %, gpu1 28.2 % (전력 93 W / 177 W) | 계산도 메모리도 포화 아님 |
+| stage 점유 | node0 40 %, node1·2 약 30 %, **tail 76.6 %** | tail이 제약 |
+
+**폭 천장의 위치가 바뀌었다.** 09-04 35B 분석은 "남겨 둔 행이 없었다"였고 여기서도 같지만,
+이번에는 `ready_sequences` 자체의 최대가 160이다. `state.rs`의 `phase_within`이 decode에서
+`outstanding > 0`인 요청을 제외하므로, 4 stage·`depth_mean` 3.18에서 resident의 상당수가 항상
+비행 중이다. **다음 측정은 발행 불가 사유별 시퀀스 수를 직접 기록해 이 분해를 확정한다.**
+`ready_sequences` 최대 160은 결과이지 원인 분해가 아니다.
+
 #### P-4. 귀속 결과가 정당화할 때만 하는 변경
 
 | 후보 | 근거가 될 측정 | 상태 |
