@@ -126,6 +126,7 @@
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-partial-result-preservation.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-partial-result-preservation.md) | 실패한 실행이 부분 결과를 잃던 결함의 원인 확정·수정·변이 검증 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-noalloc-recurrent-residency.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-noalloc-recurrent-residency.md) | 계획 모드가 recurrent 상태를 실제 할당하던 상류 결함의 원인 확정과 compat 패치 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md) | v0.9.0 릴리즈 산출물의 결속과 3090×2 실기 게이트 5종 판정 |
+| [docs/release/v0.9.0.md](release/v0.9.0.md) | v0.9.0 릴리즈 노트 — 포함 변경·검증된 것·검증하지 않은 것·알려진 제약·지원 구성 |
 | [layers/adapters/llamacpp/staged/scripts/validation/README.md](../layers/adapters/llamacpp/staged/scripts/validation/README.md) | 구성요소 안내 |
 | [layers/adapters/llamacpp/staged/server/tests/contract/README.md](../layers/adapters/llamacpp/staged/server/tests/contract/README.md) | 구성요소 안내 |
 | [layers/adapters/README.md](../layers/adapters/README.md) | 구성요소 안내 |

@@ -1,5 +1,6 @@
 {
   "name": "p4-repo-gates",
+  "version": "0.9.0",
   "private": true,
   "scripts": {
     "docs-lint": "node tools/scripts/docs-lint.mjs",
