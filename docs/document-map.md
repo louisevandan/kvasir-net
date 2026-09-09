@@ -122,6 +122,7 @@
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-measurement-trust-recovery.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-measurement-trust-recovery.md) | 철회된 폭 상관관계 정정과 측정을 가리던 세 결함의 수정 증거 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-control-receipt-budget.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-control-receipt-budget.md) | 해제·정산을 막던 제어 응답 예산의 원인 확정·수정·변이 검증 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-pressure-measured-baseline.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-pressure-measured-baseline.md) | 처음 완주한 `pressure`의 응답·TPS·배치 포화·GPU 실측 기준선 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-saturation-and-utilisation.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-saturation-and-utilisation.md) | 모델 크기·분할·resident·발행 정책·도착 패턴을 바꾼 포화·사용률 실험 10회 |
 | [layers/adapters/llamacpp/staged/scripts/validation/README.md](../layers/adapters/llamacpp/staged/scripts/validation/README.md) | 구성요소 안내 |
 | [layers/adapters/llamacpp/staged/server/tests/contract/README.md](../layers/adapters/llamacpp/staged/server/tests/contract/README.md) | 구성요소 안내 |
 | [layers/adapters/README.md](../layers/adapters/README.md) | 구성요소 안내 |

@@ -771,6 +771,92 @@ export const SCENARIOS = {
     })),
   },
 
+  // The best partition at the widest resident set the plan will admit.
+  //
+  // One stage a card is 50% faster than four at the same resident set
+  // (2026-09-09: 275.35 against 183.00 generation TPS at 96), and four
+  // stages only reached 256 because each carries half the weights. Two
+  // stages at 256 sits on the admission boundary: model 10.50 GiB, context
+  // 32.0 MiB a sequence and about 1.23 GiB of compute is 19.72 GiB required,
+  // against 20.01 GiB free in one run of this shape and 15.43 GiB in
+  // another. The plan counts weights it has already allocated, so whether
+  // this loads depends on when it is asked.
+  pressure_35b_wide: {
+    ...base,
+    description: "35B, one stage a card, 256 sequences, 32 arrivals every second for 16 s",
+    model: MODEL_35B,
+    ...placeOnLanes(ORNITH35B_LAYERS),
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 160,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 32,
+    })),
+  },
+
+  // The same rate, arriving smoothly instead of in bursts.
+  //
+  // Measured 2026-09-09: at resident 96 and at resident 160 the decode
+  // widths were 32 and 64 and nothing else, and `ready_sequences` never
+  // passed 64 either time. Thirty two identical requests arriving together
+  // decode in lockstep, and different bursts sit at different phases of the
+  // pipeline, so only a burst or two is ever eligible at once - raising the
+  // resident set adds waiting sequences, not issuable rows. This sends the
+  // same 512 requests at the same 32 a second as four every 125 ms, so the
+  // same arrival rate spreads eligibility instead of bunching it.
+  pressure_35b_stagger: {
+    ...base,
+    description: "35B, one stage a card, 160 sequences, 4 arrivals every 125 ms for 16 s",
+    model: MODEL_35B,
+    ...placeOnLanes(ORNITH35B_LAYERS),
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 160,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
+    waves: Array.from({ length: 128 }, (_, index) => ({
+      after_ms: index * 125,
+      count: 4,
+    })),
+  },
+
+  // The same rate again, in bigger bursts.
+  //
+  // Spreading the arrivals made the batches narrower, not wider (2026-09-09:
+  // four every 125 ms gave a median decode width of 24 against 32, 4,526
+  // physical batches against 2,430, and 223.10 generation TPS against
+  // 289.79). Identical requests that arrive together decode in lockstep and
+  // issue together, so the burst is what creates width and smoothing it
+  // destroys it. If that is the mechanism, a bigger burst at the same rate
+  // should widen further without anyone waiting for it.
+  pressure_35b_burst: {
+    ...base,
+    description: "35B, one stage a card, 160 sequences, 64 arrivals every 2 s for 16 s",
+    model: MODEL_35B,
+    ...placeOnLanes(ORNITH35B_LAYERS),
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 160,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
+    waves: Array.from({ length: 8 }, (_, index) => ({
+      after_ms: index * 2_000,
+      count: 64,
+    })),
+  },
+
   // The partition on its own: four stages at `pressure_35b`'s resident set.
   pressure_35b_4stage_96: {
     ...base,
