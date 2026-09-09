@@ -110,12 +110,11 @@ lib test 타깃 전체가 무너져 `cargo test --workspace`가 종료 101·실�
 
 ## 5. `pressure` 재판정 — 미판정이던 원인이 확정됐다
 
-수정 직후 같은 시나리오를 돌렸고, **고친 것이 곧바로 답을 내놓았다.**
+수정 직후 같은 시나리오를 3090×2(`m42-server2`)에서 돌렸고, **고친 것이 곧바로 답을 내놓았다.**
 
-실행 `20260908T194141Z-410fb9bb` (`target/pressure-20260909/`).
-호스트는 **로컬 RTX 3090 + RTX 4080**이다. 보존된 3090×2 실행과 **다른 하드웨어**이므로 처리량 비교에
-쓰지 않는다. 여기서 판정하는 것은 제어 평면 상태이지 성능이 아니다.
-빌드 `0eadefebd3` + patch set `961bd89cd119`(0025 포함), stage 4개, 시퀀스 정원 256, 요청 512.
+실행 `20260909T024542Z-58fbac79` (`target/pressure-remote-20260909/`).
+빌드 `0eadefebd3` + patch set `961bd89cd119`(0025 포함). stage 서버 해시는 로컬 빌드와 일치하고
+에이전트는 HEAD 빌드로 교체 후 해시를 대조했다. stage 4개, 시퀀스 정원 256, 요청 512, 173.9 s.
 
 ### 이번에는 산출물이 남았다
 
@@ -126,16 +125,20 @@ lib test 타깃 전체가 무너져 `cargo test --workspace`가 종료 101·실�
 | `error` | `LLAMA_ADAPTER_EVENT_REJECTED` / **`stage control batch total receipt budget is exhausted`** |
 | `cleanup_error` | `unload is busy;work={...}` |
 | `request_count` / `completed_count` / `released_count` | 512 / 96 / **0** |
+| `release_member`를 받은 요청 / 실제 해제된 요청 | 96 / **0** |
 
 UNLOAD 거부가 함께 실은 작업 스냅샷이 결정적이다.
 
 ```json
 {"requests":0,"pending":0,"pending_releases":0,"pending_settlements":0,
- "flight_batches":0,"flight_executions":0,"open_batch_view":0,"effects":0,
- "active_owners":256,"active_frontiers":256}
+ "prepared_issue":null,"verify_fenced":false,"flight_batches":0,"flight_executions":0,
+ "open_batch_view":0,"effects":0,"active_publications":0,"held_input":false,
+ "active_owners":224,"active_frontiers":224}
 ```
 
-**비행 중인 작업이 하나도 없다.** owner와 frontier 256개만 남아 있다.
+**비행 중인 작업이 하나도 없다.** owner와 frontier 224개만 남아 있다.
+그리고 이 224는 2026-09-07 보존 실행이 남긴 `active_owners=224/256`과 **같은 값이다.**
+그 실행들은 최초 오류를 남기지 못했지만, 같은 하드웨어에서 같은 상태로 끝난다.
 
 ### 원인 사슬
 
@@ -143,11 +146,11 @@ UNLOAD 거부가 함께 실은 작업 스냅샷이 결정적이다.
    **둘뿐이다.** 즉 예산에 걸린 것은 **해제·정산 경로 자신**이다.
 2. 그래서 96개 요청이 `release_member`와 `issued_work`를 받고도 `released`는 **0개**다.
    해제가 실행된 적이 없다.
-3. 해제가 없으므로 owner·frontier 슬롯이 계속 점유된다: 256/256.
+3. 해제가 없으므로 owner·frontier 슬롯이 계속 점유된다.
 4. `require_idle_unload`는 owner가 0이 아니면 거부한다. 그 함수의 주석이 스스로 밝히듯 이것은
    **"explicit, healthy-worker UNLOAD"의 preflight**이며 실패 정리는 별도 경로다.
 
-**판정: UNLOAD 거부는 원인이 아니라 결과다.** 해제되지 않은 상태가 방치돼 새는 것이 아니라,
+**판정: UNLOAD 거부는 원인이 아니라 결과다.** 방치된 상태가 새는 것이 아니라,
 **해제 자체가 용량 한계에 막혀 시작되지 못했다.**
 
 ### 그 용량 한계
@@ -170,11 +173,16 @@ UNLOAD 거부가 함께 실은 작업 스냅샷이 결정적이다.
 
 - 거부된 해제 batch의 **실제 폭**은 이 산출물에 기록되지 않는다. 64행 상한은 상수에서 계산한 예측이며,
   관측된 폭으로 확인하지 않았다.
-- 보존된 3090×2 실행(`active_owners=224/256`)이 **같은 원인**이었는지는 증명되지 않았다.
-  그 실행들은 최초 오류를 남기지 못했다.
-- 이 실행은 512 요청 중 96개만 완료한 채 131.4 s에 중단됐다. 처리량 수치를 인용하지 않는다.
-- 따라서 §0.5 3번(수용·비행 budget)은 resident 상향의 선행조건으로 남는다. 예산을 세우기 전에
-  resident를 올리면 같은 벽에 다시 닿는다.
+- 이 실행은 512 요청 중 96개만 완료한 채 중단됐다. **처리량 수치를 인용하지 않는다.**
+- 보존 실행과 owner 수가 같다는 것은 같은 상태로 끝났다는 뜻이지, 같은 경로를 밟았다는 증명은 아니다.
+
+### 원격 호스트에 대한 정정
+
+이 실행을 준비하며 원격이 로그아웃 상태(`explorer` 0, `LogonUI` 1)임을 관측하고, 그것을 SSH가
+`S:`를 못 보는 이유로 적었다. **그 인과는 틀렸다.** 로그온된 상태에서 다시 확인해도 SSH 세션의
+`Test-Path 'S:\models'`는 여전히 False다. 드라이브 매핑은 로그온 세션마다 별개이므로 로그온 여부와
+무관하다. 하네스가 대화형 예약 작업을 쓰는 이유가 정확히 이것이며,
+`remote-agent.mjs`의 기존 주석이 이미 그렇게 적고 있었다.
 
 ## 종합 결과
 
@@ -190,10 +198,7 @@ UNLOAD 거부가 함께 실은 작업 스냅샷이 결정적이다.
 
 ## 남은 것
 
-- **`pressure` 재판정은 하지 않았다.** 선행 결함은 해소됐고 이제 실패해도 산출물이 남지만,
-  판정 자체는 GPU 호스트에서 실행해야 한다. 원격 3090×2(`m42-server2`)는 SSH로 접속되나
-  로그온 세션이 없어(`explorer` 0개) 대화형 예약 작업을 띄울 수 없다. 매핑 드라이브의 모델을
-  여는 경로가 그 세션에 묶여 있다.
+- `pressure` 재판정은 위 5절에서 3090×2로 수행했다. 남은 것은 거부된 해제 batch의 실제 폭이다.
 - 이 문서는 어떤 처리량·GPU 사용률도 새로 주장하지 않는다. 34.2 ms·46.9 ms 등 인용한 값은
   전부 09-03/09-04 기록의 것이며 2B 실행에서 나왔다. 35B의 고정비 내역은 아직 측정되지 않았다.
 - 계측을 새로 만들 필요는 없다. 타이머는 `server_physical.cpp:34`, 스위치는
