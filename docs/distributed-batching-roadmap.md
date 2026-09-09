@@ -291,15 +291,16 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
      같은 범위다.
    - **판정: UNLOAD 거부는 원인이 아니라 결과다.** 방치된 상태가 새는 것이 아니라 **해제가 용량
      한계에 막혀 시작되지 못했다.** 한계는 `ownership.rs`의 `MAX_CONTROL_BYTES`(1 MiB, 행마다
-     최악 응답을 예약)와 `MAX_RECEIPT_BYTES`(64 MiB, 누적 상한)의 조합이며, 제어 batch는 **63행**에서
-     상한에 닿는다. resident 256의 전폭 해제는 구조적으로 이를 넘는다.
+     최악 응답을 예약)와 `MAX_RECEIPT_BYTES`(64 MiB, 누적 상한)의 조합이며, 제어 batch는 **63건까지
+     허용하고 64건부터 거부한다**(보관된 receipt가 없을 때의 경계). resident 256의 전폭 해제는
+     구조적으로 이를 넘는다.
    - **정정: `released_count=0`은 "해제가 실행된 적이 없다"는 뜻이 아니다.** head는
      `worker/effects.rs`의 `CommittedEffect::Release`에서 자기 stage의 해제를 실제로 수행한 뒤
      전달하며, 그 경로는 sequence 하나짜리 개별 검사를 쓰므로 batch 합계 검사에 걸리지 않는다.
      옳은 진술은 **전체 stage의 해제 완료가 확인되지 않았다**이다. UNLOAD 거부가 실은 작업
      스냅샷도 그 노드 하나의 상태이며, 어느 stage가 어디까지 진행했는지는 그 산출물로 판정할 수 없다.
-   - 미확정: **그 실행에서** 거부된 명령 종류와 batch 폭(산출물에 없다. 63행은 상수와 wire 인코더에서
-     확정한 상한 회계의 폭이지 그 실행의 폭이 아니다), 완료 수와 owner 수가 실행마다
+   - 미확정: **그 실행에서** 거부된 명령 종류와 batch 폭(산출물에 없다. 63건은 상수와 wire 인코더에서
+     확정한 상한 회계의 경계이지 그 실행의 폭이 아니다), 완료 수와 owner 수가 실행마다
      흔들리는 이유, 보존된 09-07 실행이 같은 경로를 밟았는지 여부. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-measurement-trust-recovery.md)
    - **따라서 §0.5 3번(수용·비행 budget)이 resident 상향의 선행조건으로 확정됐다.** 예산을 세우기
      전에 resident를 올리면 같은 벽에 다시 닿는다. P-4의 resident 축은 그 뒤에 온다.
@@ -320,6 +321,8 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
      `20260909T035149Z-9014d441`). `error`·`cleanup_error` 모두 `null`이므로 idle UNLOAD도 통과했다.
      512개 요청이 물리 슬롯 256개를 슬롯당 2건씩 쓰고 incarnation 1–512로 전부 해제됐다.
      staged 서버·DLL·launcher 해시는 실패 실행과 같고 **바뀐 것은 어댑터 바이너리 하나다.**
+   - **검증 범위는 RELEASE다.** 두 실행 모두 Verify/Replay 행이 0이고 산출물에 정산 기록이 없다.
+     SETTLE 배치 경로의 근거는 소비 경로 시험과 변이 수준에 머물며 실기 판정은 아직이다.
    - **성능 승인이 아니다.** 수정 전 `pressure`는 완주한 적이 없어 비교할 기준선이 없다.
      이 실행의 TPS를 개선폭으로 인용하지 않는다.
      [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-09-control-receipt-budget.md)
@@ -371,7 +374,7 @@ decode 전용 평균 폭을 곱한 값이라 어느 집합의 속도도 아니�
 | --- | --- | --- |
 | decode 집단 균형화 (30+2 → 균등) | P-3이 비대칭 반복을 1순위로 확정 | **첫 후보.** 아래 크기 추정 참조. `MAX_ISSUE_ROWS`는 prefill 폭까지 제한하므로 그대로 쓰면 효과를 분리하지 못한다 |
 | batch 고정비 절감 (샘플러를 **안전하게** 병렬화) | 35B에서 STEP trace로 sampler 비중 재확인 | 09-04 2B에서 tail 비용의 절반. 폭과 무관하게 이득. **구현은 이미 있으나 기본 비활성이다** — 아래 참조 |
-| resident 상향(32 → 64/128/256) | §0.5 3번의 수용·비행 budget을 **먼저 세운 뒤** | **독립 실험 축.** 09-09 `pressure`를 막던 해제 경로의 receipt 예산(제어 batch 63행 상한)은 P-2 5번에서 해소했고 resident 256 실기 통과를 확인했다. **그러나 수용·비행 budget(§0.5 3번)은 그대로 남아 있다** — 수용 경로에는 아직 pending 개수·바이트·토큰 예산이 없다. 정책 변경과 한 arm에 묶지 않는다. 폭이 resident에 선형이라는 근거도 아직 없다 |
+| resident 상향(32 → 64/128/256) | §0.5 3번의 수용·비행 budget을 **먼저 세운 뒤** | **독립 실험 축.** 09-09 `pressure`를 막던 해제 경로의 receipt 예산(제어 batch가 63건까지만 허용)은 P-2 5번에서 해소했고 resident 256 실기 통과를 확인했다. **그러나 수용·비행 budget(§0.5 3번)은 그대로 남아 있다** — 수용 경로에는 아직 pending 개수·바이트·토큰 예산이 없다. 정책 변경과 한 arm에 묶지 않는다. 폭이 resident에 선형이라는 근거도 아직 없다 |
 | 1 ms 재시도를 capacity wake로 교체 | 유휴 분포에 재시도 간격이 보이면 | §0.5 2번과 공유 |
 | 오프로딩 경로 stage 233 ms 분해 | 동일 template로 다시 잰 뒤 | 별도 판정 |
 

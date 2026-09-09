@@ -881,10 +881,13 @@ mod tests {
 
     /// The 2026-09-09 pressure failure, at production limits and the resident
     /// width the scenario runs: 64 MiB of receipts divided by a 1 MiB
-    /// per-control ceiling is 64 members, so a stage sitting at sequence
-    /// capacity 256 could never release or settle its own owners. The bodies
-    /// here are the real wire commands, and the bounds are the ones their
-    /// contracts prove, not values chosen to make the sum fit.
+    /// per-control ceiling leaves room for 64 members before the requests
+    /// themselves are counted, and this batch's requests bring the admitted
+    /// width to 63 - so a stage sitting at sequence capacity 256 could never
+    /// release or settle its own owners. That width is this command set with
+    /// no receipt retained; a stage already holding receipts admits fewer.
+    /// The bodies here are the real wire commands, and the bounds are the
+    /// ones their contracts prove, not values chosen to make the sum fit.
     #[test]
     fn a_full_width_control_batch_fits_when_each_command_reserves_its_own_bound() {
         const CAPACITY: u32 = 256;

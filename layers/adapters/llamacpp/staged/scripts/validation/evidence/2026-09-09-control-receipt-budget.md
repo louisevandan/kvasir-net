@@ -31,7 +31,8 @@ LLAMA_ADAPTER_EVENT_REJECTED / stage control batch total receipt budget is exhau
 ### 거부된 폭 — 이전 기록의 “약 64”를 확정한다
 
 이전 기록은 상수에서 계산한 예측으로 “약 64행”이라고 적고 미확정으로 남겼다. 실제 wire 명령으로
-재면 **63**이다. 예산 코드가 아니라 바뀌지 않은 두 상수와 바뀌지 않은 인코더에서 나온다.
+재면 상한 회계는 **63건까지 허용하고 64건부터 거부한다.** 예산 코드가 아니라 바뀌지 않은 두 상수와
+바뀌지 않은 인코더에서 나온다.
 
 `control_identity::prefix`는 `4 + 2 + 2 + 8×3 + 4 + (4+세션) + (4+키)` 바이트다. 세션 `session`(7 B),
 키 `session\0request-N`(17–18 B)이면 요청은 68–69 B다. 1 MiB 예약을 함께 세면
@@ -39,9 +40,13 @@ LLAMA_ADAPTER_EVENT_REJECTED / stage control batch total receipt budget is exhau
 - 63건: `63 × 1,048,576 + 4,337 = 66,064,625 B ≤ 67,108,864 B` — 통과
 - 64건: `64 × 1,048,576 + 4,406 = 67,113,270 B > 67,108,864 B` — 거부
 
-시험 `a_full_width_control_batch_fits_when_each_command_reserves_its_own_bound`이 같은 폭(63)을
-실행으로 확인한다. 다만 **09-09 실행에서 실제로 거부된 명령 종류와 batch 폭은 그 산출물에 기록되지
-않았다.** 이 값은 그 실행의 폭이 아니라 상한 회계가 허용하는 폭이다.
+시험 `a_full_width_control_batch_fits_when_each_command_reserves_its_own_bound`이 같은 경계(63건 통과,
+64건부터 거부)를 실행으로 확인한다.
+
+**이 계산은 이 명령 집합에 대해, 보관된 receipt가 하나도 없을 때의 경계다.** 요청 본문이 길거나
+이미 receipt를 들고 있는 stage는 더 적은 수에서 거부된다. 그리고 **09-09 실행에서 실제로 거부된
+명령 종류와 batch 폭은 그 산출물에 기록되지 않았다.** 이 값은 그 실행의 폭이 아니라 상한 회계가
+허용하는 폭이다.
 
 ## 수정
 
@@ -81,7 +86,7 @@ batch 합계 검사에 걸리지 않는다. 걸린 것은 그 뒤 stage의 batch
 
 | 시험 | 위치 | 무엇을 고정하는가 |
 | --- | --- | --- |
-| `a_full_width_control_batch_fits_when_each_command_reserves_its_own_bound` | `ownership.rs` | 생산 상한(1 MiB/64 MiB)과 실제 wire 명령으로 sequence 정원 256의 전폭 해제·정산이 통과하고, 같은 batch를 상한 회계로 재면 63에서 막힌다 |
+| `a_full_width_control_batch_fits_when_each_command_reserves_its_own_bound` | `ownership.rs` | 생산 상한(1 MiB/64 MiB)과 실제 wire 명령으로 sequence 정원 256의 전폭 해제·정산이 통과하고, 같은 batch를 상한 회계로 재면 63건까지만 허용된다 |
 | `a_release_batch_its_bounds_afford_is_admitted_at_the_consumption_path` | `stage_tests.rs` | 실제 소비 경로(`fixture.handle`)에서, 각 명령의 상한은 감당하고 1 MiB 회계는 감당하지 못하는 예산으로 전 member가 native 실행되고 재전송이 replay된다 |
 | `a_settlement_batch_its_bounds_afford_is_admitted_at_the_consumption_path` | `stage_tests.rs` | 위와 같으며 정산 경로 |
 
@@ -148,6 +153,16 @@ batch 합계 검사에 걸리지 않는다. 걸린 것은 그 뒤 stage의 batch
 수정 전 두 실행에서 불변이던 세 가지(최초 오류, `released_count=0`, 비행 작업 0인데 owner·frontier만
 남음)가 모두 사라졌다.
 
+### 이 실행이 검증한 범위 — RELEASE와 SETTLE을 구분한다
+
+이 `pressure`는 **Verify/Replay 행이 두 실행 모두 0**이고(요청별 `verify_rows`·`replay_rows` 합계 0,
+`spec-type none`) 산출물에 정산 기록이 없다. 따라서
+
+- **RELEASE**: 실기에서 전폭 완료·슬롯 재사용·idle UNLOAD까지 입증됐다.
+- **SETTLE**: 이 실행이 그 경로를 밟지 않았다. 근거는 위 소비 경로 시험
+  (`a_settlement_batch_..._consumption_path`)과 변이 M1·M2 수준에 머문다.
+  투기 실행이 정산을 만드는 시나리오에서의 실기 판정은 아직이다.
+
 ### 이 실행이 말하지 않는 것
 
 - **성능 승인이 아니다.** A/B의 `generation_tps`는 382.15와 401.75이고 물리 batch는 1,367과 1,281,
@@ -161,7 +176,9 @@ batch 합계 검사에 걸리지 않는다. 걸린 것은 그 뒤 stage의 batch
 ## 남은 것
 
 - 09-09 실패 실행에서 실제로 거부된 명령 종류와 batch 폭. 그 산출물에는 없고, 새 문구가 다음
-  거부부터 기록한다. 재판정이 통과했으므로 이 값은 이제 재현으로 얻을 수 없다.
+  거부부터 기록한다. **이번 수정 후 실행에서는 확인하지 못했다** — 통과했기 때문이며, 얻을 수 없다는
+  뜻은 아니다. 수정 전 소스의 독립 복사본에 진단 계측을 넣으면 추가 재현은 가능하다.
+- SETTLE 배치 경로의 실기 판정. 위 §"이 실행이 검증한 범위"를 참조한다.
 - 수용 경로(B2/B3)의 pending 개수·바이트·토큰 예산은 이 변경의 범위가 아니다. `worker.rs`의 수용
   코드는 여전히 요청 저장 공간 예약을 미래 작업으로 명시한다. resident 상향은 그 예산 뒤에 온다.
 - `prefill_mix_35b_2stage`의 template 불일치와 sustained 8R 조건은 이 문서의 대상이 아니다.
