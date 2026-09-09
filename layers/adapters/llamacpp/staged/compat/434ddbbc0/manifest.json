@@ -157,7 +157,7 @@
     {
       "file": "0001-ggml-backend.patch",
       "upstream_commit": "992cb503cdacf691ef06c332d05243bc7807257b",
-      "reason": "Upstream dynamically grows split input storage; dedicated runtime regression pending."
+      "reason": "Upstream dynamically grows split input storage; real CPU-to-GPU boundary conformance and isolated growth-removal mutation are recorded in 2026-09-10-fleet-latest-integration.md."
     }
   ]
 }

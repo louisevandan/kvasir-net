@@ -271,6 +271,7 @@ if (!noLlama) targets.push(
   "p4_staged_capability_test",
   "p4_staged_plan_invariants_test",
   "p4_staged_mtp_ownership_test",
+  "p4_staged_split_inputs_test",
 );
 run(cmake, [
   "--build", buildDir, "--config", config,

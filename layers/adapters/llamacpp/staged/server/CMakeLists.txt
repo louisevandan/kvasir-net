@@ -280,7 +280,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         # translation unit that is allowed to know what a common_params is.
         "${P4_STAGED_LLAMA_SOURCE_DIR}/common"
     )
-    target_link_libraries(p4_llama_compat PUBLIC llama)
+    target_link_libraries(p4_llama_compat PUBLIC llama PRIVATE llama-common)
     target_include_directories(p4_staged_llama_runtime PRIVATE src)
     target_link_libraries(p4_staged_llama_runtime PUBLIC
         llama
@@ -407,6 +407,17 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         PRIVATE llama llama-common)
     p4_stage_enable_asserts(p4_staged_upstream_recurrent_rollback_test)
 
+    # Exercise cross-backend input growth on an actual accelerator. A CPU-only
+    # build still compiles the probe; executing it requires CPU and GPU devices.
+    add_executable(p4_staged_split_inputs_test
+        src/runtime/ggml_split_inputs_test.cpp)
+    target_link_libraries(p4_staged_split_inputs_test PRIVATE ggml ggml-base)
+    p4_stage_enable_asserts(p4_staged_split_inputs_test)
+    if(P4_STAGED_CUDA OR GGML_METAL)
+        add_test(NAME p4_staged_split_inputs_test COMMAND p4_staged_split_inputs_test)
+        set_tests_properties(p4_staged_split_inputs_test PROPERTIES LABELS "gpu-conformance")
+    endif()
+
     # Keep native DLLs beside each executable. This makes both direct launch
     # and CTest independent of generator-specific PATH handling on Windows.
     function(p4_stage_copy_runtime target)
@@ -434,4 +445,5 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     p4_stage_copy_runtime(p4_staged_plan_lifetime_test)
     p4_stage_copy_runtime(p4_staged_mtp_ownership_test)
     p4_stage_copy_runtime(p4_staged_upstream_recurrent_rollback_test)
+    p4_stage_copy_runtime(p4_staged_split_inputs_test)
 endif()

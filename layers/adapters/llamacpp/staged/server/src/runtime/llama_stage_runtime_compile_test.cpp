@@ -9,8 +9,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
-#include <process.h>
 #include <string>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace staged::llama_runtime {
 
@@ -29,6 +34,14 @@ void test_force_hop_memory_dirty(StageRuntime & runtime, bool value) noexcept {
 void run_stage_memory_plan_tests();
 
 namespace {
+
+unsigned long long process_id() {
+#ifdef _WIN32
+    return static_cast<unsigned long long>(::_getpid());
+#else
+    return static_cast<unsigned long long>(::getpid());
+#endif
+}
 
 const char * environment_value(const char * name) {
     const auto * value = std::getenv(name);
@@ -132,8 +145,7 @@ void real_decode_after_restore_regression() {
     config.layer_begin = 0;
     config.layer_end = 28;
     const auto root = std::filesystem::temp_directory_path() /
-        ("p4-staged-kv-restore-regression-" + std::to_string(
-            static_cast<unsigned long long>(::_getpid())));
+        ("p4-staged-kv-restore-regression-" + std::to_string(process_id()));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     config.kv_root = root.string();
