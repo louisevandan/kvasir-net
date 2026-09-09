@@ -32,9 +32,13 @@ v0.9.0 후보와 기존 게이트는 보존한다. 사용자가 Spark, TUF, Mac 
 
 현재 사실과 열린 게이트는 [fleet/upstream 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)를 따른다.
 
-최신 native 빌드·16개 CTest는 Windows, Spark, Ubuntu, 두 Mac에서 통과했다.
-첫 개별 실행은 최신 upstream의 `--no-mmap` 제거를 시작 계획 회귀로 드러냈다.
-호환 facade 수정과 실제 소비 시험·독립 변이 2개를 완료했으며, 다음 첫 행동은 수정 바이너리의 개별 정상 응답 재판정이다.
+최신 native 빌드·16개 CTest는 Windows, Spark, Ubuntu, 두 Mac에서 통과했다. 전체 Rust는 1,374/0/7, Node는 159/0이다.
+저장 계획의 `--no-mmap` 호환, CPU_REPACK host 회계, 공유 no-alloc compute 버퍼 중복 집계를 실제 소비·독립 변이로 고쳤다.
+Windows·Spark·Ubuntu·Mac .21은 NAS 모델의 8/8 완료·해제·UNLOAD를 통과했지만, 작은 모델의 응답 품질 한계는 별도다.
+Mac의 GPU 레이어 수와 K/V 형식에 따른 CPU fallback은 실행을 분리해 확인 중이다.
+122B는 세 장비의 실제 메모리 계획·9개 포트 연결을 통과했다. 다만 기존 `agree()`가 CUDA/Metal 혼합을 거부한다.
+다음 행동은 이종 backend의 tensor codec/표현 호환 계약 검증이며 기존 거부 시험을 삭제하거나 identity를 위조하지 않는다.
+그동안 기존 규칙을 만족하는 Spark·Ubuntu 두 물리 호스트의 122B 적재·웨이브를 별도로 판정한다.
 이 PC의 agent 프로그램 차단 해제, TUF SSH, Mac .20 NAS, M42 로그인은 여전히 외부 입력 게이트다.
 일부 장비의 소형 모델 성공으로 전체 장비·대형 모델 게이트를 닫지 않는다.
 

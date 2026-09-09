@@ -162,6 +162,62 @@ The Windows existing prepared directory was updated only after checking its full
 
 The byte-preserving monolithic reference (`--binary-file`, same 64-token first prompt) reproduces the small model's Korean/formatting problems; the earlier newline-stripping reference is excluded. This observation does not establish numerical equivalence across batch shapes or certify the staged output quality.
 
+## Current queue: individual model execution
+
+These runs use native source `6c9c2894072c71d0f9093c092f387836af3f32f9` and the 26-patch digest above.
+Each `source.json` includes the native executable, runtime libraries and agent file hashes captured before execution.
+The Windows Rust binaries were built from the release checkout and Unix Rust binaries from `612b75496`; their Rust source is unchanged by the subsequent native fixes. They are not represented as binaries rebuilt from the final native commit.
+
+| Run / arm | Model | Requests / completed / released | Inference elapsed | Inference / cleanup error |
+| --- | --- | --- | --- | --- |
+| `20260909T213934697Z-mac21` | Qwen2.5-1.5B Q8_0 | 8 / 8 / 8 | 540,134 ms | null / null |
+| `20260909T214217374Z-local` | Gemma 4 E2B Q8_0 | 8 / 8 / 8 | 9,327 ms | null / null |
+| `20260909T214217374Z-spark` | Gemma 4 E2B Q8_0 | 8 / 8 / 8 | 10,853 ms | null / null |
+| `20260909T214217374Z-ubuntu` | Gemma 4 E2B Q8_0 | 8 / 8 / 8 | 10,299 ms | null / null |
+| `20260909T215021079Z-mac21` | Gemma 4 E2B Q8_0 | 8 / 8 / 8 | 496,743 ms | null / null |
+| `gemma-full-gpu-20260909T215934817Z-mac21` | Gemma, corrected GPU layer count | 8 / 8 / 8 | 165,639 ms | null / null |
+| `gemma-matched-kv-20260909T220539322Z-mac21` | Gemma, K/V both f16 | 8 / 8 / 8 | 8,329 ms | null / null |
+
+All seven arms report complete evidence and EOS for all requests. Mac's successful LOAD closes the two observed memory-plan failures for this arm; it does not certify the full model/backend matrix.
+The Qwen answers retain the monolithic reference's incorrect Korean explanations and sentence-count failures.
+Gemma's RAM/storage, 84-litre calculation and calibration answers were manually inspected and coherent; its wire-heating answers include imprecise friction analogies and an unqualified resistance/temperature feedback claim. Full quality acceptance is not granted from the harness's structural pass.
+
+Gemma file SHA256 is `0a8488b149e1f700712c35d5bf0a3795f9dcc2563b4944d5ef2fb89375f9483e` (5,048,350,848 bytes).
+Its embedded turn template is used with native BOS insertion and cuts `[0,13) [13,35)`.
+Both models use two stages on one host, resident 4, two four-request waves 500 ms apart, maximum 512 output tokens, EOS/stop required and no accepted length termination.
+These short, single-run elapsed times include inference prefill and queueing, exclude LOAD/UNLOAD, and are not a GPU performance ranking.
+
+The first individual configurations used `n_gpu_layers = trunk_layers - layer_begin`.
+Upstream includes the output layer (and auxiliary layers where present) in its offload indexing; native logs show the first owned layer remained on CPU.
+The paired Mac placement arm changes only that argument to `--n-gpu-layers 999` (plus run identities), preserving explicit unowned-tensor CPU overrides. These are single runs with different generated token sequences, not a repeated throughput comparison. Earlier arms are not relabelled as entirely GPU-resident.
+During the corrected arm, a two-second `sample` of its own stage process still finds CPU flash attention and CPU barriers. The selected Metal backend's `supports_op` rejects different K/V types; these plans used q8_0 K and f16 V.
+The next arm changes only K from q8_0 to f16 (plus run identities). It completes all eight requests in 8,329 ms and both native stages report zero CPU compute allocation on cleanup. This attributes the observed fallback to the tested configuration; it is not a repeated performance benchmark or proof that every Metal model avoids CPU work. Its heating explanations still do not earn full quality approval.
+
+## Three-host 122B preflight
+
+Preflight `20260909T215244120Z` uses Spark `[0,32)`, Mac `.21` `[32,45)` and Ubuntu `[45,48)` for Qwen3.5-122B-A10B UD-Q5_K_S.
+The MTP auxiliary layer is excluded (`spec-type none`). The model is three GGUF shards, 88,310,156,320 bytes in total; the vision projector is not part of this text-model identity.
+
+| Shard | SHA256 |
+| --- | --- |
+| 00001 | `ea08ef11402edf53a98cb90329961ee3dbe191dcf75ff7c99f009264cf8a99b3` |
+| 00002 | `6d4910dc603ab82570d2c8a1a979414e9d921af68273113063e7679424d53fa7` |
+| 00003 | `e0f018ae1f3016fab56005ba4b25e708720eaa2413232bd65ba07c7c6d964938` |
+
+All three actual native no-alloc plan consumers return `complete=true`, `fits_current_free=true`.
+Required bytes are Spark device 57,181,003,904 + host 1,346,619,424; Mac device 23,301,334,048 + host 56,901,664; Ubuntu device 6,892,271,744 + host 14,960,672.
+Spark and Mac charges share their respective physical host pools; their advertised host and device capacities are not added.
+The Mac free-memory snapshot was taken during its separate small-model run, so admission must be checked again at actual LOAD.
+All nine agent-port probes (three hosts to all three, including self) connect on 52004. This is TCP reachability, not yet event-ring or model inference acceptance.
+`large-plan-*-result.json` binds the plan bytes and executable hashes; local full-shard hashes describe the shared NAS files, not independent full reads on every remote host.
+The remaining targets and user-input gates are unchanged. A three-host run cannot close the requested all-computer gate.
+
+Code inspection before the heterogeneous run finds another existing gate: `v2::build_identity::agree` requires identical backend inventories. CUDA and Metal are deliberately rejected even at the same upstream/patch source. Its existing negative tests are preserved; no identity is forged and no allow-unidentified override is used.
+The physical v4 capsule carries raw engine tensor type values and bytes. Heterogeneous execution needs an explicit codec/representation compatibility contract and consumer validation; dropping the backend comparison alone is not sufficient.
+An independent two-CUDA-host diagnostic uses Spark `[0,45)` and Ubuntu `[45,48)` while that contract is examined. Spark's actual no-alloc plan requires device 80,361,451,648 + host 1,346,619,424 bytes and passes its shared physical pool check. It is not a substitute for the requested whole fleet.
+
+All repository Node test files on the current native source were rerun: 159 passed, 0 failed, 0 skipped (`node-tests-current.log`).
+
 ## Local evidence and reproduction
 
 Raw discovery, NAS inventories, compiler versions, conflicts and rebase logs are under `F:/dev/p4/target/fleet-20260910`.
