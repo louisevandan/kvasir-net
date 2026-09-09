@@ -110,6 +110,34 @@ The retired commit is an ancestor of the selected pin (`git merge-base --is-ance
 Manifest/classification tests pass 13/13; classification remains 25 patches: 3 upstream fixes, 18 stage hooks, 4 model features.
 The full Rust workspace finished with 58 summaries, 1,374 passed / 0 failed / 7 ignored; Rust code is unchanged by these native compatibility fixes.
 
+## Individual execution and host buffer ownership
+
+Run `20260909T211155072Z` used source `00e9aedb482166049487c3467322a7a98d601feb`, the unchanged 25-patch digest above, and NAS Qwen2.5-1.5B-Instruct-Q8_0 (`7185d306cf45956c8c017cd0d3b05ecc6bc18b3ea8eb5c240dce40e87563db7f`, 1,646,573,312 bytes).
+Each arm uses two stages on one physical host, four resident sequences and two waves of four requests.
+
+| Arm | Requested / completed / released | Inference / cleanup error | Scope |
+| --- | --- | --- | --- |
+| This PC | 8 / 8 / 8 | null / null | CUDA execution and cleanup pass |
+| Spark | 8 / 8 / 8 | null / null | CUDA execution and cleanup pass |
+| Ubuntu | 8 / 8 / 8 | null / null | CUDA execution and cleanup pass |
+| Mac `.21` | No inference submitted | Native memory-plan rejection | CPU_REPACK was treated as an unknown accelerator allocation |
+
+All 24 completed requests ended at EOS, but the harness only checks stop reason, nonempty response and replacement characters.
+Manual review found bad Korean explanations and failure to follow three-sentence requests. The pump calculations correctly return 84 litres.
+These are execution passes, not normal-response quality acceptance, performance rankings or fleet approval.
+A monolithic completion reference is being checked with identical prompt bytes; the initial `--file` probe removed the trailing newline and is excluded from equivalence claims.
+
+The Mac failure is physical ownership classification: `CPU_REPACK` deliberately reports `is_host=false` for its tensor representation, while its owning device is CPU.
+`stage_buffer_uses_host_memory` accounts such buffers to host RAM. An unrecognized non-CPU device still fails, now with buffer/device names.
+The generic backend probe enumerates real extra CPU buffer types, and the actual no-alloc model consumer is checked separately.
+Final native CTests pass 16/16 on Windows, Spark, Ubuntu and both Macs. Shared topology still adds host and device allocations against one shared physical pool.
+
+An isolated Mac model-plan mutation recompiles `stage_memory_plan.cpp`, replaces that object in a copied runtime archive and links a separate server.
+The control passes; removing CPU ownership recognition exits 7 with `buffer=CPU_REPACK device=CPU`.
+Control/mutant binary SHA256: `9395a408a266943a9b4e1ebde25fea7ae9c5afe21985fc8c0d6932b3189e324c` / `19458c263d7efc84c0c05fe45e326c9fa212c0449a9960e4d687d337aea41db0`.
+Full source/object/archive hashes and commands are in `host-memory-mutation-result.log`.
+That diagnostic used a hash-verified model copy on Mac `.20`; it does not establish that Mac's NAS connection.
+
 ## Local evidence and reproduction
 
 Raw discovery, NAS inventories, compiler versions, conflicts and rebase logs are under `F:/dev/p4/target/fleet-20260910`.

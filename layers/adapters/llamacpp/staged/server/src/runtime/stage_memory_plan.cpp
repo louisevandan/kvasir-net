@@ -144,7 +144,7 @@ bool add_breakdown(
     const std::size_t device_count = p4_llama_compat::model_device_count(model);
     for (const auto & measured : breakdown) {
         StageMemoryEntry * entry = &result->entries.back();
-        if (!ggml_backend_buft_is_host(measured.buffer_type)) {
+        if (!staged::llama_runtime::stage_buffer_uses_host_memory(measured.buffer_type)) {
             auto * device = ggml_backend_buft_get_device(measured.buffer_type);
             entry = nullptr;
             for (std::size_t index = 0; index < device_count; ++index) {
@@ -154,7 +154,12 @@ bool add_breakdown(
                 }
             }
             if (entry == nullptr) {
-                if (error != nullptr) *error = "memory breakdown referenced an unknown backend device";
+                if (error != nullptr) {
+                    *error = "memory breakdown referenced an unknown backend device: buffer=";
+                    *error += ggml_backend_buft_name(measured.buffer_type);
+                    *error += " device=";
+                    *error += device != nullptr ? ggml_backend_dev_name(device) : "none";
+                }
                 return false;
             }
         }
@@ -189,6 +194,12 @@ std::string json_escape(const std::string & value) {
 } // namespace
 
 namespace staged::llama_runtime {
+
+bool stage_buffer_uses_host_memory(ggml_backend_buffer_type_t buffer_type) {
+    if (ggml_backend_buft_is_host(buffer_type)) return true;
+    const auto device = ggml_backend_buft_get_device(buffer_type);
+    return device != nullptr && ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
+}
 
 llama_model_params make_stage_model_params(
         p4_llama_compat::LlamaPlan & params,
