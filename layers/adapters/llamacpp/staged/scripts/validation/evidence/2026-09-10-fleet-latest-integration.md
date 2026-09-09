@@ -218,6 +218,35 @@ An independent two-CUDA-host diagnostic uses Spark `[0,45)` and Ubuntu `[45,48)`
 
 All repository Node test files on the current native source were rerun: 159 passed, 0 failed, 0 skipped (`node-tests-current.log`).
 
+## Two physical hosts: 122B execution
+
+`large-2-hosts-20260909T220205942Z` completed 8 / 8 / 8 requested/completed/released, all EOS, with null inference error, cleanup error and missing evidence.
+It uses the sealed `6c9c28940` runtime identities, Spark `[0,45)` and Ubuntu `[45,48)`, resident 4 and two waves of four 500 ms apart.
+The verified embedded ChatML template uses the model's no-thinking generation prefix; MTP remains disabled.
+Inference elapsed is 30,353 ms, excluding LOAD and UNLOAD; 846 emitted outcome tokens include eight EOS outcomes, while decode rows total 838. These are not interchangeable TPS numerators.
+
+Both stages' model/context/compute byte totals match PLAN and ACTUAL.
+The startup-to-cleanup monitor captured 712 Spark and 702 Ubuntu samples. Ubuntu's global GPU usage peaked at 6,711 MiB.
+Spark's GPU memory query reports unavailable for its shared pool; it is not replaced with a fabricated VRAM peak. Minimum system MemAvailable was 41,620,528 KiB while MemFree fell to 704,636 KiB during NAS caching; neither metric is a per-process allocation measurement.
+The monitor includes other host activity and startup time, so its utilization samples are not a steady inference utilization result.
+ACTUAL's `fits_current_free=false` compares the allocation with the already-reduced remaining free memory; admission used the pre-allocation PLAN and actual allocation equality passed.
+
+Manual review read all eight complete responses: RAM volatility/persistence, the 84-litre calculation and reference-based sensor calibration are coherent and follow the requested format. Wire-heating responses still use an imprecise friction analogy; blanket scientific-quality approval is withheld.
+This closes a bounded two-host 122B execution path, not all-fleet participation, sustained pressure, service acceptance or performance optimization.
+`summary.json`, full artifacts/configuration/runtime hashes, both agent logs and memory samples are retained in the run directory.
+
+## Heterogeneous wire candidate (not yet runtime-approved)
+
+The separate `codex/fleet-wire-compat-20260910` checkout preserves the completed arms above.
+Its opt-in `physical-wire-v4` contract is specified in the adapter restructure document; default exact-build rejection and the old negative tests remain.
+The HELLO-to-LOADED-to-OUTER path carries `stage_wire_abi`, and artifacts keep every stage identity rather than reporting only the head's backend inventory as the whole pipeline.
+The actual LOAD reply consumer exercises reversed reply arrival, explicit opt-in, missing identities and changed wire source; native execution and peer processes are not simulated by that fixture.
+
+Initial workspace rerun ended 1,377 / 1 / 7 solely because the new contract paragraph mixed line endings. After normalizing that document, the complete run ended 1,378 / 0 / 7 across 58 summaries.
+Current native builds on Mac `.20`, Spark and Ubuntu pass 16/16 CTests, including the compiled wire-identity assertion.
+Their source fingerprint and full runtime type-size tables match byte-for-byte: source `e691ace7f2c7eef550c8c8c6b455b1de9038307819baf39eb7a939038ae8abd5`.
+Windows native compilation, independent mutations and actual heterogeneous model execution remain pending at this checkpoint. No three-host acceptance is claimed.
+
 ## Local evidence and reproduction
 
 Raw discovery, NAS inventories, compiler versions, conflicts and rebase logs are under `F:/dev/p4/target/fleet-20260910`.

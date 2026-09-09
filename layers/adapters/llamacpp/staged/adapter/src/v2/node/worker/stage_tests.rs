@@ -112,6 +112,7 @@ impl ServerControl for ScriptedStage {
             upstream_commit: "fixture-only".into(),
             patch_set: "fixture-only".into(),
             backend_inventory: "fixture-only-no-engine".into(),
+            stage_wire_abi: "unknown".into(),
         }))
     }
 

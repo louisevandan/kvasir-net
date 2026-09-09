@@ -51,6 +51,7 @@ protocol::Frame Session::handle_hello() {
         // computing on different hardware. It says nothing about where the
         // tensors ended up - see backend_inventory().
         ";backend_inventory=" + p4_llama_compat::backend_inventory() +
+        ";stage_wire_abi=" + p4_llama_compat::stage_wire_abi() +
 #else
         ";backend_inventory=none"
 #endif

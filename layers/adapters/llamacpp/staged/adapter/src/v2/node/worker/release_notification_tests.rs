@@ -32,6 +32,7 @@ impl crate::process::ServerControl for NativeProbe {
             upstream_commit: "fixture".into(),
             patch_set: "fixture".into(),
             backend_inventory: "no-engine".into(),
+            stage_wire_abi: "unknown".into(),
         }))
     }
     fn request(&mut self, _frame: Frame) -> Result<Frame, String> {

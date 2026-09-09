@@ -129,6 +129,7 @@ fn config(case: Case) -> RunConfig {
         options: String::new(),
         pre_inference_hold_ms: 0,
         timeout_ms: 2_000,
+        pipeline_compatibility: Default::default(),
         acceptance: AcceptanceConfig {
             minimum_generated_tokens: 1,
             expected_prefill_rows: None,

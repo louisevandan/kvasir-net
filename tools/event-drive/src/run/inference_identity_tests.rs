@@ -33,6 +33,7 @@ fn config() -> RunConfig {
         pre_inference_hold_ms: 0,
         acceptance: AcceptanceConfig::default(),
         timeout_ms: 1000,
+        pipeline_compatibility: Default::default(),
     }
 }
 

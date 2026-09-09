@@ -47,6 +47,7 @@ impl ServerControl for ObserveOnlyNative {
             upstream_commit: "fixture-no-native-engine".into(),
             patch_set: "fixture-no-native-engine".into(),
             backend_inventory: "fixture-no-native-engine".into(),
+            stage_wire_abi: "unknown".into(),
         }))
     }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -17,6 +18,27 @@
 #include "speculative.h"
 
 namespace p4_llama_compat {
+
+std::string stage_wire_abi() {
+#ifndef P4_STAGED_NATIVE_WIRE_SOURCE
+    return "unknown";
+#else
+    const std::uint16_t endian_probe = 1;
+    if (*reinterpret_cast<const unsigned char *>(&endian_probe) != 1
+        || sizeof(void *) != 8 || sizeof(float) != 4
+        || !std::numeric_limits<float>::is_iec559
+        || sizeof(llama_token) != 4 || sizeof(llama_pos) != 4
+        || sizeof(llama_seq_id) != 4) return "unknown";
+    std::string result = "p4pb4le64:" P4_STAGED_NATIVE_WIRE_SOURCE ":types=";
+    for (int i = 0; i < GGML_TYPE_COUNT; ++i) {
+        if (i != 0) result += ',';
+        const auto type = static_cast<ggml_type>(i);
+        result += std::to_string(i) + '/' + std::to_string(ggml_blck_size(type))
+            + '/' + std::to_string(ggml_type_size(type));
+    }
+    return result;
+#endif
+}
 
 std::vector<MemoryBreakdownEntry> memory_breakdown(const llama_context * context) {
     std::vector<MemoryBreakdownEntry> entries;

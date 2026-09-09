@@ -77,3 +77,18 @@ fn a_stage_that_does_not_report_an_inventory_reads_as_unknown() {
     let ready = decode_hello(&hello(&text)).expect("decode");
     assert_eq!(ready.backend_inventory, "unknown");
 }
+
+#[test]
+fn stage_wire_identity_is_read_verbatim_and_never_inferred_from_the_backend() {
+    let abi = format!("p4pb4le64:{}:types=0/1/4,1/1/2,2/32/18", "a".repeat(64));
+    let ready = decode_hello(&hello(&format!(
+        "{BASE};backend_inventory=MTL[MTL0];stage_wire_abi={abi};upstream=pin"
+    )))
+    .unwrap();
+    assert_eq!(ready.stage_wire_abi, abi);
+    assert_eq!(ready.upstream_commit, "pin");
+    assert_eq!(
+        decode_hello(&hello(BASE)).unwrap().stage_wire_abi,
+        "unknown"
+    );
+}

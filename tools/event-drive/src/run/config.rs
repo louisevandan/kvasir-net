@@ -14,6 +14,8 @@ pub struct RunConfig {
     pub request_id: String,
     pub nodes: Vec<NodeConfig>,
     #[serde(default)]
+    pub pipeline_compatibility: p4_llamacpp_staged_adapter::v2::PipelineCompatibility,
+    #[serde(default)]
     pub prompt: String,
     #[serde(default)]
     pub prompts: Vec<String>,
@@ -202,6 +204,7 @@ mod tests {
             pre_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
             timeout_ms: default_timeout(),
+            pipeline_compatibility: Default::default(),
         }
     }
 

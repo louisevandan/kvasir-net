@@ -120,6 +120,7 @@ impl Worker {
                 "upstream_commit":ready.upstream_commit,
                 "patch_set":ready.patch_set,
                 "backend_inventory":ready.backend_inventory,
+                "stage_wire_abi":ready.stage_wire_abi,
                 "per_sequence_context":command.context_size,
                 "reserved_context":reserved_context
             }),
@@ -327,6 +328,7 @@ mod tests {
             upstream_commit: "fixture-upstream".into(),
             patch_set: "fixture-patch-set".into(),
             backend_inventory: "fixture-backend".into(),
+            stage_wire_abi: "unknown".into(),
         }
     }
 

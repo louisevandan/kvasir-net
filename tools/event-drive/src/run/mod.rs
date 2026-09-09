@@ -9,6 +9,8 @@ mod inference_identity;
 #[cfg(test)]
 mod inference_identity_tests;
 mod load;
+#[cfg(test)]
+mod load_consumer_tests;
 mod output_budget;
 mod release_ledger;
 mod replies;
@@ -26,13 +28,13 @@ use p4_llamacpp_staged_adapter::v2::{
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
 use replies::{ExpectedReply, receive_exact};
-use wire::EventWire;
 use serde::Serialize;
 use std::io::Write;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use wire::EventWire;
 
 const CREATE: &str = "application/vnd.p4.node.create-v3+json";
 const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
@@ -49,10 +51,11 @@ pub struct StageSpanArtifact {
 #[derive(Debug, Serialize)]
 pub struct RunArtifact {
     pub passed: bool,
-    /// Which llama.cpp build every stage of this pipeline reported.
-    /// Recorded because a measurement is only attributable to the code
-    /// that produced it, and the upstream commit alone does not name that.
+    /// Head's identity for legacy readers. Per-stage identities are retained
+    /// below; heterogeneous backends must not be represented as one inventory.
     pub build: p4_llamacpp_staged_adapter::v2::BuildIdentity,
+    pub stage_builds: Vec<load::StageBuild>,
+    pub pipeline_compatibility: p4_llamacpp_staged_adapter::v2::PipelineCompatibility,
     pub acceptance: acceptance::AcceptanceSummary,
     pub prompt: String,
     pub response: String,
@@ -240,7 +243,9 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     // is always written.
     let cleanup_error = teardown(&config, &mut wire, &mut sender).await;
 
-    Ok(assemble(config, build, run, cleanup_error))
+    let mut artifact = assemble(config, build.representative, run, cleanup_error);
+    artifact.stage_builds = build.stages;
+    Ok(artifact)
 }
 
 /// Build the artifact from whatever the run produced, including nothing.
@@ -291,6 +296,8 @@ fn assemble(
     RunArtifact {
         passed: structurally_complete && acceptance.passed,
         build,
+        stage_builds: Vec::new(),
+        pipeline_compatibility: config.pipeline_compatibility,
         acceptance,
         prompt: config.prompt,
         response: requests
@@ -517,6 +524,7 @@ mod tests {
             pre_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
             timeout_ms: 1000,
+            pipeline_compatibility: Default::default(),
         }
     }
 

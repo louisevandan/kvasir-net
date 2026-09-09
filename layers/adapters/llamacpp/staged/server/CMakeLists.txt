@@ -273,6 +273,9 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     add_library(p4_llama_compat STATIC
         "${CMAKE_CURRENT_LIST_DIR}/src/compat/p4_llama_compat.cpp"
     )
+    include("${CMAKE_CURRENT_LIST_DIR}/native-wire-fingerprint.cmake")
+    target_compile_definitions(p4_llama_compat PRIVATE
+        P4_STAGED_NATIVE_WIRE_SOURCE=\"${P4_STAGED_NATIVE_WIRE_SOURCE}\")
     target_include_directories(p4_llama_compat PUBLIC src)
     target_include_directories(p4_llama_compat PRIVATE
         "${P4_STAGED_LLAMA_SOURCE_DIR}/src"

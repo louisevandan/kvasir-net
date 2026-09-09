@@ -36,6 +36,16 @@ void run_ggml_reserve_size_tests();
 
 namespace {
 
+void native_wire_representation_is_identified() {
+    const auto abi = p4_llama_compat::stage_wire_abi();
+    assert(abi.rfind("p4pb4le64:", 0) == 0);
+    const auto separator = abi.find(":types=");
+    assert(separator == std::string("p4pb4le64:").size() + 64);
+    assert(abi.find(":types=0/1/4,1/1/2,") != std::string::npos);
+    assert(abi.find(';') == std::string::npos);
+    std::cout << "stage_wire_abi=" << abi << '\n';
+}
+
 unsigned long long process_id() {
 #ifdef _WIN32
     return static_cast<unsigned long long>(::_getpid());
@@ -340,6 +350,7 @@ void hop_batch_rolls_back_only_new_sequences() {
 } // namespace
 
 int main() {
+    native_wire_representation_is_identified();
     staged::llama_runtime::StageRuntime runtime;
     assert(!runtime.loaded());
     p4_llama_compat::LlamaPlan plan;

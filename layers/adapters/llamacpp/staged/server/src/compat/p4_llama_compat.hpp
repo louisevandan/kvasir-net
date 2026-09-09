@@ -27,6 +27,10 @@
 
 namespace p4_llama_compat {
 
+/// Identity of physical-v4 codec source and the engine's raw tensor representation.
+/// Unknown representations are not eligible for heterogeneous execution.
+[[nodiscard]] std::string stage_wire_abi();
+
 /// One backend buffer type's share of what a context has allocated. Mirrors
 /// the staging struct by value so no caller names the upstream type.
 struct MemoryBreakdownEntry {

@@ -32,6 +32,7 @@ impl ServerControl for EchoStage {
             upstream_commit: "fake".into(),
             patch_set: "fake".into(),
             backend_inventory: "no-engine".into(),
+            stage_wire_abi: "unknown".into(),
         }))
     }
     fn request(&mut self, frame: Frame) -> Result<Frame, String> {
