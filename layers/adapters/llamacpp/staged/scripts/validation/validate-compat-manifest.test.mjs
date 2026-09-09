@@ -46,6 +46,28 @@ test("accepts the checked-in fixture manifest", () => {
   assert.equal(validateManifest(manifest, checkedInFixture).patch_count, 1);
 });
 
+test("requires explicit upstream retirement for gaps without weakening ordering or byte checks", () => {
+  const value = fixture();
+  const patch = value.manifest.patches[0];
+  fs.renameSync(path.join(value.directory, patch.file), path.join(value.directory, "0002-test.patch"));
+  patch.file = "0002-test.patch";
+  assert.throws(() => validateManifest(value.manifest, value.directory), /expected 0001, got 0002/u);
+  const retired = { file: "0001-retired.patch", upstream_commit: "b".repeat(40), reason: "Replaced by upstream dynamic storage; consumer regression retained." };
+  value.manifest.superseded_patches = [retired];
+  assert.equal(validateManifest(value.manifest, value.directory).patch_count, 1);
+  for (const changes of [{reason: ""}, {upstream_commit: "short"}, {file: "0002-overlap.patch"}, {file: "0000-invalid.patch"}]) {
+    value.manifest.superseded_patches = [{...retired, ...changes}];
+    assert.throws(() => validateManifest(value.manifest, value.directory));
+  }
+  value.manifest.superseded_patches = [retired, retired];
+  assert.throws(() => validateManifest(value.manifest, value.directory), /duplicate superseded/u);
+  value.manifest.superseded_patches = [retired, {...retired, file:"0004-gap.patch"}];
+  assert.throws(() => validateManifest(value.manifest, value.directory), /undeclared gap/u);
+  value.manifest.superseded_patches = [retired];
+  fs.appendFileSync(path.join(value.directory, patch.file), "corrupt");
+  assert.throws(() => validateManifest(value.manifest, value.directory), /SHA-256 mismatch/u);
+});
+
 test("rejects missing ABI and artifact symbol metadata", () => {
   const value = fixture({ abi_revision: undefined, required_artifact_symbols: undefined });
   assert.throws(() => validateManifest(value.manifest, value.directory), /abi_revision is required/u);

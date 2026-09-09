@@ -33,15 +33,34 @@ function validatePatches(manifest, manifestDir) {
   }
 
   const seen = new Set();
+  const retired = new Set();
+  if (manifest.superseded_patches !== undefined && !Array.isArray(manifest.superseded_patches)) {
+    fail("superseded_patches must be an array");
+  }
+  for (const [index, patch] of (manifest.superseded_patches ?? []).entries()) {
+    const name = `superseded_patches[${index}]`;
+    const file = requiredString(patch?.file, `${name}.file`);
+    const match = PATCH_FILE.exec(file);
+    if (!match || Number(match[1]) === 0) fail(`${name}.file must use a positive NNNN-name.patch`);
+    const number = Number(match[1]);
+    if (retired.has(number)) fail(`duplicate superseded patch number: ${match[1]}`);
+    if (!COMMIT.test(patch.upstream_commit ?? "")) fail(`${name}.upstream_commit must be a full lowercase SHA`);
+    requiredString(patch.reason, `${name}.reason`);
+    retired.add(number);
+  }
+  let expected = 1;
   for (const [index, patch] of manifest.patches.entries()) {
     if (!patch || typeof patch !== "object") fail(`patches[${index}] must be an object`);
     const file = requiredString(patch.file, `patches[${index}].file`);
     const match = PATCH_FILE.exec(file);
     if (!match) fail(`patches[${index}].file must use NNNN-name.patch: ${file}`);
     const number = Number(match[1]);
-    if (number !== index + 1) {
-      fail(`patches must be contiguous and ordered: expected ${String(index + 1).padStart(4, "0")}, got ${match[1]}`);
+    if (retired.has(number)) fail(`active and superseded patch numbers overlap: ${match[1]}`);
+    while (retired.has(expected)) { retired.delete(expected); expected++; }
+    if (number !== expected) {
+      fail(`patches must be contiguous and ordered: expected ${String(expected).padStart(4, "0")}, got ${match[1]}`);
     }
+    expected++;
     if (seen.has(file)) fail(`patches contains a duplicate: ${file}`);
     seen.add(file);
 
@@ -51,6 +70,8 @@ function validatePatches(manifest, manifestDir) {
     const actual = crypto.createHash("sha256").update(fs.readFileSync(patchPath)).digest("hex");
     if (actual !== patch.sha256) fail(`patch SHA-256 mismatch: ${file}`);
   }
+  while (retired.has(expected)) { retired.delete(expected); expected++; }
+  if (retired.size) fail("superseded patches leave an undeclared gap");
 }
 
 function validateSymbols(manifest) {

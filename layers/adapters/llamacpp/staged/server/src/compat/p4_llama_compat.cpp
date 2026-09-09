@@ -1,6 +1,8 @@
 #include "p4_llama_compat.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "p4_llama_compat_internal.hpp"
@@ -74,7 +76,45 @@ ggml_type LlamaPlan::cache_type_v() const noexcept { return impl_->params.cache_
 bool LlamaPlan::parse_arguments(const std::vector<std::string> & arguments) {
     // The parser takes a mutable argv, so the strings are copied rather than
     // handed the caller's storage to rewrite.
-    std::vector<std::string> owned = arguments;
+    // b10883 removed deprecated load flags still present in saved OUTER plans.
+    // Use upstream's option arities so a value named "--no-mmap" is not edited.
+    // Older pins already accept these aliases and need no translation.
+    const auto parser = common_params_parser_init(impl_->params, LLAMA_EXAMPLE_SERVER, nullptr);
+    std::unordered_map<std::string, std::size_t> arities;
+    for (const auto & option : parser.options) {
+        const std::size_t arity = option.handler_void || option.handler_bool ? 0 :
+            option.handler_str_str ? 2 : 1;
+        for (const auto * name : option.args) arities[name] = arity;
+        for (const auto * name : option.args_neg) arities[name] = arity;
+    }
+    const std::unordered_map<std::string, std::string> legacy_modes{
+        {"--no-mmap", "none"}, {"--mmap", "mmap"}, {"--mlock", "mlock"},
+        {"--direct-io", "dio"}, {"-dio", "dio"},
+        {"--no-direct-io", "none"}, {"-ndio", "none"},
+    };
+    std::vector<std::string> owned;
+    if (!arguments.empty()) owned.push_back(arguments.front());
+    for (std::size_t i = 1; i < arguments.size(); ++i) {
+        std::string name = arguments[i];
+        if (name.rfind("--", 0) == 0) std::replace(name.begin(), name.end(), '_', '-');
+        const auto option = arities.find(name);
+        const auto legacy = legacy_modes.find(name);
+        if (option == arities.end() && legacy != legacy_modes.end()) {
+            owned.emplace_back("--load-mode");
+            owned.push_back(legacy->second);
+        } else {
+            owned.push_back(arguments[i]);
+            const std::size_t arity = option == arities.end() ? 0 : option->second;
+            for (std::size_t value = 0; value < arity && i + 1 < arguments.size(); ++value) {
+                owned.push_back(arguments[++i]);
+            }
+        }
+    }
+#ifdef _WIN32
+    // Expansion must not undo the startup parser's synthetic-argc guard:
+    // common_params_parse would otherwise replace the plan with process argv.
+    if (owned.size() == static_cast<std::size_t>(__argc)) owned.emplace_back("--log-disable");
+#endif
     std::vector<char *> pointers;
     pointers.reserve(owned.size() + 1);
     for (auto & argument : owned) pointers.push_back(argument.data());

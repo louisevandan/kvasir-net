@@ -18,11 +18,11 @@ Memory totals are not allocation budgets; running applications, OS, backend scra
 
 | Host | Current hardware observation | NAS model access | Runtime status |
 | --- | --- | --- | --- |
-| This PC, `.6` | RTX 3090 24 GiB + RTX 4080 16 GiB; 255.9 GiB host RAM | `S:` maps to `//192.168.0.13/file-station` | New CUDA build in progress; no fleet model acceptance yet |
+| This PC, `.6` | RTX 3090 24 GiB + RTX 4080 16 GiB; 255.9 GiB host RAM | `S:` maps to `//192.168.0.13/file-station` | CUDA Release and 16 CTests pass; individual inference pending |
 | Spark, `.26` | GB10; 121.6 GiB shared system memory | `/mnt/file-station/models`, 156 GGUF files; CIFS source verified | SSH/CUDA 13.0/Cargo available |
 | Mac mini, `.20` | M4 Pro, 64 GiB unified memory | Existing placeholder contains zero models; no SMB mount | SSH/Metal tools/Cargo available; NAS authentication needs user connection |
 | Mac mini, `.21` | M4 Pro, 64 GiB unified memory | `/Volumes/file-station/models`, 156 GGUF files | SSH/Metal tools/Cargo available; existing LM Studio left running |
-| Ubuntu laptop, `.19` | RTX 2070 Max-Q 8 GiB; about 30.7 GiB host RAM | `/mnt/nas-file-station/models`, 156 GGUF files; path resolves into the logged-in user's GVFS SMB mount | SSH/CUDA 12.4 available; Git/Cargo absent from probed paths |
+| Ubuntu laptop, `.19` | RTX 2070 Max-Q 8 GiB; about 30.7 GiB host RAM | `/mnt/nas-file-station/models`, 156 GGUF files; path resolves into the logged-in user's GVFS SMB mount | User-scope Git 2.53.0 and Rust 1.97.1 installed; CUDA Release and 16 CTests pass |
 | TUF laptop, `.17` | Not verified in this run | Not verified | TCP 22 reachable; SSH key rejected; access information requested |
 | M42-SERVER2, `.29` | Prior release evidence: RTX 3090 x2; refresh before new LOAD | Interactive `42mob` login/S: recovery pending | SSH restored after planned Windows Update reboot; release agent/stage remain stopped |
 
@@ -33,6 +33,11 @@ Port probes found 19001 listening only on this PC among the hosts tested. Its he
 Local Windows firewall inspection found a TCP 52001-52005 rule. Both Mac application firewalls report disabled.
 Linux firewall inspection requires root and remains unverified. A closed TCP probe does not distinguish a firewall from an absent listener.
 Peer-to-peer connections and actual P4 delivery remain to be tested.
+
+Follow-up port checks: Windows excludes 51952-52051, so the allowed 52004 cannot bind (WSA10013).
+51054 binds and has an existing allow rule, but an explicit inbound block for this run's `p4-agent.exe` overrides it.
+Spark-to-Windows connection times out; administrator removal of that program block was requested. No rule, exclusion or unrelated service was changed.
+Spark, Ubuntu and Mac `.21` listen on 52004 and passed Spark-origin TCP connection probes; protocol/model acceptance is separate.
 
 Mac `.20` normal SMB mount and NetFS NoUI attempts failed authentication. The matching NAS Keychain item exists, but Security.framework returned `-25293` when asked to use it without user interaction. No password was logged or transferred. User connection through Finder was requested.
 
@@ -62,7 +67,7 @@ The first full builds exposed three P4 portability defects, preserved in the raw
 | Linux: `std::any_of` undeclared in `llama_stage_runtime_kv.cpp` | Include the owning `<algorithm>` header | No runtime behavior change |
 | GNU linker: undefined `common_*` references from `p4_llama_compat` in two test executables | Declare `llama-common` as the facade's private link dependency | Correct dependency order; no global linker relaxation or new public dependency |
 
-Windows CUDA at `612b75496` built and passed the pre-existing 15 CTests. The portability candidate passed 16/16 CTests on M4 Pro Metal, GB10 CUDA 13.0/sm_121 and RTX 2070 Max-Q CUDA 12.4/sm_75. Windows revalidation of the portability candidate is pending at this checkpoint. Rust agent and drive Release builds succeeded on all three Unix architectures. Optional model tests inside existing CTests still require explicit model runs; these counts do not certify those skipped sections.
+Windows CUDA at `612b75496` built and passed the pre-existing 15 CTests. The portability candidate passed 16/16 CTests on Windows CUDA 13.1/sm_86+89, M4 Pro Metal, GB10 CUDA 13.0/sm_121 and RTX 2070 Max-Q CUDA 12.4/sm_75. The second Mac passed the same 16 tests using the verified binary archive. Rust agent and drive Release builds succeeded on all three Unix architectures. Optional model tests inside existing CTests still require explicit model runs; these counts do not certify those skipped sections.
 
 `p4_staged_split_inputs_test` uses the real ggml scheduler, CPU-owned input buffers that the GPU cannot consume directly, and a graph assigned to the accelerator. It checks 29/30/31 and 59/60/61 unique cross-backend inputs, including one operation adding two new inputs across a capacity boundary. Every case must execute as one GPU split, produce the independently calculated sum in all 128 elements, and preserve every input value. Dedicated and integrated GPU types are both eligible; absence of a GPU fails the probe. CUDA/Metal CTest configurations run it; CPU-only builds compile it but require an accelerator to execute it.
 
@@ -79,6 +84,31 @@ Mutation uses a separate copied ggml tree and build under Mac `.20`'s `split-gro
 | Final standalone probe SHA256 | `5de8d3310b1c7c4d579a2870a181a7dc3c6e94bffee80f46fd5fda123e466fc4` |
 
 The live P4 prepared tree and runtime libraries were not mutated. Native source updates were sent with normalized before/after file hashes because Git archive source line endings differed from the local worktree patch context. All before hashes were checked before writing the candidate. Per-host `portability-source*.json` records bind those updates; no failed test or input was removed.
+
+## Saved-plan loading option compatibility
+
+First individual run `20260909T204558394Z` preserved four failed configurations and driver logs.
+Windows failed to connect to its excluded port; Spark, Ubuntu and Mac `.21` reached native startup but exited before inference submission.
+A length-prefixed `--validate-plan` probe isolated `invalid argument: --no-mmap`: latest upstream removed that deprecated CLI alias.
+There was no submitted inference to assemble into a partial artifact in these runs.
+
+`LlamaPlan::parse_arguments` now translates removed loading flags inside the existing compatibility facade.
+It reads upstream option arities before scanning, preserves option-looking values and CLI ordering, and retains the Windows synthetic-argc guard after expansion.
+Old pins that already register the aliases bypass translation. This change covers saved CLI plans, not restoration of removed environment-variable aliases.
+The 25 upstream patches and their digest are unchanged; an initial common/ patch draft was discarded because it did not fit the declared patch classes. No classification allowance was widened.
+
+The request-options CTest now consumes saved flags through `parse_llama_options` before its optional model section.
+Cases cover positive/negative aliases, underscore normalization, canonical/legacy precedence, literal values and invalid/missing options.
+Its six process arguments exercise Windows argv ownership after a one-token alias expands to two tokens.
+The initial counterexample failed in `load-mode-red.log`; final Windows, Spark, Mac `.20` and Ubuntu builds pass 16/16 CTests.
+In an independent Mac source/object/archive/executable copy, the control exits 0; removing alias translation or value arity each exits -6.
+Each variant was compiled and linked independently. `load-mode-mutation-result.log` records commands and all four source/object/library/binary SHA256 values; the live runtime was not mutated.
+
+The separate manifest validator initially rejected retired slot 0001 as an unexplained gap.
+It now requires each skipped slot to have an explicit upstream commit and reason, while retaining ordering, overlap, missing-slot and active patch byte checks.
+The retired commit is an ancestor of the selected pin (`git merge-base --is-ancestor`, exit 0).
+Manifest/classification tests pass 13/13; classification remains 25 patches: 3 upstream fixes, 18 stage hooks, 4 model features.
+The full Rust workspace finished with 58 summaries, 1,374 passed / 0 failed / 7 ignored; Rust code is unchanged by these native compatibility fixes.
 
 ## Local evidence and reproduction
 

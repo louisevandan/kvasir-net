@@ -32,6 +32,12 @@ v0.9.0 후보와 기존 게이트는 보존한다. 사용자가 Spark, TUF, Mac 
 
 현재 사실과 열린 게이트는 [fleet/upstream 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)를 따른다.
 
+최신 native 빌드·16개 CTest는 Windows, Spark, Ubuntu, 두 Mac에서 통과했다.
+첫 개별 실행은 최신 upstream의 `--no-mmap` 제거를 시작 계획 회귀로 드러냈다.
+호환 facade 수정과 실제 소비 시험·독립 변이 2개를 완료했으며, 다음 첫 행동은 수정 바이너리의 개별 정상 응답 재판정이다.
+이 PC의 agent 프로그램 차단 해제, TUF SSH, Mac .20 NAS, M42 로그인은 여전히 외부 입력 게이트다.
+일부 장비의 소형 모델 성공으로 전체 장비·대형 모델 게이트를 닫지 않는다.
+
 ### 0.-1 이번 버전 마감 상태 (2026-09-10)
 
 코드 수정과 로컬 검증·패키징은 마감했다. **정식 릴리즈 승인과 다음 버전 개발을 구분한다.**

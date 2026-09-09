@@ -341,10 +341,12 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         src/runtime/request_options_test.cpp
     )
     target_link_libraries(p4_staged_request_options_test
-        PRIVATE p4_staged_llama_runtime)
+        PRIVATE p4_staged_llama_runtime p4_staged_server_core)
     p4_stage_enable_asserts(p4_staged_request_options_test)
+    # Six process arguments collide with the expanded saved --no-mmap plan on
+    # Windows unless the facade preserves synthetic argv ownership.
     add_test(NAME p4_staged_request_options_test
-             COMMAND p4_staged_request_options_test)
+             COMMAND p4_staged_request_options_test --synthetic-argc-collision 1 2 3 4)
 
     add_executable(p4_staged_plan_lifetime_test src/runtime/plan_lifetime_test.cpp)
     target_link_libraries(p4_staged_plan_lifetime_test PRIVATE p4_staged_llama_runtime)
