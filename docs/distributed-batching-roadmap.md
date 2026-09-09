@@ -26,14 +26,14 @@
 | 항목 | 상태 |
 | --- | --- |
 | 실기 게이트 5종 (3090×2, 릴리즈 트리 재빌드 산출물) | 통과 — [게이트 문서](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md) |
-| compat 패치 0026 | 포함(게이트 통과). 계획=실제 편차(ubatch 4096)는 알려진 제약 |
+| compat 패치 0026 | 포함(게이트 통과). ubatch 4096의 과소 보고 주장은 서로 다른 stage를 비교한 오류로 철회 |
 | 워크스페이스 / node 시험 / docs-lint / 검증기 | 1,374 / 0 / 7 · 94 / 0 · clean · valid |
 | 배포 상태 | `m42-server2`에 릴리즈 해시 배포, 에이전트 정지, 이전 배포본 백업 |
 | 번들 | `evidence/bundles/v0.9.0/`, 총합 `d4162b89…` |
 | 미달성 | H0~H7, 다중 물리 호스트, 서비스 승인, TPS 개선, resident 상향 승인 — 노트의 "검증하지 않은 것" |
 
 **다음 버전의 첫 행동은 P-3d 2번**(no-alloc 동작 검증의 나머지: host/device별 계획=실제 전항 대조와
-attention·hybrid 무회귀, 그리고 ubatch 4096에서 드러난 계획 과소 보고의 원인)이다.
+attention·hybrid 무회귀)이다.
 그다음이 B2/B3 수용·반환 예산이며, resident 상향은 그 뒤에 온다.
 
 ### 0.0 2026-09-07 저녁 — 사용자 재개 지시 후 실제 확인 결과 (검증됨)
@@ -456,7 +456,7 @@ upstream_fix 4 · stage_hook 18 · model_feature 4), patch classification valid,
 
 | 턴 | 할 일 | 완료 조건(전부 실측·기록) |
 | ---: | --- | --- |
-| ~~**1**~~ | **완료(2026-09-10).** 재빌드(Release, CTest 15/15)·배포(해시 일치)·게이트 5종 통과, **0026 포함 확정.** 계획 pass가 ubatch 4096에서 model 0.60 GiB·compute 0.39 GiB 과소 보고하는 편차를 발견해 알려진 제약으로 넘긴다. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md). 원래 정의: **릴리즈 트리에서 CUDA 산출물 재빌드·원격 배포·실기 게이트.** `build-stage-server.mjs --cuda --cuda-architectures "86;89"`(Ninja는 `-DCMAKE_BUILD_TYPE=Release` 재구성 필요), flat copy 교체, 원격 `p4-remote/staged` 배포, `p4-agent.exe` 배포, 배포 전후 해시 기록. 실기: ① `smoke`, ② `pressure`(2B), ③ `pressure_35b`(r96) — 셋 다 512/512/512 또는 1/1/1, 두 오류 null. ④ 0026 게이트: 2-stage r256 35B 적재에서 계획 pass의 `RS buffer size = 0.00 MiB`와 `MEMORY_PLAN` context 값이 0025 때와 같은지, 실제 적재 뒤 최대 VRAM, 추론·UNLOAD 통과. ⑤ 실제로 넘치는 구성(예: 2-stage r512)은 **계속 거부**. ④·⑤ 중 하나라도 실패하면 0026 제외 분기 | 네 실행의 `evidence.json` 해시가 로컬 빌드 해시와 일치. 결과를 `evidence/2026-09-1x-release-gate.md`에 실행 ID·해시·판정으로 기록 |
+| ~~**1**~~ | **완료(2026-09-10).** 재빌드(Release, CTest 15/15)·배포(해시 일치)·게이트 5종 통과, **0026 포함 확정.** 마감 감사에서 ubatch 4096의 과소 보고 주장을 철회했다. head PLAN/ACTUAL은 일치하며 tail의 별도 PLAN이 실제 적재 전에 거부했다. [증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-release-gate-v0.9.0.md). 원래 정의: **릴리즈 트리에서 CUDA 산출물 재빌드·원격 배포·실기 게이트.** `build-stage-server.mjs --cuda --cuda-architectures "86;89"`(Ninja는 `-DCMAKE_BUILD_TYPE=Release` 재구성 필요), flat copy 교체, 원격 `p4-remote/staged` 배포, `p4-agent.exe` 배포, 배포 전후 해시 기록. 실기: ① `smoke`, ② `pressure`(2B), ③ `pressure_35b`(r96) — 셋 다 512/512/512 또는 1/1/1, 두 오류 null. ④ 0026 게이트: 2-stage r256 35B 적재에서 계획 pass의 `RS buffer size = 0.00 MiB`와 `MEMORY_PLAN` context 값이 0025 때와 같은지, 실제 적재 뒤 최대 VRAM, 추론·UNLOAD 통과. ⑤ 실제로 넘치는 구성(예: 2-stage r512)은 **계속 거부**. ④·⑤ 중 하나라도 실패하면 0026 제외 분기 | 네 실행의 `evidence.json` 해시가 로컬 빌드 해시와 일치. 결과를 `evidence/2026-09-1x-release-gate.md`에 실행 ID·해시·판정으로 기록 |
 | ~~**2**~~ | **완료(2026-09-10, `db7370e86`).** 원래 정의: **릴리즈 문서와 버전.** `docs/release/v0.9.0.md`(또는 CHANGELOG): 포함 변경(수용 예산·부분 결과 보존·귀속·CLI 산출물·측정 도구·시나리오·0026), **검증된 것**(실행 ID·해시 포함), **검증하지 않은 것**(§7 전항, H0~H7, 다중 호스트, 서비스 승인, TPS 개선, 최적값), **알려진 제약**(B2/B3 예산 부재, r160 TTFT 중앙값 93.9 초의 backlog, 모든 pressure 응답이 `length`, 휴리스틱 judge, 요청별 평균 ITL, `outstanding > 0` 의존, 한 호스트·sm_86·Windows만 시험), 지원 구성(통과한 시나리오·모델·절단·resident 그대로), 재현 명령(§6 + `measure-run.mjs`). 버전 bump, README에 릴리즈 포인터, document-map 등록. 전체 게이트 재실행(§6 전부 + CTest는 릴리즈 build dir에서) | docs-lint clean, 워크스페이스·하네스 전부 통과, 문서의 모든 숫자가 산출물 파일에서 복사됨 |
 | ~~**3**~~ | **완료(2026-09-10, tag `v0.9.0`).** 원래 정의: **봉인과 tag.** 트리 clean 확인 → 최종 커밋의 바이너리 해시를 릴리즈 노트에 다시 복사 → 증거 번들 디렉터리(실행 4개의 `MANIFEST.sha256` 사본과 총합 해시) → annotated tag `v0.9.0`(메시지에 증거 문서 경로·해시) → 원격 호스트를 배포 해시 상태로 유지하고 에이전트 정지 → 로드맵 §0에 "v0.9.0 봉인" 상태표와 **다음 버전 첫 행동**(P-3d 2번) 기록 | `git describe --tags`가 `v0.9.0`, `git status` clean, tag 메시지의 해시 = 배포 파일 해시 |
 

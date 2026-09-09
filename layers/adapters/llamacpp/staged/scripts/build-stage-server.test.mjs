@@ -11,22 +11,34 @@ const cmake = fs.readFileSync(path.join(scriptDir, "..", "server", "CMakeLists.t
 
 // Execute the production builder, replacing only filesystem/process boundaries.
 // Merely mentioning a target in a comment or dead branch cannot pass this test.
-function captureBuild(arguments_, source = builder) {
+function captureBuild(arguments_, source = builder, cudaLayout = null) {
   const calls = [];
+  const copies = [];
   const prepared = path.resolve(scriptDir, "fixture-prepared");
+  const cudaRoot = path.resolve("fixture-cuda");
+  const buildRoot = path.resolve("fixture-build");
+  const runtimeDir = cudaLayout === "multi" ? path.join(buildRoot, "Release") : buildRoot;
   const fakeFs = {
     existsSync(name) {
+      if (cudaLayout && (name === path.join(cudaRoot, "bin", "nvcc.exe")
+        || name === path.join(cudaRoot, "extras", "visual_studio_integration", "MSBuildExtensions")
+        || name === path.join(runtimeDir, "p4_staged_server.exe")
+        || ["cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll"].some(
+          (dll) => name === path.join(cudaRoot, "bin", "x64", dll)))) return true;
       return name === path.join(prepared, "CMakeLists.txt")
         || name === path.resolve("fixture-cmake")
         || name === path.join(path.dirname(path.resolve("fixture-cmake")), "ctest.exe");
     },
     mkdirSync() {},
-    copyFileSync() { assert.fail("CPU target selection must not copy CUDA libraries"); },
+    copyFileSync(from, to) {
+      assert.ok(cudaLayout, "CPU target selection must not copy CUDA libraries");
+      copies.push({ from, to });
+    },
   };
   const fakeProcess = {
     argv: ["node", "build-stage-server.mjs", "--cmake", path.resolve("fixture-cmake"),
       "--build-dir", path.resolve("fixture-build"), "--parallel", "2", ...arguments_],
-    env: {}, execPath: "fixture-node", platform: "linux",
+    env: {}, execPath: "fixture-node", platform: cudaLayout ? "win32" : "linux",
     stdout: { write() {} }, stderr: { write() {} },
     exit(code) { throw new Error(`unexpected builder exit ${code}`); },
   };
@@ -44,12 +56,40 @@ function captureBuild(arguments_, source = builder) {
   assert.ok(build, "the production builder must invoke the build command");
   assert.ok(calls.findIndex((call) => call.args[0] === "--test-dir") > calls.indexOf(build),
     "CTest must execute after the build, including when reusing imported libraries");
-  return { targets: build.args.slice(build.args.indexOf("--target") + 1), calls };
+  return { targets: build.args.slice(build.args.indexOf("--target") + 1), calls, copies };
 }
 
 function registeredTests(withLlama) {
   const source = withLlama ? cmake : cmake.split("if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)")[0];
   return [...source.matchAll(/add_test\(NAME\s+(p4_staged_[a-z0-9_]+_test)\b/gu)].map((match) => match[1]);
+}
+
+for (const [name, args, expected] of [
+  ["default Release", [], "Release"],
+  ["explicit Debug", ["--config", "Debug"], "Debug"],
+]) {
+  test(`Ninja ${name} is selected during configure as well as build and CTest`, () => {
+    const { calls } = captureBuild(["--generator", "Ninja", ...args]);
+    const configure = calls.find((call) => call.args[0] === "-S");
+    assert.ok(configure.args.includes(`-DCMAKE_BUILD_TYPE=${expected}`));
+    const build = calls.find((call) => call.args[0] === "--build");
+    assert.equal(build.args[build.args.indexOf("--config") + 1], expected);
+    const ctest = calls.find((call) => call.args[0] === "--test-dir");
+    assert.equal(ctest.args[ctest.args.indexOf("-C") + 1], expected);
+  });
+}
+
+for (const layout of ["single", "multi"]) {
+  test(`CUDA runtime DLLs are copied beside the actual ${layout}-configuration executable`, () => {
+    const { copies } = captureBuild([
+      "--cuda", "--cuda-root", path.resolve("fixture-cuda"),
+      "--generator", layout === "single" ? "Ninja" : "Visual Studio 17 2022",
+    ], builder, layout);
+    const destination = path.resolve("fixture-build", ...(layout === "multi" ? ["Release"] : []));
+    assert.deepEqual(copies.map((copy) => copy.to).sort(),
+      ["cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll"]
+        .map((dll) => path.join(destination, dll)).sort());
+  });
 }
 
 for (const [mode, args, withLlama] of [

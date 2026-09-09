@@ -62,6 +62,15 @@ RAM-offload layout validation and the final varied-corpus judge remain unfinishe
 work described by the roadmap. A successful report-unit test does not open an
 offload or multi-host acceptance gate.
 
+## Memory records
+
+`node test/benchmarks/p4-4node/plan-lines.mjs <run-directory>` prints the log's
+`MEMORY_PLAN` and `MEMORY_ACTUAL` records separately, including preceding RS/KV
+allocation lines. Record numbers are log order, not stage identity. Compare a
+stage's planned and actual model/context/compute sizes; a following stage's
+PLAN is not the preceding stage's ACTUAL. Allocated memory reduces current
+free memory, so an ACTUAL `fits_current_free=false` alone is not a load refusal.
+
 ## What the judge checks
 
 | Check | Failure it catches |

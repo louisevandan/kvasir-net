@@ -132,8 +132,10 @@ function resolveCudaRoot() {
 function copyCudaRuntimeDependencies(cuda, buildDir, config) {
   if (process.platform !== "win32" || !cuda) return [];
   const sourceDir = path.join(cuda.root, "bin", "x64");
-  const destinationDir = path.join(buildDir, config);
-  const names = ["cublas64_13.dll", "cublasLt64_13.dll"];
+  const destinationDir = [path.join(buildDir, config), buildDir, path.join(buildDir, "bin")]
+    .find((candidate) => fs.existsSync(path.join(candidate, "p4_staged_server.exe")));
+  if (!destinationDir) throw new Error("built stage executable was not found for CUDA runtime deployment");
+  const names = ["cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll"];
   const copied = [];
   for (const name of names) {
     const source = path.join(sourceDir, name);
@@ -209,10 +211,12 @@ fs.mkdirSync(buildDir, { recursive: true });
 
 const cmake = resolveCMake();
 importVisualStudioEnvironment(visualStudio);
+const config = argument("--config", "Release");
 const configureArgs = [
   "-S", serverDir,
   "-B", buildDir,
   `-DP4_STAGED_BUILD_LLAMA=${noLlama ? "OFF" : "ON"}`,
+  `-DCMAKE_BUILD_TYPE=${config}`,
 ];
 const generator = argument("--generator", defaultGenerator(cmake, buildDir));
 if (generator) {
@@ -248,7 +252,6 @@ if (prepared) configureArgs.push(`-DP4_STAGED_LLAMA_SOURCE_DIR=${prepared.source
 if (llamaBuildDir) configureArgs.push(`-DP4_STAGED_LLAMA_BUILD_DIR=${path.resolve(llamaBuildDir)}`);
 if (llamaRuntimeDir) configureArgs.push(`-DP4_STAGED_LLAMA_RUNTIME_DIR=${path.resolve(llamaRuntimeDir)}`);
 run(cmake, configureArgs);
-const config = argument("--config", "Release");
 const targets = [
   "p4_staged_server",
   "p4_staged_server_test",

@@ -3,7 +3,7 @@
 //
 //   node test/benchmarks/p4-4node/plan-lines.mjs <run directory>
 //
-// Prints, per MEMORY_PLAN record: the resident set it planned for, the
+// Prints each MEMORY_PLAN and MEMORY_ACTUAL record without merging them: the
 // device entry's free / model / context / compute / required in GiB, whether
 // it fit, and the RS and KV buffer lines that preceded it. That is the
 // arithmetic the 2026-09-09 refusals were diagnosed from, and it is what
@@ -21,18 +21,18 @@ const lines = fs.readFileSync(path.join(dir, "agent.stderr.log"), "utf8").split(
 const gib = (n) => (n / 1073741824).toFixed(2);
 
 let recent = [];
-let plans = 0;
+let records = 0;
 for (const line of lines) {
   if (/RS buffer size|KV buffer size|llama_memory_recurrent: size =|llama_kv_cache: size =/.test(line)) {
     recent.push(line.trim());
     continue;
   }
-  const at = line.indexOf("MEMORY_PLAN ");
-  if (at < 0) continue;
-  plans += 1;
-  const plan = JSON.parse(line.slice(at + "MEMORY_PLAN ".length));
+  const marker = /MEMORY_(PLAN|ACTUAL) /.exec(line);
+  if (!marker) continue;
+  records += 1;
+  const plan = JSON.parse(line.slice(marker.index + marker[0].length));
   const device = plan.entries.find((entry) => entry.scope === "device");
-  console.log(`--- plan #${plans}: n_seq_max=${plan.execution_shape.n_seq_max} n_ctx=${plan.execution_shape.n_ctx} fits_current_free=${plan.fits_current_free}`);
+  console.log(`--- MEMORY_${marker[1]} #${records}: n_seq_max=${plan.execution_shape.n_seq_max} n_ctx=${plan.execution_shape.n_ctx} fits_current_free=${plan.fits_current_free}`);
   for (const buffer of recent) console.log(`    ${buffer}`);
   if (device) {
     console.log(
@@ -43,4 +43,4 @@ for (const line of lines) {
   }
   recent = [];
 }
-if (plans === 0) console.log("no MEMORY_PLAN record in this log");
+if (records === 0) console.log("no MEMORY_PLAN or MEMORY_ACTUAL record in this log");
