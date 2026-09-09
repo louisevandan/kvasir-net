@@ -481,7 +481,7 @@ fn local_native_success_commits_receipt_and_frontier_without_forward_authority()
                 .worker
                 .state
                 .stage_owners
-                .check_control(&identity, 7 + u64::from(slot), &body)
+                .check_at_ceiling(&identity, 7 + u64::from(slot), &body)
                 .unwrap();
             let ControlCheck::Replay(response) = receipt else {
                 panic!("native success must commit its receipt")

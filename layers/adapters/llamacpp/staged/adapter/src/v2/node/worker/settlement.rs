@@ -210,20 +210,22 @@ impl Worker {
                 &identity.session_id,
                 sequence,
             )?;
+            // A settlement answers the identity echo, a token count, and at
+            // most one four-byte token per physical row. `settlement_reply`
+            // and `validate_continuation_width` refuse anything wider before
+            // the result can become a receipt.
             let response_bound = self
                 .state
                 .physical_capacity
                 .checked_mul(4)
                 .and_then(|n| n.checked_add(prefix.len() + 4))
                 .ok_or("settlement response bound overflow")?;
-            super::super::ownership::StageOwners::validate_control_sizes(
-                body.len(),
+            let check = self.state.stage_owners.check_control(
+                &identity,
+                sequence.operation_id,
+                &body,
                 response_bound,
             )?;
-            let check =
-                self.state
-                    .stage_owners
-                    .check_control(&identity, sequence.operation_id, &body)?;
             if matches!(check, super::super::ownership::ControlCheck::New) {
                 // Validate every affected sequence before the first native
                 // trim/restore. A new operation ID does not authorize rewind.
@@ -234,17 +236,31 @@ impl Worker {
                     &sequence.replay_tokens,
                 )?;
             }
-            prepared.push((identity, prefix, body, check));
+            prepared.push((identity, prefix, body, check, response_bound));
         }
         let controls: Vec<_> = prepared
             .iter()
             .zip(sequences.iter())
-            .map(|((identity, _, body, _), sequence)| {
-                (identity.clone(), sequence.operation_id, body.clone())
+            .map(|((identity, _, body, _, bound), sequence)| {
+                super::super::ownership::ControlBudget {
+                    identity: identity.clone(),
+                    operation_id: sequence.operation_id,
+                    request: body.clone(),
+                    response_bound: *bound,
+                }
             })
             .collect();
-        self.state.stage_owners.validate_control_batch(&controls)?;
-        for (sequence, (identity, prefix, body, check)) in sequences.iter_mut().zip(prepared) {
+        self.state
+            .stage_owners
+            .validate_control_batch(&controls)
+            .map_err(|error| {
+                format!(
+                    "settlement of {} sequence(s) at physical capacity {}: {error}",
+                    controls.len(),
+                    self.state.physical_capacity
+                )
+            })?;
+        for (sequence, (identity, prefix, body, check, _)) in sequences.iter_mut().zip(prepared) {
             // Slots are unique and the worker is serial. Re-prepare the delta
             // at this revision after the whole-event semantic preflight above.
             let frontier = if matches!(check, super::super::ownership::ControlCheck::New) {

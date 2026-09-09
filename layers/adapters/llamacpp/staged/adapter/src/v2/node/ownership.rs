@@ -91,6 +91,19 @@ pub(crate) enum ControlCheck {
     Replay(Vec<u8>),
 }
 
+/// One control of a batch together with the ceiling its own contract can
+/// prove for the response. The budget reserves this bound before the native
+/// effect; `MAX_CONTROL_BYTES` is only the ceiling a bound may not exceed.
+/// A RELEASE echoes its request, so its bound is the request length; a
+/// SETTLE answers an identity echo plus at most one token per physical row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ControlBudget {
+    pub identity: Identity,
+    pub operation_id: u64,
+    pub request: Vec<u8>,
+    pub response_bound: usize,
+}
+
 enum BorrowedControlCheck<'a> {
     New,
     Replay(&'a [u8]),
@@ -244,21 +257,35 @@ impl StageOwners {
             .and_then(|retained| retained.checked_add(response_len))
             .ok_or_else(|| "stage control receipt accounting overflow".to_owned())?;
         if bytes > self.limits.receipt_bytes {
-            return Err("stage control total receipt budget is exhausted".into());
+            return Err(format!(
+                "stage control total receipt budget is exhausted: slot {}, retained {} B, \
+                 reclaimed {} B, request {} B, response bound {} B, need {} B, limit {} B",
+                slot.identity.sequence_id,
+                self.receipt_bytes,
+                old,
+                request_len,
+                response_len,
+                bytes,
+                self.limits.receipt_bytes
+            ));
         }
         Ok(bytes)
     }
 
     /// `request` must be the canonical command including its operation kind,
     /// not merely an untagged payload shared by different native operations.
+    /// `response_bound` is the ceiling this one command can prove for its own
+    /// response. It is what the budget reserves before the native effect, so
+    /// a command whose answer is small no longer charges the global maximum.
     pub fn check_control(
         &self,
         identity: &Identity,
         operation_id: u64,
         request: &[u8],
+        response_bound: usize,
     ) -> Result<ControlCheck, String> {
         Ok(
-            match self.check_control_borrowed(identity, operation_id, request)? {
+            match self.check_control_borrowed(identity, operation_id, request, response_bound)? {
                 BorrowedControlCheck::New => ControlCheck::New,
                 BorrowedControlCheck::Replay(response) => ControlCheck::Replay(response.to_vec()),
             },
@@ -270,9 +297,10 @@ impl StageOwners {
         identity: &Identity,
         operation_id: u64,
         request: &[u8],
+        response_bound: usize,
     ) -> Result<BorrowedControlCheck<'_>, String> {
         identity.validate()?;
-        self.validate_sizes(request.len(), 0)?;
+        self.validate_sizes(request.len(), response_bound)?;
         if operation_id == 0 {
             return Err("stage control operation identity is zero".into());
         }
@@ -298,9 +326,10 @@ impl StageOwners {
             return Err("released stage owner can only replay its final control receipt".into());
         }
         // New controls are executed serially by the owning worker. Reserve
-        // room for the maximum response BEFORE native execution, replacing
-        // this slot's old receipt rather than charging both forever.
-        self.replacement_bytes(slot, request.len(), self.limits.control_bytes)?;
+        // room for this command's own proven response bound BEFORE native
+        // execution, replacing this slot's old receipt rather than charging
+        // both forever.
+        self.replacement_bytes(slot, request.len(), response_bound)?;
         Ok(BorrowedControlCheck::New)
     }
 
@@ -308,29 +337,41 @@ impl StageOwners {
     /// a read-only budget check, not a reservation that survives other writes:
     /// the owning worker must execute the validated command without interleaving
     /// another command. Retained receipt payloads are borrowed, never copied.
-    pub fn validate_control_batch(
-        &self,
-        controls: &[(Identity, u64, Vec<u8>)],
-    ) -> Result<(), String> {
+    ///
+    /// Every member reserves its own `response_bound`, so the batch width a
+    /// stage accepts follows the responses its commands can actually return
+    /// rather than the one-megabyte ceiling. The caller owes the proof that
+    /// its command cannot answer with more than the bound it declares:
+    /// `commit_control` charges the response that actually arrived, so a
+    /// longer answer must be fenced before it reaches commit.
+    pub fn validate_control_batch(&self, controls: &[ControlBudget]) -> Result<(), String> {
         let mut slots = BTreeSet::new();
         let mut reserved = self.receipt_bytes;
-        for (identity, operation_id, request) in controls {
-            if !slots.insert(identity.sequence_id) {
+        let mut new_members = 0usize;
+        for control in controls {
+            if !slots.insert(control.identity.sequence_id) {
                 return Err("stage control batch repeats a physical slot".into());
             }
             if matches!(
-                self.check_control_borrowed(identity, *operation_id, request)?,
+                self.check_control_borrowed(
+                    &control.identity,
+                    control.operation_id,
+                    &control.request,
+                    control.response_bound,
+                )?,
                 BorrowedControlCheck::Replay(_)
             ) {
                 continue;
             }
-            let old = self.slots[&identity.sequence_id]
+            new_members += 1;
+            let old = self.slots[&control.identity.sequence_id]
                 .receipt
                 .as_ref()
                 .map_or(0, |receipt| receipt.bytes());
-            let replacement = request
+            let replacement = control
+                .request
                 .len()
-                .checked_add(self.limits.control_bytes)
+                .checked_add(control.response_bound)
                 .ok_or_else(|| "stage control batch receipt accounting overflow".to_owned())?;
             // A later shrinking receipt cannot fund an earlier growing one.
             // Sum only positive increases so every execution prefix fits,
@@ -341,7 +382,16 @@ impl StageOwners {
                 .ok_or_else(|| "stage control batch receipt accounting overflow".to_owned())?;
         }
         if reserved > self.limits.receipt_bytes {
-            return Err("stage control batch total receipt budget is exhausted".into());
+            return Err(format!(
+                "stage control batch total receipt budget is exhausted: {} member(s), \
+                 {} new, retained {} B, reserve {} B, need {} B, limit {} B",
+                controls.len(),
+                new_members,
+                self.receipt_bytes,
+                reserved - self.receipt_bytes,
+                reserved,
+                self.limits.receipt_bytes
+            ));
         }
         Ok(())
     }
@@ -357,7 +407,8 @@ impl StageOwners {
         released: bool,
     ) -> Result<(), String> {
         self.validate_sizes(request.len(), response.len())?;
-        let check = self.check_control_borrowed(identity, operation_id, request)?;
+        // Commit charges the response that actually arrived, never a bound.
+        let check = self.check_control_borrowed(identity, operation_id, request, response.len())?;
         let status = if released {
             Status::Released
         } else {
@@ -409,6 +460,37 @@ impl StageOwners {
             },
             ..Self::default()
         }
+    }
+}
+
+/// Every control charged the whole per-control ceiling before commands
+/// declared their own response bound. Tests whose subject is something else
+/// keep charging it, so only the tests about bounds carry bound arithmetic.
+#[cfg(test)]
+impl StageOwners {
+    pub(crate) fn check_at_ceiling(
+        &self,
+        identity: &Identity,
+        operation_id: u64,
+        request: &[u8],
+    ) -> Result<ControlCheck, String> {
+        self.check_control(identity, operation_id, request, self.limits.control_bytes)
+    }
+
+    fn validate_batch_at_ceiling(
+        &self,
+        controls: &[(Identity, u64, Vec<u8>)],
+    ) -> Result<(), String> {
+        let budgets: Vec<_> = controls
+            .iter()
+            .map(|(identity, operation_id, request)| ControlBudget {
+                identity: identity.clone(),
+                operation_id: *operation_id,
+                request: request.clone(),
+                response_bound: self.limits.control_bytes,
+            })
+            .collect();
+        self.validate_control_batch(&budgets)
     }
 }
 
@@ -549,13 +631,13 @@ mod tests {
         owners = owners.prepare_rows(1, 4, &[&second]).unwrap();
         let before = owners.clone();
         for body in [b"release".as_slice(), b"settle".as_slice()] {
-            assert!(owners.check_control(&old, 7, body).is_err());
+            assert!(owners.check_at_ceiling(&old, 7, body).is_err());
             assert!(owners.commit_control(&old, 7, body, b"old", true).is_err());
         }
         assert_eq!(owners, before);
         assert_eq!(
             owners
-                .check_control(&Identity::from_owner(&second), 1, b"settle")
+                .check_at_ceiling(&Identity::from_owner(&second), 1, b"settle")
                 .unwrap(),
             ControlCheck::New
         );
@@ -588,7 +670,7 @@ mod tests {
         let identity = Identity::from_owner(&owner);
         let mut owners = active(&owner);
         assert_eq!(
-            owners.check_control(&identity, 2, b"settle").unwrap(),
+            owners.check_at_ceiling(&identity, 2, b"settle").unwrap(),
             ControlCheck::New
         );
         owners
@@ -596,15 +678,15 @@ mod tests {
             .unwrap();
         let settled = owners.clone();
         assert_eq!(
-            owners.check_control(&identity, 2, b"settle").unwrap(),
+            owners.check_at_ceiling(&identity, 2, b"settle").unwrap(),
             ControlCheck::Replay(b"proposal".to_vec())
         );
         owners
             .commit_control(&identity, 2, b"settle", b"proposal", false)
             .unwrap();
         assert_eq!(owners, settled);
-        assert!(owners.check_control(&identity, 1, b"settle").is_err());
-        assert!(owners.check_control(&identity, 2, b"changed").is_err());
+        assert!(owners.check_at_ceiling(&identity, 1, b"settle").is_err());
+        assert!(owners.check_at_ceiling(&identity, 2, b"changed").is_err());
         assert!(
             owners
                 .commit_control(&identity, 2, b"settle", b"different", false)
@@ -619,7 +701,7 @@ mod tests {
         release(&mut owners, &owner, 3);
         let released = owners.clone();
         assert_eq!(
-            owners.check_control(&identity, 3, b"release").unwrap(),
+            owners.check_at_ceiling(&identity, 3, b"release").unwrap(),
             ControlCheck::Replay(b"released".to_vec())
         );
         owners
@@ -628,7 +710,7 @@ mod tests {
         for operation in [1, 2, 4, u64::MAX] {
             assert!(
                 owners
-                    .check_control(&identity, operation, b"release")
+                    .check_at_ceiling(&identity, operation, b"release")
                     .is_err()
             );
         }
@@ -647,9 +729,9 @@ mod tests {
         variants[3].sequence_id += 1;
         variants[4].incarnation += 1;
         for invalid in variants {
-            assert!(owners.check_control(&invalid, 1, b"release").is_err());
+            assert!(owners.check_at_ceiling(&invalid, 1, b"release").is_err());
         }
-        assert!(owners.check_control(&identity, 0, b"release").is_err());
+        assert!(owners.check_at_ceiling(&identity, 0, b"release").is_err());
     }
 
     #[test]
@@ -666,7 +748,7 @@ mod tests {
             .commit_control(&identity, 1, &limit, &limit, false)
             .unwrap();
         let before = owners.clone();
-        assert!(owners.check_control(&identity, 2, &excessive).is_err());
+        assert!(owners.check_at_ceiling(&identity, 2, &excessive).is_err());
         assert!(
             owners
                 .commit_control(&identity, 2, &limit, &excessive, true)
@@ -679,7 +761,7 @@ mod tests {
         );
         assert_eq!(owners, before);
         assert_eq!(
-            owners.check_control(&identity, 1, &limit).unwrap(),
+            owners.check_at_ceiling(&identity, 1, &limit).unwrap(),
             ControlCheck::Replay(limit)
         );
         let candidate = owners.prepare_rows(1, 4, &[&owner]).unwrap();
@@ -725,14 +807,28 @@ mod tests {
             .unwrap();
         assert_eq!(owners.receipt_bytes, 16);
         let before = owners.clone();
-        assert!(owners.check_control(&bid, 1, b"b").is_err());
-        assert!(owners.commit_control(&bid, 1, b"b", b"", false).is_err());
+        assert!(owners.check_at_ceiling(&bid, 1, b"b").is_err());
+        // The pre-native gate charges the bound the caller must prove, so a
+        // command that can answer in three bytes is admitted at exactly the
+        // limit while the same command claiming the whole ceiling is not.
+        assert_eq!(
+            owners.check_control(&bid, 1, b"b", 3).unwrap(),
+            ControlCheck::New
+        );
+        assert!(owners.check_control(&bid, 1, b"b", 4).is_err());
+        // Commit charges the response that actually arrived, so it refuses
+        // only a receipt that truly does not fit, never a bound.
+        assert!(
+            owners
+                .commit_control(&bid, 1, b"b", b"1234", false)
+                .is_err()
+        );
         assert_eq!(owners, before);
         // Replacing A's receipt deducts its old bytes before reservation.
         owners.commit_control(&aid, 2, b"a", b"a", false).unwrap();
         assert_eq!(owners.receipt_bytes, 2);
         assert_eq!(
-            owners.check_control(&bid, 1, b"b").unwrap(),
+            owners.check_at_ceiling(&bid, 1, b"b").unwrap(),
             ControlCheck::New
         );
         owners
@@ -754,14 +850,18 @@ mod tests {
             .unwrap();
         for (identity, operation, request) in &controls {
             assert_eq!(
-                owners.check_control(identity, *operation, request).unwrap(),
+                owners
+                    .check_at_ceiling(identity, *operation, request)
+                    .unwrap(),
                 ControlCheck::New
             );
         }
         let before = owners.clone();
         assert_eq!(
-            owners.validate_control_batch(&controls).unwrap_err(),
-            "stage control batch total receipt budget is exhausted"
+            owners.validate_batch_at_ceiling(&controls).unwrap_err(),
+            "stage control batch total receipt budget is exhausted: 2 member(s), \
+             2 new, retained 0 B, reserve 18 B, need 18 B, limit 17 B",
+            "the refusal names the width and the arithmetic that produced it"
         );
         assert_eq!(owners, before);
 
@@ -770,13 +870,118 @@ mod tests {
         let mut fitting = StageOwners::with_limits(8, 18, 4)
             .prepare_rows(1, 4, &[&a, &b])
             .unwrap();
-        fitting.validate_control_batch(&controls).unwrap();
+        fitting.validate_batch_at_ceiling(&controls).unwrap();
         for (identity, operation, request) in &controls {
             fitting
                 .commit_control(identity, *operation, request, b"12345678", false)
                 .unwrap();
         }
         assert_eq!(fitting.receipt_bytes, 18);
+    }
+
+    /// The 2026-09-09 pressure failure, at production limits and the resident
+    /// width the scenario runs: 64 MiB of receipts divided by a 1 MiB
+    /// per-control ceiling is 64 members, so a stage sitting at sequence
+    /// capacity 256 could never release or settle its own owners. The bodies
+    /// here are the real wire commands, and the bounds are the ones their
+    /// contracts prove, not values chosen to make the sum fit.
+    #[test]
+    fn a_full_width_control_batch_fits_when_each_command_reserves_its_own_bound() {
+        const CAPACITY: u32 = 256;
+        let rows: Vec<_> = (0..CAPACITY)
+            .map(|slot| row("session", &format!("request-{slot}"), slot, 1))
+            .collect();
+        let borrowed: Vec<_> = rows.iter().collect();
+        let owners = StageOwners::default()
+            .prepare_rows(1, CAPACITY, &borrowed)
+            .unwrap();
+        assert_eq!(owners.active_slots(), CAPACITY as usize);
+
+        // A physical release is acknowledged by echoing its request.
+        let releases: Vec<_> = rows
+            .iter()
+            .map(|owner| {
+                let request = crate::v2::control_identity::release(
+                    1,
+                    "session",
+                    &crate::v2::ReleaseSequence {
+                        key: owner.sequence_key.clone(),
+                        id: owner.sequence_id,
+                        incarnation: owner.incarnation,
+                        operation_id: 1,
+                    },
+                )
+                .unwrap();
+                ControlBudget {
+                    identity: Identity::from_owner(owner),
+                    operation_id: 1,
+                    response_bound: request.len(),
+                    request,
+                }
+            })
+            .collect();
+        owners.validate_control_batch(&releases).unwrap();
+
+        // A settlement answers its identity echo, a count, and at most one
+        // four-byte token per physical row.
+        let settlements: Vec<_> = rows
+            .iter()
+            .map(|owner| {
+                let (prefix, request) = crate::v2::control_identity::settlement(
+                    1,
+                    "session",
+                    &crate::v2::SettlementSequence {
+                        key: owner.sequence_key.clone(),
+                        id: owner.sequence_id,
+                        incarnation: owner.incarnation,
+                        operation_id: 1,
+                        retain_from: 3,
+                        replay_tokens: Vec::new(),
+                        replay_position: 0,
+                        proposal: Vec::new(),
+                    },
+                )
+                .unwrap();
+                ControlBudget {
+                    identity: Identity::from_owner(owner),
+                    operation_id: 1,
+                    response_bound: CAPACITY as usize * 4 + prefix.len() + 4,
+                    request,
+                }
+            })
+            .collect();
+        owners.validate_control_batch(&settlements).unwrap();
+
+        // The same batch, with every member claiming the ceiling instead of
+        // its own bound, is the refusal the pressure run hit. Its width is
+        // the number the run did not record.
+        let at_ceiling: Vec<_> = releases
+            .iter()
+            .cloned()
+            .map(|mut control| {
+                control.response_bound = MAX_CONTROL_BYTES;
+                control
+            })
+            .collect();
+        let widest = (1..=at_ceiling.len())
+            .take_while(|width| owners.validate_control_batch(&at_ceiling[..*width]).is_ok())
+            .count();
+        let reserved: usize = at_ceiling[..widest]
+            .iter()
+            .map(|control| control.request.len() + control.response_bound)
+            .sum();
+        assert_eq!(
+            widest, 63,
+            "the ceiling admits {widest} of {CAPACITY} members ({reserved} B of {MAX_RECEIPT_BYTES} B)"
+        );
+        let refusal = owners.validate_control_batch(&at_ceiling).unwrap_err();
+        assert!(
+            refusal.contains("256 member(s)")
+                && refusal.contains("256 new")
+                && refusal.contains("retained 0 B")
+                && refusal.contains(&format!("limit {MAX_RECEIPT_BYTES} B")),
+            "the refusal must carry the width and the arithmetic: {refusal}"
+        );
     }
 
     #[test]
@@ -796,10 +1001,11 @@ mod tests {
             (bid.clone(), 1, b"b".to_vec()),
         ];
         let before = owners.clone();
-        owners.validate_control_batch(&controls).unwrap();
+        owners.validate_batch_at_ceiling(&controls).unwrap();
         assert_eq!(owners, before);
-        let BorrowedControlCheck::Replay(response) =
-            owners.check_control_borrowed(&aid, 1, b"12345678").unwrap()
+        let BorrowedControlCheck::Replay(response) = owners
+            .check_control_borrowed(&aid, 1, b"12345678", owners.limits.control_bytes)
+            .unwrap()
         else {
             panic!("the released owner's exact latest receipt must be borrowed");
         };
@@ -814,7 +1020,7 @@ mod tests {
         // B replaces its nine-byte receipt with the same worst-case size.
         // Neither an exact replay nor a replacement needs another allowance.
         owners
-            .validate_control_batch(&[(aid, 1, b"12345678".to_vec()), (bid, 2, b"c".to_vec())])
+            .validate_batch_at_ceiling(&[(aid, 1, b"12345678".to_vec()), (bid, 2, b"c".to_vec())])
             .unwrap();
 
         // A short stored response is replayed as-is, not expanded to another
@@ -827,7 +1033,7 @@ mod tests {
             .commit_control(&Identity::from_owner(&a), 1, b"a", b"a", true)
             .unwrap();
         short
-            .validate_control_batch(&[
+            .validate_batch_at_ceiling(&[
                 (Identity::from_owner(&a), 1, b"a".to_vec()),
                 (Identity::from_owner(&b), 1, b"b".to_vec()),
             ])
@@ -853,16 +1059,18 @@ mod tests {
         ];
         for (identity, operation, request) in &controls {
             assert_eq!(
-                owners.check_control(identity, *operation, request).unwrap(),
+                owners
+                    .check_at_ceiling(identity, *operation, request)
+                    .unwrap(),
                 ControlCheck::New
             );
         }
         // Final net use would be 27 <= 28, but before A shrinks the two new
         // receipts can reach 34. Refuse before B has any native side effect.
         let before = owners.clone();
-        assert!(owners.validate_control_batch(&controls).is_err());
+        assert!(owners.validate_batch_at_ceiling(&controls).is_err());
         controls.reverse();
-        assert!(owners.validate_control_batch(&controls).is_err());
+        assert!(owners.validate_batch_at_ceiling(&controls).is_err());
         assert_eq!(owners, before);
     }
 
@@ -879,12 +1087,12 @@ mod tests {
         let before = owners.clone();
         assert!(
             owners
-                .validate_control_batch(&[first.clone(), second])
+                .validate_batch_at_ceiling(&[first.clone(), second])
                 .is_err()
         );
         assert_eq!(
             owners
-                .validate_control_batch(&[first.clone(), first])
+                .validate_batch_at_ceiling(&[first.clone(), first])
                 .unwrap_err(),
             "stage control batch repeats a physical slot"
         );
@@ -911,7 +1119,7 @@ mod tests {
         assert_eq!(candidate.receipt_bytes, 2);
         assert_eq!(
             candidate
-                .check_control(&Identity::from_owner(&b), 1, b"b")
+                .check_at_ceiling(&Identity::from_owner(&b), 1, b"b")
                 .unwrap(),
             ControlCheck::Replay(b"b".to_vec())
         );

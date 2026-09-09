@@ -319,17 +319,39 @@ impl Worker {
                 &command.session_id,
                 sequence,
             )?;
-            controls.push((identity, sequence.operation_id, body));
+            // A physical release acknowledges by echoing its own request and
+            // is refused below when it does not, so the request length is the
+            // whole response this control can ever retain.
+            controls.push(super::super::ownership::ControlBudget {
+                response_bound: body.len(),
+                identity,
+                operation_id: sequence.operation_id,
+                request: body,
+            });
         }
-        self.state.stage_owners.validate_control_batch(&controls)?;
-        for (identity, operation_id, body) in &controls {
+        self.state
+            .stage_owners
+            .validate_control_batch(&controls)
+            .map_err(|error| {
+                format!(
+                    "release of {} sequence(s) for session {}: {error}",
+                    controls.len(),
+                    command.session_id
+                )
+            })?;
+        for control in &controls {
             if matches!(
-                self.state
-                    .stage_owners
-                    .check_control(identity, *operation_id, body)?,
+                self.state.stage_owners.check_control(
+                    &control.identity,
+                    control.operation_id,
+                    &control.request,
+                    control.response_bound,
+                )?,
                 super::super::ownership::ControlCheck::New
             ) {
-                self.state.stage_frontiers.prepare_release(identity)?;
+                self.state
+                    .stage_frontiers
+                    .prepare_release(&control.identity)?;
             }
         }
         self.ensure_event_id_obligations(1, 0)?;
@@ -634,10 +656,14 @@ impl Worker {
             &identity.session_id,
             sequence,
         )?;
-        let check =
-            self.state
-                .stage_owners
-                .check_control(&identity, sequence.operation_id, &body)?;
+        let check = self.state.stage_owners.check_control(
+            &identity,
+            sequence.operation_id,
+            &body,
+            // Enforced immediately below: the acknowledgement must equal the
+            // request byte for byte or the effect is fenced, never committed.
+            body.len(),
+        )?;
         let frontier = if matches!(check, super::super::ownership::ControlCheck::New) {
             Some(self.state.stage_frontiers.prepare_release(&identity)?)
         } else {

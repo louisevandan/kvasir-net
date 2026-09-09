@@ -1553,15 +1553,29 @@ fn assert_control_batch_reserves_all_receipts_before_native(release: bool) {
             }
         }
         let (event, controls) = budget_control_input(&identities, release);
+        // Each command's response ceiling read off its own wire contract, not
+        // off the budget code: a physical release must echo its request byte
+        // for byte, and a settlement echoes its identity prefix, a token
+        // count, and at most one four-byte token per physical row. The
+        // settlement bodies here carry no replay tokens, so the prefix is the
+        // body minus retain_from, replay_position and the count.
+        let capacity = fixture.worker.state.physical_capacity;
+        let bound = |body: &[u8]| {
+            if release {
+                body.len()
+            } else {
+                capacity * 4 + (body.len() - 12) + 4
+            }
+        };
         for (identity, operation, body) in &controls {
-            assert!(body.len() <= CONTROL_LIMIT);
-            assert!(body.len() + CONTROL_LIMIT <= TOTAL_LIMIT);
+            assert!(body.len() <= CONTROL_LIMIT && bound(body) <= CONTROL_LIMIT);
+            assert!(body.len() + bound(body) <= TOTAL_LIMIT);
             assert_eq!(
                 fixture
                     .worker
                     .state
                     .stage_owners
-                    .check_control(identity, *operation, body)
+                    .check_control(identity, *operation, body, bound(body))
                     .unwrap(),
                 super::super::ownership::ControlCheck::New,
                 "each command is independently valid and affordable"
@@ -1570,9 +1584,11 @@ fn assert_control_batch_reserves_all_receipts_before_native(release: bool) {
         assert!(
             controls
                 .iter()
-                .map(|(_, _, body)| body.len() + CONTROL_LIMIT)
+                .map(|(_, _, body)| body.len() + bound(body))
                 .sum::<usize>()
-                > TOTAL_LIMIT
+                > TOTAL_LIMIT,
+            "the refusal must come from the sum of the real bounds, not from \
+             a per-control worst case nobody can return"
         );
         let owners_before = fixture.worker.state.stage_owners.clone();
         let frontiers_before = format!("{:?}", fixture.worker.state.stage_frontiers);
@@ -1650,7 +1666,7 @@ fn assert_control_batch_reserves_all_receipts_before_native(release: bool) {
                 .worker
                 .state
                 .stage_owners
-                .check_control(identity, *operation, body)
+                .check_at_ceiling(identity, *operation, body)
                 .unwrap(),
             super::super::ownership::ControlCheck::Replay(_)
         ));
@@ -1665,6 +1681,113 @@ fn aggregate_settlement_receipt_budget_refuses_before_the_first_native_effect() 
 #[test]
 fn aggregate_release_receipt_budget_refuses_before_the_first_native_effect() {
     assert_control_batch_reserves_all_receipts_before_native(true);
+}
+
+/// The other side of the same preflight, at the real consumption path. This
+/// budget affords every member's own proven response and does not afford the
+/// per-control ceiling for the same members, so a stage that charges the
+/// ceiling refuses a batch it can pay for. That refusal is what stopped the
+/// 2026-09-09 pressure run from releasing any of its owners.
+fn assert_control_batch_admits_the_width_its_bounds_afford(release: bool) {
+    const CONTROL_LIMIT: usize = 128;
+    const TOTAL_LIMIT: usize = 340;
+    for role in [NodeRole::Middle, NodeRole::Last] {
+        let mut fixture = fixture_at(
+            if release {
+                ResponseMode::ReleaseExactStatus
+            } else {
+                ResponseMode::SettlementExact
+            },
+            role,
+        );
+        fixture.worker.state.stage_owners =
+            super::super::ownership::StageOwners::with_limits(CONTROL_LIMIT, TOTAL_LIMIT, 8);
+        let identities = establish_two_native_owners(&mut fixture);
+        if !release {
+            for identity in &identities {
+                append_native_verify(&mut fixture, &identity.sequence_key, 1);
+            }
+        }
+        let (event, controls) = budget_control_input(&identities, release);
+        let capacity = fixture.worker.state.physical_capacity;
+        let bound = |body: &[u8]| {
+            if release {
+                body.len()
+            } else {
+                capacity * 4 + (body.len() - 12) + 4
+            }
+        };
+        let afforded: usize = controls
+            .iter()
+            .map(|(_, _, body)| body.len() + bound(body))
+            .sum();
+        let at_ceiling: usize = controls
+            .iter()
+            .map(|(_, _, body)| body.len() + CONTROL_LIMIT)
+            .sum();
+        assert!(
+            afforded <= TOTAL_LIMIT && at_ceiling > TOTAL_LIMIT,
+            "this budget must separate the two accountings: \
+             afforded={afforded}, ceiling={at_ceiling}, limit={TOTAL_LIMIT}"
+        );
+
+        let before = fixture.trace.lock().unwrap().native_operations.clone();
+        let result = fixture.handle(event);
+        result.expect("an affordable control batch is not a refusal");
+        assert!(!fixture.worker.effects_fenced);
+        let expected = if release {
+            Operation::PhysicalRelease
+        } else {
+            Operation::PhysicalSettle
+        };
+        assert_eq!(
+            fixture.trace.lock().unwrap().native_operations,
+            [before, vec![expected; controls.len()]].concat(),
+            "every member of an affordable batch executes"
+        );
+        let events = drain(&fixture.mailbox);
+        assert!(!events.is_empty());
+        assert!(
+            events
+                .iter()
+                .all(|event| event.envelope.payload_content_type != ERROR_CONTENT_TYPE),
+            "no member may be refused for a receipt the stage can pay for: {events:?}"
+        );
+        for (identity, operation, body) in &controls {
+            assert!(
+                matches!(
+                    fixture
+                        .worker
+                        .state
+                        .stage_owners
+                        .check_at_ceiling(identity, *operation, body)
+                        .unwrap(),
+                    super::super::ownership::ControlCheck::Replay(_)
+                ),
+                "every member retains its own receipt, so a resend replays"
+            );
+        }
+        // The retained receipts are the bytes that actually arrived, and they
+        // stay inside the budget that admitted the batch.
+        let mut resent = budget_control_input(&identities, release).0;
+        resent.envelope.event_id = "resent-affordable-control-batch".into();
+        let operations = fixture.trace.lock().unwrap().native_operations.clone();
+        let kv = fixture.trace.lock().unwrap().native_kv.clone();
+        fixture.handle(resent).expect("an exact resend is a replay");
+        assert!(!fixture.worker.effects_fenced);
+        assert_eq!(fixture.trace.lock().unwrap().native_operations, operations);
+        assert_eq!(fixture.trace.lock().unwrap().native_kv, kv);
+    }
+}
+
+#[test]
+fn a_settlement_batch_its_bounds_afford_is_admitted_at_the_consumption_path() {
+    assert_control_batch_admits_the_width_its_bounds_afford(false);
+}
+
+#[test]
+fn a_release_batch_its_bounds_afford_is_admitted_at_the_consumption_path() {
+    assert_control_batch_admits_the_width_its_bounds_afford(true);
 }
 
 fn assert_release_uses_the_last_available_event_id(role: NodeRole, event: &Event) {
@@ -1710,7 +1833,7 @@ fn assert_release_uses_the_last_available_event_id(role: NodeRole, event: &Event
                 .worker
                 .state
                 .stage_owners
-                .check_control(&identity, operation, &body)
+                .check_at_ceiling(&identity, operation, &body)
                 .unwrap(),
             super::super::ownership::ControlCheck::Replay(body)
         );
@@ -2078,7 +2201,7 @@ fn assert_overwide_native_result_fenced(fixture: &mut Fixture, event: Event, ope
                 .worker
                 .state
                 .stage_owners
-                .check_control(&identity, operation, &body)
+                .check_at_ceiling(&identity, operation, &body)
                 .unwrap(),
             super::super::ownership::ControlCheck::New,
             "the invalid response must not become an exact control receipt"
