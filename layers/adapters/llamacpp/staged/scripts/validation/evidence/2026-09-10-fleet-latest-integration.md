@@ -245,12 +245,62 @@ The actual LOAD reply consumer exercises reversed reply arrival, explicit opt-in
 Initial workspace rerun ended 1,377 / 1 / 7 solely because the new contract paragraph mixed line endings. After normalizing that document, the complete run ended 1,378 / 0 / 7 across 58 summaries.
 Current native builds on Mac `.20`, Spark and Ubuntu pass 16/16 CTests, including the compiled wire-identity assertion.
 Their source fingerprint and full runtime type-size tables match byte-for-byte: source `e691ace7f2c7eef550c8c8c6b455b1de9038307819baf39eb7a939038ae8abd5`.
-Windows native compilation, independent mutations and actual heterogeneous model execution remain pending at this checkpoint. No three-host acceptance is claimed.
+The final checkpoint below supersedes the build/mutation pending state. Mixed CUDA/Metal execution remains blocked before inference; no three-host acceptance is claimed.
+
+## Final wire checkpoint and external blockers
+
+Validated product source is `9ad366f9063e49f2574639d649fe556344992c6e`; later closure edits are documentation and archive manifests only.
+The final complete workspace exits 0 with 1,378 passed / 0 failed / 7 ignored across 58 summaries. Node exits 0 with 159 passed / 0 failed / 0 skipped.
+Native CTest is 16/16 on Windows, Spark, Ubuntu and both Macs; private headers 83 clean, manifest/classification 26 valid, docs-lint 92 clean.
+
+The independent mutation checkout uses a separate build directory, requires a non-fresh compiler artifact and records source/test-binary SHA256 for every rebuild.
+The actual LOAD consumer passes the control (exit 0) and rejects all four mutants (each exit 101): force the old exact profile, remove wire equality, remove admission, or drop the wire field during payload consumption.
+No negative input, default rejection, global budget or judge was relaxed. `wire-mutations.json` and each build/test log retain the binding.
+
+The first three-host attempt `wire-gemma-3-hosts-20260909T224106258Z` never reached LOAD.
+Mac .21 received CREATE but its outgoing response was dropped by the kernel with NECP/error 65; the agent logged peer delivery failure. The run was explicitly stopped before any native model or inference submission.
+The 9/9 Python socket checks did not prove that this process had OS network permission. No alternative executable path, relay or policy bypass was used.
+An immediate two-CUDA retry exposed the retained CREATE nodes (`node already exists`); its failure is preserved and owned agents were restarted before retrying.
+
+Run `wire-gemma-2-hosts-20260909T224459830Z` then correctly rejected Ubuntu's `upstream=unknown` before inference.
+The diagnostic clone-build script omitted the user-local Git PATH. Ubuntu was rebuilt into `target/native-identified` after independently verifying HEAD and the actual patched working tree through a temporary index; the measured old build was kept.
+Verified upstream is `434ddbbc0e30522e897670681e503b797c12b7c1` and tree is `44493ca7ab53699ecc012e915be10da5ad7c7b1f`. New server SHA256 is `83e3107e3adf098448eb3d937d7687f54d889fc76ca295db373fd8362726af2a`.
+Rebuild and 16/16 CTests pass; no unidentified-build override was used. A LOAD rejection before submission still requires owned-process cleanup in this diagnostic harness; post-submission partial-artifact guarantees do not cover setup failures.
+
+| Final arm | Physical hosts / backend | Requested / completed / released | Inference elapsed | Result |
+| --- | --- | --- | --- | --- |
+| `wire-gemma-2-hosts-20260909T225142318Z` | Spark + Ubuntu / CUDA | 8 / 8 / 8 | 7,314 ms | All EOS, error/cleanup/missing null |
+| `wire-gemma-local-20260909T225459493Z-mac21` | One Mac, two Metal stages | 8 / 8 / 8 | 7,148 ms | All EOS, error/cleanup/missing null; no peer-connection proof |
+| `wire-large-wave8-2-hosts-20260909T225349569Z` | Spark + Ubuntu / CUDA, 122B | 32 / 32 / 32 | 115,422 ms | All EOS, error/cleanup/missing null |
+
+The final 122B arm keeps resident 4, cuts [0,45)/[45,48), eight waves of four at 500 ms intervals, maximum 512 tokens and the original four prompts repeated eight times.
+It emits 3,360 outcome tokens including 32 EOS outcomes and records 3,328 decode rows; these are different numerators. The elapsed denominator excludes LOAD/UNLOAD.
+All 32 incarnations are unique; physical slots 0/1/2/3 are released 9/9/7/7 times. Both monitors end with code 0 and stop_code 0.
+TTFT p50/p90 is 47,404.5/88,278.1 ms; completion latency p50/p90 is 60,539/101,277.5 ms. Quantiles use linear interpolation at rank (n-1)q.
+All 32 responses were read. RAM/storage, the 84-litre calculation and calibration answers are coherent; heating repeatedly equates resistance with mechanical friction. Blanket scientific-quality/service acceptance is withheld, and no failed prompt was removed.
+
+Both stages' host/device model, context and compute byte totals match PLAN and ACTUAL. Ubuntu global VRAM peak is 6,711 MiB; Spark shared-pool GPU memory remains unavailable rather than zero.
+Within each host's own stage RPC window, Spark has 109 GPU samples averaging 83.917%, Ubuntu 110 averaging 13.482%, neither with a zero sample. This is kernel-active sampling, not SM occupancy, absence of all idle intervals or a saturation claim.
+Startup-through-cleanup memory records contain 790/780 samples. Ubuntu's process-path filter still names `native` while its rebuilt server is under `native-identified`, so **Ubuntu process RSS is missing**, not zero; GPU/system memory samples remain valid.
+During LOAD, actual process maps on each CUDA host contain seven owned runtime files whose hashes match the pre-run identities. External OS/driver paths are listed but not represented as hashed P4 binaries.
+
+A normalized comparison of 834 non-Markdown source files matches Mac .21 completely. Spark/Ubuntu differ only in the final additional LOAD consumer test case; their product sources match the validated commit. The complete final test file is exercised by the local workspace and independent mutations.
+
+Current external gates are Mac .21 agent network policy, this PC's explicit inbound program blocks, TUF SSH account/key, Mac .20 SMB authentication and M42's interactive login/S: restoration.
+These do not invalidate the bounded passes above and cannot be silently converted into whole-fleet acceptance. The next runtime action after access restoration is the same three-host Gemma gate, then 122B and all requested hosts; B2/B3, quality and sustained-service gates remain separate.
+All task-owned agents/stages and monitors were stopped. Unrelated applications, old runtimes and the three unchanged v0.9.0 candidate archives are preserved. No stable tag or push was made.
+
+## Candidate preservation
+
+`F:/dev/p4-releases/fleet-20260910-wire-candidate` holds both source archives, four platform runtime archives, status/README, and the complete selected evidence archive (329 files, per-file SHA256 manifest).
+[Candidate manifest](bundles/fleet-20260910/candidate-manifest.json) binds the archive hashes. Windows archive members and all three Unix archive manifests were read back and hash-checked.
+These are preserved runtime candidates in their measured environments, not a claim of installation compatibility at arbitrary paths or drivers. Models and OS drivers are not bundled.
+The old ignored target files remain available, but the selected evidence no longer depends solely on that build directory.
 
 ## Local evidence and reproduction
 
 Raw discovery, NAS inventories, compiler versions, conflicts and rebase logs are under `F:/dev/p4/target/fleet-20260910`.
-These ignored files are local evidence, not a portable publication bundle.
+The selected source/runtime/evidence files are also preserved in the candidate bundle above; this is local delivery, not remote publication.
 
 ```powershell
 node layers/adapters/llamacpp/staged/scripts/prepare-pipeline-upstream.mjs --json --out F:/dev/p4-fleet-20260910/target/prepared-latest

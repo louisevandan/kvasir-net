@@ -32,15 +32,26 @@ v0.9.0 후보와 기존 게이트는 보존한다. 사용자가 Spark, TUF, Mac 
 
 현재 사실과 열린 게이트는 [fleet/upstream 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)를 따른다.
 
-최신 native 빌드·16개 CTest는 Windows, Spark, Ubuntu, 두 Mac에서 통과했다. 전체 Rust는 1,374/0/7, Node는 159/0이다.
-저장 계획의 `--no-mmap` 호환, CPU_REPACK host 회계, 공유 no-alloc compute 버퍼 중복 집계를 실제 소비·독립 변이로 고쳤다.
-Windows·Spark·Ubuntu·Mac .21은 NAS 모델의 8/8 완료·해제·UNLOAD를 통과했지만, 작은 모델의 응답 품질 한계는 별도다.
-Mac의 GPU 레이어 수와 K/V 형식에 따른 CPU fallback은 실행을 분리해 확인 중이다.
-122B는 세 장비의 실제 메모리 계획·9개 포트 연결을 통과했다. 다만 기존 `agree()`가 CUDA/Metal 혼합을 거부한다.
-다음 행동은 이종 backend의 tensor codec/표현 호환 계약 검증이며 기존 거부 시험을 삭제하거나 identity를 위조하지 않는다.
-그동안 기존 규칙을 만족하는 Spark·Ubuntu 두 물리 호스트의 122B 적재·웨이브를 별도로 판정한다.
-이 PC의 agent 프로그램 차단 해제, TUF SSH, Mac .20 NAS, M42 로그인은 여전히 외부 입력 게이트다.
-일부 장비의 소형 모델 성공으로 전체 장비·대형 모델 게이트를 닫지 않는다.
+최신 native 빌드·CTest 16/16은 Windows, Spark, Ubuntu, 두 Mac에서 통과했다. 최종 Rust는 1,378/0/7(58 summaries), Node는 159/0이다.
+저장 계획의 CLI 호환, CPU_REPACK host 회계, 공유 no-alloc compute 중복 집계는 실제 소비·독립 변이로 검증했다.
+Windows·Spark·Ubuntu·Mac .21은 NAS 모델의 개별 실행을 통과했다. Mac .20의 로컬 복사본 진단은 NAS 승인이 아니다.
+
+122B는 Spark·Ubuntu **두 물리 호스트에서 8회 × 4건 = 32/32 완료·해제·EOS·UNLOAD**를 통과했다.
+소스 `9ad366f90`, resident 4, 추론창 115.422초, TTFT p50 47.405초·p90 88.278초다.
+전선 발열 응답의 부정확한 비유와 대기를 남기며 전체 정상 응답·서비스·성능 개선 승인은 하지 않는다.
+각 호스트 stage RPC 창의 GPU kernel-active 표본 평균은 Spark 83.9%, Ubuntu 13.5%다. SM 점유율이나 포화가 아니다.
+
+명시적 `physical-wire-v4` 후보는 upstream·patch·native codec/표현을 대조하고 stage별 identity를 보존한다.
+기본 exact-build 거부는 유지하며, 소비 시험·독립 변이 4종과 CUDA 두 호스트/Metal 한 호스트 각각의 8/8 실행을 통과했다.
+**CUDA·Metal 혼합 실기는 BLOCKED**다. Mac .21 커널이 agent의 외부 TCP를 NECP/error 65로 거부했다.
+Python/nc의 포트 연결 성공은 agent의 통신 승인이 아니며, 새 실행은 CREATE 응답 전 중단돼 추론을 제출하지 않았다.
+
+첫 재개 조건은 Mac .21 agent 네트워크 허용, 이 PC의 명시적 프로그램 차단 해제, TUF SSH, Mac .20 NAS 인증, M42 로그인이다.
+그 뒤 기존 거부 기준을 유지한 세 호스트 소형 모델 → 122B → 모든 대상 장비의 합법적 컷·웨이브 순으로 판정한다.
+접근이 복구되기 전에는 추가 부분 호스트 실행을 전체 장비 승인으로 바꾸지 않는다.
+현재 후보의 소스·플랫폼별 runtime·성공/실패/변이/메모리 원자료 329파일을
+`F:/dev/p4-releases/fleet-20260910-wire-candidate`에 보존했다. 증거 문서의 candidate manifest가 해시를 소유한다.
+실험 소유 agent/stage·monitor는 정지했고 기존 앱·v0.9.0 후보는 보존했다. 정식 tag/push는 하지 않았다.
 
 ### 0.-1 이번 버전 마감 상태 (2026-09-10)
 
