@@ -1,6 +1,6 @@
 # 2026-09-09 — 제어 응답 예산이 해제·정산을 막던 결함
 
-종류: 결함 원인 확정·수정·소비 경로 시험·변이 검증. **성능 증거가 아니며 `pressure` 실기 재판정은 아직 남아 있다.**
+종류: 결함 원인 확정·수정·소비 경로 시험·변이 검증·실기 `pressure` 재판정. **성능 승인 증거가 아니다.**
 기준 HEAD `249ff9d7a83`, 작업 트리 clean에서 시작했다.
 현재 작업 순서는 [로드맵](../../../../../../../docs/distributed-batching-roadmap.md)이 소유한다.
 직전 판정과 실행 산출물은 [측정 신뢰 회복 기록](2026-09-09-measurement-trust-recovery.md)에 있다.
@@ -121,11 +121,47 @@ batch 합계 검사에 걸리지 않는다. 걸린 것은 그 뒤 stage의 batch
   요구량이 상한의 정확히 4배다.
 - M3 실패: 위 4개.
 
+## 실기 재판정 — 3090×2 `pressure`
+
+수정 커밋 `76d9bc3e3`에서 빌드한 `p4-agent.exe`(sha256 `eaa153f4231385ce…eaad291cd5b60`)만
+원격에 재배포하고 같은 시나리오를 두 번 돌렸다. **staged 서버와 DLL, launcher는 실패 실행과 같은
+해시 그대로다.** 즉 바뀐 것은 어댑터 바이너리 하나다.
+
+| | 실패 대조 `20260909T024957Z-da3b12c7` | A `20260909T034439Z-4ce8e2b1` | B `20260909T035149Z-9014d441` |
+| --- | --- | --- | --- |
+| 커밋 | `71fea12e2` (clean) | `76d9bc3e3` (clean) | `76d9bc3e3` (clean) |
+| `p4-agent.exe` sha256 | `7da7a265f2e43749…` | `eaa153f4231385ce…` | `eaa153f4231385ce…` |
+| `p4_staged_server.exe` sha256 | `b66beffb479afa6d…` | 동일 | 동일 |
+| launcher sha256 | `2cdfc22d16614452…` | 동일 | 동일 |
+| `request/completed/released` | 512 / 64 / **0** | 512 / 512 / **512** | 512 / 512 / **512** |
+| `error` | `stage control batch total receipt budget is exhausted` | `null` | `null` |
+| `cleanup_error`(idle UNLOAD) | `unload is busy; active_owners=256` | `null` | `null` |
+| 경과 | 144.1 s(중단) | 267.959 s | 254.886 s |
+
+두 통과 실행 모두 `passed=true`, structural 512/512/512, session key 512/512 일치, 거절 0,
+`agent_stopped=true`다.
+
+**슬롯 재사용도 이 산출물 안에 있다.** A의 512개 `release_member`는 물리 슬롯 0–255의 **256개**를
+쓰고 슬롯마다 정확히 **2건**씩, incarnation은 1–512로 겹치지 않는다. 즉 앞 웨이브가 해제한 슬롯을
+뒤 웨이브가 새 incarnation으로 다시 잡았고, 512건 전부가 해제까지 끝났다.
+
+수정 전 두 실행에서 불변이던 세 가지(최초 오류, `released_count=0`, 비행 작업 0인데 owner·frontier만
+남음)가 모두 사라졌다.
+
+### 이 실행이 말하지 않는 것
+
+- **성능 승인이 아니다.** A/B의 `generation_tps`는 382.15와 401.75이고 물리 batch는 1,367과 1,281,
+  batch당 행은 81.65와 87.13이다. 수정 전 `pressure`는 완주한 적이 없어 **비교할 기준선이 없다.**
+  이 값을 개선폭으로 인용하지 않는다. 시나리오도 gemma-4-E2B를 4노드로 자르고 대부분의 layer를
+  CPU로 내린 구성이며 35B 기준선과 같은 열에 놓을 수 없다.
+- `meaning` 512/512는 `judge.mjs` 휴리스틱이며 의미 승인이 아니다(로드맵 §0.0이 소유한 한계).
+- 다중 물리 컴퓨터 수용 증거가 아니다. 3090 두 장은 한 호스트에 있다.
+- 원격의 이전 agent는 `p4-agent.exe.20260909-pre-receipt-fix`로 백업해 두었다.
+
 ## 남은 것
 
-- **`pressure`(resident 256) 실기 재판정.** 이 수정은 어댑터(`p4-agent.exe`)에 있으므로 staged CUDA
-  서버 재빌드는 필요 없고 agent 재배포로 충분하다. 판정 항목은 전체 요청의 해제, 슬롯 재사용,
-  후속 요청 처리, idle UNLOAD까지다. **그때까지 이 결함이 해소됐다고 실기 기준으로 주장하지 않는다.**
-- 09-09 실행에서 실제로 거부된 명령 종류와 batch 폭. 새 문구가 다음 실행부터 이를 기록한다.
+- 09-09 실패 실행에서 실제로 거부된 명령 종류와 batch 폭. 그 산출물에는 없고, 새 문구가 다음
+  거부부터 기록한다. 재판정이 통과했으므로 이 값은 이제 재현으로 얻을 수 없다.
 - 수용 경로(B2/B3)의 pending 개수·바이트·토큰 예산은 이 변경의 범위가 아니다. `worker.rs`의 수용
-  코드는 여전히 요청 저장 공간 예약을 미래 작업으로 명시한다.
+  코드는 여전히 요청 저장 공간 예약을 미래 작업으로 명시한다. resident 상향은 그 예산 뒤에 온다.
+- `prefill_mix_35b_2stage`의 template 불일치와 sustained 8R 조건은 이 문서의 대상이 아니다.
