@@ -863,6 +863,51 @@ export const SCENARIOS = {
     })),
   },
 
+  // Release gate for compat patch 0026 (2026-09-10). Two stages a card at
+  // the resident set the memory plan refused on 2026-09-09 because its own
+  // planning pass had already allocated the recurrent state it was counting.
+  // Passing means: the planning pass logs an RS buffer of 0.00 MiB, the plan
+  // is admitted, and load, inference and UNLOAD all complete. Loading is not
+  // a service approval of this resident set; that waits for the B2/B3 budget.
+  release_35b_r256: {
+    ...base,
+    description: "35B, one stage a card, 256 sequences - 0026 admission gate",
+    model: MODEL_35B,
+    ...placeOnLanes(ORNITH35B_LAYERS),
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 256,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
+    waves: Array.from({ length: 16 }, (_, index) => ({
+      after_ms: index * 1_000,
+      count: 32,
+    })),
+  },
+
+  // The other half of that gate: a configuration that genuinely does not fit
+  // must still be refused. 512 sequences of recurrent state at 32.0 MiB each
+  // is 16 GiB beside 10.5 GiB of weights on a 24 GiB card. A plan that admits
+  // this has stopped planning.
+  release_35b_r512_must_refuse: {
+    ...base,
+    description: "35B, one stage a card, 512 sequences - must be refused by the memory plan",
+    model: MODEL_35B,
+    ...placeOnLanes(ORNITH35B_LAYERS),
+    stops: STOPS_CHATML,
+    flashAttn: "on",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
+    parallel: 512,
+    context: 512,
+    maxTokens: 200,
+    promptFor: acceptancePromptChatmlNoThinking,
+    waves: [{ after_ms: 0, count: 32 }],
+  },
+
   // The partition on its own: four stages at `pressure_35b`'s resident set.
   pressure_35b_4stage_96: {
     ...base,
