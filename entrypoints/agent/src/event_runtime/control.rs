@@ -1,9 +1,13 @@
+mod inspection;
+
 use p4_adapter::node_adapter::NodeAdapter;
 use p4_agent_core::event_broker::{EventBroker, EventReceiver, bounded_queue};
 use p4_agent_core::event_node::{EventNode, EventNodeFailure};
 use p4_llamacpp_staged_adapter::v2::LlamaNodeAdapter;
 use p4_protocol::Address;
-use p4_protocol::event::{Endpoint, Envelope, Event, EventClass};
+use p4_protocol::event::{
+    AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE, Endpoint, Envelope, Event, EventClass,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -38,6 +42,7 @@ fn default_capacity() -> usize {
 
 struct NodeOwner {
     generation: u64,
+    adapter_kind: String,
     adapter: Arc<dyn NodeAdapter>,
     // A completed task retains its failure and held Events until this handle
     // is consumed/dropped. This is in-memory ownership, not restart recovery.
@@ -48,16 +53,25 @@ pub async fn run(own: Address, broker: Arc<EventBroker>, mut receiver: EventRece
     let sequence = AtomicU64::new(1);
     let mut nodes: HashMap<String, NodeOwner> = HashMap::new();
     while let Some(event) = receiver.recv().await {
-        let result = match event.envelope.payload_content_type.as_str() {
-            CREATE => create(&own, &broker, &mut nodes, &event),
-            DELETE => remove(&broker, &mut nodes, &event).await,
-            other => Err(format!("unsupported agent control content type {other}")),
+        let (payload_content_type, payload) = match event.envelope.payload_content_type.as_str() {
+            AGENT_INSPECT_CONTENT_TYPE => (
+                AGENT_SNAPSHOT_CONTENT_TYPE,
+                inspection::snapshot(&nodes).await,
+            ),
+            content_type => {
+                let result = match content_type {
+                    CREATE => create(&own, &broker, &mut nodes, &event),
+                    DELETE => remove(&broker, &mut nodes, &event).await,
+                    other => Err(format!("unsupported agent control content type {other}")),
+                };
+                let payload = match result {
+                    Ok(node) => json!({"ok":true,"node_id":node}),
+                    Err(detail) => json!({"ok":false,"detail":detail}),
+                };
+                (RESULT, payload)
+            }
         };
-        let payload = match result {
-            Ok(node) => json!({"ok":true,"node_id":node}),
-            Err(detail) => json!({"ok":false,"detail":detail}),
-        };
-        if let Ok(reply) = reply(&own, &event, &sequence, payload)
+        if let Ok(reply) = reply(&own, &event, &sequence, payload_content_type, payload)
             && let Err(failure) = broker.dispatch(reply)
         {
             // The broker returns the original reply on every refusal. This
@@ -117,6 +131,7 @@ fn create(
         command.node_id.clone(),
         NodeOwner {
             generation: command.node_generation,
+            adapter_kind: command.adapter_kind,
             adapter,
             task,
         },
@@ -164,6 +179,7 @@ fn reply(
     own: &Address,
     base: &Event,
     sequence: &AtomicU64,
+    payload_content_type: &str,
     payload: serde_json::Value,
 ) -> Result<Event, String> {
     let number = sequence.fetch_add(1, Ordering::Relaxed);
@@ -188,7 +204,7 @@ fn reply(
         sequence: number,
         deadline_unix_ms: base.envelope.deadline_unix_ms,
         adapter_kind: None,
-        payload_content_type: RESULT.into(),
+        payload_content_type: payload_content_type.into(),
     };
     let payload = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
     Ok(Event { envelope, payload })

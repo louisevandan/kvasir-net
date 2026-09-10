@@ -99,6 +99,43 @@ Per-source sequence plus event identity provides ordering and duplicate
 suppression. It is not valid to hash a transport route and infer logical
 ordering from it.
 
+### Agent inspection
+
+OUTER sends `application/vnd.p4.agent.inspect-v1+json` to an Agent endpoint.
+The agent returns `application/vnd.p4.agent.snapshot-v1+json` to the declared
+return route without mutating node state. Snapshot schema `1` contains:
+
+```text
+schema, protocol_version, generated_at_unix_ms
+machine {
+  capability {
+    os, arch
+    cpu { physical_cores, logical_cores }
+    memory { total_bytes }
+    gpus[] { index, uuid, vendor, name, pci_bus_id, driver_version, vram_total_bytes }
+    adapters[]
+  }
+  occupancy {
+    memory { available_bytes, used_bytes }
+    gpus[] { uuid, vram_used_bytes, vram_free_bytes,
+             utilization_gpu_percent, temperature_c, power_draw_w }
+  }
+  probes { memory, gpus } { source, state, detail }
+}
+nodes[] { node_id, generation, adapter_kind, state }
+```
+
+The node list is the agent's live registry, sorted by `node_id`. `state` is the
+selected adapter's opaque, cheap snapshot; P4 and Studio must display but not
+interpret backend-specific vocabulary. Hardware capability is separated from
+process-local occupancy: placement may use totals, while observed free RAM,
+free VRAM, activity, temperature and power are diagnostic values only. The GPU
+probe is currently `nvidia-smi`; `probes.gpus.state` distinguishes a missing
+probe from a probe failure instead of reporting either as an empty machine.
+`utilization_gpu_percent` is the NVIDIA activity sample and is not SM occupancy.
+Inspection does not claim model readiness, protocol-wide health, or fleet
+atomicity.
+
 ## Node and adapter contract
 
 A node reacts to two inputs: a new NodeQueue event and an adapter completion

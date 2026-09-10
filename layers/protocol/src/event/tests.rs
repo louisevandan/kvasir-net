@@ -1,5 +1,17 @@
 use super::*;
 
+#[test]
+fn agent_inspection_content_types_are_versioned_protocol_constants() {
+    assert_eq!(
+        AGENT_INSPECT_CONTENT_TYPE,
+        "application/vnd.p4.agent.inspect-v1+json"
+    );
+    assert_eq!(
+        AGENT_SNAPSHOT_CONTENT_TYPE,
+        "application/vnd.p4.agent.snapshot-v1+json"
+    );
+}
+
 fn sample() -> Event {
     let ingress = Address::tcp("10.0.0.1", 52001);
     Event {

@@ -9,6 +9,12 @@ use crate::{Address, ProtocolError};
 
 pub use wire::{decode, encode};
 
+/// Read-only agent inspection request. See `docs/event-protocol-v2.md#agent-inspection`.
+pub const AGENT_INSPECT_CONTENT_TYPE: &str = "application/vnd.p4.agent.inspect-v1+json";
+
+/// Machine and registered-node snapshot returned for an agent inspection.
+pub const AGENT_SNAPSHOT_CONTENT_TYPE: &str = "application/vnd.p4.agent.snapshot-v1+json";
+
 pub type EventId = String;
 pub type CorrelationId = String;
 pub type NodeId = String;
