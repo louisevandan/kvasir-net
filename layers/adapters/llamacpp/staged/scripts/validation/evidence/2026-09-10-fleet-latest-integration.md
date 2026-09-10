@@ -599,3 +599,53 @@ Active raw evidence is target/hy3-100k-20260910: RED/GREEN/mutation/full-suite l
 failed LOAD logs, plan outputs and workload/template checks. Full six-file model hashes are still being
 collected. Long-wave verification and a local archive follow;100k inputs/eight active sessions/saturation
 are not approved by this checkpoint.
+
+### Hy3 long single result and diagnostic wave qualification
+
+Long single hy3-100k-single-1789029008524 used OUTER source96e6fd1ae, driver
+c6f8650a49c27764e88cc5ed311f77404c1c218f148d9d037b87133de12b1b76; native source remains9ad366f90.
+It completed31643 prefill rows and2316 generated non-EOS tokens, then EOS/release/UNLOAD.
+error/cleanup_error/evidence_missing are null. Inference elapsed2358643ms excludes LOAD/UNLOAD;
+TTFT1162465ms, generation elapsed1196070ms. Actual generated-token receipt intervals, excluding the
+empty terminal EOS frame: p50=513ms,p90=583.6ms,p99=691.6ms,max1399ms,2315 intervals.
+
+Physical prefill is124 native-captured ubatches,123 at256 rows and one at155 rows. Logical prefill
+calls are61 at512 and one at411 rows. Decode is2316 ubatches at one row each. Do not average these
+phases and call low overall UBATCH fill the bottleneck. A logical issue may contain multiple physical
+executions; the same-host RPC analysis deduplicates them by logical ordinal. With one request and
+prefill_fragments default1, this run does not validate multi-flight saturation.
+
+All six allocation plans match actuals. Mapped P4 files matched sealed identities: Spark7,Ubuntu7,
+Mac8,local9,M42 GPU0 9/GPU1 9. Windows capture initially produced empty hashes because a child
+Windows PowerShell could not autoload Get-FileHash; capture was corrected to streaming .NET SHA256
+and rerun while the long job was alive. Empty maps were never approved. The earlier short gate has
+no completed Windows mapped-module proof; its successful LOAD/runtime identity remains recorded.
+Six full model hashes,206034401344 bytes, completed before the future wave. Single LOAD/prefill
+partly overlapped that NAS hashing, so it is not a performance baseline.
+
+**Full prose quality is not approved.** All four retrieved records, power/energy pairs, unit conversions,
+pressure comparisons and energy ranking are correct. Response is1418 whitespace-counted words,
+below the requested approximate1800-2500 target, although the unchanged1024-token runtime minimum passed.
+Full reading found: alarm threshold called a safety limit; missing causal evidence described as
+non-causality; a sentence saying confirmation requires invented data; an incomplete claimed duration
+cycle. quality-review.json records quotes and reasons with passed=false. Do not cite raw row TPS as
+quality-approved effective TPS.
+
+The next16-request workload is explicitly a **diagnostic stress run**. It retains the same prompts,
+including the prose-failing first case, and the same minimum1024-token/EOS/identity checks. Arithmetic
+and transport passed; whole-response semantics remain independently graded, not weakened to pass.
+The eight initial requests arrive at0/8/16/24/32/40/48/56 seconds; eight more at300..356 seconds.
+Total input966748 tokens,4614390 bytes; resident8,context102400 each,maximum8192 output tokens each.
+The fixed inference deadline is6 hours; observer cap8 hours includes LOAD and teardown margin.
+The staggered arrivals offer independent ready cohorts while prefill_fragments stays at default1;
+no outstanding/KV dependency guard is removed. This is not an optimality or service-latency claim.
+
+The sealed upstream scheduler can offload operations on host-resident weights to CUDA for larger
+batches; default GGML_OP_OFFLOAD_MIN_BATCH is32. RAM weight residence is not proof of CPU execution
+for all phases. Source pointers and Windows CPU/GPU observations are in backend-placement-notes.txt.
+The diagnostic wave adds NVML PCIe throughput sampling (API KB/s over its20ms counter window,
+collected about once per second), retaining unsupported/error status rather than treating it as zero.
+Device utilization is kernel-active sampling, not SM occupancy. M42 and Unix/Mac clocks differed by
+about18 seconds in SSH-bounded probes; host-local RPC/monitor windows are used without assuming
+cross-host alignment. Exact head-ledger flight time distribution remains uninstrumented; same-host
+simultaneous distinct logical RPCs provide only a lower bound.
