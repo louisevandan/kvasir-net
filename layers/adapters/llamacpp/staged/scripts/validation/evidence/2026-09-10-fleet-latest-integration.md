@@ -558,3 +558,44 @@ planning candidates. The placeholder prompt in plan-only configs is not the seal
 
 No product source changed. Rust/native regression suites were not rerun for this documentation-only
 checkpoint, and historical counts are not reported as new results.
+
+<a id="hy3-100k-2026-09-10"></a>
+
+## Hy3 100k/session: selected fallback and OUTER timing (2026-09-10)
+
+The user selected Hy3 after MiMo failed preflight. MiMo is held, not patched.
+Hy3 Q5_K_S is206034401344 bytes (191.884 GiB),80 trunk layers plus one unowned NextN block.
+Native/agent product source remains9ad366f90, upstream434ddbbc, physical-wire-v4.
+Short gate used unchanged driver c96cf7539af6580c3cc610939f1981477928aaa7415bc1c512e11172c097ed23.
+
+Run hy3-100k-smoke-lowport-1789027462065 passed2/2 EOS/completion/release/UNLOAD, no inference/cleanup error.
+Six allocation plans match actual topology, shape and model/context/compute amounts; free memory is not compared.
+Cuts and placement are in roadmap0.-6. Outputs correctly calculate28.8W/115.2Wh and18W/36Wh,
+and withhold temperature conclusions for missing thermal conditions. This is short correctness only.
+Mac accumulated logs are bounded by the latest P4_EVENT_AGENT_READY marker before this run is compared.
+
+First LOAD hy3-100k-smoke-1789026789206 failed before artifact assembly with Mac ReadyFailed
+Invalid argument(os error22). Native jobs still loading were stopped by verified owned PID/path.
+After refreshing only dedicated validation agents, native ports changed53021/53022 to23021/23022
+outside the observed ephemeral ranges. Collision is a candidate, not a proven cause. Mac GUI agent
+was restarted for this test; the earlier claim of preserving PID78595 does not apply to this run.
+
+### Approved OUTPUT receipt timestamps
+
+OUTER RequestArtifact now serializes output_received_ms, parallel to approved outcomes. Time is captured
+immediately after EventWire receives a complete frame and appended only after OUTPUT validation/commit.
+Existing first_output_ms/completed_ms and TPS denominators stay unchanged. Gaps include transport batching
+and OUTER scheduling; they are not GPU completion times. Partial failures keep approved timestamps.
+
+RED: actual worker-captured OUTPUTs through EventWire/inference::drive,20ms paced delivery and40ms late
+telemetry failed because the field was absent. GREEN:93 binary tests plus1 CLI test pass.
+Full cargo test --workspace --no-fail-fast --locked exited0:1379 passed/0 failed/7 ignored,58 summaries.
+Formatting-only follow-up reran the new consumer test successfully. Independent detached worktree
+F:/dev/p4-hy3-timing-mutation-20260910, fresh target/timing-mutation, removed only append: test failed0-versus5.
+Mutated inference.rs SHA256289938f4cac8baddd722a34a6aea5d99f3e8400ee3dbd291e2b9d487faa93fcd;
+rebuilt test binary SHA2563ef94b19a0b276a084ea41811668dae417f06d96ea441a049591b7069edc92fb.
+
+Active raw evidence is target/hy3-100k-20260910: RED/GREEN/mutation/full-suite logs, short config/artifact,
+failed LOAD logs, plan outputs and workload/template checks. Full six-file model hashes are still being
+collected. Long-wave verification and a local archive follow;100k inputs/eight active sessions/saturation
+are not approved by this checkpoint.

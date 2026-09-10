@@ -134,6 +134,10 @@ pub struct RequestArtifact {
     pub arrival_ms: u128,
     pub first_output_ms: Option<u128>,
     pub completed_ms: Option<u128>,
+    /// Complete OUTPUT frame receipt times at OUTER, relative to inference start.
+    /// Only approved outputs are retained, in the same order as `outcomes`.
+    /// These include transport delivery effects and are not GPU completion times.
+    pub output_received_ms: Vec<u128>,
     pub prefill_rows: usize,
     pub decode_rows: usize,
     pub verify_rows: usize,
@@ -731,6 +735,7 @@ mod tests {
             arrival_ms: 10,
             first_output_ms: Some(210),
             completed_ms: Some(1_210),
+            output_received_ms: Vec::new(),
             prefill_rows: 500,
             decode_rows: 100,
             verify_rows: 0,

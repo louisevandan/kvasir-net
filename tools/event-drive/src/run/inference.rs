@@ -111,6 +111,7 @@ where
             };
             match wire.receive(read_until).await {
                 Ok(event) => {
+                    let received_ms = started.elapsed().as_millis();
                     if !seen_event_ids.insert(event.envelope.event_id.clone()) {
                         return Err("duplicate inference event identity".into());
                     }
@@ -147,6 +148,7 @@ where
                                 completed += 1;
                             }
                             request.outcomes.push(approved.outcome);
+                            request.output_received_ms.push(received_ms);
                         }
                         RELEASE_RECEIPT_CONTENT_TYPE => {
                             let value: ReleaseReceipt = serde_json::from_slice(&event.payload)?;
@@ -351,6 +353,7 @@ where
                 arrival_ms: started.elapsed().as_millis(),
                 first_output_ms: None,
                 completed_ms: None,
+                output_received_ms: Vec::new(),
                 prefill_rows: 0,
                 decode_rows: 0,
                 verify_rows: 0,

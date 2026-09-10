@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-10 — MiMo 100k 사전 적재 RED; 이전 5호스트 CUDA·Metal 122B 실행 PASS 보존, 최종 목표 미완. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-10 — Hy3 100k/session·resident8 적재 및 짧은 응답 PASS; 긴 입력·지속 웨이브 미판정. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -12,7 +12,30 @@
 
 ## 0. 현재 상태 — 후보 보존 및 별도 fleet·upstream 통합 진행
 
-### 0.-5 최신 사용자 지시 — 최대 성공 모델·세션당 100k (2026-09-10)
+### 0.-6 최신 사용자 지시 — MiMo 보류, Hy3로 실행 (2026-09-10)
+
+사용자가 Hy3를 선택했으므로 MiMo 로더 수정/예외 승인은 현재 실행의 선행 조건이 아니다.
+Hy3 Q5_K_S 191.884 GiB, 5호스트 6-stage, 세션당102400·resident8·KV 풀819200으로
+짧은 정합성 실행 `hy3-100k-smoke-lowport-1789027462065`가 **2/2 EOS·완료·해제·UNLOAD**했다.
+두 전력/에너지 문제 전문에서 수치·단위·온도 판단의 한계를 확인했다. error/cleanup_error는 null이다.
+여섯 stage의 topology/shape 및 model/context/compute 계획=실제 할당을 확인했다.
+긴 입력·8개 활성 세션·슬롯 재사용·포화·성능 승인은 아직 아니다.
+
+컷은 M42 [0,16)/[16,32), Spark [32,59), Mac [59,62), 로컬3090 [62,78), Ubuntu [78,80).
+CUDA KV q4_0/q4_0, Mac Metal f16/f16; batch512/UBATCH256. KV/compute를 device에 확보한 뒤
+M42 각15개·로컬15개·Ubuntu2개 층의 routed expert를 RAM에 둔다. 통합 메모리를 중복 합산하지 않는다.
+같은 컷의 r16 로컬 계획은 거부됐다. 다른 컷의 r16까지 불가능하다고 일반화하지 않는다.
+첫 실제 LOAD는 Mac native53021 연결 EINVAL로 실패해 보존했다. 전용 agent를 새로 시작하고
+native23021/23022로 재시도했다. ephemeral 충돌은 후보 원인이며 재접속 내구성 승인은 아니다.
+
+다음은 Hy3 tokenizer/template 검산을 마친32개 입력(31643/63682/91696토큰)에서
+긴 단일 입력 → 8세션 및 다음 웨이브를 봉인해 실행한다. max8192와 합쳐 최대99888토큰이다.
+최소1024 생성·EOS·기록별 산술/단위/인용을 별도 검사한다. OUTER는 승인 OUTPUT별 수신 시각을
+보존하도록 수정했다. 이 시각은 전송 효과를 포함하며 GPU 완료 시각이 아니다.
+정확한 head 원장 flight 시간 분포와 반복 포화 비교는 별도 미완이다.
+[Hy3 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#hy3-100k-2026-09-10)를 따른다.
+
+### 0.-5 이전 사용자 지시 — 최대 성공 모델·세션당 100k (2026-09-10)
 
 현재 우선순위는 과거 실제 LOAD 성공 모델 중 가장 큰 **MiMo-V2.5 UD-Q5_K_S, 201.446 GiB**를
 기존 M42·Spark·Mac .21·이 PC·Ubuntu에 적재하고 긴 입력/생성 웨이브를 검증하는 것이다.

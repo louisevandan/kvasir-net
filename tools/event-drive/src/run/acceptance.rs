@@ -226,6 +226,7 @@ mod tests {
             arrival_ms: 0,
             first_output_ms: Some(1),
             completed_ms: Some(1),
+            output_received_ms: Vec::new(),
             prefill_rows: 500,
             decode_rows: token_count,
             verify_rows: 0,

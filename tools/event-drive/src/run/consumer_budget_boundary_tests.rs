@@ -1058,6 +1058,11 @@ mod partial_results {
         );
         assert_eq!(run.requests.len(), 2);
         for request in &run.requests {
+            assert_eq!(
+                request.output_received_ms.len(),
+                request.outcomes.len(),
+                "{fault:?}: receipt times survive exactly with approved outputs"
+            );
             assert!(
                 !request.outcomes.is_empty() && !request.response.is_empty(),
                 "{fault:?}: {} kept its approved outputs",
