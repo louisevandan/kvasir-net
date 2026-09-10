@@ -91,8 +91,9 @@ pub enum WorkerInput {
 /// is not visible from batch widths: a node that submits rarely could be
 /// held by the coalescing threshold, or simply have nothing ready because
 /// every sequence is still travelling. These three numbers separate those.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct BatchPacing {
+    pub scheduling: Option<super::super::commands::SchedulingSnapshot>,
     pub stage_ms: u64,
     pub idle_ms: u64,
     pub idle_gated: u64,

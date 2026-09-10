@@ -67,6 +67,7 @@ fn observed(input: &Event, id: &str, slot: u32, rows: usize) -> BatchRequestObse
 fn observation(owners: Vec<BatchRequestObservation>) -> BatchObservation {
     let rows = owners.iter().map(|owner| owner.prefill_rows).sum();
     BatchObservation {
+        scheduling: None,
         observation_id: "logical-1".into(),
         load_generation: 1,
         session_id: "s".into(),

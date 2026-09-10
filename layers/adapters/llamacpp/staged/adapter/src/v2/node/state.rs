@@ -434,6 +434,8 @@ pub struct AdapterState {
     /// that occupies a single stage at a time. 0 disables it. See
     /// `Worker::drive_first_batches`.
     pub max_issue_rows: usize,
+    /// Experimental selection only; does not enlarge resident/flight credits.
+    pub ordinary_limits: super::super::scheduler::OrdinaryLimits,
     /// Fragments of one prompt allowed in the pipeline at once. 1 is the
     /// behaviour this adapter had before the field existed: a prompt waits a
     /// full lap between chunks even though all its tokens are known.
@@ -524,6 +526,24 @@ impl Default for AdapterState {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
+            ordinary_limits: super::super::scheduler::OrdinaryLimits {
+                prefill_members: std::env::var("P4_STAGED_PREFILL_MEMBERS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+                decode_members: std::env::var("P4_STAGED_DECODE_MEMBERS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+                prefill_rows: std::env::var("P4_STAGED_PREFILL_ROWS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+                prefill_rows_per_request: std::env::var("P4_STAGED_PREFILL_ROWS_PER_REQUEST")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+            },
             prefill_fragments: std::env::var("P4_STAGED_PREFILL_FRAGMENTS")
                 .ok()
                 .and_then(|value| value.parse().ok())

@@ -142,6 +142,7 @@ fn output_requires_exact_approving_head_route_and_contiguous_positions() {
 
 fn observation() -> BatchObservation {
     BatchObservation {
+        scheduling: None,
         observation_id: "session:11".into(),
         logical_ordinal: 1,
         load_generation: 9,

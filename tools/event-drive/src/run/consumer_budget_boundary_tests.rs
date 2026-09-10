@@ -185,6 +185,7 @@ fn observation(index: usize, event: &Event, request_id: &str, step: usize) -> Ba
     let decode = usize::from(step != 0);
     let execution = index as u64 * 10 + step as u64 + 1;
     BatchObservation {
+        scheduling: None,
         observation_id: format!("obs-{index}-{step}"),
         logical_ordinal: execution,
         load_generation: 9,

@@ -237,6 +237,7 @@ impl Worker {
                 .collect::<Vec<_>>()
                 .join("-");
             let observation = BatchObservation {
+                scheduling: pacing.scheduling.clone(),
                 observation_id: format!("{session}:{ordinal}:{ids}"),
                 load_generation: self.state.load_generation,
                 session_id: session.to_owned(),

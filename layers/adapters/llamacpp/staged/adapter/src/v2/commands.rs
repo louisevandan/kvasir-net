@@ -217,6 +217,10 @@ pub struct BatchRequestObservation {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BatchObservation {
+    /// Selection-time node snapshot. Absent on older producers; not a credit
+    /// grant, stage completion, or proof that an idle device could execute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduling: Option<SchedulingSnapshot>,
     pub observation_id: String,
     pub load_generation: u64,
     pub session_id: String,
@@ -237,7 +241,7 @@ pub struct BatchObservation {
     #[serde(default)]
     pub idle_ms: u64,
     /// How many times the coalescing threshold turned the drive loop away
-    /// during that idle gap. Zero means the node had no work to plan.
+    /// during that idle gap. Zero does not exclude other issue blockers.
     #[serde(default)]
     pub idle_gated: u64,
     /// Token rows the ready set held at the instant this batch was planned -
@@ -250,6 +254,23 @@ pub struct BatchObservation {
     /// the coalescing gate compares its threshold against.
     #[serde(default)]
     pub ready_sequences: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SchedulingSnapshot {
+    pub ordinary_limits: super::scheduler::OrdinaryLimits,
+    pub ordinary_limits_applied: bool,
+    pub min_batch_rows: usize,
+    pub max_issue_rows: usize,
+    pub max_open_batches: usize,
+    pub prefill_fragments: u32,
+    pub open_batches_before_issue: usize,
+    pub pending_admission: usize,
+    pub blocked_outstanding: usize,
+    pub no_ready_input: usize,
+    pub eligible_prefill: usize,
+    pub eligible_decode: usize,
+    pub eligible_atomic: usize,
 }
 
 /// What one node did with one batch, on a wall clock.

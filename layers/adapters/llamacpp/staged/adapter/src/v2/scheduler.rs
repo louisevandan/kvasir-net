@@ -42,6 +42,16 @@ pub enum SchedulerError {
     PolicyRevisionExhausted,
 }
 
+/// Experimental ordinary-attention selection limits. Zero retains the legacy
+/// limit for that axis. These are selection bounds, never resource credits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OrdinaryLimits {
+    pub decode_members: usize,
+    pub prefill_members: usize,
+    pub prefill_rows: usize,
+    pub prefill_rows_per_request: usize,
+}
+
 /// llama.cpp-compatible mixed-batch planner.
 ///
 /// Attention models fill one logical llama batch up to `llama_n_batch` and
@@ -142,15 +152,48 @@ impl Scheduler {
         max_atomic_sequences: usize,
         atomic_batch_exclusive: bool,
     ) -> Result<PreparedPlan, SchedulerError> {
-        let mut next = self.state.clone();
-        let allocations = next.plan_with_physical_capacity(
+        self.prepare_plan_with_limits(
             demands,
             ordinary_capacity,
             physical_capacity,
             equal_sequence_ubatch,
             max_atomic_sequences,
             atomic_batch_exclusive,
-        )?;
+            OrdinaryLimits::default(),
+        )
+    }
+
+    /// Prepare without spending fairness; native acceptance still owns commit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plan_with_limits(
+        &self,
+        demands: &[Demand],
+        ordinary_capacity: usize,
+        physical_capacity: usize,
+        equal_sequence_ubatch: bool,
+        max_atomic_sequences: usize,
+        atomic_batch_exclusive: bool,
+        limits: OrdinaryLimits,
+    ) -> Result<PreparedPlan, SchedulerError> {
+        let mut next = self.state.clone();
+        let allocations = if limits != OrdinaryLimits::default()
+            && !equal_sequence_ubatch
+            && !demands.iter().any(|d| d.atomic)
+        {
+            if physical_capacity == 0 || max_atomic_sequences == 0 {
+                return Err(SchedulerError::ZeroCapacity);
+            }
+            next.plan_bounded_ordinary(demands, ordinary_capacity, limits)?
+        } else {
+            next.plan_with_physical_capacity(
+                demands,
+                ordinary_capacity,
+                physical_capacity,
+                equal_sequence_ubatch,
+                max_atomic_sequences,
+                atomic_batch_exclusive,
+            )?
+        };
         if !allocations.is_empty() && self.revision == u64::MAX {
             return Err(SchedulerError::PolicyRevisionExhausted);
         }
@@ -535,6 +578,104 @@ impl PolicyState {
                 sequence_id: demands[index].sequence_id,
                 phase: demands[index].phase,
                 rows: width,
+            })
+            .collect())
+    }
+
+    fn plan_bounded_ordinary(
+        &mut self,
+        demands: &[Demand],
+        capacity: usize,
+        limits: OrdinaryLimits,
+    ) -> Result<Vec<Allocation>, SchedulerError> {
+        if capacity == 0 {
+            return Err(SchedulerError::ZeroCapacity);
+        }
+        if demands.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.validate(demands)?;
+        let ordered = |phase, resume| {
+            let mut indices: Vec<_> = (0..demands.len())
+                .filter(|i| demands[*i].phase == phase)
+                .collect();
+            // Sequence identity survives changes in the eligible subset;
+            // an index into today's ready vector does not.
+            indices.sort_by_key(|i| (demands[*i].sequence_id < resume, demands[*i].sequence_id));
+            indices
+        };
+        let decode = ordered(Phase::Decode, self.decode_resume);
+        let mut prefill = ordered(Phase::Prefill, self.prefill_resume);
+        if limits.prefill_members > 0 {
+            prefill.truncate(limits.prefill_members);
+        }
+        let bounded = |value: usize, fallback: usize| {
+            if value == 0 {
+                fallback
+            } else {
+                value.min(fallback)
+            }
+        };
+        let mut rows = vec![0; demands.len()];
+        let mut remaining = capacity;
+        // Even capacity=1 has a finite prompt service bound. At larger widths
+        // leave a prompt row instead of allowing an endless decode stream to
+        // consume the whole call. This is an opportunity bound, not an ITL SLO.
+        let prompt_turn = !prefill.is_empty() && self.decode_runs >= PREFILL_PATIENCE;
+        let decode_room = if prefill.is_empty() {
+            capacity
+        } else if capacity > 1 {
+            capacity - 1
+        } else {
+            usize::from(!prompt_turn)
+        };
+        for &index in decode
+            .iter()
+            .take(bounded(limits.decode_members, decode_room))
+        {
+            rows[index] = 1;
+            remaining -= 1;
+            self.decode_resume = demands[index].sequence_id.wrapping_add(1);
+        }
+        let mut prompt_budget = bounded(limits.prefill_rows, remaining);
+        while prompt_budget > 0 {
+            let mut progressed = false;
+            for &index in &prefill {
+                if prompt_budget == 0 {
+                    break;
+                }
+                if rows[index]
+                    < bounded(
+                        limits.prefill_rows_per_request,
+                        demands[index].available_rows,
+                    )
+                {
+                    rows[index] += 1;
+                    prompt_budget -= 1;
+                    progressed = true;
+                    self.prefill_resume = demands[index].sequence_id.wrapping_add(1);
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+        let served_prefill = prefill.iter().any(|i| rows[*i] > 0);
+        self.decode_runs = if served_prefill || prefill.is_empty() {
+            0
+        } else {
+            self.decode_runs.saturating_add(1)
+        };
+        self.cursor = (self.cursor % demands.len() + 1) % demands.len();
+        Ok(decode
+            .into_iter()
+            .chain(prefill)
+            .filter(|i| rows[*i] > 0)
+            .map(|i| Allocation {
+                request_id: demands[i].request_id.clone(),
+                sequence_id: demands[i].sequence_id,
+                phase: demands[i].phase,
+                rows: rows[i],
             })
             .collect())
     }

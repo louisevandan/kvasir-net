@@ -10,6 +10,7 @@ pub(super) struct AcceptedIssue {
     ordinal: u64,
     physical: CapsuleSet,
     proofs: BTreeMap<String, IssuedWorkProof>,
+    scheduling: crate::v2::commands::SchedulingSnapshot,
 }
 
 pub(super) type Accepted = Arc<Mutex<Vec<AcceptedIssue>>>;
@@ -23,7 +24,52 @@ pub(super) fn observer(
     native: Arc<Mutex<NativeTrace>>,
     extra: Option<IssueObserver>,
 ) -> IssueObserver {
+    let before = Mutex::new(None);
     Arc::new(move |point, state| {
+        if point == "before_native_issue" {
+            // Independent oracle from request state, not producer telemetry or
+            // phase_within(). Order: pending slot, prompt dependency, decode
+            // dependency, then known input. Native acceptance has not run yet.
+            let mut counts = [0usize; 6];
+            for r in state.requests.values() {
+                let class = if r.sequence_id.is_none() {
+                    0
+                } else if r.prompt_issued < r.command.tokens.len() {
+                    if r.outstanding < state.prefill_fragments.max(1) {
+                        3
+                    } else {
+                        1
+                    }
+                } else if r.outstanding > 0 {
+                    1
+                } else {
+                    match r.ready.as_ref().map(|r| r.phase) {
+                        Some(Phase::Prefill) => 3,
+                        Some(Phase::Decode) => 4,
+                        Some(Phase::Verify | Phase::Replay) => 5,
+                        None => 2,
+                    }
+                };
+                counts[class] += 1;
+            }
+            *before.lock().unwrap() = Some(crate::v2::commands::SchedulingSnapshot {
+                ordinary_limits: state.ordinary_limits,
+                ordinary_limits_applied: state.ordinary_limits != Default::default()
+                    && !state.equal_sequence_ubatch
+                    && counts[5] == 0,
+                min_batch_rows: state.min_batch_rows,
+                max_issue_rows: state.max_issue_rows,
+                max_open_batches: state.max_open_batches,
+                prefill_fragments: state.prefill_fragments,
+                open_batches_before_issue: state.open_batches.len(),
+                pending_admission: counts[0],
+                blocked_outstanding: counts[1],
+                no_ready_input: counts[2],
+                eligible_prefill: counts[3],
+                eligible_decode: counts[4],
+                eligible_atomic: counts[5],
+            });
+        }
         if point == "after_issue_accepted" {
             let native = native.lock().unwrap();
             let raw = native
@@ -52,6 +98,7 @@ pub(super) fn observer(
                 "bounded independent acceptance history"
             );
             accepted.push(AcceptedIssue {
+                scheduling: before.lock().unwrap().take().expect("pre-native snapshot"),
                 ordinal: state.next_open_batch - 1,
                 physical,
                 proofs,
@@ -148,6 +195,11 @@ fn complete(h: &Harness) -> bool {
                 .iter()
                 .find(|issue| issue.ordinal == body.logical_ordinal)
                 .expect("observation invented an unaccepted logical issue");
+            assert_eq!(
+                body.scheduling.as_ref(),
+                Some(&issue.scheduling),
+                "selection diagnostics must match pre-native state, not post-issue state"
+            );
             let route = route_key(event.envelope.return_route.as_ref().unwrap());
             let original = carriers(h, issue)[&route];
             assert_carrier(event, original);

@@ -24,8 +24,8 @@ pub use capsule::{
 pub use commands::{
     BatchObservation, BatchRequestObservation, InferenceCommand, LoadCommand, NodeAddress,
     NodeRole, OutcomePayload, PhysicalBatchObservation, ReleaseCommand, ReleaseSequence, ReplySpec,
-    SessionCommand, SettlementCommand, SettlementSequence, StageExecutionObservation,
-    StageRequestObservation, StageSpan, UnloadCommand,
+    SchedulingSnapshot, SessionCommand, SettlementCommand, SettlementSequence,
+    StageExecutionObservation, StageRequestObservation, StageSpan, UnloadCommand,
 };
 pub use completion::{ApprovedOutputPayload, ReleaseMember, ReleaseReceipt};
 pub use issue_witness::{
@@ -35,7 +35,7 @@ pub use logical::{LogicalBatch, LogicalBatchError, LogicalRow};
 pub use node::LlamaNodeAdapter;
 #[cfg(test)]
 pub(crate) use scheduler::PREFILL_PATIENCE;
-pub use scheduler::{Allocation, Demand, Phase, Scheduler, SchedulerError};
+pub use scheduler::{Allocation, Demand, OrdinaryLimits, Phase, Scheduler, SchedulerError};
 pub use session_key::{SessionKey, SessionKeyError};
 
 pub const LOAD_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.load-v3+json";

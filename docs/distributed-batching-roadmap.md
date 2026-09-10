@@ -10,6 +10,22 @@
 
 <a id="current-status"></a>
 
+### v1.1 cluster comparison preparation (2026-09-11)
+
+This isolated experiment tree retains the Hy3 fleet base `1a848a716`, including
+its explicit physical-wire-v4 compatibility checks and approved OUTPUT receipt
+timing, and ports only the bounded adapter selection/observation change from
+`d5256af44`. Driver fixture initializers set the optional scheduling field to
+None. It does not replace the fleet native binaries or relax identity checks.
+The source is identical for baseline and candidate; only decode-member caps
+change (Hy3 0 to 2, MI250 main source 0 to 4). Resident, native batch limits,
+prefill fragment count, model cuts, KV placement and offloading stay fixed.
+Short screening uses 256-token length termination and a 15-minute inference
+deadline; it is not normal-response quality or H5 performance acceptance.
+Combined-tree validation: `cargo test --workspace --no-fail-fast --locked
+--target-dir F:/dev/p4/target/v11-hy3-tests`, exit 0, 1385 passed / 0 failed /
+7 ignored, 58 summaries. Runtime comparison remains pending.
+
 ## 0. 현재 상태 — 후보 보존 및 별도 fleet·upstream 통합 진행
 
 ### 0.-6 최신 사용자 지시 — MiMo 보류, Hy3로 실행 (2026-09-10)
