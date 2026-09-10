@@ -26,13 +26,13 @@ use p4_llamacpp_staged_adapter::v2::{
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
 use replies::{ExpectedReply, receive_exact};
-use wire::EventWire;
 use serde::Serialize;
 use std::io::Write;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use wire::EventWire;
 
 const CREATE: &str = "application/vnd.p4.node.create-v3+json";
 const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
@@ -140,6 +140,8 @@ pub struct RequestArtifact {
     pub logical_prefill_tps: Option<f64>,
     pub logical_generation_tps: Option<f64>,
     pub response: String,
+    /// Monotonic run-relative receipt times, one per approved OUTPUT (including terminal).
+    pub output_received_ms: Vec<u128>,
     pub outcomes: Vec<OutcomePayload>,
 }
 
@@ -712,6 +714,7 @@ mod tests {
     #[test]
     fn phase_metrics_use_first_output_as_the_prefill_decode_boundary() {
         let mut request = RequestArtifact {
+            output_received_ms: Vec::new(),
             request_id: "request".into(),
             submission_event_id: "sent-request".into(),
             submission_authority: None,

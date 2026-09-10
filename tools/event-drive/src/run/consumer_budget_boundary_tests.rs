@@ -184,6 +184,7 @@ fn observation(index: usize, event: &Event, request_id: &str, step: usize) -> Ba
     let decode = usize::from(step != 0);
     let execution = index as u64 * 10 + step as u64 + 1;
     BatchObservation {
+        scheduling: None,
         observation_id: format!("obs-{index}-{step}"),
         logical_ordinal: execution,
         load_generation: 9,
@@ -1062,6 +1063,16 @@ mod partial_results {
                 "{fault:?}: {} kept its approved outputs",
                 request.request_id
             );
+            assert_eq!(request.output_received_ms.len(), request.outcomes.len());
+            assert_eq!(
+                request.output_received_ms.first().copied(),
+                request.first_output_ms
+            );
+            assert_eq!(
+                request.output_received_ms.last().copied(),
+                request.completed_ms
+            );
+            assert!(request.output_received_ms.windows(2).all(|w| w[0] <= w[1]));
             assert!(
                 request.completed_ms.is_some(),
                 "{fault:?}: {} kept its terminal outcome",

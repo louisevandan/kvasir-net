@@ -16,6 +16,15 @@
 
 ### 0.V1.1 MI250·Hy3 통합 수정계획 (2026-09-11)
 
+**구현 진행 (2026-09-11):** V1.1-0의 선택 시점 진단·실제 OUTPUT 수신시각과 V1.1-2의
+실험용 phase별 요청/행 상한을 구현했다. V1.1-0 전체 또는 V1.1-2 승격 완료는 아니다.
+V1.1-1 B2/B3/receipt 예산은 미완이며 resident/open/fragment 창을 확대하지 않았다.
+새 정책은 기본 비활성이고 ordinary attention에만 적용한다. 실제 GPU 실행/성능 승인은 미실행이다.
+로컬 최종 게이트: workspace **1384/0/7**(58 summary, filtered 0), 변이 실패 **1/5/3/1**, docs-lint 92 clean.
+[구현·검증 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#bounded-implementation)을 따른다.
+다음은 V1.1-0의 미발행 구간/요청별 사유·단조시계 issue→settle·byte 수명 계측을 닫고 V1.1-1을 수행하는 것이다.
+그 전에는 이번 선택 후보를 기본 정책으로 승격하거나 flight 창을 늘리지 않는다.
+
 **현재 개발 순서는 이 절로 이관한다.** 아래 v0.9.0/P/U 기록의 당시 “다음”을 다시 직렬 선행 조건으로 만들지 않는다.
 v0.9.0 봉인 여부를 이번 분석으로 바꾸거나 v1.1 구현 완료로 표시하지 않는다. 버전 bump/tag는 아직 하지 않는다.
 감사 HEAD `11dc7a0ce`, MI250 실행 `f3658f1b`, Hy3 adapter/native `9ad366f9063`의 근거를

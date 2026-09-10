@@ -137,17 +137,48 @@ impl Worker {
         // busy paying a per-batch cost repeatedly. With width controlled
         // the signs invert: width +0.898, overlap -0.060.
         //
-        // The cost a batch pays is 34.2 ms per batch plus 1.051 ms per
-        // row, so a wide batch is 3.4x more efficient per row and the
-        // curve is still climbing at width 98. Narrowing here is a way
-        // to spend more of that fixed cost for the same work. The knob
-        // stays because bounding width is still occasionally needed, but
-        // it is not a throughput lever and overlap is not a target.
+        // Those width/cost observations apply to that workload only. The
+        // 2026-09-11 MI250/Hy3 diagnosis motivates independent phase/member
+        // limits below: a row cap larger than the resident decode count
+        // still consumes every ready request. Neither wider batches nor
+        // increased RPC overlap alone establish a throughput improvement.
         //
         // Never applied while a speculative transaction is pending: a
         // Verify or Replay allocation must stay whole inside one UBATCH,
         // and the scheduler reserves it against the full capacity.
         let atomic_pending = demands.iter().any(|demand| demand.atomic);
+        let mut scheduling = super::super::super::commands::SchedulingSnapshot {
+            ordinary_limits: self.state.ordinary_limits,
+            ordinary_limits_applied: self.state.ordinary_limits != Default::default()
+                && !atomic_pending
+                && !self.state.equal_sequence_ubatch,
+            min_batch_rows: self.state.min_batch_rows,
+            max_issue_rows: self.state.max_issue_rows,
+            max_open_batches: self.state.max_open_batches,
+            prefill_fragments: self.state.prefill_fragments,
+            open_batches_before_issue: self.state.open_batches.len(),
+            pending_admission: 0,
+            blocked_outstanding: 0,
+            no_ready_input: 0,
+            eligible_prefill: 0,
+            eligible_decode: 0,
+            eligible_atomic: 0,
+        };
+        // Node-wide counts, matching ready_rows/ready_sequences. Snapshot is
+        // captured before native execution; it must not describe post-issue state.
+        for request in self.state.requests.values() {
+            if request.sequence_id.is_none() {
+                scheduling.pending_admission += 1;
+            } else {
+                match request.phase_within(self.state.prefill_fragments) {
+                    Some(Phase::Prefill) => scheduling.eligible_prefill += 1,
+                    Some(Phase::Decode) => scheduling.eligible_decode += 1,
+                    Some(Phase::Verify | Phase::Replay) => scheduling.eligible_atomic += 1,
+                    None if request.outstanding > 0 => scheduling.blocked_outstanding += 1,
+                    None => scheduling.no_ready_input += 1,
+                }
+            }
+        }
         let issue_cap = if self.state.max_issue_rows == 0 || atomic_pending {
             usize::MAX
         } else {
@@ -155,13 +186,14 @@ impl Worker {
         };
         let policy = self
             .scheduler
-            .prepare_plan_with_physical_capacity(
+            .prepare_plan_with_limits(
                 &demands,
                 self.state.batch_capacity.min(issue_cap),
                 self.state.physical_capacity.min(issue_cap),
                 self.state.equal_sequence_ubatch,
                 self.state.max_atomic_sequences,
                 self.state.atomic_batch_exclusive,
+                self.state.ordinary_limits,
             )
             .map_err(|error| {
                 self.set_snapshot(&format!("scheduler_failed:{error:?}"));
@@ -390,6 +422,7 @@ impl Worker {
                 logical_rows,
                 &physical,
                 BatchPacing {
+                    scheduling: Some(scheduling.clone()),
                     stage_ms,
                     idle_ms,
                     idle_gated,

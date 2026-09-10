@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::thread::JoinHandle;
 
 mod actor_ring;
+mod bounded_strategy;
 mod effect_backpressure;
 mod issue_witness;
 mod observation_contract;
@@ -583,6 +584,31 @@ impl Harness {
         observer: Option<IssueObserver>,
         issue_fault: Option<issue_witness::NativeFault>,
     ) -> Self {
+        Self::observed_with_limits(
+            stages,
+            max_open,
+            completion_capacity,
+            initial,
+            chain_length,
+            script,
+            observer,
+            issue_fault,
+            Default::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn observed_with_limits(
+        stages: usize,
+        max_open: usize,
+        completion_capacity: usize,
+        initial: &[Event],
+        chain_length: usize,
+        script: Option<speculative::Scenario>,
+        observer: Option<IssueObserver>,
+        issue_fault: Option<issue_witness::NativeFault>,
+        limits: crate::v2::scheduler::OrdinaryLimits,
+    ) -> Self {
         assert!((2..=8).contains(&stages));
         assert!(initial.len() < INPUT_CAPACITY);
         let mut nodes = Vec::new();
@@ -645,6 +671,7 @@ impl Harness {
                 worker.state.free_sequences = (0..script.sequence_capacity()).collect();
             }
             worker.state.max_atomic_sequences = 1;
+            worker.state.ordinary_limits = limits;
             worker.state.equal_sequence_ubatch = false;
             worker.state.atomic_batch_exclusive = false;
             worker.state.min_batch_rows = 0;

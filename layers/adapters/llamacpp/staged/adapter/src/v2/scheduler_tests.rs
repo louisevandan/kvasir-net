@@ -1,6 +1,155 @@
 //! L3 transaction tests. These do not stand in for worker/native acceptance.
 use super::*;
 
+fn limited(s: &Scheduler, d: &[Demand], capacity: usize, limits: OrdinaryLimits) -> PreparedPlan {
+    s.prepare_plan_with_limits(d, capacity, capacity, false, 1, false, limits)
+        .unwrap()
+}
+
+#[test]
+fn bounded_strategy_splits_sixteen_decodes_without_spending_rejected_fairness() {
+    let mut s = Scheduler::new();
+    let d: Vec<_> = (0..16).map(|i| demand(i, Phase::Decode, 1)).collect();
+    let limits = OrdinaryLimits {
+        decode_members: 4,
+        ..Default::default()
+    };
+    let before = snapshot(&s);
+    for _ in 0..32 {
+        let p = limited(&s, &d, 512, limits);
+        assert_eq!(p.allocations().len(), 4);
+        assert_eq!(p.allocations()[0].sequence_id, 0);
+        drop(p);
+    }
+    assert_eq!(before, snapshot(&s));
+    let mut seen = HashSet::new();
+    for _ in 0..4 {
+        let p = limited(&s, &d, 512, limits);
+        for a in s.commit_plan(p).unwrap() {
+            assert!(seen.insert(a.sequence_id));
+        }
+    }
+    assert_eq!(seen.len(), 16);
+}
+
+#[test]
+fn bounded_strategy_preserves_both_phases_and_limits_long_prompt_work() {
+    let mut s = Scheduler::new();
+    let mut d: Vec<_> = (0..15).map(|i| demand(i, Phase::Decode, 1)).collect();
+    d.push(demand(15, Phase::Prefill, 100_000));
+    let limits = OrdinaryLimits {
+        decode_members: 4,
+        prefill_members: 4,
+        prefill_rows: 128,
+        prefill_rows_per_request: 64,
+    };
+    let p = limited(&s, &d, 512, limits);
+    let a = s.commit_plan(p).unwrap();
+    assert_eq!(a.iter().filter(|a| a.phase == Phase::Decode).count(), 4);
+    assert_eq!(
+        a.iter()
+            .filter(|a| a.phase == Phase::Prefill)
+            .map(|a| a.rows)
+            .sum::<usize>(),
+        64
+    );
+    let d: Vec<_> = (0..4).map(|i| demand(i, Phase::Prefill, 100_000)).collect();
+    let p = limited(&s, &d, 512, limits);
+    assert_eq!(p.allocations().iter().map(|a| a.rows).sum::<usize>(), 128);
+    assert!(p.allocations().iter().all(|a| a.rows <= 64));
+}
+
+#[test]
+fn bounded_strategy_rotates_stable_members_and_bounds_capacity_one_starvation() {
+    let mut s = Scheduler::new();
+    let limits = OrdinaryLimits {
+        decode_members: 1,
+        prefill_members: 0,
+        prefill_rows: 1,
+        prefill_rows_per_request: 1,
+    };
+    let d = [
+        demand(10, Phase::Prefill, 100),
+        demand(20, Phase::Prefill, 100),
+        demand(30, Phase::Prefill, 100),
+    ];
+    let p = limited(&s, &d, 1, limits);
+    assert_eq!(s.commit_plan(p).unwrap()[0].sequence_id, 10);
+    // Request 10 is absent while in flight; resuming at vector index 1 would skip 20.
+    let p = limited(&s, &d[1..], 1, limits);
+    assert_eq!(s.commit_plan(p).unwrap()[0].sequence_id, 20);
+    let d = [demand(1, Phase::Decode, 1), demand(2, Phase::Prefill, 100)];
+    let mut served = [0; 2];
+    for _ in 0..(PREFILL_PATIENCE + 1) * 3 {
+        let p = limited(&s, &d, 1, limits);
+        let a = s.commit_plan(p).unwrap();
+        served[usize::from(a[0].phase == Phase::Prefill)] += 1;
+    }
+    assert!(served[0] > 0 && served[1] >= 3, "{served:?}");
+}
+
+#[test]
+fn bounded_strategy_does_not_split_atomic_or_change_equal_sequence_policy() {
+    for (d, equal) in [
+        (mixed(), true),
+        (
+            vec![demand(0, Phase::Verify, 4), demand(1, Phase::Decode, 1)],
+            false,
+        ),
+    ] {
+        let s = Scheduler::new();
+        let old = s
+            .prepare_plan_with_physical_capacity(&d, 8, 8, equal, 1, false)
+            .unwrap();
+        let new = s
+            .prepare_plan_with_limits(
+                &d,
+                8,
+                8,
+                equal,
+                1,
+                false,
+                OrdinaryLimits {
+                    decode_members: 1,
+                    prefill_members: 0,
+                    prefill_rows: 1,
+                    prefill_rows_per_request: 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(old.allocations(), new.allocations());
+    }
+}
+
+#[test]
+fn bounded_strategy_splits_long_prompt_members_without_needing_multiple_fragments() {
+    let mut s = Scheduler::new();
+    let mut ready: Vec<_> = (0..16)
+        .map(|i| demand(i, Phase::Prefill, 100_000))
+        .collect();
+    let limits = OrdinaryLimits {
+        decode_members: 4,
+        prefill_members: 4,
+        prefill_rows: 128,
+        prefill_rows_per_request: 64,
+    };
+    let mut seen = HashSet::new();
+    for _ in 0..4 {
+        let p = limited(&s, &ready, 512, limits);
+        let a = s.commit_plan(p).unwrap();
+        assert_eq!(a.len(), 4);
+        assert_eq!(a.iter().map(|a| a.rows).sum::<usize>(), 128);
+        for a in a {
+            assert!(seen.insert(a.sequence_id));
+        }
+        // No tail has returned. Issued requests are legally blocked while
+        // the other independent prompts must still be schedulable.
+        ready.retain(|d| !seen.contains(&d.sequence_id));
+    }
+    assert!(ready.is_empty());
+    assert_eq!(seen.len(), 16);
+}
+
 fn demand(sequence_id: u32, phase: Phase, rows: usize) -> Demand {
     Demand {
         request_id: format!("r{sequence_id}"),

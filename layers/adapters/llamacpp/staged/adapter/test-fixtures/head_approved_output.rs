@@ -346,6 +346,10 @@ pub fn assert_live_matches(case_id: &str, submissions: &[Event], live: &[Event],
                 "idle_gated",
                 "ready_rows",
                 "ready_sequences",
+                // Scheduling diagnostics are checked against the independently
+                // captured pre-native state by loop_tests/observation_contract.
+                // The historical ownership golden remains unchanged.
+                "scheduling",
                 "ingress_unix_ms",
                 "start_unix_ms",
                 "end_unix_ms",

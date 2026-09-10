@@ -111,6 +111,9 @@ where
             };
             match wire.receive(read_until).await {
                 Ok(event) => {
+                    // Capture receipt before parsing/validation work; retain it
+                    // only if the output is approved below.
+                    let received_ms = started.elapsed().as_millis();
                     if !seen_event_ids.insert(event.envelope.event_id.clone()) {
                         return Err("duplicate inference event identity".into());
                     }
@@ -135,7 +138,7 @@ where
                             evidence.output(&event, &approved)?;
                             let expected_release = release_approval.expected.clone();
                             submissions.commit_output(release_approval);
-                            let observed_ms = started.elapsed().as_millis();
+                            let observed_ms = received_ms;
                             if request.first_output_ms.is_none() {
                                 request.first_output_ms = Some(observed_ms);
                             }
@@ -146,6 +149,7 @@ where
                                 request.issued_work = approved.issued_work;
                                 completed += 1;
                             }
+                            request.output_received_ms.push(observed_ms);
                             request.outcomes.push(approved.outcome);
                         }
                         RELEASE_RECEIPT_CONTENT_TYPE => {
@@ -339,6 +343,7 @@ where
         requests.insert(
             key.clone(),
             RequestArtifact {
+                output_received_ms: Vec::new(),
                 request_id,
                 submission_event_id: event.envelope.event_id.clone(),
                 submission_authority: Some(authority),

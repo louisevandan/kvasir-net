@@ -209,6 +209,7 @@ mod tests {
             .collect::<Vec<_>>();
         outcomes.last_mut().unwrap().stop = Some(stop.into());
         RequestArtifact {
+            output_received_ms: Vec::new(),
             request_id: "request".into(),
             submission_event_id: "sent-request".into(),
             submission_authority: None,
