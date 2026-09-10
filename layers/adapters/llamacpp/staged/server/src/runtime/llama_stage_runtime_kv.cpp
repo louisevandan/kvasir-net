@@ -1,5 +1,6 @@
 #include "llama_stage_runtime.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>

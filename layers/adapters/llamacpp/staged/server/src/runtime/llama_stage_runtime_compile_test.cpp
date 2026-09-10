@@ -9,7 +9,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#ifdef _WIN32
 #include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <string>
 
 namespace staged::llama_runtime {
@@ -131,9 +135,14 @@ void real_decode_after_restore_regression() {
     config.model_identity = model_path;
     config.layer_begin = 0;
     config.layer_end = 28;
+#ifdef _WIN32
+    const auto process_id = ::_getpid();
+#else
+    const auto process_id = ::getpid();
+#endif
     const auto root = std::filesystem::temp_directory_path() /
         ("p4-staged-kv-restore-regression-" + std::to_string(
-            static_cast<unsigned long long>(::_getpid())));
+            static_cast<unsigned long long>(process_id)));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     config.kv_root = root.string();
