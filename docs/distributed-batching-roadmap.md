@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-10 — 릴리즈 후보 보존, 최종 실기 BLOCKED. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — MI250·Hy3 진단 병합, v1.1 수정계획 수립(구현 전). 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,7 +10,101 @@
 
 <a id="current-status"></a>
 
-## 0. 현재 상태 — v0.9.0 후보 보존, 정식 봉인 BLOCKED
+## 0. 현재 상태 — v1.1 수정계획 수립, 성능·서비스 승인은 미완료
+
+<a id="v11-plan"></a>
+
+### 0.V1.1 MI250·Hy3 통합 수정계획 (2026-09-11)
+
+**현재 개발 순서는 이 절로 이관한다.** 아래 v0.9.0/P/U 기록의 당시 “다음”을 다시 직렬 선행 조건으로 만들지 않는다.
+v0.9.0 봉인 여부를 이번 분석으로 바꾸거나 v1.1 구현 완료로 표시하지 않는다. 버전 bump/tag는 아직 하지 않는다.
+감사 HEAD `11dc7a0ce`, MI250 실행 `f3658f1b`, Hy3 adapter/native `9ad366f9063`의 근거를
+[통합 진단](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md)에 병합했다.
+서로 다른 upstream/모델/backend/워크로드의 TPS를 합치지 않았다. 판정 계약은
+[v1.1 검증 적용표](distributed-batching-verification.md#v11-gates)를 따른다.
+
+**수정 목표:** 노드별 backend 실행 1개를 유지하면서 독립 batch를 여러 stage에 흘린다.
+prefill·decode의 배치 구성과 서비스 시간을 분리해 장기 prefill의 지연 전파를 줄이고,
+수용/전송/반환/receipt 메모리가 요청량에 따라 무제한 증가하지 않게 한다.
+
+| 측정·코드 근거 | 계획에서 바꾸는 것 |
+| --- | --- |
+| MI250 16-stage 두 머신 각각 최대 동시 RPC 1; 16요청이 한 묶음에 소진 | decode 요청 묶음 크기를 별도 제어. max_issue_rows=64도 16 decode를 모두 담으므로 이것만으로 해결하지 않음 |
+| MI250·Hy3 모두 issue gate 거절 0; MI250 유효 open 설정 미봉인 | open-batch 상한이 원인이라고 단정하지 않고, 실제 eligible/blocked/flight 원인을 먼저 계측 |
+| Hy3 decode 간격 중앙 1.869s → prefill 구간 약 30s; 같은 길이 요청의 TTFT 약 2배 차이 | prefill 서비스 시간 예산·요청별 quantum·누적 공정성 도입 |
+| Hy3 agent RSS와 payload 두 번 보관의 예상량이 약 20GiB로 근접; heap 귀속은 미확정 | active credit뿐 아니라 완료 receipt의 byte 보관/퇴역 계약을 별도 수정 |
+| 8-stage 301.63과 16-stage 7.64는 resident256/16, 짧은 입력/100k 혼합 등 조건 상이 | 노드 수 손실률·최적값·유효 TPS 개선으로 승인하지 않고 토폴로지별 기준선을 새로 고정 |
+
+#### 구현 순서와 종료 조건
+
+| 단계 | 수정 단위 / 소유 | 종료 조건 |
+| --- | --- | --- |
+| V1.1-0 측정 결속 | OUTER/driver 및 adapter trace: 유효 환경설정, 요청별 수용·eligible·blocked 사유, head 단조시계 issue→settle와 flight 수, stage queue/native/forward 분해. MI250에 실제 OUTPUT 수신시각 수집 경로 결속 | 동일 artifact로 요청 묶음·실제 ITL·flight/byte 수명·미분류 시간을 재계산 가능. 노드 간 시계 오차 범위 없이 전역 겹침/홉 비용 확정 금지 |
+| V1.1-1 예산과 종료 | adapter B2/B3 수용·반환 예약; core broker는 backend 중립 byte/receipt 수명 계약. pending prompt, KV/보조 상태, 전송 payload, 출력, 완료 receipt를 각각 제한. 정상/거부/부분 전송/취소·timeout의 정산·회수 결속 | 한계 초과는 부작용 전 거부, 중복 replay 의미 보존, 결과 불명은 보존. cap1에서도 제어 진행, 장기 반복 후 live/retired 예산 안정, 모든 stage 해제 후 UNLOAD. resident·flight 창 확대 전 필수 |
+| V1.1-2 배치 구성 | adapter scheduler/drive: `decode_member_cap`에 해당하는 요청 묶음 선택과 prefill 행 quantum을 독립 정책으로 추가. ready decode 서비스 예약, 요청별 누적 서비스 deficit/aging, 단계별 관측 비용에 따른 prefill 시간 예산 | 같은 16요청으로 서로 다른 decode 묶음 발행. 느린 prefill이 있어도 decode/prefill 양쪽 starvation 없음. 불변 issued membership, decode outstanding≤1, KV prefix·atomic verify/replay 유지 |
+| V1.1-3 파이프라인 창 | adapter: prefill fragment 1→2→4→8을 단계별로 검증. node 실행 credit=1, global open-batch credit=N, edge row/byte·receiver credit 별도. 필요 시 native 작업 중 제어/전달을 처리할 수 있게 worker 상태기계 분리 | 같은 sequence fragment의 stage 순서·정산 순서, out-of-order 도착/중복/취소에서 원장·KV 안전. 실제 소비 경로/변이로 확인 후에만 실험 기본값 확대. shared context 동시 호출 금지 |
+| V1.1-4 실기 승격 | 고정 topology별 짧은 대조 실험 → 후보 선택 → 100k 연속 웨이브/긴 정상 응답·오프로딩·장기 반복. CUDA/Metal Hy3와 ROCm Step 결과를 각각 판정 | 아래 행렬과 H5 반복·holdout/SLO/품질 게이트 통과. 실패 원자료·cleanup 보존. 지원하지 못한 backend/model/기능은 명시적으로 미승인 |
+
+V1.1-0이 **다음 첫 구현**이다. 첫 산출물은 봉인된 두 기준선의 실제 knob/요청 상태/수신시각/flight trace와
+그 trace를 검증하는 소비 경로 시험이다. 기존 UTF-8 69~113토큰 실패 입력도 보존·재현하여 원인 수정 및
+한글 장문 회귀를 결속한다. 64토큰/영문 성공을 해당 결함의 해결로 읽지 않는다.
+
+V1.1-2는 고정한 안전 예산 안에서 시작하며, V1.1-3의 창 증가는 V1.1-1과 fragment 안전성 뒤다.
+`queue.is_running()` 또는 `outstanding>0`을 일괄 제거하는 변경은 이 계획에 없다.
+현재 event 경로에서 전자의 호출을 찾지 못했고, 후자는 decode 의존성이다.
+step별 동기 호출의 완료를 기다리는 구조를 변경할 때는 준비한 실행 권한/원장 commit/외부 효과를 분리해 검증한다.
+
+배치 선택의 구현 초안은 다음과 같다. 아래는 현재 구현 사실이 아니며 반례로 정책을 확정한다.
+
+1. 요청별 KV prefix·미반환 fragment·예약 상태로 합법적 후보를 만든다. 단순 ready 행 총량과 구분한다.
+2. 모든 요청을 매번 넣지 않고 phase별 요청 묶음을 선택한다. decode 묶음 상한과 요청별 prefill quantum을
+   독립 적용하되, 혼합 batch가 다시 모든 독립 요청을 점유하는지도 검사한다.
+3. decode의 대기 목표와 prefill의 누적 미서비스량/aging으로 몫을 배분한다. ready decode가 없으면 그 몫을
+   prefill이 사용한다. 행 수뿐 아니라 최근 단계별 비용으로 다음 native 작업 시간을 예상한다.
+4. node 실행·전체 flight·edge/receiver byte·KV/보조 상태·반환 예산을 모두 만족하는 만큼만 발행한다.
+   다른 묶음은 다음 issue 기회에 즉시 선택 가능하게 두며 배치를 채우려고 무조건 기다리지 않는다.
+5. issue membership/token range와 예약을 원자적으로 확정한다. 반환은 stage 완료·정산 권한에 맞춰 각각 처리하고,
+   출력/해제/receipt 퇴역까지 별도 수명을 추적한다. 전송 credit 반환만으로 KV를 재사용하지 않는다.
+
+prefill 시간 예산은 다음 작업의 크기를 고르는 예상 목표다. 실행 중 native kernel을 선점하는 보장은 아니다.
+예상과 실제 비용 차이·prefill 최장 대기·decode ITL을 함께 기록하여 큰 chunk나 decode 우선의 기아를 검출한다.
+
+#### 실험 행렬 — 작은 판별 실험부터
+
+각 행에서 명시한 정책 하나만 바꾼다. 모델·cut·backend·KV/오프로딩·resident·도착열·샘플링·출력 종료조건과
+논리/물리 batch 상한은 고정한다. 적재 시간과 추론 시간을 분리한다. 짧은 판별 arm은 사전 15분 추론 상한으로
+설계하고 실패/미완을 보존한다. 3회 반복은 후보 선별용이며 성능 승인 반복을 대체하지 않는다.
+
+| 탐색 축 | 초기 범위 | 확인할 반증 |
+| --- | --- | --- |
+| 독립 decode 묶음 | MI250 resident16에서 16/8/4/2요청; Hy3 resident8에서 8/4/2 | 작은 묶음으로 겹침이 늘어도 kernel 효율 감소로 TPS/SLO가 나빠지는가 |
+| prefill quantum | 64/128/256/512행, 선택한 decode 묶음 고정 | 긴 native step·decode 대기가 줄어드는가, prefill TTFT/공정성이 악화되는가 |
+| 요청별 prefill 창 | 1/2/4/8 fragment, quantum/전체 창 고정 | 다른 요청의 KV/edge 예산을 잠식하는가, 동일 sequence 순서가 안전한가 |
+| 전체 open 창 | 1/2/4/8/16 중 byte/메모리 예산이 허용하는 값 | 실제 flight가 한계에 닿는가, 추가 창이 처리량 대신 큐/메모리만 늘리는가 |
+
+사용자가 제시한 `(fragment, issue rows, open)`의 `(2,256,2~4)`, `(4,128,4~8)`,
+`(8,64~128,8~16)`은 위 단일 축 판별 후의 **조합 탐색**으로 보존한다. 모두 최적값이 아니며
+decode 묶음 상한은 별도다. 처음부터 전 조합을 6시간씩 실행하지 않는다.
+
+최종 부하는 (1) 짧은 decode 다수+100k prefill 혼합, (2) 실제 긴 입력 여러 건의 연속 웨이브를 구분한다.
+100k context 설정만으로 100k prefill 완료를 주장하지 않는다. KV를 device에 먼저 예약하고 남는 예산에
+weight를 배치하며 CPU 오프로딩을 허용하되, 계획/실제 peak RAM·VRAM 및 부족 구성 거부를 검증한다.
+Mac 통합 메모리는 RAM/VRAM을 서로 독립된 두 자원처럼 중복 합산하지 않는다.
+
+평균 동시 RPC 4~8은 16-stage의 탐색 목표일 뿐 출시 게이트나 GPU 포화 선언이 아니다.
+H5의 paired 최소 8쌍·holdout 최소 4쌍, 유효 TPS 중앙 개선≥5%·95% CI 하한>0,
+TTFT p95≤1.10배·ITL p95≤1.05배와 사전 절대 SLO를 그대로 적용한다.
+고정 길이/ignore_eos 부하와 정상 EOS·내용 품질 승인을 분리한다.
+
+#### 범위 경계
+
+이 버전의 필수 범위는 측정 결속, 예산/종료, 공정한 phase별 구성, 검증된 bounded flight, 선언 구성의 실기다.
+physical capsule 조기 전송은 native codec/정산 계약을 바꾸는 별도 후보다. 위 변경 뒤에도 전체 capsule
+반환 대기가 주원인으로 남는 trace가 있을 때만 범위를 재심사하고, 없으면 다음 버전으로 넘긴다.
+병렬 sampler/shared context 실행, 검증하지 않은 recurrent/hybrid fragment 확대, 영속 KV/K gate 전체,
+모든 모델/backend 승인을 이번 수정의 자동 완료 조건으로 추가하지 않는다. 지원 범위 밖은 기본 비활성/미승인이다.
+
+아래는 이전 실행 이력이다. 당시 후보 파일·실패·미실행 기록은 보존하며 이번 계획의 새 순서를 덮어쓰지 않는다.
 
 ### 0.-1 이번 버전 마감 상태 (2026-09-10)
 

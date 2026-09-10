@@ -744,6 +744,33 @@ CTest는 build script가 출력한 실제 build directory/config에서 실행한
 기존 `node test/benchmarks/p4-4node/run.mjs smoke|service|prefill_mix_35b` 명령은 개발 진단용이며
 이 문서의 H0~H7 전체를 자동 강제하는 runner는 아직 아니다. 각 scenario를 별도 명령으로 실행한다.
 
+<a id="v11-gates"></a>
+
+## 6.1 v1.1 통합 진단에 대한 검증 적용
+
+2026-09-11 계획 추가. 실행 순서는 [로드맵 v1.1](distributed-batching-roadmap.md#v11-plan)만 소유한다.
+아래는 아직 실행하지 않은 변경별 판정 조건이며 기존 T/I/H/K 게이트를 완화하지 않는다.
+
+| 변경 | 필수 반례·소비 경로 검증 |
+| --- | --- |
+| 관측 | 같은 시각의 요청별 admitted/eligible/blocked·issue/settle·byte 상태를 재계산. 지연/거부/부분 OUTPUT 뒤 실패에서도 최초 오류와 승인된 부분 증거 보존. 실제 ITL은 연속 OUTPUT 수신시각으로 계산 |
+| byte 수용/반환/receipt | 개수는 작지만 payload가 큰 입력, 완료 receipt 누적, 중복 replay, budget 경계±1, 전달 결과 불명, 해제/정산 제어 진행. 거부 전후 원장·예약·credit·출력 효과 동일. TTL/LRU로 아직 유효한 중복 판정 근거를 임의 삭제하지 않음 |
+| decode 묶음/prefill quantum | 16 decode를 한 묶음에 소진하는 반례, 같은 길이 장기 요청의 누적 불공정, decode 지속 도착 시 prefill 기아와 반대 경우. 발행한 token range/membership은 이후 재정렬·분할하지 않음 |
+| prefill 복수 fragment | stage별 KV prefix보다 앞선 fragment 도착, 중복·역순 반환, 오류/취소 시 뒤 fragment 잔존, recurrent/verify/replay 경계. decode outstanding≤1, node backend 동시 실행≤1. fragment limit를 지우거나 순서 검사를 제거하는 변이는 실패해야 함 |
+| 종료/재사용 | timeout 중 전송·native 결과 불명 보존, 진행 가능한 제어 채널, 모든 stage 정산 확인 후 슬롯 재사용·idle UNLOAD. 강제 프로세스 종료만으로 정상 정리 통과를 대신하지 않음 |
+| 메모리/오프로딩 | device KV 우선 계획과 실제 backend 할당 비교, CPU weight 포함 peak RAM·VRAM·agent heap/receipt byte 구분. 부족한 구성은 계속 거부. 통합 메모리 중복 합산 금지 |
+
+모든 기능 수정은 실패 반례 → 실제 소비 경로 → 독립 worktree의 재컴파일/해시 결속 변이로 증명한다.
+core byte 계약에는 backend 중립성 시험, adapter/native 변경에는 해당 I gate를 적용한다.
+관련 recurrent/hybrid/backend 조합이 미검증이면 복수 fragment 승격 범위에서 제외하고 비활성을 유지한다.
+UTF-8 회귀는 기존 69~113토큰 실패 입력/seed/바이너리 기준과 조각 경계를 보존하여 별도로 검증한다.
+
+실기는 모델/토폴로지별 기준선과 후보를 고정하고, 적재·prefill·decode·혼합·정리 분석창을 분리한다.
+GPU 표본과 RPC span은 별도 지표다. 호스트 간 시계 오차 범위 없는 전역 겹침/홉 지연은 참고값으로만 둔다.
+토큰 수/elapsed 분모, 미완료·실패·길이 종료, 동시 부하를 함께 보고한다. 단회 최고치와 3회 선별은 H5 승인이 아니다.
+H5의 최소 8 paired 반복·4 holdout쌍, 유효 TPS/신뢰구간·TTFT/ITL 상대 및 절대 SLO 조건을 그대로 적용한다.
+정상 종료·내용 품질·긴 웨이브·정산·UNLOAD·메모리 안정성을 함께 통과해야 선언 구성의 수용으로 기록한다.
+
 ## 7. 최종 완료 체크리스트
 
 - [ ] 모든 필수 T gate 구현·실행·mutation과 실제 소비 경로 증거가 있음.
