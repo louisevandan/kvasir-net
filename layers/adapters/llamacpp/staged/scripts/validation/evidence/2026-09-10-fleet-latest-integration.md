@@ -308,3 +308,17 @@ node layers/adapters/llamacpp/staged/scripts/build-stage-server.mjs --cuda --cud
 ```
 
 The upstream checkout must be clean at the full candidate SHA before preparation. The release checkout and its prepared source are not inputs to these commands.
+
+## Requested M42 + Spark + Mac run: 2026-09-10 recheck
+
+The user requested 3090 x2, Spark and Mac mini together. This is a new three-physical-host target, not the earlier Spark/Ubuntu result.
+Runtime source remains `9ad366f90`; this recheck changes no product source or acceptance criteria.
+[Status and scope](bundles/three-platform-20260910/status.json), [per-file hashes](bundles/three-platform-20260910/MANIFEST.sha256), and [pending 122B configuration](bundles/three-platform-20260910/large-config.pending.json) preserve the attempt.
+
+- Mixed CUDA/Metal prerequisite `mixed-1789013818305`: Mac received CREATE from Spark but its response failed. Kernel logs bind PID 76328 to an outgoing TCP drop with reason NECP and error 65. No model or inference was submitted. The driver exited 1 with event timeout while awaiting the CREATE response; absence of artifact.json is a pre-submission failure, not lost inference output.
+- M42: SSH works and both RTX 3090 cards report 24,576 MiB total / 51 MiB used. There is no interactive user; S: and the NAS UNC are unreadable. Both enabled inbound Block rules name the existing `C:/Users/42mob/p4-remote/p4-agent.exe`. No runtime deployment, firewall change or model copy was performed in this recheck.
+- Candidate 122B cuts are M42 GPU0 [0,8), M42 GPU1 [8,16), Spark [16,40), Mac [40,48), resident 4, unchanged 32 prompts / eight waves / max512 / no MTP. M42 plans and all actual LOAD/ACTUAL comparisons remain pending. The Windows executable path in the configuration is a proposed deployment destination, not an installed file.
+- Actual native no-alloc preflight passes on Spark and Mac for those cuts, exit 0 and fits_current_free=true. Spark device 42,918,623,360 B + host 14,958,624 B; Mac device 15,708,870,656 B + host 14,698,528 B. These are allocations within each shared physical pool, not separate capacities to add. They are not peak measurements or inference acceptance.
+- Both newly started agents were hash-bound, their logs copied, and they were stopped with zero stage children. Existing apps and sealed runtime/evidence bundles were preserved.
+
+The next step needs Mac app network authorization and M42 login/NAS restoration plus scoped agent network configuration. Then deploy/hash-check the sealed Windows runtime, execute all four memory plans, validate the mixed-host small-model path, and run the exact three-host 122B waves with complete release, UNLOAD and manual response review. Do not substitute a subset of hosts or claim success from the two plan passes.

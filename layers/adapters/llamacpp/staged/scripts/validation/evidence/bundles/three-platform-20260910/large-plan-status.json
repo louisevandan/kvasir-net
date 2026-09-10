@@ -1,0 +1,92 @@
+{
+  "status": "NOT_READY_NOT_EXECUTED",
+  "source": "9ad366f9063e49f2574639d649fe556344992c6e",
+  "physical_hosts": 3,
+  "stages": 4,
+  "hosts": [
+    {
+      "name": "m42-gpu0",
+      "agent": "192.168.0.29",
+      "device": "CUDA0",
+      "topology": "discrete",
+      "cut": [
+        0,
+        8
+      ],
+      "nas": "S:",
+      "binary": "C:/Users/42mob/p4-remote/releases/fleet-wire-9ad366f90/p4_staged_server.exe",
+      "port": 53021
+    },
+    {
+      "name": "m42-gpu1",
+      "agent": "192.168.0.29",
+      "device": "CUDA1",
+      "topology": "discrete",
+      "cut": [
+        8,
+        16
+      ],
+      "nas": "S:",
+      "binary": "C:/Users/42mob/p4-remote/releases/fleet-wire-9ad366f90/p4_staged_server.exe",
+      "port": 53022
+    },
+    {
+      "name": "spark",
+      "agent": "192.168.0.26",
+      "device": "CUDA0",
+      "topology": "host-shared:0",
+      "cut": [
+        16,
+        40
+      ],
+      "nas": "/mnt/file-station",
+      "binary": "/home/m42/p4-fleet-20260910/wire-candidate/target/native/p4_staged_server",
+      "port": 53021
+    },
+    {
+      "name": "mac21",
+      "agent": "192.168.0.21",
+      "device": "MTL0",
+      "topology": "host-shared:0",
+      "cut": [
+        40,
+        48
+      ],
+      "nas": "/Volumes/file-station",
+      "binary": "/Users/mobimac/p4-fleet-20260910/wire-candidate/target/native/p4_staged_server",
+      "port": 53021
+    }
+  ],
+  "model_hashes": [
+    {
+      "file": "S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf",
+      "bytes": 10943808,
+      "sha256": "ea08ef11402edf53a98cb90329961ee3dbe191dcf75ff7c99f009264cf8a99b3",
+      "start": "2026-09-09T21:37:09.871Z",
+      "end": "2026-09-09T21:37:09.983Z"
+    },
+    {
+      "file": "S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00002-of-00003.gguf",
+      "bytes": 49967634720,
+      "sha256": "6d4910dc603ab82570d2c8a1a979414e9d921af68273113063e7679424d53fa7",
+      "start": "2026-09-09T21:37:09.988Z",
+      "end": "2026-09-09T21:46:09.026Z"
+    },
+    {
+      "file": "S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00003-of-00003.gguf",
+      "bytes": 38331577792,
+      "sha256": "e0f018ae1f3016fab56005ba4b25e708720eaa2413232bd65ba07c7c6d964938",
+      "start": "2026-09-09T21:46:09.029Z",
+      "end": "2026-09-09T21:51:41.351Z"
+    }
+  ],
+  "pending": [
+    "Mac app network authorization",
+    "M42 interactive login and NAS model readability",
+    "M42 scoped agent network authorization",
+    "M42 deploy and verify sealed Windows runtime",
+    "All four stages actual memory preflight and legal-cut/identity checks",
+    "Mixed-host small-model acceptance then 122B 32-request waves; manual quality review"
+  ],
+  "note": "Candidate layer assignment only; no memory fit, load or inference acceptance claimed. Regenerate run identities and preserve this template before use."
+}

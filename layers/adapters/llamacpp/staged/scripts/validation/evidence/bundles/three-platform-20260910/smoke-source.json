@@ -1,0 +1,5 @@
+{
+  "source": "9ad366f9063e49f2574639d649fe556344992c6e",
+  "driver_sha256": "c96cf7539af6580c3cc610939f1981477928aaa7415bc1c512e11172c097ed23",
+  "purpose": "CUDA/Metal connection and inference prerequisite; not the requested three-host large-model result"
+}

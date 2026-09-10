@@ -1,0 +1,379 @@
+{
+  "pipeline_compatibility": "physical-wire-v4",
+  "ingress_agent": "tcp://192.168.0.26:52004",
+  "channel": "three-platform-122b-1789013979002",
+  "connection_generation": 1789013979,
+  "load_generation": 1789013979,
+  "session_id": "three-platform-122b-1789013979002",
+  "request_id": "request",
+  "nodes": [
+    {
+      "agent": "tcp://192.168.0.29:52004",
+      "node": "three-platform-122b-1789013979002-m42-gpu0",
+      "binary": "C:/Users/42mob/p4-remote/releases/fleet-wire-9ad366f90/p4_staged_server.exe",
+      "endpoint": "127.0.0.1:53021",
+      "plan": "--model \"S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf\" --memory-topology discrete --layer-begin 0 --layer-end 8 --kv-layer-begin 0 --kv-layer-end 8 --n-seq-max 4 --spec-type none --kv-unified --batch-size 512 --ubatch-size 512 --ctx-size 8192 --n-gpu-layers 999 --device CUDA0 --flash-attn on --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48)\\..*=CPU\"",
+      "args": [],
+      "environment": [
+        [
+          "P4_STAGED_TRACE_HELLO",
+          "1"
+        ],
+        [
+          "CUDA_DEVICE_ORDER",
+          "PCI_BUS_ID"
+        ]
+      ],
+      "n_batch": 512,
+      "n_ubatch": 512,
+      "context_size": 2048,
+      "total_context_size": 8192,
+      "sequence_capacity": 4,
+      "generation": 1789013979
+    },
+    {
+      "agent": "tcp://192.168.0.29:52004",
+      "node": "three-platform-122b-1789013979002-m42-gpu1",
+      "binary": "C:/Users/42mob/p4-remote/releases/fleet-wire-9ad366f90/p4_staged_server.exe",
+      "endpoint": "127.0.0.1:53022",
+      "plan": "--model \"S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf\" --memory-topology discrete --layer-begin 8 --layer-end 16 --kv-layer-begin 8 --kv-layer-end 16 --n-seq-max 4 --spec-type none --kv-unified --batch-size 512 --ubatch-size 512 --ctx-size 8192 --n-gpu-layers 999 --device CUDA1 --flash-attn on --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(0|1|2|3|4|5|6|7|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48)\\..*=CPU\"",
+      "args": [],
+      "environment": [
+        [
+          "P4_STAGED_TRACE_HELLO",
+          "1"
+        ],
+        [
+          "CUDA_DEVICE_ORDER",
+          "PCI_BUS_ID"
+        ]
+      ],
+      "n_batch": 512,
+      "n_ubatch": 512,
+      "context_size": 2048,
+      "total_context_size": 8192,
+      "sequence_capacity": 4,
+      "generation": 1789013979
+    },
+    {
+      "agent": "tcp://192.168.0.26:52004",
+      "node": "three-platform-122b-1789013979002-spark",
+      "binary": "/home/m42/p4-fleet-20260910/wire-candidate/target/native/p4_staged_server",
+      "endpoint": "127.0.0.1:53021",
+      "plan": "--model \"/mnt/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf\" --memory-topology host-shared:0 --layer-begin 16 --layer-end 40 --kv-layer-begin 16 --kv-layer-end 40 --n-seq-max 4 --spec-type none --kv-unified --batch-size 512 --ubatch-size 512 --ctx-size 8192 --n-gpu-layers 999 --device CUDA0 --flash-attn on --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|40|41|42|43|44|45|46|47|48)\\..*=CPU\"",
+      "args": [],
+      "environment": [
+        [
+          "P4_STAGED_TRACE_HELLO",
+          "1"
+        ],
+        [
+          "CUDA_DEVICE_ORDER",
+          "PCI_BUS_ID"
+        ]
+      ],
+      "n_batch": 512,
+      "n_ubatch": 512,
+      "context_size": 2048,
+      "total_context_size": 8192,
+      "sequence_capacity": 4,
+      "generation": 1789013979
+    },
+    {
+      "agent": "tcp://192.168.0.21:52004",
+      "node": "three-platform-122b-1789013979002-mac21",
+      "binary": "/Users/mobimac/p4-fleet-20260910/wire-candidate/target/native/p4_staged_server",
+      "endpoint": "127.0.0.1:53021",
+      "plan": "--model \"/Volumes/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf\" --memory-topology host-shared:0 --layer-begin 40 --layer-end 48 --kv-layer-begin 40 --kv-layer-end 48 --n-seq-max 4 --spec-type none --kv-unified --batch-size 512 --ubatch-size 512 --ctx-size 8192 --n-gpu-layers 999 --device MTL0 --flash-attn on --no-mmap --cache-type-k f16 --cache-type-v f16 --override-tensor \"blk\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|48)\\..*=CPU\"",
+      "args": [],
+      "environment": [
+        [
+          "P4_STAGED_TRACE_HELLO",
+          "1"
+        ],
+        [
+          "CUDA_DEVICE_ORDER",
+          "PCI_BUS_ID"
+        ]
+      ],
+      "n_batch": 512,
+      "n_ubatch": 512,
+      "context_size": 2048,
+      "total_context_size": 8192,
+      "sequence_capacity": 4,
+      "generation": 1789013979
+    }
+  ],
+  "prompts": [
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n전류가 흐르는 전선이 뜨거워지는 이유를 비전공자에게 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nExplain the difference between RAM and storage in three sentences.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\nA pump delivers 12 litres per minute for 7 minutes. How much water does it deliver? Give the calculation and the answer with its unit.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "<|im_start|>user\n온도 센서를 보정하는 이유와 보정할 때 사용할 기준을 한국어 세 문장으로 설명해 주세요.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+  ],
+  "max_tokens": 512,
+  "waves": [
+    {
+      "after_ms": 0,
+      "count": 4
+    },
+    {
+      "after_ms": 500,
+      "count": 4
+    },
+    {
+      "after_ms": 1000,
+      "count": 4
+    },
+    {
+      "after_ms": 1500,
+      "count": 4
+    },
+    {
+      "after_ms": 2000,
+      "count": 4
+    },
+    {
+      "after_ms": 2500,
+      "count": 4
+    },
+    {
+      "after_ms": 3000,
+      "count": 4
+    },
+    {
+      "after_ms": 3500,
+      "count": 4
+    }
+  ],
+  "options": "{\"temperature\":0,\"seed\":7,\"stop\":[\"<|im_end|>\",\"<|im_start|>\"]}",
+  "acceptance": {
+    "minimum_generated_tokens": 1,
+    "allowed_stop_reasons": [
+      "eos",
+      "stop"
+    ],
+    "responses": [
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      },
+      {
+        "minimum_response_chars": 10,
+        "forbidden_substrings": [
+          "�"
+        ]
+      }
+    ]
+  },
+  "timeout_ms": 1800000
+}

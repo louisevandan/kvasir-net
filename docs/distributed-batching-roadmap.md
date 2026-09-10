@@ -12,6 +12,16 @@
 
 ## 0. 현재 상태 — 후보 보존 및 별도 fleet·upstream 통합 진행
 
+### 0.-3 최신 사용자 지시 — 3090×2·Spark·맥미니 122B (2026-09-10)
+
+이번 실행 대상은 M42의 3090 두 장·Spark·Mac .21, 총 세 물리 호스트·네 stage다.
+기존 두 CUDA 호스트 성공을 이 구성의 성공으로 대체하지 않는다. 후보 컷은 [0,8)/[8,16)/[16,40)/[40,48)이며 resident 4를 유지한다.
+Spark·Mac의 새 컷 no-alloc 계획은 실제 바이너리로 통과했다. M42 계획·전체 적재·추론은 미실행이다.
+실제 agent 재시도에서 Mac 송신 NECP/error65를 다시 확인했고, M42는 로그인 세션 없음·NAS 접근 실패·기존 agent 방화벽 Block이다.
+**현재 BLOCKED_BEFORE_LOAD**. 요청 제출 0이며 검증용 agent 둘은 정리했다.
+첫 행동: Mac 앱 통신 허용 및 M42 로그인/NAS·한정된 agent 통신 복구 → 봉인 Windows runtime 배포/해시 → 네 stage 계획 → 혼합 소형 게이트 → 122B 32건 생성·해제·UNLOAD·응답 검토.
+원자료·미실행 구성은 [증거 문서](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#requested-m42--spark--mac-run-2026-09-10-recheck)의 해시 번들에 보존한다. 제품 소스·이전 후보는 변경하지 않았다.
+
 ### 0.-2 사용자 추가 지시 — 전체 장비와 최신 upstream (2026-09-10)
 
 v0.9.0 후보와 기존 게이트는 보존한다. 사용자가 Spark, TUF, Mac mini 두 대, Ubuntu 노트북,

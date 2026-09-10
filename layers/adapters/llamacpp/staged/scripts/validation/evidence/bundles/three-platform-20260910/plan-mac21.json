@@ -1,0 +1,28 @@
+{
+  "peers": [],
+  "id": "three-platform-mac21-1789013824",
+  "node": {
+    "agent": "tcp://192.168.0.21:52004",
+    "node": "three-platform-122b-1789013979002-mac21",
+    "binary": "/Users/mobimac/p4-fleet-20260910/wire-candidate/target/native/p4_staged_server",
+    "endpoint": "127.0.0.1:53021",
+    "plan": "--model \"/Volumes/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf\" --memory-topology host-shared:0 --layer-begin 40 --layer-end 48 --kv-layer-begin 40 --kv-layer-end 48 --n-seq-max 4 --spec-type none --kv-unified --batch-size 512 --ubatch-size 512 --ctx-size 8192 --n-gpu-layers 999 --device MTL0 --flash-attn on --no-mmap --cache-type-k f16 --cache-type-v f16 --override-tensor \"blk\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|48)\\..*=CPU\"",
+    "args": [],
+    "environment": [
+      [
+        "P4_STAGED_TRACE_HELLO",
+        "1"
+      ],
+      [
+        "CUDA_DEVICE_ORDER",
+        "PCI_BUS_ID"
+      ]
+    ],
+    "n_batch": 512,
+    "n_ubatch": 512,
+    "context_size": 2048,
+    "total_context_size": 8192,
+    "sequence_capacity": 4,
+    "generation": 1789013979
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "status": "BLOCKED_BEFORE_LOAD",
+  "observed_utc": "2026-09-10T04:22:54.460Z",
+  "requested_hosts": [
+    "M42-SERVER2 RTX3090 x2",
+    "Spark",
+    "Mac mini .21"
+  ],
+  "code_source": "9ad366f9063e49f2574639d649fe556344992c6e",
+  "smoke_run": "mixed-1789013818305",
+  "inference_submitted": false,
+  "artifact_json_present": false,
+  "driver_exit": 1,
+  "driver_error": "event timeout while awaiting CREATE response; no native model process",
+  "spark": {
+    "preflight_exit": 0,
+    "fits_current_free": true,
+    "required_bytes": 42933581984,
+    "scope": "memory plan only; no actual load/inference"
+  },
+  "mac21": {
+    "preflight_exit": 0,
+    "fits_current_free": true,
+    "required_bytes": 15723569184,
+    "scope": "memory plan only; no actual load/inference"
+  },
+  "blockers": [
+    "Mac .21 p4-agent outbound NECP error 65",
+    "M42 no interactive user, S: and UNC unavailable",
+    "M42 existing p4-agent.exe has enabled explicit TCP/UDP inbound Block rules; new runtime not deployed or approved by scoped network configuration"
+  ],
+  "owned_agents_stopped": true,
+  "stage_children": 0
+}
