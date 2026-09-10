@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-10 — 릴리즈 후보 보존, 최종 실기 BLOCKED. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-10 — 후보 보존, 5호스트 CUDA·Metal 122B 실행 PASS, 최종 목표 미완. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -12,7 +12,31 @@
 
 ## 0. 현재 상태 — 후보 보존 및 별도 fleet·upstream 통합 진행
 
-### 0.-3 최신 사용자 지시 — 15분 뒤 전체 장비 재시험 (2026-09-10 14:03–14:40 KST)
+### 0.-4 최신 사용자 지시 — 맥 포함 재시험 (2026-09-10 16:02 KST 실행 종료)
+
+**M42·Spark·Mac .21·이 PC·Ubuntu, 다섯 물리 호스트의 CUDA·Metal 혼합 122B 실행을 통과했다.**
+새 CREATE/DELETE 왕복이 같은 Mac agent PID78595/바이너리에서 성공했다. 이 턴에서 Mac 권한·서명·실행 파일·방화벽을 변경하지 않았으며, 외부 복구 원인은 미확정이다.
+소형 `gemma-five-hosts-cuda-metal-1789022821079`가 8/8 완료·EOS·해제·UNLOAD한 뒤, 에이전트 재시작 없이 122B를 실행했다.
+
+122B `122b-five-hosts-cuda-metal-1789022821180`: **32/32 완료·EOS·해제·UNLOAD**, error/cleanup_error/evidence_missing null.
+컷은 M42 GPU0 [0,8), GPU1 [8,16), Spark [16,29), Mac Metal [29,37), 이 PC 3090 [37,45), Ubuntu [45,48)다.
+resident4, 4건씩 8회 웨이브, max512, 명시적 physical-wire-v4 후보이며 Mac KV는 f16/f16, CUDA는 q8/f16이다.
+여섯 단계의 topology/shape와 host/device model/context/compute 계획=실제 할당을 확인했다. 실행 중 로드된 후보 파일도 단계별 해시와 일치했다.
+
+추론창 283.612초, decode 3,339행 / **11.773 row/s**, TTFT p50 115.987초·p90 218.912초다. LOAD/UNLOAD 제외이며 정상 응답으로 승인한 유효 TPS는 아니다.
+32건 전문 검토에서 발열 설명8건의 기계적 마찰 비유를 남겼다. 전체 정상 응답·지속 부하·성능 개선 승인은 하지 않는다.
+Mac 전역 AGX Device Utilization 평균62.38%는 자체 RPC 창262표본의 드라이버 카운터다. NVIDIA kernel-active 표본과 의미가 달라 합산하거나 SM 점유율로 읽지 않는다.
+이번에 통과한 것은 이 후보·모델·컷의 혼합 실행이다. TUF·Mac .20은 미참여이며 전체 장비와 H0~H7의 완료가 아니다.
+
+네 CUDA 검증 agent와 다섯 monitor를 정리했고 Mac native가 사라진 것을 확인했다. 다른 Codex가 관리하는 Mac agent는 유지했다.
+제품 소스 `9ad366f90`과 봉인 바이너리는 그대로다. 주 checkout의 별도 앱/설정 변경은 건드리지 않았고 검증 checkout에서만 기록한다.
+원자료108개는 `F:/dev/p4-releases/mac-included-20260910-1602.zip`에 보존했다. 해시·응답·측정 범위는
+[혼합 실행 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#mac-included-five-host-retry-2026-09-10)가 소유한다.
+
+다음 첫 행동은 TUF 인증·Mac .20 NAS 복구 후 미참여 장비를 포함한 컷/메모리 판정이다. 별도로 정상 응답 기준선·B2/B3·대기 원인·지속 부하를 닫아야 한다.
+이제 Mac .21 통신 복구를 선행 차단 조건으로 반복하지 않는다. 아래는 앞선 실행 당시 기록이다.
+
+### 0.-3 이전 재시도 — 15분 뒤 전체 장비 재시험 (2026-09-10 14:03–14:40 KST)
 
 예정된 재시도를 수행했다. **전체 장비 및 CUDA/Metal 혼합 실행은 여전히 BLOCKED**다.
 Mac .21은 새 CREATE를 받았지만 14:31:28의 응답 송신이 NECP/error65로 거부됐고,
@@ -73,11 +97,11 @@ Windows·Spark·Ubuntu·Mac .21은 NAS 모델의 개별 실행을 통과했다. 
 
 명시적 `physical-wire-v4` 후보는 upstream·patch·native codec/표현을 대조하고 stage별 identity를 보존한다.
 기본 exact-build 거부는 유지하며, 소비 시험·독립 변이 4종과 CUDA 두 호스트/Metal 한 호스트 각각의 8/8 실행을 통과했다.
-**CUDA·Metal 혼합 실기는 BLOCKED**다. Mac .21 커널이 agent의 외부 TCP를 NECP/error 65로 거부했다.
-Python/nc의 포트 연결 성공은 agent의 통신 승인이 아니며, 새 실행은 CREATE 응답 전 중단돼 추론을 제출하지 않았다.
+당시 **CUDA·Metal 혼합 실기는 BLOCKED**였다. Mac .21 커널이 agent의 외부 TCP를 NECP/error 65로 거부했다.
+Python/nc의 포트 연결 성공은 agent의 통신 승인이 아니며, 당시 실행은 CREATE 응답 전 중단돼 추론을 제출하지 않았다. 이후 실제 응답 복구와 혼합 실행 통과는 위 §0.-4가 갱신한다.
 
-현재 재개 조건은 위 §0.-3을 따른다. Mac .21 agent 통신, TUF SSH, Mac .20 NAS는 미복구이며 M42 로그인/NAS와 이 PC의 후보 통신 경로는 이번 재시도에서 복구했다.
-그 뒤 기존 거부 기준을 유지한 세 호스트 소형 모델 → 122B → 모든 대상 장비의 합법적 컷·웨이브 순으로 판정한다.
+현재 재개 조건은 위 §0.-4를 따른다. Mac .21 혼합 실행은 통과했고 TUF SSH와 Mac .20 NAS는 남아 있다. M42 로그인/NAS와 이 PC의 후보 통신 경로도 복구됐다.
+미참여 장비의 접근 복구 뒤 기존 거부 기준을 유지한 모든 대상 장비의 합법적 컷·소형 게이트·122B 웨이브를 판정한다.
 접근이 복구되기 전에는 추가 부분 호스트 실행을 전체 장비 승인으로 바꾸지 않는다.
 현재 후보의 소스·플랫폼별 runtime·성공/실패/변이/메모리 원자료 329파일을
 `F:/dev/p4-releases/fleet-20260910-wire-candidate`에 보존했다. 증거 문서의 candidate manifest가 해시를 소유한다.

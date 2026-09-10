@@ -402,3 +402,66 @@ Whole-fleet and CUDA/Metal acceptance remain BLOCKED. The next gate is an actual
 Transport write-error attribution/recovery, B2/B3, scientific response quality, synchronized cause tracing and sustained pressure remain open. A subset pass or agent restart does not close them.
 
 Documentation checks for this retry: node tools/scripts/docs-lint.mjs exits0 with 92 files clean; git diff --check passes. No product test suite was rerun because only these evidence/roadmap/index files changed.
+
+## Mac-included five-host retry: 2026-09-10
+
+The user requested another run including Mac. Fresh P4 CREATE and DELETE both return ok=true with matching correlations from Mac .21 to Spark.
+Mac agent PID78595 and SHA256 b7bb40ded261dbd6d213156d131cb6912644c75727427198f6d449653f4f3b6c are unchanged from the blocked run.
+This turn changes no Mac permissions, signing, launcher, executable or firewall. The external cause of recovery is not established; actual executable traffic now passes.
+The first Spark helper lookup failed and its probe saw a refused ingress; copying the known helper and starting a fresh agent resolves that setup error. An initial Ubuntu helper-path lookup also failed before the known helper was copied. These are preserved setup attempts, not failed model inference arms.
+
+| Arm | Hosts/stages | Requested/completed/released | Result |
+| --- | --- | --- | --- |
+| `gemma-five-hosts-cuda-metal-1789022821079` | M42, Spark, Mac .21, local, Ubuntu / 5 | 8/8/8 | Exit0, all EOS, error/cleanup/missing null, UNLOAD pass; inference20,528ms |
+| `122b-five-hosts-cuda-metal-1789022821180` | Same 5 physical hosts / 6 | 32/32/32 | Exit0, all EOS, error/cleanup/missing null, UNLOAD pass |
+
+The small-model cuts are [0,5)/[5,7)/[7,9)/[9,13)/[13,35). All eight full responses were read; heating requests1/5 retain analogy/mechanism concerns, while RAM/storage, 84-litre arithmetic and calibration answers are coherent for these prompts.
+There is no agent restart between passing small and large arms. Native no-alloc plans for new Spark/Mac cuts were inspected during the small functional gate; that arm is not used as a performance comparison.
+
+The large model is the same three-shard Qwen3.5-122B-A10B UD-Q5_K_S, 88,310,156,320 bytes. Its original four prompts repeat eight times, four arrivals every500ms, resident4, max512, temperature0/seed7, no MTP/speculative execution.
+The declared profile remains opt-in physical-wire-v4, with native upstream434ddbbc0 and patch ff1468f6. Product source9ad366f90 and all runtime files are unchanged.
+
+| Stage | Host / backend | Owned layers | KV |
+| --- | --- | --- | --- |
+| 0 | M42 .29 RTX3090 CUDA0 | [0,8) | Kq8 / Vf16 |
+| 1 | M42 .29 RTX3090 CUDA1 | [8,16) | Kq8 / Vf16 |
+| 2 | Spark .26 GB10 CUDA0 | [16,29) | Kq8 / Vf16 |
+| 3 | Mac .21 M4 Pro MTL0 | [29,37) | Kf16 / Vf16 |
+| 4 | Local .6 RTX3090 CUDA0 | [37,45) | Kq8 / Vf16 |
+| 5 | Ubuntu .19 RTX2070 Max-Q CUDA0 | [45,48) | Kq8 / Vf16 |
+
+Artifact stage identities report the Mac inventory BLAS[BLAS]|CPU[CPU]|MTL[MTL0] and the other inventories CUDA; configured placement, actual allocations and native logs accompany the identity.
+This is successful bounded CUDA/Metal execution for this model, layout and candidate. It is not generic cross-backend state compatibility, whole-fleet approval or H0–H7 completion. TUF and Mac .20 remain excluded.
+
+Driver wall interval is 06:50:14.797Z–07:02:13.922Z. Inference elapsed283,612ms excludes LOAD/UNLOAD; 3,371 sampled outcomes include32 EOS, while decode rows are3,339: **11.7731 decode row/s**.
+TTFT p50/p90 is115,987/218,911.7ms; completion p50/p90 is148,744/250,475.9ms, linear quantiles at(n-1)q. All32 incarnations are distinct; slots0/1/2/3 release9/8/8/7 times.
+All32 full responses were read. Heating requests1/5/9/13/17/21/25/29 still equate electrical resistance with mechanical friction/rubbing hands. The remaining prompt groups are coherent at the tested level; whole scientific-quality and normal-service approval remain withheld.
+The earlier four-CUDA run's15.2226 row/s and this run's11.7731 are different layouts/backends/KV configurations, single arms with background activity, not a controlled causal benchmark or an improvement claim. Neither is quality-approved effective TPS.
+
+All six native no-alloc plans pass before large LOAD. Topology, execution shape and every host/device model/context/compute byte total equal ACTUAL for all six stages; current free memory and fits_current_free are not equality operands.
+Mac requires device14,411,368,480B plus host14,696,480B; Spark device23,311,929,472B plus host14,958,624B. The unchanged CUDA cuts match their fresh plans as well.
+Mac's model buffer is13,477.79MiB (about13.16GiB); the earlier commentary's13.48GiB conversion was explicitly corrected. Shared host/device capacities are not added as separate physical pools.
+Runtime files mapped during LOAD match sealed identities: M42 stages9 each, local9, Spark7, Ubuntu7, Mac8. Mac native SHA256 is f17782080c1619595485241ecf2d2c9188d8791850e1a555d04b45ed8f54c8c2.
+The driver hash c96cf7539af6580c3cc610939f1981477928aaa7415bc1c512e11172c097ed23 also matches after completion. NAS model hashes reference the earlier audit and are not a new88GB hash pass.
+
+| Device | Samples in host enclosing RPC window | Mean | Zero samples | Startup-through-cleanup global VRAM peak |
+| --- | --- | --- | --- | --- |
+| M42 CUDA0 / CUDA1 | 243 each | 20.309% / 19.626% | 72 / 73 | 14,481MiB each |
+| Spark GB10 | 272 | 9.794% | 119 | Unavailable |
+| Local RTX3090 | 253 | 20.889% | 88 | 14,271MiB |
+| Ubuntu RTX2070 Max-Q | 267 | 5.652% | 1 | 6,711MiB |
+| Mac MTL0, AGX global Device Utilization | 262 | 62.378% | 23 | Shared-pool measurement; no comparable VRAM counter |
+
+NVIDIA values are kernel-active samples. Mac values are the raw global Apple driver Device Utilization counter from ioreg; its semantics differ and include other applications. They are not summed, compared as equivalent occupancy, or labeled SM saturation.
+Each window uses that host's own stage timestamps because clocks differ. RPC bounds are not GPU compute spans. Mac native RSS peaks14,673,904KiB; Windows native RSS remains missing. GPU/driver counters are not per-process isolation.
+Actual sockets bind Spark→Mac and Mac→local to the Mac agent, with cross-host byte counters on Linux. Counters span reused connections including small/control traffic, not isolated per-large-run traffic volumes.
+All five monitors exit0. After UNLOAD, Mac native PID84648 is absent, while its existing local-Codex-owned agent78595 is preserved. The four central-owned CUDA agents stop with zero native children; the temporary M42 planning task is removed. No preset H7 memory-return tolerance or sustained pressure arm was run.
+
+Local bundle `F:/dev/p4-releases/mac-included-20260910-1602.zip` contains108 evidence/helper files plus MANIFEST.json, including both full artifacts, configuration, response/judge digests, source identities, native logs, memory samples, setup attempts and cleanup.
+Archive SHA256: `dd4a02ed558dd8d83dd74807d34c47ac8bb84f50914668675e40ecbf42deb4bf`. Each manifest-listed ZIP member is read back and hash-verified at closure.
+Extract with `Expand-Archive -LiteralPath F:/dev/p4-releases/mac-included-20260910-1602.zip -DestinationPath <new-directory>`; recreate declared endpoints with the sealed candidate runtimes, generate fresh run identities, then invoke the hash-bound p4-event-drive with config and a new artifact output path. One-off helpers are retained in raw/, not promoted to maintained tools.
+This is local delivery only; remote durable publication/another-machine archive retrieval remains unapproved. Raw generated logs are not added to Git.
+During the run, unrelated application/scaffolding changes appeared in the main checkout, including ignore rules; they were left untouched. The wire checkout0c27873ef and fleet documentation checkoutc5ad2e0a0 stayed clean before these closure edits; no product suite was rerun or prior totals relabeled.
+The next fleet gate is TUF authentication and Mac .20 NAS restoration, then their legal cuts/plans and actual waves. Mac .21's old NECP failure remains historical evidence and is no longer an active blocker. Response quality, B2/B3, wait attribution and sustained service remain separate open work.
+
+Closure checks for this Mac-included retry: node tools/scripts/docs-lint.mjs exits0 with92 files clean, git diff --check passes, and108 archived files pass SHA256 readback. Product tests were not rerun.

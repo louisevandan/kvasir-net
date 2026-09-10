@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-10: 맥 포함 다섯 호스트 CUDA·Metal 122B
+
+실제 Mac agent CREATE/DELETE 응답 복구 후, 소형8/8과 122B32/32 완료·EOS·해제·UNLOAD를 통과했다.
+여섯 단계의 메모리 계획=실제와 로드된 후보 파일 해시가 일치한다. 발열 설명8건·긴 TTFT·TUF/두 번째 Mac 미참여는 남는다.
+제품 수정이나 과거 시험 재집계 없이 실행·응답 전문·108파일 로컬 번들 해시를
+[혼합 실행 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#mac-included-five-host-retry-2026-09-10)에 기록했다.
+
 ## 2026-09-10: 예약된 전체 장비 재접속·네 CUDA 호스트 122B
 
 M42·Spark·이 PC·Ubuntu의 다섯 stage에서 122B 32/32 완료·EOS·해제·UNLOAD, 계획=실제 할당을 확인했다.
