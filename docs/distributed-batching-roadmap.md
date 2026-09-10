@@ -12,15 +12,35 @@
 
 ## 0. 현재 상태 — 후보 보존 및 별도 fleet·upstream 통합 진행
 
-### 0.-3 최신 사용자 지시 — 3090×2·Spark·맥미니 122B (2026-09-10)
+### 0.-3 최신 사용자 지시 — 15분 뒤 전체 장비 재시험 (2026-09-10 14:03–14:40 KST)
 
-이번 실행 대상은 M42의 3090 두 장·Spark·Mac .21, 총 세 물리 호스트·네 stage다.
-기존 두 CUDA 호스트 성공을 이 구성의 성공으로 대체하지 않는다. 후보 컷은 [0,8)/[8,16)/[16,40)/[40,48)이며 resident 4를 유지한다.
-Spark·Mac의 새 컷 no-alloc 계획은 실제 바이너리로 통과했다. M42 계획·전체 적재·추론은 미실행이다.
-실제 agent 재시도에서 Mac 송신 NECP/error65를 다시 확인했고, M42는 로그인 세션 없음·NAS 접근 실패·기존 agent 방화벽 Block이다.
-**현재 BLOCKED_BEFORE_LOAD**. 요청 제출 0이며 검증용 agent 둘은 정리했다.
-첫 행동: Mac 앱 통신 허용 및 M42 로그인/NAS·한정된 agent 통신 복구 → 봉인 Windows runtime 배포/해시 → 네 stage 계획 → 혼합 소형 게이트 → 122B 32건 생성·해제·UNLOAD·응답 검토.
-원자료·미실행 구성은 [증거 문서](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#requested-m42--spark--mac-run-2026-09-10-recheck)의 해시 번들에 보존한다. 제품 소스·이전 후보는 변경하지 않았다.
+예정된 재시도를 수행했다. **전체 장비 및 CUDA/Metal 혼합 실행은 여전히 BLOCKED**다.
+Mac .21은 새 CREATE를 받았지만 14:31:28의 응답 송신이 NECP/error65로 거부됐고,
+TUF .17은 SSH 인증 거부, Mac .20은 SMB mount·P4 agent 없음이다. 다른 Codex가 관리하는 Mac agent는 보존했다.
+
+M42의 42mob 대화형 로그인·S: 접근은 복구됐다. 별도 경로에 봉인 Windows runtime을 배포하고 13개 파일을 해시 검증했다.
+전용 TCP 52004 규칙은 해당 실행 파일과 대상 IP 6개로 한정했다. 이 PC의 52004는 OS 예약 포트여서 51054로 실제 P4 왕복을 검증했다.
+기존 앱·v0.9.0 파일·차단 규칙은 보존했다. 프로그램 이름 변경이나 권한 우회로 Mac 거부를 피하지 않았다.
+
+연결 가능한 **네 CUDA 물리 호스트** M42·Spark·이 PC·Ubuntu에서 122B UD-Q5_K_S를 실제 실행했다.
+다섯 stage 컷은 [0,8)/[8,16)/[16,37)/[37,45)/[45,48), resident 4, 4건씩 8회 웨이브다.
+실행 `122b-four-cuda-hosts-1789017057291`: **32/32 완료·EOS·해제·UNLOAD**, error/cleanup_error/evidence_missing null.
+추론창 220.856초, decode 3,362행/15.223 row/s, TTFT p50 83.673초·p90 167.304초다. LOAD/UNLOAD는 이 시간에서 제외한다.
+응답 32건 전문을 읽었으며 발열 8건의 기계적 마찰 설명 때문에 전체 정상 응답·유효 TPS·서비스 승인은 보류한다.
+각 host RPC 창 GPU 표본 평균은 M42 두 장 20.2/20.6%, Spark 21.8%, 이 PC 3090 22.9%, Ubuntu 7.0%다. SM 점유율·포화·개선 증거가 아니다.
+
+다섯 stage의 topology/shape 및 host/device model/context/compute 계획=실제 할당을 대조했다.
+선행 소형 arm은 첫 전송 실패/8건 미완료/UNLOAD busy를 보존하고, 전체 검증 agent를 새로 시작한 다음 8/8 완료·해제했다.
+재시작 뒤 정상 통과는 peer 재접속 내구성 승인이 아니다. 이번에 제품 소스를 바꾸지 않았고 과거 단위 시험을 재실행한 것으로 세지 않는다.
+
+원자료 154개와 해시는 `F:/dev/p4-releases/all-hosts-retry-20260910-1436.zip`에 보존하고 ZIP 내부 파일을 재검증했다.
+이는 로컬 인도이며 다른 머신에서의 장기 재열람 게이트는 미충족이다. 상세·전체 실패·해시는
+[증거 문서](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#scheduled-all-computer-retry-2026-09-10)를 따른다.
+검증용 네 agent·모델 프로세스·네 monitor는 정리했고 예약 재시험은 중지했다. 제품 소스는 `9ad366f90` 그대로다.
+
+다음 첫 행동은 Mac .21의 **실제 p4-agent 왕복 응답** 복구, TUF 계정/키와 Mac .20 NAS 복구다.
+그 뒤 원래 요청한 M42·Spark·Mac 혼합 소형 게이트 → 122B → 모든 장비 웨이브를 판정한다.
+전송 실패의 즉시 귀속/보존·재접속과 정상 응답 기준선은 별도 미완이며, 단순 재시작·resident 상향으로 닫지 않는다.
 
 ### 0.-2 사용자 추가 지시 — 전체 장비와 최신 upstream (2026-09-10)
 
@@ -56,7 +76,7 @@ Windows·Spark·Ubuntu·Mac .21은 NAS 모델의 개별 실행을 통과했다. 
 **CUDA·Metal 혼합 실기는 BLOCKED**다. Mac .21 커널이 agent의 외부 TCP를 NECP/error 65로 거부했다.
 Python/nc의 포트 연결 성공은 agent의 통신 승인이 아니며, 새 실행은 CREATE 응답 전 중단돼 추론을 제출하지 않았다.
 
-첫 재개 조건은 Mac .21 agent 네트워크 허용, 이 PC의 명시적 프로그램 차단 해제, TUF SSH, Mac .20 NAS 인증, M42 로그인이다.
+현재 재개 조건은 위 §0.-3을 따른다. Mac .21 agent 통신, TUF SSH, Mac .20 NAS는 미복구이며 M42 로그인/NAS와 이 PC의 후보 통신 경로는 이번 재시도에서 복구했다.
 그 뒤 기존 거부 기준을 유지한 세 호스트 소형 모델 → 122B → 모든 대상 장비의 합법적 컷·웨이브 순으로 판정한다.
 접근이 복구되기 전에는 추가 부분 호스트 실행을 전체 장비 승인으로 바꾸지 않는다.
 현재 후보의 소스·플랫폼별 runtime·성공/실패/변이/메모리 원자료 329파일을

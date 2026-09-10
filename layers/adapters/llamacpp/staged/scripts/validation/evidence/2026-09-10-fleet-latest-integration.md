@@ -322,3 +322,83 @@ Runtime source remains `9ad366f90`; this recheck changes no product source or ac
 - Both newly started agents were hash-bound, their logs copied, and they were stopped with zero stage children. Existing apps and sealed runtime/evidence bundles were preserved.
 
 The next step needs Mac app network authorization and M42 login/NAS restoration plus scoped agent network configuration. Then deploy/hash-check the sealed Windows runtime, execute all four memory plans, validate the mixed-host small-model path, and run the exact three-host 122B waves with complete release, UNLOAD and manual response review. Do not substitute a subset of hosts or claim success from the two plan passes.
+## Scheduled all-computer retry: 2026-09-10
+
+The requested 15-minute heartbeat was dispatched at 14:03 KST and paused after dispatch to avoid another overlapping test.
+Runtime product source remains `9ad366f9063e49f2574639d649fe556344992c6e`; driver SHA256 is `c96cf7539af6580c3cc610939f1981477928aaa7415bc1c512e11172c097ed23`.
+The main checkout stays at `40d91d025`, wire checkout at `0c27873ef`, both clean. This retry changes no product source, builds, acceptance thresholds or test expectations.
+Prior workspace/CTest totals above are not rerun results for this retry. No stable tag or push is made.
+
+### Host recheck and setup
+
+| Host | Actual result in this retry |
+| --- | --- |
+| M42 .29 / two RTX3090 | Interactive 42mob login and S: restored; separate sealed runtime deployed under releases/fleet-wire-9ad366f90/windows-runtime; all 13 manifest files verified |
+| Spark .26 / GB10 CUDA | NAS read, P4 CREATE/DELETE replies, small and 122B inference |
+| This PC .6 / RTX3090 CUDA | TCP 52004 is in Windows excluded range 51952–52051; agent uses 51054, actual CREATE/DELETE and inference pass; RTX4080 belongs to background apps |
+| Ubuntu .19 / RTX2070 Max-Q CUDA | NAS read, actual CREATE/DELETE, small and 122B inference; server uses native-identified |
+| Mac .21 / Metal candidate | Incoming CREATE reaches local-Codex-owned PID78595; fresh 14:31:28 KST kernel outgoing drop is NECP/error65; no model submitted on this host |
+| Mac .20 | SSH succeeds; no SMB mount or P4 agent observed; no inference |
+| TUF .17 | TCP/SSH endpoint reachable but admin authentication denied; agent probe timed out; backend/hardware inference not verified |
+
+The candidate M42 firewall rule names only the deployed agent, TCP52004, and peers .6/.17/.19/.20/.21/.26. Existing blocks and applications are preserved.
+The local attempt to add a firewall rule was denied; no local rule change succeeded. Actual P4 traffic succeeds at 51054 under existing policy.
+The Mac process belongs to the Mac-local Codex task and was neither stopped nor bypassed. GUI toggles and generic socket success remain insufficient evidence of that executable's outgoing permission.
+Failed CREATE probes may retain empty nodes on that Mac because their reply was unavailable; their deletion is not claimed. No Mac native model was loaded.
+
+### Every inference arm
+
+| Run | Physical hosts/stages | Requested/completed/released | Result |
+| --- | --- | --- | --- |
+| `gemma-four-cuda-hosts-1789017031156` | M42/Spark/local/Ubuntu, 4 CUDA stages | 8/0/0 | Exit1; overall inference deadline; missing requests8/stage_executions3; UNLOAD busy with pending4/flight1/owners4; partial artifact preserved |
+| `gemma-four-cuda-hosts-1789017748328` | Same four hosts and four cuts | 8/8/8 | Exit0, all EOS, no inference/cleanup/missing errors, slots0–3 each reused twice; functional setup smoke |
+| `122b-four-cuda-hosts-1789017057291` | Same four hosts, 5 CUDA stages | 32/32/32 | Exit0, all EOS, no inference/cleanup/missing errors; full release and idle UNLOAD |
+
+The failed small run followed individual peer restarts and records a write failure. The transport caches outbound sender queues; enqueue success is not write completion, and a failed write is not automatically replayed.
+All central-owned agents were stopped, failure logs retained, and all four restarted before the next small run. This is a setup recovery, not a source repair or reconnect/durability acceptance.
+No agent restart occurs between the passing small and large runs. Initial failed-run cleanup forcibly stopped an owned M42 stage; this is not successful UNLOAD.
+The firewall command-return marker is 05:23:30.551Z and small-run end is 05:23:26.718Z; the actual rule-mutation instant is not recorded. Its order relative to completion is unresolved, so the small run is not a sealed performance arm.
+Large-run startup is after the rule update. A Mac CREATE probe was performed during large-run setup; configuration and product binaries were unchanged.
+
+The large run uses Qwen3.5-122B-A10B UD-Q5_K_S, 88,310,156,320 bytes in three NAS shards, resident4, ctx8192, batch/ubatch512, unified KV Kq8/Vf16, max512, temperature0/seed7 and no speculative/MTP execution.
+The original four prompts are repeated eight times, four arrivals every 500ms, cuts M42 GPU0 [0,8), GPU1 [8,16), Spark [16,37), local3090 [37,45), Ubuntu [45,48).
+Driver wall interval is 05:24:27.881Z–05:36:43.011Z; inference elapsed is 220,856ms and excludes LOAD/UNLOAD. It has 3,394 sampled outcomes including 32 EOS and 3,362 decode rows: 15.2226 decode row/s, not quality-approved effective TPS.
+TTFT p50/p90 is 83,673/167,304.4ms; completion latency p50/p90 is 111,142/192,643.1ms, quantiles at linear rank (n-1)q.
+All 32 incarnations are unique; physical slots0/1/2/3 release 9/8/7/8 times. Every full response, prompt, token position and terminal stop remains in artifact.json; responses.jsonl and digest-bound judge.json support manual review.
+All 32 responses were read. Heating explanations in requests1/5/9/13/17/21/25/29 equate resistance with mechanical friction and rubbing hands. RAM/storage distinctions, 84-litre arithmetic and calibration-purpose answers are coherent for these prompts; blanket scientific-quality and normal-service approval remain withheld.
+The small run also retains two heating concerns. No prompt, failed output or limit was removed. This is not a controlled comparison with earlier two-host throughput and is not an optimization result.
+
+### Memory, runtime and telemetry boundaries
+
+Topology, execution shape, and all host/device model/context/compute totals match PLAN and ACTUAL for all five stages. The comparison excludes current free memory and fits_current_free, which observe different allocation states.
+M42 GPU0/GPU1 and local3090 each require device14,393,862,272B; Spark37,574,310,016B; Ubuntu6,892,271,744B. M42 head host1,346,619,424B, other non-tail hosts14,958,624B, Ubuntu host14,960,672B.
+Spark shares one physical host/device pool; reported host and device capacities must not be added. The preflight correctly refused Ubuntu while a previous Gemma model remained resident, then passed after unload. The mistaken local CUDA-order preflight and corrected RTX3090 result are both preserved.
+During LOAD, mapped runtime files match sealed identities: Spark7, Ubuntu7, local9, each M42 stage9. Stage build identities retain upstream, patch and wire ABI; external OS/driver libraries are listed or outside this P4-owned hash check.
+Model hashes in source.json reference the earlier NAS content audit; all 88GB were not rehashed during this retry.
+
+| Device | Samples in its host enclosing RPC window | Mean kernel-active utilization | Zero samples | Global VRAM peak, startup through cleanup |
+| --- | --- | --- | --- | --- |
+| M42 GPU0 / GPU1 | 189 each | 20.228% / 20.619% | 43 / 39 | 14,581MiB each |
+| Spark GB10 | 212 | 21.788% | 57 | Unavailable |
+| Local RTX3090 | 199 | 22.930% | 49 | 14,271MiB |
+| Ubuntu RTX2070 Max-Q | 208 | 6.962% | 1 | 6,711MiB |
+
+These are per-host enclosing stage RPC windows using that host's timestamps, not synchronized cross-host overlap, SM occupancy or pure GPU-compute spans. Hosts have clock offsets.
+The local RTX4080 remains background activity, excluded from participating-device averages. Windows native RSS is missing; Unix native RSS filter is corrected to include native-identified.
+Four memory monitors exit0. Final samples show Unix native children absent; GPU usage has fallen after unload. A preset memory-return tolerance and sustained H7 baseline were not tested.
+TCP snapshots bind actual agent processes to cross-host bytes, including M42→Spark→local and local→Ubuntu→M42. Counters are cumulative since fresh startup and include the small run/control traffic, not isolated large-run edge byte accounting.
+Central-owned four agents stop with zero native stage children; the temporary M42 plan task is removed. Other Codex's Mac agent and unrelated apps are preserved.
+
+### Preservation and next gate
+
+Local bundle `F:/dev/p4-releases/all-hosts-retry-20260910-1436.zip` contains 154 raw/setup files plus MANIFEST.json; every listed ZIP member was read and SHA256-checked.
+Archive SHA256: `8cbb915596b045fb329934008f7c9cd7177b3659c8005fe7091ab4c686a98dc6`.
+Extract with `Expand-Archive -LiteralPath F:/dev/p4-releases/all-hosts-retry-20260910-1436.zip -DestinationPath <new-directory>`.
+The large configuration, full artifacts, report, judgment, logs, mapped identities, memory samples, failed arms and helper command sources are retained under raw/. Setup includes the preceding Mac attempts and deployment records.
+To reproduce after recreating the declared agents/endpoints, use the hash-bound p4-event-drive binary with the selected config.json and a new artifact output path; runtime archives remain in the earlier sealed candidate bundle. Do not reuse a live run's identities or mutate a measured directory.
+This is durable local delivery only, not remote publication or another-machine retrieval acceptance. Generated raw logs and one-off tools are not added to Git in this retry.
+
+Whole-fleet and CUDA/Metal acceptance remain BLOCKED. The next gate is an actual Mac agent reply after local authorization repair, then TUF SSH and Mac .20 NAS restoration, mixed small-model execution, requested M42/Spark/Mac122B, and all-host waves.
+Transport write-error attribution/recovery, B2/B3, scientific response quality, synchronized cause tracing and sustained pressure remain open. A subset pass or agent restart does not close them.
+
+Documentation checks for this retry: node tools/scripts/docs-lint.mjs exits0 with 92 files clean; git diff --check passes. No product test suite was rerun because only these evidence/roadmap/index files changed.

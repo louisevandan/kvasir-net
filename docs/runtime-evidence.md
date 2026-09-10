@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-10: 예약된 전체 장비 재접속·네 CUDA 호스트 122B
+
+M42·Spark·이 PC·Ubuntu의 다섯 stage에서 122B 32/32 완료·EOS·해제·UNLOAD, 계획=실제 할당을 확인했다.
+Mac NECP, TUF SSH, Mac .20 NAS 때문에 전체 장비·CUDA/Metal은 BLOCKED다. 발열 설명8건과 TTFT 대기를 남기며 정상 서비스·성능 개선으로 승인하지 않는다.
+첫 소형 실패와 후속 통과, 소스/파일 해시, 154개 원자료의 로컬 ZIP 해시·검증·재현 범위는
+[fleet 재시도 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#scheduled-all-computer-retry-2026-09-10)를 따른다.
+
 ## 2026-09-07: 구현 중단·증거 경계 재정리
 
 새 컴파일/시험/변이/실기 결과를 만들지 않고 기존 Git과 원집계를 대조했다. 마지막 실행은
