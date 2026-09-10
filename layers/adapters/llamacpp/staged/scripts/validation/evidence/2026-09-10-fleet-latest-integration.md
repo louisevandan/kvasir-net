@@ -465,3 +465,96 @@ During the run, unrelated application/scaffolding changes appeared in the main c
 The next fleet gate is TUF authentication and Mac .20 NAS restoration, then their legal cuts/plans and actual waves. Mac .21's old NECP failure remains historical evidence and is no longer an active blocker. Response quality, B2/B3, wait attribution and sustained service remain separate open work.
 
 Closure checks for this Mac-included retry: node tools/scripts/docs-lint.mjs exits0 with92 files clean, git diff --check passes, and108 archived files pass SHA256 readback. Product tests were not rerun.
+# MiMo 100k preflight (2026-09-10)
+
+<a id="mimo-100k-preflight-2026-09-10"></a>
+
+This addendum records a new failed preflight, not a revision of the earlier 122B acceptance.
+The active experiment order and acceptance requirements are owned by roadmap §0.-5.
+
+## Selection and executed scope
+
+The model catalogue's largest successful actual LOAD is MiMo-V2.5 UD-Q5_K_S:
+216,301,387,424 bytes across six shards, 51 declared blocks, 3 NextN blocks and 48 trunk layers.
+Its previous 102,400-context/one-sequence load belongs to the older pin. Larger catalogue entries
+without successful LOAD records were not promoted to supported models.
+
+All five current hosts could read the six NAS shard files. With source `9ad366f90` and the previously
+sealed runtime binaries, the following **inspect-memory-plan** consumers executed:
+
+| Host/backend | Candidate trunk cut | Result |
+| --- | --- | --- |
+| M42 RTX3090 CUDA0 | [0,8) | exit7; no MEMORY_PLAN |
+| M42 RTX3090 CUDA1 | [8,16) | exit7; no MEMORY_PLAN |
+| Spark GB10 CUDA | [16,36) | exit7; no MEMORY_PLAN |
+| Mac .21 M4 Pro Metal | [36,40) | exit7; no MEMORY_PLAN |
+| Local RTX3090 CUDA | [40,46) | exit7; no MEMORY_PLAN |
+| Ubuntu RTX2070 CUDA | [46,48) | exit7; no MEMORY_PLAN |
+
+Each requested resident8, unified pool819200, per-session admission102400, batch512/UBATCH512,
+no mmap, no speculative execution. All failed before allocation planning with:
+
+```text
+error loading model hyperparameters: key mimo2.attention.sliding_window_pattern has wrong array length; expected 48, got 51
+```
+
+The Windows runtime SHA256 is `98926adfb85c38decdd8438054cf4d234a142a149c7be753143cd3ac635f4825`;
+Spark `f45e12d8f54f324d92b4455fe0e10c47d8b86d6d1fb208abf433effa9fb1dde0`;
+Mac `f17782080c1619595485241ecf2d2c9188d8791850e1a555d04b45ed8f54c8c2`;
+Ubuntu `83e3107e3adf098448eb3d937d7687f54d889fc76ca295db373fd8362726af2a`.
+No actual LOAD, inference, KV placement, achievable concurrency, memory peak or TPS was obtained.
+The failure is not an OOM result. M42 used its interactive scheduled-task route for S: access;
+the task completed and was unregistered. No fleet inference agent was started or restarted;
+the Mac agent owned by its local Codex was preserved.
+
+## Diagnosis and unadopted repair
+
+In the older prepared pin `0eadefebd3`, MiMo loaded its SWA array before reading NextN count.
+In `434ddbbc0`, the common model loader reads NextN before `load_arch_hparams`;
+MiMo's unchanged SWA reader therefore requests trunk48 against the declared51 array.
+The proposed upstream change uses `n_layer_all` for that one array read. It preserves the 48-layer
+execution trunk and does not trim GGUF metadata or weaken generic array validation.
+It is **an unbuilt draft**, not a validated fix or deployed runtime.
+
+The current `validateCompatibilityPatch` guard was exercised against the draft and rejected it:
+`changes a model implementation; update official llama.cpp instead`.
+The guard requires an official ggml-org PR URL and commit for `src/models/` changes. Neither was
+invented; no upstream message/PR was sent and no guard was bypassed. Official-source adaptation
+or explicit user authorization for a narrowly scoped local exception is required before adoption.
+The remaining consumer, malformed-input, mutation and backend regressions are listed in the roadmap.
+
+## Prepared workload, independently of inference
+
+32 synthetic maintenance dossiers contain 179/361/520 distinct records each. Four queried records
+span the beginning, middle and end. They require current/resistance/unit conversions, power and
+energy arithmetic, pressure-threshold decisions, cross-record ranking, evidence citations and
+a substantial engineering report. Expected numeric values are generated from the input facts,
+not from a model response. This is a structured long-context workload, not broad domain-quality certification.
+
+Using the current runtime's vocab-only tokenizer, all 32 prompts passed exact recounts:
+31,645~92,165 input tokens; 1,972,902 tokens and 8,598,886 UTF-8 bytes in total.
+Every prompt has its own content SHA256. The saved model template, rendered with Jinja2 3.1.6,
+matches all32 prompts byte-for-byte for system+user, generation prompt on, thinking off.
+Vocab-only success does not bypass or prove the failed model hyperparameter path.
+Maximum requested output8192 plus the longest input is100357, within the102400 session bound.
+The intended long-response gate is complete EOS, at least1024 generated tokens, independent
+numeric/citation checks and full response review; it has **not run**.
+
+## Preservation and reproduction
+
+Local bundle `F:/dev/p4-releases/mimo-100k-preflight-20260910.zip` contains111 files plus
+`MANIFEST.json`: six plan inputs/logs, preparation scripts, exact-token verifier, model template,
+32 prompts/messages, numeric oracles, template parity, draft patch and task cleanup evidence.
+ZIP SHA256: `9f007cb19e742c6960511098d43e59525930b2976884d9b759ae8f4202e96f16`.
+It does not include the216GB model or replace binary provenance from the prior fleet bundle.
+It is a local evidence archive, not cross-machine durable acceptance.
+
+Extract the bundle into `target/mimo-100k-20260910` in the fleet checkout to reuse its relative
+imports. `node target/mimo-100k-20260910/plan.mjs target/mimo-100k-20260910/mimo-100k-r8-plan-v1-local.json`
+reproduces the local no-alloc RED with the saved runtime path and readable S: model share.
+`workload.mjs` regenerates the dossiers and exact counts after building the existing tokenizer
+probe; `template-check.py` validates the saved Jinja branch. The r16/r32 JSON files are unexecuted
+planning candidates. The placeholder prompt in plan-only configs is not the sealed long-wave workload.
+
+No product source changed. Rust/native regression suites were not rerun for this documentation-only
+checkpoint, and historical counts are not reported as new results.
