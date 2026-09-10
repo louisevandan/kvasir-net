@@ -17,7 +17,7 @@ import {
 // backend rather than to one shape of it, so it sits a level up.
 const shapeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const backendRoot = path.resolve(shapeRoot, "..");
-const repoRoot = path.resolve(backendRoot, "../../../../..");
+const repoRoot = path.resolve(backendRoot, "../../..");
 const upstreamDir = path.join(backendRoot, "upstream");
 const compatibilityRoot = path.join(shapeRoot, "compat");
 

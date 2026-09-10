@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const stagedRoot = path.resolve(scriptDir, "..");
-const repoRoot = path.resolve(stagedRoot, "../../../../../../");
+const repoRoot = path.resolve(stagedRoot, "../../../..");
 const serverDir = path.join(stagedRoot, "server");
 const defaultBuildDir = path.join(repoRoot, ".cache", "staged-server-build");
 const noLlama = process.argv.includes("--no-llama");
