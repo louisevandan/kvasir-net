@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — MI250·Hy3 진단 병합, v1.1 수정계획 수립(구현 전). 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — MI250·Hy3 동시 실기 선별 완료, CPU 예산/묶음 정책 상호작용 확인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,7 +10,7 @@
 
 <a id="current-status"></a>
 
-## 0. 현재 상태 — v1.1 수정계획 수립, 성능·서비스 승인은 미완료
+## 0. 현재 상태 — v1.1 bounded 선택 실기 선별, 성능·서비스 승인은 미완료
 
 <a id="v11-plan"></a>
 
@@ -19,11 +19,36 @@
 **구현 진행 (2026-09-11):** V1.1-0의 선택 시점 진단·실제 OUTPUT 수신시각과 V1.1-2의
 실험용 phase별 요청/행 상한을 구현했다. V1.1-0 전체 또는 V1.1-2 승격 완료는 아니다.
 V1.1-1 B2/B3/receipt 예산은 미완이며 resident/open/fragment 창을 확대하지 않았다.
-새 정책은 기본 비활성이고 ordinary attention에만 적용한다. 실제 GPU 실행/성능 승인은 미실행이다.
+새 정책은 기본 비활성이고 ordinary attention에만 적용한다. 두 클러스터 GPU 실기 선별을 수행했으며 H5 성능/서비스 승인은 미완료다.
 로컬 최종 게이트: workspace **1384/0/7**(58 summary, filtered 0), 변이 실패 **1/5/3/1**, docs-lint 92 clean.
 [구현·검증 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#bounded-implementation)을 따른다.
 다음은 V1.1-0의 미발행 구간/요청별 사유·단조시계 issue→settle·byte 수명 계측을 닫고 V1.1-1을 수행하는 것이다.
 그 전에는 이번 선택 후보를 기본 정책으로 승격하거나 flight 창을 늘리지 않는다.
+
+**동시 실기 선별 (2026-09-11):** MI250 두 호스트/16stage와 Hy3 다섯 호스트/6stage의 실제 추론을 병행했다.
+Hy3는 decode cap0→2에서 **5.32→9.55TPS**, ITL p50 **1.179→0.533s**, 양쪽8/8 완료·해제·UNLOAD였다.
+MI250는 기본 CPU 설정에서 cap4 실패·cap8 8.35TPS(기준28.54/29.73)로 회귀했다. cap4/min4도 폭은 안정됐지만 실패했다.
+native CPU threads4를 쓴 cap4/min4 후보는 **34.05TPS**, ITL p50 **0.319s**,
+16/16 완료·해제·UNLOAD였다. 같은 CPU4 기준군은13.59TPS로 완주했지만 외부 Python GPU 작업이
+겹쳐 **배치 단독 개선율 비교에서 제외**한다. GPU 비간섭 시간대의 재검증 전 개선율 승격은 BLOCKED다.
+Hy3도 한 쌍의 선별 결과다. context100k/출력256의 짧은 부하이며 실제100k prefill·정상 EOS·연속 웨이브 승인이 아니다.
+MI 소스d5256af44, Hy3는 fleet 호환을 유지한b9deee4ce와 동일한 기존 Mac downstream agent를 사용했다.
+[원자료·수치·실패·해시](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#dual-cluster-screening)를 따른다.
+
+**이번 결과가 정하는 다음 작업:**
+
+1. V1.1-0 계측에 **host별 CPU 예산/실행 대기, native CPU 연산·spin·graph 준비/재사용**을 추가한다.
+   cap4min4는 graph reset이 줄어도 느렸고 CPU4에서는 완주했으므로 graph miss 하나로 원인을 확정하지 않는다.
+   native 프로세스마다 호스트 전체 CPU를 기본 할당하는 구성을 피하도록 배포 계획에서 host별 예산을 명시한다.
+   threads4는 이번 진단값이며 CPU expert 오프로딩이 큰 Hy3 등에 전역 기본값으로 전파하지 않는다.
+2. READY 이전 정지의 native bind 오류/errno·stdin liveness join을 계측하고, 점유 포트/재시작 반례에서
+   bounded failure와 child 회수를 검증한다. 임시 포트 변경만으로 제품 결함을 닫지 않는다.
+3. V1.1-1 B2/B3·receipt 수명/종료를 닫은 뒤 V1.1-2의 비용 기반 묶음·공정성을 진행한다.
+   묶음 크기는 단계 겹침뿐 아니라 host CPU 예산과 실제 native 서비스 시간으로 평가한다.
+   GPU/RPC 사용률만으로 더 많은 flight를 허용하지 않고 node 실행1/decode outstanding≤1을 유지한다.
+4. Hy3 cap2와 MI의 CPU 예산을 명시한 후보를 **GPU 비간섭을 확인한 시간대**에 동일 조건 반복으로 재선별한다.
+   per-process GPU 목록/메모리·CPU 사용과 외부 작업의 시작/종료를 함께 봉인한다. 유망 후보에만 실제100k prefill/
+   decode 혼합·연속 웨이브·긴 정상 응답과 H5 paired8쌍/holdout4쌍을 적용한다. 새 정책 기본값0은 유지한다.
 
 **현재 개발 순서는 이 절로 이관한다.** 아래 v0.9.0/P/U 기록의 당시 “다음”을 다시 직렬 선행 조건으로 만들지 않는다.
 v0.9.0 봉인 여부를 이번 분석으로 바꾸거나 v1.1 구현 완료로 표시하지 않는다. 버전 bump/tag는 아직 하지 않는다.

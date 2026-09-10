@@ -57,7 +57,7 @@
 | [docs/continuous-inference-refactor-handoff.md](continuous-inference-refactor-handoff.md) | 역사·구 계획 |
 | [docs/deployment-adapter-contract.md](deployment-adapter-contract.md) | 분야 계약·구현과 구별 |
 | [docs/distributed-batching-roadmap.md](distributed-batching-roadmap.md) | 현재 목표·상태·순서 소유 |
-| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md) | MI250·Hy3 원자료 재분석·인과 경계·v1.1 수정 근거; 구현/성능 승인 아님 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md) | MI250·Hy3 진단·bounded 선택 구현·동시 실기 선별; H5 성능/서비스 승인 미완 |
 | [docs/distributed-batching-verification.md](distributed-batching-verification.md) | 시험·실기 판정 소유 |
 | [docs/distributed-mock-test-plan.md](distributed-mock-test-plan.md) | 부분 시험 계획 |
 | [docs/document-map.md](document-map.md) | 문서 분류·권위 소유 |
