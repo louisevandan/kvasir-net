@@ -649,3 +649,38 @@ Device utilization is kernel-active sampling, not SM occupancy. M42 and Unix/Mac
 about18 seconds in SSH-bounded probes; host-local RPC/monitor windows are used without assuming
 cross-host alignment. Exact head-ledger flight time distribution remains uninstrumented; same-host
 simultaneous distinct logical RPCs provide only a lower bound.
+
+### Hy3 diagnostic wave: observed stall and controlled abort
+
+Run hy3-100k-wave-diagnostic-1789033111493 loaded all six stages. Plans matched actual allocations,
+and mapped native libraries matched the sealed runtime on all five hosts. All16 requests were delivered.
+The head reported82 native physical prefill ubatches, all256 rows (20992 captured rows); this does not
+prove end-to-end completion for those rows. No request produced OUTPUT/completion/release.
+
+M42 first/downstream512-row native completion counters stayed41/41 between live probes at
+1789034814611 and1789035321871 local Unix milliseconds. The local3090 remained active near100%,
+with raw PCIe samples around3.6 million RX and6.5-7.0 million TX KB/s and only112 MiB free VRAM;
+other CUDA devices were idle in the accompanying samples. These are observations, not proof of
+WDDM paging or a specific stalled operation. Local memory pressure is the first comparison hypothesis.
+
+At2026-09-10T10:15:22.527Z the coordinator deliberately terminated only verified native PID71948,
+parent64140, in the validation runtime. controlled-abort.json records the identity and intervention.
+The ensuing10054 connection error is induced, not a spontaneous transport regression. The driver
+exited1 and preserved artifact.json: delivered16/completed0/released0, elapsed1114478ms,
+evidence_missing={requests:16,stage_executions:12}. cleanup_error preserves busy UNLOAD with active
+owners/frontiers. Scoped process cleanup afterwards is not an UNLOAD acceptance. This arm is a
+controlled-abort diagnostic failure; its original configuration, inputs, deadline and errors remain intact.
+
+Before the stall, the same-host M42 RPC window observed distinct logical batches concurrently for
+214794 of253459ms. This is only a lower bound on flight occupancy. Completed StageSpan records end
+before the stall; GPU summaries restricted to that window omit the unresolved tail and must not be
+represented as whole-inference utilization. Raw observer logs retain that tail. No throughput or
+saturation approval follows from full256-row ubatches or near100% device utilization.
+
+The next one-variable comparison moves local layer77 routed expert weights from device to RAM,
+keeping all other cuts, KV types, batch512/UBATCH256, resident8,102400/session, sixteen prompts,
+arrival schedule, acceptance and6-hour deadline. Local no-alloc plan v3 passed: device model1274146816,
+context15099494400,compute3829708800,required20203350016 bytes; host model39862665216 and
+compute423711744 bytes. Device demand falls2491416576 bytes; KV placement and capacity do not change.
+Actual load, progress beyond the stalled workload, response quality and complete teardown remain open.
+No product source changed at this checkpoint; previous Rust test totals are not new executions.
