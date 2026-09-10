@@ -280,7 +280,11 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         # translation unit that is allowed to know what a common_params is.
         "${P4_STAGED_LLAMA_SOURCE_DIR}/common"
     )
-    target_link_libraries(p4_llama_compat PUBLIC llama)
+    # The facade calls llama.cpp's common helpers directly.  Declare that
+    # dependency on the facade so single-pass Unix linkers place
+    # llama-common after libp4_llama_compat.a instead of discarding it before
+    # the facade's unresolved symbols are seen.
+    target_link_libraries(p4_llama_compat PUBLIC llama llama-common)
     target_include_directories(p4_staged_llama_runtime PRIVATE src)
     target_link_libraries(p4_staged_llama_runtime PUBLIC
         llama
