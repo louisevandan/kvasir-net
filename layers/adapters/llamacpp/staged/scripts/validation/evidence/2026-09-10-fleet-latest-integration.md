@@ -677,10 +677,138 @@ before the stall; GPU summaries restricted to that window omit the unresolved ta
 represented as whole-inference utilization. Raw observer logs retain that tail. No throughput or
 saturation approval follows from full256-row ubatches or near100% device utilization.
 
-The next one-variable comparison moves local layer77 routed expert weights from device to RAM,
+The planned comparison moves local layer77 routed expert weights from device to RAM,
 keeping all other cuts, KV types, batch512/UBATCH256, resident8,102400/session, sixteen prompts,
 arrival schedule, acceptance and6-hour deadline. Local no-alloc plan v3 passed: device model1274146816,
 context15099494400,compute3829708800,required20203350016 bytes; host model39862665216 and
 compute423711744 bytes. Device demand falls2491416576 bytes; KV placement and capacity do not change.
 Actual load, progress beyond the stalled workload, response quality and complete teardown remain open.
 No product source changed at this checkpoint; previous Rust test totals are not new executions.
+
+
+### Hy3 final six-hour wave closure (2026-09-11)
+
+Run `hy3-100k-wave-headroom-1789035735558` ended naturally at its unchanged21600000ms inference
+limit (measured21600050ms), exit1. The user explicitly selected continuing to that deadline.
+Measurement checkout was clean at300c1be9e11d750526777a662d42fd79985d2f72; OUTER source96e6fd1ae,
+driver c6f8650a49c27764e88cc5ed311f77404c1c218f148d9d037b87133de12b1b76, native/agent source9ad366f90.
+`final-binding-verification.json` passes unchanged config,16 prompt hashes, observers and driver;
+all six model files retained size/mtime after their pre-arm full SHA256 check. No frozen arm was edited.
+All six actual model/context/compute allocations and mapped runtime identities match their plans.
+
+| Gate | Final evidence |
+| --- | --- |
+| Submission | configured16/delivered16/uncertain0/unsubmitted0 |
+| Completion | EOS/completed/released4; incomplete/unreleased12 |
+| First error | inference overall deadline expired; evidence_missing requests12/stage_executions16 |
+| Cleanup | busy UNLOAD; requests12,pending4,flight_batches3,flight_executions6,active_owners8 |
+| Approved output | 16438 OUTPUT frames preserved; requests009..016 have none |
+| Quality | Four complete responses read in full; arithmetic16/16 correct; whole prose0/4 |
+| Observer closure | All eight observers exit0; driver exit1 |
+
+Completed request IDs end003/006/007/008, non-EOS output counts1876/1905/2074/1994;
+release slots2/5/6/7 and incarnations3/6/7/8. This proves those releases, not a completed second wave
+or sustained slot reuse. First-wave001/002/004/005 have partial outputs, not completions.
+Missing per-request row counts stay0 with evidence_missing; raw row TPS and quality-approved TPS
+remain null. OUTPUT frame counts are separate approved evidence, not reconstructed stage rows.
+
+TTFT over the8 requests with OUTPUT: min41.79min,p50=94.85min,p90=166.97min,max186.46min.
+The other8 are missing, not zero-latency observations. Arrival-to-completion over the4 completions:
+min239.57min,p50=309.34min,max353.97min. Per-request true generated-token receipt interval medians
+range1878..1896ms; p90 ranges2046.2..30993.7ms. These intervals include transport and scheduling,
+exclude empty EOS frames, and are not GPU kernel time. Raw per-request distributions are preserved.
+
+`quality-review.json` retains full-review decisions and exact quotes. Numeric values, energy ordering
+and pressure comparisons in all16 reviewed records are correct, including equality at120kPa being
+non-exceedance. Completed responses contain1110/1130/1201/1168 whitespace words versus requested
+approximately1800-2500. They overstate absent causal evidence as exclusion of causality; other claims
+invent a normal pressure range or treat proposing measurements as forbidden. The unchanged runtime
+minimum1024 tokens is not a whole-response quality judge. No prompt, limit or judge was weakened.
+All captured response texts have zero U+FFFD. This English arm neither reproduces nor closes the
+separate MI250 Korean UTF-8 failures around69-113 tokens; no UTF-8 implementation changed here.
+
+#### Phase and device observations, with limits
+
+Head-captured physical batches: prefill-only2137, all256 rows; mixed328,325 at256 rows,
+mean254.314/min31; decode-only3783,mean4.15596,p50=5,p90=5,max7. These are captured executions,
+not complete end-to-end row evidence for the failed arm. Logical issues5017,1231 at512 rows;
+ready_sequences max7 and gate_refusals0 are issue-time observations. Head idle observation
+mean2328.717ms,p50=435ms,p90=4172ms is not GPU idle time or proof that all requests were eligible.
+
+Completed native RPC mean ms by stage0..5:1973.18/2061.78/1356.50/286.29/1294.36/620.66.
+RPC includes native CPU/GPU work and transfers. Pre-RPC handler/planning means are1.80/7.75/1.06/
+1.04/3.63/3.18ms; these do not include complete socket/inbox queue waiting. Same-host distinct logical
+RPC overlap on M42 is5279505/21594350ms (24.45%) at depth2. It is only a lower bound on head flight
+occupancy; other hosts each own one stage. Unaligned clocks differ by about18 seconds, so cross-host
+RPC intervals were not combined into an exact flight or GPU-overlap claim.
+
+| Device | Mean sampled utilization in its host RPC window | Zero samples / window samples | Whole observer peak VRAM / minimum free MiB |
+| --- | --- | --- | --- |
+| M42 RTX3090 GPU0 | 41.78% | 7456/18649 | 22356/1971 |
+| M42 RTX3090 GPU1 | 43.78% | 7055/18649 | 22356/1971 |
+| Spark GB10 | 29.47% | 13993/20645 | NVML unavailable |
+| Local RTX3090 | 27.03% | 13347/19478 | 21775/2548 |
+| Ubuntu RTX2070 Max-Q | 13.27% | 14255/20513 | 6253/1534 |
+| Mac global AGX Device Utilization | 16.37% | 15694/20107 | shared memory; separate counters |
+
+NVIDIA utilization is kernel-active sampling, not SM occupancy. Mac is a different global driver
+counter and includes unrelated applications. RPC windows cover completed spans only, not a guarantee
+that unresolved tail work is included; memory extrema cover the full observer run. Local4080 is excluded.
+Mac observer timestamps include a backward step (minimum adjacent gap-924ms); no strict inter-host
+ordering or exact overlap is inferred. System-wide swapout/page/compression deltas are preserved,
+not attributed exclusively to P4 or mistaken for current swap bytes.
+
+The v3 local expert placement reserves device KV15099494400 bytes, model1274146816,compute3829708800;
+required20203350016. Host model39862665216/compute423711744. Its whole-run minimum free VRAM2548MiB
+and subsequent outputs show progress beyond the old abort. This is not a strict one-variable A/B:
+old agents retained earlier smoke/single history, whereas this arm started fresh agents. Placement and
+initial receipt history both changed. WDDM paging as the old stall's cause remains unproved.
+
+56 agent snapshots started after inference began. Spark RSS grew8100147200→22060609536 bytes,
+local working set8026472448→22008225792,Ubuntu RSS4230922240→11479568384. M42 private commitment
+8387792896→22592552960 is not disk swap. Spark system available memory reached2926903296 bytes;
+its swap-used peak was20480 bytes. Shared model/KV/host memory must not be counted twice.
+
+A source audit finds full Arc<Event> values retained in `layers/agent/src/event_broker/ledger.rs`,
+with count-only eviction; successful dispatch deep-clones an Event for deduplication in event_broker/mod.rs.
+The configured duplicate window is262144 in entrypoints/agent/src/event_runtime/mod.rs. Request release
+and native UNLOAD do not clear that broker history. This is distinct from the adapter physical_receive
+64MiB replay cache. The mechanism is consistent with growth but no heap profile proves exclusive
+attribution. Shrinking the window or discarding payloads without preserving replay semantics is not a fix.
+
+#### Teardown and next development boundary
+
+Final logs, model-stat binding, responses, plans and all observers were captured before process cleanup.
+Only owned validation PID/path/hash/parent-verified natives and agents were stopped. The first cleanup
+attempt stopped the Windows families then rejected absent Linux parent metadata before touching Unix;
+retry supplied the recorded agent parent and checked the live ps parent/command/hash before SIGTERM.
+Both attempts are preserved. Final-state inventory confirms all previous owned PIDs gone. Mac dedicated
+GUI service was restarted to PID1560 and listens52004; Spark available RAM recovered126547853312 bytes,
+Ubuntu GPU memory4MiB/local3090 32MiB/M42 GPUs417MiB each. Local4080 background work remains active.
+Forced scoped process cleanup is not successful protocol UNLOAD; the busy cleanup_error stays failed.
+
+This closes the measurement, not the requested service/performance goal or a release acceptance.
+Next development: prove byte-bounded admission/return and broker receipt retirement with exact replay
+semantics; add timeout cancel/drain/release closure; restore short multilingual whole-response gates.
+Then use bounded single and2/4/8-session arms with fixed fresh-agent state to attribute per-phase waiting,
+CPU/transfers and head issue-to-retirement flights before repeating this100k workload. Metal quantized KV
+or new cuts require their own plan/actual and response tests; this arm's f16 choice is not proof it is required.
+No product code changed for this closure.1379/0/7 is the earlier code validation, not a new docs-only test run.
+
+
+#### Sealed evidence bundle
+
+`F:/dev/p4-releases/hy3-100k-20260910-1924.zip` contains532 manifest-listed files plus MANIFEST.sha256.
+ZIP bytes254796048; source evidence bytes2125353352. Every ZIP member was read back and SHA256-checked.
+ZIP SHA256: `5cb312f1109dc500d5fae457a19536ba10064549db66428d2dc37bc6bf047e94`.
+Manifest SHA256: `b6415133df048c507fa9df726d2c19123105016ececd46d478b2e980253b30c6`.
+The adjacent `.zip.verify.json` records verification. It includes source archives, both OUTER drivers,
+model identities, frozen configs/prompts, raw monitors/logs, failed arms, final partial artifact, full response
+reviews, allocation/mapped-file proofs and scoped cleanup evidence. Model weights are identified by
+hash rather than duplicated. Bundle integrity is not an acceptance upgrade.
+
+For analysis reproduction, extract raw/ under `target/hy3-100k-20260910` in the fleet checkout (helpers
+also use the archived source tree and recorded absolute paths). Run `node target/hy3-100k-20260910/summarize-streaming.mjs`
+and `node target/hy3-100k-20260910/analyze-batches.mjs` against the preserved run-path/wave-path pointers.
+Do not use observer file counts or completed RPC counts as a substitute for artifact completion.
+The sealed archive remains immutable; regenerated analysis belongs in a separate extraction directory.
