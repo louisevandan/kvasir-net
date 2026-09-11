@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-12 — 생성 우선 참여·pipeline RPC 비용 예측·prefill 청크 재선택 구현, workspace1439/0/7·독립 변이5종 각1실패. MI 새native의 올바른 LOAD/추론·기존 묶음 정책 회귀4회 통과. 이번 생성/시간 정책의 실기 성능·100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
+최신 현황 정리: 2026-09-12 — 생성 우선 참여·pipeline RPC 비용 예측·prefill 청크 재선택과 초기 학습 보강, workspace1441/0/7·독립 변이6종 각1실패. MI 새native의 올바른 LOAD/추론·기존 묶음 정책 회귀4회 통과. 이번 생성/시간 정책의 실기 성능·100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -91,6 +91,9 @@ decode-only 비용 피드백과 open 작업의 순서를 포함해 마지막 sta
 없을 때1행 probe로 측정한다. 기본 비활성·ordinary/fragment1·기존 창을 유지하며, 이전 stage별
 서비스 예산과 같은 숫자가 같은 의미는 아니다. 전체1439/0/7(58 summaries, exit0), 독립 변이5종
 각0pass/1fail, 타이머의 실제 대기/무입력 재발행/원장 불변을 확인했다.
+초기 작은 shape를 학습하려면 큰 prefill의 반환을 먼저 기다려야 하는 장벽도 실제 소비 반례로 고쳤다.
+큰 작업 뒤 기존 창 안의 cold1행 probe 하나를 허용하되, 이미1행 probe/정체불명 open이 있으면 추가하지 않는다.
+보강 후 전체1441/0/7·독립 재컴파일 변이6종 각0pass/1fail을 확인했다.
 전송·dispatch·반환 잔여까지 포함한 client deadline, 시간 deficit/aging, 전체 반환 예약은 아직 남는다.
 [구현·반례·검증 범위](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#generation-service-policy)가 기준이다.
 

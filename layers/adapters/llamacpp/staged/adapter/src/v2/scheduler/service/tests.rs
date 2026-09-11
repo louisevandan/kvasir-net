@@ -100,6 +100,16 @@ fn generation_service_measures_fixed_cost_instead_of_multiplying_it_per_prefill_
 }
 
 #[test]
+fn generation_service_calibration_probe_is_one_bounded_unknown_quantum() {
+    let mut policy = learned(1);
+    assert!(!policy.has_open_calibration_probe(&open(&[1])));
+    let mut probe = sample(2, 0, 10); probe.shape.prefill_rows = 1;
+    policy.register(probe, 2, 3, &open(&[1,2]));
+    assert!(policy.has_open_calibration_probe(&open(&[1,2])));
+    assert!(policy.has_open_calibration_probe(&open(&[99])), "unknown authority cannot grant a probe");
+}
+
+#[test]
 fn service_budget_counts_already_issued_prefill_and_uses_real_stage_completion() {
     let mut policy = learned(150);
     policy.register(sample(2, 0, 10), 2, 3, &open(&[2]));

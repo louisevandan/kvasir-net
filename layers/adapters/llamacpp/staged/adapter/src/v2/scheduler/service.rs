@@ -290,6 +290,11 @@ impl ServiceBudget {
             .is_none_or(|r| r.shape.prefill_rows > 0))
     }
 
+    pub fn has_open_calibration_probe(&self, open: &BTreeMap<u64, BTreeSet<u64>>) -> bool {
+        open.keys().any(|id| self.issued.iter().find(|r| r.ordinal == *id)
+            .is_none_or(|r| r.shape.prefill_rows == 1))
+    }
+
     fn project_tail(&self, load: u64, session: &str, stages: usize, shape: &ServiceShape,
         open: &BTreeMap<u64, BTreeSet<u64>>) -> Option<u64> {
         if stages == 0 || stages > MAX_STAGES { return None; }

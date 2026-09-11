@@ -81,10 +81,15 @@ impl Worker {
                 plan = prepare(demands, smaller)?;
                 continue;
             }
-            if !self.service_budget.has_open_prefill(&self.state.open_batches) {
+            if !self.service_budget.has_open_prefill(&self.state.open_batches)
+                || (decision.verdict == ServiceVerdict::Cold
+                    && !self.service_budget.has_open_calibration_probe(&self.state.open_batches)) {
                 // Unknown/infeasible service cannot starve prompts forever.
                 // Calibrate the smallest quantum, never the rejected original
                 // full chunk. This explicit probe does not promise an SLO.
+                // One cold one-row probe may follow an older large prefill:
+                // otherwise learning its smaller shape would require first
+                // draining the very pipeline this policy should keep fed.
                 decision.examined_prefill_rows = examined;
                 decision.selected_prefill_rows = Some(shape.prefill_rows);
                 return Ok((plan, Some(decision)));

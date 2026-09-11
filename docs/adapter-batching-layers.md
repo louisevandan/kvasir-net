@@ -890,8 +890,11 @@ history128·profile256으로 제한하고 완료된 history만 교체한다. UNL
 최대 탐색 횟수는 행 수의 bit 폭이며, 준비/거부한 후보는 fairness·요청·flight를 변경하지 않는다.
 
 모르는 비용은0이 아니다. 미완료 prefill이나 정체불명 open 작업이 있으면 `calibration_wait` 또는
-`defer_prefill`로 생성만 다시 계획한다. 이전 prefill이 모두 정산되면 최소1행을 `cold`/`progress_probe`로
-측정해 영구적인 prefill 기아를 피한다. 거부된 원래 큰 quantum을 그대로 재허용하지 않는다.
+`defer_prefill`로 생성만 다시 계획한다. 단, 큰 prefill의 반환을 기다려야만 작은 shape를 학습할 수 있는
+초기화 장벽을 피하기 위해, 미측정 후보는 기존 창 안에 최대1개의1행 calibration probe를 허용한다.
+이미 prefill1행 작업이 open이거나 open identity를 모르면 새 cold probe는 보내지 않는다.
+이전 prefill이 모두 정산되면 최소1행을 `cold`/`progress_probe`로 측정해 영구적인 prefill 기아를 피한다.
+거부된 원래 큰 quantum을 그대로 재허용하지 않는다.
 prefill0은 `OrdinaryLimits`의0(무제한)으로 표현하지 않고 prefill 수요를 제외해 계획한다.
 생성 서비스가 아직 필요 없는 pure-prefill은 기존 전체 폭을 유지한다.
 

@@ -3,6 +3,31 @@ use super::*;
 use crate::v2::{ServiceSample, ServiceVerdict};
 
 #[test]
+fn service_calibration_actual_loop_issues_a_small_probe_before_a_large_prompt_returns() {
+    let commands: Vec<_> = (0..8).map(|i| request(&format!("calibration-{i}"),
+        if i < 2 { 2 } else { 96 }, 8)).collect();
+    let submissions: Vec<_> = commands.iter().enumerate()
+        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_service(8, 4, 1, &submissions, 0, None, None, None,
+        Default::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_prefill_rows: 4 }),
+        0, Some(1));
+    h.hold_tail = true;
+    h.until("a cold one-row calibration may follow the first full prompt before either returns", |h| h.held_tail.len() >= 2);
+    {
+        let native = h.nodes[0].native.lock().unwrap();
+        let first = CapsuleSet::decode(native.issued_native[0].result.as_ref().unwrap()).unwrap();
+        assert_eq!(first.0.iter().flat_map(|c| &c.owners).count(), BATCH_CAPACITY);
+        let second = CapsuleSet::decode(native.issued_native[1].result.as_ref().unwrap()).unwrap();
+        let rows: Vec<_> = second.0.iter().flat_map(|c| &c.owners).collect();
+        assert_eq!(rows.len(), 1, "unknown service cannot admit another full prefill");
+        assert!(rows.iter().all(|r| r.phase == Phase::Prefill));
+        assert!(native.logical_calls <= 4, "calibration cannot enlarge the flight window");
+    }
+    assert!(h.outputs.is_empty(), "no tail result was returned to authorize generation");
+    h.resume_tail(); h.finish(&commands);
+}
+
+#[test]
 fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_every_request() {
     let commands: Vec<_> = (0..8)
         .map(|i| request(&format!("service-{i}"), if i < 4 { 8 } else { 96 }, 48))
