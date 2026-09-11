@@ -16,6 +16,7 @@ use std::thread::JoinHandle;
 mod actor_ring;
 mod retained_ring;
 mod bounded_strategy;
+mod service_budget;
 mod effect_backpressure;
 mod issue_witness;
 mod observation_contract;
@@ -633,6 +634,18 @@ impl Harness {
         issue_fault: Option<issue_witness::NativeFault>, limits: crate::v2::scheduler::OrdinaryLimits,
         pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>, min_batch_rows: usize,
     ) -> Self {
+        Self::observed_with_service(stages, max_open, completion_capacity, initial, chain_length,
+            script, observer, issue_fault, limits, pipeline, min_batch_rows, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn observed_with_service(
+        stages: usize, max_open: usize, completion_capacity: usize, initial: &[Event],
+        chain_length: usize, script: Option<speculative::Scenario>, observer: Option<IssueObserver>,
+        issue_fault: Option<issue_witness::NativeFault>, limits: crate::v2::scheduler::OrdinaryLimits,
+        pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>, min_batch_rows: usize,
+        service_budget_us: Option<u64>,
+    ) -> Self {
         assert!((2..=8).contains(&stages));
         assert!(initial.len() < INPUT_CAPACITY);
         let mut nodes = Vec::new();
@@ -703,6 +716,9 @@ impl Harness {
             worker.state.max_open_batches = max_open;
             worker.state.max_issue_rows = 0;
             worker.state.prefill_fragments = 1;
+            if let Some(us) = service_budget_us {
+                worker.service_budget = crate::v2::scheduler::service::ServiceBudget::new(us);
+            }
             let session = SessionCommand {
                 load_generation: 1,
                 session_id: "loop-session".into(),

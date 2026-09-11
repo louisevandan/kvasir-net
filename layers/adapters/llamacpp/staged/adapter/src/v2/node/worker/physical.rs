@@ -84,17 +84,19 @@ impl Worker {
         let ids = fresh
             .0
             .iter()
-            .try_fold(1u64, |n, capsule| {
+            .try_fold(1u64 + u64::from(self.service_budget.enabled() && !fresh.0.is_empty()), |n, capsule| {
                 n.checked_add(capsule.owners.len() as u64)
             })
             .ok_or("physical notification obligation overflow")?;
         self.ensure_event_id_obligations(ids, 0)?;
         let attempt = self.state.physical_receives.begin(plan)?;
         let start_unix_ms = observe::unix_ms();
+        let mut rpc_us = 0;
         let fresh_result = if let Some(body) = request_body {
-            let response = self
-                .stage_request(Operation::PhysicalBatch, Operation::PhysicalResult, body)
-                .and_then(|body| {
+            let rpc_started = Instant::now();
+            let response = self.stage_request(Operation::PhysicalBatch, Operation::PhysicalResult, body);
+            rpc_us = rpc_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+            let response = response.and_then(|body| {
                     CapsuleSet::decode(&body).map_err(|e| format!("invalid physical result: {e:?}"))
                 });
             match response {
@@ -159,6 +161,10 @@ impl Worker {
                 return Err(error);
             }
         };
+        let feedback = self.prepare_service_feedback(event, &session, &fresh_result, rpc_us).map_err(|error| {
+            self.effects_fenced = true;
+            error
+        })?;
         let result = self
             .state
             .physical_receives
@@ -204,6 +210,7 @@ impl Worker {
                 body,
                 telemetry,
             });
+        if let Some(feedback) = feedback { self.effects.push_back(feedback); }
         self.flush_effects()
     }
 }

@@ -100,7 +100,9 @@ fn pipeline_policy_actual_loop_fills_independent_prefills_and_bounds_mixed_work(
         }));
     h.hold_tail = true;
     h.until("independent pipeline prefill before the first return", |h|
-        h.nodes[0].native.lock().unwrap().logical_calls >= 4);
+        // logical_calls counts call entry; the fourth result can still be
+        // computing after that counter becomes four. Inspect completed data.
+        h.nodes[0].native.lock().unwrap().issued_native.len() >= 4);
     {
         let native = h.nodes[0].native.lock().unwrap();
         assert_eq!(native.logical_calls, 4);

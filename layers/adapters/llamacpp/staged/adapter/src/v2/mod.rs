@@ -36,6 +36,7 @@ pub use node::{LlamaNodeAdapter, RetainedLlamaNodeAdapter};
 #[cfg(test)]
 pub(crate) use scheduler::PREFILL_PATIENCE;
 pub use scheduler::{Allocation, Demand, OrdinaryLimits, Phase, Scheduler, SchedulerError};
+pub use scheduler::service::{ServiceDecision, ServiceSample, ServiceShape, ServiceVerdict};
 pub use session_key::{SessionKey, SessionKeyError};
 
 pub const LOAD_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.load-v3+json";
@@ -58,6 +59,7 @@ pub const RELEASE_RECEIPT_CONTENT_TYPE: &str =
 pub const BATCH_OBSERVATION_CONTENT_TYPE: &str =
     "application/vnd.p4.llamacpp.batch-observation-v4+json";
 pub const STAGE_SPAN_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.stage-span-v4+json";
+pub const SERVICE_SAMPLE_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.service-sample-v1+json";
 pub const ERROR_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.error-v2+json";
 
 #[cfg(test)]

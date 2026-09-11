@@ -341,6 +341,15 @@ The exact session, settlement and output rules are owned by the
 [adapter batching contract](adapter-batching-layers.md). Monitoring remains
 separate from user output.
 
+The optional llama.cpp service policy sends
+`application/vnd.p4.llamacpp.service-sample-v1+json` from a declared downstream
+stage to the session head. Its load/session/execution membership and monotonic
+local Frame duration are adapter-owned prediction hints, never a retirement,
+remote acceptance or output receipt. P4 routes this opaque payload unchanged.
+The adapter batching contract owns validation, bounded history and late-load
+handling. All participating agents must support this opt-in event; no native
+wire or backend capability change is implied.
+
 Prefill input and decode continuation are distinct operations in the llama.cpp
 adapter protocol. They are not P4 queue classes. Another adapter may use a
 different vocabulary without changing P4.

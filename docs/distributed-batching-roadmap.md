@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — 제품 root/control/writer까지 소유형 반환 연결, 로컬 검증1424/0/7·실제 CPU 2-stage Qwen 4/4 EOS·해제·UNLOAD/DELETE. 미래 반환/receipt 선예약은 미완. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — stage별 prefill 서비스 예산을 실제 발행에 연결, 로컬1430/0/7·두 실제 TCP agent/CPU stage의4/4 EOS·해제·UNLOAD/DELETE. 비용 초과16건에서 실제 decode-only 발행을 확인했으며 성능 대조는 아직 없다. 미래 반환/receipt 선예약은 미완. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 시간 정책의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -72,8 +72,10 @@ Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 
 원자료·실행파일132경로의 전후 해시·정리 및 인과 분석은
 [독립 prefill 대조 실기](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-cohorts-20260911)에 있다.
 
-**현재 다음 첫 행동:** V1.1-0/1의 actor enqueue/dequeue·미발행 사유·native 비용과 active/retired receipt byte를
-결속하고 B2/B3 반환 수명을 닫는다. 이어 V1.1-2에서 prefill row 폭·decode 참여 수·flight 목표를 분리한다.
+**현재 다음 첫 행동:** 모든 참여 agent의 비용 피드백 지원을 맞추고 고정된 기존 안전 창에서
+누적 prefill 서비스 예산 off/on의 두 클러스터 대조를 준비한다. V1.1-0/1의 미발행 사유·native 비용·
+active/retired receipt byte 및 B2/B3 반환 선예약은 계속 열린다.
+이 비용 단위는 open/resident/fragment를 확대하지 않는다. 이어 V1.1-2에서 prefill row 폭·decode 참여 수·flight 목표를 분리한다.
 Hy3의 mixed129행은head RPC2.692s 중native2.685s이며, 모든 첫 출력 전 ITL p50이11.207s다.
 따라서 정적128행을 **각 stage 앞에 쌓이는 prefill 예상 누적시간과 decode deadline**으로 제한하는 정책으로 발전시킨다.
 deadline coalescing과 prefill deficit/aging을 함께 적용하며 queue 포함 RTT로 flight를 무한 확대하지 않는다.
@@ -115,7 +117,8 @@ native 계산만 대체한 로컬 소비 시험이며 GPU/원격 실행이 아�
 pure-prefill은 효율적인 큰 행 폭을 유지하면서 다른 요청을 다음 발행에 남긴다. decode가 시작되면
 각 stage 앞에 이미 쌓인 작업까지 포함한 예상 완료시각으로 prefill 추가량을 제한하고, prefill에는
 누적 서비스 deficit/aging과 과부하 수용 제한을 적용한다. 느린 stage가 계속 바쁜 경우에는 flight를
-더 쌓지 않고 KV 우선 조건 아래 컷/weight offload를 재계획한다. 이 비용 정책은 아직 구현되지 않았다.
+더 쌓지 않고 KV 우선 조건 아래 컷/weight offload를 재계획한다. 이 전체 비용 정책은 아직 구현되지 않았으며,
+첫 단위인 stage별 prefill 서비스 backlog 예산을 아래에서 별도 검증한다.
 반환 수명 연결 뒤 비용 계측→고정 창 안의 정책 소비 반례→같은 실제100k 입력/긴 출력의 대조 순서다.
 [원인·결정식·실험 판정](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#long-prefill-design)을 따르며, 기존 실행을100k 또는 GPU 포화 승인으로 바꾸지 않는다.
 
@@ -130,6 +133,18 @@ workspace1424/0/7(58 summaries, exit0), 독립 재컴파일 변이6종1/2/1/1/1/
 이번 연결 뒤 다음 첫 행동은 그 선예약과 전체 반환 수명을 닫는 것이다. 이어 고정 창 안의
 누적 prefill 시간 정책·실제100k·두 클러스터 대조로 진행한다.
 [실제 TCP·실패 반례·검증](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#retained-runtime)을 따른다.
+
+**stage별 prefill 서비스 예산 (2026-09-11, 로컬 검증 완료):** 기존 유한 창에서 실제 stage Frame 시간 피드백을
+head 선택에 연결했다. 미완료 prefill의 stage별 예상 비용+후보 비용이 예산을 넘으면 ready decode만
+다시 계획한다. pure-prefill 폭은 유지하고, 표본 부재는 cold, 앞선 prefill 정산 뒤 최소 서비스는
+progress probe로 드러낸다. 기본 비활성이고 전체 decode deadline·동적 행 폭·요청별 시간 aging이나
+B2/B3 선예약의 완성은 아니다. workspace1430/0/7(58 summaries, exit0), 독립 변이5종 각1실패,
+실제 제품 TCP agent2개/CPU native2stage에서4/4 EOS·해제·UNLOAD/DELETE를 봉인했다. 비용 초과16건은
+실제 prefill0/decode≥1로 발행됐다. 의도적 service1ms 기능 시험으로 성능 개선율이나 권장값은 아니다.
+최초 전체 시험의1429/1/7은 기존 fixture의 호출 진입/완료 경쟁이었고 기대값을 유지한 완료 대기로 고쳤다.
+이후 새 비용 정책을 실제 두 클러스터의 고정 창 대조로 선별하고 cold/예측오차를 확인하여 chunk 선택과
+전체 완료시각 예측으로 확장한다. 추가 자원 허용 전 반환 선예약을 닫는 조건은 유지한다.
+[결정·반례·검증](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#stage-service-budget)을 따른다.
 
 **반환 수명 계측 진행:** broker의 exact Event 사본을 indexed/retired/allocated로 구분하고
 실제 INSPECT 제어 응답에 바이트·퇴역·최종 해제량을 연결했다. 큐 dequeue와 원장 퇴역, 마지막

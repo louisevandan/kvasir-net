@@ -259,6 +259,8 @@ pub struct BatchObservation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchedulingSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_budget: Option<super::scheduler::service::ServiceDecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<super::scheduler::pipeline::PipelineSelection>,
     pub ordinary_limits: super::scheduler::OrdinaryLimits,
     pub ordinary_limits_applied: bool,

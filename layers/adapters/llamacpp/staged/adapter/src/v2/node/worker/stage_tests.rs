@@ -345,6 +345,84 @@ struct Fixture {
     trace: Arc<Mutex<NativeTrace>>,
 }
 
+#[test]
+fn service_budget_actual_handler_checks_route_issue_identity_and_never_retires_flight() {
+    use crate::v2::{ServiceSample, SERVICE_SAMPLE_CONTENT_TYPE};
+    use crate::v2::scheduler::service::ServiceBudget;
+    let mut head = fixture(ResponseMode::ExactSplit);
+    head.worker.state.max_open_batches = 4;
+    head.worker.state.pipeline_policy = Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_prefill_rows: 2 });
+    head.worker.service_budget = ServiceBudget::new(150);
+    head.handle(submission("request", vec![7; 8])).unwrap();
+    head.worker.drive_first_batches().unwrap();
+    let physical = forwarded(&head.mailbox);
+    let sample = ServiceSample { load_generation: 1, session_id: "session".into(),
+        execution_ids: physical.0.iter().map(|c| c.execution_id).collect(), stage_index: 1,
+        shape: super::service::physical_shape(&physical).unwrap(), rpc_us: 100 };
+    let mut event = input("sample", vec![]);
+    event.envelope.payload_content_type = SERVICE_SAMPLE_CONTENT_TYPE.into();
+    event.envelope.target = head.worker.endpoint.clone();
+    event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "imposter", 1);
+    event.payload = serde_json::to_vec(&sample).unwrap();
+    let original = head.worker.service_budget.clone();
+    let flights = head.worker.state.flights.clone();
+    let open = head.worker.state.open_batches.clone();
+    assert!(head.worker.service_sample(&event).is_err());
+    assert_eq!(head.worker.service_budget, original);
+    event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "last", 1);
+    let mut bad = sample.clone(); bad.shape.prefill_rows += 1;
+    event.payload = serde_json::to_vec(&bad).unwrap();
+    assert!(head.worker.service_sample(&event).is_err());
+    assert_eq!(head.worker.service_budget, original);
+    event.payload = serde_json::to_vec(&sample).unwrap();
+    head.worker.service_sample(&event).unwrap();
+    let accepted = head.worker.service_budget.clone();
+    assert_ne!(accepted, original);
+    head.worker.service_sample(&event).unwrap();
+    assert_eq!(head.worker.service_budget, accepted, "duplicate must not train twice");
+    let mut conflict = sample; conflict.rpc_us += 1;
+    event.payload = serde_json::to_vec(&conflict).unwrap();
+    assert!(head.worker.service_sample(&event).is_err());
+    assert_eq!(head.worker.service_budget, accepted);
+    assert_eq!(head.worker.state.flights, flights);
+    assert_eq!(head.worker.state.open_batches, open);
+    assert_eq!(request(&head).outstanding, 1);
+    assert_eq!(native_attempts(&head), 1);
+}
+
+#[test]
+fn service_budget_actual_unload_ignores_late_cost_without_reopening_state() {
+    use crate::v2::{ServiceSample, ServiceShape, SERVICE_SAMPLE_CONTENT_TYPE};
+    use crate::v2::scheduler::service::ServiceBudget;
+    let mut head = fixture(ResponseMode::ExactSplit);
+    head.worker.service_budget = ServiceBudget::new(150);
+    head.worker.state.last_load_generation = 1;
+    let sample = ServiceSample { load_generation: 1, session_id: "session".into(),
+        execution_ids: vec![1], stage_index: 0,
+        shape: ServiceShape { prefill_rows: 4, decode_rows: 0, members: 1, last_position: 3 }, rpc_us: 10 };
+    // Seed only optimization history; native, flight and KV authority stay idle.
+    head.worker.service_budget.register(sample.clone(), 1, 2, &Default::default());
+    let mut unload = input("unload", vec![]);
+    unload.payload = serde_json::to_vec(&UnloadCommand { load_generation: 1 }).unwrap();
+    unload.envelope.payload_content_type = UNLOAD_CONTENT_TYPE.into();
+    head.handle(unload).unwrap();
+    assert_eq!(head.worker.state.load_generation, 0);
+    assert!(head.worker.state.sessions.is_empty());
+    assert_eq!(head.worker.service_budget, ServiceBudget::new(150));
+    assert_eq!(head.trace.lock().unwrap().shutdowns, 1);
+    let mut sample = sample; sample.stage_index = 1;
+    let mut event = input("late-sample", vec![]);
+    event.payload = serde_json::to_vec(&sample).unwrap();
+    event.envelope.payload_content_type = SERVICE_SAMPLE_CONTENT_TYPE.into();
+    event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "last", 1);
+    head.handle(event).unwrap();
+    assert_eq!(head.worker.service_budget, ServiceBudget::new(150));
+    assert_eq!(head.worker.state.load_generation, 0);
+    assert!(head.worker.state.sessions.is_empty());
+    assert_eq!(native_attempts(&head), 0);
+    assert_eq!(head.trace.lock().unwrap().shutdowns, 1);
+}
+
 impl Fixture {
     // Only address the chosen receiver; do not repair source/body identity.
     // These tests retain their pre-existing native/body/frontier oracles.

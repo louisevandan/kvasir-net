@@ -176,6 +176,7 @@ impl Worker {
         } else { None };
         let effective_limits = pipeline.map_or(self.state.ordinary_limits, |p| p.effective_limits);
         let mut scheduling = super::super::super::commands::SchedulingSnapshot {
+            service_budget: None,
             pipeline,
             ordinary_limits: self.state.ordinary_limits,
             ordinary_limits_applied: effective_limits != Default::default()
@@ -213,7 +214,7 @@ impl Worker {
         } else {
             self.state.max_issue_rows
         };
-        let policy = self
+        let mut policy = self
             .scheduler
             .prepare_plan_with_limits(
                 &demands,
@@ -227,6 +228,28 @@ impl Worker {
             .map_err(|error| {
                 self.set_snapshot(&format!("scheduler_failed:{error:?}"));
             })?;
+        if phase_pacing && let Some(shape) = self.planned_service_shape(policy.allocations()) {
+            let decoding = pipeline.is_some_and(|p| p.decoding_active);
+            scheduling.service_budget = self.service_budget.decide(self.state.load_generation,
+                &session_id, session.command.stages.len(), &shape, decoding, &self.state.open_batches);
+            if scheduling.service_budget.as_ref().is_some_and(|d|
+                d.verdict == super::super::super::scheduler::service::ServiceVerdict::DeferPrefill) {
+                // A rejected candidate spends no fairness or request/flight
+                // state. Ready decodes remain runnable under the same bounds.
+                let decodes: Vec<_> = demands.iter().filter(|d| d.phase != Phase::Prefill).cloned().collect();
+                if decodes.is_empty() {
+                    self.decode_coalescer.clear();
+                    self.gate_refusals = self.gate_refusals.saturating_add(1);
+                    #[cfg(test)] self.observe_issue_state("prefill_service_wait");
+                    return Ok(false);
+                }
+                policy = self.scheduler.prepare_plan_with_limits(&decodes,
+                    self.state.batch_capacity.min(issue_cap), self.state.physical_capacity.min(issue_cap),
+                    self.state.equal_sequence_ubatch, self.state.max_atomic_sequences,
+                    self.state.atomic_batch_exclusive, effective_limits).map_err(|error|
+                        self.set_snapshot(&format!("service_decode_plan_failed:{error:?}")))?;
+            }
+        }
         if policy.allocations().is_empty() {
             self.decode_coalescer.clear();
             return Ok(false);
@@ -398,6 +421,7 @@ impl Worker {
         self.state.begin_native_issue().map_err(|_| ())?;
         #[cfg(test)]
         self.observe_issue_state("before_native_issue");
+        let rpc_started = Instant::now();
         let body =
             match self.stage_request(Operation::LogicalBatch, Operation::PhysicalResult, logical) {
                 Ok(body) => body,
@@ -408,6 +432,7 @@ impl Worker {
                     return Err(());
                 }
             };
+        let rpc_us = rpc_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
         let stage_ms = stage_started.elapsed().as_millis() as u64;
         let end_unix_ms = super::observe::unix_ms();
         self.last_stage_done = Some(std::time::Instant::now());
@@ -517,6 +542,7 @@ impl Worker {
         self.scheduler
             .commit_plan(policy)
             .expect("validated policy remained unchanged during synchronous native issue");
+        self.register_service_issue(&session, ordinal, &physical, rpc_us);
         // The accepted flight and the exact bytes to forward are committed
         // together. A telemetry/publisher failure cannot discard the only
         // retained physical result or cause the native call to be repeated.

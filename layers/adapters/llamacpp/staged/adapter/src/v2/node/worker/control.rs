@@ -175,6 +175,7 @@ impl Worker {
             return Err(format!("stage unload failed: {error:?}"));
         }
         self.state.sessions.clear();
+        self.service_budget.clear();
         self.state.requests.clear();
         self.state.pending.clear();
         self.state.free_sequences.clear();
@@ -210,6 +211,7 @@ impl Worker {
         let command: SessionCommand = serde_json::from_slice(&event.payload)
             .map_err(|error| format!("invalid session payload: {error}"))?;
         command.validate().map_err(str::to_owned)?;
+        self.service_budget.validate_session(&command.session_id)?;
         if command.load_generation != self.state.load_generation {
             return Err("session load generation is stale".into());
         }

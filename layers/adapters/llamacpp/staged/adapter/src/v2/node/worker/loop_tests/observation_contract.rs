@@ -73,6 +73,7 @@ pub(super) fn observer(
                     }
                 });
             *before.lock().unwrap() = Some(crate::v2::commands::SchedulingSnapshot {
+                service_budget: None,
                 pipeline,
                 ordinary_limits: state.ordinary_limits,
                 ordinary_limits_applied: (state.ordinary_limits != Default::default() || pipeline.is_some())
@@ -216,8 +217,13 @@ fn complete(h: &Harness) -> bool {
                 .iter()
                 .find(|issue| issue.ordinal == body.logical_ordinal)
                 .expect("observation invented an unaccepted logical issue");
+            // Preserve the existing independent request/flight/selection
+            // oracle. New cost predictions are checked by service_budget's
+            // producer/consumer counterexamples, not copied into this oracle.
+            let mut scheduling = body.scheduling.clone();
+            if let Some(s) = &mut scheduling { s.service_budget = None; }
             assert_eq!(
-                body.scheduling.as_ref(),
+                scheduling.as_ref(),
                 Some(&issue.scheduling),
                 "selection diagnostics must match pre-native state, not post-issue state"
             );

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub mod pipeline;
+pub mod service;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {

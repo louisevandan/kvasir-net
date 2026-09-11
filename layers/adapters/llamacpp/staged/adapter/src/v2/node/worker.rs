@@ -25,6 +25,7 @@ const INGRESS_EVENT_QUANTUM: usize = 32;
 
 mod ack_service;
 mod coalescing;
+mod service;
 mod control;
 mod control_dispatch;
 #[cfg(test)]
@@ -154,6 +155,8 @@ pub struct Worker {
     /// Coalescing refusals since that moment.
     gate_refusals: u64,
     decode_coalescer: coalescing::DecodeCoalescer,
+    service_budget: super::super::scheduler::service::ServiceBudget,
+    service_configuration_error: Option<String>,
     /// Set when the adapter is going away; ends a wait for mailbox room.
     shutting_down: Arc<AtomicBool>,
     #[cfg(test)]
@@ -184,6 +187,7 @@ impl Worker {
         snapshot: Arc<Mutex<String>>,
         shutting_down: Arc<AtomicBool>,
     ) -> Self {
+        let (service_budget, service_configuration_error) = service::configured_budget();
         Self {
             endpoint,
             receiver,
@@ -203,6 +207,8 @@ impl Worker {
             last_stage_done: None,
             gate_refusals: 0,
             decode_coalescer: Default::default(),
+            service_budget,
+            service_configuration_error,
             shutting_down,
             #[cfg(test)]
             issue_observer: None,
@@ -402,6 +408,7 @@ impl Worker {
             PREFILL_CONTENT_TYPE => self.prefill(event),
             PHYSICAL_BATCH_CONTENT_TYPE => self.physical(event),
             TAIL_BATCH_CONTENT_TYPE => self.tail(event),
+            SERVICE_SAMPLE_CONTENT_TYPE => self.service_sample(event),
             RELEASE_CONTENT_TYPE => self.release(event),
             RELEASED_CONTENT_TYPE => self.released(event),
             SETTLE_CONTENT_TYPE => self.settle(event),
@@ -438,6 +445,10 @@ impl Worker {
         if session.command.role() != NodeRole::First {
             return Err("prefill must target the first node".into());
         }
+        if let Some(error) = &self.service_configuration_error { return Err(error.clone()); }
+        self.service_budget.validate(session.command.stages.len(), self.state.max_open_batches,
+            self.state.pipeline_policy.is_some() && self.state.prefill_fragments == 1
+                && !self.state.equal_sequence_ubatch && !self.state.atomic_batch_exclusive)?;
         if let Some(policy) = self.state.pipeline_policy {
             if self.state.max_open_batches == 0 || policy.mixed_prefill_rows == 0
                 || self.state.prefill_fragments != 1

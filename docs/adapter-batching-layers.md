@@ -861,7 +861,37 @@ prefill을 포함하는 계획은 기존 row/member/quantum 한도 안에서 즉
 
 명시적 `max_open_batches > 0`, `mixed_prefill_rows > 0`, fragment1을 요구한다. 잘못된 조합은
 tokenize·admission·KV 전에 요청 오류로 돌려준다. Verify/Replay·등폭 recurrent 경로에는 적용하지 않는다.
-기본 비활성이다. 창 증가·다중 fragment·시간 비용 모델·전 구간 B2/B3·성능 승격을 포함하지 않는다.
+기본 비활성이다. 이 요청 묶음 자체는 창 증가·다중 fragment·시간 비용 모델·전 구간 B2/B3·성능 승격을 포함하지 않는다.
+
+#### 선택적 stage 서비스 예산 (2026-09-11)
+
+`P4_STAGED_PREFILL_SERVICE_MS`를 양의 정수로 설정하면 위 정책에 누적 prefill RPC 비용 검사를 추가한다.
+기본 비활성이며 ordinary attention·fragment1·pipeline policy·open1–128·stage2–64만 허용한다.
+같은 실행에 참여한 모든 agent에서 켠다. stage는 실제 Frame 호출 전후의 단조시계 시간과 정확한
+load/session/execution 목록·phase별 행 수·요청 수·최대 입력 position을 head로 보낸다.
+head는 선언된 stage 출처와 수용된 membership을 검사한다. exact duplicate는 학습하지 않고,
+같은 execution/stage의 충돌은 상태 변경 전에 거부한다. 이 정보는 flight/KV/edge를 퇴역시키지 않는다.
+
+비용 비교는 stage·load·session·prefill/decode 행 수·요청 수와 최대 position의2진 구간이 같은
+최근8표본의 최댓값이다. 실제 backend `n_kv`·mask·kernel 비용을 안다는 뜻이 아니며, hard 상한이 아니다.
+history128·profile256으로 제한하고 완료된 history만 교체한다. UNLOAD는 이 비용 이력을 지운다.
+늦은 이전 load의 비용 피드백은 무시하며 완료한 load를 다시 열거나 출력 권한을 만들지 않는다.
+
+decode가 active이면 각 stage에 아직 완료 표본이 없는 open-prefill 비용과 다음 후보 비용을 합한다.
+모든 stage를 예측할 수 있고 어느 하나가 예산을 넘으면 추가 prefill을 미룬다. ready decode는
+같은 row/member/open 한도 아래 다시 계획한다. 발행하지 않은 후보는 fairness·요청·flight를 변경하지 않는다.
+모르는 shape/stage/open membership은 `cold`로 표시하고 기존 bounded 정책으로 처리한다. 모르는 비용을0으로
+취급하지 않는다. 앞선 prefill flight가 모두 정산되면 한 configured quantum을 `progress_probe`로 허용해,
+최소 native 비용보다 작은 예산도 prefill을 영원히 굶기지 않게 한다. pure-prefill의 전체 폭은 유지한다.
+
+`SchedulingSnapshot.service_budget`은 판정·예산·최대 pending/후보 포함 시간·known stage 수를 기록한다.
+기존 wire에서 생략되면 None이며 기본 비활성 출력 형식은 그대로다. decode-only로 대체한 발행도
+원래 후보의 `defer_prefill` 판정을 보존한다. decode가 ready가 아니라 발행 자체를 미룬 경우는 다음 실제
+input/피드백/정산에서 재검사한다. 현재 이 대기의 전체 시간·이유는 생산 관측에 별도 집계하지 않는다.
+
+이는 **stage별 prefill 서비스 backlog의 soft 예산**이다. 전송·decode 작업·비선점 잔여 시간까지 포함한
+end-to-end 완료시각 예측, 동적 행 폭 선택, 요청별 시간 deficit/aging, 추가 반환 선예약은 아직 아니다.
+작은 예산은 GPU 공급도 줄일 수 있다. 같은 안전 창의 대조 실기 전에는 기본값이나 최적 정책으로 승격하지 않는다.
 
 시험 fixture의 불변 입력 변조는 명시적인 test-only COW로만 허용한다. 후보의 원본 공유/진행 격리와
 거부 후 원상보존을 allocation 동일성과 값 대조로 함께 검사한다. 마지막 읽기 소유자가 남아 있는 동안
