@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — 단일 main 통합 및 긴 출력 실기. Hy38/8·MI250 단일8stage16/16 완료, 품질/메모리/긴 prefill 대기 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — 단일 main 통합 및 긴 출력 실기. Hy3 8/8·MI250 단일8stage 16/16 완료, 품질/메모리/긴 prefill 대기 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -41,13 +41,16 @@ Hy3도 한 쌍의 선별 결과다. context100k/출력256의 짧은 부하이며
 MI 소스d5256af44, Hy3는 fleet 호환을 유지한b9deee4ce와 동일한 기존 Mac downstream agent를 사용했다.
 [원자료·수치·실패·해시](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#dual-cluster-screening)를 따른다.
 
-**긴 입력·긴 출력 실기 (동일 날짜, 별도 워크로드):** 사용자 2시간 한도 안에 Hy35호스트/6stage와
-비점유 MI250-B1호스트/8stage를 병행했다. Hy3는18809생성/3834.099s=4.9057TPS,
+**긴 입력·긴 출력 실기 (동일 날짜, 별도 워크로드):** 사용자 2시간 한도 안에 Hy3 5호스트/6stage와
+비점유 MI250-B 1호스트/8stage를 병행했다. Hy3는18809생성/3834.099s=4.9057TPS,
 8/8 EOS·완료·해제·UNLOAD 및 선두 계산8/8이다. MI cap4 후보는51990생성/1315.775s=39.5128TPS,
 16/16 완료·해제·UNLOAD, EOS14/length2, 선두 계산2/16이다. 두 모델 모두 전체 응답 품질은 미승인이다.
 context는100k지만 최장 실제 입력은Hy3 42154/MI42413토큰이며 실제100k prefill을 완료하지 않았다.
 Hy3 TTFT max37.13분, MI 후보 agent peak RSS30.934GiB 및 UNLOAD 뒤30.645GiB 잔류를 확인했다.
 MI 후보의 모든 첫 출력 전/후 ITL p50은2.669/0.203s로 장기 prefill의 영향이 크다.
+동일 MI250-B cap0 기준은 공통 cutoff에서2/16 완료·해제로 종료했고47218개 부분 출력을 보존했다.
+16요청 모두 첫1024 생성 토큰을 받은 시각은 cap0 940.498s→cap4 591.322s다. 공통 prefix 진단이며 완주 TPS 개선율은 아니다.
+기준도 선두 계산1/16로 품질 미승인이다. 전체 비교와 종료 오류를 증거 문서에 보존했다.
 수치의 분모·동일 호스트 대조·내용 실패·봉인 범위는
 [긴 실기 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#long-output-20260911)을 따른다.
 
