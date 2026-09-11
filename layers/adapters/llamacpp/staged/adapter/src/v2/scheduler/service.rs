@@ -1,4 +1,4 @@
-//! Measured per-stage prefill service admission. This is a prediction policy,
+//! Measured pipeline RPC service admission. This is a prediction policy,
 //! not execution, KV, transport credit or a hard response-time guarantee.
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -36,6 +36,7 @@ pub enum ServiceVerdict {
     PurePrefill,
     DecodeOnly,
     Cold,
+    CalibrationWait,
     Admit,
     DeferPrefill,
     ProgressProbe,
@@ -49,6 +50,14 @@ pub struct ServiceDecision {
     pub max_with_candidate_us: u64,
     pub known_stages: usize,
     pub stages: usize,
+    /// FIFO projection through every stage, including unconfirmed open work.
+    /// Excludes unmeasured transfer/return delay; never a client ITL guarantee.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicted_tail_rpc_us: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examined_prefill_rows: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_prefill_rows: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -179,11 +188,8 @@ impl ServiceBudget {
             };
         }
         *value = Some(sample.rpc_us);
-        // Keep decode issue identity to distinguish known open work, but the
-        // current predictor does not charge or learn decode-only service.
-        if sample.shape.prefill_rows == 0 {
-            return Ok(true);
-        }
+        // Decode-only flights consume stage service too. They must participate
+        // in calibration and in the unconfirmed-work projection below.
         let index = self.profiles.iter().position(|p| {
             p.load == sample.load_generation
                 && p.session == sample.session_id
@@ -211,19 +217,103 @@ impl ServiceBudget {
     }
 
     fn predict(&self, load: u64, session: &str, stage: usize, shape: &ServiceShape) -> Option<u64> {
-        self.profiles
+        let profiles: Vec<_> = self.profiles
             .iter()
             .rev()
-            .find(|p| {
+            .filter(|p| {
                 p.load == load
                     && p.session == session
                     && p.stage == stage
-                    && comparable(&p.shape, shape)
-            })?
-            .recent_us
-            .iter()
-            .copied()
-            .max()
+                    && (p.shape.prefill_rows > 0) == (shape.prefill_rows > 0)
+                    && (p.shape.decode_rows > 0) == (shape.decode_rows > 0)
+                    && p.shape.last_position.leading_zeros() == shape.last_position.leading_zeros()
+            }).collect();
+        if let Some(p) = profiles.iter().find(|p| comparable(&p.shape, shape)) {
+            return p.recent_us.iter().copied().max();
+        }
+        // A bounded empirical extrapolation, not a certified backend model.
+        // Never assume a smaller candidate is cheaper than its source sample.
+        // A rejected smallest quantum is measured by the progress probe; its
+        // profile then allows growth without repeatedly admitting a cold full
+        // quantum. Context-bucket transitions require fresh calibration.
+        let scaled = profiles.iter().filter_map(|p| {
+            let mut estimate = u128::from(*p.recent_us.iter().max()?);
+            let base = estimate;
+            for (wanted, observed) in [(shape.prefill_rows, p.shape.prefill_rows),
+                (shape.decode_rows, p.shape.decode_rows), (shape.members, p.shape.members)] {
+                if wanted > observed {
+                    if observed == 0 { return None; }
+                    estimate = estimate.max(base.saturating_mul(wanted as u128).div_ceil(observed as u128));
+                }
+            }
+            if shape.last_position > p.shape.last_position {
+                estimate = estimate.saturating_mul(u128::from(shape.last_position) + 1)
+                    .div_ceil(u128::from(p.shape.last_position) + 1);
+            }
+            Some(estimate.min(u128::from(u64::MAX)) as u64)
+        }).min();
+        // Repeated measurements at two widths reveal the fixed cost that a
+        // proportional model otherwise pays again for every added row. Use
+        // only equal decode/member shapes, a common context bucket, increasing
+        // measured cost and at least a doubling of prefill width. This remains
+        // an empirical estimate; row/credit limits do not depend on its truth.
+        let mut affine = None;
+        for low in &profiles {
+            for high in &profiles {
+                if low.recent_us.len() < 2 || high.recent_us.len() < 2
+                    || low.shape.prefill_rows == 0
+                    || high.shape.prefill_rows <= low.shape.prefill_rows
+                    || high.shape.prefill_rows < low.shape.prefill_rows.saturating_mul(2)
+                    || shape.prefill_rows < high.shape.prefill_rows
+                    || low.shape.decode_rows != shape.decode_rows || high.shape.decode_rows != shape.decode_rows
+                    || low.shape.members != shape.members || high.shape.members != shape.members { continue; }
+                let lower = u128::from(*low.recent_us.iter().max().unwrap());
+                let upper = u128::from(*high.recent_us.iter().max().unwrap());
+                if upper <= lower { continue; }
+                let width = (high.shape.prefill_rows - low.shape.prefill_rows) as u128;
+                let extra = (shape.prefill_rows - high.shape.prefill_rows) as u128;
+                let mut estimate = upper.saturating_add((upper - lower).saturating_mul(extra).div_ceil(width));
+                let position = low.shape.last_position.min(high.shape.last_position);
+                if shape.last_position > position {
+                    estimate = estimate.saturating_mul(u128::from(shape.last_position) + 1)
+                        .div_ceil(u128::from(position) + 1);
+                }
+                let estimate = estimate.min(u128::from(u64::MAX)) as u64;
+                affine = Some(affine.map_or(estimate, |old: u64| old.max(estimate)));
+            }
+        }
+        affine.or(scaled)
+    }
+
+    pub fn has_open_prefill(&self, open: &BTreeMap<u64, BTreeSet<u64>>) -> bool {
+        open.keys().any(|id| self.issued.iter().find(|r| r.ordinal == *id)
+            .is_none_or(|r| r.shape.prefill_rows > 0))
+    }
+
+    fn project_tail(&self, load: u64, session: &str, stages: usize, shape: &ServiceShape,
+        open: &BTreeMap<u64, BTreeSet<u64>>) -> Option<u64> {
+        if stages == 0 || stages > MAX_STAGES { return None; }
+        let mut free = vec![0u64; stages];
+        for ordinal in open.keys() {
+            let issued = self.issued.iter().find(|r| r.ordinal == *ordinal
+                && r.load == load && r.session == session)?;
+            // A downstream completion proves the earlier stages have run,
+            // even if their telemetry is late. This only updates an estimate:
+            // it cannot return KV, flight, edge or output authority.
+            let completed = issued.samples.iter().rposition(Option::is_some);
+            let mut arrival = 0;
+            for (stage, available) in free.iter_mut().enumerate() {
+                if completed.is_some_and(|last| stage <= last) { continue; }
+                let cost = self.predict(load, session, stage, &issued.shape)?;
+                arrival = arrival.max(*available).saturating_add(cost);
+                *available = arrival;
+            }
+        }
+        let mut arrival = 0u64;
+        for (stage, available) in free.into_iter().enumerate() {
+            arrival = arrival.max(available).saturating_add(self.predict(load, session, stage, shape)?);
+        }
+        Some(arrival)
     }
 
     pub fn decide(
@@ -243,6 +333,9 @@ impl ServiceBudget {
             max_with_candidate_us: 0,
             known_stages: 0,
             stages,
+            predicted_tail_rpc_us: None,
+            examined_prefill_rows: Vec::new(),
+            selected_prefill_rows: None,
         };
         if shape.prefill_rows == 0 {
             decision.verdict = ServiceVerdict::DecodeOnly;
@@ -303,9 +396,10 @@ impl ServiceBudget {
                 .max_with_candidate_us
                 .max(pending.saturating_add(candidate));
         }
-        decision.verdict = if !complete {
+        decision.predicted_tail_rpc_us = self.project_tail(load, session, stages, shape, open);
+        decision.verdict = if !complete || decision.predicted_tail_rpc_us.is_none() {
             ServiceVerdict::Cold
-        } else if decision.max_with_candidate_us <= budget_us {
+        } else if decision.predicted_tail_rpc_us.is_some_and(|us| us <= budget_us) {
             ServiceVerdict::Admit
         } else if live.is_empty() {
             ServiceVerdict::ProgressProbe

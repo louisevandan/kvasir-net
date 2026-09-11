@@ -235,27 +235,14 @@ impl Worker {
             .map_err(|error| {
                 self.set_snapshot(&format!("scheduler_failed:{error:?}"));
             })?;
-        if phase_pacing && let Some(shape) = self.planned_service_shape(policy.allocations()) {
+        if phase_pacing {
             let decoding = pipeline.is_some_and(|p| p.decoding_active);
-            scheduling.service_budget = self.service_budget.decide(self.state.load_generation,
-                &session_id, session.command.stages.len(), &shape, decoding, &self.state.open_batches);
-            if scheduling.service_budget.as_ref().is_some_and(|d|
-                d.verdict == super::super::super::scheduler::service::ServiceVerdict::DeferPrefill) {
-                // A rejected candidate spends no fairness or request/flight
-                // state. Ready decodes remain runnable under the same bounds.
-                let decodes: Vec<_> = demands.iter().filter(|d| d.phase != Phase::Prefill).cloned().collect();
-                if decodes.is_empty() {
-                    self.decode_coalescer.clear();
-                    self.gate_refusals = self.gate_refusals.saturating_add(1);
-                    #[cfg(test)] self.observe_issue_state("prefill_service_wait");
-                    return Ok(false);
-                }
-                policy = self.scheduler.prepare_plan_with_limits(&decodes,
-                    self.state.batch_capacity.min(issue_cap), self.state.physical_capacity.min(issue_cap),
-                    self.state.equal_sequence_ubatch, self.state.max_atomic_sequences,
-                    self.state.atomic_batch_exclusive, effective_limits).map_err(|error|
-                        self.set_snapshot(&format!("service_decode_plan_failed:{error:?}")))?;
-            }
+            let selected = self.prepare_generation_service_plan(&demands, &session,
+                issue_cap, effective_limits, decoding, policy).map_err(|error| {
+                    self.set_snapshot(&format!("service_plan_failed:{error}"));
+                })?;
+            policy = selected.0;
+            scheduling.service_budget = selected.1;
         }
         if policy.allocations().is_empty() {
             self.decode_coalescer.clear();

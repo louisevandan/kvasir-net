@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-12 — 고정 창의 prefill 집단 선택 수정, workspace1434/0/7·독립 변이4종 각1실패. 생성 우선·시간 예산 조사 완료. MI 새native Release CTest15/15·장치 선언 PLAN/잘못된 LOAD 거부11/11. 새 배치의 실기 성능·100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
+최신 현황 정리: 2026-09-12 — 생성 우선 참여·pipeline RPC 비용 예측·prefill 청크 재선택 구현, workspace1439/0/7·독립 변이5종 각1실패. MI 새native의 올바른 LOAD/추론·기존 묶음 정책 회귀4회 통과. 이번 생성/시간 정책의 실기 성능·100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -77,11 +77,22 @@ Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 
 각16/16 완료·해제·UNLOAD와 실제45층 ROCm 배정을 통과했다. 다만 후보의 prefill 발행280회씩 모두
 옛 계산식과 같은 참여 상한이었다. 이번 실기는 회귀 확인이며 **묶음 수정의 성능 효과 증거가 아니다**.
 혼합 배치의8단계 RPC 합은 평균약500ms, 단계 사이 잔여는114–115ms이며 생성 간격은여전히623–625ms다.
-다음은 준비된 생성의 완료시각을 보호하는 선택과 시간 기반 chunk 재선택을 구현·대조한다.
+생성 우선 참여와 pipeline RPC 비용 안의 chunk 재선택은 아래 로컬 검증을 통과했다.
+다음은 같은 native/워크로드/창에서 기존 정책·생성 우선만·시간 정책 포함을 원격 대조한다.
 Hy3는 추론 전 Mac agent의 역방향 P4 응답 `No route to host`에서 중단했다. Python TCP 성공을
 agent 통신 승인으로 확대하지 않는다. 시험 프로세스 정리·M42 한정 방화벽 예외 복원을 완료했다.
 [실기 범위·반증·RPC 귀속](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#cohort-runtime-audit)을 따른다.
 [소비 반례와 검증](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-population)을 따른다.
+
+**생성/시간 정책 구현 (2026-09-12, 로컬 GREEN):** 순간 빈 flight로 ready decode를 나누지 않고,
+명시 상한/물리 용량을 지키며 먼저 배정한다. 마지막 prefill 반환도 미래 생성 서비스로 고려한다.
+decode-only 비용 피드백과 open 작업의 순서를 포함해 마지막 stage RPC 완료를 예측하고,
+큰 후보를 거부하면 prefill 행을 줄여 실제 계획을 다시 만든다. 모르는/불가능한 비용은 이전 prefill이
+없을 때1행 probe로 측정한다. 기본 비활성·ordinary/fragment1·기존 창을 유지하며, 이전 stage별
+서비스 예산과 같은 숫자가 같은 의미는 아니다. 전체1439/0/7(58 summaries, exit0), 독립 변이5종
+각0pass/1fail, 타이머의 실제 대기/무입력 재발행/원장 불변을 확인했다.
+전송·dispatch·반환 잔여까지 포함한 client deadline, 시간 deficit/aging, 전체 반환 예약은 아직 남는다.
+[구현·반례·검증 범위](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#generation-service-policy)가 기준이다.
 
 **사용자 제안의 조사 결론:** 생성 우선 후 남는 예산에 prefill을 넣는 방향을 채택한다. P4 일반 attention은
 이미 생성 행 우선이나 혼합 결과는 전체 계산 뒤 반환하며, 고정128행 quantum은 생성 지연을 보호하지 못했다.

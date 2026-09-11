@@ -161,10 +161,10 @@ fn phase_pacing_actual_loop_issues_the_last_full_prefill_without_four_requests()
 
 #[test]
 fn phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input() {
-    let refusal = Arc::new(Mutex::new((None::<String>, false)));
+    let refusal = Arc::new(Mutex::new((None::<(u64, String)>, false)));
     let captured = Arc::clone(&refusal);
     let observer: IssueObserver = Arc::new(move |point, state| {
-        if state.next_open_batch != 7 || !matches!(point, "decode_coalescing_wait" | "before_native_issue") {
+        if !matches!(point, "decode_coalescing_wait" | "before_native_issue") {
             return;
         }
         let requests: Vec<_> = state.requests.iter().map(|(key, r)|
@@ -175,44 +175,44 @@ fn phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input() 
             requests, &state.flights, &state.open_batches, &state.free_sequences,
             state.request_budget.used()));
         let mut captured = captured.lock().unwrap();
+        if captured.1 { return; }
         if point == "decode_coalescing_wait" {
             assert!(state.prepared_issue.is_none(), "waiting must precede native preparation");
-            if let Some(before) = &captured.0 { assert_eq!(before, &authority); }
-            else { captured.0 = Some(authority); }
-        } else if let Some(before) = &captured.0 {
+            if let Some((ordinal, before)) = &captured.0 {
+                assert_eq!(*ordinal, state.next_open_batch);
+                assert_eq!(before, &authority);
+            } else { captured.0 = Some((state.next_open_batch, authority)); }
+        } else if let Some((ordinal, before)) = &captured.0 {
+            assert_eq!(*ordinal, state.next_open_batch);
             assert_eq!(before, &authority, "timer wait must preserve request/flight/slot/input authority");
             captured.1 = true;
         }
     });
     let (mut h, commands) = pacing_harness(2, Some(observer));
     h.until("four prompt results retained at the tail", |h| h.held_tail.len() == 4);
-    // The last chunks of short prompts leave the future-prefill population.
-    // The first four calls therefore carry 2/2/1/1 requests. Return the first
-    // two pairs so the two remaining prompts enter real mixed flights; no
-    // worker state is injected to manufacture decode-only eligibility.
-    for expected_calls in [5, 6] {
+    // Preserve all eight two-token requests and the one-row mixed quantum.
+    // Final-prefill flights now reserve future generation service, so their
+    // siblings can have partial prompt work left. Return one tail at a time
+    // until real decode-only eligibility occurs, rather than naming an old
+    // fixed batch ordinal. While waiting, no additional input/tail is sent.
+    for _ in 0..32 {
+        if refusal.lock().unwrap().1 { break; }
         let first = h.held_tail.pop_front().unwrap();
         h.pending.push_back(first);
-        h.until("remaining prompt enters a mixed flight", |h| {
-            h.held_tail.len() == 4 && h.nodes[0].native.lock().unwrap().logical_calls == expected_calls
-        });
+        h.until("one returned tail is replaced without any further external input", |h| h.held_tail.len() == 4);
     }
-    // One completed prompt now becomes a ready decode while all remaining
-    // work is in flight. No more input/tail is sent until the timer issues it.
-    let next = h.held_tail.pop_front().unwrap();
-    h.pending.push_back(next);
-    h.until("decode deadline must wake the actual blocking worker", |h|
-        h.nodes[0].native.lock().unwrap().logical_calls == 7);
     assert!(refusal.lock().unwrap().1, "must observe refusal followed by unchanged authority");
+    let calls;
     {
         let native = h.nodes[0].native.lock().unwrap();
+        calls = native.logical_calls;
         let last = CapsuleSet::decode(native.issued_native.last().unwrap().result.as_ref().unwrap()).unwrap();
         let rows: Vec<_> = last.0.iter().flat_map(|c| &c.owners).collect();
-        assert_eq!(rows.len(), 1);
-        assert!(rows.iter().all(|r| r.phase == Phase::Decode && r.position == 2));
+        assert!(!rows.is_empty() && rows.len() < 4, "underfilled generation must actually wait for its deadline");
+        assert!(rows.iter().all(|r| r.phase == Phase::Decode && r.position >= 2));
     }
     h.pump_for(Duration::from_millis(25));
-    assert_eq!(h.nodes[0].native.lock().unwrap().logical_calls, 7,
+    assert_eq!(h.nodes[0].native.lock().unwrap().logical_calls, calls,
         "deadline must not reissue an outstanding decode or bypass the full window");
     h.resume_tail();
     h.finish(&commands);

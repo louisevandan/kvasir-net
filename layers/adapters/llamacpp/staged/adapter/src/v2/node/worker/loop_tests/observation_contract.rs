@@ -56,7 +56,6 @@ pub(super) fn observer(
             // request phases; do not call the production pipeline selector.
             let pipeline = state.pipeline_policy.filter(|_| !state.equal_sequence_ubatch && counts[5] == 0)
                 .map(|policy| {
-                    let vacancies = state.max_open_batches - state.open_batches.len();
                     let bound = |old: usize, selected: usize| if old == 0 { selected } else { old.min(selected) };
                     let selected_session = &state.prepared_issue.as_ref().unwrap().logical.0[0].owner.session_id;
                     let mut population = crate::v2::scheduler::pipeline::PipelinePopulation::default();
@@ -77,10 +76,12 @@ pub(super) fn observer(
                     let mut effective = state.ordinary_limits;
                     effective.prefill_members = bound(effective.prefill_members,
                         prefill_count.div_ceil(state.max_open_batches).max(1));
-                    effective.decode_members = bound(effective.decode_members,
-                        population.decode.ready.div_ceil(vacancies).max(1));
+                    // Generation uses all ready capacity unless an explicit
+                    // member limit says otherwise. Flight vacancies are not
+                    // generation admission rights.
+                    effective.decode_members = state.ordinary_limits.decode_members;
                     let decoding_active = population.decode.ready + population.decode.in_flight
-                        + population.decode.waiting > 0;
+                        + population.decode.waiting > 0 || population.prefill_draining > 0;
                     if decoding_active {
                         effective.prefill_rows = bound(effective.prefill_rows, policy.mixed_prefill_rows);
                     }

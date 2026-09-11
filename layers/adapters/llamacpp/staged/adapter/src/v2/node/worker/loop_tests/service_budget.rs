@@ -23,7 +23,7 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
         None,
         Default::default(),
         Some(crate::v2::scheduler::pipeline::PipelinePolicy {
-            mixed_prefill_rows: 1,
+            mixed_prefill_rows: 4,
         }),
         0,
         Some(1),
@@ -37,10 +37,6 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
         .filter(|e| e.envelope.payload_content_type == SERVICE_SAMPLE_CONTENT_TYPE)
     {
         let sample: ServiceSample = serde_json::from_slice(&event.payload).unwrap();
-        assert!(
-            sample.shape.prefill_rows > 0,
-            "decode-only calls need no prefill feedback event"
-        );
         assert_eq!(event.envelope.target, endpoint(0));
         assert_eq!(event.envelope.source, endpoint(sample.stage_index));
         assert!(sample.stage_index > 0 && sample.stage_index < 3);
@@ -52,6 +48,8 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
         stages.insert(sample.stage_index);
     }
     assert_eq!(stages, std::collections::BTreeSet::from([1, 2]));
+    assert!(samples.values().any(|s| s.shape.prefill_rows == 0 && s.shape.decode_rows > 0),
+        "actual downstream decode service must reach the predictor");
     let observations: Vec<BatchObservation> = h
         .received
         .iter()
@@ -61,6 +59,8 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
     let mut deferred = 0;
     let mut probes = 0;
     let mut pure_full = 0;
+    let mut ready_multi = 0;
+    let mut rechunked = 0;
     for observation in &observations {
         let decision = observation
             .scheduling
@@ -79,6 +79,19 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
             .iter()
             .map(|b| b.decode_rows)
             .sum();
+        let eligible = observation.scheduling.as_ref().unwrap().eligible_decode;
+        assert_eq!(decision.selected_prefill_rows, Some(prefill),
+            "chosen service plan must match the actual native batch");
+        if decision.examined_prefill_rows.len() > 1 {
+            rechunked += 1;
+            assert!(decision.examined_prefill_rows.windows(2).all(|p| p[1] < p[0]));
+            assert!(prefill <= 1, "the deliberately infeasible budget must calibrate only one prompt row");
+        }
+        if eligible > 1 {
+            ready_multi += 1;
+            assert!(decode >= eligible.min(BATCH_CAPACITY - 1),
+                "ready generation must not be divided by vacant flights: eligible={eligible}, selected={decode}");
+        }
         match decision.verdict {
             ServiceVerdict::DeferPrefill => {
                 deferred += 1;
@@ -92,7 +105,7 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
             }
             ServiceVerdict::ProgressProbe => {
                 probes += 1;
-                assert!(prefill > 0);
+                assert_eq!(prefill, 1, "progress cannot re-admit the rejected original quantum");
             }
             ServiceVerdict::PurePrefill => pure_full += usize::from(prefill == BATCH_CAPACITY),
             _ => {}
@@ -102,4 +115,6 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
         deferred > 0 && probes > 0 && pure_full > 0,
         "must exercise actual bounded mixed admission and pure throughput: deferred={deferred}, probes={probes}, pure={pure_full}"
     );
+    assert!(ready_multi > 0, "must exercise ready generation competing with prefill");
+    assert!(rechunked > 0, "must shrink a real prepared candidate, not only reject prefill");
 }

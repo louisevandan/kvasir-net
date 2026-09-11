@@ -838,7 +838,7 @@ footprint는 원본 Event와 정규화 command의 독립 allocation capacity, re
 
 #### 선택적 파이프라인 요청 묶음 (2026-09-11)
 
-`P4_STAGED_PIPELINE_BATCHING=1`은 ordinary attention의 요청 묶음을 남은 비행 슬롯에 나눈다.
+`P4_STAGED_PIPELINE_BATCHING=1`은 ordinary attention에서 생성 우선 배정과 독립 prefill 집단을 사용한다.
 
 이 정책의 `min_batch_rows`는 실제 준비된 계획이 decode-only일 때만 적용한다. 같은 SESSION의
 eligible decode 수가 임계값보다 작고 기존 flight가 있을 때, 최초 대기 결정에서 단조시계2ms를
@@ -848,12 +848,14 @@ prefill을 포함하는 계획은 기존 row/member/quantum 한도 안에서 즉
 경로에는 이 변경을 적용하지 않는다. 빈 계획·준비할 작업 없음은 대기를 지우고, full flight·fence 등
 다른 차단 사유는 timer를 disarm한다. 만료로 native/KV/flight/저장 공간 권한이 생기지 않는다.
 `SchedulingSnapshot.pipeline.decode_coalesce_max_ms`가 적용 상한을 기록하며 과거 관측에는 없을 수 있다.
-`ceil(현재 eligible phase 요청 수 / (max_open_batches - open))`가 phase별 참여 상한이다.
-기존 명시 `OrdinaryLimits`가 더 작으면 그대로 유지한다. pure-prefill의 전체 행 예산은 유지하므로
+prefill 참여 상한은 수용된 미완료 prompt(ready/inflight/waiting)를 기존 창에 나눈 값이다.
+pending admission과 마지막 prompt 반환만 기다리는 요청은 이 집단에 넣지 않는다. 순간 빈 flight 수로
+집단을 합치지 않는다. decode는 빈 flight 수로 나누지 않고 먼저 행을 예약하며 명시적인
+`OrdinaryLimits.decode_members`와 실제 행 용량은 지킨다. pure-prefill의 전체 행 예산은 유지하므로
 16개 긴 입력·창8·batch512는 2요청×256행을 발행하고 나머지 요청으로 다음 배치를 준비할 수 있다.
 노드 수나 GPU 수를 실행비용 대신 사용하지 않으며 이 산술을 처리량 최적값으로 보증하지 않는다.
 
-같은 session에서 decode가 진행 중이면, 그 decode가 현재 비행 중이어서 eligible이 아니어도
+같은 session에서 decode가 진행 중이거나 마지막 prefill의 반환을 기다리면, 현재 eligible decode가 없어도
 `P4_STAGED_MIXED_PREFILL_ROWS`(실험 초기값128)의 prefill 행 예산을 적용한다. 마지막 decode가
 끝나면 pure-prefill 예산으로 돌아간다. native 호출은 비선점이며 이 행 예산은 시간/SLO 보장이 아니다.
 참여 요청 선택의 회전과 prepare/validate/commit fairness는 기존 scheduler 권위를 유지한다.
@@ -863,34 +865,46 @@ prefill을 포함하는 계획은 기존 row/member/quantum 한도 안에서 즉
 tokenize·admission·KV 전에 요청 오류로 돌려준다. Verify/Replay·등폭 recurrent 경로에는 적용하지 않는다.
 기본 비활성이다. 이 요청 묶음 자체는 창 증가·다중 fragment·시간 비용 모델·전 구간 B2/B3·성능 승격을 포함하지 않는다.
 
-#### 선택적 stage 서비스 예산 (2026-09-11)
+#### 선택적 pipeline RPC 서비스 예산 (2026-09-12)
 
-`P4_STAGED_PREFILL_SERVICE_MS`를 양의 정수로 설정하면 위 정책에 누적 prefill RPC 비용 검사를 추가한다.
+`P4_STAGED_PREFILL_SERVICE_MS`를 양의 정수로 설정하면 위 정책에 pipeline RPC 완료시간 예측과
+prefill 청크 재선택을 추가한다. 이전 stage별 backlog 정책과 같은 숫자가 같은 지연 목표를 뜻하지 않는다.
 기본 비활성이며 ordinary attention·fragment1·pipeline policy·open1–128·stage2–64만 허용한다.
 같은 실행에 참여한 모든 agent에서 켠다. stage는 실제 Frame 호출 전후의 단조시계 시간과 정확한
 load/session/execution 목록·phase별 행 수·요청 수·최대 입력 position을 head로 보낸다.
 head는 선언된 stage 출처와 수용된 membership을 검사한다. exact duplicate는 학습하지 않고,
 같은 execution/stage의 충돌은 상태 변경 전에 거부한다. 이 정보는 flight/KV/edge를 퇴역시키지 않는다.
 
-비용 비교는 stage·load·session·prefill/decode 행 수·요청 수와 최대 position의2진 구간이 같은
-최근8표본의 최댓값이다. 실제 backend `n_kv`·mask·kernel 비용을 안다는 뜻이 아니며, hard 상한이 아니다.
+decode-only도 피드백을 보내며 open 작업의 비용에 포함한다. 동일 stage/load/session/행 수/요청 수와
+최대 position의2진 구간은 최근8표본의 최댓값을 사용한다. 같은 구간의 미측정 폭은 행/요청 증가율로
+보수적으로 확대 예측한다. 두 폭에서 각각2회 이상 관측됐고 prefill 폭이2배 이상·비용이 증가했으며
+decode/요청 수가 같으면 고정비를 반복 곱하지 않는 affine 증가 비용을 사용한다. 서로 다른 stage와
+context 구간은 합치지 않는다. 실제 backend `n_kv`·mask·kernel 비용을 안다는 뜻이 아니며 hard 상한이 아니다.
 history128·profile256으로 제한하고 완료된 history만 교체한다. UNLOAD는 이 비용 이력을 지운다.
 늦은 이전 load의 비용 피드백은 무시하며 완료한 load를 다시 열거나 출력 권한을 만들지 않는다.
 
-decode가 active이면 각 stage에 아직 완료 표본이 없는 open-prefill 비용과 다음 후보 비용을 합한다.
-모든 stage를 예측할 수 있고 어느 하나가 예산을 넘으면 추가 prefill을 미룬다. ready decode는
-같은 row/member/open 한도 아래 다시 계획한다. 발행하지 않은 후보는 fairness·요청·flight를 변경하지 않는다.
-모르는 shape/stage/open membership은 `cold`로 표시하고 기존 bounded 정책으로 처리한다. 모르는 비용을0으로
-취급하지 않는다. 앞선 prefill flight가 모두 정산되면 한 configured quantum을 `progress_probe`로 허용해,
-최소 native 비용보다 작은 예산도 prefill을 영원히 굶기지 않게 한다. pure-prefill의 전체 폭은 유지한다.
+생성 서비스가 필요하면 open 배치와 후보를 실제 발행 순서로 모든 stage에 투영한다. 각 stage의 다음
+예상 완료는 `max(앞 stage 도착, 앞 배치 완료)+RPC 비용`이다. 실제 완료 표본이 온 stage와 그 앞 단계의
+실행은 다시 청구하지 않는다. 이는 비용 추정만 바꾸며 정산/출력 권한을 반환하지 않는다.
+후보의 마지막 stage 완료 예측이 예산을 넘거나 비용을 모르면 prefill 행을 절반씩 줄여 새 계획을 만든다.
+최대 탐색 횟수는 행 수의 bit 폭이며, 준비/거부한 후보는 fairness·요청·flight를 변경하지 않는다.
 
-`SchedulingSnapshot.service_budget`은 판정·예산·최대 pending/후보 포함 시간·known stage 수를 기록한다.
+모르는 비용은0이 아니다. 미완료 prefill이나 정체불명 open 작업이 있으면 `calibration_wait` 또는
+`defer_prefill`로 생성만 다시 계획한다. 이전 prefill이 모두 정산되면 최소1행을 `cold`/`progress_probe`로
+측정해 영구적인 prefill 기아를 피한다. 거부된 원래 큰 quantum을 그대로 재허용하지 않는다.
+prefill0은 `OrdinaryLimits`의0(무제한)으로 표현하지 않고 prefill 수요를 제외해 계획한다.
+생성 서비스가 아직 필요 없는 pure-prefill은 기존 전체 폭을 유지한다.
+
+`SchedulingSnapshot.service_budget`은 판정·예산·기존 stage backlog 집계·known stage 수 외에
+`predicted_tail_rpc_us`, `examined_prefill_rows`, `selected_prefill_rows`를 기록한다.
 기존 wire에서 생략되면 None이며 기본 비활성 출력 형식은 그대로다. decode-only로 대체한 발행도
 원래 후보의 `defer_prefill` 판정을 보존한다. decode가 ready가 아니라 발행 자체를 미룬 경우는 다음 실제
 input/피드백/정산에서 재검사한다. 현재 이 대기의 전체 시간·이유는 생산 관측에 별도 집계하지 않는다.
 
-이는 **stage별 prefill 서비스 backlog의 soft 예산**이다. 전송·decode 작업·비선점 잔여 시간까지 포함한
-end-to-end 완료시각 예측, 동적 행 폭 선택, 요청별 시간 deficit/aging, 추가 반환 선예약은 아직 아니다.
+이는 **전체 pipeline RPC의 soft 예산**이다. 아직 확인되지 않은 실행에는 전체 예상 비용을 보수적으로
+청구하며 실제 시작 후 경과시간을 빼지 않는다. 전송·dispatch·sampler 반환까지 포함한 client 완료시각,
+요청별 deadline/시간 deficit/aging, 전체 반환 선예약은 아직 아니다. 일반 attention만 대상으로 하며,
+혼합하지 못하는 equal-width hybrid에 같은 물리 모양을 강제하지 않는다.
 작은 예산은 GPU 공급도 줄일 수 있다. 같은 안전 창의 대조 실기 전에는 기본값이나 최적 정책으로 승격하지 않는다.
 
 시험 fixture의 불변 입력 변조는 명시적인 test-only COW로만 허용한다. 후보의 원본 공유/진행 격리와
