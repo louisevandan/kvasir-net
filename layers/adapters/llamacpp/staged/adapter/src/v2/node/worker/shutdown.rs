@@ -18,6 +18,7 @@ struct LocalWork {
     effects_fenced: bool,
     active_publications: usize,
     held_input: bool,
+    failed_input: bool,
     deferred_ack_error: bool,
     active_owners: usize,
     active_frontiers: usize,
@@ -39,6 +40,7 @@ impl LocalWork {
             || self.effects_fenced
             || self.active_publications != 0
             || self.held_input
+            || self.failed_input
             || self.deferred_ack_error
             || self.active_owners != 0
             || self.active_frontiers != 0
@@ -67,6 +69,7 @@ impl Worker {
             effects_fenced: self.effects_fenced,
             active_publications: self.active_publications,
             held_input: self.held_input.is_some(),
+            failed_input: self.failed_input.is_some(),
             deferred_ack_error: self.deferred_ack_error.is_some(),
             active_owners: self.state.stage_owners.active_slots(),
             active_frontiers: self.state.stage_frontiers.active_slots(),

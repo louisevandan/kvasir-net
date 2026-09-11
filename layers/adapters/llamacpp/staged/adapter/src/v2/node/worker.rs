@@ -3,7 +3,7 @@ use super::state::{AdapterState, PipelineSession, RequestState, request_key};
 use crate::lifecycle::LlamaLifecycle;
 use crate::process::{ProcessServerControl, ServerLaunch};
 use crate::{Frame, Operation};
-use p4_adapter::node_adapter::{CompletionPublisher, PublishError};
+use p4_adapter::node_adapter::{CompletionPublisher, PublishError, RetainedCompletion};
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Event, EventClass};
 use serde::Serialize;
@@ -81,8 +81,32 @@ fn with_host_load_gate<T>(operation: impl FnOnce() -> T) -> T {
     operation()
 }
 
+#[derive(Debug)]
 pub enum WorkerInput {
     Event(Event),
+    Retained(RetainedCompletion),
+}
+
+impl WorkerInput {
+    pub(super) fn event(&self) -> &Event {
+        match self { Self::Event(event) => event, Self::Retained(completion) => completion.event() }
+    }
+}
+
+/// Preserves stopped owned-worker input, semantic state and unpublished
+/// effects until the adapter owner explicitly drops it. Not replay authority.
+pub(super) struct WorkerRemainder {
+    pub(super) failed_input: Option<WorkerInput>,
+    pub(super) held_input: Option<WorkerInput>,
+    pub(super) deferred_ack_error: Option<(WorkerInput, String)>,
+    pub(super) receiver: mpsc::Receiver<WorkerInput>,
+    effects: std::collections::VecDeque<effects::CommittedEffect>,
+    pub(super) state: AdapterState,
+}
+
+impl WorkerRemainder {
+    #[cfg(test)]
+    pub(super) fn effect_count(&self) -> usize { self.effects.len() }
 }
 
 /// What the first node was doing between one batch and the next.
@@ -118,8 +142,10 @@ pub struct Worker {
     // Full servicing may retire existing ACKs, but never admits another
     // command. One FIFO obstruction and one diagnostic are the only new
     // input retention slots; neither is a general-purpose side queue.
-    held_input: Option<Event>,
-    deferred_ack_error: Option<(p4_protocol::event::Envelope, String)>,
+    held_input: Option<WorkerInput>,
+    failed_input: Option<WorkerInput>,
+    deferred_ack_error: Option<(WorkerInput, String)>,
+    owned_completions: bool,
     active_publications: usize,
     active_effect_ids: u64,
     /// When this node last finished a stage call, so the next batch can
@@ -169,7 +195,9 @@ impl Worker {
             effects: std::collections::VecDeque::new(),
             effects_fenced: false,
             held_input: None,
+            failed_input: None,
             deferred_ack_error: None,
+            owned_completions: false,
             active_publications: 0,
             active_effect_ids: 0,
             last_stage_done: None,
@@ -261,7 +289,18 @@ impl Worker {
         }
     }
 
-    pub fn run(mut self) {
+    pub fn run(self) {
+        // Legacy owner lifetime: final state is destroyed after the existing
+        // shutdown census. The owned adapter retains this remainder instead.
+        drop(self.run_to_exit());
+    }
+
+    pub(super) fn run_owned(mut self) -> WorkerRemainder {
+        self.owned_completions = true;
+        self.run_to_exit()
+    }
+
+    fn run_to_exit(mut self) -> WorkerRemainder {
         let mut failed = false;
         let mut issued = false;
         let reason = 'worker: loop {
@@ -274,7 +313,7 @@ impl Worker {
                 // when no more events arrive. A hard issue blocker disarms
                 // this timer in drive_one_batch; expiry never grants credit.
                 let input = if let Some(event) = self.held_input.take() {
-                    Some(WorkerInput::Event(event))
+                    Some(event)
                 } else if let Some(deadline) = self.decode_coalescer.wake_at() {
                     match self.receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                         Ok(input) => Some(input),
@@ -288,10 +327,12 @@ impl Worker {
                     }
                 };
                 if self.shutting_down.load(Ordering::Acquire) {
+                    self.failed_input = input;
                     break "shutdown_requested";
                 }
-                if let Some(WorkerInput::Event(event)) = input {
-                    if self.handle(event).is_err() {
+                if let Some(input) = input {
+                    if self.handle(input.event()).is_err() {
+                        self.failed_input = Some(input);
                         failed = true;
                         break "failed";
                     }
@@ -305,12 +346,12 @@ impl Worker {
                 let input = self
                     .held_input
                     .take()
-                    .map(WorkerInput::Event)
                     .map(Ok)
                     .unwrap_or_else(|| self.receiver.try_recv());
                 match input {
-                    Ok(WorkerInput::Event(event)) => {
-                        if self.handle(event).is_err() {
+                    Ok(input) => {
+                        if self.handle(input.event()).is_err() {
+                            self.failed_input = Some(input);
                             failed = true;
                             break 'worker "failed";
                         }
@@ -335,9 +376,15 @@ impl Worker {
         #[cfg(test)]
         self.observe_issue_state("run_stopping");
         self.finish_run(reason, failed);
+        WorkerRemainder {
+            failed_input: self.failed_input, held_input: self.held_input,
+            deferred_ack_error: self.deferred_ack_error, receiver: self.receiver,
+            effects: self.effects, state: self.state,
+        }
     }
 
-    fn handle(&mut self, event: Event) -> Result<(), ()> {
+    fn handle(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), ()> {
+        let event = event.borrow();
         if self.effects_fenced
             || self
                 .state
@@ -349,23 +396,23 @@ impl Worker {
         }
         let content_type = event.envelope.payload_content_type.as_str();
         let result = match content_type {
-            LOAD_CONTENT_TYPE => self.load(&event),
-            UNLOAD_CONTENT_TYPE => self.unload(&event),
-            SESSION_CONTENT_TYPE => self.session(&event),
-            PREFILL_CONTENT_TYPE => self.prefill(&event),
-            PHYSICAL_BATCH_CONTENT_TYPE => self.physical(&event),
-            TAIL_BATCH_CONTENT_TYPE => self.tail(&event),
-            RELEASE_CONTENT_TYPE => self.release(&event),
-            RELEASED_CONTENT_TYPE => self.released(&event),
-            SETTLE_CONTENT_TYPE => self.settle(&event),
-            SETTLED_CONTENT_TYPE => self.settled(&event),
+            LOAD_CONTENT_TYPE => self.load(event),
+            UNLOAD_CONTENT_TYPE => self.unload(event),
+            SESSION_CONTENT_TYPE => self.session(event),
+            PREFILL_CONTENT_TYPE => self.prefill(event),
+            PHYSICAL_BATCH_CONTENT_TYPE => self.physical(event),
+            TAIL_BATCH_CONTENT_TYPE => self.tail(event),
+            RELEASE_CONTENT_TYPE => self.release(event),
+            RELEASED_CONTENT_TYPE => self.released(event),
+            SETTLE_CONTENT_TYPE => self.settle(event),
+            SETTLED_CONTENT_TYPE => self.settled(event),
             _ => Err(format!(
                 "unsupported llama adapter content type {content_type}"
             )),
         };
         if let Err(detail) = result {
             self.set_snapshot(&format!("failed:{detail}"));
-            self.emit_error(&event, "LLAMA_ADAPTER_EVENT_REJECTED", detail)?;
+            self.emit_error(event, "LLAMA_ADAPTER_EVENT_REJECTED", detail)?;
         }
         if self.effects_fenced {
             return Err(());

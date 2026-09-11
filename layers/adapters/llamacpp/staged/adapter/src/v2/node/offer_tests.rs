@@ -64,10 +64,10 @@ fn full_keeps_the_same_input_for_exactly_one_later_acceptance() {
     };
     assert_eq!(returned, expected);
     assert_eq!(allocation(&returned), owned_allocation);
-    let WorkerInput::Event(accepted_prefix) = receiver.try_recv().unwrap();
+    let WorkerInput::Event(accepted_prefix) = receiver.try_recv().unwrap() else { panic!("raw offer changed ownership mode"); };
     assert_eq!(accepted_prefix, prefix);
     adapter.try_offer(returned).unwrap();
-    let WorkerInput::Event(accepted) = receiver.try_recv().unwrap();
+    let WorkerInput::Event(accepted) = receiver.try_recv().unwrap() else { panic!("raw offer changed ownership mode"); };
     assert_eq!(accepted, expected);
     assert_eq!(allocation(&accepted), owned_allocation);
     assert!(matches!(

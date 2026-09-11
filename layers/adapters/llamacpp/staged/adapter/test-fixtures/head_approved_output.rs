@@ -398,9 +398,15 @@ pub fn expected_prefill_rows(case_id: &str, request: &str) -> usize {
 /// a differently named observation. This checks the live producer, not merely a
 /// synthetic observation supplied to the OUTER consumer's fixture replay.
 pub fn assert_live_prefill_counts(case_id: &str, live: &[Event]) {
-    const OBSERVATION: &str = "application/vnd.p4.llamacpp.batch-observation-v4+json";
     let expected = cases().into_iter().find(|case| case.id == case_id).unwrap();
     let head = &expected.events[0].envelope.source;
+    assert_live_prefill_workload(head, prefill_workload(case_id), live);
+}
+
+/// Same independent accounting oracle for an explicitly supplied input
+/// workload. This does not generate or replace a reviewed wire fixture.
+pub fn assert_live_prefill_workload(head: &Endpoint, workload: &[(&str, usize)], live: &[Event]) {
+    const OBSERVATION: &str = "application/vnd.p4.llamacpp.batch-observation-v4+json";
     let mut observations = HashMap::<String, Value>::new();
     let mut physical_ids = HashSet::new();
     let mut totals = HashMap::<String, usize>::new();
@@ -435,7 +441,7 @@ pub fn assert_live_prefill_counts(case_id: &str, live: &[Event]) {
                     "physical request membership repeats"
                 );
                 // Reject unknown work even when it reports zero prefill rows.
-                expected_prefill_rows(case_id, request);
+                assert!(workload.iter().any(|(id, _)| *id == request), "unexpected request {request}");
                 let rows = usize::try_from(member["prefill_rows"].as_u64().unwrap()).unwrap();
                 physical_prefill = physical_prefill.checked_add(rows).unwrap();
                 let total = totals.entry(request.to_owned()).or_default();
@@ -448,11 +454,11 @@ pub fn assert_live_prefill_counts(case_id: &str, live: &[Event]) {
         }
         observations.insert(observation_key, body);
     }
-    for &(request, rows) in prefill_workload(case_id) {
+    for &(request, rows) in workload {
         assert_eq!(
             totals.get(request).copied(),
             Some(rows),
-            "actual producer prefill rows differ from independent workload ({case_id}/{request})"
+            "actual producer prefill rows differ from independent workload ({request})"
         );
     }
 }

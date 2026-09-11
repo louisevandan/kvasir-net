@@ -32,7 +32,7 @@ pub use issue_witness::{
     IssueAuthority, IssueWitness, IssuedExecution, IssuedRow, IssuedWork, IssuedWorkProof,
 };
 pub use logical::{LogicalBatch, LogicalBatchError, LogicalRow};
-pub use node::LlamaNodeAdapter;
+pub use node::{LlamaNodeAdapter, RetainedLlamaNodeAdapter};
 #[cfg(test)]
 pub(crate) use scheduler::PREFILL_PATIENCE;
 pub use scheduler::{Allocation, Demand, OrdinaryLimits, Phase, Scheduler, SchedulerError};

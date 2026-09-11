@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::thread::JoinHandle;
 
 mod actor_ring;
+mod retained_ring;
 mod bounded_strategy;
 mod effect_backpressure;
 mod issue_witness;
@@ -919,6 +920,7 @@ impl Harness {
                 Err(mpsc::TrySendError::Full(WorkerInput::Event(event))) => {
                     self.pending.push_back(event)
                 }
+                Err(mpsc::TrySendError::Full(WorkerInput::Retained(_))) => unreachable!("raw harness sent raw input"),
                 Err(mpsc::TrySendError::Disconnected(_)) => panic!(
                     "worker {index} stopped: {}",
                     self.nodes[index].snapshot.lock().unwrap()

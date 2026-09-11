@@ -19,6 +19,8 @@ pub(crate) mod physical_receive;
 pub(crate) mod request_budget;
 pub(crate) mod state;
 mod worker;
+mod retained;
+pub use retained::RetainedLlamaNodeAdapter;
 
 pub struct LlamaNodeAdapter {
     sender: Option<mpsc::SyncSender<WorkerInput>>,
@@ -90,6 +92,7 @@ impl NodeAdapter for LlamaNodeAdapter {
             Err(mpsc::TrySendError::Disconnected(WorkerInput::Event(event))) => {
                 Err(OfferError::Closed(event))
             }
+            Err(_) => unreachable!("raw offer sent a raw input"),
         }
     }
 

@@ -798,7 +798,16 @@ fallback이 없다. 새 경로에서 source claim은 실제 목적지의 queue s
 ticket은 await/native 호출/원격 전송을 넘어 보관하지 않는다. route 등록은 enqueue까지 재검사하고
 읽기 잠금으로 유지한다. source 퇴역·예약 취소·receiver 알림은 원장/등록 잠금 밖에서 실행한다.
 전체 중복 사본과 count-window는 유지하지만 **중복 사본의 byte 상한은 아직 연결하지 않았다**.
-이 타입 경계의 소비 시험은 runtime composition root·llamacpp Worker·connection writer 이관 완료가 아니다.
+이 타입 경계의 소비 시험은 runtime composition root·connection writer 이관 완료가 아니다.
+
+**llama.cpp의 소유형 소비:** `RetainedLlamaNodeAdapter`는 같은 실제 Worker loop를 사용한다.
+`WorkerInput::Retained`의 claim은 bounded std 입력 큐·현재 handle/native 호출·Full 중 비ACK 보류·
+지연 ACK 오류의 원문과 함께 유지된다. 원문을 빌려 처리하며 raw Event clone으로 바꾸는 다리가 없다.
+`try_publish_owned`는 기존 completion 저장소에서 현재 Event의 bytes/count를 수용하고 raw dequeue를
+막는다. 미래 native 결과나 아직 materialize하지 않은 effect의 사전 예약을 의미하지 않는다.
+중단 때 원인 입력·보류 입력·ACK 원문·미처리 receiver·state/effect를 adapter owner에 보존한다.
+owner Drop은 명시적 국소 폐기이며 성공 drain/replay 허가/원격 수용이 아니다. 입력 원문과 별개로
+파싱/후속 효과/중복 사본의 독립 byte 예약, runtime control·writer의 책임 연결은 남아 있다.
 
 #### 불변 수용 입력과 가변 진행 후보
 

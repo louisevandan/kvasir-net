@@ -19,19 +19,20 @@ impl Worker {
         if self.held_input.is_some() {
             return Ok(());
         }
-        let event = match self.receiver.try_recv() {
-            Ok(WorkerInput::Event(event)) => event,
+        let input = match self.receiver.try_recv() {
+            Ok(input) => input,
             // Input EOF is not permission to discard the active completion.
             // The existing publisher/shutdown path owns that lifetime.
             Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
                 return Ok(());
             }
         };
+        let event = input.event();
         let result = match event.envelope.payload_content_type.as_str() {
-            RELEASED_CONTENT_TYPE => self.released_without_flush(&event),
-            SETTLED_CONTENT_TYPE => self.settled(&event),
+            RELEASED_CONTENT_TYPE => self.released_without_flush(event),
+            SETTLED_CONTENT_TYPE => self.settled(event),
             _ => {
-                self.held_input = Some(event);
+                self.held_input = Some(input);
                 #[cfg(test)]
                 self.observe_issue_state("blocked_non_ack_held");
                 return Ok(());
@@ -45,10 +46,10 @@ impl Worker {
             {
                 // Preserve the exact second invalid/unschedulable input and
                 // stop reading past it. Never overwrite the first diagnostic.
-                self.held_input = Some(event);
+                self.held_input = Some(input);
                 return Ok(());
             }
-            self.deferred_ack_error = Some((event.envelope, detail));
+            self.deferred_ack_error = Some((input, detail));
         }
         Ok(())
     }

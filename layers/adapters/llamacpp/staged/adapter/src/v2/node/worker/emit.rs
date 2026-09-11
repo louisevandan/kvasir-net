@@ -400,7 +400,10 @@ impl Worker {
             } else {
                 None
             };
-            match self.publisher.try_publish(pending) {
+            let published = if self.owned_completions {
+                self.publisher.try_publish_owned(pending)
+            } else { self.publisher.try_publish(pending) };
+            match published {
                 Ok(()) => {
                     if let Some(ticket) = ticket {
                         self.complete_head_forward(ticket);
@@ -442,7 +445,7 @@ impl Worker {
     }
 
     pub(super) fn enqueue_deferred_ack_error(&mut self) -> Result<(), ()> {
-        let Some((base, detail)) = self.deferred_ack_error.as_ref() else {
+        let Some((input, detail)) = self.deferred_ack_error.as_ref() else {
             return Ok(());
         };
         let body = serde_json::to_vec(&ErrorPayload {
@@ -451,11 +454,11 @@ impl Worker {
         })
         .map_err(|_| ())?;
         let causal = Event {
-            envelope: base.clone(),
+            envelope: input.event().envelope.clone(),
             payload: Vec::new(),
         };
         let target = reply_target(&causal);
-        let (base, _) = self
+        let (input, _) = self
             .deferred_ack_error
             .take()
             .expect("single worker owns diagnostic");
@@ -463,7 +466,7 @@ impl Worker {
         // FIFO effect reaches publication, after all preceding suffix effects.
         self.effects
             .push_back(super::effects::CommittedEffect::Forward {
-                base,
+                base: input.event().envelope.clone(),
                 target,
                 class: EventClass::Output,
                 content_type: ERROR_CONTENT_TYPE,

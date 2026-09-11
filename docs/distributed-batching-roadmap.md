@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — 소유형 broker/node 국소 반환 경계 로컬 검증1414/0/7. 제품 전체 반환 예산은 미연결. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — 소유형 broker/node/실제 Worker 경계 로컬 검증1416/0/7. 제품 root/control/writer·미래 반환 예약은 미연결. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -102,6 +102,22 @@ retained bytes를 함께 예약하며 receiver dequeue는 byte 반환이 아니�
 exit0), 독립 재컴파일 변이3종7/1/1실패, docs-lint94 clean이다. 다음은 같은 소유형 경계를 Worker와
 control/connection writer에 실제 연결하고 필수 반환/독립 receipt 선예약을 닫는 것이다.
 [계획·소비 시험·판정](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#retained-broker-node)을 따른다.
+
+**실제 llama.cpp Worker 소유형 연결 (2026-09-11, 로컬 검증 완료):** 같은 `Worker::run`의 공통 loop를
+소유형 adapter에 연결했다. 현재 입력·Full 중 보류 입력·지연 ACK 원문을 claim과 함께 유지하고,
+중단 후 원문/미처리 receiver/state/effect는 adapter owner에 남긴다. 실제 broker→EventNode→
+llama adapter→Worker 두 단계 경로에서 기존 `ordinary-2` 골든과 네 요청 웨이브·해제·UNLOAD를 검사한다.
+native 계산만 대체한 로컬 소비 시험이며 GPU/원격 실행이 아니다. 제품 root/control/writer·미래 반환 및
+독립 receipt byte 예약은 아직 남아 있다. workspace1416/0/7(58 summaries, exit0), 실제 소비2시험,
+독립 재컴파일 변이3종 각각1실패, docs-lint94 clean이다. [소비 반례·검증](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#retained-worker)을 따른다.
+
+**장기 다중 prefill에 대한 설계 결론:** 배치 행 폭·독립 요청 묶음·동시 flight 목표를 각각 선택한다.
+pure-prefill은 효율적인 큰 행 폭을 유지하면서 다른 요청을 다음 발행에 남긴다. decode가 시작되면
+각 stage 앞에 이미 쌓인 작업까지 포함한 예상 완료시각으로 prefill 추가량을 제한하고, prefill에는
+누적 서비스 deficit/aging과 과부하 수용 제한을 적용한다. 느린 stage가 계속 바쁜 경우에는 flight를
+더 쌓지 않고 KV 우선 조건 아래 컷/weight offload를 재계획한다. 이 비용 정책은 아직 구현되지 않았다.
+반환 수명 연결 뒤 비용 계측→고정 창 안의 정책 소비 반례→같은 실제100k 입력/긴 출력의 대조 순서다.
+[원인·결정식·실험 판정](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#long-prefill-design)을 따르며, 기존 실행을100k 또는 GPU 포화 승인으로 바꾸지 않는다.
 
 **반환 수명 계측 진행:** broker의 exact Event 사본을 indexed/retired/allocated로 구분하고
 실제 INSPECT 제어 응답에 바이트·퇴역·최종 해제량을 연결했다. 큐 dequeue와 원장 퇴역, 마지막

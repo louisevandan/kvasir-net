@@ -506,6 +506,19 @@ impl CompletionPublisher {
         &self,
         event: Event,
     ) -> Result<DeferredCompletionNotification, PublishError> {
+        self.try_publish_mode(event, false)
+    }
+
+    /// Publish into the same bounded store with mandatory owned dequeue.
+    /// This reserves the existing Event allocation at admission, not future
+    /// native output or an unpublished effect's memory.
+    pub fn try_publish_owned(&self, event: Event) -> Result<(), PublishError> {
+        self.try_publish_mode(event, true)?.notify();
+        Ok(())
+    }
+
+    fn try_publish_mode(&self, event: Event, owned: bool)
+        -> Result<DeferredCompletionNotification, PublishError> {
         let bytes = match retained_event_bytes(&event) {
             Ok(bytes) => bytes,
             Err(_) => return Err(PublishError::CostOverflow(event)),
@@ -559,7 +572,7 @@ impl CompletionPublisher {
                     return Err(PublishError::CostOverflow(event));
                 }
             };
-            self.enqueue_locked(&mut storage, event, reservation, false)
+            self.enqueue_locked(&mut storage, event, reservation, owned)
         };
         Ok(notification)
     }

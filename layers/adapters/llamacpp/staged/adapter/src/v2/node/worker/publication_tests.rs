@@ -382,7 +382,7 @@ fn active_frozen_forward_keeps_every_observation_id_share_while_full_services_an
         held_mailbox.lock().unwrap().is_none(),
         "the actual Full/ACK consumer must run"
     );
-    assert_eq!(worker.held_input.as_ref(), Some(&invalid_ack));
+    assert_eq!(worker.held_input.as_ref().map(WorkerInput::event), Some(&invalid_ack));
     assert!(
         worker.deferred_ack_error.is_none(),
         "no ID remains for a diagnostic after both observers"
