@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-12 — 생성 우선 참여·pipeline RPC 비용 예측·prefill 청크 재선택과 초기 학습 보강, workspace1441/0/7·독립 변이6종 각1실패. MI 새native의 올바른 LOAD/추론·기존 묶음 정책 회귀4회 통과. 이번 생성/시간 정책의 실기 성능·100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
+최신 현황 정리: 2026-09-12 — c6bd6c597 생성/시간 후보의 MI250 6arm 모두 완료·해제·UNLOAD 통과, 성능 승격은 거부. 전체 ready decode 합류는 독립 flight를 줄였고, 시간250ms는 생성 간격을 줄이는 대신 짧은/긴 prompt를 지연시켰다. 로컬1441/0/7·변이6종은 안전성/선택 계약 증거다. 다음은 생성 묶음 유지와 비용·지연·prefill 처리량을 함께 선택하는 계약이며100k·정상 goodput·B2/B3 전체·H5·Hy3는 미완이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -72,13 +72,14 @@ Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 
 원자료·실행파일132경로의 전후 해시·정리 및 인과 분석은
 [독립 prefill 대조 실기](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-cohorts-20260911)에 있다.
 
-**현재 다음 첫 행동:** 고정 open 창·fragment1에서 수용된 미완료 prefill 집단을 순간 free slot과
-분리하는 수정은 최종 전체/변이 게이트를 통과했다. 같은 새 HIP native의 MI 정책 대조 A/B/B/A도
-각16/16 완료·해제·UNLOAD와 실제45층 ROCm 배정을 통과했다. 다만 후보의 prefill 발행280회씩 모두
-옛 계산식과 같은 참여 상한이었다. 이번 실기는 회귀 확인이며 **묶음 수정의 성능 효과 증거가 아니다**.
-혼합 배치의8단계 RPC 합은 평균약500ms, 단계 사이 잔여는114–115ms이며 생성 간격은여전히623–625ms다.
-생성 우선 참여와 pipeline RPC 비용 안의 chunk 재선택은 아래 로컬 검증을 통과했다.
-다음은 같은 native/워크로드/창에서 기존 정책·생성 우선만·시간 정책 포함을 원격 대조한다.
+**현재 다음 첫 행동:** 아래 c6bd6c597 후보의 전량 decode 합류를 성능 정책으로 채택하지 않는다.
+prefill이 없어도 독립 생성 묶음을 유지하도록 ready/inflight 인구와 측정한 stage 비용을 분리한다.
+16개 생성 요청·창8의 실제 소비 반례에서 첫 tail 반환 전에 여러 독립 flight가 발행되고,
+반환을 반복해도 한두 묶음으로 합쳐지지 않는지 먼저 고정한다. 선택된 묶음 안에서는 생성 우선을 유지한다.
+그 뒤 같은 native/입력/배정의 생성 전용·혼합 대조에서 생성 지연과 처리량의 무회귀를 확인한다.
+시간250ms 후보도 권장하지 않는다. 임의의 더 큰 숫자로 통과시키지 않고, 초기 학습 지연과 실제 실행 잔여,
+전송/반환 및 요청 deadline을 포함한 비용 선택, prefill 시간 deficit/aging을 차례로 결속한다.
+실제100k 확대는 독립 receipt/미래 반환 byte 예산과 이 소비/실기 게이트 뒤다.
 Hy3는 추론 전 Mac agent의 역방향 P4 응답 `No route to host`에서 중단했다. Python TCP 성공을
 agent 통신 승인으로 확대하지 않는다. 시험 프로세스 정리·M42 한정 방화벽 예외 복원을 완료했다.
 [실기 범위·반증·RPC 귀속](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#cohort-runtime-audit)을 따른다.
@@ -97,16 +98,28 @@ decode-only 비용 피드백과 open 작업의 순서를 포함해 마지막 sta
 전송·dispatch·반환 잔여까지 포함한 client deadline, 시간 deficit/aging, 전체 반환 예약은 아직 남는다.
 [구현·반례·검증 범위](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#generation-service-policy)가 기준이다.
 
+**생성/시간 후보 실기 판정 (c6bd6c597, 성능 RED):** 같은 MI250 한 호스트8stage·새 HIP native에서
+기존26c13b9ae/생성 우선/생성 우선+시간250ms를 A/B/C/C/B/A로 비교했다. 각16/16 EOS·완료·해제·UNLOAD,
+45층 ROCm 실제 배정과 실행파일 전후 해시가 통과했다. 실제 입력은213토큰8개+4255토큰8개이며100k가 아니다.
+raw TPS는 기존72.84–75.04, 생성 우선50.27–52.31, 시간 포함30.43–32.53이다. 전체 분모·출력량은 증거에 있다.
+긴 prefill 중 짧은 요청의 실제 ITL p50은616–628→646.5–680→172–180ms지만,
+긴 요청 TTFT p50은21.09–21.21→22.23–23.59→65.16–69.92초다. 시간 후보의 초기 짧은7요청도
+첫 출력이10–13초로 늦어졌다. 순수 생성·활성16 조건에서 생성 우선은 폭2→약8, 발행 전 open6→약1,
+head RPC 사이 대기0.51–0.55→71.82–77.69ms로 회귀했다. 생성 우선과 전량 합류를 동일시한 설계를 정정한다.
+120–180단어 지시는 전체96건 중50건만 충족했다. EOS/기본 judge 통과를 정상 goodput 승인으로 확대하지 않는다.
+시험 프로세스는 정리했고 기존 MI agent43015는 보존했다. 기본 비활성 유지·권장 설정/최적값 승격 거부다.
+[6arm·회귀 원인·수정 계약](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#generation-service-screen)이 현재 판정이다.
+
 **사용자 제안의 조사 결론:** 생성 우선 후 남는 예산에 prefill을 넣는 방향을 채택한다. P4 일반 attention은
 이미 생성 행 우선이나 혼합 결과는 전체 계산 뒤 반환하며, 고정128행 quantum은 생성 지연을 보호하지 못했다.
 동일 GPU 배정 실기의 짧은 요청 token 간격 p50은 긴 요청 유입 전45ms/긴 prefill 중637.5ms/이후76ms다.
 다른 대조도46/636.5/76ms다. 구간별 문맥과 수요가 달라 인과 배율은 주장하지 않는다.
 Sarathi-Serve·vLLM·DeepSpeed-MII·TensorRT-LLM·SGLang·현재 llama pin을 코드/원문으로 대조했다.
 [조사·코드 결함·판별 실험](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#decode-first-research)이 상세 근거다.
-이후 순서는 (1) 생성의 ready→issue/tail과 stage별 실제 잔여 비용 계측,
-(2) 고정 창 안에서 생성 참여의 순간 free 상한을 완료시각 기준으로 대조,
-(3) 생성 우선 후 문맥·기발행 backlog·전송을 포함한 시간 예산 안의 chunk 재선택,
-(4) prefill deficit/aging과 전체 KV/반환 byte 예약을 결속한 실제100k 다수/긴 출력 수용이다.
+이후 순서는 (1) 독립 생성 묶음의 반복 반환 무회귀와 ready→issue/tail·stage별 잔여 계측,
+(2) 관측한 비용으로 묶음 폭/동시 flight/청크를 공동 선택하고 초기 학습의 장기 대기를 제한,
+(3) 생성 우선 후 문맥·기발행 backlog·전송을 포함한 요청별 시간 여유 안의 chunk 재선택,
+(4) prefill 시간 deficit/aging과 전체 KV/반환 byte 예약을 결속한 실제100k 다수/긴 출력 수용이다.
 pure-prefill에는 충분한 행 폭과 독립 집단을 유지하고, 병목이 이미 바쁘면 flight를 더 쌓지 않는다.
 equal-width hybrid는 합법적인 phase 분할로 같은 서비스 목표를 구현한다. 기본 승격/최적값은 실기 뒤다.
 

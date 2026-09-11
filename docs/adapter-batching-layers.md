@@ -908,7 +908,11 @@ input/피드백/정산에서 재검사한다. 현재 이 대기의 전체 시간
 청구하며 실제 시작 후 경과시간을 빼지 않는다. 전송·dispatch·sampler 반환까지 포함한 client 완료시각,
 요청별 deadline/시간 deficit/aging, 전체 반환 선예약은 아직 아니다. 일반 attention만 대상으로 하며,
 혼합하지 못하는 equal-width hybrid에 같은 물리 모양을 강제하지 않는다.
-작은 예산은 GPU 공급도 줄일 수 있다. 같은 안전 창의 대조 실기 전에는 기본값이나 최적 정책으로 승격하지 않는다.
+작은 예산은 GPU 공급도 줄일 수 있다. c6bd6c597의 MI250 대조6회에서 전량 decode 합류는 독립
+flight와 생성 성능을 줄였고, 시간250ms는 긴 prefill 중 ITL을 줄이는 대신 prompt 완료와 전체 처리량을
+악화시켰다. 현재 동작의 설명을 권장 정책으로 읽지 않는다. 기본 비활성을 유지하고 성능 승격은 거부한다.
+다음 변경 계약은 [로드맵](distributed-batching-roadmap.md#v11-plan), 측정/반례는
+[6arm 판정](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#generation-service-screen)이 소유한다.
 
 시험 fixture의 불변 입력 변조는 명시적인 test-only COW로만 허용한다. 후보의 원본 공유/진행 격리와
 거부 후 원상보존을 allocation 동일성과 값 대조로 함께 검사한다. 마지막 읽기 소유자가 남아 있는 동안
