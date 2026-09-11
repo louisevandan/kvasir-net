@@ -449,6 +449,9 @@ pub struct AdapterState {
     pub max_issue_rows: usize,
     /// Experimental selection only; does not enlarge resident/flight credits.
     pub ordinary_limits: super::super::scheduler::OrdinaryLimits,
+    /// Opt-in until resource/real-model gates pass. Requires an explicit finite
+    /// open window; ordinary attention only, and no multi-fragment promotion.
+    pub pipeline_policy: Option<super::super::scheduler::pipeline::PipelinePolicy>,
     /// Fragments of one prompt allowed in the pipeline at once. 1 is the
     /// behaviour this adapter had before the field existed: a prompt waits a
     /// full lap between chunks even though all its tokens are known.
@@ -558,6 +561,11 @@ impl Default for AdapterState {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0),
             },
+            pipeline_policy: (std::env::var("P4_STAGED_PIPELINE_BATCHING").ok().as_deref() == Some("1"))
+                .then(|| super::super::scheduler::pipeline::PipelinePolicy {
+                    mixed_prefill_rows: std::env::var("P4_STAGED_MIXED_PREFILL_ROWS")
+                        .ok().and_then(|v| v.parse().ok()).unwrap_or(128),
+                }),
             prefill_fragments: std::env::var("P4_STAGED_PREFILL_FRAGMENTS")
                 .ok()
                 .and_then(|value| value.parse().ok())

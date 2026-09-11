@@ -147,9 +147,29 @@ impl Worker {
         // Verify or Replay allocation must stay whole inside one UBATCH,
         // and the scheduler reserves it against the full capacity.
         let atomic_pending = demands.iter().any(|demand| demand.atomic);
+        let pipeline = if !atomic_pending && !self.state.equal_sequence_ubatch {
+            if self.state.pipeline_policy.is_some() && self.state.prefill_fragments != 1 {
+                self.set_snapshot("pipeline_policy_refused:multi_fragment_not_validated");
+                return Err(());
+            }
+            self.state.pipeline_policy.map(|policy| {
+                // A temporarily absent eligible decode is still exposed to a
+                // long non-preemptive prefill at downstream stages.
+                let decoding_active = self.state.requests.values().any(|r| {
+                    r.command.session_id == session_id && r.sequence_id.is_some()
+                        && r.prompt_cursor == r.command.tokens.len()
+                });
+                policy.select(&demands, self.state.ordinary_limits,
+                    self.state.max_open_batches, self.state.open_batches.len(), decoding_active)
+            }).transpose().map_err(|error| {
+                self.set_snapshot(&format!("pipeline_policy_refused:{error:?}"));
+            })?
+        } else { None };
+        let effective_limits = pipeline.map_or(self.state.ordinary_limits, |p| p.effective_limits);
         let mut scheduling = super::super::super::commands::SchedulingSnapshot {
+            pipeline,
             ordinary_limits: self.state.ordinary_limits,
-            ordinary_limits_applied: self.state.ordinary_limits != Default::default()
+            ordinary_limits_applied: effective_limits != Default::default()
                 && !atomic_pending
                 && !self.state.equal_sequence_ubatch,
             min_batch_rows: self.state.min_batch_rows,
@@ -193,7 +213,7 @@ impl Worker {
                 self.state.equal_sequence_ubatch,
                 self.state.max_atomic_sequences,
                 self.state.atomic_batch_exclusive,
-                self.state.ordinary_limits,
+                effective_limits,
             )
             .map_err(|error| {
                 self.set_snapshot(&format!("scheduler_failed:{error:?}"));

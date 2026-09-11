@@ -67,6 +67,7 @@ test('real CLI writes bound input and refuses both overwrite and invalid work be
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'p4-cluster-compose-'));
   try {
     const a = input(), spec = { runId: a.runId, generation: a.generation };
+    a.policy = read('./policies/pipeline-open8.json');
     for (const key of ['cluster', 'model', 'policy', 'workload', 'runtime']) {
       spec[key] = key + '.json'; fs.writeFileSync(path.join(temporary, spec[key]), JSON.stringify(a[key]));
     }
@@ -77,6 +78,7 @@ test('real CLI writes bound input and refuses both overwrite and invalid work be
     const config = fs.readFileSync(path.join(output, 'config.json'));
     const manifest = readFile(path.join(output, 'manifest.json'));
     assert.equal(manifest.config_sha256, sha256(config));
+    assert.equal(manifest.agent_environment.P4_STAGED_PIPELINE_BATCHING, '1');
     assert.notEqual(invoke(output).status, 0);
     assert.deepEqual(fs.readFileSync(path.join(output, 'config.json')), config);
     a.workload.waves[0].count++;
@@ -84,6 +86,16 @@ test('real CLI writes bound input and refuses both overwrite and invalid work be
     const rejected = path.join(temporary, 'rejected');
     assert.notEqual(invoke(rejected).status, 0);
     assert.equal(fs.existsSync(rejected), false);
+    a.workload.waves[0].count--;
+    fs.writeFileSync(path.join(temporary, 'workload.json'), JSON.stringify(a.workload));
+    for (const [name, value] of [['P4_STAGED_MAX_OPEN_BATCHES', 0], ['P4_STAGED_MIXED_PREFILL_ROWS', 0],
+      ['P4_STAGED_PREFILL_FRAGMENTS', 2], ['P4_STAGED_PIPELINE_BATCHING', 2]]) {
+      const bad = structuredClone(a.policy); bad.environment[name] = value;
+      fs.writeFileSync(path.join(temporary, 'policy.json'), JSON.stringify(bad));
+      assert.notEqual(invoke(rejected).status, 0);
+      assert.equal(fs.existsSync(rejected), false);
+      assert.deepEqual(fs.readFileSync(path.join(output, 'config.json')), config);
+    }
   } finally {
     assert.ok(path.resolve(temporary).startsWith(path.resolve(os.tmpdir()) + path.sep + 'p4-cluster-compose-'));
     fs.rmSync(temporary, { recursive: true, force: true });

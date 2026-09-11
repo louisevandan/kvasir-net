@@ -815,6 +815,24 @@ footprint는 원본 Event와 정규화 command의 독립 allocation capacity, re
 처음 생성될 때의 별도 비용, ready/continuation/RowOwner 및 native 결과 비용도 남는다. 공유 후
 복사가 줄었다는 사실로 byte admission·RSS 상한·배치 처리량을 승인하지 않는다.
 
+#### 선택적 파이프라인 요청 묶음 (2026-09-11)
+
+`P4_STAGED_PIPELINE_BATCHING=1`은 ordinary attention의 요청 묶음을 남은 비행 슬롯에 나눈다.
+`ceil(현재 eligible phase 요청 수 / (max_open_batches - open))`가 phase별 참여 상한이다.
+기존 명시 `OrdinaryLimits`가 더 작으면 그대로 유지한다. pure-prefill의 전체 행 예산은 유지하므로
+16개 긴 입력·창8·batch512는 2요청×256행을 발행하고 나머지 요청으로 다음 배치를 준비할 수 있다.
+노드 수나 GPU 수를 실행비용 대신 사용하지 않으며 이 산술을 처리량 최적값으로 보증하지 않는다.
+
+같은 session에서 decode가 진행 중이면, 그 decode가 현재 비행 중이어서 eligible이 아니어도
+`P4_STAGED_MIXED_PREFILL_ROWS`(실험 초기값128)의 prefill 행 예산을 적용한다. 마지막 decode가
+끝나면 pure-prefill 예산으로 돌아간다. native 호출은 비선점이며 이 행 예산은 시간/SLO 보장이 아니다.
+참여 요청 선택의 회전과 prepare/validate/commit fairness는 기존 scheduler 권위를 유지한다.
+선택 결과는 `SchedulingSnapshot.pipeline`에 window/open/decoding_active/effective_limits로 기록한다.
+
+명시적 `max_open_batches > 0`, `mixed_prefill_rows > 0`, fragment1을 요구한다. 잘못된 조합은
+tokenize·admission·KV 전에 요청 오류로 돌려준다. Verify/Replay·등폭 recurrent 경로에는 적용하지 않는다.
+기본 비활성이다. 창 증가·다중 fragment·시간 비용 모델·전 구간 B2/B3·성능 승격을 포함하지 않는다.
+
 시험 fixture의 불변 입력 변조는 명시적인 test-only COW로만 허용한다. 후보의 원본 공유/진행 격리와
 거부 후 원상보존을 allocation 동일성과 값 대조로 함께 검사한다. 마지막 읽기 소유자가 남아 있는 동안
 입력이 유효해야 하고, 마지막 소유자가 사라지면 퇴역해야 한다. 실제 소비와 실행 지위는 증거가 소유한다.

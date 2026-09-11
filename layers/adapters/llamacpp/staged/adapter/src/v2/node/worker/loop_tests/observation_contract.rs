@@ -52,9 +52,29 @@ pub(super) fn observer(
                 };
                 counts[class] += 1;
             }
+            // Reconstruct the normalized selection from independently counted
+            // request phases; do not call the production pipeline selector.
+            let pipeline = state.pipeline_policy.filter(|_| !state.equal_sequence_ubatch && counts[5] == 0)
+                .map(|policy| {
+                    let vacancies = state.max_open_batches - state.open_batches.len();
+                    let bound = |old: usize, selected: usize| if old == 0 { selected } else { old.min(selected) };
+                    let mut effective = state.ordinary_limits;
+                    effective.prefill_members = bound(effective.prefill_members, counts[3].div_ceil(vacancies).max(1));
+                    effective.decode_members = bound(effective.decode_members, counts[4].div_ceil(vacancies).max(1));
+                    let decoding_active = state.requests.values().any(|r|
+                        r.sequence_id.is_some() && r.prompt_cursor == r.command.tokens.len());
+                    if decoding_active {
+                        effective.prefill_rows = bound(effective.prefill_rows, policy.mixed_prefill_rows);
+                    }
+                    crate::v2::scheduler::pipeline::PipelineSelection {
+                        window: state.max_open_batches, open: state.open_batches.len(), decoding_active,
+                        mixed_prefill_rows: policy.mixed_prefill_rows, effective_limits: effective,
+                    }
+                });
             *before.lock().unwrap() = Some(crate::v2::commands::SchedulingSnapshot {
+                pipeline,
                 ordinary_limits: state.ordinary_limits,
-                ordinary_limits_applied: state.ordinary_limits != Default::default()
+                ordinary_limits_applied: (state.ordinary_limits != Default::default() || pipeline.is_some())
                     && !state.equal_sequence_ubatch
                     && counts[5] == 0,
                 min_batch_rows: state.min_batch_rows,

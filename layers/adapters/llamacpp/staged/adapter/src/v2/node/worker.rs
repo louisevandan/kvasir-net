@@ -380,6 +380,13 @@ impl Worker {
         if session.command.role() != NodeRole::First {
             return Err("prefill must target the first node".into());
         }
+        if let Some(policy) = self.state.pipeline_policy {
+            if self.state.max_open_batches == 0 || policy.mixed_prefill_rows == 0
+                || self.state.prefill_fragments != 1
+            {
+                return Err("pipeline policy requires a finite open window, positive mixed quantum and fragment limit one".into());
+            }
+        }
         let submitted_route = event
             .envelope
             .return_route

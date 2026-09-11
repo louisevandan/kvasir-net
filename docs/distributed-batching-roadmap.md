@@ -40,18 +40,27 @@ Hy3 재실기를 하나의 작업으로 수행한다. 기존 두 증거 ZIP은 �
    토큰 예산·KV 예약·chunked prefill은 재사용할 설계 원리이며, 단일 인스턴스의 전체 decode
    일괄 선택을 분산 파이프라인에 그대로 이식하지 않는다. 미검증 GPU 비용을 최적값으로 선언하지 않는다.
 5. **검증:** 각 수정은 실제 소비 반례→수정→독립 변이→전체 게이트로 결속한다.
-   같은 최신 native 위의 이전 정책/새 정책을 비교해 upstream 갱신과 정책 효과를 분리한다.
+   각 클러스터 안에서 같은 native 위의 이전 정책/새 정책을 비교해 upstream 갱신과 정책 효과를 분리한다.
+   MI250는 새 451 native, Hy3는 기존 fleet 434 native를 양 arm에 고정한다. 최신 native의 전 플랫폼
+   채택은 이번 policy 비교와 별도이며 Hy3 전부를 최신 upstream으로 재검증했다고 표시하지 않는다.
    작은 판별 arm 이후 실제 긴 입력 다수와 긴 출력을 실행하며 입력 토큰 수를 tokenizer로 확인한다.
    100k 입력에 출력 예산을 더한 context, KV 우선 device 배치, RAM offload 및 host CPU 예산을 명시한다.
    MI250 타 작업 점유는 감시하며 무관 프로세스를 종료하지 않는다. Hy3의 CPU expert 병목도 따로 판정한다.
 
 이 재개 항목이 현재 첫 행동을 정한다. 아래 이전 진행표의 미완 예산/품질 게이트는 그대로 열린다.
 
-**재개 진행:** 최신 pin의 26개 패치가 clean replay/분류 검사를 통과했다(`0cf373d83`, 빌드/실기는 진행 중).
+**재개 진행:** 최신 pin의 26개 패치가 clean replay/분류 검사를 통과했다(`0cf373d83`).
+CUDA sm_86 Release CTest16/16, MI250 gfx90a ROCm Release CTest15/15 및 Qwen2.5-1.5B
+실제 CUDA 추론·KV 저장/복원·UNLOAD 1/1을 완료했다. 소형 단일 장치 승인 범위다.
 수용 입력 계정은 pending/active/공유 provenance의 count·capacity bytes·입력/출력 토큰을 제한하도록
 실제 PREFILL 소비 경로에 연결했다. 이것은 B2/B3 전체가 아니며 native 반환/outbox/broker/remote grant는 남아 있다.
 수용 입력 단위는 workspace **1391 passed / 0 failed / 7 ignored**(58 summaries), 실제 소비 시험2개,
-독립 변이(수용 우회1실패·퇴역 누락2실패)를 확인했다. 빌드/후속 예약/배치 작업은 계속 진행한다.
+독립 변이(수용 우회1실패·퇴역 누락2실패)를 확인했다(`54b4fd9b5`, main push).
+선택적 pipeline policy는 eligible 요청 수를 남은 flight slot 수로 나눠 pure-prefill의 전체 행 폭을
+유지하면서 독립 묶음을 만든다. decode가 비행 중인 동안도 mixed-prefill quantum을 적용한다.
+finite open window·fragment1만 허용하며 기본 비활성이다. 비용 모델/시간 SLO/B2·B3 전체는 아직 아니다.
+실제 loop 반례와 독립 변이2종(각2실패), workspace **1396/0/7**(58 summaries, exit0),
+공통 OUTER composer의 실제 CLI 거부/보존 포함 Node4/4를 확인했다. 양 클러스터 재실기를 이어간다.
 
 **단일 main 운영 (2026-09-11 사용자 지시):** 장기 개발·릴리즈 기준은 `main` 하나다. 모델별 개발 브랜치는 운영하지 않는다.
 merge `429e057de`로 임시 Hy3의 upstream/메모리/physical-wire 호환 변경과 main의 하드웨어 조회·경로·Linux 링크 수정을 통합하고 push했다.

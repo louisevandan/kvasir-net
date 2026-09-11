@@ -402,3 +402,19 @@ fn request_storage_refuses_each_aggregate_axis_before_admission_and_preserves_re
         assert_eq!(worker.state.request_budget.used(), cost);
     }
 }
+
+#[test]
+fn pipeline_configuration_refuses_before_request_reservation_or_native_tokenization() {
+    use crate::v2::scheduler::pipeline::PipelinePolicy;
+    for (window, quantum, fragments) in [(0, 128, 1), (8, 0, 1), (8, 128, 2)] {
+        let (mut worker, mailbox) = prefill_fixture();
+        worker.state.pipeline_policy = Some(PipelinePolicy { mixed_prefill_rows: quantum });
+        worker.state.max_open_batches = window;
+        worker.state.prefill_fragments = fragments;
+        let tokens = submission(&worker, "bad-pipeline");
+        let prompt = change_command(&tokens, |c| { c.tokens.clear(); c.prompt = Some("Meaningful input".into()); });
+        rejected_without_admission(&mut worker, &mailbox, &prompt, "pipeline policy requires");
+        worker.state.pipeline_policy = None;
+        accepted_without_native(&mut worker, &mailbox, &tokens);
+    }
+}
