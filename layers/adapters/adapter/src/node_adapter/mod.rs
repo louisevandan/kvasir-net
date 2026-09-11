@@ -16,6 +16,7 @@ pub use mailbox::{
     MAX_CAPACITY_LISTENERS, MailboxBuildError, OwnedPoll, PublishError, ReserveError,
     ReservedPublishError, ReservedPublishReason, RetainedCompletion, RetainedTransferError,
     completion_mailbox, completion_mailbox_with_budget, completion_mailbox_with_limits,
+    CompletionFront, CompletionQueueReservation, QueuePublishError, RetainedQueueTransferError,
 };
 use p4_protocol::event::{Envelope, Event};
 use std::task::{Context, Poll as TaskPoll};
@@ -81,6 +82,24 @@ pub trait NodeAdapter: Send + Sync {
     fn snapshot(&self) -> String {
         String::new()
     }
+}
+
+/// Explicit owned transport contract. There is deliberately no raw-Event
+/// fallback: concrete producers and every consumer must migrate together.
+/// A successful offer transfers responsibility for the original allocation
+/// and its claim; it does not prove native execution or downstream acceptance.
+pub trait RetainedNodeAdapter: Send + Sync {
+    fn try_offer_retained(&self, completion: RetainedCompletion) -> Result<(), RetainedOfferError>;
+    fn peek_retained_completion(&self) -> Option<CompletionFront>;
+    fn try_take_retained_matching(&self, expected: &CompletionFront) -> OwnedPoll;
+    fn poll_take_retained(&self, context: &mut Context<'_>) -> TaskPoll<OwnedPoll>;
+    fn snapshot(&self) -> String;
+}
+
+#[derive(Debug)]
+pub enum RetainedOfferError {
+    Full(RetainedCompletion),
+    Closed(RetainedCompletion),
 }
 
 #[cfg(test)]

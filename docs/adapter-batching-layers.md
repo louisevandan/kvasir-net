@@ -746,7 +746,8 @@ transfer의 옛 source 회계를 먼저 반환한 다음 reader/capacity callbac
 **알림 지연은 가시성 장벽이 아니다.** 이미 실행 중인 reader는 notify 전에도 수용된 Event를 읽을
 수 있다. callback panic을 enqueue 실패나 재전송 허가로 해석하지 않는다. 현재 raw broker는 아직
 이 deferred 경계를 소비하지 않으므로, 이 API 변경만으로 broker 원장 잠금 밖 알림이 성립했다고
-하지 않는다. 실제 broker/owned receiver 이관이 남아 있다.
+하지 않는다. 실제 broker/owned receiver의 제품 구성 이관이 남아 있다. 소유형 `RetainedEventBroker`는
+별도 명시 경로로 deferred enqueue와 원장 밖 알림을 사용한다. raw 제품 경로의 동작 변경으로 세지 않는다.
 
 단일 native 작업이 여러 필수 Event를 만들면 completion capacity=1에 그 전체 슬롯을 미리 요구하는
 것만으로는 정상 진행할 수 없다. 후속 효과 보존 공간과 전달 큐 슬롯을 구분하고 실제 수신 측의 책임
@@ -758,7 +759,7 @@ RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급
 
 현재 `event_broker::EventBroker::dispatch`는 성공하면 destination과 중복 원장에 Event를 각각
 보관한다. 따라서 producer claim을 원장에 옮겨 넣는 것은 비용 분리가 아니다. 정확한 중복 원장의
-퇴역까지 producer 공간이 묶여 새로운 순환 대기가 생긴다. 다음 조건은 **미구현 연결 계약**이다.
+퇴역까지 producer 공간이 묶여 새로운 순환 대기가 생긴다. 다음 조건은 **전체 연결 목표 계약**이다.
 
 - destination의 실제 저장 claim과 exact Event 중복 사본의 독립 비용을 성공 commit 전에 확보한다.
   모든 실패에서 원 Event/producer claim을 반환하고 원장은 그대로 둔다. 원본의 책임 이전은 양쪽
@@ -787,6 +788,17 @@ RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급
 
 과거 Frame runtime을 이 표의 Event 경로로 세지 않는다. 같은 Event wire를 읽는 OUTER가 존재한다는
 것도 원격 acceptance 증거가 아니다. 이관 상태와 실행 순서는 로드맵이 단독 소유한다.
+
+**소유형 국소 전달 경계:** `RetainedEventBroker`는 raw broker와 등록/세대/전체 Event 중복 원장을
+공유하는 타입 변형이다. `RetainedEventNode`는 필수 `RetainedNodeAdapter` 계약을 소비하며 raw
+fallback이 없다. 새 경로에서 source claim은 실제 목적지의 queue slot·retained count/bytes를
+함께 확보하고 enqueue한 뒤에만 반환한다. held input/output·terminal 반환은 claim을 유지한다.
+독립 front는 envelope와 실제 capacity 비용을 읽어 즉시 목적지 예약 후 조건부 dequeue한다.
+목적지 Full은 front를 그대로 두며 같은 `(source, correlation)`은 앞지르지 않는다.
+ticket은 await/native 호출/원격 전송을 넘어 보관하지 않는다. route 등록은 enqueue까지 재검사하고
+읽기 잠금으로 유지한다. source 퇴역·예약 취소·receiver 알림은 원장/등록 잠금 밖에서 실행한다.
+전체 중복 사본과 count-window는 유지하지만 **중복 사본의 byte 상한은 아직 연결하지 않았다**.
+이 타입 경계의 소비 시험은 runtime composition root·llamacpp Worker·connection writer 이관 완료가 아니다.
 
 #### 불변 수용 입력과 가변 진행 후보
 

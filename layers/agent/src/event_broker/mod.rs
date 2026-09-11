@@ -5,6 +5,8 @@
 
 mod ledger;
 mod receipt_memory;
+mod retained;
+pub use retained::{RetainedDispatchFailure, RetainedEventBroker};
 pub use receipt_memory::{ReceiptMemorySnapshot, ReceiptStorageSnapshot};
 
 use ledger::{EventLedger, LedgerVerdict};
@@ -54,6 +56,9 @@ pub enum DispatchError {
     /// the original Event, as it does for every permanent dispatch refusal.
     Full(Delivery),
     Closed(Delivery),
+    /// Individually impossible retained allocation; retrying after a capacity
+    /// notification cannot make this input fit the destination's configured limit.
+    StorageTooLarge { delivery: Delivery, required: usize, limit: usize },
     Poisoned,
 }
 
@@ -100,20 +105,20 @@ impl std::error::Error for DispatchFailure {
     }
 }
 
-pub struct EventBroker {
+pub struct EventBroker<S = EventSender> {
     own: Address,
-    agent: EventSender,
-    outer: EventSender,
-    outbound: EventSender,
-    nodes: RwLock<HashMap<String, NodeRoute>>,
+    agent: S,
+    outer: S,
+    outbound: S,
+    nodes: RwLock<HashMap<String, NodeRoute<S>>>,
     node_generations: Mutex<HashMap<String, u64>>,
     ledger: Mutex<EventLedger>,
 }
 
 #[derive(Clone)]
-struct NodeRoute {
+struct NodeRoute<S> {
     generation: u64,
-    sender: EventSender,
+    sender: S,
 }
 
 /// A synchronous front-dispatch ticket. It is never kept across an await or
@@ -134,13 +139,6 @@ enum CompletionDispatchKind {
 }
 
 impl EventBroker {
-    /// O(1) snapshot of exact duplicate receipts, excluding destination storage,
-    /// index/Arc/allocator overhead, native buffers and process RSS. No payload
-    /// contents, adapter vocabulary, eviction or reservation policy is changed.
-    pub fn receipt_snapshot(&self) -> Result<ReceiptMemorySnapshot, DispatchError> {
-        Ok(self.ledger.lock().map_err(|_| DispatchError::Poisoned)?.receipt_snapshot())
-    }
-
     /// Reserve the actual destination before the adapter relinquishes an
     /// independent ordinary completion. No broker lock survives this call.
     pub(crate) fn reserve_completion(
@@ -213,75 +211,6 @@ impl EventBroker {
         Ok(DispatchOutcome::Enqueued(delivery))
     }
 
-    pub fn new(
-        own: Address,
-        agent: EventSender,
-        outer: EventSender,
-        outbound: EventSender,
-        duplicate_window: usize,
-    ) -> Self {
-        assert!(duplicate_window > 0, "duplicate window must be positive");
-        Self {
-            own,
-            agent,
-            outer,
-            outbound,
-            nodes: RwLock::new(HashMap::new()),
-            node_generations: Mutex::new(HashMap::new()),
-            ledger: Mutex::new(EventLedger::new(duplicate_window)),
-        }
-    }
-
-    pub fn register_node(
-        &self,
-        node: impl Into<String>,
-        generation: u64,
-        sender: EventSender,
-    ) -> Result<(), DispatchError> {
-        let node = node.into();
-        if node.is_empty() || generation == 0 {
-            return Err(DispatchError::Invalid(
-                "node id and generation are required".into(),
-            ));
-        }
-        let mut generations = self
-            .node_generations
-            .lock()
-            .map_err(|_| DispatchError::Poisoned)?;
-        if let Some(current) = generations.get(&node)
-            && generation <= *current
-        {
-            return Err(DispatchError::StaleNode {
-                node,
-                current_generation: *current,
-                incoming_generation: generation,
-            });
-        }
-        let mut nodes = self.nodes.write().map_err(|_| DispatchError::Poisoned)?;
-        if nodes.contains_key(&node) {
-            return Err(DispatchError::Invalid("node is already registered".into()));
-        }
-        nodes.insert(node.clone(), NodeRoute { generation, sender });
-        generations.insert(node, generation);
-        Ok(())
-    }
-
-    pub fn unregister_node(&self, node: &str, generation: u64) -> Result<bool, DispatchError> {
-        let mut nodes = self.nodes.write().map_err(|_| DispatchError::Poisoned)?;
-        let Some(route) = nodes.get(node) else {
-            return Ok(false);
-        };
-        if route.generation != generation {
-            return Err(DispatchError::StaleNode {
-                node: node.to_owned(),
-                current_generation: route.generation,
-                incoming_generation: generation,
-            });
-        }
-        nodes.remove(node);
-        Ok(true)
-    }
-
     pub fn dispatch(&self, event: Event) -> Result<DispatchOutcome, DispatchFailure> {
         if let Err(error) = event.validate() {
             return Err(DispatchFailure::new(
@@ -330,7 +259,90 @@ impl EventBroker {
         }
     }
 
-    fn destination(&self, target: &Endpoint) -> Result<(Delivery, EventSender), DispatchError> {
+
+}
+
+impl<S: Clone> EventBroker<S> {
+    /// O(1) snapshot of exact duplicate receipts, excluding destination storage,
+    /// index/Arc/allocator overhead, native buffers and process RSS. No payload
+    /// contents, adapter vocabulary, eviction or reservation policy is changed.
+    pub fn receipt_snapshot(&self) -> Result<ReceiptMemorySnapshot, DispatchError> {
+        Ok(self.ledger.lock().map_err(|_| DispatchError::Poisoned)?.receipt_snapshot())
+    }
+
+    pub fn new(
+        own: Address,
+        agent: S,
+        outer: S,
+        outbound: S,
+        duplicate_window: usize,
+    ) -> Self {
+        assert!(duplicate_window > 0, "duplicate window must be positive");
+        Self {
+            own,
+            agent,
+            outer,
+            outbound,
+            nodes: RwLock::new(HashMap::new()),
+            node_generations: Mutex::new(HashMap::new()),
+            ledger: Mutex::new(EventLedger::new(duplicate_window)),
+        }
+    }
+
+    pub fn register_node(
+        &self,
+        node: impl Into<String>,
+        generation: u64,
+        sender: S,
+    ) -> Result<(), DispatchError> {
+        let node = node.into();
+        if node.is_empty() || generation == 0 {
+            return Err(DispatchError::Invalid(
+                "node id and generation are required".into(),
+            ));
+        }
+        let mut generations = self
+            .node_generations
+            .lock()
+            .map_err(|_| DispatchError::Poisoned)?;
+        if let Some(current) = generations.get(&node)
+            && generation <= *current
+        {
+            return Err(DispatchError::StaleNode {
+                node,
+                current_generation: *current,
+                incoming_generation: generation,
+            });
+        }
+        let mut nodes = self.nodes.write().map_err(|_| DispatchError::Poisoned)?;
+        if nodes.contains_key(&node) {
+            return Err(DispatchError::Invalid("node is already registered".into()));
+        }
+        nodes.insert(node.clone(), NodeRoute { generation, sender });
+        generations.insert(node, generation);
+        Ok(())
+    }
+
+    pub fn unregister_node(&self, node: &str, generation: u64) -> Result<bool, DispatchError> {
+        let mut nodes = self.nodes.write().map_err(|_| DispatchError::Poisoned)?;
+        let Some(route) = nodes.get(node) else {
+            return Ok(false);
+        };
+        if route.generation != generation {
+            return Err(DispatchError::StaleNode {
+                node: node.to_owned(),
+                current_generation: route.generation,
+                incoming_generation: generation,
+            });
+        }
+        let removed = nodes.remove(node);
+        drop(nodes);
+        // A retained publisher may wake caller code on Drop.
+        drop(removed);
+        Ok(true)
+    }
+
+    fn destination(&self, target: &Endpoint) -> Result<(Delivery, S), DispatchError> {
         if target.agent_address() != &self.own {
             let address = target.agent_address().clone();
             return Ok((Delivery::Outbound(address), self.outbound.clone()));

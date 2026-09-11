@@ -1,83 +1,83 @@
-//! Reactive v2 node: move inbound events into one concrete adapter and move
-//! adapter completions back to the agent broker. Neither direction executes
-//! adapter business logic or waits for a business response.
-
-mod retained;
-pub use retained::{RetainedEventNode, RetainedEventNodeFailure};
-
-use crate::event_broker::{DispatchError, EventBroker, EventReceiver};
-use p4_adapter::node_adapter::{NodeAdapter, OfferError, Poll};
-use p4_protocol::event::Event;
+//! Explicit retained variant of the reactive node boundary. Production roots
+//! must select this with an owned adapter and owned downstream consumers.
+use super::{EventNodeError, HELD_RETRY_INTERVAL};
+use crate::event_broker::{DispatchError, RetainedEventBroker};
+use p4_adapter::node_adapter::{
+    CompletionMailbox, OwnedPoll, RetainedCompletion, RetainedNodeAdapter, RetainedOfferError,
+};
 use std::future::poll_fn;
 use std::sync::Arc;
-use std::time::Duration;
-
-/// How long the node waits before offering a held event again when the
-/// adapter or broker destination is full. This bounds idle retry frequency;
-/// it still incurs timer work and is not a capacity-notification mechanism.
-const HELD_RETRY_INTERVAL: Duration = Duration::from_millis(1);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EventNodeError {
-    AdapterFull,
-    AdapterClosed,
-    CompletionClosed(String),
-    Broker(DispatchError),
-}
 
 /// Terminal node failure together with every event still owned by this task.
 ///
 /// A refusal is not retirement: the caller now owns these unchanged values
 /// and must account for their outcome. This boundary preserves existing Event
-/// ownership, not count/byte reservations, graceful drain or remote delivery.
+/// ownership, including count/byte claims through every held state. Graceful drain and
+/// remote delivery remain separate contracts.
 #[derive(Debug)]
-pub struct EventNodeFailure {
+pub struct RetainedEventNodeFailure {
     pub error: EventNodeError,
-    pub held_input: Option<Box<Event>>,
-    pub held_output: Option<Box<Event>>,
+    pub held_input: Option<Box<RetainedCompletion>>,
+    pub held_output: Option<Box<RetainedCompletion>>,
     /// At most one independent front can be removed after its destination is
     /// reserved. A terminal validation/routing race retains it alongside the
     /// older blocked output; it is never another ordinary holding queue.
-    pub completion_at_failure: Option<Box<Event>>,
+    pub completion_at_failure: Option<Box<RetainedCompletion>>,
 }
 
-pub struct EventNode {
-    adapter: Arc<dyn NodeAdapter>,
-    inbound: EventReceiver,
-    broker: Arc<EventBroker>,
+pub struct RetainedEventNode {
+    adapter: Arc<dyn RetainedNodeAdapter>,
+    inbound: Arc<CompletionMailbox>,
+    broker: Arc<RetainedEventBroker>,
 }
 
-impl EventNode {
+impl RetainedEventNode {
     /// This helper is synchronous: no destination permit or receipt pin may
     /// cross an await. It neither executes adapter work nor reads its payload.
-    fn forward_independent_front(&self, blocked: &Event) -> Result<(), (EventNodeError, Option<Box<Event>>)> {
-        let Some(front) = self.adapter.peek_completion() else { return Ok(()); };
-        if front.source == blocked.envelope.source
-            && front.correlation_id == blocked.envelope.correlation_id {
+    fn forward_independent_front(
+        &self,
+        blocked: &RetainedCompletion,
+    ) -> Result<(), (EventNodeError, Option<Box<RetainedCompletion>>)> {
+        let Some(front) = self.adapter.peek_retained_completion() else {
+            return Ok(());
+        };
+        if front.envelope.source == blocked.event().envelope.source
+            && front.envelope.correlation_id == blocked.event().envelope.correlation_id
+        {
             return Ok(());
         }
-        let reserved = self.broker.reserve_completion(&front);
+        let reserved = self.broker.reserve_retained_completion(&front);
         if matches!(&reserved, Err(DispatchError::Full(_))) {
             // The original remains in its real mailbox. Do not create a
             // second held output just to discover another full destination.
             return Ok(());
         }
-        match self.adapter.try_take_completion_matching(&front) {
-            Poll::Empty => Ok(()), // a changed front never consumes its replacement
-            Poll::Closed => Err((EventNodeError::CompletionClosed(self.adapter.snapshot()), None)),
-            Poll::Event(event) => match reserved {
-                Ok(ticket) => self.broker.dispatch_completion(ticket, event)
+        match self.adapter.try_take_retained_matching(&front) {
+            OwnedPoll::Empty => Ok(()), // a changed front never consumes its replacement
+            OwnedPoll::Closed => Err((
+                EventNodeError::CompletionClosed(self.adapter.snapshot()),
+                None,
+            )),
+            OwnedPoll::Event(event) => match reserved {
+                Ok(ticket) => self
+                    .broker
+                    .dispatch_retained_completion(ticket, event)
                     .map(|_| ())
-                    .map_err(|failure| (EventNodeError::Broker(failure.error), Some(failure.event))),
+                    .map_err(|failure| {
+                        (
+                            EventNodeError::Broker(failure.error),
+                            Some(failure.completion),
+                        )
+                    }),
                 Err(error) => Err((EventNodeError::Broker(error), Some(Box::new(event)))),
             },
         }
     }
 
     pub fn new(
-        adapter: Arc<dyn NodeAdapter>,
-        inbound: EventReceiver,
-        broker: Arc<EventBroker>,
+        adapter: Arc<dyn RetainedNodeAdapter>,
+        inbound: Arc<CompletionMailbox>,
+        broker: Arc<RetainedEventBroker>,
     ) -> Self {
         Self {
             adapter,
@@ -86,26 +86,26 @@ impl EventNode {
         }
     }
 
-    pub async fn run(mut self) -> Result<(), EventNodeFailure> {
+    pub async fn run(self) -> Result<(), RetainedEventNodeFailure> {
         // Retain at most one event in each direction. Waiting exclusively on
         // an outbound Full deadlocks two nodes whose own inbound queues need
         // draining to make room for one another. Neither Full commits the
         // broker ledger nor consumes the adapter input; retry the exact event.
         // This is not a general proof for a fully saturated cyclic network:
         // adapters may also be Full. End-to-end credits remain a separate gate.
-        let mut held_input: Option<Event> = None;
-        let mut held_output: Option<Event> = None;
+        let mut held_input: Option<RetainedCompletion> = None;
+        let mut held_output: Option<RetainedCompletion> = None;
         let mut input_closed = false;
         loop {
             if let Some(event) = held_output.take() {
-                match self.broker.dispatch(event) {
+                match self.broker.dispatch_retained(event) {
                     Ok(_) => {}
                     Err(failure) => {
-                        held_output = Some(*failure.event);
+                        held_output = Some(*failure.completion);
                         match failure.error {
                             DispatchError::Full(_) => {}
                             error => {
-                                return Err(EventNodeFailure {
+                                return Err(RetainedEventNodeFailure {
                                     error: EventNodeError::Broker(error),
                                     held_input: held_input.map(Box::new),
                                     held_output: held_output.map(Box::new),
@@ -117,12 +117,12 @@ impl EventNode {
                 }
             }
             if let Some(event) = held_input.take() {
-                match self.adapter.try_offer(event) {
+                match self.adapter.try_offer_retained(event) {
                     Ok(()) => {}
-                    Err(OfferError::Full(event)) => held_input = Some(event),
-                    Err(OfferError::Closed(event)) => {
+                    Err(RetainedOfferError::Full(event)) => held_input = Some(event),
+                    Err(RetainedOfferError::Closed(event)) => {
                         held_input = Some(event);
-                        return Err(EventNodeFailure {
+                        return Err(RetainedEventNodeFailure {
                             error: EventNodeError::AdapterClosed,
                             held_input: held_input.map(Box::new),
                             held_output: held_output.map(Box::new),
@@ -132,8 +132,9 @@ impl EventNode {
                 }
             }
             if let Some(blocked) = held_output.as_ref()
-                && let Err((error, completion_at_failure)) = self.forward_independent_front(blocked) {
-                return Err(EventNodeFailure {
+                && let Err((error, completion_at_failure)) = self.forward_independent_front(blocked)
+            {
+                return Err(RetainedEventNodeFailure {
                     error,
                     held_input: held_input.map(Box::new),
                     held_output: held_output.map(Box::new),
@@ -147,21 +148,22 @@ impl EventNode {
                 return Ok(());
             }
             tokio::select! {
-                inbound = self.inbound.recv(), if !input_closed && held_input.is_none() => {
+                inbound = poll_fn(|context| self.inbound.poll_take_owned(context)), if !input_closed && held_input.is_none() => {
                     match inbound {
-                        Some(event) => held_input = Some(event),
-                        None => input_closed = true,
+                        OwnedPoll::Event(event) => held_input = Some(event),
+                        OwnedPoll::Closed => input_closed = true,
+                        OwnedPoll::Empty => {},
                     }
                 }
-                completion = poll_fn(|context| self.adapter.poll_take(context)), if held_output.is_none() => {
+                completion = poll_fn(|context| self.adapter.poll_take_retained(context)), if held_output.is_none() => {
                     match completion {
-                        Poll::Event(event) => held_output = Some(event),
+                        OwnedPoll::Event(event) => held_output = Some(event),
                         // Correct mailbox implementations return Pending and
                         // register a waker. Defensively avoid spinning on an
                         // adapter that instead reports Ready(Empty).
-                        Poll::Empty => tokio::time::sleep(HELD_RETRY_INTERVAL).await,
-                        Poll::Closed => {
-                            return Err(EventNodeFailure {
+                        OwnedPoll::Empty => tokio::time::sleep(HELD_RETRY_INTERVAL).await,
+                        OwnedPoll::Closed => {
+                            return Err(RetainedEventNodeFailure {
                                 error: EventNodeError::CompletionClosed(self.adapter.snapshot()),
                                 held_input: held_input.map(Box::new),
                                 held_output: held_output.map(Box::new),

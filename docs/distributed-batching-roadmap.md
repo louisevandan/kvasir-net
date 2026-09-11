@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — 고정 창 phase 발행/단조시계 decode 대기 로컬 검증1404/0/7. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — 소유형 broker/node 국소 반환 경계 로컬 검증1414/0/7. 제품 전체 반환 예산은 미연결. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -92,6 +92,16 @@ prefill 발행, 새 입력 없이 decode 대기 만료, 기존 상한·정산·�
 flight 확대와 누적 prefill 시간 정책·실제100k 승인은 계속 열린다. workspace1404/0/7(58 summaries, exit0),
 독립 변이2종의 실제 소비 실패2/1, docs-lint94 clean을 확인했다. decode-only 대기는2ms 뒤 발행 자격을
 재검사하며 native/OS 지연의 상한은 아니다. [반례·검증·봉인](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#phase-pacing)을 따른다.
+
+**소유형 반환 전달 경계 (2026-09-11, 로컬 검증 완료):** `RetainedEventBroker`와 `RetainedEventNode`를
+명시 소유형 adapter 경계에 연결했다. 실제 queue1 소비에서 동시 held input/output, 독립 front 진행,
+Full·닫힘·중복·등록 변경의 원본/claim 보존과 반복32회 퇴역을 검사한다. 목적지 queue slot과
+retained bytes를 함께 예약하며 receiver dequeue는 byte 반환이 아니다. receipt는 독립 exact 사본이다.
+제품 composition root/llamacpp Worker/connection writer와 receipt byte 상한은 아직 raw/미연결이며
+이번 경계 구현을 B2/B3 완료나 GPU 성능 승인으로 표시하지 않는다. workspace1414/0/7(58 summaries,
+exit0), 독립 재컴파일 변이3종7/1/1실패, docs-lint94 clean이다. 다음은 같은 소유형 경계를 Worker와
+control/connection writer에 실제 연결하고 필수 반환/독립 receipt 선예약을 닫는 것이다.
+[계획·소비 시험·판정](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#retained-broker-node)을 따른다.
 
 **반환 수명 계측 진행:** broker의 exact Event 사본을 indexed/retired/allocated로 구분하고
 실제 INSPECT 제어 응답에 바이트·퇴역·최종 해제량을 연결했다. 큐 dequeue와 원장 퇴역, 마지막

@@ -10,6 +10,10 @@ use std::task::{Context, Poll as TaskPoll, Waker};
 mod group;
 pub use group::{CompletionReservationGroup, GroupReserveError};
 
+#[path = "mailbox_queue_reservation.rs"]
+mod queue_reservation;
+pub use queue_reservation::{CompletionQueueReservation, QueuePublishError, RetainedQueueTransferError};
+
 pub struct CompletionPublisher {
     receiver: Arc<Mutex<Storage>>,
     budget: Arc<Mutex<Budget>>,
@@ -136,6 +140,7 @@ pub struct RetainedTransferError {
 struct Storage {
     queue: VecDeque<Entry>,
     queue_capacity: usize,
+    reserved_slots: usize,
     closed: bool,
     publishers: usize,
     backing_bytes: usize,
@@ -380,6 +385,7 @@ pub struct CompletionStorageSnapshot {
     pub retained_count: usize,
     pub retained_bytes: usize,
     pub queued_count: usize,
+    pub reserved_queue_slots: usize,
     pub queue_backing_bytes: usize,
     pub closed: bool,
 }
@@ -531,7 +537,7 @@ impl CompletionPublisher {
             }
             // An impossible Event stays a permanent rejection even if another
             // Event currently occupies every delivery slot.
-            if storage.queue.len() >= storage.queue_capacity {
+            if storage.queue.len() + storage.reserved_slots >= storage.queue_capacity {
                 return Err(PublishError::Full(event));
             }
             // Storage -> Budget is also the snapshot/close lock order. Reserve
@@ -616,7 +622,7 @@ impl CompletionPublisher {
                     reason: ReservedPublishReason::Closed,
                 });
             }
-            if storage.queue.len() >= storage.queue_capacity {
+            if storage.queue.len() + storage.reserved_slots >= storage.queue_capacity {
                 return Err(ReservedPublishError {
                     event,
                     reservation,
@@ -657,6 +663,15 @@ pub struct CompletionMailbox {
     budget: Arc<Mutex<Budget>>,
     waker: Arc<Mutex<Option<Waker>>>,
     capacity: Arc<Mutex<CapacityState>>,
+}
+
+/// Non-consuming front metadata for synchronous owned delivery admission.
+/// The cost describes the Event allocation, excluding its source reservation.
+/// It is neither authentication nor permission to execute native work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionFront {
+    pub envelope: Envelope,
+    pub event_bytes: usize,
 }
 
 impl CompletionMailbox {
@@ -718,12 +733,35 @@ impl CompletionMailbox {
         Poll::Event(event)
     }
 
+    pub fn peek_owned_front(&self) -> Option<CompletionFront> {
+        let storage = self.receiver.lock().ok()?;
+        let entry = storage.queue.front()?;
+        Some(CompletionFront {
+            envelope: entry.event.envelope.clone(),
+            event_bytes: retained_event_bytes(&entry.event).ok()?,
+        })
+    }
+
+    pub fn try_take_owned_matching(&self, expected: &CompletionFront) -> OwnedPoll {
+        self.take_owned(Some(expected))
+    }
+
     pub fn try_take_owned(&self) -> OwnedPoll {
+        self.take_owned(None)
+    }
+
+    fn take_owned(&self, expected: Option<&CompletionFront>) -> OwnedPoll {
         let (entry, queue_was_full, queue_capacity) = {
             let Ok(mut storage) = self.receiver.lock() else {
                 return OwnedPoll::Closed;
             };
-            let queue_was_full = storage.queue.len() == storage.queue_capacity;
+            if let Some(expected) = expected
+                && storage.queue.front().is_some_and(|entry|
+                    entry.event.envelope != expected.envelope
+                    || retained_event_bytes(&entry.event).ok() != Some(expected.event_bytes)) {
+                return OwnedPoll::Empty;
+            }
+            let queue_was_full = storage.queue.len() + storage.reserved_slots == storage.queue_capacity;
             let queue_capacity = storage.queue_capacity;
             match storage.queue.pop_front() {
                 Some(entry) => (entry, queue_was_full, queue_capacity),
@@ -765,6 +803,7 @@ impl CompletionMailbox {
             retained_count: budget.used_count,
             retained_bytes: budget.used_bytes,
             queued_count: storage.queue.len(),
+            reserved_queue_slots: storage.reserved_slots,
             queue_backing_bytes: storage.backing_bytes,
             closed: storage.closed,
         }
@@ -890,6 +929,7 @@ fn build_mailbox(
     let receiver = Arc::new(Mutex::new(Storage {
         queue,
         queue_capacity,
+        reserved_slots: 0,
         closed: false,
         publishers: 1,
         backing_bytes,
