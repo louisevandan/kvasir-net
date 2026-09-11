@@ -73,8 +73,14 @@ Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 
 [독립 prefill 대조 실기](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-cohorts-20260911)에 있다.
 
 **현재 다음 첫 행동:** 고정 open 창·fragment1에서 수용된 미완료 prefill 집단을 순간 free slot과
-분리하는 수정은 최종 전체/변이 게이트를 통과했다. 다음은 같은 native의 MI 정책 대조를 실행한다.
-새 HIP native CTest15/15·장치 선언 게이트11/11은 통과했으며 올바른 실제 LOAD/추론·새 배치 성능은 남아 있다.
+분리하는 수정은 최종 전체/변이 게이트를 통과했다. 같은 새 HIP native의 MI 정책 대조 A/B/B/A도
+각16/16 완료·해제·UNLOAD와 실제45층 ROCm 배정을 통과했다. 다만 후보의 prefill 발행280회씩 모두
+옛 계산식과 같은 참여 상한이었다. 이번 실기는 회귀 확인이며 **묶음 수정의 성능 효과 증거가 아니다**.
+혼합 배치의8단계 RPC 합은 평균약500ms, 단계 사이 잔여는114–115ms이며 생성 간격은여전히623–625ms다.
+다음은 준비된 생성의 완료시각을 보호하는 선택과 시간 기반 chunk 재선택을 구현·대조한다.
+Hy3는 추론 전 Mac agent의 역방향 P4 응답 `No route to host`에서 중단했다. Python TCP 성공을
+agent 통신 승인으로 확대하지 않는다. 시험 프로세스 정리·M42 한정 방화벽 예외 복원을 완료했다.
+[실기 범위·반증·RPC 귀속](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#cohort-runtime-audit)을 따른다.
 [소비 반례와 검증](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-population)을 따른다.
 
 **사용자 제안의 조사 결론:** 생성 우선 후 남는 예산에 prefill을 넣는 방향을 채택한다. P4 일반 attention은
@@ -99,8 +105,8 @@ workspace1430/0/7, CUDA CTest16/16, 실제stdin7/7, 독립 재컴파일 변이5�
 
 MI native451의 기존 OUTER 계획 `45-cut_begin`은 각 stage의 첫 반복층을 CPU로 배정했다.
 배정만 정정한 raw27.42→75.02TPS는 배치 알고리즘만의 성과가 아니다. 정정된 계획을 다음 MI 기준선으로
-고정하되 다른 native pin/Hy3에 숫자+1을 일괄 적용하지 않는다. 새query의 ROCm PLAN/잘못된 LOAD 거부는
-확인했으나 올바른 LOAD/추론 및 Metal 실기는 아직 남아 있다.
+고정하되 다른 native pin/Hy3에 숫자+1을 일괄 적용하지 않는다. 새query의 ROCm PLAN/잘못된 LOAD 거부와
+올바른 LOAD/추론은 확인했다. 같은 새 native의 Metal 실기는 아직 남아 있다.
 
 이전 CPU 배정에서 독립 prefill 최대2건은 head 유휴670→132ms·raw14.86→27.42TPS를 만들었지만
 혼합 ITL863→1078ms가 됐다. 정정된 GPU 배정에서는 자동 정책도 이미1개 prefill 요청씩 발행해
