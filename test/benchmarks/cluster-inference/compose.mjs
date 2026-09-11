@@ -40,13 +40,17 @@ export function compose({ cluster, model, policy, workload, runtime, runId, gene
   if (maxTokens >= context) throw Error('output leaves no prompt context');
   const env = {};
   for (const [name, value] of Object.entries(policy.environment ?? {})) {
-    if (!/^P4_STAGED_(MIN_BATCH_ROWS|MAX_OPEN_BATCHES|MAX_ISSUE_ROWS|PREFILL_FRAGMENTS|DECODE_MEMBERS|PREFILL_MEMBERS|PREFILL_ROWS|PREFILL_ROWS_PER_REQUEST|PIPELINE_BATCHING|MIXED_PREFILL_ROWS)$/.test(name)) throw Error(`unsupported policy field ${name}`);
+    if (!/^P4_STAGED_(MIN_BATCH_ROWS|MAX_OPEN_BATCHES|MAX_ISSUE_ROWS|PREFILL_FRAGMENTS|DECODE_MEMBERS|PREFILL_MEMBERS|PREFILL_ROWS|PREFILL_ROWS_PER_REQUEST|PIPELINE_BATCHING|MIXED_PREFILL_ROWS|MIXED_BATCH_ROWS)$/.test(name)) throw Error(`unsupported policy field ${name}`);
     integer(value, name, name === 'P4_STAGED_PREFILL_FRAGMENTS' ? 1 : 0);
     env[name] = String(value);
   }
   if (Number(env.P4_STAGED_DECODE_MEMBERS ?? 0) > capacity) throw Error('decode cap exceeds resident capacity');
   if (Number(env.P4_STAGED_PREFILL_MEMBERS ?? 0) > capacity) throw Error('prefill cap exceeds resident capacity');
   if (Number(env.P4_STAGED_PIPELINE_BATCHING ?? 0) > 1) throw Error('pipeline batching must be 0 or 1');
+  if (env.P4_STAGED_MIXED_BATCH_ROWS !== undefined &&
+      (env.P4_STAGED_PIPELINE_BATCHING !== '1' || Number(env.P4_STAGED_MIXED_BATCH_ROWS) === 0)) {
+    throw Error('profiled mixed token budget requires pipeline policy and positive tokens');
+  }
   if (env.P4_STAGED_PIPELINE_BATCHING === '1' && (Number(env.P4_STAGED_MAX_OPEN_BATCHES ?? 0) === 0
     || Number(env.P4_STAGED_MIXED_PREFILL_ROWS ?? 128) === 0
     || Number(env.P4_STAGED_PREFILL_FRAGMENTS ?? 1) !== 1)) {

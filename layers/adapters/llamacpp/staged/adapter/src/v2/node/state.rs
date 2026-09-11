@@ -563,6 +563,11 @@ impl Default for AdapterState {
             },
             pipeline_policy: (std::env::var("P4_STAGED_PIPELINE_BATCHING").ok().as_deref() == Some("1"))
                 .then(|| super::super::scheduler::pipeline::PipelinePolicy {
+                    mixed_batch_rows: match std::env::var("P4_STAGED_MIXED_BATCH_ROWS") {
+                        Err(std::env::VarError::NotPresent) => None,
+                        Ok(value) => Some(value.parse().unwrap_or(0)),
+                        Err(_) => Some(0),
+                    },
                     mixed_prefill_rows: std::env::var("P4_STAGED_MIXED_PREFILL_ROWS")
                         .ok().and_then(|v| v.parse().ok()).unwrap_or(128),
                 }),

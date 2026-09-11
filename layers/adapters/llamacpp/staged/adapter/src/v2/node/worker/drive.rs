@@ -216,11 +216,16 @@ impl Worker {
                 }
             }
         }
-        let issue_cap = if self.state.max_issue_rows == 0 || atomic_pending {
+        let mut issue_cap = if self.state.max_issue_rows == 0 || atomic_pending {
             usize::MAX
         } else {
             self.state.max_issue_rows
         };
+        if let Some(selection) = pipeline.filter(|p| p.decoding_active) {
+            if let Some(tokens) = selection.mixed_batch_rows {
+                issue_cap = issue_cap.min(tokens);
+            }
+        }
         let mut policy = self
             .scheduler
             .prepare_plan_with_limits(
@@ -236,7 +241,10 @@ impl Worker {
                 self.set_snapshot(&format!("scheduler_failed:{error:?}"));
             })?;
         if phase_pacing {
-            let decoding = pipeline.is_some_and(|p| p.decoding_active);
+            // Preserve the separately opted-in experimental predictor's cold
+            // probe contract. Profiled operation never enables that controller.
+            let decoding = pipeline.is_some_and(|p| p.decoding_active
+                || (self.service_budget.enabled() && population.prefill_draining > 0));
             let selected = self.prepare_generation_service_plan(&demands, &session,
                 issue_cap, effective_limits, decoding, policy).map_err(|error| {
                     self.set_snapshot(&format!("service_plan_failed:{error}"));
@@ -254,8 +262,11 @@ impl Worker {
             // Only a decode-only plan may wait for more compatible requests.
             let decode_only = policy.allocations().iter().all(|a| a.phase == Phase::Decode);
             let ready_decode = demands.iter().filter(|d| d.phase == Phase::Decode).count();
-            if decode_only && self.state.min_batch_rows > 1 && self.state.any_in_flight()
-                && ready_decode < self.state.min_batch_rows {
+            let coalesce_target = self.state.min_batch_rows
+                .min(effective_limits.decode_members.max(1))
+                .min(self.state.batch_capacity.min(issue_cap));
+            if decode_only && coalesce_target > 1 && self.state.any_in_flight()
+                && ready_decode < coalesce_target {
                 if self.decode_coalescer.should_wait(self.state.load_generation, &session_id, Instant::now()) {
                     self.gate_refusals = self.gate_refusals.saturating_add(1);
                     #[cfg(test)]

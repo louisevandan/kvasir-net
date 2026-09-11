@@ -408,13 +408,32 @@ fn pipeline_configuration_refuses_before_request_reservation_or_native_tokenizat
     use crate::v2::scheduler::pipeline::PipelinePolicy;
     for (window, quantum, fragments) in [(0, 128, 1), (8, 0, 1), (8, 128, 2)] {
         let (mut worker, mailbox) = prefill_fixture();
-        worker.state.pipeline_policy = Some(PipelinePolicy { mixed_prefill_rows: quantum });
+        worker.state.pipeline_policy = Some(PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: quantum });
         worker.state.max_open_batches = window;
         worker.state.prefill_fragments = fragments;
         let tokens = submission(&worker, "bad-pipeline");
         let prompt = change_command(&tokens, |c| { c.tokens.clear(); c.prompt = Some("Meaningful input".into()); });
         rejected_without_admission(&mut worker, &mailbox, &prompt, "pipeline policy requires");
         worker.state.pipeline_policy = None;
+        accepted_without_native(&mut worker, &mailbox, &tokens);
+    }
+}
+
+#[test]
+fn profiled_token_configuration_refuses_zero_and_competing_controller_without_reservation() {
+    use crate::v2::scheduler::{pipeline::PipelinePolicy, service::ServiceBudget};
+    for (tokens, online) in [(0, false), (32, true)] {
+        let (mut worker, mailbox) = prefill_fixture();
+        worker.state.pipeline_policy = Some(PipelinePolicy { mixed_batch_rows: Some(tokens), mixed_prefill_rows: 128 });
+        worker.state.max_open_batches = 4;
+        worker.state.prefill_fragments = 1;
+        if online { worker.service_budget = ServiceBudget::new(250_000); }
+        let tokens = submission(&worker, "bad-profile");
+        let prompt = change_command(&tokens, |c| { c.tokens.clear(); c.prompt = Some("Meaningful input".into()); });
+        rejected_without_admission(&mut worker, &mailbox, &prompt,
+            if online { "profiled mixed token budget" } else { "pipeline policy requires" });
+        worker.state.pipeline_policy = None;
+        worker.service_budget = ServiceBudget::default();
         accepted_without_native(&mut worker, &mailbox, &tokens);
     }
 }

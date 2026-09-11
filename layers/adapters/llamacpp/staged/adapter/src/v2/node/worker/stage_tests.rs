@@ -351,7 +351,7 @@ fn service_budget_actual_handler_checks_route_issue_identity_and_never_retires_f
     use crate::v2::scheduler::service::ServiceBudget;
     let mut head = fixture(ResponseMode::ExactSplit);
     head.worker.state.max_open_batches = 4;
-    head.worker.state.pipeline_policy = Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_prefill_rows: 2 });
+    head.worker.state.pipeline_policy = Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 2 });
     head.worker.service_budget = ServiceBudget::new(150);
     head.handle(submission("request", vec![7; 8])).unwrap();
     head.worker.drive_first_batches().unwrap();

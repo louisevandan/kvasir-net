@@ -75,13 +75,13 @@ pub(super) fn observer(
                     let groups = prefill_count.min(state.max_open_batches);
                     let mut effective = state.ordinary_limits;
                     effective.prefill_members = bound(effective.prefill_members,
-                        prefill_count.div_ceil(state.max_open_batches).max(1));
-                    // Generation uses all ready capacity unless an explicit
-                    // member limit says otherwise. Flight vacancies are not
-                    // generation admission rights.
-                    effective.decode_members = state.ordinary_limits.decode_members;
-                    let decoding_active = population.decode.ready + population.decode.in_flight
-                        + population.decode.waiting > 0 || population.prefill_draining > 0;
+                        (prefill_count + population.prefill_draining).div_ceil(state.max_open_batches)
+                            .max(1).min(prefill_count.max(1)));
+                    let decode_count = population.decode.ready + population.decode.in_flight
+                        + population.decode.waiting;
+                    effective.decode_members = bound(effective.decode_members,
+                        decode_count.div_ceil(state.max_open_batches).max(1));
+                    let decoding_active = decode_count > 0;
                     if decoding_active {
                         effective.prefill_rows = bound(effective.prefill_rows, policy.mixed_prefill_rows);
                     }
@@ -90,6 +90,8 @@ pub(super) fn observer(
                         mixed_prefill_rows: policy.mixed_prefill_rows, effective_limits: effective,
                         decode_coalesce_max_ms: Some(2),
                         population: Some(population), prefill_groups: Some(groups),
+                        decode_groups: Some(decode_count.min(state.max_open_batches)),
+                        mixed_batch_rows: policy.mixed_batch_rows,
                     }
                 });
             *before.lock().unwrap() = Some(crate::v2::commands::SchedulingSnapshot {

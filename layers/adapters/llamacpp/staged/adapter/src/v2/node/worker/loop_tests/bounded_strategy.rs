@@ -3,6 +3,102 @@ use super::*;
 use crate::v2::scheduler::OrdinaryLimits;
 
 #[test]
+fn profiled_pipeline_actual_loop_spends_only_residual_tokens_on_prefill() {
+    let commands: Vec<_> = (0..8).map(|i| request(&format!("profile-tokens-{i}"),
+        if i < 4 { 4 } else { 96 }, 48)).collect();
+    let inputs: Vec<_> = commands.iter().enumerate()
+        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_pacing(8, 4, 1, &inputs, 0, None, None, None,
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+            mixed_batch_rows: Some(3), mixed_prefill_rows: 128,
+        }), 4);
+    h.finish(&commands);
+    let mut mixed = 0; let mut pure_full = 0;
+    for event in h.received.iter().filter(|e| e.envelope.payload_content_type == BATCH_OBSERVATION_CONTENT_TYPE) {
+        let b: BatchObservation = serde_json::from_slice(&event.payload).unwrap();
+        let snapshot = b.scheduling.unwrap(); let policy = snapshot.pipeline.unwrap();
+        let p: usize = b.physical_batches.iter().map(|b| b.prefill_rows).sum();
+        let d: usize = b.physical_batches.iter().map(|b| b.decode_rows).sum();
+        if policy.decoding_active {
+            assert!(p + d <= 3, "profile budget includes generation and all physical slices");
+            if p > 0 && d > 0 {
+                mixed += 1;
+                assert_eq!(d, snapshot.eligible_decode.min(policy.effective_limits.decode_members).min(2));
+                assert!(p <= 3 - d);
+            }
+        } else { pure_full += usize::from(p == BATCH_CAPACITY); }
+    }
+    assert!(mixed > 0 && pure_full > 0);
+    release_notifications::assert_complete(&h);
+}
+
+#[test]
+fn profiled_pipeline_actual_loop_keeps_four_generation_cohorts_across_returns() {
+    let commands: Vec<_> = (0..8).map(|i| request(&format!("decode-cohort-{i}"), 2, 12)).collect();
+    let inputs: Vec<_> = commands.iter().enumerate()
+        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_pacing(8, 4, 1, &inputs, 0, None, None, None,
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None,
+            mixed_prefill_rows: 128,
+        }), 4);
+    h.hold_tail = true;
+    let held_rows = |h: &Harness| h.held_tail.iter().map(|e|
+        CapsuleSet::decode(&e.payload).unwrap().0.iter().map(|c| c.owners.len()).sum::<usize>()).sum::<usize>();
+    h.until("all initial prompt rows at the tail", |h| held_rows(h) == 16);
+    for _ in 0..4 {
+        // Return a complete wave together; ready-set coalescence must not
+        // consume the population in two four-member decode batches.
+        let previous = h.nodes[0].native.lock().unwrap().issued_native.len();
+        h.pending.extend(h.held_tail.drain(..));
+        h.until("all eight independent decode rows after a simultaneous return", |h| held_rows(h) == 8);
+        {
+            let native = h.nodes[0].native.lock().unwrap();
+            assert_eq!(native.issued_native.len() - previous, 4,
+                "eight generation requests must retain four logical flights");
+            for call in &native.issued_native[previous..] {
+                let set = CapsuleSet::decode(call.result.as_ref().unwrap()).unwrap();
+                assert_eq!(set.0.iter().map(|c| c.owners.len()).sum::<usize>(), 2);
+            }
+        }
+        let mut members = std::collections::BTreeSet::new();
+        for event in &h.held_tail {
+            let capsules = CapsuleSet::decode(&event.payload).unwrap();
+            let rows: Vec<_> = capsules.0.iter().flat_map(|c| &c.owners).collect();
+            assert_eq!(rows.len(), 2);
+            assert!(rows.iter().all(|r| r.phase == Phase::Decode));
+            for row in rows { assert!(members.insert(row.sequence_id)); }
+        }
+        assert_eq!(members.len(), 8);
+    }
+    h.resume_tail(); h.finish(&commands);
+    release_notifications::assert_complete(&h);
+}
+
+#[test]
+fn profiled_pipeline_actual_loop_does_not_chunk_initial_short_prompts_for_future_decode() {
+    let commands: Vec<_> = (0..8).map(|i| request(&format!("initial-short-{i}"), 2, 6)).collect();
+    let inputs: Vec<_> = commands.iter().enumerate()
+        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_pipeline(8, 4, 1, &inputs, 0, None, None, None,
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None,
+            mixed_prefill_rows: 1,
+        }));
+    h.hold_tail = true;
+    h.until("four initial logical prompt batches are accepted", |h| h.nodes[0].native.lock().unwrap().issued_native.len() == 4);
+    {
+        let native = h.nodes[0].native.lock().unwrap();
+        for call in &native.issued_native {
+            let capsules = CapsuleSet::decode(call.result.as_ref().unwrap()).unwrap();
+            let rows: Vec<_> = capsules.0.iter().flat_map(|c| &c.owners).collect();
+            assert_eq!(rows.len(), 4, "future decode must not throttle startup prefill");
+            assert!(rows.iter().all(|r| r.phase == Phase::Prefill));
+        }
+    }
+    assert!(h.outputs.is_empty());
+    h.resume_tail(); h.finish(&commands);
+}
+
+#[test]
 fn pipeline_population_actual_loop_keeps_new_prefills_independent_in_the_last_slot() {
     // Pause a real accepted decode only to enqueue one complete new arrival
     // wave. The observer cannot edit worker/request/flight state.
@@ -32,7 +128,7 @@ fn pipeline_population_actual_loop_keeps_new_prefills_independent_in_the_last_sl
     let inputs: Vec<_> = commands.iter().enumerate()
         .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
     let mut h = Harness::observed_with_pipeline(8, 4, 1, &inputs, 0, None, Some(observer), None,
-        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None,
             mixed_prefill_rows: 4,
         }));
     h.hold_tail = true;
@@ -97,7 +193,7 @@ fn pipeline_population_actual_loop_excludes_pending_admission_and_retains_inflig
     let inputs: Vec<_> = commands.iter().enumerate()
         .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
     let mut h = Harness::observed_with_pipeline(8, 4, 1, &inputs, 0, None, None, None,
-        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None,
             mixed_prefill_rows: 1,
         }));
     h.hold_tail = true;
@@ -126,7 +222,7 @@ fn pacing_harness(prompt_rows: usize, observer: Option<IssueObserver>) -> (Harne
     let submissions: Vec<_> = commands.iter().enumerate()
         .map(|(i, c)| submission_event(c, i as u64 + 1, default_route())).collect();
     let mut h = Harness::observed_with_pacing(8, 4, 1, &submissions, 0, None, observer, None,
-        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None,
             mixed_prefill_rows: 1,
         }), 4);
     h.hold_tail = true;
@@ -188,18 +284,28 @@ fn phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input() 
             captured.1 = true;
         }
     });
-    let (mut h, commands) = pacing_harness(2, Some(observer));
-    h.until("four prompt results retained at the tail", |h| h.held_tail.len() == 4);
-    // Preserve all eight two-token requests and the one-row mixed quantum.
-    // Final-prefill flights now reserve future generation service, so their
-    // siblings can have partial prompt work left. Return one tail at a time
-    // until real decode-only eligibility occurs, rather than naming an old
-    // fixed batch ordinal. While waiting, no additional input/tail is sent.
-    for _ in 0..32 {
+    // Add one output to the first request so a completed peer leaves one
+    // eligible decode while the other three cohorts remain in flight.
+    let commands: Vec<_> = (0..8).map(|i| request(&format!("timer-{i}"), 2,
+        if i == 0 { 7 } else { 6 })).collect();
+    let submissions: Vec<_> = commands.iter().enumerate()
+        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_pacing(8, 4, 1, &submissions, 0, None, Some(observer), None,
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+            mixed_batch_rows: None, mixed_prefill_rows: 1,
+        }), 4);
+    h.hold_tail = true;
+    h.until("all initial prompt physical results", |h| h.held_tail.iter().map(|e|
+        CapsuleSet::decode(&e.payload).unwrap().0.iter().map(|c| c.owners.len()).sum::<usize>()).sum::<usize>() == 16);
+    h.pending.extend(h.held_tail.drain(..));
+    h.until("four full generation cohorts", |h| h.held_tail.len() == 4);
+    for _ in 0..6 {
         if refusal.lock().unwrap().1 { break; }
-        let first = h.held_tail.pop_front().unwrap();
+        let index = h.held_tail.iter().position(|e| CapsuleSet::decode(&e.payload).unwrap().0.iter()
+            .flat_map(|c| &c.owners).any(|r| r.request_id == "timer-0")).unwrap();
+        let first = h.held_tail.remove(index).unwrap();
         h.pending.push_back(first);
-        h.until("one returned tail is replaced without any further external input", |h| h.held_tail.len() == 4);
+        h.until("returned cohort progresses without another input", |h| h.held_tail.len() == 4);
     }
     assert!(refusal.lock().unwrap().1, "must observe refusal followed by unchanged authority");
     let calls;
@@ -225,7 +331,7 @@ fn pipeline_policy_actual_loop_fills_independent_prefills_and_bounds_mixed_work(
     let submissions: Vec<_> = commands.iter().enumerate()
         .map(|(i, c)| submission_event(c, i as u64 + 1, default_route())).collect();
     let mut h = Harness::observed_with_pipeline(8, 4, 32, &submissions, 0, None, None, None,
-        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None,
             mixed_prefill_rows: 1,
         }));
     h.hold_tail = true;

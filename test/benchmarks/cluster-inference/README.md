@@ -55,6 +55,12 @@ tokenization. Per-request EOS, length, full prose, arithmetic and UTF-8 are sepa
 The built-in workloads require at least 1,024 generated tokens, allow 4,096, and require EOS plus
 record IDs and a Korean conclusion marker. Substring checks do not certify numerical correctness.
 No profile increases fragment/resident windows or approves B2/B3, GPU saturation or H5 performance.
-The pipeline profile derives phase member limits from eligible requests and free flight slots;
+The pipeline profile derives independent phase cohorts from admitted ready/inflight populations
+and the fixed flight window; simultaneous returns do not merge all generation work.
+Final prefill returns preserve initial cohort width without activating the mixed-work limit.
 it requires a finite open window, fragment limit one and positive mixed prefill quantum.
 Its 128-row mixed quantum is an experimental work limit, not a measured latency guarantee.
+Optional `P4_STAGED_MIXED_BATCH_ROWS` bounds decode plus prefill rows while decode is active.
+It requires pipeline mode and a positive integer. Select its value from a separately recorded
+profile before sealing measurements; decode consumes the budget first, then prefill uses the
+remainder. It cannot be combined with the experimental online service-time controller.

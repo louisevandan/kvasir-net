@@ -451,9 +451,12 @@ impl Worker {
                 && !self.state.equal_sequence_ubatch && !self.state.atomic_batch_exclusive)?;
         if let Some(policy) = self.state.pipeline_policy {
             if self.state.max_open_batches == 0 || policy.mixed_prefill_rows == 0
-                || self.state.prefill_fragments != 1
+                || self.state.prefill_fragments != 1 || policy.mixed_batch_rows == Some(0)
             {
                 return Err("pipeline policy requires a finite open window, positive mixed quantum and fragment limit one".into());
+            }
+            if policy.mixed_batch_rows.is_some() && self.service_budget.enabled() {
+                return Err("profiled mixed token budget cannot use the experimental online service controller".into());
             }
         }
         let submitted_route = event

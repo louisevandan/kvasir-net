@@ -9,7 +9,7 @@ fn service_calibration_actual_loop_issues_a_small_probe_before_a_large_prompt_re
     let submissions: Vec<_> = commands.iter().enumerate()
         .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
     let mut h = Harness::observed_with_service(8, 4, 1, &submissions, 0, None, None, None,
-        Default::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_prefill_rows: 4 }),
+        Default::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 4 }),
         0, Some(1));
     h.hold_tail = true;
     h.until("a cold one-row calibration may follow the first full prompt before either returns", |h| h.held_tail.len() >= 2);
@@ -47,7 +47,7 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
         None,
         None,
         Default::default(),
-        Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+        Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None,
             mixed_prefill_rows: 4,
         }),
         0,
@@ -114,8 +114,9 @@ fn service_budget_actual_loop_learns_all_stages_defers_prefill_and_finishes_ever
         }
         if eligible > 1 {
             ready_multi += 1;
-            assert!(decode >= eligible.min(BATCH_CAPACITY - 1),
-                "ready generation must not be divided by vacant flights: eligible={eligible}, selected={decode}");
+            let limit = observation.scheduling.as_ref().unwrap().pipeline.unwrap().effective_limits.decode_members;
+            assert_eq!(decode, eligible.min(limit).min(BATCH_CAPACITY - 1),
+                "generation must fill its independent cohort before prefill");
         }
         match decision.verdict {
             ServiceVerdict::DeferPrefill => {
