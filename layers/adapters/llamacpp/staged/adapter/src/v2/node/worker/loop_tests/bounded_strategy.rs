@@ -3,6 +3,27 @@ use super::*;
 use crate::v2::scheduler::OrdinaryLimits;
 
 #[test]
+fn request_storage_actual_loop_retires_after_completion_and_slot_reuse() {
+    use crate::v2::node::request_budget::{RequestBudget, RequestCost};
+    let observed = Arc::new(Mutex::new((None::<RequestBudget>, 0usize)));
+    let copied = Arc::clone(&observed);
+    let observer: IssueObserver = Arc::new(move |_, state| {
+        let mut view = copied.lock().unwrap();
+        view.0 = Some(state.request_budget.clone());
+        view.1 = view.1.max(state.request_budget.used().requests);
+    });
+    let commands: Vec<_> = (0..24).map(|i| request(&format!("storage-{i}"), 12, 6)).collect();
+    let submissions: Vec<_> = commands.iter().enumerate()
+        .map(|(i, c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_events(3, 4, 1, &submissions, 0, None, Some(observer), None);
+    h.finish(&commands);
+    let view = observed.lock().unwrap();
+    assert!(view.1 > SEQUENCE_CAPACITY as usize, "pending inputs must also be charged");
+    assert_eq!(view.0.as_ref().unwrap().used(), RequestCost::default(),
+        "real completion/release must retire inputs without ending the worker");
+}
+
+#[test]
 fn bounded_strategy_actual_loop_keeps_independent_work_open_and_releases_every_slot() {
     let commands: Vec<_> = (0..8)
         .map(|i| request(&format!("bounded-{i}"), 12, 6))

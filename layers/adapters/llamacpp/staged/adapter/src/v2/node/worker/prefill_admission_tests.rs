@@ -67,6 +67,7 @@ fn admission_snapshot(worker: &Worker) -> serde_json::Value {
     value["active_effect_ids"] = serde_json::json!(worker.active_effect_ids);
     value["held_input"] = serde_json::json!(format!("{:?}", worker.held_input));
     value["deferred_ack_error"] = serde_json::json!(format!("{:?}", worker.deferred_ack_error));
+    value["request_storage"] = serde_json::json!(worker.state.request_budget.used());
     value
 }
 
@@ -353,4 +354,51 @@ fn two_available_slots_admit_the_oldest_two_requests_before_the_new_candidate() 
     );
     assert!(worker.state.free_sequences.is_empty());
     assert_eq!(worker.state.next_incarnation, 4);
+}
+
+#[test]
+fn request_storage_refuses_each_aggregate_axis_before_admission_and_preserves_retries() {
+    use super::super::super::request_budget::{RequestBudget, RequestCost};
+    for axis in 0..4 {
+        let (mut worker, mailbox) = prefill_fixture();
+        // Enough resident slots is deliberately insufficient: this also covers
+        // pending prompts once there are no free slots.
+        worker.state.free_sequences.clear();
+        let first = submission(&worker, "budget-a");
+        accepted_without_native(&mut worker, &mailbox, &first);
+        let cost = worker.state.request_budget.used();
+        assert_eq!((cost.requests, cost.prompt_tokens, cost.output_tokens), (1, 1, 1));
+        assert!(cost.bytes > first.payload.len());
+        // Reset only this fixture's empty account, then replay the real handler.
+        worker.state.requests.clear();
+        worker.state.pending.clear();
+        assert_eq!(worker.state.request_budget.used(), RequestCost::default());
+        let mut limit = RequestCost { requests: usize::MAX, bytes: usize::MAX,
+            prompt_tokens: usize::MAX, output_tokens: usize::MAX };
+        match axis {
+            0 => limit.requests = cost.requests,
+            1 => limit.bytes = cost.bytes,
+            2 => limit.prompt_tokens = cost.prompt_tokens,
+            _ => limit.output_tokens = cost.output_tokens,
+        }
+        worker.state.request_budget = RequestBudget::new(limit);
+        accepted_without_native(&mut worker, &mailbox, &first);
+        let second = submission(&worker, "budget-b");
+        rejected_without_admission(&mut worker, &mailbox, &second, "request storage budget exhausted");
+
+        // A late observation/effect may still own the input after the request
+        // leaves the active map. It keeps the claim without copying the prompt.
+        let key = request_key("declared-pipeline", "budget-a");
+        let late = worker.state.requests[&key].shared_input();
+        worker.state.requests.remove(&key);
+        worker.state.pending.clear();
+        assert_eq!(worker.state.request_budget.used(), cost);
+        rejected_without_admission(&mut worker, &mailbox, &second, "request storage budget exhausted");
+        assert_eq!(late.command.request_id, "budget-a");
+        drop(late);
+        assert_eq!(worker.state.request_budget.used(), RequestCost::default());
+        // Same rejected identity now succeeds; refusal did not consume it.
+        accepted_without_native(&mut worker, &mailbox, &second);
+        assert_eq!(worker.state.request_budget.used(), cost);
+    }
 }

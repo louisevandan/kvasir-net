@@ -21,6 +21,8 @@ pub struct RequestInput {
     pub command: InferenceCommand,
     pub template: Event,
     pub reply: String,
+    // Last field: owned data retires before returning its storage claim.
+    reservation: Option<super::request_budget::RequestReservation>,
 }
 
 /// Read-only input ownership for worker-side provenance and batch diagnostics.
@@ -167,6 +169,15 @@ impl SettlementRefusal {
 }
 
 impl RequestState {
+    pub(crate) fn new_reserved(
+        command: InferenceCommand, template: Event, reply: String,
+        incarnation: u64, reservation: super::request_budget::RequestReservation,
+    ) -> Self {
+        let mut request = Self::new(command, template, reply, incarnation, None);
+        Arc::get_mut(&mut request.input).expect("new input is unique").reservation = Some(reservation);
+        request
+    }
+
     pub(crate) fn shared_input(&self) -> SharedRequestInput {
         SharedRequestInput(Arc::clone(&self.input))
     }
@@ -183,6 +194,7 @@ impl RequestState {
                 command,
                 template,
                 reply,
+                reservation: None,
             }),
             incarnation,
             sequence_id,
@@ -403,6 +415,7 @@ impl PreparedIssue {
 pub struct AdapterState {
     pub sessions: BTreeMap<String, PipelineSession>,
     pub requests: BTreeMap<String, RequestState>,
+    pub(crate) request_budget: super::request_budget::RequestBudget,
     pub pending: VecDeque<String>,
     pub free_sequences: VecDeque<u32>,
     pub batch_capacity: usize,
@@ -488,6 +501,7 @@ impl Default for AdapterState {
         Self {
             sessions: BTreeMap::new(),
             requests: BTreeMap::new(),
+            request_budget: super::request_budget::RequestBudget::default(),
             pending: VecDeque::new(),
             free_sequences: VecDeque::new(),
             batch_capacity: 0,

@@ -790,6 +790,20 @@ RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급
 
 #### 불변 수용 입력과 가변 진행 후보
 
+**수용 입력 저장 예산 (2026-09-11 구현):** `node/request_budget.rs`는 head의 pending/active 요청과
+후속 효과가 공유 보관하는 입력을 같은 계정으로 제한한다. 기본 한도는 4,096개 입력,
+512MiB 보관 footprint, 입력 토큰 합계 16Mi, `max_tokens` 합계 16Mi다. 슬롯 수와 별도이며
+수용 거부가 request/session-key/incarnation/free-slot/기존 요청의 예약을 변경하면 안 된다.
+footprint는 원본 Event와 정규화 command의 독립 allocation capacity, reply 및 보수적인 입력/부기
+비용을 포함한다. tokenizer의 일시 메모리·KV·발행 row/capsule·미래 출력 바이트·broker receipt는
+이 계정 밖이다. 출력 토큰 예약은 미래 출력 **바이트** 예약이 아니다. B2/B3 전체 완료를 뜻하지 않는다.
+
+예약은 모든 수용 검증과 read-only tokenization 뒤, 첫 admission write 전에 확보한다.
+입력은 `Arc<RequestInput>`로 공유하며, 예약도 한 실제 입력에 한 번 과금된다. request map에서
+제거돼도 공유 입력이 살아 있으면 반환하지 않고, 마지막 input의 데이터가 파기된 뒤 반환한다.
+`P4_STAGED_TRACE_REQUEST_STORAGE`는 수용 시 해당 node/load의 입력 계정 값을 기록한다.
+정상 완료·전폭 해제·slot 재사용의 계정 퇴역은 실제 Worker loop 시험으로 검사한다.
+
 수용 정규화가 끝난 command(tokens/options 포함), 원본 Event, reply 출처는 이후 후보 전이의
 변경 대상이 아니다. `RequestState` 복사는 이 입력을 공유하고 prompt/ready/outstanding 등 진행
 상태만 독립적으로 복사한다. 생산 경로에는 공유 입력의 가변 접근자·copy-on-write를 제공하지 않는다.

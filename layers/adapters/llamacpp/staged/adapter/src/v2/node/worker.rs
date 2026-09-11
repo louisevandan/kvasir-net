@@ -467,21 +467,28 @@ impl Worker {
                 command.session_key.as_deref().unwrap_or("-")
             )
         });
+        // Reserve pending/active input before identity, incarnation or slot
+        // writes. Tokenization above is read-only; no KV/native issue occurred.
+        // The claim follows the shared immutable input through late effects.
+        let cost = super::request_budget::RequestCost::input(&command, event, &reply)?;
+        let reservation = self.state.request_budget.reserve(cost)?;
         // First admission write. This is still the sole worker mutator: no
         // handler, publication or yield intervenes before commit_admission.
-        // Future request-storage reservation must also precede this line;
-        // these validation checks do not establish a count/byte memory budget.
         if remember_key {
             self.state
                 .remember_session_key(scope, command.session_key.clone());
         }
         self.state.requests.insert(
             key.clone(),
-            RequestState::new(command, event.clone(), reply, incarnation, None),
+            RequestState::new_reserved(command, event.clone(), reply, incarnation, reservation),
         );
         self.state.next_incarnation = next_incarnation;
         self.state.pending.push_back(key);
         self.commit_admission(admission_count);
+        if std::env::var_os("P4_STAGED_TRACE_REQUEST_STORAGE").is_some() {
+            crate::v2::record::record(&format!("P4_REQUEST_STORAGE node={:?} load={} held={:?}",
+                self.endpoint, self.state.load_generation, self.state.request_budget.used()));
+        }
         if let Some(record) = admission_record {
             // This record says ADMITTED, not merely parsed or attempted.
             crate::v2::record::record(&record);

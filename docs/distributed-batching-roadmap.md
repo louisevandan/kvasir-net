@@ -47,6 +47,12 @@ Hy3 재실기를 하나의 작업으로 수행한다. 기존 두 증거 ZIP은 �
 
 이 재개 항목이 현재 첫 행동을 정한다. 아래 이전 진행표의 미완 예산/품질 게이트는 그대로 열린다.
 
+**재개 진행:** 최신 pin의 26개 패치가 clean replay/분류 검사를 통과했다(`0cf373d83`, 빌드/실기는 진행 중).
+수용 입력 계정은 pending/active/공유 provenance의 count·capacity bytes·입력/출력 토큰을 제한하도록
+실제 PREFILL 소비 경로에 연결했다. 이것은 B2/B3 전체가 아니며 native 반환/outbox/broker/remote grant는 남아 있다.
+수용 입력 단위는 workspace **1391 passed / 0 failed / 7 ignored**(58 summaries), 실제 소비 시험2개,
+독립 변이(수용 우회1실패·퇴역 누락2실패)를 확인했다. 빌드/후속 예약/배치 작업은 계속 진행한다.
+
 **단일 main 운영 (2026-09-11 사용자 지시):** 장기 개발·릴리즈 기준은 `main` 하나다. 모델별 개발 브랜치는 운영하지 않는다.
 merge `429e057de`로 임시 Hy3의 upstream/메모리/physical-wire 호환 변경과 main의 하드웨어 조회·경로·Linux 링크 수정을 통합하고 push했다.
 모델·클러스터·정책·워크로드·runtime identity는 `test/benchmarks/cluster-inference/` 공통 구성기의 독립 설정이다. 배포/lifecycle/deadline runner의 완전한 공통화는 후속 작업이다.

@@ -16,6 +16,7 @@ mod issue_tests;
 mod issue_witness_tests;
 pub(crate) mod ownership;
 pub(crate) mod physical_receive;
+pub(crate) mod request_budget;
 pub(crate) mod state;
 mod worker;
 
