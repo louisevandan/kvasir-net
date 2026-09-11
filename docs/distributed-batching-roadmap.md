@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — MI250·Hy3 동시 실기 선별 완료, CPU 예산/묶음 정책 상호작용 확인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — 단일 main 통합 및 긴 출력 실기. Hy38/8·MI250 단일8stage16/16 완료, 품질/메모리/긴 prefill 대기 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -17,16 +17,16 @@
 ### 0.V1.1 MI250·Hy3 통합 수정계획 (2026-09-11)
 
 **단일 main 운영 (2026-09-11 사용자 지시):** 장기 개발·릴리즈 기준은 `main` 하나다. 모델별 개발 브랜치는 운영하지 않는다.
-이번 임시 Hy3 브랜치의 upstream/메모리/physical-wire 호환 변경을 main의 하드웨어 조회·경로·Linux 링크 수정과 합친다.
-모델·클러스터·정책·워크로드·runtime identity는 공통 실험 실행기의 독립 설정으로 관리한다.
+merge `429e057de`로 임시 Hy3의 upstream/메모리/physical-wire 호환 변경과 main의 하드웨어 조회·경로·Linux 링크 수정을 통합하고 push했다.
+모델·클러스터·정책·워크로드·runtime identity는 `test/benchmarks/cluster-inference/` 공통 구성기의 독립 설정이다. 배포/lifecycle/deadline runner의 완전한 공통화는 후속 작업이다.
 과거 측정 소스/바이너리 해시는 불변 증거로 보관하며, 통합 소스로 재배포하지 않은 실기를 통합 main의 승인으로 표시하지 않는다.
-통합 게이트와 push 후 임시 브랜치는 폐기하고, 이후 실험 결과와 수정은 main에 반영한다.
+통합 게이트와 push 후 병합된 임시 branch ref를 정리했다. 로컬·GitHub에는 main만 남고, 기존 worktree는 동일 commit의 detached 상태로 보존했다. 이후 실험 결과와 수정은 main에 반영한다.
 
 **구현 진행 (2026-09-11):** V1.1-0의 선택 시점 진단·실제 OUTPUT 수신시각과 V1.1-2의
 실험용 phase별 요청/행 상한을 구현했다. V1.1-0 전체 또는 V1.1-2 승격 완료는 아니다.
 V1.1-1 B2/B3/receipt 예산은 미완이며 resident/open/fragment 창을 확대하지 않았다.
 새 정책은 기본 비활성이고 ordinary attention에만 적용한다. 두 클러스터 GPU 실기 선별을 수행했으며 H5 성능/서비스 승인은 미완료다.
-로컬 최종 게이트: workspace **1384/0/7**(58 summary, filtered 0), 변이 실패 **1/5/3/1**, docs-lint 92 clean.
+배치 구현 당시 게이트는 workspace1384/0/7·변이 실패1/5/3/1이다. 통합 main 게이트는 **1389/0/7**(58 summary), Node21/21, CPU Release CTest15/15, docs-lint94 clean이다. CPU 게이트를 GPU 승인으로 확대하지 않는다.
 [구현·검증 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#bounded-implementation)을 따른다.
 다음은 V1.1-0의 미발행 구간/요청별 사유·단조시계 issue→settle·byte 수명 계측을 닫고 V1.1-1을 수행하는 것이다.
 그 전에는 이번 선택 후보를 기본 정책으로 승격하거나 flight 창을 늘리지 않는다.
@@ -40,6 +40,23 @@ native CPU threads4를 쓴 cap4/min4 후보는 **34.05TPS**, ITL p50 **0.319s**,
 Hy3도 한 쌍의 선별 결과다. context100k/출력256의 짧은 부하이며 실제100k prefill·정상 EOS·연속 웨이브 승인이 아니다.
 MI 소스d5256af44, Hy3는 fleet 호환을 유지한b9deee4ce와 동일한 기존 Mac downstream agent를 사용했다.
 [원자료·수치·실패·해시](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#dual-cluster-screening)를 따른다.
+
+**긴 입력·긴 출력 실기 (동일 날짜, 별도 워크로드):** 사용자 2시간 한도 안에 Hy35호스트/6stage와
+비점유 MI250-B1호스트/8stage를 병행했다. Hy3는18809생성/3834.099s=4.9057TPS,
+8/8 EOS·완료·해제·UNLOAD 및 선두 계산8/8이다. MI cap4 후보는51990생성/1315.775s=39.5128TPS,
+16/16 완료·해제·UNLOAD, EOS14/length2, 선두 계산2/16이다. 두 모델 모두 전체 응답 품질은 미승인이다.
+context는100k지만 최장 실제 입력은Hy3 42154/MI42413토큰이며 실제100k prefill을 완료하지 않았다.
+Hy3 TTFT max37.13분, MI 후보 agent peak RSS30.934GiB 및 UNLOAD 뒤30.645GiB 잔류를 확인했다.
+MI 후보의 모든 첫 출력 전/후 ITL p50은2.669/0.203s로 장기 prefill의 영향이 크다.
+수치의 분모·동일 호스트 대조·내용 실패·봉인 범위는
+[긴 실기 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#long-output-20260911)을 따른다.
+
+**긴 실기 이후 다음 첫 구현:** V1.1-0의 live/retired receipt byte, enqueue/dequeue, 미발행 사유와
+head 단조시계 issue→settle를 실제 소비 경로에 결속한다. worker 내부 ingress는 dequeue 이전 queue 대기 계측이 아니다.
+그다음 V1.1-1의 B2/B3 예약·broker byte 퇴역을 duplicate/replay/결과 불명 보존과 함께 닫는다.
+누적 payload와 RSS의 근접만으로 heap 원인을 확정하지 않으며 단순 receipt 삭제나 resident 상향으로 우회하지 않는다.
+그 뒤 고정 창 안의 prefill quantum64/128/256, decode 서비스 예약·aging·tail coalescing deadline을 단일 축으로 평가한다.
+MI의 산술 실패는 동일 prompt/native 품질 기준선으로 분산 경로 영향과 구분한다. 새 기본값 승격 및 flight 창 확대는 보류다.
 
 **이번 결과가 정하는 다음 작업:**
 
