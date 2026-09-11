@@ -56,7 +56,7 @@ pub async fn run(own: Address, broker: Arc<EventBroker>, mut receiver: EventRece
         let (payload_content_type, payload) = match event.envelope.payload_content_type.as_str() {
             AGENT_INSPECT_CONTENT_TYPE => (
                 AGENT_SNAPSHOT_CONTENT_TYPE,
-                inspection::snapshot(&nodes).await,
+                inspection::snapshot(&nodes, &broker).await,
             ),
             content_type => {
                 let result = match content_type {

@@ -378,3 +378,6 @@ mod failure_tests;
 
 #[path = "completion_tests.rs"]
 mod completion_tests;
+
+#[path = "receipt_memory_tests.rs"]
+mod receipt_memory_tests;

@@ -123,6 +123,15 @@ machine {
   probes { memory, gpus } { source, state, detail }
 }
 nodes[] { node_id, generation, adapter_kind, state }
+broker {
+  sampled_at_unix_ms, state
+  receipts {
+    duplicate_window
+    indexed, retired, allocated { events, event_bytes, payload_capacity_bytes, unmeasured_events }
+    peak_allocated_event_bytes, committed_events, evicted_events, freed_events
+    event_index_capacity, order_capacity, sequence_entries, sequence_capacity
+  }
+}
 ```
 
 The node list is the agent's live registry, sorted by `node_id`. `state` is the
@@ -135,6 +144,25 @@ probe from a probe failure instead of reporting either as an empty machine.
 `utilization_gpu_percent` is the NVIDIA activity sample and is not SM occupancy.
 Inspection does not claim model readiness, protocol-wide health, or fleet
 atomicity.
+
+`broker.receipts` is an additive, backend-neutral schema-1 observation. `indexed`
+means exact duplicate receipts in the count window; `retired` means evicted from
+that index but still pinned by a completion-front ticket. Neither word describes
+native execution, KV completion, or a request's lifecycle. `allocated` is their
+sum. Dequeuing/mutating the destination Event does not retire its independent
+receipt. The last receipt reference drops the Event buffers before reporting
+them freed; high-water bytes include the transient insertion before count eviction.
+
+`event_bytes` counts each exact receipt Event's inline storage and owned buffer
+capacities, including payload capacity; it excludes the separately delivered
+Event, indexes/keys, Arc/receipt bookkeeping, allocator overhead, native buffers,
+and RSS. Index capacities are entry counts, not bytes. Unmeasurable byte totals
+and counters outside the machine's numeric range are `null`, never a false zero.
+The sample includes the admitted INSPECT input and precedes dispatch of its own
+reply. Broker failure reports `state=failed`, `receipts=null`, and `detail`.
+This O(1) snapshot leaves full Event equality, sequence scope, and count eviction
+unchanged. It adds no byte admission limit, early expiry, receiver reservation,
+or causal return credit. Older agents may omit `broker`.
 
 ## Node and adapter contract
 

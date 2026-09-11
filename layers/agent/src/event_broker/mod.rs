@@ -4,6 +4,8 @@
 //! event moved to one bounded queue; it never means the target completed work.
 
 mod ledger;
+mod receipt_memory;
+pub use receipt_memory::{ReceiptMemorySnapshot, ReceiptStorageSnapshot};
 
 use ledger::{EventLedger, LedgerVerdict};
 use p4_protocol::Address;
@@ -123,7 +125,7 @@ pub(crate) struct CompletionDispatch {
 }
 
 enum CompletionDispatchKind {
-    Existing(Arc<Event>),
+    Existing(Arc<receipt_memory::Receipt>),
     Destination {
         delivery: Delivery,
         sender: EventSender,
@@ -132,6 +134,13 @@ enum CompletionDispatchKind {
 }
 
 impl EventBroker {
+    /// O(1) snapshot of exact duplicate receipts, excluding destination storage,
+    /// index/Arc/allocator overhead, native buffers and process RSS. No payload
+    /// contents, adapter vocabulary, eviction or reservation policy is changed.
+    pub fn receipt_snapshot(&self) -> Result<ReceiptMemorySnapshot, DispatchError> {
+        Ok(self.ledger.lock().map_err(|_| DispatchError::Poisoned)?.receipt_snapshot())
+    }
+
     /// Reserve the actual destination before the adapter relinquishes an
     /// independent ordinary completion. No broker lock survives this call.
     pub(crate) fn reserve_completion(
@@ -171,7 +180,7 @@ impl EventBroker {
                 // The independent receipt was present when this synchronous
                 // operation began. Pinning it prevents concurrent window eviction
                 // from changing a Duplicate into a new delivery or requiring space.
-                return if receipt.as_ref() == &event {
+                return if receipt.event() == &event {
                     Ok(DispatchOutcome::Duplicate)
                 } else {
                     Err(DispatchFailure::new(DispatchError::ConflictingDuplicate, event))

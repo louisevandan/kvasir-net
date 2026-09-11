@@ -82,6 +82,15 @@ V1.1-3의 적은100k 요청 fragment 창 확대는 token-range/KV 순서와 반�
 같은 실제100k workload에서 기존 tuned cap4/cap2까지 대조하고 정상 응답/H5 반복 뒤 기본값을 결정한다.
 아래 실기 수치와 당시의 “다음”은 이력이며 이 현재 순서를 대체하지 않는다.
 
+**반환 수명 계측 진행:** broker의 exact Event 사본을 indexed/retired/allocated로 구분하고
+실제 INSPECT 제어 응답에 바이트·퇴역·최종 해제량을 연결했다. 큐 dequeue와 원장 퇴역, 마지막
+참조 해제를 별도로 관측한다. 일반/예약 completion dispatch 및 실제 control loop 반례를 따른다.
+workspace1401/0/7·독립 변이2종 각2실패, 실제 로컬 TCP에서64MiB 처리 뒤 남은 payload67112267B의
+송수신 원문 대조를 완료했다. GPU 실기와 B2/B3 완료를 뜻하지 않는다.
+이는 V1.1-0 중 receipt 관측 단위이며 B2/B3 byte 제한이나 조기 삭제가 아니다. 다음은 이 값으로
+실제 retained 저장소를 귀속하고 actor queue/반환 예약을 연결하는 것이다. 검증 결과는
+[receipt 수명 계측](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#receipt-memory-observation)을 따른다.
+
 **단일 main 운영 (2026-09-11 사용자 지시):** 장기 개발·릴리즈 기준은 `main` 하나다. 모델별 개발 브랜치는 운영하지 않는다.
 merge `429e057de`로 임시 Hy3의 upstream/메모리/physical-wire 호환 변경과 main의 하드웨어 조회·경로·Linux 링크 수정을 통합하고 push했다.
 모델·클러스터·정책·워크로드·runtime identity는 `test/benchmarks/cluster-inference/` 공통 구성기의 독립 설정이다. 배포/lifecycle/deadline runner의 완전한 공통화는 후속 작업이다.
