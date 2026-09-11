@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — stage별 prefill 서비스 예산을 실제 발행에 연결, 로컬1430/0/7·두 실제 TCP agent/CPU stage의4/4 EOS·해제·UNLOAD/DELETE. 비용 초과16건에서 실제 decode-only 발행을 확인했으며 성능 대조는 아직 없다. 미래 반환/receipt 선예약은 미완. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 시간 정책의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — e6e1f42f7 원격 선별 MI6arm·96/96 EOS/해제/UNLOAD, 실제 입력213/4255토큰. native451의 출력층 포함 GPU 계산과 기존 계획의 불일치로 stage마다 첫 반복층이 CPU였음을 확인했다. 배정 정정 뒤 자동/최대2건 묶음은74.70/75.02 rawTPS·GPU 표본56.28/55.33%로 사실상 같다. 고정250ms 시간 예산·2건 기본값은 채택하지 않는다. Hy3는 로컬 Windows 방화벽 권한으로 이번 추론 미실행. GPU 배정 검증/100k 실입력/정상 goodput/반환 선예약/H5는 미완. 제품 코드의 마지막 로컬 게이트1430/0/7과 구분한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -72,16 +72,30 @@ Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 
 원자료·실행파일132경로의 전후 해시·정리 및 인과 분석은
 [독립 prefill 대조 실기](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-cohorts-20260911)에 있다.
 
-**현재 다음 첫 행동:** 모든 참여 agent의 비용 피드백 지원을 맞추고 고정된 기존 안전 창에서
-누적 prefill 서비스 예산 off/on의 두 클러스터 대조를 준비한다. V1.1-0/1의 미발행 사유·native 비용·
-active/retired receipt byte 및 B2/B3 반환 선예약은 계속 열린다.
-이 비용 단위는 open/resident/fragment를 확대하지 않는다. 이어 V1.1-2에서 prefill row 폭·decode 참여 수·flight 목표를 분리한다.
-Hy3의 mixed129행은head RPC2.692s 중native2.685s이며, 모든 첫 출력 전 ITL p50이11.207s다.
-따라서 정적128행을 **각 stage 앞에 쌓이는 prefill 예상 누적시간과 decode deadline**으로 제한하는 정책으로 발전시킨다.
-deadline coalescing과 prefill deficit/aging을 함께 적용하며 queue 포함 RTT로 flight를 무한 확대하지 않는다.
-min gate도 요청 수와 prefill 행을 구분한다. 다음 축은KV 우선/host CPU·RAM 예산 아래 느린 stage의 컷·offload 재계획이다.
-V1.1-3의 적은100k 요청 fragment 창 확대는 token-range/KV 순서와 반환 안전성을 증명한 뒤다.
-같은 실제100k workload에서 기존 tuned cap4/cap2까지 대조하고 정상 응답/H5 반복 뒤 기본값을 결정한다.
+**현재 다음 첫 행동:** 새 비용 정책의 원격 선별을 마쳤으므로 GPU 배정 의도와 PLAN/LOAD의 실제 layer/device를
+검증하는 게이트를 먼저 구현한다. MI의 native451은 GPU층 수에 출력층을 포함하지만 기존 OUTER 계획은
+`45-cut_begin`을 써서 각 stage의 첫 repeating layer를 CPU로 배정했다. 같은 정책에서 이 배정만 정정하자
+raw27.42→75.02TPS·긴 TTFT72.813→22.351초였다. 이 증가는 배치 알고리즘만의 성과가 아니다.
+정정된 계획을 다음 MI 기준선으로 고정하되 다른 native pin/Hy3에 숫자+1을 일괄 적용하지 않는다.
+
+이전 CPU 배정에서 독립 prefill 최대2건은 head 유휴670→132ms·raw14.86→27.42TPS를 만들었지만
+혼합 ITL863→1078ms가 됐다. 정정된 GPU 배정에서는 자동 정책도 이미1개 prefill 요청씩 발행해
+상한2 추가 효과가 없었다(74.70/75.02TPS). 따라서 모델명별2건 상수를 기본값으로 넣지 않는다.
+다음 정책 단위는 phase별 active/ready/inflight 인구와 stage 비용을 보고 독립 묶음·행 폭·flight 목표를
+분리하는 것이다. 느린/offload 경로의8요청 동시 outstanding 반례와 GPU 경로의 기존 공급 무회귀를 함께 검증한다.
+
+고정250ms 서비스 예산은 최대2건 조건에서 raw27.42→13.87TPS·긴 TTFT72.813→205.312초로 악화해
+권장/기본 정책으로 채택하지 않는다. 시간 피드백은 유지하고, 실행 잔여·기발행 작업·전송을 반영한
+decode tail 완료시각 아래 discrete chunk와 coalescing을 고르는 정책으로 발전시킨다. prefill deficit/aging도 결속한다.
+기존 안전 창은 먼저 유지하며, 실제100k 입력 확대 전 exact broker receipt/미래 반환 byte 선예약을 닫는다.
+실제100k 다수 도착/생성 중 유입/1–2개 긴 요청·긴 자연 EOS와 내용 수용을 별도로 반복한다.
+V1.1-3 fragment 창 확대는 KV 순서·취소/반환 증명 뒤이며 H5·최적 정책·정상 goodput은 여전히 미승인이다.
+
+Hy3 새5호스트 agent 빌드는 끝났지만 이번 연결 검사는 M42 새 실행파일의 TCP 차단에서 멈췄다.
+M42 임시 규칙은 복원했으며 로컬 시험 실행파일 TCP51118은 관리자 권한 부족으로 변경하지 못했다.
+필요한 로컬 허용을 사용자에게 전달했고, 허용 뒤 같은 fleet의 추론을 재개한다. CPU 전문가/DRAM 병목은
+KV 우선 조건 아래 cut/weight 배치도 함께 재계획한다. MI6arm을 Hy3/다중 물리 호스트 승인으로 확대하지 않는다.
+[원격6arm·인과 분리·다음 구현](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#service-screen-placement)을 따른다.
 아래 실기 수치와 당시의 “다음”은 이력이며 이 현재 순서를 대체하지 않는다.
 
 **고정 창 안의 발행 결함 우선 수정 (2026-09-11, 로컬 검증 완료):** 반환 예산의 전체 연결은 유지하되,
