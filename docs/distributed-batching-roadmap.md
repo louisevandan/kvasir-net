@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — 단일 main 통합 및 긴 출력 실기. Hy3 8/8·MI250 단일8stage 16/16 완료, 품질/메모리/긴 prefill 대기 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — e4503e10f 독립 prefill 묶음 대조 실기 마감. MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -60,7 +60,27 @@ CUDA sm_86 Release CTest16/16, MI250 gfx90a ROCm Release CTest15/15 및 Qwen2.5-
 유지하면서 독립 묶음을 만든다. decode가 비행 중인 동안도 mixed-prefill quantum을 적용한다.
 finite open window·fragment1만 허용하며 기본 비활성이다. 비용 모델/시간 SLO/B2·B3 전체는 아직 아니다.
 실제 loop 반례와 독립 변이2종(각2실패), workspace **1396/0/7**(58 summaries, exit0),
-공통 OUTER composer의 실제 CLI 거부/보존 포함 Node4/4를 확인했다. 양 클러스터 재실기를 이어간다.
+공통 OUTER composer의 실제 CLI 거부/보존 포함 Node4/4를 확인했다. e4503e10f로 양 클러스터의 같은 조건 대조 실기를 마감했다.
+
+**이번 재개 마감·현재 판정:** 독립 prefill 묶음은 실제로 반환 대기를 줄였다. MI 초기 중앙512행을
+유지하면서 참여16→2요청, head RPC 사이 대기1948→196ms, 전체 동시 RPC0.96→4.58/8이 됐다.
+MI raw generated22.83→39.00TPS(+70.83%), 모두 첫1024 생성1060.5→394.9s지만 후보EOS15/16·선두 계산2/16으로
+정상 응답 성능은 미승인이다. 동일16 prompt의 P4 없는 native 기준도 계산2/16으로 모델 경로 자체의 오류를 재현했다.
+Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 기준은2시간 공통 cutoff에서0/8 완료로
+부분3164출력을 보존했다. 모두 첫 출력1871.1→960.4s만 공통 지연 비교이며 전체 TPS 개선율은 계산하지 않는다.
+실제 최장 입력약10.6k이며100k 입력·연속 웨이브·H5·최적 정책은 검증하지 않았다. 기본 비활성은 유지한다.
+원자료·실행파일132경로의 전후 해시·정리 및 인과 분석은
+[독립 prefill 대조 실기](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-cohorts-20260911)에 있다.
+
+**현재 다음 첫 행동:** V1.1-0/1의 actor enqueue/dequeue·미발행 사유·native 비용과 active/retired receipt byte를
+결속하고 B2/B3 반환 수명을 닫는다. 이어 V1.1-2에서 prefill row 폭·decode 참여 수·flight 목표를 분리한다.
+Hy3의 mixed129행은head RPC2.692s 중native2.685s이며, 모든 첫 출력 전 ITL p50이11.207s다.
+따라서 정적128행을 **각 stage 앞에 쌓이는 prefill 예상 누적시간과 decode deadline**으로 제한하는 정책으로 발전시킨다.
+deadline coalescing과 prefill deficit/aging을 함께 적용하며 queue 포함 RTT로 flight를 무한 확대하지 않는다.
+min gate도 요청 수와 prefill 행을 구분한다. 다음 축은KV 우선/host CPU·RAM 예산 아래 느린 stage의 컷·offload 재계획이다.
+V1.1-3의 적은100k 요청 fragment 창 확대는 token-range/KV 순서와 반환 안전성을 증명한 뒤다.
+같은 실제100k workload에서 기존 tuned cap4/cap2까지 대조하고 정상 응답/H5 반복 뒤 기본값을 결정한다.
+아래 실기 수치와 당시의 “다음”은 이력이며 이 현재 순서를 대체하지 않는다.
 
 **단일 main 운영 (2026-09-11 사용자 지시):** 장기 개발·릴리즈 기준은 `main` 하나다. 모델별 개발 브랜치는 운영하지 않는다.
 merge `429e057de`로 임시 Hy3의 upstream/메모리/physical-wire 호환 변경과 main의 하드웨어 조회·경로·Linux 링크 수정을 통합하고 push했다.
