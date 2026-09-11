@@ -250,8 +250,8 @@ pub struct BatchObservation {
     /// the scheduler, not the arrival pattern, deciding the width.
     #[serde(default)]
     pub ready_rows: usize,
-    /// Requests that were eligible at that instant, which is the quantity
-    /// the coalescing gate compares its threshold against.
+    /// Requests eligible node-wide at that instant. Legacy coalescing uses
+    /// this count; the opt-in pipeline waits only for compatible decodes.
     #[serde(default)]
     pub ready_sequences: usize,
 }

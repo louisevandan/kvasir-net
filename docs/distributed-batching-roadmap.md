@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — e4503e10f 독립 prefill 묶음 대조 실기 마감. MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — 고정 창 phase 발행/단조시계 decode 대기 로컬 검증1404/0/7. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -81,6 +81,17 @@ min gate도 요청 수와 prefill 행을 구분한다. 다음 축은KV 우선/ho
 V1.1-3의 적은100k 요청 fragment 창 확대는 token-range/KV 순서와 반환 안전성을 증명한 뒤다.
 같은 실제100k workload에서 기존 tuned cap4/cap2까지 대조하고 정상 응답/H5 반복 뒤 기본값을 결정한다.
 아래 실기 수치와 당시의 “다음”은 이력이며 이 현재 순서를 대체하지 않는다.
+
+**고정 창 안의 발행 결함 우선 수정 (2026-09-11, 로컬 검증 완료):** 반환 예산의 전체 연결은 유지하되,
+이미 허용된 pipeline policy의 프리필 요청 수 오판과 끝없는 decode coalescing을 먼저 수정한다.
+이는 새로운 resident/open/fragment 상한을 허용하지 않으며 B2/B3 완료나 시간 기반 비용 정책 승격이 아니다.
+ordinary attention의 실험 정책에서 prefill 계획은 decode 최소 요청 수로 막지 않고, decode-only 묶음의
+대기는 단조시계로 제한한다. 만료는 실제 Worker 수신 대기를 깨우되 native/KV/flight 권한을 대신하지 않는다.
+기존 정책·atomic/equal 경로는 보존한다. 실제 Worker loop와 capacity1 completion에서 마지막 독립
+prefill 발행, 새 입력 없이 decode 대기 만료, 기존 상한·정산·해제를 검증한다. 그 뒤 반환 예산 연결을 계속하며
+flight 확대와 누적 prefill 시간 정책·실제100k 승인은 계속 열린다. workspace1404/0/7(58 summaries, exit0),
+독립 변이2종의 실제 소비 실패2/1, docs-lint94 clean을 확인했다. decode-only 대기는2ms 뒤 발행 자격을
+재검사하며 native/OS 지연의 상한은 아니다. [반례·검증·봉인](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#phase-pacing)을 따른다.
 
 **반환 수명 계측 진행:** broker의 exact Event 사본을 indexed/retired/allocated로 구분하고
 실제 INSPECT 제어 응답에 바이트·퇴역·최종 해제량을 연결했다. 큐 dequeue와 원장 퇴역, 마지막

@@ -818,6 +818,15 @@ footprint는 원본 Event와 정규화 command의 독립 allocation capacity, re
 #### 선택적 파이프라인 요청 묶음 (2026-09-11)
 
 `P4_STAGED_PIPELINE_BATCHING=1`은 ordinary attention의 요청 묶음을 남은 비행 슬롯에 나눈다.
+
+이 정책의 `min_batch_rows`는 실제 준비된 계획이 decode-only일 때만 적용한다. 같은 SESSION의
+eligible decode 수가 임계값보다 작고 기존 flight가 있을 때, 최초 대기 결정에서 단조시계2ms를
+부여한다. 추가 input은 이 시각을 연장하지 않는다. Worker의 `recv_timeout`이 새 input 없이도
+다시 발행 조건을 검사하게 한다. OS 스케줄링·native/제어 실행시간을 포함한2ms 응답 보장은 아니다.
+prefill을 포함하는 계획은 기존 row/member/quantum 한도 안에서 즉시 진행한다. legacy·atomic/equal
+경로에는 이 변경을 적용하지 않는다. 빈 계획·준비할 작업 없음은 대기를 지우고, full flight·fence 등
+다른 차단 사유는 timer를 disarm한다. 만료로 native/KV/flight/저장 공간 권한이 생기지 않는다.
+`SchedulingSnapshot.pipeline.decode_coalesce_max_ms`가 적용 상한을 기록하며 과거 관측에는 없을 수 있다.
 `ceil(현재 eligible phase 요청 수 / (max_open_batches - open))`가 phase별 참여 상한이다.
 기존 명시 `OrdinaryLimits`가 더 작으면 그대로 유지한다. pure-prefill의 전체 행 예산은 유지하므로
 16개 긴 입력·창8·batch512는 2요청×256행을 발행하고 나머지 요청으로 다음 배치를 준비할 수 있다.

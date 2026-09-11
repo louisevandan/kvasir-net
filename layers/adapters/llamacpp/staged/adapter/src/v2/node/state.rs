@@ -434,9 +434,9 @@ pub struct AdapterState {
     pub stage_frontiers: super::frontier::StageFrontiers,
     pub physical_receives: super::physical_receive::PhysicalReceiveLedger,
     pub next_speculative_id: u64,
-    /// Hold a plan back until this many rows are ready, so a batch stops
-    /// re-forming the arrival group it was born in. 0 or 1 disables the wait.
-    /// See `Worker::drive_first_batches`.
+    /// Legacy ready-request threshold. In the opt-in ordinary pipeline it
+    /// coalesces only compatible decode requests, with a monotonic timeout;
+    /// it never counts a whole prefill as one token. 0 or 1 disables the wait.
     pub min_batch_rows: usize,
     /// Hold a plan back while this many batches are somewhere in the pipeline.
     /// 0 disables it. This is an experimental limit, not edge credit and not

@@ -69,6 +69,7 @@ pub(super) fn observer(
                     crate::v2::scheduler::pipeline::PipelineSelection {
                         window: state.max_open_batches, open: state.open_batches.len(), decoding_active,
                         mixed_prefill_rows: policy.mixed_prefill_rows, effective_limits: effective,
+                        decode_coalesce_max_ms: Some(2),
                     }
                 });
             *before.lock().unwrap() = Some(crate::v2::commands::SchedulingSnapshot {

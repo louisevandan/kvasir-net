@@ -24,6 +24,7 @@ const COMPLETION_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 const INGRESS_EVENT_QUANTUM: usize = 32;
 
 mod ack_service;
+mod coalescing;
 mod control;
 mod control_dispatch;
 #[cfg(test)]
@@ -126,6 +127,7 @@ pub struct Worker {
     last_stage_done: Option<Instant>,
     /// Coalescing refusals since that moment.
     gate_refusals: u64,
+    decode_coalescer: coalescing::DecodeCoalescer,
     /// Set when the adapter is going away; ends a wait for mailbox room.
     shutting_down: Arc<AtomicBool>,
     #[cfg(test)]
@@ -172,6 +174,7 @@ impl Worker {
             active_effect_ids: 0,
             last_stage_done: None,
             gate_refusals: 0,
+            decode_coalescer: Default::default(),
             shutting_down,
             #[cfg(test)]
             issue_observer: None,
@@ -267,25 +270,33 @@ impl Worker {
             }
             let mut handled = 0;
             if !issued {
-                // No self-generated progress remains. recv also catches input
-                // arriving after the preceding Empty check without a lost wake.
-                let input = self
-                    .held_input
-                    .take()
-                    .map(WorkerInput::Event)
-                    .map(Ok)
-                    .unwrap_or_else(|| self.receiver.recv());
-                let Ok(WorkerInput::Event(event)) = input else {
-                    break "input_closed";
+                // A decode coalescing deadline is local runnable work, even
+                // when no more events arrive. A hard issue blocker disarms
+                // this timer in drive_one_batch; expiry never grants credit.
+                let input = if let Some(event) = self.held_input.take() {
+                    Some(WorkerInput::Event(event))
+                } else if let Some(deadline) = self.decode_coalescer.wake_at() {
+                    match self.receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                        Ok(input) => Some(input),
+                        Err(mpsc::RecvTimeoutError::Timeout) => None,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break "input_closed",
+                    }
+                } else {
+                    match self.receiver.recv() {
+                        Ok(input) => Some(input),
+                        Err(_) => break "input_closed",
+                    }
                 };
                 if self.shutting_down.load(Ordering::Acquire) {
                     break "shutdown_requested";
                 }
-                if self.handle(event).is_err() {
-                    failed = true;
-                    break "failed";
+                if let Some(WorkerInput::Event(event)) = input {
+                    if self.handle(event).is_err() {
+                        failed = true;
+                        break "failed";
+                    }
+                    handled = 1;
                 }
-                handled = 1;
             }
             while handled < INGRESS_EVENT_QUANTUM {
                 if self.shutting_down.load(Ordering::Acquire) {

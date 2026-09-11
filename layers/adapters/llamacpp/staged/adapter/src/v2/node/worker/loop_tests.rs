@@ -621,6 +621,17 @@ impl Harness {
         issue_fault: Option<issue_witness::NativeFault>, limits: crate::v2::scheduler::OrdinaryLimits,
         pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>,
     ) -> Self {
+        Self::observed_with_pacing(stages, max_open, completion_capacity, initial, chain_length,
+            script, observer, issue_fault, limits, pipeline, 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn observed_with_pacing(
+        stages: usize, max_open: usize, completion_capacity: usize, initial: &[Event],
+        chain_length: usize, script: Option<speculative::Scenario>, observer: Option<IssueObserver>,
+        issue_fault: Option<issue_witness::NativeFault>, limits: crate::v2::scheduler::OrdinaryLimits,
+        pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>, min_batch_rows: usize,
+    ) -> Self {
         assert!((2..=8).contains(&stages));
         assert!(initial.len() < INPUT_CAPACITY);
         let mut nodes = Vec::new();
@@ -687,7 +698,7 @@ impl Harness {
             worker.state.pipeline_policy = pipeline;
             worker.state.equal_sequence_ubatch = false;
             worker.state.atomic_batch_exclusive = false;
-            worker.state.min_batch_rows = 0;
+            worker.state.min_batch_rows = min_batch_rows;
             worker.state.max_open_batches = max_open;
             worker.state.max_issue_rows = 0;
             worker.state.prefill_fragments = 1;

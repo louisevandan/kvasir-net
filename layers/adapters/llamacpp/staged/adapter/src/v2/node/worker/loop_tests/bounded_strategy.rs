@@ -2,6 +2,92 @@
 use super::*;
 use crate::v2::scheduler::OrdinaryLimits;
 
+fn pacing_harness(prompt_rows: usize, observer: Option<IssueObserver>) -> (Harness, Vec<InferenceCommand>) {
+    let commands: Vec<_> = (0..8).map(|i| request(&format!("pacing-{i}"), prompt_rows, 6)).collect();
+    let submissions: Vec<_> = commands.iter().enumerate()
+        .map(|(i, c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_pacing(8, 4, 1, &submissions, 0, None, observer, None,
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+            mixed_prefill_rows: 1,
+        }), 4);
+    h.hold_tail = true;
+    (h, commands)
+}
+
+#[test]
+fn phase_pacing_actual_loop_issues_the_last_full_prefill_without_four_requests() {
+    let (mut h, commands) = pacing_harness(12, None);
+    h.until("all four full-width prefills before any tail return", |h|
+        h.held_tail.len() == 4);
+    h.pump_for(Duration::from_millis(25));
+    {
+        let native = h.nodes[0].native.lock().unwrap();
+        assert_eq!(native.logical_calls, 4, "pacing must not bypass the open-batch window");
+        let mut members = std::collections::BTreeSet::new();
+        for call in &native.issued_native {
+            let result = CapsuleSet::decode(call.result.as_ref().unwrap()).unwrap();
+            let rows: Vec<_> = result.0.iter().flat_map(|c| &c.owners).collect();
+            assert_eq!(rows.len(), BATCH_CAPACITY);
+            assert!(rows.iter().all(|r| r.phase == Phase::Prefill));
+            let selected: std::collections::BTreeSet<_> = rows.iter().map(|r| r.sequence_id).collect();
+            assert_eq!(selected.len(), 2);
+            for id in selected { assert!(members.insert(id)); }
+        }
+        assert_eq!(members.len(), 8);
+    }
+    assert!(h.outputs.is_empty());
+    h.resume_tail();
+    h.finish(&commands);
+}
+
+#[test]
+fn phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input() {
+    let refusal = Arc::new(Mutex::new((None::<String>, false)));
+    let captured = Arc::clone(&refusal);
+    let observer: IssueObserver = Arc::new(move |point, state| {
+        if state.next_open_batch != 5 || !matches!(point, "decode_coalescing_wait" | "before_native_issue") {
+            return;
+        }
+        let requests: Vec<_> = state.requests.iter().map(|(key, r)|
+            (key, r.prompt_cursor, r.prompt_issued, r.generated, r.outstanding,
+                r.incarnation, r.sequence_id, r.ready.as_ref().map(|v|
+                    (v.phase, v.position, v.tokens.clone())))).collect();
+        let authority = format!("{:?}", (state.next_event, state.next_incarnation,
+            requests, &state.flights, &state.open_batches, &state.free_sequences,
+            state.request_budget.used()));
+        let mut captured = captured.lock().unwrap();
+        if point == "decode_coalescing_wait" {
+            assert!(state.prepared_issue.is_none(), "waiting must precede native preparation");
+            if let Some(before) = &captured.0 { assert_eq!(before, &authority); }
+            else { captured.0 = Some(authority); }
+        } else if let Some(before) = &captured.0 {
+            assert_eq!(before, &authority, "timer wait must preserve request/flight/slot/input authority");
+            captured.1 = true;
+        }
+    });
+    let (mut h, commands) = pacing_harness(2, Some(observer));
+    h.until("four prompt results retained at the tail", |h| h.held_tail.len() == 4);
+    // Exactly two requests become ready; the other six stay in flight. No
+    // further input is sent to the head until its timer issues this decode.
+    let first = h.held_tail.pop_front().unwrap();
+    h.pending.push_back(first);
+    h.until("decode deadline must wake the actual blocking worker", |h|
+        h.nodes[0].native.lock().unwrap().logical_calls == 5);
+    assert!(refusal.lock().unwrap().1, "must observe refusal followed by unchanged authority");
+    {
+        let native = h.nodes[0].native.lock().unwrap();
+        let last = CapsuleSet::decode(native.issued_native.last().unwrap().result.as_ref().unwrap()).unwrap();
+        let rows: Vec<_> = last.0.iter().flat_map(|c| &c.owners).collect();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.phase == Phase::Decode && r.position == 2));
+    }
+    h.pump_for(Duration::from_millis(25));
+    assert_eq!(h.nodes[0].native.lock().unwrap().logical_calls, 5,
+        "deadline must not reissue an outstanding decode or bypass the full window");
+    h.resume_tail();
+    h.finish(&commands);
+}
+
 #[test]
 fn pipeline_policy_actual_loop_fills_independent_prefills_and_bounds_mixed_work() {
     let commands: Vec<_> = (0..8).map(|i| request(&format!("pipeline-{i}"),

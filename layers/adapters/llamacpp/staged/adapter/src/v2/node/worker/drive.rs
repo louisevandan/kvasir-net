@@ -9,9 +9,10 @@ impl Worker {
         Ok(())
     }
 
-    /// True means one logical issue was accepted and forwarded. False means
-    /// external input (e.g. a tail return) is needed, not permission to spin.
+    /// True means one logical issue was accepted and forwarded. False waits
+    /// for input or an explicitly armed coalescing deadline, never a spin.
     pub(super) fn drive_one_batch(&mut self) -> Result<bool, ()> {
+        self.decode_coalescer.disarm();
         if self.active_publications != 0
             || !self.effects.is_empty()
             || self.deferred_ack_error.is_some()
@@ -52,13 +53,9 @@ impl Worker {
         // Normal completion re-enters this loop; the threshold is ignored
         // once nothing is in flight. Missing completions still require the
         // separate timeout/reconciliation contract: this is no liveness proof.
-        if self.state.min_batch_rows > 1
-            && self.state.any_in_flight()
-            && self.state.ready_row_count() < self.state.min_batch_rows
-        {
-            self.gate_refusals = self.gate_refusals.saturating_add(1);
-            return Ok(false);
-        }
+        // The legacy threshold is checked below after identifying the session
+        // and phase. The opt-in ordinary pipeline uses bounded decode-only
+        // coalescing; a long prompt is not one row of work.
         // Tail-aware issue. The stage spans put the lap in the tail's
         // mailbox: a batch that reached node 3 while it was busy waited
         // 128 ms (p50) for the previous one, and 63% of them did. Each
@@ -84,6 +81,7 @@ impl Worker {
             return Ok(false);
         }
         let Some(session_id) = self.state.first_session_with_work() else {
+            self.decode_coalescer.clear();
             return Ok(false);
         };
         let session = match self.state.sessions.get(&session_id).cloned() {
@@ -117,7 +115,19 @@ impl Worker {
             });
         }
         if demands.is_empty() {
+            self.decode_coalescer.clear();
             return Ok(false);
+        }
+        let atomic_pending = demands.iter().any(|demand| demand.atomic);
+        let phase_pacing = self.state.pipeline_policy.is_some()
+            && !atomic_pending && !self.state.equal_sequence_ubatch;
+        if !phase_pacing {
+            self.decode_coalescer.clear();
+            if self.state.min_batch_rows > 1 && self.state.any_in_flight()
+                && self.state.ready_row_count() < self.state.min_batch_rows {
+                self.gate_refusals = self.gate_refusals.saturating_add(1);
+                return Ok(false);
+            }
         }
         let ingress_unix_ms = super::observe::unix_ms();
         let ready_rows = self.state.available_row_count();
@@ -146,7 +156,6 @@ impl Worker {
         // Never applied while a speculative transaction is pending: a
         // Verify or Replay allocation must stay whole inside one UBATCH,
         // and the scheduler reserves it against the full capacity.
-        let atomic_pending = demands.iter().any(|demand| demand.atomic);
         let pipeline = if !atomic_pending && !self.state.equal_sequence_ubatch {
             if self.state.pipeline_policy.is_some() && self.state.prefill_fragments != 1 {
                 self.set_snapshot("pipeline_policy_refused:multi_fragment_not_validated");
@@ -219,7 +228,26 @@ impl Worker {
                 self.set_snapshot(&format!("scheduler_failed:{error:?}"));
             })?;
         if policy.allocations().is_empty() {
+            self.decode_coalescer.clear();
             return Ok(false);
+        }
+        if phase_pacing {
+            // Inspect the actual prepared plan, not a count of prompt requests.
+            // Prefill uses the existing row/member/quantum limits immediately.
+            // Only a decode-only plan may wait for more compatible requests.
+            let decode_only = policy.allocations().iter().all(|a| a.phase == Phase::Decode);
+            let ready_decode = demands.iter().filter(|d| d.phase == Phase::Decode).count();
+            if decode_only && self.state.min_batch_rows > 1 && self.state.any_in_flight()
+                && ready_decode < self.state.min_batch_rows {
+                if self.decode_coalescer.should_wait(self.state.load_generation, &session_id, Instant::now()) {
+                    self.gate_refusals = self.gate_refusals.saturating_add(1);
+                    #[cfg(test)]
+                    self.observe_issue_state("decode_coalescing_wait");
+                    return Ok(false);
+                }
+            } else {
+                self.decode_coalescer.clear();
+            }
         }
         let mut rows = Vec::new();
         let mut batch_events = Vec::new();
@@ -364,6 +392,7 @@ impl Worker {
             self.set_snapshot(&format!("issue_prepare_failed:{detail}"));
             return Err(());
         }
+        self.decode_coalescer.clear();
         let stage_started = std::time::Instant::now();
         let start_unix_ms = super::observe::unix_ms();
         self.state.begin_native_issue().map_err(|_| ())?;

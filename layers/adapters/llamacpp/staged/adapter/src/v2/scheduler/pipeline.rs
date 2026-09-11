@@ -2,6 +2,9 @@
 //! and edge storage belong to the worker/ledgers; these values cannot grant them.
 use super::{Demand, OrdinaryLimits, Phase, SchedulerError};
 
+/// Maximum intentional decode-only coalescing delay, not a native/RPC SLO.
+pub(crate) const DECODE_COALESCE_WAIT_MS: u64 = 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PipelinePolicy {
     /// Prefill rows allowed while any request is decoding, including a decode
@@ -17,6 +20,9 @@ pub struct PipelineSelection {
     pub decoding_active: bool,
     pub mixed_prefill_rows: usize,
     pub effective_limits: OrdinaryLimits,
+    /// Absent in historical observations made before timer-backed pacing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_coalesce_max_ms: Option<u64>,
 }
 
 impl PipelinePolicy {
@@ -47,7 +53,8 @@ impl PipelinePolicy {
             limits.prefill_rows = cap(configured.prefill_rows, self.mixed_prefill_rows);
         }
         Ok(PipelineSelection { window, open, decoding_active,
-            mixed_prefill_rows: self.mixed_prefill_rows, effective_limits: limits })
+            mixed_prefill_rows: self.mixed_prefill_rows, effective_limits: limits,
+            decode_coalesce_max_ms: Some(DECODE_COALESCE_WAIT_MS) })
     }
 }
 
