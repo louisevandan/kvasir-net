@@ -32,7 +32,14 @@
 최종 fixture를 이전 소스에 이식하면 실제 소비 시험2개가 실패한다. 구현 중간 커밋은 `a9d2d1a63`이다.
 후속 검증은 전체 워크스페이스1445 passed/0 failed/7 ignored(58 summaries), 독립 변이6종 모두 각1실패,
 docs-lint94 clean으로 종료했다. 소스와 각 재컴파일 바이너리 해시는 증거 §28에 결속한다.
-MI250는8장 idle, Spark/Ubuntu/Mac SSH 접근을 확인했다. 다음은 봉인 소스의 Rust Release 빌드와 실기다.
+소스 `a43950bed`를 main/GitHub main에 push하고 MI250/Spark/Ubuntu/Mac 및 Windows Release 빌드를 완료했다.
+한 차례 사전 프로파일6건은96/96 완료·해제·UNLOAD 통과다. 지연 후보 합계16행, 처리량 후보512행을
+선정 규칙대로 봉인했다. 이는 교정 표본 내 선택이며 성능/서비스 승인이 아니다. 같은 소스·native의
+생성 전용 대조를 시작했으며 이후4k 혼합 대조와 실제100034토큰×8 긴 요청+짧은8요청을 실행한다.
+출력2048/최소1024/EOS, context102400을 고정했다. 공통 실기 cutoff는2026-09-12 05:25:14 KST다.
+Hy3는 새 시험 exe의 로컬 Windows TCP 차단으로 P4 반환이 실패했고 규칙 변경은 관리자 권한 부족으로
+거부됐다. 관리자용 범위 제한/원복 스크립트와 사용자 입력 요청을 준비했다. 무응답은 허용으로 해석하지 않는다.
+원격 시험 agent와 임시 원격 규칙은 정리했다. 다음3/3에서 남은 실기·판정·증거 번들·정리를 마감한다.
 
 **이번에 구현할 정책:** Sarathi-Serve의 사전 프로파일 기반 token budget + 생성 우선 chunked-prefill을
 P4의 유한 독립 flight에 적용한다. P4 고유 부분은 admitted ready/inflight 인구로 요청 묶음을 보존하는 것이다.
