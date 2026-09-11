@@ -27,6 +27,20 @@ struct MemoryTopology final {
     }
 };
 
+struct LayerDeviceExpectation final {
+    std::int32_t begin = 0;
+    std::int32_t end = 0;
+    std::string device;
+};
+
+struct LayerDefaultDevice final {
+    std::int32_t layer = 0;
+    std::string device;
+    [[nodiscard]] bool operator==(const LayerDefaultDevice & other) const noexcept {
+        return layer == other.layer && device == other.device;
+    }
+};
+
 struct LoadConfig {
     std::string model_path;
     int32_t layer_begin = 0;
@@ -36,6 +50,7 @@ struct LoadConfig {
     std::string model_identity;
     std::string kv_root;
     MemoryTopology memory_topology;
+    std::vector<LayerDeviceExpectation> layer_device_expectations;
     bool mtp_ownership_probe = false;
 };
 
@@ -74,9 +89,26 @@ struct StageMemoryPlan final {
     MemoryTopology memory_topology;
     StageExecutionShape execution_shape;
     std::vector<StageMemoryEntry> entries;
+    // Default repeating-layer assignment, not tensor overrides, KV placement,
+    // output/embedding placement or proof of where every operator executes.
+    bool layer_device_query_supported = false;
+    bool layer_device_expectations_checked = false;
+    std::vector<LayerDefaultDevice> layer_default_devices;
     bool complete = false;
     bool fits_current_free = false;
 };
+
+[[nodiscard]] bool validate_layer_device_expectations(
+    const std::vector<LayerDeviceExpectation> & expectations,
+    std::int32_t begin, std::int32_t end, std::string * error = nullptr);
+
+[[nodiscard]] bool validate_stage_layer_devices(
+    const LoadConfig & config, const StageMemoryPlan & measured,
+    std::string * error = nullptr);
+
+[[nodiscard]] bool measure_stage_layer_devices(
+    const llama_model * model, const LoadConfig & config,
+    StageMemoryPlan * result, std::string * error = nullptr);
 
 [[nodiscard]] llama_model_params make_stage_model_params(
     p4_llama_compat::LlamaPlan & params,

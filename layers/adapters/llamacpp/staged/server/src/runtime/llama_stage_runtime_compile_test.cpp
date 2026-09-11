@@ -141,6 +141,53 @@ void kv_operations_refuse_when_hop_memory_dirty() {
     assert(error.find("reload") != std::string::npos);
 }
 
+void real_layer_device_load_gate() {
+    const auto * model_path = environment_value("P4_STAGED_LLAMA_MODEL");
+    if (!model_path) {
+        std::cout << "SKIP: set P4_STAGED_LLAMA_MODEL for real layer-device load gate\n";
+        return;
+    }
+    using namespace staged::llama_runtime;
+    LoadConfig config;
+    config.model_path = model_path;
+    config.layer_begin = 0;
+    config.layer_end = 28;
+    config.memory_topology.kind = MemoryTopologyKind::Discrete;
+    config.layer_device_expectations = {{0, 28, "unavailable-test-device"}};
+    const auto plan = [] {
+        p4_llama_compat::LlamaPlan result;
+        assert(result.parse_arguments({"layer-placement-test", "--device", "none",
+            "--n-gpu-layers", "0", "--ctx-size", "512", "--batch-size", "128",
+            "--ubatch-size", "128", "--parallel", "1", "--threads", "4", "--flash-attn", "off"}));
+        return result;
+    };
+    StageRuntime runtime;
+    std::string error;
+    assert(!runtime.load(plan(), config, &error));
+    assert(!runtime.loaded());
+    if (p4_llama_compat::has_layer_device_query()) {
+        assert(error.find("layer=0 expected=unavailable-test-device actual=CPU") != std::string::npos);
+        config.layer_device_expectations = {{0, 28, "CPU"}};
+    } else {
+        assert(error.find("query support") != std::string::npos);
+        config.layer_device_expectations.clear();
+    }
+    error.clear();
+    assert(runtime.load(plan(), config, &error) && error.empty());
+    StageMemoryPlan actual;
+    assert(measure_stage_layer_devices(runtime.model(), config, &actual, &error));
+    assert(actual.layer_device_expectations_checked == p4_llama_compat::has_layer_device_query());
+    staged::protocol::SequencePayload input, output;
+    input.sequence_id = "placement-recovery";
+    input.prompt = "Say hello.";
+    input.position = 0;
+    assert(runtime.execute_hop(input, staged::protocol::HopPhase::Prefill, &output, &error));
+    assert(output.n_tokens.has_value() && *output.n_tokens > 0);
+    runtime.unload();
+    assert(!runtime.loaded());
+    std::cout << "LAYER_DEVICE_LOAD_GATE_OK checked=" << actual.layer_device_expectations_checked << '\n';
+}
+
 void real_decode_after_restore_regression() {
     const auto * model_path = environment_value("P4_STAGED_LLAMA_MODEL");
     if (model_path == nullptr) {
@@ -373,6 +420,7 @@ int main() {
     run_stage_memory_plan_tests();
     run_ggml_reserve_size_tests();
     kv_operations_refuse_when_hop_memory_dirty();
+    real_layer_device_load_gate();
     real_decode_after_restore_regression();
     hop_batch_rolls_back_only_new_sequences();
     return 0;

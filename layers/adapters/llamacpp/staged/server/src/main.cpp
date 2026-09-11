@@ -251,6 +251,7 @@ int main(int argc, char **argv) {
     parsed_load_config.kv_root = parsed_options.kv_root;
     parsed_load_config.model_identity = parsed_options.model_identity;
     parsed_load_config.memory_topology = parsed_options.memory_topology;
+    parsed_load_config.layer_device_expectations = parsed_options.layer_device_expectations;
     if (parsed_options.inspect_memory_plan) {
         staged::llama_runtime::StageMemoryPlan memory_plan;
         std::string memory_error;

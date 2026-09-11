@@ -22,6 +22,7 @@ struct ParsedLlamaOptions final {
     std::string kv_root;
     std::string model_identity;
     staged::llama_runtime::MemoryTopology memory_topology;
+    std::vector<staged::llama_runtime::LayerDeviceExpectation> layer_device_expectations;
     bool validate_plan = false;
     bool inspect_memory_plan = false;
     bool mtp_requested = false;

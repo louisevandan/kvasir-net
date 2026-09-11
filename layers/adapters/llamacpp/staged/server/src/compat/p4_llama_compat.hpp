@@ -49,6 +49,11 @@ std::size_t model_device_count(const llama_model * model);
 /// The i-th backend device of this model, or nullptr when out of range.
 ggml_backend_dev_t model_device(const llama_model * model, std::size_t index);
 
+/// Query availability is explicit on older pins; an absent API is not CPU placement.
+bool has_layer_device_query();
+/// Default repeating-layer device; does not describe per-tensor override placement.
+ggml_backend_dev_t model_layer_device(const llama_model * model, std::int32_t layer);
+
 /// Sampling options, held whole for the same reason the plan is: upstream
 /// owns the field set and grows it.
 class SamplingOptions final {

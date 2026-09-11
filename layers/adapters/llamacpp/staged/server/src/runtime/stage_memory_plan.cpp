@@ -269,7 +269,8 @@ bool inspect_stage_memory_with_initialized_backend(
         }
         return measure_stage_memory(
             model.get(), context.get(), speculative_context.get(),
-            config.memory_topology, params.kv_unified(), result, error);
+            config.memory_topology, params.kv_unified(), result, error) &&
+            measure_stage_layer_devices(model.get(), config, result, error);
     } catch (const std::exception & exception) {
         if (error != nullptr) *error = std::string("llama.cpp memory planning failed: ") + exception.what();
         return false;
@@ -348,6 +349,12 @@ bool same_stage_memory_allocation(
         const StageMemoryPlan & planned,
         const StageMemoryPlan & actual,
         std::string * error) {
+    if (planned.layer_device_query_supported != actual.layer_device_query_supported ||
+        planned.layer_device_expectations_checked != actual.layer_device_expectations_checked ||
+        planned.layer_default_devices != actual.layer_default_devices) {
+        if (error) *error = "planned and actual default layer devices differ";
+        return false;
+    }
     if (planned.entries.size() != actual.entries.size()) {
         if (error != nullptr) *error = "planned and actual memory device counts differ";
         return false;
@@ -395,7 +402,15 @@ std::string serialize_stage_memory_plan(const StageMemoryPlan & plan) {
         << ",\"kv_unified\":" << (plan.execution_shape.kv_unified ? "true" : "false")
         << "},\"complete\":" << (plan.complete ? "true" : "false")
         << ",\"fits_current_free\":" << (plan.fits_current_free ? "true" : "false")
-        << ",\"entries\":[";
+        << ",\"layer_device_query_supported\":" << (plan.layer_device_query_supported ? "true" : "false")
+        << ",\"layer_device_expectations_checked\":" << (plan.layer_device_expectations_checked ? "true" : "false")
+        << ",\"layer_default_devices\":[";
+    for (std::size_t i = 0; i < plan.layer_default_devices.size(); ++i) {
+        if (i) out << ',';
+        const auto & layer = plan.layer_default_devices[i];
+        out << "{\"layer\":" << layer.layer << ",\"device\":\"" << json_escape(layer.device) << "\"}";
+    }
+    out << "],\"entries\":[";
     for (std::size_t index = 0; index < plan.entries.size(); ++index) {
         if (index != 0) out << ',';
         const auto & entry = plan.entries[index];

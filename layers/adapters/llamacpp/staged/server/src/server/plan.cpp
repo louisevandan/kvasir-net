@@ -127,7 +127,7 @@ bool stage_only(const std::string &name) {
            name == "--layer-begin" || name == "--layer-end" ||
            name == "--kv-layer-begin" || name == "--kv-layer-end" ||
            name == "--kv-root" || name == "--model-identity" ||
-           name == "--memory-topology" ||
+           name == "--memory-topology" || name == "--expect-layer-device" ||
            name == "--stage-only" || name == "--validate-plan" ||
            name == "--inspect-memory-plan";
 }
@@ -172,6 +172,20 @@ bool parse_stage_option(const std::string &name, const std::string &value,
     if (name == "--model-identity") {
         if (!has_value) { if (error != nullptr) *error = "--model-identity requires a value"; return false; }
         parsed->model_identity = value;
+        return true;
+    }
+    if (name == "--expect-layer-device") {
+        const auto first = value.find(':');
+        const auto second = first == std::string::npos ? first : value.find(':', first + 1);
+        staged::llama_runtime::LayerDeviceExpectation expectation;
+        if (!has_value || first == std::string::npos || second == std::string::npos ||
+            !parse_i32_value(value.substr(0, first), &expectation.begin, name.c_str(), error) ||
+            !parse_i32_value(value.substr(first + 1, second - first - 1), &expectation.end, name.c_str(), error)) {
+            if (error) *error = "--expect-layer-device requires begin:end:backend-device-name";
+            return false;
+        }
+        expectation.device = value.substr(second + 1);
+        parsed->layer_device_expectations.push_back(std::move(expectation));
         return true;
     }
     if (name == "--memory-topology") {
@@ -256,6 +270,8 @@ bool parse_llama_options(int argc, char **argv,
         return true;
     };
     if (!consume(process_args) || !consume(plan_tokens)) return false;
+    if (!staged::llama_runtime::validate_layer_device_expectations(
+            parsed->layer_device_expectations, parsed->layer_begin, parsed->layer_end, error)) return false;
     if (parsed->memory_topology.kind ==
         staged::llama_runtime::MemoryTopologyKind::Unspecified) {
         if (error != nullptr) {

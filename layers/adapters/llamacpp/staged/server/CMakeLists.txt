@@ -255,6 +255,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_stops.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/request_options_grammar.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/src/runtime/stage_memory_plan.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/runtime/stage_layer_devices.cpp"
     )
     # llama.cpp's common/ is deliberately not listed here. It still arrives,
     # because upstream's own `llama-common` target exports its directory

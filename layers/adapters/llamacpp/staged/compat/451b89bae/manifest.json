@@ -3,7 +3,8 @@
   "abi_revision": "pipeline-abi-v1",
   "required_artifact_symbols": [
     "llama_linkcpp_runtime_configure",
-    "llama_linkcpp_runtime_clear"
+    "llama_linkcpp_runtime_clear",
+    "llama_model_get_layer_device"
   ],
   "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
   "upstream_branch": "master",
@@ -14,8 +15,8 @@
   "nearest_release_tag": "b10903",
   "previous_linker_pin": "434ddbbc0e30522e897670681e503b797c12b7c1",
   "previous_official_base": "434ddbbc0e30522e897670681e503b797c12b7c1",
-  "patch_set_sha256": "7b9423e1917921ef2d9f0556f996a6314371c7fc55739ac241b4035a7318afac",
-  "patched_tree": "88bca3cddede8e456f2548ef31f9ef6d5074dc77",
+  "patch_set_sha256": "73edae511d36205270b22ca01e8ced7d1e4c44c3054809618257b47388d77154",
+  "patched_tree": "7fcec0f24374712137f5cc8bfca869ec234a9407",
   "patches": [
     {
       "file": "0002-ggml-rpc.patch",
@@ -156,6 +157,11 @@
       "file": "0027-noalloc-shared-buffer-size.patch",
       "sha256": "695aba02aba9d1efed5b79d5f91d4b8d36c8746e18c1368588355ce557b783d3",
       "layer": "upstream_fix"
+    },
+    {
+      "file": "0028-layer-default-device-query.patch",
+      "sha256": "0f6c43179e62e52d524bc9a821a3897830e82df6705009c2516ff7f30989fe02",
+      "layer": "stage_hook"
     }
   ],
   "superseded_patches": [

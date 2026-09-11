@@ -78,4 +78,45 @@ void run_stage_memory_plan_tests() {
     assert(!staged::llama_runtime::same_stage_memory_allocation(
         planned, actual, &error));
     assert(error.find("topologies") != std::string::npos);
+
+    using namespace staged::llama_runtime;
+    LoadConfig config;
+    config.layer_begin = 2;
+    config.layer_end = 5;
+    config.layer_device_expectations = {{3, 5, "backend0"}, {2, 3, "CPU"}};
+    StageMemoryPlan placement;
+    placement.layer_device_query_supported = true;
+    placement.layer_default_devices = {{2, "CPU"}, {3, "backend0"}, {4, "backend0"}};
+    assert(validate_stage_layer_devices(config, placement, &error));
+    const auto before = serialize_stage_memory_plan(placement);
+    config.layer_device_expectations = {{2, 5, "backend0"}};
+    assert(!validate_stage_layer_devices(config, placement, &error));
+    assert(error.find("layer=2 expected=backend0 actual=CPU") != std::string::npos);
+    assert(serialize_stage_memory_plan(placement) == before);
+    assert(before.find("\"layer\":2,\"device\":\"CPU\"") != std::string::npos);
+    auto changed = placement;
+    changed.layer_default_devices[0].device = "backend0";
+    assert(!same_stage_memory_allocation(placement, changed, &error));
+    assert(error.find("default layer devices") != std::string::npos);
+    changed = placement;
+    changed.layer_default_devices.pop_back();
+    assert(!validate_stage_layer_devices(config, changed, &error));
+    changed = placement;
+    changed.layer_default_devices[1].layer = 2;
+    config.layer_device_expectations = {{2, 3, "CPU"}, {3, 5, "backend0"}};
+    assert(!validate_stage_layer_devices(config, changed, &error));
+    changed = placement;
+    changed.layer_device_query_supported = false;
+    assert(!validate_stage_layer_devices(config, changed, &error));
+    assert(error.find("query support") != std::string::npos);
+    // An unasserted legacy plan remains explicit about missing query support.
+    config.layer_device_expectations.clear();
+    assert(validate_stage_layer_devices(config, changed, &error));
+    for (const std::vector<LayerDeviceExpectation> bad : {
+            std::vector<LayerDeviceExpectation>{{2, 4, "CPU"}},
+            {{2, 4, "CPU"}, {3, 5, "backend0"}},
+            {{2, 3, "CPU"}, {4, 5, "backend0"}},
+            {{2, 6, "CPU"}}, {{2, 5, ""}}}) {
+        assert(!validate_layer_device_expectations(bad, 2, 5, &error));
+    }
 }

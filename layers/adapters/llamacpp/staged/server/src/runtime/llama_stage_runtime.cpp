@@ -121,7 +121,8 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
     StageMemoryPlan actual_memory;
     if (!measure_stage_memory(
             model_, ctx_, mtp_context(), config_.memory_topology,
-            params_.kv_unified(), &actual_memory, &memory_error)) {
+            params_.kv_unified(), &actual_memory, &memory_error) ||
+        !measure_stage_layer_devices(model_, config_, &actual_memory, &memory_error)) {
         if (error != nullptr) *error = memory_error;
         unload();
         return false;

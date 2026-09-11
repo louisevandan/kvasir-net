@@ -97,5 +97,24 @@ int main() {
                                     "--inspect-memory-plan"});
     assert(memory_plan.inspect_memory_plan);
     assert(!memory_plan.validate_plan);
+    const auto placement = parse({"--model", "not-loaded.gguf",
+        "--layer-begin", "2", "--layer-end", "5",
+        "--expect-layer-device=3:5:backend0", "--expect-layer-device", "2:3:CPU"});
+    assert(placement.layer_device_expectations.size() == 2);
+    assert(placement.layer_device_expectations[0].device == "backend0");
+    assert(placement.layer_device_expectations[1].begin == 2);
+    for (const std::vector<std::string> bad : {
+            std::vector<std::string>{"--expect-layer-device", "2:4:CPU"},
+            {"--expect-layer-device", "2:5:"},
+            {"--expect-layer-device", "CPU"},
+            {"--expect-layer-device", "2:999999999999999:CPU"},
+            {"--expect-layer-device", "2:5:CPU", "--expect-layer-device", "2:5:CPU"}}) {
+        auto tokens = bad;
+        tokens.insert(tokens.end(), {"--layer-begin", "2", "--layer-end", "5",
+            "--memory-topology", "discrete", "--model", "not-loaded.gguf"});
+        staged::server::ParsedLlamaOptions refused;
+        assert(!staged::server::parse_llama_options(5, argv, tokens, &refused, &error));
+        assert(error.find("--expect-layer-device") != std::string::npos);
+    }
     return 0;
 }

@@ -62,6 +62,24 @@ ggml_backend_dev_t model_device(const llama_model * model, std::size_t index) {
     return llama_model_get_device(model, static_cast<int>(index));
 }
 
+bool has_layer_device_query() {
+#ifdef LLAMA_LINKCPP_LAYER_DEVICE_QUERY
+    return true;
+#else
+    return false;
+#endif
+}
+
+ggml_backend_dev_t model_layer_device(const llama_model * model, std::int32_t layer) {
+#ifdef LLAMA_LINKCPP_LAYER_DEVICE_QUERY
+    return llama_model_get_layer_device(model, layer);
+#else
+    (void) model;
+    (void) layer;
+    return nullptr;
+#endif
+}
+
 struct SamplingOptions::Impl final {
     common_params_sampling options;
 };

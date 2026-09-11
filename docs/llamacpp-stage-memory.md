@@ -49,6 +49,38 @@ The pinned, pristine source is
 `layers/adapters/llamacpp/upstream`. Linker changes remain only in the
 versioned `staged/compat/<sha>/` series.
 
+## Default layer-device expectation
+
+The native startup plan accepts repeatable `--expect-layer-device begin:end:name`
+assertions. Names are exact ggml backend device names (`CPU`, `CUDA0`, `ROCm0`,
+`MTL0`, etc.), local to that process. Ranges may be supplied in any order but must
+cover the complete declared repeating-layer cut without gaps or overlaps.
+An intentionally CPU-resident range can be declared alongside device ranges.
+
+The no-alloc PLAN queries llama.cpp's selected default device for each active
+repeating layer and rejects a mismatch before allocating model weights. LOAD
+queries the loaded model again, checks the expectations, and compares the actual
+map with PLAN. A memory byte-total match alone is insufficient. The query is an
+additive stage hook in the 451b89bae patch queue, behind the existing compat
+facade. Older pins report query support as unavailable and reject explicit device
+expectations; plans without an assertion retain their existing behavior.
+
+`MEMORY_PLAN`/`MEMORY_ACTUAL` schema 2 adds `layer_device_query_supported`,
+`layer_device_expectations_checked`, and ordered `layer_default_devices` records.
+An absent assertion is not placement approval. `--validate-plan` checks syntax
+only; use `--inspect-memory-plan` or a real LOAD to check device assignment.
+
+This records the default repeating-layer assignment, not individual tensor
+overrides (including CPU experts), KV, embeddings/output/NextN, or the device of
+every executed operator. It does not establish GPU saturation or kernel residency.
+Neither this check nor OUTER rewrites `n_gpu_layers` using a pin-independent formula.
+
+Required real consumer probe:
+`node layers/adapters/llamacpp/staged/scripts/validation/layer-placement-gate.mjs <server> <model> <layers> <device> <under-count> <full-count> <new-output-dir>`.
+The counts are explicit counterexample inputs for the tested pin/model. Run the
+native runtime test with `P4_STAGED_LLAMA_MODEL` set to the 28-layer Qwen2.5-1.5B
+fixture for refusal, reload, inference and unload; model-free CTest alone omits it.
+
 ## Normalized memory topology
 
 The adapter needs one model-independent description derived while

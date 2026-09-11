@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — e6e1f42f7 원격 선별 MI6arm·96/96 EOS/해제/UNLOAD, 실제 입력213/4255토큰. native451의 출력층 포함 GPU 계산과 기존 계획의 불일치로 stage마다 첫 반복층이 CPU였음을 확인했다. 배정 정정 뒤 자동/최대2건 묶음은74.70/75.02 rawTPS·GPU 표본56.28/55.33%로 사실상 같다. 고정250ms 시간 예산·2건 기본값은 채택하지 않는다. Hy3는 로컬 Windows 방화벽 권한으로 이번 추론 미실행. GPU 배정 검증/100k 실입력/정상 goodput/반환 선예약/H5는 미완. 제품 코드의 마지막 로컬 게이트1430/0/7과 구분한다.
+최신 현황 정리: 2026-09-12 — 기본 레이어 장치 선언·PLAN/LOAD 게이트 구현. workspace1430/0/7, CUDA CTest16/16·실제 stdin7/7·제품2GPU 4/4 EOS/해제. 신구 모두의 단일native 2GPU 자동 분할 compute12MiB 불일치는 별도 RED. 다음은 고정 창의 독립 prefill 묶음 선택 수정과 MI 새query 실기다. 100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -72,11 +72,21 @@ Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 
 원자료·실행파일132경로의 전후 해시·정리 및 인과 분석은
 [독립 prefill 대조 실기](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-cohorts-20260911)에 있다.
 
-**현재 다음 첫 행동:** 새 비용 정책의 원격 선별을 마쳤으므로 GPU 배정 의도와 PLAN/LOAD의 실제 layer/device를
-검증하는 게이트를 먼저 구현한다. MI의 native451은 GPU층 수에 출력층을 포함하지만 기존 OUTER 계획은
-`45-cut_begin`을 써서 각 stage의 첫 repeating layer를 CPU로 배정했다. 같은 정책에서 이 배정만 정정하자
-raw27.42→75.02TPS·긴 TTFT72.813→22.351초였다. 이 증가는 배치 알고리즘만의 성과가 아니다.
-정정된 계획을 다음 MI 기준선으로 고정하되 다른 native pin/Hy3에 숫자+1을 일괄 적용하지 않는다.
+**현재 다음 첫 행동:** 기본 레이어 배정 게이트의 로컬 구현/검증을 마쳤다. 다음은 고정 open 창과
+fragment1 안에서 독립 prefill 묶음 선택을 순간 free slot 수와 분리하는 것이다. phase별 active/ready/inflight,
+단계 비용과 원하는 독립 묶음 수를 사용하고, 뒤이어 누적 완료시각으로 행 폭을 선택한다. 새 knob의 최적값 탐색으로
+대체하지 않는다. 같은 후보의 MI 새native에서 실제 기대 장치를 선언한 PLAN/LOAD와 정책 대조를 연결한다.
+
+이번 native는 `--expect-layer-device begin:end:name`을 no-alloc PLAN과 실제 LOAD에서 대조하며,
+byte 총합이 같아도 PLAN/LOAD의 기본 레이어 장치가 바뀌면 거부한다. 명시 CPU 범위/전문가 오프로딩은 구분한다.
+workspace1430/0/7, CUDA CTest16/16, 실제stdin7/7, 독립 재컴파일 변이5종 각각1실패,
+제품agent2개·GPU UUID2개·Qwen1.5B4/4 EOS·완료·해제·UNLOAD를 확인했다. 품질 지시 전체/100k 승인은 아니다.
+한 native가2GPU를 자동 분할할 때 compute PLAN/실제12MiB 차이는 신구 바이너리 모두에서 재현한 별도 RED로 남긴다.
+[반례·소비 검증·제약](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#layer-placement-gate)을 따른다.
+
+MI native451의 기존 OUTER 계획 `45-cut_begin`은 각 stage의 첫 반복층을 CPU로 배정했다.
+배정만 정정한 raw27.42→75.02TPS는 배치 알고리즘만의 성과가 아니다. 정정된 계획을 다음 MI 기준선으로
+고정하되 다른 native pin/Hy3에 숫자+1을 일괄 적용하지 않는다. 새query의 ROCm/Metal 실기는 아직 남아 있다.
 
 이전 CPU 배정에서 독립 prefill 최대2건은 head 유휴670→132ms·raw14.86→27.42TPS를 만들었지만
 혼합 ITL863→1078ms가 됐다. 정정된 GPU 배정에서는 자동 정책도 이미1개 prefill 요청씩 발행해
