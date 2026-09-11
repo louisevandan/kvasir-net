@@ -1,0 +1,24 @@
+diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
+index a71838eafc69d1cab66dfb87885690a6e1e464d0..fa3966ff7291ca2b45143add53fb96cf3374d251 100644
+--- a/ggml/src/ggml-alloc.c
++++ b/ggml/src/ggml-alloc.c
+@@ -953,6 +953,19 @@ void ggml_gallocr_reserve_n_size(
+     GGML_ASSERT(ggml_gallocr_reserve_n_impl(galloc, graph, node_buffer_ids, leaf_buffer_ids, /*no_alloc =*/ true));
+     for (int i = 0; i < galloc->n_buffers; i++) {
+         sizes[i] = 0;
++        // Match get_buffer_size(): repeated buffer types share one physical
++        // allocation. The no-alloc path has no buffer pointers yet, so use
++        // the shared allocator identity rather than counting each alias.
++        bool shared = false;
++        for (int j = 0; j < i; j++) {
++            if (galloc->buf_tallocs[j] == galloc->buf_tallocs[i]) {
++                shared = true;
++                break;
++            }
++        }
++        if (shared) {
++            continue;
++        }
+         for (int c = 0; c < galloc->buf_tallocs[i]->n_chunks; c++) {
+             sizes[i] += galloc->buf_tallocs[i]->chunks[c]->max_size;
+         }

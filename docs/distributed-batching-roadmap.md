@@ -16,6 +16,37 @@
 
 ### 0.V1.1 MI250·Hy3 통합 수정계획 (2026-09-11)
 
+**사용자 재개 목표 (2026-09-11, 기준 `5ee827af5`):** main/원격 일치 확인 → 최신 공식
+llama.cpp 호환·Release 빌드·소형 모델 → 검증된 배치 설계를 실제 소비 경로에 구현 → MI250와
+Hy3 재실기를 하나의 작업으로 수행한다. 기존 두 증거 ZIP은 불변 기준선으로 보존한다.
+로컬 main과 GitHub main은 시작 시 같은 전체 SHA였고 dirty/untracked는 없었다.
+최신 upstream 발견값은 `451b89bae0c4b1dd612eb503ceace906c01ddcc9`이며, 채택 승인과 구분한다.
+
+이번 구현은 decode 묶음 knob의 추가 탐색으로 끝내지 않는다. 아래 계약으로 진행한다.
+
+1. **독립 prefill 묶음:** MI250의 초기 pure-prefill 91개는 모두 16요청×32행=512행,
+   발행 전 open=0이었다. 후보/기준 양쪽에서 같다. 전체 폭을 유지하면서 참여 요청 수를
+   제한하여 다른 요청 묶음을 즉시 발행 가능하게 한다. fragment=1에서 먼저 검증한다.
+   16요청에서 2요청×256행은 8개 독립 묶음을 만드는 첫 반례 입력이지 최적값이 아니다.
+2. **phase별 비용과 공정성:** pure-prefill은 효율적인 chunk를 채우고, decode와 공존하면
+   별도 prefill 서비스 예산을 적용한다. 짧은 prompt/새 요청을 영구 대기시키지 않으며
+   선택 거부는 fairness를 소비하지 않는다. prefix 길이·phase·묶음 크기가 다른 RPC 평균을
+   하나의 고정비로 회귀하지 않는다. 시간 예산은 비선점 native 호출의 실시간 보장이 아니다.
+3. **안전 예산:** pending prompt/반환/flight와 broker receipt를 각각 제한한다.
+   원본이 필요한 duplicate/replay 계약을 payload 삭제나 해시 동등성으로 몰래 바꾸지 않는다.
+   node 실행1·decode outstanding≤1·KV 완료 후 재사용은 유지한다. fragment 창 증가는 별도 증명 뒤다.
+4. **연구 결속:** 최신 llama.cpp `tools/server/server-context.cpp::update_slots`,
+   vLLM V1 `scheduler.py`, SGLang `schedule_policy.py::PrefillAdder`, Sarathi-Serve를 비교한다.
+   토큰 예산·KV 예약·chunked prefill은 재사용할 설계 원리이며, 단일 인스턴스의 전체 decode
+   일괄 선택을 분산 파이프라인에 그대로 이식하지 않는다. 미검증 GPU 비용을 최적값으로 선언하지 않는다.
+5. **검증:** 각 수정은 실제 소비 반례→수정→독립 변이→전체 게이트로 결속한다.
+   같은 최신 native 위의 이전 정책/새 정책을 비교해 upstream 갱신과 정책 효과를 분리한다.
+   작은 판별 arm 이후 실제 긴 입력 다수와 긴 출력을 실행하며 입력 토큰 수를 tokenizer로 확인한다.
+   100k 입력에 출력 예산을 더한 context, KV 우선 device 배치, RAM offload 및 host CPU 예산을 명시한다.
+   MI250 타 작업 점유는 감시하며 무관 프로세스를 종료하지 않는다. Hy3의 CPU expert 병목도 따로 판정한다.
+
+이 재개 항목이 현재 첫 행동을 정한다. 아래 이전 진행표의 미완 예산/품질 게이트는 그대로 열린다.
+
 **단일 main 운영 (2026-09-11 사용자 지시):** 장기 개발·릴리즈 기준은 `main` 하나다. 모델별 개발 브랜치는 운영하지 않는다.
 merge `429e057de`로 임시 Hy3의 upstream/메모리/physical-wire 호환 변경과 main의 하드웨어 조회·경로·Linux 링크 수정을 통합하고 push했다.
 모델·클러스터·정책·워크로드·runtime identity는 `test/benchmarks/cluster-inference/` 공통 구성기의 독립 설정이다. 배포/lifecycle/deadline runner의 완전한 공통화는 후속 작업이다.

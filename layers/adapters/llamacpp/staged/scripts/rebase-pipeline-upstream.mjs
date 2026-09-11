@@ -219,5 +219,5 @@ process.stdout.write(`${JSON.stringify(counts)}\n`);
 for (const r of report.filter((r) => r.how !== "clean")) {
   process.stdout.write(`  ${r.how.padEnd(6)} ${r.file}\n`);
 }
-process.stdout.write(`replay verified: 24/24 clean on pristine ${target.slice(0, 9)}\n`);
+process.stdout.write(`replay verified: ${manifest.patches.length}/${manifest.patches.length} clean on pristine ${target.slice(0, 9)}\n`);
 process.stdout.write(`patch_set_sha256 ${next.patch_set_sha256}\npatched_tree ${next.patched_tree}\n`);

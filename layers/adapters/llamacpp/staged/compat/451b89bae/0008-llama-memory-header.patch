@@ -1,0 +1,42 @@
+diff --git a/src/llama-memory.h b/src/llama-memory.h
+index db825396645e61c94213ca1e94b78d71d1538d67..db95b041fa44bc8855c504b13c7328d7b7c3fed0 100644
+--- a/src/llama-memory.h
++++ b/src/llama-memory.h
+@@ -82,6 +82,25 @@ struct llama_memory_i {
+ 
+     virtual ~llama_memory_i() = default;
+ 
++    void set_linkcpp_executor(
++            llama_linkcpp_memory_executor executor,
++            void * user_data,
++            bool clear_full_sequence) {
++        linkcpp_executor = executor;
++        linkcpp_executor_user_data = user_data;
++        linkcpp_clear_full_sequence = clear_full_sequence;
++    }
++
++    bool notify_linkcpp(const llama_linkcpp_memory_invocation & invocation) const {
++        return !linkcpp_executor || linkcpp_executor(&invocation, linkcpp_executor_user_data);
++    }
++
++    bool linkcpp_should_clear_full_sequence(
++            llama_seq_id seq_id, llama_pos p0, llama_pos p1) const {
++        return linkcpp_executor && linkcpp_clear_full_sequence
++            && seq_id >= 0 && p0 == 0 && p1 < 0;
++    }
++
+     // split the input batch into a set of ubatches and verify that they can fit into the cache
+     // return a context object containing the ubatches and memory state required to process them
+     // check the llama_memory_context_i::get_status() for the result
+@@ -124,6 +143,11 @@ struct llama_memory_i {
+ 
+     virtual void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) const = 0;
+     virtual void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) = 0;
++
++private:
++    llama_linkcpp_memory_executor linkcpp_executor = nullptr;
++    void * linkcpp_executor_user_data = nullptr;
++    bool linkcpp_clear_full_sequence = false;
+ };
+ 
+ using llama_memory_ptr = std::unique_ptr<llama_memory_i>;

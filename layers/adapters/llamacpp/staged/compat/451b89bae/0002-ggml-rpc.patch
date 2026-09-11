@@ -1,0 +1,86 @@
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index cc7d7206933f39260e2db319627415019cb73a7d..4ed4762f20b7dde951dea7cda1c72da9a5fba9ac 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -5,6 +5,7 @@
+ #include "transport.h"
+ 
+ #include <array>
++#include <chrono>
+ #include <cinttypes>
+ #include <optional>
+ #include <string>
+@@ -1536,17 +1537,15 @@ bool rpc_server::init_tensor(const rpc_msg_init_tensor_req & request) {
+         }
+     }
+ 
+-    if (tensor->extra != nullptr) {
+-        // This pointer can either be passed around client/server, or probably better stored server-side and kept track of.
+-        // Currently unimplemented.
+-        GGML_LOG_ERROR("tensor->extra populated by the backend, this is currently unsupported.\n");
+-        return false;
+-    }
++    // Some backends, including OpenCL, attach backend-local state through
++    // tensor->extra while initializing a tensor. The state belongs entirely to
++    // the server-side backend and is not part of the RPC tensor description.
+ 
+     return true;
+ }
+ 
+ bool rpc_server::get_tensor(const rpc_msg_get_tensor_req & request, std::vector<uint8_t> & response) {
++    const auto started = std::chrono::steady_clock::now();
+     struct ggml_init_params params {
+         /*.mem_size   =*/ ggml_tensor_overhead(),
+         /*.mem_buffer =*/ NULL,
+@@ -1578,6 +1577,12 @@ bool rpc_server::get_tensor(const rpc_msg_get_tensor_req & request, std::vector<
+ 
+     response.resize(request.size, 0);
+     ggml_backend_tensor_get(tensor, response.data(), request.offset, request.size);
++    if (RPC_DEBUG) {
++        const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
++            std::chrono::steady_clock::now() - started).count();
++        LOG_DBG("[rpc_timing] op=get_tensor bytes=%" PRIu64 " elapsed_us=%lld\n",
++                request.size, (long long) elapsed_us);
++    }
+     return true;
+ }
+ 
+@@ -1679,6 +1684,7 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
+ }
+ 
+ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
++    const auto started = std::chrono::steady_clock::now();
+     // serialization format:
+     // | device (4 bytes) | n_nodes (4 bytes) | nodes (n_nodes * sizeof(uint64_t) | n_tensors (4 bytes) | tensors (n_tensors * sizeof(rpc_tensor)) |
+     if (input.size() < 2*sizeof(uint32_t)) {
+@@ -1749,10 +1755,17 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
+     ggml_status status = ggml_backend_graph_compute(backends[device], graph);
+     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
+     stored_graphs[device].graph = graph;
++    if (RPC_DEBUG) {
++        const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
++            std::chrono::steady_clock::now() - started).count();
++        LOG_DBG("[rpc_timing] op=graph_compute device=%u n_nodes=%u n_tensors=%u elapsed_us=%lld\n",
++                device, n_nodes, n_tensors, (long long) elapsed_us);
++    }
+     return true;
+ }
+ 
+ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
++    const auto started = std::chrono::steady_clock::now();
+     uint32_t device = request.device;
+     if (device >= backends.size()) {
+         return false;
+@@ -1764,6 +1777,12 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
+     LOG_DBG("[%s] device: %u\n", __func__, device);
+     ggml_status status = ggml_backend_graph_compute(backends[device], graph);
+     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
++    if (RPC_DEBUG) {
++        const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
++            std::chrono::steady_clock::now() - started).count();
++        LOG_DBG("[rpc_timing] op=graph_recompute device=%u elapsed_us=%lld\n",
++                device, (long long) elapsed_us);
++    }
+     return true;
+ }
+ 
