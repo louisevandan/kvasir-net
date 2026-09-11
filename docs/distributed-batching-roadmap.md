@@ -29,9 +29,10 @@
 
 **현재2/3 — 구현 중간 지점:** 생성 인구 기반 독립 묶음, 초기 prefill 폭 보존, 합계 토큰 상한,
 합법적 생성 폭 이하의 coalescing 목표를 구현했다. 어댑터557/0/0, composer4/0을 통과했다.
-최종 fixture를 이전 소스에 이식하면 실제 소비 시험2개가 실패한다. 독립 변이6종과 전체 워크스페이스는
-별도 복사본에서 실행 중이며 이 중간 커밋 시점에는 전체 GREEN/실기 승인을 주장하지 않는다.
-MI250는8장 idle, Spark/Ubuntu/Mac SSH 접근을 확인했다. 다음은 전체 검증 집계와 봉인 소스의 Rust Release 빌드다.
+최종 fixture를 이전 소스에 이식하면 실제 소비 시험2개가 실패한다. 구현 중간 커밋은 `a9d2d1a63`이다.
+후속 검증은 전체 워크스페이스1445 passed/0 failed/7 ignored(58 summaries), 독립 변이6종 모두 각1실패,
+docs-lint94 clean으로 종료했다. 소스와 각 재컴파일 바이너리 해시는 증거 §28에 결속한다.
+MI250는8장 idle, Spark/Ubuntu/Mac SSH 접근을 확인했다. 다음은 봉인 소스의 Rust Release 빌드와 실기다.
 
 **이번에 구현할 정책:** Sarathi-Serve의 사전 프로파일 기반 token budget + 생성 우선 chunked-prefill을
 P4의 유한 독립 flight에 적용한다. P4 고유 부분은 admitted ready/inflight 인구로 요청 묶음을 보존하는 것이다.
