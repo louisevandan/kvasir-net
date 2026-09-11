@@ -89,11 +89,24 @@ impl Worker {
             None => return Ok(false),
         };
         let mut demands = Vec::new();
+        let mut population = super::super::super::scheduler::pipeline::PipelinePopulation::default();
         for (key, request) in &self.state.requests {
             if request.command.session_id != session_id {
                 continue;
             }
-            let Some(phase) = request.phase_within(self.state.prefill_fragments) else {
+            let eligible = request.phase_within(self.state.prefill_fragments);
+            if request.sequence_id.is_some() {
+                if request.prompt_issued < request.command.tokens.len() {
+                    if eligible == Some(Phase::Prefill) { population.prefill.ready += 1; }
+                    else if request.outstanding > 0 { population.prefill.in_flight += 1; }
+                    else { population.prefill.waiting += 1; }
+                } else if request.prompt_cursor < request.command.tokens.len() {
+                    population.prefill_draining += 1;
+                } else if eligible == Some(Phase::Decode) { population.decode.ready += 1; }
+                else if request.outstanding > 0 { population.decode.in_flight += 1; }
+                else { population.decode.waiting += 1; }
+            }
+            let Some(phase) = eligible else {
                 continue;
             };
             let available_rows = match phase {
@@ -162,14 +175,8 @@ impl Worker {
                 return Err(());
             }
             self.state.pipeline_policy.map(|policy| {
-                // A temporarily absent eligible decode is still exposed to a
-                // long non-preemptive prefill at downstream stages.
-                let decoding_active = self.state.requests.values().any(|r| {
-                    r.command.session_id == session_id && r.sequence_id.is_some()
-                        && r.prompt_cursor == r.command.tokens.len()
-                });
                 policy.select(&demands, self.state.ordinary_limits,
-                    self.state.max_open_batches, self.state.open_batches.len(), decoding_active)
+                    self.state.max_open_batches, self.state.open_batches.len(), population)
             }).transpose().map_err(|error| {
                 self.set_snapshot(&format!("pipeline_policy_refused:{error:?}"));
             })?

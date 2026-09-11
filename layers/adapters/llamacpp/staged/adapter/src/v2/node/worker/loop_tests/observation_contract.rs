@@ -58,11 +58,29 @@ pub(super) fn observer(
                 .map(|policy| {
                     let vacancies = state.max_open_batches - state.open_batches.len();
                     let bound = |old: usize, selected: usize| if old == 0 { selected } else { old.min(selected) };
+                    let selected_session = &state.prepared_issue.as_ref().unwrap().logical.0[0].owner.session_id;
+                    let mut population = crate::v2::scheduler::pipeline::PipelinePopulation::default();
+                    for r in state.requests.values().filter(|r| r.sequence_id.is_some()
+                        && &r.command.session_id == selected_session) {
+                        if r.prompt_issued < r.command.tokens.len() {
+                            if r.outstanding == 0 { population.prefill.ready += 1; }
+                            else { population.prefill.in_flight += 1; }
+                        } else if r.prompt_cursor < r.command.tokens.len() {
+                            population.prefill_draining += 1;
+                        } else if r.outstanding > 0 { population.decode.in_flight += 1; }
+                        else if r.ready.as_ref().is_some_and(|v| v.phase == Phase::Decode) {
+                            population.decode.ready += 1;
+                        } else { population.decode.waiting += 1; }
+                    }
+                    let prefill_count = population.prefill.ready + population.prefill.in_flight;
+                    let groups = prefill_count.min(state.max_open_batches);
                     let mut effective = state.ordinary_limits;
-                    effective.prefill_members = bound(effective.prefill_members, counts[3].div_ceil(vacancies).max(1));
-                    effective.decode_members = bound(effective.decode_members, counts[4].div_ceil(vacancies).max(1));
-                    let decoding_active = state.requests.values().any(|r|
-                        r.sequence_id.is_some() && r.prompt_cursor == r.command.tokens.len());
+                    effective.prefill_members = bound(effective.prefill_members,
+                        prefill_count.div_ceil(state.max_open_batches).max(1));
+                    effective.decode_members = bound(effective.decode_members,
+                        population.decode.ready.div_ceil(vacancies).max(1));
+                    let decoding_active = population.decode.ready + population.decode.in_flight
+                        + population.decode.waiting > 0;
                     if decoding_active {
                         effective.prefill_rows = bound(effective.prefill_rows, policy.mixed_prefill_rows);
                     }
@@ -70,6 +88,7 @@ pub(super) fn observer(
                         window: state.max_open_batches, open: state.open_batches.len(), decoding_active,
                         mixed_prefill_rows: policy.mixed_prefill_rows, effective_limits: effective,
                         decode_coalesce_max_ms: Some(2),
+                        population: Some(population), prefill_groups: Some(groups),
                     }
                 });
             *before.lock().unwrap() = Some(crate::v2::commands::SchedulingSnapshot {

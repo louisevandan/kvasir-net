@@ -13,6 +13,31 @@ pub struct PipelinePolicy {
     pub mixed_prefill_rows: usize,
 }
 
+/// Session-local admitted requests, counted before eligibility filtering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PhasePopulation {
+    pub ready: usize,
+    pub in_flight: usize,
+    pub waiting: usize,
+}
+
+impl PhasePopulation {
+    fn active(self) -> Result<usize, SchedulerError> {
+        self.ready.checked_add(self.in_flight).and_then(|n| n.checked_add(self.waiting))
+            .ok_or(SchedulerError::InvalidDemand)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PipelinePopulation {
+    /// Requests with unissued prompt tokens, including an outstanding chunk.
+    pub prefill: PhasePopulation,
+    pub decode: PhasePopulation,
+    /// All prompt tokens issued, final prompt work not settled. These requests
+    /// cannot supply another prefill chunk and do not enlarge prefill cohorts.
+    pub prefill_draining: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PipelineSelection {
     pub window: usize,
@@ -23,38 +48,52 @@ pub struct PipelineSelection {
     /// Absent in historical observations made before timer-backed pacing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_coalesce_max_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub population: Option<PipelinePopulation>,
+    /// Desired independent prefill groups inside the existing finite window.
+    /// This is not a reservation or a measured optimal flight target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_groups: Option<usize>,
 }
 
 impl PipelinePolicy {
-    /// Divide eligible requests over the unoccupied flight slots, not all over
-    /// one batch. Recompute from the immutable snapshot after each accepted issue.
-    /// Full-width prefill and the number of participating requests are separate:
-    /// 16 long requests / 8 slots -> 2 requests x 256 tokens in a 512-row call.
+    /// Keep prefill membership independent of transient free slots. Requests
+    /// already in flight still belong to the population of unfinished prompts.
+    /// Row width, execution and all resource admission remain separate.
     pub fn select(
         self,
         demands: &[Demand],
         configured: OrdinaryLimits,
         window: usize,
         open: usize,
-        decoding_active: bool,
+        population: PipelinePopulation,
     ) -> Result<PipelineSelection, SchedulerError> {
         if window == 0 || open >= window || self.mixed_prefill_rows == 0 {
             return Err(SchedulerError::InvalidDemand);
         }
         let free = window - open;
-        let members = |phase| demands.iter().filter(|d| d.phase == phase).count().div_ceil(free).max(1);
+        let ready = |phase| demands.iter().filter(|d| d.phase == phase).count();
+        if population.prefill.ready != ready(Phase::Prefill)
+            || population.decode.ready != ready(Phase::Decode) {
+            return Err(SchedulerError::InvalidDemand);
+        }
+        let active_prefill = population.prefill.active()?;
+        let decoding_active = population.decode.active()? > 0;
+        let prefill_groups = active_prefill.min(window);
+        let prefill_members = active_prefill.div_ceil(prefill_groups.max(1)).max(1);
         let cap = |configured: usize, derived: usize| {
             if configured == 0 { derived } else { configured.min(derived) }
         };
         let mut limits = configured;
-        limits.prefill_members = cap(configured.prefill_members, members(Phase::Prefill));
-        limits.decode_members = cap(configured.decode_members, members(Phase::Decode));
+        limits.prefill_members = cap(configured.prefill_members, prefill_members);
+        limits.decode_members = cap(configured.decode_members, ready(Phase::Decode).div_ceil(free).max(1));
         if decoding_active {
             limits.prefill_rows = cap(configured.prefill_rows, self.mixed_prefill_rows);
         }
         Ok(PipelineSelection { window, open, decoding_active,
             mixed_prefill_rows: self.mixed_prefill_rows, effective_limits: limits,
-            decode_coalesce_max_ms: Some(DECODE_COALESCE_WAIT_MS) })
+            decode_coalesce_max_ms: Some(DECODE_COALESCE_WAIT_MS),
+            population: Some(population), prefill_groups: Some(prefill_groups) })
     }
 }
 
@@ -74,7 +113,10 @@ mod tests {
         let mut scheduler = Scheduler::new();
         let policy = PipelinePolicy { mixed_prefill_rows: 128 };
         for open in 0..8 {
-            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, open, false).unwrap();
+            let population = PipelinePopulation { prefill: PhasePopulation {
+                ready: ready.len(), in_flight: 16 - ready.len(), waiting: 0,
+            }, ..Default::default() };
+            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, open, population).unwrap();
             let plan = scheduler.prepare_plan_with_limits(&ready, 512, 512, false, 1, false,
                 selection.effective_limits).unwrap();
             assert_eq!(plan.allocations().len(), 2);
@@ -91,7 +133,12 @@ mod tests {
         let scheduler = Scheduler::new();
         let policy = PipelinePolicy { mixed_prefill_rows: 128 };
         for (decoding_active, expected) in [(true, 128), (false, 512)] {
-            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, 1, decoding_active).unwrap();
+            let population = PipelinePopulation {
+                prefill: PhasePopulation { ready: 1, ..Default::default() },
+                decode: PhasePopulation { in_flight: usize::from(decoding_active), ..Default::default() },
+                ..Default::default()
+            };
+            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, 1, population).unwrap();
             let plan = scheduler.prepare_plan_with_limits(&ready, 512, 512, false, 1, false,
                 selection.effective_limits).unwrap();
             assert_eq!(plan.allocations()[0].rows, expected);
@@ -104,11 +151,46 @@ mod tests {
         let policy = PipelinePolicy { mixed_prefill_rows: 128 };
         let configured = OrdinaryLimits { prefill_rows: 64, prefill_members: 1,
             ..OrdinaryLimits::default() };
-        let result = policy.select(&ready, configured, 8, 0, true).unwrap();
+        let population = PipelinePopulation {
+            prefill: PhasePopulation { ready: 16, ..Default::default() },
+            decode: PhasePopulation { in_flight: 1, ..Default::default() },
+            ..Default::default()
+        };
+        let result = policy.select(&ready, configured, 8, 0, population).unwrap();
         assert_eq!(result.effective_limits.prefill_rows, 64);
         assert_eq!(result.effective_limits.prefill_members, 1);
         for (window, open) in [(0, 0), (8, 8), (8, 9)] {
-            assert!(policy.select(&ready, configured, window, open, false).is_err());
+            assert!(policy.select(&ready, configured, window, open, population).is_err());
         }
+    }
+
+    #[test]
+    fn the_last_vacancy_does_not_merge_independent_prefills_and_draining_is_not_future_work() {
+        let policy = PipelinePolicy { mixed_prefill_rows: 128 };
+        let ready: Vec<_> = (0..8).map(|i| demand(i, Phase::Prefill, 100_000)).collect();
+        let population = PipelinePopulation { prefill: PhasePopulation { ready: 8, ..Default::default() },
+            decode: PhasePopulation { in_flight: 7, ..Default::default() }, ..Default::default() };
+        for open in 0..8 {
+            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, open, population).unwrap();
+            assert_eq!(selection.effective_limits.prefill_members, 1);
+            assert_eq!(selection.effective_limits.prefill_rows, 128);
+            assert_eq!(selection.prefill_groups, Some(8));
+        }
+        let draining = PipelinePopulation { prefill: PhasePopulation { ready: 1, ..Default::default() },
+            prefill_draining: 15, ..Default::default() };
+        let selection = policy.select(&ready[..1], OrdinaryLimits::default(), 8, 7, draining).unwrap();
+        assert_eq!(selection.effective_limits.prefill_members, 1);
+        assert_eq!(selection.prefill_groups, Some(1));
+    }
+
+    #[test]
+    fn an_inconsistent_population_is_rejected_without_spending_scheduler_state() {
+        let policy = PipelinePolicy { mixed_prefill_rows: 128 };
+        let ready = [demand(0, Phase::Prefill, 100_000)];
+        assert!(policy.select(&ready, OrdinaryLimits::default(), 8, 7, Default::default()).is_err());
+        let overflow = PipelinePopulation { prefill: PhasePopulation {
+            ready: 1, in_flight: usize::MAX, waiting: 0,
+        }, ..Default::default() };
+        assert!(policy.select(&ready, OrdinaryLimits::default(), 8, 7, overflow).is_err());
     }
 }

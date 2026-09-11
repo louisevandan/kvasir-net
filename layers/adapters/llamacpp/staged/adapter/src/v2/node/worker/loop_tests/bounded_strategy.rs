@@ -2,6 +2,125 @@
 use super::*;
 use crate::v2::scheduler::OrdinaryLimits;
 
+#[test]
+fn pipeline_population_actual_loop_keeps_new_prefills_independent_in_the_last_slot() {
+    // Pause a real accepted decode only to enqueue one complete new arrival
+    // wave. The observer cannot edit worker/request/flight state.
+    let paused = Arc::new(AtomicBool::new(false));
+    let resume = Arc::new(AtomicBool::new(false));
+    struct ResumeOnDrop(Arc<AtomicBool>);
+    impl Drop for ResumeOnDrop {
+        fn drop(&mut self) { self.0.store(true, Ordering::Release); }
+    }
+    let _resume_on_drop = ResumeOnDrop(Arc::clone(&resume));
+    let captured_paused = Arc::clone(&paused);
+    let captured_resume = Arc::clone(&resume);
+    let observer: IssueObserver = Arc::new(move |point, state| {
+        if point != "after_issue_accepted" || state.next_open_batch != 7 { return; }
+        assert_eq!(state.open_batches.len(), 3);
+        assert_eq!(state.requests.len(), 3);
+        assert!(state.requests.values().all(|r| r.prompt_cursor == r.command.tokens.len()
+            && r.outstanding == 1));
+        captured_paused.store(true, Ordering::Release);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !captured_resume.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "arrival wave was not enqueued");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    let mut commands: Vec<_> = (0..3).map(|i| request(&format!("old-decode-{i}"), 1, 6)).collect();
+    let inputs: Vec<_> = commands.iter().enumerate()
+        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_pipeline(8, 4, 1, &inputs, 0, None, Some(observer), None,
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+            mixed_prefill_rows: 4,
+        }));
+    h.hold_tail = true;
+    h.until("three independent short prompt results", |h| h.held_tail.len() == 3);
+    for _ in 0..2 {
+        let tail = h.held_tail.pop_front().unwrap();
+        h.pending.push_back(tail);
+        h.until("one prompt replaced by its decode flight", |h| h.held_tail.len() == 3);
+    }
+    let tail = h.held_tail.pop_front().unwrap();
+    h.pending.push_back(tail);
+    h.until("three real decodes occupy three of four slots", |_| paused.load(Ordering::Acquire));
+    for i in 0..4 {
+        let command = request(&format!("new-prefill-{i}"), 96, 6);
+        h.enqueue(&command);
+        commands.push(command);
+    }
+    h.tick();
+    assert!(h.pending.is_empty(), "entire new wave must reach the bounded input before resuming");
+    resume.store(true, Ordering::Release);
+    h.until("the last slot carries a new full-width prefill", |h| h.held_tail.len() == 4);
+    let first_prefill = {
+        let native = h.nodes[0].native.lock().unwrap();
+        assert_eq!(native.logical_calls, 7);
+        let result = CapsuleSet::decode(native.issued_native[6].result.as_ref().unwrap()).unwrap();
+        let rows: Vec<_> = result.0.iter().flat_map(|c| &c.owners).collect();
+        assert_eq!(rows.len(), BATCH_CAPACITY, "independence must retain the efficient row width");
+        assert!(rows.iter().all(|r| r.phase == Phase::Prefill));
+        let names: std::collections::BTreeSet<_> = rows.iter().map(|r| r.request_id.clone()).collect();
+        assert_eq!(names.len(), 1, "last vacancy must not put all four long requests behind one return");
+        names.into_iter().next().unwrap()
+    };
+    // Return a decode while the first long prefill remains in flight. A
+    // different long request must supply the next batch immediately.
+    let tail = h.held_tail.pop_front().unwrap();
+    let decoded = CapsuleSet::decode(&tail.payload).unwrap();
+    assert!(decoded.0.iter().flat_map(|c| &c.owners).all(|r| r.phase == Phase::Decode));
+    h.pending.push_back(tail);
+    h.until("another independent prefill before the first prefill returns", |h| h.held_tail.len() == 4);
+    {
+        let native = h.nodes[0].native.lock().unwrap();
+        assert_eq!(native.logical_calls, 8);
+        let result = CapsuleSet::decode(native.issued_native[7].result.as_ref().unwrap()).unwrap();
+        let rows: Vec<_> = result.0.iter().flat_map(|c| &c.owners).collect();
+        assert_eq!(rows.len(), BATCH_CAPACITY);
+        assert!(rows.iter().any(|r| r.phase == Phase::Decode));
+        let prefills: Vec<_> = rows.iter().filter(|r| r.phase == Phase::Prefill).collect();
+        assert!(!prefills.is_empty());
+        assert!(prefills.iter().all(|r| r.request_id != first_prefill));
+    }
+    h.pump_for(Duration::from_millis(15));
+    assert_eq!(h.nodes[0].native.lock().unwrap().logical_calls, 8,
+        "population policy must preserve the full flight window and outstanding decode dependency");
+    h.resume_tail();
+    h.finish(&commands);
+    release_notifications::assert_complete(&h);
+}
+
+#[test]
+fn pipeline_population_actual_loop_excludes_pending_admission_and_retains_inflight_prefills() {
+    let commands: Vec<_> = (0..12).map(|i| request(&format!("population-{i:02}"), 12, 6)).collect();
+    let inputs: Vec<_> = commands.iter().enumerate()
+        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
+    let mut h = Harness::observed_with_pipeline(8, 4, 1, &inputs, 0, None, None, None,
+        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+            mixed_prefill_rows: 1,
+        }));
+    h.hold_tail = true;
+    h.until("four full-width independent admitted cohorts", |h| h.held_tail.len() == 4);
+    {
+        let native = h.nodes[0].native.lock().unwrap();
+        let mut all = std::collections::BTreeSet::new();
+        assert_eq!(native.logical_calls, 4);
+        for call in &native.issued_native {
+            let result = CapsuleSet::decode(call.result.as_ref().unwrap()).unwrap();
+            let rows: Vec<_> = result.0.iter().flat_map(|c| &c.owners).collect();
+            assert_eq!(rows.len(), BATCH_CAPACITY);
+            let group: std::collections::BTreeSet<_> = rows.iter().map(|r| r.request_id.clone()).collect();
+            assert_eq!(group.len(), 2, "eight admitted prompts retain two-member cohorts while others are in flight");
+            for name in group { assert!(all.insert(name)); }
+        }
+        assert_eq!(all.len(), SEQUENCE_CAPACITY as usize);
+    }
+    h.resume_tail();
+    h.finish(&commands);
+    release_notifications::assert_complete(&h);
+}
+
 fn pacing_harness(prompt_rows: usize, observer: Option<IssueObserver>) -> (Harness, Vec<InferenceCommand>) {
     let commands: Vec<_> = (0..8).map(|i| request(&format!("pacing-{i}"), prompt_rows, 6)).collect();
     let submissions: Vec<_> = commands.iter().enumerate()
@@ -45,7 +164,7 @@ fn phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input() 
     let refusal = Arc::new(Mutex::new((None::<String>, false)));
     let captured = Arc::clone(&refusal);
     let observer: IssueObserver = Arc::new(move |point, state| {
-        if state.next_open_batch != 5 || !matches!(point, "decode_coalescing_wait" | "before_native_issue") {
+        if state.next_open_batch != 7 || !matches!(point, "decode_coalescing_wait" | "before_native_issue") {
             return;
         }
         let requests: Vec<_> = state.requests.iter().map(|(key, r)|
@@ -67,22 +186,33 @@ fn phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input() 
     });
     let (mut h, commands) = pacing_harness(2, Some(observer));
     h.until("four prompt results retained at the tail", |h| h.held_tail.len() == 4);
-    // Exactly two requests become ready; the other six stay in flight. No
-    // further input is sent to the head until its timer issues this decode.
-    let first = h.held_tail.pop_front().unwrap();
-    h.pending.push_back(first);
+    // The last chunks of short prompts leave the future-prefill population.
+    // The first four calls therefore carry 2/2/1/1 requests. Return the first
+    // two pairs so the two remaining prompts enter real mixed flights; no
+    // worker state is injected to manufacture decode-only eligibility.
+    for expected_calls in [5, 6] {
+        let first = h.held_tail.pop_front().unwrap();
+        h.pending.push_back(first);
+        h.until("remaining prompt enters a mixed flight", |h| {
+            h.held_tail.len() == 4 && h.nodes[0].native.lock().unwrap().logical_calls == expected_calls
+        });
+    }
+    // One completed prompt now becomes a ready decode while all remaining
+    // work is in flight. No more input/tail is sent until the timer issues it.
+    let next = h.held_tail.pop_front().unwrap();
+    h.pending.push_back(next);
     h.until("decode deadline must wake the actual blocking worker", |h|
-        h.nodes[0].native.lock().unwrap().logical_calls == 5);
+        h.nodes[0].native.lock().unwrap().logical_calls == 7);
     assert!(refusal.lock().unwrap().1, "must observe refusal followed by unchanged authority");
     {
         let native = h.nodes[0].native.lock().unwrap();
         let last = CapsuleSet::decode(native.issued_native.last().unwrap().result.as_ref().unwrap()).unwrap();
         let rows: Vec<_> = last.0.iter().flat_map(|c| &c.owners).collect();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 1);
         assert!(rows.iter().all(|r| r.phase == Phase::Decode && r.position == 2));
     }
     h.pump_for(Duration::from_millis(25));
-    assert_eq!(h.nodes[0].native.lock().unwrap().logical_calls, 5,
+    assert_eq!(h.nodes[0].native.lock().unwrap().logical_calls, 7,
         "deadline must not reissue an outstanding decode or bypass the full window");
     h.resume_tail();
     h.finish(&commands);

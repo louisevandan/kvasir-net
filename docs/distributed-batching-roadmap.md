@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-12 — 기본 레이어 장치 선언·PLAN/LOAD 게이트 구현. workspace1430/0/7, CUDA CTest16/16·실제 stdin7/7·제품2GPU 4/4 EOS/해제. 신구 모두의 단일native 2GPU 자동 분할 compute12MiB 불일치는 별도 RED. 다음은 고정 창의 독립 prefill 묶음 선택 수정과 MI 새query 실기다. 100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
+최신 현황 정리: 2026-09-12 — 고정 창의 prefill 집단 선택 수정, workspace1434/0/7·독립 변이4종 각1실패. 생성 우선·시간 예산 조사 완료. MI 새native Release CTest15/15·장치 선언 PLAN/잘못된 LOAD 거부11/11. 새 배치의 실기 성능·100k·정상 goodput·B2/B3 전체·H5 및 Hy3 재실기 승인은 미완이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -72,10 +72,23 @@ Hy3 후보는8/8 EOS·완료·해제·UNLOAD,7.5298TPS·선두 계산7/8이다. 
 원자료·실행파일132경로의 전후 해시·정리 및 인과 분석은
 [독립 prefill 대조 실기](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-cohorts-20260911)에 있다.
 
-**현재 다음 첫 행동:** 기본 레이어 배정 게이트의 로컬 구현/검증을 마쳤다. 다음은 고정 open 창과
-fragment1 안에서 독립 prefill 묶음 선택을 순간 free slot 수와 분리하는 것이다. phase별 active/ready/inflight,
-단계 비용과 원하는 독립 묶음 수를 사용하고, 뒤이어 누적 완료시각으로 행 폭을 선택한다. 새 knob의 최적값 탐색으로
-대체하지 않는다. 같은 후보의 MI 새native에서 실제 기대 장치를 선언한 PLAN/LOAD와 정책 대조를 연결한다.
+**현재 다음 첫 행동:** 고정 open 창·fragment1에서 수용된 미완료 prefill 집단을 순간 free slot과
+분리하는 수정은 최종 전체/변이 게이트를 통과했다. 다음은 같은 native의 MI 정책 대조를 실행한다.
+새 HIP native CTest15/15·장치 선언 게이트11/11은 통과했으며 올바른 실제 LOAD/추론·새 배치 성능은 남아 있다.
+[소비 반례와 검증](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#prefill-population)을 따른다.
+
+**사용자 제안의 조사 결론:** 생성 우선 후 남는 예산에 prefill을 넣는 방향을 채택한다. P4 일반 attention은
+이미 생성 행 우선이나 혼합 결과는 전체 계산 뒤 반환하며, 고정128행 quantum은 생성 지연을 보호하지 못했다.
+동일 GPU 배정 실기의 짧은 요청 token 간격 p50은 긴 요청 유입 전45ms/긴 prefill 중637.5ms/이후76ms다.
+다른 대조도46/636.5/76ms다. 구간별 문맥과 수요가 달라 인과 배율은 주장하지 않는다.
+Sarathi-Serve·vLLM·DeepSpeed-MII·TensorRT-LLM·SGLang·현재 llama pin을 코드/원문으로 대조했다.
+[조사·코드 결함·판별 실험](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#decode-first-research)이 상세 근거다.
+이후 순서는 (1) 생성의 ready→issue/tail과 stage별 실제 잔여 비용 계측,
+(2) 고정 창 안에서 생성 참여의 순간 free 상한을 완료시각 기준으로 대조,
+(3) 생성 우선 후 문맥·기발행 backlog·전송을 포함한 시간 예산 안의 chunk 재선택,
+(4) prefill deficit/aging과 전체 KV/반환 byte 예약을 결속한 실제100k 다수/긴 출력 수용이다.
+pure-prefill에는 충분한 행 폭과 독립 집단을 유지하고, 병목이 이미 바쁘면 flight를 더 쌓지 않는다.
+equal-width hybrid는 합법적인 phase 분할로 같은 서비스 목표를 구현한다. 기본 승격/최적값은 실기 뒤다.
 
 이번 native는 `--expect-layer-device begin:end:name`을 no-alloc PLAN과 실제 LOAD에서 대조하며,
 byte 총합이 같아도 PLAN/LOAD의 기본 레이어 장치가 바뀌면 거부한다. 명시 CPU 범위/전문가 오프로딩은 구분한다.
@@ -86,7 +99,8 @@ workspace1430/0/7, CUDA CTest16/16, 실제stdin7/7, 독립 재컴파일 변이5�
 
 MI native451의 기존 OUTER 계획 `45-cut_begin`은 각 stage의 첫 반복층을 CPU로 배정했다.
 배정만 정정한 raw27.42→75.02TPS는 배치 알고리즘만의 성과가 아니다. 정정된 계획을 다음 MI 기준선으로
-고정하되 다른 native pin/Hy3에 숫자+1을 일괄 적용하지 않는다. 새query의 ROCm/Metal 실기는 아직 남아 있다.
+고정하되 다른 native pin/Hy3에 숫자+1을 일괄 적용하지 않는다. 새query의 ROCm PLAN/잘못된 LOAD 거부는
+확인했으나 올바른 LOAD/추론 및 Metal 실기는 아직 남아 있다.
 
 이전 CPU 배정에서 독립 prefill 최대2건은 head 유휴670→132ms·raw14.86→27.42TPS를 만들었지만
 혼합 ITL863→1078ms가 됐다. 정정된 GPU 배정에서는 자동 정책도 이미1개 prefill 요청씩 발행해
