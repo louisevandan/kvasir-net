@@ -2,9 +2,9 @@ diff --git a/src/llama-ext.h b/src/llama-ext.h
 --- a/src/llama-ext.h
 +++ b/src/llama-ext.h
 @@ -90,6 +90,11 @@
- 
+
  LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * ctx);
- 
+
 +// Default repeating-layer placement only. Tensor overrides, KV and operator
 +// fallback placement are separate contracts. Available in no-alloc and real loads.
 +#define LLAMA_LINKCPP_LAYER_DEVICE_QUERY 1
@@ -19,7 +19,7 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 @@ -3289,6 +3289,13 @@
      return model->devices[i].dev;
  }
- 
+
 +ggml_backend_dev_t llama_model_get_layer_device(const struct llama_model * model, int32_t layer) {
 +    if (model == nullptr || layer < 0 || layer >= llama_model_n_layer(model)) {
 +        return nullptr;

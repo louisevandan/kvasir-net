@@ -160,7 +160,7 @@
     },
     {
       "file": "0028-layer-default-device-query.patch",
-      "sha256": "0f6c43179e62e52d524bc9a821a3897830e82df6705009c2516ff7f30989fe02",
+      "sha256": "c159df2f75e904b4b6eb041b4a68becba3661fa6a9214e07401177e52efc59e8",
       "layer": "stage_hook"
     }
   ],
