@@ -1,0 +1,14 @@
+{
+  "id": "decode4-min4-cpu4",
+  "native_threads": 4,
+  "environment": {
+    "P4_STAGED_MIN_BATCH_ROWS": 4,
+    "P4_STAGED_MAX_OPEN_BATCHES": 0,
+    "P4_STAGED_MAX_ISSUE_ROWS": 0,
+    "P4_STAGED_PREFILL_FRAGMENTS": 1,
+    "P4_STAGED_DECODE_MEMBERS": 4,
+    "P4_STAGED_PREFILL_MEMBERS": 0,
+    "P4_STAGED_PREFILL_ROWS": 0,
+    "P4_STAGED_PREFILL_ROWS_PER_REQUEST": 0
+  }
+}

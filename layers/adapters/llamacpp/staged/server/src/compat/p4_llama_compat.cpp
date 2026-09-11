@@ -1,6 +1,9 @@
 #include "p4_llama_compat.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <limits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "p4_llama_compat_internal.hpp"
@@ -15,6 +18,27 @@
 #include "speculative.h"
 
 namespace p4_llama_compat {
+
+std::string stage_wire_abi() {
+#ifndef P4_STAGED_NATIVE_WIRE_SOURCE
+    return "unknown";
+#else
+    const std::uint16_t endian_probe = 1;
+    if (*reinterpret_cast<const unsigned char *>(&endian_probe) != 1
+        || sizeof(void *) != 8 || sizeof(float) != 4
+        || !std::numeric_limits<float>::is_iec559
+        || sizeof(llama_token) != 4 || sizeof(llama_pos) != 4
+        || sizeof(llama_seq_id) != 4) return "unknown";
+    std::string result = "p4pb4le64:" P4_STAGED_NATIVE_WIRE_SOURCE ":types=";
+    for (int i = 0; i < GGML_TYPE_COUNT; ++i) {
+        if (i != 0) result += ',';
+        const auto type = static_cast<ggml_type>(i);
+        result += std::to_string(i) + '/' + std::to_string(ggml_blck_size(type))
+            + '/' + std::to_string(ggml_type_size(type));
+    }
+    return result;
+#endif
+}
 
 std::vector<MemoryBreakdownEntry> memory_breakdown(const llama_context * context) {
     std::vector<MemoryBreakdownEntry> entries;
@@ -74,7 +98,45 @@ ggml_type LlamaPlan::cache_type_v() const noexcept { return impl_->params.cache_
 bool LlamaPlan::parse_arguments(const std::vector<std::string> & arguments) {
     // The parser takes a mutable argv, so the strings are copied rather than
     // handed the caller's storage to rewrite.
-    std::vector<std::string> owned = arguments;
+    // b10883 removed deprecated load flags still present in saved OUTER plans.
+    // Use upstream's option arities so a value named "--no-mmap" is not edited.
+    // Older pins already accept these aliases and need no translation.
+    const auto parser = common_params_parser_init(impl_->params, LLAMA_EXAMPLE_SERVER, nullptr);
+    std::unordered_map<std::string, std::size_t> arities;
+    for (const auto & option : parser.options) {
+        const std::size_t arity = option.handler_void || option.handler_bool ? 0 :
+            option.handler_str_str ? 2 : 1;
+        for (const auto * name : option.args) arities[name] = arity;
+        for (const auto * name : option.args_neg) arities[name] = arity;
+    }
+    const std::unordered_map<std::string, std::string> legacy_modes{
+        {"--no-mmap", "none"}, {"--mmap", "mmap"}, {"--mlock", "mlock"},
+        {"--direct-io", "dio"}, {"-dio", "dio"},
+        {"--no-direct-io", "none"}, {"-ndio", "none"},
+    };
+    std::vector<std::string> owned;
+    if (!arguments.empty()) owned.push_back(arguments.front());
+    for (std::size_t i = 1; i < arguments.size(); ++i) {
+        std::string name = arguments[i];
+        if (name.rfind("--", 0) == 0) std::replace(name.begin(), name.end(), '_', '-');
+        const auto option = arities.find(name);
+        const auto legacy = legacy_modes.find(name);
+        if (option == arities.end() && legacy != legacy_modes.end()) {
+            owned.emplace_back("--load-mode");
+            owned.push_back(legacy->second);
+        } else {
+            owned.push_back(arguments[i]);
+            const std::size_t arity = option == arities.end() ? 0 : option->second;
+            for (std::size_t value = 0; value < arity && i + 1 < arguments.size(); ++value) {
+                owned.push_back(arguments[++i]);
+            }
+        }
+    }
+#ifdef _WIN32
+    // Expansion must not undo the startup parser's synthetic-argc guard:
+    // common_params_parse would otherwise replace the plan with process argv.
+    if (owned.size() == static_cast<std::size_t>(__argc)) owned.emplace_back("--log-disable");
+#endif
     std::vector<char *> pointers;
     pointers.reserve(owned.size() + 1);
     for (auto & argument : owned) pointers.push_back(argument.data());

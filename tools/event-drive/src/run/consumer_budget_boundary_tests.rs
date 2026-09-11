@@ -129,6 +129,7 @@ fn config(case: Case) -> RunConfig {
         options: String::new(),
         pre_inference_hold_ms: 0,
         timeout_ms: 2_000,
+        pipeline_compatibility: Default::default(),
         acceptance: AcceptanceConfig {
             minimum_generated_tokens: 1,
             expected_prefill_rows: None,
@@ -1058,6 +1059,11 @@ mod partial_results {
         );
         assert_eq!(run.requests.len(), 2);
         for request in &run.requests {
+            assert_eq!(
+                request.output_received_ms.len(),
+                request.outcomes.len(),
+                "{fault:?}: receipt times survive exactly with approved outputs"
+            );
             assert!(
                 !request.outcomes.is_empty() && !request.response.is_empty(),
                 "{fault:?}: {} kept its approved outputs",

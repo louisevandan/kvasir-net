@@ -48,6 +48,7 @@
 | 문서 | 지위 |
 | --- | --- |
 | [AGENTS.md](../AGENTS.md) | 새 세션 규칙 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md) | fleet/NAS 실측과 최신 upstream 통합의 진행·미승인 게이트 |
 | [docs/adapter-batching-layers.md](adapter-batching-layers.md) | 분야 계약·구현과 구별 |
 | [docs/adapter-boundary.md](adapter-boundary.md) | 분야 계약·구현과 구별 |
 | [docs/adapter-restructure-plan.md](adapter-restructure-plan.md) | 역사·구 계획 |
@@ -138,6 +139,7 @@
 | [README.md](../README.md) | 진입점 |
 | [test/benchmarks/p4-4node/README.md](../test/benchmarks/p4-4node/README.md) | 개발 하네스 안내 |
 | [test/benchmarks/model-catalog/README.md](../test/benchmarks/model-catalog/README.md) | OUTER 모델 적재 파라미터와 메모리 실측 카탈로그 |
+| [test/benchmarks/cluster-inference/README.md](../test/benchmarks/cluster-inference/README.md) | main 공통 실험 구성기·모델/클러스터/runtime/정책/워크로드 분리 |
 | [tools/README.md](../tools/README.md) | 구성요소 안내 |
 
 ## 4. 유지 규칙

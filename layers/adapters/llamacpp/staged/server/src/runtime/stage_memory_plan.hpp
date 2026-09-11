@@ -112,6 +112,10 @@ struct StageMemoryPlan final {
 [[nodiscard]] bool stage_memory_plan_fits_current_free(
     const StageMemoryPlan & plan);
 
+// Physical allocation ownership differs from direct CPU access to a buffer's
+// tensor representation (for example a CPU-owned repacked tensor).
+[[nodiscard]] bool stage_buffer_uses_host_memory(ggml_backend_buffer_type_t buffer_type);
+
 [[nodiscard]] bool same_stage_memory_allocation(
     const StageMemoryPlan & planned,
     const StageMemoryPlan & actual,

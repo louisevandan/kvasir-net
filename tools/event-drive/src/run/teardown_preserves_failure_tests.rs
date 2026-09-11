@@ -54,6 +54,7 @@ fn config() -> RunConfig {
         options: String::new(),
         pre_inference_hold_ms: 0,
         timeout_ms: 2_000,
+        pipeline_compatibility: Default::default(),
         acceptance: AcceptanceConfig {
             minimum_generated_tokens: 1,
             expected_prefill_rows: None,
@@ -86,8 +87,7 @@ async fn failed_run(config: &RunConfig) -> inference::InferenceResult {
             .await
             .unwrap();
         assert_eq!(
-            request.envelope.payload_content_type,
-            PREFILL_CONTENT_TYPE,
+            request.envelope.payload_content_type, PREFILL_CONTENT_TYPE,
             "the run must submit before it can fail"
         );
         let command: InferenceCommand = serde_json::from_slice(&request.payload).unwrap();

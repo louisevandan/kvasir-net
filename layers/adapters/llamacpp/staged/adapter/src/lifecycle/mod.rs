@@ -162,6 +162,7 @@ mod tests {
                     upstream_commit: "fixture-upstream".into(),
                     patch_set: "fixture-patch-set".into(),
                     backend_inventory: "fixture-backend".into(),
+                    stage_wire_abi: "unknown".into(),
                 }))
             }
         }

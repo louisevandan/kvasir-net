@@ -9,6 +9,8 @@ mod inference_identity;
 #[cfg(test)]
 mod inference_identity_tests;
 mod load;
+#[cfg(test)]
+mod load_consumer_tests;
 mod output_budget;
 mod release_ledger;
 mod replies;
@@ -49,10 +51,11 @@ pub struct StageSpanArtifact {
 #[derive(Debug, Serialize)]
 pub struct RunArtifact {
     pub passed: bool,
-    /// Which llama.cpp build every stage of this pipeline reported.
-    /// Recorded because a measurement is only attributable to the code
-    /// that produced it, and the upstream commit alone does not name that.
+    /// Head's identity for legacy readers. Per-stage identities are retained
+    /// below; heterogeneous backends must not be represented as one inventory.
     pub build: p4_llamacpp_staged_adapter::v2::BuildIdentity,
+    pub stage_builds: Vec<load::StageBuild>,
+    pub pipeline_compatibility: p4_llamacpp_staged_adapter::v2::PipelineCompatibility,
     pub acceptance: acceptance::AcceptanceSummary,
     pub prompt: String,
     pub response: String,
@@ -131,6 +134,10 @@ pub struct RequestArtifact {
     pub arrival_ms: u128,
     pub first_output_ms: Option<u128>,
     pub completed_ms: Option<u128>,
+    /// Complete OUTPUT frame receipt times at OUTER, relative to inference start.
+    /// Only approved outputs are retained, in the same order as `outcomes`.
+    /// These include transport delivery effects and are not GPU completion times.
+    pub output_received_ms: Vec<u128>,
     pub prefill_rows: usize,
     pub decode_rows: usize,
     pub verify_rows: usize,
@@ -140,8 +147,6 @@ pub struct RequestArtifact {
     pub logical_prefill_tps: Option<f64>,
     pub logical_generation_tps: Option<f64>,
     pub response: String,
-    /// Monotonic run-relative receipt times, one per approved OUTPUT (including terminal).
-    pub output_received_ms: Vec<u128>,
     pub outcomes: Vec<OutcomePayload>,
 }
 
@@ -242,7 +247,9 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     // is always written.
     let cleanup_error = teardown(&config, &mut wire, &mut sender).await;
 
-    Ok(assemble(config, build, run, cleanup_error))
+    let mut artifact = assemble(config, build.representative, run, cleanup_error);
+    artifact.stage_builds = build.stages;
+    Ok(artifact)
 }
 
 /// Build the artifact from whatever the run produced, including nothing.
@@ -293,6 +300,8 @@ fn assemble(
     RunArtifact {
         passed: structurally_complete && acceptance.passed,
         build,
+        stage_builds: Vec::new(),
+        pipeline_compatibility: config.pipeline_compatibility,
         acceptance,
         prompt: config.prompt,
         response: requests
@@ -519,6 +528,7 @@ mod tests {
             pre_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
             timeout_ms: 1000,
+            pipeline_compatibility: Default::default(),
         }
     }
 
@@ -714,7 +724,6 @@ mod tests {
     #[test]
     fn phase_metrics_use_first_output_as_the_prefill_decode_boundary() {
         let mut request = RequestArtifact {
-            output_received_ms: Vec::new(),
             request_id: "request".into(),
             submission_event_id: "sent-request".into(),
             submission_authority: None,
@@ -726,6 +735,7 @@ mod tests {
             arrival_ms: 10,
             first_output_ms: Some(210),
             completed_ms: Some(1_210),
+            output_received_ms: Vec::new(),
             prefill_rows: 500,
             decode_rows: 100,
             verify_rows: 0,

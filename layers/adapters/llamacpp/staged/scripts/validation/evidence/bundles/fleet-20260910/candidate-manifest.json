@@ -1,0 +1,44 @@
+{
+  "status": "candidate; mixed host and whole fleet gates blocked",
+  "validated_source": "9ad366f9063e49f2574639d649fe556344992c6e",
+  "local_bundle": "F:/dev/p4-releases/fleet-20260910-wire-candidate",
+  "archives": [
+    {
+      "name": "source-6c9c28940.zip",
+      "bytes": 3053148,
+      "sha256": "89c1c1e525dd8b56977e7c160d068d25bcf459f77dbaa61dd7dc72d6078f92a0"
+    },
+    {
+      "name": "source-9ad366f90.zip",
+      "bytes": 3063416,
+      "sha256": "d2c9c90de86b37517329c1375ab586f35b53a4d66711d5a7619cb856052bac4b"
+    },
+    {
+      "name": "windows-runtime.zip",
+      "bytes": 531063653,
+      "sha256": "4a02d92a7fab14c721f6f5fb301525be7edabbb456a7ebf1304d5e88312592dc"
+    },
+    {
+      "name": "spark-runtime.tgz",
+      "bytes": 47423487,
+      "sha256": "50f8e879b7bb0476a0f29302b29e51c87e6ab100ac30a124b7f4325292383e7a"
+    },
+    {
+      "name": "ubuntu-runtime.tgz",
+      "bytes": 76543608,
+      "sha256": "11b2aa48871d2337da0b32ebd54895446fc13e99f5a3a1eac7dd69e6114654c6"
+    },
+    {
+      "name": "mac21-runtime.tgz",
+      "bytes": 6647745,
+      "sha256": "a2a5464a64c47a9aa76f62c7370211731ed04e0bd2f2043c029a362d4cfeb787"
+    },
+    {
+      "name": "evidence.zip",
+      "bytes": 2422154,
+      "sha256": "e96047fcaeef4fb94f0ad5750dfec85b3bca6cb1c1c33d74bf54c51f813baa87"
+    }
+  ],
+  "evidence_files": 329,
+  "evidence_manifest_sha256": "999929ea3860f40886c02a1f568f3cc868f5765a895d1d79d440a86c7a365bb1"
+}

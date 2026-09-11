@@ -1,0 +1,10 @@
+{
+  "id": "hy3-no-think",
+  "template": {
+    "system_prefix": "<｜hy_begin_of_sentence:opensource｜>",
+    "system_suffix": "<｜reasoning_mode:opensource｜>reasoning_effort:no_think",
+    "user_prefix": "<｜hy_User:opensource｜>",
+    "assistant_prefix": "<｜hy_Assistant:opensource｜><think:opensource></think:opensource>"
+  },
+  "stop": ["<|im_end|>", "<|im_start|>"]
+}

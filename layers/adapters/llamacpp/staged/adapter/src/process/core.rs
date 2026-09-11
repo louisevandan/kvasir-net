@@ -45,6 +45,7 @@ pub struct ReadyInfo {
     /// the patch set can still be a CPU build and a CUDA build, and this
     /// separates those. It does not say where the tensors ended up.
     pub backend_inventory: String,
+    pub stage_wire_abi: String,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -387,6 +388,7 @@ pub(super) fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
         upstream_commit: capability_text(&text, "upstream"),
         patch_set: capability_text(&text, "patch_set"),
         backend_inventory: capability_text(&text, "backend_inventory"),
+        stage_wire_abi: capability_text(&text, "stage_wire_abi"),
         server_id: text,
         transactions,
         physical_batch,

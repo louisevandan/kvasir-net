@@ -1,0 +1,8 @@
+{
+  "id": "engineering-korean-long16",
+  "kind": "engineering-dossier",
+  "record_counts": [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 260],
+  "max_output_tokens": 4096,
+  "minimum_output_tokens": 1024,
+  "waves": [{"after_ms": 0, "count": 16}]
+}

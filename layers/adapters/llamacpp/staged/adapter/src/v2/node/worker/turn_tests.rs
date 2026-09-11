@@ -171,6 +171,7 @@ impl ServerControl for TurnNative {
             upstream_commit: "fixture".into(),
             patch_set: "fixture".into(),
             backend_inventory: "no-engine".into(),
+            stage_wire_abi: "unknown".into(),
         }))
     }
 

@@ -9,12 +9,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <string>
+
 #ifdef _WIN32
 #include <process.h>
 #else
 #include <unistd.h>
 #endif
-#include <string>
 
 namespace staged::llama_runtime {
 
@@ -31,8 +32,27 @@ void test_force_hop_memory_dirty(StageRuntime & runtime, bool value) noexcept {
 } // namespace staged::llama_runtime
 
 void run_stage_memory_plan_tests();
+void run_ggml_reserve_size_tests();
 
 namespace {
+
+void native_wire_representation_is_identified() {
+    const auto abi = p4_llama_compat::stage_wire_abi();
+    assert(abi.rfind("p4pb4le64:", 0) == 0);
+    const auto separator = abi.find(":types=");
+    assert(separator == std::string("p4pb4le64:").size() + 64);
+    assert(abi.find(":types=0/1/4,1/1/2,") != std::string::npos);
+    assert(abi.find(';') == std::string::npos);
+    std::cout << "stage_wire_abi=" << abi << '\n';
+}
+
+unsigned long long process_id() {
+#ifdef _WIN32
+    return static_cast<unsigned long long>(::_getpid());
+#else
+    return static_cast<unsigned long long>(::getpid());
+#endif
+}
 
 const char * environment_value(const char * name) {
     const auto * value = std::getenv(name);
@@ -135,14 +155,8 @@ void real_decode_after_restore_regression() {
     config.model_identity = model_path;
     config.layer_begin = 0;
     config.layer_end = 28;
-#ifdef _WIN32
-    const auto process_id = ::_getpid();
-#else
-    const auto process_id = ::getpid();
-#endif
     const auto root = std::filesystem::temp_directory_path() /
-        ("p4-staged-kv-restore-regression-" + std::to_string(
-            static_cast<unsigned long long>(process_id)));
+        ("p4-staged-kv-restore-regression-" + std::to_string(process_id()));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     config.kv_root = root.string();
@@ -336,6 +350,7 @@ void hop_batch_rolls_back_only_new_sequences() {
 } // namespace
 
 int main() {
+    native_wire_representation_is_identified();
     staged::llama_runtime::StageRuntime runtime;
     assert(!runtime.loaded());
     p4_llama_compat::LlamaPlan plan;
@@ -356,6 +371,7 @@ int main() {
     unload_clears_hop_memory_dirty();
     quarantine_marks_hop_memory_dirty();
     run_stage_memory_plan_tests();
+    run_ggml_reserve_size_tests();
     kv_operations_refuse_when_hop_memory_dirty();
     real_decode_after_restore_regression();
     hop_batch_rolls_back_only_new_sequences();

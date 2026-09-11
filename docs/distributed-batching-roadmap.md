@@ -16,6 +16,12 @@
 
 ### 0.V1.1 MI250·Hy3 통합 수정계획 (2026-09-11)
 
+**단일 main 운영 (2026-09-11 사용자 지시):** 장기 개발·릴리즈 기준은 `main` 하나다. 모델별 개발 브랜치는 운영하지 않는다.
+이번 임시 Hy3 브랜치의 upstream/메모리/physical-wire 호환 변경을 main의 하드웨어 조회·경로·Linux 링크 수정과 합친다.
+모델·클러스터·정책·워크로드·runtime identity는 공통 실험 실행기의 독립 설정으로 관리한다.
+과거 측정 소스/바이너리 해시는 불변 증거로 보관하며, 통합 소스로 재배포하지 않은 실기를 통합 main의 승인으로 표시하지 않는다.
+통합 게이트와 push 후 임시 브랜치는 폐기하고, 이후 실험 결과와 수정은 main에 반영한다.
+
 **구현 진행 (2026-09-11):** V1.1-0의 선택 시점 진단·실제 OUTPUT 수신시각과 V1.1-2의
 실험용 phase별 요청/행 상한을 구현했다. V1.1-0 전체 또는 V1.1-2 승격 완료는 아니다.
 V1.1-1 B2/B3/receipt 예산은 미완이며 resident/open/fragment 창을 확대하지 않았다.
@@ -139,6 +145,231 @@ physical capsule 조기 전송은 native codec/정산 계약을 바꾸는 별도
 모든 모델/backend 승인을 이번 수정의 자동 완료 조건으로 추가하지 않는다. 지원 범위 밖은 기본 비활성/미승인이다.
 
 아래는 이전 실행 이력이다. 당시 후보 파일·실패·미실행 기록은 보존하며 이번 계획의 새 순서를 덮어쓰지 않는다.
+
+### Historical v1.1 cluster comparison preparation (2026-09-11)
+
+This isolated experiment tree retains the Hy3 fleet base `1a848a716`, including
+its explicit physical-wire-v4 compatibility checks and approved OUTPUT receipt
+timing, and ports only the bounded adapter selection/observation change from
+`d5256af44`. Driver fixture initializers set the optional scheduling field to
+None. It does not replace the fleet native binaries or relax identity checks.
+The source is identical for baseline and candidate; only decode-member caps
+change (Hy3 0 to 2, MI250 main source 0 to 4). Resident, native batch limits,
+prefill fragment count, model cuts, KV placement and offloading stay fixed.
+Short screening uses 256-token length termination and a 15-minute inference
+deadline; it is not normal-response quality or H5 performance acceptance.
+Combined-tree validation: `cargo test --workspace --no-fail-fast --locked
+--target-dir F:/dev/p4/target/v11-hy3-tests`, exit 0, 1385 passed / 0 failed /
+7 ignored, 58 summaries. Runtime comparison remains pending.
+
+## 0. 현재 상태 — 후보 보존 및 별도 fleet·upstream 통합 진행
+
+### 0.-6 최신 사용자 지시 — MiMo 보류, Hy3로 실행 (2026-09-10)
+
+사용자가 Hy3를 선택했으므로 MiMo 로더 수정/예외 승인은 현재 실행의 선행 조건이 아니다.
+Hy3 Q5_K_S 191.884 GiB, 5호스트 6-stage, 세션당102400·resident8·KV 풀819200으로
+짧은 정합성 실행 `hy3-100k-smoke-lowport-1789027462065`가 **2/2 EOS·완료·해제·UNLOAD**했다.
+두 전력/에너지 문제 전문에서 수치·단위·온도 판단의 한계를 확인했다. error/cleanup_error는 null이다.
+여섯 stage의 topology/shape 및 model/context/compute 계획=실제 할당을 확인했다.
+긴 입력·8개 활성 세션·슬롯 재사용·포화·성능 승인은 아직 아니다.
+
+컷은 M42 [0,16)/[16,32), Spark [32,59), Mac [59,62), 로컬3090 [62,78), Ubuntu [78,80).
+CUDA KV q4_0/q4_0, Mac Metal f16/f16; batch512/UBATCH256. KV/compute를 device에 확보한 뒤
+M42 각15개·로컬15개·Ubuntu2개 층의 routed expert를 RAM에 둔다. 통합 메모리를 중복 합산하지 않는다.
+같은 컷의 r16 로컬 계획은 거부됐다. 다른 컷의 r16까지 불가능하다고 일반화하지 않는다.
+첫 실제 LOAD는 Mac native53021 연결 EINVAL로 실패해 보존했다. 전용 agent를 새로 시작하고
+native23021/23022로 재시도했다. ephemeral 충돌은 후보 원인이며 재접속 내구성 승인은 아니다.
+
+긴 단일 실행 `hy3-100k-single-1789029008524`도31643 입력 → 2316 생성 → EOS·해제·UNLOAD했다.
+네 기록의 산술·단위·인용·경보 판정은 맞지만, 경보 기준/안전 한계 혼용과 인과 표현 과장 등으로
+**전체 응답 품질은 미승인**이다. 실제1418단어는 요청한 약1800~2500단어보다 짧다.
+TTFT1162.465초, 생성 토큰 수신 간격 p50=513ms/p99=691.6ms. 프리필 UBATCH124개 중123개가256행이다.
+단일 요청의 decode1행과 이를 합산해 전체 채움률을 병목으로 읽지 않는다.
+
+다음16건은 **진단용 부하**로 봉인한다. 품질 미승인 입력을 포함한 같은 프롬프트와
+최소1024 생성·EOS·정합성 기준을 유지하고, 정상 응답 승인과 raw 처리량을 분리한다.
+입력 길이31643/63682/91696토큰, 합계966748토큰·4614390바이트이며 max8192와 합쳐 최대99888토큰이다.
+8건을0~56초에8초 간격, 다음8건을300~356초에 제출한다. inference 제한6시간, 관측기 상한8시간이다.
+prefill_fragments 기본1과 outstanding 의존을 유지하며 도착 시차로 독립 배치 진행 기회를 만든다.
+OUTER의 승인 OUTPUT별 수신 시각은 전송 효과를 포함하며 GPU 완료 시각이 아니다.
+RAM에 둔 웨이트도 큰 배치의 연산은 CUDA로 옮겨질 수 있어 CPU 계산으로 단정하지 않는다.
+모델6개 전체 파일 해시와 장비별 실행 중 라이브러리 해시를 확인했다. PCIe 표본도 다음 실행에 보존한다.
+정확한 head 원장 flight 시간 분포와 반복 포화 비교는 별도 미완이다.
+[Hy3 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#hy3-100k-2026-09-10)를 따른다.
+
+16건 실행 `hy3-100k-wave-diagnostic-1789033111493`은 6-stage 적재·계획=실제·라이브러리 해시를 확인했지만
+프리필 중 정체돼 **진단 중단**했다. 전달16/완료0/해제0, head 관측 UBATCH82개는 모두256행이다.
+M42 호출 완료41/41이 약508초간 늘지 않는 동안 로컬3090만 높은 활동/PCIe 전송과112 MiB 여유를 보였다.
+메모리 압박은 우선 가설이며 확정 원인이 아니다. 검증 native를 의도적으로 종료했으므로 뒤따른10054는
+유발한 오류다. 부분 artifact·최초 오류·busy UNLOAD·누락 증거를 보존했다. 완료된 RPC 구간만의 사용률은
+정체 구간을 제외하므로 전체 추론 사용률로 인용하지 않는다.
+
+**최종 판정 (2026-09-11):** `hy3-100k-wave-headroom-1789035735558`을 사용자가 선택한 원래6시간
+제한까지 실행했다. 16건 전달, **4건 EOS·완료·해제 /12건 미완료**, 두 번째 웨이브8건은 OUTPUT0이다.
+최초 오류는 deadline이며 busy UNLOAD는 별도 cleanup_error다. 승인 OUTPUT16438개와 부분 산출물을 보존했다.
+누락된 요청/실행 행 수를 복원하지 않으며 raw/품질 승인 TPS는 미산출이다. 완료4건 전문의 계산16항목은
+맞지만 근거 없는 인과 배제 등과 요청 길이 미달(1110~1201단어) 때문에 전체 정상 응답은0/4다.
+
+실제 출력이 있었던8건의 TTFT p50=94.85분/p90=166.97분이며 나머지8건은 미관측이다.
+완료4건의 요청 도착→완료 p50=309.34분이다. head가 수집한 물리 prefill-only2137개는 모두256행,
+mixed328개 중325개는256행, decode-only3783개는 평균4.156행/최대7행이다.
+**프리필 폭은 찼지만 연속 요청의 완료·지연·decode 활용 목표는 충족하지 못했다.** head 전체 원장 flight
+시간 분포와 대기 귀속은 미완이므로 이 숫자만으로 스케줄러/전송/CPU 중 원인을 확정하지 않는다.
+
+로컬 layer77 전문가를 RAM으로 옮긴 v3의 여섯 stage는 계획=실제이며 로컬 device 요구량은
+20203350016바이트(KV15099494400)다. 전체 관측창 최소 여유2548 MiB를 유지하며 추론은 진행했다.
+다만 이전 실행은 재사용 agent, 이번은 fresh agent라 **엄밀한 한 변수 비교가 아니며 이동만의 효과는 미확정**이다.
+Spark agent RSS는 관측 시작 후7.54→20.55 GiB, 시스템 가용 RAM 최저2.73 GiB였다. full Event를
+건수 제한으로 보관하는 broker 원장은 확인된 메모리 증가 후보지만 힙 귀속 증명은 아니다.
+
+실행 소스/입력/바이너리를 끝까지 유지했다. 원자료를 수집한 뒤 해당 검증 native/agent만 정리했고
+Mac 전용 GUI agent는 새 PID1560/52004 LISTEN으로 복구했다. 프로세스 종료는 UNLOAD 성공이 아니다.
+로컬4080의 기존 작업은 유지했다. 이 기록은 실험 마감이며 제품 릴리즈/최종 목표 달성 선언이 아니다.
+
+**다음 버전 첫 행동:** 장시간 부하를 반복하기 전에 (1) broker/수용/반환의 바이트 예산과 안전한 receipt
+retirement, deadline 뒤 cancel→drain→release→UNLOAD 경로를 실제 소비 시험으로 닫는다.
+(2) 같은 배포에서 짧은 다국어 정상 응답을 검증한다. 이번 영어 출력에 UTF-8 오류가 없다는 사실은
+별도 MI250의69~113토큰 오류를 고친 증거가 아니다. (3) 고정된 컷/초기 상태에서 짧은 단일→동시2/4/8을
+단계별로 측정하고 prefill/decode별 대기·CPU/전송·head flight를 귀속한 뒤 같은100k arm을 재실행한다.
+resident 상향이나 Metal KV/컷 변경은 실제 메모리/정상 응답 비교를 통과한 뒤 별도 arm으로 수행한다.
+
+### 0.-5 이전 사용자 지시 — 최대 성공 모델·세션당 100k (2026-09-10)
+
+현재 우선순위는 과거 실제 LOAD 성공 모델 중 가장 큰 **MiMo-V2.5 UD-Q5_K_S, 201.446 GiB**를
+기존 M42·Spark·Mac .21·이 PC·Ubuntu에 적재하고 긴 입력/생성 웨이브를 검증하는 것이다.
+TUF/Mac .20 복구를 이 실행의 새 직렬 선행 조건으로 만들지 않는다. 아래 맥 포함 122B 결과는 과거의 별도 성공이다.
+
+**현재 판정: 적재 전 RED.** 봉인 제품 소스 `9ad366f90`의 CUDA·Metal 바이너리로 5호스트 6단계
+no-alloc 계획을 실행했으며 전부 `sliding_window_pattern ... expected 48, got 51`로 exit7했다.
+MiMo의 과거 성공은 이전 pin의 LOAD 증거이며 현재 pin의 지원 증명이 아니다. 새 메모리 계획·실제 LOAD·추론·TPS는 없다.
+원인과 원자료는 [MiMo 사전 판정](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#mimo-100k-preflight-2026-09-10)을 따른다.
+
+1. **로더 회귀부터 복구한다.** 새 공통 로더가 NextN 수를 먼저 읽는데 MiMo SWA 배열 독자가
+   여전히 본체 층 수를 기대한다. 수정 후보는 그 독자의 `n_layer()`를 `n_layer_all`로 바꾸는 한 줄이다.
+   현재 후보는 미빌드·미적용이다. 공식 upstream 변경/PR 근거를 확보하거나 사용자가 이 변경의 로컬 검증 예외를
+   명시 승인해야 현행 모델 격리 검사와 충돌 없이 채택할 수 있다. 가짜 PR provenance, GGUF 배열 절단,
+   공통 loader의 배열 길이 검사 완화로 우회하지 않는다. 51/3 정상, MTP 없는 정상, 잘못된 배열 거부,
+   실제 GGUF 소비와 독립 재컴파일 변이, CUDA/Metal 및 기존 122B 회귀가 완료 조건이다.
+2. **세션당 102,400토큰, resident 8/16/32를 계획한다.** 입력+출력 한도이며 전체 KV 풀은 각각
+   819,200/1,638,400/3,276,800토큰이다. `context_size=102400`, `total_context_size=102400*R`,
+   native `--ctx-size=102400*R`, `--n-seq-max=R`를 함께 검증한다. 세션 수만 올리고 풀을 100k로 두지 않는다.
+   초기 컷 [0,8)/[8,16)/[16,36)/[36,40)/[40,46)/[46,48)은 **미승인 후보**다.
+   KV와 compute 및 여유분을 먼저 확보하고 남은 device 공간에 웨이트를 넣으며 초과 routed experts는 PC RAM에 둔다.
+   KV host fallback을 허용한 것으로 읽지 않는다. 계획/실제 context buffer 위치를 확인하고 M42 두 stage의 host 합계를 검사한다.
+   Spark·Mac의 통합 메모리는 중복 합산하지 않는다. 실제 계획 전에는 이 컷의 적합성·동시 세션 상한을 확정하지 않는다.
+3. **의미 있는 긴 입력을 사용한다.** 32개 문서를 실제 tokenizer로 31,645~92,165토큰 검산했고,
+   모델 Jinja template와 32/32 동일하다. 앞/중간/끝 기록을 인용하는 전력·에너지 계산과 비교 보고서이며 독립 정답표가 있다.
+   최대 생성은 8,192토큰(최장 입력+출력=100,357), 완결 EOS와 최소 1,024 생성토큰을 별도 수락한다.
+   `length`나 짧은 답변을 성공으로 바꾸지 않는다. 계산 4건·단위·출처·비약·결론을 전문 검토하고 품질 통과 TPS를 분리한다.
+4. **측정 순서는 정상 응답 → 긴 단일 입력 → 동시성 → 지속 웨이브다.** 짧은 정상 게이트는 100k 부하 승인을 대신하지 않는다.
+   resident 8/16/32에서 배치 512/UBATCH512를 고정한 비교부터 한다. 수용 가능한 resident를 고정한 뒤 head agent의
+   `P4_STAGED_MAX_OPEN_BATCHES=1/2/4/8`을 비교한다. 이 값은 native NodeConfig environment가 아니라 agent 환경이다.
+   `outstanding>0` 의존은 유지한다. 32개 입력의 길이 혼합으로 prefill/decode 동시 준비 기회를 만들고,
+   최소 2회 슬롯 재사용 웨이브와 3회 반복을 확보한다. 뒤 웨이브의 입력 선택·도착 간격·재사용 여부는 선행 계측 후 봉인한다.
+   매 실행에서 제출 수/바이트를 제한하며 전체 서비스 B2/B3 boundedness 승인을 주장하지 않는다.
+5. **포화는 실제 진행으로 판단한다.** prefill/decode/mixed별 물리 폭·512 충족 비율, ready/eligible 차이,
+   head issue→retirement 기준 비행 수의 시간 분포, stage 큐 대기·RPC·전송, 장비별 GPU/RAM/VRAM·swap,
+   요청별 TTFT·실제 연속 토큰 간격·기아·완료/해제/UNLOAD를 보존한다. 현재 `StageSpan`만으로 정확한 head 원장
+   비행 수를 확정할 수 없으므로 해당 계측은 열린 선행 작업이다. 호스트 시계 오차도 기록한다.
+   RPC 겹침과 GPU kernel 활성 비율을 계산 포화로 치환하지 않는다. 반복 분산 안에서 개선이 멈추는 구간을
+   시험 범위의 plateau로 보고하며 전역 최적이라고 하지 않는다.
+
+이 단계는 사용자 요구의 실행 준비 및 실제 RED 보존까지다. 제품 수정·100k 적재·연속 부하 완료가 아니다.
+
+### 0.-4 이전 사용자 지시 — 맥 포함 재시험 (2026-09-10 16:02 KST 실행 종료)
+
+**M42·Spark·Mac .21·이 PC·Ubuntu, 다섯 물리 호스트의 CUDA·Metal 혼합 122B 실행을 통과했다.**
+새 CREATE/DELETE 왕복이 같은 Mac agent PID78595/바이너리에서 성공했다. 이 턴에서 Mac 권한·서명·실행 파일·방화벽을 변경하지 않았으며, 외부 복구 원인은 미확정이다.
+소형 `gemma-five-hosts-cuda-metal-1789022821079`가 8/8 완료·EOS·해제·UNLOAD한 뒤, 에이전트 재시작 없이 122B를 실행했다.
+
+122B `122b-five-hosts-cuda-metal-1789022821180`: **32/32 완료·EOS·해제·UNLOAD**, error/cleanup_error/evidence_missing null.
+컷은 M42 GPU0 [0,8), GPU1 [8,16), Spark [16,29), Mac Metal [29,37), 이 PC 3090 [37,45), Ubuntu [45,48)다.
+resident4, 4건씩 8회 웨이브, max512, 명시적 physical-wire-v4 후보이며 Mac KV는 f16/f16, CUDA는 q8/f16이다.
+여섯 단계의 topology/shape와 host/device model/context/compute 계획=실제 할당을 확인했다. 실행 중 로드된 후보 파일도 단계별 해시와 일치했다.
+
+추론창 283.612초, decode 3,339행 / **11.773 row/s**, TTFT p50 115.987초·p90 218.912초다. LOAD/UNLOAD 제외이며 정상 응답으로 승인한 유효 TPS는 아니다.
+32건 전문 검토에서 발열 설명8건의 기계적 마찰 비유를 남겼다. 전체 정상 응답·지속 부하·성능 개선 승인은 하지 않는다.
+Mac 전역 AGX Device Utilization 평균62.38%는 자체 RPC 창262표본의 드라이버 카운터다. NVIDIA kernel-active 표본과 의미가 달라 합산하거나 SM 점유율로 읽지 않는다.
+이번에 통과한 것은 이 후보·모델·컷의 혼합 실행이다. TUF·Mac .20은 미참여이며 전체 장비와 H0~H7의 완료가 아니다.
+
+네 CUDA 검증 agent와 다섯 monitor를 정리했고 Mac native가 사라진 것을 확인했다. 다른 Codex가 관리하는 Mac agent는 유지했다.
+제품 소스 `9ad366f90`과 봉인 바이너리는 그대로다. 주 checkout의 별도 앱/설정 변경은 건드리지 않았고 검증 checkout에서만 기록한다.
+원자료108개는 `F:/dev/p4-releases/mac-included-20260910-1602.zip`에 보존했다. 해시·응답·측정 범위는
+[혼합 실행 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#mac-included-five-host-retry-2026-09-10)가 소유한다.
+
+다음 첫 행동은 TUF 인증·Mac .20 NAS 복구 후 미참여 장비를 포함한 컷/메모리 판정이다. 별도로 정상 응답 기준선·B2/B3·대기 원인·지속 부하를 닫아야 한다.
+이제 Mac .21 통신 복구를 선행 차단 조건으로 반복하지 않는다. 아래는 앞선 실행 당시 기록이다.
+
+### 0.-3 이전 재시도 — 15분 뒤 전체 장비 재시험 (2026-09-10 14:03–14:40 KST)
+
+예정된 재시도를 수행했다. **전체 장비 및 CUDA/Metal 혼합 실행은 여전히 BLOCKED**다.
+Mac .21은 새 CREATE를 받았지만 14:31:28의 응답 송신이 NECP/error65로 거부됐고,
+TUF .17은 SSH 인증 거부, Mac .20은 SMB mount·P4 agent 없음이다. 다른 Codex가 관리하는 Mac agent는 보존했다.
+
+M42의 42mob 대화형 로그인·S: 접근은 복구됐다. 별도 경로에 봉인 Windows runtime을 배포하고 13개 파일을 해시 검증했다.
+전용 TCP 52004 규칙은 해당 실행 파일과 대상 IP 6개로 한정했다. 이 PC의 52004는 OS 예약 포트여서 51054로 실제 P4 왕복을 검증했다.
+기존 앱·v0.9.0 파일·차단 규칙은 보존했다. 프로그램 이름 변경이나 권한 우회로 Mac 거부를 피하지 않았다.
+
+연결 가능한 **네 CUDA 물리 호스트** M42·Spark·이 PC·Ubuntu에서 122B UD-Q5_K_S를 실제 실행했다.
+다섯 stage 컷은 [0,8)/[8,16)/[16,37)/[37,45)/[45,48), resident 4, 4건씩 8회 웨이브다.
+실행 `122b-four-cuda-hosts-1789017057291`: **32/32 완료·EOS·해제·UNLOAD**, error/cleanup_error/evidence_missing null.
+추론창 220.856초, decode 3,362행/15.223 row/s, TTFT p50 83.673초·p90 167.304초다. LOAD/UNLOAD는 이 시간에서 제외한다.
+응답 32건 전문을 읽었으며 발열 8건의 기계적 마찰 설명 때문에 전체 정상 응답·유효 TPS·서비스 승인은 보류한다.
+각 host RPC 창 GPU 표본 평균은 M42 두 장 20.2/20.6%, Spark 21.8%, 이 PC 3090 22.9%, Ubuntu 7.0%다. SM 점유율·포화·개선 증거가 아니다.
+
+다섯 stage의 topology/shape 및 host/device model/context/compute 계획=실제 할당을 대조했다.
+선행 소형 arm은 첫 전송 실패/8건 미완료/UNLOAD busy를 보존하고, 전체 검증 agent를 새로 시작한 다음 8/8 완료·해제했다.
+재시작 뒤 정상 통과는 peer 재접속 내구성 승인이 아니다. 이번에 제품 소스를 바꾸지 않았고 과거 단위 시험을 재실행한 것으로 세지 않는다.
+
+원자료 154개와 해시는 `F:/dev/p4-releases/all-hosts-retry-20260910-1436.zip`에 보존하고 ZIP 내부 파일을 재검증했다.
+이는 로컬 인도이며 다른 머신에서의 장기 재열람 게이트는 미충족이다. 상세·전체 실패·해시는
+[증거 문서](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#scheduled-all-computer-retry-2026-09-10)를 따른다.
+검증용 네 agent·모델 프로세스·네 monitor는 정리했고 예약 재시험은 중지했다. 제품 소스는 `9ad366f90` 그대로다.
+
+다음 첫 행동은 Mac .21의 **실제 p4-agent 왕복 응답** 복구, TUF 계정/키와 Mac .20 NAS 복구다.
+그 뒤 원래 요청한 M42·Spark·Mac 혼합 소형 게이트 → 122B → 모든 장비 웨이브를 판정한다.
+전송 실패의 즉시 귀속/보존·재접속과 정상 응답 기준선은 별도 미완이며, 단순 재시작·resident 상향으로 닫지 않는다.
+
+### 0.-2 사용자 추가 지시 — 전체 장비와 최신 upstream (2026-09-10)
+
+v0.9.0 후보와 기존 게이트는 보존한다. 사용자가 Spark, TUF, Mac mini 두 대, Ubuntu 노트북,
+이 PC 등을 NAS와 연결하고, 개별 모델 실행 → 모든 컴퓨터를 잇는 대형 모델 실행 → 최신 llama.cpp
+업데이트 성공을 지시했다. 이 지시가 과거의 한 호스트 자원 제한과 다음 버전 대기 순서보다 우선한다.
+개발 checkout은 `F:/dev/p4-fleet-20260910`, branch `codex/fleet-latest-20260910`이며 릴리즈 후보는 수정하지 않는다.
+
+1. NAS의 실제 모델 읽기와 장비별 도구·메모리·사용 중인 서비스·포트를 확인한다. TUF SSH 인증,
+   Mac .20 NAS 인증, M42 interactive logon은 사용자 입력을 기다리며 나머지 작업은 계속한다.
+2. 최신 관측 pin `434ddbbc0`의 호환 패치를 재생하고 CUDA·Metal·CPU 빌드 및 실제 소비 경로 회귀를 검증한다.
+   기존 split 입력 패치의 upstream 대체를 경계 입력으로 검증한다. 재생만으로 채택하지 않는다.
+3. 각 장비에서 NAS의 적합한 모델을 실제로 실행하고 완결 응답·배치·해제·사용 메모리를 남긴다.
+   Spark/Mac의 통합 메모리는 host와 GPU로 중복 합산하지 않는다.
+4. 사용 중인 19001 서비스를 보존하고 가능한 P4 포트의 장비 간 연결을 검증한다. 합법적 컷과
+   stage별 실제 계획으로 대형 모델을 모든 대상 컴퓨터에 분산한다. 작은 모델이나 일부 장비 성공으로 대체하지 않는다.
+5. 정상 프롬프트·완결 응답·연속 웨이브·실제 placement·실행 ID와 바이너리 해시로 판정한다.
+   B2/B3 예산 부재 등 기존 제약을 기록하며 resident 상향 서비스 승인은 별도 게이트로 유지한다.
+
+현재 사실과 열린 게이트는 [fleet/upstream 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)를 따른다.
+
+최신 native 빌드·CTest 16/16은 Windows, Spark, Ubuntu, 두 Mac에서 통과했다. 최종 Rust는 1,378/0/7(58 summaries), Node는 159/0이다.
+저장 계획의 CLI 호환, CPU_REPACK host 회계, 공유 no-alloc compute 중복 집계는 실제 소비·독립 변이로 검증했다.
+Windows·Spark·Ubuntu·Mac .21은 NAS 모델의 개별 실행을 통과했다. Mac .20의 로컬 복사본 진단은 NAS 승인이 아니다.
+
+122B는 Spark·Ubuntu **두 물리 호스트에서 8회 × 4건 = 32/32 완료·해제·EOS·UNLOAD**를 통과했다.
+소스 `9ad366f90`, resident 4, 추론창 115.422초, TTFT p50 47.405초·p90 88.278초다.
+전선 발열 응답의 부정확한 비유와 대기를 남기며 전체 정상 응답·서비스·성능 개선 승인은 하지 않는다.
+각 호스트 stage RPC 창의 GPU kernel-active 표본 평균은 Spark 83.9%, Ubuntu 13.5%다. SM 점유율이나 포화가 아니다.
+
+명시적 `physical-wire-v4` 후보는 upstream·patch·native codec/표현을 대조하고 stage별 identity를 보존한다.
+기본 exact-build 거부는 유지하며, 소비 시험·독립 변이 4종과 CUDA 두 호스트/Metal 한 호스트 각각의 8/8 실행을 통과했다.
+당시 **CUDA·Metal 혼합 실기는 BLOCKED**였다. Mac .21 커널이 agent의 외부 TCP를 NECP/error 65로 거부했다.
+Python/nc의 포트 연결 성공은 agent의 통신 승인이 아니며, 당시 실행은 CREATE 응답 전 중단돼 추론을 제출하지 않았다. 이후 실제 응답 복구와 혼합 실행 통과는 위 §0.-4가 갱신한다.
+
+현재 재개 조건은 위 §0.-4를 따른다. Mac .21 혼합 실행은 통과했고 TUF SSH와 Mac .20 NAS는 남아 있다. M42 로그인/NAS와 이 PC의 후보 통신 경로도 복구됐다.
+미참여 장비의 접근 복구 뒤 기존 거부 기준을 유지한 모든 대상 장비의 합법적 컷·소형 게이트·122B 웨이브를 판정한다.
+접근이 복구되기 전에는 추가 부분 호스트 실행을 전체 장비 승인으로 바꾸지 않는다.
+현재 후보의 소스·플랫폼별 runtime·성공/실패/변이/메모리 원자료 329파일을
+`F:/dev/p4-releases/fleet-20260910-wire-candidate`에 보존했다. 증거 문서의 candidate manifest가 해시를 소유한다.
+실험 소유 agent/stage·monitor는 정지했고 기존 앱·v0.9.0 후보는 보존했다. 정식 tag/push는 하지 않았다.
 
 ### 0.-1 이번 버전 마감 상태 (2026-09-10)
 

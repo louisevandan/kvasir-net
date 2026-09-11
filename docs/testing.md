@@ -17,6 +17,7 @@
 ```bash
 cargo test -p p4-llamacpp-staged-adapter --lib
 node --test layers/adapters/llamacpp/staged/scripts/build-stage-server.test.mjs
+node --test test/benchmarks/cluster-inference/compose.test.mjs
 ctest --test-dir <fresh-native-build> -C Release --output-on-failure
 ```
 

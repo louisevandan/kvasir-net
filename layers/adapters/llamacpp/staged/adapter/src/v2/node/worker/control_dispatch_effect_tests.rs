@@ -93,6 +93,7 @@ impl ServerControl for Native {
             upstream_commit: "fixture-only".into(),
             patch_set: "fixture-only".into(),
             backend_inventory: "no-engine".into(),
+            stage_wire_abi: "unknown".into(),
         }))
     }
 

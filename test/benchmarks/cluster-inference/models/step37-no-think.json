@@ -1,0 +1,10 @@
+{
+  "id": "step37-no-think",
+  "template": {
+    "system_prefix": "<|im_start|>system\n",
+    "system_suffix": "<|im_end|>\n",
+    "user_prefix": "<|im_start|>user\n",
+    "assistant_prefix": "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+  },
+  "stop": ["<|im_end|>", "<|im_start|>"]
+}

@@ -1,0 +1,5 @@
+P4_EVENT_AGENT_READY address=tcp://192.168.0.26:52004
+P4_EVENT_CONNECTION_OPENED connection=1 peer=192.168.0.26:37432
+P4_EVENT_CONNECTION_STOPPED connection=1 peer=192.168.0.26:37432 error=unexpected end of file
+P4_EVENT_CONNECTION_OPENED connection=2 peer=192.168.0.6:59144
+P4_EVENT_CONNECTION_STOPPED connection=2 peer=192.168.0.6:59144 error=unexpected end of file

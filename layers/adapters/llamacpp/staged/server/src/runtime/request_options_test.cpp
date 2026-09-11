@@ -2,6 +2,7 @@
 #include "compat/p4_llama_compat_internal.hpp"
 #include "request_options.hpp"
 #include "request_options_test_plan.hpp"
+#include "server/plan.hpp"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -14,6 +15,47 @@
 #include <nlohmann/json.hpp>
 
 namespace {
+
+void load_mode_arguments() {
+    // Saved OUTER plans use the old flags. Exercise the server's consumer,
+    // including its synthetic argv handling, without requiring a model file.
+    const auto check = [](std::vector<std::string> options, llama_load_mode expected) {
+        std::vector<std::string> tokens{"--memory-topology", "discrete",
+            "--model", "not-loaded.gguf"};
+        tokens.insert(tokens.end(), options.begin(), options.end());
+        staged::server::ParsedLlamaOptions parsed;
+        std::string error;
+        char program[] = "p4_staged_request_options_test";
+        char * argv[] = {program, nullptr};
+        const bool accepted = staged::server::parse_llama_options(1, argv, tokens, &parsed, &error);
+        if (!accepted) std::cerr << "LOAD_MODE_ARGUMENT_ERROR " << error << '\n';
+        assert(accepted);
+        assert(p4_llama_compat::plan_params(parsed.params).load_mode == expected);
+        assert(parsed.params.to_model_params().load_mode == expected);
+    };
+    check({"--no-mmap"}, LLAMA_LOAD_MODE_NONE);
+    check({"--no_mmap"}, LLAMA_LOAD_MODE_NONE);
+    check({"--mmap"}, LLAMA_LOAD_MODE_MMAP);
+    check({"--mlock"}, LLAMA_LOAD_MODE_MLOCK);
+    check({"--direct-io"}, LLAMA_LOAD_MODE_DIRECT_IO);
+    check({"-dio"}, LLAMA_LOAD_MODE_DIRECT_IO);
+    check({"--no-direct-io"}, LLAMA_LOAD_MODE_NONE);
+    check({"-ndio"}, LLAMA_LOAD_MODE_NONE);
+    check({"--load-mode", "mmap+mlock"}, LLAMA_LOAD_MODE_MMAP_MLOCK);
+    check({"--load-mode", "mmap", "--no-mmap"}, LLAMA_LOAD_MODE_NONE);
+    check({"--no-mmap", "--load-mode", "mmap"}, LLAMA_LOAD_MODE_MMAP);
+    check({"--mmap", "--no-direct-io", "--mlock"}, LLAMA_LOAD_MODE_MLOCK);
+    // An option-looking value must remain a value; token substitution breaks it.
+    p4_llama_compat::LlamaPlan literal;
+    assert(literal.parse_arguments({"test", "--model", "--no-mmap", "--load-mode", "mmap"}));
+    assert(literal.model_path() == "--no-mmap");
+    assert(p4_llama_compat::plan_params(literal).load_mode == LLAMA_LOAD_MODE_MMAP);
+    p4_llama_compat::LlamaPlan invalid;
+    assert(!invalid.parse_arguments({"test", "--load-mode", "invalid"}));
+    assert(!invalid.parse_arguments({"test", "--no-mmap-unknown"}));
+    assert(!invalid.parse_arguments({"test", "--no-mmap", "--model"}));
+    std::cout << "LOAD_MODE_ARGUMENTS_OK: saved plans, precedence, literal values, rejection\n";
+}
 
 const char * env_value(const char * name) {
     const auto * value = std::getenv(name);
@@ -62,6 +104,7 @@ staged::protocol::SequencePayload prefill(
 } // namespace
 
 int main() {
+    load_mode_arguments();
     const auto * model_path = env_value("P4_STAGED_LLAMA_MODEL");
     if (model_path == nullptr) {
         std::cout << "SKIP: set P4_STAGED_LLAMA_MODEL for request options E2E\n";

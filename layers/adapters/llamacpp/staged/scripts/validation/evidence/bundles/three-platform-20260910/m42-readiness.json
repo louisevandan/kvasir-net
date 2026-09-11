@@ -1,0 +1,25 @@
+{
+    "observed_utc":  "2026-09-10T04:20:51.4103213Z",
+    "host":  "M42-SERVER2",
+    "users":  "quser.exe : *에 대한 사용자가 없습니다.\r\n위치 줄:2 문자:9\r\n+ $users=(\u0026 quser 2\u003e\u00261 | Out-String)\r\n+         ~~~~~~~~~~~~\r\n    + CategoryInfo          : NotSpecified: (*에 대한 사용자가 없습니다.:String) [], RemoteException\r\n    + FullyQualifiedErrorId : NativeCommandError\r\n \r\n",
+    "nas_S":  false,
+    "nas_UNC":  false,
+    "firewall":  [
+                     {
+                         "name":  "TCP Query User{BE293A5A-87FA-44FF-A48C-B83C4E64145B}C:\\users\\42mob\\p4-remote\\p4-agent.exe",
+                         "action":  "Block",
+                         "enabled":  "True",
+                         "program":  "C:\\users\\42mob\\p4-remote\\p4-agent.exe"
+                     },
+                     {
+                         "name":  "UDP Query User{597F5019-3BAE-46FA-989A-53C1D036BEFE}C:\\users\\42mob\\p4-remote\\p4-agent.exe",
+                         "action":  "Block",
+                         "enabled":  "True",
+                         "program":  "C:\\users\\42mob\\p4-remote\\p4-agent.exe"
+                     }
+                 ],
+    "gpus":  [
+                 "0, NVIDIA GeForce RTX 3090, 24576 MiB, 51 MiB",
+                 "1, NVIDIA GeForce RTX 3090, 24576 MiB, 51 MiB"
+             ]
+}

@@ -108,6 +108,17 @@ async fn consume_delayed(
     change: impl FnOnce(&mut Vec<Event>),
     delay_telemetry: bool,
 ) -> Result<inference::InferenceResult, String> {
+    consume_timed(case, request, outputs, change, delay_telemetry, 0).await
+}
+
+async fn consume_timed(
+    case: &captured::FixtureCase,
+    request: &str,
+    outputs: &[Event],
+    change: impl FnOnce(&mut Vec<Event>),
+    delay_telemetry: bool,
+    output_gap_ms: u64,
+) -> Result<inference::InferenceResult, String> {
     let submission = case
         .submissions
         .iter()
@@ -204,6 +215,12 @@ async fn consume_delayed(
         assert_eq!(command.options, submitted.options);
         let mut delayed = false;
         for event in response_events {
+            if output_gap_ms > 0
+                && event.envelope.payload_content_type
+                    == p4_llamacpp_staged_adapter::v2::OUTPUT_CONTENT_TYPE
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(output_gap_ms)).await;
+            }
             if delay_telemetry
                 && !delayed
                 && event.envelope.payload_content_type
@@ -225,6 +242,36 @@ async fn consume_delayed(
         Some(error) => Err(error),
         None => Ok(run),
     }
+}
+
+#[tokio::test]
+async fn approved_output_receipt_times_preserve_paced_delivery_before_late_telemetry() {
+    let case = captured::cases()
+        .into_iter()
+        .find(|case| case.id == "ordinary-2")
+        .unwrap();
+    let outputs = request_events(&case, "one");
+    let run = consume_timed(&case, "one", &outputs, |_| {}, true, 20)
+        .await
+        .unwrap();
+    let request = &run.requests[0];
+    let value = serde_json::to_value(request).unwrap();
+    let received = value
+        .get("output_received_ms")
+        .and_then(|value| value.as_array())
+        .expect("the real inference consumer must retain each approved OUTPUT receipt time");
+    assert_eq!(received.len(), 5);
+    let times: Vec<_> = received
+        .iter()
+        .map(|value| value.as_u64().unwrap())
+        .collect();
+    assert!(
+        times.windows(2).all(|pair| pair[1] >= pair[0] + 15),
+        "paced wire receipts collapsed: {times:?}"
+    );
+    assert!(times[0] as u128 <= request.first_output_ms.unwrap());
+    assert!(*times.last().unwrap() as u128 <= request.completed_ms.unwrap());
+    assert!(run.telemetry_complete_elapsed_ms.unwrap() >= *times.last().unwrap() as u128 + 30);
 }
 
 #[tokio::test]

@@ -105,6 +105,7 @@ impl ServerControl for NativeStage {
             upstream_commit: "fixture-only".into(),
             patch_set: "fixture-only".into(),
             backend_inventory: "no-real-engine".into(),
+            stage_wire_abi: "unknown".into(),
         }))
     }
 

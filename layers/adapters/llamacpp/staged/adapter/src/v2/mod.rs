@@ -14,7 +14,9 @@ mod session_key;
 #[cfg(test)]
 mod session_key_wire_tests;
 
-pub use build_identity::{BuildDisagreement, BuildIdentity, UNIDENTIFIED, agree};
+pub use build_identity::{
+    BuildDisagreement, BuildIdentity, PipelineCompatibility, UNIDENTIFIED, agree, agree_for_profile,
+};
 pub use capsule::{
     CapsuleError, CapsuleSet, GeneratedToken, Invocation, PhysicalCapsule, PhysicalOutcome,
     RowOwner, Tensor, TensorDescriptor,

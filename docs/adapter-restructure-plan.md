@@ -415,6 +415,28 @@ device를 열거할 뿐, 모델 텐서·KV·compute buffer가 실제로 어디�
 선언한 기대 신원을 LOAD가 실어 보내 각 스테이지가 자기 것을 대조하게 해야 한다 —
 둘 다 계약 결정이라 구현 전에 정해야 한다.
 
+### 2026-09-10 fleet용 physical wire 호환 계약
+
+사용자의 CUDA·Metal 장비 통합 지시에 따른 별도 구현 후보다. 기존 `agree()`와
+`exact-build` 기본값은 backend/device inventory가 다르면 계속 거부한다.
+`physical-wire-v4`를 명시한 OUTER만 다음 전부를 확인하고 SESSION/추론으로 진행한다.
+
+- 모든 stage의 upstream·patch-set이 같고 식별돼 있어야 한다.
+- native는 `p4pb4le64` codec 소스 SHA256과 실제 ggml type/block/byte 크기를 HELLO에 싣는다.
+  native source fingerprint는 checkout 경로·CRLF와 무관하며 native production 소스 및 CMake를 포함한다.
+  little-endian·64-bit·IEEE754 float32·32-bit token/position/sequence 표현이 아니면 `unknown`이다.
+- 어댑터는 그 값을 LOADED로 그대로 전달한다. OUTER는 형식·소스·표현이 같은지 확인하고,
+  unknown/missing/다른 pin·patch·codec·표현은 backend가 같아도 거부한다. unidentified 허용 옵션도 이 조건을 우회하지 못한다.
+- backend inventory를 숨기거나 통합 문자열로 위조하지 않는다. 산출물 `stage_builds`는
+  topology 순서대로 agent/node/generation과 각 identity를 보존한다. 기존 `build`는 head의 호환 필드다.
+
+이 계약은 물리 capsule v4의 tensor 전달에 한정한다. 원장·제어 승인·정산·KV 소유권은 바꾸지 않으며
+KV snapshot 이종 backend 이식, 수치 비트 동일성, 임의 plugin의 정당성 또는 source 인증을 보장하지 않는다.
+raw ggml type 값은 동일 pin/patch와 runtime type 표에 결속한다. CUDA/Metal 상호 운용은
+실제 모델 소비 경로·부정 시험·독립 변이 및 실행 증거가 통과할 때만 해당 조합으로 승인한다.
+현재 집합 비교의 강제 위치는 event-drive OUTER다. 임의 외부 제품 호출자의 LOAD 강제나
+인증된 fleet coordinator가 구현됐다고 주장하지 않는다. 최신 검증 상태는 로드맵 §0과 fleet 증거를 따른다.
+
 **③b 잔여 9건의 실제 분류** (2026-09-02, 파일 단위 재확인): 앞서 이 문서는 아홉 건을
 "모두 CLI·옵션 문법이라 계약 결정이 먼저"라고 묶었다. **틀렸다.** 실제로는:
 

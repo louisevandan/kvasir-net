@@ -1,20 +1,35 @@
 use super::{RunConfig, Sender, node_endpoint, replies, wire};
 use p4_llamacpp_staged_adapter::v2::{
-    BuildIdentity, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand, UNIDENTIFIED, agree,
+    BuildIdentity, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand, UNIDENTIFIED,
+    agree_for_profile,
 };
 use p4_protocol::event::EventClass;
 use std::collections::HashSet;
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct StageBuild {
+    pub agent: String,
+    pub node: String,
+    pub generation: u64,
+    pub identity: BuildIdentity,
+}
+
+pub(super) struct LoadedBuild {
+    pub representative: BuildIdentity,
+    pub stages: Vec<StageBuild>,
+}
 
 pub(super) async fn drive<R, W>(
     config: &RunConfig,
     wire: &mut wire::EventWire<R, W>,
     sender: &mut Sender,
-) -> Result<BuildIdentity, Box<dyn std::error::Error>>
+) -> Result<LoadedBuild, Box<dyn std::error::Error>>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
     let mut builds = Vec::with_capacity(config.nodes.len());
+    let mut stages = Vec::with_capacity(config.nodes.len());
     for wave in agent_load_waves(config.nodes.iter().map(|node| node.agent.as_str())) {
         let mut expected = Vec::with_capacity(wave.len());
         for index in wave {
@@ -53,18 +68,45 @@ where
         )
         .await?;
         for event in &loaded {
-            builds.push(build_identity(&event.payload)?);
+            let identity = build_identity(&event.payload)?;
+            let node = config
+                .nodes
+                .iter()
+                .find(|node| node_endpoint(node).ok().as_ref() == Some(&event.envelope.source))
+                .ok_or("loaded reply has no configured stage")?;
+            builds.push(identity.clone());
+            stages.push(StageBuild {
+                agent: node.agent.clone(),
+                node: node.node.clone(),
+                generation: node.generation,
+                identity,
+            });
         }
     }
     // A bench may drive a stage server too old to name itself; a production
     // load path should not, which is why the choice is the caller's.
     let require_identified = std::env::var_os("P4_DRIVE_ALLOW_UNIDENTIFIED_BUILD").is_none();
-    agree(&builds, require_identified)?;
-    Ok(builds.into_iter().next().unwrap_or(BuildIdentity {
-        upstream_commit: UNIDENTIFIED.into(),
-        patch_set: UNIDENTIFIED.into(),
-        backend_inventory: UNIDENTIFIED.into(),
-    }))
+    agree_for_profile(&builds, config.pipeline_compatibility, require_identified)?;
+    stages.sort_by_key(|stage| {
+        config.nodes.iter().position(|node| {
+            node.agent == stage.agent
+                && node.node == stage.node
+                && node.generation == stage.generation
+        })
+    });
+    let representative = stages
+        .first()
+        .map(|stage| stage.identity.clone())
+        .unwrap_or(BuildIdentity {
+            upstream_commit: UNIDENTIFIED.into(),
+            patch_set: UNIDENTIFIED.into(),
+            backend_inventory: UNIDENTIFIED.into(),
+            stage_wire_abi: UNIDENTIFIED.into(),
+        });
+    Ok(LoadedBuild {
+        representative,
+        stages,
+    })
 }
 
 fn agent_load_waves<'a>(agents: impl IntoIterator<Item = &'a str>) -> Vec<Vec<usize>> {
@@ -105,6 +147,7 @@ fn build_identity(payload: &[u8]) -> Result<BuildIdentity, Box<dyn std::error::E
         upstream_commit: field("upstream_commit"),
         patch_set: field("patch_set"),
         backend_inventory: field("backend_inventory"),
+        stage_wire_abi: field("stage_wire_abi"),
     })
 }
 
