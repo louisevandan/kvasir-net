@@ -76,6 +76,9 @@ impl RetainedLlamaNodeAdapter {
 }
 
 impl RetainedNodeAdapter for RetainedLlamaNodeAdapter {
+    fn completion_storage_snapshot(&self) -> Option<p4_adapter::node_adapter::CompletionStorageSnapshot> {
+        Some(self.inner.mailbox.storage_snapshot())
+    }
     fn try_offer_retained(&self, completion: RetainedCompletion) -> Result<(), RetainedOfferError> {
         if self.stopped.load(Ordering::Acquire) || self.inner.shutting_down.load(Ordering::Acquire)
         {

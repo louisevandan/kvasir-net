@@ -119,6 +119,14 @@ pub struct EventBroker<S = EventSender> {
 struct NodeRoute<S> {
     generation: u64,
     sender: S,
+    admission_paused: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Temporary local lifecycle fence. Drop resumes the same registration.
+/// This grants no execution, cancellation or replay authority.
+pub struct NodeAdmissionPause(Arc<std::sync::atomic::AtomicBool>);
+impl Drop for NodeAdmissionPause {
+    fn drop(&mut self) { self.0.store(false, std::sync::atomic::Ordering::Release); }
 }
 
 /// A synchronous front-dispatch ticket. It is never kept across an await or
@@ -318,7 +326,8 @@ impl<S: Clone> EventBroker<S> {
         if nodes.contains_key(&node) {
             return Err(DispatchError::Invalid("node is already registered".into()));
         }
-        nodes.insert(node.clone(), NodeRoute { generation, sender });
+        nodes.insert(node.clone(), NodeRoute { generation, sender,
+            admission_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)) });
         generations.insert(node, generation);
         Ok(())
     }
@@ -363,6 +372,9 @@ impl<S: Clone> EventBroker<S> {
                         current_generation: route.generation,
                         incoming_generation: *generation,
                     });
+                }
+                if route.admission_paused.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(DispatchError::Full(Delivery::Node { node: node.clone(), generation: *generation }));
                 }
                 Ok((
                     Delivery::Node {

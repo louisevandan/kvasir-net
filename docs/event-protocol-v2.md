@@ -211,13 +211,51 @@ value. A completed production node task retains this result in `NodeOwner`'s
 join handle instead of logging and immediately discarding it. Operational
 logging reads the reason only, not the user payload in the returned value.
 
-This is **raw Event failure ownership**, not the completed retained-byte/credit
-handoff. It does not drain unread queues, acknowledge remote receipt, preserve
-state across process restart, or guarantee graceful shutdown. Explicit task
-abort/handle disposal can still discard local ownership. The current agent
-control reply loop and remote pumps do not yet retain all terminal failures;
-returning the Event from the broker alone does not close those consumers.
+The raw API above remains available to legacy callers. The event entrypoint now
+selects `RetainedEventBroker`, `RetainedEventNode` and an explicit
+`RetainedNodeAdapter`. Input, control reply, node-held output, socket queue and
+active write retain the original allocation and its count/byte claim.
 Execution status and tests belong to the roadmap/evidence, not this contract.
+
+### Event runtime storage and failure ownership
+
+`P4_EVENT_RETAINED_BYTES` is a positive byte limit **per store**, default 256 MiB.
+The root agent/OUTER/outbound stores retain at most 65536 Events each, including
+dequeued owners; queue capacity remains 65536. Node CREATE accepts optional
+`retained_capacity` and `retained_bytes`, defaulting to those root limits, for
+its input and completion stores separately. Existing `queue_capacity` and
+`completion_capacity` remain delivery-slot limits. An individually oversized
+Event is refused even if its frame is below the unchanged 2 GiB wire ceiling.
+Footprints include Event/buffer capacities and entry overhead; this is not an
+aggregate process RSS limit or a reservation for future native results.
+
+Control Full retains the current input and reply and retries without admitting
+another control command. Permanent failure returns input, reply, unread input
+store and node owners into the root-owned task result. TCP ingress Full keeps
+one decoded original per connection and stops reading until admission is possible.
+Pre-admission frame/decode buffers and serialization temporaries still need
+separate allocation budgets; the new Event-store limits do not cover them.
+
+Connection queues move the same owned delivery into the writer. A successful
+socket write retires only that local allocation: it is not remote acceptance,
+native completion, or KV retirement. A failed write retains the current original
+as uncertain and keeps the closed receiver with its unstarted queue. Encoding
+failure is not-started. Missing/closed routes retain unsent originals. Failed
+peer connections are not silently reconnected; a failed OUTER generation stays
+blocked rather than sending later events past an uncertain predecessor. Input
+EOF alone keeps the OUTER writer because a peer may half-close submissions and
+continue reading output. Failed owners are bounded by their store claims and
+connection admission slots; the connection semaphore has 256 slots.
+
+DELETE temporarily fences node ingress, then requires unloaded/empty/closed
+semantic state, a healthy node task, and zero retained input/output counts.
+Unknown completion storage is not zero. Refusal resumes the same registration;
+successful deletion removes it while fenced. Queued and node-held completions
+are included. This is local node deletion, not transport-wide graceful drain.
+
+Explicit runtime/process teardown abandons local owners. Restart persistence,
+remote acknowledgement/grants, native/effect output pre-reservation, independent
+receipt byte caps and complete cyclic-network progress remain separate work.
 
 The raw success path moves the original allocation to the destination and
 stores an independent Event copy for exact duplicate comparison. Receiver

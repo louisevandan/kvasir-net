@@ -71,6 +71,37 @@ fn broker(bytes: usize, window: usize) -> (Arc<RetainedEventBroker>, Arc<Complet
     )
 }
 
+#[test]
+fn owned_runtime_admission_pause_rechecks_reserved_front_and_preserves_exact_duplicate() {
+    let (broker, _) = broker(1 << 20, 8);
+    let (sender, inbound) = queue(1 << 20);
+    broker.register_node("paused", 1, sender).unwrap();
+    let mut original = event("paused-event");
+    original.envelope.target = Endpoint::node(own(), "paused", 1);
+    let replay = original.clone();
+    let (_, source, completion) = make_source(original);
+    let pointer = completion.event().payload.as_ptr();
+    let front = CompletionFront { envelope: completion.event().envelope.clone(),
+        event_bytes: retained_event_bytes(completion.event()).unwrap() };
+    let ticket = broker.reserve_retained_completion(&front).unwrap();
+    let pause = broker.pause_node_admission("paused", 1).unwrap();
+    let failed = broker.dispatch_retained_completion(ticket, completion).unwrap_err();
+    assert!(matches!(failed.error, DispatchError::Full(_)));
+    assert_eq!(failed.completion.event().payload.as_ptr(), pointer);
+    assert_eq!(source.storage_snapshot().retained_count, 1);
+    assert_eq!(inbound.storage_snapshot().retained_count, 0);
+    assert_eq!(inbound.storage_snapshot().reserved_queue_slots, 0);
+    assert_eq!(broker.receipt_snapshot().unwrap().committed_events, Some(0));
+    assert!(matches!(broker.dispatch_ingress(replay.clone()).unwrap_err().error, DispatchError::Full(_)));
+    drop(pause);
+    broker.dispatch_retained(*failed.completion).unwrap();
+    let pause = broker.pause_node_admission("paused", 1).unwrap();
+    assert_eq!(broker.dispatch_ingress(replay).unwrap(), DispatchOutcome::Duplicate);
+    assert_eq!(take(&inbound).event().payload.as_ptr(), pointer);
+    drop(pause);
+    assert_eq!(source.storage_snapshot().retained_count, 0);
+}
+
 struct UnlockedWake {
     broker: Arc<RetainedEventBroker>,
     calls: AtomicUsize,

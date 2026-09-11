@@ -1,9 +1,10 @@
 mod inspection;
 
-use p4_adapter::node_adapter::NodeAdapter;
-use p4_agent_core::event_broker::{EventBroker, EventReceiver, bounded_queue};
-use p4_agent_core::event_node::{EventNode, EventNodeFailure};
-use p4_llamacpp_staged_adapter::v2::LlamaNodeAdapter;
+use p4_adapter::node_adapter::{RetainedNodeAdapter, RetainedCompletion, CompletionMailbox,
+    PublishError, completion_mailbox_with_limits};
+use p4_agent_core::event_broker::RetainedEventBroker;
+use p4_agent_core::event_node::{RetainedEventNode, RetainedEventNodeFailure};
+use p4_llamacpp_staged_adapter::v2::RetainedLlamaNodeAdapter;
 use p4_protocol::Address;
 use p4_protocol::event::{
     AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE, Endpoint, Envelope, Event, EventClass,
@@ -28,6 +29,8 @@ struct CreateNode {
     queue_capacity: usize,
     #[serde(default = "default_capacity")]
     completion_capacity: usize,
+    retained_capacity: Option<usize>,
+    retained_bytes: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -43,16 +46,35 @@ fn default_capacity() -> usize {
 struct NodeOwner {
     generation: u64,
     adapter_kind: String,
-    adapter: Arc<dyn NodeAdapter>,
+    adapter: Arc<dyn RetainedNodeAdapter>,
+    inbound: Arc<CompletionMailbox>,
     // A completed task retains its failure and held Events until this handle
     // is consumed/dropped. This is in-memory ownership, not restart recovery.
-    task: JoinHandle<Result<(), EventNodeFailure>>,
+    task: JoinHandle<Result<(), RetainedEventNodeFailure>>,
 }
 
-pub async fn run(own: Address, broker: Arc<EventBroker>, mut receiver: EventReceiver) {
+impl Drop for NodeOwner {
+    fn drop(&mut self) { self.task.abort(); }
+}
+
+enum PendingReply { Raw(Event), Owned(RetainedCompletion) }
+
+// Returned into the root-owned task handle, including unread input and nodes.
+// A stopped control task does not turn accepted work into retired storage.
+pub(super) struct Remainder {
+    nodes: HashMap<String, NodeOwner>,
+    receiver: Arc<CompletionMailbox>,
+    held_input: Option<RetainedCompletion>,
+    held_reply: Option<PendingReply>,
+    error: Option<String>,
+}
+
+pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver: Arc<CompletionMailbox>, limits: super::RuntimeLimits) -> Remainder {
     let sequence = AtomicU64::new(1);
     let mut nodes: HashMap<String, NodeOwner> = HashMap::new();
-    while let Some(event) = receiver.recv().await {
+    let (replies, reply_store) = super::RuntimeLimits { queue: 1, retained: 1, ..limits }.mailbox();
+    while let Some(input) = super::next(&receiver).await {
+        let event = input.event();
         let (payload_content_type, payload) = match event.envelope.payload_content_type.as_str() {
             AGENT_INSPECT_CONTENT_TYPE => (
                 AGENT_SNAPSHOT_CONTENT_TYPE,
@@ -60,8 +82,8 @@ pub async fn run(own: Address, broker: Arc<EventBroker>, mut receiver: EventRece
             ),
             content_type => {
                 let result = match content_type {
-                    CREATE => create(&own, &broker, &mut nodes, &event),
-                    DELETE => remove(&broker, &mut nodes, &event).await,
+                    CREATE => create(&own, &broker, &mut nodes, event, limits),
+                    DELETE => remove(&broker, &mut nodes, event).await,
                     other => Err(format!("unsupported agent control content type {other}")),
                 };
                 let payload = match result {
@@ -71,23 +93,36 @@ pub async fn run(own: Address, broker: Arc<EventBroker>, mut receiver: EventRece
                 (RESULT, payload)
             }
         };
-        if let Ok(reply) = reply(&own, &event, &sequence, payload_content_type, payload)
-            && let Err(failure) = broker.dispatch(reply)
-        {
-            // The broker returns the original reply on every refusal. This
-            // current control loop still discards it after logging: a bounded
-            // reply outbox and receiver acceptance are not implemented here.
-            // Log only the reason, never the returned Event/payload.
+        let output = match reply(&own, event, &sequence, payload_content_type, payload) {
+            Ok(reply) => reply,
+            Err(error) => return Remainder { nodes, receiver, held_input: Some(input), held_reply: None, error: Some(error) },
+        };
+        if let Err(failure) = replies.try_publish_owned(output) {
+            let (reason, output) = match failure {
+                PublishError::Full(event) => ("reply storage Full", event),
+                PublishError::Closed(event) => ("reply storage Closed", event),
+                PublishError::TooLarge { event, .. } => ("reply exceeds retained bytes", event),
+                PublishError::CostOverflow(event) => ("reply cost overflow", event),
+            };
+            eprintln!("P4_EVENT_CONTROL_REPLY_FAILED error={reason}");
+            return Remainder { nodes, receiver, held_input: Some(input), held_reply: Some(PendingReply::Raw(output)), error: Some(reason.into()) };
+        }
+        let output = super::next(&reply_store).await.expect("single control reply owner");
+        if let Err(failure) = super::dispatch(&broker, output).await {
             eprintln!("P4_EVENT_CONTROL_REPLY_FAILED error={}", failure.error);
+            return Remainder { nodes, receiver, held_input: Some(input),
+                held_reply: Some(PendingReply::Owned(*failure.completion)), error: Some(failure.error.to_string()) };
         }
     }
+    Remainder { nodes, receiver, held_input: None, held_reply: None, error: None }
 }
 
 fn create(
     own: &Address,
-    broker: &Arc<EventBroker>,
+    broker: &Arc<RetainedEventBroker>,
     nodes: &mut HashMap<String, NodeOwner>,
     event: &Event,
+    limits: super::RuntimeLimits,
 ) -> Result<String, String> {
     let command: CreateNode = serde_json::from_slice(&event.payload)
         .map_err(|error| format!("invalid node create payload: {error}"))?;
@@ -106,19 +141,24 @@ fn create(
         command.node_id.clone(),
         command.node_generation,
     );
-    let adapter: Arc<dyn NodeAdapter> = match command.adapter_kind.as_str() {
-        "llamacpp" => Arc::new(LlamaNodeAdapter::new(
+    let retained_capacity = command.retained_capacity.unwrap_or(limits.retained);
+    let retained_bytes = command.retained_bytes.unwrap_or(limits.bytes);
+    let (sender, inbound) = completion_mailbox_with_limits(command.queue_capacity, retained_capacity, retained_bytes)
+        .map_err(|error| format!("invalid node retained storage: {error:?}"))?;
+    let adapter: Arc<dyn RetainedNodeAdapter> = match command.adapter_kind.as_str() {
+        "llamacpp" => Arc::new(RetainedLlamaNodeAdapter::new(
             endpoint,
             command.queue_capacity,
             command.completion_capacity,
-        )),
+            retained_capacity,
+            retained_bytes,
+        ).map_err(|error| format!("invalid adapter retained storage: {error:?}"))?),
         other => return Err(format!("unsupported adapter kind {other}")),
     };
-    let (sender, inbound) = bounded_queue(command.queue_capacity);
     broker
         .register_node(command.node_id.clone(), command.node_generation, sender)
         .map_err(|error| error.to_string())?;
-    let node = EventNode::new(Arc::clone(&adapter), inbound, Arc::clone(broker));
+    let node = RetainedEventNode::new(adapter.clone(), Arc::clone(&inbound), Arc::clone(broker));
     let id = command.node_id.clone();
     let task = tokio::spawn(async move {
         let result = node.run().await;
@@ -133,6 +173,7 @@ fn create(
             generation: command.node_generation,
             adapter_kind: command.adapter_kind,
             adapter,
+            inbound,
             task,
         },
     );
@@ -140,7 +181,7 @@ fn create(
 }
 
 async fn remove(
-    broker: &Arc<EventBroker>,
+    broker: &Arc<RetainedEventBroker>,
     nodes: &mut HashMap<String, NodeOwner>,
     event: &Event,
 ) -> Result<String, String> {
@@ -155,21 +196,26 @@ async fn remove(
             owner.generation, command.node_generation
         ));
     }
+    let _admission = broker.pause_node_admission(&command.node_id, command.node_generation)
+        .map_err(|error| error.to_string())?;
     let state = owner.adapter.snapshot();
     if !matches!(state.as_str(), "empty" | "unloaded" | "closed") {
         return Err(format!(
             "node must be unloaded before deletion; state={state}"
         ));
     }
+    if owner.task.is_finished() || owner.inbound.storage_snapshot().retained_count != 0
+        || owner.adapter.completion_storage_snapshot().is_none_or(|value| value.retained_count != 0) {
+        return Err("node delivery must be drained and healthy before deletion".into());
+    }
     broker
         .unregister_node(&command.node_id, command.node_generation)
         .map_err(|error| error.to_string())?;
     let owner = nodes.remove(&command.node_id).expect("checked node exists");
-    // Preserve the existing unloaded-node deletion behavior. Aborting and
-    // dropping this handle can discard a retained failure/held Events; the
-    // adapter snapshot is not a graceful transport drain or a durable receipt.
+    // Ingress is fenced and queued/held input/output counts are zero. Aborting
+    // this idle bridge cannot discard an Event. Failed owners are not deleted.
     owner.task.abort();
-    tokio::task::spawn_blocking(move || drop(owner.adapter))
+    tokio::task::spawn_blocking(move || drop(owner))
         .await
         .map_err(|error| format!("node adapter cleanup failed: {error}"))?;
     Ok(command.node_id)
@@ -209,3 +255,6 @@ fn reply(
     let payload = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
     Ok(Event { envelope, payload })
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,198 +1,249 @@
-use p4_agent_core::event_broker::{DispatchOutcome, EventBroker, EventReceiver};
+//! Actual socket pumps retain the same Event allocation through local writes.
+//! A completed write is not remote acceptance; failed writes are never replayed.
+use super::{RuntimeLimits, next};
+use p4_adapter::node_adapter::{CompletionMailbox, RetainedCompletion};
+use p4_agent_core::event_broker::{DispatchError, DispatchOutcome, RetainedEventBroker};
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Event, OuterEndpoint, decode, encode};
 use std::collections::HashMap;
+use std::future::Future;
 use std::io;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::task::JoinSet;
 
-/// Serial number for accepted connections, so log lines can name one.
 static CONNECTIONS: AtomicU64 = AtomicU64::new(1);
-
-const CONNECTION_CAPACITY: usize = 65_536;
 const MAX_FRAME: usize = 2 * 1024 * 1024 * 1024;
-type ConnectionSender = mpsc::Sender<Event>;
+type ConnectionSender = mpsc::Sender<RetainedCompletion>;
+type Connections = Arc<Mutex<HashMap<OuterEndpoint, Option<ConnectionSender>>>>;
 
-#[derive(Clone, Default)]
-pub struct OuterConnections(Arc<Mutex<HashMap<OuterEndpoint, ConnectionSender>>>);
+struct WriteFailure {
+    error: io::Error,
+    // False means encoding failed before touching the socket. True remains
+    // uncertain even if the peer happened to accept the whole frame.
+    started: bool,
+    current: RetainedCompletion,
+    pending: mpsc::Receiver<RetainedCompletion>,
+}
 
-pub async fn accept(
-    listener: TcpListener,
-    broker: Arc<EventBroker>,
-    connections: OuterConnections,
-) {
+enum Failure {
+    Writer { value: WriteFailure, _slot: Arc<OwnedSemaphorePermit> },
+    Ingress { error: String, event: Event, _slot: Arc<OwnedSemaphorePermit> },
+    Undelivered { error: String, event: RetainedCompletion },
+}
+
+struct Shared {
+    tasks: StdMutex<JoinSet<()>>,
+    failures: StdMutex<Vec<Failure>>,
+    slots: Arc<Semaphore>,
+    connections: Connections,
+    limits: RuntimeLimits,
+    local_writes: AtomicU64,
+}
+
+impl Shared {
+    fn new(limits: RuntimeLimits) -> Arc<Self> {
+        Arc::new(Self { tasks: StdMutex::new(JoinSet::new()), failures: StdMutex::new(Vec::new()),
+            slots: Arc::new(Semaphore::new(limits.connections)), connections: Arc::new(Mutex::new(HashMap::new())),
+            limits, local_writes: AtomicU64::new(0) })
+    }
+    fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        while let Some(result) = tasks.try_join_next() {
+            if let Err(error) = result { eprintln!("P4_EVENT_TRANSPORT_TASK_FAILED error={error}"); }
+        }
+        tasks.spawn(future);
+    }
+    fn preserve(&self, failure: Failure) {
+        // Each retained delivery still consumes its upstream store's count and
+        // bytes. Raw ingress failures additionally retain their connection slot.
+        // No dropped values, reconstruction, automatic replay, or uncharged copy.
+        self.failures.lock().unwrap_or_else(|e| e.into_inner()).push(failure);
+    }
+    fn writer<W: AsyncWrite + Unpin + Send + 'static>(self: &Arc<Self>, writer: W, slot: Arc<OwnedSemaphorePermit>) -> ConnectionSender {
+        let (sender, receiver) = mpsc::channel(self.limits.queue);
+        let shared = Arc::clone(self);
+        self.spawn(async move {
+            if let Err(value) = write_loop(writer, receiver, &shared.local_writes).await {
+                p4_llamacpp_staged_adapter::v2::record::record(&format!(
+                    "P4_EVENT_WRITE_FAILED retained_pending={} result={} error={}", value.pending.len(),
+                    if value.started { "uncertain" } else { "not_started" }, value.error));
+                for sender in shared.connections.lock().await.values_mut() {
+                    if sender.as_ref().is_some_and(|sender| sender.is_closed()) { *sender = None; }
+                }
+                shared.preserve(Failure::Writer { value, _slot: slot });
+            }
+        });
+        sender
+    }
+}
+
+pub(super) struct Owner(Arc<Shared>);
+impl Owner {
+    pub(super) fn start(listener: TcpListener, broker: Arc<RetainedEventBroker>, outer: Arc<CompletionMailbox>, outbound: Arc<CompletionMailbox>, limits: RuntimeLimits) -> Self {
+        let shared = Shared::new(limits);
+        shared.spawn(deliver_outer(outer, Arc::clone(&shared)));
+        shared.spawn(deliver_outbound(outbound, Arc::clone(&shared)));
+        shared.spawn(accept(listener, broker, Arc::clone(&shared)));
+        Self(shared)
+    }
+    pub(super) fn abort(&self) {
+        self.0.tasks.lock().unwrap_or_else(|e| e.into_inner()).abort_all();
+    }
+}
+impl Drop for Owner {
+    fn drop(&mut self) { self.abort(); }
+}
+
+async fn accept(listener: TcpListener, broker: Arc<RetainedEventBroker>, shared: Arc<Shared>) {
     loop {
+        // Failed owners keep their slots. Exhaustion stops new admissions;
+        // healthy route/node work runs in independent tasks.
+        let Ok(slot) = Arc::clone(&shared.slots).acquire_owned().await else { return; };
         match listener.accept().await {
             Ok((stream, peer)) => {
-                let broker = Arc::clone(&broker);
-                let connections = connections.clone();
-                // Named so a connection that ends mid-run can be told from
-                // the one still carrying the run: a 2026-09-01 four-node run
-                // lost output to a close that no log line could attribute.
                 let id = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
                 eprintln!("P4_EVENT_CONNECTION_OPENED connection={id} peer={peer}");
-                tokio::spawn(async move {
-                    let result = serve(id, stream, broker, connections).await;
-                    match result {
-                        Ok(()) => eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} peer={peer} error=none"),
-                        Err(error) => eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} peer={peer} error={error}"),
-                    }
-                });
+                let broker = Arc::clone(&broker);
+                let connection = Arc::clone(&shared);
+                shared.spawn(async move { serve(id, stream, broker, connection, Arc::new(slot)).await; });
             }
             Err(error) => eprintln!("P4_EVENT_ACCEPT_FAILED error={error}"),
         }
     }
 }
 
-async fn serve(
-    id: u64,
-    stream: TcpStream,
-    broker: Arc<EventBroker>,
-    connections: OuterConnections,
-) -> io::Result<()> {
-    stream.set_nodelay(true)?;
+async fn serve(id: u64, stream: TcpStream, broker: Arc<RetainedEventBroker>, shared: Arc<Shared>, slot: Arc<OwnedSemaphorePermit>) {
+    if let Err(error) = stream.set_nodelay(true) {
+        eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} error={error}"); return;
+    }
     let (mut reader, writer) = stream.into_split();
-    let (sender, receiver) = mpsc::channel(CONNECTION_CAPACITY);
-    tokio::spawn(write_loop(writer, receiver));
+    let sender = shared.writer(writer, Arc::clone(&slot));
     loop {
-        let event = read_event(&mut reader).await?;
+        let mut event = match read_event(&mut reader).await {
+            Ok(event) => event,
+            Err(error) => {
+                eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} error={error}"); break;
+            }
+        };
         if let Endpoint::Outer(route) = &event.envelope.source {
-            connections
-                .0
-                .lock()
-                .await
-                .insert(route.clone(), sender.clone());
+            let mut routes = shared.connections.lock().await;
+            if !matches!(routes.get(route), Some(None)) { routes.insert(route.clone(), Some(sender.clone())); }
         }
-        // A suppressed duplicate is not delivered and not refused, so a
-        // sender waiting on the reply waits for its whole timeout with
-        // nothing to read. That is correct idempotency and an unreadable
-        // failure at the same time, so it is at least said out loud: an
-        // OUTER that reuses a connection identity across connections lands
-        // here, with its opening command dropped as already seen.
-        let event_id = event.envelope.event_id.clone();
-        if broker.dispatch(event).map_err(io::Error::other)? == DispatchOutcome::Duplicate {
-            eprintln!("P4_EVENT_DUPLICATE_SUPPRESSED connection={id} event_id={event_id}");
-        }
-    }
-}
-
-/// Writes events to the OUTER that owns each target endpoint.
-///
-/// An undeliverable event is *lost*, and the loss is visible to nobody but
-/// this log line unless it is counted: a 2026-09-01 four-node run under
-/// continuous arrivals dropped 24 consecutive Output events here and the
-/// only reason anyone noticed was the drive's own position-contiguity check.
-/// So each discard is counted per endpoint and reported as a running total,
-/// and a route whose write side has gone is evicted rather than left in the
-/// map to swallow everything addressed to it until the OUTER happens to send
-/// something that re-registers it.
-///
-/// Counting is not delivery. Whether P4 owes an OUTER its output across a
-/// broken connection is a contract question this layer cannot settle alone;
-/// see the restructure plan's open surface.
-pub async fn deliver_outer(mut receiver: EventReceiver, connections: OuterConnections) {
-    let mut discarded: HashMap<OuterEndpoint, u64> = HashMap::new();
-    while let Some(event) = receiver.recv().await {
-        let Endpoint::Outer(target) = event.envelope.target.clone() else {
-            continue;
-        };
-        let sender = connections.0.lock().await.get(&target).cloned();
-        let delivered = match sender {
-            Some(sender) => {
-                let sent = sender.send(event).await.is_ok();
-                if !sent {
-                    // The write loop behind this sender is gone. Leaving the
-                    // entry keeps every later event going to a closed channel.
-                    connections.0.lock().await.remove(&target);
+        loop {
+            match broker.dispatch_ingress(event) {
+                Ok(DispatchOutcome::Duplicate) => {
+                    eprintln!("P4_EVENT_DUPLICATE_SUPPRESSED connection={id}"); break;
                 }
-                sent
+                Ok(_) => break,
+                Err(failure) if matches!(failure.error, DispatchError::Full(_)) => {
+                    // One original per socket: stop reading until destination
+                    // admission succeeds, keeping TCP backpressure on the peer.
+                    event = *failure.event;
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                }
+                Err(failure) => {
+                    eprintln!("P4_EVENT_INGRESS_FAILED connection={id} error={}", failure.error);
+                    shared.preserve(Failure::Ingress { error: failure.error.to_string(), event: *failure.event, _slot: Arc::clone(&slot) });
+                    shared.connections.lock().await.retain(|_, current| !current.as_ref().is_some_and(|current| current.same_channel(&sender)));
+                    return;
+                }
             }
-            None => false,
+        }
+    }
+    // Input EOF may be a TCP half-close: the peer can still be reading outputs.
+    // Keep its writer route. Only a write failure blocks that generation;
+    // replacing a route drops the old sender without deleting a newer binding.
+}
+
+async fn deliver_outer(receiver: Arc<CompletionMailbox>, shared: Arc<Shared>) {
+    while let Some(event) = next(&receiver).await {
+        let sender = match &event.event().envelope.target {
+            Endpoint::Outer(target) => shared.connections.lock().await.get(target).cloned().flatten(),
+            _ => None,
         };
-        if !delivered {
-            let total = discarded.entry(target.clone()).or_insert(0);
-            *total += 1;
-            // To the record file, not stderr: the discard count is read back
-            // as a run's delivery verdict, and stderr is shared with four
-            // stage servers that can tear a line in half.
-            p4_llamacpp_staged_adapter::v2::record::record(&format!(
-                "P4_EVENT_OUTER_MISSING discarded={total} target={target:?}"
-            ));
+        let failed = match sender {
+            Some(sender) => sender.send(event).await.err().map(|failure| failure.0),
+            None => Some(event),
+        };
+        if let Some(event) = failed {
+            p4_llamacpp_staged_adapter::v2::record::record("P4_EVENT_OUTER_MISSING retained=1 result=not_started");
+            if let Endpoint::Outer(target) = &event.event().envelope.target {
+                shared.connections.lock().await.insert(target.clone(), None);
+            }
+            shared.preserve(Failure::Undelivered { error: "OUTER route unavailable".into(), event });
         }
     }
 }
 
-pub async fn deliver_outbound(mut receiver: EventReceiver) {
-    let mut peers: HashMap<Address, ConnectionSender> = HashMap::new();
-    while let Some(event) = receiver.recv().await {
-        let target = event.envelope.target.agent_address().clone();
-        let mut sender = peers.get(&target).cloned();
-        if sender.is_none() {
-            sender = connect(&target).await.ok();
-            if let Some(value) = &sender {
-                peers.insert(target.clone(), value.clone());
-            }
+async fn deliver_outbound(receiver: Arc<CompletionMailbox>, shared: Arc<Shared>) {
+    // A failed connection is kept closed. Later events never pass an uncertain
+    // predecessor by silently reconnecting; explicit reconciliation is separate.
+    let mut peers: HashMap<Address, Result<ConnectionSender, String>> = HashMap::new();
+    while let Some(event) = next(&receiver).await {
+        let target = event.event().envelope.target.agent_address().clone();
+        if !peers.contains_key(&target) {
+            let sender = connect(&target, &shared).await.map_err(|e| e.to_string());
+            peers.insert(target.clone(), sender);
         }
-        let delivered = match sender {
-            Some(sender) => sender.send(event).await.is_ok(),
-            None => false,
+        let failure = match peers.get(&target).expect("inserted peer") {
+            Ok(sender) => sender.send(event).await.err().map(|e| ("peer writer closed".into(), e.0)),
+            Err(error) => Some((error.clone(), event)),
         };
-        if !delivered {
-            peers.remove(&target);
-            eprintln!("P4_EVENT_PEER_DELIVERY_FAILED target={target}");
+        if let Some((error, event)) = failure {
+            eprintln!("P4_EVENT_PEER_DELIVERY_FAILED target={target} retained=1 error={error}");
+            shared.preserve(Failure::Undelivered { error, event });
         }
     }
 }
 
-async fn connect(address: &Address) -> io::Result<ConnectionSender> {
+async fn connect(address: &Address, shared: &Arc<Shared>) -> io::Result<ConnectionSender> {
+    let slot = Arc::clone(&shared.slots).acquire_owned().await.map_err(io::Error::other)?;
     let stream = TcpStream::connect((address.host.as_str(), address.port)).await?;
     stream.set_nodelay(true)?;
     let (_reader, writer) = stream.into_split();
-    let (sender, receiver) = mpsc::channel(CONNECTION_CAPACITY);
-    tokio::spawn(write_loop(writer, receiver));
-    Ok(sender)
+    Ok(shared.writer(writer, Arc::new(slot)))
 }
 
-/// Writes queued events to one socket.
-///
-/// This is where an event is actually delivered, which is why the failure
-/// goes to the record channel: `P4_EVENT_OUTER_MISSING` counts what never
-/// reached this queue, and reporting only that would let a run whose socket
-/// died mid-write read as having delivered everything. The count of events
-/// abandoned in the queue is part of the record for the same reason.
-async fn write_loop<W: AsyncWrite + Unpin>(mut writer: W, mut receiver: mpsc::Receiver<Event>) {
+async fn write_loop<W: AsyncWrite + Unpin>(mut writer: W, mut receiver: mpsc::Receiver<RetainedCompletion>, local_writes: &AtomicU64) -> Result<(), WriteFailure> {
     while let Some(event) = receiver.recv().await {
-        if let Err(error) = write_event(&mut writer, &event).await {
-            receiver.close();
-            let mut abandoned = 0u64;
-            while receiver.try_recv().is_ok() {
-                abandoned += 1;
+        let bytes = match encode(event.event()) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                receiver.close();
+                return Err(WriteFailure { error: io::Error::other(error), started: false, current: event, pending: receiver });
             }
-            p4_llamacpp_staged_adapter::v2::record::record(&format!(
-                "P4_EVENT_WRITE_FAILED abandoned={abandoned} error={error}"
-            ));
-            break;
+        };
+        let result = write_frame(&mut writer, &bytes).await;
+        if let Err(error) = result {
+            receiver.close();
+            return Err(WriteFailure { error, started: true, current: event, pending: receiver });
         }
+        // Socket completion retires only this local allocation. Broker receipt,
+        // remote delivery, native completion and KV authority are independent.
+        local_writes.fetch_add(1, Ordering::Relaxed);
+        event.retire();
     }
+    Ok(())
 }
 
 async fn read_event<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Event> {
     let size = reader.read_u32_le().await? as usize;
-    if size == 0 || size > MAX_FRAME {
-        return Err(io::Error::other("invalid event frame size"));
-    }
+    if size == 0 || size > MAX_FRAME { return Err(io::Error::other("invalid event frame size")); }
     let mut bytes = vec![0; size];
     reader.read_exact(&mut bytes).await?;
     decode(&bytes).map_err(io::Error::other)
 }
 
-async fn write_event<W: AsyncWrite + Unpin>(writer: &mut W, event: &Event) -> io::Result<()> {
-    let bytes = encode(event).map_err(io::Error::other)?;
+async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
     let size = u32::try_from(bytes.len()).map_err(|_| io::Error::other("event frame too large"))?;
     writer.write_u32_le(size).await?;
-    writer.write_all(&bytes).await?;
+    writer.write_all(bytes).await?;
     writer.flush().await
 }
+
+#[cfg(test)]
+mod tests;

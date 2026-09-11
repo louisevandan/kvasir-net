@@ -94,6 +94,9 @@ pub trait RetainedNodeAdapter: Send + Sync {
     fn try_take_retained_matching(&self, expected: &CompletionFront) -> OwnedPoll;
     fn poll_take_retained(&self, context: &mut Context<'_>) -> TaskPoll<OwnedPoll>;
     fn snapshot(&self) -> String;
+    /// Unknown is not empty. Lifecycle deletion must reject without an
+    /// authoritative observation of queued and held completion ownership.
+    fn completion_storage_snapshot(&self) -> Option<CompletionStorageSnapshot> { None }
 }
 
 #[derive(Debug)]

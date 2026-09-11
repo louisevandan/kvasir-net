@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-11 — 소유형 broker/node/실제 Worker 경계 로컬 검증1416/0/7. 제품 root/control/writer·미래 반환 예약은 미연결. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
+최신 현황 정리: 2026-09-11 — 제품 root/control/writer까지 소유형 반환 연결, 로컬 검증1424/0/7·실제 CPU 2-stage Qwen 4/4 EOS·해제·UNLOAD/DELETE. 미래 반환/receipt 선예약은 미완. e4503e10f 대조 실기는 MI raw22.83→39.00TPS·첫 출력523.7→144.3s, Hy3 첫 출력1871.1→960.4s. 새 발행 수정의 GPU 성능·품질/100k 실입력/반환 예산/H5는 미승인. 최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -118,6 +118,18 @@ pure-prefill은 효율적인 큰 행 폭을 유지하면서 다른 요청을 다
 더 쌓지 않고 KV 우선 조건 아래 컷/weight offload를 재계획한다. 이 비용 정책은 아직 구현되지 않았다.
 반환 수명 연결 뒤 비용 계측→고정 창 안의 정책 소비 반례→같은 실제100k 입력/긴 출력의 대조 순서다.
 [원인·결정식·실험 판정](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#long-prefill-design)을 따르며, 기존 실행을100k 또는 GPU 포화 승인으로 바꾸지 않는다.
+
+**제품 event runtime 소유형 연결 (2026-09-11, 로컬 검증 완료):** entrypoint의 root/control/TCP가
+소유형 broker/node/adapter를 실제 선택한다. 제어 Full은 같은 원본을 재시도하고, 영구 실패는
+입력·응답·미처리 입력·노드 owner를 보존한다. 소켓 쓰기 실패는 현재 원본과 아직 쓰지 않은 큐를
+보존하며 자동 replay하지 않는다. 삭제는 ingress를 잠시 막고 입력/완료의 retained count0을 확인한다.
+원격 ACK·원시 frame/직렬화 scratch·미래 native/effect/receipt byte 예약은 여전히 남는다.
+workspace1424/0/7(58 summaries, exit0), 독립 재컴파일 변이6종1/2/1/1/1/1실패, docs-lint94 clean이다.
+실제 제품 agent→native Qwen1.5B CPU 2-stage에서 resident2/2wave의4요청 EOS·완료·해제·UNLOAD/DELETE를
+확인했다. native451·모델·실행 agent/driver 해시와 원문 응답을 봉인했다. GPU/100k/문장수 지시 전체 승인은 아니다.
+이번 연결 뒤 다음 첫 행동은 그 선예약과 전체 반환 수명을 닫는 것이다. 이어 고정 창 안의
+누적 prefill 시간 정책·실제100k·두 클러스터 대조로 진행한다.
+[실제 TCP·실패 반례·검증](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md#retained-runtime)을 따른다.
 
 **반환 수명 계측 진행:** broker의 exact Event 사본을 indexed/retired/allocated로 구분하고
 실제 INSPECT 제어 응답에 바이트·퇴역·최종 해제량을 연결했다. 큐 dequeue와 원장 퇴역, 마지막

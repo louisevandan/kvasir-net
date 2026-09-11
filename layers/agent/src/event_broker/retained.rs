@@ -68,6 +68,22 @@ fn admission_error(error: ReserveError, delivery: &Delivery) -> DispatchError {
 }
 
 impl EventBroker<CompletionPublisher> {
+    /// Fence delivery before observing quiescence; caller code never executes
+    /// under the registration lock. Existing owned front tickets recheck this.
+    pub fn pause_node_admission(&self, node: &str, generation: u64) -> Result<NodeAdmissionPause, DispatchError> {
+        let nodes = self.nodes.write().map_err(|_| DispatchError::Poisoned)?;
+        let route = nodes.get(node).ok_or_else(|| DispatchError::UnknownNode(node.into()))?;
+        if route.generation != generation {
+            return Err(DispatchError::StaleNode { node: node.into(), current_generation: route.generation,
+                incoming_generation: generation });
+        }
+        if route.admission_paused.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return Err(DispatchError::Full(Delivery::Node { node: node.into(), generation }));
+        }
+        Ok(NodeAdmissionPause(Arc::clone(&route.admission_paused)))
+    }
+
+
     pub(crate) fn reserve_retained_completion(
         &self,
         front: &CompletionFront,
@@ -218,6 +234,11 @@ impl EventBroker<CompletionPublisher> {
                     return Err(DispatchError::Invalid(
                         "completion destination changed after reservation".into(),
                     ));
+                }
+            }
+            if let Delivery::Node { node, .. } = &delivery {
+                if nodes.get(node).expect("validated route").admission_paused.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(DispatchError::Full(delivery.clone()));
                 }
             }
             // Independent exact receipt: never bind the source claim to the

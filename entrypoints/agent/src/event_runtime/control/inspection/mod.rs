@@ -5,7 +5,7 @@
 mod hardware;
 
 use super::NodeOwner;
-use p4_agent_core::event_broker::{EventBroker, ReceiptStorageSnapshot};
+use p4_agent_core::event_broker::{RetainedEventBroker, ReceiptStorageSnapshot};
 use p4_protocol::event::Envelope;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const SCHEMA: u16 = 1;
 const ADAPTERS: [&str; 1] = ["llamacpp"];
 
-pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &EventBroker) -> Value {
+pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &RetainedEventBroker) -> Value {
     let mut registered: Vec<Value> = nodes
         .iter()
         .map(|(node_id, owner)| {
@@ -23,6 +23,9 @@ pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &EventB
                 "generation": owner.generation,
                 "adapter_kind": owner.adapter_kind,
                 "state": owner.adapter.snapshot(),
+                "delivery": {"stopped":owner.task.is_finished(),
+                    "input_retained":owner.inbound.storage_snapshot().retained_count,
+                    "completion_retained":owner.adapter.completion_storage_snapshot().map(|value| value.retained_count)},
             })
         })
         .collect();
@@ -59,7 +62,7 @@ fn storage(value: ReceiptStorageSnapshot) -> Value {
         "unmeasured_events":value.unmeasured_events})
 }
 
-fn receipt_snapshot(broker: &EventBroker, sampled_at: u64) -> Value {
+fn receipt_snapshot(broker: &RetainedEventBroker, sampled_at: u64) -> Value {
     match broker.receipt_snapshot() {
         Ok(value) => json!({
             "sampled_at_unix_ms":sampled_at, "state":"ok",
