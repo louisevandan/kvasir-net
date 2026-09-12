@@ -14,8 +14,8 @@
   "nearest_release_tag": "b10883",
   "previous_linker_pin": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
   "previous_official_base": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
-  "patch_set_sha256": "ff1468f6187f0e70e2970f73c0d0ca489d7b8bd4465b583ec1b6305cbee56f3b",
-  "patched_tree": "44493ca7ab53699ecc012e915be10da5ad7c7b1f",
+  "patch_set_sha256": "ebf53e855f11e5a848ccddf34c8cc517056f839d91148b702c04f4eb4c218379",
+  "patched_tree": "73b67197837f10811bb2560ec93324886c18360a",
   "patches": [
     {
       "file": "0002-ggml-rpc.patch",
@@ -84,7 +84,7 @@
     },
     {
       "file": "0015-official-minimax-m3-dense-gguf.patch",
-      "sha256": "44596e5d1af4e0290265da546144c6cd5e6de3b48a8145a727de0d87d400b093",
+      "sha256": "88675b085503ecf65820c89f702962ee557cefb64599565db42c32f452c19bd6",
       "official_upstream_port": {
         "repository": "https://github.com/ggml-org/llama.cpp.git",
         "pull_request": "https://github.com/ggml-org/llama.cpp/pull/24523",
