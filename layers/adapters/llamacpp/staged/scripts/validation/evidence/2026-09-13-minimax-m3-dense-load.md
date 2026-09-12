@@ -1,8 +1,9 @@
 # MiniMax M3 dense GGUF 분산 적재
 
-2026-09-13. 상태: **4-stage 적재와 세션 준비 통과, 추론 미실행**.
+2026-09-13. 상태: **4-stage 적재, 단일 추론, capacity 1 순차 웨이브 통과**.
 이 문서는 dense MiniMax M3의 메타데이터 호환 수정과 두 물리 Windows 호스트의
-실제 적재만 기록한다. 정상 응답, 생성 TPS, 긴 context 및 서비스 성능 승인이 아니다.
+실제 적재·추론을 기록한다. capacity 4 동시 배치, 긴 context 및 서비스 성능 승인은
+아직 아니다.
 
 ## 원인과 수정
 
@@ -48,20 +49,52 @@ Spark, Ubuntu 노트북, Mac mini 두 대, TUF에는 agent만 남고 native stag
 MI250 두 대에도 P4 프로세스가 없었다. 따라서 이번 결과는 두 물리 호스트·네 GPU의
 CUDA 적재 증거이며 전체 LAN 클러스터나 Metal/ROCm 적재 증거가 아니다.
 
+## 단일 출력과 capacity 1 웨이브
+
+같은 상주 세션에 MiniMax M3의 raw chat template와 thinking-disabled prefix를 적용한
+한국어 설비 계산 프롬프트를 제출했다. 단일 요청은 157 prefill token과 EOS까지의
+125 generated token을 처리해 `completed=1`, `released=1`, `passed=true`였다. TTFT는
+187.043초, 논리 prefill은 0.839 token/s, 생성 구간은 141.834초로 약 0.88 token/s였다.
+응답은 `17 L/min × 13 min = 221 L`를 계산하고 일정 유량 가정 및 두 현장 측정값을
+구분했다. 229자 응답에 UTF-8 replacement character는 없었다.
+
+이어 같은 capacity 1 세션에 2건을 즉시, 60초 뒤 2건을 추가하는 고정 workload를
+실행했다. 네 요청 모두 EOS로 완료·해제됐고 84, 138, 42, 162 L 계산과 요청별 설명을
+충족했다. UTF-8 replacement character는 네 응답 모두 0이었다.
+
+| 항목 | 값 |
+| --- | --- |
+| 완료 / 해제 / 오류 | 4 / 4 / 없음 |
+| wall / generated token | 334.387초 / 426 |
+| aggregate generated TPS | 1.274 token/s |
+| 총 prefill token | 525 |
+| physical batch | 436 (prefill 10 / decode 426 / mixed 0) |
+| 물리 batch 폭 | 평균 2.181, 최대 64, UBATCH 64 평균 채움 3.408% |
+| ready sequence / open batch 관측 최대 | 1 / 0 |
+
+이 결과는 backlog를 capacity 1 슬롯으로 순차 처리하고 슬롯을 네 번 재사용한 증거다.
+동시 sequence가 없었으므로 in-flight batch 포화나 capacity 상향의 성능 효과를
+입증하지 않는다. 이를 분리하기 위해 동일 workload를 sequence capacity 4에서 다시
+실행하는 A/B가 다음 게이트다.
+
 ## 실패 경계와 남은 검증
 
 첫 수정 전 실행은 dense metadata assert로 실패했다. 수정 후 첫 원격 실행은 새 배포
 디렉터리에 CUDA runtime DLL이 없어 `0xc0000135`로 종료했고, `cublas64_13.dll`,
 `cublasLt64_13.dll`, `cudart64_13.dll`을 배포 manifest에 포함해 해결했다.
 
-최종 loader 상태는 `created=4`, `loaded=4`, `session_ready=4`, `passed=true`이며 모델은
-상주 상태로 남겼다. 이 실행은 inference를 제출하지 않았다. 다음 판정은 이 동일 session에
-짧은 의미 프롬프트 1건을 보내 stage cut과 logits 반환을 확인하는 것이며, 그 전에는
-“M3 추론 성공” 또는 TPS를 주장하지 않는다.
+최종 loader 상태는 `created=4`, `loaded=4`, `session_ready=4`, `passed=true`였다.
+단일 및 순차 웨이브 뒤 capacity 4 재적재를 위해 네 native stage를 종료했다. 재적재의
+비교 조건은 프롬프트, 도착 시각, max token, sampling, batch/ubatch, layer cut을 유지하고
+sequence capacity와 총 KV context만 1/4K에서 4/16K로 바꾼다.
 
-로컬 원본은 `target/minimax-m3-load-20260913/full-load/{config.json,load-progress2.json}`와
-`deployment-manifest.json`이다. `target/`은 checkout 간 영구 증거가 아니므로 이 문서에는
-판정에 필요한 identity, generation, topology와 경계를 함께 기록했다.
+첫 웨이브 시도에서 이전 load 연결의 outer channel/generation을 재사용해
+`event stream ended mid-frame`으로 즉시 실패했다. native stage 실행은 0회였고 성능
+표본에서 제외했다. 새 channel/generation을 사용한 위 실행이 승인 표본이다.
+
+로컬 원본은 `target/minimax-m3-load-20260913/` 아래 `full-load`, `single-inference`,
+`sequential-wave`와 `deployment-manifest.json`이다. `target/`은 checkout 간 영구 증거가
+아니므로 이 문서에는 판정에 필요한 identity, generation, topology와 경계를 함께 기록했다.
 
 ## 검증 명령
 
