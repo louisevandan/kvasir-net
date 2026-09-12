@@ -72,6 +72,7 @@
 | [docs/overview.md](overview.md) | 경로별 참고·재감사 필요 |
 | [docs/p4-256-optimization.md](p4-256-optimization.md) | 역사·구 계획 |
 | [docs/plan.md](plan.md) | 역사·구 계획 |
+| [docs/presentation/p4-structure.md](presentation/p4-structure.md) | 구조 설명 — 일반 개발자용 덱의 Markdown 판 |
 | [docs/protocol-mtp.md](protocol-mtp.md) | 분야 계약·구현과 구별 |
 | [docs/protocol-outer.md](protocol-outer.md) | 분야 계약·구현과 구별 |
 | [docs/protocol.md](protocol.md) | 경로별 참고·재감사 필요 |

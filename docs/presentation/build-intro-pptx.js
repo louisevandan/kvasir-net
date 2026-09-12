@@ -101,7 +101,7 @@ function slide(sect, eyebrow, title, num, lede, two) {
     [{ text: sect, options: { color: FLOW } }, { text: '   ·   ' + eyebrow, options: { color: MUT } }],
     { x: I(54), y: I(36), w: I(900), h: I(14), fontFace: M, fontSize: 8, bold: true, cs: 1.4, margin: 0, isTextBox: true, valign: 'middle' }
   );
-  T(s, `${String(num).padStart(2, '0')} / 14`, 1026, 36, 200, 14,
+  T(s, `${String(num).padStart(2, '0')} / 15`, 1026, 36, 200, 14,
     { size: 8, color: MUT, mono: true, align: 'right', cs: 1, valign: 'middle' });
   T(s, title, 54, 56, 1172, two ? 80 : 44, { size: 25, color: INK, bold: true, ls: 1.15 });
   let top = two ? 142 : 106;
@@ -136,7 +136,7 @@ function foot(s, str) {
     T(s, l, mx[i] + 18, 486, mw - 36, 16, { size: 7.5, color: '8B97A3', mono: true, cs: 0.6 });
   });
   rule(s, 60, 586, 1160, '2B333B');
-  T(s, '기준 HEAD f57543c8d (2026-09-12) · 코드·backend 수치는 저장소 실측 · 이 덱은 구조 설명이며 성능 주장이 아니다',
+  T(s, '기준 HEAD b3a0d51ef (2026-09-12) · 코드·backend 수치는 저장소 실측 · 이 덱은 구조 설명이며 성능 주장이 아니다',
     60, 600, 1160, 40, { size: 8, color: '8B97A3', ls: 1.4 });
 }
 
@@ -283,7 +283,7 @@ function foot(s, str) {
     T(s, v, x, dy + 20, 370, 76, { size: 9.5, ls: 1.4 });
   });
 
-  foot(s, '실제 구성 예 — 2호스트 16스테이지, 5호스트 6스테이지. 노드 수는 모델 크기·KV 용량·합법적인 자르기 지점이 정하지, 카드 수가 정하지 않는다.');
+  foot(s, '지금까지 돌린 구성 예 — 1호스트 8스테이지, 2호스트 16스테이지, 5호스트 6스테이지. 노드 수는 모델 크기·KV 용량·합법적인 자르기 지점이 정하지, 카드 수가 정하지 않는다.');
 }
 
 /* ═══ 05 ② 모델 로딩 ═══════════════════════════════════ */
@@ -353,12 +353,13 @@ function foot(s, str) {
 
   const ad = [
     ['mock', '산술만. 장치 없이', 'f'],
+    ['mock-instant', '즉시 응답. 순서 시험용', 'f'],
     ['llamacpp', 'llama-server (HTTP)', ''],
     ['vllm', 'vLLM 서버', ''],
     ['sglang', 'SGLang 서버', ''],
     ['llamacpp-staged', '레이어 분할 실행', 'b'],
   ];
-  const aw = 218, agap = 20;
+  const aw = 178, agap = 20;
   ad.forEach(([n, d, k], i) => {
     const x = 54 + i * (aw + agap);
     line(s, 640, y0 + 158, x + aw / 2, y0 + 186, { color: MUT, lw: 1 });
@@ -542,9 +543,9 @@ function foot(s, str) {
   foot(s, '전송 단위는 스테이지 경계의 텐서 묶음(캡슐)이다. 텐서 개수는 모델 구조가 정하는 상수이며, 같은 값을 가리키는 텐서는 중복해 싣지 않는다.');
 }
 
-/* ═══ 10 ⑥ 인플라이트 배치 전략 ═══════════════════════ */
+/* ═══ 10 ⑥ 배치 — 무엇을 넣는가 ═══════════════════════ */
 {
-  const s = slide('⑥ 배치', '한 배치를 고르는 규칙', '빈 시간을 메우는 일은 전부 배치 선택에 달려 있다', 10,
+  const s = slide('⑥ 배치', '한 배치에 무엇을 넣는가', '빈 시간을 메우는 일은 전부 배치 선택에 달려 있다', 10,
     '파이프라인은 한 요청만 흘리면 앞 스테이지가 논다. 어댑터는 매 발행 기회마다 어떤 요청 몇 행을 한 배치에 넣을지 고르고, 그 선택은 자원을 확정하지 않는 순수 계산이다.');
   const y0 = s.bodyTop;
 
@@ -565,35 +566,88 @@ function foot(s, str) {
     'Verify·Replay는 쪼갤 수 없는 한 트랜잭션이다 — 한 물리 UBATCH 안에 있어야 한다',
   ], 54, y0 + 96, 640, 84, { size: 9.5 });
 
-  h3(s, '두 개의 바운드', 740, y0, 486, FLOW);
-  box(s, 740, y0 + 22, 486, 66, { fill: FLOWW, line: FLOW, lw: 1.2 });
-  T(s, 'PREFILL_PATIENCE = 8', 756, y0 + 34, 300, 16, { size: 10, color: INK, mono: true, bold: true });
-  T(s, 'decode에게 연속 8배치를 준 뒤에도 프롬프트가 기다리고 있으면 다음 배치는 프롬프트 차례다. 몫이 아니라 상한이다.',
-    756, y0 + 54, 454, 30, { size: 8.5, color: INK2, ls: 1.35 });
+  h3(s, '묶음의 폭은 “지금 빈자리”가 아니라 모집단이 정한다', 740, y0, 486, FLOW);
+  box(s, 740, y0 + 22, 486, 84, { fill: FLOWW, line: FLOW, lw: 1.2 });
+  T(s, '준비됨 + 비행 중 + 대기 중  ÷  창(window)', 756, y0 + 34, 454, 16, { size: 9.5, color: INK, mono: true, bold: true });
+  T(s, '요청 하나가 잠깐 돌아왔다고 묶음이 넓어지지 않는다. 프롬프트를 다 낸 뒤 아직 정산되지 않은 요청은 ' +
+    '자기 코호트에 그대로 남고 새 묶음을 넓히지 않는다.', 756, y0 + 56, 454, 44, { size: 8.5, color: INK2, ls: 1.35 });
+
+  h3(s, '생성이 살아 있으면 prefill은 몫만 쓴다', 740, y0 + 118, 486, BND);
+  box(s, 740, y0 + 140, 486, 60, { fill: BNDW, line: BND, lw: 1.2 });
+  T(s, 'decode 진행 중 → prefill 행 = mixed_prefill_rows', 756, y0 + 150, 454, 16, { size: 9, color: INK, mono: true });
+  T(s, '순수 prefill이면 전체 토큰 예산을 쓴다. 시험이 고정한 예: 생성 중 128행, 순수 prefill 512행. ' +
+    '선점이 아니라 비선점 작업 단위다.', 756, y0 + 170, 454, 30, { size: 8.5, color: INK2, ls: 1.35 });
+
+  const ny = y0 + 208;
+  box(s, 54, ny, 640, 108, { fill: SURF2 });
+  T(s, 'PREFILL_PATIENCE = 8', 72, ny + 14, 400, 16, { size: 10, color: INK, mono: true, bold: true });
+  T(s, 'decode에 연속 8배치를 준 뒤에도 프롬프트가 기다리고 있으면 다음 배치는 프롬프트 차례다. 몫이 아니라 상한이다.',
+    72, ny + 36, 604, 30, { size: 8.5, color: INK2, ls: 1.35 });
   T(s, '코드 주석 그대로 — “8은 측정값이 아니다. 바운드가 존재하게 만드는 최소한일 뿐이고, 실제 하드웨어의 처리량으로 판정된 적이 없다.”',
-    740, y0 + 96, 486, 30, { size: 8.5, color: MUT, ls: 1.35 });
-  box(s, 740, y0 + 134, 486, 50, { fill: SURF2 });
-  T(s, '준비된 선택은 수락되기 전까지 공정성을 소비하지 않는다', 756, y0 + 146, 454, 16, { size: 9.5, color: INK, bold: true });
-  T(s, '거부되거나 취소된 후보는 순번을 쓰지 않는다. 남의 계획과 낡은 계획은 이름을 붙여 거절한다.', 756, y0 + 166, 454, 30, { size: 8, color: MUT, ls: 1.3 });
+    72, ny + 70, 604, 30, { size: 8.5, color: MUT, ls: 1.35 });
+  note(s, 740, ny, 486, 108,
+    '준비된 선택은 수락되기 전까지 공정성을 소비하지 않는다. 거부되거나 취소된 후보는 순번을 쓰지 않고, ' +
+    '남의 계획과 낡은 계획은 이름을 붙여 거절한다. 선택 층은 순수하다 — 여기서 KV도 실행 권한도 확정되지 않는다.', 'f');
 
-  const ny = y0 + 200;
-  T(s, '언제 내보내는가 — 지연 발행의 측정된 근거', 54, ny, 700, 18, { size: 11.5, color: INK, bold: true });
-  note(s, 54, ny + 26, 700, 132,
-    '꼬리 노드가 바쁜 동안 도착한 배치는 앞 배치를 p50 128 ms 기다렸고, 전체의 63%가 그랬다. 배치 하나는 꼬리에서 첫 레이어에 닿기까지 ' +
-    '약 55 ms의 고정비를 쓴다. 꼬리에 배치가 줄을 서면 같은 고정비를 여러 번 내는 셈이므로, 이미 충분한 수가 비행 중이면 계획을 head에서 잠시 쥔다. ' +
-    '같은 대기를 폭이 넓어지는 자리로 옮기는 것이다. 행 수 문턱이 아니다 — 파이프라인에 자리가 있으면 얇아도 즉시 보내 깊이를 지킨다. ' +
-    '자리와 무관하게 폭을 기다렸던 이전 실험은 26%를 잃었다.');
-  note(s, 776, ny + 26, 450, 132,
-    '이 knob들은 전부 기본값이 0 또는 off다. DECODE_MEMBERS · PREFILL_ROWS · PREFILL_ROWS_PER_REQUEST · MAX_OPEN_BATCHES · ' +
-    'MAX_ISSUE_ROWS · MIN_BATCH_ROWS · PREFILL_FRAGMENTS · PIPELINE_BATCHING. 켜지 않으면 기존 경로 그대로 돈다. ' +
-    '위 수치는 그 가설의 근거이지 승격 결과가 아니다.', 'x');
-
-  foot(s, '실측 v2/scheduler.rs(Phase·Demand·PREFILL_PATIENCE·PreparedPlan), v2/node/state.rs:520-575(knob 기본값), v2/node/worker/drive.rs:55-80(지연 발행과 그 근거 주석)');
+  foot(s, '실측 v2/scheduler.rs(Phase·Demand·PREFILL_PATIENCE:94·371·627·PreparedPlan), v2/scheduler/pipeline.rs:70-113(모집단 기반 코호트 폭과 생성 우선 quantum)');
 }
 
-/* ═══ 11 ⑦ KV 캐시 영속화 ═════════════════════════════ */
+/* ═══ 11 ⑥ 배치 — 언제 내보내는가 ═════════════════════ */
 {
-  const s = slide('⑦ 영속화', 'KV 캐시를 파일로', '노드마다 자기 구간의 KV를 내렸다가 되살린다', 11,
+  const s = slide('⑥ 배치', '언제 내보내는가', '스테이지 서비스 시간을 재서, 합류시킬지 미룰지 정한다', 11,
+    '고른 배치를 즉시 보내면 꼬리에 줄이 서고, 무조건 기다리면 깊이를 잃는다. 그래서 실제로 걸린 시간을 모아 다음 작업의 비용을 예측한다.');
+  const y0 = s.bodyTop;
+
+  const flow = [
+    ['관측', '스테이지마다 Frame 왕복 시간을\n표본으로 쌓는다', FLOW],
+    ['예측', '후보 배치 모양의 스테이지별\n시간을 프로파일에서 추정', ''],
+    ['투영', '아직 확정되지 않은 비행분까지\n전 스테이지 FIFO로 더한다', ''],
+    ['판정', '예산 안이면 합류, 넘으면 미룸', BND],
+  ];
+  flow.forEach(([a, b, c], i) => {
+    const x = 54 + i * 172;
+    box(s, x, y0, 156, 92, { fill: c === FLOW ? FLOWW : c === BND ? BNDW : SURF2, line: c || RULE2, lw: c ? 1.2 : 1 });
+    T(s, a, x + 12, y0 + 12, 132, 16, { size: 10, color: c || INK, bold: true });
+    T(s, b, x + 12, y0 + 34, 132, 48, { size: 8, color: MUT, ls: 1.4 });
+    if (i > 0) line(s, x - 14, y0 + 46, x - 2, y0 + 46, { color: FLOW, lw: 1.4 });
+  });
+
+  T(s, '판정은 일곱 가지다', 54, y0 + 106, 700, 18, { size: 11.5, color: INK, bold: true });
+  const verdicts = [
+    ['PurePrefill', '생성이 없다 — 전체 폭'],
+    ['DecodeOnly', 'prefill 행이 없다'],
+    ['Cold', '내가 내지 않은 배치가 열려 있다 — 프로파일 없음'],
+    ['CalibrationWait', '표본이 아직 모자라다'],
+    ['Admit', '예산 안에 들어온다'],
+    ['DeferPrefill', '넘는다 — 이번에는 prefill을 넣지 않는다'],
+    ['ProgressProbe', '목표가 닿지 않아도 굶기지 않으려고 한 몫을 낸다'],
+  ];
+  verdicts.forEach(([a, b], i) => {
+    const yy = y0 + 132 + i * 26;
+    T(s, a, 54, yy, 150, 14, { size: 8.5, color: i === 5 ? BLK : FLOW, mono: true });
+    T(s, b, 212, yy, 482, 14, { size: 8.5, color: INK2 });
+  });
+
+  h3(s, '켜는 값과 그 한계', 740, y0 + 106, 486, FLOW);
+  box(s, 740, y0 + 128, 486, 56, { fill: SURF2 });
+  T(s, 'P4_STAGED_PREFILL_SERVICE_MS', 756, y0 + 138, 454, 14, { size: 8.5, color: INK, mono: true });
+  T(s, '밀리초로 주면 마이크로초 예산이 된다. 주지 않으면 이 정책 자체가 꺼져 있다.', 756, y0 + 158, 454, 20, { size: 8.5, color: MUT });
+  note(s, 740, y0 + 194, 486, 118,
+    '코드가 스스로 못을 박아 둔다 — 이것은 예측 정책이지 실행도, KV 권한도, 전송 credit도, 응답 시간 보장도 아니다. ' +
+    '투영에는 측정하지 않은 전송·반환 지연이 빠져 있고, 클라이언트가 체감하는 토큰 간 간격을 약속하지 않는다. ' +
+    'decode만 모으는 지연은 최대 2 ms로 묶여 있다.', 'x');
+
+  note(s, 54, y0 + 320, 686, 96,
+    '별도로, 이미 충분한 배치가 비행 중이면 계획을 head에서 잠시 쥔다. 그 근거도 주석에 숫자로 남아 있다 — ' +
+    '꼬리가 바쁠 때 도착한 배치는 앞 배치를 p50 128 ms 기다렸고 전체의 63%가 그랬다. 배치 하나는 꼬리에서 첫 레이어까지 약 55 ms의 고정비를 쓴다. ' +
+    '자리가 있으면 얇아도 즉시 보낸다 — 자리와 무관하게 폭을 기다렸던 이전 실험은 26%를 잃었다.');
+
+  foot(s, '실측 v2/scheduler/service.rs:1-60·324-412(표본·예측·일곱 판정), v2/node/worker/service.rs:8-25(예산 knob), v2/node/worker/drive.rs:55-80(지연 발행) · 이 knob들은 전부 기본 off이며 위 수치는 가설의 근거이지 승격 결과가 아니다');
+}
+
+/* ═══ 12 ⑦ KV 캐시 영속화 ═════════════════════════════ */
+{
+  const s = slide('⑦ 영속화', 'KV 캐시를 파일로', '노드마다 자기 구간의 KV를 내렸다가 되살린다', 12,
     '스테이지가 자기 레이어 구간의 KV를 갖고 있으므로 저장도 복원도 노드마다 따로 일어난다. llama.cpp의 공개 상태 API를 그대로 쓴다.');
   const y0 = s.bodyTop;
 
@@ -644,9 +698,9 @@ function foot(s, str) {
   foot(s, '실측 server/src/runtime/llama_stage_runtime_kv.cpp:113-175(save·restore), state_store.cpp:153-360(manifest 대조·체크섬), main.cpp:284-293(--kv-root 없으면 capability off)');
 }
 
-/* ═══ 12 ⑧ MTP·스페큘러티브 ═══════════════════════════ */
+/* ═══ 13 ⑧ MTP·스페큘러티브 ═══════════════════════════ */
 {
-  const s = slide('⑧ 스페큘러티브', 'MTP와 그 밖의 방법', '지원하면 자동이 아니라, 지원하지 않으면 거부한다', 12,
+  const s = slide('⑧ 스페큘러티브', 'MTP와 그 밖의 방법', '지원하면 자동이 아니라, 지원하지 않으면 거부한다', 13,
     '스테이지를 자른 경로에서 제안·검증·롤백은 노드 경계를 넘는 상태다. 그래서 상류가 새 방법을 추가해도 자동으로 켜지지 않도록 일부러 반대로 만들어져 있다.');
   const y0 = s.bodyTop;
 
@@ -683,9 +737,9 @@ function foot(s, str) {
   foot(s, '실측 compat/p4_llama_compat.cpp:232-248(지원 목록), runtime/llama_stage_runtime.cpp:47-58(LOAD 거부), :64-66(backend 위임), v2/scheduler.rs(Verify·Replay 원자성)');
 }
 
-/* ═══ 13 ⑨ KV 외의 캐시 ═══════════════════════════════ */
+/* ═══ 14 ⑨ KV 외의 캐시 ═══════════════════════════════ */
 {
-  const s = slide('⑨ 메모리', 'KV 말고 더 잡는 모델', '캐시를 더 잡는 구현은 “선언한 것만” 자를 수 있다', 13,
+  const s = slide('⑨ 메모리', 'KV 말고 더 잡는 모델', '캐시를 더 잡는 구현은 “선언한 것만” 자를 수 있다', 14,
     'llama.cpp의 메모리는 평범한 KV 하나가 아니다. 슬라이딩 윈도우, 순환 상태, 희소 어텐션, 혼합형이 각각 다른 저장소를 잡는다.');
   const y0 = s.bodyTop;
 
@@ -733,9 +787,9 @@ function foot(s, str) {
   foot(s, '실측 upstream/src 의 메모리 구현 10종, compat/0016·0017·0022 패치(선언 4곳과 기본값 false), runtime/stage_memory_plan.hpp:56-98(장치별 model·context·compute)');
 }
 
-/* ═══ 14 정리 ═══════════════════════════════════════════ */
+/* ═══ 15 정리 ═══════════════════════════════════════════ */
 {
-  const s = slide('정리', '개발자 관점에서', '이 구조가 실제로 주는 것', 14);
+  const s = slide('정리', '개발자 관점에서', '이 구조가 실제로 주는 것', 15);
   const y0 = s.bodyTop;
 
   const cards = [
