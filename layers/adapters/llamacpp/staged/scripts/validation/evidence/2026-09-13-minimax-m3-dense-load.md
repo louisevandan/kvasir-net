@@ -1,9 +1,9 @@
 # MiniMax M3 dense GGUF 분산 적재
 
-2026-09-13. 상태: **4-stage 적재, 단일 추론, capacity 1 순차 웨이브 통과**.
+2026-09-13. 상태: **4-stage 적재, 단일 추론, capacity 1 및 capacity 4 웨이브 통과**.
 이 문서는 dense MiniMax M3의 메타데이터 호환 수정과 두 물리 Windows 호스트의
-실제 적재·추론을 기록한다. capacity 4 동시 배치, 긴 context 및 서비스 성능 승인은
-아직 아니다.
+실제 적재·추론을 기록한다. capacity 4 결과는 짧은 고정 workload의 수용 증거이며,
+긴 context 및 서비스 성능 승인은 아직 아니다.
 
 ## 원인과 수정
 
@@ -74,8 +74,62 @@ CUDA 적재 증거이며 전체 LAN 클러스터나 Metal/ROCm 적재 증거가 
 
 이 결과는 backlog를 capacity 1 슬롯으로 순차 처리하고 슬롯을 네 번 재사용한 증거다.
 동시 sequence가 없었으므로 in-flight batch 포화나 capacity 상향의 성능 효과를
-입증하지 않는다. 이를 분리하기 위해 동일 workload를 sequence capacity 4에서 다시
-실행하는 A/B가 다음 게이트다.
+입증하지 않는다. 이를 확인하기 위해 동일 workload를 sequence capacity 4에서 다시
+실행했다.
+
+## Capacity 4 동시 웨이브
+
+sequence capacity와 총 KV context를 1/4K에서 4/16K로 늘리고 같은 네 프롬프트,
+도착 시각(2건 즉시, 2건 60초 뒤), max token, sampling, batch/ubatch 128/64 및 layer
+cut을 유지했다. M42에는 NAS 로그인 세션에 의존하지 않도록 같은 여덟 shard를 로컬
+SSD로 복사했다. 각 파일 길이와 총 298,756,339,264 bytes 및 전송 종료 코드는
+일치한다. 제한 시간 안에 278 GiB를 다시 전부 읽는 별도 SHA256 비교는 하지 않았으나,
+native loader가 여덟 shard 전체를 읽고 같은 model metadata로 네 stage를 적재했다.
+
+두 호스트의 agent가 loopback 주소로 광고하므로 기존 helper 포트 42003(M42)과
+42004(중앙)를 SSH local/reverse tunnel로 연결했다. 중앙의 52005는 Windows excluded
+dynamic port range 51952--52151에 포함돼 bind할 수 없었다. agent 바이너리 SHA256은
+두 호스트에서 `c551db0c77d93cff1d9f87ba2b00622bca6627cc6b67b2c6c6d84507e9dc234b`로
+같았다.
+
+첫 capacity 4 적재는 네 `LOADED`와 네 `SESSION_READY`까지 통과했지만, 웨이브를
+시작한 뒤 약 100.5초에 M42 stage 1 native process가 종료됐다. Windows Application
+Error는 fault module `nvptxJitCompiler64.dll`, exception `0xc0000005`, offset
+`0x5853a`, WER report ID `d4f85b29-b61d-4e80-826d-8ca9b6bf1875`를 기록했다.
+직전 native log에는 `CUDA graph warmup reset`이 반복됐다. 이 실행은 응답 조각 `**`만
+받았고 `completed=0`, `released=0`이므로 실패이며 성능 표본이 아니다.
+
+이 실패에 직접 대응해 네 stage에 `GGML_CUDA_DISABLE_GRAPHS=1`을 적용하고 나머지
+조건을 유지해 generation `1789254973468`, session
+`minimax-m3-batch-1789254973468`로 다시 적재했다. 네 `LOADED`와 네
+`SESSION_READY`를 모두 받았고 적재 소요는 1,458.3초였다. 이어 실행한 같은 웨이브는
+네 요청을 모두 EOS까지 완료하고 네 slot을 모두 해제했다. 네 응답은 각각 84, 138,
+42, 162 L를 올바르게 계산했고 UTF-8 replacement character는 모두 0이었다.
+
+| 항목 | capacity 1 | capacity 4 + CUDA graph off | 변화 |
+| --- | ---: | ---: | ---: |
+| 완료 / 해제 | 4 / 4 | 4 / 4 | 동일 |
+| wall | 334.387초 | 151.745초 | -54.6% |
+| generated token | 426 | 407 | sampling 결과 차이 |
+| aggregate generated TPS | 1.274 | 2.682 | +110.5% |
+| 총 prefill token | 525 | 525 | 동일 |
+| physical batch | 436 | 416 | -20 |
+| prefill / decode / mixed batch | 10 / 426 / 0 | 9 / 406 / 1 | mixed 1회 |
+| batch 폭 평균 / 최대 | 2.181 / 64 | 2.240 / 64 | 평균 +2.7% |
+| UBATCH 평균 채움 | 3.408% | 3.501% | +0.093%p |
+| ready sequence / open batch 관측 최대 | 1 / 0 | 3 / 3 | 동시 진행 확인 |
+
+요청별 TTFT는 capacity 1에서 16.155, 87.572, 109.185, 221.790초였고 capacity 4
+실행에서 18.295, 26.356, 22.760, 22.231초였다. 첫 요청은 2.140초 느려졌지만 뒤의
+세 요청은 각각 61.216, 86.425, 199.559초 빨라졌다. 이는 capacity 1의 긴 head-of-line
+대기를 제거하고 여러 sequence를 실제로 진행했다는 증거다.
+
+처리량 증가는 capacity 4와 CUDA graph 비활성화를 함께 바꾼 arm 사이의 값이다.
+따라서 capacity 상향만의 인과 효과나 CUDA graph 비용을 이 실행으로 분리할 수 없다.
+또한 물리 batch 평균 폭은 거의 그대로이고 p50/p90은 모두 1행이어서 UBATCH 포화는
+일어나지 않았다. 이 결과가 승인하는 것은 네 동시 요청의 정상 완료, tail TTFT 감소와
+해당 결합 조건에서의 aggregate TPS 증가다. 긴 prompt 혼합, 지속 arrival, GPU utilization,
+서비스 지연 분포와 최적 capacity는 별도 게이트다.
 
 ## 실패 경계와 남은 검증
 
@@ -83,25 +137,26 @@ CUDA 적재 증거이며 전체 LAN 클러스터나 Metal/ROCm 적재 증거가 
 디렉터리에 CUDA runtime DLL이 없어 `0xc0000135`로 종료했고, `cublas64_13.dll`,
 `cublasLt64_13.dll`, `cudart64_13.dll`을 배포 manifest에 포함해 해결했다.
 
-최종 loader 상태는 `created=4`, `loaded=4`, `session_ready=4`, `passed=true`였다.
-단일 및 순차 웨이브 뒤 capacity 4 재적재를 위해 네 native stage를 종료했다. 재적재의
-비교 조건은 프롬프트, 도착 시각, max token, sampling, batch/ubatch, layer cut을 유지하고
-sequence capacity와 총 KV context만 1/4K에서 4/16K로 바꾼다.
+최종 capacity 4 loader 상태는 `created=4`, `loaded=4`, `session_ready=4`,
+`passed=true`였다. 웨이브 뒤 네 native stage는 모두 상주했다. M42의 두 GPU는 각각
+4,974 MiB를 사용했고 idle utilization 표본은 0%였다.
 
-첫 웨이브 시도에서 이전 load 연결의 outer channel/generation을 재사용해
+capacity 1 검증을 준비하던 첫 harness 시도에서 이전 load 연결의 outer
+channel/generation을 재사용해
 `event stream ended mid-frame`으로 즉시 실패했다. native stage 실행은 0회였고 성능
 표본에서 제외했다. 새 channel/generation을 사용한 위 실행이 승인 표본이다.
 
 로컬 원본은 `target/minimax-m3-load-20260913/` 아래 `full-load`, `single-inference`,
-`sequential-wave`와 `deployment-manifest.json`이다. `target/`은 checkout 간 영구 증거가
-아니므로 이 문서에는 판정에 필요한 identity, generation, topology와 경계를 함께 기록했다.
+`sequential-wave`, `batch-load`, `batch-wave`와 `deployment-manifest.json`이다.
+`target/`은 checkout 간 영구 증거가 아니므로 이 문서에는 판정에 필요한 identity,
+generation, topology와 경계를 함께 기록했다.
 
 ## 검증 명령
 
 - compat manifest: valid, 26 patches
 - patch classification: valid, upstream_fix 4 / stage_hook 18 / model_feature 4
 - 같은 Windows CUDA Release 빌드의 CTest: 16/16 passed
-- `npm run docs-lint`: 95 files clean
+- `npm run docs-lint`: 96 files clean
 - `node tools/scripts/docs-lint.mjs --all`: 로컬 `.cache/llama-pipeline-upstream`의
   무시된 upstream 문서 122개를 미등록 저장소 문서로 세어 실패. 추적 문서 게이트와
   구분하며 이 결과를 clean으로 보고하지 않는다.
