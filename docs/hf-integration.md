@@ -10,7 +10,7 @@ P4는 `hf-transformers` feature로 인접 HF의 `crates/p4-hf-adapter`를 정적
 | 현재 실행 순서 | [로드맵](distributed-batching-roadmap.md#current-status) |
 | 검증 계약 | [HF 검증](distributed-batching-verification.md#hf-integration-contract) |
 | wire·환경·배포·명령 | [HF 통합 명세](../../p4hfadapter/docs/integration/README.md) |
-| 실패 반례·실행 결과·미완료 | [HF 수용 보고](../../p4hfadapter/tests/reports/p4-integration/20260914_023000.md) |
+| 실패 반례·수용 결과·적용 범위 | [HF 수용 보고](../../p4hfadapter/tests/reports/p4-integration/20260914_023000.md) |
 
 ```powershell
 cargo build --locked -p p4-agent -p p4-event-drive --features hf-transformers
@@ -26,4 +26,8 @@ HF의 build 도구는 정확한 두 commit을 source archive로 내보내고 독
 
 CREATE 성공은 Python 환경/모델 준비 완료가 아니다. LOAD readiness와 실제 요청/회수/UNLOAD/DELETE로 검증한다.
 동일 agent 바이너리에서 Python bundle 교체와 기존 llama.cpp 정상 실행을 별도로 증명한다.
-현재 구현 중간 지점이며 전체 수용 판정은 위 보고의 최종 결과를 따른다. 로컬 작은 Qwen의 성공은 H0–H7 승격이 아니다.
+2026-09-14 HF-0~3 수용 완료. 실제 두 물리 host의 FP32 실행·취소·8건×3 epoch 재수용·회수,
+반환 TCP 단절 후 복구, 동일 agent의 Python A→B 교체를 검증했다. 기존 llama.cpp는 feature on/off
+모두 실제 GGUF 생성·해제·UNLOAD/DELETE를 통과했다. P4 전체 Rust는 각각1450/0/7 ignored,
+외부 HF9개는 별도이며 정확한 runtime commit/hash·명령·실패 증거는 위 보고에 있다.
+이기종 BF16 실패는 유지한다. 소형 Qwen conformance는 초대형 H0–H7/성능 승격이 아니다.

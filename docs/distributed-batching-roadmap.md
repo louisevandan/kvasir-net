@@ -10,34 +10,33 @@
 
 <a id="current-status"></a>
 
-2026-09-14 HF 구현 진행: [통합 안내](hf-integration.md)의 외부 Rust bridge/P4 factory와 실제 Qwen event 경로를 검증 중이다. 최종 수용·기존 llama.cpp 회귀·두 호스트/배포 증거가 끝나기 전에는 HF 완료로 표시하지 않는다.
+2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../../p4hfadapter/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 
-## 0. 현재 상태 — 외부 HF 어댑터 수용 우선, 기존 릴리즈 계획 보존
+## 0. 현재 상태 — 외부 HF 어댑터 수용 완료, 다음 Release A
 
-### 0.HF 수용을 첫 작업으로 편성 (2026-09-14)
+### 0.HF 수용 결과 (2026-09-14)
 
 사용자 지시로 **[p4hfadapter 수용](external-analysis-improvement-plan.md#hf-integration)을 모든 기존
-릴리즈 작업보다 앞에 둔다.** P4 `6bd01d7e1`, HF `df4f81b7`을 읽기 감사했다. Python Qwen 전용
-실행은 있으나 Rust bridge/실제 P4 통합은 아직 없다. 현재 변경은 계획이며 구현을 완료했다는 뜻이 아니다.
+릴리즈 작업보다 먼저 완료했다.** 실행 runtime은 P4 `0bd3734a9` + HF `6d8144d`이며 후속 시험 도구/문서와
+출하 commit은 수용 보고의 source manifest를 따른다. 공통 core/protocol/기존 llama runtime은 수정하지 않았다.
 
-1. 양쪽 HEAD·dirty·retained 경계와 HF worker의 차이를 고정하고 외부 Rust bridge를 HF 저장소에서 구현/검증한다.
-2. P4에는 외부 crate 의존성·source/lock·event 생성·INSPECT 광고 및 통합 회귀를 연결한다.
-3. 실제 P4 LOAD→요청/취소/해제→UNLOAD/DELETE·다중 host 전달·Python 교체·재현 배포를
-   [HF 수용 계약](distributed-batching-verification.md#hf-integration-contract)으로 검증한다.
-4. HF 수용을 마친 뒤 기존 Release A로 진행한다. HF의 내부 구현 묶음을 개별 제품 릴리즈로 세지 않는다.
+1. HF bridge9개, 실제 broker fixture12종, 독립 Rust 변이5종과 Python 변이7종을 검증했다.
+2. local Qwen event99 logits/198 stage-cache, 두 물리 host75/150, 반환 단절 후 복구4/8을 통과했다.
+3. 같은 LOAD에서8건×3 epoch와 이전 epoch 거부, 같은 agent의 Python A→B 및 llama.cpp 생성/회수를 확인했다.
+4. P4 전체 workspace on/off 각각1450 passed/0 failed/7 ignored다. ignored와 외부 HF 시험은 별도 집계한다.
+5. 다음 첫 행동은 Release A 착수 시 HEAD/dirty와 기존 대형 모델 실패 증거를 감사하는 것이다. 이번 §0 요청으로 A를 자동 실행하지 않는다.
 
 P4는 `hf-transformers` 하나만 알고 모델별 Python과 Rust 구상 어댑터는 외부 저장소가 소유한다.
-현재 INSPECT의 llama 고정 목록도 생성 지원과 함께 갱신해야 한다. 작은 Qwen 통합은 초대형 모델 성능 승격이
-아니며 기존 H0–H7 목표를 바꾸지 않는다. 기존 llama timer RED는 보존하고 HF의 계약을 막지 않으면 A에서
-다룬다. HF 연결 전에 A의 배치 개선 전체를 선행 구현하지 않는다. HF 접근/구현이 막히면 가능한 로컬 작업과
-정확한 의존 조건을 남기며 A로 자동 우회해 새 우선순위를 취소하지 않는다.
+INSPECT와 생성은 동일 factory 목록을 소비한다. 작은 Qwen 통합은 기존 H0–H7 목표를 바꾸지 않는다.
+기존 llama timer 시험은 이번 전체 실행에서 PASS였지만 timer 구현을 바꾸지 않았으므로 과거 RED의
+일반적 해결을 주장하지 않는다. 이기종 BF16 실패 및 Release A의 대형 모델/SLO 미완료는 보존한다.
 
 ### 0.기존 제품 개발 계획 (2026-09-13, HF 수용 이후 적용)
 
 [단일 개발 계획](external-analysis-improvement-plan.md)은 외부 덱·희소 분석·배치 G1–G6와
 DFlash/DSpark를 실제 코드 기준 `245d6b785c96ec770dc6041ded35457c2ef97260` 및 공식 자료로 대조했다.
 별도 개별 버전 파일이나 이전 대화는 요구하지 않는다. 계획 작성은 완료했으나 제품 개발/원격 실기는
-이번에 재개하지 않았다. 아래는 HF 수용 다음에 적용할 제품 편성이다. 새 세션의 첫 작업은 위 HF 수용이다.
+이번에 재개하지 않았다. 아래는 HF 수용 이후 적용할 제품 편성이다. 새 개발 요청 시 첫 대상은 Release A다.
 
 | 우선순위 | 제품과 종료 조건 | 다음 첫 행동 |
 | --- | --- | --- |
