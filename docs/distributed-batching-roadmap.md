@@ -12,7 +12,17 @@
 
 2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../../p4hfadapter/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 
-## 0. 현재 상태 — 외부 HF 어댑터 수용 완료, 다음 Release A
+## 0. 현재 상태 — 외부 HF 어댑터 수용 완료, Release A 진행
+
+### 0.A Release A 착수 (2026-09-14)
+
+사용자의 후속 개발 지시로 A0을 진행한다. [단계별 계획](../tests/plans/release-a-20260914.md)과
+[A-RED/trace 감사](../tests/reports/release-a/20260914_040306.md)를 따른다.
+timer의 무입력 만료와 실제 RELEASE interleave를 분리했고 독립 재컴파일 변이2종을 검출했다.
+전체 workspace는1451 passed/0 failed/7 ignored다. runtime timer/기본 정책은 변경하지 않았다.
+과거 Nemotron의 요청별7,864개 prefill 위치와 stage별 RPC/forward를 확인했으나 pure kernel·
+현재 pin 비용 하한은 미판정이다. 다음 작업은 A0 corpus/tokenization/manifest/실행기·비용 계측 연결이다.
+A0 전체와 A1–A5, 제품 SLO/H0–H7은 아직 미완료다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 

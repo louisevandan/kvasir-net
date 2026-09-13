@@ -9,6 +9,13 @@ Compose distributed inference experiments from model, placement, policy, workloa
 | Model templates | [Hy3](models/hy3-no-think.json), [Step3.7](models/step37-no-think.json) |
 | Experimental policies | [decode2/open8](policies/decode2-open8.json), [decode4/min4/CPU4](policies/decode4-min4-cpu4.json), [pipeline/open8](policies/pipeline-open8.json) |
 | Long Korean workloads | [8 requests](workloads/long8.json), [16 requests](workloads/long16.json) |
+| Release A staged verification | [Plan](../../../tests/plans/release-a-20260914.md), [A-RED/trace report](../../../tests/reports/release-a/20260914_040306.md) |
+
+Release A tools live in `release-a/`: `timer-mutations.py` rebuilds isolated worker mutations,
+`analyze-trace.mjs` preserves partial evidence and separates local RPC/return times,
+and `corpus.mjs` generates controlled source facts and an exact JSON oracle.
+Run `node --test test/benchmarks/cluster-inference/release-a/*.test.mjs`.
+These tools do not yet constitute the A service lifecycle runner or approve a deployment.
 
 Long-lived source and release work use `main`. Model names select data, not Git branches.
 Temporary comparison source commits stay reachable through integration history and evidence bundles.

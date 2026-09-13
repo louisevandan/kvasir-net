@@ -161,3 +161,5 @@
 - 현재 상태 갱신은 로드맵에만, 실측 상세는 evidence에만 남긴다. 복제한 상태표를 여러 README에 늘리지 않는다.
 
 외부 HF 소비 빌드·실행 및 양쪽 어댑터 수용: [HF 통합 안내](hf-integration.md).
+
+Release A: [단계별 시험 계획](../tests/plans/release-a-20260914.md) · [A-RED/trace 감사](../tests/reports/release-a/20260914_040306.md).

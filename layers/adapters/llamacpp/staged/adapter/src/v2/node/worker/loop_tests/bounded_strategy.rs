@@ -255,73 +255,16 @@ fn phase_pacing_actual_loop_issues_the_last_full_prefill_without_four_requests()
     h.finish(&commands);
 }
 
+mod phase_pacing;
+
 #[test]
 fn phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input() {
-    let refusal = Arc::new(Mutex::new((None::<(u64, String)>, false)));
-    let captured = Arc::clone(&refusal);
-    let observer: IssueObserver = Arc::new(move |point, state| {
-        if !matches!(point, "decode_coalescing_wait" | "before_native_issue") {
-            return;
-        }
-        let requests: Vec<_> = state.requests.iter().map(|(key, r)|
-            (key, r.prompt_cursor, r.prompt_issued, r.generated, r.outstanding,
-                r.incarnation, r.sequence_id, r.ready.as_ref().map(|v|
-                    (v.phase, v.position, v.tokens.clone())))).collect();
-        let authority = format!("{:?}", (state.next_event, state.next_incarnation,
-            requests, &state.flights, &state.open_batches, &state.free_sequences,
-            state.request_budget.used()));
-        let mut captured = captured.lock().unwrap();
-        if captured.1 { return; }
-        if point == "decode_coalescing_wait" {
-            assert!(state.prepared_issue.is_none(), "waiting must precede native preparation");
-            if let Some((ordinal, before)) = &captured.0 {
-                assert_eq!(*ordinal, state.next_open_batch);
-                assert_eq!(before, &authority);
-            } else { captured.0 = Some((state.next_open_batch, authority)); }
-        } else if let Some((ordinal, before)) = &captured.0 {
-            assert_eq!(*ordinal, state.next_open_batch);
-            assert_eq!(before, &authority, "timer wait must preserve request/flight/slot/input authority");
-            captured.1 = true;
-        }
-    });
-    // Add one output to the first request so a completed peer leaves one
-    // eligible decode while the other three cohorts remain in flight.
-    let commands: Vec<_> = (0..8).map(|i| request(&format!("timer-{i}"), 2,
-        if i == 0 { 7 } else { 6 })).collect();
-    let submissions: Vec<_> = commands.iter().enumerate()
-        .map(|(i,c)| submission_event(c, i as u64 + 1, default_route())).collect();
-    let mut h = Harness::observed_with_pacing(8, 4, 1, &submissions, 0, None, Some(observer), None,
-        OrdinaryLimits::default(), Some(crate::v2::scheduler::pipeline::PipelinePolicy {
-            mixed_batch_rows: None, mixed_prefill_rows: 1,
-        }), 4);
-    h.hold_tail = true;
-    h.until("all initial prompt physical results", |h| h.held_tail.iter().map(|e|
-        CapsuleSet::decode(&e.payload).unwrap().0.iter().map(|c| c.owners.len()).sum::<usize>()).sum::<usize>() == 16);
-    h.pending.extend(h.held_tail.drain(..));
-    h.until("four full generation cohorts", |h| h.held_tail.len() == 4);
-    for _ in 0..6 {
-        if refusal.lock().unwrap().1 { break; }
-        let index = h.held_tail.iter().position(|e| CapsuleSet::decode(&e.payload).unwrap().0.iter()
-            .flat_map(|c| &c.owners).any(|r| r.request_id == "timer-0")).unwrap();
-        let first = h.held_tail.remove(index).unwrap();
-        h.pending.push_back(first);
-        h.until("returned cohort progresses without another input", |h| h.held_tail.len() == 4);
-    }
-    assert!(refusal.lock().unwrap().1, "must observe refusal followed by unchanged authority");
-    let calls;
-    {
-        let native = h.nodes[0].native.lock().unwrap();
-        calls = native.logical_calls;
-        let last = CapsuleSet::decode(native.issued_native.last().unwrap().result.as_ref().unwrap()).unwrap();
-        let rows: Vec<_> = last.0.iter().flat_map(|c| &c.owners).collect();
-        assert!(!rows.is_empty() && rows.len() < 4, "underfilled generation must actually wait for its deadline");
-        assert!(rows.iter().all(|r| r.phase == Phase::Decode && r.position >= 2));
-    }
-    h.pump_for(Duration::from_millis(25));
-    assert_eq!(h.nodes[0].native.lock().unwrap().logical_calls, calls,
-        "deadline must not reissue an outstanding decode or bypass the full window");
-    h.resume_tail();
-    h.finish(&commands);
+    phase_pacing::assert_timer_authority(false);
+}
+
+#[test]
+fn phase_pacing_actual_loop_preserves_authority_across_a_real_release_during_wait() {
+    phase_pacing::assert_timer_authority(true);
 }
 
 #[test]
