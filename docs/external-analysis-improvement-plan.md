@@ -2,9 +2,127 @@
 
 2026-09-13 조사. [외부 구조 분석 덱](https://docs.google.com/presentation/d/1Ycq1kuAR1BX1zO6kJHvF18WaRLsB318hSVwPx93ZpPc/edit)의 15장, 특히 10–15장의 시사점을 최신 공식 모델·엔진 자료 및 실제 P4 코드/실기 기록과 대조했다. **이전 R1–R8을 예정 릴리즈 목록으로 삼는 안은 철회한다.** 제품으로 완결될 수 있다는 사실만으로 개발 투자 가치가 생기지는 않는다.
 
-이 문서는 투자 판단·제품 범위·구현 범위·인수인계를 소유하는 **단일 개발 계획**이다. 별도 개별 버전 계획 파일이나 이전 대화를 요구하지 않는다. 출시 우선순위는 [로드맵](distributed-batching-roadmap.md#current-status), 시험·성능 판정은 [검증 규약](distributed-batching-verification.md#release-a-contract), 수정 소유 층은 [격리 계약](layer-isolation-contract.md)을 따른다. 현재는 계획 확정이며 제품 개발·원격 재시험·배포는 실행하지 않았다.
+이 문서는 투자 판단·제품 범위·구현 범위·인수인계를 소유하는 **단일 개발 계획**이다. 별도 개별 버전 계획 파일이나 이전 대화를 요구하지 않는다. 출시 우선순위는 [로드맵](distributed-batching-roadmap.md#current-status), 시험·성능 판정은 [검증 규약](distributed-batching-verification.md), 수정 소유 층은 [격리 계약](layer-isolation-contract.md)을 따른다. 현재는 계획 확정이며 제품 개발·원격 재시험·배포는 실행하지 않았다.
 
-첫 개발 대상은 [Release A](#release-a): 기존 Nemotron 550B 서비스를 장문 처리부터 취소·회수·다음 웨이브까지 완결한다. [배치 G1–G6의 채택 범위](#batch-decisions), [DFlash/DSpark를 포함한 가속 판단](#speculation-decision), [새 세션 시작 절차](#fresh-session)를 함께 읽는다. A/S/B/C는 제품 계약 식별자이며 과거 R1–R8 단계 번호나 실제 Git tag가 아니다.
+**2026-09-14 우선순위 변경: 첫 개발 대상은 [외부 HF 어댑터 수용](#hf-integration)이다.** 그 통합 뒤 [Release A](#release-a)의 기존 Nemotron 550B 장문·취소·회수·다음 웨이브 작업을 진행한다. [배치 G1–G6의 채택 범위](#batch-decisions), [DFlash/DSpark를 포함한 가속 판단](#speculation-decision), [새 세션 시작 절차](#fresh-session)를 함께 읽는다. A/S/B/C는 제품 계약 식별자이며 과거 R1–R8 단계 번호나 실제 Git tag가 아니다.
+
+<a id="hf-integration"></a>
+
+## 0. 최우선 작업 — p4hfadapter를 실제 P4 event 경로에 수용
+
+2026-09-14 사용자 지시로 기존 A/S/B/C보다 먼저 편성한다. **모델별 Python 개발과 Rust 구상 어댑터를
+`F:/dev/p4hfadapter`가 소유하고, P4는 외부 crate를 정적으로 연결해 생성·발견·수명 계약을 소비한다.**
+이 작업의 납품물은 외부 HF 실행 구성을 사용할 수 있는 P4 통합 배포물이다. 등록만 하고 실행은 A 이후로
+미루는 작업이 아니다. 실제 LOAD→요청→취소/해제→UNLOAD→DELETE·재생성을 함께 검증한다.
+Qwen3.5-0.8B는 이 연결의 conformance 모델이며 초대형 모델 성능/최종 H0–H7 승격을 대체하지 않는다.
+
+### 0.1 현재 양쪽 코드와 투자 이유
+
+- P4 감사 HEAD: `6bd01d7e12f2711cb27e93b3b45533703e3caf9b`, 시작 dirty 없음. 공통 경계는
+  [RetainedNodeAdapter](../layers/adapters/adapter/src/node_adapter/mod.rs), 실제 조립은
+  [p4-agent Cargo](../entrypoints/agent/Cargo.toml)와 [event create/remove](../entrypoints/agent/src/event_runtime/control.rs)다.
+  구 service `adapters::registry()`를 연결 대상으로 삼지 않는다.
+- HF 감사 HEAD: `df4f81b7c774e60cba78d71ad868c515e619cb15`, 시작 dirty 없음.
+  [HF 인수인계](../../p4hfadapter/HANDOFF.md), [Qwen 실행 보고](../../p4hfadapter/tests/reports/qwen3_5_0_8b/20260913_220709.md)를
+  현재 Python 코드와 대조했다. **Rust bridge crate는 아직 없다.** Python framing과 Qwen 전용 loader/forward/state/worker,
+  로컬 controller가 있다. 보고된 8개 조합·47스텝 비교는 같은 물리 컴퓨터의 기록이며 이번에 모델을 재실행한 결과가 아니다.
+- Qwen3.5-0.8B revision `2fc06364715b967f1860aea9cf38778875588b17`, dense FP32 분할을 최초 연결 대상으로 삼는다.
+  RTX 4080+3090 BF16 분할의 logits 기준 초과는 미해결로 보존한다. 양자화·물리 batching·여러 물리 host·
+  cache 전 원소 비교·P4 retained 수용은 아직 증명되지 않았다.
+- 목적은 최신 모델의 제조사 Python 구현을 독립적으로 수정·검증·배포할 경로를 확보하는 것이다.
+  llama.cpp에 없는 memory 클래스나 draft 기능을 공통 코어로 끌어오는 대안이 아니다. 같은 P4 바이너리로
+  호환되는 Python 배포물을 교체할 수 있는지를 시험해 모델 개발 주기의 독립성을 증명한다.
+
+### 0.2 소유권과 P4 변경 한도
+
+| 위치 | 책임·필수 산출물 | 포함하지 않는 책임 |
+| --- | --- | --- |
+| P4 entrypoint/루트 빌드 | 외부 Rust crate 의존성·source 매핑·lock, `hf-transformers` 생성과 실제 지원 kind 광고, 통합/기존 경로 회귀 시험 | 모델명/Qwen class 등록, Python 설치·모델 weight 다운로드, 모델별 tensor 해석 |
+| HF `crates/p4-hf-adapter/` (예정) | construction/retained/process/ipc/lifecycle 역할 폴더. trait 구현, bounded input/completion, Python 감독·IPC, identity·예약·전달/출력 소유권, 오류/종료 증거 | 모델 layer/KV를 이해하는 Rust 스케줄러를 다시 구현 |
+| HF 모델별 Python | loader·부분 forward·KV/recurrent·모델 배치/선택 정책·샘플링·양자화·tensor codec. 모델별 디렉터리 안에서도 역할 분리 | 모든 모델이 상속해야 하는 공통 모델 인터페이스, P4 broker를 우회하는 노드 간 전달 |
+| HF 실행 명세/도구 | worker 환경 lock·entry/argv/env·모델/분할/장치·IPC/capability identity·배포·통합 scenario/fixture/report | P4 공통 envelope에 Qwen 필드 추가, llama 전용 PLAN/LOAD wire 재사용을 강제 |
+
+**“의존성과 생성 분기만”은 제품 로직의 경계이지 수정 파일 두 개라는 뜻이 아니다.**
+현재 [INSPECT](../entrypoints/agent/src/event_runtime/control/inspection/mod.rs)의 ADAPTERS도 `llamacpp` 상수다.
+컴파일 가능한 종류와 실제 CREATE의 종류가 일치하게 entrypoint의 작은 정적 생성/지원 목록을 결속한다.
+Python 환경/모델이 준비됐다는 광고는 별도 LOAD readiness 검증이다. 범용 dynamic plugin loader를 만들지 않는다.
+공통 P4 core/trait/모델 wire 변경이 필요하다고 판단되면 실제 반례와 함께 [격리 계약](layer-isolation-contract.md#external-hf-boundary)으로
+심사하고 별도 범위로 기록한다. HF를 llama staged 프로토콜에 맞추기 위해 그 경로를 재설계하지 않는다.
+
+모델 스케줄러는 Python에 한 벌만 둔다. head/controller가 선택한 membership·position·issue를 Rust가
+전달 전 예약/권한 계약으로 검증하고 immutable하게 결속한다. Rust의 전달 가능 여부 판단과 Python의
+모델 배치 선택은 다른 책임이다. Python에 줄 수 없는 예산은 발행을 승인하지 않으며, Python의 token
+계산 완료만으로 P4 출력이 승인되지 않는다. 이 기준은 HF 문서의 이전 Rust 배치 발행 설명보다 최신 사용자 지시를 우선한 결정이다.
+
+### 0.3 먼저 연결해야 할 실제 부족분
+
+1. **로컬 시험 controller를 P4 경로로 전환:** 현재 HF `routing.Pipeline`은 `host=local`만 허용하고
+   `Peer.exchange`를 순서대로 호출한다. 이 코드는 reference로 보존한다. 통합 경로에서는 Python stage 결과가
+   Rust retained completion→P4 broker/다음 node→다음 Python worker를 거친다. tail 결과/다음 step의 위치와
+   head 또는 모델 controller의 스케줄링 소유자를 HF 실행 명세에서 고정한다. 별도 controller가 모든 worker의
+   stdin/stdout을 직접 잡고 P4는 껍데기 노드만 만드는 구성은 불합격이다.
+2. **실행 명세와 handshake:** CREATE는 Rust와 bounded mailbox만 만들고 LOAD가 지정 Python을 실행한다.
+   현재 worker의 `ready/run_id`만으로 bridge/worker 호환성이 증명되지는 않는다. IPC 버전, worker 배포물 hash,
+   model/tokenizer/plan·stage·load generation·dtype/boundary·지원 operation·byte bound를 서로 확인한다.
+   stdout은 framing 전용, stderr는 별도 bounded 수집. LOAD 실패/중복 LOAD/부분 초기화의 자식·예약을 회수한다.
+3. **retained 소유권:** Full/Closed에서 원래 allocation/claim을 돌려주고 peek는 소비하지 않는다. matching take는
+   전체 front identity를 확인하며 wake 등록/해제와 capacity 재개를 구현한다. queued·held·in-flight·pending output을
+   끝까지 계수한다. `completion_storage_snapshot=None`을 빈 것으로 바꾸지 않는다. 입력 byte, IPC 복사·scratch,
+   출력·receipt 예약을 별도 계산한다. 32MiB frame 한도는 전체 heap 한도가 아니다.
+4. **정산·취소·종료:** 현재 Python `release`와 step 경계 취소를 P4 요청 incarnation/issue/cutoff에 결속한다.
+   partial write/worker death/timeout은 실행 불명으로 보존하고 같은 issue를 자동 재실행하지 않는다. token/native 효과의
+   정산과 실제 외부 전달을 구분한다. worker 종료/상태 회수와 held output 0을 확인한 뒤만 unloaded를 표시한다.
+   현재 P4 DELETE는 `snapshot()`의 empty/unloaded/closed와 권위 있는 retained count 0, 건강한 node task를 검사한다.
+   Python이 종료됐다는 이유로 이 검사를 우회하지 않는다. worker 사망을 곧바로 전체 adapter completion stream 종료로 바꿔 node task를 끝내면 현재 DELETE가 거부하므로, 복구 가능한 오류는 제어/결과를 정산할 façade 수명과 분리한다. 진행 가능한 제어 경로와 자기 소유 child만 정리하는 절차를 둔다.
+5. **동일 적재의 재수용:** 현재 `StageSessions`는 `len(active)+len(retired)`를 `max_requests`와 비교하므로
+   해제한 ID도 한도를 차지한다. 기본 8건 처리 뒤 다음 8건을 같은 worker에 넣는 것은 현재 지원이 아니다.
+   통합에서는 활성 요청 한도와 중복 방지 기록의 수명을 분리한다. 예를 들어 전 stage 정산/상태 해소를 확인한
+   명시 session epoch 전환으로 bounded retired 기록을 회수하고 옛 epoch를 거부할 수 있다. 단순 `retired.clear()`나
+   상한 증대로 우회하지 않는다. 기존 v1 독립 스크립트의 누적 한도 계약/반례는 보존하고 새 장기 실행 의미를
+   버전화한다. slot/epoch 재사용 후 늦은 step/result/release가 새 요청을 바꾸지 않는지 반드시 검증한다.
+6. **독립 배포:** Rust bridge/P4 ABI가 바뀌면 P4 재빌드, 호환되는 Python 구현 교체는 새 worker bundle identity로
+   기존 P4 바이너리에서 LOAD한다. 실행 중인 worker를 덮어쓰지 않고 UNLOAD 후 전환한다. 비호환 bundle은 LOAD 전에
+   거부한다. HF worker/환경 준비 명령과 실패 진단은 HF 저장소가 소유하고 P4 문서는 그 정확한 revision을 가리킨다.
+
+### 0.4 Cargo 결합과 재현 가능한 배포
+
+개발은 인접 checkout의 `crates/p4-hf-adapter` path 연결로 시작할 수 있다. crate가 존재하기 전 빈 crate나
+무조건 성공하는 stub을 P4에 등록하지 않는다. 독립 HF crate는 P4의 `p4-adapter`/`p4-protocol`만 필요한
+공개 경계로 의존하고 P4 agent/llama private 구현을 의존하지 않는다. P4와 HF를 서로 workspace member로
+흡수하거나 P4 소스를 복사해 별도 trait를 만드는 방식은 제외한다.
+
+한 빌드의 `p4-adapter`/`p4-protocol` **package ID/source/version이 각각 하나**인지 Cargo metadata와
+실제 생성자의 `Arc<dyn RetainedNodeAdapter>` 변환으로 검증한다. Git source를 path로 통일할 경우 소비자인
+P4 루트의 `[patch]`가 적용돼야 하며 HF 하위 crate의 patch만으로 해결됐다고 보지 않는다.
+[Cargo 공식 override 규칙](https://doc.rust-lang.org/cargo/reference/overriding-dependencies.html)을 따른다.
+두 저장소를 참조하는 package와 양쪽 lockfile의 역할도 구분한다. 최종 P4 빌드는 P4 root lock과 양쪽 source seal이 기준이다.
+
+선택 feature를 쓴다면 기본 off로 연결하고 enabled/disabled 생성·INSPECT·회귀를 모두 시험한다.
+**optional path 의존성이면 HF checkout 없이도 기존 P4가 빌드된다는 가정은 금지한다.** Cargo lock 해석에는
+optional dependency도 관여한다. [공식 resolver 설명](https://doc.rust-lang.org/cargo/reference/resolver.html#features).
+개발 path를 출하 계약으로 남길 경우 두 repo의 정확한 commit을 복원하는 build bundle/스크립트를 반드시 납품한다.
+배포용 Git revision/crate version을 택하려면 실제 접근 가능한 source와 재현 빌드를 먼저 검증한다. 아직 없는 remote URL이나
+배포 버전을 추측하지 않고 remote 생성/push도 이 계획으로 자동 수행하지 않는다. worker bundle은 Rust crate source와 별도로 배포한다.
+
+### 0.5 통합 완료 조건과 작업 인계
+
+| 구현 묶음 (별도 릴리즈 아님) | 소유 저장소와 종료 증거 |
+| --- | --- |
+| HF-0 경계/명세 고정 | 양쪽 HEAD·dirty·trait·kind·제출/결과/오류/종료 wire와 예산·source mapping·테스트 fixture를 고정. HF 현재 worker와의 차이표 작성 |
+| HF-1 독립 Rust bridge | HF 저장소에서 실제 retained mailbox와 fixture worker로 거부/포화/부분 I/O/사망/취소/미회수 출력/종료를 시험. 모델 없는 계약 검사와 실제 Qwen 비교를 구분 |
+| HF-2 P4 event 연결 | P4 entrypoint의 의존성·생성·INSPECT·회귀/중립성 검증. 외부 crate의 구상 타입을 실제 생성하고 event 요청으로 worker를 실행 |
+| HF-3 실행·배포 수용 | 같은 모델/정밀도/시나리오의 독립 기준과 P4 소비 결과 비교. 두 물리 host의 실제 stage 전달, 취소/해제/다음 요청/UNLOAD/DELETE, Python 교체와 재현 빌드까지 검증 |
+
+필수 시험과 구체적 반례는 [HF 통합 검증 계약](distributed-batching-verification.md#hf-integration-contract)이 소유한다.
+각 묶음의 통과는 중간 개발 증거다. **HF-3까지 동작하고 배포/운영/재현 명령이 있어야 HF 수용 완료**다.
+작은 Qwen의 연결 성공을 초대형 모델 성능 승격으로 표현하지 않으며 H0–H7은 기존 제품별 목표에서 별도로 요구한다.
+기존 llama timer RED를 숨기지 않는다. HF/core 변경에 필요한 회귀이면 먼저 해결하고, 무관하면 A의 미해결로
+보존하며 전체 workspace GREEN을 주장하지 않는다. A의 배치 개선 전체를 HF 통합의 선행 구현으로 되돌리지 않는다.
+
+새 세션은 먼저 HF의 HANDOFF/AGENTS/모델 문서를 읽고 Rust crate 생성 여부부터 확인한다. HF 저장소의
+“P4 읽기 전용”은 그 작업의 기존 범위이며, 이 계획은 P4의 후속 수용 작업을 편성한 것이다. 이 문서 변경으로
+다른 세션에 개발 메시지를 보내거나 HF 소스/문서·원격 환경을 변경하지 않았다. 실제 개발 시 외부 crate/worker
+수정은 HF checkout에서, 생성 연결은 P4 checkout에서 각각 검증·커밋한다. 두 저장소 dirty를 함께 stage하지 않는다.
 
 ## 1. 지향점과 투자 원칙
 
@@ -242,7 +360,7 @@ C6의 별도 저장소 위험도 보존한다. [native KV](../layers/adapters/ll
 
 <a id="release-a"></a>
 
-## 6. 첫 릴리즈 A — 장문 작업을 지속 처리하는 분산 서비스
+## 6. HF 수용 이후 릴리즈 A — 장문 작업을 지속 처리하는 분산 서비스
 
 ### 6.1 사용자 약속과 출하 범위
 
@@ -319,10 +437,16 @@ B/C의 세부 spec도 구현 전에 target artifact·SLO·자원 상한을 봉�
 
 ## 7. 컨텍스트 없는 새 세션의 시작과 인수인계
 
-첫 요청은 “이 저장소의 개발 계획 Release A를 구현하라”로 충분해야 한다. 새 세션은 AGENTS → 로드맵 전체 → 검증 규약 전체 → 격리 계약 → 문서 안내도 → 이 문서와 배치 코드 검토 순서로 읽는다. 문서가 가리키는 과거 실행 중 상태를 현재 프로세스 상태로 취급하지 않는다.
+현재 첫 요청은 “개발 계획 §0의 p4hfadapter 수용 작업을 구현하라”다. HF 수용 완료 후에는 “Release A를 구현하라”로 이어간다. 새 세션은 AGENTS → 로드맵 전체 → 검증 규약 전체 → 격리 계약 → 문서 안내도 → 이 문서와 배치 코드 검토 순서로 읽는다. 문서가 가리키는 과거 실행 중 상태를 현재 프로세스 상태로 취급하지 않는다.
 
-### 7.1 처음 실행할 로컬 명령
+### 7.1 먼저 양쪽 기준 확인, HF 완료 후 A 재개
 
+HF 착수 시 P4와 HF 양쪽에서 `git rev-parse HEAD`/`git status --short`를 확인하고,
+`Test-Path F:/dev/p4hfadapter/crates/p4-hf-adapter/Cargo.toml`로 아직 없는 crate를 있다고 전제하지 않는다.
+현재 HF 독립 빠른 시험은 그 저장소의 `python -B tools/testing/run.py`다. 실제 모델/변이 명령은 HF 모델 문서를 따른다.
+HF 빌드/통합 명령은 crate/feature가 구현된 뒤 확정하며 예정 옵션을 실행하지 않는다.
+
+다음 명령은 **HF 완료 뒤 A를 재개할 때의 기존 회귀 명령**이며 HF 구현에 앞서 A 전체를 실행하는 지시가 아니다.
 아래는 현재 존재하는 명령이다. 저장소 루트의 PowerShell에서 실행한다. 정상 실기/원격 배포 명령이 아니다.
 
 ```powershell
@@ -345,13 +469,15 @@ node --test test/benchmarks/cluster-inference/*.test.mjs
 ### 7.2 개발 중단과 완료의 정확한 기록
 
 - 실행 소스에 차이가 있으면 관련 소비 경로·시험을 먼저 갱신하고 문서 기준 차이를 남긴다. 봉인 arm/사용자 변경을 덮어쓰지 않는다. 변이는 독립 checkout과 실제 재컴파일/hash로 결속한다.
-- timer RED 해소→A1–A4 실제 경로 반례/변이→관련 native/backend conformance→A5 실기 순으로 진행한다. A1–A4 내부 순서는 의존 관계에 따라 조정할 수 있고 별도 출시하지 않는다. 최종 `cargo test --workspace --no-fail-fast` 종료와 모든 summary를 집계한다.
+- HF 수용 후 A 재개 시 timer RED 해소→A1–A4 실제 경로 반례/변이→관련 native/backend conformance→A5 실기 순으로 진행한다. A1–A4 내부 순서는 의존 관계에 따라 조정할 수 있고 별도 출시하지 않는다. 최종 `cargo test --workspace --no-fail-fast` 종료와 모든 summary를 집계한다.
 - native는 현재 pin/27 patch manifest를 검사하고 해당 backend를 빌드한다. Windows 실행에는 검증한 동반 DLL을 함께 배포하고 hash/timestamp를 확인한다. 오래된 서버 binary를 새 Rust 결과와 섞지 않는다.
 - 수치 예산은 검증 규약의 A 계약과 native PLAN/INSPECT 결과에서 구체화해 run 이전 봉인한다. 한계가 안 맞으면 INVALID/BLOCKED/FAIL로 기록한다. 미측정 성능을 승인으로 채우지 않는다.
 - 실행 보고에는 code hash·명령·시험 ID·passed/failed/ignored/미실행·native/다중 host 구분·첫 오류/cleanup 오류·남은 작업·다음 첫 행동을 기록한다. 로컬 안전성 완료와 제품 출시는 분리한다.
 - 원격 자원 사용은 개발 요청의 승인 범위에서 수행한다. 무관한 프로세스 종료·기존 봉인 arm 수정·push는 확대 권한이 아니다. 자원이 없으면 할 수 있는 로컬 작업을 마치고 필요한 host/artifact와 H gate를 구체적으로 남긴다.
 
 ## 8. 근거 보존과 현재 검증 상태
+
+2026-09-14 HF 편성 감사는 양쪽 저장소를 읽고 P4 계획 문서만 수정했다. 아래 09-13 시험은 그때의 기록이며 HF 통합 결과가 아니다.
 
 - 외부 덱 15장 전체 텍스트와 렌더링을 검토했다. 원문/이미지는 `target/external-slide-review-20260913/`에 보존했다. 첨부 희소 분석을 실제 pin/최신 upstream 상태와 나누어 검증했으며 확정 못 한 원인 주장은 §3에서 제외했다.
 - 최신 upstream 검토 snapshot은 `002a12ad25503a93501b2e188c360029830a241a`, P4 pin은 `451b89bae0c4b1dd612eb503ceace906c01ddcc9`다. 최신 소스 5개는 `target/external-slide-review-20260913/upstream-002a12ad/`에 있다. DFlash/DSpark 사실은 P4 pin의 `common/speculative.cpp`·`src/models/dflash.cpp`와 공식 model 자료로 대조했다. 원격 master의 설명을 P4 실행 결과로 쓰지 않았다.
@@ -362,3 +488,5 @@ node --test test/benchmarks/cluster-inference/*.test.mjs
 
 문서 마감 재확인: OUTER 이동 후 `npm run test:model-loading` 34/34 통과, timer 단독 시험 0/1로 RED 재현.
 제품 소스/기존 시험은 수정하지 않았다. 문서 링크/anchor와 docs-lint 회귀 12/12를 확인했다.
+
+2026-09-14 변경 검증: P4 문서 100개 docs-lint clean, docs-lint 회귀 12/12, 수정 문서의 파일/anchor 링크와 `git diff --check` 통과. HF HEAD/dirty는 읽기 전후 동일하며 Rust/Python/Cargo 구현이나 모델 실기는 변경·실행하지 않았다.

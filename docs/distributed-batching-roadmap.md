@@ -10,18 +10,36 @@
 
 <a id="current-status"></a>
 
-## 0. 현재 상태 — V1.1/M3 마감 보존, Release A 개발 계획 확정
+## 0. 현재 상태 — 외부 HF 어댑터 수용 우선, 기존 릴리즈 계획 보존
 
-### 0.제품 개발 계획 확정: 다음 개발은 Release A (2026-09-13)
+### 0.HF 수용을 첫 작업으로 편성 (2026-09-14)
+
+사용자 지시로 **[p4hfadapter 수용](external-analysis-improvement-plan.md#hf-integration)을 모든 기존
+릴리즈 작업보다 앞에 둔다.** P4 `6bd01d7e1`, HF `df4f81b7`을 읽기 감사했다. Python Qwen 전용
+실행은 있으나 Rust bridge/실제 P4 통합은 아직 없다. 현재 변경은 계획이며 구현을 완료했다는 뜻이 아니다.
+
+1. 양쪽 HEAD·dirty·retained 경계와 HF worker의 차이를 고정하고 외부 Rust bridge를 HF 저장소에서 구현/검증한다.
+2. P4에는 외부 crate 의존성·source/lock·event 생성·INSPECT 광고 및 통합 회귀를 연결한다.
+3. 실제 P4 LOAD→요청/취소/해제→UNLOAD/DELETE·다중 host 전달·Python 교체·재현 배포를
+   [HF 수용 계약](distributed-batching-verification.md#hf-integration-contract)으로 검증한다.
+4. HF 수용을 마친 뒤 기존 Release A로 진행한다. HF의 내부 구현 묶음을 개별 제품 릴리즈로 세지 않는다.
+
+P4는 `hf-transformers` 하나만 알고 모델별 Python과 Rust 구상 어댑터는 외부 저장소가 소유한다.
+현재 INSPECT의 llama 고정 목록도 생성 지원과 함께 갱신해야 한다. 작은 Qwen 통합은 초대형 모델 성능 승격이
+아니며 기존 H0–H7 목표를 바꾸지 않는다. 기존 llama timer RED는 보존하고 HF의 계약을 막지 않으면 A에서
+다룬다. HF 연결 전에 A의 배치 개선 전체를 선행 구현하지 않는다. HF 접근/구현이 막히면 가능한 로컬 작업과
+정확한 의존 조건을 남기며 A로 자동 우회해 새 우선순위를 취소하지 않는다.
+
+### 0.기존 제품 개발 계획 (2026-09-13, HF 수용 이후 적용)
 
 [단일 개발 계획](external-analysis-improvement-plan.md)은 외부 덱·희소 분석·배치 G1–G6와
 DFlash/DSpark를 실제 코드 기준 `245d6b785c96ec770dc6041ded35457c2ef97260` 및 공식 자료로 대조했다.
 별도 개별 버전 파일이나 이전 대화는 요구하지 않는다. 계획 작성은 완료했으나 제품 개발/원격 실기는
-이번에 재개하지 않았다. 사용자가 새 세션에서 개발을 요청하면 다음 순서로 진행한다.
+이번에 재개하지 않았다. 아래는 HF 수용 다음에 적용할 제품 편성이다. 새 세션의 첫 작업은 위 HF 수용이다.
 
 | 우선순위 | 제품과 종료 조건 | 다음 첫 행동 |
 | --- | --- | --- |
-| 1 | **Release A: 기존 대형 모델의 지속 사용.** Nemotron 550B의 장문 정상 서비스·배치 진행·취소·회수·재수용·유한 배포 profile을 함께 출하 | [새 세션 절차](external-analysis-improvement-plan.md#fresh-session)로 HEAD/dirty를 감사하고 timer RED를 재현. [A 수용 계약](distributed-batching-verification.md#release-a-contract)의 corpus/manifest/실제 runner를 작성하며 비용·종결 경로를 분리 |
+| HF 수용 후 | **Release A: 기존 대형 모델의 지속 사용.** Nemotron 550B의 장문 정상 서비스·배치 진행·취소·회수·재수용·유한 배포 profile을 함께 출하 | [새 세션 절차](external-analysis-improvement-plan.md#fresh-session)로 HEAD/dirty를 감사하고 timer RED를 재현. [A 수용 계약](distributed-batching-verification.md#release-a-contract)의 corpus/manifest/실제 runner를 작성하며 비용·종결 경로를 분리 |
 | 조건부 | S: 선정 희소 모델 한 종의 유용한 장문 서비스 | artifact·보조 상태·합법 cut·실제 backend sparse 계산과 기존 모델 대비 과제 효용 확인. flag만 여는 릴리즈 제외 |
 | 조건부 | B: 반복 문서/코드 문맥의 재사용 대화 | 실제 유효 prefix·checkpoint bytes·cold/hit/no-hit 순절감으로 채택. 요청 소비와 eviction/오염 방지/회수를 함께 완성 |
 | 조건부 | C: target에 맞는 speculative 응답 서비스 | non-spec/MTP와 가능한 DFlash/DSpark·저비용 draft를 비교해 한 방식을 선정. hidden-state 전달·state replay·queue/fence·draft 메모리 포함. MTP만으로 조사 종료 금지 |

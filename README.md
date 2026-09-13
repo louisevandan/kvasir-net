@@ -92,7 +92,7 @@ comparison path. Its queue statistics are not proof of the default event path.
 | Goal | File |
 | --- | --- |
 | 현재 목표·감사 상태·개발 순서의 단독 소유 | [docs/distributed-batching-roadmap.md](docs/distributed-batching-roadmap.md) |
-| 제품 개발 계획·첫 릴리즈 인수인계·배치·희소 모델·DFlash/DSpark 투자 판단 | [docs/external-analysis-improvement-plan.md](docs/external-analysis-improvement-plan.md) |
+| 개발 계획·외부 HF 어댑터 수용 우선·릴리즈 인수인계·배치/모델/가속 투자 판단 | [docs/external-analysis-improvement-plan.md](docs/external-analysis-improvement-plan.md) |
 | MI250·Hy3 배치 진단·구현·동시 실기 선별 | [통합 진단](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md) |
 | 시험 제약·mutation·다중 머신 강한 웨이브·정상 응답·성능 승인 | [docs/distributed-batching-verification.md](docs/distributed-batching-verification.md) |
 | P4/어댑터 층별 책임·native 경계·잦은 llama.cpp 업데이트 충격 흡수 | [docs/layer-isolation-contract.md](docs/layer-isolation-contract.md) |

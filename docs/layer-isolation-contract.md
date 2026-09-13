@@ -79,6 +79,25 @@ target 라우팅/전달 원장을 소유한다. 따라서 올바른 terminal end
 즉석에서 한 OUTER만 허용하거나 P4 broker에 llama sequence 규칙을 넣는 수리는 금지한다.
 인증을 추가할 때는 peer/source 사칭·세대 재사용과 중립 mock/다른 adapter 회귀를 함께 검증한다.
 
+<a id="external-hf-boundary"></a>
+
+### 2.1 외부 HF 구상 어댑터 적용 (2026-09-14)
+
+[HF 수용 계획](external-analysis-improvement-plan.md#hf-integration)은 기존 중립 경계의 외부 구현이다.
+위 llama.cpp/ggml 경로의 내부 구현 방식을 HF에 강제하지 않는다. P4 entrypoint는 외부 Rust crate의
+`RetainedNodeAdapter` 구현체를 정적으로 생성하며 `hf-transformers`만 등록한다. 모델 종류는 외부 실행 명세가 소유한다.
+
+- `F:/dev/p4hfadapter`가 Rust bridge와 모델별 Python·환경/배포물·실행 의미를 소유한다. P4가 그 소스를
+  내부 llama 어댑터 디렉터리로 복사하지 않는다. P4 변경은 composition root의 의존성/source mapping/lock·
+  생성·INSPECT 광고와 통합/기존 계약 시험·문서로 제한한다.
+- Python이 모델별 배치 선택·layer/KV/recurrent/양자화·tensor codec을 소유한다. Rust는 전달/IPC·식별·
+  예약·발행/결과 귀속·출력 승인·child 수명을 맡는다. 모델 스케줄러를 Rust와 Python에 중복 구현하지 않는다.
+- 노드 간 모델 payload는 P4에 불투명하다. P4는 tensor 의미를 파싱하지 않으며 Python direct node 통신으로
+  retained backpressure를 우회하지 않는다. adapter registry 확장이 공통 모델 framework 도입을 뜻하지 않는다.
+- compiler/source 정체성, 상태 변경 권한, 실행 의미 호환을 각각 [HF 검증](distributed-batching-verification.md#hf-integration-contract)으로
+  증명한다. 기존 trait를 만족하는 외부 구현 때문에 공통 경계를 바꾸는 것은 기본안이 아니다. 실제 반례가
+  공통 결함을 드러내면 수정 이유·영향·중립성 시험을 별도 계약 변경으로 심사한다.
+
 ## 3. 어댑터 L0~L5의 권한
 
 세부 배치 불변식은 [배치 계약](adapter-batching-layers.md)이 소유한다. 이 표는 **누가 무엇을 읽고 쓸 수 있는지**를 고정한다.

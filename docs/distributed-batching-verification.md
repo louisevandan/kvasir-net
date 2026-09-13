@@ -771,6 +771,56 @@ GPU 표본과 RPC span은 별도 지표다. 호스트 간 시계 오차 범위 �
 H5의 최소 8 paired 반복·4 holdout쌍, 유효 TPS/신뢰구간·TTFT/ITL 상대 및 절대 SLO 조건을 그대로 적용한다.
 정상 종료·내용 품질·긴 웨이브·정산·UNLOAD·메모리 안정성을 함께 통과해야 선언 구성의 수용으로 기록한다.
 
+<a id="hf-integration-contract"></a>
+
+## 6.1.1 외부 HF 어댑터 통합 수용 (2026-09-14 계획)
+
+작업 범위·구현/저장소 소유와 선행 순서는 [HF 수용 계획](external-analysis-improvement-plan.md#hf-integration),
+수정 경계는 [격리 계약](layer-isolation-contract.md#external-hf-boundary)을 따른다. 아래 HF-*는 새 예정 시험 ID다.
+현재 crate/등록/통합 실행이 존재한다는 뜻이 아니다. 독립 Python worker 시험을 P4 통합 통과로 승격하지 않는다.
+
+| 예정 ID | 입력·실제 소비 경로 | 필수 판정 |
+| --- | --- | --- |
+| HF-PKG | P4 root에서 외부 HF crate를 실제 의존한 locked build, package metadata/tree, 구현체→`Arc<dyn RetainedNodeAdapter>` 연결. feature를 쓰면 on/off 별도 build | `p4-adapter`/`p4-protocol` 각각 package ID/source/version 단일성. 중복 source를 넣은 독립 negative fixture는 타입 연결 실패 또는 graph gate 거부. sibling path 개발과 배포 복원 절차 구분. P4 전체 workspace와 외부 crate 자체 시험 모두 종료/summary 기록 |
+| HF-REGISTER | 실제 agent event CREATE/INSPECT. enabled/disabled kind, 잘못된 kind·generation·용량. llama/HF node를 같은 agent에 생성 | 생성 가능 kind와 광고 일치. disabled HF는 사전 거부, worker spawn/모델 할당 0. Qwen 모델명은 P4 생성 분기에 없음. 기존 llama 생성/반환/삭제 계약 유지 |
+| HF-RETAIN | queue/completion cap 1, 작은 고정 byte 한도에서 Full/Closed/peek/matching take/poll wake. 실제 RetainedEventNode·broker가 외부 어댑터를 소비 | 원본 allocation/claim 반환, peek 무소비, stale front 불소비, capacity 재개/wake 유실 없음. queued/held/IPC/출력 권한 보존. bytes 경계±1 거부 무효과, 입력 수용과 실행/하류 수용 분리 |
+| HF-IPC | 실제 Rust↔fixture Python binary pipe에 magic/version/reserved/length 오염, partial header/body/write·flush 실패, stdout 오염, ready mismatch·초과 stderr·worker death·hang 주입 | 비호환/한도 초과는 tensor/model 실행 전 거부. 실패 후 stream 임의 재동기화/issue 자동 재실행 없음. uncertain·최초 오류·cleanup 오류 별도 보존. nonblocking retained 호출 안에서 blocking Python I/O 대기 금지 |
+| HF-LIFE | P4 LOAD→여러 요청→취소/Release→UNLOAD→DELETE→새 generation 재생성. 실행 중·결과 보유 중·큐 포화 시 취소/삭제, 오래된 결과/해제 도착 | 취소 접수/발행 중단과 worker 정지 확인 분리. 미회수 출력/unknown snapshot/살아 있는 state가 있으면 삭제 거부. child 종료·물리 state 해제와 claim 회수 뒤만 unloaded. node task 건강성과 출력 수명 검사 우회 금지 |
+| HF-MODEL | 아래 고정 Qwen dense FP32를 독립 controller와 P4 경로에서 실행. chunked prefill·decode·요청 교대·취소·slot 재사용·DeltaNet/attention cut·CPU/GPU 지원 조합 | 기존 logits atol=0.125/rtol=0.01와 매 스텝 greedy 동일 기준 유지. state 위치뿐 아니라 선언 cache의 구성/내용 parity를 요청별 참조와 비교. FP32 PASS로 기존 이기종 BF16 FAIL을 덮지 않음. 원본/양자화/분산 오차 분리 |
+| HF-DIST | 같은 target·정밀도의 2개 실제 물리 host에서 각 P4 node가 HF worker/담당 weight/state를 소유. P4 event로 경계 tensor와 tail 결과 전달 | host/PID/장치·소스/모델/plan hash·할당·송수신 bytes·요청 귀속 증거. 중앙 Python이 직접 전체 worker를 순회하면 실패. disconnect/late reply 후 정산·다음 정상 요청을 검증. 로컬 여러 프로세스는 이 gate 미실행 |
+| HF-SWAP | 한 P4 binary hash로 호환 Python bundle A→정상 UNLOAD→bundle B LOAD→같은 과제. 다른 IPC/schema/identity bundle도 투입 | 호환 교체에서 P4 재컴파일 없음, 실제 사용 bundle hash는 바뀜. 비호환 bundle은 LOAD 실패와 회수. Rust bridge 변경 시에는 별도 P4 binary/hash. 실행 중 bundle 덮어쓰기 금지 |
+
+### HF 고정 시험 구성과 납품물
+
+- Contract fixture는 input/completion queue 1·retained count 2·각 store 4KiB, IPC payload 최대 1KiB의 별도 profile로
+  경계±1/큰 payload/출력 포화를 시험한다. 이 수치는 실제 Qwen readiness/tensor용 한도가 아니다.
+- 실제 모델은 HF manifest의 Qwen3.5-0.8B revision을 사용한다. 첫 통합 profile은 FP32/quantization none,
+  24층의 [0,12)/[12,24), context 2,048·요청 한도 8·출력 cap 64, 물리 batch 1·동시에 outstanding step 1이다.
+  원본 `short/chunked_prefill/interleaved_cancel` 시나리오와 합법 attention 경계 profile을 유지한다.
+  CUDA/CPU의 승인 FP32 구성을 사용하고 physical host/device identity는 실행 전 manifest에 고정한다.
+- 기존 worker의 frame 상한 32MiB와 readiness metadata 64KiB, tensor/state 크기·복사·P4 retained/receipt 수명을
+  합산해 모델 profile의 store/IPC/RSS 정수 예산을 산출한다. 모든 필드가 없으면 실행 전 거부한다. frame 상한을
+  전체 heap 상한으로 보고하지 않는다. 요청별 timeout 120초, LOAD readiness 120초, idle shutdown 확인 5초를
+  초기 통합 회귀 한도로 고정하며 성능 SLO와 구별한다. 초과 시 오류/격리·소유 child 정리를 별도 10초 한도로
+  수행하고 무한 join을 허용하지 않는다. 이 한도를 사후 늘린 실행은 같은 수용 arm이 아니다.
+- 추가 운영 회귀는 같은 load에서 8개 요청 block을 3번 처리·회수하고 매 block 사이에 다음 요청을 재수용한다.
+  현재 `active+retired≤max_requests`의 누적 상한으로는 불가능하므로 새 실행 epoch/중복 방지 수명 계약과
+  구 v1 계약을 구분해 검증한다. 이전 epoch의 늦은 step/result/release 거부와 state/claim 무효과를 확인하고
+  중복 방지 검사를 삭제하거나 cap을 늘려 24건만 통과시키는 구현은 불합격이다.
+  `short`만 성공하고 cancel/회수/재생성이 실패하면 수용 미완이다. 출력 cap 종료는 EOS/정상 답변과 분리한다.
+  conformance의 teacher-forcing 비교와 일반 생성 전문/정답·형식 검토를 따로 남긴다.
+- 변경된 각 권한/한도/identity 검사는 실제 소비 반례와 독립 수정 제거 변이로 증명한다. Rust 재컴파일·binary hash,
+  Python source/import 경로·bundle hash를 함께 봉인한다. feature를 쓰면 HF 활성 시험을 필수 CI/실행 명령에 넣고
+  기본 빌드에서 제외됐다는 이유로 HF 검증을 통과 처리하지 않는다.
+- HF 저장소에 독립/통합 runner·fixture·profile·환경 lock·실행/결과 보고를 두고, P4에는 생성/광고/공통 계약 회귀와
+  외부 고정 revision으로 시험을 재현하는 명령·결과 색인을 둔다. sibling 없이 시작하는 복원 시험에서는 명시 build
+  bundle이 두 repo를 정확한 commit으로 준비하거나 실제 고정 Git/crate source를 가져와야 한다. 테스트 중 임시 path만
+  우연히 존재한 빌드는 재현 가능한 배포 증거가 아니다.
+
+HF 수용 완료는 위 통합 capability의 완료다. 소형 Qwen으로 초대형 모델 H0–H7/성능 승격을 승인하지 않는다.
+물리 host/bridge source가 없으면 해당 항목은 BLOCKED/미구현이며 후속 A 성공을 기다려 수용을 대신하지 않는다.
+기존 llama timer RED 등 전체 workspace 결과는 별도 보존한다. HF 때문에 새로 생긴 회귀를 기존 실패로 분류하지 않는다.
+
 <a id="release-a-contract"></a>
 
 ## 6.2 Release A 수용 계약 (2026-09-13 계획)
