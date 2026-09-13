@@ -1,5 +1,6 @@
 #include "llama_stage_runtime.hpp"
 #include "physical_wire.hpp"
+#include "physical_cost.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -53,6 +54,7 @@ bool valid_equal_sequence_ubatch(
 
 bool StageRuntime::collect_physical_tensors(
         bool terminal, std::vector<PhysicalTensor> * result, std::string * error) {
+    cost::Capture capture_cost;
     if (result == nullptr || !loaded()) {
         return physical_fail("invalid physical tensor collection", error);
     }
@@ -74,6 +76,7 @@ bool StageRuntime::collect_physical_tensors(
         }
         if (tensor.descriptor.alias_of < 0) {
             tensor.data.resize(static_cast<std::size_t>(tensor.descriptor.nbytes));
+            capture_cost.bytes += tensor.data.size();
             const bool copied = terminal
                 ? llama_linkcpp_terminal_get(ctx_, index, tensor.data.data(), tensor.data.size())
                 : llama_linkcpp_output_get(ctx_, index, tensor.data.data(), tensor.data.size());
@@ -133,6 +136,7 @@ bool StageRuntime::execute_first_batch(
         const std::vector<PhysicalOwner> & owners,
         std::vector<PhysicalExecution> * executions,
         std::string * error) {
+    cost::Native native_cost(ctx_);
     if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || config_.layer_begin != 0 || tail_stage_
         || rows.empty() || owners.size() != rows.size() || executions == nullptr
@@ -197,7 +201,9 @@ bool StageRuntime::execute_first_batch(
         batch.logits[index] = needs_native_logits(row.output, owners[index]) ? 1 : 0;
     }
     const bool encoder = llama_model_has_encoder(model_);
+    native_cost.begin_decode(rows.size());
     const auto raw = encoder ? llama_encode(ctx_, batch) : llama_decode(ctx_, batch);
+    native_cost.end_decode();
     llama_batch_free(batch);
     if (raw != 0 || captured_executions_.empty()) {
         const auto status = decode_status_from_raw(raw);
@@ -235,6 +241,7 @@ bool StageRuntime::execute_first_batch(
     }
     *executions = std::move(captured_executions_);
     captured_executions_.clear();
+    native_cost.finish();
     return true;
 }
 
@@ -243,6 +250,7 @@ bool StageRuntime::execute_physical(
         const std::vector<PhysicalOwner> & owners,
         PhysicalExecution * output,
         std::string * error) {
+    cost::Native native_cost(ctx_);
     if (refuse_for_dirty_hop_memory(hop_memory_dirty_, error)) return false;
     if (!loaded() || config_.layer_begin == 0 || output == nullptr
         || !valid_execution(input) || input.tensors.empty()
@@ -300,7 +308,9 @@ bool StageRuntime::execute_physical(
         llama_linkcpp_input_clear(ctx_);
         return physical_fail("unsupported physical invocation flags", error);
     }
+    native_cost.begin_decode(owners.size());
     const auto raw = encoder ? llama_encode(ctx_, batch) : llama_decode(ctx_, batch);
+    native_cost.end_decode();
     const bool input_mismatch = llama_linkcpp_input_count(ctx_)
         != static_cast<std::int32_t>(input.tensors.size());
     if (raw != 0 || input_mismatch) {
@@ -332,7 +342,7 @@ bool StageRuntime::execute_physical(
     output->terminal = tail_stage_;
     // Terminal logits and h_nextn remain inside llama.cpp. Sampling and MTP
     // consume them in this process; only compact token decisions cross P4.
-    if (tail_stage_) return true;
+    if (tail_stage_) { native_cost.finish(); return true; }
     if (!collect_physical_tensors(false, &output->tensors, error)) {
         hop_memory_dirty_ = true;
         if (error != nullptr) *error += ";memory_dirty=1;action=reload";
@@ -344,6 +354,7 @@ bool StageRuntime::execute_physical(
             "llama.cpp produced no physical result tensors;memory_dirty=1;action=reload",
             error);
     }
+    native_cost.finish();
     return true;
 }
 

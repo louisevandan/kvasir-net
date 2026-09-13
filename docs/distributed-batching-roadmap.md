@@ -28,7 +28,8 @@ A0 전체와 A1–A5, 제품 SLO/H0–H7은 아직 미완료다.
 현재 pin 비용 계측과 native PLAN의 완전한 상한 산출·서비스 실행기는 아직 남았다.
 현재 native 재구성을 막던 metadata 거부/격리 검사 충돌을 compat 안에서 분리했고,
 [full/relink 및 양쪽 어댑터 회귀](../tests/reports/release-a/20260914_043652.md)를 통과했다.
-다음은 준비된 현재 pin의 A-COST 실행 ID/n_kv/graph/capture/return 계측이다.
+[native 비용 관측](../tests/reports/release-a/20260914_050400.md)을 추가하고 CPU 실제 경로 on/off·누락 변이를 검증했다.
+다음은 CUDA/550B hybrid 관측·occupancy 비용·계측 overhead와 Worker/client/전송 결속이다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 

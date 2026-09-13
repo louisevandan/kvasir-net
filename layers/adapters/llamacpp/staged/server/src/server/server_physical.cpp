@@ -2,6 +2,7 @@
 
 #ifdef P4_STAGED_WITH_LLAMA
 #include "physical_wire.hpp"
+#include "physical_cost.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -214,6 +215,7 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
         (void) runtime_.cancel();
         return physical_error(*this, "LOGICAL_BATCH failed: " + failure);
     };
+    llama_runtime::cost::Call cost(request.body.size());
     const auto step_began = step_clock::now();
     std::vector<llama_runtime::LogicalExecutionRow> input;
     std::string detail;
@@ -285,6 +287,9 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     std::vector<std::uint8_t> body;
     if (!llama_runtime::encode_physical_set(output, &body, &detail)) return fail(detail);
     const auto step_encoded = step_clock::now();
+    cost.parse_us = step_us(step_began, step_parsed);
+    cost.match_us = step_us(step_executed, step_matched);
+    cost.encode_us = step_us(step_matched, step_encoded);
     if (step_trace_enabled()) {
         std::fprintf(stderr,
             "P4_STAGED_STEP role=first rows=%zu parse_us=%lld decode_us=%lld"
@@ -298,6 +303,7 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     }
     if (!runtime_.finish_hop().ok()) return fail("session transition failed");
     physical_authority_.commit_rows(owner_plan);
+    cost.finish(output);
     return protocol::Frame::make(protocol::Operation::PhysicalResult, std::move(body));
 #endif
 }
@@ -356,6 +362,7 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
         (void) runtime_.cancel();
         return physical_error(*this, "PHYSICAL_BATCH failed: " + failure);
     };
+    llama_runtime::cost::Call cost(request.body.size());
     const auto step_began = step_clock::now();
     std::vector<llama_runtime::RoutedPhysicalExecution> input;
     std::string detail;
@@ -396,6 +403,9 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
     const auto step_ready = step_clock::now();
     std::vector<std::uint8_t> body;
     if (!llama_runtime::encode_physical_set(output, &body, &detail)) return fail(detail);
+    cost.parse_us = step_us(step_began, step_parsed);
+    cost.sample_us = sample_us;
+    cost.encode_us = step_us(step_ready, step_clock::now());
     if (step_trace_enabled()) {
         std::fprintf(stderr,
             "P4_STAGED_STEP role=downstream rows=%zu parse_us=%lld decode_us=%lld"
@@ -409,6 +419,7 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
     }
     if (!runtime_.finish_hop().ok()) return fail("session transition failed");
     physical_authority_.commit_rows(owner_plan);
+    cost.finish(output);
     return protocol::Frame::make(protocol::Operation::PhysicalResult, std::move(body));
 #endif
 }

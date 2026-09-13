@@ -13,6 +13,8 @@ CASES = {
     "shared_pool": ("manifest.mjs", "fail(pool.reserved <= pool.available, 'shared pool overcommitted');", "", 2),
     "exact_oracle": ("corpus.mjs", "assert.deepEqual(value, item.expected);", "", 1),
     "missing_as_zero": ("analyze-trace.mjs", "percentile(s.spans.map(x => x.rpc), .5) : null", "percentile(s.spans.map(x => x.rpc), .5) : 0", 1),
+    "missing_native_kv_accepted": ("analyze-native-cost.mjs", "g.end?.status === 0 && g.kv.length > 0", "g.end?.status === 0", 1),
+    "overlapping_native_cost_accepted": ("analyze-native-cost.mjs", "check(f.total_us >= parts && f.total_us - parts <= 3, 'native cost overlap or missing interval');", "", 1),
 }
 
 

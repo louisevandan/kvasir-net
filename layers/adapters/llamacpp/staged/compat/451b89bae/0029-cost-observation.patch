@@ -1,0 +1,135 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1371,6 +1371,7 @@
+ }
+ 
+ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
++    llama_linkcpp_cost::Scope cost(this);
+     if (mctx && !mctx->apply()) {
+         LLAMA_LOG_ERROR("%s: failed to apply memory context\n", __func__);
+         ret = GGML_STATUS_FAILED;
+@@ -1384,7 +1385,8 @@
+     // in order to correctly reuse a graph, it's full topology has to be uniquely determined by these parameters
+     const auto gparams = graph_params(res, ubatch, mctx, gtype);
+ 
+-    if (!graph_reuse_disable && res->can_reuse(gparams)) {
++    const bool reused = !graph_reuse_disable && res->can_reuse(gparams);
++    if (reused) {
+         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
+ 
+         // with pipeline parallelism, the previous graph_compute_async may still be running
+@@ -1420,6 +1422,7 @@
+         }
+     }
+ 
++    const auto cost_ready = cost.traced ? ggml_time_us() : 0;
+     // set the input data for the input tensors
+     {
+         //const auto t_start_us = ggml_time_us();
+@@ -1500,7 +1503,19 @@
+         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
+     }
+ 
++    const auto cost_inputs = cost.traced ? ggml_time_us() : 0;
+     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
++    if (cost.traced) {
++        // Diagnostic mode explicitly waits for this graph, so asynchronous
++        // launch time cannot be reported as completed execution time.
++        ggml_backend_sched_synchronize(sched.get());
++        const auto cost_executed = ggml_time_us();
++        std::fprintf(stderr, "P4_COST_GRAPH_TIMES pid=%ld ctx=%llx graph=%llu status=%d setup_us=%lld input_us=%lld execute_us=%lld reused=%d nodes=%d\n",
++            llama_linkcpp_cost::pid(), (unsigned long long) (uintptr_t) this,
++            (unsigned long long) llama_linkcpp_cost::graph_id, (int) status,
++            (long long) (cost_ready - cost.started), (long long) (cost_inputs - cost_ready),
++            (long long) (cost_executed - cost_inputs), reused ? 1 : 0, ggml_graph_n_nodes(res->get_gf()));
++    }
+     if (status != GGML_STATUS_SUCCESS) {
+         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
+         ret = status;
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -552,6 +552,14 @@
+ }
+ 
+ void llm_graph_input_attn_kv::set_input(const llama_ubatch * ubatch) {
++    if (llama_linkcpp_cost::graph_id != 0) {
++        std::fprintf(stderr, "P4_COST_NKV pid=%ld ctx=%llx graph=%llu n_kv=%u rows=%u sequences=%u mask_allocated=%d mask_nkv=%lld\n",
++            llama_linkcpp_cost::pid(), (unsigned long long) (uintptr_t) llama_linkcpp_cost::context,
++            (unsigned long long) llama_linkcpp_cost::graph_id, (unsigned) mctx->get_n_kv(),
++            ubatch->n_tokens, ubatch->n_seqs_unq,
++            self_kq_mask && self_kq_mask->buffer ? 1 : 0,
++            self_kq_mask ? (long long) self_kq_mask->ne[0] : -1);
++    }
+     mctx->set_input_k_idxs(self_k_idxs, ubatch);
+     mctx->set_input_v_idxs(self_v_idxs, ubatch);
+ 
+@@ -1171,6 +1179,14 @@
+ }
+ 
+ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
++    if (llama_linkcpp_cost::graph_id != 0) {
++        std::fprintf(stderr, "P4_COST_NKV pid=%ld ctx=%llx graph=%llu n_kv=%u rows=%u sequences=%u mask_allocated=%d mask_nkv=%lld\n",
++            llama_linkcpp_cost::pid(), (unsigned long long) (uintptr_t) llama_linkcpp_cost::context,
++            (unsigned long long) llama_linkcpp_cost::graph_id, (unsigned) mctx->get_attn()->get_n_kv(),
++            ubatch->n_tokens, ubatch->n_seqs_unq,
++            inp_attn->self_kq_mask && inp_attn->self_kq_mask->buffer ? 1 : 0,
++            inp_attn->self_kq_mask ? (long long) inp_attn->self_kq_mask->ne[0] : -1);
++    }
+     if (inp_attn->self_k_idxs && inp_attn->self_k_idxs->buffer) {
+         mctx->get_attn()->set_input_k_idxs(inp_attn->self_k_idxs, ubatch);
+         mctx->get_attn()->set_input_v_idxs(inp_attn->self_v_idxs, ubatch);
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -13,6 +13,49 @@
+ #include <functional>
+ #include <map>
+ #include <unordered_map>
++#include <atomic>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#ifdef _WIN32
++#include <process.h>
++#else
++#include <unistd.h>
++#endif
++
++namespace llama_linkcpp_cost {
++inline bool enabled() {
++    static const bool value = [] {
++        const auto * p = std::getenv("P4_STAGED_TRACE_COST");
++        return p && std::strcmp(p, "1") == 0;
++    }();
++    return value;
++}
++inline long pid() {
++#ifdef _WIN32
++    return _getpid();
++#else
++    return getpid();
++#endif
++}
++inline std::atomic<uint64_t> next_graph{1};
++inline thread_local uint64_t graph_id = 0;
++inline thread_local const void * context = nullptr;
++struct Scope {
++    const bool traced = enabled();
++    uint64_t previous_graph = graph_id;
++    const void * previous_context = context;
++    int64_t started = 0;
++    explicit Scope(const void * ctx) {
++        if (!traced) return;
++        graph_id = next_graph.fetch_add(1, std::memory_order_relaxed);
++        context = ctx; started = ggml_time_us();
++        std::fprintf(stderr, "P4_COST_GRAPH_BEGIN pid=%ld ctx=%llx graph=%llu\n", pid(),
++            (unsigned long long) (uintptr_t) context, (unsigned long long) graph_id);
++    }
++    ~Scope() { if (traced) { graph_id = previous_graph; context = previous_context; } }
++};
++} // namespace llama_linkcpp_cost
+ 
+ struct ggml_cgraph;
+ struct ggml_context;
