@@ -23,6 +23,9 @@ timer의 무입력 만료와 실제 RELEASE interleave를 분리했고 독립 �
 과거 Nemotron의 요청별7,864개 prefill 위치와 stage별 RPC/forward를 확인했으나 pure kernel·
 현재 pin 비용 하한은 미판정이다. 다음 작업은 A0 corpus/tokenization/manifest/실행기·비용 계측 연결이다.
 A0 전체와 A1–A5, 제품 SLO/H0–H7은 아직 미완료다.
+후속 [corpus/명세 준비](../tests/reports/release-a/20260914_041920.md)에서64개 실제 vocabulary tokenization,
+독립 원문 정답 재계산, 기존8건 token 동일성과 명세 거부/변이4종을 검증했다.
+현재 pin 비용 계측과 native PLAN의 완전한 상한 산출·서비스 실행기는 아직 남았다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 

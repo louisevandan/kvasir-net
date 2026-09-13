@@ -16,6 +16,10 @@ Release A tools live in `release-a/`: `timer-mutations.py` rebuilds isolated wor
 and `corpus.mjs` generates controlled source facts and an exact JSON oracle.
 Run `node --test test/benchmarks/cluster-inference/release-a/*.test.mjs`.
 These tools do not yet constitute the A service lifecycle runner or approve a deployment.
+`manifest.mjs` verifies materialized artifact/byte ownership inputs. `materialize-corpus.mjs`
+uses the public native `tokenize.cpp` probe; `review-corpus.py` independently checks source facts.
+The exact 64-case identities are in [corpus-v1.json](release-a/corpus-v1.json), with
+[preparation evidence](../../../tests/reports/release-a/20260914_041920.md).
 
 Long-lived source and release work use `main`. Model names select data, not Git branches.
 Temporary comparison source commits stay reachable through integration history and evidence bundles.

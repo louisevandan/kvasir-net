@@ -5,7 +5,7 @@ export const wrap = user => `<|im_start|>system\n${system}<|im_end|>\n<|im_start
 
 // Every record is distinct evidence with an explicit revision and a source ID.
 // No filler, copied answers, or repeated paragraph is used to reach a token size.
-export function corpusCase(kind, variant, count) {
+export function corpusCase(kind, variant, count, compact = []) {
   assert(['short', 'medium', 'long'].includes(kind));
   assert(Number.isSafeInteger(variant) && variant >= 0);
   assert(Number.isSafeInteger(count) && count >= 8);
@@ -18,10 +18,15 @@ export function corpusCase(kind, variant, count) {
     revision: 1 + (i + variant) % 9,
   }));
   const picked = [rows[1], rows[Math.floor(count / 2)], rows[count - 2]];
-  const sources = rows.map(r => `[${r.id}] Station ${r.station}; revision ${r.revision}. ` +
+  assert(new Set(compact).size === compact.length && compact.every(i => Number.isSafeInteger(i) && i >= 0 && i < count));
+  const alternatives = rows.map(r => {
+    const full = `[${r.id}] Station ${r.station}; revision ${r.revision}. ` +
     `Measured RMS current: ${r.amps} A. Isolated conductor resistance: ${r.milliohms} milliohms. ` +
     `Operating duration: ${r.hours} hours. Inlet pressure: ${r.pressure} kPa. ` +
-    `Pressure alarm threshold: 120 kPa; equality is not an exceedance. No temperature measurement is recorded.`);
+    `Pressure alarm threshold: 120 kPa; equality is not an exceedance. No temperature measurement is recorded.`;
+    return { full, compact: full.replace('No temperature measurement is recorded.', 'Temperature was not measured.') };
+  });
+  const sources = alternatives.map((r,i) => compact.includes(i) ? r.compact : r.full);
   let task, expected;
   if (kind === 'short') {
     task = `The source function is: function alarm(pressure, threshold) { return pressure >= threshold; }\n` +
@@ -45,7 +50,7 @@ export function corpusCase(kind, variant, count) {
   }
   const user = `Case ${variant + 1}: ${count} archived records.\n${sources.join('\n')}\n\n${task}`;
   return { kind, variant, records: count, prompt: wrap(user), expected,
-    source_facts: picked, oracle: 'exact-json-v1' };
+    source_facts: picked, compact_records: compact, record_alternatives: alternatives, oracle: 'exact-json-v1' };
 }
 
 export function judge(item, response, stopReason) {
