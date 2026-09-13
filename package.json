@@ -5,6 +5,6 @@
   "scripts": {
     "docs-lint": "node tools/scripts/docs-lint.mjs",
     "test:docs-lint": "node --test tools/scripts/docs-lint.test.mjs",
-    "test:placement-policy": "node --test test/benchmarks/cluster-inference/placement-policy.test.ts"
+    "test:placement-policy": "node --test test/benchmarks/cluster-inference/*.test.ts"
   }
 }

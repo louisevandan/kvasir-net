@@ -31,6 +31,10 @@ MSA wrapper의 두 실제 `llama_kv_cache`가 이미 가진 stage-local residenc
 목표 workload로 캘리브레이션한 stage service time을 입력으로, 가장 느린 stage 예측 시간을
 최소화한다. 이름이나 VRAM 크기만으로 성능을 추측하지 않으며 느린 소형 GPU는 병목 목적함수를
 낮출 때만 포함한다. 이 결정은 `tools/cluster-inference/placement-policy.ts`가 소유한다.
+각 agent의 INSPECT는 CUDA 외에도 Linux AMD DRM/amdgpu와 Apple `system_profiler`를
+provider별로 조사하고 dedicated/unified memory를 구분한다. OUTER의
+`collect-inventory.ts`는 이 snapshot을 머신별 시각 이력과 `latest.json`으로 원자적으로
+보존한다. 수집 실패는 빈 GPU로 바꾸지 않고 필수 머신 실패로 남긴다.
 정상 MSA GGUF 여덟 shard 준비, 플랫폼별 동일 patch identity 빌드,
 LOAD/SESSION, 단일 정상 출력, 긴 prefill과 혼합 웨이브 순서로 실행한다. 비통합 KV용
 다중 sequence native decode 합치기는 정확성 수용 뒤의 성능 작업으로 분리한다.

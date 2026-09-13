@@ -12,6 +12,12 @@ into the agent.
 | `link/` | A relay that carries frames badly on purpose — latency, jitter, width, stalls, and a cut. Used as a library by the tests and as a binary between machines. |
 | `cluster-inference/` | OUTER TypeScript policy. Persists agent hardware discovery and chooses memory tiers and contiguous model-stage cuts from measured memory plans and service profiles. |
 
+`cluster-inference/collect-inventory.ts` sends an ordinary agent INSPECT to every
+configured address and atomically writes per-machine timestamped JSON plus
+`latest.json`. A failed required machine remains in the fleet failure list and
+makes the command fail after the partial evidence has been saved. The placement
+policy consumes these records; it does not maintain a handwritten GPU table.
+
 An earlier `controller/` and `scripts/` lived here and are gone. The first was
 a client for a participant the protocol no longer has; the second drove the
 runtime that the v6 core replaced. Their measurements are still recorded in
