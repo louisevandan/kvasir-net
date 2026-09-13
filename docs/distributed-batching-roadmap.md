@@ -26,6 +26,9 @@ A0 전체와 A1–A5, 제품 SLO/H0–H7은 아직 미완료다.
 후속 [corpus/명세 준비](../tests/reports/release-a/20260914_041920.md)에서64개 실제 vocabulary tokenization,
 독립 원문 정답 재계산, 기존8건 token 동일성과 명세 거부/변이4종을 검증했다.
 현재 pin 비용 계측과 native PLAN의 완전한 상한 산출·서비스 실행기는 아직 남았다.
+현재 native 재구성을 막던 metadata 거부/격리 검사 충돌을 compat 안에서 분리했고,
+[full/relink 및 양쪽 어댑터 회귀](../tests/reports/release-a/20260914_043652.md)를 통과했다.
+다음은 준비된 현재 pin의 A-COST 실행 ID/n_kv/graph/capture/return 계측이다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 

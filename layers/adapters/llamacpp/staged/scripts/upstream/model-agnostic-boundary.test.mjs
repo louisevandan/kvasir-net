@@ -95,3 +95,19 @@ test("official model identifiers come from upstream file names, not an adapter l
   fs.writeFileSync(path.join(directory, "README.md"), "");
   assert.deepEqual(officialModelIdentifiers(directory), ["futuremodel"]);
 });
+
+test("only the isolated metadata rejection policy can name models in string values", () => {
+  const policy = "src/compat/model_support.cpp";
+  const literal = 'return model_metadata_equals(model, "general.architecture", "futuremodel");';
+  assert.doesNotThrow(() => validateRuntimeSource(policy, literal, ["futuremodel"]));
+  assert.doesNotThrow(() => validateRuntimeSource(policy.replaceAll("/", "\\"), literal, ["futuremodel"]));
+  for (const file of ["runtime.cpp", "src/compat/p4_llama_compat.cpp", "other/model_support.cpp"]) {
+    assert.throws(() => validateRuntimeSource(file, literal, ["futuremodel"]));
+  }
+  for (const source of ['#include "llama-model.h"', 'if (arch == LLM_ARCH_FUTURE) {}',
+    'static_cast<llama_model_futuremodel *>(model);', '// futuremodel uses a special graph',
+    'futuremodel.build_graph();', 'llama_decode(ctx, batch);', 'ggml_build_forward_expand(gf, tensor);',
+    'llama_model_meta_val_str(model, key, value, size); llama_decode(ctx, batch);']) {
+    assert.throws(() => validateRuntimeSource(policy, source, ["futuremodel"]));
+  }
+});

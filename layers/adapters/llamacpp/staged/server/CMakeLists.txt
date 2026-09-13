@@ -273,6 +273,7 @@ if(P4_STAGED_BUILD_LLAMA AND P4_STAGED_LLAMA_SOURCE_DIR)
     # rather than merely failing review (U0 (3)).
     add_library(p4_llama_compat STATIC
         "${CMAKE_CURRENT_LIST_DIR}/src/compat/p4_llama_compat.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/compat/model_support.cpp"
     )
     include("${CMAKE_CURRENT_LIST_DIR}/native-wire-fingerprint.cmake")
     target_compile_definitions(p4_llama_compat PRIVATE

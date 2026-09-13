@@ -128,3 +128,4 @@ comparison path. Its queue statistics are not proof of the default event path.
 
 Release A: [단계별 시험 계획](tests/plans/release-a-20260914.md) · [A-RED/trace 감사](tests/reports/release-a/20260914_040306.md).
 Corpus와 명세 검증: [준비 결과](tests/reports/release-a/20260914_041920.md).
+Native 준비와 양쪽 어댑터: [회귀 결과](tests/reports/release-a/20260914_043652.md).

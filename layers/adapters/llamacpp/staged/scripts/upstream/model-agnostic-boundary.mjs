@@ -45,7 +45,17 @@ export function validateCompatibilityPatch(file, patch, provenance = null) {
 }
 
 export function validateRuntimeSource(file, source, modelIdentifiers = []) {
+  // Public GGUF metadata rejection is separate from graph/state implementation.
+  // Only this translation unit may name a model in an ordinary string literal.
+  const metadataPolicy = file.replaceAll("\\", "/") === "src/compat/model_support.cpp";
   for (const line of source.split(/\r?\n/u)) {
+    if (metadataPolicy) {
+      for (const call of line.matchAll(/\b((?:llama|ggml)_\w+)\s*\(/gu)) {
+        if (call[1] !== "llama_model_meta_val_str") {
+          throw new Error(`${file} metadata rejection policy cannot execute engine operations`);
+        }
+      }
+    }
     if (architectureToken.test(line) || modelImplementationCast.test(line)) {
       throw new Error(`${file} contains model or architecture knowledge: ${line.trim()}`);
     }
@@ -54,7 +64,8 @@ export function validateRuntimeSource(file, source, modelIdentifiers = []) {
     }
     for (const identifier of modelIdentifiers) {
       const modelName = new RegExp(`\\b${escaped(identifier)}\\b`, "iu");
-      if (modelName.test(line)) {
+      const implementationLine = metadataPolicy ? line.replace(/"(?:\\.|[^"\\])*"/gu, "") : line;
+      if (modelName.test(implementationLine)) {
         throw new Error(
           `${file} names an official model implementation instead of a generic tensor contract: ${line.trim()}`,
         );

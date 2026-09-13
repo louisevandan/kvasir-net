@@ -208,6 +208,12 @@ raw ggml ordinal을 엔진 중립 의미로 해석하거나 서로 다른 pin에
 
 ### CMake·Rust의 강제 경계
 
+native compat의 `src/compat/model_support.cpp`는 공개 GGUF metadata로 미지원 artifact/옵션을
+거부하는 전용 모듈이다. 기존 모델 거부 의미를 유지하는 문자열 값만 이 파일에 격리하며,
+모델 이름을 graph·KV·배치 알고리즘의 분기로 사용하는 권한은 주지 않는다.
+이 모듈에서도 architecture enum·모델 구현 cast·private header·metadata 조회 외 llama/ggml 실행 호출은
+거부한다. 다른 runtime 파일의 모델 이름 금지와 upstream model 구현 수정 제한은 그대로 적용한다.
+
 - protocol/agent/adapter-contract crate는 concrete backend에 normal dependency를 갖지 않는다.
   등록은 entrypoint에서 하고, pure scheduler/ledger 시험은 llama checkout·GPU·네트워크 없이 빌드된다.
 - 중립 완료 저장소는 불투명 Event의 실제 보존 비용·move-only 공간 소유·통지를 제공할 수 있다.
