@@ -35,6 +35,8 @@ export type PlacementRequest = {
   minimumMachines?: number;
   devices: PlacementDevice[];
   tierOrder?: MemoryTier[];
+  /** Allowed interior boundaries from the adapter's memory topology. Absent means all. */
+  legalCuts?: number[];
 };
 
 export type StagePlacement = {
@@ -60,6 +62,8 @@ export type PlacementPlan = {
 const DEFAULT_TIERS: MemoryTier[] = ["gddr", "mac_unified", "gb10_unified", "ddr_offload"];
 const EPSILON = 1e-9;
 
+export class PlacementInfeasibleError extends Error {}
+
 type Candidate = { stages: StagePlacement[]; bottleneck: number; total: number };
 
 function finiteNonNegative(value: number, label: string): void {
@@ -74,9 +78,14 @@ function validate(request: PlacementRequest): MemoryTier[] {
     throw new Error("tierOrder must contain unique known tiers");
   }
   const ids = new Set<string>();
+  for (const cut of request.legalCuts ?? []) {
+    if (!Number.isSafeInteger(cut) || cut < 1 || cut >= request.layerCount) throw new Error("invalid legal cut");
+  }
   for (const device of request.devices) {
     if (!device.id || ids.has(device.id)) throw new Error(`device id is empty or duplicated: ${device.id}`);
     ids.add(device.id);
+    if (!device.machineId || !Number.isSafeInteger(device.order)) throw new Error("device machineId and integer order are required");
+    if (!Object.keys(device.pools).length) throw new Error("device requires at least one memory pool");
     if (!tiers.includes(device.tier)) throw new Error(`device ${device.id} uses a tier absent from tierOrder`);
     if (device.layerMemoryBytes.length !== request.layerCount || device.layerServiceMs.length !== request.layerCount) {
       throw new Error(`device ${device.id} does not have one memory and service record per layer`);
@@ -87,9 +96,6 @@ function validate(request: PlacementRequest): MemoryTier[] {
       finiteNonNegative(pool.capacityBytes, `${device.id}.${poolName}.capacityBytes`);
       finiteNonNegative(pool.reserveBytes, `${device.id}.${poolName}.reserveBytes`);
       finiteNonNegative(pool.fixedBytes, `${device.id}.${poolName}.fixedBytes`);
-      if (pool.reserveBytes + pool.fixedBytes > pool.capacityBytes) {
-        throw new Error(`device ${device.id} ${poolName} reserve plus fixed bytes exceeds capacity`);
-      }
     }
     for (let layer = 0; layer < request.layerCount; layer += 1) {
       finiteNonNegative(device.layerServiceMs[layer], `${device.id}.layerServiceMs[${layer}]`);
@@ -102,30 +108,6 @@ function validate(request: PlacementRequest): MemoryTier[] {
   return tiers;
 }
 
-function stage(device: PlacementDevice, begin: number, end: number): StagePlacement | null {
-  const memory: StagePlacement["memory"] = {};
-  for (const [poolName, pool] of Object.entries(device.pools)) {
-    const layerBytes = device.layerMemoryBytes
-      .slice(begin, end)
-      .reduce((sum, layer) => sum + (layer[poolName] ?? 0), 0);
-    const requiredBytes = pool.fixedBytes + layerBytes;
-    const usableBytes = pool.capacityBytes - pool.reserveBytes;
-    if (requiredBytes > usableBytes) return null;
-    memory[poolName] = { requiredBytes, usableBytes };
-  }
-  const predictedServiceMs = device.fixedServiceMs + device.hopServiceMs
-    + device.layerServiceMs.slice(begin, end).reduce((sum, value) => sum + value, 0);
-  return {
-    deviceId: device.id,
-    machineId: device.machineId,
-    tier: device.tier,
-    layerBegin: begin,
-    layerEnd: end,
-    predictedServiceMs,
-    memory,
-  };
-}
-
 function better(left: Candidate | null, right: Candidate): Candidate {
   if (!left) return right;
   if (right.bottleneck < left.bottleneck - EPSILON) return right;
@@ -136,10 +118,13 @@ function better(left: Candidate | null, right: Candidate): Candidate {
 }
 
 /** Exact ordered-subset and contiguous-cut search without a 2^device fleet ceiling. */
-function partitionOptional(devices: PlacementDevice[], layerCount: number, minimumMachines: number): Candidate | null {
+function partitionOptional(devices: PlacementDevice[], layerCount: number, minimumMachines: number,
+  legalCuts?: number[], ceiling?: number): Candidate | null {
   const machines = [...new Set(devices.map((device) => device.machineId))];
   const machineBits = new Map(machines.map((machine, index) => [machine, 1n << BigInt(index)]));
   const satisfiedMask = -1n;
+  if (machines.length < minimumMachines || layerCount < minimumMachines) return null;
+  const boundaries = new Set(legalCuts ?? Array.from({ length: layerCount - 1 }, (_, i) => i + 1));
   const addMachine = (mask: bigint, bit: bigint): bigint => {
     if (mask === satisfiedMask) return mask;
     const next = mask | bit;
@@ -155,11 +140,30 @@ function partitionOptional(devices: PlacementDevice[], layerCount: number, minim
   let states = new Map<string, State>();
   states.set("0:0", { end: 0, machineMask: 0n, candidate: { stages: [], bottleneck: 0, total: 0 } });
   for (const device of devices) {
+    const memoryPrefix = Object.fromEntries(Object.keys(device.pools).map((name) => {
+      const values = [0];
+      for (const layer of device.layerMemoryBytes) values.push(values.at(-1)! + (layer[name] ?? 0));
+      return [name, values];
+    }));
+    const servicePrefix = [0];
+    for (const value of device.layerServiceMs) servicePrefix.push(servicePrefix.at(-1)! + value);
     const next = new Map(states);
     for (const state of states.values()) {
       for (let end = state.end + 1; end <= layerCount; end += 1) {
-        const nextStage = stage(device, state.end, end);
-        if (!nextStage) break;
+        const memory: StagePlacement["memory"] = {};
+        let fits = true;
+        for (const [name, pool] of Object.entries(device.pools)) {
+          const requiredBytes = pool.fixedBytes + memoryPrefix[name][end] - memoryPrefix[name][state.end];
+          const usableBytes = Math.max(0, pool.capacityBytes - pool.reserveBytes);
+          if (requiredBytes > usableBytes) { fits = false; break; }
+          memory[name] = { requiredBytes, usableBytes };
+        }
+        if (!fits) break;
+        if (end !== layerCount && !boundaries.has(end)) continue;
+        const predictedServiceMs = device.fixedServiceMs + device.hopServiceMs + servicePrefix[end] - servicePrefix[state.end];
+        if (ceiling !== undefined && predictedServiceMs > ceiling + EPSILON) continue;
+        const nextStage: StagePlacement = { deviceId: device.id, machineId: device.machineId, tier: device.tier,
+          layerBegin: state.end, layerEnd: end, predictedServiceMs, memory };
         const machineMask = addMachine(state.machineMask, machineBits.get(device.machineId)!);
         const candidate = {
           stages: [...state.candidate.stages, nextStage],
@@ -168,7 +172,13 @@ function partitionOptional(devices: PlacementDevice[], layerCount: number, minim
         };
         const key = `${end}:${machineMask.toString(16)}`;
         const previous = next.get(key);
-        next.set(key, { end, machineMask, candidate: better(previous?.candidate ?? null, candidate) });
+        // Pass one preserves the minimum maximum; pass two fixes that maximum
+        // and minimises the additive total. A single lexicographic prefix is unsafe.
+        const chosen = ceiling === undefined ? better(previous?.candidate ?? null, candidate)
+          : !previous || candidate.total < previous.candidate.total - EPSILON
+            || (Math.abs(candidate.total - previous.candidate.total) <= EPSILON && candidate.stages.length < previous.candidate.stages.length)
+            ? candidate : previous.candidate;
+        next.set(key, { end, machineMask, candidate: chosen });
       }
     }
     states = next;
@@ -191,8 +201,9 @@ export function planPlacement(request: PlacementRequest): PlacementPlan {
     const permitted = request.devices
       .filter((device) => permittedTiers.has(device.tier))
       .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
-    const best = partitionOptional(permitted, request.layerCount, minimumMachines);
-    if (!best) continue;
+    const primary = partitionOptional(permitted, request.layerCount, minimumMachines, request.legalCuts);
+    if (!primary) continue;
+    const best = partitionOptional(permitted, request.layerCount, minimumMachines, request.legalCuts, primary.bottleneck)!;
     const selectedIds = new Set(best.stages.map((entry) => entry.deviceId));
     return {
       schema: "p4-placement-plan-v1",
@@ -209,5 +220,5 @@ export function planPlacement(request: PlacementRequest): PlacementPlan {
         })),
     };
   }
-  throw new Error("no tier prefix can place every layer within the supplied memory limits");
+  throw new PlacementInfeasibleError("no tier prefix can place every layer within the supplied memory limits and legal cuts");
 }

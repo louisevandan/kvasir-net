@@ -6,6 +6,7 @@ Compose distributed inference experiments from model, placement, policy, workloa
 | Runtime acceptance | [Verification](../../../docs/distributed-batching-verification.md#v11-gates) |
 | Composer and CLI | [compose.mjs](compose.mjs) |
 | Fleet/model loading planner | [model-loading-planner.ts](../../../tools/cluster-inference/model-loading-planner.ts), [model-loading-policy.ts](../../../tools/cluster-inference/model-loading-policy.ts), [audit-model-loading.ts](../../../tools/cluster-inference/audit-model-loading.ts) |
+| Loading reference/policy evaluation | [evaluate-loading.ts](evaluate-loading.ts), [analyst judgments](loading-judgments.ts), [independent reference](loading-reference.ts), [scenario matrix](loading-scenarios.ts) |
 | Model templates | [Hy3](models/hy3-no-think.json), [Step3.7](models/step37-no-think.json) |
 | Experimental policies | [decode2/open8](policies/decode2-open8.json), [decode4/min4/CPU4](policies/decode4-min4-cpu4.json), [pipeline/open8](policies/pipeline-open8.json) |
 | Long Korean workloads | [8 requests](workloads/long8.json), [16 requests](workloads/long16.json) |
@@ -57,16 +58,58 @@ The built-in workloads require at least 1,024 generated tokens, allow 4,096, and
 record IDs and a Korean conclusion marker. Substring checks do not certify numerical correctness.
 No profile increases fragment/resident windows or approves B2/B3, GPU saturation or H5 performance.
 
-The loading audit groups split GGUF files, excludes `mmproj`, converts persisted agent inventory into
+The coarse loading audit groups split GGUF files, excludes `mmproj`, converts persisted agent inventory into
 GDDR, Apple unified, GB10 unified and host DDR pools, and compares its tier decision with an independent
-cumulative-capacity judgment. Pass explicit KV and runtime bytes for an executable load decision; zero
-values only audit model-weight tier boundaries. Operator-disabled devices remain in evidence but are not
+cumulative-capacity judgment. Even with explicit KV/runtime bytes this aggregate audit does not prove
+legal layer cuts, repeated stage costs or native loading. Zero values only audit weight-tier boundaries.
+Operator-disabled devices remain in evidence but are not
 admitted.
 
 `planModelLoading` is the typed black-box entry point. It accepts arbitrary CPU, RAM and accelerator
 specifications, an exact layer model profile, target context/concurrency and per-device calibration.
 It returns evidence for hardware normalization, layer demand, memory-tier admission and contiguous-cut
 optimization. Missing calibration is an error; a device name is never substituted for measured service.
+Placement uses the smaller of total and available memory, minus the reserve. Unified GPU/RAM shares
+one capacity and the larger reserve; multiple unified devices require a future explicit shared topology.
+`model.legalCuts` contains allowed interior boundaries (`[]` means unsplit only); an absent value assumes
+all boundaries and is not native topology approval. An oversized optional device is skipped.
+The exact ordered-device objective is minimum tier prefix, maximum stage time, total stage time, then
+stage count. Two passes preserve the secondary optimum when a later stage dominates the maximum.
+`admission` remains a coarse, nominal-capacity diagnostic; `placement` is the plan for current capacity.
+DDR pools represent whole-layer CPU stages. GPU expert offload and shared-device execution contention
+need richer profiles. Hardware link fields are validated metadata; hop cost comes from calibration.
+
+The evaluation writes reference data before importing a policy. Its independent Pareto search consumes
+the original typed input and calls none of the production normalisation/admission/partition functions.
+Ten literal analyst judgments anchor that solver; the large matrix is algorithmically expanded from
+the analyst's explicit objective, not thousands of separate LLM judgments or measured speed predictions.
+The scorer reconstructs selected memory/time/ordering from input, detects false admission/refusal,
+compares all four objectives and allows equivalent cuts. Missing profiles and unexpected policy errors
+remain separate failures. Immutable study/reference hashes prevent replacing expectations after scoring.
+
+```powershell
+node test/benchmarks/cluster-inference/evaluate-loading.ts prepare --model-root S:\models --out target/loading-study/new-run
+node test/benchmarks/cluster-inference/evaluate-loading.ts reference --out target/loading-study/new-run
+node test/benchmarks/cluster-inference/evaluate-loading.ts compare --out target/loading-study/new-run --label candidate
+# Optional baseline: use an independent checkout with the previous policy.
+node test/benchmarks/cluster-inference/evaluate-loading.ts compare --out target/loading-study/new-run --label baseline --policy-root F:\dev\p4-baseline
+node --test test/benchmarks/cluster-inference/*.test.ts test/benchmarks/cluster-inference/*.test.mjs
+```
+
+`study.json` preserves all model file paths/stat identities/header hashes, per-layer stored extents,
+hardware definitions, workload assumptions and literal judgments. `reference-data.jsonl` holds every
+reference plan/refusal; `<label>-policy-data.jsonl` holds policy plans, errors, comparison and timing;
+`<label>-summary.json` groups scores by model/scenario/workload. Existing output files are never replaced.
+The 53 configurations cover 1/2/3/4/8/9 available hosts, dedicated 12/24/64-GiB devices, dual/multi-GPU
+hosts, 64-GiB Mac/128-GiB GB10 unified classes, CPU DDR, pressure and disabled devices. All service
+times are hypothetical. Workloads are stored-weight geometry, assumed 4k×1 and assumed 32k×8
+(512 KV bytes/token/sequence/layer and 4 MiB runtime/layer in the latter two).
+GGUF headers/padding and all non-block tensors repeat per stage; all stored blocks including auxiliary
+blocks are represented. Metadata-only and metadata-first split shards are supported. This conservative
+storage model is not native resident bytes, model capability/alias-cut validation or a payload digest.
+Embedding models remain storage cases; `mmproj` is excluded. None of these scores approves LOAD,
+normal responses, actual TPS or hardware performance. The next runtime step is adapter-proven model
+topology and workload/backend-specific PLAN plus calibration before any deployment decision.
 
 ```powershell
 node tools/cluster-inference/audit-model-loading.ts --model-root S:\models --fleet target/fleet-inventory-current/final-v2.json --out target/model-loading-audit.json --exclude-devices central:gpu:1 --without-machines mi250-a,mi250-b --reserve-gib gddr=2,mac_unified=10,gb10_unified=20,ddr_offload=16

@@ -113,13 +113,16 @@ function parseHeader(file, length, { keepTokens = false } = {}) {
     const ne = [];
     for (let d = 0; d < dims; d += 1) ne.push(u64());
     const type = u32();
-    u64(); // offset within the tensor data section
+    const dataOffset = u64(); // offset within the tensor data section
     const elements = ne.reduce((a, b) => a * b, 1);
     const spec = GGML_TYPE_SIZE[type];
-    tensors.push({ name, type, ne, bytes: spec ? (elements / spec[1]) * spec[0] : null });
+    tensors.push({ name, type, ne, dataOffset, bytes: spec ? (elements / spec[1]) * spec[0] : null });
   }
 
-  return { file, version, kv, tensors, tokens, fileSize: size };
+  const alignment = kv['general.alignment'] ?? 32;
+  if (!Number.isSafeInteger(alignment) || alignment < 1) throw new Error(`invalid GGUF alignment in ${file}`);
+  return { file, version, kv, tensors, tokens, fileSize: size,
+    dataStart: tensorCount === 0 ? size : Math.ceil(offset / alignment) * alignment };
 }
 
 /// Sums one logical model's shards into the numbers a load decision needs.

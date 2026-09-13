@@ -54,6 +54,8 @@ export type ModelLoadingDefinition = {
   layers: ModelLayerDefinition[];
   /** PLAN-measured non-layer bytes required by every selected stage. */
   fixedBytesPerStage: number;
+  /** Adapter-proven boundaries; [] permits only an unsplit model. */
+  legalCuts?: number[];
 };
 
 export type DeviceCalibration = {
@@ -117,20 +119,32 @@ export function planModelLoading(input: ModelLoadingPlannerInput): ModelLoadingP
     safe(machine.cpu.logicalCores, `${machine.id}.cpu.logicalCores`, true);
     safe(machine.ram.totalBytes, `${machine.id}.ram.totalBytes`, true);
     safe(machine.ram.reserveBytes, `${machine.id}.ram.reserveBytes`);
+    if (machine.ram.availableBytes !== undefined) safe(machine.ram.availableBytes, `${machine.id}.ram.availableBytes`);
+    if (machine.ram.reserveBytes > machine.ram.totalBytes) throw new Error("RAM reserve exceeds capacity");
     for (const link of machine.links ?? []) {
       if (!link.toMachineId) throw new Error(`${machine.id} link target is required`);
       safe(link.bandwidthBytesPerSecond, `${machine.id}.link.bandwidthBytesPerSecond`, true);
       if (!Number.isFinite(link.latencyMs) || link.latencyMs < 0) throw new Error(`${machine.id}.link.latencyMs must be finite and non-negative`);
     }
     const hasUnified = machine.accelerators.some((accelerator) => accelerator.memoryKind === "unified");
+    if (machine.accelerators.filter((accelerator) => accelerator.memoryKind === "unified").length > 1) {
+      throw new Error("multiple unified accelerators require an explicit shared-memory topology");
+    }
     for (const accelerator of machine.accelerators) {
       const id = `${machine.id}:gpu:${accelerator.id}`;
       if (poolIds.has(id)) throw new Error(`duplicate pool id: ${id}`);
       poolIds.add(id);
       safe(accelerator.memoryTotalBytes, `${id}.memoryTotalBytes`, true);
       safe(accelerator.reserveBytes, `${id}.reserveBytes`);
-      pools.push({ id, machineId: machine.id, tier: tier(accelerator), capacityBytes: accelerator.memoryTotalBytes,
-        availableBytes: accelerator.memoryAvailableBytes, reserveBytes: accelerator.reserveBytes,
+      if (accelerator.memoryAvailableBytes !== undefined) safe(accelerator.memoryAvailableBytes, `${id}.memoryAvailableBytes`);
+      const unified = accelerator.memoryKind === "unified";
+      const capacityBytes = unified ? Math.min(accelerator.memoryTotalBytes, machine.ram.totalBytes) : accelerator.memoryTotalBytes;
+      const availableBytes = unified
+        ? Math.min(accelerator.memoryAvailableBytes ?? capacityBytes, machine.ram.availableBytes ?? capacityBytes)
+        : accelerator.memoryAvailableBytes;
+      const reserveBytes = unified ? Math.max(accelerator.reserveBytes, machine.ram.reserveBytes) : accelerator.reserveBytes;
+      pools.push({ id, machineId: machine.id, tier: tier(accelerator), capacityBytes,
+        availableBytes, reserveBytes,
         enabled: accelerator.enabled, order: accelerator.order });
     }
     if (machine.ram.allowOffload && !hasUnified) {
@@ -154,8 +168,8 @@ export function planModelLoading(input: ModelLoadingPlannerInput): ModelLoadingP
   const weightBytes = layerDemand.reduce((sum, layer) => sum + layer.weightBytes, 0);
   const kvBytes = layerDemand.reduce((sum, layer) => sum + layer.kvBytes, 0);
   const runtimeBytes = layerDemand.reduce((sum, layer) => sum + layer.runtimeBytes, 0) + input.model.fixedBytesPerStage;
+  safe(weightBytes + kvBytes + runtimeBytes, "total model demand");
   const tierOrder = input.constraints?.tierOrder;
-  const admission = recommendModelLoad({ modelId: input.model.id, weightBytes, kvBytes, runtimeBytes }, pools, tierOrder);
 
   const calibrationByPool = new Map(input.calibrations.map((calibration) => [calibration.poolId, calibration]));
   if (calibrationByPool.size !== input.calibrations.length) throw new Error("duplicate device calibration");
@@ -166,7 +180,8 @@ export function planModelLoading(input: ModelLoadingPlannerInput): ModelLoadingP
     if (calibration.layerServiceMs.length !== layerDemand.length) throw new Error(`${pool.id} calibration layer count differs from model`);
     return {
       id: pool.id, machineId: pool.machineId, order: pool.order, tier: pool.tier,
-      pools: { memory: { capacityBytes: pool.capacityBytes, reserveBytes: pool.reserveBytes, fixedBytes: input.model.fixedBytesPerStage } },
+      pools: { memory: { capacityBytes: Math.min(pool.capacityBytes, pool.availableBytes ?? pool.capacityBytes),
+        reserveBytes: pool.reserveBytes, fixedBytes: input.model.fixedBytesPerStage } },
       layerMemoryBytes: layerDemand.map((layer) => ({ memory: layer.weightBytes + layer.kvBytes + layer.runtimeBytes })),
       layerServiceMs: calibration.layerServiceMs,
       fixedServiceMs: calibration.fixedServiceMs,
@@ -175,9 +190,11 @@ export function planModelLoading(input: ModelLoadingPlannerInput): ModelLoadingP
   });
   const placementRequest: PlacementRequest = {
     schema: "p4-placement-request-v1", modelId: input.model.id, layerCount: input.model.layers.length,
-    minimumMachines: input.constraints?.minimumMachines, devices, tierOrder,
+    minimumMachines: input.constraints?.minimumMachines, devices, tierOrder, legalCuts: input.model.legalCuts,
   };
   const placement = planPlacement(placementRequest);
+  // Coarse capacity evidence is informational; only the exact plan authorises placement.
+  const admission = recommendModelLoad({ modelId: input.model.id, weightBytes, kvBytes, runtimeBytes }, pools, tierOrder);
   return {
     schema: "p4-model-loading-plan-v1", modelId: input.model.id,
     stages: [

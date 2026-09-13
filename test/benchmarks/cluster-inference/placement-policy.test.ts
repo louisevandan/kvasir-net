@@ -89,7 +89,7 @@ test("missing per-layer measurements are rejected instead of guessed from a GPU 
 
 test("the full 26-accelerator inventory has no exhaustive-subset ceiling", () => {
   const devices = Array.from({ length: 26 }, (_, index) => device(
-    `gpu-${index}`, "gddr", 10, index + 1, `machine-${Math.floor(index / 3)}`,
+    `gpu-${index}`, "gddr", 10, index + 1, index, `machine-${Math.floor(index / 3)}`,
   ));
   const plan = planPlacement(request(devices));
   assert.equal(plan.maxTier, "gddr");
