@@ -135,55 +135,63 @@ function better(left: Candidate | null, right: Candidate): Candidate {
   return right.stages.length < left.stages.length ? right : left;
 }
 
-/** Finds the optimal contiguous cut for one already ordered device subset. */
-function partition(devices: PlacementDevice[], layerCount: number, minimumMachines: number): Candidate | null {
-  const states: Array<Map<number, Candidate>> = Array.from({ length: devices.length + 1 }, () => new Map());
-  states[0].set(0, { stages: [], bottleneck: 0, total: 0 });
-  for (let index = 0; index < devices.length; index += 1) {
-    const device = devices[index];
-    for (const [begin, prior] of states[index]) {
-      for (let end = begin + 1; end <= layerCount; end += 1) {
-        const nextStage = stage(device, begin, end);
+/** Exact ordered-subset and contiguous-cut search without a 2^device fleet ceiling. */
+function partitionOptional(devices: PlacementDevice[], layerCount: number, minimumMachines: number): Candidate | null {
+  const machines = [...new Set(devices.map((device) => device.machineId))];
+  const machineBits = new Map(machines.map((machine, index) => [machine, 1n << BigInt(index)]));
+  const satisfiedMask = -1n;
+  const addMachine = (mask: bigint, bit: bigint): bigint => {
+    if (mask === satisfiedMask) return mask;
+    const next = mask | bit;
+    let value = next;
+    let count = 0;
+    while (value !== 0n && count < minimumMachines) {
+      value &= value - 1n;
+      count += 1;
+    }
+    return count >= minimumMachines ? satisfiedMask : next;
+  };
+  type State = { end: number; machineMask: bigint; candidate: Candidate };
+  let states = new Map<string, State>();
+  states.set("0:0", { end: 0, machineMask: 0n, candidate: { stages: [], bottleneck: 0, total: 0 } });
+  for (const device of devices) {
+    const next = new Map(states);
+    for (const state of states.values()) {
+      for (let end = state.end + 1; end <= layerCount; end += 1) {
+        const nextStage = stage(device, state.end, end);
         if (!nextStage) break;
+        const machineMask = addMachine(state.machineMask, machineBits.get(device.machineId)!);
         const candidate = {
-          stages: [...prior.stages, nextStage],
-          bottleneck: Math.max(prior.bottleneck, nextStage.predictedServiceMs),
-          total: prior.total + nextStage.predictedServiceMs,
+          stages: [...state.candidate.stages, nextStage],
+          bottleneck: Math.max(state.candidate.bottleneck, nextStage.predictedServiceMs),
+          total: state.candidate.total + nextStage.predictedServiceMs,
         };
-        states[index + 1].set(end, better(states[index + 1].get(end) ?? null, candidate));
+        const key = `${end}:${machineMask.toString(16)}`;
+        const previous = next.get(key);
+        next.set(key, { end, machineMask, candidate: better(previous?.candidate ?? null, candidate) });
       }
     }
+    states = next;
   }
-  const result = states[devices.length].get(layerCount) ?? null;
-  return result && new Set(result.stages.map((entry) => entry.machineId)).size >= minimumMachines ? result : null;
-}
-
-function subsets<T>(values: T[]): T[][] {
-  const out: T[][] = [];
-  for (let mask = 1; mask < 2 ** values.length; mask += 1) {
-    const selection = values.filter((_, index) => (mask & (1 << index)) !== 0);
-    out.push(selection);
+  let result: Candidate | null = null;
+  for (const state of states.values()) {
+    if (state.end !== layerCount) continue;
+    if (state.machineMask !== satisfiedMask) continue;
+    result = better(result, state.candidate);
   }
-  return out;
+  return result;
 }
 
 export function planPlacement(request: PlacementRequest): PlacementPlan {
   const tiers = validate(request);
   const minimumMachines = request.minimumMachines ?? 1;
   if (!Number.isSafeInteger(minimumMachines) || minimumMachines < 1) throw new Error("minimumMachines must be positive");
-  if (request.devices.length > 20) throw new Error("at most 20 devices are supported by exhaustive subset selection");
-
   for (let maxTierIndex = 0; maxTierIndex < tiers.length; maxTierIndex += 1) {
     const permittedTiers = new Set(tiers.slice(0, maxTierIndex + 1));
     const permitted = request.devices
       .filter((device) => permittedTiers.has(device.tier))
       .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
-    let best: Candidate | null = null;
-    for (const selected of subsets(permitted)) {
-      if (!selected.some((device) => device.tier === tiers[maxTierIndex])) continue;
-      const candidate = partition(selected, request.layerCount, minimumMachines);
-      if (candidate) best = better(best, candidate);
-    }
+    const best = partitionOptional(permitted, request.layerCount, minimumMachines);
     if (!best) continue;
     const selectedIds = new Set(best.stages.map((entry) => entry.deviceId));
     return {

@@ -5,6 +5,7 @@ Compose distributed inference experiments from model, placement, policy, workloa
 | Current work and promotion gates | [Roadmap](../../../docs/distributed-batching-roadmap.md#v11-plan) |
 | Runtime acceptance | [Verification](../../../docs/distributed-batching-verification.md#v11-gates) |
 | Composer and CLI | [compose.mjs](compose.mjs) |
+| Fleet/model loading planner | [model-loading-planner.ts](../../../tools/cluster-inference/model-loading-planner.ts), [model-loading-policy.ts](../../../tools/cluster-inference/model-loading-policy.ts), [audit-model-loading.ts](../../../tools/cluster-inference/audit-model-loading.ts) |
 | Model templates | [Hy3](models/hy3-no-think.json), [Step3.7](models/step37-no-think.json) |
 | Experimental policies | [decode2/open8](policies/decode2-open8.json), [decode4/min4/CPU4](policies/decode4-min4-cpu4.json), [pipeline/open8](policies/pipeline-open8.json) |
 | Long Korean workloads | [8 requests](workloads/long8.json), [16 requests](workloads/long16.json) |
@@ -55,6 +56,21 @@ tokenization. Per-request EOS, length, full prose, arithmetic and UTF-8 are sepa
 The built-in workloads require at least 1,024 generated tokens, allow 4,096, and require EOS plus
 record IDs and a Korean conclusion marker. Substring checks do not certify numerical correctness.
 No profile increases fragment/resident windows or approves B2/B3, GPU saturation or H5 performance.
+
+The loading audit groups split GGUF files, excludes `mmproj`, converts persisted agent inventory into
+GDDR, Apple unified, GB10 unified and host DDR pools, and compares its tier decision with an independent
+cumulative-capacity judgment. Pass explicit KV and runtime bytes for an executable load decision; zero
+values only audit model-weight tier boundaries. Operator-disabled devices remain in evidence but are not
+admitted.
+
+`planModelLoading` is the typed black-box entry point. It accepts arbitrary CPU, RAM and accelerator
+specifications, an exact layer model profile, target context/concurrency and per-device calibration.
+It returns evidence for hardware normalization, layer demand, memory-tier admission and contiguous-cut
+optimization. Missing calibration is an error; a device name is never substituted for measured service.
+
+```powershell
+node tools/cluster-inference/audit-model-loading.ts --model-root S:\models --fleet target/fleet-inventory-current/final-v2.json --out target/model-loading-audit.json --exclude-devices central:gpu:1 --without-machines mi250-a,mi250-b --reserve-gib gddr=2,mac_unified=10,gb10_unified=20,ddr_offload=16
+```
 The pipeline profile derives independent phase cohorts from admitted ready/inflight populations
 and the fixed flight window; simultaneous returns do not merge all generation work.
 Final prefill returns preserve initial cohort width without activating the mixed-work limit.

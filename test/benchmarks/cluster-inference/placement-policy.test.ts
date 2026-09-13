@@ -86,3 +86,15 @@ test("missing per-layer measurements are rejected instead of guessed from a GPU 
   broken.layerServiceMs = [];
   assert.throws(() => planPlacement(request([broken])), /one memory and service record per layer/);
 });
+
+test("the full 26-accelerator inventory has no exhaustive-subset ceiling", () => {
+  const devices = Array.from({ length: 26 }, (_, index) => device(
+    `gpu-${index}`, "gddr", 10, index + 1, `machine-${Math.floor(index / 3)}`,
+  ));
+  const plan = planPlacement(request(devices));
+  assert.equal(plan.maxTier, "gddr");
+  assert.deepEqual(plan.stages.map((stage) => [stage.deviceId, stage.layerBegin, stage.layerEnd]), [
+    ["gpu-0", 0, 4],
+    ["gpu-1", 4, 6],
+  ]);
+});
