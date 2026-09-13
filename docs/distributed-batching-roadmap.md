@@ -12,33 +12,30 @@
 
 ## 0. 현재 상태 — V1.1 마감 보존, 사용자 후속 지시의 Nemotron LAN 시험 진행
 
-### 0.MiniMax M3 MSA 재검증 (2026-09-13)
+### 0.MiniMax M3 MSA 종결 판정 (2026-09-13)
 
-직전 MiniMax M3 실행의 낮은 TPS를 배치 정책 성능으로 판정하지 않는다. 사용한 Unsloth
-Q5_K_S 여덟 shard에는 MSA indexer metadata와 tensor가 모두 없었고, compat patch가
-그 artifact를 dense attention으로 실행하게 했다. capacity 4 계획의 `--kv-unified`도
-정상 MSA GGUF에서는 sparse 경로를 비활성화한다. 따라서 직전 수치는 구형 dense-fallback
-artifact와 CPU expert offload가 결합된 결과이며 MiniMax M3 MSA 성능 기준선이 아니다.
+직전 구형 dense-fallback GGUF의 TPS는 MiniMax M3 MSA 성능 기준선이 아니다. 정상
+Bartowski Q5_K_S 8-shard artifact로 CUDA·Metal 이기종 분산을 다시 판정했다. context
+4,096, sequence 1, batch/ubatch 128/64, `--flash-attn on --no-kv-unified`를 사용했고,
+중앙 호스트에서는 사용자가 지정한 RTX 3090만 사용했다.
 
-451 native 호환층은 구형 dense-fallback 변경을 되돌려 indexer가 없는 GGUF를 거부하고,
-flash attention 비활성 및 다중 sequence와 unified KV 조합도 fail-closed로 거부한다.
-MSA wrapper의 두 실제 `llama_kv_cache`가 이미 가진 stage-local residency를 명시적으로
-승인한다. 정상 Q5_K_S MSA artifact에는
-`--flash-attn on --no-kv-unified`를 사용한다. 적재 정책은 layer 수의 균등 분할을 쓰지
-않는다. 각 장치에서 KV와 runtime headroom을 먼저 예약하고 남은 용량에 weight를 놓는다.
-필요한 memory tier는 `GDDR -> Mac unified -> GB10 unified -> x86 DDR expert offload`의
-최소 prefix로 고정한다. 선택된 장치 안의 연속 layer cut은 native PLAN의 layer별 pool byte와
-목표 workload로 캘리브레이션한 stage service time을 입력으로, 가장 느린 stage 예측 시간을
-최소화한다. 이름이나 VRAM 크기만으로 성능을 추측하지 않으며 느린 소형 GPU는 병목 목적함수를
-낮출 때만 포함한다. 이 결정은 `tools/cluster-inference/placement-policy.ts`가 소유한다.
-각 agent의 INSPECT는 CUDA 외에도 Linux AMD DRM/amdgpu와 Apple `system_profiler`를
-provider별로 조사하고 dedicated/unified memory를 구분한다. OUTER의
-`collect-inventory.ts`는 이 snapshot을 머신별 시각 이력과 `latest.json`으로 원자적으로
-보존한다. 수집 실패는 빈 GPU로 바꾸지 않고 필수 머신 실패로 남긴다.
-정상 MSA GGUF 여덟 shard 준비, 플랫폼별 동일 patch identity 빌드,
-LOAD/SESSION, 단일 정상 출력, 긴 prefill과 혼합 웨이브 순서로 실행한다. 비통합 KV용
-다중 sequence native decode 합치기는 정확성 수용 뒤의 성능 작업으로 분리한다.
+native 계획은 중앙 CUDA0, Spark CUDA unified memory, Mac21 Metal의 모든 stage에서
+`llama.cpp memory implementation does not declare stage-local residency support`로 exit 7이었다.
+실제 CREATE는 4/4였지만 LOAD는 Mac21 native exit 5로 거부됐고 SESSION·질의는 실행되지
+않았다. 정상 응답과 TPS는 미측정이다. 상세 증거는
+[MSA 분산 적재 거부 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-13-minimax-m3-msa-distributed-rejection.md)이
+소유한다.
 
+compat patch 0029는 MSA wrapper에 static flag만 추가해 실제 virtual residency 검사에
+영향을 주지 않았으므로 제거했다. 제품은 27-patch fail-closed 상태로 돌아갔다. indexer
+누락, flash attention 비활성, 다중 sequence와 unified KV 조합의 명시적 거부는 유지한다.
+이 버전에서는 M3 stage residency를 더 수정하거나 재시험하지 않는다.
+
+모델 배치 정책과 사양 수집은 M3 결과와 독립적으로 유지한다. `tools/cluster-inference`는
+KV/runtime headroom을 먼저 예약한 뒤 `GDDR -> Mac unified -> GB10 unified -> x86 DDR`
+순서의 최소 tier와 service-time 기반 연속 cut을 계산한다. agent INSPECT는 NVIDIA 외에도
+Linux AMD DRM과 Apple `system_profiler`를 조사하고, OUTER 수집기는 시각 이력과
+`latest.json`을 보존한다. 해당 기능의 fleet 배포·실기 수용은 다음 버전 작업이다.
 ### 0.Nemotron LAN 혼합 웨이브 후속 시험 (2026-09-12)
 
 사용자의 후속 적재·긴 컨텍스트·혼합 반복 웨이브 지시로 수행하는 별도 실기다. 위 V1.1의

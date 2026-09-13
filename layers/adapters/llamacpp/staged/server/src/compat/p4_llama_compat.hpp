@@ -54,6 +54,25 @@ bool has_layer_device_query();
 /// Default repeating-layer device; does not describe per-tensor override placement.
 ggml_backend_dev_t model_layer_device(const llama_model * model, std::int32_t layer);
 
+/// MiniMax M3 uses its indexer metadata and tensors to select MSA.  Older
+/// third-party GGUF conversions omitted both and llama.cpp consequently ran
+/// dense attention.  Keep that model-specific distinction inside the adapter.
+enum class MiniMaxM3AttentionMode {
+    NotMiniMaxM3,
+    MissingSparseIndexer,
+    SparseIndexer,
+};
+
+[[nodiscard]] MiniMaxM3AttentionMode minimax_m3_attention_mode(const llama_model * model);
+
+/// Returns an empty string when the loaded model and execution shape preserve
+/// MiniMax M3 sparse-attention semantics, otherwise a stable rejection reason.
+[[nodiscard]] std::string minimax_m3_attention_rejection(
+    MiniMaxM3AttentionMode mode,
+    bool flash_attention_enabled,
+    bool kv_unified,
+    int n_parallel);
+
 /// Sampling options, held whole for the same reason the plan is: upstream
 /// owns the field set and grows it.
 class SamplingOptions final {
@@ -107,6 +126,7 @@ public:
     /// straight back to llama.cpp.
     [[nodiscard]] const std::string & model_path() const noexcept;
     [[nodiscard]] bool kv_unified() const noexcept;
+    [[nodiscard]] bool flash_attention_enabled() const noexcept;
     [[nodiscard]] ggml_type cache_type_k() const noexcept;
     [[nodiscard]] ggml_type cache_type_v() const noexcept;
 

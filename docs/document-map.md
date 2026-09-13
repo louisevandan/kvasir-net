@@ -60,6 +60,7 @@
 | [docs/distributed-batching-roadmap.md](distributed-batching-roadmap.md) | 현재 목표·상태·순서 소유 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md) | MI250·Hy3 진단·bounded 선택 구현·동시 실기 선별; H5 성능/서비스 승인 미완 |
 | [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-13-minimax-m3-dense-load.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-13-minimax-m3-dense-load.md) | MSA가 누락된 구형 MiniMax M3 GGUF의 Windows CUDA 4-stage 적재·추론과 MSA 재감사 |
+| [layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-13-minimax-m3-msa-distributed-rejection.md](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-13-minimax-m3-msa-distributed-rejection.md) | 정상 MSA MiniMax M3 GGUF의 CUDA·Metal 분산 계획/LOAD 거부와 불완전 opt-in 회수 |
 | [docs/distributed-batching-verification.md](distributed-batching-verification.md) | 시험·실기 판정 소유 |
 | [docs/distributed-mock-test-plan.md](distributed-mock-test-plan.md) | 부분 시험 계획 |
 | [docs/document-map.md](document-map.md) | 문서 분류·권위 소유 |

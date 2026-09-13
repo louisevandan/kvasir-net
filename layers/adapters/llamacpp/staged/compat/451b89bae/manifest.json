@@ -15,8 +15,8 @@
   "nearest_release_tag": "b10903",
   "previous_linker_pin": "434ddbbc0e30522e897670681e503b797c12b7c1",
   "previous_official_base": "434ddbbc0e30522e897670681e503b797c12b7c1",
-  "patch_set_sha256": "8d0df5696fa360de1ffa566fb7fc7bdc383866ca200397eddc489f7ee34bbfe7",
-  "patched_tree": "594a4ed6018e35b99b82984071f8d33ee5f0fcad",
+  "patch_set_sha256": "73edae511d36205270b22ca01e8ced7d1e4c44c3054809618257b47388d77154",
+  "patched_tree": "7fcec0f24374712137f5cc8bfca869ec234a9407",
   "patches": [
     {
       "file": "0002-ggml-rpc.patch",
@@ -162,16 +162,6 @@
       "file": "0028-layer-default-device-query.patch",
       "sha256": "c159df2f75e904b4b6eb041b4a68becba3661fa6a9214e07401177e52efc59e8",
       "layer": "stage_hook"
-    },
-    {
-      "file": "0029-minimax-m3-msa-stage-residency.patch",
-      "sha256": "1f15a59bf4a82887d84a5320ab8da6a5175448b657e43475c8818e63a8e17e63",
-      "official_upstream_port": {
-        "repository": "https://github.com/ggml-org/llama.cpp.git",
-        "pull_request": "https://github.com/ggml-org/llama.cpp/pull/24908",
-        "commit": "b1d4c6552489d27eb732c2804f189d9cc6ba99bd"
-      },
-      "layer": "model_feature"
     }
   ],
   "superseded_patches": [

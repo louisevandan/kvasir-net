@@ -22,13 +22,10 @@ KV에서 여러 sequence를 한 native decode 호출로 합치는 최적화는 �
 
 비교 대상으로 확인한 `bartowski/MiniMax-M3-GGUF` Q5_K_S 첫 shard는 indexer head 4,
 key length 128, top-k 16, block size 128, local block 1과 실제 indexer tensor 28개를
-포함한다. 같은 양자화의 여덟 shard를 NAS에 준비한 뒤 동일 LAN의 CUDA·Metal 노드로
-확대한다. 451 native 호환 patch `0029`는 아래의 구형 dense-fallback 변경을 최종
-prepared tree에서 되돌리고, MiniMax M3에서 indexer 누락, flash attention 비활성,
-다중 sequence와 unified KV의 조합을 명시적으로 거부한다. 동시에 두 개의 stage-aware
-`llama_kv_cache`를 감싸는 MSA memory wrapper에 stage residency 지원을 선언한다.
-manifest와 clean replay 검사는 통과했으며 정상 MSA GGUF의 native build와 다중 머신
-실기는 아직 진행 중이다.
+포함한다. 같은 양자화의 여덟 shard로 CUDA·Metal 분산을 재판정했지만 MSA memory가
+stage-local residency를 승인하지 않아 LOAD에서 거부됐다. 제품 어댑터의 indexer 누락,
+flash attention 비활성, 다중 sequence와 unified KV 조합 거부는 유지한다. 정상 MSA
+실기 결과는 [별도 거부 기록](2026-09-13-minimax-m3-msa-distributed-rejection.md)에 남겼다.
 
 ## 원인과 수정
 
@@ -38,8 +35,7 @@ manifest와 clean replay 검사는 통과했으며 정상 MSA GGUF의 native bui
 `GGML_ASSERT(hparams.indexer_block_size > 0)`로 종료했다. 이 GGUF는 dense M3라
 `has_msa=false`이고 indexer block size가 없다. `0015-official-minimax-m3-dense-gguf.patch`가
 해당 assert를 `has_msa` 분기 안에서만 실행하도록 고쳤다. 이 수정은 당시 구형 변환본의
-실행을 가능하게 한 호환 조치다. 451 patch queue에서는 역사적 patch 순서를 보존하되
-마지막 `0029`가 공식 MSA 구현으로 되돌리므로 최종 제품 tree에는 dense 경로가 남지 않는다.
+실행을 가능하게 한 호환 조치이며, 위 재감사 뒤에는 제품 수용 경로에서 거부한다.
 
 수정 커밋은 `f4b0feb62`. pristine `434ddbbc0`에 26개 patch를 순서대로 다시 적용했고
 manifest 검증 7/7을 통과했다. 최종 identity는 다음과 같다.
