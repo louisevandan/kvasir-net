@@ -111,6 +111,41 @@ Embedding models remain storage cases; `mmproj` is excluded. None of these score
 normal responses, actual TPS or hardware performance. The next runtime step is adapter-proven model
 topology and workload/backend-specific PLAN plus calibration before any deployment decision.
 
+2026-09-13 evaluation checkpoint: implementation `532deee47`, baseline `484b856ee`. All 42 catalog
+models yielded storage geometry; 53 hardware scenarios × 3 assumed workloads produced 6,678 cases.
+The ten literal judgments are separate from that denominator.
+
+| Matrix verdict | Baseline | Candidate |
+| --- | ---: | ---: |
+| Full feasibility/objective agreement | 5,915 / 6,678 (88.57%) | 6,678 / 6,678 (100%) |
+| Optimal among 4,872 reference-feasible cases | 4,321 | 4,872 |
+| Correct infeasibility | 1,594 | 1,806 |
+| False admission | 179 | 0 |
+| Invalid selected plan | 407 | 0 |
+| Worse total service at the same bottleneck | 111 | 0 |
+| Policy exception instead of a plan/capacity verdict | 66 | 0 |
+
+Literal judgments improved 5/10 to 10/10. Baseline failures reproduce unavailable VRAM, shared RAM
+pressure, forbidden cuts and the later-bottleneck counterexample. In the stored Nemotron 550B
+`mixed-4-nominal` case both policies predict a 1,724-ms maximum, but total assumed service improves
+3,402→3,399 ms. Different optimal cuts are accepted. These are modelled numbers, not inference measurements.
+
+Validation: Node 38/38 (34 TypeScript tests plus 4 composer tests), including 240 seeded oracle cases,
+real GGUF/shard parsing, the actual prepare→reference→compare CLI, input preservation and seal tampering.
+Five independent source-copy mutations (availability, unified host availability, cut forwarding,
+secondary objective, disabled device) each produce assertion failures after syntax validation in a
+fresh Node process; source/runtime/log hashes are retained. No build cache supplies mutated execution.
+`cargo test --workspace --no-fail-fast --locked` on unchanged Rust source completed with exit 0,
+1,449 passed / 0 failed / 7 ignored, 58 summaries. The previously reported phase-pacing failure did
+not recur in this run; this TypeScript change does not claim to repair it. `npm run docs-lint`: 97 clean.
+
+Local evidence: `F:/dev/p4/target/loading-evaluation-20260913/` (study, references, both policy datasets,
+comparison summary, tests and mutations). Study SHA256
+`985e77217841ed1ede6a2be5d9d2f65a455961a9d9855bb8c1ad5392a90f1601`; reference SHA256
+`3f78a2f089264f2eaae0cfd2d4311a1b8e1f319869a688de8a24f56a576ad0b8`.
+This is a local policy-validation checkpoint. No fleet deployment, native PLAN/LOAD, real throughput
+acceptance or remote publication was performed. The remaining runtime step is stated above.
+
 ```powershell
 node tools/cluster-inference/audit-model-loading.ts --model-root S:\models --fleet target/fleet-inventory-current/final-v2.json --out target/model-loading-audit.json --exclude-devices central:gpu:1 --without-machines mi250-a,mi250-b --reserve-gib gddr=2,mac_unified=10,gb10_unified=20,ddr_offload=16
 ```
