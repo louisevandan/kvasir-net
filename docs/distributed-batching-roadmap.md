@@ -29,7 +29,9 @@ A0 전체와 A1–A5, 제품 SLO/H0–H7은 아직 미완료다.
 현재 native 재구성을 막던 metadata 거부/격리 검사 충돌을 compat 안에서 분리했고,
 [full/relink 및 양쪽 어댑터 회귀](../tests/reports/release-a/20260914_043652.md)를 통과했다.
 [native 비용 관측](../tests/reports/release-a/20260914_050400.md)을 추가하고 CPU 실제 경로 on/off·누락 변이를 검증했다.
-다음은 CUDA/550B hybrid 관측·occupancy 비용·계측 overhead와 Worker/client/전송 결속이다.
+[현재 pin/배포 후보 검증](../tests/reports/release-a/20260914_054100.md)에서 token64건 동일성, CUDA/Metal native,
+5개 OS agent, 새 agent의 llama/HF 회귀와 native→Worker 비용 결속을 확인했다.
+다음은7-host 연결/PLAN 준비와550B의 실제 occupancy 비용·정답·계측 overhead·전송/client 지연 검증이다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 

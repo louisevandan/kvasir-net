@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import time
@@ -21,6 +22,8 @@ def main(args):
     host, port = address.rsplit(":", 1)
     if host != "127.0.0.1" or any(n["agent"] != config["ingress_agent"] for n in config["nodes"]):
         raise ValueError("diagnostic helper requires one local agent")
+    if args.capture_native_processes and (os.name != "nt" or config.get("pre_inference_hold_ms", 0) < 5000):
+        raise ValueError("native process capture requires Windows and a declared hold of at least 5000ms")
     with socket.socket() as s:
         if s.connect_ex((host, int(port))) == 0:
             raise ValueError("probe port already owned; refusing to reuse another agent")
@@ -50,10 +53,38 @@ def main(args):
                     raise TimeoutError("probe agent readiness")
                 time.sleep(.1)
             with (out / "driver.log").open("wb") as log:
-                result = subprocess.run([str(args.driver.resolve()), str(out / "config.json"),
-                                         str(out / "artifact.json")], stdout=log, stderr=subprocess.STDOUT,
-                                        timeout=config["timeout_ms"] / 1000 + 120, creationflags=creationflags)
-            record["driver_exit"] = result.returncode
+                driver = subprocess.Popen([str(args.driver.resolve()), str(out / "config.json"),
+                                           str(out / "artifact.json")], stdout=log, stderr=subprocess.STDOUT,
+                                          creationflags=creationflags)
+                deadline = time.monotonic() + config["timeout_ms"] / 1000 + 120
+                try:
+                    while driver.poll() is None:
+                        if (args.capture_native_processes and "native_processes" not in record and
+                                b"P4_EVENT_GATE_LOADED" in (out / "driver.log").read_bytes()):
+                            command = ("$p=@(Get-CimInstance Win32_Process -Filter 'ParentProcessId=" +
+                                       str(proc.pid) + "' | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine,CreationDate); ConvertTo-Json -InputObject $p -Depth 3")
+                            raw = subprocess.check_output(["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+                                                          creationflags=creationflags, timeout=20)
+                            (out / "native-processes.raw.json").write_bytes(raw)
+                            processes = json.loads(raw)
+                            mapped = []
+                            for index, node in enumerate(config["nodes"]):
+                                port = node["endpoint"].rsplit(":", 1)[1]
+                                found = [p for p in processes if re.search(r"--port\s+" + port + r"(?:\s|$)", p["CommandLine"]) and
+                                         Path(p["ExecutablePath"]).resolve() == Path(node["binary"]).resolve()]
+                                if len(found) != 1:
+                                    raise ValueError("native process identity is ambiguous")
+                                mapped.append({"node": index, "pid": found[0]["ProcessId"],
+                                               "binary_sha256": sha(node["binary"]), "observed": found[0]})
+                            record["native_processes"] = mapped
+                            (out / "native-processes.json").write_text(json.dumps(mapped, indent=2), encoding="utf-8")
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("driver exceeded diagnostic deadline")
+                        time.sleep(.1)
+                finally:
+                    if driver.poll() is None:
+                        driver.kill(); driver.wait(timeout=30)
+            record["driver_exit"] = driver.returncode
             if (out / "artifact.json").exists():
                 artifact = json.loads((out / "artifact.json").read_text(encoding="utf-8"))
                 record["runtime_acceptance"] = artifact.get("passed") is True
@@ -97,4 +128,5 @@ if __name__ == "__main__":
     p.add_argument("--agent", type=Path, required=True)
     p.add_argument("--driver", type=Path, required=True)
     p.add_argument("--expect-incomplete", action="store_true")
+    p.add_argument("--capture-native-processes", action="store_true")
     raise SystemExit(main(p.parse_args()))

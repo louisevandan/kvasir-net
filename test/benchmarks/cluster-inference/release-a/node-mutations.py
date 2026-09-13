@@ -15,6 +15,8 @@ CASES = {
     "missing_as_zero": ("analyze-trace.mjs", "percentile(s.spans.map(x => x.rpc), .5) : null", "percentile(s.spans.map(x => x.rpc), .5) : 0", 1),
     "missing_native_kv_accepted": ("analyze-native-cost.mjs", "g.end?.status === 0 && g.kv.length > 0", "g.end?.status === 0", 1),
     "overlapping_native_cost_accepted": ("analyze-native-cost.mjs", "check(f.total_us >= parts && f.total_us - parts <= 3, 'native cost overlap or missing interval');", "", 1),
+    "foreign_cost_host_accepted": ("correlate-cost.mjs", "stage && stage.agent === source.agent", "stage", 1),
+    "return_cost_dropped": ("correlate-cost.mjs", "worker_return_publish_us: (span.forward_unix_ms - span.end_unix_ms) * 1000", "worker_return_publish_us: 0", 1),
 }
 
 
