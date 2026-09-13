@@ -10,6 +10,8 @@
 
 <a id="current-status"></a>
 
+2026-09-14 HF 구현 진행: [통합 안내](hf-integration.md)의 외부 Rust bridge/P4 factory와 실제 Qwen event 경로를 검증 중이다. 최종 수용·기존 llama.cpp 회귀·두 호스트/배포 증거가 끝나기 전에는 HF 완료로 표시하지 않는다.
+
 ## 0. 현재 상태 — 외부 HF 어댑터 수용 우선, 기존 릴리즈 계획 보존
 
 ### 0.HF 수용을 첫 작업으로 편성 (2026-09-14)

@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA: u16 = 1;
-const ADAPTERS: [&str; 1] = ["llamacpp"];
 
 pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &RetainedEventBroker) -> Value {
     let mut registered: Vec<Value> = nodes
@@ -50,7 +49,7 @@ pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &Retain
         "schema": SCHEMA,
         "protocol_version": Envelope::VERSION,
         "generated_at_unix_ms": generated_at_unix_ms,
-        "machine": hardware.with_adapters(ADAPTERS),
+        "machine": hardware.with_adapters(super::super::adapters::kinds()),
         "nodes": registered,
         "broker": broker,
     })

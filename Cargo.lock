@@ -145,6 +145,7 @@ dependencies = [
  "num_cpus",
  "p4-adapter",
  "p4-agent-core",
+ "p4-hf-adapter",
  "p4-llamacpp-deployment",
  "p4-llamacpp-served",
  "p4-llamacpp-staged-adapter",
@@ -190,6 +191,18 @@ dependencies = [
  "p4-protocol",
  "serde",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "p4-hf-adapter"
+version = "0.1.0"
+dependencies = [
+ "p4-adapter",
+ "p4-protocol",
+ "serde",
+ "serde_json",
+ "sha2",
  "tokio",
 ]
 

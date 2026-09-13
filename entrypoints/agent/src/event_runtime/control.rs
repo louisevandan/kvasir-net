@@ -4,7 +4,6 @@ use p4_adapter::node_adapter::{RetainedNodeAdapter, RetainedCompletion, Completi
     PublishError, completion_mailbox_with_limits};
 use p4_agent_core::event_broker::RetainedEventBroker;
 use p4_agent_core::event_node::{RetainedEventNode, RetainedEventNodeFailure};
-use p4_llamacpp_staged_adapter::v2::RetainedLlamaNodeAdapter;
 use p4_protocol::Address;
 use p4_protocol::event::{
     AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE, Endpoint, Envelope, Event, EventClass,
@@ -145,16 +144,8 @@ fn create(
     let retained_bytes = command.retained_bytes.unwrap_or(limits.bytes);
     let (sender, inbound) = completion_mailbox_with_limits(command.queue_capacity, retained_capacity, retained_bytes)
         .map_err(|error| format!("invalid node retained storage: {error:?}"))?;
-    let adapter: Arc<dyn RetainedNodeAdapter> = match command.adapter_kind.as_str() {
-        "llamacpp" => Arc::new(RetainedLlamaNodeAdapter::new(
-            endpoint,
-            command.queue_capacity,
-            command.completion_capacity,
-            retained_capacity,
-            retained_bytes,
-        ).map_err(|error| format!("invalid adapter retained storage: {error:?}"))?),
-        other => return Err(format!("unsupported adapter kind {other}")),
-    };
+    let adapter = super::adapters::create(&command.adapter_kind, endpoint,
+        command.queue_capacity, command.completion_capacity, retained_capacity, retained_bytes)?;
     broker
         .register_node(command.node_id.clone(), command.node_generation, sender)
         .map_err(|error| error.to_string())?;

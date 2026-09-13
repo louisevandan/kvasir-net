@@ -16,6 +16,8 @@
 미루는 작업이 아니다. 실제 LOAD→요청→취소/해제→UNLOAD→DELETE·재생성을 함께 검증한다.
 Qwen3.5-0.8B는 이 연결의 conformance 모델이며 초대형 모델 성능/최종 H0–H7 승격을 대체하지 않는다.
 
+2026-09-14 구현 진행: [소비 구성](hf-integration.md)과 [수용 보고](../../p4hfadapter/tests/reports/p4-integration/20260914_023000.md)에 구현·실행 증거를 기록한다. 아래 감사 설명은 착수 시점 상태다.
+
 ### 0.1 현재 양쪽 코드와 투자 이유
 
 - P4 감사 HEAD: `6bd01d7e12f2711cb27e93b3b45533703e3caf9b`, 시작 dirty 없음. 공통 경계는

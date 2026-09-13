@@ -1,4 +1,5 @@
 mod control;
+mod adapters;
 mod transport;
 
 use p4_adapter::node_adapter::{CompletionMailbox, CompletionPublisher, RetainedCompletion,

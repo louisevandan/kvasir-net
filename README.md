@@ -123,3 +123,5 @@ comparison path. Its queue statistics are not proof of the default event path.
 | 256-session local pipeline optimization evidence | [docs/p4-256-optimization.md](docs/p4-256-optimization.md) |
 | Measured behaviour of the backend below | [docs/runtime-evidence.md](docs/runtime-evidence.md) |
 | The revision that produced all this | [P4_REVISION_PLAN.md](P4_REVISION_PLAN.md) |
+
+외부 HF 소비 빌드·실행 및 양쪽 어댑터 수용: [HF 통합 안내](docs/hf-integration.md).

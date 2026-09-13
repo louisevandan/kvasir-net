@@ -68,7 +68,7 @@ async fn an_empty_agent_still_reports_machine_and_protocol_identity() {
     );
     assert_eq!(
         snapshot["machine"]["capability"]["adapters"],
-        json!(["llamacpp"])
+        json!(super::super::super::adapters::kinds())
     );
     assert!(snapshot["machine"]["capability"]["cpu"]["logical_cores"].is_u64());
     assert!(snapshot["machine"]["capability"]["memory"].is_object());
