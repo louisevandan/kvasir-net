@@ -24,10 +24,14 @@ artifact와 CPU expert offload가 결합된 결과이며 MiniMax M3 MSA 성능 �
 flash attention 비활성 및 다중 sequence와 unified KV 조합도 fail-closed로 거부한다.
 MSA wrapper의 두 실제 `llama_kv_cache`가 이미 가진 stage-local residency를 명시적으로
 승인한다. 정상 Q5_K_S MSA artifact에는
-`--flash-attn on --no-kv-unified`를 사용한다. 우선 같은 LAN의 중앙 CUDA, M42 CUDA,
-Spark CUDA unified memory, Mac 두 대 Metal을 사용해 weight와 KV headroom을 재배정한다.
-Ubuntu/TUF의 각 8 GiB GPU는 한두 layer를 더 놓는 이득보다 hop 비용이 큰지 계획 수치로
-판정한 뒤 포함한다. 정상 MSA GGUF 여덟 shard 준비, 플랫폼별 동일 patch identity 빌드,
+`--flash-attn on --no-kv-unified`를 사용한다. 적재 정책은 layer 수의 균등 분할을 쓰지
+않는다. 각 장치에서 KV와 runtime headroom을 먼저 예약하고 남은 용량에 weight를 놓는다.
+필요한 memory tier는 `GDDR -> Mac unified -> GB10 unified -> x86 DDR expert offload`의
+최소 prefix로 고정한다. 선택된 장치 안의 연속 layer cut은 native PLAN의 layer별 pool byte와
+목표 workload로 캘리브레이션한 stage service time을 입력으로, 가장 느린 stage 예측 시간을
+최소화한다. 이름이나 VRAM 크기만으로 성능을 추측하지 않으며 느린 소형 GPU는 병목 목적함수를
+낮출 때만 포함한다. 이 결정은 `tools/cluster-inference/placement-policy.ts`가 소유한다.
+정상 MSA GGUF 여덟 shard 준비, 플랫폼별 동일 patch identity 빌드,
 LOAD/SESSION, 단일 정상 출력, 긴 prefill과 혼합 웨이브 순서로 실행한다. 비통합 KV용
 다중 sequence native decode 합치기는 정확성 수용 뒤의 성능 작업으로 분리한다.
 

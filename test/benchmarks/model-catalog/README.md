@@ -11,6 +11,12 @@
 recurrent state, MoE 라우팅, NextN 블록이 섞이면 KV·compute·model 버퍼가 서로 다르게 늘어난다.
 이 폴더는 그 실측을 모델별로 남겨, 이후 P4를 제어하는 웹 UI가 계산 대신 조회하도록 한다.
 
+fleet 분할은 [`tools/cluster-inference/placement-policy.ts`](../../../tools/cluster-inference/placement-policy.ts)가
+이 카탈로그의 PLAN byte와 workload별 service profile을 읽어 결정한다. 정책은 GPU 이름이나
+layer 수 균등 분할을 사용하지 않는다. KV/runtime 예약을 먼저 차감하고 GDDR, Mac unified,
+GB10 unified, DDR offload 순으로 필요한 최소 memory tier를 선택한 뒤, 가장 느린 stage의
+예측 시간을 최소화한다. profile이 없는 장치는 최종 분할 입력으로 허용하지 않는다.
+
 ## 무엇이 기록되는가
 
 `models/<model-id>.json` 하나가 한 논리 모델이다.

@@ -112,15 +112,20 @@ machine {
     os, arch
     cpu { physical_cores, logical_cores }
     memory { total_bytes }
-    gpus[] { index, uuid, vendor, name, pci_bus_id, driver_version, vram_total_bytes }
+    gpus[] { index, uuid, vendor, name, backend, memory_kind,
+             pci_bus_id, driver_version, memory_total_bytes, vram_total_bytes }
     adapters[]
   }
   occupancy {
     memory { available_bytes, used_bytes }
-    gpus[] { uuid, vram_used_bytes, vram_free_bytes,
+    gpus[] { uuid, memory_used_bytes, memory_free_bytes,
+             vram_used_bytes, vram_free_bytes,
              utilization_gpu_percent, temperature_c, power_draw_w }
   }
-  probes { memory, gpus } { source, state, detail }
+  probes {
+    memory { source, state, detail }
+    gpus { source, state, detail, sources[] { source, state, detail, devices } }
+  }
 }
 nodes[] { node_id, generation, adapter_kind, state }
 broker {
@@ -138,10 +143,16 @@ The node list is the agent's live registry, sorted by `node_id`. `state` is the
 selected adapter's opaque, cheap snapshot; P4 and Studio must display but not
 interpret backend-specific vocabulary. Hardware capability is separated from
 process-local occupancy: placement may use totals, while observed free RAM,
-free VRAM, activity, temperature and power are diagnostic values only. The GPU
-probe is currently `nvidia-smi`; `probes.gpus.state` distinguishes a missing
-probe from a probe failure instead of reporting either as an empty machine.
-`utilization_gpu_percent` is the NVIDIA activity sample and is not SM occupancy.
+free device memory, activity, temperature and power are diagnostic values only.
+GPU discovery aggregates provider probes instead of treating `nvidia-smi` as a
+vendor-neutral inventory: NVIDIA uses `nvidia-smi`, Linux AMD uses DRM/amdgpu
+sysfs, and Apple uses `system_profiler`. Each source independently distinguishes
+unavailable from failed. `memory_kind` distinguishes dedicated VRAM from unified
+system memory. Unified devices report `vram_* = null`; their `memory_*` values are
+the shared system pool and must not be added to host RAM as another capacity.
+Utilization, temperature, power and driver fields are nullable when the provider
+cannot report them without privilege. `utilization_gpu_percent` is an activity
+sample and is not SM occupancy.
 Inspection does not claim model readiness, protocol-wide health, or fleet
 atomicity.
 

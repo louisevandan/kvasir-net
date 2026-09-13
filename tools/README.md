@@ -10,6 +10,7 @@ into the agent.
 | --- | --- |
 | `drive/` | OUTER. Creates nodes, loads them, runs inferences and prints a verdict. Built on the same core as an agent, which is the point: nothing in the layer distinguishes the thing that asks from the things that answer. |
 | `link/` | A relay that carries frames badly on purpose — latency, jitter, width, stalls, and a cut. Used as a library by the tests and as a binary between machines. |
+| `cluster-inference/` | OUTER TypeScript policy. Persists agent hardware discovery and chooses memory tiers and contiguous model-stage cuts from measured memory plans and service profiles. |
 
 An earlier `controller/` and `scripts/` lived here and are gone. The first was
 a client for a participant the protocol no longer has; the second drove the
