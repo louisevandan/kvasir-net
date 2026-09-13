@@ -31,7 +31,10 @@ A0 전체와 A1–A5, 제품 SLO/H0–H7은 아직 미완료다.
 [native 비용 관측](../tests/reports/release-a/20260914_050400.md)을 추가하고 CPU 실제 경로 on/off·누락 변이를 검증했다.
 [현재 pin/배포 후보 검증](../tests/reports/release-a/20260914_054100.md)에서 token64건 동일성, CUDA/Metal native,
 5개 OS agent, 새 agent의 llama/HF 회귀와 native→Worker 비용 결속을 확인했다.
-다음은7-host 연결/PLAN 준비와550B의 실제 occupancy 비용·정답·계측 overhead·전송/client 지연 검증이다.
+[Fleet 사전 검사](../tests/reports/release-a/20260914_062025.md)에서7-host INSPECT와6/8 stage native PLAN을 확인했다.
+검사 도구의 CUDA 환경 전달·장치 검사와 실제 native 경로에서 도구 제거 변이2종을 검증했다. 검사 소유 프로세스·task·rule은 정리했다.
+현재 `.29`에 로그인 세션과 모델 S: 접근이 없어 stage0·1 및550B 통합 검증이 BLOCKED다.
+다음은 `.29` 접근 복구→남은 PLAN→550B 실제 occupancy 비용·정답·계측 overhead·전송/client 지연 검증이다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 
