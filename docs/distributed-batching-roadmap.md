@@ -12,6 +12,23 @@
 
 ## 0. 현재 상태 — V1.1 마감 보존, 사용자 후속 지시의 Nemotron LAN 시험 진행
 
+### 0.MiniMax M3 MSA 재검증 (2026-09-13)
+
+직전 MiniMax M3 실행의 낮은 TPS를 배치 정책 성능으로 판정하지 않는다. 사용한 Unsloth
+Q5_K_S 여덟 shard에는 MSA indexer metadata와 tensor가 모두 없었고, compat patch가
+그 artifact를 dense attention으로 실행하게 했다. capacity 4 계획의 `--kv-unified`도
+정상 MSA GGUF에서는 sparse 경로를 비활성화한다. 따라서 직전 수치는 구형 dense-fallback
+artifact와 CPU expert offload가 결합된 결과이며 MiniMax M3 MSA 성능 기준선이 아니다.
+
+어댑터 수용 경로는 MiniMax M3의 indexer 누락, flash attention 비활성, 다중 sequence와
+unified KV 조합을 fail-closed로 거부한다. 정상 Q5_K_S MSA artifact에는
+`--flash-attn on --no-kv-unified`를 사용한다. 우선 같은 LAN의 중앙 CUDA, M42 CUDA,
+Spark CUDA unified memory, Mac 두 대 Metal을 사용해 weight와 KV headroom을 재배정한다.
+Ubuntu/TUF의 각 8 GiB GPU는 한두 layer를 더 놓는 이득보다 hop 비용이 큰지 계획 수치로
+판정한 뒤 포함한다. 정상 MSA GGUF 여덟 shard 준비, 플랫폼별 동일 patch identity 빌드,
+LOAD/SESSION, 단일 정상 출력, 긴 prefill과 혼합 웨이브 순서로 실행한다. 비통합 KV용
+다중 sequence native decode 합치기는 정확성 수용 뒤의 성능 작업으로 분리한다.
+
 ### 0.Nemotron LAN 혼합 웨이브 후속 시험 (2026-09-12)
 
 사용자의 후속 적재·긴 컨텍스트·혼합 반복 웨이브 지시로 수행하는 별도 실기다. 위 V1.1의

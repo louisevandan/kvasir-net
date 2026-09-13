@@ -1,9 +1,31 @@
-# MiniMax M3 dense GGUF 분산 적재
+# MiniMax M3 구형 dense-fallback GGUF 분산 적재
 
-2026-09-13. 상태: **4-stage 적재, 단일 추론, capacity 1 및 capacity 4 웨이브 통과**.
-이 문서는 dense MiniMax M3의 메타데이터 호환 수정과 두 물리 Windows 호스트의
+2026-09-13. 상태: **구형 변환본의 4-stage 적재, 단일 추론, capacity 1 및 capacity 4 웨이브 통과**.
+이 문서는 MSA 정보가 누락된 MiniMax M3 변환본의 호환 수정과 두 물리 Windows 호스트의
 실제 적재·추론을 기록한다. capacity 4 결과는 짧은 고정 workload의 수용 증거이며,
 긴 context 및 서비스 성능 승인은 아직 아니다.
+
+## 2026-09-13 MSA 재감사와 판정 정정
+
+이 실행은 MiniMax M3의 정상 sparse attention 실행을 승인하지 않는다. 사용한 여덟
+GGUF shard의 전체 header를 다시 검사한 결과 `minimax-m3.attention.indexer.*`
+metadata가 0개이고 `indexer` tensor도 0개였다. 따라서 어댑터 옵션으로 MSA를 켤 수
+있는 artifact가 아니다. metadata만 만들어 넣어도 필요한 indexer projection/norm
+weight가 없으므로 의미가 복구되지 않는다.
+
+현재 llama.cpp의 MSA 실행 조건도 함께 감사했다. 정상 MSA GGUF라도 flash attention이
+꺼져 있거나, `n_seq_max > 1`에서 unified KV를 쓰면 dense attention으로 fallback한다.
+아래 capacity 4 실행은 `--flash-attn on --kv-unified`였으므로 정상 MSA GGUF로 교체해도
+같은 계획을 재사용할 수 없다. staged 서버의 비통합 KV 경로는 요청별 HOP 실행으로
+안전하게 fallback하므로, 첫 수용 구성은 `--flash-attn on --no-kv-unified`다. 비통합
+KV에서 여러 sequence를 한 native decode 호출로 합치는 최적화는 별도 구현·검증 대상이다.
+
+비교 대상으로 확인한 `bartowski/MiniMax-M3-GGUF` Q5_K_S 첫 shard는 indexer head 4,
+key length 128, top-k 16, block size 128, local block 1과 실제 indexer tensor 28개를
+포함한다. 같은 양자화의 여덟 shard를 NAS에 준비한 뒤 동일 LAN의 CUDA·Metal 노드로
+확대한다. 제품 어댑터는 이제 MiniMax M3에서 indexer 누락, flash attention 비활성,
+다중 sequence와 unified KV의 조합을 명시적으로 거부한다. 이 게이트의 로컬 컴파일
+시험은 통과했으며 정상 MSA GGUF의 다중 머신 실기는 아직 진행 중이다.
 
 ## 원인과 수정
 
@@ -12,7 +34,8 @@
 기존 `434ddbbc0` native는 첫 stage 초기화에서
 `GGML_ASSERT(hparams.indexer_block_size > 0)`로 종료했다. 이 GGUF는 dense M3라
 `has_msa=false`이고 indexer block size가 없다. `0015-official-minimax-m3-dense-gguf.patch`가
-해당 assert를 `has_msa` 분기 안에서만 실행하도록 고쳤다. sparse MSA 경로의 검사는 유지한다.
+해당 assert를 `has_msa` 분기 안에서만 실행하도록 고쳤다. 이 수정은 당시 구형 변환본의
+실행을 가능하게 한 호환 조치이며, 위 재감사 뒤에는 제품 수용 경로에서 거부한다.
 
 수정 커밋은 `f4b0feb62`. pristine `434ddbbc0`에 26개 patch를 순서대로 다시 적용했고
 manifest 검증 7/7을 통과했다. 최종 identity는 다음과 같다.
