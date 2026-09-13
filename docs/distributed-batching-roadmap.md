@@ -20,8 +20,10 @@ Q5_K_S 여덟 shard에는 MSA indexer metadata와 tensor가 모두 없었고, co
 정상 MSA GGUF에서는 sparse 경로를 비활성화한다. 따라서 직전 수치는 구형 dense-fallback
 artifact와 CPU expert offload가 결합된 결과이며 MiniMax M3 MSA 성능 기준선이 아니다.
 
-어댑터 수용 경로는 MiniMax M3의 indexer 누락, flash attention 비활성, 다중 sequence와
-unified KV 조합을 fail-closed로 거부한다. 정상 Q5_K_S MSA artifact에는
+451 native 호환층은 구형 dense-fallback 변경을 되돌려 indexer가 없는 GGUF를 거부하고,
+flash attention 비활성 및 다중 sequence와 unified KV 조합도 fail-closed로 거부한다.
+MSA wrapper의 두 실제 `llama_kv_cache`가 이미 가진 stage-local residency를 명시적으로
+승인한다. 정상 Q5_K_S MSA artifact에는
 `--flash-attn on --no-kv-unified`를 사용한다. 우선 같은 LAN의 중앙 CUDA, M42 CUDA,
 Spark CUDA unified memory, Mac 두 대 Metal을 사용해 weight와 KV headroom을 재배정한다.
 Ubuntu/TUF의 각 8 GiB GPU는 한두 layer를 더 놓는 이득보다 hop 비용이 큰지 계획 수치로

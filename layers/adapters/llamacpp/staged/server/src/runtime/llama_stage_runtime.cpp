@@ -90,11 +90,6 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
         return fail("llama.cpp failed to load the staged model", error);
     }
 
-    const auto minimax_rejection = p4_llama_compat::minimax_m3_attention_rejection(
-        p4_llama_compat::minimax_m3_attention_mode(model_),
-        params_.flash_attention_enabled(), params_.kv_unified(), params_.n_parallel());
-    if (!minimax_rejection.empty()) return fail(minimax_rejection.c_str(), error);
-
     auto context_params = make_stage_context_params(params_);
     ctx_ = llama_init_from_model(model_, context_params);
     if (ctx_ == nullptr) {

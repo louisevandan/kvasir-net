@@ -319,21 +319,6 @@ void real_decode_after_restore_regression() {
     std::filesystem::remove_all(root);
 }
 
-void minimax_m3_sparse_attention_policy() {
-    using Mode = p4_llama_compat::MiniMaxM3AttentionMode;
-    using p4_llama_compat::minimax_m3_attention_rejection;
-    assert(minimax_m3_attention_rejection(Mode::NotMiniMaxM3, false, true, 8).empty());
-    assert(minimax_m3_attention_rejection(
-        Mode::MissingSparseIndexer, true, false, 8).find("lacks MSA indexer") != std::string::npos);
-    assert(minimax_m3_attention_rejection(
-        Mode::SparseIndexer, false, false, 8).find("requires flash attention") != std::string::npos);
-    assert(minimax_m3_attention_rejection(
-        Mode::SparseIndexer, true, true, 8).find("--no-kv-unified") != std::string::npos);
-    assert(minimax_m3_attention_rejection(Mode::SparseIndexer, true, false, 8).empty());
-    assert(minimax_m3_attention_rejection(Mode::SparseIndexer, true, true, 1).empty());
-    std::cout << "MINIMAX_M3_MSA_POLICY_OK\n";
-}
-
 void hop_batch_rolls_back_only_new_sequences() {
     const auto * model_path = environment_value("P4_STAGED_LLAMA_MODEL");
     if (model_path == nullptr) {
@@ -435,7 +420,6 @@ int main() {
     run_stage_memory_plan_tests();
     run_ggml_reserve_size_tests();
     kv_operations_refuse_when_hop_memory_dirty();
-    minimax_m3_sparse_attention_policy();
     real_layer_device_load_gate();
     real_decode_after_restore_regression();
     hop_batch_rolls_back_only_new_sequences();
