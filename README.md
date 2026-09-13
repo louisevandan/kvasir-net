@@ -92,10 +92,12 @@ comparison path. Its queue statistics are not proof of the default event path.
 | Goal | File |
 | --- | --- |
 | 현재 목표·감사 상태·개발 순서의 단독 소유 | [docs/distributed-batching-roadmap.md](docs/distributed-batching-roadmap.md) |
+| 제품 개발 계획·첫 릴리즈 인수인계·배치·희소 모델·DFlash/DSpark 투자 판단 | [docs/external-analysis-improvement-plan.md](docs/external-analysis-improvement-plan.md) |
 | MI250·Hy3 배치 진단·구현·동시 실기 선별 | [통합 진단](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md) |
 | 시험 제약·mutation·다중 머신 강한 웨이브·정상 응답·성능 승인 | [docs/distributed-batching-verification.md](docs/distributed-batching-verification.md) |
 | P4/어댑터 층별 책임·native 경계·잦은 llama.cpp 업데이트 충격 흡수 | [docs/layer-isolation-contract.md](docs/layer-isolation-contract.md) |
 | 모든 문서의 지위·계약 소유·새 세션 읽기 순서 | [docs/document-map.md](docs/document-map.md) |
+| 마이크로 배치 제안과 실제 배처의 코드 대조·개선 후보·로컬 재현 | [docs/batching-code-review.md](docs/batching-code-review.md) |
 | What the layer is and why it is shaped this way | [docs/overview.md](docs/overview.md) |
 | Every crate, what it holds, and what is not built | [docs/implementation.md](docs/implementation.md) |
 | The wire and the message vocabulary | [docs/api.md](docs/api.md) |

@@ -10,7 +10,8 @@
 2. [분산 배치 로드맵의 현재 상태](distributed-batching-roadmap.md#current-status): 검증된 진전/미검증 작업/중단과 재개 조건. 시간순 기록의 옛 “다음”부터 실행하지 않는다.
 3. [분산 배치 검증 규약](distributed-batching-verification.md): 결정론적 반례와 실기 승인 조건.
 4. [계층 격리 계약](layer-isolation-contract.md): P4/어댑터/native/llama/backend 책임과 upstream 충격 흡수.
-5. 아래 분야 소유 문서와 실제 구현 경로: 지금 고치는 계약만 필요한 만큼 읽는다.
+5. 새 릴리즈 개발은 [단일 개발 계획](external-analysis-improvement-plan.md#fresh-session)의 인수인계와 [A 수용 계약](distributed-batching-verification.md#release-a-contract)을 읽는다.
+6. 아래 분야 소유 문서와 실제 구현 경로: 지금 고치는 계약만 필요한 만큼 읽는다.
 
 초대형 모델·다중 물리 컴퓨터·강한 요청 웨이브·정상 응답 전문이 최종 성과의 조건이다.
 작은 모델과 한 머신 실측, simulator 완주, 과거 U/P 번호를 새로운 완료 기준으로 끌어올리지 않는다.
@@ -54,6 +55,7 @@
 | [docs/adapter-restructure-plan.md](adapter-restructure-plan.md) | 역사·구 계획 |
 | [docs/api.md](api.md) | 경로별 참고·재감사 필요 |
 | [docs/architecture.md](architecture.md) | 경로별 참고·재감사 필요 |
+| [docs/batching-code-review.md](batching-code-review.md) | 2026-09-13 배치 selector·worker·native 전달 경계 코드 검토; 제안과의 차이·개선 후보·로컬 재현, 실행 순서/성능 승격 아님 |
 | [docs/constraints.md](constraints.md) | 경로별 참고·재감사 필요 |
 | [docs/continuous-inference-refactor-handoff.md](continuous-inference-refactor-handoff.md) | 역사·구 계획 |
 | [docs/deployment-adapter-contract.md](deployment-adapter-contract.md) | 분야 계약·구현과 구별 |
@@ -65,6 +67,7 @@
 | [docs/distributed-mock-test-plan.md](distributed-mock-test-plan.md) | 부분 시험 계획 |
 | [docs/document-map.md](document-map.md) | 문서 분류·권위 소유 |
 | [docs/event-protocol-v2.md](event-protocol-v2.md) | 분야 계약·구현과 구별 |
+| [docs/external-analysis-improvement-plan.md](external-analysis-improvement-plan.md) | 단일 제품 개발 계획·Release A 구현 범위/새 세션 인수인계, 배치 G1–G6·희소 상태·DFlash/DSpark 투자 근거; 실행 순서는 로드맵, 판정은 검증 규약 소유 |
 | [docs/implementation.md](implementation.md) | 경로별 참고·재감사 필요 |
 | [docs/internals.md](internals.md) | 경로별 참고·재감사 필요 |
 | [docs/kv-state-store-convention.md](kv-state-store-convention.md) | 분야 계약·구현과 구별 |

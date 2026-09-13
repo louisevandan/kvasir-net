@@ -10,7 +10,34 @@
 
 <a id="current-status"></a>
 
-## 0. 현재 상태 — V1.1 마감 보존, 사용자 후속 지시의 Nemotron LAN 시험 진행
+## 0. 현재 상태 — V1.1/M3 마감 보존, Release A 개발 계획 확정
+
+### 0.제품 개발 계획 확정: 다음 개발은 Release A (2026-09-13)
+
+[단일 개발 계획](external-analysis-improvement-plan.md)은 외부 덱·희소 분석·배치 G1–G6와
+DFlash/DSpark를 실제 코드 기준 `245d6b785c96ec770dc6041ded35457c2ef97260` 및 공식 자료로 대조했다.
+별도 개별 버전 파일이나 이전 대화는 요구하지 않는다. 계획 작성은 완료했으나 제품 개발/원격 실기는
+이번에 재개하지 않았다. 사용자가 새 세션에서 개발을 요청하면 다음 순서로 진행한다.
+
+| 우선순위 | 제품과 종료 조건 | 다음 첫 행동 |
+| --- | --- | --- |
+| 1 | **Release A: 기존 대형 모델의 지속 사용.** Nemotron 550B의 장문 정상 서비스·배치 진행·취소·회수·재수용·유한 배포 profile을 함께 출하 | [새 세션 절차](external-analysis-improvement-plan.md#fresh-session)로 HEAD/dirty를 감사하고 timer RED를 재현. [A 수용 계약](distributed-batching-verification.md#release-a-contract)의 corpus/manifest/실제 runner를 작성하며 비용·종결 경로를 분리 |
+| 조건부 | S: 선정 희소 모델 한 종의 유용한 장문 서비스 | artifact·보조 상태·합법 cut·실제 backend sparse 계산과 기존 모델 대비 과제 효용 확인. flag만 여는 릴리즈 제외 |
+| 조건부 | B: 반복 문서/코드 문맥의 재사용 대화 | 실제 유효 prefix·checkpoint bytes·cold/hit/no-hit 순절감으로 채택. 요청 소비와 eviction/오염 방지/회수를 함께 완성 |
+| 조건부 | C: target에 맞는 speculative 응답 서비스 | non-spec/MTP와 가능한 DFlash/DSpark·저비용 draft를 비교해 한 방식을 선정. hidden-state 전달·state replay·queue/fence·draft 메모리 포함. MTP만으로 조사 종료 금지 |
+
+A의 A0–A5는 구현/검증 커밋 단위이며 별도 제품 버전이 아니다. G1/G3/G4/G6는 A의 필수
+진행/관측 계약에 결속하고, G2 UBATCH 조기 전송/G5 복수 prefill fragment는 비용과 상태 계약이
+입증될 때만 후속 제품에 편성한다. 기존 OUTER 계획기·receipt 수정·physical MTP는 재구현하지 않는다.
+
+현재 배치 선택 재실행은 **44 passed / 1 failed**이며 timer 단독 재현도 실패했다. 최초 문서의
+45/45를 현재 GREEN으로 인수인계하지 않는다. [정정과 재현](batching-code-review.md#review-correction)을
+따르고, 정상 RELEASE의 관측 시점 문제인지 runtime 권한 변경인지 구분한 뒤 수정한다.
+
+S/B/C는 전부 구현할 직렬 단계가 아니다. 순서는 과제 품질/실제 재계산 비용/확정 token당 비용과
+유지 비용으로 결정한다. 어떤 후보도 다음 제품이 나와야 운영 가능한 상태로 출시하지 않는다.
+희소 모델의 상태·kernel 미승인 위에 가속만 얹지 않는다. 모든 제품은 독립 정상 서비스·회수·
+다중 컴퓨터 실기 수용을 만족해야 한다. 기존 V1.1/M3 종결과 Nemotron 실패는 그대로 보존한다.
 
 ### 0.MiniMax M3 MSA 종결 판정 (2026-09-13)
 
@@ -36,7 +63,13 @@ KV/runtime headroom을 먼저 예약한 뒤 `GDDR -> Mac unified -> GB10 unified
 순서의 최소 tier와 service-time 기반 연속 cut을 계산한다. agent INSPECT는 NVIDIA 외에도
 Linux AMD DRM과 Apple `system_profiler`를 조사하고, OUTER 수집기는 시각 이력과
 `latest.json`을 보존한다. 해당 기능의 fleet 배포·실기 수용은 다음 버전 작업이다.
-### 0.Nemotron LAN 혼합 웨이브 후속 시험 (2026-09-12)
+### 0.Nemotron LAN 혼합 웨이브 후속 시험 (2026-09-12, 09-13 로컬 상태 재확인)
+
+**2026-09-13 재확인:** 로컬 test-progress는 long arm 약 7,203초 후 완료/해제 0/0,
+deadline·관측 누락·UNLOAD busy로 종료됐다. mixed progress는 old native work remains로
+시작을 거부했다. 아래의 22:11 진행 상황과 당시 다음 행동은 이 종료 상태보다 우선하지
+않는다. 새 실기/원격 확인은 하지 않았고 원인·정상 goodput은 미판정이다. 파일 식별과
+투자 영향은 [재검토 근거](external-analysis-improvement-plan.md#2-현재-코드와-실측이-말하는-출발점)를 따른다.
 
 사용자의 후속 적재·긴 컨텍스트·혼합 반복 웨이브 지시로 수행하는 별도 실기다. 위 V1.1의
 3턴 마감·서비스 미승격 판정을 변경하거나 종료된 알고리즘 개발을 자동 재개하지 않는다.

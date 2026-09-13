@@ -771,6 +771,82 @@ GPU 표본과 RPC span은 별도 지표다. 호스트 간 시계 오차 범위 �
 H5의 최소 8 paired 반복·4 holdout쌍, 유효 TPS/신뢰구간·TTFT/ITL 상대 및 절대 SLO 조건을 그대로 적용한다.
 정상 종료·내용 품질·긴 웨이브·정산·UNLOAD·메모리 안정성을 함께 통과해야 선언 구성의 수용으로 기록한다.
 
+<a id="release-a-contract"></a>
+
+## 6.2 Release A 수용 계약 (2026-09-13 계획)
+
+제품 범위·모델·구현 진입점은 [개발 계획 Release A](external-analysis-improvement-plan.md#release-a)가 소유한다.
+아래는 **새 개발의 목표 계약**이며 구현/실기 통과 기록이 아니다. 기존 T/I/H/K 및 v1.1 회귀 조건을 대체하지 않는다.
+A- 접두사는 예정 시험 ID다. 실제 테스트 함수/runner와 ID 대응을 구현 보고서에 남긴다.
+
+### A 실행 명세와 비용 확인
+
+대상은 개발 계획의 Nemotron 550B 10-shard Q5·7물리 host/8stage·resident 8이다. 이번 릴리즈의
+수용 목표는 짧은 질의 streaming과 긴 문서의 비동기 분석이다. 다음 새 수치는 측정 예측이 아니라
+제품 사용 한도다. 임의의 향상률 대신 사용자 대기와 작업 완료에 상한을 둔다. 달성 가능성은 A-COST에서
+검사하며 불가능하면 해당 릴리즈 FAIL/범위 재심사다. 사후 수치 완화로 기존 arm을 GREEN으로 바꾸지 않는다.
+
+| 입력/운영 항목 | 실행 전 고정할 값과 판정 |
+| --- | --- |
+| 제품 context/생성 | template 적용 후 short 2–8k, medium 32k급, long 100,038 input tokens. sequence context 102,400, 출력 cap 2,048. long도 input+cap이 context 내인지 검사. 정상 응답의 `length` 중도 종료는 실패 |
+| 사용자 대기 상한 | class별 TTFT p95: short 60초, medium 300초, long 900초. 각 class ITL p95 ≤250ms. submit 이후 end-to-end deadline: short 600초, medium 1,200초, long 1,800초. queue 대기 포함 |
+| 상한의 목적 | 100k 입력은 실시간 채팅 약속이 아니라 최대 30분 비동기 작업. 250ms/token에서 cap 2,048 생성은 약 512초이며 long TTFT 예산 900초와 합쳐 deadline 내 운영 여유를 둠. 이는 모든 토큰의 간격 보장/실측 수용량을 뜻하지 않으며 요청별 deadline은 별도 검사 |
+| 초기 적재·종료 | cold LOAD/SESSION 전체 3,600초 이내, 정상 drain/idle UNLOAD는 완료된 마지막 작업 이후 30초 이내. 요청 cancel 접수/새 발행 차단 1초 이내, graceful 회수 30초 이내. native 정지가 불명하면 30초 내 failed/uncertain·quarantine으로 전환하고 정상 회수 PASS로 세지 않음 |
+| fault recovery | 격리한 epoch의 결과/새 작업을 차단. 소유 프로세스 종료와 장치/예약 해소가 확인된 뒤 새 epoch의 cold LOAD/SESSION을 3,600초 내 수행하고 정상 recovery wave 재수용. 확인 불가 host는 BLOCKED 유지; 자동 원격 KV 해소 추정 금지 |
+| admission | resident 8, pending queue 최대 64건/128MiB serialized request/6,553,600 input tokens, 요청당 serialized input 최대 2MiB. 초과 전에 명시 거부. UTF-8/tokenizer별 입력 bytes를 실제로 검사. 전체 max token/byte를 둘 다 적용 |
+| host/device/edge/output/receipt | native PLAN이 내는 소유 weight/KV/보조 state/최대 physical result/scratch와 INSPECT의 실제 available·host 공용 pool을 사용해 **각 stage와 edge의 정수 byte 상한**을 manifest에 산출. input 예산만으로 대체 금지. count×max serialized response, pending/retained/receipt의 별도 수명과 공유 payload 중복 과금을 명시. required field 누락·무한대·음수·잔여량 초과이면 실행 전 거부 |
+| 현재 관측 명세 | GPU/host 표본 주기 1초, sample coverage ≥95%, wall-clock host skew 허용 10ms 이하일 때만 host 간 세부 overlap 수치 판정. 미충족은 해당 분석 INVALID이며 0ms로 채우지 않음. 동일 host monotonic latency와 client TTFT/ITL은 별도 보존 |
+
+위 memory byte 값은 추정 고정 상수로 장비에 밀어 넣지 않는다. PLAN→manifest materialization이
+필수 구현이다. 생성된 정수 예산과 환경을 A/B 전에 봉인하며, host reserve는 OS/기존 서비스와 실제
+할당을 뺀 실행 가능량에서 명시한다. 현재 available을 넘으면 진행하지 않는다. topology/quant/cut
+선택을 마친 뒤 정책 A/B를 시작한다. config 안에 실험 중 자동으로 커지는 한도는 금지한다.
+
+### A corpus와 비교 arm
+
+1. 기존 `target/nemotron550-all-fleet/`의 100,038 input ×8·output cap 2,048·원래 deadline 및
+   `target/nemotron550-mixed-waves/`의 미시작 workload를 **원본 그대로 별도 회귀 arm**으로 보존한다.
+   250ms 기존 지연 목표와 종료 watchdog도 해당 원 spec으로 다시 판정한다. 새 제품 corpus의 통과로
+   이 실패를 대체하지 않는다. 원본 유실 시 재현 불가를 명시하고 새 arm을 같은 것으로 부르지 않는다.
+2. 제품 cold burst: short 4건, medium 2건, long 2건을 시점 0에 함께 제출한다. sustained는 8개 wave×8건,
+   매 wave 같은 길이 구성에 서로 다른 과제를 사용한다. 초기 고정 도착은 0/180/480/780/1080/1380/1680/1980초.
+   예정 시각 대비 실제 송신 오차는 최대 1초. 전체 timeout은 마지막 예정 송신+1,800초이며 요청별 deadline도 검사한다.
+   이 schedule에서 겹침이 안 생기면 H2에 따라 양 arm 전체를 같은 새 spec으로 다시 실행한다. 응답을 기다렸다가 송신하지 않는다.
+3. 공개 문서/코드와 고정 seed의 사실/표 자료를 사용한다. short는 코드 수정/형식 답변, medium은 다문서 사실 연결,
+   long은 여러 위치의 근거를 결합하는 질의로 구성한다. 무의미한 반복 padding 금지. 정확한 원문·생성기·자료 버전·
+   tokenizer/template·token IDs/hash·정답/근거·기대 stop을 tracked corpus manifest에 보존한다. fixture 의미 검토는
+   양 arm 측정 전에 끝낸다. 기존 `required_substrings`만으로 정답 판정을 대신하지 않는다.
+4. controlled 문제는 정답·형식·출처를 기계 판정하고 일반 답변은 hash-bound 의미 검토한다. 정상 서비스의 모든 요청이
+   H1을 만족해야 한다. baseline 모델도 풀지 못하는 fixture는 H1의 공통 버전화 절차로만 바꾸며 실패 원문도 보존한다.
+5. recovery는 같은 load에서 최소 3개 wave block을 drain/재수용한다. 별도 fault arm은 head/intermediate/tail의 native 지연,
+   return 중단, output backpressure, cancel 시점을 교차한다. overload는 최소 16건 동시 burst와 queue/byte/token 각 상한±1을
+   분리 시험한다. 정상 corpus에서 거절한 건을 정상 완료로 세지 않는다.
+6. 비교는 (a) 현재 소스의 spec-off 기본 정책, (b) 안전성 수정만 적용한 동일 profile, (c) 선정 batch profile을 구분한다.
+   진단 baseline이 실패하면 기능 회복만 판정하고 실패한 baseline으로 H5 개선율을 계산하지 않는다. 정상 baseline과 후보의
+   최적화 비교는 H5의 8 paired/4 holdout·품질·상대/절대 SLO·5%/신뢰구간 문턱을 모두 적용한다. 새로운 source/layout은
+   별도 arm이다. 모든 arm 결과와 선정하지 않은 이웃 후보를 남긴다.
+
+### A 반례와 실제 소비 경로
+
+| 예정 ID | 실패 반례/실행 환경 | 통과 oracle와 변이 |
+| --- | --- | --- |
+| A-RED | 현재 `phase_pacing_actual_loop_expires_decode_wait_without_another_tail_or_input` 단독/선택 묶음. 실제 Worker와 fake native의 event 순서 수집 | timer 대기 자체는 request/flight/slot/input authority를 변경하지 않음. 정상 RELEASE가 끼었다면 선형화 지점을 고정해 구분. 관련 권한을 timer가 바꾸는 변이는 실패. 기존 assert 삭제로 수용 금지 |
+| A-PLAN | 실제 OUTER→native PLAN/LOAD. available 축소, 동일 host pool 이중 사용, 불법 cut, shard/patch/backend/layout mismatch, 부분 LOAD 실패 | 예상보다 큰 allocation/다른 placement를 조용히 수용하지 않음. 이미 만든 자원까지 추적 회수. 순수 정책 6,678건 재통과는 필요 회귀지만 실기 대체 아님. 소비 경로 검사를 제거하는 변이 실패 |
+| A-BYTES | 개수는 작고 bytes 큰 결과, 정확 경계±1, 중복/늦은 응답, receipt 보존 중 queue 포화, 전송 결과 불명. core는 중립 fake adapter도 시험 | reservation 전에 native/output 효과 0. 거부 전후 모든 원장/예약/credit/output 동일. valid duplicate의 효과는 1회. expiry/eviction으로 유효 duplicate 증거 유실 금지. reserve/commit/response bound 하나 제거하는 변이 실패 |
+| A-LIFE | submit→issue 전/후, partial output, tail result 전/후 cancel; Drain 중 새 요청; head/mid/tail 단절; slot 재사용 후 옛 generation 반환 | cancel 선형화 전에 승인된 출력은 보존, 이후 새 발행 금지. stage별 정산·KV quiescence 확인 후만 reusable. 불명 상태 분리. 정상 recovery 3회에서 active owner/flight/미정산 회수 의무 0. 중복 판정용 retained receipt는 유효 수명 동안 보존하며 별도 byte 상한/H7 유지. fence/epoch/release 검사 제거 변이 실패 |
+| A-BATCH | cap 1/8, D 수요 cap 미만/동일/초과+P, 다중 session, continuous arrival, controller on/off, prepare 거부 반복. selector와 실제 Worker 모두 실행 | 선택된 session의 eligible P는 그 session에 허용된 최대 8개 승인 issue 안에 진행. 계속 eligible인 session은 활성 session 수만큼 승인 session 선택 안에 차례를 받음. 두 bound를 합성한 전체 대기도 보고. 거부는 차례/정책 예산을 소비하지 않음. D의 실시간 SLO는 A-SERVICE로 별도 검증. equal-width/atomic verify/replay 유지. reserve-P/session 회전/거부 보존 중 실제 수정 제거 변이 실패 |
+| A-COST | 같은 position/rows에서 unified KV occupancy/다른 sequence/CPU expert layout 변경. native decode→capture→return→Worker forward→client output 전체 timestamp 수집 | 실제 n_kv·phase·mask/graph·copy/network·sample·queue를 분리. 불명 시간을 compute로 몰지 않음. 실제 소비한 profile/blocked reason에 결속. n_kv 또는 return cost를 의도적으로 누락하면 비용 conformance가 실패. 계측 자체 overhead도 같은 arm으로 보고 |
+| A-SERVICE | 위 target/fleet의 cold·sustained·recovery·overload·fault 전체, 실제 CLI 사용자 명령 | H0–H7 및 위 절대 SLO·자원·회수/복구 조건. 정상 요청 전문·EOS/정상 stop·품질·정산·회수 모두 통과. missed evidence/first error/cleanup error 각각 보존. failed arm을 빼거나 강제 kill을 graceful PASS로 세지 않음 |
+
+위 round-based fairness는 **자원상 발행 가능한 작업**의 상한이다. credit/KV/native가 계속 막혀 있으면
+그 시간을 빼서 사용자 SLO를 성공으로 만들지 않는다. 실제 blocked 기간을 기록하고 deadline 또는 명시
+admission 거부로 종결한다. 한 요청 여러 fragment를 지원하지 않는 A에서도 독립 요청 간 전진을 증명한다.
+
+출하 증거에는 CLI 제출/조회/취소/drain/recovery 명령, 지원 profile과 오류, machine-readable manifest와
+요약 생성기를 포함한다. 전체 workspace 종료 결과·관련 native/backend·독립 변이·다중 host 승인을 따로
+기록한다. raw artifact는 hash/접근 경로, corpus/실행 방법/요약은 tracked 경로에 보존한다. 필수 runner가
+미구현이거나 장비가 없으면 그 gate는 미실행/BLOCKED이며 체크박스로 승인하지 않는다.
+
 ## 7. 최종 완료 체크리스트
 
 - [ ] 모든 필수 T gate 구현·실행·mutation과 실제 소비 경로 증거가 있음.
