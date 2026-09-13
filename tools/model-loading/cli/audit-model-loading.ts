@@ -8,7 +8,7 @@ import {
   recommendModelLoad,
   type LoadingPool,
   type LoadingTier,
-} from "./model-loading-policy.ts";
+} from "../src/model-loading-policy.ts";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);

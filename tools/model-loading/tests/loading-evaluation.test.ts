@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planModelLoading } from "../../../tools/cluster-inference/model-loading-planner.ts";
-import { analystJudgments, fixture } from "./loading-judgments.ts";
-import { referencePlan, comparePlan } from "./loading-reference.ts";
+import { planModelLoading } from "../src/model-loading-planner.ts";
+import { analystJudgments, fixture } from "../validation/loading-judgments.ts";
+import { referencePlan, comparePlan } from "../validation/loading-reference.ts";
 
 for (const row of analystJudgments()) {
   test(`analyst judgment: ${row.id}`, () => {

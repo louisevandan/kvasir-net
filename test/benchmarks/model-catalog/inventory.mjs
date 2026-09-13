@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { describeModel } from './gguf-header.mjs';
+import { describeModel } from '../../../tools/model-loading/src/gguf-header.mjs';
 
 const argument = (name, fallback) => {
   const index = process.argv.indexOf(name);

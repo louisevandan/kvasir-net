@@ -64,6 +64,8 @@ p4-event-drive CONFIG.json ARTIFACT.json
 The second argument is what a process calls itself, and every reply is
 addressed to it — across machines it has to be an address the others can reach.
 
+The [P4 model-loading module](tools/model-loading/README.md) owns its planner, reference evaluation, tests and local evidence.
+
 Long-lived development and releases use `main`. The [cluster experiment composer](test/benchmarks/cluster-inference/README.md)
 combines model templates, cluster placement, runtime identities, policies and workloads without model-specific branches.
 

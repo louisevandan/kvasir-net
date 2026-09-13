@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fleetInventory, machineInventory } from "../../../tools/cluster-inference/inventory.ts";
+import { fleetInventory, machineInventory } from "../src/inventory.ts";
 
 const snapshot = {
   schema: 1,

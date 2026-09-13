@@ -7,7 +7,7 @@ import {
   type AgentSnapshot,
   type AgentTarget,
   type MachineInventory,
-} from "./inventory.ts";
+} from "../src/inventory.ts";
 
 function argument(name: string, fallback: string | null = null): string | null {
   const index = process.argv.indexOf(name);
@@ -22,7 +22,7 @@ function atomicJson(file: string, value: unknown): void {
 }
 
 const agentsFile = argument("--agents");
-const outDir = argument("--out-dir", path.join(process.cwd(), "target", "fleet-inventory"))!;
+const outDir = argument("--out-dir", path.resolve(import.meta.dirname, "../target/fleet-inventory"))!;
 const python = argument("--python", "python")!;
 const probe = argument(
   "--probe",

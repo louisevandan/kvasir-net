@@ -5,6 +5,7 @@
   "scripts": {
     "docs-lint": "node tools/scripts/docs-lint.mjs",
     "test:docs-lint": "node --test tools/scripts/docs-lint.test.mjs",
-    "test:placement-policy": "node --test test/benchmarks/cluster-inference/*.test.ts"
+    "test:model-loading": "node --test tools/model-loading/tests/*.test.ts",
+    "test:placement-policy": "npm run test:model-loading"
   }
 }

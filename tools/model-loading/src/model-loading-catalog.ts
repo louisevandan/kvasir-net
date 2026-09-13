@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { catalogGgufModels } from "./model-loading-policy.ts";
-import { readGgufHeader } from "../../test/benchmarks/model-catalog/gguf-header.mjs";
+import { readGgufHeader } from "./gguf-header.mjs";
 import type { ModelLoadingDefinition } from "./model-loading-planner.ts";
 
 /** Storage geometry only: GGUF extents are not native PLAN allocations or legal-cut evidence. */

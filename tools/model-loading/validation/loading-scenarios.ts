@@ -1,4 +1,4 @@
-import type { MachineSpecification, ModelLoadingDefinition, ModelLoadingPlannerInput } from "../../../tools/cluster-inference/model-loading-planner.ts";
+import type { MachineSpecification, ModelLoadingDefinition, ModelLoadingPlannerInput } from "../src/model-loading-planner.ts";
 
 const GIB = 1024 ** 3;
 // Deliberately hypothetical capacity classes, not claims about measured fleet speed.

@@ -10,9 +10,9 @@ into the agent.
 | --- | --- |
 | `drive/` | OUTER. Creates nodes, loads them, runs inferences and prints a verdict. Built on the same core as an agent, which is the point: nothing in the layer distinguishes the thing that asks from the things that answer. |
 | `link/` | A relay that carries frames badly on purpose — latency, jitter, width, stalls, and a cut. Used as a library by the tests and as a binary between machines. |
-| `cluster-inference/` | OUTER TypeScript policy. Persists agent hardware discovery and chooses memory tiers and contiguous model-stage cuts from measured memory plans and service profiles. |
+| [model-loading/](model-loading/README.md) | P4 OUTER model-loading module: inventory, typed planner, CLI, independent reference, tests and local evidence. |
 
-`cluster-inference/collect-inventory.ts` sends an ordinary agent INSPECT to every
+`model-loading/cli/collect-inventory.ts` sends an ordinary agent INSPECT to every
 configured address and atomically writes per-machine timestamped JSON plus
 `latest.json`. A failed required machine remains in the fleet failure list and
 makes the command fail after the partial evidence has been saved. The placement

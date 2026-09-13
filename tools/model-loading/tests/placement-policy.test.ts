@@ -5,7 +5,7 @@ import {
   type MemoryTier,
   type PlacementDevice,
   type PlacementRequest,
-} from "../../../tools/cluster-inference/placement-policy.ts";
+} from "../src/placement-policy.ts";
 
 function device(id: string, tier: MemoryTier, capacity: number, service: number,
   order: number, machineId = id, reserve = 0): PlacementDevice {

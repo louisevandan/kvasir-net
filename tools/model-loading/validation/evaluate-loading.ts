@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
-import { readLoadingCatalog } from "../../../tools/cluster-inference/model-loading-catalog.ts";
+import { readLoadingCatalog } from "../src/model-loading-catalog.ts";
 import { loadingScenarios, STUDY_WORKLOADS, scenarioInput } from "./loading-scenarios.ts";
 import { referencePlan, comparePlan } from "./loading-reference.ts";
 import { analystJudgments } from "./loading-judgments.ts";
@@ -22,7 +22,7 @@ const referenceFile = path.join(out, "reference-data.jsonl");
 const save = (file: string, value: unknown) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { flag: "wx" });
 const sourceRoot = path.resolve(import.meta.dirname, "../../..");
 const sourceHashes = (root: string, names: string[]) => Object.fromEntries(names.map((name) => [name, fileHash(path.join(root, name))]));
-const referenceSources = ["test/benchmarks/cluster-inference/loading-reference.ts", "test/benchmarks/cluster-inference/loading-judgments.ts", "test/benchmarks/cluster-inference/loading-scenarios.ts"];
+const referenceSources = ["tools/model-loading/validation/loading-reference.ts", "tools/model-loading/validation/loading-judgments.ts", "tools/model-loading/validation/loading-scenarios.ts"];
 
 if (mode === "prepare") {
   fs.mkdirSync(out, { recursive: true });
@@ -68,7 +68,9 @@ if (mode === "prepare") {
     const refs = fs.readFileSync(referenceFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
     if (refs.length !== rows.length || seal.rows !== rows.length) throw new Error("reference coverage mismatch");
     const policyRoot = path.resolve(option("--policy-root", sourceRoot));
-    const { planModelLoading } = await import(pathToFileURL(path.join(policyRoot, "tools/cluster-inference/model-loading-planner.ts")).href);
+    const policyDirectory = option("--policy-dir", "tools/model-loading/src");
+    const policySources = ["model-loading-planner.ts", "placement-policy.ts", "model-loading-policy.ts"].map((name) => path.join(policyDirectory, name).replaceAll("\\", "/"));
+    const { planModelLoading } = await import(pathToFileURL(path.join(policyRoot, policySources[0])).href);
     const label = option("--label", "candidate");
     if (!/^[a-z0-9-]+$/.test(label)) throw new Error("invalid label");
     const outputFile = path.join(out, `${label}-policy-data.jsonl`);
@@ -103,7 +105,7 @@ if (mode === "prepare") {
       feasibleQualityDenominator: refs.filter((r) => r.status === "feasible").length,
       exactObjectiveMatches: categories.optimal ?? 0, planningTimeMs: planTime,
       studySha256: seal.studySha256, referenceSha256: seal.referenceSha256, policyDataSha256: fileHash(outputFile),
-      policySources: sourceHashes(policyRoot, ["tools/cluster-inference/model-loading-planner.ts", "tools/cluster-inference/placement-policy.ts", "tools/cluster-inference/model-loading-policy.ts"]),
+      policySources: sourceHashes(policyRoot, policySources),
       groups, mismatches };
     save(path.join(out, `${label}-summary.json`), summary);
     console.log(JSON.stringify({ label, cases: summary.cases, categories, agreements: summary.agreements, exactObjectiveMatches: summary.exactObjectiveMatches,

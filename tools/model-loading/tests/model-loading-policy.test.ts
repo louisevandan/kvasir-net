@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { catalogGgufModels, loadingPoolsFromFleetSnapshot, recommendModelLoad, type LoadingPool } from "../../../tools/cluster-inference/model-loading-policy.ts";
+import { catalogGgufModels, loadingPoolsFromFleetSnapshot, recommendModelLoad, type LoadingPool } from "../src/model-loading-policy.ts";
 
 const GIB = 1024 ** 3;
 const pool = (id: string, tier: LoadingPool["tier"], usableGiB: number, order: number): LoadingPool => ({

@@ -31,7 +31,7 @@ compat patch 0029는 MSA wrapper에 static flag만 추가해 실제 virtual resi
 누락, flash attention 비활성, 다중 sequence와 unified KV 조합의 명시적 거부는 유지한다.
 이 버전에서는 M3 stage residency를 더 수정하거나 재시험하지 않는다.
 
-모델 배치 정책과 사양 수집은 M3 결과와 독립적으로 유지한다. `tools/cluster-inference`는
+모델 배치 정책과 사양 수집은 M3 결과와 독립적으로 유지한다. `tools/model-loading`는
 KV/runtime headroom을 먼저 예약한 뒤 `GDDR -> Mac unified -> GB10 unified -> x86 DDR`
 순서의 최소 tier와 service-time 기반 연속 cut을 계산한다. agent INSPECT는 NVIDIA 외에도
 Linux AMD DRM과 Apple `system_profiler`를 조사하고, OUTER 수집기는 시각 이력과

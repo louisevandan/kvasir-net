@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planModelLoading, type MachineSpecification, type ModelLoadingPlannerInput } from "../../../tools/cluster-inference/model-loading-planner.ts";
+import { planModelLoading, type MachineSpecification, type ModelLoadingPlannerInput } from "../index.ts";
 
 const machine = (id: string, memory: number, service: number): [MachineSpecification, { poolId: string; layerServiceMs: number[]; fixedServiceMs: number; hopServiceMs: number }] => [{
   id, cpu: { architecture: "test", logicalCores: 8 },

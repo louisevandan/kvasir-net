@@ -143,6 +143,7 @@
 | [test/benchmarks/p4-4node/README.md](../test/benchmarks/p4-4node/README.md) | 개발 하네스 안내 |
 | [test/benchmarks/model-catalog/README.md](../test/benchmarks/model-catalog/README.md) | OUTER 모델 적재 파라미터와 메모리 실측 카탈로그 |
 | [test/benchmarks/cluster-inference/README.md](../test/benchmarks/cluster-inference/README.md) | main 공통 실험 구성기·모델/클러스터/runtime/정책/워크로드 분리 |
+| [tools/model-loading/README.md](../tools/model-loading/README.md) | P4 모델 로딩 함수·참조/정책 평가·시험·로컬 증거 |
 | [tools/README.md](../tools/README.md) | 구성요소 안내 |
 
 ## 4. 유지 규칙

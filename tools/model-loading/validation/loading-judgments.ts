@@ -1,4 +1,4 @@
-import type { MachineSpecification, ModelLoadingPlannerInput } from "../../../tools/cluster-inference/model-loading-planner.ts";
+import type { MachineSpecification, ModelLoadingPlannerInput } from "../src/model-loading-planner.ts";
 
 export function fixture(capacities: number[], times: number[][], weights: number[]): ModelLoadingPlannerInput {
   const machines: MachineSpecification[] = capacities.map((capacity, i) => ({ id: `h${i}`,

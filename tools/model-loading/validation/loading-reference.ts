@@ -1,4 +1,4 @@
-import type { ModelLoadingPlannerInput } from "../../../tools/cluster-inference/model-loading-planner.ts";
+import type { ModelLoadingPlannerInput } from "../src/model-loading-planner.ts";
 
 // Independent analyst specification. No production normaliser, admission or solver is called.
 const TIERS = ["gddr", "mac_unified", "gb10_unified", "ddr_offload"];

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { planPlacement, type PlacementRequest } from "./placement-policy.ts";
+import { planPlacement, type PlacementRequest } from "../src/placement-policy.ts";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
