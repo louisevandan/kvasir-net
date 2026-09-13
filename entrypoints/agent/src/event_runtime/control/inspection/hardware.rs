@@ -9,6 +9,7 @@ const MIB: u64 = 1024 * 1024;
 #[derive(Debug, Serialize)]
 struct GpuCapability {
     index: u32,
+    provider_index: Option<u32>,
     uuid: String,
     vendor: String,
     name: String,
@@ -16,6 +17,8 @@ struct GpuCapability {
     memory_kind: &'static str,
     pci_bus_id: Option<String>,
     driver_version: Option<String>,
+    architecture: Option<String>,
+    compute_units: Option<u32>,
     memory_total_bytes: Option<u64>,
     // Kept for schema-1 readers. Unified-memory devices deliberately report
     // null here instead of presenting system RAM as dedicated VRAM.
@@ -198,7 +201,7 @@ fn gpu_probes() -> Vec<GpuProbe> {
 fn nvidia_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
     let output = Command::new("nvidia-smi")
         .args([
-            "--query-gpu=index,uuid,name,pci.bus_id,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,driver_version",
+            "--query-gpu=index,uuid,name,pci.bus_id,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,power.limit,driver_version,compute_cap",
             "--format=csv,noheader,nounits",
         ])
         .output()
@@ -211,50 +214,86 @@ fn nvidia_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
             detail.chars().take(512).collect()
         }));
     }
-    parse_nvidia_csv(&String::from_utf8_lossy(&output.stdout)).map_err(ProbeFailure::Error)
+    let unified_memory = memory_sample().ok();
+    parse_nvidia_csv(
+        &String::from_utf8_lossy(&output.stdout),
+        unified_memory.as_ref(),
+    )
+    .map_err(ProbeFailure::Error)
 }
 
-fn parse_nvidia_csv(csv: &str) -> Result<Vec<GpuSample>, String> {
+fn parse_nvidia_csv(
+    csv: &str,
+    unified_memory: Option<&MemorySample>,
+) -> Result<Vec<GpuSample>, String> {
     csv.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .enumerate()
         .map(|(line_index, line)| {
             let columns: Vec<_> = line.split(',').map(str::trim).collect();
-            if columns.len() != 11 {
+            if columns.len() != 13 {
                 return Err(format!(
-                    "nvidia-smi row {} has {} columns, expected 11",
+                    "nvidia-smi row {} has {} columns, expected 13",
                     line_index + 1,
                     columns.len()
                 ));
             }
             let index = parse_required::<u32>(columns[0], "index", line_index)?;
             let uuid = required_text(columns[1], "uuid", line_index)?;
-            let total = parse_mib(columns[4], "memory.total", line_index)?;
-            let used = parse_mib(columns[5], "memory.used", line_index)?;
-            let free = parse_mib(columns[6], "memory.free", line_index)?;
+            let name = required_text(columns[2], "name", line_index)?;
+            let is_gb10 = name.to_ascii_lowercase().contains("gb10");
+            let (memory_kind, total, used, free) = if is_gb10
+                && is_missing(columns[4])
+                && is_missing(columns[5])
+                && is_missing(columns[6])
+            {
+                let memory = unified_memory.ok_or_else(|| {
+                    format!(
+                        "nvidia-smi row {} reports unified memory but OS memory is unavailable",
+                        line_index + 1
+                    )
+                })?;
+                (
+                    "unified",
+                    memory.total_bytes,
+                    memory.total_bytes.saturating_sub(memory.available_bytes),
+                    memory.available_bytes,
+                )
+            } else {
+                (
+                    "dedicated",
+                    parse_mib(columns[4], "memory.total", line_index)?,
+                    parse_mib(columns[5], "memory.used", line_index)?,
+                    parse_mib(columns[6], "memory.free", line_index)?,
+                )
+            };
             Ok(GpuSample {
                 capability: GpuCapability {
                     index,
+                    provider_index: Some(index),
                     uuid: uuid.clone(),
                     vendor: "NVIDIA".into(),
-                    name: required_text(columns[2], "name", line_index)?,
+                    name,
                     backend: "cuda".into(),
-                    memory_kind: "dedicated",
+                    memory_kind,
                     pci_bus_id: Some(required_text(columns[3], "pci.bus_id", line_index)?),
-                    driver_version: Some(required_text(columns[10], "driver_version", line_index)?),
+                    driver_version: Some(required_text(columns[11], "driver_version", line_index)?),
+                    architecture: parse_optional::<String>(columns[12])
+                        .map(|value| format!("compute_{value}")),
+                    compute_units: None,
                     memory_total_bytes: Some(total),
-                    vram_total_bytes: Some(total),
+                    vram_total_bytes: (memory_kind == "dedicated").then_some(total),
                 },
                 occupancy: GpuOccupancy {
                     uuid,
                     memory_used_bytes: Some(used),
                     memory_free_bytes: Some(free),
-                    vram_used_bytes: Some(used),
-                    vram_free_bytes: Some(free),
+                    vram_used_bytes: (memory_kind == "dedicated").then_some(used),
+                    vram_free_bytes: (memory_kind == "dedicated").then_some(free),
                     utilization_gpu_percent: parse_optional(columns[7]),
                     temperature_c: parse_optional(columns[8]),
-                    power_draw_w: parse_optional(columns[9]),
+                    power_draw_w: plausible_power_draw(columns[9], columns[10]),
                 },
             })
         })
@@ -292,6 +331,13 @@ fn parse_optional<T: std::str::FromStr>(value: &str) -> Option<T> {
     (!is_missing(value)).then(|| value.parse().ok()).flatten()
 }
 
+fn plausible_power_draw(draw: &str, limit: &str) -> Option<f64> {
+    let draw = parse_optional::<f64>(draw)?;
+    let limit = parse_optional::<f64>(limit)?;
+    (draw.is_finite() && draw >= 0.0 && limit.is_finite() && limit > 0.0 && draw <= limit * 1.2)
+        .then_some(draw)
+}
+
 fn is_missing(value: &str) -> bool {
     value.is_empty() || value.eq_ignore_ascii_case("n/a") || value == "[N/A]"
 }
@@ -304,6 +350,7 @@ fn linux_amd_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
     let entries = std::fs::read_dir(drm).map_err(|error| {
         ProbeFailure::Unavailable(format!("cannot read {}: {error}", drm.display()))
     })?;
+    let kfd = linux_amd_kfd_capabilities();
     let mut samples = Vec::new();
     for entry in entries.flatten() {
         let file_name = entry.file_name();
@@ -323,6 +370,10 @@ fn linux_amd_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
             .as_deref()
             .and_then(|path| path.file_name())
             .map(|value| value.to_string_lossy().into_owned());
+        let kfd_capability = pci_bus_id
+            .as_deref()
+            .and_then(pci_location_id)
+            .and_then(|location| kfd.get(&location));
         let unique_id = read_trimmed(device.join("unique_id"));
         let uuid = format!(
             "AMD-{}",
@@ -348,6 +399,7 @@ fn linux_amd_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
         samples.push(GpuSample {
             capability: GpuCapability {
                 index,
+                provider_index: Some(index),
                 uuid: uuid.clone(),
                 vendor: "AMD".into(),
                 name,
@@ -355,6 +407,8 @@ fn linux_amd_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
                 memory_kind: "dedicated",
                 pci_bus_id,
                 driver_version,
+                architecture: kfd_capability.map(|value| value.0.clone()),
+                compute_units: kfd_capability.map(|value| value.1),
                 memory_total_bytes: total,
                 vram_total_bytes: total,
             },
@@ -375,9 +429,72 @@ fn linux_amd_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
             "no AMD DRM device with vendor 0x1002".into(),
         ))
     } else {
-        samples.sort_by_key(|sample| sample.capability.index);
+        samples.sort_by(|left, right| {
+            left.capability
+                .pci_bus_id
+                .cmp(&right.capability.pci_bus_id)
+                .then(left.capability.index.cmp(&right.capability.index))
+        });
+        // DRM card numbers include display and non-ROCm devices. Preserve the
+        // provider number separately and expose the dense HIP LOAD ordinal.
+        for (runtime_index, sample) in samples.iter_mut().enumerate() {
+            sample.capability.index = runtime_index as u32;
+        }
         Ok(samples)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_amd_kfd_capabilities() -> std::collections::HashMap<u64, (String, u32)> {
+    use std::path::Path;
+
+    let mut capabilities = std::collections::HashMap::new();
+    let Ok(nodes) = std::fs::read_dir(Path::new("/sys/class/kfd/kfd/topology/nodes")) else {
+        return capabilities;
+    };
+    for node in nodes.flatten() {
+        let Some(properties) = read_trimmed(node.path().join("properties")) else {
+            continue;
+        };
+        let fields: std::collections::HashMap<_, _> = properties
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .collect();
+        let parsed = || {
+            let location = fields.get("location_id")?.parse::<u64>().ok()?;
+            let target = fields.get("gfx_target_version")?.parse::<u32>().ok()?;
+            let simd_count = fields.get("simd_count")?.parse::<u32>().ok()?;
+            let simd_per_cu = fields.get("simd_per_cu")?.parse::<u32>().ok()?;
+            if location == 0 || simd_count == 0 || simd_per_cu == 0 {
+                return None;
+            }
+            Some((
+                location,
+                (format_gfx_target(target)?, simd_count / simd_per_cu),
+            ))
+        };
+        if let Some((location, capability)) = parsed() {
+            capabilities.insert(location, capability);
+        }
+    }
+    capabilities
+}
+
+fn pci_location_id(pci_bus_id: &str) -> Option<u64> {
+    let mut sections = pci_bus_id.split(':');
+    let _domain = sections.next()?;
+    let bus = u64::from_str_radix(sections.next()?, 16).ok()?;
+    let mut device_function = sections.next()?.split('.');
+    let device = u64::from_str_radix(device_function.next()?, 16).ok()?;
+    let function = u64::from_str_radix(device_function.next()?, 16).ok()?;
+    Some((bus << 8) | (device << 3) | function)
+}
+
+fn format_gfx_target(target: u32) -> Option<String> {
+    let major = target / 10_000;
+    let minor = (target % 10_000) / 100;
+    let stepping = target % 100;
+    (major > 0).then(|| format!("gfx{major}{minor:x}{stepping:x}"))
 }
 
 #[cfg(target_os = "linux")]
@@ -453,6 +570,7 @@ fn apple_gpu_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
         samples.push(GpuSample {
             capability: GpuCapability {
                 index: index as u32,
+                provider_index: Some(index as u32),
                 uuid: uuid.clone(),
                 vendor: "Apple".into(),
                 name,
@@ -463,6 +581,15 @@ fn apple_gpu_samples() -> Result<Vec<GpuSample>, ProbeFailure> {
                     .get("spdisplays_metal")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
+                architecture: display
+                    .get("spdisplays_mtlgpufamilysupport")
+                    .or_else(|| display.get("spdisplays_metal"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                compute_units: display
+                    .get("sppci_cores")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse().ok()),
                 memory_total_bytes: memory.as_ref().map(|sample| sample.total_bytes),
                 vram_total_bytes: None,
             },
@@ -614,7 +741,8 @@ mod tests {
     #[test]
     fn parses_structured_nvidia_capability_and_occupancy() {
         let samples = parse_nvidia_csv(
-            "0, GPU-a, NVIDIA GeForce RTX 3090, 00000000:21:00.0, 24576, 1024, 23552, 73, 58, 312.50, 596.21\n",
+            "0, GPU-a, NVIDIA GeForce RTX 3090, 00000000:21:00.0, 24576, 1024, 23552, 73, 58, 312.50, 350.00, 596.21, 8.6\n",
+            None,
         )
         .expect("valid sample");
         assert_eq!(samples.len(), 1);
@@ -632,8 +760,47 @@ mod tests {
 
     #[test]
     fn rejects_ambiguous_raw_gpu_rows() {
-        let error = parse_nvidia_csv("GPU-a, RTX 3090").expect_err("invalid sample");
-        assert!(error.contains("expected 11"));
+        let error = parse_nvidia_csv("GPU-a, RTX 3090", None).expect_err("invalid sample");
+        assert!(error.contains("expected 13"));
+    }
+
+    #[test]
+    fn reports_gb10_as_unified_memory_when_nvidia_smi_omits_vram() {
+        let memory = MemorySample {
+            total_bytes: 128 * 1024 * MIB,
+            available_bytes: 120 * 1024 * MIB,
+        };
+        let samples = parse_nvidia_csv(
+            "0, GPU-gb10, NVIDIA GB10, 0000000F:01:00.0, [N/A], [N/A], [N/A], 0, N/A, N/A, N/A, 580.159.03, 12.1\n",
+            Some(&memory),
+        )
+        .expect("GB10 unified memory sample");
+        assert_eq!(samples[0].capability.memory_kind, "unified");
+        assert_eq!(
+            samples[0].capability.memory_total_bytes,
+            Some(128 * 1024 * MIB)
+        );
+        assert_eq!(
+            samples[0].occupancy.memory_free_bytes,
+            Some(120 * 1024 * MIB)
+        );
+        assert!(samples[0].capability.vram_total_bytes.is_none());
+        assert!(samples[0].occupancy.vram_free_bytes.is_none());
+    }
+
+    #[test]
+    fn discards_power_without_a_plausible_provider_limit() {
+        assert_eq!(plausible_power_draw("590.01", "N/A"), None);
+        assert_eq!(plausible_power_draw("590.01", "140.00"), None);
+        assert_eq!(plausible_power_draw("120.00", "140.00"), Some(120.0));
+    }
+
+    #[test]
+    fn maps_kfd_identity_to_rocm_architecture_and_pci_location() {
+        assert_eq!(pci_location_id("0000:32:00.0"), Some(0x3200));
+        assert_eq!(pci_location_id("0000:8e:00.1"), Some(0x8e01));
+        assert_eq!(format_gfx_target(90_010).as_deref(), Some("gfx90a"));
+        assert_eq!(format_gfx_target(110_000).as_deref(), Some("gfx1100"));
     }
 
     #[test]
@@ -641,6 +808,7 @@ mod tests {
         let sample = GpuSample {
             capability: GpuCapability {
                 index: 0,
+                provider_index: Some(0),
                 uuid: "APPLE-0".into(),
                 vendor: "Apple".into(),
                 name: "Apple M4 Pro".into(),
@@ -648,6 +816,8 @@ mod tests {
                 memory_kind: "unified",
                 pci_bus_id: None,
                 driver_version: Some("Metal 4".into()),
+                architecture: Some("Metal 4".into()),
+                compute_units: Some(20),
                 memory_total_bytes: Some(64 * 1024 * MIB),
                 vram_total_bytes: None,
             },

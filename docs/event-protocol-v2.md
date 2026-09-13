@@ -112,8 +112,9 @@ machine {
     os, arch
     cpu { physical_cores, logical_cores }
     memory { total_bytes }
-    gpus[] { index, uuid, vendor, name, backend, memory_kind,
-             pci_bus_id, driver_version, memory_total_bytes, vram_total_bytes }
+    gpus[] { index, provider_index, uuid, vendor, name, backend, memory_kind,
+             pci_bus_id, driver_version, architecture, compute_units,
+             memory_total_bytes, vram_total_bytes }
     adapters[]
   }
   occupancy {
@@ -150,11 +151,22 @@ sysfs, and Apple uses `system_profiler`. Each source independently distinguishes
 unavailable from failed. `memory_kind` distinguishes dedicated VRAM from unified
 system memory. Unified devices report `vram_* = null`; their `memory_*` values are
 the shared system pool and must not be added to host RAM as another capacity.
+`index` is the dense backend LOAD ordinal. `provider_index` preserves a provider
+identifier when it differs, such as Linux DRM `cardN`. NVIDIA GB10 devices whose
+driver deliberately reports VRAM as `N/A` use the OS shared-memory observation
+and remain `memory_kind=unified`. `architecture` and `compute_units` are nullable
+provider facts; they are never inferred from marketing throughput tables.
 Utilization, temperature, power and driver fields are nullable when the provider
 cannot report them without privilege. `utilization_gpu_percent` is an activity
-sample and is not SM occupancy.
+sample and is not SM occupancy. NVIDIA power is retained only when the same
+sample supplies a positive power limit and the draw is within a small telemetry
+tolerance of that limit.
 Inspection does not claim model readiness, protocol-wide health, or fleet
-atomicity.
+atomicity. It supplies capacity and backend identity for placement admission;
+the placement policy still needs exact model PLAN bytes, usable-memory reserves,
+per-layer service calibration, selected-link latency/bandwidth, model-file
+reachability and operator exclusions. A hardware snapshot alone cannot approve
+an optimal distributed cut.
 
 `broker.receipts` is an additive, backend-neutral schema-1 observation. `indexed`
 means exact duplicate receipts in the count window; `retired` means evicted from

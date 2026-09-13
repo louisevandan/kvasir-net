@@ -1905,3 +1905,39 @@ The default agent was started with only `p4-agent 127.0.0.1:29019`; it received 
 The two-GPU Pipeline E2E started the agent with only `p4-agent 127.0.0.1:29202`, sent the same control envelope with its Adapter endpoint and opaque Pipeline `adapter_request`, then completed `LOAD`, `DRAFT_REPORT`, `HEALTH ready=true`, 16 token events, and `DONE`. Its observed TTFT was 357.091 ms; hidden-state traffic was 62 frames / 201,128 B, sampled-token return traffic was 16 frames / 200 B, and host-observed transfer rate was 44,675,255.44 B/s.
 
 This proves that concrete inference topology is protocol-supplied runtime state, not agent startup configuration.
+## 2026-09-13: cross-platform agent hardware inventory audit
+
+Current `p4-agent` inspection was rebuilt and queried on all nine owned machines:
+the central Windows host, the 3090x2 host, TUF, Spark GB10, Ubuntu laptop, two M4
+Pro Mac minis, and both eight-device MI250 servers. The first pass exposed three
+placement-relevant defects: Spark returned no GPU because `nvidia-smi` reports
+GB10 memory as `N/A`; AMD exposed DRM card numbers 1--8 as if they were HIP LOAD
+ordinals; and Metal omitted its reported GPU core count.
+
+The candidate fixes those defects and preserves the provider number separately.
+The second agent-protocol pass returned all 26 accelerators: central 3090+4080,
+3090x2, TUF 4070 Laptop, Spark GB10, Ubuntu 2070 Max-Q, two M4 Pro GPUs, and
+sixteen MI250 MCM devices. Spark reports one CUDA `compute_12.1` device with a
+121.6 GiB unified pool; each M4 Pro reports a 64.0 GiB unified pool and 20 GPU
+cores; each MI250 server reports dense LOAD ordinals 0--7 and eight 64.0 GiB
+dedicated pools, `gfx90a`, and 104 compute units while retaining the non-dense
+DRM provider identifiers. The MI250 PCI-ordered mapping was independently
+matched against `rocm-smi` card0--7 and KFD topology identity.
+TUF's provider value of 590.01 W had no power limit and is discarded rather than
+stored as trustworthy occupancy.
+
+The collected capacity is sufficient to build a conservative memory-feasibility
+candidate after applying operator exclusions (the central 4080 is excluded).
+It is not sufficient by itself to choose or approve a performance-optimal model
+split. Exact PLAN/actual layer bytes, per-device service calibration for the model
+and workload, link measurements, model-file reachability, and safety reserves
+remain required inputs of the OUTER placement policy. Thus the result is
+**capacity inventory GREEN, optimal-placement input INCOMPLETE**, not a model
+load or inference acceptance result.
+
+Validation ran six focused hardware tests, the complete locked workspace with
+1,449 passes, zero failures and seven hardware-dependent ignored tests, nine placement-policy
+tests, and docs-lint over 97 files. Removing the GB10 unified-memory branch in an
+independent detached worktree made its regression fail with `invalid
+memory.total`. The final protocol snapshot had zero missing required fields; its
+SHA-256 was `a043ec9d800487b002fd5989c367d9a029a7640b692428c7a8c667dc96b93260`.
