@@ -45,6 +45,9 @@ SSH와 시험용 S4U agent의 접근 실패를 설치 앱의 상태로 일반화
 다음은7host/8stage의550B 실제 LOAD·정상 응답·occupancy 비용·계측 overhead·전송/client 지연 검증이다.
 실행 직전 Spark에 별도 Qwen122B 시연의 loading node가 생겨 가용44.20GB/필요84.05GB로 동시 적재가 불가했다.
 해당 시연의 자원 회수 후 현재 점유를 다시 확인해 재개한다. 설치 앱/NAS 접근 차단은 아니다.
+[2026-09-15 fleet 회수](../tests/reports/release-a/20260915_005456.md)에서 사용자 지시로 기존 노드를 정리했다.
+등록7/7 INSPECT nodes=[], 물리9대 P4 native0개다. 실패한 UNLOAD와 cold recovery는 별도 보존한다.
+현재 HEAD의 agent 재빌드 후 같은550B 실기로 진행한다. 과거 요청 정산·서비스 수용을 소급 승인하지 않는다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 
