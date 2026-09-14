@@ -1,0 +1,32 @@
+{
+  "schema": "qwen3.5-0.8b-plan-v1",
+  "model_id": "Qwen/Qwen3.5-0.8B",
+  "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+  "dtype": "bfloat16",
+  "quantization": "none",
+  "limits": {
+    "context": 2048,
+    "max_requests": 8,
+    "max_new_tokens": 64
+  },
+  "nodes": [
+    {
+      "node_id": "node-0",
+      "host": "local",
+      "device": "cuda:0",
+      "layers": [
+        0,
+        12
+      ]
+    },
+    {
+      "node_id": "node-1",
+      "host": "local",
+      "device": "cuda:1",
+      "layers": [
+        12,
+        24
+      ]
+    }
+  ]
+}

@@ -10,9 +10,14 @@
 
 <a id="current-status"></a>
 
-2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../../p4hfadapter/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
+2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 
-## 0. 현재 상태 — 외부 HF 어댑터 수용 완료, Release A 진행
+## 0. 현재 상태 — HF 내부 이관 진행, Release A 기존 상태 보존
+
+### 0.HF 이관 (2026-09-14)
+
+사용자가 독립 HF 프로젝트의 P4 내부 이관과 최종 제거를 승인했다. 현재 검증 중이다.
+[이관 계약·진행](../layers/adapters/hf/docs/migration/README.md)을 따른다. 기존 Release A의 실기/점유 상태와 실패 증거는 유지한다.
 
 ### 0.A Release A 착수 (2026-09-14)
 
@@ -52,7 +57,7 @@ SSH와 시험용 S4U agent의 접근 실패를 설치 앱의 상태로 일반화
 4. P4 전체 workspace on/off 각각1450 passed/0 failed/7 ignored다. ignored와 외부 HF 시험은 별도 집계한다.
 5. 다음 첫 행동은 Release A 착수 시 HEAD/dirty와 기존 대형 모델 실패 증거를 감사하는 것이다. 이번 §0 요청으로 A를 자동 실행하지 않는다.
 
-P4는 `hf-transformers` 하나만 알고 모델별 Python과 Rust 구상 어댑터는 외부 저장소가 소유한다.
+P4는 `hf-transformers` 하나만 알고 모델별 Python과 Rust 구상 어댑터는 `layers/adapters/hf`가 소유한다.
 INSPECT와 생성은 동일 factory 목록을 소비한다. 작은 Qwen 통합은 기존 H0–H7 목표를 바꾸지 않는다.
 기존 llama timer 시험은 이번 전체 실행에서 PASS였지만 timer 구현을 바꾸지 않았으므로 과거 RED의
 일반적 해결을 주장하지 않는다. 이기종 BF16 실패 및 Release A의 대형 모델/SLO 미완료는 보존한다.

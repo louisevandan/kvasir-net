@@ -8,15 +8,17 @@
 
 <a id="hf-integration"></a>
 
+> HF §0의 독립 저장소 배치는 2026-09-14 사용자 지시로 폐기했다. 현재 소유·빌드·이관은 [HF 안내](hf-integration.md)를 따른다. 아래 착수 감사는 당시 기록이며 Release A 이후 기능 계획은 유지한다.
+
 ## 0. 최우선 작업 — p4hfadapter를 실제 P4 event 경로에 수용
 
 2026-09-14 사용자 지시로 기존 A/S/B/C보다 먼저 편성한다. **모델별 Python 개발과 Rust 구상 어댑터를
-`F:/dev/p4hfadapter`가 소유하고, P4는 외부 crate를 정적으로 연결해 생성·발견·수명 계약을 소비한다.**
+`layers/adapters/hf`가 소유하고, P4는 외부 crate를 정적으로 연결해 생성·발견·수명 계약을 소비한다.**
 이 작업의 납품물은 외부 HF 실행 구성을 사용할 수 있는 P4 통합 배포물이다. 등록만 하고 실행은 A 이후로
 미루는 작업이 아니다. 실제 LOAD→요청→취소/해제→UNLOAD→DELETE·재생성을 함께 검증한다.
 Qwen3.5-0.8B는 이 연결의 conformance 모델이며 초대형 모델 성능/최종 H0–H7 승격을 대체하지 않는다.
 
-2026-09-14 HF-0~3 수용 완료: [소비 구성](hf-integration.md)과 [수용 보고](../../p4hfadapter/tests/reports/p4-integration/20260914_023000.md)에 실제 두 호스트·취소/재수용·Python 교체·재현 빌드·기존 llama.cpp on/off 검증을 기록했다. 아래 부족분/감사 설명은 착수 시점 상태이며 최종 결과는 위 보고를 따른다. Release A는 아직 착수하지 않았다.
+2026-09-14 HF-0~3 수용 완료: [소비 구성](hf-integration.md)과 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)에 실제 두 호스트·취소/재수용·Python 교체·재현 빌드·기존 llama.cpp on/off 검증을 기록했다. 아래 부족분/감사 설명은 착수 시점 상태이며 최종 결과는 위 보고를 따른다. Release A는 아직 착수하지 않았다.
 
 ### 0.1 현재 양쪽 코드와 투자 이유
 
@@ -25,7 +27,7 @@ Qwen3.5-0.8B는 이 연결의 conformance 모델이며 초대형 모델 성능/�
   [p4-agent Cargo](../entrypoints/agent/Cargo.toml)와 [event create/remove](../entrypoints/agent/src/event_runtime/control.rs)다.
   구 service `adapters::registry()`를 연결 대상으로 삼지 않는다.
 - HF 감사 HEAD: `df4f81b7c774e60cba78d71ad868c515e619cb15`, 시작 dirty 없음.
-  [HF 인수인계](../../p4hfadapter/HANDOFF.md), [Qwen 실행 보고](../../p4hfadapter/tests/reports/qwen3_5_0_8b/20260913_220709.md)를
+  [HF 인수인계](../layers/adapters/hf/docs/history/initial/HANDOFF.md), [Qwen 실행 보고](../layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md)를
   현재 Python 코드와 대조했다. **Rust bridge crate는 아직 없다.** Python framing과 Qwen 전용 loader/forward/state/worker,
   로컬 controller가 있다. 보고된 8개 조합·47스텝 비교는 같은 물리 컴퓨터의 기록이며 이번에 모델을 재실행한 결과가 아니다.
 - Qwen3.5-0.8B revision `2fc06364715b967f1860aea9cf38778875588b17`, dense FP32 분할을 최초 연결 대상으로 삼는다.
@@ -40,7 +42,7 @@ Qwen3.5-0.8B는 이 연결의 conformance 모델이며 초대형 모델 성능/�
 | 위치 | 책임·필수 산출물 | 포함하지 않는 책임 |
 | --- | --- | --- |
 | P4 entrypoint/루트 빌드 | 외부 Rust crate 의존성·source 매핑·lock, `hf-transformers` 생성과 실제 지원 kind 광고, 통합/기존 경로 회귀 시험 | 모델명/Qwen class 등록, Python 설치·모델 weight 다운로드, 모델별 tensor 해석 |
-| HF `crates/p4-hf-adapter/` (예정) | construction/retained/process/ipc/lifecycle 역할 폴더. trait 구현, bounded input/completion, Python 감독·IPC, identity·예약·전달/출력 소유권, 오류/종료 증거 | 모델 layer/KV를 이해하는 Rust 스케줄러를 다시 구현 |
+| HF `layers/adapters/hf/adapter/` | construction/retained/process/ipc/lifecycle 역할 폴더. trait 구현, bounded input/completion, Python 감독·IPC, identity·예약·전달/출력 소유권, 오류/종료 증거 | 모델 layer/KV를 이해하는 Rust 스케줄러를 다시 구현 |
 | HF 모델별 Python | loader·부분 forward·KV/recurrent·모델 배치/선택 정책·샘플링·양자화·tensor codec. 모델별 디렉터리 안에서도 역할 분리 | 모든 모델이 상속해야 하는 공통 모델 인터페이스, P4 broker를 우회하는 노드 간 전달 |
 | HF 실행 명세/도구 | worker 환경 lock·entry/argv/env·모델/분할/장치·IPC/capability identity·배포·통합 scenario/fixture/report | P4 공통 envelope에 Qwen 필드 추가, llama 전용 PLAN/LOAD wire 재사용을 강제 |
 
@@ -88,7 +90,7 @@ Python 환경/모델이 준비됐다는 광고는 별도 LOAD readiness 검증�
 
 ### 0.4 Cargo 결합과 재현 가능한 배포
 
-개발은 인접 checkout의 `crates/p4-hf-adapter` path 연결로 시작할 수 있다. crate가 존재하기 전 빈 crate나
+개발은 P4 내부 `layers/adapters/hf/adapter` path 연결로 시작할 수 있다. crate가 존재하기 전 빈 crate나
 무조건 성공하는 stub을 P4에 등록하지 않는다. 독립 HF crate는 P4의 `p4-adapter`/`p4-protocol`만 필요한
 공개 경계로 의존하고 P4 agent/llama private 구현을 의존하지 않는다. P4와 HF를 서로 workspace member로
 흡수하거나 P4 소스를 복사해 별도 trait를 만드는 방식은 제외한다.
@@ -444,7 +446,7 @@ B/C의 세부 spec도 구현 전에 target artifact·SLO·자원 상한을 봉�
 ### 7.1 먼저 양쪽 기준 확인, HF 완료 후 A 재개
 
 HF 착수 시 P4와 HF 양쪽에서 `git rev-parse HEAD`/`git status --short`를 확인하고,
-`Test-Path F:/dev/p4hfadapter/crates/p4-hf-adapter/Cargo.toml`로 아직 없는 crate를 있다고 전제하지 않는다.
+`Test-Path F:/dev/p4/layers/adapters/hf/adapter/Cargo.toml`로 아직 없는 crate를 있다고 전제하지 않는다.
 현재 HF 독립 빠른 시험은 그 저장소의 `python -B tools/testing/run.py`다. 실제 모델/변이 명령은 HF 모델 문서를 따른다.
 HF 빌드/통합 명령은 crate/feature가 구현된 뒤 확정하며 예정 옵션을 실행하지 않는다.
 

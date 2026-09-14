@@ -9,7 +9,7 @@ default = []
 hf-transformers = ["dep:p4-hf-adapter"]
 
 [dependencies]
-p4-hf-adapter = { path = "../../../p4hfadapter/crates/p4-hf-adapter", optional = true }
+p4-hf-adapter = { path = "../../layers/adapters/hf/adapter", optional = true }
 p4-adapter = { path = "../../layers/adapters/adapter" }
 p4-agent-core = { path = "../../layers/agent" }
 p4-llamacpp-deployment = { path = "../../layers/adapters/llamacpp/deployment" }

@@ -1,0 +1,20 @@
+{
+  "name": "short",
+  "schedule": "sequential",
+  "requests": [
+    {
+      "id": "arithmetic",
+      "prompt": "What is 2 + 2? Reply with only the digit.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "korean",
+      "prompt": "대한민국의 수도 이름만 답하세요.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    }
+  ]
+}

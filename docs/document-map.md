@@ -169,3 +169,51 @@ Native 비용 관측: [CPU 실제 경로와 제거 변이](../tests/reports/rele
 현재 pin과 배포 후보: [token·CUDA/Metal·양쪽 어댑터·비용 귀속](../tests/reports/release-a/20260914_054100.md).
 Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](../tests/reports/release-a/20260914_062025.md).
 앱 실행 환경 재확인: [모델 접근·native PLAN8/8](../tests/reports/release-a/20260914_102600.md).
+
+## HF 어댑터 문서
+
+| 문서 | 지위 |
+| --- | --- |
+| [layers/adapters/hf/adapter/docs/api.md](../layers/adapters/hf/adapter/docs/api.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/adapter/docs/architecture.md](../layers/adapters/hf/adapter/docs/architecture.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/adapter/docs/constraints.md](../layers/adapters/hf/adapter/docs/constraints.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/adapter/docs/internals.md](../layers/adapters/hf/adapter/docs/internals.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/adapter/docs/overview.md](../layers/adapters/hf/adapter/docs/overview.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/adapter/docs/testing.md](../layers/adapters/hf/adapter/docs/testing.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/adapter/docs/usage.md](../layers/adapters/hf/adapter/docs/usage.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/adapter/README.md](../layers/adapters/hf/adapter/README.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/AGENTS.md](../layers/adapters/hf/AGENTS.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/api.md](../layers/adapters/hf/docs/api.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/architecture.md](../layers/adapters/hf/docs/architecture.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/constraints.md](../layers/adapters/hf/docs/constraints.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/history/initial/api.md](../layers/adapters/hf/docs/history/initial/api.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/architecture.md](../layers/adapters/hf/docs/history/initial/architecture.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/bootstrap-evidence.md](../layers/adapters/hf/docs/history/initial/bootstrap-evidence.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/constraints.md](../layers/adapters/hf/docs/history/initial/constraints.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/decisions.md](../layers/adapters/hf/docs/history/initial/decisions.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/development-plan.md](../layers/adapters/hf/docs/history/initial/development-plan.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/HANDOFF.md](../layers/adapters/hf/docs/history/initial/HANDOFF.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/internals.md](../layers/adapters/hf/docs/history/initial/internals.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/overview.md](../layers/adapters/hf/docs/history/initial/overview.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/references.md](../layers/adapters/hf/docs/history/initial/references.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/roadmap.md](../layers/adapters/hf/docs/history/initial/roadmap.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/testing.md](../layers/adapters/hf/docs/history/initial/testing.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/history/initial/usage.md](../layers/adapters/hf/docs/history/initial/usage.md) | HF 역사 기록 |
+| [layers/adapters/hf/docs/integration/README.md](../layers/adapters/hf/docs/integration/README.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/internals.md](../layers/adapters/hf/docs/internals.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/migration/README.md](../layers/adapters/hf/docs/migration/README.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md](../layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/overview.md](../layers/adapters/hf/docs/overview.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/quantization.md](../layers/adapters/hf/docs/quantization.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/structure/README.md](../layers/adapters/hf/docs/structure/README.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/testing.md](../layers/adapters/hf/docs/testing.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/transport/framing/README.md](../layers/adapters/hf/docs/transport/framing/README.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/docs/usage.md](../layers/adapters/hf/docs/usage.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/README.md](../layers/adapters/hf/README.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/tests/plans/framing-20260913.md](../layers/adapters/hf/tests/plans/framing-20260913.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/tests/plans/migration-20260914.md](../layers/adapters/hf/tests/plans/migration-20260914.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/tests/plans/p4-integration-20260914.md](../layers/adapters/hf/tests/plans/p4-integration-20260914.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/tests/plans/qwen3_5_0_8b-20260913.md](../layers/adapters/hf/tests/plans/qwen3_5_0_8b-20260913.md) | HF 구성·계약·검증 |
+| [layers/adapters/hf/tests/reports/framing/20260913_174516.md](../layers/adapters/hf/tests/reports/framing/20260913_174516.md) | HF 역사 기록 |
+| [layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md) | HF 역사 기록 |
+| [layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md](../layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md) | HF 역사 기록 |

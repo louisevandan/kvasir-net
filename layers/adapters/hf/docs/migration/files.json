@@ -1,0 +1,775 @@
+{
+  "schema": 1,
+  "source_commit": "bc656a2a09422e452a69735eb411c12899caa57e",
+  "p4_base": "5b540770de877a8f05eec8a2fbf5b1ac932d5c4f",
+  "files": [
+    {
+      "source": ".gitattributes",
+      "sha256": "476cec90c90868dbd159917bf5101cbe0fc9b868fb5eba23c15e0dff5ca18109",
+      "destination": null,
+      "disposition": "replace_with_p4_root_configuration"
+    },
+    {
+      "source": ".gitignore",
+      "sha256": "dc6b9b9d6cd8598e6b7b8bfc339752ae17ae2e2b046b119a59d80aded5d83918",
+      "destination": null,
+      "disposition": "replace_with_p4_root_configuration"
+    },
+    {
+      "source": "AGENTS.md",
+      "sha256": "8b0135a0b19d27b70c51933fc40424b7bc43167a0d0744e10ac47772fca4005b",
+      "destination": "layers/adapters/hf/AGENTS.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "Cargo.lock",
+      "sha256": "8b1b2d146b25992290ba85270ba00daed1129c55527e116807753e0ccdf78768",
+      "destination": null,
+      "disposition": "replace_with_p4_root_configuration"
+    },
+    {
+      "source": "Cargo.toml",
+      "sha256": "64749b2aec0d3bbdd704fce7dd7cf3231557b458351854192ed6ab689724e98b",
+      "destination": null,
+      "disposition": "replace_with_p4_root_configuration"
+    },
+    {
+      "source": "HANDOFF.md",
+      "sha256": "bc801ba89ad3383ec0e602867d520e5c945c24b76e90b2573dd70d7e29e4e2f8",
+      "destination": "layers/adapters/hf/docs/history/initial/HANDOFF.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "README.md",
+      "sha256": "3f75f8fbf763be5c0ebecc80ee3c2a6b00023a9c3ab7e03388d999ef3d32d5b4",
+      "destination": "layers/adapters/hf/README.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/Cargo.toml",
+      "sha256": "847e5787a546367183a56fee079909d04f92e0ee5a5625f1faa85b3c8c070ece",
+      "destination": "layers/adapters/hf/adapter/Cargo.toml",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/README.md",
+      "sha256": "943a6565fe6727c4c4279de6f7689b4449f580f855e7cf4bb35955887838be78",
+      "destination": "layers/adapters/hf/adapter/README.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/docs/api.md",
+      "sha256": "14d8afaf442e407d30cfb70083e176b19d7c42f9207c30e8ad4b05c846d3dd10",
+      "destination": "layers/adapters/hf/adapter/docs/api.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/docs/architecture.md",
+      "sha256": "d260c1254bf35e1a80bf2d1fa7d7bb84a4b0bfb19979f38f02396cc94552a9c8",
+      "destination": "layers/adapters/hf/adapter/docs/architecture.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/docs/constraints.md",
+      "sha256": "0c478f0c387f575c5c77ce57ee0d405e8f45da19d2231ed42b56c7a09bb358f7",
+      "destination": "layers/adapters/hf/adapter/docs/constraints.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/docs/internals.md",
+      "sha256": "b05fe26c0708087d4c4b5c59d7b243a73e846ec1c145c68ec3c3ec111d59722e",
+      "destination": "layers/adapters/hf/adapter/docs/internals.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/docs/overview.md",
+      "sha256": "81d5acb256d2e423dc086abb8a065d7b092dcd870f36cee319907ff63f29d957",
+      "destination": "layers/adapters/hf/adapter/docs/overview.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/docs/testing.md",
+      "sha256": "3f13e1cec8c4fd1f872bbb1fa479fd49f6a22b9eb52d5f3d401c876dad512096",
+      "destination": "layers/adapters/hf/adapter/docs/testing.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/docs/usage.md",
+      "sha256": "59e1075897b756a75bb7a03fba9074379b173ba2bacf911db19004baee0be1be",
+      "destination": "layers/adapters/hf/adapter/docs/usage.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/src/construction/mod.rs",
+      "sha256": "49cede5df3526b84f5605a9c51e809905ef4ab813a247eb83e0bcedaa960f264",
+      "destination": "layers/adapters/hf/adapter/src/construction/mod.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/src/ipc/mod.rs",
+      "sha256": "55bc0788bdb64879003f80ee178b2116b515fb9dfc4b02ce19722f49cf4f2f23",
+      "destination": "layers/adapters/hf/adapter/src/ipc/mod.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/src/lib.rs",
+      "sha256": "0aba7f9ac4899b75d7062f337f7f2fd0f8dda75b0f1216cdfa66ef31791dcd59",
+      "destination": "layers/adapters/hf/adapter/src/lib.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/src/lifecycle/mod.rs",
+      "sha256": "f35fab6cbd0884bf11dad8d38f40a3a204139b52a69beb3326f046e73b2c9198",
+      "destination": "layers/adapters/hf/adapter/src/lifecycle/mod.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/src/process/mod.rs",
+      "sha256": "7735a48649ad5945d61711fa443350aacd502d3c179f444ed3fbb61d0aebbe31",
+      "destination": "layers/adapters/hf/adapter/src/process/mod.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/src/process/windows/mod.rs",
+      "sha256": "500767c5f2b36e1c7bc07efe72574cf28a8d0c6fa40ff71e56c416207c11b732",
+      "destination": "layers/adapters/hf/adapter/src/process/windows/mod.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/src/retained/mod.rs",
+      "sha256": "989bafcf69309e7b3ba2deab44719155fff2afabeee476f0bdb124303d07bbc3",
+      "destination": "layers/adapters/hf/adapter/src/retained/mod.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "crates/p4-hf-adapter/tests/retained.rs",
+      "sha256": "c407213662e3845837b6d0ce012f53d44a6c9edb3c0771ffb935cff650c2ce0f",
+      "destination": "layers/adapters/hf/adapter/tests/retained.rs",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/api.md",
+      "sha256": "4a64d33ff05dc9af461e8fc974639bb5a302af476f13443e6f361c882cf15bc8",
+      "destination": "layers/adapters/hf/docs/history/initial/api.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/architecture.md",
+      "sha256": "bb514a51acd5c7a9d76ce72d0e7a7ed3e2f2a1fd0117b2ca22c5f6350d207b28",
+      "destination": "layers/adapters/hf/docs/history/initial/architecture.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/bootstrap-evidence.md",
+      "sha256": "112c12c66fcb715ced820bea488a9cb4918cfbbccc0dc4a235724b79effb5c74",
+      "destination": "layers/adapters/hf/docs/history/initial/bootstrap-evidence.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/constraints.md",
+      "sha256": "c228932131ed28619202a070c115200f509ee04be73d3929888c83c8004c0b4a",
+      "destination": "layers/adapters/hf/docs/history/initial/constraints.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/decisions.md",
+      "sha256": "721610f09384be36352d9fad3c15c46536c87282bb7a1186a592eefc222a4f84",
+      "destination": "layers/adapters/hf/docs/history/initial/decisions.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/development-plan.md",
+      "sha256": "6456c7c62f5ee228ce817fdb25e2127d19365238155c7511ad4d5c6a5abcb940",
+      "destination": "layers/adapters/hf/docs/history/initial/development-plan.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/integration/README.md",
+      "sha256": "66082d26a27144e75649339bad5365b34e64738b9b9d3838ef3a67ddd4f23456",
+      "destination": "layers/adapters/hf/docs/integration/README.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/internals.md",
+      "sha256": "2d2bad1e1267d31715bcdfa36e0cc52895bced23bba14eba7fbe5a9caeeec541",
+      "destination": "layers/adapters/hf/docs/history/initial/internals.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/models/qwen3_5_0_8b/README.md",
+      "sha256": "2c0f579cb86470f27d678f7de7a53a92bf5663a2f331c50e492ab357d5ac96f4",
+      "destination": "layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/overview.md",
+      "sha256": "f5ad3ed7f42f5d050c3461f3731bb3fd263e4128f9c52e91573d223fe2d8c1b7",
+      "destination": "layers/adapters/hf/docs/history/initial/overview.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/quantization.md",
+      "sha256": "5a1851cfb3956156952f044361f00a1ff199e8c05655da8b9ee40214658ada59",
+      "destination": "layers/adapters/hf/docs/quantization.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/references.md",
+      "sha256": "94c189173f99174c2c61228514ea36b88c9f3e06cf548fe26524f42ae7913579",
+      "destination": "layers/adapters/hf/docs/history/initial/references.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/roadmap.md",
+      "sha256": "e37377d42fac02a955e59563c2b25cad8eb150865d38023e4b2b01d5764f68f3",
+      "destination": "layers/adapters/hf/docs/history/initial/roadmap.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/structure/README.md",
+      "sha256": "58a0e03a86c24092b08e664cba294f527de729c263dfb83966d6ff32a3f6b573",
+      "destination": "layers/adapters/hf/docs/structure/README.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/testing.md",
+      "sha256": "725295051085808b59c5a7ed7821bffe7fa9775be9a95655ce6fb8a9b836950f",
+      "destination": "layers/adapters/hf/docs/history/initial/testing.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/transport/framing/README.md",
+      "sha256": "48b5b586a4af034e16dd36fd3998014afbea2aa6274f4cf038b955a27f4a4941",
+      "destination": "layers/adapters/hf/docs/transport/framing/README.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "docs/usage.md",
+      "sha256": "e5d3a2b89ab0075e5ccd36a970451d1f504bba3ad2951e262d574bd5e85606d3",
+      "destination": "layers/adapters/hf/docs/history/initial/usage.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "environments/qwen3_5_0_8b/requirements.in",
+      "sha256": "f73fe35d581fdb9cf9468ba0f9e756c7aeb9f55bc5db04e8dd45d3a9aa652934",
+      "destination": "layers/adapters/hf/environments/qwen3_5_0_8b/requirements.in",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "environments/qwen3_5_0_8b/requirements.lock",
+      "sha256": "63e03d6201e09b14e38fc9ff695d1a3ecf1b4109513fdea91f0d14bf6122d14f",
+      "destination": "layers/adapters/hf/environments/qwen3_5_0_8b/requirements.lock",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "manifests/qwen3_5_0_8b/artifact/identity.json",
+      "sha256": "ee7f1770e3d44fcbfd10d421d135a8609beb2f598fde0b0904ebae826461bd0e",
+      "destination": "layers/adapters/hf/manifests/qwen3_5_0_8b/artifact/identity.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/attention_boundaries/plan.json",
+      "sha256": "ea06ff8b7bea4932aee6ee02e2cd962ac7129de063bfa2c0879791dae2a1df8d",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/attention_boundaries/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/attention_boundaries_fp32/plan.json",
+      "sha256": "8957a84f2353b4f077c8fd7922859b8da878a3efd0602531de40052a74b643ff",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/attention_boundaries_fp32/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/balanced_two_gpu/plan.json",
+      "sha256": "1e979b6b6322bc284fd4e511162e6b18dc696bdca99064280f4708e50cf892c4",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/balanced_two_gpu/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/balanced_two_gpu_fp32/plan.json",
+      "sha256": "bf9f1ac04eb5d66097ffc5dd56a0373ff17c07045156c3bd2fbde6b854b65a90",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/balanced_two_gpu_fp32/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/cpu_gpu/plan.json",
+      "sha256": "9cdad087ab73b46c9b2a901cd18fd1815557c2cd8271cfcbebf3c4aaec666a79",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/cpu_gpu/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/single_cpu/plan.json",
+      "sha256": "9df8016e40f7cdea4f21130b237c87f507410d86dd7ebeeaf0887075e26d5850",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/single_cpu/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/single_gpu/plan.json",
+      "sha256": "80bdf38a30a9a77efb27db584a56ec0603fad1177c029d75b1c20a658d4240ec",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/single_gpu/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/uneven_three_stage/plan.json",
+      "sha256": "a39c2e8c3db9aaf29e6bebbdbfa44ec5496830c8dd599894f8de6835e087f035",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/uneven_three_stage/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "plans/qwen3_5_0_8b/uneven_three_stage_fp32/plan.json",
+      "sha256": "59a64898e5739ae2b7fd1e808e020e90187e3b4aab071b4e0663b5a8c8793ea1",
+      "destination": "layers/adapters/hf/plans/qwen3_5_0_8b/uneven_three_stage_fp32/plan.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/integration/packet/__init__.py",
+      "sha256": "b6396adf70c6457514c253b699ecd80e58a912f81ac69867c05199cc92c5ad99",
+      "destination": "layers/adapters/hf/python/p4hfadapter/integration/packet/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/integration/transport/__init__.py",
+      "sha256": "9ee88ccc5ee7699991df1b4ab102e7c1ae3aa436d57c72fd04ff3585bfb16a26",
+      "destination": "layers/adapters/hf/python/p4hfadapter/integration/transport/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/boundary/__init__.py",
+      "sha256": "141897da0d9bcd1f1bd603ec1dccff7fa624c831f2520d9c379949545c36b22d",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/boundary/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/cache_export/__init__.py",
+      "sha256": "70e4a74c30b5362de55d6a20267a54350061ffb29cf58671853c969a85fa80e3",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/cache_export/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/cli/__init__.py",
+      "sha256": "ccd916034ba33e777a09e694a74a230283fd1f766de69ded84c816ee7dad6297",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/cli/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/configuration/__init__.py",
+      "sha256": "4cbe42ba2e1a4feba0dacd9ecc8cded4acf4b936ba00579c7ea4c2a26e1df995",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/configuration/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/epoch/__init__.py",
+      "sha256": "c8b6b1d4f4576960409a755bb2eb0afb080ebbc814f44ebc67fbd352767b6157",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/epoch/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/event_pipeline/__init__.py",
+      "sha256": "6597d5a5b4a11cbcc86757b21a2067776cc03100e0bf4525ebcfa547e034748b",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/event_pipeline/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/event_worker/__init__.py",
+      "sha256": "26f7382a50ce08c61b8a86f67e39cd9fb1ea0dfadb37a081e653984681316256",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/event_worker/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/evidence/__init__.py",
+      "sha256": "b8ffc0c12362b30141c7b3fee71d280024d166a2315214be6d6df3b58c4e63b2",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/evidence/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/execution/__init__.py",
+      "sha256": "a61c021304598df996cc21f2976650bdf373dea8bd78de14b1ef21eb1b879b5c",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/execution/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/forward/__init__.py",
+      "sha256": "d1255ecab25fc50fabb5c25a33afa110f19b0f2c4f3c25a3c8b6eacc6e496388",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/forward/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/identity/__init__.py",
+      "sha256": "a0c6c13bc52a4c5b13356834894bbc964b1c1d79a4ccb07583bdbb1024da3131",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/identity/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/loading/__init__.py",
+      "sha256": "5ded7d8ccf469ea612ca173216d7d5861fbed75c5308b7a7c3432fefd62d1f53",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/loading/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/preparation/__init__.py",
+      "sha256": "ab7d810e884d83ef830b6e32f7abd227cd8b9c214e312843a10a8a26bee5b0be",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/preparation/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/processes/__init__.py",
+      "sha256": "e19f0126fdb403459f3a552f3e824887021a1bebb96a2bbcc8effd17e84a9d97",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/processes/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/reference/__init__.py",
+      "sha256": "b53b489f0811d957792b30b39a521ace48ed5d9fb3a3e397348a49bbc77a7fbf",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/reference/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/routing/__init__.py",
+      "sha256": "d5068b32253e57ff3f1507135be64613b8a93a077db44d0b8d197e389379ca51",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/routing/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/scenarios/__init__.py",
+      "sha256": "2b4f1b4c4bfb644694e7cf9ef9098388fde867f30f49b9bb8bdc978026b43e9e",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/scenarios/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/scheduling/__init__.py",
+      "sha256": "c686eb111853ffd09146b096f9795b872c255a21f2b41b95cfb982ef44f5ec8b",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/scheduling/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/state/__init__.py",
+      "sha256": "d887102744ec506c7e331b50d64202cf2e07d291a5357ad0da79b04feb2616bc",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/state/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/models/qwen3_5_0_8b/worker/__init__.py",
+      "sha256": "d2af6a9fc6952cdae2dd757ef73f38129d91034576b73e41b24d12b2aebb84c2",
+      "destination": "layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/worker/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/transport/framing/decoding/__init__.py",
+      "sha256": "8981c83d11909097a01e5c7555a6bc565f3cf03601c983caa16f6760e3b8eeb8",
+      "destination": "layers/adapters/hf/python/p4hfadapter/transport/framing/decoding/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/transport/framing/encoding/__init__.py",
+      "sha256": "70ec92cef422f1ba9573a73356361c830d6ec5927474ca492f77c093904b0f1e",
+      "destination": "layers/adapters/hf/python/p4hfadapter/transport/framing/encoding/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/transport/framing/errors/__init__.py",
+      "sha256": "6b0c2f4651701d2e608d2fbfc6489ec14228a728f388e312e32c8b29f43086e0",
+      "destination": "layers/adapters/hf/python/p4hfadapter/transport/framing/errors/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/transport/framing/layout/__init__.py",
+      "sha256": "f747f07ab5821ffbf17a58827fd692957f7f357dbecf9f6b7116e6e9634acc44",
+      "destination": "layers/adapters/hf/python/p4hfadapter/transport/framing/layout/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/transport/framing/limits/__init__.py",
+      "sha256": "68191ca9a4b4c7630c55e9ddf8b62ca7846b60aefbcd3694c8e0e4508c42ef68",
+      "destination": "layers/adapters/hf/python/p4hfadapter/transport/framing/limits/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/transport/framing/receiving/__init__.py",
+      "sha256": "d4d8892fb7c5938cda416940a965b06ba13b6c00a634e5fcd0039c2308670270",
+      "destination": "layers/adapters/hf/python/p4hfadapter/transport/framing/receiving/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "python/p4hfadapter/transport/framing/sending/__init__.py",
+      "sha256": "e2ff4562814e66520189c489657dc148e39a0c9ea7c2d1d43acab7075cf69581",
+      "destination": "layers/adapters/hf/python/p4hfadapter/transport/framing/sending/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "scenarios/qwen3_5_0_8b/chunked_prefill/scenario.json",
+      "sha256": "11d5f2862dcccd2e3bea3ffb4575bafaa76abfe91e37c933a854b8f4727fdb4c",
+      "destination": "layers/adapters/hf/scenarios/qwen3_5_0_8b/chunked_prefill/scenario.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "scenarios/qwen3_5_0_8b/epoch_eight/scenario.json",
+      "sha256": "8c7e42422ea586f2c9eb7f0217827404a757773032101c93096f3cb37173d20f",
+      "destination": "layers/adapters/hf/scenarios/qwen3_5_0_8b/epoch_eight/scenario.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "scenarios/qwen3_5_0_8b/interleaved_cancel/scenario.json",
+      "sha256": "bce5f76a86b6b16e584743c27521c5b3161ad583a4f1fc8ca63c1d87eca981ee",
+      "destination": "layers/adapters/hf/scenarios/qwen3_5_0_8b/interleaved_cancel/scenario.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "scenarios/qwen3_5_0_8b/short/scenario.json",
+      "sha256": "f29bc2026cb7da242a70dd5ed0fe28646a62dfb0e549fb96000affb1cafa73f5",
+      "destination": "layers/adapters/hf/scenarios/qwen3_5_0_8b/short/scenario.json",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/__init__.py",
+      "sha256": "e7210103e99350b8f42fd6061f73671a95d2e2c0a69eab4d198ebbd66972e5bb",
+      "destination": "layers/adapters/hf/tests/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/fixtures/bridge_worker/main.py",
+      "sha256": "dd0e2d14e634c9594c27ae8acfdc06cb8a2461497723e98bb243d9c0ceb6eea4",
+      "destination": "layers/adapters/hf/tests/fixtures/bridge_worker/main.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/fixtures/framing_peer/main.py",
+      "sha256": "063880940b759b686f87048b9f5eb2c40bb3e420c0a77a51b75d6e9789415393",
+      "destination": "layers/adapters/hf/tests/fixtures/framing_peer/main.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/fixtures/qwen_plans/__init__.py",
+      "sha256": "4404630d7efebeffb72dcc978b99bd0cf6db9e496b6350fbc2819f1c04a07ec0",
+      "destination": "layers/adapters/hf/tests/fixtures/qwen_plans/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/fixtures/qwen_rejection_stage/__init__.py",
+      "sha256": "f5e2e8d696c827e90e33cc6fe438703ffc1c89edd157e7845c6f2240075361d1",
+      "destination": "layers/adapters/hf/tests/fixtures/qwen_rejection_stage/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/fixtures/qwen_tokenizer/__init__.py",
+      "sha256": "0263f29b2668fc68db93efd52736d0914d8db9caea943bbc9122c0575a8502c5",
+      "destination": "layers/adapters/hf/tests/fixtures/qwen_tokenizer/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/fixtures/receiving_streams/__init__.py",
+      "sha256": "8a1f0a57f4eec68039b618f8f6d7328d084fc4f548f37c23719c62df52a7b51d",
+      "destination": "layers/adapters/hf/tests/fixtures/receiving_streams/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/fixtures/sending_streams/__init__.py",
+      "sha256": "31032e3f1de3e66c20636f78227b9e14aef2726aec0280bd64237bdd029225f2",
+      "destination": "layers/adapters/hf/tests/fixtures/sending_streams/__init__.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/models/qwen3_5_0_8b/cache_epoch/checks.py",
+      "sha256": "f8b2d60a810f1ad355cfb8dc7290c52cc782eb82b3aa2a52ed0adfeffe8ffff9",
+      "destination": "layers/adapters/hf/tests/models/qwen3_5_0_8b/cache_epoch/checks.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/models/qwen3_5_0_8b/configuration/test_configuration.py",
+      "sha256": "31b114d67060510968ab95af92a4243e9a5bc1459523a59d479b0a17b7a90d4d",
+      "destination": "layers/adapters/hf/tests/models/qwen3_5_0_8b/configuration/test_configuration.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/models/qwen3_5_0_8b/scenarios/test_scenarios.py",
+      "sha256": "34b9f20dca9abc0b428c72cc2eb2670c885a932cb79d793bc37b18c97bb3589c",
+      "destination": "layers/adapters/hf/tests/models/qwen3_5_0_8b/scenarios/test_scenarios.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/models/qwen3_5_0_8b/state/checks.py",
+      "sha256": "103e7646499fa8a71ddc4cf153878b8e61604332fef6d0f3bc183d09b347d4f4",
+      "destination": "layers/adapters/hf/tests/models/qwen3_5_0_8b/state/checks.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/plans/framing-20260913.md",
+      "sha256": "d5c57d01a764ccd1c926dc35e64f3f0603bb651e074d139ffbf17312fe6c4089",
+      "destination": "layers/adapters/hf/tests/plans/framing-20260913.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/plans/p4-integration-20260914.md",
+      "sha256": "552fa5bb497adaa7ddda18d76a388c271621bc6749872f2f87cfd50c0684490f",
+      "destination": "layers/adapters/hf/tests/plans/p4-integration-20260914.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/plans/qwen3_5_0_8b-20260913.md",
+      "sha256": "43aaaee9517e74e1ac1fa241f15f11e17f5c7f2ba103410f76635fe3bd8f6c82",
+      "destination": "layers/adapters/hf/tests/plans/qwen3_5_0_8b-20260913.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/reports/framing/20260913_174516.md",
+      "sha256": "dc9a0e9c7a7e3cd488e77aa0de7efd03b3363ea51e6979561ef3bd9f529042f5",
+      "destination": "layers/adapters/hf/tests/reports/framing/20260913_174516.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/reports/p4-integration/20260914_023000.md",
+      "sha256": "0bd5c5ee599cb5a740601e388101cdd2cb43b8c035a4fccbdd70d9d1a772bc03",
+      "destination": "layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/reports/qwen3_5_0_8b/20260913_220709.md",
+      "sha256": "446e80cea4223b42331a906fc84ea305336fc4c33d764db404f40dd9c54c33ae",
+      "destination": "layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/transport/framing/decoding/test_decoding.py",
+      "sha256": "54ea85971c550a77e88a2e291f6b72ec7b52e53f00c063ce1a672a3ffc09a818",
+      "destination": "layers/adapters/hf/tests/transport/framing/decoding/test_decoding.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/transport/framing/encoding/test_encoding.py",
+      "sha256": "77e1204dca8087527ee8b3d5cc5c91aaaa356a3d1fbf33045650612ec943d38f",
+      "destination": "layers/adapters/hf/tests/transport/framing/encoding/test_encoding.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/transport/framing/limits/test_limits.py",
+      "sha256": "a50ffccf867f96f2b807efa8879e6b127a4496e0d14815cd55a78c1d6a411624",
+      "destination": "layers/adapters/hf/tests/transport/framing/limits/test_limits.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/transport/framing/process/test_process.py",
+      "sha256": "d6421e4b5b0a06f232d73f2c32d5beeef551ecacc4af63b6e74d5ffeecd95aef",
+      "destination": "layers/adapters/hf/tests/transport/framing/process/test_process.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/transport/framing/receiving/test_receiving.py",
+      "sha256": "8e5e8f314b7de6dcb32bd950dd5ecffc5d1bf52b5b902f0a457b71303d523c1e",
+      "destination": "layers/adapters/hf/tests/transport/framing/receiving/test_receiving.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tests/transport/framing/sending/test_sending.py",
+      "sha256": "172bec2cac0be77ec0abc4395ae0c03a5f21007fb27fb28cc2f93e565f6cd76b",
+      "destination": "layers/adapters/hf/tests/transport/framing/sending/test_sending.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/integration/build/run.py",
+      "sha256": "6d4e58d95f6ef39d77370406cd324533f37e037554e8a3a22101c71cc801af8a",
+      "destination": "layers/adapters/hf/scripts/deployment/source/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/integration/bundle/entry.py",
+      "sha256": "341d080ef357a8e4c79851324eeab593bd9316fa9808f733375084101c26970d",
+      "destination": "layers/adapters/hf/scripts/deployment/worker/entry.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/integration/bundle/run.py",
+      "sha256": "4b0ed15d58d42c716e2d6d910c8423b3be2a6e149b7d11a05647f44132d84cb2",
+      "destination": "layers/adapters/hf/scripts/deployment/worker/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/integration/lifecycle/run.py",
+      "sha256": "899c12c7b60047bb645ea5f1e691a44acde806937efef2538cdd2ebe4e190b20",
+      "destination": "layers/adapters/hf/scripts/verification/lifecycle/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/integration/matrix/run.py",
+      "sha256": "e85b4dade9d44b36a477d4ded3c4323a7448c79ad03a2198ef80781578076cbc",
+      "destination": "layers/adapters/hf/scripts/verification/event_matrix/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/integration/mutation/run.py",
+      "sha256": "83790bff180ec364cbf168205764449aba8a3ffda0b1ee4e7e5da0b6f4b938a1",
+      "destination": "layers/adapters/hf/scripts/verification/rust_mutation/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/integration/qwen/run.py",
+      "sha256": "d8b9d6101f6437a63718869790a6d4bb3ab55ea78689147a111b97358b05381e",
+      "destination": "layers/adapters/hf/scripts/verification/event_qwen/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/qwen3_5_0_8b/cli/run.py",
+      "sha256": "af4c8ecbfaef0cf87e6fc513e635c1eb5874f111dadc96897b74dcdd4500933a",
+      "destination": "layers/adapters/hf/scripts/models/qwen3_5_0_8b/cli/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/qwen3_5_0_8b/preparation/run.py",
+      "sha256": "e5e163f1587f0e16831120b2e309600a1459598c482f23734f25e31e521e2156",
+      "destination": "layers/adapters/hf/scripts/models/qwen3_5_0_8b/preparation/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/testing/run.py",
+      "sha256": "1ebd99a94b09347d7bfb8574ce18db9aae50672ded8fb95f107489737408c1f6",
+      "destination": "layers/adapters/hf/scripts/testing/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/distributed_recovery/run.py",
+      "sha256": "3be329c0689036f2c1575825303a11f6b1ea91423ff0a22b74cfb1c3c265a65e",
+      "destination": "layers/adapters/hf/scripts/verification/distributed_recovery/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/documents/run.py",
+      "sha256": "6498039c3c8f41fc47f54c9026a521726d3672b679a3d969d571fe626b2756b3",
+      "destination": "layers/adapters/hf/scripts/verification/documents/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/framing_mutation/run.py",
+      "sha256": "9f551a7aed6326879df55dac43e9a934dcbc1d799d8fb1fb411d34f10cb207dc",
+      "destination": "layers/adapters/hf/scripts/verification/framing_mutation/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/package_graph/run.py",
+      "sha256": "fdd51724e948b5545149aebbb21e6e9cd84482a902a3caa49a73d3ea6b15046d",
+      "destination": "layers/adapters/hf/scripts/verification/package_graph/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/qwen3_5_0_8b/run.py",
+      "sha256": "8f547ae84156af4388adfdd8a0d3bafc4c845707f98546097f1d5fa5112dd426",
+      "destination": "layers/adapters/hf/scripts/verification/qwen3_5_0_8b/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/qwen_cache/run.py",
+      "sha256": "ed6bb1c19aa38d372534c93ea0cafff6153d65dc856d350f8ec86a4eb1614c73",
+      "destination": "layers/adapters/hf/scripts/verification/qwen_cache/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/qwen_mutation/run.py",
+      "sha256": "1f46134e65cab701588972262acb79aa527e0084112ce6aad959bcd46e1134fd",
+      "destination": "layers/adapters/hf/scripts/verification/qwen_mutation/run.py",
+      "disposition": "move_or_adapt"
+    },
+    {
+      "source": "tools/verification/qwen_state/run.py",
+      "sha256": "265c0e3a558178ecbf31420f2e7b7517b0dfded1435a8a13210925ed16151ddd",
+      "destination": "layers/adapters/hf/scripts/verification/qwen_state/run.py",
+      "disposition": "move_or_adapt"
+    }
+  ]
+}

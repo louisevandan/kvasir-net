@@ -19,7 +19,7 @@ import path from "node:path";
 const args = process.argv.slice(2);
 const sweepAll = args.includes("--all");
 const root = path.resolve(args.find((a) => a !== "--all") ?? ".");
-const SKIP_DIRS = new Set([".git", "node_modules", "target", "tmp_dummy", "upstream"]);
+const SKIP_DIRS = new Set([".git", ".cache", "node_modules", "target", "tmp_dummy", "upstream"]);
 
 // Retirement is permanent; never delete entries. Each names the review that
 // retired the phrase so a hit explains itself.

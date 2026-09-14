@@ -1,0 +1,27 @@
+{
+  "name": "interleaved_cancel",
+  "schedule": "round_robin",
+  "requests": [
+    {
+      "id": "cancel",
+      "prompt": "Count upward from one.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 7,
+      "cancel_after": 2
+    },
+    {
+      "id": "keep",
+      "prompt": "Name the largest planet in one word.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 5,
+      "cancel_after": null
+    },
+    {
+      "id": "reuse",
+      "prompt": "What is 3 + 3? Reply with only the digit.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 11,
+      "cancel_after": null
+    }
+  ]
+}

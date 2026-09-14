@@ -5,6 +5,7 @@ members = [
     "layers/service",
     "layers/adapters/adapter",
     "layers/adapters/mock",
+    "layers/adapters/hf/adapter",
     "layers/adapters/llamacpp/served",
     "layers/adapters/llamacpp/deployment",
     "layers/adapters/llamacpp/staged/adapter",

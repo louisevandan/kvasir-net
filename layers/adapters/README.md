@@ -1,3 +1,5 @@
+> 현재 event 경계는 `RetainedNodeAdapter`다. 아래 `Adapter::start(Work)` 설명은 service 경로다. HF는 [hf/](hf/README.md), 생성·INSPECT는 agent event factory가 소유한다.
+
 # The adapter contract, and everyone who implements it
 
 > 문서 지위 (2026-09-06): **구성요소 안내**. 해당 경로의 API·구조 안내다. 과거 service 경로와 현재 event 경로는 실제 호출자로 구분한다.

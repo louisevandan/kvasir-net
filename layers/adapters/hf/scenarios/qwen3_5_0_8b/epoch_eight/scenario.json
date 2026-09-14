@@ -1,0 +1,62 @@
+{
+  "name": "eight_request_epoch",
+  "schedule": "sequential",
+  "requests": [
+    {
+      "id": "wave-0",
+      "prompt": "What is 2 + 2? Reply with only the digit.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "wave-1",
+      "prompt": "대한민국의 수도 이름만 답하세요.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "wave-2",
+      "prompt": "What is 2 + 2? Reply with only the digit.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "wave-3",
+      "prompt": "대한민국의 수도 이름만 답하세요.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "wave-4",
+      "prompt": "What is 2 + 2? Reply with only the digit.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "wave-5",
+      "prompt": "대한민국의 수도 이름만 답하세요.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "wave-6",
+      "prompt": "What is 2 + 2? Reply with only the digit.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    },
+    {
+      "id": "wave-7",
+      "prompt": "대한민국의 수도 이름만 답하세요.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 512,
+      "cancel_after": null
+    }
+  ]
+}

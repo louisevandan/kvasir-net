@@ -65,6 +65,7 @@ test("a docs page missing from the README index fails", () => {
 test("vendored and build directories are skipped", () => {
   const dir = fixture({
     "README.md": "clean\n",
+    ".cache/hf/environment/bad.md": "cache\r\ncontains mixed\n",
     "upstream/bad.md": "\ud558\ub098\ub77c\ub3c4 \uc2e4\ud328 \u2192 Abort mixed\r\n\n",
     "target/bad.md": "\uc6d0\uc7a5 \ubd80\uc7ac\uc758 \uc99d\uac70\n",
   });

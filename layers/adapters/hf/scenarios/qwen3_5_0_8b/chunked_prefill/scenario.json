@@ -1,0 +1,13 @@
+{
+  "name": "chunked_prefill",
+  "schedule": "sequential",
+  "requests": [
+    {
+      "id": "context",
+      "prompt": "Remember the secret word: BLUE. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. This sentence is background context. What is the secret word? Reply with one word.",
+      "max_new_tokens": 16,
+      "prefill_chunk": 32,
+      "cancel_after": null
+    }
+  ]
+}

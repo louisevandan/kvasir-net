@@ -773,17 +773,17 @@ H5의 최소 8 paired 반복·4 holdout쌍, 유효 TPS/신뢰구간·TTFT/ITL �
 
 <a id="hf-integration-contract"></a>
 
-## 6.1.1 외부 HF 어댑터 통합 수용 (2026-09-14 계획)
+## 6.1.1 HF 어댑터 통합 수용 (2026-09-14 계획)
 
 작업 범위·구현/저장소 소유와 선행 순서는 [HF 수용 계획](external-analysis-improvement-plan.md#hf-integration),
 수정 경계는 [격리 계약](layer-isolation-contract.md#external-hf-boundary)을 따른다. 아래 HF-*는 새 예정 시험 ID다.
-현재 crate/등록/통합 실행이 존재한다는 뜻이 아니다. 독립 Python worker 시험을 P4 통합 통과로 승격하지 않는다.
+최초 계획의 과거 결과는 HF 수용 보고, 현재 source 이관은 이관 보고를 따른다. 독립 Python worker 시험을 P4 통합 통과로 승격하지 않는다.
 
 | 예정 ID | 입력·실제 소비 경로 | 필수 판정 |
 | --- | --- | --- |
-| HF-PKG | P4 root에서 외부 HF crate를 실제 의존한 locked build, package metadata/tree, 구현체→`Arc<dyn RetainedNodeAdapter>` 연결. feature를 쓰면 on/off 별도 build | `p4-adapter`/`p4-protocol` 각각 package ID/source/version 단일성. 중복 source를 넣은 독립 negative fixture는 타입 연결 실패 또는 graph gate 거부. sibling path 개발과 배포 복원 절차 구분. P4 전체 workspace와 외부 crate 자체 시험 모두 종료/summary 기록 |
+| HF-PKG | P4 root에서 HF crate를 실제 의존한 locked build, package metadata/tree, 구현체→`Arc<dyn RetainedNodeAdapter>` 연결. feature를 쓰면 on/off 별도 build | `p4-adapter`/`p4-protocol` 각각 package ID/source/version 단일성. 중복 source를 넣은 독립 negative fixture는 타입 연결 실패 또는 graph gate 거부. 내부 workspace와 단일 source 복원 검증. P4 전체 workspace와 HF member 시험 모두 종료/summary 기록 |
 | HF-REGISTER | 실제 agent event CREATE/INSPECT. enabled/disabled kind, 잘못된 kind·generation·용량. llama/HF node를 같은 agent에 생성 | 생성 가능 kind와 광고 일치. disabled HF는 사전 거부, worker spawn/모델 할당 0. Qwen 모델명은 P4 생성 분기에 없음. 기존 llama 생성/반환/삭제 계약 유지 |
-| HF-RETAIN | queue/completion cap 1, 작은 고정 byte 한도에서 Full/Closed/peek/matching take/poll wake. 실제 RetainedEventNode·broker가 외부 어댑터를 소비 | 원본 allocation/claim 반환, peek 무소비, stale front 불소비, capacity 재개/wake 유실 없음. queued/held/IPC/출력 권한 보존. bytes 경계±1 거부 무효과, 입력 수용과 실행/하류 수용 분리 |
+| HF-RETAIN | queue/completion cap 1, 작은 고정 byte 한도에서 Full/Closed/peek/matching take/poll wake. 실제 RetainedEventNode·broker가 HF 어댑터를 소비 | 원본 allocation/claim 반환, peek 무소비, stale front 불소비, capacity 재개/wake 유실 없음. queued/held/IPC/출력 권한 보존. bytes 경계±1 거부 무효과, 입력 수용과 실행/하류 수용 분리 |
 | HF-IPC | 실제 Rust↔fixture Python binary pipe에 magic/version/reserved/length 오염, partial header/body/write·flush 실패, stdout 오염, ready mismatch·초과 stderr·worker death·hang 주입 | 비호환/한도 초과는 tensor/model 실행 전 거부. 실패 후 stream 임의 재동기화/issue 자동 재실행 없음. uncertain·최초 오류·cleanup 오류 별도 보존. nonblocking retained 호출 안에서 blocking Python I/O 대기 금지 |
 | HF-LIFE | P4 LOAD→여러 요청→취소/Release→UNLOAD→DELETE→새 generation 재생성. 실행 중·결과 보유 중·큐 포화 시 취소/삭제, 오래된 결과/해제 도착 | 취소 접수/발행 중단과 worker 정지 확인 분리. 미회수 출력/unknown snapshot/살아 있는 state가 있으면 삭제 거부. child 종료·물리 state 해제와 claim 회수 뒤만 unloaded. node task 건강성과 출력 수명 검사 우회 금지 |
 | HF-MODEL | 아래 고정 Qwen dense FP32를 독립 controller와 P4 경로에서 실행. chunked prefill·decode·요청 교대·취소·slot 재사용·DeltaNet/attention cut·CPU/GPU 지원 조합 | 기존 logits atol=0.125/rtol=0.01와 매 스텝 greedy 동일 기준 유지. state 위치뿐 아니라 선언 cache의 구성/내용 parity를 요청별 참조와 비교. FP32 PASS로 기존 이기종 BF16 FAIL을 덮지 않음. 원본/양자화/분산 오차 분리 |
@@ -812,9 +812,9 @@ H5의 최소 8 paired 반복·4 holdout쌍, 유효 TPS/신뢰구간·TTFT/ITL �
 - 변경된 각 권한/한도/identity 검사는 실제 소비 반례와 독립 수정 제거 변이로 증명한다. Rust 재컴파일·binary hash,
   Python source/import 경로·bundle hash를 함께 봉인한다. feature를 쓰면 HF 활성 시험을 필수 CI/실행 명령에 넣고
   기본 빌드에서 제외됐다는 이유로 HF 검증을 통과 처리하지 않는다.
-- HF 저장소에 독립/통합 runner·fixture·profile·환경 lock·실행/결과 보고를 두고, P4에는 생성/광고/공통 계약 회귀와
-  외부 고정 revision으로 시험을 재현하는 명령·결과 색인을 둔다. sibling 없이 시작하는 복원 시험에서는 명시 build
-  bundle이 두 repo를 정확한 commit으로 준비하거나 실제 고정 Git/crate source를 가져와야 한다. 테스트 중 임시 path만
+- HF adapter 폴더에 독립/통합 runner·fixture·profile·환경 lock·실행/결과 보고를 두고, P4에는 생성/광고/공통 계약 회귀와
+  P4 고정 revision으로 시험을 재현하는 명령·결과 색인을 둔다. sibling 없이 시작하는 복원 시험에서는 명시 build
+  bundle이 하나의 P4 commit으로 모든 내부 source를 준비해야 한다. 테스트 중 임시 path만
   우연히 존재한 빌드는 재현 가능한 배포 증거가 아니다.
 
 HF 수용 완료는 위 통합 capability의 완료다. 소형 Qwen으로 초대형 모델 H0–H7/성능 승격을 승인하지 않는다.

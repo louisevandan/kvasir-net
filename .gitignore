@@ -57,3 +57,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# HF source-export tooling is source, even in a build-named directory.
+!layers/adapters/hf/scripts/deployment/source/

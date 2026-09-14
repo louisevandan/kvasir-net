@@ -4,3 +4,5 @@
 # Release manifests are hashed as raw bytes across Windows checkouts.
 *.sha256 text eol=lf
 SHA256SUMS text eol=lf
+
+layers/adapters/hf/** text eol=lf
