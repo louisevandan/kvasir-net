@@ -13,7 +13,7 @@ from uuid import uuid4
 root = Path(__file__).resolve().parents[3]
 output = root.parents[2] / "target/hf/qwen-mutation" / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8])
 output.mkdir(parents=True)
-model_dir = (root.parents[2] / ".cache/hf/models/checkpoint-path.txt").read_text(encoding="utf-8")
+model_dir = (root.parents[2] / ".cache/hf/models/checkpoint-path.txt").read_text(encoding="utf-8").strip()
 prefix = "python/p4hfadapter/models/qwen3_5_0_8b/"
 cases = {
     "baseline": None,

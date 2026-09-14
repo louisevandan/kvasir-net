@@ -25,7 +25,7 @@ def main(root: Path):
             return 0
         directory = args.model_dir
         if directory is None:
-            directory = Path((root.parents[2] / ".cache/hf/models/checkpoint-path.txt").read_text(encoding="utf-8"))
+            directory = Path((root.parents[2] / ".cache/hf/models/checkpoint-path.txt").read_text(encoding="utf-8").strip())
         directory = directory.resolve()
         if args.command == "worker":
             if not args.node or not args.run_id:

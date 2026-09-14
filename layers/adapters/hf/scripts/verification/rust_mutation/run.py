@@ -10,6 +10,7 @@ import zipfile
 ROOT=Path(__file__).resolve().parents[3]
 CASES={
  "baseline":None,
+ "startup_isolation":("../tests/retained.rs", "Some(FIXTURE_STARTUP.lock().unwrap_or_else(|error| error.into_inner()))", "None"),
  "epoch":("lifecycle/mod.rs","job.epoch != self.epoch + u64::from(epoch_change)","false"),
  "result_identity":("lifecycle/mod.rs",'reply["job"] != meta["job"] || ',""),
  "input_bound":("retained/mod.rs","if cost > self.limit {","if false {"),
@@ -34,6 +35,7 @@ def main(output):
    before=sha(path);path.write_text(text.replace(change[1],change[2]),encoding="utf-8",newline="\n")
   env=dict(os.environ,CARGO_TARGET_DIR=str(case / "target"),HF_TEST_PYTHON=os.environ.get("HF_TEST_PYTHON","python"))
   cmd=["cargo","test","--locked","-p","p4-hf-adapter","--test","retained","--","--test-threads=1"]
+  if name=="startup_isolation":cmd=cmd[:-2]
   print(f"START {name}",flush=True)
   with (case / "test.log").open("wb") as log:
    result=subprocess.run(cmd,cwd=source,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=300)

@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 static IDS: AtomicU64 = AtomicU64::new(1);
+static FIXTURE_STARTUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn pack(meta: &Value, body: &[u8]) -> Vec<u8> {
     let h = serde_json::to_vec(meta).unwrap();
     let mut b = (h.len() as u32).to_be_bytes().to_vec();
@@ -128,6 +129,8 @@ impl Harness {
         unpack(&self.take().event().payload)
     }
     fn load(&self, mode: &str) -> Value {
+        let _startup: Option<std::sync::MutexGuard<'static, ()>> =
+            Some(FIXTURE_STARTUP.lock().unwrap_or_else(|error| error.into_inner()));
         let nodes = json!([{"agent":"tcp://127.0.0.1:41999","node":"node","generation":1}]);
         self.call(json!({"op":"load","generation":1,"nodes":nodes,"index":0,"launch":{
    "python":std::env::var("HF_TEST_PYTHON").unwrap_or("python".into()),"bundle":self.path.join("bundle.json"),

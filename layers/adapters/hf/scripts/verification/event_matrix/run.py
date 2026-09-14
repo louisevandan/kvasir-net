@@ -14,6 +14,10 @@ def quality(request):
  return request['released'] and request['text'].strip()==text and request['terminal']==('cancelled_at_step_boundary' if name=='cancel' else 'eos')
 
 def main(args):
+ for name in ('output','bundle','bundle_b','agent_binary','nodes','deployments'):
+  value=getattr(args,name)
+  if value is not None:setattr(args,name,value.resolve())
+ if args.plan:args.plan=str(Path(args.plan).resolve())
  args.output.mkdir(parents=True,exist_ok=False)
  cases=[(name,'short',1,args.bundle) for name in ('single_gpu','balanced_two_gpu_fp32','uneven_three_stage_fp32','attention_boundaries_fp32','cpu_gpu','single_cpu')]
  cases += [('balanced_two_gpu_fp32',name,1,args.bundle) for name in ('chunked_prefill','interleaved_cancel')]
