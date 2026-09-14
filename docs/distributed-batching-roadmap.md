@@ -51,7 +51,14 @@ SSH와 시험용 S4U agent의 접근 실패를 설치 앱의 상태로 일반화
 [현재 fleet 재개](../tests/reports/release-a/20260915_011200.md)에서 현재 소스 재빌드·PLAN8/8,
 7edge 왕복과 양쪽 어댑터 회귀를 통과했다. Mac은 같은 바이너리를 SSH foreground 세션에서 실행해
 직접 LAN 반환을 확인했다. 550B case-00은 정답/EOS·완료/해제1/1·UNLOAD/DELETE와1104개 비용 결속을 통과했다.
-TTFT662.342초/E2E770.047초/ITL p95 1.741초로 SLO는 실패했다. 계측 off 대조 arm이 진행 중이며 전체 A 수용으로 세지 않는다.
+계측 off도 같은94개 token·정답/EOS·완료/해제1/1과 회수를 통과했다. on/off TTFT662.342/656.619초,
+E2E770.047/763.552초, ITL p95 1.741/1.754초로 양쪽 SLO는 실패했다. 단일 고정 순서 쌍이며
+관측 E2E 차이0.851%를 인과적 계측 overhead로 확정하지 않는다. 요청별 deadline은 미구현이다.
+시험 agent/task/rule을 정리하고 물리9대 native0, 기존 등록7/7 INSPECT nodes=[]를 재확인했다.
+Spark/Ubuntu 구형 agent는 제어 연결 포화가 재발해 동일 바이너리·설정으로 cold recovery했다.
+영구 해결이나 과거 요청 정산은 미승인이다. 다음 첫 행동은 TCP half-close/반환 route 소유권을 보존하는
+연결 슬롯 수명 반례·소비 경로·변이 검증이며, CPU expert 비용 후보·유한 profile·deadline 실행기가 남았다.
+A0 전체 및 A1–A5/H0–H7 수용은 미완료다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 
