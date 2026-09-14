@@ -31,7 +31,7 @@ use replies::{ExpectedReply, receive_exact};
 use serde::Serialize;
 use std::io::Write;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use wire::EventWire;
@@ -245,7 +245,12 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     // The guard is untouched and a refused teardown still fails the run.
     // Only the reporting changes: both errors are kept, and the artifact
     // is always written.
-    let cleanup_error = teardown(&config, &mut wire, &mut sender).await;
+    let mut cleanup_error = teardown(&config, &mut wire, &mut sender).await;
+    if cleanup_error.is_none() {
+        if let Err(error) = wire.finish(Instant::now() + Duration::from_millis(config.timeout_ms.min(10_000))).await {
+            cleanup_error = Some(format!("connection finish: {error}"));
+        }
+    }
 
     let mut artifact = assemble(config, build.representative, run, cleanup_error);
     artifact.stage_builds = build.stages;

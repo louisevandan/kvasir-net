@@ -7,7 +7,40 @@ use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint, e
 use std::io;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncWriteExt, duplex};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
+
+#[tokio::test]
+async fn explicit_finish_requires_split_ack_and_rejects_later_send() {
+    let (client, mut server) = duplex(16);
+    let (reader, writer) = tokio::io::split(client);
+    let mut wire = EventWire::new(reader, writer);
+    let peer = tokio::spawn(async move {
+        assert_eq!(server.read_u32_le().await.unwrap(), 0);
+        server.write_all(&[0, 0]).await.unwrap();
+        tokio::task::yield_now().await;
+        server.write_all(&[0, 0]).await.unwrap();
+    });
+    wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap();
+    assert!(wire.send(event(1)).await.is_err());
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn explicit_finish_rejects_eof_and_preserves_unexpected_output() {
+    for bytes in [Vec::new(), frames(1)] {
+        let (client, mut server) = duplex(4096);
+        let (reader, writer) = tokio::io::split(client);
+        let mut wire = EventWire::new(reader, writer);
+        let expected = bytes.clone();
+        let peer = tokio::spawn(async move {
+            assert_eq!(server.read_u32_le().await.unwrap(), 0);
+            server.write_all(&bytes).await.unwrap();
+        });
+        assert!(wire.finish(Instant::now() + Duration::from_secs(2)).await.is_err());
+        assert_eq!(wire.buffer, expected, "unexpected output remains available to diagnose the failed close");
+        peer.await.unwrap();
+    }
+}
 
 fn outer() -> OuterEndpoint {
     OuterEndpoint {

@@ -555,3 +555,22 @@ The following legacy concepts have no representation in this contract:
 
 They remain available only on the reference branch and must be removed from
 the active implementation rather than wrapped.
+
+<a id="connection-finish-candidate"></a>
+
+## Connection FINISH candidate — unaccepted WIP (2026-09-15)
+
+[Validation stopped after three failures](../tests/reports/release-a/20260915_044735.md).
+This additive transport candidate reserves a zero u32-LE frame length as a
+connection-scoped FINISH, not an Event. The caller must consume its expected
+outputs first. The agent detaches only that socket's live OUTER bindings, drains
+previously acquired sender clones and queued Events, then sends a zero-length ACK.
+Input EOF alone still preserves a half-closed output route. Replacement bindings
+and failed-generation tombstones survive FINISH. Later outputs remain retained
+as undelivered; FINISH neither cancels work nor settles requests, receipts or KV.
+
+Old agents do not implement this ACK and old clients do not send FINISH. Do not
+claim fleet repair from an agent-only upgrade. Unexpected output during FINISH
+must remain diagnosable. The current driver preserves a received prefix, but its
+whole-frame preservation test fails; client/fleet adoption and acceptance remain
+unimplemented or unverified. No production support is claimed by this section.

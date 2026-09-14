@@ -32,6 +32,7 @@ pub struct EventWire<R, W> {
     /// on a run carrying tens of thousands of events is enough backpressure
     /// to change how the far side batches.
     cursor: usize,
+    finishing: bool,
 }
 
 impl<R, W> EventWire<R, W>
@@ -45,15 +46,43 @@ where
             writer,
             buffer: Vec::new(),
             cursor: 0,
+            finishing: false,
         }
     }
 
     pub async fn send(&mut self, event: Event) -> io::Result<()> {
+        if self.finishing { return Err(io::Error::other("event connection is finishing")); }
         let bytes = encode(&event).map_err(io::Error::other)?;
         let size = u32::try_from(bytes.len()).map_err(|_| io::Error::other("event too large"))?;
         self.writer.write_u32_le(size).await?;
         self.writer.write_all(&bytes).await?;
         self.writer.flush().await
+    }
+
+    /// Retire this socket's routes after the caller has consumed its expected
+    /// outputs. FINISH is not cancellation, node drain, or remote settlement.
+    pub async fn finish(&mut self, deadline: Instant) -> io::Result<()> {
+        if self.finishing { return Err(io::Error::other("event connection already finishing")); }
+        if self.cursor != self.buffer.len() { return Err(io::Error::other("unconsumed events before connection finish")); }
+        self.finishing = true;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        tokio::time::timeout(remaining, async {
+            self.writer.write_u32_le(0).await?;
+            self.writer.flush().await
+        }).await.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "connection finish write timeout"))??;
+        self.buffer.clear(); self.cursor = 0;
+        loop {
+            if self.buffer.len() >= HEADER {
+                if self.buffer[..HEADER] != [0; HEADER] || self.buffer.len() != HEADER {
+                    return Err(io::Error::other("unexpected output before connection finish ACK"));
+                }
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let read = tokio::time::timeout(remaining, self.reader.read_buf(&mut self.buffer)).await
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "connection finish ACK timeout"))??;
+            if read == 0 { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection ended without finish ACK")); }
+        }
     }
 
     /// The next event, or `TimedOut` at the deadline with the buffer intact.

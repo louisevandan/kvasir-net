@@ -221,3 +221,5 @@ Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](../t
 | [layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md) | HF 역사 기록 |
 | [layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md](../layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md) | HF 역사 기록 |
 | [layers/adapters/hf/tests/reports/migration/20260914_120000.md](../layers/adapters/hf/tests/reports/migration/20260914_120000.md) | HF 내부 통합 검증·원본 정리 결과 |
+
+연결 회수 WIP: [검증 계획](../tests/plans/release-a-transport-20260915.md) · [실패3회 중단 보고](../tests/reports/release-a/20260915_044735.md).

@@ -54,7 +54,10 @@ class Client:
         self.sequence=0
         self.sent_bytes=self.received_bytes=0
         self.trace=[]
+        self.finishing=False
     def send(self,target,content,payload,adapter=None):
+        if self.finishing:
+            raise RuntimeError("P4 connection is finishing")
         self.sequence+=1
         event_id=f"{self.outer[2]}:{self.sequence}"
         env=struct.pack("<H",3)+text(event_id)+text(event_id)+b"\0"+endpoint(self.outer)+endpoint(target)
@@ -104,3 +107,19 @@ class Client:
     def close(self):
         self.socket.close()
 
+    def finish(self,timeout=10):
+        """Retire socket routes after expected outputs; not request/KV settlement."""
+        if self.finishing:
+            raise RuntimeError("P4 connection already finishing")
+        self.finishing=True
+        previous=self.socket.gettimeout()
+        try:
+            self.socket.settimeout(timeout)
+            self.socket.sendall(struct.pack("<I",0))
+            self.sent_bytes+=4
+            ack=self.exact(4)
+            self.received_bytes+=4
+            if ack!=bytes(4):
+                raise ValueError(f"unexpected output before P4 finish ACK: {ack.hex()}")
+        finally:
+            self.socket.settimeout(previous)

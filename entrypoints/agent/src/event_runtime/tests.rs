@@ -28,6 +28,31 @@ pub(super) async fn receive(stream: &mut TcpStream) -> Event {
 }
 
 #[tokio::test]
+async fn owned_runtime_actual_tcp_inspection_retires_connection_after_explicit_finish() {
+    use p4_protocol::event::{AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let own = Address::tcp("127.0.0.1", listener.local_addr().unwrap().port());
+    let _runtime = Runtime::start(listener, own.clone(), RuntimeLimits { connections: 2, ..limits() });
+    // More independent OUTER generations than the actual admission budget.
+    for number in 1..=6 {
+        let mut stream = TcpStream::connect((own.host.as_str(), own.port)).await.unwrap();
+        let mut input = event(&own, Endpoint::agent(own.clone()), number, AGENT_INSPECT_CONTENT_TYPE, b"{}");
+        let route = Endpoint::outer(own.clone(), format!("inspection-{number}"), number);
+        input.envelope.source = route.clone();
+        input.envelope.return_route = match route { Endpoint::Outer(route) => Some(route), _ => unreachable!() };
+        send(&mut stream, &input).await;
+        let output = receive(&mut stream).await;
+        assert_eq!(output.envelope.payload_content_type, AGENT_SNAPSHOT_CONTENT_TYPE);
+        assert_eq!(output.envelope.causation_id, Some(input.envelope.event_id));
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&output.payload).unwrap()["nodes"], serde_json::json!([]));
+        stream.write_u32_le(0).await.unwrap();
+        let ack = tokio::time::timeout(std::time::Duration::from_secs(2), stream.read_u32_le()).await;
+        assert!(matches!(ack, Ok(Ok(0))), "explicit finish must drain the writer and acknowledge route retirement: {ack:?}");
+        assert_eq!(stream.read(&mut [0; 1]).await.unwrap(), 0);
+    }
+}
+
+#[tokio::test]
 async fn owned_runtime_actual_tcp_root_creates_uses_and_deletes_real_worker() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let own = Address::tcp("127.0.0.1", listener.local_addr().unwrap().port());

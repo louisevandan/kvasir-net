@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
@@ -64,10 +64,13 @@ impl Shared {
         self.failures.lock().unwrap_or_else(|e| e.into_inner()).push(failure);
     }
     fn writer<W: AsyncWrite + Unpin + Send + 'static>(self: &Arc<Self>, writer: W, slot: Arc<OwnedSemaphorePermit>) -> ConnectionSender {
+        self.writer_with_finish(writer, slot, None)
+    }
+    fn writer_with_finish<W: AsyncWrite + Unpin + Send + 'static>(self: &Arc<Self>, mut writer: W, slot: Arc<OwnedSemaphorePermit>, finish: Option<Arc<AtomicBool>>) -> ConnectionSender {
         let (sender, receiver) = mpsc::channel(self.limits.queue);
         let shared = Arc::clone(self);
         self.spawn(async move {
-            if let Err(value) = write_loop(writer, receiver, &shared.local_writes).await {
+            if let Err(value) = write_loop(&mut writer, receiver, &shared.local_writes).await {
                 p4_llamacpp_staged_adapter::v2::record::record(&format!(
                     "P4_EVENT_WRITE_FAILED retained_pending={} result={} error={}", value.pending.len(),
                     if value.started { "uncertain" } else { "not_started" }, value.error));
@@ -75,6 +78,14 @@ impl Shared {
                     if sender.as_ref().is_some_and(|sender| sender.is_closed()) { *sender = None; }
                 }
                 shared.preserve(Failure::Writer { value, _slot: slot });
+            } else if finish.as_ref().is_some_and(|finish| finish.load(Ordering::Acquire)) {
+                // All sender clones are gone and every queued Event has been
+                // locally written. This ACK has no request/receipt/KV authority.
+                if let Err(error) = writer.write_u32_le(0).await {
+                    eprintln!("P4_EVENT_CONNECTION_FINISH_ACK_FAILED error={error}");
+                } else if let Err(error) = writer.shutdown().await {
+                    eprintln!("P4_EVENT_CONNECTION_FINISH_ACK_FAILED error={error}");
+                }
             }
         });
         sender
@@ -121,10 +132,20 @@ async fn serve(id: u64, stream: TcpStream, broker: Arc<RetainedEventBroker>, sha
         eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} error={error}"); return;
     }
     let (mut reader, writer) = stream.into_split();
-    let sender = shared.writer(writer, Arc::clone(&slot));
+    let finish = Arc::new(AtomicBool::new(false));
+    let sender = shared.writer_with_finish(writer, Arc::clone(&slot), Some(Arc::clone(&finish)));
     loop {
         let mut event = match read_event(&mut reader).await {
-            Ok(event) => event,
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                // Explicit connection-scoped FINISH, not input EOF. Detach
+                // only this socket's live bindings; retain failure tombstones
+                // and any replacement socket. Existing senders drain normally.
+                finish.store(true, Ordering::Release);
+                shared.connections.lock().await.retain(|_, current| !current.as_ref().is_some_and(|current| current.same_channel(&sender)));
+                eprintln!("P4_EVENT_CONNECTION_FINISH connection={id}");
+                return;
+            }
             Err(error) => {
                 eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} error={error}"); break;
             }
@@ -230,12 +251,13 @@ async fn write_loop<W: AsyncWrite + Unpin>(mut writer: W, mut receiver: mpsc::Re
     Ok(())
 }
 
-async fn read_event<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Event> {
+async fn read_event<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Option<Event>> {
     let size = reader.read_u32_le().await? as usize;
-    if size == 0 || size > MAX_FRAME { return Err(io::Error::other("invalid event frame size")); }
+    if size == 0 { return Ok(None); }
+    if size > MAX_FRAME { return Err(io::Error::other("invalid event frame size")); }
     let mut bytes = vec![0; size];
     reader.read_exact(&mut bytes).await?;
-    decode(&bytes).map_err(io::Error::other)
+    decode(&bytes).map(Some).map_err(io::Error::other)
 }
 
 async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {

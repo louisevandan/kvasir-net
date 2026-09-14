@@ -89,6 +89,13 @@ def run(args):
         if reference:
             report["comparisons"]=reference.comparisons
         if client:
+            if report["cleanup_error"] is None:
+                try:
+                    client.finish()
+                    report["connection_finished"]=True
+                except Exception as error:
+                    report["cleanup_error"]=f"connection finish: {error}"
+                    report["ok"]=False
             report["transport"]={"sent_bytes":client.sent_bytes,"received_bytes":client.received_bytes,"trace":client.trace}
             client.close()
         report["source_unchanged"]=all(hashlib.sha256((ROOT / p).read_bytes()).hexdigest()==h for p,h in source.items())

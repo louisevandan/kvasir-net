@@ -22,6 +22,11 @@ HF를 P4 내부로 통합했고 전체 workspace on/off 각각 1460 passed / 0 f
 
 ### 0.A Release A 착수 (2026-09-14)
 
+**2026-09-15 04:47 STOP:** [연결 회수 WIP](../tests/reports/release-a/20260915_044735.md)의 구현 검증이
+소유 비용 시험·컴파일·예상 밖 출력 보존 시험에서 누적3회 실패했다. 사용자 지시에 따라 이 단계에서
+개발·재시험·배포·다음 단계 진행을 중단한다. 중간 PASS로 실패 횟수를 초기화하지 않는다.
+아래 이전의 “다음”은 중단 해제 뒤의 후보이며 자동 실행하지 않는다. [시험 계획](../tests/plans/release-a-transport-20260915.md)을 따른다.
+
 사용자의 후속 개발 지시로 A0을 진행한다. [단계별 계획](../tests/plans/release-a-20260914.md)과
 [A-RED/trace 감사](../tests/reports/release-a/20260914_040306.md)를 따른다.
 timer의 무입력 만료와 실제 RELEASE interleave를 분리했고 독립 재컴파일 변이2종을 검출했다.
