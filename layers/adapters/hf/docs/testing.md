@@ -18,3 +18,17 @@ Python 모델/cache/epoch/변이 검증에는 고정 torch/Transformers 환경�
 `distributed_recovery/`는 두 물리 host의 반환 단절/재수용을 검증한다.
 새 출력 디렉터리와 generation을 사용한다. 과거 보고를 새 commit의 실행 증거로 세지 않는다.
 이관 시험은 [계획](../tests/plans/migration-20260914.md), 판정은 [이관 기록](migration/README.md)을 따른다.
+
+자동 로딩 계획의 함수·CLI·독립 전수 탐색은 기본 Python suite에 포함되며
+P4 root `npm run test:model-loading`이 llama.cpp TS와 HF Python suite를 모두 실행한다.
+실제 CPU 모델 소비 및 제거 변이는 고정 환경에서 실행한다.
+
+```powershell
+.cache/hf/environments/qwen3_5_0_8b/Scripts/python.exe -B layers/adapters/hf/scripts/verification/loading_planner/run.py --output layers/adapters/hf/target/loading-check/new-run
+.cache/hf/environments/qwen3_5_0_8b/Scripts/python.exe -B layers/adapters/hf/scripts/verification/loading_planner_shape/run.py
+.cache/hf/environments/qwen3_5_0_8b/Scripts/python.exe -B layers/adapters/hf/scripts/verification/loading_planner_mutation/run.py --output layers/adapters/hf/target/loading-mutations/new-run
+.cache/hf/environments/qwen3_5_0_8b/Scripts/python.exe -B layers/adapters/hf/scripts/verification/loading_planner_event/run.py --agent <HF-enabled-agent.exe> --plan <generated-plan.json> --scenario <scenario.json> --output layers/adapters/hf/target/loading-event/new-run
+```
+
+역할별 source·tests·검증 runner는 HF 내부, 로딩 계획 산출물은 HF 내부 `target/`에 둔다.
+기존 다른 HF 검증 도구의 P4 root `target/hf/` 출력 규칙은 유지한다.

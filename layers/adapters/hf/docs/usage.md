@@ -13,4 +13,8 @@ python layers/adapters/hf/scripts/models/qwen3_5_0_8b/cli/run.py inspect --plan 
 `scripts/models/qwen3_5_0_8b/preparation/run.py`이며 root `.cache/hf/models/`에 revision 고정 캐시를 만든다.
 모델 실행 시 해당 환경 Python을 사용하고 `--model-dir`로 실제 checkpoint를 줄 수 있다.
 기본 경로 파일은 P4 root `.cache/hf/models/checkpoint-path.txt`다. 다른 checkout은 자기 캐시 또는 명시 경로를 사용한다.
+
+자동 로딩 계획은 모델별 `profile` → `plan` → 기존 `run`/`verify` 순서다.
+[자동 계획 명령](models/qwen3_5_0_8b/README.md#automatic-loading-planner)의 요청 예시에서
+가용 용량과 reserve를 실행 환경에 맞춰 갱신한다. 결과는 `layers/adapters/hf/target/` 아래 새 폴더에 둔다.
 환경·가중치는 Cargo가 설치하지 않는다. 상세 실행과 source 복원은 [통합 계약](integration/README.md)을 따른다.

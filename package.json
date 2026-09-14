@@ -5,7 +5,9 @@
   "scripts": {
     "docs-lint": "node tools/scripts/docs-lint.mjs",
     "test:docs-lint": "node --test tools/scripts/docs-lint.test.mjs",
-    "test:model-loading": "node --test tools/model-loading/tests/*.test.ts",
+    "test:model-loading": "npm run test:model-loading:llamacpp && npm run test:model-loading:hf",
+    "test:model-loading:llamacpp": "node --test tools/model-loading/tests/*.test.ts",
+    "test:model-loading:hf": "python -B layers/adapters/hf/scripts/testing/run.py",
     "test:placement-policy": "npm run test:model-loading"
   }
 }

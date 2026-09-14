@@ -4,6 +4,68 @@
 
 # Qwen3.5-0.8B 노드 분할 실행
 
+<a id="automatic-loading-planner"></a>
+
+## 자동 로딩 계획
+
+`planning.plan_loading`과 CLI `plan`은 이 모델의 실제 stage 프로필을 받아 기존 v1 plan JSON을 생성한다.
+모델 형식은 safetensors이며 고정 revision·dense FP32·CPU/CUDA만 자동 계획한다.
+GGUF 파싱, Mac/GB10 tier 우선순위, 모든 레이어에 동일한 KV 공식을 적용하지 않는다.
+
+요청 예시는 [loading_cpu/request.json](../../../plans/qwen3_5_0_8b/loading_cpu/request.json)이다.
+예시의 16 GiB는 시험용 예산이다. 실제 가용량을 조사한 값으로 바꾸고 OS/allocator/미관측 peak reserve를 남긴다.
+
+| 입력 | 계약 |
+| --- | --- |
+| `model_id`, `revision`, `dtype`, `quantization`, `limits` | 현재 모델 실행 계약과 일치. limits는 context·max_requests·max_new_tokens |
+| `prefill_chunk` | 측정 최대 chunk. 생성 plan의 `limits.prefill_chunk`로 전달해 scenario/worker에서 실행 전 거부 |
+| `cuts` | 0과24를 포함하는 오름차순 경계. 모든 앞/뒤 경계 조합을 device별로 측정해야 함 |
+| `hosts` | host ID, available_bytes, reserve_bytes. 여러 stage의 프로세스 RAM을 합산 |
+| `devices` | ID, host, cpu/cuda:N, available_bytes, reserve_bytes, enabled. 한 물리 host/device는 한 ID |
+| `slots` | node_id/device_id의 순서. 생략 가능한 stage 자리이며 같은 device를 여러 번 참조 가능 |
+| `minimum_hosts` | 선택할 host ID 수의 하한. ID/프로필만으로 물리 머신 수를 인증하지 않음 |
+
+P4 root에서 새 출력 폴더를 사용한다.
+
+```powershell
+.cache/hf/environments/qwen3_5_0_8b/Scripts/python.exe -B layers/adapters/hf/scripts/models/qwen3_5_0_8b/cli/run.py profile --request layers/adapters/hf/plans/qwen3_5_0_8b/loading_cpu/request.json --output layers/adapters/hf/target/loading-profile/new-run --timeout 600
+python -B layers/adapters/hf/scripts/models/qwen3_5_0_8b/cli/run.py plan --request layers/adapters/hf/plans/qwen3_5_0_8b/loading_cpu/request.json --profiles layers/adapters/hf/target/loading-profile/new-run/profiles.json --output layers/adapters/hf/target/loading-plan/new-run
+python -B layers/adapters/hf/scripts/models/qwen3_5_0_8b/cli/run.py inspect --plan layers/adapters/hf/target/loading-plan/new-run/plan.json
+```
+
+`profile --host <id>`는 현재 로컬 머신을 해당 ID에 명시적으로 대응시킨다. 원격 접속은 하지 않는다.
+각 머신에서 만든 profiles.json을 `plan --profiles <file1> <file2>`로 합친다. 모델 경로는 `--model-dir`로 지정할 수 있다.
+`plan`은 checkpoint의 대형 tensor나 torch를 읽지 않고 프로필의 고정 모델·source·runtime·workload 결속을 확인한다.
+누락/오래된 프로필은 용량 부족과 구별해 거부한다. 모델/worker 변경 후 프로필을 다시 측정한다.
+
+각 후보를 새 Python 프로세스에서 `load_stage`로 적재한다. safetensors index가 선택한 실제 weight byte,
+전체 context까지 동시에 살아 있는 max_requests개의 KV/conv/recurrent cache, 프로세스 peak RSS와
+CUDA allocator peak reserved byte를 측정한다. 끝에 실제 release로 모든 active state를 회수한다.
+첫/마지막 stage의 tied embedding 복제와 단일 stage의 alias는 loader가 실행한 양 그대로 반영한다.
+
+현재 HF controller는 stage 반환을 순서대로 기다린다. 따라서 목적은 **전체 stage service 합 → 최대 stage service → stage 수**다.
+동일 GPU의 여러 stage는 device 용량을, 같은 host의 여러 GPU/CPU stage는 host RAM을 누적한다.
+Pareto 탐색은 주어진 순서의 slot 부분집합과 cuts 안에서 정확하다. 상태 수 상한을 넘으면 미판정 오류이며
+용량 부족으로 바꾸지 않는다. 후보 밖의 cut/device 순서·IPC/network 비용·공유 GPU contention은 최적성 주장 범위 밖이다.
+측정은 synthetic tokens/hidden states와 cold stage 실행이며 실제 TPS/품질/모든 입력의 메모리 상한을 보증하지 않는다.
+
+출력은 `plan.json`, `assessment.json`, `request.json`, `profiles.json`이다. 기존 `run`/`verify`와 P4 event
+pipeline이 plan을 그대로 소비한다. standalone 실행은 `host=local`; P4 원격 배포 주소와 bundle은 기존 별도 명세다.
+계획·시험·프로필 생성기·검증 runner와 이 기능의 ignored `target/` 결과는 모두 HF 서브폴더에 있다.
+
+2026-09-15 로컬 검증: Python42/42, 기존 TS34/34, 독립 전수 탐색180개 사례, 제거 변이7/7을 확인했다.
+CPU 실측3개 구간에서 split tied weight 추가량1,017,118,720 bytes와 live cache44,433,408 bytes를 확인했다.
+생성된2-stage CPU plan으로 공식 모델과6스텝 logits/greedy 비교를 통과했고 두 응답은 `4`, `서울`이며 둘 다 EOS다.
+초기 검증 runner의 빈 set을 빈 dict와 비교한 assertion 실패는 `real-cpu/`에 보존하고, 타입 비교를 고친 새 실행은
+`layers/adapters/hf/target/loading-planner-20260915/real-cpu-final/summary.json`에 기록했다. 모델 기대값/허용 오차는 바꾸지 않았다.
+oversized chunk의 실제 StageSessions 거부는 forward·active·retired 효과0을 확인했다. 다중 물리 host 수용·BF16 해결·H0–H7 승격은 아니다.
+같은 생성 plan을 작업 소유 localhost P4 agent의 CREATE/LOAD→HF worker→release/UNLOAD/DELETE로도 소비했다.
+`target/loading-planner-20260915/p4-event/summary.json`은 logits/greedy6회·cache12회 비교와 agent 종료를 기록한다.
+HF 활성 `cargo test --locked --workspace --no-fail-fast --features hf-transformers`는 별도
+`--target-dir layers/adapters/hf/target/loading-planner-20260915/cargo`에서1460 passed/0 failed/7 ignored,
+61 summaries와exit0이다. 기본 target의 첫 시도는 사용 중인 `target/debug/p4-agent.exe` 제거가 거부돼
+build exit101이었으며 실행 중인 agent를 중단하지 않았다. 로그는 `workspace-hf.log`와 `workspace-isolated.log`로 구분한다.
+
 선정 모델은 `Qwen/Qwen3.5-0.8B`, revision `2fc06364715b967f1860aea9cf38778875588b17`입니다.
 텍스트 입력의 prefill·decode를 **노드별 실제 로컬 Python 프로세스**로 실행합니다.
 각 노드는 지정 레이어의 weight와 요청별 cache만 소유합니다. 노드 간 전달은 독립 시험 controller의 bounded IPC입니다.

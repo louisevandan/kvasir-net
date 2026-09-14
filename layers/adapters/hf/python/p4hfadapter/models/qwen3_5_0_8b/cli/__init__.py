@@ -9,8 +9,11 @@ from p4hfadapter.models.qwen3_5_0_8b.configuration import inspect_plan, read_pla
 
 def main(root: Path):
     parser = argparse.ArgumentParser(description="Qwen3.5-0.8B text stage-plan runner")
-    parser.add_argument("command", choices=("inspect", "run", "verify", "worker"))
-    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("command", choices=("inspect", "run", "verify", "worker", "plan", "profile"))
+    parser.add_argument("--plan", type=Path)
+    parser.add_argument("--request", type=Path)
+    parser.add_argument("--profiles", type=Path, nargs="+")
+    parser.add_argument("--host", default="local")
     parser.add_argument("--model-dir", type=Path)
     parser.add_argument("--scenario", type=Path)
     parser.add_argument("--output", type=Path)
@@ -19,6 +22,31 @@ def main(root: Path):
     parser.add_argument("--run-id")
     args = parser.parse_args()
     try:
+        if args.command in ("plan", "profile"):
+            if args.request is None or args.output is None:
+                raise ValueError("plan/profile require --request and fresh --output directory")
+            request = json.loads(args.request.read_text(encoding="utf-8"))
+            if args.command == "plan":
+                if not args.profiles:
+                    raise ValueError("plan requires measured --profiles; no guessed service or memory")
+                from p4hfadapter.models.qwen3_5_0_8b.planning import plan_loading
+                profiles = [profile for file in args.profiles for profile in json.loads(file.read_text(encoding="utf-8"))]
+                result = plan_loading(request, profiles)
+                args.output.mkdir(parents=True, exist_ok=False)
+                (args.output / "plan.json").write_text(json.dumps(result["plan"], indent=2) + "\n", encoding="utf-8")
+                (args.output / "assessment.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+                (args.output / "request.json").write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
+                (args.output / "profiles.json").write_text(json.dumps(profiles, indent=2) + "\n", encoding="utf-8")
+                print(json.dumps({"plan": str(args.output / "plan.json"), "objective": result["objective"]}))
+                return 0
+            if not 0 < args.timeout <= 600:
+                raise ValueError("profile timeout must be in (0,600]")
+            directory = args.model_dir or Path((root.parents[2] / ".cache/hf/models/checkpoint-path.txt").read_text(encoding="utf-8").strip())
+            from p4hfadapter.models.qwen3_5_0_8b.profiling import create_profiles
+            print(json.dumps(create_profiles(root, directory, request, args.output, args.host, args.timeout)))
+            return 0
+        if args.plan is None:
+            raise ValueError("inspect/run/verify/worker require --plan")
         plan = read_plan(args.plan)
         if args.command == "inspect":
             print(json.dumps(inspect_plan(plan), indent=2))

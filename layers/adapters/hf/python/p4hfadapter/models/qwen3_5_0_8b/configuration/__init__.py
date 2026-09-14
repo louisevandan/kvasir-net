@@ -24,6 +24,7 @@ class Plan:
     context: int
     max_requests: int
     max_new_tokens: int
+    prefill_chunk: int | None = None
 
 
 def fields(value, expected, where):
@@ -44,10 +45,12 @@ def parse_plan(value) -> Plan:
     if value["dtype"] not in ("float32", "bfloat16") or value["quantization"] != "none":
         raise ValueError("this runner supports dense float32/bfloat16 only")
     limits = value["limits"]
-    fields(limits, ("context", "max_requests", "max_new_tokens"), "limits")
+    expected = ("context", "max_requests", "max_new_tokens")
+    fields(limits, expected + (("prefill_chunk",) if type(limits) is dict and "prefill_chunk" in limits else ()), "limits")
     context = positive(limits["context"], 4096, "context")
     requests = positive(limits["max_requests"], 16, "max_requests")
     output = positive(limits["max_new_tokens"], context, "max_new_tokens")
+    chunk = positive(limits["prefill_chunk"], context, "prefill_chunk") if "prefill_chunk" in limits else None
     if type(value["nodes"]) is not list or not value["nodes"]:
         raise ValueError("nodes must be a nonempty ordered list")
     nodes, seen, cursor = [], set(), 0
@@ -68,7 +71,7 @@ def parse_plan(value) -> Plan:
         cursor = end
     if cursor != LAYERS:
         raise ValueError("partition does not reach layer 24")
-    return Plan(tuple(nodes), value["dtype"], context, requests, output)
+    return Plan(tuple(nodes), value["dtype"], context, requests, output, chunk)
 
 
 def read_plan(path: str | Path) -> Plan:
@@ -77,6 +80,8 @@ def read_plan(path: str | Path) -> Plan:
 
 def inspect_plan(plan: Plan) -> dict:
     return {"model_id": MODEL_ID, "revision": REVISION, "dtype": plan.dtype,
+            "limits": {"context": plan.context, "max_requests": plan.max_requests,
+                       "max_new_tokens": plan.max_new_tokens, "prefill_chunk": plan.prefill_chunk},
             "execution": "local-process", "physical_hosts_verified": False,
             "nodes": [{"node_id": n.node_id, "host": n.host, "device": n.device,
                        "layers": [n.start, n.end], "embedding": n.start == 0,

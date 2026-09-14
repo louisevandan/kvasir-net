@@ -35,6 +35,8 @@ Qwen의 실제 역할 목록은 [모델 계약](../models/qwen3_5_0_8b/README.md
 models/<model>/
   configuration/   선택 모델의 실행 명세 검증
   loading/         담당 weight와 metadata 적재
+  planning/        해당 모델의 실측 stage 후보 선택·자원 합산
+  profiling/       실제 loader·cache를 새 프로세스에서 측정
   quantization/    해당 모델의 recipe 적용과 kernel 선택
   forward/         해당 모델의 부분 연산
   state/           해당 모델의 요청별 KV/recurrent 상태

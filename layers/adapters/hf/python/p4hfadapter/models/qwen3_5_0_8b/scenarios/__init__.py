@@ -37,6 +37,8 @@ def read_scenario(path: Path, plan, tokenizer):
             raise ValueError("request needs unique id and nonempty text prompt")
         limit = positive(item["max_new_tokens"], plan.max_new_tokens, "max_new_tokens")
         chunk = positive(item["prefill_chunk"], plan.context, "prefill_chunk")
+        if plan.prefill_chunk is not None and chunk > plan.prefill_chunk:
+            raise ValueError("scenario exceeds profiled prefill_chunk")
         cancel = item["cancel_after"]
         if cancel is not None:
             positive(cancel, limit, "cancel_after")

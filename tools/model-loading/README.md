@@ -1,7 +1,9 @@
 # P4 model loading
 
 P4 내부의 OUTER 모듈이다. 별도 저장소·배포 단위가 아니며 P4의 루트 테스트 명령으로 검증한다.
-계획 구현과 입력 타입, 참조 판단, 회귀 시험 및 로컬 검증 산출물의 소유 경로는 이 폴더다.
+llama.cpp/GGUF 기반 계획 구현과 입력 타입, 참조 판단, 회귀 시험 및 로컬 검증 산출물의 소유 경로는 이 폴더다.
+Python HF 계획기는 [HF 모델별 모듈](../../layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md#automatic-loading-planner)이
+구현·시험·실측·검증 자료를 함께 소유한다. HF 모델 의미를 이 TS 계획기나 P4 공통 core에 넣지 않는다.
 실행 순서와 실기 수용은 [로드맵](../../docs/distributed-batching-roadmap.md)과
 [검증 규약](../../docs/distributed-batching-verification.md)을 따른다.
 
@@ -17,7 +19,8 @@ P4 내부의 OUTER 모듈이다. 별도 저장소·배포 단위가 아니며 P4
 P4 TypeScript consumers import `planModelLoading` and its types from
 `tools/model-loading/index.ts`. The implementation never imports its tests or reference solver.
 The existing model-catalog benchmark reuses this module's GGUF reader.
-`npm run test:model-loading` runs this module's tests; `test:placement-policy` remains an alias.
+`npm run test:model-loading` runs both llama.cpp TypeScript and HF Python tests; `test:placement-policy` remains an alias.
+Use `test:model-loading:llamacpp` or `test:model-loading:hf` for a scoped suite.
 
 `cli/collect-inventory.ts` accepts `--agents <agents.json>` and `--probe <event-probe.py>`;
 its default output is this module's `target/fleet-inventory/`. The probe is the P4 runtime's

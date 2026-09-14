@@ -45,6 +45,8 @@ class StageSessions:
         shape_ok = tensor.ndim == (2 if first else 3) and tensor.shape[0] == 1 and tensor.shape[1] > 0
         if not shape_ok or (not first and tensor.shape[2] != 1024):
             raise ValueError("invalid Qwen boundary shape")
+        if self.plan.prefill_chunk is not None and tensor.shape[1] > self.plan.prefill_chunk:
+            raise ValueError("step exceeds profiled prefill_chunk")
         if tensor.shape[1] + position > self.plan.context:
             raise ValueError("context capacity exceeded")
         if first:

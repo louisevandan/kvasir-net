@@ -11,6 +11,8 @@ P4의 모델별 Hugging Face Transformers 어댑터: Rust retained bridge와 Pyt
 | 시험 | [검증](docs/testing.md) |
 | wire·예산·배포 | [통합 계약](docs/integration/README.md) |
 | 모델 | [Qwen3.5-0.8B](docs/models/qwen3_5_0_8b/README.md) |
+| 자동 로딩 계획·실측 프로필 | [모델 계획기](docs/models/qwen3_5_0_8b/README.md#automatic-loading-planner) |
+| 로딩 계획기 검증 | [계획](tests/plans/loading-planner-20260915.md) · [보고](tests/reports/loading-planner/20260915_013600.md) |
 | 양자화 후보 | [설계](docs/quantization.md) |
 | 작업 규칙 | [AGENTS](AGENTS.md) |
 | 이관·복원·현재 증거 | [이관 기록](docs/migration/README.md) |
