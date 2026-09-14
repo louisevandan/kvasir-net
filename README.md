@@ -124,7 +124,7 @@ comparison path. Its queue statistics are not proof of the default event path.
 | Measured behaviour of the backend below | [docs/runtime-evidence.md](docs/runtime-evidence.md) |
 | The revision that produced all this | [P4_REVISION_PLAN.md](P4_REVISION_PLAN.md) |
 
-외부 HF 소비 빌드·실행 및 양쪽 어댑터 수용: [HF 통합 안내](docs/hf-integration.md).
+내부 HF 빌드·실행 및 양쪽 어댑터 수용: [HF 통합 안내](docs/hf-integration.md).
 
 Release A: [단계별 시험 계획](tests/plans/release-a-20260914.md) · [A-RED/trace 감사](tests/reports/release-a/20260914_040306.md).
 Corpus와 명세 검증: [준비 결과](tests/reports/release-a/20260914_041920.md).
@@ -181,3 +181,4 @@ Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](test
 | [layers/adapters/hf/tests/reports/framing/20260913_174516.md](layers/adapters/hf/tests/reports/framing/20260913_174516.md) | HF 역사 기록 |
 | [layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md](layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md) | HF 역사 기록 |
 | [layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md](layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md) | HF 역사 기록 |
+| [layers/adapters/hf/tests/reports/migration/20260914_120000.md](layers/adapters/hf/tests/reports/migration/20260914_120000.md) | HF 내부 통합 검증·원본 정리 결과 |

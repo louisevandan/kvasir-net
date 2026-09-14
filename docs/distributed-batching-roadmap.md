@@ -12,12 +12,13 @@
 
 2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 
-## 0. 현재 상태 — HF 내부 이관 진행, Release A 기존 상태 보존
+## 0. 현재 상태 — HF 내부 통합 검증 완료, Release A 기존 상태 보존
 
 ### 0.HF 이관 (2026-09-14)
 
-사용자가 독립 HF 프로젝트의 P4 내부 이관과 최종 제거를 승인했다. 현재 검증 중이다.
-[이관 계약·진행](../layers/adapters/hf/docs/migration/README.md)을 따른다. 기존 Release A의 실기/점유 상태와 실패 증거는 유지한다.
+HF를 P4 내부로 통합했고 전체 workspace on/off 각각 1460 passed / 0 failed / 7 ignored, 로컬·두 물리 host 모델 검증을 통과했다.
+[이관 보고](../layers/adapters/hf/tests/reports/migration/20260914_120000.md)를 따른다. 원본 내용은 백업으로 이동했고 빈 원본 디렉터리 삭제만 차단됐다.
+[이관 기록](../layers/adapters/hf/docs/migration/README.md)을 따른다. 기존 Release A의 실기/점유 상태와 실패 증거는 유지한다.
 
 ### 0.A Release A 착수 (2026-09-14)
 

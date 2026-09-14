@@ -14,6 +14,7 @@ P4의 모델별 Hugging Face Transformers 어댑터: Rust retained bridge와 Pyt
 | 양자화 후보 | [설계](docs/quantization.md) |
 | 작업 규칙 | [AGENTS](AGENTS.md) |
 | 이관·복원·현재 증거 | [이관 기록](docs/migration/README.md) |
+| 이관 검증 결과 | [보고](tests/reports/migration/20260914_120000.md) |
 | Rust 공개 경계 | [crate 안내](adapter/README.md) |
 
 저장소와 Cargo workspace는 P4 하나다. Python import명은 `p4hfadapter`, agent kind는 `hf-transformers`다.
