@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[6]
 
 def check(root):
     command = ['cargo', 'metadata', '--offline', '--locked', '--features', 'hf-transformers', '--format-version', '1']
-    result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding="utf-8")
     if result.returncode:
         raise RuntimeError(result.stderr)
     graph = json.loads(result.stdout)
