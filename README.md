@@ -132,3 +132,4 @@ Native 준비와 양쪽 어댑터: [회귀 결과](tests/reports/release-a/20260
 Native 비용 관측: [CPU 실제 경로와 제거 변이](tests/reports/release-a/20260914_050400.md).
 현재 pin과 배포 후보: [token·CUDA/Metal·양쪽 어댑터·비용 귀속](tests/reports/release-a/20260914_054100.md).
 Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](tests/reports/release-a/20260914_062025.md).
+앱 실행 환경 재확인: [모델 접근·native PLAN8/8](tests/reports/release-a/20260914_102600.md).

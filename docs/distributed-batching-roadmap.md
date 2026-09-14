@@ -33,8 +33,10 @@ A0 전체와 A1–A5, 제품 SLO/H0–H7은 아직 미완료다.
 5개 OS agent, 새 agent의 llama/HF 회귀와 native→Worker 비용 결속을 확인했다.
 [Fleet 사전 검사](../tests/reports/release-a/20260914_062025.md)에서7-host INSPECT와6/8 stage native PLAN을 확인했다.
 검사 도구의 CUDA 환경 전달·장치 검사와 실제 native 경로에서 도구 제거 변이2종을 검증했다. 검사 소유 프로세스·task·rule은 정리했다.
-현재 `.29`에 로그인 세션과 모델 S: 접근이 없어 stage0·1 및550B 통합 검증이 BLOCKED다.
-다음은 `.29` 접근 복구→남은 PLAN→550B 실제 occupancy 비용·정답·계측 overhead·전송/client 지연 검증이다.
+[앱 실행 환경 재확인](../tests/reports/release-a/20260914_102600.md)으로 `.29` 모델 접근 차단 판정을 철회했다.
+설치 앱은 같은 S:의10개 shard를 읽으며, 사용자 세션에서 남은 stage0·1도 통과해 native PLAN8/8이다.
+SSH와 시험용 S4U agent의 접근 실패를 설치 앱의 상태로 일반화하지 않는다. 기존 설치 앱은 유지한다.
+다음은7host/8stage의550B 실제 LOAD·정상 응답·occupancy 비용·계측 overhead·전송/client 지연 검증이다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 
