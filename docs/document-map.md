@@ -170,6 +170,7 @@ Native 비용 관측: [CPU 실제 경로와 제거 변이](../tests/reports/rele
 Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](../tests/reports/release-a/20260914_062025.md).
 앱 실행 환경 재확인: [모델 접근·native PLAN8/8](../tests/reports/release-a/20260914_102600.md).
 후속 실기 준비: [기존 fleet 노드 회수](../tests/reports/release-a/20260915_005456.md).
+현재 fleet 재개: [재빌드·양쪽 어댑터·550B arm](../tests/reports/release-a/20260915_011200.md).
 동시 HF 작업 인수: [로딩 계획기 재현 계획](../layers/adapters/hf/tests/plans/loading-planner-20260915.md) · [검증](../layers/adapters/hf/tests/reports/loading-planner/20260915_013600.md).
 
 ## HF 어댑터 문서

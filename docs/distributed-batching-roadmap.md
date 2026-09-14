@@ -48,6 +48,9 @@ SSH와 시험용 S4U agent의 접근 실패를 설치 앱의 상태로 일반화
 [2026-09-15 fleet 회수](../tests/reports/release-a/20260915_005456.md)에서 사용자 지시로 기존 노드를 정리했다.
 등록7/7 INSPECT nodes=[], 물리9대 P4 native0개다. 실패한 UNLOAD와 cold recovery는 별도 보존한다.
 현재 HEAD의 agent 재빌드 후 같은550B 실기로 진행한다. 과거 요청 정산·서비스 수용을 소급 승인하지 않는다.
+[현재 fleet 재개](../tests/reports/release-a/20260915_011200.md)에서 현재 소스 재빌드·PLAN8/8,
+7edge 왕복과 양쪽 어댑터 회귀를 통과했다. Mac은 같은 바이너리를 SSH foreground 세션에서 실행해
+직접 LAN 반환을 확인했다. 550B case-00 A0 비용 arm은 LOAD 중이며 전체 A 수용으로 세지 않는다.
 
 ### 0.HF 수용 결과 (2026-09-14)
 
