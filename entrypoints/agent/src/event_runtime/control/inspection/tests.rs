@@ -233,6 +233,10 @@ async fn node_inspection_reports_request_completion_and_native_storage_separatel
                 >()
                 .await
             }),
+            lifecycle_phase: super::super::LifecyclePhase::Loaded,
+            pending_lifecycle: None,
+            admission_pause: None,
+            last_lifecycle_result: None,
         },
     );
     let limits = crate::event_runtime::RuntimeLimits {
@@ -247,6 +251,7 @@ async fn node_inspection_reports_request_completion_and_native_storage_separatel
     let transport = crate::event_runtime::transport::Inspector::detached(limits);
     let value = snapshot(&nodes, &broker, &transport).await;
     let retention = &value["nodes"][0]["retention"];
+    assert_eq!(value["nodes"][0]["lifecycle_state"], "loaded");
     assert_eq!(retention["pending_requests"]["count"], 3);
     assert_eq!(retention["pending_requests"]["bytes"], 4096);
     assert_eq!(retention["completions"]["retained_count"], 2);

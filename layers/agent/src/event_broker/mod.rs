@@ -128,10 +128,32 @@ struct NodeRoute<S> {
 
 /// Temporary local lifecycle fence. Drop resumes the same registration.
 /// This grants no execution, cancellation or replay authority.
-pub struct NodeAdmissionPause(Arc<std::sync::atomic::AtomicBool>);
+pub struct NodeAdmissionPause {
+    node: String,
+    generation: u64,
+    admission_paused: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl NodeAdmissionPause {
+    fn targets(&self, target: &Endpoint) -> bool {
+        matches!(target, Endpoint::Node { node, generation, .. }
+            if node == &self.node && generation == &self.generation)
+    }
+
+    fn matches<S>(&self, node: &str, generation: u64, route: &NodeRoute<S>) -> bool {
+        self.node == node
+            && self.generation == generation
+            && Arc::ptr_eq(&self.admission_paused, &route.admission_paused)
+            && route
+                .admission_paused
+                .load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 impl Drop for NodeAdmissionPause {
     fn drop(&mut self) {
-        self.0.store(false, std::sync::atomic::Ordering::Release);
+        self.admission_paused
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -170,7 +192,7 @@ impl EventBroker {
         let kind = if let Some(receipt) = existing {
             CompletionDispatchKind::Existing(receipt)
         } else {
-            let (delivery, sender) = self.destination(&envelope.target)?;
+            let (delivery, sender) = self.destination(&envelope.target, None)?;
             let permit = sender
                 .clone()
                 .try_reserve_owned()
@@ -238,7 +260,7 @@ impl EventBroker {
         }
         // A slot is not routing authority: registration may have changed
         // between the front probe and this commit, even without an await.
-        let current = match self.destination(&event.envelope.target) {
+        let current = match self.destination(&event.envelope.target, None) {
             Ok((current_delivery, current_sender))
                 if current_delivery == delivery && current_sender.same_channel(&sender) =>
             {
@@ -278,7 +300,7 @@ impl EventBroker {
             Err(error) => return Err(DispatchFailure::new(error, event)),
         }
 
-        let (delivery, sender) = match self.destination(&event.envelope.target) {
+        let (delivery, sender) = match self.destination(&event.envelope.target, None) {
             Ok(destination) => destination,
             Err(error) => return Err(DispatchFailure::new(error, event)),
         };
@@ -346,6 +368,36 @@ impl<S: Clone> EventBroker<S> {
         generation: u64,
         sender: S,
     ) -> Result<(), DispatchError> {
+        self.register_node_with_admission(node, generation, sender, false)
+            .map(|_| ())
+    }
+
+    /// Register a new generation with ordinary ingress fenced from its first
+    /// observable instant. The returned capability admits only the lifecycle
+    /// command for this exact route and resumes admission when dropped.
+    pub fn register_node_paused(
+        &self,
+        node: impl Into<String>,
+        generation: u64,
+        sender: S,
+    ) -> Result<NodeAdmissionPause, DispatchError> {
+        let node = node.into();
+        let admission_paused =
+            self.register_node_with_admission(node.clone(), generation, sender, true)?;
+        Ok(NodeAdmissionPause {
+            node,
+            generation,
+            admission_paused,
+        })
+    }
+
+    fn register_node_with_admission(
+        &self,
+        node: impl Into<String>,
+        generation: u64,
+        sender: S,
+        paused: bool,
+    ) -> Result<Arc<std::sync::atomic::AtomicBool>, DispatchError> {
         let node = node.into();
         if node.is_empty() || generation == 0 {
             return Err(DispatchError::Invalid(
@@ -369,16 +421,17 @@ impl<S: Clone> EventBroker<S> {
         if nodes.contains_key(&node) {
             return Err(DispatchError::Invalid("node is already registered".into()));
         }
+        let admission_paused = Arc::new(std::sync::atomic::AtomicBool::new(paused));
         nodes.insert(
             node.clone(),
             NodeRoute {
                 generation,
                 sender,
-                admission_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                admission_paused: Arc::clone(&admission_paused),
             },
         );
         generations.insert(node, generation);
-        Ok(())
+        Ok(admission_paused)
     }
 
     pub fn unregister_node(&self, node: &str, generation: u64) -> Result<bool, DispatchError> {
@@ -400,7 +453,11 @@ impl<S: Clone> EventBroker<S> {
         Ok(true)
     }
 
-    fn destination(&self, target: &Endpoint) -> Result<(Delivery, S), DispatchError> {
+    fn destination(
+        &self,
+        target: &Endpoint,
+        paused_control: Option<&NodeAdmissionPause>,
+    ) -> Result<(Delivery, S), DispatchError> {
         if target.agent_address() != &self.own {
             let address = target.agent_address().clone();
             return Ok((Delivery::Outbound(address), self.outbound.clone()));
@@ -425,6 +482,7 @@ impl<S: Clone> EventBroker<S> {
                 if route
                     .admission_paused
                     .load(std::sync::atomic::Ordering::Acquire)
+                    && !paused_control.is_some_and(|pause| pause.matches(node, *generation, route))
                 {
                     return Err(DispatchError::Full(Delivery::Node {
                         node: node.clone(),

@@ -17,6 +17,8 @@ type Factory = fn(
 ) -> Result<Arc<dyn RetainedNodeAdapter>, String>;
 
 const FACTORIES: &[(&str, Factory)] = &[
+    #[cfg(test)]
+    ("neutral-lifecycle", neutral::create),
     (
         "llamacpp",
         |endpoint, input, output, retained, bytes, probe| {
@@ -38,6 +40,10 @@ const FACTORIES: &[(&str, Factory)] = &[
 
 pub(super) fn kinds() -> Vec<&'static str> {
     FACTORIES.iter().map(|(kind, _)| *kind).collect()
+}
+
+pub(super) fn supports(kind: &str) -> bool {
+    FACTORIES.iter().any(|(name, _)| *name == kind)
 }
 
 pub(super) fn runtime_resource_probe(
@@ -105,7 +111,7 @@ mod tests {
     }
     #[tokio::test]
     async fn advertised_factories_construct_the_real_retained_adapters() {
-        let mut expected = vec!["llamacpp"];
+        let mut expected = vec!["neutral-lifecycle", "llamacpp"];
         if cfg!(feature = "hf-transformers") {
             expected.push("hf-transformers");
         }
@@ -147,5 +153,213 @@ mod tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+pub(super) mod neutral {
+    use super::*;
+    use p4_adapter::node_adapter::{
+        AdapterLifecycleCompletion, CompletionFront, CompletionMailbox, CompletionPublisher,
+        OwnedPoll, RetainedCompletion, RetainedOfferError, completion_mailbox_with_limits,
+    };
+    use p4_protocol::event::lifecycle::{LifecycleOperation, LifecycleStatus, ResourceState};
+    use p4_protocol::event::{Event, EventClass};
+    use serde::Deserialize;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+
+    pub(crate) const LOAD: &str = "application/vnd.p4.test.neutral-load-v1+json";
+    pub(crate) const UNLOAD: &str = "application/vnd.p4.test.neutral-unload-v1+json";
+    pub(crate) const RESULT: &str = "application/vnd.p4.test.neutral-result-v1+json";
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Command {
+        #[serde(default)]
+        delay_ms: u64,
+        #[serde(default)]
+        fail: bool,
+        #[serde(default)]
+        unknown_resource: bool,
+    }
+
+    struct Adapter {
+        endpoint: Endpoint,
+        publisher: CompletionPublisher,
+        mailbox: Arc<CompletionMailbox>,
+        state: Arc<Mutex<String>>,
+        busy: Arc<AtomicBool>,
+        sequence: AtomicU64,
+    }
+
+    impl RetainedNodeAdapter for Adapter {
+        fn try_offer_retained(
+            &self,
+            completion: RetainedCompletion,
+        ) -> Result<(), RetainedOfferError> {
+            let event = completion.event();
+            if event.envelope.target != self.endpoint || event.validate().is_err() {
+                return Err(RetainedOfferError::Closed(completion));
+            }
+            let operation = match event.envelope.payload_content_type.as_str() {
+                LOAD => LifecycleOperation::Load,
+                UNLOAD => LifecycleOperation::Unload,
+                _ => return Err(RetainedOfferError::Closed(completion)),
+            };
+            let command: Command = match serde_json::from_slice(&event.payload) {
+                Ok(command) => command,
+                Err(_) => return Err(RetainedOfferError::Closed(completion)),
+            };
+            let target = match &event.envelope.source {
+                Endpoint::Agent(address) => Endpoint::agent(address.clone()),
+                _ => return Err(RetainedOfferError::Closed(completion)),
+            };
+            if self
+                .busy
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                return Err(RetainedOfferError::Full(completion));
+            }
+            *self.state.lock().unwrap_or_else(|error| error.into_inner()) = match operation {
+                LifecycleOperation::Load => "loading".into(),
+                LifecycleOperation::Unload => "unloading".into(),
+            };
+            let number = self.sequence.fetch_add(1, Ordering::Relaxed);
+            let (node_id, node_generation) = match &self.endpoint {
+                Endpoint::Node {
+                    node, generation, ..
+                } => (node.clone(), *generation),
+                _ => unreachable!("neutral adapter endpoint is always a node"),
+            };
+            let endpoint = self.endpoint.clone();
+            let publisher = self.publisher.clone();
+            let state = Arc::clone(&self.state);
+            let busy = Arc::clone(&self.busy);
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(command.delay_ms));
+                let resource_state = if command.unknown_resource {
+                    ResourceState::Unknown
+                } else {
+                    match operation {
+                        LifecycleOperation::Load => ResourceState::Present,
+                        LifecycleOperation::Unload => ResourceState::Absent,
+                    }
+                };
+                let status = if command.fail {
+                    LifecycleStatus::Failed
+                } else {
+                    LifecycleStatus::Succeeded
+                };
+                let outcome = AdapterLifecycleCompletion {
+                    operation,
+                    status,
+                    resource_state,
+                    first_error: command.fail.then(|| "neutral requested failure".into()),
+                    cleanup_error: None,
+                };
+                let mut envelope = completion.event().envelope.next(
+                    format!("neutral-lifecycle:{node_id}:{node_generation}:{number}"),
+                    endpoint,
+                    target,
+                    EventClass::Control,
+                    number,
+                    RESULT,
+                );
+                envelope.adapter_kind = Some("neutral-lifecycle".into());
+                let mut output = Event {
+                    envelope,
+                    payload: serde_json::to_vec(&outcome).expect("neutral outcome encodes"),
+                };
+                *state.lock().unwrap_or_else(|error| error.into_inner()) = match operation {
+                    LifecycleOperation::Load if status == LifecycleStatus::Succeeded => {
+                        "loaded".into()
+                    }
+                    LifecycleOperation::Unload if status == LifecycleStatus::Succeeded => {
+                        "unloaded".into()
+                    }
+                    _ => "failed".into(),
+                };
+                busy.store(false, Ordering::Release);
+                // Terminal publication is the authority that the command is no
+                // longer retained by the node-side delivery path.
+                completion.retire();
+                loop {
+                    match publisher.try_publish_owned(output) {
+                        Ok(()) => break,
+                        Err(p4_adapter::node_adapter::PublishError::Full(returned)) => {
+                            output = returned;
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            Ok(())
+        }
+
+        fn peek_retained_completion(&self) -> Option<CompletionFront> {
+            self.mailbox.peek_owned_front()
+        }
+
+        fn try_take_retained_matching(&self, expected: &CompletionFront) -> OwnedPoll {
+            self.mailbox.try_take_owned_matching(expected)
+        }
+
+        fn poll_take_retained(&self, context: &mut Context<'_>) -> Poll<OwnedPoll> {
+            self.mailbox.poll_take_owned(context)
+        }
+
+        fn snapshot(&self) -> String {
+            self.state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone()
+        }
+
+        fn completion_storage_snapshot(
+            &self,
+        ) -> Option<p4_adapter::node_adapter::CompletionStorageSnapshot> {
+            Some(self.mailbox.storage_snapshot())
+        }
+
+        fn decode_lifecycle_completion(
+            &self,
+            operation: LifecycleOperation,
+            event: &Event,
+        ) -> Result<AdapterLifecycleCompletion, String> {
+            if event.envelope.payload_content_type != RESULT {
+                return Err("neutral lifecycle result content type does not match".into());
+            }
+            let completion: AdapterLifecycleCompletion =
+                serde_json::from_slice(&event.payload).map_err(|error| error.to_string())?;
+            if completion.operation != operation {
+                return Err("neutral lifecycle result operation does not match".into());
+            }
+            completion.validate().map_err(str::to_owned)?;
+            Ok(completion)
+        }
+    }
+
+    pub(super) fn create(
+        endpoint: Endpoint,
+        _input: usize,
+        completion: usize,
+        retained: usize,
+        bytes: usize,
+        _probe: RuntimeResourceProbe,
+    ) -> Result<Arc<dyn RetainedNodeAdapter>, String> {
+        let (publisher, mailbox) = completion_mailbox_with_limits(completion, retained, bytes)
+            .map_err(|error| format!("invalid neutral storage: {error:?}"))?;
+        Ok(Arc::new(Adapter {
+            endpoint,
+            publisher,
+            mailbox,
+            state: Arc::new(Mutex::new("empty".into())),
+            busy: Arc::new(AtomicBool::new(false)),
+            sequence: AtomicU64::new(1),
+        }))
     }
 }

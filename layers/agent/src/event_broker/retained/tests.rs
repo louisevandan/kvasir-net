@@ -178,6 +178,58 @@ fn owned_runtime_admission_pause_rechecks_reserved_front_and_preserves_exact_dup
     assert_eq!(source.storage_snapshot().retained_count, 0);
 }
 
+#[test]
+fn node_load_lifecycle_pause_admits_only_its_exact_control_target() {
+    let (broker, _) = broker(1 << 20, 8);
+    let (first_sender, first_inbound) = queue(1 << 20);
+    let (second_sender, second_inbound) = queue(1 << 20);
+    let pause = broker
+        .register_node_paused("first", 3, first_sender)
+        .unwrap();
+    broker.register_node("second", 4, second_sender).unwrap();
+
+    let mut ordinary = event("ordinary-during-unload");
+    ordinary.envelope.target = Endpoint::node(own(), "first", 3);
+    assert!(matches!(
+        broker.dispatch_ingress(ordinary).unwrap_err().error,
+        DispatchError::Full(Delivery::Node { .. })
+    ));
+
+    let mut wrong = event("wrong-control-target");
+    wrong.envelope.target = Endpoint::node(own(), "second", 4);
+    let failure = broker
+        .dispatch_ingress_while_paused(&pause, wrong)
+        .unwrap_err();
+    assert!(matches!(failure.error, DispatchError::Invalid(_)));
+    assert_eq!(failure.event.envelope.event_id, "wrong-control-target");
+    assert_eq!(second_inbound.storage_snapshot().retained_count, 0);
+
+    let mut unload = event("authorized-unload");
+    unload.envelope.target = Endpoint::node(own(), "first", 3);
+    assert_eq!(
+        broker
+            .dispatch_ingress_while_paused(&pause, unload)
+            .unwrap(),
+        DispatchOutcome::Enqueued(Delivery::Node {
+            node: "first".into(),
+            generation: 3,
+        })
+    );
+    drop(take(&first_inbound));
+
+    let mut still_fenced = event("still-fenced");
+    still_fenced.envelope.target = Endpoint::node(own(), "first", 3);
+    assert!(matches!(
+        broker.dispatch_ingress(still_fenced).unwrap_err().error,
+        DispatchError::Full(Delivery::Node { .. })
+    ));
+    drop(pause);
+    let mut resumed = event("resumed");
+    resumed.envelope.target = Endpoint::node(own(), "first", 3);
+    broker.dispatch_ingress(resumed).unwrap();
+    drop(take(&first_inbound));
+}
+
 struct UnlockedWake {
     broker: Arc<RetainedEventBroker>,
     calls: AtomicUsize,

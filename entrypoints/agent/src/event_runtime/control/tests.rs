@@ -198,6 +198,10 @@ async fn owned_runtime_delete_refuses_held_completion_even_when_adapter_says_emp
             }),
             inbound: inbound.clone(),
             task,
+            lifecycle_phase: LifecyclePhase::Legacy,
+            pending_lifecycle: None,
+            admission_pause: None,
+            last_lifecycle_result: None,
         },
     )]);
     let delete = event(
@@ -229,4 +233,125 @@ async fn owned_runtime_delete_refuses_held_completion_even_when_adapter_says_emp
     drop(next(&inbound).await.unwrap());
     drop(held);
     assert_eq!(remove(&broker, &mut nodes, &delete).await.unwrap(), "node");
+}
+
+#[tokio::test]
+async fn node_load_lifecycle_unload_closed_outer_preserves_both_owned_inputs_and_reply() {
+    use p4_protocol::event::lifecycle::{
+        LIFECYCLE_SCHEMA, LifecycleOperation, LifecycleRequestMetadata, LifecycleResultMetadata,
+        LifecycleStatus, NODE_LOAD_CONTENT_TYPE, NODE_UNLOAD_CONTENT_TYPE, ResourceState,
+        decode_metadata, encode_metadata,
+    };
+
+    fn payload(
+        operation: LifecycleOperation,
+        adapter_content_type: &str,
+        opaque: &[u8],
+    ) -> Vec<u8> {
+        let load = operation == LifecycleOperation::Load;
+        encode_metadata(
+            &LifecycleRequestMetadata {
+                schema: LIFECYCLE_SCHEMA,
+                node_id: "lifecycle-held".into(),
+                node_generation: 9,
+                adapter_kind: "neutral-lifecycle".into(),
+                adapter_content_type: adapter_content_type.into(),
+                queue_capacity: load.then_some(1),
+                completion_capacity: load.then_some(1),
+                retained_capacity: load.then_some(8),
+                retained_bytes: load.then_some(1024 * 1024),
+            },
+            opaque,
+        )
+        .unwrap()
+    }
+
+    let own = Address::tcp("127.0.0.1", 54102);
+    let limits = limits();
+    let (agent, input) = limits.mailbox();
+    let (outer, output) = limits.mailbox();
+    let (outbound, _) = limits.mailbox();
+    let broker = Arc::new(RetainedEventBroker::new(
+        own.clone(),
+        agent,
+        outer,
+        outbound,
+        32,
+    ));
+    let transport = super::super::transport::Inspector::detached(limits);
+    let task = tokio::spawn(run(
+        own.clone(),
+        Arc::clone(&broker),
+        Arc::clone(&input),
+        limits,
+        transport,
+    ));
+
+    let load_payload = payload(
+        LifecycleOperation::Load,
+        super::super::adapters::neutral::LOAD,
+        br#"{"delay_ms":1}"#,
+    );
+    broker
+        .dispatch_ingress(event(
+            &own,
+            Endpoint::agent(own.clone()),
+            30,
+            NODE_LOAD_CONTENT_TYPE,
+            &load_payload,
+        ))
+        .unwrap();
+    let loaded = tokio::time::timeout(std::time::Duration::from_secs(10), next(&output))
+        .await
+        .unwrap()
+        .unwrap();
+    let (result, _): (LifecycleResultMetadata, _) =
+        decode_metadata(&loaded.event().payload).unwrap();
+    assert_eq!(result.status, LifecycleStatus::Succeeded);
+    assert_eq!(result.resource_state, ResourceState::Present);
+    drop(loaded);
+
+    let unload_payload = payload(
+        LifecycleOperation::Unload,
+        super::super::adapters::neutral::UNLOAD,
+        br#"{"delay_ms":1}"#,
+    );
+    let unload = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        31,
+        NODE_UNLOAD_CONTENT_TYPE,
+        &unload_payload,
+    );
+    let request_pointer = unload.payload.as_ptr();
+    broker.dispatch_ingress(unload).unwrap();
+    drop(output);
+
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(10), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stopped.nodes.is_empty(),
+        "successful UNLOAD removes the owner"
+    );
+    assert!(
+        stopped.error.as_deref().unwrap().contains("Closed(Outer)"),
+        "terminal delivery failure stays explicit"
+    );
+    assert_eq!(
+        stopped
+            .held_lifecycle_request
+            .as_ref()
+            .unwrap()
+            .event()
+            .payload
+            .as_ptr(),
+        request_pointer
+    );
+    assert!(stopped.held_input.is_some());
+    assert!(matches!(stopped.held_reply, Some(PendingReply::Owned(_))));
+    assert_eq!(input.storage_snapshot().retained_count, 2);
+    drop(stopped);
+    assert_eq!(input.storage_snapshot().retained_count, 0);
 }

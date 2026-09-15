@@ -56,7 +56,7 @@
 | [docs/adapter-restructure-plan.md](adapter-restructure-plan.md) | 역사·구 계획 |
 | [docs/api.md](api.md) | 경로별 참고·재감사 필요 |
 | [docs/architecture.md](architecture.md) | 경로별 참고·재감사 필요 |
-| [docs/node-load-lifecycle-plan.md](node-load-lifecycle-plan.md) | 미구현 계획·새 세션 인수인계: LOAD/UNLOAD와 노드 수명 통합, 전체 적재 조율은 OUTER 책임 |
+| [docs/node-load-lifecycle-plan.md](node-load-lifecycle-plan.md) | 활성 구현계획: M0·M1 완료, M2 실제 llama.cpp/HF worker 수명 연결이 다음 단계, 전체 적재 조율은 OUTER 책임 |
 | [docs/deterministic-execution-register.md](deterministic-execution-register.md) | 활성 계약: 반복 실패의 원인 증거를 자동 사전 차단과 다음 단계 시험으로 재사용 |
 | [docs/batching-code-review.md](batching-code-review.md) | 2026-09-13 배치 selector·worker·native 전달 경계 코드 검토; 제안과의 차이·개선 후보·로컬 재현, 실행 순서/성능 승격 아님 |
 | [docs/constraints.md](constraints.md) | 경로별 참고·재감사 필요 |
@@ -255,6 +255,7 @@ Release A A-BYTES B5: [양쪽 어댑터 회귀·Qwen122B 3-host 정상 요청·�
 노드 LOAD·UNLOAD 수명 M0: [현재 호출 경로·NL01–NL14 소유권 매핑](../tests/reports/node-load-lifecycle/20260916_014500.md).
 M1: [결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.md).
 Typed adapter completion: [원격 baseline·독립 변이 보고](../tests/reports/node-load-lifecycle/20260916_015702.md).
+M1 supervisor 완료: [실제 TCP LOAD·UNLOAD·회수 보존·workspace off/on·제거 변이](../tests/reports/node-load-lifecycle/20260916_023059.md).
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 

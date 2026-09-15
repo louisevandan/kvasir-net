@@ -27,6 +27,8 @@ pub(super) async fn snapshot(
                 "node_id": node_id,
                 "generation": owner.generation,
                 "adapter_kind": owner.adapter_kind,
+                "lifecycle_state": owner.lifecycle_state(),
+                "lifecycle_result": owner.last_lifecycle_result.as_ref(),
                 "state": owner.adapter.snapshot(),
                 "delivery": {"stopped":owner.task.is_finished(),
                     "input_retained":owner.inbound.storage_snapshot().retained_count,

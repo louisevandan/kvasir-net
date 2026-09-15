@@ -180,17 +180,17 @@ HF의 기존 명시적 abort는 실패 정리 의미를 유지한다. abort 결�
 bounded 반환 비용을 함께 세운다. B5에서 발견한 bind 실패 뒤 stdin join과 failed LOAD 회수는
 NL05/NL08 fixture로 재사용한다.
 
-**2026-09-16 M1 진행:** 공통 protocol에 LOAD/UNLOAD/result content type, 64 KiB little-endian JSON
-metadata framing, opaque adapter bytes, 요청 identity·LOAD capacity·결과 status/resource-state 검증을
-추가했다. 이어 adapter 경계에 snapshot과 독립된 typed completion을 추가해 성공 LOAD는 Present,
-성공 UNLOAD는 Absent, 오류 없음만 허용했다. 원격 Spark에서 `p4-protocol` 73개와 `p4-adapter` 112개 및
-doc-test 1개가 통과했고, 성공 LOAD의 resource 증명을 제거한 독립 변이를 표적 시험이 검출했다.
-[typed 경계 보고](../tests/reports/node-load-lifecycle/20260916_015702.md)를 따른다. 다음 구현은 이 경계를
-소비하는 agent 비동기 supervisor이며, 실제 TCP 경로가 통과하기 전 M1 완료로 판정하지 않는다.
+**2026-09-16 M1 완료:** 공통 protocol codec과 typed adapter completion에 이어 agent 비동기 supervisor,
+처음부터 일시정지된 route 등록, LOAD 생성·UNLOAD 제거, agent 소유 terminal result와 수명 상태 INSPECT를
+구현했다. neutral 실제 TCP에서 잘못된·중복 LOAD, 느린 LOAD 중 INSPECT, 정상 LOAD/UNLOAD, OUTER 단절 뒤
+세 retained 소유물을 검증했다. workspace feature off/on은 각각 1,514 통과, 0 실패, 실제 모델 시험 7개
+ignored였고 owner 제거 변이가 실제 TCP 시험에 검출됐다.
+[M1 검증 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)를 따른다. 실제 llama.cpp/HF worker가
+typed 완료를 내고 새 node 수명 경로를 쓰게 하는 작업은 M2다.
 
 M1의 실행 전 검토와 최대 3라운드 입력은
 [M1 결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.md)에 봉인한다. 이 단계는
-[결정론적 실행 장부](deterministic-execution-register.md)의 `L001`~`L007`을 재사용한다. 새 실패가
+[결정론적 실행 장부](deterministic-execution-register.md)의 `L001`~`L013`을 재사용한다. 새 실패가
 나오면 같은 명령을 다시 실행하기 전에 새 교훈 ID와 자동 차단 수단을 먼저 추가한다.
 
 이 순서는 이 변경 내부의 작업 순서다. 전체 로드맵의 다른 작업을 임의로 재정렬하지 않는다.
@@ -198,8 +198,8 @@ M1의 실행 전 검토와 최대 3라운드 입력은
 | 단계 | 작업 | 다음 단계 조건 |
 | --- | --- | --- |
 | M0 | **DONE** — 최신 HEAD/dirty 감사, 실제 호출자 전수 검색, §8 반례와 수명 소유권 설계 | [M0 보고](../tests/reports/node-load-lifecycle/20260916_014500.md)에 중복·실패·완료 응답·barrier·byte 소유권 매핑 |
-| M1 | 공통 요청/결과 codec·typed adapter 완료·agent supervisor 설계 구현, neutral fixture | 단일 LOAD/UNLOAD 실제 event 경로와 경계·거부 무효과 시험 통과 |
-| M2 | llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | 두 adapter에서 busy·cleanup 실패·응답 포화·정상 제거 통과 |
+| M1 | **DONE** — 공통 codec·typed adapter 완료·비동기 agent supervisor·neutral 실제 TCP | [M1 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)에 NL01·NL02·NL04·NL07·NL10과 제거 변이 기록 |
+| M2 | **NEXT** — llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | 두 adapter에서 busy·cleanup 실패·응답 포화·정상 제거 통과 |
 | M3 | Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | 새 명령만으로 생성→정상 응답→해제, 구형 명령 부작용 없는 거부 |
 | M4 | 필수 회귀·독립 제거 변이·두 adapter 실기, 소유 문서 갱신 | 최종 소스 결속·시험별 판정·미수용 항목 기록 |
 

@@ -18,6 +18,7 @@
 | L010 | 원격 검증 복사본의 `origin`이 GitHub가 아니라 임시 bundle이면 fetch가 최신 원격 추적 ref를 만들지 않아 로컬의 새 커밋 약칭을 해석하지 못한다. | `git remote -v`, fetch exit, `git rev-parse FETCH_HEAD`를 먼저 기록하고 확인된 전체 object ID로만 worktree를 만든다. 필요한 commit이 bundle에 없으면 검증용 bundle을 새로 전달한다. | 원격 clean replay와 독립 변이 |
 | L011 | 의미 변이의 교체문이 문법적으로 불완전하면 시험 단언이 아니라 컴파일 오류만 검출해 변이 증거가 되지 않는다. | 변이 diff가 한 의미만 바꾸는지 보고 formatter/check를 먼저 통과시킨다. 컴파일 실패 변이는 검출 수에 넣지 않는다. | 모든 Rust 독립 변이 |
 | L012 | 원격 Cargo가 있어도 해당 toolchain에 rustfmt component가 설치됐다고 가정할 수 없다. | 실행계획 전에 필요한 component를 조회한다. baseline은 로컬 rustfmt check, 원격 변이는 한 줄 diff 검토와 `cargo check`를 거쳐 의미 시험을 실행하며 검증 중 component를 설치하지 않는다. | M1 원격 Rust 변이 |
+| L013 | 한 함수 호출의 앞 인수로 owned metadata를 이동한 뒤 뒤 인수에서 같은 값을 읽으면 Rust 인수 평가 중 소유권 검사가 실패한다. | 이동 인수를 받는 오류 생성 호출 전에 진단 문자열과 비교값을 먼저 계산하고, 원격 시험 runner보다 `cargo check --tests`를 먼저 통과시킨다. | M1 supervisor와 이후 owned 오류 경로 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

@@ -68,3 +68,10 @@ M1을 완료로 표시하지 않고 재설계한다.
 - 각 라운드는 source digest, 정확한 명령, exit code, pass/fail/ignored, 첫 실패, 남은 횟수를 보고서에 남긴다.
 
 M1 완료에는 실제 TCP neutral 결과와 전체 회귀가 필요하다. 문서·codec·mock 함수만 통과한 상태는 진행 중이다.
+
+## 실행 결과
+
+M1은 2026-09-16 완료됐다. 실제 TCP neutral 수명 경로, OUTER 단절 보존, workspace feature off/on,
+독립 owner 제거 변이의 결과는
+[M1 검증 보고](../reports/node-load-lifecycle/20260916_023059.md)에 기록했다. 실제 llama.cpp/HF worker
+이관은 계획대로 M2에서 진행한다.

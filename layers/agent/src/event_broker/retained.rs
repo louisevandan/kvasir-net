@@ -102,12 +102,24 @@ impl EventBroker<CompletionPublisher> {
                 generation,
             }));
         }
-        Ok(NodeAdmissionPause(Arc::clone(&route.admission_paused)))
+        Ok(NodeAdmissionPause {
+            node: node.to_owned(),
+            generation,
+            admission_paused: Arc::clone(&route.admission_paused),
+        })
     }
 
     pub(crate) fn reserve_retained_completion(
         &self,
         front: &CompletionFront,
+    ) -> Result<RetainedCompletionDispatch, DispatchError> {
+        self.reserve_retained_completion_with_pause(front, None)
+    }
+
+    fn reserve_retained_completion_with_pause(
+        &self,
+        front: &CompletionFront,
+        paused_control: Option<&NodeAdmissionPause>,
     ) -> Result<RetainedCompletionDispatch, DispatchError> {
         front
             .envelope
@@ -121,7 +133,7 @@ impl EventBroker<CompletionPublisher> {
         let kind = if let Some(receipt) = existing {
             RetainedDispatchKind::Existing(receipt)
         } else {
-            let (delivery, sender) = self.destination(&front.envelope.target)?;
+            let (delivery, sender) = self.destination(&front.envelope.target, paused_control)?;
             let (slot, reservation) = sender
                 .try_reserve_delivery(front.event_bytes)
                 .map_err(|error| admission_error(error, &delivery))?;
@@ -141,7 +153,30 @@ impl EventBroker<CompletionPublisher> {
     /// Raw ingress must acquire this actual retained destination before it is
     /// accepted. The original raw owner is returned on every refusal.
     pub fn dispatch_ingress(&self, event: Event) -> Result<DispatchOutcome, DispatchFailure> {
-        self.dispatch_input(None, Input::Raw(event))
+        self.dispatch_input(None, Input::Raw(event), None)
+            .map_err(|(error, input)| match input {
+                Input::Raw(event) => DispatchFailure::new(error, event),
+                Input::Retained(_) => unreachable!("ingress preserves its input mode"),
+            })
+    }
+
+    /// Deliver one lifecycle control while its exact node registration is
+    /// fenced. The pause token cannot bypass another node, generation or
+    /// replacement mailbox.
+    pub fn dispatch_ingress_while_paused(
+        &self,
+        pause: &NodeAdmissionPause,
+        event: Event,
+    ) -> Result<DispatchOutcome, DispatchFailure> {
+        if !pause.targets(&event.envelope.target) {
+            return Err(DispatchFailure::new(
+                DispatchError::Invalid(
+                    "node admission pause does not authorize this control target".into(),
+                ),
+                event,
+            ));
+        }
+        self.dispatch_input(None, Input::Raw(event), Some(pause))
             .map_err(|(error, input)| match input {
                 Input::Raw(event) => DispatchFailure::new(error, event),
                 Input::Retained(_) => unreachable!("ingress preserves its input mode"),
@@ -168,7 +203,7 @@ impl EventBroker<CompletionPublisher> {
         ticket: Option<RetainedCompletionDispatch>,
         completion: RetainedCompletion,
     ) -> Result<DispatchOutcome, RetainedDispatchFailure> {
-        self.dispatch_input(ticket, Input::Retained(completion))
+        self.dispatch_input(ticket, Input::Retained(completion), None)
             .map_err(|(error, input)| match input {
                 Input::Retained(completion) => RetainedDispatchFailure {
                     error,
@@ -182,6 +217,7 @@ impl EventBroker<CompletionPublisher> {
         &self,
         ticket: Option<RetainedCompletionDispatch>,
         input: Input,
+        paused_control: Option<&NodeAdmissionPause>,
     ) -> Result<DispatchOutcome, (DispatchError, Input)> {
         if let Err(error) = input.event().validate() {
             return Err((DispatchError::Invalid(error.to_string()), input));
@@ -207,7 +243,7 @@ impl EventBroker<CompletionPublisher> {
                 ));
             }
             Some(ticket) => ticket,
-            None => match self.reserve_retained_completion(&front) {
+            None => match self.reserve_retained_completion_with_pause(&front, paused_control) {
                 Ok(ticket) => ticket,
                 Err(error) => return Err((error, input)),
             },
@@ -258,11 +294,12 @@ impl EventBroker<CompletionPublisher> {
                 }
             }
             if let Delivery::Node { node, .. } = &delivery {
-                if nodes
-                    .get(node)
-                    .expect("validated route")
+                let route = nodes.get(node).expect("validated route");
+                if route
                     .admission_paused
                     .load(std::sync::atomic::Ordering::Acquire)
+                    && !paused_control
+                        .is_some_and(|pause| pause.matches(node, route.generation, route))
                 {
                     return Err(DispatchError::Full(delivery.clone()));
                 }

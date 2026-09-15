@@ -61,6 +61,35 @@ pub(super) async fn receive(stream: &mut TcpStream) -> Event {
     .unwrap()
 }
 
+fn lifecycle_payload(
+    operation: p4_protocol::event::lifecycle::LifecycleOperation,
+    node_id: &str,
+    generation: u64,
+    adapter_kind: &str,
+    adapter_content_type: &str,
+    opaque: &[u8],
+) -> Vec<u8> {
+    use p4_protocol::event::lifecycle::{
+        LIFECYCLE_SCHEMA, LifecycleOperation, LifecycleRequestMetadata, encode_metadata,
+    };
+    let load = operation == LifecycleOperation::Load;
+    encode_metadata(
+        &LifecycleRequestMetadata {
+            schema: LIFECYCLE_SCHEMA,
+            node_id: node_id.into(),
+            node_generation: generation,
+            adapter_kind: adapter_kind.into(),
+            adapter_content_type: adapter_content_type.into(),
+            queue_capacity: load.then_some(1),
+            completion_capacity: load.then_some(1),
+            retained_capacity: load.then_some(8),
+            retained_bytes: load.then_some(1024 * 1024),
+        },
+        opaque,
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn owned_runtime_actual_tcp_inspection_retires_connection_after_explicit_finish() {
     use p4_protocol::event::{AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE};
@@ -112,6 +141,169 @@ async fn owned_runtime_actual_tcp_inspection_retires_connection_after_explicit_f
         );
         assert_eq!(stream.read(&mut [0; 1]).await.unwrap(), 0);
     }
+}
+
+#[tokio::test]
+async fn node_load_lifecycle_actual_tcp_creates_fences_reports_and_removes_node() {
+    use p4_protocol::event::lifecycle::{
+        LifecycleOperation, LifecycleResultMetadata, LifecycleStatus,
+        NODE_LIFECYCLE_RESULT_CONTENT_TYPE, NODE_LOAD_CONTENT_TYPE, NODE_UNLOAD_CONTENT_TYPE,
+        ResourceState, decode_metadata,
+    };
+    use p4_protocol::event::{AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let own = Address::tcp("127.0.0.1", listener.local_addr().unwrap().port());
+    let runtime = Runtime::start(listener, own.clone(), limits());
+    let mut stream = TcpStream::connect((own.host.as_str(), own.port))
+        .await
+        .unwrap();
+
+    let mut malformed = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        20,
+        NODE_LOAD_CONTENT_TYPE,
+        &[9, 0, 0, 0, b'{', b'}'],
+    );
+    malformed.envelope.adapter_kind = Some("neutral-lifecycle".into());
+    send(&mut stream, &malformed).await;
+    let rejected = receive(&mut stream).await;
+    assert_eq!(rejected.envelope.causation_id.as_deref(), Some("input-20"));
+    assert_eq!(
+        rejected.envelope.payload_content_type,
+        "application/vnd.p4.node.result-v3+json"
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&rejected.payload).unwrap()["ok"],
+        false
+    );
+
+    let unsupported_payload = lifecycle_payload(
+        LifecycleOperation::Load,
+        "never-created",
+        1,
+        "disabled-test-adapter",
+        "application/x-disabled-load",
+        b"{}",
+    );
+    let unsupported = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        21,
+        NODE_LOAD_CONTENT_TYPE,
+        &unsupported_payload,
+    );
+    send(&mut stream, &unsupported).await;
+    let rejected = receive(&mut stream).await;
+    let (result, opaque): (LifecycleResultMetadata, _) =
+        decode_metadata(&rejected.payload).unwrap();
+    assert_eq!(rejected.envelope.causation_id.as_deref(), Some("input-21"));
+    assert_eq!(
+        rejected.envelope.payload_content_type,
+        NODE_LIFECYCLE_RESULT_CONTENT_TYPE
+    );
+    assert_eq!(result.status, LifecycleStatus::Rejected);
+    assert_eq!(result.resource_state, ResourceState::Absent);
+    assert!(opaque.is_empty());
+
+    let load_payload = lifecycle_payload(
+        LifecycleOperation::Load,
+        "lifecycle-node",
+        7,
+        "neutral-lifecycle",
+        super::adapters::neutral::LOAD,
+        br#"{"delay_ms":2000}"#,
+    );
+    let load = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        22,
+        NODE_LOAD_CONTENT_TYPE,
+        &load_payload,
+    );
+    let duplicate = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        23,
+        NODE_LOAD_CONTENT_TYPE,
+        &load_payload,
+    );
+    send(&mut stream, &load).await;
+    send(&mut stream, &duplicate).await;
+    let rejected = receive(&mut stream).await;
+    let (result, _): (LifecycleResultMetadata, _) = decode_metadata(&rejected.payload).unwrap();
+    assert_eq!(rejected.envelope.causation_id.as_deref(), Some("input-23"));
+    assert_eq!(result.status, LifecycleStatus::Rejected);
+    assert_eq!(result.resource_state, ResourceState::Unknown);
+
+    let inspect_loading = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        24,
+        AGENT_INSPECT_CONTENT_TYPE,
+        b"{}",
+    );
+    send(&mut stream, &inspect_loading).await;
+    let snapshot = receive(&mut stream).await;
+    assert_eq!(
+        snapshot.envelope.payload_content_type,
+        AGENT_SNAPSHOT_CONTENT_TYPE
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(&snapshot.payload).unwrap();
+    assert_eq!(snapshot["nodes"][0]["node_id"], "lifecycle-node");
+    assert_eq!(snapshot["nodes"][0]["lifecycle_state"], "loading");
+
+    let loaded = receive(&mut stream).await;
+    let (result, opaque): (LifecycleResultMetadata, _) = decode_metadata(&loaded.payload).unwrap();
+    assert_eq!(loaded.envelope.source, Endpoint::agent(own.clone()));
+    assert_eq!(loaded.envelope.target, load.envelope.source);
+    assert_eq!(loaded.envelope.return_route, load.envelope.return_route);
+    assert_eq!(loaded.envelope.causation_id.as_deref(), Some("input-22"));
+    assert_eq!(result.operation, LifecycleOperation::Load);
+    assert_eq!(result.status, LifecycleStatus::Succeeded);
+    assert_eq!(result.resource_state, ResourceState::Present);
+    assert_eq!(
+        result.adapter_content_type,
+        super::adapters::neutral::RESULT
+    );
+    assert!(!opaque.is_empty());
+
+    let unload_payload = lifecycle_payload(
+        LifecycleOperation::Unload,
+        "lifecycle-node",
+        7,
+        "neutral-lifecycle",
+        super::adapters::neutral::UNLOAD,
+        br#"{"delay_ms":10}"#,
+    );
+    let unload = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        25,
+        NODE_UNLOAD_CONTENT_TYPE,
+        &unload_payload,
+    );
+    send(&mut stream, &unload).await;
+    let unloaded = receive(&mut stream).await;
+    let (result, _): (LifecycleResultMetadata, _) = decode_metadata(&unloaded.payload).unwrap();
+    assert_eq!(unloaded.envelope.causation_id.as_deref(), Some("input-25"));
+    assert_eq!(result.operation, LifecycleOperation::Unload);
+    assert_eq!(result.status, LifecycleStatus::Succeeded);
+    assert_eq!(result.resource_state, ResourceState::Absent);
+
+    let inspect_empty = event(
+        &own,
+        Endpoint::agent(own.clone()),
+        26,
+        AGENT_INSPECT_CONTENT_TYPE,
+        b"{}",
+    );
+    send(&mut stream, &inspect_empty).await;
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&receive(&mut stream).await.payload).unwrap();
+    assert_eq!(snapshot["nodes"], serde_json::json!([]));
+    assert!(!runtime.control.is_finished());
 }
 
 #[tokio::test]

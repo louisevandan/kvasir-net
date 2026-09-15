@@ -106,7 +106,7 @@ pub struct AdapterRetentionSnapshot {
 /// permission to remove a route or retire the completion: the agent supervisor
 /// must still match source, causation, operation and node generation and prove
 /// delivery/native cleanup. `ResourceState::Unknown` is never success.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct AdapterLifecycleCompletion {
     pub operation: LifecycleOperation,
     pub status: LifecycleStatus,
