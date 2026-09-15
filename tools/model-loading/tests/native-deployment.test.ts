@@ -65,7 +65,11 @@ test("native PLAN authorizes one contiguous, source-bound, shared-pool deploymen
 test("post-LOAD evidence must reproduce PLAN allocation and placement", () => {
   const input = fixture();
   input.requireActual = true;
-  for (const stage of input.stages) stage.actual = structuredClone(stage.plan);
+  for (const stage of input.stages) {
+    stage.actual = structuredClone(stage.plan);
+    stage.actual.fits_current_free = false;
+    for (const entry of stage.actual.entries) entry.free = 1;
+  }
   assert.equal(validateNativeDeployment(input).actualAllocationConformant, true);
   input.stages[1].actual!.entries[0].compute++;
   input.stages[1].actual!.entries[0].required++;

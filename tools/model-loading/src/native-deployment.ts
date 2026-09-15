@@ -109,9 +109,14 @@ function validatePlan(
   stage: NativeDeploymentInput["stages"][number],
   plan: NativeMemoryPlan,
   label: string,
+  requireCurrentFree: boolean,
 ): Map<string, NativeMemoryEntry> {
-  fail(plan?.schema === 2 && plan.complete === true && plan.fits_current_free === true,
-    `${stage.id} ${label} is incomplete or does not fit current free memory`);
+  fail(plan?.schema === 2 && plan.complete === true,
+    `${stage.id} ${label} is incomplete`);
+  if (requireCurrentFree) {
+    fail(plan.fits_current_free === true,
+      `${stage.id} ${label} does not fit current free memory`);
+  }
   fail(plan.layer_device_query_supported === true, `${stage.id} ${label} cannot report layer devices`);
   const shape = plan.execution_shape;
   fail(shape.n_ctx === input.profile.totalContext && shape.n_ctx_seq === input.profile.totalContext &&
@@ -138,8 +143,12 @@ function validatePlan(
     }
     fail(entry.required === entry.model + entry.context + entry.compute,
       `${stage.id} ${label} ${key} required bytes differ from components`);
-    fail(entry.required <= entry.free && entry.free <= entry.total,
-      `${stage.id} ${label} ${key} exceeds native free/total memory`);
+    fail(entry.free <= entry.total,
+      `${stage.id} ${label} ${key} free memory exceeds total memory`);
+    if (requireCurrentFree) {
+      fail(entry.required <= entry.free,
+        `${stage.id} ${label} ${key} exceeds native free memory`);
+    }
     entries.set(key, entry);
   }
   fail([...entries.values()].some((entry) => entry.scope === "device" &&
@@ -224,7 +233,7 @@ export function validateNativeDeployment(input: NativeDeploymentInput): NativeDe
     sourceIdentity ??= currentSourceIdentity;
     fail(sourceIdentity === currentSourceIdentity, `${stage.id} runtime source/patch differs from the deployment`);
 
-    const planned = validatePlan(input, stage, stage.plan, "PLAN");
+    const planned = validatePlan(input, stage, stage.plan, "PLAN", true);
     let plannedBytes = 0;
     for (const [key, entry] of planned) {
       const poolId = stage.entryPools[key];
@@ -245,7 +254,11 @@ export function validateNativeDeployment(input: NativeDeploymentInput): NativeDe
 
     let actualConformant = false;
     if (stage.actual) {
-      const actual = validatePlan(input, stage, stage.actual, "MEMORY_ACTUAL");
+      // MEMORY_ACTUAL is measured after allocation. Its current-free field can
+      // be below required and fits_current_free can be false; neither describes
+      // the allocation that PLAN admitted. Native equality intentionally binds
+      // topology, shape, placement and allocated model/context/compute bytes.
+      const actual = validatePlan(input, stage, stage.actual, "MEMORY_ACTUAL", false);
       fail(isDeepStrictEqual(stage.actual.memory_topology, stage.plan.memory_topology) &&
         isDeepStrictEqual(stage.actual.execution_shape, stage.plan.execution_shape) &&
         isDeepStrictEqual(allocationShape(actual), allocationShape(planned)),

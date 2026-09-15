@@ -52,7 +52,10 @@ PLAN and post-LOAD allocation evidence. Every stage binds its native device/host
 physical pool. Host-shared entries are added once in that pool, all cuts must be contiguous and
 adapter-approved, and every stage must have the same upstream commit and patch set. PLAN-only input may
 authorize LOAD but returns `actualAllocationConformant: false`; runtime acceptance requires matching
-`MEMORY_ACTUAL` evidence for every stage. The CLI uses the same public function:
+`MEMORY_ACTUAL` evidence for every stage. Because MEMORY_ACTUAL is measured after allocation, its
+remaining `free` and `fits_current_free` observation is not compared with the pre-allocation PLAN;
+topology, execution shape, placement and allocated model/context/compute bytes must still match.
+The CLI uses the same public function:
 
 ```powershell
 node tools/model-loading/cli/validate-native-deployment.ts INPUT.json RESULT.json
