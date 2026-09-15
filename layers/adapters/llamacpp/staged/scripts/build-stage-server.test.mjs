@@ -11,7 +11,7 @@ const cmake = fs.readFileSync(path.join(scriptDir, "..", "server", "CMakeLists.t
 
 // Execute the production builder, replacing only filesystem/process boundaries.
 // Merely mentioning a target in a comment or dead branch cannot pass this test.
-function captureBuild(arguments_, source = builder, cudaLayout = null) {
+function captureBuild(arguments_, source = builder, cudaLayout = null, cudaMajor = "13") {
   const calls = [];
   const copies = [];
   const prepared = path.resolve(scriptDir, "fixture-prepared");
@@ -23,7 +23,7 @@ function captureBuild(arguments_, source = builder, cudaLayout = null) {
       if (cudaLayout && (name === path.join(cudaRoot, "bin", "nvcc.exe")
         || name === path.join(cudaRoot, "extras", "visual_studio_integration", "MSBuildExtensions")
         || name === path.join(runtimeDir, "p4_staged_server.exe")
-        || ["cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll"].some(
+        || [`cublas64_${cudaMajor}.dll`, `cublasLt64_${cudaMajor}.dll`, `cudart64_${cudaMajor}.dll`].some(
           (dll) => name === path.join(cudaRoot, "bin", "x64", dll)))) return true;
       return name === path.join(prepared, "CMakeLists.txt")
         || name === path.resolve("fixture-cmake")
@@ -79,15 +79,15 @@ for (const [name, args, expected] of [
   });
 }
 
-for (const layout of ["single", "multi"]) {
-  test(`CUDA runtime DLLs are copied beside the actual ${layout}-configuration executable`, () => {
+for (const [layout, cudaMajor] of [["single", "12"], ["single", "13"], ["multi", "12"], ["multi", "13"]]) {
+  test(`CUDA ${cudaMajor} runtime DLLs are copied beside the actual ${layout}-configuration executable`, () => {
     const { copies } = captureBuild([
       "--cuda", "--cuda-root", path.resolve("fixture-cuda"),
       "--generator", layout === "single" ? "Ninja" : "Visual Studio 17 2022",
-    ], builder, layout);
+    ], builder, layout, cudaMajor);
     const destination = path.resolve("fixture-build", ...(layout === "multi" ? ["Release"] : []));
     assert.deepEqual(copies.map((copy) => copy.to).sort(),
-      ["cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll"]
+      [`cublas64_${cudaMajor}.dll`, `cublasLt64_${cudaMajor}.dll`, `cudart64_${cudaMajor}.dll`]
         .map((dll) => path.join(destination, dll)).sort());
   });
 }

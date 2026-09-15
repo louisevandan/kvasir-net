@@ -135,7 +135,15 @@ function copyCudaRuntimeDependencies(cuda, buildDir, config) {
   const destinationDir = [path.join(buildDir, config), buildDir, path.join(buildDir, "bin")]
     .find((candidate) => fs.existsSync(path.join(candidate, "p4_staged_server.exe")));
   if (!destinationDir) throw new Error("built stage executable was not found for CUDA runtime deployment");
-  const names = ["cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll"];
+  const supportedMajors = ["13", "12"];
+  const names = supportedMajors.map((major) => [
+    `cublas64_${major}.dll`,
+    `cublasLt64_${major}.dll`,
+    `cudart64_${major}.dll`,
+  ]).find((candidate) => candidate.every((name) => fs.existsSync(path.join(sourceDir, name))));
+  if (!names) {
+    throw new Error(`a complete CUDA 12 or 13 runtime dependency set is missing: ${sourceDir}`);
+  }
   const copied = [];
   for (const name of names) {
     const source = path.join(sourceDir, name);
