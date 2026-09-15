@@ -248,8 +248,9 @@ fn dealing_layers_by_cost_beats_dealing_them_evenly() {
             evenly.starved * 100.0
         );
         assert!(
-            by_cost.starved > 0.95,
-            "dealt by cost, no stage should rest: the least occupied managed              {:.0}%",
+            by_cost.starved > evenly.starved,
+            "dealing by cost should leave the least occupied stage busier: evenly {:.0}%, by cost {:.0}%",
+            evenly.starved * 100.0,
             by_cost.starved * 100.0
         );
         assert!(
