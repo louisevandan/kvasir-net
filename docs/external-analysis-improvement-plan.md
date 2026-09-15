@@ -18,7 +18,7 @@
 미루는 작업이 아니다. 실제 LOAD→요청→취소/해제→UNLOAD→DELETE·재생성을 함께 검증한다.
 Qwen3.5-0.8B는 이 연결의 conformance 모델이며 초대형 모델 성능/최종 H0–H7 승격을 대체하지 않는다.
 
-2026-09-14 HF-0~3 수용 완료: [소비 구성](hf-integration.md)과 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)에 실제 두 호스트·취소/재수용·Python 교체·재현 빌드·기존 llama.cpp on/off 검증을 기록했다. 아래 부족분/감사 설명은 착수 시점 상태이며 최종 결과는 위 보고를 따른다. Release A는 아직 착수하지 않았다.
+2026-09-14 HF-0~3 수용 완료: [소비 구성](hf-integration.md)과 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)에 실제 두 호스트·취소/재수용·Python 교체·재현 빌드·기존 llama.cpp on/off 검증을 기록했다. 2026-09-15 후속 전송 R1–R9와 최종 소스의 양쪽 실제 어댑터 재검증은 [Release A 수용 보고](../tests/reports/release-a/20260915_183158.md)를 따른다. 아래 부족분/감사 설명은 착수 시점 상태이며 Release A의 다음 단계는 Qwen122B A-PLAN이다.
 
 ### 0.1 현재 양쪽 코드와 투자 이유
 

@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-12 — 3/3 마감. a43950bed의 독립 생성 묶음/생성 우선 D+P 예산 구현과 로컬1445/0/7·변이6종 검증을 보존했다. MI250 한 호스트8단계에서 생성 전용 raw TPS155.25→206.06,4k 지연 후보 ITL p95 198ms를 확인했다.100k 세 arm은 모두 deadline/정상 응답 수용 실패다. 지연16은 짧은 ITL2220→266ms, 긴 TTFT는 거의 동일하지만250ms 목표·전체 완주는 미달이다. Hy3는 OS 반환 연결 차단으로 BLOCKED다. 엄격한 공통 native 종료 한도도 artifact 복사 후 정리로50.373초 초과했다. 기본값/H5/서비스 승격은 하지 않으며 추가4턴 개발/재시험을 자동 시작하지 않는다.
+최신 현황 정리: 2026-09-15 — 전송 결과 불명의 R1–R9를 최종 소스 `e41cf2c5f`에서 닫았다. feature off/on 전체 workspace는 각각1490/0/7, HF Python50/0, R9 Python2/0이며 물리2host receipt 유실·재연결·exact reconcile·회수를 통과했다. 같은 소스로 원격 Spark의 실제 Qwen3.5-0.8B llama.cpp와 HF/Python 생성·cache parity·UNLOAD/DELETE를 재검증했다. 이는 전송과 소형 conformance 수용이며 Qwen3.5-122B-A10B Release A의 H0–H7 승격이 아니다. 다음 실행 단계는 새 122B artifact의 공유 pool 예산과 합법 cut을 계산하는 A-PLAN이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -43,7 +43,18 @@ FINISH의 로컬 기능 수용은 완료했다. 다음 첫 행동은 전송 결�
 현재 write 완료·failure owner·duplicate window를 추적했다. 원격 수용 receipt와 outstanding pin이 없어
 peer cache만 지우거나 uncertain Event를 다시 보내는 구현은 안전하지 않다. 첫 후보는 버전화된 hop receipt,
 count/byte/horizon 상한, exact/unknown/quarantine, INSPECT, 구형 peer fail-closed와 Rust/HF OUTER 소비를
-R1–R9 한 gate로 구현한다. 이 사전 검토는 구현·수용 완료가 아니다.
+R1–R9 한 gate로 구현한다.
+
+**2026-09-15 전송 정산 R1–R9 수용 완료:** [최종 수용 보고](../tests/reports/release-a/20260915_183158.md)의
+소스 `e41cf2c5f`에서 hop ACK/receipt·bounded outstanding/store·불명 결과 보존·exact reconcile·구형 peer
+fail-closed·INSPECT와 Rust/HF OUTER 소비를 실제 물리2host까지 검증했다. feature off/on 전체 workspace는
+각각1490 PASS / 0 FAIL / 7 ignored, HF Python50 PASS, R9 Python2 PASS다. 독립 재컴파일 변이4종을 검출했고
+물리 receipt 유실 뒤 ingress uncertain→target accepted_exact→양쪽 failure0/nodes=[]를 확인했다. 같은 최종
+소스로 Spark의 실제 llama.cpp PLAN/HOP/KV 재시작 reconcile/UNLOAD와 HF 단일 GPU의 정답 `4`·`서울`,
+logits4/cache4 parity, UNLOAD/DELETE·최종 nodes=[]를 통과했다. 오래된 `:52005` 에이전트는 INSPECT가
+timeout이지만 모델 자식0·GPU 점유0으로 확인해 변경하지 않았다. 데스크톱은 빌드·모델 실행에 사용하지 않았다.
+다음 첫 행동은 Qwen3.5-122B-A10B 3-shard의 실제 machine snapshot, 공유 pool 중복 제거, stage별 정수
+allocation과 합법 cut을 산출·봉인하는 A-PLAN이다. PLAN 승인 전 LOAD나 arm 반복은 하지 않는다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/
