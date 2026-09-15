@@ -118,6 +118,19 @@ fn stage_socket_identity_rejects_a_tcp_self_connection() {
     ));
 }
 
+fn wait_for_concrete_ready(control: &mut ProcessServerControl, timeout: Duration) -> ReadyInfo {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match control.wait_ready(deadline).expect("hello succeeds") {
+            Some(ready) => return ready,
+            None if Instant::now() >= deadline => {
+                panic!("server did not become ready within {timeout:?}")
+            }
+            None => std::thread::sleep(Duration::from_millis(2)),
+        }
+    }
+}
+
 #[test]
 fn concrete_process_control_sends_plan_hello_and_unload_then_reaps_child() {
     if env::var_os("STAGED_ADAPTER_CHILD_SERVER").is_some() {
@@ -148,10 +161,7 @@ fn concrete_process_control_sends_plan_hello_and_unload_then_reaps_child() {
     let mut control = ProcessServerControl::new(launch);
     control.start().expect("child starts");
     let pid = control.pid().expect("child pid");
-    let ready = control
-        .wait_ready(Instant::now() + Duration::from_secs(5))
-        .expect("hello succeeds")
-        .expect("server became ready");
+    let ready = wait_for_concrete_ready(&mut control, Duration::from_secs(5));
     assert_eq!(ready.protocol_revision, PROTOCOL_REVISION);
     assert!(ready.server_id.starts_with("test-child;"));
     assert_eq!((ready.n_ctx, ready.n_batch, ready.n_ubatch), (512, 64, 64));
@@ -192,10 +202,7 @@ fn concrete_process_control_round_trips_all_kv_operations() {
     launch.io_timeout = Duration::from_secs(2);
     let mut control = ProcessServerControl::new(launch);
     control.start().expect("child starts");
-    control
-        .wait_ready(Instant::now() + Duration::from_secs(5))
-        .expect("hello succeeds")
-        .expect("server became ready");
+    wait_for_concrete_ready(&mut control, Duration::from_secs(5));
 
     for (operation, expected) in [
         (Operation::KvSave, 101u64),
@@ -254,10 +261,7 @@ fn concrete_process_control_round_trips_multiple_hop_results() {
     launch.io_timeout = Duration::from_secs(2);
     let mut control = ProcessServerControl::new(launch);
     control.start().expect("child starts");
-    control
-        .wait_ready(Instant::now() + Duration::from_secs(5))
-        .expect("hello succeeds")
-        .expect("server became ready");
+    wait_for_concrete_ready(&mut control, Duration::from_secs(5));
 
     let body = crate::HopPayload {
         phase: crate::HopPhase::Prefill,

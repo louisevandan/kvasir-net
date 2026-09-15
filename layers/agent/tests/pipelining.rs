@@ -192,8 +192,12 @@ fn a_ceiling_wider_than_the_work_costs_the_overlap() {
 #[test]
 fn a_longer_run_approaches_the_number_of_stages() {
     runtime().block_on(async {
-        let brief = overlap(3, 24, 8, 3).await;
-        let sustained = overlap(3, 192, 8, 3).await;
+        // Keep the same work ratio and threshold while making each declared
+        // hop long enough that fixed process wakeup cost cannot dominate the
+        // wall-clock denominator on a loaded validation host.
+        let costs = [90, 90, 90];
+        let brief = uneven(&costs, 24, 8, 3).await.overlap;
+        let sustained = uneven(&costs, 192, 8, 3).await.overlap;
         println!("three stages: brief={brief:.2} sustained={sustained:.2} of 3.00");
         assert!(
             sustained > brief,
