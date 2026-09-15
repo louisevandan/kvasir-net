@@ -15,6 +15,8 @@ llama.cpp/HF 실제 worker 이관은 M2, OUTER 호출자와 구 CREATE/DELETE �
 - `L005`: ordinary completion의 유일 소비자는 EventNode다. supervisor가 같은 front를 poll하거나 무제한
   channel에 Event를 복제하는 구현은 코드 검토에서 거부한다.
 - `L006`: patch한 기존 문서는 원래 CRLF로 정규화하고 전체 docs-lint를 통과한 뒤 코드 시험으로 간다.
+- `L007`: line count와 numstat이 의도 범위인지 확인하지 않고 커밋하지 않는다. 이미 공개된 잘못된 커밋은
+  기록을 지우는 강제 push 대신 원문 복원 전진 커밋으로 바로잡는다.
 
 ## 1회차 전 소유권·호출 경로 검토
 

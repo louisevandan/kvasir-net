@@ -12,6 +12,7 @@
 | L004 | 비대화형 원격 shell의 PATH에는 설치된 Cargo/Node/Python이 없을 수 있다. 같은 명령 재시도는 환경을 바꾸지 않는다. | 첫 build 전에 `command -v`와 설치 위치를 읽고 실행계획에 절대 경로를 봉인한다. Spark Cargo는 `/home/m42/.cargo/bin/cargo`다. | M1~M4 원격 시험 |
 | L005 | adapter completion mailbox를 두 소비자가 poll하면 front 소유권과 byte claim이 경쟁한다. 별도 무제한 통지는 기존 boundedness를 우회한다. | EventNode만 ordinary completion을 소비한다. lifecycle 설계는 별도 소비자를 추가하기 전에 단일 front owner와 count/byte charge 이동을 시험에서 단언한다. | M1 supervisor, NL07/NL10/NL14 |
 | L006 | CRLF 문서에 LF patch 조각을 삽입하면 내용이 맞아도 저장소 문서 검사가 mixed EOL로 거부한다. | patch 뒤 수정 문서 전체의 줄바꿈을 원래 형식으로 정규화하고 `node tools/scripts/docs-lint.mjs --all`을 커밋 전 실행한다. | 모든 문서 변경, M1 계획 |
+| L007 | 줄바꿈 정규화 명령에 실제 CR/LF를 잘못 인용하면 기존 문서 전체가 한 줄로 합쳐지고 작은 의도 변경이 수천 줄 삭제로 커밋될 수 있다. | byte 단위 `CRLF→LF→CRLF` 정규화 뒤 line count와 `git diff --numstat`을 원본/의도 범위와 대조한다. 비정상 대량 변경은 push 여부와 무관하게 부모 원문에서 전진 복구한다. | 모든 커밋 전 검사 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 
