@@ -28,8 +28,11 @@ function Invoke-RequestedCommand {
 }
 
 if ($Mode -eq 'Build') {
+    if ($env:P4_ALLOW_LOCAL_BUILD -ne '1') {
+        throw 'Local builds are disabled after repeated hard power loss during cold Rust builds. Use a remote host.'
+    }
     $logicalCpuCount = [Environment]::ProcessorCount
-    $buildCpuCount = [Math]::Max(1, [Math]::Floor($logicalCpuCount * 0.70))
+    $buildCpuCount = [Math]::Max(1, [Math]::Min(8, [Math]::Floor($logicalCpuCount * 0.25)))
     if ($buildCpuCount -gt 63) {
         throw "The local build affinity guard supports at most 63 logical CPUs; detected $logicalCpuCount."
     }
@@ -45,7 +48,7 @@ if ($Mode -eq 'Build') {
     $env:CMAKE_BUILD_PARALLEL_LEVEL = [string]$buildCpuCount
     $env:RUST_TEST_THREADS = [string]$buildCpuCount
     try {
-        # Child compiler/linker processes inherit this 33-of-48 affinity mask.
+        # This is an emergency ceiling, not a claim that CPU affinity limits wall power.
         $current.ProcessorAffinity = [IntPtr]$affinityMask
         Write-Host "P4_LOCAL_BUILD_POLICY logical=$logicalCpuCount allowed=$buildCpuCount percent=$([Math]::Round(100 * $buildCpuCount / $logicalCpuCount, 2))"
         Invoke-RequestedCommand

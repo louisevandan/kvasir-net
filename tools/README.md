@@ -12,12 +12,15 @@ into the agent.
 | `link/` | A relay that carries frames badly on purpose — latency, jitter, width, stalls, and a cut. Used as a library by the tests and as a binary between machines. |
 | [model-loading/](model-loading/README.md) | P4 OUTER model-loading module: inventory, typed planner, CLI, independent reference, tests and local evidence. |
 
-On the development desktop, run unavoidable builds through
-`tools/scripts/invoke-local-resource-policy.ps1 Build -- cargo ...`. It restricts the
-process tree to 70% or less of the detected logical CPUs and applies the same
-job count to Cargo, CMake and Rust tests. Run unavoidable local inference
-through `invoke-local-resource-policy.ps1 Inference -- COMMAND`; it fails unless the designated RTX 3090 is
-present and exposes only that GPU through `CUDA_VISIBLE_DEVICES`.
+Build on remote hosts. The development desktop build path is disabled by default after
+repeated hard power losses during consecutive cold Rust builds. A separately authorized
+emergency run must set `P4_ALLOW_LOCAL_BUILD=1` and use
+`tools/scripts/invoke-local-resource-policy.ps1 Build -- cargo ...`; the wrapper then caps
+Cargo, CMake and Rust tests at the smaller of eight jobs or 25% of logical CPUs. This is a
+conservative concurrency ceiling, not a wall-power measurement. Run unavoidable local
+inference through `invoke-local-resource-policy.ps1 Inference -- COMMAND`; it fails unless
+the designated RTX 3090 is present and exposes only that GPU through
+`CUDA_VISIBLE_DEVICES`.
 
 `model-loading/cli/collect-inventory.ts` sends an ordinary agent INSPECT to every
 configured address and atomically writes per-machine timestamped JSON plus

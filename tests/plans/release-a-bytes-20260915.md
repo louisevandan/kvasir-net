@@ -16,16 +16,22 @@ native 실행이 만든 physical result, adapter가 보존하는 completion, age
 ## Environment
 
 - 개발 기준: Windows `F:\dev\p4`, `main`, A-LOAD 기준 `9b2522dae` 이후 소스.
-- native 재빌드와 모델 검증은 원격 host를 우선한다.
-- 이 PC 빌드가 불가피하면 48 logical CPU의 70% 이하인 33 jobs를 `CARGO_BUILD_JOBS`, Cargo
-  `--jobs`, `CMAKE_BUILD_PARALLEL_LEVEL`, `RUST_TEST_THREADS`에 적용한다.
+- native 재빌드와 모델 검증은 원격 host에서 수행한다.
+- 이 PC의 build 경로는 기본 차단한다. 사용자가 별도로 비상 실행을 허가한 경우에만
+  `P4_ALLOW_LOCAL_BUILD=1`과 resource wrapper를 사용하며, 48 logical CPU에서는 최대 8 jobs로
+  `CARGO_BUILD_JOBS`, Cargo `--jobs`, `CMAKE_BUILD_PARALLEL_LEVEL`, `RUST_TEST_THREADS`를 제한한다.
+  affinity/job 비율을 소비 전력 비율로 해석하지 않는다.
 - 이 PC 추론이 불가피하면 `CUDA_DEVICE_ORDER=PCI_BUS_ID`와
   `CUDA_VISIBLE_DEVICES=GPU-38e6dbac-fee5-ac16-62d4-cfacbe02f8ed`로 RTX 3090만 노출한다.
 - 2026-09-15의 예기치 않은 종료 시각은 15:19:04와 16:18:52다. 첫 종료 3분47초 전에는 제한 없는
   `cargo test` 두 개를 동시에 시작했고 모델 실행은 없었다. 두 번째 종료 전에는 제한 없는 release build에
   이어 로컬 llama.cpp와 HF 추론을 연속 실행했다. 두 Kernel-Power 41 모두 bugcheck와 전원 버튼 시각이
   0이며 직전 WHEA/GPU 오류는 없다. 첫 사례는 빌드 부하를 독립적으로 지목하고 두 번째는 빌드·추론이
-  섞였으므로, 빌드는 33 logical CPU affinity로 제한하고 로컬 추론은 지정 RTX 3090만 노출한다.
+  섞였으므로, 당시에는 빌드를 33 logical CPU affinity로 제한하고 로컬 추론은 지정 RTX 3090만
+  노출하도록 했다. 그러나 23:39:18 시작한 네 번째 연속 독립 Rust cold build도 23:39:34에 로그가
+  끊기고 23:40:48에 재부팅됐다. 이 구간에는 모델/CUDA 실행이 없었다. 새 Kernel-Power 41도 bugcheck,
+  전원 버튼, WHEA boot error가 모두 0이다. 따라서 thread 비율을 전력 비율로 취급한 정책을 폐기하고
+  이 PC의 빌드를 기본 차단한다.
 
 ## Preconditions
 

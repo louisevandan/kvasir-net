@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0에서 native physical result 최대 103,843,468bytes를 결속했고, B1에서 versioned LOAD resource profile과 실제 completion/edge/hop receipt 잔여 용량 검사를 연결했다. B2는 native 실행 전 completion group 예약과 거부 무효과를 닫았다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B3 수명 분리다.
+최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0–B4는 physical result 상한, LOAD resource profile, native 전 completion 예약, 보존 수명별 INSPECT, 실제 경계와 독립 변이까지 닫았다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B5 양쪽 어댑터 회귀와 Qwen122B 3-host 실기다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -71,9 +71,9 @@ source/patch·device·shape mismatch, shared pool 과다 예약 및 PLAN≠MEMOR
 변이4종을 검출했다. 현재 `loadAuthorized=true`, 실제 allocation과 runtime acceptance는 false다. 다음 첫
 행동은 현재 소스를 봉인한 별도 agent namespace에서 3-stage LOAD를 한 번 실행해 MEMORY_ACTUAL 일치와
 UNLOAD 뒤 자식/점유0을 확인하는 것이다. output/receipt/edge byte bound 결속 전 요청 arm은 시작하지 않는다.
-feature off/on 전체 workspace는 각각1490 PASS / 0 FAIL / 7 ignored다. 작업은 원격 host를 우선하며,
-이 PC에서 빌드가 불가피하면 48 logical CPU 중 최대33 job만 쓴다. 이 PC의 inference는 지정된 RTX 3090
-한 장만 노출하고 RTX 4080은 사용하지 않는다.
+feature off/on 전체 workspace는 각각1490 PASS / 0 FAIL / 7 ignored다. 이 PC의 build는 이후 B4 cold
+build 중 추가 hard power loss가 확인되어 기본 차단했다. 이 PC의 inference가 별도 허가로 불가피할 때만
+지정된 RTX 3090 한 장을 노출하고 RTX 4080은 사용하지 않는다.
 
 **2026-09-15 Qwen122B A-LOAD 수용:** [A-LOAD 보고](../tests/reports/release-a/20260915_195106.md)의
 현재 P4 agent 소스 `8be242082`와 봉인 native로 Spark/Mac20/Mac21의 새 `:52150` namespace에
@@ -110,6 +110,18 @@ scheduler/flight/KV/native/ID/effect/output을 모두 보존한다. package 682/
 ring fixture의 store/profile 불일치로 실패해 같은 64 MiB 계약으로 정정했으므로 `first_pass=fail`이다.
 A-BYTES 전체와 실제 inference는 미수용이다. 다음 첫 행동은 B3에서 pending/completion/broker receipt/
 hop outstanding/native response 수명을 INSPECT의 별도 필드로 검증하는 것이다.
+
+**2026-09-15 A-BYTES B3/B4 수용:** [B3/B4 보고](../tests/reports/release-a/20260915_235900.md)의
+backend 중립 retention snapshot이 pending request, retained completion, broker receipt, hop receipt와
+outstanding, native response를 분리한다. destination은 실제 Event 비용을 예약한 뒤 commit하고 source는
+`AcceptedExact`까지 원본 claim을 유지한다. 실제 worker와 TCP 소비 경로의 count/byte 경계, duplicate/late,
+uncertain transport, neutral adapter를 통과했고 독립 재컴파일 변이 4종을 모두 검출했다. B3 workspace
+feature off/on은 각 1,506/0/7이고 B4 최종 소스의 관련 package는 원격 4개 host에서 모두 통과했다.
+`first_pass=fail`이며, B4의 네 번째 연속 로컬 cold build 중 hard power loss가 재발해 33/48 affinity를
+전력 70%로 본 가정이 틀렸음을 확정했다. 이후 이 PC build는 기본 차단하고 원격 검증만 사용한다.
+A-BYTES 전체와 실제 inference는 미수용이다. 다음 첫 행동은 B5 시작 전 새 namespace와 작업 소유 node를
+INSPECT하고 모두 UNLOAD/DELETE한 뒤, 최종 소스로 llama.cpp와 HF/Python 회귀 및 Qwen122B 3-host
+경계 거부·정상 1요청·최종 회수를 한 번의 봉인된 gate로 수행하는 것이다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/

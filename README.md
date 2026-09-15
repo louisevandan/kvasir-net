@@ -216,3 +216,5 @@ Release A A-BYTES B0: [Qwen122B physical result 상한·실제 LOAD·제거 변�
 Release A A-BYTES B1: [versioned LOAD profile·실제 잔여 용량·Qwen122B LOAD/회수](tests/reports/release-a/20260915_222346.md).
 
 Release A A-BYTES B2: [native 전 completion group 예약·거부 무효과·독립 변이](tests/reports/release-a/20260915_232600.md).
+
+Release A A-BYTES B3/B4: [보존 수명 분리·실제 경계·독립 변이·로컬 전원 사고](tests/reports/release-a/20260915_235900.md).
