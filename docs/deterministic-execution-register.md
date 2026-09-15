@@ -14,6 +14,10 @@
 | L006 | CRLF 문서에 LF patch 조각을 삽입하면 내용이 맞아도 저장소 문서 검사가 mixed EOL로 거부한다. | patch 뒤 수정 문서 전체의 줄바꿈을 원래 형식으로 정규화하고 `node tools/scripts/docs-lint.mjs --all`을 커밋 전 실행한다. | 모든 문서 변경, M1 계획 |
 | L007 | 줄바꿈 정규화 명령에 실제 CR/LF를 잘못 인용하면 기존 문서 전체가 한 줄로 합쳐지고 작은 의도 변경이 수천 줄 삭제로 커밋될 수 있다. | byte 단위 `CRLF→LF→CRLF` 정규화 뒤 line count와 `git diff --numstat`을 원본/의도 범위와 대조한다. 비정상 대량 변경은 push 여부와 무관하게 부모 원문에서 전진 복구한다. | 모든 커밋 전 검사 |
 | L008 | 완성 후보 전에 formatter를 적용하지 않으면 import 순서 같은 기계적 차이가 원격 첫 gate를 불필요하게 실패시킨다. | 코드 편집 직후 formatter를 적용하고 별도 `cargo fmt --all -- --check`를 통과한 뒤에만 원격 build/test 라운드를 연다. | 모든 Rust 변경, M1 |
+| L009 | Windows PowerShell→SSH→원격 Python을 한 문자열에 중첩 인용하면 원격에 도달하기 전에 로컬 parser가 코드를 명령으로 해석할 수 있다. | 여러 줄 원격 변경은 검토 가능한 스크립트 파일로 만들고 전송·준비·실행을 분리한다. 실행 전 원격 diff를 확인한다. | 독립 변이와 원격 fixture |
+| L010 | 원격 검증 복사본의 `origin`이 GitHub가 아니라 임시 bundle이면 fetch가 최신 원격 추적 ref를 만들지 않아 로컬의 새 커밋 약칭을 해석하지 못한다. | `git remote -v`, fetch exit, `git rev-parse FETCH_HEAD`를 먼저 기록하고 확인된 전체 object ID로만 worktree를 만든다. 필요한 commit이 bundle에 없으면 검증용 bundle을 새로 전달한다. | 원격 clean replay와 독립 변이 |
+| L011 | 의미 변이의 교체문이 문법적으로 불완전하면 시험 단언이 아니라 컴파일 오류만 검출해 변이 증거가 되지 않는다. | 변이 diff가 한 의미만 바꾸는지 보고 formatter/check를 먼저 통과시킨다. 컴파일 실패 변이는 검출 수에 넣지 않는다. | 모든 Rust 독립 변이 |
+| L012 | 원격 Cargo가 있어도 해당 toolchain에 rustfmt component가 설치됐다고 가정할 수 없다. | 실행계획 전에 필요한 component를 조회한다. baseline은 로컬 rustfmt check, 원격 변이는 한 줄 diff 검토와 `cargo check`를 거쳐 의미 시험을 실행하며 검증 중 component를 설치하지 않는다. | M1 원격 Rust 변이 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

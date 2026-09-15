@@ -224,3 +224,4 @@ Release A A-BYTES B5: [양쪽 어댑터 회귀·Qwen122B 3-host 정상 요청·�
 
 노드 LOAD·UNLOAD 수명 M0: [현재 호출 경로·NL01–NL14 소유권 매핑](tests/reports/node-load-lifecycle/20260916_014500.md).
 M1: [결정론적 실행계획](tests/plans/node-load-lifecycle-m1-20260916.md).
+Typed adapter completion: [원격 baseline·독립 변이 보고](tests/reports/node-load-lifecycle/20260916_015702.md).

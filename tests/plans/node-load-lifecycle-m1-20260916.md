@@ -18,6 +18,10 @@ llama.cpp/HF 실제 worker 이관은 M2, OUTER 호출자와 구 CREATE/DELETE �
 - `L007`: line count와 numstat이 의도 범위인지 확인하지 않고 커밋하지 않는다. 이미 공개된 잘못된 커밋은
   기록을 지우는 강제 push 대신 원문 복원 전진 커밋으로 바로잡는다.
 - `L008`: Rust formatter를 먼저 적용하고 check를 통과한 뒤에만 원격 1회차를 연다.
+- `L009`: 원격 변이는 중첩 shell 인용으로 만들지 않고 별도 스크립트를 전송한 뒤 diff를 확인한다.
+- `L010`: 원격 `origin`과 `FETCH_HEAD` object ID를 확인한 뒤 그 전체 ID로 독립 worktree를 만든다.
+- `L011`: 의미 변이는 formatter/check를 통과한 뒤 시험 단언의 실패만 검출 증거로 센다.
+- `L012`: Spark rustfmt 부재를 가정에 숨기지 않고, 로컬 baseline fmt와 원격 mutation `cargo check`를 분리한다.
 
 ## 1회차 전 소유권·호출 경로 검토
 

@@ -182,8 +182,11 @@ NL05/NL08 fixture로 재사용한다.
 
 **2026-09-16 M1 진행:** 공통 protocol에 LOAD/UNLOAD/result content type, 64 KiB little-endian JSON
 metadata framing, opaque adapter bytes, 요청 identity·LOAD capacity·결과 status/resource-state 검증을
-추가했다. 원격 Spark의 `p4-protocol` 72개 시험이 통과했다. 다음 구현은 이 typed codec을 소비하는
-agent 비동기 supervisor이며, 그 실제 TCP 경로가 통과하기 전 M1 완료로 판정하지 않는다.
+추가했다. 이어 adapter 경계에 snapshot과 독립된 typed completion을 추가해 성공 LOAD는 Present,
+성공 UNLOAD는 Absent, 오류 없음만 허용했다. 원격 Spark에서 `p4-protocol` 73개와 `p4-adapter` 112개 및
+doc-test 1개가 통과했고, 성공 LOAD의 resource 증명을 제거한 독립 변이를 표적 시험이 검출했다.
+[typed 경계 보고](../tests/reports/node-load-lifecycle/20260916_015702.md)를 따른다. 다음 구현은 이 경계를
+소비하는 agent 비동기 supervisor이며, 실제 TCP 경로가 통과하기 전 M1 완료로 판정하지 않는다.
 
 M1의 실행 전 검토와 최대 3라운드 입력은
 [M1 결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.md)에 봉인한다. 이 단계는
