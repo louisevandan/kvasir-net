@@ -831,7 +831,7 @@ A- 접두사는 예정 시험 ID다. 실제 테스트 함수/runner와 ID 대응
 
 ### A 실행 명세와 비용 확인
 
-대상은 개발 계획의 Nemotron 550B 10-shard Q5·7물리 host/8stage·resident 8이다. 이번 릴리즈의
+대상은 2026-09-15 사용자 지시에 따라 개발 계획의 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard·resident8로 변경한다. 최소2물리 host를 사용하며 정확한 fleet/stage/cut은 새 PLAN·공유 pool 예산·비용 비교 후 봉인한다. 과거550B의7host/8stage를 그대로 적용하지 않는다. 이번 릴리즈의
 수용 목표는 짧은 질의 streaming과 긴 문서의 비동기 분석이다. 다음 새 수치는 측정 예측이 아니라
 제품 사용 한도다. 임의의 향상률 대신 사용자 대기와 작업 완료에 상한을 둔다. 달성 가능성은 A-COST에서
 검사하며 불가능하면 해당 릴리즈 FAIL/범위 재심사다. 사후 수치 완화로 기존 arm을 GREEN으로 바꾸지 않는다.
@@ -855,9 +855,10 @@ A- 접두사는 예정 시험 ID다. 실제 테스트 함수/runner와 ID 대응
 ### A corpus와 비교 arm
 
 1. 기존 `target/nemotron550-all-fleet/`의 100,038 input ×8·output cap 2,048·원래 deadline 및
-   `target/nemotron550-mixed-waves/`의 미시작 workload를 **원본 그대로 별도 회귀 arm**으로 보존한다.
-   250ms 기존 지연 목표와 종료 watchdog도 해당 원 spec으로 다시 판정한다. 새 제품 corpus의 통과로
-   이 실패를 대체하지 않는다. 원본 유실 시 재현 불가를 명시하고 새 arm을 같은 것으로 부르지 않는다.
+   `target/nemotron550-mixed-waves/`의 미시작 workload를 **원본 그대로 역사 회귀 증거**로 보존한다.
+   사용자가550B를 대상에서 제외했으므로 새 Release A의 선행 조건으로550B 재실행을 요구하지 않는다.
+   해당 실패는 그대로 유지하며 Qwen의 통과로 대체하지 않는다. Qwen corpus는 별도 명세·tokenizer·token ID로
+   재생성하고 동일 정답·입력 등급·8wave·SLO를 적용한다. 원본 유실 시 재현 불가를 명시한다.
 2. 제품 cold burst: short 4건, medium 2건, long 2건을 시점 0에 함께 제출한다. sustained는 8개 wave×8건,
    매 wave 같은 길이 구성에 서로 다른 과제를 사용한다. 초기 고정 도착은 0/180/480/780/1080/1380/1680/1980초.
    예정 시각 대비 실제 송신 오차는 최대 1초. 전체 timeout은 마지막 예정 송신+1,800초이며 요청별 deadline도 검사한다.

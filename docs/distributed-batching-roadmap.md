@@ -22,6 +22,14 @@ HF를 P4 내부로 통합했고 전체 workspace on/off 각각 1460 passed / 0 f
 
 ### 0.A Release A 착수 (2026-09-14)
 
+**2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
+550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/
+PLAN/profile로 검증하고 resident8·장문·8wave·정답·SLO·취소/회수·양쪽 adapter 회귀 기준은 유지한다.
+최소2물리 host에서 exact topology를 다시 선정한다. 550B의7host/8stage를 복사하지 않는다.
+3개 artifact의 전체 hash, 새 corpus64건 독립 검증, 계약 시험6개 및 로컬3090의 한 cut PLAN을 확인했다.
+전체 topology·적재·분산 서비스는 미완료이며 [Qwen 전환 기록](../tests/reports/release-a/20260915_131432.md)을 따른다.
+기존 FINISH 누적3회 중단 기록과 미해결 반환 실패는 모델 변경으로 해소된 것으로 간주하지 않는다.
+
 **2026-09-15 모델 없는 클러스터 조회:** 사용자 지정 [9대·MI250 SSH 검증](../tests/reports/release-a/20260915_124433.md)을 수행했다.
 LAN7×7과 로컬 gateway/MI250두 대3×3에서 정상 응답542개·잘못된 문맥 거부20개를 확인했다.
 직접 SSH는 시간 초과였으나 Ubuntu jump 및 정·역방향 터널은 통과했다. 충돌 ID 시험 뒤 실패 peer를
@@ -107,7 +115,7 @@ DFlash/DSpark를 실제 코드 기준 `245d6b785c96ec770dc6041ded35457c2ef97260`
 
 | 우선순위 | 제품과 종료 조건 | 다음 첫 행동 |
 | --- | --- | --- |
-| HF 수용 후 | **Release A: 기존 대형 모델의 지속 사용.** Nemotron 550B의 장문 정상 서비스·배치 진행·취소·회수·재수용·유한 배포 profile을 함께 출하 | [새 세션 절차](external-analysis-improvement-plan.md#fresh-session)로 HEAD/dirty를 감사하고 timer RED를 재현. [A 수용 계약](distributed-batching-verification.md#release-a-contract)의 corpus/manifest/실제 runner를 작성하며 비용·종결 경로를 분리 |
+| HF 수용 후 | **Release A: 기존 대형 모델의 지속 사용.** Qwen3.5-122B-A10B의 장문 정상 서비스·배치 진행·취소·회수·재수용·유한 배포 profile을 함께 출하 | [새 세션 절차](external-analysis-improvement-plan.md#fresh-session)로 HEAD/dirty를 감사하고 timer RED를 재현. [A 수용 계약](distributed-batching-verification.md#release-a-contract)의 corpus/manifest/실제 runner를 작성하며 비용·종결 경로를 분리 |
 | 조건부 | S: 선정 희소 모델 한 종의 유용한 장문 서비스 | artifact·보조 상태·합법 cut·실제 backend sparse 계산과 기존 모델 대비 과제 효용 확인. flag만 여는 릴리즈 제외 |
 | 조건부 | B: 반복 문서/코드 문맥의 재사용 대화 | 실제 유효 prefix·checkpoint bytes·cold/hit/no-hit 순절감으로 채택. 요청 소비와 eviction/오염 방지/회수를 함께 완성 |
 | 조건부 | C: target에 맞는 speculative 응답 서비스 | non-spec/MTP와 가능한 DFlash/DSpark·저비용 draft를 비교해 한 방식을 선정. hidden-state 전달·state replay·queue/fence·draft 메모리 포함. MTP만으로 조사 종료 금지 |

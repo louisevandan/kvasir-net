@@ -1,0 +1,156 @@
+{
+  "schema": "p4.release-a.target.v1",
+  "target_id": "qwen3_5_122b_a10b_ud_q5_k_s_v1",
+  "authorized_change_date": "2026-09-15",
+  "source_commit": "67c722325",
+  "model": {
+    "name": "Qwen3.5-122B-A10B",
+    "repository": "unsloth/Qwen3.5-122B-A10B-MTP-GGUF",
+    "quantization": "UD-Q5_K_S",
+    "architecture": "qwen35moe",
+    "gguf_block_count": 49,
+    "nextn_predict_layers": 1,
+    "base_layer_count_candidate": 48,
+    "native_layer_count_verified": true,
+    "total_artifact_bytes": 88310156320,
+    "chat_template_sha256": "8452ca85cb1e0ff04304c02f417a53305d5ba17f6eb9d5693343ad8355f985a8",
+    "native_base_layer_count": 48,
+    "native_all_layer_count": 49
+  },
+  "corpus_manifest": "corpus-qwen122b-v1.json",
+  "corpus_manifest_sha256": "cc1a1e90b0d4841418c508bd68c5435920805bbeb23db5e0540f1f628357407f",
+  "execution_contract": {
+    "resident": 8,
+    "context_per_sequence": 102400,
+    "total_context": 819200,
+    "kv_k": "f16",
+    "kv_v": "f16",
+    "flash_attention": true,
+    "unified_kv": true,
+    "n_batch": 128,
+    "n_ubatch": 64,
+    "spec_type": "none",
+    "minimum_physical_hosts": 2,
+    "topology": null,
+    "memory_budgets": null
+  },
+  "historical_550b": {
+    "status": "failed_evidence_preserved",
+    "required_to_rerun_for_this_target": false
+  },
+  "runtime_acceptance": false,
+  "public_plan_acceptance": false,
+  "remaining": [
+    "FINISH failure remains subject to existing stop record",
+    "current fleet artifact and device identity",
+    "model-rendered template parity and actual response quality",
+    "deadline runner and full service gates",
+    "full-topology native PLAN and physical shared-pool budget"
+  ],
+  "local_plan_probe": {
+    "layer_begin": 37,
+    "layer_end": 45,
+    "device": "NVIDIA GeForce RTX 3090",
+    "binary_sha256": "97003fc1077f18b34d7718c105da50e3e89323f99c6052ca11149268cc595aba",
+    "config_sha256": "ed0e22766abdb72302083260a080fdf8eb56b410af02c7c5dd12ab5a2a6c61f8",
+    "result_sha256": "1a95a8cf9e22c8d26eca82f7ffb79d106ba309e525284cf1f743b6893746af68",
+    "native_plan": {
+      "schema": 2,
+      "memory_topology": {
+        "mode": "discrete",
+        "host_shared_devices": []
+      },
+      "execution_shape": {
+        "n_ctx": 819200,
+        "n_ctx_seq": 819200,
+        "n_batch": 128,
+        "n_ubatch": 64,
+        "n_seq_max": 8,
+        "kv_unified": true
+      },
+      "complete": true,
+      "fits_current_free": true,
+      "layer_device_query_supported": true,
+      "layer_device_expectations_checked": false,
+      "layer_default_devices": [
+        {
+          "layer": 37,
+          "device": "CUDA0"
+        },
+        {
+          "layer": 38,
+          "device": "CUDA0"
+        },
+        {
+          "layer": 39,
+          "device": "CUDA0"
+        },
+        {
+          "layer": 40,
+          "device": "CUDA0"
+        },
+        {
+          "layer": 41,
+          "device": "CUDA0"
+        },
+        {
+          "layer": 42,
+          "device": "CUDA0"
+        },
+        {
+          "layer": 43,
+          "device": "CUDA0"
+        },
+        {
+          "layer": 44,
+          "device": "CUDA0"
+        }
+      ],
+      "entries": [
+        {
+          "scope": "device",
+          "index": 0,
+          "name": "CUDA0",
+          "description": "NVIDIA GeForce RTX 3090",
+          "free": 24465375232,
+          "total": 25769279488,
+          "model": 14132488192,
+          "context": 3563847680,
+          "compute": 189139072,
+          "required": 17885474944
+        },
+        {
+          "scope": "host",
+          "index": -1,
+          "name": "host",
+          "description": "host memory",
+          "free": 226978226176,
+          "total": 274727415808,
+          "model": 0,
+          "context": 0,
+          "compute": 105646112,
+          "required": 105646112
+        }
+      ]
+    },
+    "actual_allocation_verified": false
+  },
+  "artifacts": [
+    {
+      "path": "S:\\models\\unsloth\\Qwen3.5-122B-A10B-MTP-GGUF\\Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf",
+      "bytes": 10943808,
+      "sha256": "ea08ef11402edf53a98cb90329961ee3dbe191dcf75ff7c99f009264cf8a99b3"
+    },
+    {
+      "path": "S:\\models\\unsloth\\Qwen3.5-122B-A10B-MTP-GGUF\\Qwen3.5-122B-A10B-UD-Q5_K_S-00002-of-00003.gguf",
+      "bytes": 49967634720,
+      "sha256": "6d4910dc603ab82570d2c8a1a979414e9d921af68273113063e7679424d53fa7"
+    },
+    {
+      "path": "S:\\models\\unsloth\\Qwen3.5-122B-A10B-MTP-GGUF\\Qwen3.5-122B-A10B-UD-Q5_K_S-00003-of-00003.gguf",
+      "bytes": 38331577792,
+      "sha256": "e0f018ae1f3016fab56005ba4b25e708720eaa2413232bd65ba07c7c6d964938"
+    }
+  ],
+  "manifest_kind": "target_preparation_not_runnable_deployment"
+}

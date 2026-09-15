@@ -4,7 +4,7 @@
 
 이 문서는 투자 판단·제품 범위·구현 범위·인수인계를 소유하는 **단일 개발 계획**이다. 별도 개별 버전 계획 파일이나 이전 대화를 요구하지 않는다. 출시 우선순위는 [로드맵](distributed-batching-roadmap.md#current-status), 시험·성능 판정은 [검증 규약](distributed-batching-verification.md), 수정 소유 층은 [격리 계약](layer-isolation-contract.md)을 따른다. 현재는 계획 확정이며 제품 개발·원격 재시험·배포는 실행하지 않았다.
 
-**2026-09-14 우선순위 변경: 첫 개발 대상은 [외부 HF 어댑터 수용](#hf-integration)이다.** 그 통합 뒤 [Release A](#release-a)의 기존 Nemotron 550B 장문·취소·회수·다음 웨이브 작업을 진행한다. [배치 G1–G6의 채택 범위](#batch-decisions), [DFlash/DSpark를 포함한 가속 판단](#speculation-decision), [새 세션 시작 절차](#fresh-session)를 함께 읽는다. A/S/B/C는 제품 계약 식별자이며 과거 R1–R8 단계 번호나 실제 Git tag가 아니다.
+**2026-09-14 우선순위 변경: 첫 개발 대상은 [외부 HF 어댑터 수용](#hf-integration)이다.** 그 통합 뒤 [Release A](#release-a)의 장문·취소·회수·다음 웨이브 작업을 진행한다. 2026-09-15 사용자 지시로 기준 모델을 Qwen3.5-122B-A10B로 변경했다. [배치 G1–G6의 채택 범위](#batch-decisions), [DFlash/DSpark를 포함한 가속 판단](#speculation-decision), [새 세션 시작 절차](#fresh-session)를 함께 읽는다. A/S/B/C는 제품 계약 식별자이며 과거 R1–R8 단계 번호나 실제 Git tag가 아니다.
 
 <a id="hf-integration"></a>
 
@@ -276,7 +276,7 @@ Nemotron/Qwen 같은 hybrid에서는 recurrent state를 임의 prefix 길이로 
 
 - **Qwen3.5-397B-A17B + [Z-Lab DFlash draft](https://huggingface.co/z-lab/Qwen3.5-397B-A17B-DFlash):** 공식 카드가 target 쌍을 명시한다. 8×B200·BF16·SGLang·greedy/thinking·5회 반복에서 동시성 1과 32, built-in MTP와 비교한 결과를 공개했다. 이는 고부하 DFlash도 검토해야 할 근거다. 해당 runtime/장비의 보고값을 P4 Q5/LAN 이득으로 전용하지 않는다. GGUF 변환과 pin의 해당 draft graph·selected layer·hybrid replay는 별도 미검증이다.
 - **DeepSeek-V4-Flash-0731 + [ggml-org DSpark GGUF](https://huggingface.co/ggml-org/DeepSeek-V4-Flash-0731-GGUF):** 같은 배포에서 DSpark artifact가 공개돼 있다. 표시 크기는 약 10.8–10.9GB로, 작은 draft라는 이름만으로 여유 VRAM에 무료 적재된다고 볼 수 없다. pin `src/models/dflash.cpp`에도 DSV4 graph 분기가 있다. 다만 P4 target의 DSV4 stage/state 자체가 선행 미승인이다. 이전 Flash variant와 0731 target을 임의 혼용하지 않는다.
-- **Nemotron 550B + native MTP:** A와 같은 target을 쓰는 최저 추가 비용 비교군. 이번 조사에서 확인하지 않은 Nemotron 전용 DFlash/DSpark artifact를 있는 것으로 전제하지 않는다. 직접 학습 프로젝트를 C에 몰래 포함하지 않는다.
+- **Qwen3.5-122B-A10B + native MTP:** 변경된 A와 같은 target의 비교 후보. MTP tensor 포함만으로 Verify/Replay 지원을 승인하지 않는다. 전용 DFlash/DSpark artifact의 호환성을 별도 확인한다. 직접 학습 프로젝트를 C에 몰래 포함하지 않는다.
 
 DeepSpec의 공개 소형 checkpoint는 해당 target의 non-thinking 데이터로 학습됐다고 명시한다. 이것만으로 큰 target·thinking·우리 코드 과제의 acceptance를 추정하지 않는다. 학습/데이터 준비는 큰 별도 비용이므로 적합한 artifact가 없으면 모델 쌍을 보류한다. 문서의 오래된 “Qwen3만 지원” 설명보다 pin의 실제 model graph와 artifact metadata를 우선하고, 그 역시 전체 backend 지원으로 확대하지 않는다.
 
@@ -343,7 +343,7 @@ C1–C9는 이번 감사에서 붙인 주제 ID이며 이미 구현된 시험 �
 | C2 자원/receipt, 9–11장 | input request budget과 native output/return/receipt 한도는 다름. event broker ledger는 개수 중심 보관. 기존 ControlBudget RELEASE/SETTLE 수정은 존재 | A-BYTES: pending wire·retained output·중복 판정 receipt·scratch의 수명별 선예약과 거부 무효과. 기존 회계 재작성 대신 실제 consumer까지 결속 |
 | C3 스케줄링, 10–11장 | 덱의 patience 설명은 ordinary 기본 배처 전체를 증명하지 않음. controller는 기본 off이며 service 추정과 TTFT/ITL은 다름 | A-BATCH/A-COST 및 G1/G3/G4/G6. G2/G5는 조건부 |
 | C4 배치/적재 계획, 1–8장 | OUTER의 최신 available/legal-cut/unified 검증은 이미 구현·합성 시험. native PLAN→LOAD와 실제 pool 분리·장치 배치 검증은 남음 | A-PLAN. 과거 20장치 제한·상위 공유 pool 결함으로 중복 개발하지 않음 |
-| C5 특수 아키텍처, 14장 | MSA/DSV4/DSA/hybrid-idx는 tensor shape뿐 아니라 보조 상태·alias·합법 cut 문제 | S의 SP 전 게이트. A의 Nemotron hybrid도 recurrent 정합성/실제 KV bytes/회수는 검사 |
+| C5 특수 아키텍처, 14장 | MSA/DSV4/DSA/hybrid-idx는 tensor shape뿐 아니라 보조 상태·alias·합법 cut 문제 | S의 SP 전 게이트. A의 Qwen3.5 hybrid도 recurrent 정합성/실제 KV bytes/회수는 검사 |
 | C6 재사용/영속, 12장 | native save/restore가 있어도 event v2에 Persist/Restore 소비가 연결된 것은 아님. 기존 `adapter/cache_transactions.inc.rs`를 현재 경로로 오독 금지 | B가 실제 사용자 요청부터 재사용까지 완성. 최초 in-memory 범위이면 SSD는 명시 미지원 |
 | C7 가속, 13장 | P4 native MTP 지원과 upstream DFlash/DSpark 지원의 층이 다름. 전체 head verify fence·hidden-state 전송·보조 상태 rollback이 비용/정합성 쟁점 | C: §4.3의 target 쌍 중 채택한 방식 하나를 end-to-end 완성. MTP만으로 검토 종료 금지 |
 | C8 격리/확장, 1–8·14–15장 | 공개 facade 뒤 Impl accessor·raw ordinal·transitive include/link도 경계. clean patch replay는 의미 호환 아님 | 전 제품: adapter×memory×backend별 PLAN/LOAD/physical/KV/spec 증거 matrix, compiler·상태 변경 권한·의미 conformance를 각각 검증 |
@@ -368,18 +368,18 @@ C6의 별도 저장소 위험도 보존한다. [native KV](../layers/adapters/ll
 
 ### 6.1 사용자 약속과 출하 범위
 
-**사용자는 승인된 LAN fleet에서 Nemotron 550B를 한 번 적재한 뒤 여러 장단문 작업을 제출하고, 진행 상태/정상 응답을 받으며, 요청 취소나 과부하 뒤에도 새 작업을 실행할 수 있다.** 긴 문서 분석은 비동기 작업으로 제공하고 짧은 후속 질의는 streaming으로 제공한다. 유지보수 시 admission 중단→drain→UNLOAD를 수행한다. 실패가 불명인 경우에는 성공을 가장하지 않고 명시 실패·격리·cold recovery를 제공한다. B의 prefix cache나 C의 가속 없이 이 작업 전체가 가능해야 A 출시다.
+**사용자는 승인된 fleet에서 Qwen3.5-122B-A10B를 한 번 적재한 뒤 여러 장단문 작업을 제출하고, 진행 상태/정상 응답을 받으며, 요청 취소나 과부하 뒤에도 새 작업을 실행할 수 있다.** 긴 문서 분석은 비동기 작업으로 제공하고 짧은 후속 질의는 streaming으로 제공한다. 유지보수 시 admission 중단→drain→UNLOAD를 수행한다. 실패가 불명인 경우에는 성공을 가장하지 않고 명시 실패·격리·cold recovery를 제공한다. B의 prefix cache나 C의 가속 없이 이 작업 전체가 가능해야 A 출시다.
 
 기존 CLI/event 경로를 제품 진입점으로 사용한다. 새 웹 UI·OpenAI 호환 API·범용 인증 서버는 A 요구가 아니다. 다만 사용자가 실제로 제출/진행 조회/취소/종료할 수 있는 **문서화된 OUTER 명령과 event 소비 경로**는 필수다. 명령 이름/프로토콜 필드를 아직 구현된 API처럼 문서에 미리 만들어 놓지 않는다. 구현 체크포인트에서 확정한 CLI 도움말·예제·오류 코드를 함께 출하한다.
 
 지원 목표를 다음으로 고정한다. 현재 실기 승인이라는 의미는 아니다.
 
-- 기준 모델: `unsloth/NVIDIA-Nemotron-3-Ultra-550B-A55B-GGUF`, `NVIDIA-Nemotron-3-Ultra-550B-A55B-UD-Q5_K_S-00001-of-00010.gguf`에서 시작하는 10 shard. 실제 hash·GGUF metadata·tokenizer/template를 수집해 manifest에 고정한다. 같은 파일명의 교체는 새 artifact다.
-- 기준 fleet: 기존 7물리 host/8stage의 CUDA·Metal+CPU expert offload. 아래 표는 **과거 배치 재현 입력**이며 새 INSPECT/PLAN/LOAD가 승인해야 사용할 수 있다. IP·device ordinal을 하드웨어 identity로 쓰지 않는다.
+- 기준 모델(2026-09-15 사용자 변경): `unsloth/Qwen3.5-122B-A10B-MTP-GGUF`, `Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf`에서 시작하는 3 shard. 로컬 원본은 `S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/`다. GGUF `qwen35moe.block_count=49`, `nextn_predict_layers=1`을 확인했다. 로컬 native PLAN에서 n_layer48/n_layer_all49를 확인했으며 전체 합법 cut·allocation은 별도 검증한다. MTP 포함 파일이어도 A의 speculative 실행은 비활성이다. 실제 hash·metadata·tokenizer/template를 새 Qwen 명세에 고정하고 같은 파일명의 교체는 새 artifact로 취급한다.
+- 기준 fleet: 기존 장비 중 최소2물리 host의 실제 분산 실행. 정확한 host/device/cut/stage 수는 Qwen의 새 INSPECT·native PLAN·공유 pool 예산·비용 비교로 정하고 실행 전에 봉인한다. 과거 Qwen5host/6stage cut은 탐색 시작 후보이며 resident8/context 조건의 수용 증거가 아니다. 아래550B 표를 Qwen에 재사용하지 않는다. IP·device ordinal을 하드웨어 identity로 쓰지 않는다.
 - resident 8, sequence당 context 102,400, total 819,200, F16 K/V, flash attention on, unified KV, native batch/ubatch 128/64, spec none. target 외 추가 모델/새 backend는 출시 범위 밖이다.
 - 기본 공개 모드는 승인한 정적 batch profile 하나다. pipeline/controller의 전역 기본값을 실기 전 바꾸지 않는다. 후보는 기존 ordinary와 bounded/pipeline의 유한 비교로 선정한다. 자동 service controller·복수 prefill fragment·외부 draft·자동 prefix 재사용은 A 비활성.
 
-| 과거 host suffix (192.168.0.x) | stage / layer 범위 [begin,end) | backend 참고 |
+| 과거550B host suffix (192.168.0.x), 새 대상에 미적용 | stage / layer 범위 [begin,end) | backend 참고 |
 | --- | --- | --- |
 | .29 | 0 [0,24), 1 [24,48) | CUDA0/1, 한 host의 두 stage |
 | .26 | 2 [48,70) | CUDA |
@@ -388,20 +388,20 @@ C6의 별도 저장소 위험도 보존한다. [native KV](../layers/adapters/ll
 
 현재 OUTER DDR profile은 whole-layer CPU stage를 표현하며 GPU expert offload·같은 장치 여러 stage의 contention까지 최적화하지 않는다. A는 기존 CPU expert 배치를 **유한 승인 layout으로 명시**하고 native PLAN/실제 allocation·calibration으로 검증할 수 있다. 표현하지 못한 배치를 planner가 자동 승인한 것으로 포장하지 않는다. 범용 expert optimizer 추가는 A의 필수 요건이 아니다.
 
-원본 [config](../target/nemotron550-all-fleet/config.json)의 tensor override·모델 경로·환경을 전부 검토하되 과거 binary/channel/session/port를 그대로 재사용하지 않는다. 새 실행은 새 namespace/epoch와 현재 빌드 산출물로 봉인한다. layout 개선은 별도 실험축으로 먼저 결정하며, 그 이득을 batch 정책 개선율과 합산하지 않는다. fleet가 없거나 해당 artifact에 접근할 수 없으면 로컬 개발 후 H6을 BLOCKED로 남긴다. 작은 모델로 A 완료를 대신하지 않는다.
+550B 원본 [config](../target/nemotron550-all-fleet/config.json)와 실패 결과는 역사 증거로 보존하며 새 Qwen 대상의 선행 재실행을 요구하지 않는다. Qwen의 모델·tensor override·실제 metadata·tokenizer/template·device/cut을 새로 고정한다. 과거 binary/channel/session/port를 그대로 재사용하지 않는다. 새 실행은 새 namespace/epoch와 현재 빌드 산출물로 봉인한다. layout 개선은 별도 실험축으로 먼저 결정하며, 그 이득을 batch 정책 개선율과 합산하지 않는다. fleet가 없거나 해당 artifact에 접근할 수 없으면 로컬 개발 후 H6을 BLOCKED로 남긴다. 승인된 Qwen122B 이외의 소형 conformance 모델로 A 완료를 대신하지 않는다.
 
 ### 6.2 구현 단위 — 각각은 중간 커밋이며 별도 릴리즈가 아니다
 
 | 단위 | 구현 진입점과 완료 산출물 | 반례/소비 경로 |
 | --- | --- | --- |
-| A0 재현·명세 고정 | 기존 timer RED 원인 분리, 봉인 Nemotron trace의 compute/return/cleanup 분해. `tools/event-drive/src/run`의 수용 판정과 실제 명령 검토. tracked corpus·benchmark manifest·재현 명령 작성 | A-RED/A-COST. 새 계측 전 기존 실패가 재현되는지 확인. 누락된 단계가 계산 중인지 반환/관측 유실인지 추정하지 않음 |
+| A0 재현·명세 고정 | 기존 timer RED 원인 분리, 기존 Nemotron 실패를 보존하고 새 Qwen trace의 compute/return/cleanup 분해. `tools/event-drive/src/run`의 수용 판정과 실제 명령 검토. tracked corpus·benchmark manifest·재현 명령 작성 | A-RED/A-COST. 새 계측 전 기존 실패가 재현되는지 확인. 누락된 단계가 계산 중인지 반환/관측 유실인지 추정하지 않음 |
 | A1 배포 전 정확한 거부 | `tools/model-loading/index.ts`의 공개 입력/결과→native PLAN→LOAD→실제 allocation 비교. pool·artifact·capability mismatch에서는 전체 배포 실패와 이미 생성한 자원 회수 | A-PLAN. fresh available·통합 pool·합법 cut·실제 CPU expert 배치·shard/ABI mismatch. planner 알고리즘 재작성 금지 |
 | A2 유한 작업 수명 | OUTER/event adapter dispatch→Worker 발행/정산→native quiescence→모든 stage 회수→결과 terminal. Cancel/Drain·상태 조회·admission의 실제 사용자 명령 | A-LIFE. 취소 전 commit된 출력과 취소 후 금지 출력 구분. 결과 불명 상태·first error·cleanup error 보존. 완료/취소/실패와 자원 회수 상태를 분리 |
 | A3 byte 수용과 제어 진행 | `layers/agent/src/event_broker/ledger.rs`, 기존 control ownership, adapter input/output/return 경로의 한도 결속. output receipt/payload 중복 소유를 계산 | A-BYTES. 거부 시 원장·예약·credit·token 효과 0, duplicate/late reply에서도 1회 효과. 데이터 포화 중 취소/정산 제어 진행 |
 | A4 배치 진행과 profile | `v2/scheduler.rs`, `scheduler/pipeline.rs`, `node/state.rs`, `worker/drive.rs`, `worker/service.rs`, native physical capture/return. G1/G3/G4/G6 계약의 최소 변경 | A-BATCH/A-COST. request와 session 공정성을 구분. 검증된 범위의 KV/hybrid 불변식 보존. G2/G5 확대 없이도 다음 wave가 진행해야 함 |
 | A5 제품 수용·운영 패키지 | 현재 executable/동반 DLL·profile·지원/거부 matrix·CLI 예제·정상/취소/drain/cold recovery 절차·test runner/report. 새 세션이 같은 명령으로 재현 | A-SERVICE 및 H0–H7. source/binary 결속과 최종 전체 시험. 배포/성능 승격은 해당 실기 통과 후만 기록 |
 
-A0에서 장문 계산의 측정 하한이 제품 SLO를 이미 넘으면 필요한 kernel/placement 변경 규모를 먼저 산정한다. 작은 scheduler 변경으로 된다고 밀어붙이지 않는다. 실현 가능한 최소 수정이 범위를 넘으면 **A 미완료와 구체적 병목/필요 자원**을 보고한다. 모델·기존 100k 입력·정답·SLO를 사후 바꿔 출시로 만들지 않는다. 개발 중 회귀 고정·기능 연결·검증 완료마다 커밋하고 남은 작업을 로드맵에 기록한다.
+A0에서 장문 계산의 측정 하한이 제품 SLO를 이미 넘으면 필요한 kernel/placement 변경 규모를 먼저 산정한다. 작은 scheduler 변경으로 된다고 밀어붙이지 않는다. 실현 가능한 최소 수정이 범위를 넘으면 **A 미완료와 구체적 병목/필요 자원**을 보고한다. 이번 사용자 모델 변경은 새 target/spec으로 관리하며 과거550B 실패를 통과로 바꾸지 않는다. Qwen의 100k 입력·정답·SLO를 실행 뒤 완화해 출시로 만들지 않는다. 개발 중 회귀 고정·기능 연결·검증 완료마다 커밋하고 남은 작업을 로드맵에 기록한다.
 
 ### 6.3 릴리즈를 판정할 시험·운영 계약
 
