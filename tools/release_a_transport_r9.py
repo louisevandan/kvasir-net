@@ -269,6 +269,8 @@ def run(config_path: Path, output: Path) -> int:
     final_ingress, final_target = _inspect(ingress), _inspect(target)
     if final_ingress["transport"]["failures"]["count"] != 0:
         raise AssertionError("ingress failure was not retired")
+    if final_target["transport"]["failures"]["count"] != 0:
+        raise AssertionError(f"receiver transport failure was not retired: {final_target['transport']['failures']}")
     if final_target["transport"]["receipts"]["records"] != 0:
         raise AssertionError(f"receiver receipt was not released: {final_target['transport']['receipts']}")
     report.update({"wave": wave, "final": {"ingress": final_ingress, "target": final_target},
