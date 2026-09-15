@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from 'node:util';
 
 export const contract = Object.freeze({
   schema: 'p4.release-a.manifest.v1', context_tokens: 102400, output_tokens: 2048,
+  target_id: 'qwen3_5_122b_a10b_ud_q5_k_s_v1', model_layers: 48, model_shards: 3,
+  minimum_physical_hosts: 2,
   resident: 8, pending_count: 64, pending_bytes: 128 * 1024 ** 2,
   pending_tokens: 6553600, request_bytes: 2 * 1024 ** 2,
   ttft_ms: { short: 60000, medium: 300000, long: 900000 }, itl_ms: 250,
@@ -34,7 +36,10 @@ export function validateManifest(m) {
   }
   const artifact = id => { fail(artifacts.has(id), `unbound artifact ${id}`); return artifacts.get(id); };
   fail(Array.isArray(m.sources) && m.sources.length > 0 && m.sources.every(x => /^[a-f0-9]{40}$/.test(x)), 'missing sources');
-  fail(m.model?.shards?.length === 10 && new Set(m.model.shards).size === 10, 'model needs ten unique shards');
+  fail(m.model?.id === contract.target_id && m.model?.architecture === 'qwen35moe' &&
+    m.model?.layer_count === contract.model_layers, 'model identity or layer count differs from Release A target');
+  fail(m.model.shards?.length === contract.model_shards && new Set(m.model.shards).size === contract.model_shards,
+    `model needs ${contract.model_shards} unique shards`);
   m.model.shards.forEach(artifact);
   artifact(m.model.metadata); artifact(m.model.template); artifact(m.tokenizer?.binary);
   fail(m.tokenizer.add_special === true && m.tokenizer.parse_special === true, 'wrong tokenizer mode');
@@ -42,7 +47,8 @@ export function validateManifest(m) {
   fail(m.profile?.spec === 'none' && m.profile.prefill_fragments === 1 &&
     m.profile.service_controller === false && m.profile.prefix_reuse === false, 'unsupported experimental profile');
   artifact(m.profile.artifact);
-  fail(m.hosts?.length === 7 && new Set(m.hosts.map(h => h.identity)).size === 7, 'seven unique physical hosts required');
+  fail(m.hosts?.length >= contract.minimum_physical_hosts &&
+    new Set(m.hosts.map(h => h.identity)).size === m.hosts.length, 'too few or duplicate physical hosts');
   const hosts = new Map(), pools = new Map();
   for (const h of m.hosts) {
     fail(sha(h.identity), 'host identity must be a measured digest, not an IP');
@@ -56,10 +62,12 @@ export function validateManifest(m) {
       pools.set(key, { available: p.available_bytes - p.reserve_bytes, reserved: 0 });
     }
   }
-  fail(m.stages?.length === 8, 'eight stages required');
+  fail(m.stages?.length >= contract.minimum_physical_hosts, 'too few stages for the physical-host contract');
+  const usedHosts = new Set();
   let end = 0;
   for (const s of m.stages) {
     fail(hosts.has(s.host) && s.layer_begin === end, 'unbound host or discontinuous cut');
+    usedHosts.add(s.host);
     integer(s.layer_end, 'layer end', end + 1); end = s.layer_end;
     artifact(s.plan); artifact(s.native); artifact(s.agent); artifact(s.allocation_conformance);
     fail(sha(s.state_abi) && sha(s.wire_abi), 'missing state/wire ABI binding');
@@ -93,7 +101,9 @@ export function validateManifest(m) {
       fail(pool.reserved <= pool.available, 'shared pool overcommitted');
     }
   }
-  fail(end === 108, 'model layer count mismatch');
+  fail(end === contract.model_layers, 'model layer count mismatch');
+  fail(usedHosts.size >= contract.minimum_physical_hosts && usedHosts.size === hosts.size,
+    'every inspected host must own a stage and the minimum physical-host count must hold');
   const waves = m.mode === 'cold' ? [0] : contract.arrival_ms;
   fail(m.requests?.length === waves.length * 8, 'request/wave count mismatch');
   fail(new Set(m.requests.map(r => r.id)).size === m.requests.length, 'duplicate request identity');

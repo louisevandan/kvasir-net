@@ -16,11 +16,11 @@ function fixture(root) {
     if (root) fs.writeFileSync(path.join(root, id + '.bin'), bytes);
     return id;
   };
-  const hosts = Array.from({ length: 7 }, (_, i) => ({ identity: hash('host' + i),
+  const hosts = Array.from({ length: 3 }, (_, i) => ({ identity: hash('host' + i),
     inspect: add('inspect' + i), inspected_unix_ms: 1789320000000,
     pools: [{ id: 'shared', available_bytes: 20000, reserve_bytes: 1000 }] }));
-  const cuts = [0,24,48,70,78,88,94,98,108];
-  const stages = cuts.slice(1).map((end, i) => ({ host: hosts[Math.max(0,i-1)].identity,
+  const cuts = [0,16,32,48];
+  const stages = cuts.slice(1).map((end, i) => ({ host: hosts[i].identity,
     layer_begin: cuts[i], layer_end: end, plan: add('plan' + i), native: add('native' + i),
     agent: add('agent' + i), allocation_conformance: add('actual' + i),
     state_abi: hash('state'), wire_abi: hash('wire'), n_batch: 128, n_ubatch: 64,
@@ -38,7 +38,9 @@ function fixture(root) {
   });
   return { schema: contract.schema, mode: 'cold', run_id: 'test-arm', epoch: 1,
     contract: structuredClone(contract), artifacts, sources: ['1234567890'.repeat(4)],
-    model: { shards: Array.from({length:10},(_,i) => add('shard' + i)), metadata: add('metadata'), template: add('template') },
+    model: { id: contract.target_id, architecture: 'qwen35moe', layer_count: contract.model_layers,
+      shards: Array.from({length:contract.model_shards},(_,i) => add('shard' + i)),
+      metadata: add('metadata'), template: add('template') },
     tokenizer: { binary: add('tokenizer'), add_special: true, parse_special: true },
     trust_boundary: 'approved-private-lan', hosts, stages, requests,
     profile: { artifact: add('profile'), spec: 'none', prefill_fragments: 1, service_controller: false, prefix_reuse: false },
@@ -53,13 +55,18 @@ test('strict materialized specification has an explicit execution and quality bo
     m => m.stages[0].bounds.receipt_each_bytes = Infinity,
     m => m.stages[0].bounds.receipt_bytes--,
     m => m.stages[0].bounds.edge_each_bytes = -1,
-    m => m.hosts[0].pools[0].available_bytes = 4500,
+    // One stage owns 1,600 allocation + 200 output + 60 receipt + 200 edge
+    // bytes in addition to the 1,000-byte host reserve: 3,059 is one short.
+    m => m.hosts[0].pools[0].available_bytes = 3059,
     m => m.stages[0].allocations[0].weight_bytes = Number.MAX_SAFE_INTEGER,
     m => m.stages[0].output_pool = 'unbound',
     m => m.requests[0].serialized_bytes = contract.request_bytes + 1,
     m => m.requests[6].input_tokens--,
     m => m.requests[0].after_ms = 180000,
     m => m.model.shards[0] = m.model.shards[1],
+    m => m.model.id = 'historical-550b',
+    m => m.model.layer_count = 49,
+    m => m.stages[2].host = m.stages[1].host,
     m => m.contract.deadline_ms.long++,
     m => m.artifacts[0].sha256 = '0'.repeat(64),
   ]) { const bad = structuredClone(m); mutate(bad); assert.throws(() => validateManifest(bad)); }

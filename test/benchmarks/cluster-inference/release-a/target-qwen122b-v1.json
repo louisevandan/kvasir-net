@@ -31,21 +31,81 @@
     "n_ubatch": 64,
     "spec_type": "none",
     "minimum_physical_hosts": 2,
-    "topology": null,
-    "memory_budgets": null
+    "topology": {
+      "id": "spark-mac20-mac21-24-12-12-v1",
+      "physical_hosts": 3,
+      "stages": [
+        {
+          "id": "spark-0",
+          "host_identity": "2063dd763211c1db9da114413e97226fd96777bb0126e770f8663044a0aa1736",
+          "layers": [
+            0,
+            24
+          ],
+          "device": "NVIDIA GB10",
+          "backend": "CUDA0"
+        },
+        {
+          "id": "mac20-1",
+          "host_identity": "134f57a256b041c64e741acb9afb6b8e6f5dc1c5576c23d474845cb82a3fd110",
+          "layers": [
+            24,
+            36
+          ],
+          "device": "Apple M4 Pro",
+          "backend": "MTL0"
+        },
+        {
+          "id": "mac21-2",
+          "host_identity": "167777b22c1c2f71057d698d026d817416bf42ba7fb96bab304d6c0c86f807ea",
+          "layers": [
+            36,
+            48
+          ],
+          "device": "Apple M4 Pro",
+          "backend": "MTL0"
+        }
+      ]
+    },
+    "memory_budgets": {
+      "reserve_bytes_per_host": 8589934592,
+      "pools": [
+        {
+          "stage": "spark-0",
+          "available_bytes": 125770739712,
+          "usable_bytes": 117180805120,
+          "required_bytes": 54259452320,
+          "headroom_bytes": 62921352800
+        },
+        {
+          "stage": "mac20-1",
+          "available_bytes": 47636922368,
+          "usable_bytes": 39046987776,
+          "required_bytes": 28477144128,
+          "headroom_bytes": 10569843648
+        },
+        {
+          "stage": "mac21-2",
+          "available_bytes": 55662313472,
+          "usable_bytes": 47072378880,
+          "required_bytes": 29394628160,
+          "headroom_bytes": 17677750720
+        }
+      ]
+    }
   },
   "historical_550b": {
     "status": "failed_evidence_preserved",
     "required_to_rerun_for_this_target": false
   },
   "runtime_acceptance": false,
-  "public_plan_acceptance": false,
+  "public_plan_acceptance": true,
   "remaining": [
     "FINISH failure remains subject to existing stop record",
-    "current fleet artifact and device identity",
+    "post-LOAD MEMORY_ACTUAL conformance for all three stages",
+    "physical result, retained output, receipt and edge byte bounds",
     "model-rendered template parity and actual response quality",
-    "deadline runner and full service gates",
-    "full-topology native PLAN and physical shared-pool budget"
+    "deadline runner and full service gates"
   ],
   "local_plan_probe": {
     "layer_begin": 37,
@@ -152,5 +212,21 @@
       "sha256": "e0f018ae1f3016fab56005ba4b25e708720eaa2413232bd65ba07c7c6d964938"
     }
   ],
-  "manifest_kind": "target_preparation_not_runnable_deployment"
+  "manifest_kind": "target_preparation_not_runnable_deployment",
+  "a_plan": {
+    "status": "load_authorized_runtime_not_accepted",
+    "native_source_commit": "915f0136a6a6629b37c89ba596cda89324519a57",
+    "upstream_commit": "451b89bae0c4b1dd612eb503ceace906c01ddcc9",
+    "patch_set": "a07b782641a008bcab4b4e81e58cd11798387c5bf332fa4a0474a1dce4d700ef",
+    "input": "qwen122b-native-plan-v1.json",
+    "input_sha256": "0949c2cdc089584cf2ca822745e7f2bf1b03626f89c9ffd1aae7d74e2d800958",
+    "result": "qwen122b-native-plan-v1.result.json",
+    "result_sha256": "6b8b466f9052ec988c94c60b22405ac946f691c0064653501f392296ddf78e36",
+    "raw_result_sha256": {
+      "mac20": "9ac3835b73d644b93be414d6912694695fc2cfe4957b79706434b54297d3ab1a",
+      "spark": "bb3799e7a8f42116f40a89beabb1bbf6f276e545011f09ab76bd86e795e43027",
+      "mac21": "11e4d9b9825f950a11fc43eccd5f79e785428cacd27bf341c0287074e4311972"
+    },
+    "actual_allocation_verified": false
+  }
 }

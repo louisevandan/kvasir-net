@@ -1,0 +1,451 @@
+{
+  "schema": "p4-native-deployment-v1",
+  "model": {
+    "id": "qwen3_5_122b_a10b_ud_q5_k_s_v1",
+    "fingerprint": "2fae2fe9fed81e255841c2204b3b0cc1d2b43410089bf0f72c395a3544806814",
+    "layerCount": 48,
+    "legalCuts": [
+      24,
+      36
+    ]
+  },
+  "profile": {
+    "totalContext": 819200,
+    "resident": 8,
+    "nBatch": 128,
+    "nUbatch": 64,
+    "kvUnified": true
+  },
+  "minimumMachines": 2,
+  "requireActual": false,
+  "hosts": [
+    {
+      "id": "2063dd763211c1db9da114413e97226fd96777bb0126e770f8663044a0aa1736",
+      "inspectedUnixMs": 1789465375503,
+      "pools": [
+        {
+          "id": "shared",
+          "availableBytes": 125770739712,
+          "reserveBytes": 8589934592
+        }
+      ]
+    },
+    {
+      "id": "134f57a256b041c64e741acb9afb6b8e6f5dc1c5576c23d474845cb82a3fd110",
+      "inspectedUnixMs": 1789465355708,
+      "pools": [
+        {
+          "id": "shared",
+          "availableBytes": 47636922368,
+          "reserveBytes": 8589934592
+        }
+      ]
+    },
+    {
+      "id": "167777b22c1c2f71057d698d026d817416bf42ba7fb96bab304d6c0c86f807ea",
+      "inspectedUnixMs": 1789465355954,
+      "pools": [
+        {
+          "id": "shared",
+          "availableBytes": 55662313472,
+          "reserveBytes": 8589934592
+        }
+      ]
+    }
+  ],
+  "stages": [
+    {
+      "id": "spark-0",
+      "hostId": "2063dd763211c1db9da114413e97226fd96777bb0126e770f8663044a0aa1736",
+      "layerBegin": 0,
+      "layerEnd": 24,
+      "expectedDeviceDescription": "NVIDIA GB10",
+      "expectedLayerDevice": "CUDA0",
+      "entryPools": {
+        "device:0": "shared",
+        "host:-1": "shared"
+      },
+      "runtime": {
+        "binarySha256": "bdddd012b9d93a5ad231fafcdc5ed3eac5f6b2d7b735d58d6d58ff7a54d9f217",
+        "upstreamCommit": "451b89bae0c4b1dd612eb503ceace906c01ddcc9",
+        "patchSet": "a07b782641a008bcab4b4e81e58cd11798387c5bf332fa4a0474a1dce4d700ef",
+        "backendInventory": "CPU[CPU]|CUDA[CUDA0]"
+      },
+      "plan": {
+        "schema": 2,
+        "memory_topology": {
+          "mode": "host-shared",
+          "host_shared_devices": [
+            0
+          ]
+        },
+        "execution_shape": {
+          "n_ctx": 819200,
+          "n_ctx_seq": 819200,
+          "n_batch": 128,
+          "n_ubatch": 64,
+          "n_seq_max": 8,
+          "kv_unified": true
+        },
+        "complete": true,
+        "fits_current_free": true,
+        "layer_device_query_supported": true,
+        "layer_device_expectations_checked": false,
+        "layer_default_devices": [
+          {
+            "layer": 0,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 1,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 2,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 3,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 4,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 5,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 6,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 7,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 8,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 9,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 10,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 11,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 12,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 13,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 14,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 15,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 16,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 17,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 18,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 19,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 20,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 21,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 22,
+            "device": "CUDA0"
+          },
+          {
+            "layer": 23,
+            "device": "CUDA0"
+          }
+        ],
+        "entries": [
+          {
+            "scope": "device",
+            "index": 0,
+            "name": "CUDA0",
+            "description": "NVIDIA GB10",
+            "free": 125770739712,
+            "total": 130596118528,
+            "model": 42397464576,
+            "context": 10691543040,
+            "compute": 189139072,
+            "required": 53278146688
+          },
+          {
+            "scope": "host",
+            "index": -1,
+            "name": "host",
+            "description": "host memory",
+            "free": 70008135680,
+            "total": 130596118528,
+            "model": 810516480,
+            "context": 0,
+            "compute": 170789152,
+            "required": 981305632
+          }
+        ]
+      }
+    },
+    {
+      "id": "mac20-1",
+      "hostId": "134f57a256b041c64e741acb9afb6b8e6f5dc1c5576c23d474845cb82a3fd110",
+      "layerBegin": 24,
+      "layerEnd": 36,
+      "expectedDeviceDescription": "Apple M4 Pro",
+      "expectedLayerDevice": "MTL0",
+      "entryPools": {
+        "device:0": "shared",
+        "host:-1": "shared"
+      },
+      "runtime": {
+        "binarySha256": "b8038a9e7bc841d2a90fd97a72d1b7c10c43e50131b22c90fa33170d13e28f55",
+        "upstreamCommit": "451b89bae0c4b1dd612eb503ceace906c01ddcc9",
+        "patchSet": "a07b782641a008bcab4b4e81e58cd11798387c5bf332fa4a0474a1dce4d700ef",
+        "backendInventory": "CPU[CPU]|Metal[MTL0]"
+      },
+      "plan": {
+        "schema": 2,
+        "memory_topology": {
+          "mode": "host-shared",
+          "host_shared_devices": [
+            0
+          ]
+        },
+        "execution_shape": {
+          "n_ctx": 819200,
+          "n_ctx_seq": 819200,
+          "n_batch": 128,
+          "n_ubatch": 64,
+          "n_seq_max": 8,
+          "kv_unified": true
+        },
+        "complete": true,
+        "fits_current_free": true,
+        "layer_device_query_supported": true,
+        "layer_device_expectations_checked": false,
+        "layer_default_devices": [
+          {
+            "layer": 24,
+            "device": "MTL0"
+          },
+          {
+            "layer": 25,
+            "device": "MTL0"
+          },
+          {
+            "layer": 26,
+            "device": "MTL0"
+          },
+          {
+            "layer": 27,
+            "device": "MTL0"
+          },
+          {
+            "layer": 28,
+            "device": "MTL0"
+          },
+          {
+            "layer": 29,
+            "device": "MTL0"
+          },
+          {
+            "layer": 30,
+            "device": "MTL0"
+          },
+          {
+            "layer": 31,
+            "device": "MTL0"
+          },
+          {
+            "layer": 32,
+            "device": "MTL0"
+          },
+          {
+            "layer": 33,
+            "device": "MTL0"
+          },
+          {
+            "layer": 34,
+            "device": "MTL0"
+          },
+          {
+            "layer": 35,
+            "device": "MTL0"
+          }
+        ],
+        "entries": [
+          {
+            "scope": "device",
+            "index": 0,
+            "name": "MTL0",
+            "description": "Apple M4 Pro",
+            "free": 55662313472,
+            "total": 55662788608,
+            "model": 21198732288,
+            "context": 5345771520,
+            "compute": 1826994208,
+            "required": 28371498016
+          },
+          {
+            "scope": "host",
+            "index": -1,
+            "name": "host",
+            "description": "host memory",
+            "free": 47962292224,
+            "total": 68719476736,
+            "model": 0,
+            "context": 0,
+            "compute": 105646112,
+            "required": 105646112
+          }
+        ]
+      }
+    },
+    {
+      "id": "mac21-2",
+      "hostId": "167777b22c1c2f71057d698d026d817416bf42ba7fb96bab304d6c0c86f807ea",
+      "layerBegin": 36,
+      "layerEnd": 48,
+      "expectedDeviceDescription": "Apple M4 Pro",
+      "expectedLayerDevice": "MTL0",
+      "entryPools": {
+        "device:0": "shared",
+        "host:-1": "shared"
+      },
+      "runtime": {
+        "binarySha256": "b8038a9e7bc841d2a90fd97a72d1b7c10c43e50131b22c90fa33170d13e28f55",
+        "upstreamCommit": "451b89bae0c4b1dd612eb503ceace906c01ddcc9",
+        "patchSet": "a07b782641a008bcab4b4e81e58cd11798387c5bf332fa4a0474a1dce4d700ef",
+        "backendInventory": "CPU[CPU]|Metal[MTL0]"
+      },
+      "plan": {
+        "schema": 2,
+        "memory_topology": {
+          "mode": "host-shared",
+          "host_shared_devices": [
+            0
+          ]
+        },
+        "execution_shape": {
+          "n_ctx": 819200,
+          "n_ctx_seq": 819200,
+          "n_batch": 128,
+          "n_ubatch": 64,
+          "n_seq_max": 8,
+          "kv_unified": true
+        },
+        "complete": true,
+        "fits_current_free": true,
+        "layer_device_query_supported": true,
+        "layer_device_expectations_checked": false,
+        "layer_default_devices": [
+          {
+            "layer": 36,
+            "device": "MTL0"
+          },
+          {
+            "layer": 37,
+            "device": "MTL0"
+          },
+          {
+            "layer": 38,
+            "device": "MTL0"
+          },
+          {
+            "layer": 39,
+            "device": "MTL0"
+          },
+          {
+            "layer": 40,
+            "device": "MTL0"
+          },
+          {
+            "layer": 41,
+            "device": "MTL0"
+          },
+          {
+            "layer": 42,
+            "device": "MTL0"
+          },
+          {
+            "layer": 43,
+            "device": "MTL0"
+          },
+          {
+            "layer": 44,
+            "device": "MTL0"
+          },
+          {
+            "layer": 45,
+            "device": "MTL0"
+          },
+          {
+            "layer": 46,
+            "device": "MTL0"
+          },
+          {
+            "layer": 47,
+            "device": "MTL0"
+          }
+        ],
+        "entries": [
+          {
+            "scope": "device",
+            "index": 0,
+            "name": "MTL0",
+            "description": "Apple M4 Pro",
+            "free": 55662313472,
+            "total": 55662788608,
+            "model": 22116215808,
+            "context": 5345771520,
+            "compute": 1826994464,
+            "required": 29288981792
+          },
+          {
+            "scope": "host",
+            "index": -1,
+            "name": "host",
+            "description": "host memory",
+            "free": 57222332416,
+            "total": 68719476736,
+            "model": 0,
+            "context": 0,
+            "compute": 105646368,
+            "required": 105646368
+          }
+        ]
+      }
+    }
+  ]
+}

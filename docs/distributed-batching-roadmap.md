@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-15 — 전송 결과 불명의 R1–R9를 최종 소스 `e41cf2c5f`에서 닫았다. feature off/on 전체 workspace는 각각1490/0/7, HF Python50/0, R9 Python2/0이며 물리2host receipt 유실·재연결·exact reconcile·회수를 통과했다. 같은 소스로 원격 Spark의 실제 Qwen3.5-0.8B llama.cpp와 HF/Python 생성·cache parity·UNLOAD/DELETE를 재검증했다. 이는 전송과 소형 conformance 수용이며 Qwen3.5-122B-A10B Release A의 H0–H7 승격이 아니다. 다음 실행 단계는 새 122B artifact의 공유 pool 예산과 합법 cut을 계산하는 A-PLAN이다.
+최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN을 통과했다. 동일 upstream/patch의 Spark GB10 `[0,24)`·Mac M4 Pro `[24,36)`·Mac M4 Pro `[36,48)` 3물리 host 배치가 resident8/context819,200/F16 KV에서 각각 54.3/28.5/29.4GB를 요구하며 8GiB host 예비 후에도 적합하다. 공유 pool·cut·source/patch·PLAN/actual을 fail-closed 검증하는 공개 model-loading 경로와 독립 변이4종을 추가했다. 현재 LOAD 승인만 GREEN이며 실제 allocation·요청·H0–H7은 미수용이다. 다음 단계는 봉인 소스의 3-stage LOAD→MEMORY_ACTUAL 일치→UNLOAD/점유 회수다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -55,6 +55,19 @@ logits4/cache4 parity, UNLOAD/DELETE·최종 nodes=[]를 통과했다. 오래된
 timeout이지만 모델 자식0·GPU 점유0으로 확인해 변경하지 않았다. 데스크톱은 빌드·모델 실행에 사용하지 않았다.
 다음 첫 행동은 Qwen3.5-122B-A10B 3-shard의 실제 machine snapshot, 공유 pool 중복 제거, stage별 정수
 allocation과 합법 cut을 산출·봉인하는 A-PLAN이다. PLAN 승인 전 LOAD나 arm 반복은 하지 않는다.
+
+**2026-09-15 Qwen122B A-PLAN 수용:** [A-PLAN 보고](../tests/reports/release-a/20260915_190631.md)의
+실제 원격 PLAN으로 Spark `[0,24)`·Mac20 `[24,36)`·Mac21 `[36,48)`을 봉인했다. 세 host 모두
+upstream `451b89bae`/patch set `a07b7826…`가 같고 CPU expert offload 없이 소유 층 전체가 CUDA/Metal에
+있다. 통합 device/host 항목을 하나의 pool에 합산하고 host당 8GiB를 예비한 뒤 여유는 각각
+62,921,352,800/10,569,843,648/17,677,750,720bytes다. 공개 `validateNativeDeployment`는 불법 cut,
+source/patch·device·shape mismatch, shared pool 과다 예약 및 PLAN≠MEMORY_ACTUAL을 거부하며 독립 source
+변이4종을 검출했다. 현재 `loadAuthorized=true`, 실제 allocation과 runtime acceptance는 false다. 다음 첫
+행동은 현재 소스를 봉인한 별도 agent namespace에서 3-stage LOAD를 한 번 실행해 MEMORY_ACTUAL 일치와
+UNLOAD 뒤 자식/점유0을 확인하는 것이다. output/receipt/edge byte bound 결속 전 요청 arm은 시작하지 않는다.
+feature off/on 전체 workspace는 각각1490 PASS / 0 FAIL / 7 ignored다. 작업은 원격 host를 우선하며,
+이 PC에서 빌드가 불가피하면 48 logical CPU 중 최대33 job만 쓴다. 이 PC의 inference는 지정된 RTX 3090
+한 장만 노출하고 RTX 4080은 사용하지 않는다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/

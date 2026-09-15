@@ -47,6 +47,17 @@ stage count. Two passes preserve the secondary optimum when a later stage domina
 DDR pools represent whole-layer CPU stages. GPU expert offload and shared-device execution contention
 need richer profiles. Hardware link fields are validated metadata; hop cost comes from calibration.
 
+`validateNativeDeployment` is the fail-closed bridge from an approved placement to adapter-native
+PLAN and post-LOAD allocation evidence. Every stage binds its native device/host entries to one named
+physical pool. Host-shared entries are added once in that pool, all cuts must be contiguous and
+adapter-approved, and every stage must have the same upstream commit and patch set. PLAN-only input may
+authorize LOAD but returns `actualAllocationConformant: false`; runtime acceptance requires matching
+`MEMORY_ACTUAL` evidence for every stage. The CLI uses the same public function:
+
+```powershell
+node tools/model-loading/cli/validate-native-deployment.ts INPUT.json RESULT.json
+```
+
 The evaluation writes reference data before importing a policy. Its independent Pareto search consumes
 the original typed input and calls none of the production normalisation/admission/partition functions.
 Ten literal analyst judgments anchor that solver; the large matrix is algorithmically expanded from
