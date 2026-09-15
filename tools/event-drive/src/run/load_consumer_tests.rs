@@ -1,5 +1,5 @@
 use super::load::{self, LoadedBuild};
-use super::{RunConfig, Sender, wire};
+use super::{RunConfig, Sender, lifecycle, wire};
 use p4_llamacpp_staged_adapter::v2::{LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE};
 use p4_protocol::{
     Address,
@@ -69,7 +69,9 @@ fn rejected_load_reply(request: &Event, serial: usize) -> Event {
         node_id: metadata.node_id,
         node_generation: metadata.node_generation,
         adapter_kind: metadata.adapter_kind,
-        adapter_content_type: LOADED_CONTENT_TYPE.into(),
+        // Agent-side rejections happen before adapter dispatch, so the
+        // lifecycle result names the request content type.
+        adapter_content_type: LOAD_CONTENT_TYPE.into(),
         operation: LifecycleOperation::Load,
         status: LifecycleStatus::Rejected,
         resource_state: ResourceState::Absent,
@@ -78,6 +80,31 @@ fn rejected_load_reply(request: &Event, serial: usize) -> Event {
     };
     let mut reply = request.clone();
     reply.envelope.event_id = format!("fixture-rejected-{serial}");
+    reply.envelope.causation_id = Some(request.envelope.event_id.clone());
+    reply.envelope.source = request.envelope.target.clone();
+    reply.envelope.target = request.envelope.source.clone();
+    reply.envelope.class = EventClass::Control;
+    reply.envelope.payload_content_type = NODE_LIFECYCLE_RESULT_CONTENT_TYPE.into();
+    reply.payload = encode_metadata(&result, b"").unwrap();
+    reply
+}
+
+fn adapter_failed_load_reply(request: &Event, serial: usize) -> Event {
+    let (metadata, _): (LifecycleRequestMetadata, _) = decode_metadata(&request.payload).unwrap();
+    let result = LifecycleResultMetadata {
+        schema: LIFECYCLE_SCHEMA,
+        node_id: metadata.node_id,
+        node_generation: metadata.node_generation,
+        adapter_kind: metadata.adapter_kind,
+        adapter_content_type: p4_llamacpp_staged_adapter::v2::ERROR_CONTENT_TYPE.into(),
+        operation: LifecycleOperation::Load,
+        status: LifecycleStatus::Failed,
+        resource_state: ResourceState::Absent,
+        first_error: Some("stage runtime initialization failed: cannot start fixed-missing".into()),
+        cleanup_error: None,
+    };
+    let mut reply = request.clone();
+    reply.envelope.event_id = format!("fixture-adapter-failed-{serial}");
     reply.envelope.causation_id = Some(request.envelope.event_id.clone());
     reply.envelope.source = request.envelope.target.clone();
     reply.envelope.target = request.envelope.source.clone();
@@ -229,7 +256,9 @@ async fn node_load_lifecycle_partial_rejection_unloads_only_the_prior_success() 
         ))
         .await
         .unwrap();
-        peer.send(rejected_load_reply(&second, 2)).await.unwrap();
+        peer.send(adapter_failed_load_reply(&second, 2))
+            .await
+            .unwrap();
 
         let cleanup = peer
             .receive(Instant::now() + Duration::from_secs(1))
@@ -249,5 +278,60 @@ async fn node_load_lifecycle_partial_rejection_unloads_only_the_prior_success() 
         Err(error) => error.to_string(),
     };
     fixture.await.unwrap();
-    assert!(error.contains("fixture LOAD rejection"), "{error}");
+    assert!(
+        error.contains("stage runtime initialization failed: cannot start fixed-missing"),
+        "{error}"
+    );
+}
+
+#[test]
+fn lifecycle_result_content_type_matches_the_failure_origin() {
+    let config = config("physical-wire-v4");
+    let outer = OuterEndpoint {
+        ingress_agent: Address::tcp("127.0.0.1", 50001),
+        channel: "failure-content-type".into(),
+        connection_generation: 3,
+    };
+    let mut sender = Sender::new(outer);
+    let request = lifecycle::load_event(
+        &config.nodes[0],
+        &mut sender,
+        serde_json::to_vec(&p4_llamacpp_staged_adapter::v2::LoadCommand {
+            load_generation: 1,
+            binary: "fixture".into(),
+            endpoint: "127.0.0.1:1".into(),
+            plan: "fixture".into(),
+            args: Vec::new(),
+            environment: Vec::new(),
+            n_batch: 4,
+            n_ubatch: 4,
+            context_size: 8,
+            total_context_size: 8,
+            sequence_capacity: 1,
+            resource_profile: super::config::test_resource_profile(),
+            ready_timeout_ms: 1000,
+            io_timeout_ms: 1000,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    let agent_rejection = rejected_load_reply(&request, 1);
+    let decoded = lifecycle::decode_result(&agent_rejection, LifecycleOperation::Load).unwrap();
+    assert_eq!(decoded.metadata.status, LifecycleStatus::Rejected);
+
+    let adapter_failure = adapter_failed_load_reply(&request, 2);
+    let decoded = lifecycle::decode_result(&adapter_failure, LifecycleOperation::Load).unwrap();
+    assert_eq!(decoded.metadata.status, LifecycleStatus::Failed);
+
+    let (mut metadata, opaque): (LifecycleResultMetadata, _) =
+        decode_metadata(&adapter_failure.payload).unwrap();
+    metadata.adapter_content_type = LOADED_CONTENT_TYPE.into();
+    let mut wrong = adapter_failure.clone();
+    wrong.payload = encode_metadata(&metadata, opaque).unwrap();
+    let error = match lifecycle::decode_result(&wrong, LifecycleOperation::Load) {
+        Ok(_) => panic!("wrong failure content type unexpectedly decoded"),
+        Err(error) => error,
+    };
+    assert_eq!(error, "lifecycle result adapter content type mismatch");
 }

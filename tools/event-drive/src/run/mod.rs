@@ -186,7 +186,22 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     )?;
     let mut sender = Sender::new(outer);
 
-    let build = load::drive(&config, &mut wire, &mut sender).await?;
+    let build = match load::drive(&config, &mut wire, &mut sender).await {
+        Ok(build) => build,
+        Err(error) => {
+            let first_error = error.to_string();
+            return match wire
+                .finish(Instant::now() + Duration::from_millis(config.timeout_ms.min(10_000)))
+                .await
+            {
+                Ok(()) => Err(first_error.into()),
+                Err(finish_error) => Err(format!(
+                    "{first_error}; connection finish failed after LOAD rollback: {finish_error}"
+                )
+                .into()),
+            };
+        }
+    };
 
     let mut session_replies = Vec::with_capacity(config.nodes.len());
     for event in session_events(&config, &mut sender)? {

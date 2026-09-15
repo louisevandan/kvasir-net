@@ -105,11 +105,22 @@ pub(super) fn decode_result(
     if metadata.operation != operation || metadata.adapter_kind != ADAPTER_KIND {
         return Err("lifecycle result operation or adapter mismatch".into());
     }
-    let expected_content_type = match operation {
+    let expected_success = match operation {
         LifecycleOperation::Load => p4_llamacpp_staged_adapter::v2::LOADED_CONTENT_TYPE,
         LifecycleOperation::Unload => p4_llamacpp_staged_adapter::v2::UNLOADED_CONTENT_TYPE,
     };
-    if metadata.adapter_content_type != expected_content_type {
+    let request_content_type = match operation {
+        LifecycleOperation::Load => p4_llamacpp_staged_adapter::v2::LOAD_CONTENT_TYPE,
+        LifecycleOperation::Unload => p4_llamacpp_staged_adapter::v2::UNLOAD_CONTENT_TYPE,
+    };
+    let content_type_matches = match metadata.status {
+        LifecycleStatus::Succeeded => metadata.adapter_content_type == expected_success,
+        LifecycleStatus::Rejected | LifecycleStatus::Failed => {
+            metadata.adapter_content_type == p4_llamacpp_staged_adapter::v2::ERROR_CONTENT_TYPE
+                || metadata.adapter_content_type == request_content_type
+        }
+    };
+    if !content_type_matches {
         return Err("lifecycle result adapter content type mismatch".into());
     }
     Ok(DecodedResult { metadata, opaque })
