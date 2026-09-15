@@ -46,6 +46,7 @@
 | L038 | 원격 target 부재로 timeout된 route는 client 종료 직후 INSPECT에서 잠시 0이어도 송신 agent에 비동기로 transport failure를 확정해 다음 preflight를 오염시켰다. | route 실패 뒤 같은 agent를 재사용하지 않는다. task-owned agent의 nodes 0·PID/executable/listener를 대조해 종료하고 새 broker instance에서 failures 0을 확인한다. 비소유 agent나 모델 node를 전역 종료하지 않는다. | M4 route preflight와 실기 전 clean state |
 | L039 | 같은 patch-set/ABI 표시가 있는 과거 native 실행물도 현재 adapter가 요구하는 READY resource profile 필드를 내보내지 않아 LOAD 한도를 결정할 수 없었다. wire 표식만으로 현재 source와의 실행 호환성을 승인할 수 없다. | 실제 모델 LOAD 전에 봉인 모델로 memory-plan을 실행해 `physical_result_payload_bytes`, `tensor_count`, `max_physical_result_bytes`를 모두 양의 정수로 단언한다. 하나라도 없으면 추정값을 넣지 않고 최종 P4 source에서 native를 다시 build·test·hash한다. | M4 llama.cpp native preflight와 이후 실제 모델 수용 |
 | L040 | Windows CUDA 12.8 host에서 stage build 도구가 CUDA 13 runtime DLL 이름만 고정해 두어, 컴파일 성공 뒤 배포물 조립이 필연적으로 실패할 상태였다. | build 전에 CUDA root의 `cublas`, `cublasLt`, `cudart`가 같은 major의 완전한 묶음인지 확인한다. builder는 지원 major 12/13 중 실제 완전한 묶음만 복사하고 두 major의 단일·다중 config 소비 경로 시험을 유지한다. | M4 Windows native build와 이후 CUDA runtime 배포 |
+| L041 | CUDA 12 major를 지원한 첫 수정도 DLL이 항상 `bin/x64`에 있다는 fixture 가정을 남겨, 실제 12.8의 `bin` 배치를 컴파일 완료 뒤에야 거부했다. 이름 호환과 설치 레이아웃 호환은 별개다. | builder는 `bin/x64`, `bin` 순서로 같은 major의 완전한 DLL 묶음을 찾는다. CUDA 12/13, 두 설치 레이아웃, single/multi-config의 조합을 실제 copy 경로 시험으로 고정한다. post-build 실패에서는 완성된 object를 폐기하지 않고 동일 source/cache로 조립·CTest만 재개한다. | M4 Windows native round 2와 이후 CUDA runtime 배포 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

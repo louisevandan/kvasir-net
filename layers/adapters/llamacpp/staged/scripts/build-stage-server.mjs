@@ -131,22 +131,28 @@ function resolveCudaRoot() {
 
 function copyCudaRuntimeDependencies(cuda, buildDir, config) {
   if (process.platform !== "win32" || !cuda) return [];
-  const sourceDir = path.join(cuda.root, "bin", "x64");
   const destinationDir = [path.join(buildDir, config), buildDir, path.join(buildDir, "bin")]
     .find((candidate) => fs.existsSync(path.join(candidate, "p4_staged_server.exe")));
   if (!destinationDir) throw new Error("built stage executable was not found for CUDA runtime deployment");
   const supportedMajors = ["13", "12"];
-  const names = supportedMajors.map((major) => [
-    `cublas64_${major}.dll`,
-    `cublasLt64_${major}.dll`,
-    `cudart64_${major}.dll`,
-  ]).find((candidate) => candidate.every((name) => fs.existsSync(path.join(sourceDir, name))));
-  if (!names) {
-    throw new Error(`a complete CUDA 12 or 13 runtime dependency set is missing: ${sourceDir}`);
+  const runtime = [path.join(cuda.root, "bin", "x64"), path.join(cuda.root, "bin")]
+    .flatMap((sourceDir) => supportedMajors.map((major) => ({
+      sourceDir,
+      names: [
+        `cublas64_${major}.dll`,
+        `cublasLt64_${major}.dll`,
+        `cudart64_${major}.dll`,
+      ],
+    })))
+    .find((candidate) => candidate.names.every(
+      (name) => fs.existsSync(path.join(candidate.sourceDir, name)),
+    ));
+  if (!runtime) {
+    throw new Error(`a complete CUDA 12 or 13 runtime dependency set is missing below: ${cuda.root}`);
   }
   const copied = [];
-  for (const name of names) {
-    const source = path.join(sourceDir, name);
+  for (const name of runtime.names) {
+    const source = path.join(runtime.sourceDir, name);
     if (!fs.existsSync(source)) {
       throw new Error(`CUDA runtime dependency is missing: ${source}`);
     }
