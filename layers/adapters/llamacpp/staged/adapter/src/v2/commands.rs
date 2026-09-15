@@ -68,6 +68,7 @@ impl SessionCommand {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LoadCommand {
     pub load_generation: u64,
     pub binary: String,
@@ -82,6 +83,7 @@ pub struct LoadCommand {
     pub context_size: usize,
     pub total_context_size: usize,
     pub sequence_capacity: u32,
+    pub resource_profile: super::ResourceProfile,
     #[serde(default = "default_ready_timeout")]
     pub ready_timeout_ms: u64,
     #[serde(default = "default_io_timeout")]
@@ -427,7 +429,10 @@ impl ReplySpec {
     pub fn context(&self) -> Result<p4_protocol::event::ReturnContext, String> {
         let context = p4_protocol::event::ReturnContext {
             route: p4_protocol::event::OuterEndpoint {
-                ingress_agent: self.ingress_agent.parse().map_err(|e: p4_protocol::ProtocolError| e.to_string())?,
+                ingress_agent: self
+                    .ingress_agent
+                    .parse()
+                    .map_err(|e: p4_protocol::ProtocolError| e.to_string())?,
                 channel: self.channel.clone(),
                 connection_generation: self.connection_generation,
             },

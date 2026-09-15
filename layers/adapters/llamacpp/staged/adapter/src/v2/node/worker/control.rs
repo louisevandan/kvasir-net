@@ -23,6 +23,15 @@ impl Worker {
         {
             return Err("load generation must be fresh and non-zero".into());
         }
+        let runtime_resources = self
+            .runtime_resource_probe
+            .as_ref()
+            .ok_or("runtime edge and receipt resource probe is not configured")?
+            .snapshot()?;
+        let validated_profile = command.resource_profile.validate_preload(
+            self.publisher.storage_snapshot(),
+            runtime_resources,
+        )?;
         let reserved_context = command
             .context_size
             .checked_mul(command.sequence_capacity as usize)
@@ -81,10 +90,20 @@ impl Worker {
             let _ = self.lifecycle.unload();
             return Err(detail);
         }
+        if let Err(detail) = command
+            .resource_profile
+            .validate_ready_bound(ready.max_physical_result_bytes)
+        {
+            let _ = self.lifecycle.unload();
+            return Err(detail);
+        }
         self.bind_loaded_identity(command.load_generation)?;
         self.state.batch_capacity = command.n_batch;
         self.state.physical_capacity = command.n_ubatch;
         self.state.max_physical_result_bytes = ready.max_physical_result_bytes;
+        self.state.request_budget =
+            super::super::request_budget::RequestBudget::new(validated_profile.request_limit);
+        self.state.resource_profile = Some(command.resource_profile.clone());
         self.state.equal_sequence_ubatch = ready.equal_sequence_ubatch;
         self.state.max_atomic_sequences = ready.max_atomic_sequences;
         self.state.atomic_batch_exclusive = ready.atomic_batch_exclusive;
@@ -119,6 +138,7 @@ impl Worker {
                 "max_atomic_sequences":ready.max_atomic_sequences,
                 "atomic_batch_exclusive":ready.atomic_batch_exclusive,
                 "max_physical_result_bytes":ready.max_physical_result_bytes,
+                "resource_profile":command.resource_profile,
                 "upstream_commit":ready.upstream_commit,
                 "patch_set":ready.patch_set,
                 "backend_inventory":ready.backend_inventory,
@@ -184,6 +204,8 @@ impl Worker {
         self.state.batch_capacity = 0;
         self.state.physical_capacity = 0;
         self.state.max_physical_result_bytes = 0;
+        self.state.request_budget = super::super::request_budget::RequestBudget::default();
+        self.state.resource_profile = None;
         self.state.equal_sequence_ubatch = false;
         self.state.max_atomic_sequences = 0;
         self.state.atomic_batch_exclusive = false;
@@ -312,6 +334,7 @@ mod tests {
             context_size: 1_200,
             total_context_size: 12_000,
             sequence_capacity: 10,
+            resource_profile: crate::v2::resource_profile::fixture_resource_profile(),
             ready_timeout_ms: 1,
             io_timeout_ms: 1,
         }
@@ -341,6 +364,67 @@ mod tests {
         }
     }
 
+    fn load_event(command: &LoadCommand) -> Event {
+        let mut event = crate::v2::tests::request_state(vec![7]).template.clone();
+        event.envelope.payload_content_type = LOAD_CONTENT_TYPE.into();
+        event.payload = serde_json::to_vec(command).unwrap();
+        event
+    }
+
+    fn runtime_probe(edge_count: usize) -> crate::v2::RuntimeResourceProbe {
+        crate::v2::RuntimeResourceProbe::new(move || {
+            Ok(crate::v2::RuntimeResourceSnapshot {
+                edge: crate::v2::ResourceStorageSnapshot {
+                    count_limit: edge_count,
+                    retained_count: 0,
+                    byte_limit: 64 << 20,
+                    retained_bytes: 0,
+                },
+                receipt: crate::v2::ResourceStorageSnapshot {
+                    count_limit: 1,
+                    retained_count: 0,
+                    byte_limit: 1 << 20,
+                    retained_bytes: 0,
+                },
+            })
+        })
+    }
+
+    fn preload_worker() -> Worker {
+        let (_sender, receiver) = mpsc::channel();
+        let (publisher, _mailbox) =
+            p4_adapter::node_adapter::completion_mailbox_with_limits(1, 1, 64 << 20)
+                .unwrap();
+        Worker::new(
+            Endpoint::node(Address::tcp("127.0.0.1", 43001), "preload", 1),
+            receiver,
+            publisher,
+            Arc::new(Mutex::new(String::new())),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    #[test]
+    fn actual_load_rejects_missing_or_short_runtime_resources_before_native_start() {
+        let event = load_event(&command());
+        let mut missing = preload_worker();
+        let before = super::super::release_tests::snapshot(&missing);
+        assert_eq!(
+            missing.load(&event).unwrap_err(),
+            "runtime edge and receipt resource probe is not configured"
+        );
+        assert!(!missing.lifecycle.has_server());
+        assert_eq!(super::super::release_tests::snapshot(&missing), before);
+        assert!(missing.effects.is_empty());
+
+        let mut short = preload_worker().with_runtime_resource_probe(runtime_probe(0));
+        let before = super::super::release_tests::snapshot(&short);
+        assert!(short.load(&event).unwrap_err().contains("edge retained count is insufficient"));
+        assert!(!short.lifecycle.has_server());
+        assert_eq!(super::super::release_tests::snapshot(&short), before);
+        assert!(short.effects.is_empty());
+    }
+
     #[test]
     fn declared_parallel_context_fits_actual_llama_capacity() {
         assert_eq!(validate_ready_capacities(&command(), &ready()), Ok(()));
@@ -350,9 +434,11 @@ mod tests {
     fn zero_physical_result_bound_cannot_complete_load() {
         let mut actual = ready();
         actual.max_physical_result_bytes = 0;
-        assert!(validate_ready_capacities(&command(), &actual)
-            .unwrap_err()
-            .contains("stage capacity is below"));
+        assert!(
+            validate_ready_capacities(&command(), &actual)
+                .unwrap_err()
+                .contains("stage capacity is below")
+        );
     }
 
     #[test]

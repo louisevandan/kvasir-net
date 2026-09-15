@@ -12,7 +12,9 @@ pub use group::{CompletionReservationGroup, GroupReserveError};
 
 #[path = "mailbox_queue_reservation.rs"]
 mod queue_reservation;
-pub use queue_reservation::{CompletionQueueReservation, QueuePublishError, RetainedQueueTransferError};
+pub use queue_reservation::{
+    CompletionQueueReservation, QueuePublishError, RetainedQueueTransferError,
+};
 
 pub struct CompletionPublisher {
     receiver: Arc<Mutex<Storage>>,
@@ -409,6 +411,22 @@ impl Clone for CompletionPublisher {
 }
 
 impl CompletionPublisher {
+    pub fn storage_snapshot(&self) -> CompletionStorageSnapshot {
+        let storage = self.receiver.lock().unwrap_or_else(|e| e.into_inner());
+        let budget = self.budget.lock().unwrap_or_else(|e| e.into_inner());
+        CompletionStorageSnapshot {
+            capacity: budget.capacity,
+            queue_capacity: storage.queue_capacity,
+            byte_limit: budget.byte_limit,
+            retained_count: budget.used_count,
+            retained_bytes: budget.used_bytes,
+            queued_count: storage.queue.len(),
+            reserved_queue_slots: storage.reserved_slots,
+            queue_backing_bytes: storage.backing_bytes,
+            closed: storage.closed,
+        }
+    }
+
     /// Register before testing capacity and retain while waiting. Wake means
     /// retry, not reservation. Callbacks must be short/nonblocking/nonpanicking.
     /// A violating callback's first panic propagates; claim destruction during
@@ -517,8 +535,11 @@ impl CompletionPublisher {
         Ok(())
     }
 
-    fn try_publish_mode(&self, event: Event, owned: bool)
-        -> Result<DeferredCompletionNotification, PublishError> {
+    fn try_publish_mode(
+        &self,
+        event: Event,
+        owned: bool,
+    ) -> Result<DeferredCompletionNotification, PublishError> {
         let bytes = match retained_event_bytes(&event) {
             Ok(bytes) => bytes,
             Err(_) => return Err(PublishError::CostOverflow(event)),
@@ -717,7 +738,10 @@ impl CompletionMailbox {
                 None if storage.closed || storage.publishers == 0 => return Poll::Closed,
                 None => return Poll::Empty,
             }
-            storage.queue.pop_front().expect("matched front remains locked")
+            storage
+                .queue
+                .pop_front()
+                .expect("matched front remains locked")
         };
         let Entry { event, claim, .. } = entry;
         drop(claim); // Capacity callbacks run outside Storage/Budget locks.
@@ -769,12 +793,15 @@ impl CompletionMailbox {
                 return OwnedPoll::Closed;
             };
             if let Some(expected) = expected
-                && storage.queue.front().is_some_and(|entry|
+                && storage.queue.front().is_some_and(|entry| {
                     entry.event.envelope != expected.envelope
-                    || retained_event_bytes(&entry.event).ok() != Some(expected.event_bytes)) {
+                        || retained_event_bytes(&entry.event).ok() != Some(expected.event_bytes)
+                })
+            {
                 return OwnedPoll::Empty;
             }
-            let queue_was_full = storage.queue.len() + storage.reserved_slots == storage.queue_capacity;
+            let queue_was_full =
+                storage.queue.len() + storage.reserved_slots == storage.queue_capacity;
             let queue_capacity = storage.queue_capacity;
             match storage.queue.pop_front() {
                 Some(entry) => (entry, queue_was_full, queue_capacity),

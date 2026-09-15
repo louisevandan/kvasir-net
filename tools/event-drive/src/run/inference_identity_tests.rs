@@ -52,6 +52,7 @@ fn node(name: &str) -> NodeConfig {
         context_size: 8,
         total_context_size: 8,
         sequence_capacity: 1,
+        resource_profile: super::config::test_resource_profile(),
     }
 }
 

@@ -12,6 +12,13 @@ into the agent.
 | `link/` | A relay that carries frames badly on purpose — latency, jitter, width, stalls, and a cut. Used as a library by the tests and as a binary between machines. |
 | [model-loading/](model-loading/README.md) | P4 OUTER model-loading module: inventory, typed planner, CLI, independent reference, tests and local evidence. |
 
+On the development desktop, run unavoidable builds through
+`tools/scripts/invoke-local-resource-policy.ps1 Build -- cargo ...`. It restricts the
+process tree to 70% or less of the detected logical CPUs and applies the same
+job count to Cargo, CMake and Rust tests. Run unavoidable local inference
+through `invoke-local-resource-policy.ps1 Inference -- COMMAND`; it fails unless the designated RTX 3090 is
+present and exposes only that GPU through `CUDA_VISIBLE_DEVICES`.
+
 `model-loading/cli/collect-inventory.ts` sends an ordinary agent INSPECT to every
 configured address and atomically writes per-machine timestamped JSON plus
 `latest.json`. A failed required machine remains in the fleet failure list and

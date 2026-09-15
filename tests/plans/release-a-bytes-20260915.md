@@ -21,9 +21,11 @@ native 실행이 만든 physical result, adapter가 보존하는 completion, age
   `--jobs`, `CMAKE_BUILD_PARALLEL_LEVEL`, `RUST_TEST_THREADS`에 적용한다.
 - 이 PC 추론이 불가피하면 `CUDA_DEVICE_ORDER=PCI_BUS_ID`와
   `CUDA_VISIBLE_DEVICES=GPU-38e6dbac-fee5-ac16-62d4-cfacbe02f8ed`로 RTX 3090만 노출한다.
-- 2026-09-15의 예기치 않은 종료 시각은 15:19:04와 16:18:52다. 직전 `target` 기록은 각각
-  15:15에 4,103개, 16:00~16:18에 18,436개 파일을 썼다. 같은 구간의 로컬 inference와 WHEA/GPU
-  오류는 관측되지 않았다. 이는 빌드 부하 우선 가설이며 PSU 인과의 단독 증명은 아니다.
+- 2026-09-15의 예기치 않은 종료 시각은 15:19:04와 16:18:52다. 첫 종료 3분47초 전에는 제한 없는
+  `cargo test` 두 개를 동시에 시작했고 모델 실행은 없었다. 두 번째 종료 전에는 제한 없는 release build에
+  이어 로컬 llama.cpp와 HF 추론을 연속 실행했다. 두 Kernel-Power 41 모두 bugcheck와 전원 버튼 시각이
+  0이며 직전 WHEA/GPU 오류는 없다. 첫 사례는 빌드 부하를 독립적으로 지목하고 두 번째는 빌드·추론이
+  섞였으므로, 빌드는 33 logical CPU affinity로 제한하고 로컬 추론은 지정 RTX 3090만 노출한다.
 
 ## Preconditions
 
@@ -87,4 +89,3 @@ native 실행이 만든 physical result, adapter가 보존하는 completion, age
 - 최초 오류, `evidence_missing`, `cleanup_error`, 종료 코드와 전체 workspace summary.
 - 원격 host별 agent/native PID, 전체 명령, GPU UUID, LOAD/UNLOAD/DELETE와 최종 INSPECT.
 - 변이별 source/binary hash, 실제 재컴파일 증거, 예상 실패 지점.
-

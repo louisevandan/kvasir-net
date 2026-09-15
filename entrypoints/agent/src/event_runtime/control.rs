@@ -94,7 +94,7 @@ pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver
                     }
                 } else {
                     let result = match content_type {
-                        CREATE => create(&own, &broker, &mut nodes, event, limits),
+                        CREATE => create(&own, &broker, &mut nodes, event, limits, &transport),
                         DELETE => remove(&broker, &mut nodes, event).await,
                         other => Err(format!("unsupported agent control content type {other}")),
                     };
@@ -136,6 +136,7 @@ fn create(
     nodes: &mut HashMap<String, NodeOwner>,
     event: &Event,
     limits: super::RuntimeLimits,
+    transport: &super::transport::Inspector,
 ) -> Result<String, String> {
     let command: CreateNode = serde_json::from_slice(&event.payload)
         .map_err(|error| format!("invalid node create payload: {error}"))?;
@@ -158,8 +159,10 @@ fn create(
     let retained_bytes = command.retained_bytes.unwrap_or(limits.bytes);
     let (sender, inbound) = completion_mailbox_with_limits(command.queue_capacity, retained_capacity, retained_bytes)
         .map_err(|error| format!("invalid node retained storage: {error:?}"))?;
+    let resource_probe = super::adapters::runtime_resource_probe(broker, transport);
     let adapter = super::adapters::create(&command.adapter_kind, endpoint,
-        command.queue_capacity, command.completion_capacity, retained_capacity, retained_bytes)?;
+        command.queue_capacity, command.completion_capacity, retained_capacity, retained_bytes,
+        resource_probe)?;
     broker
         .register_node(command.node_id.clone(), command.node_generation, sender)
         .map_err(|error| error.to_string())?;

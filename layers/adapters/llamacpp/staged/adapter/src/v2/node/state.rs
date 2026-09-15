@@ -170,11 +170,16 @@ impl SettlementRefusal {
 
 impl RequestState {
     pub(crate) fn new_reserved(
-        command: InferenceCommand, template: Event, reply: String,
-        incarnation: u64, reservation: super::request_budget::RequestReservation,
+        command: InferenceCommand,
+        template: Event,
+        reply: String,
+        incarnation: u64,
+        reservation: super::request_budget::RequestReservation,
     ) -> Self {
         let mut request = Self::new(command, template, reply, incarnation, None);
-        Arc::get_mut(&mut request.input).expect("new input is unique").reservation = Some(reservation);
+        Arc::get_mut(&mut request.input)
+            .expect("new input is unique")
+            .reservation = Some(reservation);
         request
     }
 
@@ -416,6 +421,7 @@ pub struct AdapterState {
     pub sessions: BTreeMap<String, PipelineSession>,
     pub requests: BTreeMap<String, RequestState>,
     pub(crate) request_budget: super::request_budget::RequestBudget,
+    pub(crate) resource_profile: Option<super::super::ResourceProfile>,
     pub pending: VecDeque<String>,
     pub free_sequences: VecDeque<u32>,
     pub batch_capacity: usize,
@@ -506,6 +512,7 @@ impl Default for AdapterState {
             sessions: BTreeMap::new(),
             requests: BTreeMap::new(),
             request_budget: super::request_budget::RequestBudget::default(),
+            resource_profile: None,
             pending: VecDeque::new(),
             free_sequences: VecDeque::new(),
             batch_capacity: 0,
@@ -563,16 +570,19 @@ impl Default for AdapterState {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0),
             },
-            pipeline_policy: (std::env::var("P4_STAGED_PIPELINE_BATCHING").ok().as_deref() == Some("1"))
-                .then(|| super::super::scheduler::pipeline::PipelinePolicy {
-                    mixed_batch_rows: match std::env::var("P4_STAGED_MIXED_BATCH_ROWS") {
-                        Err(std::env::VarError::NotPresent) => None,
-                        Ok(value) => Some(value.parse().unwrap_or(0)),
-                        Err(_) => Some(0),
-                    },
-                    mixed_prefill_rows: std::env::var("P4_STAGED_MIXED_PREFILL_ROWS")
-                        .ok().and_then(|v| v.parse().ok()).unwrap_or(128),
-                }),
+            pipeline_policy: (std::env::var("P4_STAGED_PIPELINE_BATCHING").ok().as_deref()
+                == Some("1"))
+            .then(|| super::super::scheduler::pipeline::PipelinePolicy {
+                mixed_batch_rows: match std::env::var("P4_STAGED_MIXED_BATCH_ROWS") {
+                    Err(std::env::VarError::NotPresent) => None,
+                    Ok(value) => Some(value.parse().unwrap_or(0)),
+                    Err(_) => Some(0),
+                },
+                mixed_prefill_rows: std::env::var("P4_STAGED_MIXED_PREFILL_ROWS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(128),
+            }),
             prefill_fragments: std::env::var("P4_STAGED_PREFILL_FRAGMENTS")
                 .ok()
                 .and_then(|value| value.parse().ok())

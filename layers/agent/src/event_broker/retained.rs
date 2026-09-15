@@ -68,6 +68,15 @@ fn admission_error(error: ReserveError, delivery: &Delivery) -> DispatchError {
 }
 
 impl EventBroker<CompletionPublisher> {
+    /// O(1) view of the actual cross-agent retained destination. Adapter
+    /// composition may use this for preflight capacity checks without
+    /// exposing backend vocabulary to the broker.
+    pub fn outbound_storage_snapshot(
+        &self,
+    ) -> p4_adapter::node_adapter::CompletionStorageSnapshot {
+        self.outbound.storage_snapshot()
+    }
+
     /// Fence delivery before observing quiescence; caller code never executes
     /// under the registration lock. Existing owned front tickets recheck this.
     pub fn pause_node_admission(&self, node: &str, generation: u64) -> Result<NodeAdmissionPause, DispatchError> {

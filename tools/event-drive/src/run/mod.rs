@@ -179,8 +179,12 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         channel: config.channel.clone(),
         connection_generation: config.connection_generation,
     };
-    let mut wire = wire::EventWire::acknowledged(reader, writer,
-        format!("{}#{}", outer.channel, outer.ingress_agent), outer.connection_generation)?;
+    let mut wire = wire::EventWire::acknowledged(
+        reader,
+        writer,
+        format!("{}#{}", outer.channel, outer.ingress_agent),
+        outer.connection_generation,
+    )?;
     let mut sender = Sender::new(outer);
 
     let mut create_replies = Vec::with_capacity(config.nodes.len());
@@ -248,7 +252,10 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     // is always written.
     let mut cleanup_error = teardown(&config, &mut wire, &mut sender).await;
     if cleanup_error.is_none() {
-        if let Err(error) = wire.finish(Instant::now() + Duration::from_millis(config.timeout_ms.min(10_000))).await {
+        if let Err(error) = wire
+            .finish(Instant::now() + Duration::from_millis(config.timeout_ms.min(10_000)))
+            .await
+        {
             cleanup_error = Some(format!("connection finish: {error}"));
         }
     }
@@ -512,6 +519,7 @@ mod tests {
             context_size: 16,
             total_context_size: 16,
             sequence_capacity: 1,
+            resource_profile: config::test_resource_profile(),
         })
         .collect();
         RunConfig {

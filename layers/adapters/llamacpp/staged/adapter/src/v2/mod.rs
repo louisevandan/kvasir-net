@@ -9,6 +9,7 @@ pub(crate) mod issue_witness;
 mod logical;
 mod node;
 pub mod record;
+mod resource_profile;
 mod scheduler;
 mod session_key;
 #[cfg(test)]
@@ -33,14 +34,18 @@ pub use issue_witness::{
 };
 pub use logical::{LogicalBatch, LogicalBatchError, LogicalRow};
 pub use node::{LlamaNodeAdapter, RetainedLlamaNodeAdapter};
+pub use resource_profile::{
+    RESOURCE_PROFILE_VERSION, ResourceProfile, ResourceStorageSnapshot, RuntimeResourceProbe,
+    RuntimeResourceSnapshot,
+};
 #[cfg(test)]
 pub(crate) use scheduler::PREFILL_PATIENCE;
-pub use scheduler::{Allocation, Demand, OrdinaryLimits, Phase, Scheduler, SchedulerError};
 pub use scheduler::service::{ServiceDecision, ServiceSample, ServiceShape, ServiceVerdict};
+pub use scheduler::{Allocation, Demand, OrdinaryLimits, Phase, Scheduler, SchedulerError};
 pub use session_key::{SessionKey, SessionKeyError};
 
-pub const LOAD_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.load-v3+json";
-pub const LOADED_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.loaded-v3+json";
+pub const LOAD_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.load-v4+json";
+pub const LOADED_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.loaded-v4+json";
 pub const UNLOAD_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.unload-v3+json";
 pub const UNLOADED_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.unloaded-v3+json";
 pub const SESSION_CONTENT_TYPE: &str = "application/vnd.p4.llamacpp.session-v4+json";

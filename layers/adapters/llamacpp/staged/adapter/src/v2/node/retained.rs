@@ -4,6 +4,7 @@ use p4_adapter::node_adapter::{
     CompletionFront, CompletionMailbox, MailboxBuildError, OwnedPoll, RetainedCompletion,
     RetainedNodeAdapter, RetainedOfferError, completion_mailbox_with_limits,
 };
+use crate::v2::resource_profile::RuntimeResourceProbe;
 
 pub struct RetainedLlamaNodeAdapter {
     inner: LlamaNodeAdapter,
@@ -22,6 +23,42 @@ impl RetainedLlamaNodeAdapter {
         retained_capacity: usize,
         retained_bytes: usize,
     ) -> Result<Self, MailboxBuildError> {
+        Self::new_inner(
+            endpoint,
+            input_capacity,
+            completion_capacity,
+            retained_capacity,
+            retained_bytes,
+            None,
+        )
+    }
+
+    pub fn new_with_runtime_resource_probe(
+        endpoint: Endpoint,
+        input_capacity: usize,
+        completion_capacity: usize,
+        retained_capacity: usize,
+        retained_bytes: usize,
+        probe: RuntimeResourceProbe,
+    ) -> Result<Self, MailboxBuildError> {
+        Self::new_inner(
+            endpoint,
+            input_capacity,
+            completion_capacity,
+            retained_capacity,
+            retained_bytes,
+            Some(probe),
+        )
+    }
+
+    fn new_inner(
+        endpoint: Endpoint,
+        input_capacity: usize,
+        completion_capacity: usize,
+        retained_capacity: usize,
+        retained_bytes: usize,
+        probe: Option<RuntimeResourceProbe>,
+    ) -> Result<Self, MailboxBuildError> {
         if input_capacity == 0 {
             return Err(MailboxBuildError::InvalidCapacity);
         }
@@ -30,13 +67,16 @@ impl RetainedLlamaNodeAdapter {
         let (sender, receiver) = mpsc::sync_channel(input_capacity);
         let snapshot = Arc::new(Mutex::new("empty".to_owned()));
         let shutdown = Arc::new(AtomicBool::new(false));
-        let worker = Worker::new(
+        let mut worker = Worker::new(
             endpoint,
             receiver,
             publisher,
             snapshot.clone(),
             shutdown.clone(),
         );
+        if let Some(probe) = probe {
+            worker = worker.with_runtime_resource_probe(probe);
+        }
         Ok(Self::spawn_worker(
             sender, mailbox, snapshot, shutdown, worker,
         ))

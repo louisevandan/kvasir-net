@@ -124,6 +124,20 @@ fn config(port: u16, requests: usize) -> serde_json::Value {
             "plan": "not-loaded", "args": [], "environment": [],
             "n_batch": 32, "n_ubatch": 32, "context_size": 128,
             "total_context_size": 256, "sequence_capacity": 2,
+            "resource_profile": {
+                "version": 1,
+                "max_requests": 2,
+                "max_request_retained_bytes": 1_048_576,
+                "max_input_tokens": 256,
+                "max_request_bytes": 524_288,
+                "max_output_tokens_per_request": 4,
+                "max_output_tokens": 8,
+                "max_physical_result_bytes": 1,
+                "max_completion_payload_bytes": 1_048_576,
+                "max_completion_retained_bytes": 2_097_152,
+                "max_edge_retained_bytes": 2_097_152,
+                "max_receipt_retained_bytes": 1_048_576
+            },
         })
     };
     serde_json::json!({

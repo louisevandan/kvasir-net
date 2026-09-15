@@ -211,6 +211,14 @@ pub(super) struct Owner(Arc<Shared>);
 #[derive(Clone)]
 pub(super) struct Inspector(Arc<Shared>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ReceiptCapacitySnapshot {
+    pub limit_count: usize,
+    pub retained_count: usize,
+    pub limit_bytes: usize,
+    pub retained_bytes: usize,
+}
+
 impl Inspector {
     #[cfg(test)]
     pub(super) fn detached(limits: RuntimeLimits) -> Self { Self(Shared::new(limits)) }
@@ -238,6 +246,21 @@ impl Inspector {
                 "oldest_unix_ms":failures.iter().map(|value| value.created_unix_ms).min(),
                 "states":states,"failure_ids":ids},
         })
+    }
+
+    pub(super) fn receipt_capacity_snapshot(&self) -> ReceiptCapacitySnapshot {
+        let receipts = self
+            .0
+            .receipts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .snapshot();
+        ReceiptCapacitySnapshot {
+            limit_count: receipts.limit_count,
+            retained_count: receipts.records,
+            limit_bytes: receipts.limit_bytes,
+            retained_bytes: receipts.reserved_bytes,
+        }
     }
 
     pub(super) async fn reconcile(&self, failure_id: &str) -> serde_json::Value {

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 // Real LOAD event encoding/reply matching/identity admission over EventWire.
 // Native HELLO and GPU execution are separate tests; these peers are fixtures.
 async fn consume(profile: &str, changed: Option<&str>) -> Result<LoadedBuild, String> {
-    let config: RunConfig = serde_json::from_value(json!({
+    let mut value = json!({
         "ingress_agent":"tcp://127.0.0.1:50001", "channel":"load-abi", "connection_generation":1,
         "load_generation":1, "session_id":"s", "request_id":"r", "max_tokens":10,
         "prompt":"not submitted", "pipeline_compatibility":profile,
@@ -19,7 +19,12 @@ async fn consume(profile: &str, changed: Option<&str>) -> Result<LoadedBuild, St
             {"agent":"tcp://127.0.0.1:50001","node":"head","generation":1,"binary":"fixture","endpoint":"127.0.0.1:1","plan":"fixture","n_batch":4,"n_ubatch":4,"context_size":8,"total_context_size":8,"sequence_capacity":1},
             {"agent":"tcp://127.0.0.2:50001","node":"tail","generation":2,"binary":"fixture","endpoint":"127.0.0.1:2","plan":"fixture","n_batch":4,"n_ubatch":4,"context_size":8,"total_context_size":8,"sequence_capacity":1}
         ], "timeout_ms":1000
-    })).unwrap();
+    });
+    let resource_profile = serde_json::to_value(super::config::test_resource_profile()).unwrap();
+    for node in value["nodes"].as_array_mut().unwrap() {
+        node["resource_profile"] = resource_profile.clone();
+    }
+    let config: RunConfig = serde_json::from_value(value).unwrap();
     let outer = OuterEndpoint {
         ingress_agent: Address::tcp("127.0.0.1", 50001),
         channel: "load-abi".into(),

@@ -25,7 +25,6 @@ const INGRESS_EVENT_QUANTUM: usize = 32;
 
 mod ack_service;
 mod coalescing;
-mod service;
 mod control;
 mod control_dispatch;
 #[cfg(test)]
@@ -59,6 +58,7 @@ mod release;
 mod release_notification_tests;
 #[cfg(test)]
 mod release_tests;
+mod service;
 #[cfg(test)]
 mod session_tests;
 mod settlement;
@@ -90,7 +90,10 @@ pub enum WorkerInput {
 
 impl WorkerInput {
     pub(super) fn event(&self) -> &Event {
-        match self { Self::Event(event) => event, Self::Retained(completion) => completion.event() }
+        match self {
+            Self::Event(event) => event,
+            Self::Retained(completion) => completion.event(),
+        }
     }
 }
 
@@ -107,7 +110,9 @@ pub(super) struct WorkerRemainder {
 
 impl WorkerRemainder {
     #[cfg(test)]
-    pub(super) fn effect_count(&self) -> usize { self.effects.len() }
+    pub(super) fn effect_count(&self) -> usize {
+        self.effects.len()
+    }
 }
 
 /// What the first node was doing between one batch and the next.
@@ -134,6 +139,7 @@ pub struct Worker {
     endpoint: Endpoint,
     receiver: mpsc::Receiver<WorkerInput>,
     publisher: CompletionPublisher,
+    runtime_resource_probe: Option<super::super::resource_profile::RuntimeResourceProbe>,
     snapshot: Arc<Mutex<String>>,
     lifecycle: LlamaLifecycle<Box<dyn crate::process::ServerControl + Send>>,
     scheduler: Scheduler,
@@ -192,6 +198,7 @@ impl Worker {
             endpoint,
             receiver,
             publisher,
+            runtime_resource_probe: None,
             snapshot,
             lifecycle: LlamaLifecycle::default(),
             scheduler: Scheduler::new(),
@@ -215,6 +222,14 @@ impl Worker {
         }
     }
 
+    pub(super) fn with_runtime_resource_probe(
+        mut self,
+        probe: super::super::resource_profile::RuntimeResourceProbe,
+    ) -> Self {
+        self.runtime_resource_probe = Some(probe);
+        self
+    }
+
     /// Inject at the existing native Frame boundary, preserving lifecycle and
     /// worker execution. This does not exercise LOAD event parsing/capacity
     /// validation; that remains a separate integration obligation.
@@ -228,6 +243,22 @@ impl Worker {
             .lifecycle
             .ready_info()
             .map_or(0, |ready| ready.max_physical_result_bytes);
+        // These tests deliberately inject an already-READY native stage and
+        // therefore bypass LOAD admission. Mirror the former test budget and
+        // install a matching profile so request-path tests still exercise the
+        // production per-request checks without pretending to cover LOAD.
+        let request_limit = super::request_budget::RequestCost {
+            requests: 4096,
+            bytes: 512 * 1024 * 1024,
+            prompt_tokens: 16 * 1024 * 1024,
+            output_tokens: 16 * 1024 * 1024,
+        };
+        self.state.request_budget = super::request_budget::RequestBudget::new(request_limit);
+        self.state.resource_profile = Some(
+            super::super::resource_profile::worker_fixture_resource_profile(
+                self.state.max_physical_result_bytes,
+            ),
+        );
         Ok(self)
     }
 
@@ -325,7 +356,10 @@ impl Worker {
                 let input = if let Some(event) = self.held_input.take() {
                     Some(event)
                 } else if let Some(deadline) = self.decode_coalescer.wake_at() {
-                    match self.receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                    match self
+                        .receiver
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    {
                         Ok(input) => Some(input),
                         Err(mpsc::RecvTimeoutError::Timeout) => None,
                         Err(mpsc::RecvTimeoutError::Disconnected) => break "input_closed",
@@ -387,9 +421,12 @@ impl Worker {
         self.observe_issue_state("run_stopping");
         self.finish_run(reason, failed);
         WorkerRemainder {
-            failed_input: self.failed_input, held_input: self.held_input,
-            deferred_ack_error: self.deferred_ack_error, receiver: self.receiver,
-            effects: self.effects, state: self.state,
+            failed_input: self.failed_input,
+            held_input: self.held_input,
+            deferred_ack_error: self.deferred_ack_error,
+            receiver: self.receiver,
+            effects: self.effects,
+            state: self.state,
         }
     }
 
@@ -449,13 +486,22 @@ impl Worker {
         if session.command.role() != NodeRole::First {
             return Err("prefill must target the first node".into());
         }
-        if let Some(error) = &self.service_configuration_error { return Err(error.clone()); }
-        self.service_budget.validate(session.command.stages.len(), self.state.max_open_batches,
-            self.state.pipeline_policy.is_some() && self.state.prefill_fragments == 1
-                && !self.state.equal_sequence_ubatch && !self.state.atomic_batch_exclusive)?;
+        if let Some(error) = &self.service_configuration_error {
+            return Err(error.clone());
+        }
+        self.service_budget.validate(
+            session.command.stages.len(),
+            self.state.max_open_batches,
+            self.state.pipeline_policy.is_some()
+                && self.state.prefill_fragments == 1
+                && !self.state.equal_sequence_ubatch
+                && !self.state.atomic_batch_exclusive,
+        )?;
         if let Some(policy) = self.state.pipeline_policy {
-            if self.state.max_open_batches == 0 || policy.mixed_prefill_rows == 0
-                || self.state.prefill_fragments != 1 || policy.mixed_batch_rows == Some(0)
+            if self.state.max_open_batches == 0
+                || policy.mixed_prefill_rows == 0
+                || self.state.prefill_fragments != 1
+                || policy.mixed_batch_rows == Some(0)
             {
                 return Err("pipeline policy requires a finite open window, positive mixed quantum and fragment limit one".into());
             }
@@ -487,7 +533,7 @@ impl Worker {
         )
         .map_err(str::to_owned)?;
         let reply = serde_json::to_string(&ReplySpec::from_envelope(&event.envelope)?)
-        .map_err(|error| format!("cannot encode reply specification: {error}"))?;
+            .map_err(|error| format!("cannot encode reply specification: {error}"))?;
         // Both codecs keep the same byte limit. Refuse before session-key
         // records, Tokenize, slot/incarnation admission or native execution.
         super::super::capsule::validate_reply_options(&reply, &command.options)
@@ -548,6 +594,18 @@ impl Worker {
         // writes. Tokenization above is read-only; no KV/native issue occurred.
         // The claim follows the shared immutable input through late effects.
         let cost = super::request_budget::RequestCost::input(&command, event, &reply)?;
+        let profile = self
+            .state
+            .resource_profile
+            .as_ref()
+            .ok_or("loaded resource profile is missing")?;
+        if cost.bytes
+            > usize::try_from(profile.max_request_bytes)
+                .map_err(|_| "resource profile request bytes exceed platform range")?
+            || command.max_tokens > profile.max_output_tokens_per_request
+        {
+            return Err("request exceeds the loaded resource profile".into());
+        }
         let reservation = self.state.request_budget.reserve(cost)?;
         // First admission write. This is still the sole worker mutator: no
         // handler, publication or yield intervenes before commit_admission.
@@ -563,8 +621,12 @@ impl Worker {
         self.state.pending.push_back(key);
         self.commit_admission(admission_count);
         if std::env::var_os("P4_STAGED_TRACE_REQUEST_STORAGE").is_some() {
-            crate::v2::record::record(&format!("P4_REQUEST_STORAGE node={:?} load={} held={:?}",
-                self.endpoint, self.state.load_generation, self.state.request_budget.used()));
+            crate::v2::record::record(&format!(
+                "P4_REQUEST_STORAGE node={:?} load={} held={:?}",
+                self.endpoint,
+                self.state.load_generation,
+                self.state.request_budget.used()
+            ));
         }
         if let Some(record) = admission_record {
             // This record says ADMITTED, not merely parsed or attempted.
@@ -665,7 +727,10 @@ fn node_endpoint(value: &NodeAddress) -> Result<Endpoint, String> {
 }
 
 fn reply_target(event: &Event) -> Result<Endpoint, String> {
-    event.envelope.reply_target().map_err(|error| error.to_string())
+    event
+        .envelope
+        .reply_target()
+        .map_err(|error| error.to_string())
 }
 
 fn single_session(capsules: &CapsuleSet) -> Result<String, String> {

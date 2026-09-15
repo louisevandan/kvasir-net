@@ -35,6 +35,11 @@ fn fixture(name: &str) -> (Worker, Arc<CompletionMailbox>) {
         Arc::new(AtomicBool::new(false)),
     );
     worker.state.load_generation = 7;
+    // This fixture injects post-LOAD state directly. Install the same
+    // production request profile contract that `prefill` now requires.
+    worker.state.resource_profile = Some(
+        crate::v2::resource_profile::worker_fixture_resource_profile(1),
+    );
     (worker, mailbox)
 }
 

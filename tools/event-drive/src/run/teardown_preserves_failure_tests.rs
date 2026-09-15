@@ -34,6 +34,7 @@ fn config() -> RunConfig {
         context_size: 128,
         total_context_size: 256,
         sequence_capacity: 2,
+        resource_profile: config::test_resource_profile(),
     };
     RunConfig {
         ingress_agent: "tcp://127.0.0.1:52501".into(),

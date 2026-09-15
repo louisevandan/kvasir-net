@@ -428,12 +428,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_send_retains_the_registered_attempt_and_never_resends_a_duplicate_request() {
-        let node = serde_json::json!({
+        let mut node = serde_json::json!({
             "agent": "tcp://127.0.0.1:53000", "node": "head", "generation": 1,
             "binary": "unused", "endpoint": "tcp://127.0.0.1:53001", "plan": "unused",
             "n_batch": 8, "n_ubatch": 8, "context_size": 8,
             "total_context_size": 8, "sequence_capacity": 1,
         });
+        node["resource_profile"] =
+            serde_json::to_value(super::super::config::test_resource_profile()).unwrap();
         let config: RunConfig = serde_json::from_value(serde_json::json!({
             "ingress_agent": "tcp://127.0.0.1:53000", "channel": "send-test", "connection_generation": 7,
             "load_generation": 1, "session_id": "s", "request_id": "r", "nodes": [node],
@@ -536,12 +538,14 @@ mod tests {
     /// "two requests, both missing" cannot say whether the peer saw them.
     #[tokio::test]
     async fn a_wave_that_fails_mid_write_separates_delivered_uncertain_and_unsubmitted() {
-        let node = serde_json::json!({
+        let mut node = serde_json::json!({
             "agent": "tcp://127.0.0.1:53100", "node": "head", "generation": 1,
             "binary": "unused", "endpoint": "tcp://127.0.0.1:53101", "plan": "unused",
             "n_batch": 8, "n_ubatch": 8, "context_size": 8,
             "total_context_size": 8, "sequence_capacity": 4,
         });
+        node["resource_profile"] =
+            serde_json::to_value(super::super::config::test_resource_profile()).unwrap();
         let config: RunConfig = serde_json::from_value(serde_json::json!({
             "ingress_agent": "tcp://127.0.0.1:53100", "channel": "partial-wave",
             "connection_generation": 7, "load_generation": 1, "session_id": "s",

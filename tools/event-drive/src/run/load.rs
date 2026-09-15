@@ -46,6 +46,7 @@ where
                 context_size: node.context_size,
                 total_context_size: node.total_context_size,
                 sequence_capacity: node.sequence_capacity,
+                resource_profile: node.resource_profile.clone(),
                 ready_timeout_ms: config.timeout_ms,
                 io_timeout_ms: config.timeout_ms,
             };

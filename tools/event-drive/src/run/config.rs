@@ -1,4 +1,4 @@
-use p4_llamacpp_staged_adapter::v2::NodeAddress;
+use p4_llamacpp_staged_adapter::v2::{NodeAddress, ResourceProfile};
 use p4_protocol::Address;
 use p4_protocol::event::Endpoint;
 use serde::Deserialize;
@@ -98,6 +98,7 @@ pub struct NodeConfig {
     pub context_size: usize,
     pub total_context_size: usize,
     pub sequence_capacity: u32,
+    pub resource_profile: ResourceProfile,
 }
 
 fn default_waves() -> Vec<ArrivalWave> {
@@ -113,6 +114,24 @@ fn default_timeout() -> u64 {
 
 fn default_minimum_generated_tokens() -> usize {
     1
+}
+
+#[cfg(test)]
+pub(super) fn test_resource_profile() -> ResourceProfile {
+    ResourceProfile {
+        version: 1,
+        max_requests: 1,
+        max_request_retained_bytes: 1 << 20,
+        max_input_tokens: 4096,
+        max_request_bytes: 1 << 19,
+        max_output_tokens_per_request: 500,
+        max_output_tokens: 500,
+        max_physical_result_bytes: 33_554_432,
+        max_completion_payload_bytes: 64 << 20,
+        max_completion_retained_bytes: 64 << 20,
+        max_edge_retained_bytes: 64 << 20,
+        max_receipt_retained_bytes: 1 << 20,
+    }
 }
 
 pub(super) fn validate(config: &RunConfig) -> Result<(), &'static str> {
@@ -223,6 +242,7 @@ mod tests {
             context_size: 1200,
             total_context_size: 1200,
             sequence_capacity: 1,
+            resource_profile: test_resource_profile(),
         }
     }
 
