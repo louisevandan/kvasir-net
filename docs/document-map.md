@@ -238,6 +238,7 @@ Release A 대상 변경: [Qwen122B 명세·corpus 준비](../tests/reports/relea
 Release A FINISH 재개: [결정론적 검토·전체 회귀·양쪽 어댑터](../tests/reports/release-a/20260915_142237.md).
 
 Release A 전송 정산: [불명 결과·hop receipt·재연결 시험 계획](../tests/plans/release-a-transport-reconciliation-20260915.md).
+Release A A-BYTES: [native result·completion·receipt·edge 정수 byte 시험 계획](../tests/plans/release-a-bytes-20260915.md).
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 

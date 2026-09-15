@@ -207,3 +207,5 @@ Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 �
 Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 거부](tests/reports/release-a/20260915_190631.md).
 
 Release A Qwen122B A-LOAD: [3물리 host 실제 allocation·회수](tests/reports/release-a/20260915_195106.md).
+
+Release A A-BYTES: [native result·completion·receipt·edge 정수 byte 시험 계획](tests/plans/release-a-bytes-20260915.md).
