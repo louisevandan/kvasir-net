@@ -16,6 +16,7 @@ import struct
 import sys
 import threading
 import time
+import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "layers/adapters/hf/python"))
 from p4hfadapter.integration.transport import Client
@@ -149,6 +150,23 @@ def _client(agent: dict[str, object], timeout: float = 20) -> Client:
     return client
 
 
+def _legacy_client(agent: dict[str, object], timeout: float = 20) -> Client:
+    """Read-only observer without a hop receipt of its own in the snapshot."""
+    client = Client.__new__(Client)
+    client.address = str(agent["address"])
+    client.socket = socket.create_connection((str(agent["host"]), int(agent["port"])), timeout=timeout)
+    client.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    client.socket.settimeout(timeout)
+    client.outer = (2, client.address, uuid.uuid4().hex, 1)
+    client.sequence = 0
+    client.sent_bytes = client.received_bytes = 0
+    client.trace = []
+    client.finishing = False
+    client.finish_unexpected_output = bytearray()
+    client.hop_enabled = False
+    return client
+
+
 def _exchange(agent: dict[str, object], target: dict[str, object], content: str,
               payload: dict[str, object]) -> tuple[dict[str, object], dict[str, object]]:
     client = _client(agent)
@@ -162,10 +180,15 @@ def _exchange(agent: dict[str, object], target: dict[str, object], content: str,
 
 
 def _inspect(agent: dict[str, object]) -> dict[str, object]:
-    meta, body = _exchange(agent, agent, INSPECT, {})
+    client = _legacy_client(agent)
+    try:
+        meta, body = client.exchange(_agent_endpoint(agent), INSPECT, b"{}")
+        client.finish()
+    finally:
+        client.close()
     if meta["content"] != SNAPSHOT:
         raise AssertionError(f"INSPECT returned {meta['content']}")
-    return body
+    return json.loads(body)
 
 
 def _wait_failure(agent: dict[str, object], timeout: float) -> dict[str, object]:
@@ -189,6 +212,9 @@ def run(config_path: Path, output: Path) -> int:
         "ingress": ingress, "target": target, "started_unix_ms": int(time.time() * 1000),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
+    def checkpoint() -> None:
+        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
     client = _client(ingress, timeout=30)
     try:
         first = client.send(_agent_endpoint(target), INSPECT, b"{}")
@@ -197,6 +223,7 @@ def run(config_path: Path, output: Path) -> int:
         if first_meta["correlation"] != first or first_meta["content"] != SNAPSHOT:
             raise AssertionError("first physical response did not match the first request")
         report["first_response"] = {"meta": first_meta, "nodes": json.loads(first_body)["nodes"]}
+        checkpoint()
 
         retained = _wait_failure(ingress, 15)
         failures = retained["transport"]["failures"]
@@ -205,22 +232,23 @@ def run(config_path: Path, output: Path) -> int:
             raise AssertionError(f"unexpected retained failure: {failures}")
         receiver_before = _inspect(target)
         receipts_before = receiver_before["transport"]["receipts"]
-        # The inspection itself is an acknowledged hop record while its snapshot
-        # is produced, so the lost receipt must appear in addition to that record.
-        if receipts_before["accepted"] < 2 or receipts_before["reserved_bytes"] <= 0:
+        if receipts_before["accepted"] != 1 or receipts_before["records"] != 1 or receipts_before["reserved_bytes"] <= 0:
             raise AssertionError(f"receiver did not pin the lost receipt: {receipts_before}")
         report["before_reconcile"] = {"ingress": retained, "receiver": receiver_before}
+        checkpoint()
 
         reconcile_meta, reconcile = _exchange(ingress, ingress, RECONCILE,
                                                {"failure_id": row["failure_id"]})
         if reconcile_meta["content"] != RESULT or not reconcile.get("ok") or reconcile.get("state") != "accepted_exact":
             raise AssertionError(f"exact reconciliation failed: {reconcile}")
         report["reconcile"] = reconcile
+        checkpoint()
 
         second_meta, second_body = client.receive()
         if second_meta["correlation"] != second or second_meta["content"] != SNAPSHOT:
             raise AssertionError("queued physical response did not resume in order")
         report["second_response"] = {"meta": second_meta, "nodes": json.loads(second_body)["nodes"]}
+        checkpoint()
         client.finish()
     finally:
         client.close()
@@ -241,12 +269,11 @@ def run(config_path: Path, output: Path) -> int:
     final_ingress, final_target = _inspect(ingress), _inspect(target)
     if final_ingress["transport"]["failures"]["count"] != 0:
         raise AssertionError("ingress failure was not retired")
-    # Only the observation request itself may be present while its snapshot is made.
-    if final_target["transport"]["receipts"]["records"] != 1:
+    if final_target["transport"]["receipts"]["records"] != 0:
         raise AssertionError(f"receiver receipt was not released: {final_target['transport']['receipts']}")
     report.update({"wave": wave, "final": {"ingress": final_ingress, "target": final_target},
                    "finished_unix_ms": int(time.time() * 1000), "passed": True})
-    output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    checkpoint()
     print(json.dumps({"passed": True, "wave": len(wave), "failure_state": "uncertain",
                       "reconcile": reconcile["state"]}))
     return 0
