@@ -166,8 +166,9 @@ impl Worker {
         // Burn the attempted generation even if the bind reply is lost.
         self.state.last_load_generation = generation;
         let bind = generation.to_le_bytes().to_vec();
-        let acknowledgement =
-            self.stage_request(Operation::BindLoad, Operation::BindLoad, bind.clone());
+        let acknowledgement = self
+            .stage_request(Operation::BindLoad, Operation::BindLoad, bind.clone())
+            .map(super::retention::NativeResponse::into_vec);
         if acknowledgement.as_ref() != Ok(&bind) {
             let _ = self.lifecycle.unload();
             return Err("native load identity binding failed".into());

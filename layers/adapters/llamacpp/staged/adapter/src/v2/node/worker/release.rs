@@ -670,11 +670,13 @@ impl Worker {
         };
         let response = match check {
             super::super::ownership::ControlCheck::Replay(response) => response,
-            super::super::ownership::ControlCheck::New => self.stage_request(
-                Operation::PhysicalRelease,
-                Operation::PhysicalRelease,
-                body.clone(),
-            )?,
+            super::super::ownership::ControlCheck::New => self
+                .stage_request(
+                    Operation::PhysicalRelease,
+                    Operation::PhysicalRelease,
+                    body.clone(),
+                )?
+                .into_vec(),
         };
         if response != body {
             self.effects_fenced = true;

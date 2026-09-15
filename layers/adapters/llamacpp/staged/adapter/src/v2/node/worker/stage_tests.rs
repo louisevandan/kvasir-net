@@ -209,6 +209,10 @@ impl ServerControl for ScriptedStage {
             };
             return Frame::new(Operation::PhysicalRelease, body).map_err(|error| error.to_string());
         }
+        if request.header.operation == Operation::Tokenize {
+            return Frame::new(Operation::Tokenized, request.body)
+                .map_err(|error| error.to_string());
+        }
         if request.header.operation == Operation::PhysicalBatch {
             let mut set =
                 CapsuleSet::decode(&request.body).map_err(|error| format!("{error:?}"))?;
@@ -714,6 +718,35 @@ fn b2_middle_reservation_refusal_preserves_receive_ledger_and_native_kv() {
     assert!(fixture.worker.effects.is_empty());
     assert_eq!(fixture.mailbox.storage_snapshot().retained_count, 0);
     assert_eq!(fixture.mailbox.storage_snapshot().retained_bytes, 0);
+}
+
+#[test]
+fn b3_adapter_snapshot_separates_pending_request_and_native_response_storage() {
+    let mut fixture = fixture(ResponseMode::ExactSplit);
+    let tracker = fixture.worker.retention_tracker();
+    fixture
+        .handle(submission("retention-request", vec![3, 5, 7, 11]))
+        .unwrap();
+    fixture.worker.sync_pending_retention();
+    let pending = tracker.snapshot();
+    assert_eq!(pending.pending_requests.count, 1);
+    assert!(pending.pending_requests.bytes > 0);
+    assert_eq!(pending.native_responses.count, 0);
+
+    let response = fixture
+        .worker
+        .stage_request(
+            Operation::Tokenize,
+            Operation::Tokenized,
+            b"storage".to_vec(),
+        )
+        .unwrap();
+    let native = tracker.snapshot();
+    assert_eq!(native.pending_requests, pending.pending_requests);
+    assert_eq!(native.native_responses.count, 1);
+    assert_eq!(native.native_responses.bytes, response.capacity());
+    drop(response);
+    assert_eq!(tracker.snapshot().native_responses.count, 0);
 }
 
 fn forwarded(mailbox: &CompletionMailbox) -> CapsuleSet {

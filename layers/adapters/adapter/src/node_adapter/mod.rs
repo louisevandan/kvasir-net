@@ -84,6 +84,21 @@ pub trait NodeAdapter: Send + Sync {
     }
 }
 
+/// Backend-neutral owned storage that remains inside an adapter rather than
+/// its completion mailbox. Counts and bytes name allocations, not wire work,
+/// GPU memory, KV rows or completion delivery authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct AdapterRetainedStorage {
+    pub count: usize,
+    pub bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct AdapterRetentionSnapshot {
+    pub pending_requests: AdapterRetainedStorage,
+    pub native_responses: AdapterRetainedStorage,
+}
+
 /// Explicit owned transport contract. There is deliberately no raw-Event
 /// fallback: concrete producers and every consumer must migrate together.
 /// A successful offer transfers responsibility for the original allocation
@@ -97,6 +112,11 @@ pub trait RetainedNodeAdapter: Send + Sync {
     /// Unknown is not empty. Lifecycle deletion must reject without an
     /// authoritative observation of queued and held completion ownership.
     fn completion_storage_snapshot(&self) -> Option<CompletionStorageSnapshot> {
+        None
+    }
+    /// Unknown is distinct from an adapter with no pending request or native
+    /// response buffers. Implementations report their own allocation units.
+    fn retention_snapshot(&self) -> Option<AdapterRetentionSnapshot> {
         None
     }
 }

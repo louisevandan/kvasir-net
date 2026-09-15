@@ -21,6 +21,8 @@ pub(super) async fn snapshot(
     let mut registered: Vec<Value> = nodes
         .iter()
         .map(|(node_id, owner)| {
+            let completion = owner.adapter.completion_storage_snapshot();
+            let retention = owner.adapter.retention_snapshot();
             json!({
                 "node_id": node_id,
                 "generation": owner.generation,
@@ -28,7 +30,12 @@ pub(super) async fn snapshot(
                 "state": owner.adapter.snapshot(),
                 "delivery": {"stopped":owner.task.is_finished(),
                     "input_retained":owner.inbound.storage_snapshot().retained_count,
-                    "completion_retained":owner.adapter.completion_storage_snapshot().map(|value| value.retained_count)},
+                    "completion_retained":completion.map(|value| value.retained_count)},
+                "retention":{
+                    "pending_requests":retention.map(|value| value.pending_requests),
+                    "completions":completion.map(completion_storage),
+                    "native_responses":retention.map(|value| value.native_responses),
+                },
             })
         })
         .collect();
@@ -57,6 +64,19 @@ pub(super) async fn snapshot(
         "nodes": registered,
         "broker": broker,
         "transport": transport.snapshot(),
+    })
+}
+
+fn completion_storage(value: p4_adapter::node_adapter::CompletionStorageSnapshot) -> Value {
+    json!({
+        "count_limit":value.capacity,
+        "byte_limit":value.byte_limit,
+        "retained_count":value.retained_count,
+        "retained_bytes":value.retained_bytes,
+        "queued_count":value.queued_count,
+        "reserved_queue_slots":value.reserved_queue_slots,
+        "queue_backing_bytes":value.queue_backing_bytes,
+        "closed":value.closed,
     })
 }
 

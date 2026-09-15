@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0에서 native physical result 최대 103,843,468bytes를 결속했고, B1에서 versioned LOAD resource profile과 실제 completion/edge/hop receipt 잔여 용량 검사를 연결했다. 실제 부족 경계 거부, Qwen122B LOAD→READY→UNLOAD→DELETE, 제거 변이와 최종 PID/listener/GPU 회수를 통과했다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B2 실행 전 보존 reservation이다.
+최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0에서 native physical result 최대 103,843,468bytes를 결속했고, B1에서 versioned LOAD resource profile과 실제 completion/edge/hop receipt 잔여 용량 검사를 연결했다. B2는 native 실행 전 completion group 예약과 거부 무효과를 닫았다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B3 수명 분리다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -9,6 +9,12 @@
 이전 기록 안의 “다음”은 당시의 계획이지 지금 구현을 계속하라는 지시가 아니다.
 
 <a id="current-status"></a>
+
+**2026-09-15 노드 수명 개편 계획:** 사용자 합의와 새 세션 구현 절차는
+[LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)에 고정했다. 현재는 문서 작성만 수행했으며
+구현·실기 수용은 미실행이다. 개별 LOAD가 노드를 생성하고 정상 UNLOAD 완료가 제거를 끝낸다.
+다중 노드 전체 적재 판정과 실패 회수는 OUTER 책임이다. 기존 A-BYTES 진행 상태와 실행 순서를
+변경하지 않으며, 이 개편 구현을 지시받은 세션은 계획 M0의 최신 소스·병행 변경 감사부터 시작한다.
 
 2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 
@@ -95,6 +101,15 @@ native 전에 검사한다. workspace feature off/on 각 1,497/0/7, 실제 TCP �
 LOAD→READY→UNLOAD→DELETE와 독립 제거 변이를 통과했고 모든 작업 소유 자원을 회수했다. 이것은 현재 잔여
 용량 검사이며 동시 실행 reservation은 아니다. 다음 첫 행동은 B2에서 native 호출 전 completion forward와
 관측 fan-out 전체를 하나의 group으로 예약하는 것이다.
+
+**2026-09-15 A-BYTES B2 수용:** [B2 보고](../tests/reports/release-a/20260915_232600.md)의
+backend 중립 completion group이 first/middle native 호출 전에 forward와 관측 fan-out 전체 count/bytes를
+한 번 예약한다. publication은 같은 claim을 이동하고 실제 Event 비용을 검사한다. 예약 거부는
+scheduler/flight/KV/native/ID/effect/output을 모두 보존한다. package 682/0/7과 workspace feature off/on
+각 1,503/0/7, reserve-after-native 독립 재컴파일 변이를 통과했다. 첫 package gate는 LOAD를 우회한 기존
+ring fixture의 store/profile 불일치로 실패해 같은 64 MiB 계약으로 정정했으므로 `first_pass=fail`이다.
+A-BYTES 전체와 실제 inference는 미수용이다. 다음 첫 행동은 B3에서 pending/completion/broker receipt/
+hop outstanding/native response 수명을 INSPECT의 별도 필드로 검증하는 것이다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/

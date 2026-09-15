@@ -9,6 +9,7 @@ use p4_adapter::node_adapter::{
 pub struct RetainedLlamaNodeAdapter {
     inner: LlamaNodeAdapter,
     stopped: Arc<AtomicBool>,
+    retention: worker::retention::RetentionTracker,
     // A stopped worker's original inputs/state/effects remain owned here.
     // Dropping this adapter is explicit local abandonment, not successful
     // drain, native reconciliation, remote acceptance or permission to replay.
@@ -89,6 +90,7 @@ impl RetainedLlamaNodeAdapter {
         shutdown: Arc<AtomicBool>,
         worker: Worker,
     ) -> Self {
+        let retention = worker.retention_tracker();
         let stopped = Arc::new(AtomicBool::new(false));
         let stopped_on_exit = stopped.clone();
         let remainder = Arc::new(Mutex::new(None));
@@ -110,6 +112,7 @@ impl RetainedLlamaNodeAdapter {
                 worker: Mutex::new(Some(thread)),
             },
             stopped,
+            retention,
             _remainder: remainder,
         }
     }
@@ -120,6 +123,9 @@ impl RetainedNodeAdapter for RetainedLlamaNodeAdapter {
         &self,
     ) -> Option<p4_adapter::node_adapter::CompletionStorageSnapshot> {
         Some(self.inner.mailbox.storage_snapshot())
+    }
+    fn retention_snapshot(&self) -> Option<p4_adapter::node_adapter::AdapterRetentionSnapshot> {
+        Some(self.retention.snapshot())
     }
     fn try_offer_retained(&self, completion: RetainedCompletion) -> Result<(), RetainedOfferError> {
         if completion.event().validate().is_err() {

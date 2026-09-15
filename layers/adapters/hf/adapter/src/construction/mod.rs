@@ -11,11 +11,13 @@ use tokio::sync::{Notify, mpsc};
 
 pub(crate) struct Input {
     pub completion: Option<RetainedCompletion>,
+    pub count: Arc<AtomicUsize>,
     pub bytes: Arc<AtomicUsize>,
     pub cost: usize,
 }
 impl Drop for Input {
     fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::AcqRel);
         self.bytes.fetch_sub(self.cost, Ordering::AcqRel);
     }
 }
@@ -24,6 +26,7 @@ pub struct HfNodeAdapter {
     pub(crate) sender: Option<mpsc::Sender<Input>>,
     pub(crate) mailbox: Arc<CompletionMailbox>,
     pub(crate) state: Arc<Mutex<String>>,
+    pub(crate) count: Arc<AtomicUsize>,
     pub(crate) bytes: Arc<AtomicUsize>,
     pub(crate) limit: usize,
     pub(crate) stop: Arc<AtomicBool>,
@@ -68,6 +71,7 @@ impl HfNodeAdapter {
             sender: Some(sender),
             mailbox,
             state,
+            count: Arc::new(AtomicUsize::new(0)),
             bytes: Arc::new(AtomicUsize::new(0)),
             limit: retained_bytes,
             stop,

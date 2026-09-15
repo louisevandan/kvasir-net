@@ -379,6 +379,7 @@ async fn explicit_reconcile_queries_exact_receipt_before_resuming_original_queue
                 attempt: 1,
                 digest: first_digest,
                 event: first_owned,
+                live: None,
             }]),
             pending_acks: VecDeque::new(),
             pending: VecDeque::from([second_owned]),
@@ -463,6 +464,7 @@ async fn absent_receipt_quarantines_original_without_replay_or_retirement() {
                 attempt: 1,
                 digest,
                 event: owned,
+                live: None,
             }),
             outstanding: VecDeque::new(),
             pending_acks: VecDeque::new(),
@@ -904,6 +906,7 @@ async fn hop_partial_write_is_uncertain_and_keeps_current_plus_unstarted_queue()
         &writes,
         None,
         2,
+        HopLiveTracker::default(),
         "agent-a",
         7,
     )
@@ -915,5 +918,70 @@ async fn hop_partial_write_is_uncertain_and_keeps_current_plus_unstarted_queue()
     assert_eq!(failure.pending.len(), 1);
     assert_eq!(store.storage_snapshot().retained_count, 2);
     drop(failure);
+    assert_eq!(store.storage_snapshot().retained_count, 0);
+}
+
+#[tokio::test]
+async fn inspect_separates_live_hop_outstanding_from_receipts_and_failures() {
+    use p4_protocol::event::hop::{self, HopFrame, ReceiptStatus};
+    let limits = super::super::tests::limits();
+    let shared = Shared::new(limits);
+    let inspector = Inspector(Arc::clone(&shared));
+    let (publisher, store) = completion_mailbox_with_limits(1, 2, 1024 * 1024).unwrap();
+    let event = super::super::tests::event(
+        &Address::tcp("127.0.0.1", 53115),
+        Endpoint::agent(Address::tcp("127.0.0.2", 53115)),
+        1,
+        "application/octet-stream",
+        &[42; 32],
+    );
+    publisher.try_publish_owned(event).unwrap();
+    let owned = next(&store).await.unwrap();
+    let retained_bytes = owned.retained_bytes();
+    let (events, receiver) = mpsc::channel(1);
+    let (controls, control_receiver) = mpsc::channel(2);
+    events.send(owned).await.unwrap();
+    drop(events);
+    let (mut reader, mut writer) = tokio::io::duplex(16 * 1024);
+    let live = shared.hop_live.clone();
+    let task = tokio::spawn(async move {
+        write_hop_loop(
+            &mut writer,
+            receiver,
+            control_receiver,
+            &AtomicU64::new(0),
+            None,
+            1,
+            live,
+            "agent-a",
+            7,
+        )
+        .await
+    });
+    let size = reader.read_u32_le().await.unwrap() as usize;
+    let mut bytes = vec![0; size];
+    reader.read_exact(&mut bytes).await.unwrap();
+    let HopFrame::Data {
+        attempt, digest, ..
+    } = hop::decode(&bytes).unwrap().unwrap()
+    else {
+        panic!("first frame is not hop data");
+    };
+    let snapshot = inspector.snapshot();
+    assert_eq!(snapshot["outstanding"]["events"], 1);
+    assert_eq!(snapshot["outstanding"]["event_bytes"], retained_bytes);
+    assert_eq!(snapshot["receipts"]["records"], 0);
+    assert_eq!(snapshot["failures"]["count"], 0);
+    controls
+        .send(HopCommand::Received(HopFrame::Receipt {
+            attempt,
+            digest,
+            status: ReceiptStatus::AcceptedExact,
+            detail: "accepted".into(),
+        }))
+        .await
+        .unwrap();
+    assert!(task.await.unwrap().is_ok());
+    assert_eq!(inspector.snapshot()["outstanding"]["events"], 0);
     assert_eq!(store.storage_snapshot().retained_count, 0);
 }

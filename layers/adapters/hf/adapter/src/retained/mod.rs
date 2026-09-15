@@ -26,8 +26,10 @@ impl RetainedNodeAdapter for HfNodeAdapter {
         {
             return Err(RetainedOfferError::Full(completion));
         }
+        self.count.fetch_add(1, Ordering::AcqRel);
         let input = Input {
             completion: Some(completion),
+            count: self.count.clone(),
             bytes: self.bytes.clone(),
             cost,
         };
@@ -69,5 +71,14 @@ impl RetainedNodeAdapter for HfNodeAdapter {
     }
     fn completion_storage_snapshot(&self) -> Option<CompletionStorageSnapshot> {
         Some(self.mailbox.storage_snapshot())
+    }
+    fn retention_snapshot(&self) -> Option<AdapterRetentionSnapshot> {
+        Some(AdapterRetentionSnapshot {
+            pending_requests: AdapterRetainedStorage {
+                count: self.count.load(Ordering::Acquire),
+                bytes: self.bytes.load(Ordering::Acquire),
+            },
+            native_responses: AdapterRetainedStorage::default(),
+        })
     }
 }

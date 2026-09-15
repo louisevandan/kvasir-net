@@ -56,6 +56,7 @@
 | [docs/adapter-restructure-plan.md](adapter-restructure-plan.md) | 역사·구 계획 |
 | [docs/api.md](api.md) | 경로별 참고·재감사 필요 |
 | [docs/architecture.md](architecture.md) | 경로별 참고·재감사 필요 |
+| [docs/node-load-lifecycle-plan.md](node-load-lifecycle-plan.md) | 미구현 계획·새 세션 인수인계: LOAD/UNLOAD와 노드 수명 통합, 전체 적재 조율은 OUTER 책임 |
 | [docs/batching-code-review.md](batching-code-review.md) | 2026-09-13 배치 selector·worker·native 전달 경계 코드 검토; 제안과의 차이·개선 후보·로컬 재현, 실행 순서/성능 승격 아님 |
 | [docs/constraints.md](constraints.md) | 경로별 참고·재감사 필요 |
 | [docs/continuous-inference-refactor-handoff.md](continuous-inference-refactor-handoff.md) | 역사·구 계획 |
@@ -243,6 +244,8 @@ Release A A-BYTES: [native result·completion·receipt·edge 정수 byte 시험 
 Release A A-BYTES B0: [Qwen122B physical result 상한·실제 LOAD·제거 변이](../tests/reports/release-a/20260915_211000.md).
 
 Release A A-BYTES B1: [versioned LOAD profile·실제 잔여 용량·Qwen122B LOAD/회수](../tests/reports/release-a/20260915_222346.md).
+
+Release A A-BYTES B2: [native 전 completion group 예약·거부 무효과·독립 변이](../tests/reports/release-a/20260915_232600.md).
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 

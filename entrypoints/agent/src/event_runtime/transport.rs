@@ -85,10 +85,64 @@ enum HopFailureState {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct HopLiveSnapshot {
+    events: usize,
+    event_bytes: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct HopLiveTracker(Arc<StdMutex<HopLiveSnapshot>>);
+
+impl HopLiveTracker {
+    fn claim(&self, event_bytes: usize) -> io::Result<HopLiveClaim> {
+        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        state.events = state
+            .events
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("hop outstanding count overflow"))?;
+        state.event_bytes = match state.event_bytes.checked_add(event_bytes) {
+            Some(value) => value,
+            None => {
+                state.events -= 1;
+                return Err(io::Error::other("hop outstanding byte count overflow"));
+            }
+        };
+        drop(state);
+        Ok(HopLiveClaim {
+            tracker: self.clone(),
+            event_bytes,
+        })
+    }
+
+    fn snapshot(&self) -> HopLiveSnapshot {
+        *self.0.lock().unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+#[derive(Debug)]
+struct HopLiveClaim {
+    tracker: HopLiveTracker,
+    event_bytes: usize,
+}
+
+impl Drop for HopLiveClaim {
+    fn drop(&mut self) {
+        let mut state = self
+            .tracker
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.events -= 1;
+        state.event_bytes -= self.event_bytes;
+    }
+}
+
 struct HopOutstanding {
     attempt: u64,
     digest: p4_protocol::event::hop::EventDigest,
     event: RetainedCompletion,
+    live: Option<HopLiveClaim>,
 }
 
 struct HopAckIntent {
@@ -143,6 +197,7 @@ struct Shared {
     limits: RuntimeLimits,
     local_writes: AtomicU64,
     receipts: StdMutex<hop::ReceiptStore>,
+    hop_live: HopLiveTracker,
     sender_id: String,
 }
 
@@ -164,6 +219,7 @@ impl Shared {
                 limits.hop_receipts,
                 limits.hop_receipt_bytes,
             )),
+            hop_live: HopLiveTracker::default(),
             sender_id,
         })
     }
@@ -255,7 +311,7 @@ impl Shared {
         let shared = Arc::clone(self);
         self.spawn(async move {
             if let Err(value) = write_hop_loop(&mut writer, receiver, control_receiver,
-                &shared.local_writes, finish, max_outstanding, &shared.sender_id,
+                &shared.local_writes, finish, max_outstanding, shared.hop_live.clone(), &shared.sender_id,
                 connection_generation).await {
                 if target.is_none() && value.current.is_none() && value.outstanding.is_empty()
                     && value.pending_acks.is_empty() && value.pending.is_empty() {
@@ -315,6 +371,7 @@ impl Inspector {
             .unwrap_or_else(|e| e.into_inner())
             .snapshot();
         let failures = self.0.failures.lock().unwrap_or_else(|e| e.into_inner());
+        let outstanding = self.0.hop_live.snapshot();
         let mut states: std::collections::BTreeMap<&'static str, usize> =
             std::collections::BTreeMap::new();
         let mut retained_event_bytes = 0usize;
@@ -332,6 +389,8 @@ impl Inspector {
                 "records":receipts.records,"reserved_bytes":receipts.reserved_bytes,
                 "pending":receipts.pending,"accepted":receipts.accepted,"rejected":receipts.rejected,
                 "oldest_unix_ms":receipts.oldest_unix_ms},
+            "outstanding":{"events":outstanding.events,"event_bytes":outstanding.event_bytes,
+                "limit":self.0.limits.hop_outstanding},
             "failures":{"count":failures.len(),"retained_event_bytes":retained_event_bytes,
                 "oldest_unix_ms":failures.iter().map(|value| value.created_unix_ms).min(),
                 "states":states,"failure_ids":ids},
@@ -1292,6 +1351,7 @@ async fn write_hop_loop<W: AsyncWrite + Unpin>(
     local_writes: &AtomicU64,
     finish: Option<Arc<AtomicBool>>,
     max_outstanding: usize,
+    live: HopLiveTracker,
     sender_id: &str,
     connection_generation: u64,
 ) -> Result<(), HopWriteFailure> {
@@ -1408,7 +1468,7 @@ async fn write_hop_loop<W: AsyncWrite + Unpin>(
                         Ok(value) => value,
                         Err(error) => {
                             let current = HopOutstanding { attempt: next_attempt,
-                                digest: [0; 32], event };
+                                digest: [0; 32], event, live: None };
                             return Err(hop_failure(io::Error::other(error), HopFailureState::RejectedLocal,
                                 Some(current), outstanding, pending_acks, events));
                         }
@@ -1426,11 +1486,16 @@ async fn write_hop_loop<W: AsyncWrite + Unpin>(
                         Err(error) => return Err(hop_failure(io::Error::other(error),
                             HopFailureState::RejectedLocal, None, outstanding, pending_acks, events)),
                     };
-                    let current = HopOutstanding { attempt, digest, event };
+                    let mut current = HopOutstanding { attempt, digest, event, live: None };
                     if let Err(error) = write_bytes_frame(writer, &frame).await {
                         return Err(hop_failure(error, HopFailureState::Uncertain,
                             Some(current), outstanding, pending_acks, events));
                     }
+                    current.live = match live.claim(current.event.retained_bytes()) {
+                        Ok(claim) => Some(claim),
+                        Err(error) => return Err(hop_failure(error, HopFailureState::Uncertain,
+                            Some(current), outstanding, pending_acks, events)),
+                    };
                     local_writes.fetch_add(1, Ordering::Relaxed);
                     outstanding.push_back(current);
                 }
@@ -1443,11 +1508,17 @@ async fn write_hop_loop<W: AsyncWrite + Unpin>(
 fn hop_failure(
     error: io::Error,
     state: HopFailureState,
-    current: Option<HopOutstanding>,
-    outstanding: VecDeque<HopOutstanding>,
+    mut current: Option<HopOutstanding>,
+    mut outstanding: VecDeque<HopOutstanding>,
     pending_acks: VecDeque<HopAckIntent>,
     mut pending: mpsc::Receiver<RetainedCompletion>,
 ) -> HopWriteFailure {
+    if let Some(current) = &mut current {
+        current.live.take();
+    }
+    for item in &mut outstanding {
+        item.live.take();
+    }
     let pending = drain_pending(&mut pending);
     HopWriteFailure {
         error,

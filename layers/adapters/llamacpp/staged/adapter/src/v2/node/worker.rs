@@ -62,6 +62,7 @@ mod release_notification_tests;
 #[cfg(test)]
 mod release_tests;
 mod reservation;
+pub(super) mod retention;
 mod service;
 #[cfg(test)]
 mod session_tests;
@@ -145,6 +146,7 @@ pub struct Worker {
     publisher: CompletionPublisher,
     runtime_resource_probe: Option<super::super::resource_profile::RuntimeResourceProbe>,
     snapshot: Arc<Mutex<String>>,
+    retention: retention::RetentionTracker,
     lifecycle: LlamaLifecycle<Box<dyn crate::process::ServerControl + Send>>,
     scheduler: Scheduler,
     state: AdapterState,
@@ -204,6 +206,7 @@ impl Worker {
             publisher,
             runtime_resource_probe: None,
             snapshot,
+            retention: retention::RetentionTracker::default(),
             lifecycle: LlamaLifecycle::default(),
             scheduler: Scheduler::new(),
             state: AdapterState::default(),
@@ -232,6 +235,15 @@ impl Worker {
     ) -> Self {
         self.runtime_resource_probe = Some(probe);
         self
+    }
+
+    pub(super) fn retention_tracker(&self) -> retention::RetentionTracker {
+        self.retention.clone()
+    }
+
+    fn sync_pending_retention(&self) {
+        let used = self.state.request_budget.used();
+        self.retention.set_pending(used.requests, used.bytes);
     }
 
     /// Inject at the existing native Frame boundary, preserving lifecycle and
@@ -379,7 +391,9 @@ impl Worker {
                     break "shutdown_requested";
                 }
                 if let Some(input) = input {
-                    if self.handle(input.event()).is_err() {
+                    let result = self.handle(input.event());
+                    self.sync_pending_retention();
+                    if result.is_err() {
                         self.failed_input = Some(input);
                         failed = true;
                         break "failed";
@@ -398,7 +412,9 @@ impl Worker {
                     .unwrap_or_else(|| self.receiver.try_recv());
                 match input {
                     Ok(input) => {
-                        if self.handle(input.event()).is_err() {
+                        let result = self.handle(input.event());
+                        self.sync_pending_retention();
+                        if result.is_err() {
                             self.failed_input = Some(input);
                             failed = true;
                             break 'worker "failed";
@@ -411,7 +427,9 @@ impl Worker {
                     Err(mpsc::TryRecvError::Disconnected) => break 'worker "input_closed",
                 }
             }
-            issued = match self.drive_one_batch() {
+            let drive = self.drive_one_batch();
+            self.sync_pending_retention();
+            issued = match drive {
                 Ok(issued) => issued,
                 Err(()) => {
                     failed = true;
@@ -644,7 +662,7 @@ impl Worker {
         operation: Operation,
         expected: Operation,
         body: Vec<u8>,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<retention::NativeResponse, String> {
         let request = Frame::new(operation, body).map_err(|error| error.to_string())?;
         // Drop may be signalled while planning or decoding a command. This is
         // the final observation before entering native; it cannot interrupt a
@@ -686,7 +704,7 @@ impl Worker {
                 response.header.operation
             ));
         }
-        Ok(response.body)
+        self.retention.hold_native(response.body)
     }
 
     fn tokenize(&mut self, prompt: String) -> Result<Vec<i32>, String> {

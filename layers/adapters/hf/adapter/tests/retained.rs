@@ -204,8 +204,15 @@ fn held_output_claims_bound_execution_and_matching_front() {
     h.send(h.job("step", 3, 1), b"three");
     std::thread::sleep(Duration::from_millis(50));
     assert!(h.adapter.peek_retained_completion().is_none());
+    let pending = h.adapter.retention_snapshot().unwrap().pending_requests;
+    assert_eq!(pending.count, 1);
+    assert!(pending.bytes > 0);
     drop(held);
     let third = h.take();
+    assert_eq!(
+        h.adapter.retention_snapshot().unwrap().pending_requests,
+        AdapterRetainedStorage::default()
+    );
     assert_eq!(
         unpack(&third.event().payload)["receipts"][0]["report"]["calls"],
         3

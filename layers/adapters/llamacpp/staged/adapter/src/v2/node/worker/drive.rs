@@ -632,7 +632,7 @@ impl Worker {
                             .expect("validated first session has next"),
                         EventClass::Data,
                         PHYSICAL_BATCH_CONTENT_TYPE,
-                        body,
+                        body.into_vec(),
                         telemetry,
                         None,
                         group,
@@ -658,7 +658,7 @@ impl Worker {
                         target: session.next.expect("validated first session has next"),
                         class: EventClass::Data,
                         content_type: PHYSICAL_BATCH_CONTENT_TYPE,
-                        body,
+                        body: body.into_vec(),
                         telemetry,
                     });
             }

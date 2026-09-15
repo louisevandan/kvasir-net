@@ -275,11 +275,13 @@ impl Worker {
             };
             let result = match check {
                 super::super::ownership::ControlCheck::Replay(result) => result,
-                super::super::ownership::ControlCheck::New => self.stage_request(
-                    Operation::PhysicalSettle,
-                    Operation::PhysicalSettle,
-                    body.clone(),
-                )?,
+                super::super::ownership::ControlCheck::New => self
+                    .stage_request(
+                        Operation::PhysicalSettle,
+                        Operation::PhysicalSettle,
+                        body.clone(),
+                    )?
+                    .into_vec(),
             };
             sequence.proposal = crate::v2::control_identity::settlement_reply(&prefix, &result)
                 .map_err(|error| {

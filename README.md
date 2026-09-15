@@ -97,6 +97,7 @@ comparison path. Its queue statistics are not proof of the default event path.
 | 시험 제약·mutation·다중 머신 강한 웨이브·정상 응답·성능 승인 | [docs/distributed-batching-verification.md](docs/distributed-batching-verification.md) |
 | P4/어댑터 층별 책임·native 경계·잦은 llama.cpp 업데이트 충격 흡수 | [docs/layer-isolation-contract.md](docs/layer-isolation-contract.md) |
 | 모든 문서의 지위·계약 소유·새 세션 읽기 순서 | [docs/document-map.md](docs/document-map.md) |
+| LOAD·UNLOAD로 노드 생성·제거 통합 — 사용자 합의·변경 경로·검증·새 세션 구현계획 | [docs/node-load-lifecycle-plan.md](docs/node-load-lifecycle-plan.md) |
 | 마이크로 배치 제안과 실제 배처의 코드 대조·개선 후보·로컬 재현 | [docs/batching-code-review.md](docs/batching-code-review.md) |
 | Studio 관측 요구 수용안·추가 트래픽/성능 예산·상시 집계와 선택 진단 | [docs/inference-observability-proposal.md](docs/inference-observability-proposal.md) |
 | What the layer is and why it is shaped this way | [docs/overview.md](docs/overview.md) |
@@ -213,3 +214,5 @@ Release A A-BYTES: [native result·completion·receipt·edge 정수 byte 시험 
 Release A A-BYTES B0: [Qwen122B physical result 상한·실제 LOAD·제거 변이](tests/reports/release-a/20260915_211000.md).
 
 Release A A-BYTES B1: [versioned LOAD profile·실제 잔여 용량·Qwen122B LOAD/회수](tests/reports/release-a/20260915_222346.md).
+
+Release A A-BYTES B2: [native 전 completion group 예약·거부 무효과·독립 변이](tests/reports/release-a/20260915_232600.md).
