@@ -29,50 +29,110 @@ async fn acknowledged_wire_pipelines_requests_and_retires_both_directions_by_exa
     let (reader, writer) = tokio::io::split(client);
     let mut wire = EventWire::acknowledged(reader, writer, "outer-a".into(), 7).unwrap();
     let peer = tokio::spawn(async move {
-        let Some(HopFrame::Hello { connection_generation, .. }) =
-            hop::decode(&read_body(&mut server).await).unwrap() else { panic!("hello"); };
-        write_body(&mut server, &hop::encode(&HopFrame::HelloAck {
-            accepted_connection_generation: connection_generation, sender_id: "agent-a".into(),
-            connection_generation: 9, max_outstanding: 2, max_receipt_bytes: 1024 * 1024,
-        }).unwrap()).await;
+        let Some(HopFrame::Hello {
+            connection_generation,
+            ..
+        }) = hop::decode(&read_body(&mut server).await).unwrap()
+        else {
+            panic!("hello");
+        };
+        write_body(
+            &mut server,
+            &hop::encode(&HopFrame::HelloAck {
+                accepted_connection_generation: connection_generation,
+                sender_id: "agent-a".into(),
+                connection_generation: 9,
+                max_outstanding: 2,
+                max_receipt_bytes: 1024 * 1024,
+            })
+            .unwrap(),
+        )
+        .await;
         let mut requests = Vec::new();
         for _ in 0..2 {
-            let Some(frame @ HopFrame::Data { .. }) = hop::decode(&read_body(&mut server).await).unwrap()
-                else { panic!("data"); };
+            let Some(frame @ HopFrame::Data { .. }) =
+                hop::decode(&read_body(&mut server).await).unwrap()
+            else {
+                panic!("data");
+            };
             requests.push(frame);
         }
         for frame in requests {
-            let HopFrame::Data { attempt, digest, .. } = frame else { unreachable!() };
-            write_body(&mut server, &hop::encode(&HopFrame::Receipt { attempt, digest,
-                status: ReceiptStatus::AcceptedExact, detail: String::new() }).unwrap()).await;
+            let HopFrame::Data {
+                attempt, digest, ..
+            } = frame
+            else {
+                unreachable!()
+            };
+            write_body(
+                &mut server,
+                &hop::encode(&HopFrame::Receipt {
+                    attempt,
+                    digest,
+                    status: ReceiptStatus::AcceptedExact,
+                    detail: String::new(),
+                })
+                .unwrap(),
+            )
+            .await;
         }
         let response = encode(&event(3)).unwrap();
         let digest = hop::event_digest(&response);
-        write_body(&mut server, &hop::encode(&HopFrame::Data { attempt: 11, digest,
-            event: response }).unwrap()).await;
+        write_body(
+            &mut server,
+            &hop::encode(&HopFrame::Data {
+                attempt: 11,
+                digest,
+                event: response,
+            })
+            .unwrap(),
+        )
+        .await;
         let mut request_acks = 0;
         let mut response_receipt = false;
         loop {
             match hop::decode(&read_body(&mut server).await).unwrap().unwrap() {
                 HopFrame::ReceiptAck { .. } => request_acks += 1,
-                HopFrame::Receipt { attempt: 11, digest: seen, status: ReceiptStatus::AcceptedExact, .. } => {
+                HopFrame::Receipt {
+                    attempt: 11,
+                    digest: seen,
+                    status: ReceiptStatus::AcceptedExact,
+                    ..
+                } => {
                     assert_eq!(seen, digest);
-                    write_body(&mut server, &hop::encode(&HopFrame::ReceiptAck {
-                        sender_id: "agent-a".into(), connection_generation: 9,
-                        attempt: 11, digest }).unwrap()).await;
+                    write_body(
+                        &mut server,
+                        &hop::encode(&HopFrame::ReceiptAck {
+                            sender_id: "agent-a".into(),
+                            connection_generation: 9,
+                            attempt: 11,
+                            digest,
+                        })
+                        .unwrap(),
+                    )
+                    .await;
                     response_receipt = true;
                 }
                 other => panic!("unexpected {other:?}"),
             }
-            if request_acks == 2 && response_receipt { break; }
+            if request_acks == 2 && response_receipt {
+                break;
+            }
         }
         assert_eq!(server.read_u32_le().await.unwrap(), 0);
         server.write_u32_le(0).await.unwrap();
     });
     wire.send(event(1)).await.unwrap();
     wire.send(event(2)).await.unwrap();
-    assert_eq!(wire.receive(Instant::now() + Duration::from_secs(2)).await.unwrap(), event(3));
-    wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap();
+    assert_eq!(
+        wire.receive(Instant::now() + Duration::from_secs(2))
+            .await
+            .unwrap(),
+        event(3)
+    );
+    wire.finish(Instant::now() + Duration::from_secs(2))
+        .await
+        .unwrap();
     peer.await.unwrap();
 }
 
@@ -88,9 +148,18 @@ async fn old_peer_is_refused_after_hello_before_any_event_data() {
         write_body(&mut server, &legacy).await;
         let mut byte = [0u8; 1];
         let read = tokio::time::timeout(Duration::from_millis(50), server.read(&mut byte)).await;
-        assert!(read.is_err() || matches!(read, Ok(Ok(0))), "no P4H1 Data may follow refusal");
+        assert!(
+            read.is_err() || matches!(read, Ok(Ok(0))),
+            "no P4H1 Data may follow refusal"
+        );
     });
-    assert!(wire.send(event(1)).await.unwrap_err().to_string().contains("does not support"));
+    assert!(
+        wire.send(event(1))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("does not support")
+    );
     drop(wire);
     peer.await.unwrap();
 }
@@ -106,7 +175,9 @@ async fn explicit_finish_requires_split_ack_and_rejects_later_send() {
         tokio::task::yield_now().await;
         server.write_all(&[0, 0]).await.unwrap();
     });
-    wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap();
+    wire.finish(Instant::now() + Duration::from_secs(2))
+        .await
+        .unwrap();
     assert!(wire.send(event(1)).await.is_err());
     peer.await.unwrap();
 }
@@ -122,10 +193,20 @@ async fn explicit_finish_rejects_eof_and_preserves_unexpected_output() {
             assert_eq!(server.read_u32_le().await.unwrap(), 0);
             server.write_all(&bytes).await.unwrap();
         });
-        let error = wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap_err();
-        assert_eq!(wire.buffer, expected, "unexpected output remains available to diagnose the failed close");
+        let error = wire
+            .finish(Instant::now() + Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            wire.buffer, expected,
+            "unexpected output remains available to diagnose the failed close"
+        );
         if !wire.buffer.is_empty() {
-            assert!(error.to_string().contains(&format!("frame_bytes={}", wire.buffer.len())));
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("frame_bytes={}", wire.buffer.len()))
+            );
         }
         peer.await.unwrap();
     }
@@ -143,10 +224,17 @@ async fn explicit_finish_preserves_partial_unexpected_frame_on_eof() {
         assert_eq!(server.read_u32_le().await.unwrap(), 0);
         server.write_all(&bytes[..split]).await.unwrap();
     });
-    let error = wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap_err();
+    let error = wire
+        .finish(Instant::now() + Duration::from_secs(2))
+        .await
+        .unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     assert_eq!(wire.buffer, expected);
-    assert!(error.to_string().contains(&format!("buffered_bytes={split}")));
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("buffered_bytes={split}"))
+    );
     peer.await.unwrap();
 }
 
@@ -163,10 +251,17 @@ async fn explicit_finish_preserves_partial_unexpected_frame_on_timeout() {
         server.write_all(&bytes[..split]).await.unwrap();
         tokio::time::sleep(Duration::from_secs(1)).await;
     });
-    let error = wire.finish(Instant::now() + Duration::from_millis(50)).await.unwrap_err();
+    let error = wire
+        .finish(Instant::now() + Duration::from_millis(50))
+        .await
+        .unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     assert_eq!(wire.buffer, expected);
-    assert!(error.to_string().contains(&format!("buffered_bytes={split}")));
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("buffered_bytes={split}"))
+    );
     peer.abort();
 }
 
@@ -180,7 +275,10 @@ async fn explicit_finish_rejects_oversize_before_reading_a_body() {
         assert_eq!(server.read_u32_le().await.unwrap(), 0);
         server.write_all(&prefix).await.unwrap();
     });
-    let error = wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap_err();
+    let error = wire
+        .finish(Instant::now() + Duration::from_secs(2))
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("exceeds frame bound"));
     assert_eq!(wire.buffer, prefix);
     peer.await.unwrap();

@@ -29,6 +29,18 @@ impl CommittedEffect {
                 }
                 _ => Ok(0),
             },
+            Self::PreparedReservedPublication { publication, after } => {
+                let own = u64::from(!publication.owns_event_id());
+                let suffix = match after {
+                    super::effects::PublicationAfter::ReservedObserved(telemetry) => {
+                        u64::try_from(telemetry.len())
+                            .map_err(|_| "completion obligation count overflow")?
+                    }
+                    _ => 0,
+                };
+                own.checked_add(suffix)
+                    .ok_or_else(|| "completion obligation count overflow".into())
+            }
             Self::ForwardObserved { telemetry, .. } => u64::try_from(telemetry.len())
                 .ok()
                 .and_then(|count| count.checked_add(1))

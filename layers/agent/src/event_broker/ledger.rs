@@ -41,15 +41,20 @@ impl EventLedger {
 
     /// Pin the exact already-delivered receipt for a synchronous front probe.
     /// No producer storage permission is shared with this independent copy.
-    pub(super) fn inspect_completion_header(&self, envelope: &Envelope) -> Result<Option<Arc<Receipt>>, DispatchError> {
+    pub(super) fn inspect_completion_header(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<Option<Arc<Receipt>>, DispatchError> {
         if let Some(existing) = self.events.get(&envelope.event_id) {
             return Ok(Some(Arc::clone(existing)));
         }
         let key = (envelope.source.clone(), envelope.correlation_id.clone());
         if let Some(previous) = self.sequences.get(&key)
-            && envelope.sequence <= *previous {
+            && envelope.sequence <= *previous
+        {
             return Err(DispatchError::SequenceRegression {
-                previous: *previous, incoming: envelope.sequence,
+                previous: *previous,
+                incoming: envelope.sequence,
             });
         }
         Ok(None)
@@ -62,13 +67,18 @@ impl EventLedger {
         );
         self.sequences.insert(sequence_key, event.envelope.sequence);
         self.order.push_back(event.envelope.event_id.clone());
-        self.events.insert(event.envelope.event_id.clone(),
-            Arc::new(Receipt::new(event, Arc::clone(&self.memory))));
+        self.events.insert(
+            event.envelope.event_id.clone(),
+            Arc::new(Receipt::new(event, Arc::clone(&self.memory))),
+        );
         while self.order.len() > self.limit {
             if let Some(expired) = self.order.pop_front() {
                 if let Some(event) = self.events.remove(&expired) {
                     event.retire();
-                    let key = (event.event().envelope.source.clone(), event.event().envelope.correlation_id.clone());
+                    let key = (
+                        event.event().envelope.source.clone(),
+                        event.event().envelope.correlation_id.clone(),
+                    );
                     if self.sequences.get(&key) == Some(&event.event().envelope.sequence) {
                         self.sequences.remove(&key);
                     }
@@ -78,8 +88,16 @@ impl EventLedger {
     }
 
     pub(super) fn receipt_snapshot(&self) -> ReceiptMemorySnapshot {
-        self.memory.lock().unwrap_or_else(|error| error.into_inner()).snapshot(
-            self.limit, self.events.capacity(), self.order.capacity(), self.sequences.len(), self.sequences.capacity())
+        self.memory
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .snapshot(
+                self.limit,
+                self.events.capacity(),
+                self.order.capacity(),
+                self.sequences.len(),
+                self.sequences.capacity(),
+            )
     }
 }
 
@@ -87,8 +105,12 @@ impl EventLedger {
 impl std::fmt::Debug for EventLedger {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Semantic-ledger refusal oracles intentionally exclude diagnostics.
-        formatter.debug_struct("EventLedger").field("limit", &self.limit)
-            .field("order", &self.order).field("events", &self.events)
-            .field("sequences", &self.sequences).finish()
+        formatter
+            .debug_struct("EventLedger")
+            .field("limit", &self.limit)
+            .field("order", &self.order)
+            .field("events", &self.events)
+            .field("sequences", &self.sequences)
+            .finish()
     }
 }

@@ -801,7 +801,11 @@ fn malformed_load(
             causation_id: None,
             source: endpoint.clone(),
             target: endpoint.clone(),
-            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
+            return_route: Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
             class: p4_protocol::event::EventClass::Control,
             sequence,
             deadline_unix_ms: None,

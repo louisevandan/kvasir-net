@@ -5,7 +5,7 @@
 mod hardware;
 
 use super::NodeOwner;
-use p4_agent_core::event_broker::{RetainedEventBroker, ReceiptStorageSnapshot};
+use p4_agent_core::event_broker::{ReceiptStorageSnapshot, RetainedEventBroker};
 use p4_protocol::event::Envelope;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -13,8 +13,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA: u16 = 1;
 
-pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &RetainedEventBroker,
-    transport: &super::super::transport::Inspector) -> Value {
+pub(super) async fn snapshot(
+    nodes: &HashMap<String, NodeOwner>,
+    broker: &RetainedEventBroker,
+    transport: &super::super::transport::Inspector,
+) -> Value {
     let mut registered: Vec<Value> = nodes
         .iter()
         .map(|(node_id, owner)| {

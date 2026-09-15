@@ -1,10 +1,12 @@
-mod control;
 mod adapters;
+mod control;
 mod transport;
 
-use p4_adapter::node_adapter::{CompletionMailbox, CompletionPublisher, RetainedCompletion,
-    OwnedPoll, completion_mailbox_with_limits};
-use p4_agent_core::event_broker::{RetainedEventBroker, RetainedDispatchFailure, DispatchError};
+use p4_adapter::node_adapter::{
+    CompletionMailbox, CompletionPublisher, OwnedPoll, RetainedCompletion,
+    completion_mailbox_with_limits,
+};
+use p4_agent_core::event_broker::{DispatchError, RetainedDispatchFailure, RetainedEventBroker};
 use p4_protocol::Address;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -30,13 +32,23 @@ impl RuntimeLimits {
             Err(std::env::VarError::NotPresent) => 256 * 1024 * 1024,
             Err(error) => return Err(error.into()),
         };
-        if bytes == 0 { return Err("P4_EVENT_RETAINED_BYTES must be positive".into()); }
+        if bytes == 0 {
+            return Err("P4_EVENT_RETAINED_BYTES must be positive".into());
+        }
         let hop_receipts = positive_env("P4_EVENT_HOP_RECEIPTS", ROUTE_CAPACITY)?;
         let hop_receipt_bytes = positive_env("P4_EVENT_HOP_RECEIPT_BYTES", 64 * 1024 * 1024)?;
         let hop_outstanding = positive_env("P4_EVENT_HOP_OUTSTANDING", 256)?;
-        u32::try_from(hop_outstanding).map_err(|_| "P4_EVENT_HOP_OUTSTANDING exceeds protocol range")?;
-        Ok(Self { queue: ROUTE_CAPACITY, retained: ROUTE_CAPACITY, bytes, connections: 256,
-            hop_receipts, hop_receipt_bytes, hop_outstanding })
+        u32::try_from(hop_outstanding)
+            .map_err(|_| "P4_EVENT_HOP_OUTSTANDING exceeds protocol range")?;
+        Ok(Self {
+            queue: ROUTE_CAPACITY,
+            retained: ROUTE_CAPACITY,
+            bytes,
+            connections: 256,
+            hop_receipts,
+            hop_receipt_bytes,
+            hop_outstanding,
+        })
     }
     fn mailbox(self) -> (CompletionPublisher, Arc<CompletionMailbox>) {
         completion_mailbox_with_limits(self.queue, self.retained, self.bytes)
@@ -50,7 +62,9 @@ fn positive_env(name: &str, default: usize) -> Result<usize, Box<dyn std::error:
         Err(std::env::VarError::NotPresent) => default,
         Err(error) => return Err(error.into()),
     };
-    if value == 0 { return Err(format!("{name} must be positive").into()); }
+    if value == 0 {
+        return Err(format!("{name} must be positive").into());
+    }
     Ok(value)
 }
 
@@ -62,9 +76,10 @@ async fn next(receiver: &CompletionMailbox) -> Option<RetainedCompletion> {
     }
 }
 
-async fn dispatch(broker: &RetainedEventBroker, mut event: RetainedCompletion)
-    -> Result<(), RetainedDispatchFailure>
-{
+async fn dispatch(
+    broker: &RetainedEventBroker,
+    mut event: RetainedCompletion,
+) -> Result<(), RetainedDispatchFailure> {
     loop {
         match broker.dispatch_retained(event) {
             Ok(_) => return Ok(()),
@@ -89,9 +104,22 @@ impl Runtime {
         let (agent_tx, agent_rx) = limits.mailbox();
         let (outer_tx, outer_rx) = limits.mailbox();
         let (outbound_tx, outbound_rx) = limits.mailbox();
-        let broker = Arc::new(RetainedEventBroker::new(own.clone(), agent_tx, outer_tx, outbound_tx, DUPLICATE_WINDOW));
-        let transport = transport::Owner::start(listener, Arc::clone(&broker), outer_rx, outbound_rx, limits);
-        let control = tokio::spawn(control::run(own, broker, agent_rx, limits, transport.inspector()));
+        let broker = Arc::new(RetainedEventBroker::new(
+            own.clone(),
+            agent_tx,
+            outer_tx,
+            outbound_tx,
+            DUPLICATE_WINDOW,
+        ));
+        let transport =
+            transport::Owner::start(listener, Arc::clone(&broker), outer_rx, outbound_rx, limits);
+        let control = tokio::spawn(control::run(
+            own,
+            broker,
+            agent_rx,
+            limits,
+            transport.inspector(),
+        ));
         Self { control, transport }
     }
 }
@@ -107,9 +135,16 @@ impl Drop for Runtime {
 
 pub async fn run(listener: TcpListener, own: Address) -> Result<(), Box<dyn std::error::Error>> {
     let limits = RuntimeLimits::configured()?;
-    eprintln!("P4_EVENT_RETAINED_LIMITS queue={} retained={} bytes_per_store={} connections={} hop_receipts={} hop_receipt_bytes={} hop_outstanding={}",
-        limits.queue, limits.retained, limits.bytes, limits.connections, limits.hop_receipts,
-        limits.hop_receipt_bytes, limits.hop_outstanding);
+    eprintln!(
+        "P4_EVENT_RETAINED_LIMITS queue={} retained={} bytes_per_store={} connections={} hop_receipts={} hop_receipt_bytes={} hop_outstanding={}",
+        limits.queue,
+        limits.retained,
+        limits.bytes,
+        limits.connections,
+        limits.hop_receipts,
+        limits.hop_receipt_bytes,
+        limits.hop_outstanding
+    );
     let _runtime = Runtime::start(listener, own, limits);
     tokio::signal::ctrl_c().await?;
     Ok(())

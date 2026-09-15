@@ -7,7 +7,9 @@ use std::{
 
 impl RetainedNodeAdapter for HfNodeAdapter {
     fn try_offer_retained(&self, completion: RetainedCompletion) -> Result<(), RetainedOfferError> {
-        if completion.event().validate().is_err() { return Err(RetainedOfferError::Closed(completion)); }
+        if completion.event().validate().is_err() {
+            return Err(RetainedOfferError::Closed(completion));
+        }
         if self.stop.load(Ordering::Acquire) {
             return Err(RetainedOfferError::Closed(completion));
         }

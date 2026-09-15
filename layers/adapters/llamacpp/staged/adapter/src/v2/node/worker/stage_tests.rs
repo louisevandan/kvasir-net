@@ -9,7 +9,9 @@ use crate::v2::capsule::{
     GeneratedToken, Invocation, PhysicalCapsule, PhysicalOutcome, Tensor, TensorDescriptor,
 };
 use crate::v2::node::state::IssueProgress;
-use p4_adapter::node_adapter::{CompletionMailbox, Poll, completion_mailbox};
+use p4_adapter::node_adapter::{
+    CompletionMailbox, OwnedPoll, Poll, completion_mailbox, completion_mailbox_with_limits,
+};
 use p4_protocol::event::OuterEndpoint;
 
 #[derive(Clone, Copy)]
@@ -350,18 +352,26 @@ struct Fixture {
 
 #[test]
 fn service_budget_actual_handler_checks_route_issue_identity_and_never_retires_flight() {
-    use crate::v2::{ServiceSample, SERVICE_SAMPLE_CONTENT_TYPE};
     use crate::v2::scheduler::service::ServiceBudget;
+    use crate::v2::{SERVICE_SAMPLE_CONTENT_TYPE, ServiceSample};
     let mut head = fixture(ResponseMode::ExactSplit);
     head.worker.state.max_open_batches = 4;
-    head.worker.state.pipeline_policy = Some(crate::v2::scheduler::pipeline::PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 2 });
+    head.worker.state.pipeline_policy = Some(crate::v2::scheduler::pipeline::PipelinePolicy {
+        mixed_batch_rows: None,
+        mixed_prefill_rows: 2,
+    });
     head.worker.service_budget = ServiceBudget::new(150);
     head.handle(submission("request", vec![7; 8])).unwrap();
     head.worker.drive_first_batches().unwrap();
     let physical = forwarded(&head.mailbox);
-    let sample = ServiceSample { load_generation: 1, session_id: "session".into(),
-        execution_ids: physical.0.iter().map(|c| c.execution_id).collect(), stage_index: 1,
-        shape: super::service::physical_shape(&physical).unwrap(), rpc_us: 100 };
+    let sample = ServiceSample {
+        load_generation: 1,
+        session_id: "session".into(),
+        execution_ids: physical.0.iter().map(|c| c.execution_id).collect(),
+        stage_index: 1,
+        shape: super::service::physical_shape(&physical).unwrap(),
+        rpc_us: 100,
+    };
     let mut event = input("sample", vec![]);
     event.envelope.payload_content_type = SERVICE_SAMPLE_CONTENT_TYPE.into();
     event.envelope.target = head.worker.endpoint.clone();
@@ -373,7 +383,8 @@ fn service_budget_actual_handler_checks_route_issue_identity_and_never_retires_f
     assert!(head.worker.service_sample(&event).is_err());
     assert_eq!(head.worker.service_budget, original);
     event.envelope.source = Endpoint::node(Address::tcp("127.0.0.1", 42001), "last", 1);
-    let mut bad = sample.clone(); bad.shape.prefill_rows += 1;
+    let mut bad = sample.clone();
+    bad.shape.prefill_rows += 1;
     event.payload = serde_json::to_vec(&bad).unwrap();
     assert!(head.worker.service_sample(&event).is_err());
     assert_eq!(head.worker.service_budget, original);
@@ -382,8 +393,12 @@ fn service_budget_actual_handler_checks_route_issue_identity_and_never_retires_f
     let accepted = head.worker.service_budget.clone();
     assert_ne!(accepted, original);
     head.worker.service_sample(&event).unwrap();
-    assert_eq!(head.worker.service_budget, accepted, "duplicate must not train twice");
-    let mut conflict = sample; conflict.rpc_us += 1;
+    assert_eq!(
+        head.worker.service_budget, accepted,
+        "duplicate must not train twice"
+    );
+    let mut conflict = sample;
+    conflict.rpc_us += 1;
     event.payload = serde_json::to_vec(&conflict).unwrap();
     assert!(head.worker.service_sample(&event).is_err());
     assert_eq!(head.worker.service_budget, accepted);
@@ -395,16 +410,28 @@ fn service_budget_actual_handler_checks_route_issue_identity_and_never_retires_f
 
 #[test]
 fn service_budget_actual_unload_ignores_late_cost_without_reopening_state() {
-    use crate::v2::{ServiceSample, ServiceShape, SERVICE_SAMPLE_CONTENT_TYPE};
     use crate::v2::scheduler::service::ServiceBudget;
+    use crate::v2::{SERVICE_SAMPLE_CONTENT_TYPE, ServiceSample, ServiceShape};
     let mut head = fixture(ResponseMode::ExactSplit);
     head.worker.service_budget = ServiceBudget::new(150);
     head.worker.state.last_load_generation = 1;
-    let sample = ServiceSample { load_generation: 1, session_id: "session".into(),
-        execution_ids: vec![1], stage_index: 0,
-        shape: ServiceShape { prefill_rows: 4, decode_rows: 0, members: 1, last_position: 3 }, rpc_us: 10 };
+    let sample = ServiceSample {
+        load_generation: 1,
+        session_id: "session".into(),
+        execution_ids: vec![1],
+        stage_index: 0,
+        shape: ServiceShape {
+            prefill_rows: 4,
+            decode_rows: 0,
+            members: 1,
+            last_position: 3,
+        },
+        rpc_us: 10,
+    };
     // Seed only optimization history; native, flight and KV authority stay idle.
-    head.worker.service_budget.register(sample.clone(), 1, 2, &Default::default());
+    head.worker
+        .service_budget
+        .register(sample.clone(), 1, 2, &Default::default());
     let mut unload = input("unload", vec![]);
     unload.payload = serde_json::to_vec(&UnloadCommand { load_generation: 1 }).unwrap();
     unload.envelope.payload_content_type = UNLOAD_CONTENT_TYPE.into();
@@ -413,7 +440,8 @@ fn service_budget_actual_unload_ignores_late_cost_without_reopening_state() {
     assert!(head.worker.state.sessions.is_empty());
     assert_eq!(head.worker.service_budget, ServiceBudget::new(150));
     assert_eq!(head.trace.lock().unwrap().shutdowns, 1);
-    let mut sample = sample; sample.stage_index = 1;
+    let mut sample = sample;
+    sample.stage_index = 1;
     let mut event = input("late-sample", vec![]);
     event.payload = serde_json::to_vec(&sample).unwrap();
     event.envelope.payload_content_type = SERVICE_SAMPLE_CONTENT_TYPE.into();
@@ -553,6 +581,139 @@ fn drain(mailbox: &CompletionMailbox) -> Vec<Event> {
         events.push(event);
     }
     events
+}
+
+fn drain_owned(mailbox: &CompletionMailbox) -> Vec<Event> {
+    let mut events = Vec::new();
+    while let OwnedPoll::Event(completion) = mailbox.try_take_owned() {
+        events.push(completion.event().clone());
+        completion.retire();
+    }
+    events
+}
+
+fn install_owned_completion_budget(fixture: &mut Fixture, retained_count: usize, bytes: usize) {
+    let (publisher, mailbox) =
+        completion_mailbox_with_limits(retained_count.max(1), retained_count, bytes).unwrap();
+    fixture.worker.publisher = publisher;
+    fixture.worker.owned_completions = true;
+    fixture
+        .worker
+        .state
+        .resource_profile
+        .as_mut()
+        .expect("stage fixture has a resource profile")
+        .max_completion_retained_bytes = bytes as u64;
+    fixture.mailbox = mailbox;
+}
+
+#[test]
+fn b2_first_native_reserves_forward_and_every_observation_before_issue() {
+    let mut fixture = fixture(ResponseMode::ExactSplit);
+    install_owned_completion_budget(&mut fixture, 8, 1 << 20);
+    fixture
+        .handle(submission("request", vec![3, 5, 7, 11]))
+        .unwrap();
+    fixture.worker.drive_first_batches().unwrap();
+    assert_eq!(native_attempts(&fixture), 1);
+    let events = drain_owned(&fixture.mailbox);
+    assert_eq!(events.len(), 3);
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.envelope.payload_content_type.as_str())
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            PHYSICAL_BATCH_CONTENT_TYPE,
+            BATCH_OBSERVATION_CONTENT_TYPE,
+            STAGE_SPAN_CONTENT_TYPE,
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_count, 0);
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_bytes, 0);
+}
+
+#[test]
+fn b2_first_reservation_refusal_precedes_native_and_every_issue_commit() {
+    let mut fixture = fixture(ResponseMode::ExactSplit);
+    install_owned_completion_budget(&mut fixture, 2, 1 << 20);
+    fixture
+        .handle(submission("request", vec![3, 5, 7, 11]))
+        .unwrap();
+    let event_id = fixture.worker.state.next_event;
+    let pending = fixture.worker.state.pending.clone();
+    let free = fixture.worker.state.free_sequences.clone();
+    assert!(fixture.worker.drive_first_batches().is_err());
+    assert_eq!(native_attempts(&fixture), 0);
+    assert_eq!(fixture.worker.state.next_event, event_id);
+    assert_eq!(fixture.worker.state.pending, pending);
+    assert_eq!(fixture.worker.state.free_sequences, free);
+    assert!(fixture.worker.state.prepared_issue.is_none());
+    assert!(fixture.worker.state.open_batches.is_empty());
+    assert_eq!(request(&fixture).outstanding, 0);
+    assert!(fixture.worker.effects.is_empty());
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_count, 0);
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_bytes, 0);
+}
+
+#[test]
+fn b2_middle_native_moves_its_reserved_forward_and_span_to_owned_storage() {
+    let mut fixture = fixture_at(ResponseMode::ExactSplit, NodeRole::Middle);
+    install_owned_completion_budget(&mut fixture, 8, 1 << 20);
+    fixture.handle(new_physical_input()).unwrap();
+    assert_eq!(
+        fixture.trace.lock().unwrap().native_operations,
+        vec![Operation::PhysicalBatch]
+    );
+    let events = drain_owned(&fixture.mailbox);
+    assert_eq!(events.len(), 2);
+    assert!(
+        events
+            .iter()
+            .any(|event| { event.envelope.payload_content_type == PHYSICAL_BATCH_CONTENT_TYPE })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| { event.envelope.payload_content_type == STAGE_SPAN_CONTENT_TYPE })
+    );
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_count, 0);
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_bytes, 0);
+}
+
+#[test]
+fn b2_middle_reservation_refusal_preserves_receive_ledger_and_native_kv() {
+    let mut fixture = fixture_at(ResponseMode::ExactSplit, NodeRole::Middle);
+    install_owned_completion_budget(&mut fixture, 1, 1 << 20);
+    let event_id = fixture.worker.state.next_event;
+    let owners = fixture.worker.state.stage_owners.clone();
+    let frontiers = format!("{:?}", fixture.worker.state.stage_frontiers);
+    let physical_receives = format!("{:?}", fixture.worker.state.physical_receives);
+    let receive_status = fixture.worker.state.physical_receives.shutdown_status();
+    let mut event = new_physical_input();
+    event.envelope.target = fixture.worker.endpoint.clone();
+    assert!(fixture.worker.physical(&event).is_err());
+    assert!(fixture.trace.lock().unwrap().native_operations.is_empty());
+    assert!(fixture.trace.lock().unwrap().native_kv.is_empty());
+    assert_eq!(fixture.worker.state.next_event, event_id);
+    assert_eq!(fixture.worker.state.stage_owners, owners);
+    assert_eq!(
+        format!("{:?}", fixture.worker.state.stage_frontiers),
+        frontiers
+    );
+    assert_eq!(
+        format!("{:?}", fixture.worker.state.physical_receives),
+        physical_receives
+    );
+    assert_eq!(
+        fixture.worker.state.physical_receives.shutdown_status(),
+        receive_status
+    );
+    assert!(fixture.worker.effects.is_empty());
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_count, 0);
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_bytes, 0);
 }
 
 fn forwarded(mailbox: &CompletionMailbox) -> CapsuleSet {

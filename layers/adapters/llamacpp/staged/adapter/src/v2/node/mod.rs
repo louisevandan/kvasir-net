@@ -17,9 +17,9 @@ mod issue_witness_tests;
 pub(crate) mod ownership;
 pub(crate) mod physical_receive;
 pub(crate) mod request_budget;
+mod retained;
 pub(crate) mod state;
 mod worker;
-mod retained;
 pub use retained::RetainedLlamaNodeAdapter;
 
 pub struct LlamaNodeAdapter {
@@ -81,7 +81,9 @@ impl NodeAdapter for LlamaNodeAdapter {
     }
 
     fn try_offer(&self, event: Event) -> Result<(), OfferError> {
-        if event.validate().is_err() { return Err(OfferError::Closed(event)); }
+        if event.validate().is_err() {
+            return Err(OfferError::Closed(event));
+        }
         let Some(sender) = &self.sender else {
             return Err(OfferError::Closed(event));
         };

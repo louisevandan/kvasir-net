@@ -3,22 +3,43 @@ use super::*;
 #[tokio::test]
 async fn inspection_counts_retained_receipts_through_the_actual_control_loop() {
     use p4_agent_core::event_broker::RetainedEventBroker;
-    use p4_protocol::{Address, event::{Endpoint, Event, EventClass, AGENT_INSPECT_CONTENT_TYPE}};
+    use p4_protocol::{
+        Address,
+        event::{AGENT_INSPECT_CONTENT_TYPE, Endpoint, Event, EventClass},
+    };
     use std::sync::Arc;
     let own = Address::tcp("127.0.0.1", 53120);
     let remote = Address::tcp("127.0.0.2", 53120);
-    let (agent_tx, agent_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
-    let (outer_tx, outer_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
-    let (outbound_tx, outbound_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
-    let broker = Arc::new(RetainedEventBroker::new(own.clone(), agent_tx, outer_tx, outbound_tx, 8));
+    let (agent_tx, agent_rx) =
+        p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
+    let (outer_tx, outer_rx) =
+        p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
+    let (outbound_tx, outbound_rx) =
+        p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
+    let broker = Arc::new(RetainedEventBroker::new(
+        own.clone(),
+        agent_tx,
+        outer_tx,
+        outbound_tx,
+        8,
+    ));
     let route = Endpoint::outer(own.clone(), "inspection-test", 1);
     let mut event = Event {
         envelope: Envelope {
             protocol_version: Envelope::VERSION,
-            event_id: "retained-input".into(), correlation_id: "retained-probe".into(),
-            causation_id: None, source: route.clone(), target: Endpoint::agent(remote),
-            return_route: match route { Endpoint::Outer(ref outer) => Some(outer.clone()), _ => unreachable!() },
-            class: EventClass::Data, sequence: 1, deadline_unix_ms: None, adapter_kind: None,
+            event_id: "retained-input".into(),
+            correlation_id: "retained-probe".into(),
+            causation_id: None,
+            source: route.clone(),
+            target: Endpoint::agent(remote),
+            return_route: match route {
+                Endpoint::Outer(ref outer) => Some(outer.clone()),
+                _ => unreachable!(),
+            },
+            class: EventClass::Data,
+            sequence: 1,
+            deadline_unix_ms: None,
+            adapter_kind: None,
             payload_content_type: "application/octet-stream".into(),
         },
         payload: vec![42; 4096],
@@ -33,18 +54,42 @@ async fn inspection_counts_retained_receipts_through_the_actual_control_loop() {
     event.envelope.payload_content_type = AGENT_INSPECT_CONTENT_TYPE.into();
     event.payload = b"{}".to_vec();
     let second_cost = p4_adapter::node_adapter::retained_event_bytes(&event.clone()).unwrap();
-    let limits = crate::event_runtime::RuntimeLimits { queue: 1, retained: 8, bytes: 1024 * 1024,
-        connections: 8, hop_receipts: 8, hop_receipt_bytes: 1024 * 1024, hop_outstanding: 4 };
+    let limits = crate::event_runtime::RuntimeLimits {
+        queue: 1,
+        retained: 8,
+        bytes: 1024 * 1024,
+        connections: 8,
+        hop_receipts: 8,
+        hop_receipt_bytes: 1024 * 1024,
+        hop_outstanding: 4,
+    };
     let transport = crate::event_runtime::transport::Inspector::detached(limits);
-    let task = tokio::spawn(super::super::run(own, Arc::clone(&broker), agent_rx, limits, transport));
+    let task = tokio::spawn(super::super::run(
+        own,
+        Arc::clone(&broker),
+        agent_rx,
+        limits,
+        transport,
+    ));
     broker.dispatch_ingress(event).unwrap();
-    let reply = tokio::time::timeout(std::time::Duration::from_secs(20), crate::event_runtime::next(&outer_rx))
-        .await.unwrap().unwrap();
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        crate::event_runtime::next(&outer_rx),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     task.abort();
     let value: Value = serde_json::from_slice(&reply.event().payload).unwrap();
     assert_eq!(value["broker"]["receipts"]["indexed"]["events"], 2);
-    assert_eq!(value["broker"]["receipts"]["indexed"]["event_bytes"], first_cost + second_cost);
-    assert_eq!(value["broker"]["receipts"]["indexed"]["payload_capacity_bytes"], 4098);
+    assert_eq!(
+        value["broker"]["receipts"]["indexed"]["event_bytes"],
+        first_cost + second_cost
+    );
+    assert_eq!(
+        value["broker"]["receipts"]["indexed"]["payload_capacity_bytes"],
+        4098
+    );
     assert_eq!(value["broker"]["receipts"]["retired"]["events"], 0);
     assert_eq!(value["broker"]["receipts"]["committed_events"], 2);
     assert!(value["broker"]["sampled_at_unix_ms"].is_u64());
@@ -53,12 +98,28 @@ async fn inspection_counts_retained_receipts_through_the_actual_control_loop() {
 #[tokio::test]
 async fn an_empty_agent_still_reports_machine_and_protocol_identity() {
     use p4_agent_core::event_broker::RetainedEventBroker;
-    let (agent, _agent_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
-    let (outer, _outer_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
-    let (outbound, _outbound_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
-    let broker = RetainedEventBroker::new(p4_protocol::Address::tcp("127.0.0.1", 53001), agent, outer, outbound, 8);
-    let limits = crate::event_runtime::RuntimeLimits { queue: 1, retained: 8, bytes: 1024 * 1024,
-        connections: 8, hop_receipts: 8, hop_receipt_bytes: 1024 * 1024, hop_outstanding: 4 };
+    let (agent, _agent_rx) =
+        p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
+    let (outer, _outer_rx) =
+        p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
+    let (outbound, _outbound_rx) =
+        p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
+    let broker = RetainedEventBroker::new(
+        p4_protocol::Address::tcp("127.0.0.1", 53001),
+        agent,
+        outer,
+        outbound,
+        8,
+    );
+    let limits = crate::event_runtime::RuntimeLimits {
+        queue: 1,
+        retained: 8,
+        bytes: 1024 * 1024,
+        connections: 8,
+        hop_receipts: 8,
+        hop_receipt_bytes: 1024 * 1024,
+        hop_outstanding: 4,
+    };
     let transport = crate::event_runtime::transport::Inspector::detached(limits);
     let snapshot = snapshot(&HashMap::new(), &broker, &transport).await;
 

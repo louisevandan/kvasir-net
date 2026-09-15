@@ -2,7 +2,17 @@ use super::*;
 use p4_protocol::event::{Envelope, EventClass};
 
 fn event(id: &str, source: Endpoint, target: Endpoint, sequence: u64) -> Event {
-    let return_route = match &source { Endpoint::Outer(route) => Some(route.clone()), _ => match &target { Endpoint::Outer(route) => Some(route.clone()), _ => Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }) } };
+    let return_route = match &source {
+        Endpoint::Outer(route) => Some(route.clone()),
+        _ => match &target {
+            Endpoint::Outer(route) => Some(route.clone()),
+            _ => Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
+        },
+    };
     Event {
         envelope: Envelope {
             protocol_version: Envelope::VERSION,

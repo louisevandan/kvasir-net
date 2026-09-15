@@ -55,8 +55,9 @@ impl Worker {
                 .filter_map(|(i, c)| fresh_indices.binary_search(&i).is_ok().then_some(c))
                 .collect(),
         );
-        let (candidate_owners, candidate_frontiers) = if fresh.0.is_empty() {
-            (None, None)
+        let (candidate_owners, candidate_frontiers, observation_recipients) = if fresh.0.is_empty()
+        {
+            (None, None, 0)
         } else {
             let rows = fresh.0.iter().flat_map(|c| &c.owners).collect::<Vec<_>>();
             self.validate_observation_rows(&event, &session_id, &rows, false)?;
@@ -70,7 +71,8 @@ impl Worker {
                 self.state.sequence_capacity,
                 &rows,
             )?;
-            (Some(owners), Some(frontiers))
+            let recipients = self.observation_recipient_count(event, &session_id, &rows, false)?;
+            (Some(owners), Some(frontiers), recipients)
         };
         let request_body = if fresh.0.is_empty() {
             None
@@ -84,22 +86,41 @@ impl Worker {
         let ids = fresh
             .0
             .iter()
-            .try_fold(1u64 + u64::from(self.service_budget.enabled() && !fresh.0.is_empty()), |n, capsule| {
-                n.checked_add(capsule.owners.len() as u64)
-            })
+            .try_fold(
+                1u64 + u64::from(self.service_budget.enabled() && !fresh.0.is_empty()),
+                |n, capsule| n.checked_add(capsule.owners.len() as u64),
+            )
             .ok_or("physical notification obligation overflow")?;
         self.ensure_event_id_obligations(ids, 0)?;
+        let completion_items = if request_body.is_some() {
+            observation_recipients
+                .checked_add(1)
+                .and_then(|count| {
+                    count.checked_add(usize::from(
+                        self.service_budget.enabled() && service::physical_shape(&fresh).is_some(),
+                    ))
+                })
+                .ok_or("physical completion item count overflow")?
+        } else {
+            0
+        };
+        let completion_pool = if completion_items == 0 {
+            None
+        } else {
+            self.reserve_native_completion_pool(completion_items)?
+        };
         let attempt = self.state.physical_receives.begin(plan)?;
         let start_unix_ms = observe::unix_ms();
         let mut rpc_us = 0;
         let fresh_result = if let Some(body) = request_body {
             let rpc_started = Instant::now();
-            let response = self.stage_request(Operation::PhysicalBatch, Operation::PhysicalResult, body);
+            let response =
+                self.stage_request(Operation::PhysicalBatch, Operation::PhysicalResult, body);
             rpc_us = rpc_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
             let response = response.and_then(|body| {
-                    CapsuleSet::decode_bounded(&body, self.state.max_physical_result_bytes)
-                        .map_err(|e| format!("invalid physical result: {e:?}"))
-                });
+                CapsuleSet::decode_bounded(&body, self.state.max_physical_result_bytes)
+                    .map_err(|e| format!("invalid physical result: {e:?}"))
+            });
             match response {
                 Ok(result) => result,
                 Err(error) => {
@@ -162,10 +183,12 @@ impl Worker {
                 return Err(error);
             }
         };
-        let feedback = self.prepare_service_feedback(event, &session, &fresh_result, rpc_us).map_err(|error| {
-            self.effects_fenced = true;
-            error
-        })?;
+        let feedback = self
+            .prepare_service_feedback(event, &session, &fresh_result, rpc_us)
+            .map_err(|error| {
+                self.effects_fenced = true;
+                error
+            })?;
         let result = self
             .state
             .physical_receives
@@ -202,16 +225,35 @@ impl Worker {
             NodeRole::Last => (session.first, TAIL_BATCH_CONTENT_TYPE),
             NodeRole::First => unreachable!(),
         };
-        self.effects
-            .push_back(effects::CommittedEffect::ForwardObserved {
-                base: event.envelope.clone(),
-                target,
-                class: EventClass::Data,
-                content_type,
-                body,
-                telemetry,
-            });
-        if let Some(feedback) = feedback { self.effects.push_back(feedback); }
+        match completion_pool {
+            Some(group) => {
+                let effects = self.reserved_native_effects(
+                    event.envelope.clone(),
+                    target.clone(),
+                    EventClass::Data,
+                    content_type,
+                    body,
+                    telemetry,
+                    feedback,
+                    group,
+                )?;
+                self.effects.extend(effects);
+            }
+            None => {
+                self.effects
+                    .push_back(effects::CommittedEffect::ForwardObserved {
+                        base: event.envelope.clone(),
+                        target,
+                        class: EventClass::Data,
+                        content_type,
+                        body,
+                        telemetry,
+                    });
+                if let Some(feedback) = feedback {
+                    self.effects.push_back(feedback);
+                }
+            }
+        }
         self.flush_effects()
     }
 }

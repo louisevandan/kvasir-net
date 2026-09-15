@@ -27,7 +27,9 @@ pub struct PhasePopulation {
 
 impl PhasePopulation {
     fn active(self) -> Result<usize, SchedulerError> {
-        self.ready.checked_add(self.in_flight).and_then(|n| n.checked_add(self.waiting))
+        self.ready
+            .checked_add(self.in_flight)
+            .and_then(|n| n.checked_add(self.waiting))
             .ok_or(SchedulerError::InvalidDemand)
     }
 }
@@ -76,12 +78,17 @@ impl PipelinePolicy {
         open: usize,
         population: PipelinePopulation,
     ) -> Result<PipelineSelection, SchedulerError> {
-        if window == 0 || open >= window || self.mixed_prefill_rows == 0 || self.mixed_batch_rows == Some(0) {
+        if window == 0
+            || open >= window
+            || self.mixed_prefill_rows == 0
+            || self.mixed_batch_rows == Some(0)
+        {
             return Err(SchedulerError::InvalidDemand);
         }
         let ready = |phase| demands.iter().filter(|d| d.phase == phase).count();
         if population.prefill.ready != ready(Phase::Prefill)
-            || population.decode.ready != ready(Phase::Decode) {
+            || population.decode.ready != ready(Phase::Decode)
+        {
             return Err(SchedulerError::InvalidDemand);
         }
         let active_prefill = population.prefill.active()?;
@@ -92,11 +99,19 @@ impl PipelinePolicy {
         let prefill_groups = active_prefill.min(window);
         // Final prompt chunks still occupy their original pipeline cohorts.
         // Keep initial width stable until their results turn into decode work.
-        let prefill_population = active_prefill.checked_add(population.prefill_draining)
+        let prefill_population = active_prefill
+            .checked_add(population.prefill_draining)
             .ok_or(SchedulerError::InvalidDemand)?;
-        let prefill_members = prefill_population.div_ceil(window).max(1).min(active_prefill.max(1));
+        let prefill_members = prefill_population
+            .div_ceil(window)
+            .max(1)
+            .min(active_prefill.max(1));
         let cap = |configured: usize, derived: usize| {
-            if configured == 0 { derived } else { configured.min(derived) }
+            if configured == 0 {
+                derived
+            } else {
+                configured.min(derived)
+            }
         };
         let mut limits = configured;
         limits.prefill_members = cap(configured.prefill_members, prefill_members);
@@ -106,11 +121,18 @@ impl PipelinePolicy {
         if decoding_active {
             limits.prefill_rows = cap(configured.prefill_rows, self.mixed_prefill_rows);
         }
-        Ok(PipelineSelection { window, open, decoding_active,
-            mixed_prefill_rows: self.mixed_prefill_rows, effective_limits: limits,
+        Ok(PipelineSelection {
+            window,
+            open,
+            decoding_active,
+            mixed_prefill_rows: self.mixed_prefill_rows,
+            effective_limits: limits,
             decode_coalesce_max_ms: Some(DECODE_COALESCE_WAIT_MS),
-            population: Some(population), prefill_groups: Some(prefill_groups),
-            decode_groups: Some(decode_groups), mixed_batch_rows: self.mixed_batch_rows })
+            population: Some(population),
+            prefill_groups: Some(prefill_groups),
+            decode_groups: Some(decode_groups),
+            mixed_batch_rows: self.mixed_batch_rows,
+        })
     }
 }
 
@@ -120,22 +142,49 @@ mod tests {
     use crate::v2::scheduler::Scheduler;
 
     fn demand(i: u32, phase: Phase, rows: usize) -> Demand {
-        Demand { request_id: format!("r{i}"), sequence_id: i, compatibility: "session".into(),
-            phase, available_rows: rows, atomic: false }
+        Demand {
+            request_id: format!("r{i}"),
+            sequence_id: i,
+            compatibility: "session".into(),
+            phase,
+            available_rows: rows,
+            atomic: false,
+        }
     }
 
     #[test]
     fn full_width_prefill_keeps_eight_disjoint_batches_available_without_fragments() {
-        let mut ready: Vec<_> = (0..16).map(|i| demand(i, Phase::Prefill, 100_000)).collect();
+        let mut ready: Vec<_> = (0..16)
+            .map(|i| demand(i, Phase::Prefill, 100_000))
+            .collect();
         let mut scheduler = Scheduler::new();
-        let policy = PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 128 };
+        let policy = PipelinePolicy {
+            mixed_batch_rows: None,
+            mixed_prefill_rows: 128,
+        };
         for open in 0..8 {
-            let population = PipelinePopulation { prefill: PhasePopulation {
-                ready: ready.len(), in_flight: 16 - ready.len(), waiting: 0,
-            }, ..Default::default() };
-            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, open, population).unwrap();
-            let plan = scheduler.prepare_plan_with_limits(&ready, 512, 512, false, 1, false,
-                selection.effective_limits).unwrap();
+            let population = PipelinePopulation {
+                prefill: PhasePopulation {
+                    ready: ready.len(),
+                    in_flight: 16 - ready.len(),
+                    waiting: 0,
+                },
+                ..Default::default()
+            };
+            let selection = policy
+                .select(&ready, OrdinaryLimits::default(), 8, open, population)
+                .unwrap();
+            let plan = scheduler
+                .prepare_plan_with_limits(
+                    &ready,
+                    512,
+                    512,
+                    false,
+                    1,
+                    false,
+                    selection.effective_limits,
+                )
+                .unwrap();
             assert_eq!(plan.allocations().len(), 2);
             assert!(plan.allocations().iter().all(|a| a.rows == 256));
             let accepted = scheduler.commit_plan(plan).unwrap();
@@ -148,86 +197,208 @@ mod tests {
     fn mixed_quantum_applies_even_while_decode_is_in_flight_and_pure_prefill_recovers_width() {
         let ready = [demand(0, Phase::Prefill, 100_000)];
         let scheduler = Scheduler::new();
-        let policy = PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 128 };
+        let policy = PipelinePolicy {
+            mixed_batch_rows: None,
+            mixed_prefill_rows: 128,
+        };
         for (decoding_active, expected) in [(true, 128), (false, 512)] {
             let population = PipelinePopulation {
-                prefill: PhasePopulation { ready: 1, ..Default::default() },
-                decode: PhasePopulation { in_flight: usize::from(decoding_active), ..Default::default() },
+                prefill: PhasePopulation {
+                    ready: 1,
+                    ..Default::default()
+                },
+                decode: PhasePopulation {
+                    in_flight: usize::from(decoding_active),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
-            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, 1, population).unwrap();
-            let plan = scheduler.prepare_plan_with_limits(&ready, 512, 512, false, 1, false,
-                selection.effective_limits).unwrap();
+            let selection = policy
+                .select(&ready, OrdinaryLimits::default(), 8, 1, population)
+                .unwrap();
+            let plan = scheduler
+                .prepare_plan_with_limits(
+                    &ready,
+                    512,
+                    512,
+                    false,
+                    1,
+                    false,
+                    selection.effective_limits,
+                )
+                .unwrap();
             assert_eq!(plan.allocations()[0].rows, expected);
         }
     }
 
     #[test]
     fn an_explicit_smaller_budget_survives_and_no_unbounded_window_is_accepted() {
-        let ready: Vec<_> = (0..16).map(|i| demand(i, Phase::Prefill, 100_000)).collect();
-        let policy = PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 128 };
-        let configured = OrdinaryLimits { prefill_rows: 64, prefill_members: 1,
-            ..OrdinaryLimits::default() };
+        let ready: Vec<_> = (0..16)
+            .map(|i| demand(i, Phase::Prefill, 100_000))
+            .collect();
+        let policy = PipelinePolicy {
+            mixed_batch_rows: None,
+            mixed_prefill_rows: 128,
+        };
+        let configured = OrdinaryLimits {
+            prefill_rows: 64,
+            prefill_members: 1,
+            ..OrdinaryLimits::default()
+        };
         let population = PipelinePopulation {
-            prefill: PhasePopulation { ready: 16, ..Default::default() },
-            decode: PhasePopulation { in_flight: 1, ..Default::default() },
+            prefill: PhasePopulation {
+                ready: 16,
+                ..Default::default()
+            },
+            decode: PhasePopulation {
+                in_flight: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let result = policy.select(&ready, configured, 8, 0, population).unwrap();
         assert_eq!(result.effective_limits.prefill_rows, 64);
         assert_eq!(result.effective_limits.prefill_members, 1);
         for (window, open) in [(0, 0), (8, 8), (8, 9)] {
-            assert!(policy.select(&ready, configured, window, open, population).is_err());
+            assert!(
+                policy
+                    .select(&ready, configured, window, open, population)
+                    .is_err()
+            );
         }
     }
 
     #[test]
     fn the_last_vacancy_does_not_merge_independent_prefills_and_draining_is_not_future_work() {
-        let policy = PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 128 };
+        let policy = PipelinePolicy {
+            mixed_batch_rows: None,
+            mixed_prefill_rows: 128,
+        };
         let ready: Vec<_> = (0..8).map(|i| demand(i, Phase::Prefill, 100_000)).collect();
-        let population = PipelinePopulation { prefill: PhasePopulation { ready: 8, ..Default::default() },
-            decode: PhasePopulation { in_flight: 7, ..Default::default() }, ..Default::default() };
+        let population = PipelinePopulation {
+            prefill: PhasePopulation {
+                ready: 8,
+                ..Default::default()
+            },
+            decode: PhasePopulation {
+                in_flight: 7,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         for open in 0..8 {
-            let selection = policy.select(&ready, OrdinaryLimits::default(), 8, open, population).unwrap();
+            let selection = policy
+                .select(&ready, OrdinaryLimits::default(), 8, open, population)
+                .unwrap();
             assert_eq!(selection.effective_limits.prefill_members, 1);
             assert_eq!(selection.effective_limits.prefill_rows, 128);
             assert_eq!(selection.prefill_groups, Some(8));
         }
-        let draining = PipelinePopulation { prefill: PhasePopulation { ready: 1, ..Default::default() },
-            prefill_draining: 15, ..Default::default() };
-        let selection = policy.select(&ready[..1], OrdinaryLimits::default(), 8, 7, draining).unwrap();
+        let draining = PipelinePopulation {
+            prefill: PhasePopulation {
+                ready: 1,
+                ..Default::default()
+            },
+            prefill_draining: 15,
+            ..Default::default()
+        };
+        let selection = policy
+            .select(&ready[..1], OrdinaryLimits::default(), 8, 7, draining)
+            .unwrap();
         assert_eq!(selection.effective_limits.prefill_members, 1);
         assert_eq!(selection.prefill_groups, Some(1));
     }
 
     #[test]
     fn an_inconsistent_population_is_rejected_without_spending_scheduler_state() {
-        let policy = PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 128 };
+        let policy = PipelinePolicy {
+            mixed_batch_rows: None,
+            mixed_prefill_rows: 128,
+        };
         let ready = [demand(0, Phase::Prefill, 100_000)];
-        assert!(policy.select(&ready, OrdinaryLimits::default(), 8, 7, Default::default()).is_err());
-        let overflow = PipelinePopulation { prefill: PhasePopulation {
-            ready: 1, in_flight: usize::MAX, waiting: 0,
-        }, ..Default::default() };
-        assert!(policy.select(&ready, OrdinaryLimits::default(), 8, 7, overflow).is_err());
+        assert!(
+            policy
+                .select(&ready, OrdinaryLimits::default(), 8, 7, Default::default())
+                .is_err()
+        );
+        let overflow = PipelinePopulation {
+            prefill: PhasePopulation {
+                ready: 1,
+                in_flight: usize::MAX,
+                waiting: 0,
+            },
+            ..Default::default()
+        };
+        assert!(
+            policy
+                .select(&ready, OrdinaryLimits::default(), 8, 7, overflow)
+                .is_err()
+        );
     }
 
     #[test]
     fn generation_cohorts_own_capacity_before_prefill_independent_of_flight_vacancies() {
-        let policy = PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: 128 };
+        let policy = PipelinePolicy {
+            mixed_batch_rows: None,
+            mixed_prefill_rows: 128,
+        };
         let mut ready: Vec<_> = (0..16).map(|i| demand(i, Phase::Decode, 1)).collect();
         ready.push(demand(16, Phase::Prefill, 100_000));
         let population = PipelinePopulation {
-            prefill: PhasePopulation { ready: 1, ..Default::default() },
-            decode: PhasePopulation { ready: 16, ..Default::default() }, ..Default::default()
+            prefill: PhasePopulation {
+                ready: 1,
+                ..Default::default()
+            },
+            decode: PhasePopulation {
+                ready: 16,
+                ..Default::default()
+            },
+            ..Default::default()
         };
         for open in 0..8 {
-            let selected = policy.select(&ready, OrdinaryLimits::default(), 8, open, population).unwrap();
+            let selected = policy
+                .select(&ready, OrdinaryLimits::default(), 8, open, population)
+                .unwrap();
             let scheduler = Scheduler::new();
-            let plan = scheduler.prepare_plan_with_limits(&ready, 512, 512, false, 1, false, selected.effective_limits).unwrap();
-            assert_eq!(plan.allocations().iter().filter(|a| a.phase == Phase::Decode).count(), 2);
-            assert_eq!(plan.allocations().iter().filter(|a| a.phase == Phase::Prefill).map(|a| a.rows).sum::<usize>(), 128);
+            let plan = scheduler
+                .prepare_plan_with_limits(
+                    &ready,
+                    512,
+                    512,
+                    false,
+                    1,
+                    false,
+                    selected.effective_limits,
+                )
+                .unwrap();
+            assert_eq!(
+                plan.allocations()
+                    .iter()
+                    .filter(|a| a.phase == Phase::Decode)
+                    .count(),
+                2
+            );
+            assert_eq!(
+                plan.allocations()
+                    .iter()
+                    .filter(|a| a.phase == Phase::Prefill)
+                    .map(|a| a.rows)
+                    .sum::<usize>(),
+                128
+            );
         }
-        let explicit = policy.select(&ready, OrdinaryLimits { decode_members: 1, ..Default::default() }, 8, 0, population).unwrap();
+        let explicit = policy
+            .select(
+                &ready,
+                OrdinaryLimits {
+                    decode_members: 1,
+                    ..Default::default()
+                },
+                8,
+                0,
+                population,
+            )
+            .unwrap();
         assert_eq!(explicit.effective_limits.decode_members, 1);
     }
 }

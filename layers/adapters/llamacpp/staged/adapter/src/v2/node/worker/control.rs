@@ -28,10 +28,9 @@ impl Worker {
             .as_ref()
             .ok_or("runtime edge and receipt resource probe is not configured")?
             .snapshot()?;
-        let validated_profile = command.resource_profile.validate_preload(
-            self.publisher.storage_snapshot(),
-            runtime_resources,
-        )?;
+        let validated_profile = command
+            .resource_profile
+            .validate_preload(self.publisher.storage_snapshot(), runtime_resources)?;
         let reserved_context = command
             .context_size
             .checked_mul(command.sequence_capacity as usize)
@@ -393,8 +392,7 @@ mod tests {
     fn preload_worker() -> Worker {
         let (_sender, receiver) = mpsc::channel();
         let (publisher, _mailbox) =
-            p4_adapter::node_adapter::completion_mailbox_with_limits(1, 1, 64 << 20)
-                .unwrap();
+            p4_adapter::node_adapter::completion_mailbox_with_limits(1, 1, 64 << 20).unwrap();
         Worker::new(
             Endpoint::node(Address::tcp("127.0.0.1", 43001), "preload", 1),
             receiver,
@@ -419,7 +417,12 @@ mod tests {
 
         let mut short = preload_worker().with_runtime_resource_probe(runtime_probe(0));
         let before = super::super::release_tests::snapshot(&short);
-        assert!(short.load(&event).unwrap_err().contains("edge retained count is insufficient"));
+        assert!(
+            short
+                .load(&event)
+                .unwrap_err()
+                .contains("edge retained count is insufficient")
+        );
         assert!(!short.lifecycle.has_server());
         assert_eq!(super::super::release_tests::snapshot(&short), before);
         assert!(short.effects.is_empty());

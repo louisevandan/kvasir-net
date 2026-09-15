@@ -26,9 +26,14 @@ fn a_session_key_survives_a_json_round_trip() {
     let wire = serde_json::to_vec(&sent).expect("serialise");
     let received: InferenceCommand = serde_json::from_slice(&wire).expect("deserialise");
     assert_eq!(received, sent);
-    assert_eq!(received.session_key.as_deref(), Some("sk1:tenant-a/conv-7f3c"));
     assert_eq!(
-        received.parsed_session_key().map(|key| key.owner().to_owned()),
+        received.session_key.as_deref(),
+        Some("sk1:tenant-a/conv-7f3c")
+    );
+    assert_eq!(
+        received
+            .parsed_session_key()
+            .map(|key| key.owner().to_owned()),
         Some("tenant-a".to_owned())
     );
 }
@@ -85,7 +90,10 @@ fn normalisation_forms_are_different_conversations_on_the_wire() {
     let decomposed = command(Some("sk1:owner/\u{1100}\u{1161}"));
     assert_eq!(composed.validate(), Ok(()));
     assert_eq!(decomposed.validate(), Ok(()));
-    assert_ne!(composed.parsed_session_key(), decomposed.parsed_session_key());
+    assert_ne!(
+        composed.parsed_session_key(),
+        decomposed.parsed_session_key()
+    );
 }
 
 #[test]

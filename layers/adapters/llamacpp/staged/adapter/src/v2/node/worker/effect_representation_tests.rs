@@ -521,7 +521,9 @@ fn mixed_output_effects_select_each_request_context_from_the_same_carrier() {
     let mut prepared = outputs(&base, &["first", "second"]);
     let mut expected = Vec::new();
     for (index, effect) in prepared.iter_mut().enumerate() {
-        let CommittedEffect::Output { reply, ingress, .. } = effect else { panic!(); };
+        let CommittedEffect::Output { reply, ingress, .. } = effect else {
+            panic!();
+        };
         reply.ingress_agent = format!("tcp://192.0.2.{}:52001", index + 1);
         reply.channel = format!("outer-{index}");
         reply.connection_generation = index as u64 + 11;
@@ -534,13 +536,25 @@ fn mixed_output_effects_select_each_request_context_from_the_same_carrier() {
     worker.flush_effects().unwrap();
     for reply in expected {
         let event = next(&mailbox);
-        assert_eq!(event.envelope.target, Endpoint::outer(reply.ingress_agent.parse().unwrap(),
-            reply.channel.clone(), reply.connection_generation));
-        assert_eq!(event.envelope.reply_target().unwrap(), event.envelope.target);
+        assert_eq!(
+            event.envelope.target,
+            Endpoint::outer(
+                reply.ingress_agent.parse().unwrap(),
+                reply.channel.clone(),
+                reply.connection_generation
+            )
+        );
+        assert_eq!(
+            event.envelope.reply_target().unwrap(),
+            event.envelope.target
+        );
         assert_eq!(event.envelope.correlation_id, reply.correlation_id);
         assert_eq!(event.envelope.deadline_unix_ms, reply.deadline_unix_ms);
         assert_eq!(event.envelope.causation_id.as_deref(), Some("tail-cause"));
-        assert_eq!(p4_protocol::event::decode(&p4_protocol::event::encode(&event).unwrap()).unwrap(), event);
+        assert_eq!(
+            p4_protocol::event::decode(&p4_protocol::event::encode(&event).unwrap()).unwrap(),
+            event
+        );
     }
     assert!(worker.effects.is_empty());
     assert!(matches!(mailbox.try_take(), Poll::Empty));

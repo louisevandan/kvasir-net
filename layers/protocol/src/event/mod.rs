@@ -3,8 +3,8 @@
 //! Relays inspect only the envelope. Payload interpretation belongs to the
 //! concrete adapter named by `adapter_kind`.
 
-mod wire;
 pub mod hop;
+mod wire;
 
 use crate::{Address, ProtocolError};
 
@@ -36,7 +36,9 @@ impl OuterEndpoint {
             return Err(ProtocolError::new("outer endpoint requires a channel"));
         }
         if self.connection_generation == 0 {
-            return Err(ProtocolError::new("outer endpoint requires a connection generation"));
+            return Err(ProtocolError::new(
+                "outer endpoint requires a connection generation",
+            ));
         }
         Ok(())
     }
@@ -56,19 +58,32 @@ impl ReturnContext {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         self.route.validate()?;
         if self.correlation_id.is_empty() || self.deadline_unix_ms == Some(0) {
-            return Err(ProtocolError::new("return context requires correlation and a valid deadline"));
+            return Err(ProtocolError::new(
+                "return context requires correlation and a valid deadline",
+            ));
         }
         Ok(())
     }
 
     /// Select one request's context, keeping the actual causal event identity.
     pub fn reply(
-        &self, base: &Envelope, event_id: impl Into<EventId>, source: Endpoint,
-        class: EventClass, sequence: u64, content_type: impl Into<String>,
+        &self,
+        base: &Envelope,
+        event_id: impl Into<EventId>,
+        source: Endpoint,
+        class: EventClass,
+        sequence: u64,
+        content_type: impl Into<String>,
     ) -> Result<Envelope, ProtocolError> {
         self.validate()?;
-        let mut envelope = base.next(event_id, source, Endpoint::Outer(self.route.clone()),
-            class, sequence, content_type);
+        let mut envelope = base.next(
+            event_id,
+            source,
+            Endpoint::Outer(self.route.clone()),
+            class,
+            sequence,
+            content_type,
+        );
         envelope.return_route = Some(self.route.clone());
         envelope.correlation_id = self.correlation_id.clone();
         envelope.deadline_unix_ms = self.deadline_unix_ms;
@@ -192,13 +207,17 @@ impl Envelope {
         }
         self.source.validate()?;
         self.target.validate()?;
-        let route = self.return_route.as_ref()
+        let route = self
+            .return_route
+            .as_ref()
             .ok_or_else(|| ProtocolError::new("event requires an explicit OUTER return route"))?;
         route.validate()?;
         for endpoint in [&self.source, &self.target] {
             if let Endpoint::Outer(outer) = endpoint {
                 if outer != route {
-                    return Err(ProtocolError::new("OUTER endpoint differs from the event return route"));
+                    return Err(ProtocolError::new(
+                        "OUTER endpoint differs from the event return route",
+                    ));
                 }
             }
         }
@@ -207,8 +226,9 @@ impl Envelope {
 
     pub fn return_context(&self) -> Result<ReturnContext, ProtocolError> {
         let context = ReturnContext {
-            route: self.return_route.clone()
-                .ok_or_else(|| ProtocolError::new("event requires an explicit OUTER return route"))?,
+            route: self.return_route.clone().ok_or_else(|| {
+                ProtocolError::new("event requires an explicit OUTER return route")
+            })?,
             correlation_id: self.correlation_id.clone(),
             deadline_unix_ms: self.deadline_unix_ms,
         };

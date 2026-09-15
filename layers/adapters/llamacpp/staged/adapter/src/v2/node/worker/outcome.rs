@@ -266,7 +266,11 @@ mod tests {
                 causation_id: None,
                 source: Endpoint::agent(address.clone()),
                 target: Endpoint::agent(address),
-                return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
+                return_route: Some(p4_protocol::event::OuterEndpoint {
+                    ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                    channel: "outer".into(),
+                    connection_generation: 1,
+                }),
                 class: EventClass::Data,
                 sequence: 1,
                 deadline_unix_ms: None,

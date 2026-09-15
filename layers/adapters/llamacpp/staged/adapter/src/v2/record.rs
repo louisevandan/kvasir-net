@@ -13,8 +13,8 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The open record file, with the path it was opened for. Keyed by path so
 /// the sink follows the variable rather than caching the first value it ever
@@ -61,8 +61,13 @@ pub fn record(line: &str) {
     }
     let (_, file) = sink.as_mut().expect("sink is open");
     if let Err(error) = file
-        .write_all(format!("{line}
-").as_bytes())
+        .write_all(
+            format!(
+                "{line}
+"
+            )
+            .as_bytes(),
+        )
         .and_then(|()| file.flush())
     {
         mark_failed(&path, &format!("write: {error}"));
@@ -95,8 +100,13 @@ fn mark_failed(path: &std::ffi::OsStr, reason: &str) {
         .map(|value| format!("{}.failed", value.to_string_lossy()))
         .unwrap_or_else(|| "record.failed".to_owned());
     marker.set_file_name(name);
-    let _ = std::fs::write(&marker, format!("{reason}
-"));
+    let _ = std::fs::write(
+        &marker,
+        format!(
+            "{reason}
+"
+        ),
+    );
 }
 
 #[cfg(test)]

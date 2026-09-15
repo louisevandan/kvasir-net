@@ -64,10 +64,14 @@ fn full_keeps_the_same_input_for_exactly_one_later_acceptance() {
     };
     assert_eq!(returned, expected);
     assert_eq!(allocation(&returned), owned_allocation);
-    let WorkerInput::Event(accepted_prefix) = receiver.try_recv().unwrap() else { panic!("raw offer changed ownership mode"); };
+    let WorkerInput::Event(accepted_prefix) = receiver.try_recv().unwrap() else {
+        panic!("raw offer changed ownership mode");
+    };
     assert_eq!(accepted_prefix, prefix);
     adapter.try_offer(returned).unwrap();
-    let WorkerInput::Event(accepted) = receiver.try_recv().unwrap() else { panic!("raw offer changed ownership mode"); };
+    let WorkerInput::Event(accepted) = receiver.try_recv().unwrap() else {
+        panic!("raw offer changed ownership mode");
+    };
     assert_eq!(accepted, expected);
     assert_eq!(allocation(&accepted), owned_allocation);
     assert!(matches!(
@@ -84,9 +88,14 @@ fn missing_return_context_is_refused_before_worker_admission() {
     event.envelope.return_route = None;
     let expected = event.clone();
     let original = allocation(&event);
-    let Err(OfferError::Closed(returned)) = adapter.try_offer(event) else { panic!("missing context admitted"); };
+    let Err(OfferError::Closed(returned)) = adapter.try_offer(event) else {
+        panic!("missing context admitted");
+    };
     assert_eq!(returned, expected);
     assert_eq!(allocation(&returned), original);
-    assert!(matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
     assert_eq!(adapter.snapshot(), "offer-test");
 }

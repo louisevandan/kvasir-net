@@ -334,9 +334,14 @@ pub(crate) async fn run(
                 break;
             }
         };
-        let envelope = match context.reply(&event.envelope,
-            format!("hf:{endpoint:?}:{sequence}"), endpoint.clone(),
-            EventClass::Output, sequence, ipc::RESULT) {
+        let envelope = match context.reply(
+            &event.envelope,
+            format!("hf:{endpoint:?}:{sequence}"),
+            endpoint.clone(),
+            EventClass::Output,
+            sequence,
+            ipc::RESULT,
+        ) {
             Ok(envelope) => envelope,
             Err(error) => {
                 *snapshot.lock().unwrap() = format!("failed: {error}");

@@ -26,7 +26,8 @@ impl RequestCost {
     }
 
     fn fits(self, limit: Self) -> bool {
-        self.requests <= limit.requests && self.bytes <= limit.bytes
+        self.requests <= limit.requests
+            && self.bytes <= limit.bytes
             && self.prompt_tokens <= limit.prompt_tokens
             && self.output_tokens <= limit.output_tokens
     }
@@ -35,24 +36,46 @@ impl RequestCost {
     /// their capacities. Include inline/Arc and request-map/pending bookkeeping.
     /// Native tokenizer temporaries, KV, subsequent effects and broker receipts
     /// are different stores; this is not a process RSS or B3 return-byte bound.
-    pub(crate) fn input(command: &InferenceCommand, event: &Event, reply: &String)
-        -> Result<Self, String>
-    {
+    pub(crate) fn input(
+        command: &InferenceCommand,
+        event: &Event,
+        reply: &String,
+    ) -> Result<Self, String> {
         let mut bytes = retained_event_bytes(event).map_err(|_| "request storage cost overflow")?;
-        let token_bytes = command.tokens.capacity().checked_mul(std::mem::size_of::<i32>())
+        let token_bytes = command
+            .tokens
+            .capacity()
+            .checked_mul(std::mem::size_of::<i32>())
             .ok_or("request storage cost overflow")?;
-        let key_bytes = command.session_id.len().checked_add(command.request_id.len())
-            .and_then(|n| n.checked_add(64)).and_then(|n| n.checked_mul(4))
+        let key_bytes = command
+            .session_id
+            .len()
+            .checked_add(command.request_id.len())
+            .and_then(|n| n.checked_add(64))
+            .and_then(|n| n.checked_mul(4))
             .ok_or("request storage cost overflow")?;
-        for value in [std::mem::size_of::<RequestInput>(), 256, key_bytes, token_bytes,
-            command.session_id.capacity(), command.request_id.capacity(),
-            command.options.capacity(), command.session_key.as_ref().map_or(0, String::capacity),
-            command.prompt.as_ref().map_or(0, String::capacity), reply.capacity()]
-        {
-            bytes = bytes.checked_add(value).ok_or("request storage cost overflow")?;
+        for value in [
+            std::mem::size_of::<RequestInput>(),
+            256,
+            key_bytes,
+            token_bytes,
+            command.session_id.capacity(),
+            command.request_id.capacity(),
+            command.options.capacity(),
+            command.session_key.as_ref().map_or(0, String::capacity),
+            command.prompt.as_ref().map_or(0, String::capacity),
+            reply.capacity(),
+        ] {
+            bytes = bytes
+                .checked_add(value)
+                .ok_or("request storage cost overflow")?;
         }
-        Ok(Self { requests: 1, bytes, prompt_tokens: command.tokens.len(),
-            output_tokens: command.max_tokens as usize })
+        Ok(Self {
+            requests: 1,
+            bytes,
+            prompt_tokens: command.tokens.len(),
+            output_tokens: command.max_tokens as usize,
+        })
     }
 }
 
@@ -70,15 +93,20 @@ impl Default for RequestBudget {
         // Pending + active + input retained by effects, not just resident slots.
         // These ceilings do not increase the sequence or fragment window.
         Self::new(RequestCost {
-            requests: 4096, bytes: 512 * 1024 * 1024,
-            prompt_tokens: 16 * 1024 * 1024, output_tokens: 16 * 1024 * 1024,
+            requests: 4096,
+            bytes: 512 * 1024 * 1024,
+            prompt_tokens: 16 * 1024 * 1024,
+            output_tokens: 16 * 1024 * 1024,
         })
     }
 }
 
 impl RequestBudget {
     pub(crate) fn new(limit: RequestCost) -> Self {
-        Self(Arc::new(Mutex::new(Account { limit, used: RequestCost::default() })))
+        Self(Arc::new(Mutex::new(Account {
+            limit,
+            used: RequestCost::default(),
+        })))
     }
 
     pub(crate) fn used(&self) -> RequestCost {
@@ -86,14 +114,25 @@ impl RequestBudget {
     }
 
     pub(crate) fn reserve(&self, cost: RequestCost) -> Result<RequestReservation, String> {
-        let mut account = self.0.lock().map_err(|_| "request storage budget poisoned")?;
-        let next = account.used.checked_add(cost).ok_or("request storage budget overflow")?;
+        let mut account = self
+            .0
+            .lock()
+            .map_err(|_| "request storage budget poisoned")?;
+        let next = account
+            .used
+            .checked_add(cost)
+            .ok_or("request storage budget overflow")?;
         if !next.fits(account.limit) {
-            return Err(format!("request storage budget exhausted: held={:?}, additional={cost:?}, limit={:?}",
-                account.used, account.limit));
+            return Err(format!(
+                "request storage budget exhausted: held={:?}, additional={cost:?}, limit={:?}",
+                account.used, account.limit
+            ));
         }
         account.used = next;
-        Ok(RequestReservation(Arc::new(Claim { account: self.clone(), cost })))
+        Ok(RequestReservation(Arc::new(Claim {
+            account: self.clone(),
+            cost,
+        })))
     }
 }
 
@@ -103,12 +142,17 @@ impl RequestBudget {
 pub(crate) struct RequestReservation(Arc<Claim>);
 
 impl PartialEq for RequestReservation {
-    fn eq(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) }
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 impl Eq for RequestReservation {}
 
 #[derive(Debug)]
-struct Claim { account: RequestBudget, cost: RequestCost }
+struct Claim {
+    account: RequestBudget,
+    cost: RequestCost,
+}
 
 impl Drop for Claim {
     fn drop(&mut self) {

@@ -21,6 +21,10 @@ pub(super) enum CommittedEffect {
         event: Event,
         after: PublicationAfter,
     },
+    PreparedReservedPublication {
+        publication: super::emit::PreparedReservedPublication,
+        after: PublicationAfter,
+    },
     Output {
         base: Envelope,
         reply: ReplySpec,
@@ -87,6 +91,7 @@ pub(super) enum PublicationAfter {
     Forward,
     HeadControl,
     Observed(Vec<super::observe::PreparedTelemetry>),
+    ReservedObserved(Vec<super::emit::PreparedReservedTelemetry>),
     Telemetry,
 }
 
@@ -102,6 +107,7 @@ impl PublicationAfter {
             Self::Forward => "committed control could not be delivered",
             Self::HeadControl => "committed head control could not be delivered",
             Self::Observed(_) => "committed physical result could not be delivered",
+            Self::ReservedObserved(_) => "reserved physical result could not be delivered",
             Self::Telemetry => "committed observation could not be delivered",
         }
     }
@@ -165,6 +171,18 @@ impl Worker {
                         }
                     }
                 }
+                CommittedEffect::PreparedReservedPublication { publication, after } => {
+                    match self.publish_reserved_kind(publication) {
+                        Ok(()) => Ok(Some(after)),
+                        Err(publication) => {
+                            let error = after.failure_message().to_owned();
+                            Err((
+                                CommittedEffect::PreparedReservedPublication { publication, after },
+                                error,
+                            ))
+                        }
+                    }
+                }
                 mut native => {
                     let result = match &mut native {
                         CommittedEffect::Settle {
@@ -221,6 +239,16 @@ impl Worker {
                         delivery.forwarded_at(stamp);
                         self.effects
                             .push_front(CommittedEffect::Telemetry(delivery));
+                    }
+                }
+                Ok(Some(PublicationAfter::ReservedObserved(telemetry))) => {
+                    let stamp = super::observe::unix_ms();
+                    for delivery in telemetry.into_iter().rev() {
+                        self.effects
+                            .push_front(CommittedEffect::PreparedReservedPublication {
+                                publication: delivery.finalize(stamp),
+                                after: PublicationAfter::Telemetry,
+                            });
                     }
                 }
                 Ok(Some(PublicationAfter::OutputTrace {
@@ -381,9 +409,22 @@ impl Worker {
                 .map_err(|_| "committed observation could not be delivered".to_owned())?;
                 (event, PublicationAfter::Telemetry)
             }
+            CommittedEffect::PreparedReservedPublication { publication, .. } => {
+                if !publication.owns_event_id() {
+                    let sequence = self.state.next_event;
+                    let next_event = sequence
+                        .checked_add(1)
+                        .ok_or("completion event ID is exhausted")?;
+                    publication.materialize(sequence)?;
+                    self.state.next_event = next_event;
+                }
+                return Ok(());
+            }
             CommittedEffect::Publication { .. }
             | CommittedEffect::Settle { .. }
-            | CommittedEffect::Release { .. } => return Ok(()),
+            | CommittedEffect::Release { .. } => {
+                return Ok(());
+            }
         };
         *effect = CommittedEffect::Publication { event, after };
         Ok(())

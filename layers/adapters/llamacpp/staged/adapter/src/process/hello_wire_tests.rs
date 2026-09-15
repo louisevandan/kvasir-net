@@ -48,10 +48,9 @@ fn physical_result_bound_is_required_and_parsed_exactly() {
     assert_eq!(ready.physical_result_tensor_count, 2);
     assert_eq!(ready.max_physical_result_bytes, 33_554_432);
     assert!(
-        decode_hello(&hello(&BASE.replace(
-            ";max_physical_result_bytes=33554432",
-            ""
-        )))
+        decode_hello(&hello(
+            &BASE.replace(";max_physical_result_bytes=33554432", "")
+        ))
         .is_err()
     );
     assert!(

@@ -1,7 +1,9 @@
 mod inspection;
 
-use p4_adapter::node_adapter::{RetainedNodeAdapter, RetainedCompletion, CompletionMailbox,
-    PublishError, completion_mailbox_with_limits};
+use p4_adapter::node_adapter::{
+    CompletionMailbox, PublishError, RetainedCompletion, RetainedNodeAdapter,
+    completion_mailbox_with_limits,
+};
 use p4_agent_core::event_broker::RetainedEventBroker;
 use p4_agent_core::event_node::{RetainedEventNode, RetainedEventNodeFailure};
 use p4_protocol::Address;
@@ -40,7 +42,9 @@ struct DeleteNode {
 }
 
 #[derive(Deserialize)]
-struct ReconcileTransport { failure_id: String }
+struct ReconcileTransport {
+    failure_id: String,
+}
 
 fn default_capacity() -> usize {
     65_536
@@ -57,10 +61,15 @@ struct NodeOwner {
 }
 
 impl Drop for NodeOwner {
-    fn drop(&mut self) { self.task.abort(); }
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
-enum PendingReply { Raw(Event), Owned(RetainedCompletion) }
+enum PendingReply {
+    Raw(Event),
+    Owned(RetainedCompletion),
+}
 
 // Returned into the root-owned task handle, including unread input and nodes.
 // A stopped control task does not turn accepted work into retired storage.
@@ -72,11 +81,21 @@ pub(super) struct Remainder {
     error: Option<String>,
 }
 
-pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver: Arc<CompletionMailbox>,
-    limits: super::RuntimeLimits, transport: super::transport::Inspector) -> Remainder {
+pub(super) async fn run(
+    own: Address,
+    broker: Arc<RetainedEventBroker>,
+    receiver: Arc<CompletionMailbox>,
+    limits: super::RuntimeLimits,
+    transport: super::transport::Inspector,
+) -> Remainder {
     let sequence = AtomicU64::new(1);
     let mut nodes: HashMap<String, NodeOwner> = HashMap::new();
-    let (replies, reply_store) = super::RuntimeLimits { queue: 1, retained: 1, ..limits }.mailbox();
+    let (replies, reply_store) = super::RuntimeLimits {
+        queue: 1,
+        retained: 1,
+        ..limits
+    }
+    .mailbox();
     while let Some(input) = super::next(&receiver).await {
         let event = input.event();
         let (payload_content_type, payload) = match event.envelope.payload_content_type.as_str() {
@@ -87,10 +106,15 @@ pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver
             content_type => {
                 let payload = if content_type == RECONCILE {
                     match serde_json::from_slice::<ReconcileTransport>(&event.payload) {
-                        Ok(request) if !request.failure_id.is_empty() =>
-                            transport.reconcile(&request.failure_id).await,
-                        Ok(_) => json!({"ok":false,"state":"rejected_local","detail":"failure_id is required"}),
-                        Err(error) => json!({"ok":false,"state":"rejected_local","detail":error.to_string()}),
+                        Ok(request) if !request.failure_id.is_empty() => {
+                            transport.reconcile(&request.failure_id).await
+                        }
+                        Ok(_) => {
+                            json!({"ok":false,"state":"rejected_local","detail":"failure_id is required"})
+                        }
+                        Err(error) => {
+                            json!({"ok":false,"state":"rejected_local","detail":error.to_string()})
+                        }
                     }
                 } else {
                     let result = match content_type {
@@ -108,7 +132,15 @@ pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver
         };
         let output = match reply(&own, event, &sequence, payload_content_type, payload) {
             Ok(reply) => reply,
-            Err(error) => return Remainder { nodes, receiver, held_input: Some(input), held_reply: None, error: Some(error) },
+            Err(error) => {
+                return Remainder {
+                    nodes,
+                    receiver,
+                    held_input: Some(input),
+                    held_reply: None,
+                    error: Some(error),
+                };
+            }
         };
         if let Err(failure) = replies.try_publish_owned(output) {
             let (reason, output) = match failure {
@@ -118,16 +150,35 @@ pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver
                 PublishError::CostOverflow(event) => ("reply cost overflow", event),
             };
             eprintln!("P4_EVENT_CONTROL_REPLY_FAILED error={reason}");
-            return Remainder { nodes, receiver, held_input: Some(input), held_reply: Some(PendingReply::Raw(output)), error: Some(reason.into()) };
+            return Remainder {
+                nodes,
+                receiver,
+                held_input: Some(input),
+                held_reply: Some(PendingReply::Raw(output)),
+                error: Some(reason.into()),
+            };
         }
-        let output = super::next(&reply_store).await.expect("single control reply owner");
+        let output = super::next(&reply_store)
+            .await
+            .expect("single control reply owner");
         if let Err(failure) = super::dispatch(&broker, output).await {
             eprintln!("P4_EVENT_CONTROL_REPLY_FAILED error={}", failure.error);
-            return Remainder { nodes, receiver, held_input: Some(input),
-                held_reply: Some(PendingReply::Owned(*failure.completion)), error: Some(failure.error.to_string()) };
+            return Remainder {
+                nodes,
+                receiver,
+                held_input: Some(input),
+                held_reply: Some(PendingReply::Owned(*failure.completion)),
+                error: Some(failure.error.to_string()),
+            };
         }
     }
-    Remainder { nodes, receiver, held_input: None, held_reply: None, error: None }
+    Remainder {
+        nodes,
+        receiver,
+        held_input: None,
+        held_reply: None,
+        error: None,
+    }
 }
 
 fn create(
@@ -157,12 +208,19 @@ fn create(
     );
     let retained_capacity = command.retained_capacity.unwrap_or(limits.retained);
     let retained_bytes = command.retained_bytes.unwrap_or(limits.bytes);
-    let (sender, inbound) = completion_mailbox_with_limits(command.queue_capacity, retained_capacity, retained_bytes)
-        .map_err(|error| format!("invalid node retained storage: {error:?}"))?;
+    let (sender, inbound) =
+        completion_mailbox_with_limits(command.queue_capacity, retained_capacity, retained_bytes)
+            .map_err(|error| format!("invalid node retained storage: {error:?}"))?;
     let resource_probe = super::adapters::runtime_resource_probe(broker, transport);
-    let adapter = super::adapters::create(&command.adapter_kind, endpoint,
-        command.queue_capacity, command.completion_capacity, retained_capacity, retained_bytes,
-        resource_probe)?;
+    let adapter = super::adapters::create(
+        &command.adapter_kind,
+        endpoint,
+        command.queue_capacity,
+        command.completion_capacity,
+        retained_capacity,
+        retained_bytes,
+        resource_probe,
+    )?;
     broker
         .register_node(command.node_id.clone(), command.node_generation, sender)
         .map_err(|error| error.to_string())?;
@@ -204,7 +262,8 @@ async fn remove(
             owner.generation, command.node_generation
         ));
     }
-    let _admission = broker.pause_node_admission(&command.node_id, command.node_generation)
+    let _admission = broker
+        .pause_node_admission(&command.node_id, command.node_generation)
         .map_err(|error| error.to_string())?;
     let state = owner.adapter.snapshot();
     if !matches!(state.as_str(), "empty" | "unloaded" | "closed") {
@@ -212,8 +271,13 @@ async fn remove(
             "node must be unloaded before deletion; state={state}"
         ));
     }
-    if owner.task.is_finished() || owner.inbound.storage_snapshot().retained_count != 0
-        || owner.adapter.completion_storage_snapshot().is_none_or(|value| value.retained_count != 0) {
+    if owner.task.is_finished()
+        || owner.inbound.storage_snapshot().retained_count != 0
+        || owner
+            .adapter
+            .completion_storage_snapshot()
+            .is_none_or(|value| value.retained_count != 0)
+    {
         return Err("node delivery must be drained and healthy before deletion".into());
     }
     broker
@@ -236,13 +300,23 @@ fn reply(
     payload_content_type: &str,
     payload: serde_json::Value,
 ) -> Result<Event, String> {
-    let context = base.envelope.return_context().map_err(|error| error.to_string())?;
+    let context = base
+        .envelope
+        .return_context()
+        .map_err(|error| error.to_string())?;
     let number = sequence.fetch_add(1, Ordering::Relaxed);
     if number == u64::MAX {
         return Err("agent event sequence exhausted".into());
     }
-    let mut envelope = context.reply(&base.envelope, format!("{own}:agent:{number}"),
-        Endpoint::agent(own.clone()), EventClass::Telemetry, number, payload_content_type)
+    let mut envelope = context
+        .reply(
+            &base.envelope,
+            format!("{own}:agent:{number}"),
+            Endpoint::agent(own.clone()),
+            EventClass::Telemetry,
+            number,
+            payload_content_type,
+        )
         .map_err(|error| error.to_string())?;
     envelope.adapter_kind = None;
     let payload = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;

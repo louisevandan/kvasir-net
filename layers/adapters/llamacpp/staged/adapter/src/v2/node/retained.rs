@@ -1,10 +1,10 @@
 //! Explicit owned adapter transport. Raw callers cannot consume its output.
 use super::*;
+use crate::v2::resource_profile::RuntimeResourceProbe;
 use p4_adapter::node_adapter::{
     CompletionFront, CompletionMailbox, MailboxBuildError, OwnedPoll, RetainedCompletion,
     RetainedNodeAdapter, RetainedOfferError, completion_mailbox_with_limits,
 };
-use crate::v2::resource_profile::RuntimeResourceProbe;
 
 pub struct RetainedLlamaNodeAdapter {
     inner: LlamaNodeAdapter,
@@ -116,11 +116,15 @@ impl RetainedLlamaNodeAdapter {
 }
 
 impl RetainedNodeAdapter for RetainedLlamaNodeAdapter {
-    fn completion_storage_snapshot(&self) -> Option<p4_adapter::node_adapter::CompletionStorageSnapshot> {
+    fn completion_storage_snapshot(
+        &self,
+    ) -> Option<p4_adapter::node_adapter::CompletionStorageSnapshot> {
         Some(self.inner.mailbox.storage_snapshot())
     }
     fn try_offer_retained(&self, completion: RetainedCompletion) -> Result<(), RetainedOfferError> {
-        if completion.event().validate().is_err() { return Err(RetainedOfferError::Closed(completion)); }
+        if completion.event().validate().is_err() {
+            return Err(RetainedOfferError::Closed(completion));
+        }
         if self.stopped.load(Ordering::Acquire) || self.inner.shutting_down.load(Ordering::Acquire)
         {
             return Err(RetainedOfferError::Closed(completion));

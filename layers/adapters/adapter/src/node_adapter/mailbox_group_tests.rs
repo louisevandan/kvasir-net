@@ -17,7 +17,11 @@ fn event(id: &str) -> Event {
             causation_id: None,
             source: Endpoint::agent(Address::tcp("127.0.0.1", 61101)),
             target: Endpoint::node(Address::tcp("127.0.0.1", 61101), "mock", 1),
-            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
+            return_route: Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
             class: EventClass::Data,
             sequence: 1,
             deadline_unix_ms: None,
@@ -356,6 +360,70 @@ fn concurrent_groups_cannot_both_consume_the_same_storage_count() {
     );
     assert_eq!(mailbox.storage_snapshot().retained_count, 2);
     drop(results);
+    assert_eq!(mailbox.storage_snapshot().retained_count, 0);
+    assert_eq!(mailbox.storage_snapshot().retained_bytes, 0);
+}
+
+#[test]
+fn aggregate_pool_is_charged_once_and_split_without_changing_total_usage() {
+    let first = event("first");
+    let mut second = event("second");
+    second.payload.reserve_exact(16 * 1024);
+    let first_cost = cost(&first);
+    let second_cost = cost(&second);
+    let count = 2;
+    let backing = count * std::mem::size_of::<CompletionReservation>();
+    let total = first_cost + second_cost + count * COMPLETION_ENTRY_OVERHEAD_BYTES + backing + 4096;
+    let (publisher, mailbox) = completion_mailbox_with_limits(1, count, total).unwrap();
+    let mut group = publisher.try_reserve_pool(count, total).unwrap();
+    assert_eq!(mailbox.storage_snapshot().retained_count, count);
+    assert_eq!(mailbox.storage_snapshot().retained_bytes, total);
+    let before = mailbox.storage_snapshot();
+    let first_reservation = group.take_for(first_cost).unwrap();
+    let second_reservation = group.take_for(second_cost).unwrap();
+    assert_eq!(mailbox.storage_snapshot(), before);
+    assert!(group.is_empty());
+    drop(group);
+    assert_eq!(
+        mailbox.storage_snapshot().retained_bytes,
+        first_reservation.retained_bytes() + second_reservation.retained_bytes()
+    );
+    publisher
+        .publish_reserved(first, first_reservation)
+        .unwrap();
+    let first = owned(&mailbox);
+    publisher
+        .publish_reserved(second, second_reservation)
+        .unwrap();
+    first.retire();
+    owned(&mailbox).retire();
+    assert_eq!(mailbox.storage_snapshot().retained_count, 0);
+    assert_eq!(mailbox.storage_snapshot().retained_bytes, 0);
+}
+
+#[test]
+fn aggregate_pool_refusal_and_oversized_item_preserve_the_whole_unassigned_pool() {
+    let count = 2;
+    let minimum = count * (std::mem::size_of::<Event>() + COMPLETION_ENTRY_OVERHEAD_BYTES)
+        + count * std::mem::size_of::<CompletionReservation>();
+    let (publisher, mailbox) = completion_mailbox_with_limits(1, count, minimum + 1024).unwrap();
+    assert_eq!(
+        publisher.try_reserve_pool(count, minimum - 1).unwrap_err(),
+        GroupReserveError::PoolTooSmall {
+            required_bytes: minimum,
+            provided_bytes: minimum - 1,
+        }
+    );
+    assert_eq!(mailbox.storage_snapshot().retained_count, 0);
+    let mut group = publisher.try_reserve_pool(count, minimum + 1024).unwrap();
+    let before = mailbox.storage_snapshot();
+    assert!(matches!(
+        group.take_for(std::mem::size_of::<Event>() + 1025),
+        Err(GroupReserveError::PoolItemTooLarge { .. })
+    ));
+    assert_eq!(group.len(), count);
+    assert_eq!(mailbox.storage_snapshot(), before);
+    drop(group);
     assert_eq!(mailbox.storage_snapshot().retained_count, 0);
     assert_eq!(mailbox.storage_snapshot().retained_bytes, 0);
 }

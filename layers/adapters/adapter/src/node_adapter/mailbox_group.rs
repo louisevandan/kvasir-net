@@ -15,6 +15,14 @@ pub enum GroupReserveError {
     Full,
     CostOverflow,
     AllocationFailed,
+    PoolTooSmall {
+        required_bytes: usize,
+        provided_bytes: usize,
+    },
+    PoolItemTooLarge {
+        required_bytes: usize,
+        assignable_bytes: usize,
+    },
     TooLarge {
         required_count: usize,
         count_limit: usize,
@@ -59,6 +67,7 @@ impl Drop for GroupBackingClaim {
 pub struct CompletionReservationGroup {
     items: VecDeque<CompletionReservation>,
     backing: Option<GroupBackingClaim>,
+    assignable_bytes: usize,
 }
 
 impl std::fmt::Debug for CompletionReservationGroup {
@@ -66,6 +75,7 @@ impl std::fmt::Debug for CompletionReservationGroup {
         f.debug_struct("CompletionReservationGroup")
             .field("remaining", &self.items.len())
             .field("backing_bytes", &self.backing_bytes())
+            .field("assignable_bytes", &self.assignable_bytes)
             .finish()
     }
 }
@@ -80,10 +90,53 @@ impl CompletionReservationGroup {
     pub fn backing_bytes(&self) -> usize {
         self.backing.as_ref().map_or(0, |claim| claim.bytes)
     }
+    pub fn assignable_bytes(&self) -> usize {
+        self.assignable_bytes
+    }
     /// Input order is preserved. A failed publication returns this same item's
     /// reservation; it does not consume a different item's capacity.
     pub fn take_next(&mut self) -> Option<CompletionReservation> {
         self.items.pop_front()
+    }
+
+    /// Assign part of an already charged aggregate pool to the next item.
+    /// The mailbox's used count/bytes do not change here: ownership moves from
+    /// the group's unpublished pool to one linear publication reservation.
+    pub fn take_for(
+        &mut self,
+        footprint_bytes: usize,
+    ) -> Result<CompletionReservation, GroupReserveError> {
+        let required = footprint_bytes
+            .checked_add(COMPLETION_ENTRY_OVERHEAD_BYTES)
+            .ok_or(GroupReserveError::CostOverflow)?;
+        let current = self
+            .items
+            .front()
+            .ok_or(GroupReserveError::Empty)?
+            .claim
+            .bytes;
+        let additional = required.saturating_sub(current);
+        if additional > self.assignable_bytes {
+            return Err(GroupReserveError::PoolItemTooLarge {
+                required_bytes: required,
+                assignable_bytes: self.assignable_bytes,
+            });
+        }
+        let mut reservation = self.items.pop_front().expect("front was inspected");
+        if additional != 0 {
+            reservation.claim.bytes = reservation
+                .claim
+                .bytes
+                .checked_add(additional)
+                .ok_or(GroupReserveError::CostOverflow)?;
+            let backing = self.backing.as_mut().expect("assignable pool has backing");
+            backing.bytes = backing
+                .bytes
+                .checked_sub(additional)
+                .expect("assignable bytes are part of the backing claim");
+            self.assignable_bytes -= additional;
+        }
+        Ok(reservation)
     }
 }
 
@@ -235,6 +288,76 @@ impl CompletionPublisher {
                 capacity: Arc::clone(&self.capacity),
                 bytes: backing_bytes,
             }),
+            assignable_bytes: 0,
+        })
+    }
+
+    /// Reserve a count and aggregate retained-byte ceiling before the caller
+    /// knows each result's exact allocation footprint. Every item starts with
+    /// the minimum Event claim; `take_for` moves bytes out of the same charged
+    /// pool, so native/result preparation can never increase mailbox usage.
+    pub fn try_reserve_pool(
+        &self,
+        count: usize,
+        total_retained_bytes: usize,
+    ) -> Result<CompletionReservationGroup, GroupReserveError> {
+        if count == 0 {
+            return Err(GroupReserveError::Empty);
+        }
+        let item_bytes = count
+            .checked_mul(
+                std::mem::size_of::<Event>()
+                    .checked_add(COMPLETION_ENTRY_OVERHEAD_BYTES)
+                    .ok_or(GroupReserveError::CostOverflow)?,
+            )
+            .ok_or(GroupReserveError::CostOverflow)?;
+        {
+            let budget = self.budget.lock().map_err(|_| GroupReserveError::Closed)?;
+            check_group_budget(&budget, count, total_retained_bytes)?;
+        }
+        let mut items = VecDeque::new();
+        items
+            .try_reserve_exact(count)
+            .map_err(|_| GroupReserveError::AllocationFailed)?;
+        let backing_bytes = items
+            .capacity()
+            .checked_mul(std::mem::size_of::<CompletionReservation>())
+            .ok_or(GroupReserveError::CostOverflow)?;
+        let minimum = item_bytes
+            .checked_add(backing_bytes)
+            .ok_or(GroupReserveError::CostOverflow)?;
+        if total_retained_bytes < minimum {
+            return Err(GroupReserveError::PoolTooSmall {
+                required_bytes: minimum,
+                provided_bytes: total_retained_bytes,
+            });
+        }
+        {
+            let mut budget = self.budget.lock().map_err(|_| GroupReserveError::Closed)?;
+            let (next_count, next_bytes) =
+                check_group_budget(&budget, count, total_retained_bytes)?;
+            budget.used_count = next_count;
+            budget.used_bytes = next_bytes;
+        }
+        let minimum_item = std::mem::size_of::<Event>() + COMPLETION_ENTRY_OVERHEAD_BYTES;
+        for _ in 0..count {
+            items.push_back(CompletionReservation {
+                claim: Claim {
+                    budget: Arc::clone(&self.budget),
+                    capacity: Arc::clone(&self.capacity),
+                    bytes: minimum_item,
+                    active: true,
+                },
+            });
+        }
+        Ok(CompletionReservationGroup {
+            items,
+            backing: Some(GroupBackingClaim {
+                budget: Arc::clone(&self.budget),
+                capacity: Arc::clone(&self.capacity),
+                bytes: total_retained_bytes - item_bytes,
+            }),
+            assignable_bytes: total_retained_bytes - minimum,
         })
     }
 }

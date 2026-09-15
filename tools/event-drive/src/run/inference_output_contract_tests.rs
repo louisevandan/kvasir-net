@@ -394,7 +394,8 @@ async fn captured_outputs_reject_tail_middle_other_head_generation_and_route_cha
             // routes before inference can consume them. Preserve all inputs
             // and independently check the consumer's existing fence as well.
             assert!(encode(&changed[0]).is_err(), "route mutation {mutation}");
-            InferenceIdentity::new(&fixture_config(&case, "partial"), &outer()).unwrap()
+            InferenceIdentity::new(&fixture_config(&case, "partial"), &outer())
+                .unwrap()
                 .output(&changed[0], &outcome(&changed[0]), None)
         } else {
             consume(&case, "partial", &changed).await.map(|_| ())

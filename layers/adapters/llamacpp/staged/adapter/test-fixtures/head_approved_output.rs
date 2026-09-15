@@ -441,7 +441,10 @@ pub fn assert_live_prefill_workload(head: &Endpoint, workload: &[(&str, usize)],
                     "physical request membership repeats"
                 );
                 // Reject unknown work even when it reports zero prefill rows.
-                assert!(workload.iter().any(|(id, _)| *id == request), "unexpected request {request}");
+                assert!(
+                    workload.iter().any(|(id, _)| *id == request),
+                    "unexpected request {request}"
+                );
                 let rows = usize::try_from(member["prefill_rows"].as_u64().unwrap()).unwrap();
                 physical_prefill = physical_prefill.checked_add(rows).unwrap();
                 let total = totals.entry(request.to_owned()).or_default();

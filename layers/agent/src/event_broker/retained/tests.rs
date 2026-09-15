@@ -22,7 +22,11 @@ fn event(id: &str) -> Event {
             causation_id: None,
             source: Endpoint::agent(Address::tcp("127.0.0.2", 52001)),
             target: Endpoint::agent(own()),
-            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
+            return_route: Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
             class: EventClass::Control,
             sequence: 1,
             deadline_unix_ms: None,
@@ -83,10 +87,14 @@ fn outer_output_is_routed_to_reception_agent_and_full_preserves_original() {
     let mut first = event("first-output");
     first.envelope.source = Endpoint::node(worker, "backend-neutral", 4);
     first.envelope.target = route.clone();
-    first.envelope.return_route = match route { Endpoint::Outer(route) => Some(route), _ => unreachable!() };
+    first.envelope.return_route = match route {
+        Endpoint::Outer(route) => Some(route),
+        _ => unreachable!(),
+    };
     first.envelope.class = EventClass::Output;
     let mut second = first.clone();
-    second.envelope.event_id = "second-output".into(); second.envelope.sequence = 2;
+    second.envelope.event_id = "second-output".into();
+    second.envelope.sequence = 2;
     let expected = second.clone();
     remote.dispatch_ingress(first).unwrap();
     let (_, source, pending) = make_source(second);
@@ -94,7 +102,10 @@ fn outer_output_is_routed_to_reception_agent_and_full_preserves_original() {
     let charge = source.storage_snapshot().retained_bytes;
     let before = remote.receipt_snapshot().unwrap().committed_events;
     let failure = remote.dispatch_retained(pending).unwrap_err();
-    assert_eq!(failure.error, DispatchError::Full(Delivery::Outbound(ingress.clone())));
+    assert_eq!(
+        failure.error,
+        DispatchError::Full(Delivery::Outbound(ingress.clone()))
+    );
     assert_eq!(failure.completion.event(), &expected);
     assert_eq!(failure.completion.event().payload.as_ptr(), pointer);
     assert_eq!(source.storage_snapshot().retained_bytes, charge);
@@ -102,7 +113,10 @@ fn outer_output_is_routed_to_reception_agent_and_full_preserves_original() {
     assert_eq!(outer_rx.storage_snapshot().retained_count, 0);
     assert_eq!(agent_rx.storage_snapshot().retained_count, 0);
     drop(take(&out_rx));
-    assert_eq!(remote.dispatch_retained(*failure.completion).unwrap(), DispatchOutcome::Enqueued(Delivery::Outbound(ingress.clone())));
+    assert_eq!(
+        remote.dispatch_retained(*failure.completion).unwrap(),
+        DispatchOutcome::Enqueued(Delivery::Outbound(ingress.clone()))
+    );
     let forwarded = take(&out_rx);
     assert_eq!(forwarded.event(), &expected);
     assert_eq!(forwarded.event().payload.as_ptr(), pointer);
@@ -112,7 +126,10 @@ fn outer_output_is_routed_to_reception_agent_and_full_preserves_original() {
     let (outer_tx, outer_rx) = queue(1 << 20);
     let (out_tx, out_rx) = queue(1 << 20);
     let reception = RetainedEventBroker::new(ingress, agent_tx, outer_tx, out_tx, 8);
-    assert_eq!(reception.dispatch_retained(forwarded).unwrap(), DispatchOutcome::Enqueued(Delivery::Outer));
+    assert_eq!(
+        reception.dispatch_retained(forwarded).unwrap(),
+        DispatchOutcome::Enqueued(Delivery::Outer)
+    );
     let delivered = take(&outer_rx);
     assert_eq!(delivered.event(), &expected);
     assert_eq!(delivered.event().payload.as_ptr(), pointer);
@@ -130,22 +147,32 @@ fn owned_runtime_admission_pause_rechecks_reserved_front_and_preserves_exact_dup
     let replay = original.clone();
     let (_, source, completion) = make_source(original);
     let pointer = completion.event().payload.as_ptr();
-    let front = CompletionFront { envelope: completion.event().envelope.clone(),
-        event_bytes: retained_event_bytes(completion.event()).unwrap() };
+    let front = CompletionFront {
+        envelope: completion.event().envelope.clone(),
+        event_bytes: retained_event_bytes(completion.event()).unwrap(),
+    };
     let ticket = broker.reserve_retained_completion(&front).unwrap();
     let pause = broker.pause_node_admission("paused", 1).unwrap();
-    let failed = broker.dispatch_retained_completion(ticket, completion).unwrap_err();
+    let failed = broker
+        .dispatch_retained_completion(ticket, completion)
+        .unwrap_err();
     assert!(matches!(failed.error, DispatchError::Full(_)));
     assert_eq!(failed.completion.event().payload.as_ptr(), pointer);
     assert_eq!(source.storage_snapshot().retained_count, 1);
     assert_eq!(inbound.storage_snapshot().retained_count, 0);
     assert_eq!(inbound.storage_snapshot().reserved_queue_slots, 0);
     assert_eq!(broker.receipt_snapshot().unwrap().committed_events, Some(0));
-    assert!(matches!(broker.dispatch_ingress(replay.clone()).unwrap_err().error, DispatchError::Full(_)));
+    assert!(matches!(
+        broker.dispatch_ingress(replay.clone()).unwrap_err().error,
+        DispatchError::Full(_)
+    ));
     drop(pause);
     broker.dispatch_retained(*failed.completion).unwrap();
     let pause = broker.pause_node_admission("paused", 1).unwrap();
-    assert_eq!(broker.dispatch_ingress(replay).unwrap(), DispatchOutcome::Duplicate);
+    assert_eq!(
+        broker.dispatch_ingress(replay).unwrap(),
+        DispatchOutcome::Duplicate
+    );
     assert_eq!(take(&inbound).event().payload.as_ptr(), pointer);
     drop(pause);
     assert_eq!(source.storage_snapshot().retained_count, 0);
@@ -446,7 +473,10 @@ fn missing_or_conflicting_return_context_refuses_without_queue_receipt_or_claim_
         assert_eq!(broker.receipt_snapshot().unwrap().committed_events, Some(0));
         drop(failed);
         assert_eq!(source.storage_snapshot().retained_bytes, 0);
-        assert_eq!(broker.dispatch_ingress(good).unwrap(), DispatchOutcome::Enqueued(Delivery::Agent));
+        assert_eq!(
+            broker.dispatch_ingress(good).unwrap(),
+            DispatchOutcome::Enqueued(Delivery::Agent)
+        );
         drop(take(&destination));
     }
 }

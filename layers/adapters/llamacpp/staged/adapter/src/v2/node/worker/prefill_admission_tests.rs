@@ -367,14 +367,21 @@ fn request_storage_refuses_each_aggregate_axis_before_admission_and_preserves_re
         let first = submission(&worker, "budget-a");
         accepted_without_native(&mut worker, &mailbox, &first);
         let cost = worker.state.request_budget.used();
-        assert_eq!((cost.requests, cost.prompt_tokens, cost.output_tokens), (1, 1, 1));
+        assert_eq!(
+            (cost.requests, cost.prompt_tokens, cost.output_tokens),
+            (1, 1, 1)
+        );
         assert!(cost.bytes > first.payload.len());
         // Reset only this fixture's empty account, then replay the real handler.
         worker.state.requests.clear();
         worker.state.pending.clear();
         assert_eq!(worker.state.request_budget.used(), RequestCost::default());
-        let mut limit = RequestCost { requests: usize::MAX, bytes: usize::MAX,
-            prompt_tokens: usize::MAX, output_tokens: usize::MAX };
+        let mut limit = RequestCost {
+            requests: usize::MAX,
+            bytes: usize::MAX,
+            prompt_tokens: usize::MAX,
+            output_tokens: usize::MAX,
+        };
         match axis {
             0 => limit.requests = cost.requests,
             1 => limit.bytes = cost.bytes,
@@ -384,7 +391,12 @@ fn request_storage_refuses_each_aggregate_axis_before_admission_and_preserves_re
         worker.state.request_budget = RequestBudget::new(limit);
         accepted_without_native(&mut worker, &mailbox, &first);
         let second = submission(&worker, "budget-b");
-        rejected_without_admission(&mut worker, &mailbox, &second, "request storage budget exhausted");
+        rejected_without_admission(
+            &mut worker,
+            &mailbox,
+            &second,
+            "request storage budget exhausted",
+        );
 
         // A late observation/effect may still own the input after the request
         // leaves the active map. It keeps the claim without copying the prompt.
@@ -393,7 +405,12 @@ fn request_storage_refuses_each_aggregate_axis_before_admission_and_preserves_re
         worker.state.requests.remove(&key);
         worker.state.pending.clear();
         assert_eq!(worker.state.request_budget.used(), cost);
-        rejected_without_admission(&mut worker, &mailbox, &second, "request storage budget exhausted");
+        rejected_without_admission(
+            &mut worker,
+            &mailbox,
+            &second,
+            "request storage budget exhausted",
+        );
         assert_eq!(late.command.request_id, "budget-a");
         drop(late);
         assert_eq!(worker.state.request_budget.used(), RequestCost::default());
@@ -408,11 +425,17 @@ fn pipeline_configuration_refuses_before_request_reservation_or_native_tokenizat
     use crate::v2::scheduler::pipeline::PipelinePolicy;
     for (window, quantum, fragments) in [(0, 128, 1), (8, 0, 1), (8, 128, 2)] {
         let (mut worker, mailbox) = prefill_fixture();
-        worker.state.pipeline_policy = Some(PipelinePolicy { mixed_batch_rows: None, mixed_prefill_rows: quantum });
+        worker.state.pipeline_policy = Some(PipelinePolicy {
+            mixed_batch_rows: None,
+            mixed_prefill_rows: quantum,
+        });
         worker.state.max_open_batches = window;
         worker.state.prefill_fragments = fragments;
         let tokens = submission(&worker, "bad-pipeline");
-        let prompt = change_command(&tokens, |c| { c.tokens.clear(); c.prompt = Some("Meaningful input".into()); });
+        let prompt = change_command(&tokens, |c| {
+            c.tokens.clear();
+            c.prompt = Some("Meaningful input".into());
+        });
         rejected_without_admission(&mut worker, &mailbox, &prompt, "pipeline policy requires");
         worker.state.pipeline_policy = None;
         accepted_without_native(&mut worker, &mailbox, &tokens);
@@ -424,14 +447,30 @@ fn profiled_token_configuration_refuses_zero_and_competing_controller_without_re
     use crate::v2::scheduler::{pipeline::PipelinePolicy, service::ServiceBudget};
     for (tokens, online) in [(0, false), (32, true)] {
         let (mut worker, mailbox) = prefill_fixture();
-        worker.state.pipeline_policy = Some(PipelinePolicy { mixed_batch_rows: Some(tokens), mixed_prefill_rows: 128 });
+        worker.state.pipeline_policy = Some(PipelinePolicy {
+            mixed_batch_rows: Some(tokens),
+            mixed_prefill_rows: 128,
+        });
         worker.state.max_open_batches = 4;
         worker.state.prefill_fragments = 1;
-        if online { worker.service_budget = ServiceBudget::new(250_000); }
+        if online {
+            worker.service_budget = ServiceBudget::new(250_000);
+        }
         let tokens = submission(&worker, "bad-profile");
-        let prompt = change_command(&tokens, |c| { c.tokens.clear(); c.prompt = Some("Meaningful input".into()); });
-        rejected_without_admission(&mut worker, &mailbox, &prompt,
-            if online { "profiled mixed token budget" } else { "pipeline policy requires" });
+        let prompt = change_command(&tokens, |c| {
+            c.tokens.clear();
+            c.prompt = Some("Meaningful input".into());
+        });
+        rejected_without_admission(
+            &mut worker,
+            &mailbox,
+            &prompt,
+            if online {
+                "profiled mixed token budget"
+            } else {
+                "pipeline policy requires"
+            },
+        );
         worker.state.pipeline_policy = None;
         worker.service_budget = ServiceBudget::default();
         accepted_without_native(&mut worker, &mailbox, &tokens);

@@ -51,23 +51,54 @@ impl Worker {
     /// Candidate preparation is read-only. Only the plan eventually accepted
     /// by native issue may advance scheduler fairness or request/flight state.
     pub(super) fn prepare_generation_service_plan(
-        &self, demands: &[Demand], session: &PipelineSession, issue_cap: usize,
-        limits: crate::v2::scheduler::OrdinaryLimits, decoding: bool,
+        &self,
+        demands: &[Demand],
+        session: &PipelineSession,
+        issue_cap: usize,
+        limits: crate::v2::scheduler::OrdinaryLimits,
+        decoding: bool,
         mut plan: crate::v2::scheduler::PreparedPlan,
-    ) -> Result<(crate::v2::scheduler::PreparedPlan, Option<crate::v2::scheduler::service::ServiceDecision>), String> {
+    ) -> Result<
+        (
+            crate::v2::scheduler::PreparedPlan,
+            Option<crate::v2::scheduler::service::ServiceDecision>,
+        ),
+        String,
+    > {
         use crate::v2::scheduler::service::ServiceVerdict;
-        let prepare = |demands: &[Demand], limits| self.scheduler.prepare_plan_with_limits(
-            demands, self.state.batch_capacity.min(issue_cap), self.state.physical_capacity.min(issue_cap),
-            self.state.equal_sequence_ubatch, self.state.max_atomic_sequences,
-            self.state.atomic_batch_exclusive, limits).map_err(|e| format!("service candidate: {e:?}"));
+        let prepare = |demands: &[Demand], limits| {
+            self.scheduler
+                .prepare_plan_with_limits(
+                    demands,
+                    self.state.batch_capacity.min(issue_cap),
+                    self.state.physical_capacity.min(issue_cap),
+                    self.state.equal_sequence_ubatch,
+                    self.state.max_atomic_sequences,
+                    self.state.atomic_batch_exclusive,
+                    limits,
+                )
+                .map_err(|e| format!("service candidate: {e:?}"))
+        };
         let mut examined = Vec::new();
         loop {
-            let Some(shape) = self.planned_service_shape(plan.allocations()) else { return Ok((plan, None)); };
-            let Some(mut decision) = self.service_budget.decide(self.state.load_generation,
-                &session.command.session_id, session.command.stages.len(), &shape, decoding,
-                &self.state.open_batches) else { return Ok((plan, None)); };
+            let Some(shape) = self.planned_service_shape(plan.allocations()) else {
+                return Ok((plan, None));
+            };
+            let Some(mut decision) = self.service_budget.decide(
+                self.state.load_generation,
+                &session.command.session_id,
+                session.command.stages.len(),
+                &shape,
+                decoding,
+                &self.state.open_batches,
+            ) else {
+                return Ok((plan, None));
+            };
             examined.push(shape.prefill_rows);
-            if matches!(decision.verdict, ServiceVerdict::PurePrefill | ServiceVerdict::DecodeOnly | ServiceVerdict::Admit) {
+            if matches!(
+                decision.verdict,
+                ServiceVerdict::PurePrefill | ServiceVerdict::DecodeOnly | ServiceVerdict::Admit
+            ) {
                 decision.examined_prefill_rows = examined;
                 decision.selected_prefill_rows = Some(shape.prefill_rows);
                 return Ok((plan, Some(decision)));
@@ -76,14 +107,20 @@ impl Worker {
                 // Zero means unbounded in OrdinaryLimits. Never express
                 // "no prefill" by writing zero into that field.
                 let smaller = crate::v2::scheduler::OrdinaryLimits {
-                    prefill_rows: shape.prefill_rows / 2, ..limits
+                    prefill_rows: shape.prefill_rows / 2,
+                    ..limits
                 };
                 plan = prepare(demands, smaller)?;
                 continue;
             }
-            if !self.service_budget.has_open_prefill(&self.state.open_batches)
+            if !self
+                .service_budget
+                .has_open_prefill(&self.state.open_batches)
                 || (decision.verdict == ServiceVerdict::Cold
-                    && !self.service_budget.has_open_calibration_probe(&self.state.open_batches)) {
+                    && !self
+                        .service_budget
+                        .has_open_calibration_probe(&self.state.open_batches))
+            {
                 // Unknown/infeasible service cannot starve prompts forever.
                 // Calibrate the smallest quantum, never the rejected original
                 // full chunk. This explicit probe does not promise an SLO.
@@ -97,7 +134,11 @@ impl Worker {
             if decision.verdict == ServiceVerdict::Cold {
                 decision.verdict = ServiceVerdict::CalibrationWait;
             }
-            let decodes: Vec<_> = demands.iter().filter(|d| d.phase != Phase::Prefill).cloned().collect();
+            let decodes: Vec<_> = demands
+                .iter()
+                .filter(|d| d.phase != Phase::Prefill)
+                .cloned()
+                .collect();
             plan = prepare(&decodes, limits)?;
             decision.examined_prefill_rows = examined;
             decision.selected_prefill_rows = Some(0);

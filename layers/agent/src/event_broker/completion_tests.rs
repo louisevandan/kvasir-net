@@ -108,7 +108,12 @@ fn existing_duplicate_and_conflict_precede_full_and_closed_destinations() {
         let mut f = fixture(1);
         let original = input(&f, "existing", Endpoint::agent(f.own.clone()), 1);
         f.broker.dispatch(original.clone()).unwrap();
-        let newer = input(&f, "later-in-stream", Endpoint::outer(f.own.clone(), "sink", 1), 2);
+        let newer = input(
+            &f,
+            "later-in-stream",
+            Endpoint::outer(f.own.clone(), "sink", 1),
+            2,
+        );
         f.broker.dispatch(newer.clone()).unwrap();
         if closed {
             f.agent.close();
@@ -163,20 +168,25 @@ fn existing_ticket_pins_exact_receipt_through_window_eviction() {
         f.broker.dispatch(newer.clone()).unwrap();
         assert_eq!(f.agent.try_recv().unwrap(), newer);
     }
-    assert!(matches!(
-        f.broker
-            .ledger
-            .lock()
-            .unwrap()
-            .inspect_completion_header(&original.envelope),
-        Err(DispatchError::SequenceRegression { previous: 10, incoming: 1 })
-    ),
+    assert!(
+        matches!(
+            f.broker
+                .ledger
+                .lock()
+                .unwrap()
+                .inspect_completion_header(&original.envelope),
+            Err(DispatchError::SequenceRegression {
+                previous: 10,
+                incoming: 1
+            })
+        ),
         "the test must actually cross the receipt window"
     );
     f.agent.close();
     let before = ledger_snapshot(&f.broker);
     assert_eq!(
-        f.broker.dispatch_completion(duplicate_ticket, original.clone()),
+        f.broker
+            .dispatch_completion(duplicate_ticket, original.clone()),
         Ok(DispatchOutcome::Duplicate)
     );
     assert_eq!(ledger_snapshot(&f.broker), before);
@@ -240,7 +250,10 @@ fn front_probe_rejects_sequence_regression_before_destination_full() {
     match f.broker.reserve_completion(&regressing.envelope) {
         Err(error) => assert_eq!(
             error,
-            DispatchError::SequenceRegression { previous: 4, incoming: 3 },
+            DispatchError::SequenceRegression {
+                previous: 4,
+                incoming: 3
+            },
         ),
         Ok(_) => panic!("a regressing front cannot gain a destination ticket"),
     }
@@ -282,7 +295,12 @@ fn changed_completion_envelope_returns_original_and_releases_reserved_slot() {
 #[test]
 fn recreated_route_cannot_use_a_previous_generations_reserved_slot() {
     let mut f = fixture(1);
-    let value = input(&f, "route-generation", Endpoint::node(f.own.clone(), "n1", 1), 1);
+    let value = input(
+        &f,
+        "route-generation",
+        Endpoint::node(f.own.clone(), "n1", 1),
+        1,
+    );
     let ticket = f.broker.reserve_completion(&value.envelope).unwrap();
     assert!(f.broker.unregister_node("n1", 1).unwrap());
     let (sender, mut receiver) = bounded_queue(1);
@@ -315,13 +333,24 @@ fn recreated_route_cannot_use_a_previous_generations_reserved_slot() {
 #[test]
 fn reserved_slot_is_bound_to_the_actual_channel_not_only_route_labels() {
     let mut f = fixture(1);
-    let value = input(&f, "route-channel", Endpoint::node(f.own.clone(), "n1", 1), 1);
+    let value = input(
+        &f,
+        "route-channel",
+        Endpoint::node(f.own.clone(), "n1", 1),
+        1,
+    );
     let ticket = f.broker.reserve_completion(&value.envelope).unwrap();
     let (sender, mut receiver) = bounded_queue(1);
     // Public registration forbids replacing a live generation. This explicit
     // test-only substitution isolates the additional same-channel guard from
     // the real generation-change test above; it is not a production rebind API.
-    f.broker.nodes.write().unwrap().get_mut("n1").unwrap().sender = sender;
+    f.broker
+        .nodes
+        .write()
+        .unwrap()
+        .get_mut("n1")
+        .unwrap()
+        .sender = sender;
     let returned = refuse(
         &f.broker,
         ticket,
@@ -347,7 +376,10 @@ fn queue_ticket_rechecks_sequence_changed_by_a_real_interleaved_dispatch() {
         &f.broker,
         ticket,
         value,
-        DispatchError::SequenceRegression { previous: 2, incoming: 1 },
+        DispatchError::SequenceRegression {
+            previous: 2,
+            incoming: 1,
+        },
     );
     assert!(f.node.try_recv().is_err());
     assert_eq!(f.outer.try_recv().unwrap(), newer);
@@ -370,7 +402,12 @@ fn queue_ticket_rechecks_duplicate_and_conflict_without_a_second_delivery() {
         }
         f.broker.dispatch(accepted.clone()).unwrap();
         if conflicting {
-            refuse(&f.broker, ticket, value, DispatchError::ConflictingDuplicate);
+            refuse(
+                &f.broker,
+                ticket,
+                value,
+                DispatchError::ConflictingDuplicate,
+            );
         } else {
             let before = ledger_snapshot(&f.broker);
             assert_eq!(
@@ -380,9 +417,19 @@ fn queue_ticket_rechecks_duplicate_and_conflict_without_a_second_delivery() {
             assert_eq!(ledger_snapshot(&f.broker), before);
         }
         assert_eq!(f.node.try_recv().unwrap(), accepted);
-        assert!(f.node.try_recv().is_err(), "the ticket cannot duplicate delivery");
+        assert!(
+            f.node.try_recv().is_err(),
+            "the ticket cannot duplicate delivery"
+        );
         assert_eq!(
-            f.broker.nodes.read().unwrap().get("n1").unwrap().sender.capacity(),
+            f.broker
+                .nodes
+                .read()
+                .unwrap()
+                .get("n1")
+                .unwrap()
+                .sender
+                .capacity(),
             2,
             "both the consumed delivery and unused reservation are released"
         );

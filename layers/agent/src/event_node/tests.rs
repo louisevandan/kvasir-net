@@ -87,7 +87,11 @@ fn event(own: &Address) -> Event {
             causation_id: None,
             source: Endpoint::outer(own.clone(), "outer", 1),
             target: Endpoint::node(own.clone(), "n1", 1),
-            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: own.clone(), channel: "outer".into(), connection_generation: 1 }),
+            return_route: Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: own.clone(),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
             class: EventClass::Control,
             sequence: 1,
             deadline_unix_ms: None,
@@ -398,7 +402,17 @@ impl NodeAdapter for DuplexProbeAdapter {
 }
 
 fn duplex_event(id: &str, source: Endpoint, target: Endpoint, payload: &[u8]) -> Event {
-    let return_route = match &source { Endpoint::Outer(route) => Some(route.clone()), _ => match &target { Endpoint::Outer(route) => Some(route.clone()), _ => Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }) } };
+    let return_route = match &source {
+        Endpoint::Outer(route) => Some(route.clone()),
+        _ => match &target {
+            Endpoint::Outer(route) => Some(route.clone()),
+            _ => Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
+        },
+    };
     Event {
         envelope: Envelope {
             protocol_version: Envelope::VERSION,
@@ -1084,7 +1098,11 @@ impl FrontCase {
         let (input, input_rx) = bounded_queue(1);
         let (blocked, blocked_rx) = bounded_queue(1);
         let broker = Arc::new(EventBroker::new(
-            own.clone(), agent, outer.clone(), outbound, 16,
+            own.clone(),
+            agent,
+            outer.clone(),
+            outbound,
+            16,
         ));
         broker.register_node("a", 3, input.clone()).unwrap();
         broker.register_node("b", 7, blocked.clone()).unwrap();
@@ -1099,8 +1117,20 @@ impl FrontCase {
             refusals: AtomicUsize::new(0),
         });
         let run = Box::pin(EventNode::new(adapter.clone(), input_rx, broker.clone()).run());
-        Self { own, broker, adapter, publisher, run, input, blocked, blocked_rx,
-            outer, outer_rx, _agent_rx: agent_rx, _outbound_rx: outbound_rx }
+        Self {
+            own,
+            broker,
+            adapter,
+            publisher,
+            run,
+            input,
+            blocked,
+            blocked_rx,
+            outer,
+            outer_rx,
+            _agent_rx: agent_rx,
+            _outbound_rx: outbound_rx,
+        }
     }
 
     fn completion(&self, id: &str, correlation: &str, sequence: u64, outer: bool) -> Event {
@@ -1109,8 +1139,12 @@ impl FrontCase {
         } else {
             Endpoint::node(self.own.clone(), "b", 7)
         };
-        let mut event = duplex_event(id, Endpoint::node(self.own.clone(), "a", 3),
-            target, &[0xff, 0, sequence as u8]);
+        let mut event = duplex_event(
+            id,
+            Endpoint::node(self.own.clone(), "a", 3),
+            target,
+            &[0xff, 0, sequence as u8],
+        );
         event.envelope.correlation_id = correlation.into();
         event.envelope.sequence = sequence;
         with_spare_allocation(event)
@@ -1121,8 +1155,11 @@ impl FrontCase {
         // The production retry is currently timer-based. Let that existing
         // timer become ready; this does not claim a capacity-waker proof.
         tokio::time::sleep(Duration::from_millis(1)).await;
-        assert!(poll_fn(|cx| TaskPoll::Ready(self.run.as_mut().poll(cx)))
-            .await.is_pending());
+        assert!(
+            poll_fn(|cx| TaskPoll::Ready(self.run.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
     }
 }
 
@@ -1142,19 +1179,35 @@ async fn an_independent_front_reaches_its_reserved_destination_while_output_is_h
     let original_allocation = allocation(&independent);
     case.publisher.try_publish(independent).unwrap();
     case.pending_step().await;
-    let delivered = case.outer_rx.try_recv().expect("the actual OUTER slot was available");
+    let delivered = case
+        .outer_rx
+        .try_recv()
+        .expect("the actual OUTER slot was available");
     assert_eq!(delivered, expected);
     assert_eq!(allocation(&delivered), original_allocation);
-    assert_eq!(case.blocked.capacity(), 0, "the original output is still held");
+    assert_eq!(
+        case.blocked.capacity(),
+        0,
+        "the original output is still held"
+    );
     assert!(case.blocked_rx.try_recv().is_err());
     assert_eq!(case.adapter.inner.taken.load(Ordering::SeqCst), 2);
-    assert_eq!(case.broker.dispatch(delivered), Ok(DispatchOutcome::Duplicate));
+    assert_eq!(
+        case.broker.dispatch(delivered),
+        Ok(DispatchOutcome::Duplicate)
+    );
     drop(obstruction);
     case.pending_step().await;
-    let delivered = case.blocked_rx.try_recv().expect("original held output must follow intact");
+    let delivered = case
+        .blocked_rx
+        .try_recv()
+        .expect("original held output must follow intact");
     assert_eq!(delivered, held_expected);
     assert_eq!(allocation(&delivered), held_allocation);
-    assert_eq!(case.broker.dispatch(delivered), Ok(DispatchOutcome::Duplicate));
+    assert_eq!(
+        case.broker.dispatch(delivered),
+        Ok(DispatchOutcome::Duplicate)
+    );
     assert!(case.outer_rx.try_recv().is_err());
     assert_eq!(case.adapter.inner.taken.load(Ordering::SeqCst), 2);
 }
@@ -1176,19 +1229,31 @@ async fn a_shared_source_and_correlation_cannot_bypass_even_to_a_different_desti
     for _ in 0..4 {
         case.pending_step().await;
         assert_eq!(case.adapter.inner.mailbox.storage_snapshot(), before);
-        assert_eq!(case.adapter.peek_completion(), Some(expected_next.envelope.clone()));
+        assert_eq!(
+            case.adapter.peek_completion(),
+            Some(expected_next.envelope.clone())
+        );
         assert_eq!(case.adapter.inner.taken.load(Ordering::SeqCst), 1);
         assert!(case.outer_rx.try_recv().is_err());
     }
     drop(obstruction);
     case.pending_step().await;
     assert_eq!(case.blocked_rx.try_recv().unwrap(), expected_held);
-    let delivered = case.outer_rx.try_recv().expect("same stream may follow only after the held event");
+    let delivered = case
+        .outer_rx
+        .try_recv()
+        .expect("same stream may follow only after the held event");
     assert_eq!(delivered, expected_next);
     assert_eq!(allocation(&delivered), next_allocation);
     assert_eq!(case.adapter.inner.taken.load(Ordering::SeqCst), 2);
-    assert_eq!(case.broker.dispatch(expected_held), Ok(DispatchOutcome::Duplicate));
-    assert_eq!(case.broker.dispatch(delivered), Ok(DispatchOutcome::Duplicate));
+    assert_eq!(
+        case.broker.dispatch(expected_held),
+        Ok(DispatchOutcome::Duplicate)
+    );
+    assert_eq!(
+        case.broker.dispatch(delivered),
+        Ok(DispatchOutcome::Duplicate)
+    );
 }
 
 #[tokio::test]
@@ -1210,7 +1275,10 @@ async fn a_full_independent_destination_does_not_dequeue_or_reallocate_the_front
     for _ in 0..4 {
         case.pending_step().await;
         assert_eq!(case.adapter.inner.mailbox.storage_snapshot(), before);
-        assert_eq!(case.adapter.peek_completion(), Some(expected.envelope.clone()));
+        assert_eq!(
+            case.adapter.peek_completion(),
+            Some(expected.envelope.clone())
+        );
         assert_eq!(case.adapter.inner.taken.load(Ordering::SeqCst), 1);
         assert_eq!(case.outer.capacity(), 0);
         assert!(case.outer_rx.try_recv().is_err());
@@ -1231,8 +1299,12 @@ async fn a_full_independent_destination_does_not_dequeue_or_reallocate_the_front
 #[tokio::test]
 async fn a_terminal_independent_front_returns_all_three_original_owned_events() {
     let mut case = FrontCase::new(52050);
-    let input = with_spare_allocation(duplex_event("held-input", Endpoint::outer(case.own.clone(), "client", 1),
-        Endpoint::node(case.own.clone(), "a", 3), &[1, 0xfe, 0]));
+    let input = with_spare_allocation(duplex_event(
+        "held-input",
+        Endpoint::outer(case.own.clone(), "client", 1),
+        Endpoint::node(case.own.clone(), "a", 3),
+        &[1, 0xfe, 0],
+    ));
     let expected_input = input.clone();
     let input_allocation = allocation(&input);
     case.input.try_send(input).unwrap();
@@ -1252,17 +1324,28 @@ async fn a_terminal_independent_front_returns_all_three_original_owned_events() 
     let expected_candidate = candidate.clone();
     let candidate_allocation = allocation(&candidate);
     case.publisher.try_publish(candidate).unwrap();
-    let failure = tokio::time::timeout(Duration::from_secs(1), case.run.as_mut()).await
-        .expect("terminal front refusal must stop, not retry Full forever").unwrap_err();
+    let failure = tokio::time::timeout(Duration::from_secs(1), case.run.as_mut())
+        .await
+        .expect("terminal front refusal must stop, not retry Full forever")
+        .unwrap_err();
     let error = DispatchError::UnknownNode("missing".into());
     assert_eq!(failure.error, EventNodeError::Broker(error.clone()));
-    let input = failure.held_input.as_deref().expect("the earlier refused input remains owned");
+    let input = failure
+        .held_input
+        .as_deref()
+        .expect("the earlier refused input remains owned");
     assert_eq!(input, &expected_input);
     assert_eq!(allocation(input), input_allocation);
-    let held = failure.held_output.as_deref().expect("the original Full output remains owned");
+    let held = failure
+        .held_output
+        .as_deref()
+        .expect("the original Full output remains owned");
     assert_eq!(held, &expected_held);
     assert_eq!(allocation(held), held_allocation);
-    let candidate = failure.completion_at_failure.as_deref().expect("the exact terminal candidate remains owned");
+    let candidate = failure
+        .completion_at_failure
+        .as_deref()
+        .expect("the exact terminal candidate remains owned");
     assert_eq!(candidate, &expected_candidate);
     assert_eq!(allocation(candidate), candidate_allocation);
     assert_eq!(case.adapter.inner.taken.load(Ordering::SeqCst), 2);
@@ -1270,11 +1353,20 @@ async fn a_terminal_independent_front_returns_all_three_original_owned_events() 
     assert!(case.adapter.peek_completion().is_none());
     assert!(case.outer_rx.try_recv().is_err());
     assert!(case.blocked_rx.try_recv().is_err());
-    let rejected = case.broker.dispatch(*failure.completion_at_failure.unwrap()).unwrap_err();
-    assert_eq!(rejected.error, error, "the failed candidate did not commit a receipt");
+    let rejected = case
+        .broker
+        .dispatch(*failure.completion_at_failure.unwrap())
+        .unwrap_err();
+    assert_eq!(
+        rejected.error, error,
+        "the failed candidate did not commit a receipt"
+    );
     assert_eq!(*rejected.event, expected_candidate);
     assert_eq!(allocation(&rejected.event), candidate_allocation);
-    let rejected = case.broker.dispatch(*failure.held_output.unwrap()).unwrap_err();
+    let rejected = case
+        .broker
+        .dispatch(*failure.held_output.unwrap())
+        .unwrap_err();
     assert!(matches!(rejected.error, DispatchError::Full(_)));
     assert_eq!(*rejected.event, expected_held);
     assert_eq!(allocation(&rejected.event), held_allocation);

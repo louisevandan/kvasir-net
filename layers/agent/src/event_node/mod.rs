@@ -50,10 +50,16 @@ pub struct EventNode {
 impl EventNode {
     /// This helper is synchronous: no destination permit or receipt pin may
     /// cross an await. It neither executes adapter work nor reads its payload.
-    fn forward_independent_front(&self, blocked: &Event) -> Result<(), (EventNodeError, Option<Box<Event>>)> {
-        let Some(front) = self.adapter.peek_completion() else { return Ok(()); };
+    fn forward_independent_front(
+        &self,
+        blocked: &Event,
+    ) -> Result<(), (EventNodeError, Option<Box<Event>>)> {
+        let Some(front) = self.adapter.peek_completion() else {
+            return Ok(());
+        };
         if front.source == blocked.envelope.source
-            && front.correlation_id == blocked.envelope.correlation_id {
+            && front.correlation_id == blocked.envelope.correlation_id
+        {
             return Ok(());
         }
         let reserved = self.broker.reserve_completion(&front);
@@ -64,11 +70,18 @@ impl EventNode {
         }
         match self.adapter.try_take_completion_matching(&front) {
             Poll::Empty => Ok(()), // a changed front never consumes its replacement
-            Poll::Closed => Err((EventNodeError::CompletionClosed(self.adapter.snapshot()), None)),
+            Poll::Closed => Err((
+                EventNodeError::CompletionClosed(self.adapter.snapshot()),
+                None,
+            )),
             Poll::Event(event) => match reserved {
-                Ok(ticket) => self.broker.dispatch_completion(ticket, event)
+                Ok(ticket) => self
+                    .broker
+                    .dispatch_completion(ticket, event)
                     .map(|_| ())
-                    .map_err(|failure| (EventNodeError::Broker(failure.error), Some(failure.event))),
+                    .map_err(|failure| {
+                        (EventNodeError::Broker(failure.error), Some(failure.event))
+                    }),
                 Err(error) => Err((EventNodeError::Broker(error), Some(Box::new(event)))),
             },
         }
@@ -132,7 +145,8 @@ impl EventNode {
                 }
             }
             if let Some(blocked) = held_output.as_ref()
-                && let Err((error, completion_at_failure)) = self.forward_independent_front(blocked) {
+                && let Err((error, completion_at_failure)) = self.forward_independent_front(blocked)
+            {
                 return Err(EventNodeFailure {
                     error,
                     held_input: held_input.map(Box::new),

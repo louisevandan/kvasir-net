@@ -18,9 +18,9 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 mod core;
-mod server_process;
 #[cfg(test)]
 mod hello_wire_tests;
+mod server_process;
 #[cfg(test)]
 mod tests;
 

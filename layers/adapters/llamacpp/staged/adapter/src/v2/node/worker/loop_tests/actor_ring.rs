@@ -385,7 +385,8 @@ impl Ring {
         }
         if self.head_frozen_full {
             assert_eq!(
-                self.senders[0].capacity(), 0,
+                self.senders[0].capacity(),
+                0,
                 "R's actual destination never acquired space during prevention"
             );
         }
@@ -469,13 +470,21 @@ impl Ring {
         assert_eq!(head.taken, head.node_taken, "no external recovery yet");
         assert_eq!(tail.taken, tail.node_taken, "no external recovery yet");
         assert_eq!(
-            head.node_taken.last().unwrap().envelope.payload_content_type,
+            head.node_taken
+                .last()
+                .unwrap()
+                .envelope
+                .payload_content_type,
             PHYSICAL_BATCH_CONTENT_TYPE
         );
-        let releases: Vec<_> = tail.node_taken.iter().filter(|event| {
-            event.envelope.payload_content_type == RELEASED_CONTENT_TYPE
-                && event.envelope.correlation_id == "R"
-        }).collect();
+        let releases: Vec<_> = tail
+            .node_taken
+            .iter()
+            .filter(|event| {
+                event.envelope.payload_content_type == RELEASED_CONTENT_TYPE
+                    && event.envelope.correlation_id == "R"
+            })
+            .collect();
         assert_eq!(releases.len(), 1);
         let event = releases[0];
         assert_eq!(event.envelope.source, endpoint(1));
@@ -484,22 +493,33 @@ impl Ring {
         assert_eq!(release.sequences.len(), 1);
         assert_eq!(release.sequences[0].key, request_key("loop-session", "R"));
         let states = self.states[0].lock().unwrap();
-        let held = states.iter().rev()
-            .find(|view| view.point == "blocked_non_ack_held").unwrap();
+        let held = states
+            .iter()
+            .rev()
+            .find(|view| view.point == "blocked_non_ack_held")
+            .unwrap();
         let pending = held.pending[&request_key("loop-session", "R")];
         assert_eq!(
             pending,
-            (release.sequences[0].id, release.sequences[0].incarnation,
-                release.sequences[0].operation_id),
+            (
+                release.sequences[0].id,
+                release.sequences[0].incarnation,
+                release.sequences[0].operation_id
+            ),
             "genuine ACK matches exact head-owned release identity"
         );
         assert_eq!(release.load_generation, 1);
         assert_eq!(release.session_id, "loop-session");
-        assert!(!held.free.contains(&pending.0), "R's slot remains pending release");
+        assert!(
+            !held.free.contains(&pending.0),
+            "R's slot remains pending release"
+        );
         assert!(held.requests.contains(&request_key("loop-session", "Q")));
         for command in &commands[2..] {
             assert!(
-                !held.requests.contains(&request_key("loop-session", &command.request_id)),
+                !held
+                    .requests
+                    .contains(&request_key("loop-session", &command.request_id)),
                 "held/queued PREFILL must not already have entered request state"
             );
         }
@@ -510,14 +530,26 @@ impl Ring {
         assert!(self.head_frozen_full);
         assert_eq!(self.senders[0].capacity(), 0);
         let trace = self.adapters[1].trace.lock().unwrap();
-        assert_eq!(trace.taken, trace.node_taken, "only actual EventNode dequeue is eligible");
+        assert_eq!(
+            trace.taken, trace.node_taken,
+            "only actual EventNode dequeue is eligible"
+        );
         let Some(index) = trace.node_taken.iter().position(|event| {
             event.envelope.payload_content_type == SESSION_READY_CONTENT_TYPE
                 && event.envelope.correlation_id == control.envelope.correlation_id
-        }) else { return false; };
+        }) else {
+            return false;
+        };
         let response = &trace.node_taken[index];
-        assert!(trace.node_taken[..index].iter().any(|event| event == release));
-        assert_eq!(response.envelope.causation_id.as_deref(), Some(control.envelope.event_id.as_str()));
+        assert!(
+            trace.node_taken[..index]
+                .iter()
+                .any(|event| event == release)
+        );
+        assert_eq!(
+            response.envelope.causation_id.as_deref(),
+            Some(control.envelope.event_id.as_str())
+        );
         assert_eq!(response.envelope.source, endpoint(1));
         assert_eq!(response.envelope.target, control.envelope.source);
         assert_eq!(
@@ -805,18 +837,22 @@ async fn scenario(capacity: usize) {
     }
     if capacity == 1 {
         let held_release = held_release.as_ref().unwrap();
-        ring.until("tail saturation or genuine C1 progress past held R", &[1], |ring| {
-            let saturated = ring.adapters[1].snapshot() == "completion_queue_full:waiting"
-                && ring.accepted(1, &controls[3])
-                && ring.refused(1, &controls[4])
-                && ring.senders.iter().all(|sender| sender.capacity() == 0)
-                && ring.states[1]
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|view| view.point == "blocked_non_ack_held");
-            saturated || ring.normal_c1_passed_held_release(&controls[0], held_release)
-        })
+        ring.until(
+            "tail saturation or genuine C1 progress past held R",
+            &[1],
+            |ring| {
+                let saturated = ring.adapters[1].snapshot() == "completion_queue_full:waiting"
+                    && ring.accepted(1, &controls[3])
+                    && ring.refused(1, &controls[4])
+                    && ring.senders.iter().all(|sender| sender.capacity() == 0)
+                    && ring.states[1]
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|view| view.point == "blocked_non_ack_held");
+                saturated || ring.normal_c1_passed_held_release(&controls[0], held_release)
+            },
+        )
         .await;
         assert_eq!(ring.authentic_held_release(&commands), *held_release);
         let prevented = ring.normal_c1_passed_held_release(&controls[0], held_release);

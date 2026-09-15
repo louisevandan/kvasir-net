@@ -15,8 +15,8 @@ use p4_llamacpp_staged_adapter::v2::{
     ERROR_CONTENT_TYPE, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, PREFILL_CONTENT_TYPE,
     SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
 };
-use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, decode, encode};
 use p4_protocol::event::hop::{self, HopFrame, ReceiptStatus};
+use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, decode, encode};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
@@ -44,18 +44,39 @@ fn write_body(stream: &mut TcpStream, bytes: &[u8]) {
 fn read_event(stream: &mut TcpStream) -> Option<Event> {
     loop {
         let body = read_body(stream)?;
-        match hop::decode(&body).expect("the drive sends decodable hop frames")
-            .expect("legacy Event after hello is forbidden") {
-            HopFrame::Data { attempt, digest, event } => {
-                let receipt = hop::encode(&HopFrame::Receipt { attempt, digest,
-                    status: ReceiptStatus::AcceptedExact, detail: String::new() }).unwrap();
+        match hop::decode(&body)
+            .expect("the drive sends decodable hop frames")
+            .expect("legacy Event after hello is forbidden")
+        {
+            HopFrame::Data {
+                attempt,
+                digest,
+                event,
+            } => {
+                let receipt = hop::encode(&HopFrame::Receipt {
+                    attempt,
+                    digest,
+                    status: ReceiptStatus::AcceptedExact,
+                    detail: String::new(),
+                })
+                .unwrap();
                 write_body(stream, &receipt);
                 return Some(decode(&event).expect("the drive sends decodable Events"));
             }
             HopFrame::ReceiptAck { .. } => continue,
-            HopFrame::Receipt { attempt, digest, status: ReceiptStatus::AcceptedExact, .. } => {
-                let ack = hop::encode(&HopFrame::ReceiptAck { sender_id: "fixture".into(),
-                    connection_generation: 11, attempt, digest }).unwrap();
+            HopFrame::Receipt {
+                attempt,
+                digest,
+                status: ReceiptStatus::AcceptedExact,
+                ..
+            } => {
+                let ack = hop::encode(&HopFrame::ReceiptAck {
+                    sender_id: "fixture".into(),
+                    connection_generation: 11,
+                    attempt,
+                    digest,
+                })
+                .unwrap();
                 write_body(stream, &ack);
             }
             other => panic!("unexpected drive hop frame {other:?}"),
@@ -66,19 +87,35 @@ fn read_event(stream: &mut TcpStream) -> Option<Event> {
 fn write_event(stream: &mut TcpStream, event: &Event, attempt: u64) -> hop::EventDigest {
     let bytes = encode(event).expect("reply encodes");
     let digest = hop::event_digest(&bytes);
-    let frame = hop::encode(&HopFrame::Data { attempt, digest, event: bytes }).unwrap();
+    let frame = hop::encode(&HopFrame::Data {
+        attempt,
+        digest,
+        event: bytes,
+    })
+    .unwrap();
     write_body(stream, &frame);
     digest
 }
 
 fn await_output_receipt(stream: &mut TcpStream, attempt: u64, digest: hop::EventDigest) {
     loop {
-        let frame = hop::decode(&read_body(stream).expect("output receipt")).unwrap().unwrap();
+        let frame = hop::decode(&read_body(stream).expect("output receipt"))
+            .unwrap()
+            .unwrap();
         match frame {
-            HopFrame::Receipt { attempt: seen, digest: seen_digest,
-                status: ReceiptStatus::AcceptedExact, .. } if seen == attempt && seen_digest == digest => {
-                let ack = hop::encode(&HopFrame::ReceiptAck { sender_id: "fixture".into(),
-                    connection_generation: 11, attempt, digest }).unwrap();
+            HopFrame::Receipt {
+                attempt: seen,
+                digest: seen_digest,
+                status: ReceiptStatus::AcceptedExact,
+                ..
+            } if seen == attempt && seen_digest == digest => {
+                let ack = hop::encode(&HopFrame::ReceiptAck {
+                    sender_id: "fixture".into(),
+                    connection_generation: 11,
+                    attempt,
+                    digest,
+                })
+                .unwrap();
                 write_body(stream, &ack);
                 return;
             }
@@ -160,11 +197,24 @@ fn config(port: u16, requests: usize) -> serde_json::Value {
 /// Answers the handshake, then fails the inference and drops the connection.
 fn serve(listener: TcpListener, requests: usize) {
     let (mut stream, _) = listener.accept().expect("the drive connects");
-    let hello = hop::decode(&read_body(&mut stream).expect("hello body")).unwrap().unwrap();
-    let HopFrame::Hello { connection_generation, .. } = hello else { panic!("hop hello"); };
-    let ack = hop::encode(&HopFrame::HelloAck { accepted_connection_generation: connection_generation,
-        sender_id: "fixture".into(), connection_generation: 11, max_outstanding: 256,
-        max_receipt_bytes: 1024 * 1024 }).unwrap();
+    let hello = hop::decode(&read_body(&mut stream).expect("hello body"))
+        .unwrap()
+        .unwrap();
+    let HopFrame::Hello {
+        connection_generation,
+        ..
+    } = hello
+    else {
+        panic!("hop hello");
+    };
+    let ack = hop::encode(&HopFrame::HelloAck {
+        accepted_connection_generation: connection_generation,
+        sender_id: "fixture".into(),
+        connection_generation: 11,
+        max_outstanding: 256,
+        max_receipt_bytes: 1024 * 1024,
+    })
+    .unwrap();
     write_body(&mut stream, &ack);
     let mut serial = 1;
     let mut submitted = 0;
@@ -200,7 +250,11 @@ fn serve(listener: TcpListener, requests: usize) {
         };
         if let Some((content_type, payload)) = answer {
             let payload = serde_json::to_vec(&payload).expect("payload encodes");
-            let _ = write_event(&mut stream, &reply(&event, content_type, payload, serial), serial);
+            let _ = write_event(
+                &mut stream,
+                &reply(&event, content_type, payload, serial),
+                serial,
+            );
             serial += 1;
         }
     }

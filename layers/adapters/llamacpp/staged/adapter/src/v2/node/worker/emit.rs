@@ -21,6 +21,77 @@ pub(super) struct DirectEmission {
 #[derive(Debug)]
 pub(super) struct PreparedEmission(DirectEmission);
 
+#[derive(Debug)]
+pub(super) struct PreparedReservedPublication {
+    event: Event,
+    reservation: CompletionReservation,
+    materialized: bool,
+}
+
+impl PreparedReservedPublication {
+    pub(super) fn materialize(&mut self, sequence: u64) -> Result<(), String> {
+        if self.materialized {
+            return Ok(());
+        }
+        let prefix = self
+            .event
+            .envelope
+            .event_id
+            .rfind(':')
+            .map(|index| index + 1)
+            .ok_or("reserved publication event ID has no sequence suffix")?;
+        let required = prefix
+            .checked_add(sequence.to_string().len())
+            .ok_or("reserved publication event ID length overflows")?;
+        if required > self.event.envelope.event_id.capacity() {
+            return Err("reserved publication event ID exceeds its prepared capacity".into());
+        }
+        self.event.envelope.event_id.truncate(prefix);
+        use std::fmt::Write as _;
+        write!(&mut self.event.envelope.event_id, "{sequence}")
+            .map_err(|_| "reserved publication event ID formatting failed")?;
+        self.event.envelope.sequence = sequence;
+        self.materialized = true;
+        Ok(())
+    }
+
+    pub(super) fn owns_event_id(&self) -> bool {
+        self.materialized
+    }
+
+    fn into_parts(self) -> (Event, CompletionReservation) {
+        (self.event, self.reservation)
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct PreparedReservedTelemetry {
+    delivery: super::observe::PreparedTelemetry,
+    event: Event,
+    reservation: CompletionReservation,
+}
+
+impl PreparedReservedTelemetry {
+    pub(super) fn finalize(mut self, stamp: u64) -> PreparedReservedPublication {
+        self.delivery.forwarded_at(stamp);
+        self.event.payload.clear();
+        match &self.delivery.payload {
+            super::observe::TelemetryPayload::Batch(value) => {
+                serde_json::to_writer(&mut self.event.payload, value)
+            }
+            super::observe::TelemetryPayload::Span(value) => {
+                serde_json::to_writer(&mut self.event.payload, value)
+            }
+        }
+        .expect("prevalidated observation remains serializable after timestamp replacement");
+        PreparedReservedPublication {
+            event: self.event,
+            reservation: self.reservation,
+            materialized: false,
+        }
+    }
+}
+
 impl PreparedEmission {
     #[cfg(test)]
     pub(super) fn intent_for_test(&self) -> &DirectEmission {
@@ -83,6 +154,177 @@ impl DirectEmission {
 }
 
 impl Worker {
+    fn reserved_forward(
+        &self,
+        base: &Envelope,
+        target: Endpoint,
+        class: EventClass,
+        content_type: &str,
+        payload: Vec<u8>,
+        group: &mut CompletionReservationGroup,
+    ) -> Result<PreparedReservedPublication, String> {
+        let sequence = u64::MAX - 1;
+        let event = Event {
+            envelope: base.next(
+                derived_envelope_event_id(base, sequence),
+                self.endpoint.clone(),
+                target,
+                class,
+                sequence,
+                content_type,
+            ),
+            payload,
+        };
+        let footprint = retained_event_bytes(&event).map_err(|error| error.to_string())?;
+        let reservation = group
+            .take_for(footprint)
+            .map_err(|error| format!("reserved forward exceeds completion pool: {error:?}"))?;
+        Ok(PreparedReservedPublication {
+            event,
+            reservation,
+            materialized: false,
+        })
+    }
+
+    fn reserved_telemetry(
+        &self,
+        delivery: super::observe::PreparedTelemetry,
+        group: &mut CompletionReservationGroup,
+    ) -> Result<PreparedReservedTelemetry, String> {
+        let mut bound = delivery.clone();
+        bound.forwarded_at(u64::MAX);
+        let payload = match &bound.payload {
+            super::observe::TelemetryPayload::Batch(value) => serde_json::to_vec(value),
+            super::observe::TelemetryPayload::Span(value) => serde_json::to_vec(value),
+        }
+        .map_err(|error| format!("reserved observation encoding failed: {error}"))?;
+        let sequence = u64::MAX - 1;
+        let context = delivery.reply.context()?;
+        if context.route.ingress_agent != delivery.ingress {
+            return Err("reserved observation ingress differs from reply route".into());
+        }
+        let envelope = context
+            .reply(
+                &delivery.base,
+                derived_envelope_event_id(&delivery.base, sequence),
+                self.endpoint.clone(),
+                EventClass::Telemetry,
+                sequence,
+                match &delivery.payload {
+                    super::observe::TelemetryPayload::Batch(_) => BATCH_OBSERVATION_CONTENT_TYPE,
+                    super::observe::TelemetryPayload::Span(_) => STAGE_SPAN_CONTENT_TYPE,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        let event = Event { envelope, payload };
+        let footprint = retained_event_bytes(&event).map_err(|error| error.to_string())?;
+        let reservation = group
+            .take_for(footprint)
+            .map_err(|error| format!("reserved observation exceeds completion pool: {error:?}"))?;
+        Ok(PreparedReservedTelemetry {
+            delivery,
+            event,
+            reservation,
+        })
+    }
+
+    pub(super) fn reserved_native_effects(
+        &self,
+        base: Envelope,
+        target: Endpoint,
+        class: EventClass,
+        content_type: &'static str,
+        body: Vec<u8>,
+        telemetry: Vec<super::observe::PreparedTelemetry>,
+        feedback: Option<effects::CommittedEffect>,
+        mut group: CompletionReservationGroup,
+    ) -> Result<Vec<effects::CommittedEffect>, String> {
+        let publication =
+            self.reserved_forward(&base, target, class, content_type, body, &mut group)?;
+        let telemetry = telemetry
+            .into_iter()
+            .map(|delivery| self.reserved_telemetry(delivery, &mut group))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut effects = vec![effects::CommittedEffect::PreparedReservedPublication {
+            publication,
+            after: effects::PublicationAfter::ReservedObserved(telemetry),
+        }];
+        if let Some(feedback) = feedback {
+            let effects::CommittedEffect::Forward {
+                base,
+                target,
+                class,
+                content_type,
+                body,
+            } = feedback
+            else {
+                return Err("reserved native feedback is not a forward effect".into());
+            };
+            effects.push(effects::CommittedEffect::PreparedReservedPublication {
+                publication: self.reserved_forward(
+                    &base,
+                    target,
+                    class,
+                    content_type,
+                    body,
+                    &mut group,
+                )?,
+                after: effects::PublicationAfter::Forward,
+            });
+        }
+        drop(group);
+        Ok(effects)
+    }
+
+    pub(super) fn publish_reserved_kind(
+        &mut self,
+        publication: PreparedReservedPublication,
+    ) -> Result<(), PreparedReservedPublication> {
+        let (mut event, mut reservation) = publication.into_parts();
+        loop {
+            match self.publisher.publish_reserved(event, reservation) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    event = error.event;
+                    reservation = error.reservation;
+                    match error.reason {
+                        ReservedPublishReason::Full => {
+                            if self.shutting_down.load(Ordering::SeqCst) {
+                                self.set_snapshot(
+                                    "reserved_completion_queue_full:abandoned_at_shutdown",
+                                );
+                                return Err(PreparedReservedPublication {
+                                    event,
+                                    reservation,
+                                    materialized: true,
+                                });
+                            }
+                            self.set_snapshot("reserved_completion_queue_full:waiting");
+                            if self.service_blocked_ack().is_err() {
+                                return Err(PreparedReservedPublication {
+                                    event,
+                                    reservation,
+                                    materialized: true,
+                                });
+                            }
+                            std::thread::sleep(COMPLETION_RETRY_INTERVAL);
+                        }
+                        ReservedPublishReason::Closed
+                        | ReservedPublishReason::WrongMailbox
+                        | ReservedPublishReason::TooSmall { .. }
+                        | ReservedPublishReason::CostOverflow => {
+                            self.set_snapshot("reserved_completion_publication_failed");
+                            return Err(PreparedReservedPublication {
+                                event,
+                                reservation,
+                                materialized: true,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
     /// SESSION performs all response interpretation before installing routing
     /// authority. Earlier FIFO suffixes may still owe IDs, so preparation must
     /// neither choose the actual sequence nor consume its counter.
@@ -165,14 +407,16 @@ impl Worker {
         if &context.route.ingress_agent != ingress {
             return Err(());
         }
-        let envelope = context.reply(
-            base,
-            derived_envelope_event_id(base, sequence),
-            self.endpoint.clone(),
-            class,
-            sequence,
-            content_type,
-        ).map_err(|_| ())?;
+        let envelope = context
+            .reply(
+                base,
+                derived_envelope_event_id(base, sequence),
+                self.endpoint.clone(),
+                class,
+                sequence,
+                content_type,
+            )
+            .map_err(|_| ())?;
         self.state.next_event = next_event;
         Ok(Event { envelope, payload })
     }
@@ -395,7 +639,9 @@ impl Worker {
             };
             let published = if self.owned_completions {
                 self.publisher.try_publish_owned(pending)
-            } else { self.publisher.try_publish(pending) };
+            } else {
+                self.publisher.try_publish(pending)
+            };
             match published {
                 Ok(()) => {
                     if let Some(ticket) = ticket {
@@ -495,7 +741,11 @@ mod tests {
                 causation_id: None,
                 source: Endpoint::agent(address.clone()),
                 target: Endpoint::agent(address),
-                return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
+                return_route: Some(p4_protocol::event::OuterEndpoint {
+                    ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                    channel: "outer".into(),
+                    connection_generation: 1,
+                }),
                 class: EventClass::Control,
                 sequence: 1,
                 deadline_unix_ms: None,

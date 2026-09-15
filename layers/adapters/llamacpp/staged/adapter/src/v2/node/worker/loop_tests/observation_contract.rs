@@ -54,42 +54,72 @@ pub(super) fn observer(
             }
             // Reconstruct the normalized selection from independently counted
             // request phases; do not call the production pipeline selector.
-            let pipeline = state.pipeline_policy.filter(|_| !state.equal_sequence_ubatch && counts[5] == 0)
+            let pipeline = state
+                .pipeline_policy
+                .filter(|_| !state.equal_sequence_ubatch && counts[5] == 0)
                 .map(|policy| {
-                    let bound = |old: usize, selected: usize| if old == 0 { selected } else { old.min(selected) };
-                    let selected_session = &state.prepared_issue.as_ref().unwrap().logical.0[0].owner.session_id;
-                    let mut population = crate::v2::scheduler::pipeline::PipelinePopulation::default();
-                    for r in state.requests.values().filter(|r| r.sequence_id.is_some()
-                        && &r.command.session_id == selected_session) {
+                    let bound = |old: usize, selected: usize| {
+                        if old == 0 {
+                            selected
+                        } else {
+                            old.min(selected)
+                        }
+                    };
+                    let selected_session = &state.prepared_issue.as_ref().unwrap().logical.0[0]
+                        .owner
+                        .session_id;
+                    let mut population =
+                        crate::v2::scheduler::pipeline::PipelinePopulation::default();
+                    for r in state.requests.values().filter(|r| {
+                        r.sequence_id.is_some() && &r.command.session_id == selected_session
+                    }) {
                         if r.prompt_issued < r.command.tokens.len() {
-                            if r.outstanding == 0 { population.prefill.ready += 1; }
-                            else { population.prefill.in_flight += 1; }
+                            if r.outstanding == 0 {
+                                population.prefill.ready += 1;
+                            } else {
+                                population.prefill.in_flight += 1;
+                            }
                         } else if r.prompt_cursor < r.command.tokens.len() {
                             population.prefill_draining += 1;
-                        } else if r.outstanding > 0 { population.decode.in_flight += 1; }
-                        else if r.ready.as_ref().is_some_and(|v| v.phase == Phase::Decode) {
+                        } else if r.outstanding > 0 {
+                            population.decode.in_flight += 1;
+                        } else if r.ready.as_ref().is_some_and(|v| v.phase == Phase::Decode) {
                             population.decode.ready += 1;
-                        } else { population.decode.waiting += 1; }
+                        } else {
+                            population.decode.waiting += 1;
+                        }
                     }
                     let prefill_count = population.prefill.ready + population.prefill.in_flight;
                     let groups = prefill_count.min(state.max_open_batches);
                     let mut effective = state.ordinary_limits;
-                    effective.prefill_members = bound(effective.prefill_members,
-                        (prefill_count + population.prefill_draining).div_ceil(state.max_open_batches)
-                            .max(1).min(prefill_count.max(1)));
-                    let decode_count = population.decode.ready + population.decode.in_flight
+                    effective.prefill_members = bound(
+                        effective.prefill_members,
+                        (prefill_count + population.prefill_draining)
+                            .div_ceil(state.max_open_batches)
+                            .max(1)
+                            .min(prefill_count.max(1)),
+                    );
+                    let decode_count = population.decode.ready
+                        + population.decode.in_flight
                         + population.decode.waiting;
-                    effective.decode_members = bound(effective.decode_members,
-                        decode_count.div_ceil(state.max_open_batches).max(1));
+                    effective.decode_members = bound(
+                        effective.decode_members,
+                        decode_count.div_ceil(state.max_open_batches).max(1),
+                    );
                     let decoding_active = decode_count > 0;
                     if decoding_active {
-                        effective.prefill_rows = bound(effective.prefill_rows, policy.mixed_prefill_rows);
+                        effective.prefill_rows =
+                            bound(effective.prefill_rows, policy.mixed_prefill_rows);
                     }
                     crate::v2::scheduler::pipeline::PipelineSelection {
-                        window: state.max_open_batches, open: state.open_batches.len(), decoding_active,
-                        mixed_prefill_rows: policy.mixed_prefill_rows, effective_limits: effective,
+                        window: state.max_open_batches,
+                        open: state.open_batches.len(),
+                        decoding_active,
+                        mixed_prefill_rows: policy.mixed_prefill_rows,
+                        effective_limits: effective,
                         decode_coalesce_max_ms: Some(2),
-                        population: Some(population), prefill_groups: Some(groups),
+                        population: Some(population),
+                        prefill_groups: Some(groups),
                         decode_groups: Some(decode_count.min(state.max_open_batches)),
                         mixed_batch_rows: policy.mixed_batch_rows,
                     }
@@ -98,7 +128,8 @@ pub(super) fn observer(
                 service_budget: None,
                 pipeline,
                 ordinary_limits: state.ordinary_limits,
-                ordinary_limits_applied: (state.ordinary_limits != Default::default() || pipeline.is_some())
+                ordinary_limits_applied: (state.ordinary_limits != Default::default()
+                    || pipeline.is_some())
                     && !state.equal_sequence_ubatch
                     && counts[5] == 0,
                 min_batch_rows: state.min_batch_rows,
@@ -243,7 +274,9 @@ fn complete(h: &Harness) -> bool {
             // oracle. New cost predictions are checked by service_budget's
             // producer/consumer counterexamples, not copied into this oracle.
             let mut scheduling = body.scheduling.clone();
-            if let Some(s) = &mut scheduling { s.service_budget = None; }
+            if let Some(s) = &mut scheduling {
+                s.service_budget = None;
+            }
             assert_eq!(
                 scheduling.as_ref(),
                 Some(&issue.scheduling),

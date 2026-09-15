@@ -6,8 +6,8 @@
 mod ledger;
 mod receipt_memory;
 mod retained;
-pub use retained::{RetainedDispatchFailure, RetainedEventBroker};
 pub use receipt_memory::{ReceiptMemorySnapshot, ReceiptStorageSnapshot};
+pub use retained::{RetainedDispatchFailure, RetainedEventBroker};
 
 use ledger::{EventLedger, LedgerVerdict};
 use p4_protocol::Address;
@@ -58,7 +58,11 @@ pub enum DispatchError {
     Closed(Delivery),
     /// Individually impossible retained allocation; retrying after a capacity
     /// notification cannot make this input fit the destination's configured limit.
-    StorageTooLarge { delivery: Delivery, required: usize, limit: usize },
+    StorageTooLarge {
+        delivery: Delivery,
+        required: usize,
+        limit: usize,
+    },
     Poisoned,
 }
 
@@ -126,7 +130,9 @@ struct NodeRoute<S> {
 /// This grants no execution, cancellation or replay authority.
 pub struct NodeAdmissionPause(Arc<std::sync::atomic::AtomicBool>);
 impl Drop for NodeAdmissionPause {
-    fn drop(&mut self) { self.0.store(false, std::sync::atomic::Ordering::Release); }
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 /// A synchronous front-dispatch ticket. It is never kept across an await or
@@ -153,20 +159,35 @@ impl EventBroker {
         &self,
         envelope: &Envelope,
     ) -> Result<CompletionDispatch, DispatchError> {
-        envelope.validate().map_err(|error| DispatchError::Invalid(error.to_string()))?;
-        let existing = self.ledger.lock().map_err(|_| DispatchError::Poisoned)?
+        envelope
+            .validate()
+            .map_err(|error| DispatchError::Invalid(error.to_string()))?;
+        let existing = self
+            .ledger
+            .lock()
+            .map_err(|_| DispatchError::Poisoned)?
             .inspect_completion_header(envelope)?;
         let kind = if let Some(receipt) = existing {
             CompletionDispatchKind::Existing(receipt)
         } else {
             let (delivery, sender) = self.destination(&envelope.target)?;
-            let permit = sender.clone().try_reserve_owned().map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => DispatchError::Full(delivery.clone()),
-                mpsc::error::TrySendError::Closed(_) => DispatchError::Closed(delivery.clone()),
-            })?;
-            CompletionDispatchKind::Destination { delivery, sender, permit }
+            let permit = sender
+                .clone()
+                .try_reserve_owned()
+                .map_err(|error| match error {
+                    mpsc::error::TrySendError::Full(_) => DispatchError::Full(delivery.clone()),
+                    mpsc::error::TrySendError::Closed(_) => DispatchError::Closed(delivery.clone()),
+                })?;
+            CompletionDispatchKind::Destination {
+                delivery,
+                sender,
+                permit,
+            }
         };
-        Ok(CompletionDispatch { envelope: envelope.clone(), kind })
+        Ok(CompletionDispatch {
+            envelope: envelope.clone(),
+            kind,
+        })
     }
 
     pub(crate) fn dispatch_completion(
@@ -176,10 +197,15 @@ impl EventBroker {
     ) -> Result<DispatchOutcome, DispatchFailure> {
         if event.envelope != ticket.envelope {
             return Err(DispatchFailure::new(
-                DispatchError::Invalid("completion front changed after reservation".into()), event));
+                DispatchError::Invalid("completion front changed after reservation".into()),
+                event,
+            ));
         }
         if let Err(error) = event.validate() {
-            return Err(DispatchFailure::new(DispatchError::Invalid(error.to_string()), event));
+            return Err(DispatchFailure::new(
+                DispatchError::Invalid(error.to_string()),
+                event,
+            ));
         }
         let (delivery, sender, permit) = match ticket.kind {
             CompletionDispatchKind::Existing(receipt) => {
@@ -189,10 +215,17 @@ impl EventBroker {
                 return if receipt.event() == &event {
                     Ok(DispatchOutcome::Duplicate)
                 } else {
-                    Err(DispatchFailure::new(DispatchError::ConflictingDuplicate, event))
+                    Err(DispatchFailure::new(
+                        DispatchError::ConflictingDuplicate,
+                        event,
+                    ))
                 };
             }
-            CompletionDispatchKind::Destination { delivery, sender, permit } => (delivery, sender, permit),
+            CompletionDispatchKind::Destination {
+                delivery,
+                sender,
+                permit,
+            } => (delivery, sender, permit),
         };
         let mut ledger = match self.ledger.lock() {
             Ok(ledger) => ledger,
@@ -207,9 +240,18 @@ impl EventBroker {
         // between the front probe and this commit, even without an await.
         let current = match self.destination(&event.envelope.target) {
             Ok((current_delivery, current_sender))
-                if current_delivery == delivery && current_sender.same_channel(&sender) => current_sender,
-            Ok(_) => return Err(DispatchFailure::new(
-                DispatchError::Invalid("completion destination changed after reservation".into()), event)),
+                if current_delivery == delivery && current_sender.same_channel(&sender) =>
+            {
+                current_sender
+            }
+            Ok(_) => {
+                return Err(DispatchFailure::new(
+                    DispatchError::Invalid(
+                        "completion destination changed after reservation".into(),
+                    ),
+                    event,
+                ));
+            }
             Err(error) => return Err(DispatchFailure::new(error, event)),
         };
         drop(current);
@@ -266,28 +308,26 @@ impl EventBroker {
             }
         }
     }
-
-
 }
 
 impl<S: Clone> EventBroker<S> {
     /// Canonical address of this agent, including ownership of local OUTER routes.
-    pub fn local_address(&self) -> &Address { &self.own }
+    pub fn local_address(&self) -> &Address {
+        &self.own
+    }
 
     /// O(1) snapshot of exact duplicate receipts, excluding destination storage,
     /// index/Arc/allocator overhead, native buffers and process RSS. No payload
     /// contents, adapter vocabulary, eviction or reservation policy is changed.
     pub fn receipt_snapshot(&self) -> Result<ReceiptMemorySnapshot, DispatchError> {
-        Ok(self.ledger.lock().map_err(|_| DispatchError::Poisoned)?.receipt_snapshot())
+        Ok(self
+            .ledger
+            .lock()
+            .map_err(|_| DispatchError::Poisoned)?
+            .receipt_snapshot())
     }
 
-    pub fn new(
-        own: Address,
-        agent: S,
-        outer: S,
-        outbound: S,
-        duplicate_window: usize,
-    ) -> Self {
+    pub fn new(own: Address, agent: S, outer: S, outbound: S, duplicate_window: usize) -> Self {
         assert!(duplicate_window > 0, "duplicate window must be positive");
         Self {
             own,
@@ -329,8 +369,14 @@ impl<S: Clone> EventBroker<S> {
         if nodes.contains_key(&node) {
             return Err(DispatchError::Invalid("node is already registered".into()));
         }
-        nodes.insert(node.clone(), NodeRoute { generation, sender,
-            admission_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)) });
+        nodes.insert(
+            node.clone(),
+            NodeRoute {
+                generation,
+                sender,
+                admission_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            },
+        );
         generations.insert(node, generation);
         Ok(())
     }
@@ -376,8 +422,14 @@ impl<S: Clone> EventBroker<S> {
                         incoming_generation: *generation,
                     });
                 }
-                if route.admission_paused.load(std::sync::atomic::Ordering::Acquire) {
-                    return Err(DispatchError::Full(Delivery::Node { node: node.clone(), generation: *generation }));
+                if route
+                    .admission_paused
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    return Err(DispatchError::Full(Delivery::Node {
+                        node: node.clone(),
+                        generation: *generation,
+                    }));
                 }
                 Ok((
                     Delivery::Node {

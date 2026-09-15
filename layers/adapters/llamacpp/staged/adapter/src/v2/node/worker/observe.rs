@@ -142,6 +142,17 @@ impl Worker {
             .map(|_| ())
     }
 
+    pub(super) fn observation_recipient_count(
+        &self,
+        base: &Event,
+        session: &str,
+        rows: &[&RowOwner],
+        head: bool,
+    ) -> Result<usize, String> {
+        self.observation_recipients(base, session, rows, head)
+            .map(|recipients| recipients.len())
+    }
+
     /// Predicted indices are candidates, not approval. The committed witness
     /// is independently compared before any forward/observation publication.
     pub(super) fn prepare_batch_observation(

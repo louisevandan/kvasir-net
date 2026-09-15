@@ -47,8 +47,10 @@ impl Harness {
         );
         let adapter = HfNodeAdapter::new(endpoint.clone(), 1, 1, 2, 4096).unwrap();
         let (tx, rx) = completion_mailbox_with_limits(4, 8, 32768).unwrap();
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("../../../../target/hf/fixture-{}-{id}", std::process::id()));
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../../../target/hf/fixture-{}-{id}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&path).unwrap();
         let fixture = include_bytes!("../../tests/fixtures/bridge_worker/main.py");
         std::fs::write(path.join("entry.py"), fixture).unwrap();
@@ -129,8 +131,11 @@ impl Harness {
         unpack(&self.take().event().payload)
     }
     fn load(&self, mode: &str) -> Value {
-        let _startup: Option<std::sync::MutexGuard<'static, ()>> =
-            Some(FIXTURE_STARTUP.lock().unwrap_or_else(|error| error.into_inner()));
+        let _startup: Option<std::sync::MutexGuard<'static, ()>> = Some(
+            FIXTURE_STARTUP
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        );
         let nodes = json!([{"agent":"tcp://127.0.0.1:41999","node":"node","generation":1}]);
         self.call(json!({"op":"load","generation":1,"nodes":nodes,"index":0,"launch":{
    "python":std::env::var("HF_TEST_PYTHON").unwrap_or("python".into()),"bundle":self.path.join("bundle.json"),
@@ -398,7 +403,9 @@ fn missing_return_context_is_refused_before_worker_admission() {
     bad.envelope.return_route = None;
     let pointer = bad.payload.as_ptr();
     h.tx.try_publish_owned(bad).unwrap();
-    let OwnedPoll::Event(held) = h.rx.try_take_owned() else { panic!(); };
+    let OwnedPoll::Event(held) = h.rx.try_take_owned() else {
+        panic!();
+    };
     let charge = h.rx.storage_snapshot().retained_bytes;
     let before = h.adapter.snapshot();
     let Err(RetainedOfferError::Closed(returned)) = h.adapter.try_offer_retained(held) else {

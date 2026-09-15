@@ -14,7 +14,11 @@ fn event(id: &str) -> Event {
             causation_id: None,
             source: Endpoint::agent(Address::tcp("127.0.0.1", 52201)),
             target: Endpoint::node(Address::tcp("127.0.0.1", 52201), "mock", 1),
-            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
+            return_route: Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
             class: EventClass::Control,
             sequence: 1,
             deadline_unix_ms: None,
@@ -43,7 +47,10 @@ fn peek_and_mismatched_envelopes_preserve_queue_claim_and_notifications() {
     let reader = Arc::new(CountWake::default());
     let capacity = Arc::new(CountWake::default());
     let waker = Waker::from(Arc::clone(&reader));
-    assert_eq!(mailbox.poll_take(&mut Context::from_waker(&waker)), TaskPoll::Pending);
+    assert_eq!(
+        mailbox.poll_take(&mut Context::from_waker(&waker)),
+        TaskPoll::Pending
+    );
     let _registration = publisher
         .capacity_listener(&Waker::from(Arc::clone(&capacity)))
         .unwrap();
@@ -78,7 +85,10 @@ fn peek_and_mismatched_envelopes_preserve_queue_claim_and_notifications() {
     }
     notification.notify();
     assert_eq!(reader.0.load(Ordering::SeqCst), 1);
-    assert!(matches!(mailbox.try_take_completion_matching(&expected), Poll::Event(_)));
+    assert!(matches!(
+        mailbox.try_take_completion_matching(&expected),
+        Poll::Event(_)
+    ));
     assert_eq!(capacity.0.load(Ordering::SeqCst), 1);
 }
 
@@ -138,7 +148,9 @@ fn matching_neither_consumes_reserved_front_nor_skips_to_ordinary_suffix() {
     let (publisher, mailbox) = completion_mailbox(2);
     let reserved = event("reserved");
     let expected_reserved = reserved.clone();
-    let reservation = publisher.try_reserve(1, retained_event_bytes(&reserved).unwrap()).unwrap();
+    let reservation = publisher
+        .try_reserve(1, retained_event_bytes(&reserved).unwrap())
+        .unwrap();
     publisher.publish_reserved(reserved, reservation).unwrap();
     let ordinary = event("ordinary");
     let expected_ordinary = ordinary.clone();
@@ -154,7 +166,10 @@ fn matching_neither_consumes_reserved_front_nor_skips_to_ordinary_suffix() {
     };
     assert_eq!(held.event(), &expected_reserved);
     assert_eq!(mailbox.storage_snapshot().retained_count, 2);
-    assert_eq!(mailbox.peek_completion(), Some(expected_ordinary.envelope.clone()));
+    assert_eq!(
+        mailbox.peek_completion(),
+        Some(expected_ordinary.envelope.clone())
+    );
     assert_eq!(
         mailbox.try_take_completion_matching(&expected_ordinary.envelope),
         Poll::Event(expected_ordinary)
@@ -170,17 +185,32 @@ fn matching_drains_buffered_ordinary_events_before_last_publisher_closure() {
     let first = event("first");
     let second = event("second");
     assert_eq!(mailbox.peek_completion(), None);
-    assert_eq!(mailbox.try_take_completion_matching(&first.envelope), Poll::Empty);
+    assert_eq!(
+        mailbox.try_take_completion_matching(&first.envelope),
+        Poll::Empty
+    );
     publisher.try_publish(first.clone()).unwrap();
     publisher.try_publish(second.clone()).unwrap();
     drop(publisher);
     assert_eq!(mailbox.peek_completion(), Some(first.envelope.clone()));
-    assert_eq!(mailbox.try_take_completion_matching(&second.envelope), Poll::Empty);
-    assert_eq!(mailbox.try_take_completion_matching(&first.envelope), Poll::Event(first));
+    assert_eq!(
+        mailbox.try_take_completion_matching(&second.envelope),
+        Poll::Empty
+    );
+    assert_eq!(
+        mailbox.try_take_completion_matching(&first.envelope),
+        Poll::Event(first)
+    );
     assert_eq!(mailbox.peek_completion(), Some(second.envelope.clone()));
     let second_envelope = second.envelope.clone();
-    assert_eq!(mailbox.try_take_completion_matching(&second_envelope), Poll::Event(second));
+    assert_eq!(
+        mailbox.try_take_completion_matching(&second_envelope),
+        Poll::Event(second)
+    );
     assert_eq!(mailbox.peek_completion(), None);
-    assert_eq!(mailbox.try_take_completion_matching(&second_envelope), Poll::Closed);
+    assert_eq!(
+        mailbox.try_take_completion_matching(&second_envelope),
+        Poll::Closed
+    );
     assert_eq!(mailbox.storage_snapshot().retained_count, 0);
 }

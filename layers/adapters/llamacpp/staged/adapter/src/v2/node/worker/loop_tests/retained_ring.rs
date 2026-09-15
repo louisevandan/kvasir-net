@@ -21,7 +21,7 @@ struct Ring {
 }
 impl Ring {
     fn new() -> Self {
-        let queue = || completion_mailbox_with_limits(1, 16, 4 << 20).unwrap();
+        let queue = || completion_mailbox_with_limits(1, 16, 64 << 20).unwrap();
         let (agent_tx, agent) = queue();
         let (outer_tx, outer) = queue();
         let (outbound_tx, outbound) = queue();
@@ -62,6 +62,19 @@ impl Ring {
                 issue_fault: None,
             }))
             .unwrap();
+            // This post-LOAD fixture owns a 64 MiB completion store. Keep the
+            // injected profile identical to that store instead of inheriting
+            // the broad 512 MiB unit-fixture ceiling; a real LOAD would reject
+            // that mismatch before any session or native work.
+            let profile = worker
+                .state
+                .resource_profile
+                .as_mut()
+                .expect("injected native installs a resource profile");
+            profile.max_requests = 16;
+            profile.max_completion_payload_bytes = 64 << 20;
+            profile.max_completion_retained_bytes = 64 << 20;
+            profile.max_edge_retained_bytes = 64 << 20;
             // Documented post-LOAD fixture only. All sessions, input, decode,
             // physical results and release acknowledgements use the real actors.
             worker.state.load_generation = 1;

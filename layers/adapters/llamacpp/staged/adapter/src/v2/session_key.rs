@@ -115,20 +115,38 @@ mod tests {
 
     #[test]
     fn rejects_a_missing_prefix() {
-        assert_eq!(SessionKey::parse("tenant-a/conv"), Err(SessionKeyError::MissingPrefix));
+        assert_eq!(
+            SessionKey::parse("tenant-a/conv"),
+            Err(SessionKeyError::MissingPrefix)
+        );
     }
 
     #[test]
     fn rejects_a_missing_separator() {
-        assert_eq!(SessionKey::parse("sk1:tenant-a"), Err(SessionKeyError::MissingSeparator));
+        assert_eq!(
+            SessionKey::parse("sk1:tenant-a"),
+            Err(SessionKeyError::MissingSeparator)
+        );
     }
 
     #[test]
     fn rejects_blank_components() {
-        assert_eq!(SessionKey::parse("sk1:/conv"), Err(SessionKeyError::EmptyComponent));
-        assert_eq!(SessionKey::parse("sk1:tenant/"), Err(SessionKeyError::EmptyComponent));
-        assert_eq!(SessionKey::parse("sk1:   /conv"), Err(SessionKeyError::EmptyComponent));
-        assert_eq!(SessionKey::parse("sk1:tenant/   "), Err(SessionKeyError::EmptyComponent));
+        assert_eq!(
+            SessionKey::parse("sk1:/conv"),
+            Err(SessionKeyError::EmptyComponent)
+        );
+        assert_eq!(
+            SessionKey::parse("sk1:tenant/"),
+            Err(SessionKeyError::EmptyComponent)
+        );
+        assert_eq!(
+            SessionKey::parse("sk1:   /conv"),
+            Err(SessionKeyError::EmptyComponent)
+        );
+        assert_eq!(
+            SessionKey::parse("sk1:tenant/   "),
+            Err(SessionKeyError::EmptyComponent)
+        );
     }
 
     #[test]
@@ -141,10 +159,16 @@ mod tests {
 
     #[test]
     fn length_is_measured_in_bytes_including_the_prefix() {
-        let fits = format!("sk1:owner/{}", "c".repeat(MAX_BYTES - PREFIX.len() - "owner/".len()));
+        let fits = format!(
+            "sk1:owner/{}",
+            "c".repeat(MAX_BYTES - PREFIX.len() - "owner/".len())
+        );
         assert_eq!(fits.len(), MAX_BYTES);
         assert!(SessionKey::parse(&fits).is_ok());
-        assert_eq!(SessionKey::parse(&format!("{fits}c")), Err(SessionKeyError::Length));
+        assert_eq!(
+            SessionKey::parse(&format!("{fits}c")),
+            Err(SessionKeyError::Length)
+        );
         assert_eq!(SessionKey::parse(""), Err(SessionKeyError::Length));
     }
 

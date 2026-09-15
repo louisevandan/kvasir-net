@@ -10,13 +10,13 @@ mod mailbox;
 pub use event_cost::{ResourceCostError, retained_event_bytes};
 
 pub use mailbox::{
-    COMPLETION_ENTRY_OVERHEAD_BYTES, CapacityListenError, CapacityRegistration, CompletionMailbox,
-    CompletionPublisher, CompletionReservation, CompletionReservationGroup,
-    CompletionStorageSnapshot, DeferredCompletionNotification, GroupReserveError,
-    MAX_CAPACITY_LISTENERS, MailboxBuildError, OwnedPoll, PublishError, ReserveError,
-    ReservedPublishError, ReservedPublishReason, RetainedCompletion, RetainedTransferError,
-    completion_mailbox, completion_mailbox_with_budget, completion_mailbox_with_limits,
-    CompletionFront, CompletionQueueReservation, QueuePublishError, RetainedQueueTransferError,
+    COMPLETION_ENTRY_OVERHEAD_BYTES, CapacityListenError, CapacityRegistration, CompletionFront,
+    CompletionMailbox, CompletionPublisher, CompletionQueueReservation, CompletionReservation,
+    CompletionReservationGroup, CompletionStorageSnapshot, DeferredCompletionNotification,
+    GroupReserveError, MAX_CAPACITY_LISTENERS, MailboxBuildError, OwnedPoll, PublishError,
+    QueuePublishError, ReserveError, ReservedPublishError, ReservedPublishReason,
+    RetainedCompletion, RetainedQueueTransferError, RetainedTransferError, completion_mailbox,
+    completion_mailbox_with_budget, completion_mailbox_with_limits,
 };
 use p4_protocol::event::{Envelope, Event};
 use std::task::{Context, Poll as TaskPoll};
@@ -96,7 +96,9 @@ pub trait RetainedNodeAdapter: Send + Sync {
     fn snapshot(&self) -> String;
     /// Unknown is not empty. Lifecycle deletion must reject without an
     /// authoritative observation of queued and held completion ownership.
-    fn completion_storage_snapshot(&self) -> Option<CompletionStorageSnapshot> { None }
+    fn completion_storage_snapshot(&self) -> Option<CompletionStorageSnapshot> {
+        None
+    }
 }
 
 #[derive(Debug)]

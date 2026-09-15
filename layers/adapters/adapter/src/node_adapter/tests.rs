@@ -1,5 +1,5 @@
-use super::*;
 use super::PublishError;
+use super::*;
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, EventClass};
 
@@ -12,7 +12,11 @@ fn event(id: &str) -> Event {
             causation_id: None,
             source: Endpoint::agent(Address::tcp("127.0.0.1", 52001)),
             target: Endpoint::node(Address::tcp("127.0.0.1", 52001), "node", 1),
-            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
+            return_route: Some(p4_protocol::event::OuterEndpoint {
+                ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001),
+                channel: "outer".into(),
+                connection_generation: 1,
+            }),
             class: EventClass::Control,
             sequence: 1,
             deadline_unix_ms: None,
@@ -46,7 +50,10 @@ fn a_refused_completion_is_returned_with_its_reason() {
 
     match publisher.try_publish(event("two")) {
         Err(PublishError::Full(returned)) => {
-            assert_eq!(returned.envelope.event_id, "two", "the event comes back whole");
+            assert_eq!(
+                returned.envelope.event_id, "two",
+                "the event comes back whole"
+            );
         }
         other => panic!("a full mailbox should say so and return the event: {other:?}"),
     }

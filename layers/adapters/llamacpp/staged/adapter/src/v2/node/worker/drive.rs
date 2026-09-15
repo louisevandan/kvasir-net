@@ -89,7 +89,8 @@ impl Worker {
             None => return Ok(false),
         };
         let mut demands = Vec::new();
-        let mut population = super::super::super::scheduler::pipeline::PipelinePopulation::default();
+        let mut population =
+            super::super::super::scheduler::pipeline::PipelinePopulation::default();
         for (key, request) in &self.state.requests {
             if request.command.session_id != session_id {
                 continue;
@@ -97,14 +98,22 @@ impl Worker {
             let eligible = request.phase_within(self.state.prefill_fragments);
             if request.sequence_id.is_some() {
                 if request.prompt_issued < request.command.tokens.len() {
-                    if eligible == Some(Phase::Prefill) { population.prefill.ready += 1; }
-                    else if request.outstanding > 0 { population.prefill.in_flight += 1; }
-                    else { population.prefill.waiting += 1; }
+                    if eligible == Some(Phase::Prefill) {
+                        population.prefill.ready += 1;
+                    } else if request.outstanding > 0 {
+                        population.prefill.in_flight += 1;
+                    } else {
+                        population.prefill.waiting += 1;
+                    }
                 } else if request.prompt_cursor < request.command.tokens.len() {
                     population.prefill_draining += 1;
-                } else if eligible == Some(Phase::Decode) { population.decode.ready += 1; }
-                else if request.outstanding > 0 { population.decode.in_flight += 1; }
-                else { population.decode.waiting += 1; }
+                } else if eligible == Some(Phase::Decode) {
+                    population.decode.ready += 1;
+                } else if request.outstanding > 0 {
+                    population.decode.in_flight += 1;
+                } else {
+                    population.decode.waiting += 1;
+                }
             }
             let Some(phase) = eligible else {
                 continue;
@@ -133,11 +142,14 @@ impl Worker {
         }
         let atomic_pending = demands.iter().any(|demand| demand.atomic);
         let phase_pacing = self.state.pipeline_policy.is_some()
-            && !atomic_pending && !self.state.equal_sequence_ubatch;
+            && !atomic_pending
+            && !self.state.equal_sequence_ubatch;
         if !phase_pacing {
             self.decode_coalescer.clear();
-            if self.state.min_batch_rows > 1 && self.state.any_in_flight()
-                && self.state.ready_row_count() < self.state.min_batch_rows {
+            if self.state.min_batch_rows > 1
+                && self.state.any_in_flight()
+                && self.state.ready_row_count() < self.state.min_batch_rows
+            {
                 self.gate_refusals = self.gate_refusals.saturating_add(1);
                 return Ok(false);
             }
@@ -174,13 +186,24 @@ impl Worker {
                 self.set_snapshot("pipeline_policy_refused:multi_fragment_not_validated");
                 return Err(());
             }
-            self.state.pipeline_policy.map(|policy| {
-                policy.select(&demands, self.state.ordinary_limits,
-                    self.state.max_open_batches, self.state.open_batches.len(), population)
-            }).transpose().map_err(|error| {
-                self.set_snapshot(&format!("pipeline_policy_refused:{error:?}"));
-            })?
-        } else { None };
+            self.state
+                .pipeline_policy
+                .map(|policy| {
+                    policy.select(
+                        &demands,
+                        self.state.ordinary_limits,
+                        self.state.max_open_batches,
+                        self.state.open_batches.len(),
+                        population,
+                    )
+                })
+                .transpose()
+                .map_err(|error| {
+                    self.set_snapshot(&format!("pipeline_policy_refused:{error:?}"));
+                })?
+        } else {
+            None
+        };
         let effective_limits = pipeline.map_or(self.state.ordinary_limits, |p| p.effective_limits);
         let mut scheduling = super::super::super::commands::SchedulingSnapshot {
             service_budget: None,
@@ -243,10 +266,20 @@ impl Worker {
         if phase_pacing {
             // Preserve the separately opted-in experimental predictor's cold
             // probe contract. Profiled operation never enables that controller.
-            let decoding = pipeline.is_some_and(|p| p.decoding_active
-                || (self.service_budget.enabled() && population.prefill_draining > 0));
-            let selected = self.prepare_generation_service_plan(&demands, &session,
-                issue_cap, effective_limits, decoding, policy).map_err(|error| {
+            let decoding = pipeline.is_some_and(|p| {
+                p.decoding_active
+                    || (self.service_budget.enabled() && population.prefill_draining > 0)
+            });
+            let selected = self
+                .prepare_generation_service_plan(
+                    &demands,
+                    &session,
+                    issue_cap,
+                    effective_limits,
+                    decoding,
+                    policy,
+                )
+                .map_err(|error| {
                     self.set_snapshot(&format!("service_plan_failed:{error}"));
                 })?;
             policy = selected.0;
@@ -260,14 +293,26 @@ impl Worker {
             // Inspect the actual prepared plan, not a count of prompt requests.
             // Prefill uses the existing row/member/quantum limits immediately.
             // Only a decode-only plan may wait for more compatible requests.
-            let decode_only = policy.allocations().iter().all(|a| a.phase == Phase::Decode);
+            let decode_only = policy
+                .allocations()
+                .iter()
+                .all(|a| a.phase == Phase::Decode);
             let ready_decode = demands.iter().filter(|d| d.phase == Phase::Decode).count();
-            let coalesce_target = self.state.min_batch_rows
+            let coalesce_target = self
+                .state
+                .min_batch_rows
                 .min(effective_limits.decode_members.max(1))
                 .min(self.state.batch_capacity.min(issue_cap));
-            if decode_only && coalesce_target > 1 && self.state.any_in_flight()
-                && ready_decode < coalesce_target {
-                if self.decode_coalescer.should_wait(self.state.load_generation, &session_id, Instant::now()) {
+            if decode_only
+                && coalesce_target > 1
+                && self.state.any_in_flight()
+                && ready_decode < coalesce_target
+            {
+                if self.decode_coalescer.should_wait(
+                    self.state.load_generation,
+                    &session_id,
+                    Instant::now(),
+                ) {
                     self.gate_refusals = self.gate_refusals.saturating_add(1);
                     #[cfg(test)]
                     self.observe_issue_state("decode_coalescing_wait");
@@ -375,6 +420,24 @@ impl Worker {
             true,
         )
         .map_err(|detail| self.set_snapshot(&format!("issue_observation_failed:{detail}")))?;
+        let observation_recipients = self
+            .observation_recipient_count(
+                &template
+                    .as_ref()
+                    .expect("non-empty allocation has a template")
+                    .template,
+                &session_id,
+                &owner_rows,
+                true,
+            )
+            .map_err(|detail| self.set_snapshot(&format!("issue_observation_failed:{detail}")))?;
+        let completion_items = observation_recipients
+            .checked_mul(2)
+            .and_then(|count| count.checked_add(1))
+            .ok_or(())?;
+        let completion_pool = self
+            .reserve_native_completion_pool(completion_items)
+            .map_err(|detail| self.set_snapshot(&format!("issue_reservation_failed:{detail}")))?;
         let candidate_owners = self
             .state
             .stage_owners
@@ -442,10 +505,8 @@ impl Worker {
         let end_unix_ms = super::observe::unix_ms();
         self.last_stage_done = Some(std::time::Instant::now());
         self.gate_refusals = 0;
-        let physical = match CapsuleSet::decode_bounded(
-            &body,
-            self.state.max_physical_result_bytes,
-        ) {
+        let physical = match CapsuleSet::decode_bounded(&body, self.state.max_physical_result_bytes)
+        {
             Ok(physical) => physical,
             Err(error) => {
                 self.state.mark_issue_uncertain();
@@ -555,20 +616,53 @@ impl Worker {
         // together. A telemetry/publisher failure cannot discard the only
         // retained physical result or cause the native call to be repeated.
         let accepted_observations = self.validate_accepted_observations(&telemetry);
-        self.effects
-            .push_back(super::effects::CommittedEffect::ForwardObserved {
-                base: template
-                    .as_ref()
-                    .expect("non-empty allocation has a template")
-                    .template
-                    .envelope
-                    .clone(),
-                target: session.next.expect("validated first session has next"),
-                class: EventClass::Data,
-                content_type: PHYSICAL_BATCH_CONTENT_TYPE,
-                body,
-                telemetry,
-            });
+        match completion_pool {
+            Some(group) => {
+                let effects = self
+                    .reserved_native_effects(
+                        template
+                            .as_ref()
+                            .expect("non-empty allocation has a template")
+                            .template
+                            .envelope
+                            .clone(),
+                        session
+                            .next
+                            .clone()
+                            .expect("validated first session has next"),
+                        EventClass::Data,
+                        PHYSICAL_BATCH_CONTENT_TYPE,
+                        body,
+                        telemetry,
+                        None,
+                        group,
+                    )
+                    .map_err(|detail| {
+                        self.state.mark_issue_uncertain();
+                        self.effects_fenced = true;
+                        self.set_snapshot(&format!(
+                            "native_reservation_assignment_failed:{detail}"
+                        ));
+                    })?;
+                self.effects.extend(effects);
+            }
+            None => {
+                self.effects
+                    .push_back(super::effects::CommittedEffect::ForwardObserved {
+                        base: template
+                            .as_ref()
+                            .expect("non-empty allocation has a template")
+                            .template
+                            .envelope
+                            .clone(),
+                        target: session.next.expect("validated first session has next"),
+                        class: EventClass::Data,
+                        content_type: PHYSICAL_BATCH_CONTENT_TYPE,
+                        body,
+                        telemetry,
+                    });
+            }
+        }
         // Even an internal post-accept observation mismatch retains the exact
         // physical bytes. It cannot roll back approval or reissue native work.
         accepted_observations.map_err(|detail| {

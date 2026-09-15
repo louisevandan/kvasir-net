@@ -14,15 +14,15 @@ use std::collections::{BTreeMap, VecDeque};
 use std::thread::JoinHandle;
 
 mod actor_ring;
-mod retained_ring;
 mod bounded_strategy;
-mod service_budget;
 mod effect_backpressure;
 mod issue_witness;
 mod observation_contract;
 #[path = "../../../../test-fixtures/head_approved_output.rs"]
 mod output_contract;
 mod release_notifications;
+mod retained_ring;
+mod service_budget;
 mod speculative;
 mod submission_identity;
 mod submission_limits;
@@ -615,38 +615,91 @@ impl Harness {
         issue_fault: Option<issue_witness::NativeFault>,
         limits: crate::v2::scheduler::OrdinaryLimits,
     ) -> Self {
-        Self::observed_with_pipeline(stages, max_open, completion_capacity, initial,
-            chain_length, script, observer, issue_fault, limits, None)
+        Self::observed_with_pipeline(
+            stages,
+            max_open,
+            completion_capacity,
+            initial,
+            chain_length,
+            script,
+            observer,
+            issue_fault,
+            limits,
+            None,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
     fn observed_with_pipeline(
-        stages: usize, max_open: usize, completion_capacity: usize, initial: &[Event],
-        chain_length: usize, script: Option<speculative::Scenario>, observer: Option<IssueObserver>,
-        issue_fault: Option<issue_witness::NativeFault>, limits: crate::v2::scheduler::OrdinaryLimits,
+        stages: usize,
+        max_open: usize,
+        completion_capacity: usize,
+        initial: &[Event],
+        chain_length: usize,
+        script: Option<speculative::Scenario>,
+        observer: Option<IssueObserver>,
+        issue_fault: Option<issue_witness::NativeFault>,
+        limits: crate::v2::scheduler::OrdinaryLimits,
         pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>,
     ) -> Self {
-        Self::observed_with_pacing(stages, max_open, completion_capacity, initial, chain_length,
-            script, observer, issue_fault, limits, pipeline, 0)
+        Self::observed_with_pacing(
+            stages,
+            max_open,
+            completion_capacity,
+            initial,
+            chain_length,
+            script,
+            observer,
+            issue_fault,
+            limits,
+            pipeline,
+            0,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
     fn observed_with_pacing(
-        stages: usize, max_open: usize, completion_capacity: usize, initial: &[Event],
-        chain_length: usize, script: Option<speculative::Scenario>, observer: Option<IssueObserver>,
-        issue_fault: Option<issue_witness::NativeFault>, limits: crate::v2::scheduler::OrdinaryLimits,
-        pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>, min_batch_rows: usize,
+        stages: usize,
+        max_open: usize,
+        completion_capacity: usize,
+        initial: &[Event],
+        chain_length: usize,
+        script: Option<speculative::Scenario>,
+        observer: Option<IssueObserver>,
+        issue_fault: Option<issue_witness::NativeFault>,
+        limits: crate::v2::scheduler::OrdinaryLimits,
+        pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>,
+        min_batch_rows: usize,
     ) -> Self {
-        Self::observed_with_service(stages, max_open, completion_capacity, initial, chain_length,
-            script, observer, issue_fault, limits, pipeline, min_batch_rows, None)
+        Self::observed_with_service(
+            stages,
+            max_open,
+            completion_capacity,
+            initial,
+            chain_length,
+            script,
+            observer,
+            issue_fault,
+            limits,
+            pipeline,
+            min_batch_rows,
+            None,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
     fn observed_with_service(
-        stages: usize, max_open: usize, completion_capacity: usize, initial: &[Event],
-        chain_length: usize, script: Option<speculative::Scenario>, observer: Option<IssueObserver>,
-        issue_fault: Option<issue_witness::NativeFault>, limits: crate::v2::scheduler::OrdinaryLimits,
-        pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>, min_batch_rows: usize,
+        stages: usize,
+        max_open: usize,
+        completion_capacity: usize,
+        initial: &[Event],
+        chain_length: usize,
+        script: Option<speculative::Scenario>,
+        observer: Option<IssueObserver>,
+        issue_fault: Option<issue_witness::NativeFault>,
+        limits: crate::v2::scheduler::OrdinaryLimits,
+        pipeline: Option<crate::v2::scheduler::pipeline::PipelinePolicy>,
+        min_batch_rows: usize,
         service_budget_us: Option<u64>,
     ) -> Self {
         assert!((2..=8).contains(&stages));
@@ -939,7 +992,9 @@ impl Harness {
                 Err(mpsc::TrySendError::Full(WorkerInput::Event(event))) => {
                     self.pending.push_back(event)
                 }
-                Err(mpsc::TrySendError::Full(WorkerInput::Retained(_))) => unreachable!("raw harness sent raw input"),
+                Err(mpsc::TrySendError::Full(WorkerInput::Retained(_))) => {
+                    unreachable!("raw harness sent raw input")
+                }
                 Err(mpsc::TrySendError::Disconnected(_)) => panic!(
                     "worker {index} stopped: {}",
                     self.nodes[index].snapshot.lock().unwrap()

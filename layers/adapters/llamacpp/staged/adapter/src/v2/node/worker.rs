@@ -3,7 +3,10 @@ use super::state::{AdapterState, PipelineSession, RequestState, request_key};
 use crate::lifecycle::LlamaLifecycle;
 use crate::process::{ProcessServerControl, ServerLaunch};
 use crate::{Frame, Operation};
-use p4_adapter::node_adapter::{CompletionPublisher, PublishError, RetainedCompletion};
+use p4_adapter::node_adapter::{
+    CompletionPublisher, CompletionReservation, CompletionReservationGroup, GroupReserveError,
+    PublishError, ReservedPublishReason, RetainedCompletion, retained_event_bytes,
+};
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Event, EventClass};
 use serde::Serialize;
@@ -58,6 +61,7 @@ mod release;
 mod release_notification_tests;
 #[cfg(test)]
 mod release_tests;
+mod reservation;
 mod service;
 #[cfg(test)]
 mod session_tests;

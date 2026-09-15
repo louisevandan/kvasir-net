@@ -228,7 +228,9 @@ fn every_waiting_prompt_advances_not_just_the_prompt_cohort() {
         }
     }
 
-    let stalled: Vec<usize> = (1..sequences).filter(|index| progress[*index] == 0).collect();
+    let stalled: Vec<usize> = (1..sequences)
+        .filter(|index| progress[*index] == 0)
+        .collect();
     assert!(
         stalled.is_empty(),
         "{plans} plans left prompts {stalled:?} at zero rows; the rest reached {progress:?}",
@@ -246,7 +248,10 @@ fn every_waiting_prompt_advances_not_just_the_prompt_cohort() {
     // twenty-seven plans - which is what it measures. Stated with room,
     // because the point is that the gap is bounded at all, and the bound is
     // the cohort period times the turns a request waits, not the period.
-    let worst = (1..sequences).map(|index| longest_gap[index]).max().unwrap();
+    let worst = (1..sequences)
+        .map(|index| longest_gap[index])
+        .max()
+        .unwrap();
     assert!(
         worst <= 40,
         "a ready prompt went {worst} plans without being selected; gaps {longest_gap:?}",

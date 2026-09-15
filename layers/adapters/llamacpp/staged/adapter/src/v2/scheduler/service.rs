@@ -217,7 +217,8 @@ impl ServiceBudget {
     }
 
     fn predict(&self, load: u64, session: &str, stage: usize, shape: &ServiceShape) -> Option<u64> {
-        let profiles: Vec<_> = self.profiles
+        let profiles: Vec<_> = self
+            .profiles
             .iter()
             .rev()
             .filter(|p| {
@@ -227,7 +228,8 @@ impl ServiceBudget {
                     && (p.shape.prefill_rows > 0) == (shape.prefill_rows > 0)
                     && (p.shape.decode_rows > 0) == (shape.decode_rows > 0)
                     && p.shape.last_position.leading_zeros() == shape.last_position.leading_zeros()
-            }).collect();
+            })
+            .collect();
         if let Some(p) = profiles.iter().find(|p| comparable(&p.shape, shape)) {
             return p.recent_us.iter().copied().max();
         }
@@ -236,22 +238,34 @@ impl ServiceBudget {
         // A rejected smallest quantum is measured by the progress probe; its
         // profile then allows growth without repeatedly admitting a cold full
         // quantum. Context-bucket transitions require fresh calibration.
-        let scaled = profiles.iter().filter_map(|p| {
-            let mut estimate = u128::from(*p.recent_us.iter().max()?);
-            let base = estimate;
-            for (wanted, observed) in [(shape.prefill_rows, p.shape.prefill_rows),
-                (shape.decode_rows, p.shape.decode_rows), (shape.members, p.shape.members)] {
-                if wanted > observed {
-                    if observed == 0 { return None; }
-                    estimate = estimate.max(base.saturating_mul(wanted as u128).div_ceil(observed as u128));
+        let scaled = profiles
+            .iter()
+            .filter_map(|p| {
+                let mut estimate = u128::from(*p.recent_us.iter().max()?);
+                let base = estimate;
+                for (wanted, observed) in [
+                    (shape.prefill_rows, p.shape.prefill_rows),
+                    (shape.decode_rows, p.shape.decode_rows),
+                    (shape.members, p.shape.members),
+                ] {
+                    if wanted > observed {
+                        if observed == 0 {
+                            return None;
+                        }
+                        estimate = estimate.max(
+                            base.saturating_mul(wanted as u128)
+                                .div_ceil(observed as u128),
+                        );
+                    }
                 }
-            }
-            if shape.last_position > p.shape.last_position {
-                estimate = estimate.saturating_mul(u128::from(shape.last_position) + 1)
-                    .div_ceil(u128::from(p.shape.last_position) + 1);
-            }
-            Some(estimate.min(u128::from(u64::MAX)) as u64)
-        }).min();
+                if shape.last_position > p.shape.last_position {
+                    estimate = estimate
+                        .saturating_mul(u128::from(shape.last_position) + 1)
+                        .div_ceil(u128::from(p.shape.last_position) + 1);
+                }
+                Some(estimate.min(u128::from(u64::MAX)) as u64)
+            })
+            .min();
         // Repeated measurements at two widths reveal the fixed cost that a
         // proportional model otherwise pays again for every added row. Use
         // only equal decode/member shapes, a common context bucket, increasing
@@ -260,22 +274,32 @@ impl ServiceBudget {
         let mut affine = None;
         for low in &profiles {
             for high in &profiles {
-                if low.recent_us.len() < 2 || high.recent_us.len() < 2
+                if low.recent_us.len() < 2
+                    || high.recent_us.len() < 2
                     || low.shape.prefill_rows == 0
                     || high.shape.prefill_rows <= low.shape.prefill_rows
                     || high.shape.prefill_rows < low.shape.prefill_rows.saturating_mul(2)
                     || shape.prefill_rows < high.shape.prefill_rows
-                    || low.shape.decode_rows != shape.decode_rows || high.shape.decode_rows != shape.decode_rows
-                    || low.shape.members != shape.members || high.shape.members != shape.members { continue; }
+                    || low.shape.decode_rows != shape.decode_rows
+                    || high.shape.decode_rows != shape.decode_rows
+                    || low.shape.members != shape.members
+                    || high.shape.members != shape.members
+                {
+                    continue;
+                }
                 let lower = u128::from(*low.recent_us.iter().max().unwrap());
                 let upper = u128::from(*high.recent_us.iter().max().unwrap());
-                if upper <= lower { continue; }
+                if upper <= lower {
+                    continue;
+                }
                 let width = (high.shape.prefill_rows - low.shape.prefill_rows) as u128;
                 let extra = (shape.prefill_rows - high.shape.prefill_rows) as u128;
-                let mut estimate = upper.saturating_add((upper - lower).saturating_mul(extra).div_ceil(width));
+                let mut estimate =
+                    upper.saturating_add((upper - lower).saturating_mul(extra).div_ceil(width));
                 let position = low.shape.last_position.min(high.shape.last_position);
                 if shape.last_position > position {
-                    estimate = estimate.saturating_mul(u128::from(shape.last_position) + 1)
+                    estimate = estimate
+                        .saturating_mul(u128::from(shape.last_position) + 1)
                         .div_ceil(u128::from(position) + 1);
                 }
                 let estimate = estimate.min(u128::from(u64::MAX)) as u64;
@@ -286,29 +310,49 @@ impl ServiceBudget {
     }
 
     pub fn has_open_prefill(&self, open: &BTreeMap<u64, BTreeSet<u64>>) -> bool {
-        open.keys().any(|id| self.issued.iter().find(|r| r.ordinal == *id)
-            .is_none_or(|r| r.shape.prefill_rows > 0))
+        open.keys().any(|id| {
+            self.issued
+                .iter()
+                .find(|r| r.ordinal == *id)
+                .is_none_or(|r| r.shape.prefill_rows > 0)
+        })
     }
 
     pub fn has_open_calibration_probe(&self, open: &BTreeMap<u64, BTreeSet<u64>>) -> bool {
-        open.keys().any(|id| self.issued.iter().find(|r| r.ordinal == *id)
-            .is_none_or(|r| r.shape.prefill_rows == 1))
+        open.keys().any(|id| {
+            self.issued
+                .iter()
+                .find(|r| r.ordinal == *id)
+                .is_none_or(|r| r.shape.prefill_rows == 1)
+        })
     }
 
-    fn project_tail(&self, load: u64, session: &str, stages: usize, shape: &ServiceShape,
-        open: &BTreeMap<u64, BTreeSet<u64>>) -> Option<u64> {
-        if stages == 0 || stages > MAX_STAGES { return None; }
+    fn project_tail(
+        &self,
+        load: u64,
+        session: &str,
+        stages: usize,
+        shape: &ServiceShape,
+        open: &BTreeMap<u64, BTreeSet<u64>>,
+    ) -> Option<u64> {
+        if stages == 0 || stages > MAX_STAGES {
+            return None;
+        }
         let mut free = vec![0u64; stages];
         for ordinal in open.keys() {
-            let issued = self.issued.iter().find(|r| r.ordinal == *ordinal
-                && r.load == load && r.session == session)?;
+            let issued = self
+                .issued
+                .iter()
+                .find(|r| r.ordinal == *ordinal && r.load == load && r.session == session)?;
             // A downstream completion proves the earlier stages have run,
             // even if their telemetry is late. This only updates an estimate:
             // it cannot return KV, flight, edge or output authority.
             let completed = issued.samples.iter().rposition(Option::is_some);
             let mut arrival = 0;
             for (stage, available) in free.iter_mut().enumerate() {
-                if completed.is_some_and(|last| stage <= last) { continue; }
+                if completed.is_some_and(|last| stage <= last) {
+                    continue;
+                }
                 let cost = self.predict(load, session, stage, &issued.shape)?;
                 arrival = arrival.max(*available).saturating_add(cost);
                 *available = arrival;
@@ -316,7 +360,9 @@ impl ServiceBudget {
         }
         let mut arrival = 0u64;
         for (stage, available) in free.into_iter().enumerate() {
-            arrival = arrival.max(available).saturating_add(self.predict(load, session, stage, shape)?);
+            arrival = arrival
+                .max(available)
+                .saturating_add(self.predict(load, session, stage, shape)?);
         }
         Some(arrival)
     }
@@ -404,7 +450,10 @@ impl ServiceBudget {
         decision.predicted_tail_rpc_us = self.project_tail(load, session, stages, shape, open);
         decision.verdict = if !complete || decision.predicted_tail_rpc_us.is_none() {
             ServiceVerdict::Cold
-        } else if decision.predicted_tail_rpc_us.is_some_and(|us| us <= budget_us) {
+        } else if decision
+            .predicted_tail_rpc_us
+            .is_some_and(|us| us <= budget_us)
+        {
             ServiceVerdict::Admit
         } else if live.is_empty() {
             ServiceVerdict::ProgressProbe
