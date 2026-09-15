@@ -50,6 +50,17 @@ def run(args):
         deployments=json.loads(args.deployments.read_text(encoding="utf-8")) if args.deployments else None
         pipeline.__init__(client,plan_raw,directory,args.python,args.bundle,nodes,args.generation,deployments)
         report["nodes"]=pipeline.reports
+        if args.reject_generation is not None:
+            if args.reject_generation <= 0 or args.reject_generation >= args.generation:
+                raise ValueError("rejected generation must be positive and older than the loaded generation")
+            stale=pipeline.job("step","stale-generation")
+            stale["generation"]=args.reject_generation
+            rejection,output=pipeline.command(0,{"job":stale,"receipts":[]},require=False)
+            if (output or rejection.get("ok") is not False
+                    or rejection.get("disposition") != "rejected"
+                    or "invalid job identity" not in rejection.get("error", "")):
+                raise AssertionError(f"stale load generation accepted or misclassified: {rejection}")
+            report["stale_generation_rejection"]={"job":stale,"result":rejection}
         tokenizer=AutoTokenizer.from_pretrained(directory,local_files_only=True)
         reference=Reference(directory,plan.dtype,plan.nodes[0].device)
         def caches(request,cache):
@@ -120,5 +131,6 @@ if __name__=="__main__":
     parser.add_argument("--deployments",type=Path)
     parser.add_argument("--agent-binary",type=Path)
     parser.add_argument("--generation",type=int,default=1)
+    parser.add_argument("--reject-generation",type=int)
     parser.add_argument("--blocks",type=int,default=1)
     raise SystemExit(run(parser.parse_args()))
