@@ -242,6 +242,8 @@ Release A A-BYTES: [native result·completion·receipt·edge 정수 byte 시험 
 
 Release A A-BYTES B0: [Qwen122B physical result 상한·실제 LOAD·제거 변이](../tests/reports/release-a/20260915_211000.md).
 
+Release A A-BYTES B1: [versioned LOAD profile·실제 잔여 용량·Qwen122B LOAD/회수](../tests/reports/release-a/20260915_222346.md).
+
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 
 Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 거부](../tests/reports/release-a/20260915_190631.md).

@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0에서 Qwen122B stage0의 native payload 786,432bytes/tensor1을 측정하고 physical-v4 최대 result 103,843,468bytes를 PLAN·ACTUAL·READY와 실제 encoder/decoder에 결속했다. 실제 LOAD→READY→UNLOAD와 제거 변이까지 통과했으며 PID/listener/GPU를 회수했다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B1 versioned LOAD resource profile 결속이다.
+최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0에서 native physical result 최대 103,843,468bytes를 결속했고, B1에서 versioned LOAD resource profile과 실제 completion/edge/hop receipt 잔여 용량 검사를 연결했다. 실제 부족 경계 거부, Qwen122B LOAD→READY→UNLOAD→DELETE, 제거 변이와 최종 PID/listener/GPU 회수를 통과했다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B2 실행 전 보존 reservation이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -87,6 +87,14 @@ Rust563/563과 bound 제거 변이를 통과했다. Qwen122B 실제 stage0 LOAD�
 max103,843,468bytes가 세 lifecycle 기록에서 일치했고 UNLOAD 뒤 PID/listener/GPU가0이다. 첫 native 전체
 gate는 descriptor 고정부 2bytes 과대 계산으로 15/16이어서 `first_pass=fail`이다. A-BYTES 전체와 실제
 inference는 아직 미수용이다. 다음 첫 행동은 B1 versioned resource profile을 LOAD 전에 검증하는 것이다.
+
+**2026-09-15 A-BYTES B1 수용:** [B1 보고](../tests/reports/release-a/20260915_222346.md)의
+version 1 resource profile이 request count/bytes, input/output token, native result, completion, edge, receipt
+상한을 모두 소유한다. LOAD는 profile 형식·checked integer·내부 상한과 실제 mailbox/edge/hop receipt 잔여를
+native 전에 검사한다. workspace feature off/on 각 1,497/0/7, 실제 TCP 부족 경계, Qwen122B stage0
+LOAD→READY→UNLOAD→DELETE와 독립 제거 변이를 통과했고 모든 작업 소유 자원을 회수했다. 이것은 현재 잔여
+용량 검사이며 동시 실행 reservation은 아니다. 다음 첫 행동은 B2에서 native 호출 전 completion forward와
+관측 fan-out 전체를 하나의 group으로 예약하는 것이다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/
