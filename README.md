@@ -199,3 +199,5 @@ Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](test
 Release A 대상 변경: [Qwen122B 명세·corpus 준비](tests/reports/release-a/20260915_131432.md).
 
 Release A FINISH 재개: [결정론적 검토·전체 회귀·양쪽 어댑터](tests/reports/release-a/20260915_142237.md).
+
+Release A 전송 정산: [불명 결과·hop receipt·재연결 시험 계획](tests/plans/release-a-transport-reconciliation-20260915.md).

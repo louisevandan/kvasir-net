@@ -39,6 +39,12 @@ Rust event-drive와 HF Python client를 맞췄다. 표적 시험은 한 번에 �
 FINISH의 로컬 기능 수용은 완료했다. 다음 첫 행동은 전송 결과 불명의 명시 정산·재연결 계약을 닫고,
 이어 Qwen122B 전체 topology PLAN·LOAD·정상 응답·deadline/8wave를 수행하는 것이다.
 
+**2026-09-15 전송 정산 사전 검토:** [정산·재연결 계획](../tests/plans/release-a-transport-reconciliation-20260915.md)으로
+현재 write 완료·failure owner·duplicate window를 추적했다. 원격 수용 receipt와 outstanding pin이 없어
+peer cache만 지우거나 uncertain Event를 다시 보내는 구현은 안전하지 않다. 첫 후보는 버전화된 hop receipt,
+count/byte/horizon 상한, exact/unknown/quarantine, INSPECT, 구형 peer fail-closed와 Rust/HF OUTER 소비를
+R1–R9 한 gate로 구현한다. 이 사전 검토는 구현·수용 완료가 아니다.
+
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/
 PLAN/profile로 검증하고 resident8·장문·8wave·정답·SLO·취소/회수·양쪽 adapter 회귀 기준은 유지한다.
