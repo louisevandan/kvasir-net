@@ -180,6 +180,11 @@ HF의 기존 명시적 abort는 실패 정리 의미를 유지한다. abort 결�
 bounded 반환 비용을 함께 세운다. B5에서 발견한 bind 실패 뒤 stdin join과 failed LOAD 회수는
 NL05/NL08 fixture로 재사용한다.
 
+**2026-09-16 M1 진행:** 공통 protocol에 LOAD/UNLOAD/result content type, 64 KiB little-endian JSON
+metadata framing, opaque adapter bytes, 요청 identity·LOAD capacity·결과 status/resource-state 검증을
+추가했다. 원격 Spark의 `p4-protocol` 72개 시험이 통과했다. 다음 구현은 이 typed codec을 소비하는
+agent 비동기 supervisor이며, 그 실제 TCP 경로가 통과하기 전 M1 완료로 판정하지 않는다.
+
 이 순서는 이 변경 내부의 작업 순서다. 전체 로드맵의 다른 작업을 임의로 재정렬하지 않는다.
 
 | 단계 | 작업 | 다음 단계 조건 |

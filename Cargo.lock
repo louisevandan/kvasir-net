@@ -259,6 +259,8 @@ dependencies = [
 name = "p4-protocol"
 version = "0.9.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "sha2",
 ]
 
