@@ -40,23 +40,23 @@ fn eos_profile() -> Profile {
 const SESSION_CLOSE_PREFIX: &[u8] = b"close|";
 const SESSION_CLOSED_PREFIX: &[u8] = b"closed|";
 
-/// Polls two `Agent` accessors together until both settle, the same way
-/// `session_close.rs` already does for `node_reserved` -- `until` itself
-/// takes a synchronous closure and neither accessor here is, so this is the
-/// async equivalent for this file's own pair of assertions.
-async fn until_settled(
-    agent: &Arc<Agent>,
-    node: &str,
-    reserved: usize,
-    pending: usize,
+/// Polls the two sides of the close handshake together: the receiver must
+/// release its reservation and the sender must retire the acknowledged
+/// pending close. Observing both accessors on the receiver can finish before
+/// the acknowledgement has crossed back to the sender.
+async fn until_close_converged(
+    head: &Arc<Agent>,
+    head_node: &str,
+    tail: &Arc<Agent>,
+    tail_node: &str,
 ) -> (Option<usize>, Option<usize>) {
     let mut seen = (None, None);
     for _ in 0..300 {
         seen = (
-            agent.node_reserved(node).await,
-            agent.node_pending_closes(node).await,
+            head.node_reserved(head_node).await,
+            tail.node_pending_closes(tail_node).await,
         );
-        if seen == (Some(reserved), Some(pending)) {
+        if seen == (Some(0), Some(0)) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -103,8 +103,7 @@ async fn a_lost_first_session_close_still_converges() {
     })
     .await;
 
-    let (head_reserved, _) = until_settled(&head, "s0", 0, 0).await;
-    let tail_pending = tail.node_pending_closes("s1").await;
+    let (head_reserved, tail_pending) = until_close_converged(&head, "s0", &tail, "s1").await;
 
     assert_eq!(
         drop.dropped(),
