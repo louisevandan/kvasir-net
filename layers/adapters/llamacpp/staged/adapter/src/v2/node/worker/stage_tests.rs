@@ -663,6 +663,33 @@ fn b2_first_reservation_refusal_precedes_native_and_every_issue_commit() {
 }
 
 #[test]
+fn b4_worker_response_bound_rejects_after_native_before_success_publication() {
+    let mut fixture = fixture(ResponseMode::ExactSplit);
+    install_owned_completion_budget(&mut fixture, 8, 1 << 20);
+    fixture.worker.state.max_physical_result_bytes = 1;
+    fixture
+        .handle(submission("oversized-response", vec![3, 5, 7, 11]))
+        .unwrap();
+
+    assert!(fixture.worker.drive_first_batches().is_err());
+    assert_eq!(native_attempts(&fixture), 1);
+    assert!(matches!(
+        fixture
+            .worker
+            .state
+            .prepared_issue
+            .as_ref()
+            .map(|issue| issue.progress),
+        Some(IssueProgress::Uncertain)
+    ));
+    assert!(!fixture.worker.effects.is_empty());
+    assert!(!fixture.worker.effects.is_empty());
+    assert!(matches!(fixture.mailbox.try_take_owned(), OwnedPoll::Empty));
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_count, 0);
+    assert_eq!(fixture.mailbox.storage_snapshot().retained_bytes, 0);
+}
+
+#[test]
 fn b2_middle_native_moves_its_reserved_forward_and_span_to_owned_storage() {
     let mut fixture = fixture_at(ResponseMode::ExactSplit, NodeRole::Middle);
     install_owned_completion_budget(&mut fixture, 8, 1 << 20);
