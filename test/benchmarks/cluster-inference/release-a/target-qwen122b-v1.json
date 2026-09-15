@@ -102,7 +102,6 @@
   "public_plan_acceptance": true,
   "remaining": [
     "FINISH failure remains subject to existing stop record",
-    "post-LOAD MEMORY_ACTUAL conformance for all three stages",
     "physical result, retained output, receipt and edge byte bounds",
     "model-rendered template parity and actual response quality",
     "deadline runner and full service gates"
@@ -214,19 +213,26 @@
   ],
   "manifest_kind": "target_preparation_not_runnable_deployment",
   "a_plan": {
-    "status": "load_authorized_runtime_not_accepted",
+    "status": "actual_allocation_verified_runtime_not_accepted",
     "native_source_commit": "915f0136a6a6629b37c89ba596cda89324519a57",
+    "p4_agent_source_commit": "8be2420828ecb3c5e3e34f076e6c2e9e7bd51ddc",
     "upstream_commit": "451b89bae0c4b1dd612eb503ceace906c01ddcc9",
     "patch_set": "a07b782641a008bcab4b4e81e58cd11798387c5bf332fa4a0474a1dce4d700ef",
-    "input": "qwen122b-native-plan-v1.json",
-    "input_sha256": "0949c2cdc089584cf2ca822745e7f2bf1b03626f89c9ffd1aae7d74e2d800958",
-    "result": "qwen122b-native-plan-v1.result.json",
-    "result_sha256": "6b8b466f9052ec988c94c60b22405ac946f691c0064653501f392296ddf78e36",
+    "input": "qwen122b-native-actual-v1.json",
+    "input_sha256": "636d094e280a0bfc5ac103aa53b08860d247c921140303954423826c40594bc9",
+    "result": "qwen122b-native-actual-v1.result.json",
+    "result_sha256": "3e09ce5c09774f6952704a09e76e4b1bdf3dc61bc4fff6813f0a4a94978e55f7",
     "raw_result_sha256": {
       "mac20": "9ac3835b73d644b93be414d6912694695fc2cfe4957b79706434b54297d3ab1a",
       "spark": "bb3799e7a8f42116f40a89beabb1bbf6f276e545011f09ab76bd86e795e43027",
       "mac21": "11e4d9b9825f950a11fc43eccd5f79e785428cacd27bf341c0287074e4311972"
     },
-    "actual_allocation_verified": false
+    "raw_actual_log_sha256": {
+      "spark": "5fc0ac5ab117d5b24833aec3fdbe5867e5128f5985fe55283d43671e79422950",
+      "mac20": "d44fb791f7a0bdbe909ffa6e7639dca2f35c189211baccc10498a286d2b0db11",
+      "mac21": "e5ede6ac262c7eba9cfbbca4a5151aeb6559dda440ab759c80715b6cf6816951"
+    },
+    "lifecycle_result_sha256": "6dc2c171a8d3f1425e2feef39f19c38130689ff8b67e7412dce0ebdc59b3f714",
+    "actual_allocation_verified": true
   }
 }

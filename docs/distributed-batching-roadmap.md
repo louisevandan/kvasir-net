@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN을 통과했다. 동일 upstream/patch의 Spark GB10 `[0,24)`·Mac M4 Pro `[24,36)`·Mac M4 Pro `[36,48)` 3물리 host 배치가 resident8/context819,200/F16 KV에서 각각 54.3/28.5/29.4GB를 요구하며 8GiB host 예비 후에도 적합하다. 공유 pool·cut·source/patch·PLAN/actual을 fail-closed 검증하는 공개 model-loading 경로와 독립 변이4종을 추가했다. 현재 LOAD 승인만 GREEN이며 실제 allocation·요청·H0–H7은 미수용이다. 다음 단계는 봉인 소스의 3-stage LOAD→MEMORY_ACTUAL 일치→UNLOAD/점유 회수다.
+최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. 동일 upstream/patch의 Spark GB10 `[0,24)`·Mac M4 Pro `[24,36)`·Mac M4 Pro `[36,48)` 3물리 host가 resident8/context819,200/F16 KV로 동시에 READY였고 세 `MEMORY_ACTUAL`이 계획 allocation과 일치했다. `UNLOAD→DELETE` 뒤 새 namespace와 stage port를 모두 회수했다. 실제 요청·H0–H7은 미수용이다. 다음 단계는 physical result/retained output/receipt/edge의 정수 byte 상한을 실제 소비 경로와 실행 profile에 결속하는 A-BYTES다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -68,6 +68,16 @@ UNLOAD 뒤 자식/점유0을 확인하는 것이다. output/receipt/edge byte bo
 feature off/on 전체 workspace는 각각1490 PASS / 0 FAIL / 7 ignored다. 작업은 원격 host를 우선하며,
 이 PC에서 빌드가 불가피하면 48 logical CPU 중 최대33 job만 쓴다. 이 PC의 inference는 지정된 RTX 3090
 한 장만 노출하고 RTX 4080은 사용하지 않는다.
+
+**2026-09-15 Qwen122B A-LOAD 수용:** [A-LOAD 보고](../tests/reports/release-a/20260915_195106.md)의
+현재 P4 agent 소스 `8be242082`와 봉인 native로 Spark/Mac20/Mac21의 새 `:52150` namespace에
+stage를 만들고 `[0,24)`/`[24,36)`/`[36,48)`을 동시에 적재했다. 첫 실행은 LOAD endpoint의 포트0을
+native가 그대로 거부해 `first_pass=fail`이며 모델·전력 실패가 아니다. 런처 계약대로 비어 있는 고정
+loopback port53150을 사용한 2회차에 세 LOAD/READY와 INSPECT를 통과했다. 실제 allocation은 stage별
+계획과 모두 일치하고 `actualAllocationConformant=true`다. 이어 UNLOAD/DELETE 3/3, 최종 nodes=[] 및
+53150 listener0을 확인하고 현재 작업 소유 agent52150만 종료했다. 기존 agent52005는 유지했다. 다음 첫
+행동은 A-BYTES의 네 byte 경계를 실제 codec·mailbox·hop 소비량에서 산출해 manifest와 실행기에서
+fail-closed 검증하는 것이다. 그 전에는 요청 arm을 시작하지 않는다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/

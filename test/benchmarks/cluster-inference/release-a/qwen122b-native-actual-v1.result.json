@@ -1,0 +1,68 @@
+{
+  "schema": "p4-native-deployment-result-v1",
+  "modelId": "qwen3_5_122b_a10b_ud_q5_k_s_v1",
+  "cuts": [
+    0,
+    24,
+    36,
+    48
+  ],
+  "machineCount": 3,
+  "stages": [
+    {
+      "id": "spark-0",
+      "hostId": "2063dd763211c1db9da114413e97226fd96777bb0126e770f8663044a0aa1736",
+      "layerBegin": 0,
+      "layerEnd": 24,
+      "plannedBytes": 54259452320,
+      "actualConformant": true
+    },
+    {
+      "id": "mac20-1",
+      "hostId": "134f57a256b041c64e741acb9afb6b8e6f5dc1c5576c23d474845cb82a3fd110",
+      "layerBegin": 24,
+      "layerEnd": 36,
+      "plannedBytes": 28477144128,
+      "actualConformant": true
+    },
+    {
+      "id": "mac21-2",
+      "hostId": "167777b22c1c2f71057d698d026d817416bf42ba7fb96bab304d6c0c86f807ea",
+      "layerBegin": 36,
+      "layerEnd": 48,
+      "plannedBytes": 29394628160,
+      "actualConformant": true
+    }
+  ],
+  "pools": [
+    {
+      "hostId": "2063dd763211c1db9da114413e97226fd96777bb0126e770f8663044a0aa1736",
+      "poolId": "shared",
+      "availableBytes": 125770739712,
+      "reserveBytes": 8589934592,
+      "usableBytes": 117180805120,
+      "requiredBytes": 54259452320,
+      "headroomBytes": 62921352800
+    },
+    {
+      "hostId": "134f57a256b041c64e741acb9afb6b8e6f5dc1c5576c23d474845cb82a3fd110",
+      "poolId": "shared",
+      "availableBytes": 47636922368,
+      "reserveBytes": 8589934592,
+      "usableBytes": 39046987776,
+      "requiredBytes": 28477144128,
+      "headroomBytes": 10569843648
+    },
+    {
+      "hostId": "167777b22c1c2f71057d698d026d817416bf42ba7fb96bab304d6c0c86f807ea",
+      "poolId": "shared",
+      "availableBytes": 55662313472,
+      "reserveBytes": 8589934592,
+      "usableBytes": 47072378880,
+      "requiredBytes": 29394628160,
+      "headroomBytes": 17677750720
+    }
+  ],
+  "loadAuthorized": true,
+  "actualAllocationConformant": true
+}
