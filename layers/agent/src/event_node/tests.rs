@@ -87,7 +87,7 @@ fn event(own: &Address) -> Event {
             causation_id: None,
             source: Endpoint::outer(own.clone(), "outer", 1),
             target: Endpoint::node(own.clone(), "n1", 1),
-            return_route: None,
+            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: own.clone(), channel: "outer".into(), connection_generation: 1 }),
             class: EventClass::Control,
             sequence: 1,
             deadline_unix_ms: None,
@@ -398,6 +398,7 @@ impl NodeAdapter for DuplexProbeAdapter {
 }
 
 fn duplex_event(id: &str, source: Endpoint, target: Endpoint, payload: &[u8]) -> Event {
+    let return_route = match &source { Endpoint::Outer(route) => Some(route.clone()), _ => match &target { Endpoint::Outer(route) => Some(route.clone()), _ => Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }) } };
     Event {
         envelope: Envelope {
             protocol_version: Envelope::VERSION,
@@ -406,7 +407,7 @@ fn duplex_event(id: &str, source: Endpoint, target: Endpoint, payload: &[u8]) ->
             causation_id: None,
             source,
             target,
-            return_route: None,
+            return_route,
             class: EventClass::Data,
             sequence: 1,
             deadline_unix_ms: None,

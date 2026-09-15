@@ -388,3 +388,26 @@ fn exact_input_byte_boundary_and_one_byte_over_have_distinct_dispositions() {
     drop(excess);
     assert_eq!(h.call(h.job("unload", 1, 1), b"")["ok"], true);
 }
+
+#[test]
+fn missing_return_context_is_refused_before_worker_admission() {
+    let h = Harness::new("normal");
+    let original = h.input(json!({"op":"load"}), &[]);
+    let mut bad = original.event().clone();
+    drop(original);
+    bad.envelope.return_route = None;
+    let pointer = bad.payload.as_ptr();
+    h.tx.try_publish_owned(bad).unwrap();
+    let OwnedPoll::Event(held) = h.rx.try_take_owned() else { panic!(); };
+    let charge = h.rx.storage_snapshot().retained_bytes;
+    let before = h.adapter.snapshot();
+    let Err(RetainedOfferError::Closed(returned)) = h.adapter.try_offer_retained(held) else {
+        panic!("missing context admitted");
+    };
+    assert_eq!(returned.event().payload.as_ptr(), pointer);
+    assert_eq!(h.rx.storage_snapshot().retained_bytes, charge);
+    assert_eq!(h.adapter.snapshot(), before);
+    assert!(h.adapter.peek_retained_completion().is_none());
+    drop(returned);
+    assert_eq!(h.rx.storage_snapshot().retained_bytes, 0);
+}

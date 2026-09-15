@@ -97,7 +97,7 @@ fn rejected_without_admission(
         envelope: input.envelope.next(
             format!("{}:llamacpp:{next_event}", input.envelope.event_id),
             worker.endpoint.clone(),
-            reply_target(input),
+            reply_target(input).unwrap(),
             EventClass::Output,
             next_event,
             ERROR_CONTENT_TYPE,

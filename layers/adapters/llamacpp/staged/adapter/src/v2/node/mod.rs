@@ -81,6 +81,7 @@ impl NodeAdapter for LlamaNodeAdapter {
     }
 
     fn try_offer(&self, event: Event) -> Result<(), OfferError> {
+        if event.validate().is_err() { return Err(OfferError::Closed(event)); }
         let Some(sender) = &self.sender else {
             return Err(OfferError::Closed(event));
         };

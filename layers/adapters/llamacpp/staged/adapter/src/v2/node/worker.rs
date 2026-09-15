@@ -482,13 +482,7 @@ impl Worker {
             &event.envelope.event_id,
         )
         .map_err(str::to_owned)?;
-        let reply = serde_json::to_string(&ReplySpec {
-            ingress_agent: submitted_route.ingress_agent.to_string(),
-            channel: submitted_route.channel.clone(),
-            connection_generation: submitted_route.connection_generation,
-            correlation_id: event.envelope.correlation_id.clone(),
-            deadline_unix_ms: event.envelope.deadline_unix_ms,
-        })
+        let reply = serde_json::to_string(&ReplySpec::from_envelope(&event.envelope)?)
         .map_err(|error| format!("cannot encode reply specification: {error}"))?;
         // Both codecs keep the same byte limit. Refuse before session-key
         // records, Tokenize, slot/incarnation admission or native execution.
@@ -666,13 +660,8 @@ fn node_endpoint(value: &NodeAddress) -> Result<Endpoint, String> {
     Ok(Endpoint::node(agent, value.node.clone(), value.generation))
 }
 
-fn reply_target(event: &Event) -> Endpoint {
-    event
-        .envelope
-        .return_route
-        .clone()
-        .map(Endpoint::Outer)
-        .unwrap_or_else(|| event.envelope.source.clone())
+fn reply_target(event: &Event) -> Result<Endpoint, String> {
+    event.envelope.reply_target().map_err(|error| error.to_string())
 }
 
 fn single_session(capsules: &CapsuleSet) -> Result<String, String> {

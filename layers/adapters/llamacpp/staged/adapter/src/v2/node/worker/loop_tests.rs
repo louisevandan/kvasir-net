@@ -821,7 +821,7 @@ impl Harness {
                         .is_some_and(|(input, body)| {
                             event.envelope.class == EventClass::Output
                                 && event.envelope.source == input.envelope.target
-                                && event.envelope.target == reply_target(input)
+                                && event.envelope.target == reply_target(input).unwrap()
                                 && event.envelope.return_route == input.envelope.return_route
                                 && event.envelope.correlation_id == input.envelope.correlation_id
                                 && event.envelope.deadline_unix_ms

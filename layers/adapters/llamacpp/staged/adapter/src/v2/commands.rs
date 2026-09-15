@@ -422,6 +422,34 @@ pub struct ReplySpec {
     pub deadline_unix_ms: Option<u64>,
 }
 
+impl ReplySpec {
+    /// Adapter wire compatibility only; P4 owns the return-context semantics.
+    pub fn context(&self) -> Result<p4_protocol::event::ReturnContext, String> {
+        let context = p4_protocol::event::ReturnContext {
+            route: p4_protocol::event::OuterEndpoint {
+                ingress_agent: self.ingress_agent.parse().map_err(|e: p4_protocol::ProtocolError| e.to_string())?,
+                channel: self.channel.clone(),
+                connection_generation: self.connection_generation,
+            },
+            correlation_id: self.correlation_id.clone(),
+            deadline_unix_ms: self.deadline_unix_ms,
+        };
+        context.validate().map_err(|e| e.to_string())?;
+        Ok(context)
+    }
+
+    pub fn from_envelope(envelope: &p4_protocol::event::Envelope) -> Result<Self, String> {
+        let context = envelope.return_context().map_err(|e| e.to_string())?;
+        Ok(Self {
+            ingress_agent: context.route.ingress_agent.to_string(),
+            channel: context.route.channel,
+            connection_generation: context.route.connection_generation,
+            correlation_id: context.correlation_id,
+            deadline_unix_ms: context.deadline_unix_ms,
+        })
+    }
+}
+
 #[cfg(test)]
 mod observation_wire_tests {
     use super::*;

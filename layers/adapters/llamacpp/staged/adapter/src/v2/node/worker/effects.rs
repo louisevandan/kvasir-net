@@ -409,8 +409,7 @@ impl Worker {
             {
                 return Err("tail reply contract is incomplete".into());
             }
-            let ingress = Address::from_str(&reply.ingress_agent)
-                .map_err(|_| "tail reply ingress is invalid".to_owned())?;
+            let ingress = reply.context()?.route.ingress_agent;
             let payload = ApprovedOutputPayload {
                 submission_event_id,
                 incarnation: owner.incarnation,

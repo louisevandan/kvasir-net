@@ -41,7 +41,7 @@ fn expected_response(
         envelope: input.envelope.next(
             format!("{}:llamacpp:{sequence}", input.envelope.event_id),
             source,
-            reply_target(input),
+            reply_target(input).unwrap(),
             class,
             sequence,
             content_type,
@@ -173,7 +173,7 @@ fn failed_direct_publication_keeps_its_entire_event_and_original_body_allocation
         worker
             .emit_bytes(
                 &input,
-                reply_target(&input),
+                reply_target(&input).unwrap(),
                 EventClass::Output,
                 "application/test-direct",
                 body
@@ -282,7 +282,7 @@ fn actual_counter_exhaustion_does_not_move_a_prevalidated_direct_body() {
     let prepared = worker
         .prepare_json_emission(
             &input,
-            reply_target(&input),
+            reply_target(&input).unwrap(),
             EventClass::Output,
             ERROR_CONTENT_TYPE,
             &serde_json::json!({"detail":"fixed"}),
@@ -386,7 +386,7 @@ fn an_old_fenced_publication_is_not_replayed_to_deliver_a_later_diagnostic() {
     let intent = prepared.intent_for_test();
     assert_eq!(intent.base, input.envelope);
     assert_eq!(intent.source, worker.endpoint);
-    assert_eq!(intent.target, reply_target(&input));
+    assert_eq!(intent.target, reply_target(&input).unwrap());
     assert_eq!(intent.class, EventClass::Output);
     assert_eq!(intent.content_type, ERROR_CONTENT_TYPE);
     assert_eq!(
@@ -439,7 +439,7 @@ fn first_closed_batch_diagnostic_preserves_every_failed_computation_owner() {
     let intent = prepared.intent_for_test();
     assert_eq!(intent.base, second.envelope);
     assert_eq!(intent.source, worker.endpoint);
-    assert_eq!(intent.target, reply_target(&second));
+    assert_eq!(intent.target, reply_target(&second).unwrap());
     assert_eq!(intent.class, EventClass::Output);
     assert_eq!(intent.content_type, ERROR_CONTENT_TYPE);
     assert_eq!(intent.body, body);

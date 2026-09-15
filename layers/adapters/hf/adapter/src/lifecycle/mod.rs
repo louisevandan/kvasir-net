@@ -325,21 +325,28 @@ pub(crate) async fn run(
             Some(n) => n,
             None => break,
         };
-        let target = event
-            .envelope
-            .return_route
-            .clone()
-            .map(Endpoint::Outer)
-            .unwrap_or_else(|| event.envelope.source.clone());
+        let context = match event.envelope.return_context() {
+            Ok(context) => context,
+            Err(error) => {
+                *snapshot.lock().unwrap() = format!("failed: {error}");
+                notify.notified().await;
+                drop(input);
+                break;
+            }
+        };
+        let envelope = match context.reply(&event.envelope,
+            format!("hf:{endpoint:?}:{sequence}"), endpoint.clone(),
+            EventClass::Output, sequence, ipc::RESULT) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                *snapshot.lock().unwrap() = format!("failed: {error}");
+                notify.notified().await;
+                drop(input);
+                break;
+            }
+        };
         let mut output = Event {
-            envelope: event.envelope.next(
-                format!("hf:{endpoint:?}:{sequence}"),
-                endpoint.clone(),
-                target,
-                EventClass::Output,
-                sequence,
-                ipc::RESULT,
-            ),
+            envelope,
             payload: vec![],
         };
         let parsed = ipc::unpack(&event.payload);
@@ -429,12 +436,7 @@ pub(crate) async fn run(
             Ok(payload) => payload,
             Err(error) => {
                 state.uncertain = Some(error.clone());
-                output.envelope.target = event
-                    .envelope
-                    .return_route
-                    .clone()
-                    .map(Endpoint::Outer)
-                    .unwrap_or_else(|| event.envelope.source.clone());
+                output.envelope.target = Endpoint::Outer(context.route.clone());
                 output.envelope.class = EventClass::Output;
                 output.envelope.payload_content_type = ipc::RESULT.into();
                 ipc::pack(

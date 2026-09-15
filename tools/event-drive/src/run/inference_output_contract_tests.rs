@@ -389,8 +389,18 @@ async fn captured_outputs_reject_tail_middle_other_head_generation_and_route_cha
             }
             _ => unreachable!(),
         }
+        let result = if matches!(mutation, 0 | 1 | 2 | 3 | 7) {
+            // The common codec now rejects these same contradictory/missing
+            // routes before inference can consume them. Preserve all inputs
+            // and independently check the consumer's existing fence as well.
+            assert!(encode(&changed[0]).is_err(), "route mutation {mutation}");
+            InferenceIdentity::new(&fixture_config(&case, "partial"), &outer()).unwrap()
+                .output(&changed[0], &outcome(&changed[0]), None)
+        } else {
+            consume(&case, "partial", &changed).await.map(|_| ())
+        };
         assert_eq!(
-            consume(&case, "partial", &changed).await.err().as_deref(),
+            result.err().as_deref(),
             Some("inference event route is not self-consistent"),
             "route mutation {mutation}"
         );

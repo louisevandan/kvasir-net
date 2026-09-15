@@ -103,7 +103,7 @@ impl Worker {
         self.set_snapshot("loaded");
         self.emit_json(
             &event,
-            reply_target(&event),
+            reply_target(&event)?,
             EventClass::Telemetry,
             LOADED_CONTENT_TYPE,
             &serde_json::json!({
@@ -198,7 +198,7 @@ impl Worker {
         self.set_snapshot("unloaded");
         self.emit_json(
             &event,
-            reply_target(&event),
+            reply_target(&event)?,
             EventClass::Telemetry,
             UNLOADED_CONTENT_TYPE,
             &serde_json::json!({"state":"unloaded","load_generation":command.load_generation}),
@@ -238,7 +238,7 @@ impl Worker {
         }
         let response = self.prepare_json_emission(
             &event,
-            reply_target(&event),
+            reply_target(&event)?,
             EventClass::Telemetry,
             SESSION_READY_CONTENT_TYPE,
             &serde_json::json!({"session_id":id,"state":"ready","load_generation":self.state.load_generation}),

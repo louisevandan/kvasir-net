@@ -470,8 +470,7 @@ impl Worker {
             {
                 return Err("release reply contract is incomplete".into());
             }
-            let ingress = Address::from_str(&reply.ingress_agent)
-                .map_err(|_| "release reply ingress is invalid")?;
+            let ingress = reply.context()?.route.ingress_agent;
             let owner = Endpoint::outer(
                 ingress.clone(),
                 reply.channel.clone(),

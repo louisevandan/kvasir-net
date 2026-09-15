@@ -934,7 +934,7 @@ fn b2_completion_full_settles_both_speculative_continuations_without_native_reen
                 SESSION_READY_CONTENT_TYPE
             );
             assert_eq!(replies[0].envelope.source, endpoint(0));
-            assert_eq!(replies[0].envelope.target, reply_target(input));
+            assert_eq!(replies[0].envelope.target, reply_target(input).unwrap());
             assert_eq!(
                 serde_json::from_slice::<serde_json::Value>(&replies[0].payload).unwrap(),
                 serde_json::json!({"session_id":"loop-session", "state":"ready", "load_generation":1})

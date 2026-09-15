@@ -40,7 +40,7 @@ EventEnvelope {
   causation_id?            // event that caused this event
   source: Endpoint         // logical producer of this event
   target: Endpoint         // final consumer of this event
-  return_route: Outer?     // stable output/telemetry destination
+  return_route: Outer      // required stable output/telemetry destination
   class                    // control | data | output | telemetry
   sequence                 // monotonic within correlation + source
   deadline_unix_ms?        // admission fence, never an interrupt promise
@@ -64,7 +64,10 @@ prevents an old socket from receiving a new stream after reconnect.
 
 ### Reception agent and an OUTER reachable only through a gateway
 
-The first agent contacted by OUTER is its **reception agent** (`ingress_agent`).
+OUTER knows the agents, nodes and placement; it selects a reception agent for
+each originating request. The agent contacted for that request is its
+**reception agent** (`ingress_agent`), not a topology authority or mandatory
+transit for node-to-node traffic.
 It can be the only network entry point into a private cluster. Other agents send
 return traffic to this agent, never to an OUTER host/port. The reception agent
 writes to the already accepted OUTER connection; it does not dial OUTER back.
@@ -104,6 +107,40 @@ An intermediate agent never rewrites `source`, `target` or `return_route`.
 When an adapter completes work it creates a new event with itself as source,
 the exact next endpoint as target, the triggering event as `causation_id`, and
 the original correlation and return route.
+
+### Required request return context
+
+Every valid P4 event carries `return_route`, including Agent-to-Agent and
+Node-to-Node events. OUTER sets it on the initiating event; it is never inferred
+from a socket, a previous message, a correlation registry or the current source.
+`source=Outer` and `target=Outer`, when present, must each equal that route in
+all three fields. Validation runs in the wire codec, broker admission and both
+concrete adapter admission paths before request or backend effects.
+
+The Rust field remains `Option` only to preserve P4E3 framing and represent an
+unchanged refused input. `None` is invalid, including a legacy wire presence flag
+of zero. Existing valid P4E3 bytes are unchanged; older senders that omitted the
+route must be updated. This is stricter acceptance, not universal old-peer
+compatibility. The older Chain/Hop service protocol is a separate runtime.
+
+`p4_protocol::event::ReturnContext` owns return-route, correlation and deadline
+validation and reply-envelope construction. `Envelope::next` preserves context
+for a normal derivation; `ReturnContext::reply` selects one request's context
+while retaining the actual causal event ID. Missing context has no source fallback.
+Validation of already borrowed routes does not clone their strings.
+
+A mixed adapter batch carries each request's original return context in its
+opaque owner metadata. Its carrier envelope routes that one aggregate event;
+it is not authority to replace every owner's return identity. llama.cpp keeps
+the existing `ReplySpec` wire fields as an adapter codec for the common context,
+validates each owner before effect commitment, and selects that owner when
+publishing OUTPUT or RELEASE. Stream-level batch observations retain their
+existing grouping by complete OUTER route and explicitly list the owned requests;
+they do not become per-request completion events. P4 does not parse batch payloads.
+
+HF forwards the input context to the next declared node and uses the same common
+reply construction for OUTER responses. The Python OUTER reader checks target
+and return route together before accepting a response into its trace.
 
 The payload is opaque bytes. P4 does not define prompt, token, max-token,
 Prefill, Decode, KV, layer, tensor, batch or backend fields. The

@@ -93,7 +93,9 @@ class Client:
         meta={"event_id":r.text(),"correlation":r.text(),"causation":r.optional(r.text),"source":r.endpoint(),"target":r.endpoint()}
         meta["return_route"]=r.optional(lambda:(2,r.text(),r.text(),r.num("<Q")))
         meta.update(event_class=r.num("B"),sequence=r.num("<Q"),deadline=r.optional(lambda:r.num("<Q")),adapter=r.optional(r.text),content=r.text())
-        if r.pos!=e or meta["target"]!=self.outer:
+        if (r.pos!=e or meta["target"]!=self.outer
+                or meta["return_route"]!=self.outer
+                or (meta["source"][0]==2 and meta["source"]!=self.outer)):
             raise ValueError("response envelope mismatch")
         self.received_bytes+=size+4
         self.trace.append({**meta,"bytes":size+4})

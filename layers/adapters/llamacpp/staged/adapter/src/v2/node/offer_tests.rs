@@ -75,3 +75,18 @@ fn full_keeps_the_same_input_for_exactly_one_later_acceptance() {
         Err(mpsc::TryRecvError::Empty)
     ));
 }
+
+#[test]
+fn missing_return_context_is_refused_before_worker_admission() {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let adapter = adapter(Some(sender));
+    let mut event = input();
+    event.envelope.return_route = None;
+    let expected = event.clone();
+    let original = allocation(&event);
+    let Err(OfferError::Closed(returned)) = adapter.try_offer(event) else { panic!("missing context admitted"); };
+    assert_eq!(returned, expected);
+    assert_eq!(allocation(&returned), original);
+    assert!(matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert_eq!(adapter.snapshot(), "offer-test");
+}

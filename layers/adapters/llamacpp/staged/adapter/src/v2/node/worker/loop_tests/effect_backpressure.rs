@@ -309,7 +309,7 @@ fn completion_full_defers_one_bad_ack_error_without_blocking_the_genuine_ack() {
         Some(invalid.envelope.event_id.as_str())
     );
     assert_eq!(errors[0].envelope.source, invalid.envelope.target);
-    assert_eq!(errors[0].envelope.target, reply_target(&invalid));
+    assert_eq!(errors[0].envelope.target, reply_target(&invalid).unwrap());
     assert_eq!(
         native_before_room, native_before,
         "servicing a rejected and accepted ACK must issue no native operation"

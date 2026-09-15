@@ -22,6 +22,11 @@ HF를 P4 내부로 통합했고 전체 workspace on/off 각각 1460 passed / 0 f
 
 ### 0.A Release A 착수 (2026-09-14)
 
+**2026-09-15 반환 문맥 계약 반영:** 사용자 지시로 [공통 반환 문맥](../tests/reports/release-a/20260915_121000.md)을 구현했다.
+모든 유효 이벤트의 명시적 경로·OUTER 일치 검증, source fallback 제거, 공통 ReturnContext와
+혼합 owner별 응답 선택을 연결했다. workspace1472/1/7·Python43개·독립 변이3종 및 접수 A만 거치는
+llama.cpp/HF 실제 생성·회수를 검증했다. 실패1개는 기존 FINISH다. 이 범위 완료와 아래 중단/잔여 로드맵은 구분한다.
+
 **2026-09-15 접수 경로 반영:** 후속 사용자 지시로 [접수 에이전트 엔벨롭](../tests/reports/release-a/20260915_113754.md)을 검토·수정했다.
 네트워크 반환은 ingress_agent로 보내고 그 에이전트만 OUTER socket을 등록한다. 실제 TCP·독립 변이2종·
 접수 A만 통과하는 llama.cpp/HF 생성·회수를 확인했다. 전체 workspace1465/1/7이며 기존 FINISH 실패1개가 남는다.

@@ -69,8 +69,7 @@ impl Worker {
             {
                 return Err("observation reply contract is incomplete".into());
             }
-            let ingress = Address::from_str(&reply.ingress_agent)
-                .map_err(|_| "observation reply ingress is invalid")?;
+            let ingress = reply.context()?.route.ingress_agent;
             let route = OuterEndpoint {
                 ingress_agent: ingress,
                 channel: reply.channel.clone(),

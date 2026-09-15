@@ -6,7 +6,7 @@ use p4_agent_core::event_broker::RetainedEventBroker;
 use p4_agent_core::event_node::{RetainedEventNode, RetainedEventNodeFailure};
 use p4_protocol::Address;
 use p4_protocol::event::{
-    AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE, Endpoint, Envelope, Event, EventClass,
+    AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE, Endpoint, Event, EventClass,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -219,30 +219,15 @@ fn reply(
     payload_content_type: &str,
     payload: serde_json::Value,
 ) -> Result<Event, String> {
+    let context = base.envelope.return_context().map_err(|error| error.to_string())?;
     let number = sequence.fetch_add(1, Ordering::Relaxed);
     if number == u64::MAX {
         return Err("agent event sequence exhausted".into());
     }
-    let target = base
-        .envelope
-        .return_route
-        .clone()
-        .map(Endpoint::Outer)
-        .unwrap_or_else(|| base.envelope.source.clone());
-    let envelope = Envelope {
-        protocol_version: Envelope::VERSION,
-        event_id: format!("{own}:agent:{number}"),
-        correlation_id: base.envelope.correlation_id.clone(),
-        causation_id: Some(base.envelope.event_id.clone()),
-        source: Endpoint::agent(own.clone()),
-        target,
-        return_route: base.envelope.return_route.clone(),
-        class: EventClass::Telemetry,
-        sequence: number,
-        deadline_unix_ms: base.envelope.deadline_unix_ms,
-        adapter_kind: None,
-        payload_content_type: payload_content_type.into(),
-    };
+    let mut envelope = context.reply(&base.envelope, format!("{own}:agent:{number}"),
+        Endpoint::agent(own.clone()), EventClass::Telemetry, number, payload_content_type)
+        .map_err(|error| error.to_string())?;
+    envelope.adapter_kind = None;
     let payload = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
     Ok(Event { envelope, payload })
 }

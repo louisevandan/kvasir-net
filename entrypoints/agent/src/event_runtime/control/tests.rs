@@ -27,13 +27,14 @@ async fn owned_runtime_control_full_retries_and_permanent_failure_retains_inputs
         let reply = tokio::time::timeout(std::time::Duration::from_secs(10), next(&output)).await.unwrap().unwrap();
         assert_eq!(reply.event().envelope.causation_id, Some(format!("input-{number}")));
     }
-    let mut bad = event(&own, Endpoint::agent(own.clone()), 13, "application/x-control-test", b"terminal original");
-    bad.envelope.return_route = None;
-    bad.envelope.source = Endpoint::node(own.clone(), "missing-return", 1);
+    // A missing return route is now refused by the broker before control runs.
+    // Keep this consumer's permanent-delivery-failure test at its actual boundary.
+    drop(output);
+    let bad = event(&own, Endpoint::agent(own.clone()), 13, "application/x-control-test", b"terminal original");
     let pointer = bad.payload.as_ptr() as usize;
     broker.dispatch_ingress(bad).unwrap();
     let stopped = tokio::time::timeout(std::time::Duration::from_secs(10), task).await.unwrap().unwrap();
-    assert!(stopped.error.as_deref().unwrap().contains("UnknownNode"));
+    assert!(stopped.error.as_deref().unwrap().contains("Closed(Outer)"));
     assert_eq!(stopped.held_input.as_ref().unwrap().event().payload.as_ptr() as usize, pointer);
     let Some(PendingReply::Owned(reply)) = &stopped.held_reply else { panic!("original owned reply must remain"); };
     assert_eq!(reply.event().envelope.causation_id.as_deref(), Some("input-13"));

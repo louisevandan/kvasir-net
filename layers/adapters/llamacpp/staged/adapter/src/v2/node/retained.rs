@@ -80,6 +80,7 @@ impl RetainedNodeAdapter for RetainedLlamaNodeAdapter {
         Some(self.inner.mailbox.storage_snapshot())
     }
     fn try_offer_retained(&self, completion: RetainedCompletion) -> Result<(), RetainedOfferError> {
+        if completion.event().validate().is_err() { return Err(RetainedOfferError::Closed(completion)); }
         if self.stopped.load(Ordering::Acquire) || self.inner.shutting_down.load(Ordering::Acquire)
         {
             return Err(RetainedOfferError::Closed(completion));

@@ -134,7 +134,7 @@ impl Worker {
             .map_err(|_| ())?;
             prepared.push(Self::direct_effect(self.direct_intent(
                 base,
-                reply_target(base),
+                reply_target(base).map_err(|_| ())?,
                 EventClass::Output,
                 ERROR_CONTENT_TYPE,
                 body,
@@ -161,25 +161,18 @@ impl Worker {
         let payload = serde_json::to_vec(value).map_err(|_| ())?;
         let sequence = self.state.next_event;
         let next_event = sequence.checked_add(1).ok_or(())?;
-        let target = Endpoint::outer(
-            ingress.clone(),
-            reply.channel.clone(),
-            reply.connection_generation,
-        );
-        let mut envelope = base.next(
+        let context = reply.context().map_err(|_| ())?;
+        if &context.route.ingress_agent != ingress {
+            return Err(());
+        }
+        let envelope = context.reply(
+            base,
             derived_envelope_event_id(base, sequence),
             self.endpoint.clone(),
-            target,
             class,
             sequence,
             content_type,
-        );
-        envelope.correlation_id = reply.correlation_id.clone();
-        envelope.return_route = match &envelope.target {
-            Endpoint::Outer(route) => Some(route.clone()),
-            _ => unreachable!(),
-        };
-        envelope.deadline_unix_ms = reply.deadline_unix_ms;
+        ).map_err(|_| ())?;
         self.state.next_event = next_event;
         Ok(Event { envelope, payload })
     }
@@ -226,7 +219,7 @@ impl Worker {
         self.ensure_event_id_obligations(1, 0).map_err(|_| ())?;
         let effect = Self::direct_effect(self.direct_intent(
             base,
-            reply_target(base),
+            reply_target(base).map_err(|_| ())?,
             EventClass::Output,
             ERROR_CONTENT_TYPE,
             body,
@@ -457,7 +450,7 @@ impl Worker {
             envelope: input.event().envelope.clone(),
             payload: Vec::new(),
         };
-        let target = reply_target(&causal);
+        let target = reply_target(&causal).map_err(|_| ())?;
         let (input, _) = self
             .deferred_ack_error
             .take()
@@ -502,7 +495,7 @@ mod tests {
                 causation_id: None,
                 source: Endpoint::agent(address.clone()),
                 target: Endpoint::agent(address),
-                return_route: None,
+                return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
                 class: EventClass::Control,
                 sequence: 1,
                 deadline_unix_ms: None,

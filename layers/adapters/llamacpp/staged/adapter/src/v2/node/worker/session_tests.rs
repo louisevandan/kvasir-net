@@ -246,7 +246,7 @@ fn handle_undecodable_ready_does_not_install_session_authority() {
     };
     assert_eq!(intent.base, input.envelope);
     assert_eq!(intent.source, worker.endpoint);
-    assert_eq!(intent.target, reply_target(&input));
+    assert_eq!(intent.target, reply_target(&input).unwrap());
     assert_eq!(intent.class, EventClass::Output);
     assert_eq!(intent.content_type, ERROR_CONTENT_TYPE);
     assert!(detail.contains("completion event cannot be decoded"));
@@ -666,8 +666,15 @@ fn prefill_owner_declarations_are_checked_before_remembering_or_admitting_the_at
             bad.envelope.source = Endpoint::outer(Address::tcp("127.0.0.1", 43992), "other", 5);
         }
         let incarnation = worker.state.next_incarnation;
-        let decoded =
-            p4_protocol::event::decode(&p4_protocol::event::encode(&bad).unwrap()).unwrap();
+        let decoded = if wrong_target {
+            p4_protocol::event::decode(&p4_protocol::event::encode(&bad).unwrap()).unwrap()
+        } else {
+            // P4 now refuses the contradictory OUTER identity at the wire
+            // boundary. Still exercise the adapter's independent admission
+            // check with the same counterexample through its direct handler.
+            assert!(p4_protocol::event::encode(&bad).is_err());
+            bad
+        };
         worker.handle(decoded).unwrap();
         let error = response(&mailbox);
         let error: ErrorPayload = serde_json::from_slice(&error.payload).unwrap();

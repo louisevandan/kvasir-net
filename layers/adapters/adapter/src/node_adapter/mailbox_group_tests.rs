@@ -17,7 +17,7 @@ fn event(id: &str) -> Event {
             causation_id: None,
             source: Endpoint::agent(Address::tcp("127.0.0.1", 61101)),
             target: Endpoint::node(Address::tcp("127.0.0.1", 61101), "mock", 1),
-            return_route: None,
+            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
             class: EventClass::Data,
             sequence: 1,
             deadline_unix_ms: None,

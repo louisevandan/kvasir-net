@@ -22,7 +22,7 @@ fn event(id: &str) -> Event {
             causation_id: None,
             source: Endpoint::agent(Address::tcp("127.0.0.2", 52001)),
             target: Endpoint::agent(own()),
-            return_route: None,
+            return_route: Some(p4_protocol::event::OuterEndpoint { ingress_agent: p4_protocol::Address::tcp("127.0.0.1", 52001), channel: "outer".into(), connection_generation: 1 }),
             class: EventClass::Control,
             sequence: 1,
             deadline_unix_ms: None,
@@ -415,5 +415,38 @@ fn retained_delivery_permissions_reject_foreign_or_undersized_owners_and_cancel(
         assert_eq!(b_rx.storage_snapshot().retained_count, 0);
         assert_eq!(a_rx.storage_snapshot().reserved_queue_slots, 0);
         assert_eq!(b_rx.storage_snapshot().reserved_queue_slots, 0);
+    }
+}
+
+#[test]
+fn missing_or_conflicting_return_context_refuses_without_queue_receipt_or_claim_effects() {
+    for malformed in 0..3 {
+        let (broker, destination) = broker(1 << 20, 8);
+        let good = event("same-id-after-refusal");
+        let mut bad = good.clone();
+        match malformed {
+            0 => bad.envelope.return_route = None,
+            1 => bad.envelope.source = Endpoint::outer(own(), "different", 2),
+            _ => bad.envelope.target = Endpoint::outer(own(), "different", 2),
+        }
+        let expected = bad.clone();
+        let pointer = bad.payload.as_ptr();
+        let raw = broker.dispatch_ingress(bad).unwrap_err();
+        assert!(matches!(raw.error, DispatchError::Invalid(_)));
+        assert_eq!(raw.event.payload.as_ptr(), pointer);
+        let (_, source, held) = make_source(*raw.event);
+        let charge = source.storage_snapshot().retained_bytes;
+        let failed = broker.dispatch_retained(held).unwrap_err();
+        assert!(matches!(failed.error, DispatchError::Invalid(_)));
+        assert_eq!(failed.completion.event(), &expected);
+        assert_eq!(failed.completion.event().payload.as_ptr(), pointer);
+        assert_eq!(source.storage_snapshot().retained_bytes, charge);
+        assert_eq!(destination.storage_snapshot().retained_count, 0);
+        assert_eq!(destination.storage_snapshot().reserved_queue_slots, 0);
+        assert_eq!(broker.receipt_snapshot().unwrap().committed_events, Some(0));
+        drop(failed);
+        assert_eq!(source.storage_snapshot().retained_bytes, 0);
+        assert_eq!(broker.dispatch_ingress(good).unwrap(), DispatchOutcome::Enqueued(Delivery::Agent));
+        drop(take(&destination));
     }
 }

@@ -189,3 +189,6 @@ Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](test
 연결 회수 WIP: [검증 계획](tests/plans/release-a-transport-20260915.md) · [실패3회 중단 보고](tests/reports/release-a/20260915_044735.md).
 
 접수 에이전트 경유: [검증 계획](tests/plans/ingress-envelope-20260915.md) · [엔벨롭·양쪽 어댑터 검증](tests/reports/release-a/20260915_113754.md).
+
+의뢰 반환 문맥: [검증 계획](tests/plans/return-context-20260915.md).
+반환 문맥 구현 검증: [공통 계약·두 어댑터·독립 변이](tests/reports/release-a/20260915_121000.md).

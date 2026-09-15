@@ -29,6 +29,53 @@ pub struct OuterEndpoint {
     pub connection_generation: u64,
 }
 
+impl OuterEndpoint {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.channel.is_empty() {
+            return Err(ProtocolError::new("outer endpoint requires a channel"));
+        }
+        if self.connection_generation == 0 {
+            return Err(ProtocolError::new("outer endpoint requires a connection generation"));
+        }
+        Ok(())
+    }
+}
+
+/// Request-owned return identity. Adapters may carry several of these in an
+/// opaque aggregate, but must select the relevant owner when emitting a reply.
+/// Transport never looks up a request or decodes an adapter payload to route it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReturnContext {
+    pub route: OuterEndpoint,
+    pub correlation_id: CorrelationId,
+    pub deadline_unix_ms: Option<u64>,
+}
+
+impl ReturnContext {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        self.route.validate()?;
+        if self.correlation_id.is_empty() || self.deadline_unix_ms == Some(0) {
+            return Err(ProtocolError::new("return context requires correlation and a valid deadline"));
+        }
+        Ok(())
+    }
+
+    /// Select one request's context, keeping the actual causal event identity.
+    pub fn reply(
+        &self, base: &Envelope, event_id: impl Into<EventId>, source: Endpoint,
+        class: EventClass, sequence: u64, content_type: impl Into<String>,
+    ) -> Result<Envelope, ProtocolError> {
+        self.validate()?;
+        let mut envelope = base.next(event_id, source, Endpoint::Outer(self.route.clone()),
+            class, sequence, content_type);
+        envelope.return_route = Some(self.route.clone());
+        envelope.correlation_id = self.correlation_id.clone();
+        envelope.deadline_unix_ms = self.deadline_unix_ms;
+        envelope.validate()?;
+        Ok(envelope)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Endpoint {
     Agent(Address),
@@ -82,12 +129,7 @@ impl Endpoint {
             Self::Node { generation: 0, .. } => {
                 Err(ProtocolError::new("node endpoint requires a generation"))
             }
-            Self::Outer(outer) if outer.channel.is_empty() => {
-                Err(ProtocolError::new("outer endpoint requires a channel"))
-            }
-            Self::Outer(outer) if outer.connection_generation == 0 => Err(ProtocolError::new(
-                "outer endpoint requires a connection generation",
-            )),
+            Self::Outer(outer) => outer.validate(),
             _ => Ok(()),
         }
     }
@@ -109,6 +151,8 @@ pub struct Envelope {
     pub causation_id: Option<EventId>,
     pub source: Endpoint,
     pub target: Endpoint,
+    /// Mandatory for valid events. Option preserves P4E3 framing and lets a
+    /// refused malformed event retain its exact original representation.
     pub return_route: Option<OuterEndpoint>,
     pub class: EventClass,
     pub sequence: u64,
@@ -147,10 +191,32 @@ impl Envelope {
         }
         self.source.validate()?;
         self.target.validate()?;
-        if let Some(route) = &self.return_route {
-            Endpoint::Outer(route.clone()).validate()?;
+        let route = self.return_route.as_ref()
+            .ok_or_else(|| ProtocolError::new("event requires an explicit OUTER return route"))?;
+        route.validate()?;
+        for endpoint in [&self.source, &self.target] {
+            if let Endpoint::Outer(outer) = endpoint {
+                if outer != route {
+                    return Err(ProtocolError::new("OUTER endpoint differs from the event return route"));
+                }
+            }
         }
         Ok(())
+    }
+
+    pub fn return_context(&self) -> Result<ReturnContext, ProtocolError> {
+        let context = ReturnContext {
+            route: self.return_route.clone()
+                .ok_or_else(|| ProtocolError::new("event requires an explicit OUTER return route"))?,
+            correlation_id: self.correlation_id.clone(),
+            deadline_unix_ms: self.deadline_unix_ms,
+        };
+        context.validate()?;
+        Ok(context)
+    }
+
+    pub fn reply_target(&self) -> Result<Endpoint, ProtocolError> {
+        Ok(Endpoint::Outer(self.return_context()?.route))
     }
 
     pub fn next(
