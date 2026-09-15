@@ -94,4 +94,6 @@ async fn owned_runtime_actual_tcp_peer_forwards_and_returns_opaque_control() {
         assert_eq!(reply.envelope.source, Endpoint::agent(own_b.clone()));
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&reply.payload).unwrap()["ok"], false);
     }
+    assert_eq!(_a.transport.outer_route_count().await, 1, "only the reception agent owns the OUTER socket");
+    assert_eq!(_b.transport.outer_route_count().await, 0, "forwarded OUTER identity is not a socket registration");
 }

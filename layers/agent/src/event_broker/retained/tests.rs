@@ -72,6 +72,55 @@ fn broker(bytes: usize, window: usize) -> (Arc<RetainedEventBroker>, Arc<Complet
 }
 
 #[test]
+fn outer_output_is_routed_to_reception_agent_and_full_preserves_original() {
+    let ingress = Address::tcp("192.0.2.1", 52001);
+    let worker = own();
+    let (agent_tx, agent_rx) = queue(1 << 20);
+    let (outer_tx, outer_rx) = queue(1 << 20);
+    let (out_tx, out_rx) = queue(1 << 20);
+    let remote = RetainedEventBroker::new(worker.clone(), agent_tx, outer_tx, out_tx, 8);
+    let route = Endpoint::outer(ingress.clone(), "private-client-channel", 7);
+    let mut first = event("first-output");
+    first.envelope.source = Endpoint::node(worker, "backend-neutral", 4);
+    first.envelope.target = route.clone();
+    first.envelope.return_route = match route { Endpoint::Outer(route) => Some(route), _ => unreachable!() };
+    first.envelope.class = EventClass::Output;
+    let mut second = first.clone();
+    second.envelope.event_id = "second-output".into(); second.envelope.sequence = 2;
+    let expected = second.clone();
+    remote.dispatch_ingress(first).unwrap();
+    let (_, source, pending) = make_source(second);
+    let pointer = pending.event().payload.as_ptr();
+    let charge = source.storage_snapshot().retained_bytes;
+    let before = remote.receipt_snapshot().unwrap().committed_events;
+    let failure = remote.dispatch_retained(pending).unwrap_err();
+    assert_eq!(failure.error, DispatchError::Full(Delivery::Outbound(ingress.clone())));
+    assert_eq!(failure.completion.event(), &expected);
+    assert_eq!(failure.completion.event().payload.as_ptr(), pointer);
+    assert_eq!(source.storage_snapshot().retained_bytes, charge);
+    assert_eq!(remote.receipt_snapshot().unwrap().committed_events, before);
+    assert_eq!(outer_rx.storage_snapshot().retained_count, 0);
+    assert_eq!(agent_rx.storage_snapshot().retained_count, 0);
+    drop(take(&out_rx));
+    assert_eq!(remote.dispatch_retained(*failure.completion).unwrap(), DispatchOutcome::Enqueued(Delivery::Outbound(ingress.clone())));
+    let forwarded = take(&out_rx);
+    assert_eq!(forwarded.event(), &expected);
+    assert_eq!(forwarded.event().payload.as_ptr(), pointer);
+    assert_eq!(source.storage_snapshot().retained_bytes, 0);
+
+    let (agent_tx, agent_rx) = queue(1 << 20);
+    let (outer_tx, outer_rx) = queue(1 << 20);
+    let (out_tx, out_rx) = queue(1 << 20);
+    let reception = RetainedEventBroker::new(ingress, agent_tx, outer_tx, out_tx, 8);
+    assert_eq!(reception.dispatch_retained(forwarded).unwrap(), DispatchOutcome::Enqueued(Delivery::Outer));
+    let delivered = take(&outer_rx);
+    assert_eq!(delivered.event(), &expected);
+    assert_eq!(delivered.event().payload.as_ptr(), pointer);
+    assert_eq!(agent_rx.storage_snapshot().retained_count, 0);
+    assert_eq!(out_rx.storage_snapshot().retained_count, 0);
+}
+
+#[test]
 fn owned_runtime_admission_pause_rechecks_reserved_front_and_preserves_exact_duplicate() {
     let (broker, _) = broker(1 << 20, 8);
     let (sender, inbound) = queue(1 << 20);

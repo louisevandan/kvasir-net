@@ -271,6 +271,9 @@ impl EventBroker {
 }
 
 impl<S: Clone> EventBroker<S> {
+    /// Canonical address of this agent, including ownership of local OUTER routes.
+    pub fn local_address(&self) -> &Address { &self.own }
+
     /// O(1) snapshot of exact duplicate receipts, excluding destination storage,
     /// index/Arc/allocator overhead, native buffers and process RSS. No payload
     /// contents, adapter vocabulary, eviction or reservation policy is changed.

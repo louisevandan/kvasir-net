@@ -62,6 +62,44 @@ previous node, but output belongs to the OUTER that originated the inference.
 The stable `channel_id` identifies that OUTER stream; the connection generation
 prevents an old socket from receiving a new stream after reconnect.
 
+### Reception agent and an OUTER reachable only through a gateway
+
+The first agent contacted by OUTER is its **reception agent** (`ingress_agent`).
+It can be the only network entry point into a private cluster. Other agents send
+return traffic to this agent, never to an OUTER host/port. The reception agent
+writes to the already accepted OUTER connection; it does not dial OUTER back.
+
+`Endpoint::Outer` is a delivery instruction **at the reception agent**, not a
+network address for the external client. `target.agent_address()` resolves to
+`target.ingress_agent`. `channel` and `connection_generation` select the local
+connection only after that agent receives the event. For example:
+
+```text
+OUTER C --existing connection--> reception agent A --> worker agent B
+OUTER C <--same connection----- reception agent A <-- worker agent B
+
+response.source = Node { agent: B, node, generation }
+response.target = Outer { ingress_agent: A, channel: c, connection_generation: g }
+response.return_route = { ingress_agent: A, channel: c, connection_generation: g }
+network destination = A; local recipient at A = connection (c, g)
+```
+
+A forwarded request retains its OUTER source. Its receiving worker/relay MUST
+NOT register that source as its own external socket. Only an agent whose canonical
+address equals `source.ingress_agent` binds an OUTER source to a connection.
+For an OUTER target, a non-reception broker selects outbound-to-reception; only
+the reception broker selects its local OUTER mailbox. Changing the target to
+plain `Agent(A)` would instead invoke A's agent-control handler and omit the
+OUTER delivery instruction. The existing P4E3 wire layout is unchanged.
+
+The declared reception address must identify the same agent inside the cluster;
+an externally forwarded dial address is not a new logical reception identity.
+Address alias discovery and peer authentication are separate contracts. This
+ownership check does not authenticate a source field or authorize a reconnect.
+A missing or failed reception connection retains undelivered output; another
+agent must not invent a direct OUTER route, acknowledge native completion, or
+replay an uncertain output. FINISH retirement is a separate, unaccepted candidate.
+
 An intermediate agent never rewrites `source`, `target` or `return_route`.
 When an adapter completes work it creates a new event with itself as source,
 the exact next endpoint as target, the triggering event as `causation_id`, and

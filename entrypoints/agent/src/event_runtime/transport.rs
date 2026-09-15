@@ -94,6 +94,10 @@ impl Shared {
 
 pub(super) struct Owner(Arc<Shared>);
 impl Owner {
+    #[cfg(test)]
+    pub(super) async fn outer_route_count(&self) -> usize {
+        self.0.connections.lock().await.len()
+    }
     pub(super) fn start(listener: TcpListener, broker: Arc<RetainedEventBroker>, outer: Arc<CompletionMailbox>, outbound: Arc<CompletionMailbox>, limits: RuntimeLimits) -> Self {
         let shared = Shared::new(limits);
         shared.spawn(deliver_outer(outer, Arc::clone(&shared)));
@@ -150,7 +154,10 @@ async fn serve(id: u64, stream: TcpStream, broker: Arc<RetainedEventBroker>, sha
                 eprintln!("P4_EVENT_CONNECTION_STOPPED connection={id} error={error}"); break;
             }
         };
-        if let Endpoint::Outer(route) = &event.envelope.source {
+        if let Endpoint::Outer(route) = &event.envelope.source
+            && &route.ingress_agent == broker.local_address() {
+            // A forwarded request preserves its OUTER source. Only its
+            // reception agent may bind that identity to an external socket.
             let mut routes = shared.connections.lock().await;
             if !matches!(routes.get(route), Some(None)) { routes.insert(route.clone(), Some(sender.clone())); }
         }

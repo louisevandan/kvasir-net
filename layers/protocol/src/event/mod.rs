@@ -20,6 +20,9 @@ pub type CorrelationId = String;
 pub type NodeId = String;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Delivery through the reception agent's existing OUTER connection.
+/// This contains no dialable OUTER address: `ingress_agent` is the network
+/// destination; channel and generation select local delivery at that agent.
 pub struct OuterEndpoint {
     pub ingress_agent: Address,
     pub channel: String,

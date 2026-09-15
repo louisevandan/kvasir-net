@@ -223,3 +223,5 @@ Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](../t
 | [layers/adapters/hf/tests/reports/migration/20260914_120000.md](../layers/adapters/hf/tests/reports/migration/20260914_120000.md) | HF 내부 통합 검증·원본 정리 결과 |
 
 연결 회수 WIP: [검증 계획](../tests/plans/release-a-transport-20260915.md) · [실패3회 중단 보고](../tests/reports/release-a/20260915_044735.md).
+
+접수 에이전트 경유: [검증 계획](../tests/plans/ingress-envelope-20260915.md) · [엔벨롭·양쪽 어댑터 검증](../tests/reports/release-a/20260915_113754.md).
