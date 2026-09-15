@@ -228,4 +228,4 @@ Typed adapter completion: [원격 baseline·독립 변이 보고](tests/reports/
 M1 supervisor 완료: [실제 TCP LOAD·UNLOAD·회수 보존·workspace off/on·제거 변이](tests/reports/node-load-lifecycle/20260916_023059.md).
 M2: [결정론적 실행계획](tests/plans/node-load-lifecycle-m2-20260916.md), [llama.cpp/HF 실제 worker·포화·cleanup·독립 변이 보고](tests/reports/node-load-lifecycle/20260916_032621.md).
 M3: [Rust/HF OUTER 이관·legacy CREATE/DELETE 제거 결정론적 실행계획](tests/plans/node-load-lifecycle-m3-20260916.md), [실제 Agent/HF child·workspace·독립 변이 검증 보고](tests/reports/node-load-lifecycle/20260916_041848.md).
-M4: [실제 llama.cpp/HF 생성·취소·해제·재적재 결정론적 실행계획](tests/plans/node-load-lifecycle-m4-20260916.md).
+M4: [실제 llama.cpp/HF 생성·취소·해제·재적재 결정론적 실행계획](tests/plans/node-load-lifecycle-m4-20260916.md), [두 adapter 실제 모델·전체 회귀·독립 변이 수용 보고](tests/reports/node-load-lifecycle/20260916_064306.md).

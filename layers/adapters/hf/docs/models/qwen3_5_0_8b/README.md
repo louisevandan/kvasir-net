@@ -59,7 +59,7 @@ CPU 실측3개 구간에서 split tied weight 추가량1,017,118,720 bytes와 li
 초기 검증 runner의 빈 set을 빈 dict와 비교한 assertion 실패는 `real-cpu/`에 보존하고, 타입 비교를 고친 새 실행은
 `layers/adapters/hf/target/loading-planner-20260915/real-cpu-final/summary.json`에 기록했다. 모델 기대값/허용 오차는 바꾸지 않았다.
 oversized chunk의 실제 StageSessions 거부는 forward·active·retired 효과0을 확인했다. 다중 물리 host 수용·BF16 해결·H0–H7 승격은 아니다.
-같은 생성 plan을 작업 소유 localhost P4 agent의 CREATE/LOAD→HF worker→release/UNLOAD/DELETE로도 소비했다.
+같은 생성 plan을 작업 소유 localhost P4 agent의 NODE_LOAD→HF worker→release/NODE_UNLOAD로도 소비했다.
 `target/loading-planner-20260915/p4-event/summary.json`은 logits/greedy6회·cache12회 비교와 agent 종료를 기록한다.
 HF 활성 `cargo test --locked --workspace --no-fail-fast --features hf-transformers`는 별도
 `--target-dir layers/adapters/hf/target/loading-planner-20260915/cargo`에서1460 passed/0 failed/7 ignored,

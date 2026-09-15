@@ -319,10 +319,11 @@ Execution status and tests belong to the roadmap/evidence, not this contract.
 
 `P4_EVENT_RETAINED_BYTES` is a positive byte limit **per store**, default 256 MiB.
 The root agent/OUTER/outbound stores retain at most 65536 Events each, including
-dequeued owners; queue capacity remains 65536. Node CREATE accepts optional
-`retained_capacity` and `retained_bytes`, defaulting to those root limits, for
-its input and completion stores separately. Existing `queue_capacity` and
-`completion_capacity` remain delivery-slot limits. An individually oversized
+dequeued owners; queue capacity remains 65536. Agent-target `NODE_LOAD` accepts
+the node identity, adapter kind, optional `queue_capacity`, `completion_capacity`,
+`retained_capacity` and `retained_bytes`, plus opaque adapter LOAD bytes. It
+atomically claims the previously absent node ID, creates the bounded stores and
+adapter, and registers the route paused while the adapter loads. An individually oversized
 Event is refused even if its frame is below the unchanged 2 GiB wire ceiling.
 Footprints include Event/buffer capacities and entry overhead; this is not an
 aggregate process RSS limit or a reservation for future native results.
@@ -345,11 +346,15 @@ EOF alone keeps the OUTER writer because a peer may half-close submissions and
 continue reading output. Failed owners are bounded by their store claims and
 connection admission slots; the connection semaphore has 256 slots.
 
-DELETE temporarily fences node ingress, then requires unloaded/empty/closed
-semantic state, a healthy node task, and zero retained input/output counts.
-Unknown completion storage is not zero. Refusal resumes the same registration;
-successful deletion removes it while fenced. Queued and node-held completions
-are included. This is local node deletion, not transport-wide graceful drain.
+Agent-target `NODE_UNLOAD` is the sole normal removal operation. It temporarily
+fences node ingress and requires loaded, idle semantic state before asking the
+adapter to release native/worker resources. Busy refusal restores the same loaded
+route. Successful adapter completion must report `resource_state=absent`; only
+then does the supervisor close the node task, account for queued and held values,
+remove the route and `NodeOwner`, and return the terminal lifecycle result from
+the Agent after removal. Unknown completion storage is not zero. Failed or
+uncertain cleanup remains failed and fenced rather than being reported as a
+successful deletion. There is no external CREATE/DELETE step in this runtime.
 
 Explicit runtime/process teardown abandons local owners. Restart persistence,
 remote acknowledgement/grants, native/effect output pre-reservation, independent

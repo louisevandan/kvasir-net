@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 llama.cpp/HF 양쪽 회귀, Qwen3.5-122B-A10B 3-host 정상 1요청·정확 응답·회수를 통과했다. 강한 연속 웨이브 H0–H7은 미수용이다. LOAD가 node를 생성하고 UNLOAD가 제거하는 노드 수명 계획은 M3까지 완료했고 실제 두 모델과 문서 수용 M4가 다음이다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
+최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 Qwen3.5-122B-A10B 3-host 정상 1요청·정확 응답·회수를 통과했다. LOAD가 node를 생성하고 UNLOAD가 제거하는 노드 수명 M0–M4도 llama.cpp/HF 실제 모델까지 수용했다. 강한 연속 웨이브 H0–H7은 미수용이며 다음 단계는 Qwen122B H0 명세 봉인이다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,13 +10,14 @@
 
 <a id="current-status"></a>
 
-**2026-09-16 노드 수명 개편 M3 완료:** [LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)의
-Rust event-drive와 HF Qwen controller/실기 fixture를 Agent-target LOAD/UNLOAD로 이관하고 정상 경로의
-CREATE/DELETE 및 direct node lifecycle 우회를 제거했다. 부분 LOAD 실패의 OUTER 회수, 실제 Agent TCP와
-HF child 12 case, Python 57개, workspace feature off/on 각각 1,525 PASS / 0 FAIL / 7 ignored와 독립
-target 제거 변이 두 건을 확인했다. [M3 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)를
-따른다. 실제 모델 시험 7개는 아직 ignored다. 다음 첫 행동은 M4 사전계획에서 작은 실제 llama.cpp/HF
-모델·배포물·원격 포트와 초기 nodes=[]를 봉인한 뒤 생성·취소·해제·재적재를 한 번에 검증하는 것이다.
+**2026-09-16 노드 수명 개편 M4 완료:** [LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)의
+M0–M4를 끝냈다. 정상 경로의 CREATE/DELETE와 direct node lifecycle 우회를 제거했고, 실제 llama.cpp
+2-stage와 HF single GPU에서 생성·두 요청·교차 실행·취소·부분 LOAD 실패 회수·이전 generation 거부·
+새 worker 재적재 및 최종 nodes/child 0을 확인했다. Python 57개와 workspace feature off/on 각각
+1,526 PASS / 0 FAIL / 7 ignored, 독립 재컴파일 변이 2건을 통과했다.
+[M4 보고](../tests/reports/node-load-lifecycle/20260916_064306.md)를 따른다. 작은 모델 수명 수용은
+Qwen122B H0–H7 승격이 아니다. 다음 첫 행동은 기존 122B 3-host artifact/topology와 B0–B5를 새
+NODE_LOAD/NODE_UNLOAD 계약에 결속한 H0 benchmark-spec을 검토·봉인하는 것이다. H0 승인 전 LOAD하지 않는다.
 
 2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 

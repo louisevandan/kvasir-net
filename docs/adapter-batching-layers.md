@@ -779,11 +779,11 @@ RELEASE의 미리보기 Event ID를 나중에 일반 Forward에서 다시 발급
 
 | 제품 경계 | 같은 수명 안에서 반드시 보존할 대상 |
 | --- | --- |
-| `event_runtime::{run,control::create}` → broker queue/ledger | 실제 목적지 예산, 원본과 독립 중복 사본, 거부·eviction의 비용 |
+| `event_runtime::{run,control}`의 NODE_LOAD → broker queue/ledger | 실제 목적지 예산, 원본과 독립 중복 사본, 거부·eviction의 비용 |
 | `EventNode` → `NodeAdapter` → `WorkerInput` | 양방향 held 값, offer 거부, 완료 dequeue, terminal 반환의 owner |
 | worker → `RequestState`·`PendingRelease`·후속 effect | 장기 원문/파싱 결과의 비용, 후보 복사의 공유 범위, terminal 뒤 해제 출처 |
 | `effects`/`emit`/`ack_service` → completion | 고정 Event·후속 관측·진단이 실제 저장소에 수용되기 전까지의 claim |
-| control reply·`NodeOwner` 수명 | broker 거부, 완료 task 결과, DELETE/Drop의 보존 또는 명시적 종료 판정 |
+| control reply·`NodeOwner` 수명 | broker 거부, 완료 task 결과, NODE_UNLOAD/Drop의 보존 또는 명시적 종료 판정 |
 | transport 수신 → broker → connection writer | 프레임/디코드 임시 공간, Full, 송신 실패·결과 불명, 원격 수용 전 책임 |
 
 과거 Frame runtime을 이 표의 Event 경로로 세지 않는다. 같은 Event wire를 읽는 OUTER가 존재한다는

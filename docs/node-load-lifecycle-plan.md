@@ -1,6 +1,6 @@
 # LOAD·UNLOAD에 노드 수명을 통합하는 구현계획
 
-작성: 2026-09-15 KST. 지위: 사용자 합의를 고정한 **활성 구현계획, M3 완료**.
+작성: 2026-09-15 KST. 지위: 사용자 합의를 고정한 **완료된 구현계획, M4 수용 완료**.
 코드 감사 기준 HEAD: `c16cbfa2abe8e7bc0bd7ce4f3e4c568f6a6c0569`.
 계획 작성 시 공통 adapter retention·transport·INSPECT·llama/HF에 별도 미커밋 변경이 있었다.
 현재 구현·시험 통과를 뜻하지 않는다. 전체 실행 순서와 진행 상태는
@@ -202,6 +202,12 @@ HF child 12개 failure/recovery case, workspace feature off/on 각각 1,525 통�
 Agent target 제거 변이 두 건도 검출했다. [M3 검증 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)를
 따른다. 다음 단계 M4는 작은 실제 llama.cpp/HF 모델의 생성·취소·해제·재적재와 소유 문서 최종 이관이다.
 
+**2026-09-16 M4 완료:** 실제 Qwen3.5-0.8B llama.cpp 2-stage와 HF single GPU에서 CREATE/DELETE 없이
+생성·교차 실행·취소·부분 LOAD 실패 회수·이전 generation 거부·새 worker 재적재·최종 node/child 0을
+확인했다. workspace feature off/on은 각각 1,526 통과, 0 실패, 7 ignored이고 Python 57개와 독립
+재컴파일 변이 2개를 통과했다. [M4 수용 보고](../tests/reports/node-load-lifecycle/20260916_064306.md)를
+따른다. 이 계획은 완료됐고 다음 순서는 주 로드맵의 Qwen122B H0–H7이다.
+
 M1의 실행 전 검토와 최대 3라운드 입력은
 [M1 결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.md)에 봉인한다. 이 단계는
 [결정론적 실행 장부](deterministic-execution-register.md)의 `L001`~`L013`을 재사용한다. 새 실패가
@@ -215,7 +221,7 @@ M1의 실행 전 검토와 최대 3라운드 입력은
 | M1 | **DONE** — 공통 codec·typed adapter 완료·비동기 agent supervisor·neutral 실제 TCP | [M1 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)에 NL01·NL02·NL04·NL07·NL10과 제거 변이 기록 |
 | M2 | **DONE** — llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | [M2 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)에 busy·cleanup 실패·응답/frame 포화·정상 제거·변이3종 기록 |
 | M3 | **DONE** — Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | [M3 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)에 부분 실패 회수·우회 거부·실제 HF child·workspace·변이 기록 |
-| M4 | **NEXT** — 실제 작은 llama.cpp/HF 모델 생성·취소·해제·재적재, 소유 문서 갱신 | 최종 소스 결속·시험별 판정·Qwen122B 경로와 미수용 항목 기록 |
+| M4 | **DONE** — 실제 작은 llama.cpp/HF 모델 생성·취소·해제·재적재, 소유 문서 갱신 | [M4 보고](../tests/reports/node-load-lifecycle/20260916_064306.md)에 최종 소스·시험·회수·Qwen122B 다음 단계 기록 |
 
 각 단계의 복원 가능한 지점에서 저장소 커밋 규칙을 따른다. 다른 작성자를 멈추고 전체 비무시 변경을
 감사한 뒤 자신이 소유하는 일관된 checkout을 커밋한다. 무관한 병행 변경을 임의로 포함하지 않는다.

@@ -88,6 +88,8 @@ entrypoint는 `hf-transformers`만 등록한다. 모델별 의미와 Python work
 
 - `adapter/` Rust bridge는 retained/IPC·식별·용량·출력 귀속·child 수명을 담당한다.
 - 모델별 Python은 부분 적재/forward·배치 선택·KV/recurrent·양자화·tensor codec을 소유한다.
+- 외부 제어는 Agent-target `NODE_LOAD`와 `NODE_UNLOAD`만 사용한다. LOAD가 bounded route와
+  bridge를 만든 뒤 worker readiness까지 완료하고, UNLOAD가 child·route·owner를 제거한 뒤 응답한다.
 - 노드 간 payload는 P4에 불투명하며 Python direct 통신으로 retained backpressure를 우회하지 않는다.
 - 공통 core와 중립 trait, 기존 llama 실행 경계를 이번 소스 이관으로 바꾸지 않는다.
 - root Cargo.lock과 하나의 P4 commit으로 빌드한다. 환경/가중치는 adapter manifest/lock으로 별도 준비한다.

@@ -51,20 +51,22 @@ stdout은 framing 전용, stderr는 ≤64KiB로 별도 수집한다. worker 환�
 
 ## 예산과 수명
 
-CREATE는 bounded mailbox와 감독 thread만 만든다. LOAD만 worker를 실행한다.
+Agent-target `NODE_LOAD`는 node ID를 원자적으로 점유하고 bounded mailbox와 감독 task, Rust bridge를 만든다.
+route는 loading 동안 일시정지되며 Python worker readiness가 성공해야 일반 요청을 받는다.
 입력에는 upstream 원본 claim을 유지하면서 별도 byte 상한을 계수한다. Full/Closed는 원본 allocation/claim을 반환한다.
 출력은 worker 호출 전 최대 packet과 최대 경로 envelope를 예약한다. dequeue 이후 held claim도 count/bytes에 남는다.
 IPC body 복사용 scratch는 최소 4×frame이다. 별도로 입력/출력 저장소, JSON ≤64KiB의 유한 metadata,
 16개 topology, bounded stderr, bundle 검증 중 최대 16MiB 파일 버퍼를 계산해야 한다. frame 한도를 전체 heap 상한으로 읽지 않는다.
-한 bridge의 실제 model command는 하나다. input queue와 output queue/retained 한도는 CREATE 명세다.
+한 bridge의 실제 model command는 하나다. input queue와 output queue/retained 한도는 NODE_LOAD 명세다.
 
 실행 중 EOF/잘린 frame/잘못된 identity/timeout은 uncertain으로 fence한다. 첫 입력 claim과 읽은 응답 bytes를
 명시 abort까지 유지하고 같은 issue를 자동 재시도하지 않는다. façade는 살아 있어 회수 제어를 처리한다.
 모델 오류와 cleanup 오류는 분리한다. timeout은 LOAD/command ≤120초, graceful exit 5초, 강제 회수 10초다.
 `abort`는 LOAD generation 전체의 명시 포기이며 epoch/serial/issue/position=0, request=""여야 한다.
 요청 cancel/release와 다르며 이전 LOAD generation은 거부한다. barrier 도중 일부 stage만 전환됐어도 각 worker를 회수할 수 있다.
-UNLOAD/epoch는 이전 held output이 있으면 거부한다. 자신의 최종 ack도 회수되기 전 snapshot은 busy다.
-DELETE는 기존 P4의 adapter 상태·권위 있는 completion storage·건강한 node task 검사를 그대로 소비한다.
+epoch 전환과 NODE_UNLOAD는 이전 held output이 있으면 거부한다. 자신의 최종 ack도 회수되기 전 snapshot은 busy다.
+NODE_UNLOAD 성공은 worker의 물리 상태 해제 뒤 supervisor가 node task·route·owner를 제거한 상태다.
+실패 또는 결과 불명은 성공으로 바꾸지 않으며 최초 오류와 cleanup 오류를 분리해 보존한다.
 
 v1 `active+retired<=8` 계약은 보존한다. v2는 모든 stage release를 확인한 OUTER가 명시 epoch barrier를 발행한다.
 각 stage는 active=0에서만 새 bounded StageSessions를 만든다. 이전 epoch step/release/cancel은 실행 전에 거부한다.
@@ -72,7 +74,7 @@ v1 `active+retired<=8` 계약은 보존한다. v2는 모든 stage release를 확
 
 ## Python 교체와 source 출하
 
-A를 UNLOAD/DELETE하고 새 B bundle로 다시 LOAD한다. 동일 agent hash에서 bundle hash/readiness label 변화와 정상 요청을 검증한다.
+A를 NODE_UNLOAD하고 새 B bundle로 새 generation NODE_LOAD한다. 동일 agent hash에서 bundle hash/readiness label 변화와 정상 요청을 검증한다.
 protocol/hash가 맞지 않는 bundle은 LOAD 전에 거부하며 실행 디렉터리를 덮어쓰지 않는다.
 
 clean P4 commit에서 단일 source archive를 내보낸다. schema2는 P4 commit/archive SHA256/restore tool SHA256를 기록한다.
