@@ -260,6 +260,8 @@ M2: [결정론적 실행계획](../tests/plans/node-load-lifecycle-m2-20260916.m
 M3: [Rust/HF OUTER 이관·legacy CREATE/DELETE 제거 결정론적 실행계획](../tests/plans/node-load-lifecycle-m3-20260916.md), [실제 Agent/HF child·workspace·독립 변이 검증 보고](../tests/reports/node-load-lifecycle/20260916_041848.md).
 M4: [실제 llama.cpp/HF 생성·취소·해제·재적재 결정론적 실행계획](../tests/plans/node-load-lifecycle-m4-20260916.md), [두 adapter 실제 모델·전체 회귀·독립 변이 수용 보고](../tests/reports/node-load-lifecycle/20260916_064306.md).
 
+Release A Qwen122B H0: [봉인 benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json) · [3-host·모델·자원·workload 실행 전 승인 보고](../tests/reports/release-a/20260916_072100.md).
+
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 
 Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 거부](../tests/reports/release-a/20260915_190631.md).

@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 Qwen3.5-122B-A10B 3-host 정상 1요청·정확 응답·회수를 통과했다. LOAD가 node를 생성하고 UNLOAD가 제거하는 노드 수명 M0–M4도 llama.cpp/HF 실제 모델까지 수용했다. 강한 연속 웨이브 H0–H7은 미수용이며 다음 단계는 Qwen122B H0 명세 봉인이다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
+최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 LOAD/UNLOAD 노드 수명 M0–M4에 이어 Qwen3.5-122B-A10B H0 실행 명세를 봉인했다. H1–H7은 미수용이며 다음 단계는 새 task namespace의 3-host NODE_LOAD와 H1 정상 corpus다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,6 +10,15 @@
 
 <a id="current-status"></a>
 
+**2026-09-16 Qwen122B H0 명세 봉인:** [H0 보고](../tests/reports/release-a/20260916_072100.md)의
+현재 runtime source `c6a28b582`와 [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)을
+결속했다. GGUF header의 총124,635,206,144/활성9,954,546,176 parameters, 3물리 host 장치 식별·
+1Gbps/RTT·power unavailable 이유, agent/native/library hash, `[0,24)/[24,36)/[36,48)` placement,
+resident8·pending64의 count/byte/token/KV/result 상한, H1–H7 workload/SLO/A-B/telemetry를 모두
+구체화했다. Node10/10·Python4/4와 구조 변이25종·파일 교체1종을 통과했다. H0만 GREEN이며
+`load_authorized=true`, `runtime_acceptance=false`다. 다음 첫 행동은 `:22150` task agent를 시작하기 전
+기존 task-owned node/listener/worker를 INSPECT·UNLOAD하고 shard/source/binary/library/pool을 재대조한 뒤
+NODE_LOAD 3/3과 H1 quality64를 실행하는 것이다. 기존 `:52005` agent는 보존한다.
 **2026-09-16 노드 수명 개편 M4 완료:** [LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)의
 M0–M4를 끝냈다. 정상 경로의 CREATE/DELETE와 direct node lifecycle 우회를 제거했고, 실제 llama.cpp
 2-stage와 HF single GPU에서 생성·두 요청·교차 실행·취소·부분 LOAD 실패 회수·이전 generation 거부·

@@ -3,6 +3,15 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-16: Qwen3.5-122B Release A H0 실행 명세 봉인
+
+현재 runtime source `c6a28b582`와 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard, Spark GB10와
+두 M4 Pro의 실제 agent/native/library hash, 3-stage placement, count/byte/token/KV/result 상한,
+H1–H7 workload/SLO/A-B/telemetry를 [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)에
+봉인했다. H0 검사와 26개 부정 변이가 통과해 LOAD는 허용하지만 실제 모델을 적재하지 않았으므로
+`runtime_acceptance=false`다. 물리 host 조사·결정론적 회차·다음 H1 사전조건은
+[H0 보고](../tests/reports/release-a/20260916_072100.md)를 따른다.
+
 ## 2026-09-10: 맥 포함 다섯 호스트 CUDA·Metal 122B
 
 실제 Mac agent CREATE/DELETE 응답 복구 후, 소형8/8과 122B32/32 완료·EOS·해제·UNLOAD를 통과했다.
