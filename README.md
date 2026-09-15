@@ -98,6 +98,7 @@ comparison path. Its queue statistics are not proof of the default event path.
 | P4/어댑터 층별 책임·native 경계·잦은 llama.cpp 업데이트 충격 흡수 | [docs/layer-isolation-contract.md](docs/layer-isolation-contract.md) |
 | 모든 문서의 지위·계약 소유·새 세션 읽기 순서 | [docs/document-map.md](docs/document-map.md) |
 | 마이크로 배치 제안과 실제 배처의 코드 대조·개선 후보·로컬 재현 | [docs/batching-code-review.md](docs/batching-code-review.md) |
+| Studio 관측 요구 수용안·추가 트래픽/성능 예산·상시 집계와 선택 진단 | [docs/inference-observability-proposal.md](docs/inference-observability-proposal.md) |
 | What the layer is and why it is shaped this way | [docs/overview.md](docs/overview.md) |
 | Every crate, what it holds, and what is not built | [docs/implementation.md](docs/implementation.md) |
 | The wire and the message vocabulary | [docs/api.md](docs/api.md) |

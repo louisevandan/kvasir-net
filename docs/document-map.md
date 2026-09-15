@@ -24,6 +24,7 @@
 | 시험 입력·mutation·판정·실기 웨이브·보고 지표 | [검증 규약](distributed-batching-verification.md). “실행 명령 있음”과 “현재 통과”를 구분한다. |
 | 층별 역할·허용 의존·public 타입·업데이트 적응 경계 | [계층 격리 계약](layer-isolation-contract.md). 기존 include 부채 수치를 전체 구조 격리로 읽지 않는다. |
 | 문서의 지위·찾는 경로 | 이 문서. 새 문서를 만들면 아래 전체 목록도 함께 등록한다. |
+| Studio 관측 요구와 비용 제한 후보 | [관측 수용안](inference-observability-proposal.md). 설계 제안이며 구현·기본값·실기 승인 또는 기존 실행 순서 변경이 아님. |
 | event wire/forwarding의 backend 중립 경계 | [event-protocol-v2](event-protocol-v2.md); 본문의 당시 proof order는 현 로드맵을 대체하지 않는다. |
 | 어댑터 배치 계층·메커니즘/정책 소유 | [adapter-batching-layers](adapter-batching-layers.md); 미구현 목표 계약 포함. |
 | 영속 identity·namespace·CONTROL·2PC·스냅샷/LCP | [kv-state-store-convention](kv-state-store-convention.md); 기능별 K 분기 구현/장애 게이트 통과 전 활성화 금지. |
@@ -69,6 +70,7 @@
 | [docs/event-protocol-v2.md](event-protocol-v2.md) | 분야 계약·구현과 구별 |
 | [docs/external-analysis-improvement-plan.md](external-analysis-improvement-plan.md) | 단일 개발 계획·외부 HF 수용 우선·Release A 구현 범위/새 세션 인수인계, 배치 G1–G6·희소 상태·DFlash/DSpark 투자 근거; 실행 순서는 로드맵, 판정은 검증 규약 소유 |
 | [docs/implementation.md](implementation.md) | 경로별 참고·재감사 필요 |
+| [docs/inference-observability-proposal.md](inference-observability-proposal.md) | Studio 관측 요구의 상시 집계·요청 요약·선택 진단과 트래픽/성능 예산 제안; 미구현·미실측 |
 | [docs/internals.md](internals.md) | 경로별 참고·재감사 필요 |
 | [docs/kv-state-store-convention.md](kv-state-store-convention.md) | 분야 계약·구현과 구별 |
 | [docs/layer-isolation-contract.md](layer-isolation-contract.md) | 층별 책임·upstream 격리 소유 |
