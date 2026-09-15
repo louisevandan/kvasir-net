@@ -179,6 +179,16 @@ impl Shared {
             if let Err(value) = write_hop_loop(&mut writer, receiver, control_receiver,
                 &shared.local_writes, finish, max_outstanding, &shared.sender_id,
                 connection_generation).await {
+                if target.is_none() && value.current.is_none() && value.outstanding.is_empty()
+                    && value.pending_acks.is_empty() && value.pending.is_empty() {
+                    // Accepted receipts remain authoritative in ReceiptStore.
+                    // A lost Receipt/QueryResult with no Event or ACK intent is
+                    // recovered by exact Query and must not leak a socket slot.
+                    p4_llamacpp_staged_adapter::v2::record::record(&format!(
+                        "P4_EVENT_HOP_CONTROL_CLOSED retained=0 result={:?} error={}",
+                        value.state, value.error));
+                    return;
+                }
                 p4_llamacpp_staged_adapter::v2::record::record(&format!(
                     "P4_EVENT_HOP_WRITE_FAILED retained_pending={} outstanding={} pending_acks={} result={:?} error={}",
                     value.pending.len(), value.outstanding.len() + usize::from(value.current.is_some()),

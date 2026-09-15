@@ -95,6 +95,37 @@ async fn full_receipt_store_rejects_before_broker_commit() {
 }
 
 #[tokio::test]
+async fn lost_inbound_receipt_keeps_store_authority_without_leaking_connection_slot() {
+    use p4_protocol::event::hop::{event_digest, HopFrame, ReceiptStatus};
+    let limits = RuntimeLimits { queue: 1, retained: 2, bytes: 1024 * 1024, connections: 1,
+        hop_receipts: 2, hop_receipt_bytes: 1024 * 1024, hop_outstanding: 1 };
+    let shared = Shared::with_identity("receiver".into(), limits);
+    let (writer, mut peer) = tokio::io::duplex(4096);
+    let slot = shared.slots.clone().acquire_owned().await.unwrap();
+    let sender = shared.hop_writer(writer, Arc::new(slot), None, 1, 1, None);
+    let digest = event_digest(b"accepted-event");
+    let key = super::hop::ReceiptKey { sender_id: "sender".into(),
+        connection_generation: 7, attempt: 1 };
+    shared.receipts.lock().unwrap().reserve(key.clone(), digest, "event-1").unwrap();
+    shared.receipts.lock().unwrap().commit(&key, digest,
+        ReceiptStatus::AcceptedExact, "").unwrap();
+    sender.control(HopFrame::Receipt { attempt: 1, digest,
+        status: ReceiptStatus::AcceptedExact, detail: String::new() }).await.unwrap();
+    let body = read_body(&mut peer).await.unwrap().unwrap();
+    assert!(matches!(p4_protocol::event::hop::decode(&body).unwrap(),
+        Some(HopFrame::Receipt { attempt: 1, status: ReceiptStatus::AcceptedExact, .. })));
+
+    sender.peer_closed("injected receipt loss").await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while shared.slots.available_permits() != 1 { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    assert!(shared.failures.lock().unwrap().is_empty(),
+        "receipt state belongs to the bounded store, not a dead response socket");
+    let receipts = shared.receipts.lock().unwrap().snapshot();
+    assert_eq!((receipts.records, receipts.accepted), (1, 1));
+}
+
+#[tokio::test]
 async fn explicit_reconcile_queries_exact_receipt_before_resuming_original_queue() {
     use p4_protocol::event::hop::{event_digest, ReceiptStatus};
     let limits = RuntimeLimits { queue: 4, retained: 8, bytes: 1024 * 1024, connections: 8,
