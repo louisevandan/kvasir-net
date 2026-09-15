@@ -6,6 +6,7 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <limits>
 #include <string>
 
 void run_stage_memory_plan_tests() {
@@ -33,12 +34,19 @@ void run_stage_memory_plan_tests() {
     planned.complete = true;
     planned.fits_current_free = true;
     planned.execution_shape = {12'800, 1'280, 512, 512, 10, false};
+    planned.physical_result_payload_bytes = 1'048'576;
+    planned.physical_result_tensor_count = 2;
+    std::string error;
+    assert(staged::llama_runtime::derive_max_physical_result_bytes(
+        planned.execution_shape, planned.physical_result_payload_bytes,
+        planned.physical_result_tensor_count, false,
+        &planned.max_physical_result_bytes, &error));
+    assert(planned.max_physical_result_bytes == 551'745'036);
     planned.entries.push_back({
         "device", 0, "backend0", "test backend", 4096, 8192, 1024, 512, 256});
     planned.entries.push_back({
         "host", -1, "host", "host memory", 16384, 32768, 2048, 1024, 512});
     auto actual = planned;
-    std::string error;
     assert(staged::llama_runtime::same_stage_memory_allocation(
         planned, actual, &error));
     assert(error.empty());
@@ -53,6 +61,36 @@ void run_stage_memory_plan_tests() {
     assert(json.find("\"fits_current_free\":true") != std::string::npos);
     assert(json.find("\"n_ctx_seq\":1280") != std::string::npos);
     assert(json.find("\"kv_unified\":false") != std::string::npos);
+    assert(json.find("\"physical_result_payload_bytes\":1048576") != std::string::npos);
+    assert(json.find("\"physical_result_tensor_count\":2") != std::string::npos);
+    assert(json.find("\"max_physical_result_bytes\":551745036") != std::string::npos);
+
+    actual = planned;
+    actual.physical_result_payload_bytes += 1;
+    assert(!staged::llama_runtime::same_stage_memory_allocation(
+        planned, actual, &error));
+    assert(error.find("physical result bounds") != std::string::npos);
+
+    actual = planned;
+    actual.max_physical_result_bytes += 1;
+    assert(!staged::llama_runtime::same_stage_memory_allocation(
+        planned, actual, &error));
+    assert(error.find("physical result bounds") != std::string::npos);
+
+    std::uint64_t speculative_bound = 0;
+    assert(staged::llama_runtime::derive_max_physical_result_bytes(
+        planned.execution_shape, planned.physical_result_payload_bytes,
+        planned.physical_result_tensor_count, true, &speculative_bound, &error));
+    assert(speculative_bound == 2'163'314'188);
+    auto invalid_shape = planned.execution_shape;
+    invalid_shape.n_ubatch = 0;
+    assert(!staged::llama_runtime::derive_max_physical_result_bytes(
+        invalid_shape, 0, 0, false, &speculative_bound, &error));
+    assert(error == "invalid physical result bound inputs");
+    assert(!staged::llama_runtime::derive_max_physical_result_bytes(
+        planned.execution_shape, std::numeric_limits<std::uint64_t>::max(),
+        planned.physical_result_tensor_count, false, &speculative_bound, &error));
+    assert(error == "physical result bound overflows uint64");
 
     actual = planned;
     actual.execution_shape.n_ctx_seq += 256;

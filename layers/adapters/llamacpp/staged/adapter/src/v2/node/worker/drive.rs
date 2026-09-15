@@ -442,7 +442,10 @@ impl Worker {
         let end_unix_ms = super::observe::unix_ms();
         self.last_stage_done = Some(std::time::Instant::now());
         self.gate_refusals = 0;
-        let physical = match CapsuleSet::decode(&body) {
+        let physical = match CapsuleSet::decode_bounded(
+            &body,
+            self.state.max_physical_result_bytes,
+        ) {
             Ok(physical) => physical,
             Err(error) => {
                 self.state.mark_issue_uncertain();

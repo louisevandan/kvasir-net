@@ -245,7 +245,15 @@ int main() {
     assert(!decode_logical_batch(wrong_prefix, &logical, &error));
 
     std::vector<std::uint8_t> encoded;
-    assert(encode_physical_set({capsule()}, &encoded, &error));
+    const auto ordinary = capsule();
+    std::uint64_t encoded_size = 0;
+    assert(physical_set_encoded_size({ordinary}, &encoded_size, &error));
+    std::vector<std::uint8_t> rejected{0xa5};
+    assert(!encode_physical_set_bounded({ordinary}, encoded_size - 1, &rejected, &error));
+    assert(error == "physical result exceeds planned byte bound");
+    assert(rejected == std::vector<std::uint8_t>{0xa5});
+    assert(encode_physical_set_bounded({ordinary}, encoded_size, &encoded, &error));
+    assert(encoded.size() == encoded_size);
     std::vector<RoutedPhysicalExecution> decoded;
     assert(decode_physical_set(encoded, &decoded, &error));
     assert(decoded.size() == 1);

@@ -62,6 +62,7 @@ static void unsupported_capabilities_are_explicit() {
     const std::string capabilities(hello.body.begin() + 2, hello.body.end());
     for (const auto * required : {
              ";n_ctx=", ";n_batch=", ";n_ubatch=", ";n_seq_max=",
+             ";physical_result_payload_bytes=", ";physical_result_tensor_count=", ";max_physical_result_bytes=",
              ";max_atomic_sequences=", ";upstream="}) {
         assert(capabilities.find(required) != std::string::npos);
     }

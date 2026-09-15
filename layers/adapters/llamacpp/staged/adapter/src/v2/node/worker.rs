@@ -224,6 +224,10 @@ impl Worker {
         stage: Box<dyn crate::process::ServerControl + Send>,
     ) -> Result<Self, crate::lifecycle::LifecycleError> {
         self.lifecycle.load(stage, Duration::from_millis(100))?;
+        self.state.max_physical_result_bytes = self
+            .lifecycle
+            .ready_info()
+            .map_or(0, |ready| ready.max_physical_result_bytes);
         Ok(self)
     }
 

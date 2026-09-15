@@ -285,7 +285,8 @@ protocol::Frame Session::handle_logical_batch(const protocol::Frame & request) {
     }
     const auto step_matched = step_clock::now();
     std::vector<std::uint8_t> body;
-    if (!llama_runtime::encode_physical_set(output, &body, &detail)) return fail(detail);
+    if (!llama_runtime::encode_physical_set_bounded(
+            output, llama_runtime_->max_physical_result_bytes(), &body, &detail)) return fail(detail);
     const auto step_encoded = step_clock::now();
     cost.parse_us = step_us(step_began, step_parsed);
     cost.match_us = step_us(step_executed, step_matched);
@@ -402,7 +403,8 @@ protocol::Frame Session::handle_physical_batch(const protocol::Frame & request) 
     }
     const auto step_ready = step_clock::now();
     std::vector<std::uint8_t> body;
-    if (!llama_runtime::encode_physical_set(output, &body, &detail)) return fail(detail);
+    if (!llama_runtime::encode_physical_set_bounded(
+            output, llama_runtime_->max_physical_result_bytes(), &body, &detail)) return fail(detail);
     cost.parse_us = step_us(step_began, step_parsed);
     cost.sample_us = sample_us;
     cost.encode_us = step_us(step_ready, step_clock::now());

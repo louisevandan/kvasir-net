@@ -154,6 +154,15 @@ impl CapsuleSet {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, CapsuleError> {
+        Self::decode_bounded(bytes, u64::MAX)
+    }
+
+    pub fn decode_bounded(bytes: &[u8], max_bytes: u64) -> Result<Self, CapsuleError> {
+        if max_bytes == 0
+            || u64::try_from(bytes.len()).map_err(|_| CapsuleError::IntegerOverflow)? > max_bytes
+        {
+            return Err(CapsuleError::LimitExceeded);
+        }
         let mut cursor = Cursor::new(bytes);
         if cursor.take(4)? != MAGIC {
             return Err(CapsuleError::InvalidMagic);

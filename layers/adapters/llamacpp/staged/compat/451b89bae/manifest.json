@@ -4,7 +4,8 @@
   "required_artifact_symbols": [
     "llama_linkcpp_runtime_configure",
     "llama_linkcpp_runtime_clear",
-    "llama_model_get_layer_device"
+    "llama_model_get_layer_device",
+    "llama_linkcpp_output_payload_bound"
   ],
   "upstream_repository": "https://github.com/ggml-org/llama.cpp.git",
   "upstream_branch": "master",
@@ -15,8 +16,8 @@
   "nearest_release_tag": "b10903",
   "previous_linker_pin": "434ddbbc0e30522e897670681e503b797c12b7c1",
   "previous_official_base": "434ddbbc0e30522e897670681e503b797c12b7c1",
-  "patch_set_sha256": "a07b782641a008bcab4b4e81e58cd11798387c5bf332fa4a0474a1dce4d700ef",
-  "patched_tree": "750da4a6070913a696e397809adbe0734ed397b9",
+  "patch_set_sha256": "d8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9",
+  "patched_tree": "83f5aa5b3a5479949de14eb0afabfb7119d799dc",
   "patches": [
     {
       "file": "0002-ggml-rpc.patch",
@@ -166,6 +167,11 @@
     {
       "file": "0029-cost-observation.patch",
       "sha256": "ab0fffd66ef78c3291967707075358de8768b65265c98c0a96f1efa771a7e25f",
+      "layer": "stage_hook"
+    },
+    {
+      "file": "0030-physical-output-bound.patch",
+      "sha256": "a5a169b3022e555fc519bbb1218d19b2c8ac413416c9dbf99700c2aa1a1933b1",
       "layer": "stage_hook"
     }
   ],

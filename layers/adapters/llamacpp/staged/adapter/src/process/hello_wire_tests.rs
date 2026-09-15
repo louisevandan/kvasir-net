@@ -16,7 +16,8 @@ fn hello(capabilities: &str) -> Vec<u8> {
 }
 
 const BASE: &str = "READY;llama_runtime=1;hop=1;kv=1;transactions=1;physical_batch=1\
-;n_ctx=2048;n_batch=512;n_ubatch=512;n_seq_max=4;max_atomic_sequences=4";
+;n_ctx=2048;n_batch=512;n_ubatch=512;n_seq_max=4;physical_result_payload_bytes=1048576\
+;physical_result_tensor_count=2;max_physical_result_bytes=33554432;max_atomic_sequences=4";
 
 #[test]
 fn physical_identity_revision_is_never_inferred_from_physical_batch() {
@@ -36,6 +37,27 @@ fn physical_identity_revision_is_never_inferred_from_physical_batch() {
         decode_hello(&hello(&format!(
             "{BASE};physical_identity_revision=invalid"
         )))
+        .is_err()
+    );
+}
+
+#[test]
+fn physical_result_bound_is_required_and_parsed_exactly() {
+    let ready = decode_hello(&hello(BASE)).unwrap();
+    assert_eq!(ready.physical_result_payload_bytes, 1_048_576);
+    assert_eq!(ready.physical_result_tensor_count, 2);
+    assert_eq!(ready.max_physical_result_bytes, 33_554_432);
+    assert!(
+        decode_hello(&hello(&BASE.replace(
+            ";max_physical_result_bytes=33554432",
+            ""
+        )))
+        .is_err()
+    );
+    assert!(
+        decode_hello(&hello(
+            "READY;n_ctx=1;n_batch=1;n_ubatch=1;n_seq_max=1;max_atomic_sequences=1"
+        ))
         .is_err()
     );
 }

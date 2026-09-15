@@ -52,6 +52,11 @@ std::vector<MemoryBreakdownEntry> memory_breakdown(const llama_context * context
     return entries;
 }
 
+bool output_payload_bound(const llama_context * context, OutputPayloadBound * result) {
+    if (context == nullptr || result == nullptr) return false;
+    return llama_linkcpp_output_payload_bound(context, &result->bytes, &result->tensors);
+}
+
 std::size_t model_device_count(const llama_model * model) {
     if (model == nullptr) return 0;
     const int32_t count = llama_model_n_devices(model);

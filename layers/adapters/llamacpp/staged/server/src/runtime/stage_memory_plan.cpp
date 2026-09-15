@@ -3,6 +3,7 @@
 #include "ggml-backend.h"
 #include "llama-cpp.h"
 #include "compat/p4_llama_compat.hpp"
+#include "physical_wire_cursor.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -269,7 +270,8 @@ bool inspect_stage_memory_with_initialized_backend(
         }
         return measure_stage_memory(
             model.get(), context.get(), speculative_context.get(),
-            config.memory_topology, params.kv_unified(), result, error) &&
+            config.memory_topology, params.kv_unified(),
+            params.requests_any_speculative(), result, error) &&
             measure_stage_layer_devices(model.get(), config, result, error);
     } catch (const std::exception & exception) {
         if (error != nullptr) *error = std::string("llama.cpp memory planning failed: ") + exception.what();
@@ -296,6 +298,7 @@ bool measure_stage_memory(
         const llama_context * speculative_context,
         const MemoryTopology & memory_topology,
         bool kv_unified,
+        bool speculative,
         StageMemoryPlan * result,
         std::string * error) {
     if (model == nullptr || context == nullptr || result == nullptr) {
@@ -308,6 +311,18 @@ bool measure_stage_memory(
     result->execution_shape = StageExecutionShape{
         llama_n_ctx(context), llama_n_ctx_seq(context), llama_n_batch(context),
         llama_n_ubatch(context), llama_n_seq_max(context), kv_unified};
+    p4_llama_compat::OutputPayloadBound output_bound;
+    if (!p4_llama_compat::output_payload_bound(context, &output_bound)) {
+        if (error != nullptr) *error = "cannot derive physical result payload bound";
+        return false;
+    }
+    result->physical_result_payload_bytes = output_bound.bytes;
+    result->physical_result_tensor_count = output_bound.tensors;
+    if (!derive_max_physical_result_bytes(
+            result->execution_shape, output_bound.bytes, output_bound.tensors,
+            speculative, &result->max_physical_result_bytes, error)) {
+        return false;
+    }
     result->entries.clear();
     result->entries.reserve(device_count + 1);
     for (std::size_t index = 0; index < device_count; ++index) {
@@ -320,6 +335,108 @@ bool measure_stage_memory(
         !add_breakdown(model, speculative_context, false, result, error)) return false;
     result->complete = true;
     result->fits_current_free = stage_memory_plan_fits_current_free(*result);
+    return true;
+}
+
+bool derive_max_physical_result_bytes(
+        const StageExecutionShape & execution_shape,
+        std::uint64_t payload_bytes_per_capsule,
+        std::uint32_t tensors_per_capsule,
+        bool speculative,
+        std::uint64_t * result,
+        std::string * error) {
+    namespace wire = physical_wire;
+    if (result == nullptr || execution_shape.n_batch == 0
+        || execution_shape.n_ubatch == 0
+        || execution_shape.n_ubatch > execution_shape.n_batch
+        || execution_shape.n_batch > wire::kMaxRows
+        || execution_shape.n_seq_max == 0
+        || tensors_per_capsule > wire::kMaxTensors) {
+        if (error != nullptr) *error = "invalid physical result bound inputs";
+        return false;
+    }
+    auto add = [](std::uint64_t lhs, std::uint64_t rhs, std::uint64_t * value) {
+        if (rhs > std::numeric_limits<std::uint64_t>::max() - lhs) return false;
+        *value = lhs + rhs;
+        return true;
+    };
+    auto multiply = [](std::uint64_t lhs, std::uint64_t rhs, std::uint64_t * value) {
+        if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) return false;
+        *value = lhs * rhs;
+        return true;
+    };
+    auto fail_overflow = [&]() {
+        if (error != nullptr) *error = "physical result bound overflows uint64";
+        return false;
+    };
+
+    // Physical-v4 has a 12-byte set header. Every captured invocation has at
+    // least one row, so n_batch is a source-independent upper bound on both
+    // rows and capsules even when llama.cpp chooses uneven UBATCH splits.
+    constexpr std::uint64_t set_header = 12;
+    constexpr std::uint64_t capsule_header = 8 + 10 * 4;
+    constexpr std::uint64_t owner_fixed = 56;
+    constexpr std::uint64_t string_max = 2 + wire::kMaxString;
+    constexpr std::uint64_t owner_max = owner_fixed + 5 * string_max;
+    constexpr std::uint64_t tensor_descriptor_max =
+        8 + 4 * 8 + 4 * 8 + 8 + 8 + 4 + string_max + 8;
+    constexpr std::uint64_t outcome_header = 6 * 4;
+    constexpr std::uint64_t generated_token_max = 4 + 4 + 2 * string_max;
+
+    const auto rows = static_cast<std::uint64_t>(execution_shape.n_batch);
+    const auto capsules = rows;
+    const auto sequences = static_cast<std::uint64_t>(execution_shape.n_seq_max);
+    const auto continuation = static_cast<std::uint64_t>(execution_shape.n_ubatch);
+
+    std::uint64_t sequence_ids_max = 0;
+    std::uint64_t row_max = 0;
+    if (!multiply(sequences, 4, &sequence_ids_max)
+        || !add(16 + 4 + 1 + owner_max, sequence_ids_max, &row_max)) {
+        return fail_overflow();
+    }
+
+    std::uint64_t descriptor_bytes = 0;
+    std::uint64_t capsule_nonterminal = 0;
+    std::uint64_t nonterminal_capsules = 0;
+    std::uint64_t row_bytes = 0;
+    std::uint64_t nonterminal = set_header;
+    if (!multiply(tensors_per_capsule, tensor_descriptor_max, &descriptor_bytes)
+        || !add(capsule_header, descriptor_bytes, &capsule_nonterminal)
+        || !add(capsule_nonterminal, payload_bytes_per_capsule, &capsule_nonterminal)
+        || !multiply(capsules, capsule_nonterminal, &nonterminal_capsules)
+        || !multiply(rows, row_max, &row_bytes)
+        || !add(nonterminal, nonterminal_capsules, &nonterminal)
+        || !add(nonterminal, row_bytes, &nonterminal)) {
+        return fail_overflow();
+    }
+
+    std::uint64_t outcome_max = outcome_header;
+    if (speculative) {
+        // The stage rejects continuation vectors wider than n_ubatch. Count
+        // all three vectors simultaneously so this remains an upper bound for
+        // Verify/Replay even though valid results normally use only a subset.
+        std::uint64_t continuation_item_max = 0;
+        std::uint64_t continuation_bytes = 0;
+        if (!add(generated_token_max, 8, &continuation_item_max)
+            || !multiply(continuation, continuation_item_max, &continuation_bytes)
+            || !add(outcome_max, continuation_bytes, &outcome_max)) {
+            return fail_overflow();
+        }
+    } else if (!add(outcome_max, generated_token_max, &outcome_max)) {
+        return fail_overflow();
+    }
+    std::uint64_t terminal_capsules = 0;
+    std::uint64_t terminal_row = 0;
+    std::uint64_t terminal_rows = 0;
+    std::uint64_t terminal = set_header;
+    if (!multiply(capsules, capsule_header, &terminal_capsules)
+        || !add(row_max, outcome_max, &terminal_row)
+        || !multiply(rows, terminal_row, &terminal_rows)
+        || !add(terminal, terminal_capsules, &terminal)
+        || !add(terminal, terminal_rows, &terminal)) {
+        return fail_overflow();
+    }
+    *result = std::max(nonterminal, terminal);
     return true;
 }
 
@@ -367,6 +484,12 @@ bool same_stage_memory_allocation(
         if (error != nullptr) *error = "planned and actual execution shapes differ";
         return false;
     }
+    if (planned.physical_result_payload_bytes != actual.physical_result_payload_bytes ||
+        planned.physical_result_tensor_count != actual.physical_result_tensor_count ||
+        planned.max_physical_result_bytes != actual.max_physical_result_bytes) {
+        if (error != nullptr) *error = "planned and actual physical result bounds differ";
+        return false;
+    }
     for (std::size_t index = 0; index < planned.entries.size(); ++index) {
         const auto & lhs = planned.entries[index];
         const auto & rhs = actual.entries[index];
@@ -402,6 +525,9 @@ std::string serialize_stage_memory_plan(const StageMemoryPlan & plan) {
         << ",\"kv_unified\":" << (plan.execution_shape.kv_unified ? "true" : "false")
         << "},\"complete\":" << (plan.complete ? "true" : "false")
         << ",\"fits_current_free\":" << (plan.fits_current_free ? "true" : "false")
+        << ",\"physical_result_payload_bytes\":" << plan.physical_result_payload_bytes
+        << ",\"physical_result_tensor_count\":" << plan.physical_result_tensor_count
+        << ",\"max_physical_result_bytes\":" << plan.max_physical_result_bytes
         << ",\"layer_device_query_supported\":" << (plan.layer_device_query_supported ? "true" : "false")
         << ",\"layer_device_expectations_checked\":" << (plan.layer_device_expectations_checked ? "true" : "false")
         << ",\"layer_default_devices\":[";

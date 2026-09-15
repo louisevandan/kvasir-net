@@ -33,6 +33,9 @@ pub struct ReadyInfo {
     pub n_batch: usize,
     pub n_ubatch: usize,
     pub n_seq_max: u32,
+    pub physical_result_payload_bytes: u64,
+    pub physical_result_tensor_count: u32,
+    pub max_physical_result_bytes: u64,
     /// Which llama.cpp this stage was built from: the upstream commit and
     /// the patch queue applied on top of it. The commit alone does not
     /// identify a build - two stages can share it and differ in every
@@ -384,6 +387,9 @@ pub(super) fn decode_hello(body: &[u8]) -> Result<ReadyInfo, String> {
         n_batch: capability_number(&text, "n_batch")?,
         n_ubatch: capability_number(&text, "n_ubatch")?,
         n_seq_max: capability_number(&text, "n_seq_max")?,
+        physical_result_payload_bytes: capability_number(&text, "physical_result_payload_bytes")?,
+        physical_result_tensor_count: capability_number(&text, "physical_result_tensor_count")?,
+        max_physical_result_bytes: capability_number(&text, "max_physical_result_bytes")?,
         max_atomic_sequences: capability_number(&text, "max_atomic_sequences")?,
         upstream_commit: capability_text(&text, "upstream"),
         patch_set: capability_text(&text, "patch_set"),

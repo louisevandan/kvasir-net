@@ -33,6 +33,9 @@ impl ServerControl for Fake {
                 n_batch: 64,
                 n_ubatch: 64,
                 n_seq_max: 1,
+                physical_result_payload_bytes: 0,
+                physical_result_tensor_count: 0,
+                max_physical_result_bytes: 33_554_432,
                 upstream_commit: "fixture-upstream".into(),
                 patch_set: "fixture-patch-set".into(),
                 backend_inventory: "fixture-backend".into(),
@@ -320,7 +323,7 @@ fn child_server() {
     let response = Frame::new(Operation::Hello, {
         let mut body = PROTOCOL_REVISION.to_le_bytes().to_vec();
         body.extend_from_slice(
-            b"test-child;physical_batch=1;equal_sequence_ubatch=0;max_atomic_sequences=1;atomic_batch_exclusive=0;n_ctx=512;n_batch=64;n_ubatch=64;n_seq_max=1",
+            b"test-child;physical_batch=1;equal_sequence_ubatch=0;max_atomic_sequences=1;atomic_batch_exclusive=0;n_ctx=512;n_batch=64;n_ubatch=64;n_seq_max=1;physical_result_payload_bytes=0;physical_result_tensor_count=0;max_physical_result_bytes=33554432",
         );
         body
     })

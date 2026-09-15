@@ -97,7 +97,8 @@ impl Worker {
             let response = self.stage_request(Operation::PhysicalBatch, Operation::PhysicalResult, body);
             rpc_us = rpc_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
             let response = response.and_then(|body| {
-                    CapsuleSet::decode(&body).map_err(|e| format!("invalid physical result: {e:?}"))
+                    CapsuleSet::decode_bounded(&body, self.state.max_physical_result_bytes)
+                        .map_err(|e| format!("invalid physical result: {e:?}"))
                 });
             match response {
                 Ok(result) => result,

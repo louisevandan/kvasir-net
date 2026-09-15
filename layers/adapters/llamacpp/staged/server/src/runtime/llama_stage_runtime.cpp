@@ -126,7 +126,8 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
     StageMemoryPlan actual_memory;
     if (!measure_stage_memory(
             model_, ctx_, mtp_context(), config_.memory_topology,
-            params_.kv_unified(), &actual_memory, &memory_error) ||
+            params_.kv_unified(), params_.requests_any_speculative(),
+            &actual_memory, &memory_error) ||
         !measure_stage_layer_devices(model_, config_, &actual_memory, &memory_error)) {
         if (error != nullptr) *error = memory_error;
         unload();
@@ -138,6 +139,9 @@ bool StageRuntime::load(p4_llama_compat::LlamaPlan params, const LoadConfig & co
         unload();
         return false;
     }
+    physical_result_payload_bytes_ = actual_memory.physical_result_payload_bytes;
+    physical_result_tensor_count_ = actual_memory.physical_result_tensor_count;
+    max_physical_result_bytes_ = actual_memory.max_physical_result_bytes;
     return true;
 }
 
@@ -169,6 +173,9 @@ void StageRuntime::unload() noexcept {
     pending_texts_.clear();
     next_sequence_id_ = 0;
     tail_stage_ = false;
+    physical_result_payload_bytes_ = 0;
+    physical_result_tensor_count_ = 0;
+    max_physical_result_bytes_ = 0;
     // unload() is the only reset path: load() calls it first on every call,
     // the destructor calls it, and fail() calls it on every load-time error.
     // Clearing here means a fresh load() is the only way hop_memory_dirty_

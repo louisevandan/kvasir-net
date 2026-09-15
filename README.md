@@ -209,3 +209,5 @@ Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 �
 Release A Qwen122B A-LOAD: [3물리 host 실제 allocation·회수](tests/reports/release-a/20260915_195106.md).
 
 Release A A-BYTES: [native result·completion·receipt·edge 정수 byte 시험 계획](tests/plans/release-a-bytes-20260915.md).
+
+Release A A-BYTES B0: [Qwen122B physical result 상한·실제 LOAD·제거 변이](tests/reports/release-a/20260915_211000.md).

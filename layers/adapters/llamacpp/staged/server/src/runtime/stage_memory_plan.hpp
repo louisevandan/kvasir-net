@@ -94,6 +94,9 @@ struct StageMemoryPlan final {
     bool layer_device_query_supported = false;
     bool layer_device_expectations_checked = false;
     std::vector<LayerDefaultDevice> layer_default_devices;
+    std::uint64_t physical_result_payload_bytes = 0;
+    std::uint32_t physical_result_tensor_count = 0;
+    std::uint64_t max_physical_result_bytes = 0;
     bool complete = false;
     bool fits_current_free = false;
 };
@@ -138,6 +141,7 @@ struct StageMemoryPlan final {
     const llama_context * speculative_context,
     const MemoryTopology & memory_topology,
     bool kv_unified,
+    bool speculative,
     StageMemoryPlan * result,
     std::string * error = nullptr);
 
@@ -151,6 +155,14 @@ struct StageMemoryPlan final {
 [[nodiscard]] bool same_stage_memory_allocation(
     const StageMemoryPlan & planned,
     const StageMemoryPlan & actual,
+    std::string * error = nullptr);
+
+[[nodiscard]] bool derive_max_physical_result_bytes(
+    const StageExecutionShape & execution_shape,
+    std::uint64_t payload_bytes_per_capsule,
+    std::uint32_t tensors_per_capsule,
+    bool speculative,
+    std::uint64_t * result,
     std::string * error = nullptr);
 
 [[nodiscard]] std::string serialize_stage_memory_plan(const StageMemoryPlan & plan);

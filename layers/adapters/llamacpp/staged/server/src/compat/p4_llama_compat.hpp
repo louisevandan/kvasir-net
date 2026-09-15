@@ -43,6 +43,16 @@ struct MemoryBreakdownEntry {
 /// Allocation, per backend buffer type, of one context.
 std::vector<MemoryBreakdownEntry> memory_breakdown(const llama_context * context);
 
+/// Maximum alias-elided Link.cpp tensor payload produced by any graph shape
+/// reserved for this context. Derived during context construction, before decode.
+struct OutputPayloadBound final {
+    std::uint64_t bytes = 0;
+    std::uint32_t tensors = 0;
+};
+
+[[nodiscard]] bool output_payload_bound(
+    const llama_context * context, OutputPayloadBound * result);
+
 /// How many backend devices this model is spread over.
 std::size_t model_device_count(const llama_model * model);
 

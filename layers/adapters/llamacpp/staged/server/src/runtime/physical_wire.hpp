@@ -72,5 +72,11 @@ struct RoutedPhysicalExecution final {
 [[nodiscard]] bool encode_physical_set(
     const std::vector<RoutedPhysicalExecution> &, std::vector<std::uint8_t> *,
     std::string * error = nullptr);
+[[nodiscard]] bool physical_set_encoded_size(
+    const std::vector<RoutedPhysicalExecution> &, std::uint64_t *,
+    std::string * error = nullptr);
+[[nodiscard]] bool encode_physical_set_bounded(
+    const std::vector<RoutedPhysicalExecution> &, std::uint64_t max_bytes,
+    std::vector<std::uint8_t> *, std::string * error = nullptr);
 
 } // namespace staged::llama_runtime

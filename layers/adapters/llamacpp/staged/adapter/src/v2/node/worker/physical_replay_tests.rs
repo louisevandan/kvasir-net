@@ -86,6 +86,9 @@ impl ServerControl for NonIdempotentStage {
             n_batch: 8,
             n_ubatch: 8,
             n_seq_max: 2,
+            physical_result_payload_bytes: 0,
+            physical_result_tensor_count: 0,
+            max_physical_result_bytes: 33_554_432,
             upstream_commit: "fixture-only".into(),
             patch_set: "fixture-only".into(),
             backend_inventory: "no-real-engine".into(),
@@ -434,6 +437,19 @@ fn capsule(execution_id: u64, position: u32) -> PhysicalCapsule {
         }],
         outcomes: Vec::new(),
     }
+}
+
+#[test]
+fn physical_result_decoder_enforces_exact_ready_byte_bound() {
+    let encoded = CapsuleSet(vec![capsule(7, 0)]).encode().unwrap();
+    assert_eq!(
+        CapsuleSet::decode_bounded(&encoded, encoded.len() as u64),
+        Ok(CapsuleSet(vec![capsule(7, 0)]))
+    );
+    assert_eq!(
+        CapsuleSet::decode_bounded(&encoded, encoded.len() as u64 - 1),
+        Err(crate::v2::capsule::CapsuleError::LimitExceeded)
+    );
 }
 
 fn other_slot(mut capsule: PhysicalCapsule) -> PhysicalCapsule {

@@ -81,6 +81,15 @@ public:
     [[nodiscard]] std::uint32_t sequence_capacity() const noexcept {
         return ctx_ == nullptr ? 0 : llama_n_seq_max(ctx_);
     }
+    [[nodiscard]] std::uint64_t physical_result_payload_bytes() const noexcept {
+        return physical_result_payload_bytes_;
+    }
+    [[nodiscard]] std::uint32_t physical_result_tensor_count() const noexcept {
+        return physical_result_tensor_count_;
+    }
+    [[nodiscard]] std::uint64_t max_physical_result_bytes() const noexcept {
+        return max_physical_result_bytes_;
+    }
     [[nodiscard]] bool kv_unified() const noexcept {
         return params_.kv_unified();
     }
@@ -324,6 +333,9 @@ private:
     bool hop_batch_active_ = false;
     llama_seq_id next_sequence_id_ = 0;
     bool tail_stage_ = false;
+    std::uint64_t physical_result_payload_bytes_ = 0;
+    std::uint32_t physical_result_tensor_count_ = 0;
+    std::uint64_t max_physical_result_bytes_ = 0;
     // See hop_memory_dirty() above. Cleared only in unload(), which load()
     // always calls first, so a fresh load() is the only way back to false.
     bool hop_memory_dirty_ = false;

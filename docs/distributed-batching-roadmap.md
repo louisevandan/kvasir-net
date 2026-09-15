@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. 동일 upstream/patch의 Spark GB10 `[0,24)`·Mac M4 Pro `[24,36)`·Mac M4 Pro `[36,48)` 3물리 host가 resident8/context819,200/F16 KV로 동시에 READY였고 세 `MEMORY_ACTUAL`이 계획 allocation과 일치했다. `UNLOAD→DELETE` 뒤 새 namespace와 stage port를 모두 회수했다. 실제 요청·H0–H7은 미수용이다. 다음 단계는 physical result/retained output/receipt/edge의 정수 byte 상한을 실제 소비 경로와 실행 profile에 결속하는 A-BYTES다.
+최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0에서 Qwen122B stage0의 native payload 786,432bytes/tensor1을 측정하고 physical-v4 최대 result 103,843,468bytes를 PLAN·ACTUAL·READY와 실제 encoder/decoder에 결속했다. 실제 LOAD→READY→UNLOAD와 제거 변이까지 통과했으며 PID/listener/GPU를 회수했다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B1 versioned LOAD resource profile 결속이다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -78,6 +78,15 @@ loopback port53150을 사용한 2회차에 세 LOAD/READY와 INSPECT를 통과�
 53150 listener0을 확인하고 현재 작업 소유 agent52150만 종료했다. 기존 agent52005는 유지했다. 다음 첫
 행동은 A-BYTES의 네 byte 경계를 실제 codec·mailbox·hop 소비량에서 산출해 manifest와 실행기에서
 fail-closed 검증하는 것이다. 그 전에는 요청 arm을 시작하지 않는다.
+
+**2026-09-15 A-BYTES B0 수용:** [B0 보고](../tests/reports/release-a/20260915_211000.md)의
+compat patch가 reserve된 worst graph의 outgoing cut tensor payload/descriptor를 exact alias 규칙과 checked
+integer로 산출한다. native는 physical-v4 metadata를 더한 최대 result를 PLAN·ACTUAL·READY에 동일하게
+기록하고 실제 C++ encoder와 Rust decoder가 allocation 전에 이 상한을 검사한다. 최종 CUDA CTest16/16,
+Rust563/563과 bound 제거 변이를 통과했다. Qwen122B 실제 stage0 LOAD에서 payload786,432bytes/tensor1,
+max103,843,468bytes가 세 lifecycle 기록에서 일치했고 UNLOAD 뒤 PID/listener/GPU가0이다. 첫 native 전체
+gate는 descriptor 고정부 2bytes 과대 계산으로 15/16이어서 `first_pass=fail`이다. A-BYTES 전체와 실제
+inference는 아직 미수용이다. 다음 첫 행동은 B1 versioned resource profile을 LOAD 전에 검증하는 것이다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/

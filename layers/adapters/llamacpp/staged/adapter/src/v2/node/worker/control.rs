@@ -84,6 +84,7 @@ impl Worker {
         self.bind_loaded_identity(command.load_generation)?;
         self.state.batch_capacity = command.n_batch;
         self.state.physical_capacity = command.n_ubatch;
+        self.state.max_physical_result_bytes = ready.max_physical_result_bytes;
         self.state.equal_sequence_ubatch = ready.equal_sequence_ubatch;
         self.state.max_atomic_sequences = ready.max_atomic_sequences;
         self.state.atomic_batch_exclusive = ready.atomic_batch_exclusive;
@@ -117,6 +118,7 @@ impl Worker {
                 "equal_sequence_ubatch":ready.equal_sequence_ubatch,
                 "max_atomic_sequences":ready.max_atomic_sequences,
                 "atomic_batch_exclusive":ready.atomic_batch_exclusive,
+                "max_physical_result_bytes":ready.max_physical_result_bytes,
                 "upstream_commit":ready.upstream_commit,
                 "patch_set":ready.patch_set,
                 "backend_inventory":ready.backend_inventory,
@@ -181,6 +183,7 @@ impl Worker {
         self.state.free_sequences.clear();
         self.state.batch_capacity = 0;
         self.state.physical_capacity = 0;
+        self.state.max_physical_result_bytes = 0;
         self.state.equal_sequence_ubatch = false;
         self.state.max_atomic_sequences = 0;
         self.state.atomic_batch_exclusive = false;
@@ -270,6 +273,7 @@ fn validate_ready_capacities(
         || ready.n_ubatch < command.n_ubatch
         || ready.n_seq_max < command.sequence_capacity
         || ready.max_atomic_sequences == 0
+        || ready.max_physical_result_bytes == 0
     {
         return Err(format!(
             "stage capacity is below the declared load contract: actual n_ctx={} n_batch={} n_ubatch={} n_seq_max={} max_atomic_sequences={}; required n_ctx={} n_batch={} n_ubatch={} n_seq_max={}",
@@ -327,6 +331,9 @@ mod tests {
             n_batch: 512,
             n_ubatch: 64,
             n_seq_max: 10,
+            physical_result_payload_bytes: 0,
+            physical_result_tensor_count: 0,
+            max_physical_result_bytes: 33_554_432,
             upstream_commit: "fixture-upstream".into(),
             patch_set: "fixture-patch-set".into(),
             backend_inventory: "fixture-backend".into(),
@@ -337,6 +344,15 @@ mod tests {
     #[test]
     fn declared_parallel_context_fits_actual_llama_capacity() {
         assert_eq!(validate_ready_capacities(&command(), &ready()), Ok(()));
+    }
+
+    #[test]
+    fn zero_physical_result_bound_cannot_complete_load() {
+        let mut actual = ready();
+        actual.max_physical_result_bytes = 0;
+        assert!(validate_ready_capacities(&command(), &actual)
+            .unwrap_err()
+            .contains("stage capacity is below"));
     }
 
     #[test]
