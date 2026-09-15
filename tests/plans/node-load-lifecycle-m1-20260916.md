@@ -17,6 +17,7 @@ llama.cpp/HF 실제 worker 이관은 M2, OUTER 호출자와 구 CREATE/DELETE �
 - `L006`: patch한 기존 문서는 원래 CRLF로 정규화하고 전체 docs-lint를 통과한 뒤 코드 시험으로 간다.
 - `L007`: line count와 numstat이 의도 범위인지 확인하지 않고 커밋하지 않는다. 이미 공개된 잘못된 커밋은
   기록을 지우는 강제 push 대신 원문 복원 전진 커밋으로 바로잡는다.
+- `L008`: Rust formatter를 먼저 적용하고 check를 통과한 뒤에만 원격 1회차를 연다.
 
 ## 1회차 전 소유권·호출 경로 검토
 

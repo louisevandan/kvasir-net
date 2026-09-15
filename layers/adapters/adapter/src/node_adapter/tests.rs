@@ -73,3 +73,43 @@ fn a_refused_completion_is_returned_with_its_reason() {
         other => panic!("a closed mailbox should say so: {other:?}"),
     }
 }
+
+#[test]
+fn node_load_lifecycle_typed_completion_never_infers_success_from_snapshot_or_errors() {
+    use p4_protocol::event::lifecycle::{LifecycleOperation, LifecycleStatus, ResourceState};
+
+    let mut completion = AdapterLifecycleCompletion {
+        operation: LifecycleOperation::Load,
+        status: LifecycleStatus::Succeeded,
+        resource_state: ResourceState::Present,
+        first_error: None,
+        cleanup_error: None,
+    };
+    assert!(completion.validate().is_ok());
+    assert!(completion.succeeded());
+
+    completion.resource_state = ResourceState::Unknown;
+    assert_eq!(
+        completion.validate(),
+        Err("successful LOAD completion must prove present resources")
+    );
+    completion.status = LifecycleStatus::Failed;
+    assert_eq!(
+        completion.validate(),
+        Err("rejected or failed lifecycle completion requires first_error")
+    );
+    completion.first_error = Some("native cleanup uncertain".into());
+    assert!(completion.validate().is_ok());
+    assert!(!completion.succeeded());
+
+    completion.operation = LifecycleOperation::Unload;
+    completion.status = LifecycleStatus::Succeeded;
+    completion.resource_state = ResourceState::Absent;
+    completion.first_error = None;
+    assert!(completion.succeeded());
+    completion.cleanup_error = Some("late child".into());
+    assert_eq!(
+        completion.validate(),
+        Err("successful lifecycle completion cannot contain an error")
+    );
+}

@@ -18,6 +18,7 @@ pub use mailbox::{
     RetainedCompletion, RetainedQueueTransferError, RetainedTransferError, completion_mailbox,
     completion_mailbox_with_budget, completion_mailbox_with_limits,
 };
+use p4_protocol::event::lifecycle::{LifecycleOperation, LifecycleStatus, ResourceState};
 use p4_protocol::event::{Envelope, Event};
 use std::task::{Context, Poll as TaskPoll};
 
@@ -99,6 +100,50 @@ pub struct AdapterRetentionSnapshot {
     pub native_responses: AdapterRetainedStorage,
 }
 
+/// Backend-owned interpretation of one lifecycle terminal completion.
+///
+/// The Event and its retained claim stay with the caller. This value grants no
+/// permission to remove a route or retire the completion: the agent supervisor
+/// must still match source, causation, operation and node generation and prove
+/// delivery/native cleanup. `ResourceState::Unknown` is never success.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdapterLifecycleCompletion {
+    pub operation: LifecycleOperation,
+    pub status: LifecycleStatus,
+    pub resource_state: ResourceState,
+    pub first_error: Option<String>,
+    pub cleanup_error: Option<String>,
+}
+
+impl AdapterLifecycleCompletion {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.status != LifecycleStatus::Succeeded {
+            return if self.first_error.as_deref().is_some_and(|v| !v.is_empty()) {
+                Ok(())
+            } else {
+                Err("rejected or failed lifecycle completion requires first_error")
+            };
+        }
+        if self.first_error.is_some() || self.cleanup_error.is_some() {
+            return Err("successful lifecycle completion cannot contain an error");
+        }
+        match (self.operation, self.resource_state) {
+            (LifecycleOperation::Load, ResourceState::Present)
+            | (LifecycleOperation::Unload, ResourceState::Absent) => Ok(()),
+            (LifecycleOperation::Load, _) => {
+                Err("successful LOAD completion must prove present resources")
+            }
+            (LifecycleOperation::Unload, _) => {
+                Err("successful UNLOAD completion must prove absent resources")
+            }
+        }
+    }
+
+    pub fn succeeded(&self) -> bool {
+        self.status == LifecycleStatus::Succeeded && self.validate().is_ok()
+    }
+}
+
 /// Explicit owned transport contract. There is deliberately no raw-Event
 /// fallback: concrete producers and every consumer must migrate together.
 /// A successful offer transfers responsibility for the original allocation
@@ -118,6 +163,19 @@ pub trait RetainedNodeAdapter: Send + Sync {
     /// response buffers. Implementations report their own allocation units.
     fn retention_snapshot(&self) -> Option<AdapterRetentionSnapshot> {
         None
+    }
+
+    /// Interpret a lifecycle terminal without consuming the ordinary
+    /// completion front. EventNode remains the only owner that dequeues that
+    /// front and transfers it through the broker into the bounded agent input.
+    /// A concrete adapter must opt in; the default never infers completion from
+    /// a content type, payload text or `snapshot()`.
+    fn decode_lifecycle_completion(
+        &self,
+        _operation: LifecycleOperation,
+        _event: &Event,
+    ) -> Result<AdapterLifecycleCompletion, String> {
+        Err("adapter does not provide typed lifecycle completion".into())
     }
 }
 
