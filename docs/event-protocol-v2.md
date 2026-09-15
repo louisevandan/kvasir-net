@@ -633,9 +633,10 @@ the active implementation rather than wrapped.
 
 <a id="connection-finish-candidate"></a>
 
-## Connection FINISH candidate — unaccepted WIP (2026-09-15)
+## Connection FINISH — local acceptance (2026-09-15)
 
-[Validation stopped after three failures](../tests/reports/release-a/20260915_044735.md).
+[Initial validation stopped after three failures](../tests/reports/release-a/20260915_044735.md).
+[Deterministic review and acceptance](../tests/reports/release-a/20260915_142237.md) completed the local contract.
 This additive transport candidate reserves a zero u32-LE frame length as a
 connection-scoped FINISH, not an Event. The caller must consume its expected
 outputs first. The agent detaches only that socket's live OUTER bindings, drains
@@ -645,7 +646,12 @@ and failed-generation tombstones survive FINISH. Later outputs remain retained
 as undelivered; FINISH neither cancels work nor settles requests, receipts or KV.
 
 Old agents do not implement this ACK and old clients do not send FINISH. Do not
-claim fleet repair from an agent-only upgrade. Unexpected output during FINISH
-must remain diagnosable. The current driver preserves a received prefix, but its
-whole-frame preservation test fails; client/fleet adoption and acceptance remain
-unimplemented or unverified. No production support is claimed by this section.
+claim fleet repair from an agent-only upgrade. For a valid nonzero length prefix,
+Rust and HF Python clients read and retain the whole first unexpected frame before
+returning an error. EOF and timeout retain the received prefix/body; an oversized
+declaration is refused before body allocation. The run cleanup error records the
+buffered/frame size in Rust; HF retains the bytes in the client's
+`finish_unexpected_output` diagnostic, including when the socket timeout itself is
+returned. These diagnostic bytes are client-owned and do not approve or settle the
+Event. Local actual llama.cpp/HF generation and cleanup pass. Fleet
+binary replacement, uncertain-result reconciliation and multi-host acceptance remain.

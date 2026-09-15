@@ -22,6 +22,23 @@ HF를 P4 내부로 통합했고 전체 workspace on/off 각각 1460 passed / 0 f
 
 ### 0.A Release A 착수 (2026-09-14)
 
+**실행 원칙 — 첫 검증 성공률을 품질 지표로 사용:** 단계별 최대 3회는 시행착오 예산이 아니다.
+후보를 처음 실행하기 전에 호출자·실제 소비 경로·상태/byte 소유권·거부 무효과·실패 artifact·기존 반례를
+결정론적으로 검토하고, 첫 실행에는 구현·컴파일·소비 경로·회귀를 닫은 완성 후보를 넣는다. 컴파일 또는
+시험 실행에서 발생한 실패는 모두 회차에 포함한다. `first_pass=pass|fail`은 표적 시험 일부가 아니라
+문서·컴파일·실제 소비 경로·필수 회귀를 모두 포함한 첫 완전 gate로 판정해 단계 기록에 남긴다. 2회차는
+첫 실행이 드러낸 한정된 차이만 조정하고, 3회차는 기능 변경 없이 clean rebuild·전체 회귀·독립 변이로
+확인한다. 3회차에 새 설계나 기능 수정이 필요하면 해당 단계의 사전 검토 실패로 판정하고 중단한다.
+로드맵 운영 목표는 첫 실행 통과 비율을 계속 높이는 것이다.
+
+**2026-09-15 FINISH 결정론적 재개:** [재개 검증](../tests/reports/release-a/20260915_142237.md)으로
+예상 밖 유효 frame 전체와 EOF/timeout 부분 수신을 보존하고 과대 frame은 본문 할당 전에 거부하도록
+Rust event-drive와 HF Python client를 맞췄다. 표적 시험은 한 번에 통과했지만 첫 완전 workspace gate는
+문서2개의 혼합 EOL로 실패했으므로 `first_pass=fail`이다. 줄바꿈만 수정한 뒤 feature off/on 각각
+1476 PASS / 0 FAIL / 7 ignored, Python49 PASS, 제거 변이 검출 및 llama.cpp/HF 실제 생성·회수를 확인했다.
+FINISH의 로컬 기능 수용은 완료했다. 다음 첫 행동은 전송 결과 불명의 명시 정산·재연결 계약을 닫고,
+이어 Qwen122B 전체 topology PLAN·LOAD·정상 응답·deadline/8wave를 수행하는 것이다.
+
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/
 PLAN/profile로 검증하고 resident8·장문·8wave·정답·SLO·취소/회수·양쪽 adapter 회귀 기준은 유지한다.

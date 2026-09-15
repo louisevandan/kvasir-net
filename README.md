@@ -197,3 +197,5 @@ Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](test
 클러스터 반환 경로: [시험 계획](tests/plans/cluster-envelope-20260915.md) · [9대·MI250 SSH 검증](tests/reports/release-a/20260915_124433.md).
 
 Release A 대상 변경: [Qwen122B 명세·corpus 준비](tests/reports/release-a/20260915_131432.md).
+
+Release A FINISH 재개: [결정론적 검토·전체 회귀·양쪽 어댑터](tests/reports/release-a/20260915_142237.md).

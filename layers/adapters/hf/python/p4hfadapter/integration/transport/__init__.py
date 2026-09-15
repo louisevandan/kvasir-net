@@ -55,6 +55,7 @@ class Client:
         self.sent_bytes=self.received_bytes=0
         self.trace=[]
         self.finishing=False
+        self.finish_unexpected_output=bytearray()
     def send(self,target,content,payload,adapter=None):
         if self.finishing:
             raise RuntimeError("P4 connection is finishing")
@@ -119,9 +120,36 @@ class Client:
             self.socket.settimeout(timeout)
             self.socket.sendall(struct.pack("<I",0))
             self.sent_bytes+=4
-            ack=self.exact(4)
-            self.received_bytes+=4
+            while len(self.finish_unexpected_output)<4:
+                block=self.socket.recv(4-len(self.finish_unexpected_output))
+                if not block:
+                    raise EOFError(
+                        "P4 connection closed during finish response: "
+                        f"buffered_bytes={len(self.finish_unexpected_output)}"
+                    )
+                self.finish_unexpected_output.extend(block)
+                self.received_bytes+=len(block)
+            ack=bytes(self.finish_unexpected_output)
             if ack!=bytes(4):
-                raise ValueError(f"unexpected output before P4 finish ACK: {ack.hex()}")
+                size,=struct.unpack("<I",ack)
+                if size>40*1024*1024:
+                    raise ValueError(
+                        "unexpected output before P4 finish ACK exceeds client bound: "
+                        f"declared_bytes={size} buffered_bytes=4"
+                    )
+                while len(self.finish_unexpected_output)<size+4:
+                    block=self.socket.recv(size+4-len(self.finish_unexpected_output))
+                    if not block:
+                        raise EOFError(
+                            "P4 connection closed during unexpected finish output: "
+                            f"buffered_bytes={len(self.finish_unexpected_output)}"
+                        )
+                    self.finish_unexpected_output.extend(block)
+                    self.received_bytes+=len(block)
+                raise ValueError(
+                    "unexpected output before P4 finish ACK: "
+                    f"frame_bytes={size+4} buffered_bytes={len(self.finish_unexpected_output)}"
+                )
+            self.finish_unexpected_output.clear()
         finally:
             self.socket.settimeout(previous)

@@ -73,15 +73,32 @@ where
         self.buffer.clear(); self.cursor = 0;
         loop {
             if self.buffer.len() >= HEADER {
-                if self.buffer[..HEADER] != [0; HEADER] || self.buffer.len() != HEADER {
-                    return Err(io::Error::other("unexpected output before connection finish ACK"));
+                let size = u32::from_le_bytes(self.buffer[..HEADER].try_into().expect("four-byte finish prefix")) as usize;
+                if size == 0 {
+                    if self.buffer.len() != HEADER {
+                        return Err(io::Error::other(format!("bytes after connection finish ACK: buffered_bytes={}", self.buffer.len())));
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+                if size > MAX_FRAME {
+                    return Err(io::Error::other(format!("unexpected output before connection finish ACK exceeds frame bound: declared_bytes={size} buffered_bytes={}", self.buffer.len())));
+                }
+                let frame_bytes = HEADER + size;
+                if self.buffer.len() >= frame_bytes {
+                    return Err(io::Error::other(format!("unexpected output before connection finish ACK: frame_bytes={frame_bytes} buffered_bytes={}", self.buffer.len())));
+                }
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let read = tokio::time::timeout(remaining, self.reader.read_buf(&mut self.buffer)).await
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "connection finish ACK timeout"))??;
-            if read == 0 { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection ended without finish ACK")); }
+            let read = match tokio::time::timeout(remaining, self.reader.read_buf(&mut self.buffer)).await {
+                Ok(result) => result?,
+                Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut,
+                    format!("connection finish response timeout: buffered_bytes={}", self.buffer.len()))),
+            };
+            if read == 0 {
+                let message = if self.buffer.is_empty() { "connection ended without finish ACK".into() }
+                    else { format!("connection ended during finish response: buffered_bytes={}", self.buffer.len()) };
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, message));
+            }
         }
     }
 

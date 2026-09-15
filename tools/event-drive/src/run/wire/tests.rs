@@ -36,10 +36,68 @@ async fn explicit_finish_rejects_eof_and_preserves_unexpected_output() {
             assert_eq!(server.read_u32_le().await.unwrap(), 0);
             server.write_all(&bytes).await.unwrap();
         });
-        assert!(wire.finish(Instant::now() + Duration::from_secs(2)).await.is_err());
+        let error = wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap_err();
         assert_eq!(wire.buffer, expected, "unexpected output remains available to diagnose the failed close");
+        if !wire.buffer.is_empty() {
+            assert!(error.to_string().contains(&format!("frame_bytes={}", wire.buffer.len())));
+        }
         peer.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn explicit_finish_preserves_partial_unexpected_frame_on_eof() {
+    let bytes = frames(1);
+    let split = bytes.len() / 2;
+    let expected = bytes[..split].to_vec();
+    let (client, mut server) = duplex(4096);
+    let (reader, writer) = tokio::io::split(client);
+    let mut wire = EventWire::new(reader, writer);
+    let peer = tokio::spawn(async move {
+        assert_eq!(server.read_u32_le().await.unwrap(), 0);
+        server.write_all(&bytes[..split]).await.unwrap();
+    });
+    let error = wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    assert_eq!(wire.buffer, expected);
+    assert!(error.to_string().contains(&format!("buffered_bytes={split}")));
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn explicit_finish_preserves_partial_unexpected_frame_on_timeout() {
+    let bytes = frames(1);
+    let split = bytes.len() / 2;
+    let expected = bytes[..split].to_vec();
+    let (client, mut server) = duplex(4096);
+    let (reader, writer) = tokio::io::split(client);
+    let mut wire = EventWire::new(reader, writer);
+    let peer = tokio::spawn(async move {
+        assert_eq!(server.read_u32_le().await.unwrap(), 0);
+        server.write_all(&bytes[..split]).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    });
+    let error = wire.finish(Instant::now() + Duration::from_millis(50)).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert_eq!(wire.buffer, expected);
+    assert!(error.to_string().contains(&format!("buffered_bytes={split}")));
+    peer.abort();
+}
+
+#[tokio::test]
+async fn explicit_finish_rejects_oversize_before_reading_a_body() {
+    let prefix = ((super::MAX_FRAME as u32) + 1).to_le_bytes();
+    let (client, mut server) = duplex(16);
+    let (reader, writer) = tokio::io::split(client);
+    let mut wire = EventWire::new(reader, writer);
+    let peer = tokio::spawn(async move {
+        assert_eq!(server.read_u32_le().await.unwrap(), 0);
+        server.write_all(&prefix).await.unwrap();
+    });
+    let error = wire.finish(Instant::now() + Duration::from_secs(2)).await.unwrap_err();
+    assert!(error.to_string().contains("exceeds frame bound"));
+    assert_eq!(wire.buffer, prefix);
+    peer.await.unwrap();
 }
 
 fn outer() -> OuterEndpoint {
