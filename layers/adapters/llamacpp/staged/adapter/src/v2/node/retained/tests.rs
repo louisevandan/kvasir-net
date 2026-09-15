@@ -1,5 +1,13 @@
 use super::*;
-use p4_adapter::node_adapter::{CompletionPublisher, retained_event_bytes};
+use crate::v2::resource_profile::{ResourceStorageSnapshot, RuntimeResourceSnapshot};
+use crate::v2::{LOAD_CONTENT_TYPE, LoadCommand, UNLOAD_CONTENT_TYPE, UnloadCommand};
+use p4_adapter::node_adapter::{
+    AdapterLifecycleCompletion, CompletionPublisher, retained_event_bytes,
+};
+use p4_protocol::Address;
+use p4_protocol::event::lifecycle::{LifecycleOperation, LifecycleStatus, ResourceState};
+use p4_protocol::event::{Envelope, EventClass, OuterEndpoint};
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 fn input(name: &str) -> Event {
@@ -46,6 +54,289 @@ fn offer(adapter: &RetainedLlamaNodeAdapter, completion: RetainedCompletion) {
             }
             other => panic!("{other:?}"),
         },
+    );
+}
+
+struct LifecycleStage {
+    shutdown_error: bool,
+}
+
+impl crate::process::ServerControl for LifecycleStage {
+    fn start(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn wait_ready(&mut self, _: Instant) -> Result<Option<crate::process::ReadyInfo>, String> {
+        Ok(Some(crate::process::ReadyInfo {
+            physical_identity_revision: 1,
+            protocol_revision: 1,
+            server_id: "lifecycle-stage".into(),
+            transactions: false,
+            physical_batch: true,
+            equal_sequence_ubatch: false,
+            max_atomic_sequences: 1,
+            atomic_batch_exclusive: false,
+            n_ctx: 512,
+            n_batch: 64,
+            n_ubatch: 64,
+            n_seq_max: 1,
+            physical_result_payload_bytes: 0,
+            physical_result_tensor_count: 0,
+            max_physical_result_bytes: 33_554_432,
+            upstream_commit: "fixture-upstream".into(),
+            patch_set: "fixture-patch-set".into(),
+            backend_inventory: "fixture-backend".into(),
+            stage_wire_abi: "fixture-stage-wire".into(),
+        }))
+    }
+    fn request(&mut self, request: crate::Frame) -> Result<crate::Frame, String> {
+        if request.header.operation != crate::Operation::BindLoad {
+            return Err("unexpected lifecycle fixture operation".into());
+        }
+        crate::Frame::new(crate::Operation::BindLoad, request.body).map_err(|e| e.to_string())
+    }
+    fn shutdown(&mut self) -> Result<(), String> {
+        if self.shutdown_error {
+            Err("fixture cleanup failed".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn lifecycle_adapter(
+    endpoint: Endpoint,
+    shutdown_error: bool,
+    fill_completion_queue: bool,
+) -> RetainedLlamaNodeAdapter {
+    let queue_capacity = if fill_completion_queue { 1 } else { 4 };
+    let retained_bytes = if fill_completion_queue {
+        128 << 20
+    } else {
+        64 << 20
+    };
+    let (publisher, mailbox) =
+        completion_mailbox_with_limits(queue_capacity, 8, retained_bytes).unwrap();
+    if fill_completion_queue {
+        publisher
+            .try_publish_owned(input("lifecycle-filler"))
+            .unwrap();
+    }
+    let (sender, receiver) = mpsc::sync_channel(4);
+    let snapshot = Arc::new(Mutex::new("empty".into()));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let probe = RuntimeResourceProbe::new(|| {
+        let store = ResourceStorageSnapshot {
+            count_limit: 8,
+            retained_count: 0,
+            byte_limit: 64 << 20,
+            retained_bytes: 0,
+        };
+        Ok(RuntimeResourceSnapshot {
+            edge: store,
+            receipt: store,
+        })
+    });
+    let worker = Worker::new(
+        endpoint,
+        receiver,
+        publisher,
+        snapshot.clone(),
+        shutdown.clone(),
+    )
+    .with_runtime_resource_probe(probe)
+    .with_server_factory(Arc::new(move |_| {
+        Box::new(LifecycleStage { shutdown_error })
+    }));
+    RetainedLlamaNodeAdapter::spawn_worker(sender, mailbox, snapshot, shutdown, worker)
+}
+
+fn lifecycle_event(endpoint: Endpoint, operation: LifecycleOperation, generation: u64) -> Event {
+    let agent = match &endpoint {
+        Endpoint::Node { agent, .. } => agent.clone(),
+        _ => unreachable!(),
+    };
+    let payload = match operation {
+        LifecycleOperation::Load => serde_json::to_vec(&LoadCommand {
+            load_generation: generation,
+            binary: "fixture".into(),
+            endpoint: "127.0.0.1:43190".into(),
+            plan: "model=test".into(),
+            args: Vec::new(),
+            environment: Vec::new(),
+            n_batch: 64,
+            n_ubatch: 64,
+            context_size: 512,
+            total_context_size: 512,
+            sequence_capacity: 1,
+            resource_profile: crate::v2::resource_profile::fixture_resource_profile(),
+            ready_timeout_ms: 100,
+            io_timeout_ms: 100,
+        })
+        .unwrap(),
+        LifecycleOperation::Unload => serde_json::to_vec(&UnloadCommand {
+            load_generation: generation,
+        })
+        .unwrap(),
+    };
+    Event {
+        envelope: Envelope {
+            protocol_version: 3,
+            event_id: format!("llama-lifecycle-{operation:?}-{generation}"),
+            correlation_id: format!("llama-lifecycle-correlation-{generation}"),
+            causation_id: None,
+            source: Endpoint::agent(agent.clone()),
+            target: endpoint,
+            return_route: Some(OuterEndpoint {
+                ingress_agent: agent,
+                channel: "llama-lifecycle-test".into(),
+                connection_generation: 1,
+            }),
+            class: EventClass::Control,
+            sequence: generation,
+            deadline_unix_ms: None,
+            adapter_kind: Some("llamacpp".into()),
+            payload_content_type: match operation {
+                LifecycleOperation::Load => LOAD_CONTENT_TYPE,
+                LifecycleOperation::Unload => UNLOAD_CONTENT_TYPE,
+            }
+            .into(),
+        },
+        payload,
+    }
+}
+
+fn take(adapter: &RetainedLlamaNodeAdapter) -> RetainedCompletion {
+    let mut output = None;
+    until(|| {
+        let Some(front) = adapter.peek_retained_completion() else {
+            return false;
+        };
+        match adapter.try_take_retained_matching(&front) {
+            OwnedPoll::Event(value) => {
+                output = Some(value);
+                true
+            }
+            OwnedPoll::Empty => false,
+            OwnedPoll::Closed => panic!("llama lifecycle mailbox closed"),
+        }
+    });
+    output.unwrap()
+}
+
+#[test]
+fn node_load_lifecycle_llama_worker_targets_agent_and_decodes_typed_terminals() {
+    let address = Address::tcp("127.0.0.1", 43189);
+    let endpoint = Endpoint::node(address.clone(), "llama-lifecycle", 1);
+    let adapter = lifecycle_adapter(endpoint.clone(), false, false);
+    let (source_publisher, source) = completion_mailbox_with_limits(4, 8, 64 << 20).unwrap();
+
+    let load = lifecycle_event(endpoint.clone(), LifecycleOperation::Load, 1);
+    let load_id = load.envelope.event_id.clone();
+    offer(&adapter, owned(&source_publisher, &source, load));
+    let loaded = take(&adapter);
+    assert_eq!(
+        loaded.event().envelope.target,
+        Endpoint::agent(address.clone())
+    );
+    assert_eq!(
+        loaded.event().envelope.causation_id.as_deref(),
+        Some(load_id.as_str())
+    );
+    assert_eq!(
+        adapter
+            .decode_lifecycle_completion(LifecycleOperation::Load, loaded.event())
+            .unwrap(),
+        AdapterLifecycleCompletion {
+            operation: LifecycleOperation::Load,
+            status: LifecycleStatus::Succeeded,
+            resource_state: ResourceState::Present,
+            first_error: None,
+            cleanup_error: None,
+        }
+    );
+    drop(loaded);
+
+    let unload = lifecycle_event(endpoint, LifecycleOperation::Unload, 1);
+    offer(&adapter, owned(&source_publisher, &source, unload));
+    let unloaded = take(&adapter);
+    assert_eq!(
+        adapter
+            .decode_lifecycle_completion(LifecycleOperation::Unload, unloaded.event())
+            .unwrap()
+            .resource_state,
+        ResourceState::Absent
+    );
+    drop(unloaded);
+    until(|| {
+        adapter
+            .retention_snapshot()
+            .is_some_and(|value| value.pending_requests.count == 0)
+    });
+    assert_eq!(source.storage_snapshot().retained_count, 0);
+}
+
+#[test]
+fn node_load_lifecycle_llama_cleanup_failure_is_failed_unknown() {
+    let address = Address::tcp("127.0.0.1", 43188);
+    let endpoint = Endpoint::node(address, "llama-cleanup-failure", 1);
+    let adapter = lifecycle_adapter(endpoint.clone(), true, false);
+    let (source_publisher, source) = completion_mailbox_with_limits(4, 8, 64 << 20).unwrap();
+    offer(
+        &adapter,
+        owned(
+            &source_publisher,
+            &source,
+            lifecycle_event(endpoint.clone(), LifecycleOperation::Load, 1),
+        ),
+    );
+    drop(take(&adapter));
+    offer(
+        &adapter,
+        owned(
+            &source_publisher,
+            &source,
+            lifecycle_event(endpoint, LifecycleOperation::Unload, 1),
+        ),
+    );
+    let failed = take(&adapter);
+    let completion = adapter
+        .decode_lifecycle_completion(LifecycleOperation::Unload, failed.event())
+        .unwrap();
+    assert_eq!(completion.status, LifecycleStatus::Failed);
+    assert_eq!(completion.resource_state, ResourceState::Unknown);
+    assert!(completion.cleanup_error.is_some());
+}
+
+#[test]
+fn node_load_lifecycle_llama_full_completion_retires_input_before_terminal() {
+    let address = Address::tcp("127.0.0.1", 43187);
+    let endpoint = Endpoint::node(address, "llama-full-completion", 1);
+    let adapter = lifecycle_adapter(endpoint.clone(), false, true);
+    let (source_publisher, source) = completion_mailbox_with_limits(4, 8, 64 << 20).unwrap();
+    offer(
+        &adapter,
+        owned(
+            &source_publisher,
+            &source,
+            lifecycle_event(endpoint, LifecycleOperation::Load, 1),
+        ),
+    );
+    until(|| adapter.snapshot() == "completion_queue_full:waiting");
+    assert_eq!(
+        source.storage_snapshot().retained_count,
+        0,
+        "supervised lifecycle input must retire before terminal publication"
+    );
+    let filler = take(&adapter);
+    assert_eq!(filler.event().envelope.event_id, "owned-lifecycle-filler");
+    drop(filler);
+    let loaded = take(&adapter);
+    assert_eq!(
+        adapter
+            .decode_lifecycle_completion(LifecycleOperation::Load, loaded.event())
+            .unwrap()
+            .resource_state,
+        ResourceState::Present
     );
 }
 

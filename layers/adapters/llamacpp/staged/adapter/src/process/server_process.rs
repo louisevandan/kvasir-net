@@ -77,6 +77,36 @@ impl<C: ServerControl> ServerProcess<C> {
         }
     }
 
+    /// Reclaim a server that failed before reaching or while leaving READY.
+    ///
+    /// This is an explicit cleanup attempt, unlike Drop. Success proves that
+    /// the concrete control boundary released its child/socket ownership;
+    /// failure keeps this object available to the caller as unknown state.
+    pub fn cleanup_failed(&mut self) -> Result<(), ProcessError> {
+        if !matches!(
+            self.state,
+            ProcessState::Starting
+                | ProcessState::AwaitingReady
+                | ProcessState::Stopping
+                | ProcessState::Crashed
+                | ProcessState::TimedOut
+        ) {
+            return Err(ProcessError::InvalidState(self.state));
+        }
+        self.state = ProcessState::Stopping;
+        match self.control.shutdown() {
+            Ok(()) => {
+                self.state = ProcessState::Exited;
+                self.ready = None;
+                Ok(())
+            }
+            Err(error) => {
+                self.state = ProcessState::Crashed;
+                Err(ProcessError::ShutdownFailed(error))
+            }
+        }
+    }
+
     pub fn request(&mut self, request: Frame) -> Result<Frame, ProcessError> {
         if self.state != ProcessState::Ready {
             return Err(ProcessError::InvalidState(self.state));

@@ -114,6 +114,31 @@ impl<C: ServerControl> LlamaLifecycle<C> {
         }
     }
 
+    /// Attempt cleanup after LOAD or UNLOAD entered a failed state.
+    /// The server remains owned on failure so callers cannot report absence.
+    pub fn cleanup_failed(&mut self) -> Result<(), LifecycleError> {
+        if self.state != LoadState::Failed {
+            return Err(LifecycleError::InvalidState(self.state));
+        }
+        self.state = LoadState::Unloading;
+        let result = self
+            .server
+            .as_mut()
+            .expect("failed lifecycle owns server")
+            .cleanup_failed();
+        match result {
+            Ok(()) => {
+                self.server = None;
+                self.state = LoadState::Unloaded;
+                Ok(())
+            }
+            Err(error) => {
+                self.state = LoadState::Failed;
+                Err(LifecycleError::Process(error))
+            }
+        }
+    }
+
     pub fn request(&mut self, request: Frame) -> Result<Frame, LifecycleError> {
         if self.state != LoadState::Loaded {
             return Err(LifecycleError::InvalidState(self.state));
@@ -203,6 +228,44 @@ mod tests {
             .load(Fake::default(), Duration::from_millis(10))
             .unwrap();
         assert_eq!(lifecycle.state(), LoadState::Loaded);
+    }
+
+    #[test]
+    fn failed_load_cleanup_separates_absent_from_unknown_resources() {
+        let mut cleaned = LlamaLifecycle::default();
+        assert!(
+            cleaned
+                .load(Fake { crash: true }, Duration::from_millis(10))
+                .is_err()
+        );
+        cleaned.cleanup_failed().unwrap();
+        assert_eq!(cleaned.state(), LoadState::Unloaded);
+        assert!(!cleaned.has_server());
+
+        struct CleanupFailure;
+        impl ServerControl for CleanupFailure {
+            fn start(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            fn wait_ready(
+                &mut self,
+                _: Instant,
+            ) -> Result<Option<crate::process::ReadyInfo>, String> {
+                Err("ready failed".into())
+            }
+            fn shutdown(&mut self) -> Result<(), String> {
+                Err("cleanup failed".into())
+            }
+        }
+        let mut unknown = LlamaLifecycle::default();
+        assert!(
+            unknown
+                .load(CleanupFailure, Duration::from_millis(10))
+                .is_err()
+        );
+        assert!(unknown.cleanup_failed().is_err());
+        assert_eq!(unknown.state(), LoadState::Failed);
+        assert!(unknown.has_server());
     }
 
     #[test]

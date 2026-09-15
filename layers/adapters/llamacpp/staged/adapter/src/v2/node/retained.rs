@@ -1,10 +1,12 @@
 //! Explicit owned adapter transport. Raw callers cannot consume its output.
 use super::*;
 use crate::v2::resource_profile::RuntimeResourceProbe;
+use crate::v2::{ERROR_CONTENT_TYPE, LOADED_CONTENT_TYPE, UNLOADED_CONTENT_TYPE};
 use p4_adapter::node_adapter::{
-    CompletionFront, CompletionMailbox, MailboxBuildError, OwnedPoll, RetainedCompletion,
-    RetainedNodeAdapter, RetainedOfferError, completion_mailbox_with_limits,
+    AdapterLifecycleCompletion, CompletionFront, CompletionMailbox, MailboxBuildError, OwnedPoll,
+    RetainedCompletion, RetainedNodeAdapter, RetainedOfferError, completion_mailbox_with_limits,
 };
+use p4_protocol::event::lifecycle::LifecycleOperation;
 
 pub struct RetainedLlamaNodeAdapter {
     inner: LlamaNodeAdapter,
@@ -163,6 +165,39 @@ impl RetainedNodeAdapter for RetainedLlamaNodeAdapter {
     }
     fn snapshot(&self) -> String {
         self.inner.snapshot()
+    }
+    fn decode_lifecycle_completion(
+        &self,
+        operation: LifecycleOperation,
+        event: &Event,
+    ) -> Result<AdapterLifecycleCompletion, String> {
+        let allowed = match operation {
+            LifecycleOperation::Load => {
+                event.envelope.payload_content_type == LOADED_CONTENT_TYPE
+                    || event.envelope.payload_content_type == ERROR_CONTENT_TYPE
+            }
+            LifecycleOperation::Unload => {
+                event.envelope.payload_content_type == UNLOADED_CONTENT_TYPE
+                    || event.envelope.payload_content_type == ERROR_CONTENT_TYPE
+            }
+        };
+        if !allowed {
+            return Err("unexpected llama lifecycle completion content type".into());
+        }
+        let value: serde_json::Value = serde_json::from_slice(&event.payload)
+            .map_err(|error| format!("invalid llama lifecycle result: {error}"))?;
+        let completion: AdapterLifecycleCompletion = serde_json::from_value(
+            value
+                .get("lifecycle")
+                .cloned()
+                .ok_or("llama lifecycle result omits typed completion")?,
+        )
+        .map_err(|error| format!("invalid llama typed lifecycle result: {error}"))?;
+        if completion.operation != operation {
+            return Err("llama lifecycle completion operation mismatch".into());
+        }
+        completion.validate().map_err(str::to_owned)?;
+        Ok(completion)
     }
 }
 

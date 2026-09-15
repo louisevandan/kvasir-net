@@ -1,6 +1,9 @@
 use p4_adapter::node_adapter::*;
 use p4_hf_adapter::{COMMAND, HfNodeAdapter};
-use p4_protocol::event::{Endpoint, Envelope, Event, EventClass};
+use p4_protocol::event::{
+    Endpoint, Envelope, Event, EventClass,
+    lifecycle::{LifecycleOperation, LifecycleStatus, ResourceState},
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -71,6 +74,15 @@ impl Harness {
         }
     }
     fn input(&self, meta: Value, body: &[u8]) -> RetainedCompletion {
+        self.input_from(meta, body, self.outer.clone())
+    }
+    fn agent(&self) -> Endpoint {
+        match &self.endpoint {
+            Endpoint::Node { agent, .. } => Endpoint::agent(agent.clone()),
+            _ => unreachable!(),
+        }
+    }
+    fn input_from(&self, meta: Value, body: &[u8], source: Endpoint) -> RetainedCompletion {
         let n = IDS.fetch_add(1, Ordering::Relaxed);
         let route = if let Endpoint::Outer(r) = &self.outer {
             r.clone()
@@ -83,7 +95,7 @@ impl Harness {
                 event_id: format!("input{n}"),
                 correlation_id: format!("corr{n}"),
                 causation_id: None,
-                source: self.outer.clone(),
+                source,
                 target: self.endpoint.clone(),
                 return_route: Some(route),
                 class: EventClass::Control,
@@ -102,7 +114,9 @@ impl Harness {
         }
     }
     fn send(&self, meta: Value, body: &[u8]) {
-        let mut c = self.input(meta, body);
+        self.offer(self.input(meta, body));
+    }
+    fn offer(&self, mut c: RetainedCompletion) {
         let end = Instant::now() + Duration::from_secs(5);
         loop {
             match self.adapter.try_offer_retained(c) {
@@ -130,21 +144,178 @@ impl Harness {
         self.send(meta, body);
         unpack(&self.take().event().payload)
     }
+    fn supervised(&self, meta: Value, body: &[u8]) -> RetainedCompletion {
+        let input = self.input_from(meta, body, self.agent());
+        let cause = input.event().envelope.event_id.clone();
+        self.offer(input);
+        let output = self.take();
+        assert_eq!(output.event().envelope.target, self.agent());
+        assert_eq!(
+            output.event().envelope.causation_id.as_deref(),
+            Some(cause.as_str())
+        );
+        output
+    }
     fn load(&self, mode: &str) -> Value {
+        self.call(self.load_meta(mode), &[])
+    }
+    fn load_meta(&self, mode: &str) -> Value {
         let _startup: Option<std::sync::MutexGuard<'static, ()>> = Some(
             FIXTURE_STARTUP
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()),
         );
         let nodes = json!([{"agent":"tcp://127.0.0.1:41999","node":"node","generation":1}]);
-        self.call(json!({"op":"load","generation":1,"nodes":nodes,"index":0,"launch":{
+        json!({"op":"load","generation":1,"nodes":nodes,"index":0,"launch":{
    "python":std::env::var("HF_TEST_PYTHON").unwrap_or("python".into()),"bundle":self.path.join("bundle.json"),
    "bundle_sha256":hash(&std::fs::read(self.path.join("bundle.json")).unwrap()),"config":{"mode":mode},
-   "identity":{"generation":1,"index":0,"nodes":nodes},"frame_bytes":1024,"scratch_bytes":4096,"stderr_bytes":1024,"timeout_ms":300}}),&[])
+   "identity":{"generation":1,"index":0,"nodes":nodes},"frame_bytes":1024,"scratch_bytes":4096,"stderr_bytes":1024,"timeout_ms":300}})
     }
     fn job(&self, kind: &str, serial: u64, epoch: u64) -> Value {
         json!({"job":{"generation":1,"epoch":epoch,"serial":serial,"kind":kind,"request":"A","issue":0,"position":0},"receipts":[]})
     }
+}
+
+#[test]
+fn node_load_lifecycle_hf_supervisor_preserves_outer_owner_and_typed_terminals() {
+    let h = Harness::new("normal");
+    let loaded = h.supervised(h.load_meta("normal"), &[]);
+    assert_eq!(
+        h.adapter
+            .decode_lifecycle_completion(LifecycleOperation::Load, loaded.event())
+            .unwrap(),
+        AdapterLifecycleCompletion {
+            operation: LifecycleOperation::Load,
+            status: LifecycleStatus::Succeeded,
+            resource_state: ResourceState::Present,
+            first_error: None,
+            cleanup_error: None,
+        }
+    );
+    drop(loaded);
+
+    // The supervisor receives lifecycle terminals, while inference continues
+    // to use the original OUTER route captured from the LOAD request.
+    assert_eq!(h.call(h.job("step", 1, 1), b"owned-by-outer")["ok"], true);
+    let busy = h.supervised(h.job("unload", 2, 1), &[]);
+    let busy_completion = h
+        .adapter
+        .decode_lifecycle_completion(LifecycleOperation::Unload, busy.event())
+        .unwrap();
+    assert_eq!(busy_completion.status, LifecycleStatus::Rejected);
+    assert_eq!(busy_completion.resource_state, ResourceState::Present);
+    drop(busy);
+
+    assert_eq!(h.call(h.job("cancel", 2, 1), b"")["ok"], true);
+    let unloaded = h.supervised(h.job("unload", 3, 1), &[]);
+    assert_eq!(
+        h.adapter
+            .decode_lifecycle_completion(LifecycleOperation::Unload, unloaded.event())
+            .unwrap()
+            .resource_state,
+        ResourceState::Absent
+    );
+}
+
+#[test]
+fn node_load_lifecycle_hf_failed_start_and_cleanup_failure_are_not_success() {
+    let failed = Harness::new("ready_mismatch");
+    let result = failed.supervised(failed.load_meta("ready_mismatch"), &[]);
+    let completion = failed
+        .adapter
+        .decode_lifecycle_completion(LifecycleOperation::Load, result.event())
+        .unwrap();
+    assert_eq!(completion.status, LifecycleStatus::Failed);
+    assert_eq!(completion.resource_state, ResourceState::Absent);
+    assert!(completion.first_error.is_some());
+    drop(result);
+
+    let uncertain = Harness::new("unload_exit_error");
+    let loaded = uncertain.supervised(uncertain.load_meta("unload_exit_error"), &[]);
+    drop(loaded);
+    let result = uncertain.supervised(uncertain.job("unload", 1, 1), &[]);
+    let completion = uncertain
+        .adapter
+        .decode_lifecycle_completion(LifecycleOperation::Unload, result.event())
+        .unwrap();
+    assert_eq!(completion.status, LifecycleStatus::Failed);
+    assert_eq!(completion.resource_state, ResourceState::Unknown);
+    assert!(completion.cleanup_error.is_some());
+}
+
+#[test]
+fn node_load_lifecycle_hf_full_completion_rejects_unload_before_native_effect() {
+    let h = Harness::new("normal");
+    drop(h.supervised(h.load_meta("normal"), &[]));
+    h.send(h.job("cache", 1, 1), b"");
+    let settled = Instant::now() + Duration::from_secs(3);
+    while h
+        .adapter
+        .completion_storage_snapshot()
+        .is_none_or(|storage| storage.queued_count != 1)
+        || h.rx.storage_snapshot().retained_count != 0
+    {
+        assert!(Instant::now() < settled, "state {}", h.adapter.snapshot());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let unload = h.input_from(h.job("unload", 1, 1), &[], h.agent());
+    h.offer(unload);
+    let end = Instant::now() + Duration::from_secs(3);
+    while h.adapter.snapshot() != "busy" {
+        assert!(Instant::now() < end, "state {}", h.adapter.snapshot());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        h.rx.storage_snapshot().retained_count,
+        1,
+        "reservation saturation retains the unexecuted lifecycle input"
+    );
+
+    let held = h.take();
+    let terminal = h.take();
+    let completion = h
+        .adapter
+        .decode_lifecycle_completion(LifecycleOperation::Unload, terminal.event())
+        .unwrap();
+    assert_eq!(completion.status, LifecycleStatus::Rejected);
+    assert_eq!(completion.resource_state, ResourceState::Present);
+    assert_eq!(h.rx.storage_snapshot().retained_count, 0);
+
+    drop(held);
+    drop(terminal);
+    let unloaded = h.supervised(h.job("unload", 1, 1), &[]);
+    assert_eq!(
+        h.adapter
+            .decode_lifecycle_completion(LifecycleOperation::Unload, unloaded.event())
+            .unwrap()
+            .resource_state,
+        ResourceState::Absent
+    );
+}
+
+#[test]
+fn node_load_lifecycle_hf_wrapper_crosses_python_frame_without_losing_agent_terminal() {
+    let h = Harness::new("lifecycle_frame");
+    drop(h.supervised(h.load_meta("lifecycle_frame"), &[]));
+
+    let unloaded = h.supervised(h.job("unload", 1, 1), &[]);
+    assert!(
+        unloaded.event().payload.len() > 1024,
+        "fixture must cross the negotiated Python frame only after adding the lifecycle wrapper"
+    );
+    assert_eq!(
+        h.adapter
+            .decode_lifecycle_completion(LifecycleOperation::Unload, unloaded.event())
+            .unwrap(),
+        AdapterLifecycleCompletion {
+            operation: LifecycleOperation::Unload,
+            status: LifecycleStatus::Succeeded,
+            resource_state: ResourceState::Absent,
+            first_error: None,
+            cleanup_error: None,
+        }
+    );
 }
 
 #[test]
@@ -233,6 +404,13 @@ fn pipe_faults_are_uncertain_and_facade_survives_for_abort() {
         let reply = h.call(h.job("step", 1, 1), b"effect");
         assert_eq!(reply["ok"], false, "{mode}");
         assert!(!reply["uncertain"].is_null(), "{mode}: {reply}");
+        if matches!(
+            mode,
+            "partial" | "magic" | "version" | "reserved" | "length" | "identity"
+        ) {
+            let native = h.adapter.retention_snapshot().unwrap().native_responses;
+            assert!(native.count > 0 && native.bytes > 0, "{mode}: {native:?}");
+        }
         assert_eq!(h.call(h.job("step", 2, 1), b"effect")["ok"], false);
         let mut abort = h.job("abort", 0, 0);
         abort["job"]["request"] = json!("");

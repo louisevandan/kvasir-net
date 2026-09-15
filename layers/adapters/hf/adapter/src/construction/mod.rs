@@ -28,6 +28,7 @@ pub struct HfNodeAdapter {
     pub(crate) state: Arc<Mutex<String>>,
     pub(crate) count: Arc<AtomicUsize>,
     pub(crate) bytes: Arc<AtomicUsize>,
+    pub(crate) native_response_bytes: Arc<AtomicUsize>,
     pub(crate) limit: usize,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) notify: Arc<Notify>,
@@ -53,8 +54,14 @@ impl HfNodeAdapter {
         let state = Arc::new(Mutex::new("empty".into()));
         let stop = Arc::new(AtomicBool::new(false));
         let notify = Arc::new(Notify::new());
-        let (s, flag, wake, storage) =
-            (state.clone(), stop.clone(), notify.clone(), mailbox.clone());
+        let native_response_bytes = Arc::new(AtomicUsize::new(0));
+        let (s, flag, wake, storage, native) = (
+            state.clone(),
+            stop.clone(),
+            notify.clone(),
+            mailbox.clone(),
+            native_response_bytes.clone(),
+        );
         let thread = std::thread::Builder::new()
             .name("p4-hf-retained".into())
             .spawn(move || {
@@ -63,7 +70,7 @@ impl HfNodeAdapter {
                     .build()
                     .unwrap();
                 runtime.block_on(crate::lifecycle::run(
-                    endpoint, receiver, publisher, storage, s, flag, wake,
+                    endpoint, receiver, publisher, storage, s, flag, wake, native,
                 ));
             })
             .map_err(|e| e.to_string())?;
@@ -73,6 +80,7 @@ impl HfNodeAdapter {
             state,
             count: Arc::new(AtomicUsize::new(0)),
             bytes: Arc::new(AtomicUsize::new(0)),
+            native_response_bytes,
             limit: retained_bytes,
             stop,
             notify,

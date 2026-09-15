@@ -65,20 +65,35 @@ impl Worker {
             .collect();
         launch.ready_timeout = Duration::from_millis(command.ready_timeout_ms);
         launch.io_timeout = Duration::from_millis(command.io_timeout_ms);
+        #[cfg(test)]
+        let control = self.server_factory.as_ref().map_or_else(
+            || {
+                Box::new(ProcessServerControl::new(launch.clone()))
+                    as Box<dyn crate::process::ServerControl + Send>
+            },
+            |factory| factory(launch.clone()),
+        );
+        #[cfg(not(test))]
+        let control = Box::new(ProcessServerControl::new(launch));
+        self.lifecycle_cleanup_error = None;
         self.set_snapshot("loading");
-        with_host_load_gate(|| {
-            self.lifecycle.load(
-                Box::new(ProcessServerControl::new(launch)),
-                Duration::from_millis(command.ready_timeout_ms),
-            )
-        })
-        // Reaching READY includes process start, plan validation, model tensor
-        // loading, context construction and capability negotiation. Do not
-        // collapse every failure in that sequence into a model-load claim.
-        .map_err(|error| format!("stage runtime initialization failed: {error:?}"))?;
+        if let Err(error) = with_host_load_gate(|| {
+            self.lifecycle
+                .load(control, Duration::from_millis(command.ready_timeout_ms))
+        }) {
+            // Reaching READY includes process start, plan validation, model tensor
+            // loading, context construction and capability negotiation. Cleanup
+            // is attempted here so the terminal distinguishes absent from unknown.
+            let detail = format!("stage runtime initialization failed: {error:?}");
+            if let Err(cleanup) = self.lifecycle.cleanup_failed() {
+                self.lifecycle_cleanup_error = Some(format!("{cleanup:?}"));
+            }
+            return Err(detail);
+        }
         if !self.lifecycle.physical_batch_capable() {
-            let _ = self.lifecycle.unload();
-            return Err("stage server did not negotiate physical_batch=1".into());
+            return Err(self.cleanup_loaded_after_load_failure(
+                "stage server did not negotiate physical_batch=1".into(),
+            ));
         }
         let ready = self
             .lifecycle
@@ -86,15 +101,13 @@ impl Worker {
             .cloned()
             .ok_or_else(|| "loaded stage omitted readiness capabilities".to_owned())?;
         if let Err(detail) = validate_ready_capacities(&command, &ready) {
-            let _ = self.lifecycle.unload();
-            return Err(detail);
+            return Err(self.cleanup_loaded_after_load_failure(detail));
         }
         if let Err(detail) = command
             .resource_profile
             .validate_ready_bound(ready.max_physical_result_bytes)
         {
-            let _ = self.lifecycle.unload();
-            return Err(detail);
+            return Err(self.cleanup_loaded_after_load_failure(detail));
         }
         self.bind_loaded_identity(command.load_generation)?;
         self.state.batch_capacity = command.n_batch;
@@ -120,33 +133,54 @@ impl Worker {
         self.effects.clear();
         self.effects_fenced = false;
         self.set_snapshot("loaded");
+        let mut result = serde_json::json!({
+            "state":"loaded",
+            "load_generation":command.load_generation,
+            "physical_identity_revision":ready.physical_identity_revision,
+            "n_batch":ready.n_batch,
+            "n_ubatch":ready.n_ubatch,
+            "n_ctx":ready.n_ctx,
+            "n_seq_max":ready.n_seq_max,
+            "equal_sequence_ubatch":ready.equal_sequence_ubatch,
+            "max_atomic_sequences":ready.max_atomic_sequences,
+            "atomic_batch_exclusive":ready.atomic_batch_exclusive,
+            "max_physical_result_bytes":ready.max_physical_result_bytes,
+            "resource_profile":command.resource_profile,
+            "upstream_commit":ready.upstream_commit,
+            "patch_set":ready.patch_set,
+            "backend_inventory":ready.backend_inventory,
+            "stage_wire_abi":ready.stage_wire_abi,
+            "per_sequence_context":command.context_size,
+            "reserved_context":reserved_context
+        });
+        if let Some(target) = lifecycle_agent_target(event, &self.endpoint) {
+            result["lifecycle"] = serde_json::to_value(AdapterLifecycleCompletion {
+                operation: LifecycleOperation::Load,
+                status: LifecycleStatus::Succeeded,
+                resource_state: ResourceState::Present,
+                first_error: None,
+                cleanup_error: None,
+            })
+            .map_err(|error| format!("lifecycle completion serialization failed: {error}"))?;
+            return self
+                .queue_lifecycle_json(event, target, LOADED_CONTENT_TYPE, &result)
+                .map_err(|_| "completion queue is unavailable".to_owned());
+        }
         self.emit_json(
-            &event,
-            reply_target(&event)?,
+            event,
+            reply_target(event)?,
             EventClass::Telemetry,
             LOADED_CONTENT_TYPE,
-            &serde_json::json!({
-                "state":"loaded",
-                "load_generation":command.load_generation,
-                "physical_identity_revision":ready.physical_identity_revision,
-                "n_batch":ready.n_batch,
-                "n_ubatch":ready.n_ubatch,
-                "n_ctx":ready.n_ctx,
-                "n_seq_max":ready.n_seq_max,
-                "equal_sequence_ubatch":ready.equal_sequence_ubatch,
-                "max_atomic_sequences":ready.max_atomic_sequences,
-                "atomic_batch_exclusive":ready.atomic_batch_exclusive,
-                "max_physical_result_bytes":ready.max_physical_result_bytes,
-                "resource_profile":command.resource_profile,
-                "upstream_commit":ready.upstream_commit,
-                "patch_set":ready.patch_set,
-                "backend_inventory":ready.backend_inventory,
-                "stage_wire_abi":ready.stage_wire_abi,
-                "per_sequence_context":command.context_size,
-                "reserved_context":reserved_context
-            }),
+            &result,
         )
         .map_err(|_| "completion queue is full".to_owned())
+    }
+
+    fn cleanup_loaded_after_load_failure(&mut self, detail: String) -> String {
+        if let Err(cleanup) = self.lifecycle.unload() {
+            self.lifecycle_cleanup_error = Some(format!("{cleanup:?}"));
+        }
+        detail
     }
 
     // This is the production LOAD-to-native boundary, not a readiness-only
@@ -160,7 +194,9 @@ impl Worker {
             .ready_info()
             .is_none_or(|ready| ready.physical_identity_revision != 1)
         {
-            let _ = self.lifecycle.unload();
+            if let Err(cleanup) = self.lifecycle.unload() {
+                self.lifecycle_cleanup_error = Some(format!("{cleanup:?}"));
+            }
             return Err("stage omitted physical_identity_revision=1".into());
         }
         // Burn the attempted generation even if the bind reply is lost.
@@ -170,7 +206,9 @@ impl Worker {
             .stage_request(Operation::BindLoad, Operation::BindLoad, bind.clone())
             .map(super::retention::NativeResponse::into_vec);
         if acknowledgement.as_ref() != Ok(&bind) {
-            let _ = self.lifecycle.unload();
+            if let Err(cleanup) = self.lifecycle.unload() {
+                self.lifecycle_cleanup_error = Some(format!("{cleanup:?}"));
+            }
             return Err("native load identity binding failed".into());
         }
         Ok(())
@@ -188,13 +226,16 @@ impl Worker {
         // locally accepted work, including downstream KV with no head request
         // record. The worker serializes this preflight with native execution.
         self.require_idle_unload()?;
+        self.lifecycle_cleanup_error = None;
         self.set_snapshot("unloading");
         if let Err(error) = self.lifecycle.unload() {
             // Native cleanup may have partially happened. Unlike a busy
             // preflight rejection, this cannot resume the old loaded session
             // or acknowledge queued input. handle() reports and exits fenced.
             self.effects_fenced = true;
-            return Err(format!("stage unload failed: {error:?}"));
+            let detail = format!("stage unload failed: {error:?}");
+            self.lifecycle_cleanup_error = Some(detail.clone());
+            return Err(detail);
         }
         self.state.sessions.clear();
         self.service_budget.clear();
@@ -221,14 +262,63 @@ impl Worker {
         self.effects.clear();
         self.effects_fenced = false;
         self.set_snapshot("unloaded");
+        let mut result = serde_json::json!({
+            "state":"unloaded",
+            "load_generation":command.load_generation
+        });
+        if let Some(target) = lifecycle_agent_target(event, &self.endpoint) {
+            result["lifecycle"] = serde_json::to_value(AdapterLifecycleCompletion {
+                operation: LifecycleOperation::Unload,
+                status: LifecycleStatus::Succeeded,
+                resource_state: ResourceState::Absent,
+                first_error: None,
+                cleanup_error: None,
+            })
+            .map_err(|error| format!("lifecycle completion serialization failed: {error}"))?;
+            return self
+                .queue_lifecycle_json(event, target, UNLOADED_CONTENT_TYPE, &result)
+                .map_err(|_| "completion queue is unavailable".to_owned());
+        }
         self.emit_json(
-            &event,
-            reply_target(&event)?,
+            event,
+            reply_target(event)?,
             EventClass::Telemetry,
             UNLOADED_CONTENT_TYPE,
-            &serde_json::json!({"state":"unloaded","load_generation":command.load_generation}),
+            &result,
         )
         .map_err(|_| "completion queue is full".to_owned())
+    }
+
+    pub(super) fn lifecycle_failure(
+        &self,
+        operation: LifecycleOperation,
+        detail: String,
+    ) -> AdapterLifecycleCompletion {
+        let (status, resource_state) = match (operation, self.lifecycle.state()) {
+            (LifecycleOperation::Load, crate::lifecycle::LoadState::Empty) => {
+                (LifecycleStatus::Rejected, ResourceState::Absent)
+            }
+            (LifecycleOperation::Load, crate::lifecycle::LoadState::Unloaded) => {
+                (LifecycleStatus::Failed, ResourceState::Absent)
+            }
+            (LifecycleOperation::Load, crate::lifecycle::LoadState::Loaded) => {
+                (LifecycleStatus::Failed, ResourceState::Present)
+            }
+            (LifecycleOperation::Unload, crate::lifecycle::LoadState::Loaded) => {
+                (LifecycleStatus::Rejected, ResourceState::Present)
+            }
+            (LifecycleOperation::Unload, crate::lifecycle::LoadState::Unloaded) => {
+                (LifecycleStatus::Failed, ResourceState::Absent)
+            }
+            _ => (LifecycleStatus::Failed, ResourceState::Unknown),
+        };
+        AdapterLifecycleCompletion {
+            operation,
+            status,
+            resource_state,
+            first_error: Some(detail),
+            cleanup_error: self.lifecycle_cleanup_error.clone(),
+        }
     }
 
     pub(super) fn session(&mut self, event: impl std::borrow::Borrow<Event>) -> Result<(), String> {

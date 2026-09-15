@@ -1,6 +1,6 @@
 # LOAD·UNLOAD에 노드 수명을 통합하는 구현계획
 
-작성: 2026-09-15 KST. 지위: 사용자 합의를 고정한 **미구현 계획·새 세션 인수인계**.
+작성: 2026-09-15 KST. 지위: 사용자 합의를 고정한 **활성 구현계획, M2 완료**.
 코드 감사 기준 HEAD: `c16cbfa2abe8e7bc0bd7ce4f3e4c568f6a6c0569`.
 계획 작성 시 공통 adapter retention·transport·INSPECT·llama/HF에 별도 미커밋 변경이 있었다.
 현재 구현·시험 통과를 뜻하지 않는다. 전체 실행 순서와 진행 상태는
@@ -188,6 +188,13 @@ ignored였고 owner 제거 변이가 실제 TCP 시험에 검출됐다.
 [M1 검증 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)를 따른다. 실제 llama.cpp/HF worker가
 typed 완료를 내고 새 node 수명 경로를 쓰게 하는 작업은 M2다.
 
+**2026-09-16 M2 완료:** llama.cpp/HF 실제 retained worker가 supervisor Agent의 LOAD/UNLOAD를
+typed terminal로 반환한다. native/child cleanup 상태, busy 거부, input/native response retention,
+completion 포화와 HF Python frame을 넘는 wrapper 여유를 실제 worker fixture로 검증했다. workspace
+feature off/on은 각각 1,523 통과, 0 실패, 실제 모델 시험 7개 ignored였고 최종 소스 독립 변이 3개를
+검출했다. [M2 검증 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)를 따른다.
+다음 단계는 Rust/HF OUTER와 실기 호출자를 새 수명 명령으로 이관하는 M3다.
+
 M1의 실행 전 검토와 최대 3라운드 입력은
 [M1 결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.md)에 봉인한다. 이 단계는
 [결정론적 실행 장부](deterministic-execution-register.md)의 `L001`~`L013`을 재사용한다. 새 실패가
@@ -199,8 +206,8 @@ M1의 실행 전 검토와 최대 3라운드 입력은
 | --- | --- | --- |
 | M0 | **DONE** — 최신 HEAD/dirty 감사, 실제 호출자 전수 검색, §8 반례와 수명 소유권 설계 | [M0 보고](../tests/reports/node-load-lifecycle/20260916_014500.md)에 중복·실패·완료 응답·barrier·byte 소유권 매핑 |
 | M1 | **DONE** — 공통 codec·typed adapter 완료·비동기 agent supervisor·neutral 실제 TCP | [M1 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)에 NL01·NL02·NL04·NL07·NL10과 제거 변이 기록 |
-| M2 | **NEXT** — llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | 두 adapter에서 busy·cleanup 실패·응답 포화·정상 제거 통과 |
-| M3 | Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | 새 명령만으로 생성→정상 응답→해제, 구형 명령 부작용 없는 거부 |
+| M2 | **DONE** — llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | [M2 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)에 busy·cleanup 실패·응답/frame 포화·정상 제거·변이3종 기록 |
+| M3 | **NEXT** — Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | 새 명령만으로 생성→정상 응답→해제, 구형 명령 부작용 없는 거부 |
 | M4 | 필수 회귀·독립 제거 변이·두 adapter 실기, 소유 문서 갱신 | 최종 소스 결속·시험별 판정·미수용 항목 기록 |
 
 각 단계의 복원 가능한 지점에서 저장소 커밋 규칙을 따른다. 다른 작성자를 멈추고 전체 비무시 변경을

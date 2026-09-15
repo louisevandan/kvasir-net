@@ -65,7 +65,12 @@ while True:
     elif kind in ("epoch", "unload") and active:
         write({"job":job,"ok":False,"disposition":"rejected","error":"live state"})
         continue
-    write({"job":job,"ok":True,"active":len(active),"report":{"calls":calls,"active":len(active)}},
+    report = {"calls":calls,"active":len(active)}
+    if mode == "lifecycle_frame" and kind == "unload":
+        report["padding"] = "x" * 700
+    write({"job":job,"ok":True,"active":len(active),"report":report},
           body if kind == "step" else b"")
     if kind == "unload":
+        if mode == "unload_exit_error":
+            sys.exit(17)
         break

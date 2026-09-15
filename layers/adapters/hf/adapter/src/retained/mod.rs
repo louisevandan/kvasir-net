@@ -1,5 +1,6 @@
 use crate::construction::{HfNodeAdapter, Input};
 use p4_adapter::node_adapter::*;
+use p4_protocol::event::lifecycle::LifecycleOperation;
 use std::{
     sync::atomic::Ordering,
     task::{Context, Poll},
@@ -78,7 +79,35 @@ impl RetainedNodeAdapter for HfNodeAdapter {
                 count: self.count.load(Ordering::Acquire),
                 bytes: self.bytes.load(Ordering::Acquire),
             },
-            native_responses: AdapterRetainedStorage::default(),
+            native_responses: AdapterRetainedStorage {
+                count: usize::from(self.native_response_bytes.load(Ordering::Acquire) != 0),
+                bytes: self.native_response_bytes.load(Ordering::Acquire),
+            },
         })
+    }
+    fn decode_lifecycle_completion(
+        &self,
+        operation: LifecycleOperation,
+        event: &p4_protocol::event::Event,
+    ) -> Result<AdapterLifecycleCompletion, String> {
+        if event.envelope.payload_content_type != crate::ipc::RESULT {
+            return Err("unexpected HF lifecycle completion content type".into());
+        }
+        let (metadata, body) = crate::ipc::unpack(&event.payload)?;
+        if !body.is_empty() {
+            return Err("HF lifecycle completion carries an unexpected tensor body".into());
+        }
+        let completion: AdapterLifecycleCompletion = serde_json::from_value(
+            metadata
+                .get("lifecycle")
+                .cloned()
+                .ok_or("HF lifecycle result omits typed completion")?,
+        )
+        .map_err(|error| format!("invalid HF typed lifecycle result: {error}"))?;
+        if completion.operation != operation {
+            return Err("HF lifecycle completion operation mismatch".into());
+        }
+        completion.validate().map_err(str::to_owned)?;
+        Ok(completion)
     }
 }

@@ -121,6 +121,38 @@ fn stage_socket_identity_rejects_a_tcp_self_connection() {
     ));
 }
 
+#[test]
+fn failed_start_cleanup_proves_absence_only_after_control_shutdown() {
+    let mut process = ServerProcess::new(Fake {
+        crash_on_ready: true,
+        ..Fake::default()
+    });
+    assert!(
+        process
+            .start_and_wait_ready(Duration::from_millis(10))
+            .is_err()
+    );
+    process.cleanup_failed().unwrap();
+    assert_eq!(process.state(), ProcessState::Exited);
+    assert!(process.ready_info().is_none());
+
+    let mut failed = ServerProcess::new(Fake {
+        crash_on_ready: true,
+        shutdown_error: true,
+        ..Fake::default()
+    });
+    assert!(
+        failed
+            .start_and_wait_ready(Duration::from_millis(10))
+            .is_err()
+    );
+    assert!(matches!(
+        failed.cleanup_failed(),
+        Err(ProcessError::ShutdownFailed(_))
+    ));
+    assert_eq!(failed.state(), ProcessState::Crashed);
+}
+
 fn wait_for_concrete_ready(control: &mut ProcessServerControl, timeout: Duration) -> ReadyInfo {
     let deadline = Instant::now() + timeout;
     loop {

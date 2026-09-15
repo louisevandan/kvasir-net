@@ -4,10 +4,12 @@ use crate::lifecycle::LlamaLifecycle;
 use crate::process::{ProcessServerControl, ServerLaunch};
 use crate::{Frame, Operation};
 use p4_adapter::node_adapter::{
-    CompletionPublisher, CompletionReservation, CompletionReservationGroup, GroupReserveError,
-    PublishError, ReservedPublishReason, RetainedCompletion, retained_event_bytes,
+    AdapterLifecycleCompletion, CompletionPublisher, CompletionReservation,
+    CompletionReservationGroup, GroupReserveError, PublishError, ReservedPublishReason,
+    RetainedCompletion, retained_event_bytes,
 };
 use p4_protocol::Address;
+use p4_protocol::event::lifecycle::{LifecycleOperation, LifecycleStatus, ResourceState};
 use p4_protocol::event::{Endpoint, Event, EventClass};
 use serde::Serialize;
 use std::ffi::OsString;
@@ -25,6 +27,20 @@ const COMPLETION_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 /// Actor service bound, not a throughput-tuned batch width or an environment
 /// knob. Count the event received by blocking recv in this same turn budget.
 const INGRESS_EVENT_QUANTUM: usize = 32;
+
+fn lifecycle_agent_target(event: &Event, endpoint: &Endpoint) -> Option<Endpoint> {
+    match (&event.envelope.source, endpoint) {
+        (
+            Endpoint::Agent(source),
+            Endpoint::Node {
+                agent: node_agent, ..
+            },
+        ) if source == node_agent && &event.envelope.target == endpoint => {
+            Some(event.envelope.source.clone())
+        }
+        _ => None,
+    }
+}
 
 mod ack_service;
 mod coalescing;
@@ -139,6 +155,9 @@ pub(super) struct BatchPacing {
 
 #[cfg(test)]
 type IssueObserver = Arc<dyn Fn(&'static str, &AdapterState) + Send + Sync>;
+#[cfg(test)]
+type ServerFactory =
+    Arc<dyn Fn(ServerLaunch) -> Box<dyn crate::process::ServerControl + Send> + Send + Sync>;
 
 pub struct Worker {
     endpoint: Endpoint,
@@ -148,6 +167,7 @@ pub struct Worker {
     snapshot: Arc<Mutex<String>>,
     retention: retention::RetentionTracker,
     lifecycle: LlamaLifecycle<Box<dyn crate::process::ServerControl + Send>>,
+    lifecycle_cleanup_error: Option<String>,
     scheduler: Scheduler,
     state: AdapterState,
     effects: std::collections::VecDeque<effects::CommittedEffect>,
@@ -173,6 +193,8 @@ pub struct Worker {
     shutting_down: Arc<AtomicBool>,
     #[cfg(test)]
     issue_observer: Option<IssueObserver>,
+    #[cfg(test)]
+    server_factory: Option<ServerFactory>,
 }
 
 impl Worker {
@@ -208,6 +230,7 @@ impl Worker {
             snapshot,
             retention: retention::RetentionTracker::default(),
             lifecycle: LlamaLifecycle::default(),
+            lifecycle_cleanup_error: None,
             scheduler: Scheduler::new(),
             state: AdapterState::default(),
             effects: std::collections::VecDeque::new(),
@@ -226,6 +249,8 @@ impl Worker {
             shutting_down,
             #[cfg(test)]
             issue_observer: None,
+            #[cfg(test)]
+            server_factory: None,
         }
     }
 
@@ -234,6 +259,12 @@ impl Worker {
         probe: super::super::resource_profile::RuntimeResourceProbe,
     ) -> Self {
         self.runtime_resource_probe = Some(probe);
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_server_factory(mut self, factory: ServerFactory) -> Self {
+        self.server_factory = Some(factory);
         self
     }
 
@@ -357,6 +388,28 @@ impl Worker {
         self.run_to_exit()
     }
 
+    fn handle_received_input(&mut self, input: WorkerInput) -> Result<(), ()> {
+        let supervised_lifecycle = matches!(
+            input.event().envelope.payload_content_type.as_str(),
+            LOAD_CONTENT_TYPE | UNLOAD_CONTENT_TYPE
+        ) && lifecycle_agent_target(input.event(), &self.endpoint)
+            .is_some();
+        let result = self.handle(input.event());
+        self.sync_pending_retention();
+        if result.is_err() {
+            self.failed_input = Some(input);
+            return Err(());
+        }
+        if supervised_lifecycle {
+            // The node input claim must retire before the terminal becomes
+            // observable to the agent supervisor. Both the blocking first
+            // receive and the bounded nonblocking drain use this one path.
+            drop(input);
+            self.flush_owned_lifecycle_terminal()?;
+        }
+        Ok(())
+    }
+
     fn run_to_exit(mut self) -> WorkerRemainder {
         let mut failed = false;
         let mut issued = false;
@@ -391,10 +444,7 @@ impl Worker {
                     break "shutdown_requested";
                 }
                 if let Some(input) = input {
-                    let result = self.handle(input.event());
-                    self.sync_pending_retention();
-                    if result.is_err() {
-                        self.failed_input = Some(input);
+                    if self.handle_received_input(input).is_err() {
                         failed = true;
                         break "failed";
                     }
@@ -412,10 +462,7 @@ impl Worker {
                     .unwrap_or_else(|| self.receiver.try_recv());
                 match input {
                     Ok(input) => {
-                        let result = self.handle(input.event());
-                        self.sync_pending_retention();
-                        if result.is_err() {
-                            self.failed_input = Some(input);
+                        if self.handle_received_input(input).is_err() {
                             failed = true;
                             break 'worker "failed";
                         }
@@ -464,6 +511,14 @@ impl Worker {
             return Err(());
         }
         let content_type = event.envelope.payload_content_type.as_str();
+        let lifecycle_operation = match content_type {
+            LOAD_CONTENT_TYPE => Some(LifecycleOperation::Load),
+            UNLOAD_CONTENT_TYPE => Some(LifecycleOperation::Unload),
+            _ => None,
+        };
+        let lifecycle_target = lifecycle_operation.and_then(|operation| {
+            lifecycle_agent_target(event, &self.endpoint).map(|target| (operation, target))
+        });
         let result = match content_type {
             LOAD_CONTENT_TYPE => self.load(event),
             UNLOAD_CONTENT_TYPE => self.unload(event),
@@ -482,7 +537,16 @@ impl Worker {
         };
         if let Err(detail) = result {
             self.set_snapshot(&format!("failed:{detail}"));
-            self.emit_error(event, "LLAMA_ADAPTER_EVENT_REJECTED", detail)?;
+            if let Some((operation, target)) = lifecycle_target.as_ref() {
+                let completion = self.lifecycle_failure(*operation, detail.clone());
+                self.emit_lifecycle_error(event, target.clone(), detail, &completion)?;
+            } else {
+                self.emit_error(event, "LLAMA_ADAPTER_EVENT_REJECTED", detail)?;
+            }
+        }
+        if lifecycle_target.is_some() {
+            self.enqueue_deferred_ack_error()?;
+            return Ok(());
         }
         if self.effects_fenced {
             return Err(());

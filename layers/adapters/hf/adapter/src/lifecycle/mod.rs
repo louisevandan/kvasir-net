@@ -6,17 +6,27 @@ use crate::{
 use p4_adapter::node_adapter::*;
 use p4_protocol::{
     Address,
-    event::{Endpoint, Event, EventClass},
+    event::{
+        Endpoint, Event, EventClass,
+        lifecycle::{LifecycleOperation, LifecycleStatus, ResourceState},
+    },
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Wake, Waker},
 };
+
+// The Python frame bound covers the opaque worker result. A supervised
+// lifecycle result adds one fixed-shape typed completion before publication.
+// Reserve that wrapper before the worker can have effects so a valid worker
+// frame cannot lose its agent terminal only because the wrapper crossed the
+// Python frame boundary.
+const LIFECYCLE_COMPLETION_OVERHEAD_BYTES: usize = 512;
 use tokio::sync::{Notify, mpsc};
 
 #[derive(Clone, Deserialize)]
@@ -60,6 +70,40 @@ struct State {
     cleanup_error: Option<String>,
 }
 
+fn lifecycle_supervisor(
+    endpoint: &Endpoint,
+    event: &Event,
+    metadata: &Value,
+) -> Option<(Endpoint, LifecycleOperation)> {
+    let operation = if metadata["op"] == "load" {
+        LifecycleOperation::Load
+    } else if metadata["job"]["kind"] == "unload" {
+        LifecycleOperation::Unload
+    } else {
+        return None;
+    };
+    match (&event.envelope.source, endpoint) {
+        (
+            Endpoint::Agent(source),
+            Endpoint::Node {
+                agent: node_agent, ..
+            },
+        ) if source == node_agent && &event.envelope.target == endpoint => {
+            Some((event.envelope.source.clone(), operation))
+        }
+        _ => None,
+    }
+}
+
+fn outer_owner(event: &Event) -> Result<Endpoint, String> {
+    event
+        .envelope
+        .return_route
+        .clone()
+        .map(Endpoint::Outer)
+        .ok_or_else(|| "HF command requires an OUTER return route".into())
+}
+
 impl State {
     async fn command(
         &mut self,
@@ -74,6 +118,8 @@ impl State {
         {
             return Err("wrong adapter/target/content type".into());
         }
+        let supervisor = lifecycle_supervisor(endpoint, event, &meta);
+        let owner = outer_owner(event)?;
         if meta["op"] == "load" {
             let load: Load = serde_json::from_value(meta).map_err(|e| e.to_string())?;
             if load.op != "load"
@@ -84,13 +130,7 @@ impl State {
                 || load.nodes.is_empty()
                 || load.nodes.len() > 16
                 || load.index >= load.nodes.len()
-                || !matches!(event.envelope.source, Endpoint::Outer(_))
-                || event
-                    .envelope
-                    .return_route
-                    .as_ref()
-                    .map(|r| Endpoint::Outer(r.clone()))
-                    != Some(event.envelope.source.clone())
+                || (supervisor.is_none() && event.envelope.source != owner)
             {
                 return Err("invalid/duplicate/stale LOAD".into());
             }
@@ -115,7 +155,7 @@ impl State {
             self.generation = load.generation;
             self.nodes = nodes.clone();
             self.index = load.index;
-            self.owner = Some(event.envelope.source.clone());
+            self.owner = Some(owner.clone());
             let (worker, ready) = Worker::start(load.launch).await.map_err(|error| {
                 if error.cleanup_error.is_some() {
                     self.uncertain = Some(error.detail.clone());
@@ -129,11 +169,11 @@ impl State {
             self.serial = 0;
             self.nodes = nodes;
             self.index = load.index;
-            self.owner = Some(event.envelope.source.clone());
+            self.owner = Some(owner.clone());
             return Ok((
                 json!({"ok":true,"op":"loaded","generation":self.generation,"ready":ready}),
                 vec![],
-                event.envelope.source.clone(),
+                supervisor.map_or(owner, |(target, _)| target),
             ));
         }
         let job: Job =
@@ -148,7 +188,15 @@ impl State {
         } else {
             &self.nodes[self.index - 1]
         };
-        if &event.envelope.source != source
+        let source_matches = if job.kind == "unload" {
+            supervisor
+                .as_ref()
+                .is_some_and(|(target, _)| target == &event.envelope.source)
+                || &event.envelope.source == source
+        } else {
+            &event.envelope.source == source
+        };
+        if !source_matches
             || event
                 .envelope
                 .return_route
@@ -263,7 +311,9 @@ impl State {
         }
         let mut chain = receipts.clone();
         chain.push(json!({"index":self.index,"job":job,"ok":true,"report":reply["report"]}));
-        let target = if !direct && self.index + 1 < self.nodes.len() {
+        let target = if job.kind == "unload" {
+            supervisor.map_or(owner, |(target, _)| target)
+        } else if !direct && self.index + 1 < self.nodes.len() {
             self.nodes[self.index + 1].clone()
         } else {
             owner
@@ -294,6 +344,7 @@ pub(crate) async fn run(
     snapshot: Arc<Mutex<String>>,
     stop: Arc<AtomicBool>,
     notify: Arc<Notify>,
+    native_response_bytes: Arc<AtomicUsize>,
 ) {
     let mut state = State {
         worker: None,
@@ -316,10 +367,11 @@ pub(crate) async fn run(
     loop {
         let input = tokio::select! { value=receiver.recv()=>value, _=notify.notified()=>None };
         let Some(input) = input else { break };
+        let mut input = Some(input);
         if stop.load(Ordering::Acquire) {
             break;
         }
-        let event = input.completion.as_ref().unwrap().event();
+        let event = input.as_ref().unwrap().completion.as_ref().unwrap().event();
         *snapshot.lock().unwrap() = "busy".into();
         sequence = match sequence.checked_add(1) {
             Some(n) => n,
@@ -355,6 +407,10 @@ pub(crate) async fn run(
             payload: vec![],
         };
         let parsed = ipc::unpack(&event.payload);
+        let supervisor = parsed
+            .as_ref()
+            .ok()
+            .and_then(|(metadata, _)| lifecycle_supervisor(&endpoint, event, metadata));
         let frame = parsed
             .as_ref()
             .ok()
@@ -374,7 +430,13 @@ pub(crate) async fn run(
         }
         // This bound includes the receipt header as well as the opaque body. An oversized
         // worker result is retained/fenced; it cannot escape as a successful completion.
-        let output_bound = frame;
+        let output_bound = if supervisor.is_some() {
+            frame
+                .checked_add(LIFECYCLE_COMPLETION_OVERHEAD_BYTES)
+                .expect("HF frame limit plus lifecycle wrapper fits usize")
+        } else {
+            frame
+        };
         let cost = envelope_cost.saturating_add(output_bound);
         let reservation = loop {
             match publisher.try_reserve(1, cost) {
@@ -403,6 +465,7 @@ pub(crate) async fn run(
             }
             continue;
         };
+        let generation_before = state.generation;
         let operation = async {
             match parsed {
                 Ok((meta, body)) => {
@@ -423,7 +486,63 @@ pub(crate) async fn run(
         };
         let result = tokio::select! {value=operation=>Some(value),_=notify.notified()=>None};
         let Some(result) = result else { break };
-        let (meta, body, target) = match result {
+        native_response_bytes.store(
+            state
+                .worker
+                .as_ref()
+                .map_or(0, |worker| worker.last_response.len()),
+            Ordering::Release,
+        );
+        let typed = supervisor.as_ref().map(|(_, operation)| {
+            let completion = match &result {
+                Ok(_) => AdapterLifecycleCompletion {
+                    operation: *operation,
+                    status: LifecycleStatus::Succeeded,
+                    resource_state: match operation {
+                        LifecycleOperation::Load => ResourceState::Present,
+                        LifecycleOperation::Unload => ResourceState::Absent,
+                    },
+                    first_error: None,
+                    cleanup_error: None,
+                },
+                Err(error) => {
+                    let (status, resource_state) = match operation {
+                        LifecycleOperation::Load if state.uncertain.is_some() => {
+                            (LifecycleStatus::Failed, ResourceState::Unknown)
+                        }
+                        LifecycleOperation::Load if state.worker.is_some() => {
+                            (LifecycleStatus::Failed, ResourceState::Unknown)
+                        }
+                        LifecycleOperation::Load if state.generation > generation_before => {
+                            (LifecycleStatus::Failed, ResourceState::Absent)
+                        }
+                        LifecycleOperation::Load => {
+                            (LifecycleStatus::Rejected, ResourceState::Absent)
+                        }
+                        LifecycleOperation::Unload if state.uncertain.is_some() => {
+                            (LifecycleStatus::Failed, ResourceState::Unknown)
+                        }
+                        LifecycleOperation::Unload if state.worker.is_some() => {
+                            (LifecycleStatus::Rejected, ResourceState::Present)
+                        }
+                        LifecycleOperation::Unload => {
+                            (LifecycleStatus::Failed, ResourceState::Absent)
+                        }
+                    };
+                    AdapterLifecycleCompletion {
+                        operation: *operation,
+                        status,
+                        resource_state,
+                        first_error: Some(error.clone()),
+                        cleanup_error: state.cleanup_error.clone(),
+                    }
+                }
+            };
+            debug_assert!(completion.validate().is_ok());
+            completion
+        });
+        let lifecycle_terminal = typed.is_some();
+        let (mut meta, body, mut target) = match result {
             Ok(value) => value,
             Err(error) => (
                 json!({"ok":false,"error":error,"uncertain":state.uncertain,
@@ -432,6 +551,12 @@ pub(crate) async fn run(
                 output.envelope.target.clone(),
             ),
         };
+        if let Some(((supervisor, _), completion)) = supervisor.zip(typed) {
+            meta["lifecycle"] = serde_json::to_value(completion)
+                .expect("validated HF lifecycle completion serializes");
+            target = supervisor;
+            output.envelope.class = EventClass::Control;
+        }
         output.envelope.target = target;
         if matches!(output.envelope.target, Endpoint::Node { .. }) {
             output.envelope.payload_content_type = ipc::COMMAND.into();
@@ -452,6 +577,27 @@ pub(crate) async fn run(
                 .unwrap()
             }
         };
+        if lifecycle_terminal {
+            if state.uncertain.is_none()
+                && let Some(worker) = state.worker.as_mut()
+            {
+                worker.last_response.clear();
+            }
+            native_response_bytes.store(
+                state
+                    .worker
+                    .as_ref()
+                    .map_or(0, |worker| worker.last_response.len()),
+                Ordering::Release,
+            );
+            let mut owned = input.take().expect("HF lifecycle input is still owned");
+            owned
+                .completion
+                .take()
+                .expect("HF lifecycle input is still owned")
+                .retire();
+            drop(owned);
+        }
         let mut pending = Some((output, reservation));
         while let Some((event, reservation)) = pending.take() {
             match publisher.publish_reserved(event, reservation) {
@@ -468,10 +614,13 @@ pub(crate) async fn run(
                 }
             }
         }
-        if state.uncertain.is_some() && failed_input.is_none() {
-            failed_input = Some(input);
-        } else {
-            drop(input);
+        if !lifecycle_terminal {
+            let input = input.take().expect("non-lifecycle input remains owned");
+            if state.uncertain.is_some() && failed_input.is_none() {
+                failed_input = Some(input);
+            } else {
+                drop(input);
+            }
         }
         if state.worker.is_none() && state.uncertain.is_none() {
             failed_input = None;
@@ -481,6 +630,13 @@ pub(crate) async fn run(
                 worker.last_response.clear();
             }
         }
+        native_response_bytes.store(
+            state
+                .worker
+                .as_ref()
+                .map_or(0, |worker| worker.last_response.len()),
+            Ordering::Release,
+        );
         *snapshot.lock().unwrap() = if state.uncertain.is_some() {
             "uncertain"
         } else if state.worker.is_some() {
@@ -495,5 +651,6 @@ pub(crate) async fn run(
     if let Some(worker) = state.worker.as_mut() {
         let _ = worker.stop(true).await;
     }
+    native_response_bytes.store(0, Ordering::Release);
     *snapshot.lock().unwrap() = "closed".into();
 }

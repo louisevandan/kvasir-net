@@ -472,6 +472,76 @@ impl Worker {
         self.commit_direct_effects(vec![effect], true)
     }
 
+    pub(super) fn emit_lifecycle_error(
+        &mut self,
+        base: &Event,
+        target: Endpoint,
+        detail: String,
+        completion: &AdapterLifecycleCompletion,
+    ) -> Result<(), ()> {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "code": "LLAMA_ADAPTER_EVENT_REJECTED",
+            "detail": detail,
+            "lifecycle": completion,
+        }))
+        .map_err(|_| ())?;
+        self.queue_lifecycle_bytes(base, target, ERROR_CONTENT_TYPE, body, true)
+    }
+
+    pub(super) fn queue_lifecycle_json<T: Serialize>(
+        &mut self,
+        base: &Event,
+        target: Endpoint,
+        content_type: &str,
+        value: &T,
+    ) -> Result<(), ()> {
+        let body = serde_json::to_vec(value).map_err(|_| ())?;
+        self.queue_lifecycle_bytes(base, target, content_type, body, false)
+    }
+
+    fn queue_lifecycle_bytes(
+        &mut self,
+        base: &Event,
+        target: Endpoint,
+        content_type: &str,
+        body: Vec<u8>,
+        diagnostic: bool,
+    ) -> Result<(), ()> {
+        if !self.effects.is_empty() || self.active_publications != 0 || self.active_effect_ids != 0
+        {
+            return Err(());
+        }
+        self.ensure_event_id_obligations(1, 0).map_err(|_| ())?;
+        let effect = Self::direct_effect(self.direct_intent(
+            base,
+            target,
+            EventClass::Control,
+            content_type,
+            body,
+            diagnostic,
+        ));
+        if let effects::CommittedEffect::UndeliverableDirect { detail, .. } = &effect {
+            self.set_snapshot(&format!("lifecycle_terminal_invalid:{detail}"));
+            self.effects_fenced = true;
+            self.effects.push_back(effect);
+            return Err(());
+        }
+        self.effects.push_back(effect);
+        Ok(())
+    }
+
+    pub(super) fn flush_owned_lifecycle_terminal(&mut self) -> Result<(), ()> {
+        if self.effects.len() != 1 {
+            self.effects_fenced = true;
+            return Err(());
+        }
+        if self.effects_fenced {
+            self.flush_terminal_diagnostics(1).map_err(|_| ())
+        } else {
+            self.flush_effects().map_err(|_| ())
+        }
+    }
+
     pub(super) fn emit_json<T: Serialize>(
         &mut self,
         base: &Event,

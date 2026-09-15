@@ -19,6 +19,11 @@
 | L011 | 의미 변이의 교체문이 문법적으로 불완전하면 시험 단언이 아니라 컴파일 오류만 검출해 변이 증거가 되지 않는다. | 변이 diff가 한 의미만 바꾸는지 보고 formatter/check를 먼저 통과시킨다. 컴파일 실패 변이는 검출 수에 넣지 않는다. | 모든 Rust 독립 변이 |
 | L012 | 원격 Cargo가 있어도 해당 toolchain에 rustfmt component가 설치됐다고 가정할 수 없다. | 실행계획 전에 필요한 component를 조회한다. baseline은 로컬 rustfmt check, 원격 변이는 한 줄 diff 검토와 `cargo check`를 거쳐 의미 시험을 실행하며 검증 중 component를 설치하지 않는다. | M1 원격 Rust 변이 |
 | L013 | 한 함수 호출의 앞 인수로 owned metadata를 이동한 뒤 뒤 인수에서 같은 값을 읽으면 Rust 인수 평가 중 소유권 검사가 실패한다. | 이동 인수를 받는 오류 생성 호출 전에 진단 문자열과 비교값을 먼저 계산하고, 원격 시험 runner보다 `cargo check --tests`를 먼저 통과시킨다. | M1 supervisor와 이후 owned 오류 경로 |
+| L014 | PowerShell pipeline으로 `git diff` 출력을 파일에 쓰면 patch 줄바꿈이 CRLF로 재직렬화되어 동일 base에도 `git apply`가 모든 context를 거부한다. | patch는 shell pipeline을 거치지 않고 `git diff --output=<path>`로 생성하며, 전송 전 LF/CRLF 수와 SHA-256, 원격 `git apply --check`를 기록한다. | M2~M4 원격 source 동기화 |
+| L015 | 원격에 `rg`가 없는데 `rg ... | wc -l`을 실행하면 마지막 `wc`가 성공해 시험 발견 실패가 0건으로 위장된다. | 원격 runner는 `set -euo pipefail`을 켜고 사용할 도구를 `command -v`로 확인한다. 시험 수는 절대 경로 `/usr/bin/grep`으로 세고 adapter별 1건 이상을 build 전 단언한다. | M2~M4 원격 시험 발견 |
+| L016 | llama.cpp worker의 blocking 첫 입력 분기와 후속 nonblocking drain이 서로 다른 후처리를 써서 첫 supervised LOAD만 input claim 퇴역 뒤 terminal 게시를 건너뛰었다. | 두 수신 분기는 `handle_received_input` 하나만 호출한다. 첫 입력으로 LOAD를 넣는 actual owned-worker 시험이 terminal·source claim0을 단언한다. | M2 llama.cpp lifecycle worker, NL01/NL07 |
+| L017 | completion 포화 시험이 queue slot과 retained byte를 동시에 소진하면 의도한 게시 대기가 아니라 profile 사전 거부를 시험하며, 공용 `busy` snapshot만 기다리면 앞 입력의 claim과 다음 입력의 claim을 혼동한다. | 포화 fixture는 제한할 차원만 정확히 채우고 다른 profile 예산에는 여유를 둔다. 다음 입력 전 `queued_count=1`과 upstream claim0을 함께 단언한다. | M2 adapter response saturation, NL07/NL10 |
+| L018 | HF Python frame 상한에 typed lifecycle wrapper 크기를 더하지 않으면 경계 응답의 agent terminal이 OUTER fallback으로 바뀐다. | lifecycle 여부를 native 효과 전에 판별하고 Python frame과 고정 wrapper 여유를 completion 저장소에 함께 예약한다. | opaque 응답은 frame 안이지만 wrapper 추가 뒤 frame을 넘는 실제 UNLOAD가 agent typed terminal로 완료됨을 단언한다. | M2 HF lifecycle frame boundary, NL07/NL14 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 
