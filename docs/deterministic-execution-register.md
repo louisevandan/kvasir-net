@@ -54,6 +54,7 @@
 | L046 | PowerShell `Set-Content`로 만든 Bash runner는 내용이 맞아도 CRLF가 남아 here-document 종료 표식을 Linux가 인식하지 못했다. runner가 우연히 파일 끝에서 동작한 것은 재현 가능한 증거가 아니다. | 전송 전 Bash runner를 LF로 정규화하고 CR byte 0, 마지막 LF 1개, `bash -n` 성공을 단언한다. 실행 로그에 here-document 경고가 있으면 기능 결과와 무관하게 runner를 거부한다. | M4 원격 Linux runner와 이후 shell artifact |
 | L047 | LOAD rollback이 성공해 node가 모두 사라져도 event-drive가 오류를 `?`로 즉시 반환하면 hop FINISH 없이 TCP가 닫혀 ingress transport failure가 남는다. 실패 판정과 연결 회수는 별도 의무다. 검사 runner도 assertion에서 즉시 빠지며 같은 오염을 한 건 더 만들 수 있다. | LOAD 실패 분기는 최초 오류를 문자열로 보존한 뒤 bounded FINISH를 수행한다. FINISH 실패만 별도 후미 오류로 붙인다. 검사 client는 판정 실패도 가능한 범위에서 FINISH한 다음 오류를 보고한다. 다음 실행 전에는 task-owned 양쪽 agent를 교체하고 failures 0을 다시 요구한다. | M4-L3 오류 경로와 이후 실패 검증 runner |
 | L048 | 기존 PowerShell runner의 문자열 치환으로 H2를 만들 때 path 구분자의 실제 개수를 대조하지 않아 output 이름만 H2이고 실제 scenario는 `short`인 모델 실행이 발생했다. 파일명은 실행 의도를 증명하지 않는다. | runner 생성 후 실제 인수 파일을 JSON으로 읽어 scenario name·schedule·request 수를 고정값과 비교한다. 결과 `summary.json`의 scenario identity를 같은 값으로 다시 대조하며 불일치 실행은 다른 시험 증거로 전용하지 않는다. | M4-H2/H3와 이후 모델 scenario runner |
+| L049 | HF의 이전 generation 명령은 Python worker까지 전달되지 않고 Rust bridge의 generation fence가 먼저 거부한다. 검증기가 Python의 `disposition=\"rejected\"`와 `invalid job identity`를 기대해 정상 거부를 실패로 오판했다. | 실제 소유 경계에 맞춰 bridge의 정규화된 결과 `{ok:false,error:\"stale load generation\",uncertain:null,cleanup_error:null}`와 빈 출력만 정확히 단언한다. Python worker의 identity 거부는 worker에 도달하는 별도 입력에서만 판정한다. | M4-H3 이전 generation 거부·재적재와 이후 HF event 검증 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

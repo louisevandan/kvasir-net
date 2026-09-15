@@ -56,9 +56,8 @@ def run(args):
             stale=pipeline.job("step","stale-generation")
             stale["generation"]=args.reject_generation
             rejection,output=pipeline.command(0,{"job":stale,"receipts":[]},require=False)
-            if (output or rejection.get("ok") is not False
-                    or rejection.get("disposition") != "rejected"
-                    or "invalid job identity" not in rejection.get("error", "")):
+            expected={"ok":False,"error":"stale load generation","uncertain":None,"cleanup_error":None}
+            if output or rejection != expected:
                 raise AssertionError(f"stale load generation accepted or misclassified: {rejection}")
             report["stale_generation_rejection"]={"job":stale,"result":rejection}
         tokenizer=AutoTokenizer.from_pretrained(directory,local_files_only=True)
