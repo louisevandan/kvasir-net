@@ -25,7 +25,8 @@ Qwen3.5-122B-A10B Release A 승격은 다음 로드맵 단계이며 이 수용 �
 - 기존 Linux/Windows native server는 P4 source `bfc8bcc45c4d2f8bd8723add6c8f1190db623989`라서
   현재 READY resource profile보다 오래됐다. 봉인 모델 memory-plan에서 필수 상한 세 값이 누락됨을 확인했으므로
   이를 재사용하지 않는다. 최종 M4 source에서 Windows CUDA 12.8·compute 86·parallel 8로 다시 build·test하고,
-  새 binary/DLL hash와 양의 resource profile을 확인한 뒤에만 LOAD를 허용한다.
+  새 binary/DLL hash와 stage 역할별 resource profile을 확인한 뒤에만 LOAD를 허용한다. 중간 stage는
+  tensor payload/count와 전체 상한이 양수여야 하고 최종 sampling stage는 payload/count 0, 전체 상한 양수여야 한다.
 - 포트는 각 OS의 실제 dynamic range와 기존 listener를 읽은 뒤 고른다. 작업 소유 방화벽 규칙과
   프로세스만 종료하며 최종 listener 0을 확인한다.
 
