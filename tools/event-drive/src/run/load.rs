@@ -1,10 +1,9 @@
-use super::{RunConfig, Sender, node_endpoint, replies, wire};
-use p4_llamacpp_staged_adapter::v2::{
-    BuildIdentity, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand, UNIDENTIFIED,
-    agree_for_profile,
+use super::{RunConfig, Sender, lifecycle, replies, wire};
+use p4_llamacpp_staged_adapter::v2::{BuildIdentity, LoadCommand, UNIDENTIFIED, agree_for_profile};
+use p4_protocol::event::lifecycle::{
+    LifecycleOperation, NODE_LIFECYCLE_RESULT_CONTENT_TYPE, ResourceState,
 };
-use p4_protocol::event::EventClass;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct StageBuild {
@@ -30,8 +29,10 @@ where
 {
     let mut builds = Vec::with_capacity(config.nodes.len());
     let mut stages = Vec::with_capacity(config.nodes.len());
+    let mut loaded_indices = Vec::with_capacity(config.nodes.len());
     for wave in agent_load_waves(config.nodes.iter().map(|node| node.agent.as_str())) {
         let mut expected = Vec::with_capacity(wave.len());
+        let mut requested = HashMap::with_capacity(wave.len());
         for index in wave {
             let node = &config.nodes[index];
             let command = LoadCommand {
@@ -50,31 +51,60 @@ where
                 ready_timeout_ms: config.timeout_ms,
                 io_timeout_ms: config.timeout_ms,
             };
-            let event = sender.event(
-                node_endpoint(node)?,
-                EventClass::Control,
-                LOAD_CONTENT_TYPE,
-                serde_json::to_vec(&command)?,
-                "load",
-            );
+            let event = lifecycle::load_event(node, sender, serde_json::to_vec(&command)?)?;
+            requested.insert(event.envelope.event_id.clone(), index);
             expected.push(replies::ExpectedReply::from_request(&event));
             wire.send(event).await?;
         }
         let loaded = replies::receive_exact(
             wire,
-            LOADED_CONTENT_TYPE,
+            NODE_LIFECYCLE_RESULT_CONTENT_TYPE,
             expected,
             "load",
             config.timeout_ms,
         )
         .await?;
+        let mut first_failure = None;
+        let mut uncertain_indices = Vec::new();
         for event in &loaded {
-            let identity = build_identity(&event.payload)?;
-            let node = config
-                .nodes
-                .iter()
-                .find(|node| node_endpoint(node).ok().as_ref() == Some(&event.envelope.source))
-                .ok_or("loaded reply has no configured stage")?;
+            let requested_index = event
+                .envelope
+                .causation_id
+                .as_ref()
+                .and_then(|causation| requested.get(causation))
+                .copied();
+            let result = match lifecycle::decode_result(event, LifecycleOperation::Load) {
+                Ok(result) => result,
+                Err(error) => {
+                    if let Some(index) = requested_index {
+                        uncertain_indices.push(index);
+                    }
+                    first_failure.get_or_insert(error);
+                    continue;
+                }
+            };
+            let Some(index) = requested_index else {
+                first_failure.get_or_insert_with(|| {
+                    "LOAD lifecycle result has no requested causation identity".into()
+                });
+                continue;
+            };
+            let node = &config.nodes[index];
+            if let Err(error) = lifecycle::require_success(&result, node) {
+                if result.metadata.resource_state != ResourceState::Absent {
+                    uncertain_indices.push(index);
+                }
+                first_failure.get_or_insert(error);
+                continue;
+            }
+            loaded_indices.push(index);
+            let identity = match build_identity(result.opaque) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    first_failure.get_or_insert_with(|| error.to_string());
+                    continue;
+                }
+            };
             builds.push(identity.clone());
             stages.push(StageBuild {
                 agent: node.agent.clone(),
@@ -83,11 +113,38 @@ where
                 identity,
             });
         }
+        if let Some(error) = first_failure {
+            loaded_indices.extend(uncertain_indices);
+            loaded_indices.sort_unstable();
+            loaded_indices.dedup();
+            let cleanup = lifecycle::unload_indices(
+                config,
+                loaded_indices.iter().copied().rev(),
+                wire,
+                sender,
+            )
+            .await;
+            return Err(match cleanup {
+                Ok(()) => error.into(),
+                Err(cleanup) => format!("{error}; rollback failed: {cleanup}").into(),
+            });
+        }
     }
     // A bench may drive a stage server too old to name itself; a production
     // load path should not, which is why the choice is the caller's.
     let require_identified = std::env::var_os("P4_DRIVE_ALLOW_UNIDENTIFIED_BUILD").is_none();
-    agree_for_profile(&builds, config.pipeline_compatibility, require_identified)?;
+    if let Err(error) =
+        agree_for_profile(&builds, config.pipeline_compatibility, require_identified)
+    {
+        let error = error.to_string();
+        let cleanup =
+            lifecycle::unload_indices(config, loaded_indices.iter().copied().rev(), wire, sender)
+                .await;
+        return Err(match cleanup {
+            Ok(()) => error.into(),
+            Err(cleanup) => format!("{error}; rollback failed: {cleanup}").into(),
+        });
+    }
     stages.sort_by_key(|stage| {
         config.nodes.iter().position(|node| {
             node.agent == stage.agent

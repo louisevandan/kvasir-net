@@ -7,22 +7,25 @@
 //! binary against a scripted peer on a local TCP listener, so the assertions
 //! are about the artifact on disk and the process's status.
 //!
-//! The peer is a protocol fixture, not a node: it answers CREATE, LOAD and
+//! The peer is a protocol fixture, not a node: it answers NODE_LOAD and
 //! SESSION, then reports an inference error and closes the connection so the
 //! teardown that follows also fails. It runs no model and approves no output.
 
 use p4_llamacpp_staged_adapter::v2::{
-    ERROR_CONTENT_TYPE, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, PREFILL_CONTENT_TYPE,
+    ERROR_CONTENT_TYPE, LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE, LoadCommand, PREFILL_CONTENT_TYPE,
     SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
 };
 use p4_protocol::event::hop::{self, HopFrame, ReceiptStatus};
+use p4_protocol::event::lifecycle::{
+    LIFECYCLE_SCHEMA, LifecycleOperation, LifecycleRequestMetadata, LifecycleResultMetadata,
+    LifecycleStatus, NODE_LIFECYCLE_RESULT_CONTENT_TYPE, NODE_LOAD_CONTENT_TYPE, ResourceState,
+    decode_metadata, encode_metadata,
+};
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, decode, encode};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 
-const CREATE: &str = "application/vnd.p4.node.create-v3+json";
-const NODE_RESULT: &str = "application/vnd.p4.node.result-v3+json";
 const NODE_ERROR: &str = "stage refused decode: sequence 41 has no resident slot";
 
 fn read_body(stream: &mut TcpStream) -> Option<Vec<u8>> {
@@ -221,16 +224,39 @@ fn serve(listener: TcpListener, requests: usize) {
     while let Some(event) = read_event(&mut stream) {
         let content_type = event.envelope.payload_content_type.clone();
         let answer = match content_type.as_str() {
-            CREATE => Some((NODE_RESULT, serde_json::json!({ "ok": true }))),
-            LOAD_CONTENT_TYPE => Some((
-                LOADED_CONTENT_TYPE,
-                serde_json::json!({
+            NODE_LOAD_CONTENT_TYPE => {
+                assert!(matches!(event.envelope.target, Endpoint::Agent(_)));
+                let (metadata, opaque): (LifecycleRequestMetadata, _) =
+                    decode_metadata(&event.payload).unwrap();
+                assert_eq!(metadata.adapter_content_type, LOAD_CONTENT_TYPE);
+                let _: LoadCommand = serde_json::from_slice(opaque).unwrap();
+                let result = LifecycleResultMetadata {
+                    schema: LIFECYCLE_SCHEMA,
+                    node_id: metadata.node_id,
+                    node_generation: metadata.node_generation,
+                    adapter_kind: metadata.adapter_kind,
+                    adapter_content_type: LOADED_CONTENT_TYPE.into(),
+                    operation: LifecycleOperation::Load,
+                    status: LifecycleStatus::Succeeded,
+                    resource_state: ResourceState::Present,
+                    first_error: None,
+                    cleanup_error: None,
+                };
+                let body = serde_json::to_vec(&serde_json::json!({
                     "upstream_commit": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
                     "patch_set": "961bd89cd1197cef0d683f22d99d9451e25aba5eb",
                     "backend_inventory": "CPU[CPU]",
-                }),
+                }))
+                .unwrap();
+                Some((
+                    NODE_LIFECYCLE_RESULT_CONTENT_TYPE,
+                    encode_metadata(&result, &body).unwrap(),
+                ))
+            }
+            SESSION_CONTENT_TYPE => Some((
+                SESSION_READY_CONTENT_TYPE,
+                serde_json::to_vec(&serde_json::json!({})).unwrap(),
             )),
-            SESSION_CONTENT_TYPE => Some((SESSION_READY_CONTENT_TYPE, serde_json::json!({}))),
             PREFILL_CONTENT_TYPE => {
                 submitted += 1;
                 // Every request is accepted first, so the failure lands on a
@@ -249,7 +275,6 @@ fn serve(listener: TcpListener, requests: usize) {
             other => panic!("the peer was not scripted for {other}"),
         };
         if let Some((content_type, payload)) = answer {
-            let payload = serde_json::to_vec(&payload).expect("payload encodes");
             let _ = write_event(
                 &mut stream,
                 &reply(&event, content_type, payload, serial),

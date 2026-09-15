@@ -1,6 +1,6 @@
 # LOAD·UNLOAD에 노드 수명을 통합하는 구현계획
 
-작성: 2026-09-15 KST. 지위: 사용자 합의를 고정한 **활성 구현계획, M2 완료**.
+작성: 2026-09-15 KST. 지위: 사용자 합의를 고정한 **활성 구현계획, M3 완료**.
 코드 감사 기준 HEAD: `c16cbfa2abe8e7bc0bd7ce4f3e4c568f6a6c0569`.
 계획 작성 시 공통 adapter retention·transport·INSPECT·llama/HF에 별도 미커밋 변경이 있었다.
 현재 구현·시험 통과를 뜻하지 않는다. 전체 실행 순서와 진행 상태는
@@ -195,6 +195,13 @@ feature off/on은 각각 1,523 통과, 0 실패, 실제 모델 시험 7개 ignor
 검출했다. [M2 검증 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)를 따른다.
 다음 단계는 Rust/HF OUTER와 실기 호출자를 새 수명 명령으로 이관하는 M3다.
 
+**2026-09-16 M3 완료:** Rust event-drive와 HF Qwen controller/실기 fixture를 Agent-target
+NODE_LOAD/NODE_UNLOAD로 이관하고 event runtime의 legacy CREATE/DELETE 수용 분기를 제거했다.
+부분 LOAD 거부 뒤 OUTER 개별 회수, causation 기반 결과 결속, direct node 우회 무효과, 실제 Agent와
+HF child 12개 failure/recovery case, workspace feature off/on 각각 1,525 통과를 확인했다. 최종 소스의
+Agent target 제거 변이 두 건도 검출했다. [M3 검증 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)를
+따른다. 다음 단계 M4는 작은 실제 llama.cpp/HF 모델의 생성·취소·해제·재적재와 소유 문서 최종 이관이다.
+
 M1의 실행 전 검토와 최대 3라운드 입력은
 [M1 결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.md)에 봉인한다. 이 단계는
 [결정론적 실행 장부](deterministic-execution-register.md)의 `L001`~`L013`을 재사용한다. 새 실패가
@@ -207,8 +214,8 @@ M1의 실행 전 검토와 최대 3라운드 입력은
 | M0 | **DONE** — 최신 HEAD/dirty 감사, 실제 호출자 전수 검색, §8 반례와 수명 소유권 설계 | [M0 보고](../tests/reports/node-load-lifecycle/20260916_014500.md)에 중복·실패·완료 응답·barrier·byte 소유권 매핑 |
 | M1 | **DONE** — 공통 codec·typed adapter 완료·비동기 agent supervisor·neutral 실제 TCP | [M1 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)에 NL01·NL02·NL04·NL07·NL10과 제거 변이 기록 |
 | M2 | **DONE** — llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | [M2 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)에 busy·cleanup 실패·응답/frame 포화·정상 제거·변이3종 기록 |
-| M3 | **NEXT** — Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | 새 명령만으로 생성→정상 응답→해제, 구형 명령 부작용 없는 거부 |
-| M4 | 필수 회귀·독립 제거 변이·두 adapter 실기, 소유 문서 갱신 | 최종 소스 결속·시험별 판정·미수용 항목 기록 |
+| M3 | **DONE** — Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | [M3 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)에 부분 실패 회수·우회 거부·실제 HF child·workspace·변이 기록 |
+| M4 | **NEXT** — 실제 작은 llama.cpp/HF 모델 생성·취소·해제·재적재, 소유 문서 갱신 | 최종 소스 결속·시험별 판정·Qwen122B 경로와 미수용 항목 기록 |
 
 각 단계의 복원 가능한 지점에서 저장소 커밋 규칙을 따른다. 다른 작성자를 멈추고 전체 비무시 변경을
 감사한 뒤 자신이 소유하는 일관된 checkout을 커밋한다. 무관한 병행 변경을 임의로 포함하지 않는다.

@@ -56,7 +56,7 @@
 | [docs/adapter-restructure-plan.md](adapter-restructure-plan.md) | 역사·구 계획 |
 | [docs/api.md](api.md) | 경로별 참고·재감사 필요 |
 | [docs/architecture.md](architecture.md) | 경로별 참고·재감사 필요 |
-| [docs/node-load-lifecycle-plan.md](node-load-lifecycle-plan.md) | 활성 구현계획: M0–M2 완료, M3 Rust/HF OUTER 호출자 이관이 다음 단계, 전체 적재 조율은 OUTER 책임 |
+| [docs/node-load-lifecycle-plan.md](node-load-lifecycle-plan.md) | 활성 구현계획: M0–M3 완료, M4 실제 두 adapter 모델·문서 수용이 다음 단계, 전체 적재 조율은 OUTER 책임 |
 | [docs/deterministic-execution-register.md](deterministic-execution-register.md) | 활성 계약: 반복 실패의 원인 증거를 자동 사전 차단과 다음 단계 시험으로 재사용 |
 | [docs/batching-code-review.md](batching-code-review.md) | 2026-09-13 배치 selector·worker·native 전달 경계 코드 검토; 제안과의 차이·개선 후보·로컬 재현, 실행 순서/성능 승격 아님 |
 | [docs/constraints.md](constraints.md) | 경로별 참고·재감사 필요 |
@@ -257,6 +257,7 @@ M1: [결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.m
 Typed adapter completion: [원격 baseline·독립 변이 보고](../tests/reports/node-load-lifecycle/20260916_015702.md).
 M1 supervisor 완료: [실제 TCP LOAD·UNLOAD·회수 보존·workspace off/on·제거 변이](../tests/reports/node-load-lifecycle/20260916_023059.md).
 M2: [결정론적 실행계획](../tests/plans/node-load-lifecycle-m2-20260916.md), [llama.cpp/HF 실제 worker·포화·cleanup·독립 변이 보고](../tests/reports/node-load-lifecycle/20260916_032621.md).
+M3: [Rust/HF OUTER 이관·legacy CREATE/DELETE 제거 결정론적 실행계획](../tests/plans/node-load-lifecycle-m3-20260916.md), [실제 Agent/HF child·workspace·독립 변이 검증 보고](../tests/reports/node-load-lifecycle/20260916_041848.md).
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 

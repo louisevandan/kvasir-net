@@ -3,14 +3,20 @@ use super::{RunConfig, Sender, wire};
 use p4_llamacpp_staged_adapter::v2::{LOAD_CONTENT_TYPE, LOADED_CONTENT_TYPE};
 use p4_protocol::{
     Address,
-    event::{Endpoint, EventClass, OuterEndpoint},
+    event::{
+        Endpoint, Event, EventClass, OuterEndpoint,
+        lifecycle::{
+            LIFECYCLE_SCHEMA, LifecycleOperation, LifecycleRequestMetadata,
+            LifecycleResultMetadata, LifecycleStatus, NODE_LIFECYCLE_RESULT_CONTENT_TYPE,
+            NODE_LOAD_CONTENT_TYPE, NODE_UNLOAD_CONTENT_TYPE, ResourceState, decode_metadata,
+            encode_metadata,
+        },
+    },
 };
 use serde_json::json;
 use std::time::{Duration, Instant};
 
-// Real LOAD event encoding/reply matching/identity admission over EventWire.
-// Native HELLO and GPU execution are separate tests; these peers are fixtures.
-async fn consume(profile: &str, changed: Option<&str>) -> Result<LoadedBuild, String> {
+fn config(profile: &str) -> RunConfig {
     let mut value = json!({
         "ingress_agent":"tcp://127.0.0.1:50001", "channel":"load-abi", "connection_generation":1,
         "load_generation":1, "session_id":"s", "request_id":"r", "max_tokens":10,
@@ -24,7 +30,96 @@ async fn consume(profile: &str, changed: Option<&str>) -> Result<LoadedBuild, St
     for node in value["nodes"].as_array_mut().unwrap() {
         node["resource_profile"] = resource_profile.clone();
     }
-    let config: RunConfig = serde_json::from_value(value).unwrap();
+    serde_json::from_value(value).unwrap()
+}
+
+fn loaded_reply(request: &Event, body: serde_json::Value, serial: usize) -> Event {
+    let (metadata, opaque): (LifecycleRequestMetadata, _) =
+        decode_metadata(&request.payload).unwrap();
+    assert_eq!(metadata.adapter_kind, "llamacpp");
+    assert_eq!(metadata.adapter_content_type, LOAD_CONTENT_TYPE);
+    assert!(!opaque.is_empty());
+    let result = LifecycleResultMetadata {
+        schema: LIFECYCLE_SCHEMA,
+        node_id: metadata.node_id,
+        node_generation: metadata.node_generation,
+        adapter_kind: metadata.adapter_kind,
+        adapter_content_type: LOADED_CONTENT_TYPE.into(),
+        operation: LifecycleOperation::Load,
+        status: LifecycleStatus::Succeeded,
+        resource_state: ResourceState::Present,
+        first_error: None,
+        cleanup_error: None,
+    };
+    let mut reply = request.clone();
+    reply.envelope.event_id = format!("fixture-load-{serial}");
+    reply.envelope.causation_id = Some(request.envelope.event_id.clone());
+    reply.envelope.source = request.envelope.target.clone();
+    reply.envelope.target = request.envelope.source.clone();
+    reply.envelope.class = EventClass::Control;
+    reply.envelope.payload_content_type = NODE_LIFECYCLE_RESULT_CONTENT_TYPE.into();
+    reply.payload = encode_metadata(&result, &serde_json::to_vec(&body).unwrap()).unwrap();
+    reply
+}
+
+fn rejected_load_reply(request: &Event, serial: usize) -> Event {
+    let (metadata, _): (LifecycleRequestMetadata, _) = decode_metadata(&request.payload).unwrap();
+    let result = LifecycleResultMetadata {
+        schema: LIFECYCLE_SCHEMA,
+        node_id: metadata.node_id,
+        node_generation: metadata.node_generation,
+        adapter_kind: metadata.adapter_kind,
+        adapter_content_type: LOADED_CONTENT_TYPE.into(),
+        operation: LifecycleOperation::Load,
+        status: LifecycleStatus::Rejected,
+        resource_state: ResourceState::Absent,
+        first_error: Some("fixture LOAD rejection".into()),
+        cleanup_error: None,
+    };
+    let mut reply = request.clone();
+    reply.envelope.event_id = format!("fixture-rejected-{serial}");
+    reply.envelope.causation_id = Some(request.envelope.event_id.clone());
+    reply.envelope.source = request.envelope.target.clone();
+    reply.envelope.target = request.envelope.source.clone();
+    reply.envelope.class = EventClass::Control;
+    reply.envelope.payload_content_type = NODE_LIFECYCLE_RESULT_CONTENT_TYPE.into();
+    reply.payload = encode_metadata(&result, b"").unwrap();
+    reply
+}
+
+fn unloaded_reply(request: &Event, serial: usize) -> Event {
+    let (metadata, opaque): (LifecycleRequestMetadata, _) =
+        decode_metadata(&request.payload).unwrap();
+    assert_eq!(
+        metadata.adapter_content_type,
+        p4_llamacpp_staged_adapter::v2::UNLOAD_CONTENT_TYPE
+    );
+    assert!(!opaque.is_empty());
+    let result = LifecycleResultMetadata {
+        schema: LIFECYCLE_SCHEMA,
+        node_id: metadata.node_id,
+        node_generation: metadata.node_generation,
+        adapter_kind: metadata.adapter_kind,
+        adapter_content_type: p4_llamacpp_staged_adapter::v2::UNLOADED_CONTENT_TYPE.into(),
+        operation: LifecycleOperation::Unload,
+        status: LifecycleStatus::Succeeded,
+        resource_state: ResourceState::Absent,
+        first_error: None,
+        cleanup_error: None,
+    };
+    let mut reply = request.clone();
+    reply.envelope.event_id = format!("fixture-unload-{serial}");
+    reply.envelope.causation_id = Some(request.envelope.event_id.clone());
+    reply.envelope.source = request.envelope.target.clone();
+    reply.envelope.target = request.envelope.source.clone();
+    reply.envelope.class = EventClass::Control;
+    reply.envelope.payload_content_type = NODE_LIFECYCLE_RESULT_CONTENT_TYPE.into();
+    reply.payload = encode_metadata(&result, b"{}").unwrap();
+    reply
+}
+
+async fn consume(profile: &str, changed: Option<&str>) -> Result<LoadedBuild, String> {
+    let config = config(profile);
     let outer = OuterEndpoint {
         ingress_agent: Address::tcp("127.0.0.1", 50001),
         channel: "load-abi".into(),
@@ -44,15 +139,11 @@ async fn consume(profile: &str, changed: Option<&str>) -> Result<LoadedBuild, St
                 .receive(Instant::now() + Duration::from_secs(1))
                 .await
                 .unwrap();
-            assert_eq!(request.envelope.payload_content_type, LOAD_CONTENT_TYPE);
-            let mut reply = request.clone();
-            reply.envelope.event_id = format!("fixture-load-{index}");
-            reply.envelope.causation_id = Some(request.envelope.event_id.clone());
-            reply.envelope.source = request.envelope.target;
-            assert!(matches!(reply.envelope.source, Endpoint::Node { .. }));
-            reply.envelope.target = request.envelope.source;
-            reply.envelope.class = EventClass::Telemetry;
-            reply.envelope.payload_content_type = LOADED_CONTENT_TYPE.into();
+            assert_eq!(
+                request.envelope.payload_content_type,
+                NODE_LOAD_CONTENT_TYPE
+            );
+            assert!(matches!(request.envelope.target, Endpoint::Agent(_)));
             let mut body = json!({"upstream_commit":"pin", "patch_set":"patch",
                 "backend_inventory":if index==0 {"CPU[CPU]|CUDA[CUDA0]"} else {"CPU[CPU]|MTL[MTL0]"},
                 "stage_wire_abi":format!("p4pb4le64:{}:types=0/1/4,1/1/2,2/32/18", "a".repeat(64))});
@@ -66,10 +157,8 @@ async fn consume(profile: &str, changed: Option<&str>) -> Result<LoadedBuild, St
                     body.as_object_mut().unwrap().remove(field);
                 }
             }
-            reply.payload = serde_json::to_vec(&body).unwrap();
-            replies.push(reply);
+            replies.push(loaded_reply(&request, body, index));
         }
-        // Arrival order must not replace topology order or lose the tail identity.
         for reply in replies.into_iter().rev() {
             peer.send(reply).await.unwrap();
         }
@@ -105,4 +194,60 @@ async fn load_consumer_preserves_heterogeneous_stage_identities_only_with_explic
             "missing {field}"
         );
     }
+}
+
+#[tokio::test]
+async fn node_load_lifecycle_partial_rejection_unloads_only_the_prior_success() {
+    let config = config("physical-wire-v4");
+    let outer = OuterEndpoint {
+        ingress_agent: Address::tcp("127.0.0.1", 50001),
+        channel: "partial-load".into(),
+        connection_generation: 2,
+    };
+    let mut sender = Sender::new(outer);
+    let (client, peer) = tokio::io::duplex(65536);
+    let (reader, writer) = tokio::io::split(client);
+    let (reader_peer, writer_peer) = tokio::io::split(peer);
+    let mut client = wire::EventWire::new(reader, writer);
+    let fixture = tokio::spawn(async move {
+        let mut peer = wire::EventWire::new(reader_peer, writer_peer);
+        let first = peer
+            .receive(Instant::now() + Duration::from_secs(1))
+            .await
+            .unwrap();
+        let second = peer
+            .receive(Instant::now() + Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(first.envelope.payload_content_type, NODE_LOAD_CONTENT_TYPE);
+        assert_eq!(second.envelope.payload_content_type, NODE_LOAD_CONTENT_TYPE);
+        peer.send(loaded_reply(
+            &first,
+            json!({"upstream_commit":"pin","patch_set":"patch","backend_inventory":"CPU[CPU]",
+                "stage_wire_abi":format!("p4pb4le64:{}:types=0/1/4,1/1/2,2/32/18", "a".repeat(64))}),
+            1,
+        ))
+        .await
+        .unwrap();
+        peer.send(rejected_load_reply(&second, 2)).await.unwrap();
+
+        let cleanup = peer
+            .receive(Instant::now() + Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(
+            cleanup.envelope.payload_content_type,
+            NODE_UNLOAD_CONTENT_TYPE
+        );
+        let (metadata, _): (LifecycleRequestMetadata, _) =
+            decode_metadata(&cleanup.payload).unwrap();
+        assert_eq!(metadata.node_id, "head");
+        peer.send(unloaded_reply(&cleanup, 3)).await.unwrap();
+    });
+    let error = match load::drive(&config, &mut client, &mut sender).await {
+        Ok(_) => panic!("fixture rejection unexpectedly loaded every node"),
+        Err(error) => error.to_string(),
+    };
+    fixture.await.unwrap();
+    assert!(error.contains("fixture LOAD rejection"), "{error}");
 }

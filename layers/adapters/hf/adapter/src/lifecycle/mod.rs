@@ -77,7 +77,7 @@ fn lifecycle_supervisor(
 ) -> Option<(Endpoint, LifecycleOperation)> {
     let operation = if metadata["op"] == "load" {
         LifecycleOperation::Load
-    } else if metadata["job"]["kind"] == "unload" {
+    } else if matches!(metadata["job"]["kind"].as_str(), Some("unload" | "abort")) {
         LifecycleOperation::Unload
     } else {
         return None;
@@ -188,7 +188,7 @@ impl State {
         } else {
             &self.nodes[self.index - 1]
         };
-        let source_matches = if job.kind == "unload" {
+        let source_matches = if matches!(job.kind.as_str(), "unload" | "abort") {
             supervisor
                 .as_ref()
                 .is_some_and(|(target, _)| target == &event.envelope.source)
@@ -233,7 +233,7 @@ impl State {
             return Ok((
                 json!({"ok":true,"op":"aborted","job":job,"first_error":first,"graceful":false}),
                 vec![],
-                owner,
+                supervisor.map_or(owner, |(target, _)| target),
             ));
         }
         if let Some(error) = &self.uncertain {

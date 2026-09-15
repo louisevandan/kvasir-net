@@ -244,6 +244,32 @@ fn node_load_lifecycle_hf_failed_start_and_cleanup_failure_are_not_success() {
 }
 
 #[test]
+fn node_load_lifecycle_hf_supervised_abort_recovers_uncertain_worker_as_unload() {
+    let h = Harness::new("death");
+    drop(h.supervised(h.load_meta("death"), &[]));
+    let failed = h.call(h.job("step", 1, 1), b"starts-native-effect");
+    assert_eq!(failed["ok"], false);
+    assert_eq!(failed["uncertain"], "partial frame: EOF");
+
+    let abort = json!({"job":{"generation":1,"epoch":0,"serial":0,"kind":"abort",
+        "request":"","issue":0,"position":0},"receipts":[]});
+    let recovered = h.supervised(abort, &[]);
+    assert_eq!(recovered.event().envelope.target, h.agent());
+    assert_eq!(
+        h.adapter
+            .decode_lifecycle_completion(LifecycleOperation::Unload, recovered.event())
+            .unwrap(),
+        AdapterLifecycleCompletion {
+            operation: LifecycleOperation::Unload,
+            status: LifecycleStatus::Succeeded,
+            resource_state: ResourceState::Absent,
+            first_error: None,
+            cleanup_error: None,
+        }
+    );
+}
+
+#[test]
 fn node_load_lifecycle_hf_full_completion_rejects_unload_before_native_effect() {
     let h = Harness::new("normal");
     drop(h.supervised(h.load_meta("normal"), &[]));

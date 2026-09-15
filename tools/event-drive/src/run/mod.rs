@@ -8,6 +8,7 @@ pub use evidence_ledger::SubmittedAuthority;
 mod inference_identity;
 #[cfg(test)]
 mod inference_identity_tests;
+mod lifecycle;
 mod load;
 #[cfg(test)]
 mod load_consumer_tests;
@@ -23,7 +24,7 @@ use config::{address, node_endpoint, validate};
 
 use p4_llamacpp_staged_adapter::v2::{
     BatchObservation, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,
-    SessionCommand, UNLOAD_CONTENT_TYPE, UNLOADED_CONTENT_TYPE, UnloadCommand,
+    SessionCommand,
 };
 use p4_protocol::Address;
 use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, OuterEndpoint};
@@ -36,8 +37,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use wire::EventWire;
 
-const CREATE: &str = "application/vnd.p4.node.create-v3+json";
-const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
 const NODE_RESULT: &str = "application/vnd.p4.node.result-v3+json";
 
 /// One node's span for one batch, with which node it came from.
@@ -79,7 +78,7 @@ pub struct RunArtifact {
     /// Where the run's requests actually got to. A failed run is not a run
     /// with nothing in it, and "not submitted" is not "submitted and lost".
     pub submissions: SubmissionSummary,
-    /// UNLOAD/DELETE failure, kept apart from `error` so a refused
+    /// NODE_UNLOAD failure, kept apart from `error` so a refused
     /// teardown cannot be mistaken for the reason the run failed - and so
     /// the reverse, a teardown refused *because* inference already broke,
     /// stays visible next to the break that caused it.
@@ -186,31 +185,6 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
         outer.connection_generation,
     )?;
     let mut sender = Sender::new(outer);
-
-    let mut create_replies = Vec::with_capacity(config.nodes.len());
-    for node in &config.nodes {
-        let payload = serde_json::json!({
-            "node_id":node.node,"node_generation":node.generation,"adapter_kind":"llamacpp",
-            "queue_capacity":65536,"completion_capacity":65536,
-        });
-        let event = sender.event(
-            Endpoint::agent(Address::from_str(&node.agent)?),
-            EventClass::Control,
-            CREATE,
-            serde_json::to_vec(&payload)?,
-            "create",
-        );
-        create_replies.push(ExpectedReply::from_request(&event));
-        wire.send(event).await?;
-    }
-    receive_exact(
-        &mut wire,
-        NODE_RESULT,
-        create_replies,
-        "create",
-        config.timeout_ms,
-    )
-    .await?;
 
     let build = load::drive(&config, &mut wire, &mut sender).await?;
 
@@ -340,8 +314,7 @@ fn assemble(
     }
 }
 
-/// UNLOAD then DELETE every node, returning the failure rather than raising
-/// it.
+/// NODE_UNLOAD every node, returning the failure rather than raising it.
 ///
 /// Deliberately not a `Result`. The defect this replaced was a `?` at the
 /// call site: a refused UNLOAD propagated and took the entire run with it.
@@ -372,52 +345,7 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut unload_replies = Vec::with_capacity(config.nodes.len());
-    for node in &config.nodes {
-        let event = sender.event(
-            node_endpoint(node)?,
-            EventClass::Control,
-            UNLOAD_CONTENT_TYPE,
-            serde_json::to_vec(&UnloadCommand {
-                load_generation: config.load_generation,
-            })?,
-            "unload",
-        );
-        unload_replies.push(ExpectedReply::from_request(&event));
-        wire.send(event).await?;
-    }
-    receive_exact(
-        wire,
-        UNLOADED_CONTENT_TYPE,
-        unload_replies,
-        "unload",
-        config.timeout_ms,
-    )
-    .await?;
-    let mut delete_replies = Vec::with_capacity(config.nodes.len());
-    for node in &config.nodes {
-        let payload = serde_json::json!({
-            "node_id":node.node,"node_generation":node.generation
-        });
-        let event = sender.event(
-            Endpoint::agent(Address::from_str(&node.agent)?),
-            EventClass::Control,
-            DELETE,
-            serde_json::to_vec(&payload)?,
-            "delete",
-        );
-        delete_replies.push(ExpectedReply::from_request(&event));
-        wire.send(event).await?;
-    }
-    receive_exact(
-        wire,
-        NODE_RESULT,
-        delete_replies,
-        "delete",
-        config.timeout_ms,
-    )
-    .await?;
-    Ok(())
+    lifecycle::unload_indices(config, 0..config.nodes.len(), wire, sender).await
 }
 
 /// The actual execute path uses this builder. It declares the same complete
@@ -555,14 +483,14 @@ mod tests {
             connection_generation: 17,
         };
         let mut sender = Sender::new(outer.clone());
-        // LOAD/CREATE already consume IDs in execute. The SESSION builder
+        // NODE_LOAD already consumes IDs in execute. The SESSION builder
         // must preserve its caller's stream, not create a new Sender.
         let prior = sender.event(
             Endpoint::Agent(outer.ingress_agent.clone()),
             EventClass::Control,
-            CREATE,
+            p4_protocol::event::lifecycle::NODE_LOAD_CONTENT_TYPE,
             Vec::new(),
-            "create",
+            "load",
         );
         let events = session_events(&config, &mut sender).unwrap();
         assert_eq!(events.len(), 3);

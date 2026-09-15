@@ -229,6 +229,18 @@ mod tests {
     }
 
     #[test]
+    fn node_load_lifecycle_codec_accepts_python_canonical_fixture() {
+        let json = br#"{"adapter_content_type":"application/vnd.p4.hf.command-v2","adapter_kind":"hf-transformers","completion_capacity":1,"node_generation":7,"node_id":"n0","queue_capacity":1,"retained_bytes":4096,"retained_capacity":2,"schema":1}"#;
+        let mut payload = (json.len() as u32).to_le_bytes().to_vec();
+        payload.extend_from_slice(json);
+        payload.extend_from_slice(b"python-opaque");
+        let (metadata, opaque): (LifecycleRequestMetadata, _) = decode_metadata(&payload).unwrap();
+        metadata.validate(LifecycleOperation::Load).unwrap();
+        assert_eq!(metadata.adapter_kind, "hf-transformers");
+        assert_eq!(opaque, b"python-opaque");
+    }
+
+    #[test]
     fn node_load_lifecycle_codec_rejects_length_and_schema_before_use() {
         let mut truncated = (9u32).to_le_bytes().to_vec();
         truncated.extend_from_slice(b"{}");

@@ -307,138 +307,105 @@ async fn node_load_lifecycle_actual_tcp_creates_fences_reports_and_removes_node(
 }
 
 #[tokio::test]
-async fn owned_runtime_actual_tcp_root_creates_uses_and_deletes_real_worker() {
+async fn node_load_lifecycle_actual_tcp_rejects_legacy_and_direct_bypass_without_node_effects() {
+    use p4_protocol::event::lifecycle::{LifecycleOperation, NODE_LOAD_CONTENT_TYPE};
+    use p4_protocol::event::{AGENT_INSPECT_CONTENT_TYPE, AGENT_SNAPSHOT_CONTENT_TYPE};
+
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let own = Address::tcp("127.0.0.1", listener.local_addr().unwrap().port());
     let runtime = Runtime::start(listener, own.clone(), limits());
     let mut stream = TcpStream::connect((own.host.as_str(), own.port))
         .await
         .unwrap();
-    let create = b"{\"node_id\":\"node\",\"node_generation\":1,\"adapter_kind\":\"llamacpp\",\"queue_capacity\":1,\"completion_capacity\":1}";
-    send(
-        &mut stream,
-        &event(
-            &own,
-            Endpoint::agent(own.clone()),
-            1,
+
+    for (number, content_type, payload) in [
+        (
+            30,
             "application/vnd.p4.node.create-v3+json",
-            create,
+            b"{\"node_id\":\"legacy\",\"node_generation\":1,\"adapter_kind\":\"llamacpp\"}"
+                .as_slice(),
         ),
-    )
-    .await;
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&receive(&mut stream).await.payload).unwrap()["ok"],
-        true
-    );
-    // A real adapter Worker consumes this unknown opaque command and publishes
-    // its normal diagnostic through node->broker->OUTER->socket. No mock adapter.
-    send(
-        &mut stream,
-        &event(
-            &own,
-            Endpoint::node(own.clone(), "node", 1),
-            2,
-            "application/x-owned-utf8-test",
-            "긴 입력 원문 유지".as_bytes(),
-        ),
-    )
-    .await;
-    let output = receive(&mut stream).await;
-    assert_eq!(output.envelope.causation_id.as_deref(), Some("input-2"));
-    assert!(
-        String::from_utf8(output.payload)
-            .unwrap()
-            .contains("unsupported llama adapter")
-    );
-    // The same real TCP -> broker -> EventNode -> llama Worker path must read
-    // the agent's live outbound/hop stores before it can start native LOAD.
-    // This profile asks for 2 MiB from the actual 1 MiB outbound store.
-    let mut load = serde_json::json!({
-        "load_generation":1, "binary":"must-not-start", "endpoint":"127.0.0.1:1",
-        "plan":"unused", "n_batch":1, "n_ubatch":1, "context_size":1,
-        "total_context_size":1, "sequence_capacity":1,
-        "resource_profile":{
-            "version":1, "max_requests":1, "max_request_retained_bytes":1024,
-            "max_input_tokens":1, "max_request_bytes":1024,
-            "max_output_tokens_per_request":1, "max_output_tokens":1,
-            "max_physical_result_bytes":1, "max_completion_payload_bytes":1048576,
-            "max_completion_retained_bytes":1048576, "max_edge_retained_bytes":2097152,
-            "max_receipt_retained_bytes":1048576
-        }
-    });
-    send(
-        &mut stream,
-        &event(
-            &own,
-            Endpoint::node(own.clone(), "node", 1),
-            3,
-            p4_llamacpp_staged_adapter::v2::LOAD_CONTENT_TYPE,
-            &serde_json::to_vec(&load).unwrap(),
-        ),
-    )
-    .await;
-    let output = receive(&mut stream).await;
-    assert_eq!(output.envelope.causation_id.as_deref(), Some("input-3"));
-    assert!(
-        String::from_utf8(output.payload)
-            .unwrap()
-            .contains("edge retained bytes are insufficient")
-    );
-    load["resource_profile"]["max_edge_retained_bytes"] = serde_json::json!(1048576);
-    load["resource_profile"]["max_receipt_retained_bytes"] = serde_json::json!(2097152);
-    send(
-        &mut stream,
-        &event(
-            &own,
-            Endpoint::node(own.clone(), "node", 1),
-            4,
-            p4_llamacpp_staged_adapter::v2::LOAD_CONTENT_TYPE,
-            &serde_json::to_vec(&load).unwrap(),
-        ),
-    )
-    .await;
-    let output = receive(&mut stream).await;
-    assert_eq!(output.envelope.causation_id.as_deref(), Some("input-4"));
-    assert!(
-        String::from_utf8(output.payload)
-            .unwrap()
-            .contains("receipt retained bytes are insufficient")
-    );
-    // Separate idle node: lifecycle deletion must fence admission and prove
-    // actual delivery stores empty, without weakening the unloaded requirement.
-    let create_idle = String::from_utf8(create.to_vec())
-        .unwrap()
-        .replace("\"node\"", "\"idle\"");
-    send(
-        &mut stream,
-        &event(
-            &own,
-            Endpoint::agent(own.clone()),
-            5,
-            "application/vnd.p4.node.create-v3+json",
-            create_idle.as_bytes(),
-        ),
-    )
-    .await;
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&receive(&mut stream).await.payload).unwrap()["ok"],
-        true
-    );
-    send(
-        &mut stream,
-        &event(
-            &own,
-            Endpoint::agent(own.clone()),
-            6,
+        (
+            31,
             "application/vnd.p4.node.delete-v3+json",
-            b"{\"node_id\":\"idle\",\"node_generation\":1}",
+            b"{\"node_id\":\"legacy\",\"node_generation\":1}".as_slice(),
+        ),
+    ] {
+        send(
+            &mut stream,
+            &event(
+                &own,
+                Endpoint::agent(own.clone()),
+                number,
+                content_type,
+                payload,
+            ),
+        )
+        .await;
+        let reply = receive(&mut stream).await;
+        let result: serde_json::Value = serde_json::from_slice(&reply.payload).unwrap();
+        assert_eq!(result["ok"], false);
+        assert!(result["detail"].as_str().unwrap().contains("unsupported"));
+    }
+
+    // A lifecycle request addressed straight to a nonexistent node never
+    // reaches agent control and cannot create a route as a side effect.
+    let bypass = lifecycle_payload(
+        LifecycleOperation::Load,
+        "bypass",
+        1,
+        "llamacpp",
+        p4_llamacpp_staged_adapter::v2::LOAD_CONTENT_TYPE,
+        b"{}",
+    );
+    send(
+        &mut stream,
+        &event(
+            &own,
+            Endpoint::node(own.clone(), "bypass", 1),
+            32,
+            NODE_LOAD_CONTENT_TYPE,
+            &bypass,
         ),
     )
     .await;
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&receive(&mut stream).await.payload).unwrap()["ok"],
-        true
-    );
+    drop(stream);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut inspection_sequence = 33;
+    loop {
+        let mut inspection = TcpStream::connect((own.host.as_str(), own.port))
+            .await
+            .unwrap();
+        send(
+            &mut inspection,
+            &event(
+                &own,
+                Endpoint::agent(own.clone()),
+                inspection_sequence,
+                AGENT_INSPECT_CONTENT_TYPE,
+                b"{}",
+            ),
+        )
+        .await;
+        let response = receive(&mut inspection).await;
+        assert_eq!(
+            response.envelope.payload_content_type,
+            AGENT_SNAPSHOT_CONTENT_TYPE
+        );
+        let snapshot: serde_json::Value = serde_json::from_slice(&response.payload).unwrap();
+        assert_eq!(snapshot["nodes"], serde_json::json!([]));
+        if snapshot["transport"]["failures"]["count"] == 1 {
+            assert_eq!(
+                snapshot["transport"]["failures"]["states"]["rejected_remote"],
+                1
+            );
+            break;
+        }
+        inspection_sequence += 1;
+        assert!(std::time::Instant::now() < deadline, "{snapshot}");
+        tokio::task::yield_now().await;
+    }
     assert!(!runtime.control.is_finished());
 }
 

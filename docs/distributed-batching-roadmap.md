@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 llama.cpp/HF 양쪽 회귀, Qwen3.5-122B-A10B 3-host 정상 1요청·정확 응답·회수를 통과했다. 강한 연속 웨이브 H0–H7은 미수용이다. 사용자 지시에 따른 다음 우선 단계는 LOAD가 node를 생성하고 UNLOAD가 제거하는 노드 수명 계획 M0–M4다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
+최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 llama.cpp/HF 양쪽 회귀, Qwen3.5-122B-A10B 3-host 정상 1요청·정확 응답·회수를 통과했다. 강한 연속 웨이브 H0–H7은 미수용이다. LOAD가 node를 생성하고 UNLOAD가 제거하는 노드 수명 계획은 M3까지 완료했고 실제 두 모델과 문서 수용 M4가 다음이다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,12 +10,13 @@
 
 <a id="current-status"></a>
 
-**2026-09-16 노드 수명 개편 M2 완료:** [LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)의
-M1 공통 Agent supervisor에 llama.cpp/HF 실제 retained worker를 연결했다. busy·cleanup 실패·원본 claim,
-completion 포화와 HF Python frame wrapper 경계를 검증했고 workspace feature off/on은 각각
-1,523 PASS / 0 FAIL / 7 ignored다. [M2 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)를
-따른다. 실제 모델 시험 7개는 M4까지 미수용이다. 다음 첫 행동은 M3에서 Rust/HF OUTER와 실기
-스크립트를 Agent-target LOAD/UNLOAD로 이관하고 정상 경로의 CREATE/DELETE/direct 우회를 제거하는 것이다.
+**2026-09-16 노드 수명 개편 M3 완료:** [LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)의
+Rust event-drive와 HF Qwen controller/실기 fixture를 Agent-target LOAD/UNLOAD로 이관하고 정상 경로의
+CREATE/DELETE 및 direct node lifecycle 우회를 제거했다. 부분 LOAD 실패의 OUTER 회수, 실제 Agent TCP와
+HF child 12 case, Python 57개, workspace feature off/on 각각 1,525 PASS / 0 FAIL / 7 ignored와 독립
+target 제거 변이 두 건을 확인했다. [M3 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)를
+따른다. 실제 모델 시험 7개는 아직 ignored다. 다음 첫 행동은 M4 사전계획에서 작은 실제 llama.cpp/HF
+모델·배포물·원격 포트와 초기 nodes=[]를 봉인한 뒤 생성·취소·해제·재적재를 한 번에 검증하는 것이다.
 
 2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 

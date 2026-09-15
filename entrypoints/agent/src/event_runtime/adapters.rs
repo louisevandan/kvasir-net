@@ -1,4 +1,4 @@
-//! Composition-only factories. Discovery and CREATE consume the same entries.
+//! Composition-only factories. Discovery and NODE_LOAD consume the same entries.
 use p4_adapter::node_adapter::RetainedNodeAdapter;
 use p4_agent_core::event_broker::RetainedEventBroker;
 use p4_llamacpp_staged_adapter::v2::{

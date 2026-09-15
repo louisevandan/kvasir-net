@@ -22,42 +22,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::task::JoinHandle;
 
-const CREATE: &str = "application/vnd.p4.node.create-v3+json";
-const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
 const RESULT: &str = "application/vnd.p4.node.result-v3+json";
 const RECONCILE: &str = "application/vnd.p4.transport.reconcile-v1+json";
-
-#[derive(Deserialize)]
-struct CreateNode {
-    node_id: String,
-    node_generation: u64,
-    adapter_kind: String,
-    #[serde(default = "default_capacity")]
-    queue_capacity: usize,
-    #[serde(default = "default_capacity")]
-    completion_capacity: usize,
-    retained_capacity: Option<usize>,
-    retained_bytes: Option<usize>,
-}
-
-#[derive(Deserialize)]
-struct DeleteNode {
-    node_id: String,
-    node_generation: u64,
-}
 
 #[derive(Deserialize)]
 struct ReconcileTransport {
     failure_id: String,
 }
 
-fn default_capacity() -> usize {
-    65_536
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LifecyclePhase {
-    Legacy,
     Loading,
     Loaded,
     Unloading,
@@ -67,7 +41,6 @@ enum LifecyclePhase {
 impl LifecyclePhase {
     fn as_str(self) -> &'static str {
         match self {
-            Self::Legacy => "legacy",
             Self::Loading => "loading",
             Self::Loaded => "loaded",
             Self::Unloading => "unloading",
@@ -296,17 +269,9 @@ pub(super) async fn run(
                         }
                     }
                 } else {
-                    let result = match content_type.as_str() {
-                        CREATE => {
-                            create(&own, &broker, &mut nodes, input.event(), limits, &transport)
-                        }
-                        DELETE => remove(&broker, &mut nodes, input.event()).await,
-                        other => Err(format!("unsupported agent control content type {other}")),
-                    };
-                    match result {
-                        Ok(node) => json!({"ok":true,"node_id":node}),
-                        Err(detail) => json!({"ok":false,"detail":detail}),
-                    }
+                    json!({"ok":false,"detail":format!(
+                        "unsupported agent control content type {content_type}"
+                    )})
                 };
                 let output = match reply(&own, input.event(), &sequence, RESULT, payload) {
                     Ok(output) => output,
@@ -413,7 +378,7 @@ fn begin_load(
     }
     if let Some(owner) = nodes.get(&metadata.node_id) {
         let resource_state = match owner.lifecycle_phase {
-            LifecyclePhase::Loaded | LifecyclePhase::Legacy => ResourceState::Present,
+            LifecyclePhase::Loaded => ResourceState::Present,
             LifecyclePhase::Loading | LifecyclePhase::Unloading | LifecyclePhase::Failed => owner
                 .last_lifecycle_result
                 .as_ref()
@@ -1024,125 +989,6 @@ fn lifecycle_reply(
         NODE_LIFECYCLE_RESULT_CONTENT_TYPE,
         payload,
     )
-}
-
-fn create(
-    own: &Address,
-    broker: &Arc<RetainedEventBroker>,
-    nodes: &mut HashMap<String, NodeOwner>,
-    event: &Event,
-    limits: super::RuntimeLimits,
-    transport: &super::transport::Inspector,
-) -> Result<String, String> {
-    let command: CreateNode = serde_json::from_slice(&event.payload)
-        .map_err(|error| format!("invalid node create payload: {error}"))?;
-    if command.node_id.is_empty()
-        || command.node_generation == 0
-        || command.queue_capacity == 0
-        || command.completion_capacity == 0
-    {
-        return Err("node id and positive queue capacities are required".into());
-    }
-    if nodes.contains_key(&command.node_id) {
-        return Err("node already exists".into());
-    }
-    let endpoint = Endpoint::node(
-        own.clone(),
-        command.node_id.clone(),
-        command.node_generation,
-    );
-    let retained_capacity = command.retained_capacity.unwrap_or(limits.retained);
-    let retained_bytes = command.retained_bytes.unwrap_or(limits.bytes);
-    let (sender, inbound) =
-        completion_mailbox_with_limits(command.queue_capacity, retained_capacity, retained_bytes)
-            .map_err(|error| format!("invalid node retained storage: {error:?}"))?;
-    let resource_probe = super::adapters::runtime_resource_probe(broker, transport);
-    let adapter = super::adapters::create(
-        &command.adapter_kind,
-        endpoint,
-        command.queue_capacity,
-        command.completion_capacity,
-        retained_capacity,
-        retained_bytes,
-        resource_probe,
-    )?;
-    broker
-        .register_node(command.node_id.clone(), command.node_generation, sender)
-        .map_err(|error| error.to_string())?;
-    let node = RetainedEventNode::new(adapter.clone(), Arc::clone(&inbound), Arc::clone(broker));
-    let id = command.node_id.clone();
-    let task = tokio::spawn(async move {
-        let result = node.run().await;
-        if let Err(failure) = &result {
-            eprintln!("P4_EVENT_NODE_STOPPED node={id} error={:?}", failure.error);
-        }
-        result
-    });
-    nodes.insert(
-        command.node_id.clone(),
-        NodeOwner {
-            generation: command.node_generation,
-            adapter_kind: command.adapter_kind,
-            adapter,
-            inbound,
-            task,
-            lifecycle_phase: LifecyclePhase::Legacy,
-            pending_lifecycle: None,
-            admission_pause: None,
-            last_lifecycle_result: None,
-        },
-    );
-    Ok(command.node_id)
-}
-
-async fn remove(
-    broker: &Arc<RetainedEventBroker>,
-    nodes: &mut HashMap<String, NodeOwner>,
-    event: &Event,
-) -> Result<String, String> {
-    let command: DeleteNode = serde_json::from_slice(&event.payload)
-        .map_err(|error| format!("invalid node delete payload: {error}"))?;
-    let owner = nodes
-        .get(&command.node_id)
-        .ok_or_else(|| "node does not exist".to_owned())?;
-    if owner.generation != command.node_generation {
-        return Err(format!(
-            "node generation is stale; current={} incoming={}",
-            owner.generation, command.node_generation
-        ));
-    }
-    if owner.lifecycle_phase != LifecyclePhase::Legacy {
-        return Err("lifecycle-managed node must be removed through NODE_UNLOAD".into());
-    }
-    let _admission = broker
-        .pause_node_admission(&command.node_id, command.node_generation)
-        .map_err(|error| error.to_string())?;
-    let state = owner.adapter.snapshot();
-    if !matches!(state.as_str(), "empty" | "unloaded" | "closed") {
-        return Err(format!(
-            "node must be unloaded before deletion; state={state}"
-        ));
-    }
-    if owner.task.is_finished()
-        || owner.inbound.storage_snapshot().retained_count != 0
-        || owner
-            .adapter
-            .completion_storage_snapshot()
-            .is_none_or(|value| value.retained_count != 0)
-    {
-        return Err("node delivery must be drained and healthy before deletion".into());
-    }
-    broker
-        .unregister_node(&command.node_id, command.node_generation)
-        .map_err(|error| error.to_string())?;
-    let owner = nodes.remove(&command.node_id).expect("checked node exists");
-    // Ingress is fenced and queued/held input/output counts are zero. Aborting
-    // this idle bridge cannot discard an Event. Failed owners are not deleted.
-    owner.task.abort();
-    tokio::task::spawn_blocking(move || drop(owner))
-        .await
-        .map_err(|error| format!("node adapter cleanup failed: {error}"))?;
-    Ok(command.node_id)
 }
 
 fn next_sequence(sequence: &AtomicU64) -> Result<u64, String> {
