@@ -1,0 +1,469 @@
+{
+  "runtime_commit": "dde0813fb0adbcb43aa6dccb27e9b8a2675b85f2",
+  "source_archive_sha256": "d5831db3c6e79b8c018882d7f6695f522bb4d3a06bed205b995ba468c2d0c041",
+  "harness": {
+    "path": "tools/cluster-envelope-check.py",
+    "sha256": "360f7fc6bed59582124bc2a5a1fd02a491c79cd412b6745ea050d6ba30ed93eb"
+  },
+  "arms": [
+    {
+      "artifact": "lan-results-clean.json",
+      "sha256": "23a95c279b3c7bf96b029ad422add33a65ff5315f933ddd11bd266de592bacfa",
+      "agents": [
+        {
+          "name": "local",
+          "host": "192.168.0.6",
+          "port": 41997,
+          "address": "tcp://192.168.0.6:41997"
+        },
+        {
+          "name": "m42",
+          "host": "192.168.0.29",
+          "port": 41997,
+          "address": "tcp://192.168.0.29:41997"
+        },
+        {
+          "name": "tuf",
+          "host": "192.168.0.17",
+          "port": 41997,
+          "address": "tcp://192.168.0.17:41997"
+        },
+        {
+          "name": "spark",
+          "host": "192.168.0.26",
+          "port": 41997,
+          "address": "tcp://192.168.0.26:41997"
+        },
+        {
+          "name": "ubuntu",
+          "host": "192.168.0.19",
+          "port": 41997,
+          "address": "tcp://192.168.0.19:41997"
+        },
+        {
+          "name": "mac20",
+          "host": "192.168.0.20",
+          "port": 41997,
+          "address": "tcp://192.168.0.20:41997"
+        },
+        {
+          "name": "mac21",
+          "host": "192.168.0.21",
+          "port": 41997,
+          "address": "tcp://192.168.0.21:41997"
+        }
+      ],
+      "responses": 455,
+      "cases": [
+        {
+          "name": "direct",
+          "passed": 7,
+          "total": 7,
+          "responses": 7
+        },
+        {
+          "name": "matrix-1",
+          "passed": 7,
+          "total": 7,
+          "responses": 49
+        },
+        {
+          "name": "matrix-2",
+          "passed": 7,
+          "total": 7,
+          "responses": 49
+        },
+        {
+          "name": "matrix-3",
+          "passed": 7,
+          "total": 7,
+          "responses": 49
+        },
+        {
+          "name": "burst",
+          "passed": 7,
+          "total": 7,
+          "responses": 147
+        },
+        {
+          "name": "same-channel-distinct-generation",
+          "passed": 14,
+          "total": 14,
+          "responses": 98
+        },
+        {
+          "name": "reconnect-generation-3",
+          "passed": 7,
+          "total": 7,
+          "responses": 49
+        },
+        {
+          "name": "reject-absent",
+          "passed": 7,
+          "total": 7,
+          "responses": 0
+        },
+        {
+          "name": "reject-mismatch",
+          "passed": 7,
+          "total": 7,
+          "responses": 0
+        },
+        {
+          "name": "post-rejection",
+          "passed": 7,
+          "total": 7,
+          "responses": 7
+        }
+      ]
+    },
+    {
+      "artifact": "tunnel-results.json",
+      "sha256": "3d9e6e186726f440eac58d035937fb9b9345014a81063a8959bcd10ed13eab36",
+      "agents": [
+        {
+          "name": "gateway",
+          "host": "127.0.0.1",
+          "port": 42010,
+          "address": "tcp://127.0.0.1:42010"
+        },
+        {
+          "name": "miA",
+          "host": "127.0.0.1",
+          "port": 42011,
+          "address": "tcp://127.0.0.1:42011"
+        },
+        {
+          "name": "miB",
+          "host": "127.0.0.1",
+          "port": 42012,
+          "address": "tcp://127.0.0.1:42012"
+        }
+      ],
+      "responses": 87,
+      "cases": [
+        {
+          "name": "direct",
+          "passed": 3,
+          "total": 3,
+          "responses": 3
+        },
+        {
+          "name": "matrix-1",
+          "passed": 3,
+          "total": 3,
+          "responses": 9
+        },
+        {
+          "name": "matrix-2",
+          "passed": 3,
+          "total": 3,
+          "responses": 9
+        },
+        {
+          "name": "matrix-3",
+          "passed": 3,
+          "total": 3,
+          "responses": 9
+        },
+        {
+          "name": "burst",
+          "passed": 3,
+          "total": 3,
+          "responses": 27
+        },
+        {
+          "name": "same-channel-distinct-generation",
+          "passed": 6,
+          "total": 6,
+          "responses": 18
+        },
+        {
+          "name": "reconnect-generation-3",
+          "passed": 3,
+          "total": 3,
+          "responses": 9
+        },
+        {
+          "name": "reject-absent",
+          "passed": 3,
+          "total": 3,
+          "responses": 0
+        },
+        {
+          "name": "reject-mismatch",
+          "passed": 3,
+          "total": 3,
+          "responses": 0
+        },
+        {
+          "name": "post-rejection",
+          "passed": 3,
+          "total": 3,
+          "responses": 3
+        }
+      ]
+    }
+  ],
+  "builds": [
+    {
+      "host": "spark",
+      "exit": 0,
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "p4-agent",
+        "--features",
+        "hf-transformers"
+      ],
+      "source_archive_sha256": "d5831db3c6e79b8c018882d7f6695f522bb4d3a06bed205b995ba468c2d0c041",
+      "binary": "/home/m42/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+      "binary_sha256": "dce50588e6faae57f2f4c5f0fb4ee53415c4834fbcfeac1caf845c11ee324bbe"
+    },
+    {
+      "host": "ubuntu",
+      "exit": 0,
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "p4-agent",
+        "--features",
+        "hf-transformers"
+      ],
+      "source_archive_sha256": "d5831db3c6e79b8c018882d7f6695f522bb4d3a06bed205b995ba468c2d0c041",
+      "binary": "/home/hika/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+      "binary_sha256": "8d851240d055cd24256c748ab8f01c80060a33987522aa67eb06fe2ec5f8ae64"
+    },
+    {
+      "host": "mac20",
+      "exit": 0,
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "p4-agent",
+        "--features",
+        "hf-transformers"
+      ],
+      "source_archive_sha256": "d5831db3c6e79b8c018882d7f6695f522bb4d3a06bed205b995ba468c2d0c041",
+      "binary": "/Users/mobimac/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+      "binary_sha256": "a691057049f93521660337c507c73660df323eed98b217fb42be0004d5fa8265"
+    },
+    {
+      "host": "mac21",
+      "exit": 0,
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "p4-agent",
+        "--features",
+        "hf-transformers"
+      ],
+      "source_archive_sha256": "d5831db3c6e79b8c018882d7f6695f522bb4d3a06bed205b995ba468c2d0c041",
+      "binary": "/Users/mobimac/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+      "binary_sha256": "a691057049f93521660337c507c73660df323eed98b217fb42be0004d5fa8265"
+    },
+    {
+      "host": "miA",
+      "exit": 0,
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "p4-agent",
+        "--features",
+        "hf-transformers"
+      ],
+      "source_archive_sha256": "d5831db3c6e79b8c018882d7f6695f522bb4d3a06bed205b995ba468c2d0c041",
+      "binary": "/home/banya/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+      "binary_sha256": "c4400f5ec80963a6536f646f295bd67f6bc7b159fcdaeb128c32325572f0b773"
+    },
+    {
+      "host": "miB",
+      "exit": 0,
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "p4-agent",
+        "--features",
+        "hf-transformers"
+      ],
+      "source_archive_sha256": "d5831db3c6e79b8c018882d7f6695f522bb4d3a06bed205b995ba468c2d0c041",
+      "binary": "/home/banya2/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+      "binary_sha256": "89cc2d90cd38c0be3d777c681a538438164f0bea92a09c72f216c41223b407e0"
+    }
+  ],
+  "cleanup": [
+    {
+      "name": "m42",
+      "code": 0,
+      "owner": {
+        "pid": 6844,
+        "start_ticks": 639250405112838755,
+        "binary": "C:\\Users\\42mob\\p4-envelope-dde0813fb-20260915\\p4-agent.exe"
+      },
+      "sha256": "8D1631BF929EB084C01019A34D9DF9348951DF3E4807460912B38EBD770B9315",
+      "alive": false,
+      "task_remaining": false,
+      "rule_remaining": false
+    },
+    {
+      "name": "tuf",
+      "code": 0,
+      "owner": {
+        "pid": 113840,
+        "start_ticks": 639250405123629042,
+        "binary": "C:\\Users\\admin\\p4-envelope-dde0813fb-20260915\\p4-agent.exe"
+      },
+      "sha256": "8D1631BF929EB084C01019A34D9DF9348951DF3E4807460912B38EBD770B9315",
+      "alive": false,
+      "task_remaining": false,
+      "rule_remaining": false
+    },
+    {
+      "name": "spark",
+      "code": 0,
+      "owner": {
+        "pid": 1721085,
+        "binary": "/home/m42/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+        "sha256": "dce50588e6faae57f2f4c5f0fb4ee53415c4834fbcfeac1caf845c11ee324bbe",
+        "address": "tcp://192.168.0.26:41997"
+      },
+      "sha256": "dce50588e6faae57f2f4c5f0fb4ee53415c4834fbcfeac1caf845c11ee324bbe",
+      "alive": false
+    },
+    {
+      "name": "ubuntu",
+      "code": 0,
+      "owner": {
+        "pid": 3130011,
+        "binary": "/home/hika/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+        "sha256": "8d851240d055cd24256c748ab8f01c80060a33987522aa67eb06fe2ec5f8ae64",
+        "address": "tcp://192.168.0.19:41997"
+      },
+      "sha256": "8d851240d055cd24256c748ab8f01c80060a33987522aa67eb06fe2ec5f8ae64",
+      "alive": false
+    },
+    {
+      "name": "mac20",
+      "code": 0,
+      "owner": {
+        "pid": 6221,
+        "binary": "/Users/mobimac/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+        "sha256": "a691057049f93521660337c507c73660df323eed98b217fb42be0004d5fa8265",
+        "address": "tcp://192.168.0.20:41997"
+      },
+      "sha256": "a691057049f93521660337c507c73660df323eed98b217fb42be0004d5fa8265",
+      "alive": false
+    },
+    {
+      "name": "mac21",
+      "code": 0,
+      "owner": {
+        "pid": 10840,
+        "binary": "/Users/mobimac/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+        "sha256": "a691057049f93521660337c507c73660df323eed98b217fb42be0004d5fa8265",
+        "address": "tcp://192.168.0.21:41997"
+      },
+      "sha256": "a691057049f93521660337c507c73660df323eed98b217fb42be0004d5fa8265",
+      "alive": false
+    },
+    {
+      "name": "miA",
+      "code": 0,
+      "owner": {
+        "pid": 1333241,
+        "binary": "/home/banya/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+        "sha256": "c4400f5ec80963a6536f646f295bd67f6bc7b159fcdaeb128c32325572f0b773",
+        "address": "tcp://127.0.0.1:42011"
+      },
+      "sha256": "c4400f5ec80963a6536f646f295bd67f6bc7b159fcdaeb128c32325572f0b773",
+      "alive": false
+    },
+    {
+      "name": "miB",
+      "code": 0,
+      "owner": {
+        "pid": 859106,
+        "binary": "/home/banya2/p4-envelope-dde0813fb-20260915/build/release/p4-agent",
+        "sha256": "89cc2d90cd38c0be3d777c681a538438164f0bea92a09c72f216c41223b407e0",
+        "address": "tcp://127.0.0.1:42012"
+      },
+      "sha256": "89cc2d90cd38c0be3d777c681a538438164f0bea92a09c72f216c41223b407e0",
+      "alive": false
+    },
+    {
+      "owner": {
+        "pid": 64176,
+        "start_ticks": 639250404976502530,
+        "binary": "F:\\dev\\p4\\target\\cluster-envelope-20260915\\runtime\\p4-agent.exe"
+      },
+      "sha256": "8D1631BF929EB084C01019A34D9DF9348951DF3E4807460912B38EBD770B9315",
+      "alive": false
+    },
+    {
+      "owner": {
+        "pid": 24364,
+        "start_ticks": 639250403079698474,
+        "binary": "F:\\dev\\p4\\target\\cluster-envelope-20260915\\runtime\\p4-agent.exe"
+      },
+      "sha256": "8D1631BF929EB084C01019A34D9DF9348951DF3E4807460912B38EBD770B9315",
+      "alive": false
+    }
+  ],
+  "capability_comparisons": {
+    "responses": 542,
+    "matched_direct_baseline": 542,
+    "final_empty_agents": 10
+  },
+  "raw_artifacts": {
+    "lan-results-id-collision.json": "c46a5ab4dd5c0110961b72aec0b15955919683a1eb5792c92fdb960a7b15d730",
+    "lan-results-retained-peer.json": "65973ccad3849852df5e467cc2e0fa8858e878b7cb563bff9c9ddbbaac86f5aa",
+    "mi-retry.json": "50853a4897242056bb06b0a6edc6e6acc08745e61ccb6557d73cbc49044ce311",
+    "mi-jump.json": "63a1792c0e5b35dbd5b3ab84997559ac16a3824a5736da1493ff970e788dad6f",
+    "final-inspect.json": "91ff8d19530b4b4d2e92342c7fbdd9d23244e6e1b349de53f4443f7b45a32d70",
+    "host-inventory.json": "c6541f513f642c9aefab7deb7cd5b53f762a795f0459d4457020ba1dba2d035c",
+    "installed-inspect.json": "35609f097c7f8970379bc0eee74fa420952a789447f1a97c769f7edb250e1933",
+    "mi-process-inventory.json": "75bb0ad1e4bd2663abc17c108f186e03dfe5ed2486c5df7e9b6d3c2a34a3179e",
+    "remote-cleanup.json": "d1dc4881a33a42add772e8e0307e9babcd2ee797ff33e8010938d0c64b642709",
+    "local-cleanup.json": "bdf71241b0717b0dc47959f631b6c005bccfb440cd002e347b57d3a0801c2827",
+    "m42-final.err": "27a63247159f80f9a5aec22ef91273d206c36179d47ba2ea4ebd4acaedbc0670",
+    "mac20-final.err": "169bfbe866284c0991b88b583b65f164c15c66d15abfe19205d825459aa7ee03",
+    "mac21-final.err": "4d0cb2f39174e49096e883a6c0c4b4e7481620e042a277b0cdfa7c7568665313",
+    "miA-final.err": "3b2f7344c5d2f5a6e90389337434dbf00186a01953afefde36a2918203079119",
+    "miB-final.err": "912137eae2d5e61c7416b4514377d61ca744b3e00a6ead6042dc24ecd3c398d9",
+    "spark-final.err": "98ef0718cc95ffea9c664d37fdba80debbea11219d88fd3947aedd64961a75ea",
+    "tuf-final.err": "fd560f1bf1433cad2ef3bd4955c323759a4bb204fd398ae9afea11fdc36f23e8",
+    "ubuntu-final.err": "7242d6b86f75d6a27b54c4102c091a55608bccdf79235b14f5f42437cad182a5",
+    "agent-local.err": "e8bd064816eb6961409be94f3e26c6a19e0c5e6b2a0ca7818dc5eda48005ba28",
+    "gateway.err": "e79f64aa7fb428e8c15578909bbe7f3c29ec7e358946f3489d3a7c00594a8183",
+    "local-pre-restart.err": "c6adc87267750561eca17a57119f987eac4eb7e9f0e9bc6b99f0af48e32c48cd",
+    "ubuntu-failure.err": "b0de42234541c682b5bd88c1e2e40854cb6406578449172fc4ec40dbdfd38dd0",
+    "mac20-failure.err": "7c21ee13afe95d8c7fdee9906c113d54fef2ecb1d7d90d5e3760311af71d6b2e",
+    "local-transport-cleanup.json": "0ba4668786b7d225cec6ea5703fd65a1003b82ffb29d8c94e2a71a2189b343e1",
+    "mi-transport-cleanup.json": "77e2cb5aea55613ebbc6e5dd73402a4142555b6b895285496eb98c7fd64c0731"
+  },
+  "limitations": [
+    "LAN 7x7 and tunnel 3x3, not one 9x9 mesh",
+    "No model loading or derived node events in this run",
+    "Conflicting event ID arm failed; uncertain peer writers remained closed until test agent restart",
+    "Existing FINISH unexpected-output failure unchanged",
+    "SSH lifecycle managed externally; no automatic reconciliation implementation"
+  ]
+}

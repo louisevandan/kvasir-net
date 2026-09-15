@@ -22,6 +22,12 @@ HF를 P4 내부로 통합했고 전체 workspace on/off 각각 1460 passed / 0 f
 
 ### 0.A Release A 착수 (2026-09-14)
 
+**2026-09-15 모델 없는 클러스터 조회:** 사용자 지정 [9대·MI250 SSH 검증](../tests/reports/release-a/20260915_124433.md)을 수행했다.
+LAN7×7과 로컬 gateway/MI250두 대3×3에서 정상 응답542개·잘못된 문맥 거부20개를 확인했다.
+직접 SSH는 시간 초과였으나 Ubuntu jump 및 정·역방향 터널은 통과했다. 충돌 ID 시험 뒤 실패 peer를
+계속 보존하는 상태도 확인했으며 자동 재접속/정산 수용은 아니다. 소유 시험 프로세스·터널을 정리했다.
+모델 생성 재검증·전체 Release A 승격은 하지 않으며 기존 FINISH 실패와 아래 중단 상태를 유지한다.
+
 **2026-09-15 반환 문맥 계약 반영:** 사용자 지시로 [공통 반환 문맥](../tests/reports/release-a/20260915_121000.md)을 구현했다.
 모든 유효 이벤트의 명시적 경로·OUTER 일치 검증, source fallback 제거, 공통 ReturnContext와
 혼합 owner별 응답 선택을 연결했다. workspace1472/1/7·Python43개·독립 변이3종 및 접수 A만 거치는

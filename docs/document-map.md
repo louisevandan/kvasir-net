@@ -230,3 +230,5 @@ Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](../t
 
 의뢰 반환 문맥: [검증 계획](../tests/plans/return-context-20260915.md).
 반환 문맥 구현 검증: [공통 계약·두 어댑터·독립 변이](../tests/reports/release-a/20260915_121000.md).
+
+클러스터 반환 경로: [시험 계획](../tests/plans/cluster-envelope-20260915.md) · [9대·MI250 SSH 검증](../tests/reports/release-a/20260915_124433.md).
