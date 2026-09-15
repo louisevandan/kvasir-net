@@ -174,11 +174,17 @@ HF의 기존 명시적 abort는 실패 정리 의미를 유지한다. abort 결�
 
 ## 7. 구현 순서와 단계 산출물
 
+**2026-09-16 M0 완료:** [호출 경로·소유권 감사](../tests/reports/node-load-lifecycle/20260916_014500.md)에
+현재 control/broker/retained adapter/OUTER 호출자와 NL01–NL14를 매핑했다. M1의 첫 구현은 agent control을
+막지 않는 node별 supervisor, agent 소유 terminal result, snapshot과 분리된 typed lifecycle completion,
+bounded 반환 비용을 함께 세운다. B5에서 발견한 bind 실패 뒤 stdin join과 failed LOAD 회수는
+NL05/NL08 fixture로 재사용한다.
+
 이 순서는 이 변경 내부의 작업 순서다. 전체 로드맵의 다른 작업을 임의로 재정렬하지 않는다.
 
 | 단계 | 작업 | 다음 단계 조건 |
 | --- | --- | --- |
-| M0 | 최신 HEAD/dirty 감사, 실제 호출자 전수 검색, §8 반례와 수명 소유권 설계 | 중복·실패·완료 응답·barrier·byte 소유권을 코드 경로에 매핑 |
+| M0 | **DONE** — 최신 HEAD/dirty 감사, 실제 호출자 전수 검색, §8 반례와 수명 소유권 설계 | [M0 보고](../tests/reports/node-load-lifecycle/20260916_014500.md)에 중복·실패·완료 응답·barrier·byte 소유권 매핑 |
 | M1 | 공통 요청/결과 codec·typed adapter 완료·agent supervisor 설계 구현, neutral fixture | 단일 LOAD/UNLOAD 실제 event 경로와 경계·거부 무효과 시험 통과 |
 | M2 | llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | 두 adapter에서 busy·cleanup 실패·응답 포화·정상 제거 통과 |
 | M3 | Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | 새 명령만으로 생성→정상 응답→해제, 구형 명령 부작용 없는 거부 |

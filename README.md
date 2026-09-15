@@ -218,3 +218,7 @@ Release A A-BYTES B1: [versioned LOAD profile·실제 잔여 용량·Qwen122B LO
 Release A A-BYTES B2: [native 전 completion group 예약·거부 무효과·독립 변이](tests/reports/release-a/20260915_232600.md).
 
 Release A A-BYTES B3/B4: [보존 수명 분리·실제 경계·독립 변이·로컬 전원 사고](tests/reports/release-a/20260915_235900.md).
+
+Release A A-BYTES B5: [양쪽 어댑터 회귀·Qwen122B 3-host 정상 요청·회수·원격 사전검사](tests/reports/release-a/20260916_013500.md).
+
+노드 LOAD·UNLOAD 수명 M0: [현재 호출 경로·NL01–NL14 소유권 매핑](tests/reports/node-load-lifecycle/20260916_014500.md).

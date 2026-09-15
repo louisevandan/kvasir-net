@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-15 — 전송 R1–R9와 소형 llama.cpp/HF 수용 뒤 Qwen3.5-122B-A10B의 실제 A-PLAN과 A-LOAD를 통과했다. A-BYTES B0–B4는 physical result 상한, LOAD resource profile, native 전 completion 예약, 보존 수명별 INSPECT, 실제 경계와 독립 변이까지 닫았다. 실제 요청·H0–H7과 A-BYTES 전체는 미수용이다. 다음 단계는 B5 양쪽 어댑터 회귀와 Qwen122B 3-host 실기다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
+최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 llama.cpp/HF 양쪽 회귀, Qwen3.5-122B-A10B 3-host 정상 1요청·정확 응답·회수를 통과했다. 강한 연속 웨이브 H0–H7은 미수용이다. 사용자 지시에 따른 다음 우선 단계는 LOAD가 node를 생성하고 UNLOAD가 제거하는 노드 수명 계획 M0–M4다. 이 PC의 build는 기본 차단하며 원격 host에서만 진행한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,11 +10,12 @@
 
 <a id="current-status"></a>
 
-**2026-09-15 노드 수명 개편 계획:** 사용자 합의와 새 세션 구현 절차는
-[LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)에 고정했다. 현재는 문서 작성만 수행했으며
-구현·실기 수용은 미실행이다. 개별 LOAD가 노드를 생성하고 정상 UNLOAD 완료가 제거를 끝낸다.
+**2026-09-16 노드 수명 개편 M0 완료:** 사용자 합의와 구현 절차는
+[LOAD·UNLOAD 수명 통합 계획](node-load-lifecycle-plan.md)에 고정했다. 구현 코드는 아직 변경하지 않았고,
+최신 호출 경로·소유권을 [M0 보고](../tests/reports/node-load-lifecycle/20260916_014500.md)에 매핑했다.
+개별 LOAD가 노드를 생성하고 정상 UNLOAD 완료가 제거를 끝낸다.
 다중 노드 전체 적재 판정과 실패 회수는 OUTER 책임이다. 기존 A-BYTES 진행 상태와 실행 순서를
-변경하지 않으며, 이 개편 구현을 지시받은 세션은 계획 M0의 최신 소스·병행 변경 감사부터 시작한다.
+변경하지 않으며, 다음 첫 행동은 M1 공통 codec·비동기 supervisor·typed lifecycle 완료 구현이다.
 
 2026-09-14 HF-0~3 수용 완료: [통합 안내](hf-integration.md)와 [수용 보고](../layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md)를 따른다. HF 소유 Rust bridge/모델별 Python과 P4 factory/INSPECT를 연결했고 두 물리 host·취소/재수용·회수·Python 교체·반환 단절 복구·재현 빌드를 검증했다. 기존 llama.cpp도 feature on/off 실제 생성·회수를 통과했다. 소형 conformance이며 H0–H7 승격은 아니다.
 
@@ -36,6 +37,14 @@ HF를 P4 내부로 통합했고 전체 workspace on/off 각각 1460 passed / 0 f
 첫 실행이 드러낸 한정된 차이만 조정하고, 3회차는 기능 변경 없이 clean rebuild·전체 회귀·독립 변이로
 확인한다. 3회차에 새 설계나 기능 수정이 필요하면 해당 단계의 사전 검토 실패로 판정하고 중단한다.
 로드맵 운영 목표는 첫 실행 통과 비율을 계속 높이는 것이다.
+
+**원격 실기 사전검사 — 실패에서 얻은 규칙을 실행 조건으로 재사용:** B5와 이후 원격 모델 실행은
+`tools/validate_event_runtime_preflight.py`가 봉인된 실행 설정과 직전 증거를 승인한 뒤에만 시작한다.
+증거에는 설정 그대로의 advertised agent별 양방향 INSPECT 왕복, 응답 source·OUTER 반환 경로,
+참여 OS에서 조회한 dynamic/ephemeral port 범위, 시작 전 nodes/transport failure, task 소유 native
+child/listener 수를 포함한다. SSH·단방향 연결 성공이나 agent 재시작은 이를 대신하지 않는다.
+실패 뒤에는 원인을 보고서에만 남기지 않고 이 검사 또는 실제 소비 경로 시험에 새 반례를 추가한 뒤
+다음 실행으로 간다. 종료 뒤에도 같은 상태 항목을 다시 검사해 회수 완료를 판정한다.
 
 **2026-09-15 FINISH 결정론적 재개:** [재개 검증](../tests/reports/release-a/20260915_142237.md)으로
 예상 밖 유효 frame 전체와 EOF/timeout 부분 수신을 보존하고 과대 frame은 본문 할당 전에 거부하도록
@@ -122,6 +131,14 @@ feature off/on은 각 1,506/0/7이고 B4 최종 소스의 관련 package는 원�
 A-BYTES 전체와 실제 inference는 미수용이다. 다음 첫 행동은 B5 시작 전 새 namespace와 작업 소유 node를
 INSPECT하고 모두 UNLOAD/DELETE한 뒤, 최종 소스로 llama.cpp와 HF/Python 회귀 및 Qwen122B 3-host
 경계 거부·정상 1요청·최종 회수를 한 번의 봉인된 gate로 수행하는 것이다.
+
+**2026-09-16 A-BYTES B5 수용:** [B5 보고](../tests/reports/release-a/20260916_013500.md)의 최종
+workspace feature off/on은 각각 1,506/0/7, HF Python 50/0, 세 host native CTest는 각 16/0이다.
+소형 llama.cpp 2회 생성·회수와 HF Qwen0.8B 교차 실행·취소·재수용을 통과했다. Qwen122B 3-host는
+byte ±1 거부 무효과, LOAD 3/3, 정답인 정상 응답 119 token/EOS, delivered1/uncertain0,
+UNLOAD/DELETE 3/3과 최종 nodes/failures/native/listener0을 통과했다. `first_pass=fail`이며 반복된
+반환 경로·dynamic port 실패를 exact 왕복과 OS port 범위 자동 사전검사로 고정했다. A-BYTES B0–B5는
+GREEN이고 H0–H7은 미수용이다. 다음 첫 행동은 노드 수명 계획 M1의 공통 codec·supervisor 구현이다.
 
 **2026-09-15 대상 변경:** 사용자 지시로 Release A를 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard 기반으로 진행한다.
 550B 원본/실패는 보존하되 재적재·재실행을 새 대상의 선행 조건에서 제외한다. Qwen은 새 artifact/corpus/
