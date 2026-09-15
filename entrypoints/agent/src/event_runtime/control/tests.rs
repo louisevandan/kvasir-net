@@ -13,7 +13,8 @@ async fn owned_runtime_control_full_retries_and_permanent_failure_retains_inputs
     broker.dispatch_ingress(event(&own, route, 10, "application/octet-stream", b"occupy output")).unwrap();
     let first = event(&own, Endpoint::agent(own.clone()), 11, "application/x-control-test", b"original first");
     broker.dispatch_ingress(first).unwrap();
-    let task = tokio::spawn(run(own.clone(), broker.clone(), input.clone(), limits));
+    let transport = super::super::transport::Inspector::detached(limits);
+    let task = tokio::spawn(run(own.clone(), broker.clone(), input.clone(), limits, transport));
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while input.storage_snapshot().queued_count != 0 { tokio::task::yield_now().await; }
     }).await.unwrap();

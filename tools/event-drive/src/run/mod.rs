@@ -174,12 +174,13 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
     let stream = TcpStream::connect((ingress.host.as_str(), ingress.port)).await?;
     stream.set_nodelay(true)?;
     let (reader, writer) = stream.into_split();
-    let mut wire = wire::EventWire::new(reader, writer);
     let outer = OuterEndpoint {
         ingress_agent: ingress.clone(),
         channel: config.channel.clone(),
         connection_generation: config.connection_generation,
     };
+    let mut wire = wire::EventWire::acknowledged(reader, writer,
+        format!("{}#{}", outer.channel, outer.ingress_agent), outer.connection_generation)?;
     let mut sender = Sender::new(outer);
 
     let mut create_replies = Vec::with_capacity(config.nodes.len());

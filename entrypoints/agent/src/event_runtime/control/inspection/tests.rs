@@ -33,7 +33,10 @@ async fn inspection_counts_retained_receipts_through_the_actual_control_loop() {
     event.envelope.payload_content_type = AGENT_INSPECT_CONTENT_TYPE.into();
     event.payload = b"{}".to_vec();
     let second_cost = p4_adapter::node_adapter::retained_event_bytes(&event.clone()).unwrap();
-    let task = tokio::spawn(super::super::run(own, Arc::clone(&broker), agent_rx, crate::event_runtime::RuntimeLimits { queue: 1, retained: 8, bytes: 1024 * 1024, connections: 8 }));
+    let limits = crate::event_runtime::RuntimeLimits { queue: 1, retained: 8, bytes: 1024 * 1024,
+        connections: 8, hop_receipts: 8, hop_receipt_bytes: 1024 * 1024, hop_outstanding: 4 };
+    let transport = crate::event_runtime::transport::Inspector::detached(limits);
+    let task = tokio::spawn(super::super::run(own, Arc::clone(&broker), agent_rx, limits, transport));
     broker.dispatch_ingress(event).unwrap();
     let reply = tokio::time::timeout(std::time::Duration::from_secs(20), crate::event_runtime::next(&outer_rx))
         .await.unwrap().unwrap();
@@ -54,7 +57,10 @@ async fn an_empty_agent_still_reports_machine_and_protocol_identity() {
     let (outer, _outer_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
     let (outbound, _outbound_rx) = p4_adapter::node_adapter::completion_mailbox_with_limits(1, 8, 1024 * 1024).unwrap();
     let broker = RetainedEventBroker::new(p4_protocol::Address::tcp("127.0.0.1", 53001), agent, outer, outbound, 8);
-    let snapshot = snapshot(&HashMap::new(), &broker).await;
+    let limits = crate::event_runtime::RuntimeLimits { queue: 1, retained: 8, bytes: 1024 * 1024,
+        connections: 8, hop_receipts: 8, hop_receipt_bytes: 1024 * 1024, hop_outstanding: 4 };
+    let transport = crate::event_runtime::transport::Inspector::detached(limits);
+    let snapshot = snapshot(&HashMap::new(), &broker, &transport).await;
 
     assert_eq!(snapshot["schema"], 1);
     assert_eq!(snapshot["protocol_version"], Envelope::VERSION);
@@ -77,5 +83,7 @@ async fn an_empty_agent_still_reports_machine_and_protocol_identity() {
     assert!(snapshot["machine"]["occupancy"]["gpus"].is_array());
     assert!(snapshot["machine"]["probes"]["gpus"].is_object());
     assert_eq!(snapshot["nodes"], json!([]));
+    assert_eq!(snapshot["transport"]["receipts"]["records"], 0);
+    assert_eq!(snapshot["transport"]["failures"]["count"], 0);
     assert!(snapshot["generated_at_unix_ms"].as_u64().unwrap_or(0) > 0);
 }

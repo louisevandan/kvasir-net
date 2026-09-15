@@ -655,3 +655,37 @@ buffered/frame size in Rust; HF retains the bytes in the client's
 returned. These diagnostic bytes are client-owned and do not approve or settle the
 Event. Local actual llama.cpp/HF generation and cleanup pass. Fleet
 binary replacement, uncertain-result reconciliation and multi-host acceptance remain.
+
+<a id="acknowledged-hop-transport"></a>
+
+## Acknowledged hop transport — Release A candidate (2026-09-15)
+
+`P4H1` is a backend-neutral envelope inside the existing u32 little-endian
+socket frame. A connection starts with `Hello`/`HelloAck`; no Event is sent
+before the peer confirms protocol version, sender identity, connection
+generation and bounded outstanding capacity. A legacy `P4E3` connection is
+still readable during the migration window, while a new sender fails closed
+against a peer that does not acknowledge `P4H1`.
+
+Each `Data` frame contains a connection-local attempt number, SHA-256 of the
+canonical `P4E3` bytes and those exact bytes. The receiver reserves a bounded
+receipt record before broker dispatch. Count or byte exhaustion therefore
+returns `Rejected` without broker, node, adapter or output effects. A successful
+broker commit pins `AcceptedExact`; duplicate attempt plus equal digest returns
+the pinned result, while a changed digest returns `Conflict` without dispatch.
+
+The sender retains the original Event until `AcceptedExact`, then retires it
+and sends `ReceiptAck`. The ACK carries the original sender identity and
+connection generation so it can release a pin after reconnect. ACK loss is
+idempotent. `Query` names that same identity, generation, attempt and digest.
+Only `AcceptedExact` permits retirement and queue resumption; `Unknown`,
+`Conflict` and rejected results remain quarantined and visible in INSPECT.
+Receipt pins are bounded in memory and are not durable across agent process
+restart, so a restart can yield `Unknown` and never authorizes replay.
+
+Agent INSPECT exposes receipt count/bytes/status/age plus transport failure
+count, retained Event bytes, state, age and stable `transport-N` identifiers.
+`application/vnd.p4.transport.reconcile-v1+json` accepts
+`{"failure_id":"transport-N"}`. It retries `not_started` originals or queries
+an uncertain acknowledged generation before reconnecting. No transport receipt
+is native completion, request release, output approval or KV settlement.

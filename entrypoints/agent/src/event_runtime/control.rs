@@ -18,6 +18,7 @@ use tokio::task::JoinHandle;
 const CREATE: &str = "application/vnd.p4.node.create-v3+json";
 const DELETE: &str = "application/vnd.p4.node.delete-v3+json";
 const RESULT: &str = "application/vnd.p4.node.result-v3+json";
+const RECONCILE: &str = "application/vnd.p4.transport.reconcile-v1+json";
 
 #[derive(Deserialize)]
 struct CreateNode {
@@ -37,6 +38,9 @@ struct DeleteNode {
     node_id: String,
     node_generation: u64,
 }
+
+#[derive(Deserialize)]
+struct ReconcileTransport { failure_id: String }
 
 fn default_capacity() -> usize {
     65_536
@@ -68,7 +72,8 @@ pub(super) struct Remainder {
     error: Option<String>,
 }
 
-pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver: Arc<CompletionMailbox>, limits: super::RuntimeLimits) -> Remainder {
+pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver: Arc<CompletionMailbox>,
+    limits: super::RuntimeLimits, transport: super::transport::Inspector) -> Remainder {
     let sequence = AtomicU64::new(1);
     let mut nodes: HashMap<String, NodeOwner> = HashMap::new();
     let (replies, reply_store) = super::RuntimeLimits { queue: 1, retained: 1, ..limits }.mailbox();
@@ -77,17 +82,26 @@ pub(super) async fn run(own: Address, broker: Arc<RetainedEventBroker>, receiver
         let (payload_content_type, payload) = match event.envelope.payload_content_type.as_str() {
             AGENT_INSPECT_CONTENT_TYPE => (
                 AGENT_SNAPSHOT_CONTENT_TYPE,
-                inspection::snapshot(&nodes, &broker).await,
+                inspection::snapshot(&nodes, &broker, &transport).await,
             ),
             content_type => {
-                let result = match content_type {
-                    CREATE => create(&own, &broker, &mut nodes, event, limits),
-                    DELETE => remove(&broker, &mut nodes, event).await,
-                    other => Err(format!("unsupported agent control content type {other}")),
-                };
-                let payload = match result {
-                    Ok(node) => json!({"ok":true,"node_id":node}),
-                    Err(detail) => json!({"ok":false,"detail":detail}),
+                let payload = if content_type == RECONCILE {
+                    match serde_json::from_slice::<ReconcileTransport>(&event.payload) {
+                        Ok(request) if !request.failure_id.is_empty() =>
+                            transport.reconcile(&request.failure_id).await,
+                        Ok(_) => json!({"ok":false,"state":"rejected_local","detail":"failure_id is required"}),
+                        Err(error) => json!({"ok":false,"state":"rejected_local","detail":error.to_string()}),
+                    }
+                } else {
+                    let result = match content_type {
+                        CREATE => create(&own, &broker, &mut nodes, event, limits),
+                        DELETE => remove(&broker, &mut nodes, event).await,
+                        other => Err(format!("unsupported agent control content type {other}")),
+                    };
+                    match result {
+                        Ok(node) => json!({"ok":true,"node_id":node}),
+                        Err(detail) => json!({"ok":false,"detail":detail}),
+                    }
                 };
                 (RESULT, payload)
             }

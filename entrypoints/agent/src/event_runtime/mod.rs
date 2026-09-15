@@ -18,6 +18,9 @@ struct RuntimeLimits {
     retained: usize,
     bytes: usize,
     connections: usize,
+    hop_receipts: usize,
+    hop_receipt_bytes: usize,
+    hop_outstanding: usize,
 }
 
 impl RuntimeLimits {
@@ -28,12 +31,27 @@ impl RuntimeLimits {
             Err(error) => return Err(error.into()),
         };
         if bytes == 0 { return Err("P4_EVENT_RETAINED_BYTES must be positive".into()); }
-        Ok(Self { queue: ROUTE_CAPACITY, retained: ROUTE_CAPACITY, bytes, connections: 256 })
+        let hop_receipts = positive_env("P4_EVENT_HOP_RECEIPTS", ROUTE_CAPACITY)?;
+        let hop_receipt_bytes = positive_env("P4_EVENT_HOP_RECEIPT_BYTES", 64 * 1024 * 1024)?;
+        let hop_outstanding = positive_env("P4_EVENT_HOP_OUTSTANDING", 256)?;
+        u32::try_from(hop_outstanding).map_err(|_| "P4_EVENT_HOP_OUTSTANDING exceeds protocol range")?;
+        Ok(Self { queue: ROUTE_CAPACITY, retained: ROUTE_CAPACITY, bytes, connections: 256,
+            hop_receipts, hop_receipt_bytes, hop_outstanding })
     }
     fn mailbox(self) -> (CompletionPublisher, Arc<CompletionMailbox>) {
         completion_mailbox_with_limits(self.queue, self.retained, self.bytes)
             .expect("validated event mailbox limits/allocation")
     }
+}
+
+fn positive_env(name: &str, default: usize) -> Result<usize, Box<dyn std::error::Error>> {
+    let value = match std::env::var(name) {
+        Ok(value) => value.parse::<usize>()?,
+        Err(std::env::VarError::NotPresent) => default,
+        Err(error) => return Err(error.into()),
+    };
+    if value == 0 { return Err(format!("{name} must be positive").into()); }
+    Ok(value)
 }
 
 async fn next(receiver: &CompletionMailbox) -> Option<RetainedCompletion> {
@@ -73,7 +91,7 @@ impl Runtime {
         let (outbound_tx, outbound_rx) = limits.mailbox();
         let broker = Arc::new(RetainedEventBroker::new(own.clone(), agent_tx, outer_tx, outbound_tx, DUPLICATE_WINDOW));
         let transport = transport::Owner::start(listener, Arc::clone(&broker), outer_rx, outbound_rx, limits);
-        let control = tokio::spawn(control::run(own, broker, agent_rx, limits));
+        let control = tokio::spawn(control::run(own, broker, agent_rx, limits, transport.inspector()));
         Self { control, transport }
     }
 }
@@ -89,8 +107,9 @@ impl Drop for Runtime {
 
 pub async fn run(listener: TcpListener, own: Address) -> Result<(), Box<dyn std::error::Error>> {
     let limits = RuntimeLimits::configured()?;
-    eprintln!("P4_EVENT_RETAINED_LIMITS queue={} retained={} bytes_per_store={} connections={}",
-        limits.queue, limits.retained, limits.bytes, limits.connections);
+    eprintln!("P4_EVENT_RETAINED_LIMITS queue={} retained={} bytes_per_store={} connections={} hop_receipts={} hop_receipt_bytes={} hop_outstanding={}",
+        limits.queue, limits.retained, limits.bytes, limits.connections, limits.hop_receipts,
+        limits.hop_receipt_bytes, limits.hop_outstanding);
     let _runtime = Runtime::start(listener, own, limits);
     tokio::signal::ctrl_c().await?;
     Ok(())

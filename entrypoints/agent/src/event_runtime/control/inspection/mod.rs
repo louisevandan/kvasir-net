@@ -13,7 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA: u16 = 1;
 
-pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &RetainedEventBroker) -> Value {
+pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &RetainedEventBroker,
+    transport: &super::super::transport::Inspector) -> Value {
     let mut registered: Vec<Value> = nodes
         .iter()
         .map(|(node_id, owner)| {
@@ -52,6 +53,7 @@ pub(super) async fn snapshot(nodes: &HashMap<String, NodeOwner>, broker: &Retain
         "machine": hardware.with_adapters(super::super::adapters::kinds()),
         "nodes": registered,
         "broker": broker,
+        "transport": transport.snapshot(),
     })
 }
 

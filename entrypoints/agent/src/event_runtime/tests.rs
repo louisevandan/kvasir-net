@@ -3,7 +3,8 @@ use p4_protocol::event::{Endpoint, Envelope, Event, EventClass, encode, decode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub(super) fn limits() -> RuntimeLimits { RuntimeLimits { queue: 1, retained: 8, bytes: 1024 * 1024, connections: 16 } }
+pub(super) fn limits() -> RuntimeLimits { RuntimeLimits { queue: 1, retained: 8, bytes: 1024 * 1024,
+    connections: 16, hop_receipts: 8, hop_receipt_bytes: 1024 * 1024, hop_outstanding: 4 } }
 
 pub(super) fn event(own: &Address, target: Endpoint, number: u64, content_type: &str, payload: &[u8]) -> Event {
     let source = Endpoint::outer(own.clone(), "owned-runtime", 1);

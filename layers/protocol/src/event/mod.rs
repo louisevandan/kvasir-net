@@ -4,6 +4,7 @@
 //! concrete adapter named by `adapter_kind`.
 
 mod wire;
+pub mod hop;
 
 use crate::{Address, ProtocolError};
 

@@ -258,6 +258,9 @@ dependencies = [
 [[package]]
 name = "p4-protocol"
 version = "0.9.0"
+dependencies = [
+ "sha2",
+]
 
 [[package]]
 name = "p4-service"

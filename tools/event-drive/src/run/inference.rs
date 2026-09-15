@@ -234,6 +234,12 @@ where
     if let Err(error) = outcome {
         failure.get_or_insert_with(|| error.to_string());
     }
+    let confirmed: BTreeSet<String> = wire.take_confirmed().into_iter().collect();
+    for request in requests.values_mut() {
+        if confirmed.contains(&request.submission_event_id) {
+            request.submission = super::SubmissionState::Delivered;
+        }
+    }
     // Attribution follows the evidence, not the verdict. Evidence that is
     // complete proves every request's rows whether or not the run went on to
     // fail, be refused, or leave sequences unreleased - and a failed run that
@@ -373,10 +379,11 @@ where
         // Record which of the two this was before propagating, because the
         // artifact is now built even when this run aborts.
         let sent = wire.send(event).await;
+        let acknowledged = wire.acknowledged_mode();
         requests
             .get_mut(&key)
             .expect("registered submission")
-            .submission = if sent.is_ok() {
+            .submission = if sent.is_ok() && !acknowledged {
             super::SubmissionState::Delivered
         } else {
             super::SubmissionState::Uncertain
