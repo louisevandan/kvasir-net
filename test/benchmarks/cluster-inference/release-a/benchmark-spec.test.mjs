@@ -10,7 +10,7 @@ import { validateBenchmarkSpec, verifyFiles, verifySourceEol } from './benchmark
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../../../..');
-const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v5.json');
+const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v6.json');
 const read = () => JSON.parse(fs.readFileSync(specPath));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const reseal = component => {
@@ -50,8 +50,18 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
       reseal(spec.source.components[0]);
     },
     spec => {
+      spec.source.components[0].files = spec.source.components[0].files
+        .filter(item => item.path !== 'tools/event-drive/src/run/source_grounded.rs');
+      reseal(spec.source.components[0]);
+    },
+    spec => {
       spec.source.components[1].files = spec.source.components[1].files
         .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py');
+      reseal(spec.source.components[1]);
+    },
+    spec => {
+      spec.source.components[1].files = spec.source.components[1].files
+        .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/judge-reference-capability.py');
       reseal(spec.source.components[1]);
     },
     spec => {
@@ -100,6 +110,7 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_runner'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_cleanup'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_judge'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'reference_capability_judge'); },
     spec => { spec.integrity.execution_order = ['I0', 'P0']; },
     spec => { spec.integrity.integrity_baseline = true; },
     spec => { spec.integrity.performance_improvement_claimed = true; },

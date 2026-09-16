@@ -5,16 +5,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-const EXPECTED_COMMIT = 'a5f09201760ecd2679c6c64e134a5666f34c70c8';
+const EXPECTED_COMMIT = 'b8f5214ba9a88a2bc449889af80aff4b2c3ae8c0';
 const EXPECTED_SOURCE_BUNDLE = Object.freeze({
-  bytes: 3519834,
-  sha256: '2aa95e15c41eb9b240e06f58bbadc5fd84c9dbb0adf30edbe822a1de0e360827',
+  bytes: 5275556,
+  sha256: '150f1e795e45e9cdf1fb2730c83eba66fbb0c620d4d50457772718fba3f2a3db',
 });
 const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9';
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);
 const EXPECTED_MODES = Object.freeze(['quality', 'cold', 'sustained', 'recovery', 'overload', 'soak']);
 const EXPECTED_FAULTS = Object.freeze(['cancel', 'slow_edge', 'disconnected_edge', 'node_restart', 'late_return']);
-const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v5';
+const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v6';
 const EXPECTED_ARRIVALS = Object.freeze([0, 180000, 480000, 780000, 1080000, 1380000, 1680000, 1980000]);
 const H1_DEADLINES = Object.freeze({ short: 600000, medium: 1200000, long: 1800000 });
 const H1_TIMEOUT_MS = 32 * H1_DEADLINES.short + 16 * H1_DEADLINES.medium +
@@ -90,12 +90,14 @@ export function validateBenchmarkSpec(spec) {
   }
   fail(components.size === 3, 'scheduler/judge/summary versions are incomplete');
   const componentPaths = id => new Set(components.get(id).files.map(item => item.path));
-  for (const required of ['tools/event-drive/src/run/config.rs', 'tools/event-drive/src/run/inference.rs'])
+  for (const required of ['tools/event-drive/src/run/config.rs', 'tools/event-drive/src/run/inference.rs',
+    'tools/event-drive/src/run/acceptance.rs', 'tools/event-drive/src/run/source_grounded.rs'])
     fail(componentPaths('scheduler').has(required), `scheduler omits H1 execution authority: ${required}`);
   for (const required of [
     '.gitattributes',
     'test/benchmarks/cluster-inference/release-a/prepare-h1-quality.py',
     'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py',
+    'test/benchmarks/cluster-inference/release-a/judge-reference-capability.py',
     'test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json',
     'test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py',
     'test/benchmarks/cluster-inference/release-a/prepare-integrity-i0.py',
@@ -129,7 +131,7 @@ export function validateBenchmarkSpec(spec) {
     'host_inspector_tests', 'event_preflight', 'event_preflight_tests',
     'integrity_spec', 'integrity_spec_validator', 'integrity_judge', 'i0_materializer',
     'i0_active_preflight', 'i0_host_observer', 'i0_route_inspector', 'i0_runner',
-    'i0_cleanup', 'i0_evidence_builder', 'i0_judge'])
+    'i0_cleanup', 'i0_evidence_builder', 'i0_judge', 'reference_capability_judge'])
     fail(artifacts.has(id), `missing artifact ${id}`);
   fail(artifacts.get('event_preflight').path === '../../../../tools/validate_event_runtime_preflight.py' &&
     artifacts.get('event_preflight_tests').path === '../../../../tools/tests/test_validate_event_runtime_preflight.py',
