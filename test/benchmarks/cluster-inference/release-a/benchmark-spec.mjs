@@ -4,16 +4,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-const EXPECTED_COMMIT = '19f2b1afaa5c4243a59b8bc1edb76d9b82a01d6b';
+const EXPECTED_COMMIT = 'a5f09201760ecd2679c6c64e134a5666f34c70c8';
 const EXPECTED_SOURCE_BUNDLE = Object.freeze({
-  bytes: 3489763,
-  sha256: '9a51534a71a65d9c9b471cb43ebee11d9e787504b5aadaed79d0fecb4f551697',
+  bytes: 3519834,
+  sha256: '2aa95e15c41eb9b240e06f58bbadc5fd84c9dbb0adf30edbe822a1de0e360827',
 });
 const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9';
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);
 const EXPECTED_MODES = Object.freeze(['quality', 'cold', 'sustained', 'recovery', 'overload', 'soak']);
 const EXPECTED_FAULTS = Object.freeze(['cancel', 'slow_edge', 'disconnected_edge', 'node_restart', 'late_return']);
-const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v4';
+const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v5';
 const EXPECTED_ARRIVALS = Object.freeze([0, 180000, 480000, 780000, 1080000, 1380000, 1680000, 1980000]);
 const H1_DEADLINES = Object.freeze({ short: 600000, medium: 1200000, long: 1800000 });
 const H1_TIMEOUT_MS = 32 * H1_DEADLINES.short + 16 * H1_DEADLINES.medium +
@@ -99,6 +99,10 @@ export function validateBenchmarkSpec(spec) {
     'test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py',
     'test/benchmarks/cluster-inference/release-a/prepare-integrity-i0.py',
     'test/benchmarks/cluster-inference/release-a/inspect-i0-active-host.py',
+    'test/benchmarks/cluster-inference/release-a/observe-i0-host.py',
+    'test/benchmarks/cluster-inference/release-a/inspect-i0-routes.py',
+    'test/benchmarks/cluster-inference/release-a/run-integrity-i0.py',
+    'test/benchmarks/cluster-inference/release-a/cleanup-i0-owned.py',
     'test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py',
     'test/benchmarks/cluster-inference/release-a/judge-integrity-i0.py',
     'test/benchmarks/cluster-inference/release-a/judge-integrity.py',
@@ -123,7 +127,8 @@ export function validateBenchmarkSpec(spec) {
     'h1_materializer', 'h1_judge', 'h0_verifier', 'spec_validator', 'spec_tests',
     'host_inspector_tests', 'event_preflight', 'event_preflight_tests',
     'integrity_spec', 'integrity_spec_validator', 'integrity_judge', 'i0_materializer',
-    'i0_active_preflight', 'i0_evidence_builder', 'i0_judge'])
+    'i0_active_preflight', 'i0_host_observer', 'i0_route_inspector', 'i0_runner',
+    'i0_cleanup', 'i0_evidence_builder', 'i0_judge'])
     fail(artifacts.has(id), `missing artifact ${id}`);
   fail(artifacts.get('event_preflight').path === '../../../../tools/validate_event_runtime_preflight.py' &&
     artifacts.get('event_preflight_tests').path === '../../../../tools/tests/test_validate_event_runtime_preflight.py',
@@ -135,6 +140,8 @@ export function validateBenchmarkSpec(spec) {
     test_spec: 'integrity_spec', spec_validator: 'integrity_spec_validator',
     judge: 'integrity_judge', i0_materializer: 'i0_materializer',
     i0_active_preflight: 'i0_active_preflight',
+    i0_host_observer: 'i0_host_observer', i0_route_inspector: 'i0_route_inspector',
+    i0_runner: 'i0_runner', i0_cleanup: 'i0_cleanup',
     i0_evidence_builder: 'i0_evidence_builder', i0_judge: 'i0_judge',
     status: 'planned', integrity_baseline: false, performance_improvement_claimed: false,
   }), 'integrity-first execution authority differs');
@@ -149,7 +156,7 @@ export function validateBenchmarkSpec(spec) {
     fail(typeof remote.remote_path === 'string' && remote.remote_path.endsWith(`${remote.runner_sha256}.py`) &&
       !META.test(remote.remote_path), 'remote runner path is unsafe');
     fail(Array.isArray(remote.argv) && isDeepStrictEqual(remote.argv,
-      ['python3', remote.remote_path, '--role', remote.role, '--output', `/tmp/p4-h0-v4-host-${remote.role}.json`]),
+      ['python3', remote.remote_path, '--role', remote.role, '--output', `/tmp/p4-h0-v5-host-${remote.role}.json`]),
     'remote invocation is not argv-only');
     fail(remote.argv.every(value => typeof value === 'string' && value && !META.test(value)), 'remote argv has shell metacharacters');
     fail(remote.local_remote_hash_equal === true, 'remote runner hash was not matched');

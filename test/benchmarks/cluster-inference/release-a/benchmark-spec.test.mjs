@@ -10,7 +10,7 @@ import { validateBenchmarkSpec, verifyFiles } from './benchmark-spec.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../../../..');
-const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v4.json');
+const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v5.json');
 const read = () => JSON.parse(fs.readFileSync(specPath));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const reseal = component => {
@@ -95,6 +95,10 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_materializer'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_evidence_builder'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_active_preflight'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_host_observer'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_route_inspector'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_runner'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_cleanup'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_judge'); },
     spec => { spec.integrity.execution_order = ['I0', 'P0']; },
     spec => { spec.integrity.integrity_baseline = true; },

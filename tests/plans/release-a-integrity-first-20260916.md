@@ -29,6 +29,8 @@ different terminal classification on exact replay fails the arm.
   replace them after the first LOAD.
 - H0 v4 binds runtime `19f2b1afaa5c4243a59b8bc1edb76d9b82a01d6b`, including the absolute
   inference-window anchor, to freshly built remote binaries and the raw-evidence builder.
+- I0 uses sealed 15-second loaded, inference-window, and drained barriers. Missing or repeated
+  barriers invalidate the run; resource snapshots are captured only while a barrier owns the state.
 - Model: Qwen3.5-122B-A10B UD-Q5_K_S, cuts `[0,24)`, `[24,36)`, `[36,48)` on Spark GB10,
   Mac20 M4 Pro, and Mac21 M4 Pro.
 - Shape: resident 8, context 102,400 per sequence, total context 819,200, batch 128, ubatch 64,

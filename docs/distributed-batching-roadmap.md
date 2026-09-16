@@ -24,11 +24,11 @@ I0 materializer, 원시 증거 builder와 두 단계 judge를 결속했다. 상�
 있던 틈을 `started_unix_ms`와 원격 capture 시각으로 닫았고, contract22·builder10·I0 judge11·전체
 judge27·active-host preflight4·H0 spec4를 포함한 고정 검증이 통과했다. `load_authorized=true`지만 모델 실행 전 상태이므로
 `runtime_acceptance=false`, `integrity_baseline=false`다. 다음 행동은 새 task agent의 실제 양방향
-INSPECT와 정확한 pre-LOAD 상태를 확인한 뒤 I0-S/M/L을 한 LOAD에서 한 번 실행하는 것이다.
+INSPECT와 정확한 pre-LOAD 상태를 확인한 뒤 I0-S/M/L을 한 LOAD에서 한 번 실행하는 것이다. v5는 추론창 시작과 drain 뒤에 각각 15초의 관측 장벽을 두고, 장벽 밖에서 추측한 process/GPU 상태를 증거로 받지 않는다. 원격 runner가 LOAD 전·peak·drain·UNLOAD 뒤 상태와 transport byte를 수집하고 정확한 task 소유 process만 회수한다.
 
 | 단계 | 상태 | 종료 조건 |
 | --- | --- | --- |
-| I0 현재 단일 요청 기준선 | **NEXT (H0 v4 GREEN)** | 봉인된 source/binary/model/topology로 short·medium·long을 한 LOAD에서 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 절대 시간창에 보존. task agent 시작 뒤 LOAD 전에는 nodes/native0·agent listener1/host, 최종 종료 뒤 nodes/child/listener0 |
+| I0 현재 단일 요청 기준선 | **NEXT (H0 v5 GREEN)** | 봉인된 source/binary/model/topology로 short·medium·long을 한 LOAD에서 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 절대 시간창에 보존. task agent 시작 뒤 LOAD 전에는 nodes/native0·agent listener1/host, 최종 종료 뒤 nodes/child/listener0 |
 | I1 전체 정상 corpus | TODO | 같은 load에서 64건 closed-loop corpus 전부 정답·EOS·deadline·RELEASE. 오류·미분류·재시작0 |
 | I2 bounded 지속 서비스 | TODO | resident8 cold8, 8×8 sustained, 같은 load recovery3×8. 정상 요청100%, 무응답·유실·세션 오염0, backlog가 유한 시간 안에0으로 수렴 |
 | I3 과부하·취소·장애 | TODO | overload80의 한도 밖 요청 명시 거절, 취소·느린/끊긴 edge·중간 stage 재시작·늦은 반환의 terminal과 원장/KV/credit/출력 권위 회수 |
