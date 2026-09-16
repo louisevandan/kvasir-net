@@ -3,6 +3,13 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-16: Qwen3.5-122B H1 1차 RED
+
+세 물리 host LOAD 뒤 quality64를 동시에 제출해 30분 동안 8건만 EOS·RELEASE했다. 종료 시 나머지
+중·장문8은 실제 stage prefill을 계속 수행했고 48건은 pending이었다. 최초 deadline 오류, busy UNLOAD,
+부분 evidence와 실패 recovery를 [H1 1차 보고](../tests/reports/release-a/20260916_084650.md)에 보존했다.
+H0 v1의 동시 quality schedule은 H1/H2 경계를 위반하므로 새 LOAD 승인에는 사용하지 않는다.
+
 ## 2026-09-16: Qwen3.5-122B Release A H0 실행 명세 봉인
 
 현재 runtime source `c6a28b582`와 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard, Spark GB10와

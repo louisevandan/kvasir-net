@@ -10,7 +10,7 @@ use p4_llamacpp_staged_adapter::v2::{
 use p4_protocol::event::EventClass;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 #[derive(Debug)]
@@ -49,6 +49,7 @@ where
     let mut requests = BTreeMap::new();
     let mut next_index = 0usize;
     let mut next_wave = 0usize;
+    let mut sent_in_wave = 0usize;
     let mut completed = 0usize;
     let mut released = 0usize;
     let mut failure = None;
@@ -77,9 +78,22 @@ where
             while next_wave < config.waves.len()
                 && started.elapsed() >= Duration::from_millis(config.waves[next_wave].after_ms)
             {
+                let remaining = config.waves[next_wave]
+                    .count
+                    .checked_sub(sent_in_wave)
+                    .ok_or("wave submission count underflow")?;
+                let count =
+                    submission_allowance(remaining, next_index, released, config.max_in_flight)?;
+                if count == 0 {
+                    break;
+                }
+                let partial = ArrivalWave {
+                    after_ms: config.waves[next_wave].after_ms,
+                    count,
+                };
                 send_wave(
                     config,
-                    &config.waves[next_wave],
+                    &partial,
                     total,
                     &mut next_index,
                     &mut requests,
@@ -91,7 +105,13 @@ where
                     started,
                 )
                 .await?;
-                next_wave += 1;
+                sent_in_wave = sent_in_wave
+                    .checked_add(count)
+                    .ok_or("wave submission count overflow")?;
+                if sent_in_wave == config.waves[next_wave].count {
+                    next_wave += 1;
+                    sent_in_wave = 0;
+                }
             }
             if completed == total && released == total {
                 // Never include a late-telemetry wait in the established throughput
@@ -104,7 +124,9 @@ where
                     break;
                 }
             }
-            let read_until = if next_wave < config.waves.len() {
+            let read_until = if next_wave < config.waves.len()
+                && started.elapsed() < Duration::from_millis(config.waves[next_wave].after_ms)
+            {
                 overall.min(started + Duration::from_millis(config.waves[next_wave].after_ms))
             } else {
                 overall
@@ -278,6 +300,31 @@ where
     })
 }
 
+fn submission_allowance(
+    remaining: usize,
+    submitted: usize,
+    released: usize,
+    maximum: Option<usize>,
+) -> Result<usize, &'static str> {
+    let active = submitted
+        .checked_sub(released)
+        .ok_or("released request count exceeds submitted requests")?;
+    Ok(match maximum {
+        Some(maximum) => remaining.min(maximum.saturating_sub(active)),
+        None => remaining,
+    })
+}
+
+fn deadline_unix_ms(timeout_ms: u64) -> Result<u64, &'static str> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock is before the Unix epoch")?
+        .as_millis();
+    let now = u64::try_from(now).map_err(|_| "system clock does not fit u64 milliseconds")?;
+    now.checked_add(timeout_ms)
+        .ok_or("request deadline overflows u64 milliseconds")
+}
+
 async fn send_wave<R, W>(
     config: &RunConfig,
     wave: &ArrivalWave,
@@ -296,13 +343,14 @@ where
     W: AsyncWrite + Unpin,
 {
     for _ in 0..wave.count {
-        let request_index = *next_index + 1;
+        let current_index = *next_index;
+        let request_index = current_index + 1;
         let request_id = if total == 1 {
             config.request_id.clone()
         } else {
-            format!("{}-{:03}", config.request_id, *next_index + 1)
+            format!("{}-{:03}", config.request_id, current_index + 1)
         };
-        let prompt_source = config.prompts.get(*next_index).unwrap_or(&config.prompt);
+        let prompt_source = config.prompts.get(current_index).unwrap_or(&config.prompt);
         let prompt = prompt_source
             .replace("{{request_index}}", &request_index.to_string())
             .replace("{{request_id}}", &request_id);
@@ -331,13 +379,16 @@ where
             session_key,
             max_tokens: config.max_tokens,
         };
-        let event = sender.event(
+        let mut event = sender.event(
             node_endpoint(&config.nodes[0])?,
             EventClass::Data,
             PREFILL_CONTENT_TYPE,
             serde_json::to_vec(&command)?,
             &request_id,
         );
+        if let Some(timeout_ms) = config.request_timeout_ms.get(current_index).copied() {
+            event.envelope.deadline_unix_ms = Some(deadline_unix_ms(timeout_ms)?);
+        }
         if known_requests.contains(&request_id) || requests.contains_key(&request_id) {
             return Err("duplicate submitted request identity".into());
         }
@@ -403,6 +454,18 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
     use std::task::{Context, Poll};
+
+    #[test]
+    fn closed_loop_allowance_waits_for_release_and_open_loop_keeps_the_wave() {
+        assert_eq!(submission_allowance(64, 0, 0, Some(1)), Ok(1));
+        assert_eq!(submission_allowance(63, 1, 0, Some(1)), Ok(0));
+        assert_eq!(submission_allowance(63, 1, 1, Some(1)), Ok(1));
+        assert_eq!(submission_allowance(64, 0, 0, None), Ok(64));
+        assert_eq!(
+            submission_allowance(1, 0, 1, Some(1)),
+            Err("released request count exceeds submitted requests")
+        );
+    }
 
     struct FailedWriter(Arc<AtomicUsize>);
 
@@ -590,5 +653,49 @@ mod tests {
             "one write landed, one is unknown, and the second wave never ran"
         );
         assert!(!artifact.passed);
+    }
+
+    #[tokio::test]
+    async fn actual_drive_sends_only_one_closed_loop_request_before_a_release() {
+        let node = serde_json::json!({
+            "agent": "tcp://127.0.0.1:53200", "node": "head", "generation": 1,
+            "binary": "unused", "endpoint": "tcp://127.0.0.1:53201", "plan": "unused",
+            "n_batch": 8, "n_ubatch": 8, "context_size": 8,
+            "total_context_size": 8, "sequence_capacity": 1,
+            "resource_profile": super::super::config::test_resource_profile(),
+        });
+        let config: RunConfig = serde_json::from_value(serde_json::json!({
+            "ingress_agent": "tcp://127.0.0.1:53200", "channel": "closed-loop",
+            "connection_generation": 7, "load_generation": 1, "session_id": "s",
+            "request_id": "r", "nodes": [node.clone(), node],
+            "prompts": ["first", "second"], "max_tokens": 1,
+            "waves": [{"after_ms": 0, "count": 2}],
+            "max_in_flight": 1,
+            "request_timeout_ms": [600000, 1800000],
+            "timeout_ms": 1000,
+        }))
+        .unwrap();
+        super::super::config::validate(&config).unwrap();
+        let mut sender = Sender::new(OuterEndpoint {
+            ingress_agent: Address::tcp("127.0.0.1", 53200),
+            channel: "closed-loop".into(),
+            connection_generation: 7,
+        });
+        let mut wire = EventWire::new(tokio::io::empty(), tokio::io::sink());
+        let result = drive(&config, &mut wire, &mut sender).await.unwrap();
+        assert_eq!(result.request_count, 2);
+        assert_eq!(
+            result.requests.len(),
+            1,
+            "the unreleased request owns the only permit"
+        );
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("receive failed"))
+        );
+        let authority = serde_json::to_value(&result.requests[0].submission_authority).unwrap();
+        assert!(authority["deadline"].as_u64().is_some());
     }
 }

@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — A-BYTES B0–B5와 LOAD/UNLOAD 노드 수명 M0–M4에 이어 Qwen3.5-122B-A10B H0 실행 명세를 봉인했다. H1–H7은 미수용이며 다음 단계는 새 task namespace의 3-host NODE_LOAD와 H1 정상 corpus다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
+최신 현황 정리: 2026-09-16 — Qwen3.5-122B-A10B H1 1차는 H0 v1이 quality64를 동시에 제출한 명세 오류로 RED다. 작업 소유 node/process는 실패 recovery로 회수했고, RELEASE 기반 closed-loop와 요청 deadline 구현은 독립 변이·전체 회귀·양쪽 adapter 실제 모델 시험을 통과했다. H0 v2 재봉인 전 LOAD하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -9,6 +9,16 @@
 이전 기록 안의 “다음”은 당시의 계획이지 지금 구현을 계속하라는 지시가 아니다.
 
 <a id="current-status"></a>
+
+**2026-09-16 H1 1차 RED와 교정 구현:** [실행 보고](../tests/reports/release-a/20260916_084650.md)의
+실제 3-host 실행은 delivered64 중 short8만 EOS·RELEASE했고, 30분 종료 시 중·장문8이 계속 prefill,
+48건이 pending이었다. H0 v1의 quality64 동시 제출은 H1 품질과 H2 동시 wave의 경계를 섞었고 요청별
+제품 deadline을 event에 넣지 않았다. busy UNLOAD를 성공으로 바꾸지 않고 작업 소유 agent/native를
+실패 recovery로만 종료했으며 기존 `:52005` agent3개는 보존했다. event-drive의 RELEASE 기반
+`max_in_flight`와 요청별 deadline 구현은 독립 변이2개, workspace feature off/on 각1,529/0,
+HF Python57/0, llama.cpp와 HF 실제 Qwen3.5-0.8B 생성·취소·회수·재수용을 통과했다. H0 v1은 당시
+source의 역사 증거로 남기되 새 LOAD 승인은 중지한다. 다음 첫 행동은 runtime 복원점을 commit·push하고
+tracked H1 materializer/judge와 함께 H0 v2를 재봉인하는 것이다. H1 2차 전에는 LOAD하지 않는다.
 
 **2026-09-16 Qwen122B H0 명세 봉인:** [H0 보고](../tests/reports/release-a/20260916_072100.md)의
 현재 runtime source `c6a28b582`와 [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)을

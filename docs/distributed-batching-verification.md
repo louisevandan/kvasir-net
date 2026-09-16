@@ -840,6 +840,13 @@ resource bounds, H1–H7 workload, A/B, telemetry와 LOAD/UNLOAD 수명을 결�
 제품 사용 한도다. 임의의 향상률 대신 사용자 대기와 작업 완료에 상한을 둔다. 달성 가능성은 A-COST에서
 검사하며 불가능하면 해당 릴리즈 FAIL/범위 재심사다. 사후 수치 완화로 기존 arm을 GREEN으로 바꾸지 않는다.
 
+**2026-09-16 H1 1차 반례:** H0 v1 quality가 64건을 시점0에 모두 제출해 30분 뒤 8/64만
+완료·RELEASE했다. resident/pending 한도가 모든 요청의 제품 deadline 내 서비스 가능성을 뜻하지 않는다.
+[실행 보고](../tests/reports/release-a/20260916_084650.md)를 보존하며 H0 v1의 새 LOAD 승인은 중지한다.
+H1 품질은 같은 LOAD에서 RELEASE 기반 closed-loop로 64개를 모두 판정하고, H2 cold/sustained만
+open-loop 중첩을 소유한다. 요청별 deadline vector가 corpus와 정확히 일치하고 실제 event deadline으로
+소비되지 않으면 H0 v2와 H1을 승인하지 않는다.
+
 | 입력/운영 항목 | 실행 전 고정할 값과 판정 |
 | --- | --- |
 | 제품 context/생성 | template 적용 후 short 2–8k, medium 32k급, long 100,038 input tokens. sequence context 102,400, 출력 cap 2,048. long도 input+cap이 context 내인지 검사. 정상 응답의 `length` 중도 종료는 실패 |

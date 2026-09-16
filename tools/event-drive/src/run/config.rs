@@ -28,6 +28,17 @@ pub struct RunConfig {
     pub max_tokens: u32,
     #[serde(default = "default_waves")]
     pub waves: Vec<ArrivalWave>,
+    /// Optional OUTER-side bound on submitted requests that have not received
+    /// their terminal RELEASE receipt. Quality evaluation uses one so queue
+    /// time from an unrelated corpus member cannot replace that request's
+    /// model-quality result. Open-loop service modes leave it unset.
+    #[serde(default)]
+    pub max_in_flight: Option<usize>,
+    /// Per-request end-to-end limits, in corpus order. Empty preserves the
+    /// legacy no-deadline envelope. A populated vector must cover every
+    /// configured request exactly.
+    #[serde(default)]
+    pub request_timeout_ms: Vec<u64>,
     #[serde(default)]
     pub options: String,
     #[serde(default)]
@@ -175,6 +186,18 @@ pub(super) fn validate(config: &RunConfig) -> Result<(), &'static str> {
         || config.waves.is_empty()
         || config.waves[0].after_ms != 0
         || config.waves.iter().any(|wave| wave.count == 0)
+        || config.max_in_flight == Some(0)
+        || config.max_in_flight.is_some_and(|limit| {
+            config
+                .nodes
+                .iter()
+                .map(|node| node.sequence_capacity as usize)
+                .min()
+                .is_none_or(|capacity| limit > capacity)
+        })
+        || (!config.request_timeout_ms.is_empty()
+            && (config.request_timeout_ms.len() != request_count
+                || config.request_timeout_ms.contains(&0)))
         || config.nodes.iter().any(|node| {
             node.generation == 0
                 || node.n_batch == 0
@@ -219,6 +242,8 @@ mod tests {
             session_key_template: String::new(),
             max_tokens: 500,
             waves: default_waves(),
+            max_in_flight: None,
+            request_timeout_ms: Vec::new(),
             options: String::new(),
             pre_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
@@ -257,6 +282,24 @@ mod tests {
     fn requires_one_response_expectation_per_request() {
         let mut config = valid_config();
         config.acceptance.responses = vec![ResponseExpectation::default(); 2];
+        assert!(validate(&config).is_err());
+    }
+
+    #[test]
+    fn closed_loop_limits_and_request_deadlines_cover_the_exact_run() {
+        let mut config = valid_config();
+        config.waves[0].count = 2;
+        config.prompts = vec!["first".into(), "second".into()];
+        config.max_in_flight = Some(1);
+        config.request_timeout_ms = vec![600_000, 1_800_000];
+        assert!(validate(&config).is_ok());
+
+        config.request_timeout_ms.pop();
+        assert!(validate(&config).is_err());
+        config.request_timeout_ms.push(0);
+        assert!(validate(&config).is_err());
+        config.request_timeout_ms[1] = 1_800_000;
+        config.max_in_flight = Some(2);
         assert!(validate(&config).is_err());
     }
 }

@@ -52,6 +52,8 @@ fn config() -> RunConfig {
             after_ms: 0,
             count: 1,
         }],
+        max_in_flight: None,
+        request_timeout_ms: Vec::new(),
         options: String::new(),
         pre_inference_hold_ms: 0,
         timeout_ms: 2_000,

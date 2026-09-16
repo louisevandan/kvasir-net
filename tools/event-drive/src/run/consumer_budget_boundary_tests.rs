@@ -127,6 +127,8 @@ fn config(case: Case) -> RunConfig {
         session_key_template: String::new(),
         max_tokens: case.max_tokens(),
         waves: vec![ArrivalWave { after_ms: 0, count }],
+        max_in_flight: None,
+        request_timeout_ms: Vec::new(),
         options: String::new(),
         pre_inference_hold_ms: 0,
         timeout_ms: 2_000,
