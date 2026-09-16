@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — H1 2차는 판정기 누락과 terminal artifact 부재로 INVALID 처리하고 정상 UNLOAD·작업 자원 회수를 끝냈다. H0 v3가 요청별 E2E deadline과 class별 TTFT/ITL p95를 실제로 강제한다. 다음은 단일 short A-COST feasibility gate이며 통과 전 H1 3차를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
+최신 현황 정리: 2026-09-16 — 구성요소·LOAD/UNLOAD 무결성은 통과했지만 현재 Qwen122B 서비스 무결성은 미달이다. 과거 단일 요청은 정답119 token/EOS를 냈으나 현재 runtime source의 단일 요청은 재검증되지 않았고, H1 1차는64건 중8건만 완료, H1 2차는 terminal artifact가 없어 INVALID다. 실행 순서를 **서비스 무결성 확립 → 기준선 봉인 → 성능 개선**으로 바꾼다. 단일 요청·지속 유입·과부하/취소/drain·다중 host·soak가 모두 GREEN이 되기 전 성능 후보 개발과 H5를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,6 +10,32 @@
 
 <a id="current-status"></a>
 
+**2026-09-16 무결성 우선 재조정 — 현재 실행 순서:** B0–B5와 노드 수명 M0–M4는 실행 안전성의
+필요조건이지만 현재 제품 서비스의 완료 단계로 세지 않는다. 현행 source에서 단일 요청조차 다시 수용하지
+않았고, 지속 요청은 완료율12.5%(8/64)로 수렴하지 않았다. 따라서 아래 I0–I4가 현재 단독 실행 순서다.
+기존 H1 3차 반복은 취소한다. 계약·사전검사·판정기를 바꾼 새 I 단계로 독립 검토하며, 각 단계의 최종
+source가 달라지면 앞선 I 단계부터 다시 실행한다. [무결성 우선 시험계획](../tests/plans/release-a-integrity-first-20260916.md),
+[실행 계약](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json),
+계약 검사기와 결과 판정기를 수용한 뒤에만 모델을 적재한다.
+
+| 단계 | 상태 | 종료 조건 |
+| --- | --- | --- |
+| I0 현재 단일 요청 기준선 | **NEXT** | 현재 source/binary/model/topology를 봉인하고 short·medium·long을 각각 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 시간창에 보존. LOAD 전과 UNLOAD 후 nodes/child/listener0 |
+| I1 전체 정상 corpus | TODO | 같은 load에서 64건 closed-loop corpus 전부 정답·EOS·deadline·RELEASE. 오류·미분류·재시작0 |
+| I2 bounded 지속 서비스 | TODO | resident8 cold8, 8×8 sustained, 같은 load recovery3×8. 정상 요청100%, 무응답·유실·세션 오염0, backlog가 유한 시간 안에0으로 수렴 |
+| I3 과부하·취소·장애 | TODO | overload80의 한도 밖 요청 명시 거절, 취소·느린/끊긴 edge·중간 stage 재시작·늦은 반환의 terminal과 원장/KV/credit/출력 권위 회수 |
+| I4 무결성 soak | TODO | 32×8, 최소93분의 정상·장애 arm. 정상 응답100%, 사전 정의 terminal100%, 종료 후 nodes/child/listener/ledger/queue/RSS/VRAM 기준 상태. 이때 `integrity_baseline=GREEN` |
+| P0 기준선 봉인 | BLOCKED(I4) | I0–I4 최종 source의 단일·지속·과부하 scorecard를 성능 기준선으로 봉인. 과거 모델·다른 topology·실패 실행 수치를 비교 기준으로 사용하지 않음 |
+| P1 병목별 후보 | BLOCKED(P0) | queue/tokenize/prefill/decode/sample/copy/network/settle 중 계측으로 증명한 한 원인만 변경. 매 변경마다 동일 단일 요청과 지속 웨이브를 전후 실행 |
+| P2 성능 승격 | BLOCKED(P1) | H5 paired8쌍·holdout4쌍, useful TPS 중앙 개선≥5%·95% CI 하한>0, 절대 SLO와 TTFT/ITL 비회귀, 품질·자원 무결성 유지 |
+| P3 최종 재수용 | BLOCKED(P2) | 선택 후보로 I0–I4와 H1–H7 적용 범위를 다시 통과하고 재현 가능한 bundle·운영 기본값·미수용 범위를 공개 |
+
+I0는 단순 smoke가 아니다. 첫 실행 자체가 현재 제품 판정이며 실패하면 현재 서비스 무결성 RED로
+확정한다. 같은 실행을 반복하지 않고 artifact로 특정한 병목과 종료 경계를 코드·사전검사로 고친다.
+I0–I4에서도 성능 scorecard를 빠짐없이 수집하지만 상승을 주장하지 않는다. P 단계의 비교 가능한
+기준선을 만들기 위한 것이다. 안전성·문서·단위시험만 통과한 단계는 `enabling`으로 기록하며 제품 또는
+성능 진척률에 합산하지 않는다.
+
 **2026-09-16 H1 2차 INVALID와 H0 v3:** [실행·회수 보고](../tests/reports/release-a/20260916_104300.md)의
 3-host closed-loop 실행은 41분13초 동안 실제 stage 계산을 진행했지만 terminal artifact가 없고, 실행 중
 감사에서 H0 v2 judge가 요청별 E2E deadline과 class별 TTFT/ITL p95를 판정하지 않음을 확인했다.
@@ -17,8 +43,8 @@
 succeeded/absent였고 작업 agent/native/proxy/tunnel을 모두 회수했으며 보호 agent 3개는 보존했다.
 H0 v3는 같은 runtime/model/topology/SLO를 유지하면서 위 수치를 실제 timestamp로 강제하고, 검사6·
 host inspector4·preflight5·materializer4·judge10·spec4를 통과했다. H1 회차는 1차 RED, 2차 INVALID다.
-다음 첫 행동은 단일 short A-COST feasibility gate다. 이 gate가 short SLO와 정상 JSON/EOS를 통과하기 전
-H1 3차 quality64를 시작하지 않는다.
+이 기록의 “H1 3차”는 더 실행하지 않는다. A-COST 초안은 위 I0의 short arm으로 흡수하며 medium·long,
+성능 계측, 정상 UNLOAD까지 같은 현재-source 기준선에서 닫는다.
 
 **2026-09-16 Qwen122B H0 v2 재봉인:** [H0 v2 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)와
 [보고](../tests/reports/release-a/20260916_093739.md)가 runtime source `25edd33cf`, 3-host binary/model/layout,
@@ -1740,15 +1766,15 @@ B0의 반례 봉인은 **수정 전 실패를 확인·보존**하는 작업이�
 | B3 수용·KV 예약·edge credit | TODO | bounded pending와 byte/token 예산, deadline·명시적 거절, 다중 노드 all-or-none 예약, row/byte credit, leak/over-admit 0. T30~T38 |
 | B4 continuous batching 정책 | TODO | 전체 runnable 재선택, 일반/등폭/atomic 전략, 요청별 fairness, batch/ubatch 분리, 공유 전이를 쓰는 simulator/reference와 worker 대조. T40~T47 |
 | B5 실행 신원·native·다중 호스트 하네스 | IN_PROGRESS | B1에 필요한 versioned 실행 identity와 제품 LOAD bind·native guard부터 보강. 실제 layout/model/build/ABI 결속·full/relink 격리·선언 backend·다중 호스트 runner는 남음. I00~I09/T50~T58 |
-| B6 초대형 모델 웨이브 기준선 | TODO | §1의 자원 단계와 H0~H4: 정상 요청/응답 전문, 강한 겹치는 웨이브, 유효 TPS/GPU 요약, 재시작 없이 반복. 현재 fleet 성과와 2개 이상 물리 컴퓨터 최종 승격을 별도 기록 |
-| B7 배치 최적화와 반증 | TODO | 토폴로지 고정 paired A/B + holdout, 단계별 cost 분해·credit-aware issue·prefill chunk/폭 선택; H5/H6. 승인된 유효 TPS/GPU Pareto 후보 |
-| B8 지속 운영·최종 인수인계 | TODO | H7 soak/fault, 선언 backend/upstream 회귀, 재현 가능한 증거 bundle, 모든 필수 gate PASS와 남은 비필수 범위 공개 |
+| B6 초대형 모델 서비스 무결성 | TODO | §0의 I0–I4가 이 단계의 현행 분해다. H0–H4/H6/H7의 정상 요청, 지속 유입, 과부하, 취소·drain, 실제 분산, soak를 성능 변경 전에 통과. `integrity_baseline=GREEN` |
+| B7 배치 최적화와 반증 | BLOCKED(B6) | §0의 P0–P2. I0–I4 기준 source를 봉인하고 동일 단일·지속 workload에서 원인 하나만 바꾼 paired A/B+holdout. H5를 통과한 유효 TPS/GPU Pareto 후보 |
+| B8 최종 재수용·인수인계 | BLOCKED(B7) | 선택 후보로 I0–I4 및 적용 H0–H7 재실행, 선언 backend/upstream 회귀, 재현 가능한 증거 bundle, 모든 필수 gate PASS와 남은 비필수 범위 공개 |
 
 승격 의존 관계: B0 후 B1, B1 후 B2, B1/B2 후 B3, B2/B3 후 B4.
 B1의 실제 소비 경로 검증을 위해 B2의 최소 fake-stage 연결을 먼저 작성할 수 있다. 이는 B2 승격이나
 실기 최적화 선행의 허가가 아니며, 양쪽의 남은 시험을 생략하지 않는다.
 B5의 환경 발견·신원 설계는 B1과 병행 가능하나 실기 승격은 B1~B5의 관련 gate를 모두 요구한다.
-B6 후 B7, B7 후 B8이다. 작은 native smoke는 기존 감사 조합의 회귀 진단용으로 허용되지만 B6를 대체하지 않는다.
+B6의 `integrity_baseline=GREEN` 후 B7, B7 후 B8이다. 작은 native smoke는 기존 감사 조합의 회귀 진단용으로 허용되지만 B6를 대체하지 않는다.
 GPU 실험을 기다리며 같은 arm의 checkout을 수정하지 않는다.
 계층 격리는 B5만의 마지막 청소가 아니다. B1~B4의 매 변경부터 I00/I03의 pure 경계를 지키고,
 B5에서 I 전체를 완성하며, B8 및 이후 모든 채택 pin에서 반복한다.

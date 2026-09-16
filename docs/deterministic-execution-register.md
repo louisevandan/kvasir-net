@@ -74,6 +74,7 @@
 | L066 | H0 v2 judge는 deadline/SLO 필드가 존재하는지만 확인하고 요청별 E2E, class별 TTFT p95, 실제 token 간격 ITL p95를 계산하지 않았다. 명세에 수치가 있어도 판정기가 소비하지 않으면 수용 권위가 아니다. | seal에 요청별 timeout과 class SLO를 포함하고 judge가 nearest-rank p95와 timestamp 순서를 직접 계산한다. 각 수치 초과·표본 누락·순서 역전 반례와 제거 변이를 유지하며, 실행 전 spec의 모든 수치 필드에 소비 assertion이 있는지 대조한다. | H0 v3와 H1–H7 모든 수치 수용 |
 | L067 | 장시간 event-drive를 외부 TERM하면 partial artifact와 FINISH가 없어 이미 계산한 결과가 판정 불능이 되고, agent가 사라진 OUTER로 반환을 반복해 transport failure 2,390건을 남겼다. | 전체 arm 전 task-owned supervisor의 bounded cancel→artifact assemble→FINISH→UNLOAD 경로를 실제 소비 시험한다. 그 전 외부 TERM은 INVALID 회수로만 기록하고, node가 비어도 failure ledger를 성공으로 지우지 않는다. | H1 3차 전 A-COST와 이후 모든 장시간 원격 arm |
 | L068 | 새 .gitattributes는 이미 열린 Windows worktree의 CRLF 파일을 자동 재물질화하지 않아 fresh checkout은 통과하지만 main 통합 첫 verifier가 raw-byte hash에서 실패했다. | raw-byte 봉인 전 working bytes·HEAD blob·staged blob을 전수 비교하고 fresh checkout을 함께 실행한다. 기존 worktree 차이는 내용이 HEAD blob과 의미상 동일함을 확인한 파일만 blob 그대로 재물질화하며, verifier가 두 환경을 모두 통과해야 한다. | 모든 hash-bound spec/materializer/judge |
+| L069 | 구성요소 안전성·문서·소형 모델 시험을 순서대로 통과한 사실을 현재 Qwen122B 제품 진전으로 세어, 현행 source의 단일 요청과 지속 서비스 TPS·batch·GPU 기준선 없이 H1 전체 실행까지 갔다. 결과는 8/64 완료와 다음 실행의 terminal artifact 부재였다. | 모든 단계에 `enabling|integrity|performance` 유형과 현재 source의 서비스 envelope를 기록한다. I0–I4 무결성 전에 H5/성능 후보를 차단하고, 모든 모델 실행은 단일·지속 workload의 TTFT/prefill/useful TPS/batch/GPU/정상 응답·정산·회수 scorecard가 없으면 판정 자체를 거부한다. | Release A I0–I4, P0–P3 및 이후 모든 실기 단계 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

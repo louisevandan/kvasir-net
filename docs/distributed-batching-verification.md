@@ -523,6 +523,19 @@ T11/T23은 꼬리 출력→head 거부, 일부 output publish→Full/Closed도 �
 
 ## 4. 실기 웨이브 계약 — 이것만 최종 성과 증거다
 
+### 실행 순서 — 서비스 무결성 뒤 성능 개선
+
+H 번호는 시험 종류이며 실행 순서를 뜻하지 않는다. 현재 Release A는 먼저 H0 명세 아래 H1 정상 응답,
+H2 지속 유입, H3 과부하, H4 완전한 분모, H6 실제 분산, H7 지속·장애를 한 source에서 통과해
+`integrity_baseline=GREEN`을 만든다. 이 전에는 H5 후보를 실행하거나 인프라·단위시험 통과를 제품
+진척률로 세지 않는다. H5로 source나 정책이 바뀌면 선택 후보가 같은 무결성 묶음을 다시 통과해야 한다.
+
+무결성 실행도 TTFT, prefill rows/s, useful generation TPS, phase별 물리 batch 폭/채움, runnable 대비
+blocked 사유, GPU 표본 coverage/util/memory/power를 같은 시간창에 반드시 수집한다. 이 수치는 P0
+기준선이며 상승률 주장이 아니다. 성능 단계에서는 동일 모델·artifact·topology·resident·KV·corpus·
+도착열·출력 조건을 고정하고 원인 하나만 바꾼다. 단일 요청과 지속 웨이브 중 하나라도 누락되거나
+정상 응답·정산·회수가 깨지면 성능 후보가 아니라 제품 회귀다.
+
 ### H0. 실행 전 승인·봉인할 명세
 
 최종 모델의 이름만으로는 부족하다. 모델/분할 GGUF/보조 artifact digest, 총/활성 parameter 수(MoE 구분),

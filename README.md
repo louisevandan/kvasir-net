@@ -235,3 +235,7 @@ Release A Qwen122B H0 v3: [봉인 benchmark-spec](test/benchmarks/cluster-infere
 Release A Qwen122B H1 1차: [64건 동시 명세 RED·실패 recovery·closed-loop 교정 구현](tests/reports/release-a/20260916_084650.md).
 
 Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVALID, 정상 UNLOAD·작업 자원 회수](tests/reports/release-a/20260916_104300.md).
+
+Release A 무결성 우선 재개: [I0–I4 정밀 시험계획](tests/plans/release-a-integrity-first-20260916.md) · [실행 계약](test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json). I0–I4 GREEN 전에는 성능 후보와 H5를 시작하지 않는다.
+
+Release A 무결성 시험 계약: [14개 실기 arm·계약/판정 변이·로드맵 재조정 보고](tests/reports/release-a/20260916_131446.md).
