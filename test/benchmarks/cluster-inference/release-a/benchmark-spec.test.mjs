@@ -10,7 +10,7 @@ import { validateBenchmarkSpec, verifyFiles } from './benchmark-spec.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../../../..');
-const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v2.json');
+const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v3.json');
 const read = () => JSON.parse(fs.readFileSync(specPath));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const reseal = component => {
@@ -38,6 +38,7 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
   const original = read();
   const mutations = [
     spec => { spec.schema = 'p4.release-a.benchmark-spec.v1'; },
+    spec => { spec.spec_id = 'qwen3_5_122b_a10b_h0_20260916_v2'; },
     spec => { spec.source.source_commit = '0'.repeat(40); },
     spec => { spec.source.source_bundle.sha256 = hash('other source bundle'); },
     spec => { spec.source.compatibility.patch_digest = hash('other compatibility patch'); },
@@ -51,6 +52,11 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => {
       spec.source.components[1].files = spec.source.components[1].files
         .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py');
+      reseal(spec.source.components[1]);
+    },
+    spec => {
+      spec.source.components[1].files = spec.source.components[1].files
+        .filter(item => item.path !== '.gitattributes');
       reseal(spec.source.components[1]);
     },
     spec => { spec.lifecycle.load_content_type = 'application/vnd.p4.node.create-v1'; },
@@ -81,6 +87,7 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.workload.fault_arms.pop(); },
     spec => { spec.ab.paired_repetitions = 7; spec.ab.paired_order.pop(); },
     spec => { spec.telemetry.sample_interval_ms = 0; },
+    spec => { spec.slo.itl_ms = 251; },
     spec => { spec.execution_safety.local_desktop_model_run = true; },
     spec => { spec.model.parameters.active_per_token++; },
     spec => { spec.model.shards[0].sha256 = '0'.repeat(64); },

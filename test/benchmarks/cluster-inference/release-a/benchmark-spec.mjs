@@ -13,6 +13,7 @@ const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);
 const EXPECTED_MODES = Object.freeze(['quality', 'cold', 'sustained', 'recovery', 'overload', 'soak']);
 const EXPECTED_FAULTS = Object.freeze(['cancel', 'slow_edge', 'disconnected_edge', 'node_restart', 'late_return']);
+const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v3';
 const EXPECTED_ARRIVALS = Object.freeze([0, 180000, 480000, 780000, 1080000, 1380000, 1680000, 1980000]);
 const H1_DEADLINES = Object.freeze({ short: 600000, medium: 1200000, long: 1800000 });
 const H1_TIMEOUT_MS = 32 * H1_DEADLINES.short + 16 * H1_DEADLINES.medium +
@@ -69,7 +70,7 @@ function validateMode(mode, name) {
 
 export function validateBenchmarkSpec(spec) {
   fail(spec?.schema === 'p4.release-a.benchmark-spec.v2' && spec.h0_status === 'sealed', 'unsupported or unsealed H0 spec');
-  fail(typeof spec.spec_id === 'string' && /^[a-z0-9_]+$/.test(spec.spec_id), 'invalid spec identity');
+  fail(spec.spec_id === EXPECTED_SPEC_ID, 'invalid spec identity');
 
   const source = spec.source;
   fail(source?.source_commit === EXPECTED_COMMIT && commit(source.source_commit), 'runtime source commit differs');
@@ -91,6 +92,7 @@ export function validateBenchmarkSpec(spec) {
   for (const required of ['tools/event-drive/src/run/config.rs', 'tools/event-drive/src/run/inference.rs'])
     fail(componentPaths('scheduler').has(required), `scheduler omits H1 execution authority: ${required}`);
   for (const required of [
+    '.gitattributes',
     'test/benchmarks/cluster-inference/release-a/prepare-h1-quality.py',
     'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py',
   ]) fail(componentPaths('judge').has(required), `judge omits H1 sealed tool: ${required}`);

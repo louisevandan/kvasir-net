@@ -6,3 +6,12 @@
 SHA256SUMS text eol=lf
 
 layers/adapters/hf/** text eol=lf
+
+# Release A binds these files by raw bytes. A fresh Windows worktree must
+# materialize the same bytes that the sealed spec hashed.
+.gitattributes text eol=lf
+layers/adapters/llamacpp/staged/adapter/src/v2/** text eol=lf
+test/benchmarks/cluster-inference/release-a/** text eol=lf
+tools/event-drive/src/run/** text eol=lf
+tools/validate_event_runtime_preflight.py text eol=lf
+tools/tests/test_validate_event_runtime_preflight.py text eol=lf

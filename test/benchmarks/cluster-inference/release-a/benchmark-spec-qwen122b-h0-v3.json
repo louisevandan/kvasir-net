@@ -1,0 +1,1659 @@
+{
+  "schema": "p4.release-a.benchmark-spec.v2",
+  "spec_id": "qwen3_5_122b_a10b_h0_20260916_v3",
+  "h0_status": "sealed",
+  "source": {
+    "source_commit": "25edd33cf24b46964e432a7cd6d89772417673db",
+    "runtime_kind": "event",
+    "source_bundle": {
+      "bytes": 5126427,
+      "sha256": "4de5d0147fe3ac281ab735ad02f3fbfb46c5874a3b434e33237cdfdf1e314cc6"
+    },
+    "components": [
+      {
+        "id": "scheduler",
+        "version": "911987aac2b4a9a0629ca3900f8441c4ebab58764479734be8a2ac4e0e4cee48",
+        "files": [
+          {
+            "path": "layers/adapters/llamacpp/staged/adapter/src/v2/scheduler.rs",
+            "bytes": 29316,
+            "sha256": "95c5642c88f47154cd8754c5ea55cfd45684d06813ccfeb0117e2c75f311c697"
+          },
+          {
+            "path": "layers/adapters/llamacpp/staged/adapter/src/v2/scheduler/pipeline.rs",
+            "bytes": 14865,
+            "sha256": "d5cc56bf89ade04d1b0b16a007ffcdecaf00cd703a86d64d107815f999931306"
+          },
+          {
+            "path": "layers/adapters/llamacpp/staged/adapter/src/v2/scheduler/service.rs",
+            "bytes": 17556,
+            "sha256": "4d2722ab0d6900d29cd9ae71cf4a5871e4b25b61170546cad1c612b24f2e0cc6"
+          },
+          {
+            "path": "layers/adapters/llamacpp/staged/adapter/src/v2/node/worker/drive.rs",
+            "bytes": 32272,
+            "sha256": "584afbcbbc32a2e68fa19c8537bf6502046c58c645b8d74add81d5049855d233"
+          },
+          {
+            "path": "layers/adapters/llamacpp/staged/adapter/src/v2/node/request_budget.rs",
+            "bytes": 5497,
+            "sha256": "7e1e025708505a2d48ef07e53d6fb4ca2c825aa3f97f0b6e1d2b244b04fc8976"
+          },
+          {
+            "path": "tools/event-drive/src/run/config.rs",
+            "bytes": 10814,
+            "sha256": "e2e8a7ed5052a6c6a48584f3d259a9635d0a2cc91ceb8148e911e5ec405259f0"
+          },
+          {
+            "path": "tools/event-drive/src/run/inference.rs",
+            "bytes": 30174,
+            "sha256": "5861b29dcd09f8b2f3966d6117a173044d79b5839a09940d497fd81e1851eda0"
+          }
+        ]
+      },
+      {
+        "id": "judge",
+        "version": "bc2308c78a89d73854d10f37d1ad81adf1b5c072488460c3a85edf9349d760fc",
+        "files": [
+          {
+            "path": ".gitattributes",
+            "bytes": 799,
+            "sha256": "f243c65727cc92526c11a2e0b6973a14f08f940ba85e56d56a617717850afae2"
+          },
+          {
+            "path": "test/benchmarks/cluster-inference/release-a/corpus.mjs",
+            "bytes": 4253,
+            "sha256": "f0a74c325fb45c87a3cff8de57fa9fd6e9957368587602259bd8a9a42d17c55f"
+          },
+          {
+            "path": "test/benchmarks/cluster-inference/release-a/review-corpus.py",
+            "bytes": 3712,
+            "sha256": "68ee0984c8da156e2586f0e323e9e5ac413b8104a083c2c7e5140da282f2b536"
+          },
+          {
+            "path": "tools/event-drive/src/run/acceptance.rs",
+            "bytes": 15013,
+            "sha256": "acb2a94168b6c95cf85e83d609d90ea7c60814507b6d3bc99d613b65ba40e9dd"
+          },
+          {
+            "path": "test/benchmarks/cluster-inference/release-a/prepare-h1-quality.py",
+            "bytes": 11498,
+            "sha256": "78c6bbaa87a26f848e8a24d78d0f5f0fab783d746f173ec64e3964c9ca86da0f"
+          },
+          {
+            "path": "test/benchmarks/cluster-inference/release-a/judge-h1-quality.py",
+            "bytes": 10864,
+            "sha256": "b78ec673b8a9b7a918ae9c70b501ac4edc0ec1190995da215de17da228a0eeda"
+          }
+        ]
+      },
+      {
+        "id": "summary",
+        "version": "4b695e1cff30960ef40d2ddc3276486574a47238b383f8352b52b04f9659711d",
+        "files": [
+          {
+            "path": "tools/event-drive/src/run/mod.rs",
+            "bytes": 26985,
+            "sha256": "e20a4c0913405442116b54b2ee7cb2863a7dc783b91a7819816fa7d3648ddb2c"
+          },
+          {
+            "path": "tools/event-drive/src/run/inference_evidence.rs",
+            "bytes": 6252,
+            "sha256": "ee22f04fd3f06f1f71761b0b98cc675d478484dea7fc9d0bf2fd33cf37d9ad84"
+          },
+          {
+            "path": "tools/event-drive/src/run/evidence_ledger.rs",
+            "bytes": 23598,
+            "sha256": "5a5ab1fe924f48fe4914b363cb39f7ca3985df9f846253b7a17c7b01d034c035"
+          }
+        ]
+      }
+    ],
+    "compatibility": {
+      "pipeline": "physical-wire-v4",
+      "upstream_commit": "451b89bae0c4b1dd612eb503ceace906c01ddcc9",
+      "patch_digest": "d8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9"
+    }
+  },
+  "lifecycle": {
+    "schema": 1,
+    "load_content_type": "application/vnd.p4.node.load-v1",
+    "unload_content_type": "application/vnd.p4.node.unload-v1",
+    "adapter_load_content_type": "application/vnd.p4.llamacpp.load-v4+json",
+    "adapter_unload_content_type": "application/vnd.p4.llamacpp.unload-v3+json",
+    "node_created_by_load": true,
+    "node_removed_by_unload": true,
+    "separate_create_delete_allowed": false
+  },
+  "artifacts": [
+    {
+      "id": "corpus",
+      "path": "corpus-qwen122b-v1.json",
+      "bytes": 55956,
+      "sha256": "47389e9977cfc1de65e129498d2dc0773a3d20d6d85d677004b6334fd8cc2733"
+    },
+    {
+      "id": "native_actual",
+      "path": "qwen122b-native-actual-v1.json",
+      "bytes": 18834,
+      "sha256": "636d094e280a0bfc5ac103aa53b08860d247c921140303954423826c40594bc9"
+    },
+    {
+      "id": "native_actual_result",
+      "path": "qwen122b-native-actual-v1.result.json",
+      "bytes": 1857,
+      "sha256": "3e09ce5c09774f6952704a09e76e4b1bdf3dc61bc4fff6813f0a4a94978e55f7"
+    },
+    {
+      "id": "host_inspector",
+      "path": "inspect-h0-host.py",
+      "bytes": 12143,
+      "sha256": "59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c"
+    },
+    {
+      "id": "gguf_inspector",
+      "path": "inspect-gguf-metadata.py",
+      "bytes": 6248,
+      "sha256": "7324ce77b349e0460b7aabc3f721d0411c81a4d07e23a8a75b00459a23da7802"
+    },
+    {
+      "id": "h1_materializer",
+      "path": "prepare-h1-quality.py",
+      "bytes": 11498,
+      "sha256": "78c6bbaa87a26f848e8a24d78d0f5f0fab783d746f173ec64e3964c9ca86da0f"
+    },
+    {
+      "id": "h1_judge",
+      "path": "judge-h1-quality.py",
+      "bytes": 10864,
+      "sha256": "b78ec673b8a9b7a918ae9c70b501ac4edc0ec1190995da215de17da228a0eeda"
+    },
+    {
+      "id": "h0_verifier",
+      "path": "verify-h0-v3.py",
+      "bytes": 2620,
+      "sha256": "2a9a80434e41e171449ffc607844866761350c4872b0a45f6c7c30c803cd20a1"
+    },
+    {
+      "id": "spec_validator",
+      "path": "benchmark-spec.mjs",
+      "bytes": 29145,
+      "sha256": "695a0b5431ec101d51e475332b4b522470e734abfe7fcfc41056f1688b8e5ca3"
+    },
+    {
+      "id": "spec_tests",
+      "path": "benchmark-spec.test.mjs",
+      "bytes": 5845,
+      "sha256": "35a402e2c6bce78f7533659224729090b9f3d4ae9a30b03559e446fe7fd44b80"
+    },
+    {
+      "id": "host_inspector_tests",
+      "path": "test_inspect_h0_host.py",
+      "bytes": 2542,
+      "sha256": "9b72ac727497486afa7a06e6a24c1246c01b56229138d18b8a7bdc336f276f9f"
+    },
+    {
+      "id": "event_preflight",
+      "path": "../../../../tools/validate_event_runtime_preflight.py",
+      "bytes": 6591,
+      "sha256": "a828d59b307d6f57090c4b1372b3bd128a332248edf4e6d9e37b8f526290d08a"
+    },
+    {
+      "id": "event_preflight_tests",
+      "path": "../../../../tools/tests/test_validate_event_runtime_preflight.py",
+      "bytes": 3032,
+      "sha256": "55cb281b0f868656448d0a21f1b509b771f612105f080abaf42b5225c508f443"
+    }
+  ],
+  "remote_execution": [
+    {
+      "role": "spark",
+      "runner": "host_inspector",
+      "runner_sha256": "59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c",
+      "remote_path": "/tmp/p4-h0-inspect-59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c.py",
+      "argv": [
+        "python3",
+        "/tmp/p4-h0-inspect-59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c.py",
+        "--role",
+        "spark",
+        "--output",
+        "/tmp/p4-h0-v2-host-spark.json"
+      ],
+      "local_remote_hash_equal": true
+    },
+    {
+      "role": "mac20",
+      "runner": "host_inspector",
+      "runner_sha256": "59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c",
+      "remote_path": "/tmp/p4-h0-inspect-59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c.py",
+      "argv": [
+        "python3",
+        "/tmp/p4-h0-inspect-59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c.py",
+        "--role",
+        "mac20",
+        "--output",
+        "/tmp/p4-h0-v2-host-mac20.json"
+      ],
+      "local_remote_hash_equal": true
+    },
+    {
+      "role": "mac21",
+      "runner": "host_inspector",
+      "runner_sha256": "59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c",
+      "remote_path": "/tmp/p4-h0-inspect-59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c.py",
+      "argv": [
+        "python3",
+        "/tmp/p4-h0-inspect-59179e35facfb8ed82fd00af651b4475d6c2b8a88c4adc825082800dfe95eb6c.py",
+        "--role",
+        "mac21",
+        "--output",
+        "/tmp/p4-h0-v2-host-mac21.json"
+      ],
+      "local_remote_hash_equal": true
+    }
+  ],
+  "model": {
+    "id": "qwen3_5_122b_a10b_ud_q5_k_s_v1",
+    "name": "Qwen3.5-122B-A10B",
+    "repository": "unsloth/Qwen3.5-122B-A10B-MTP-GGUF",
+    "architecture": "qwen35moe",
+    "variant": "UD-Q5_K_S",
+    "quantization": {
+      "label": "UD-Q5_K_S",
+      "gguf_version": 3,
+      "quantization_version": 2,
+      "file_type": 16
+    },
+    "parameters": {
+      "total": 124635206144,
+      "expert": 118380036096,
+      "nonexpert": 6255170048,
+      "active_per_token": 9954546176,
+      "method": "nonexpert + expert_parameters * expert_used_count / expert_count",
+      "experts": 256,
+      "experts_active": 8
+    },
+    "layers": {
+      "gguf_blocks": 49,
+      "trunk": 48,
+      "mtp": 1,
+      "mtp_execution": "disabled"
+    },
+    "context": {
+      "model_max_tokens": 262144,
+      "per_sequence_tokens": 102400,
+      "resident": 8,
+      "total_tokens": 819200
+    },
+    "kv": {
+      "k": "f16",
+      "v": "f16",
+      "unified": true,
+      "flash_attention": true
+    },
+    "chat_template_sha256": "8452ca85cb1e0ff04304c02f417a53305d5ba17f6eb9d5693343ad8355f985a8",
+    "shards": [
+      {
+        "name": "Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf",
+        "bytes": 10943808,
+        "sha256": "ea08ef11402edf53a98cb90329961ee3dbe191dcf75ff7c99f009264cf8a99b3",
+        "locations": {
+          "windows": "S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf",
+          "spark": "/mnt/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf",
+          "mac": "/Volumes/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00001-of-00003.gguf"
+        }
+      },
+      {
+        "name": "Qwen3.5-122B-A10B-UD-Q5_K_S-00002-of-00003.gguf",
+        "bytes": 49967634720,
+        "sha256": "6d4910dc603ab82570d2c8a1a979414e9d921af68273113063e7679424d53fa7",
+        "locations": {
+          "windows": "S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00002-of-00003.gguf",
+          "spark": "/mnt/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00002-of-00003.gguf",
+          "mac": "/Volumes/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00002-of-00003.gguf"
+        }
+      },
+      {
+        "name": "Qwen3.5-122B-A10B-UD-Q5_K_S-00003-of-00003.gguf",
+        "bytes": 38331577792,
+        "sha256": "e0f018ae1f3016fab56005ba4b25e708720eaa2413232bd65ba07c7c6d964938",
+        "locations": {
+          "windows": "S:/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00003-of-00003.gguf",
+          "spark": "/mnt/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00003-of-00003.gguf",
+          "mac": "/Volumes/file-station/models/unsloth/Qwen3.5-122B-A10B-MTP-GGUF/Qwen3.5-122B-A10B-UD-Q5_K_S-00003-of-00003.gguf"
+        }
+      }
+    ],
+    "model_manifest": {
+      "kind": "inline_h0_binding",
+      "inspector": "gguf_inspector",
+      "snapshot": {
+        "path": "target/release-a-h0-v2-20260916/model-metadata.json",
+        "bytes": 10622,
+        "sha256": "5cca37b2b9daa94e78d4bebe5ed2d349f6679df64659a5199899358f36f8f20c"
+      },
+      "tensor_count": 899
+    },
+    "tokenizer": {
+      "sha256": "b83687865f179865e2c50e8ab046d60163471e4de90207b4f926f83586275e49",
+      "source_commit": "451b89bae0c4b1dd612eb503ceace906c01ddcc9",
+      "add_special": true,
+      "parse_special": true
+    },
+    "sampling": {
+      "temperature": 0,
+      "top_p": 1,
+      "top_k": 0,
+      "min_p": 0,
+      "repeat_penalty": 1,
+      "seed": 20260916,
+      "max_output_tokens": 2048,
+      "speculative": "none"
+    },
+    "distribution_reason": {
+      "coverage_goal": "multi_host_final",
+      "single_host_capacity_claim": "not_claimed_without_a_full_single-host_PLAN",
+      "reason": "Release A validates physical cross-host stage and KV ownership; the accepted three-host PLAN provides bounded per-host headroom and is the only approved layout.",
+      "split_required_for_approved_layout": true
+    }
+  },
+  "coverage": {
+    "resource_tier": "vram_only",
+    "coverage": "multi_host_final",
+    "physical_host_count": 3,
+    "unified_memory_devices": [
+      "spark",
+      "mac20",
+      "mac21"
+    ],
+    "cpu_offload_of_owned_compute": false
+  },
+  "hosts": [
+    {
+      "role": "spark",
+      "identity": "2063dd763211c1db9da114413e97226fd96777bb0126e770f8663044a0aa1736",
+      "address": "192.168.0.26",
+      "inventory_snapshot": {
+        "path": "target/release-a-h0-v2-20260916/host-spark.json",
+        "bytes": 38383,
+        "sha256": "830fb539c5ce41d1e626acf3cc0370bcc3b4e273ec3d610c1d0d914bb30406b4"
+      },
+      "captured_unix_ms": 1789518837720,
+      "hostname": "gx10-c044",
+      "platform": "Linux-6.17.0-1021-nvidia-aarch64-with-glibc2.39",
+      "machine": "aarch64",
+      "logical_cpu_count": 20,
+      "physical_memory_bytes": 130596118528,
+      "disk_free_bytes": 604878299136,
+      "dynamic_port_range": {
+        "first": 32768,
+        "last": 60999
+      },
+      "device": {
+        "name": "NVIDIA GB10",
+        "backend": "CUDA",
+        "plugin": "CUDA",
+        "driver_or_os_build": "580.159.03",
+        "identifier": {
+          "kind": "uuid",
+          "value": "GPU-583855c0-b56c-03c9-4f46-177eb3efb800"
+        },
+        "power_cap": {
+          "reason": "nvidia_smi_reports_NA_for_power_limit",
+          "status": "unavailable"
+        }
+      },
+      "binaries": {
+        "agent": {
+          "bytes": 6783832,
+          "path": "/home/m42/p4-h0-v2-25edd33cf/target/release/p4-agent",
+          "sha256": "86cac7b9e26ac4297c7d46f6ffcb2d098f9fa0fa6969f393db2f74276e8bb233"
+        },
+        "event_drive": {
+          "bytes": 2445544,
+          "path": "/home/m42/p4-h0-v2-25edd33cf/target/release/p4-event-drive",
+          "sha256": "a11f92865ba9e060fa653c2d76cfdd7ee09e6c03f6efafc4f08afbfca150923c"
+        },
+        "native": {
+          "bytes": 925168,
+          "path": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/p4_staged_server",
+          "sha256": "4a14c86783c21ab27e9e970b96e30148ff4a57105719b6b201de963ffe496c3b"
+        }
+      },
+      "runtime_libraries": {
+        "count": 19,
+        "digest": "afbc4b27734891e5dcc6d5e79584675b0b4a12195b782410c3d53fa5a2486cdd",
+        "binding": "file_hashes",
+        "files": [
+          {
+            "bytes": 875192,
+            "path": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/bin/libggml-base.so.0",
+            "sha256": "c0ca0971b4fe8c90280e3b3c6ab053ff6c55785bc1de3c760100d8c5e09bdb70"
+          },
+          {
+            "bytes": 995680,
+            "path": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/bin/libggml-cpu.so.0",
+            "sha256": "d36dbbff05a464b954e2c9092f484ba54f3d02c9e09d5f1a53d6ae110d2ca322"
+          },
+          {
+            "bytes": 61524752,
+            "path": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/bin/libggml-cuda.so.0",
+            "sha256": "ba0bf3f33f893b2e2ae9e6f8c4ebbc5cda488917a1b3f902d7f9c1c24882b259"
+          },
+          {
+            "bytes": 78152,
+            "path": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/bin/libggml.so.0",
+            "sha256": "2130c324bcd562c56e0a7dfa509921f9cc56f38f48a7fe84596c2a1aad95bdfd"
+          },
+          {
+            "bytes": 5286480,
+            "path": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/bin/libllama-common.so.0",
+            "sha256": "e81bd218b181968f0d29edd6957b77792ba01a273987e00da8baf83bb12c7fd8"
+          },
+          {
+            "bytes": 4547008,
+            "path": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/bin/libllama.so.0",
+            "sha256": "f6cff16742c3d25adc8e7760802242e85358b9e4399f76ed305b436c1950f710"
+          },
+          {
+            "bytes": 1722920,
+            "path": "/lib/aarch64-linux-gnu/libc.so.6",
+            "sha256": "fe5966a43e068ad7cb389c3affa069f4ee6f296e07d7ccc0398a23cfde4f0b7e"
+          },
+          {
+            "bytes": 96460560,
+            "path": "/lib/aarch64-linux-gnu/libcuda.so.1",
+            "sha256": "f6fb476bbefda386491dc5151a593a98bedeff6a4eb0ec4ef766e3b2fe3b9032"
+          },
+          {
+            "bytes": 67440,
+            "path": "/lib/aarch64-linux-gnu/libdl.so.2",
+            "sha256": "97387fb55ccfc0cc109dfe99b81de2b7bbaac723d1c215107dc69a068c4b1fae"
+          },
+          {
+            "bytes": 133696,
+            "path": "/lib/aarch64-linux-gnu/libgcc_s.so.1",
+            "sha256": "f2d3ad2bf0b61f6bc944cc37d7b6ab7f88d2582b41ff989ca164803f56cc5f20"
+          },
+          {
+            "bytes": 397088,
+            "path": "/lib/aarch64-linux-gnu/libgomp.so.1",
+            "sha256": "33c8bcb7d33228fe5101bfeb201bcaff4563d4ecf09497229b9deba522ebaf3d"
+          },
+          {
+            "bytes": 591800,
+            "path": "/lib/aarch64-linux-gnu/libm.so.6",
+            "sha256": "d5b262e559d38769e4959f036a1cc2c4009fa60b4ec836a7a19ca8554aebf5a5"
+          },
+          {
+            "bytes": 67440,
+            "path": "/lib/aarch64-linux-gnu/libpthread.so.0",
+            "sha256": "97b288827c0ab29659dfcdcfab6c2e9e1225c19fc5abfe106d8a53c2c7b34402"
+          },
+          {
+            "bytes": 67512,
+            "path": "/lib/aarch64-linux-gnu/librt.so.1",
+            "sha256": "4b38331a53bc2bd10c1ecf4f02a71c913c40bad13f5fbf93bee5a0e1f25dd493"
+          },
+          {
+            "bytes": 2633224,
+            "path": "/lib/aarch64-linux-gnu/libstdc++.so.6",
+            "sha256": "6e3112d35cfc86db7ee85b27e1746f67408e2837ff8628b46386c3eabd5682a4"
+          },
+          {
+            "bytes": 203968,
+            "path": "/lib/ld-linux-aarch64.so.1",
+            "sha256": "393384096ffa869e1be20d2f91fdf08dfadb9f3e531dfe724085d8501d3f85d9"
+          },
+          {
+            "bytes": 61910216,
+            "path": "/usr/local/cuda/targets/sbsa-linux/lib/libcublas.so.13",
+            "sha256": "4e346a7b60a01552bd9bf4bbc6c862e11eb851559c3da3572293345de6aaed75"
+          },
+          {
+            "bytes": 629945952,
+            "path": "/usr/local/cuda/targets/sbsa-linux/lib/libcublasLt.so.13",
+            "sha256": "930418840b747413584867cb7167dd5911dcf4184135589e0334527e9abbac9f"
+          },
+          {
+            "bytes": 707752,
+            "path": "/usr/local/cuda/targets/sbsa-linux/lib/libcudart.so.13",
+            "sha256": "7bdba2b5b08cbdc85203c41cc94598adedb1bcfea7cb574ca693ac73599e4e63"
+          }
+        ]
+      },
+      "links": [
+        {
+          "peer_role": "mac20",
+          "interface": "enP7s7",
+          "speed_mbps": 1000,
+          "min_ms": 0.325,
+          "avg_ms": 0.498,
+          "max_ms": 0.925,
+          "stddev_ms": 0.216,
+          "packet_loss_percent": 0.0,
+          "samples": 5
+        },
+        {
+          "peer_role": "mac21",
+          "interface": "enP7s7",
+          "speed_mbps": 1000,
+          "min_ms": 0.403,
+          "avg_ms": 0.82,
+          "max_ms": 0.97,
+          "stddev_ms": 0.218,
+          "packet_loss_percent": 0.0,
+          "samples": 5
+        }
+      ],
+      "telemetry": {
+        "primary": "nvidia-smi",
+        "available": true,
+        "fallback": null
+      },
+      "preflight_state": {
+        "task_native_workers": 0,
+        "hf_workers": 0,
+        "protected_agent_present": true
+      },
+      "protected_agent": {
+        "port": 52005,
+        "present": true,
+        "must_not_terminate": true
+      }
+    },
+    {
+      "role": "mac20",
+      "identity": "134f57a256b041c64e741acb9afb6b8e6f5dc1c5576c23d474845cb82a3fd110",
+      "address": "192.168.0.20",
+      "inventory_snapshot": {
+        "path": "target/release-a-h0-v2-20260916/host-mac20.json",
+        "bytes": 165528,
+        "sha256": "902d2e08f74721571a1bbf37c792c1d8ac2582da8a2d286a806f3fcbce4550c2"
+      },
+      "captured_unix_ms": 1789518835870,
+      "hostname": "mobimacui-Macmini-2.local",
+      "platform": "macOS-26.6.2-arm64-arm-64bit",
+      "machine": "arm64",
+      "logical_cpu_count": 14,
+      "physical_memory_bytes": 68719476736,
+      "disk_free_bytes": 894620114944,
+      "dynamic_port_range": {
+        "first": 49152,
+        "last": 65535
+      },
+      "device": {
+        "name": "Apple M4 Pro",
+        "backend": "Metal",
+        "plugin": "Metal4",
+        "driver_or_os_build": "25G83",
+        "identifier": {
+          "kind": "metal_registry_id",
+          "value": "4294968303",
+          "uuid_unavailable_reason": "Metal exposes registryID rather than a device UUID"
+        },
+        "power_cap": {
+          "reason": "macOS_Metal_has_no_configurable_device_power_cap",
+          "status": "unavailable"
+        }
+      },
+      "binaries": {
+        "agent": {
+          "bytes": 6125008,
+          "path": "/Users/mobimac/p4-h0-v2-25edd33cf/target/release/p4-agent",
+          "sha256": "5c2a3301a3b821d6ba990a7947fbbbd5182d8d1fdd64b2833183ba037cad0cdf"
+        },
+        "native": {
+          "bytes": 766816,
+          "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/p4_staged_server",
+          "sha256": "8e20e202c2785f2ef4d4164ac8be8e44e6004a05d79653a0743231246fa2ebb1"
+        }
+      },
+      "runtime_libraries": {
+        "count": 27,
+        "digest": "27d91596056d748a904d9e4f84c714db740b6d409803ef4da288b5d9a7e900f1",
+        "binding": "macOS_dyld_shared_cache_and_file_hashes",
+        "files": [
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-base.0.23.0.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-base.0.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-base.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 58776,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-blas.0.23.0.dylib",
+            "sha256": "c06d89a778aa793acc368e17714af4c774407019c48c9597b9c2357da928ff7c"
+          },
+          {
+            "bytes": 58776,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-blas.0.dylib",
+            "sha256": "c06d89a778aa793acc368e17714af4c774407019c48c9597b9c2357da928ff7c"
+          },
+          {
+            "bytes": 58776,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-blas.dylib",
+            "sha256": "c06d89a778aa793acc368e17714af4c774407019c48c9597b9c2357da928ff7c"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-cpu.0.23.0.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-cpu.0.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-cpu.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-metal.0.23.0.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-metal.0.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-metal.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml.0.23.0.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml.0.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 5048072,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama-common.0.4.0.dylib",
+            "sha256": "c8364981451d1deafc80783ffc8a7ed63e1baa7629e9a528864a9b44cc479385"
+          },
+          {
+            "bytes": 5048072,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama-common.0.dylib",
+            "sha256": "c8364981451d1deafc80783ffc8a7ed63e1baa7629e9a528864a9b44cc479385"
+          },
+          {
+            "bytes": 5048072,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama-common.dylib",
+            "sha256": "c8364981451d1deafc80783ffc8a7ed63e1baa7629e9a528864a9b44cc479385"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama.0.4.0.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama.0.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          },
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml-base.0.23.0.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml-cpu.0.23.0.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml-metal.0.23.0.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml.0.23.0.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 5048072,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libllama-common.0.4.0.dylib",
+            "sha256": "c8364981451d1deafc80783ffc8a7ed63e1baa7629e9a528864a9b44cc479385"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libllama.0.4.0.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          }
+        ]
+      },
+      "links": [
+        {
+          "peer_role": "spark",
+          "interface": "en0",
+          "speed_mbps": 1000,
+          "min_ms": 0.668,
+          "avg_ms": 0.995,
+          "max_ms": 1.214,
+          "stddev_ms": 0.21,
+          "packet_loss_percent": 0.0,
+          "samples": 5
+        },
+        {
+          "peer_role": "mac21",
+          "interface": "en0",
+          "speed_mbps": 1000,
+          "min_ms": 0.622,
+          "avg_ms": 0.772,
+          "max_ms": 0.929,
+          "stddev_ms": 0.1,
+          "packet_loss_percent": 0.0,
+          "samples": 5
+        }
+      ],
+      "telemetry": {
+        "primary": "powermetrics",
+        "available": false,
+        "unavailable_reason": "sudo: a password is required",
+        "fallback": "ioreg.AGXAccelerator.PerformanceStatistics",
+        "fallback_available": true
+      },
+      "preflight_state": {
+        "task_native_workers": 0,
+        "hf_workers": 0,
+        "protected_agent_present": true
+      },
+      "protected_agent": {
+        "port": 52005,
+        "present": true,
+        "must_not_terminate": true
+      }
+    },
+    {
+      "role": "mac21",
+      "identity": "167777b22c1c2f71057d698d026d817416bf42ba7fb96bab304d6c0c86f807ea",
+      "address": "192.168.0.21",
+      "inventory_snapshot": {
+        "path": "target/release-a-h0-v2-20260916/host-mac21.json",
+        "bytes": 162359,
+        "sha256": "acd1210d52f58b334c4418fd74c6d343f226afc881b88679aa0690f174e7aaef"
+      },
+      "captured_unix_ms": 1789518838113,
+      "hostname": "mobimacui-Macmini.local",
+      "platform": "macOS-26.6.2-arm64-arm-64bit",
+      "machine": "arm64",
+      "logical_cpu_count": 14,
+      "physical_memory_bytes": 68719476736,
+      "disk_free_bytes": 373820444672,
+      "dynamic_port_range": {
+        "first": 49152,
+        "last": 65535
+      },
+      "device": {
+        "name": "Apple M4 Pro",
+        "backend": "Metal",
+        "plugin": "Metal4",
+        "driver_or_os_build": "25G83",
+        "identifier": {
+          "kind": "metal_registry_id",
+          "value": "4294968441",
+          "uuid_unavailable_reason": "Metal exposes registryID rather than a device UUID"
+        },
+        "power_cap": {
+          "reason": "macOS_Metal_has_no_configurable_device_power_cap",
+          "status": "unavailable"
+        }
+      },
+      "binaries": {
+        "agent": {
+          "bytes": 6125008,
+          "path": "/Users/mobimac/p4-h0-v2-25edd33cf/target/release/p4-agent",
+          "sha256": "5c2a3301a3b821d6ba990a7947fbbbd5182d8d1fdd64b2833183ba037cad0cdf"
+        },
+        "native": {
+          "bytes": 766816,
+          "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/p4_staged_server",
+          "sha256": "8e20e202c2785f2ef4d4164ac8be8e44e6004a05d79653a0743231246fa2ebb1"
+        }
+      },
+      "runtime_libraries": {
+        "count": 27,
+        "digest": "36ee50c3e257b4bf1837badbd7de8ef02ece4ccb4cc29499138bc1c8a344ea4e",
+        "binding": "macOS_dyld_shared_cache_and_file_hashes",
+        "files": [
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-base.0.23.0.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-base.0.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-base.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 58776,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-blas.0.23.0.dylib",
+            "sha256": "c06d89a778aa793acc368e17714af4c774407019c48c9597b9c2357da928ff7c"
+          },
+          {
+            "bytes": 58776,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-blas.0.dylib",
+            "sha256": "c06d89a778aa793acc368e17714af4c774407019c48c9597b9c2357da928ff7c"
+          },
+          {
+            "bytes": 58776,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-blas.dylib",
+            "sha256": "c06d89a778aa793acc368e17714af4c774407019c48c9597b9c2357da928ff7c"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-cpu.0.23.0.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-cpu.0.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-cpu.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-metal.0.23.0.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-metal.0.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml-metal.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml.0.23.0.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml.0.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libggml.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 5185304,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama-common.0.4.0.dylib",
+            "sha256": "5d3c4a9685d346e638df0aeb28c013d13995709adc0cb63b25c926a924cfb095"
+          },
+          {
+            "bytes": 5185304,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama-common.0.dylib",
+            "sha256": "5d3c4a9685d346e638df0aeb28c013d13995709adc0cb63b25c926a924cfb095"
+          },
+          {
+            "bytes": 5185304,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama-common.dylib",
+            "sha256": "5d3c4a9685d346e638df0aeb28c013d13995709adc0cb63b25c926a924cfb095"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama.0.4.0.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama.0.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/bin/libllama.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          },
+          {
+            "bytes": 735144,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml-base.0.23.0.dylib",
+            "sha256": "63a6323b7cb74cf529f6b952ce47d54a297baa653912f14a4d8a9191077a731c"
+          },
+          {
+            "bytes": 1001968,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml-cpu.0.23.0.dylib",
+            "sha256": "5c24a2566bcdab5f67463c6b5bf57df33661fa5a2c4c85fb74dfa29180e8c156"
+          },
+          {
+            "bytes": 2128264,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml-metal.0.23.0.dylib",
+            "sha256": "91509ed5dc58a0223e81d48f4a8db8ea90fac319c4f917f5e00cb04141ed48a9"
+          },
+          {
+            "bytes": 60224,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libggml.0.23.0.dylib",
+            "sha256": "3038c09c51d8655152d2fce7cd9d7bbcc8413635fc850d69b875fd3de3126bf0"
+          },
+          {
+            "bytes": 5185304,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libllama-common.0.4.0.dylib",
+            "sha256": "5d3c4a9685d346e638df0aeb28c013d13995709adc0cb63b25c926a924cfb095"
+          },
+          {
+            "bytes": 3303488,
+            "path": "/Users/mobimac/p4-b5-native-build-48437eaeb/libllama.0.4.0.dylib",
+            "sha256": "06afa9393cd5d137f494b44e2d59a5dd33a5da7641a1e84818478d7f6d8f786b"
+          }
+        ]
+      },
+      "links": [
+        {
+          "peer_role": "spark",
+          "interface": "en0",
+          "speed_mbps": 1000,
+          "min_ms": 0.483,
+          "avg_ms": 0.926,
+          "max_ms": 1.223,
+          "stddev_ms": 0.315,
+          "packet_loss_percent": 0.0,
+          "samples": 5
+        },
+        {
+          "peer_role": "mac20",
+          "interface": "en0",
+          "speed_mbps": 1000,
+          "min_ms": 0.68,
+          "avg_ms": 0.726,
+          "max_ms": 0.76,
+          "stddev_ms": 0.031,
+          "packet_loss_percent": 0.0,
+          "samples": 5
+        }
+      ],
+      "telemetry": {
+        "primary": "powermetrics",
+        "available": false,
+        "unavailable_reason": "sudo: a password is required",
+        "fallback": "ioreg.AGXAccelerator.PerformanceStatistics",
+        "fallback_available": true
+      },
+      "preflight_state": {
+        "task_native_workers": 0,
+        "hf_workers": 0,
+        "protected_agent_present": true
+      },
+      "protected_agent": {
+        "port": 52005,
+        "present": true,
+        "must_not_terminate": true
+      }
+    }
+  ],
+  "execution_layout": {
+    "id": "spark-mac20-mac21-24-12-12-h0-v2",
+    "artifact": "native_actual",
+    "allocation_conformance": "native_actual_result",
+    "cuts": [
+      0,
+      24,
+      36,
+      48
+    ],
+    "shape": {
+      "n_batch": 128,
+      "n_ubatch": 64,
+      "resident": 8,
+      "context_per_sequence": 102400,
+      "total_context": 819200,
+      "sequence_capacity": 8,
+      "kv_unified": true,
+      "k_type": "f16",
+      "v_type": "f16",
+      "flash_attention": true,
+      "prefill_fragments": 1,
+      "speculative": "none"
+    },
+    "stages": [
+      {
+        "id": "spark-0",
+        "host": "2063dd763211c1db9da114413e97226fd96777bb0126e770f8663044a0aa1736",
+        "role": "spark",
+        "layer_begin": 0,
+        "layer_end": 24,
+        "kv_layer_begin": 0,
+        "kv_layer_end": 24,
+        "device": "NVIDIA GB10",
+        "backend_device": "CUDA0",
+        "owned_layer_compute": "device",
+        "owned_layer_weights": "device",
+        "nonowned_cpu_tensors_computed": false,
+        "mtp_layer_48_enabled": false,
+        "allocation_entries": [
+          {
+            "scope": "device",
+            "index": 0,
+            "name": "CUDA0",
+            "model_bytes": 42397464576,
+            "kv_bytes": 10691543040,
+            "compute_bytes": 189139072,
+            "required_bytes": 53278146688
+          },
+          {
+            "scope": "host",
+            "index": -1,
+            "name": "host",
+            "model_bytes": 810516480,
+            "kv_bytes": 0,
+            "compute_bytes": 170789152,
+            "required_bytes": 981305632
+          }
+        ],
+        "pool": {
+          "id": "shared",
+          "available_bytes": 125770739712,
+          "reserve_bytes": 8589934592,
+          "usable_bytes": 117180805120,
+          "required_bytes": 54259452320,
+          "headroom_bytes": 62921352800
+        },
+        "actual_allocation_conformant": true,
+        "agent_sha256": "86cac7b9e26ac4297c7d46f6ffcb2d098f9fa0fa6969f393db2f74276e8bb233",
+        "native_sha256": "4a14c86783c21ab27e9e970b96e30148ff4a57105719b6b201de963ffe496c3b",
+        "agent_port": 22150,
+        "native_port": 23150,
+        "result_bounds": {
+          "max_rows": 128,
+          "max_physical_result_bytes": 103843468,
+          "max_completion_payload_bytes": 103843468,
+          "max_simultaneous_retained_groups": 2
+        }
+      },
+      {
+        "id": "mac20-1",
+        "host": "134f57a256b041c64e741acb9afb6b8e6f5dc1c5576c23d474845cb82a3fd110",
+        "role": "mac20",
+        "layer_begin": 24,
+        "layer_end": 36,
+        "kv_layer_begin": 24,
+        "kv_layer_end": 36,
+        "device": "Apple M4 Pro",
+        "backend_device": "MTL0",
+        "owned_layer_compute": "device",
+        "owned_layer_weights": "device",
+        "nonowned_cpu_tensors_computed": false,
+        "mtp_layer_48_enabled": false,
+        "allocation_entries": [
+          {
+            "scope": "device",
+            "index": 0,
+            "name": "MTL0",
+            "model_bytes": 21198732288,
+            "kv_bytes": 5345771520,
+            "compute_bytes": 1826994208,
+            "required_bytes": 28371498016
+          },
+          {
+            "scope": "host",
+            "index": -1,
+            "name": "host",
+            "model_bytes": 0,
+            "kv_bytes": 0,
+            "compute_bytes": 105646112,
+            "required_bytes": 105646112
+          }
+        ],
+        "pool": {
+          "id": "shared",
+          "available_bytes": 47636922368,
+          "reserve_bytes": 8589934592,
+          "usable_bytes": 39046987776,
+          "required_bytes": 28477144128,
+          "headroom_bytes": 10569843648
+        },
+        "actual_allocation_conformant": true,
+        "agent_sha256": "5c2a3301a3b821d6ba990a7947fbbbd5182d8d1fdd64b2833183ba037cad0cdf",
+        "native_sha256": "8e20e202c2785f2ef4d4164ac8be8e44e6004a05d79653a0743231246fa2ebb1",
+        "agent_port": 22150,
+        "native_port": 23151,
+        "result_bounds": {
+          "max_rows": 128,
+          "max_physical_result_bytes": 103843468,
+          "max_completion_payload_bytes": 103843468,
+          "max_simultaneous_retained_groups": 2
+        }
+      },
+      {
+        "id": "mac21-2",
+        "host": "167777b22c1c2f71057d698d026d817416bf42ba7fb96bab304d6c0c86f807ea",
+        "role": "mac21",
+        "layer_begin": 36,
+        "layer_end": 48,
+        "kv_layer_begin": 36,
+        "kv_layer_end": 48,
+        "device": "Apple M4 Pro",
+        "backend_device": "MTL0",
+        "owned_layer_compute": "device",
+        "owned_layer_weights": "device",
+        "nonowned_cpu_tensors_computed": false,
+        "mtp_layer_48_enabled": false,
+        "allocation_entries": [
+          {
+            "scope": "device",
+            "index": 0,
+            "name": "MTL0",
+            "model_bytes": 22116215808,
+            "kv_bytes": 5345771520,
+            "compute_bytes": 1826994464,
+            "required_bytes": 29288981792
+          },
+          {
+            "scope": "host",
+            "index": -1,
+            "name": "host",
+            "model_bytes": 0,
+            "kv_bytes": 0,
+            "compute_bytes": 105646368,
+            "required_bytes": 105646368
+          }
+        ],
+        "pool": {
+          "id": "shared",
+          "available_bytes": 55662313472,
+          "reserve_bytes": 8589934592,
+          "usable_bytes": 47072378880,
+          "required_bytes": 29394628160,
+          "headroom_bytes": 17677750720
+        },
+        "actual_allocation_conformant": true,
+        "agent_sha256": "5c2a3301a3b821d6ba990a7947fbbbd5182d8d1fdd64b2833183ba037cad0cdf",
+        "native_sha256": "8e20e202c2785f2ef4d4164ac8be8e44e6004a05d79653a0743231246fa2ebb1",
+        "agent_port": 22150,
+        "native_port": 23152,
+        "result_bounds": {
+          "max_rows": 128,
+          "max_physical_result_bytes": 3696012,
+          "max_completion_payload_bytes": 3696012,
+          "max_simultaneous_retained_groups": 72
+        }
+      }
+    ]
+  },
+  "capacity": {
+    "resident": 8,
+    "pending": {
+      "count": 64,
+      "bytes": 134217728,
+      "input_tokens": 6553600
+    },
+    "request": {
+      "max_bytes": 2097152,
+      "max_input_tokens": 102400,
+      "max_output_tokens": 2048
+    },
+    "admission": {
+      "max_requests": 72,
+      "retained_request_bytes": 150994944,
+      "input_tokens": 7372800,
+      "output_tokens": 147456
+    },
+    "stores": {
+      "completion": {
+        "count": 65536,
+        "bytes": 268435456
+      },
+      "edge": {
+        "count": 65536,
+        "bytes": 268435456
+      },
+      "receipt": {
+        "count": 65536,
+        "bytes": 67108864
+      },
+      "hop_outstanding": 256
+    }
+  },
+  "workload": {
+    "corpus": "corpus",
+    "workload_digest": "47389e9977cfc1de65e129498d2dc0773a3d20d6d85d677004b6334fd8cc2733",
+    "corpus_requests": 64,
+    "wave_class_order": [
+      "short",
+      "short",
+      "short",
+      "short",
+      "medium",
+      "medium",
+      "long",
+      "long"
+    ],
+    "class_tokens": {
+      "short": {
+        "min": 2000,
+        "max": 8000
+      },
+      "medium": {
+        "exact": 32000
+      },
+      "long": {
+        "exact": 100038
+      }
+    },
+    "modes": {
+      "quality": {
+        "selection": "corpus_order",
+        "requests": 64,
+        "waves": [
+          {
+            "after_ms": 0,
+            "count": 64
+          }
+        ],
+        "submission": "release_closed_loop",
+        "max_in_flight": 1,
+        "open_loop": false,
+        "request_deadline_ms_by_class": {
+          "short": 600000,
+          "medium": 1200000,
+          "long": 1800000
+        },
+        "overall_grace_ms": 300000,
+        "timeout_ms": 67500000,
+        "normal": true
+      },
+      "cold": {
+        "selection": "corpus_0_7",
+        "requests": 8,
+        "waves": [
+          {
+            "after_ms": 0,
+            "count": 8
+          }
+        ],
+        "timeout_ms": 1800000,
+        "normal": true
+      },
+      "sustained": {
+        "selection": "corpus_order",
+        "requests": 64,
+        "waves": [
+          {
+            "after_ms": 0,
+            "count": 8
+          },
+          {
+            "after_ms": 180000,
+            "count": 8
+          },
+          {
+            "after_ms": 480000,
+            "count": 8
+          },
+          {
+            "after_ms": 780000,
+            "count": 8
+          },
+          {
+            "after_ms": 1080000,
+            "count": 8
+          },
+          {
+            "after_ms": 1380000,
+            "count": 8
+          },
+          {
+            "after_ms": 1680000,
+            "count": 8
+          },
+          {
+            "after_ms": 1980000,
+            "count": 8
+          }
+        ],
+        "timeout_ms": 3780000,
+        "normal": true,
+        "open_loop": true
+      },
+      "recovery": {
+        "selection": "corpus_0_23",
+        "requests": 24,
+        "blocks": 3,
+        "requests_per_block": 8,
+        "quiescence_ms": 30000,
+        "same_load": true,
+        "block_timeout_ms": 1800000,
+        "timeout_ms": 5460000,
+        "normal": true
+      },
+      "overload": {
+        "selection": "corpus_cycle_unique_ids",
+        "requests": 80,
+        "waves": [
+          {
+            "after_ms": 0,
+            "count": 80
+          }
+        ],
+        "submit_window_ms": 1000,
+        "accepted_max": 72,
+        "rejected_min": 8,
+        "rejection_deadline_ms": 5000,
+        "timeout_ms": 1800000,
+        "normal": false
+      },
+      "soak": {
+        "selection": "corpus_cycle_unique_ids",
+        "requests": 256,
+        "waves": [
+          {
+            "after_ms": 0,
+            "count": 8
+          },
+          {
+            "after_ms": 180000,
+            "count": 8
+          },
+          {
+            "after_ms": 360000,
+            "count": 8
+          },
+          {
+            "after_ms": 540000,
+            "count": 8
+          },
+          {
+            "after_ms": 720000,
+            "count": 8
+          },
+          {
+            "after_ms": 900000,
+            "count": 8
+          },
+          {
+            "after_ms": 1080000,
+            "count": 8
+          },
+          {
+            "after_ms": 1260000,
+            "count": 8
+          },
+          {
+            "after_ms": 1440000,
+            "count": 8
+          },
+          {
+            "after_ms": 1620000,
+            "count": 8
+          },
+          {
+            "after_ms": 1800000,
+            "count": 8
+          },
+          {
+            "after_ms": 1980000,
+            "count": 8
+          },
+          {
+            "after_ms": 2160000,
+            "count": 8
+          },
+          {
+            "after_ms": 2340000,
+            "count": 8
+          },
+          {
+            "after_ms": 2520000,
+            "count": 8
+          },
+          {
+            "after_ms": 2700000,
+            "count": 8
+          },
+          {
+            "after_ms": 2880000,
+            "count": 8
+          },
+          {
+            "after_ms": 3060000,
+            "count": 8
+          },
+          {
+            "after_ms": 3240000,
+            "count": 8
+          },
+          {
+            "after_ms": 3420000,
+            "count": 8
+          },
+          {
+            "after_ms": 3600000,
+            "count": 8
+          },
+          {
+            "after_ms": 3780000,
+            "count": 8
+          },
+          {
+            "after_ms": 3960000,
+            "count": 8
+          },
+          {
+            "after_ms": 4140000,
+            "count": 8
+          },
+          {
+            "after_ms": 4320000,
+            "count": 8
+          },
+          {
+            "after_ms": 4500000,
+            "count": 8
+          },
+          {
+            "after_ms": 4680000,
+            "count": 8
+          },
+          {
+            "after_ms": 4860000,
+            "count": 8
+          },
+          {
+            "after_ms": 5040000,
+            "count": 8
+          },
+          {
+            "after_ms": 5220000,
+            "count": 8
+          },
+          {
+            "after_ms": 5400000,
+            "count": 8
+          },
+          {
+            "after_ms": 5580000,
+            "count": 8
+          }
+        ],
+        "minimum_duration_ms": 5580000,
+        "timeout_ms": 7380000,
+        "normal": true,
+        "same_load": true
+      }
+    },
+    "fault_arms": [
+      {
+        "id": "cancel",
+        "requests": 8,
+        "inject_after_first_token": 2,
+        "issue_stop_ms": 1000,
+        "timeout_ms": 1800000
+      },
+      {
+        "id": "slow_edge",
+        "requests": 8,
+        "edge_delay_ms": 1000,
+        "timeout_ms": 1800000
+      },
+      {
+        "id": "disconnected_edge",
+        "requests": 8,
+        "disconnect_after_outputs": 1,
+        "timeout_ms": 1800000
+      },
+      {
+        "id": "node_restart",
+        "requests": 8,
+        "restart_stage": "mac20-1",
+        "restart_after_outputs": 1,
+        "timeout_ms": 1800000
+      },
+      {
+        "id": "late_return",
+        "requests": 8,
+        "delay_result_ms": 30000,
+        "timeout_ms": 1800000
+      }
+    ]
+  },
+  "slo": {
+    "ttft_ms": {
+      "short": 60000,
+      "medium": 300000,
+      "long": 900000
+    },
+    "itl_ms": 250,
+    "send_slip_ms": 1000,
+    "clock_skew_ms": 10,
+    "normal_response_pass_rate": 1,
+    "request_terminal_pass_rate": 1
+  },
+  "ab": {
+    "one_policy_variable": "pipeline_mixed_batching_v1",
+    "paired_repetitions": 8,
+    "holdout_pairs": 4,
+    "paired_order": [
+      "AB",
+      "BA",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "AB",
+      "BA"
+    ],
+    "holdout_order": [
+      "BA",
+      "AB",
+      "AB",
+      "BA"
+    ],
+    "holdout_seed": 2026091601,
+    "arms": {
+      "A": {
+        "environment": {},
+        "description": "default serial-safe scheduler"
+      },
+      "B": {
+        "environment": {
+          "P4_STAGED_PIPELINE_BATCHING": "1",
+          "P4_STAGED_MIXED_BATCH_ROWS": "128",
+          "P4_STAGED_MIXED_PREFILL_ROWS": "128"
+        },
+        "description": "bounded mixed pipeline batching"
+      }
+    },
+    "promotion": {
+      "median_useful_tps_improvement_percent": 5,
+      "ci95_lower_bound_gt": 0,
+      "holdout_direction_positive": true,
+      "ttft_p95_ratio_max": 1.1,
+      "itl_p95_ratio_max": 1.05
+    }
+  },
+  "telemetry": {
+    "sample_interval_ms": 1000,
+    "warmup_ms": 60000,
+    "minimum_coverage": 0.95,
+    "retain_raw_samples": true,
+    "unsupported_metrics_are_null_with_reason": true,
+    "required": [
+      "gpu_or_device_active",
+      "memory_used",
+      "power_if_supported",
+      "temperature_if_supported",
+      "stage_queue",
+      "stage_compute",
+      "network_wait",
+      "kv_used_reserved_free",
+      "edge_credit",
+      "runnable_blocked_pending",
+      "reject_reason",
+      "inflight_peak",
+      "drain_residue"
+    ]
+  },
+  "execution_safety": {
+    "local_desktop_build": false,
+    "local_desktop_model_run": false,
+    "remote_build_max_jobs": 8,
+    "load_requires_validated_h0": true,
+    "inspect_and_unload_task_owned_nodes_before_run": true,
+    "protected_agents_must_remain": true,
+    "assigned_agent_port": 22150,
+    "assigned_native_ports": [
+      23150,
+      23151,
+      23152
+    ]
+  },
+  "evidence_bundle": {
+    "required_files": [
+      "benchmark-spec.json",
+      "provenance.json",
+      "requests.jsonl",
+      "responses.jsonl",
+      "judge.json",
+      "telemetry",
+      "report.json",
+      "commands-and-exits.txt",
+      "checksums.sha256"
+    ],
+    "failure_file_required_on_failure": "failure.json"
+  },
+  "runtime_acceptance": false
+}

@@ -46,6 +46,20 @@ def quality_deadlines(spec: dict, corpus: dict) -> list[int]:
     return deadlines
 
 
+def quality_slo(spec: dict) -> dict:
+    slo = spec.get("slo") or {}
+    ttft = slo.get("ttft_ms")
+    itl = slo.get("itl_ms")
+    if not isinstance(ttft, dict) or set(ttft) != {"short", "medium", "long"}:
+        raise ValueError("H1 TTFT classes differ")
+    if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0
+           for value in ttft.values()):
+        raise ValueError("H1 TTFT limits must be positive integers")
+    if not isinstance(itl, int) or isinstance(itl, bool) or itl <= 0:
+        raise ValueError("H1 ITL limit must be a positive integer")
+    return {"percentile": "nearest_rank", "ttft_ms_by_class": ttft, "itl_p95_ms": itl}
+
+
 def resource_profile(capacity: dict, stage: dict) -> dict:
     return {
         "version": 1,
@@ -67,6 +81,7 @@ def materialize(args: argparse.Namespace) -> dict:
     spec = read_json(args.spec)
     corpus = read_json(args.corpus)
     deadlines = quality_deadlines(spec, corpus)
+    slo = quality_slo(spec)
     if spec["h0_status"] != "sealed" or spec["runtime_acceptance"] is not False:
         raise ValueError("H0 spec is not sealed for execution")
     if corpus.get("runtime_acceptance") is not False:
@@ -74,7 +89,7 @@ def materialize(args: argparse.Namespace) -> dict:
 
     prompts, cases = [], []
     total_bytes = total_tokens = 0
-    for row in corpus["requests"]:
+    for index, row in enumerate(corpus["requests"]):
         prompt_bytes = (args.materialized / f"{row['id']}.prompt.txt").read_bytes()
         oracle_bytes = (args.materialized / f"{row['id']}.oracle.json").read_bytes()
         if len(prompt_bytes) != row["prompt_bytes"] or digest(prompt_bytes) != row["prompt_sha256"]:
@@ -83,7 +98,8 @@ def materialize(args: argparse.Namespace) -> dict:
             raise ValueError(f"oracle binding differs: {row['id']}")
         prompts.append(prompt_bytes.decode("utf-8"))
         cases.append({"id": row["id"], "class": row["class"],
-                      "prompt_sha256": row["prompt_sha256"], "expected": json.loads(oracle_bytes)})
+                      "prompt_sha256": row["prompt_sha256"], "expected": json.loads(oracle_bytes),
+                      "request_timeout_ms": deadlines[index]})
         total_bytes += len(prompt_bytes)
         total_tokens += row["input_tokens"]
 
@@ -141,13 +157,13 @@ def materialize(args: argparse.Namespace) -> dict:
     config_bytes = (json.dumps(config, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
     (args.output_dir / "h1-quality.json").write_bytes(config_bytes)
     seal = {
-        "schema": 2, "generation": args.generation, "spec_sha256": digest(args.spec.read_bytes()),
+        "schema": 3, "generation": args.generation, "spec_sha256": digest(args.spec.read_bytes()),
         "corpus_sha256": digest(args.corpus.read_bytes()), "config_sha256": digest(config_bytes),
         "materializer_sha256": digest(Path(__file__).read_bytes()), "requests": len(prompts),
         "total_prompt_bytes": total_bytes, "total_input_tokens": total_tokens,
         "max_output_tokens": max_tokens, "max_in_flight": 1,
         "request_timeout_ms_sha256": digest(json.dumps(deadlines, separators=(",", ":")).encode()),
-        "request_timeout_ms": deadlines, "cases": cases,
+        "request_timeout_ms": deadlines, "slo": slo, "cases": cases,
     }
     (args.output_dir / "h1-judge-seal.json").write_text(
         json.dumps(seal, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -161,8 +177,12 @@ def self_test() -> None:
                "open_loop": False, "waves": [{"after_ms": 0, "count": 3}],
                "request_deadline_ms_by_class": {"short": 10, "medium": 20, "long": 30},
                "overall_grace_ms": 5, "timeout_ms": 65}
-    spec = {"workload": {"modes": {"quality": quality}}}
+    spec = {"workload": {"modes": {"quality": quality}},
+            "slo": {"ttft_ms": {"short": 4, "medium": 5, "long": 6}, "itl_ms": 3}}
     assert quality_deadlines(spec, corpus) == [10, 20, 30]
+    assert quality_slo(spec) == {"percentile": "nearest_rank",
+                                 "ttft_ms_by_class": {"short": 4, "medium": 5, "long": 6},
+                                 "itl_p95_ms": 3}
     quality["max_in_flight"] = None
     try:
         quality_deadlines(spec, corpus)
@@ -170,7 +190,14 @@ def self_test() -> None:
         pass
     else:
         raise AssertionError("open-loop H1 quality was accepted")
-    print(json.dumps({"passed": True, "tests": 2}, separators=(",", ":")))
+    spec["slo"]["itl_ms"] = 0
+    try:
+        quality_slo(spec)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("zero H1 ITL SLO was accepted")
+    print(json.dumps({"passed": True, "tests": 4}, separators=(",", ":")))
 
 
 def main() -> None:
