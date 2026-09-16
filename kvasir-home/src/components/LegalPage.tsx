@@ -15,7 +15,7 @@ import { useT, useLang } from "../i18n/provider";
    ========================================================================== */
 
 const UPDATED = "2026-09-17";
-const CONTACT = "louisevandan@gmail.com";
+const CONTACT = "sales@newtype-ai.com";
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (

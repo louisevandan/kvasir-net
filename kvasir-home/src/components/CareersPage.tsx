@@ -29,7 +29,7 @@ import { useT } from "../i18n/provider";
    ========================================================================== */
 
 const APPLY_MAILTO =
-  "mailto:louisevandan@gmail.com?subject=Kvasir%20%E2%80%94%20Marketing%20%26%20Growth";
+  "mailto:sales@newtype-ai.com?subject=Kvasir%20%E2%80%94%20Marketing%20%26%20Growth";
 
 const OWN_ICONS = [BoltIcon, NetworkIcon, TerminalIcon, GaugeIcon, LayersIcon];
 
@@ -227,7 +227,7 @@ export default function CareersPage() {
           <p className="mt-3 max-w-2xl text-ink-muted">{c.applyBody}</p>
           <div className="mt-7 flex flex-col gap-3 sm:flex-row">
             <Button href={APPLY_MAILTO} variant="primary" size="lg">
-              {c.applyCta} — louisevandan@gmail.com
+              {c.applyCta} — sales@newtype-ai.com
               <ArrowIcon
                 width={16}
                 height={16}
