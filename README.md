@@ -249,3 +249,5 @@ Release A I0 첫 실기: [정답 1/3 RED·단일 호스트 기준 역검증·새
 Release A I0 오답 원인 진단: [사전 봉인 관측·판정 계획](tests/plans/release-a-quality-cause-20260916.md).
 
 Release A I0 오답 원인 확정: [원격 6개 분리 진단·정확 사실 추출과 산술 실패·정상 회수](tests/reports/release-a/20260916_172000.md).
+
+Release A OUTER 오답 판정 경계: [JSON 오라클 결속·원격 회귀·제품 수정 미완](tests/reports/release-a/20260916_180500.md).

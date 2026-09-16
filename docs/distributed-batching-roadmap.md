@@ -40,6 +40,8 @@ medium/long 모두 선택 사실 3/3을 정확히 출력했으나, 전체 기록
 P4 transport 밖에서 정확 산술을 요구하는 작업의 추출 신원·결정론적 계산/검증·불일치 terminal
 계약을 설계하고 제거 변이를 추가하는 것이다. I0 RED와 새 분산 LOAD 차단은 유지한다.
 
+**2026-09-16 OUTER 오답 판정 경계 보강:** [수정·검증 보고](../tests/reports/release-a/20260916_180500.md)의 요청별 `expected_json`을 H1/I0 설정에 결속했다. 모델이 틀린 산술을 내면 실행 artifact도 실패로 판정하며 원시 출력은 보존한다. 이는 판정 누락 수정이지 Qwen122B의 계산 수정이나 제품의 검증 전 응답 차단이 아니다. 따라서 I0 RED와 새 분산 LOAD 차단은 유지한다. OUTER 호출자의 원자료·대상·계산/검증 권위와 실제 소비 경로를 구현·증명하기 전에는 정확 응답 수용으로 승격하지 않는다.
+
 **2026-09-16 H0 v4 봉인:** [H0 v4 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v4.json)가
 runtime `19f2b1afa`, 세 원격 host의 새 agent/event-drive 바이너리, native/library/model/layout,
 I0 materializer, 원시 증거 builder와 두 단계 judge를 결속했다. 상대 시간 GPU 표본을 다른 실행에 붙일 수
