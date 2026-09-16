@@ -77,6 +77,20 @@ def resource_profile(capacity: dict, stage: dict) -> dict:
     }
 
 
+def response_expectations(cases: list[dict]) -> list[dict]:
+    """Bind OUTER acceptance to the independent, source-derived corpus oracle."""
+    expectations = []
+    for case in cases:
+        expected = case.get("expected")
+        if not isinstance(expected, dict) or not expected:
+            raise ValueError(f"missing JSON object oracle: {case.get('id')}")
+        expectations.append({
+            "minimum_generated_tokens": 1, "minimum_response_chars": 2,
+            "expected_json": expected,
+        })
+    return expectations
+
+
 def materialize(args: argparse.Namespace) -> dict:
     spec = read_json(args.spec)
     corpus = read_json(args.corpus)
@@ -151,7 +165,7 @@ def materialize(args: argparse.Namespace) -> dict:
         "request_timeout_ms": deadlines,
         "options": json.dumps({"temperature": 0, "seed": spec["model"]["sampling"]["seed"]}, separators=(",", ":")),
         "acceptance": {"minimum_generated_tokens": 1, "allowed_stop_reasons": ["eos"],
-                       "responses": [{"minimum_generated_tokens": 1, "minimum_response_chars": 2} for _ in prompts]},
+                       "responses": response_expectations(cases)},
         "nodes": nodes,
     }
     args.output_dir.mkdir(parents=True, exist_ok=False)
@@ -184,6 +198,15 @@ def self_test() -> None:
     assert quality_slo(spec) == {"percentile": "nearest_rank",
                                  "ttft_ms_by_class": {"short": 4, "medium": 5, "long": 6},
                                  "itl_p95_ms": 3}
+    assert response_expectations([{"id": "case-00", "expected": {"answer": 7}}]) == [
+        {"minimum_generated_tokens": 1, "minimum_response_chars": 2,
+         "expected_json": {"answer": 7}}]
+    try:
+        response_expectations([{"id": "case-04"}])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("missing source-derived oracle was accepted")
     quality["max_in_flight"] = None
     try:
         quality_deadlines(spec, corpus)
@@ -198,7 +221,7 @@ def self_test() -> None:
         pass
     else:
         raise AssertionError("zero H1 ITL SLO was accepted")
-    print(json.dumps({"passed": True, "tests": 4}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 6}, separators=(",", ":")))
 
 
 def main() -> None:

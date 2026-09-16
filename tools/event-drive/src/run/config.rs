@@ -86,6 +86,10 @@ pub struct ResponseExpectation {
     pub minimum_response_chars: Option<usize>,
     #[serde(default)]
     pub exact_response: Option<String>,
+    /// OUTER-owned semantic oracle. Object key order and whitespace do not
+    /// matter, but JSON syntax, value types, arrays and numbers do.
+    #[serde(default)]
+    pub expected_json: Option<serde_json::Value>,
     #[serde(default)]
     pub required_substrings: Vec<String>,
     #[serde(default)]
@@ -293,6 +297,20 @@ mod tests {
         let mut config = valid_config();
         config.acceptance.responses = vec![ResponseExpectation::default(); 2];
         assert!(validate(&config).is_err());
+    }
+
+    #[test]
+    fn parses_a_source_derived_json_expectation_from_run_config() {
+        let response: ResponseExpectation = serde_json::from_value(serde_json::json!({
+            "expected_json": {"rows": [{"power_mW": 174928}], "temperature_measured": false}
+        }))
+        .unwrap();
+        assert_eq!(
+            response.expected_json,
+            Some(serde_json::json!({
+                "rows": [{"power_mW": 174928}], "temperature_measured": false
+            }))
+        );
     }
 
     #[test]

@@ -160,6 +160,13 @@ fn evaluate_response(
             failures.push("response does not exactly match the expectation".into());
         }
     }
+    if let Some(expected) = &expectation.expected_json {
+        match serde_json::from_str::<serde_json::Value>(response) {
+            Ok(actual) if actual == *expected => {}
+            Ok(_) => failures.push("response JSON does not match the expected value".into()),
+            Err(_) => failures.push("response is not valid JSON".into()),
+        }
+    }
     for required in &expectation.required_substrings {
         if !response.contains(required) {
             failures.push(format!(
@@ -278,6 +285,41 @@ mod tests {
             200,
         );
         assert!(result.passed, "{:?}", result.failures);
+    }
+
+    #[test]
+    fn semantic_json_oracle_rejects_wrong_arithmetic_and_fenced_output() {
+        let acceptance = AcceptanceConfig {
+            minimum_generated_tokens: 1,
+            expected_prefill_rows: Some(500),
+            allowed_stop_reasons: vec!["eos".into()],
+            responses: Vec::new(),
+        };
+        let expectation = ResponseExpectation {
+            expected_json: Some(serde_json::json!({
+                "rows": [{"id": "R00196", "power_mW": 174928}],
+                "temperature_measured": false,
+            })),
+            ..Default::default()
+        };
+        let correct = request(
+            "{\"temperature_measured\":false,\"rows\":[{\"power_mW\":174928,\"id\":\"R00196\"}]}",
+            1,
+            "eos",
+        );
+        assert!(evaluate_request(&acceptance, Some(&expectation), &correct, 10).passed);
+
+        let wrong = request(
+            "{\"rows\":[{\"id\":\"R00196\",\"power_mW\":174832}],\"temperature_measured\":false}",
+            1,
+            "eos",
+        );
+        let result = evaluate_request(&acceptance, Some(&expectation), &wrong, 10);
+        assert_eq!(result.failures, ["response JSON does not match the expected value"]);
+
+        let fenced = request("```json\n{}\n```", 1, "eos");
+        let result = evaluate_request(&acceptance, Some(&expectation), &fenced, 10);
+        assert_eq!(result.failures, ["response is not valid JSON"]);
     }
 
     #[test]
