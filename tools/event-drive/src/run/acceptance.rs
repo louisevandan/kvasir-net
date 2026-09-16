@@ -322,7 +322,10 @@ mod tests {
             "eos",
         );
         let result = evaluate_request(&acceptance, Some(&expectation), &wrong, 10);
-        assert_eq!(result.failures, ["response JSON does not match the expected value"]);
+        assert_eq!(
+            result.failures,
+            ["response JSON does not match the expected value"]
+        );
 
         let fenced = request("```json\n{}\n```", 1, "eos");
         let result = evaluate_request(&acceptance, Some(&expectation), &fenced, 10);

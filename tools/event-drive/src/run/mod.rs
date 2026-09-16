@@ -21,8 +21,8 @@ mod teardown_preserves_failure_tests;
 mod wire;
 
 pub use config::{AcceptanceConfig, ArrivalWave, ResponseExpectation, RunConfig};
-pub use source_grounded::ResponseProcessor;
 use config::{address, node_endpoint, validate};
+pub use source_grounded::ResponseProcessor;
 
 use p4_llamacpp_staged_adapter::v2::{
     BatchObservation, OutcomePayload, SESSION_CONTENT_TYPE, SESSION_READY_CONTENT_TYPE,

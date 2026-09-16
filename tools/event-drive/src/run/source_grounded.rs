@@ -108,7 +108,9 @@ fn valid_id(id: &str) -> bool {
     id.len() == 6 && id.starts_with('R') && id[1..].bytes().all(|byte| byte.is_ascii_digit())
 }
 
-fn source_and_selection(prompt: &str) -> Result<(BTreeMap<String, SourceRecord>, Vec<String>), &'static str> {
+fn source_and_selection(
+    prompt: &str,
+) -> Result<(BTreeMap<String, SourceRecord>, Vec<String>), &'static str> {
     let user = prompt
         .split_once("<|im_start|>user\n")
         .and_then(|(_, rest)| rest.split_once("<|im_end|>"))
@@ -264,18 +266,48 @@ mod tests {
         assert_eq!(value["rows"][1]["energy_mWh"], 58 * 58 * 52 * 11);
         assert_eq!(value["rows"][1]["pressure_alarm"], true);
         let fenced = format!("```json\n{raw}\n```", raw = raw());
-        assert_eq!(process(ResponseProcessor::EngineeringPowerV1, &prompt(), &fenced).unwrap(), actual);
+        assert_eq!(
+            process(ResponseProcessor::EngineeringPowerV1, &prompt(), &fenced).unwrap(),
+            actual
+        );
     }
 
     #[test]
     fn source_and_model_identity_must_both_survive() {
         for (prompt, raw, error) in [
-            (prompt().replace("Case 5: 2", "Case 5: 3"), raw().to_owned(), "source record count differs"),
-            (prompt().replace("[R00196]", "[R00002]"), raw().to_owned(), "source record identity is duplicated"),
-            (prompt(), raw().replace("\"revision\":2", "\"revision\":3"), "model revision differs from source record"),
-            (prompt(), raw().replace("\"id\":\"R00196\"", "\"id\":\"R00002\""), "model selection identity or order differs from source task"),
-            (prompt(), raw().replace("\"temperature_measured\":false", "\"temperature_measured\":true"), "model temperature fact differs from source records"),
-            (prompt(), format!("```json\n{}", raw()), "model JSON fence is malformed"),
+            (
+                prompt().replace("Case 5: 2", "Case 5: 3"),
+                raw().to_owned(),
+                "source record count differs",
+            ),
+            (
+                prompt().replace("[R00196]", "[R00002]"),
+                raw().to_owned(),
+                "source record identity is duplicated",
+            ),
+            (
+                prompt(),
+                raw().replace("\"revision\":2", "\"revision\":3"),
+                "model revision differs from source record",
+            ),
+            (
+                prompt(),
+                raw().replace("\"id\":\"R00196\"", "\"id\":\"R00002\""),
+                "model selection identity or order differs from source task",
+            ),
+            (
+                prompt(),
+                raw().replace(
+                    "\"temperature_measured\":false",
+                    "\"temperature_measured\":true",
+                ),
+                "model temperature fact differs from source records",
+            ),
+            (
+                prompt(),
+                format!("```json\n{}", raw()),
+                "model JSON fence is malformed",
+            ),
         ] {
             assert_eq!(
                 process(ResponseProcessor::EngineeringPowerV1, &prompt, &raw),

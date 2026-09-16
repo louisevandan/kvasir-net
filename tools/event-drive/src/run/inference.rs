@@ -195,7 +195,8 @@ where
                                         Err(error) => request.service_error = Some(error.into()),
                                     }
                                     request.model_response = Some(raw);
-                                    request.service_completed_ms = Some(started.elapsed().as_millis());
+                                    request.service_completed_ms =
+                                        Some(started.elapsed().as_millis());
                                 }
                                 request.completed_ms = Some(observed_ms);
                                 request.release_member = expected_release;
@@ -462,7 +463,11 @@ where
                 logical_generation_tps: None,
                 response: String::new(),
                 model_response: None,
-                response_processor: config.response_processors.get(current_index).copied().flatten(),
+                response_processor: config
+                    .response_processors
+                    .get(current_index)
+                    .copied()
+                    .flatten(),
                 service_error: None,
                 service_completed_ms: None,
                 outcomes: Vec::new(),

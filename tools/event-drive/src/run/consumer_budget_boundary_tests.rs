@@ -156,23 +156,27 @@ fn config(case: Case) -> RunConfig {
             // scenario-specific stop allowlist. UnknownStop exercises that.
             allowed_stop_reasons: Vec::new(),
             responses: (0..count)
-                .map(|_| if matches!(case, Case::GroundedPower | Case::GroundedWrongRevision) {
-                    ResponseExpectation {
-                        expected_json: Some(serde_json::json!({
-                            "rows": [{"id":"R00002", "revision":6, "power_mW":40768,
-                                      "energy_mWh":407680, "pressure_alarm":true}],
-                            "temperature_measured":false,
-                        })),
-                        ..Default::default()
+                .map(|_| {
+                    if matches!(case, Case::GroundedPower | Case::GroundedWrongRevision) {
+                        ResponseExpectation {
+                            expected_json: Some(serde_json::json!({
+                                "rows": [{"id":"R00002", "revision":6, "power_mW":40768,
+                                          "energy_mWh":407680, "pressure_alarm":true}],
+                                "temperature_measured":false,
+                            })),
+                            ..Default::default()
+                        }
+                    } else {
+                        ResponseExpectation {
+                            // RunConfig correctly forbids an exact empty-response
+                            // expectation. EmptyEos instead tests that the unchanged
+                            // useful-response gate rejects the empty result.
+                            exact_response: (!matches!(case, Case::EmptyEos))
+                                .then(|| "Normal response.".into()),
+                            ..Default::default()
+                        }
                     }
-                } else { ResponseExpectation {
-                    // RunConfig correctly forbids an exact empty-response
-                    // expectation. EmptyEos instead tests that the unchanged
-                    // useful-response gate rejects the empty result.
-                    exact_response: (!matches!(case, Case::EmptyEos))
-                        .then(|| "Normal response.".into()),
-                    ..Default::default()
-                }})
+                })
                 .collect(),
         },
     }
@@ -265,10 +269,20 @@ fn observation(index: usize, event: &Event, request_id: &str, step: usize) -> Ba
 
 fn tokens(case: Case) -> Vec<(&'static str, Option<&'static str>)> {
     match case {
-        Case::GroundedPower => vec![("", None),
-            (r#"{"rows":[{"id":"R00002","revision":6,"power_mW":1,"energy_mWh":2,"pressure_alarm":false}],"temperature_measured":false}"#, Some("eos"))],
-        Case::GroundedWrongRevision => vec![("", None),
-            (r#"{"rows":[{"id":"R00002","revision":7,"power_mW":1,"energy_mWh":2,"pressure_alarm":false}],"temperature_measured":false}"#, Some("eos"))],
+        Case::GroundedPower => vec![
+            ("", None),
+            (
+                r#"{"rows":[{"id":"R00002","revision":6,"power_mW":1,"energy_mWh":2,"pressure_alarm":false}],"temperature_measured":false}"#,
+                Some("eos"),
+            ),
+        ],
+        Case::GroundedWrongRevision => vec![
+            ("", None),
+            (
+                r#"{"rows":[{"id":"R00002","revision":7,"power_mW":1,"energy_mWh":2,"pressure_alarm":false}],"temperature_measured":false}"#,
+                Some("eos"),
+            ),
+        ],
         Case::EmptyEos => vec![("", Some("eos"))],
         Case::EarlyStop => vec![("Normal response.", Some("stop"))],
         Case::EarlyEos => vec![("Normal response.", None), ("", Some("eos"))],
@@ -776,8 +790,14 @@ async fn actual_outer_consumer_computes_from_source_and_preserves_model_text() {
     let request = &result.run.requests[0];
     assert_eq!(request.completed_ms.is_some(), true);
     assert_eq!(request.released, true);
-    assert_eq!(request.response_processor, Some(ResponseProcessor::EngineeringPowerV1));
-    assert_eq!(request.model_response.as_deref(), Some(tokens(Case::GroundedPower)[1].0));
+    assert_eq!(
+        request.response_processor,
+        Some(ResponseProcessor::EngineeringPowerV1)
+    );
+    assert_eq!(
+        request.model_response.as_deref(),
+        Some(tokens(Case::GroundedPower)[1].0)
+    );
     assert!(request.service_error.is_none());
     assert!(request.service_completed_ms.unwrap() >= request.completed_ms.unwrap());
     let value: serde_json::Value = serde_json::from_str(&request.response).unwrap();
@@ -793,7 +813,10 @@ async fn actual_outer_consumer_rejects_wrong_source_identity_after_terminal_and_
     assert_eq!(result.run.completed_count, 1);
     assert_eq!(result.run.released_count, 1);
     assert!(request.response.is_empty());
-    assert_eq!(request.service_error.as_deref(), Some("model revision differs from source record"));
+    assert_eq!(
+        request.service_error.as_deref(),
+        Some("model revision differs from source record")
+    );
     assert!(request.model_response.is_some());
     assert!(!result.acceptance.passed);
 }

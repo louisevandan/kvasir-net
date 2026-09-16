@@ -1,9 +1,9 @@
+use super::ResponseProcessor;
 use p4_llamacpp_staged_adapter::v2::{NodeAddress, ResourceProfile};
 use p4_protocol::Address;
 use p4_protocol::event::Endpoint;
 use serde::Deserialize;
 use std::str::FromStr;
-use super::ResponseProcessor;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RunConfig {
