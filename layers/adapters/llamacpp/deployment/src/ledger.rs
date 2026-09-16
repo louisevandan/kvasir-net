@@ -4,7 +4,7 @@
 //!
 //! This is deliberately not the "coordinator's `SubmissionId` ledger with
 //! bounded terminal tombstone" `SEALED-CONTRACT.md` §5 asks for -- that one
-//! lives in `apps/llama`'s coordinator (the "llama 경로" allowlist row) and
+//! lives in `apps/llama`'s coordinator (the "llama path" allowlist row) and
 //! is authoritative. This ledger exists only so the client itself never
 //! sends a submission twice, never hands a caller a stale-generation or
 //! out-of-order event, and knows what to resend after a reconnect. Nothing
@@ -75,8 +75,8 @@ pub enum Verdict {
     /// connection. It is valid on the wire but must not be raised twice.
     Duplicate,
     /// The submission belongs to a generation this ledger has since moved
-    /// past. Refused per `SEALED-CONTRACT.md` §1: "이전 deployment_generation의
-    /// 결과는 무조건 stale이다."
+    /// past. Refused per `SEALED-CONTRACT.md` §1: "results from an earlier
+    /// deployment_generation are always stale."
     StaleGeneration,
     /// Never submitted through this ledger, or already reaped.
     Unknown,
@@ -173,8 +173,8 @@ impl Ledger {
 
     /// Registers a new submission, or reports that this `submission_id` is
     /// already known so the caller does not send it twice. This is the
-    /// client-side half of "같은 submission_id 재전송은 새 실행을 만들지
-    /// 않는다": the server's dedup is authoritative, but a client that never
+    /// client-side half of "resending the same submission_id does not
+    /// create a new execution": the server's dedup is authoritative, but a client that never
     /// resends in the first place needs no server round trip to prove it.
     pub fn begin(&mut self, submit: Submit) -> Admission {
         if let Some(entry) = self.entries.get(&submit.submission_id) {

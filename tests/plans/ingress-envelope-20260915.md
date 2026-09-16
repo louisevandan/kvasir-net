@@ -1,23 +1,23 @@
-# 접수 에이전트 엔벨롭·반환 경로 검증 계획
+# Ingress agent envelope and return route verification plan
 
-2026-09-15 생성. 기준 P4 `4f2db5cda`. 사용자의 접수 에이전트 경유 요구에 한정한 후속 수정이다.
-FINISH 실패3회 중단을 전체 로드맵 재개로 해석하지 않는다.
-[계약](../../docs/event-protocol-v2.md#reception-agent-and-an-outer-reachable-only-through-a-gateway).
+Created 2026-09-15. Baseline P4 `4f2db5cda`. This is a follow-up fix limited to the user's requirement to route through an ingress agent.
+The stop after 3 FINISH failures is not to be read as a resumption of the whole roadmap.
+[Contract](../../docs/event-protocol-v2.md#reception-agent-and-an-outer-reachable-only-through-a-gateway).
 
-## 환경·목표
+## Environment and goal
 
-Windows PowerShell, 실제 로컬 TCP 에이전트 두 개, 현재 HF feature 및 llama.cpp/HF Qwen0.8B.
-OUTER는 A에만 접속하고 모델 노드는 B에 생성한다. 실제 VPC/다중 컴퓨터 배포 수용은 아니다.
-네트워크 반환 대상은 접수 A이고 OUTER 채널·세대는 A의 로컬 배달 정보다. payload·identity를 보존한다.
+Windows PowerShell, two real local TCP agents, the current HF feature, and llama.cpp/HF Qwen0.8B.
+OUTER connects only to A, and model nodes are created on B. This is not acceptance of a real VPC/multi-computer deployment.
+The network return target is ingress A; the OUTER channel and generation are A's local delivery information. Payload and identity are preserved.
 
-## 절차·기대값
+## Procedure and expected values
 
-1. 실제 Runtime A→B control→A→OUTER 왕복 후 A의 OUTER binding1/B0을 검사한다. 수정 전 B1 반례 보존.
-2. B의 OUTER 출력은 A로 outbound, A만 local OUTER mailbox로 전달한다. Full이면 원본 pointer·비용·receipt를 보존한다.
-3. 독립 worktree와 별도 빈 build 경로에서 registration guard 제거와 OUTER 조기 local 전달 변이를 각각 검출한다.
-4. `cargo test --workspace --features hf-transformers --no-fail-fast`의 모든 summary·최종 exit를 집계한다.
-5. OUTER→A→B 실제 llama.cpp/HF 생성·EOS·해제·UNLOAD/DELETE와 최종 두 agent의 빈 node를 확인한다.
-6. 소유 시험 agent만 종료하고 source/binary hash·명령·log·exit와 미검증 범위를 기록한다.
+1. After a real Runtime A→B control→A→OUTER round trip, check A's OUTER binding1/B0. Preserve the pre-fix B1 counterexample.
+2. B's OUTER output goes outbound to A, and only A delivers it to the local OUTER mailbox. On Full, the original pointer, cost and receipt are preserved.
+3. In an independent worktree with a separate empty build path, detect each of two mutations: removal of the registration guard, and premature local delivery of OUTER.
+4. Aggregate every summary and the final exit of `cargo test --workspace --features hf-transformers --no-fail-fast`.
+5. Confirm real llama.cpp/HF generation, EOS, release and UNLOAD/DELETE over OUTER→A→B, and that both agents end with empty nodes.
+6. Terminate only the owned test agents, and record source/binary hashes, commands, logs, exits and the unverified scope.
 
-원자료 `target/ingress-envelope-20260915/`. 모델·기존 설치 앱·Studio 코드는 변경하지 않는다.
-기존 FINISH RED는 별도 보존하며 기대값을 완화하지 않는다. 이 범위의 구현 검증 실패가3회이면 중단한다.
+Raw data: `target/ingress-envelope-20260915/`. Models, previously installed apps and Studio code are not changed.
+The existing FINISH RED is kept separately, and its expected values are not relaxed. Stop if implementation verification in this scope fails 3 times.

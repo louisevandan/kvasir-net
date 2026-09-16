@@ -1,27 +1,27 @@
-# OUTER 인수테스트 3턴 계획
+# OUTER acceptance test three-turn plan
 
-> 문서 지위 (2026-09-06): **부분 시험 계획**. 해당 mock/OUTER 경로의 계획이다. 초대형 모델 실기 수용 전체를 대신하지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Partial test plan**. This is the plan for the mock/OUTER path in question. It does not replace full real-hardware acceptance of very large models.
+> Current goals, status and ordering follow the [execution roadmap](distributed-batching-roadmap.md); document authority and reading paths follow the [document map](document-map.md).
 
-이 문서는 OUTER 세션·취소·복원·KV 수명주기의 인수테스트 순서와 판정 기준을
-고정한다. 테스트 케이스를 임의로 추가하거나 순서를 바꾸지 않는다. 총 세 턴만
-허용한다.
+This document pins the order and verdict criteria of the acceptance tests for OUTER sessions, cancel, restore and the KV
+lifecycle. Do not add test cases ad hoc or change their order. Only three turns in total
+are allowed.
 
-## 변경·커밋 규칙
+## Change and commit rules
 
-| 턴 | 허용 변경 | 커밋 경계 | 테스트 범위 |
+| Turn | Allowed changes | Commit boundary | Test scope |
 | --- | --- | --- | --- |
-| 1차 | 계획 문서 커밋 후, 인수테스트에서 발견된 결함만 수정 | 계획 커밋 → 결함 수정 커밋 | 전체 핵심 계약과 상호작용 |
-| 2차 | 1차 결함 수정 및 재검증. 새 구조·새 시나리오 추가 금지 | 2차 결함 수정 커밋 | 1차 실패 재현 + 전체 회귀 |
-| 3차 | 미세조정, flaky 제거, 로그·판정 보완만 허용 | 최종 수정 커밋 | 최종 smoke·전체 게이트 |
+| 1st | After committing the plan document, fix only defects found by the acceptance tests | plan commit → defect fix commit | All core contracts and interactions |
+| 2nd | Fix and re-verify 1st-turn defects. No new structures or new scenarios | 2nd-turn defect fix commit | Reproduce 1st-turn failures + full regression |
+| 3rd | Only fine-tuning, removing flakiness and improving logs/verdicts | final fix commit | Final smoke and full gate |
 
-각 턴에서 테스트 전에 `git status`, 바이너리 hash, 포트, state root를 기록한다.
-테스트 산출물은 `target/outer-acceptance/<turn>-<run-id>/`에 저장한다.
+In each turn, record `git status`, binary hashes, ports and the state root before testing.
+Store test outputs in `target/outer-acceptance/<turn>-<run-id>/`.
 
-## 격리 토폴로지
+## Isolated topology
 
-llama.cpp 테스트 세션과 충돌하지 않도록 OUTER 인수테스트는 별도 프로세스와
-상태 디렉터리를 사용한다.
+To avoid colliding with the llama.cpp test session, the OUTER acceptance tests use separate processes and
+state directories.
 
 ```text
 OUTER driver :52102
@@ -31,113 +31,113 @@ agent A :52100 ── agent B :52101
    mock stage A   mock stage B
 ```
 
-- adapter: `mock` 또는 `mock-instant`
-- agent: `p4-agent.exe` 두 프로세스
-- OUTER: `p4-drive.exe` 별도 프로세스
-- 상태: `target/outer-acceptance/<turn>-<run-id>/state-*`
-- 로그: agent stdout/stderr, drive stdout/stderr, process exit code
-- 포트가 사용 중이면 기존 프로세스를 종료하지 않고 다른 run을 시작하지
-  않는다. 충돌을 기록하고 해당 실행은 실패 처리한다.
+- adapter: `mock` or `mock-instant`
+- agent: two `p4-agent.exe` processes
+- OUTER: a separate `p4-drive.exe` process
+- state: `target/outer-acceptance/<turn>-<run-id>/state-*`
+- logs: agent stdout/stderr, drive stdout/stderr, process exit codes
+- If a port is in use, do not stop the existing process and do not start another
+  run. Record the collision and treat that run as failed.
 
-## 병렬 실행 묶음
+## Parallel run bundles
 
-각 묶음은 독립 agent·port·state root·deployment를 사용하므로 1차와 2차에서
-동시에 실행한다. 묶음 내부의 단계 순서는 고정한다.
+Each bundle uses its own agents, ports, state root and deployment, so in the 1st and 2nd turns they
+run concurrently. The order of steps inside a bundle is fixed.
 
-| 묶음 | 검증 축 | 핵심 증거 |
+| Bundle | Verification axis | Key evidence |
 | --- | --- | --- |
-| A | 연결·재접속·generation | stale ACK/event 거부, 새 generation 수용, journal replay |
-| B | 요청 순서·복원 barrier | 동일 sequence의 Restore 순서, Restore 완료 전 Hop 차단, partial residency 거부 |
-| C | 취소·terminal | queued 취소, active hop 경계, duplicate Cancel, terminal 1회·replay |
-| D | KV transaction | 2-stage/4-stage Persist·Restore·Discard, commit 실패 보상, restart recovery |
-| E | 수명정책 | heartbeat miss threshold, retain-until 경계, 중복 GC 후보 제거 |
+| A | Connection, reconnect, generation | stale ACK/event rejection, new generation acceptance, journal replay |
+| B | Request order, restore barrier | Restore order within the same sequence, Hop blocked until Restore completes, partial residency rejection |
+| C | Cancel, terminal | queued cancel, active hop boundary, duplicate Cancel, terminal exactly once and replay |
+| D | KV transaction | 2-stage/4-stage Persist/Restore/Discard, compensation on commit failure, restart recovery |
+| E | Lifetime policy | heartbeat miss threshold, retain-until boundary, duplicate GC candidate removal |
 
-묶음 A~E는 병렬 실행하지만, 모든 묶음이 같은 agent나 state root를 공유하지
-않는다. 병렬 실행 결과는 묶음별 manifest로 합친다.
+Bundles A–E run in parallel, but no two bundles share the same agent or state
+root. Parallel run results are merged into per-bundle manifests.
 
-## 1차: 전체 계약과 논리 관계 확인
+## 1st turn: confirm all contracts and logical relationships
 
-### 1차 사전 게이트
+### 1st-turn pre-gate
 
-1. 계획 커밋의 commit id 기록
+1. Record the commit id of the plan commit
 2. `cargo fmt --all -- --check`
 3. `cargo clippy --workspace --all-targets -- -D warnings`
 4. `cargo test --workspace`
-5. release `p4-agent.exe`, `p4-drive.exe` hash 기록
-6. reserved ports가 비어 있고 기존 llama.cpp 세션이 살아 있음을 확인
+5. Record the hashes of the release `p4-agent.exe` and `p4-drive.exe`
+6. Confirm that the reserved ports are free and that the existing llama.cpp session is alive
 
-사전 게이트가 실패하면 인수테스트를 시작하지 않는다.
+If the pre-gate fails, do not start the acceptance tests.
 
-### 1차 케이스
+### 1st-turn cases
 
-각 케이스는 요청 ID, sequence ID, operation ID, route, return channel,
-ingress generation을 로그와 대조한다.
+Each case checks the request ID, sequence ID, operation ID, route, return channel
+and ingress generation against the logs.
 
-| ID | 시나리오 | 반드시 확인할 관계 |
+| ID | Scenario | Relationship that must be confirmed |
 | --- | --- | --- |
-| A1 | 연결 후 event 수신·ACK | channel + stream + event sequence |
-| A2 | 연결 단절 후 재접속 | 이전 generation의 ACK/event가 새 연결을 침범하지 않음 |
-| A3 | 동일 sequence Restore 두 건 | 발행 순서와 adapter 실행 순서 일치 |
-| A4 | Restore 중 후속 Hop | 모든 stage 완료 전 Hop이 실행되지 않음 |
-| A5 | 한 stage Restore 실패 | partial resident가 executable로 공개되지 않음 |
-| A6 | queued request Cancel | 대상 request만 terminal 처리 |
-| A7 | 같은 Cancel 재전송 | terminal 추가 생성 없음, 동일 결과 replay |
-| A8 | active hop Cancel | 강제중단을 주장하지 않고 경계 이후 종료 |
-| A9 | 4-stage Persist → restart → Restore | 각 shard와 position 보존 |
-| A10 | commit 중 한 stage failure | abort/reconcile 후 성공 상태를 가장하지 않음 |
-| A11 | 만료 경계 전후 GC | `now < retain_until` 보존, `now >= retain_until` 폐기 후보 |
-| A12 | 동시 서로 다른 sequence | 서로 다른 sequence는 병렬, 동일 sequence는 순서 보존 |
+| A1 | Receive event and ACK after connecting | channel + stream + event sequence |
+| A2 | Reconnect after a disconnect | ACKs/events of the previous generation do not intrude on the new connection |
+| A3 | Two Restores on the same sequence | Publish order matches adapter execution order |
+| A4 | Follow-up Hop during Restore | Hop does not run before all stages complete |
+| A5 | Restore fails on one stage | A partial resident is not published as executable |
+| A6 | Cancel a queued request | Only the target request is terminated |
+| A7 | Resend the same Cancel | No additional terminal created, same result replayed |
+| A8 | Cancel an active hop | Does not claim a forced stop; terminates after the boundary |
+| A9 | 4-stage Persist → restart → Restore | Each shard and position preserved |
+| A10 | One stage fails during commit | After abort/reconcile, does not pretend to be in a success state |
+| A11 | GC just before and after the expiry boundary | `now < retain_until` retained, `now >= retain_until` discard candidate |
+| A12 | Different sequences concurrently | Different sequences run in parallel, the same sequence keeps order |
 
-### 1차 판정
+### 1st-turn verdict
 
-- 위 A1~A12 중 하나라도 실패하면 즉시 테스트를 중단하고 실패 manifest와
-  관련 로그를 보존한다.
-- 원인 분석 후 구현을 수정한다. 수정 범위는 실패를 직접 설명하는 코드와
-  해당 회귀테스트로 제한한다.
-- 수정 후 `outer-acceptance-1-fix` 커밋을 만든다.
+- If any of A1–A12 fails, stop the tests immediately and preserve the failure manifest and
+  related logs.
+- Fix the implementation after root-cause analysis. Limit the fix to code that directly explains the failure and
+  the corresponding regression test.
+- After the fix, create the `outer-acceptance-1-fix` commit.
 
-## 2차: 1차 결함 재현과 전면 회귀
+## 2nd turn: reproduce 1st-turn defects and full regression
 
-2차는 1차에서 실패한 케이스를 먼저 같은 입력으로 재현한다. 재현되지 않으면
-수정 완료로 판정하지 않는다. 이후 A~E 병렬 묶음 전체와 `cargo test --workspace`
-를 재실행한다.
+The 2nd turn first reproduces the cases that failed in the 1st turn with the same inputs. If they cannot be reproduced,
+the fix is not judged complete. Then rerun all A–E parallel bundles and `cargo test --workspace`
+.
 
-판정 기준:
+Verdict criteria:
 
-- 1차 실패 케이스 0건
-- A1~A12 전체 0건
-- 병렬 묶음 간 cross-talk 0건
-- terminal 누락·중복 0건
-- 종료 후 agent/drive/listener 잔류 0건
-- 1차에서 변경하지 않은 기존 테스트 회귀 0건
+- 0 1st-turn failure cases
+- 0 across all of A1–A12
+- 0 cross-talk between parallel bundles
+- 0 missing or duplicate terminals
+- 0 leftover agents/drives/listeners after shutdown
+- 0 regressions in existing tests not changed in the 1st turn
 
-새로운 실패가 발견되면 2차 수정 커밋만 허용한다. 테스트 범위를 넓히거나
-프로토콜 의미를 바꾸지 않는다.
+If a new failure is found, only a 2nd-turn fix commit is allowed. Do not widen the test scope or
+change protocol semantics.
 
-## 3차: 최종 미세조정
+## 3rd turn: final fine-tuning
 
-3차는 2차에서 통과한 계약을 유지한 채 다음만 수행한다.
+The 3rd turn keeps the contracts that passed in the 2nd turn and does only the following.
 
-- timing margin과 polling 안정화
-- 로그·manifest의 누락 필드 보완
-- deterministic ordering과 flaky 원인 제거
-- 최종 포맷·Clippy·diff·workspace test
+- Stabilize timing margins and polling
+- Fill in missing fields in logs and manifests
+- Deterministic ordering and removing causes of flakiness
+- Final format, Clippy, diff and workspace test
 
-3차에서 의미 있는 프로토콜·상태·스케줄링 변경이 필요하면 최종판으로 인정하지
-않고 별도 변경으로 되돌린다.
+If the 3rd turn needs a meaningful protocol, state or scheduling change, it is not accepted as the final version
+and is reverted into a separate change.
 
-## 최종 산출물
+## Final outputs
 
-최종 커밋에는 다음이 함께 있어야 한다.
+The final commit must include all of the following.
 
-- 1차/2차/3차 manifest
-- 묶음 A~E별 pass/fail과 process exit code
-- agent/drive 로그 경로
-- 실행 바이너리 hash
-- 포트·state root 목록
-- ignored된 실 llama.cpp E2E와 그 이유
-- `protocol-outer.md`의 구현 상태 갱신
+- 1st/2nd/3rd-turn manifests
+- pass/fail and process exit codes per bundle A–E
+- agent/drive log paths
+- executed binary hashes
+- list of ports and state roots
+- the ignored real llama.cpp E2E and the reason
+- implementation status update in `protocol-outer.md`
 
-실 llama.cpp adapter 테스트는 이 계획의 대체물이 아니다. OUTER 계약은 Mock
-adapter로 먼저 확정하고, llama.cpp 세션에서는 같은 wire·cache·cancel 입력을
-실 backend에 연결하는 별도 acceptance로 검증한다.
+Real llama.cpp adapter tests do not replace this plan. The OUTER contract is settled first with the Mock
+adapter, and the llama.cpp session verifies it in a separate acceptance that connects the same wire, cache and cancel inputs
+to a real backend.

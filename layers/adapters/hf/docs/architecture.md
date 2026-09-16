@@ -1,8 +1,8 @@
-# 책임과 연결
+# Responsibilities and wiring
 
-`entrypoints/agent` factory → `adapter/`의 `HfNodeAdapter: RetainedNodeAdapter` → bounded IPC → 모델별 Python worker.
-노드 사이에는 P4 event/broker를 사용한다. 공통 core는 모델 payload를 해석하지 않는다.
-Python OUTER controller의 모델 스케줄링과 stage별 연산·cache를 Rust에서 중복 구현하지 않는다.
-bridge는 용량/결과 귀속/출력 승인/프로세스 수명을 담당한다.
-Python bundle 교체는 동일 agent에서 NODE_UNLOAD 후 새 generation NODE_LOAD로 수행한다.
-wire·소유권은 [통합 계약](integration/README.md), 코드 역할은 [구조](structure/README.md)를 따른다.
+`entrypoints/agent` factory → `HfNodeAdapter: RetainedNodeAdapter` in `adapter/` → bounded IPC → per-model Python worker.
+Nodes talk to each other through the P4 event/broker. The common core does not interpret model payloads.
+Rust does not reimplement the Python OUTER controller's model scheduling or the per-stage computation and cache.
+The bridge owns capacity, result attribution, output approval and process lifetime.
+To swap the Python bundle, the same agent runs NODE_UNLOAD and then NODE_LOAD with a new generation.
+Wire format and ownership follow the [integration contract](integration/README.md); code roles follow the [structure](structure/README.md).

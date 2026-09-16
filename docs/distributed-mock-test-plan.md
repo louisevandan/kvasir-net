@@ -1,39 +1,39 @@
 # P4 distributed mock test plan
 
-> 문서 지위 (2026-09-06): **부분 시험 계획**. 해당 mock/OUTER 경로의 계획이다. 초대형 모델 실기 수용 전체를 대신하지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Partial test plan**. This is the plan for the mock/OUTER path in question. It does not replace full real-hardware acceptance of very large models.
+> Current goals, status and ordering follow the [execution roadmap](distributed-batching-roadmap.md); document authority and reading paths follow the [document map](document-map.md).
 
-목표: 중앙 PC와 `m42-server2`의 RTX 3090×2 Windows 11 환경에서, 실제
-llama.cpp를 사용하지 않고 `p4-mock`을 어댑터로 사용해 discovery부터
-분산 load, 다중 inference, queue/backpressure, monitoring, cache, failure
-return까지의 프로토콜 시나리오를 검증한다.
+Goal: on the central PC and the RTX 3090×2 Windows 11 environment of `m42-server2`, without using real
+llama.cpp and with `p4-mock` as the adapter, verify the protocol scenarios from discovery through
+distributed load, multiple inference, queue/backpressure, monitoring, cache, and failure
+return.
 
-범위:
+Scope:
 
-- 중앙 PC: `192.168.0.6`, P4 소스와 빌드 책임
-- 원격 PC: `192.168.0.29`, SSH `42mob@m42-server2`
-- 원격 빌드: 금지. 중앙 PC에서 만든 동일 Windows x64 바이너리만 복사
-- 어댑터: `mock`, `mock-instant`, 필요 시 `p4-link`
-- 실험 전제: 원격의 기존 프로세스·GPU 작업·P4 포트를 확인하고 충돌하면
-  중단한다. 사용 중인 서비스는 종료하지 않는다.
+- Central PC: `192.168.0.6`, responsible for the P4 source and builds
+- Remote PC: `192.168.0.29`, SSH `42mob@m42-server2`
+- Remote builds: forbidden. Copy only the identical Windows x64 binaries built on the central PC
+- Adapters: `mock`, `mock-instant`, and `p4-link` if needed
+- Experiment precondition: check the remote host's existing processes, GPU jobs and P4 ports, and stop if there is a
+  conflict. Do not stop services that are in use.
 
-## 1. 실행 산출물과 증거
+## 1. Run artifacts and evidence
 
-체크인된 로컬 runner는 `target/parallel-mock-e2e/<run-id>/`에 manifest와
-worker별 log를 남긴다. 원격 cross-host 실행은 수동 산출물이며 이 경로에
-자동 수집되지 않는다.
+The checked-in local runner writes a manifest and
+per-worker logs to `target/parallel-mock-e2e/<run-id>/`. Remote cross-host runs produce manual artifacts and are not
+collected into this path automatically.
 
-| 산출물 | 검증 대상 |
+| Artifact | What it verifies |
 | --- | --- |
-| `manifest.json` | run id, worker/request/token 입력, worker별 verdict와 working set |
+| `manifest.json` | run id, worker/request/token inputs, per-worker verdict and working set |
 | `worker-*/agent-*.log` | local agent stdout/stderr |
-| `worker-*/drive.log` | request/stream verdict와 queue peak |
-| `worker-*/drive.err.log` | driver 오류 |
+| `worker-*/drive.log` | request/stream verdicts and queue peak |
+| `worker-*/drive.err.log` | driver errors |
 
-바이너리는 복사 전에 중앙·원격 SHA-256을 비교한다. 원격에는 소스나
-`cargo` 실행을 요구하지 않는다.
+Before copying, compare the central and remote SHA-256 of the binaries. The remote host is not required to have the source or to
+run `cargo`.
 
-## 2. 공통 topology
+## 2. Shared topology
 
 ```text
 OUTER/controller
@@ -46,255 +46,255 @@ OUTER/controller
       <--------------- reply/status ----------------┘
 ```
 
-실제 테스트는 다음 두 모드를 모두 사용한다.
+The actual tests use both of the following modes.
 
-1. `local-only`: 모든 agent와 mock stage를 중앙 PC에 두고 protocol 오류를
-   원격 네트워크와 분리한다.
-2. `cross-host`: local ingress/stage와 remote stage를 분리해 frame routing,
-   return anchor, peer queue, reconnect, link impairment를 검증한다.
+1. `local-only`: put all agents and mock stages on the central PC to separate protocol errors
+   from the remote network.
+2. `cross-host`: separate the local ingress/stage from the remote stage to verify frame routing,
+   return anchor, peer queue, reconnect and link impairment.
 
-## 3. 병렬 실행 묶음
+## 3. Parallel run bundle
 
-서로 다른 포트와 `run-id`를 사용하는 다음 네 개의 worker 시나리오는
-동시에 실행할 수 있다. 동일 deployment를 공유하지 않는다.
+The following four worker scenarios use different ports and `run-id`s and
+can run at the same time. They do not share a deployment.
 
-| worker | 시나리오 | 핵심 증거 |
+| Worker | Scenario | Key evidence |
 | --- | --- | --- |
 | W1 | discovery/model profile | `Inspect`, `InspectModel`, artifact/profile round trip, unsupported adapter refusal |
-| W2 | sustained pipeline | 연속 prefill/decode, stage overlap, FIFO, ceiling, bounded queues |
-| W3 | return/monitoring | 다중 OUTER route, ingress return, status correlation, disconnect/reconnect |
+| W2 | sustained pipeline | continuous prefill/decode, stage overlap, FIFO, ceiling, bounded queues |
+| W3 | return/monitoring | multiple OUTER routes, ingress return, status correlation, disconnect/reconnect |
 | W4 | lifecycle/cache/failure | load/unload, persist/restore/fork/discard, deadline, failed hop |
 
-W1은 새 `InspectModel` wire와 mock profile을 먼저 smoke한다. W2~W4는
-W1의 binary smoke가 통과한 뒤 parallel fan-out한다. 테스트 runner 자체는
-각 worker를 별도 프로세스로 실행해 한 worker의 CPU spin이나 종료가 다른
-worker의 결과를 가리지 않게 한다.
+W1 smoke-tests the new `InspectModel` wire and the mock profile first. W2~W4
+fan out in parallel after W1's binary smoke passes. The test runner itself
+runs each worker as a separate process so that one worker's CPU spin or exit does not hide another
+worker's result.
 
-반복 실행 명령은 [`tools/scripts/e2e/run-distributed-mock.ps1`](../tools/scripts/e2e/run-distributed-mock.ps1)이다.
-기본값은 4개 worker, worker당 2-stage, 128 requests, 16 tokens이며 각
-worker가 독립 포트·로그·deployment를 사용한다.
+The repeatable run command is [`tools/scripts/e2e/run-distributed-mock.ps1`](../tools/scripts/e2e/run-distributed-mock.ps1).
+The defaults are 4 workers, 2 stages per worker, 128 requests and 16 tokens, and each
+worker uses its own ports, logs and deployment.
 
-## 4. 시나리오와 판정 기준
+## 4. Scenarios and verdict criteria
 
 ### D-01 discovery contract
 
-OUTER가 artifact reference와 adapter 이름으로 `InspectModel`을 요청한다.
-Agent는 mock profile을 반환하고, P4는 profile 문자열을 해석하거나
-재작성하지 않는다.
+OUTER requests `InspectModel` with an artifact reference and an adapter name.
+The agent returns the mock profile, and P4 does not interpret or
+rewrite the profile string.
 
-`P4_DRIVE_DISCOVER=1`을 지정한 drive는 node 생성 전에 모든 selected agent에
-이 preflight를 수행한다. 각 응답의 artifact와 opaque profile을 비교하고,
-agent별 capability snapshot ID/expiry를 저장해 같은 agent의 `Load`에
-전달한다. 응답 누락·artifact 불일치·빈 snapshot이면 create/load/inference를
-시작하지 않는다.
+A drive with `P4_DRIVE_DISCOVER=1` runs this preflight against every selected agent
+before creating nodes. It compares the artifact and opaque profile of each response,
+stores the per-agent capability snapshot ID/expiry, and passes it to the same agent's `Load`.
+If a response is missing, an artifact does not match, or a snapshot is empty, it does not
+start create/load/inference.
 
-판정:
+Verdict:
 
-- request/reply correlation이 유지된다.
-- artifact, adapter, profile이 byte-preserving round trip한다.
-- 등록되지 않은 adapter와 빈 artifact는 명시적 `Failed`가 된다.
-- 기존 `Inspect`는 machine snapshot만 반환하며 model profile을 가장하지
-  않는다.
+- Request/reply correlation is maintained.
+- Artifact, adapter and profile round-trip byte-for-byte.
+- An unregistered adapter and an empty artifact produce an explicit `Failed`.
+- The existing `Inspect` returns only the machine snapshot and does not pretend to be a
+  model profile.
 
 ### D-02 distributed placement input
 
-local/remote agent에서 각각 model profile과 capability snapshot을 수집한
-뒤 OUTER가 하나의 placement plan을 만들고, 각 node에는 opaque `Load`를
-보낸다.
+After collecting the model profile and capability snapshot from each of the local and remote agents,
+OUTER builds one placement plan and sends an opaque `Load`
+to each node.
 
-판정:
+Verdict:
 
-- 모든 stage가 동일한 model fingerprint/profile을 사용한다.
-- profile을 얻기 전에는 `Load`를 보내지 않는다.
-- `Internal` adapter를 staged chain의 중간 node로 사용하지 않는다.
-- snapshot 불일치 또는 지원하지 않는 distribution은 load refusal이 된다.
+- Every stage uses the same model fingerprint/profile.
+- `Load` is not sent before the profile has been obtained.
+- An `Internal` adapter is not used as a middle node of a staged chain.
+- A snapshot mismatch or an unsupported distribution results in a load refusal.
 
-mock profile은 실제 GGUF 파일을 읽는 parser의 대체물이 아니지만, llama 계열
-architecture/layer/embedding/head/KV-head/context/quantization/fingerprint와
-stage/boundary bytes를 가진 synthetic profile이다. mock adapter는 또한 opaque
-load plan과 sampling 형태의 JSON options를 수신·기록하고, 비-object options를
-요청 단위로 거부하며, llama-compatible backend report를 반환한다. 따라서
-D-02는 discovery와 adapter boundary를 검증하지만 CUDA allocator나 실제
-llama.cpp kernel 동작을 증명하지 않는다.
+The mock profile is not a substitute for a parser that reads real GGUF files, but it is a synthetic profile with llama-family
+architecture/layer/embedding/head/KV-head/context/quantization/fingerprint and
+stage/boundary bytes. The mock adapter also receives and records the opaque
+load plan and sampling-shaped JSON options, rejects non-object options
+per request, and returns a llama-compatible backend report. D-02 therefore
+verifies discovery and the adapter boundary, but it does not prove CUDA allocator or real
+llama.cpp kernel behaviour.
 
 ### P-01 pipeline feed-ahead
 
-각 stage의 hop 비용을 서로 다르게 두고 64~256개의 요청을 지속적으로
-주입한다. prefill이 decode를 막지 않는지와 stage 0/1이 앞선 요청과
-뒤따른 요청을 겹쳐 처리하는지를 관찰한다.
+Give each stage a different hop cost and inject 64~256 requests
+continuously. Observe whether prefill blocks decode and whether stages 0/1 process earlier and
+later requests overlapping.
 
-판정:
+Verdict:
 
-- node `ceiling`을 넘는 adapter hop이 없다.
-- stage별 busy 시간이 겹치며, queue가 존재하는 동안 idle gap이 지속적으로
-  증가하지 않는다.
-- token/event 순서는 request별 FIFO이고 서로 다른 request가 섞이지 않는다.
-- ingress lane과 node queue가 모두 bounded이며 overflow 정책이 명시된다.
+- No adapter hop exceeds the node `ceiling`.
+- Per-stage busy time overlaps, and the idle gap does not keep growing
+  while a queue exists.
+- Token/event order is FIFO per request, and different requests do not mix.
+- Both the ingress lane and the node queue are bounded, and the overflow policy is stated.
 
-### Q-01 장기 도착과 메모리 압박
+### Q-01 long-running arrivals and memory pressure
 
-생산 속도를 mock 처리 속도보다 빠르게 유지하고 10분 이상 실행한다.
-`run-distributed-mock.ps1`는 실행 중인 각 worker agent를 1초 간격으로
-샘플링해 request/frame 결과와 함께 queue depth, process working set
-min/peak/delta를 manifest에 기록한다.
+Keep the production rate above the mock processing rate and run for 10 minutes or more.
+`run-distributed-mock.ps1` samples each running worker agent every 1 second
+and records queue depth and process working set
+min/peak/delta in the manifest together with the request/frame results.
 
-판정:
+Verdict:
 
-- queue depth는 설정된 상한을 넘지 않는다.
-- reader/worker가 무한히 block되지 않고 명시적 reject/deadline/spill 중
-  하나가 관찰된다.
-- working set이 요청 수에 비례해 무한 증가하지 않는다.
-- 완료된 request의 route/continuation/KV 상태가 잔류하지 않는다.
+- Queue depth does not exceed the configured cap.
+- Readers/workers do not block indefinitely; one of an explicit reject, deadline or spill
+  is observed.
+- The working set does not grow without bound in proportion to the request count.
+- No route/continuation/KV state remains for completed requests.
 
-### R-01 return anchor와 다중 OUTER
+### R-01 return anchor and multiple OUTERs
 
-하나의 ingress agent에 두 개의 logical OUTER channel을 연결하고 동일한
-route 문자열이 재사용되는 요청을 동시에 보낸다. 이어 ingress 연결을
-끊고 재연결 정책을 실행한다.
+Connect two logical OUTER channels to one ingress agent and send, at the same time, requests that reuse the same
+route string. Then drop the ingress connection
+and run the reconnect policy.
 
-판정:
+Verdict:
 
-- token과 Done은 최초 ingress/return channel로만 도착한다.
-- route 재사용이 다른 channel의 응답을 소비하지 않는다.
-- 재연결은 buffer, rebind, cancel 중 선언된 정책 하나로 끝난다.
-- 늦은/중복/terminal 이후 event는 새 요청 상태를 오염시키지 않는다.
+- Tokens and Done arrive only on the original ingress/return channel.
+- Route reuse does not consume another channel's responses.
+- Reconnect ends with exactly one declared policy: buffer, rebind or cancel.
+- Late, duplicate or post-terminal events do not contaminate new request state.
 
 ### M-01 monitoring transparency
 
-유휴, load 중, prefill, decode, blocked link, failed hop, unload 직후의
-status를 각각 수집한다.
+Collect status separately for idle, during load, prefill, decode, blocked link, failed hop, and right after
+unload.
 
-판정:
+Verdict:
 
-- agent/node/adapter identity, request/stream/sequence/hop correlation이
-  status와 event에 연결된다.
-- lane depth, peer queue, in-flight, phase, last-progress, deadline이
-  구분된다.
-- queue depth만으로 GPU utilization을 주장하지 않고 mock busy/idle 및
-  adapter report를 함께 기록한다.
-- snapshot sequence와 generated time으로 stale status를 거부할 수 있다.
+- Agent/node/adapter identity and request/stream/sequence/hop correlation are
+  linked to status and events.
+- Lane depth, peer queue, in-flight, phase, last-progress and deadline are
+  distinguished.
+- GPU utilization is not claimed from queue depth alone; mock busy/idle and the
+  adapter report are recorded together.
+- Stale status can be rejected using the snapshot sequence and generated time.
 
 ### K-01 cache lifecycle
 
-각 stage에서 동일 sequence를 persist, restore, fork, discard하고, restore
-실패와 deployment generation 변경을 각각 주입한다.
+On each stage, persist, restore, fork and discard the same sequence, and inject a restore
+failure and a deployment generation change separately.
 
-판정:
+Verdict:
 
-- 모든 stage가 같은 operation/sequence identity를 보고한다.
-- 일부 stage만 restore된 상태를 inference에 노출하지 않는다.
-- fork는 원본을 보존하고 새 sequence만 독립적으로 변경한다.
-- model fingerprint, deployment generation, cache format이 맞지 않으면
-  명시적으로 거부한다.
+- Every stage reports the same operation/sequence identity.
+- A state where only some stages were restored is not exposed to inference.
+- Fork preserves the original and changes only the new sequence, independently.
+- If the model fingerprint, deployment generation or cache format does not match, it is
+  rejected explicitly.
 
-## 5. 실행 순서
+## 5. Run order
 
-1. `git rev-parse HEAD`, `cargo test --workspace`, binary hash를 manifest에
-   기록한다.
-2. local-only W1을 실행해 discovery codec와 mock hook을 확인한다.
-3. 중앙 PC에서 release binary를 빌드하고 원격 Windows 경로로 복사한다.
-4. 원격에서 hostname, OS/architecture, binary hash, 사용 중인 P4 port와
-   기존 P4/backend process를 read-only 확인한다.
-5. 충돌하지 않는 별도 port로 cross-host W1 smoke를 실행한다.
-6. W1 통과 후 W2~W4를 별도 run-id로 병렬 실행한다.
-7. Q-01을 별도 장시간 run으로 실행하며 작업 관리자 또는 PowerShell의
-   process working set과 P4 status를 함께 샘플링한다.
-8. 모든 프로세스와 listener를 run manifest와 대조해 종료 후 잔류가 없는지
-   확인한다. 기존 사용자 프로세스는 종료 대상에서 제외한다.
+1. Record `git rev-parse HEAD`, `cargo test --workspace` and the binary hashes in the
+   manifest.
+2. Run local-only W1 to check the discovery codec and the mock hook.
+3. Build the release binaries on the central PC and copy them to the remote Windows path.
+4. On the remote host, check read-only the hostname, OS/architecture, binary hash, P4 ports in use and
+   existing P4/backend processes.
+5. Run the cross-host W1 smoke on separate, non-conflicting ports.
+6. After W1 passes, run W2~W4 in parallel with separate run-ids.
+7. Run Q-01 as a separate long run, sampling the Task Manager or PowerShell
+   process working set together with P4 status.
+8. Compare all processes and listeners against the run manifest to confirm nothing remains after shutdown.
+   Existing user processes are excluded from shutdown.
 
-## 6. 현재 구현의 제한과 다음 구현 단계
+## 6. Limits of the current implementation and next implementation steps
 
-- `InspectModel`은 P4 wire와 adapter hook을 사용하며, mock profile은
-  의도적으로 GGUF 사실을 모사하지 않는다.
-- served concrete adapter는 `P4_MODEL_DIR` 또는 `LLAMA_MODEL_DIR` 아래의 상대
-  artifact reference를 검증하고 실제 GGUF metadata/tensor index profile과
-  fingerprint를 반환한다.
-- 실제 모델 파일에 대한 parser smoke는
-  `Qwen2.5-1.5B-Instruct-Q8_0.gguf`로 통과했다.
-- discovery 응답은 snapshot ID/generated/expiry를 운반하고, OUTER가 이를
-  Load에 바인딩하면 agent가 만료된 snapshot을 adapter 호출 전에 거부한다.
-  다만 snapshot registry의 실제 ID 일치 검증, 하드웨어 자원 스냅샷, adapter
-  distribution-mode 검증은 아직 남아 있다.
-- Agent lane, node ingress, adapter event channel, node outbox는 모두
-  `Budget.depth` 기반의 bounded RAM 경로다. 초과 node work는 기다리지
-  않고 명시적 `Failed`로 반환되며, 느린 downstream은 bounded outbox를
-  통해 event loop까지 역압을 전파한다. 아직 disk spill, FIFO paging,
-  retry quota 정책은 구현하지 않았다.
-- 실제 staged GPU adapter가 없으므로 이 계획의 mock overlap 결과는 GPU
-  utilization 증거가 아니다.
+- `InspectModel` uses the P4 wire and the adapter hook, and the mock profile
+  deliberately does not imitate GGUF facts.
+- The served concrete adapter validates relative
+  artifact references under `P4_MODEL_DIR` or `LLAMA_MODEL_DIR` and returns the real GGUF metadata/tensor index profile and
+  fingerprint.
+- The parser smoke on a real model file passed with
+  `Qwen2.5-1.5B-Instruct-Q8_0.gguf`.
+- The discovery response carries the snapshot ID/generated/expiry, and when OUTER binds it
+  to Load, the agent rejects an expired snapshot before calling the adapter.
+  Still remaining: verification that the ID actually matches in a snapshot registry, a hardware resource snapshot, and adapter
+  distribution-mode validation.
+- The agent lane, node ingress, adapter event channel and node outbox are all
+  bounded RAM paths based on `Budget.depth`. Excess node work does not wait;
+  it is returned as an explicit `Failed`, and a slow downstream propagates backpressure through the bounded outbox
+  up to the event loop. Disk spill, FIFO paging and
+  retry quota policies are not implemented yet.
+- There is no real staged GPU adapter, so the mock overlap results of this plan are not GPU
+  utilization evidence.
 
-관련 계약:
+Related contracts:
 
-- [protocol.md](protocol.md#11-discovery-is-required-before-distributed-loading)
+- [protocol.md](protocol.md#9-model-discovery-and-distributed-loading)
 - [testing.md](testing.md)
 - [service message](../layers/service/src/message/mod.rs)
 - [service wire](../layers/service/src/message/wire.rs)
 - [adapter contract](../layers/adapters/adapter/src/lib.rs)
 - [mock adapter](../layers/adapters/mock/src/lib.rs)
 
-## 7. 실행 결과
+## 7. Run results
 
-2026-08-18 중앙 PC와 `192.168.0.29`에서 release binary만 사용해 cross-host
-mock smoke를 수행했다.
+On 2026-08-18, a cross-host mock smoke was run on the central PC and `192.168.0.29`
+using only release binaries.
 
-| 항목 | 결과 |
+| Item | Result |
 | --- | --- |
-| binary | 중앙 release build 후 `p4-agent.exe`, `p4-drive.exe`만 원격 복사 |
-| hash | 이번 수정 release의 중앙/원격 `p4-agent.exe` `2F7172B7578FCBA6E4ACADA3A04849EC411396ED7A9DAA15AEDF558EC5B22BC9`, `p4-drive.exe` `A0B88A6BD7686304AD733D18F0FCD2C88D9C1811FAB86AD79AC910EAF3EE4A37` 일치 |
+| binary | after the central release build, only `p4-agent.exe` and `p4-drive.exe` copied to the remote host |
+| hash | for this fix release, central and remote match: `p4-agent.exe` `2F7172B7578FCBA6E4ACADA3A04849EC411396ED7A9DAA15AEDF558EC5B22BC9`, `p4-drive.exe` `A0B88A6BD7686304AD733D18F0FCD2C88D9C1811FAB86AD79AC910EAF3EE4A37` |
 | topology | local stage + SSH-forwarded remote stage, 2 stages |
 | load | nodes 2, mock, ceiling 8 |
 | inference | 32 requests × 8 tokens |
-| discovery | local/remote profile 2개 수집, profile bytes 일치 |
+| discovery | 2 profiles collected (local/remote), profile bytes match |
 | result | completed 32, failed 0, unanswered 0, tokens 256 |
 | timing | 385 ms, 748 frames/s |
 | queue | peak node 31, peak adapter 8, peak main lane 0 |
 | ordering | every stream in order, one terminal per route |
 
-직접 `192.168.0.29:52001` 경로는 원격 agent가 정상 기동했지만 중앙에서
-원격 TCP listener에 연결할 수 없어 30초 node creation timeout이 발생했다.
-방화벽을 변경하지 않고 SSH `-L 52101`, `-R 52003` 양방향 forwarding을
-사용해 재실행했고 통과했다. 첫 tunnel 시도는 remote agent가 SSH 세션 종료와
-함께 사라지는 문제가 있어 PTY 세션으로 agent를 유지했다. 이 결과는 원격
-Windows 운영 시 방화벽·프로세스 수명·forward/reply 경로를 모두 manifest에
-기록해야 한다는 증거다.
+On the direct `192.168.0.29:52001` path the remote agent started normally, but the central PC could not connect to
+the remote TCP listener, and a 30-second node creation timeout occurred.
+Without changing the firewall, the run was repeated with bidirectional SSH forwarding `-L 52101`, `-R 52003`
+and passed. On the first tunnel attempt the remote agent disappeared when the SSH session ended,
+so the agent was kept alive in a PTY session. This result is evidence that when operating remote
+Windows hosts, the firewall, process lifetime and forward/reply paths must all be recorded in the
+manifest.
 
-최신 release에서 mock discovery preflight를 추가했다. 원격
-agent는 `52001`에 bind하고 `127.0.0.1:52101`로 advertise했으며, driver는
-`P4_DRIVE_DISCOVER=1`로 두 agent의 profile을 먼저 수집한 뒤 load했다. local과
-remote profile 모두 수집되고 profile bytes가 일치한 뒤 32 requests × 8 tokens를
-수행했으며 `completed=32`, `failed=0`, `unanswered=0`, stream order 통과,
-`tokens=256`, `elapsed_ms=385`, `frames_per_second=748`였다. 이 결과는
-discovery→opaque Load→pipeline inference의 cross-host 경로를 증명하지만,
-실제 GGUF 파일 fingerprint나 GPU memory 사용량은 증명하지 않는다.
+The latest release added the mock discovery preflight. The remote
+agent bound to `52001` and advertised `127.0.0.1:52101`, and the driver used
+`P4_DRIVE_DISCOVER=1` to collect both agents' profiles before loading. After both local and
+remote profiles were collected and the profile bytes matched, it ran 32 requests × 8 tokens
+with `completed=32`, `failed=0`, `unanswered=0`, stream order passing,
+`tokens=256`, `elapsed_ms=385`, `frames_per_second=748`. This result
+proves the cross-host path discovery→opaque Load→pipeline inference, but
+it does not prove a real GGUF file fingerprint or GPU memory usage.
 
-최종 llama-shaped mock release에서 `run-distributed-mock.ps1`로 4개 worker를
-병렬 실행했다. 각 worker는 독립적인 2-stage deployment에서 1024 requests ×
-32 tokens를 처리했고, 네 worker 모두 `completed=1024`, `failed=0`,
-`unanswered=0`, `tokens=32768`, stream order 통과를 기록했다. worker별 peak
-node queue는 753, 747, 746, 729, peak in-adapter는 16, peak main lane은
-9~15, working-set peak는 약 25~26 MB였다. 이 결과는 여러 agent/driver가 동시에 동작해도 request별
-FIFO와 terminal correlation이 유지됨을 검증한다.
+On the final llama-shaped mock release, `run-distributed-mock.ps1` ran 4 workers
+in parallel. Each worker handled 1024 requests ×
+32 tokens on an independent 2-stage deployment, and all four workers recorded `completed=1024`, `failed=0`,
+`unanswered=0`, `tokens=32768`, stream order passing. Per-worker peak
+node queue was 753, 747, 746, 729; peak in-adapter was 16; peak main lane was
+9~15; working-set peak was about 25~26 MB. This result verifies that per-request
+FIFO and terminal correlation hold even with several agents/drivers running at once.
 
-bounded release를 원격에 재복사한 뒤 2026-08-18 cross-host tunnel smoke도
-재실행했다. 중앙 stage와 원격 stage의 2-stage topology에서 32 requests ×
-8 tokens가 `completed=32`, `failed=0`, `unanswered=0`, stream order 통과로
-끝났고 peak node queue 31, peak in-adapter 8, peak main lane 0이었다. 이번
-실행에서는 discovery preflight와 generation options/opaque plan 전달도 함께
-통과했으며, 실행 후 중앙·원격 P4 listener는 모두 정리됐다.
+After re-copying the bounded release to the remote host, the 2026-08-18 cross-host tunnel smoke was
+also rerun. On the 2-stage topology with a central stage and a remote stage, 32 requests ×
+8 tokens finished with `completed=32`, `failed=0`, `unanswered=0`, stream order passing,
+with peak node queue 31, peak in-adapter 8, peak main lane 0. This
+run also passed the discovery preflight and delivery of generation options/opaque plan,
+and after the run all central and remote P4 listeners were cleaned up.
 
-6000 requests × 1 token overflow run도 `completed=6000`, `failed=0`,
-`unanswered=0`, `tokens=6000`, stream order 통과로 끝났고 elapsed 55,659 ms,
-peak node queue 24, peak in-adapter 16, peak main lane 14였다. runner는 55개
-working-set 샘플을 수집했고 min 15,138,816 B, peak 21,798,912 B, delta
-6,660,096 B를 manifest에 기록했다. 즉 생산자는 lane admission에서 조절되고
-node queue/event/outbox는 무제한으로 증가하지 않았다. 이 수치는 mock adapter의
-결과이며 실제 GPU memory/allocator 상한 검증을 대체하지 않는다.
-기존 60000-request 기록은 595622 ms로 10분 조건보다 짧으므로 10분 통과로
-주장하지 않는다. 이번 수정 release의 arrival-paced local run은 6000 requests
-× 1 token을 56470 ms 동안 처리했고 `completed=6000`, `failed=0`,
+A 6000 requests × 1 token overflow run also finished with `completed=6000`, `failed=0`,
+`unanswered=0`, `tokens=6000`, stream order passing, elapsed 55,659 ms,
+peak node queue 24, peak in-adapter 16, peak main lane 14. The runner collected 55
+working-set samples and recorded min 15,138,816 B, peak 21,798,912 B, delta
+6,660,096 B in the manifest. In other words, producers were throttled at lane admission and the
+node queue/event/outbox did not grow without bound. These figures are mock adapter
+results and do not replace verification of real GPU memory/allocator limits.
+The earlier 60000-request record took 595622 ms, shorter than the 10-minute condition, so it is not
+claimed as a 10-minute pass. The arrival-paced local run of this fix release processed 6000 requests
+× 1 token over 56470 ms and recorded `completed=6000`, `failed=0`,
 `unanswered=0`, `tokens=6000`, peak node queue 23, peak in-adapter 16,
-peak main lane 9, 12002 samples를 기록했다. 이는 bounded mock queue 증거이며
-실제 GPU memory/allocator 상한 검증을 대체하지 않는다.
+peak main lane 9, 12002 samples. This is bounded mock queue evidence and
+does not replace verification of real GPU memory/allocator limits.
 
 ### Latest correlation/retry verification
 

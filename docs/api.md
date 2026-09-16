@@ -1,7 +1,7 @@
 # The wire
 
-> 문서 지위 (2026-09-06): **경로별 참고·재감사 필요**. 기존 Chain/Hop 설명과 당시 결정을 포함한다. event 경로의 현재 보장은 코드 및 새 검증 규약으로 확인한다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Path-specific reference; re-audit required**. It contains the earlier Chain/Hop description and the decisions made at the time. Confirm current guarantees of the event path against the code and the new verification convention.
+> Current goals, status and ordering follow the [execution roadmap](distributed-batching-roadmap.md); document authority and reading paths follow the [document map](document-map.md).
 
 P4B1 v6. Two things travel: an envelope every hop reads, and a body only its
 destination does.

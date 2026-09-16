@@ -1,65 +1,65 @@
-# LOAD·UNLOAD에 노드 수명을 통합하는 구현계획
+# Implementation plan: folding node lifetime into LOAD and UNLOAD
 
-작성: 2026-09-15 KST. 지위: 사용자 합의를 고정한 **완료된 구현계획, M4 수용 완료**.
-코드 감사 기준 HEAD: `c16cbfa2abe8e7bc0bd7ce4f3e4c568f6a6c0569`.
-계획 작성 시 공통 adapter retention·transport·INSPECT·llama/HF에 별도 미커밋 변경이 있었다.
-현재 구현·시험 통과를 뜻하지 않는다. 전체 실행 순서와 진행 상태는
-[로드맵](distributed-batching-roadmap.md#current-status)이 소유한다.
+Written: 2026-09-15 KST. Status: **completed implementation plan that fixes the user agreement; M4 acceptance complete**.
+Code audit baseline HEAD: `c16cbfa2abe8e7bc0bd7ce4f3e4c568f6a6c0569`.
+When this plan was written, shared adapter retention, transport, INSPECT and llama/HF had separate uncommitted changes.
+This document does not mean the current implementation or tests pass. The overall execution order and progress status
+are owned by the [roadmap](distributed-batching-roadmap.md#current-status).
 
-## 1. 합의된 목표와 책임 — 다시 설계하지 말 것
+## 1. Agreed goals and responsibilities — do not redesign
 
-- **노드는 모델 또는 담당 모델 구간의 적재 인스턴스다.** 빈 노드를 미리 생성하거나 정상 언로드 후 남겨 두지 않는다.
-- 상주 에이전트는 모델이 없어도 존재한다. GPU·물리 머신·모델 파일은 노드의 identity가 아니다.
-- 같은 GPU에 두 모델을 적재하면 노드 두 개다. 같은 모델을 두 번 독립 적재해도 노드 두 개다.
-- 외부 호출자가 노드 ID를 공급한다. 해당 에이전트에서 이미 사용 중인 ID는 LOAD에서 거부한다.
-  적재 중·실행 중·해제 중·회수 불명으로 자원을 소유한 인스턴스도 사용 중에 포함한다.
-- ID 검사와 등록은 원자적으로 수행한다. GPU당 한 노드 제한, 모델 경로 중복 금지,
-  전역 UUID 발급 서비스, 영구 ID 소진 규칙은 도입하지 않는다.
-- 기존 node generation과 adapter load generation 검증은 유지한다. ID 중복 판단은 generation과
-  무관하게 현재 ID 점유로 한다. 해제 후 같은 ID 재사용 시에는 기존 broker의 새 generation 규칙을 따른다.
-- P4 외부 API는 **개별 LOAD와 UNLOAD**만으로 노드 생성·제거를 완료한다. 별도 CREATE·DELETE를 요구하지 않는다.
-- **OUTER가 전체 모델의 다중 노드 적재를 조율한다.** 개별 명령 발행, 전체 성공 판정,
-  하나라도 거부/실패했을 때 성공한 노드의 UNLOAD, 아직 적재 중이거나 결과가 불명인 노드의 추적·회수는 OUTER 책임이다.
-- P4는 자기 에이전트의 개별 적재·해제와 정확한 결과 반환만 책임진다. 다른 에이전트의 노드를
-  자동 회수하거나 전체 모델용 commit/abort·2PC·전역 배포 관리자를 만들지 않는다.
+- **A node is a loaded instance of a model or of the model segment it serves.** Do not create empty nodes in advance, and do not leave them behind after a normal unload.
+- A resident agent exists even without a model. The GPU, the physical machine and the model file are not the node's identity.
+- Loading two models on the same GPU gives two nodes. Loading the same model twice, independently, also gives two nodes.
+- The external caller supplies the node ID. LOAD rejects an ID that is already in use on that agent.
+  "In use" includes instances that hold resources while loading, running, releasing, or with unknown reclaim status.
+- The ID check and registration run atomically. Do not introduce a one-node-per-GPU limit, a ban on duplicate model paths,
+  a global UUID issuing service, or a rule that permanently exhausts IDs.
+- Keep the existing node generation and adapter load generation checks. The duplicate-ID decision is based on current ID occupancy,
+  independent of generation. When the same ID is reused after release, follow the existing broker's new-generation rule.
+- The P4 external API completes node creation and removal with **individual LOAD and UNLOAD** only. It does not require a separate CREATE or DELETE.
+- **OUTER coordinates the multi-node load of a whole model.** OUTER is responsible for issuing the individual commands, judging overall success,
+  UNLOADing the nodes that succeeded when any one is rejected or fails, and tracking and reclaiming nodes that are still loading or whose result is unknown.
+- P4 is responsible only for the individual load and release on its own agent and for returning the exact result. It does not
+  automatically reclaim another agent's nodes, and it does not build whole-model commit/abort, 2PC or a global deployment manager.
 
-## 2. 범위와 완료의 의미
+## 2. Scope and what completion means
 
-### 포함
+### Included
 
-1. 현재 event runtime에서 CREATE의 중복 검사·등록·adapter 생성 책임을 LOAD에 통합.
-2. UNLOAD 완료에 native/worker 자원 해제, event 소유권 정리, node route/owner 제거를 통합.
-3. backend 중립 수명 명령·완료 계약과 llama.cpp/HF 양쪽 구현.
-4. Rust event-drive, HF Python 호출자와 현재 수용 스크립트의 CREATE·DELETE 제거 및 결과 검증 이관.
-5. INSPECT, 거부/실패 결과, 기존 retained/receipt/resource-profile 보호, 실제 소비 경로 시험.
+1. In the current event runtime, fold CREATE's duplicate check, registration and adapter construction into LOAD.
+2. Fold native/worker resource release, event ownership cleanup and node route/owner removal into UNLOAD completion.
+3. A backend-neutral lifecycle command and completion contract, implemented for both llama.cpp and HF.
+4. Remove CREATE and DELETE from Rust event-drive, the HF Python callers and the current acceptance scripts, and move their result checks over.
+5. Tests for INSPECT, rejection/failure results, the existing retained/receipt/resource-profile protections, and the real consumption path.
 
-### 별도 작업
+### Separate work
 
-- OUTER의 다중 노드 실패 자동 회수 기능은 OUTER 소유 후속 작업이다. 이 계획에서는 호출 API를 이관하고
-  그 책임을 명시한다. 기존 누락을 P4 내부 기능으로 메우거나 이미 구현된 것처럼 기록하지 않는다.
-- 배치 정책·KV 연산·native 모델 계산·분산 성능 개선·일반 장애 복구 플랫폼은 범위 밖이다.
-- 이전 service 경로의 `Agent::create_node/delete_node`를 현재 event 경로와 혼동하지 않는다.
-  실제 제품 호출이 남았는지 조사하되 무관한 legacy API 전체 삭제를 이 작업의 선행 조건으로 만들지 않는다.
-- 원격 배포·기존 프로세스 종료·push는 이 문서로 새 권한이 생기지 않는다.
+- Automatic reclaim of multi-node failures in OUTER is follow-up work owned by OUTER. This plan migrates the calling API and
+  states that responsibility. Do not fill the existing gap with a P4-internal feature or record it as if it were already implemented.
+- Batching policy, KV operations, native model computation, distributed performance work and a general failure-recovery platform are out of scope.
+- Do not confuse `Agent::create_node/delete_node` on the old service path with the current event path.
+  Investigate whether any real product calls remain, but do not make deletion of the whole unrelated legacy API a precondition of this work.
+- This document grants no new authority for remote deployment, killing existing processes, or pushing.
 
-완료는 정상 경로가 `LOAD → SESSION/요청 → UNLOAD`이고 마지막 응답을 받은 시점에 노드와
-그 native 자원이 제거된 상태다. 실제 원격 응답 수신과 transport receipt 퇴역은 각각 관측한다.
-소형 conformance 통과는 [최종 다중 머신 수용](distributed-batching-verification.md)의 대체가 아니다.
+Completion means the normal path is `LOAD → SESSION/request → UNLOAD`, and at the moment the last response is received the node and
+its native resources have been removed. Receipt of the actual remote response and retirement of the transport receipt are observed separately.
+Passing the small conformance suite does not replace [final multi-machine acceptance](distributed-batching-verification.md).
 
-## 3. 새 세션 시작 절차
+## 3. Procedure for starting a new session
 
-1. [AGENTS.md](../AGENTS.md), [로드맵](distributed-batching-roadmap.md),
-   [검증 규약](distributed-batching-verification.md), [격리 계약](layer-isolation-contract.md),
-   [문서 안내도](document-map.md)를 읽고 이 문서를 끝까지 읽는다.
-2. `F:\dev\p4`의 HEAD·branch·전체 dirty/untracked·실행 경로를 확인한다. 기준 HEAD와 다르면
-   아래 경로의 차이를 먼저 감사한다. 이미 구현된 부분을 옛 코드로 되돌리지 않는다.
-3. 작성 당시 겹치는 작업은 `RetainedNodeAdapter::retention_snapshot`, transport 비용/잔량,
-   INSPECT, llama worker의 request/native buffer 보존이다. 해당 최신 계약을 먼저 통합한다.
-   오래된 trait 정의를 복사하거나 resource profile 검사·예약을 제거하지 않는다.
-4. 다른 작성자의 변경·실행 중 측정 arm을 건드리지 않는다. 병행 중이면 충돌 없는 독립 checkout에서
-   작업하고 그 변경의 통합 기준을 기록한다. 사용자 작업 트리를 reset/checkout으로 복원하지 않는다.
-5. 최초 착수는 §4 호출 경로 감사와 §8 시험의 결정론적 사전 검토다. 문서만 요구받은 세션에서는
-   구현·시험용 모델 실행을 시작하지 않는다. 구현 지시를 받은 새 세션은 §7의 작업 순서를 따른다.
+1. Read [AGENTS.md](../AGENTS.md), the [roadmap](distributed-batching-roadmap.md),
+   the [verification convention](distributed-batching-verification.md), the [isolation contract](layer-isolation-contract.md)
+   and the [document map](document-map.md), then read this document to the end.
+2. Check HEAD, branch, all dirty/untracked files and the execution path of `F:\dev\p4`. If it differs from the baseline HEAD,
+   audit the differences in the paths below first. Do not revert already-implemented parts to old code.
+3. Work that overlapped at the time of writing: `RetainedNodeAdapter::retention_snapshot`, transport cost/remaining capacity,
+   INSPECT, and request/native buffer retention in the llama worker. Integrate the latest version of those contracts first.
+   Do not copy stale trait definitions, and do not remove the resource profile checks or reservations.
+4. Do not touch other authors' changes or measurement arms that are running. If work runs in parallel, work in an independent checkout
+   with no conflicts and record the integration baseline of that change. Do not restore the user's working tree with reset/checkout.
+5. The first step is the §4 call-path audit and a deterministic pre-review of the §8 tests. In a session that was asked only for documents,
+   do not start implementation or model runs for testing. A new session that is given implementation instructions follows the work order in §7.
 
 ```powershell
 Set-Location F:\dev\p4
@@ -70,198 +70,198 @@ git diff --stat
 git diff c16cbfa2abe8e7bc0bd7ce4f3e4c568f6a6c0569 -- entrypoints/agent/src/event_runtime layers/agent/src/event_broker layers/agent/src/event_node layers/adapters/adapter/src/node_adapter tools/event-drive/src/run
 ```
 
-## 4. 기준 코드와 변경 위치
+## 4. Baseline code and change locations
 
-아래는 관찰된 코드 위치다. 표의 변경 내용은 구현 목표다.
+These are the observed code locations. The changes in the table are implementation goals.
 
-| 위치 | 현재 역할 / 필요한 변경 |
+| Location | Current role / required change |
 | --- | --- |
-| `entrypoints/agent/src/event_runtime/control.rs` | CREATE/DELETE와 `NodeOwner` 소유. LOAD 수락·중복 검사·노드별 비동기 수명 작업·최종 제거로 이관 |
-| `entrypoints/agent/src/event_runtime/adapters.rs` | 지원 kind와 factory. 같은 목록으로 LOAD 지원 광고/실제 생성, disabled kind 사전 거부 |
-| `entrypoints/agent/src/event_runtime/control/inspection/` | 등록 노드와 task/retention 관측. loading/unloading 및 회수 실패를 구분, 정상 해제 후 nodes에서 제거 |
-| `entrypoints/agent/src/event_runtime/transport.rs` | ingress·보존 전송·reconcile·실제 비용. 반환 문맥과 기존 B1/B2/B3 비용 계약 보존 |
-| `layers/protocol/src/event/` | 공통 수명 요청/결과의 codec 및 상수 추가 후보. 기존 P4E3 envelope·hop wire를 불필요하게 변경하지 않음 |
-| `layers/agent/src/event_broker/{mod.rs,retained.rs}` | ID 등록·generation·입구 fence. LOAD의 원자적 점유와 UNLOAD 종료 barrier에 사용 |
-| `layers/agent/src/event_node/retained.rs` | 실제 입력/출력 전달과 실패 시 held Event 소유. 수명 완료를 owner에게 전달하고 잔여 소유권을 보존 |
-| `layers/adapters/adapter/src/node_adapter/mod.rs` | `RetainedNodeAdapter` 중립 경계. typed 수명 결과 추가, snapshot 문자열을 완료 신호로 사용하지 않음 |
-| `layers/adapters/llamacpp/staged/adapter/src/v2/node/worker/{control.rs,shutdown.rs}` | 실제 LOAD/UNLOAD와 busy 검사. 현재 unloaded 설정 뒤 응답 생성 순서를 typed 완료와 결속 |
-| `layers/adapters/llamacpp/staged/adapter/src/v2/node/{retained.rs,worker.rs}` | 실제 adapter와 worker 종료·retention. native 자원·응답·claim의 해제 시점 연결 |
-| `layers/adapters/hf/adapter/src/{construction,lifecycle,retained}/` | HF 실제 LOAD/UNLOAD/abort·Python child 수명. 별도 [HF 규칙](../layers/adapters/hf/AGENTS.md) 적용 |
-| `tools/event-drive/src/run/{mod.rs,load.rs,replies.rs,config.rs}` | CREATE 전체 → 노드별 LOAD → SESSION, UNLOAD 전체 → DELETE. 새 개별 수명 API와 정확 결과 확인으로 이관 |
-| `layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/event_pipeline/__init__.py` | 노드별 CREATE/LOAD·shutdown/close. 새 수명 API 이관, 모델 연산/직접 worker 경로로 우회 금지 |
-| `layers/adapters/hf/scripts/verification/`, `test/benchmarks/`, `tools/` | 동적 `node.{op}` 문자열까지 찾아 현재 호출자/fixture 이관. 날짜별 과거 artifact는 수정하지 않음 |
+| `entrypoints/agent/src/event_runtime/control.rs` | Owns CREATE/DELETE and `NodeOwner`. Move to LOAD acceptance, duplicate check, per-node asynchronous lifecycle task and final removal |
+| `entrypoints/agent/src/event_runtime/adapters.rs` | Supported kinds and factory. Use the same list to advertise LOAD support and to actually construct; reject disabled kinds up front |
+| `entrypoints/agent/src/event_runtime/control/inspection/` | Observes registered nodes and task/retention. Distinguish loading/unloading and reclaim failure; remove from nodes after a normal release |
+| `entrypoints/agent/src/event_runtime/transport.rs` | Ingress, retained send, reconcile, actual cost. Preserve the return context and the existing B1/B2/B3 cost contract |
+| `layers/protocol/src/event/` | Candidate place for the codec and constants of the shared lifecycle request/result. Do not change the existing P4E3 envelope or hop wire unnecessarily |
+| `layers/agent/src/event_broker/{mod.rs,retained.rs}` | ID registration, generation, ingress fence. Used for LOAD's atomic occupancy and the UNLOAD shutdown barrier |
+| `layers/agent/src/event_node/retained.rs` | Actual input/output delivery and ownership of held Events on failure. Deliver lifecycle completion to the owner and preserve remaining ownership |
+| `layers/adapters/adapter/src/node_adapter/mod.rs` | Neutral `RetainedNodeAdapter` boundary. Add a typed lifecycle result; do not use the snapshot string as a completion signal |
+| `layers/adapters/llamacpp/staged/adapter/src/v2/node/worker/{control.rs,shutdown.rs}` | Actual LOAD/UNLOAD and busy check. Bind the current "set unloaded, then build the response" order to typed completion |
+| `layers/adapters/llamacpp/staged/adapter/src/v2/node/{retained.rs,worker.rs}` | Actual adapter and worker shutdown/retention. Connect the release points of native resources, responses and claims |
+| `layers/adapters/hf/adapter/src/{construction,lifecycle,retained}/` | HF actual LOAD/UNLOAD/abort and Python child lifetime. The separate [HF rules](../layers/adapters/hf/AGENTS.md) apply |
+| `tools/event-drive/src/run/{mod.rs,load.rs,replies.rs,config.rs}` | CREATE all → per-node LOAD → SESSION, UNLOAD all → DELETE. Move to the new individual lifecycle API with exact result checks |
+| `layers/adapters/hf/python/p4hfadapter/models/qwen3_5_0_8b/event_pipeline/__init__.py` | Per-node CREATE/LOAD and shutdown/close. Move to the new lifecycle API; do not bypass through model operations or a direct worker path |
+| `layers/adapters/hf/scripts/verification/`, `test/benchmarks/`, `tools/` | Find current callers and fixtures, down to dynamic `node.{op}` strings, and migrate them. Do not modify dated historical artifacts |
 
-Rust LOAD는 `agent_load_waves`로 agent 간 병렬·같은 agent 내 순차 실행한다. 모두 성공한 후
-build 호환성을 검사한다. `execute`의 `load::drive(...).await?`가 실패하면 뒤 teardown에 도달하지 않는다.
-HF도 개별 명령을 보낸다. 이 부분 실패 회수 누락은 OUTER 문제이며 P4 전체 적재 기능의 부재와 구분한다.
+Rust LOAD uses `agent_load_waves` to run in parallel across agents and sequentially within one agent. Build compatibility is checked
+after all of them succeed. If `load::drive(...).await?` in `execute` fails, the later teardown is never reached.
+HF also sends individual commands. This missing partial-failure reclaim is an OUTER problem and is distinct from P4 lacking a whole-model load feature.
 
-## 5. 목표 명령 계약
+## 5. Target command contract
 
-이 절은 구현용 제안 규격이다. M1에서 codec·literal fixture로 고정하고 현행
-[event 계약](event-protocol-v2.md)에 반영한다. 기존 명령인 것처럼 사용하지 않는다.
+This section is a proposed specification for implementation. M1 fixes it with a codec and literal fixtures and reflects it in the current
+[event contract](event-protocol-v2.md). Do not use it as if it were an existing command.
 
-### 5.1 외부 수명 요청
+### 5.1 External lifecycle requests
 
-- LOAD/UNLOAD 모두 `Endpoint::Agent(해당 agent)`를 대상으로 한다. LOAD 전에는 노드가 없고,
-  UNLOAD 결과는 제거 후에도 에이전트가 책임져야 하기 때문이다.
-- 새 content type: `application/vnd.p4.node.load-v1`, `application/vnd.p4.node.unload-v1`,
-  결과 `application/vnd.p4.node.lifecycle-result-v1`.
-- payload 형식: `metadata_len: u32 little-endian` + 해당 길이의 UTF-8 JSON metadata + 나머지 opaque adapter bytes.
-  metadata에 `schema:1`, `node_id`, `node_generation`, `adapter_kind`, `adapter_content_type`를 둔다.
-  LOAD에는 기존 CREATE의 queue/completion/retained capacity와 retained bytes 설정도 포함한다.
-  adapter load generation·실제 plan·binary·장치·HF job 등은 opaque bytes 안에 기존 어댑터 형식으로 둔다.
-- metadata 상한은 M1 literal fixture에 명시하고, 길이 overflow·잘림·필수 필드·unsupported version을
-  생성/native 효과 전에 검사한다. 전체 payload와 내부 전달에 실제 retained-byte 상한을 적용한다.
-  기존 LOAD resource profile과 transport/edge/receipt 검사를 그대로 실제 소비 경로에서 통과시킨다.
-- 내부 전달은 원 요청의 OUTER source·return route·correlation·deadline·원인 identity를 보존하고
-  target을 생성한 node endpoint로 결속한다. HF의 Outer source/토폴로지 검사를 우회하지 않는다.
-  이 전달에서 같은 broker event ID를 다른 payload로 재등록하지 않는다. 파생 Event가 필요하면
-  새 event ID와 원 요청 causation을 명시하고 원본 비용 소유권을 결속한다.
-- 일반 SESSION/추론/정산 Event는 기존 node endpoint로 전송한다. unknown node에 일반 Event가
-  왔다고 노드를 자동 생성하지 않는다. 외부 node-target LOAD/UNLOAD 우회 경로는 차단한다.
+- Both LOAD and UNLOAD target `Endpoint::Agent(the agent in question)`. Before LOAD there is no node, and
+  the agent must still be responsible for the UNLOAD result after removal.
+- New content types: `application/vnd.p4.node.load-v1`, `application/vnd.p4.node.unload-v1`,
+  and for the result `application/vnd.p4.node.lifecycle-result-v1`.
+- Payload format: `metadata_len: u32 little-endian` + UTF-8 JSON metadata of that length + the remaining opaque adapter bytes.
+  The metadata carries `schema:1`, `node_id`, `node_generation`, `adapter_kind` and `adapter_content_type`.
+  LOAD also includes the queue/completion/retained capacity and retained bytes settings that CREATE used to carry.
+  Adapter load generation, the actual plan, binary, device, HF job and so on stay inside the opaque bytes in the existing adapter format.
+- The metadata limit is stated in the M1 literal fixture. Length overflow, truncation, required fields and unsupported versions are
+  checked before any construction or native effect. The actual retained-byte limit applies to the whole payload and to internal delivery.
+  The existing LOAD resource profile and transport/edge/receipt checks still run unchanged on the real consumption path.
+- Internal delivery preserves the original request's OUTER source, return route, correlation, deadline and causal identity, and
+  binds the target to the node endpoint it created. It does not bypass HF's Outer source/topology check.
+  This delivery does not re-register the same broker event ID with a different payload. If a derived Event is needed,
+  it states a new event ID and the original request's causation, and binds the original cost ownership.
+- Ordinary SESSION/inference/settlement Events go to the existing node endpoint. A node is not created automatically because an ordinary Event
+  arrived for an unknown node. External node-target LOAD/UNLOAD bypass paths are blocked.
 
-### 5.2 완료 결과와 재전송
+### 5.2 Completion result and retransmission
 
-- 결과 발신자는 해당 agent이며 node ID/generation, `operation:load|unload`,
+- The result sender is the agent in question. The result carries node ID/generation, `operation:load|unload`,
   `status:succeeded|rejected|failed`, `resource_state:absent|present|unknown`,
-  최초 오류와 cleanup 오류, adapter 결과의 content type/opaque bytes를 담는다.
-- 최종 성공은 LOAD의 실행 준비 완료 또는 UNLOAD의 자원·node 제거 완료다. 단순 접수 ACK나
-  socket write 성공을 수명 완료로 반환하지 않는다. OUTER의 source/causation 검증도 함께 바꾼다.
-- 동일 Event의 transport 재전송은 기존 receipt/중복 억제 계약을 따른다. 새 LOAD 명령에 사용 중 ID가
-  오면 같은 모델/plan이어도 거부한다. 새 UUID를 내부 발급하거나 기존 노드를 덮어쓰지 않는다.
-- 없는 ID의 새 UNLOAD는 `rejected/resource_state=absent`로 명시한다. 과거 성공을 추측하지 않는다.
-  이미 생성한 원래 결과의 전송 불명은 기존 transport reconcile/INSPECT로 추적한다.
-- lifecycle 결과를 위해 전역 배포 원장이나 무제한 재시도 캐시를 만들지 않는다. 결과/실패 owner는
-  에이전트의 bounded retained 저장소로 소유하며, 실제 전송·receipt의 비용 수명은 보존한다.
+  the first error and the cleanup error, and the content type/opaque bytes of the adapter result.
+- Final success means LOAD is ready to execute, or UNLOAD has finished removing resources and the node. A plain receipt ACK or
+  a successful socket write is not returned as lifecycle completion. OUTER's source/causation checks change accordingly.
+- Transport retransmission of the same Event follows the existing receipt/duplicate-suppression contract. If a new LOAD command arrives with an ID in use,
+  it is rejected even for the same model/plan. Do not issue a new UUID internally or overwrite the existing node.
+- A new UNLOAD for an ID that does not exist is stated as `rejected/resource_state=absent`. Do not guess at past success.
+  If delivery of an already produced original result is uncertain, track it with the existing transport reconcile/INSPECT.
+- Do not build a global deployment ledger or an unbounded retry cache for lifecycle results. The result/failure owner is
+  the agent's bounded retained store, and the cost lifetime of the actual send and receipt is preserved.
 
-## 6. 로컬 상태 전이와 소유권
+## 6. Local state transitions and ownership
 
 ### LOAD
 
-1. envelope·공통 metadata·지원 kind·설정·결과 저장 공간을 검사한다.
-2. 현재 ID 점유 검사와 `loading` 등록을 한 원자적 절차로 수행한다. adapter 생성 실패 등 native 이전
-   실패에는 생성한 mailbox/route/예약만 회수한다. 기존 같은 ID의 노드는 전혀 변경하지 않는다.
-3. 개별 worker에 적재를 맡긴다. agent 제어 루프에서 긴 native LOAD를 기다려 다른 노드의
-   INSPECT/UNLOAD/reconcile를 막지 않는다. 모델별 payload 검증과 실제 적재는 adapter 소유다.
-4. typed 완료로 성공하면 노드를 실행 가능하게 하고 정확한 결과를 반환한다. loading 중 일반 요청은
-   기존 not-ready 계약으로 거부하며 native 추론을 시작하지 않는다.
-5. 적재 실패 후 자기 자원 회수가 확인되면 node를 제거하고 실패 결과는 agent가 소유한다.
-   cleanup 불명/잔존 자원이 있으면 해당 ID의 실패 인스턴스를 격리·관측 가능하게 유지한다.
-   다른 node는 변경하지 않는다. 이것은 재사용 가능한 빈 노드가 아니다.
+1. Check the envelope, shared metadata, supported kind, settings and result storage space.
+2. Check current ID occupancy and register `loading` as one atomic step. For failures before native work, such as adapter construction failure,
+   reclaim only the mailbox/route/reservation that was created. An existing node with the same ID is not changed at all.
+3. Hand the load to an individual worker. The agent control loop does not wait on a long native LOAD and so does not block
+   INSPECT/UNLOAD/reconcile for other nodes. Model-specific payload validation and the actual load are owned by the adapter.
+4. On success through typed completion, make the node runnable and return the exact result. Ordinary requests during loading are
+   rejected under the existing not-ready contract and do not start native inference.
+5. After a load failure, if reclaim of its own resources is confirmed, remove the node; the agent owns the failure result.
+   If cleanup is unknown or resources remain, keep the failed instance for that ID isolated and observable.
+   Other nodes are not changed. This is not a reusable empty node.
 
 ### UNLOAD
 
-1. ID/generation·adapter identity를 검사한다. 기존 accepted input과 경쟁하지 않게 종료 barrier를 둔다.
-   새 작업의 수용과 종료 확정이 교차하지 않아야 한다. barrier 이전 입력을 버리지 않는다.
-2. 기존 busy/정산/KV/effect/출력 소유 검사를 보존한다. busy 거부면 임시 fence를 풀고 같은 노드가
-   기존 요청을 끝낼 수 있어야 한다. 정산 메시지를 막은 채 busy가 풀리길 기다리는 교착을 만들지 않는다.
-3. 종료 가능한 시점에 adapter가 자기 native/child를 해제한다. 실패·불명은 성공으로 바꾸지 않고
-   격리 및 최초 오류/cleanup 오류를 보존한다. 실패 node의 회수 경로도 명시하고 정상 UNLOAD로 위장하지 않는다.
-4. adapter는 typed 수명 결과를 반환한다. `snapshot() == "unloaded"` 감시로 삭제하지 않는다.
-   특히 llama.cpp의 현재 `set_snapshot("unloaded") → emit_json` 사이에는 삭제 경쟁이 있다.
-5. 원 UNLOAD 입력과 terminal 결과를 agent 소유로 넘기고, 나머지 queued/held input/output가
-   남지 않았음을 권위 있는 retained 관측으로 확인한다. **UNLOAD 자신의 입력/결과를 node에 둔 채
-   count=0을 기다리는 자기 대기**를 만들지 않는다. 다른 Event를 clear/drop해서 통과시키지 않는다.
-6. route와 NodeOwner를 제거하고 worker 종료·소유 자원 해제를 확인한다. 그 뒤 agent가 보존한
-   UNLOAD 성공 결과를 OUTER로 보낸다. 정상 응답 후 INSPECT `nodes`에 해당 ID가 없어야 한다.
-7. 이미 transport로 소유권이 넘어간 출력/receipt는 그 소유자가 계속 책임진다. node 제거를
-   remote acceptance/KV 정산의 증거로 쓰거나 transport 기록까지 일괄 삭제하지 않는다.
+1. Check ID/generation and adapter identity. Put up a shutdown barrier so it does not race with already accepted input.
+   Acceptance of new work and confirmation of shutdown must not cross. Input from before the barrier is not dropped.
+2. Keep the existing busy/settlement/KV/effect/output ownership checks. On a busy rejection, lift the temporary fence so the same node can
+   finish its existing requests. Do not create a deadlock that blocks settlement messages while waiting for busy to clear.
+3. Once shutdown is possible, the adapter releases its own native/child resources. Failure or unknown status is not turned into success;
+   it is isolated and the first error/cleanup error is kept. State the reclaim path for failed nodes too, and do not disguise it as a normal UNLOAD.
+4. The adapter returns a typed lifecycle result. Do not delete by watching for `snapshot() == "unloaded"`.
+   In particular, llama.cpp currently has a deletion race between `set_snapshot("unloaded") → emit_json`.
+5. Hand the original UNLOAD input and the terminal result to agent ownership, and confirm through authoritative retained observation that
+   no other queued/held input/output remains. Do not create a **self-wait that keeps UNLOAD's own input/result on the node
+   while waiting for count=0**. Do not get past it by clearing or dropping other Events.
+6. Remove the route and NodeOwner, and confirm worker shutdown and release of owned resources. Only then does the agent send the
+   UNLOAD success result it holds to OUTER. After a normal response, the ID must not appear in INSPECT `nodes`.
+7. Output/receipts whose ownership has already passed to the transport remain the responsibility of that owner. Do not use node removal
+   as evidence of remote acceptance or KV settlement, and do not wipe the transport records along with it.
 
-typed 수명 통지는 중립 `RetainedNodeAdapter`/event-node 경계에 두고 요청 identity·결과·자원 상태를
-결속한다. 모델별 JSON을 agent가 해석하지 않는다. 새로운 통지 경로 역시 기존 count/byte reservation을
-소비하며, 별도 무제한 channel·원본 Event 복제로 completion 보존을 우회하지 않는다.
-HF의 기존 명시적 abort는 실패 정리 의미를 유지한다. abort 결과만으로 정상 UNLOAD 성공을 만들지 않는다.
+Typed lifecycle notification sits on the neutral `RetainedNodeAdapter`/event-node boundary and binds request identity, result and resource state.
+The agent does not interpret model-specific JSON. The new notification path also consumes the existing count/byte reservation,
+and does not bypass completion retention through a separate unbounded channel or copies of the original Event.
+HF's existing explicit abort keeps its failure-cleanup meaning. An abort result alone does not produce a normal UNLOAD success.
 
-## 7. 구현 순서와 단계 산출물
+## 7. Implementation order and phase deliverables
 
-**2026-09-16 M0 완료:** [호출 경로·소유권 감사](../tests/reports/node-load-lifecycle/20260916_014500.md)에
-현재 control/broker/retained adapter/OUTER 호출자와 NL01–NL14를 매핑했다. M1의 첫 구현은 agent control을
-막지 않는 node별 supervisor, agent 소유 terminal result, snapshot과 분리된 typed lifecycle completion,
-bounded 반환 비용을 함께 세운다. B5에서 발견한 bind 실패 뒤 stdin join과 failed LOAD 회수는
-NL05/NL08 fixture로 재사용한다.
+**2026-09-16 M0 done:** The [call-path and ownership audit](../tests/reports/node-load-lifecycle/20260916_014500.md)
+mapped the current control/broker/retained adapter/OUTER callers to NL01–NL14. The first M1 implementation sets up, together,
+a per-node supervisor that does not block agent control, an agent-owned terminal result, typed lifecycle completion separate from the snapshot,
+and bounded return cost. The stdin join after a bind failure and the failed-LOAD reclaim found in B5 are
+reused as NL05/NL08 fixtures.
 
-**2026-09-16 M1 완료:** 공통 protocol codec과 typed adapter completion에 이어 agent 비동기 supervisor,
-처음부터 일시정지된 route 등록, LOAD 생성·UNLOAD 제거, agent 소유 terminal result와 수명 상태 INSPECT를
-구현했다. neutral 실제 TCP에서 잘못된·중복 LOAD, 느린 LOAD 중 INSPECT, 정상 LOAD/UNLOAD, OUTER 단절 뒤
-세 retained 소유물을 검증했다. workspace feature off/on은 각각 1,514 통과, 0 실패, 실제 모델 시험 7개
-ignored였고 owner 제거 변이가 실제 TCP 시험에 검출됐다.
-[M1 검증 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)를 따른다. 실제 llama.cpp/HF worker가
-typed 완료를 내고 새 node 수명 경로를 쓰게 하는 작업은 M2다.
+**2026-09-16 M1 done:** Building on the shared protocol codec and typed adapter completion, implemented the asynchronous agent supervisor,
+route registration that starts paused, LOAD construction and UNLOAD removal, the agent-owned terminal result and lifecycle-state INSPECT.
+On neutral real TCP, verified malformed and duplicate LOAD, INSPECT during a slow LOAD, normal LOAD/UNLOAD, and the
+three retained owned items after an OUTER disconnect. Workspace feature off/on each gave 1,514 passed, 0 failed, 7 real-model tests
+ignored, and the owner-removal mutation was detected by the real TCP test.
+See the [M1 verification report](../tests/reports/node-load-lifecycle/20260916_023059.md). Making the real llama.cpp/HF workers
+emit typed completion and use the new node lifecycle path is M2.
 
-**2026-09-16 M2 완료:** llama.cpp/HF 실제 retained worker가 supervisor Agent의 LOAD/UNLOAD를
-typed terminal로 반환한다. native/child cleanup 상태, busy 거부, input/native response retention,
-completion 포화와 HF Python frame을 넘는 wrapper 여유를 실제 worker fixture로 검증했다. workspace
-feature off/on은 각각 1,523 통과, 0 실패, 실제 모델 시험 7개 ignored였고 최종 소스 독립 변이 3개를
-검출했다. [M2 검증 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)를 따른다.
-다음 단계는 Rust/HF OUTER와 실기 호출자를 새 수명 명령으로 이관하는 M3다.
+**2026-09-16 M2 done:** The real llama.cpp/HF retained workers return the supervisor Agent's LOAD/UNLOAD
+as typed terminals. Native/child cleanup state, busy rejection, input/native response retention,
+completion saturation and wrapper headroom beyond the HF Python frame were verified with real worker fixtures. Workspace
+feature off/on each gave 1,523 passed, 0 failed, 7 real-model tests ignored, and 3 independent mutations of the final source
+were detected. See the [M2 verification report](../tests/reports/node-load-lifecycle/20260916_032621.md).
+The next phase is M3: migrating the Rust/HF OUTER and the real-hardware callers to the new lifecycle commands.
 
-**2026-09-16 M3 완료:** Rust event-drive와 HF Qwen controller/실기 fixture를 Agent-target
-NODE_LOAD/NODE_UNLOAD로 이관하고 event runtime의 legacy CREATE/DELETE 수용 분기를 제거했다.
-부분 LOAD 거부 뒤 OUTER 개별 회수, causation 기반 결과 결속, direct node 우회 무효과, 실제 Agent와
-HF child 12개 failure/recovery case, workspace feature off/on 각각 1,525 통과를 확인했다. 최종 소스의
-Agent target 제거 변이 두 건도 검출했다. [M3 검증 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)를
-따른다. 다음 단계 M4는 작은 실제 llama.cpp/HF 모델의 생성·취소·해제·재적재와 소유 문서 최종 이관이다.
+**2026-09-16 M3 done:** Migrated Rust event-drive and the HF Qwen controller/real-hardware fixtures to Agent-target
+NODE_LOAD/NODE_UNLOAD, and removed the legacy CREATE/DELETE acceptance branch from the event runtime.
+Confirmed OUTER per-node reclaim after a partial LOAD rejection, causation-based result binding, no effect from direct node bypass, 12 failure/recovery cases
+on a real Agent and HF child, and 1,525 passed for each of workspace feature off/on. Two mutations removing the
+Agent target in the final source were also detected. See the [M3 verification report](../tests/reports/node-load-lifecycle/20260916_041848.md).
+The next phase, M4, is generation, cancellation, release and reload on small real llama.cpp/HF models, plus the final migration of the owning documents.
 
-**2026-09-16 M4 완료:** 실제 Qwen3.5-0.8B llama.cpp 2-stage와 HF single GPU에서 CREATE/DELETE 없이
-생성·교차 실행·취소·부분 LOAD 실패 회수·이전 generation 거부·새 worker 재적재·최종 node/child 0을
-확인했다. workspace feature off/on은 각각 1,526 통과, 0 실패, 7 ignored이고 Python 57개와 독립
-재컴파일 변이 2개를 통과했다. [M4 수용 보고](../tests/reports/node-load-lifecycle/20260916_064306.md)를
-따른다. 이 계획은 완료됐고 다음 순서는 주 로드맵의 Qwen122B H0–H7이다.
+**2026-09-16 M4 done:** On real Qwen3.5-0.8B llama.cpp 2-stage and HF single GPU, confirmed, without CREATE/DELETE,
+generation, interleaved execution, cancellation, partial LOAD failure reclaim, rejection of the previous generation, reload into a new worker, and final node/child count 0.
+Workspace feature off/on each gave 1,526 passed, 0 failed, 7 ignored, and 57 Python tests and 2 independent
+recompiled mutations passed. See the [M4 acceptance report](../tests/reports/node-load-lifecycle/20260916_064306.md).
+This plan is complete; next in order is Qwen122B H0–H7 on the main roadmap.
 
-M1의 실행 전 검토와 최대 3라운드 입력은
-[M1 결정론적 실행계획](../tests/plans/node-load-lifecycle-m1-20260916.md)에 봉인한다. 이 단계는
-[결정론적 실행 장부](deterministic-execution-register.md)의 `L001`~`L013`을 재사용한다. 새 실패가
-나오면 같은 명령을 다시 실행하기 전에 새 교훈 ID와 자동 차단 수단을 먼저 추가한다.
+The M1 pre-run review and the inputs for at most 3 rounds are
+sealed in the [M1 deterministic execution plan](../tests/plans/node-load-lifecycle-m1-20260916.md). This phase
+reuses `L001`~`L013` from the [deterministic execution register](deterministic-execution-register.md). If a new failure
+appears, add a new lesson ID and an automatic blocking mechanism before re-running the same command.
 
-이 순서는 이 변경 내부의 작업 순서다. 전체 로드맵의 다른 작업을 임의로 재정렬하지 않는다.
+This order is the work order inside this change. Do not arbitrarily reorder other work on the overall roadmap.
 
-| 단계 | 작업 | 다음 단계 조건 |
+| Phase | Work | Condition for the next phase |
 | --- | --- | --- |
-| M0 | **DONE** — 최신 HEAD/dirty 감사, 실제 호출자 전수 검색, §8 반례와 수명 소유권 설계 | [M0 보고](../tests/reports/node-load-lifecycle/20260916_014500.md)에 중복·실패·완료 응답·barrier·byte 소유권 매핑 |
-| M1 | **DONE** — 공통 codec·typed adapter 완료·비동기 agent supervisor·neutral 실제 TCP | [M1 보고](../tests/reports/node-load-lifecycle/20260916_023059.md)에 NL01·NL02·NL04·NL07·NL10과 제거 변이 기록 |
-| M2 | **DONE** — llama.cpp/HF 실제 worker 연결, profile/retention 통합, 완료/실패 제거 | [M2 보고](../tests/reports/node-load-lifecycle/20260916_032621.md)에 busy·cleanup 실패·응답/frame 포화·정상 제거·변이3종 기록 |
-| M3 | **DONE** — Rust/HF OUTER·실기 스크립트 이관, CREATE/DELETE 및 직접 우회 제거 | [M3 보고](../tests/reports/node-load-lifecycle/20260916_041848.md)에 부분 실패 회수·우회 거부·실제 HF child·workspace·변이 기록 |
-| M4 | **DONE** — 실제 작은 llama.cpp/HF 모델 생성·취소·해제·재적재, 소유 문서 갱신 | [M4 보고](../tests/reports/node-load-lifecycle/20260916_064306.md)에 최종 소스·시험·회수·Qwen122B 다음 단계 기록 |
+| M0 | **DONE** — latest HEAD/dirty audit, exhaustive search for real callers, §8 counterexamples and lifecycle ownership design | [M0 report](../tests/reports/node-load-lifecycle/20260916_014500.md) maps duplicates, failures, completion responses, barrier and byte ownership |
+| M1 | **DONE** — shared codec, typed adapter completion, asynchronous agent supervisor, neutral real TCP | [M1 report](../tests/reports/node-load-lifecycle/20260916_023059.md) records NL01·NL02·NL04·NL07·NL10 and the removal mutation |
+| M2 | **DONE** — real llama.cpp/HF worker hookup, profile/retention integration, removal on completion/failure | [M2 report](../tests/reports/node-load-lifecycle/20260916_032621.md) records busy, cleanup failure, response/frame saturation, normal removal and 3 mutation kinds |
+| M3 | **DONE** — migrate Rust/HF OUTER and real-hardware scripts, remove CREATE/DELETE and direct bypass | [M3 report](../tests/reports/node-load-lifecycle/20260916_041848.md) records partial failure reclaim, bypass rejection, real HF child, workspace and mutations |
+| M4 | **DONE** — generation, cancellation, release and reload on real small llama.cpp/HF models; update owning documents | [M4 report](../tests/reports/node-load-lifecycle/20260916_064306.md) records final source, tests, reclaim and the Qwen122B next phase |
 
-각 단계의 복원 가능한 지점에서 저장소 커밋 규칙을 따른다. 다른 작성자를 멈추고 전체 비무시 변경을
-감사한 뒤 자신이 소유하는 일관된 checkout을 커밋한다. 무관한 병행 변경을 임의로 포함하지 않는다.
-최종 결과에는 commit·정확한 명령·시험 ID·exit code·최초 실패·남은 작업·다음 첫 행동을 남긴다.
+At each restorable point in each phase, follow the repository commit rules. Pause other authors, audit all non-ignored changes,
+then commit a consistent checkout that you own. Do not arbitrarily include unrelated parallel changes.
+The final result records the commit, exact commands, test IDs, exit codes, first failure, remaining work and first next action.
 
-## 8. 필수 반례와 수용 시험 — 모두 예정
+## 8. Required counterexamples and acceptance tests — all planned
 
-시험 추가 시 `node_load_lifecycle` 이름으로 검색 가능하게 한다. pure 함수 시험만으로 아래 실제 경로를
-대체하지 않는다. 기본 필수 시험을 새 feature 뒤로 숨기지 않는다.
+Make added tests searchable under the name `node_load_lifecycle`. Pure-function tests alone do not replace the real paths below.
+Do not hide the basic required tests behind a new feature.
 
-| ID | 입력 / 실제 경로 | 필수 판정 |
+| ID | Input / real path | Required verdict |
 | --- | --- | --- |
-| NL01 | 실제 agent TCP LOAD, neutral adapter와 각 실제 adapter | CREATE 없이 loading 등록·적재 완료·INSPECT, native 적재 1회 |
-| NL02 | 같은 ID의 동시 LOAD, 서로 다른 generation/plan 포함, loading/loaded/unloading 각각 | 수락 최대1, 거부 측 spawn/native/route/기존 원장·claim·출력 변화0 |
-| NL03 | 같은 장치·같은 모델, 서로 다른 ID의 두 LOAD | 자원이 충분한 선언 구성에서 두 node 허용, 한 UNLOAD가 다른 node에 영향0 |
-| NL04 | 잘못된 metadata/kind/disabled HF/길이/용량/profile, exact 및 ±1 | native 전 거부, 새 빈 node/예약 누수0, unknown 일반 Event 자동 생성0 |
-| NL05 | 실제 LOAD 초기화 실패·부분 child 시작·cleanup 실패 | 확인된 회수면 nodes에서 제거, 불명이면 격리·first/cleanup 오류 보존, 타 node 불변 |
-| NL06 | 실제 run-loop의 요청 없는 중간 stage KV·정산 대기·held 출력에서 UNLOAD | busy 거부, native 해제0, 기존 작업/정산 재개 후 같은 요청 정상 완료 |
-| NL07 | unloaded 상태 기록 직후 정지, completion cap1·held terminal·OUTER Full/단절 | 완료 응답 전 삭제 경쟁/자기 대기 없음, owner/원본/byte claim 보존, 재개 뒤 성공1회 |
-| NL08 | idle UNLOAD의 native cleanup 실패·결과 불명·worker 종료 | 성공 응답0, 이후 일반 실행 차단, 자원 상태와 실패 결과 관측 가능 |
-| NL09 | 성공 UNLOAD 뒤 INSPECT와 ID 재사용, 구 generation 지연 LOAD/UNLOAD/추론 | node/worker/소유 listener 제거, 새 generation만 수락, 새 인스턴스에 과거 효과0 |
-| NL10 | 한 agent의 느린 LOAD와 다른 node INSPECT/UNLOAD/reconcile | 긴 모델 적재가 공통 제어 루프를 막지 않음 |
-| NL11 | 실제 OUTER 경유 응답, source/causation/return route 오염·부분 프레임·receipt 유실 | 정확한 요청별 결과만 수락, uncertain 보존, 전송 ACK를 수명 성공으로 오인하지 않음 |
-| NL12 | 둘 이상의 개별 LOAD 중 하나 거부, 성공 node를 OUTER fixture가 UNLOAD | P4의 자동 타 node 회수0, OUTER 명령으로만 전체 회수, 실패/회수 결과 구분 |
-| NL13 | 현재 Rust/HF 호출자 및 새 protocol에 구 CREATE/DELETE/direct node LOAD 투입 | 정상 경로 CREATE/DELETE0, 우회 명령 거부 무효과, 두 adapter 정상 추론/해제 |
-| NL14 | 반복 LOAD/UNLOAD 및 실패 응답 포화 | active node/worker/claim 잔량0, 새 lifecycle 저장소 count/byte 상한 준수, 기존 세대 이력은 별도 계수 |
+| NL01 | Real agent TCP LOAD, with the neutral adapter and each real adapter | loading registration, load completion and INSPECT without CREATE; exactly 1 native load |
+| NL02 | Concurrent LOAD of the same ID, including different generation/plan, in each of loading/loaded/unloading | at most 1 accepted; on the rejected side, 0 change to spawn/native/route/existing ledger/claim/output |
+| NL03 | Two LOADs with different IDs, same device and same model | two nodes allowed in a declared configuration with enough resources; one UNLOAD has 0 effect on the other node |
+| NL04 | Malformed metadata/kind/disabled HF/length/capacity/profile, exact and ±1 | rejected before native work; 0 new empty nodes or reservation leaks; 0 automatic creation from unknown ordinary Events |
+| NL05 | Real LOAD initialization failure, partial child start, cleanup failure | removed from nodes if reclaim is confirmed; if unknown, isolated with first/cleanup errors kept; other nodes unchanged |
+| NL06 | UNLOAD during mid-stage KV with no request, pending settlement or held output in the real run-loop | busy rejection; 0 native release; existing work/settlement resumes and the same request completes normally |
+| NL07 | Stop right after the unloaded state is recorded, completion cap1, held terminal, OUTER Full/disconnect | no deletion race or self-wait before the completion response; owner/original/byte claim kept; exactly 1 success after resume |
+| NL08 | Native cleanup failure, unknown result or worker exit on an idle UNLOAD | 0 success responses; later ordinary execution blocked; resource state and failure result observable |
+| NL09 | INSPECT and ID reuse after a successful UNLOAD; delayed LOAD/UNLOAD/inference from the old generation | node/worker/owned listener removed; only the new generation accepted; 0 past effects on the new instance |
+| NL10 | Slow LOAD on one agent alongside INSPECT/UNLOAD/reconcile of another node | a long model load does not block the shared control loop |
+| NL11 | Response via real OUTER; corrupted source/causation/return route, partial frame, lost receipt | only the exact per-request result accepted; uncertain kept; transport ACK not mistaken for lifecycle success |
+| NL12 | One of two or more individual LOADs rejected; the OUTER fixture UNLOADs the successful nodes | 0 automatic reclaim of other nodes by P4; full reclaim only through OUTER commands; failure and reclaim results distinguished |
+| NL13 | Old CREATE/DELETE/direct node LOAD fed to the current Rust/HF callers and the new protocol | 0 CREATE/DELETE on the normal path; bypass commands rejected with no effect; normal inference/release on both adapters |
+| NL14 | Repeated LOAD/UNLOAD and saturation with failure responses | 0 remaining active node/worker/claim; new lifecycle store stays within count/byte limits; existing generation history counted separately |
 
-NL14에서 기존 `node_generations`가 과거 ID를 유지한다는 사실을 숨기지 않는다. 이번 변경으로
-무제한 수명 결과 저장소를 추가하지 않는다. 기존 generation 검증을 없애 이력을 줄이는 수정은 하지 않는다.
+Do not hide in NL14 the fact that the existing `node_generations` keeps past IDs. This change does not
+add an unbounded lifecycle result store. Do not shrink the history by removing the existing generation check.
 
-독립 변이 최소 항목: 중복 검사 제거/등록 뒤 검사(NL02), snapshot만으로 조기 삭제(NL07),
-busy 보호 제거(NL06), cleanup 오류를 성공 처리(NL08), held 결과 drop(NL07),
-generation/응답 identity 검증 제거(NL09/NL11). 매 변이는 독립 복사본과 별도 target에서 실제 재컴파일하고
-baseline source/binary/hash를 기록한다. 사용자 checkout을 변이 후 복원하는 방식은 금지한다.
+Minimum independent mutations: remove the duplicate check / check after registration (NL02), early deletion on snapshot alone (NL07),
+remove the busy protection (NL06), treat a cleanup error as success (NL08), drop the held result (NL07),
+remove generation/response identity checks (NL09/NL11). Each mutation is actually recompiled in an independent copy and a separate target,
+with the baseline source/binary/hash recorded. Mutating the user's checkout and restoring it afterwards is forbidden.
 
-## 9. 검증 실행과 보고
+## 9. Verification runs and reporting
 
-아래는 향후 구현 검증 명령이다. 이 계획 작성 시 실행한 결과가 아니다. 먼저 실제 도구 경로와
-HF fixture interpreter를 확인한다. 로컬 빌드 제약과 원격 실기 자원 사용은 현재 로드맵을 따른다.
-아래 Rust 명령은 동시에 실행하지 않는다.
+These are future implementation verification commands. They are not results run when this plan was written. First confirm the actual tool paths and
+the HF fixture interpreter. Local build constraints and use of remote real-hardware resources follow the current roadmap.
+Do not run the Rust commands below concurrently.
 
 ```powershell
 cargo test --locked -p p4-agent -p p4-agent-core -p p4-adapter -p p4-protocol node_load_lifecycle
@@ -273,35 +273,35 @@ node tools/scripts/docs-lint.mjs --all
 git diff --check
 ```
 
-- 표적 필터가 0개 실행이면 PASS로 처리하지 않는다. feature on 실제 entrypoint의 NL01/NL13도 확인한다.
-- 새 수명 API로 소형 llama.cpp/HF 정상 응답·취소/해제·재적재를 검증한다. HF의 기존 source/return-route,
-  topology/handshake, native의 load identity와 resource profile 회귀를 포함한다.
-- 허용된 동일 GPU에 작은 두 적재가 가능한 환경이면 NL03을 실제 모델로 확인한다. 필요한 환경이 없으면
-  neutral/로컬 결과와 실제 모델 BLOCKED를 구분한다. GPU당 한 노드 제한으로 시험을 바꾸지 않는다.
-- 원격 실행이 승인된 환경에서는 2물리 agent를 경유한 LOAD/UNLOAD와 NL12를 실행한다. 사용자가
-  허용한 자원/namespace만 사용한다. 장문/8wave/H0–H7 성능 수용은 현 로드맵의 별도 gate다.
-- `tests/plans/node-load-lifecycle-<date>.md`와 `tests/reports/node-load-lifecycle/<timestamp>.md`에
-  실제 환경·source/binary/model·시험 ID/명령/exit·passed/failed/ignored/미실행·원본 증거 경로를 남긴다.
-  새 파일은 README와 문서 안내도에 등록한다. 실패 뒤 기대값·상한·입력을 완화하지 않는다.
+- If a targeted filter runs 0 tests, do not treat it as PASS. Also check NL01/NL13 on the real entrypoint with the feature on.
+- Use the new lifecycle API to verify normal responses, cancellation/release and reload on small llama.cpp/HF models. Include regressions for HF's existing source/return-route,
+  topology/handshake, and native load identity and resource profile.
+- If the environment allows two small loads on the same permitted GPU, check NL03 with a real model. If the required environment is not available,
+  distinguish neutral/local results from real-model BLOCKED. Do not change the test into a one-node-per-GPU limit.
+- In an environment where remote runs are approved, run LOAD/UNLOAD through 2 physical agents, and NL12. Use only
+  the resources/namespaces the user allowed. Long-context/8-wave/H0–H7 performance acceptance is a separate gate on the current roadmap.
+- Record in `tests/plans/node-load-lifecycle-<date>.md` and `tests/reports/node-load-lifecycle/<timestamp>.md`
+  the actual environment, source/binary/model, test IDs/commands/exit, passed/failed/ignored/not run, and raw evidence paths.
+  Register new files in the README and the document map. After a failure, do not relax expected values, limits or inputs.
 
-## 10. 문서 이관과 최종 체크
+## 10. Document migration and final checklist
 
-- [event 계약](event-protocol-v2.md): 외부 CREATE/DELETE를 새 LOAD/UNLOAD·결과 규격으로 교체.
-- [격리 계약](layer-isolation-contract.md): 중립 수명 통지와 OUTER 전체 적재 책임 명시.
-- [검증 규약](distributed-batching-verification.md): HF-REGISTER/HF-LIFE의 명령 흐름을 갱신하되
-  기존 거부 무효과·retention·child 회수·generation 검증 조건을 유지.
-- [배치 계약](adapter-batching-layers.md): UNLOAD의 로컬 정지점과 node 최종 제거 단계 연결.
-- 실행 README/도구 문서·HF 현재 문서를 갱신하고, 역사 보고의 CREATE/DELETE 기록은 그대로 보존.
-- README/문서 안내도 등록 및 로드맵 진행 상태 갱신. 이 계획의 단계를 실제 결과 없이 완료로 표시하지 않음.
-- 최종 구현에 외부 CREATE/DELETE가 필요하지 않고, 노드가 없는 상태의 LOAD에서 시작해 UNLOAD 후
-  node/native 자원이 사라지며, 정확한 최종 결과를 OUTER가 받는지를 실제 경로로 확인.
-- OUTER 전체 실패 자동 회수가 별도 미구현이면 명시한다. 그것을 P4 완료 조건에 몰래 포함하거나
-  P4가 대신 구현한 것으로 설명하지 않는다.
+- [Event contract](event-protocol-v2.md): replace external CREATE/DELETE with the new LOAD/UNLOAD and result specification.
+- [Isolation contract](layer-isolation-contract.md): state the neutral lifecycle notification and OUTER's responsibility for the whole-model load.
+- [Verification convention](distributed-batching-verification.md): update the command flow of HF-REGISTER/HF-LIFE while
+  keeping the existing no-effect-on-rejection, retention, child reclaim and generation check conditions.
+- [Batching contract](adapter-batching-layers.md): connect UNLOAD's local stop point to the final node removal step.
+- Update the run READMEs, tool docs and current HF docs; keep the CREATE/DELETE records in historical reports as they are.
+- Register in the README and document map, and update roadmap progress. Do not mark phases of this plan complete without actual results.
+- Confirm on the real path that the final implementation needs no external CREATE/DELETE, starts from LOAD with no node present, removes the
+  node and native resources after UNLOAD, and that OUTER receives the exact final result.
+- If automatic whole-model failure reclaim in OUTER remains separately unimplemented, say so. Do not quietly include it in P4's completion criteria or
+  describe it as something P4 implemented on OUTER's behalf.
 
-## 새 세션에 전달할 실행 요청
+## Execution request to hand to a new session
 
-> `F:\dev\p4`에서 `docs/node-load-lifecycle-plan.md`를 끝까지 읽고 구현하라.
-> 노드는 모델 적재 인스턴스이며 외부 LOAD/UNLOAD만으로 생성·제거한다. 사용 중 ID는 거부한다.
-> 다중 노드 전체 성공 판정과 실패 시 회수는 OUTER 책임이다. 먼저 현재 HEAD와 병행 변경을 감사하고,
-> 로드맵·검증·격리 계약을 지키며 계획의 실제 소비 반례와 독립 변이로 검증하라.
-> 문서의 기준 코드가 바뀌었다면 최신 보존/비용 계약을 유지하고 수정 경로를 갱신하라.
+> In `F:\dev\p4`, read `docs/node-load-lifecycle-plan.md` to the end and implement it.
+> A node is a model load instance and is created and removed only by external LOAD/UNLOAD. Reject IDs that are in use.
+> Judging overall multi-node success and reclaiming on failure are OUTER's responsibility. First audit the current HEAD and parallel changes,
+> keep to the roadmap, verification convention and isolation contract, and verify with the plan's real-consumption counterexamples and independent mutations.
+> If the baseline code in this document has changed, keep the latest retention/cost contracts and update the change paths.

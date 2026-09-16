@@ -1,7 +1,7 @@
 # What is implemented
 
-> 문서 지위 (2026-09-06): **경로별 참고·재감사 필요**. 기존 Chain/Hop 설명과 당시 결정을 포함한다. event 경로의 현재 보장은 코드 및 새 검증 규약으로 확인한다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **per-path reference; needs re-audit**. It includes the older Chain/Hop description and the decisions of that time. Confirm current guarantees of the event path against the code and the new verification protocol.
+> For current goals, status and order see the [execution roadmap](distributed-batching-roadmap.md); for document authority and reading paths see the [document map](document-map.md).
 
 A reference to the code as it stands: every crate, what it holds, what state it
 keeps, and why it is separate from its neighbours. [`api.md`](api.md) is the

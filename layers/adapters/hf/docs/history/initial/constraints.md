@@ -1,41 +1,41 @@
-> 역사 기록: 독립 저장소 시점의 요구·상태·측정이다. 현재 배치와 사용법은 [HF 안내](../../../README.md)를 따른다. 원본 전체는 이관 시 보존한 Git bundle에 있다.
+> Historical record: requirements, status and measurements from the time of the standalone repository. The current layout and usage follow the [HF guide](../../../README.md). The complete original is in the Git bundle preserved during the migration.
 
-> 2026-09-14: 사용자 §0 지시로 P4 통합 구현을 진행한다. 이전 미연결/읽기 전용 설명의 현재 상태는 [통합 명세](../../integration/README.md)와 그 수용 보고가 우선한다.
+> 2026-09-14: P4 integration is being implemented under the user's §0 instruction. For the current status of the earlier unconnected/read-only descriptions, the [integration specification](../../integration/README.md) and its acceptance report take precedence.
 
-# 제약과 증거의 한계
+# Constraints and limits of the evidence
 
-지위: 현재 제한과 향후 구현이 지켜야 할 경계입니다.
+Status: the current limitations and the boundaries that future implementation must respect.
 
-## 현재 제한
+## Current limitations
 
-- 로컬 IPC와 Qwen3.5-0.8B 텍스트 분할 스크립트를 구현했습니다. 지원 범위는 [모델 계약](../../models/qwen3_5_0_8b/README.md)을 따릅니다.
-- 모델·revision·Windows/로컬 GPU·CPU의 dense 실행 버전은 고정했습니다. 양자화·다중 물리 fleet·SLO 수용은 미완입니다.
-- P4는 읽기 전용 참고 대상이며 기존 dirty 작업 트리는 그대로 둡니다.
-- Python 모델 예제가 있다는 사실은 해당 모델의 모든 attention/quantization backend 지원을 뜻하지 않습니다.
-- 현재 P4 entrypoint가 이 어댑터를 생성할 수는 없습니다. 예정 이름을 보내도 등록 전에는 거부됩니다.
+- Local IPC and the Qwen3.5-0.8B text partition script are implemented. The supported scope follows the [model contract](../../models/qwen3_5_0_8b/README.md).
+- The model, revision, and dense execution versions for Windows/local GPU/CPU are pinned. Quantization, a multi-physical-host fleet and SLO acceptance are unfinished.
+- P4 is a read-only reference, and its existing dirty working tree is left as is.
+- The existence of a Python model example does not mean that every attention/quantization backend for that model is supported.
+- The current P4 entrypoint cannot create this adapter. Sending the planned name is rejected until it is registered.
 
-## 구현 제약
+## Implementation constraints
 
-- 역할이 다르면 파일 하나라도 별도 폴더로 둡니다. 세부 소유권은 [폴더 규칙](../../structure/README.md)을 따릅니다.
-- 모델별 shared 상태·합법 cut·sequence 길이·batch 제약을 조사하고 지원되지 않으면 명시적으로 거부합니다.
-- 비담당 레이어의 가중치/KV를 각 노드에 상주시키는 방식으로 분산 적재를 흉내 내지 않습니다.
-- 모든 양자화 format을 모든 GPU에서 같은 속도로 실행할 수 있다고 가정하지 않습니다.
-- FP8/NVFP4 같은 형식은 실제 device/kernel 조건으로 선택하고 dtype 지원과 하드웨어 가속을 구분합니다.
-- 긴 context의 KV/state, 보정 활성값, 로딩 peak, 커널 workspace, 전송 buffer를 가중치 예산과 별도로 셉니다.
-- Python/GIL/IPC/복사/동기화 비용은 측정 대상입니다. Python 자체만으로 성능 우열을 단정하지 않습니다.
-- transport ACK·buffer 반환·GPU 완료·KV 정지·요청 해제를 서로 대신하는 증거로 쓰지 않습니다.
-- 잘못된 identity·shape·quantization metadata·초과 budget을 native 효과 전에 거부합니다.
+- If roles differ, even a single file goes in a separate folder. Detailed ownership follows the [folder rules](../../structure/README.md).
+- Investigate per-model shared state, legal cuts, sequence length and batch constraints, and explicitly reject anything unsupported.
+- Do not imitate distributed loading by keeping the weights/KV of unassigned layers resident on every node.
+- Do not assume that every quantization format runs at the same speed on every GPU.
+- Choose formats such as FP8/NVFP4 by actual device/kernel conditions, and distinguish dtype support from hardware acceleration.
+- Count long-context KV/state, calibration activations, loading peak, kernel workspace and transport buffers separately from the weight budget.
+- Python/GIL/IPC/copy/synchronization costs are to be measured. Do not conclude performance superiority or inferiority from the use of Python alone.
+- Do not use transport ACK, buffer return, GPU completion, KV stop and request release as evidence for one another.
+- Reject invalid identity, shape, quantization metadata and over-budget requests before any native effect.
 
-## 운영과 지원 범위
+## Operations and support scope
 
-첫 실제 시험은 명시된 신뢰망과 사용자가 허용한 장치에 한정합니다.
-인증·접근 제어·재시작 후 내구 정산은 별도 기능이며 P4의 기존 논리 endpoint를 인증 신원으로 취급하지 않습니다.
-원격 실행/배포 권한은 문서화·로컬 개발 권한과 구별합니다.
-모델/커널 코드 및 가중치 재배포 조건은 선택한 아티팩트에 맞춰 확인합니다. 현재 프로젝트 라이선스를 임의 부여하지 않습니다.
+The first real tests are limited to the specified trusted network and the devices the user allowed.
+Authentication, access control and durable settlement after restart are separate features, and P4's existing logical endpoints are not treated as authenticated identities.
+Remote execution and deployment permission is distinct from documentation and local development permission.
+Redistribution terms for model/kernel code and weights are checked against the selected artifacts. No license is assigned to the current project on our own initiative.
 
-## 판정
+## Verdict
 
-문서 점검은 의미 정확성·실제 모델 동작을 인증하지 않습니다.
-단일 호스트/작은 모델/mock은 로컬 증거이며 최종 다중 물리 호스트 수용의 대체물이 아닙니다.
-실제 측정 전에는 성능 우월성이나 llama.cpp 완전 대체를 주장하지 않습니다.
-필수 장치나 권한이 없으면 가능한 로컬 작업을 끝내고 해당 실기 단계만 BLOCKED로 기록합니다.
+Document checks do not certify semantic correctness or real model behavior.
+A single host, a small model or a mock is local evidence and does not replace the final multi-physical-host acceptance.
+Before real measurements, do not claim performance superiority or a full replacement of llama.cpp.
+If required devices or permissions are missing, finish the local work that is possible and record only the affected real-hardware stage as BLOCKED.

@@ -1,11 +1,11 @@
 # The adapter boundary
 
-> 문서 지위 (2026-09-06): **분야 계약·구현과 구별**. 소유 분야의 계약/목표를 읽되 구현 완료로 간주하지 않는다. 현재 개발 순서와 충돌하면 로드맵의 명시적 이관을 따른다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Domain contract; distinct from implementation**. Read it for the contract/goal of the domain it owns, but do not treat that as implemented. If it conflicts with the current development order, follow the explicit migration in the roadmap.
+> For the current goal, status and order, follow the [execution roadmap](distributed-batching-roadmap.md); for document authority and reading paths, follow the [document map](document-map.md).
 
-현재 P4/어댑터 L0~L5/native/llama.cpp/ggml-backend의 구체적 책임·허용 인터페이스와
-업데이트 충격 격리는 [계층 격리 계약](layer-isolation-contract.md)이 소유한다.
-아래 당시의 `Adapter` 경계 설명을 현재 `NodeAdapter` 경로의 구현 증거로 읽지 않는다.
+The concrete responsibilities, allowed interfaces and update-impact isolation of the current P4 / adapter L0~L5 / native / llama.cpp / ggml-backend layers
+are owned by the [layer isolation contract](layer-isolation-contract.md).
+Do not read the description below of the `Adapter` boundary as it stood at the time as implementation evidence for the current `NodeAdapter` path.
 
 What P4 hands a backend, what a backend hands back, and why almost nothing
 crosses that line. Written 2026-08-21, after the boundary was rebuilt.
@@ -282,7 +282,7 @@ adapter's behalf. The adapter drops it itself now.
 
 Token boundaries are not character boundaries. An incomplete trailing UTF-8
 sequence was replaced with U+FFFD rather than held for the next token, so a
-Korean answer came out as `러스트 프로그래밍 언어는???시아어로`. It is held now.
+Korean answer came out as `러스트 프로그래밍 언어는???시아어로` (English: "The Rust programming language ???sian language"). It is held now.
 **This was invisible while every test prompt was ASCII.**
 
 ### 6.6 Event numbers spent on silence

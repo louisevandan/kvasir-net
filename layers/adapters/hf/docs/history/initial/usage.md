@@ -1,14 +1,14 @@
-> 역사 기록: 독립 저장소 시점의 요구·상태·측정이다. 현재 배치와 사용법은 [HF 안내](../../../README.md)를 따른다. 원본 전체는 이관 시 보존한 Git bundle에 있다.
+> Historical record: requirements, status and measurements from the time of the standalone repository. The current layout and usage follow the [HF guide](../../../README.md). The complete original is in the Git bundle preserved during the migration.
 
-> 2026-09-14: 사용자 §0 지시로 P4 통합 구현을 진행한다. 이전 미연결/읽기 전용 설명의 현재 상태는 [통합 명세](../../integration/README.md)와 그 수용 보고가 우선한다.
+> 2026-09-14: P4 integration is being implemented under the user's §0 instruction. For the current status of the earlier unconnected/read-only descriptions, the [integration specification](../../integration/README.md) and its acceptance report take precedence.
 
-# 현재 사용과 예정 운영 흐름
+# Current usage and planned operating flow
 
-지위: 현재 가능한 명령과 미래 흐름을 구분합니다.
+Status: separates the commands available now from future flows.
 
-## 지금 가능한 것
+## Available now
 
-Qwen3.5-0.8B의 모델 준비·계획 검사·시나리오 실행은 [전용 스크립트 안내](../../models/qwen3_5_0_8b/README.md)를 따릅니다.
+Model preparation, plan checks and scenario runs for Qwen3.5-0.8B follow the [dedicated script guide](../../models/qwen3_5_0_8b/README.md).
 
 ```powershell
 Set-Location F:\dev\p4hfadapter
@@ -22,39 +22,39 @@ python -B tools/verification/framing_mutation/run.py
 python -B tools/verification/documents/run.py
 ```
 
-위 Python 명령은 표준 라이브러리만 사용하며 설치된 CPython 3.13.15/Windows에서 검증했습니다.
-framing 변이 명령은 `artifacts/framing/`의 새 폴더에 독립 복사본·전체 로그·SHA256을 기록하고 원본을 수정하지 않습니다.
-전송 시험의 peer는 검증용 프로세스이며 모델 worker가 아닙니다.
-`pip install -e .`, `cargo build`, P4 서비스와 quantize 명령은 아직 없습니다. Qwen 실행은 위 전용 진입점을 사용합니다.
-P4 문서는 읽기 전용으로 참고하며 기존 P4의 build/deploy 명령을 이 프로젝트 실행 명령처럼 사용하지 않습니다.
+The Python commands above use only the standard library and were verified on the installed CPython 3.13.15/Windows.
+The framing mutation command records the independent copy, full logs and SHA256 in a new folder under `artifacts/framing/` and does not modify the original.
+The peer in the transport tests is a verification process, not a model worker.
+`pip install -e .`, `cargo build`, P4 services and quantize commands do not exist yet. Qwen runs use the dedicated entry point above.
+P4 documents are consulted read-only, and the existing P4 build/deploy commands are not used as if they were this project's run commands.
 
-## 향후 운영 순서
+## Planned operating order
 
-1. 고정된 모델/장치/양자화 manifest와 버전 lock을 검증합니다.
-2. 원본 또는 공개 양자화 가중치를 확보하고 필요한 경우 별도 준비 작업으로 양자화합니다.
-3. stage별 필요한 tensor와 metadata를 패키징하고 해시를 검증합니다.
-4. OUTER가 노드를 구성하고 각 stage의 LOAD를 요청합니다.
-5. worker의 실제 커널·메모리·capability를 확인한 뒤 session 경로를 바인딩합니다.
-6. 요청을 수용해 prefill/decode·정산·출력·release를 진행합니다.
-7. 종료 때 새 수용 중지 → 실행 정지/정산 → 상태/예약 반환 → unload를 확인합니다.
-8. 실패 때 정상 종료와 구분한 부분 결과·최초 오류·정리 오류·잔존 자원을 보존합니다.
+1. Verify the pinned model/device/quantization manifest and the version lock.
+2. Obtain the original or published quantized weights, and quantize them in a separate preparation task if needed.
+3. Package the tensors and metadata each stage needs, and verify their hashes.
+4. OUTER composes the nodes and requests LOAD for each stage.
+5. After confirming the worker's actual kernels, memory and capability, bind the session route.
+6. Accept requests and proceed with prefill/decode, settlement, output and release.
+7. At shutdown, confirm: stop accepting new requests → stop execution/settle → return state/reservations → unload.
+8. On failure, preserve the partial results (kept distinct from normal completion), the first error, cleanup errors and remaining resources.
 
-위 흐름의 CLI/REST/socket 문법은 아직 미정입니다. 웹서비스를 붙여도 P4 입장에서 OUTER 클라이언트이며,
-모델별 실행 의미를 P4 공통 코어로 옮기지 않습니다.
+The CLI/REST/socket syntax for the flow above is not decided yet. Even if a web service is attached, it is an OUTER client from P4's point of view,
+and model-specific execution semantics are not moved into the P4 common core.
 
-## 환경과 산출물
+## Environment and outputs
 
-Python 환경은 이 저장소의 `.venv/` 등 독립 위치에 만듭니다. P4의 환경/빌드 디렉터리를 재사용하지 않습니다.
-CUDA/ROCm/MPS에 필요한 패키지·커널·compiler는 지원표 확정 후 설치합니다.
-Python lock과 Rust Cargo.lock은 실제 패키지 생성 시 정책을 정해 재현 가능한 조합으로 관리합니다.
+The Python environment is created in an independent location such as this repository's `.venv/`. P4's environment and build directories are not reused.
+Packages, kernels and compilers needed for CUDA/ROCm/MPS are installed after the support table is confirmed.
+The Python lock and the Rust Cargo.lock are managed as a reproducible combination, with the policy decided when the actual packages are created.
 
-가중치는 루트 `models/`, 측정은 `artifacts/`, Rust 출력은 `target/`, 로컬 감사는 `.local/` 같은 무시 경로를 사용합니다.
-`python/p4hfadapter/models/<model>/<role>/`의 전용 모델 소스는 Git 추적 대상입니다.
-실제 대용량 파일은 외부 경로에 둘 수 있으나 manifest에 digest와 재확보 방법을 남깁니다.
-credentials와 모델 가중치는 Git에 넣지 않습니다. 원격 URL·배포 호스트·access token은 아직 설정하지 않았습니다.
+Weights go in the root `models/`, measurements in `artifacts/`, Rust output in `target/`, and local audits in ignored paths such as `.local/`.
+Dedicated model source in `python/p4hfadapter/models/<model>/<role>/` is tracked by Git.
+Actual large files may live on an external path, but the manifest records their digest and how to re-obtain them.
+Credentials and model weights are not committed to Git. No remote URL, deployment host or access token has been set up yet.
 
-## 향후 통합 배포
+## Planned integrated deployment
 
-P4 바이너리에 Rust bridge를 링크하는 것과 Python 환경·모델·커널을 배포하는 것은 별도 산출물입니다.
-양쪽 revision과 worker package identity를 묶어 배포하고 불일치 시 LOAD를 거부하는 계약을 구현합니다.
-최종 P4 통합 작업의 변경 위치와 범위는 [아키텍처](architecture.md)를 따릅니다.
+Linking the Rust bridge into the P4 binary and deploying the Python environment, models and kernels are separate deliverables.
+Implement a contract that deploys both revisions and the worker package identity together and rejects LOAD on a mismatch.
+The change locations and scope of the final P4 integration task follow the [architecture](architecture.md).

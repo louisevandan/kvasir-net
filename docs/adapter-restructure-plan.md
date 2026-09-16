@@ -1,576 +1,572 @@
-# llama.cpp 어댑터 재구성 계획
+# llama.cpp adapter restructure plan
 
-> 문서 지위 (2026-09-06): **역사·구 계획**. 당시 계획/관측을 보존한다. 현재 상태·실행 순서·승격 기준으로 사용하지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **historical / superseded plan**. It preserves the plans and observations of the time. Do not use it for current status, execution order, or promotion criteria.
+> Current goals, status, and order follow the [execution roadmap](distributed-batching-roadmap.md); document authority and reading paths follow the [document map](document-map.md).
 
-**2026-09-06 지위 변경:** 이 문서는 U/P 결함·계약·실험의 역사적 backlog다.
-현재 상태와 구현 순서는 [분산 배치 로드맵](distributed-batching-roadmap.md)이 단독 소유하며,
-구 단계의 새 소유도 그 문서에서 대조한다. 아래 “현재/완료/미착수”는 각 기록일 기준이다.
-필수 영속·호환 안전성 계약은 폐기하지 않지만, 모든 영속 기능을 현재 배치 정확성 구현의 직렬 선행 조건으로 삼지 않는다.
+**2026-09-06 status change:** This document is the historical backlog of U/P defects, contracts, and experiments.
+The [distributed batching roadmap](distributed-batching-roadmap.md) is the sole owner of current status and implementation order,
+and new ownership of the old phases is cross-checked there as well. "Current/done/not started" below is as of each entry's recorded date.
+The required persistence and compatibility safety contracts are not discarded, but not every persistence feature is a serial prerequisite for the current batching-correctness implementation.
 
-2026-08-31 개정(초판 2026-08-30, 동일자 검토 피드백 반영). llama.cpp
-어댑터의 전면 재구성 — 배치 레이어링, KV 영속화, 세션 원장, 수용·축출
-정책, 전송 효율, 모델 다양성 게이트 — 의 전체 계획이다. 근거 실측은
-2026-08-30의 4노드 gemma-4-E2B 실행에서 나왔다.
+Revised 2026-08-31 (first edition 2026-08-30, with same-day review feedback applied). This is the full plan for the complete restructure of the llama.cpp
+adapter — batch layering, KV persistence, session ledger, admission/eviction
+policy, transport efficiency, and model diversity gates. The supporting measurements came from
+the 2026-08-30 4-node gemma-4-E2B run.
 
-설계 상세는 두 문서가 소유한다:
+Two documents own the design details:
 
-- 배치 레이어 계약: [adapter-batching-layers.md](adapter-batching-layers.md)
-- 영속 저장 규약: [kv-state-store-convention.md](kv-state-store-convention.md)
+- Batch layer contract: [adapter-batching-layers.md](adapter-batching-layers.md)
+- Persistent storage convention: [kv-state-store-convention.md](kv-state-store-convention.md)
 
-## 원칙
+## Principles
 
-1. **P4 코어 무변경, 어댑터+OUTER 변경 허용.** 프로토콜·에이전트·서비스는
-   배치·KV·모델 개념을 모른다. 코드 변경은 `layers/adapters/llamacpp/`와
-   OUTER 구현물(드라이브·플래너·하네스)에서 일어난다 — `session_key` 같은
-   새 wire 필드는 어댑터 소유 content-type 안에서 늘고 OUTER가 채운다.
-   P4 코어에 llama 전용 지식은 추가하지 않되, **백엔드 중립적인 2PC 정확성
-   수정은 허용한다** — 현행 코디네이터(`layers/service/src/cache.rs::recover` @ df5b9ce7,
-   시험 `recovered_partial_restore_is_failed_closed`는 이 현행 동작의
-   고정이다)는 부분 Restore를 재시작 후 즉시 실패 처리하고 Aborting 중
-   committed 영수증을 실패로 접으므로, 그대로는 P2의 all-resident/all-persisted
-   수렴을 통과할 수 없다. 수렴 방향 표는 저장 규약 문서가 소유한다.
-2. **llama.cpp 계층 분리 내성.** 정책 코드(전략·원장·수용)는 llama.cpp에
-   링크하지 않고 HELLO 협상값·GGUF 파생값·캘리브레이션 상수만 본다 —
-   "pull 후 값만 바뀐다"는 이 층에만 성립한다. native compat 계층의
-   갱신은 매 pin 의미 기반 rebase이며(d7a207411→d7bd3bfc dry-run 5/24
-   충돌 — 6차 회차 자체 재현), 그 비용은 U0의 per-pin 호환성 게이트와 패치 큐
-   3분할이 소유한다.
-3. **fail-closed 유지.** 미감사 메모리 계열(msa/dsa/dsv4/hybrid_iswa)은
-   로드 거부. 모델 확장은 3축 감사(스테이지 잔존성 ∧ unified 시퀀스 분리
-   ∧ backend conformance) 통과가 조건이고, 영속 정체성 완화도 P2 검증
-   행렬을 통과한 항목만 내린다.
-4. **메커니즘이 정책보다 먼저, 측정이 최적화보다 먼저.** 그리고 **장애
-   경로가 검증되기 전에 그 위의 자동 정책을 켜지 않는다** — P2 fault gate
-   통과 전 P3의 자동 TTL 축출 금지.
+1. **No change to the P4 core; adapter + OUTER changes are allowed.** The protocol, agents, and services
+   know nothing about batching, KV, or model concepts. Code changes happen in `layers/adapters/llamacpp/` and
+   the OUTER implementations (drive, planner, harness) — new wire fields such as `session_key`
+   grow inside the adapter-owned content-type and are filled in by OUTER.
+   No llama-specific knowledge is added to the P4 core, **but backend-neutral 2PC correctness
+   fixes are allowed** — the current coordinator (`layers/service/src/cache.rs::recover` @ df5b9ce7;
+   the test `recovered_partial_restore_is_failed_closed` pins this current
+   behavior) fails a partial Restore immediately after restart and folds a
+   committed receipt seen during Aborting into failure, so as-is it cannot pass P2's all-resident/all-persisted
+   convergence. The storage convention document owns the convergence direction table.
+2. **Tolerance of llama.cpp layer separation.** Policy code (strategy, ledger, admission) does not link against
+   llama.cpp and sees only HELLO-negotiated values, GGUF-derived values, and calibration constants —
+   "only the values change after a pull" holds for this layer alone. Updating the native compat layer
+   is a semantic rebase on every pin (d7a207411→d7bd3bfc dry-run: 5/24
+   conflicts — reproduced independently in round 6), and that cost is owned by U0's per-pin compatibility gate and the
+   3-way split of the patch queue.
+3. **Stay fail-closed.** Unaudited memory families (msa/dsa/dsv4/hybrid_iswa) are
+   refused at load. Model expansion requires passing a 3-axis audit (stage retention ∧ unified sequence separation
+   ∧ backend conformance), and persistent-identity relaxations are lowered only for items that pass the P2 verification
+   matrix.
+4. **Mechanism before policy, measurement before optimization.** And **do not turn on automatic
+   policy above a failure path before that path is verified** — no automatic TTL eviction in P3 before the P2 fault gate
+   passes.
 
-## 현재 상태 — 과거 관측 (재현성 주의)
+## Current status — past observations (reproducibility caveat)
 
-아래는 2026-08-30의 로컬 관측이다. 5차 리뷰 시점의 체크아웃은 이를
-재현하지 못했다 — compat 0022~0024와 manifest가 미추적이었고, upstream
-checkout이 pin(d7a207411)을 벗어나(d7bd3bfc, dirty tree) 공식 prepare가
-`no compatibility manifest`로 실패했다. 이번 회차에 패치 큐와 manifest를
-추적했으며, upstream pin 복구와 pristine 검증은 U0 수용 기준이다.
+The following are local observations from 2026-08-30. The checkout at the time of the 5th review could not
+reproduce them — compat 0022~0024 and the manifest were untracked, and the upstream
+checkout had drifted off the pin (d7a207411) to d7bd3bfc (dirty tree), so the official prepare
+failed with `no compatibility manifest`. This round put the patch queue and manifest under
+tracking; restoring the upstream pin and pristine verification are U0 acceptance criteria.
 
-- 4노드(3090×2 + 4080×2) gemma-4-E2B가 event-v2 경로로 40/40 완주.
-  iSWA 스테이지 잔존성 옵트인 + 통과 텐서 정체성 수정(compat 0022~0024).
-- 실측: parallel 20 → 121.43 tok/s, parallel 40 → 189.26 tok/s,
-  동시 수용 시 TTFT p50 1.4 s.
-- Persist/Restore 파일 형식, 원자적 publish, 복원 위치 검증, 2PC
-  코디네이터(`service/cache.rs`)와 디스크 영수증(TransactionStore) 존재.
+- 4 nodes (3090×2 + 4080×2) ran gemma-4-E2B to completion, 40/40, over the event-v2 path.
+  iSWA stage-retention opt-in + passthrough tensor identity fix (compat 0022~0024).
+- Measured: parallel 20 → 121.43 tok/s, parallel 40 → 189.26 tok/s,
+  TTFT p50 1.4 s under concurrent admission.
+- The Persist/Restore file format, atomic publish, restore-position verification, the 2PC
+  coordinator (`service/cache.rs`), and on-disk receipts (TransactionStore) exist.
 
-## 실측: upstream 이동에 대한 계층 내성 (2026-08-31)
+## Measured: layer tolerance to upstream movement (2026-08-31)
 
-원칙 2("정책 계층만 값-독립, native compat은 매 pin rebase")를 검증하기 위해
-llama.cpp 최신 master를 받아 패치 큐를 재생했다. `bump-pipeline-upstream.mjs`가
-깨끗한 worktree를 만들어 적용하므로 작업 트리를 건드리지 않고 측정된다.
+To verify Principle 2 ("only the policy layer is value-independent; native compat is rebased on every pin"),
+we pulled the latest llama.cpp master and replayed the patch queue. `bump-pipeline-upstream.mjs`
+creates a clean worktree and applies the queue there, so the measurement does not touch the working tree.
 
-| 항목 | 값 |
+| Item | Value |
 | --- | --- |
 | pin | d7a207411 (2026-08-27) |
-| 대상 | 557614e02 (2026-08-31) |
-| 사이 upstream 커밋 | **69** |
-| 충돌 | **24개 중 6개** (0009, 0010, 0013, 0016, 0017, 0018) |
-| P4 정책 계층(Rust) 변경 | **0** |
+| target | 557614e02 (2026-08-31) |
+| upstream commits in between | **69** |
+| conflicts | **6 of 24** (0009, 0010, 0013, 0016, 0017, 0018) |
+| P4 policy layer (Rust) changes | **0** |
 
-계층별로 갈라 보면 계약이 예측한 그대로다.
+Broken down by layer, the result matches exactly what the contract predicted.
 
-| 분류 | 패치 수 | 충돌 | 해석 |
+| Class | Patches | Conflicts | Interpretation |
 | --- | --- | --- | --- |
-| `upstream_fix` (ggml 계층) | 2 | **0** | ggml 추상층은 69커밋 동안 이 패치들과 무관하게 움직였다 |
-| `model_feature` | 4 | 1 (0018 mtp-tail) | 모델 기능 포트는 대체로 독립 |
-| `stage_hook` (llama core 침투) | 18 | 5 | 갱신 비용은 여기 집중된다 |
-| P4 정책(전략·원장·스케줄러·session_key) | — | 0 | llama.cpp에 링크하지 않으므로 구조적으로 0 |
+| `upstream_fix` (ggml layer) | 2 | **0** | Over 69 commits, the ggml abstraction layer moved independently of these patches |
+| `model_feature` | 4 | 1 (0018 mtp-tail) | Model feature ports are mostly independent |
+| `stage_hook` (intrudes into llama core) | 18 | 5 | Update cost concentrates here |
+| P4 policy (strategy, ledger, scheduler, session_key) | — | 0 | Structurally 0, because it does not link against llama.cpp |
 
-**비용은 선형이 아니다.** 하루 전 pin(d7bd3bfc, 1커밋 차)에서 이미 5개가
-충돌했고, 69커밋을 더 받아도 6개다 — 커밋 68개가 새 충돌을 1개만 추가했다.
-갱신 비용은 upstream 변화량이 아니라 **우리가 침투한 파일이 건드려졌는가**로
-결정된다. 이것이 U0 ④ 패치 큐 3분할과 ③ stage ABI 격리를 정당화하는 실측
-근거다: `upstream_fix`를 별도 묶음으로 두면 upstream이 그것을 흡수했을 때
-전체 포팅과 함께 충돌하지 않고, `stage_hook`의 침투 표면을 좁힐수록 5라는
-숫자가 줄어든다.
+**The cost is not linear.** The pin from one day earlier (d7bd3bfc, 1 commit apart) already had 5
+conflicts, and pulling 69 more commits gives 6 — 68 commits added only 1 new conflict.
+Update cost is determined not by the volume of upstream change but by **whether the files we intrude into were touched**.
+This is the measured basis for U0 ④ (3-way patch queue split) and ③ (stage ABI isolation):
+if `upstream_fix` is kept as a separate bundle, it does not conflict along with the whole port when upstream
+absorbs it, and the narrower the intrusion surface of `stage_hook`, the smaller the number 5
+becomes.
 
-한계: 이 측정은 **적용 가능성**만 본다. 적용된 뒤의 의미 동등성(상태 형식,
-수치 동등성)은 U0 ①의 clean-pin prepare와 매 pin 상태 호환 게이트가 따로
-판정한다.
+Limitation: this measurement looks only at **applicability**. Semantic equivalence after application (state format,
+numerical equivalence) is judged separately by U0 ①'s clean-pin prepare and the per-pin state compatibility gate.
 
-## 실측: 추종 비용 (2026-09-01, 18커밋 표류)
+## Measured: tracking cost (2026-09-01, 18-commit drift)
 
-llama.cpp는 하루에 한 번이 아니라 **하루 평균 17.5커밋**을 낸다(최근 21일 367커밋,
-범위 2~26). 태그도 하루 여러 개다(b10718~b10731이 이틀). 그리고 우리가 패치한 27개
-파일은 **21일 중 20일** 움직였고 그 기간 누적 변경량은 20개 파일 +2438/-506이다.
-따라서 "따라갈 수 있는가"는 이 프로젝트의 성능 문제가 아니라 생존 문제다.
+llama.cpp does not ship once a day; it ships **17.5 commits a day on average** (367 commits in the last 21 days,
+range 2~26). Tags also come several a day (b10718~b10731 over two days). And the 27
+files we patch **moved on 20 of those 21 days**, with cumulative change over the period of +2438/-506 across 20 files.
+So "can we keep up" is not a performance question for this project; it is a survival question.
 
-557614e02 → 0eadefebd(18커밋)를 실제로 옮긴 비용은 다음과 같다.
+The actual cost of moving 557614e02 → 0eadefebd (18 commits) was:
 
-| 단계 | 결과 |
+| Stage | Result |
 | --- | --- |
-| 충돌 가능 지점 | 우리 파일 3개가 상류에서 변경 — `git diff --numstat 557614e02..0eadefebd`: `common/speculative.cpp` +6/-46, `src/llama-context.cpp` +19/-6, `src/llama-kv-cache.cpp` +26/-38 |
-| 큐 리베이스 (24패치) | **24/24 clean** — 에스컬레이션 0, 수동 개입 0 |
-| pristine 재생 검증 | 24/24 clean |
-| 패치 분류 게이트 | valid — hook 18 / fix 2 / model 4 (분류 변동 없음) |
-| 공식 prepare | 통과 — compatibility_id `0eadefebd3.3cfc636181e4…` |
-| CPU 빌드 + CTest | 11/11 (real-model 하위 4건은 SKIP) |
-| CUDA 빌드 + CTest | 11/11, sm_86/sm_89 |
-| 4노드 실기 (3090x2) | smoke 1/1 · mixed 40/40 · service 40/40, 전부 의미 판정 통과 |
-| compat 포트 성립에 필요한 C++·정책 소스 변경 | **0** — 같은 커밋의 Rust·하네스 변경은 증거 채널 수정이며 포트와 무관 |
+| Possible conflict points | 3 of our files changed upstream — `git diff --numstat 557614e02..0eadefebd`: `common/speculative.cpp` +6/-46, `src/llama-context.cpp` +19/-6, `src/llama-kv-cache.cpp` +26/-38 |
+| Queue rebase (24 patches) | **24/24 clean** — 0 escalations, 0 manual interventions |
+| pristine replay verification | 24/24 clean |
+| Patch classification gate | valid — hook 18 / fix 2 / model 4 (no classification change) |
+| Official prepare | passed — compatibility_id `0eadefebd3.3cfc636181e4…` |
+| CPU build + CTest | 11/11 (4 real-model subtests SKIP) |
+| CUDA build + CTest | 11/11, sm_86/sm_89 |
+| 4-node real-hardware run (3090x2) | smoke 1/1 · mixed 40/40 · service 40/40, all passed semantic judgement |
+| C++/policy source changes needed for the compat port | **0** — the Rust and harness changes in the same commit are evidence-channel fixes unrelated to the port |
 
-패치 큐 크기의 추이는 13(08-03) → 21(08-05) → 24(08-27) → 24(08-31) → 24(09-01)로,
-**최근 세 pin 연속 24개 고정**이다. 큐가 누적되지 않는다는 것이 계층 분리의 실질적
-증거다 — 상류가 우리 패치 이웃을 거의 매일 건드리는데도 그렇다.
+The patch queue size went 13 (08-03) → 21 (08-05) → 24 (08-27) → 24 (08-31) → 24 (09-01),
+**holding at 24 for the last three consecutive pins**. That the queue does not accumulate is the practical
+evidence of layer separation — even though upstream touches the neighborhood of our patches almost every day.
 
-**다만 한 번의 관측이다.** 18커밋은 짧은 표류이고, 앞선 69커밋 표류에서는 fuzz 3·
-3-way 2가 필요했다. 무충돌이 일반 성질이라고 주장하지 않는다.
-재현 명령을 남긴다. 커밋 수는 `git log --since="21 days ago" --format=%H origin/master`
-(21×24h rolling window, 2026-09-01 08:00 UTC 기준), 변경량은 21일 전 base commit 대비
-`git diff --shortstat <base>..origin/master -- <패치 파일 27개>`, 일자 집계는 KST 달력
-기준이다. base·종료 SHA와 시간대를 밝히지 않으면 같은 수치가 재현되지 않는다.
+**It is, however, a single observation.** 18 commits is a short drift, and the earlier 69-commit drift needed fuzz 3 and
+3-way 2. We do not claim that conflict-free replay is a general property.
+We record the reproduction commands. The commit count is `git log --since="21 days ago" --format=%H origin/master`
+(21×24h rolling window, as of 2026-09-01 08:00 UTC), the change volume is
+`git diff --shortstat <base>..origin/master -- <the 27 patched files>` against the base commit from 21 days earlier, and daily aggregation uses the KST
+calendar. Without stating the base and end SHAs and the time zone, the same figures do not reproduce.
 
 
-## 실측: 새 pin 채택 (2026-08-31, U0 ①)
+## Measured: adopting the new pin (2026-08-31, U0 ①)
 
-위 내성 측정에 이어 실제로 pin을 옮겼다. 결과는 계층 분리 주장의 가장
-강한 증거다.
+Following the tolerance measurement above, we actually moved the pin. The result is the strongest
+evidence for the layer separation claim.
 
-| 단계 | 결과 |
+| Stage | Result |
 | --- | --- |
-| 큐 리베이스 (24패치) | clean 19, fuzz 3, 3-way 2 — 수동 개입은 hunk 5개 |
-| pristine 재생 검증 | **24/24 clean** (`rebase-pipeline-upstream.mjs` phase 2) |
-| 공식 prepare | **통과** — compatibility_id `557614e029.00e66c6b…` |
-| CUDA 빌드 | **성공**. 네이티브 시험 실행 파일 11개 전부 종료 코드 0, 단 **real-model 하위 시험 4건은 SKIP**(`P4_STAGED_LLAMA_MODEL`·`P4_STAGED_MTP_MODEL` 미설정) — model-free 스위트만 증명됐다 |
-| 4노드 수용 | **통과** — 동일 프롬프트에 유의미한 한국어 답, 구조 1/1·의미 1/1 |
-| P4 정책 계층(Rust) 변경 | **0** |
+| Queue rebase (24 patches) | clean 19, fuzz 3, 3-way 2 — manual intervention on 5 hunks |
+| pristine replay verification | **24/24 clean** (`rebase-pipeline-upstream.mjs` phase 2) |
+| Official prepare | **passed** — compatibility_id `557614e029.00e66c6b…` |
+| CUDA build | **succeeded**. All 11 native test executables exited with code 0, but **4 real-model subtests were SKIP** (`P4_STAGED_LLAMA_MODEL` and `P4_STAGED_MTP_MODEL` unset) — only the model-free suite was proven |
+| 4-node acceptance | **passed** — a meaningful Korean answer to the same prompt, structure 1/1, semantics 1/1 |
+| P4 policy layer (Rust) changes | **0** |
 
-리베이스가 실제 결함을 하나 찾아냈다. upstream이 메모리 생성 지점과 계열
-둘(`llama_kv_cache_dsa_iswa`, `llama_memory_hybrid_idx`)을 추가했는데
-이들이 잔존성 게이트를 우회하고 있었다. 우회는 감사되지 않은 계열에 대해
-부분 스테이지를 조용히 다시 열어 주므로 fail-closed가 무너진다. 게이트
-적용을 계열 이름 나열이 아니라 `llama_kv_cache*`/`llama_memory*` 생성
-전체 매칭으로 바꾸고, 재생 검증에 **우회 0건**을 단언으로 넣었다 — 그
-단언이 이 구멍을 드러냈다. 두 신규 계열은 의도대로 default-deny로 안착했다.
+The rebase found one real defect. Upstream added memory creation sites and two families
+(`llama_kv_cache_dsa_iswa`, `llama_memory_hybrid_idx`), and
+these were bypassing the retention gate. The bypass silently reopens partial stages for unaudited
+families, which breaks fail-closed. We changed the gate to apply
+to all `llama_kv_cache*`/`llama_memory*` creation by pattern match instead of a list of family names, and
+added **0 bypasses** as an assertion in replay verification — that
+assertion is what exposed this hole. Both new families landed as default-deny, as intended.
 
-빌드 아키텍처 함정도 기록해 둔다. 스크립트 기본값이 `75;89`라 이 배치의
-sm_86(3090)에는 네이티브 코드가 없었고, 그 sm_75 빌드로 돌린 로컬 실행이
-19.9 → 6.15 tok/s였다. **이 수치는 그 과거 빌드의 관측이며 현행 실행의
-설명이 아니다** — 현재 배포된 `ggml-cuda.dll`은 sm_86·sm_89 cubin을 모두
-담고 있고(직접 검사: sm_86 15, sm_89 22, sm_75 0) 원격 해시도 동일하다.
-수용 판정이 처리량이 아니라 **답의 의미**였기에 이 함정은 시험을
-통과시키면서도 드러났다 — 두 판정을 분리해 둔 것이 값을 한 지점이다.
+We also record a build-architecture trap. The script default was `75;89`, so this batch's
+sm_86 (3090) had no native code, and a local run with that sm_75 build went
+19.9 → 6.15 tok/s. **This figure is an observation of that past build, not an
+explanation of current runs** — the currently deployed `ggml-cuda.dll` contains both sm_86 and sm_89 cubins
+(direct inspection: sm_86 15, sm_89 22, sm_75 0), and the remote hash is identical.
+Because the acceptance verdict was about **the meaning of the answer**, not throughput, this trap surfaced
+even while the test passed — this is where keeping the two verdicts separate paid off.
 
-원격 smoke의 6.4 tok/s는 성능 기준선이 아니다: 요청 1건, 대부분 1행 디코드,
-`mixed_batches=0`이라 배치·파이프라인 처리량을 대표하지 않는다. 기준선은
-증거 체계(E0/R0)가 닫힌 뒤 동일 commit·build·model로 재측정한다.
+The remote smoke's 6.4 tok/s is not a performance baseline: 1 request, mostly 1-row decode,
+`mixed_batches=0`, so it does not represent batching or pipeline throughput. The baseline will be
+re-measured with the same commit, build, and model after the evidence system (E0/R0) is closed.
 
-## 역사적 결함 대장 — 현재 상태표가 아님
+## Historical defect register — not a current status table
 
-| # | 결함 | 증거 |
+| # | Defect | Evidence |
 | --- | --- | --- |
-| D1 | 파이프라인 깊이 1: `in_flight: bool` 하나, downstream은 CapsuleSet의 전 물리 UBATCH를 순차 실행 후 일괄 반환 | GPU 18~25%, 스텝 시간 행수 무관, 혼합 배치 0~2건 |
-| D2 | 플랜에 `--kv-root` 없음 → `kv=0` | HELLO 로그 |
-| D3 | 상태 저장 조직 부재: 평면 `<root>/<key>.lkv`, 무조건 덮어쓰기, 시각 없음 | state_store.cpp |
-| D4 | 40요청 슬롯 재사용 position 불연속. **원인 미규명** — 로컬 seq_rm→전 스테이지 정산→슬롯 반환 순서는 이미 구현돼 있으므로(release.rs) 관찰 장부만으로는 안 고쳐진다 | 스트레스 C (증거 미보존, 재확보 필요) |
-| D5 | 셀 회계 부재: 수용이 슬롯 개수만 셈 | scheduler 호출부 |
-| D6 | 정체성 과잉 고정: n_batch/n_ubatch/n_seq_max·빌드 완전 일치 요구 | manifest 대조 코드 |
-| D7 | 홉당 81회 개별 텐서 전송 고정비 | cut-set 31/27/23 |
-| D8 | compute buffer 과할당: ubatch 512에서 1.4 GB, 실점유 3.5% | 512↔128 실측 3.66× |
-| D9 | SWA V 과할당 (v_trans 시 256→512) | KV 버퍼 로그 |
-| D10 | 영속 128 MB/노드 상한 | state_store 크기 검사 |
-| D11 | 프리픽스 재사용 부재 | 어댑터 감사 |
-| D12 | 동적 점유 텔레메트리 부재. `MEMORY_ACTUAL`은 로드 시 전체 할당 보고이지 런타임 셀 점유가 아니다 | llama_stage_runtime.cpp |
-| D13 | 영수증 충돌: `<kv_root>/.p4-transactions/<op>.receipt` 평면 구조, 스테이지 범위가 경로에 없음 → 볼륨 공유 시 4스테이지가 같은 operation_id로 상충 | transaction_store.cpp:185 |
-| D14 | 2PC commit 구멍: 네이티브 Commit은 publish 후 즉시 seq_rm 하므로, commit wave 중 실패 시 코디네이터의 Abort가 이미 committed 스테이지를 되살릴 수 없다. 부분 committed의 수렴 규칙 미검증 | kv 런타임 + cache.rs |
-| D15 | 영속 SessionKey·LCP 증거 부재: `InferenceCommand`는 session_id/request_id뿐, 저장 meta에 토큰 이력·prefix digest 없음 → 재시작 후 "같은 대화" 판정 근거 없음 | `v2/commands.rs::InferenceCommand` @ df5b9ce7 |
-| D16 | 세션 단위 직렬화 부재: 잠금이 operation_id 단위라 같은 세션의 Persist/Restore/Discard/GC가 동시 실행 가능 | `transaction_store.cpp::TransactionStore::Lease` @ df5b9ce7 |
-| D17 | 레코드 번들 비원자: state/tokens/meta의 부분 조합이 가능하고 LCP 증거와 KV position의 결속을 증명할 수 없음 | 규약 문서 결함 표 |
-| D18 | `Committing` 미정의: commit은 Committing 내구 기록→부작용→Committed인데 어댑터 Reconcile이 Committing을 Inconsistent로 축약; Prepare는 staged 사본 없이 영수증만 씀 | `protocol.hpp::KvReceiptState` 정의, `server.cpp::Session::handle` KvCommit 분기, `transaction_store.cpp::TransactionStore::prepare` @ df5b9ce7 |
-| D19 | native compat 갱신 취약: 24개 패치·27개 upstream 파일, d7a207411→d7bd3bfc 재생에서 5개 충돌(0010, 0013, 0016, 0017, 0018 — `bump-pipeline-upstream.mjs --from d7a207411` clean-worktree 재생으로 자체 재현). 큐가 stage hook/upstream fix/model feature 미분리이고 `ggml-backend.cpp`·RPC까지 패치해 llama 계층 아래를 침범 | compat/d7a207411 큐 |
-| D20 | stage server가 llama 비공개 헤더에 결합: CMake가 upstream `src/`를 PRIVATE include로 열고 `stage_memory_plan.cpp`가 `llama-cpp.h`·`llama-ext.h`를 직접 포함 → public ABI와 무관하게 내부 리팩터링마다 파손 | `server/CMakeLists.txt`(P4_STAGED_LLAMA_SOURCE_DIR/src), `runtime/stage_memory_plan.cpp` 상단 include @ 87ec1317 |
-| D21 | HELLO가 실행물을 식별 못 함: upstream commit만 노출 — 같은 commit·다른 patch-set 빌드가 동일하게 보이고, stage_abi·활성 backend/device·trim_support·state_abi 부재 | `server/server_hello.cpp`(capabilities 문자열) @ 87ec1317 |
-| D22 | compat manifest가 체크아웃 EOL에 종속: 0001~0021은 CRLF 바이트 해시, 0022~0024는 LF 해시로 기록돼 어떤 autocrlf 설정의 깨끗한 checkout도 검증 실패, fixture 자체 시험 14/15 | 6차 회차 수정 — `.gitattributes`(`*.patch text eol=lf`) + 전체 LF 재해시, validate 통과·자체 시험 6/6. patch_set_sha256·patched_tree 재검증은 U0 ①의 clean-pin prepare가 수행. 7차 리뷰가 clean pin 직접 적용으로 현행 aggregate 값 일치를 외부 검증 |
+| D1 | Pipeline depth 1: a single `in_flight: bool`; downstream runs all physical UBATCHes of a CapsuleSet sequentially, then returns them all at once | GPU 18~25%, step time independent of row count, 0~2 mixed batches |
+| D2 | No `--kv-root` in the plan → `kv=0` | HELLO log |
+| D3 | No state storage organization: flat `<root>/<key>.lkv`, unconditional overwrite, no timestamp | state_store.cpp |
+| D4 | Position discontinuity on slot reuse with 40 requests. **Root cause unknown** — the order local seq_rm → settle all stages → return slot is already implemented (release.rs), so an observation ledger alone will not fix it | Stress C (evidence not preserved; must be re-acquired) |
+| D5 | No cell accounting: admission counts only slots | scheduler call site |
+| D6 | Over-pinned identity: requires an exact match of n_batch/n_ubatch/n_seq_max and the build | manifest comparison code |
+| D7 | Fixed cost of 81 individual tensor transfers per hop | cut-set 31/27/23 |
+| D8 | Compute buffer over-allocation: 1.4 GB at ubatch 512, 3.5% actually used | 512↔128 measured 3.66× |
+| D9 | SWA V over-allocation (256→512 with v_trans) | KV buffer log |
+| D10 | Persistence cap of 128 MB/node | state_store size check |
+| D11 | No prefix reuse | adapter audit |
+| D12 | No dynamic occupancy telemetry. `MEMORY_ACTUAL` reports the full allocation at load, not runtime cell occupancy | llama_stage_runtime.cpp |
+| D13 | Receipt collision: flat `<kv_root>/.p4-transactions/<op>.receipt` layout with no stage scope in the path → on a shared volume, 4 stages conflict on the same operation_id | transaction_store.cpp:185 |
+| D14 | 2PC commit hole: native Commit runs seq_rm immediately after publish, so if a failure occurs during the commit wave, the coordinator's Abort cannot revive stages that are already committed. The convergence rule for partially committed state is unverified | kv runtime + cache.rs |
+| D15 | No persistent SessionKey or LCP evidence: `InferenceCommand` carries only session_id/request_id, and stored meta has no token history or prefix digest → no basis for judging "the same conversation" after restart | `v2/commands.rs::InferenceCommand` @ df5b9ce7 |
+| D16 | No per-session serialization: locks are per operation_id, so Persist/Restore/Discard/GC on the same session can run concurrently | `transaction_store.cpp::TransactionStore::Lease` @ df5b9ce7 |
+| D17 | Non-atomic record bundle: partial combinations of state/tokens/meta are possible, and the binding between LCP evidence and KV position cannot be proven | convention document defect table |
+| D18 | `Committing` undefined: commit is Committing durable record → side effect → Committed, but adapter Reconcile collapses Committing into Inconsistent; Prepare writes only a receipt, with no staged copy | `protocol.hpp::KvReceiptState` definition, `server.cpp::Session::handle` KvCommit branch, `transaction_store.cpp::TransactionStore::prepare` @ df5b9ce7 |
+| D19 | Fragile native compat updates: 24 patches and 27 upstream files; replaying d7a207411→d7bd3bfc gave 5 conflicts (0010, 0013, 0016, 0017, 0018 — reproduced independently with a clean-worktree replay via `bump-pipeline-upstream.mjs --from d7a207411`). The queue does not separate stage hook/upstream fix/model feature, and it patches down into `ggml-backend.cpp` and RPC, intruding below the llama layer | compat/d7a207411 queue |
+| D20 | Stage server coupled to llama private headers: CMake exposes upstream `src/` as a PRIVATE include, and `stage_memory_plan.cpp` directly includes `llama-cpp.h` and `llama-ext.h` → breaks on every internal refactor regardless of the public ABI | `server/CMakeLists.txt` (P4_STAGED_LLAMA_SOURCE_DIR/src), `runtime/stage_memory_plan.cpp` top-of-file includes @ 87ec1317 |
+| D21 | HELLO cannot identify the executable: only the upstream commit is exposed — builds with the same commit and a different patch-set look identical, and stage_abi, the active backend/device, trim_support, and state_abi are absent | `server/server_hello.cpp` (capabilities string) @ 87ec1317 |
+| D22 | Compat manifest depends on checkout EOL: 0001~0021 were recorded as CRLF byte hashes and 0022~0024 as LF hashes, so a clean checkout under any autocrlf setting fails verification; fixture self-test 14/15 | Fixed in round 6 — `.gitattributes` (`*.patch text eol=lf`) + full LF rehash, validate passes, self-test 6/6. Re-verification of patch_set_sha256 and patched_tree is done by U0 ①'s clean-pin prepare. The 7th review externally verified that the current aggregate values match by applying the queue directly to a clean pin |
 
-## 목표 구조 (요약)
+## Target structure (summary)
 
 ```
-L0 큐 → L1 원장 → L2 수용·점유 → L3 구성 전략 → L4 증명 → L5 전송
+L0 queue → L1 ledger → L2 admission/occupancy → L3 composition strategy → L4 proof → L5 transport
 ```
 
-레코드 정체성 = (모델×컷×포맷)×(session_key×위치), 로딩ID 아님.
-파이프라인 깊이 확장은 `in_flight: bool`을 풀기 전에 **fragment credit
-계약**이 선행한다 — `(generation, edge, sequence, stream_epoch, fragment)` 정체성,
-edge별 row·byte credit, ACK/중복/timeout에서의 idempotent 반환, 순서·취소
-규칙, 큐·RSS 상한. 규범 내용은 P4.5 행이 전부 담으며, [plan.md](plan.md) §3은 역사적 근거
-링크로만 남는다.
+Record identity = (model×cut×format)×(session_key×position), not the load ID.
+Extending pipeline depth requires the **fragment credit
+contract** before `in_flight: bool` is unlocked — `(generation, edge, sequence, stream_epoch, fragment)` identity,
+per-edge row and byte credit, idempotent return on ACK/duplicate/timeout, ordering and cancellation
+rules, and queue and RSS caps. The P4.5 row carries all of the normative content; [plan.md](plan.md) §3 remains only as a historical
+rationale link.
 
-## 구 단계 정의 — 현재 순서·승격 기준은 새 로드맵 참조
+## Old phase definitions — see the new roadmap for current order and promotion criteria
 
-| 단계 | 내용 | 해소 | 수용 기준 |
+| Phase | Content | Resolves | Acceptance criteria |
 | --- | --- | --- | --- |
-| U0 | llama 호환 경계: ① clean upstream pin 복구·pristine 검증(공식 prepare 통과) ② HELLO에 stage_abi·`build_id`(patch_set_sha256 포함)·활성 backend/device·`trim_support`·`state_abi_id`·backend layout 결속 ③ server의 llama 비공개 헤더 의존 제거(public `llama.h` + P4 소유 versioned stage ABI만; 내부 접근은 compat 구현 안으로) ④ 패치 큐 3분할(stage hook / upstream fix / model feature) ⑤ backend conformance 감사 3축 등재 ⑥ backend 게이트는 release manifest의 `required_backend_set` 선언 기준이다 — 집합에는 CPU 기준선이 항상 포함되고 배포가 주장하는 production backend가 더해진다(현행 선언 = {CPU 기준선, CUDA production}). 선언된 전 backend가 plugin/version·device capability·실제 buffer placement 증거와 함께 통과해야 승격 ⑦ cross-backend Persist/Restore는 행렬 통과 전 fail-closed | D19, D20, D21, D22 | ① pin에서 공식 prepare 통과 — 양쪽 autocrlf의 깨끗한 checkout fixture 포함, patch_set_sha256·patched_tree 재검증·재기록, dirty 포트 시도는 폐기가 아니라 분기로 보존 ② 같은 upstream·다른 patch-set 두 빌드를 HELLO로 구분 + 협상값(trim_support·state_abi_id·backend layout)이 실측 능력과 일치하는 시험 ③ server include 빌드 게이트로 비공개 헤더 0건 ④ 전 패치 `stage_hook\|upstream_fix\|model_feature` 분류 — 미분류 0건, 묶음별 독립 적용 시험, upstream에 흡수된 fix 자동 검출·제거, stage hook의 허용 파일·심볼 범위 명세 ⑤ 감사 3축과 수치 동등성 기준 문서화 ⑥ `required_backend_set` 선언·검증 절차 정의 — 현행 선언 {CPU 기준선, CUDA production} 중 CPU 축은 현행 pin에서 통과; CUDA 축 통과는 U0 완료 조건이 아니라 production 승격 조건 ⑦ cross-backend 복원 거부를 부정 시험으로 확인 |
-| P-1 | 고정 작업: `base_model_id × kv_variant_id` 계약 확정(정의는 규약이 단독 소유, 구현 착수는 계약 승인 후), `session_key`·prefix 증거의 계약 5요소(정규화·유일성 범위·버전·비교 규칙·부정 시험) 문서화, `session_key` wire 필드(어댑터 content-type + OUTER 전달), 하네스를 versioned `test/benchmarks/`로 이관, 증거 규약(commit·compat manifest·spec 전문·환경·요약기 버전·artifact checksum) | D15 일부 | 하네스가 저장소에서 재실행 가능; D4 실패 증거 재확보·보존; base_model_id·kv_variant_id가 load/restore 경로에 결속되고 base 1바이트 변조 시험이 **캐시 부재·조작된 사이드카 양쪽 경로에서 통과**; LoRA scale·mmproj·control-vector 변조 거부 + 엔트리 순서 무관 시험 통과; session_key가 OUTER→어댑터→저장→재시작 Restore까지 동일 값으로 왕복; 다른 request_id의 같은 session_key 재사용 성공; 같은 request_id의 다른 session_key 별칭 거부 |
-| P0 | 상태 **및 영수증** 네임스페이스: `v2/<model_id>/<cut_id>/{sessions,receipts,tmp}`, 덮어쓰기 정체성 대조, meta.json(saved_at·session_key·digest 결속) + 조언적 ACCESS 분리 + CONTROL epoch CAS | D3, D13, D17 | 동일 `operation_id`로 4개 cut 동시 Prepare/Commit/Reconcile 성공; 충돌 save 거부; gen-N 번들 + MANIFEST CAS publish의 각 단계 crash 시험에서 항상 완전한 번들만 노출; 세션 lease 원자 획득·epoch fencing 동작 |
-| P1a | 행동 없는 원장: 매핑·상주·슬롯 수명 **관찰**과 불변식 위반 검출 + 시퀀스별 backend position·사용 셀 텔레메트리 신설 | D12; D5는 측정 전제만(해소는 P3) | 로드 전 노드별 KV 예측 = 실할당 ±1%; 이벤트별 원장-텔레메트리 대조 일치 |
-| P1b | D4 수정: 안정 재현 → 원인 규명 → 실제 수명/네이티브 상태 수정 | D4 | 스트레스 C(40요청, 슬롯 재사용) 반복 통과 |
-| P2 | `kv=1` 왕복 + **fault gate**. 선행 구현: PreparePersist의 내구 staged 번들, `Committing` 증거 기반 판정(어댑터 Reconcile의 Inconsistent 축약 교체), 수렴 표의 백엔드 중립 코어 수정 — 표는 [kv-state-store-convention.md](kv-state-store-convention.md) 소유. fault gate: 각 스테이지 commit 전·중·후 실패, 부작용 완료·finalize 전 종료(=Committing 복구), 부분 committed+부분 prepared 재조정, 코디네이터 재시작 후 명시적 수렴, 세션 경합 4종(Persist↔Restore, Persist↔Discard, Restore↔GC, 이중 Persist). 정체성 완화 **행렬**: {n_batch, n_ubatch, n_seq_max, n_ctx_seq, kv_unified} × {K/V 형식, flash/v_trans} × {같은 compat 재빌드, 다른 revision} × {소스 backend × 대상 backend} — 통과 항목만 등급 인하, 나머지 fail-closed | D2, D6, D14, D16, D18 | 전 fault gate 통과(Committing 각 지점 포함); 세션 경합 시험에서 교차 손상 0; 재로딩 후 복원 성공; 행렬 결과 문서화 |
-| P2.5 | n_ubatch 정적 보정: P5 측정 기준값 확정 (자동 최적화는 P7) | D8 일부 | 보정값으로 기준 워크로드 재측정·기록 |
-| P3 | L2 수용·점유: 셀 인지 수용 + 스냅샷 명령 이행(Persist/`Checkpoint` 신설/`SnapshotList` 신설/RestoreInto 확장/Fork/Discard — 어휘와 의미는 규약 소유, 트리거 정책은 전부 OUTER) + 재요청 Restore + LCP(`TrimTo` 2PC 포함) + 동시성 세 축 분리(max_resident/decode_parallelism — 축 계약은 [adapter-batching-layers.md](adapter-batching-layers.md) 소유). **P2 fault gate 통과가 전제** | D5, D11 | 예측 최악 셀 선예약 — 다중 노드는 예약 2PC(규약 소유: prepared 회계 포함, 로컬 단조 TTL 회수, 멱등 release), 부족 시 대기/거절, over-admit 0(prepared 포함); 분기 프롬프트에서 전 스테이지 TrimTo attest 전 프리필 시작 0건; 헤비+숏 혼합에서 무고 세션 실패 0; TTFT 분포 개선 |
-| P4 | L3 전략 크레이트 추출 + 기록 트레이스 골든 재생 | — | 기존 trace 재생 결과 동일 |
-| P4.5 | fragment credit 계약 구현: `(generation, edge, sequence, stream_epoch, fragment)` 정체성, edge별 row·byte credit — `U_edge = min(producer, consumer)` 협상, `B_edge`는 모델·cut별 합의, 불일치 시 load 거부 — idempotent 반환, 순서·취소 규칙, 큐·RSS 상한 | D1 전제 | 중복·timeout·취소 fault test 통과; credit 누수 0; credit exhaustion 시험 통과; long-prompt 경계 메모리 상한 준수 실측 |
-| P5 | 파이프라인 깊이>1 (프리필 청크 연속 투입부터). 스냅샷 정합 펜스는 전 파이프라인 정지가 아니라 **대상 시퀀스 드레인**으로 좁힌다(정산 증거는 credit이 아니라 stage별 `SequenceQuiesced` attest — O9) | D1 | GPU util 상승, 혼합 배치 발생, ITL 비악화, **경계 메모리·큐 깊이 상한 준수**; 시퀀스 드레인 중 타 시퀀스 스텝 지속 |
-| P6 | cut-set 연속 버퍼 합치기, 통과 텐서 재전송 생략 | D7 | 스텝 고정비 감소 실측 |
-| P7 | 청크 persist(D10), SWA V(D9), n_ubatch 자동 최적화, DENIED 계열 3축 감사 | D8~D10 | 계열별 감사 문서 + 로드 성공 |
+| U0 | llama compatibility boundary: ① restore a clean upstream pin and verify pristine (official prepare passes) ② bind stage_abi, `build_id` (including patch_set_sha256), the active backend/device, `trim_support`, `state_abi_id`, and backend layout into HELLO ③ remove the server's dependency on llama private headers (public `llama.h` + a P4-owned versioned stage ABI only; internal access moves inside the compat implementation) ④ 3-way split of the patch queue (stage hook / upstream fix / model feature) ⑤ register the 3-axis backend conformance audit ⑥ the backend gate is based on the release manifest's `required_backend_set` declaration — the set always includes the CPU baseline, plus the production backends the deployment claims (current declaration = {CPU baseline, CUDA production}). Promotion requires every declared backend to pass, together with plugin/version, device capability, and actual buffer placement evidence ⑦ cross-backend Persist/Restore stays fail-closed until the matrix passes | D19, D20, D21, D22 | ① official prepare passes on the pin — including clean-checkout fixtures under both autocrlf settings, patch_set_sha256 and patched_tree re-verified and re-recorded, and the dirty port attempt preserved as a branch rather than discarded ② a test that distinguishes two builds with the same upstream and different patch-sets via HELLO + negotiated values (trim_support, state_abi_id, backend layout) match measured capability ③ 0 private headers, enforced by a server include build gate ④ every patch classified as `stage_hook\|upstream_fix\|model_feature` — 0 unclassified, an independent application test per bundle, automatic detection and removal of fixes absorbed upstream, a specification of the allowed file and symbol scope for stage hooks ⑤ the 3 audit axes and the numerical equivalence criteria documented ⑥ the `required_backend_set` declaration and verification procedure defined — of the current declaration {CPU baseline, CUDA production}, the CPU axis passes on the current pin; passing the CUDA axis is a production promotion condition, not a U0 completion condition ⑦ cross-backend restore refusal confirmed by a negative test |
+| P-1 | Fixed groundwork: finalize the `base_model_id × kv_variant_id` contract (the convention is the sole owner of the definition; implementation starts after contract approval), document the 5 contract elements of `session_key` and prefix evidence (normalization, uniqueness scope, version, comparison rule, negative tests), the `session_key` wire field (adapter content-type + OUTER delivery), move the harness into versioned `test/benchmarks/`, evidence convention (commit, compat manifest, full spec, environment, summarizer version, artifact checksum) | Part of D15 | The harness can be re-run from the repository; D4 failure evidence re-acquired and preserved; base_model_id and kv_variant_id bound into the load/restore paths, and the 1-byte base tamper test **passes on both the cache-absent path and the tampered-sidecar path**; tampering with LoRA scale, mmproj, or control-vector is refused + entry-order-independence test passes; session_key round-trips with the same value OUTER→adapter→storage→post-restart Restore; reusing the same session_key with a different request_id succeeds; aliasing the same request_id with a different session_key is refused |
+| P0 | State **and receipt** namespace: `v2/<model_id>/<cut_id>/{sessions,receipts,tmp}`, identity check on overwrite, meta.json (binding saved_at, session_key, and digest) + a separate advisory ACCESS file + CONTROL epoch CAS | D3, D13, D17 | Concurrent Prepare/Commit/Reconcile across 4 cuts with the same `operation_id` succeeds; conflicting saves are refused; in crash tests at each step of gen-N bundle + MANIFEST CAS publish, only complete bundles are ever exposed; atomic session lease acquisition and epoch fencing work |
+| P1a | Behavior-free ledger: **observe** mapping, residency, and slot lifetime and detect invariant violations + new per-sequence backend position and used-cell telemetry | D12; for D5, only the measurement prerequisite (resolved in P3) | Per-node KV prediction before load = actual allocation ±1%; ledger and telemetry agree on every event |
+| P1b | Fix D4: stable reproduction → root cause → fix of the actual lifetime/native state | D4 | Stress C (40 requests, slot reuse) passes repeatedly |
+| P2 | `kv=1` round trip + **fault gate**. Prerequisite implementation: a durable staged bundle in PreparePersist, evidence-based judgement of `Committing` (replacing adapter Reconcile's collapse into Inconsistent), backend-neutral core fixes for the convergence table — the table is owned by [kv-state-store-convention.md](kv-state-store-convention.md). Fault gate: failure before, during, and after each stage's commit; exit after side effects complete but before finalize (= Committing recovery); reconciliation of partially committed + partially prepared state; explicit convergence after coordinator restart; 4 kinds of session contention (Persist↔Restore, Persist↔Discard, Restore↔GC, double Persist). Identity relaxation **matrix**: {n_batch, n_ubatch, n_seq_max, n_ctx_seq, kv_unified} × {K/V format, flash/v_trans} × {rebuild with the same compat, different revision} × {source backend × target backend} — only passing items are downgraded; the rest stay fail-closed | D2, D6, D14, D16, D18 | All fault gates pass (including each Committing point); 0 cross-corruption in session contention tests; restore succeeds after reload; matrix results documented |
+| P2.5 | Static n_ubatch calibration: fix the reference values for P5 measurement (automatic optimization is P7) | Part of D8 | Reference workload re-measured and recorded with the calibrated value |
+| P3 | L2 admission/occupancy: cell-aware admission + execution of snapshot commands (Persist / new `Checkpoint` / new `SnapshotList` / extended RestoreInto / Fork / Discard — the convention owns the vocabulary and semantics; all trigger policy belongs to OUTER) + Restore on re-request + LCP (including `TrimTo` 2PC) + separation of the three concurrency axes (max_resident/decode_parallelism — the axis contract is owned by [adapter-batching-layers.md](adapter-batching-layers.md)). **Requires the P2 fault gate to pass** | D5, D11 | Predicted worst-case cells are reserved in advance — multi-node uses reservation 2PC (owned by the convention: includes prepared accounting, local monotonic TTL reclaim, idempotent release); wait/reject on shortage; 0 over-admit (including prepared); 0 prefills started before all stages attest TrimTo on a branched prompt; 0 innocent-session failures under a heavy+short mix; improved TTFT distribution |
+| P4 | Extract the L3 strategy crate + golden replay of recorded traces | — | Replaying existing traces gives identical results |
+| P4.5 | Implement the fragment credit contract: `(generation, edge, sequence, stream_epoch, fragment)` identity, per-edge row and byte credit — `U_edge = min(producer, consumer)` negotiation, `B_edge` agreed per model and cut, load refused on mismatch — idempotent return, ordering and cancellation rules, queue and RSS caps | Prerequisite for D1 | Duplicate/timeout/cancellation fault tests pass; 0 credit leaks; credit exhaustion test passes; measured compliance with the long-prompt boundary memory cap |
+| P5 | Pipeline depth >1 (starting with continuous submission of prefill chunks). The snapshot consistency fence narrows from a full pipeline stop to **draining the target sequence** (the settlement evidence is not credit but a per-stage `SequenceQuiesced` attest — O9) | D1 | GPU util rises, mixed batches occur, ITL does not get worse, **boundary memory and queue depth caps are respected**; other sequences keep stepping while one sequence drains |
+| P6 | Merge the cut-set into a contiguous buffer, skip retransmission of passthrough tensors | D7 | Measured reduction in fixed per-step cost |
+| P7 | Chunked persist (D10), SWA V (D9), automatic n_ubatch optimization, 3-axis audit of DENIED families | D8~D10 | Per-family audit document + successful load |
 
-위 표의 옛 직렬 순서는 더 이상 실행 지시가 아니다. 현재 의존 관계와 U/P→새 단계 연결은
-[분산 배치 로드맵](distributed-batching-roadmap.md)이 단독 소유한다.
-GPU util 상승만으로 P5 완료, 특정 한 호스트의 전송 관측만으로 P6 병목 확정,
-신규 크레이트 생성만으로 P4 완료를 승인하지 않는다.
+The old serial order in the table above is no longer an execution directive. Current dependencies and the U/P→new phase mapping are
+owned solely by the [distributed batching roadmap](distributed-batching-roadmap.md).
+A rise in GPU util alone does not approve P5 completion, a transport observation on one particular host alone does not confirm a P6 bottleneck,
+and creating a new crate alone does not approve P4 completion.
 
-## 계약 보정 회차 (2026-08-31, 3차 리뷰)
+## Contract correction round (2026-08-31, 3rd review)
 
-3차 리뷰의 차단 결함 7건에 대한 처리 기록이다. "완료"는 이 저장소에서
-검증 가능한 것만 말한다; 코드 구현은 해당 단계의 통과 조건이지 완료
-주장이 아니다. **P-1 착수 가부는 차기 리뷰가 판정한다.**
+This is the record of how the 7 blocking defects from the 3rd review were handled. "Done" refers only to what can be
+verified in this repository; code implementation is the pass condition of the relevant phase, not a completion
+claim. **The next review decides whether P-1 may start.**
 
-| 차단 결함 | 계약(문서) | 구현(코드) |
+| Blocking defect | Contract (document) | Implementation (code) |
 | --- | --- | --- |
-| Committing 수렴 미정의 | 완료 — 규약 2PC 표에 연산×Committing 행과 증거 판정 추가 | P2 |
-| 세션 단위 직렬화 부재 | 완료 — 규약 "세션 샤드 직렬화"(lease/epoch fencing/generation CAS) | P0(lease)·P2(경합 시험) |
-| 레코드 번들 비원자 | 완료 — 규약 "레코드 번들과 원자성"(gen-N + MANIFEST CAS, 영수증 결속) | P0 |
-| LCP trim 장벽 부재 | 완료 — 규약 "LCP Trim 장벽"(TrimTo 2PC, 전 스테이지 attest) | P3 |
-| model_id 사이드카 우회 | 완료 — load마다 전체 재계산 기본, 검증된 manifest만 대체 허용, 양쪽 경로 부정 시험 | P-1 |
-| session namespace/version 불완전 | 완료 — `sk1:<owner>/<conversation>` 필수 형식, `sk-v1` 경로 성분, 부정 시험 목록 | P-1 |
-| lint 실효성 없음 | 완료 — 재귀·README 포함·소유 주장 검사·미색인 오류화, fixture 자체 시험, `package.json` 진입점, 저장소 추적 | — |
+| Committing convergence undefined | Done — added operation×Committing rows and evidence-based judgement to the convention's 2PC table | P2 |
+| No per-session serialization | Done — convention "session shard serialization" (lease/epoch fencing/generation CAS) | P0 (lease), P2 (contention tests) |
+| Non-atomic record bundle | Done — convention "record bundles and atomicity" (gen-N + MANIFEST CAS, receipt binding) | P0 |
+| No LCP trim barrier | Done — convention "LCP Trim barrier" (TrimTo 2PC, attest from all stages) | P3 |
+| model_id sidecar bypass | Done — full recomputation on every load by default, substitution allowed only from a verified manifest, negative tests on both paths | P-1 |
+| Incomplete session namespace/version | Done — mandatory `sk1:<owner>/<conversation>` format, `sk-v1` path component, list of negative tests | P-1 |
+| lint was ineffective | Done — recursive, covers README, checks ownership claims, unindexed files are errors, fixture self-test, `package.json` entry point, tracked in the repository | — |
 
-### 4차 리뷰 반영 (2026-08-31)
+### 4th review changes (2026-08-31)
 
-| 차단 결함 | 처리 |
+| Blocking defect | Handling |
 | --- | --- |
-| 재시작 후 all-Prepared rollback 불성립 (resident는 휘발) | 규약 2PC 표 개정 — 동일 epoch resident attest ×N일 때만 Abort; attest 실패+staged 유효 → roll-forward; 둘 다 없으면 Inconsistent |
-| epoch 권위 저장소 부재 | 규약 — 내구 `CONTROL {epoch, generation}` 신설, 모든 publish가 (expected_epoch, expected_generation) 결속 |
-| TrimTo 부분 커밋 미정의 | 규약 2PC 표에 TrimTo 행 — 부분 절단은 동일 position roll-forward(멱등); suffix 폐기 확정 후에만 발행되므로 전진만 안전 |
-| 불변 번들 vs last_access 충돌 | meta에서 제거, 조언적 `ACCESS` 파일 분리; 고아 gen은 증명 없이 노출 금지(격리/GC만) |
-| model 경로 16-hex 충돌 | 경로도 전체 64 hex, Windows 장경로 전제 명시 |
-| session key 문법 모순 | 512바이트=접두 포함 raw 전체, 첫 `/` 분할, 유니코드 정규화 없음(바이트 동일성), 공백-전용 금지, 부정 시험 일치화 |
+| all-Prepared rollback does not hold after restart (resident state is volatile) | Revised the convention's 2PC table — Abort only when there are ×N resident attests with the same epoch; attest failure + valid staged → roll-forward; if neither exists, Inconsistent |
+| No authoritative epoch store | Convention — new durable `CONTROL {epoch, generation}`; every publish binds (expected_epoch, expected_generation) |
+| TrimTo partial commit undefined | TrimTo row in the convention's 2PC table — a partial truncation is rolled forward to the same position (idempotent); since TrimTo is issued only after the suffix discard is final, only forward progress is safe |
+| Immutable bundle vs last_access conflict | Removed from meta and split out into an advisory `ACCESS` file; orphan gens must not be exposed without proof (quarantine/GC only) |
+| 16-hex collision in the model path | Paths also use the full 64 hex; the Windows long-path prerequisite is stated |
+| Contradictory session key grammar | 512 bytes = the entire raw value including the prefix, split at the first `/`, no Unicode normalization (byte identity), whitespace-only forbidden, negative tests aligned |
 
-게이트 주장 수위 정정: docs-lint는 문자열 canary이고 cargo test에 연결해
-강제하되 의미 재서술 검출은 리뷰 몫이다. R2 자체 위반 앵커 2건(`server.cpp`
-무심볼, KvReceiptState 정의 위치)을 정정했고 무심볼 앵커는 이제 lint가
-거부한다. 직전 커밋 d33c2671f의 `p4-256-optimization.md` 포함은 README
-색인 요구(미색인=오류)의 의도된 결과다. 동시성 세 축 계약(외부 피드백)을
-batching 문서에 추가했다. **P-1 착수 가부는 여전히 차기 리뷰가 판정한다.**
+Gate claim strength corrected: docs-lint is a string canary, enforced by wiring it into cargo test,
+but detecting semantic restatements is the review's job. We corrected 2 anchors that violated R2 themselves (`server.cpp`
+without a symbol, the location of the KvReceiptState definition), and lint now rejects
+symbol-less anchors. The inclusion of `p4-256-optimization.md` in the previous commit d33c2671f is the intended result of the README
+indexing requirement (unindexed = error). We added the three-axis concurrency contract (external feedback) to the
+batching document. **The next review still decides whether P-1 may start.**
 
-### 5차 리뷰 반영 (2026-08-31)
+### 5th review changes (2026-08-31)
 
-llama.cpp의 추상층(llama/ggml 인터페이스)과 구상 백엔드(CPU/CUDA/Metal)
-분리를 계획에 결속했다.
+We bound into the plan the separation between llama.cpp's abstraction layer (llama/ggml interfaces) and the concrete backends (CPU/CUDA/Metal).
 
-| 차단 결함 | 처리 |
+| Blocking defect | Handling |
 | --- | --- |
-| "값만 바뀐다" 과잉 주장 | 원칙 2를 두 층으로 분리 — 정책 계층만 값-독립, native compat은 매 pin rebase(5/24 충돌 관측). per-pin 게이트·큐 3분할은 U0 소유 |
-| stage server의 비공개 헤더 결합 | D20 등재, U0 ③(P4 소유 versioned stage ABI 뒤로 이동) |
-| HELLO 식별력 부족 | D21 등재, U0 ② 필드 목록 확정 |
-| 정체성 backend 축 부재 | 규약 레이아웃 정체성에 state_format·backend_family·compatibility_id 추가, P2 행렬에 소스×대상 backend 축 |
-| 동시성 소유권 오서술 | batching 문서 — 요청값(코디네이터)/물리 상한(스테이지별 min) 2층 분리, `n_seq_max`는 구성값의 echo임을 명시 |
-| 모델 게이트 2축 → 3축 | backend conformance 축 추가(CPU 매 pin 필수) |
-| CONTROL rename≠CAS | 규약 — `control.lock` exclusive-create 임계구역 + crash recovery 계약으로 교체 |
-| TrimTo family capability | 규약 — `trim_support = arbitrary\|bounded\|none` attest, 불가 시 전체 재프리필 강등(recurrent 실코드 앵커) |
-| quota GC shard-local 위험 | 규약 — 노출 레코드 삭제는 코디네이터 Discard 2PC만, 로컬 GC는 orphan 한정 |
-| 재현성 | "동작하는 것" 절을 과거 관측으로 재표기, compat 큐·manifest 추적 커밋, upstream pin 복구는 U0 수용 기준 |
-| lint의 untracked 오염 | 공식 모드를 `git ls-files` 추적 파일 기준으로 전환, `--all` 분리 |
+| "Only the values change" overclaim | Split Principle 2 into two layers — only the policy layer is value-independent; native compat is rebased on every pin (5/24 conflicts observed). The per-pin gate and the 3-way queue split are owned by U0 |
+| Stage server coupled to private headers | Registered D20; U0 ③ (move behind a P4-owned versioned stage ABI) |
+| HELLO lacks identifying power | Registered D21; finalized the U0 ② field list |
+| No backend axis in identity | Added state_format, backend_family, and compatibility_id to the convention's layout identity; source×target backend axis in the P2 matrix |
+| Misstated concurrency ownership | batching document — 2-layer split, requested value (coordinator) / physical cap (per-stage min); stated that `n_seq_max` is an echo of the configured value |
+| Model gate 2 axes → 3 axes | Added the backend conformance axis (CPU mandatory on every pin) |
+| CONTROL rename ≠ CAS | Convention — replaced with a `control.lock` exclusive-create critical section + crash recovery contract |
+| TrimTo family capability | Convention — `trim_support = arbitrary\|bounded\|none` attest; when unsupported, downgrade to a full re-prefill (recurrent real-code anchor) |
+| Shard-local risk in quota GC | Convention — exposed records are deleted only through coordinator Discard 2PC; local GC is limited to orphans |
+| Reproducibility | Relabeled the "what works" section as past observations, committed the tracking of the compat queue and manifest; restoring the upstream pin is a U0 acceptance criterion |
+| lint polluted by untracked files | Switched the official mode to files tracked by `git ls-files`; `--all` is separate |
 
-**P-1 완료 판정과 native 실측은 U0 통과 전 불가하다.** 차기 리뷰 판정
-대상이다.
+**A P-1 completion verdict and native measurements are impossible before U0 passes.** This is subject to the next review's
+verdict.
 
-### 6차 리뷰 반영 + 자체 감사 (2026-08-31)
+### 6th review changes + self-audit (2026-08-31)
 
-6차부터는 지적 반영과 함께 **전체 계획 논리성 자체 감사**를 회차 산출물로
-포함한다.
+From round 6 on, each round's deliverables include, alongside the fixes for review findings, a **self-audit of the logical soundness of the
+whole plan**.
 
-리뷰 5건:
+5 review findings:
 
-| 차단 결함 | 처리 |
+| Blocking defect | Handling |
 | --- | --- |
-| compat manifest EOL 종속 | **수정 완료** — `.gitattributes` + LF 재해시(21건), validate 통과, fixture 6/6. clean-checkout 이중 autocrlf fixture와 patch_set/patched_tree 재기록은 U0 ① 수용 기준 |
-| CONTROL 비교·publish 분리 경합 | 규약 — 비교와 publish를 같은 임계구역으로; lock 소유자 `{host_instance_id, boot_id, pid, operation_id}`; stale-break 늦은 writer 시험 P0 추가 |
-| U0 내용·기준 불일치 | U0 수용 기준을 7항목 전부로 확장(분류 강제·미분류 0·흡수 fix 검출·허용 범위·승격 기준·cross-backend 부정 시험) |
-| compatibility_id 과잉 고정 재도입 | 정체성 4분할 — build_id(참고) / state_abi_id(경로) / backend_layout_id(meta 대조) / 복원 행렬. cut_id는 build 출처 배제 |
-| "deterministic logits" 판정 불능 | 수치 동등성으로 교체 — NMSE·오차 한계·greedy 토큰열 기준, 같은-backend 왕복과 cross-backend 별도 기준 |
+| Compat manifest EOL dependency | **Fixed** — `.gitattributes` + LF rehash (21 items), validate passes, fixture 6/6. The clean-checkout dual-autocrlf fixture and re-recording of patch_set/patched_tree are U0 ① acceptance criteria |
+| Race from separated CONTROL compare and publish | Convention — compare and publish in the same critical section; lock owner `{host_instance_id, boot_id, pid, operation_id}`; added a P0 stale-break late-writer test |
+| U0 content vs criteria mismatch | Expanded U0 acceptance criteria to cover all 7 items (enforced classification, 0 unclassified, absorbed-fix detection, allowed scope, promotion criteria, cross-backend negative test) |
+| Over-pinned compatibility_id reintroduced | 4-way identity split — build_id (reference) / state_abi_id (path) / backend_layout_id (meta check) / restore matrix. cut_id excludes build provenance |
+| "deterministic logits" cannot be judged | Replaced with numerical equivalence — NMSE, error bounds, greedy token sequence criteria; separate criteria for same-backend round trips and cross-backend |
 
-정정: "dirty upstream이라 dry-run 자체 재현 불가"는 오류였다 — bump
-스크립트는 clean worktree를 만들며, 6차 회차에서 5/24 충돌(0010, 0013,
-0016, 0017, 0018)을 자체 재현했다.
+Correction: "the dry-run cannot be reproduced independently because upstream is dirty" was wrong — the bump
+script creates a clean worktree, and in round 6 we independently reproduced the 5/24 conflicts (0010, 0013,
+0016, 0017, 0018).
 
-자체 감사 발견(리뷰가 지적하지 않은 구멍):
+Self-audit findings (holes the review did not point out):
 
-| # | 구멍 | 처리 |
+| # | Hole | Handling |
 | --- | --- | --- |
-| a | 다중 샤드 연산의 lease 획득 순서 미정 → 교착 가능 | 규약 — stage_index 오름차순 전순서, 실패 시 전부 해제 |
-| b | `epoch` 용어 충돌(저장소 fencing vs P4.5 fragment) | store_epoch/stream_epoch로 분리 명명 |
-| c | U0 ② 필드가 4분할 정체성과 불일치(state_format 단일값) | U0 필드 목록을 build_id/state_abi_id/backend layout으로 갱신 |
-| d | model_id가 단일 GGUF 전제 — mmproj·LoRA 미포함 | 아티팩트 집합 digest로 확장, LoRA 집합 상이 = 다른 레코드 |
-| e | TrimTo 후 영속 레코드가 상주보다 앞설 수 있음 → 복원이 죽은 suffix 부활 위험 | Restore에 `복원→LCP 대조→TrimTo` 순서 강제 명문화 |
-| f | 코디네이터가 노드 로컬 ACCESS 파일을 읽을 수 없음 | victim 선정 입력은 와이어 텔레메트리로, ACCESS는 로컬 영속화로 역할 분리 |
-| g | cut_id 파생에 build 출처 혼입 가능성 | 레이아웃 정체성만으로 파생함을 명문화 |
-| h | 복원의 셀 선확보가 4노드 각각의 비동기 해제에 걸림 | P3 셀 예약을 전 노드 all-or-release로 명시(아래 P3 항목) |
-| i | recurrent 앵커가 저장소 커밋 형식 | upstream pin 형식으로 정정, R2에 규칙 추가 |
+| a | Lease acquisition order for multi-shard operations undefined → possible deadlock | Convention — total order by ascending stage_index; release everything on failure |
+| b | `epoch` term collision (store fencing vs P4.5 fragment) | Renamed separately as store_epoch/stream_epoch |
+| c | U0 ② fields inconsistent with the 4-way identity split (single state_format value) | Updated the U0 field list to build_id/state_abi_id/backend layout |
+| d | model_id assumes a single GGUF — mmproj and LoRA not included | Extended to an artifact-set digest; a different LoRA set = a different record |
+| e | After TrimTo, the persisted record can be ahead of the resident state → risk that restore revives a dead suffix | Stated explicitly that Restore enforces the order `restore→LCP check→TrimTo` |
+| f | The coordinator cannot read node-local ACCESS files | Split the roles: victim selection input comes from wire telemetry; ACCESS is for local persistence |
+| g | Build provenance may leak into cut_id derivation | Stated that cut_id is derived from layout identity only |
+| h | Restore's cell pre-acquisition depends on asynchronous release on each of the 4 nodes | Stated P3 cell reservation as all-or-release across all nodes (P3 item below) |
+| i | Recurrent anchor used the repository commit format | Corrected to the upstream pin format; added a rule to R2 |
 
-### 8차 리뷰 반영 + 저장 계층 방향 (2026-08-31)
+### 8th review changes + storage tier direction (2026-08-31)
 
-8차 판정: 승인 보류 — 정확성 차단점 3, 계약 불일치 2. O1~O8은 중복
-계산되지 않았다(등재 제도가 의도대로 동작).
+8th verdict: approval withheld — 3 correctness blockers, 2 contract mismatches. O1~O8 were not counted
+twice (the registration system worked as intended).
 
-| 판정 | 처리 |
+| Verdict | Handling |
 | --- | --- |
-| Checkpoint 논거 타당하나 동사 중복 지양 | `Snapshot{after_commit: KeepResident\|ReleaseResident}` 한 형상으로 수용 |
-| 무복사 분기는 조건부 | 3조건(동일 storage domain·호환 cut·전 스테이지 완료 후 절연) + read-pin(O10) 명문화 |
-| fragment credit은 정지점 증거가 아님 | 확인 — plan.md §3이 credit 반환을 "peer가 인수"로 정의. `SequenceQuiesced` attest로 교체, O9 등재 |
-| SnapshotList 키 교집합 부족(O8 등재 확인) | 교집합 단위를 논리 스냅샷 튜플로 정정 |
-| backend set 문면 모순(미닫힘 판정) | U0 ⑥ 양쪽 셀 통일 — {CPU 기준선, CUDA production}, CUDA 통과는 승격 조건 |
-| state ABI 게이트·예약 2PC 조건부 닫힘 | O3(fixture 실재)·O4(예약 수명+TTL 경합) 문구 확장으로 조건 등재 |
+| Checkpoint argument is valid, but avoid duplicate verbs | Accepted as a single shape, `Snapshot{after_commit: KeepResident\|ReleaseResident}` |
+| Zero-copy branching is conditional | Stated the 3 conditions (same storage domain, compatible cut, detached after all stages complete) + read-pin (O10) |
+| fragment credit is not quiescence-point evidence | Confirmed — plan.md §3 defines credit return as "the peer has taken it over". Replaced with a `SequenceQuiesced` attest; registered O9 |
+| SnapshotList key intersection is insufficient (O8 registration confirmed) | Corrected the intersection unit to the logical snapshot tuple |
+| Contradictory backend set wording (judged not closed) | Unified both cells of U0 ⑥ — {CPU baseline, CUDA production}; passing CUDA is a promotion condition |
+| State ABI gate and reservation 2PC conditionally closed | Registered the conditions by extending the wording of O3 (fixtures exist) and O4 (reservation lifetime + TTL race) |
 
-추가 방향 지시(저장 계층): 영속화 목적지는 디스크만이 아니다 —
-`tier = durable | ram | resident`를 규약에 신설했다. ram 계층은 과부하
-공정 스왑(일부 KV를 RAM으로 내리고 다른 요청 처리 후 재적재)을 위한
-휘발 계층으로, 크래시 수렴은 Absent(손상 아님), cross-pin ABI 부담 없음,
-호스트 바이트는 별도 수용 회계 축(O11). 스왑 정책은 전부 OUTER 명령이다.
+Additional direction (storage tier): the persistence destination is not only disk —
+we added `tier = durable | ram | resident` to the convention. The ram tier is a volatile tier for fair swapping under
+overload (offload part of the KV to RAM, serve other requests, then reload); its crash convergence is Absent (not corruption), it carries no cross-pin ABI burden, and
+host bytes form a separate admission accounting axis (O11). All swap policy is issued as OUTER commands.
 
-### 방향 확정: 스냅샷 명령 모델 (2026-08-31)
+### Direction set: snapshot command model (2026-08-31)
 
-영속화 트리거를 TTL로 좁혔던 것을 정정했다. 분기 워크로드(기존 KV를
-영속화·복사해 새 세션으로 트리 분기)가 일상 연산이므로, 어댑터는 명령
-어휘(Persist/Checkpoint/SnapshotList/RestoreInto/Fork/Discard/Unload)의
-이행만 소유하고 **모든 트리거 정책은 OUTER**가 소유한다. 이 과정에서
-기존 계약과의 실제 충돌 하나를 확인했다: `CacheAction::Persist`의
-"한 동사" 논증은 상주를 유지하는 족적(Checkpoint) 용례를 보지 못했다.
-`Fork {into}`는 계약이 이미 분기를 예견한 부분이다. 상세는 규약의
-"스냅샷 명령 모델" 절이 소유한다.
+We corrected the earlier narrowing of the persistence trigger to TTL. Branching workloads (persisting and copying existing KV
+to branch the tree into a new session) are routine operations, so the adapter owns only the execution of the command
+vocabulary (Persist/Checkpoint/SnapshotList/RestoreInto/Fork/Discard/Unload), and **all trigger policy is owned by
+OUTER**. In the process we found one real conflict with an existing contract: the "one verb" argument for
+`CacheAction::Persist` did not account for the use case of taking a footprint while keeping the resident state (Checkpoint).
+`Fork {into}` is where the contract had already anticipated branching. The convention's
+"snapshot command model" section owns the details.
 
-### 7차 리뷰 반영 + 자체 감사 (2026-08-31)
+### 7th review changes + self-audit (2026-08-31)
 
-EOL 수리는 승인되었고, 리뷰가 clean pin 직접 적용으로 aggregate
-(patch_set_sha256·patched_tree) 일치까지 외부 검증했다.
+The EOL repair was approved, and the review externally verified, by applying the queue directly to a clean pin, that the aggregate
+(patch_set_sha256, patched_tree) matches.
 
-리뷰 6건:
+6 review findings:
 
-| 차단 결함 | 처리 |
+| Blocking defect | Handling |
 | --- | --- |
-| state_abi_id가 upstream 상태 형식 변화를 못 봄 | 규약 — manifest 소유·수동 입력 금지, 매 pin 상태 호환 게이트(N-1→N 계열별 복원, 바이트·position·logits 비교, 실패 시 증가 강제) |
-| stale 판정 권위 부재 | 규약 — lock_token·release token 대조, 권위는 토폴로지가 결정(신설 kv_root 토폴로지 절), 불확실 시 자동 break 금지 |
-| model_id 불완전 + plan-규약 R1 불일치 | base_model_id × kv_variant_id 분리(role·scale·range 정규 인코딩), P-1 정합화, lint에 정의 소유 needle 추가 |
-| Restore→LCP 역순(자체 감사 e의 방향 오류) | 판정 사다리로 교체 — import 전 tokens.bin LCP, trim 불가 시 Restore 생략. 역순 문구는 폐기 목록 등재 |
-| all-or-release 비분산 | 예약 2PC 신설(prepared 회계·로컬 단조 TTL·멱등·Reconcile·장애 시험) |
-| production backend CUDA 고정 | required_backend_set 선언 기준으로 일반화, 현행 target은 CUDA 한정 명시 |
+| state_abi_id does not see upstream state format changes | Convention — owned by the manifest, no manual entry, a per-pin state compatibility gate (per-family N-1→N restore, comparison of bytes, positions, and logits; a mandatory increment on failure) |
+| No authority for stale judgement | Convention — compare lock_token and release token; topology decides the authority (new kv_root topology section); no automatic break when uncertain |
+| Incomplete model_id + plan-convention R1 mismatch | Split into base_model_id × kv_variant_id (canonical encoding of role, scale, range), aligned P-1, added definition-ownership needles to lint |
+| Reversed Restore→LCP order (direction error in self-audit item e) | Replaced with a decision ladder — LCP on tokens.bin before import; skip Restore when trim is impossible. The reversed wording is added to the discarded-phrase list |
+| all-or-release is not distributed | New reservation 2PC (prepared accounting, local monotonic TTL, idempotency, Reconcile, failure tests) |
+| production backend pinned to CUDA | Generalized to the required_backend_set declaration; stated that the current target is CUDA only |
 
-자체 감사 재판정 수용: 완료 2(b, c) / 부분 6(a, d, f, g, h, i) / 방향
-오류 1(e — 이번 회차에 정정). 부분 항목 중 d·h는 위 리뷰 항목으로 승격
-처리됐다.
+We accept the self-audit re-verdict: done 2 (b, c) / partial 6 (a, d, f, g, h, i) / direction
+error 1 (e — corrected in this round). Of the partial items, d and h were promoted to the review items above
+and handled there.
 
-신규 자체 감사(리뷰 미지적):
+New self-audit (not pointed out by the review):
 
-| # | 구멍 | 처리 |
+| # | Hole | Handling |
 | --- | --- | --- |
-| α | 상태 호환 게이트를 실서비스 모델로 돌리면 pin마다 비용 폭발 | 소형 fixture 모델 + 계열별 골든 상태를 저장소 시험 자산으로 명시 |
-| β | 예약 TTL을 절대 시각으로 두면 시계 편차 문제 재도입 | 수신 시점 기준 로컬 단조 시계로 정의 |
-| γ | e-역순 충돌의 근본 원인은 실행 흐름의 문서 간 중복 | batching의 Persist/Restore 흐름 블록 제거(링크만) — 중복 클래스 자체 소거 |
-| δ | 잠금에 완전성을 요구하는 계층 오류 | liveness(잠금)/safety(store_epoch) 분리 원칙 명문화; 상호배제 불성립 배포는 로드 거부 |
-| ε | prepared 예약이 회계에 안 보이면 over-admit 재발 | 텔레메트리 reserved_cells 필드 추가 |
-| ζ | kv_root가 공유인지 노드 로컬인지 미정 — 잠금 계약 전체가 조건부였음 | 토폴로지 축 신설: 기본=노드 전용 로컬(권위 문제 소거), 공유 볼륨은 storage capability gate + membership 권위 필수 |
+| α | Running the state compatibility gate on production service models makes the per-pin cost explode | Specified small fixture models + per-family golden states as repository test assets |
+| β | Defining reservation TTL in absolute time reintroduces the clock skew problem | Defined on a local monotonic clock, measured from the time of receipt |
+| γ | The root cause of the reversed-e conflict is cross-document duplication of the execution flow | Removed the Persist/Restore flow block from the batching document (link only) — eliminates the duplication class itself |
+| δ | Layering error of demanding completeness from locks | Stated the principle that separates liveness (locks) from safety (store_epoch); a deployment where mutual exclusion does not hold is refused at load |
+| ε | If prepared reservations are invisible to accounting, over-admit recurs | Added a reserved_cells telemetry field |
+| ζ | Undecided whether kv_root is shared or node-local — the entire lock contract was conditional | New topology axis: default = node-dedicated local (eliminates the authority problem); a shared volume requires a storage capability gate + membership authority |
 
-U0 ②·③의 **각 일부**가 2026-09-01에 성립했다. 완료로 읽어서는 안 되며, 정확한
-분해는 다음이다.
+**Parts** of U0 ② and ③ came to hold on 2026-09-01. They must not be read as done; the exact
+breakdown is as follows.
 
-| 조각 | 상태 | 근거 |
+| Piece | Status | Basis |
 | --- | --- | --- |
-| ③a `src/llama-ext.h` 격리 | 성립 | `p4_llama_compat`만 llama `src/`를 include path에 갖고, 두 번째 침범은 C1083으로 빌드 실패(주입해 확인) |
-| ③b llama.cpp `common/` 격리 | **중간 게이트 통과, 완료 아님** | **헤더 0**(2026-09-02) — 계획·체크포인트·sampler·speculative·seq-rm·MTP 브링업을 모두 P4 소유 핸들과 연산 뒤로 옮겼고, 헤더가 `common/`을 포함하면 게이트가 **실패**한다(주입해 확인). **구현 5개가 남아 있다**(2026-09-03 실측) — 요청 옵션 파싱 2, 시험 3. 플랜 파싱 4는 닫혔다: 파서 호출이 `LlamaPlan::parse_arguments()`로 들어가면서 `server/plan.cpp`가 `common/`에서 완전히 떨어졌다. upstream의 `llama-common`이 자기 디렉터리를 PUBLIC으로 내보내므로 그 라이브러리를 호출하는 파일이 링크하는 한 include 경로도 따라온다: **include와 link는 마지막 호출이 facade로 옮겨갈 때 함께 끝난다.** 현재 runtime 타깃이 여전히 `llama-common`을 링크하므로 경계는 닫히지 않았다 |
-| ② 빌드 신원 | **부분** | `upstream_commit`·`patch_set`·`backend_inventory` 셋이 prepare의 트리 스탬프와 ggml 런타임 레지스트리에서 HELLO → 어댑터 텔레메트리 → OUTER까지 실값으로 왕복한다(3090×2 실행이 `CPU[CPU]|CUDA[CUDA0]` 전체를 보고). `agree()`는 어댑터 크레이트에 있고 `unknown`을 fail-closed로 거부하지만, **실제 호출자는 event-drive 하나뿐이라 제품 로드 경로가 규칙을 강제하지는 않는다** — 파이프라인 전체를 모으는 코디네이터 API가 이 저장소에 없다. `stage_abi_id`·`state_abi_id`·`trim_support`도 없고, 따라서 합성 `build_id`도 만들지 않았다 |
+| ③a `src/llama-ext.h` isolation | Holds | Only `p4_llama_compat` has llama `src/` on its include path, and a second intrusion fails the build with C1083 (confirmed by injection) |
+| ③b llama.cpp `common/` isolation | **Intermediate gate passed, not done** | **0 headers** (2026-09-02) — planning, checkpoints, sampler, speculative, seq-rm, and MTP bring-up all moved behind P4-owned handles and operations, and the gate **fails** if a header includes `common/` (confirmed by injection). **5 implementation files remain** (measured 2026-09-03) — 2 for request option parsing, 3 tests. The 4 plan-parsing items are closed: once the parser call moved into `LlamaPlan::parse_arguments()`, `server/plan.cpp` was fully decoupled from `common/`. Because upstream's `llama-common` exports its own directory as PUBLIC, the include path comes along for as long as a file that calls that library links it: **include and link end together when the last call moves to the facade.** The runtime target still links `llama-common`, so the boundary is not closed |
+| ② Build identity | **Partial** | The three values `upstream_commit`, `patch_set`, and `backend_inventory` round-trip as real values from prepare's tree stamp and the ggml runtime registry through HELLO → adapter telemetry → OUTER (the 3090×2 run reports the full `CPU[CPU]|CUDA[CUDA0]`). `agree()` lives in the adapter crate and rejects `unknown` fail-closed, but **its only real caller is event-drive, so the product load path does not enforce the rule** — this repository has no coordinator API that assembles the whole pipeline. `stage_abi_id`, `state_abi_id`, and `trim_support` are also absent, so no composite `build_id` was created either |
 
-**정정 (2026-09-02)**: 이 문서는 앞서 실행이 `CUDA[CUDA0]` 하나만 보고한 것을
-"각 스테이지가 `CUDA_VISIBLE_DEVICES`로 장치 하나만 보기 때문"이라고 설명했다.
-**틀렸다.** 스테이지 서버는 `CUDA[CUDA0];CPU[CPU]`를 보냈고, 값 안의 `;`가
-capability 문자열의 필드 구분자와 충돌해 어댑터가 첫 `;`에서 잘랐다 — CPU
-레지스트리는 이름 없는 필드가 되어 사라졌다. 산출물을 읽지 않고 기대에서
-설명을 지어낸 것이고, 그 설명이 실제 결함을 가렸다.
+**Correction (2026-09-02)**: This document previously explained that the run reported only `CUDA[CUDA0]`
+"because each stage sees only one device via `CUDA_VISIBLE_DEVICES`."
+**That was wrong.** The stage server sent `CUDA[CUDA0];CPU[CPU]`, and the `;` inside the value
+collided with the field separator of the capability string, so the adapter cut the value at the first `;` — the CPU
+registry became an unnamed field and disappeared. We made up the explanation from expectations without reading the artifact,
+and that explanation hid a real defect.
 
-교정: 값은 `|`로 구분하고 모든 이름을 percent 이스케이프하며 레지스트리를
-정렬한다(플러그인 로드 순서가 다른 값이 되지 않도록). 그리고 **실제 HELLO
-문자열을 파서에 통과시키는 왕복 시험 4건**을 넣었다 — 기존 부정 시험은
-`BuildIdentity`를 손으로 만들어 비교했으므로 이 경로를 전혀 시험하지 않았다.
-옛 인코딩을 주입하면 그 시험이 `CUDA[CUDA0]`으로 잘린 값을 잡는다(확인).
+Fix: values are separated by `|`, all names are percent-escaped, and registries are
+sorted (so that a different plugin load order does not yield a different value). We also added **4 round-trip tests that pass the actual HELLO
+string through the parser** — the existing negative tests built `BuildIdentity`
+by hand and compared it, so they never exercised this path at all.
+With the old encoding injected, the test catches the value truncated to `CUDA[CUDA0]` (confirmed).
 
-**이름도 정정한다: `backend_inventory`.** 이 함수는 프로세스에 등록된 backend와
-device를 열거할 뿐, 모델 텐서·KV·compute buffer가 실제로 어디에 놓였는지는
-보지 않는다. 전부 CUDA에 놓인 실행과 host buffer로 광범위하게 폴백한 실행이
-같은 값을 낸다. 영속 상태 호환성에 결속할 값은 **placement에서 취한 별도의
-`execution_layout_id`**여야 하며, 그것은 아직 없다.
+**The name is corrected too: `backend_inventory`.** This function only enumerates the backends and
+devices registered in the process; it does not look at where model tensors, KV, and compute buffers were actually placed.
+A run placed entirely on CUDA and a run that fell back broadly to host buffers
+produce the same value. The value bound to persistent state compatibility must be **a separate
+`execution_layout_id` taken from placement**, and it does not exist yet.
 
-각 스테이지가 장치 하나만 보는 것은 사실이지만, 그것은 물리 GPU를 구분하지
-못한다는 별개의 한계다 — 실행 증거의 placement와 GPU UUID가 따로 기록한다.
+It is true that each stage sees only one device, but that is a separate limitation: it cannot distinguish
+physical GPUs — the execution evidence records placement and GPU UUIDs separately.
 
 
-**아직 강제되지 않는 것**: `agree()`가 어댑터에 있다는 것과 제품이 그것을 부른다는 것은
-다르다. 지금 이 규칙을 부르는 비시험 호출자는 `tools/event-drive` 하나이고, 어댑터의 LOAD
-수신 경로는 자기 스테이지의 신원을 텔레메트리에 실어 보낼 뿐 파이프라인을 모으지 않는다.
-제품 OUTER가 이 API를 부르지 않아도 컴파일되고 실행되므로 계약이 구조적으로 강제되지
-않는다. 닫으려면 **식별을 통과한 타입만 추론 단계로 넘어갈 수 있게** 하거나, OUTER가
-선언한 기대 신원을 LOAD가 실어 보내 각 스테이지가 자기 것을 대조하게 해야 한다 —
-둘 다 계약 결정이라 구현 전에 정해야 한다.
+**Not yet enforced**: `agree()` being in the adapter is not the same as the product calling it.
+Right now the only non-test caller of this rule is `tools/event-drive`, and the adapter's LOAD
+receive path only puts its own stage's identity into telemetry; it does not assemble the pipeline.
+The product OUTER compiles and runs without calling this API, so the contract is not structurally
+enforced. Closing this requires either **allowing only types that passed identification to proceed to the inference phase**, or having LOAD
+carry the expected identity declared by OUTER so that each stage checks its own —
+both are contract decisions and must be settled before implementation.
 
-### 2026-09-10 fleet용 physical wire 호환 계약
+### 2026-09-10 physical wire compatibility contract for the fleet
 
-사용자의 CUDA·Metal 장비 통합 지시에 따른 별도 구현 후보다. 기존 `agree()`와
-`exact-build` 기본값은 backend/device inventory가 다르면 계속 거부한다.
-`physical-wire-v4`를 명시한 OUTER만 다음 전부를 확인하고 SESSION/추론으로 진행한다.
+This is a separate implementation candidate, following the user's directive to integrate CUDA and Metal machines. The existing `agree()` and the
+`exact-build` default still refuse when backend/device inventories differ.
+Only an OUTER that explicitly specifies `physical-wire-v4` checks all of the following and then proceeds to SESSION/inference.
 
-- 모든 stage의 upstream·patch-set이 같고 식별돼 있어야 한다.
-- native는 `p4pb4le64` codec 소스 SHA256과 실제 ggml type/block/byte 크기를 HELLO에 싣는다.
-  native source fingerprint는 checkout 경로·CRLF와 무관하며 native production 소스 및 CMake를 포함한다.
-  little-endian·64-bit·IEEE754 float32·32-bit token/position/sequence 표현이 아니면 `unknown`이다.
-- 어댑터는 그 값을 LOADED로 그대로 전달한다. OUTER는 형식·소스·표현이 같은지 확인하고,
-  unknown/missing/다른 pin·patch·codec·표현은 backend가 같아도 거부한다. unidentified 허용 옵션도 이 조건을 우회하지 못한다.
-- backend inventory를 숨기거나 통합 문자열로 위조하지 않는다. 산출물 `stage_builds`는
-  topology 순서대로 agent/node/generation과 각 identity를 보존한다. 기존 `build`는 head의 호환 필드다.
+- Upstream and patch-set must be identical and identified across all stages.
+- native puts the `p4pb4le64` codec source SHA256 and the actual ggml type/block/byte sizes into HELLO.
+  The native source fingerprint is independent of checkout path and CRLF, and covers the native production sources and CMake.
+  Anything other than a little-endian, 64-bit, IEEE754 float32, 32-bit token/position/sequence representation is `unknown`.
+- The adapter forwards those values unchanged in LOADED. OUTER checks that format, source, and representation match,
+  and refuses unknown/missing values or a different pin, patch, codec, or representation even when the backend is the same. The option that allows unidentified builds cannot bypass this condition either.
+- The backend inventory is neither hidden nor forged into a merged string. The `stage_builds` artifact preserves
+  agent/node/generation and each identity in topology order. The existing `build` is the head's compatibility field.
 
-이 계약은 물리 capsule v4의 tensor 전달에 한정한다. 원장·제어 승인·정산·KV 소유권은 바꾸지 않으며
-KV snapshot 이종 backend 이식, 수치 비트 동일성, 임의 plugin의 정당성 또는 source 인증을 보장하지 않는다.
-raw ggml type 값은 동일 pin/patch와 runtime type 표에 결속한다. CUDA/Metal 상호 운용은
-실제 모델 소비 경로·부정 시험·독립 변이 및 실행 증거가 통과할 때만 해당 조합으로 승인한다.
-현재 집합 비교의 강제 위치는 event-drive OUTER다. 임의 외부 제품 호출자의 LOAD 강제나
-인증된 fleet coordinator가 구현됐다고 주장하지 않는다. 최신 검증 상태는 로드맵 §0과 fleet 증거를 따른다.
+This contract is limited to tensor transfer in physical capsule v4. It does not change the ledger, control approval, settlement, or KV ownership, and
+it does not guarantee KV snapshot portability across heterogeneous backends, numerical bit-identity, legitimacy of arbitrary plugins, or source authentication.
+Raw ggml type values are bound to the same pin/patch and the runtime type table. CUDA/Metal interoperation is
+approved for a given combination only when the actual model consumption path, negative tests, independent mutation, and execution evidence all pass.
+The current enforcement point for the set comparison is the event-drive OUTER. We do not claim LOAD enforcement for arbitrary external product callers, nor
+that an authenticated fleet coordinator has been implemented. For the latest verification status, follow roadmap §0 and the fleet evidence.
 
-**③b 잔여 9건의 실제 분류** (2026-09-02, 파일 단위 재확인): 앞서 이 문서는 아홉 건을
-"모두 CLI·옵션 문법이라 계약 결정이 먼저"라고 묶었다. **틀렸다.** 실제로는:
+**Actual classification of the 9 remaining ③b items** (2026-09-02, rechecked file by file): This document previously lumped all nine
+together as "all CLI/option grammar, so a contract decision comes first." **That was wrong.** In reality:
 
-| 파일 | 무엇을 쓰는가 | 옮기는 데 계약이 필요한가 |
+| File | What it uses | Does moving it need a contract? |
 | --- | --- | --- |
-| `server/plan.cpp` | `common_params_parse`·`common_args`·`common_speculative_type` | 예 — llama.cpp CLI 문법 자체 |
-| `runtime/request_options.cpp` | `common_sampler_types_from_*`·옵션 필드 | 예 — 요청 옵션 문법 |
-| `runtime/request_options_grammar.cpp` | `common_grammar_trigger` | 예 — 문법 트리거 표현 |
-| `runtime/request_stops.cpp` | `string_find_partial_stop` | **아니다** — 단순 헬퍼, 감싸면 끝 |
-| 시험 5건 | 파서 결과를 직접 확인 | 아니다 — facade 관측값으로 바꾸면 된다 |
+| `server/plan.cpp` | `common_params_parse`, `common_args`, `common_speculative_type` | Yes — the llama.cpp CLI grammar itself |
+| `runtime/request_options.cpp` | `common_sampler_types_from_*`, option fields | Yes — request option grammar |
+| `runtime/request_options_grammar.cpp` | `common_grammar_trigger` | Yes — grammar trigger representation |
+| `runtime/request_stops.cpp` | `string_find_partial_stop` | **No** — a simple helper; wrapping it is enough |
+| 5 tests | Check parser results directly | No — switching them to facade-observed values is enough |
 
-즉 계약이 걸린 것은 **운영 3건**뿐이고, 나머지 6건은 지금도 옮길 수 있다. 그리고
-`plan.cpp`가 아직 `common_speculative_type`·`has_dft()`를 직접 읽으므로 **"sampler·
-speculative API 변화가 compat.cpp 한 곳에서 멈춘다"는 아직 사실이 아니다** — 런타임에
-대해서는 참이고 플랜 파싱에 대해서는 거짓이다.
+So only **3 operational items** depend on a contract, and the other 6 can be moved now. And since
+`plan.cpp` still reads `common_speculative_type` and `has_dft()` directly, **"sampler/
+speculative API changes stop at compat.cpp alone" is not yet true** — it is true for the runtime
+and false for plan parsing.
 
-**③c 그 표를 실행해 본 결과** (2026-09-03): 위 표에서 "지금도 옮길 수 있다"고 센 6건
-중 **4건만 실제로 옮겨졌다** — `request_stops.cpp`, `capability_test.cpp`,
-`plan_invariants_test.cpp`, 그리고 표가 "계약 필요"로 분류했던 `server/plan.cpp`.
-표의 예측이 양쪽 모두 틀렸으므로 그대로 적는다.
+**③c Result of actually executing that table** (2026-09-03): Of the 6 items the table above counted as "can be moved now",
+**only 4 were actually moved** — `request_stops.cpp`, `capability_test.cpp`,
+`plan_invariants_test.cpp`, and `server/plan.cpp`, which the table had classified as "needs a contract".
+The table's predictions were wrong in both directions, so we record them as they are.
 
-* `plan.cpp`는 계약이 필요 없었다. 필요한 것은 파서 *문법*이 아니라 파서 *호출 위치*를
-  옮기는 것이었고, `LlamaPlan::parse_arguments()`가 그 호출을 가져가자 남은 것은 술어
-  네 개뿐이었다. 문법은 여전히 llama.cpp의 것이다 — 바뀐 것은 누가 그것을 부르느냐다.
-  `common_speculative_type`을 직접 읽던 마지막 지점이 사라졌으므로, 이제 **"sampler·
-  speculative API 변화가 compat.cpp 한 곳에서 멈춘다"가 플랜 파싱에 대해서도 참이다.**
-* 시험 5건 중 3건은 정직하게 옮길 수 없다. `request_options_test.cpp`는 sampling 필드
-  27개를 확인하는데, 옮기면 그 27개를 facade에 그대로 복제해야 한다 — 경계가 아니라
-  거울이다. `compile_test.cpp`·`mtp_ownership_test.cpp`는 파서가 있는
-  `p4_staged_server_core`에 링크하지 않고 `p4_staged_llama_runtime`만 링크한다. 시험을
-  통과시키려고 그 링크를 추가하는 것은 계층을 거꾸로 세우는 일이다.
+* `plan.cpp` did not need a contract. What had to move was not the parser *grammar* but the parser *call site*,
+  and once `LlamaPlan::parse_arguments()` took over that call, only four predicates
+  remained. The grammar is still llama.cpp's — what changed is who calls it.
+  The last place that read `common_speculative_type` directly is gone, so now **"sampler/
+  speculative API changes stop at compat.cpp alone" is true for plan parsing as well.**
+* 3 of the 5 tests cannot honestly be moved. `request_options_test.cpp` checks 27 sampling
+  fields, and moving it would mean duplicating those 27 fields in the facade — a mirror, not a
+  boundary. `compile_test.cpp` and `mtp_ownership_test.cpp` do not link `p4_staged_server_core`, which holds the
+  parser; they link only `p4_staged_llama_runtime`. Adding that link just to make the tests
+  pass would build the layering upside down.
 
-측정된 잔여 부채는 헤더 0 / 소스 5이며, 그중 **운영 파일은 요청 옵션 문법 2건**
-(`request_options.cpp`, `request_options_grammar.cpp`)뿐이다. 나머지 3건은 위의 시험이다.
+The measured remaining debt is 0 headers / 5 sources, and of those **the only operational files are the 2 request option grammar files**
+(`request_options.cpp`, `request_options_grammar.cpp`). The other 3 are the tests above.
 
-경계도 llama.cpp CLI 전체를 복제하는 것이 아니다. 최소 추종 비용의 형태는 P4 소유
-typed plan/request 계약을 두고, `common_params_parse`와 sampler·grammar 변환을 compat
-타깃 안에 두며, 시험이 raw `common_params` 대신 facade 관측값을 검증하는 것이다.
-
-
-핸들이 소유권만이 아니라 연산도 가져갔으므로, sampler·speculative API 변경은
-이제 `p4_llama_compat.cpp` 한 곳에서 멈춘다. draft 배치 의미를 한 번 깨뜨렸다가
-되돌린 것이 이 이동의 실제 위험을 보여 준다 — upstream은 설정된 모든 시퀀스를
-한 배치로 draft하는데, 시퀀스별 `draft()`로 바꾸면 다른 계산이 된다. facade는
-`configure_draft`와 `run_draft`를 나눠 그 구분을 타입으로 남긴다.
-
-조사 자체도 한 번 반증됐다. `common_*` 접두만 세었더니 `string_find_partial_stop`
-같은 심볼을 놓쳤고, include를 지우자 컴파일러가 그것을 알려 주었다. 편의
-라이브러리의 표면은 접두사로 정의되지 않는다.
-
-| ③c P4 소유 versioned stage ABI | 미착수 | — |
-| ② `patch_set` 왕복 | 성립 | prepare 스탬프 → CMake → HELLO → loaded 텔레메트리 → OUTER, 실행 산출물에 기록 |
-| ② 스테이지 불일치 거부 | 성립 | 상이 patch-set 거부 + 빌드를 못 대는 스테이지 거부(fail-closed, 명시 환경변수로만 우회) |
-| ② `stage_abi_id`·`state_abi_id`·backend layout·`trim_support` | 미착수 | 따라서 합성 `build_id`도 만들지 않았다 — 입력이 갖춰지기 전의 합성 식별자는 구분하지 못하는 것을 구분한다고 주장하게 된다 |
-
-같은 pin으로 빌드된 CPU/CUDA는 현재 `patch_set`이 같으므로 **동일 빌드로 취급된다**.
-backend·plugin·device·buffer layout 축이 HELLO에 없기 때문이며, 이는 ②의 남은
-부분이 닫히기 전까지 유효한 구멍이다.
+The boundary is also not a replica of the whole llama.cpp CLI. The minimal tracking-cost shape is a P4-owned
+typed plan/request contract, with `common_params_parse` and the sampler/grammar conversions kept inside the compat
+target, and tests that verify facade-observed values instead of raw `common_params`.
 
 
-**U0·P-1 완료는 여전히 주장하지 않는다.** 병행 가능 범위는 session_key
-wire·하네스 이관이며, base×variant 구현은 이 계약의 리뷰 승인 후다.
+Because the handles took over not only ownership but also operations, sampler and speculative API changes
+now stop at `p4_llama_compat.cpp` alone. Breaking draft batch semantics once and then
+reverting shows the real risk of this move — upstream drafts all configured sequences
+in one batch, and switching to per-sequence `draft()` computes something different. The facade
+splits `configure_draft` from `run_draft` so that the distinction stays in the types.
 
-session_key wire의 현재 실증 범위는 **OUTER→어댑터 편도**다. 3090×2 원격
-4노드 실행에서 하네스가 발급한 키와 어댑터가 admission 시점에 보유한 키가
-같음을 어댑터 자신의 트레이스로 대조했고, 같은 request_id가 다른 키로
-재등장하면 admission이 거부한다. **저장·재시작 Restore 구간은 아직 없다** —
-그 왕복은 상태 네임스페이스(P0)와 스냅샷 명령(P3)이 생긴 뒤에야 성립하며,
-P-1 인수 기준의 나머지 절반은 그때까지 미충족으로 남는다.
+The investigation itself was also disproved once. Counting only the `common_*` prefix missed symbols such as
+`string_find_partial_stop`, and removing the include made the compiler point them out. The surface of a convenience
+library is not defined by a prefix.
+
+| ③c P4-owned versioned stage ABI | Not started | — |
+| ② `patch_set` round trip | Holds | prepare stamp → CMake → HELLO → loaded telemetry → OUTER, recorded in run artifacts |
+| ② Refusal on stage mismatch | Holds | Refuses differing patch-sets + refuses stages that cannot report their build (fail-closed; bypass only via an explicit environment variable) |
+| ② `stage_abi_id`, `state_abi_id`, backend layout, `trim_support` | Not started | So no composite `build_id` was created either — a composite identifier built before its inputs exist would claim to distinguish what it cannot distinguish |
+
+CPU and CUDA builds from the same pin currently have the same `patch_set`, so **they are treated as the same build**.
+That is because the backend, plugin, device, and buffer layout axes are not in HELLO, and this hole remains open until the rest of
+② is closed.
+
+
+**We still do not claim U0 or P-1 completion.** The scope that can proceed in parallel is the session_key
+wire and the harness migration; the base×variant implementation comes after review approval of this contract.
+
+The currently demonstrated scope of the session_key wire is **OUTER→adapter, one way**. In a 3090×2 remote
+4-node run, we used the adapter's own trace to check that the key issued by the harness and the key the adapter held at admission time
+were the same, and admission refuses when the same request_id reappears with a different key.
+**The storage and post-restart Restore leg does not exist yet** —
+that round trip can hold only after the state namespace (P0) and snapshot commands (P3) exist, and
+the other half of the P-1 acceptance criteria stays unmet until then.
 
 ## known open surface
 
-다음 리뷰가 지적할 것으로 스스로 예상하는 미해결 표면이다. 여기 등재된
-항목의 지적은 "새 발견"이 아니라 "등재 확인"으로 판정한다.
+These are the unresolved surfaces we ourselves expect the next review to point out. A finding on an item registered
+here is judged as "registration confirmed", not "new discovery".
 
-| # | 표면 | 예정 소유 |
+| # | Surface | Planned owner |
 | --- | --- | --- |
-| O1 | 텔레메트리 채널 자체의 계약 부재 — reserved_cells·last_access·세션 점유를 어느 이벤트로, 어떤 주기·순서 보장으로 나르는지 | P1a |
-| O2 | U0 ③의 stage ABI가 "제거하라"뿐 — P4 소유 versioned ABI의 실제 표면(함수·타입) 미정의 | U0 설계 산출물 |
-| O3 | 상태 게이트 fixture의 계열 커버리지 — kv_cache/iswa/hybrid/recurrent 각각의 소형 골든 모델 실재 미확인 | P2 준비 |
-| O4 | 예약 2PC와 세션 lease의 관계 — 예약이 lease를 전제하는지, 두 조율 계층의 획득 순서, 예약 수명 `Prepared→Committed→Consumed/Released`와 TTL 만료·Commit 경합의 승자 규칙 | P0 |
-| O5 | ~~session_key wire 확장이 정말 어댑터 content-type 안에서 끝나는지~~ — 해소: 필드는 어댑터의 `InferenceCommand` 안에서만 살고 P4 프로토콜은 불변, 4노드 원격 실행이 OUTER가 발급한 값과 어댑터가 보유한 값의 동일성을 증명 | P-1 |
-| O6 | `Snapshot{after_commit}`·`SnapshotList`·RestoreInto의 계약 문면 — 방향은 확정(스냅샷 명령 모델), p4-adapter 동사의 정확한 시그니처·2PC 결합·**Fork와 snapshot key의 immutable-ID/mutable-ref 선택** 미작성 | P-1 계약, P3 구현 |
-| O7 | resident 계층 체크포인트(tier)의 capability 협상 | P7 |
-| O8 | 코디네이터의 스냅샷 원장 복구 — 교집합 단위는 키가 아니라 논리 스냅샷 튜플(규약 정정 완료), OUTER 재시작 후 재구성 절차 자체는 미작성 | P3 |
-| O9 | Sequence quiescence — credit와 별개의 stage별 `SequenceQuiesced` attest 계약(credit 반환은 인수 증거이지 compute/KV 완료가 아님, plan.md §3) | P4.5 |
-| O10 | Snapshot storage domain·read pin — source·target lease, 동시 Discard 차단, 노드 이동·cross-domain 복사 경로 | P3 |
-| O11 | durable/ram-byte admission — 노드별 디스크·호스트 RAM 예약, ENOSPC partial-prepare 수렴, OUTER 가용량 텔레메트리 | P3 |
-| O12 | 한 실행을 마친 원격 에이전트가 두 번째 실행을 받지 못한 관측 1건 — 스테이지가 뜨지 않고 에이전트 로그에 수신 흔적도 없이 드라이브가 timeout_ms까지 대기(2026-09-01, 재기동 후 동일 시나리오는 정상). 원인 미확정: 로드 세대 전환의 어댑터 상태인지 터널·연결 수명인지 분리되지 않음. 현재 하네스는 실행마다 에이전트를 재기동해 회피한다 | 미배정 |
-| O13 | ~~OUTER 전달 손실~~ — 원인 규명 완료: 드라이브의 `EventWire::receive`가 `tokio::time::timeout`으로 `read_u32_le`/`read_exact`를 감쌌고, 이들은 cancel-safe가 아니어서 취소 시 이미 소비한 바이트를 가져가 스트림이 어긋났다. 드라이브는 도착 웨이브마다 **의도적으로** 타임아웃하므로 웨이브 경계마다 어긋날 기회가 있었고, 쓰레기 길이 접두가 임의 구간을 삼킨 뒤 조용히 재동기화했다 — 이것이 "위치 불연속"의 정체다. 버퍼가 취소보다 오래 사는 리더로 교정, 옛 리더에서 실패하고 새 리더에서 통과하는 시험 2건으로 고정. 어댑터 폐기 계수·죽은 경로 축출은 그대로 유지(후속 증상 관측 수단) | 해소 |
+| O1 | No contract for the telemetry channel itself — which events carry reserved_cells, last_access, and session occupancy, and with what period and ordering guarantees | P1a |
+| O2 | U0 ③'s stage ABI only says "remove it" — the actual surface (functions, types) of the P4-owned versioned ABI is undefined | U0 design deliverable |
+| O3 | Family coverage of the state gate fixtures — unconfirmed whether small golden models actually exist for each of kv_cache/iswa/hybrid/recurrent | P2 preparation |
+| O4 | Relationship between reservation 2PC and the session lease — whether a reservation presupposes a lease, the acquisition order of the two coordination layers, and the winner rule when the reservation lifetime `Prepared→Committed→Consumed/Released` races TTL expiry and Commit | P0 |
+| O5 | ~~Whether the session_key wire extension really stays inside the adapter content-type~~ — resolved: the field lives only inside the adapter's `InferenceCommand` and the P4 protocol is unchanged; a 4-node remote run proved that the value issued by OUTER and the value held by the adapter are identical | P-1 |
+| O6 | Contract wording for `Snapshot{after_commit}`, `SnapshotList`, and RestoreInto — the direction is set (snapshot command model), but the exact p4-adapter verb signatures, the 2PC coupling, and **the immutable-ID/mutable-ref choice for Fork and snapshot keys** are not written | P-1 contract, P3 implementation |
+| O7 | Capability negotiation for resident-tier checkpoints (tier) | P7 |
+| O8 | Recovery of the coordinator's snapshot ledger — the intersection unit is the logical snapshot tuple, not the key (convention correction done); the reconstruction procedure after an OUTER restart is itself not written | P3 |
+| O9 | Sequence quiescence — a per-stage `SequenceQuiesced` attest contract separate from credit (credit return is evidence of takeover, not of compute/KV completion; plan.md §3) | P4.5 |
+| O10 | Snapshot storage domain and read pin — source and target leases, blocking concurrent Discard, node moves and cross-domain copy paths | P3 |
+| O11 | durable/ram-byte admission — per-node disk and host RAM reservation, ENOSPC partial-prepare convergence, OUTER available-capacity telemetry | P3 |
+| O12 | 1 observation of a remote agent that had finished one run failing to accept a second run — no stage came up, the agent log showed no trace of receipt, and the drive waited until timeout_ms (2026-09-01; the same scenario was normal after a restart). Cause undetermined: not yet separated whether it is adapter state across the load generation transition or tunnel/connection lifetime. The current harness works around it by restarting the agent for every run | Unassigned |
+| O13 | ~~OUTER delivery loss~~ — root cause found: the drive's `EventWire::receive` wrapped `read_u32_le`/`read_exact` in `tokio::time::timeout`, and those calls are not cancel-safe, so on cancellation the bytes they had already consumed were lost and the stream fell out of alignment. The drive **intentionally** times out on every arriving wave, so every wave boundary was a chance to misalign, and a garbage length prefix swallowed an arbitrary span before the stream silently resynchronized — this is what the "position discontinuity" really was. Fixed with a reader whose buffer outlives cancellation, and pinned by 2 tests that fail on the old reader and pass on the new one. The adapter's discard counter and dead-path eviction are kept as they are (as a means of observing follow-on symptoms) | Resolved |
 
-## 검토 수렴 규약
+## Review convergence rules
 
-반복 리뷰가 같은 종류의 결함을 다시 찾지 않게 하는 규칙이다.
+These rules keep repeated reviews from finding the same kind of defect again.
 
-- R1 **주장 단일 소유**: 하나의 계약·순서·결함 귀속은 한 문서만 소유하고
-  다른 문서는 링크한다. 중복 서술이 낡는 것이 이번 회차 충돌의 원인이었다.
-- R2 **코드 앵커 의무**: 코드 행동을 서술하는 문장은 `path::symbol @
-  short-commit` 앵커를 달거나, 검증 전이면 "목표 계약"으로 명시한다.
-  line 번호 단독 앵커는 코드 이동으로 부패하므로 쓰지 않는다. upstream
-  파일 앵커는 저장소 커밋이 아니라 **upstream pin 커밋**으로 적는다.
-  lint는 `@` 형태만 검사하므로 앵커 없는 신규 주장의 검출은 리뷰 몫이다.
-- R3 **이름에는 계약**: 새 식별자·키·digest는 정규화, 유일성 범위, 버전,
-  비교 규칙, 부정 시험의 5요소가 정의되기 전에는 이름만 올릴 수 없다.
-- R4 **단계 동사 규율**: 단계-결함 연결은 측정/재현/수정/검증 중 하나의
-  동사로만 표기한다. "관찰" 단계가 "해소"를 주장할 수 없다.
-- R5 **기계 검사**: `npm run docs-lint`가 vendored/build 제외 전 프로젝트
-  Markdown을 재귀 검사한다 — 파일별 혼합 EOL, 폐기 문구(README 포함),
-  소유 주장 재서술, docs/ 미색인(README의 실제 링크 형태 요구), 심볼 없는
-  코드 앵커를 오류로 거부하며, `cargo test --workspace`가 이 검사를
-  실행한다(entrypoints/agent/tests/docs_lint.rs). 한계도 계약이다:
-  이것은 **문자열 canary**라서 의미를 바꾼 재서술은 잡지 못하고, 그 검출은
-  리뷰의 몫이다. 공식 모드는 `git ls-files` 기준 추적 Markdown만 검사해
-  무관한 untracked 초안이 게이트와 커밋 범위를 오염시키지 않게 하고,
-  `--all`이 파일시스템 전체 검사다. CI/pre-commit 연결은 아직 없다.
-- R6 **피드백 변환 규칙**: 리뷰 지적은 (a) 앵커 달린 주장 수정, (b) 실행
-  가능한 시험·게이트, (c) 소유 단계가 있는 열린 결정 중 하나로 변환해서만
-  닫는다. 텍스트 수정만으로 닫지 않는다.
+- R1 **Single ownership of claims**: a given contract, order, or defect attribution is owned by exactly one document, and
+  other documents link to it. Stale duplicate descriptions caused this round's conflicts.
+- R2 **Mandatory code anchors**: a sentence that describes code behavior carries a `path::symbol @
+  short-commit` anchor or, if not yet verified, is explicitly marked as a "target contract".
+  Line-number-only anchors rot as code moves, so they are not used. Anchors to upstream
+  files use the **upstream pin commit**, not the repository commit.
+  lint checks only the `@` form, so detecting new claims without anchors is the review's job.
+- R3 **A name needs a contract**: a new identifier, key, or digest cannot be introduced by name alone until its 5 elements are defined:
+  normalization, uniqueness scope, version, comparison rule, and negative tests.
+- R4 **Phase verb discipline**: a phase-to-defect link uses exactly one of the verbs
+  measure/reproduce/fix/verify. An "observe" phase cannot claim "resolve".
+- R5 **Machine checks**: `npm run docs-lint` recursively checks all project Markdown except vendored/build
+  files — it rejects as errors mixed EOL within a file, discarded phrases (README included), restated
+  ownership claims, unindexed docs/ files (an actual link form in the README is required), and code anchors without a
+  symbol, and `cargo test --workspace` runs this check
+  (entrypoints/agent/tests/docs_lint.rs). The limits are part of the contract too:
+  it is a **string canary**, so it does not catch restatements that change the meaning; detecting those is
+  the review's job. The official mode checks only Markdown tracked per `git ls-files`, so
+  unrelated untracked drafts do not pollute the gate or the commit scope;
+  `--all` checks the whole filesystem. There is no CI/pre-commit wiring yet.
+- R6 **Feedback conversion rule**: a review finding is closed only by converting it into one of (a) a fix to an anchored claim, (b) an executable
+  test or gate, or (c) an open decision with an owning phase.
+  A text edit alone does not close it.
 
-## 측정 하네스
+## Measurement harness
 
-현행 `target/gemma4-4node/`는 git-ignored라 기준이 될 수 없다. P-1에서
-versioned `test/benchmarks/` 아래로 이관하고, 모든 수용 판정 증거에
-commit·compat manifest·spec 전문·환경·요약기 버전·원본 artifact checksum을
-남긴다. 현재 보존된 스트레스 아티팩트는 2/2 성공본이며 D4의 40요청 실패
-증거가 아니다 — P-1에서 재확보한다.
+The current `target/gemma4-4node/` is git-ignored, so it cannot serve as a baseline. In P-1 it moves under
+versioned `test/benchmarks/`, and the evidence for every acceptance verdict records the
+commit, compat manifest, full spec, environment, summarizer version, and source artifact checksums.
+The currently preserved stress artifacts are the 2/2 successful runs, not the D4 40-request failure
+evidence — that evidence is to be re-acquired in P-1.
 
-## 문서 지도
+## Document map
 
-| 문서 | 소유 |
+| Document | Owns |
 | --- | --- |
-| 이 문서 | 재구성 전체 계획·결함 대장·단계 |
-| [adapter-batching-layers.md](adapter-batching-layers.md) | L0~L5 계약, 불변식, 전략 모듈 |
-| [kv-state-store-convention.md](kv-state-store-convention.md) | 레코드 정체성, 디렉터리, 수명 |
-| [llamacpp-stage-memory.md](llamacpp-stage-memory.md) | 스테이지 메모리 소유권, 합법 절단 |
-| [event-protocol-v2.md](event-protocol-v2.md) | 이벤트 계약, 게이트 증명 순서 |
-| [plan.md](plan.md) | 2026-08-21 계획(역사 문서; §3 Edge credit 규범 내용은 P4.5 행으로 이관 완료) |
+| This document | Overall restructure plan, defect register, phases |
+| [adapter-batching-layers.md](adapter-batching-layers.md) | L0~L5 contracts, invariants, strategy modules |
+| [kv-state-store-convention.md](kv-state-store-convention.md) | Record identity, directories, lifetime |
+| [llamacpp-stage-memory.md](llamacpp-stage-memory.md) | Stage memory ownership, legal cuts |
+| [event-protocol-v2.md](event-protocol-v2.md) | Event contract, gate proof order |
+| [plan.md](plan.md) | 2026-08-21 plan (historical document; the §3 Edge credit normative content has moved to the P4.5 row) |

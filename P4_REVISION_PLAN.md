@@ -1,456 +1,456 @@
-# P4 수정 계획
+# P4 revision plan
 
-> 문서 지위 (2026-09-06): **역사·구 계획**. 당시 계획/관측을 보존한다. 현재 상태·실행 순서·승격 기준으로 사용하지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](docs/document-map.md)를 따른다.
+> Document status (2026-09-06): **historical / superseded plan**. It preserves the plans and observations of the time. Do not use it for current status, execution order or promotion criteria.
+> Current goals, status and order follow the [execution roadmap](docs/distributed-batching-roadmap.md); document authority and reading paths follow the [documentation map](docs/document-map.md).
 
-> **상태: 완결된 이력. 착수 지침서가 아니다.**
+> **Status: completed history. Not a kickoff guide.**
 >
-> 이 문서는 v5에서 v6로 가는 개편을 계획했고 그 개편은 끝났다. 기준 구현으로
-> 적힌 `layers/runtime`과 `tools/controller`는 지금 존재하지 않는다 — 그 제거가
-> 이 계획의 결과다. 여기 적힌 `Q` 결정들은 **당시** 무엇을 왜 골랐는지의 기록이지
-> 지금 따를 지시가 아니다.
+> This document planned the reorganization from v5 to v6, and that reorganization is finished. The reference implementation
+> it lists, `layers/runtime` and `tools/controller`, no longer exists — removing them was
+> the outcome of this plan. The `Q` decisions here record what was chosen **at the time** and why;
+> they are not instructions to follow now.
 >
-> 현재 상태는 [STATUS.md](../../STATUS.md), 앞으로 할 일과 그것을 구속하는 규범은
-> [STAGED.md](../../STAGED.md)에 있다. 둘과 이 문서가 어긋나면 그 둘이 이긴다.
+> Current status is in [STATUS.md](../../STATUS.md); future work and the norms that bind it are in
+> [STAGED.md](../../STAGED.md). If those two disagree with this document, those two win.
 >
-> **특히 Q-22가 뒤집혔다.** 이 문서는 "hidden state는 native 유지, 텐서는 프레임에
-> 들어가지 않는다"로 결정했다. 그 전제는 텐서를 옮겨줄 native 데이터 평면이
-> 있다는 것이었다. staged 구조에는 없다 — 두 stage 서버는 우리 것이고 서로 다른
-> 머신에 있으며 둘을 잇는 것은 P4뿐이다. 그래서 컷셋은 프레임 본문으로 건너간다.
-> 근거는 STAGED.md의 "How the cut-set crosses between nodes"에 있다.
+> **In particular, Q-22 was reversed.** This document decided that "hidden state stays native; tensors do not go into
+> frames". That premise assumed a native data plane that would move the tensors.
+> The staged structure has none — both stage servers are ours, they sit on different
+> machines, and P4 is the only thing connecting them. So the cut-set travels in the frame body.
+> The rationale is in "How the cut-set crosses between nodes" in STAGED.md.
 >
-> 기준 구현: P4B1 v5 (`layers/protocol`, `layers/runtime`, `layers/adapters`, `tools/controller`) — 전부 개편됨
-> 대상: **P4B1 v6** (§90) — 도달함
-> 최초 작성: 2026-08-13 · 완결: 2026-08-14
+> Reference implementation: P4B1 v5 (`layers/protocol`, `layers/runtime`, `layers/adapters`, `tools/controller`) — all reorganized
+> Target: **P4B1 v6** (§90) — reached
+> First written: 2026-08-13 · Completed: 2026-08-14
 
-## 요약
+## Summary
 
 | | |
 |---|---|
-| 전제 | 12개 (§1.1) |
-| 주제 | A~N 14개 |
-| 확인된 결함 | `D-1`~`D-84` (철회·해소 4건 포함) |
-| 보완 설계 | `P-1`~`P-64` (철회 2건 포함) |
-| 미결 | `Q-1`~`Q-72` 중 **53건 미결**, 19건 결정·철회·해소 |
-| 병행 세션 | 실측 결론이 §92에 반영됨. `Q-49`만 진행 중 |
-| 구축 단계 | 0~6, 순차 (§91) |
+| Premises | 12 (§1.1) |
+| Topics | 14, A~N |
+| Confirmed defects | `D-1`~`D-84` (including 4 withdrawn or resolved) |
+| Remediation designs | `P-1`~`P-64` (including 2 withdrawn) |
+| Open | Of `Q-1`~`Q-72`, **53 open**; 19 decided, withdrawn or resolved |
+| Parallel session | Measured conclusions are reflected in §92. Only `Q-49` is in progress |
+| Build phases | 0~6, sequential (§91) |
 
-> **2026-08-15 방향 확정:** 1차 구현 대상은 개별 메시지의 디테일이 아니라 **에이전트 코어**다 — §1.4. 컨트롤러는 폐기되었고 에이전트의 내부 엔티티는 노드 하나다.
+> **Direction fixed on 2026-08-15:** the first implementation target is **the agent core**, not the details of individual messages — §1.4. The controller is discarded, and the agent's only internal entity is the node.
 
-**가장 무거운 셋** — 나머지가 여기에 얹힌다.
-1. **CPS 위반이 토대 계약에 박혀 있다** (`D-26`). 제어 평면 전체가 반환값 기반이며 함수 이름이 `compatibility`다. §1.4의 CPS 규격이 이것의 대체 사양이다
-2. **주소·식별자 체계 재편** (`P-2`·`P-34`). 자기기술 주소가 에이전트 identity가 되고 중계가 큐 기본 동작이 된다
-3. **체인이 P4 밖에 있다** (`D-35`). 인퍼런스 경로의 본체가 프로토콜에 표현되지 않는다
+**The three heaviest items** — everything else builds on them.
+1. **CPS violations are baked into the foundational contract** (`D-26`). The whole control plane is return-value based, and the function is even named `compatibility`. The CPS spec in §1.4 is its replacement
+2. **Reorganizing the address and identifier scheme** (`P-2`·`P-34`). The self-describing address becomes the agent identity, and relaying becomes a default queue behavior
+3. **The chain lives outside P4** (`D-35`). The core of the inference path is not expressed in the protocol
 
-**어댑터 경계 감사 결과** — 의존 방향은 정확하고 `layers/protocol`에 백엔드 문자열이 0건이다. 새는 곳은 **계약과 문서**다: `DRAFT_REPORT`의 KV·FFN(`D-62`), `docs/model-load.md`가 llama.cpp 노브를 정식 스키마로 규범화(`D-63`), 어댑터 인터페이스가 산출물로 부재(`D-64`).
+**Adapter boundary audit result** — the dependency direction is correct, and `layers/protocol` contains 0 backend strings. The leaks are in **contracts and docs**: KV/FFN in `DRAFT_REPORT` (`D-62`), `docs/model-load.md` codifying llama.cpp knobs as the formal schema (`D-63`), and no adapter interface as an explicit artifact (`D-64`).
 
-**첫 착수는 단계 0** — `P-40`. Pipeline 어댑터의 5개 화이트리스트를 걷어내는 것만으로 구조화 출력 불가 상태(`D-56`)가 풀린다. wire 변경도 다른 단계 의존도 없다.
+**The first step is phase 0** — `P-40`. Removing the Pipeline adapter's 5-item whitelist alone lifts the state in which structured output is impossible (`D-56`). It needs no wire change and depends on no other phase.
 
-## 0. 이 문서의 규약
+## 0. Conventions of this document
 
-### 표기
+### Notation
 
-| 표기 | 뜻 |
+| Notation | Meaning |
 |---|---|
-| `D-n` | 확인된 결함. 근거 파일·행이 붙는다 |
-| `Q-n` | 미결 결정. 답이 나오기 전에는 하위 설계를 확정하지 않는다 |
-| `P-n` | 보완 제안. `Q`가 풀리면 사양으로 승격한다 |
-| (초안) | 소스 대조는 끝났으나 합의 전 |
-| (결정) | 회의에서 확정. 근거를 함께 남긴다 |
-| (철회) | 이후 논의에서 뒤집힌 항목. 지우지 않고 남겨 이유를 보존한다 |
+| `D-n` | Confirmed defect. Comes with the source file and line |
+| `Q-n` | Open decision. Sub-designs are not finalized before it is answered |
+| `P-n` | Remediation proposal. Promoted to spec once its `Q` is resolved |
+| (draft) | Source cross-check done, but not yet agreed |
+| (decided) | Confirmed in a meeting. The rationale is recorded with it |
+| (withdrawn) | Reversed in later discussion. Kept rather than deleted, to preserve the reason |
 
-결함은 소스에서 확인된 것만 적는다. 추정은 `Q`로 내린다.
+Only defects confirmed in the source are listed. Guesses are filed as `Q`.
 
-### 개정 방식
+### Revision method
 
-한 번에 전체를 기술하지 않는다. 주제 단위로 회의하고, 합의된 만큼만 채운다.
-**기존 서술과 모순이 발견되면 새 절을 덧붙이지 않고 해당 절을 고친다.** `D`/`P`/`Q` 번호는 전역 연속이고 재사용하지 않는다 — 철회된 항목도 번호를 유지한 채 `(철회)`로 남긴다. 절 번호는 주제가 늘면 재배치될 수 있으므로 참조는 `D`/`P`/`Q` 번호로 한다. 개정 내역은 마지막 절에 기록한다.
+Do not describe everything at once. Hold meetings per topic and fill in only what has been agreed.
+**When a contradiction with existing text is found, fix that section instead of appending a new one.** `D`/`P`/`Q` numbers are globally sequential and never reused — withdrawn items keep their number and stay marked `(withdrawn)`. Section numbers can be rearranged as topics grow, so references use `D`/`P`/`Q` numbers. The revision history is recorded in the last section.
 
-**절 번호 규약:** 주제 절은 §2부터 순차로 늘어나고, 주제와 무관한 종합 절(미결·순서·처리량·파급·잔여·이력)은 **§89 이상 고정**이다. 주제가 추가되어도 종합 절 번호가 밀리지 않는다.
+**Section numbering convention:** topic sections grow sequentially from §2, and synthesis sections not tied to a topic (open items, order, throughput, impact, remaining items, history) are **fixed at §89 and above**. Adding a topic does not shift the synthesis section numbers.
 
-번호가 전역 연속이고 재배치하지 않으므로 **주제 안에서 항목 번호가 순서대로 나오지 않는다.** 나중에 추가되거나 다른 주제에서 옮겨온 항목이 있기 때문이며, 의도된 것이다. 예: 주제 A의 `P-39`, 주제 G의 `P-33`.
+Because numbers are globally sequential and never rearranged, **item numbers within a topic do not appear in order.** This is intentional: some items were added later or moved over from other topics. Examples: `P-39` in topic A, `P-33` in topic G.
 
-### 이 문서를 읽는 순서
+### Reading order for this document
 
-| 목적 | 절 |
+| Purpose | Section |
 |---|---|
-| 무엇을 만들려는가 | §1.2 대상 아키텍처, §1.3 식별자 소유 |
-| 무엇이 잘못되었는가 | 주제 A~I의 "결함" 절 |
-| 무엇을 할 것인가 | 주제 A~I의 "보완 설계" 절 |
-| 무엇을 정해야 하는가 | §89 미결 결정 |
-| 재작성인가 수정인가 | §91.0 판단 기록 |
-| 어떤 순서로 할 것인가 | §91 구축 순서 — **착수 단위** |
-| 처리량과 어떤 관계인가 | §92 — **P4는 처리량을 소유하지 않는다** |
+| What are we building | §1.2 target architecture, §1.3 identifier ownership |
+| What is wrong | The "Defects" sections of topics A~I |
+| What will we do | The "Remediation design" sections of topics A~I |
+| What must be decided | §89 open decisions |
+| Rewrite or revise | §91.0 decision record |
+| In what order | §91 build order — **units of work** |
+| How it relates to throughput | §92 — **P4 does not own throughput** |
 
-## 1. 배경 전제와 대상 아키텍처
+## 1. Background premises and target architecture
 
-### 1.0 용어
+### 1.0 Terms
 
-**OUTER** — 외부 요청 주체. 편성 권위를 갖고 에이전트에 지시하며 결과를 수신한다. 이 문서에서 지금까지 "외부"로 지칭한 주체가 OUTER다.
+**OUTER** — the external requesting party. It holds orchestration authority, instructs agents and receives results. The party this document has so far called "external" is OUTER.
 
-**Agent** — 소켓 프로그램. 메인 메시지큐 하나와 tokio 워커를 갖는다. 내부 엔티티로 **노드만** 소유한다.
+**Agent** — a socket program. It has one main message queue and tokio workers. As internal entities it owns **only nodes**.
 
-**Node** — 에이전트 안의 id 껍데기. 적재 시점에 실체화된 구상 어댑터와 연결된다.
+**Node** — an id shell inside the agent. At load time it is bound to a concrete adapter that is instantiated for it.
 
-**컨트롤러는 없다.** 2026-08-15에 폐기되었다 — 근거는 §1.2.
+**There is no controller.** It was discarded on 2026-08-15 — the rationale is in §1.2.
 
-### 1.1 전제
+### 1.1 Premises
 
-회의에서 확정된 방향이다.
+This is the direction confirmed in meetings.
 
-1. 상태 자산은 에이전트 외부에 존재한다. 어떤 노드가 있는가, 어떤 모델이 어디에 있는가는 외부 레코드가 권위를 가진다.
-   **OUTER는 인프라 사실의 소유자다.** 모든 에이전트의 접근 주소를 이미 알고 있다. 인프라 사실을 프로토콜로 발견하려 하면 "누가 먼저인가"의 선후 모순만 생기므로, **프로토콜로 알아내야 할 것과 OUTER가 이미 아는 것을 구분한다.** 주소·배치 권한 같은 인프라 사실은 후자이며 P4의 조회 대상이 아니다.
-2. 함수적 형태를 지향한다. 인자로 전달될 상태는 외부에 있다고 본다.
-3. 노드의 생성·모델 적재·해제는 OUTER가 지시한다. 진입 에이전트는 이 지시를 **소유하지 않고 경유만** 한다 — 해석하지도, 검증하지도, 상태를 보유하지도 않는다. (경유는 소유가 아니다)
-4. 모델 적재는 OUTER 요청으로 재편한다. 적재 정책은 OUTER가 수립해 프로토콜로 주입하며, 그 표현력은 구상 런타임이 실제로 제공하는 수준을 담아야 한다.
-5. 적재의 진행·완료·실패는 지시한 OUTER로 돌아간다. 경로는 진입 에이전트를 경유하되 그 에이전트는 통과시킬 뿐이다.
-6. 적재 옵션은 P4가 해석하지 않는다. 문자열로 통과시키고 구상 어댑터가 해석한다.
-7. 적재·해제는 노드의 사전 상태에 의존한다. 사전 조건을 어긴 명령은 실패 메시지가 된다. 해제가 성공하면 노드의 실체는 완전히 해지된다.
-8. CPS다. 응답은 반환값이 아니라 **메시지가 되어 요청자를 호출한다.** 따라서 한 번 emit한 것은 되돌릴 수 없다.
-9. **모든 프로토콜 처리에 반환값이 없다.** 워커가 할 수 있는 일은 자기 일을 하고 메시지를 큐에 넣는 것뿐이다. 응답이든 전달이든 결과는 큐를 거친다. 이를 지키지 않는 처리 경로는 전부 수정 대상이다.
-10. **노드는 자신의 적재 구조를 최대한 모른다.** 추상층을 유지한다. 레이어 번호 등 배치 구조에 관한 판정은 노드의 검사에서 배제하고, 그 책임은 편성 주체인 OUTER가 진다.
-12. **인퍼런스 옵션도 P4가 해석하지 않는다.** 전제 6(적재 옵션)의 대칭이다. 구상 런타임에 실제 인자로 전달되어야 하는 모든 스펙을 지원해야 하며, 어댑터가 임의로 선별하지 않는다. **미지원 옵션을 조용히 버리는 것은 금지한다.**
-11. **네트워크 도달성이 제약이다.** OUTER는 방화벽 밖에 있고 내부망과는 터널 하나만 열리는 배치가 일반적이다. 제약은 정확히 둘이다.
-    - OUTER는 **정확히 하나의 에이전트**에만 접근할 수 있다. VPC의 입출력부를 담당하는 그 에이전트를 **진입 에이전트**라 한다
-    - 진입 에이전트는 **나머지 모든 에이전트에 접근할 수 있다**
+1. State assets live outside the agent. External records are authoritative for which nodes exist and which models are where.
+   **OUTER owns infrastructure facts.** It already knows the access addresses of all agents. Trying to discover infrastructure facts through the protocol only creates a "who comes first" ordering contradiction, so **distinguish what must be learned through the protocol from what OUTER already knows.** Infrastructure facts such as addresses and placement authority are the latter and are not something P4 queries.
+2. Aim for a functional form. State passed as arguments is treated as living outside.
+3. OUTER instructs node creation, model load and release. The entry agent **does not own these instructions; it only relays them** — it neither interprets nor verifies them, and it holds no state. (Relaying is not owning)
+4. Model loading is reorganized as an OUTER request. OUTER sets the load policy and injects it through the protocol, and its expressiveness must cover what the concrete runtime actually offers.
+5. Load progress, completion and failure return to the OUTER that issued the instruction. The path goes through the entry agent, but that agent only passes it along.
+6. P4 does not interpret load options. They pass through as strings, and the concrete adapter interprets them.
+7. Load and release depend on the node's prior state. A command that violates a precondition becomes a failure message. When a release succeeds, the node's concrete instance is completely torn down.
+8. CPS. A response is not a return value; it **becomes a message that calls the requester.** Anything once emitted therefore cannot be taken back.
+9. **No protocol handling has a return value.** All a worker can do is its own job and putting messages on the queue. Responses and forwards alike go through the queue. Every handling path that does not follow this must be revised.
+10. **A node knows as little as possible about its own load structure.** Keep the abstraction layer. Judgements about placement structure, such as layer numbers, are excluded from the node's checks; OUTER, as the orchestrating party, is responsible for them.
+12. **P4 does not interpret inference options either.** This mirrors premise 6 (load options). Every spec that must reach the concrete runtime as an actual argument must be supported, and adapters do not pick and choose arbitrarily. **Silently dropping unsupported options is forbidden.**
+11. **Network reachability is a constraint.** A typical deployment has OUTER outside the firewall with only one tunnel open to the internal network. There are exactly two constraints.
+    - OUTER can reach **exactly one agent**. That agent, which handles the VPC's ingress/egress, is called the **entry agent**
+    - The entry agent **can reach every other agent**
 
-    따라서 진입 에이전트는 특정 노드를 품을 이유가 없다. 노드 생성·삭제, 모델 적재·해제, 인퍼런스 등 모든 메시지를 진입 에이전트로 보내면, 그 에이전트가 스스로 소비하거나 다른 에이전트로 전달해 수행한다. **이 제약이 진입 에이전트가 존재하는 유일한 이유다.**
+    The entry agent therefore has no reason to host any particular node. When every message — node create/delete, model load/release, inference and so on — is sent to the entry agent, it either consumes the message itself or forwards it to another agent to carry out. **This constraint is the only reason the entry agent exists.**
 
-### 1.2 대상 아키텍처 흐름
+### 1.2 Target architecture flow
 
-개별 결함 수정이 향하는 목적지다.
+This is the destination that the individual defect fixes aim for.
 
-#### 컨트롤러 폐기 (2026-08-15 결정)
+#### Controller discarded (decided 2026-08-15)
 
-**컨트롤러는 존재하지 않는다.** 이 문서는 오랫동안 컨트롤러를 OUTER와 진입 에이전트 사이의 독립 참여자로 그렸고, 역할표에 "이번 요청의 노드 리스트와 순서를 안다"고 적었다. **둘 다 틀렸다.**
+**The controller does not exist.** For a long time this document drew the controller as an independent participant between OUTER and the entry agent, and the role table said it "knows the node list and order for this request". **Both were wrong.**
 
-- **노드 리스트를 아는 인퍼런스 창구가 아니다.** 노드 리스트는 전제 1에 따라 이미 OUTER의 외부 상태다. 컨트롤러는 그것을 **인퍼런스·적재 명령에서 주입받을** 뿐이며, 주입받는 것을 안다고 하지 않는다
-- **존재 이유는 방화벽뿐이었다.** 컨트롤러는 VPC 입출력부를 담당하는 **에이전트의 진입점**이라는 뜻이었다
+- **It is not an inference front end that knows the node list.** Per premise 1, the node list is already OUTER's external state. The controller only **has it injected through inference and load commands**, and having something injected is not knowing it
+- **Its only reason to exist was the firewall.** "Controller" meant the **entry point of the agent** that handles VPC ingress/egress
 
-그런데 진입점은 에이전트 자신이다. 컨트롤러가 하던 모든 일은 **에이전트만 알아도 충분하다.** 별도 객체가 담당할 고유 상태도 판단도 남지 않는다. 따라서 참여자에서 지운다.
+But the entry point is the agent itself. Everything the controller did **requires only the agent's knowledge.** No unique state or judgement remains for a separate object to own. So it is removed from the participants.
 
-**결과: 에이전트는 내부 엔티티로 노드만 소유한다.** 이로써 워커의 판정이 `내부 노드 | 외부 주소` 이분법으로 떨어진다(§1.4).
+**Result: the agent owns only nodes as internal entities.** This reduces the worker's judgement to the dichotomy `internal node | external address` (§1.4).
 
-#### 위상 — 도달성이 구조를 정한다 (전제 11)
+#### Topology — reachability decides the structure (premise 11)
 
 ```text
-        방화벽
+       firewall
           │                          ┌──▶ Agent A ──▶ Node
  OUTER ───┼──▶ Entry Agent ──────────┼──▶ Agent B ──▶ Node
-          │    (VPC 입출력부)         └──▶ Agent C ──▶ Node
+          │    (VPC ingress/egress)  └──▶ Agent C ──▶ Node
                │
-               └── 자신이 노드를 품을 수도 있다
+               └── may also host nodes itself
 ```
 
-- OUTER가 도달할 수 있는 에이전트는 **정확히 하나**다
-- 그 진입 에이전트는 **나머지 모든 에이전트에 도달**한다
-- 진입 에이전트는 **특정 노드를 품을 이유가 없다.** 노드 배치와 무관한 순수 진입점이며, 필요하면 자기도 노드를 가질 수 있을 뿐이다
+- OUTER can reach **exactly one** agent
+- That entry agent **reaches every other agent**
+- The entry agent **has no reason to host any particular node.** It is a pure entry point unrelated to node placement; it may simply have nodes of its own if needed
 
-따라서 모든 메시지는 종류를 가리지 않고 같은 관문을 지난다. **경유와 소유를 구분하는 것이 이 설계의 핵심이다** — 진입 에이전트는 메시지를 나르지만 해석하거나 소유하지 않는다.
+So every message, whatever its kind, passes through the same gateway. **Distinguishing relaying from owning is the core of this design** — the entry agent carries messages but neither interprets nor owns them.
 
-#### 수신자는 둘뿐이다 — 에이전트 자신, 또는 노드
+#### There are only two recipients — the agent itself, or a node
 
-메시지가 어느 에이전트에서 소비될지는 봉투의 주소가 정한다. 소비하기로 정해진 뒤, **그 에이전트 안에서 수신자는 둘 중 하나다.**
+The envelope's address decides which agent consumes a message. Once that is decided, **the recipient inside that agent is one of two.**
 
-| 수신자 | 메시지 | 왜 여기인가 |
+| Recipient | Message | Why here |
 |---|---|---|
-| **에이전트 자신** | 노드 생성·삭제 | 노드 레지스트리를 에이전트가 소유한다 |
-| | 인퍼런스 요청 접수 | 요청은 노드가 아니라 에이전트로 들어온다 |
-| | 하드웨어 스펙 조사 | 머신의 사실이지 노드의 사실이 아니다 |
-| **노드** | 모델 적재·해제 | 실체화되는 주체가 노드다 |
-| | 프리필·디코드 | 실행하는 주체가 노드다 |
+| **The agent itself** | Node create/delete | The agent owns the node registry |
+| | Inference request intake | Requests come to the agent, not to a node |
+| | Hardware spec survey | A fact about the machine, not about a node |
+| **Node** | Model load/release | The node is what gets instantiated |
+| | Prefill/decode | The node is what executes |
 
-**인퍼런스는 두 단계로 갈라진다.** 요청은 에이전트가 받고, 에이전트가 **노드에게 프리필 메시지를 전달**한다. 접수와 실행의 주체가 다른 것이 이 경로의 형태를 정한다.
+**Inference splits into two steps.** The agent receives the request, and the agent **forwards a prefill message to the node**. The fact that intake and execution have different owners shapes this path.
 
-#### 제어 경로 — 진입 에이전트를 경유하되 소유하지 않는다
+#### Control path — through the entry agent, without ownership
 
 ```text
-OUTER ──hardware/capability───▶ Entry ──▶ (자기 소비 또는 대상 Agent)
-OUTER ──node create/delete────▶ Entry ──▶ Agent 자신
+OUTER ──hardware/capability───▶ Entry ──▶ (consumed itself, or target Agent)
+OUTER ──node create/delete────▶ Entry ──▶ Agent itself
 OUTER ──model load/unload─────▶ Entry ──▶ Agent ──▶ Node ──▶ Adapter
-OUTER ◀──progress/완료/실패──── Entry ◀── Agent
+OUTER ◀──progress/done/failed── Entry ◀── Agent
 ```
 
-편성·적재·해제의 **지시 주체는 여전히 OUTER**이고, 진입 에이전트는 통과시킬 뿐이다. 검증도 상태 보유도 하지 않는다. (전제 3·4·5·11)
+**OUTER is still the party that directs** orchestration, load and release; the entry agent only passes things through. It neither verifies nor holds state. (Premises 3·4·5·11)
 
-진입 에이전트가 대상 에이전트 자신이면 전달 없이 그 자리에서 소비한다.
+If the entry agent is itself the target agent, it consumes the message on the spot without forwarding.
 
-#### 인퍼런스 경로 — 에이전트가 접수하고 노드가 실행한다
+#### Inference path — the agent takes the request, the node executes it
 
 ```text
 OUTER ──inference(node chain)──▶ Entry Agent
-                                    │ 접수 후, 체인을 담은 PREFILL을 노드에게 1회
+                                    │ after intake, one PREFILL carrying the chain goes to the node
                                     ▼
                               Node[0] ──▶ Node[1] ──▶ … ──▶ Node[n]
-                                     (각 노드가 메시지의 체인을 보고 스스로 다음으로 전달)
+                                     (each node reads the chain in the message and forwards to the next itself)
                                                                   │
                                     ┌────────generated token──────┘
                                     ▼
 OUTER ◀────────token stream──── Entry Agent
 ```
 
-**에이전트는 홉마다 개입하지 않는다.** 체인은 1번 노드에게 보내는 프리필 메시지 안에 담기고, 각 노드는 그 메시지로부터 다음 노드를 스스로 안다. 소스 라우팅이다.
+**The agent does not intervene at every hop.** The chain is carried inside the prefill message sent to node 1, and each node learns the next node from that message on its own. This is source routing.
 
-디코드는 노드 주도로 순환한다. 최초 프리필 이후 생성 반복은 **노드 간 통신**으로 이뤄진다.
+Decode cycles under node control. After the first prefill, the generation loop runs through **node-to-node communication**.
 
 ```text
-        ┌──────────────── next token 의뢰 ────────────────┐
+        ┌─────────────── next token request ──────────────┐
         ▼                                                 │
    Node[0] ──▶ Node[1] ──▶ … ──▶ Node[n] ─────────────────┘
-                                    │ token / 생성 종료
+                                    │ token / end of generation
                                     ▼
                               Entry Agent ──▶ OUTER
-                        (자신이 진입 에이전트면 그 자리에서)
+                        (on the spot if it is itself the entry agent)
 ```
 
-**마지막 노드는 OUTER에게 직접 보고할 수 없다**(전제 11). 디코딩·생성 종료를 **진입 에이전트**로 보내고, 진입 에이전트가 OUTER로 넘긴다. 보고하는 노드가 이미 진입 에이전트 소속이면 중계 홉이 없다.
+**The last node cannot report directly to OUTER** (premise 11). It sends decoded tokens and end of generation to the **entry agent**, which passes them on to OUTER. If the reporting node already belongs to the entry agent, there is no relay hop.
 
-노드 배치는 자유롭다. 1번 노드도 마지막 노드도 진입 에이전트에 있을 이유가 없다.
+Node placement is free. Neither the first node nor the last node has any reason to be on the entry agent.
 
-- OUTER는 요청에 **노드 리스트를 실어 보낸다.** 에이전트는 그것을 주입받을 뿐 보유하지 않으며, 각 노드의 구상 상태나 구조도 모른다
-- 에이전트의 요청당 능동 관여는 **접수와 프리필 1회 송신**뿐이다. 이후는 보고 수신과 통과다
-- **프리필은 상태 확인 단계이기도 하다.** 각 노드가 진입과 완료를 보고하므로 이때 비로소 노드의 실제 상태를 안다 (주제 G)
-- **마지막 노드는 OUTER가 아니라 진입 에이전트에게** 생성 토큰을 준다. 이후 필터링·부가 작업의 자리를 남기기 위함이며, 현재는 OUTER로 통과시키는 기능만 한다
-- **스트림/비스트림 모드는 없다.** 이 시스템의 인퍼런스는 언제나 스트림이다
+- OUTER **sends the node list along with the request.** The agent only has it injected and does not keep it, and it knows neither the concrete state nor the structure of each node
+- The agent's only active involvement per request is **intake and sending one prefill**. After that it only receives reports and passes things through
+- **Prefill is also a state-check step.** Each node reports entry and completion, so this is when the node's actual state first becomes known (topic G)
+- **The last node gives generated tokens to the entry agent, not to OUTER.** This leaves room for later filtering or additional work; currently it only passes them through to OUTER
+- **There is no stream/non-stream mode.** Inference in this system is always streaming
 
-#### 역할 요약
+#### Role summary
 
-| 주체 | 아는 것 | 모르는 것 | 위상 |
+| Party | Knows | Does not know | Topology |
 |---|---|---|---|
-| OUTER | 하드웨어 capability, 노드 편성, 적재 계획, 체인 구성, 모든 업무 식별자 | 실행 중 상태 | 방화벽 밖 |
-| Entry Agent | 자기 노드(있다면) + 중계 | 편성 의도, 나르는 내용 | OUTER가 도달하는 **유일한** 에이전트. 노드 배치와 무관 |
-| Agent | 자기 머신의 노드 id와 수용력 | 편성 의도, 체인 | 내부망. **모든 에이전트가 중계 능력을 가진다** |
-| Node | 자기 바인딩과 어댑터 | 자신의 적재 구조(전제 10), 체인 전체 | 에이전트의 **유일한** 내부 엔티티 |
-| Adapter | 구상 실체 — 적재된 레이어, 런타임 | P4 상위 의미 | 내부망. 주소를 가진 외부 전송 대상 |
+| OUTER | Hardware capability, node orchestration, load plan, chain composition, all business identifiers | Runtime state | Outside the firewall |
+| Entry Agent | Its own nodes (if any) + relaying | Orchestration intent, the content it carries | The **only** agent OUTER reaches. Unrelated to node placement |
+| Agent | Node ids and capacity on its own machine | Orchestration intent, the chain | Internal network. **Every agent can relay** |
+| Node | Its own binding and adapter | Its own load structure (premise 10), the chain as a whole | The agent's **only** internal entity |
+| Adapter | The concrete substance — loaded layers, runtime | P4's upper-level semantics | Internal network. An external transport target with an address |
 
-### 1.3 식별자 소유
+### 1.3 Identifier ownership
 
-**원칙: 식별자는 OUTER가 발급한다.** 예외는 실체 세대와 전송·CPS 내부 ID뿐이다. 이는 전제 1의 직접적 귀결이다 — 상태의 권위가 외부에 있으면 그 상태를 가리키는 이름도 외부가 정해야 한다.
+**Principle: OUTER issues identifiers.** The only exceptions are the instance generation and transport/CPS-internal IDs. This follows directly from premise 1 — if the authority over state is external, the names that point to that state must also be decided externally.
 
-| 식별자 | 발급 | 수명 | 비고 |
+| Identifier | Issued by | Lifetime | Notes |
 |---|---|---|---|
-| **접근 주소** | OUTER (인프라 사실) | 배치 변경까지 | **에이전트의 identity** (P-2) |
-| `node_id` | OUTER | create ~ delete | 이미 외부 발급 |
-| `deployment_id` | OUTER | 배포 논리 단위 | |
+| **Access address** | OUTER (infrastructure fact) | Until the placement changes | **The agent's identity** (P-2) |
+| `node_id` | OUTER | create ~ delete | Already issued externally |
+| `deployment_id` | OUTER | Logical deployment unit | |
 | `binding_id` | OUTER | load ~ unload | |
-| `plan_revision` | OUTER | 계획 개정 | 외부 의도의 버전 (P-8) |
-| `request_id` | **OUTER** | 인퍼런스 1건 | 개별 인퍼런스마다 별도 부여 |
-| `session_id` | **OUTER** | 대화·실행 세션 | 에이전트가 발급하지 않는다 (D-54) |
-| `operation_id` | OUTER | lifecycle 1건 | |
-| `runtime_generation` | **어댑터** | 실체 세대 | 유일한 비-OUTER 업무 ID (P-8) |
-| `route_id` | 발신자 | 한 exchange | 전송 계층 correlation |
-| `task_id` / `causation_id` | 런타임 내부 | Task 1건 | CPS 내부 |
-| ~~`agent_id`~~ | **폐지** | — | 접근 주소가 대신한다 (P-2) |
-| `ingress_id` | OUTER | 제출 ~ 승격 | `request_id`와의 중복 여부는 Q-43 |
+| `plan_revision` | OUTER | Plan revision | Version of the external intent (P-8) |
+| `request_id` | **OUTER** | One inference | Assigned separately for each inference |
+| `session_id` | **OUTER** | Conversation/execution session | Not issued by the agent (D-54) |
+| `operation_id` | OUTER | One lifecycle operation | |
+| `runtime_generation` | **Adapter** | Instance generation | The only business ID not issued by OUTER (P-8) |
+| `route_id` | Sender | One exchange | Transport-layer correlation |
+| `task_id` / `causation_id` | Runtime internal | One Task | CPS internal |
+| ~~`agent_id`~~ | **Abolished** | — | Replaced by the access address (P-2) |
+| `ingress_id` | OUTER | submission ~ promotion | Whether it duplicates `request_id` is Q-43 |
 
-#### 4-튜플 규칙
+#### 4-tuple rule
 
-실행 가능한 구상 실체는 다음으로 정확히 지정된다.
-
-```text
-(에이전트 접근 주소, node_id, binding_id, runtime_generation)
-```
-
-앞의 셋은 OUTER가 발급한 이름이고, 마지막 하나만 어댑터가 발급한 실체 세대다. 넷 중 하나라도 빠지면 stale 실체에 실행될 수 있다. 체인 항목(P-25)과 실행 요청이 이 튜플을 공유한다.
-
-### 1.4 에이전트 코어 — 1차 구현 대상 (2026-08-15 확정)
-
-**이것이 먼저다.** 개별 메시지의 디테일은 그 다음이다. 주제 A~N의 결함 대부분은 이 코어가 없어서 생긴 증상이며, 코어가 서면 `D-26`·`D-27`·`D-30`·`D-66`~`D-69`가 함께 소멸한다.
-
-1. 각 에이전트는 **멀티플랫폼 소켓 프로그램**이다
-2. **tokio 워커쓰레드 패턴 + CPS 패턴**으로 구현한다
-3. 에이전트마다 **메인 메시지큐**가 하나 있고, 워커는 그 메시지를 **신속하게 해소**한다
-4. 메시지는 엄밀하게 **세 종류뿐**이다
-5. 에이전트 내부 객체에게 갈 것, 다른 에이전트에게 갈 것, OUTER에게 갈 것
-6. 뒤의 둘은 **근본적으로 같은 외부 전송 메시지**다. 워커는 이것을 **해당 주소로 그대로** 소켓 전송한다
-7. **소켓 수신자는 받은 메시지를 큐에 넣는 일만 한다**
-8. 내부에서 소화할 메시지는 **내부 객체 — 즉 노드 — 에게** 전달된다
-
-#### 워커의 판정은 두 단계다
-
-6번이 외부 전송을 한 타입으로 합치므로 첫 판정은 이분법이고, 컨트롤러가 없으므로(§1.2) 두 번째 판정도 이분법이다.
+An executable concrete instance is identified exactly by the following.
 
 ```text
-큐에서 꺼낸 메시지
-   ├── 대상 주소가 내가 아니다 → 그대로 그 주소로 전송 (다른 에이전트든 OUTER든 동일)
-   └── 내 것이다
-         ├── 에이전트 자신에게 → 노드 생성·삭제, 인퍼런스 접수, 하드웨어 조사
-         └── 노드에게        → 모델 적재·해제, 프리필·디코드
+(agent access address, node_id, binding_id, runtime_generation)
 ```
 
-**중계는 본문을 해석하지 않는다.** 7번이 성립하려면 수신자가 본문을 디코드하지 않아야 하고, 첫 판정이 성립하려면 대상 주소가 **봉투**에 있어야 한다. 이것이 `P-34`(자기기술 주소)·`P-48`(봉투·본문 분리)·`P-51`(큐 분류를 봉투가 나름)이 코어의 선행 조건인 이유다.
+The first three are names issued by OUTER; only the last is an instance generation issued by the adapter. If any one of the four is missing, execution may land on a stale instance. Chain entries (P-25) and execution requests share this tuple.
 
-#### CPS 규격 — 철저하게 지킨다
+### 1.4 Agent core — first implementation target (confirmed 2026-08-15)
 
-전제 8·9를 실행 가능한 규격으로 못박는다. 예외를 하나라도 두면 그 경로가 다시 블로킹이 된다.
+**This comes first.** The details of individual messages come after. Most defects in topics A~N are symptoms of this core being absent, and once the core stands, `D-26`·`D-27`·`D-30`·`D-66`~`D-69` disappear together.
 
-1. **모든 메시지 처리는 응답을 대기하지 않는다.**
-2. 응답할 내용이 있으면 **그 수신자를 향해 메시지를 발송하는 구조**여야 한다.
-3. 따라서 **모든 처리 함수는 프로시저다.** 반환값이 없고, 응답은 **에이전트 메시지큐에 메시지를 넣는 부수효과**로 진행된다.
-4. **순서 있는 메시지는 큐의 순서로 보장하지 않는다.** 메시지를 처리하는 곳에서 **다음 메시지를 등록**하는 것으로 보장한다.
-5. **요청측은 응답을 대기하지 않는다.** 응답에 해당하는 인자로 호출될 **쌍 핸들러를 함께 준비**해야 한다.
+1. Each agent is a **multi-platform socket program**
+2. It is implemented with the **tokio worker-thread pattern + CPS pattern**
+3. Each agent has one **main message queue**, and workers **drain its messages promptly**
+4. There are strictly **only three kinds** of messages
+5. Those for an object inside the agent, those for another agent, and those for OUTER
+6. The latter two are **fundamentally the same external-send message**. The worker sends it over the socket **as is, to that address**
+7. **The socket receiver only puts received messages on the queue**
+8. Messages to be handled internally are delivered **to the internal object — that is, the node**
 
-5번이 이 규격의 실체다. 요청을 보내는 쪽은 "보내고 잊는" 것이 아니라 **연속을 등록**한다. 응답이 큐에 도착하면 워커가 그 연속을 찾아 응답을 인자로 호출한다. 이것이 없으면 3번이 "응답을 못 받는다"는 뜻이 되어버린다.
+#### The worker's judgement has two steps
 
-4번은 정렬 큐를 만들지 말라는 뜻이다. `INGRESS_ACCEPTED → TOKEN → DONE`의 순서는 큐가 아니라 **각 단계가 다음 단계를 등록**해서 성립한다. 큐는 순서를 약속하지 않아도 되고, 그래서 워커가 경쟁적으로 뽑아도 안전하다.
+Because item 6 merges external sends into one type, the first judgement is a dichotomy, and because there is no controller (§1.2), the second judgement is a dichotomy as well.
 
-**이 규격이 무효화하는 현재 코드**
+```text
+Message taken from the queue
+   ├── target address is not me → send as is to that address (same for another agent or OUTER)
+   └── it is mine
+         ├── to the agent itself → node create/delete, inference intake, hardware survey
+         └── to a node           → model load/release, prefill/decode
+```
 
-| 대상 | 무엇이 위반인가 |
+**Relaying does not interpret the body.** For item 7 to hold, the receiver must not decode the body, and for the first judgement to hold, the target address must be in the **envelope**. This is why `P-34` (self-describing address), `P-48` (envelope/body separation) and `P-51` (the envelope carries the queue classification) are prerequisites of the core.
+
+#### CPS spec — followed strictly
+
+Premises 8 and 9 are pinned down as an executable spec. Allow a single exception and that path becomes blocking again.
+
+1. **No message handling waits for a response.**
+2. If there is something to respond with, the structure must be **sending a message toward that recipient**.
+3. Therefore **every handling function is a procedure.** It has no return value, and a response proceeds as **the side effect of putting a message on the agent's message queue**.
+4. **Ordered messages are not guaranteed by queue order.** Order is guaranteed by the place that handles a message **registering the next message**.
+5. **The requesting side does not wait for the response.** It must **prepare a paired handler** that will be called with the response as its argument.
+
+Item 5 is the substance of this spec. The side that sends a request does not "fire and forget"; it **registers a continuation**. When the response arrives on the queue, a worker finds that continuation and calls it with the response as its argument. Without this, item 3 would mean "responses can never be received".
+
+Item 4 means: do not build an ordered queue. The order `INGRESS_ACCEPTED → TOKEN → DONE` holds not because of the queue but because **each step registers the next step**. The queue need not promise any order, which is why it is safe for workers to pull from it competitively.
+
+**Current code this spec invalidates**
+
+| Target | What violates it |
 |---|---|
-| `P4Handler::handle(...) -> Result<()>` | 반환값으로 완료를 알린다. 3번 위반 (`D-26`) |
-| `P4Transport::dispatch` | 소켓을 열고 terminal까지 읽는다. 1번 위반 (`D-27`) |
-| `forward::capture` | 어댑터 응답을 **반환값으로** 돌려준다. 2번 위반 (`D-28`) |
-| lifecycle 여섯 핸들러 | 반환값으로 분기한다. 3번 위반 (`D-29`) |
-| 600초 폴링 루프 | 하나의 블로킹 호출 안에 장기 작업이 갇힌다. 1번 위반 (`D-30`) |
-| `ResponseSink` | 응답 목적지를 호출 스택이 쥐고 있다. 5번의 쌍 핸들러가 없다 |
+| `P4Handler::handle(...) -> Result<()>` | Signals completion with a return value. Violates item 3 (`D-26`) |
+| `P4Transport::dispatch` | Opens a socket and reads until terminal. Violates item 1 (`D-27`) |
+| `forward::capture` | Hands the adapter response back **as a return value**. Violates item 2 (`D-28`) |
+| The six lifecycle handlers | Branch on return values. Violates item 3 (`D-29`) |
+| The 600-second polling loop | A long-running job is trapped inside one blocking call. Violates item 1 (`D-30`) |
+| `ResponseSink` | The call stack holds the response destination. There is no paired handler as item 5 requires |
 
-`ResponseSink`가 특히 중요하다. 지금은 응답 경로가 **호출 스택에 묶인 싱크**이므로 호출이 끝나면 응답할 자리가 사라진다. 5번대로면 응답 경로는 스택이 아니라 **큐에 등록된 연속**이며, 그래야 장기 작업을 여러 Task로 쪼개도 응답 자리가 살아남는다 (`P-17`·`P-19`).
+`ResponseSink` matters most. Today the response path is **a sink bound to the call stack**, so the place to respond disappears when the call ends. Under item 5, the response path is not the stack but **a continuation registered on the queue**, and only then does the place to respond survive when a long job is split into several Tasks (`P-17`·`P-19`).
 
-#### 2단 큐 — 노드는 자기 큐를 갖는다
+#### Two-level queue — a node has its own queue
 
-**노드는 GPU의 긴 작업에 대응하는 추상 개념이다.** 따라서 노드의 처리 시간은 워커의 시간이 될 수 없다.
+**A node is an abstraction for long-running GPU work.** A node's processing time therefore cannot become a worker's time.
 
-1. 에이전트의 메시지큐는 **즉시 비워진다.** 워커는 노드가 그 메시지를 처리하는 것을 **대기하지 않는다**
-2. **노드별 메시지큐가 별도로 존재한다.** 워커는 거기로 메시지를 **옮기는 것으로 해제된다**
-3. 노드 큐의 해소는 **이벤트 기반**이다. 트리거는 둘 — **노드 큐에 메시지가 들어오는 이벤트**, 그리고 **노드에 연결된 구상 객체가 GPU 홉을 끝내는 이벤트**. 그때마다 자기 큐를 검사해 액션을 취한다
-
-```text
-소켓 수신자 ──▶ [에이전트 메인 큐] ──▶ 워커 (신속 해소)
-                                        ├── 외부 주소 → 그대로 전송
-                                        ├── 에이전트 자신 → 즉시 처리
-                                        └── 노드 → [노드 큐]로 옮기고 해제
-                                                       │
-                                             ┌─────────┴─────────┐
-                                        메시지 도착           GPU 홉 종료
-                                             └─────────┬─────────┘
-                                                  큐 검사 → 액션
-```
-
-**이 분리가 이 설계의 관측 가능성을 만든다.** 에이전트 큐의 깊이와 워커 점유는 **GPU 시간과 독립**해진다. 부하에서 처리량이 주저앉을 때 에이전트 큐가 얕고 노드 큐가 깊으면 원인은 P4 아래에 있고, 그 반대면 P4에 있다. **"문제가 P4 탓인지"가 두 큐의 깊이로 판정 가능한 질문이 된다.**
-
-GPU 홉 경계가 노드의 유일한 결정 시점이므로 **데드라인 검사와 취소도 그 경계에서** 이뤄진다. 홉 도중에 끊을 방법은 없고 있을 필요도 없다 — 다음 홉을 시작하지 않으면 된다 (`P-20`).
-
-#### 일반화하지 않는다 — 아는 워크로드가 형태를 정한다
-
-**막연한 통신 시나리오를 덮는 범용 에이전트를 만드는 것이 아니다.** 이 시스템이 나를 워크로드는 이미 디테일까지 알려져 있고, 코어도 목 어댑터도 **그것에 맞춰** 만든다. 그와 무관한 일반론은 추구하지 않는다.
-
-아는 워크로드는 넷이다.
-
-| 워크로드 | 형태 | 목이 재현해야 하는 것 |
-|---|---|---|
-| **분산 적재** | 모델이 여러 노드에 레이어 구간으로 쪼개져 올라간다 | 노드별 진행률이 따로 흐르고, 전체 완료는 **가장 느린 스테이지**가 정한다 |
-| **프리필 체인** | `Node[0] → … → Node[n]` 소스 라우팅 1회 통과 | **비용이 장치가 아니라 역할에 붙는다** — 선두 ~64s, 후미 32–40s (§92) |
-| **디코드(재생성) 링** | 노드 주도 순환. 토큰 1개가 링 1바퀴 | 홉마다의 지연과 순환 종료 조건 |
-| **배치** | 코호트·윈도, credit, 합치기 | 선언 상한 안에서의 동시 수용, 코호트 교체, 창 분할 |
-
-**§92의 실측이 목의 보정 기준이다.** 스테이지 중첩 271.5 tok/s(단일 66.0 대비 4.11x), 스테이지 대기 8.0–87.3초, KV 약 188 MiB/레이어/48세션. 목은 이 **형태**를 재현하면 되고 숫자를 계산할 필요는 없다 — 선언받아 그대로 흉내 내면 된다.
-
-따라서 목의 프로필은 `지연 시간` 몇 개가 아니라 **역할별 비용·스테이지 구성·링 홉·코호트 창**을 표현해야 한다. 그렇지 않으면 재현되는 부하가 실제와 다른 모양이 되어 검증이 무의미해진다.
-
-**그럼에도 에이전트는 구상 어댑터 이전에 완성되고 증명되어야 한다.** 두 제약은 충돌하지 않는다 — 워크로드는 에이전트가 **무엇을 지원해야 하는지**를 정하고, 그것을 **공급하는 것은 전부 목**이다. llama.cpp는 이 단계에 등장하지 않는다.
+1. The agent's message queue **is emptied immediately.** A worker **does not wait** for the node to process a message
+2. **A separate message queue exists per node.** A worker **is released by moving the message there**
+3. Draining a node queue is **event-driven**. There are two triggers — **a message arriving in the node queue**, and **the concrete object bound to the node finishing a GPU hop**. Each time, the node inspects its own queue and takes action
 
 ```text
-① 노드 어댑터 인터페이스   ← 네 워크로드를 표현하되 백엔드 이름은 0건
-② 에이전트 코어           ← 인터페이스 위에서 완성
-③ 목 어댑터              ← 인터페이스의 두 번째 구현, 네 워크로드를 재현
-④ 플릿 연속 부하 증명      ← 여기서 에이전트가 "완성"으로 판정된다
-─────────────────────── 여기까지 llama.cpp 없음 ───────────────────────
-⑤ 구상 어댑터            ← 그 다음
+socket receiver ──▶ [agent main queue] ──▶ worker (prompt drain)
+                                            ├── external address → send as is
+                                            ├── agent itself → handle immediately
+                                            └── node → move to [node queue] and release
+                                                                    │
+                                                          ┌─────────┴─────────┐
+                                                   message arrives      GPU hop ends
+                                                          └─────────┬─────────┘
+                                                           inspect queue → act
 ```
 
-**에이전트의 완성 판정은 ④에서 끝난다.** 구상 어댑터가 아직 없어도 판정할 수 있어야 하고, 판정할 수 없다면 그것은 인터페이스가 워크로드를 덜 표현했다는 뜻이다 — 목이 재현하지 못하는 부하가 있다면 인터페이스로 돌아간다.
+**This separation is what makes the design observable.** Agent queue depth and worker occupancy become **independent of GPU time**. When throughput collapses under load, a shallow agent queue with a deep node queue means the cause is below P4, and the reverse means it is in P4. **"Is P4 to blame?" becomes a question the two queue depths can answer.**
 
-#### 이 코어는 GPU와 무관하다 — 증명 수단이 여기서 나온다
+Since the GPU hop boundary is the node's only decision point, **deadline checks and cancellation also happen at that boundary**. There is no way to cut in mid-hop, and no need to — simply do not start the next hop (`P-20`).
 
-위의 어느 항목도 GPU를 필요로 하지 않는다. "GPU 홉"은 **홉 경계라는 추상**일 뿐이고, 그 경계를 제공하는 것이 노드의 어댑터 인터페이스다. 따라서 **어댑터 인터페이스와 그를 따르는 목 어댑터만으로 이 구현 전체를 증명할 수 있다.**
+#### Do not generalize — the known workloads decide the shape
 
-두 가지 귀결이 있다.
+**The goal is not a general-purpose agent that covers vague communication scenarios.** The workloads this system will carry are already known in detail, and both the core and the mock adapter are built **to fit them**. Generalities unrelated to them are not pursued.
 
-1. **`D-64`·`Q-51`이 해소된다.** 어댑터 인터페이스가 "명시적 산출물로 없다"는 것이 결함이었는데, 목 어댑터가 그 인터페이스를 **실재하게 강제한다.** 목이 구현할 수 있는 것이 곧 인터페이스이고, 목이 백엔드 개념 없이 구현을 마칠 수 있다면 경계가 깨끗하다는 뜻이다. 인터페이스가 문서가 아니라 **두 번째 구현으로** 증명된다
-2. **부하·시뮬레이션 검증에 GPU가 필요 없다.** 도착 폭주, 코호트 교체, 취소, 데드라인 만료, 느린 홉의 역압을 전부 목으로 돌릴 수 있다. 그리고 이때 관측되는 것은 순수하게 P4의 거동이다 — 아래에 탓할 것이 남아 있지 않다
+There are four known workloads.
 
-**이것이 이 브랜치의 완료 기준이다.** 목 어댑터 위에서 코어가 부하를 견디면, 이후 실 시스템에서 생기는 문제는 P4의 문제가 아니라고 단언할 근거가 생긴다.
-
-#### 폴더 분리 원칙 — 구조가 코드를 보호한다
-
-**단순 최적화의 문제가 아니다.** 이후의 유지보수와 기능 추가를 고려하면 코드는 반드시 폴더로 세심하게 분리되어야 한다.
-
-이유는 도구의 실패 양상에 있다. **인공지능은 파일 분리와 파일 내부 구조에서 회귀를 너무 많이 일으키고, 수정이 반복될수록 구조가 무너진다.** 한 파일에 여러 변경 이유가 섞여 있으면 그 파일은 매번 열리고, 열릴 때마다 관련 없는 부분이 함께 흔들린다.
-
-따라서 **건드리고 싶어도 건드릴 수 없을 만큼 잘게 폴더로 나눠 보호한다.** 다만 무분별한 분할이 아니라 **목적·역할·변화율**에 맞춘 분할이다.
-
-| 축 | 질문 | 다르면 나눈다 |
+| Workload | Shape | What the mock must reproduce |
 |---|---|---|
-| **목적** | 이것은 무엇을 위해 존재하는가 | 존재 이유가 다르면 같은 폴더에 두지 않는다 |
-| **역할** | 누가 이것을 소유하고 호출하는가 | 소유자가 다르면 나눈다 |
-| **변화율** | 이것은 얼마나 자주 바뀌는가 | 자주 바뀌는 것이 드물게 바뀌는 것과 섞이면, 드문 쪽이 자주 열린다 |
+| **Distributed load** | A model is loaded onto several nodes, split into layer ranges | Progress flows separately per node, and overall completion is decided by **the slowest stage** |
+| **Prefill chain** | One source-routed pass through `Node[0] → … → Node[n]` | **Cost attaches to the role, not the device** — head ~64s, tail 32–40s (§92) |
+| **Decode (regeneration) ring** | Node-driven cycle. One token is one lap of the ring | Per-hop latency and the loop termination condition |
+| **Batching** | Cohort/window, credit, merging | Concurrent acceptance within the declared cap, cohort replacement, window splitting |
 
-**판정 기준은 "한 폴더에 변경 이유가 하나인가"다.** 둘이면 나눈다. 이것은 저장소 계약의 400줄 규칙보다 강하다 — 400줄은 결과적 상한이고, 이 원칙은 **줄 수와 무관하게** 적용된다. 20줄짜리 파일도 변경 이유가 둘이면 나눈다.
+**The measurements in §92 are the calibration reference for the mock.** Stage overlap 271.5 tok/s (4.11x versus 66.0 single), stage wait 8.0–87.3 s, KV about 188 MiB/layer/48 sessions. The mock only has to reproduce this **shape**; it does not need to compute the numbers — it can be given them and imitate them as declared.
 
-**보호 성질:** 잘 나뉜 구조에서는 하나의 변경이 하나의 폴더만 연다. 여러 폴더를 동시에 열어야 하는 변경은 **분할이 틀렸다는 신호**이지 그 변경이 큰 것이 아니다.
+The mock profile therefore has to express **per-role cost, stage composition, ring hops and cohort windows**, not just a few `latency` values. Otherwise the reproduced load has a different shape from reality and the verification becomes meaningless.
 
-#### 목표: 최상의 에이전트 구현 — 축적된 실측이 거는 제약
+**Even so, the agent must be completed and proven before any concrete adapter.** The two constraints do not conflict — the workloads decide **what the agent must support**, and **everything that supplies it is the mock**. llama.cpp does not appear in this phase.
 
-여러 세션이 실험·커밋·측정으로 쌓아 둔 결과가 이미 충분하다. 코어를 처음부터 다시 만드는 이 기회에 **그 결과가 알려준 것을 설계에 미리 반영한다.** 아래는 재발견하면 안 되는 것들이다.
+```text
+① node adapter interface     ← expresses the four workloads with 0 backend names
+② agent core                 ← completed on top of the interface
+③ mock adapter               ← second implementation of the interface; reproduces the four workloads
+④ fleet sustained-load proof ← this is where the agent is judged "complete"
+─────────────────────── no llama.cpp up to here ───────────────────────
+⑤ concrete adapter           ← after that
+```
 
-| 근거 | 사실 | 코어가 지켜야 할 것 |
+**The agent's completion verdict ends at ④.** It must be possible to judge it without any concrete adapter; if it cannot be judged, the interface under-expresses the workloads — if there is load the mock cannot reproduce, go back to the interface.
+
+#### This core is GPU-independent — that is where the means of proof comes from
+
+None of the items above needs a GPU. A "GPU hop" is merely **the abstraction of a hop boundary**, and what provides that boundary is the node's adapter interface. **This entire implementation can therefore be proven with just the adapter interface and a mock adapter that follows it.**
+
+There are two consequences.
+
+1. **`D-64` and `Q-51` are resolved.** The defect was that the adapter interface "does not exist as an explicit artifact", and the mock adapter **forces that interface to exist.** What the mock can implement is the interface, and if the mock can complete its implementation without backend concepts, the boundary is clean. The interface is proven not by a document but **by a second implementation**
+2. **Load and simulation verification need no GPU.** Arrival storms, cohort replacement, cancellation, deadline expiry and back-pressure from slow hops can all run on the mock. What is observed then is purely P4's behavior — nothing below is left to blame
+
+**This is the completion criterion for this branch.** If the core withstands load on the mock adapter, there are grounds to state that problems arising later on the real system are not P4's problems.
+
+#### Folder separation principle — structure protects the code
+
+**This is not a matter of mere optimization.** Considering later maintenance and feature additions, the code must be carefully separated into folders.
+
+The reason lies in how the tools fail. **AI causes far too many regressions in file splitting and in-file structure, and the structure collapses as edits repeat.** When several reasons for change are mixed in one file, that file is opened every time, and each time unrelated parts are shaken along with it.
+
+So **protect the code by splitting it into folders so finely that it cannot be touched even when someone wants to.** This is not indiscriminate splitting, though; it follows **purpose, role and rate of change**.
+
+| Axis | Question | Split if different |
 |---|---|---|
-| 핸드오프 §4.1 | **에이전트만 거부하고 그 아래는 전부 대기한다.** 어댑터 큐·스케줄러·네이티브가 각자 흡수한다 | 거부 지점을 하나로 유지한다. 아래 층에 게이트를 늘리면 도착량과 보고된 한도가 어긋난다 |
-| 핸드오프 §4.1 | 에이전트가 대기할 수 없었던 이유는 **`TaskHandler::handle`이 동기 계약**이었기 때문이다 | CPS 규격이 이 제약을 없앤다 — 노드 큐가 흡수하므로 거부·대기가 더 이상 양자택일이 아니다 |
-| 핸드오프 §4.2 | **상수 하나가 세 가지를 사이징했다** — 연결 수용, 요청 수용, 큐 깊이. 하나를 줄이면 셋이 같이 줄었다 | 세 축을 **처음부터 분리해 선언**한다 |
-| `capacity/mod.rs` | 프로세스 전역 상수로 게이트를 두었을 때 **스로틀이 GPU에서 세 단계 위**에 있었다 | 배치·창 결정은 노드 큐 아래에 둔다. 코어는 상한을 나르되 파생하지 않는다 |
-| §92 / 2026-08-15 | 선언 상한을 넘는 동시성은 현재 네이티브에서 **안전하지 않다** | 상한을 상한으로만 쓴다. 초과 동시성을 조용히 허용하지 않는다 |
-| 핸드오프 트랩 | **자식 스테이지가 사라지면 supervisor가 함께 죽는다** — 가용성 결함 | 노드가 자기 어댑터의 소멸을 견디고 보고해야 한다. 연쇄 종료를 설계에 넣지 않는다 |
-| 핸드오프 caveat | `controller_id`는 **인증되지 않은 문자열**이었다 | 컨트롤러 폐기로 소멸한다. 대체물을 만들지 않는다 |
-| 메모리 | 비최종 스테이지가 **모델 전체 footprint를 예약**했다 | 적재 보고는 스테이지별이어야 한다. 총량 하나로는 이 결함이 안 보인다 (`P-45`가 이미 그 형태다) |
+| **Purpose** | What does this exist for | If the reasons to exist differ, do not put them in the same folder |
+| **Role** | Who owns and calls this | If the owners differ, split |
+| **Rate of change** | How often does this change | If frequently changing code mixes with rarely changing code, the rare side gets opened often |
 
-**이 표가 "최상의 구현"의 조작적 정의다.** 새 코어는 위 항목을 다시 겪지 않아야 하고, 각 항목은 목 어댑터로 재현 가능한 시나리오를 하나씩 갖는다.
+**The test is "does a folder have exactly one reason to change?"** If it has two, split it. This is stronger than the repository contract's 400-line rule — 400 lines is a resulting cap, while this principle applies **regardless of line count**. Even a 20-line file is split if it has two reasons to change.
 
-#### 검증은 실제 플릿 전체에서 한다
+**Protective property:** in a well-split structure, one change opens one folder. A change that must open several folders at once is **a sign that the split is wrong**, not that the change is large.
 
-단위 테스트로는 부족하다. **이 구현은 안정화가 목적이므로, 목 어댑터 기반으로 가용한 PC를 전부 연결해 복잡하고 무거우며 연속된 시나리오를 전개해 증명한다.**
+#### Goal: the best possible agent implementation — constraints set by accumulated measurements
 
-목이 GPU를 요구하지 않는다는 점이 여기서 결정적이다 — **모든 장비가 동등한 자격으로 참여한다.** 백엔드가 없는 장비, 약한 장비, 다른 OS의 장비가 전부 에이전트와 노드를 띄울 수 있다.
+The results that several sessions accumulated through experiments, commits and measurements are already sufficient. Taking this chance to rebuild the core from scratch, **build what those results taught into the design up front.** The following must not be rediscovered.
 
-| 축 | 플릿이 덮는 범위 |
+| Source | Fact | What the core must uphold |
+|---|---|---|
+| Handoff §4.1 | **Only the agent refuses; everything below it waits.** The adapter queue, scheduler and native side each absorb load | Keep a single refusal point. Adding gates in lower layers makes arrivals and reported limits diverge |
+| Handoff §4.1 | The agent could not wait because **`TaskHandler::handle` was a synchronous contract** | The CPS spec removes this constraint — the node queue absorbs load, so refusing and waiting are no longer either/or |
+| Handoff §4.2 | **One constant sized three things** — connection acceptance, request acceptance and queue depth. Reducing one reduced all three | **Declare the three axes separately from the start** |
+| `capacity/mod.rs` | With a process-global constant as the gate, **the throttle sat three levels above the GPU** | Put batching/window decisions below the node queue. The core carries caps but does not derive them |
+| §92 / 2026-08-15 | Concurrency above the declared cap is **not safe** on the current native side | Use the cap only as a cap. Do not silently allow excess concurrency |
+| Handoff trap | **When a child stage disappears, the supervisor dies with it** — an availability defect | A node must survive and report the disappearance of its adapter. Do not design in cascading shutdown |
+| Handoff caveat | `controller_id` was **an unauthenticated string** | It disappears with the controller. Do not create a replacement |
+| Memory | Non-final stages **reserved the whole model footprint** | Load reports must be per stage. A single total hides this defect (`P-45` already has that shape) |
+
+**This table is the operational definition of "the best implementation".** The new core must not go through these items again, and each item gets one scenario that the mock adapter can reproduce.
+
+#### Verification runs on the whole real fleet
+
+Unit tests are not enough. **Since the purpose of this implementation is stabilization, prove it by connecting every available PC on top of the mock adapter and running complex, heavy, continuous scenarios.**
+
+The fact that the mock needs no GPU is decisive here — **every machine participates on equal terms.** Machines without a backend, weak machines and machines running other OSes can all run agents and nodes.
+
+| Axis | What the fleet covers |
 |---|---|
-| OS·아키텍처 | Windows x64, Windows ARM64, macOS ARM64, Linux ARM64 — **코어 사양 1번(멀티플랫폼)의 실측** |
-| 장비 수 | LAN 7대 + 외부 2대 |
-| 방화벽 위상 | 외부 장비는 **WAN 경계 너머**에 있다. 전제 11의 진입 에이전트·중계가 인위적 구성이 아니라 **실제 방화벽**으로 검증된다 |
+| OS/architecture | Windows x64, Windows ARM64, macOS ARM64, Linux ARM64 — **a measurement of core spec item 1 (multi-platform)** |
+| Machine count | 7 on the LAN + 2 external |
+| Firewall topology | The external machines are **beyond the WAN boundary**. The entry agent and relaying of premise 11 are verified against **a real firewall**, not an artificial setup |
 
-접속 정보는 저장소 밖 로컬 운영 문서(`F:\dev\REMOTE_SSH_ACCESS.md`)가 관리한다. **주소·계정·비밀은 이 저장소에 복사하지 않는다.**
+Connection details are managed in a local operations document outside the repository (`F:\dev\REMOTE_SSH_ACCESS.md`). **Do not copy addresses, accounts or secrets into this repository.**
 
-시나리오는 짧은 스모크가 아니라 **연속 부하**여야 한다. 노드 큐가 깊어진 상태에서의 도착, 코호트 교체, 중계 홉을 여러 번 지나는 경로, 취소와 데드라인이 섞인 흐름, 그리고 장시간 지속. §92의 기존 실측(스테이지 대기 8.0~87.3초, 30 도착에서의 네이티브 크래시)이 참조 척도이나, 이번 검증은 그 아래 층이 목으로 대체되므로 **관측되는 것은 순수한 P4 거동**이다.
+Scenarios must be **sustained load**, not short smoke tests: arrivals while node queues are deep, cohort replacement, paths that cross relay hops several times, flows that mix cancellation and deadlines, and long durations. The earlier measurements in §92 (stage wait 8.0~87.3 s, native crash at 30 arrivals) are the reference scale, but since the layer below is replaced by the mock this time, **what is observed is pure P4 behavior**.
 
-#### 현재 코드와의 간극
+#### Gap with the current code
 
-| 항목 | 현재 |
+| Item | Current |
 |---|---|
-| 1 | 성립 |
-| 2 | **절반.** `foundation/task_queue`에 tokio 워커는 있으나 [`transport/mod.rs`](layers/runtime/src/foundation/transport/mod.rs)의 `P4Handler::handle`이 동기 완료 계약이다 (`D-26`) |
-| 3 | **깨져 있다.** `TcpTransport::dispatch`가 호출마다 소켓을 열고 terminal까지 블로킹한다 — 워커가 큐 안에서 멈춘다 (`D-27`·`D-30`) |
-| 4·5 | **없다.** 분류 개념이 봉투에 없다 (`D-69`) |
-| 6 | **없다.** 중계가 정적 라우트 맵이고 OUTER 귀환은 별개 경로다 (`D-48`) |
-| 7 | **아니다.** `serve()`가 연결마다 스레드를 띄워 핸들러를 인라인 호출한다 |
-| 8 | 있으나 kind 분기가 이중이고(`D-66`) 노드를 건너뛰어 어댑터로 직행한다 (`D-67`) |
+| 1 | Holds |
+| 2 | **Half.** `foundation/task_queue` has tokio workers, but `P4Handler::handle` in [`transport/mod.rs`](layers/runtime/src/foundation/transport/mod.rs) is a synchronous completion contract (`D-26`) |
+| 3 | **Broken.** `TcpTransport::dispatch` opens a socket on every call and blocks until terminal — the worker stalls inside the queue (`D-27`·`D-30`) |
+| 4·5 | **Missing.** The envelope has no concept of classification (`D-69`) |
+| 6 | **Missing.** Relaying is a static route map, and the return to OUTER is a separate path (`D-48`) |
+| 7 | **No.** `serve()` spawns a thread per connection and calls the handler inline |
+| 8 | Exists, but the kind branching is duplicated (`D-66`) and messages skip the node and go straight to the adapter (`D-67`) |
 
 ---
 
-# 주제 A. 하드웨어 조회 프로토콜
+# Topic A. Hardware query protocol
 
-전제 1이 성립하려면 외부가 머신 스펙을 조회할 수 있어야 하고, 그 위에서 노드 편성을 한다. 현 프로토콜은 이 조회의 **계약이 없다.**
+For premise 1 to hold, the outside must be able to query machine specs and orchestrate nodes on top of them. The current protocol has **no contract** for this query.
 
-## 2. 현재 상태 (검증 완료)
+## 2. Current status (verified)
 
-`INVENTORY_QUERY`(34) → `HARDWARE_REPORT`(35) 왕복은 구현되어 있다.
+The `INVENTORY_QUERY`(34) → `HARDWARE_REPORT`(35) round trip is implemented.
 
-- 요청: `controller_id`, `request_id`
-- 응답: `agent_id`, `report_id`, `snapshot`(bounded text)
-- 방향: `ExternalController` — [`catalog/mod.rs`](layers/protocol/src/catalog/mod.rs)
-- 클래스: Terminal. 응답이 route를 닫는다
+- Request: `controller_id`, `request_id`
+- Response: `agent_id`, `report_id`, `snapshot` (bounded text)
+- Direction: `ExternalController` — [`catalog/mod.rs`](layers/protocol/src/catalog/mod.rs)
+- Class: Terminal. The response closes the route
 
-`snapshot`의 전체 구현은 [`domain/hardware/mod.rs`](layers/runtime/src/domain/hardware/mod.rs) 35줄이다.
+The whole implementation of `snapshot` is 35 lines in [`domain/hardware/mod.rs`](layers/runtime/src/domain/hardware/mod.rs).
 
 ```json
 { "observed_at_unix_ms": 0, "os": "windows", "arch": "x86_64",
@@ -459,403 +459,403 @@ GPU 홉 경계가 노드의 유일한 결정 시점이므로 **데드라인 검�
   "adapters": [...], "nodes": [...] }
 ```
 
-`os`는 `env::consts::OS`, 즉 **컴파일 타임 상수**다. `gpus`는 `nvidia-smi --format=csv,noheader,nounits`의 **원문 문자열 배열**이다.
+`os` is `env::consts::OS`, that is, **a compile-time constant**. `gpus` is **an array of raw strings** from `nvidia-smi --format=csv,noheader,nounits`.
 
-## 3. 결함
+## 3. Defects
 
-### D-1. `snapshot`에 스키마 계약이 없다
-P4 계층에서 `snapshot`은 256 KiB 이하 텍스트일 뿐이다. 버전도, 필수 필드도, 검증도 없다.
-근거: [`message/mod.rs`](layers/protocol/src/contract/message/mod.rs) `HardwareReport.snapshot: String`
+### D-1. `snapshot` has no schema contract
+At the P4 layer, `snapshot` is just text of 256 KiB or less. It has no version, no required fields and no validation.
+Evidence: [`message/mod.rs`](layers/protocol/src/contract/message/mod.rs) `HardwareReport.snapshot: String`
 
-### D-2. RAM 정보가 전면 부재
-total도 available도 없다. CPU offload 가능 여부, KV 예산, mmap 적합성 판단 근거가 통째로 없다. 노드 편성의 1차 입력이 빠져 있다.
+### D-2. RAM information is entirely missing
+Neither total nor available. There is no basis at all for judging whether CPU offload is possible, the KV budget or mmap suitability. The primary input to node orchestration is missing.
 
-### D-3. GPU 정보가 구조화되지 않았고 NVIDIA 전용
-- `nvidia-smi` CSV 원문 문자열 → 외부가 규약 없이 문자열을 쪼개야 한다
-- 단위 미문서화 (`nounits`는 MiB)
-- AMD·Intel·Apple 경로 없음
-- compute capability, PCIe bus, NVLink 피어 없음 → 다중 GPU 배치 판단 불가
-- 조회마다 프로세스 spawn. 실패 시 조용히 빈 배열이라 **GPU 없음과 드라이버 오류가 구분되지 않는다**
+### D-3. GPU information is unstructured and NVIDIA-only
+- Raw `nvidia-smi` CSV strings → the outside has to split strings without any convention
+- Units are undocumented (`nounits` is MiB)
+- No AMD, Intel or Apple path
+- No compute capability, PCIe bus or NVLink peers → multi-GPU placement cannot be judged
+- A process is spawned on every query. On failure it silently returns an empty array, so **"no GPU" and "driver error" are indistinguishable**
 
-### D-4. CPU·OS 정보가 편성에 못 미친다
-코어 수 2개(`cpu_physical`, `cpu_logical`)뿐. 모델명, 클럭, 소켓/NUMA, ISA 확장(AVX-512·AMX) 없음. OS는 커널·버전·배포판 없이 계열 문자열만.
+### D-4. CPU and OS information falls short of what orchestration needs
+Only 2 core counts (`cpu_physical`, `cpu_logical`). No model name, clock, socket/NUMA or ISA extensions (AVX-512, AMX). The OS is only a family string, without kernel, version or distribution.
 
-### D-5. 저장소 용량 정보 없음
-모델 저장소 총량/여유가 없다. 배치 전에 적재 가능 여부를 알 수 없다.
+### D-5. No storage capacity information
+No total or free model storage. Whether a model can be loaded cannot be known before placement.
 
-### D-6. 에이전트가 먼저 말을 걸 수단이 없다
-P4의 모든 응답은 이미 열린 `route_id` 위로만 나간다. `HARDWARE_REPORT`는 terminal이라 route를 닫는다. [`agent-link.mjs`](tools/controller/client/transport/agent-link.mjs)와 [`controller-instance.mjs`](tools/controller/client/controller-instance.mjs) 모두 요청 개시만 구현한다.
+### D-6. The agent has no way to speak first
+Every P4 response goes out only on an already open `route_id`. `HARDWARE_REPORT` is terminal and closes the route. Both [`agent-link.mjs`](tools/controller/client/transport/agent-link.mjs) and [`controller-instance.mjs`](tools/controller/client/controller-instance.mjs) implement only request initiation.
 
-결과: 외부는 **이미 아는 엔드포인트에만** 물어볼 수 있다. "어떤 노드가 있는가"의 시작점이 외부에 없다. 전제 1에 대해 D-1~D-5보다 치명적이다.
+Result: the outside can ask **only endpoints it already knows**. The outside has no starting point for "which nodes exist". For premise 1 this is more critical than D-1~D-5.
 
-### D-7. 프로세스 교체를 감지할 수단이 없다 (재정의)
+### D-7. There is no way to detect a process replacement (redefined)
 `format!("agent-{host}-{pid}")` — [`domain/agent/mod.rs`](layers/runtime/src/domain/agent/mod.rs).
 
-당초 "재시작하면 같은 머신이 다른 에이전트가 되므로 레코드를 키잉할 수 없다"로 적었다. **키잉 문제는 P-2에서 해소되었다** — 접근 주소가 identity이므로 키는 이미 안정적이다.
+This originally said "after a restart the same machine becomes a different agent, so records cannot be keyed". **The keying problem was resolved in P-2** — the access address is the identity, so the key is already stable.
 
-남는 실질 결함은 반대 방향이다. 주소가 안정적이기 때문에 **에이전트가 재시작해 `NodeSlot`과 바인딩을 전부 잃어도 OUTER는 그것을 알 수 없다.** 프로세스 교체를 감지할 표식이 없다(P-39).
+The real remaining defect points the other way. Because the address is stable, **OUTER cannot tell when an agent restarts and loses all of its `NodeSlot`s and bindings.** There is no marker for detecting a process replacement (P-39).
 
-### D-8. 불변 정보와 휘발 정보가 한 덩어리다
-`cpu_physical`(하드웨어 교체 전까지 불변)과 `memory.free`(초 단위 변동)가 같은 문서에 같은 신뢰도로 들어 있다. 분리되지 않으면 "편성에 관측 여유값을 쓰지 말라"는 규칙을 강제할 방법이 없다.
+### D-8. Immutable and volatile information are lumped together
+`cpu_physical` (unchanged until the hardware is replaced) and `memory.free` (changes by the second) sit in the same document with the same trust level. Without separating them, there is no way to enforce the rule "do not use observed free values for orchestration".
 
-## 4. 보완 설계 (초안)
+## 4. Remediation design (draft)
 
-### P-1. capability / occupancy 분리
+### P-1. Separate capability and occupancy
 
-| 구분 | 성격 | 내용 | 외재화 |
+| Kind | Nature | Contents | Externalization |
 |---|---|---|---|
-| **capability** | 하드웨어·드라이버·**빌드** 변경 시에만 변함 | **런타임 변종**(P-61), CPU(모델·물리/논리·소켓·NUMA·ISA), RAM 총량, GPU별(uuid·vendor·모델·VRAM 총량·아키텍처·PCIe·NVLink 피어), 저장소 총량, OS/커널 버전 | 외부 레코드로 저장. `capability_revision`으로 변경 감지 |
-| **occupancy** | 초 단위 변동 | free VRAM/RAM, 사용률, 온도·전력, 현재 적재 바인딩 | 저장 금지. 진단·검증용 |
+| **capability** | Changes only when hardware, drivers or **the build** change | **Runtime variant** (P-61), CPU (model, physical/logical, sockets, NUMA, ISA), total RAM, per GPU (uuid, vendor, model, total VRAM, architecture, PCIe, NVLink peers), total storage, OS/kernel version | Stored as an external record. Changes detected via `capability_revision` |
+| **occupancy** | Changes by the second | Free VRAM/RAM, utilization, temperature/power, currently loaded bindings | Must not be stored. For diagnosis and verification only |
 
-**편성 규칙 (필수):** 노드 편성은 occupancy를 입력으로 쓰지 않는다. `capability 총량 − 외부 레코드가 선언한 배치`로 계산하고, 관측 여유값은 그 결과의 검증에만 쓴다.
-근거: free VRAM 기준 배치는 두 컨트롤러가 같은 여유를 보고 동시에 커밋한다. 경합을 막는 것은 보고서가 아니라 외부 레코드다.
+**Orchestration rule (mandatory):** node orchestration does not use occupancy as input. Compute `capability total − placements declared by the external record`, and use observed free values only to verify that result.
+Rationale: with placement based on free VRAM, two controllers see the same free space and commit at the same time. What prevents the race is the external record, not the report.
 
-### P-2. 접근 주소가 에이전트의 identity다 (P-34으로 재작성)
+### P-2. The access address is the agent's identity (rewritten under P-34)
 
-**초안(철회):** `machine_id` / `boot_id` / `agent_instance_id` 3층 identity를 두자는 제안이었다. `agent_id`가 PID에 묶여 있다는 D-7의 해결책으로 적었다.
+**Draft (withdrawn):** the proposal was a 3-layer identity of `machine_id` / `boot_id` / `agent_instance_id`, written as the fix for D-7, where `agent_id` is tied to the PID.
 
-**확정:** P-34에 따라 모든 메시지가 대상 에이전트의 접근 주소를 자기기술한다. 그리고 그 주소는 OUTER가 소유하는 인프라 사실이다(전제 1). **따라서 별도의 에이전트 ID는 무의미하다 — 접근 주소 자체가 에이전트의 ID다.**
+**Decided:** per P-34, every message self-describes the access address of its target agent, and that address is an infrastructure fact owned by OUTER (premise 1). **A separate agent ID is therefore meaningless — the access address itself is the agent's ID.**
 
-| 기존 용도 | 대체 |
+| Existing use | Replacement |
 |---|---|
-| capability 레코드의 키 | 접근 주소 |
-| `is_local_bypass`의 동일성 판정 | 접근 주소 비교 |
-| `HARDWARE_REPORT.agent_id` | 불필요 — 물어본 쪽이 이미 주소를 안다 |
-| `Participant.agent_id` | 접근 주소 |
+| Key of the capability record | Access address |
+| Identity check in `is_local_bypass` | Access address comparison |
+| `HARDWARE_REPORT.agent_id` | Unnecessary — the asker already knows the address |
+| `Participant.agent_id` | Access address |
 
-`machine_id`도 불필요하다. 주소는 재시작·재부팅을 넘어 안정하며, PID 유래 값보다 오히려 더 안정적이다. `boot_id`도 마찬가지다 — occupancy는 저장하지 않으므로(P-1) 유효 범위를 표시할 대상이 없다.
+`machine_id` is unnecessary too. The address is stable across restarts and reboots — more stable, in fact, than a PID-derived value. The same goes for `boot_id`: occupancy is not stored (P-1), so there is nothing whose validity range needs marking.
 
-**단 하나 남는 것: 프로세스 화신(incarnation) 표식** — §하단 P-39 참조. 이는 identity가 아니라 세대 표식이다.
+**The one thing that remains: a process incarnation marker** — see P-39 below. It is a generation marker, not an identity.
 
-`node_id`는 이미 외부가 발급한다([`controller-instance.mjs`](tools/controller/client/controller-instance.mjs) `createNode`의 `randomUUID`) — 이 축은 이미 전제 1과 정합하다.
+`node_id` is already issued externally (`randomUUID` in `createNode` of [`controller-instance.mjs`](tools/controller/client/controller-instance.mjs)) — this axis is already consistent with premise 1.
 
-### P-39. 프로세스 화신 표식 (identity가 아닌 세대)
+### P-39. Process incarnation marker (a generation, not an identity)
 
-주소가 identity를 대신해도 대체하지 못하는 사실이 하나 있다. **에이전트가 재시작하면 `NodeSlot`과 바인딩이 전부 사라진다** — 현재 registry는 프로세스 메모리에만 있고 지속화되지 않는다(D-9 영역). 주소는 그대로이므로 OUTER는 자기 레코드가 무효가 된 것을 알 수 없다.
+Even with the address standing in for identity, there is one fact it cannot cover. **When an agent restarts, all of its `NodeSlot`s and bindings disappear** — the current registry lives only in process memory and is not persisted (D-9 territory). The address stays the same, so OUTER cannot tell that its records have become invalid.
 
-필요한 것은 ID가 아니라 **"같은 주소인데 다른 화신"을 구별하는 단조 증가 표식**이다. `runtime_generation`이 바인딩 실체에 대해 하는 일과 같은 역할을 에이전트 프로세스에 대해 한다.
+What is needed is not an ID but **a monotonically increasing marker that distinguishes "same address, different incarnation"**. It plays for the agent process the role that `runtime_generation` plays for the binding instance.
 
-D-7의 실질 해결은 여기다 — 문제는 "ID가 PID에 묶였다"가 아니라 **"프로세스가 바뀐 것을 감지할 수 없다"**였다. 지속화(§94.1)를 도입하면 필요 범위가 달라지므로 함께 판단한다(Q-42).
+This is the real fix for D-7 — the problem was not "the ID is tied to the PID" but **"a process change cannot be detected"**. Introducing persistence (§94.1) changes the required scope, so the two are judged together (Q-42).
 
-### P-3. `snapshot` 스키마 규범화
-버전 붙은 JSON으로 규범화한다(`schema_version` 필수). wire 필드 승격은 하지 않는다 — 하드웨어 속성은 코덱보다 빨리 변하므로, 필드로 올리면 GPU 속성 하나 늘 때마다 프로토콜 버전이 올라간다. 대신 스키마를 **규범**으로 못 박고 검증한다. best-effort 성격은 occupancy 절에만 남긴다.
+### P-3. Make the `snapshot` schema normative
+Standardize it as versioned JSON (`schema_version` required). Do not promote it to wire fields — hardware attributes change faster than the codec, so promoting them to fields would bump the protocol version every time a GPU attribute is added. Instead, pin the schema down as **a norm** and validate it. The best-effort nature remains only in the occupancy section.
 
-### P-4. agent-initiated announce (Q-3 종속)
-전제 1을 끝까지 밀면 필요하다.
-- 새 방향: Agent → External (현 `TaskDirection`에 없음)
-- non-terminal 갱신 프레임 (현 `HARDWARE_REPORT`는 terminal)
-- 등장 시 announce + capability 변경 시 재announce
+### P-4. agent-initiated announce (depends on Q-3)
+Required if premise 1 is pushed all the way.
+- New direction: Agent → External (not in the current `TaskDirection`)
+- Non-terminal update frame (the current `HARDWARE_REPORT` is terminal)
+- Announce on appearance + re-announce on capability change
 
-**P4B1 v6 급 변경이다.** v5 호환 포기 결정이므로 Q-3에서 함께 판단한다.
+**This is a P4B1 v6-class change.** It means giving up v5 compatibility, so it is judged together in Q-3.
 
 ---
 
-# 주제 B. 노드 소유권과 노드의 실체
+# Topic B. Node ownership and the node's concrete instance
 
-전제 3을 코드와 대조한 결과다.
+This is the result of checking premise 3 against the code.
 
-## 5. 현재 상태 (검증 완료)
+## 5. Current status (verified)
 
-### 5.1 코드가 이미 전제 3과 일치하는 부분
+### 5.1 Where the code already matches premise 3
 
-- **노드 정의는 하드웨어 제약이지만 `NodeSlot`에는 제약이 없다.** `NodeSlot`은 `controller_id`, `adapter_id`, `max_inflight`, `admission`, `bindings`뿐 — [`registry/node/mod.rs`](layers/runtime/src/domain/agent/registry/node/mod.rs)
-- **에이전트는 상세 제약을 모른다.** [`node_spec/mod.rs`](layers/runtime/src/domain/agent/lifecycle/node_spec/mod.rs) 주석 그대로 — Agent는 `p4_max_inflight` 한 필드만 읽고 나머지를 무시한다
-- **실체는 모델 로딩 때 드러난다.** `MODEL_BOUND(state=ready)`일 때만 `bind()`가 `Binding{deployment_id, generation}`을 만든다
-- **부분로딩 전략은 외부가 결정해 주입한다.** `stage_plan`은 Agent가 해석하지 않고 어댑터로 통과
-- **언로드하면 id는 남고 실체만 사라진다.** `unbind()`는 `bindings`에서만 제거
-- **`runtime_generation`은 어댑터가 발급한다.** Agent는 `MODEL_BOUND`의 값을 기록만 한다
+- **A node definition is a hardware constraint, but `NodeSlot` has no constraints.** `NodeSlot` has only `controller_id`, `adapter_id`, `max_inflight`, `admission` and `bindings` — [`registry/node/mod.rs`](layers/runtime/src/domain/agent/registry/node/mod.rs)
+- **The agent does not know the detailed constraints.** As the comment in [`node_spec/mod.rs`](layers/runtime/src/domain/agent/lifecycle/node_spec/mod.rs) says — the Agent reads only the single field `p4_max_inflight` and ignores the rest
+- **The concrete instance appears at model load.** `bind()` creates `Binding{deployment_id, generation}` only on `MODEL_BOUND(state=ready)`
+- **The partial-loading strategy is decided and injected from outside.** `stage_plan` is not interpreted by the Agent and passes through to the adapter
+- **Unloading keeps the id and removes only the concrete instance.** `unbind()` only removes the entry from `bindings`
+- **`runtime_generation` is issued by the adapter.** The Agent only records the value from `MODEL_BOUND`
 
-### 5.2 코드가 전제 3과 어긋나는 부분
+### 5.2 Where the code diverges from premise 3
 
-현재 노드는 **controller-owned**다. `NODE_CREATE`가 `controller_id`를 나르고 `NodeSlot::new(controller_id, …)`가 소유권을 각인한다. 이후 `MODEL_LOAD`, `MODEL_UNLOAD`, `HEALTH_CHECK`, `EXECUTE`가 전부 `owned_node()`를 통과한다 — [`authorization/mod.rs`](layers/runtime/src/domain/agent/authorization/mod.rs).
+Nodes are currently **controller-owned**. `NODE_CREATE` carries `controller_id`, and `NodeSlot::new(controller_id, …)` stamps ownership. After that, `MODEL_LOAD`, `MODEL_UNLOAD`, `HEALTH_CHECK` and `EXECUTE` all go through `owned_node()` — [`authorization/mod.rs`](layers/runtime/src/domain/agent/authorization/mod.rs).
 
-## 6. 결함
+## 6. Defects
 
-### D-9. 노드 제거가 프로토콜에 없다
-`nodes.remove` 호출이 저장소 어디에도 없고 `NODE_DELETE` kind도 없다. **노드 수명이 Agent 프로세스 수명과 같다.** 노드 목록을 외부가 권위 있게 관리하려면 필수 결손이다.
+### D-9. Node removal is not in the protocol
+There is no `nodes.remove` call anywhere in the repository and no `NODE_DELETE` kind. **A node's lifetime equals the Agent process's lifetime.** This gap must be filled if the outside is to manage the node list authoritatively.
 
-### D-10. `NODE_CREATE` 재적용이 조용한 no-op
-[`lifecycle/mod.rs`](layers/runtime/src/domain/agent/lifecycle/mod.rs)의 `entry(node_id).or_insert_with(…)`. 같은 `node_id`로 다시 만들면 새 `node_spec`이 무시되고, 호출자는 성공 응답을 받아 반영되었다고 오해한다. 갱신과 무시가 구분되지 않는다.
+### D-10. Re-applying `NODE_CREATE` is a silent no-op
+`entry(node_id).or_insert_with(…)` in [`lifecycle/mod.rs`](layers/runtime/src/domain/agent/lifecycle/mod.rs). Creating again with the same `node_id` ignores the new `node_spec`, and the caller gets a success response and wrongly assumes it was applied. Update and ignore are indistinguishable.
 
-### D-11. `node_spec`의 하드웨어 제약이 저장되지 않는다
-`create_node`는 `max_inflight`만 추출하고 원문을 버린다. 어댑터로 전달은 되지만 registry에는 남지 않는다. 제약은 실체가 아닌 정도가 아니라 **에이전트 안에서 소멸한다.** 외부가 기억하지 않으면 아무도 기억하지 않는다 — 전제 1과 정합하지만, 현재는 외부 레코드도 없으므로 그냥 유실이다.
+### D-11. The hardware constraints in `node_spec` are not stored
+`create_node` extracts only `max_inflight` and discards the original. It is passed to the adapter but not kept in the registry. The constraints are not merely absent from the instance; **they vanish inside the agent.** If the outside does not remember them, nobody does — consistent with premise 1, but since there is no external record yet either, they are simply lost.
 
-### D-12. `controller_id` 게이트는 인증이 아니다
-`controller_id`는 프레임에 적힌 **자기 신고값**이고 wire authz는 존재하지 않는다. 다른 값을 적어 보내면 그대로 통과한다. 즉 `ForeignController` 거부는 보안이 아니라 실수 방지 장치다.
-**따라서 이 게이트를 걷어내는 대가는 보안 약화가 아니다.** 진짜 접근 통제가 필요하면 별도 authz 계층의 문제이지 `controller_id` 문자열이 해결할 수 있는 사안이 아니었다.
+### D-12. The `controller_id` gate is not authentication
+`controller_id` is **a self-declared value** written in the frame, and there is no wire authz. Sending a different value goes straight through. So the `ForeignController` refusal is a guard against mistakes, not security.
+**Removing this gate therefore costs no security.** If real access control is needed, that belongs to a separate authz layer; it was never something the `controller_id` string could solve.
 
-### D-13. `plan_revision`이 로그 문자열로만 쓰인다
-`MODEL_LOAD`가 나르지만 저장도 비교도 되지 않고, 어댑터의 `detail` 메시지에만 삽입된다. 외부 의도의 버전을 담을 자리가 이미 있는데 비어 있다.
+### D-13. `plan_revision` is used only as a log string
+`MODEL_LOAD` carries it, but it is neither stored nor compared; it is only inserted into the adapter's `detail` message. A slot for the version of the external intent already exists but is empty.
 
-## 7. 보완 설계 (초안)
+## 7. Remediation design (draft)
 
-### P-5. 4층 모델
+### P-5. Four-layer model
 
-| 층 | 소유 | 수명 | 개입 |
+| Layer | Owner | Lifetime | Involvement |
 |---|---|---|---|
-| 편성 의도 (하드웨어 제약, 배치 계획) | **외부 레코드** | 영구 | P4 밖 |
-| 노드 슬롯 (id + adapter + 수용력) | 에이전트 | create ~ delete | 외부 → 에이전트 |
-| 노드 실체 (구상 어댑터, 부분로딩된 레이어) | 어댑터 | load ~ unload | 외부 → 에이전트 → 어댑터 |
-| 실행 | **컨트롤러** | 요청 단위 | 컨트롤러가 처음 등장하는 지점 |
+| Orchestration intent (hardware constraints, placement plan) | **External record** | Permanent | Outside P4 |
+| Node slot (id + adapter + capacity) | Agent | create ~ delete | External → agent |
+| Node instance (concrete adapter, partially loaded layers) | Adapter | load ~ unload | External → agent → adapter |
+| Execution | **Controller** | Per request | Where the controller first appears |
 
-노드 슬롯은 id와 수용력만 갖는 껍데기이고, 실체는 세 번째 층에서만 존재한다. 편성 제약은 첫 층에만 있고 P4는 그것을 나르지 않는다.
+A node slot is a shell with only an id and capacity; the concrete instance exists only in the third layer. Orchestration constraints exist only in the first layer, and P4 does not carry them.
 
-### P-6. lifecycle에서 `controller_id` 제거
-`NODE_CREATE`, `MODEL_LOAD`, `MODEL_UNLOAD`, `HEALTH_CHECK`에서 제거한다. `EXECUTE`의 `controller_id`는 남되 의미가 **소유권 게이트에서 relay 대상 식별·추적으로** 바뀐다(Q-6).
-연동: `TaskDirection`에 외부→에이전트 방향 신설, `allows_direction` 재작성, `authorization`에서 `ForeignController` 삭제(`UnknownNode`·`Dangling`·`BindingNotReady`는 유지), `NodeSlot.controller_id` 제거.
+### P-6. Remove `controller_id` from lifecycle
+Remove it from `NODE_CREATE`, `MODEL_LOAD`, `MODEL_UNLOAD` and `HEALTH_CHECK`. `controller_id` in `EXECUTE` stays, but its meaning changes **from an ownership gate to relay-target identification and tracing** (Q-6).
+Knock-on changes: add an external→agent direction to `TaskDirection`, rewrite `allows_direction`, delete `ForeignController` from `authorization` (keep `UnknownNode`, `Dangling` and `BindingNotReady`), remove `NodeSlot.controller_id`.
 
-### P-7. `NODE_DELETE` / `NODE_DELETED` 신설
-D-9의 해결. 활성 바인딩·실행이 있을 때의 처리는 Q-8.
+### P-7. Add `NODE_DELETE` / `NODE_DELETED`
+Fixes D-9. Handling when active bindings or executions exist is Q-8.
 
-### P-8. `plan_revision` / `runtime_generation` 두 축 분리
-- `plan_revision` — **외부 의도의 버전.** 외부 레코드가 발급하고 에이전트가 기록·비교한다
-- `runtime_generation` — **어댑터 실체의 세대.** 현행 역할 유지. 발급 주체도 어댑터 그대로
+### P-8. Separate the two axes `plan_revision` / `runtime_generation`
+- `plan_revision` — **the version of the external intent.** Issued by the external record; the agent records and compares it
+- `runtime_generation` — **the generation of the adapter instance.** Keeps its current role and is still issued by the adapter
 
-두 축은 갱신 주기와 발급자가 다르므로 하나로 합치지 않는다.
-
----
-
-# 주제 C. 모델 적재 프로토콜
-
-전제 4. 적재 지시는 외부에서 오고, 표현력은 구상 런타임 수준을 담아야 한다.
-
-## 8. 현재 상태 (검증 완료)
-
-### 8.1 계약이 정의한 것
-
-[`docs/model-load.md`](docs/model-load.md)의 `stage_plan.load_options`가 정의하는 항목은 다음이 전부다.
-
-`flash_attention`, `mmap`, `kv_cache.{type_k, type_v, offload}`, `batching.{strategy, max_sequences, node_limits[], context_batch_tokens, context_ubatch_tokens, calculation}`, `adapter_options`(자유 객체)
-
-### 8.2 실제 처리
-
-| 주체 | 동작 |
-|---|---|
-| P4 protocol | `stage_plan`을 해석하지 않는다. bounded text |
-| Pipeline 어댑터 | `load_options.batching.max_sequences` **한 필드만** 읽는다 — [`capacity/mod.rs`](layers/adapters/adapter/src/domain/capacity/mod.rs) |
-| Pipeline 어댑터 (적재) | `stage_plan` 전체를 호스트 supervisor `/api/runtime-groups`로 **그대로 POST**한다. 검증하지 않는다 — [`lifecycle/load/mod.rs`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs) |
-| stock llama.cpp 어댑터 | `load_options` 키가 **존재하면 거부**한다(`require_process_start_compatible`). 이미 기동된 프로세스를 가리키므로 |
-
-### 8.3 upstream 실제 표면
-
-고정된 [`apps/llama/upstream`](../llama/upstream) 기준 `common/arg.cpp`의 `add_opt` 호출은 **347개**다. 적재 시점에 의미가 있는 것만 추려도 다음 범주가 계약에 없다.
-
-| 범주 | 대표 플래그 |
-|---|---|
-| 레이어/텐서 배치 | `--n-gpu-layers`, `--override-tensor`, `--n-cpu-moe`, `--cpu-moe`, `--tensor-split`, `--main-gpu`, `--device`, `--rpc` |
-| KV/컨텍스트 | `--ctx-size`, `--parallel`, `--kv-unified`, `--ctx-checkpoints`, `--checkpoint-min-step`, `--defrag-thold`, `--swa-full`, `--context-shift`, `--cache-ram`, `--cache-reuse`, `--cache-idle-slots` |
-| 메모리 로딩 | `--mlock`, `--direct-io`, `--no-repack`, `--check-tensors`, `--load-mode`, `--numa` |
-| RoPE/어텐션 | `--rope-freq-base`, `--rope-freq-scale`, `--rope-scaling`, `--yarn-*`(5), `--grp-attn-n/w`, `--flash-attn`, `--attention` |
-| 스레드/배치 | `--threads`, `--threads-batch`, `--batch-size`, `--ubatch-size`, `--cpu-mask`, `--cpu-range`, `--cpu-strict`, `--poll`, `--prio`, `--cont-batching` |
-| 투기 디코딩 | `--spec-draft-model`, `--spec-draft-ngl`, `--spec-draft-n-max/min`, `--spec-draft-device`, `--spec-draft-type-k/v`, `--eagle3`, `--mtp` |
-| 부가 아티팩트 | `--lora`, `--lora-scaled`, `--control-vector`, `--control-vector-layer-range`, `--mmproj`, `--mmproj-offload` |
-| 메타/템플릿 | `--override-kv`, `--chat-template`, `--jinja`, `--reasoning-budget` |
-
-`--override-tensor`가 없다는 점이 특히 문제다. 레이어 부분 로딩의 실제 도구인데 계약에 자리가 없다.
-
-## 9. 결함
-
-### D-14. 적재 옵션의 표현력이 런타임의 극히 일부만 덮는다
-§8.1의 항목 수와 §8.3의 표면을 비교하면 자명하다. 특히 텐서 단위 배치(`--override-tensor`), MoE 분리(`--n-cpu-moe`), 디바이스 선택(`--device`, `--tensor-split`)이 빠져 있어 부분 로딩 전략을 프로토콜로 표현할 수 없다.
-**해소 경로 (결정):** 전제 6에 따라 P4는 옵션 스키마를 소유하지 않는다. 불투명 문자열로 통과시키고 구상 어댑터가 해석한다. 이 결함은 프로토콜 결함에서 **어댑터 구현 범위**로 내려간다 — 표현력 확보는 어댑터가 upstream 표면을 얼마나 덮느냐의 문제가 된다.
-
-### D-15. `MODEL_LOAD.model`이 단일 문자열이라 다중 아티팩트를 표현할 수 없다
-draft model, mmproj, LoRA, control vector는 모두 **추가 아티팩트**다. 투기 디코딩은 두 번째 모델의 적재다.
-**해소 경로 (결정):** 부가 아티팩트 경로는 옵션 문자열 안에 담고 어댑터가 해석한다. `model` 필드는 주 모델을 가리키는 식별자로 남는다. 따라서 wire 변경이 필요 없다(Q-11 철회).
-
-### D-16. 문서가 기술한 검증 주체와 구현이 다르다
-`docs/model-load.md`는 "선택된 어뎁터가 `load_options`의 공통 필드와 `adapter_options`를 검증·선별하여 적용한다"고 쓰여 있으나, Pipeline 어댑터는 `batching.max_sequences` 외에는 검증하지 않고 통째로 전달한다. "미지원 옵션을 조용히 무시하면 안 된다"는 규칙을 강제하는 코드가 P4 계층에 없다.
-
-### D-17. 같은 필드가 어댑터에 따라 전부 무시 또는 전부 거부로 갈린다
-Pipeline은 통과, stock llama.cpp는 존재만으로 `ERROR`. 호출자가 어느 쪽인지 알 방법이 프로토콜에 없다. `ADAPTER_REGISTER.descriptor`가 그 자리인데 지원 옵션 집합을 선언하지 않는다.
-
-### D-18. `load_options`는 클러스터 계획인데 `MODEL_LOAD`는 노드 단위다
-`batching.node_limits[]`가 **다른 노드들의 값까지** 담는다. 그래서 "최상위 `max_sequences`는 모든 `node_limits`의 최솟값"이라는 fallback 규칙이 필요해졌다. 클러스터 전역 계획이 노드마다 중복 전송되고, 각 어댑터가 자기 몫을 골라내야 한다.
-
-### D-19. 호스트 API에 `controller_id`라는 이름으로 `deployment_id`를 보낸다
-[`lifecycle/load/mod.rs`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs)의 `start.insert("controller_id", deployment)`. 필드명과 내용이 불일치하고, 전제 3·4의 컨트롤러 분리와 충돌하는 잔재다.
-
-### D-60. 적재 시점 선언이 런타임 파생 값을 고정한다
-
-`capacity::declare()`는 `MODEL_LOAD` 시점에 `stage_plan.load_options.batching.max_sequences`를 읽어 **deployment별 세마포어 게이트로 설치**한다 — [`capacity/mod.rs`](layers/adapters/adapter/src/domain/capacity/mod.rs). 적재 시점의 상수가 실행 시점의 admission을 지배한다.
-
-**기제가 확인되었다**(2026-08-13 근거). `max_sequences`는 credit 원장의 상한이고 스케줄러는 `in_flight < credit_limit`인 동안만 채운다. 그리고 `scheduler_window_target`이 **그 아래에서** 활성 코호트를 `pipeline_stage_count`개 창으로 쪼갠다. 즉 런타임은 이미 실시간 파생을 하고 있고, 적재 시점 선언은 **상한으로 기능한다.**
-
-문제는 선언이 존재한다는 것이 아니라 **그것이 권위 게이트로 설치된다는 것**이다. 창 분할이 파생인 이상 선언은 안전장치 이상일 이유가 없다.
-
-같은 파일의 주석이 경고하는 실패가 다른 층위에서 반복된다 — 프로세스 전역 상수를 게이트로 두었을 때 "스로틀이 GPU에서 세 단계 위에" 있었던 것과, 적재 시점 선언을 게이트로 두는 것은 같은 형태다.
-
-`D-18`의 `node_limits[]`·`calculation` 기계 장치 전체가 이 정적 수치를 계산하기 위해 존재한다는 점도 함께 본다.
-
-**이 항목은 타 세션의 스케줄러 결론에 종속된다(Q-48).** 여기서 단독으로 확정하지 않는다.
-
-### D-84. 중첩 깊이가 환경변수로만 존재한다
-스테이지 중첩은 `LINKER_PIPELINE_WINDOW_DEPTH`로 강제되고, 기본값은 `pipeline_stage_count`에서 파생된다. **프로토콜 표면이 없다.**
-
-그런데 깊이는 편성과 얽힌다 — 근거 문서가 보이듯 중첩이 없으면 벽이 스테이지 비용의 **합**을 따라가 균형 배치(13/27)가 20/20보다 나쁘고, 중첩이 있으면 벽이 **최댓값**을 따라가 계산이 뒤집힌다. 세션 수·레이어 분할·깊이가 한 묶음의 결정이다.
-
-따라서 깊이는 **계획 지식**(P-60)이고 OUTER가 정한다. 전제 6에 따라 값은 불투명 적재 옵션으로 전달되면 되지만, **환경변수로만 존재하는 동안에는 OUTER가 그것을 지정할 통로가 없다.**
-
-### D-61. 연결 수립 정책이 프로토콜에 없다
-
-소스 라우팅(P-22)과 자기기술 주소(P-34)는 **홉마다 연결이 성립함**을 전제한다. 그러나 재시도·백오프·연결 예산에 대한 규정이 P4에 없다.
-
-병행 세션에서 링 형성 중 `connect()`가 `EHOSTUNREACH`를 반환하는 현상과 연결 예산·백오프 작업이 진행 중이다. 체인이 프로토콜로 올라오면 이 정책도 계약의 일부가 되어야 한다 — 어느 홉에서 몇 번 재시도하고, 실패를 언제 `ERROR`로 종결하는가.
-
-### D-20. 적재 보고가 요청 route에 묶여 있어 재접속 경로가 없다
-`LOAD_PROGRESS`·`DRAFT_REPORT`는 non-terminal, `MODEL_BOUND`는 terminal이며 모두 요청이 들어온 `route_id`로만 나간다. **요청자가 끊기면 진행 상황도 완료 사실도 어디에도 전달되지 않는다.** 적재는 수 분 단위 작업이므로 실질적 위험이고, 전제 5(적재 보고는 요청한 외부로)가 성립해도 이 구멍은 남는다.
-
-전제 1의 외부 레코드 관점에서는 더 나쁘다 — 완료를 놓치면 외부 기록과 실제 적재 상태가 갈라지고, 이를 복구할 조회 수단이 없다(D-6과 같은 뿌리).
-
-## 10. 보완 설계 (초안)
-
-### P-9. 옵션은 불투명 문자열로 통과시킨다 (결정)
-
-전제 6. P4는 적재 옵션의 구조를 소유하지 않는다. `MODEL_LOAD`는 옵션을 bounded text로 나르고, 해석은 전적으로 구상 어댑터가 한다.
-
-근거: upstream `add_opt`가 347개이고 계속 늘어난다. 스키마로 박으면 upstream이 움직일 때마다 P4 계약이 깨진다. 부가 아티팩트(draft·mmproj·LoRA·control vector) 경로도 이 문자열 안에 담기므로 wire 필드 승격이 불필요하다.
-
-**따라서 폐기되는 설계:** 옵션의 3부 분리(artifacts/placement/tuning)를 P4 계약으로 규정하려던 초안. 그 구분은 유의미하지만 **어댑터와 외부 계획기가 공유하는 규약**이지 P4의 관심사가 아니다.
-
-### P-10. 잔여 문제 — 사전 발견 수단 (축소)
-
-P-9로 D-14~D-17의 대부분이 해소된다. 어댑터가 해석하므로 미지원 옵션에 대해 `ERROR`를 낼 수 있고, "무시 대 거부" 분기도 어댑터 구현 규칙으로 내려간다.
-
-**남는 것 하나:** 외부 계획기가 **보내기 전에** 그 어댑터가 무엇을 지원하는지 알 방법이 없다. 현재는 보내보고 `ERROR`를 받는 시행착오뿐이다. 적재는 비싼 작업이라 실패 비용이 크다.
-
-선택지는 두 가지다.
-- (a) `ADAPTER_REGISTER.descriptor`에 지원 옵션 키 집합과 스키마 버전을 **선언만** 한다. P4는 여전히 해석하지 않고 외부에 전달만 한다
-- (b) 시행착오를 수용한다. `ERROR` detail에 미지원 키를 명시하는 것으로 충분하다고 본다
-
-(a)는 P-9와 충돌하지 않는다 — 선언은 어댑터가 만든 문자열이고 P4는 나르기만 한다. Q-9로 판단한다.
-
-### P-13. 적재 보고의 방향 전환과 재접속 (전제 5)
-
-**방향 전환은 재라벨링에 가깝다.** 현재도 `loadModel`을 호출한 외부 클라이언트가 같은 route로 `LOAD_PROGRESS` → `DRAFT_REPORT` → `MODEL_BOUND`를 받는다([`controller-instance.mjs`](tools/controller/client/controller-instance.mjs)). 바꿀 것은 `allows_direction`이 이들을 `NodeController`로 규정한 부분이며, P-6의 방향 재정의와 같은 변경에 포함된다.
-
-**실질 작업은 D-20이다.** 요청 route가 끊겼을 때 진행·완료를 되찾을 수단이 필요하다. 선택지:
-- (a) 진행 중인 적재를 조회하는 요청 신설 — `operation_id`로 현재 상태를 되묻는다
-- (b) 적재 상태를 노드 상태 조회에 포함 — 별도 메시지 없이 D-6의 조회 수단에 얹는다
-- (c) agent-initiated announce(P-4)에 적재 완료를 실어 보낸다 — Q-3 채택이 전제
-
-Q-14로 판단한다. (b)가 새 메시지를 늘리지 않아 유력하나, 진행률의 실시간성은 포기하게 된다.
-
-### P-44. `batching.*`를 권위 게이트에서 상한으로 강등
-
-D-60의 해소안이다. **실측이 강등안과 일치한다** — 런타임이 이미 창을 파생하고 선언은 상한으로 작동한다(§92).
-
-| 안 | 내용 |
-|---|---|
-| 유지 | 현행. 적재 시점 선언이 admission 게이트 |
-| **강등** | 선언은 **상한 힌트**로만 쓰고, 실제 폭은 런타임이 활성 코호트에서 파생 |
-| 제거 | `batching.*`를 계약에서 빼고 전적으로 런타임 소유 |
-
-강등안이 §92의 원칙과 가장 잘 맞는다 — P4는 처리량을 소유하지 않고 **손잡이를 넘겨줄 뿐**이다. 상한은 안전장치로서 의미가 있으나 매 순간의 폭은 GPU에 가장 가까운 층이 정해야 한다.
-
-강등·제거 어느 쪽이든 `D-18`의 `node_limits[]`·`calculation` 구조가 함께 정리된다.
-
-### P-11. 클러스터 계획과 노드 지시의 분리
-`MODEL_LOAD`는 **그 노드가 할 일만** 싣는다. 클러스터 전역 계획은 외부 레코드에 남고, 필요한 교차 정보(전체 스테이지 수, 이웃 스테이지 식별자 등)만 명시 필드로 전달한다. D-18의 fallback 규칙과 노드별 중복 전송을 제거한다.
-
-### P-12. 적재 지시의 방향 전환
-전제 4에 따라 `MODEL_LOAD`/`MODEL_UNLOAD`를 외부→에이전트 방향으로 옮긴다(P-6과 동일 변경). D-19의 `controller_id` 잔재도 이때 제거한다.
+The two axes have different update cycles and issuers, so they are not merged.
 
 ---
 
-# 주제 D. 적재·해제의 사전 조건과 노드 상태 기계
+# Topic C. Model load protocol
 
-전제 7·8. 명령은 노드의 사전 상태에 의존하고, 실패는 메시지로 요청자를 호출한다.
+Premise 4. Load instructions come from outside, and their expressiveness must match the level of the concrete runtime.
 
-## 11. 현재 상태 (검증 완료)
+## 8. Current status (verified)
 
-### 11.1 사전 조건 검사가 이미 있는 곳
+### 8.1 What the contract defines
 
-`MODEL_LOAD`·`MODEL_UNLOAD`는 `exclusive()`를 통과한다 — `admission::lifecycle(slot)`이 `try_acquire_many_owned(max_inflight)`로 **슬롯의 모든 permit**을 비차단 획득한다. 실행이 하나라도 진행 중이면 즉시 실패하고 `ERROR("node … admission is full")`을 emit한다.
+The items defined by `stage_plan.load_options` in [`docs/model-load.md`](docs/model-load.md) are, in full:
 
-따라서 **"인퍼런스 참가 중이면 로드·언로드 실패"는 이미 구현되어 있다.** 전제 7 중 이 부분만 충족된다.
+`flash_attention`, `mmap`, `kv_cache.{type_k, type_v, offload}`, `batching.{strategy, max_sequences, node_limits[], context_batch_tokens, context_ubatch_tokens, calculation}`, `adapter_options` (free-form object)
 
-### 11.2 응답 전달 구조
+### 8.2 Actual handling
 
-[`forward/mod.rs`](layers/runtime/src/domain/agent/lifecycle/forward/mod.rs)의 `capture`는 어댑터의 모든 응답을 **먼저 호출자에게 그대로 흘려보내고**, 그중 terminal을 복제해 보관한다. 에이전트는 그 복제본을 보고 레지스트리 반영 여부를 뒤늦게 결정한다.
+| Party | Behavior |
+|---|---|
+| P4 protocol | Does not interpret `stage_plan`. Bounded text |
+| Pipeline adapter | Reads **only one field**, `load_options.batching.max_sequences` — [`capacity/mod.rs`](layers/adapters/adapter/src/domain/capacity/mod.rs) |
+| Pipeline adapter (load) | POSTs the whole `stage_plan` **as is** to the host supervisor `/api/runtime-groups`. No validation — [`lifecycle/load/mod.rs`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs) |
+| stock llama.cpp adapter | **Refuses** if any `load_options` key **is present** (`require_process_start_compatible`), because it points at an already started process |
 
-전제 8과 정면으로 충돌하는 구조다. 흘려보낸 시점에 이미 요청자가 호출되었다.
+### 8.3 Actual upstream surface
 
-## 12. 결함
+In the pinned [`apps/llama/upstream`](../llama/upstream), `common/arg.cpp` has **347** `add_opt` calls. Even counting only those that matter at load time, the following categories are missing from the contract.
 
-### D-21. 이미 해제된 대상의 해제가 성공으로 보고된다
-[`lifecycle/unload/mod.rs`](layers/adapters/adapter/src/application/lifecycle/unload/mod.rs)가 `DELETE /api/runtime-groups/{deployment}`의 **HTTP 404를 성공으로 처리**하고 `MODEL_UNBOUND`를 emit한다. 전제 7("이미 언로드된 상태면 실패")과 어긋난다.
+| Category | Representative flags |
+|---|---|
+| Layer/tensor placement | `--n-gpu-layers`, `--override-tensor`, `--n-cpu-moe`, `--cpu-moe`, `--tensor-split`, `--main-gpu`, `--device`, `--rpc` |
+| KV/context | `--ctx-size`, `--parallel`, `--kv-unified`, `--ctx-checkpoints`, `--checkpoint-min-step`, `--defrag-thold`, `--swa-full`, `--context-shift`, `--cache-ram`, `--cache-reuse`, `--cache-idle-slots` |
+| Memory loading | `--mlock`, `--direct-io`, `--no-repack`, `--check-tensors`, `--load-mode`, `--numa` |
+| RoPE/attention | `--rope-freq-base`, `--rope-freq-scale`, `--rope-scaling`, `--yarn-*`(5), `--grp-attn-n/w`, `--flash-attn`, `--attention` |
+| Threads/batching | `--threads`, `--threads-batch`, `--batch-size`, `--ubatch-size`, `--cpu-mask`, `--cpu-range`, `--cpu-strict`, `--poll`, `--prio`, `--cont-batching` |
+| Speculative decoding | `--spec-draft-model`, `--spec-draft-ngl`, `--spec-draft-n-max/min`, `--spec-draft-device`, `--spec-draft-type-k/v`, `--eagle3`, `--mtp` |
+| Auxiliary artifacts | `--lora`, `--lora-scaled`, `--control-vector`, `--control-vector-layer-range`, `--mmproj`, `--mmproj-offload` |
+| Metadata/templates | `--override-kv`, `--chat-template`, `--jinja`, `--reasoning-budget` |
 
-### D-22. 한 route에 terminal이 두 번 나갈 수 있다
-D-21에 이어, 에이전트는 `MODEL_UNBOUND`를 받은 뒤 `slot.unbind()`를 호출하고 `UnknownBinding`이면 `refuse()`로 `ERROR`를 emit한다. `capture`가 이미 `MODEL_UNBOUND`를 흘려보낸 뒤이므로 **요청자는 `MODEL_UNBOUND` 다음에 `ERROR`를 받는다.**
+The absence of `--override-tensor` is a particular problem. It is the actual tool for partial layer loading, yet the contract has no place for it.
 
-terminal은 route를 닫는다는 계약 위반이다. 클라이언트 쪽에서는 `AgentLink`가 첫 terminal에서 route를 지우므로 뒤따르는 `ERROR`는 **조용히 버려진다** — 실패가 성공으로 관측된다.
+## 9. Defects
 
-### D-23. 이미 적재된 노드에 대한 적재가 조용히 덮어쓴다
-`NodeSlot::bind()`는 `bindings.insert()`다. 사전 조건 검사가 없다. 전제 7("이미 모델이 로딩된 노드면 로드 실패")과 어긋나며, 기존 바인딩이 경고 없이 교체된다.
+### D-14. The expressiveness of load options covers only a tiny part of the runtime
+Comparing the item count in §8.1 with the surface in §8.3 makes this obvious. In particular, tensor-level placement (`--override-tensor`), MoE separation (`--n-cpu-moe`) and device selection (`--device`, `--tensor-split`) are missing, so partial-loading strategies cannot be expressed in the protocol.
+**Resolution path (decided):** per premise 6, P4 does not own the option schema. Options pass through as opaque strings and the concrete adapter interprets them. This defect moves down from a protocol defect to **adapter implementation scope** — expressiveness becomes a question of how much of the upstream surface the adapter covers.
 
-### D-24. 노드:바인딩이 1:N이라 "노드의 실체"가 단수로 정의되지 않는다
-`NodeSlot.bindings`는 `HashMap<binding_id, Binding>`이다. 한 노드가 여러 바인딩을 동시에 보유할 수 있다.
+### D-15. `MODEL_LOAD.model` is a single string and cannot express multiple artifacts
+Draft models, mmproj, LoRA and control vectors are all **additional artifacts**. Speculative decoding means loading a second model.
+**Resolution path (decided):** auxiliary artifact paths go inside the option string, and the adapter interprets them. The `model` field remains an identifier that points at the main model. No wire change is therefore needed (Q-11 withdrawn).
 
-전제 3·7의 모델("노드의 실체 = 적재된 구상 어댑터 객체", 해제하면 실체 없음)은 **0 또는 1**을 전제한다. 이 불일치가 해소되지 않으면 "이미 적재된 노드"라는 판정 자체가 성립하지 않는다. D-23의 선행 문제다.
+### D-16. The validating party described in the docs differs from the implementation
+`docs/model-load.md` says "the selected adapter validates, filters and applies the common fields of `load_options` and `adapter_options`", but the Pipeline adapter validates nothing other than `batching.max_sequences` and forwards everything wholesale. No code at the P4 layer enforces the rule "unsupported options must not be silently ignored".
 
-### D-25. 해제 단위가 계층마다 다르다
-P4의 `MODEL_UNLOAD`는 `binding_id` 단위인데, 어댑터는 `deployment_id` 단위로 `DELETE`한다. 같은 deployment에 여러 binding이 있으면 **하나를 해제하면서 그룹 전체를 지운다.** 전제 7의 "실체 완전 해지"가 의도한 범위보다 넓게 작동할 수 있다.
+### D-17. The same field is either entirely ignored or entirely refused, depending on the adapter
+Pipeline passes it through; stock llama.cpp returns `ERROR` just because it is present. The protocol gives the caller no way to know which applies. `ADAPTER_REGISTER.descriptor` is the natural place, but it does not declare the set of supported options.
 
-## 13. 보완 설계 (초안)
+### D-18. `load_options` is a cluster plan, but `MODEL_LOAD` is per node
+`batching.node_limits[]` carries **the values of other nodes as well**. That is why the fallback rule "top-level `max_sequences` is the minimum of all `node_limits`" became necessary. The cluster-wide plan is sent redundantly to every node, and each adapter has to pick out its own share.
 
-### P-14. 사전 조건은 emit 이전에 완결한다 (전제 8)
+### D-19. The host API receives `deployment_id` under the name `controller_id`
+`start.insert("controller_id", deployment)` in [`lifecycle/load/mod.rs`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs). The field name and content do not match, and it is a leftover that conflicts with the controller separation of premises 3 and 4.
 
-CPS에서 emit은 요청자 호출이므로 되돌릴 수 없다. 따라서:
+### D-60. Load-time declarations fix values that the runtime derives
 
-1. 모든 사전 조건은 **어떤 메시지도 emit하기 전에** 검사한다
-2. 검사를 통과하면 그 명령의 결과 메시지는 하나뿐이다 — 성공 terminal 또는 실패 terminal
-3. **어댑터 응답을 흘려보낸 뒤 에이전트가 판단을 뒤집는 구조를 금지한다**
+`capacity::declare()` reads `stage_plan.load_options.batching.max_sequences` at `MODEL_LOAD` time and **installs it as a per-deployment semaphore gate** — [`capacity/mod.rs`](layers/adapters/adapter/src/domain/capacity/mod.rs). A load-time constant governs execution-time admission.
 
-`forward::capture`의 재설계가 필요하다. 어댑터의 terminal은 에이전트가 판단을 마친 뒤에만 요청자에게 전달되거나, 에이전트가 자신의 terminal로 대체해 emit해야 한다. D-22의 근본 해결이다.
+**The mechanism is confirmed** (evidence as of 2026-08-13). `max_sequences` is the cap of the credit ledger, and the scheduler fills only while `in_flight < credit_limit`. Then `scheduler_window_target` splits the active cohort into `pipeline_stage_count` windows **below that cap**. In other words, the runtime already derives this in real time, and the load-time declaration **functions as a cap.**
 
-### P-15. 노드 상태 기계 명시
+The problem is not that the declaration exists but that **it is installed as an authoritative gate**. As long as window splitting is derived, the declaration has no reason to be more than a safety guard.
+
+The failure that the comment in the same file warns about repeats at a different level — a process-global constant as a gate put "the throttle three levels above the GPU", and a load-time declaration as a gate has the same shape.
+
+Note also that the entire `node_limits[]`/`calculation` machinery of `D-18` exists only to compute this static number.
+
+**This item depends on the other session's scheduler conclusion (Q-48).** It is not finalized here on its own.
+
+### D-84. Overlap depth exists only as an environment variable
+Stage overlap is enforced by `LINKER_PIPELINE_WINDOW_DEPTH`, and its default is derived from `pipeline_stage_count`. **There is no protocol surface.**
+
+Yet depth is entangled with orchestration — as the evidence document shows, without overlap the wall time follows the **sum** of stage costs, so a balanced placement (13/27) is worse than 20/20; with overlap the wall time follows the **maximum**, and the calculation flips. Session count, layer split and depth form one bundled decision.
+
+Depth is therefore **planning knowledge** (P-60), and OUTER decides it. Per premise 6, the value can simply be passed as an opaque load option, but **as long as it exists only as an environment variable, OUTER has no channel through which to specify it.**
+
+### D-61. The protocol has no connection establishment policy
+
+Source routing (P-22) and self-describing addresses (P-34) assume that **a connection can be established at every hop**. But P4 has no rules for retries, backoff or connection budgets.
+
+A parallel session is working on `connect()` returning `EHOSTUNREACH` during ring formation and on connection budgets and backoff. Once the chain moves into the protocol, this policy must also become part of the contract — at which hop to retry how many times, and when to terminate a failure as `ERROR`.
+
+### D-20. Load reports are tied to the request route, so there is no reconnection path
+`LOAD_PROGRESS` and `DRAFT_REPORT` are non-terminal and `MODEL_BOUND` is terminal, and all of them go out only on the `route_id` the request came in on. **If the requester disconnects, neither progress nor completion is delivered anywhere.** Loading takes minutes, so this is a real risk, and the hole remains even if premise 5 (load reports go to the requesting outside party) holds.
+
+From the viewpoint of premise 1's external record it is worse — missing the completion makes the external record and the actual load state diverge, and there is no query with which to recover (the same root as D-6).
+
+## 10. Remediation design (draft)
+
+### P-9. Options pass through as opaque strings (decided)
+
+Premise 6. P4 does not own the structure of load options. `MODEL_LOAD` carries options as bounded text, and interpretation is entirely up to the concrete adapter.
+
+Rationale: upstream has 347 `add_opt` calls and the number keeps growing. Hard-coding them as a schema would break the P4 contract every time upstream moves. Auxiliary artifact paths (draft, mmproj, LoRA, control vector) also go inside this string, so promoting wire fields is unnecessary.
+
+**Design discarded as a result:** the draft that would have defined a three-part split of options (artifacts/placement/tuning) as a P4 contract. That distinction is meaningful, but it is **a convention shared by adapters and the external planner**, not P4's concern.
+
+### P-10. Remaining problem — a means of discovery in advance (reduced)
+
+P-9 resolves most of D-14~D-17. Since the adapter interprets the options, it can return `ERROR` for unsupported ones, and the "ignore vs refuse" split also moves down into adapter implementation rules.
+
+**One thing remains:** the external planner has no way to know what the adapter supports **before sending**. Today the only way is trial and error: send and get `ERROR`. Loading is expensive, so failures are costly.
+
+There are two options.
+- (a) **Only declare** the set of supported option keys and the schema version in `ADAPTER_REGISTER.descriptor`. P4 still does not interpret it and only passes it outside
+- (b) Accept trial and error. Consider it sufficient for the `ERROR` detail to name the unsupported keys
+
+(a) does not conflict with P-9 — the declaration is a string the adapter produces, and P4 only carries it. Judged in Q-9.
+
+### P-13. Redirecting load reports and reconnection (premise 5)
+
+**The redirection is close to a relabeling.** Even today the external client that called `loadModel` receives `LOAD_PROGRESS` → `DRAFT_REPORT` → `MODEL_BOUND` on the same route ([`controller-instance.mjs`](tools/controller/client/controller-instance.mjs)). What needs to change is the part where `allows_direction` classifies them as `NodeController`, and that belongs to the same change as P-6's direction redefinition.
+
+**The real work is D-20.** A way to recover progress and completion after the request route drops is needed. Options:
+- (a) Add a request that queries an in-progress load — ask for the current state by `operation_id`
+- (b) Include load state in the node state query — piggyback on D-6's query mechanism without a separate message
+- (c) Carry load completion in the agent-initiated announce (P-4) — requires adopting Q-3
+
+Judged in Q-14. (b) is the likely choice because it adds no new message, but it gives up real-time progress.
+
+### P-44. Demote `batching.*` from an authoritative gate to a cap
+
+The fix for D-60. **Measurements agree with the demotion option** — the runtime already derives the windows, and the declaration works as a cap (§92).
+
+| Option | Contents |
+|---|---|
+| Keep | Current behavior. The load-time declaration is the admission gate |
+| **Demote** | The declaration is used only as **a cap hint**, and the runtime derives the actual width from the active cohort |
+| Remove | Take `batching.*` out of the contract; the runtime owns it entirely |
+
+The demotion option fits the principle of §92 best — P4 does not own throughput; **it only hands over the knobs**. A cap is meaningful as a safety guard, but the width at each moment must be decided by the layer closest to the GPU.
+
+Whether it is demoted or removed, the `node_limits[]`/`calculation` structure of `D-18` is cleaned up along with it.
+
+### P-11. Separate the cluster plan from node instructions
+`MODEL_LOAD` carries **only what that node has to do**. The cluster-wide plan stays in the external record, and only the necessary cross-node information (total stage count, neighboring stage identifiers and so on) is passed as explicit fields. This removes D-18's fallback rule and the redundant per-node sending.
+
+### P-12. Redirecting load instructions
+Per premise 4, move `MODEL_LOAD`/`MODEL_UNLOAD` to the external→agent direction (the same change as P-6). The `controller_id` leftover of D-19 is removed at the same time.
+
+---
+
+# Topic D. Load/release preconditions and the node state machine
+
+Premises 7 and 8. Commands depend on the node's prior state, and failures call the requester as messages.
+
+## 11. Current status (verified)
+
+### 11.1 Where precondition checks already exist
+
+`MODEL_LOAD` and `MODEL_UNLOAD` go through `exclusive()` — `admission::lifecycle(slot)` acquires **all of the slot's permits** without blocking, via `try_acquire_many_owned(max_inflight)`. If even one execution is in progress, it fails immediately and emits `ERROR("node … admission is full")`.
+
+So **"load/unload fails while the node participates in inference" is already implemented.** Only this part of premise 7 is satisfied.
+
+### 11.2 Response delivery structure
+
+`capture` in [`forward/mod.rs`](layers/runtime/src/domain/agent/lifecycle/forward/mod.rs) **streams every adapter response straight through to the caller first**, and keeps a copy of the terminal among them. The agent looks at that copy and decides belatedly whether to update the registry.
+
+This structure collides head-on with premise 8. By the time a response has been streamed through, the requester has already been called.
+
+## 12. Defects
+
+### D-21. Releasing an already released target is reported as success
+[`lifecycle/unload/mod.rs`](layers/adapters/adapter/src/application/lifecycle/unload/mod.rs) **treats HTTP 404** from `DELETE /api/runtime-groups/{deployment}` **as success** and emits `MODEL_UNBOUND`. This contradicts premise 7 ("fail if already unloaded").
+
+### D-22. Two terminals can go out on one route
+Following D-21, the agent calls `slot.unbind()` after receiving `MODEL_UNBOUND`, and on `UnknownBinding` emits `ERROR` via `refuse()`. Since `capture` has already streamed `MODEL_UNBOUND` through, **the requester receives `ERROR` after `MODEL_UNBOUND`.**
+
+This violates the contract that a terminal closes the route. On the client side, `AgentLink` deletes the route at the first terminal, so the trailing `ERROR` is **silently dropped** — a failure is observed as a success.
+
+### D-23. Loading onto an already loaded node silently overwrites it
+`NodeSlot::bind()` is `bindings.insert()`. There is no precondition check. This contradicts premise 7 ("loading fails if the node already has a model loaded"), and the existing binding is replaced without warning.
+
+### D-24. Node:binding is 1:N, so "the node's concrete instance" is not defined as singular
+`NodeSlot.bindings` is `HashMap<binding_id, Binding>`. One node can hold several bindings at once.
+
+The model of premises 3 and 7 ("the node's instance = the loaded concrete adapter object"; no instance after release) assumes **0 or 1**. Unless this mismatch is resolved, the verdict "the node is already loaded" cannot even be defined. This is the prerequisite problem for D-23.
+
+### D-25. The unit of release differs by layer
+P4's `MODEL_UNLOAD` works per `binding_id`, but the adapter `DELETE`s per `deployment_id`. If the same deployment has several bindings, **releasing one deletes the whole group.** Premise 7's "complete teardown of the instance" can reach further than intended.
+
+## 13. Remediation design (draft)
+
+### P-14. Preconditions are settled before any emit (premise 8)
+
+In CPS, an emit is a call to the requester and cannot be undone. Therefore:
+
+1. Check every precondition **before emitting any message**
+2. Once the checks pass, the command has exactly one result message — a success terminal or a failure terminal
+3. **Forbid structures in which the agent reverses its judgement after streaming an adapter response through**
+
+`forward::capture` needs a redesign. The adapter's terminal must reach the requester only after the agent finishes its judgement, or the agent must emit its own terminal in its place. This is the root fix for D-22.
+
+### P-15. Make the node state machine explicit
 
 ```text
-(없음) ──NODE_CREATE──▶ empty ──MODEL_LOAD──▶ bound ──EXECUTE──▶ active
+(none) ──NODE_CREATE──▶ empty ──MODEL_LOAD──▶ bound ──EXECUTE──▶ active
                           ▲                     │                  │
-                          └────MODEL_UNLOAD─────┘◀─────완료────────┘
-   empty ──NODE_DELETE──▶ (없음)
+                          └────MODEL_UNLOAD─────┘◀─────done────────┘
+   empty ──NODE_DELETE──▶ (none)
 ```
 
-| 명령 | 허용 사전 상태 | 그 외 |
+| Command | Allowed prior state | Otherwise |
 |---|---|---|
-| `MODEL_LOAD` | `empty` | 실패 (`bound`는 이미 적재, `active`는 실행 중) |
-| `MODEL_UNLOAD` | `bound` | 실패 (`empty`는 이미 해제, `active`는 실행 중) |
+| `MODEL_LOAD` | `empty` | Fail (`bound` is already loaded, `active` is executing) |
+| `MODEL_UNLOAD` | `bound` | Fail (`empty` is already released, `active` is executing) |
 | `NODE_DELETE` | `empty` | Q-8 |
-| `EXECUTE` | `bound` | 실패 |
+| `EXECUTE` | `bound` | Fail |
 
-교체는 단일 명령이 아니다. `MODEL_UNLOAD` → `MODEL_LOAD` 2단계로만 가능하다.
-`active` 차단은 이미 `admission::lifecycle`로 구현되어 있다(§11.1). 새로 필요한 것은 `empty`/`bound` 판정이다.
+Replacement is not a single command. It is possible only in two steps: `MODEL_UNLOAD` → `MODEL_LOAD`.
+Blocking in `active` is already implemented by `admission::lifecycle` (§11.1). What is newly needed is the `empty`/`bound` check.
 
-### P-16. 노드:바인딩을 1:1로 좁힌다 (Q-15 종속)
-P-15의 상태 기계는 노드가 최대 하나의 실체를 갖는다는 전제 위에서만 정의된다. `NodeSlot.bindings`를 `Option<Binding>`으로 좁히면 D-23·D-24가 함께 풀리고, D-25의 단위 불일치도 "노드 하나 = 실체 하나"로 정렬된다.
+### P-16. Narrow node:binding to 1:1 (depends on Q-15)
+P-15's state machine is defined only on the premise that a node has at most one instance. Narrowing `NodeSlot.bindings` to `Option<Binding>` resolves D-23 and D-24 together, and D-25's unit mismatch also lines up as "one node = one instance".
 
-여러 모델을 한 노드에 올리고 싶다면 노드를 여러 개 만드는 것이 전제 3·5의 모델과 정합하다.
+If several models are wanted on one node, creating several nodes is what is consistent with the model of premises 3 and 5.
 
 ---
 
-# 주제 E. CPS 전면 감사
+# Topic E. Full CPS audit
 
-전제 9. 반환값 기반 처리 경로를 전수 조사한 결과다.
+Premise 9. This is the result of surveying every return-value-based handling path.
 
-## 14. 현재 상태 (검증 완료)
+## 14. Current status (verified)
 
-처리 경로는 두 갈래로 갈라져 있고, 한쪽만 CPS다.
+Handling paths split in two, and only one side is CPS.
 
-### 14.1 CPS를 지키는 경로
+### 14.1 Paths that follow CPS
 
-`INGRESS_SUBMIT`, `EXECUTE`, `CANCEL`. [`dispatch/mod.rs`](layers/runtime/src/application/dispatch/mod.rs)가 후속 Task를 큐에 넣고 즉시 반환하며, 원격 응답은 `QueueResponseSink`가 `enqueue`로 큐에 재진입시킨다. `causation_id` 사슬이 이어진다.
+`INGRESS_SUBMIT`, `EXECUTE`, `CANCEL`. [`dispatch/mod.rs`](layers/runtime/src/application/dispatch/mod.rs) puts the follow-up Task on the queue and returns immediately, and `QueueResponseSink` re-enters remote responses into the queue via `enqueue`. The `causation_id` chain continues.
 
-### 14.2 반환값 기반 경로
+### 14.2 Return-value-based paths
 
-`NODE_CREATE`, `MODEL_LOAD`, `MODEL_UNLOAD`, `HEALTH_CHECK`, `INVENTORY_QUERY`, `ADAPTER_REGISTER` — **제어 평면 전체**다. `dispatch::compatibility`가 이 경로이며, 함수 이름이 이미 성격을 인정하고 있다.
+`NODE_CREATE`, `MODEL_LOAD`, `MODEL_UNLOAD`, `HEALTH_CHECK`, `INVENTORY_QUERY`, `ADAPTER_REGISTER` — **the whole control plane**. `dispatch::compatibility` is this path, and the function name itself already admits what it is.
 
-토대가 되는 세 계약이 전부 동기 완료형이다 — [`foundation/transport/mod.rs`](layers/runtime/src/foundation/transport/mod.rs).
+The three foundational contracts are all synchronous-completion style — [`foundation/transport/mod.rs`](layers/runtime/src/foundation/transport/mod.rs).
 
 ```rust
 trait P4Handler   { fn handle(&self, message, responses) -> Result<()>; }
@@ -863,365 +863,365 @@ trait P4Transport { fn dispatch(&self, message, responses) -> Result<()>; }
 trait ResponseSink{ fn emit(&mut self, message) -> Result<()>; }
 ```
 
-## 15. 결함
+## 15. Defects
 
-### D-26. `P4Handler`/`P4Transport`가 동기 완료 계약이다
-두 trait 모두 "돌아왔으면 끝났다"를 뜻한다. 처리 중간에 큐로 빠져나갈 자리가 시그니처에 없다. 전제 9의 위반이 개별 구현이 아니라 **토대 계약에 박혀 있다.**
+### D-26. `P4Handler`/`P4Transport` are synchronous completion contracts
+Both traits mean "if it returned, it is done". The signatures leave no place to exit to the queue mid-processing. The violation of premise 9 is **baked into the foundational contract**, not into individual implementations.
 
-### D-27. `TcpTransport::dispatch`가 블로킹 RPC다
-호출마다 새 `TcpStream`을 연결하고, terminal이 올 때까지 `read_message` 루프를 돈다. 지속 소켓 다중화(`peer_mux`)를 쓰지 않는다. CPS 이전에 자원 사용 측면에서도 낭비다.
+### D-27. `TcpTransport::dispatch` is a blocking RPC
+Each call connects a new `TcpStream` and loops on `read_message` until a terminal arrives. It does not use persistent socket multiplexing (`peer_mux`). Even setting CPS aside, it wastes resources.
 
-### D-28. `forward::capture`가 응답을 반환값으로 돌려준다
-전제 8·9의 정면 위반이며 주제 D의 `D-22`를 낳은 직접 원인이다. 모든 응답을 호출자에게 흘려보낸 뒤 terminal을 복제해 **반환**하고, 에이전트가 그 반환값으로 분기한다.
+### D-28. `forward::capture` hands responses back as a return value
+A head-on violation of premises 8 and 9, and the direct cause of `D-22` in topic D. After streaming every response through to the caller, it copies the terminal and **returns** it, and the agent branches on that return value.
 
-### D-29. lifecycle 여섯 핸들러가 전부 반환값으로 분기한다
-`create_node`는 `NodeCreated{state=="ready"}`인지 보고 슬롯을 기록하고, `load_model`은 `ModelBound{state=="ready"}`를 보고 `bind()`하며, `unload_model`은 `ModelUnbound`를 보고 `unbind()`한다. 전부 `capture`의 반환값 검사다.
+### D-29. All six lifecycle handlers branch on return values
+`create_node` records the slot after checking for `NodeCreated{state=="ready"}`, `load_model` calls `bind()` after seeing `ModelBound{state=="ready"}`, and `unload_model` calls `unbind()` after seeing `ModelUnbound`. All of them inspect `capture`'s return value.
 
-### D-30. 장기 작업이 하나의 블로킹 호출 안에 갇힌다
-어댑터의 적재는 `http::json` 동기 호출이고, **600초 데드라인 폴링 루프**를 핸들러 안에서 돈다 — [`lifecycle/load/mod.rs`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs). 수 분짜리 작업이 Task로 쪼개지지 않으므로 진행 상태가 큐에 나타나지 않는다.
+### D-30. Long-running work is trapped inside one blocking call
+The adapter's load is a synchronous `http::json` call, and it runs **a 600-second deadline polling loop** inside the handler — [`lifecycle/load/mod.rs`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs). A job that lasts minutes is not split into Tasks, so its progress never appears on the queue.
 
-`compatibility`가 `spawn_blocking`으로 넘기므로 **큐 워커 자체는 막히지 않는다.** 그러나 이는 블로킹 풀로 밀어낸 것이지 CPS로 만든 것이 아니며, 아래 셋이 그 대가다.
+Because `compatibility` hands the work off via `spawn_blocking`, **the queue worker itself is not blocked.** But that only pushes the work onto the blocking pool; it does not make it CPS, and the three items below are the price.
 
-### D-31. `deadline_unix_ms`가 제어 평면에 강제되지 않는다
-데드라인 검사는 admission([`agent_host/mod.rs`](layers/runtime/src/application/agent_host/mod.rs))과 `peer_mux`의 execute 경로에만 있다. 큐 워커에도, `compatibility` 경로에도 없다. 데드라인 직전에 승인된 lifecycle 작업은 **무제한으로 실행된다.**
+### D-31. `deadline_unix_ms` is not enforced on the control plane
+Deadline checks exist only in admission ([`agent_host/mod.rs`](layers/runtime/src/application/agent_host/mod.rs)) and in the execute path of `peer_mux`. Neither the queue worker nor the `compatibility` path has one. A lifecycle job admitted just before its deadline **runs without limit.**
 
-### D-32. `CANCEL`이 제어 평면에 도달하지 못한다
-`dispatch::cancel`은 `active` 맵의 relay만 `abort()`한다. 그 맵은 execute 경로만 등록한다. `spawn_blocking`으로 넘어간 lifecycle 작업은 **취소 핸들 자체가 없다.** 즉 진행 중인 모델 적재는 중단할 수 없다.
+### D-32. `CANCEL` does not reach the control plane
+`dispatch::cancel` only `abort()`s relays in the `active` map, and only the execute path registers entries in that map. Lifecycle jobs handed to `spawn_blocking` **have no cancel handle at all.** In other words, a model load in progress cannot be stopped.
 
-### D-33. causation 사슬이 블로킹 구간에서 끊긴다
-하나의 `dispatch` 호출 안에서 일어나는 일은 Task가 아니므로 `task_id`/`causation_id`가 생기지 않는다. 적재의 어느 단계에서 멈췄는지 큐에서 관측할 수 없고, 재개 지점도 정의되지 않는다. 주제 C의 `D-20`(route 단절 시 복구 불가)과 같은 뿌리다.
+### D-33. The causation chain breaks in blocking sections
+What happens inside one `dispatch` call is not a Task, so no `task_id`/`causation_id` is created. The queue cannot show at which step a load stopped, and no resume point is defined. This has the same root as `D-20` in topic C (no recovery when the route drops).
 
-## 16. 보완 설계 (초안)
+## 16. Remediation design (draft)
 
-### P-17. 출력 경로를 큐 하나로 통일한다
-`ResponseSink`를 유일한 출력구로 삼고, 처리 함수에서 **결과를 뜻하는 반환값을 없앤다.** 반환은 "큐에 넣었다"는 수용 여부까지만 의미한다. `forward::capture`는 폐기하고, 어댑터 응답은 후속 Task로 재진입시킨다. 이미 `QueueResponseSink`가 그 형태이므로 일반화하는 작업이다.
+### P-17. Unify the output path into one queue
+Make `ResponseSink` the only output, and **remove return values that stand for a result** from handling functions. A return means no more than whether the item was accepted onto the queue. Discard `forward::capture`, and re-enter adapter responses as follow-up Tasks. `QueueResponseSink` already has that shape, so this is a generalization.
 
-### P-18. 어댑터 경계를 지속 소켓 다중화로 교체
-`TcpTransport`를 `peer_mux`로 대체한다. D-27 해소이자 P-17의 전제 — 응답이 나중에 도착하려면 소켓이 호출과 분리되어야 한다.
+### P-18. Replace the adapter boundary with persistent socket multiplexing
+Replace `TcpTransport` with `peer_mux`. This resolves D-27 and is a prerequisite of P-17 — for a response to arrive later, the socket must be decoupled from the call.
 
-### P-19. 장기 작업을 다단 Task로 분해
-적재를 `시작 요청 → 진행 관측 → 완료 판정` 단계로 쪼개고, 각 단계가 다음 단계를 큐에 넣는다. 진행 폴링은 자기 자신을 재-enqueue하는 Task가 된다. D-30·D-33이 함께 풀리고, 주제 C의 `D-20` 복구 경로도 여기서 나온다.
+### P-19. Break long-running work into multi-step Tasks
+Split loading into `start request → progress observation → completion verdict` steps, each of which queues the next. Progress polling becomes a Task that re-enqueues itself. D-30 and D-33 are resolved together, and the recovery path for `D-20` in topic C also comes from here.
 
-### P-20. `deadline`과 `CANCEL`을 전 경로에 적용
-Task 단위로 쪼개지면 각 단계 진입 시 데드라인을 검사할 수 있고, `CANCEL`은 다음 단계의 enqueue를 막는 방식으로 도달한다. D-31·D-32 해소.
+### P-20. Apply `deadline` and `CANCEL` to every path
+Once work is split into Tasks, the deadline can be checked on entry to each step, and `CANCEL` takes effect by blocking the enqueue of the next step. Resolves D-31 and D-32.
 
-**의존 관계:** P-17 ← P-18 ← P-19 ← P-20 순으로 쌓인다. 토대 계약(D-26)을 먼저 바꾸지 않으면 어느 것도 성립하지 않는다.
+**Dependencies:** they stack in the order P-17 ← P-18 ← P-19 ← P-20. None of them holds unless the foundational contract (D-26) changes first.
 
 ---
 
-# 주제 F. 인퍼런스 경로와 노드 체인
+# Topic F. Inference path and node chain
 
-§1.2의 인퍼런스 경로를 코드와 대조한 결과다.
+This is the result of checking the inference path of §1.2 against the code.
 
-## 17. 현재 상태 (검증 완료)
+## 17. Current status (verified)
 
-### 17.1 이미 대상 구조와 맞는 것
+### 17.1 What already matches the target structure
 
-**스트림 단일 모드.** P4에는 스트림 여부 스위치가 없다. 인퍼런스 결과는 `TOKEN*` → `DONE`이 유일한 형태이고, 어댑터도 SSE 델타를 그대로 흘린다. "언제나 스트림"은 이미 성립하며 **유지해야 할 성질**이지 고칠 대상이 아니다.
+**Single streaming mode.** P4 has no stream on/off switch. The only form of inference results is `TOKEN*` → `DONE`, and adapters also stream SSE deltas straight through. "Always streaming" already holds and is **a property to preserve**, not something to fix.
 
-### 17.2 어긋나는 것
+### 17.2 What diverges
 
-`INGRESS_SUBMIT`은 `node_id` **단수**를 나른다. 체인을 표현할 자리가 없다.
+`INGRESS_SUBMIT` carries a **single** `node_id`. There is no place to express a chain.
 
-현재 체인은 P4 밖에 있다. Pipeline 런타임의 deployment(`/api/runtime-groups`) 설정이 스테이지 구성을 소유하고, 스테이지 간 교환은 `linker-pipeline-inference-stream-v1`로 이뤄진다. 컨트롤러는 체인을 관리하지 않는다 — `ControllerProcessor`는 ingress를 단일 `EXECUTE`로 바꿔 한 노드에 넘길 뿐이다.
+The chain currently lives outside P4. The Pipeline runtime's deployment (`/api/runtime-groups`) configuration owns the stage composition, and stage-to-stage exchange uses `linker-pipeline-inference-stream-v1`. The controller does not manage the chain — `ControllerProcessor` only turns the ingress into a single `EXECUTE` and hands it to one node.
 
-## 18. 결함
+## 18. Defects
 
-### D-34. 인퍼런스 요청이 노드 리스트를 표현할 수 없다
-`INGRESS_SUBMIT.node_id`가 단수다. "OUTER가 컨트롤러에게 노드 리스트를 전달한다"는 대상 구조를 현 wire로는 표현할 수 없다.
+### D-34. An inference request cannot express a node list
+`INGRESS_SUBMIT.node_id` is singular. The target structure, "OUTER passes a node list to the controller", cannot be expressed on the current wire.
 
-### D-35. 체인 관리 주체가 P4 밖에 있다
-스테이지 구성이 Pipeline 런타임의 deployment 설정에 박혀 있다. 대상 구조는 컨트롤러가 **요청 시점에** 체인을 편성하는 것이므로, 체인이 적재 시점의 런타임 설정에 고정되어 있으면 성립하지 않는다.
+### D-35. The party that manages the chain is outside P4
+The stage composition is baked into the Pipeline runtime's deployment configuration. The target structure has the controller compose the chain **at request time**, which cannot hold if the chain is fixed in load-time runtime configuration.
 
-동시에 이는 전제 3과도 충돌한다 — 체인은 편성 의도(OUTER 소유)인데 지금은 노드 실체(어댑터 소유) 안에 들어 있다.
+It also conflicts with premise 3 — the chain is orchestration intent (owned by OUTER), yet it currently sits inside the node instance (owned by the adapter).
 
-### D-36. "체인의 마지막"이라는 개념이 P4에 없다
-`TOKEN`/`DONE`은 어댑터 → 에이전트 → route 소유자로 갈 뿐이다. 어느 노드가 마지막이며 그 결과가 컨트롤러로 귀환해야 하는지를 표현하는 필드가 없다.
+### D-36. P4 has no concept of "the end of the chain"
+`TOKEN`/`DONE` simply go adapter → agent → route owner. No field expresses which node is last and that its result must return to the controller.
 
-### D-38. `EXECUTE`도 체인을 나를 수 없고, 노드 간 주소 지정이 정적 설정에 묶여 있다
-`ExecutionRequest`의 `node_id`도 단수다. 소스 라우팅을 하려면 메시지가 체인 전체를 날라야 하는데 자리가 없다.
+### D-38. `EXECUTE` cannot carry the chain either, and node-to-node addressing is tied to static configuration
+`node_id` in `ExecutionRequest` is also singular. Source routing needs the message to carry the whole chain, but there is no place for it.
 
-주소 지정은 더 근본적이다. 현재 노드 간 도달 수단은 `RouteProcessor`의 `HashMap<node_id, SharedTransport>`뿐이고, 이는 **기동 시 설정으로 주입되는 정적 맵**이다 — [`routing/processor/mod.rs`](layers/runtime/src/application/routing/processor/mod.rs). 요청마다 달라지는 체인을 정적 맵으로 따라갈 수 없다.
+Addressing is the more fundamental issue. Today the only way to reach another node is `RouteProcessor`'s `HashMap<node_id, SharedTransport>`, which is **a static map injected by configuration at startup** — [`routing/processor/mod.rs`](layers/runtime/src/application/routing/processor/mod.rs). A static map cannot follow a chain that changes per request.
 
-### D-39. 체인 중간 실패의 보고 경로가 없다
-소스 라우팅에서 홉은 전진만 한다. `Node[2]`가 실패하면 그 사실을 컨트롤러에 알릴 역방향 간선이 없다. 현재 구조는 홉이 하나뿐이라 이 문제가 드러나지 않았다.
+### D-39. There is no reporting path for mid-chain failures
+In source routing, hops only move forward. If `Node[2]` fails, there is no backward edge to tell the controller. The current structure has only one hop, so this problem never surfaced.
 
-### D-40. `CANCEL`이 체인 전체에 도달할 수 없다
-`dispatch::cancel`은 자기 `route_id`의 active relay만 중단한다. 체인의 나머지 노드는 취소 사실을 모른 채 계속 전진한다. 주제 E의 `D-32`(제어 평면 미도달)와는 다른 축의 결손이다.
+### D-40. `CANCEL` cannot reach the whole chain
+`dispatch::cancel` only stops the active relay of its own `route_id`. The rest of the chain keeps advancing without knowing about the cancellation. This is a gap on a different axis from `D-32` in topic E (not reaching the control plane).
 
-### D-37. `NodeNode` 방향의 분류가 잘못되어 있었다 (정정)
-이 문서는 `NodeNode`를 발행 코드가 없다는 이유로 "죽은 표면 — 구현할지 삭제할지 판단"으로 분류했다. **대상 구조에서는 필수 방향이다.** 노드 간 hidden state 전달이 인퍼런스 경로의 본체이므로 삭제 후보가 아니라 구현 대상이다. §94.3을 이에 맞게 정정했다.
+### D-37. The classification of the `NodeNode` direction was wrong (corrected)
+This document classified `NodeNode` as "dead surface — decide whether to implement or delete" because no code emits it. **In the target structure it is a required direction.** Hidden-state transfer between nodes is the core of the inference path, so it is an implementation target, not a deletion candidate. §94.3 was corrected accordingly.
 
-## 19. 보완 설계 (초안)
+## 19. Remediation design (draft)
 
-### P-21. 인퍼런스 요청이 순서 있는 노드 리스트를 나른다
-`INGRESS_SUBMIT`의 단일 `node_id`를 순서 있는 노드 지정으로 교체한다. 각 항목은 `(agent, node_id, binding, runtime_generation)`을 지정해야 실행 가능한 실체를 가리킨다(§1.3의 4-튜플 규칙).
+### P-21. The inference request carries an ordered node list
+Replace the single `node_id` of `INGRESS_SUBMIT` with an ordered node specification. Each entry must specify `(agent, node_id, binding, runtime_generation)` to point at an executable instance (§1.3's 4-tuple rule).
 
-컨트롤러는 이 리스트를 받아 체인을 편성하되 각 노드의 구상 상태는 조회하지 않는다. 유효성은 OUTER가 편성 시점에 보장한다.
+The controller takes this list and composes the chain, but does not query the concrete state of each node. OUTER guarantees validity at orchestration time.
 
-### P-22. 체인을 메시지에 실어 소스 라우팅한다 (결정)
+### P-22. Carry the chain in the message and source-route it (decided)
 
-컨트롤러가 `Node[0]`에게 보내는 프리필 `EXECUTE`가 **체인 전체를 담는다.** 각 노드는 그 메시지에서 자신의 위치와 다음 대상을 읽어 스스로 전달한다. 컨트롤러는 홉마다 개입하지 않는다.
+The prefill `EXECUTE` that the controller sends to `Node[0]` **carries the whole chain.** Each node reads its own position and the next target from that message and forwards on its own. The controller does not intervene at each hop.
 
-hidden state 자체는 계속 native 데이터 평면이 옮긴다(주제 §6.2의 구분 유지). P4가 나르는 것은 **체인·순서·correlation**이며 텐서는 프레임에 들어가지 않는다.
+Hidden state itself is still moved by the native data plane (the distinction in §6.2 is kept). What P4 carries is **the chain, the order and the correlation**; tensors do not go into frames.
 
-D-35 해소. `NodeNode` 방향이 여기서 살아난다.
+Resolves D-35. This is where the `NodeNode` direction comes to life.
 
-### P-25. 체인 항목은 자기 완결적 주소여야 한다
-정적 라우트 맵(D-38)으로는 요청마다 달라지는 체인을 따라갈 수 없다. 체인 항목은 그 자체로 도달과 실행이 가능해야 한다.
+### P-25. Chain entries must be self-contained addresses
+A static route map (D-38) cannot follow a chain that changes per request. A chain entry must be enough on its own to reach the node and execute.
 
 ```text
-chain[i] = (agent 도달 주소, node_id, binding_id, runtime_generation)
+chain[i] = (agent reachable address, node_id, binding_id, runtime_generation)
 ```
 
-`binding_id`/`runtime_generation`이 없으면 홉 도착지에서 stale 실체에 실행될 수 있다(§1.3의 4-튜플 규칙과 같은 이유). 전제 2와도 정합한다 — 인자로 전달될 상태를 메시지가 들고 다닌다.
+Without `binding_id`/`runtime_generation`, execution at the hop destination may land on a stale instance (the same reason as §1.3's 4-tuple rule). It is also consistent with premise 2 — the message carries the state that is to be passed as arguments.
 
-### P-26. 귀환 주소를 메시지에 싣는다 (전제 11로 대상 변경)
-중간 노드의 실패 보고(D-39)와 마지막 노드의 결과 반환에 귀환 주소가 필요하다는 골자는 유지된다. 다만 **귀환 대상이 컨트롤러가 아니다.**
+### P-26. Carry the return address in the message (target changed by premise 11)
+The gist stays: failure reports from intermediate nodes (D-39) and result returns from the last node need a return address. But **the return target is not the controller.**
 
-당초 "컨트롤러 귀환 주소"로 적었으나 전제 11에서 내부망 노드는 컨트롤러에 직접 도달할 수 없다. 귀환 주소는 **진입 에이전트**이며, 진입 에이전트가 컨트롤러로 넘긴다. 보고 노드가 이미 진입 에이전트 소속이면 한 홉을 건너뛴다(P-36).
+It was originally written as "controller return address", but under premise 11 internal-network nodes cannot reach the controller directly. The return address is **the entry agent**, which passes things on to the controller. If the reporting node already belongs to the entry agent, one hop is skipped (P-36).
 
-이로써 `TOKEN`/`DONE`/`ERROR`는 체인을 거슬러 오르지 않고 **진입 에이전트로 직접** 간다. 역방향 전파는 여전히 불필요하다.
+With this, `TOKEN`/`DONE`/`ERROR` do not climb back up the chain; they go **directly to the entry agent**. Backward propagation remains unnecessary.
 
-### P-27. `CANCEL`을 체인 전파형으로 정의한다
-취소는 체인 전체에 도달해야 한다(D-40). 체인이 메시지에 있으므로 취소도 같은 경로를 따라 전진 전파하거나, 각 노드가 correlation 단위로 자체 중단하도록 규정한다. Q-27.
+### P-27. Define `CANCEL` as chain-propagating
+Cancellation must reach the whole chain (D-40). Since the chain is in the message, specify either that cancellation propagates forward along the same path, or that each node stops on its own per correlation. Q-27.
 
-### P-23. 마지막 노드의 귀환 경로를 명시한다
-체인의 마지막 노드는 생성 토큰을 **컨트롤러에게** 보낸다. 컨트롤러는 현재 그대로 OUTER로 통과시키되, 이후 필터링·부가 작업이 들어갈 자리를 계약상 확보한다.
+### P-23. Specify the return path of the last node
+The last node of the chain sends generated tokens **to the controller**. For now the controller passes them straight through to OUTER, but the contract reserves room for later filtering and additional work.
 
-따라서 `TOKEN`/`DONE`의 방향 규칙은 `NodeController` → `ExternalController` 2단으로 유지되며, 이 부분은 현행과 같다.
+So the direction rule for `TOKEN`/`DONE` stays two-level, `NodeController` → `ExternalController`; this part is unchanged from today.
 
-### P-24. 스트림 단일 모드를 계약으로 못 박는다
-현재 사실상 그렇게 동작하지만 명문 규칙이 없다. `options` 문자열에 백엔드가 비스트림 스위치를 받아들이면 계약이 조용히 깨질 수 있으므로, 어댑터가 이를 거부하도록 규정한다.
+### P-24. Pin down the single streaming mode in the contract
+It effectively behaves this way today, but there is no written rule. If a backend accepts a non-stream switch in the `options` string, the contract can break silently, so specify that adapters refuse it.
 
 ---
 
-# 주제 G. 스테이지 보고와 디코드 루프
+# Topic G. Stage reports and the decode loop
 
-프리필은 계산 단계이자 **상태 확인 단계**다. 각 노드는 진입과 완료를 보고할 책임을 진다.
+Prefill is a compute step and also **a state-check step**. Each node is responsible for reporting entry and completion.
 
-## 20. 현재 상태 (검증 완료)
+## 20. Current status (verified)
 
-인퍼런스 중 노드가 내보내는 메시지는 `TOKEN`(이벤트)과 `DONE`(terminal) **둘뿐**이다. 수락 보고도 완료 보고도 없다.
+During inference a node emits **only two** messages: `TOKEN` (event) and `DONE` (terminal). There is neither an acceptance report nor a completion report.
 
-사전 조건 검사는 `binding_is_ready(binding_id, deployment_id, generation)` 하나다 — 바인딩이 존재하고 세대가 일치하는지만 본다.
+The only precondition check is `binding_is_ready(binding_id, deployment_id, generation)` — it only checks that the binding exists and that the generation matches.
 
-`Binding`이 보유한 것은 `deployment_id`와 `generation`뿐이다 — [`domain/state/mod.rs`](layers/adapters/adapter/src/domain/state/mod.rs), [`registry/node/mod.rs`](layers/runtime/src/domain/agent/registry/node/mod.rs). **레이어 범위도 컨텍스트 크기도 어디에도 기록되지 않는다.**
+`Binding` holds only `deployment_id` and `generation` — [`domain/state/mod.rs`](layers/adapters/adapter/src/domain/state/mod.rs), [`registry/node/mod.rs`](layers/runtime/src/domain/agent/registry/node/mod.rs). **Neither the layer range nor the context size is recorded anywhere.**
 
-통계는 `DRAFT_REPORT`가 유일한데 이는 적재 시점 메모리 실측(`model_bytes`/`kv_bytes`/`layer_bytes`/`ffn_bytes`)이다. 인퍼런스 통계를 나르는 메시지는 없다.
+`DRAFT_REPORT` is the only statistic, and it is a load-time memory measurement (`model_bytes`/`kv_bytes`/`layer_bytes`/`ffn_bytes`). No message carries inference statistics.
 
-## 21. 결함
+## 21. Defects
 
-### D-41. 스테이지 수락·완료 보고 메시지가 없다
-"이 프리필을 받았고 처리할 수 있다", "무사히 마쳤다"를 표현할 kind가 없다. 홉이 하나뿐인 현 구조에서는 `DONE` 하나로 갈음되었으나, 체인에서는 **노드마다 두 시점**이 필요하다.
+### D-41. There are no stage acceptance/completion report messages
+No kind expresses "I received this prefill and can process it" or "I finished successfully". In the current single-hop structure, one `DONE` stood in for both, but a chain needs **two points in time per node**.
 
-### D-42. 인퍼런스 통계를 나를 자리가 없다
-처리 시간, 처리량, 생성된 hidden state 시퀀스 크기 등을 담을 메시지가 없다. OUTER의 모니터링은 이 정보 위에서만 성립한다.
+### D-42. There is no place to carry inference statistics
+No message holds processing time, throughput, the size of the generated hidden-state sequence and the like. OUTER's monitoring can only be built on this information.
 
-### ~~D-43. 노드의 레이어 범위가 어디에도 없다~~ (철회)
-`Binding`에도 `NodeSlot`에도 P4 메시지에도 레이어 구간이 없다는 관찰 자체는 사실이다. 그러나 **이는 결함이 아니라 의도된 추상화다.**
+### ~~D-43. The node's layer range is recorded nowhere~~ (withdrawn)
+The observation that `Binding`, `NodeSlot` and the P4 messages have no layer range is true. But **this is not a defect; it is an intended abstraction.**
 
-노드는 자신의 적재 상태를 최대한 모르는 상태로 유지한다(전제 10). 따라서 진입 검사에서 레이어 번호에 관한 판정은 배제한다. 체인 구간의 연속성·시작·종단은 그 배치를 결정한 OUTER가 편성 시점에 보장한다 — P-5의 "편성 제약은 첫 층에만 있고 P4는 그것을 나르지 않는다"와 일치한다.
+A node is kept as unaware of its own load state as possible (premise 10). Judgements about layer numbers are therefore excluded from the entry check. OUTER, which decided the placement, guarantees the continuity, start and end of chain ranges at orchestration time — consistent with P-5's "orchestration constraints exist only in the first layer, and P4 does not carry them".
 
-### D-44. 컨텍스트 초과 판정의 통로가 없다 (축소)
-당초 "바인딩의 컨텍스트 크기가 기록되지 않는다"를 결함으로 적었으나, 전제 10에 따라 **P4가 기록할 메타가 아니다.** 컨텍스트 크기는 실체의 속성이므로 어댑터가 자기 런타임에서 이미 안다.
+### D-44. There is no channel for context-overflow verdicts (reduced)
+This originally listed "the binding's context size is not recorded" as a defect, but per premise 10 **it is not metadata for P4 to record.** Context size is a property of the instance, so the adapter already knows it from its own runtime.
 
-남는 결손은 그 판정 **결과를 알릴 통로**뿐이고, 이는 D-41(진입 보고 부재)에 포함된다. 별도 항목으로 다루지 않는다.
+The only remaining gap is **a channel to report the result** of that verdict, and that is covered by D-41 (no entry report). It is not treated as a separate item.
 
-### D-45. 디코드 루프의 순환을 표현할 수 없다
-마지막 노드가 1번 노드에게 다음 토큰 생성을 의뢰하려면 체인이 **링**이어야 한다. 현 `EXECUTE`는 단일 대상만 가리키고, 주제 F의 소스 라우팅 체인도 선형 전진만 상정했다.
+### D-45. The decode loop's cycle cannot be expressed
+For the last node to ask node 1 to generate the next token, the chain must be **a ring**. The current `EXECUTE` points at a single target, and topic F's source-routed chain also assumed only linear forward movement.
 
-### D-46. `phase=DECODE`의 처분이 확정되었다 (정정)
-이 문서는 `phase=DECODE`를 "생성 코드가 없으니 삭제 판단 대상"으로 두고 P-22 이후로 미뤘다. **디코드 루프가 노드 주도로 순환하는 구조에서는 필수다.** 프리필 홉과 디코드 홉은 페이로드도 순환 형태도 다르므로 구분이 필요하다. §94.3을 정정했다.
+### D-46. The disposition of `phase=DECODE` is settled (corrected)
+This document had marked `phase=DECODE` as "no code generates it, so decide whether to delete it" and deferred it until after P-22. **In a structure where the decode loop cycles under node control, it is required.** Prefill hops and decode hops differ in payload and in cycle shape, so they need to be distinguished. §94.3 was corrected.
 
-## 22. 보완 설계 (초안)
+## 22. Remediation design (draft)
 
-### P-28. 스테이지 진입·완료 보고 신설
-노드마다 두 시점을 보고한다.
+### P-28. Add stage entry/completion reports
+Each node reports two points in time.
 
-| 시점 | 뜻 | 실패 시 |
+| Point | Meaning | On failure |
 |---|---|---|
-| **진입** | 메시지를 수령했고 처리 가능한 상태다 | 사전 조건 위반 → `ERROR`, 체인 전진 중단 |
-| **완료** | 자기 구간을 마쳤고 다음으로 넘겼다 | — |
+| **Entry** | Received the message and is able to process it | Precondition violation → `ERROR`, the chain stops advancing |
+| **Completion** | Finished its own range and passed it on | — |
 
-진입 시 검사할 사전 조건은 **노드가 자기 적재 상태를 알지 않고도 판정할 수 있는 것**으로 한정한다(전제 10).
+The preconditions checked at entry are limited to **what the node can judge without knowing its own load state** (premise 10).
 
-| 검사 | 판정 주체 |
+| Check | Judged by |
 |---|---|
-| 지정된 바인딩이 존재하고 세대가 일치하는가 | 에이전트 (`binding_is_ready`) |
-| 모델이 적재되어 있는가 (`bound` 상태인가) | 에이전트 (P-15 상태 기계) |
-| 프롬프트가 컨텍스트를 넘지 않는가 | 어댑터 — 자기 런타임의 속성이므로 조회 없이 안다 |
-| ~~레이어 구간이 자기 차례와 맞는가~~ | **배제.** OUTER가 편성 시점에 보장한다 (D-43) |
+| Does the specified binding exist, and does its generation match | Agent (`binding_is_ready`) |
+| Is a model loaded (is the state `bound`) | Agent (P-15 state machine) |
+| Does the prompt fit within the context | Adapter — a property of its own runtime, known without a query |
+| ~~Does the layer range match this node's turn~~ | **Excluded.** OUTER guarantees it at orchestration time (D-43) |
 
-전제 8에 따라 **진입 보고는 어떤 계산도 시작하기 전에** 나가야 하고, 실패는 계산 대신 `ERROR`로 종결한다.
+Per premise 8, **the entry report must go out before any computation starts**, and a failure terminates with `ERROR` instead of computing.
 
-### P-29. 인퍼런스 통계 스키마
-완료 보고가 나르는 항목: 처리 시간, 처리량, 생성된 hidden state 시퀀스 크기, 노드·바인딩 식별자, 구간 위치. 전제 6과 같은 이유로 세부 확장은 문자열에 담되, 모니터링에 필요한 최소 집합은 명시 필드로 둔다(Q-29).
+### P-29. Inference statistics schema
+Items carried by the completion report: processing time, throughput, size of the generated hidden-state sequence, node/binding identifiers, range position. For the same reason as premise 6, detailed extensions go into a string, but the minimum set needed for monitoring is kept as explicit fields (Q-29).
 
-컨트롤러는 이를 해석하지 않고 OUTER로 통과시킨다 — §1.2의 컨트롤러 역할과 일치한다.
+The controller does not interpret this and passes it through to OUTER — consistent with the controller's role in §1.2.
 
-### ~~P-30. 레이어 구간을 바인딩 메타로 노출~~ (철회)
-`MODEL_BOUND`가 레이어 구간을 보고하고 에이전트가 `Binding`에 기록하자는 제안이었다. **전제 10과 P-5에 반한다.** 노드·에이전트가 적재 구조를 알게 되고, 편성 제약이 첫 층에만 있다는 원칙이 깨진다. P-33으로 대체한다.
+### ~~P-30. Expose the layer range as binding metadata~~ (withdrawn)
+The proposal was for `MODEL_BOUND` to report the layer range and for the agent to record it in `Binding`. **It contradicts premise 10 and P-5.** Nodes and agents would learn the load structure, breaking the principle that orchestration constraints exist only in the first layer. Replaced by P-33.
 
-### P-33. 노드는 자신의 적재 구조를 모른다 (전제 10)
+### P-33. A node does not know its own load structure (premise 10)
 
-노드와 에이전트가 아는 것은 **바인딩이 있다/없다와 그 세대**까지다. 어떤 레이어를 맡았는지, 몇 번부터 몇 번까지인지는 알지 않는다.
+What nodes and agents know stops at **whether a binding exists, and its generation**. They do not know which layers they took on or from which number to which.
 
-| 관심사 | 소유 |
+| Concern | Owner |
 |---|---|
-| 어떤 노드가 어떤 레이어 구간을 맡는가 | **OUTER** (편성 의도, 4층 모델의 첫 층) |
-| 체인 구간의 연속성·시작·종단 유효성 | **OUTER** — 편성 시점에 보장 |
-| 그 구간이 실제로 적재되었는가 | 어댑터 — 실패하면 적재 자체가 실패한다 |
-| 실행 시점에 이 바인딩이 유효한가 | 에이전트 — 존재와 세대만 본다 |
+| Which node takes which layer range | **OUTER** (orchestration intent, the first layer of the four-layer model) |
+| Validity of the continuity, start and end of chain ranges | **OUTER** — guaranteed at orchestration time |
+| Whether that range was actually loaded | Adapter — if not, the load itself fails |
+| Whether this binding is valid at execution time | Agent — looks only at existence and generation |
 
-이로써 P4는 배치 구조를 나르지 않아도 되고, 노드는 교체 가능한 부품으로 남는다. 검증을 OUTER 단독에 맡기는 대가는 **잘못 편성된 체인이 실행 중에야 드러난다**는 것이다(Q-33).
+With this, P4 does not need to carry the placement structure, and nodes remain replaceable parts. The price of leaving verification to OUTER alone is that **a mis-composed chain shows up only during execution** (Q-33).
 
-적재 옵션이 불투명 문자열인 것(전제 6)과 같은 방향이다 — P4는 지시도 구조도 해석하지 않는다.
+This points in the same direction as load options being opaque strings (premise 6) — P4 interprets neither instructions nor structure.
 
-### P-31. 체인을 링으로 정의하고 `phase`로 홉을 구분한다
-- `phase=PREFILL` — 선형 전진. `chain[i] → chain[i+1]`
-- `phase=DECODE` — 순환. `chain[n] → chain[0]`, 종료 조건 충족 시 루프 이탈
+### P-31. Define the chain as a ring and distinguish hops by `phase`
+- `phase=PREFILL` — linear forward. `chain[i] → chain[i+1]`
+- `phase=DECODE` — cyclic. `chain[n] → chain[0]`; the loop exits when the termination condition is met
 
-마지막 노드는 두 책임을 동시에 진다 — 컨트롤러에게 토큰 또는 생성 종료를 보고하고, 1번 노드에게 다음 토큰 생성을 의뢰한다.
+The last node carries two responsibilities at once — it reports a token or the end of generation to the controller, and it asks node 1 to generate the next token.
 
-### P-32. KV는 요청 수명 동안 노드에 귀속된다 (외재화 예외)
-디코드 루프가 성립하려면 각 노드가 그 요청의 KV를 홉 사이에 보유해야 한다. 이는 주제 A의 occupancy와 같은 성격 — **프로세스에 관한 사실이지 레코드가 아니다.**
+### P-32. KV belongs to the node for the lifetime of the request (externalization exception)
+For the decode loop to work, each node must hold that request's KV between hops. This has the same nature as topic A's occupancy — **a fact about the process, not a record.**
 
-전제 2의 예외로 명문화한다. 외재화 대상은 편성 의도와 체인이며, KV는 요청 수명에 묶인 점유 자원이다. 따라서 체인 중간 노드의 장애는 그 요청의 재시작을 뜻하지 이전(migration)이 아니다.
+This is written down as an exception to premise 2. What gets externalized is orchestration intent and the chain; KV is an occupied resource tied to the request lifetime. A failure of a mid-chain node therefore means restarting that request, not migrating it.
 
 ---
 
-# 주제 H. 네트워크 위상과 경유
+# Topic H. Network topology and relaying
 
-전제 11. 방화벽이 구조를 정한다.
+Premise 11. The firewall decides the structure.
 
-## 23. 현재 상태 (검증 완료)
+## 23. Current status (verified)
 
-**현 구현은 평면 도달성을 가정한다.**
+**The current implementation assumes flat reachability.**
 
-- `ControllerInstance`는 `endpoint`를 받아 그 에이전트에 **직접 TCP 연결**한다 — [`agent-link.mjs`](tools/controller/client/transport/agent-link.mjs). OUTER가 각 에이전트에 개별 접속하는 모델이다
-- `peer_mux`는 에이전트 → 에이전트 endpoint 직결이다
-- `RouteProcessor`는 `HashMap<node_id, SharedTransport>` 정적 맵으로 대상을 고른다
-- `TcpTransport::dispatch`는 호출마다 목적지에 새 소켓을 연다
+- `ControllerInstance` takes an `endpoint` and **connects directly over TCP** to that agent — [`agent-link.mjs`](tools/controller/client/transport/agent-link.mjs). It is a model in which OUTER connects to each agent individually
+- `peer_mux` connects agent → agent endpoints directly
+- `RouteProcessor` picks targets from a static `HashMap<node_id, SharedTransport>` map
+- `TcpTransport::dispatch` opens a new socket to the destination on every call
 
-즉 **모든 참여자가 서로 도달 가능하다는 전제 위에 서 있다.** 방화벽으로 나뉜 배치를 표현할 수단이 하나도 없다.
+In short, **it stands on the premise that every participant can reach every other.** There is no way at all to express a deployment split by a firewall.
 
-## 24. 결함
+## 24. Defects
 
-### D-47. 프로토콜에 계층적 경유 개념이 없다
-메시지는 발신자와 최종 대상만 안다. "이 관문을 지나 저기로"를 표현할 자리가 없다. 전제 11의 배치에서는 모든 외부 왕래가 2단 경유인데 그 구조가 wire에 나타나지 않는다.
+### D-47. The protocol has no concept of hierarchical relaying
+A message knows only its sender and its final target. There is no place to express "through this gateway, then over there". In premise 11's deployment, all external traffic is relayed in two steps, but that structure does not show up on the wire.
 
-### D-48. 컨트롤러의 relay가 정적 맵 기반이다
-`ControllerProcessor::Remote(RouteProcessor)`는 기동 시 주입된 라우트 맵으로만 포워딩한다. 요청마다 대상이 달라지는 경유를 할 수 없다. 제어 경로가 컨트롤러를 지나야 하는데 그 통로가 정적이다.
+### D-48. The controller's relay is based on a static map
+`ControllerProcessor::Remote(RouteProcessor)` forwards only with the route map injected at startup. It cannot relay to targets that vary per request. The control path has to go through the controller, but that passage is static.
 
-### D-49. 에이전트에 중계 능력이 없다
-에이전트는 자기가 수행할 메시지만 처리한다. **다른 에이전트로 단순 전달하는 처리 경로가 없다.** `AgentProcessor::handle`은 모든 kind를 자기 것으로 간주하고, 대상이 다른 에이전트임을 표현할 자리도 없다.
+### D-49. Agents cannot relay
+An agent handles only messages it is to perform itself. **There is no handling path that simply forwards to another agent.** `AgentProcessor::handle` treats every kind as its own, and there is no place to express that the target is a different agent.
 
-전제 11에서 진입 에이전트는 받은 메시지의 상당수를 **소비하지 않고 넘겨야** 한다. 나아가 중계는 진입 에이전트만의 특권이 아니라 **모든 에이전트가 가져야 할 일반 능력**이다.
+Under premise 11, the entry agent must **pass on, not consume,** many of the messages it receives. Moreover, relaying is not a privilege of the entry agent but **a general capability every agent must have**.
 
-### ~~D-50. 적재 경로의 관문이 정의되지 않았다~~ (해소)
-"적재 시점에는 1번 노드가 없으므로 관문이 미정"이라 적었으나, 진입 에이전트가 노드 배치와 무관한 순수 진입점으로 정의되면서 소멸했다. 노드 생성·삭제, 적재·해제, 인퍼런스가 **모두 같은 진입 에이전트**를 지난다. Q-34도 함께 종결.
+### ~~D-50. The gateway for the load path is undefined~~ (resolved)
+This said "at load time there is no node 1 yet, so the gateway is undecided", but the issue disappeared once the entry agent was defined as a pure entry point unrelated to node placement. Node create/delete, load/release and inference **all pass through the same entry agent**. Q-34 is closed with it.
 
-### ~~D-52. 에이전트가 자신의 도달 주소를 보고하지 않는다~~ (철회)
-`HARDWARE_REPORT.snapshot`에 에이전트 자신의 endpoint가 없다는 관찰은 사실이나 **결함이 아니다.**
+### ~~D-52. Agents do not report their own reachable address~~ (withdrawn)
+The observation that `HARDWARE_REPORT.snapshot` lacks the agent's own endpoint is true, but **it is not a defect.**
 
-OUTER는 인프라 사실의 소유자이며 모든 에이전트의 접근 주소를 이미 안다(전제 1). 이를 프로토콜로 발견하려 들면 "주소를 알아야 물어보는데 물어봐야 주소를 안다"는 선후 모순이 생긴다. 에이전트는 **자기 주소를 알 필요조차 없다** — 전제 10이 노드에 적용한 원칙과 같은 방향이다.
+OUTER owns infrastructure facts and already knows every agent's access address (premise 1). Trying to discover this through the protocol creates the ordering contradiction "you need the address to ask, but you have to ask to learn the address". An agent **does not even need to know its own address** — the same direction as the principle premise 10 applies to nodes.
 
-따라서 capability 보고에 도달 주소를 넣지 않는다. Q-40도 함께 종결.
+So the reachable address is not put into the capability report. Q-40 is closed with it.
 
-**남는 구분:** 어댑터의 `ADAPTER_REGISTER.endpoint`는 다르다. 어댑터 프로세스는 동적으로 등장·소멸하고 그 주소는 에이전트 내부의 사실이므로 자기 등록이 맞다. **OUTER가 소유하는 인프라 사실과 에이전트 내부의 동적 사실을 혼동하지 않는다.**
+**The remaining distinction:** the adapter's `ADAPTER_REGISTER.endpoint` is different. Adapter processes appear and disappear dynamically, and their address is a fact internal to the agent, so self-registration is right. **Do not confuse infrastructure facts owned by OUTER with dynamic facts internal to the agent.**
 
-### D-54. 에이전트가 `session_id`를 발급한다
-`INGRESS_SUBMIT.session_id`가 비어 있으면 에이전트가 `{controller_id}-session-{n}` 형태로 발급한다. 게다가 **발급기가 두 곳에 서로 모르는 카운터로 존재**한다 — [`ingress/mod.rs`](layers/runtime/src/domain/agent/ingress/mod.rs)와 [`routing/processor/mod.rs`](layers/runtime/src/application/routing/processor/mod.rs). 같은 controller_id가 두 경로를 타면 충돌한다.
+### D-54. The agent issues `session_id`
+If `INGRESS_SUBMIT.session_id` is empty, the agent issues one in the form `{controller_id}-session-{n}`. What is more, **the issuer exists in two places, with counters that do not know about each other** — [`ingress/mod.rs`](layers/runtime/src/domain/agent/ingress/mod.rs) and [`routing/processor/mod.rs`](layers/runtime/src/application/routing/processor/mod.rs). If the same controller_id takes both paths, they collide.
 
-당초 단순 중복 결함으로 기록했으나 **§1.3의 발급 원칙 위반이다.** 식별자는 OUTER가 발급하며, 에이전트가 이름을 짓는 순간 그 이름을 아는 주체가 에이전트뿐이 된다. 폐지된 `controller_id`를 이름에 박고 있다는 점(P-6)에서도 잔재다.
+This was first recorded as a plain duplication defect, but **it violates the issuance principle of §1.3.** OUTER issues identifiers, and the moment the agent names something, the agent is the only party that knows the name. It is also a leftover in that it embeds the abolished `controller_id` in the name (P-6).
 
-해결: `session_id`는 OUTER가 발급하고 빈 값을 허용하지 않는다. 두 발급기를 모두 제거한다.
+Fix: OUTER issues `session_id`, and empty values are not allowed. Remove both issuers.
 
-### D-53. 자기기술 주소와 wire authz 부재가 겹친다
-주소가 메시지에 실리면 에이전트는 **메시지가 지시하는 곳으로 접속을 연다.** 현재 P4에는 TLS도 wire authz도 없으므로(문서 §9), 프레임을 넣을 수 있는 주체는 에이전트가 임의 주소로 접속하게 만들 수 있다.
+### D-53. Self-describing addresses combine with the absence of wire authz
+Once addresses are carried in messages, an agent **opens connections to wherever the message says.** P4 currently has neither TLS nor wire authz (document §9), so anyone who can inject a frame can make an agent connect to an arbitrary address.
 
-내부망이 신뢰 경계라는 전제 위에서는 감수 가능하나, **전제 11의 배치에서 진입 에이전트는 경계에 걸쳐 있다.** 설계 결정으로 기록해 두고 authz 도입 시 함께 다룬다(Q-41).
+This is acceptable on the premise that the internal network is the trust boundary, but **in premise 11's deployment the entry agent straddles the boundary.** Record it as a design decision and handle it together with the introduction of authz (Q-41).
 
-### D-51. 홉 증가가 토큰 경로에 얹힌다
-`TOKEN`은 토큰마다 발생한다. 마지막 노드가 진입 에이전트와 다른 에이전트에 있으면 토큰마다 **진입 에이전트 → 컨트롤러 → OUTER**로 중계 홉이 하나 더 붙는다. 집계 TPS 목표에 직접 영향을 준다.
+### D-51. More hops land on the token path
+`TOKEN` is produced for every token. If the last node is on an agent other than the entry agent, every token gets one extra relay hop: **entry agent → controller → OUTER**. This directly affects the aggregate TPS target.
 
-노드 배치가 자유로워진 만큼(전제 11 정정) 이는 편성 최적화의 문제로 남는다 — 마지막 노드를 진입 에이전트에 두면 바이패스된다.
+Now that node placement is free (premise 11 correction), this remains an orchestration optimization issue — putting the last node on the entry agent bypasses it.
 
-## 25. 보완 설계 (초안)
+## 25. Remediation design (draft)
 
-### P-34. 대상 주소를 메시지가 자기기술한다 (결정)
+### P-34. Messages self-describe their target address (decided)
 
-메시지 표준은 대상 **객체**만이 아니라 그 객체가 **소속된 에이전트에 도달하는 정보**를 함께 실어야 한다. URL·호스트·포트 등 접속에 충분한 정보를 봉투가 자기기술한다.
+The message standard must carry not only the target **object** but also **the information needed to reach the agent that the object belongs to**. The envelope self-describes enough to connect: URL, host, port and so on.
 
-이는 P-35의 **전제조건**이다. 중계 판정이 조회 테이블을 참조해야 한다면 워커 루프가 상태를 갖게 되고, 전제 2("인자로 전달될 상태는 외부에")와 전제 9(워커는 자기 일과 큐잉만)가 동시에 깨진다. **자기기술 주소여야 중계가 무상태로 성립한다.**
+This is a **prerequisite** of P-35. If the relay decision had to consult a lookup table, the worker loop would hold state, breaking premise 2 ("state passed as arguments lives outside") and premise 9 (workers only do their own job and queue messages) at the same time. **Relaying is stateless only with self-describing addresses.**
 
-적용 범위는 셋이며 표기는 하나로 통일한다.
+It applies in three places, with one unified notation.
 
-| 자리 | 내용 |
+| Place | Contents |
 |---|---|
-| 봉투의 대상 주소 | 이 메시지가 최종적으로 닿아야 할 에이전트의 접속 정보 |
-| 체인 항목 (P-25) | `(에이전트 접속 정보, node_id, binding_id, runtime_generation)` |
-| 귀환 주소 (P-26) | 진입 에이전트의 접속 정보 |
+| Envelope target address | Connection info of the agent this message must finally reach |
+| Chain entry (P-25) | `(agent connection info, node_id, binding_id, runtime_generation)` |
+| Return address (P-26) | Connection info of the entry agent |
 
-D-47·D-48 해소. `RouteProcessor`의 정적 맵과 `TcpTransport`의 고정 endpoint를 함께 대체한다. Q-25·Q-35가 이 결정으로 종결된다.
+Resolves D-47 and D-48. It replaces both the static map of `RouteProcessor` and the fixed endpoint of `TcpTransport`. Q-25 and Q-35 are closed by this decision.
 
-**frame 계층 변경이다.** 현 routed envelope는 `route_id`와 `deadline`만 나르므로 대상 주소 자리가 없다. P4B1 v6에 해당하며 Q-3(announce)과 같은 판에서 처리한다.
+**This is a frame-layer change.** The current routed envelope carries only `route_id` and `deadline`, so there is no place for a target address. It belongs to P4B1 v6 and is handled in the same round as Q-3 (announce).
 
-### P-35. 중계를 큐 디스패치의 기본 동작으로 내장한다
+### P-35. Build relaying into queue dispatch as a default behavior
 
-**핸들러 계층의 기능이 아니다.** 큐에서 메시지를 꺼내는 기초 로직이 모든 메시지에 대해 기본으로 수행하는 판정이어야 하며, 상위 코드는 중계를 인지하지 않아도 된다.
+**It is not a handler-layer feature.** It must be a decision that the basic logic taking messages off the queue makes by default for every message, so that higher-level code need not be aware of relaying.
 
-배치 위치는 워커 루프의 핸들러 호출 **직전**이다 — [`task_queue/worker/mod.rs`](layers/runtime/src/foundation/task_queue/worker/mod.rs)의 `spawn` 루프가 봉투를 꺼내 `handler.handle`로 넘기는 지점.
+It sits **just before** the handler call in the worker loop — the point where the `spawn` loop in [`task_queue/worker/mod.rs`](layers/runtime/src/foundation/task_queue/worker/mod.rs) takes out an envelope and passes it to `handler.handle`.
 
-| 판정 | 동작 |
+| Decision | Action |
 |---|---|
-| 대상이 자신 | 핸들러로 넘긴다 — 현행 동작 |
-| 대상이 다른 에이전트 | **핸들러를 거치지 않고** 다음 홉으로 큐잉한다 |
+| Target is self | Pass to the handler — current behavior |
+| Target is another agent | Queue it for the next hop **without going through the handler** |
 
-판정 근거는 봉투의 대상 주소(P-34)다. `TaskEnvelope`에는 이미 `source`/`target` Participant와 `is_local_bypass()`가 있으므로, 같은 자리에 대칭 개념을 놓는 것이다 — **bypass가 "안으로 접는" 판정이라면 중계는 "밖으로 미는" 판정**이고 둘은 같은 조건의 양면이다.
+The decision is based on the envelope's target address (P-34). `TaskEnvelope` already has `source`/`target` Participants and `is_local_bypass()`, so this places the symmetric concept in the same spot — **if bypass is the decision that "folds inward", relaying is the decision that "pushes outward"**, and the two are two sides of the same condition.
 
-이 배치의 이점 셋.
-- 핸들러는 자기 것만 안다. `AgentProcessor`에 중계 분기가 생기지 않는다
-- 새 메시지 kind가 추가되어도 중계는 자동으로 따라온다. kind별 중계 규칙을 쓸 일이 없다
-- **전제 9와 자연스럽게 맞는다.** 중계는 "자기 일을 하고 메시지를 큐에 넣는 것"의 가장 단순한 형태다. 반환값도 블로킹도 없다
+This placement has three advantages.
+- Handlers know only their own messages. No relay branch appears in `AgentProcessor`
+- When a new message kind is added, relaying follows automatically. No per-kind relay rules need to be written
+- **It fits premise 9 naturally.** Relaying is the simplest form of "do your own job and put messages on the queue". No return value, no blocking
 
-중계 시 에이전트는 내용을 해석하지 않는다 — 전제 3의 "경유는 소유가 아니다"가 컨트롤러뿐 아니라 에이전트에도 적용된다. 따라서 "진입 에이전트"는 별도 역할이 아니라 **컨트롤러가 도달할 수 있는 위치에 있는 에이전트**를 가리키는 말일 뿐이고, `ParticipantRole`을 늘릴 필요가 없다(Q-35). 위상은 배치의 결과이지 프로토콜의 타입이 아니다.
+When relaying, the agent does not interpret the content — premise 3's "relaying is not owning" applies to agents as well as to the controller. So "entry agent" is not a separate role; it is just a name for **an agent in a position the controller can reach**, and `ParticipantRole` need not grow (Q-35). Topology is a result of deployment, not a protocol type.
 
-### P-36. 동일 에이전트 바이패스
-대상이 자신이면 중계 홉을 건너뛴다. 판정은 **에이전트 동일성**이며, `TaskEnvelope::is_local_bypass`가 이미 쓰는 규칙과 같다 — `source.agent_id == target.agent_id`.
+### P-36. Same-agent bypass
+If the target is self, the relay hop is skipped. The decision is **agent identity**, the same rule `TaskEnvelope::is_local_bypass` already uses — `source.agent_id == target.agent_id`.
 
-기존 in-process bypass 개념을 재사용하므로 새 판정 로직이 필요 없다. P-35의 두 갈래 판정과 같은 조건이다.
+It reuses the existing in-process bypass concept, so no new decision logic is needed. It is the same condition as P-35's two-way decision.
 
-### P-37. 컨트롤러의 relay 책임을 계약으로 못 박는다
-컨트롤러가 경유시키는 메시지에 대해 **해석·검증·상태 보유를 금지**한다. 인퍼런스에서 컨트롤러가 하는 일(체인 미해석, 통과)과 같은 규칙을 제어 경로에도 적용한다.
+### P-37. Pin down the controller's relay responsibility in the contract
+For messages the controller relays, **interpretation, validation and holding state are forbidden**. The rule for what the controller does in inference (does not interpret the chain, passes it through) is applied to the control path as well.
 
-이로써 P-6(소유 게이트로서의 `controller_id` 제거)과 충돌하지 않는다. 컨트롤러는 **경유 주소**로 등장하지 소유자로 등장하지 않는다.
+This does not conflict with P-6 (removing `controller_id` as an ownership gate). The controller appears as **a relay address**, not as an owner.
 
 ---
 
-# 주제 I. 인퍼런스 요청의 표현력
+# Topic I. Expressiveness of inference requests
 
-전제 12. 샘플링·디코딩 스펙이 구상 런타임 수준에 못 미친다.
+Premise 12. The sampling and decoding spec falls short of what the concrete runtime offers.
 
-## 26. 현재 상태 (검증 완료)
+## 26. Current status (verified)
 
-### 26.1 P4가 나르는 것
+### 26.1 What P4 carries
 
-`ExecutionRequest`의 생성 관련 필드는 `max_tokens`(u32), `temperature`(f32), `prompt`(text), `options`(불투명 JSON) 넷이다. 샘플링 파라미터 중 **wire 필드로 승격된 것은 `temperature` 하나**뿐이다.
+`ExecutionRequest` has four generation-related fields: `max_tokens` (u32), `temperature` (f32), `prompt` (text) and `options` (opaque JSON). Among the sampling parameters, **only `temperature` has been promoted to a wire field**.
 
-### 26.2 어댑터가 실제로 하는 일 — 정반대다
+### 26.2 What the adapters actually do — the exact opposite
 
-| 어댑터 | 동작 |
+| Adapter | Behavior |
 |---|---|
-| stock llama.cpp | **전부 통과.** `model`/`messages`/`stream`만 보호하고 나머지 옵션은 그대로 전달 — [`llamacpp/.../options/mod.rs`](layers/adapters/llamacpp/src/application/options/mod.rs) |
-| **Pipeline** | **5개만 화이트리스트.** `["max_tokens", "temperature", "top_p", "top_k", "seed"]` 외에는 **조용히 버린다** — [`adapter/.../execution/options/mod.rs`](layers/adapters/adapter/src/application/execution/options/mod.rs) |
+| stock llama.cpp | **Passes everything through.** Protects only `model`/`messages`/`stream` and forwards the remaining options as is — [`llamacpp/.../options/mod.rs`](layers/adapters/llamacpp/src/application/options/mod.rs) |
+| **Pipeline** | **Whitelists only 5.** Anything other than `["max_tokens", "temperature", "top_p", "top_k", "seed"]` is **silently dropped** — [`adapter/.../execution/options/mod.rs`](layers/adapters/adapter/src/application/execution/options/mod.rs) |
 
-두 어댑터 모두 프롬프트를 `messages: [{"role":"user","content": prompt}]`로 **하드코딩**한다.
+Both adapters **hard-code** the prompt as `messages: [{"role":"user","content": prompt}]`.
 
-### 26.3 upstream 실제 표면
+### 26.3 Actual upstream surface
 
-고정된 upstream `common/common.h`의 `common_params_sampling`은 약 35개 필드와 sampler 순서 배열, grammar, logit_bias, reasoning budget을 갖는다.
+In the pinned upstream `common/common.h`, `common_params_sampling` has about 35 fields plus a sampler order array, grammar, logit_bias and the reasoning budget.
 
 ```text
 seed n_prev n_probs min_keep top_k top_p min_p xtc_probability xtc_threshold
@@ -1233,499 +1233,499 @@ samplers[] grammar grammar_lazy grammar_triggers preserved_tokens
 logit_bias[] logit_bias_eog reasoning_budget_* backend_sampling
 ```
 
-Pipeline 화이트리스트가 덮는 것은 이 중 `seed`, `top_k`, `top_p`, `temp` **넷**이다.
+Of these, the Pipeline whitelist covers **four**: `seed`, `top_k`, `top_p` and `temp`.
 
-## 27. 결함
+## 27. Defects
 
-### D-55. Pipeline 어댑터가 샘플링 옵션을 조용히 버린다
-`SUPPORTED` 5개 외 모든 키가 경고도 오류도 없이 사라진다. 호출자는 `min_p`나 `repeat_penalty`를 보내고 적용되었다고 믿는다. **전제 12의 "조용한 누락 금지" 정면 위반**이며, `docs/model-load.md`가 적재 옵션에 대해 선언한 규칙과도 어긋난다.
+### D-55. The Pipeline adapter silently drops sampling options
+Every key outside the 5 in `SUPPORTED` disappears with neither a warning nor an error. The caller sends `min_p` or `repeat_penalty` and believes it was applied. **This is a head-on violation of premise 12's "no silent omission"**, and it also contradicts the rule that `docs/model-load.md` declares for load options.
 
-### D-56. Pipeline 경로에서 structured output이 원리적으로 불가능하다
-구조화 출력은 grammar 샘플러의 **로짓 필터링**으로 동작한다. 생성 후 파싱으로 대체할 수 없다 — 모델이 애초에 그 형식만 내도록 토큰 분포를 제약하는 방식이기 때문이다.
+### D-56. Structured output is impossible in principle on the Pipeline path
+Structured output works through **logit filtering** in the grammar sampler. It cannot be replaced by parsing after generation — the method constrains the token distribution so that the model emits only that format in the first place.
 
-`grammar`, `grammar_lazy`, `grammar_triggers`, `json_schema`, `preserved_tokens`가 전부 화이트리스트 밖이므로 **Pipeline 경로에서는 구조화 출력을 켤 방법이 없다.** 이는 기능 부족이 아니라 기능 부재다.
+`grammar`, `grammar_lazy`, `grammar_triggers`, `json_schema` and `preserved_tokens` are all outside the whitelist, so **there is no way to turn on structured output on the Pipeline path.** This is not a weak feature; it is a missing one.
 
-같은 이유로 `logit_bias`, `ignore_eos`, `reasoning_budget_*`도 사후처리 불가 항목이며 모두 누락되어 있다.
+For the same reason, `logit_bias`, `ignore_eos` and `reasoning_budget_*` cannot be handled in post-processing either, and all of them are missing.
 
-### D-57. 같은 `options` 필드가 어댑터마다 정반대로 처리된다
-stock은 전부 통과, Pipeline은 5개만 통과. 호출자는 어느 쪽인지 알 수 없고 프로토콜에 그 차이를 표현할 자리도 없다. 주제 C의 `D-17`(적재 옵션의 무시 대 거부)과 같은 구조의 문제가 인퍼런스 쪽에도 있다.
+### D-57. The same `options` field is handled in opposite ways by different adapters
+stock passes everything; Pipeline passes only 5. The caller cannot know which applies, and the protocol has no place to express the difference. The same structural problem as `D-17` in topic C (ignoring vs refusing load options) exists on the inference side too.
 
-### D-58. 프롬프트가 단일 문자열이라 대화 구조를 표현할 수 없다
-`prompt: String`이 두 어댑터에서 모두 `[{"role":"user","content": prompt}]`로 하드코딩된다. **system prompt를 보낼 방법이 없고**, 다중 턴 메시지도, assistant prefill도, 멀티모달 파트도 표현할 수 없다.
+### D-58. The prompt is a single string and cannot express conversation structure
+`prompt: String` is hard-coded as `[{"role":"user","content": prompt}]` in both adapters. **There is no way to send a system prompt**, and neither multi-turn messages, assistant prefill nor multimodal parts can be expressed.
 
-`session_id`가 있으나 이는 세션 식별자일 뿐 대화 이력의 전달 수단이 아니다.
+`session_id` exists, but it is only a session identifier, not a means of passing conversation history.
 
-### D-59. wire 필드 승격 기준이 자의적이고 이중화되어 있다
-샘플링 파라미터 중 `temperature`만 wire 필드다. `top_p`·`top_k`·`min_p`는 옵션 문자열에 있는데 `temperature`만 승격된 근거가 없다. 게다가 두 어댑터 모두 `options`의 동명 키와 wire 필드를 병합해야 해서 **우선순위 규칙이 어댑터마다 다르다** — stock은 `or_insert_with`(옵션 우선), Pipeline은 나중 삽입(wire 우선).
+### D-59. The criterion for promoting wire fields is arbitrary and duplicated
+Of the sampling parameters, only `temperature` is a wire field. `top_p`, `top_k` and `min_p` live in the option string, and there is no rationale for promoting only `temperature`. Moreover, both adapters must merge same-named keys in `options` with the wire fields, so **the precedence rule differs per adapter** — stock uses `or_insert_with` (options win), Pipeline inserts later (wire wins).
 
-## 28. 보완 설계 (초안)
+## 28. Remediation design (draft)
 
-### P-40. 인퍼런스 옵션을 불투명 통과로 통일한다 (전제 12)
-적재 옵션과 같은 규칙이다. P4는 `options`를 해석하지 않고, 어댑터가 구상 런타임에 그대로 전달한다. stock llama.cpp 어댑터의 현재 동작이 이미 정답이므로 **Pipeline 어댑터를 그 형태로 맞춘다.**
+### P-40. Unify inference options as opaque pass-through (premise 12)
+The same rule as for load options. P4 does not interpret `options`, and the adapter forwards them as is to the concrete runtime. The stock llama.cpp adapter's current behavior is already correct, so **align the Pipeline adapter with it.**
 
-화이트리스트를 없애면 upstream이 샘플러를 추가해도 P4도 어댑터도 바뀌지 않는다.
+Without the whitelist, neither P4 nor the adapter has to change when upstream adds a sampler.
 
-### P-41. 조용한 누락을 금지한다
-어댑터가 해석할 수 없는 키를 만나면 버리지 말고 `ERROR`로 종결한다. 전제 12의 강제 조항이며, 주제 C의 P-10(사전 발견 수단)과 같은 판단 축이다 — 어댑터가 지원 키를 선언하게 할지는 Q-9와 함께 정한다.
+### P-41. Forbid silent omission
+When an adapter meets a key it cannot interpret, it terminates with `ERROR` instead of dropping the key. This is the enforcement clause of premise 12 and sits on the same decision axis as P-10 in topic C (a means of discovery in advance) — whether adapters declare their supported keys is decided together with Q-9.
 
-### P-42. 프롬프트를 대화 구조로 바꾼다
-단일 문자열을 메시지 배열로 교체한다. system·user·assistant 역할과 다중 턴, 그리고 멀티모달 파트를 표현할 수 있어야 한다. D-58 해소.
+### P-42. Turn the prompt into a conversation structure
+Replace the single string with a message array. It must be able to express system/user/assistant roles, multiple turns and multimodal parts. Resolves D-58.
 
-전제 12에 따라 이 구조를 P4가 해석할 필요는 없다 — **표현할 수 있기만 하면 된다.** 따라서 옵션 문자열에 담는 선택지도 성립한다(Q-45).
+Per premise 12, P4 does not need to interpret this structure — **it only needs to be expressible.** Carrying it in the option string is therefore also a valid option (Q-45).
 
-### P-43. wire 필드를 정리한다
-`temperature`·`max_tokens`가 wire 필드이면서 옵션에도 동명 키가 존재하는 이중 구조를 없앤다. 선택지는 둘이며 어느 쪽이든 **우선순위 규칙이 사라지는 것**이 목적이다(Q-44).
-- 전부 옵션으로 내린다 — P4는 생성 파라미터를 하나도 모른다
-- 전부 wire로 올린다 — 전제 12에 반하므로 채택하지 않는다
+### P-43. Clean up the wire fields
+Remove the double structure in which `temperature` and `max_tokens` are wire fields and also exist as same-named keys in the options. There are two options, and either way the goal is **for the precedence rule to disappear** (Q-44).
+- Move all of them down into the options — P4 knows no generation parameters at all
+- Move all of them up to the wire — contradicts premise 12, so not adopted
 
 ---
 
-# 주제 J. 어댑터 경계
+# Topic J. Adapter boundary
 
-목표 계층: `P4 어댑터 인터페이스 ← 구상 어댑터 ← 구상 백엔드`. **P4는 llama.cpp를 몰라야 한다.**
+Target layering: `P4 adapter interface ← concrete adapter ← concrete backend`. **P4 must not know about llama.cpp.**
 
-## 29. 현재 상태 (검증 완료)
+## 29. Current status (verified)
 
-### 29.1 지켜지고 있는 것
+### 29.1 What is being upheld
 
-**의존 방향이 정확하다.**
+**The dependency direction is correct.**
 
 ```text
-p4-protocol   (의존 0개)
+p4-protocol   (0 dependencies)
      ▲   ▲   ▲
      │   │   └── p4-llamacpp
      │   └────── p4-adapter
      └────────── p4-runtime
 ```
 
-역참조가 없다. `layers/protocol/src` 전체에 `llama|gguf|ggml|cuda|vulkan|metal|rocm|nvidia` 문자열이 **0건**이다.
+There are no back-references. The whole of `layers/protocol/src` contains **0** occurrences of the strings `llama|gguf|ggml|cuda|vulkan|metal|rocm|nvidia`.
 
-`adapter_kind`는 어댑터가 `"pipeline"`/`"llamacpp"`로 자기 신고할 뿐이며 protocol은 값을 해석하지 않는다. `stage_plan`·`node_spec`·`descriptor`·`options`는 bounded text로 통과한다.
+`adapter_kind` is merely self-declared by the adapter as `"pipeline"`/`"llamacpp"`, and protocol does not interpret the value. `stage_plan`, `node_spec`, `descriptor` and `options` pass through as bounded text.
 
-### 29.2 누출 지점
+### 29.2 Leak points
 
-| 위치 | 내용 |
+| Location | Contents |
 |---|---|
-| `contract/message/mod.rs` | `DraftReport`의 `kv_bytes`·`layer_bytes`·`ffn_bytes` |
-| `contract/execution/mod.rs` | `temperature`·`max_tokens`(D-59), `text` |
+| `contract/message/mod.rs` | `kv_bytes`·`layer_bytes`·`ffn_bytes` in `DraftReport` |
+| `contract/execution/mod.rs` | `temperature`·`max_tokens` (D-59), `text` |
 | `contract/phase/mod.rs` | `Prefill`/`Decode` |
-| `docs/model-load.md` | llama.cpp 노브를 정식 스키마로 규범화 |
-| `domain/hardware/mod.rs` | `nvidia-smi`(D-3) |
+| `docs/model-load.md` | Codifies llama.cpp knobs as the formal schema |
+| `domain/hardware/mod.rs` | `nvidia-smi` (D-3) |
 
-## 30. 결함
+## 30. Defects
 
-### D-62. 트랜스포머 내부 구조가 protocol 계약에 있다
-`DRAFT_REPORT`의 `kv_bytes`·`layer_bytes`·`ffn_bytes`는 P4가 **"모델은 KV 캐시와 FFN 블록으로 이루어진다"**를 안다는 뜻이다. llama.cpp 특정은 아니나 어댑터 인터페이스가 알아야 할 것도 아니며, 구조가 다른 백엔드에서는 의미를 잃는다.
+### D-62. Transformer internals are in the protocol contract
+`kv_bytes`, `layer_bytes` and `ffn_bytes` in `DRAFT_REPORT` mean that P4 knows that **"a model consists of a KV cache and FFN blocks"**. This is not llama.cpp-specific, but it is not something the adapter interface should know either, and it loses its meaning on backends with a different structure.
 
-### D-63. 문서가 코드보다 더 샌다
-[`docs/model-load.md`](docs/model-load.md)가 `load_options`의 **정식 스키마**로 `flash_attention`, `mmap`, `kv_cache.type_k/type_v/offload`, `context_batch_tokens`, `context_ubatch_tokens`를 규범으로 명시한다. 전부 llama.cpp 노브다.
+### D-63. The docs leak more than the code
+[`docs/model-load.md`](docs/model-load.md) explicitly codifies `flash_attention`, `mmap`, `kv_cache.type_k/type_v/offload`, `context_batch_tokens` and `context_ubatch_tokens` as the **formal schema** of `load_options`. All of them are llama.cpp knobs.
 
-코드는 불투명 통과인데 **문서가 P4 계층의 계약이라고 선언한다.** 전제 6·12를 확정한 지금 이 문서는 계약이 아니라 예시여야 한다.
+The code passes them through opaquely, yet **the docs declare them a contract of the P4 layer.** Now that premises 6 and 12 are settled, that document must be an example, not a contract.
 
-### D-64. 어댑터 인터페이스가 명시적 산출물로 없다
-어댑터가 구현해야 할 계약이 별도 아티팩트가 아니라 **P4 메시지 계약 그 자체**다. 그 설계 자체는 정당하나, 그러면 **백엔드 중립의 부담이 전부 메시지 계약에 실린다.** D-62·D-63·D-59가 그 부담을 감당하지 못하고 있는 증거다.
+### D-64. The adapter interface does not exist as an explicit artifact
+The contract adapters must implement is not a separate artifact but **the P4 message contract itself**. That design is legitimate in itself, but then **the entire burden of backend neutrality falls on the message contract.** D-62, D-63 and D-59 are evidence that it is not bearing that burden.
 
-### D-70. 계약이 완결형 노드와 스테이지 노드를 구분하지 않는다
+### D-70. The contract does not distinguish self-contained nodes from stage nodes
 
-vLLM 도입 가능성으로 검증한 결과다.
+This came out of checking whether vLLM could be adopted.
 
-| 종류 | 성격 | 체인 길이 | 예 |
+| Kind | Nature | Chain length | Examples |
 |---|---|---|---|
-| **완결형** | 모델 전체를 스스로 서빙. 내부 TP/PP는 자기 소관 | 1 | vLLM, stock llama-server |
-| **스테이지** | 레이어 구간만 담당, hidden state 교환 | n | 우리 Pipeline 런타임 |
+| **Self-contained** | Serves the whole model by itself. Internal TP/PP is its own business | 1 | vLLM, stock llama-server |
+| **Stage** | Handles only a layer range and exchanges hidden state | n | Our Pipeline runtime |
 
-주제 F·G의 체인 설계는 **스테이지 노드를 전제**한다 — 우리가 스테이지 경계를 소유하고, hidden state를 노드 사이로 넘기며, 디코드 루프를 바깥에서 돌린다. vLLM은 파이프라인 병렬을 내부(Ray/NCCL)에서 하므로 PP 스테이지가 P4 노드로 주소 지정되지 않는다.
+The chain design of topics F and G **assumes stage nodes** — we own the stage boundaries, pass hidden state between nodes and run the decode loop from outside. vLLM does pipeline parallelism internally (Ray/NCCL), so its PP stages are not addressed as P4 nodes.
 
-계약에 이 구분이 없어 **체인 길이 1이 유효한 구성인지가 명시되지 않았다.** 명시되면 완결형 백엔드가 자연스럽게 수용되고, 명시되지 않으면 체인 설계가 특정 백엔드 모양을 암묵 전제하게 된다.
+Because the contract lacks this distinction, **it does not state whether chain length 1 is a valid configuration.** If it is stated, self-contained backends fit in naturally; if not, the chain design implicitly assumes the shape of one specific backend.
 
-**vLLM 도입 자체는 가능하다.** llamacpp 어댑터의 추론 경로 전체가 `POST /v1/chat/completions` + SSE, 즉 OpenAI 호환 API 하나이므로 vLLM이 그대로 대응한다. 적재도 프로세스 기동 시점이라 stock llama-server와 같은 제약이 적용된다. 걸리는 것은 `D-62`(KV·FFN 분해 요구), `D-58`(프롬프트 단일 문자열), `session_id`의 대응물 부재이며 **전부 vLLM 때문이 아니라 기존 결함이 드러나는 것**이다.
+**Adopting vLLM itself is possible.** The llamacpp adapter's entire inference path is `POST /v1/chat/completions` + SSE, i.e. a single OpenAI-compatible API, which vLLM supports as is. Loading also happens at process start, so the same constraints as for stock llama-server apply. What gets in the way is `D-62` (the required KV/FFN breakdown), `D-58` (single-string prompt) and the lack of a counterpart to `session_id` — **none of these are caused by vLLM; they are existing defects coming to light**.
 
-### D-65. 구상 어댑터가 인터페이스 이름을 점유한다
-크레이트 `p4-adapter`(`layers/adapters/adapter/`)는 인터페이스가 아니라 **Pipeline 구상 어댑터**다 — `linker-pipeline-inference-stream-v1`, `/api/runtime-groups`, "Pipeline binding" 등이 박혀 있다.
+### D-65. A concrete adapter occupies the interface's name
+The crate `p4-adapter` (`layers/adapters/adapter/`) is not the interface but **the Pipeline concrete adapter** — `linker-pipeline-inference-stream-v1`, `/api/runtime-groups`, "Pipeline binding" and so on are baked into it.
 
-[`layers/adapters/README.md`](layers/adapters/README.md)는 스스로 이 디렉터리를 **`pipeline/`이라고 부른다.** 의도한 이름이 문서에 남아 있고 실제 디렉터리만 `adapter/`다.
+[`layers/adapters/README.md`](layers/adapters/README.md) itself calls this directory **`pipeline/`.** The intended name survives in the docs; only the actual directory is `adapter/`.
 
-## 31. 보완 설계 (초안)
+## 31. Remediation design (draft)
 
-### P-45. `DRAFT_REPORT`를 구조 중립 보고로
-바이트 항목을 트랜스포머 구조로 고정하지 않는다. 총량과 **어댑터가 정의한 분류**로 나누어, 분류 이름과 값을 어댑터가 채우는 형태로 바꾼다. 전제 6·12와 같은 방향이다 — 지시도 보고도 P4가 해석하지 않되, 보고는 구조화된다(P-30 논의 참조).
+### P-45. Make `DRAFT_REPORT` a structure-neutral report
+Do not fix the byte items to the transformer structure. Change the report to a total plus **adapter-defined categories**, with the adapter filling in the category names and values. Same direction as premises 6 and 12 — P4 interprets neither instructions nor reports, but reports are structured (see the P-30 discussion).
 
-### P-46. `docs/model-load.md`의 지위를 격하
-정식 스키마에서 **예시**로 내린다. 계약은 "옵션은 불투명 문자열이고 어댑터가 해석한다"(전제 6)이며, 구체 키 목록은 어댑터별 문서로 옮긴다.
+### P-46. Demote `docs/model-load.md`
+Downgrade it from the formal schema to **an example**. The contract is "options are opaque strings interpreted by the adapter" (premise 6), and concrete key lists move to per-adapter docs.
 
-### P-52. 노드 종류를 구분하고 체인 길이 1을 명시적으로 유효화
+### P-52. Distinguish node kinds and explicitly validate chain length 1
 
-D-70의 해소안이다.
+The fix for D-70.
 
-1. **체인 길이 1을 유효한 구성으로 계약에 명시한다.** 완결형 노드는 길이 1 체인이며, 그 경우 `Node[0]`이 곧 마지막 노드이므로 주제 G의 진입·완료 보고와 귀환이 그대로 성립한다
-2. **노드 종류를 어댑터가 선언한다.** `ADAPTER_REGISTER.descriptor`에 스테이지 참여 가능 여부를 담는다. P-10(지원 옵션 선언)과 같은 자리이며 P4는 값을 해석하지 않고 OUTER가 편성에 쓴다
-3. **OUTER의 편성 규칙:** 완결형 노드는 다른 노드와 체인을 이룰 수 없다. 이 판정은 OUTER가 하며(전제 10·P-33), 에이전트는 어긋난 지시에 실패를 보고할 뿐이다
+1. **State in the contract that chain length 1 is a valid configuration.** A self-contained node is a chain of length 1; in that case `Node[0]` is also the last node, so topic G's entry/completion reports and return path hold as they are
+2. **The adapter declares the node kind.** `ADAPTER_REGISTER.descriptor` states whether it can take part in stages. This is the same place as P-10 (declaring supported options); P4 does not interpret the value, and OUTER uses it for orchestration
+3. **OUTER's orchestration rule:** a self-contained node cannot form a chain with other nodes. OUTER makes this judgement (premise 10, P-33), and the agent only reports failure for an instruction that violates it
 
-이로써 vLLM·TGI·SGLang 같은 완결형 백엔드가 **체인 설계를 바꾸지 않고** 참여한다. 스테이지 체인은 우리가 경계를 소유하는 백엔드에만 적용된다.
+With this, self-contained backends such as vLLM, TGI and SGLang take part **without changing the chain design**. Stage chains apply only to backends whose boundaries we own.
 
-### P-47. 이름 정정
-`layers/adapters/adapter/` → `layers/adapters/pipeline/`, 크레이트 `p4-adapter` → `p4-pipeline`. layer README가 이미 그 이름을 쓴다. 인터페이스 자리를 비운다.
+### P-47. Name correction
+`layers/adapters/adapter/` → `layers/adapters/pipeline/`, crate `p4-adapter` → `p4-pipeline`. The layer README already uses that name. This frees up the interface's place.
 
-**단계 0에 넣을 수 있다.** wire 무변경이고 다른 항목과 의존이 없다.
+**It can go into phase 0.** No wire change and no dependency on other items.
 
 ---
 
-# 주제 K. 메시지 디스패치 계층
+# Topic K. Message dispatch layers
 
-목표 계층. 각 단계는 **바깥일수록 범용이고 안쪽으로 갈수록 구상**이다.
+Target layering. Each level is **more generic toward the outside and more concrete toward the inside**.
 
 ```text
-에이전트 [범용 메시지큐 관리]
-  └─ 다른 에이전트에게 토스 / 바이패스 판정
-      └─ 워커의 범용 처리
-          └─ 해당 컨트롤러 또는 노드에게 전달
-              └─ (노드) 그 노드에 연결된 노드 어댑터에게 전달
-                  └─ 구상 노드 어댑터 → 구상 인퍼런스 객체
+Agent [generic message queue management]
+  └─ toss to another agent / bypass decision
+      └─ generic worker handling
+          └─ deliver to the relevant controller or node
+              └─ (node) deliver to the node adapter bound to that node
+                  └─ concrete node adapter → concrete inference object
 ```
 
-**kind별 해석은 마지막 두 단계에서만 일어나야 한다.** 앞의 네 단계는 봉투만 보고 움직인다.
+**Per-kind interpretation must happen only in the last two levels.** The first four levels act on the envelope alone.
 
-## 32. 현재 상태 (검증 완료)
+## 32. Current status (verified)
 
-| 목표 단계 | 현재 |
+| Target level | Current |
 |---|---|
-| 범용 메시지큐 관리 | `TaskQueue`가 있으나 **P4 `Message`를 안다** — `TaskEnvelope`가 `queue: message.queue_class()`로 분류를 계산한다 |
-| 토스 / 바이패스 판정 | **없다.** 바이패스 판정(`is_local_bypass`)만 있고 토스가 없다 (D-49) |
-| 워커의 범용 처리 | 워커는 범용이나 곧바로 kind 분기로 넘어간다 |
-| 컨트롤러·노드에게 전달 | **없다.** 참여자 전달 계층이 비어 있고 에이전트가 어댑터 transport로 직행한다 |
-| 노드 → 노드 어댑터 | `NodeSlot`은 수동 데이터다. 전달 주체가 아니라 `adapter_id` 문자열을 담을 뿐이며, 조회·전달을 `AgentProcessor`가 대신한다 |
-| 구상 어댑터 → 구상 객체 | 정상 동작 |
+| Generic message queue management | `TaskQueue` exists but **knows the P4 `Message`** — `TaskEnvelope` computes the classification with `queue: message.queue_class()` |
+| Toss / bypass decision | **Missing.** Only the bypass decision (`is_local_bypass`) exists; there is no toss (D-49) |
+| Generic worker handling | Workers are generic but hand off to kind branching right away |
+| Delivery to the controller/node | **Missing.** The participant delivery layer is empty, and the agent goes straight to the adapter transport |
+| Node → node adapter | `NodeSlot` is passive data. It is not a delivering party and only holds an `adapter_id` string; `AgentProcessor` does the lookup and delivery instead |
+| Concrete adapter → concrete object | Works correctly |
 
-## 33. 결함
+## 33. Defects
 
-### D-66. kind 분기가 계층에 흩어져 중복된다
-[`dispatch/mod.rs:104`](layers/runtime/src/application/dispatch/mod.rs)의 `match task.message`와 [`agent/mod.rs:104`](layers/runtime/src/domain/agent/mod.rs)의 `match message`가 **같은 메시지를 두 번 분해한다.** 목표 계층에서 kind 해석은 마지막 두 단계의 일인데 상위 두 곳이 이미 알고 있다.
+### D-66. Kind branching is scattered and duplicated across layers
+`match task.message` in [`dispatch/mod.rs:104`](layers/runtime/src/application/dispatch/mod.rs) and `match message` in [`agent/mod.rs:104`](layers/runtime/src/domain/agent/mod.rs) **decompose the same message twice.** In the target layering, kind interpretation is the job of the last two levels, yet two upper places already know it.
 
-### D-67. 참여자 전달 계층이 없다
-"해당 컨트롤러 또는 노드에게 전달"에 해당하는 단계가 존재하지 않는다. `AgentProcessor`가 registry 조회·권한 검사·transport 전달을 kind별 핸들러 안에서 한꺼번에 수행하고 **노드를 건너뛰어 어댑터 transport로 직행한다.**
+### D-67. There is no participant delivery layer
+The level corresponding to "deliver to the relevant controller or node" does not exist. `AgentProcessor` performs registry lookup, authorization and transport delivery all at once inside per-kind handlers, and **skips the node, going straight to the adapter transport.**
 
-결과로 `NodeSlot`이 전달 주체가 아니라 수동 데이터가 된다. "노드가 자기 어댑터에게 전달한다"는 계층이 코드에 없다.
+As a result, `NodeSlot` becomes passive data instead of a delivering party. The layer "a node delivers to its own adapter" does not exist in the code.
 
-### D-68. 중계에도 전체 payload 디코드가 필요하다
-`read_routed_message`는 봉투를 읽자마자 `decode_payload`로 **본문을 완전히 디코드**한다. 남에게 넘길 메시지까지 내용을 해석해야 한다.
+### D-68. Even relaying requires decoding the full payload
+`read_routed_message` **fully decodes the body** with `decode_payload` as soon as it reads the envelope. Even messages that are only to be handed on must have their content interpreted.
 
-목표 계층의 두 번째 단계(토스 판정)는 봉투만 보면 되고, 그래야 "경유는 소유가 아니다"(전제 3)가 구현 수준에서도 참이 된다. 지금 구조로 중계를 붙이면 **중계 노드가 남의 메시지를 전부 해석하게 된다.**
+The second level of the target layering (the toss decision) only needs the envelope, and only then does "relaying is not owning" (premise 3) hold at the implementation level as well. Adding relaying to the current structure would **make relay nodes interpret every message that belongs to someone else.**
 
-### D-69. 큐가 P4 메시지 타입에 묶여 있다
-`TaskEnvelope::new_routed`가 `message.queue_class()`를 호출해 레인을 정한다 — [`task/mod.rs:116`](layers/protocol/src/task/mod.rs). 큐가 범용이려면 **분류가 봉투에 실려 와야** 하고 큐는 그 값을 읽기만 해야 한다.
+### D-69. The queue is tied to the P4 message type
+`TaskEnvelope::new_routed` calls `message.queue_class()` to choose the lane — [`task/mod.rs:116`](layers/protocol/src/task/mod.rs). For the queue to be generic, **the classification must arrive in the envelope**, and the queue must only read that value.
 
-## 34. 보완 설계 (초안)
+## 34. Remediation design (draft)
 
-### P-48. 봉투와 본문의 디코드를 분리한다
-프레임 수신 시 **봉투(route, 대상 주소, 분류, 데드라인)만 먼저 파싱**하고 본문은 지연한다. 대상이 자신일 때만 본문을 디코드한다.
+### P-48. Separate envelope decoding from body decoding
+On frame receipt, **parse only the envelope (route, target address, classification, deadline) first** and defer the body. Decode the body only when the target is self.
 
-D-68·D-69가 함께 풀린다. 중계 비용이 낮아지고(§92의 D-51 완화), 큐가 메시지 타입을 몰라도 된다.
+D-68 and D-69 are resolved together. Relay cost drops (mitigating D-51 in §92), and the queue no longer needs to know the message type.
 
-전제 6·12(옵션 불투명 통과)의 자연스러운 확장이다 — **중계 경로에서는 메시지 전체가 불투명하다.**
+It is a natural extension of premises 6 and 12 (opaque pass-through of options) — **on the relay path, the whole message is opaque.**
 
-### P-49. 참여자 전달 계층을 세운다
-"컨트롤러 또는 노드에게 전달"을 명시적 단계로 만든다. 에이전트는 봉투의 대상으로 참여자를 고르고, **노드가 자기 어댑터로 전달하는 책임을 갖는다.** `NodeSlot`이 데이터에서 전달 주체로 승격된다.
+### P-49. Establish the participant delivery layer
+Make "deliver to the controller or node" an explicit level. The agent picks the participant from the envelope's target, and **the node is responsible for delivering to its own adapter.** `NodeSlot` is promoted from data to a delivering party.
 
-D-67 해소이며 P-15(상태 기계)와 자연스럽게 붙는다 — 상태 판정과 전달이 같은 객체에 놓인다.
+Resolves D-67 and fits naturally with P-15 (state machine) — state decisions and delivery live on the same object.
 
-### P-50. kind 분기를 마지막 두 단계로 밀어낸다
-`dispatch`와 `AgentProcessor`의 이중 분기를 없앤다. 상위 계층은 봉투로만 라우팅하고, kind 해석은 노드 어댑터 경계 이후에서 한다.
+### P-50. Push kind branching down into the last two levels
+Remove the double branching in `dispatch` and `AgentProcessor`. Upper layers route by envelope only, and kind interpretation happens past the node adapter boundary.
 
-**단, 에이전트가 소유하는 것은 예외다** — `NODE_CREATE`/`NODE_DELETE`처럼 NodeSlot 자체를 다루는 메시지는 에이전트가 해석한다(P-5의 두 번째 층). 그 경계를 명시적으로 긋는 것이 이 항목의 실제 작업이다.
+**The exception is what the agent owns** — messages that deal with the NodeSlot itself, such as `NODE_CREATE`/`NODE_DELETE`, are interpreted by the agent (the second layer of P-5). Drawing that boundary explicitly is the real work of this item.
 
-### P-51. 큐 분류를 봉투가 나른다
-`queue_class`를 메시지에서 계산하지 않고 발신자가 봉투에 싣는다. 큐는 값을 읽어 레인을 고를 뿐 메시지를 모른다. D-69 해소, P-48의 전제.
+### P-51. The envelope carries the queue classification
+`queue_class` is not computed from the message; the sender puts it in the envelope. The queue only reads the value to pick a lane and does not know the message. Resolves D-69; prerequisite of P-48.
 
 ---
 
-# 주제 L. 백엔드 소유와 upstream 추적
+# Topic L. Backend ownership and upstream tracking
 
-목표: **구상 어댑터가 자기 백엔드를 소유한다.** upstream은 언제나 최신을 풀받을 수 있고, 우리가 필요한 기능만 붙여 컴파일한다. llama.cpp뿐 아니라 vLLM 등 모든 구상 어댑터에 같은 규칙을 적용한다.
+Goal: **each concrete adapter owns its backend.** Upstream can always be pulled at its latest version, and we compile it with only the features we need attached. The same rule applies to every concrete adapter — not only llama.cpp but also vLLM and others.
 
-## 35. 현재 상태 (검증 완료)
+## 35. Current status (verified)
 
-### 35.1 이미 목표 형태인 것
+### 35.1 What already has the target shape
 
-llama.cpp에 대해서는 **요청한 구조가 이미 구현되어 있다.**
+For llama.cpp, **the requested structure is already implemented.**
 
-| 항목 | 현재 |
+| Item | Current |
 |---|---|
-| upstream | `apps/llama/upstream` — **pristine 서브모듈**. `.gitmodules`가 공식 `ggml-org/llama.cpp`를 가리킨다 |
-| 패치 | `apps/llama/native/compat/<upstream-sha>/` — 순서 있는 패치 세트. SHA 4개분이 관리 중 |
-| 검증 | `manifest.json` — upstream 커밋·날짜·subject·직전 pin, 패치별 SHA256, 패치 세트 해시, 적용된 트리 해시 |
-| 적용 | `scripts/prepare-pipeline-upstream.mjs`가 무시되는 `.cache/`에 worktree를 만들어 해시 검증 후 순서대로 적용. **생성물은 커밋되지 않는다** |
-| 빌드 분기 | stock 빌드는 pristine 서브모듈을 직접 컴파일. **Pipeline 빌드만 패치를 쓴다** |
-| 헤더 경계 | 우리 C++는 공개 헤더만 include — `llama.h`, `ggml-backend.h`, `ggml-cuda.h` |
-| 절차 | README에 6단계 갱신 절차. "빌드를 통과시키려고 공식 서브모듈을 편집하지 말 것" 명시 |
+| upstream | `apps/llama/upstream` — **a pristine submodule**. `.gitmodules` points to the official `ggml-org/llama.cpp` |
+| Patches | `apps/llama/native/compat/<upstream-sha>/` — ordered patch sets. Four SHAs' worth are maintained |
+| Verification | `manifest.json` — upstream commit, date, subject, previous pin, per-patch SHA256, patch-set hash, applied tree hash |
+| Application | `scripts/prepare-pipeline-upstream.mjs` creates a worktree in the ignored `.cache/`, verifies hashes and applies the patches in order. **The output is not committed** |
+| Build split | The stock build compiles the pristine submodule directly. **Only the Pipeline build uses the patches** |
+| Header boundary | Our C++ includes only public headers — `llama.h`, `ggml-backend.h`, `ggml-cuda.h` |
+| Procedure | The README has a 6-step update procedure and states "do not edit the official submodule to make the build pass" |
 
-즉 "항상 최신을 풀받고 필요한 기능만 붙여 컴파일한다"는 요구는 **설계로 이미 성립해 있다.** 남은 문제는 소유 위치와 추적 비용이다.
+So the requirement "always pull the latest and compile with only the needed features attached" **already holds by design.** What remains is where ownership sits and what tracking costs.
 
-### 35.2 패치의 성격별 분포
+### 35.2 Patches by nature
 
-기준 커밋 `3e3a7a416`, 14개 패치 2,219줄.
+Base commit `3e3a7a416`, 14 patches, 2,219 lines.
 
-| 성격 | 패치 | 줄 수 | 비중 | 리베이스 비용 |
+| Nature | Patches | Lines | Share | Rebase cost |
 |---|---|---:|---:|---|
-| **upstream 결함** | `0001-ggml-backend`, `0002-ggml-rpc` | 138 | 6% | 공식 기여 시 **영구 소멸** |
-| **ABI 노출** | `0003-public-pipeline-abi`, `0005`, `0007`, `0008`, `0010`, `0012` | 484 | 22% | 낮음 — 헤더 위주 |
-| **내부 개조** | `0004-llama-context`(646), `0006-llama-graph`(641), `0009`, `0011`, `0013`, `0014` | 1,597 | 72% | 높음 |
+| **upstream defects** | `0001-ggml-backend`, `0002-ggml-rpc` | 138 | 6% | **Disappears permanently** once contributed upstream |
+| **ABI exposure** | `0003-public-pipeline-abi`, `0005`, `0007`, `0008`, `0010`, `0012` | 484 | 22% | Low — mostly headers |
+| **Internal modification** | `0004-llama-context`(646), `0006-llama-graph`(641), `0009`, `0011`, `0013`, `0014` | 1,597 | 72% | High |
 
-**`0004`와 `0006` 둘이 1,287줄로 전체의 58%다.** 최신 추적 비용이 사실상 이 두 파일에 있다.
+**`0004` and `0006` together are 1,287 lines, 58% of the total.** The cost of tracking the latest upstream effectively sits in these two files.
 
-`0001`은 upstream이 스스로 `// FIXME: count the number of inputs instead of only checking when full`이라 표시해 둔 자리를 고친 것이다.
+`0001` fixes the spot that upstream itself marked with `// FIXME: count the number of inputs instead of only checking when full`.
 
-## 36. 결함
+## 36. Defects
 
-### D-71. 백엔드 소유가 어댑터 밖에 있다
-P4의 Pipeline 어댑터는 `layers/adapters/adapter`에 있는데, 그것이 구동하는 백엔드(upstream + 패치 + 준비 스크립트 + 호스트 supervisor)는 **`apps/llama` 아래에 있다.** 둘은 HTTP로 연결된다 — `/api/runtime-groups`, `linker-pipeline-inference-stream-v1`.
+### D-71. Backend ownership sits outside the adapter
+P4's Pipeline adapter is in `layers/adapters/adapter`, but the backend it drives (upstream + patches + prep scripts + host supervisor) **lives under `apps/llama`.** The two are connected over HTTP — `/api/runtime-groups`, `linker-pipeline-inference-stream-v1`.
 
-어댑터와 그 백엔드가 서로 다른 앱에 흩어져 있어 **"구상 어댑터가 자기 백엔드를 소유한다"가 성립하지 않는다.** 어댑터를 추가·교체할 때 두 곳을 동시에 만져야 한다.
+With the adapter and its backend scattered across different apps, **"each concrete adapter owns its backend" does not hold.** Adding or replacing an adapter means touching two places at once.
 
-### D-72. 최신 추적 비용이 두 패치에 집중된다
-`0004-llama-context`(646줄)와 `0006-llama-graph`(641줄)가 패치 총량의 58%다. upstream을 올릴 때마다 이 둘의 충돌 해소가 작업의 대부분을 차지한다. README의 갱신 절차 3단계("포팅")가 실질적으로 이 두 파일의 리베이스다.
+### D-72. The tracking cost is concentrated in two patches
+`0004-llama-context` (646 lines) and `0006-llama-graph` (641 lines) are 58% of the total patch volume. On every upstream bump, resolving conflicts in these two takes most of the work. Step 3 of the README update procedure ("porting") is effectively a rebase of these two files.
 
-### D-73. upstream 결함 수정이 우리 패치로 상주한다
-`0001`은 upstream의 `FIXME` 자리를 고친 것이고 `0002`는 누락된 `<chrono>` include다. **둘 다 우리 고유 기능이 아니다.** 공식에 기여하지 않으면 upstream을 올릴 때마다 영구히 따라다니는 비용이 된다.
+### D-73. Fixes for upstream defects live on as our patches
+`0001` fixes an upstream `FIXME` spot, and `0002` is a missing `<chrono>` include. **Neither is a feature of ours.** Unless they are contributed upstream, they become a cost that follows every upstream bump forever.
 
-### D-74. 완결형·스테이지별 upstream 정책이 명문화되지 않았다
-패치가 필요한 이유는 **부분 로딩**이고, 부분 로딩은 **스테이지 노드만의 요구**다(D-70).
+### D-74. The upstream policy for self-contained vs stage backends is not written down
+Patches are needed because of **partial loading**, and partial loading is **a requirement of stage nodes only** (D-70).
 
-| 노드 종류 | upstream 개조 | 현재 |
+| Node kind | upstream modification | Current |
 |---|---|---|
-| 완결형 | **불필요.** 바이너리·패키지 의존만 | `layers/adapters/llamacpp`가 이미 이 형태 — stock llama-server에 붙고 패치를 쓰지 않는다 |
-| 스테이지 | **필요.** compat 계층 필수 | Pipeline 어댑터 |
+| Self-contained | **Not needed.** Only binary/package dependencies | `layers/adapters/llamacpp` already has this shape — it attaches to stock llama-server and uses no patches |
+| Stage | **Needed.** A compat layer is required | Pipeline adapter |
 
-이 구분이 구조에 명시되지 않아, 새 백엔드를 붙일 때 패치가 필요한지 아닌지 판단 근거가 없다. **vLLM은 완결형이므로 upstream 개조가 0이고 pip pin만으로 끝난다** — 이것이 문서에 적혀 있지 않으면 불필요한 fork 검토가 반복된다.
+Because this distinction is not explicit in the structure, there is no basis for judging whether a new backend needs patches. **vLLM is self-contained, so it needs zero upstream modification and a pip pin is enough** — unless this is written down, needless fork reviews keep recurring.
 
-## 37. 보완 설계 (초안)
+## 37. Remediation design (draft)
 
-### P-53. 백엔드를 어댑터 아래로 옮긴다
+### P-53. Move backends under their adapters
 
 ```text
 adapters/
-  llamacpp/          완결형 — upstream 개조 없음
-    src/             P4 어댑터. stock llama-server에 OpenAI 호환 API로 접속
-  pipeline/          스테이지 — 개조 필요
-    upstream/        pristine 서브모듈
-    compat/<sha>/    순서 있는 패치 + manifest
-    scripts/         .cache worktree 준비·해시 검증
-    src/             P4 어댑터
-  vllm/              완결형 — pip pin
+  llamacpp/          self-contained — no upstream modification
+    src/             P4 adapter. Connects to stock llama-server through the OpenAI-compatible API
+  pipeline/          stage — modification needed
+    upstream/        pristine submodule
+    compat/<sha>/    ordered patches + manifest
+    scripts/         .cache worktree preparation, hash verification
+    src/             P4 adapter
+  vllm/              self-contained — pip pin
     src/
 ```
 
-**새로 만드는 것이 아니라 이동이다.** `apps/llama`의 upstream·compat·scripts가 그대로 `adapters/pipeline/` 아래로 간다. D-71 해소이며 `P-47`(이름 정정)과 같은 작업에 포함된다.
+**This is a move, not new construction.** The upstream, compat and scripts of `apps/llama` move as they are under `adapters/pipeline/`. This resolves D-71 and belongs to the same work as `P-47` (name correction).
 
-이동이 끝나면 P4의 `apps/llama` 의존이 사라진다. 남는 것은 호스트 supervisor와의 HTTP 경계인데, 그것도 어댑터 소유가 되므로 앱 간 의존이 아니라 어댑터 내부 구조가 된다.
+Once the move is done, P4's dependency on `apps/llama` disappears. What remains is the HTTP boundary with the host supervisor, and since that also becomes adapter-owned, it turns into the adapter's internal structure rather than a cross-app dependency.
 
-### P-54. upstream 정책을 노드 종류로 가른다
+### P-54. Split the upstream policy by node kind
 
-계약으로 명문화한다.
+Write it into the contract.
 
-- **완결형 어댑터는 upstream을 개조하지 않는다.** 공식 배포물(바이너리·패키지)에만 의존하며 `compat/` 계층을 갖지 않는다
-- **스테이지 어댑터만 `compat/` 계층을 갖는다.** 부분 로딩이 필요한 경우에 한한다
-- 새 백엔드 도입 시 **먼저 완결형으로 가능한지 판단**하고, 불가능할 때만 스테이지를 검토한다
+- **Self-contained adapters do not modify upstream.** They depend only on official distributions (binaries, packages) and have no `compat/` layer
+- **Only stage adapters have a `compat/` layer**, and only where partial loading is needed
+- When adopting a new backend, **first judge whether it can work as self-contained**, and consider a stage adapter only if it cannot
 
-D-74 해소. `P-52`(노드 종류 구분)의 구조적 대응물이다.
+Resolves D-74. This is the structural counterpart of `P-52` (node kind distinction).
 
-### P-55. upstream 결함 패치를 공식에 기여해 소멸시킨다
-`0001-ggml-backend`(FIXME 자리 수정), `0002-ggml-rpc`(include 누락)를 공식에 PR로 올린다. 받아들여지면 패치 세트에서 영구히 빠진다 — 138줄과 리베이스 대상 2개가 사라진다.
+### P-55. Contribute the upstream defect patches so they disappear
+Submit `0001-ggml-backend` (FIXME fix) and `0002-ggml-rpc` (missing include) as PRs to the official project. Once accepted, they leave the patch set for good — 138 lines and 2 rebase targets disappear.
 
-우리 고유 기능이 아니므로 기여에 장애가 없다. D-73 해소.
+They are not features of ours, so nothing stands in the way of contributing them. Resolves D-73.
 
-### P-56. 내부 개조를 ABI 노출로 전환한다 (검토 필요)
-D-72의 근본 해소안이다. `0004`·`0006`의 1,287줄에서 **로직을 우리 코드로 끌어오고 upstream에는 훅만 남긴다.**
+### P-56. Convert internal modifications into ABI exposure (needs review)
+The root fix for D-72. From the 1,287 lines of `0004` and `0006`, **pull the logic into our code and leave only hooks in upstream.**
 
-`0003-public-pipeline-abi.patch`(197줄)가 이미 그 방향의 시도로 보인다. 이를 극단으로 밀어 내부 개조를 ABI 노출로 수렴시킬 수 있다면, 최신 추적 비용이 **헤더 리베이스 수준**으로 떨어진다.
+`0003-public-pipeline-abi.patch` (197 lines) already looks like an attempt in that direction. If this is pushed to the extreme so that internal modifications converge into ABI exposure, the tracking cost drops to **the level of a header rebase**.
 
-전환 가능 범위는 실제 패치 내용을 읽어야 판정된다(Q-56). 전부는 불가능하더라도 **비중을 줄이는 것만으로 효과가 크다** — 58%가 병목이므로.
+The convertible scope can only be judged by reading the actual patch contents (Q-56). Even if not all of it can be converted, **just reducing the share has a large effect** — the 58% is the bottleneck.
 
 ---
 
-# 주제 M. 저장소 종료 상태
+# Topic M. Repository end state
 
-이 작업은 **별도 브랜치**에서 이뤄진다. 종료 조건은 **"에이전트가 쓸 구상 어댑터가 `apps/p4` 밖에 없다"**이며, `apps/llama`는 실행 지식을 전부 넘기고 **계획 지식 제공자로 존속**한다(P-57·P-60).
+This work happens on **a separate branch**. The exit condition is **"no concrete adapter that agents use exists outside `apps/p4`"**, and `apps/llama` hands over all execution knowledge and **survives as a planning knowledge provider** (P-57·P-60).
 
-당초 종료 상태를 "`apps/linker`와 `apps/p4`만"으로 잡았으나, 계획 지식을 OUTER 코어에 넣지 않기로 하면서(D-77 해소) 세 번째 앱이 남는다. 목표였던 **P4의 백엔드 소유**는 그대로 달성된다.
+The end state was originally set as "only `apps/linker` and `apps/p4`", but once it was decided not to put planning knowledge into the OUTER core (D-77 resolved), a third app remains. The original goal, **P4 owning its backends**, is still achieved.
 
-## 38. 역할 매핑
+## 38. Role mapping
 
-계획서가 추상적으로 쓰는 역할이 실제 산출물과 이렇게 대응한다.
+The roles that the plan describes abstractly map to actual artifacts as follows.
 
-| 역할 (§1.2) | 산출물 | 근거 |
+| Role (§1.2) | Artifact | Rationale |
 |---|---|---|
-| **OUTER** | `apps/linker` + `packages/linker_domain` | 토폴로지·identity·소유·카탈로그·계획 상태가 이미 여기 있다. §1.3의 식별자 발급과 P-33의 편성 소유가 곧 이 앱의 직무다 |
-| **Controller** | `apps/p4/entrypoints/controller` | 이미 존재 |
-| **Agent** | `apps/p4/entrypoints/agent` | 이미 존재 |
-| **Node** | `apps/p4/entrypoints/node` | 이미 존재 |
-| **구상 어댑터** | `apps/p4/adapters/*` | P-53의 이동 대상 |
+| **OUTER** | `apps/linker` + `packages/linker_domain` | Topology, identity, ownership, catalog and plan state already live here. §1.3's identifier issuance and P-33's orchestration ownership are exactly this app's duties |
+| **Controller** | `apps/p4/entrypoints/controller` | Already exists |
+| **Agent** | `apps/p4/entrypoints/agent` | Already exists |
+| **Node** | `apps/p4/entrypoints/node` | Already exists |
+| **Concrete adapters** | `apps/p4/adapters/*` | Targets of the P-53 move |
 
-**OUTER가 `apps/linker`라는 확정이 계획서 전반의 귀속을 정한다.** 하드웨어 capability 레코드, 노드 편성, 적재 계획, 체인 구성, 식별자 발급이 모두 `packages/linker_domain`(현재 3,041줄)으로 간다.
+**Confirming that OUTER is `apps/linker` settles where everything in the plan belongs.** Hardware capability records, node orchestration, load plans, chain composition and identifier issuance all go to `packages/linker_domain` (currently 3,041 lines).
 
-## 39. 현재 상태 (검증 완료)
+## 39. Current status (verified)
 
-해체 대상의 규모다.
+The size of what is being dismantled.
 
-| 구성 | 규모 | 성격 |
+| Component | Size | Nature |
 |---|---|---|
-| `apps/llama/native/` | 134 파일 | upstream 서브모듈, `compat/<sha>/` 패치, `linker-node`, `linker-expert-worker`, `linker-device-probe`, `linker-moe-verify`, `linker-arch-fixtures` |
-| `apps/llama/src/` | 56 파일 | 웹 UI + 호스트 supervisor(18082, `/api/runtime-groups`, `linker-pipeline-inference-stream-v1`) |
-| `apps/llama/scripts/` | 28 파일 | `prepare-pipeline-upstream.mjs` 등 빌드·준비 |
-| `packages/llama_domain` | **11,631줄** (common 6,113 / server 3,493 / front 1) | GGUF 검사, 배치 휴리스틱, 런타임 검증, Pipeline 기동 정책 |
+| `apps/llama/native/` | 134 files | upstream submodule, `compat/<sha>/` patches, `linker-node`, `linker-expert-worker`, `linker-device-probe`, `linker-moe-verify`, `linker-arch-fixtures` |
+| `apps/llama/src/` | 56 files | Web UI + host supervisor (18082, `/api/runtime-groups`, `linker-pipeline-inference-stream-v1`) |
+| `apps/llama/scripts/` | 28 files | Build and preparation, such as `prepare-pipeline-upstream.mjs` |
+| `packages/llama_domain` | **11,631 lines** (common 6,113 / server 3,493 / front 1) | GGUF inspection, placement heuristics, runtime verification, Pipeline startup policy |
 
-**`packages/llama_domain`이 저장소 최대 자산이다.** `linker_domain`(3,041줄)의 약 4배다.
+**`packages/llama_domain` is the largest asset in the repository**, about 4 times the size of `linker_domain` (3,041 lines).
 
-## 40. 결함
+## 40. Defects
 
-### D-75. `apps/llama`의 처분 계획이 없다
-`P-53`은 upstream·compat·scripts의 이동만 다루고 웹 UI·supervisor·`llama_domain`은 다루지 않는다. **실행 지식과 계획 지식이 한 앱에 섞여 있어** 무엇을 넘기고 무엇을 남길지 기준이 없었다. P-60이 그 기준을 정한다.
+### D-75. There is no disposition plan for `apps/llama`
+`P-53` covers only moving upstream, compat and scripts; it does not cover the web UI, the supervisor or `llama_domain`. **Execution knowledge and planning knowledge are mixed in one app**, so there was no criterion for what to hand over and what to keep. P-60 sets that criterion.
 
-### D-76. `packages/llama_domain`이 세 주체의 관심사를 한 패키지에 담고 있다
-계획서의 소유 규칙에 비추면 11,631줄이 셋으로 갈린다.
+### D-76. `packages/llama_domain` holds the concerns of three parties in one package
+By the plan's ownership rules, the 11,631 lines split three ways.
 
-| 내용 | 귀속 | 근거 |
+| Contents | Belongs to | Rationale |
 |---|---|---|
-| 배치 휴리스틱 | **OUTER** | P-33 — 편성은 OUTER 단독 소유 |
-| GGUF 검사 | **OUTER** (또는 공유) | 적재 계획을 세우려면 모델 구조를 알아야 한다 |
-| 런타임 검증 | **어댑터** | 전제 10 — 실체 판정은 구상 어댑터의 일 |
-| Pipeline 기동 정책 | **Pipeline 어댑터** | 백엔드 고유 |
+| Placement heuristics | **OUTER** | P-33 — orchestration is owned by OUTER alone |
+| GGUF inspection | **OUTER** (or shared) | Building a load plan requires knowing the model structure |
+| Runtime verification | **Adapter** | Premise 10 — judging the instance is the concrete adapter's job |
+| Pipeline startup policy | **Pipeline adapter** | Backend-specific |
 
-지금은 이 넷이 한 패키지에 있어 `apps/llama` 해체 시 통째로 갈 곳이 없다.
+Right now these four sit in one package, so when `apps/llama` is dismantled there is no single place for the package to go as a whole.
 
-### D-77. OUTER가 모델 형식을 알아야 하는지가 미정이다 (해소 경로 확정)
-D-76의 GGUF 검사가 `linker_domain`으로 가면 **OUTER 코어가 GGUF를 안다.** GGUF는 llama.cpp 형식이고 vLLM은 safetensors/HF다. 완결형 백엔드가 늘면 OUTER 코어가 형식마다 검사기를 갖게 된다.
+### D-77. Whether OUTER must know model formats is undecided (resolution path fixed)
+If D-76's GGUF inspection goes to `linker_domain`, **the OUTER core knows GGUF.** GGUF is a llama.cpp format; vLLM uses safetensors/HF. As self-contained backends multiply, the OUTER core would need an inspector for each format.
 
-이는 `D-64`(추상 부담이 어디에 실리는가)의 OUTER 측 판본이다. 어댑터 위임은 성립하지 않는다 — **편성은 적재 이전이므로** 그 시점에 어댑터가 그 모델을 들고 있지 않다.
+This is the OUTER-side version of `D-64` (where the abstraction burden falls). Delegating to the adapter does not work — **orchestration happens before loading**, so at that point the adapter does not have the model.
 
-계획 지식의 실체가 실측으로 드러나 있다 — 역할별 스테이지 비용, 레이어·세션당 KV(~188 MiB), VRAM 상한, 중첩 깊이와 레이어 분할의 상호작용(§92). **이것이 `planner` 3,182줄의 내용이며 OUTER가 소유해야 할 것이다.**
+What planning knowledge consists of has been revealed by measurement — per-role stage cost, KV per layer/session (~188 MiB), VRAM caps, and the interaction between overlap depth and layer split (§92). **This is the content of the 3,182-line `planner`, and it is what OUTER must own.**
 
-**해소: 계획 지식을 OUTER 코어에 넣지 않고 백엔드별 모듈로 둔다(P-60).** OUTER는 형식을 아는 게 아니라 **형식을 아는 모듈을 소비**한다. `linker_domain`은 형식 무지 상태로 남는다.
+**Resolution: do not put planning knowledge into the OUTER core; keep it in per-backend modules (P-60).** OUTER does not know formats; it **consumes modules that know formats**. `linker_domain` stays format-agnostic.
 
-### D-83. 계획 지식이 읽어야 할 모델 파일은 방화벽 안에 있다
-`readPlannerModel`은 GGUF **파일**을 직접 읽는다(`LLAMA_MODEL_DIR` 경계 검사가 있다). 그런데 모델은 노드가 적재할 수 있는 곳, 즉 **방화벽 안**에 있다(`HOST_MODELS_DIR`).
+### D-83. The model files that planning knowledge must read are inside the firewall
+`readPlannerModel` reads GGUF **files** directly (with a `LLAMA_MODEL_DIR` boundary check). But models live where nodes can load them, that is, **inside the firewall** (`HOST_MODELS_DIR`).
 
-현재는 `apps/llama`가 호스트 앱이라 로컬 접근이 성립하지만, P-57로 OUTER 측 계획 앱이 되면 **파일이 보이지 않는다.**
+Today `apps/llama` is a host app, so local access works, but once P-57 turns it into an OUTER-side planning app, **it cannot see the files.**
 
-이는 `D-77`의 근거 하나를 무너뜨린다. "편성은 적재 이전이므로 어댑터가 그 모델을 들고 있지 않다"고 적었으나, **모델 파일은 적재 이전에도 호스트에 존재한다.** 파일 검사와 런타임 적재는 다른 일이며, 에이전트는 적재하지 않고도 파일을 읽을 수 있다.
+This knocks out one of `D-77`'s arguments. It said "orchestration happens before loading, so the adapter does not have the model", but **model files exist on the host even before loading.** Inspecting files and loading them at runtime are different things, and an agent can read files without loading them.
 
-`P-60`(OUTER 코어를 형식 무지로 유지)은 다른 근거로 여전히 유효하나, **검사를 누가 실행하는가**는 다시 열린다(Q-70).
+`P-60` (keeping the OUTER core format-agnostic) still holds on other grounds, but **who runs the inspection** is reopened (Q-70).
 
-| 안 | 내용 | 대가 |
+| Option | Contents | Cost |
 |---|---|---|
-| OUTER가 읽는다 | 모델 카탈로그를 방화벽 밖에도 둔다 | 모델 파일 이중 배치 또는 별도 카탈로그 동기 |
-| 에이전트가 읽는다 | 파일 검사를 P4로 요청하고 결과를 계획 모듈이 해석 | 검사 요청 메시지 신설. 형식 지식은 여전히 계획 모듈 소유 |
+| OUTER reads | Keep a model catalog outside the firewall as well | Duplicate placement of model files, or a separate catalog sync |
+| Agent reads | Request file inspection through P4 and have the planning module interpret the result | A new inspection request message. Format knowledge is still owned by the planning module |
 
-후자가 전제 11(방화벽)과 P-60(형식 무지 코어) 둘 다와 정합한다 — **에이전트는 바이트를 읽고, 계획 모듈이 해석한다.** 에이전트는 GGUF를 몰라도 된다.
+The latter is consistent with both premise 11 (firewall) and P-60 (format-agnostic core) — **the agent reads bytes, and the planning module interprets them.** The agent need not know GGUF.
 
-### D-78. 저장소 계약 문서가 현 구조를 기술한다
-루트 `CLAUDE.md`가 `apps/linker`·`apps/llama`·`packages/linker_domain`·`packages/llama_domain` 4자 구조와 그 고정 짝을 명시하고, 포트·Docker·호스트 supervisor 배치를 규정한다. 종료 상태에서는 전부 사실과 어긋난다.
+### D-78. The repository contract document describes the current structure
+The root `CLAUDE.md` spells out the four-part structure of `apps/linker`, `apps/llama`, `packages/linker_domain` and `packages/llama_domain` and their fixed pairings, and prescribes ports, Docker and host supervisor placement. In the end state, all of that will contradict the facts.
 
-## 41. 보완 설계 (초안)
+## 41. Remediation design (draft)
 
-### P-60. 분할 기준을 방화벽 위치로 삼는다 (결정)
+### P-60. Split by firewall position (decided)
 
-관심사가 아니라 **"방화벽 어느 쪽에서 필요한가"**로 가른다. 전제 11의 위상과 직접 맞물리는 기준이다.
+Split not by concern but by **"which side of the firewall needs it"**. This criterion meshes directly with premise 11's topology.
 
-| 지식 | 위치 | 소유 | 내용 |
+| Knowledge | Location | Ownership | Contents |
 |---|---|---|---|
-| **계획 지식** | 방화벽 밖 | OUTER가 **소비** | 모델 형식 검사, 배치 휴리스틱, 용량 추정, 모델 가용성 |
-| **실행 지식** | 방화벽 안 | 어댑터가 **소유** | 런타임 기동, 적재, 추론, 스테이지 제어 |
+| **Planning knowledge** | Outside the firewall | OUTER **consumes** it | Model format inspection, placement heuristics, capacity estimation, model availability |
+| **Execution knowledge** | Inside the firewall | Adapters **own** it | Runtime startup, loading, inference, stage control |
 
-**계획 지식은 `linker_domain`에 넣지 않는다.** OUTER 코어를 형식 무지 상태로 두고, 백엔드별 계획 모듈을 OUTER가 소비한다. D-77 해소이며 백엔드가 늘어도 OUTER 코어가 부풀지 않는다.
+**Planning knowledge does not go into `linker_domain`.** The OUTER core stays format-agnostic, and OUTER consumes per-backend planning modules. This resolves D-77, and the OUTER core does not bloat as backends multiply.
 
-이 기준이 기존 코드의 이음매와 이미 일치한다.
+This criterion already matches the seams in the existing code.
 
-| 구분 | `llama_domain/common` | `apps/llama/src/server` 라우트 |
+| Kind | `llama_domain/common` | `apps/llama/src/server` routes |
 |---|---|---|
-| 계획 | `planner` **3,182줄** (common의 52%) | `/api/models/inspect`, `/api/models/availability`, `/api/plans`, `/api/resources` |
-| 실행 | `protocol` 1,864 + `pipeline-*` 976 | `/api/processes`, `/api/runtime`, `/api/runtime-groups`, `/api/rpc-runtime-groups` |
+| Planning | `planner` **3,182 lines** (52% of common) | `/api/models/inspect`, `/api/models/availability`, `/api/plans`, `/api/resources` |
+| Execution | `protocol` 1,864 + `pipeline-*` 976 | `/api/processes`, `/api/runtime`, `/api/runtime-groups`, `/api/rpc-runtime-groups` |
 
-### P-57. `apps/llama`의 처분 — 계획 지식 제공자로 존속
+### P-57. Disposition of `apps/llama` — it survives as a planning knowledge provider
 
-**해체하지 않는다.** 실행 지식만 걷어내고 계획 지식 제공자로 남긴다.
+**Do not dismantle it.** Strip out only the execution knowledge and keep it as a planning knowledge provider.
 
-| 구성 | 처분 |
+| Component | Disposition |
 |---|---|
 | `native/upstream`, `native/compat`, `scripts/prepare-*` | → `apps/p4/adapters/pipeline/` (P-53) |
-| `native/linker-node` 외 네이티브 | → `apps/p4/adapters/pipeline/native/` |
-| 호스트 supervisor (`/api/processes`, `/api/runtime*`) | → `apps/p4/adapters/pipeline/` — 어댑터 내부 경계가 된다 |
-| `/api/models/inspect`, `/api/plans`와 그 UI | **존속** — OUTER가 소비하는 계획 표면 |
-| `/api/resources` | **대체.** 하드웨어 capability는 P4 경로로 간다 (아래) |
-| `backend-contract.json`, `docs/` | 처분 따라 분산 |
+| `native/linker-node` and the other native code | → `apps/p4/adapters/pipeline/native/` |
+| Host supervisor (`/api/processes`, `/api/runtime*`) | → `apps/p4/adapters/pipeline/` — becomes an adapter-internal boundary |
+| `/api/models/inspect`, `/api/plans` and their UI | **Survive** — the planning surface OUTER consumes |
+| `/api/resources` | **Replaced.** Hardware capability goes through the P4 path (below) |
+| `backend-contract.json`, `docs/` | Distributed according to the dispositions above |
 
-**존속분은 순수 TypeScript다.** 계획 지식이 네이티브를 부르지 않는다는 것이 검증되었다 — `readPlannerModel`이 GGUF를 TS로 직접 파싱하고, `planner` 3,182줄에 `spawn`·`exec`·`child_process`가 0건이다.
+**What survives is pure TypeScript.** It was verified that planning knowledge does not call native code — `readPlannerModel` parses GGUF directly in TS, and the 3,182-line `planner` has 0 occurrences of `spawn`, `exec` or `child_process`.
 
-**정정:** 당초 `/api/resources`를 존속 목록에 넣었으나 잘못이다. 그 출처인 `host-resources/cuda-driver-probe.ts`가 C++ `linker-device-probe`를 소비하는데, 하드웨어 capability 보고는 주제 A에서 이미 **에이전트의 일**로 정해져 있다(P-1·D-3). P4의 capability 경로로 대체하면 **존속분의 마지막 네이티브 의존이 사라진다.**
+**Correction:** `/api/resources` was originally on the survival list, which was wrong. Its source, `host-resources/cuda-driver-probe.ts`, consumes the C++ `linker-device-probe`, and topic A already made hardware capability reporting **the agent's job** (P-1·D-3). Replacing it with P4's capability path **removes the last native dependency of what survives.**
 
-따라서 이 계획대로면 **`apps/llama`에서 C++와 llama.cpp가 완전히 제거된다.**
+So under this plan, **C++ and llama.cpp are removed from `apps/llama` completely.**
 
-**종료 상태가 2앱이 아니라 3앱이 된다.** 다만 원래 목표였던 "P4가 자기 백엔드를 소유한다"는 그대로 달성된다 — `apps/llama`에는 **에이전트가 쓸 구상 어댑터가 남지 않는다.**
+**The end state has three apps, not two.** Still, the original goal, "P4 owns its backends", is achieved as is — **no concrete adapter that agents use remains** in `apps/llama`.
 
-이름이 실체와 어긋나는 점은 남는다. 존속하는 것은 런타임 앱이 아니라 llama.cpp/GGUF **계획 제공자**다(Q-64).
+The mismatch between the name and what the app actually is remains. What survives is not a runtime app but a llama.cpp/GGUF **planning provider** (Q-64).
 
-### P-58. `packages/llama_domain` 분할
-P-60의 기준으로 가른다.
-- `planner`(3,182) 등 계획 지식 → `apps/llama` 존속분과 함께 남는다. **`linker_domain`으로 옮기지 않는다**
-- `protocol`(1,864), `pipeline-*`(976), `server`(3,493) 등 실행 지식 → `apps/p4/adapters/pipeline/`
+### P-58. Split `packages/llama_domain`
+Split it by P-60's criterion.
+- Planning knowledge such as `planner` (3,182) → stays with the surviving part of `apps/llama`. **Do not move it to `linker_domain`**
+- Execution knowledge such as `protocol` (1,864), `pipeline-*` (976) and `server` (3,493) → `apps/p4/adapters/pipeline/`
 
-11,631줄의 분할이지만 P-60의 기준선이 기존 디렉터리 경계와 대체로 일치하므로, 당초 예상보다 절단면이 깨끗하다(Q-61).
+It is a split of 11,631 lines, but P-60's dividing line largely matches the existing directory boundaries, so the cut is cleaner than first expected (Q-61).
 
-### P-59. 저장소 계약 문서 갱신
-루트 `CLAUDE.md`의 아키텍처·포트·Docker·앱↔패키지 짝 규정을 종료 상태에 맞춘다. **브랜치 병합 시점에 함께 반영한다** — 그 전에 고치면 현재 트리를 기술하지 않게 된다.
+### P-59. Update the repository contract document
+Align the architecture, ports, Docker and app↔package pairing rules in the root `CLAUDE.md` with the end state. **Apply this at branch merge time** — changing it earlier would make it stop describing the current tree.
 
 ---
 
-# 주제 N. 멀티플랫폼과 백엔드 변종
+# Topic N. Multi-platform support and backend variants
 
-에이전트는 GB10 리눅스, 우분투(x86·arm), macOS, Windows에서 실행된다. 그리고 llama.cpp는 OS별로 다를 뿐 아니라 GPU에 따라 **CUDA·ROCm/HIP·Metal·OpenCL·Vulkan·CPU**로 각각 빌드된다. **노드의 실체는 하나가 아니라 매트릭스다.**
+Agents run on GB10 Linux, Ubuntu (x86/arm), macOS and Windows. And llama.cpp not only differs per OS but is built separately per GPU as **CUDA, ROCm/HIP, Metal, OpenCL, Vulkan and CPU**. **A node's concrete instance is not a single thing but a matrix.**
 
-## 42. 현재 상태 (검증 완료)
+## 42. Current status (verified)
 
-### 42.1 빌드 측은 이미 매트릭스를 다룬다
+### 42.1 The build side already handles the matrix
 
-`apps/llama/scripts`(28 파일)와 `cmake/LinkerProxy.cmake`가 변종을 처리한다. 백엔드 문자열 출현 빈도는 `opencl` 35, `rocm` 29, `cuda` 28, `cpu` 21, `vulkan` 11, `metal` 10, `hip` 5다.
+`apps/llama/scripts` (28 files) and `cmake/LinkerProxy.cmake` handle the variants. Backend string frequencies: `opencl` 35, `rocm` 29, `cuda` 28, `cpu` 21, `vulkan` 11, `metal` 10, `hip` 5.
 
-| 자산 | 역할 |
+| Asset | Role |
 |---|---|
-| `build-node-runtime.{ps1,sh}`, `build.mjs` | 플랫폼별 빌드 |
-| `package-pipeline-runtime.py`, `windows-runtime-pack.psm1`, `write-runtime-pack-manifest.mjs` | **런타임 팩** 패키징과 매니페스트 |
-| `deploy-node-runtime.{ps1,sh}`, `host-service` | 배포와 OS별 서비스 등록 |
-| `native/linker-device-probe` | 디바이스 탐지 |
-| `cmake/LinkerProxy.cmake` | `LINKER_LLAMA_COMPAT_ID` 강제, 빌드 identity 각인 |
+| `build-node-runtime.{ps1,sh}`, `build.mjs` | Per-platform builds |
+| `package-pipeline-runtime.py`, `windows-runtime-pack.psm1`, `write-runtime-pack-manifest.mjs` | **Runtime pack** packaging and manifest |
+| `deploy-node-runtime.{ps1,sh}`, `host-service` | Deployment and per-OS service registration |
+| `native/linker-device-probe` | Device detection |
+| `cmake/LinkerProxy.cmake` | Enforces `LINKER_LLAMA_COMPAT_ID` and stamps the build identity |
 
-compat README도 이미 "CUDA·Metal·OpenCL에서 실제 load/chat/unload를 검증한 뒤 fleet 승격"을 요구한다.
+The compat README already requires "fleet promotion after verifying real load/chat/unload on CUDA, Metal and OpenCL".
 
-### 42.2 프로토콜 측은 매트릭스를 모른다
+### 42.2 The protocol side does not know the matrix
 
-`HARDWARE_REPORT.snapshot`이 담는 것은 `os`(컴파일 타임 상수), `arch`, CPU 코어 수, `nvidia-smi` GPU 문자열, adapters, nodes다.
+`HARDWARE_REPORT.snapshot` holds `os` (a compile-time constant), `arch`, CPU core counts, `nvidia-smi` GPU strings, adapters and nodes.
 
-**어느 백엔드로 빌드된 런타임이 이 호스트에 있는지가 없다.** `adapter_kind`도 `"pipeline"`/`"llamacpp"`뿐이라 변종을 구분하지 못한다.
+**It does not say which backend the runtimes on this host were built for.** `adapter_kind` is also only `"pipeline"`/`"llamacpp"`, so it cannot distinguish variants.
 
-## 43. 결함
+## 43. Defects
 
-### D-79. capability 보고에 런타임 빌드 변종이 없다
-OUTER가 배치를 결정하려면 **그 호스트에 어떤 백엔드로 빌드된 런타임이 있는지** 알아야 한다. Metal 호스트와 CUDA 호스트는 지원 양자화, flash attention 가용성, KV 타입이 다르다.
+### D-79. The capability report has no runtime build variant
+For OUTER to decide placement, it must know **which backend the runtimes on that host were built with**. Metal hosts and CUDA hosts differ in supported quantization, flash attention availability and KV types.
 
-주제 A의 구분으로는 **capability 부류**다 — 재빌드·재배포 시에만 변하므로 외부 레코드에 저장 가능하다. 그런데 P-1의 capability 목록에 이 항목이 없다.
+In topic A's classification this belongs to **the capability class** — it changes only on rebuild or redeploy, so it can be stored in the external record. Yet P-1's capability list lacks this item.
 
-### D-80. `adapter_kind`가 빌드 변종을 구분하지 못한다
-`"pipeline"`은 프로토콜 형태를 말할 뿐 실행 능력을 말하지 않는다. CUDA로 빌드된 Pipeline 어댑터와 Metal로 빌드된 것은 같은 `adapter_kind`이면서 **받아들일 수 있는 적재 옵션이 다르다.**
+### D-80. `adapter_kind` cannot distinguish build variants
+`"pipeline"` describes the protocol shape, not the execution capability. A Pipeline adapter built with CUDA and one built with Metal have the same `adapter_kind` but **accept different load options.**
 
-`P-10`(지원 옵션 선언)과 `P-52`(노드 종류 선언)가 `descriptor`를 쓰기로 했으므로 자리는 있으나, 변종 축이 명시되지 않았다.
+`P-10` (declaring supported options) and `P-52` (declaring the node kind) already chose `descriptor`, so the place exists, but the variant axis is not specified.
 
-### D-81. 패치 검증 매트릭스가 최신 추적 비용을 곱한다
-`D-72`는 리베이스 비용이 `0004`·`0006` 두 패치에 있다고 했으나, **그 비용에 플랫폼 수가 곱해진다.** 패치가 적용되는 것과 모든 타깃에서 빌드·동작하는 것은 다르다. 현재 요구가 CUDA·Metal·OpenCL 셋이고 ROCm·Vulkan·arm이 더해지면 upstream 갱신 1회의 비용이 그만큼 늘어난다.
+### D-81. The patch verification matrix multiplies the tracking cost
+`D-72` said the rebase cost sits in the two patches `0004` and `0006`, but **that cost is multiplied by the number of platforms.** A patch applying is not the same as building and working on every target. The current requirement is three (CUDA, Metal, OpenCL); adding ROCm, Vulkan and arm raises the cost of each upstream update accordingly.
 
-### D-82. 완결형 백엔드의 플랫폼 가용성이 편성 제약인데 계약에 없다
-`P-54`가 완결형·스테이지로 갈랐으나 **완결형이 모든 플랫폼에서 가능한 것은 아니다.** vLLM은 CUDA·ROCm 중심이고 Metal·Windows 네이티브 경로가 없다. 즉 **Mac 호스트에서는 llama.cpp 계열만 가능하다.**
+### D-82. Platform availability of self-contained backends is an orchestration constraint, but it is not in the contract
+`P-54` split self-contained from stage, but **self-contained is not possible on every platform.** vLLM centers on CUDA/ROCm and has no Metal or native Windows path. In other words, **only llama.cpp-family backends are possible on Mac hosts.**
 
-노드 종류 × 플랫폼 × 백엔드가 가용성 매트릭스를 이루고 이는 OUTER의 편성 입력인데, 이를 표현할 자리가 없다.
+Node kind × platform × backend forms an availability matrix, which is an input to OUTER's orchestration, but there is no place to express it.
 
-## 44. 보완 설계 (초안)
+## 44. Remediation design (draft)
 
-### P-61. 런타임 변종을 capability에 싣는다
+### P-61. Put runtime variants into capability
 
-`P-1`의 capability 항목에 다음을 더한다.
+Add the following to `P-1`'s capability items.
 
 ```text
 runtime_variants: [
@@ -1734,540 +1734,540 @@ runtime_variants: [
 ```
 
 - `backend` — `cuda` / `rocm` / `metal` / `opencl` / `vulkan` / `cpu`
-- `compat_id` — 어느 upstream compat 세트로 빌드되었는가 (`LINKER_LLAMA_COMPAT_ID`가 이미 강제하는 값)
-- `build_id` — cmake가 각인하는 불변 아티팩트 identity
+- `compat_id` — which upstream compat set it was built with (the value that `LINKER_LLAMA_COMPAT_ID` already enforces)
+- `build_id` — the immutable artifact identity that cmake stamps
 
-capability 부류이므로 재빌드·재배포 시에만 변한다. **관측(occupancy)이 아니라 선언이다.**
+It is in the capability class, so it changes only on rebuild or redeploy. **It is a declaration, not an observation (occupancy).**
 
-### P-62. `descriptor`가 빌드 변종을 선언한다
-어댑터 자기 등록 시 `ADAPTER_REGISTER.descriptor`에 변종을 담는다. `P-10`(지원 옵션 집합)·`P-52`(노드 종류)와 같은 자리이며, **P4는 값을 해석하지 않고 OUTER가 편성에 쓴다**(전제 6·12와 동일 규칙).
+### P-62. `descriptor` declares the build variant
+When an adapter registers itself, `ADAPTER_REGISTER.descriptor` carries the variant. It is the same place as `P-10` (supported option set) and `P-52` (node kind), and **P4 does not interpret the value; OUTER uses it for orchestration** (the same rule as premises 6 and 12).
 
-이로써 "이 어댑터는 pipeline 종류이고 CUDA 빌드이며 이러이러한 적재 옵션을 받는다"가 한 선언으로 표현된다.
+With this, "this adapter is of the pipeline kind, is a CUDA build and accepts such-and-such load options" is expressed in a single declaration.
 
-### P-63. 가용성 매트릭스를 OUTER 편성 입력으로 삼는다
-OUTER는 `노드 종류 × 플랫폼 × 백엔드`의 가용성을 알고 편성한다. 이 판정은 OUTER 단독이며(P-33), 에이전트는 어긋난 지시에 실패를 보고할 뿐이다(Q-33 결정).
+### P-63. Make the availability matrix an input to OUTER orchestration
+OUTER orchestrates knowing the availability of `node kind × platform × backend`. This judgement is OUTER's alone (P-33), and the agent only reports failure for an instruction that does not fit (Q-33 decision).
 
-주제 M의 **계획 지식**(P-60)에 속한다 — 방화벽 밖에서 필요하고 백엔드별 모듈이 제공한다. 따라서 `linker_domain`이 아니라 계획 제공자 쪽에 놓인다.
+It belongs to topic M's **planning knowledge** (P-60) — needed outside the firewall and provided by per-backend modules. So it sits on the planning provider side, not in `linker_domain`.
 
-### P-64. 지원 매트릭스를 문서로 고정한다
-어느 조합을 공식 지원하고 어느 것을 최선 노력으로 두는지 명시한다. `D-81`의 비용이 이 범위에 비례하므로, **매트릭스를 좁히는 것이 최신 추적 비용을 줄이는 직접 수단**이다(Q-66).
+### P-64. Pin down the support matrix in documentation
+State which combinations are officially supported and which are best-effort. The cost in `D-81` is proportional to this scope, so **narrowing the matrix is the direct way to reduce the tracking cost** (Q-66).
 
 ---
 
-## 89. 미결 결정
+## 89. Open decisions
 
-| # | 내용 | 종속 |
+| # | Contents | Depends on |
 |---|---|---|
-| Q-1 | `snapshot`을 버전 붙은 JSON 스키마로 규범화할 것인가, wire 필드로 승격할 것인가 | P-3은 전자 전제 |
-| Q-2 | capability와 occupancy를 별도 메시지로 쪼갤 것인가, 한 스냅샷 안의 별도 절로 둘 것인가 | P-1 |
-| Q-3 | agent-initiated announce를 신설할 것인가 | 채택 시 v5 호환 포기 → 죽은 표면 정리를 같은 판에서 처리 |
-| ~~Q-4~~ | ~~`machine_id` 산출 방식 — OS 유래 값 대 설정 주입~~ | **(해소)** `machine_id` 자체가 불필요. 접근 주소가 identity다 (P-2) |
-| Q-5 | `NODE_CREATE`가 기존 id에 대해 멱등 no-op인가 갱신인가 | D-10. 활성 바인딩이 있을 때의 처리가 걸린다 |
-| Q-6 | `EXECUTE`의 `controller_id`를 남길 것인가, 컨트롤러 개입을 route/session 층으로 옮길 것인가 | P-6 |
-| Q-7 | `HEALTH_CHECK`의 귀속 — 외부→에이전트 진단인가, 컨트롤러 관심사인가 | P-6 |
-| Q-8 | 노드 제거 시 활성 바인딩·실행이 있으면 거부인가 강제 회수인가 | P-7 |
-| Q-9 | 어댑터가 지원 옵션 집합을 `descriptor`로 **선언**할 것인가, 시행착오를 수용할 것인가 | P-10. 어느 쪽이든 P4는 옵션을 해석하지 않는다 |
-| ~~Q-10~~ | ~~옵션 키 이름을 llama.cpp 플래그에 맞출 것인가, 백엔드 중립 이름으로 추상화할 것인가~~ | **(철회)** 전제 6에 따라 P4 관심사가 아니다. 어댑터와 외부 계획기가 공유할 규약 |
-| ~~Q-11~~ | ~~artifacts를 `MODEL_LOAD` 필드로 승격할 것인가~~ | **(철회)** 옵션 문자열 안에 담는 것으로 결정. wire 변경 없음 |
-| ~~Q-12~~ | ~~부분 로딩 단위를 레이어 범위로 할 것인가 텐서 패턴까지 허용할 것인가~~ | **(철회)** 어댑터 해석 범위. P4 관심사가 아니다 |
-| ~~Q-13~~ | ~~적재 옵션 검증을 어디서 하는가~~ | **(결정)** 구상 어댑터. 전제 6 |
-| Q-14 | 요청 route가 끊긴 적재의 진행·완료를 어떻게 되찾는가 — 전용 조회, 노드 상태 조회에 포함, announce 중 무엇인가 | D-20, P-13 |
-| Q-15 | 노드:바인딩을 1:1로 좁힐 것인가, 1:N을 유지하고 상태 판정을 다르게 정의할 것인가 | P-16. P-15 상태 기계의 선행 조건 |
-| Q-16 | 해제 단위를 `binding`으로 통일할 것인가, `deployment`로 올릴 것인가 | D-25. Q-15가 1:1이면 자동 정렬된다 |
-| Q-17 | `forward::capture` 재설계 방식 — 에이전트 판단 후 전달인가, 에이전트가 자기 terminal로 대체 emit인가 | P-14. 전자는 지연, 후자는 어댑터 detail 손실 |
-| Q-18 | 어댑터 프로세스 경계 내부도 CPS로 만들 것인가, P4 경계까지만 요구할 것인가 | D-30. 어댑터는 별도 프로세스이고 자체 런타임을 가진다 |
-| Q-19 | 장기 작업을 몇 단으로 쪼갤 것인가 — 진행 폴링을 자기 재-enqueue Task로 둘 것인가 | P-19. 폴링 주기가 큐 부하가 된다 |
-| Q-20 | 반환값 제거를 토대 trait 교체로 갈 것인가, 기존 trait 위에 CPS 어댑터를 씌울 것인가 | D-26, P-17. 전자는 전면 개편, 후자는 이중 구조 존속 |
-| ~~Q-21~~ | ~~체인을 요청마다 실을 것인가, 사전 등록된 체인 id를 참조할 것인가~~ | **(결정)** 요청마다 싣는다. 체인은 프리필 메시지 안에 있다 |
-| ~~Q-22~~ | ~~스테이지 이동을 P4로 감쌀 것인가, 전부 native에 맡길 것인가~~ | **(결정)** P4가 체인·순서·correlation을 나르고 노드가 스스로 전달한다. hidden state는 native 유지 |
-| Q-23 | 컨트롤러가 요청 동안 보유하는 상태를 OUTER 귀환 route로 한정할 것인가 | §1.2. 체인 상태는 이미 메시지로 넘어갔으므로 남는 것은 귀환 경로뿐이다 |
-| ~~Q-25~~ | ~~체인 항목의 agent 도달 주소를 무엇으로 표기할 것인가~~ | **(결정)** 자기기술 접속 정보로 통일. 봉투·체인·귀환 주소가 같은 표기를 쓴다 (P-34) |
-| Q-26 | 체인 항목에 체인 전체를 실을 것인가, 남은 구간만 잘라 전달할 것인가 | P-22. 전자는 관측·재시도에 유리, 후자는 프레임이 작다 |
-| Q-27 | `CANCEL`을 체인 전진 전파로 할 것인가, 각 노드의 correlation 자체 중단으로 할 것인가 | P-27, D-40 |
-| Q-28 | 진입 보고의 수신자는 누구인가 — 자기 에이전트인가, 컨트롤러인가, 둘 다인가 | 진술상 1번 노드는 에이전트, 2번 노드는 컨트롤러로 갈렸다. 통일 필요 |
-| Q-29 | 완료 보고의 명시 필드 최소 집합을 무엇으로 할 것인가 | P-29. 나머지는 문자열 확장 |
-| Q-30 | 디코드 홉에서도 전 노드가 진입·완료를 보고하는가, 마지막 노드만 보고하는가 | **부하 논거는 소멸** — 스테이지 대기가 8.0~87.3초다(§92). 관측 필요성만으로 판단한다 |
-| Q-31 | 컨텍스트 초과를 어디서 판정하는가 — 어댑터 진입 검사인가, OUTER 편성 시 사전 검증인가 | D-44. 전제 10에 따라 P4가 기록하지는 않는다 |
-| ~~Q-33~~ | ~~잘못 편성된 체인이 실행 중에 드러나는 것을 수용할 것인가~~ | **(결정)** 수용한다. OUTER가 완전한 체인·적재 상태를 기억하며, 지시가 실제와 다르면 에이전트는 실패를 보고할 뿐이다. 그 대가로 **에이전트·노드는 단순한 기계적 동작을 보장받는다** |
-| ~~Q-34~~ | ~~적재 경로의 관문은 누구인가~~ | **(해소)** 진입 에이전트가 노드 배치와 무관한 순수 진입점이므로 모든 메시지가 같은 관문을 지난다. D-50과 함께 종결 |
-| ~~Q-35~~ | ~~중계 판정을 위한 대상 주소를 어떻게 표기할 것인가~~ | **(결정)** 자기기술 접속 정보. 조회 없이 도달 가능해야 중계가 무상태다 (P-34) |
-| Q-39 | 접속 정보의 표기 형식 — URL인가 `host:port`인가, scheme·전송 종류를 담을 것인가 | P-34. 향후 TLS·다른 전송을 수용하려면 scheme이 필요하다 |
-| ~~Q-40~~ | ~~에이전트의 내부망 도달 주소를 누가 정하는가~~ | **(해소)** OUTER가 인프라 사실로 이미 소유한다. 프로토콜 발견 대상이 아니다 (전제 1, D-52 철회) |
-| Q-41 | 자기기술 주소를 신뢰할 범위를 어떻게 제한할 것인가 | D-53. authz 도입 시점까지 내부망 신뢰를 전제할 것인지 |
-| Q-42 | 프로세스 화신 표식을 둘 것인가, 에이전트 상태 지속화로 대신할 것인가 | P-39, D-7. 지속화하면 화신 구별의 필요 범위가 줄어든다 |
-| Q-43 | `ingress_id`가 `request_id`와 별개로 필요한가 | §1.3. 둘 다 OUTER 발급이고 인퍼런스 1건을 가리킨다 |
-| Q-44 | `temperature`·`max_tokens`를 wire에서 내릴 것인가 | P-43, D-59. 내리면 P4는 생성 파라미터를 하나도 모른다 |
-| Q-45 | 대화 구조를 wire 구조로 둘 것인가, 옵션 문자열에 담을 것인가 | P-42, D-58. 전제 12는 후자를 허용한다 |
-| Q-46 | 체인에서 샘플링·grammar는 어느 노드가 수행하는가 | 파이프라인 병렬에서 로짓은 **마지막 스테이지에서만** 나온다. 옵션이 전 노드에 전달될 필요가 있는지 |
-| Q-47 | Pipeline 런타임이 실제로 지원하는 샘플러 범위는 어디까지인가 | P-40. 화이트리스트를 걷어내도 하위 런타임이 못 받으면 의미가 없다 — 실측 필요 |
-| Q-48 | `load_options.batching.*`를 **강등**할 것인가 **제거**할 것인가 | D-60, P-44. **유지 안은 탈락** — 런타임이 이미 창을 파생하고 선언은 상한으로 작동함이 실측으로 확인되었다(§92) |
-| Q-49 | 연결 수립 정책(재시도·백오프·연결 예산)을 프로토콜 계약에 넣을 것인가 | D-61. 소스 라우팅은 홉마다 연결을 전제한다 |
-| Q-50 | `Phase`(Prefill/Decode)와 `text`를 계약에 남길 것인가 | D-64. 실행 계약의 일부로 정당화 가능하나 백엔드 중립은 아니다 |
-| Q-51 | 어댑터 인터페이스를 명시적 산출물로 만들 것인가 | D-64. 만들지 않으면 중립 부담이 메시지 계약에 남는다 |
-| Q-52 | 봉투가 나를 최소 필드는 무엇인가 — route·대상·분류·데드라인이면 충분한가 | P-48·P-51. 중계가 본문을 안 보려면 봉투가 자족해야 한다 |
-| Q-53 | 에이전트가 직접 해석하는 kind의 경계를 어디로 긋는가 | P-50. `NODE_CREATE`/`NODE_DELETE`는 에이전트 소유이나 나머지는 통과 대상 |
-| Q-54 | 완결형 노드와 스테이지 노드의 구분을 `descriptor` 선언으로 둘 것인가, `adapter_kind`로 둘 것인가 | P-52, D-70. 전자는 P4 무해석, 후자는 계약이 종류를 안다 |
-| Q-55 | 완결형 백엔드(vLLM 등)를 실제 도입 대상으로 삼을 것인가 | D-70. 삼는다면 P-52가 단계 5에 들어간다 |
-| Q-56 | `0004-llama-context`·`0006-llama-graph`의 내부 개조를 ABI 노출로 전환할 수 있는가 | P-56, D-72. 패치 내용 분석이 선행되어야 판정된다. 전체의 58% |
-| Q-57 | `compat/` 계층의 소유를 Pipeline 어댑터 하나로 한정할 것인가 | P-53·P-54. 다른 스테이지 백엔드가 생기면 각자 갖는다 |
-| Q-58 | vLLM을 pip pin으로 둘 것인가 서브모듈로 둘 것인가 | P-53. 완결형이면 pin으로 충분하다 |
-| ~~Q-59~~ | ~~`apps/llama`의 나머지는 어디로 가는가~~ | **(주제 M으로 이관)** P-57이 배치표를 정의한다 |
-| Q-60 | 존속하는 계획 UI(`/api/models/*`·`/api/plans`)를 `apps/llama`에 둘 것인가 `apps/linker`로 합칠 것인가 | P-57. 합치면 2앱이 되나 OUTER 코어가 형식별 화면을 갖는다 |
-| Q-61 | `llama_domain`의 절단면이 실제로 깨끗한가 — `planner`가 `protocol`·`pipeline-*`에 의존하는가 | P-58. 의존이 있으면 분할 비용이 커진다 |
-| ~~Q-62~~ | ~~OUTER가 모델 형식을 직접 아는가, 검사를 위임하는가~~ | **(해소)** 둘 다 아니다. **형식을 아는 모듈을 소비**한다. OUTER 코어는 형식 무지 (P-60, D-77) |
-| Q-64 | 존속하는 `apps/llama`의 이름을 유지할 것인가 | P-57. 실체는 런타임 앱이 아니라 llama.cpp/GGUF 계획 제공자다 |
-| Q-65 | vLLM 도입 시 계획 모듈을 형제로 둘 것인가 | P-60. safetensors/HF 검사가 필요하면 같은 자리에 선다 |
-| Q-66 | 공식 지원 매트릭스의 범위는 어디까지인가 | P-64, D-81. **범위가 곧 upstream 추적 비용**이다. 현재 검증 요구는 CUDA·Metal·OpenCL 셋 |
-| Q-67 | 런타임 팩을 어떻게 전달하는가 — 사전 배치인가, 에이전트가 받아오는가 | 이미 `package-*`·`deploy-*`·`write-runtime-pack-manifest`가 있다. 프로토콜이 관여할지 여부 |
-| Q-68 | 변종 불일치는 어느 시점에 실패하는가 — OUTER 편성인가 적재 진입 검사인가 | D-79·D-82. Q-33의 "실행 중에 드러남 수용"과 같은 축 |
-| Q-69 | 에이전트 바이너리와 런타임 팩의 버전 정합을 어떻게 보장하는가 | `compat_id`·`build_id`가 있으나 에이전트 쪽 대응물이 없다 |
-| Q-70 | 모델 파일 검사를 누가 실행하는가 — OUTER가 직접 읽는가, 에이전트가 읽어 넘기는가 | D-83. 후자면 검사 요청 메시지가 신설되고, 에이전트는 형식을 모른 채 바이트만 읽는다 |
-| Q-71 | 모델 카탈로그를 방화벽 밖에도 둘 것인가 | D-83. 두면 파일 이중 배치 또는 동기가 필요하다 |
-| Q-72 | 중첩 깊이를 적재 옵션으로 올릴 것인가 | D-84. 환경변수로만 있으면 OUTER가 지정할 통로가 없다. 전제 6대로면 불투명 옵션의 한 키다 |
-| Q-63 | 브랜치 병합 시점과 `CLAUDE.md` 갱신을 어떻게 묶을 것인가 | P-59, D-78 |
-| ~~Q-36~~ | ~~1번 노드를 게이트웨이에 배치하도록 편성 제약을 명문화할 것인가~~ | **(철회)** 진입 에이전트가 노드를 품을 이유가 없어 편성 제약이 불필요하다. 마지막 노드 배치는 성능 최적화로만 남는다(D-51) |
-| Q-37 | 컨트롤러가 진입점이 여럿인 배치(내부망 여러 개)를 상대해야 하는가 | 전제 11은 단일 진입점을 명시한다. 확장 필요 여부만 확인 |
-| Q-38 | 중계 메시지도 큐 레인을 소비하는가, 별도 경로인가 | P-35. 중계량이 많으면 Control 레인 예산을 잠식한다 |
-| Q-32 | 체인 중간 노드 장애 시 재시작 단위는 무엇인가 — 요청 전체인가, 프리필부터인가 | P-32. KV가 노드 귀속이므로 이전은 불가능하다 |
-| ~~Q-24~~ | ~~적재 시점 구성과 요청 시점 체인이 불일치하면 어떻게 하는가~~ | **(결정)** OUTER 책임. 에이전트는 자기 상태와 맞지 않는 지시에 실패를 보고할 뿐 대조·보정하지 않는다 (Q-33과 같은 근거) |
+| Q-1 | Make `snapshot` a normative versioned JSON schema, or promote it to wire fields? | P-3 assumes the former |
+| Q-2 | Split capability and occupancy into separate messages, or keep them as separate sections of one snapshot? | P-1 |
+| Q-3 | Add agent-initiated announce? | If adopted, v5 compatibility is given up → clean up the dead surfaces in the same round |
+| ~~Q-4~~ | ~~How to derive `machine_id` — OS-derived value vs injected configuration~~ | **(resolved)** `machine_id` itself is unnecessary. The access address is the identity (P-2) |
+| Q-5 | Is `NODE_CREATE` on an existing id an idempotent no-op or an update? | D-10. Handling when active bindings exist is at stake |
+| Q-6 | Keep `controller_id` in `EXECUTE`, or move controller involvement to the route/session layer? | P-6 |
+| Q-7 | Where does `HEALTH_CHECK` belong — external→agent diagnosis, or a controller concern? | P-6 |
+| Q-8 | When removing a node that has active bindings or executions, refuse or reclaim by force? | P-7 |
+| Q-9 | Should adapters **declare** their supported option set in `descriptor`, or should trial and error be accepted? | P-10. Either way, P4 does not interpret options |
+| ~~Q-10~~ | ~~Match option key names to llama.cpp flags, or abstract them into backend-neutral names?~~ | **(withdrawn)** Not a P4 concern per premise 6. A convention shared by adapters and the external planner |
+| ~~Q-11~~ | ~~Promote artifacts to `MODEL_LOAD` fields?~~ | **(withdrawn)** Decided to carry them in the option string. No wire change |
+| ~~Q-12~~ | ~~Should the partial-loading unit be a layer range, or also allow tensor patterns?~~ | **(withdrawn)** Within the adapter's interpretation scope. Not a P4 concern |
+| ~~Q-13~~ | ~~Where are load options validated?~~ | **(decided)** In the concrete adapter. Premise 6 |
+| Q-14 | How to recover the progress and completion of a load whose request route dropped — a dedicated query, inclusion in the node state query, or announce? | D-20, P-13 |
+| Q-15 | Narrow node:binding to 1:1, or keep 1:N and define the state checks differently? | P-16. Prerequisite of the P-15 state machine |
+| Q-16 | Unify the release unit on `binding`, or raise it to `deployment`? | D-25. Aligns automatically if Q-15 settles on 1:1 |
+| Q-17 | How to redesign `forward::capture` — forward after the agent's judgement, or have the agent emit its own terminal instead? | P-14. The former adds delay; the latter loses the adapter detail |
+| Q-18 | Make the inside of the adapter process boundary CPS as well, or require CPS only up to the P4 boundary? | D-30. The adapter is a separate process with its own runtime |
+| Q-19 | Into how many steps should long-running work be split — should progress polling be a self-re-enqueueing Task? | P-19. The polling interval becomes queue load |
+| Q-20 | Remove return values by replacing the foundational traits, or wrap a CPS adapter over the existing traits? | D-26, P-17. The former is a full overhaul; the latter keeps a dual structure alive |
+| ~~Q-21~~ | ~~Carry the chain in every request, or reference a pre-registered chain id?~~ | **(decided)** Carry it in every request. The chain is inside the prefill message |
+| ~~Q-22~~ | ~~Wrap stage movement in P4, or leave it all to native?~~ | **(decided)** P4 carries the chain, order and correlation, and nodes forward on their own. Hidden state stays native |
+| Q-23 | Limit the state the controller holds during a request to the OUTER return route? | §1.2. Chain state has already moved into the message, so only the return path remains |
+| ~~Q-25~~ | ~~How to write the agent reachable address in chain entries?~~ | **(decided)** Unified as self-describing connection info. Envelope, chain and return address use the same notation (P-34) |
+| Q-26 | Carry the whole chain in chain entries, or pass on only the remaining segment? | P-22. The former helps observation and retries; the latter keeps frames small |
+| Q-27 | Make `CANCEL` propagate forward along the chain, or have each node stop on its own per correlation? | P-27, D-40 |
+| Q-28 | Who receives the entry report — the node's own agent, the controller, or both? | The descriptions diverged: the agent for node 1, the controller for node 2. Needs to be unified |
+| Q-29 | What is the minimum set of explicit fields in the completion report? | P-29. The rest is a string extension |
+| Q-30 | On decode hops, do all nodes report entry and completion, or only the last node? | **The load argument is gone** — stage waits are 8.0~87.3 s (§92). Decide on the need for observability alone |
+| Q-31 | Where is context overflow judged — in the adapter's entry check, or by OUTER as pre-validation at orchestration time? | D-44. Per premise 10, P4 does not record it |
+| ~~Q-33~~ | ~~Accept that a mis-composed chain shows up only during execution?~~ | **(decided)** Accept it. OUTER remembers the complete chain and load state, and if an instruction does not match reality, the agent only reports failure. In return, **agents and nodes are guaranteed simple mechanical behavior** |
+| ~~Q-34~~ | ~~Who is the gateway for the load path?~~ | **(resolved)** The entry agent is a pure entry point unrelated to node placement, so every message passes through the same gateway. Closed together with D-50 |
+| ~~Q-35~~ | ~~How to write the target address used for relay decisions?~~ | **(decided)** Self-describing connection info. Relaying is stateless only if the target is reachable without a lookup (P-34) |
+| Q-39 | Notation for connection info — URL or `host:port`; should it carry the scheme and transport type? | P-34. A scheme is needed to accommodate TLS and other transports later |
+| ~~Q-40~~ | ~~Who decides an agent's reachable address on the internal network?~~ | **(resolved)** OUTER already owns it as an infrastructure fact. Not a target for protocol discovery (premise 1, D-52 withdrawn) |
+| Q-41 | How far should self-describing addresses be trusted? | D-53. Whether to assume internal-network trust until authz is introduced |
+| Q-42 | Add a process incarnation marker, or replace it with agent state persistence? | P-39, D-7. With persistence, the need to distinguish incarnations shrinks |
+| Q-43 | Is `ingress_id` needed separately from `request_id`? | §1.3. Both are issued by OUTER and point to one inference |
+| Q-44 | Remove `temperature`/`max_tokens` from the wire? | P-43, D-59. If removed, P4 knows no generation parameters at all |
+| Q-45 | Keep the conversation structure as a wire structure, or carry it in the option string? | P-42, D-58. Premise 12 allows the latter |
+| Q-46 | In a chain, which node performs sampling and grammar? | In pipeline parallelism, logits come **only from the last stage**. Whether options need to reach every node |
+| Q-47 | How much of the sampler surface does the Pipeline runtime actually support? | P-40. Removing the whitelist is pointless if the underlying runtime cannot accept the options — needs measurement |
+| Q-48 | **Demote** or **remove** `load_options.batching.*`? | D-60, P-44. **The keep option is out** — measurements confirmed that the runtime already derives the windows and that the declaration works as a cap (§92) |
+| Q-49 | Put the connection establishment policy (retries, backoff, connection budget) into the protocol contract? | D-61. Source routing assumes a connection at every hop |
+| Q-50 | Keep `Phase` (Prefill/Decode) and `text` in the contract? | D-64. Justifiable as part of the execution contract, but not backend-neutral |
+| Q-51 | Make the adapter interface an explicit artifact? | D-64. If not, the neutrality burden stays on the message contract |
+| Q-52 | What minimum fields must the envelope carry — are route, target, classification and deadline enough? | P-48·P-51. For relaying to skip the body, the envelope must be self-sufficient |
+| Q-53 | Where is the boundary of the kinds the agent interprets directly? | P-50. `NODE_CREATE`/`NODE_DELETE` are agent-owned; the rest pass through |
+| Q-54 | Distinguish self-contained and stage nodes through a `descriptor` declaration or through `adapter_kind`? | P-52, D-70. With the former P4 does not interpret it; with the latter the contract knows the kind |
+| Q-55 | Make self-contained backends (vLLM and others) an actual adoption target? | D-70. If so, P-52 goes into phase 5 |
+| Q-56 | Can the internal modifications in `0004-llama-context`/`0006-llama-graph` be converted into ABI exposure? | P-56, D-72. Needs an analysis of the patch contents first. 58% of the total |
+| Q-57 | Limit ownership of the `compat/` layer to the Pipeline adapter alone? | P-53·P-54. If other stage backends appear, each gets its own |
+| Q-58 | Keep vLLM as a pip pin or as a submodule? | P-53. A pin is enough for a self-contained backend |
+| ~~Q-59~~ | ~~Where does the rest of `apps/llama` go?~~ | **(moved to topic M)** P-57 defines the placement table |
+| Q-60 | Keep the surviving planning UI (`/api/models/*`, `/api/plans`) in `apps/llama`, or merge it into `apps/linker`? | P-57. Merging leaves 2 apps, but the OUTER core would get per-format screens |
+| Q-61 | Is the cut through `llama_domain` actually clean — does `planner` depend on `protocol` or `pipeline-*`? | P-58. If it does, the split costs more |
+| ~~Q-62~~ | ~~Does OUTER know model formats directly, or delegate inspection?~~ | **(resolved)** Neither. It **consumes modules that know the formats**. The OUTER core is format-agnostic (P-60, D-77) |
+| Q-64 | Keep the name of the surviving `apps/llama`? | P-57. What it actually is, is a llama.cpp/GGUF planning provider, not a runtime app |
+| Q-65 | When adopting vLLM, put its planning module alongside as a sibling? | P-60. If safetensors/HF inspection is needed, it goes in the same place |
+| Q-66 | How wide is the official support matrix? | P-64, D-81. **The scope is the upstream tracking cost**. The current verification requirement is three: CUDA, Metal and OpenCL |
+| Q-67 | How are runtime packs delivered — placed in advance, or fetched by the agent? | `package-*`, `deploy-*` and `write-runtime-pack-manifest` already exist. Whether the protocol gets involved |
+| Q-68 | When does a variant mismatch fail — at OUTER orchestration or at the load entry check? | D-79·D-82. The same axis as Q-33's "accept that it shows up during execution" |
+| Q-69 | How is version consistency between the agent binary and the runtime pack guaranteed? | `compat_id` and `build_id` exist, but there is no counterpart on the agent side |
+| Q-70 | Who runs model file inspection — does OUTER read the files directly, or does the agent read them and pass them on? | D-83. If the latter, an inspection request message is added, and the agent reads only bytes without knowing the format |
+| Q-71 | Keep a model catalog outside the firewall as well? | D-83. If so, duplicate file placement or syncing is needed |
+| Q-72 | Promote overlap depth to a load option? | D-84. As long as it is only an environment variable, OUTER has no channel to set it. Per premise 6, it is one key of the opaque options |
+| Q-63 | How to tie the branch merge timing to the `CLAUDE.md` update? | P-59, D-78 |
+| ~~Q-36~~ | ~~Write down an orchestration constraint that places node 1 on the gateway?~~ | **(withdrawn)** The entry agent has no reason to host nodes, so the constraint is unnecessary. Last-node placement remains only as a performance optimization (D-51) |
+| Q-37 | Must the controller handle deployments with several entry points (several internal networks)? | Premise 11 specifies a single entry point. Only check whether an extension is needed |
+| Q-38 | Do relayed messages also consume queue lanes, or take a separate path? | P-35. Heavy relay volume eats into the Control lane budget |
+| Q-32 | What is the restart unit when a mid-chain node fails — the whole request, or from prefill? | P-32. KV belongs to the node, so migration is impossible |
+| ~~Q-24~~ | ~~What if the load-time configuration and the request-time chain disagree?~~ | **(decided)** OUTER's responsibility. The agent only reports failure for instructions that do not match its state; it neither cross-checks nor corrects them (same rationale as Q-33) |
 
-## 90. wire 버전 결정
+## 90. Wire version decision
 
-**P4B1 v6으로 간다. v5 호환은 포기한다.** 개별 판단이 아니라 누적된 결과다 — 아래 중 어느 하나만 채택해도 frame 또는 필드 구조가 바뀐다.
+**Move to P4B1 v6 and give up v5 compatibility.** This is a cumulative result, not a single judgement — adopting any one of the items below changes the frame or the field structure.
 
-| 근거 | 항목 |
+| Reason | Item |
 |---|---|
-| routed envelope에 대상 주소 자리가 없다 | P-34 |
-| `Participant.agent_id`·`HardwareReport.agent_id` 제거 | P-2 |
-| lifecycle에서 `controller_id` 제거, 방향 재정의 | P-6 |
-| `NODE_DELETE`/`NODE_DELETED` 신설 | P-7 |
-| 스테이지 진입·완료 보고 신설 | P-28 |
-| `EXECUTE`가 체인·귀환 주소를 나른다 | P-21·P-22·P-26 |
-| `prompt` 단일 문자열 → 대화 구조 | P-42 |
-| agent-initiated announce (채택 시) | P-4 |
+| The routed envelope has no place for a target address | P-34 |
+| Remove `Participant.agent_id` and `HardwareReport.agent_id` | P-2 |
+| Remove `controller_id` from lifecycle, redefine directions | P-6 |
+| Add `NODE_DELETE`/`NODE_DELETED` | P-7 |
+| Add stage entry/completion reports | P-28 |
+| `EXECUTE` carries the chain and the return address | P-21·P-22·P-26 |
+| Single `prompt` string → conversation structure | P-42 |
+| agent-initiated announce (if adopted) | P-4 |
 
-따라서 "v5와의 호환을 위해"라는 이유로 남겨둘 표면은 없다. 미사용 표면(§94.3)도 같은 판에서 정리한다.
+So no surface is kept "for compatibility with v5". Unused surfaces (§94.3) are cleaned up in the same round.
 
-**v6에서 사라지는 것:** `agent_id`, lifecycle의 `controller_id`, `machine_id`(도입되지 않음), 에이전트의 `session_id` 발급.
-**v6에서 생기는 것:** 대상 주소, 체인, 귀환 주소, 노드 제거, 스테이지 보고, 대화 구조.
+**What disappears in v6:** `agent_id`, `controller_id` in lifecycle, `machine_id` (never introduced), and the agent issuing `session_id`.
+**What appears in v6:** target address, chain, return address, node removal, stage reports, conversation structure.
 
-## 91. 구축 순서
+## 91. Build order
 
-### 91.0 재작성 대 수정 (판단 기록)
+### 91.0 Rewrite vs revise (decision record)
 
-"기존 구조를 버리고 새 프로젝트에서 구현 코드만 참고해 재작성"을 검토한 결과다. **결론: 프로젝트를 새로 만들지 않는다. 재작성 대상은 `layers/runtime` 하나다.**
+This is the result of considering "discard the existing structure and rewrite in a new project, referring only to the implementation code". **Conclusion: do not start a new project. The only rewrite target is `layers/runtime`.**
 
-**코드 분포**
+**Code distribution**
 
-| 계층 | 줄 수 | 계획서가 요구하는 변경 |
+| Layer | Lines | Change the plan requires |
 |---|---:|---|
-| `layers/protocol` | 1,330 | 필드 수술 — 코덱 원시 연산은 존속 |
-| **`layers/runtime`** | **3,489** | **거의 전면** — 주제 E + K가 사실상 재작성 |
-| `layers/adapters/adapter` | 2,159 | `P-40` 한 파일, `P-45` 필드, 이름 정정 |
-| `layers/adapters/llamacpp` | 986 | 거의 무변경 |
-| `tools` | 1,400 | v6 대응, 구조 유지 |
+| `layers/protocol` | 1,330 | Field surgery — the codec primitives survive |
+| **`layers/runtime`** | **3,489** | **Almost total** — topics E + K amount to a rewrite |
+| `layers/adapters/adapter` | 2,159 | One file for `P-40`, fields for `P-45`, name correction |
+| `layers/adapters/llamacpp` | 986 | Almost unchanged |
+| `tools` | 1,400 | v6 adaptation, structure kept |
 
-파괴적 변경은 `layers/runtime`(전체의 약 29%)에 몰려 있다. 어댑터 3,145줄은 거의 그대로 살아남는다.
+The destructive changes concentrate in `layers/runtime` (about 29% of the total). The 3,145 lines of adapters survive almost intact.
 
-**재작성을 권하지 않는 근거**
+**Reasons not to recommend a rewrite**
 
-1. **버릴 것을 다시 쓰려고 지킬 것까지 버리는 거래가 된다.** `apps/p4`+`apps/llama/native` 커밋 61개 중 22개가 fix·revert로 **36%**다. 그 흉터는 runtime이 아니라 **어댑터와 네이티브**에 있다 — `capacity/mod.rs`의 "스로틀이 GPU에서 세 단계 위에" 주석, 스테이지 터미널 수정, 마이크로배치 게이트 revert. 그리고 그 지식은 코드 모양이 아니라 **주석·문서·커밋 메시지**에 있다. "구현 코드만 참고"가 정확히 그 층을 버리는 방식이다
-2. **재작성이 주는 자유를 순차 수정이 이미 갖고 있다.** v6 파괴가 허용되어 있고 외부 소비자가 우리 도구뿐이라 호환 부담이 없다
-3. **미결 40건 중 셋(`Q-47`·`Q-48`·`Q-49`)이 다른 세션의 측정에 종속된다.** 재작성은 아무것도 돌기 전에 전부 결정해야 한다. 순차 수정은 단계 0이 `Q-47`을, TPS 세션이 `Q-48`·`Q-49`를 답하는 동안 진행된다. **재작성은 질문을 없애지 않고 답하는 시점만 앞당기며, 그동안 "돌려보고 안다"는 검증 수단을 잃는다**
-4. **병행 TPS 세션이 같은 트리의 네이티브를 고치고 있다.** 지금 포크하면 가장 나쁜 시점에 갈라진다
-5. **추상층 판정은 "대체로 맞다"였다.** vLLM 검증에서 의존 방향이 깨끗했고 누출은 계약 필드 3~4개·문서 하나·크레이트 이름 하나·디스패치 계층이었다
+1. **It would throw away what must be kept in order to rewrite what is being discarded anyway.** Of the 61 commits in `apps/p4`+`apps/llama/native`, 22 are fixes or reverts — **36%**. Those scars are not in runtime but in **the adapters and the native code** — the "throttle three levels above the GPU" comment in `capacity/mod.rs`, the stage terminal fixes, the micro-batch gate revert. And that knowledge lives not in the shape of the code but in **comments, docs and commit messages**. "Refer only to the implementation code" is exactly the way to throw that layer away
+2. **Sequential revision already has the freedom a rewrite would give.** Breaking changes in v6 are allowed, and the only external consumers are our own tools, so there is no compatibility burden
+3. **Three of the 40 open items (`Q-47`, `Q-48`, `Q-49`) depend on another session's measurements.** A rewrite must decide everything before anything runs. Sequential revision proceeds while phase 0 answers `Q-47` and the TPS session answers `Q-48` and `Q-49`. **A rewrite does not remove questions; it only moves up the time they must be answered, and meanwhile loses "run it and see" as a means of verification**
+4. **A parallel TPS session is modifying the native code in the same tree.** Forking now would split the tree at the worst possible moment
+5. **The verdict on the abstraction layers was "mostly right".** The vLLM check showed a clean dependency direction, and the leaks were 3~4 contract fields, one document, one crate name and the dispatch layer
 
-**실행 형태:** `layers/runtime` 아래 새 모듈을 세우고 옮겨 붙인 뒤 기존을 삭제한다. 단계 1과 주제 K를 합치면 그것이 곧 runtime 재작성이며, **wire 불변이라 그동안 시스템이 돈다.**
+**Execution shape:** build new modules under `layers/runtime`, move things over, then delete the old ones. Phase 1 plus topic K is exactly the runtime rewrite, and **since the wire is unchanged, the system keeps running in the meantime.**
 
-**재작성으로 뒤집을 조건**
-- 단계 1·2가 실제로 wire 불변이 아닌 것으로 드러날 때
-- 미결이 어댑터까지 무효화하는 방향으로 결론날 때 (예: `Q-51`에서 어댑터 인터페이스가 지금 어댑터와 근본적으로 다른 형태로 결정될 때)
-- 병행 TPS 작업이 종료되어 네이티브가 얼어붙을 때. 포크 비용이 사라진다
+**Conditions that would flip the decision to a rewrite**
+- Phases 1 and 2 turn out not to be wire-neutral after all
+- Open items resolve in a way that invalidates the adapters as well (e.g. `Q-51` settles on an adapter interface fundamentally different from today's adapters)
+- The parallel TPS work ends and the native code freezes, which removes the fork cost
 
 ---
 
-**순차 구축이다.** 각 단계는 그것만으로 완결되고, 끝난 시점에 시스템이 동작하며, 뒤 단계의 존재를 전제하지 않는다. 단계 경계는 **wire 호환성**으로 긋는다 — v5를 유지한 채 할 수 있는 것을 모두 먼저 끝내고, 그 다음에 v6로 넘어간다.
+**The build is sequential.** Each phase is complete on its own, the system works when it ends, and it does not assume that later phases exist. Phase boundaries are drawn by **wire compatibility** — finish everything that can be done while keeping v5 first, and only then move to v6.
 
-| 단계 | 성격 | wire | 끝난 시점의 상태 |
+| Phase | Nature | wire | State at the end |
 |---:|---|---|---|
-| 0 | 어댑터 단독 | v5 | 구조화 출력이 동작한다 |
-| 1 | 런타임 내부 | v5 | 제어 평면이 CPS가 된다 |
-| 2 | 의미 정리 | v5 | 노드 상태 기계가 성립한다 |
-| 3 | frame 확장 | **v6** | 주소가 자기기술되고 중계가 동작한다 |
-| 4 | 소유·방향 | v6 | OUTER→에이전트 제어가 성립한다 |
-| 5 | 표현력 | v6 | 런타임 스펙을 온전히 전달한다 |
-| 6 | 체인 | v6 | 인퍼런스 경로가 프로토콜에 표현된다 |
+| 0 | Adapter only | v5 | Structured output works |
+| 1 | Runtime internals | v5 | The control plane becomes CPS |
+| 2 | Semantic cleanup | v5 | The node state machine holds |
+| 3 | Frame extension | **v6** | Addresses are self-describing and relaying works |
+| 4 | Ownership and direction | v6 | OUTER→agent control holds |
+| 5 | Expressiveness | v6 | Runtime specs are passed through in full |
+| 6 | Chain | v6 | The inference path is expressed in the protocol |
 
 ---
 
-### 단계 0 — 어댑터 화이트리스트 제거
+### Phase 0 — Remove the adapter whitelist
 
-| 항목 | 내용 |
+| Item | Contents |
 |---|---|
-| P-40 | Pipeline 어댑터의 5개 화이트리스트 제거, 불투명 통과 |
-| P-41 | 미지원 키를 조용히 버리지 않고 `ERROR` |
-| P-46 | `docs/model-load.md`를 정식 스키마에서 예시로 격하 |
-| P-47 | `adapter` → `pipeline` 이름 정정 (크레이트·디렉터리) |
-| P-53 | 백엔드(upstream·compat·scripts)를 어댑터 아래로 이동 |
-| P-54 | 완결형·스테이지별 upstream 정책 명문화 |
-| P-55 | upstream 결함 패치 2건을 공식에 기여 |
+| P-40 | Remove the Pipeline adapter's 5-item whitelist; opaque pass-through |
+| P-41 | Return `ERROR` instead of silently dropping unsupported keys |
+| P-46 | Demote `docs/model-load.md` from formal schema to example |
+| P-47 | Rename `adapter` → `pipeline` (crate and directory) |
+| P-53 | Move the backend (upstream, compat, scripts) under the adapter |
+| P-54 | Write down the upstream policy for self-contained vs stage backends |
+| P-55 | Contribute the 2 upstream defect patches to the official project |
 
-`P-53`은 `P-47`과 같은 이동 작업이므로 함께 처리한다. `P-55`는 외부 반영 시점이 우리 통제 밖이므로 착수만 이 단계에서 한다.
+`P-53` is the same move as `P-47`, so the two are done together. When `P-55` lands upstream is outside our control, so this phase only starts it.
 
-**wire 변경 없음. 다른 단계와 의존 없음.** 파일 하나(`adapter/.../execution/options`)이며 stock llama.cpp 어댑터가 이미 정답 형태이므로 그것을 따른다.
+**No wire change. No dependency on other phases.** It is one file (`adapter/.../execution/options`), and the stock llama.cpp adapter already has the correct shape, so follow it.
 
-**이 단계만으로 D-56(구조화 출력 원리적 불가)이 풀린다.** 순서상 가장 먼저 둘 이유가 여기 있다.
+**This phase alone resolves D-56 (structured output impossible in principle).** That is why it goes first.
 
-**관문:** Q-47(하위 런타임의 실제 수용 범위). 걷어낸 뒤 `ERROR`가 늘면 런타임 쪽 작업이 뒤따른다.
-
----
-
-### 단계 1 — 제어 평면을 CPS로 (wire 불변)
-
-**wire를 건드리지 않는다.** 외부에서 본 프로토콜은 그대로이고 내부 처리 구조만 바뀐다. 따라서 기존 클라이언트·벤치 도구가 그대로 동작한다.
-
-순서가 있다.
-
-**1-a. 어댑터 경계를 지속 다중화로 (P-18)**
-`TcpTransport`를 `peer_mux` 기반으로 교체한다. 현재 호출마다 새 소켓을 여는 것(D-27)을 없앤다. 프레임 형식은 v5 그대로이고 어댑터 측 listener도 이미 routed frame을 처리하므로 **양쪽 모두 무변경**이다.
-
-**1-b. 출력 경로를 큐로 통일 (P-17·P-14)**
-`forward::capture`를 폐기한다. lifecycle 여섯 핸들러가 어댑터 응답을 반환값으로 받아 분기하던 것을, 후속 Task로 재진입시키는 형태로 바꾼다. 사전 조건은 emit 이전에 완결한다.
-
-이 시점에 `D-22`(한 route에 terminal 두 번)와 `D-28`이 해소된다. `dispatch::compatibility` 경로를 제거한다.
-
-**1-c. 장기 작업을 다단 Task로 (P-19)**
-적재를 `시작 → 진행 관측 → 완료 판정`으로 쪼갠다. 600초 블로킹 폴링 루프(D-30)가 사라지고 진행 상태가 큐에 나타난다.
-
-**1-d. 데드라인·취소를 워커 루프에 (P-20)**
-Task 단위로 쪼개졌으므로 각 단계 진입 시 데드라인을 검사할 수 있고, `CANCEL`은 다음 단계 enqueue를 막는 방식으로 도달한다. `D-31`·`D-32`·`D-33` 해소.
-
-**관문:** Q-20(토대 trait 교체 대 어댑터 씌우기), Q-18(어댑터 내부까지 CPS로 할 것인가), Q-19(폴링 단 수).
+**Gate:** Q-47 (what the underlying runtime actually accepts). If `ERROR`s increase after the whitelist is removed, runtime-side work follows.
 
 ---
 
-### 단계 2 — 노드 의미 정리 (wire 불변)
+### Phase 1 — Make the control plane CPS (wire unchanged)
 
-필드 구조는 그대로이고 **동작 규칙만** 바뀐다. 호출자에게는 거부가 늘어나는 형태로 나타난다.
+**The wire is not touched.** The protocol as seen from outside stays the same; only the internal handling structure changes. Existing clients and bench tools therefore keep working.
 
-| 항목 | 내용 | 관문 |
+There is an order.
+
+**1-a. Persistent multiplexing at the adapter boundary (P-18)**
+Replace `TcpTransport` with a `peer_mux`-based transport. This removes opening a new socket on every call (D-27). The frame format stays v5, and the adapter-side listener already handles routed frames, so **neither side changes**.
+
+**1-b. Unify the output path through the queue (P-17·P-14)**
+Discard `forward::capture`. The six lifecycle handlers, which received adapter responses as return values and branched on them, are changed to re-enter the responses as follow-up Tasks. Preconditions are settled before emitting.
+
+At this point `D-22` (two terminals on one route) and `D-28` are resolved. Remove the `dispatch::compatibility` path.
+
+**1-c. Long-running work as multi-step Tasks (P-19)**
+Split loading into `start → progress observation → completion verdict`. The 600-second blocking polling loop (D-30) disappears, and progress shows up on the queue.
+
+**1-d. Deadlines and cancellation in the worker loop (P-20)**
+With work split into Tasks, the deadline can be checked on entry to each step, and `CANCEL` takes effect by blocking the enqueue of the next step. Resolves `D-31`, `D-32` and `D-33`.
+
+**Gates:** Q-20 (replace the foundational traits vs wrap an adapter around them), Q-18 (whether to make the adapter internals CPS too), Q-19 (number of polling steps).
+
+---
+
+### Phase 2 — Clean up node semantics (wire unchanged)
+
+The field structure stays the same; **only the behavior rules** change. Callers see this as more refusals.
+
+| Item | Contents | Gate |
 |---|---|---|
-| P-16 | `NodeSlot.bindings`를 `HashMap` → `Option<Binding>` | **Q-15** |
-| P-15 | 상태 기계 `empty`/`bound`/`active` 강제 | Q-5, Q-8 |
-| P-8 | `plan_revision` 기록·비교 활성화 | — |
-| D-21 | 어댑터의 HTTP 404 성공 처리 제거 | — |
-| D-23 | 적재된 노드에 대한 적재를 실패로 | Q-15 |
-| D-54 | `session_id` 빈 값 금지, 두 발급기 제거 | — |
+| P-16 | `NodeSlot.bindings` from `HashMap` → `Option<Binding>` | **Q-15** |
+| P-15 | Enforce the `empty`/`bound`/`active` state machine | Q-5, Q-8 |
+| P-8 | Turn on recording and comparison of `plan_revision` | — |
+| D-21 | Remove the adapter's treatment of HTTP 404 as success | — |
+| D-23 | Make loading onto an already loaded node fail | Q-15 |
+| D-54 | Forbid an empty `session_id`, remove both issuers | — |
 
-단계 1의 `P-14`가 선행되어야 한다. 사전 조건 검사가 emit 이전에 끝나지 않으면 상태 기계가 "성공 통지 후 거부"를 낳는다.
+Phase 1's `P-14` must come first. If precondition checks do not finish before emitting, the state machine produces "refusal after a success notice".
 
-**Q-15가 이 단계 전체의 선행 조건이다.** 1:1이 아니면 "이미 적재됨" 판정이 정의되지 않는다.
-
----
-
-### 단계 3 — v6 frame: 자기기술 주소와 중계
-
-**여기서 wire가 깨진다.** 클라이언트(`agent-link.mjs`, `controller-instance.mjs`)와 벤치 도구를 같은 단계에서 함께 옮긴다.
-
-**3-a. 봉투에 대상 주소 (P-34)**
-routed envelope에 대상 에이전트 접속 정보를 추가한다. 이 시점에는 모든 대상이 자기 자신이므로 **동작은 변하지 않는다.** 필드만 자리를 잡는다.
-
-**3-b. `agent_id` 폐지 (P-2)**
-`Participant.agent_id`·`HardwareReport.agent_id`·`agent-{host}-{pid}` 생성을 제거하고 주소로 대체한다. `is_local_bypass`가 주소 비교가 된다.
-
-**3-c. 봉투·본문 디코드 분리 (P-48·P-51)**
-봉투(route·대상·분류·데드라인)만 먼저 파싱하고 본문은 지연한다. 큐 분류를 봉투가 나른다. 중계가 본문을 해석하지 않게 하는 전제다.
-
-**3-d. 중계를 큐 디스패치에 내장 (P-35·P-36)**
-워커 루프의 핸들러 호출 직전에 판정을 넣는다. 대상이 자신이면 핸들러로, 아니면 다음 홉으로 큐잉한다. 3-a와 3-c가 끝나 있어야 판정 근거가 존재하고 본문을 건드리지 않는다.
-
-**이 단계가 끝나면 전제 11의 방화벽 배치가 성립한다.** 진입 에이전트를 거쳐 내부망 에이전트에 도달할 수 있다.
-
-**관문:** Q-39(주소 표기 형식), Q-38(중계가 레인 예산을 잠식하는가), Q-42(화신 표식).
+**Q-15 is the prerequisite of this whole phase.** Without 1:1, the "already loaded" verdict is undefined.
 
 ---
 
-### 단계 4 — 소유와 방향 재편
+### Phase 3 — v6 frame: self-describing addresses and relaying
 
-| 항목 | 내용 | 관문 |
+**This is where the wire breaks.** The clients (`agent-link.mjs`, `controller-instance.mjs`) and the bench tools move over in the same phase.
+
+**3-a. Target address in the envelope (P-34)**
+Add the target agent's connection info to the routed envelope. At this point every target is self, so **behavior does not change.** Only the field takes its place.
+
+**3-b. Abolish `agent_id` (P-2)**
+Remove `Participant.agent_id`, `HardwareReport.agent_id` and the `agent-{host}-{pid}` generation, and replace them with the address. `is_local_bypass` becomes an address comparison.
+
+**3-c. Separate envelope and body decoding (P-48·P-51)**
+Parse only the envelope (route, target, classification, deadline) first and defer the body. The envelope carries the queue classification. This is the prerequisite for relaying without interpreting the body.
+
+**3-d. Build relaying into queue dispatch (P-35·P-36)**
+Insert the decision just before the handler call in the worker loop. If the target is self, pass the message to the handler; otherwise queue it for the next hop. 3-a and 3-c must be done first, so that the decision has its basis and the body stays untouched.
+
+**When this phase ends, premise 11's firewall deployment works.** Internal-network agents can be reached through the entry agent.
+
+**Gates:** Q-39 (address notation), Q-38 (whether relaying eats into lane budgets), Q-42 (incarnation marker).
+
+---
+
+### Phase 4 — Reorganize ownership and direction
+
+| Item | Contents | Gate |
 |---|---|---|
-| P-6 | lifecycle에서 `controller_id` 제거, `TaskDirection` 재정의 | Q-6, Q-7 |
-| P-37 | 컨트롤러·에이전트의 relay 책임 계약화 | — |
-| P-7 | `NODE_DELETE`/`NODE_DELETED` 신설 | Q-8 |
-| P-12·P-13 | 적재 지시·보고의 방향 전환 | — |
-| D-19 | 호스트 API의 `controller_id` 잔재 제거 | — |
-| D-20 | route 단절 시 적재 진행·완료 복구 | Q-14 |
+| P-6 | Remove `controller_id` from lifecycle, redefine `TaskDirection` | Q-6, Q-7 |
+| P-37 | Put the relay responsibilities of the controller and agents into the contract | — |
+| P-7 | Add `NODE_DELETE`/`NODE_DELETED` | Q-8 |
+| P-12·P-13 | Redirect load instructions and load reports | — |
+| D-19 | Remove the `controller_id` leftover in the host API | — |
+| D-20 | Recover load progress and completion after a route drop | Q-14 |
 
-단계 3의 중계가 있어야 "OUTER→진입 에이전트→대상 에이전트" 경로가 실제로 성립한다. 단계 2의 상태 기계가 있어야 `NODE_DELETE`의 사전 조건이 정의된다.
+The "OUTER→entry agent→target agent" path only really exists once phase 3's relaying is in place. `NODE_DELETE`'s preconditions are defined only once phase 2's state machine exists.
 
 ---
 
-### 단계 5 — 표현력 (병행 가능)
+### Phase 5 — Expressiveness (can run in parallel)
 
-단계 3 이후 서로 독립적이며 병행할 수 있다.
+After phase 3 these items are independent of each other and can proceed in parallel.
 
-| 항목 | 내용 | 관문 |
+| Item | Contents | Gate |
 |---|---|---|
-| P-42·P-43 | 대화 구조, wire 생성 필드 정리 | Q-44, Q-45 |
-| P-9·P-10 | 적재 옵션 불투명 통과, 사전 발견 수단 | Q-9 |
-| P-1·P-3 | capability/occupancy 분리, 스냅샷 스키마 | Q-1, Q-2 |
+| P-42·P-43 | Conversation structure, cleanup of wire generation fields | Q-44, Q-45 |
+| P-9·P-10 | Opaque pass-through of load options, means of discovery in advance | Q-9 |
+| P-1·P-3 | Capability/occupancy separation, snapshot schema | Q-1, Q-2 |
 | P-4 | agent-initiated announce | Q-3 |
 
 ---
 
-### 단계 6 — 체인
+### Phase 6 — Chain
 
-가장 마지막이다. 앞의 모든 단계를 전제한다 — 자기기술 주소(3), 중계(3), 방향 규칙(4), 다단 Task(1).
+This comes last. It assumes all the earlier phases — self-describing addresses (3), relaying (3), direction rules (4), multi-step Tasks (1).
 
-**6-a. 체인을 메시지에 (P-21·P-22·P-25·P-26)**
-`EXECUTE`가 순서 있는 노드 리스트와 귀환 주소를 나른다. 각 항목은 4-튜플(§1.3)로 자기 완결적이다.
+**6-a. The chain in the message (P-21·P-22·P-25·P-26)**
+`EXECUTE` carries an ordered node list and a return address. Each entry is self-contained as a 4-tuple (§1.3).
 
-**6-b. 스테이지 보고 (P-28·P-29)**
-진입·완료 보고와 통계. OUTER의 상태 관측이 여기서 성립한다.
+**6-b. Stage reports (P-28·P-29)**
+Entry/completion reports and statistics. OUTER's state observation becomes possible here.
 
-**6-c. 디코드 루프 (P-31·P-27·P-32)**
-링 구조, `phase` 구분, 체인 취소 전파, KV 귀속 명문화.
+**6-c. Decode loop (P-31·P-27·P-32)**
+Ring structure, the `phase` distinction, chain cancellation propagation, and a written rule for KV ownership.
 
-**네이티브 측 작업:** Pipeline 런타임이 요청마다 체인을 받아야 한다. 현재는 적재 시점 deployment에 스테이지 구성이 고정된다(D-35). 다만 **에이전트·노드는 기계적으로 남는다** — 지시가 자기 상태와 맞지 않으면 실패를 보고할 뿐이고, 체인의 정합성은 OUTER가 책임진다(P-33, Q-24·Q-33 결정).
+**Native-side work:** the Pipeline runtime must accept a chain per request. Today the stage composition is fixed in the load-time deployment (D-35). However, **agents and nodes stay mechanical** — if an instruction does not match their state they only report failure, and OUTER is responsible for chain consistency (P-33, Q-24/Q-33 decisions).
 
-**관문:** Q-26, Q-27, Q-28, Q-29, Q-30, Q-32, Q-46.
+**Gates:** Q-26, Q-27, Q-28, Q-29, Q-30, Q-32, Q-46.
 
 ---
 
-### 단계 간 되돌림
+### Rollback between phases
 
-단계 0~2는 wire 불변이므로 개별 되돌림이 가능하다. 단계 3부터는 v6이므로 **단계 3 이전으로 되돌리려면 클라이언트도 함께 되돌려야 한다.** 실질적 되돌림 경계는 단계 2와 3 사이 하나다.
+Phases 0~2 keep the wire unchanged, so each can be rolled back individually. From phase 3 on it is v6, so **rolling back to before phase 3 requires rolling back the clients as well.** The only practical rollback boundary is the one between phases 2 and 3.
 
-## 92. 처리량과의 관계
+## 92. Relationship to throughput
 
-### 처리량의 소재 — P4가 소유하지 않는다
+### Where throughput lives — P4 does not own it
 
-이 저장소의 판단 기준은 단일 세션 대비 **집계 TPS**다. 그러나 **처리량은 P4 계층에서 결정되지 않는다.** 최적화가 일어나는 곳은 노드 큐와 그 아래 물리 구상층이다.
+This repository's yardstick is **aggregate TPS** relative to a single session. But **throughput is not decided at the P4 layer.** Optimization happens in the node queue and in the physical concrete layer below it.
 
-| 층 | 소재 | 무엇을 결정하는가 |
+| Layer | Location | What it decides |
 |---|---|---|
-| 노드 큐 | [`listener/queue.rs`](layers/adapters/adapter/src/infrastructure/listener/queue.rs) | 배치 합치기(`batch_coalesce_ms`), 디코드 credit, 동적 배치 구성 |
-| 용량 게이트 | [`capacity/mod.rs`](layers/adapters/adapter/src/domain/capacity/mod.rs) | deployment별 동시 시퀀스 상한 |
-| 물리 구상층 | `apps/llama` 네이티브 | 마이크로배치, 스테이지 중첩, 스테이지 터미널, 레이어 점유 |
+| Node queue | [`listener/queue.rs`](layers/adapters/adapter/src/infrastructure/listener/queue.rs) | Batch merging (`batch_coalesce_ms`), decode credit, dynamic batch composition |
+| Capacity gate | [`capacity/mod.rs`](layers/adapters/adapter/src/domain/capacity/mod.rs) | Per-deployment cap on concurrent sequences |
+| Physical concrete layer | `apps/llama` native | Micro-batching, stage overlap, stage terminal, layer occupancy |
 
-`capacity/mod.rs`의 주석이 이 경계를 직접 서술한다 — 프로세스 전역 상수로 게이트를 두었을 때 "스로틀이 GPU에서 세 단계 위에" 있었고, 그래서 네이티브가 `limit=50`을 보고하는데 실제로는 16개만 도착했다.
+The comment in `capacity/mod.rs` describes this boundary directly — with a process-global constant as the gate, "the throttle sat three levels above the GPU", so the native side reported `limit=50` while only 16 requests actually arrived.
 
-**따라서 이 개편은 처리량 노력과 배치되지 않는다.** 서로 다른 층을 만지며 경쟁하지 않는다.
+**This reorganization therefore does not work against the throughput effort.** The two touch different layers and do not compete.
 
-### P4의 의무는 둘뿐이다
+### P4 has only two duties
 
-처리량을 **올리는** 것이 P4의 일이 아니다. P4가 지는 책임은 다음 둘이다.
+Raising throughput is not P4's job. P4 is responsible for the following two things.
 
-**1. 처리량을 소유한 층이 필요로 하는 선언을 온전히 전달한다.**
-현재 이 의무가 깨져 있다. 용량 게이트는 `stage_plan.load_options.batching.max_sequences`를 읽는데(capacity/mod.rs), 인퍼런스 옵션은 Pipeline 어댑터가 5개만 통과시킨다(D-55). **배치·투기 디코딩처럼 처리량에 직결되는 옵션이 프로토콜 중간에서 사라진다.**
+**1. Deliver in full the declarations that the throughput-owning layer needs.**
+This duty is currently broken. The capacity gate reads `stage_plan.load_options.batching.max_sequences` (capacity/mod.rs), but the Pipeline adapter passes through only 5 inference options (D-55). **Options that directly affect throughput, such as batching and speculative decoding, disappear midway through the protocol.**
 
-`P-40`·`P-9`가 이 의무의 이행이며, 이것이 개편과 처리량이 만나는 **유일하고 정확한 접점**이다. 프로토콜이 TPS를 올리는 게 아니라, 올릴 수 있는 층에 손잡이를 온전히 넘겨준다.
+`P-40` and `P-9` fulfil this duty, and they are the **only, precise point of contact** between the reorganization and throughput. The protocol does not raise TPS; it hands the knobs intact to the layer that can.
 
-**2. 토큰 경로를 불필요하게 무겁게 하지 않는다.**
-아래 "비용" 항목이 이에 해당한다.
+**2. Do not make the token path needlessly heavy.**
+The "Costs" items below cover this.
 
-### 부수적 이득
+### Side benefits
 
-| 항목 | 효과 |
+| Item | Effect |
 |---|---|
-| P-18 | `TcpTransport`가 **호출마다 새 소켓을 연다**(D-27). 지속 다중화로 제어 경로의 연결 비용이 사라진다 |
-| P-19 | 적재가 블로킹 풀을 점유하지 않게 되어 동시 적재의 확장성이 생긴다 |
+| P-18 | `TcpTransport` **opens a new socket on every call** (D-27). Persistent multiplexing removes the connection cost on the control path |
+| P-19 | Loading no longer occupies the blocking pool, so concurrent loads can scale |
 
-### 비용
+### Costs
 
-| 항목 | 비용 | 판단 |
+| Item | Cost | Judgement |
 |---|---|---|
-| D-51 | 마지막 노드가 진입 에이전트 밖이면 토큰마다 중계 홉 +1 | 편성으로 회피 가능 — 마지막 노드를 진입 에이전트에 배치 |
-| P-22 | 스테이지 이동마다 P4 `EXECUTE` 홉 | hidden state는 native 유지이므로 제어 프레임만 |
-| Q-26 | 체인 전체를 매 홉 복제하면 프레임이 커진다 | 잔여 구간만 전달하는 선택지 |
-| Q-38 | 중계가 Control 레인 예산을 잠식 | 레인 분리 |
+| D-51 | If the last node is outside the entry agent, +1 relay hop per token | Avoidable through orchestration — place the last node on the entry agent |
+| P-22 | A P4 `EXECUTE` hop per stage move | Hidden state stays native, so these are control frames only |
+| Q-26 | Copying the whole chain at every hop enlarges frames | Option to pass only the remaining segment |
+| Q-38 | Relaying eats into the Control lane budget | Separate lanes |
 
-### 스테이지 보고는 비용으로 보지 않는다 (결정)
+### Stage reports are not counted as a cost (decided)
 
-`P-28`의 진입·완료 보고를 토큰 경로 부하로 계상하지 않는다. 근거 둘.
+`P-28`'s entry/completion reports are not counted as token-path load, for two reasons.
 
-- 매우 작은 신호다. hidden state도 토큰도 아니고 correlation과 통계뿐이다
-- **이것이 없으면 OUTER는 각 노드의 상태와 동작에 대한 통계를 수집할 수 없다.** 관측 가능성이 사라지는 대가가 신호 비용보다 크다
+- They are very small signals. They carry neither hidden state nor tokens — only correlation and statistics
+- **Without them, OUTER cannot collect statistics on each node's state and behavior.** Losing observability costs more than the signals do
 
-프리필 파이프라이닝(코호트 윈도 분할, 프리필 중 도착률 유지)이 최근 최적화된 경로이므로 보고가 그 위에 얹히는 것은 사실이나, 신호 크기를 고려하면 실질 간섭으로 보기 어렵다. Q-30은 여전히 열려 있으나 "부하 때문에 줄인다"는 근거로는 판단하지 않는다.
+Prefill pipelining (cohort window splitting, keeping the arrival rate up during prefill) is a recently optimized path, so the reports do ride on top of it, but given the signal size it is hard to call this real interference. Q-30 is still open, but it will not be decided on the grounds of "reduce them because of load".
 
-### 측정이 필요한 것
+### What needs measuring
 
-- **Q-47** — Pipeline 런타임이 실제로 받는 샘플러 범위. 화이트리스트를 걷어내도 하위가 못 받으면 `ERROR`만 늘어난다. 단계 0의 직후 확인 대상이다
-- **Q-26** — 체인 복제의 프레임 증가량. 주소 표기 길이에 비례하므로 Q-39 확정 후 산출한다
+- **Q-47** — the range of samplers the Pipeline runtime actually accepts. If the lower layer cannot accept them, removing the whitelist only increases `ERROR`s. To be checked right after phase 0
+- **Q-26** — frame growth from copying the chain. It is proportional to the length of the address notation, so compute it after Q-39 is settled
 
-### 병행 세션이 확립한 것 (2026-08-13 기준)
+### What the parallel session established (as of 2026-08-13)
 
-처리량 최적화는 별도 세션에서 진행되며 결론이 [`docs/runtime-evidence.md`](docs/runtime-evidence.md)에 커밋된다. 이 개편은 그 층을 만지지 않지만, **거기서 확립된 사실이 이 계획의 여러 항목을 확정하거나 뒤집는다.**
+Throughput optimization proceeds in a separate session, whose conclusions are committed to [`docs/runtime-evidence.md`](docs/runtime-evidence.md). This reorganization does not touch that layer, but **the facts established there confirm or overturn several items of this plan.**
 
-| 사실 | 수치 | 이 계획에 대한 함의 |
+| Fact | Figures | Implication for this plan |
 |---|---|---|
-| 스테이지 중첩이 성립 | 16/24·64세션·depth 2에서 **271.5 tok/s**, 단일 세션 66.0 대비 **4.11x** | 체인 설계(주제 F)가 실측으로 뒷받침된다 |
-| 스테이지 비용은 **역할**에 붙는다 | 선두 ~64s, 후미 32–40s — 카드를 바꿔도 동일 | 배치는 장치가 아니라 역할로 계산해야 한다. **OUTER 편성 입력** |
-| 절벽은 스케줄러가 아니라 **VRAM 스필** | 레이어 축·세션 축이 같은 벽(16 GiB 선두)에서 끝난다 | `P-1`의 capability(총량) 기준 편성이 옳다는 근거 |
-| KV 비용 모델 | 레이어·48세션당 **~188 MiB** | OUTER가 가진 계획 지식의 실체 (주제 M) |
-| 균형 배치가 더 느릴 수 있다 | 13/27이 20/20보다 나쁨 (중첩 없을 때 벽=합) | 중첩 여부에 따라 편성 계산이 달라진다 |
-| 첫 스테이지 대기 | 8.0–87.3초 | **제어 메시지 비용 논쟁 종결** — 수백 바이트 신호는 이 척도에서 잡음이다 |
+| Stage overlap works | **271.5 tok/s** at 16/24, 64 sessions, depth 2 — **4.11x** versus 66.0 for a single session | The chain design (topic F) is backed by measurement |
+| Stage cost attaches to the **role** | Head ~64s, tail 32–40s — the same even when the cards are swapped | Placement must be computed by role, not by device. **An input to OUTER orchestration** |
+| The cliff is **VRAM spill**, not the scheduler | The layer axis and the session axis end at the same wall (16 GiB head) | Grounds that orchestration based on `P-1`'s capability (totals) is right |
+| KV cost model | **~188 MiB** per layer per 48 sessions | The substance of the planning knowledge OUTER holds (topic M) |
+| A balanced placement can be slower | 13/27 is worse than 20/20 (without overlap, wall = sum) | The orchestration calculation changes depending on overlap |
+| First-stage wait | 8.0–87.3 s | **Ends the debate over control message cost** — signals of a few hundred bytes are noise at this scale |
 
-### 확정으로 바뀐 접점
+### Points of contact that became settled
 
-| 항목 | 이전 | 지금 |
+| Item | Before | Now |
 |---|---|---|
-| `D-60`·`P-44`·`Q-48` | 타 세션 결론 대기 | **기제가 확인됨** — `max_sequences`는 credit 상한이고, `scheduler_window_target`이 그 아래에서 `pipeline_stage_count`와 활성 코호트로 창을 파생한다. 즉 **런타임이 이미 파생하고 선언은 상한으로 기능한다.** P-44의 강등안이 실제 동작과 일치한다 |
-| `D-51`·`Q-30` | 토큰 경로 비용 우려 | **해소** — 스테이지 대기가 초 단위다 |
-| `D-61`·`Q-49` | 대기 | 진행 중 — `3276d5d fix(pipeline): give ring wiring real backlog and a load-scaled connect budget`이 착지했다. 연결 예산·백오프가 실측으로 형성되는 중이며, 확정되면 계약으로 끌어올린다 |
+| `D-60`·`P-44`·`Q-48` | Waiting for the other session's conclusion | **Mechanism confirmed** — `max_sequences` is the credit cap, and below it `scheduler_window_target` derives the windows from `pipeline_stage_count` and the active cohort. In other words, **the runtime already derives the width, and the declaration functions as a cap.** P-44's demotion option matches the actual behavior |
+| `D-51`·`Q-30` | Concern about token-path cost | **Resolved** — stage waits are measured in seconds |
+| `D-61`·`Q-49` | Waiting | In progress — `3276d5d fix(pipeline): give ring wiring real backlog and a load-scaled connect budget` has landed. The connection budget and backoff are being shaped by measurement and will be lifted into the contract once settled |
 
-**여전히 단독 확정하지 않는 것:** 프로토콜이 처리량 층의 결정을 앞질러 못 박는 것이 `D-60`이 지적한 실패 형태다. 위 사실들은 **그 층이 내린 결론을 계약이 뒤따르는** 형태로만 반영한다.
+**Still not settled unilaterally:** the protocol pinning down the throughput layer's decisions ahead of that layer is exactly the failure pattern `D-60` points out. The facts above are reflected only in the form of **the contract following conclusions that layer has reached**.
 
-### 이 문서가 다루지 않는 것
+### What this document does not cover
 
-노드 큐의 배치 정책, 마이크로배치 크기, 스테이지 중첩, 레이어 점유는 **이 개편의 대상이 아니다.** 처리량 작업은 그 층에서 독립적으로 진행되며, 두 작업은 서로를 막지 않는다.
+Node queue batching policy, micro-batch size, stage overlap and layer occupancy are **not targets of this reorganization.** Throughput work proceeds independently in that layer, and the two efforts do not block each other.
 
-역으로 **처리량 문제를 프로토콜 변경으로 풀려 하지 않는다.** 스로틀이 GPU에서 멀어질수록 실제 도착량과 보고된 한도가 어긋난다는 것이 이미 확인된 사실이고(capacity/mod.rs), P4에 게이트를 추가하는 것은 그 실수를 반복하는 일이다.
+Conversely, **do not try to solve throughput problems with protocol changes.** It is already established that the farther the throttle is from the GPU, the more actual arrivals and reported limits diverge (capacity/mod.rs), and adding gates to P4 would repeat that mistake.
 
-### 2026-08-15: 오버서브스크립션이 안전하지 않다는 것이 실측으로 확정됨
+### 2026-08-15: measurement confirmed that oversubscription is unsafe
 
-[`docs/runtime-evidence.md`](docs/runtime-evidence.md#2026-08-15-the-terminal-stage-access-violation-is-corruption-not-the-churn-or-the-oversubscription-ratio)에 근거 기록. 2026-08-13 항목이 열어둔 재시도 조건("access violation을 먼저 설명할 것")을 이번에 충족했다.
+The evidence is recorded in [`docs/runtime-evidence.md`](docs/runtime-evidence.md#2026-08-15-the-terminal-stage-access-violation-is-corruption-not-the-churn-or-the-oversubscription-ratio). This run met the retry condition that the 2026-08-13 entry had left open ("explain the access violation first").
 
-10슬롯 용량에 10/20/30개 동시 요청을 순서대로 실행한 결과, **10과 20은 통과하고 30만 크래시**했다. 20에서는 실제 코호트 교체(`peak=10` 유지하며 20건 완료)가 일어났는데도 통과했으므로 **세션 교체 자체는 트리거가 아니다.** 총 처리 윈도 볼륨에 비례하는 확률적 메모리 손상으로 좁혀졌다 — 옛 크래시 덤프(`0xC0000409`, CRT 힙 무결성 검사 실패)와 이번 크래시(`0xC0000005`, 액세스 위반)가 같은 부하 패턴에서 서로 다른 예외 코드로 나타난 것이 그 근거다. 심볼 붙은 새 덤프 없이는 정확한 결함 지점을 특정할 수 없어 여기서 멈췄다.
+Running 10, 20 and 30 concurrent requests in turn against a capacity of 10 slots, **10 and 20 passed and only 30 crashed.** At 20, real cohort replacement happened (20 requests completed while `peak=10` held) and the run still passed, so **session replacement itself is not the trigger.** The cause narrowed down to probabilistic memory corruption proportional to the total processing window volume — the grounds are that the old crash dump (`0xC0000409`, CRT heap integrity check failure) and this crash (`0xC0000005`, access violation) appeared with different exception codes under the same load pattern. Without a new dump with symbols, the exact defect location cannot be pinned down, so the investigation stopped here.
 
-**이 개편에 대한 함의:** `D-60`·`P-44`(적재 시점 `max_sequences` 선언을 상한으로 강등)의 전제가 하나 더 생겼다 — 그 상한을 넘는 동시성(오버서브스크립션)은 **현재 네이티브 런타임에서 안전을 보장할 수 없다.** 상한을 상한으로만 쓰고 그 안에서 운용하는 것이 지금 유일하게 검증된 안전 경계다. 프로토콜이 이 상한을 강제하는 것과 무관하게, 그 위의 동시성을 프로토콜이 조용히 허용해서는 안 된다는 근거가 이번 조사로 생겼다.
+**Implication for this reorganization:** `D-60`/`P-44` (demoting the load-time `max_sequences` declaration to a cap) gained one more premise — concurrency above that cap (oversubscription) **cannot be guaranteed safe on the current native runtime.** Using the cap only as a cap and operating within it is currently the only verified safety boundary. Whether or not the protocol enforces this cap, this investigation established that the protocol must not silently allow concurrency above it.
 
-## 93. 파급 범위 (Q 확정 후 상세화)
+## 93. Impact scope (to be detailed once the Qs are settled)
 
-| 대상 | 예상 변경 |
+| Target | Expected change |
 |---|---|
-| [`domain/hardware/mod.rs`](layers/runtime/src/domain/hardware/mod.rs) | 전면 재작성. vendor 중립 probe 분리, RAM·저장소·NUMA 추가 |
-| [`contract/message/mod.rs`](layers/protocol/src/contract/message/mod.rs) | Q-2·Q-3 신규 kind, `NODE_DELETE`/`NODE_DELETED`, lifecycle의 `controller_id` 제거, Q-11에 따라 artifacts 필드 |
-| [`catalog/mod.rs`](layers/protocol/src/catalog/mod.rs) | 신규 kind의 class/queue/direction, `allows_direction` 재작성 |
-| [`task/mod.rs`](layers/protocol/src/task/mod.rs) | `TaskDirection` 확장 (외부→에이전트, Q-3 채택 시 에이전트→외부) |
-| [`registry/node/mod.rs`](layers/runtime/src/domain/agent/registry/node/mod.rs) | `NodeSlot.controller_id` 제거, 제거 연산 추가 |
-| [`authorization/mod.rs`](layers/runtime/src/domain/agent/authorization/mod.rs) | `ForeignController` 삭제, 게이트 축소 |
-| [`lifecycle/mod.rs`](layers/runtime/src/domain/agent/lifecycle/mod.rs) | 재생성 의미 확정(Q-5), `plan_revision` 기록 |
-| [`adapters/adapter/.../lifecycle/load`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs) | 옵션 검증 도입(Q-13), `controller_id` 잔재 제거 |
-| [`adapters/llamacpp/.../model_load_options`](layers/adapters/llamacpp/src/application/model_load_options/mod.rs) | 전부 거부에서 선별 해석으로. 미지원 키는 명시적 `ERROR` |
-| [`adapter/.../execution/options`](layers/adapters/adapter/src/application/execution/options/mod.rs) | **5개 화이트리스트 제거.** 불투명 통과로 전환 (P-40, D-55) |
-| [`contract/execution/mod.rs`](layers/protocol/src/contract/execution/mod.rs) | `prompt` 단일 문자열 → 대화 구조, wire 생성 필드 정리 (P-42, P-43) |
-| `ADAPTER_REGISTER.descriptor` 계약 | Q-9 채택 시 지원 옵션 키 집합 선언 (P-10) |
-| [`controller-instance.mjs`](tools/controller/client/controller-instance.mjs) | 조회·lifecycle·적재 surface 갱신 |
-| [`docs/model-load.md`](docs/model-load.md) | 전면 개정. D-16의 서술 불일치 포함 |
-| [`docs/message-pairs.md`](docs/message-pairs.md) | pair 표 갱신 |
-| `apps/llama` 네이티브 Pipeline 런타임 | 요청마다 체인을 수용 (단계 6). 스테이지 구성이 적재 시점 deployment에 고정된 것을 요청 단위로 (D-35) |
-| `apps/llama/upstream` · `native/compat` · `scripts` | 어댑터 아래로 이동 (P-53). upstream은 pristine 유지, 패치·manifest·준비 스크립트가 함께 간다 |
-| `native/compat/<sha>/0004`·`0006` | ABI 노출 전환 검토 (P-56, Q-56). 패치 총량의 58% |
-| [`tools/controller/evidence`](tools/controller/evidence) | v6 전환 시 벤치 도구를 단계 3과 함께 이동 |
-| [`foundation/transport/mod.rs`](layers/runtime/src/foundation/transport/mod.rs) | **토대 계약 교체.** `P4Handler`/`P4Transport`의 동기 완료 시그니처 제거 (D-26, Q-20) |
-| [`task_queue/worker/mod.rs`](layers/runtime/src/foundation/task_queue/worker/mod.rs) | **중계 판정을 워커 루프에 내장** — 핸들러 호출 직전 (P-35). 데드라인 검사도 같은 지점(P-20) |
-| [`protocol/task/mod.rs`](layers/protocol/src/task/mod.rs) | `is_local_bypass`의 대칭으로 중계 판정 추가, `Participant.agent_id`를 접근 주소로 대체 (P-2, P-34) |
-| [`contract/message/mod.rs`](layers/protocol/src/contract/message/mod.rs) | `HardwareReport.agent_id` 제거 (P-2) |
-| [`domain/agent/mod.rs`](layers/runtime/src/domain/agent/mod.rs) | `agent-{host}-{pid}` 생성 제거. 필요하면 화신 표식으로 대체 (P-39, Q-42) |
-| [`lifecycle/forward/mod.rs`](layers/runtime/src/domain/agent/lifecycle/forward/mod.rs) | 폐기. 후속 Task 재진입으로 대체 (P-17) |
-| [`domain/agent/lifecycle/mod.rs`](layers/runtime/src/domain/agent/lifecycle/mod.rs) | 여섯 핸들러를 다단 Task로 재작성 (D-29, P-19) |
-| [`application/dispatch/mod.rs`](layers/runtime/src/application/dispatch/mod.rs) | `compatibility` 경로 제거, 데드라인·취소를 전 경로에 (P-20) |
-| [`adapters/adapter/.../lifecycle/load`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs) | 600초 폴링 루프를 단계 Task로 분해 (D-30, Q-18) |
+| [`domain/hardware/mod.rs`](layers/runtime/src/domain/hardware/mod.rs) | Full rewrite. Split out a vendor-neutral probe; add RAM, storage and NUMA |
+| [`contract/message/mod.rs`](layers/protocol/src/contract/message/mod.rs) | New kinds for Q-2/Q-3, `NODE_DELETE`/`NODE_DELETED`, remove `controller_id` from lifecycle, artifacts fields depending on Q-11 |
+| [`catalog/mod.rs`](layers/protocol/src/catalog/mod.rs) | class/queue/direction for the new kinds, rewrite `allows_direction` |
+| [`task/mod.rs`](layers/protocol/src/task/mod.rs) | Extend `TaskDirection` (external→agent, plus agent→external if Q-3 is adopted) |
+| [`registry/node/mod.rs`](layers/runtime/src/domain/agent/registry/node/mod.rs) | Remove `NodeSlot.controller_id`, add a removal operation |
+| [`authorization/mod.rs`](layers/runtime/src/domain/agent/authorization/mod.rs) | Delete `ForeignController`, shrink the gate |
+| [`lifecycle/mod.rs`](layers/runtime/src/domain/agent/lifecycle/mod.rs) | Settle re-creation semantics (Q-5), record `plan_revision` |
+| [`adapters/adapter/.../lifecycle/load`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs) | Introduce option validation (Q-13), remove the `controller_id` leftover |
+| [`adapters/llamacpp/.../model_load_options`](layers/adapters/llamacpp/src/application/model_load_options/mod.rs) | From refusing everything to selective interpretation. Unsupported keys get an explicit `ERROR` |
+| [`adapter/.../execution/options`](layers/adapters/adapter/src/application/execution/options/mod.rs) | **Remove the 5-item whitelist.** Switch to opaque pass-through (P-40, D-55) |
+| [`contract/execution/mod.rs`](layers/protocol/src/contract/execution/mod.rs) | Single `prompt` string → conversation structure, cleanup of wire generation fields (P-42, P-43) |
+| `ADAPTER_REGISTER.descriptor` contract | If Q-9 is adopted, declare the supported option key set (P-10) |
+| [`controller-instance.mjs`](tools/controller/client/controller-instance.mjs) | Update the query, lifecycle and load surfaces |
+| [`docs/model-load.md`](docs/model-load.md) | Full revision, including D-16's description mismatch |
+| [`docs/message-pairs.md`](docs/message-pairs.md) | Update the pair table |
+| `apps/llama` native Pipeline runtime | Accept a chain per request (phase 6). Move the stage composition, currently fixed in the load-time deployment, to per-request (D-35) |
+| `apps/llama/upstream` · `native/compat` · `scripts` | Move under the adapter (P-53). upstream stays pristine; the patches, manifest and prep scripts move with it |
+| `native/compat/<sha>/0004`·`0006` | Review conversion to ABI exposure (P-56, Q-56). 58% of the total patch volume |
+| [`tools/controller/evidence`](tools/controller/evidence) | On the v6 switch, move the bench tools together with phase 3 |
+| [`foundation/transport/mod.rs`](layers/runtime/src/foundation/transport/mod.rs) | **Replace the foundational contract.** Remove the synchronous completion signatures of `P4Handler`/`P4Transport` (D-26, Q-20) |
+| [`task_queue/worker/mod.rs`](layers/runtime/src/foundation/task_queue/worker/mod.rs) | **Build the relay decision into the worker loop** — just before the handler call (P-35). The deadline check goes at the same point (P-20) |
+| [`protocol/task/mod.rs`](layers/protocol/src/task/mod.rs) | Add the relay decision as the mirror of `is_local_bypass`, replace `Participant.agent_id` with the access address (P-2, P-34) |
+| [`contract/message/mod.rs`](layers/protocol/src/contract/message/mod.rs) | Remove `HardwareReport.agent_id` (P-2) |
+| [`domain/agent/mod.rs`](layers/runtime/src/domain/agent/mod.rs) | Remove the `agent-{host}-{pid}` generation. Replace it with an incarnation marker if needed (P-39, Q-42) |
+| [`lifecycle/forward/mod.rs`](layers/runtime/src/domain/agent/lifecycle/forward/mod.rs) | Discard. Replace with re-entry as follow-up Tasks (P-17) |
+| [`domain/agent/lifecycle/mod.rs`](layers/runtime/src/domain/agent/lifecycle/mod.rs) | Rewrite the six handlers as multi-step Tasks (D-29, P-19) |
+| [`application/dispatch/mod.rs`](layers/runtime/src/application/dispatch/mod.rs) | Remove the `compatibility` path, apply deadlines and cancellation to every path (P-20) |
+| [`adapters/adapter/.../lifecycle/load`](layers/adapters/adapter/src/application/lifecycle/load/mod.rs) | Break the 600-second polling loop into step Tasks (D-30, Q-18) |
 
-## 94. 잔여 주제
+## 94. Remaining topics
 
-### 94.1 상태 외재화 — 경계 확정 (결론)
+### 94.1 State externalization — boundary settled (conclusion)
 
-회의 전체에 걸쳐 결정이 누적되어 이 주제는 **경계가 확정되었다.** 별도 주제로 열 필요가 없다.
+Decisions accumulated over all the meetings have **settled the boundary** of this topic. It does not need to be opened as a separate topic.
 
-**권위 모델:** OUTER 단독 권위다(전제 1). "외부 저장소 권위 + 에이전트 조정" 대 "에이전트 권위 + 외부 투영"의 선택지는 소멸했다 — 식별자 발급(§1.3), 편성 의도(P-5), 배치 구조(P-33)가 모두 OUTER로 확정되었기 때문이다.
+**Authority model:** OUTER is the sole authority (premise 1). The choice between "external store as authority + agent reconciliation" and "agent as authority + external projection" no longer exists — identifier issuance (§1.3), orchestration intent (P-5) and placement structure (P-33) have all been settled as OUTER's.
 
-**외재화되는 것:** 노드 목록, 배치, 적재 계획, 체인 구성, 모든 업무 식별자, 에이전트 접근 주소.
-**외재화되지 않는 것과 그 이유:**
+**What is externalized:** the node list, placement, the load plan, chain composition, all business identifiers and agent access addresses.
+**What is not externalized, and why:**
 
-| 항목 | 이유 | 근거 |
+| Item | Reason | Basis |
 |---|---|---|
-| occupancy (free VRAM 등) | 프로세스에 관한 사실이지 레코드가 아니다 | P-1 |
-| KV | 요청 수명 동안 노드 귀속 | P-32 |
-| 실행 credit (세마포어) | 물리 점유 | 주제 A §admission |
-| 소켓·전송 핸들 | 프로세스 로컬 | P-17 |
-| 프로세스 화신 | 세대 표식이지 상태가 아니다 | P-39 |
+| occupancy (free VRAM etc.) | A fact about the process, not a record | P-1 |
+| KV | Belongs to the node for the lifetime of the request | P-32 |
+| Execution credit (semaphore) | Physical occupancy | Topic A §admission |
+| Socket/transport handles | Process-local | P-17 |
+| Process incarnation | A generation marker, not state | P-39 |
 
-**처리량 가드레일:** 전제 11의 결과로 자동 충족된다. OUTER는 애초에 실행 경로에 없다 — 실행 중 OUTER가 관여하는 것은 토큰 반환뿐이고, 편성·적재는 모두 실행 이전이다. "외부 접근을 실행 경로에서 배제한다"는 규칙을 따로 강제할 필요가 없다.
+**Throughput guardrail:** satisfied automatically as a consequence of premise 11. OUTER is not on the execution path in the first place — during execution OUTER is involved only in receiving returned tokens, and orchestration and loading all happen before execution. The rule "keep external access off the execution path" need not be enforced separately.
 
-**남은 미결:** Q-42(에이전트 상태 지속화 여부)와 그 경우의 재시작 조정 절차. 이는 외재화 범위의 문제가 아니라 **에이전트 측 복구**의 문제다.
+**Still open:** Q-42 (whether to persist agent state) and, in that case, the restart reconciliation procedure. This is not a question of externalization scope but of **agent-side recovery**.
 
-### 94.2 연속성(continuation) 외재화 — 범위 축소 (결론)
+### 94.2 Continuation externalization — scope reduced (conclusion)
 
-`route_id` 키 in-process 맵 5개(`recipients`, `ingress_routes`, `prepared`, `active`, `deliveries`)를 봉투로 옮기는 문제였다. 단계 1·4를 거치면 **상당 부분이 소멸한다.**
+The question was moving the 5 in-process maps keyed by `route_id` (`recipients`, `ingress_routes`, `prepared`, `active`, `deliveries`) into the envelope. After phases 1 and 4, **much of it disappears.**
 
-| 맵 | 처분 |
+| Map | Disposition |
 |---|---|
-| `prepared` | P-19의 다단 Task화로 소멸. 준비 상태가 Task 사이에 머물 이유가 없어진다 |
-| `active` | P-20의 취소 재설계로 대체. 취소는 다음 단계 enqueue를 막는 방식이 된다 |
-| `deliveries` | CPS 내부 추적이므로 프로세스 로컬로 남는다 |
-| `recipients`·`ingress_routes` | **남는다.** route 소유권은 살아 있는 연결이며 직렬화 대상이 아니다 |
+| `prepared` | Disappears with P-19's multi-step Tasks. There is no longer any reason for preparation state to sit between Tasks |
+| `active` | Replaced by P-20's cancellation redesign. Cancellation works by blocking the enqueue of the next step |
+| `deliveries` | CPS-internal tracking, so it stays process-local |
+| `recipients`·`ingress_routes` | **Remain.** Route ownership is a live connection, not something to serialize |
 
-`AsyncExecution`을 "직렬화 가능한 실행 의도"와 "프로세스 로컬 핸들"로 분리해야 한다는 요구는 유효하며, P-17·P-19가 그 작업이다.
+The requirement to split `AsyncExecution` into "serializable execution intent" and "process-local handles" is valid, and P-17 and P-19 are that work.
 
-**결론적 비대칭 하나:** KV가 노드 귀속이므로(P-32) **인퍼런스 연속성은 외재화할 수 없다.** 체인 중간 노드가 죽으면 그 요청은 재시작이지 재개가 아니다(Q-32). 외재화 대상이 되는 것은 **제어 연속성**뿐이다 — 적재의 진행·완료를 route 단절 후 되찾는 문제(D-20, Q-14).
+**One resulting asymmetry:** since KV belongs to the node (P-32), **inference continuation cannot be externalized.** If a mid-chain node dies, the request is restarted, not resumed (Q-32). Only **control continuation** is a target for externalization — recovering load progress and completion after a route drop (D-20, Q-14).
 
-이 비대칭을 인정하면 continuation 외재화는 별도 대개편 주제가 아니라 단계 1·4의 부수 효과다.
+Once this asymmetry is accepted, continuation externalization is not a separate large reorganization topic but a side effect of phases 1 and 4.
 
-### 94.3 미사용 표면 정리 (D-37·D-46으로 정정 완료)
-이 절은 더 이상 "삭제 판단" 대상이 아니다. 둘 다 **구현 대상**으로 확정되었다.
-- **`NodeNode` 방향** — §1.2 인퍼런스 경로의 본체 (D-37, P-22)
-- **`phase=DECODE`** — 노드 주도 디코드 루프에 필수. 프리필 홉과 순환 형태가 다르다 (D-46, P-31)
+### 94.3 Cleanup of unused surfaces (corrected by D-37 and D-46)
+This section is no longer about "deciding on deletion". Both items are settled as **implementation targets**.
+- **The `NodeNode` direction** — the core of the §1.2 inference path (D-37, P-22)
+- **`phase=DECODE`** — required for the node-driven decode loop. Its cycle shape differs from that of prefill hops (D-46, P-31)
 
-### 94.4 아직 주제로 열지 않은 것
+### 94.4 Not yet opened as topics
 
-대개편 항목은 모두 짚었으나 다음은 별도 판단이 남아 있다.
+All the major reorganization items have been covered, but the following still need separate judgement.
 
-- **`INGRESS_ACCEPTED` 의미의 3분기** (검증 전 / credit 전 / credit 후). 단계 1의 P-14로 구조적 원인은 사라지지만, **어느 시점을 계약으로 삼을지**는 정해야 한다. Q-43(`ingress_id` 존치)과 함께 보면 `INGRESS_ACCEPTED` 자체의 필요성까지 재검토 대상이다
-- **wire authz와 TLS.** D-53이 자기기술 주소와 겹치는 위험을 기록했으나 이 개편의 범위 밖이다. 도입 시 Q-41을 함께 판단한다
-- **다중 컨트롤러·다중 진입점.** Q-37. 전제 11은 단일 진입점을 명시하므로 현 개편은 이를 가정한다
-- **에이전트 상태 지속화.** Q-42. §94.1의 남은 미결
+- **The three possible meanings of `INGRESS_ACCEPTED`** (before validation / before credit / after credit). Phase 1's P-14 removes the structural cause, but **which point becomes the contract** still has to be decided. Taken together with Q-43 (keeping `ingress_id`), even the need for `INGRESS_ACCEPTED` itself is up for review
+- **wire authz and TLS.** D-53 recorded the risk that overlaps with self-describing addresses, but it is outside the scope of this reorganization. Q-41 is judged together with their introduction
+- **Multiple controllers / multiple entry points.** Q-37. Premise 11 specifies a single entry point, so the current reorganization assumes one
+- **Agent state persistence.** Q-42. The item still open from §94.1
 
-※ `session_id` 발급 문제는 D-54로 격상되어 이 절에서 빠졌다.
+※ The `session_id` issuance issue was promoted to D-54 and removed from this section.
 
-## 95. 개정 이력
+## 95. Revision history
 
-| 날짜 | 내용 |
+| Date | Contents |
 |---|---|
-| 2026-08-16 | **코어 사양 1번(멀티플랫폼)이 실측으로 덮였다 — 단, Windows ARM64는 미포함.** 소스를 Mac mini 2대(macOS ARM64)와 DGX Spark GB10(Linux aarch64)로 옮겨 각 장비에서 빌드했다. 조건부 컴파일도 타깃별 의존성도 필요 없었고 네 장비 모두 `rustc 1.97.1`에서 **196 테스트 통과·경고 0**이다. 체인 `stage-0` Windows x64 → `stage-1` macOS ARM64 → `stage-2` Linux aarch64 → `tail-3` macOS ARM64로 **홉마다 머신·OS가 바뀌고 대부분 아키텍처도 바뀐다**: 800×48 3회 전부 800/800(초당 80,723-81,799 프레임), 지연 있는 백엔드 400×24도 400/400. **Windows ARM64(Surface)는 키 인증 실패로 여전히 미검증**이다. 부수 소득으로 **macOS 운영 제약**을 확정했다 — `nohup`으로 분리된 에이전트는 로컬 네트워크 접근 권한을 상속하지 못해 **수신은 되고 아웃바운드만 조용히 버려진다**. 증상이 P4를 가리키지만 원인은 P4가 아니며, 판별 근거는 `consumed`·`forwarded`가 오르는데 호출자 방향 소켓이 없다는 것이다 |
-| 2026-08-15 | **범위 경계 확정 — 일반화하지 않되, 구상 어댑터보다 먼저 끝낸다** (§1.4). 막연한 통신을 덮는 범용 에이전트가 아니다. 나를 워크로드는 이미 디테일까지 알려져 있고(**분산 적재 / 프리필 체인 / 디코드 링 / 배치 코호트**) 코어도 목도 그것에 맞춰 만든다. 따라서 목의 프로필은 지연 시간 몇 개가 아니라 **역할별 비용·스테이지 구성·링 홉·코호트 창**을 표현해야 한다 — §92의 실측(선두 ~64s·후미 32–40s, 중첩 271.5 tok/s, 스테이지 대기 8.0–87.3초, KV 188 MiB/레이어/48세션)이 형태의 보정 기준이며 목은 숫자를 계산하지 않고 선언받아 흉내 낸다. **동시에, 에이전트는 llama.cpp와 무관하게 구상 어댑터 이전에 완성·증명되어야 한다.** 두 제약은 충돌하지 않는다 — 워크로드는 에이전트가 지원할 것을 정하고 공급은 전부 목이 한다. 순서가 확정됐다: ① 노드 어댑터 인터페이스(백엔드 이름 0건) → ② 에이전트 코어 → ③ 목 어댑터 → ④ 플릿 부하 증명(**여기서 완성 판정**) → ⑤ 구상 어댑터. ④에서 판정할 수 없다면 인터페이스가 워크로드를 덜 표현한 것이므로 ①로 돌아간다 |
-| 2026-08-15 | **검증 범위를 실제 플릿 전체로 확정** (§1.4). 안정화가 목적이므로 단위 테스트로 끝내지 않고 **목 어댑터 기반으로 가용한 PC를 전부 연결해 복잡·연속 시나리오를 전개**한다. 목이 GPU를 요구하지 않으므로 **백엔드가 없거나 약한 장비도 동등하게 참여**하며, 이로써 Windows x64·Windows ARM64·macOS ARM64·Linux ARM64가 모두 걸려 **코어 사양 1번(멀티플랫폼)이 실측으로 덮인다**(주제 N의 검증 축과 동일). 외부 장비 2대는 WAN 경계 너머에 있으므로 **전제 11의 진입 에이전트·중계가 인위적 구성이 아니라 실제 방화벽으로 검증된다**. 접속 정보는 저장소 밖 로컬 운영 문서가 관리하며 주소·계정·비밀을 저장소에 복사하지 않는다 |
-| 2026-08-15 | **코어가 GPU와 무관함을 확정하고 증명 수단을 정함** (§1.4). "GPU 홉"은 홉 경계라는 추상일 뿐이므로 **어댑터 인터페이스와 목 어댑터만으로 구현 전체를 증명할 수 있다.** 귀결 둘 — **`D-64`·`Q-51` 해소**(어댑터 인터페이스가 명시적 산출물로 없다는 결함을 목 어댑터가 해소한다. 목이 구현할 수 있는 것이 곧 인터페이스이고, 백엔드 개념 없이 구현이 끝나면 경계가 깨끗하다는 뜻이다 — 문서가 아니라 **두 번째 구현으로** 증명된다), 그리고 **부하·시뮬레이션에 GPU가 불필요**(도착 폭주·코호트 교체·취소·데드라인 만료·느린 홉 역압을 전부 목으로 돌리며, 관측되는 것은 순수한 P4 거동이다). **이것이 브랜치의 완료 기준이다** — 목 위에서 코어가 부하를 견디면 이후 실 시스템의 문제를 P4의 문제가 아니라고 단언할 근거가 생긴다 |
-| 2026-08-15 | **2단 큐 확정** (§1.4). 노드는 GPU의 긴 작업에 대응하는 추상이므로 노드의 시간이 워커의 시간이 되어서는 안 된다. 에이전트 메인 큐는 즉시 비워지고, 노드 대상 메시지에 대해 워커가 하는 일은 **노드별 큐로 옮기고 해제되는 것**뿐이다. 노드 큐의 해소는 이벤트 기반이며 트리거는 둘 — 메시지 도착, 그리고 **구상 객체가 GPU 홉을 끝내는 시점**. **이 분리가 관측 가능성을 만든다** — 에이전트 큐 깊이가 GPU 시간과 독립해지므로, 부하에서 에이전트 큐가 얕고 노드 큐가 깊으면 원인은 P4 아래이고 그 반대면 P4다. "문제가 P4 탓인지"가 두 큐의 깊이로 판정 가능한 질문이 된다. 데드라인·취소도 홉 경계에서만 판정한다 — 홉 도중에 끊을 방법은 없고 다음 홉을 시작하지 않으면 된다 |
-| 2026-08-15 | **CPS 규격을 5개 항목으로 못박음** (§1.4). 전제 8·9가 방향만 정하고 있던 것을 실행 가능한 규격으로 확정 — 처리 함수는 전부 프로시저이고, 응답은 큐 투입이라는 부수효과이며, **요청측은 응답에 해당하는 인자로 호출될 쌍 핸들러를 함께 준비한다**(연속 등록). 순서는 큐가 아니라 **각 단계가 다음 단계를 등록**해서 보장한다. 이로써 `ResponseSink`가 무효화된다 — 응답 경로가 호출 스택에 묶여 있으면 호출이 끝날 때 응답할 자리가 사라지므로, 장기 작업을 Task로 쪼갤 수 없다. `D-26`·`D-27`·`D-28`·`D-29`·`D-30`이 각각 어느 항목을 위반하는지 표로 대응 |
-| 2026-08-15 | **컨트롤러 폐기, 그리고 에이전트 코어를 1차 구현 대상으로 확정.** 네 건의 정정이 한 방향을 가리켰다. ① 컨트롤러의 존재 이유는 노드 리스트를 아는 인퍼런스 창구가 아니라 **방화벽 때문에 필요한 에이전트의 진입점**이었다. 노드 리스트는 전제 1에 따라 이미 OUTER의 외부 상태이고, 컨트롤러는 인퍼런스·적재 명령에서 그것을 **주입받을** 뿐이다. ② 그런데 진입점은 에이전트 자신이므로 별도 객체가 담당할 고유 상태도 판단도 없다 — **컨트롤러를 참여자에서 지운다.** 에이전트의 내부 엔티티는 **노드 하나뿐**이다. ③ 노드는 **id 껍데기**이며 적재 시점에 실체화된 구상 어댑터와 연결된다(코드의 `NodeSlot`이 이미 이 형태다). ④ 에이전트가 받는 메시지는 노드 생성·삭제, 인퍼런스 접수, 하드웨어 조사이고, **노드가 받는 것은 모델 적재·해제와 프리필·디코드**다 — 인퍼런스는 에이전트가 접수해 노드에게 프리필을 전달하는 두 단계다. §1.0·§1.2 전면 개정, 전제 1·3·5·11에서 컨트롤러 제거. **§1.4 신설** — 에이전트 코어 8개 사양(멀티플랫폼 소켓, tokio 워커+CPS, 메인 큐, 세 메시지 종류, 외부 전송 단일화, 수신자는 큐 투입만, 내부는 노드로)과 현재 코드와의 간극. 이로써 워커 판정이 `외부 주소 \| 내부` → `에이전트 자신 \| 노드` 두 단계 이분법으로 확정. **`P-6`은 축소가 아니라 확대된다** — lifecycle의 `controller_id` 제거가 아니라 `ParticipantRole::Controller`·`TaskDirection` 3변형·`ControllerProcessor`·`p4-controller` 바이너리 전체 삭제다 |
-| 2026-08-15 | **브랜치 `p4/adapter-boundary` 착수.** 주제 J·L을 대상으로 `P-47`(`adapters/adapter/` → `pipeline/`, 크레이트 `p4-adapter` → `p4-pipeline`), `P-45`(`DRAFT_REPORT` 구조 중립화), `P-53`(백엔드 이동)을 착지. **`P-45`가 §91 어느 단계에도 배정되지 않았던 누락을 발견** — 프로토콜 계약에서 트랜스포머 구조를 걷어내는 항목인데 단계 0이 "wire 불변"이라 자동 포함되지 않았다. 포함하면서 **wire를 v6으로 올렸다**(§90이 이미 확정한 방향이고, 페이로드를 깨는 첫 변경이다. 버전 바이트를 안 올리면 벤치 호스트의 낡은 바이너리가 거부 대신 오독한다). **부수 발견:** `kv_bytes`·`layer_bytes`의 출처가 `POST /api/models/inspect`였고 이는 `P-60`이 그은 방화벽 반대편의 계획 지식이었다 — `D-62` 해소가 곧 방화벽 위반 해소였다. **`P-53`의 이동 경계는 계획서 서술이 틀렸다** — `compat/`은 순수 패치가 아니라 `linker-node`에 정적 링크되는 우리 C++를 함께 담고 있었고, `apps/llama/upstream` 경로를 37개 파일이 참조하며, `layout.test.mjs`가 뒤집으려는 소유 구조를 assertion으로 못박고 있었다. 실제 자족 단위는 **pristine upstream + 순서 패치 + 실체화 스크립트**이며 그 산출물의 소비자는 CMake 변수 하나로 연결된다 |
-| 2026-08-13 | 초판. 주제 A(하드웨어 조회) — D-1~D-8, P-1~P-4, Q-1~Q-4 |
-| 2026-08-13 | 주제 B(노드 소유권) 추가 — D-9~D-13, P-5~P-8, Q-5~Q-8. 전제 3 추가 |
-| 2026-08-13 | **철회:** 초판의 "`runtime_generation`을 외부 desired-state 레코드의 버전으로 재정의" 항목. 노드 실체가 어댑터에 있다는 전제 3과 모순된다. P-8의 두 축 분리로 대체 — 외부 의도는 `plan_revision`, 실체 세대는 `runtime_generation` |
-| 2026-08-13 | 주제 C(모델 적재) 추가 — D-14~D-19, P-9~P-12, Q-9~Q-13. 전제 4 추가. upstream `common/arg.cpp`(고정 커밋 `3e3a7a4`, 347 `add_opt`) 대조 |
-| 2026-08-13 | 전제 5·6 추가. **결정:** 적재 옵션은 불투명 문자열 통과, 해석은 구상 어댑터 — P-9 재작성, Q-13 결정, Q-10·Q-11·Q-12 철회, D-14·D-15에 해소 경로 기재. P-10은 "사전 발견 수단" 잔여 문제로 축소 |
-| 2026-08-13 | 전제 5(적재 보고의 외부 전송) 반영 — P-13 추가. 방향 전환 자체는 재라벨링이며 실질 작업은 route 단절 시 복구(D-20, Q-14) |
-| 2026-08-13 | 주제 D(사전 조건과 상태 기계) 추가 — D-21~D-25, P-14~P-16, Q-15~Q-17. 전제 7·8 추가. `admission::lifecycle`로 `active` 차단은 이미 구현되어 있음을 확인 |
-| 2026-08-13 | 주제 E(CPS 전면 감사) 추가 — D-26~D-33, P-17~P-20, Q-18~Q-20. 전제 9 추가. 절 번호 중복(주제 D 삽입 시 발생) 정정, 주제 E 이후를 §17~§20으로 재배치 |
-| 2026-08-13 | **OUTER 명명**과 §1.2 대상 아키텍처 흐름 추가 — 제어 경로와 인퍼런스 경로를 분리 기술. 주제 F(인퍼런스 경로와 체인) 추가 — D-34~D-37, P-21~P-24, Q-21~Q-24 |
-| 2026-08-13 | 체인 전달 방식 확정 — 컨트롤러가 `Node[0]`에 보내는 프리필 메시지가 체인 전체를 담고 노드가 스스로 전달하는 **소스 라우팅**. §1.2 도식 수정, P-22 재작성, P-25~P-27 추가, D-38~D-40 추가, Q-21·Q-22 결정 처리 |
-| 2026-08-13 | 주제 G(스테이지 보고와 디코드 루프) 추가 — D-41~D-46, P-28~P-32, Q-28~Q-32. 프리필을 상태 확인 단계로 규정. 디코드 루프의 노드 주도 순환을 §1.2 도식에 반영. KV의 노드 귀속을 전제 2의 외재화 예외로 명문화(P-32) |
-| 2026-08-13 | **전제 11 정정 — 진입 에이전트는 노드 배치와 무관한 순수 진입점.** "1번 노드의 에이전트가 관문"이라는 초안을 폐기. 제약은 ① 컨트롤러가 도달하는 에이전트는 정확히 하나 ② 그 에이전트는 나머지 전부에 도달, 둘뿐이다. §1.2 위상·인퍼런스 도식과 역할 표 재작성, P-26·P-35·P-36 수정, D-49를 "중계 능력 부재"로 재정의, D-50·Q-34 해소, Q-36 철회, Q-38 추가 |
-| 2026-08-13 | 중계를 **모든 에이전트의 일반 능력**으로 확정 — 자기가 수행할 메시지 외에 다른 에이전트로 단순 전달하는 처리 경로. P-35 재작성. "진입 에이전트"는 역할이 아니라 위상상의 위치이므로 `ParticipantRole`을 늘리지 않는다 |
-| 2026-08-14 | **병행 TPS 세션(MI250·Mac·GB10)의 실측 결론을 반영.** [`docs/runtime-evidence.md`](docs/runtime-evidence.md) 기준. 확립된 사실 — 스테이지 중첩으로 **271.5 tok/s**(단일 66.0 대비 4.11x), 스테이지 비용은 장치가 아니라 **역할**에 붙음(선두 ~64s / 후미 32–40s), 절벽은 스케줄러가 아니라 **VRAM 스필**(레이어 축·세션 축이 같은 16 GiB 벽에서 끝남), KV **~188 MiB/레이어/48세션**, 중첩 유무에 따라 균형 배치의 유불리가 뒤집힘, 스테이지 대기 8.0~87.3초. **확정으로 전환:** `Q-48` 유지 안 탈락 — `max_sequences`는 credit 상한이고 `scheduler_window_target`이 그 아래에서 코호트를 `pipeline_stage_count`개 창으로 파생하므로 P-44 강등안이 실제 동작과 일치한다. `D-51`·`Q-30`의 부하 논거 소멸. **D-84 추가** — 중첩 깊이가 `LINKER_PIPELINE_WINDOW_DEPTH` 환경변수로만 존재해 OUTER가 지정할 통로가 없다(Q-72) |
-| 2026-08-14 | **"`apps/llama`에서 C++와 llama.cpp가 완전히 제거되는가"를 검증 — 그렇다.** 계획 지식이 네이티브를 부르지 않음을 확인: `readPlannerModel`이 GGUF를 순수 TS로 파싱하고 `planner` 3,182줄에 `spawn`·`exec`·`child_process`가 0건. **P-57 정정** — `/api/resources`를 존속 목록에 넣은 것은 오류였다. 출처인 `cuda-driver-probe.ts`가 C++ `linker-device-probe`를 소비하는데 하드웨어 capability는 주제 A에서 이미 에이전트의 일이므로 P4 경로로 대체한다. 이로써 존속분의 마지막 네이티브 의존이 사라진다. **D-83 추가** — 계획 지식이 읽어야 할 모델 파일은 방화벽 안에 있다. 이는 D-77의 근거 하나를 무너뜨린다(모델 파일은 적재 이전에도 호스트에 존재하므로 에이전트가 적재 없이 읽을 수 있다). Q-70·Q-71 추가 |
-| 2026-08-14 | 주제 N(멀티플랫폼과 백엔드 변종) 추가 — D-79~D-82, P-61~P-64, Q-66~Q-69. 에이전트는 GB10 리눅스·우분투(x86·arm)·macOS·Windows에서 돌고 llama.cpp는 CUDA·ROCm·Metal·OpenCL·Vulkan·CPU로 각각 빌드된다. **빌드 측은 이미 매트릭스를 다루나**(스크립트 28파일, 런타임 팩 패키징, `LINKER_LLAMA_COMPAT_ID` 강제, CUDA·Metal·OpenCL 검증 요구) **프로토콜은 모른다** — `HARDWARE_REPORT`에 런타임 변종이 없고 `adapter_kind`가 변종을 구분하지 못한다. 런타임 변종을 capability 부류로 확정(재빌드 시에만 변함)하고 P-1 항목에 추가. `D-72`의 리베이스 비용에 **플랫폼 수가 곱해진다**는 점(D-81)과 완결형 백엔드의 플랫폼 가용성이 편성 제약이라는 점(D-82, vLLM은 Metal·Windows 경로 없음)을 기록 |
-| 2026-08-14 | **분할 기준을 방화벽 위치로 확정(P-60).** 관심사가 아니라 "방화벽 어느 쪽에서 필요한가"로 가른다 — 계획 지식(모델 형식 검사·배치 휴리스틱·용량 추정)은 방화벽 밖에서 OUTER가 **소비**하고, 실행 지식(기동·적재·추론)은 방화벽 안에서 어댑터가 **소유**한다. **`apps/llama`는 해체하지 않고 계획 지식 제공자로 존속**한다(P-57 재작성) — 에이전트가 쓸 구상 어댑터만 넘긴다. 이로써 **D-77 해소**: 계획 지식을 `linker_domain`에 넣지 않으므로 OUTER 코어가 형식 무지로 남고, 백엔드가 늘어도 부풀지 않는다. Q-62 해소, Q-64·Q-65 추가. 종료 상태가 2앱에서 3앱으로 바뀌나 목표(P4의 백엔드 소유)는 그대로 달성된다. 기준선이 기존 이음매와 일치함을 확인 — `planner` 3,182줄(common의 52%) 대 `protocol`+`pipeline-*` 2,840줄, `/api/models\|plans\|resources` 대 `/api/processes\|runtime*` |
-| 2026-08-14 | 주제 M(저장소 종료 상태) 추가 — D-75~D-78, P-57~P-59, Q-60~Q-63. 브랜치 종료 시 **`apps/linker`와 `apps/p4`만 남고 `apps/llama`는 해체**된다. **역할 매핑 확정: OUTER = `apps/linker` + `packages/linker_domain`** — 이로써 capability 레코드·편성·적재 계획·체인 구성·식별자 발급의 귀속이 정해진다. Controller/Agent/Node는 `apps/p4/entrypoints/*`에 이미 존재. 해체 규모는 native 134파일·src 56파일·scripts 28파일과 **`packages/llama_domain` 11,631줄**이며 후자는 배치 휴리스틱·모델 검사(→OUTER)와 런타임 검증·기동 정책(→어댑터)으로 3분할된다. Q-59는 주제 M으로 이관 |
-| 2026-08-14 | 주제 L(백엔드 소유와 upstream 추적) 추가 — D-71~D-74, P-53~P-56, Q-56~Q-59. **검증 결과 "항상 최신 풀받고 필요한 기능만 붙여 컴파일"은 이미 구현되어 있다** — pristine 서브모듈, `native/compat/<sha>/`의 해시 검증된 순서 패치, `.cache/` worktree 적용(생성물 미커밋), stock은 무패치 빌드, 우리 C++는 공개 헤더만 include. 남은 문제는 **소유 위치**(어댑터와 백엔드가 다른 앱에 분산)와 **추적 비용**(패치 2,219줄 중 `0004`·`0006`이 1,287줄로 58%)이다. 완결형은 upstream 개조 0(vLLM은 pip pin으로 끝난다), 스테이지만 `compat/` 필요라는 정책을 P-54로 명문화. upstream 결함 패치 2건(138줄)은 공식 기여로 소멸 대상 |
-| 2026-08-14 | **§91.0 재작성 대 수정 판단 기록.** 신규 프로젝트 재작성을 검토하고 **권하지 않는 것으로 결론.** 파괴적 변경은 `layers/runtime`(3,489줄, 전체의 29%)에 몰려 있고 어댑터 3,145줄은 거의 존속한다. 흉터(커밋 61개 중 fix·revert 22개 = 36%)는 runtime이 아니라 어댑터·네이티브에 있으며 코드 모양이 아니라 주석·문서·커밋 메시지에 담겨 있어 "구현 코드만 참고"가 정확히 그 층을 버린다. 미결 3건이 타 세션 측정에 종속되므로 재작성은 답하는 시점만 앞당기고 검증 수단을 잃는다. 실행 형태는 `layers/runtime` 모듈 단위 재작성이며 뒤집을 조건 3가지를 함께 기록 |
-| 2026-08-14 | vLLM 도입 가능성으로 어댑터 추상을 검증 — D-70, P-52, Q-54·Q-55. **단일 노드로는 가능하다** (llamacpp 어댑터의 추론 경로 전체가 OpenAI 호환 `POST /v1/chat/completions`+SSE 하나). 걸리는 것은 D-62·D-58·`session_id` 대응물 부재이며 전부 기존 결함이 드러나는 것이다. **체인 스테이지로는 불가능**하고 이는 vLLM이 PP를 내부에서 하기 때문이지 P4 결함이 아니다. 이로써 **완결형 노드와 스테이지 노드**의 구분이 계약에 없다는 것이 드러났다 — 체인 길이 1의 유효성을 명시하면 완결형 백엔드가 설계 변경 없이 수용된다 |
-| 2026-08-14 | 주제 K(메시지 디스패치 계층) 추가 — D-66~D-69, P-48~P-51, Q-52·Q-53. 목표 계층은 **바깥일수록 범용, 안쪽일수록 구상**이며 kind 해석은 마지막 두 단계의 일이다. 현재는 kind 분기가 `dispatch`와 `AgentProcessor`에 이중으로 있고(D-66), 참여자 전달 계층이 없어 에이전트가 노드를 건너뛰어 어댑터로 직행하며(D-67), 중계에도 본문 전체 디코드가 필요하고(D-68), 큐가 P4 메시지 타입에 묶여 있다(D-69). 단계 3에 `3-c`(봉투·본문 분리) 신설. **절 번호 규약 변경 — 종합 절을 §89 이상 고정으로 이전**해 주제 추가 시 번호가 밀리지 않게 함 |
-| 2026-08-14 | 주제 J(어댑터 경계) 추가 — D-62~D-65, P-45~P-47, Q-50·Q-51. **감사 결과: 의존 방향은 정확하다** — `p4-protocol` 의존 0개, 역참조 없음, `layers/protocol/src`에 백엔드 문자열 0건. 누출은 계약과 문서에 있다 — `DRAFT_REPORT`의 KV·FFN, `docs/model-load.md`의 llama.cpp 노브 규범화(코드는 불투명한데 문서가 계약을 선언), 어댑터 인터페이스의 산출물 부재, 구상 어댑터가 `p4-adapter`로 인터페이스 이름을 점유(layer README는 이미 `pipeline/`이라 부른다). P-46·P-47을 단계 0에 추가. 절 번호 재배치(§90~§95) |
-| 2026-08-14 | 병행 TPS 세션(Mac+GB10, MI250)과의 접점 기록 — D-60(적재 시점 `max_sequences` 선언이 런타임 파생 값을 게이트로 고정), D-61(연결 수립 정책 부재), P-44(`batching.*` 강등안), Q-48·Q-49. **둘 다 이 문서가 단독 확정하지 않는다** — 프로토콜이 처리량 층의 결정을 앞질러 못 박는 것이 D-60이 지적하는 실패 형태이므로 계획 단계에서 반복하지 않는다 |
-| 2026-08-14 | **§92를 "처리량과의 관계"로 재작성.** 처리량은 P4가 아니라 **노드 큐와 물리 구상층**에서 결정된다 — 배치 합치기·디코드 credit(`listener/queue.rs`), 용량 게이트(`capacity/mod.rs`), 네이티브의 마이크로배치·스테이지 중첩. 따라서 이 개편은 처리량 노력과 배치되지 않으며 서로 다른 층을 만진다. P4의 의무는 **① 그 층이 필요로 하는 선언을 온전히 전달하고 ② 토큰 경로를 무겁게 하지 않는 것** 둘뿐이며, `P-40`·`P-9`가 ①의 이행이자 개편과 처리량의 유일한 접점이다. "처리량 문제를 프로토콜 게이트로 풀지 않는다"를 명시 — 스로틀이 GPU에서 멀어질 때의 실패가 이미 기록되어 있다 |
-| 2026-08-14 | **§91을 순차 구축 순서로 재작성.** "단계 1은 분리 불가"라는 이전 서술은 **오류였다** — `P-35`(중계)가 `P-34`(주소)를 필요로 하는 것과 CPS 토대가 주소를 필요로 하는 것을 혼동했다. `P-17`·`P-18`은 wire 불변이며 단독으로 선다. 단계 경계를 **wire 호환성**으로 다시 긋고 0~6으로 재구성: v5를 유지한 채 가능한 것(0~2)을 모두 끝낸 뒤 v6(3~6)로 넘어간다. 되돌림 경계는 단계 2/3 사이 하나. **결정:** Q-33·Q-24 — 체인·적재 상태는 OUTER가 기억하고 에이전트는 불일치에 실패만 보고한다. 그 대가로 에이전트·노드가 기계적으로 단순해진다. **결정:** 스테이지 보고를 토큰 경로 비용으로 계상하지 않는다 — 신호가 작고, 없으면 OUTER의 통계 수집이 불가능하다. 파급 범위에 네이티브 런타임과 벤치 도구 추가 |
-| 2026-08-14 | **조사 완결.** 요약 절과 읽는 순서 신설. §90 wire 버전 결정(v6 확정과 그 근거 8건), §91 개편 순서(6단계 의존 그래프와 단계별 관문 Q), §92 처리량 영향 평가(이득 3·비용 5·측정 필요 3) 신설. §94.1 상태 외재화를 "미완 절"에서 **경계 확정 결론**으로, §94.2 연속성 외재화를 **범위 축소 결론**으로 승격 — 인퍼런스 연속성은 KV 귀속(P-32) 때문에 외재화 불가이며 제어 연속성만 대상이라는 비대칭 확정. §94.4를 "아직 주제로 열지 않은 것"으로 재정의. 절 번호 §90~§95 재배치 |
-| 2026-08-13 | 주제 I(인퍼런스 요청의 표현력) 추가 — D-55~D-59, P-40~P-43, Q-44~Q-47. 전제 12(인퍼런스 옵션 불투명 통과 + 조용한 누락 금지) 추가. upstream `common_params_sampling`(약 35필드) 대조. **Pipeline 어댑터가 샘플링 옵션을 5개로 화이트리스트하고 나머지를 조용히 버리는 것**이 핵심 결함이며, structured output은 로짓 필터링이라 사후처리가 불가능하므로 Pipeline 경로에서 원리적으로 사용 불가(D-56). 절 번호 재배치(§89~§92) |
-| 2026-08-13 | **§1.3 식별자 소유 신설.** 개별 인퍼런스의 `request_id`는 OUTER가 부여한다는 확정을 계기로, 누적된 발급 주체 결정을 한 표로 정리하고 **"식별자는 OUTER가 발급한다"**를 원칙으로 명문화. 예외는 `runtime_generation`(어댑터)과 전송·CPS 내부 ID뿐. P-21·P-25가 참조하던 "§1.3의 4-튜플 규칙"이 실제 절 없이 걸려 있던 것을 여기서 해소. D-54(에이전트의 `session_id` 발급) 격상, Q-43 추가 |
-| 2026-08-13 | **에이전트 ID 폐지(P-2 재작성).** 모든 메시지가 접근 주소를 자기기술하므로 별도 에이전트 ID가 무의미하다 — **접근 주소 자체가 에이전트의 ID**다. `machine_id`·`boot_id`·`agent_instance_id` 3층 초안 철회, Q-4 해소. `HardwareReport.agent_id`·`Participant.agent_id`·`agent-{host}-{pid}` 제거 대상. D-7을 "프로세스 교체 감지 불가"로 재정의하고 P-39(화신 표식)로 분리, Q-42 추가 |
-| 2026-08-13 | **철회(D-52·Q-40):** "에이전트가 도달 주소를 보고하지 않는다"는 결함이 아니다. OUTER가 인프라 사실의 소유자이며 주소를 이미 안다. 프로토콜 발견은 선후 모순을 낳는다. 전제 1에 **"프로토콜로 알아낼 것과 OUTER가 이미 아는 것을 구분한다"**를 명문화하고, capability 항목에서 도달 주소를 제거. 어댑터의 `ADAPTER_REGISTER.endpoint`는 에이전트 내부의 동적 사실이므로 자기 등록 유지 |
-| 2026-08-13 | **주소의 자기기술 확정(P-34)** — 메시지가 대상 객체뿐 아니라 소속 에이전트의 접속 정보(URL·포트 등)를 자기기술한다. 중계가 무상태로 성립하기 위한 전제조건. 봉투·체인 항목·귀환 주소가 같은 표기를 공유. Q-25·Q-35 결정 처리, Q-39~Q-41 추가. D-52(에이전트 도달 주소 미보고) 추가 및 주제 A의 capability 항목에 반영, D-53(자기기술 주소와 authz 부재) 추가. frame 계층 변경이므로 v6 |
-| 2026-08-13 | 중계의 **배치 위치 확정** — 핸들러 계층이 아니라 큐에서 메시지를 꺼내는 기초 디스패치에 내장한다. 워커 루프의 `handler.handle` 호출 직전이며, `is_local_bypass`의 대칭 판정으로 둔다. 상위 코드는 중계를 인지하지 않는다. P-35 재작성, 파급 범위에 `task_queue/worker`·`protocol/task` 추가 |
-| 2026-08-13 | **전제 11(네트워크 도달성) 추가 — 방화벽 제약.** 전제 3·5 재작성: 제어 지시가 컨트롤러를 **경유**하되 소유하지 않는다. §1.2에 위상 절 신설, 제어 경로 도식 전면 수정, 인퍼런스 반환 경로를 게이트웨이 경유로 수정, 역할 요약에 위상 열 추가. P-26 대상 변경(컨트롤러 → 게이트웨이). 주제 H 추가 — D-47~D-51, P-34~P-37, Q-34~Q-37 |
-| 2026-08-13 | 전제 10(노드는 자기 적재 구조를 모른다) 추가. **철회:** D-43(레이어 범위 부재)은 결함이 아니라 의도된 추상화 — 진입 검사에서 레이어 판정 배제. **철회:** P-30(레이어 구간을 바인딩 메타로 노출)은 P-5의 "편성 제약은 첫 층에만"과 모순이었다. P-33으로 대체. D-44는 D-41에 흡수되어 축소. Q-33 추가 |
-| 2026-08-13 | **정정(D-46):** `phase=DECODE`의 삭제 판단 보류를 종결. 노드 주도 디코드 루프에 필수이므로 구현 대상으로 확정. §94.3을 "삭제 판단" 절에서 "구현 확정" 절로 다시 씀 |
-| 2026-08-13 | **정정(D-37):** `NodeNode` 방향을 "죽은 표면 — 삭제 후보"로 분류한 것은 오류. 대상 구조의 인퍼런스 경로 본체이므로 구현 대상이다. §94.3을 그에 맞게 다시 씀. `phase=DECODE`의 삭제 판단도 P-22 확정 이후로 연기 |
+| 2026-08-16 | **Core spec item 1 (multi-platform) is covered by measurement — except Windows ARM64.** The source was moved to 2 Mac minis (macOS ARM64) and a DGX Spark GB10 (Linux aarch64) and built on each machine. Neither conditional compilation nor per-target dependencies were needed, and all four machines show **196 tests passed, 0 warnings** on `rustc 1.97.1`. In the chain `stage-0` Windows x64 → `stage-1` macOS ARM64 → `stage-2` Linux aarch64 → `tail-3` macOS ARM64, **the machine and OS change at every hop, and in most cases so does the architecture**: 800×48 three times, all 800/800 (80,723-81,799 frames per second), and 400×24 with a delayed backend also 400/400. **Windows ARM64 (Surface) is still unverified because of a key authentication failure.** As a side result, a **macOS operational constraint** was confirmed — an agent detached with `nohup` does not inherit local network access permission, so **receiving works but outbound traffic is silently dropped**. The symptoms point at P4 but the cause is not P4; the tell is that `consumed` and `forwarded` rise while there is no socket in the caller's direction |
+| 2026-08-15 | **Scope boundary settled — do not generalize, but finish before any concrete adapter** (§1.4). This is not a general-purpose agent covering vague communication. The workloads to carry are already known in detail (**distributed load / prefill chain / decode ring / batch cohorts**), and both the core and the mock are built to fit them. The mock profile must therefore express **per-role cost, stage composition, ring hops and cohort windows**, not just a few latency values — §92's measurements (head ~64s, tail 32–40s, overlap 271.5 tok/s, stage wait 8.0–87.3 s, KV 188 MiB/layer/48 sessions) are the calibration reference for the shape, and the mock does not compute the numbers but is given them and imitates them. **At the same time, the agent must be completed and proven before any concrete adapter, independently of llama.cpp.** The two constraints do not conflict — the workloads decide what the agent supports, and the mock supplies all of it. The order is settled: ① node adapter interface (0 backend names) → ② agent core → ③ mock adapter → ④ fleet load proof (**completion is judged here**) → ⑤ concrete adapter. If completion cannot be judged at ④, the interface under-expresses the workloads, so go back to ① |
+| 2026-08-15 | **Verification scope settled as the whole real fleet** (§1.4). Since stabilization is the purpose, do not stop at unit tests; **connect every available PC on the mock adapter and run complex, continuous scenarios**. The mock needs no GPU, so **machines with no backend and weak machines take part on equal terms**, which brings in Windows x64, Windows ARM64, macOS ARM64 and Linux ARM64 and **covers core spec item 1 (multi-platform) by measurement** (the same verification axis as topic N). The 2 external machines are beyond the WAN boundary, so **premise 11's entry agent and relaying are verified against a real firewall, not an artificial setup**. Connection details are managed in a local operations document outside the repository, and addresses, accounts and secrets are not copied into the repository |
+| 2026-08-15 | **Settled that the core is GPU-independent, and fixed the means of proof** (§1.4). A "GPU hop" is merely the abstraction of a hop boundary, so **the whole implementation can be proven with the adapter interface and a mock adapter alone.** Two consequences — **`D-64` and `Q-51` are resolved** (the mock adapter resolves the defect that the adapter interface does not exist as an explicit artifact; what the mock can implement is the interface, and if the implementation completes without backend concepts, the boundary is clean — proven **by a second implementation**, not by a document), and **load and simulation need no GPU** (arrival storms, cohort replacement, cancellation, deadline expiry and back-pressure from slow hops all run on the mock, and what is observed is pure P4 behavior). **This is the branch's completion criterion** — if the core withstands load on the mock, there are grounds to state that later problems on the real system are not P4's problems |
+| 2026-08-15 | **Two-level queue settled** (§1.4). A node is an abstraction for long-running GPU work, so a node's time must not become a worker's time. The agent main queue is emptied immediately, and for messages bound for a node, all a worker does is **move them to the per-node queue and be released**. Node queue draining is event-driven, with two triggers — message arrival, and **the moment the concrete object finishes a GPU hop**. **This separation creates observability** — agent queue depth becomes independent of GPU time, so under load a shallow agent queue with a deep node queue means the cause is below P4, and the reverse means it is P4. "Is P4 to blame?" becomes a question the two queue depths can answer. Deadlines and cancellation are also judged only at hop boundaries — there is no way to cut in mid-hop; simply do not start the next hop |
+| 2026-08-15 | **CPS spec pinned down as 5 items** (§1.4). What premises 8 and 9 had only set as a direction is settled as an executable spec — every handling function is a procedure, a response is the side effect of queueing a message, and **the requesting side prepares a paired handler that will be called with the response as its argument** (continuation registration). Order is guaranteed not by the queue but by **each step registering the next step**. This invalidates `ResponseSink` — if the response path is bound to the call stack, the place to respond disappears when the call ends, so long-running work cannot be split into Tasks. A table maps which item each of `D-26`·`D-27`·`D-28`·`D-29`·`D-30` violates |
+| 2026-08-15 | **Controller discarded, and the agent core set as the first implementation target.** Four corrections pointed in one direction. ① The controller's reason to exist was not being an inference front end that knows the node list but being **the agent's entry point, needed because of the firewall**. Per premise 1, the node list is already OUTER's external state, and the controller only **has it injected** through inference and load commands. ② But the entry point is the agent itself, so there is no unique state or judgement for a separate object to own — **the controller is removed from the participants.** The agent's only internal entity is **the node**. ③ A node is **an id shell** bound at load time to an instantiated concrete adapter (the code's `NodeSlot` already has this shape). ④ The messages an agent receives are node create/delete, inference intake and hardware survey, and **what a node receives is model load/release and prefill/decode** — inference is two steps: the agent takes the request and passes a prefill to the node. §1.0 and §1.2 fully revised; the controller removed from premises 1, 3, 5 and 11. **§1.4 added** — the 8 agent core specs (multi-platform socket, tokio workers + CPS, main queue, three message kinds, unified external send, receivers only enqueue, internal delivery goes to nodes) and the gap with the current code. With this, the worker's judgement is settled as a two-step dichotomy: `external address \| internal` → `agent itself \| node`. **`P-6` grows rather than shrinks** — it is no longer just removing `controller_id` from lifecycle but deleting `ParticipantRole::Controller`, the 3 `TaskDirection` variants, `ControllerProcessor` and the whole `p4-controller` binary |
+| 2026-08-15 | **Branch `p4/adapter-boundary` started.** Targeting topics J and L, landed `P-47` (`adapters/adapter/` → `pipeline/`, crate `p4-adapter` → `p4-pipeline`), `P-45` (making `DRAFT_REPORT` structure-neutral) and `P-53` (backend move). **Found an omission: `P-45` had not been assigned to any phase in §91** — it removes transformer structure from the protocol contract, but phase 0 is "wire unchanged", so it was not included automatically. With it included, **the wire was bumped to v6** (the direction §90 had already settled, and the first payload-breaking change; without bumping the version byte, old binaries on bench hosts would misread frames instead of refusing them). **Side finding:** `kv_bytes` and `layer_bytes` came from `POST /api/models/inspect`, which is planning knowledge on the other side of the firewall line drawn by `P-60` — resolving `D-62` also resolved a firewall violation. **The plan's description of the `P-53` move boundary was wrong** — `compat/` held not only pure patches but also our C++ that is statically linked into `linker-node`, 37 files referenced the `apps/llama/upstream` path, and `layout.test.mjs` pinned down with assertions the very ownership structure that was being reversed. The actual self-contained unit is **pristine upstream + ordered patches + materialization script**, and the consumer of its output is connected through a single CMake variable |
+| 2026-08-13 | First edition. Topic A (hardware query) — D-1~D-8, P-1~P-4, Q-1~Q-4 |
+| 2026-08-13 | Added topic B (node ownership) — D-9~D-13, P-5~P-8, Q-5~Q-8. Added premise 3 |
+| 2026-08-13 | **Withdrawn:** the first edition's item "redefine `runtime_generation` as the version of the external desired-state record". It contradicts premise 3, which puts the node instance in the adapter. Replaced by P-8's two-axis split — external intent is `plan_revision`, the instance generation is `runtime_generation` |
+| 2026-08-13 | Added topic C (model load) — D-14~D-19, P-9~P-12, Q-9~Q-13. Added premise 4. Checked against upstream `common/arg.cpp` (pinned commit `3e3a7a4`, 347 `add_opt`) |
+| 2026-08-13 | Added premises 5 and 6. **Decided:** load options pass through as opaque strings and are interpreted by the concrete adapter — P-9 rewritten, Q-13 decided, Q-10/Q-11/Q-12 withdrawn, resolution paths written into D-14/D-15. P-10 reduced to the remaining "means of discovery in advance" problem |
+| 2026-08-13 | Reflected premise 5 (load reports are sent to the outside) — added P-13. The redirection itself is a relabeling; the real work is recovery after a route drop (D-20, Q-14) |
+| 2026-08-13 | Added topic D (preconditions and state machine) — D-21~D-25, P-14~P-16, Q-15~Q-17. Added premises 7 and 8. Confirmed that `admission::lifecycle` already implements blocking in `active` |
+| 2026-08-13 | Added topic E (full CPS audit) — D-26~D-33, P-17~P-20, Q-18~Q-20. Added premise 9. Fixed duplicate section numbers (introduced when topic D was inserted) and renumbered topic E onward as §17~§20 |
+| 2026-08-13 | Added **the OUTER name** and the §1.2 target architecture flow — control path and inference path described separately. Added topic F (inference path and chain) — D-34~D-37, P-21~P-24, Q-21~Q-24 |
+| 2026-08-13 | Chain delivery settled — **source routing**, in which the prefill message the controller sends to `Node[0]` carries the whole chain and the nodes forward on their own. §1.2 diagram fixed, P-22 rewritten, P-25~P-27 added, D-38~D-40 added, Q-21/Q-22 marked decided |
+| 2026-08-13 | Added topic G (stage reports and decode loop) — D-41~D-46, P-28~P-32, Q-28~Q-32. Defined prefill as a state-check step. Reflected the node-driven decode loop in the §1.2 diagram. Wrote down KV node ownership as an externalization exception to premise 2 (P-32) |
+| 2026-08-13 | **Premise 11 corrected — the entry agent is a pure entry point unrelated to node placement.** Discarded the draft "the agent of node 1 is the gateway". There are only two constraints: ① the controller can reach exactly one agent ② that agent reaches all the rest. Rewrote the §1.2 topology/inference diagrams and the role table, revised P-26/P-35/P-36, redefined D-49 as "no relay capability", resolved D-50/Q-34, withdrew Q-36, added Q-38 |
+| 2026-08-13 | Relaying settled as **a general capability of every agent** — a handling path that simply forwards to another agent, besides the messages the agent performs itself. P-35 rewritten. "Entry agent" is a topological position, not a role, so `ParticipantRole` does not grow |
+| 2026-08-14 | **Reflected the measured conclusions of the parallel TPS session (MI250, Mac, GB10).** Based on [`docs/runtime-evidence.md`](docs/runtime-evidence.md). Established facts — stage overlap gives **271.5 tok/s** (4.11x versus 66.0 single), stage cost attaches to the **role**, not the device (head ~64s / tail 32–40s), the cliff is **VRAM spill**, not the scheduler (the layer axis and the session axis end at the same 16 GiB wall), KV **~188 MiB/layer/48 sessions**, whether a balanced placement helps flips depending on overlap, stage wait 8.0~87.3 s. **Turned into settled:** the keep option of `Q-48` is out — `max_sequences` is the credit cap and below it `scheduler_window_target` derives `pipeline_stage_count` windows from the cohort, so P-44's demotion option matches the actual behavior. The load argument of `D-51`/`Q-30` is gone. **Added D-84** — overlap depth exists only as the `LINKER_PIPELINE_WINDOW_DEPTH` environment variable, so OUTER has no channel to set it (Q-72) |
+| 2026-08-14 | **Verified whether "C++ and llama.cpp are removed from `apps/llama` completely" — they are.** Confirmed that planning knowledge does not call native code: `readPlannerModel` parses GGUF in pure TS, and the 3,182-line `planner` has 0 occurrences of `spawn`, `exec` or `child_process`. **P-57 corrected** — putting `/api/resources` on the survival list was a mistake. Its source, `cuda-driver-probe.ts`, consumes the C++ `linker-device-probe`, and hardware capability is already the agent's job per topic A, so it is replaced with the P4 path. This removes the last native dependency of what survives. **Added D-83** — the model files that planning knowledge must read are inside the firewall. This knocks out one of D-77's arguments (model files exist on the host even before loading, so an agent can read them without loading). Added Q-70/Q-71 |
+| 2026-08-14 | Added topic N (multi-platform support and backend variants) — D-79~D-82, P-61~P-64, Q-66~Q-69. Agents run on GB10 Linux, Ubuntu (x86/arm), macOS and Windows, and llama.cpp is built separately for CUDA, ROCm, Metal, OpenCL, Vulkan and CPU. **The build side already handles the matrix** (28 script files, runtime pack packaging, `LINKER_LLAMA_COMPAT_ID` enforcement, the CUDA/Metal/OpenCL verification requirement), **but the protocol does not know it** — `HARDWARE_REPORT` has no runtime variant, and `adapter_kind` cannot distinguish variants. Settled runtime variants as capability class (they change only on rebuild) and added them to P-1's items. Recorded that `D-72`'s rebase cost is **multiplied by the number of platforms** (D-81) and that the platform availability of self-contained backends is an orchestration constraint (D-82; vLLM has no Metal or Windows path) |
+| 2026-08-14 | **Split criterion settled as firewall position (P-60).** Split not by concern but by "which side of the firewall needs it" — planning knowledge (model format inspection, placement heuristics, capacity estimation) is **consumed** by OUTER outside the firewall, and execution knowledge (startup, loading, inference) is **owned** by adapters inside the firewall. **`apps/llama` is not dismantled; it survives as a planning knowledge provider** (P-57 rewritten) — only the concrete adapters that agents use are handed over. This **resolves D-77**: planning knowledge does not go into `linker_domain`, so the OUTER core stays format-agnostic and does not bloat as backends multiply. Q-62 resolved, Q-64/Q-65 added. The end state changes from 2 apps to 3, but the goal (P4 owning its backends) is still achieved. Confirmed that the dividing line matches the existing seams — `planner` 3,182 lines (52% of common) vs `protocol`+`pipeline-*` 2,840 lines, `/api/models\|plans\|resources` vs `/api/processes\|runtime*` |
+| 2026-08-14 | Added topic M (repository end state) — D-75~D-78, P-57~P-59, Q-60~Q-63. At branch end, **only `apps/linker` and `apps/p4` remain, and `apps/llama` is dismantled**. **Role mapping settled: OUTER = `apps/linker` + `packages/linker_domain`** — this decides where capability records, orchestration, load plans, chain composition and identifier issuance belong. Controller/Agent/Node already exist in `apps/p4/entrypoints/*`. The dismantling covers 134 native files, 56 src files, 28 script files and **11,631 lines of `packages/llama_domain`**, the latter split three ways into placement heuristics and model inspection (→OUTER) and runtime verification and startup policy (→adapter). Q-59 moved to topic M |
+| 2026-08-14 | Added topic L (backend ownership and upstream tracking) — D-71~D-74, P-53~P-56, Q-56~Q-59. **Verification showed that "always pull the latest and compile with only the needed features attached" is already implemented** — pristine submodule, hash-verified ordered patches in `native/compat/<sha>/`, application in a `.cache/` worktree (output not committed), a patch-free stock build, and our C++ including only public headers. The remaining problems are **where ownership sits** (adapter and backend spread over different apps) and **the tracking cost** (of 2,219 patch lines, `0004`/`0006` account for 1,287 lines, 58%). P-54 writes down the policy that self-contained backends need zero upstream modification (vLLM needs only a pip pin) and only stage backends need `compat/`. The 2 upstream defect patches (138 lines) are to disappear through upstream contribution |
+| 2026-08-14 | **§91.0 rewrite vs revise decision record.** Considered rewriting as a new project and **concluded against it.** Destructive changes concentrate in `layers/runtime` (3,489 lines, 29% of the total), and the 3,145 lines of adapters largely survive. The scars (22 fix/revert commits out of 61 = 36%) are in the adapters and native code, not in runtime, and they live in comments, docs and commit messages rather than in the shape of the code, so "refer only to the implementation code" throws exactly that layer away. Three open items depend on the other session's measurements, so a rewrite would only move up the time they must be answered and lose the means of verification. The execution shape is a module-by-module rewrite of `layers/runtime`, and 3 conditions that would flip the decision are recorded alongside |
+| 2026-08-14 | Checked the adapter abstraction against the possibility of adopting vLLM — D-70, P-52, Q-54/Q-55. **As a single node it is possible** (the llamacpp adapter's entire inference path is a single OpenAI-compatible `POST /v1/chat/completions`+SSE). What gets in the way is D-62, D-58 and the lack of a `session_id` counterpart, all of which are existing defects coming to light. **As a chain stage it is impossible**, because vLLM does PP internally — not because of a P4 defect. This revealed that the contract lacks the distinction between **self-contained nodes and stage nodes** — stating that chain length 1 is valid lets self-contained backends fit in without design changes |
+| 2026-08-14 | Added topic K (message dispatch layers) — D-66~D-69, P-48~P-51, Q-52/Q-53. The target layering is **more generic toward the outside and more concrete toward the inside**, and kind interpretation belongs to the last two levels. Today kind branching is duplicated in `dispatch` and `AgentProcessor` (D-66), there is no participant delivery layer so the agent skips the node and goes straight to the adapter (D-67), even relaying requires decoding the whole body (D-68), and the queue is tied to the P4 message type (D-69). Added `3-c` (envelope/body separation) to phase 3. **Changed the section numbering convention — moved the synthesis sections to fixed numbers at §89 and above** so that adding topics does not shift the numbers |
+| 2026-08-14 | Added topic J (adapter boundary) — D-62~D-65, P-45~P-47, Q-50/Q-51. **Audit result: the dependency direction is correct** — `p4-protocol` has 0 dependencies, there are no back-references, and `layers/protocol/src` has 0 backend strings. The leaks are in contracts and docs — KV/FFN in `DRAFT_REPORT`, `docs/model-load.md` codifying llama.cpp knobs (the code is opaque, but the docs declare a contract), no adapter interface artifact, and a concrete adapter occupying the interface's name as `p4-adapter` (the layer README already calls it `pipeline/`). Added P-46/P-47 to phase 0. Renumbered sections (§90~§95) |
+| 2026-08-14 | Recorded the points of contact with the parallel TPS session (Mac+GB10, MI250) — D-60 (the load-time `max_sequences` declaration fixes a runtime-derived value as a gate), D-61 (no connection establishment policy), P-44 (`batching.*` demotion option), Q-48/Q-49. **This document settles neither on its own** — the protocol pinning down the throughput layer's decisions ahead of that layer is the failure pattern D-60 points out, so it is not repeated at the planning stage |
+| 2026-08-14 | **Rewrote §92 as "Relationship to throughput".** Throughput is decided not by P4 but by **the node queue and the physical concrete layer** — batch merging and decode credit (`listener/queue.rs`), the capacity gate (`capacity/mod.rs`), and native micro-batching and stage overlap. This reorganization therefore does not work against the throughput effort; they touch different layers. P4 has only two duties: **① deliver in full the declarations that layer needs, and ② not make the token path heavy**; `P-40`/`P-9` fulfil ① and are the only point of contact between the reorganization and throughput. Stated explicitly: "do not solve throughput problems with protocol gates" — the failure when the throttle moves away from the GPU is already on record |
+| 2026-08-14 | **Rewrote §91 as a sequential build order.** The earlier statement "phase 1 cannot be separated" **was wrong** — it confused `P-35` (relaying) needing `P-34` (addresses) with the CPS foundation needing addresses. `P-17` and `P-18` are wire-neutral and stand on their own. Redrew the phase boundaries by **wire compatibility** and restructured the phases as 0~6: finish everything possible while keeping v5 (0~2), then move to v6 (3~6). The single rollback boundary is between phases 2 and 3. **Decided:** Q-33/Q-24 — OUTER remembers the chain and load state, and the agent only reports failure on a mismatch. In return, agents and nodes become mechanically simple. **Decided:** stage reports are not counted as token-path cost — the signals are small, and without them OUTER cannot collect statistics. Added the native runtime and the bench tools to the impact scope |
+| 2026-08-14 | **Investigation complete.** Added the summary section and the reading order. Added §90 wire version decision (v6 settled, with 8 reasons), §91 reorganization order (6-phase dependency graph and per-phase gate Qs), and §92 throughput impact assessment (3 benefits, 5 costs, 3 items to measure). Promoted §94.1 state externalization from an "unfinished section" to **a settled-boundary conclusion**, and §94.2 continuation externalization to **a reduced-scope conclusion** — settling the asymmetry that inference continuation cannot be externalized because of KV ownership (P-32) and that only control continuation is a target. Redefined §94.4 as "not yet opened as topics". Renumbered sections §90~§95 |
+| 2026-08-13 | Added topic I (expressiveness of inference requests) — D-55~D-59, P-40~P-43, Q-44~Q-47. Added premise 12 (opaque pass-through of inference options + no silent omission). Checked against upstream `common_params_sampling` (about 35 fields). The key defect is that **the Pipeline adapter whitelists 5 sampling options and silently drops the rest**; structured output relies on logit filtering and cannot be done in post-processing, so it is unusable in principle on the Pipeline path (D-56). Renumbered sections (§89~§92) |
+| 2026-08-13 | **Added §1.3 identifier ownership.** Prompted by the decision that OUTER assigns the `request_id` of each inference, collected the accumulated issuer decisions into one table and wrote down the principle **"OUTER issues identifiers"**. The only exceptions are `runtime_generation` (adapter) and transport/CPS-internal IDs. This resolves "§1.3's 4-tuple rule", which P-21 and P-25 had referenced without an actual section. Promoted D-54 (the agent issuing `session_id`), added Q-43 |
+| 2026-08-13 | **Agent ID abolished (P-2 rewritten).** Every message self-describes the access address, so a separate agent ID is meaningless — **the access address itself is the agent's ID**. Withdrew the 3-layer `machine_id`/`boot_id`/`agent_instance_id` draft and resolved Q-4. `HardwareReport.agent_id`, `Participant.agent_id` and `agent-{host}-{pid}` are slated for removal. Redefined D-7 as "a process replacement cannot be detected", split it off into P-39 (incarnation marker) and added Q-42 |
+| 2026-08-13 | **Withdrawn (D-52, Q-40):** "agents do not report their reachable address" is not a defect. OUTER owns infrastructure facts and already knows the addresses, and protocol discovery would create an ordering contradiction. Wrote into premise 1 **"distinguish what must be learned through the protocol from what OUTER already knows"**, and removed the reachable address from the capability items. The adapter's `ADAPTER_REGISTER.endpoint` is a dynamic fact internal to the agent, so self-registration stays |
+| 2026-08-13 | **Self-describing addresses settled (P-34)** — messages self-describe not only the target object but also the connection info (URL, port and so on) of the agent it belongs to. A prerequisite for stateless relaying. The envelope, chain entries and return address share the same notation. Q-25/Q-35 marked decided, Q-39~Q-41 added. Added D-52 (agents do not report their reachable address) and reflected it in topic A's capability items; added D-53 (self-describing addresses and missing authz). A frame-layer change, hence v6 |
+| 2026-08-13 | **Relay placement settled** — built into the basic dispatch that takes messages off the queue, not into the handler layer. It sits just before the `handler.handle` call in the worker loop, as the mirror decision of `is_local_bypass`. Higher-level code is not aware of relaying. P-35 rewritten; `task_queue/worker` and `protocol/task` added to the impact scope |
+| 2026-08-13 | **Added premise 11 (network reachability) — the firewall constraint.** Rewrote premises 3 and 5: control instructions **pass through** the controller without being owned by it. Added a topology section to §1.2, fully revised the control path diagram, changed the inference return path to go through the gateway, and added a topology column to the role summary. Changed P-26's target (controller → gateway). Added topic H — D-47~D-51, P-34~P-37, Q-34~Q-37 |
+| 2026-08-13 | Added premise 10 (a node does not know its own load structure). **Withdrawn:** D-43 (no layer range) is not a defect but an intended abstraction — layer judgements are excluded from the entry check. **Withdrawn:** P-30 (expose the layer range as binding metadata) contradicted P-5's "orchestration constraints exist only in the first layer". Replaced by P-33. D-44 absorbed into D-41 and reduced. Added Q-33 |
+| 2026-08-13 | **Corrected (D-46):** ended the deferral of the deletion decision on `phase=DECODE`. It is settled as an implementation target because the node-driven decode loop requires it. Rewrote §94.3 from a "deletion decision" section into an "implementation settled" section |
+| 2026-08-13 | **Corrected (D-37):** classifying the `NodeNode` direction as "dead surface — deletion candidate" was a mistake. It is the core of the target structure's inference path, so it is an implementation target. Rewrote §94.3 accordingly. The deletion decision on `phase=DECODE` was also deferred until P-22 is settled |

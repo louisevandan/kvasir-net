@@ -1,20 +1,20 @@
-# 2026-09-09 — 포화와 GPU 사용률을 올리려는 실험 10회
+# 2026-09-09 — 10 experiments aimed at saturation and higher GPU utilisation
 
-종류: 실측 실험. 모델 크기·분할·resident·발행 정책·도착 패턴을 한 번에 하나씩 바꿨다.
-응답은 `judge.mjs`가 아니라 **원문을 직접 읽어** 판정했다.
-장소는 `m42-server2`(RTX 3090 ×2), 커밋 `6901f236a` 이후의 작업 트리.
+Type: measurement experiments. Model size, split, resident, issue policy and arrival pattern were changed one at a time.
+Responses were judged **by reading the raw text directly**, not with `judge.mjs`.
+Location: `m42-server2` (RTX 3090 ×2), working tree after commit `6901f236a`.
 
-숫자는 각 실행의 보존 산출물에서 재계산했다. 재현:
+The numbers were recomputed from each run's preserved artifacts. To reproduce:
 
 ```
 node test/benchmarks/p4-4node/measure-run.mjs target/saturation-20260909/<run id>
 ```
 
-## 실측표
+## Measurement table
 
-`st`=stage 수, `seq`=resident, `decMn/decMx`=decode batch 행 평균/최대, `fill%`=UBATCH(512) 채움률,
-`idle%`=head 유휴가 벽시계에서 차지하는 비율, `ovl2`=stage 2개 이상이 동시에 열린 시간 비율,
-`gpu0/1`=stage 실행창 평균 사용률, `zero`=그 창에서 0 %인 표본 수, `W`=평균 전력.
+`st`=stage count, `seq`=resident, `decMn/decMx`=mean/max decode batch rows, `fill%`=UBATCH(512) fill rate,
+`idle%`=share of wall-clock time the head is idle, `ovl2`=share of time with 2 or more stages open at once,
+`gpu0/1`=mean utilisation over the stage run window, `zero`=number of samples at 0 % in that window, `W`=mean power.
 
 ```
 run                      scenario                 st seq    TPS   ITL  batch  decMn decMx  fill% idle%  ovl2 depth  gpu0  gpu1  zero0 zero1   W0    W1
@@ -30,209 +30,210 @@ run                      scenario                 st seq    TPS   ITL  batch  de
 20260909T074931Z-8853b3e pressure_35b_burst 128/4s 2 160 302.49 478.4   1929  53.65    96  11.46  22.9  68.0  2.55  43.7  38.7  100/1337   78/1337 197.6 205.4
 ```
 
-열 개 실행 전부 512 요청 완료·512 해제, `error`·`cleanup_error` 모두 `null`이다.
+All ten runs completed 512 requests and released 512, with `error` and `cleanup_error` both `null`.
 
-## 1. 2B와 35B 사이에서 kernel 활성 비율이 크게 달랐다
+## 1. The kernel-active ratio differed widely between 2B and 35B
 
 | | 2B | 35B |
 | --- | ---: | ---: |
-| kernel 활성 창 평균 | 21.4–32.9 % | **36.8–50.7 %** |
-| 전력 | 98.8–160 W | **175–212.7 W** |
-| 창에서 0 %인 표본 | 9.7–28.4 % | 0–20.5 % |
+| Mean over kernel-active window | 21.4–32.9 % | **36.8–50.7 %** |
+| Power | 98.8–160 W | **175–212.7 W** |
+| Samples at 0 % in the window | 9.7–28.4 % | 0–20.5 % |
 
-**읽는 법.** `nvidia-smi`의 `utilization.gpu`는 표본 구간 중 **kernel이 하나라도 올라와 있던 시간의
-비율**이다. SM 점유율도, 연산 자원의 포화도도 아니다. 따라서 **0 % 표본이 없다는 것은 카드가 쉬지
-않았다는 뜻이 아니다** — 아무것도 올라와 있지 않은 표본 구간이 통째로 지나가지 않았다는 뜻일 뿐이다.
-전력은 별개의 관측이며 같은 방향으로 움직였다.
+**How to read it.** `utilization.gpu` from `nvidia-smi` is **the share of the sample interval during which at least one kernel
+was running**. It is neither SM occupancy nor the saturation of compute resources. So **having no 0 % samples does not mean the card never
+rested** — it only means that no sample interval passed entirely with nothing running.
+Power is a separate observation and moved in the same direction.
 
-**단일 원인으로 귀속하지 않는다.** 2B에서 35B로 갈 때 바뀐 것은 모델 크기만이 아니다. 구조(하이브리드
-recurrent), 양자화, flash attention, KV 형식, resident, 절단이 함께 바뀐다. "모델 크기가 사용률을
-결정한다"는 **아직 검증하지 않은 가설**이고, 이 표가 말하는 것은 두 구성 사이에 큰 차이가 있었다는
-사실뿐이다. 귀속하려면 한 모델 안에서 나머지를 고정한 비교가 필요하다.
+**This is not attributed to a single cause.** Going from 2B to 35B changes more than model size. Architecture (hybrid
+recurrent), quantization, flash attention, KV format, resident and cut all change together. "Model size determines utilisation"
+is **a hypothesis not yet verified**; all this table says is that there was a large difference between the two
+configurations. Attribution needs a comparison within one model with everything else fixed.
 
-## 2. 한 카드에 한 stage. 두 개를 얹으면 33 % 잃는다
+## 2. One stage per card. Putting two on a card loses 33 %
 
-resident를 96으로 고정하고 분할만 바꿨다.
+Resident was fixed at 96 and only the split was changed.
 
 | | 2 stage (1/card) | 4 stage (2/card) |
 | --- | ---: | ---: |
-| 생성 TPS | **275.35** | 183.00 |
+| Generation TPS | **275.35** | 183.00 |
 | GPU0 / GPU1 | **41.5 / 39.4 %** | 36.8 / 37.4 % |
-| head 유휴 | **24.7 %** | 57.0 % |
-| stage 시간 | 105.8 / 127.5 ms (20층씩) | 98.3 / 96.7 / 95.9 / 125.1 ms (10층씩) |
+| Head idle | **24.7 %** | 57.0 % |
+| Stage time | 105.8 / 127.5 ms (20 layers each) | 98.3 / 96.7 / 95.9 / 125.1 ms (10 layers each) |
 
-10층 stage가 약 97 ms, 20층 stage가 약 117 ms다. 두 점을 잇는 직선의 절편은 stage당 약 77 ms인데,
-**이 값은 실측으로 귀속된 고정비가 아니다.** 두 점은 batch 폭도, stage의 역할(head·중간·tail)도,
-같은 카드를 쓰는 process 수도 서로 다른 실행의 평균이다. 절편은 그런 평균들을 층 수로 이은
-경험적 값이며, **벽시계에서 빼도 되는 회수 가능한 비용으로 읽으면 안 된다.**
-분해는 [STEP 계측](../../../server/src/server/server_physical.cpp)의 parse/decode/sample/encode로
-해야 한다. 방향은 저장소가 09-04에 적은 "한 카드 한 stage가 35B에서 33 % 빠르다"와 같다.
+A 10-layer stage takes about 97 ms and a 20-layer stage about 117 ms. The line through those two points has an intercept of about 77 ms per stage, but
+**this value is not a fixed cost attributed by measurement.** The two points are averages of runs that differ in batch width, in stage role (head, middle, tail)
+and in the number of processes sharing the same card. The intercept is an empirical value obtained by joining such averages by layer count,
+and **it must not be read as a recoverable cost that can be subtracted from wall-clock time.**
+Decomposition must use the parse/decode/sample/encode breakdown of the [STEP instrumentation](../../../server/src/server/server_physical.cpp).
+The direction matches what the repository recorded on 09-04: "one stage per card is 33 % faster on 35B".
 
-따라서 `pressure_35b_4stage`(resident 256)가 사용률 50.7 %로 가장 높았던 것은 **분할 덕분이 아니라
-resident 덕분**이다. 4 stage는 stage당 가중치 지분이 절반이라 메모리 계획을 통과할 뿐이다.
+So the fact that `pressure_35b_4stage` (resident 256) had the highest utilisation at 50.7 % is **due to resident, not
+to the split**. With 4 stages each stage carries half the weight share, which is merely what lets it pass the memory plan.
 
-## 3. 적재 판정이 최적 구성을 막는다
+## 3. The load verdict blocks the best configuration
 
-35B 실행 5회의 계획을 모으면 규칙이 정확히 맞는다. 카드 초기 여유는 22.76 GiB다(단위 GiB).
+Collecting the plans of the 5 35B runs, the rule fits exactly. The card's initial free memory is 22.76 GiB (units are GiB).
 
-| arm | n_seq | `CUDA0 RS buffer` | 계획 `free` | free + RS | `required` | 판정 |
+| arm | n_seq | `CUDA0 RS buffer` | plan `free` | free + RS | `required` | Verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | :-- |
 | 2 stage | 96 | 2,814 MiB = 2.75 | 20.01 | **22.76** | 14.01 | ✓ |
 | 2 stage | 256 | 7,504 MiB = 7.33 | 15.43 | **22.76** | 19.72 | ✗ |
-| 2 stage(재시도) | 256 | 7,504 MiB = 7.33 | 15.43 | **22.76** | 19.72 | ✗ |
+| 2 stage (retry) | 256 | 7,504 MiB = 7.33 | 15.43 | **22.76** | 19.72 | ✗ |
 | 4 stage | 96 | 1,407 MiB = 1.37 | 21.38 | **22.75** | 6.96 | ✓ |
 | 4 stage | 256 | 3,752 MiB = 3.66 | 19.09 | **22.75** | 10.14 | ✓ |
 
-recurrent 상태 버퍼는 계획을 세우기 **전에 이미 할당**돼 `free`에서 빠져 있는데,
-`required`의 `context` 항이 같은 버퍼를 다시 센다. 판정식은
-[stage_memory_plan.cpp:107](../../../../../server/src/runtime/stage_memory_plan.cpp)의
-`entry.required() <= entry.free`이고 `free`는 컨텍스트 생성 뒤의 `ggml_backend_dev_memory` 값이다.
+The recurrent state buffer is **already allocated before** the plan is built, so it is missing from `free`,
+yet the `context` term of `required` counts the same buffer again. The verdict expression is
+`entry.required() <= entry.free` in [stage_memory_plan.cpp:107](../../../../../server/src/runtime/stage_memory_plan.cpp),
+and `free` is the `ggml_backend_dev_memory` value after context creation.
 
-정확히 말하면 원인은 **가중치의 중복 계산이 아니라 계획용 recurrent 버퍼의 실제 할당**이다.
-계획용 모델은 `no_alloc=true`로 만들지만 recurrent 생성자는 실제 버퍼를 잡는다. `context` 항에는
-그 recurrent와 어텐션 KV(r256에서 각각 7,504 MiB와 680 MiB)가 함께 들어 있고 둘의 취급이 다르므로,
-`model + compute + 2 × context`는 편의상의 근사이지 정확한 조건식이 아니다.
+Strictly speaking, the cause is **not double-counting of weights but the actual allocation of the recurrent buffer used for planning**.
+The planning model is created with `no_alloc=true`, but the recurrent constructor takes a real buffer. The `context` term contains
+both that recurrent buffer and the attention KV (7,504 MiB and 680 MiB respectively at r256), and the two are handled differently, so
+`model + compute + 2 × context` is a convenient approximation, not an exact condition.
 
-효과는 분명하다. 이 하이브리드 35B는 **시퀀스당 32.0 MiB**(recurrent, 컨텍스트 길이와 무관)이므로
-2 stage에서 resident 상한이 실제 필요량보다 훨씬 낮게 깎인다. r256에서 실제로 필요한 19.72 GiB는
-24 GiB 카드에 들어간다.
+The effect is clear. This hybrid 35B uses **32.0 MiB per sequence** (recurrent, independent of context length), so
+with 2 stages the resident cap is cut far below the actual requirement. The 19.72 GiB actually needed at r256
+fits on a 24 GiB card.
 
-**이것은 staged 서버(C++)이며 격리 계약상 다른 계층이라 이 세션에서 고치지 않았다.**
-수정 방향은 no-alloc 계약과 가용량 계산 기준을 맞추는 것이며, **fit 검사를 없애거나 `free`에
-context를 더하는 보정은 부적절하다.** "오거절을 고쳤다"와 "r256이 안전하게 실행된다"는 서로 다른
-완료 조건이고, 같은 카드를 여러 process가 쓸 때의 합산 예약도 개별 stage의 통과로 대체할 수 없다.
+**This is the staged server (C++), a different layer under the isolation contract, so it was not fixed in this session.**
+The fix direction is to align the no-alloc contract with the basis for computing available memory; **removing the fit check or compensating by adding
+context to `free` is inappropriate.** "Fixed the false rejection" and "r256 runs safely" are different
+completion conditions, and the combined reservation when several processes share one card cannot be replaced by individual stages passing.
 
-## 4. UBATCH 채움률은 목표 지표가 아니다
+## 4. UBATCH fill rate is not a target metric
 
-같은 구성(2 stage, resident 160)에서 `P4_STAGED_MIN_BATCH_ROWS=64`만 켰다.
+Same configuration (2 stage, resident 160), with only `P4_STAGED_MIN_BATCH_ROWS=64` turned on.
 
-| | 기본 | min-batch-rows 64 |
+| | Default | min-batch-rows 64 |
 | --- | ---: | ---: |
-| **채움률** | 9.09 % | **25.14 %** |
-| decode 폭 평균 / 최대 | 42.49 / 64 | 119.45 / 160 |
-| 물리 batch | 2,430 | 879 |
-| **생성 TPS** | **289.79** | 234.58 |
+| **Fill rate** | 9.09 % | **25.14 %** |
+| Decode width mean / max | 42.49 / 64 | 119.45 / 160 |
+| Physical batches | 2,430 | 879 |
+| **Generation TPS** | **289.79** | 234.58 |
 | **GPU0 / GPU1** | **44.5 / 40.9 %** | 27.1 / 26.6 % |
 | GPU p50 | 47 / 39 % | **5 / 4 %** |
-| stage 2개 이상 겹침 | 73 % | **3 %** |
-| 파이프라인 깊이 | 3.29 | **1.03** |
+| 2+ stages overlapping | 73 % | **3 %** |
+| Pipeline depth | 3.29 | **1.03** |
 | `idle_gated` | 0 | 837 |
 
-폭을 모으려고 기다리면 파이프라인이 직렬화된다. 채움률은 2.8배가 됐고 TPS는 19 %,
-kernel 활성 비율은 40 % 떨어졌다. **채움률은 목표 지표가 아니다.**
+Waiting to gather width serializes the pipeline. Fill rate rose 2.8 times, while TPS fell 19 % and
+the kernel-active ratio fell 40 %. **Fill rate is not a target metric.**
 
-`min-batch-rows`가 실제로 하는 일도 정확히 적어 둔다. [drive.rs](../../../adapter/src/v2/node/worker/drive.rs)의
-gate는 **비행 중인 작업이 있고** 적격 행 수가 문턱보다 적을 때만 발행을 미룬다. 아무것도 비행 중이
-아니면 문턱을 무시한다. 따라서 이것은 "모든 physical batch에 최소 행 수를 보장하는" 옵션이 아니다.
+What `min-batch-rows` actually does is also recorded precisely. The gate in [drive.rs](../../../adapter/src/v2/node/worker/drive.rs)
+defers issuing only when **work is in flight** and the number of eligible rows is below the threshold. If nothing is in flight,
+it ignores the threshold. So this is not an option that "guarantees a minimum row count for every physical batch".
 
-폭 32에서 98 ms, 폭 160에서 278 ms를 이으면 행당 1.41 ms·절편 53 ms가 나오지만, **두 점은 서로 다른
-실행의 평균이다.** min64 실행 자신의 폭 32 평균은 88.62 ms다. 이 절편도 §2의 77 ms와 같은 성격의
-경험적 추정이며 원인별 실측 비용이 아니다.
+Joining 98 ms at width 32 and 278 ms at width 160 gives 1.41 ms per row and an intercept of 53 ms, but **the two points are averages of different
+runs.** The min64 run's own mean at width 32 is 88.62 ms. This intercept is an empirical estimate of the same kind as the 77 ms in §2,
+not a measured cost per cause.
 
-## 5. 폭을 정하는 것은 resident가 아니라 도착 버스트다
+## 5. Width is set by arrival bursts, not by resident
 
-resident 96 → 160으로 1.67배 올렸는데 decode 폭 분포는 **32와 64 두 개뿐**이고 최대가 그대로였다.
+Raising resident from 96 to 160 (1.67 times) left the decode width distribution with **only two values, 32 and 64**, and the maximum unchanged.
 
-| decode 폭 | resident 96 | resident 160 |
+| Decode width | resident 96 | resident 160 |
 | ---: | ---: | ---: |
-| 32 | 1,996회 | 1,612회 |
-| 64 | 594회 | 786회 |
-| 96 이상 | **0회** | **0회** |
+| 32 | 1,996 times | 1,612 times |
+| 64 | 594 times | 786 times |
+| 96 or more | **0 times** | **0 times** |
 
-같은 프롬프트로 함께 도착한 요청은 같은 보조로 decode하고, 다른 버스트는 파이프라인 위상이
-어긋나 동시에 발행되지 못한다. 그래서 **동시에 발행 가능한 집합은 버스트 한두 개 크기**다.
-도착률을 초당 32건으로 고정하고 버스트 크기만 바꾸면 이것이 직접 보인다.
+Requests that arrive together with the same prompt decode in the same step, while different bursts are out of phase in the pipeline
+and cannot be issued together. So **the set that can be issued at once is the size of one or two bursts**.
+Fixing the arrival rate at 32 per second and changing only the burst size shows this directly.
 
-| 버스트 | decode 폭 평균 / 최대 | 물리 batch | 생성 TPS | 토큰 간격 p50 | GPU0 / GPU1 |
+| Burst | Decode width mean / max | Physical batches | Generation TPS | Inter-token gap p50 | GPU0 / GPU1 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 4건 / 125 ms | 22.76 / 52 | 4,526 | 223.10 | 659.9 ms | 30.1 / 31.0 % |
-| 32건 / 1 s | 42.49 / 64 | 2,430 | 289.79 | 537.3 ms | 44.5 / 40.9 % |
-| **64건 / 2 s** | **51.12 / 64** | **2,021** | **313.80** | **478.7 ms** | 41.8 / 40.8 % |
-| 128건 / 4 s | 53.65 / 96 | 1,929 | 302.49 | 478.4 ms | 43.7 / 38.7 % |
+| 4 / 125 ms | 22.76 / 52 | 4,526 | 223.10 | 659.9 ms | 30.1 / 31.0 % |
+| 32 / 1 s | 42.49 / 64 | 2,430 | 289.79 | 537.3 ms | 44.5 / 40.9 % |
+| **64 / 2 s** | **51.12 / 64** | **2,021** | **313.80** | **478.7 ms** | 41.8 / 40.8 % |
+| 128 / 4 s | 53.65 / 96 | 1,929 | 302.49 | 478.4 ms | 43.7 / 38.7 % |
 
-**도착을 고르게 펴면 폭이 반으로 잘리고 batch 수가 86 % 늘어 TPS가 23 % 떨어진다.**
-버스트를 키우면 기다림 없이 폭이 넓어지고, 32 → 64건 구간에서는 TPS와 지연이 함께 좋아진다.
+**Spreading arrivals evenly halves the width, increases the batch count by 86 %, and drops TPS by 23 %.**
+Larger bursts widen batches without waiting, and between 32 and 64 requests per burst both TPS and latency improve.
 
-**그러나 폭만으로는 설명되지 않는다.** 64 → 128건에서 평균 폭은 51.12 → 53.65로 늘었는데 TPS는
-313.80 → 302.49로 떨어졌다. kernel 활성 비율은 **카드마다 방향이 엇갈린다** — gpu0은 41.8 → 43.7 %로
-오르고 gpu1은 40.8 → 38.7 %로 내린다. 한 방향으로 움직였다고 읽으면 안 된다.
-"기다리지 않고 얻은 폭이 커지면 TPS와 kernel 활성이 함께 오른다"는 **성립하지 않는다.**
-이 표가 말하는 것은 **도착 패턴에 대한 민감도**이며, 입력을 고정한 채 얻은 개선이 아니다.
+**But width alone does not explain it.** From 64 to 128, the mean width rose from 51.12 to 53.65 while TPS
+fell from 313.80 to 302.49. The kernel-active ratio **moved in opposite directions on the two cards** — gpu0 rose from 41.8 to 43.7 %
+and gpu1 fell from 40.8 to 38.7 %. It must not be read as moving in one direction.
+"When width gained without waiting grows, TPS and kernel activity rise together" **does not hold.**
+What this table shows is **sensitivity to the arrival pattern**, not an improvement obtained with the input held fixed.
 
-`pressure_35b_stagger`는 다른 이유로 중요하다. tail의 stage 점유가 97.2 %인데 kernel 활성 비율은
-31 %다. 다만 그 97.2 %는 [drive.rs](../../../adapter/src/v2/node/worker/drive.rs)가 재는
-**native 요청부터 응답까지의 RPC 점유**이지 GPU 계산 시간이 아니다. RPC가 계속 열려 있다는 것만으로
-sampler·전송·동기화·kernel 중 무엇이 지배하는지는 **확정할 수 없다.** 두 값의 간격은 분해가 필요한
-관측이지 결론이 아니다.
+`pressure_35b_stagger` matters for a different reason. The tail's stage occupancy is 97.2 %, while the kernel-active ratio is
+31 %. However, that 97.2 % is the **RPC occupancy from native request to response** measured by [drive.rs](../../../adapter/src/v2/node/worker/drive.rs),
+not GPU compute time. The fact that the RPC stays open **cannot establish** which of
+sampler, transfer, synchronization or kernel dominates. The gap between the two values is an observation that needs decomposition,
+not a conclusion.
 
-## 6. 응답 — 직접 읽고 판정했다
+## 6. Responses — read and judged directly
 
-프롬프트는 이 모델 GGUF의 `tokenizer.chat_template`을 읽어 그 템플릿이 `enable_thinking: false`에서
-내보내는 문자열과 같게 썼다.
+The prompt was written by reading this model GGUF's `tokenizer.chat_template` so that it matches the string that template
+emits with `enable_thinking: false`.
 
 ```
 <|im_start|>user\n타입스크립트에 대해 한국어로 설명하라<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n
+// English: "Explain TypeScript in Korean"
 ```
 
-35B 8개 실행 전부에서:
+Across all 8 35B runs:
 
-| 검사 | 결과 |
+| Check | Result |
 | --- | --- |
-| `<think>` 태그 유출 | **0 / 512** (8회 모두) |
-| ChatML 마커 유출 | **0 / 512** (8회 모두) |
-| 최다 반복 24자 창 비율 | 0.06–0.11 — 원문을 읽어 마크다운 구조 반복임을 확인, 퇴화 아님 |
-| 서로 다른 응답 | 283–417 / 512 |
-| 종료 사유 | 512/512 `length` — `max_tokens` 200에서 잘림 |
+| `<think>` tag leakage | **0 / 512** (all 8 runs) |
+| ChatML marker leakage | **0 / 512** (all 8 runs) |
+| Most-repeated 24-character window ratio | 0.06–0.11 — confirmed by reading the raw text as repeated markdown structure, not degeneration |
+| Distinct responses | 283–417 / 512 |
+| Stop reason | 512/512 `length` — truncated at `max_tokens` 200 |
 
-**싱킹 억제가 실제로 동작했다.** 한글 비율이 0.45로 2B(0.54)보다 낮은 것은 언어 이탈이 아니라
-TypeScript 코드 블록 때문이다(147/512가 코드 펜스를 포함).
+**Thinking suppression actually worked.** The Hangul ratio of 0.45, lower than 2B (0.54), is due to
+TypeScript code blocks, not language drift (147/512 contain a code fence).
 
-**수락 범위를 명시한다.** 사용자는 이 **고정 길이 부하시험**에서 잘린 응답을 정상 응답으로
-받아들인다고 판단했다. 그 판단은 이 실험의 수치를 인용할 수 있게 하지만, **실제 서비스의 내용·형식·
-완결성 판정을 대신하지 않는다.** 성공 11회 전부가 요청당 200토큰 `length` 종료이고, 기본 r160에서는
-코드 블록이 닫히지 않은 응답이 99건이다. 여기의 TPS는 전부 **품질 승인 전, 고정 길이 부하의
-생성 속도**다.
+**The acceptance scope is stated explicitly.** The user decided to accept truncated responses as normal responses in this
+**fixed-length load test**. That decision allows the figures of this experiment to be cited, but **it does not replace judgement of content, format
+and completeness for a real service.** All 11 successful runs stopped with `length` at 200 tokens per request, and in the default r160
+99 responses have an unclosed code block. Every TPS here is **generation speed under fixed-length load, before quality
+approval**.
 
-## 이 문서가 주장하지 않는 것
+## What this document does not claim
 
-- **하드웨어 한계도 최적값도 아니다.** 313.80 TPS는 **시험한 조건 중 단회 최고치**다.
-  "35B가 약 276 TPS에서 포화다"라고 적었던 앞선 진술은 그 뒤 실행이 반박했으므로 **철회한다.**
-- 원인 귀속. 2B와 35B의 차이, tail의 RPC 점유와 kernel 활성의 간격, 절편 53–77 ms는 모두
-  분해 전의 관측이다. parse·decode·sample·encode는 `P4_STAGED_TRACE_STEP`으로 따로 재야 한다.
-- 서비스 성능. 도착 패턴을 바꿔 얻은 차이는 **입력 민감도**이며, 입력을 고정한 채 개선한 결과와
-  같은 열에 놓을 수 없다.
-- 정상 서비스 수용. 모든 요청이 14–16 초 안에 도착하고 그 뒤 수백 초 backlog를 처리한다. 같은 짧은
-  질문 512건이므로 혼합 prompt·최소 8 wave·총 8R 이상을 요구하는 sustained 조건에 못 미친다.
-  기본 r160의 **TTFT 중앙값은 93.9 초, p90은 197.6 초**다. TTFT는 수용 대기만의 측정이 아니므로
-  admission 병목으로 귀속하지 않는다. 다만 토큰 간격만 보면 이 대기가 통째로 가려진다.
-- 통계적 유의성. 각 조건 1회씩이고 paired 반복이 없다. 차이는 후보 선정 자료로만 쓴다.
-- 다른 모델·다른 카드로의 일반화. 시퀀스당 32.0 MiB는 이 하이브리드 모델의 성질이다.
-- 다중 물리 컴퓨터 수용. 3090 두 장은 한 호스트다.
+- **Neither a hardware limit nor an optimum.** 313.80 TPS is **the best single-run value among the conditions tested**.
+  The earlier statement "35B saturates at about 276 TPS" was contradicted by later runs and is **withdrawn**.
+- Cause attribution. The difference between 2B and 35B, the gap between tail RPC occupancy and kernel activity, and the 53–77 ms intercepts are all
+  observations before decomposition. parse, decode, sample and encode must be measured separately with `P4_STAGED_TRACE_STEP`.
+- Service performance. Differences obtained by changing the arrival pattern are **input sensitivity**, and cannot be placed in the same column as
+  results improved with the input held fixed.
+- Normal service acceptance. All requests arrive within 14–16 seconds, followed by a backlog of hundreds of seconds. With 512 copies of the same short
+  question, this falls short of the sustained condition requiring mixed prompts, at least 8 waves and a total of 8R or more.
+  In the default r160, **median TTFT is 93.9 seconds and p90 is 197.6 seconds**. TTFT is not a measure of admission waiting alone, so
+  it is not attributed to an admission bottleneck. Still, looking only at inter-token gaps hides this wait entirely.
+- Statistical significance. Each condition had 1 run, with no paired repetitions. The differences serve only as candidate-selection data.
+- Generalization to other models or cards. 32.0 MiB per sequence is a property of this hybrid model.
+- Multi-physical-computer acceptance. The two 3090s are in one host.
 
-## 현재 근거가 허용하는 판단
+## Judgements the current evidence allows
 
-| 항목 | 판단 |
+| Item | Judgement |
 | --- | --- |
-| 35B 2-stage/r96 대 4-stage/r96 | 해당 단회 실행에서 2-stage가 유리. **기준선 후보**로 사용 |
-| `min-batch-rows 64` | 같은 입력에서 TPS 약 19 % 하락. **채택 후보에서 제외** |
-| 도착 패턴 | 성능에 큰 영향. **입력 민감도 실험**으로 분류 |
-| 최대 처리량 | 313.80은 **시험한 조건 중 단회 최고치**. 한계도 최적도 아님 |
-| 폭과 처리량 | 64 → 128건에서 폭은 늘고 TPS는 하락. **폭만으로 설명 불가** |
-| kernel 활성 | kernel 활성 시간·RPC 점유·SM 점유율을 구분해야 함 |
-| 절편 77 ms·53 ms | 서로 다른 조건의 평균에서 얻은 추정. **실측 비용으로 인용 금지** |
-| 메모리 계획 | 계획용 recurrent 실제 할당으로 가용량이 축소되는 결함. **수정 근거 충분** |
+| 35B 2-stage/r96 vs 4-stage/r96 | 2-stage was better in that single run. Use as a **baseline candidate** |
+| `min-batch-rows 64` | About 19 % TPS drop on the same input. **Excluded from adoption candidates** |
+| Arrival pattern | Large effect on performance. Classified as an **input-sensitivity experiment** |
+| Maximum throughput | 313.80 is **the best single-run value among the conditions tested**. Neither a limit nor an optimum |
+| Width and throughput | From 64 to 128, width rose and TPS fell. **Width alone cannot explain it** |
+| Kernel activity | Kernel-active time, RPC occupancy and SM occupancy must be distinguished |
+| Intercepts 77 ms·53 ms | Estimates from averages under different conditions. **Do not cite as measured costs** |
+| Memory plan | A defect where the actual allocation of the planning recurrent buffer shrinks available memory. **Sufficient basis for a fix** |
 
-## 다음 순서
+## Next steps
 
-실행 순서는 [로드맵](../../../../../../../docs/distributed-batching-roadmap.md)이 소유한다.
-이 문서가 근거를 대는 항목만 적는다.
+The execution order is owned by the [roadmap](../../../../../../../docs/distributed-batching-roadmap.md).
+Only the items this document provides evidence for are listed.
 
-1. **실패의 부분 결과 보존.** 4-stage 실패 4회에는 `artifact.json`이 없어 최초 원인을 관측 증거
-   누락·스트림 중단·10054와 분리할 수 없었다. 재시도 성공으로 닫힌 문제가 아니다.
-2. **no-alloc recurrent 결함 수정과 검증(3절).**
-3. **B2/B3 수용·반환 예산.** 이번 작업은 시나리오·측정·문서이며 그 구현은 전진하지 않았다.
-4. **완결 응답 기준선과 STEP trace 확보 뒤 반복 A/B.** 단회 최고치를 최적값으로 승격하지 않는다.
+1. **Preserve partial results of failures.** The 4 failed 4-stage runs had no `artifact.json`, so the first cause could not be separated
+   from missing observation evidence, stream interruption or 10054. This is not a problem closed by a successful retry.
+2. **Fix and verify the no-alloc recurrent defect (section 3).**
+3. **B2/B3 acceptance and return budget.** This work was scenarios, measurement and documentation; that implementation did not advance.
+4. **Repeated A/B after securing a complete-response baseline and STEP traces.** Do not promote a single-run best to an optimum.
 
-**`state.rs`의 `outstanding > 0` 검사는 유지한다.** 다음 decode는 앞 토큰의 결과를 필요로 하므로,
-이 검사를 없애 적격 행을 늘리는 것은 최적화가 아니라 의존성 위반이다. 투기 실행을 도입한다면
-proposal·Verify·Replay·SETTLE의 별도 계약과 검증이 필요하다.
+**Keep the `outstanding > 0` check in `state.rs`.** The next decode needs the result of the previous token, so
+removing this check to increase eligible rows is not an optimization but a dependency violation. Introducing speculative execution
+would need a separate contract and verification for proposal, Verify, Replay and SETTLE.

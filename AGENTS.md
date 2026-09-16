@@ -1,88 +1,88 @@
-# P4 개발 인수인계 규칙
+# P4 development handoff rules
 
-이 저장소를 처음 접한 세션도 다음 순서로 시작한다. 대화 기록은 필요하지 않다.
+A session that is new to this repository still starts in the following order. No conversation history is needed.
 
-1. [현재 실행 로드맵](docs/distributed-batching-roadmap.md)을 끝까지 읽는다.
-2. [검증·실기 수용 규약](docs/distributed-batching-verification.md)을 끝까지 읽는다.
-3. [계층 격리 계약](docs/layer-isolation-contract.md)을 읽고 P4/어댑터/native/llama/backend의 책임을 확인한다.
-4. [문서 안내도](docs/document-map.md)에서 작업 대상의 계약 소유 문서를 읽는다.
-5. HEAD·작업 트리·실행 경로를 확인한다. 문서의 기준 커밋과 다르면 먼저 차이를 감사한다.
+1. Read the [current execution roadmap](docs/distributed-batching-roadmap.md) to the end.
+2. Read the [verification and real-hardware acceptance conventions](docs/distributed-batching-verification.md) to the end.
+3. Read the [layer isolation contract](docs/layer-isolation-contract.md) and confirm the responsibilities of P4, the adapters, native, llama and the backends.
+4. In the [document map](docs/document-map.md), read the document that owns the contract for your work target.
+5. Check HEAD, the working tree and the execution path. If they differ from a document's baseline commit, audit the difference first.
 
-## 최우선 목표
+## Top-priority goal
 
-초대형 모델을 여러 물리 컴퓨터의 분산 노드에 적재하고, 강한 연속 웨이브 요청을
-정상 프롬프트와 정상 응답으로 처리하면서 유효 생성 TPS와 GPU 활용을 최대화한다.
-단위 시험·시뮬레이터·한 컴퓨터의 여러 프로세스·작은 모델은 최종 성과 증명이 아니다.
-최종 성과는 로드맵과 검증 규약이 정한 다중 컴퓨터 실기 웨이브 증거로만 승인한다.
+Load very large models onto distributed nodes across several physical computers, and serve heavy continuous request waves
+with normal prompts and normal responses while maximizing useful generation TPS and GPU utilization.
+Unit tests, simulators, several processes on one computer and small models are not proof of the final result.
+The final result is approved only by the multi-computer real-hardware wave evidence defined by the roadmap and the verification conventions.
 
-## 변경과 완료에 대한 강제 규칙
+## Mandatory rules for changes and completion
 
-- 현재 실행 순서의 단독 소유자는 로드맵이다. 과거 U/P 시리즈를 다시 직렬 선행 조건으로 만들지 않는다.
-- 문서의 계획·목표 계약을 구현 사실로 읽지 않는다. 실행 경로는 event runtime을 추적한다.
-- 기능 수정에는 실패 반례, 실제 소비 경로 시험, 수정 제거 시 실패하는 변이 검증을 남긴다.
-- 안전성·문서·단위시험 단계는 `enabling`이며 현재 최종 source의 실제 서비스 envelope가 통과하기 전
-  제품 무결성 완료나 성능 진전으로 세지 않는다. 먼저 단일 요청·bounded 지속 유입·과부하/취소/drain·
-  분산·soak의 무결성 기준선을 닫고, 그 뒤에만 성능 후보를 연다.
-- 모든 모델 실행은 단일 요청과 지속 웨이브에서 TTFT, prefill rows/s, useful generation TPS, phase별
-  batch 폭/채움, runnable/blocked, GPU 표본 coverage/util/memory/power, 정상 응답·정산·회수를 같은
-  분석창으로 남긴다. 자료가 없으면 0이나 과거 다른 모델 수치로 채우지 않고 미측정으로 판정한다.
-- 성능 관련 변경은 같은 모델·artifact·topology·resident·KV·corpus·도착열·출력 조건의 baseline과
-  candidate를 비교한다. 최소한 단일 요청과 지속 웨이브를 둘 다 재실행하고, 개선 수치가 없으면 성능
-  단계 진전으로 세지 않는다. 무결성이 깨진 빠른 후보는 즉시 회귀다.
-- 새 단계에 착수하기 전에 같은 경계·오류 문자열·자원 종류를 과거 보고와
-  [결정론적 실행 장부](docs/deterministic-execution-register.md)에서 검색한다. 재사용할 수 있는 실패는
-  현재 계획의 시험 ID와 자동 차단 수단에 연결하고, 적용되지 않는 항목은 이유를 적는다. 과거 실패를
-  읽기만 하고 새 실행계획에서 참조하지 않은 상태로 첫 실행을 시작하지 않는다.
-- 실패 실행은 다음 실행 전에 재현 조건을 불변식으로 정리하고 자동 사전검사·assertion·시험 중 하나로
-  고정한다. 보고서에 교훈만 적고 같은 실패 종류를 다시 사람 판단에 맡기지 않는다. 같은 실패 종류를
-  막는 새 결정론적 검사가 없으면 다음 모델 실행을 시작하지 않는다.
-- 단계별 3회는 첫 실행에 소스·호출자·반환 경로·상태·자원 경계를 모두 검토한 완성 후보를 넣고,
-  두 번째에는 증거로 특정한 한 가지 차이만 수정하며, 세 번째에는 그 수정의 확인만 한다. 세 번째 뒤에는
-  코드·계약·사전검사를 바꾸어 독립 검토하기 전 같은 실행을 반복하지 않는다.
-- 각 실행 실패에는 안정된 교훈 ID, 반증된 가설, 증명된 원인, 새 자동 차단 경로, 이 교훈을 재사용할
-  다음 단계/시험을 기록한다. 교훈 ID의 차단 수단이 아직 없으면 실행 가능 상태가 아니라 분석 중이다.
-- 커밋 전 `git diff --numstat`과 `git diff --cached --stat`을 확인한다. 의도하지 않은 파일 전체 줄바꿈,
-  대량 삭제·재추가, 생성물 유입이 있으면 커밋하지 않고 원문에서 전진 복구한다.
-- 원격 event runtime의 연결성은 설정에 적힌 advertised address와 반환 경로를 그대로 사용한 agent별
-  양방향 왕복으로 증명한다. SSH·`nc`·한 방향 socket 연결은 이 증거를 대신하지 않는다.
-- native listener 포트는 참여 OS마다 실제 동적/ephemeral 범위를 조회해 범위 밖 또는 명시적으로 예약된
-  값만 사용한다. 모델 적재 전 자동 검사로 충돌을 거부한다.
-- 실패 회수 완료는 INSPECT nodes 0, task 소유 native child 0, task 소유 listener 0과 transport failure의
-  보존·정산을 함께 확인한다. agent 종료만으로 native 회수를 주장하지 않는다.
-- 거부 시 요청뿐 아니라 원장·예약·credit·출력 효과가 보존되는지 검사한다.
-- 모델·시뮬레이터가 같은 함수를 호출한다는 것과 실제 경로를 시험했다는 것을 구분한다.
-- 구현에 맞춰 기대값·골든·judge·상한을 완화하거나 실패 입력을 삭제하여 통과시키지 않는다.
-- 전체 집계는 `cargo test --workspace --no-fail-fast`의 최종 종료와 모든 summary로 계산한다.
-  미실행·feature 제외·ignored·실패는 별도다. 새 필수 시험을 feature 뒤로 숨기지 않는다.
-- 변이는 독립 복사본/검증용 worktree에서만 한다. 사용자의 작업 트리를 checkout/reset으로 복원하지 않는다.
-- 변이의 실제 재컴파일과 source/binary 결속을 확인한다. 공유 build cache가 baseline을 재사용한 실행은 증거에서 제외한다.
-- 측정 arm의 소스·바이너리·모델·워크로드를 봉인한 뒤에는 수정하지 않는다. 다른 작업은 다른 checkout에서 한다.
-- GPU 사용률·RPC 깊이·혼합 배치 수·행 수만으로 성능 또는 정상 응답을 승인하지 않는다.
-- 요청·정산·edge credit·KV 완료의 의미를 혼동하지 않는다. 전송 credit 반환은 KV 정지점 증거가 아니다.
-- 노드 수는 모델·KV 용량·합법적 컷·배포 제약이다. 카드당 한 노드 제한을 일반 규칙으로 만들지 않는다.
-- 정책/원장에 llama.cpp 비공개 타입을 넣지 않는다. backend 중립 코어 수정은 중립성 시험을 동반한다.
-- upstream 적응은 격리 계약의 허용 모듈 안에서 한다. direct include뿐 아니라 transitive include/link,
-  전방 선언·public signature·imported relink를 검사한다. 위층 수정이 필요하면 계약 변경을 별도 승인·검증한다.
-- llama.cpp 추상층과 ggml/CUDA·CPU·Metal 구상 backend를 구분한다. pin clean replay는 의미 호환 증명이 아니다.
-- 의존 격리·상태 변경 권한·의미 호환의 세 조건을 따로 검증한다. 동일 의미의 upstream 적응은
-  격리 계약의 허용 모듈 안에서 끝내며, pure 원장/정책 수정이 필요하면 경계 누출 또는 계약 변경으로 먼저 심사한다.
-- “P4 소유”를 공통 코어 소유로 오독하지 않는다. batch/flight/KV/shape/stage codec은 어댑터 소유이며
-  공통 코어는 불투명 payload를 전달한다. 호환층의 Impl/internal accessor·raw ordinal도 격리 검사 대상이다.
-- 정산 승인을 우회해 token/native 효과를 먼저 내보내지 않는다. 원장 commit과 effect intent를 결속하고,
-  외부 효과 실패·결과 불명은 별도 진행 상태로 보존한다. compiler 격리와 상태 권한 격리를 함께 검사한다.
-- 위험한 실험 옵션은 증명 전 기본 비활성이다. 병렬 sampler는 공유 context 안전성 검증 전 기본 직렬이다.
-- 각 단계 종료 시 코드 기준, 시험 ID/명령/결과, 실패 증거, 남은 단계와 다음 첫 행동을 기록한다.
-  최종 소스와 검증한 소스가 다르면 완료를 주장하지 않는다.
-- 구현·회귀 고정 등 복원 가능한 중간 지점마다 커밋한다. 커밋 전 다른 작성자를 멈추고 전체
-  비무시 변경을 확인하여 소스·시험·문서를 모두 포함한다. 임시 산출물·로컬 비밀은 ignore로 관리하며
-  필요한 파일을 일부만 stage해 남기지 않는다. 커밋 직후 비무시 dirty/untracked 0을 확인한다.
-  중간 실패 상태는 WIP와 정확한 실패·다음 행동을 명시하며 green/완료로 포장하지 않는다. push는 별도 권한이다.
-- 검토 요청은 읽기 전용이다. 개발 요청도 무관한 변경·원격 프로세스 종료·배포·push 권한을 확대하지 않는다.
+- The roadmap is the sole owner of the current execution order. Do not turn the past U/P series back into serial prerequisites.
+- Do not read a document's plans or target contracts as implementation facts. For the execution path, trace the event runtime.
+- Every functional fix leaves a failing counterexample, a test of the real consuming path, and a mutation check that fails when the fix is removed.
+- Safety, documentation and unit-test stages are `enabling`. Until the real service envelope of the current final source passes,
+  they do not count as product integrity completion or as performance progress. First close the integrity baseline for single requests, bounded sustained inflow,
+  overload/cancel/drain, distribution and soak; only after that, open performance candidates.
+- Every model run records, in the same analysis window, for both single requests and sustained waves: TTFT, prefill rows/s, useful generation TPS,
+  per-phase batch width/fill, runnable/blocked, GPU sample coverage/util/memory/power, normal responses, settlement and reclaim.
+  If data is missing, do not fill it with 0 or with numbers from a different past model; judge it as not measured.
+- A performance change compares a baseline and a candidate under the same model, artifact, topology, resident, KV, corpus, arrival sequence and output conditions.
+  At minimum, rerun both a single request and a sustained wave. Without an improvement figure, it does not count as progress
+  in the performance phase. A fast candidate that breaks integrity is an immediate regression.
+- Before starting a new stage, search past reports and the
+  [deterministic execution register](docs/deterministic-execution-register.md) for the same boundary, error string and resource kind. Link reusable failures
+  to the test IDs and automatic blocking mechanisms of the current plan, and write down why any non-applicable item does not apply. Do not start the first run
+  after only reading past failures without referencing them in the new execution plan.
+- Before the next run, turn a failed run's reproduction conditions into an invariant and pin it as an automatic preflight, an assertion or a test.
+  Do not just write a lesson in the report and leave the same failure kind to human judgement again. Do not start the next model run
+  without a new deterministic check that blocks the same failure kind.
+- For the three runs per stage: the first run takes a complete candidate whose source, callers, return path, state and resource boundaries have all been reviewed;
+  the second fixes exactly one difference identified from evidence; the third only confirms that fix. After the third,
+  do not repeat the same run until code, contract or preflight has changed and been reviewed independently.
+- For each run failure, record a stable lesson ID, the refuted hypothesis, the proven cause, the new automatic blocking path, and the
+  next stage/test that will reuse this lesson. If a lesson ID has no blocking mechanism yet, the state is under analysis, not ready to run.
+- Before committing, check `git diff --numstat` and `git diff --cached --stat`. If there are unintended whole-file line-ending changes,
+  mass deletion and re-addition, or generated artifacts, do not commit; recover forward from the original.
+- Prove remote event runtime connectivity with a per-agent round trip in both directions that uses the advertised address and return route
+  exactly as written in the configuration. SSH, `nc` or a one-way socket connection do not substitute for this evidence.
+- For native listener ports, query the actual dynamic/ephemeral range on each participating OS and use only values outside that range or explicitly reserved.
+  An automatic check before model load rejects collisions.
+- Failure reclaim is complete only when INSPECT nodes 0, task-owned native children 0 and task-owned listeners 0 are confirmed together with
+  preservation and settlement of the transport failure. Do not claim native reclaim from agent exit alone.
+- On rejection, check that not only the request but also the ledger, reservations, credit and output effects are preserved.
+- Distinguish between a model and a simulator calling the same function and having actually tested the real path.
+- Do not make a test pass by relaxing expected values, goldens, judges or limits to match the implementation, or by deleting failing inputs.
+- Compute overall totals from the final exit of `cargo test --workspace --no-fail-fast` and all of its summaries.
+  Not-run, feature-excluded, ignored and failed tests are counted separately. Do not hide new required tests behind a feature.
+- Run mutations only in an independent copy or a verification worktree. Do not restore the user's working tree with checkout/reset.
+- Confirm that the mutation was actually recompiled and that source and binary are bound. Exclude from evidence any run where a shared build cache reused the baseline.
+- After the source, binary, model and workload of a measurement arm are sealed, do not modify them. Do other work in a different checkout.
+- Do not approve performance or normal responses from GPU utilization, RPC depth, mixed batch count or row count alone.
+- Do not confuse the meanings of request, settlement, edge credit and KV completion. A returned transport credit is not evidence of a KV stop point.
+- Node count is a constraint from the model, KV capacity, legal cuts and deployment. Do not make a one-node-per-card limit a general rule.
+- Do not put private llama.cpp types into policy or the ledger. A change to the backend-neutral core comes with a neutrality test.
+- Upstream adaptation happens inside the modules the isolation contract allows. Check not only direct includes but also transitive includes/links,
+  forward declarations, public signatures and imported relinks. If an upper layer needs a change, approve and verify the contract change separately.
+- Distinguish the llama.cpp abstraction layer from the concrete ggml/CUDA, CPU and Metal backends. A clean pin replay is not proof of semantic compatibility.
+- Verify three conditions separately: dependency isolation, state-change authority and semantic compatibility. An upstream adaptation with the same semantics
+  is finished inside the modules the isolation contract allows; if a pure ledger/policy change is needed, first review it as a boundary leak or a contract change.
+- Do not misread "owned by P4" as "owned by the common core". Batch/flight/KV/shape/stage codecs are owned by the adapter, and
+  the common core forwards opaque payloads. Impl/internal accessors and raw ordinals in the compatibility layer are also subject to isolation checks.
+- Do not emit token/native effects ahead of settlement approval. Bind the ledger commit to the effect intent, and
+  preserve external-effect failures and unknown outcomes as a separate progress state. Check compiler isolation and state-authority isolation together.
+- Risky experimental options are disabled by default until proven. The parallel sampler is serial by default until shared-context safety is verified.
+- At the end of each stage, record the code baseline, test IDs/commands/results, failure evidence, the remaining stages and the first next action.
+  If the final source differs from the verified source, do not claim completion.
+- Commit at every recoverable intermediate point, such as an implementation or a pinned regression. Before committing, stop other writers and review all
+  non-ignored changes so that source, tests and docs are all included. Manage temporary outputs and local secrets with ignore rules,
+  and do not leave required files partially staged. Right after committing, confirm 0 non-ignored dirty/untracked files.
+  An intermediate failing state states WIP, the exact failure and the next action, and is not dressed up as green/complete. Push is a separate permission.
+- A review request is read-only. A development request also does not widen permission for unrelated changes, stopping remote processes, deployment or push.
 
-## 문서와 검증의 정직성
+## Honesty in documents and verification
 
-새 문서에는 README 색인과 문서 안내도 등록이 필요하다. 파일 안의 줄바꿈은 일관되게 유지한다.
-docs-lint는 문자열·색인 검사이지 의미 정확성이나 미구현 시험의 실행을 보증하지 않는다.
-필수 하드웨어나 접근 권한이 없으면 로컬 안전성 작업을 완료하고 실기 게이트는 BLOCKED로 남긴다.
-사용자가 개발 완료를 요청한 경우, 승인된 범위 안에서 다음 안전한 단계가 남아 있으면 계속한다.
-다만 외부 자원·권한·최종 모델 선택이 필요하면 이유와 필요한 입력을 명시하고 멈춘다.
+A new document needs a README index entry and a document map registration. Keep line endings consistent within a file.
+docs-lint is a string and index check; it does not guarantee semantic accuracy or that unimplemented tests have run.
+Without the required hardware or access rights, finish the local safety work and leave the real-hardware gate as BLOCKED.
+When the user has asked for development to be completed, continue if a next safe step remains within the approved scope.
+However, if external resources, permissions or a final model choice are needed, state the reason and the required input, and stop.

@@ -1,86 +1,86 @@
-# 2026-09-10 — 계획 모드가 recurrent 상태를 실제로 할당하던 결함
+# 2026-09-10 — Defect where plan mode actually allocated recurrent state
 
-종류: 결함 원인 확정·수정(상류 compat 패치)·적용/컴파일 검증.
-**후속 상태:** 초기 CUDA Release 게이트는 r96/r256 적재·추론·UNLOAD와 부족 구성 거부를 통과했고,
-해당 2B·35B의 각 stage host/device model/context/compute 계획=실제도 대조했다.
-새 0.9.0 Rust binary로 r96은 통과했으나 r256이 Windows Update 재시작으로 중단돼 최종 봉인은 BLOCKED다.
-[릴리즈 게이트](2026-09-10-release-gate-v0.9.0.md)가 최신 판정을 소유한다.
-아래 미실행 목록은 최초 수정 시점의 기록이며, r160·다른 모델/backend 행렬은 다음 버전이다.
-기준 HEAD `ea202000a`. 현재 작업 순서는 [로드맵](../../../../../../../docs/distributed-batching-roadmap.md)이 소유한다.
+Kind: defect cause confirmed, fixed (upstream compat patch), apply/compile verified.
+**Follow-up status:** The initial CUDA Release gate passed r96/r256 load, inference and UNLOAD and the rejection of insufficient configurations, and
+also checked plan = actual for host/device model/context/compute on each stage of the 2B and 35B models in question.
+With the new 0.9.0 Rust binary, r96 passed, but r256 was interrupted by a Windows Update restart, so the final seal is BLOCKED.
+The [release gate](2026-09-10-release-gate-v0.9.0.md) owns the latest verdict.
+The not-run list below is the record from the time of the original fix; r160 and the other model/backend matrix are for the next version.
+Baseline HEAD `ea202000a`. The current work order is owned by the [roadmap](../../../../../../../docs/distributed-batching-roadmap.md).
 
-## 원인 — 상류 자신이 두 메모리에서 다르게 한다
+## Cause — upstream itself handles the two memories differently
 
-`stage_memory_plan.cpp`의 계획 경로는 모델을 `no_alloc = true`로 만든다. 어텐션 KV는 그 뜻대로
-움직이지만 recurrent 상태는 그러지 않는다. 같은 pin의 상류 소스에서 나란히 보면 분명하다.
+The plan path in `stage_memory_plan.cpp` builds the model with `no_alloc = true`. Attention KV behaves as intended,
+but recurrent state does not. Placing the upstream sources of the same pin side by side makes this clear.
 
-| | `llama_kv_cache` | `llama_memory_recurrent` (수정 전) |
+| | `llama_kv_cache` | `llama_memory_recurrent` (before the fix) |
 | --- | --- | --- |
-| 버퍼 할당 | `no_alloc`이면 **크기 0 dummy 버퍼**를 만들고 모든 tensor의 `buffer`를 그것으로 지정 | 언제나 `ggml_backend_alloc_ctx_tensors_from_buft` — **실제 할당** |
-| `memory_breakdown()` | `no_alloc`이면 `ggml_backend_alloc_ctx_tensors_from_buft_size(ctx, buft)` — **정렬을 반영한 예상 크기** | 언제나 `ggml_backend_buffer_get_size(buf)` |
+| Buffer allocation | With `no_alloc`, creates a **size-0 dummy buffer** and sets every tensor's `buffer` to it | Always `ggml_backend_alloc_ctx_tensors_from_buft` — **real allocation** |
+| `memory_breakdown()` | With `no_alloc`, `ggml_backend_alloc_ctx_tensors_from_buft_size(ctx, buft)` — **expected size including alignment** | Always `ggml_backend_buffer_get_size(buf)` |
 
-그래서 계획을 세우는 동안 recurrent 저장 공간이 **실제로 카드에 잡힌다.** 그 뒤 `stage_memory_plan.cpp`는
-줄어든 `free`를 읽고, 방금 잡은 그 비용을 포함한 `required`와 비교한다.
+So while the plan is being built, the recurrent storage is **actually allocated on the card.** `stage_memory_plan.cpp` then
+reads the reduced `free` and compares it with a `required` that includes the cost just allocated.
 
-09-09 35B 실행 5회의 계획이 이 산술을 그대로 보여준다(카드 초기 여유 22.76 GiB).
+The plans of the five 09-09 35B runs show exactly this arithmetic (card initial headroom 22.76 GiB).
 
-| arm | n_seq | `CUDA0 RS buffer` | 계획 `free` | free + RS | `required` | 판정 |
+| arm | n_seq | `CUDA0 RS buffer` | plan `free` | free + RS | `required` | Verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | :-- |
 | 2 stage | 96 | 2,814 MiB | 20.01 | **22.76** | 14.01 | ✓ |
 | 2 stage | 256 | 7,504 MiB | 15.43 | **22.76** | 19.72 | ✗ |
-| 2 stage(재시도) | 256 | 7,504 MiB | 15.43 | **22.76** | 19.72 | ✗ |
+| 2 stage (retry) | 256 | 7,504 MiB | 15.43 | **22.76** | 19.72 | ✗ |
 | 4 stage | 96 | 1,407 MiB | 21.38 | **22.75** | 6.96 | ✓ |
 | 4 stage | 256 | 3,752 MiB | 19.09 | **22.75** | 10.14 | ✓ |
 
-**원인은 가중치의 중복 계산이 아니라 계획용 recurrent 할당이다.** GPU `context` 항에는 이미 할당된
-RS와 어텐션 KV가 함께 있고 둘의 취급이 다르므로, `model + compute + 2 × context`도 정확한 조건식이
-아니다. r256에서 실제로 필요한 19.72 GiB는 24 GiB 카드에 들어간다.
+**The cause is not double-counting of weights but the recurrent allocation made for planning.** The GPU `context` term holds both the already allocated
+RS and the attention KV, and the two are handled differently, so `model + compute + 2 × context` is not the exact condition either.
+The 19.72 GiB actually needed for r256 fits on a 24 GiB card.
 
-## 수정
+## Fix
 
-상류 `llama-memory-recurrent.cpp`가 `llama_kv_cache`와 같은 답을 하도록 두 곳을 맞췄다.
-새 compat 패치 `0026-noalloc-recurrent-residency.patch`(`layer: upstream_fix`)다.
+Two places in upstream `llama-memory-recurrent.cpp` were aligned so that it answers the same way as `llama_kv_cache`.
+This is the new compat patch `0026-noalloc-recurrent-residency.patch` (`layer: upstream_fix`).
 
-- 할당 루프: `hparams.no_alloc`이면 크기 0 dummy 버퍼를 만들고 모든 tensor의 `buffer`를 지정한다.
-  실행 모드의 할당·초기화 의미는 그대로다.
-- `memory_breakdown()`: `no_alloc`이면 `ggml_backend_alloc_ctx_tensors_from_buft_size`로
-  **정렬과 패딩을 포함한 예상 크기**를 보고한다. 실제 크기 보고 경로는 그대로다.
+- Allocation loop: with `hparams.no_alloc`, create a size-0 dummy buffer and set every tensor's `buffer`.
+  Allocation and initialization semantics in run mode are unchanged.
+- `memory_breakdown()`: with `no_alloc`, report the **expected size including alignment and padding** via
+  `ggml_backend_alloc_ctx_tensors_from_buft_size`. The actual-size reporting path is unchanged.
 
-**fit 검사를 없애거나 `free`에 context를 더하는 보정은 하지 않았다.** 공간이 실제로 부족한 구성은
-계속 거부되어야 하며, 이 수정은 계획이 계획으로 남게 할 뿐이다.
+**The fit check was not removed, and no correction adding context to `free` was made.** Configurations that genuinely lack space
+must still be rejected; this fix only keeps the plan a plan.
 
-수정 위치는 채택 상류의 compat 경계 안이고, llama 비공개 타입이 위층으로 올라가지 않는다.
+The fix sits inside the compat boundary of the adopted upstream, and no private llama types move up to higher layers.
 
-## 지금까지의 검증
+## Verification so far
 
-| 검사 | 결과 |
+| Check | Result |
 | --- | --- |
-| 26개 패치 적용 | `git apply --check` 전부 통과 |
-| model-agnostic 경계 | `validateCompatibilityPatch` 통과(모델·아키텍처 지식 없음) |
-| 준비 트리 diff 해시 | `patch_set_sha256` = `f37f181c9d38afed04993921b30470dd69d8cfd5d232d05405f384a01439e738`로 재계산·검증 |
+| Applying 26 patches | `git apply --check` all passed |
+| model-agnostic boundary | `validateCompatibilityPatch` passed (no model or architecture knowledge) |
+| Prepared tree diff hash | `patch_set_sha256` = `f37f181c9d38afed04993921b30470dd69d8cfd5d232d05405f384a01439e738`, recomputed and verified |
 | `patched_tree` | `7d66751252406ad0e952409355c5cc0a34530c55` |
-| Pipeline ABI 심볼 | `llama_linkcpp_runtime_configure` 존재 확인 |
-| **컴파일** | CPU Release 빌드에서 `llama.dll` **214/214 링크 성공** |
-| 고정된 상류 checkout | `git status --porcelain` 비어 있음 — 작업은 전부 분리된 worktree에서 |
+| Pipeline ABI symbol | `llama_linkcpp_runtime_configure` confirmed present |
+| **Compile** | CPU Release build, `llama.dll` **214/214 linked successfully** |
+| Pinned upstream checkout | `git status --porcelain` empty — all work done in separate worktrees |
 
-수정 전 `patch_set_sha256`은 `961bd89cd1197cef0d683f22d99d9451e25aba5eba5f360dac6aaa792b993d81`이었고,
-재현 절차(고정 pin의 worktree에 25개 패치 적용 → `git diff --binary --full-index`)로 그 값을 먼저
-그대로 얻어 절차 자체가 맞는지 확인한 뒤 26번째를 얹었다.
+Before the fix, `patch_set_sha256` was `961bd89cd1197cef0d683f22d99d9451e25aba5eba5f360dac6aaa792b993d81`.
+The reproduction procedure (apply 25 patches to a worktree at the pinned pin → `git diff --binary --full-index`) first reproduced that value
+exactly, confirming the procedure itself was correct, and then the 26th patch was added on top.
 
-## 아직 하지 않은 것 — 이것이 다음 단계다
+## Not done yet — this is the next stage
 
-컴파일은 통과했지만 **동작은 검증하지 않았다.** 다음 전부가 남아 있고 CUDA 빌드와 원격 3090×2가 필요하다.
+It compiles, but **the behavior has not been verified.** All of the following remain, and they need a CUDA build and the remote 3090×2.
 
-1. 계획용 RS 실제 할당이 사라졌음을 backend 초기화 비용과 구분해 확인.
-2. resident 96·160·256에서 host/device별 `model`·`context`·`compute` 계획과 실제 할당 대조.
-3. attention·recurrent·hybrid 및 host/device 경로 무회귀.
-4. **실제로 공간이 부족한 구성은 계속 거부**되는지 — 오거절만 고치고 과승인을 만들지 않았는지.
-5. 수정 뒤 r256의 실제 적재·최대 메모리·추론·UNLOAD 별도 통과.
+1. Confirm that the real RS allocation for planning is gone, distinguishing it from backend initialization cost.
+2. Compare per-host/device `model`, `context` and `compute` plans with actual allocation at resident 96, 160 and 256.
+3. No regression on attention, recurrent and hybrid, and on host/device paths.
+4. Whether **configurations that genuinely lack space are still rejected** — that only the false rejection was fixed and no over-approval was introduced.
+5. After the fix, a separate pass of real r256 load, peak memory, inference and UNLOAD.
 
-**“오거절을 고쳤다”와 “r256이 안전하게 실행된다”는 서로 다른 완료 조건이다.**
-같은 카드를 여러 process가 쓸 때의 합산 예약도 개별 stage의 fit 통과로 대체할 수 없다.
-그리고 **r256 적재 성공은 resident 상향의 서비스 승인이 아니다** — 강한 연속 웨이브에서의 resident
-평가는 B2/B3 수용·반환 예산을 연결한 뒤에 한다.
+**"Fixed the false rejection" and "r256 runs safely" are different completion conditions.**
+The combined reservation when several processes share the same card cannot be replaced by individual stages passing fit either.
+And **a successful r256 load is not service approval for raising resident** — resident evaluation under heavy continuous waves
+comes after the B2/B3 acceptance and return budgets are wired in.
 
-빌드 비용에 대해: recurrent는 C++로 컴파일되어 `llama.dll`에 들어가므로 개발 중 증분 검증은
-위와 같이 CPU 빌드로 충분했다. 실기 검증은 CUDA 산출물 갱신이 필요하며, 배포 시 서버 옆의 실제
-DLL 해시까지 확인한다.
+On build cost: recurrent is compiled as C++ into `llama.dll`, so during development a CPU build was enough for incremental verification,
+as above. Real-hardware verification needs refreshed CUDA outputs, and at deployment the hash of the actual
+DLL next to the server is checked as well.

@@ -1,7 +1,7 @@
 # P4 self-describing event contract
 
-> 문서 지위 (2026-09-06): **분야 계약·구현과 구별**. 소유 분야의 계약/목표를 읽되 구현 완료로 간주하지 않는다. 현재 개발 순서와 충돌하면 로드맵의 명시적 이관을 따른다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Domain contract, distinct from implementation**. Read it as the contract and goals of the owning domain, but do not treat it as implemented. Where it conflicts with the current development order, follow the explicit hand-over recorded in the roadmap.
+> Current goals, status and ordering follow the [execution roadmap](distributed-batching-roadmap.md); document authority and reading paths follow the [document map](document-map.md).
 
 This is the implementation contract for the replacement P4 path. The branch
 `codex/p4-pre-event-architecture-reference` preserves the previous Chain/Hop
@@ -366,7 +366,7 @@ mutation cannot alter that receipt. This does not establish either store's
 retained-byte budget. In particular, moving a producer's storage claim into
 the duplicate ledger would incorrectly retain producer capacity until receipt
 eviction. The owned handoff and notification/commit requirements are owned by
-the [batching boundary contract](adapter-batching-layers.md#broker-책임-이전과-정확한-중복-보관--연결-시-지켜야-할-목표-계약).
+the [batching boundary contract](adapter-batching-layers.md#broker-responsibility-transfer-and-exact-duplicate-retention--target-contract-to-keep-when-wiring).
 
 ### Independent completion progress
 

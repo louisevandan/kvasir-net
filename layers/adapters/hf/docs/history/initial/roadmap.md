@@ -1,58 +1,58 @@
-> 역사 기록: 독립 저장소 시점의 요구·상태·측정이다. 현재 배치와 사용법은 [HF 안내](../../../README.md)를 따른다. 원본 전체는 이관 시 보존한 Git bundle에 있다.
+> Historical record: requirements, status and measurements from the time of the standalone repository. The current layout and usage follow the [HF guide](../../../README.md). The complete original is in the Git bundle preserved during the migration.
 
-> 2026-09-14: 사용자 §0 지시로 P4 통합 구현을 진행한다. 이전 미연결/읽기 전용 설명의 현재 상태는 [통합 명세](../../integration/README.md)와 그 수용 보고가 우선한다.
+> 2026-09-14: P4 integration is being implemented under the user's §0 instruction. For the current status of the earlier unconnected/read-only descriptions, the [integration specification](../../integration/README.md) and its acceptance report take precedence.
 
-# 실행 로드맵
+# Execution roadmap
 
-지위: 이 프로젝트의 현재 단계·다음 행동·단계 완료 조건의 단독 소유자입니다.
+Status: the sole owner of this project's current phase, next action and phase completion conditions.
 
-## 현재 상태
+## Current status
 
-2026-09-13: Python IPC framing과 사용자 지정 Qwen3.5-0.8B의 전용 로컬 분할 스크립트를 구현했습니다.
-실제 가중치의 8개 조합·47개 스텝에서 공식 전체 모델과 비교했습니다. Rust bridge는 아직 없습니다.
-초기화 결과는 [초기화 기록](bootstrap-evidence.md)과 Git log를 확인합니다.
-P4 참고 HEAD는 `d122125bafeaa6d32790761669f1bfa5868d8078`이며 다음 세션에서 재확인합니다.
+2026-09-13: Python IPC framing and a dedicated local partition script for the user-specified Qwen3.5-0.8B are implemented.
+They were compared against the official full model on the real weights across 8 combinations and 47 steps. There is no Rust bridge yet.
+For the initialization result, see the [initialization record](bootstrap-evidence.md) and the Git log.
+The P4 reference HEAD is `d122125bafeaa6d32790761669f1bfa5868d8078`; re-check it in the next session.
 
-| 단계 | 작업 | 종료 조건 | 상태 |
+| Phase | Work | Exit condition | Status |
 | --- | --- | --- | --- |
-| S0 | 독립 폴더/Git/계획/인수인계 | 문서/링크 점검·P4 쓰기 없음·동시 변경 기록·초기 커밋 | 완료 |
-| S1 | 첫 모델·장치·양자화 커널 조사와 manifest | 정확한 revision·지원 조합·합법 cut·품질/SLO 기준 고정 | Qwen dense 조합 고정; 양자화·제품 SLO 미완 |
-| S2 | 고정밀도/양자화 reference와 부분 적재 | REF-01, Q-01~04; 실제 압축 실행과 품질 | Qwen dense reference·담당 weight 적재 로컬 통과; 양자화 미실행 |
-| S3 | 모델별 stage 실행 | MOD-01~02; prefill/decode/cache parity | 로컬 프로세스 분할·반복 logits 통과; cache 전 원소 비교 미완 |
-| S4 | 독립 Rust bridge·Python worker·로컬 host | BR/WIRE/LIFE/SET 실제 소비 경로·변이 | Qwen worker·controller 구현; Rust/retained 소비 미구현 |
-| S5 | 실제 물리 컴퓨터 PP 실행·연속 배칭 | DIST/BATCH/WAVE; 이기종 주장 시 HET | 미시작 |
-| S6 | 승인된 P4 통합·컴파일·배포 검증 | INT-01·기존 adapter 회귀·실제 제품 소비 웨이브 | 미래 별도 통합 작업 |
+| S0 | Standalone folder/Git/plan/handoff | Document/link check, no P4 writes, concurrent changes recorded, initial commit | Done |
+| S1 | Investigation of the first model, devices and quantization kernels; manifest | Pin the exact revision, supported combinations, legal cuts and quality/SLO criteria | Qwen dense combination pinned; quantization and product SLO unfinished |
+| S2 | High-precision/quantized reference and partial loading | REF-01, Q-01~04; real compressed execution and quality | Qwen dense reference and assigned-weight loading passed locally; quantization not run |
+| S3 | Per-model stage execution | MOD-01~02; prefill/decode/cache parity | Local process partition and repeated logits passed; element-wise cache comparison unfinished |
+| S4 | Standalone Rust bridge, Python worker, local host | BR/WIRE/LIFE/SET real consumption paths and mutations | Qwen worker and controller implemented; Rust/retained consumption not implemented |
+| S5 | PP execution on real physical computers, continuous batching | DIST/BATCH/WAVE; HET if heterogeneity is claimed | Not started |
+| S6 | Approved P4 integration, compilation and deployment verification | INT-01, existing adapter regression, real product consumption waves | Future separate integration task |
 
-이 표는 기술 검증 단계이며 각 단계를 독립 제품 릴리즈로 부르지 않습니다.
-S5의 별도 시험 host 결과를 수정하지 않은 stock P4의 지원으로 보고하지 않습니다.
-최종 제품 완료에는 실제 P4 통합 소비 경로와 명시된 목표 모델/물리 fleet 증거가 필요합니다.
+This table lists technical verification phases; no phase is called an independent product release.
+Results from S5's separate test host are not reported as support in unmodified stock P4.
+Final product completion requires the real P4 integrated consumption path and evidence for the specified target model and physical fleet.
 
-## 다음 첫 작업
+## First next task
 
-최초 개발의 작업 분해와 산출물은 [개발 실행 계획](development-plan.md)을 따릅니다.
-선행 IPC 구현의 증거는 [framing 실행 보고](../../../tests/reports/framing/20260913_174516.md)에 있습니다.
-이는 WIRE-01 전체, 모델 worker, Rust bridge 또는 P4 소비 경로의 통과를 뜻하지 않습니다.
+The work breakdown and deliverables of the initial development follow the [development execution plan](development-plan.md).
+Evidence for the preceding IPC implementation is in the [framing run report](../../../tests/reports/framing/20260913_174516.md).
+It does not mean that all of WIRE-01, the model worker, the Rust bridge or the P4 consumption path passed.
 
-현재 구현의 진입점은 [Qwen 모델 문서](../../models/qwen3_5_0_8b/README.md),
-실행 범위와 실패는 [Qwen 실행 보고](../../../tests/reports/qwen3_5_0_8b/20260913_220709.md)를 따릅니다.
-BF16 이기종 분할은 기준 초과로 실패했고 FP32는 별도 통과 조합입니다.
-다음 범위에 따라 BF16 연산별 수치 차이, cache parity 또는 독립 Rust bridge를 검증합니다.
-양자화 착수 전에는 제조사 코드·아티팩트·실제 실행 커널의 교집합과 module coverage를 고정합니다.
+The entry point of the current implementation is the [Qwen model document](../../models/qwen3_5_0_8b/README.md),
+and the run scope and failures follow the [Qwen run report](../../../tests/reports/qwen3_5_0_8b/20260913_220709.md).
+The BF16 heterogeneous split failed by exceeding the threshold; FP32 is a separate passing combination.
+Depending on the next scope, verify BF16 per-operation numeric differences, cache parity or the standalone Rust bridge.
+Before starting quantization, pin the intersection of vendor code, artifacts and actual execution kernels, and the module coverage.
 
-S2는 첫 실행부터 초대형 모델 전체의 고정밀도 GPU 적재를 강제하지 않습니다.
-reference 실행에 필요한 offload/자원과 양자화 순차 처리 방법을 먼저 계산하고 검증합니다.
-작은 모델은 bridge/codec 반례를 빠르게 돌리는 보조 도구로 사용할 수 있지만 목표 모델 수용과 분리합니다.
+S2 does not force high-precision GPU loading of an entire very large model from the first run.
+First compute and verify the offload/resources the reference run requires and the method for sequential quantization.
+Small models can serve as an auxiliary tool for running bridge/codec counterexamples quickly, but they are kept separate from target-model acceptance.
 
-## 단계 운영
+## Phase operations
 
-복원 가능한 구현/회귀 고정 지점에서 이 저장소만 커밋합니다. WIP는 정확한 실패와 다음 작업을 기록합니다.
-각 단계 끝에 HEAD, 변경 파일, 실제 명령/시험 ID/결과, 실패·미실행, 아티팩트 위치, 다음 첫 행동을 갱신합니다.
-검증한 소스가 최종 소스와 다르면 완료로 표시하지 않습니다.
-장치·접근 권한이 없으면 해당 실기는 BLOCKED이며 가능한 로컬 안전성 작업과 구별합니다.
+Commit only this repository, at restorable implementation/regression pin points. A WIP commit records the exact failure and the next task.
+At the end of each phase, update HEAD, changed files, actual commands/test IDs/results, failures and items not run, artifact locations, and the first next action.
+If the verified source differs from the final source, do not mark the phase done.
+Without the devices or access rights, the affected real-hardware run is BLOCKED and kept distinct from the local safety work that is still possible.
 
-## 후속 선택
+## Follow-up options
 
-첫 지원 조합이 완료된 뒤 다른 모델·장치·양자화 recipe를 같은 검증 단위로 추가합니다.
-다른 모델은 별도 전용 Python 구현으로 추가할 수 있으며, 공통 모델 처리기로의 일반화는 목표가 아닙니다.
-노드별 recipe 혼합, KV/전송 양자화, 동일 호스트 TP, 자동 배치, KV 영속화, MTP, 외부 인증/복구는
-사용 목적과 측정 결과에 따라 별도 범위로 편성합니다. 현재 대화에서 자동 구현을 승인한 항목은 아닙니다.
+After the first supported combination is complete, add other models, devices and quantization recipes as the same verification unit.
+Other models can be added as separate dedicated Python implementations; generalizing into a common model processor is not a goal.
+Per-node recipe mixing, KV/transport quantization, same-host TP, automatic placement, KV persistence, MTP and external authentication/recovery
+are organized as separate scope according to the purpose of use and the measurement results. They are not items approved for automatic implementation in the current conversation.

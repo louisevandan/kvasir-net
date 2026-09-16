@@ -1,62 +1,62 @@
-# Release A 전송 불명 결과 정산·재연결 계획
+# Release A settlement and reconnection for unknown transport results
 
-2026-09-15. 기준 `94c796c1e`. 범위는 P4 event transport의 한 hop 전달이며 adapter payload,
-native 완료, request/KV 정산 권한은 바꾸지 않는다. [FINISH 수용](../reports/release-a/20260915_142237.md)
-다음 게이트이고, Qwen122B 전체 topology 실행 전에 닫는다.
+2026-09-15. Baseline `94c796c1e`. The scope is single-hop delivery in the P4 event transport; adapter payload,
+native completion, and request/KV settlement authority are not changed. This is the gate after [FINISH acceptance](../reports/release-a/20260915_142237.md),
+and it is closed before the full Qwen122B topology run.
 
-## 실행 전 확정한 결론
+## Conclusions fixed before the run
 
-현재 socket write 완료는 원격 broker 수용 증거가 아니다. partial write의 현재 원본과 뒤의 미시작 queue는
-agent 메모리에 보존되지만 외부 조회·해소 API가 없다. 원격 duplicate window도 receipt 조회나 outstanding
-pin을 제공하지 않는다. 따라서 재접속 뒤 자동 재송신은 중복 native 효과를 만들 수 있고, receipt 없음은
-미수신과 eviction을 구분하지 못한다. 단순 peer-cache 삭제나 agent 재시작은 수용 후보가 아니다.
+Completion of the current socket write is not evidence of acceptance by the remote broker. The current original of a partial write and the unstarted queue behind it
+are kept in agent memory, but there is no API to query or resolve them externally. The remote duplicate window also provides no receipt query or outstanding
+pin. Automatic resend after reconnection can therefore produce duplicate native effects, and the absence of a receipt cannot distinguish
+non-receipt from eviction. Simply deleting the peer cache or restarting the agent is not an acceptance candidate.
 
-첫 구현 후보는 다음 상태와 권한을 한 번에 갖춘다.
+The first implementation candidate provides all of the following states and authorities at once.
 
-| 상태 | 판정과 허용 동작 |
+| State | Verdict and allowed action |
 | --- | --- |
-| `rejected_local` | encode·version·capability가 socket write 전에 거부됐다. 원본과 무효과를 보존하고 재전송하지 않는다. |
-| `not_started` | connect·route 실패로 socket을 건드리지 않았다. 같은 원본 allocation·event ID·digest를 명시 재연결 뒤 다시 전달할 수 있다. |
-| `uncertain` | prefix/body/flush를 시작한 뒤 결과를 모른다. 자동 재송신하지 않고 remote hop receipt를 조회한다. |
-| `accepted_exact` | remote가 같은 event ID와 canonical bytes를 broker에 commit했고 receipt가 pin돼 있다. local 원본만 retire하고 다음 queue를 진행한다. |
-| `conflict` | 같은 ID의 다른 bytes가 관측됐다. 실패 원본과 증거를 보존하고 해당 연결 세대를 quarantine한다. |
-| `unknown` | receipt 부재·기한 초과·peer 불가·증명 horizon 밖이다. 성공/미수신으로 추정하지 않고 quarantine한다. |
+| `rejected_local` | Encode/version/capability was rejected before the socket write. Preserve the original and the no-effect state; do not resend. |
+| `not_started` | Connect/route failed, so the socket was not touched. The same original allocation, event ID and digest can be delivered again after an explicit reconnection. |
+| `uncertain` | The outcome is unknown after the prefix/body/flush started. Do not resend automatically; query the remote hop receipt. |
+| `accepted_exact` | The remote committed the same event ID and canonical bytes to the broker, and the receipt is pinned. Retire only the local original and proceed with the next queue item. |
+| `conflict` | Different bytes were observed for the same ID. Preserve the failed original and the evidence, and quarantine that connection generation. |
+| `unknown` | No receipt, deadline exceeded, peer unreachable, or outside the proof horizon. Do not presume success or non-receipt; quarantine. |
 
-## 구현 경계
+## Implementation boundaries
 
-1. protocol은 connection generation, delivery attempt ID, event ID, canonical event digest와 receipt 상태를
-   버전화한다. capability 협상 없는 구형 peer에는 새 동작을 보내지 않고 기존 fail-closed를 유지한다.
-2. receiver는 broker commit과 hop receipt 생성을 결속한다. outstanding receipt의 count/bytes/horizon을
-   별도 계산하고 공간이 없으면 event commit 전에 거부한다. eviction은 미정산 receipt를 제거하지 않는다.
-   sender가 local 원본을 retire한 뒤 보내는 receipt ACK만 pin을 해제하며, ACK 중복·유실은 idempotent하다.
-3. sender는 실패 ID별로 현재 원본·미시작 queue·started 여부·target·digest를 소유한다. INSPECT는 payload를
-   노출하지 않고 상태별 수, byte 수, 가장 오래된 시각과 failure ID를 제공한다.
-4. reconcile은 exact receipt만 `accepted_exact`으로 바꾼다. `not_started` 재전달과 exact 뒤 queue 재개는
-   원래 순서를 유지한다. conflict/unknown 뒤 새 세대는 기존 세대를 격리한 후에만 시작한다.
-5. Rust event-drive와 HF Python client도 OUTER 수신 receipt를 같은 의미로 소비한다. FINISH ACK, request
-   terminal, release, receipt/KV 정산은 서로 대체하지 않는다.
+1. The protocol versions the connection generation, delivery attempt ID, event ID, canonical event digest and receipt state.
+   Old peers without capability negotiation are not sent the new behavior and keep the existing fail-closed behavior.
+2. The receiver binds broker commit to hop receipt creation. The count, bytes and horizon of outstanding receipts are
+   accounted separately, and if there is no space the event is rejected before commit. Eviction does not remove unsettled receipts.
+   Only the receipt ACK that the sender sends after retiring its local original releases the pin; duplicate or lost ACKs are idempotent.
+3. Per failure ID, the sender owns the current original, the unstarted queue, whether sending started, the target and the digest. INSPECT does not
+   expose the payload; it reports per-state counts, byte counts, the oldest timestamp and the failure IDs.
+4. Reconcile changes only an exact receipt into `accepted_exact`. `not_started` redelivery and queue resumption after exact keep
+   the original order. After conflict/unknown, a new generation starts only after the existing generation has been isolated.
+5. Rust event-drive and the HF Python client also consume OUTER receive receipts with the same semantics. FINISH ACK, request
+   terminal, release and receipt/KV settlement do not substitute for one another.
 
-## 첫 완전 gate
+## First complete gate
 
-| ID | 실패 주입과 통과 조건 |
+| ID | Fault injection and pass condition |
 | --- | --- |
-| R1 | encode/version 거부는 원장·remote 효과와 재전송0. connect/route 실패는 원본·비용을 보존하고 명시 재연결 뒤 정확히1회 commit |
-| R2 | prefix 일부/body 일부/flush 뒤 reset: 모두 uncertain. 재연결만으로 재송신0 |
-| R3 | remote commit 뒤 hop receipt 유실: exact 조회로 local 원본만 retire, native/queue 효과 추가0 |
-| R4 | 같은 ID·다른 bytes, receipt absent, receipt horizon 초과: conflict/unknown quarantine, 성공 승격0 |
-| R5 | receipt count/bytes 경계±1과 data queue 포화: 거부 전후 원장·예약·credit·출력 효과 동일, reconcile 제어 진행 |
-| R6 | uncertain predecessor 뒤 정상 event: 선행 exact 또는 quarantine 전 추월0, 해소 뒤 원 순서 유지 |
-| R7 | 구형 peer/잘못된 version·generation·attempt/digest: 실행 전 거부, fallback replay0 |
-| R8 | 실제 TCP OUTER 및 agent↔agent, Rust/HF client, llama.cpp/HF 정상 생성·취소·회수·재수용 |
-| R9 | 두 물리 host 단절·late receipt·재연결 후 다음 정상 wave. source/binary와 failure/receipt bytes 봉인 |
+| R1 | Encode/version rejection: 0 ledger or remote effects and 0 resends. Connect/route failure: original and cost preserved, exactly 1 commit after an explicit reconnection |
+| R2 | Reset after part of the prefix / part of the body / flush: all uncertain. Reconnection alone causes 0 resends |
+| R3 | Hop receipt lost after remote commit: exact query retires only the local original; 0 additional native/queue effects |
+| R4 | Same ID with different bytes, receipt absent, receipt horizon exceeded: conflict/unknown quarantine; 0 promotions to success |
+| R5 | Receipt count/bytes boundary ±1 and data queue saturation: ledger, reservation, credit and output effects identical before and after rejection; reconcile control proceeds |
+| R6 | Normal event after an uncertain predecessor: 0 overtakes before the predecessor is exact or quarantined; original order kept after resolution |
+| R7 | Old peer, invalid version/generation/attempt/digest: rejected before execution; 0 fallback replays |
+| R8 | Real TCP OUTER and agent↔agent, Rust/HF clients, llama.cpp/HF normal generation, cancellation, reclaim and re-acceptance |
+| R9 | Disconnection between two physical hosts, late receipt, next normal wave after reconnection. Seal the source/binary and the failure/receipt bytes |
 
-첫 실행은 R1–R9 구현, 독립 oracle과 제거 변이, docs gate, feature off/on
-`cargo test --workspace --no-fail-fast`, HF Python 전체, 양쪽 adapter 실제 경로를 모두 포함한다.
-부분 crate 통과는 `first_pass`가 아니다. 2회차는 첫 gate가 드러낸 한정 차이만 수정하고 3회차는 기능 변경
-없이 clean rebuild·전체 회귀·독립 worktree 재컴파일 변이로 확인한다.
+The first run includes the R1–R9 implementation, independent oracles and removal mutations, the docs gate, feature off/on
+`cargo test --workspace --no-fail-fast`, the full HF Python suite and the real paths of both adapters.
+A partial crate pass is not `first_pass`. Round 2 fixes only the limited differences the first gate exposed, and round 3 confirms, with no functional change,
+through a clean rebuild, full regression and recompiled mutations in an independent worktree.
 
-## 완료와 다음 단계
+## Completion and next phase
 
-완료는 실패 원본·receipt·예약 byte가 상태별 상한으로 설명되고, uncertain을 성공이나 미수신으로 추정하지
-않으면서 다음 정상 wave를 수용한 경우다. 그 뒤에만 Qwen122B 전체 topology PLAN→LOAD→정상 응답→
-요청별 deadline·8wave·취소/회수/재수용을 시작한다.
+Completion means that failed originals, receipts and reserved bytes are explained by per-state limits, and that the next normal wave was accepted
+without presuming uncertain to be success or non-receipt. Only after that does the full Qwen122B topology run start: PLAN→LOAD→normal response→
+per-request deadlines, 8 waves, and cancel/reclaim/re-acceptance.

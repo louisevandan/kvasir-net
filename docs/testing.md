@@ -1,18 +1,18 @@
 # Testing
 
-> 문서 지위 (2026-09-06): **게이트 실행 안내**. 기존 경로/옵션별 명령 안내다. 현재 필수 판정은 분산 배치 검증 규약이 소유한다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Gate execution guide**. A command guide for the existing paths and options. The current mandatory verdicts are owned by the distributed batching verification protocol.
+> For the current goal, status and order, follow the [execution roadmap](distributed-batching-roadmap.md); for document authority and reading paths, follow the [document map](document-map.md).
 
-## 현재 분산 배치의 필수 게이트
+## Mandatory gates for current distributed batching
 
-현재 목표의 시험·mutation·실기 웨이브 판정은
-[분산 배치 검증 규약](distributed-batching-verification.md)이 소유한다.
-아래는 경로별 기존 시험의 참고 목록이며, Chain/Hop 시험을 event worker의 증명으로 세지 않는다.
-전체 집계는 `cargo test --workspace --no-fail-fast`로 최종 종료 후 계산한다.
-새 필수 시험을 skip/feature로 숨기거나 “실행 안 함”을 통과로 세지 않는다.
+Test, mutation and real-hardware wave verdicts for the current goal are owned by the
+[distributed batching verification protocol](distributed-batching-verification.md).
+Below is a reference list of existing tests per path; do not count Chain/Hop tests as proof of the event worker.
+Compute the overall tally only after `cargo test --workspace --no-fail-fast` has fully exited.
+Do not hide new mandatory tests behind skip/feature flags, and do not count "not run" as a pass.
 
-2026-09-06 실행 소유권 후속 slice의 재실행 명령은 다음과 같다. 시험의 보장 범위/수치는
-[정산 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)를 따른다.
+The rerun commands for the 2026-09-06 execution-ownership follow-up slice are below. For what these tests guarantee and their figures, see the
+[settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
 
 ```bash
 cargo test -p p4-llamacpp-staged-adapter --lib
@@ -21,9 +21,9 @@ node --test test/benchmarks/cluster-inference/compose.test.mjs
 ctest --test-dir <fresh-native-build> -C Release --output-on-failure
 ```
 
-공식 native builder는 authority·UTF-8 시험을 포함한 해당 분기의 모든 CTest target을 빌드해야 한다.
-builder 시험은 source/imported/no-llama 분기의 실제 target 선택을 검사하되 외부 빌드 도구는 대체한다.
-이는 imported native relink 또는 CUDA/Metal 실제 빌드를 수행한 증거가 아니다.
+The official native builder must build every CTest target of the relevant branch, including the authority and UTF-8 tests.
+The builder tests check the actual target selection of the source/imported/no-llama branches, but substitute the external build tools.
+This is not evidence that an imported native relink or a real CUDA/Metal build was performed.
 
 ## Compatibility queue gates
 
@@ -67,28 +67,28 @@ Three levels, and each catches what the one below cannot.
 
 ## Cache contract: mock first
 
-복원 정책과 P4 경계는 실제 llama.cpp 없이 목 어댑터로 먼저 검증한다. 목은
-`Adapter::start`가 즉시 반환하고 `EventSink`로 결과를 내는 계약을 지키며,
-`Work::Cache`의 단일 `sequence`·`stage_id`·`generation`·`operation_id`를
-그대로 기록해야 한다. 라마 어댑터는 아래 계약을 깨지 않는 동안 지연 가능하다.
+Restore policy and the P4 boundary are verified first with the mock adapter, without real llama.cpp. The mock
+must honour the contract that `Adapter::start` returns immediately and emits results through `EventSink`,
+and must record the single `sequence`, `stage_id`, `generation` and `operation_id` of `Work::Cache`
+unchanged. The llama adapter may lag behind as long as it does not break the contract below.
 
-| 시나리오 | 목 어댑터가 증명할 것 | 필수 결과 |
+| Scenario | What the mock adapter must prove | Required result |
 | --- | --- | --- |
-| Persist → Commit | resident KV를 durable 상태로 바꾸고 receipt를 남김 | `Cached`/`Committed` |
-| Restore → Commit | 같은 `sequence`를 복원하고 후속 Hop을 Restore 뒤에만 실행 | 복원 후 상태·순서 보존 |
-| Prepare → Abort | 준비 상태와 resident/durable 원상복구 | 성공을 가장하지 않음 |
-| Discard 재전달 | 이미 삭제된 durable 상태에 중복 Discard | idempotent `Cached` 또는 명시적 `Absent` |
-| KV 슬롯 부족 | Restore를 무한 대기시키지 않음 | bounded `Refused`와 재시도 정보 |
-| 없는 sequence / generation 불일치 | 다른 세션·배포에 복원하지 않음 | `Failed` |
-| 손상·누락 receipt 또는 재시작 | 추측 복원하지 않고 상태를 드러냄 | `Inconsistent` 또는 `Failed` |
-| 다단계 중 한 stage 실패 | partial residency를 실행 가능으로 공개하지 않음 | 전체 transaction 보상 또는 reconciliation |
-| 동일 sequence의 Restore + Hop 동시 도착 | 큐 순서를 보존해 Hop을 앞세우지 않음 | Restore 완료 전 Hop 금지 |
+| Persist → Commit | turns resident KV into durable state and leaves a receipt | `Cached`/`Committed` |
+| Restore → Commit | restores the same `sequence` and runs the following Hop only after Restore | state and order preserved after restore |
+| Prepare → Abort | rolls back the prepared state and the resident/durable state | does not pretend to succeed |
+| Discard redelivery | duplicate Discard on durable state that is already deleted | idempotent `Cached` or explicit `Absent` |
+| KV slot shortage | does not make Restore wait indefinitely | bounded `Refused` with retry information |
+| unknown sequence / generation mismatch | does not restore into another session or deployment | `Failed` |
+| corrupted or missing receipt, or restart | exposes the state instead of restoring by guesswork | `Inconsistent` or `Failed` |
+| one stage fails in a multi-stage operation | does not publish partial residency as runnable | compensation of the whole transaction, or reconciliation |
+| Restore + Hop for the same sequence arrive together | preserves queue order and does not let the Hop go first | no Hop before Restore completes |
 
-구현 계약의 기준은 [`Adapter`](../layers/adapters/adapter/src/lib.rs)와
-[`Work::Cache`](../layers/adapters/adapter/src/work/cache/mod.rs)이며,
-목 구현의 수명주기 검증은 `p4-mock` 테스트에 둔다. 실제 라마 어댑터의
-파일 포맷·GPU 슬롯·전송 성능 테스트는 이 표의 대체물이 아니라 후속
-acceptance다.
+The reference for the implementation contract is [`Adapter`](../layers/adapters/adapter/src/lib.rs) and
+[`Work::Cache`](../layers/adapters/adapter/src/work/cache/mod.rs),
+and lifecycle verification of the mock implementation lives in the `p4-mock` tests. The real llama adapter's
+file format, GPU slot and transfer performance tests do not replace this table; they are follow-up
+acceptance.
 
 ## Pure
 
@@ -218,7 +218,7 @@ stream in order, one terminal per route. Run each chain shape several times
 against long-lived agents — a defect that only appears on the second run
 against the same process is exactly the kind this level exists for.
 
-The final 2026-08-21 two-stage real run used `러스트에 대해 한국어로 설명하라`
+The final 2026-08-21 two-stage real run used `러스트에 대해 한국어로 설명하라` (English: "Explain Rust in Korean")
 with `max_tokens=200`: parallel 1 completed 1/1 and parallel 4 completed 4/4,
 with zero failed, unanswered, duplicate, or gap events. Every length terminal
 reported `Done.generated=200`, equal to its native generation telemetry; raw

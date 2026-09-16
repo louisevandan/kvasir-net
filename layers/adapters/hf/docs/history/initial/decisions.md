@@ -1,58 +1,58 @@
-> 역사 기록: 독립 저장소 시점의 요구·상태·측정이다. 현재 배치와 사용법은 [HF 안내](../../../README.md)를 따른다. 원본 전체는 이관 시 보존한 Git bundle에 있다.
+> Historical record: requirements, status and measurements from the time of the standalone repository. The current layout and usage follow the [HF guide](../../../README.md). The complete original is in the Git bundle preserved during the migration.
 
-# 요구와 결정 기록
+# Requirements and decision record
 
-지위: 사용자 확정 요구, 대화의 설계 제안, 아직 필요한 결정을 구분합니다.
+Status: separates user-confirmed requirements, design proposals from the conversation, and decisions still needed.
 
-## 사용자 확정 요구
+## User-confirmed requirements
 
-| ID | 요구 |
+| ID | Requirement |
 | --- | --- |
-| U1 | 특정 모델의 제조사 Python/Transformers 코드에 모델별로 대응하는 분산 추론 어댑터를 검토한다. |
-| U2 | 분산 노드는 P4 규격에 맞추고, 양자화 준비/실행 방법을 설계한다. |
-| U3 | `F:\dev\p4hfadapter`에 완전히 분리된 프로젝트·Git·전체 계획 문서를 만든다. |
-| U4 | 문서에 `F:\dev\p4`가 참고 프로젝트임을 명시한다. |
-| U5 | 지금 P4 프로젝트 자체는 변경하지 않는다. 기존 파일을 옮겨 없애지도 않는다. |
-| U6 | 나중에는 P4가 이 어댑터의 존재를 포함해 컴파일하도록 통합한다. |
-| U7 | 사용자가 새 프로젝트 세션을 열어 이어간다. 문서만으로 재개할 수 있어야 한다. |
-| U8 | 모델마다 전용 Python 실행 코드를 작성하는 것이 프로젝트의 핵심이다. 처리기의 범용성이나 여러 모델을 수용할 공통 모델 인터페이스는 요구하지 않는다. |
-| U9 | 역할이 다르면 파일 하나라도 폴더로 분리한다. 모델별 구분 안에서도 각 구현 역할·시험·fixture·도구를 폴더로 나눈다. |
-| U10 | 독립 저장소의 개발을 시작한다. P4 변경·통합은 기존의 별도 작업 경계를 유지한다. |
-| U11 | 첫 모델은 Qwen3.5-0.8B이며 다양한 시나리오를 명시한 노드 분할 계획에 맞춰 처리하는 스크립트를 추가한다. |
+| U1 | Investigate a distributed inference adapter that supports a specific model's vendor Python/Transformers code on a per-model basis. |
+| U2 | Align the distributed nodes with the P4 specification, and design how quantization is prepared and executed. |
+| U3 | Create a fully separate project, Git repository and complete set of planning documents in `F:\dev\p4hfadapter`. |
+| U4 | State in the documents that `F:\dev\p4` is the reference project. |
+| U5 | Do not change the P4 project itself now. Do not remove existing files by moving them either. |
+| U6 | Later, integrate so that P4 compiles with this adapter included. |
+| U7 | The user opens a new project session to continue. Work must be resumable from the documents alone. |
+| U8 | Writing dedicated Python execution code for each model is the core of the project. Neither a general-purpose processor nor a common model interface that accommodates multiple models is required. |
+| U9 | If roles differ, split them into folders, even for a single file. Within each per-model division, split every implementation role, tests, fixtures and tools into folders. |
+| U10 | Start development in the standalone repository. P4 changes and integration keep their existing separate work boundary. |
+| U11 | The first model is Qwen3.5-0.8B; add scripts that handle it according to a node partition plan that specifies various scenarios. |
 
-U8은 2026-09-13 개발 계획에 대한 사용자 후속 지시로 확정했습니다.
-모델별 loader·forward·cache/state·분할·양자화 코드를 직접 구현하며, 다른 모델 지원을 위해
-선행 추상화하지 않습니다. P4 연결·이벤트 및 자원 소유권 계약은 이 원칙과 별개로 유지합니다.
+U8 was confirmed by the user's follow-up instruction on the 2026-09-13 development plan.
+Per-model loader, forward, cache/state, partitioning and quantization code is implemented directly, without up-front
+abstraction for supporting other models. The P4 connection, event and resource ownership contracts are maintained independently of this principle.
 
-## 설계 제안 — 구현 시 검증/확정
+## Design proposals — verify and confirm during implementation
 
-| ID | 제안 | 이유 |
+| ID | Proposal | Reason |
 | --- | --- | --- |
-| D1 | P4 중립 경계 + 독립 Rust bridge + Python worker | 기존 event runtime과 모델별 Python 연산을 연결 |
-| D2 | 호스트 간 연속 레이어 PP 우선 | stage마다 담당 weight/state를 유지하고 경계만 전송 |
-| D3 | 초기 가중치 4bit 후보, 경계/KV FP16/BF16 후보 | 용량 문제를 먼저 다루고 통신/KV 양자화 오차를 분리 |
-| D4 | 공개 양자화 우선 조사; 필요 시 load-time 또는 offline PTQ | 재사용·준비 비용·품질을 실제 아티팩트로 선택 |
-| D5 | 모델별 양자화 아티팩트를 고정하고 stage별 tensor만 배포 | node cut 변경과 양자화 준비를 분리 |
-| D6 | stage 내부 양자화 형식은 달라도 경계 dtype/schema 합의 | 이기종 커널 활용; 혼합 품질은 전체 검증 |
-| D7 | 양자화 형식과 실제 압축 커널을 manifest에 함께 기록 | 첫 실행 dequantization과 예상 밖 메모리 증가 검출 |
-| D8 | 원본→동일 양자화→분할→다중 호스트 기준선 분리 | 양자화 오차와 분산 오류를 구분 |
+| D1 | P4 neutral boundary + standalone Rust bridge + Python worker | Connects the existing event runtime with per-model Python computation |
+| D2 | Cross-host contiguous-layer PP first | Each stage keeps its assigned weights/state, and only the boundary is transferred |
+| D3 | Initial 4-bit weight candidates; FP16/BF16 candidates for boundary/KV | Addresses the capacity problem first and isolates communication/KV quantization error |
+| D4 | Investigate published quantizations first; load-time or offline PTQ if needed | Choose on reuse, preparation cost and quality using real artifacts |
+| D5 | Pin a per-model quantized artifact and deploy only per-stage tensors | Separates node-cut changes from quantization preparation |
+| D6 | Stage-internal quantization formats may differ, but boundary dtype/schema is agreed | Uses heterogeneous kernels; mixed quality is verified end to end |
+| D7 | Record the quantization format and the actual compressed kernel together in the manifest | Detects first-run dequantization and unexpected memory growth |
+| D8 | Separate baselines: original → same quantization → partitioned → multi-host | Distinguishes quantization error from distribution errors |
 
-D1~D8은 이 문서의 권장안이며 구현·성능 입증 또는 사용자의 세부 기술 선택 완료를 뜻하지 않습니다.
+D1~D8 are this document's recommendations; they do not mean that implementation or performance has been proven, or that the user has finished the detailed technical choices.
 
-## 미결정
+## Undecided
 
-- 후속 기능 범위와 수용 목표. 첫 스크립트의 모델·revision·라이브러리 기준은 [Qwen 계약](../../models/qwen3_5_0_8b/README.md)에 고정했습니다.
-- 사용할 물리 fleet, GPU/OS/네트워크, 모델 접근권한·가용 메모리.
-- 양자화 공개 artifact 또는 직접 변환 여부, bit/group/대칭성/제외 모듈/커널.
-- 보정 dataset, 별도 평가 입력, 허용 logits/품질 오차, TTFT/ITL/유효 TPS·자원 기준.
-- context·동시 요청·최대 출력·배치/flight 예산과 샘플링 설정.
-- Python/PyTorch/Transformers/양자화 패키지 및 Rust 의존 버전/lock 방식.
-- IPC transport, adapter kind/content-type/schema, standalone test host 구성.
-- 향후 P4 의존 참조/빌드/배포 방식, 저장소 remote, 라이선스와 배포 정책.
+- Follow-up feature scope and acceptance goals. The model, revision and library baseline for the first script are pinned in the [Qwen contract](../../models/qwen3_5_0_8b/README.md).
+- The physical fleet to use, GPU/OS/network, model access rights and available memory.
+- Published quantized artifact or own conversion; bits/group/symmetry/excluded modules/kernels.
+- Calibration dataset, separate evaluation inputs, allowed logits/quality error, TTFT/ITL/useful TPS and resource criteria.
+- Context, concurrent requests, maximum output, batch/flight budget and sampling settings.
+- Python/PyTorch/Transformers/quantization package and Rust dependency versions, and the lock method.
+- IPC transport, adapter kind/content-type/schema, standalone test host setup.
+- The future P4 dependency reference/build/deploy method, repository remote, license and distribution policy.
 
-## 채택하지 않은 가정
+## Assumptions not adopted
 
-`device_map="auto"`만으로 P4 다중 호스트 실행이 완성되거나, 노드마다 전체 `generate()`를 호출하면
-분할 실행이 되거나, 동일 4비트면 모든 장치에서 같은 커널/품질을 얻는다는 가정은 사용하지 않습니다.
-파이썬 실행 가능성을 부정하는 근거로 양자화 난점을 과장하지도 않습니다.
-특정 모델/장치 조합을 실제 코드·아티팩트·측정으로 좁혀 해결합니다.
+We do not assume that `device_map="auto"` alone completes P4 multi-host execution, that calling the full `generate()` on each node
+yields partitioned execution, or that the same 4-bit format gives the same kernels and quality on every device.
+Nor do we exaggerate the difficulties of quantization as grounds for denying that Python execution is feasible.
+Specific model/device combinations are narrowed down and solved with real code, artifacts and measurements.

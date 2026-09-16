@@ -1,13 +1,13 @@
-# 제한
+# Limitations
 
-- 한 bridge의 model command는 하나이며 physical batching·양자화·임의 모델 지원은 미구현이다.
-- 기존 RTX4080+3090 BF16 분할의 logits FAIL을 유지한다. FP32 통과로 대체하지 않는다.
-- epoch는 drain된 상태에서만 전환한다. 오래된 generation/epoch가 새 상태를 변경해서는 안 된다.
-- host 전체 장애의 durable 복구·인증은 이 in-memory 계약의 범위 밖이다.
-- 작은 Qwen conformance와 디렉터리 이관 검증은 초대형 H0–H7/성능·SLO 수용이 아니다.
-- Python import명 `p4hfadapter`는 유지하지만 독립 저장소·외부 path dependency는 사용하지 않는다.
-- 자동 계획은 현재 Qwen3.5-0.8B 고정 revision의 FP32, CPU/CUDA만 허용한다. BF16 실험 plan의 수동 실행은 별도다.
-- stage 프로필은 실제 loader/cache 실행의 관측치다. synthetic 입력의 관측 최대값이 모든 입력의 절대 메모리 상한은 아니다.
-  caller reserve와 LOAD 직전 점유 재검사가 필요하다. IPC/network·동시 GPU 실행 contention은 아직 비용에 포함하지 않는다.
+- One bridge has one model command. Physical batching, quantization and support for arbitrary models are not implemented.
+- The existing logits FAIL for the RTX4080+3090 BF16 split stands. The FP32 pass does not replace it.
+- The epoch changes only in a drained state. A stale generation/epoch must not modify new state.
+- Durable recovery from a whole-host failure, and authentication, are outside the scope of this in-memory contract.
+- Small-Qwen conformance and the directory-migration verification are not acceptance of the very large H0–H7 models or of performance/SLO.
+- The Python import name `p4hfadapter` is kept, but no standalone repository or external path dependency is used.
+- The automatic planner currently allows only FP32 on CPU/CUDA for the pinned Qwen3.5-0.8B revision. Manual execution of the BF16 experimental plan is a separate matter.
+- Stage profiles are observations from real loader/cache runs. The maximum observed on synthetic inputs is not an absolute memory ceiling for every input.
+  A caller reserve and a re-check of occupancy right before LOAD are required. IPC/network cost and contention from concurrent GPU execution are not yet included in the cost.
 
-세부 예산/실패 의미는 [통합 계약](integration/README.md), 미검증 양자화 후보는 [양자화 설계](quantization.md)를 따른다.
+Detailed budget and failure semantics follow the [integration contract](integration/README.md); unverified quantization candidates follow the [quantization design](quantization.md).

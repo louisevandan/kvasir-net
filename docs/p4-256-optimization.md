@@ -1,450 +1,450 @@
-# P4 256세션 통신·추론 최적화 실측 보고서
+# P4 256-session communication and inference optimization: measurement report
 
-> 문서 지위 (2026-09-06): **역사·구 계획**. 당시 계획/관측을 보존한다. 현재 상태·실행 순서·승격 기준으로 사용하지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **historical / old plan**. It preserves the plans and observations of that time. Do not use it for current status, execution order or promotion criteria.
+> For current goals, status and order see the [execution roadmap](distributed-batching-roadmap.md); for document authority and reading paths see the [document map](document-map.md).
 
-기준일: 2026-08-10. 이 문서는 P4(Proxy Pipeline Parallel Protocol)의
-로컬 2-GPU Pipeline 실행을 실제 요청·응답 trace, stage 계측, 원시 GPU 샘플로
-재구성한 근거 문서다. 구성·로그인·모델 적재만으로 성공을 주장하지 않는다.
+Reference date: 2026-08-10. This document reconstructs the local 2-GPU Pipeline execution of P4 (Proxy Pipeline Parallel Protocol)
+from real request/response traces, stage instrumentation and raw GPU samples.
+It does not claim success from configuration, login or model load alone.
 
-## 결론
+## Conclusion
 
-14:14 레이어 분할, 고정 backend sampler, 공유 메모리 경계에서 **서로 독립적인
-controller/Pipeline 4개가 각 64세션을 동시에 처리하여 총 256/256 요청을 성공**했다.
-그 뒤 terminal 역할을 RTX 4080으로 옮긴 reverse 14:14도 256/256을 통과했고,
-terminal compute와 wall time을 더 낮췄다. 단일 native context의
-`parallel=batch=ubatch=256`도 256/256 완료, 오류 0, 실제 생성 토큰 상한 위반 0,
-TCP fallback 0으로 통과했다.
+With a 14:14 layer split, a fixed backend sampler and a shared-memory boundary, **4 independent
+controllers/Pipelines each handled 64 concurrent sessions, and all 256/256 requests succeeded**.
+After that, reverse 14:14, which moved the terminal role to the RTX 4080, also passed 256/256 and
+lowered terminal compute and wall time further. A single native context with
+`parallel=batch=ubatch=256` also passed: 256/256 complete, 0 errors, 0 violations of the actual generated-token cap
+and 0 TCP fallbacks.
 
-자연 EOG 종료가 비교를 왜곡하지 않도록 benchmark 전용 `benchmark_ignore_eog`를
-추가했다. 이 모드의 reverse 14:14, **4 × 64 physical microbatch**는 요청당 정확히
-500 completion tokens, 총 128,000 tokens를 37.985초에 처리해 **3,369.71 tok/s**를
-기록했다. reverse 15:13 재균형도 256/256, 128,000 tokens, TCP fallback 0으로
-통과했지만 37.827초, **3,383.82 tok/s**로 차이는 0.4%뿐이다. 레이어 한 장 이동은
-현재 병목의 실질적 해법이 아니다.
+To keep natural EOG termination from skewing comparisons, we added the benchmark-only `benchmark_ignore_eog`.
+In this mode, reverse 14:14 with **4 × 64 physical microbatches** processed exactly
+500 completion tokens per request, 128,000 tokens in total, in 37.985 s, recording **3,369.71 tok/s**.
+The reverse 15:13 rebalance also passed with 256/256, 128,000 tokens and 0 TCP fallbacks,
+at 37.827 s and **3,383.82 tok/s**, a difference of only 0.4%. Moving one layer
+is not a real fix for the current bottleneck.
 
-공유 메모리 전송과 terminal 반환은 작고 TCP batch fallback은 계속 0회다. 4 × 64
-고정 길이에서 4080 terminal GPU 평균 활성률은 약 80–82%이나 3090 first stage는
-약 42–44%에 그친다. stage 0의 downstream wait는 stage 1 compute와 같은 규모다.
-Nsight Systems로 같은 256세션을 다시 실행한 결과 terminal 4080의 CUDA graph 실행
-union은 70.55%이고 p95 graph gap은 17.127 ms, stage 1의 평균 kernel queue time은
-12.962 ms다. **P4 중계 병목은 아니지만 terminal CUDA 제출/동기화 경로에는 아직
-유휴 구간이 남아 있다.** tensor-core instruction 점유는 이 측정만으로 알 수 없으므로
-다음 판정은 terminal stage에 대한 Nsight Compute counter로 제한한다.
+Shared-memory transfer and terminal return are small, and TCP batch fallback stays at 0. With 4 × 64
+at fixed length, the 4080 terminal GPU's mean active rate is about 80–82%, while the 3090 first stage
+reaches only about 42–44%. Stage 0's downstream wait is on the same scale as stage 1 compute.
+Re-running the same 256 sessions under Nsight Systems showed a CUDA graph execution
+union of 70.55% on the terminal 4080, a p95 graph gap of 17.127 ms, and a mean kernel queue time of
+12.962 ms on stage 1. **P4 relay is not the bottleneck, but the terminal CUDA submit/synchronize path still
+has idle intervals.** This measurement alone cannot reveal tensor-core instruction occupancy, so
+the next verdict is limited to Nsight Compute counters on the terminal stage.
 
-## 범위와 판정 규칙
+## Scope and verdict rules
 
-| 항목 | 고정 조건 |
+| Item | Fixed condition |
 | --- | --- |
-| 모델 | Qwen2.5-1.5B-Instruct-Q8_0, 로컬 CUDA 2-stage Pipeline |
-| 요청 | 한국어 Rust 설명 요청, 요청별 생성 상한 500 |
+| Model | Qwen2.5-1.5B-Instruct-Q8_0, local CUDA 2-stage Pipeline |
+| Request | Korean-language request to explain Rust, generation cap of 500 per request |
 | sampler | terminal backend: `temperature=0.2`, `top_p=0.9`, `top_k=20`, `seed=7` |
-| 세션 | 4 × 64, 2 × 128, 1 × 256의 세 가지 physical microbatch 형태를 모두 실측 |
-| 경계 | CUDA P2P/IPC 불가(`can_access:false` 양방향)이므로 host shared memory 사용 |
-| 유효 trace | 프롬프트·최종문장 비어 있지 않음, `max_tokens=500`, accepted 1회, DONE 1회, `completed=true` |
+| Sessions | all three physical microbatch shapes measured: 4 × 64, 2 × 128, 1 × 256 |
+| Boundary | CUDA P2P/IPC unavailable (`can_access:false` in both directions), so host shared memory is used |
+| Valid trace | prompt and final sentence non-empty, `max_tokens=500`, accepted exactly 1, DONE exactly 1, `completed=true` |
 
-4 × 64와 2 × 128은 동일 물리 GPU 위의 진짜 256 동시 세션 시스템 시험이지만,
-각 lane이 별도 `llama_context`다. 1 × 256은 단일 context의 256 sequence를 검증한다.
-따라서 context graph 상한과 scheduler의 실제 batch 폭을 구분해서 해석한다.
+4 × 64 and 2 × 128 are real 256-concurrent-session system tests on the same physical GPUs,
+but each lane is a separate `llama_context`. 1 × 256 verifies 256 sequences in a single context.
+So interpret the context graph limit and the scheduler's actual batch width separately.
 
-## 지금까지의 실험 이력
+## Experiment history so far
 
-| 상태 | 실행/변경 | 결과 | 해석 |
+| Status | Run/change | Result | Interpretation |
 | --- | --- | --- | --- |
-| 통과 | TCP hidden-state 경계 | 256/128, 54,550 events, 96.749 s | 초기 통신 기준선 |
-| 통과 | shared-memory 경계 | 256/128, 54,956 events, 80.402 s | host 공유 메모리로 경계 비용 축소 |
-| 통과 | terminal batch return + persistent CPU sampler | 256/256, 56,357 events, 58.621 s | sampler worker/buffer 재사용으로 CPU sampler 비용 축소 |
-| 통과 | CPU sampler, 4 × 64, 11:17 | 256/256, 14,189 events, slowest 8.793 s | 짧은 64-lane 기준선 |
-| 통과 | backend sampler, 4 × 64, 11:17 | 256/256, 14,231 events, slowest 19.950 s | terminal 3090 평균 89.73%, first 4080 평균 28.79% |
-| 거절 | backend sampler 물리 256/256 | context graph가 368 bytes 부족 | 정적 sampler graph 예산 누락 |
-| 통과 | 새 graph 예산, 15:13, 64 | 64/64, 3,612 token events, 15.239 s | 예약식과 backend sampler를 실제 생성까지 검증 |
-| 통과 | 새 graph 예산, 12:16/13:15/14:14/15:13 | 각 64/64, 오류 0 | 14:14를 256 후보로 선택 |
-| 통과 | 새 graph 예산, 14:14, 4 × 64 | **256/256, 14,082 token events, wall 18.011 s** | 현재 기준 결과 |
-| 거절 | 15:13, 4 × 64, 4080 first / 3090 terminal | 256/256이나 wall 26.029 s, terminal compute 64.495 s | 레이어 한 개 이동이 이 배치에서는 악화 |
-| 통과 | reverse 14:14, 4 × 64 | **256/256, 14,151 token events, wall 16.527 s** | 3090 first / 4080 terminal로 현재 최선 |
+| Pass | TCP hidden-state boundary | 256/128, 54,550 events, 96.749 s | initial communication baseline |
+| Pass | shared-memory boundary | 256/128, 54,956 events, 80.402 s | host shared memory reduced boundary cost |
+| Pass | terminal batch return + persistent CPU sampler | 256/256, 56,357 events, 58.621 s | reusing sampler workers/buffers reduced CPU sampler cost |
+| Pass | CPU sampler, 4 × 64, 11:17 | 256/256, 14,189 events, slowest 8.793 s | short 64-lane baseline |
+| Pass | backend sampler, 4 × 64, 11:17 | 256/256, 14,231 events, slowest 19.950 s | terminal 3090 mean 89.73%, first 4080 mean 28.79% |
+| Rejected | backend sampler, physical 256/256 | context graph short by 368 bytes | static sampler graph budget was missing |
+| Pass | new graph budget, 15:13, 64 | 64/64, 3,612 token events, 15.239 s | reservation formula and backend sampler verified through actual generation |
+| Pass | new graph budget, 12:16/13:15/14:14/15:13 | 64/64 each, 0 errors | 14:14 chosen as the 256 candidate |
+| Pass | new graph budget, 14:14, 4 × 64 | **256/256, 14,082 token events, wall 18.011 s** | current reference result |
+| Rejected | 15:13, 4 × 64, 4080 first / 3090 terminal | 256/256 but wall 26.029 s, terminal compute 64.495 s | moving one layer made this layout worse |
+| Pass | reverse 14:14, 4 × 64 | **256/256, 14,151 token events, wall 16.527 s** | 3090 first / 4080 terminal, current best |
 
-생성 길이가 요청마다 다르므로 단순 wall time만으로 layer cut을 선택하지 않았다.
-동일 조건에서 stage compute/token, downstream wait, trace 완결성을 함께 보았다.
+Because generation length differs per request, the layer cut was not chosen from wall time alone.
+Under identical conditions we looked at stage compute/token, downstream wait and trace completeness together.
 
-## 정적 sampler graph 실패와 수정
+## Static sampler graph failure and fix
 
-15:13, 64세션에서 초기 예약식은 모델 stage가 실제로 보유한 tensor 수만 세고
-전체 graph가 sampler 체인을 만들 때 필요한 context metadata를 충분히 세지 못했다.
-실패는 Pipeline cut-set이 아니라 upstream `build_sampling()` 이전/도중의 context
-metadata pool에서 일어났다.
+At 15:13 with 64 sessions, the initial reservation formula counted only the tensors the model stage actually holds,
+and did not count enough of the context metadata the full graph needs when it builds the sampler chain.
+The failure occurred not in the Pipeline cut-set but in the context
+metadata pool before or during upstream `build_sampling()`.
 
-| run | 시도 | 관측 |
+| run | Attempt | Observation |
 | --- | --- | --- |
-| `backend-sampler-15-64-v4` | stage metadata 조건식 | needed 1,273,296; available 1,272,928 |
-| `...-v5` | sampler당 8개 추정 | needed 738,080; available 737,712 |
-| `...-v6`~`v9` | Pipeline reserve 16→17→32, debug marker | 매번 368 bytes 차이; marker 전에 실패 |
-| `...-v10` | stage base 2배 + 8/sequence | 47번째 sampler chain에서 metadata pool 소진 |
+| `backend-sampler-15-64-v4` | stage metadata condition | needed 1,273,296; available 1,272,928 |
+| `...-v5` | estimate of 8 per sampler | needed 738,080; available 737,712 |
+| `...-v6`~`v9` | Pipeline reserve 16→17→32, debug marker | 368-byte gap every time; failed before the marker |
+| `...-v10` | 2× stage base + 8/sequence | metadata pool exhausted at the 47th sampler chain |
 
-v10의 계측으로 첫 sampler chain은 graph node 37개, 후속 chain은 graph node 36개를
-추가하며, metadata tensor object는 chain마다 37개가 필요함을 확인했다. 같은 `res`
-값이 graph capacity와 tensor metadata pool 양쪽에 영향을 주므로 graph node 수만
-맞추면 다시 실패할 수 있다.
+Instrumentation in v10 confirmed that the first sampler chain adds 37 graph nodes, each later chain adds 36 graph nodes,
+and each chain needs 37 metadata tensor objects. Because the same `res`
+value drives both graph capacity and the tensor metadata pool, matching only the graph node count
+can fail again.
 
-현재 호환 계층은 stage-aware base를 2배로 잡고, 활성 sampler마다 **64개 + 안전
-object 1개**를 예약한다. 64는 관측된 37 object보다 여유 있는 보수적 상한이며
-VRAM/전송량이 아니라 host metadata의 소량 증가다. 변경은 공식 llama.cpp checkout
-밖의 버전 고정 compatibility patch에만 존재한다.
+The current compat layer sets the stage-aware base to 2× and reserves **64 + 1 safety
+object** for each active sampler. 64 is a conservative upper bound with headroom over the observed 37 objects,
+and it is a small increase in host metadata, not in VRAM or transfer volume. The change exists only in a version-pinned compatibility patch
+outside the official llama.cpp checkout.
 
-| 검증 | 결과 |
+| Verification | Result |
 | --- | --- |
-| 호환 patch set | `b7f842e37ca8642bbaab86ebfe208cdda19642ed586abda7af899675e6dddc21` |
-| upstream 준비 | `prepare-pipeline-upstream.mjs --json` 통과 |
-| native pipeline stability | CUDA build 후 CTest `pipeline-stability` 5/5 통과 |
-| 생성 검증 | `backend-sampler-15-64-v11`: 64/64 trace-valid, 오류 0 |
+| compat patch set | `b7f842e37ca8642bbaab86ebfe208cdda19642ed586abda7af899675e6dddc21` |
+| upstream preparation | `prepare-pipeline-upstream.mjs --json` passed |
+| native pipeline stability | CTest `pipeline-stability` 5/5 passed after the CUDA build |
+| generation verification | `backend-sampler-15-64-v11`: 64/64 trace-valid, 0 errors |
 
-관련 소스는 [`0004-llama-context.patch`](../native/compat/3e3a7a416/0004-llama-context.patch)와
-[`0006-llama-graph.patch`](../native/compat/3e3a7a416/0006-llama-graph.patch)다.
-`apps/p4/layers/adapters/llamacpp/upstream`에는 Linker/P4 변경을 넣지 않았다.
+The related sources are [`0004-llama-context.patch`](../native/compat/3e3a7a416/0004-llama-context.patch) and
+[`0006-llama-graph.patch`](../native/compat/3e3a7a416/0006-llama-graph.patch).
+No Linker/P4 changes were put into `apps/p4/layers/adapters/llamacpp/upstream`.
 
-## 64세션 layer-cut 대조
+## 64-session layer-cut comparison
 
-아래 GPU 평균은 실행마다 출력 길이가 다르므로 보조 지표다. 선택의 주 근거는
-두 stage의 compute/token과 완료 지연이다.
+The GPU means below are secondary indicators because output length differs per run. The main basis for the choice is
+the compute/token and completion latency of the two stages.
 
-| 분할 | 생성 token events | 완료 window | 4080 compute/token | 3090 compute/token | first downstream wait | 완료 p95 |
+| Split | Generated token events | Completion window | 4080 compute/token | 3090 compute/token | first downstream wait | Completion p95 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 12:16 | 3,624 | 14.304 s | 1.623 ms | 1.997 ms | 7.454 s | 13.247 s |
 | 13:15 | 3,660 | 15.501 s | 1.865 ms | 2.022 ms | 7.739 s | 14.733 s |
 | **14:14** | **3,386** | **10.023 s** | **0.924 ms** | **1.723 ms** | **5.977 s** | **9.344 s** |
 | 15:13 | 3,612 | 15.239 s | 2.005 ms | 1.874 ms | 7.068 s | 14.285 s |
 
-14:14는 이 대조군에서 두 stage의 최대 compute/token과 완료 지연이 가장 낮았다.
-다만 64세션 단독에서는 두 GPU 모두 포화되지 않았으므로, 이 선택은 256 동시
-시험으로 다시 확인해야 했다.
+In this comparison, 14:14 had the lowest maximum compute/token across the two stages and the lowest completion latency.
+However, neither GPU was saturated with 64 sessions alone, so the choice had to be re-confirmed with the 256-concurrent
+test.
 
-## 최종 256 동시 세션 실측
+## Final 256-concurrent-session measurement
 
-실행은 서로 다른 P4 listen, Pipeline listen, native stage port를 사용한 네 lane을
-같은 시점에 기동했다. 외부 PowerShell job은 마지막에 비정상 종료 코드를
-보고했지만, 이는 job wrapper의 종료 상태다. P4 실행 자체는 네 lane 모두
-`P4_PIPELINE_E2E_CLIENT_PASS`를 기록했고 아래 독립 artifact 검증이 이를 대체한다.
+The run started four lanes at the same moment, each using distinct P4 listen, Pipeline listen and native stage ports.
+The outer PowerShell job reported an abnormal exit code at the end,
+but that is the exit status of the job wrapper. The P4 run itself recorded
+`P4_PIPELINE_E2E_CLIENT_PASS` on all four lanes, and the independent artifact verification below takes precedence over the wrapper status.
 
-| lane | 완료/오류/무결성 위반 | token events | 요청 window | 완료 p95 | 4080 compute | 3090 compute |
+| lane | Completed/errors/integrity violations | token events | Request window | Completion p95 | 4080 compute | 3090 compute |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | lane1 | 64 / 0 / 0 | 3,596 | 17.711 s | 15.581 s | 2.543 s | 13.214 s |
 | lane2 | 64 / 0 / 0 | 3,372 | 17.693 s | 15.388 s | 2.515 s | 13.313 s |
 | lane3 | 64 / 0 / 0 | 3,472 | 18.011 s | 15.035 s | 2.463 s | 13.348 s |
 | lane4 | 64 / 0 / 0 | 3,642 | 16.973 s | 15.877 s | 2.341 s | 12.688 s |
-| **합계/벽시계** | **256 / 0 / 0** | **14,082** | **18.011 s** | 전체 p95 15.667 s | 9.862 s 합 | 52.563 s 합 |
+| **Total/wall clock** | **256 / 0 / 0** | **14,082** | **18.011 s** | overall p95 15.667 s | 9.862 s sum | 52.563 s sum |
 
-전체 trace에서 accepted 평균/95분위는 41/51 ms, 첫 token은 5.103/5.446 s,
-완료는 10.606/15.667 s(최대 17.966 s)다. 최종 프롬프트 trace는
-“Rust 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.”를
-보존한다. lane별 첫 응답의 최종 문장도 모두 실제 추론 결과로 보관되어 있다.
+Across all traces, accepted mean/p95 is 41/51 ms, first token 5.103/5.446 s,
+and completion 10.606/15.667 s (max 17.966 s). The final prompt trace preserves
+“Rust 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.” (English: "Briefly explain the Rust language in Korean. Include its key features in one sentence.").
+The final sentence of each lane's first response is also kept as a real inference result.
 
-### 통신과 GPU 근거
+### Communication and GPU evidence
 
-| 지표 | 4080 first stage | 3090 terminal stage | 의미 |
+| Metric | 4080 first stage | 3090 terminal stage | Meaning |
 | --- | ---: | ---: | --- |
-| GPU 평균 사용률 | 27.809–28.078% | 86.297–87.044% | terminal만 거의 지속적으로 활성 |
-| GPU p95 사용률 | 47% | 99–100% | first stage는 큰 여유가 남음 |
-| first downstream wait 합 | 56.517 s | — | terminal 결과 대기와 일치 |
-| stage compute 합 | 9.862 s | 52.563 s | terminal decode가 약 5.3배 큼 |
-| TCP batch fallback | 0 | — | shared-memory/batched 경계에서 TCP 대기열 없음 |
-| hidden transfer 속도 | 약 46–120 MB/s (lane별 표본) | — | payload 전달은 작은 compute 대비 지배적이지 않음 |
+| GPU mean utilization | 27.809–28.078% | 86.297–87.044% | only the terminal is almost continuously active |
+| GPU p95 utilization | 47% | 99–100% | the first stage has large headroom |
+| first downstream wait sum | 56.517 s | — | matches waiting for terminal results |
+| stage compute sum | 9.862 s | 52.563 s | terminal decode is about 5.3× larger |
+| TCP batch fallback | 0 | — | no TCP queue at the shared-memory/batched boundary |
+| hidden transfer rate | about 46–120 MB/s (per-lane samples) | — | payload delivery does not dominate, even next to the small compute |
 
-terminal 반환 send는 lane별 수십 ms, sampler apply도 수십 ms 수준이다. 반면
-3090의 `decode_submit_us`는 lane별 약 11.7–13.0 s다. 따라서 현 시점에서 socket,
-event loop, shared-memory 구조를 다시 바꾸는 것은 근거가 없다. 통신층은 256
-동시 세션을 잃지 않고 중계했고, 다음 병목은 model placement와 terminal decode다.
+Terminal return sends take tens of ms per lane, and sampler apply is also in the tens of ms. By contrast,
+the 3090's `decode_submit_us` is about 11.7–13.0 s per lane. So at this point there is no basis for changing the socket,
+event loop or shared-memory structure again. The communication layer relayed 256
+concurrent sessions without loss; the next bottlenecks are model placement and terminal decode.
 
-## Reverse rank 14:14: terminal을 RTX 4080으로 이동
+## Reverse rank 14:14: moving the terminal to the RTX 4080
 
-기존 planner는 4080을 first, 3090을 terminal rank로 선택했다. P4 plan 자체에는
-stage별 `node`/`node_id`가 있으므로 wire를 바꾸지 않고 benchmark runner에
-`P4_PIPELINE_STAGE_NODE_ORDER`를 추가했다. 이는 명시된 placement를 plan에 기록하는
-실험용 입력이며, native launch는 기존 `ringProcessLaunches()`가 그 node mapping을
-그대로 사용한다.
+The existing planner chose the 4080 as the first rank and the 3090 as the terminal rank. The P4 plan already carries
+per-stage `node`/`node_id`, so we added `P4_PIPELINE_STAGE_NODE_ORDER` to the benchmark runner
+without changing the wire. It is an experimental input that records an explicit placement
+in the plan,
+and native launch uses that node mapping unchanged through the existing `ringProcessLaunches()`.
 
-64세션 선행 run(`backend-sampler-reverse-14-64-v1`)은
-`stage_nodes=[p4-gpu-3090,p4-gpu-4080]`, 64/64 완료, 오류 0, TCP fallback 0으로
-mapping과 생성 경로를 먼저 검증했다. 이후 같은 매핑으로 4 × 64를 동시에 실행했다.
+A preliminary 64-session run (`backend-sampler-reverse-14-64-v1`) first verified the mapping and the generation path with
+`stage_nodes=[p4-gpu-3090,p4-gpu-4080]`, 64/64 complete, 0 errors and 0 TCP fallbacks.
+We then ran 4 × 64 concurrently with the same mapping.
 
-| 비교: 14:14, 4 × 64 | 기본 rank (4080 first → 3090 terminal) | reverse rank (3090 first → 4080 terminal) | 변화 |
+| Comparison: 14:14, 4 × 64 | Default rank (4080 first → 3090 terminal) | Reverse rank (3090 first → 4080 terminal) | Change |
 | --- | ---: | ---: | ---: |
-| 유효 완료 / 오류 / 무결성 위반 | 256 / 0 / 0 | 256 / 0 / 0 | 동일 |
-| 생성 token events | 14,082 | 14,151 | 비슷한 길이 |
+| valid completions / errors / integrity violations | 256 / 0 / 0 | 256 / 0 / 0 | same |
+| generated token events | 14,082 | 14,151 | similar length |
 | wall time | 18.011 s | 16.527 s | -8.2% |
-| first stage compute 합 | 9.862 s | 10.501 s | +6.5% |
-| terminal stage compute 합 | 52.563 s | 40.972 s | -22.1% |
-| first downstream wait 합 | 56.517 s | 43.228 s | -23.5% |
-| terminal GPU 평균 / p95 | 86.3–87.0% / 99–100% | 73.2–78.7% / 94% | terminal 과점 완화 |
-| first GPU 평균 / p95 | 27.8–28.1% / 47% | 30.1–30.7% / 47–63% | 아직 여유 큼 |
-| TCP batch fallback | 0 | 0 | 통신 경로 유지 |
+| first stage compute sum | 9.862 s | 10.501 s | +6.5% |
+| terminal stage compute sum | 52.563 s | 40.972 s | -22.1% |
+| first downstream wait sum | 56.517 s | 43.228 s | -23.5% |
+| terminal GPU mean / p95 | 86.3–87.0% / 99–100% | 73.2–78.7% / 94% | terminal dominance eased |
+| first GPU mean / p95 | 27.8–28.1% / 47% | 30.1–30.7% / 47–63% | still large headroom |
+| TCP batch fallback | 0 | 0 | communication path unchanged |
 
-reverse rank는 stage compute 비율을 약 5.3:1에서 약 3.9:1로 줄였지만 아직 균형은
-아니다. 15:13을 기본 rank로 옮긴 대조는 256/256을 통과했어도 token-normalized
-terminal 비용과 wall time이 모두 악화됐으므로 채택하지 않는다. 다음 대조는
-**reverse rank에서만** 15:13을 확인해 3090 first stage에 일을 더 주고 4080 terminal
-부담을 실제로 더 낮출 수 있는지 판단한다.
+Reverse rank cut the stage compute ratio from about 5.3:1 to about 3.9:1, but the stages are still not balanced.
+The comparison that moved 15:13 onto the default rank passed 256/256, but both token-normalized
+terminal cost and wall time got worse, so it is not adopted. The next comparison checks 15:13
+**on the reverse rank only**, to decide whether giving the 3090 first stage more work actually lowers the 4080 terminal
+load further.
 
-### Reverse 15:13 거절과 다음 가설
+### Reverse 15:13 rejected, and the next hypothesis
 
-reverse 15:13도 선행 64세션과 4 × 64의 256세션을 모두 trace-valid로 통과했다.
-그러나 256세션에서 14,709 token events, wall 21.647 s, first/terminal compute 합
-13.074/52.058 s, first downstream wait 55.410 s였다. reverse 14:14의
-10.501/40.972 s, 43.228 s보다 모두 나쁘므로 이 cut은 거절한다.
+Reverse 15:13 also passed both the preliminary 64-session run and the 4 × 64 256-session run as trace-valid.
+But at 256 sessions it recorded 14,709 token events, wall 21.647 s, first/terminal compute sums of
+13.074/52.058 s and a first downstream wait of 55.410 s. All of these are worse than reverse 14:14's
+10.501/40.972 s and 43.228 s, so this cut is rejected.
 
-원인은 통신이 아니라 4 × 64 실행 형태다. scheduler의 physical microbatch는
-`min(batch, ubatch)`이고 각 독립 native context의 active session은 64개뿐이므로,
-`batch=64`, `ubatch=64`에서 GPU에 전달되는 한 batch도 최대 64다. controller를
-늘려도 서로 다른 native context의 batch는 합쳐지지 않는다. 따라서 다음 최소
-실험은 **reverse 14:14, 128세션 한 lane**이다. 이를 통과하면 2 × 128 lane으로
-256 동시 세션을 구성한다. 목적은 통신 구조를 바꾸지 않고 physical microbatch를
-128로 키워 CUDA kernel shape와 두 stage의 유휴 시간을 개선하는 것이다.
+The cause is not communication but the 4 × 64 execution shape. The scheduler's physical microbatch is
+`min(batch, ubatch)`, and each independent native context has only 64 active sessions, so
+with `batch=64`, `ubatch=64` any single batch sent to the GPU is at most 64. Adding controllers
+does not merge batches across different native contexts. The next minimal
+experiment is therefore **reverse 14:14, one 128-session lane**. If it passes, build 256 concurrent sessions from
+2 × 128 lanes. The aim is to grow the physical microbatch to 128 without changing the communication structure,
+improving CUDA kernel shapes and the idle time of both stages.
 
-### 2 × 128 physical microbatch 통과와 재측정
+### 2 × 128 physical microbatch: pass and re-measurement
 
-128세션 단일 lane(`backend-sampler-reverse-14-128-v1`)은 128/128 trace-valid,
-`max_batch_size=128`, TCP fallback 0으로 선행 검증됐다. 두 lane을 처음 동시에
-올린 시도는 inference 전에 실패했는데, 539xx/540xx가 Windows TCP excluded range
-53851–54550에 포함됐기 때문이다. 보존한 native stderr는 정확히
-`cannot listen on <port>`를 보였고 VRAM, graph, transport 실패가 아니었다. 해당
-실패 group을 삭제하고 제외 범위 밖 531xx를 사용한 재시도만 성능 결과로 채택한다.
+A single 128-session lane (`backend-sampler-reverse-14-128-v1`) was verified first with 128/128 trace-valid,
+`max_batch_size=128` and 0 TCP fallbacks. The first attempt to bring up both lanes at once
+failed before inference, because 539xx/540xx fell inside the Windows TCP excluded range
+53851–54550. The preserved native stderr showed exactly
+`cannot listen on <port>`; it was not a VRAM, graph or transport failure. We deleted that
+failed group and took only the retry on 531xx, outside the excluded range, as a performance result.
 
-처음의 `r2` 결과는 P4 adapter가 `DONE.generated_tokens`에 text chunk 수를 기록하던
-시점의 결과였다. 비교값의 의미를 고정하기 위해 adapter를 수정한 뒤 같은 조건을
-`v4`로 재측정했다. `v4`의 completion token은 마지막 native SSE usage의
-`completion_tokens`이며, usage가 없는 경우에만 text chunk 수로 fallback한다.
+The first `r2` result was taken while the P4 adapter still wrote the number of text chunks into `DONE.generated_tokens`.
+To pin down the meaning of the compared value, we fixed the adapter and re-measured the same conditions as
+`v4`. In `v4`, the completion token count is `completion_tokens` from the last native SSE usage,
+with a fallback to the text chunk count only when usage is absent.
 
-| 비교: reverse 14:14, 256세션 | 4 × 64 (batch 64) | 2 × 128 (batch 128, v4) | 변화 |
+| Comparison: reverse 14:14, 256 sessions | 4 × 64 (batch 64) | 2 × 128 (batch 128, v4) | Change |
 | --- | ---: | ---: | ---: |
-| 유효 완료 / 오류 / 무결성 위반 | 256 / 0 / 0 | 256 / 0 / 0 | 동일 |
-| completion tokens / text chunks | 이전 계측 | 34,693 / 34,016 | chunk와 native token을 구분 |
-| 완료 window | 16.527 s | 40.041 s | 출력 길이가 달라 raw wall만 비교하지 않음 |
-| completion tokens/s | 이전 계측 | **866.43** | 새 의미론의 기준선 |
-| 3090 first compute/token | 0.742 ms | 0.535 ms | microbatch 확대 효과 유지 |
-| 4080 terminal compute/token | 2.895 ms | 1.572 ms | microbatch 확대 효과 유지 |
-| first downstream wait/token | 3.055 ms | 1.612 ms | 통신 fallback 없이 감소 |
-| native observed maximum batch | 64 | 128 | 목표대로 확대 |
-| TCP batch fallback | 0 | 0 | 통신 경로 유지 |
+| valid completions / errors / integrity violations | 256 / 0 / 0 | 256 / 0 / 0 | same |
+| completion tokens / text chunks | old instrumentation | 34,693 / 34,016 | chunks and native tokens told apart |
+| completion window | 16.527 s | 40.041 s | output lengths differ, so raw wall is not compared on its own |
+| completion tokens/s | old instrumentation | **866.43** | baseline under the new semantics |
+| 3090 first compute/token | 0.742 ms | 0.535 ms | microbatch growth benefit holds |
+| 4080 terminal compute/token | 2.895 ms | 1.572 ms | microbatch growth benefit holds |
+| first downstream wait/token | 3.055 ms | 1.612 ms | reduced with no communication fallback |
+| native observed maximum batch | 64 | 128 | grew as intended |
+| TCP batch fallback | 0 | 0 | communication path unchanged |
 
-이는 128 physical microbatch가 kernel/dispatch 효율을 실제로 높였다는 직접
-근거다. 아직 두 context가 같은 GPU를 공유하고 4080 terminal이 상대적으로 더
-무겁다. native `n_seq_max`의 실제 상한은 256이므로 다음 단계에서 단일 256
-context를 검증했다.
+This is direct evidence that a 128 physical microbatch actually raised kernel/dispatch
+efficiency. The two contexts still share the same GPUs, and the 4080 terminal is relatively
+heavier. The actual upper limit of native `n_seq_max` is 256, so the next step verified a single 256
+context.
 
-### 1 × 256 physical microbatch: 용량은 통과, 처리량은 하락
+### 1 × 256 physical microbatch: capacity passes, throughput drops
 
-`backend-sampler-reverse-14-256-1x256-v2`는 reverse 14:14,
-`parallel=concurrent=batch=ubatch=256`으로 실행했다. adapter 수정 후의 strict
-trace 검증은 submitted/accepted/done 모두 256, 오류 0, 무결성 위반 0이다.
-235개는 `stop`, 21개는 `length`로 끝났으며 native completion token 최댓값은 정확히
-500이다.
+`backend-sampler-reverse-14-256-1x256-v2` ran reverse 14:14 with
+`parallel=concurrent=batch=ubatch=256`. Strict trace verification after the adapter fix shows
+submitted/accepted/done all at 256, 0 errors and 0 integrity violations.
+235 requests ended with `stop` and 21 with `length`, and the maximum native completion token count is exactly
+500.
 
-| 비교: 정확한 P4 completion-token 계측 | 2 × 128 (v4) | 1 × 256 (v2) | 판정 |
+| Comparison: exact P4 completion-token instrumentation | 2 × 128 (v4) | 1 × 256 (v2) | Verdict |
 | --- | ---: | ---: | --- |
-| 완료 / 오류 / 무결성 위반 | 256 / 0 / 0 | 256 / 0 / 0 | 둘 다 유효 |
-| completion tokens / text chunks | 34,693 / 34,016 | 56,700 / 55,654 | chunk 수는 token 수와 같을 필요 없음 |
-| 최대 completion token | 500 | 500 | 요청 상한 준수 |
-| 완료 window | 40.041 s | 107.261 s | 자연 종료 분포가 다름 |
-| completion tokens/s | **866.43** | 528.62 | 2 × 128이 63.9% 높음 |
-| 3090 first compute/token | **0.535 ms** | 0.614 ms | 2 × 128 우세 |
-| 4080 terminal compute/token | 1.572 ms | **1.161 ms** | 단일 큰 batch의 terminal kernel은 효율적 |
-| 3090 first downstream wait/token | 1.612 ms | 1.164 ms | terminal wait 자체는 감소 |
-| observed maximum batch | 128 | 256 | 256 native graph/sequence 용량 증명 |
-| TCP batch fallback | 0 | 0 | transport는 두 경우 모두 비지배적 |
+| completed / errors / integrity violations | 256 / 0 / 0 | 256 / 0 / 0 | both valid |
+| completion tokens / text chunks | 34,693 / 34,016 | 56,700 / 55,654 | chunk count need not equal token count |
+| max completion tokens | 500 | 500 | request cap respected |
+| completion window | 40.041 s | 107.261 s | natural-termination distributions differ |
+| completion tokens/s | **866.43** | 528.62 | 2 × 128 is 63.9% higher |
+| 3090 first compute/token | **0.535 ms** | 0.614 ms | 2 × 128 ahead |
+| 4080 terminal compute/token | 1.572 ms | **1.161 ms** | terminal kernels are efficient with one large batch |
+| 3090 first downstream wait/token | 1.612 ms | 1.164 ms | terminal wait itself decreased |
+| observed maximum batch | 128 | 256 | proves 256 native graph/sequence capacity |
+| TCP batch fallback | 0 | 0 | transport is non-dominant in both cases |
 
-1 × 256에서 두 GPU의 250ms GPU-util 평균은 3090 26.53%, 4080 26.99%였다
-(p95 74%, 55%). 이는 "256을 못 묶었다"는 뜻이 아니다. native stage aggregate는
-각 70,728 batched tokens와 256 완료 세션을 기록한다. 원인은 235개 요청이 EOG로
-종료된 뒤 같은 단일 lane 안에서 active batch 폭이 계속 줄어든 것이다. 종료 길이가
-고정되지 않은 production 의미론에서 평균 GPU-util과 전체 처리량을 곧바로
-tensor-core 한계로 읽으면 안 된다.
+With 1 × 256, the 250 ms GPU-util means of the two GPUs were 26.53% on the 3090 and 26.99% on the 4080
+(p95 74% and 55%). This does not mean "256 could not be batched". The native stage aggregates
+each record 70,728 batched tokens and 256 completed sessions. The cause is that after 235 requests ended with EOG,
+the active batch width kept shrinking inside the same single lane. Under production semantics, where termination length
+is not fixed, mean GPU-util and overall throughput must not be read directly as a
+tensor-core limit.
 
-### P4 완료 토큰 의미론 정정
+### Correction to P4 completion-token semantics
 
-`TOKEN` frame은 UTF-8 text filter가 내보낸 **text chunk**다. 하나의 native token이
-여러 chunk가 되거나, 여러 native token이 하나의 chunk로 합쳐질 수 있으므로
-`TOKEN` frame 수는 생성 token 수의 권위값이 아니다. 이제 Rust P4 adapter는
-마지막 SSE usage의 `completion_tokens`를 `DONE.generated_tokens`로 보낸다. usage가
-없는 backend에는 안전하게 chunk 수를 쓴다. 검증 불변식은 `DONE.generated_tokens <=
-INGRESS_SUBMIT.max_tokens`이고, chunk 수와의 동일성은 요구하지 않는다.
+A `TOKEN` frame is a **text chunk** emitted by the UTF-8 text filter. One native token
+can become several chunks, and several native tokens can merge into one chunk, so
+the `TOKEN` frame count is not an authoritative generated-token count. The Rust P4 adapter now sends
+`completion_tokens` from the last SSE usage as `DONE.generated_tokens`. For backends
+without usage it safely falls back to the chunk count. The verification invariant is `DONE.generated_tokens <=
+INGRESS_SUBMIT.max_tokens`; equality with the chunk count is not required.
 
-## 고정 길이 500-token benchmark: 자연 종료 변수를 제거한 재측정
+## Fixed-length 500-token benchmark: re-measurement without the natural-termination variable
 
-production 요청의 EOG 종료를 바꾸지 않으면서 비교 가능한 물리 batch를 만들기 위해
-benchmark에서만 첫 stage가 `--benchmark-ignore-eog`를 받게 했다. terminal이 sampled
-EOG를 보더라도 first stage는 EOG가 아니라 `max_tokens`에서만 session을 끝낸다. 이
-옵션은 `benchmark=true` 없이는 P4에서 거절하며, 정상 mode의 64-token regression은
-EOG에 의해 37 tokens에서 `stop`으로 완료되어 기존 의미론이 보존됨을 확인했다.
+To build comparable physical batches without changing EOG termination for production requests,
+only benchmarks pass `--benchmark-ignore-eog` to the first stage. Even if the terminal sees a sampled
+EOG, the first stage ends the session only at `max_tokens`, not at EOG. P4
+rejects this option without `benchmark=true`, and a 64-token regression in normal mode
+completed with `stop` at 37 tokens because of EOG, confirming that the existing semantics are preserved.
 
-처음의 고정 길이 256 run은 supervisor bundle이 domain build보다 오래되어 native flag가
-빠진 것을 launch log로 발견했다. 따라서 결과를 폐기하고 `npm run build:server --workspace
-llama` 후 bundle에 flag가 들어간 것을 확인한 뒤 재실행했다. 이는 성능 비교의 일부가
-아닌 artifact-identity 검증 실패 사례다.
+In the first fixed-length 256 run, the launch log showed that the native flag was missing because the supervisor bundle was older
+than the domain build. We therefore discarded the result, ran `npm run build:server --workspace
+llama`, confirmed the flag was in the bundle, and re-ran. This is a case of artifact-identity verification failure,
+not part of the performance comparison.
 
-| 구성: reverse 14:14, 요청당 500 native completion tokens | 완료/오류 | 총 tokens | 가장 느린 요청 window | 처리량 | 3090 compute/token | 4080 compute/token | 3090 downstream wait/token | TCP fallback |
+| Configuration: reverse 14:14, 500 native completion tokens per request | Completed/errors | Total tokens | Slowest request window | Throughput | 3090 compute/token | 4080 compute/token | 3090 downstream wait/token | TCP fallback |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1 × 256, batch=ubatch=256 | 256 / 0 | 128,000 | 170.650 s | 750.07 tok/s | 0.583 ms | 0.661 ms | 0.662 ms | 0 |
 | 2 × 128, batch=ubatch=128 | 256 / 0 | 128,000 | 78.005 s | 1,640.92 tok/s | 0.420 ms | 0.711 ms | 0.714 ms | 0 |
 | **4 × 64, batch=ubatch=64** | **256 / 0** | **128,000** | **37.985 s** | **3,369.71 tok/s** | **0.256 ms** | **0.806 ms** | **0.834 ms** | **0** |
 
-1 × 256의 길이 고정 run은 natural drain 때문이 아니라 한 context 안의 stage 실행과
-hand-off가 직렬적으로 길어짐을 보였다. `ubatch=128`으로 하나의 256 context를 두
-window로 만들려는 별도 시도는 실행 전에 upstream GGML assertion으로 중단됐다.
-`n_tokens=128`, `n_seqs=256`에서 runtime이 256으로 올림한 뒤 view 범위를 벗어났다.
-이것은 P4 transport 결과가 아니며, upstream/compat 경계를 즉시 바꾸지 않고 지원하지
-않는 batch shape로 기록한다.
+The fixed-length 1 × 256 run showed that stage execution and hand-off inside one context grow long serially;
+it is not a natural-drain effect. A separate attempt to split a single 256 context into two
+windows with `ubatch=128` was stopped by an upstream GGML assertion before execution.
+With `n_tokens=128`, `n_seqs=256`, the runtime rounded up to 256 and then went past the view range.
+This is not a P4 transport result. Without changing the upstream/compat boundary right away, it is recorded as an unsupported
+batch shape.
 
-### 15:13 재균형의 음성 결과
+### Negative result of the 15:13 rebalance
 
-14:14의 4 × 64 결과에서 terminal 4080의 GPU 활성률이 높고 first 3090에는 여유가
-있어, wire·sampler·batch·prompt·max token을 그대로 둔 채 first stage에 한 레이어를
-더 주는 15:13만 비교했다. 첫 시도는 load profile
-`0.8/0.95/40/123`과 request profile `0.2/0.9/20/7`의 불일치로 native가 방어적으로
-종료했으므로 성능 결과에서 제외했다. 동일 profile로 재실행한 `v3`만 유효하다.
+In the 14:14 4 × 64 result, the terminal 4080 had high GPU activity and the first 3090 had
+headroom, so we compared only 15:13, which gives the first stage one more layer while wire, sampler, batch, prompt and max tokens
+stay unchanged. The first attempt was excluded from performance results because a mismatch between load profile
+`0.8/0.95/40/123` and request profile `0.2/0.9/20/7` made native exit defensively.
+Only `v3`, re-run with the same profile, is valid.
 
-| 구성: 4 × 64, 256세션, 요청당 500 | 14:14 | 15:13 | 변화 |
+| Configuration: 4 × 64, 256 sessions, 500 per request | 14:14 | 15:13 | Change |
 | --- | ---: | ---: | ---: |
-| 완료 / 오류 / token-cap 위반 | 256 / 0 / 0 | 256 / 0 / 0 | 동일 |
-| 총 native completion tokens | 128,000 | 128,000 | 동일 |
-| 가장 느린 요청 window | 37.985 s | 37.827 s | -0.4% |
-| 처리량 | 3,369.71 tok/s | 3,383.82 tok/s | +0.4% |
-| 3090 compute/token | 0.256 ms | 0.277 ms | 악화 |
-| 4080 compute/token | 0.806 ms | 0.779 ms | 소폭 개선 |
-| 3090 downstream wait/token | 0.834 ms | 0.809 ms | 소폭 개선 |
-| 3090 / 4080 GPU 평균 활성률 | 약 42% / 82% | 43.882% / 79.747% | 불균형은 유지 |
-| shared-memory frames (lane별) | 560/560 | 559/559 | 정상 |
-| TCP batch fallback | 0 | 0 | 정상 |
+| completed / errors / token-cap violations | 256 / 0 / 0 | 256 / 0 / 0 | same |
+| total native completion tokens | 128,000 | 128,000 | same |
+| slowest request window | 37.985 s | 37.827 s | -0.4% |
+| throughput | 3,369.71 tok/s | 3,383.82 tok/s | +0.4% |
+| 3090 compute/token | 0.256 ms | 0.277 ms | worse |
+| 4080 compute/token | 0.806 ms | 0.779 ms | slightly better |
+| 3090 downstream wait/token | 0.834 ms | 0.809 ms | slightly better |
+| 3090 / 4080 GPU mean active rate | about 42% / 82% | 43.882% / 79.747% | imbalance remains |
+| shared-memory frames (per lane) | 560/560 | 559/559 | normal |
+| TCP batch fallback | 0 | 0 | normal |
 
-레이어 한 장을 4080에서 3090으로 옮겨도 최종 stage가 여전히 더 오래 걸리고 전체
-처리량 변화는 반복 오차 수준이다. 다음 변경 대상은 layer cut이 아니라 **동일 GPU에서
-독립 context들을 어떻게 동시에 CUDA stream에 제출하는지**와 terminal decode의
-physical scheduling이다.
+Even after moving one layer from the 4080 to the 3090, the final stage still takes longer, and the change in overall
+throughput is within run-to-run noise. The next change target is not the layer cut but **how independent contexts on the same GPU
+submit to the CUDA stream concurrently**, together with the
+physical scheduling of terminal decode.
 
-## Nsight Systems: 256세션 CUDA 실행·대기열 판정
+## Nsight Systems: CUDA execution and queue verdict for 256 sessions
 
-다음 capture는 위 기준선과 같은 reverse 14:14, 4 × 64, 요청당 정확히 500 native
-completion tokens를 사용했다. native stage의 binary stdout은 P4 control stream이므로
-개별 `linker-node`를 profiler로 감싸지 않았다. 대신 부모 Node supervisor를 Nsight
-Systems의 child-process trace 아래에서 기동해 P4 pipe 의미론을 보존했다. capture
-중에도 네 lane은 모두 `P4_SHARED_MEMORY_PASS`(각 559/559 frame),
-`P4_PIPELINE_E2E_CLIENT_PASS`, 256/256 완료, 오류 0, TCP fallback 0을 기록했다.
+The next capture used the same reverse 14:14, 4 × 64 and exactly 500 native
+completion tokens per request as the baseline above. The native stage's binary stdout is the P4 control stream, so
+we did not wrap individual `linker-node` processes in the profiler. Instead we started the parent Node supervisor under Nsight
+Systems child-process tracing, which preserved P4 pipe semantics. During the capture
+all four lanes still recorded `P4_SHARED_MEMORY_PASS` (559/559 frames each),
+`P4_PIPELINE_E2E_CLIENT_PASS`, 256/256 complete, 0 errors and 0 TCP fallbacks.
 
-| 항목 | Nsight capture 결과 | 기준선과의 관계 |
+| Item | Nsight capture result | Relation to the baseline |
 | --- | ---: | --- |
-| 유효 완료 / 오류 / 총 completion tokens | 256 / 0 / 128,000 | 고정 길이 불변식 유지 |
-| wall time / 처리량 | 39.606 s / 3,231.87 tok/s | profiler 부하로 기준선 3,369.71 tok/s보다 4.1% 낮음; 성능 비교값으로 사용하지 않음 |
-| 3090 stage 0 compute / downstream wait 합 | 35.334 s / 111.930 s | downstream wait가 stage 0 compute의 3.17배 |
-| 4080 terminal stage 1 compute 합 | 109.399 s | 네 terminal context의 지배적 작업 |
-| CUDA native process | 8개 (3090 4, 4080 4) | 네 lane의 양 stage가 모두 capture됨 |
+| valid completions / errors / total completion tokens | 256 / 0 / 128,000 | fixed-length invariant holds |
+| wall time / throughput | 39.606 s / 3,231.87 tok/s | 4.1% below the 3,369.71 tok/s baseline because of profiler overhead; not used as a performance comparison value |
+| 3090 stage 0 compute / downstream wait sum | 35.334 s / 111.930 s | downstream wait is 3.17× stage 0 compute |
+| 4080 terminal stage 1 compute sum | 109.399 s | dominant work of the four terminal contexts |
+| CUDA native processes | 8 (3090: 4, 4080: 4) | both stages of all four lanes were captured |
 
-`nvidia-smi` 250 ms sample은 3090/4080 평균 41.93%/79.94%였다. 보다 세밀한
-Nsight CUDA graph timeline에서는 동일 GPU에 속한 네 context의 실행 구간을 union으로
-합쳐야 물리 GPU의 공백을 볼 수 있다. 일반 kernel event만 합치면 CUDA graph 내부
-kernel을 별도의 짧은 이벤트로 세어 실제 graph 실행시간을 과소평가하므로, 아래 판정은
-`CUPTI_ACTIVITY_KIND_GRAPH_TRACE`의 union을 사용한다.
+The `nvidia-smi` 250 ms samples averaged 41.93%/79.94% on the 3090/4080. In the finer-grained
+Nsight CUDA graph timeline, the execution intervals of the four contexts on the same GPU must be merged as a union
+to see physical GPU gaps. Merging only generic kernel events counts the kernels inside a CUDA graph
+as separate short events and underestimates actual graph execution time, so the verdict below
+uses the union of `CUPTI_ACTIVITY_KIND_GRAPH_TRACE`.
 
-| 물리 GPU / P4 역할 | graph 실행 union / 관측 span | 점유율 | graph gap p50 / p95 / p99 / 최대 | 해석 |
+| Physical GPU / P4 role | graph execution union / observed span | Occupancy | graph gap p50 / p95 / p99 / max | Interpretation |
 | --- | ---: | ---: | ---: | --- |
-| RTX 3090, first stage | 11.582 / 37.813 s | 30.63% | 12.218 / 50.499 / 91.947 / 143.792 ms | downstream/terminal 대기가 큰 여유로 나타남 |
-| RTX 4080, terminal stage | 26.716 / 37.867 s | 70.55% | 1.175 / 17.127 / 36.341 / 500.699 ms | 지배 stage지만 약 29.45%의 graph-level 공백이 남음 |
+| RTX 3090, first stage | 11.582 / 37.813 s | 30.63% | 12.218 / 50.499 / 91.947 / 143.792 ms | waiting on downstream/terminal shows up as large headroom |
+| RTX 4080, terminal stage | 26.716 / 37.867 s | 70.55% | 1.175 / 17.127 / 36.341 / 500.699 ms | dominant stage, but about 29.45% graph-level gap remains |
 
-CUDA runtime call도 terminal에 집중된다. 4080 terminal은 `cudaStreamSynchronize`
-449,804회/51.719 s, `cudaMemcpyAsync` 705,319회/15.524 s,
-`cudaLaunchKernel` 1,505,700회/15.398 s, `cudaGraphLaunch` 6,027회/9.978 s를
-기록했다. 3090 first의 같은 값은 38,008회/11.941 s, 20,956회/0.796 s,
-647,472회/5.055 s, 1,660회/0.772 s다. execution summary의 launch queue 평균도
-3090 2.470 ms 대비 4080 **12.962 ms**다. 즉 4080은 이미 다중 context의 제출 backlog를
-받고 있지만 graph 공백이 없지는 않다.
+CUDA runtime calls also concentrate on the terminal. The 4080 terminal recorded `cudaStreamSynchronize`
+449,804 calls/51.719 s, `cudaMemcpyAsync` 705,319 calls/15.524 s,
+`cudaLaunchKernel` 1,505,700 calls/15.398 s and `cudaGraphLaunch` 6,027 calls/9.978 s.
+The same values on the 3090 first stage are 38,008 calls/11.941 s, 20,956 calls/0.796 s,
+647,472 calls/5.055 s and 1,660 calls/0.772 s. The mean launch queue in the execution summary is also
+**12.962 ms** on the 4080 versus 2.470 ms on the 3090. The 4080 is already receiving a submit backlog from multiple contexts,
+yet its graph timeline is not free of gaps.
 
-| GPU / 역할 | CUDA launch 수 | queue가 있는 launch | 평균 queue time | kernel 시간 합 | kernel 시간 상위 2개 |
+| GPU / role | CUDA launches | Launches with a queue | Mean queue time | Total kernel time | Top 2 kernels by time |
 | --- | ---: | ---: | ---: | ---: | --- |
 | RTX 3090, first | 328,328 | 326,364 | 2.470 ms | 4.676 s | `mul_mat_q` 1.897 s, `flash_attn_ext_f16` 0.995 s |
 | RTX 4080, terminal | 794,490 | 793,956 | **12.962 ms** | 5.067 s | `mul_mat_q` 2.216 s, `flash_attn_ext_f16` 0.765 s |
 
-이것으로 확정할 수 있는 사실은 다음과 같다.
+This establishes the following facts.
 
-1. P4 transport는 256세션에서 손실/대체 경로 없이 동작하므로 다음 최적화 대상이 아니다.
-2. terminal 4080은 layer cut을 한 장 바꾸어도 해소되지 않은 CUDA graph scheduling과
-   synchronization 부담을 갖고 있다. 3090의 낮은 사용률은 terminal 완료를 기다리는
-   결과와 일치한다.
-3. 다만 70.55% graph 점유율이나 12.962 ms queue는 SM occupancy, tensor-core active
-   cycle, memory bandwidth의 측정값이 아니다. 따라서 이것을 tensor-core 포화로
-   과장할 수 없으며, hardware counter 없이 커널 자체를 바꾸는 것도 근거가 부족하다.
+1. P4 transport runs at 256 sessions with no loss and no fallback path, so it is not the next optimization target.
+2. The terminal 4080 carries CUDA graph scheduling and synchronization load that
+   moving the layer cut by one layer did not relieve. The 3090's low utilization is consistent with
+   waiting for terminal completion.
+3. However, 70.55% graph occupancy and a 12.962 ms queue are not measurements of SM occupancy, tensor-core active
+   cycles or memory bandwidth. They cannot be overstated as tensor-core saturation,
+   and changing the kernels themselves without hardware counters also lacks grounds.
 
-## 보존 artifact
+## Preserved artifacts
 
-모든 원시 결과는 `apps/p4/target/pipeline-e2e/`에 남긴다.
+All raw results are kept in `apps/p4/target/pipeline-e2e/`.
 
-- `trace-backend-sampler-14-256-lane{1..4}.jsonl` — 256개 전체 요청·응답 쌍
-- `trace-...md`, `report-...md` — 사람이 읽는 요청·최종문장·세션 보고서
-- `summary-...json` — stage/wire/latency 집계
-- `summary-...-gpu.jsonl` — 250 ms 원시 GPU samples
-- `plan-...json`, `client-...log`, `p4-agent-...log`, `p4-pipeline-...log` — 계획과 실행 로그
-- `trace-backend-sampler-reverse-14-256-2x128-v4-lane{1,2}.jsonl` — 새 completion-token
-  의미론으로 재측정한 256개 요청·응답 쌍
-- `summary-backend-sampler-reverse-14-256-2x128-v4-lane{1,2}.json` — 같은 run의
-  native stage aggregate, shared-memory 전송과 sampler 통계
-- `trace-backend-sampler-reverse-14-256-1x256-v2.jsonl` 및
-  `summary-backend-sampler-reverse-14-256-1x256-v2.json` — 단일 native context의
-  256 sequence, batch=256 용량과 strict token-cap 검증
-- `trace-fixed-length-reverse-14-256-4x64-v1-lane{1..4}.jsonl` 및
-  `summary-fixed-length-reverse-14-256-4x64-v1-lane{1..4}.json` — EOG 억제,
-  정확히 128,000 native completion tokens의 현 benchmark 기준선
-- `trace-fixed-length-reverse-15-256-4x64-v3-lane{1..4}.jsonl` 및
-  `summary-fixed-length-reverse-15-256-4x64-v3-lane{1..4}.json` — 동일 workload의
-  15:13 재균형 음성 대조; prompt, DONE, stage/wire/GPU 원시 계측 포함
-- `summary-fixed-length-*-gpu.jsonl` — 250ms 간격 원시 GPU 사용률·VRAM·전력 샘플.
-  모든 valid fixed-length run은 `P4_SHARED_MEMORY_PASS`와 `P4_PIPELINE_E2E_CLIENT_PASS`를
-  client log에 함께 보존한다.
-- `.cache/p4-nsys-256/p4-fixed-reverse-14-256-4x64-v1.nsys-rep` — 부모 supervisor와
-  그 아래 8개 native CUDA process의 Nsight Systems 원본(153.6 MB)
-- `.cache/p4-nsys-256/p4-fixed-reverse-14-256-4x64-v1.sqlite` 및
-  `analysis_cuda_{kern_exec,gpu_kern,api}_sum.csv` — 이 문서의 graph union, runtime
-  API, launch queue 계산에 사용한 재현 가능한 추출본
-- `trace-nsys-fixed-reverse-14-256-4x64-v1-lane{1..4}.jsonl` 및
-  `summary-nsys-fixed-reverse-14-256-4x64-v1-lane{1..4}.json` — profiler capture 중의
-  256개 요청·응답 쌍과 P4 stage/wire 집계
+- `trace-backend-sampler-14-256-lane{1..4}.jsonl` — all 256 request/response pairs
+- `trace-...md`, `report-...md` — human-readable request, final sentence and session reports
+- `summary-...json` — stage/wire/latency aggregates
+- `summary-...-gpu.jsonl` — 250 ms raw GPU samples
+- `plan-...json`, `client-...log`, `p4-agent-...log`, `p4-pipeline-...log` — plans and run logs
+- `trace-backend-sampler-reverse-14-256-2x128-v4-lane{1,2}.jsonl` — 256 request/response pairs re-measured under the new
+  completion-token semantics
+- `summary-backend-sampler-reverse-14-256-2x128-v4-lane{1,2}.json` — native stage aggregates, shared-memory transfer and sampler
+  statistics for the same run
+- `trace-backend-sampler-reverse-14-256-1x256-v2.jsonl` and
+  `summary-backend-sampler-reverse-14-256-1x256-v2.json` — 256 sequences in a single native context,
+  batch=256 capacity and strict token-cap verification
+- `trace-fixed-length-reverse-14-256-4x64-v1-lane{1..4}.jsonl` and
+  `summary-fixed-length-reverse-14-256-4x64-v1-lane{1..4}.json` — current benchmark baseline with EOG suppressed and
+  exactly 128,000 native completion tokens
+- `trace-fixed-length-reverse-15-256-4x64-v3-lane{1..4}.jsonl` and
+  `summary-fixed-length-reverse-15-256-4x64-v3-lane{1..4}.json` — negative 15:13 rebalance comparison on the same
+  workload; includes prompts, DONE and raw stage/wire/GPU instrumentation
+- `summary-fixed-length-*-gpu.jsonl` — raw GPU utilization, VRAM and power samples at 250ms intervals.
+  Every valid fixed-length run keeps both `P4_SHARED_MEMORY_PASS` and `P4_PIPELINE_E2E_CLIENT_PASS`
+  in its client log.
+- `.cache/p4-nsys-256/p4-fixed-reverse-14-256-4x64-v1.nsys-rep` — Nsight Systems original of the parent supervisor and
+  the 8 native CUDA processes under it (153.6 MB)
+- `.cache/p4-nsys-256/p4-fixed-reverse-14-256-4x64-v1.sqlite` and
+  `analysis_cuda_{kern_exec,gpu_kern,api}_sum.csv` — reproducible extracts used for this document's graph union, runtime
+  API and launch queue calculations
+- `trace-nsys-fixed-reverse-14-256-4x64-v1-lane{1..4}.jsonl` and
+  `summary-nsys-fixed-reverse-14-256-4x64-v1-lane{1..4}.json` — the 256 request/response pairs during the profiler capture
+  and the P4 stage/wire aggregates
 
-## 2026-08-10: 선택한 P4 개선
+## 2026-08-10: chosen P4 improvement
 
-256-session trace와 Nsight 결과는 shared-memory P4 transport가 요청 손실 없이
-동작하고 TCP fallback이 0임을 보였다. 반면 terminal CUDA 실행에는 남은 유휴 구간이
-있지만, CUDA backend만을 전제로 한 llama.cpp compatibility 변경은 아직 동일 fixture의
-성능 이득으로 검증되지 않았다. 따라서 이번 단계에서 채택한 유일한 구조 변경은
-[`AgentProcessor`](../../p4/runtime/src/agent.rs)의 **ingress execution-credit**이다.
+The 256-session traces and Nsight results showed that shared-memory P4 transport works without request loss
+and with 0 TCP fallbacks. Terminal CUDA execution does have remaining idle intervals, but
+llama.cpp compatibility changes that assume a CUDA-only backend have not yet been verified as a performance gain on the same fixture.
+So the only structural change adopted at this stage is the **ingress execution-credit** in
+[`AgentProcessor`](../../p4/runtime/src/agent.rs).
 
-Agent는 이제 ready binding과 NodeSlot permit을 먼저 확보한 뒤에만
-`INGRESS_ACCEPTED`를 보낸다. 포화된 요청은 accept 없이 `ERROR`로 끝나므로 external
-controller는 수락을 실제 실행 슬롯의 확보로 해석할 수 있다. 이 정책은 opaque
-`p4_max_inflight`만 사용하며 CUDA, llama.cpp private ABI, Pipeline hidden-state, sampling
-option을 해석하지 않는다. mock adapter TCP test는 ready credit에서
-`INGRESS_ACCEPTED → DONE`, saturated credit에서 `ERROR`만 발생함을 검증한다.
+The Agent now sends `INGRESS_ACCEPTED` only after it has first secured a ready binding and a NodeSlot permit.
+A saturated request ends with `ERROR` without an accept, so an external
+controller can read acceptance as an execution slot actually being secured. This policy uses only the opaque
+`p4_max_inflight` and does not interpret CUDA, the llama.cpp private ABI, Pipeline hidden state or sampling
+options. The mock adapter TCP test verifies that ready credit yields only
+`INGRESS_ACCEPTED → DONE` and saturated credit yields only `ERROR`.
 
-기존 CUDA/llama.cpp boundary-copy 변경 후보는 adapter-private 실험으로 남기며, 이
-P4 개선의 수용 근거나 protocol requirement가 아니다.
+The earlier CUDA/llama.cpp boundary-copy change candidates remain adapter-private experiments; they are
+neither an acceptance basis for this P4 improvement nor a protocol requirement.
 
-## 다음 스테이지 제안
+## Proposed next stage
 
-1. **4 × 64를 고정 benchmark 기준으로 보존한다.** 이것이 현재 유일하게 256개
-   요청 모두를 정확히 500 native tokens로 끝내고 3.37k tok/s를 보인 구성이다.
-   `benchmark_ignore_eog`는 production 기본값이 아니며, 자연 EOG 허용 run은 별도
-   품질/실사용 지표로 유지한다.
-2. **다음 최소 측정은 terminal RTX 4080의 Nsight Compute다.** `mul_mat_q`와
-   `flash_attn_ext_f16`에 한정하여 SM active, tensor-pipe active, achieved occupancy,
-   DRAM throughput을 수집한다. capture는 다시 256/256·128,000 tokens·shared-memory
-   pass·TCP fallback 0을 충족해야 하며, profiler 처리량은 기준선과 섞지 않는다.
-3. **counter 판정에 따라 변경 대상을 한 곳으로만 좁힌다.** tensor/SM이 높고 DRAM도
-   포화면 P4·scheduler를 더 만지지 않고 모델 quantization/placement 또는 더 큰 GPU가
-   다음 선택지다. tensor/SM이 낮거나 graph gap과 launch stall이 유지되면 native
-   scheduler의 terminal return wakeup, cross-context CUDA graph submit, 동기화 빈도를
-   한 변경씩 줄인다. 이 경우에도 P4 wire/공유 메모리 ABI는 바꾸지 않는다.
-4. **scheduler 개선은 기준선 전후 1회씩만 재측정한다.** 수용 기준은 256/256 정확
-   500-token 완료, shared-memory 순서 보존, TCP fallback 0, terminal graph union 증가,
-   stage 0 downstream wait 감소, 그리고 baseline 3,369.71 tok/s보다 재현 가능한
-   처리량 증가다. counter와 timeline이 개선되지 않으면 변경을 되돌리고 다른 가설을
-   세운다.
-5. **그 뒤에만 microbatch/placement를 재개한다.** 한 context에서 `256×128`은 GGML
-   assertion으로 현재 지원 불가이고 15:13은 +0.4%라서, 두 실험을 반복하지 않는다.
-   scheduler가 고쳐진 뒤에만 4×64 대비 2×128 및 stage cut을 재측정한다.
+1. **Keep 4 × 64 as the fixed benchmark baseline.** It is currently the only configuration that ends all 256
+   requests at exactly 500 native tokens and shows 3.37k tok/s.
+   `benchmark_ignore_eog` is not a production default; runs that allow natural EOG stay a separate
+   quality/real-use metric.
+2. **The next minimal measurement is Nsight Compute on the terminal RTX 4080.** Limited to `mul_mat_q` and
+   `flash_attn_ext_f16`, collect SM active, tensor-pipe active, achieved occupancy and
+   DRAM throughput. The capture must again meet 256/256, 128,000 tokens, shared-memory
+   pass and 0 TCP fallbacks, and profiler throughput is never mixed with the baseline.
+3. **Narrow the change target to a single place based on the counter verdict.** If tensor/SM are high and DRAM is also
+   saturated, stop touching P4 and the scheduler; the next options are model quantization/placement or a larger GPU.
+   If tensor/SM are low, or graph gaps and launch stalls persist, reduce the native
+   scheduler's terminal return wakeups, cross-context CUDA graph submits and synchronization frequency
+   one change at a time. Even then, do not change the P4 wire or the shared-memory ABI.
+4. **Re-measure a scheduler improvement with only 1 run each, before and after, against the baseline.** The acceptance criteria are 256/256 exact
+   500-token completion, preserved shared-memory ordering, 0 TCP fallbacks, a larger terminal graph union,
+   lower stage 0 downstream wait, and a reproducible throughput gain over the 3,369.71 tok/s
+   baseline. If the counters and timeline do not improve, revert the change and form a different
+   hypothesis.
+5. **Only after that, resume microbatch/placement work.** `256×128` in one context is currently unsupported because of the GGML
+   assertion, and 15:13 gives only +0.4%, so neither experiment is repeated.
+   Only after the scheduler is fixed, re-measure 2×128 against 4×64 and the stage cut.
 
-이 순서는 이미 검증된 P4 중계 경로를 보존하면서, 다음 변경을 CUDA 제출/실행 계층으로
-한정한다. 즉 통신 최적화가 끝났다는 선언이 아니라, 통신 가설을 충분한 실측으로
-배제하고 GPU scheduler 가설을 다음 대상으로 좁힌 것이다.
+This order preserves the already verified P4 relay path and limits the next change to the CUDA submit/execute
+layer. It is not a declaration that communication optimization is finished; it rules out the communication hypothesis with sufficient
+measurement and narrows the next target to the GPU scheduler hypothesis.

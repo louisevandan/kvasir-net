@@ -328,7 +328,7 @@ impl Agent {
     /// Cancels queued work and returns one removed carrier for terminalizing
     /// the original request. Every node is still scanned so a chained request
     /// cannot leave later queued stages behind.
-    // See docs/protocol-outer.md#단절과-kv-흐름.
+    // See docs/protocol-outer.md#disconnect-and-kv-flow.
     pub async fn cancel_frame(&self, route: &str) -> Option<Frame> {
         // A relayed submission is not in any node's queue, so the scan below
         // would never find it and the caller would call it already terminal.

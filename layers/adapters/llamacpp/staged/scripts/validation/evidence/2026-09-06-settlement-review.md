@@ -1,554 +1,554 @@
-# 2026-09-06 — 공유 정산 추출의 실제 범위와 미해결 반례
+# 2026-09-06 — Actual scope of the shared settlement extraction and unresolved counterexamples
 
-종류: 코드 감사와 CPU-only 결정론적 검사. GPU/원격 실행 증거가 아니다.
-최초 감사 기준: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`, 최초 검사 당시 작업 트리 clean.
-아래는 시간순 기록이다. **최신 상태는 마지막 후속 구현 절**이며, 과거 RED/clean을 현재 상태로 읽지 않는다.
-현재 작업 순서는 [로드맵](../../../../../../../docs/distributed-batching-roadmap.md),
-시험 승격 기준은 [검증 규약](../../../../../../../docs/distributed-batching-verification.md) 소유다.
+Type: code audit and CPU-only deterministic checks. This is not GPU/remote execution evidence.
+Initial audit baseline: `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`; the working tree was clean at the first check.
+What follows is a chronological record. **The latest state is the last follow-up implementation section**; do not read past RED/clean results as the current state.
+The current work order is owned by the [roadmap](../../../../../../../docs/distributed-batching-roadmap.md),
+and the test promotion criteria by the [verification protocol](../../../../../../../docs/distributed-batching-verification.md).
 
-## 실행한 것
+## What was run
 
 - `cargo test --workspace --no-fail-fast`: 844 passed / 0 failed / 7 ignored, exit 0.
-- `test/benchmarks/p4-4node`의 추적 `*.test.mjs`: 57 passed, exit 0.
-- C++와 clippy는 이 감사에서 재실행하지 않았다. 이전 결과를 이번 실행으로 세지 않는다.
-- 독립 임시 복사본에 기존 worker test fixture를 확장해 실제 `CapsuleSet::encode/decode`와
-  `Worker::tail`, 일부 `Worker::handle`을 호출했다. full worker loop나 transport 전체를 시험한 것은 아니다.
-- 아래 probe는 당시 임시 복사본에만 있었으며 **아직 저장소의 정식 회귀 시험이 아니다**.
-  다음 세션은 검증 규약 T10~T13/T17로 재현·커밋해야 한다. 임시 경로는 장기 의존 대상으로 삼지 않는다.
+- Tracked `*.test.mjs` in `test/benchmarks/p4-4node`: 57 passed, exit 0.
+- C++ and clippy were not rerun in this audit. Earlier results do not count as this run.
+- In a separate temporary copy, the existing worker test fixture was extended to call the real `CapsuleSet::encode/decode`,
+  `Worker::tail`, and part of `Worker::handle`. This did not test the full worker loop or the whole transport.
+- The probes below existed only in that temporary copy and **are not yet formal regression tests in the repository**.
+  The next session must reproduce and commit them as T10~T13/T17 of the verification protocol. Do not treat the temporary paths as long-term dependencies.
 
-## 수용한 변경
+## Accepted changes
 
-`v2/node/state.rs::RequestState::settle_fragment`는 요청의 outstanding과 프롬프트 경계를
-검사한 뒤 변경한다. 이 함수 자체의 거부는 요청을 보존한다. 운영 `Worker::tail`과
-`Simulation::advance`가 실제로 호출하므로 소스 공유는 존재한다.
-cohort별 최대 미선택 간격은 마지막 구간까지 검사하고, 9회는 cohort 상한으로 주석이 축소됐다.
+`v2/node/state.rs::RequestState::settle_fragment` checks the request's outstanding count and prompt bounds
+before mutating. A rejection by this function itself preserves the request. The production `Worker::tail` and
+`Simulation::advance` really call it, so the source is genuinely shared.
+The maximum unselected gap per cohort is now checked through the final interval, and the comment's "9 times" was narrowed to a cohort upper bound.
 
-## R-A — 반환 이벤트 전체의 원자성은 없다
+## R-A — The return event as a whole is not atomic
 
-앵커: `v2/node/worker/release.rs::Worker::tail` @ a9e1967fc.
+Anchor: `v2/node/worker/release.rs::Worker::tail` @ a9e1967fc.
 
-재현 절차:
+Reproduction steps:
 
-1. session/request/load generation을 맞추고 prompt 길이 10, issued=4, cursor=0, outstanding=1로 둔다.
-2. `AdapterState::open_batch([1])`로 실제 열린 원장 상태를 만든다.
-3. execution=1의 terminal prefill capsule에 6행을 넣어 tail에 전달한다.
-4. 요청 경계 오류는 반환되지만 열린 batch가 1→0으로 감소한다. 요청은 cursor=0/outstanding=1로 보존된다.
+1. Align the session/request/load generation and set prompt length 10, issued=4, cursor=0, outstanding=1.
+2. Use `AdapterState::open_batch([1])` to create a real open ledger state.
+3. Put 6 rows into the terminal prefill capsule of execution=1 and pass it to tail.
+4. The request-bound error is returned, but the open batch count drops 1→0. The request is preserved at cursor=0/outstanding=1.
 
-혼합 반례: A(issued4)에 4행, B(issued2)에 3행을 같은 CapsuleSet으로 반환한다.
-A를 먼저 순회하도록 ID를 정하면 오류 뒤 상태는 A=(cursor4,outstanding0), B=(0,1), 열린 batch=0이다.
-`Worker::handle`에 같은 과다 반환과 정상 completion publisher를 주면 오류 응답을 발행하고
-`Ok(())`를 반환하면서 열린 batch=0을 유지한다. 따라서 worker 종료를 통한 fail-closed라는 해석도 틀리다.
+Mixed counterexample: return 4 rows for A (issued4) and 3 rows for B (issued2) in the same CapsuleSet.
+With IDs chosen so that A is visited first, the state after the error is A=(cursor4,outstanding0), B=(0,1), open batches=0.
+Given the same over-return and a normal completion publisher, `Worker::handle` publishes an error response and
+returns `Ok(())` while keeping open batches=0. So the reading that it fails closed through worker termination is also wrong.
 
-원인: `close_execution`이 검증보다 먼저이고, 요청별 validate/write가 한 루프에서 섞인다.
-요구: 반환 이벤트 전체 사전 검증과 요청·원장·출력 의도의 원자 반영(T10/T11).
+Cause: `close_execution` runs before validation, and per-request validate/write steps are interleaved in one loop.
+Requirement: pre-validate the entire return event, and apply the request, ledger and output-intent changes atomically (T10/T11).
 
-## R-B — 이전 반환과 잘못된 소유/구간이 정산된다
+## R-B — Stale returns and wrong ownership/ranges get settled
 
-앵커: `v2/node/state.rs::RequestState::settle_fragment`,
+Anchor: `v2/node/state.rs::RequestState::settle_fragment`,
 `v2/node/worker/release.rs::Worker::tail` @ a9e1967fc.
 
-- F1 `[0,4)`를 정산한 뒤 F2 `[4,8)`이 유일한 in-flight인 상태를 만든다(issued8/cursor4/outstanding1).
-  F1 캡슐을 새 event ID로 재전달하면 `Ok(())`, cursor8/outstanding0이 된다.
-  F2 execution은 열린 원장에 남아 요청 counter와 갈라진다. 다중 fragment opt-in 없이도 성립한다.
-- partial prefill 반환에 outcome 없이 sequence ID만 99로 바꾸면, 실제 request sequence0이어도 수용된다.
-- 실제 issued `[0,4)`에 대해 invocation과 owner의 position을 함께 `[5,9)`로 바꾸면
-  캡슐 포맷 검증을 통과하고 tail은 cursor4/outstanding0으로 수용한다.
+- Settle F1 `[0,4)`, then create a state where F2 `[4,8)` is the only in-flight fragment (issued8/cursor4/outstanding1).
+  Redelivering the F1 capsule under a new event ID yields `Ok(())` and cursor8/outstanding0.
+  The F2 execution stays in the open ledger and diverges from the request counters. This holds even without the multi-fragment opt-in.
+- In a partial prefill return without an outcome, changing only the sequence ID to 99 is accepted even though the real request is sequence0.
+- For an actually issued `[0,4)`, shifting both the invocation and the owner positions to `[5,9)`
+  passes capsule format validation, and tail accepts it as cursor4/outstanding0.
 
-요구: 발행 identity/range/membership와 대조하고 중복은 다음 비행을 소비하지 않음(T12/T13).
-이는 보고서가 미착수로 밝힌 멱등 원장의 구체적인 위험이며, 이번 추출이 새로 만든 회귀라고 단정하지 않는다.
+Requirement: check against the issued identity/range/membership, and a duplicate must not consume the next flight (T12/T13).
+This is a concrete risk of the idempotent ledger that the report declared not yet started; we do not claim it is a regression newly introduced by this extraction.
 
-## R-C — 실제 simulator 경로의 공유 연결은 시험이 보호하지 않는다
+## R-C — Tests do not protect the shared wiring on the real simulator path
 
-앵커: `v2/simulator_tests.rs::the_worker_and_this_model_settle_through_one_transition`,
+Anchor: `v2/simulator_tests.rs::the_worker_and_this_model_settle_through_one_transition`,
 `v2/simulator.rs::Simulation::advance` @ a9e1967fc.
 
-새 시험은 Simulation을 실행하지 않고 RequestState 함수를 직접 호출한다.
-검증용 복사본에서 `advance`의 공유 함수 호출을 지우고 outstanding 감소/cursor 증가를 별도 구현하며
-행 경계 검사를 제거해도 simulator tests **11/11이 통과**했다. 변이는 복사본에서 원복했다.
-따라서 “모델 1개 실패”를 Simulation 실제 도착 경로의 거부 검증이라고 보고할 수 없다.
-요구: malformed travelling fragment가 실제 advance를 지나 같은 거부와 상태 보존을 보이고,
-공유 경계 검사를 우회하는 변이를 검출(T17).
+The new test does not run Simulation; it calls the RequestState function directly.
+In a verification copy, removing the shared-function call from `advance`, reimplementing the outstanding decrement and cursor increment separately,
+and removing the row-bound check still left the simulator tests **11/11 passing**. The mutation was reverted in the copy.
+So "1 model failure" cannot be reported as validation of rejection on Simulation's real arrival path.
+Requirement: a malformed travelling fragment must go through the real advance and show the same rejection and state preservation,
+and a mutation that bypasses the shared bound check must be detected (T17).
 
-## 다음 작업
+## Next work
 
-위 반례를 정식 시험으로 보존한 뒤 발행 기록과 원자적·멱등 정산을 연결한다.
-함수 추출의 완료와 전체 인플라이트/실기 성과의 완료는 다르다. 작은 카운터 함수 추출을 반복하는 대신
-“발행한 바로 그 작업만 정확히 한 번 정산한다”를 다음 구현 단위로 삼는다.
+After preserving the counterexamples above as formal tests, connect the issue records to atomic, idempotent settlement.
+Completing the function extraction is not the same as completing the full in-flight or real-hardware results. Instead of repeating small counter-function extractions,
+make "settle exactly the work that was issued, exactly once" the next implementation unit.
 
-## 같은 날의 문서 이관 검증
+## Same-day document migration verification
 
-기준 HEAD는 같고 문서/문서 게이트만 수정된 작업 트리에서 수행했다. 추론 코드 변경·원격 배포·GPU 실행은 없다.
+Run on a working tree at the same base HEAD with only documents and document gates modified. No inference code changes, remote deploys or GPU runs.
 
-- 전체 Rust 재실행: `cargo test --workspace --no-fail-fast`, 844 passed / 0 failed / 7 ignored, exit 0.
-- 하네스 재실행: 57 passed / 0 failed, exit 0.
-- 문서 자체 시험: 12 passed. 기존 9건에 document-map 정상/누락/깨진 대상 3건 추가.
-- docs-lint: 추적 73문서 및 신규 포함 `--all` 79문서 통과. 새 파일은 아직 Git index에 넣지 않은 상태의 별도 검사다.
-- 마지막 문서 수정 후 `cargo test -p p4-agent --test docs_lint` 1 passed로 기존 cargo 연결도 확인.
-- private-header 게이트: 74 source 파일, include 패턴 기준 header 부채 0 / source 부채 5.
-  타입·transitive build 격리까지 성립한다는 뜻이 아니며 [계층 격리 계약](../../../../../../../docs/layer-isolation-contract.md)에 실제 빈틈을 기록했다.
-- C++/GPU/원격/새 I/T/K/H 시험은 이번 문서 이관에서 실행·구현했다고 주장하지 않는다.
+- Full Rust rerun: `cargo test --workspace --no-fail-fast`, 844 passed / 0 failed / 7 ignored, exit 0.
+- Harness rerun: 57 passed / 0 failed, exit 0.
+- Documentation self-tests: 12 passed. 3 document-map cases (normal/missing/broken target) were added to the existing 9.
+- docs-lint: passed on the 73 tracked documents and on 79 documents with `--all`, including the new ones. The new files were checked separately while not yet in the Git index.
+- After the last document edit, `cargo test -p p4-agent --test docs_lint` gave 1 passed, confirming the existing cargo wiring as well.
+- private-header gate: 74 source files; by include pattern, header debt 0 / source debt 5.
+  This does not mean that type-level and transitive build isolation hold; the actual gaps are recorded in the [layer isolation contract](../../../../../../../docs/layer-isolation-contract.md).
+- This document migration does not claim to have run or implemented any C++/GPU/remote or new I/T/K/H tests.
 
-새 문서가 요구하는 결정론적 T, 계층 격리 I, 조건부 저장 K, 최종 실기 H는 **앞으로 구현·실행할 게이트**다.
-문서 게이트 통과를 이 기능들의 통과로 세지 않는다. 커밋/푸시는 이 문서 정리 요청에 포함되지 않는다.
+The deterministic T, layer isolation I, conditional store K and final real-hardware H gates required by the new documents are **gates still to be implemented and run**.
+Passing the document gates does not count as passing these features. Commit/push is not part of this documentation cleanup request.
 
-## 후속 반례 봉인과 계층 격리 보강 — 같은 HEAD의 작업 트리
+## Follow-up counterexample sealing and layer isolation hardening — working tree at the same HEAD
 
-위 844/0/7은 반례 추가 **전** 결과다. 아래 변경 뒤 녹색 기준선으로 재사용하지 않는다.
-프로덕션 정산 수리는 아직 하지 않았다. 테스트 전용 simulator 주입기와 정식 실패 반례를 보존했다.
+The 844/0/7 above is the result **before** the counterexamples were added. Do not reuse it as a green baseline after the changes below.
+The production settlement fix has not been made yet. A test-only simulator injector and formal failing counterexamples were preserved.
 
-| 실제 소비 경로 / 시험 | 새 반례와 실행 범위 |
+| Real consumer path / test | New counterexample and execution scope |
 | --- | --- |
-| `worker_tests.rs::t10_rejected_tail_preserves_the_open_batch_and_all_request_bookkeeping` | 과다 반환을 거부해도 open batch가 사라짐 |
-| `worker_tests.rs::t11_one_bad_request_rejects_the_whole_tail_in_either_capsule_order` | A를 정산한 뒤 B를 거부. 첫 실패 때문에 뒤 permutation은 아직 이 실행에서 도달하지 않음 |
-| `worker_tests.rs::t11_a_late_outcome_error_cannot_settle_any_other_request` | 뒤늦은 outcome 오류 전 A cursor/outstanding과 B generated가 이미 변경됨 |
-| `worker_tests.rs::t12_old_execution_in_a_new_event_never_consumes_the_next_fragment` | F1 중복이 F2 outstanding을 소비 |
-| `worker_tests.rs::t13_partial_prefill_refuses_a_different_sequence_without_an_outcome` | outcome 없는 다른 sequence 수용 |
-| `worker_tests.rs::t13_partial_prefill_refuses_a_different_position_range` | 올바른 행 수의 다른 구간 수용 |
-| `worker_tests.rs::t13_partial_prefill_refuses_an_unregistered_execution` | 미등록 execution 수용 |
-| `worker_tests.rs::t13_partial_prefill_identity_is_checked_without_waiting_for_an_outcome` | key 변조에서 실패. 뒤 generation/phase/request/invocation 사례는 아직 실행 검증 아님 |
-| `simulator_tests.rs::a_malformed_arrival_preserves_the_simulation_ledger_and_request` | 실제 run→advance에서 4행 발행→6행 도착을 거부하지만 travelling 항목을 먼저 삭제 |
-| `simulator_tests.rs::a_wrong_range_arrival_cannot_settle_the_right_number_of_rows` | 실제 run→advance에서 [0,4) 발행→[1,5) 반환을 수용 |
+| `worker_tests.rs::t10_rejected_tail_preserves_the_open_batch_and_all_request_bookkeeping` | The open batch disappears even though the over-return is rejected |
+| `worker_tests.rs::t11_one_bad_request_rejects_the_whole_tail_in_either_capsule_order` | Settles A, then rejects B. Because of the first failure, the later permutation is not yet reached in this run |
+| `worker_tests.rs::t11_a_late_outcome_error_cannot_settle_any_other_request` | A's cursor/outstanding and B's generated were already changed before the late outcome error |
+| `worker_tests.rs::t12_old_execution_in_a_new_event_never_consumes_the_next_fragment` | The F1 duplicate consumes F2's outstanding |
+| `worker_tests.rs::t13_partial_prefill_refuses_a_different_sequence_without_an_outcome` | Accepts a different sequence without an outcome |
+| `worker_tests.rs::t13_partial_prefill_refuses_a_different_position_range` | Accepts a different range with the correct row count |
+| `worker_tests.rs::t13_partial_prefill_refuses_an_unregistered_execution` | Accepts an unregistered execution |
+| `worker_tests.rs::t13_partial_prefill_identity_is_checked_without_waiting_for_an_outcome` | Fails on key tampering. The later generation/phase/request/invocation cases are not yet verified by execution |
+| `simulator_tests.rs::a_malformed_arrival_preserves_the_simulation_ledger_and_request` | On the real run→advance, rejects a 6-row arrival for a 4-row issue, but deletes the travelling entry first |
+| `simulator_tests.rs::a_wrong_range_arrival_cannot_settle_the_right_number_of_rows` | On the real run→advance, accepts a [1,5) return for a [0,4) issue |
 
-위 worker 파일은 `v2/node/`, simulator 파일은 `v2/` 아래다. worker 선택 실행은 기존 3 passed /
-신규 8 failed, simulator `arrival` 선택 실행은 0 passed / 2 failed였다. 반환은 실제 capsule decode를 지나지만
-full worker loop·stage I/O·handle 후 계속 운행·외부 출력 검증까지 통과한 시험은 아니다.
-fixture의 발행 등록도 아직 ID 집합뿐이며 expected membership 등록은 B1 구현과 연결해야 한다.
-현재는 수정 전 반례이므로 mutation 완료도 주장하지 않는다.
+The worker file above is under `v2/node/`, and the simulator file is under `v2/`. The selected worker run gave 3 passed (existing) /
+8 failed (new), and the simulator `arrival` selection gave 0 passed / 2 failed. The returns do pass through the real capsule decode, but
+no test got through the full worker loop, stage I/O, continued operation after handle, and external output validation.
+The fixture's issue registration is still only an ID set; expected-membership registration must be wired up together with the B1 implementation.
+These are pre-fix counterexamples, so mutation completion is not claimed either.
 
-### R-D — 출력 승인과 native 실행 여부의 경계
+### R-D — Boundary between output approval and whether native ran
 
-앵커: `v2/node/worker/drive.rs::Worker::emit_tail_results` @ a9e1967fc.
-OUTER 토큰을 모두 발행한 뒤 head로 TAIL_BATCH를 보낸다. 따라서 head만 원자화해도 이미 발행한
-출력을 되돌릴 수 없다. 이는 코드 순서로 확인한 결함이며, 이번에 전체 wire 경로에서 실증한 것은 아니다.
-검증 규약 T11/T23과 격리 계약의 L1 commit + L5 effect intent 경계로 처리한다.
+Anchor: `v2/node/worker/drive.rs::Worker::emit_tail_results` @ a9e1967fc.
+It sends TAIL_BATCH to head only after publishing all OUTER tokens. So making only head atomic cannot roll back
+output that has already been published. This defect was confirmed from the code order; it was not demonstrated on the full wire path this time.
+It is handled by verification protocol T11/T23 and by the isolation contract's L1 commit + L5 effect intent boundary.
 
-native `server/server_physical.cpp::Session::handle_logical_batch` @ a9e1967fc는 head 계산 이후
-physical execution ID를 만든다. Rust의 발행 원장은 native 호출 전 논리 PreparedIssue와
-PhysicalResult 검증 후 AcceptedIssue를 구별해야 한다. 응답 유실은 Uncertain이며 미발행으로 재시도할 근거가 없다.
-logical allocation 하나가 여러 physical capsule에 걸칠 수 있으므로, 부분 capsule마다 request outstanding을
-감소시키면 안 된다. 완성된 membership/연속 구간과 execution/batch 완료를 별도 대조한다.
+native `server/server_physical.cpp::Session::handle_logical_batch` @ a9e1967fc creates the
+physical execution ID after the head computation. Rust's issue ledger must distinguish the logical PreparedIssue before the native call from the
+AcceptedIssue after PhysicalResult validation. A lost response is Uncertain, and there is no basis for retrying it as unissued.
+One logical allocation can span several physical capsules, so request outstanding must not be
+decremented for each partial capsule. Check the completed membership/contiguous range and the execution/batch completion separately.
 
-### 계층 격리의 현재 코드 표면
+### Current code surface of layer isolation
 
-- `server/CMakeLists.txt`: runtime의 `llama-common` PUBLIC link와 imported relink `_p4_inc` 전파가 남음.
-- `compat/p4_llama_compat.hpp::LlamaPlan::impl` 및 public include root로 opaque 내부 접근이 열려 있음.
-- `runtime/request_options_grammar.hpp::parse_grammar_triggers`는 전방 선언 common 타입을 서명에 노출.
-- `v2/capsule.rs::TensorDescriptor`와 `Invocation`의 raw 정수 코드에 codec 의미/협상 대조가 필요.
-- 기존 `layers/agent/tests/stays_neutral.rs`는 중립성 이름/manifest canary 기반이며 I00 전체 graph·mutation의 대체가 아님.
+- `server/CMakeLists.txt`: the runtime's PUBLIC link to `llama-common` and the imported relink `_p4_inc` propagation remain.
+- `compat/p4_llama_compat.hpp::LlamaPlan::impl` and the public include root leave opaque internals accessible.
+- `runtime/request_options_grammar.hpp::parse_grammar_triggers` exposes a forward-declared common type in its signature.
+- The raw integer codes in `v2/capsule.rs::TensorDescriptor` and `Invocation` need codec-meaning and negotiation checks.
+- The existing `layers/agent/tests/stays_neutral.rs` is based on neutrality name/manifest canaries and does not replace the full I00 graph and mutation checks.
 
-실제 수정 허용 범위·API 대장·target 권한·engine/common과 ggml/backend의 변경 분류는
-[계층 격리 계약](../../../../../../../docs/layer-isolation-contract.md)에 단독 기록했다.
-이번 보강은 그 구조의 구현 완료가 아니라 다음 구현의 계약과 시험 제약이다.
+The actual allowed modification scope, the API register, target permissions, and the change classification for engine/common versus ggml/backend
+are recorded solely in the [layer isolation contract](../../../../../../../docs/layer-isolation-contract.md).
+This hardening is not a completed implementation of that structure; it is the contract and the test constraints for the next implementation.
 
-### 반례 추가 후 전체 재실행
+### Full rerun after adding the counterexamples
 
-- source: HEAD `a9e1967fc`, 작업 트리 문서/문서 gate와 위 3개 테스트 관련 Rust 파일 변경. 커밋하지 않음.
+- source: HEAD `a9e1967fc`; the working tree changes documents/document gates and the Rust files related to the 3 tests above. Not committed.
 - `cargo test --workspace --no-fail-fast`: **844 passed / 10 failed / 7 ignored**, exit **101**.
-  최종 종료를 확인하고 전체 57개 summary를 합산했다. 실패는 위 신규 worker 8개·실제 simulator 도착 2개다.
-  미실행 외부 fixture feature는 이 집계의 pass가 아니다.
-- 로컬 원본 로그: `target/layer-isolation-doc-review-workspace.log` (임시 산출물).
-  장기 재현은 저장소의 반례와 위 명령에 의존하며, 이 로그 경로만으로 B1 완료를 주장하지 않는다.
-- 문서 자체 시험 12 passed, 신규 포함 docs-lint 79문서 통과. private-header 패턴 gate는 74파일,
-  header 부채 0 / source 부채 5로 동일. 이것은 I00~I09 전체 PASS가 아니다.
-- 하네스/C++/GPU/원격은 이번 보강에서 미실행. 마지막 문서 수정 뒤 문서 gate만 다시 실행한다.
-- 다음: 시험을 지우거나 skip하지 말고, 실제 발행 기록/정산/효과 소유 경계를 구현해 이 실패들을 닫는다.
+  The final exit was confirmed and all 57 summaries were summed. The failures are the 8 new worker tests and the 2 real simulator arrival tests above.
+  External fixture features that were not run are not passes in this tally.
+- Local raw log: `target/layer-isolation-doc-review-workspace.log` (temporary artifact).
+  Long-term reproduction relies on the repository's counterexamples and the command above; this log path alone does not support a claim of B1 completion.
+- Documentation self-tests 12 passed; docs-lint including the new files passed on 79 documents. The private-header pattern gate is unchanged at 74 files,
+  header debt 0 / source debt 5. This is not a full I00~I09 PASS.
+- Harness/C++/GPU/remote were not run in this hardening. After the last document edit, only the document gates are rerun.
+- Next: do not delete or skip the tests; close these failures by implementing the real issue record, settlement and effect ownership boundaries.
 
-## 후속 구현 — 발행 권위·정산 transaction·가짜 native seam
+## Follow-up implementation — issue authority, settlement transaction, fake native seam
 
-같은 HEAD의 **미커밋 작업 트리**에서 구현했다. 앞 절의 반례 10개는 이제 실행을 통과한다.
-새로운 분산 배칭 전체, B1/B2 완료, native 의미 호환 또는 실기 성능을 승인하는 기록은 아니다.
-이번 기능 변경은 `layers/adapters/llamacpp/staged/adapter/` 안에 한정했다.
-P4 공통 protocol/agent의 payload 의미나 llama.cpp/CUDA 코드는 바꾸지 않았다.
+Implemented on an **uncommitted working tree** at the same HEAD. The 10 counterexamples from the previous section now pass when run.
+This record does not approve the new distributed batching as a whole, B1/B2 completion, native semantic compatibility, or real-hardware performance.
+The functional changes this time are confined to `layers/adapters/llamacpp/staged/adapter/`.
+The payload semantics of the P4 common protocol/agent and the llama.cpp/CUDA code were not changed.
 
-### 소스와 실제 구현 경계
+### Sources and actual implementation boundaries
 
-| 경로 / 심볼 | 구현 / 한계 |
+| Path / symbol | Implementation / limits |
 | --- | --- |
-| `v2/node/state.rs::RequestState::issue_fragment`, `settle_fragment` | 운영 발행/도착과 Simulation의 공유 부기. 검사가 끝난 후 issued/cursor/outstanding 변경 |
-| `v2/node/state.rs::AdapterState::prepare_issue`, `accept_prepared_issue` | resident 권위와 후보 전체 대조, Prepared/AwaitingNative/Uncertain, 정확한 native split 승인 뒤 요청 전진. 취소 API는 아직 production 취소 소비자가 없음 |
-| `v2/node/flight.rs::FlightLedger` | invocation/owner/membership 권위, partial/역순 buffering, logical fragment별 정산, receipt와 실행 ID high-water. Verify/Replay는 atomic group을 보존 |
-| `v2/node/worker/release.rs::Worker::tail` | 전체 요청 후보·outcome·효과 의도 사전 검증, counter와 식별 원장 독립 대조, 원장/요청/의도 commit 후 실행 |
-| `v2/node/worker/outcome.rs::apply_fragment` | prefill/decode/verify/replay의 position·생성량·stop·proposal·KV 후속 상태를 정규화. 엔진의 실제 token 생성은 대체하지 않음 |
-| `v2/node/worker/effects.rs::Worker::flush_effects` | output/forward/settle/release 의도 보존. 외부 효과 실패 후 남은 의도와 fence 유지. 내구 outbox나 crash exactly-once 아님 |
-| `v2/node/worker/drive.rs::Worker::emit_tail_results` | 꼬리는 head로 TAIL_BATCH만 보냄. OUTER 출력은 head 승인 뒤 한 번 발행 |
-| `v2/node/worker/settlement.rs::Worker::settled` | physical outstanding과 pending KV ack 분리, sampled token·position·proposal 권위, 이벤트 전체 사전 검사 |
-| `v2/node/worker/release.rs::Worker::released` | pending release 권위·슬롯·admission 후보 전부 확인한 뒤 슬롯 반환. 같은 key/slot의 새 incarnation 구분은 아직 없음 |
-| `process/core.rs::ServerControl` 및 `v2/node/worker/stage_tests.rs` | 기존 trait에 Box 전달 구현. 실제 handle/drive/stage 명령/반환을 fake native로 시험. LOAD 협상과 전체 수신 루프는 우회하므로 full worker E2E 아님 |
+| `v2/node/state.rs::RequestState::issue_fragment`, `settle_fragment` | Shared bookkeeping for production issue/arrival and for Simulation. issued/cursor/outstanding change only after the checks finish |
+| `v2/node/state.rs::AdapterState::prepare_issue`, `accept_prepared_issue` | Checks the whole candidate against resident authority; Prepared/AwaitingNative/Uncertain; the request advances only after an exact native split is approved. The cancel API has no production cancel consumer yet |
+| `v2/node/flight.rs::FlightLedger` | Invocation/owner/membership authority, partial/out-of-order buffering, per-logical-fragment settlement, receipt and execution ID high-water. Verify/Replay preserve the atomic group |
+| `v2/node/worker/release.rs::Worker::tail` | Pre-validates all request candidates, outcomes and effect intents; checks the counters and the identity ledger independently; executes after committing ledger/request/intent |
+| `v2/node/worker/outcome.rs::apply_fragment` | Normalizes position, generated count, stop, proposal and follow-up KV state for prefill/decode/verify/replay. Does not replace the engine's actual token generation |
+| `v2/node/worker/effects.rs::Worker::flush_effects` | Preserves output/forward/settle/release intents. After an external effect fails, the remaining intents and the fence are kept. Not a durable outbox and not crash exactly-once |
+| `v2/node/worker/drive.rs::Worker::emit_tail_results` | The tail sends only TAIL_BATCH to head. OUTER output is published once, after head approval |
+| `v2/node/worker/settlement.rs::Worker::settled` | Separates physical outstanding from pending KV ack; sampled token, position and proposal authority; pre-checks the whole event |
+| `v2/node/worker/release.rs::Worker::released` | Returns the slot only after checking pending release authority, the slot and all admission candidates. It does not yet distinguish a new incarnation of the same key/slot |
+| `process/core.rs::ServerControl` and `v2/node/worker/stage_tests.rs` | Box-forwarding implementation of the existing trait. Tests the real handle/drive/stage commands/returns against fake native. LOAD negotiation and the full receive loop are bypassed, so this is not a full worker E2E |
 
-FlightLedger의 완료 receipt 창은 64MiB/4096개로 제한하며 만료된 옛 ID는 fail-closed다.
-이 수치는 active flight·edge tensor·pending queue의 메모리 상한이 아니다. crash 이후 receipt도 아니다.
-기존 open-batch 표시는 ledger에서 재생성되는 관측값이며 단독 완료 권위로 쓰지 않는다.
+The FlightLedger completion receipt window is bounded at 64MiB/4096 entries, and expired old IDs fail closed.
+These numbers are not memory bounds for active flights, edge tensors or pending queues. Nor are they receipts that survive a crash.
+The existing open-batch indicator is an observed value regenerated from the ledger and is not used as a standalone completion authority.
 
-### 실제 경로의 회귀 시험
+### Regression tests on the real path
 
-경로 루트는 `layers/adapters/llamacpp/staged/adapter/src/`다. ID 전체 PASS가 아니라 아래 부분 입력의 증거다.
+The path root is `layers/adapters/llamacpp/staged/adapter/src/`. This is evidence for the partial inputs below, not a full PASS of the IDs.
 
-| 시험 묶음 | 이번 실행 / 증명 범위 |
+| Test group | This run / proof scope |
 | --- | --- |
-| `v2/node/worker_tests.rs` | 26개. R-A/B/D, 잘못된 key/generation/phase/range/member, handle 거부 후 정상 반환, 부분/역순 정산, 중복/conflict, head 이전 출력 금지, Closed/부분 출력 후 intent 내용·join, counter 불일치 |
-| `v2/node/issue_tests.rs` | 10개. resident 대비 계획 검증, issue 공유 호출, native 전 취소/불확실 이후 재발행 금지, 정확한 split, atomic capsule 분할 거부, ID 한계 |
-| `v2/simulator_tests.rs` | 15개. 실제 run/issue/advance에 malformed 행·구간을 주입, 거부 후 travelling/요청 보존, 잘못된 전체 후보의 부분 commit 방지, 기존 공정성·시계·오류 cap |
-| `v2/node/worker/outcome.rs` 시험 | 12개. ordinary/verify/replay 정상·거부, max_tokens/position/stop/proposal. 실제 native 샘플러 시험은 아님 |
-| `v2/node/worker/settlement.rs` 시험 | 9개. 늦은 잘못된 ack에도 전체 상태 보존, proposal sampled-token 대조, 물리 outstanding이 남은 정산 거부 |
-| `v2/node/worker/release_tests.rs` | 3개. 미소유/혼합 ack·잘못된 admission의 원자 거부와 정상 소유 슬롯 반환 |
-| `v2/node/worker/stage_tests.rs` | 9개. 실제 drive가 fake native split을 보존, native 응답 유실/행 누락을 Uncertain으로 유지, 마지막 physical member 전 다음 issue 차단, mutating native의 잘못된 body 후 추가 호출 금지 |
+| `v2/node/worker_tests.rs` | 26 tests. R-A/B/D, wrong key/generation/phase/range/member, normal return after a handle rejection, partial/out-of-order settlement, duplicate/conflict, no output before head, intent contents and join after Closed/partial output, counter mismatch |
+| `v2/node/issue_tests.rs` | 10 tests. Plan validation against resident, the shared issue call, no reissue after pre-native cancel/uncertain, exact split, rejection of a split atomic capsule, ID limits |
+| `v2/simulator_tests.rs` | 15 tests. Injects malformed rows/ranges into the real run/issue/advance, preserves travelling/request after rejection, prevents partial commit of a wrong whole candidate, existing fairness/clock/error cap |
+| `v2/node/worker/outcome.rs` tests | 12 tests. ordinary/verify/replay normal and rejection cases, max_tokens/position/stop/proposal. Not a test of the real native sampler |
+| `v2/node/worker/settlement.rs` tests | 9 tests. Whole state preserved even with a late bad ack, proposal sampled-token check, rejection of settlement while physical outstanding remains |
+| `v2/node/worker/release_tests.rs` | 3 tests. Atomic rejection of unowned/mixed acks and wrong admission, and return of a properly owned slot |
+| `v2/node/worker/stage_tests.rs` | 9 tests. The real drive preserves the fake native split, keeps a lost native response or missing rows as Uncertain, blocks the next issue before the last physical member, and forbids further calls after a bad body from mutating native |
 
-fake stage는 Frame 응답을 만들 뿐 selector/정산을 다시 구현하지 않는다. 하지만 이 시험은
-`Worker::run`→broker→N개의 실제 worker 전체를 연결하지 않는다. stage 수 1/2/4/8·지속 input·cancel·
-재접속·종료와 native conformance는 별도 미완이다. simulator도 FlightLedger/outcome/effects 전체를
-쓰지 않으므로 “engine 결과만 다른 완전한 동일 상태 머신”으로 보고하지 않는다.
+The fake stage only builds Frame responses; it does not reimplement the selector or settlement. However, these tests do not
+connect `Worker::run`→broker→N real workers end to end. Stage counts 1/2/4/8, sustained input, cancel,
+reconnect, shutdown and native conformance remain separately open. The simulator does not use all of FlightLedger/outcome/effects
+either, so it is not reported as "a complete, identical state machine that differs only in the engine result".
 
-### 독립 복사본 변이 검증
+### Mutation verification on independent copies
 
-원본 checkout을 변경해 변이를 복구하지 않았다. 각 묶음은 작성 당시 소스 snapshot에서 수행했으며
-모두 최종 소스 한 snapshot에서 수행한 것으로 합쳐 주장하지 않는다. 최종 정상 suite는 별도로 실행한다.
+Mutations were not applied to the original checkout and then reverted. Each group ran on the source snapshot current when it was written,
+and they are not combined into a claim that all of them ran on one final source snapshot. The final normal suite is run separately.
 
-| 제거/오류 변이 | 실제 검출 |
+| Removal/fault mutation | Actual detection |
 | --- | --- |
-| Simulation 공유 settle 우회·range 검사 제거·arrival 조기 commit | 실제 malformed arrival/range 시험 실패 |
-| Simulation 공유 issue 우회·outstanding 증가 제거 | 잘못된 발행 후보 및 fragment 1/2/4 독립 원장 시험 실패 |
-| worker issue 공유 호출 또는 resident authority 검증 우회 | issue 소비 시험 각 2개 실패 |
-| 꼬리 OUTER 선출력 복원 | head 승인 전 출력 시험 실패 |
-| effect를 성공 확인 전에 pop | 출력 거부/부분 발행 보존 시험 3개 실패 |
-| 늦은 outcome 검사 전 flight commit | 이벤트 전체 보존 시험 실패 |
-| request-vs-flight 독립 대조 우회 | T19 실제 worker 반례 실패 |
-| KV sampled-token 대조 제거·후속 ack 검사 전 후보 commit·outstanding 허용 | 각각 해당 KV ack 시험 실패 |
-| release 소유 검증 제거·부분 슬롯 조기 반환·옛 admission pop 순서 | release 시험 각각 실패 |
-| max-open gate 우회·native split 누락 검사 제거 | 실제 drive의 native 호출/불완전 issue 시험 실패 |
-| atomic physical membership 검사 제거 | 2+2 capsule로 찢긴 Verify/Replay 거부 시험 실패. 내부 재정렬만의 독립 변이는 미실행 |
-| native SETTLE short/length/middle-proposal, RELEASE status의 사후 fence 제거 | 각각 해당 fake stage 시험 실패 |
-| handle 진입 fence 제거 | 추가 오류 이벤트 효과 금지 단언 실패. 내부 stage guard는 native 재호출을 여전히 막으므로 native 호출 증가로 설명하지 않음 |
+| Simulation bypasses the shared settle, range check removed, early commit on arrival | The real malformed arrival/range tests fail |
+| Simulation bypasses the shared issue, outstanding increment removed | The wrong-issue-candidate test and the fragment 1/2/4 independent ledger tests fail |
+| worker bypasses the shared issue call or the resident authority check | 2 issue consumer tests fail in each case |
+| Early OUTER output at the tail restored | The output-before-head-approval test fails |
+| effect popped before success is confirmed | 3 output rejection/partial publish preservation tests fail |
+| flight committed before the late outcome check | The whole-event preservation test fails |
+| Independent request-vs-flight check bypassed | The T19 real worker counterexample fails |
+| KV sampled-token check removed, candidate committed before the follow-up ack check, outstanding allowed | The corresponding KV ack test fails in each case |
+| release ownership check removed, partial slot returned early, old admission pop order | The release tests fail in each case |
+| max-open gate bypassed, native split omission check removed | The real drive's native call / incomplete issue tests fail |
+| atomic physical membership check removed | The test rejecting Verify/Replay torn into 2+2 capsules fails. An independent mutation of internal reordering alone was not run |
+| Post-hoc fence removed for native SETTLE short/length/middle-proposal and RELEASE status | The corresponding fake stage test fails in each case |
+| handle entry fence removed | The assertion forbidding effects from an additional error event fails. The internal stage guard still blocks the native re-call, so this is not explained by an increase in native calls |
 
-임시 상세 로그는 `target/tail-mutations-20260906-01/verification.txt`,
+Temporary detailed logs are in `target/tail-mutations-20260906-01/verification.txt`,
 `target/release-mutations-20260906-01/verification.txt`,
-`target/atomic-membership-mutation-20260906-01/verification.txt` 및 독립 Temp 복사본의 `results.json`에 있다.
-이는 로컬 보조 증거이며 장기 재현은 위 저장소 시험/변이 위치와 명령에 의존한다.
-공유 Cargo target이 baseline 바이너리를 재사용한 초기 변이 실행은 **무효로 제외**했다.
-채택한 사후 fence 변이는 각 별도 target에서 실제 compile과 해당 실패를 확인했다.
+`target/atomic-membership-mutation-20260906-01/verification.txt`, and `results.json` in the independent Temp copies.
+These are local supporting evidence; long-term reproduction relies on the repository tests/mutation locations and commands above.
+The early mutation runs in which a shared Cargo target reused the baseline binary were **excluded as invalid**.
+For the post-hoc fence mutations that were adopted, the actual compile and the corresponding failure were confirmed in a separate target each.
 
-### 아직 닫지 않은 결함과 다음 개발 제약
+### Defects not yet closed and constraints on the next development
 
-- 같은 load/session/key/slot 재사용 뒤 옛 RELEASE/RELEASED가 새 요청에 도달하는 incarnation 구멍.
-  head 검사뿐 아니라 모든 홉의 native KV 효과를 보호해야 한다. wire 버전·연산 receipt가 필요하다.
-- 중간 stage의 동일 physical 재전달은 head receipt보다 앞에서 native를 다시 호출할 수 있다.
-  이번 중복 terminal no-op가 downstream KV/sampler 멱등성을 증명하지 않는다.
-- `RequestState::clone`의 prompt/Event 복제와 effect의 cut-set 복제, 모든 열린 batch/owner 재검색.
-  안전성 확보용 현재 후보 구현을 고성능 기준선으로 승격하지 않는다. 불변 입력과 작은 진행 delta,
-  membership index로 바꾸면서 기존 거부·원자성 시험을 유지해야 한다.
-- 계속 차는 입력을 모두 비운 후 drive하는 루프는 발행 기회를 굶길 수 있다. selector fairness와 별개다.
-- selector가 plan 생성 때 cohort resume/decode_runs를 변경한다. 이번 issue counter 원자화만으로
-  거부된 계획의 fairness 소비도 사라졌다고 말할 수 없다. 후보 정책 delta와 accepted commit 분리가 남아 있다.
-- active row/byte/KV credit, durable/reconnect 수렴, cancel/reload/graceful drain, 제품 LOAD identity,
-  common/private/transitive 격리와 declared backend conformance는 미완이다.
+- The incarnation hole: after the same load/session/key/slot is reused, an old RELEASE/RELEASED reaches the new request.
+  Not only the head check but the native KV effects on every hop must be protected. This needs a wire version and operation receipts.
+- An identical physical redelivery at a middle stage can call native again ahead of the head receipt.
+  The duplicate terminal no-op this time does not prove downstream KV/sampler idempotence.
+- The prompt/Event copy in `RequestState::clone`, the cut-set copy in effects, and the rescan of all open batches/owners.
+  Do not promote this safety-first candidate implementation to a high-performance baseline. Replace it with immutable input, small progress deltas
+  and a membership index while keeping the existing rejection and atomicity tests.
+- A loop that drains all continuously arriving input before driving can starve issue opportunities. This is separate from selector fairness.
+- The selector mutates cohort resume/decode_runs when building a plan. Making the issue counters atomic this time does not by itself show
+  that fairness consumption by rejected plans is gone. Separating the candidate policy delta from the accepted commit remains to be done.
+- Active row/byte/KV credit, durable/reconnect convergence, cancel/reload/graceful drain, product LOAD identity,
+  common/private/transitive isolation and declared backend conformance are unfinished.
 
-이 후속 작업의 상태는 **B1/B2 IN_PROGRESS**다. 다음 순서의 단독 소유는 로드맵이며, 위 목록을
-새 U/P 직렬 단계표로 만들지 않는다. C++/GPU/원격/다중 머신 웨이브·성능 결과는 이번 기록에 없다.
+The status of this follow-up work is **B1/B2 IN_PROGRESS**. The roadmap alone owns the next order; do not turn the list above
+into a new serial U/P stage table. This record contains no C++/GPU/remote/multi-machine wave or performance results.
 
-### 최종 정상 실행과 소스 결속
+### Final normal run and source binding
 
-- `cargo test --workspace --no-fail-fast`: **914 passed / 0 failed / 7 ignored**, 57 summary, 최종 exit 0.
-  staged adapter lib는 221 passed. 초기 감사 844에서 70개 증가했다. 전체 수에는 과거 runtime 시험도
-  포함되므로 914개 모두를 event worker 증거로 세지 않는다. 외부 fixture feature는 실행하지 않았다.
-- 하네스 `node --test`: 57 passed / 0 failed / 0 skipped, exit 0.
-- docs-lint 자체 시험: 12 passed / 0 failed. private-header 패턴 게이트: 74파일, header 0/source 5.
-- 문서 gate: 추적 73개, 신규 포함 `--all` 79개 통과. 패치 뒤 혼합 EOL을 검출했으며 해당 문서만
-  파일 내 CRLF로 정규화한 뒤 재검사했다. 파일 개수는 기능/의미 정확성 인증이 아니다.
-- `cargo clippy -p p4-llamacpp-staged-adapter --all-targets`: exit 0, **warning은 남아 있다**.
-  새 `cancel_prepared_issue`의 production 소비자 부재 경고도 있다. `-D warnings` 또는 경고 0 통과가 아니다.
-- C++ CTest·실제 llama 라이브러리·GPU·원격은 미실행. commit/push/deploy 하지 않았다.
-- 정상 실행 원본 로그: `target/b1-settlement-workspace.log`, clippy: `target/b1-settlement-clippy.log`.
-  명령은 검증 규약에 있고, 이 로컬 로그만을 장기 재현 조건으로 요구하지 않는다.
+- `cargo test --workspace --no-fail-fast`: **914 passed / 0 failed / 7 ignored**, 57 summaries, final exit 0.
+  The staged adapter lib had 221 passed, an increase of 70 over the initial audit's 844. The total also includes
+  older runtime tests, so not all 914 count as event worker evidence. External fixture features were not run.
+- Harness `node --test`: 57 passed / 0 failed / 0 skipped, exit 0.
+- docs-lint self-tests: 12 passed / 0 failed. private-header pattern gate: 74 files, header 0/source 5.
+- Document gate: 73 tracked and 79 with `--all` including new files passed. Mixed EOL was detected after the patch; only the affected document was
+  normalized to CRLF within the file and rechecked. File counts do not certify functional or semantic correctness.
+- `cargo clippy -p p4-llamacpp-staged-adapter --all-targets`: exit 0, **warnings remain**.
+  They include a warning that the new `cancel_prepared_issue` has no production consumer. This is not a `-D warnings` or 0-warning pass.
+- C++ CTest, the real llama library, GPU and remote were not run. No commit/push/deploy was done.
+- Raw log of the normal run: `target/b1-settlement-workspace.log`; clippy: `target/b1-settlement-clippy.log`.
+  The commands are in the verification protocol; these local logs alone are not required as a long-term reproduction condition.
 
-소스는 clean HEAD가 아니다. 검증 중 Rust 변경을 동결하고 Git의 추적+비무시 미추적 파일에서
-`.rs`, `Cargo.toml`, `Cargo.lock`을 중복 없이 경로 정렬했다(353파일).
-각 파일의 `path + LF + raw byte length + LF + SHA256(raw bytes) + LF`를 순서대로 연결한 SHA256은
-`67e7fa07aa27699dc65492934bcbdcfa07ec9f2b3bb64b668f812b517905b7b4`다.
-이는 이번 Rust 소스 범위 식별자이며 문서/네이티브/전체 배포 이미지 식별자를 대신하지 않는다.
-후속 소스가 이 값과 달라지면 이 결과를 새 소스 통과로 재사용하지 않는다.
+The source is not a clean HEAD. Rust changes were frozen during verification, and `.rs`, `Cargo.toml` and `Cargo.lock` from Git's tracked plus
+non-ignored untracked files were sorted by path without duplicates (353 files).
+The SHA256 over the concatenation, in order, of each file's `path + LF + raw byte length + LF + SHA256(raw bytes) + LF` is
+`67e7fa07aa27699dc65492934bcbdcfa07ec9f2b3bb64b668f812b517905b7b4`.
+This identifies the Rust source scope of this run; it does not stand in for a document, native or full deployment image identifier.
+If later sources differ from this value, do not reuse this result as a pass for the new sources.
 
-## 후속 실행 소유권·정책 후보 slice — 2026-09-06
+## Follow-up execution ownership and policy candidate slice — 2026-09-06
 
-상태는 **B1/B2/B5 IN_PROGRESS**다. HEAD는 여전히 `a9e1967fc`, 아래는 미커밋 작업 트리의
-후속 구현이다. 과거 절의 914/Rust-only 결과를 이 slice의 결과로 사용하지 않는다. 커밋·push·원격 배포는 하지 않았다.
-계약 정의는 [배치 계약](../../../../../../../docs/adapter-batching-layers.md)의 실행 소유권 절,
-레이어 권한은 [격리 계약](../../../../../../../docs/layer-isolation-contract.md), 다음 순서는 로드맵이 소유한다.
+The status is **B1/B2/B5 IN_PROGRESS**. HEAD is still `a9e1967fc`; what follows is follow-up implementation on an uncommitted
+working tree. Do not use the 914/Rust-only results from the previous section as this slice's results. No commit, push or remote deploy was done.
+The contract definition is owned by the execution ownership section of the [batching contract](../../../../../../../docs/adapter-batching-layers.md),
+layer permissions by the [isolation contract](../../../../../../../docs/layer-isolation-contract.md), and the next order by the roadmap.
 
-### 수정 전 실패와 실제 소비 경로
+### Pre-fix failures and real consumer paths
 
-- 같은 load/session/request/slot의 두 번째 요청에 첫 번째 RELEASED가 오면 새 pending release가 지워졌고,
-  중간/꼬리의 옛 RELEASE는 새 fake native KV를 삭제했다. 실제 head prefill→drive→tail→release와
-  중간/꼬리 PHYSICAL→release 경로 3개에서 RED를 확인했다. 현재는 새 incarnation을 보존하며 정상 새 해제는 진행한다.
-- 같은 operation의 body/kind 충돌·이전 operation은 native 이전 거부, 정확한 SETTLE/RELEASE는 receipt 재생이다.
-  stage 시험은 유효 P4ID prefix와 실제 PHYSICAL warmup을 통과한 뒤 원래 short/count/role 오류를 주입한다.
-  신규 guard에서 조기 거부된 것을 기존 native 응답 오류의 검출로 세지 않는다.
-- 합계 receipt 예산 반례: 각개 검사는 가능했지만 한 명령의 합계는 불가능했다. 수정 전 RELEASE는
-  첫 슬롯을 삭제한 뒤 거부, SETTLE은 두 native 호출/절단 뒤 commit 실패였다. 현재 두 방향 모두 첫 native
-  호출 전에 거부하며 소유/flight/KV/출력 의도를 보존한다. 같은 operation을 단독으로 주면 정상 실행된다.
-- old SETTLED의 incarnation/operation이 새 pending KV 장벽을 소비하지 않는 head 시험도 추가했다.
-- 정책 후보는 `Scheduler::prepare_plan_with_physical_capacity`/`validate_prepared`/`commit_plan`으로 분리했다.
-  실제 drive에서 발행 ID를 0으로 만들어 64번 거부해도 선택 revision/cohort/member·요청·owner·flight와
-  native 호출 수가 그대로다. ID만 수리하면 원래 예정된 decode slot이 실행되고 그때만 다음 멤버로 회전한다.
-- 제품 LOAD가 사용하는 `Worker::bind_loaded_identity`를 실제 lifecycle/request + fake ServerControl로
-  검증했다. capability 없음/unknown·다른 echo·응답 유실·이전 generation 재사용은 슬롯 미공개/종료로 처리한다.
-  **이 시험은 LOAD JSON parser와 실제 subprocess 시작까지 통과하지 않는다.** native Session 시험도 별도로 존재한다.
+- When the first RELEASED arrived for a second request on the same load/session/request/slot, the new pending release was erased,
+  and an old RELEASE at the middle/tail deleted the new fake native KV. RED was confirmed on 3 real paths: head prefill→drive→tail→release and
+  middle/tail PHYSICAL→release. Now the new incarnation is preserved and a normal new release proceeds.
+- A body/kind conflict on the same operation or an earlier operation is rejected before native; an exact SETTLE/RELEASE replays the receipt.
+  The stage tests pass a valid P4ID prefix and a real PHYSICAL warmup before injecting the original short/count/role faults.
+  An early rejection by the new guard is not counted as detection of the existing native response fault.
+- Aggregate receipt budget counterexample: each item passed its own check, but the total for one command was impossible. Before the fix, RELEASE
+  deleted the first slot and then rejected; SETTLE failed to commit after two native calls/truncation. Now both directions reject before the first native
+  call and preserve ownership/flight/KV/output intent. The same operation given alone runs normally.
+- A head test was also added showing that an old SETTLED's incarnation/operation does not consume the new pending KV barrier.
+- The policy candidate was split into `Scheduler::prepare_plan_with_physical_capacity`/`validate_prepared`/`commit_plan`.
+  On the real drive, forcing the issue ID to 0 and rejecting 64 times leaves the selected revision/cohort/member, request, owner, flight and
+  native call count unchanged. Once only the ID is repaired, the originally scheduled decode slot runs, and only then does it rotate to the next member.
+- `Worker::bind_loaded_identity`, used by product LOAD, was verified with a real lifecycle/request + fake ServerControl.
+  Missing/unknown capability, a different echo, a lost response and reuse of an earlier generation are handled by not publishing the slot / shutting down.
+  **This test does not go through the LOAD JSON parser or real subprocess startup.** Native Session tests exist separately as well.
 
-### 계층 경계에서 바뀐 것
+### What changed at the layer boundary
 
-P4 공용 protocol/agent에는 모델 규칙을 추가하지 않았다. 실행 소유/원장·wire는 concrete adapter에,
-native guard/codec은 stage shell에 있다. guard와 공유 `utf8_text.hpp`는 llama/ggml 타입 없이 컴파일한다.
-LB/PB와 제어 incarnation의 규약은 의도적 adapter wire 변경이며 upstream API의 직접 노출이 아니다.
-state ABI·backend layout·ggml ordinal·common public signature·transitive include/link의 잔여를 해소한 것은 아니다.
+No model rules were added to the P4 common protocol/agent. Execution ownership/ledger and wire live in the concrete adapter,
+and the native guard/codec in the stage shell. The guard and the shared `utf8_text.hpp` compile without llama/ggml types.
+The LB/PB and control incarnation conventions are a deliberate adapter wire change, not direct exposure of the upstream API.
+This does not resolve the remaining state ABI, backend layout, ggml ordinal, common public signature, or transitive include/link issues.
 
-canonical identity 부정 시험은 잘못된 session prefix, 빈 request, 추가 NUL, 손상 UTF-8을 거부하고
-유효 한글/emoji를 수용한다. Rust의 유효하지 않은 key를 encoder가 먼저 거부하게 된 뒤에는 기존 worker
-반례를 정상 bytes의 명시 변조로 바꿔 실제 decoder/consumer까지 유지했다. unknown request 반례는
-그 다른 요청의 canonical key도 같이 바꿔 codec은 통과하고 원장 권위에서 거부되게 했다.
+The canonical identity negative tests reject a wrong session prefix, an empty request, an extra NUL and corrupted UTF-8, and
+accept valid Korean text and emoji. Once the encoder began rejecting invalid Rust keys up front, the existing worker
+counterexamples were changed into explicit tampering of valid bytes so that they still reach the real decoder/consumer. The unknown request counterexample
+also changes that other request's canonical key, so it passes the codec and is rejected by the ledger authority.
 
-### 변이와 회계 한계
+### Mutations and accounting limits
 
-모두 사용자 checkout이 아닌 독립 복사본에서 실제 재컴파일했다. 소스 snapshot별 시험이므로
-모든 변이를 아래 최종 전체 소스 하나에서 실행했다고 합쳐 주장하지 않는다.
+All were actually recompiled in independent copies, not in the user's checkout. These are per-source-snapshot tests, so
+they are not combined into a claim that every mutation ran on the single final full source below.
 
-| 변이 | 검출 / 보존 근거 |
+| Mutation | Detection / preservation evidence |
 | --- | --- |
-| drive의 정책 commit을 issue 승인 앞으로 이동 | 실제 거부→재계획 시험 실패; 정확한 실패 원인/native 0 뒤 cursor가 달라짐. 복원 stage 13/13 |
-| native control owner/body/watermark/canonical 검사 제거 | 최종 native 복사본 4종 모두 해당 assertion 실패. baseline 및 최종 CPU 별도 통과 |
-| Rust ownership의 incarnation/watermark/개수·receipt 상한 제거 | 각각 소유/재사용/한계 시험 실패. 후보 payload는 Arc 공유 |
-| control 합계 guard 제거, Replay 재과금, old receipt 차감 제거, 뒤 shrink 선차감, duplicate slot 또는 권위 검사 제거 | 6종 모두 실패(각 2/1/1/1/1/2개). 복원 ownership 16/16 |
-| LOAD exact echo 검사 제거 또는 없는 identity revision 허용 | 각각 소비 시험 1개 실패; 복원 control 시험 6/6 |
+| Move drive's policy commit ahead of issue approval | The real reject→replan test fails; after the exact failure cause/native 0, the cursor differs. Restored stage 13/13 |
+| Remove native control owner/body/watermark/canonical checks | All 4 in the final native copy fail the corresponding assertion. Baseline and final CPU pass separately |
+| Remove incarnation/watermark/count/receipt bounds from Rust ownership | The ownership/reuse/limit tests fail in each case. Candidate payloads are shared via Arc |
+| Remove the control aggregate guard, recharge Replay, remove the old receipt deduction, pre-deduct a later shrink, remove the duplicate slot or authority check | All 6 fail (2/1/1/1/1/2 tests each). Restored ownership 16/16 |
+| Remove the LOAD exact echo check or allow a missing identity revision | 1 consumer test fails in each case; restored control tests 6/6 |
 
-로컬 RED/변이 보조 증거는 `target/incarnation-red-20260906-01/verification.txt`,
+Local RED/mutation supporting evidence is in `target/incarnation-red-20260906-01/verification.txt`,
 `target/aggregate-control-red-20260906-01/verification.txt`, `target/drive-policy-mutation-20260906-01/verification.txt`,
 `target/bind-load-mutation-20260906-01/verification.txt`,
-`target/native-identity-mutations-final/build/Testing/Temporary/LastTest.log`에 있다.
-저장소 회귀 시험과 위 변이 정의가 재현의 기준이며 ignored target 디렉터리 존재를 새 세션의 필수 입력으로 삼지 않는다.
+`target/native-identity-mutations-final/build/Testing/Temporary/LastTest.log`.
+The repository regression tests and the mutation definitions above are the reproduction reference; a new session does not require the ignored target directories to exist.
 
-이는 메모리 내 제어 멱등/직렬 사전 예산 검사다. native가 실행 도중 실패하면 여러 변경을 원자 rollback하는
-것이 아니며, 결과 불명은 fence한다. PHYSICAL execution 중복 계산·prefix 순서·전송 credit·지속적인
-input servicing·cancel/drain·crash durable receipt는 미완이다. snapshot/restore와 bare legacy KV mutation은
-이 실행 소유권과 통합되기 전 bound mode의 우회 실행으로 허용하지 않는다.
+This is in-memory control idempotence plus a serial pre-budget check. If native fails mid-execution, it does not roll back multiple changes
+atomically; an unknown result is fenced. Duplicate PHYSICAL execution computation, prefix ordering, transfer credit, sustained
+input servicing, cancel/drain and crash-durable receipts are unfinished. snapshot/restore and bare legacy KV mutation are
+not allowed as bypass execution in bound mode until they are integrated with this execution ownership.
 
-### 최종 실행 결과 — 숫자와 미실행을 분리
+### Final run results — numbers kept apart from what was not run
 
-- `cargo test --workspace --no-fail-fast`: **956 passed / 0 failed / 7 ignored**, 57 summary, 최종 exit 0.
-  staged adapter lib는 **263 passed**. 전체 수에는 과거 runtime 시험도 포함된다. 외부 fixture feature는 미실행이다.
-- 하네스 `node --test`: **57 passed / 0 failed / 0 skipped**, exit 0.
-- docs-lint 자체 시험 **12/12**, 공식 native builder wiring **4/4**. wiring은 production JS의 source/imported/
-  no-llama target 선택을 실제 실행하되 외부 빌드 명령을 대체했다. 실제 imported relink 성공 증거가 아니다.
-- 최종 native 소스로 **CPU 전체 source build 성공**. CTest 표면 집계는 13 executable exit 0이다.
-  정확히는 **비모델 본문 실행 10개 + compile_test 부분 실행 1개 + 본문 전체 SKIP 2개**다.
-  `request_options_test`는 첫 환경변수 검사에서 종료하여 sampling/grammar 단언도 전부 미실행,
-  `mtp_ownership_test`도 첫 환경변수 검사에서 종료했다. compile_test의 real restore·batch rollback
-  두 함수도 생략됐다. 따라서 SKIP 출력은 4줄이며 **실제 모델 native conformance는 미승인**이다.
-  새로운 authority/codec/UTF-8 및 Session BindLoad/legacy 거부 시험은 생략된 분기에 속하지 않는다.
-- private-header 패턴 gate 및 docs-lint는 통과했으나 의미 정확성/격리 전체의 인증이 아니다.
-- clippy exit 0, warning 잔존. 이번 LOAD 시험의 type-complexity 경고도 있으므로 “새 경고 0”이라고 하지 않는다.
-  전체 `cargo fmt --all -- --check`는 기존 비변경 entrypoint/adapter 등 formatting으로 실패했다.
-  해당 파일은 임의 포맷하지 않았고 변경한 staged Rust 파일은 별도 정규화했다.
-- GPU·실제 모델 load/native KV 효과·다중 컴퓨터 웨이브·성능 비회귀는 미실행이다.
+- `cargo test --workspace --no-fail-fast`: **956 passed / 0 failed / 7 ignored**, 57 summaries, final exit 0.
+  The staged adapter lib had **263 passed**. The total also includes older runtime tests. External fixture features were not run.
+- Harness `node --test`: **57 passed / 0 failed / 0 skipped**, exit 0.
+- docs-lint self-tests **12/12**, official native builder wiring **4/4**. The wiring test really executes the production JS source/imported/
+  no-llama target selection but substitutes the external build commands. It is not evidence of a successful real imported relink.
+- **Full CPU source build succeeded** with the final native sources. The CTest surface tally is 13 executables with exit 0.
+  Precisely, that is **10 with non-model bodies executed + 1 partial compile_test run + 2 with the whole body SKIPPED**.
+  `request_options_test` exited at the first environment variable check, so none of its sampling/grammar assertions ran either,
+  and `mtp_ownership_test` also exited at the first environment variable check. The two compile_test functions for real restore and batch rollback
+  were also skipped. So there are 4 SKIP output lines, and **real-model native conformance is not approved**.
+  The new authority/codec/UTF-8 tests and the Session BindLoad/legacy rejection tests are not in the skipped branches.
+- The private-header pattern gate and docs-lint passed, but that does not certify semantic correctness or full isolation.
+- clippy exit 0, warnings remain. There is also a type-complexity warning from this LOAD test, so we do not say "0 new warnings".
+  The full `cargo fmt --all -- --check` failed on formatting in existing, unchanged entrypoint/adapter files and others.
+  Those files were not reformatted arbitrarily; the changed staged Rust files were normalized separately.
+- GPU, real model load/native KV effects, multi-computer waves and performance non-regression were not run.
 
-로그: `target/b1-incarnation-final-workspace.log`, `target/b1-incarnation-staged.log`,
+Logs: `target/b1-incarnation-final-workspace.log`, `target/b1-incarnation-staged.log`,
 `target/b1-incarnation-harness.log`, `target/b1-incarnation-clippy.log`,
 `target/native-identity-cpu/Testing/Temporary/LastTest.log`.
-기존 CPU CTest가 모델 없는 early return을 Passed로 집계하는 배치는 B5/T03에서 unit/model-required를
-분리해야 한다. 필수 모델 시험을 성공 숫자로 유지하는 방식으로 게이트를 고치지 않는다.
+The existing CPU CTest setup that counts a model-less early return as Passed must separate unit from model-required tests in B5/T03.
+Do not fix the gate by keeping mandatory model tests as success counts.
 
-### 동결 소스 식별
+### Frozen source identification
 
-이전 절과 같은 `path + LF + raw byte length + LF + SHA256 + LF` 경로 정렬 방식이다.
-Rust 범위 357파일(`.rs`, Cargo.toml, Cargo.lock)의 aggregate:
+Same path-sorted `path + LF + raw byte length + LF + SHA256 + LF` method as the previous section.
+Aggregate for the Rust scope of 357 files (`.rs`, Cargo.toml, Cargo.lock):
 `1782839851ebae20e1e69d0d1b1a5eccf175b57202850c67fb90a419b8b5b41a`.
-native 범위는 staged/server 아래 `.cpp/.hpp/.h/.inc`와 CMakeLists.txt 79파일이며 aggregate:
+The native scope is the 79 `.cpp/.hpp/.h/.inc` and CMakeLists.txt files under staged/server, with aggregate:
 `a4ea6508731bf6c7090d2df1c51b84530ad5d95e3b666b124664dde0f0f9cdf0`.
-이는 해당 소스 범위의 식별이지 upstream 준비 트리·toolchain·전체 배포 이미지 digest가 아니다.
-CPU 빌드는 `target/native-identity-cpu`의 새 source-build tree에서 수행했고 기존 imported DLL 재링크로 대체하지 않았다.
-다음 개발에서 소스가 바뀌면 이 결과를 재사용하지 말고 새 digest/실행 결과를 기록한다.
+This identifies those source scopes; it is not a digest of the upstream prepared tree, the toolchain or the full deployment image.
+The CPU build ran in a new source-build tree at `target/native-identity-cpu` and was not replaced by relinking the existing imported DLL.
+If the sources change in later development, do not reuse this result; record a new digest and new run results.
 
-## PHYSICAL 수신 receipt·opaque plan 수명 — 2026-09-07
+## PHYSICAL receive receipt and opaque plan lifetime — 2026-09-07
 
-HEAD `a9e1967fc`의 후속 **미커밋 작업 트리**다. 현재 소스에 대한 실행 결과이며 새 commit/push/deploy를
-주장하지 않는다. 로드맵의 B1/B2/B5는 여전히 IN_PROGRESS다. PHYSICAL 정체성·상한·만료 계약은
-[배치 계약](../../../../../../../docs/adapter-batching-layers.md)이 단독 소유한다.
+A follow-up **uncommitted working tree** on HEAD `a9e1967fc`. These are run results for the current source and do not claim a new commit/push/deploy.
+B1/B2/B5 in the roadmap are still IN_PROGRESS. The PHYSICAL identity, bound and expiry contract is owned solely by the
+[batching contract](../../../../../../../docs/adapter-batching-layers.md).
 
-### 실제 소비 경로와 수정 전 실패
+### Real consumer path and pre-fix failures
 
-- `Worker::physical`을 별도 모듈로 분리하고 `PhysicalReceiveLedger`의 prepare/begin/complete를 연결했다.
-  fresh 입력만 native Frame으로 실행하고 cached 응답과 원래 이벤트 순서로 조립한다.
-  전체 사전 검증 뒤 ID를 Running으로 만들며 native 응답 불명은 모든 fresh를 Uncertain/fence로 전환한다.
-- 수정 전 실제 worker 시험 9개 중 정상 진행/native 사후 실패 3개는 PASS, 중복/충돌/혼합/낮은 ID의
-  재전달 6개는 RED였다. fake는 native 호출마다 KV 기록과 tail sampler nonce를 바꾸므로 echo-only 대역이 아니다.
-  원본 RED는 `target/physical-replay-red-20260907-01/verification.txt`와 그 raw output에 보존했다.
-- 통합 후 actual SESSION→handle→PHYSICAL codec→native Frame→receipt/owner commit→mailbox 시험은
-  **14/14 PASS**다. load 이후 상태는 fixture가 명시 설치하므로 LOAD JSON·subprocess 시작·Worker::run·
-  실제 네트워크/llama KV/GPU를 통과했다고 하지 않는다.
-- 독립 감사에서 load-global 실행 번호 가정의 결함을 추가 확인했다. 각 native head Session이 자기 번호를
-  발급하는데 SESSION은 서로 다른 first를 허용한다. 설정된 first의 전체 Endpoint로 권위를 구분했다.
-  다른 head의 같은 번호는 두 정상 실행, 같은 head의 다른 session/body는 conflict다.
-- 실제 P4ID RELEASE로 fake live KV를 지운 뒤 같은 slot/incarnation 2를 다시 실행하고 old receipt를
-  재전달해도 새 owner/KV가 보존된다. cache 만료·한도보다 큰 결과도 최초 정상 실행을 허용하며
-  뒤 재전달을 새 native 작업으로 바꾸지 않는다. exact Replay에는 새 계산 span이 없다.
+- `Worker::physical` was split into its own module and wired to `PhysicalReceiveLedger` prepare/begin/complete.
+  Only fresh inputs run as a native Frame, and the result is assembled with the cached responses in the original event order.
+  IDs become Running only after full pre-validation, and an unknown native response turns every fresh input into Uncertain/fence.
+- Before the fix, of 9 real worker tests, the 3 for normal progress and native post-hoc failure were PASS, and the 6 for duplicate/conflict/mixed/lower-ID
+  redelivery were RED. The fake changes the KV record and the tail sampler nonce on every native call, so it is not an echo-only stand-in.
+  The original RED is preserved in `target/physical-replay-red-20260907-01/verification.txt` and its raw output.
+- After integration, the actual SESSION→handle→PHYSICAL codec→native Frame→receipt/owner commit→mailbox tests are
+  **14/14 PASS**. The fixture installs the post-load state explicitly, so we do not claim that the LOAD JSON, subprocess startup, Worker::run,
+  a real network, llama KV or GPU were exercised.
+- An independent audit additionally found a defect in the assumption of load-global execution numbers. Each native head Session issues
+  its own numbers, yet SESSION allows different first values. Authority is now distinguished by the full Endpoint of the configured first.
+  The same number from a different head is two normal executions; a different session/body from the same head is a conflict.
+- After a real P4ID RELEASE clears the fake live KV, running the same slot/incarnation 2 again and redelivering the old receipt
+  still preserves the new owner/KV. A result that exceeds the cache expiry or limit still allows the first normal execution,
+  and a later redelivery is not turned into new native work. An exact Replay has no new compute span.
 
-### 변이와 그 한계
+### Mutations and their limits
 
-사용자 checkout이 아닌 별도 복사본에서 보호를 제거하고 실제 재컴파일했다.
-아래 변이 정의와 저장소의 시험 이름이 재현 근거이며 ignored target 경로의 영구 보존만을 요구하지 않는다.
+Protections were removed and actually recompiled in a separate copy, not in the user's checkout.
+The mutation definitions below and the repository test names are the reproduction basis; permanent retention of the ignored target paths is not required.
 
-| 변이 | 실제 검출 / 한계 |
+| Mutation | Actual detection / limits |
 | --- | --- |
-| full issuer namespace를 첫 namespace로 합침 | `t24_distinct_head_full_endpoints...` 실패. 정상 시험은 agent/node/generation 세 축을 각각 바꾸나 이 변이는 첫 agent 차이에서 실패 |
-| completed ID의 canonical body 비교 제거 | `t24_conflict_anywhere...` 실패. [fresh, 뒤 conflict]가 native를 호출해 상태를 바꾸는 것을 검출 |
-| replay-only에도 old owner를 재수용 | `t24_cached_old_return...` 실패. 기존 owner guard가 takeover를 막더라도 정확한 replay를 부당 거부하는 회귀를 검출 |
-| cached result를 새 계산 span으로 보고 | exact middle replay 시험 실패. early return만 지운 변이는 emit 내부 empty guard 때문에 동등하게 PASS했고 그 결과도 보존 |
+| Merge the full issuer namespace into the first namespace | `t24_distinct_head_full_endpoints...` fails. The normal test varies each of the agent/node/generation axes, but this mutation fails at the first agent difference |
+| Remove the canonical body comparison for completed IDs | `t24_conflict_anywhere...` fails. Detects that [fresh, then conflict] calls native and changes state |
+| Re-accept an old owner even for replay-only | `t24_cached_old_return...` fails. Even though the existing owner guard blocks takeover, this detects a regression that wrongly rejects an exact replay |
+| Report a cached result as a new compute span | The exact middle replay test fails. A mutation that only removes the early return passed equally because of the empty guard inside emit, and that result is also preserved |
 
-원장 단위는 **18/18 PASS**다. canonical 입력 비교, naive max-seen 거부, prospective floor, 반환 owner,
-oversized tombstone, 입력 byte 회계, invocation/owner membership, issuer 합치기, Seen/issuer/cache 합계
-상한의 11종 변이도 해당 시험에서 실패했다. 단위 원장 시험과 위 actual worker 시험은 범위가 다르다.
+The ledger unit tests are **18/18 PASS**. The 11 mutations — canonical input comparison, naive max-seen rejection, prospective floor, returned owner,
+oversized tombstone, input byte accounting, invocation/owner membership, issuer merging, and the Seen/issuer/cache aggregate
+bounds — also failed the corresponding tests. The unit ledger tests and the actual worker tests above differ in scope.
 
-단위 변이의 최초 회차는 tool 출력만 있었으므로 같은 최종 소스로 **새 보존 회차**를 재실행했다.
-`target/physical-receive-mutations-20260907-01/`에 baseline/11변이/복원 raw 로그와 명령·exit·
-source/binary hash를 각각 보존하고 `mutation-definitions.json`에 정확한 전후 코드·시험명을 남겼다.
-13실행 모두 실제 Compiling을 확인했다. baseline/복원은 각각 18 GREEN, 변이는 각각 cargo exit 101의
-시험 실패이며 컴파일 실패로 대체하지 않았다. 원본과 독립 복사본 소스는 같지만 두 정상 바이너리
-hash는 달랐으므로 bit-reproducible build의 증거로 쓰지 않는다. 임시 증거 28파일을 작업공간 target에
-복사하고 각 파일의 SHA256 일치를 확인했다. 원본 source는 이 과정에서 수정하지 않았다.
+The first round of unit mutations had only tool output, so a **new preserved round** was rerun on the same final source.
+`target/physical-receive-mutations-20260907-01/` holds the baseline/11 mutations/restore raw logs with their commands, exits and
+source/binary hashes, and `mutation-definitions.json` records the exact before/after code and test names.
+All 13 runs were confirmed to actually be Compiling. Baseline and restore each gave 18 GREEN; each mutation was a test failure with cargo exit 101,
+not a compile failure substituted for one. The original and the independent copy had the same sources, but the two normal binary
+hashes differed, so this is not used as evidence of a bit-reproducible build. The 28 temporary evidence files were copied into the workspace target
+and each file's SHA256 was confirmed to match. The original source was not modified in this process.
 
-actual worker 변이 원자료·명령·exit·변이별 source/binary SHA256:
-`target/physical-replay-mutations-20260907-01/verification.txt` 및 같은 디렉터리의 output 파일.
-최종 원본/복사본의 core receipt 소스 SHA256은
+Actual worker mutation raw data, commands, exits and per-mutation source/binary SHA256:
+`target/physical-replay-mutations-20260907-01/verification.txt` and the output files in the same directory.
+The core receipt source SHA256 of the final original/copy is
 `bfb777f715d300eb53a75b782658ec5cbc11b138cd1b5d0c2fce2f76b5f6b182`,
-worker consumer는 `8a7e370ff817b525577339cef9f58e1cfee43c66ddd9e3b16cfd87d79046e374`,
-actual worker test는 `ff3d39707909e15b3286cd2dc90ebed9416519682195c815044f1626d5c92797`다.
+the worker consumer is `8a7e370ff817b525577339cef9f58e1cfee43c66ddd9e3b16cfd87d79046e374`,
+and the actual worker test is `ff3d39707909e15b3286cd2dc90ebed9416519682195c815044f1626d5c92797`.
 
-### opaque plan: 모델 없는 경로로도 소유권 이전 반례 유지
+### opaque plan: keeping the ownership-transfer counterexample on a model-less path too
 
-options E2E는 plan을 runtime으로 이동시킨 뒤 sampling 옵션을 읽고 있었다. 모델 없는 실행에서는
-그 앞에서 SKIP하여 이 결함을 지나지 않았다. 이제 `consume_request_options_plan`이라는 **시험용**
-공유 준비 함수가 두 sampling snapshot을 이동 전에 만든다. 실제 options E2E는 같은 함수로 실제
-`runtime.load`를 호출하고, 새 `plan_lifetime_test`는 모델 없이 실제 opaque plan을 callback 안으로
-소비하여 snapshot 내용·실패 시 보존·소비자 소멸 후 수명을 확인한다. production parser를 바꾸거나
-27개 sampling/grammar 단언을 삭제하지 않았다.
+The options E2E read the sampling options after moving the plan into the runtime. In a model-less run it
+SKIPped before that point, so it never reached this defect. Now a **test-only** shared preparation function,
+`consume_request_options_plan`, builds the two sampling snapshots before the move. The real options E2E uses the same function to call the real
+`runtime.load`, and the new `plan_lifetime_test`, without a model, consumes a real opaque plan inside a callback
+and checks the snapshot contents, preservation on failure, and lifetime after the consumer is destroyed. The production parser was not changed, and
+the 27 sampling/grammar assertions were not deleted.
 
-별도 native 복사본에서 예전 순서로 되돌리면 SegFault, early-return이면 CTest의 필수 완료 문자열
-부재로 실패했다. Release `assert(false)` 주입도 assertion 실패를 냈다. 이는 assertion 활성의 증거이며
-assert를 제거하는 변이를 별도로 검출했다는 주장은 아니다.
-근거는 `target/plan-lifetime-mutations/build/Testing/Temporary/LastTest.log`와
-`target/plan-lifetime-mutations/full-native-test.log`다.
+In a separate native copy, reverting to the old order caused a SegFault, and an early return failed because the required CTest completion string
+was missing. Injecting a Release `assert(false)` also produced an assertion failure. That is evidence that assertions are active;
+it does not claim that a mutation removing the assert was detected separately.
+Evidence: `target/plan-lifetime-mutations/build/Testing/Temporary/LastTest.log` and
+`target/plan-lifetime-mutations/full-native-test.log`.
 
-### 이번 실행 결과와 미실행
+### Results of this run and what was not run
 
-- `cargo test --workspace --no-fail-fast`: **988 passed / 0 failed / 7 ignored**, 57 summary, 최종 exit 0.
-  staged adapter lib는 **295 passed**. 외부 fixture feature는 미실행이고, 전체 집계에는 과거 runtime 시험도 있다.
-  로그: `target/b1-physical-workspace.log`. 중간 집계를 전체 결과로 쓰지 않았다.
-- 하네스 `node --test test/benchmarks/p4-4node/*.test.mjs`: **57 passed / 0 failed / 0 skipped**.
-- 공식 native builder wiring **5/5**. 빌드 프로세스를 대체하여 target 선택을 검사하므로 imported relink 실증이 아니다.
-- docs-lint 자체 **12/12**, 추적 73파일/전체 79파일 clean, private-header 패턴 gate 80파일 통과.
-  `git diff --check` 오류 없음. 원래 남은 common source 부채는 유지한다.
-- 최종 native CPU source build 성공 후 CTest를 다시 실행했다. **14개 executable exit 0 = 비모델 본문 실행 11개
-  + compile_test 부분 실행 1개 + 본문 전체 SKIP 2개**다. real restore·rollback·options E2E·MTP 네 경로의
-  SKIP가 남아 있고 actual model conformance는 미승인이다. 새 lifetime 테스트는 SKIP가 아니다.
-- `cargo clippy -p p4-llamacpp-staged-adapter --all-targets`: exit 0, 경고 잔존. 새 physical consumer의
-  inspect_err 제안 및 테스트 type-complexity도 있으므로 경고 0/새 경고 없음으로 보고하지 않는다.
-  로그: `target/b1-physical-clippy.log`. 전체 workspace fmt 통과는 주장하지 않는다.
-- 문서 gate의 문자열/색인 통과는 기능/원자성/모델 성능의 증거가 아니다. GPU/실제 모델 load·
-  VRAM-only 웨이브·RAM 오프로딩·다중 컴퓨터·성능 비회귀는 **미실행**이다.
+- `cargo test --workspace --no-fail-fast`: **988 passed / 0 failed / 7 ignored**, 57 summaries, final exit 0.
+  The staged adapter lib had **295 passed**. External fixture features were not run, and the total also includes older runtime tests.
+  Log: `target/b1-physical-workspace.log`. Intermediate tallies were not used as the overall result.
+- Harness `node --test test/benchmarks/p4-4node/*.test.mjs`: **57 passed / 0 failed / 0 skipped**.
+- Official native builder wiring **5/5**. It checks target selection by substituting the build process, so it does not demonstrate an imported relink.
+- docs-lint self-tests **12/12**, 73 tracked files / 79 total files clean, private-header pattern gate passed on 80 files.
+  `git diff --check` reported no errors. The pre-existing common source debt remains.
+- After the final native CPU source build succeeded, CTest was rerun. **14 executables with exit 0 = 11 with non-model bodies executed
+  + 1 partial compile_test run + 2 with the whole body SKIPPED**. SKIPs remain on four paths — real restore, rollback, options E2E and MTP —
+  and actual model conformance is not approved. The new lifetime test is not a SKIP.
+- `cargo clippy -p p4-llamacpp-staged-adapter --all-targets`: exit 0, warnings remain. There is an inspect_err suggestion for the new physical consumer
+  and a test type-complexity warning, so this is not reported as 0 warnings or no new warnings.
+  Log: `target/b1-physical-clippy.log`. A full-workspace fmt pass is not claimed.
+- Passing the document gate's string/index checks is not evidence of functionality, atomicity or model performance. GPU/real model load,
+  VRAM-only waves, RAM offloading, multi-computer runs and performance non-regression were **not run**.
 
-동결 소스는 이전 기록과 같은 경로 정렬·raw byte length/SHA256 방식으로 집계했다.
-Rust 범위 360파일 aggregate:
+The frozen sources were aggregated with the same path sorting and raw byte length/SHA256 method as the earlier records.
+Rust scope, 360 files, aggregate:
 `0b79236846afb8c404746efd2882ebc3845352bce1137a111738b50172274a16`.
-native 범위 81파일 aggregate:
+Native scope, 81 files, aggregate:
 `816c90838ca53b648fa67a3321dc8633ddbe445cf18a25c035cfce5443a3f08b`.
-문서·모델·toolchain·배포 이미지 digest를 대신하지 않는다. A/B 수행 중인 소스를 수정한 결과도 아니다.
+These do not stand in for document, model, toolchain or deployment image digests. Nor are they the result of editing sources while an A/B run was in progress.
 
-### H0 읽기 전용 확인 — 실행 환경과 모델 승인은 별개
+### H0 read-only check — the execution environment and model approval are separate
 
-사용자 지정 자원·확장 순서는 로드맵 §1에 반영했다. 여기에는 확인한 사실만 남긴다.
+The user-specified resources and expansion order are reflected in roadmap §1. Only verified facts are recorded here.
 
-- 기존 신뢰된 SSH 키 경로로 조회한 M42-SERVER2는 RTX3090 24,576MiB 두 장과 host RAM
-  274,561,966,080 bytes를 보고했다. 한 시점의 두 GPU 사용량은 각 350MiB/0%였으며 예약 가능량이나
-  향후 독점 사용의 보장은 아니다. 두 GPU가 한 물리 호스트에 있다는 사실을 다중 호스트로 바꾸지 않는다.
-- 현재 로컬 계정의 `S:\models`에는 GGUF 156파일이 있었다. 파일명/크기로 묶으면 가중치 후보 40,
-  mmproj 22, embedding 1이다. split 후보 18개는 파일명상 조각이 모두 있었지만 GGUF header/내용/전체
-  digest는 읽지 않았다. 156개 독립 모델이 검증됐거나 40개 모두 지원된다는 뜻이 아니다.
-- 같은 SSH 비대화형 세션에는 S:가 보이지 않았다. 기존 `remote-agent.mjs`는 이 차이를 알고 interactive
-  scheduled-task로 agent를 실행한다. 실제 agent 계정의 접근성은 아직 미확인이다. 경로 변경·모델 복사·
-  매핑 생성·credential 변경·원격 task 시작/종료는 하지 않았다. 접속 문서의 암호/토큰은 저장소에 복사하지 않았다.
-- 기존 `layer-window-memory-report.mjs`는 구형 apps 루트/누락 모듈 때문에 현재 독립 repo에서 실행 실패한다.
-  기존 `spec.mjs`의 단일 ingress/GPU 강제 설정도 inventory/RAM 오프로딩/다중 host runner 완료가 아니다.
+- M42-SERVER2, queried over the existing trusted SSH key path, reported two RTX3090 cards at 24,576MiB and host RAM of
+  274,561,966,080 bytes. At one point in time the two GPUs used 350MiB/0% each; that is not a guarantee of reservable capacity or
+  future exclusive use. The fact that both GPUs are in one physical host is not turned into multiple hosts.
+- `S:\models` under the current local account held 156 GGUF files. Grouped by file name and size, there are 40 weight candidates,
+  22 mmproj and 1 embedding. All pieces of the 18 split candidates were present by file name, but the GGUF headers/contents/full
+  digests were not read. This does not mean 156 independent models were verified or that all 40 are supported.
+- S: was not visible in the same non-interactive SSH session. The existing `remote-agent.mjs` knows about this difference and runs the agent as an interactive
+  scheduled task. Access from the actual agent account is still unverified. No path changes, model copies,
+  mapping creation, credential changes or remote task start/stop were done. Passwords/tokens from the access documents were not copied into the repository.
+- The existing `layer-window-memory-report.mjs` fails to run in the current standalone repo because of the old apps root and missing modules.
+  The single-ingress/forced-GPU settings in the existing `spec.mjs` also do not amount to a completed inventory, RAM offloading or multi-host runner.
 
-### 남은 안전성과 비용
+### Remaining safety and cost
 
-보존된 ID의 replay를 막는 원장과 시퀀스 KV frontier는 다르다. 새 ID의 지난 위치/gap/phase,
-새 Worker/native Session·재접속 후 freshness, 실제 Worker::run의 지속 입력/출력 포화·취소·drain,
-edge credit/재시도 기간 결속은 남았다. cached 결과의 임의 만료는 무손실 복구를 보장하지 않는다.
-begin/complete는 bounded Seen index 전체와 Arc 핸들을 복제하며, encoding/조립 임시 payload도 남아 있다.
-이 cache 상한으로 전체 RSS 또는 hot-path 비용을 인증하지 않는다. 다음 순서는 로드맵 마지막 기록이 소유한다.
+The ledger that blocks replay of retained IDs is not the same as a sequence KV frontier. Still open: stale position/gap/phase under a new ID,
+freshness after a new Worker/native Session or reconnect, sustained input/output saturation, cancel and drain in the real Worker::run,
+and binding of edge credit and retry periods. Arbitrary expiry of cached results does not guarantee lossless recovery.
+begin/complete copies the whole bounded Seen index and Arc handles, and temporary encoding/assembly payloads also remain.
+This cache bound does not certify total RSS or hot-path cost. The next order is owned by the latest roadmap record.
 
-## 2026-09-07 후속 — stage KV frontier, 소스 동결 후 독립 변이
+## 2026-09-07 follow-up — stage KV frontier, independent mutations after the source freeze
 
-기준 HEAD는 여전히 `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`이며 **미커밋 작업 트리**를
-검증했다. 원본을 checkout/reset하지 않았고 commit/push·원격 프로세스 변경·배포·모델 load는 하지 않았다.
-VRAM-only 뒤 RAM 오프로딩이라는 사용자 범위는 로드맵 §1과 검증 규약 H0가 소유한다.
+The base HEAD is still `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`, and an **uncommitted working tree** was
+verified. The original was not checked out or reset, and there was no commit/push, remote process change, deploy or model load.
+The user scope of VRAM-only followed by RAM offloading is owned by roadmap §1 and verification protocol H0.
 
-### 실제 실패와 구현 범위
+### Actual failures and implementation scope
 
-새 ID를 붙인 old position/gap/Prefill 회귀를 실제 `Worker::handle`로 middle/tail에 보냈다.
-가짜 native는 호출할 때마다 KV를 쓰고 tail sampler nonce를 증가시킨다. 수정 전 정상 연속 진행 1개는
-PASS, 사전 거부해야 할 8개는 FAIL이었다. 혼합 A 정상/B 오류를 양순서로 보내도 A가 먼저 실행됐다.
-원문·당시 소스·바이너리 해시: `target/stage-frontier-red-20260907-01/verification.txt`.
+Old position/gap/Prefill regressions carrying new IDs were sent to middle/tail through the real `Worker::handle`.
+The fake native writes KV and increments the tail sampler nonce on every call. Before the fix, the 1 normal continuous-progress test
+PASSED and the 8 that should be pre-rejected FAILED. Sending a mixed A-normal/B-fault pair in both orders still ran A first.
+Raw output, source and binary hashes at the time: `target/stage-frontier-red-20260907-01/verification.txt`.
 
-`v2/node/frontier.rs::StageFrontiers`를 head 실제 발행, 중간/꼬리 PHYSICAL, SETTLE/RELEASE에
-연결했다. exact receipt replay는 frontier를 움직이지 않는다. 위치·phase·생성량·options/reply·
-Verify window·허가된 Replay·tail의 전체 proposal을 검사하며, candidate는 touched slot만 보유한다.
-기존 `worker/outcome.rs::validate_outcome`의 본문은 순수 frontier 모듈 한 곳으로 옮겼다.
-원래 검증 의미를 삭제하거나 sampler를 원장 안에서 호출하지 않았다.
+`v2/node/frontier.rs::StageFrontiers` was wired into the head's actual issue, middle/tail PHYSICAL, and SETTLE/RELEASE.
+An exact receipt replay does not move the frontier. It checks position, phase, generated count, options/reply,
+Verify window, authorized Replay and the tail's full proposal, and the candidate holds only the touched slots.
+The body of the existing `worker/outcome.rs::validate_outcome` was moved into the single pure frontier module.
+The original validation semantics were not deleted, and the sampler is not called from inside the ledger.
 
-정상 경로에는 partial→final Prefill→Decode, SETTLE 없는 Verify 전량 수용, direct partial SETTLE,
-checkpoint 복원 후 같은 round의 정확한 Replay가 있다. 단순히 모든 Verify를 막아서 음성 시험을 통과시키지 않았다.
-기존 stage control fixture가 Prefill만 한 뒤 임의 SETTLE하던 잘못된 전제도 실제 PHYSICAL Verify
-warmup으로 바꿨다. 응답 손상/receipt 상한/늦은 연산 거부의 원래 목적과 native 호출·fence 단언은 유지했다.
+The normal paths include partial→final Prefill→Decode, full Verify acceptance without SETTLE, direct partial SETTLE,
+and an exact Replay of the same round after checkpoint restore. The negative tests were not made to pass by simply blocking every Verify.
+The wrong premise of the existing stage control fixture, which did only Prefill and then an arbitrary SETTLE, was also changed to a real PHYSICAL Verify
+warmup. The original purpose of the response corruption/receipt bound/late operation rejection tests and their native call and fence assertions were kept.
 
-새 시험 작성 중 fake가 여러 행 텐서를 4바이트 하나로 치환해 `InvalidTensor`를 낸 3건은 fixture 오류였다.
-텐서 길이는 유지하면서 각 word에 nonce를 기록하도록 고쳤다. 새 순수 시험은 정상 membership을 가진
-같은 시퀀스의 결과 청크를 역순으로 승인하는 구현 결함도 찾았다. per-slot 반환 순서 대조로 수정했다.
+While writing the new tests, 3 cases where the fake replaced a multi-row tensor with a single 4-byte value and raised `InvalidTensor` were fixture errors.
+The fake was fixed to keep the tensor length and record the nonce in each word. The new pure tests also found an implementation defect that approved
+result chunks of the same sequence with valid membership in reverse order. This was fixed by checking the per-slot return order.
 
-### 독립 변이 — 실제 재컴파일과 복원
+### Independent mutations — actual recompile and restore
 
-| 제거한 검사 | 관측된 실패 |
+| Removed check | Observed failure |
 | --- | --- |
-| 순수 old/gap 위치 검사 | middle에서 허가되지 않은 행이 native KV에 추가됨 |
-| 실제 `Worker::physical`의 frontier 연결 | tail에서 KV와 sampler가 다시 실행됨. 순수 함수 존재만으로는 방어가 아님 |
-| exact Replay token 결속 | 잘못된 token 999가 native KV에 들어감 |
-| per-slot 결과 청크 순서 | `[2..4),[0..2)` 결과가 Ready로 승인됨 |
-| delta slot revision | 오래된 RELEASE 후보가 승인됨 |
-| tail 정산 retain 대조 | tail이 확정한 retain 3 대신 4를 승인함 |
+| Pure old/gap position check | Unauthorized rows are appended to native KV at middle |
+| Frontier wiring in the real `Worker::physical` | KV and the sampler run again at tail. The pure function merely existing is not a defense |
+| Exact Replay token binding | The wrong token 999 enters native KV |
+| Per-slot result chunk order | The results `[2..4),[0..2)` are approved as Ready |
+| delta slot revision | A stale RELEASE candidate is approved |
+| tail settlement retain check | Approves 4 instead of the retain 3 that tail committed |
 
-앞 3개는 `target/stage-frontier-mutations-20260907-01/verification.md`, 뒤 3개는
-`target/stage-frontier-pure-mutations-20260907-01/verification.txt`에 raw 출력·명령·소스/바이너리
-SHA256과 정확한 변이 정의가 있다. 모두 컴파일 성공 후 시험 assertion으로 실패했다(cargo exit 101).
-실제 소비자 변이는 복원 후 28/28, 순수 변이는 복원 후 10/10 재통과했다. 각 변이가 for-role
-루프의 첫 실패에서 멈춘 경우 뒤 role까지 그 변이로 실행했다고 확대하지 않았다.
-consumer 복사본 141파일 복원 해시가 일치했고, 순수 증거 11파일은 temp에서 위 저장소 내부 위치로
-복사한 뒤 파일별 해시가 전부 일치했다. 이 target 원자료는 Git 추적 배포물이라는 뜻은 아니다.
+For the first 3, `target/stage-frontier-mutations-20260907-01/verification.md`, and for the last 3,
+`target/stage-frontier-pure-mutations-20260907-01/verification.txt` hold the raw output, commands, source/binary
+SHA256 and exact mutation definitions. All compiled successfully and then failed on test assertions (cargo exit 101).
+After restore, the real consumer mutations passed again at 28/28 and the pure mutations at 10/10. Where a mutation stopped at the first failure of a for-role
+loop, we do not extend that to claim the later roles also ran under that mutation.
+The restore hashes of the 141 consumer copy files matched, and the 11 pure evidence files were copied from temp to the in-repository location above
+with every per-file hash matching. This target raw data is not a Git-tracked deliverable.
 
-### 동결 결과와 정확한 범위
+### Frozen results and exact scope
 
-- `cargo test --workspace --no-fail-fast`: **1012 passed / 0 failed / 7 ignored**, 57 summary, 최종 exit 0.
-  staged adapter lib는 **319 passed**. 로그: `target/stage-frontier-workspace.log`.
-  외부 fixture feature 제외와 과거 runtime 시험도 구분한다. 이 집계가 전부 event full-loop 시험은 아니다.
-- 순수 frontier **10/10**, actual PHYSICAL 소비자 **28/28**, 기존 stage 소비자 **15/15**.
-- 하네스 **57/57** + native builder wiring **5/5**, 합계 **62/62**, skipped 0.
-  로그: `target/stage-frontier-js.log`. native C++ 본문을 실행한 수가 아니다.
-- clippy exit 0, **경고 잔존**. 신규 `map_err`/시험 배치 등의 제안도 있다.
-  로그: `target/stage-frontier-clippy.log`. warnings 0 또는 새 경고 없음으로 보고하지 않는다.
-- C++/CUDA/실제 모델·강한 실기 웨이브·RAM 오프로딩·다중 컴퓨터·TPS 비회귀는 **이번 회차 미실행**.
-  이전 native 모델 SKIP를 이 Rust GREEN으로 채우지 않는다.
+- `cargo test --workspace --no-fail-fast`: **1012 passed / 0 failed / 7 ignored**, 57 summaries, final exit 0.
+  The staged adapter lib had **319 passed**. Log: `target/stage-frontier-workspace.log`.
+  External fixture features being excluded and the older runtime tests are also kept apart. Not all of this tally is event full-loop tests.
+- Pure frontier **10/10**, actual PHYSICAL consumer **28/28**, existing stage consumer **15/15**.
+- Harness **57/57** + native builder wiring **5/5**, total **62/62**, skipped 0.
+  Log: `target/stage-frontier-js.log`. This is not a count of executed native C++ bodies.
+- clippy exit 0, **warnings remain**. There are also suggestions for the new `map_err`, test layout and so on.
+  Log: `target/stage-frontier-clippy.log`. Not reported as warnings 0 or no new warnings.
+- C++/CUDA, real models, heavy real-hardware waves, RAM offloading, multi-computer runs and TPS non-regression were **not run in this round**.
+  The earlier native model SKIPs are not filled in with this Rust GREEN.
 
-동결 Rust 361파일: Git tracked+untracked(exclude-standard) 중 `.rs`, Cargo.toml/Cargo.lock,
-경로 ordinal 정렬 후 `path LF byte-length LF sha256 LF`를 합산한 SHA256은
-`85d453ebbfc381225a66555861386ebfcbdcc00afc2eb2d454ea1caff72950a0`이다.
-핵심 파일 SHA256:
+Frozen Rust, 361 files: from Git tracked+untracked (exclude-standard), `.rs` and Cargo.toml/Cargo.lock,
+sorted by ordinal path; the SHA256 over the concatenated `path LF byte-length LF sha256 LF` is
+`85d453ebbfc381225a66555861386ebfcbdcc00afc2eb2d454ea1caff72950a0`.
+Key file SHA256:
 
-| 파일(어댑터 src/v2/node/ 아래) | SHA256 |
+| File (under adapter src/v2/node/) | SHA256 |
 | --- | --- |
 | frontier.rs | `9a12ea01693a3461e4ecd6383b0ac25a19886983207d8225a7be6bdf8a6ed196` |
 | worker/physical.rs | `970ad0739377e1d6ebb85f1a7d6815ae81f741dfa824d94030912e709842ec9f` |
@@ -557,1279 +557,1279 @@ consumer 복사본 141파일 복원 해시가 일치했고, 순수 증거 11파�
 | worker/release.rs | `c207e15e6025fa4d5c08f339bbade6a0c22866436edadec2c74765ef20b10578` |
 | worker/physical_replay_tests.rs | `aadd2253a7839f71ffc00d2a12c23374542390006661d844cdfd32dcee98ee7f` |
 
-### 추가 발견: GREEN 밖의 P1 두 경로
+### Additional finding: two P1 paths outside GREEN
 
-독립 감사에서 `physical_capacity=2`인데 native가 정상 형식 proposal `[23,29,31]`을 반환하면
-토큰 예산 검사는 통과하고 **PHYSICAL은 TAIL_BATCH, SETTLE은 SETTLED를 발행**하는 것을 재현했다.
-두 경로 모두 `handle=Ok`, fence=false다. 정상 opcode와 token budget만으로는 atomic 폭을 보증하지 않는다.
+An independent audit reproduced that with `physical_capacity=2`, if native returns a well-formed proposal `[23,29,31]`,
+the token budget check passes and **PHYSICAL publishes TAIL_BATCH and SETTLE publishes SETTLED**.
+Both paths give `handle=Ok`, fence=false. A normal opcode and the token budget alone do not guarantee the atomic width.
 
-`target/proposal-cap-red-20260907-01`의 baseline 15/15와 새 거부 반례 **2/2 FAIL**을 따로 보존한다.
-138파일 대조에서 변경은 독립 시험 파일 하나뿐이며 생산 137파일은 동결 원본과 같다.
-`red-output.txt`, `verification.json`이 근거다. 이 반례는 원본 suite 1012개에 포함되지 않았으며,
-원본 GREEN을 제품 정합성 전체 완료로 보고하지 않는다. 다음 첫 행동은 로드맵 최신 기록을 따른다.
+In `target/proposal-cap-red-20260907-01`, the baseline 15/15 and the new rejection counterexamples **2/2 FAIL** are preserved separately.
+A 138-file comparison shows the only change is one independent test file; the 137 production files are identical to the frozen original.
+Evidence: `red-output.txt`, `verification.json`. These counterexamples are not included in the original suite of 1012,
+and the original GREEN is not reported as full product correctness. The first next action follows the latest roadmap record.
 
-이번 frontier는 **Rust에서 native 진입 전 검사**다. C++ 자체의 직접 호출 위치 방어, Worker::run
-전체 스케줄·지속 queue 포화·종료, 재시작 신선성·credit/재시도, 모델 conformance와 실기 증명은 여전히 남았다.
+This frontier is a **check in Rust before entering native**. Still open: direct-call-site defense in C++ itself, the full Worker::run
+schedule, sustained queue saturation and shutdown, restart freshness, credit/retry, model conformance, and real-hardware proof.
 
-## 2026-09-07 후속 — continuation 폭·actual loop·duplex Full
+## 2026-09-07 follow-up — continuation width, actual loop, duplex Full
 
-HEAD는 `a9e1967fc`로 같고 후속 작업 트리 변경을 검증했다. 원본 checkout 변이/복원·commit/push·
-원격 배포·GPU 모델 load는 하지 않았다. C++/실제 모델·RAM 오프로딩·다중 호스트 성과가 아니다.
+HEAD is the same `a9e1967fc`; follow-up working tree changes were verified. No mutation/restore of the original checkout, commit/push,
+remote deploy or GPU model load was done. These are not C++/real model, RAM offloading or multi-host results.
 
-### T24 continuation 폭: native 뒤 실패와 head 사전 거부
+### T24 continuation width: failure after native and pre-rejection at head
 
-지난 독립 RED를 실제 stage 소비 시험으로 이관했다. `physical_capacity=2`인데 정상 codec과
-남은 token budget을 만족하는 `[23,29,31]`을 돌려준다. PHYSICAL/SETTLE 및 정상 앞부분+잘못된
-뒤 결과의 Fresh 묶음은 수정 전 모두 `handle=Ok`, fence=false로 성공 TAIL/SETTLED를 발행했다.
-원본 RED는 **17 passed / 3 failed**, 동일 시험의 수정 후 결과는 **20 passed**다.
-`target/proposal-cap-source-red-20260907/red-output.log`와 소스 사본, 수정 후
-`target/proposal-cap-source-green-20260907.log`를 보존했다.
+The earlier independent RED was moved into a real stage consumer test. With `physical_capacity=2`, native returns `[23,29,31]`, which satisfies the normal codec
+and the remaining token budget. Before the fix, PHYSICAL/SETTLE and a Fresh batch with a valid leading part plus a bad
+trailing result all gave `handle=Ok`, fence=false, and published a successful TAIL/SETTLED.
+The original RED was **17 passed / 3 failed**; the same tests after the fix gave **20 passed**.
+`target/proposal-cap-source-red-20260907/red-output.log` with a source copy, and the post-fix
+`target/proposal-cap-source-green-20260907.log`, are preserved.
 
-- shared `frontier::validate_continuation_width`를 PHYSICAL 응답·SETTLE 응답·head tail 승인에 연결했다.
-  token budget/phase 검사를 대체하지 않고 physical 폭을 추가 대조한다. proposal을 절단하지 않는다.
-- native가 이미 실행한 뒤의 잘못된 응답은 effects fence다. PHYSICAL Fresh 묶음 전체는 Uncertain,
-  성공 receipt/cache와 owner/frontier commit은 없다. SETTLE도 성공 receipt/SETTLED를 만들지 않는다.
-  동일 재전달과 별도 정상 새 요청을 보내도 native 추가 호출 0이다. native KV rollback 주장은 하지 않는다.
-- 폭 1과 정확한 cap=2는 실제 head 반환→다음 drive→tail에서 Decode/Verify로 계속 진행한다.
-- head의 별도 회귀는 정상 A/폭 초과 B를 함께 반환하여 전 요청·flight·출력 의도가 그대로인지 본다.
-  B를 cap 안으로 돌린 동일 issued identities는 각각 한 번 출력한다. 이미 있던 SETTLED의 cap 검사는 유지했다.
+- The shared `frontier::validate_continuation_width` was wired into the PHYSICAL response, the SETTLE response and head tail approval.
+  It adds a physical width check without replacing the token budget/phase checks. It does not truncate the proposal.
+- A bad response after native has already run is an effects fence. The whole PHYSICAL Fresh batch is Uncertain,
+  with no success receipt/cache and no owner/frontier commit. SETTLE does not create a success receipt/SETTLED either.
+  Sending an identical redelivery and a separate valid new request results in 0 additional native calls. No native KV rollback is claimed.
+- Width 1 and exactly cap=2 keep progressing through Decode/Verify on the real head return→next drive→tail.
+- A separate head regression returns a valid A and a width-exceeding B together and checks that all requests, flights and output intents are unchanged.
+  The same issued identities, with B brought within the cap, each output once. The cap check on the pre-existing SETTLED was kept.
 
-### T20/T21/T23 일부: 실제 Worker::run 4개 시험
+### Part of T20/T21/T23: 4 real Worker::run tests
 
-`worker/loop_tests.rs`는 실제 OS worker thread, bounded input/completion mailbox, Event/Frame/
-LogicalBatch/CapsuleSet codec을 지난다. native fake는 독립 KV token/position/incarnation 배열을
-관리하며 production scheduler/request/flight/frontier/ownership 전이를 호출하지 않는다.
-LOAD 이후 상태는 fixture가 명시 구성하고, 라우팅은 별도 bounded pump다.
+`worker/loop_tests.rs` goes through a real OS worker thread, bounded input/completion mailboxes, and the Event/Frame/
+LogicalBatch/CapsuleSet codecs. The native fake manages independent KV token/position/incarnation arrays
+and does not call the production scheduler/request/flight/frontier/ownership transitions.
+The fixture builds the post-LOAD state explicitly, and routing is a separate bounded pump.
 
-1. 2-stage chunked prompt와 max_tokens 5의 정확한 토큰·위치·종료, 전 stage release 한 번, head ack.
-2. 2/4/8-stage에서 첫 웨이브 6요청이 진행 중일 때 둘째 웨이브 2요청을 추가한다.
-   새 짧은 요청의 첫 output이 오래된 긴 요청의 마지막 output보다 먼저 오고, 모든 요청의 정확한
-   native KV 이력/토큰/position/stop·전 stage release를 확인한다.
-3. completion capacity 1에서 실제 `completion_queue_full:waiting`과 계산 1회가 먼저 발생한다.
-   drain을 재개하면 결과를 잃지 않고 완주한다. 단지 Full 자료구조를 직접 시험한 것이 아니다.
-4. max-open=1에서 논리 batch의 physical 두 조각 중 하나만 돌려주면 다음 issue는 안 열린다.
-   max-open=2는 TAIL 전에 두 번 issue하는 양성 대조이며 서로 다른 요청의 TAIL 역순도 처리한다.
+1. Exact tokens, positions and termination for a 2-stage chunked prompt with max_tokens 5, one release on every stage, and head ack.
+2. At 2/4/8 stages, a second wave of 2 requests is added while a first wave of 6 requests is in progress.
+   The first output of a new short request arrives before the last output of an older long request, and every request's exact
+   native KV history, tokens, positions, stop and release on every stage are checked.
+3. At completion capacity 1, a real `completion_queue_full:waiting` and 1 computation occur first.
+   When draining resumes, the run completes without losing results. This is not merely a direct test of the Full data structure.
+4. At max-open=1, returning only one of the two physical pieces of a logical batch keeps the next issue from opening.
+   max-open=2 is the positive control that issues twice before TAIL, and it also handles TAILs of different requests in reverse order.
 
-**범위 제한:** N=1, 지속 유입 기아, speculative SETTLE/Replay, 취소·graceful drain은 미포함이다.
-native subprocess/model/GPU와 실제 EventNode/broker/network도 이 fixture에 없다. 강제 teardown의
-join escape를 정상 drain으로 세지 않는다. fixture 큐 상한을 제품 pending/RSS/credit 상한으로 확대하지 않는다.
-가짜 token 문자열의 정확성을 정상 언어 모델 응답 품질로 보고하지 않는다.
+**Scope limits:** N=1, starvation under sustained inflow, speculative SETTLE/Replay, and cancel/graceful drain are not included.
+The native subprocess/model/GPU and the real EventNode/broker/network are not in this fixture either. The join escape of a forced teardown
+is not counted as a normal drain. The fixture queue bounds are not extended to product pending/RSS/credit bounds.
+The correctness of fake token strings is not reported as the response quality of a real language model.
 
-### T22/T23 일부: 중립 EventNode의 양방향 진행
+### Part of T22/T23: bidirectional progress of the neutral EventNode
 
-기존 `dispatch_or_wait`는 출력 Full이면 자기 입력을 읽지 못했다. 실제 broker와 capacity 1의
-두 EventNode를 사용해 각각 상대에게 보낼 completion을 보유하게 만든 뒤 정상 입력을 채웠다.
-수정 전 두 번 모두 **a=0, b=0**, 1초 timeout이었다. 첫 poll의 유일한 ready 경로를 completion으로
-만들어 select 분기 운에 의존하지 않는다. 모든 이벤트는 정상 broker 검증을 통과한다.
-원문과 old source/exe 해시는 `target/event-node-duplex-red-20260907-01/verification.md`에 있다.
+The existing `dispatch_or_wait` could not read its own input while its output was Full. Using the real broker and two EventNodes with capacity 1,
+each was made to hold a completion destined for the other, and then normal input was filled in.
+Before the fix, both runs gave **a=0, b=0** with a 1-second timeout. The only ready path on the first poll was made the completion,
+so the test does not depend on the luck of the select branch. All events pass normal broker validation.
+The raw output and the old source/exe hashes are in `target/event-node-duplex-red-20260907-01/verification.md`.
 
-중립 pump는 input/output을 각각 한 개 보존한다. 한쪽 Full이어도 반대쪽의 처리 기회를 유지하며,
-이미 가진 방향의 queue에서는 더 꺼내지 않는다. opaque Event만 다루고 어댑터/모델 지식을 추가하지 않았다.
-추가 상한 시험은 두 held + 다음 각 capacity-1 큐가 찬 상태에서 completion take=1, 셋째 양방향
-offer=Full과 전체 bytes 보존을 검사한 뒤, 공간 복구 시 처음 두 개씩 정확한 Event/순서로 도착함을 본다.
-목적지 Closed는 오류이며 broker가 전달 실패를 Duplicate로 기록하지 않는다.
+The neutral pump keeps one held input and one held output. Even when one side is Full it keeps the other side's processing opportunity,
+and it does not take more from the queue of a direction it already holds. It handles only opaque Events and adds no adapter/model knowledge.
+An additional bound test, with the two held items plus each next capacity-1 queue full, checks completion take=1, a third bidirectional
+offer=Full and full byte preservation, and then checks that once space recovers the first two of each arrive as exact Events in order.
+A Closed destination is an error, and the broker does not record the delivery failure as a Duplicate.
 
-EventNode **7/7**, core neutrality **3/3** 통과. 1ms timer는 여전히 남고 capacity waker가 아니다.
-모든 adapter/queue가 Full인 일반 순환망의 교착 해소·control 예약·bounded RSS·종료는 이 수정의 보장이 아니다.
+EventNode **7/7** and core neutrality **3/3** passed. The 1ms timer still remains; it is not a capacity waker.
+Deadlock resolution, control reservation, bounded RSS and shutdown in a general cyclic network where every adapter/queue is Full are not guaranteed by this fix.
 
-### 독립 실제 소비 변이 9종
+### 9 independent real consumer mutations
 
-| 변이 | 실패한 실제 소비 시험 | 복원 |
+| Mutation | Real consumer tests that failed | Restore |
 | --- | --- | --- |
-| continuation helper 비활성 | stage 3개 | stage 20/20 |
-| PHYSICAL의 cap 호출 제거 | stage 2개 | stage 20/20 |
-| SETTLE의 cap 호출 제거 | stage 1개 | stage 20/20 |
-| head의 cap 호출 제거 | head 1개 | head 1/1 |
-| max-open gate 제거 | actual run-loop 1개: native issue 2 ≠ 1 | loop 4/4 |
-| worker Full의 결과 보관 대신 폐기 | actual run-loop 1개: waiting/정상 복구 미성립 | loop 4/4 |
-| outbound Full 독점 await 복원 | actual broker ring 1개: a=0,b=0 | EventNode 7/7 |
-| held input guard 제거 | 둘째 input이 꺼내져 셋째가 잘못 수용됨 | EventNode 7/7 |
-| held output guard 제거 | completion take 2 ≠ 1 | EventNode 7/7 |
+| continuation helper disabled | 3 stage | stage 20/20 |
+| cap call removed from PHYSICAL | 2 stage | stage 20/20 |
+| cap call removed from SETTLE | 1 stage | stage 20/20 |
+| cap call removed from head | 1 head | head 1/1 |
+| max-open gate removed | 1 actual run-loop: native issue 2 ≠ 1 | loop 4/4 |
+| worker Full discards results instead of keeping them | 1 actual run-loop: waiting/normal recovery not achieved | loop 4/4 |
+| exclusive await on outbound Full restored | 1 actual broker ring: a=0,b=0 | EventNode 7/7 |
+| held input guard removed | the second input is taken and the third is wrongly accepted | EventNode 7/7 |
+| held output guard removed | completion take 2 ≠ 1 | EventNode 7/7 |
 
-각 arm에서 실제 재컴파일 후 assertion 실패(cargo exit 101)를 확인했고 최종 복원본이 통과했다.
-원자료·정확한 변이·source/binary 해시·복원 대조는 다음에 보존한다.
+For each arm, an assertion failure (cargo exit 101) after an actual recompile was confirmed, and the final restored copy passed.
+Raw data, exact mutations, source/binary hashes and restore comparisons are preserved in:
 
-- `target/proposal-cap-mutations-20260907/verification.json`: cap 4종, source 139파일 arm별 대조.
-- `target/worker-loop-mutations-20260907-01/verification.txt`: loop 2종, final 03~06 실행의 4핵심파일 해시.
-- `target/event-node-duplex-mutations-20260907-01/verification.md`: duplex 3종, snapshot 150파일 대조.
+- `target/proposal-cap-mutations-20260907/verification.json`: 4 cap mutations, per-arm comparison of 139 source files.
+- `target/worker-loop-mutations-20260907-01/verification.txt`: 2 loop mutations, hashes of the 4 key files for the final 03~06 runs.
+- `target/event-node-duplex-mutations-20260907-01/verification.md`: 3 duplex mutations, 150-file snapshot comparison.
 
-증거로 제외한 실패도 남겼다. head 시험 최초 복사 때 mtime 보존 때문에 Cargo가 옛 executable을 써
-**0 tests**를 실행한 것은 무효다. 복사본 mtime 갱신→실제 compile→1개 실행을 확인하고 변이했다.
-loop의 첫 gate 변이는 assertion unwind 중 fixture Drop이 다시 panic하여 비정상 abort했다.
-Drop이 원래 실패를 가리지 않도록 고친 뒤 같은 변이로 정상 FAILED를 재현했고, 옛 abort를 최종 검출 수에 넣지 않았다.
-target 원자료는 로컬 보존이며 Git 추적/배포되었다는 의미가 아니다.
+Failures excluded from the evidence are recorded too. On the first copy for the head test, preserved mtimes made Cargo use an old executable and
+run **0 tests**; that run is invalid. The copy's mtime was updated, an actual compile and a 1-test run were confirmed, and then the mutation was applied.
+The first loop gate mutation aborted abnormally because the fixture Drop panicked again during assertion unwind.
+After fixing Drop so it does not mask the original failure, the same mutation reproduced a normal FAILED, and the old abort was not counted in the final detection count.
+The target raw data is preserved locally and does not mean it is Git-tracked or deployed.
 
-### 최종 동결 집계
+### Final frozen tally
 
-- `cargo test --workspace --no-fail-fast`: **1026 passed / 0 failed / 7 ignored**, **57 summary**, 최종 exit 0.
-  staged adapter lib **330**, agent core lib **149**. 로그 `target/proposal-duplex-loop-workspace.log`.
-  외부 fixture feature 제외·과거 runtime 시험을 포함한 전체 집계이며 모두 event loop 시험은 아니다.
-- JS 하네스 57 + native builder wiring 5 = **62/62**, skipped 0. `target/proposal-duplex-loop-js.log`.
-- clippy(staged adapter + agent core, all-targets) exit 0, 경고 잔존. 새 경고가 없다고 주장하지 않는다.
+- `cargo test --workspace --no-fail-fast`: **1026 passed / 0 failed / 7 ignored**, **57 summaries**, final exit 0.
+  staged adapter lib **330**, agent core lib **149**. Log `target/proposal-duplex-loop-workspace.log`.
+  This is the full tally, excluding external fixture features and including older runtime tests; not all of it is event loop tests.
+- JS harness 57 + native builder wiring 5 = **62/62**, skipped 0. `target/proposal-duplex-loop-js.log`.
+- clippy (staged adapter + agent core, all-targets) exit 0, warnings remain. We do not claim there are no new warnings.
   `target/proposal-duplex-loop-clippy.log`.
-- 문서 갱신 후 docs-lint tracked **73 clean** / `--all` **79 clean**, 자체 시험 **12/12**,
-  `cargo test -p p4-agent --test docs_lint` **1/1** 재통과, 기본 `git diff --check` exit 0.
-- C++/CUDA/native 모델·실기 웨이브·RAM 오프로딩·다중 컴퓨터·성능 비회귀는 **이번 회차 미실행**.
+- After the document update: docs-lint tracked **73 clean** / `--all` **79 clean**, self-tests **12/12**,
+  `cargo test -p p4-agent --test docs_lint` **1/1** passed again, default `git diff --check` exit 0.
+- C++/CUDA/native models, real-hardware waves, RAM offloading, multi-computer runs and performance non-regression were **not run in this round**.
 
-Rust 362파일을 이전과 같은 ordinal `path LF byte-length LF sha256 LF` 규칙으로 동결했다.
-합산 SHA256: `c532a51016ba39ea97251602ecefbdbb2e9397696a75db99ce8161cdb7949f84`.
-목록: `target/proposal-duplex-loop-rust-source.log`. 문서만의 후속 갱신은 이 Rust seal에 포함되지 않는다.
-핵심 새 loop 시험 SHA256 `e297fe44a2ebce6ced2996b30440b95f1e89fef514614859c69e5961c4a196d2`,
+The 362 Rust files were frozen with the same ordinal `path LF byte-length LF sha256 LF` rule as before.
+Aggregate SHA256: `c532a51016ba39ea97251602ecefbdbb2e9397696a75db99ce8161cdb7949f84`.
+List: `target/proposal-duplex-loop-rust-source.log`. Later document-only updates are not included in this Rust seal.
+Key new loop test SHA256 `e297fe44a2ebce6ced2996b30440b95f1e89fef514614859c69e5961c4a196d2`,
 EventNode SHA256 `d3711058d3a4b2ca63c2c001fac097f4b700e8b29a6ad5937842cdefce24cf3b`,
 EventNode tests SHA256 `9dbce3f6fd70fcc4fd752f21b1864bfb6929006fad0cfb7b8016da8fa10d284c`.
 
-상태·다음 행동은 로드맵 최신 절이 소유한다. 이번 GREEN을 지속 입력·전체 credit·정상 shutdown·
-native 직접 호출 방어 또는 VRAM-only/RAM 오프로딩 실기 완료로 고정하지 않는다.
+Status and next action are owned by the latest roadmap section. This GREEN is not fixed as completion of sustained input, full credit, normal shutdown,
+native direct-call defense, or VRAM-only/RAM offloading real-hardware runs.
 
-### 동결 GREEN 밖: 지속 입력 drain의 결정론 반례
+### Outside the frozen GREEN: a deterministic counterexample for sustained input drain
 
-독립 copy에서 기존 4개 loop 시험에 관측 probe 하나만 추가했다. runnable token 요청을 먼저 둔 뒤
-Tokenize fake가 다음 유효 PREFILL을 worker input에 하나씩 넣어 queue nonempty를 인과적으로 유지한다.
-입력 연쇄 0/16/256에 대해 첫 Logical 전에 실행한 Tokenize 수는 **0/16/256**이었다.
-무한 연쇄로 늘리면 `try_recv` drain이 끝나지 않아 drive에 도달하지 못한다. 유한 연쇄를 끊은 뒤에는
-정상 토큰·전 stage KV·release·head ack까지 완주했다. admission이 원인이라는 추정이나 TPS 실험이 아니라
-실제 루프의 처리 순서 반례다. 고정 quantum 수치를 임의로 PASS 조건에 넣지 않았다.
+In an independent copy, only one observation probe was added to the existing 4 loop tests. With a runnable token request placed first,
+the Tokenize fake pushes the next valid PREFILL into the worker input one at a time, causally keeping the queue nonempty.
+For input chains of 0/16/256, the number of Tokenize calls executed before the first Logical was **0/16/256**.
+With an infinite chain, the `try_recv` drain never ends and drive is never reached. Once the finite chain was cut,
+the run completed through normal tokens, KV on every stage, release and head ack. This is not a guess that admission is the cause, nor a TPS experiment;
+it is a counterexample in the processing order of the real loop. No fixed quantum value was arbitrarily added to the PASS condition.
 
-`target/worker-ingress-drain-probe-20260907-01/verification.txt`에 raw/metadata/fixture-only diff,
-probe 소스와 unchanged worker 소스를 보존한다. 독립 실행은 기존 4+관측 1의 5개였지만 **1026에
-추가하지 않으며** 관측 probe의 종료 성공을 정상성 게이트 PASS로 세지 않는다. 원본 production loop는
-이번에 바꾸지 않았고, 이어서 지켜야 할 처리 기회 계약은 검증 규약 T20, 구현 순서는 로드맵이 소유한다.
+`target/worker-ingress-drain-probe-20260907-01/verification.txt` preserves the raw output/metadata/fixture-only diff,
+the probe source and the unchanged worker source. The independent run was 5 tests (the existing 4 + 1 observation), but they are **not added
+to the 1026**, and the observation probe's successful exit is not counted as a PASS of the correctness gate. The original production loop was
+not changed this time; the processing-opportunity contract to uphold next is owned by verification protocol T20, and the implementation order by the roadmap.
 
-## 2026-09-07 후속 — 유한 actor 기회와 실패를 보존하는 종료
+## 2026-09-07 follow-up — finite actor opportunities and a shutdown that preserves failures
 
-앞 절 이후 같은 HEAD `a9e1967fc`의 작업 트리를 수정했다. commit/push·배포·모델 load는 하지 않았다.
-원본 소스 변이는 없으며, CPU-only Rust 검증이다. 물리 GPU·정상 언어 모델 응답·RAM 오프로딩의 성과가 아니다.
+After the previous section, the working tree at the same HEAD `a9e1967fc` was modified. No commit/push, deploy or model load was done.
+There were no mutations of the original source; this is CPU-only Rust verification. It is not a result on physical GPUs, real language model responses or RAM offloading.
 
-### 지속 입력과 발행의 양방향 진행
+### Bidirectional progress of sustained input and issuing
 
-`Worker::run`의 무상한 입력 drain을 한 turn 최대 32개로 제한하고, 기존 발행 루프를 실제
-`drive_one_batch` 한 번으로 나눴다. 성공하면 새 입력 없이 다음 turn도 재진행하고, 외부 해제가
-필요한 gate/no-work이면 입력을 기다린다. 기존 `drive_first_batches`는 메서드 시험 전용 wrapper이며
-운영 run-loop가 호출하지 않는다. 32는 고정 actor 기회 상한이지 성능 최적값이나 새 실험 옵션이 아니다.
+The unbounded input drain in `Worker::run` was limited to at most 32 per turn, and the existing issue loop was split into one real
+`drive_one_batch` call. On success, the next turn proceeds again without new input; when the gate is closed or there is no work and an external release
+is needed, it waits for input. The existing `drive_first_batches` is a wrapper only for method tests and is
+not called by the production run-loop. 32 is a fixed actor opportunity bound, not a performance-optimal value or a new experiment option.
 
-지속 입력 시험은 실제 Event/Frame codec·bounded queue·Worker::run과 독립 native KV 모델을 사용한다.
-Tokenize가 다음 정상 PREFILL을 재공급하는 유한 연쇄를 0/16/256으로 만들고, 정상 완주·출력·전 stage
-KV/release를 검사한 뒤 **첫 Logical 전의 Tokenize 개수**를 독립 literal 32와 대조한다.
+The sustained input test uses the real Event/Frame codec, bounded queues, Worker::run and an independent native KV model.
+It builds finite chains of 0/16/256 in which Tokenize resupplies the next valid PREFILL, checks normal completion, output, and KV/release on every stage,
+and then compares **the number of Tokenize calls before the first Logical** against an independent literal 32.
 
-| 연쇄 | 수정 전 | 수정 후 |
+| Chain | Before fix | After fix |
 | --- | --- | --- |
 | 0 | 0 | 0 |
 | 16 | 16 | 16 |
 | 256 | 256 | 30 |
 
-숫자는 Tokenize 호출 수다. SESSION과 token 입력 등 다른 handle도 같은 32-event 예산에 포함되므로
-30이 나온다. 이 지표를 전체 head native 작업 시간·TTFT 또는 전체 입력 처리 건수로 바꿔 부르지 않는다.
-RED는 `target/worker-ingress-quantum-regression-20260907-01/00-before-fix.stdout.log`에 보존했다.
-최종 ordinary loop **5/5**는 기존 depth=2의 **입력 없는 추가 issue** 양성 대조도 유지한다.
+The numbers are Tokenize call counts. Other handles such as SESSION and token input are included in the same 32-event budget, which is why
+30 appears. This metric is not to be renamed as total head native work time, TTFT or total input processing count.
+The RED is preserved in `target/worker-ingress-quantum-regression-20260907-01/00-before-fix.stdout.log`.
+The final ordinary loop **5/5** also keeps the existing depth=2 positive control of an **additional issue without input**.
 
-### actual run 종료·제어 시험 8개
+### 8 actual run shutdown/control tests
 
-`worker/turn_tests.rs`는 head 한 개의 실제 run/codec 경로다. native Frame만 fake이며 tail은 없다.
-정상 SESSION 재전달은 이벤트/ACK 인과 ID와 payload를 확인한다. 요청마다 독립 token/position도 확인한다.
+`worker/turn_tests.rs` is the real run/codec path for a single head. Only the native Frame is fake, and there is no tail.
+A normal SESSION redelivery checks the event/ACK causal ID and payload. Independent tokens/positions per request are checked as well.
 
-1. 첫 Logical 실행 안에서 SESSION을 넣으면 둘째 Logical 시작 전에 해당 ACK가 정확히 한 개 있다.
-2. 첫 native 실행 안에서 중지하면 native는 한 번뿐이며 requests 2/flight 1을 보존한다.
-3. input EOF를 관측하면 native 0, requests 2/flight 0으로 abandoned를 기록한다.
-4. idle EOF는 local work empty지만 native cleanup 실행 **중**에는 closing이다. cleanup 성공 뒤에만 closed다.
-5. active work의 unload 실패는 최상위 cleanup failure이고 원래 abandoned와 requests 2/flight 2를 보존한다.
-6. native 응답 유실+unload 실패는 원래 오류·prepared Uncertain·effects fence와 정리 오류 둘 다 남긴다.
-7. idle이라도 unload 실패면 최상위 failed다. 정상 closed prefix에 실패 문자열만 덧붙이는 것으로 통과하지 않는다.
-8. stale SESSION 하나를 거부한 뒤 idle EOF이면 요청 거부 사유를 previous에 남긴다. 비치명적 이벤트 거부를
-   태스크 fatal로 바꾸거나 로컬 잔량을 만들어 시험하지 않는다.
+1. If SESSION is injected during the first Logical execution, exactly one corresponding ACK exists before the second Logical starts.
+2. If a stop occurs during the first native execution, native runs only once and requests 2/flight 1 are preserved.
+3. When input EOF is observed, native 0, and abandoned is recorded with requests 2/flight 0.
+4. On idle EOF, local work is empty, but the state is closing **while** native cleanup runs. It is closed only after cleanup succeeds.
+5. An unload failure with active work is a top-level cleanup failure and preserves the original abandoned state and requests 2/flight 2.
+6. A lost native response plus an unload failure keeps both the original error, prepared Uncertain and the effects fence, and the cleanup error.
+7. Even when idle, an unload failure is top-level failed. Merely appending a failure string to a normal closed prefix does not pass.
+8. After one stale SESSION is rejected and idle EOF follows, the request rejection reason is left in previous. The test does not turn a non-fatal event rejection
+   into a task fatal or create local leftovers.
 
-첫 3개는 무수정 run에서 **0 passed / 3 failed**, 수정 뒤 통과했다.
-`target/worker-turn-red-20260907-01/verification.md`에 실제 재컴파일/원문/소스·exe 해시가 있다.
-추가 감사에서 새 종료 구현도 idle unload 실패에 closed prefix를 남기는 결함을 발견했다.
-`target/worker-cleanup-red-20260907-01`의 **5 passed / 2 failed**를 봉인한 뒤 고쳤다.
-최종 8개는 기존 단언과 pre-cleanup 관측을 모두 유지한다.
+The first 3 gave **0 passed / 3 failed** on the unmodified run and passed after the fix.
+`target/worker-turn-red-20260907-01/verification.md` has the actual recompile, raw output, and source/exe hashes.
+A further audit found that the new shutdown implementation also left a closed prefix on an idle unload failure.
+It was fixed after sealing **5 passed / 2 failed** in `target/worker-cleanup-red-20260907-01`.
+The final 8 keep both the existing assertions and the pre-cleanup observations.
 
-`finish_run`은 cleanup 전에 요청·pending·release/settle·prepared issue·flight·효과·owner/frontier·
-수신 Running/Uncertain/fence를 각각 보존한다. `active_counts/active_slots/shutdown_status` 조회
-회귀 **4/4**는 실제 원장 전이를 사용한다. completed receipt/Released tombstone은 미완 작업이 아니며,
-Stopped KV는 release 전까지 미완이고 active_attempt=None인 Uncertain도 미완이다.
-조회 함수 통과와 실제 종료 consumer 통과를 같은 시험이라고 합치지 않았다.
+`finish_run` separately preserves requests, pending, release/settle, prepared issues, flights, effects, owner/frontier, and
+receive Running/Uncertain/fence before cleanup. The query regressions for `active_counts/active_slots/shutdown_status`,
+**4/4**, use real ledger transitions. Completed receipts/Released tombstones are not unfinished work;
+Stopped KV is unfinished until released, and Uncertain with active_attempt=None is also unfinished.
+Passing the query functions and passing the real shutdown consumer are not merged into one test.
 
-**보장하지 않는 것:** global graceful drain, 각 요청의 취소 terminal 전달, network/mailbox 잔량 0,
-일반 포화 순환망의 control 진행, 이미 실행 중인 동기 native의 강제 중단. 입력 PHYSICAL/SETTLE/
-RELEASE 한 이벤트 안에는 여러 native 작업과 publisher Full 대기가 있을 수 있다. turn 상한은
-head의 자발적 Logical 발행 기회이며, 모든 native 호출의 시간/횟수 상한이 아니다.
-중지 전에 시작한 native 결과를 승인/보존하는 것은 새 실행이 아니며, 그 결과를 버리고 rollback이라고 하지 않는다.
+**Not guaranteed:** global graceful drain, delivery of a cancel terminal for each request, network/mailbox leftovers of 0,
+control progress in a general saturated cyclic network, forced interruption of synchronous native work already running. A single input PHYSICAL/SETTLE/
+RELEASE event can contain multiple native operations and a wait on publisher Full. The turn bound is
+head's voluntary Logical issue opportunity, not a time or count bound on every native call.
+Approving/preserving a native result started before the stop is not a new execution, and discarding that result is not called a rollback.
 
-### 독립 변이와 복원
+### Independent mutations and restore
 
-| 독립 copy 변이 | 검출된 실패 |
+| Independent copy mutation | Failure detected |
 | --- | --- |
-| ingress 상한을 MAX로 | 연쇄 256에서 literal 32 상한 실패 |
-| 성공 issue 뒤에도 무조건 recv | terminal 전 depth=2 두 번째 발행 불가 |
-| 입력 재확인 전 여러 논리 issue drain | 둘째 native가 SESSION ACK를 추월 |
-| 중지/EOF/native 진입 guard 제거 묶음 | 중지 native 2≠1, EOF native 2≠0 |
-| unload 오류 무시 | active 잔량/원래 native 실패와 cleanup 오류 보존 시험 2개 실패 |
-| cleanup 전 최종 closed 발표 | native.shutdown 내부 관측이 closing 아님 |
-| previous 삭제 | nonfatal stale SESSION 거부 사유 유실 |
-| cleanup 실패의 최상위 실패 승격 제거 | idle unload 실패인데 closed prefix |
-| flight/owner에 완료 history 포함 | 각 원장의 active 0 판정 실패 |
-| Stopped frontier 제외 | release 전 KV 잔량 누락 |
-| 수신 Uncertain 무시 | active attempt가 없어도 미완인 상태 누락 |
+| ingress bound set to MAX | The literal 32 bound fails at chain 256 |
+| unconditional recv even after a successful issue | The second issue at depth=2 before terminal cannot happen |
+| drain multiple logical issues before rechecking input | The second native overtakes the SESSION ACK |
+| stop/EOF/native entry guards removed together | stop native 2≠1, EOF native 2≠0 |
+| unload error ignored | 2 tests fail: active leftovers / preservation of the original native failure and cleanup error |
+| final closed announced before cleanup | The observation inside native.shutdown is not closing |
+| previous deleted | The non-fatal stale SESSION rejection reason is lost |
+| promotion of cleanup failure to top-level failure removed | closed prefix despite an idle unload failure |
+| completed history included in flight/owner | Each ledger's active-0 judgement fails |
+| Stopped frontier excluded | KV leftovers before release are missed |
+| receive Uncertain ignored | The unfinished state without an active attempt is missed |
 
-표의 flight/owner는 별도 변이 두 개다. 총 **12개 변이 arm**이며, 중지/EOF 묶음은 한 arm이 두 시험을
-깨뜨린 것이지 각 guard를 따로 변이했다고 주장하지 않는다. 경로별 상세와 복원 대조는 다음에 있다.
+The flight/owner row in the table is two separate mutations. That makes **12 mutation arms** in total; the stop/EOF group is one arm that broke two tests,
+not a claim that each guard was mutated separately. Per-path details and restore comparisons are in:
 
-- `target/worker-actor-quantum-mutations-20260907-01/verification.txt`: actor 2종, 실제 compile·133파일 대조,
-  기준/복원 loop 5/5. 이 복사본 shutdown은 후속 cleanup 수정 전이며 그 수정의 검증으로 세지 않는다.
-- `target/worker-turn-mutations-20260907-02/`: actor/종료 6종, arm별 실제 코드·exe·출력과 복원본.
-- `target/shutdown-count-mutations-20260907/verification.json`: 조회 4종, 각 3 passed/1 failed, 복원 4/4.
-  주변 actor가 동결된 별도 복사본이므로 현재 전체 workspace 시험으로 합산하지 않는다.
+- `target/worker-actor-quantum-mutations-20260907-01/verification.txt`: 2 actor mutations, actual compile, 133-file comparison,
+  baseline/restore loop 5/5. The shutdown in this copy predates the later cleanup fix and does not count as verification of that fix.
+- `target/worker-turn-mutations-20260907-02/`: 6 actor/shutdown mutations, with per-arm actual code, exe, output and restored copy.
+- `target/shutdown-count-mutations-20260907/verification.json`: 4 query mutations, each 3 passed/1 failed, restore 4/4.
+  This is a separate copy with the surrounding actor frozen, so it is not added into the current full workspace tests.
 
-turn copy는 baseline/복원 **8/8**, 143파일 내용 일치다. 첫 복원은 오래된 mtime 때문에 Cargo가
-0.04초에 M6 executable을 재사용해 6 passed/2 failed를 냈다. 이 실행은 승인에서 제외하고 원문을
-보존했다. copy에서 내용은 원복하되 mtime을 갱신한 뒤 **실제 3.43초 재컴파일·8/8**을 확인했다.
-원본에서는 네 원장 파일을 최종 format했으며, 변이 결과는 각각 봉인된 copy에, 전체 집계는 아래
-최종 작업 트리에 귀속한다. 소스 일치만으로 실행 파일까지 갱신됐다고 추정하지 않는다.
+The turn copy gave baseline/restore **8/8** with 143 files matching in content. On the first restore, a stale mtime made Cargo
+reuse the M6 executable in 0.04 s, giving 6 passed/2 failed. That run is excluded from approval, and its raw output
+is preserved. In the copy, the content was restored and the mtime updated, and then an **actual 3.43 s recompile with 8/8** was confirmed.
+In the original, the four ledger files were given their final formatting; the mutation results are attributed to each sealed copy and the full tally to the
+final working tree below. Matching sources alone are not taken to mean the executables were also rebuilt.
 
-### 최종 작업 트리 집계와 재개 기준
+### Final working tree tally and resume criteria
 
-- `cargo test --workspace --no-fail-fast`: **1039 passed / 0 failed / 7 ignored**, **57 summary**, 최종 exit 0.
+- `cargo test --workspace --no-fail-fast`: **1039 passed / 0 failed / 7 ignored**, **57 summaries**, final exit 0.
   staged adapter lib **343**, agent core lib **149**. `target/worker-actor-workspace.log`.
-  이전 1026 대비 13개 증가: sustained ingress 1 + actual actor/exit 8 + 원장 조회 4.
-  feature 제외와 과거 runtime의 시험을 구분하며 전체 1039를 current event E2E로 부르지 않는다.
-- JS **62/62**, skipped 0: 하네스 57 + native builder wiring 5. `target/worker-actor-js.log`.
-- staged adapter/agent core `clippy --all-targets` exit 0, 경고 잔존. `target/worker-actor-clippy.log`.
-  staged lib-test는 23 warnings(13 duplicates)로 기록됐으며 무경고/새 경고 0이라고 하지 않는다.
-- Rust 소스/Cargo **364파일** 합산 SHA256
+  An increase of 13 over the previous 1026: sustained ingress 1 + actual actor/exit 8 + ledger queries 4.
+  Feature exclusions and older runtime tests are kept apart, and the full 1039 is not called current event E2E.
+- JS **62/62**, skipped 0: harness 57 + native builder wiring 5. `target/worker-actor-js.log`.
+- staged adapter/agent core `clippy --all-targets` exit 0, warnings remain. `target/worker-actor-clippy.log`.
+  The staged lib-test was recorded with 23 warnings (13 duplicates); this is not reported as warning-free or 0 new warnings.
+- Aggregate SHA256 over **364 files** of Rust source/Cargo:
   `2dbdbfe4a41b2ccc190b9188c257b08b77130cd95fc33995ae2cdb7da87e66d4`.
-  `target/worker-actor-rust-source.json`과 재검증 도구에 목록·길이·원문 해시를 보존했다.
-  정렬/canonical 규칙은 이전 seal과 같으며 문서 후속 수정은 포함하지 않는다.
-- 문서 후속 갱신 뒤 tracked **73 clean** / `--all` **79 clean**, 자체 시험 **12/12**,
-  `cargo test -p p4-agent --test docs_lint` **1/1**, 기본 `git diff --check` exit 0.
-- C++/CUDA build, 실제 모델/GPU·VRAM-only/RAM 오프로딩·다중 컴퓨터·성능 비회귀는 **이번 회차 미실행**.
+  The list, lengths and raw hashes are preserved in `target/worker-actor-rust-source.json` and the re-verification tool.
+  The sort/canonical rules are the same as the earlier seals, and later document edits are not included.
+- After the later document update: tracked **73 clean** / `--all` **79 clean**, self-tests **12/12**,
+  `cargo test -p p4-agent --test docs_lint` **1/1**, default `git diff --check` exit 0.
+- C++/CUDA build, real models/GPU, VRAM-only/RAM offloading, multi-computer runs and performance non-regression were **not run in this round**.
 
-현재 상태·다음 첫 행동의 단독 소유자는 로드맵의 최신 진행 절이다. 이 집계를 B2 전체 완료나
-최종 강한 웨이브 성과로 승인하지 않는다. target 원자료는 로컬 보존이며 commit/push된 증거가 아니다.
+The sole owner of the current status and the first next action is the latest progress section of the roadmap. This tally is not approved as full B2 completion
+or as a final heavy-wave result. The target raw data is preserved locally and is not committed/pushed evidence.
 
-## 2026-09-07 후속 — speculative actual run과 native logits 소비 경계
+## 2026-09-07 follow-up — speculative actual run and the native logits consumption boundary
 
-HEAD `a9e1967fc` + 미커밋 작업 트리다. 직전 Rust 봉인 364파일을 시작 시 다시 대조한 뒤
-actual run fixture를 확장했다. 기존 ordinary 5개와 위치당 1회 append oracle는 유지한다.
-`worker/loop_tests/speculative.rs`의 native fake는 production 상태 전이를 호출하지 않고 literal
-입력·응답·KV 이력을 소유한다. Worker::run·codec·발행·반환·제어·출력은 실제 생산 경로다.
-OS 스레드/독립 라우팅 pump를 쓰며 LOAD/subprocess·EventNode/broker/network·llama 모델은 지나지 않는다.
+HEAD `a9e1967fc` + uncommitted working tree. The previous 364-file Rust seal was rechecked at the start, and then
+the actual run fixture was extended. The existing 5 ordinary tests and the oracle of 1 append per position are kept.
+The native fake in `worker/loop_tests/speculative.rs` does not call production state transitions; it owns the literal
+inputs, responses and KV history. Worker::run, codec, issue, return, control and output are the real production path.
+It uses OS threads and an independent routing pump, and does not go through LOAD/subprocess, EventNode/broker/network or a llama model.
 
-### 정상 경로와 독립 oracle
+### Normal paths and independent oracles
 
-새 시험 3개는 각각 **2·4스테이지**에서 실행한다. ordinary 5개와 합쳐 actual run **8/8**이다.
+Each of the 3 new tests runs at **2 and 4 stages**. Together with the 5 ordinary tests, actual run is **8/8**.
 
-| 시나리오 | 반드시 관찰한 결과 |
+| Scenario | Results that must be observed |
 | --- | --- |
-| Full accept | SETTLE 0, 정확한 5 token/position/length; RELEASED 보류 중 다음 요청 미발행, 해제 뒤 같은 slot·다른 incarnation 정상 진행 |
-| Direct partial | tentative KV `[10,11,12,1000,9001]`를 위치 4에서 trim; 올바른 token으로 위치 4부터 재append; 4 token/position/length |
-| Checkpoint Replay | 같은 tentative KV를 **위치 3**으로 복구; retain 5는 앞으로 채울 끝; 미확정 Verify 출력 0, output=false Replay의 확인된 결과는 정상 출력; 4 token/position/length |
+| Full accept | SETTLE 0, exact 5 tokens/positions/length; while RELEASED is held the next request is not issued, and after release the same slot with a different incarnation proceeds normally |
+| Direct partial | tentative KV `[10,11,12,1000,9001]` is trimmed at position 4; the correct token is re-appended from position 4; 4 tokens/positions/length |
+| Checkpoint Replay | the same tentative KV is restored to **position 3**; retain 5 is the end to be filled going forward; unconfirmed Verify output 0, and the confirmed result of the output=false Replay is output normally; 4 tokens/positions/length |
 
-Direct/Checkpoint는 마지막 SETTLE 홉과 꼬리→head의 단일 SETTLED를 따로 보류한다.
-별도 요청을 tokenize까지 완료해 runnable로 만들어도 global Verify fence가 logical 발행을
-2회에서 유지하는지 본다. 대상 요청의 ready가 없어서 자연히 멈추는 시험이 아니다.
-각 stage의 append→trim/restore→reappend→release 전체 이력과 동일 control operation ID를 대조한다.
-native fake의 sampler_calls는 scripted decision 횟수이지 실제 sampler primitive 횟수 증명이 아니다.
+Direct/Checkpoint separately hold back the last SETTLE hop and the single tail→head SETTLED.
+They check whether the global Verify fence keeps logical issues at 2 even when a separate request has been tokenized
+and made runnable. This is not a test that stops naturally because the target request has nothing ready.
+The full append→trim/restore→reappend→release history of each stage and the identical control operation ID are compared.
+The native fake's sampler_calls is the number of scripted decisions, not proof of the number of real sampler primitive calls.
 
-Full의 마지막 Verify fence도 RELEASED까지 유지된다. 따라서 release 전 재사용이 없다는 end-to-end
-관측은 있으나 free-slot 반환 기전만의 독립 mutation 증명이라고 하지 않는다.
+In Full, the last Verify fence is also kept until RELEASED. So there is an end-to-end observation that nothing is reused before release,
+but we do not call it an independent mutation proof of the free-slot return mechanism alone.
 
-### 생산 소비 변이 3종
+### 3 production consumer mutations
 
-`target/b2-speculative-run-mutations-20260907/verification.json`의 독립 3-crate/132파일 copy에서
-시험과 fake를 고정한 채 생산 소비 코드만 변경했다. 각 arm 실제 compile·exe/source 해시를 보존한다.
+In the independent 3-crate/132-file copy recorded in `target/b2-speculative-run-mutations-20260907/verification.json`,
+only the production consumer code was changed, with the tests and the fake held fixed. Each arm's actual compile and exe/source hashes are preserved.
 
-| 변이 | actual run 결과 |
+| Mutation | actual run result |
 | --- | --- |
-| drive의 Verify fence 검사 제거 | 6 passed / 2 failed; 별도 ready 요청으로 native logical 3≠2 |
-| Replay의 실제 output intent 누락 | 7 passed / 1 failed; 최종 출력 수 부족 |
-| 전량 수용 후 Verify fence 해제 누락 | 7 passed / 1 failed; 후속 발행 정지 |
-| 원상 복원 후 재컴파일 | 8 passed / 0 failed; 132파일 baseline 내용 일치 |
+| Remove drive's Verify fence check | 6 passed / 2 failed; with a separate ready request, native logical 3≠2 |
+| Drop Replay's real output intent | 7 passed / 1 failed; the final output count falls short |
+| Omit releasing the Verify fence after full acceptance | 7 passed / 1 failed; later issuing stalls |
+| Recompile after restoring the original | 8 passed / 0 failed; 132-file baseline content matches |
 
-첫 변이는 기본 assertion 뒤 fake Mutex poison에 따른 teardown 오류도 냈다. 최초 3≠2 실패와
-전체 libtest summary를 모두 보존했으며 추가 teardown 오류를 별도 결함 검출 수로 세지 않는다.
-원본 두 시험 파일의 SHA256:
+The first mutation also produced a teardown error from fake Mutex poisoning after the primary assertion. Both the initial 3≠2 failure and
+the full libtest summary are preserved, and the extra teardown error is not counted as a separate defect detection.
+SHA256 of the two original test files:
 
 - `loop_tests.rs`: `c6e2428dd06a9a2d6d359c475dade2fd520969274715bc29e79adf835613831d`
 - `loop_tests/speculative.rs`: `5466a0265158dce0606147039204f80f57e5515d2cf8b00033b8edbf0238de3d`
 
-### Rust 전체와 독립 native 감사의 구분
+### Keeping the full Rust suite apart from the independent native audit
 
-`cargo test --workspace --no-fail-fast`는 최종 exit 0, **1042 passed / 0 failed / 7 ignored**,
-57 summary다. staged adapter lib는 **346**이다. `target/worker-speculative-workspace.log`에 원문을
-보존했다. 이전 1039에서 위 actual run 3개만 증가했으며 전체 수를 event E2E 개수로 부르지 않는다.
-Rust/Cargo **365파일**의 SHA256은
-`9f1dbc577f78336bab97d088a035398c07b4799795c371dfe356913cfb93b841`이다.
-`target/worker-speculative-rust-source.json`과 `worker-speculative-seal.mjs --verify`로 전체 시험
-전후 내용 일치를 확인했다. clippy --all-targets는 exit 0이나 staged lib-test **24 warnings
-(13 duplicates)**가 남아 있다. 새 fixture의 clone 스타일 경고 1개도 포함하며 무경고라 하지 않는다.
+`cargo test --workspace --no-fail-fast` gave final exit 0, **1042 passed / 0 failed / 7 ignored**,
+57 summaries. The staged adapter lib is **346**. The raw output is preserved in `target/worker-speculative-workspace.log`.
+Only the 3 actual run tests above were added since the previous 1039, and the total is not called the number of event E2E tests.
+The SHA256 of the **365 files** of Rust/Cargo is
+`9f1dbc577f78336bab97d088a035398c07b4799795c371dfe356913cfb93b841`.
+`target/worker-speculative-rust-source.json` and `worker-speculative-seal.mjs --verify` confirmed that the content was identical before and after
+the full test run. clippy --all-targets gave exit 0, but the staged lib-test still has **24 warnings
+(13 duplicates)**. This includes 1 clone-style warning from the new fixture, so it is not called warning-free.
 
-코드 독립 감사에서 fake 성공과 다른 native 결함을 찾았다. 실제 `execute_physical`이 Replay
-wire output=false를 llama_batch.logits에 그대로 전달했지만 `sample_physical_mtp`는 Replay의
-모든 행에서 logits를 읽었다. pin `0eadefebd3`의 기본 embeddings=false 경로는 해당 logits를
-만들지 않는다. 같은 문제를 FIRST 배치 생성에서도 검사해야 한다. fake는 native sampler를
-호출하지 않으므로 1042 GREEN이 이 오류를 반증하지 않는다. 아래 native 소비 시험은 별도 증거다.
+An independent code audit found a native defect that differs from what the fake's success shows. The real `execute_physical` passed the Replay
+wire output=false straight into llama_batch.logits, but `sample_physical_mtp` read logits from every
+Replay row. The default embeddings=false path at pin `0eadefebd3` does not produce those logits.
+The same problem must also be checked in FIRST batch construction. The fake does not call the native sampler,
+so the 1042 GREEN does not disprove this defect. The native consumer tests below are separate evidence.
 
-### 별도 다음 반례 — 아직 고치지 않은 busy UNLOAD
+### A separate next counterexample — busy UNLOAD, not yet fixed
 
-`target/b2-unsafe-unload-red-20260907/verification.json`은 위 원본 1042 집계 밖의 독립 copy다.
-기존 actual run ordinary fixture에 tail capsule-set 하나를 보류하고 정상 generation의 UNLOAD를
-보냈다. 생산 코드는 변경하지 않았으며 새 반례가 있는 시험 파일만 바뀌었다.
+`target/b2-unsafe-unload-red-20260907/verification.json` is an independent copy outside the original 1042 tally above.
+In the existing actual run ordinary fixture, one tail capsule-set was held back and an UNLOAD for the valid generation was
+sent. Production code was not changed; only the test file containing the new counterexample changed.
 
 ```text
 UNSAFE_UNLOAD native_shutdowns=1 rejected=0 approved=1 held_tail=1 outputs=0 snapshot=unloaded
 test result: FAILED. 0 passed; 1 failed
 ```
 
-실제 25.19초 재컴파일과 132파일/실행파일 해시를 보존했다. busy일 때 native shutdown 0이라는
-첫 안전 단언이 1≠0으로 실패한다. 시험 뒤쪽에는 원래 작업의 정상 출력·KV·전 stage release 완주와
-idle UNLOAD 성공의 양성 대조가 있지만 첫 단언에서 멈춰 **실행하지 않았다**. 수정/복원 GREEN은 없다.
-현재 정상 suite GREEN으로 이 반례를 덮지 않으며 다음 첫 행동은 로드맵 최신 절이 소유한다.
+The actual 25.19 s recompile and the 132-file/executable hashes are preserved. The first safety assertion, native shutdown 0 while busy,
+fails with 1≠0. Later in the test there are positive controls — normal output, KV and release on every stage for the original work, and
+a successful idle UNLOAD — but the test stopped at the first assertion, so they **were not run**. There is no fix/restore GREEN.
+This counterexample is not covered over by the current normal suite GREEN, and the first next action is owned by the latest roadmap section.
 
-### native mask 수정과 실제 소비 회귀
+### native mask fix and real consumer regression
 
-`llama_stage_runtime_physical.cpp`의 FIRST/downstream이 내부 logits mask를 따로 만들도록
-수정했다. 원래 owner/logical/capsule mask를 쓰기 변경하지 않는다. 정책·공통 P4·상류 patch·ABI·
-common 의존 권한은 변경하지 않았다. 실제 생산 변경은 17행 추가/2행 교체다.
+FIRST/downstream in `llama_stage_runtime_physical.cpp` were changed to build an internal logits mask
+of their own. The original owner/logical/capsule masks are not written to. Policy, common P4, upstream patches, ABI and
+common dependency permissions were not changed. The actual production change is 17 lines added / 2 lines replaced.
 
-새 `physical_logits_consumer_test.cpp`는 생산 physical.cpp 본문을 직접 컴파일한다. model/context
-설정과 native API 경계만 test-only Probe로 대체하고, 실제 llama_decode/encode 호출에 도달한
-mask·token·position을 관찰한다. llama 라이브러리 자체는 이 실행파일에 링크하지 않는다.
-초기 mixed-mask 시험은 수정 전 FIRST에서 assertion으로 실패했다. 이 RED 이후 all-Replay를
-추가했으므로 최초 RED가 나중의 12개 경우까지 실행했다고 하지 않는다.
+The new `physical_logits_consumer_test.cpp` compiles the production physical.cpp body directly. Only the model/context
+setup and the native API boundary are replaced by a test-only Probe, which observes the mask, tokens and positions that reach the real
+llama_decode/encode calls. The llama library itself is not linked into this executable.
+The initial mixed-mask test failed with an assertion in FIRST before the fix. all-Replay was added after this RED,
+so we do not claim that the initial RED ran the later 12 cases.
 
-최종 경우는 first/middle/tail × decode/encode × all-Replay/mixed **12개**다. all-Replay의
-literal mask는 `[1,1]`, mixed는 `[0,1,1,1,1,1,1]`이며 downstream의 입력/반환 wire mask는
-그대로다. mixed geometry·atomic preparation은 fixture이고 합법적인 recurrent 실제 shape를
-검증한 것이 아니다. FIRST의 internal capture mask를 wire owner.output으로 복원하는 별도
-server 소비자는 코드로 확인했지만 이 시험에서 실행하지 않았다. 실제 logits 수치·sampler·
-checkpoint byte·모델 또는 backend conformance를 이 12개로 승인하지 않는다.
+The final cases are first/middle/tail × decode/encode × all-Replay/mixed, **12 cases**. The all-Replay
+literal mask is `[1,1]` and the mixed one is `[0,1,1,1,1,1,1]`; downstream's input/return wire masks are
+unchanged. The mixed geometry and atomic preparation are fixtures; they do not verify a legitimate real recurrent shape.
+A separate server consumer that restores FIRST's internal capture mask into wire owner.output was confirmed in code
+but not run in this test. These 12 cases do not approve real logits values, the sampler,
+checkpoint bytes, or model or backend conformance.
 
-독립 81파일 copy의 생산 소비 변이: FIRST가 옛 row.output 사용, downstream이 계산된 mask를
-버리고 옛 input.output 전달, 반환 wire에 native mask 오염 — **각각 CTest 1 failed**다.
-변이 사이마다 실제 test TU 재컴파일/실행파일 해시를 확인했으며 정확한 복원 후 **1 passed**,
-81파일 내용 불일치 0이다. 상세는 `target/replay-logits-consumer-mutations/verification.md`,
-최초 RED는 `target/replay-logits-consumer-evidence/red-*`에 보존한다.
+Production consumer mutations in an independent 81-file copy: FIRST uses the old row.output; downstream discards the computed mask
+and forwards the old input.output; the native mask contaminates the return wire — **1 CTest failed in each case**.
+Between mutations, the actual recompile of the test TU and the executable hash were confirmed; after the exact restore, **1 passed**,
+with 0 content mismatches across the 81 files. Details are in `target/replay-logits-consumer-mutations/verification.md`,
+and the initial RED is preserved in `target/replay-logits-consumer-evidence/red-*`.
 
-- 최종 생산 source: `E90AF312E7489DCA02564BCEA6E884606B9FE4C8E31872A2D798CC221F547C7E`
-- 최종 consumer 시험: `D5DF40C0D51BA68BE3119EC36D66F88A5822B40308CAAA50D54415A7C00EC0C8`
+- Final production source: `E90AF312E7489DCA02564BCEA6E884606B9FE4C8E31872A2D798CC221F547C7E`
+- Final consumer test: `D5DF40C0D51BA68BE3119EC36D66F88A5822B40308CAAA50D54415A7C00EC0C8`
 
-### 공식 native build와 미실행 본문 분리
+### Official native build, kept apart from bodies that did not run
 
-no-llama 공식 build는 최초 C1083으로 **시험 0개 실행**이었다. `server_hello.cpp`의 compat
-include는 사용부와 달리 무조건이었고, 같은 P4_STAGED_WITH_LLAMA guard를 넣어 고쳤다.
-include path/link를 넓혀 통과시키지 않았다. 수정 후 **5/5** 계약 시험이 실제 실행됐다.
-최종 CMake/builder/native 동결 뒤에도 아래 두 모드를 다시 실행했다.
+The official no-llama build initially hit C1083 and **ran 0 tests**. The compat include in `server_hello.cpp`
+was unconditional, unlike its use sites, and was fixed by adding the same P4_STAGED_WITH_LLAMA guard.
+It was not made to pass by widening the include path/link. After the fix, the **5/5** contract tests actually ran.
+Both modes below were run again after the final CMake/builder/native freeze.
 
 ```powershell
 node layers/adapters/llamacpp/staged/scripts/build-stage-server.mjs --backend cpu --build-dir F:/dev/p4/target/native-identity-cpu --config Release --parallel 4
 node layers/adapters/llamacpp/staged/scripts/build-stage-server.mjs --no-llama --backend cpu --build-dir F:/dev/p4/target/worker-spec-native-contract --config Release --parallel 4
 ```
 
-| 최종 모드 | 실행 결과와 범위 |
+| Final mode | Run result and scope |
 | --- | --- |
-| llama-linked CPU source build | exit 0, CTest executable **15/15**; 모델프리 본문 **12**, 부분 실행 **1**, 전체 본문 SKIP **2** |
-| no-llama build | exit 0, 계약 executable **5/5**, 해당 본문 SKIP 0 |
+| llama-linked CPU source build | exit 0, CTest executables **15/15**; model-free bodies **12**, partial run **1**, whole body SKIP **2** |
+| no-llama build | exit 0, contract executables **5/5**, SKIPped bodies 0 |
 
-15/15 중 compile 시험은 실제 KV restore/HOP rollback 두 부분을 생략했고, request_options/MTP
-두 실행파일은 모델이 없어 본문 전체를 생략했다. SKIP 원문 총 **4줄**을 별도 집계한다. 15개를
-모델 정상성 통과라고 하지 않는다. upstream recurrent rollback의 모델 필수 별도 실행도 하지 않았다.
-새 소비 시험은 target-only Rebuild로 실제 TU를 다시 컴파일한 뒤 공식 CTest에서 12-case 완료
-메시지를 확인했다. Release의 /UNDEBUG 단언도 활성이다. no-llama 5개와 linked 15개는 중복
-타깃을 포함하므로 20개 독립 conformance로 합산하지 않는다.
+Of the 15/15, the compile test skipped the two parts for real KV restore/HOP rollback, and the request_options/MTP
+executables skipped their whole bodies because there was no model. The **4 lines** of raw SKIP output are tallied separately. The 15 are
+not called a pass of model correctness. The separate model-required run of upstream recurrent rollback was not done either.
+For the new consumer test, the real TU was recompiled with a target-only Rebuild, and the 12-case completion
+message was confirmed in the official CTest. The /UNDEBUG assertions in Release are also active. The 5 no-llama and 15 linked executables include duplicate
+targets, so they are not summed as 20 independent conformance tests.
 
-`target/worker-spec-native-contract-evidence/final-linked.*`와 `final-no-llama.*`에 명령·exit·
-LastTest·실행파일 해시가 있다. native/CMake/builder/prepare/manifest/patch **111입력파일**은
-각 실행 전후·두 모드 사이 동일하며 최종 원본 재해시도 불일치 0이다. 실제 production runtime
-object/link 성공과 위 Probe consumer 시험의 범위를 분리한다.
+`target/worker-spec-native-contract-evidence/final-linked.*` and `final-no-llama.*` hold the commands, exits,
+LastTest and executable hashes. The **111 input files** of native/CMake/builder/prepare/manifest/patch were
+identical before and after each run and between the two modes, and a final rehash of the originals also found 0 mismatches. Real production runtime
+object/link success is kept apart from the scope of the Probe consumer test above.
 
-공식 prepare 전후 pin `0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0`, patch diff
-`3cfc636181e4ee1033249b8f7ca4d50156174138bf07c2797a476f4c42ab8c47`, 재계산 tree
-`c81ecd4fff7c93a1f637d63733c0387f0b6bf157` 및 patch 24개 byte hash가 manifest와 일치했다.
-모델 env는 자식 빌드/시험에서 명시적으로 제외했으며 모델/GPU/원격 실행은 없었다.
+Before and after the official prepare, pin `0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0`, patch diff
+`3cfc636181e4ee1033249b8f7ca4d50156174138bf07c2797a476f4c42ab8c47`, recomputed tree
+`c81ecd4fff7c93a1f637d63733c0387f0b6bf157`, and the byte hashes of the 24 patches matched the manifest.
+Model env was explicitly excluded from the child builds/tests, and there were no model/GPU/remote runs.
 
-### 이번 slice 최종 기타 게이트와 한계
+### Other final gates and limits for this slice
 
-- JS **63/63**, skipped 0: 하네스 57 + 공식 build target wiring 6. 새 target이 dead code로만
-  남는 변이도 builder의 실제 명령 포착 시험이 검출한다. `target/worker-speculative-js.log`.
-- private-header **81파일 clean**, common debt **0 header / 5 source**; compat manifest valid 24.
-  문자열/목록 gate를 전체 transitive 의미 격리 완료로 확대하지 않는다.
-- 문서 tracked **73 clean** / all **79 clean**, 자체 **12/12**, cargo 문서 gate **1/1**.
-  기본 git diff --check exit 0; 파일별 EOL 일관 정규화 후 검사했다.
-- Rust 소스는 위 365파일 봉인과 최종 재대조해 동일하다. 현재 whole suite의 1042 GREEN 밖에
-  busy UNLOAD 독립 RED 1개가 남으며 이를 소거하지 않았다.
-- CUDA build, 실제 모델의 MTP/Replay, VRAM-only/RAM 오프로딩·다중 물리 호스트 웨이브·품질/TPS는
-  이번 slice에서 **미실행**이다. 원격 배포·commit/push도 하지 않았다. 원자료 target은 로컬 보존이다.
+- JS **63/63**, skipped 0: harness 57 + official build target wiring 6. A mutation that leaves the new target as dead code only
+  is also detected by the builder's actual command capture test. `target/worker-speculative-js.log`.
+- private-header **81 files clean**, common debt **0 header / 5 source**; compat manifest valid 24.
+  The string/list gates are not extended to mean full transitive semantic isolation is complete.
+- Documents tracked **73 clean** / all **79 clean**, self-tests **12/12**, cargo document gate **1/1**.
+  Default git diff --check exit 0; checked after consistent per-file EOL normalization.
+- The Rust sources were rechecked at the end against the 365-file seal above and are identical. Outside the current whole-suite 1042 GREEN,
+  1 independent busy UNLOAD RED remains, and it was not erased.
+- CUDA build, MTP/Replay on real models, VRAM-only/RAM offloading, multi-physical-host waves and quality/TPS were
+  **not run** in this slice. No remote deploy or commit/push was done either. The raw data target is preserved locally.
 
-## 2026-09-07 후속 기록 — busy UNLOAD와 native 종료 실패
+## 2026-09-07 follow-up record — busy UNLOAD and native shutdown failure
 
-기준은 같은 HEAD `a9e1967fc`와 미커밋 작업 트리다. 앞 절의 busy UNLOAD RED를 원본 actual
-Worker::run에 이관하고, 정상 거부와 native cleanup 사후 실패를 분리했다. P4 중립 코어·정책·native
-ABI는 이 slice에서 변경하지 않았다. 의미 계약은 배치 계약의 명시적 UNLOAD 절, 판정은 T25가 소유한다.
+The baseline is the same HEAD `a9e1967fc` and an uncommitted working tree. The busy UNLOAD RED from the previous section was moved into the original actual
+Worker::run, and normal rejection was separated from post-hoc native cleanup failure. The P4 neutral core, policy and native
+ABI were not changed in this slice. The semantic contract is owned by the explicit UNLOAD section of the batching contract, and the verdict by T25.
 
-### 수정 전 실패와 실제 소비 범위
+### Pre-fix failures and real consumer scope
 
-`target/b2-busy-unload-original-red-20260907.log`의 ordinary 두 시험과
-`target/speculative-unload-red/red.log`의 speculative 두 시험은 기존 명령을 실제 run에 보냈다.
-각 첫 안전 단언에서 native shutdown이 0 대신 1, UNLOADED가 0 대신 1이 되어 실패했다. RED는
-그 뒤 정상 완주·idle 양성 대조까지 실행한 것으로 세지 않는다. source/exe 해시와 재컴파일 원문을
-각 증거 디렉터리에 보존했다. helper의 진단을 강화한 두 번째 ordinary RED도 별도 raw에 있다.
+The two ordinary tests in `target/b2-busy-unload-original-red-20260907.log` and
+the two speculative tests in `target/speculative-unload-red/red.log` sent the existing command into a real run.
+Each failed at its first safety assertion, with native shutdown at 1 instead of 0 and UNLOADED at 1 instead of 0. The RED is
+not counted as having run the later normal completion and idle positive controls. Source/exe hashes and the raw recompile output are
+preserved in each evidence directory. A second ordinary RED with stronger helper diagnostics is also in separate raw output.
 
-| 추가 actual-run 회귀 | 보류된 실제 작업 | 수정 뒤 검사 |
+| Added actual-run regression | Real work held back | Checks after the fix |
 | --- | --- | --- |
-| ordinary head (N=2/4) | tail capsule-set; flight batch 1, executions 2 | busy 오류 1, native/출력 불변; 같은 요청 완주 뒤 idle 성공 |
-| ordinary middle (N=4) | requests/pending/flight 0이나 active owner/frontier 각 1 | head 요청 원장 없이도 KV 보존; 이후 정상 완주/idle 성공 |
-| speculative head (N=2/4) | 최종 SETTLED; flight/open view 0, pending settlement 1, Verify fence | 잘못된 FIRST/LAST generation 거부; 정산 재개 뒤 literal output/release/전 stage idle 성공 |
-| speculative middle (N=4) | 아직 SETTLE 안 된 tentative Verify KV; requests/pending/flight 0 | native KV·append/restore 이력 보존; checkpoint Replay 정상 완주/전 stage idle 성공 |
+| ordinary head (N=2/4) | tail capsule-set; flight batch 1, executions 2 | 1 busy error, native/output unchanged; idle succeeds after the same request completes |
+| ordinary middle (N=4) | requests/pending/flight 0, but active owner/frontier 1 each | KV preserved even without a head request ledger; then normal completion / idle success |
+| speculative head (N=2/4) | final SETTLED; flight/open view 0, pending settlement 1, Verify fence | wrong FIRST/LAST generation rejected; after settlement resumes, literal output/release/idle success on every stage |
+| speculative middle (N=4) | tentative Verify KV not yet SETTLEd; requests/pending/flight 0 | native KV and append/restore history preserved; checkpoint Replay completes normally / idle success on every stage |
 
-공통 헬퍼는 정확한 source/correlation의 오류만 허용한다. native 호출·sampler·KV·write/release 이력·
-speculative 이력의 전체 스냅샷과 요청 출력을 비교하며 모든 오류를 삼키도록 pump를 바꾸지 않았다.
-수동 RequestState나 공유 census 함수를 oracle로 부르는 대신 실제 이벤트로 만든 상태의 진단을
-대조한다. 성공 receipt/Released history만 남은 경우에는 idle UNLOAD가 가능해야 한다.
-기존 ordinary 5/speculative 3과 추가 4를 합쳐 actual pipeline loop는 **12/12**다.
+The common helper accepts only errors with the exact source/correlation. It compares full snapshots of native calls, sampler, KV, write/release history and
+speculative history, plus the request outputs, and the pump was not changed to swallow every error.
+Instead of calling a hand-built RequestState or a shared census function as the oracle, it compares diagnostics of state produced by real events.
+When only success receipts/Released history remain, idle UNLOAD must be possible.
+The existing ordinary 5/speculative 3 plus the 4 added make the actual pipeline loop **12/12**.
 
-생산 `control.rs::Worker::unload`는 identity 검사 후 `shutdown.rs::Worker::require_idle_unload`를
-통과한다. 기존 종료용 로컬 잔량 집계를 공유하되 실패 정리를 이 guard로 막지 않는다. 이미 fenced된
-worker의 fatal/Drop cleanup은 native 자원을 닫을 수 있다. 따라서 native 0은 healthy busy 사전 거부의
-약속이며 모든 종료 종류의 약속이 아니다. 이 시험은 LOAD/subprocess·실제 llama/model/backend·
-네트워크 broker·global drain을 지나지 않는다. 전달한 토큰을 취소하거나 사용자 출력 ACK를 증명하지 않는다.
+The production `control.rs::Worker::unload` goes through `shutdown.rs::Worker::require_idle_unload` after the identity check.
+It shares the existing local leftover tally used for shutdown, but this guard does not block failure cleanup. The fatal/Drop cleanup of an
+already fenced worker may close native resources. So native 0 is a promise of healthy busy pre-rejection,
+not a promise for every kind of shutdown. This test does not go through LOAD/subprocess, a real llama/model/backend,
+a network broker or global drain. It does not cancel tokens already delivered or prove a user output ACK.
 
-### guard가 실제로 필요한지 — 독립 변이
+### Is the guard really needed — independent mutations
 
-`target/b2-busy-unload-mutations-20260907/verification.json`: 독립 3-crate/133소스 copy에서
-시험/fake는 고정하고 생산 코드만 바꿨다. 모든 arm 실제 재컴파일·동시점 실행파일/원문 해시를 보존한다.
+`target/b2-busy-unload-mutations-20260907/verification.json`: in an independent 3-crate/133-source copy,
+the tests/fake were held fixed and only production code was changed. Every arm preserves the actual recompile and the contemporaneous executable/raw output hashes.
 
-| 조건 | loop 통과 / 실패 |
+| Condition | loop passed / failed |
 | --- | --- |
-| 기준선 | 12 / 0 |
-| UNLOAD guard 호출 제거 | 8 / 4 |
-| requests-only busy 판정 | 10 / 2; ordinary/speculative 중간 KV만 실패 |
-| 무조건 busy 거부 | 8 / 4; 원래 요청 완료 뒤 idle 양성 대조에서 실패 |
-| 정확히 복원 | 12 / 0 |
+| Baseline | 12 / 0 |
+| UNLOAD guard call removed | 8 / 4 |
+| requests-only busy judgement | 10 / 2; only ordinary/speculative middle KV fails |
+| unconditional busy rejection | 8 / 4; fails in the idle positive control after the original request completes |
+| exact restore | 12 / 0 |
 
-변이마다 control.rs 또는 shutdown.rs 한 파일만 달라졌다. 복원본·기준선·현재 원본 133파일의
-내용이 일치했다. 테스트 합계 감소/상한 완화·골든 변경으로 변이를 통과시키지 않았다.
+Each mutation differed in only one file, control.rs or shutdown.rs. The restored copy, the baseline and the current original matched in content
+across 133 files. No mutation was made to pass by reducing test totals, relaxing bounds or changing goldens.
 
-### 별도 발견 — idle native UNLOAD 실패 뒤 SESSION 승인
+### A separate finding — SESSION approved after an idle native UNLOAD failure
 
-실제 run에 SESSION → idle UNLOAD → 이미 큐잉된 SESSION을 넣고 native shutdown만 실패시켰다.
-`target/worker-unload-failure-regression-20260907-01/01-before-fix-compiled.stdout.log`는 실제
-재컴파일 뒤 **0 passed / 1 failed**다. cleanup 1회 뒤 오류가 있어도 후속 SESSION이 ACK되었고
-최종 상태는 `closed:local_work_empty`, `effects_fenced:false`였다. 앞의 00 로그는 동시 빌드 산출물을
-재사용한 보조 관측이므로 01의 fresh compile 증거로 대체하지 않았다.
+A real run was fed SESSION → idle UNLOAD → an already queued SESSION, with only the native shutdown made to fail.
+`target/worker-unload-failure-regression-20260907-01/01-before-fix-compiled.stdout.log` shows, after an actual
+recompile, **0 passed / 1 failed**. Even with an error after 1 cleanup, the following SESSION was ACKed, and
+the final state was `closed:local_work_empty`, `effects_fenced:false`. The earlier 00 log is a supporting observation that reused concurrent build outputs,
+so it was not used in place of the fresh compile evidence in 01.
 
-native cleanup Err에서 effects fence를 세워 실제 handle이 오류 응답 후 종료하게 했다. 원래 오류와
-불확실 경계를 보존하며 UNLOADED·후속 SESSION ACK는 0이다. 기존 turn 시험 8개 + 새 회귀 **9/9**.
-독립 copy에서 fence 한 줄만 제거하면 같은 queued-SESSION 단언으로 **0/1 실패**, 복원 **9/9**다.
-135입력파일(Cargo 포함)의 기준선/복원/원본/증거 사본이 일치하며 각 단계 실제 compile·exe 해시가 있다.
-`target/worker-unload-failure-regression-20260907-01/verification.txt`가 명령과 전체 범위를 기록한다.
-fake shutdown 횟수는 실제 OS process 종료/소멸자 재시도의 증명이 아니며 실패 lifecycle 재로드는 구현하지 않았다.
+On a native cleanup Err, the effects fence is now raised so the real handle shuts down after the error response. The original error and
+the uncertainty boundary are preserved, and UNLOADED and follow-up SESSION ACKs are 0. The existing 8 turn tests + the new regression give **9/9**.
+In an independent copy, removing just the one fence line gives **0/1 failed** on the same queued-SESSION assertion, and the restore gives **9/9**.
+The baseline/restore/original/evidence copies of the 135 input files (Cargo included) match, and each step has actual compile and exe hashes.
+`target/worker-unload-failure-regression-20260907-01/verification.txt` records the commands and the full scope.
+The fake shutdown count is not proof of real OS process termination or destructor retries, and failure lifecycle reload was not implemented.
 
-### 최종 소스와 전체 집계
+### Final sources and full tally
 
 - control.rs: `50046B4A9B973D265833B3DEC65347F05ECADCC6916B5354290BB15E74D031DD`
 - shutdown.rs: `3A673D5B1929DB19AE906E666525570D4DE0868650B966A610FCD0652811EB2C`
-- Rust/Cargo **366파일** 봉인: `7e3257ed5f97f9ce586d6c3871f3e3621e5619f0208e1a1e960f2aa143478e23`.
-  `target/worker-unload-rust-source.json`, `worker-unload-seal.mjs --verify`로 전체 실행 전후 동일성을 확인했다.
+- Rust/Cargo **366 files** seal: `7e3257ed5f97f9ce586d6c3871f3e3621e5619f0208e1a1e960f2aa143478e23`.
+  `target/worker-unload-rust-source.json` and `worker-unload-seal.mjs --verify` confirmed identity before and after the full run.
 
-첫 `--workspace --no-fail-fast` 실행은 **1046 passed / 1 failed / 7 ignored**, exit 101이었다.
-`target/worker-unload-workspace.log`의 유일한 실패는 새 배치 계약 문단의 mixed EOL 문서 gate였다.
-이를 정규화하고 전체를 다시 실행한 `target/worker-unload-workspace-final.log`는 최종 exit 0,
-57 summary, **1047 passed / 0 failed / 7 ignored**다. staged adapter lib **351**이며 이전 1042에서
-busy 4 + native 실패 1만 증가했다. 1047개를 실기/E2E 개수로 부르지 않는다.
+The first `--workspace --no-fail-fast` run gave **1046 passed / 1 failed / 7 ignored**, exit 101.
+The only failure in `target/worker-unload-workspace.log` was the document gate for mixed EOL in the new batching contract paragraph.
+After normalizing it and rerunning everything, `target/worker-unload-workspace-final.log` shows final exit 0,
+57 summaries, **1047 passed / 0 failed / 7 ignored**. The staged adapter lib is **351**; relative to the previous 1042,
+only busy 4 + native failure 1 were added. The 1047 are not called a count of real-hardware/E2E tests.
 
-JS는 **63 passed / 0 failed / 0 skipped**(하네스 57 + build wiring 6), 원문은
-`target/worker-unload-js.log`다. clippy staged/agent-core --all-targets exit 0이나 staged lib-test
-**26 warnings (13 duplicates)**가 남는다. 새 speculative fixture clone 스타일 경고 2개도 포함한다.
-private-header는 **81 clean**, common debt **0 header / 5 source**이며 compat manifest는 valid 24다.
-이번 Rust-only slice에서 C++/CUDA를 다시 실행하지 않았다. 앞 slice의 모델 없는 CPU15/no-llama5를
-현재 실제 모델 conformance나 새 실행으로 재표기하지 않는다.
+JS is **63 passed / 0 failed / 0 skipped** (harness 57 + build wiring 6), with raw output in
+`target/worker-unload-js.log`. clippy staged/agent-core --all-targets gave exit 0, but the staged lib-test
+still has **26 warnings (13 duplicates)**. This includes 2 clone-style warnings from the new speculative fixture.
+private-header is **81 clean**, common debt **0 header / 5 source**, and the compat manifest is valid 24.
+C++/CUDA were not rerun in this Rust-only slice. The model-less CPU15/no-llama5 from the previous slice are not
+relabelled as current real-model conformance or as new runs.
 
-Cancel/Drain·OUTER 소비 ACK·재시작 신선성·edge credit는 여전히 미완이다. 실제 모델/GPU·원격 배포·
-VRAM-only/RAM 오프로딩 웨이브·성능 비회귀·commit/push는 이번 slice **미실행**이다. 원자료 target은
-로컬 보존이며 공개된 불변 증거 번들이 아니다. 다음 작업과 승인된 실기 순서는 최신 로드맵을 따른다.
+Cancel/Drain, OUTER consumption ACK, restart freshness and edge credit are still unfinished. Real models/GPU, remote deploy,
+VRAM-only/RAM offloading waves, performance non-regression and commit/push were **not run** in this slice. The raw data target is
+preserved locally and is not a published immutable evidence bundle. The next work and the approved real-hardware order follow the latest roadmap.
 
-### 전체 GREEN 밖의 다음 P1 — 실제 head 출력과 OUTER의 tail 전제
+### The next P1 outside the full GREEN — real head output and OUTER's tail assumption
 
-`target/head-output-consumer-red-20260907-01/verification.md`의 독립 copy에서 실제 run의 출력
-메일박스를 관측했다. ordinary 2-stage 기존 시험 **1 passed**, 출력 5개; checkpoint Replay 2/4-stage
-기존 시험 **1 passed**, 출력 10개다. 기존 token/position/KV/release oracle는 그대로다. 이 Event 15개를
-그대로 `p4_protocol::event::encode`로 보존하고 실제 event-drive `InferenceIdentity::output`에 공급했다.
+In the independent copy recorded in `target/head-output-consumer-red-20260907-01/verification.md`, the output
+mailbox of a real run was observed. The existing ordinary 2-stage test gave **1 passed** with 5 outputs; the existing checkpoint Replay 2/4-stage
+test gave **1 passed** with 10 outputs. The existing token/position/KV/release oracles are unchanged. These 15 Events were
+preserved as-is via `p4_protocol::event::encode` and fed into the real event-drive `InferenceIdentity::output`.
 
-ordinary 소비자는 **1 failed(5/5 거부)**, checkpoint 소비자는 **1 failed(10/10 거부)**다. 오류는 모두
-`inference event source or correlation is incorrect`다. correlation/body/target/load/session은 고정하고
-source만 configured tail로 바꾼 별도 대조군은 각각 **1 passed**, 15개 모두 승인됐다. 이것은 원인을
-분리하는 잘못된 과거 source의 대조군이지 tail 발행을 다시 허용하라는 결론이 아니다.
+The ordinary consumer gave **1 failed (5/5 rejected)**, and the checkpoint consumer **1 failed (10/10 rejected)**. All errors were
+`inference event source or correlation is incorrect`. A separate control group that kept correlation/body/target/load/session fixed and
+changed only the source to the configured tail gave **1 passed** each, with all 15 approved. This is a control group using the wrong past source to isolate
+the cause, not a conclusion that tail publishing should be allowed again.
 
-생산자 fresh compile 27.02초, 소비자 fresh compile 19.65초와 EXE/367입력파일 해시, 실제 encoded
-출력 15개, 두 소비 RED 원문을 보존했다. 변한 것은 복사본 시험 두 파일의 관측/소비 probe뿐이고
-생산 알고리즘·원본은 무변경이다. 1047 전체 원본 GREEN에 이 신규 copy 시험이 포함됐다고 하지 않는다.
-생산자의 네트워크·모델 연산은 fake이며 전체 `inference::drive` 또는 실제 GPU 웨이브는 미실행이다.
-현재 strict unit test가 오히려 head 거부를 기대하므로, 소비자만 head/tail 모두 허용하도록 고쳐서는 안 된다.
+The producer fresh compile of 27.02 s, the consumer fresh compile of 19.65 s, the EXE/367-input-file hashes, the 15 real encoded
+outputs, and the raw output of both consumer REDs are preserved. The only changes are the observation/consumption probes in two test files of the copy;
+the production algorithm and the original are unchanged. We do not claim that this new copy test is included in the full original 1047 GREEN.
+The producer's network and model computation are fake, and the full `inference::drive` or a real GPU wave was not run.
+The current strict unit test actually expects head to be rejected, so the fix must not be to make only the consumer accept both head and tail.
 
-최종 문서 검사도 수행했다: 추적 **73 clean**, 전체 **79 clean**, 자체 **12/12**; 전체 Rust 안의
-문서 gate **1/1**. 최종 증거 문단 추가 후 lint와 기본 diff --check를 다시 확인하며 Rust 366파일 봉인은
-변경하지 않는다. Git의 향후 LF→CRLF 변환 경고는 남지만 whitespace 오류/exit 실패는 없다.
+The final document checks were also run: tracked **73 clean**, all **79 clean**, self-tests **12/12**; the document gate inside the full Rust suite
+**1/1**. After adding the final evidence paragraph, lint and the default diff --check are rechecked, and the Rust 366-file seal
+is not changed. Git's warning about future LF→CRLF conversion remains, but there are no whitespace errors or exit failures.
 
-## 2026-09-07 후속 구현 — head OUTPUT의 실제 생산·소비 계약
+## 2026-09-07 follow-up implementation — the real production/consumption contract for head OUTPUT
 
-기준은 `a9e1967fc` + 이 문서의 후속 미커밋 변경이다. 앞 절의 독립 RED를 원본 기본 시험에 이관했다.
-`tools/event-drive/src/run/inference_identity.rs::InferenceIdentity::output`은 configured head의
-전체 endpoint를 요구한다. sampling 위치인 tail과 승인된 OUTPUT 발행자를 구분하며, 이전 load/session/
-request/route/position 검사와 중복/terminal 뒤 거부를 없애지 않았다. 어댑터 생산자가 이미 head 발행을
-구현하고 있었으므로 이번 production 수정은 OUTER consumer 한 파일이다. P4 중립 transport나 llama ABI는 무변경이다.
+The baseline is `a9e1967fc` + this document's later uncommitted changes. The independent RED from the previous section was moved into the original default tests.
+`tools/event-drive/src/run/inference_identity.rs::InferenceIdentity::output` requires the configured head's
+full endpoint. It distinguishes the tail, which is the sampling location, from the approved OUTPUT publisher, and the earlier load/session/
+request/route/position checks and the rejection of duplicates and post-terminal output were not removed. The adapter producer already
+implemented head publishing, so this production fix is one OUTER consumer file. The P4 neutral transport and the llama ABI are unchanged.
 
-### 지속 회귀와 증거 범위
+### Persistent regressions and evidence scope
 
-- `adapter/test-fixtures/head-approved-output-v1.json`: actual Worker::run에서 캡처한 encoded OUTPUT
-  15개(ordinary 2-stage 5개, checkpoint Replay 2/4-stage 10개). test-only `head_approved_output.rs`를
-  어댑터와 drive가 함께 읽는다. 새 public production API나 선택 feature는 추가하지 않았다.
-- 실제 producer 기본 loop 시험은 현재 출력을 이 wire의 의미 투영과 대조한다. source/target/reply route
-  전체와 protocol/class/content/adapter/correlation/deadline, Outcome JSON 전체를 비교한다. 기존 literal
-  token/text/position/KV/정산/release oracle는 유지했다. loop **12/12**이며 기존 두 시험에 대조를 추가했다.
-- event_id/causation_id/sequence의 실행별 값은 의미 투영에서 제외한다. 현재 실행의 ID 유일성·Event
-  유효성·causation 존재·source별 sequence 증가·요청별 위치 순서를 별도로 본다. **causation 존재는 정확한
-  원인 terminal의 ID 동일성 증명이 아니다.** 캡처 파일은 순서 로그가 아닌 집합이므로 소비 시 요청별
-  position으로 정렬한다. producer의 live 순서 검사는 정렬 전에 수행한다.
-- 실제 `InferenceIdentity`와 `inference::drive`가 같은 15개를 소비한다. 인메모리 framed EventWire와 실제
-  state loop를 지나며 source/세대/route/load/session/request/위치/동일 Event 중복/terminal 뒤 출력 부정
-  입력도 검사한다. 종료용 RELEASED는 **synthetic**이다. 실제 release 집합이나 network/LOAD/native/GPU
-  증명이 아니며, 두 consumer 모듈의 기본 시험은 **7/7**, event-drive 전체는 **22/22**다.
+- `adapter/test-fixtures/head-approved-output-v1.json`: 15 encoded OUTPUTs captured from the actual Worker::run
+  (5 from ordinary 2-stage, 10 from checkpoint Replay 2/4-stage). The test-only `head_approved_output.rs` is
+  read by both the adapter and drive. No new public production API or optional feature was added.
+- The real producer default loop test compares the current output against the semantic projection of this wire. It compares the full source/target/reply route,
+  protocol/class/content/adapter/correlation/deadline, and the entire Outcome JSON. The existing literal
+  token/text/position/KV/settlement/release oracles were kept. loop **12/12**, with the comparison added to the two existing tests.
+- The per-run values of event_id/causation_id/sequence are excluded from the semantic projection. ID uniqueness, Event
+  validity, causation presence, per-source sequence increase and per-request position order in the current run are checked separately. **Causation presence is not proof
+  that the ID matches the exact causing terminal.** The capture file is a set, not an ordered log, so on consumption it is sorted by per-request
+  position. The producer's live order check runs before sorting.
+- The real `InferenceIdentity` and `inference::drive` consume the same 15. They go through an in-memory framed EventWire and the real
+  state loop, and also test negative inputs for source/generation/route/load/session/request/position, duplicate identical Events, and output after terminal.
+  The RELEASED used for termination is **synthetic**. It is not proof of the real release set or of network/LOAD/native/GPU;
+  the default tests of the two consumer modules are **7/7**, and event-drive as a whole is **22/22**.
 
-원본 수정 전 fresh compile RED는 `target/head-output-consumer-original-red.log` 및 동명 snapshot에
-**0 passed / 1 failed**로 남았다. 이전 tail만 허용하면 head positive가 실패한다. 앞 절 15개 전체 거부
-실행과 이번 지속 기본 회귀를 구분한다.
+The fresh compile RED before the original fix remains in `target/head-output-consumer-original-red.log` and the snapshot of the same name as
+**0 passed / 1 failed**. If only the previous tail is allowed, the head positive fails. The previous section's run that rejected all 15
+is kept apart from this persistent default regression.
 
-### 독립 변이 — 양쪽 경계가 각각 실패해야 함
+### Independent mutations — each side of the boundary must fail on its own
 
-| 변이 | 기준선 | 잘못된 변경 | 복원 |
+| Mutation | Baseline | Faulty change | Restore |
 | --- | --- | --- | --- |
-| producer를 head 대신 base의 tail source로 발행 | 12/0 | 10/2 | 12/0 |
-| 같은 길이의 fixture 응답 text 오염 | 12/0 | 11/1 | 12/0 |
-| consumer tail-only 회귀 | 7/0 | 3/4 | 7/0 |
-| consumer가 모든 configured node 허용 | 7/0 | 5/2 | 7/0 |
-| consumer route 검사 제거 | 7/0 | 5/2 | 7/0 |
+| producer publishes from base's tail source instead of head | 12/0 | 10/2 | 12/0 |
+| fixture response text corrupted at the same length | 12/0 | 11/1 | 12/0 |
+| consumer tail-only regression | 7/0 | 3/4 | 7/0 |
+| consumer accepts every configured node | 7/0 | 5/2 | 7/0 |
+| consumer route check removed | 7/0 | 5/2 | 7/0 |
 
-표는 passed/failed다. `target/head-output-producer-mutations-20260907-01/verification.md`에 각 fresh
-compile·EXE·370입력파일과 복원/원본 mismatch 0을 보존했다. producer 370에는 기존 deployment의
-`fixtures.json`도 포함된다. checkpoint 변이는 2-stage iteration에서 먼저 실패하므로 그 실패 실행을
-4-stage까지 수행한 것으로 세지 않는다. 정상/복원은 두 크기를 모두 수행한다.
+The table shows passed/failed. `target/head-output-producer-mutations-20260907-01/verification.md` preserves each fresh
+compile, EXE, the 370 input files, and restore/original mismatch 0. The producer's 370 also include the existing deployment's
+`fixtures.json`. The checkpoint mutation fails first in the 2-stage iteration, so that failing run is not counted as having
+gone through 4-stage. The normal and restore runs cover both sizes.
 
-최초 producer 복원은 파일 mtime까지 복사해 Cargo가 변이 EXE를 재사용했다. 해당 로그는 `INVALID-*`로
-보존하고 유효 복원에서 제외했다. mtime을 갱신한 실제 재컴파일/12 PASS를 따로 남겼다. 원본 checkout은
-변이에 쓰지 않았다. `target/head-output-consumer-mutations-20260907/verification.json`은 소비측
-161파일 기준선/복원/현재 원본 일치와 세 변이의 실제 compile·EXE·raw log를 보존한다.
+The first producer restore copied file mtimes too, so Cargo reused the mutated EXE. That log is preserved as `INVALID-*`
+and excluded from the valid restore. The actual recompile with updated mtimes and 12 PASS is recorded separately. The original checkout was
+not used for mutations. `target/head-output-consumer-mutations-20260907/verification.json` preserves the match of the consumer-side
+161-file baseline/restore/current original and the actual compile, EXE and raw log of the three mutations.
 
-### 최종 집계와 소스
+### Final tally and sources
 
 - consumer production SHA256: `6DF744B8F0321FBCD007AB683FB8ED8F453C4E56F825078BBBBB852D1519FDFB`.
 - shared OUTPUT JSON: `5C566577E988048335BD34CA10ECA94F8E96F7A448D7BBE126CBF7A221F40D21`.
 - shared test helper: `6CCC6AC81EBD535BAA6E8D881610BCC5C4B514A8309E9E2A91E32DFFDE99CA2F`.
-- 전체 실행 전후 Rust/Cargo + 새 OUTPUT JSON **369파일** 봉인:
+- Seal of Rust/Cargo + the new OUTPUT JSON, **369 files**, before and after the full run:
   `b6c164b21e3131f421a195cc0d4a6c0f3d673a7b548aaa862a2aab7f367d0dff`.
-  `target/head-output-rust-source.json`과 `head-output-seal.mjs --verify`를 사용했다. 이 369파일 집계는
-  기존 deployment JSON·문서·compiler/registry 원문까지 포함한 모든 빌드 입력이라는 뜻은 아니다.
+  `target/head-output-rust-source.json` and `head-output-seal.mjs --verify` were used. This 369-file aggregate
+  does not mean it covers every build input, including the existing deployment JSON, documents and compiler/registry sources.
 
-`target/head-output-workspace.log`: `cargo test --workspace --no-fail-fast`, 최종 exit **0**, 57 summary,
-**1051 passed / 0 failed / 7 ignored**. 이전 1047 + 실제 consumer 기본 회귀 4이며 producer parity는 기존
-시험 두 개를 강화했다. `target/head-output-js.log`: 하네스57 + build wiring6 = **63 passed**, 실패/생략0.
-`target/head-output-clippy.log`: staged/agent-core/event-drive --all-targets exit0이지만 경고는 남는다.
-staged lib-test 26(13 duplicates), event-drive bin-test 7(6 duplicates); 경고 없는 완료로 보고하지 않는다.
-private-header **81 clean**, common **0 header / 5 source**, 현재 compat manifest **valid 24**다.
-C++/CUDA·원격·실제 모델·VRAM-only/RAM 오프로딩 웨이브·성능 비회귀·commit/push는 이번 slice 미실행이다.
+`target/head-output-workspace.log`: `cargo test --workspace --no-fail-fast`, final exit **0**, 57 summaries,
+**1051 passed / 0 failed / 7 ignored**. That is the previous 1047 + 4 real consumer default regressions; producer parity strengthened two existing
+tests. `target/head-output-js.log`: harness57 + build wiring6 = **63 passed**, failed/skipped0.
+`target/head-output-clippy.log`: staged/agent-core/event-drive --all-targets exit0, but warnings remain.
+staged lib-test 26 (13 duplicates), event-drive bin-test 7 (6 duplicates); this is not reported as a warning-free completion.
+private-header **81 clean**, common **0 header / 5 source**, current compat manifest **valid 24**.
+C++/CUDA, remote, real models, VRAM-only/RAM offloading waves, performance non-regression and commit/push were not run in this slice.
 
-### GREEN 밖의 다음 세 소비자 RED
+### The next three consumer REDs outside GREEN
 
-`target/outer-inference-consumer-probes-20260907-01/verification.txt`와 `consumer_probes.rs`에 정상
-1 PASS / 거부 규약 **3 RED**를 남겼다. 권위 실행은 `03-final-identity-counterexamples.*`다.
-수정된 head source/최종 formatting까지 복사하고 재컴파일했다. 원본 1051에 포함되지 않은 copy 시험이다.
+`target/outer-inference-consumer-probes-20260907-01/verification.txt` and `consumer_probes.rs` record
+1 normal PASS / **3 RED** for the rejection rules. The authoritative run is `03-final-identity-counterexamples.*`.
+The fixed head source and final formatting were copied and recompiled. This is a copy test not included in the original 1051.
 
-실제 drive가 보낸 PREFILL을 독립 peer가 받아 검증한 뒤 current head/route의 BATCH_OBSERVATION,
-OUTPUT, RELEASED를 반환한다. drive의 실제 상태→execute와 같은 관측 집계→실제 acceptance를 통과한다.
-정상 대조는 프롬프트 [4,7], 첫 위치 [4,7], 각 두 토큰, 정확한 읽을 수 있는 응답, 서로 다른 해제 요청이다.
+An independent peer receives and validates the PREFILL sent by the real drive, and then returns BATCH_OBSERVATION,
+OUTPUT and RELEASED for the current head/route. It goes through drive's real state→execute, the same observation aggregation, and the real acceptance.
+The normal control is prompts [4,7], first positions [4,7], two tokens each, exact readable responses, and different release requests.
 
-1. A만 실제 peer 해제 집합에 넣고 fresh-ID RELEASED(A,count=1)를 두 번 보내면 completed2/released2로
-   승인된다. 정상 producer가 이 잘못을 한다는 증명이 아니라 consumer가 해제 집합을 증명하지 못함이다.
-2. max_tokens=1 제출에 contiguous OUTPUT 두 개, 두 번째 length 종료를 보내면 sampled2인데 승인된다.
-3. 프롬프트 관측 [4,7]에서 B의 위치를 전부 +1 옮겨 첫 위치 [4,8]로 보내도 선택적 공통 경계가 없으면 승인된다.
+1. With only A in the real peer release set, sending a fresh-ID RELEASED(A,count=1) twice is approved as completed2/released2.
+   This does not prove that a normal producer makes this mistake; it shows that the consumer cannot prove the release set.
+2. For a max_tokens=1 submission, sending two contiguous OUTPUTs with the second ending in length is approved even though sampled2.
+3. With prompt observation [4,7], shifting all of B's positions by +1 and sending first positions [4,8] is approved when there is no optional common bound.
 
-최종151소스 before/after/사본 일치와 EXE `06AA14DEDDC06EC9B158805618EE445746286E1437D9534FF5FDB6F5D65AD3D5`
-및 cargo exit101을 보존했다. 원본 수리는 하지 않았다. peer의 해제 집합은 자기 payload count와 독립이나
-실제 native KV 관측은 아니다. CREATE/LOAD/UNLOAD/DELETE 전 RPC나 실제 GPU 웨이브도 포함하지 않는다.
-T20에 필수 완료 판정 반례를 등록했으며 구체적 다음 순서는 최신 로드맵이 단독 소유한다.
+The before/after/copy match of the final 151 sources, EXE `06AA14DEDDC06EC9B158805618EE445746286E1437D9534FF5FDB6F5D65AD3D5`,
+and cargo exit101 are preserved. The original was not fixed. The peer's release set is independent of its own payload count but
+is not a real native KV observation. RPCs for CREATE/LOAD/UNLOAD/DELETE and a real GPU wave are not included either.
+The mandatory completion-verdict counterexamples were registered in T20, and the concrete next order is owned solely by the latest roadmap.
 
-## 2026-09-07 후속 구현 — OUTPUT 예산과 fresh-prefill 관측의 실제 소비
+## 2026-09-07 follow-up implementation — real consumption of the OUTPUT budget and fresh-prefill observations
 
-기준은 `a9e1967fc` + 후속 미커밋 변경이다. 앞 절의 세 소비자 반례 중 출력 예산과 요청별 첫 위치를
-수정했다. **해제 멤버십은 아직 수정하지 않았다.** source 승인·정상 text 존재만으로 완료를 승인하지
-않도록 실제 drive/최종 acceptance 양쪽에 필요한 검사를 추가했다. P4 중립 transport/native ABI는 무변경이다.
+The baseline is `a9e1967fc` + later uncommitted changes. Of the three consumer counterexamples from the previous section, the output budget and the per-request first position
+were fixed. **Release membership has not been fixed yet.** Checks were added on both the real drive and final acceptance so that completion is not approved
+merely because the source is approved and normal text exists. The P4 neutral transport and native ABI are unchanged.
 
-### 구현된 경계와 아직 없는 증명
+### Implemented boundaries and proof still missing
 
-- `tools/event-drive/src/run/output_budget.rs::validate_output`: 이미 받은 sampled 개수와 들어오는
-  한 OUTPUT으로 예산/terminal을 검증한다. 빈 EOS도 1개이며, `length`는 예산 끝에서만 가능하다.
-  `stop`/`eos`는 조기 종료 가능, 알 수 없는 이유·상한 도달 후 비terminal은 거부한다. 실제 drive는
-  response/outcomes/completion을 바꾸기 전에 호출한다. acceptance는 보존된 전체 outcomes를 다시 검사한다.
-- `inference_evidence.rs::apply_observations`: 전체 후보를 검증한 후 요청별 counters를 한 번 설치한다.
-  같은 observation ID의 같은 body 재전달은 기존 insert 경로에서 dedup한다. 다른 observation ID가
-  같은 physical execution을 재사용하거나 unknown request/합계 overflow를 만들면 거부한다.
-  모든 완료 요청은 양수 prefill 관측이 있어야 하고 first OUTPUT position이 그 요청 합계와 같아야 한다.
-  뒤 요청이 실패할 때 앞 요청 counters도 미변경이라는 회귀를 포함한다.
-- 현재 drive의 completed/released 최종 경계에서 검증한다. OUTPUT 뒤 관측이 오고 마지막 해제 전
-  도착하는 양성은 허용한다. **그 경계 뒤 늦은 관측을 기다리는 재조정은 구현하지 않았다.**
-  누락/불일치는 성공 report가 아니라 오류다. execute의 중복 후처리 집계를 제거했으며, 현재 fake-peer
-  시험은 drive와 acceptance를 지나지만 CREATE/LOAD/UNLOAD/DELETE 전 RPC orchestration은 지나지 않는다.
-- 이번 위치 대조는 fresh position 0 제출과 head-reported prefill 증거 사이 관계다. 독립 native tokenizer/
-  실제 KV 또는 Restore/LCP의 위치 증명이 아니다. 빈 EOS의 protocol-valid와 nonempty/minimum 응답
-  quality-pass도 구분한다. 기존 response 전문/최소 길이/judge는 완화하지 않았다.
+- `tools/event-drive/src/run/output_budget.rs::validate_output`: validates budget/terminal using the sampled count already received and
+  the one incoming OUTPUT. An empty EOS also counts as 1, and `length` is only possible at the end of the budget.
+  `stop`/`eos` may end early; an unknown reason, or a non-terminal after the bound is reached, is rejected. The real drive
+  calls it before changing response/outcomes/completion. acceptance rechecks all preserved outcomes.
+- `inference_evidence.rs::apply_observations`: after validating the whole candidate, it installs the per-request counters once.
+  A redelivery of the same body under the same observation ID is deduplicated on the existing insert path. If a different observation ID
+  reuses the same physical execution, or creates an unknown request or a sum overflow, it is rejected.
+  Every completed request must have a positive prefill observation, and the first OUTPUT position must equal that request's sum.
+  This includes a regression showing that when a later request fails, the earlier request's counters are also unchanged.
+- Validation happens at the current drive's completed/released final boundary. A positive case in which the observation comes after OUTPUT and
+  arrives before the last release is allowed. **Reconciliation that waits for late observations after that boundary is not implemented.**
+  Missing or mismatched data is an error, not a success report. The duplicate post-processing tally in execute was removed; the current fake-peer
+  tests go through drive and acceptance but not through the full CREATE/LOAD/UNLOAD/DELETE RPC orchestration.
+- This position check relates a fresh position 0 submission to head-reported prefill evidence. It is not a position proof from an independent native tokenizer,
+  real KV, or Restore/LCP. Protocol-valid for an empty EOS is also kept apart from a nonempty/minimum response
+  quality pass. The existing full response / minimum length / judge checks were not relaxed.
 
-### 기본 시험과 실제 생산 경로
+### Default tests and the real production path
 
-`consumer_budget_boundary_tests.rs`의 **15개**는 실제 drive가 보낸 PREFILL을 peer가 먼저 읽어 검사한 뒤,
-bounded duplex의 framed EventWire로 응답을 준다. 독립 프롬프트 행수 [4,7]·읽을 수 있는 정확한 응답을
-사용한다. 예산 초과/첫 위치 변경/관측 누락/정확 재전달/ID 재사용/변형 body/역순/늦은 관측/빈 EOS/
-조기 stop·eos/조기 length/unknown stop/terminal 뒤 출력을 다룬다. 시험이 request counters를 대신
-채우지 않는다. 거부는 final acceptance=false만이 아니라 **실제 drive Err**여야 한다. 해제 통지는 synthetic이다.
+The **15 tests** in `consumer_budget_boundary_tests.rs` have the peer first read and check the PREFILL sent by the real drive,
+and then respond through a framed EventWire over a bounded duplex. They use independent prompt row counts [4,7] and exact readable responses.
+They cover budget overrun, changed first position, missing observation, exact redelivery, ID reuse, altered body, reverse order, late observation, empty EOS,
+early stop/eos, early length, unknown stop, and output after terminal. The tests do not fill in the request counters themselves.
+A rejection must be a **real drive Err**, not just final acceptance=false. The release notification is synthetic.
 
-기존 actual producer OUTPUT JSON 15개는 수정하지 않았다:
+The existing 15 actual producer OUTPUT JSON entries were not modified:
 `5C566577E988048335BD34CA10ECA94F8E96F7A448D7BBE126CBF7A221F40D21`.
-공용 helper는 actual loop가 받은 전체 이벤트의 BATCH_OBSERVATION에서 request/physical prefill을 읽고,
-OUTPUT position에서 역산하지 않은 독립 workload 상수 ordinary=7, partial=3, fence-probe=1과 대조한다.
-ordinary 2-stage 및 checkpoint Replay 2/4-stage의 기존 token/text/position/KV/release oracle는 유지한다.
-producer는 fake native이므로 독립 tokenizer 증명이 아니다. 기존 fixture consumer에 새로 감싼 관측/
-RELEASED는 synthetic이며, 원래 OUTPUT만 actual capture다. 실제 producer loop는 기존 **12/12**다.
+The shared helper reads the request/physical prefill from the BATCH_OBSERVATION among all events received by the actual loop,
+and compares them with independent workload constants ordinary=7, partial=3, fence-probe=1, which are not back-computed from the OUTPUT position.
+The existing token/text/position/KV/release oracles for ordinary 2-stage and checkpoint Replay 2/4-stage are kept.
+The producer is fake native, so this is not an independent tokenizer proof. The observations/RELEASED newly wrapped around the existing fixture consumer
+are synthetic, and only the original OUTPUT is an actual capture. The real producer loop stays at **12/12**.
 
-초기 empty-EOS consumer 시험이 config의 `exact_response=""` 금지에 막혀 **14/15**, 전체 drive **46/47**였다.
-입력 자체가 illegal한 fixture였으므로 expectation을 None으로 고쳤다. EOS token/text·min length=1·빈 응답
-quality 실패 단언은 유지했다. 이 초기 RED를 생산 코드 결함이나 성공으로 세지 않는다.
-`target/outer-budget-boundary-initial.log` 및 독립 기록에 원문을 남겼고 최종 drive는 **47/47**다.
+The initial empty-EOS consumer test was blocked by the config's ban on `exact_response=""`, giving **14/15** and full drive **46/47**.
+The input itself was an illegal fixture, so the expectation was changed to None. The EOS token/text, min length=1, and empty-response
+quality failure assertions were kept. This initial RED is counted neither as a production code defect nor as a success.
+The raw output is in `target/outer-budget-boundary-initial.log` and the independent record, and the final drive is **47/47**.
 
-### 실제 호출과 독립 변이
+### Real calls and independent mutations
 
-| 대상 / 잘못된 변경 | 기준선 | 변이 | 정확 복원 |
+| Target / faulty change | Baseline | Mutation | Exact restore |
 | --- | --- | --- | --- |
-| actual drive의 budget 검사 호출만 제거 | 15/0 | 12/3 | 15/0 |
-| actual drive의 observation 적용 호출만 제거 | 15/0 | 6/9 | 15/0 |
-| budget의 early-length 검사 제거 | 47/0 | 44/3 | 47/0 |
-| budget에서 빈 EOS 예산 예외 허용 | 47/0 | 46/1 | 47/0 |
-| acceptance 첫 위치 대조 제거 | 47/0 | 46/1 | 47/0 |
-| producer의 prefill 통계를 aggregate/request 모두 decode로 오분류 | 12/0 | 10/2 | 12/0 |
+| Remove only the budget check call in the actual drive | 15/0 | 12/3 | 15/0 |
+| Remove only the observation apply call in the actual drive | 15/0 | 6/9 | 15/0 |
+| Remove the budget early-length check | 47/0 | 44/3 | 47/0 |
+| Allow an empty-EOS budget exception in budget | 47/0 | 46/1 | 47/0 |
+| Remove the acceptance first-position check | 47/0 | 46/1 | 47/0 |
+| Misclassify the producer's prefill statistics as decode for both aggregate and request | 12/0 | 10/2 | 12/0 |
 
-passed/failed 표다. 빈 EOS 변이는 pure helper 시험만, acceptance 변이는 해당 최종 대조 시험만 실패했다.
-다른 layer의 방어가 남아 있으므로 모두 actual drive까지 실패했다고 하지 않는다. 반면 budget 호출 제거는
-acceptance가 여전히 거부해도 drive가 잘못 완료해 3개가 실패한다. 생산 오분류는 물리 행수·native 동작·
-출력을 바꾸지 않고 관측 두 카운터만 바꾼다. 기존 OUTPUT/KV oracle는 통과하되 새 prefill 대조가 실패한다.
-checkpoint 변이 실패는 2-stage에서 멈추며, 기준선/복원은 2/4-stage를 모두 수행한다.
+The table shows passed/failed. The empty-EOS mutation failed only the pure helper test, and the acceptance mutation failed only the corresponding final check test.
+Other layers' defenses remain, so we do not claim that all of them failed as far as the actual drive. In contrast, removing the budget call
+makes 3 tests fail because drive wrongly completes even though acceptance still rejects. The production misclassification does not change the physical row count, native behavior
+or output; it changes only the two observation counters. The existing OUTPUT/KV oracles pass, but the new prefill check fails.
+The checkpoint mutation failure stops at 2-stage, while baseline/restore run both 2/4-stage.
 
-- `target/consumer-budget-boundary-regressions-20260907-01/verification.txt`: actual consumer 변이·
-  원문·소스/EXE. 이전 소비자 보존본(HEAD 자체 아님)에 동일 시험을 넣은 fresh compile은 **6/9**다.
-  6개는 잘못된 스트림 승인, 3개는 새 최종 counters postcondition 미충족이다. 그 3개를 과거 정상 입력
-  거부라고 부르지 않는다. 권위 실행 04/05/06/10/11은 모두 실제 Compiling과 input before=after를 남긴다.
-  03은 복사 mtime 때문에 old EXE를 재사용하여 **무효**다. 07은 EOL이 달라 byte-exact 복원 증거에서
-  제외한다. 10은 baseline 154파일 정확 복원, 11은 최종 producer fixture 변경 후 15/0 및 원본 대응
-  153파일 일치다. 사본의 나머지 1파일은 모듈 등록되지 않은 옛 probe이며 실행 coverage에 포함되지 않는다.
-- `target/output-budget-mutations-20260907/verification.json`: pure/acceptance 변이 세 가지와 최종
-  47/0, 167입력(원본 대응164 + 독립 workspace/Cargo 설정), 현재 대응 파일 일치, EXE/compile 원문.
-  수정 전 acceptance cap RED는 `target/output-budget-acceptance-original-red.log`에 별도로 남는다.
-- `target/prefill-producer-mutations-20260907-01/verification.md`: producer baseline/변이/복원 모두
-  재컴파일, 372입력 source/EXE, restore/current mismatch 0. 이 copy scope는 아래 전체 봉인의 기존
-  deployment JSON을 제외하므로 373과 다른 수다. 원본은 변이에 사용하지 않았다.
+- `target/consumer-budget-boundary-regressions-20260907-01/verification.txt`: actual consumer mutations,
+  raw output, source/EXE. A fresh compile with the same tests in the preserved earlier consumer copy (not HEAD itself) gives **6/9**.
+  6 are wrong stream approvals, and 3 fail the new final counters postcondition. Those 3 are not called rejections of
+  formerly valid input. The authoritative runs 04/05/06/10/11 all record actual Compiling and input before=after.
+  03 is **invalid** because the copied mtime made it reuse the old EXE. 07 has different EOL and is excluded from the byte-exact restore
+  evidence. 10 is an exact restore of the 154-file baseline, and 11 is 15/0 after the final producer fixture change, matching the corresponding
+  153 original files. The copy's remaining 1 file is an old probe not registered as a module and is not in the execution coverage.
+- `target/output-budget-mutations-20260907/verification.json`: the three pure/acceptance mutations and the final
+  47/0, 167 inputs (164 corresponding to the original + independent workspace/Cargo settings), current corresponding files matching, EXE/compile raw output.
+  The pre-fix acceptance cap RED is kept separately in `target/output-budget-acceptance-original-red.log`.
+- `target/prefill-producer-mutations-20260907-01/verification.md`: producer baseline/mutation/restore all
+  recompiled, 372 input sources/EXE, restore/current mismatch 0. This copy scope excludes the existing
+  deployment JSON in the full seal below, so the count differs from 373. The original was not used for mutations.
 
-### 최종 소스·집계
+### Final sources and tally
 
-`target/outer-budget-source.json`과 `outer-budget-seal.mjs --verify`는 Rust/Cargo와 두 literal embedded
-JSON fixture **373파일**을 봉인한다. 문서·compiler/registry package 원문은 이 범위 밖이다.
+`target/outer-budget-source.json` and `outer-budget-seal.mjs --verify` seal Rust/Cargo plus the two literal embedded
+JSON fixtures, **373 files**. Documents and compiler/registry package sources are outside this scope.
 SHA256 `d234508fd86df5caff045e63994a42a5f943407d36bec67d5eb9fd32567c2b71`.
 
-- `target/outer-budget-workspace.log`: `cargo test --workspace --no-fail-fast`, 최종 exit0, **57 summary,
-  1076 passed / 0 failed / 7 ignored**. 이전1051 + consumer15 + budget3 + acceptance5 + evidence2.
-  producer 두 기존 시험 강화는 새 시험 수에 더하지 않는다.
-- `target/outer-budget-js.log`: 하네스57 + build wiring6 = **63/0**, skipped0.
+- `target/outer-budget-workspace.log`: `cargo test --workspace --no-fail-fast`, final exit0, **57 summaries,
+  1076 passed / 0 failed / 7 ignored**. Previous1051 + consumer15 + budget3 + acceptance5 + evidence2.
+  Strengthening the two existing producer tests is not added to the new test count.
+- `target/outer-budget-js.log`: harness57 + build wiring6 = **63/0**, skipped0.
 - `target/outer-budget-boundary-final-focused.log`: event-drive **47/0**.
-- `target/outer-budget-clippy.log`: staged/agent-core/event-drive all-targets exit0. staged lib-test26
-  (13 duplicates), event-drive bin-test7(6 duplicates) 등 경고는 남는다. warning-free로 보고하지 않는다.
+- `target/outer-budget-clippy.log`: staged/agent-core/event-drive all-targets exit0. Warnings remain, including staged lib-test26
+  (13 duplicates) and event-drive bin-test7 (6 duplicates). Not reported as warning-free.
 
-C++/CUDA·실제 network·remote deployment·모델/GPU·VRAM-only/RAM offload 웨이브·성능·commit/push는
-이번 slice에서 실행하지 않았다. target 원문/사본은 로컬 보존이며 공개 불변 번들이 아니다.
-scalar RELEASED의 request 집합, 여러 OUTER의 소유자별 해제 통지, publish 실패 후 notification intent는
-현재 GREEN 밖의 다음 감사 범위다. 구체 작업 순서와 단계 승격은 최신 로드맵만 소유한다.
+C++/CUDA, a real network, remote deployment, models/GPU, VRAM-only/RAM offload waves, performance and commit/push were
+not run in this slice. The target raw output and copies are preserved locally and are not a published immutable bundle.
+The request set of a scalar RELEASED, per-owner release notifications to multiple OUTERs, and the notification intent after a publish failure are
+the next audit scope outside the current GREEN. The concrete work order and stage promotion are owned only by the latest roadmap.
 
-### GREEN 밖의 해제 경계 RED — 실제 생산과 broker 소비를 따로 확인
+### Release boundary REDs outside GREEN — real production and broker consumption checked separately
 
-아래 신규 시험은 독립 copy에만 있고 위 원본 1076 집계에는 포함되지 않는다. 원본 production 수리는
-아직 하지 않았다. source·원문·입력/EXE·scope를 각각 보존했으며 반례를 fake GPU 성능으로 부르지 않는다.
+The new tests below exist only in independent copies and are not included in the original 1076 tally above. The original production fix
+has not been done yet. Source, raw output, inputs/EXE and scope are each preserved, and the counterexamples are not called fake GPU performance.
 
-**소유자 라우팅** — `target/release-owner-routing-red-20260907-01/verification.md`.
-actual Worker::run의 2-stage에서 A/B가 같은 execution=1 terminal capsule에 둘 다 있다는 것을 먼저
-단언했다. 원래 token/text/position/stop 및 모든 stage의 KV 해제 한 번 oracle를 통과한 뒤 새 통지 검사가
-실패한다. A의 ingress42991/channel owner-a/connection11/correlation-a로 released=2, B의 독립
-ingress42992/channel owner-b/connection12/correlation-b로는 0이다. 단일 OUTER 양성은 count1로 통과한다.
+**Owner routing** — `target/release-owner-routing-red-20260907-01/verification.md`.
+In a 2-stage actual Worker::run, the test first asserts that A and B are both in the same execution=1 terminal capsule.
+After passing the original token/text/position/stop oracle and the one-KV-release-per-stage oracle, the new notification check
+fails. A's ingress42991/channel owner-a/connection11/correlation-a gets released=2, while B's independent
+ingress42992/channel owner-b/connection12/correlation-b gets 0. The single-OUTER positive passes with count1.
 
-baseline12/0(fresh compile26.08초), 새 두 시험 후 **13/1**(6.15초), 별도 관측 캡처 시험 추가 후 **14/1**
-(6.83초)이다. 최종 EXE `6EDB6F3AE20DB1653DCA92793F57E35BADA2C165C8D124D9C728A4B8186835B5`,
-copy loop 시험 SHA `95DEBB54EB02E91886896A2FFBE959D841B91EE36609E634F27DC4759B64DA3A`.
-372입력 봉인/원본변경0이며 copy의 loop_tests.rs만 바뀌었다. post-LOAD fake native를 사용하는 actual
-run이지 LOAD negotiation·EventBroker/network 또는 실제 llama/GPU가 아니다.
+baseline12/0 (fresh compile 26.08 s), **13/1** after the two new tests (6.15 s), and **14/1** after adding a separate observation capture test
+(6.83 s). Final EXE `6EDB6F3AE20DB1653DCA92793F57E35BADA2C165C8D124D9C728A4B8186835B5`,
+copy loop test SHA `95DEBB54EB02E91886896A2FFBE959D841B91EE36609E634F27DC4759B64DA3A`.
+372-input seal / original changes 0, and only loop_tests.rs in the copy changed. This is an actual
+run using post-LOAD fake native, not LOAD negotiation, EventBroker/network, or real llama/GPU.
 
-실제 관측도 별도로 캡처했다. 최초 독립 correlation은 event-drive의 request_id=correlation 전제와 다르므로,
-별도 actual run에서 telemetry-owner-a/b 입력의 correlation을 각 request ID로 발행했다. **생성된 wire는
-사후 수정하지 않았다.** `captures/request-correlations.json`의 SHA는
-`01C3E73F1CFE4AFB8E504B79B6CE1766544BF2A37D4A722249A14A3F1B8BB4F7`이다. 실제 관측 두 개는
-각 route로 가지만 body는 A/B 요청 전체를 포함하고, stage span 두 개는 A route에만 간다. 이 생산 관측과
-실제 소비자의 승인 여부는 별도 실행 범위로 나눠 기록한다.
+The real observations were also captured separately. The first independent correlation differed from event-drive's request_id=correlation premise,
+so a separate actual run published the correlation of the telemetry-owner-a/b inputs as each request ID. **The generated wire
+was not edited afterwards.** The SHA of `captures/request-correlations.json` is
+`01C3E73F1CFE4AFB8E504B79B6CE1766544BF2A37D4A722249A14A3F1B8BB4F7`. The two real observations
+go to their respective routes, but each body contains the full A/B requests, and the two stage spans go only to the A route. This production observation and
+whether the real consumer approves it are recorded as separate execution scopes.
 
-**캡처 관측의 실제 소비** — `target/captured-mixed-outer-consumer-red-20260907-01/verification.txt`.
-위 request-correlations 캡처를 바이트 변경 없이 protocol decode→현재 InferenceIdentity::observation에
-재생했다. A/B의 독립 제출 집합은 각각 자기 요청 하나다. 두 route 모두 unknown-request 오류로 거부된다.
-동일 wire를 두 요청 모두 명시 허용한 진단 대조군에 넣으면 통과한다. 이는 source/route/load/session/
-correlation/숫자 형식 오류가 아니라 foreign member 문제를 분리한 대조이며, 모든 요청을 허용하라는 수리가 아니다.
+**Real consumption of the captured observations** — `target/captured-mixed-outer-consumer-red-20260907-01/verification.txt`.
+The request-correlations capture above was replayed, byte-for-byte unchanged, through protocol decode→the current InferenceIdentity::observation.
+A's and B's independent submission sets each contain only their own request. Both routes are rejected with an unknown-request error.
+Putting the same wire into a diagnostic control that explicitly allows both requests passes. This control isolates the foreign member problem from
+source/route/load/session/correlation/number format errors; it is not a fix that allows every request.
 
-fresh compile2.35초, **1 PASS/1 RED**, 입력155파일 before=after와 raw capture 불변, 실행된 consumer/
-protocol6파일 원본=copy다. EXE `9B0A7EFD3C830859F5FACD076366E4CE7D4B9AC476E3AEE7B490F945D2AE8346`.
-같은 함수가 actual drive에서 호출되지만 이 실행 자체는 identity 소비 지점만 통과하며 전체 drive/bootstrap/
-network 실행은 아니다. 캡처의 StageSpan B 누락은 생산 관측/코드 사실이고 이 소비 시험의 coverage 단언은 아니다.
+fresh compile 2.35 s, **1 PASS/1 RED**, 155 input files before=after with the raw capture unchanged, and the executed consumer/
+protocol 6 files identical between original and copy. EXE `9B0A7EFD3C830859F5FACD076366E4CE7D4B9AC476E3AEE7B490F945D2AE8346`.
+The same function is called in the actual drive, but this run itself only goes through the identity consumption point, not a full drive/bootstrap/
+network run. The missing StageSpan B in the capture is a fact of production observation/code, not a coverage assertion of this consumer test.
 
-**ACK source 권위** — `target/released-source-authority-red-20260907/verification.json`.
-독립 head→middle→tail topology와 정확한 pending release 두 개를 준비하고 encoded Event를 실제
-EventBroker::dispatch→node receiver→Worker::handle→released에 넣었다. tail은 **1 PASS**, 같은 body의
-middle·pipeline 밖 Node는 **2 RED**다. 두 RED 모두 Enqueued, ERROR0/RELEASED1이며 pending 두 개 삭제,
-slot0의 waiting 요청 재수용, 남은 free=[1], Verify fence 해제가 발생한다. `next`는 이 시험에서 middle이다.
+**ACK source authority** — `target/released-source-authority-red-20260907/verification.json`.
+An independent head→middle→tail topology and exactly two pending releases were prepared, and encoded Events were fed into the real
+EventBroker::dispatch→node receiver→Worker::handle→released. tail gives **1 PASS**; the same body from
+middle and from a Node outside the pipeline gives **2 RED**. Both REDs are Enqueued with ERROR0/RELEASED1, and cause deletion of the two pending entries,
+re-admission of the waiting request in slot0, remaining free=[1], and release of the Verify fence. `next` is middle in this test.
 
-기존 release 시험 baseline3/0는32.67초 fresh compile, 신규 source 시험 **1/2**는17.66초 fresh compile다.
-RED EXE `c6e7754b24a53e79653af8bd22c2c0d9d3524a975b397e47255b150daf672a0e`와 같은 소스/실행파일로
-`--test-threads=1`을 재실행해 before/after 원문을 온전하게 남겼다. `red-serial-output.log` SHA는
-`0744604305919a7b2a51758eba5181f16fc7125a811c7de1795c7310d47ba509`다. 보존 242입력, 원본 대응239의
-production 차이0. 독립 workspace/test dev-dependency/축소 lock은 명시했으며 공유 registry 버전과 checksum은 같다.
+The existing release tests' baseline3/0 was a 32.67 s fresh compile, and the new source test **1/2** a 17.66 s fresh compile.
+With the RED EXE `c6e7754b24a53e79653af8bd22c2c0d9d3524a975b397e47255b150daf672a0e` and the same sources/executable,
+`--test-threads=1` was rerun to keep complete before/after raw output. The SHA of `red-serial-output.log` is
+`0744604305919a7b2a51758eba5181f16fc7125a811c7de1795c7310d47ba509`. 242 inputs preserved, with production difference0 across the 239
+corresponding to the original. The independent workspace, test dev-dependency and reduced lock are stated explicitly, and the shared registry versions and checksums are the same.
 
-이 시험은 pending 상태 주입 후 실제 broker/handler 소비다. 원래 native RELEASE 체인 전체 생성,
-EventNode async run·TCP 인증·GPU 실행은 미실행이다. “외부”는 pipeline 밖 Node envelope이며 외부 네트워크
-침입을 증명한 것이 아니다. source 역할의 모델 의미는 adapter의 SESSION 계약에 있어야 하며 중립
-broker에 llama 지식을 넣는 수리는 제안하지 않는다.
+This test is real broker/handler consumption after injecting pending state. Generating the full original native RELEASE chain,
+EventNode async run, TCP authentication and GPU execution were not run. "External" means a Node envelope outside the pipeline; it does not prove
+an intrusion from an external network. The model meaning of the source role belongs in the adapter's SESSION contract, and a fix that puts llama knowledge into the neutral
+broker is not proposed.
 
-**코드 감사만 완료한 별도 표면**: release.rs는 ACK 검증 뒤 pending/slot/admission을 바꾸고 직접 emit한다.
-Closed 또는 이벤트 ID 고갈 뒤 notification intent를 effects에 보존하는 actual 회귀는 아직 없다.
-이를 위 두 RED와 섞어 “실제로 세 결함을 재현했다”고 하지 않는다. 해제 group/attempt/terminal 기대값과
-재시작 freshness도 새 wire 계약/시험 없이 scalar 교체만으로 닫을 수 없다.
+**A separate surface where only the code audit is complete**: release.rs changes pending/slot/admission after ACK validation and emits directly.
+There is no actual regression yet that preserves the notification intent in effects after Closed or event ID exhaustion.
+This is not mixed with the two REDs above into a claim that "three defects were actually reproduced". Release group/attempt/terminal expectations and
+restart freshness also cannot be closed by a scalar replacement alone, without a new wire contract and tests.
 
-문서 게이트는 추적73/전체79 clean, 자체12/12, cargo 문서 gate1/1이다. private-header81 clean,
-common0 header/5 source, 현재0eadefebd manifest valid24도 다시 실행했다. 전체 준비/새 pin 의미 호환이나
-native 모델 재검증은 아니다. 문서 변경 후 source373 봉인과 기본 diff 검사를 다시 확인한다.
+The document gates are tracked73/all79 clean, self-tests12/12, cargo document gate1/1. private-header81 clean,
+common0 header/5 source, and current0eadefebd manifest valid24 were also rerun. This is not full preparation, semantic compatibility of a new pin,
+or native model re-verification. After the document change, the source373 seal and the default diff check are rechecked.
 
-## 2026-09-07 후속 — SESSION 권위와 해제 ACK 발신자 경계
+## 2026-09-07 follow-up — SESSION authority and the release ACK sender boundary
 
-HEAD `a9e1967fc` + 미커밋 작업 트리다. 이전 절에서 원본 밖 RED로 남긴 내부 ACK source를 수리했다.
-SESSION v4 의미/제약은 배치 계약 단독 소유다. P4 중립 protocol/broker와 native/llama/backend 생산은
-이 slice에서 바꾸지 않았다. staged Cargo의 agent-core 의존은 broker 시험용 dev-dependency다.
+HEAD `a9e1967fc` + uncommitted working tree. The internal ACK source, left as an out-of-original RED in the previous section, was fixed.
+SESSION v4 semantics and constraints are owned solely by the batching contract. The P4 neutral protocol/broker and native/llama/backend production code were
+not changed in this slice. The staged Cargo dependency on agent-core is a dev-dependency for broker tests.
 
-### 실제 소비와 유지한 정상 경로
+### Real consumption and the normal paths kept
 
-- `worker/release_tests.rs`: 실제 SESSION 설치 뒤 codec→EventBroker::dispatch→Worker::handle로
-  정상 terminal, next인 middle, pipeline 밖 Node, 오래된 terminal node generation, 다른 agent의
-  동명 terminal을 대조한다. 거부 시 pending/slot/예약 대기/Verify fence/effects를 보존하고 같은
-  본문을 정상 terminal로 다시 보내 성공한다. 기존 release/admission 3개를 포함해 **8/8**.
-- `worker/loop_tests.rs`: 기존 ordinary 2/4/8 및 speculative 2/4의 token/text/position/stop·각 stage
-  native KV/release oracle를 유지한다. 새 3-stage 시험은 실제 ACK들을 보류한 상태에서 middle의
-  fresh-ID ACK를 주입한다. 8개 요청 뒤 대기한 9번째 요청이 구코드에서는 조기 native 발행됐고,
-  수정 뒤에는 native 상태가 보존된다. 정상 ACK 재개 뒤 9개 모두 정상 완주한다. **13/13**.
-  shared OUTPUT 15개 JSON와 prefill 기대값을 수정하지 않았다.
-- `worker/session_tests.rs`: 설치한 세 role과 같은 선언 반복, 설치 전/후 malformed·rebind,
-  local endpoint/index/target·구 wire를 검사한다. 설치 후 immutable 비교가 최초 선언 검증 누락을
-  숨기지 않도록 설치 전 부정도 둔다. stage 메시지 여섯 계열은 source/target 각각 잘못된 codec 입력을
-  실제 handler에 넣어 정확한 route 거부를 확인한다. **5/5**. 빈 상태의 이 행렬을 native 효과 시험으로 세지 않는다.
-- 이전 fixture 5파일의 정상 metadata를 새 SESSION에 맞췄다. 기존 worker27/incarnation3/turn9/
-  physical-replay28/stage20 = **87개**의 body/원장/불확실성 단언을 유지했다. target만 실제 수신자에
-  맞추는 fixture wrapper는 source를 보정하지 않으며, wrong-target 증명은 새 명시 시험이 담당한다.
-- OUTER `session_events`는 execute가 실제 사용하는 생산 함수다. 독립 상수의 세 노드 순서와 각
-  target/index·v4 JSON·기존 Sender sequence를 고정한다. 실제 ExpectedReply/receive_exact의
-  역순 ACK 양성, source/causation 부정은 bounded in-memory EventWire를 사용한다. 새 **3/3**,
-  event-drive 전체 **50/50**. 이 시험은 실제 TCP CREATE/LOAD bootstrap을 실행하지 않는다.
+- `worker/release_tests.rs`: after installing a real SESSION, goes through codec→EventBroker::dispatch→Worker::handle and compares
+  the normal terminal, the next middle, a Node outside the pipeline, a stale terminal node generation, and a same-named terminal from another
+  agent. On rejection, pending/slot/reserved waiters/Verify fence/effects are preserved, and resending the same
+  body from the normal terminal succeeds. Including the 3 existing release/admission tests, **8/8**.
+- `worker/loop_tests.rs`: keeps the existing ordinary 2/4/8 and speculative 2/4 token/text/position/stop and per-stage
+  native KV/release oracles. A new 3-stage test injects a fresh-ID ACK from middle while the real ACKs are
+  held back. The 9th request, waiting behind 8 requests, was issued to native early under the old code;
+  after the fix, the native state is preserved. After normal ACKs resume, all 9 complete normally. **13/13**.
+  The 15 shared OUTPUT JSON entries and the prefill expectations were not modified.
+- `worker/session_tests.rs`: checks the three installed roles and a repeat of the same declaration, malformed/rebind before and after installation,
+  and local endpoint/index/target and old wire. Negative cases before installation are included too, so that the post-install immutable comparison does not hide
+  a missing check on the first declaration. For the six stage message families, wrong codec inputs for source and target each are fed into
+  the real handler to confirm the exact route rejection. **5/5**. This matrix on an empty state is not counted as a native effect test.
+- The valid metadata of the earlier 5 fixture files was aligned with the new SESSION. The body/ledger/uncertainty assertions of the existing worker27/incarnation3/turn9/
+  physical-replay28/stage20 = **87 tests** were kept. The fixture wrapper that only aligns target to the real receiver
+  does not correct source, and the new explicit tests are responsible for the wrong-target proof.
+- OUTER `session_events` is the production function that execute actually uses. The three-node order from independent constants and each
+  target/index, the v4 JSON and the existing Sender sequence are pinned. The reverse-order ACK positive and the source/causation negatives
+  for the real ExpectedReply/receive_exact use a bounded in-memory EventWire. New **3/3**,
+  event-drive overall **50/50**. These tests do not run a real TCP CREATE/LOAD bootstrap.
 
-### 구코드 반례와 독립 변이
+### Old-code counterexample and independent mutations
 
-1. `target/release-source-authority-red-20260907-01/verification.md`: 이전 봉인372파일과 동일한
-   독립 구소스에 새 actual run 시험만 이관하고 SESSION literal만 구스키마로 맞췄다. fresh compile
-   26.85초, **12 PASS/1 RED**. `waiting_started=true`, head logical2→3; 현 원본은 false/2→2.
-   구 RED EXE `80AFD2034067AF7BE27F618BB8ED8764231F349E961CD610AA9D8441E389FCBA`.
-   RED copy는 시험 파일 하나만 달랐으며 원래 보존 구소스는 변경하지 않았다.
-2. `target/release-source-guard-mutations-20260907/verification.json`: 포맷 전 결과와 최종 byte 결과를
-   나눴다. **final-** 5arm은 baseline8/0 → guard 허용전부4/4 → 복원8/0 → 거부전부2/6 → 복원8/0.
-   각각 fresh Compiling 6.84/6.76/4.27/3.99/4.00초. 잘못된 source뿐 아니라 정상 재시도까지 검사하므로
-   영구 거부도 실패한다. final-restored-deny EXE
+1. `target/release-source-authority-red-20260907-01/verification.md`: only the new actual run test was moved into an independent old source
+   identical to the previous 372-file seal, with only the SESSION literal adjusted to the old schema. fresh compile
+   26.85 s, **12 PASS/1 RED**. `waiting_started=true`, head logical2→3; the current original gives false/2→2.
+   Old RED EXE `80AFD2034067AF7BE27F618BB8ED8764231F349E961CD610AA9D8441E389FCBA`.
+   The RED copy differed only in one test file, and the originally preserved old source was not changed.
+2. `target/release-source-guard-mutations-20260907/verification.json`: results before formatting and the final byte results are
+   kept apart. The **final-** 5 arms: baseline8/0 → guard allows all 4/4 → restore8/0 → denies all 2/6 → restore8/0.
+   Fresh Compiling took 6.84/6.76/4.27/3.99/4.00 s respectively. Since both wrong sources and valid retries are checked,
+   a permanent rejection also fails. final-restored-deny EXE
    `e05eb7d0c0b7f00df55385cc4cf76e69ca74ad8cc3fff06e11784d17d1d7eb4d`.
-   243입력 중 저장소 대응239파일은 최종 원본=복원이며 final arm 동안 원본 불변이다.
-   독립 축소 workspace/lock과 원래 선언/lock을 따로 보존하고 공유 registry package checksum을 대조했다.
-3. `target/session-v4-builder-mutations-20260907-01/verification.txt`: 실제 producer 인자를 v3로
-   낮추면 **2/1**, middle을 생략한 head/tail 배열로 바꾸면 **2/1**, 정확 복원 **3/0**.
-   154선정입력과 실행 EXE를 봉인하고 매 arm 실제 compile을 확인했다. final-restored EXE
+   Of the 243 inputs, the 239 files corresponding to the repository are final original = restore, and the original was unchanged during the final arms.
+   The independent reduced workspace/lock and the original declarations/lock were preserved separately, and the shared registry package checksums were compared.
+3. `target/session-v4-builder-mutations-20260907-01/verification.txt`: lowering the real producer argument to v3
+   gives **2/1**, changing it to a head/tail array without middle gives **2/1**, and the exact restore gives **3/0**.
+   The 154 selected inputs and the executed EXE were sealed, and an actual compile was confirmed for every arm. final-restored EXE
    `1DB93BA9FBD2E46B9C9C1AC94201447BB170E3F85B104FE0097E3B77F2F5CDA3`.
-   추출 전 이미 적용 중이던 v4 생산의 회귀 시험이지 builder 추출 자체의 구코드 결함 수리 주장은 아니다.
+   This is a regression test for v4 production that was already in effect before the extraction, not a claim that the builder extraction itself fixed an old-code defect.
 
-모든 변이는 독립 copy에서만 실행했다. 현재 원본의 새로운 SESSION 시험 초기 실패는 test 주소의
-`tcp://` 누락과 비terminal capsule의 tensor 누락이었다. 검증기를 낮추지 않고 실제 wire 형식의 fixture로
-수리했다. 해당 compile/실패 실행을 성공 수에 합치지 않는다.
+All mutations ran only in independent copies. The initial failures of the new SESSION tests in the current original were a missing
+`tcp://` in the test address and a missing tensor in a non-terminal capsule. They were fixed with fixtures in the real wire format,
+without weakening the validator. Those compile/failure runs are not added to the success count.
 
-### 최종 소스·집계·제외
+### Final sources, tally and exclusions
 
-`target/session-authority-source.json`, `session-authority-seal.mjs --verify`: Rust/Cargo와 두 literal
-JSON fixture **374파일**, SHA256
+`target/session-authority-source.json`, `session-authority-seal.mjs --verify`: Rust/Cargo and the two literal
+JSON fixtures, **374 files**, SHA256
 `2af41250c3a3b1b05604fd7c1be7363f6f20bd3816b88613785105b32d4e1d0f`.
-문서·compiler/registry package 원문은 이 봉인 밖이다. 이전373 봉인 파일은 덮어쓰지 않았다.
+Documents and compiler/registry package sources are outside this seal. The earlier 373 seal file was not overwritten.
 
-- `target/session-authority-workspace.log`: `cargo test --workspace --no-fail-fast` 최종 exit0,
-  **57 summaries, 1090 passed / 0 failed / 7 ignored**. 이전1076 + SESSION5 + release5 + actual loop1
-  + OUTER builder3. fixture 이관87개는 새 시험 수로 더하지 않는다.
-- `target/session-authority-js.log`: 하네스57 + build wiring6 = **63 passed / 0 failed**, skipped0.
-- 소스 동결 후 문서 변경은 별도 lint/cargo 문서 gate로 확인한다. 검사하는 문자열·색인과 실행 의미는 다르다.
+- `target/session-authority-workspace.log`: `cargo test --workspace --no-fail-fast` final exit0,
+  **57 summaries, 1090 passed / 0 failed / 7 ignored**. Previous1076 + SESSION5 + release5 + actual loop1
+  + OUTER builder3. The 87 migrated fixtures are not added to the new test count.
+- `target/session-authority-js.log`: harness57 + build wiring6 = **63 passed / 0 failed**, skipped0.
+- Document changes after the source freeze are checked by the separate lint/cargo document gates. The strings and indexes they check are not the same as execution semantics.
 
-actual Worker::run은 post-LOAD fake native Frame을 사용했다. 실제 모델 load·CPU/CUDA conformance·
-네트워크 인증·GPU/VRAM-only/RAM 오프로딩·성능/다중 컴퓨터·배포·commit/push는 이번 slice에서 실행하지 않았다.
-target 자료는 로컬 보존이지 공개 불변 evidence bundle이 아니다.
+The actual Worker::run used a post-LOAD fake native Frame. Real model load, CPU/CUDA conformance,
+network authentication, GPU/VRAM-only/RAM offloading, performance/multi-computer runs, deployment and commit/push were not run in this slice.
+The target material is preserved locally and is not a published immutable evidence bundle.
 
-scalar RELEASED의 요청 집합, 다중 OUTER의 해제 라우팅·관측, commit 후 notification intent 보존,
-새 OUTER/Worker 재시작 freshness와 fleet 전체 topology 합의는 미해결이다. SESSION의 source 대조를
-해제 완료 전체나 인증으로 승격하지 않는다. 이후 행동과 단계 상태는 최신 로드맵만 소유한다.
+The request set of a scalar RELEASED, release routing and observation for multiple OUTERs, preservation of the notification intent after commit,
+freshness across a new OUTER/Worker restart, and fleet-wide topology agreement are unresolved. The SESSION source check is not promoted
+to full release completion or to authentication. Subsequent actions and stage status are owned only by the latest roadmap.
 
-읽기 전용 별도 감사: `event_runtime/transport.rs::serve`와 `EventBroker::dispatch`는 peer 신원과
-envelope source의 인증 결속을 하지 않는다. SESSION 최초 설치는 설정자 권한을 결속하지 않고,
-SESSION_READY는 전체 ordered topology를 attest하지 않는다. 이 세 가지는 code-only 열린 경계이며
-위 source/target 반례의 효과 시험이나 네트워크 침입 재현 결과가 아니다. 책임/제약은 격리 계약을 따른다.
+Separate read-only audit: `event_runtime/transport.rs::serve` and `EventBroker::dispatch` do not bind the peer identity to
+the envelope source through authentication. The first SESSION installation does not bind the configurer's authority, and
+SESSION_READY does not attest the full ordered topology. These three are code-only open boundaries,
+not effect tests of the source/target counterexamples above or reproductions of a network intrusion. Responsibilities and constraints follow the isolation contract.
 
-최종 문서 gate는 추적73/전체79 clean, 자체12/12, cargo docs_lint1/1이다. 편집 도중 혼합 EOL을
-검출한 첫 lint 실패는 같은 여섯 문서의 CRLF 정규화로 수리했다. private-header81 clean/common0 header·
-5 source, 현재 pin0eadefebd manifest valid24를 다시 확인했다. `target/session-authority-clippy.log`는
-staged/event-drive all-targets exit0이나 staged lib-test26(13 duplicates) 등 경고는 남는다.
-이것은 새로운 pin replay나 native 의미 호환 증명이 아니다. 문서 갱신 뒤에도 source374 봉인 동일을 확인한다.
+The final document gates are tracked73/all79 clean, self-tests12/12, cargo docs_lint1/1. The first lint failure, which detected mixed EOL
+during editing, was fixed by CRLF normalization of the same six documents. private-header81 clean/common0 header,
+5 source, and current pin0eadefebd manifest valid24 were rechecked. `target/session-authority-clippy.log` shows
+staged/event-drive all-targets exit0, but warnings such as staged lib-test26 (13 duplicates) remain.
+This is not a new pin replay or proof of native semantic compatibility. After the document update, the source374 seal is again confirmed unchanged.
 
-## 2026-09-07 후속 — 요청별 해제 증명과 소유자 통지
+## 2026-09-07 follow-up — per-request release proof and owner notification
 
-### 소스와 실제 실행 경계
+### Sources and real execution boundaries
 
-HEAD는 a9e1967fc59dffa6c2e458f1b91f916b1df826c1이며 후속 미커밋 작업 트리를 검증했다. 새로운
-`completion.rs`와 `worker/release.rs`/`effects.rs`/`node/state.rs`, OUTER `run/inference.rs`/
-`release_ledger.rs`가 실제 소비 경로다. wire 의미는 배치 계약만 소유한다. native C++/llama/backend와
-P4 중립 프로토콜을 이번 slice에서 바꾸지 않았다. 기존 SESSION source 권위 시험도 유지한다.
+HEAD is a9e1967fc59dffa6c2e458f1b91f916b1df826c1, and a later uncommitted working tree was verified. The new
+`completion.rs` and `worker/release.rs`/`effects.rs`/`node/state.rs`, plus OUTER `run/inference.rs`/
+`release_ledger.rs`, are the real consumer paths. Wire semantics are owned only by the batching contract. Native C++/llama/backend and
+the P4 neutral protocol were not changed in this slice. The existing SESSION source authority tests are kept as well.
 
-actual `Worker::run`의 post-LOAD fake native에서 정상 단일 OUTER와 서로 다른 OUTER의 A/B를 한
-physical terminal에 섞었다. 기대값은 원본 PREFILL의 송신 ID/전체 route, head가 발행한 PHYSICAL의
-slot/incarnation, head의 RELEASE 명령 및 fake native가 받은 P4ID 원문에서 각각 대조한다. 수신
-receipt를 복사하여 자기 기대값으로 쓰지 않는다. 2/4-stage에서 OUTPUT/receipt의 소유자·correlation/
-deadline과 terminal 뒤 receipt 순서·이벤트 유일성·head sequence 진행을 확인한다. 첫/후속 Full은
-실제 worker 루프와 mailbox를 통과하며, 원래 native release 1회·정상 토큰/text/position/stop도 유지한다.
-actual loop는 **16/16**(기존13 + 새3)이다. 실제 네트워크·모델·토큰화·GPU가 실행된 것은 아니다.
+In the actual `Worker::run` with post-LOAD fake native, a normal single OUTER and A/B from different OUTERs were mixed into one
+physical terminal. The expected values are checked separately against the original PREFILL's sender ID/full route, the
+slot/incarnation of the PHYSICAL issued by head, head's RELEASE command, and the raw P4ID received by the fake native. The received
+receipt is not copied and used as its own expected value. At 2/4 stages, the OUTPUT/receipt owner, correlation/
+deadline, the receipt order after terminal, event uniqueness and head sequence progress are checked. The first and subsequent Full go through the
+real worker loop and mailbox, and the original 1 native release and normal tokens/text/position/stop are also kept.
+The actual loop is **16/16** (existing13 + new3). No real network, model, tokenization or GPU was run.
 
-직접 `Worker::released` + 실제 completion mailbox의 **7/7**은 첫/1건 뒤 Closed, MAX/MAX-1 이벤트
-번호, Full 회복, 같은 OUTER의 다른 correlation/deadline, 뒤쪽 잘못된 provenance를 검사한다.
-잘못된 원본/ReplySpec의 **8가지 유효 값 불일치 × A/B 양순서**에서 슬롯·pending·효과/native 호출을
-보존한다. 직접 handler/method의 범위와 위 actual run을 합쳐 하나의 전체 경로라고 하지 않는다.
-별도 DTO4와 실제 PREFILL source/target 소비1을 더했으며 SESSION 전체6/6이다.
+The **7/7** for direct `Worker::released` + the real completion mailbox check Closed after the first/1 item, MAX/MAX-1 event
+numbers, Full recovery, different correlation/deadline from the same OUTER, and bad provenance later in the list.
+For **8 kinds of valid-value mismatch × A/B in both orders** of a wrong origin/ReplySpec, slots, pending, effects and native calls
+are preserved. The scope of the direct handler/method tests and the actual run above are not merged and called one full path.
+A separate DTO4 and real PREFILL source/target consumption1 were added, making SESSION overall 6/6.
 
-새 `head-approved-output-v2.json`은 ordinary2·checkpoint Replay2/4의 **실제 PREFILL5·OUTPUT15·
-receipt5**를 함께 캡처했다. 구 `head-approved-output-v1.json`은 보존했고 legacy semantic projection은
-기존 전체 토큰/text/position/stop/route가 같음을 검사한다. 새 projection은 신규 필드를 포함한 전체
-body를 비교한다. capture 모드가 검사를 건너뛰지 않으므로 첫 이관은 빈 새 fixture에서 의도적으로 RED였다.
-실제 소비는 bounded duplex의 EventWire→drive→acceptance를 통과한다. OUTER 실제 송신의 envelope와
-캡처 PREFILL을 대조하고 원문 OUTPUT/receipt bytes를 사후 수정하지 않는다. 다만 worker 입력은 explicit
-tokens, OUTER 입력은 prompt이므로 **tokenization 동등성은 아니다**. 캡처 주변의 관측은 synthetic임을
-유지하며 그것으로 다중 OUTER 실제 관측 생산의 미해결을 감추지 않는다.
+The new `head-approved-output-v2.json` captures together the **real PREFILL5, OUTPUT15 and
+receipt5** of ordinary2 and checkpoint Replay2/4. The old `head-approved-output-v1.json` was preserved, and the legacy semantic projection
+checks that the existing full tokens/text/position/stop/route are the same. The new projection compares the entire
+body including the new fields. Capture mode does not skip the checks, so the first migration was intentionally RED against the empty new fixture.
+Real consumption goes through EventWire→drive→acceptance over a bounded duplex. The envelope of the real OUTER send is compared with
+the captured PREFILL, and the raw OUTPUT/receipt bytes are not edited afterwards. However, the worker input is explicit
+tokens and the OUTER input is a prompt, so **this is not tokenization equivalence**. The observations around the capture remain
+synthetic, and they are not used to hide that real multi-OUTER observation production is unresolved.
 
-OUTER 전체 **67/67**은 기존50 + 새17이다. actual drive budget/boundary/member27, 순수 release
-원장2, 실제 send_wave 실패/등록순서1, 공유 캡처 소비5가 포함된다. final artifact의 member/승인 bool
-대조는 보존 결과의 일관성 검사이지 원시 receipt의 독립 인증/재생이 아니다.
+The full OUTER **67/67** is existing50 + new17. It includes actual drive budget/boundary/member27, pure release
+ledger2, real send_wave failure/registration order1, and shared capture consumption5. The member/approval bool
+comparison in the final artifact is a consistency check of preserved results, not independent authentication/replay of raw receipts.
 
-### 반례와 독립 변이
+### Counterexamples and independent mutations
 
-| 자료 | 고정 시험과 결과 | 해석 한계 |
+| Material | Pinned tests and results | Limits of interpretation |
 | --- | --- | --- |
-| `target/release-notification-provenance-red-20260907/` | 수정 전 유효한 다른 ingress를 수용: 실제 fresh compile 뒤 0/1 RED. 원본·시험·EXE 보존 | 첫 잘못된 값에서 멈춘 RED; 8축 각각의 독립 구코드 실행은 아님 |
-| `target/release-receipt-producer-mutations-20260907/verification.json` | 기준13/0 → provenance 제거12/1 → 복원13/0 → 실패 front 삭제10/3 → 복원13/0 → PREFILL source/target 제거12/1 → 복원13/0 | notification7+SESSION6. 메서드/handler 증명; actual run/native KV 전체가 아님 |
-| `target/release-notification-producer-mutations-20260907-01/verification.md` | actual run16/0 → 소유 그룹 하나로 축소14/2 → 복원16/0 → ACK route 통지14/2 → 복원16/0 → terminal operation 변조7/9 → 복원16/0 | route 변이는 첫 2-stage/첫 Full 하위 사례에서 실패. 4-stage/후속 Full의 개별 변이 실행을 추가 주장하지 않음 |
-| `target/outer-release-membership-mutations-20260907-01/verification.txt` | 67/0 → terminal member 대조 제거61/6 → 중복 재계수64/3 → 부분 commit66/1 → OUTPUT attempt 대조 제거65/2 → send 선행66/1 → 정확 복원67/0 | 부분 commit의 상태 불변 반증1개는 순수 원장이다. 오류 뒤 actual drive의 private 원장을 관찰한 것은 아님 |
+| `target/release-notification-provenance-red-20260907/` | Before the fix, a different valid ingress was accepted: 0/1 RED after an actual fresh compile. Original, test and EXE preserved | A RED that stopped at the first wrong value; not an independent old-code run for each of the 8 axes |
+| `target/release-receipt-producer-mutations-20260907/verification.json` | baseline13/0 → provenance removed12/1 → restore13/0 → failed front deleted10/3 → restore13/0 → PREFILL source/target removed12/1 → restore13/0 | notification7+SESSION6. Method/handler proof; not the full actual run/native KV |
+| `target/release-notification-producer-mutations-20260907-01/verification.md` | actual run16/0 → collapsed to one owner group14/2 → restore16/0 → notify the ACK route14/2 → restore16/0 → terminal operation tampered7/9 → restore16/0 | The route mutation fails in the first 2-stage/first Full sub-case. No additional claim of separate mutation runs for 4-stage/subsequent Full |
+| `target/outer-release-membership-mutations-20260907-01/verification.txt` | 67/0 → terminal member check removed61/6 → duplicate recount64/3 → partial commit66/1 → OUTPUT attempt check removed65/2 → send first66/1 → exact restore67/0 | The 1 refutation of state invariance under partial commit is the pure ledger. It does not observe the actual drive's private ledger after the error |
 
-변이는 전부 독립 복사본에서 실시했다. 각 arm 실제 Compiling, source before/after, EXE·raw log 해시를
-남겼고 단순 copied mtime나 원래 프로세스의 공유 EXE 재사용을 fresh 결과로 세지 않았다. source closure는
-각각 247입력/원본243(+격리 workspace/lock), 379입력, 167입력이며 정확 복원/원본 불변을 확인했다.
-축소 workspace의 dependency closure와 전체 workspace 시험을 구분한다. 각 변이는 baseline에서 출발하며
-기대값·시험 본문을 낮추지 않았다. 잘못된 구현이 실패하는 것과 guard의 모든 predicate를 하나씩 변이한
-것은 다르다. 현재 grouped provenance/PREFILL 변이는 첫 부정에서 실패한다.
+All mutations were run in independent copies. Each arm recorded actual Compiling, source before/after, and EXE/raw log hashes,
+and a simple copied mtime or reuse of the original process's shared EXE was not counted as a fresh result. The source closures are
+247 inputs/243 original (+ isolated workspace/lock), 379 inputs and 167 inputs respectively, with exact restore and an unchanged original confirmed.
+The dependency closure of the reduced workspace is kept apart from full workspace tests. Each mutation starts from the baseline, and
+expectations and test bodies were not weakened. A faulty implementation failing is not the same as mutating every predicate of the guard
+one by one. The current grouped provenance/PREFILL mutations fail at the first negative case.
 
-최종 복원 EXE SHA256:
+Final restored EXE SHA256:
 
 - method/handler: `0c169ad85cd6ae5cb17ef71953f839eb93d6cd840a758b3ea07a9e8f8fe55525`
 - actual worker: `E100B55F026F25E9A1D2EAA644811C27B18186A2EF03449EADF756E261A0B3F3`
 - actual OUTER: `BDF5237888734C843E3FB194EE53DB25AAF463210B14025FB6D77D1FA77D0611`
 
-### 실패한 중간 실행과 집계
+### Failed intermediate runs and tally
 
-- old fixture source가 return_route와 다르던 정상 PREFILL은 새 검사에서 거부되어 adapter 초기 전체
-  **354/23**이었다. `stage_tests`20·`incarnation_tests`3의 정상 입력 생성만 고쳤고 음성 입력이나
-  native/body/slot/KV 단언은 바꾸지 않았다. 기존23개를 새 시험 수에 더하지 않는다.
-- actual Full 시험의 오래된 `completion_queue_full:waiting` snapshot이 다음 포화를 증명하지 못했다.
-  genuine ACK 전 recv 대기·mailbox Empty를 확인한 지점의 test-only 관찰 baseline 뒤 새 Full을 기다리게
-  했다. 요청/원장/native 상태를 바꾼 것은 아니다. 초기 실패 로그를 보존했다.
-- 새 캡처를 쓰는 파일을 병렬 작성하는 도중 module 부재/함수 인자 미이관/Envelope 직렬화 시험 오류로
-  compile이 실패한 시도는 PASS가 아니다. Envelope를 테스트 편의로 P4 Serialize 타입으로 바꾸지 않았다.
-- 공유 빌드 디렉터리에서 다른 작업이 EXE를 재링크하여 한 producer 실행 직후 EXE 해시를 확정할 수
-  없었던 시도는 별도 기록했다. 위 독립 최종 실행의 EXE만 정확히 결속했다.
+- Valid PREFILLs whose old fixture source differed from return_route were rejected by the new check, so the initial full adapter run was
+  **354/23**. Only the valid input generation in `stage_tests`20 and `incarnation_tests`3 was fixed; the negative inputs and the
+  native/body/slot/KV assertions were not changed. The existing 23 are not added to the new test count.
+- The stale `completion_queue_full:waiting` snapshot in the actual Full test did not prove the next saturation.
+  The test was changed to wait for a new Full after a test-only observation baseline taken at the point where the recv wait before the genuine ACK and an Empty mailbox
+  were confirmed. This does not change request/ledger/native state. The initial failure log was preserved.
+- Attempts whose compile failed while the files using the new capture were being written in parallel — missing module, function arguments not migrated,
+  Envelope serialization test error — are not PASS. Envelope was not changed into a P4 Serialize type for test convenience.
+- An attempt in which another job relinked the EXE in the shared build directory, so that the EXE hash right after a producer run
+  could not be pinned, is recorded separately. Only the EXEs of the independent final runs above are bound exactly.
 
-`target/release-receipt-source.json`과 `release-receipt-seal.mjs --verify`: Rust/Cargo와 **세 literal
-JSON fixture 379파일**, SHA256 `604a008d2e8b66bcf746494802fbe2382d56b133c1451271da7de84615a62dc2`.
-이전 source374 파일을 덮어쓰지 않았다. 문서·JS·compiler/registry package 원문은 이 봉인 밖이다.
+`target/release-receipt-source.json` and `release-receipt-seal.mjs --verify`: Rust/Cargo and **the three literal
+JSON fixtures, 379 files**, SHA256 `604a008d2e8b66bcf746494802fbe2382d56b133c1451271da7de84615a62dc2`.
+The earlier source374 file was not overwritten. Documents, JS and compiler/registry package sources are outside this seal.
 
-- `target/release-receipt-workspace.log`: 전체 `cargo test --workspace --no-fail-fast` 최종 exit0,
-  **57 summaries / 1122 passed / 0 failed / 7 ignored**. 1090 + adapter15 + event-drive17이다.
-- `target/release-receipt-js-final.log`: 하네스57+build wiring6+event config3+four-node config9 =
-  **75/0**, skipped0. 넓힌 범위의 첫 실행66/1은 옛 `apps/p4/` import 경로 부재였다. 실제 같은 저장소
-  모듈을 찾고 test import 한 줄만 수정했다. 기존 선택 범위63의 결과를 과거75 통과였다고 바꾸지 않는다.
-- `target/release-receipt-clippy.log`: staged/event-drive all-targets exit0. staged lib14/lib-test26
-  (13 duplicates), event-drive bin6/test8(6 duplicates) 등 경고가 남는다. warning-free 주장이 아니다.
-- private-header81 clean/common0 header·5 source, 현재 pin0eadefebd manifest valid24 재확인.
-  이는 native 빌드·새 pin replay·CPU/CUDA 의미 conformance가 아니다.
+- `target/release-receipt-workspace.log`: full `cargo test --workspace --no-fail-fast` final exit0,
+  **57 summaries / 1122 passed / 0 failed / 7 ignored**. That is 1090 + adapter15 + event-drive17.
+- `target/release-receipt-js-final.log`: harness57+build wiring6+event config3+four-node config9 =
+  **75/0**, skipped0. The first run of the widened scope gave 66/1 because the old `apps/p4/` import path was missing. The actual module in the same repository
+  was located and only one test import line was changed. The results of the earlier selected scope of 63 are not rewritten as a past pass of 75.
+- `target/release-receipt-clippy.log`: staged/event-drive all-targets exit0. Warnings remain, including staged lib14/lib-test26
+  (13 duplicates) and event-drive bin6/test8 (6 duplicates). This is not a warning-free claim.
+- private-header81 clean/common0 header, 5 source, and current pin0eadefebd manifest valid24 were rechecked.
+  This is not a native build, a new pin replay, or CPU/CUDA semantic conformance.
 
-새 root source로 C++/CUDA/model/GPU/원격 네트워크/배포/commit/push는 실행하지 않았다. target 증거는
-로컬 보존 자료이며 공개 불변 bundle이 아니다. VRAM-only 충분성 및 이후 RAM 오프로딩은 실기 게이트로
-남는다. 현재 정상 종료의 증명을 출력 없는 Cancel·다중 OUTER 관측·restart freshness·재연결/내구 전달·
-완전한 bounded queue/credit·graceful drain으로 확대하지 않는다. 단계 상태와 다음 첫 행동은 로드맵만 소유한다.
+With the new root source, C++/CUDA/model/GPU/remote network/deploy/commit/push were not run. The target evidence is
+locally preserved material and not a published immutable bundle. VRAM-only sufficiency and the later RAM offloading remain real-hardware gates.
+The proof of the current normal shutdown is not extended to Cancel without output, multi-OUTER observation, restart freshness, reconnect/durable delivery,
+fully bounded queues/credit, or graceful drain. Stage status and the first next action are owned only by the roadmap.
 
-최종 문서 검수에서 캡처의 ‘전체 필드’ 표현을 payload 전체로 좁혔다. envelope volatile3개의 semantic
-equality 제외와 별도 검사, 원본 PREFILL exact 대조를 구별한 것이며 fixture/기대값을 낮춘 수정이 아니다.
-문서 gate는 추적73/전체79 clean, 자체12/12, cargo docs_lint1/1이다. 문서와 JS import의 EOL 정규화 뒤
-JS75/0을 재실행했고 Rust379 source seal 동일을 다시 확인했다.
+In the final document review, the capture's "all fields" wording was narrowed to the whole payload. This distinguishes the exclusion of the 3 volatile envelope fields
+from semantic equality (checked separately) from the exact check against the original PREFILL; it does not weaken fixtures or expectations.
+The document gates are tracked73/all79 clean, self-tests12/12, cargo docs_lint1/1. After EOL normalization of the documents and the JS import,
+JS75/0 was rerun, and the Rust379 source seal was confirmed unchanged again.
 
-## 2026-09-07 후속 — 보고 지표 분리와 관측 완결 감사
+## 2026-09-07 follow-up — separating report metrics and auditing observation completeness
 
-### 이번에 실행한 범위
+### Scope run this time
 
-`test/benchmarks/p4-4node/run.mjs::buildReport`는 실제 main과 모델 없는 보고 시험이 함께 사용하는
-artifact 소비 경로다. 기존 inline report 조립을 옮기고 import 시 main이 자원을 시작하지 않도록
-했다. 직접 CLI의 무인자 usage 실패도 별도 시험한다. 모델/worker/native/network 실행을 이 시험이
-통과한다는 뜻은 아니다. 같은 HEAD의 미커밋 트리이며 이번 생산 변경은 run.mjs, 새 시험은
-report-metrics.test.mjs다. Rust/native/C++/P4 중립 코어는 이번 slice에서 변경하지 않았다.
+`test/benchmarks/p4-4node/run.mjs::buildReport` is the artifact consumer path shared by the real main and the model-less report tests.
+The existing inline report assembly was moved there, and main no longer starts resources on import.
+The direct CLI's no-argument usage failure is also tested separately. This does not mean these tests exercise model/worker/native/network
+execution. This is an uncommitted tree at the same HEAD; the production change this time is run.mjs, and the new test is
+report-metrics.test.mjs. Rust/native/C++ and the P4 neutral core were not changed in this slice.
 
-report metrics v2는 Rust acceptance가 보존 OUTPUT을 세는 규칙에 맞췄다. 이전 decode 행 속도와
-승인 생성 토큰 속도를 구분하며 정확한 필드/빈 EOS/분모/legacy 이관은 하네스 README가 기술한다.
-Prefill+Verify/Replay도 혼합으로 센다. 물리 rows/fill/pacing은 원래 값이고 이전 보고서 파일은 고치지
-않았다. 이 지표는 H1 품질 승인이나 H4의 마지막 terminal 시간창/유효 TPS가 아니다. Rust 요청별
-logical_generation_tps와 stage span의 계산·소유권·완결은 미이관이다.
+report metrics v2 is aligned with the rule by which Rust acceptance counts preserved OUTPUTs. It distinguishes the earlier decode row rate from
+the approved generated token rate; the exact fields, empty EOS, denominators and legacy migration are described in the harness README.
+Prefill+Verify/Replay is also counted as mixed. Physical rows/fill/pacing are the original values, and earlier report files were not
+modified. This metric is not H1 quality approval, nor H4's last-terminal time window / useful TPS. The computation, ownership and completeness of Rust per-request
+logical_generation_tps and stage spans have not been migrated.
 
-### 구코드 반례·변이
+### Old-code counterexample and mutations
 
-`target/report-token-metrics-20260907-01/verification.txt`와 같은 디렉터리의 원문/소스/metadata:
+`target/report-token-metrics-20260907-01/verification.txt` and the raw output/sources/metadata in the same directory:
 
-| 실행 | 결과 | 범위 |
+| Run | Result | Scope |
 | --- | --- | --- |
-| `01-before-fix.stdout.log` | 0 passed / 2 failed, exit1 | 원래 수식 그대로 report 조립 소비: 혼합0≠2, speculative 출력3/2초인데 생성TPS0≠1.5 |
-| `03-complete-tests.stdout.log` | 11/0, exit0 | EOS/빈 조각/첫 토큰/분모/물리 폭/증거 부재/CLI를 포함한 최종 원본 회귀 |
-| `04-copy-baseline.stdout.log` | 11/0, exit0 | 독립 복사본과 실제 import 폐쇄10파일 |
-| `05-copy-decode-numerator-mutant.stdout.log` | 6/5, exit1 | production 생성 분자만 generated→decode로 되돌림, 시험 bytes 그대로 |
-| `06-copy-restored.stdout.log` | 11/0, exit0 | 복사본만 정확 복원, 원본과10/10 일치 |
+| `01-before-fix.stdout.log` | 0 passed / 2 failed, exit1 | Consumes report assembly with the original formulas unchanged: mixed0≠2; speculative output3 in 2 s, yet generation TPS0≠1.5 |
+| `03-complete-tests.stdout.log` | 11/0, exit0 | Final original regressions, including EOS/empty fragment/first token/denominator/physical width/missing evidence/CLI |
+| `04-copy-baseline.stdout.log` | 11/0, exit0 | Independent copy with the real import closure of 10 files |
+| `05-copy-decode-numerator-mutant.stdout.log` | 6/5, exit1 | Only the production generation numerator reverted from generated→decode; test bytes unchanged |
+| `06-copy-restored.stdout.log` | 11/0, exit0 | Only the copy restored exactly; 10/10 matching the original |
 
-구코드 RED 전에는 report 조립의 함수 추출/import guard만 먼저 있었으며 잘못된 수식은 그대로였다.
-중간8개 GREEN을 최종11개 집계로 보고하지 않는다. 변이는 JavaScript를 매번 새 Node 프로세스에서
-해석한 증거이지 컴파일/EXE 재빌드가 아니다. 세 copy 실행 모두 입력10파일의 before/after와 원본
-before/after 변화0을 확인했다. 원본 checkout/reset은 사용하지 않았다. 이번에는 생성 분자 변이1개만
-실행했고 혼합 predicate를 별도로 제거한 독립 변이까지 했다고 주장하지 않는다.
+Before the old-code RED, only the function extraction and import guard for report assembly existed; the wrong formulas were unchanged.
+The intermediate 8 GREEN are not reported as the final tally of 11. The mutation is evidence that JavaScript was interpreted in a fresh Node process each time,
+not a compile or EXE rebuild. All three copy runs confirmed before/after for the 10 input files and a change of 0 in the original's
+before/after. No original checkout/reset was used. Only 1 generation-numerator mutation was
+run this time, and we do not claim an independent mutation that separately removes the mixed predicate.
 
-- 최종 run.mjs SHA256: `A7685DAB587992F18DDF6C7CDAD5137E566562041297B9B9720CFE8D2E51837E`
-- 최종 시험 SHA256: `E7B71CD85E8179C556721BE0D31915630D993BB74FD1EE5BF9DE31F7F9BFADAB`
+- Final run.mjs SHA256: `A7685DAB587992F18DDF6C7CDAD5137E566562041297B9B9720CFE8D2E51837E`
+- Final test SHA256: `E7B71CD85E8179C556721BE0D31915630D993BB74FD1EE5BF9DE31F7F9BFADAB`
 - verification.txt SHA256: `FAC6E72AE330673680AFA0584CFDF02BA466ECDD9B96648B13FD3B9D5993E1CD`
 - Node v26.4.0 SHA256: `3193D7F751B8A07BD4ACC70E81946AE9C6EFDEE83E07AD1C8D0E4089DF7C5CEF`
 
-### 최종 재실행·봉인
+### Final rerun and seal
 
-- `target/report-metrics-workspace.log`: `cargo test --workspace --no-fail-fast` 최종 exit0,
-  **57 summaries /1122 passed /0 failed /7 ignored**. 새 Rust 시험 증가는 없다. 이전 Rust379 입력
-  `release-receipt-seal.mjs --verify`의 SHA `604a008d2e8b66bcf746494802fbe2382d56b133c1451271da7de84615a62dc2`와 같다.
-- `target/report-metrics-js-final.log`: 하네스68+build wiring6+event config3+four-node config9 =
-  **86/0**, skipped0. 기존75에 새 report11을 더한 선택 범위이며 저장소 전체 JavaScript 시험이라는 뜻은 아니다.
-- `target/report-metrics-source.json`: 하네스 .mjs와 선택 build/config 입력 **25파일**,
-  SHA `41dbff05c72d143191348766d6802924611e36fdc6f1006ec9a5240f1d0a26b8`. Node/toolchain/OS/모델의
-  hermetic 봉인은 아니다. 첫 봉인 도구 시도는 잘못 적은 event-config 경로 때문에 실패했고 실제
-  p4-event-gate/config 경로로 고친 뒤 위 봉인을 만들었다. 그 실패를 시험 GREEN에 포함하지 않는다.
-- 문서 tracked73/all79 clean, 자체12/12. 최종 문서 EOL 정리 후 cargo docs_lint1/1도 별도 재실행했다.
-  문자열 gate가 미구현 관측 계약의 의미를 증명하지 않는다.
+- `target/report-metrics-workspace.log`: `cargo test --workspace --no-fail-fast` final exit0,
+  **57 summaries /1122 passed /0 failed /7 ignored**. No new Rust tests were added. The earlier Rust379 input
+  matches the SHA from `release-receipt-seal.mjs --verify`, `604a008d2e8b66bcf746494802fbe2382d56b133c1451271da7de84615a62dc2`.
+- `target/report-metrics-js-final.log`: harness68+build wiring6+event config3+four-node config9 =
+  **86/0**, skipped0. This is the selected scope of the existing 75 plus the new report11, not every JavaScript test in the repository.
+- `target/report-metrics-source.json`: the harness .mjs files and selected build/config inputs, **25 files**,
+  SHA `41dbff05c72d143191348766d6802924611e36fdc6f1006ec9a5240f1d0a26b8`. This is not a hermetic seal of
+  Node/toolchain/OS/models. The first attempt with the seal tool failed because of a mistyped event-config path; it was fixed to the real
+  p4-event-gate/config path and then the seal above was made. That failure is not included in the test GREEN.
+- Documents tracked73/all79 clean, self-tests12/12. After the final document EOL cleanup, cargo docs_lint1/1 was also rerun separately.
+  The string gates do not prove the semantics of the unimplemented observation contract.
 
-### 관측 경계 추가 감사 — 구현하지 않은 것
+### Additional observation boundary audit — what was not implemented
 
-`observe.rs::emit_batch_observation`의 전체 owner 복사, `emit_stage_span`의 첫 owner 송신과
-`inference.rs::drive`의 terminal/receipt 직후 종료를 다시 읽었다. 일부 관측/span을 한 묶음 통째로
-잃으면 받은 execution에만 coverage를 요구하는 검사로는 기대 집합 자체를 알 수 없다. count/phase
-합만 유지한 다른 execution/위치 대체도 별도 문제다. 이것은 **code-only 감사**이며 새 실행 RED가 아니다.
-발행 승인 시의 요청별 고정 크기 증거와 terminal 결속, 소유 투영·지연 수집·실패 원자성·비용 반례는
-배치 계약/검증 규약에 목표로 기록했다. 아직 SHA 의존성·새 OUTPUT·관측 wire나 완료 장벽을 구현하지 않았다.
+The full owner copy in `observe.rs::emit_batch_observation`, the first-owner send in `emit_stage_span`, and
+the exit right after terminal/receipt in `inference.rs::drive` were reread. If some observations/spans are lost as a whole batch,
+a check that requires coverage only for the executions received cannot know the expected set itself. Substituting a different execution/position
+while keeping only the count/phase sums is a separate problem. This is a **code-only audit**, not a new execution RED.
+Fixed-size per-request evidence at issue approval and its binding to terminal, owner projection, deferred collection, failure atomicity and cost counterexamples are
+recorded as goals in the batching contract / verification protocol. SHA dependencies, a new OUTPUT, observation wire and the completion barrier are not implemented yet.
 
-VRAM-only→더 큰 RAM 오프로딩의 기존 사용자 순서도 유지했다. H0는 의도적인 CPU 계산이라도
-실제 모델 계산/가중치/KV의 host 의존이면 VRAM-only가 아님을 명확히 했다. CPU tokenizer/sampler,
-staging, mmap과 비소유 레이어 표시를 모델 offload로 오인하지 않는다. 기존 runner의 actual RAM
-layout/budget은 아직 미구현이며 이번에 모델 inventory/적재·GPU·오프로딩·원격 배포·commit/push는 없다.
-현재 단계와 다음 첫 행동은 로드맵의 최신 관측 감사 절만 소유한다.
+The existing user order of VRAM-only → larger RAM offloading was also kept. H0 now makes clear that even deliberate CPU computation
+is not VRAM-only if the real model computation/weights/KV depend on the host. CPU tokenizer/sampler,
+staging, mmap and the marking of non-owned layers are not mistaken for model offload. The existing runner's actual RAM
+layout/budget is still unimplemented, and this time there was no model inventory/load, GPU, offloading, remote deploy or commit/push.
+The current stage and the first next action are owned only by the latest observation audit section of the roadmap.
 
-## 2026-09-07 후속 — 실제 승인된 발행의 내부 witness
+## 2026-09-07 follow-up — internal witness of actually approved issues
 
-### 첫 봉인과 생산 경로
+### First seal and production path
 
-같은 HEAD a9e1967fc의 미커밋 작업 트리에서 `issue_witness.rs`와 `accept_prepared_issue`에 내부
-발행 증거를 연결했다. 정확한 encoding·계층 귀속·제외 범위는 배치 계약의 내부 issued-work v1 절을
-따른다. P4 중립 코어·native stage ABI·llama/backend는 이번 생산 변경에 포함되지 않는다. witness는
-승인된 멤버십 증거이지 토큰의 의미·내구성·서명·관측 완결 또는 KV 정지점 증명이 아니다.
+On the uncommitted working tree at the same HEAD a9e1967fc, internal issue evidence was wired into `issue_witness.rs` and `accept_prepared_issue`.
+The exact encoding, layer attribution and exclusions follow the internal issued-work v1 section of the batching contract.
+The P4 neutral core, native stage ABI and llama/backend are not part of this production change. The witness is
+evidence of approved membership, not proof of token semantics, durability, signatures, observation completeness or a KV stop point.
 
-첫 원본 전체 실행 `target/issue-witness-workspace.log`는 최종 exit0, **57 summaries /1146 passed /
-0 failed /7 ignored**였다. 이전1122에 primitive12+실제 L1 API9+실제 worker loop3을 더한 값이다.
-`target/issue-witness-source.json`의 입력385파일 SHA는
-`d8189658968bae94ec4181a33dba4eeb8b95cd8b8a9ce27fd1173cb3d000d94d`다. Rust/Cargo·기존3 JSON fixture·
-독립 vector JSON과 생성 스크립트를 포함한다. compiler/registry source·문서·모델은 봉인 밖이다.
-아래 후속 제출 사전검사 수정 이전의 소스이며 최종 소스의 전체 통과로 재사용하지 않는다.
+The first full original run, `target/issue-witness-workspace.log`, gave final exit0, **57 summaries /1146 passed /
+0 failed /7 ignored**. That is the previous1122 plus primitive12 + real L1 API9 + real worker loop3.
+The SHA of the 385 input files in `target/issue-witness-source.json` is
+`d8189658968bae94ec4181a33dba4eeb8b95cd8b8a9ce27fd1173cb3d000d94d`. It includes Rust/Cargo, the existing3 JSON fixtures,
+the independent vector JSON and the generator script. Compiler/registry sources, documents and models are outside the seal.
+This is the source before the submission preflight fix below, and it is not reused as a full pass of the final source.
 
-primitive는 `generate_vectors.mjs`가 Rust 없이 선언한 입력5종/chain13단계의 bytes/digest와 대조한다.
-L1 시험은 실제 준비/시작/승인 API와 committed·prepared·flight snapshot을 통과한다. actual run 시험은
-post-LOAD fake native, 실제 Frame/Capsule/EventWire 및 Worker::run을 통과한다. ordinary 2/4/8-stage,
-다중 OUTER 2/4-stage, 실제 completion Full, 새 EventID의 중복 terminal, 두 번째 native 실패/ID 재사용을
-포함한다. native가 실제로 KV를 만진 뒤 실패한 경우에도 마지막 승인 witness가 보존됨을 검사했다.
-독립 digest 외에 기존 output token/text/position/stop·KV/release oracle도 유지한다.
+The primitive tests compare against the bytes/digests of the 5 input kinds and 13 chain steps declared by `generate_vectors.mjs` without Rust.
+The L1 tests go through the real prepare/begin/approve APIs and the committed, prepared and flight snapshots. The actual run tests go through
+post-LOAD fake native, the real Frame/Capsule/EventWire, and Worker::run. They include ordinary 2/4/8-stage,
+multi-OUTER 2/4-stage, a real completion Full, a duplicate terminal under a new EventID, and a second native failure / ID reuse.
+They check that the last approved witness is preserved even when native fails after actually touching KV.
+Besides the independent digest, the existing output token/text/position/stop and KV/release oracles are kept.
 
-### 원본을 건드리지 않은 변이
+### Mutations that did not touch the original
 
-`target/issued-work-mutations-20260907-01/verification.json`과 각 arm의 원문/manifest/소스/EXE에 보존했다.
-시험 선택은 primitive12+L1 API9+actual loop19 = **40개**다. 19개가 모두 신규 시험이라는 뜻은 아니다.
+Preserved in `target/issued-work-mutations-20260907-01/verification.json` and each arm's raw output/manifest/source/EXE.
+The selected tests are primitive12 + L1 API9 + actual loop19 = **40**. This does not mean all 19 are new tests.
 
-| arm | 결과 | 변경과 검출 |
+| arm | Result | Change and detection |
 | --- | --- | --- |
-| baseline | 40/0, exit0 | 원본385파일과 동일한 독립 복사본 |
-| omitted-witness | 35/5, exit101 | 승인 후 witness 설치만 None으로. L1 2·actual worker 3 실패 |
-| restored-omission | 40/0, exit0 | 복사본을 원본 bytes로 복원 |
-| premature-commit | 35/5, exit101 | 후순위 검증/flight 등록 전에 현재 요청 witness를 먼저 변경. 거부 불변 시험 실패 |
-| missing-execution-identity | 33/7, exit101 | 실행 ID를 hash 입력에서만 제거. 독립 literal 및 실제 승인/worker 비교 실패 |
-| restored-final | 40/0, exit0 | 두 생산 파일 모두 원본385파일과 동일 |
+| baseline | 40/0, exit0 | Independent copy identical to the 385 original files |
+| omitted-witness | 35/5, exit101 | Only the witness installation after approval set to None. 2 L1 and 3 actual worker tests fail |
+| restored-omission | 40/0, exit0 | Copy restored to the original bytes |
+| premature-commit | 35/5, exit101 | The current request's witness changed before the lower-priority validation/flight registration. The rejection-invariance tests fail |
+| missing-execution-identity | 33/7, exit101 | Execution ID removed only from the hash input. The independent literal and the real approval/worker comparisons fail |
+| restored-final | 40/0, exit0 | Both production files identical to the 385 original files |
 
-모든 arm은 실제 staged crate의 **Compiling→새 EXE**를 확인했고 입력 before/after 변경0,
-원본 before/after 변경0이었다. 복원 시에도 copy의 crate-root mtime만 갱신하여 이전 EXE를 재사용하지
-못하게 했다. 원본 checkout/reset·원본 생산 변이·골든 수정은 없다. 각 arm의 정확한 EXE/hash는 manifest에
-보존하며 실행 뒤 EXE를 복사해 다음 arm이 덮어쓰지 못하게 했다. 다른 시점의 원본 source/EXE를 같은
-실행이라 주장하지 않는다. 첫 소스 봉인은 마지막 변이 뒤에도 동일하게 재확인했다.
+Every arm confirmed **Compiling→new EXE** of the real staged crate, with input before/after change0 and
+original before/after change0. On restore, too, only the copy's crate-root mtime was updated so the previous EXE could not
+be reused. There was no original checkout/reset, no mutation of the original production code and no golden edits. Each arm's exact EXE/hash is preserved in the manifest,
+and the EXE was copied after each run so the next arm could not overwrite it. Original sources/EXEs from a different point in time are not claimed to be
+the same run. The first source seal was reconfirmed as identical after the last mutation as well.
 
-이 증거는 OUTPUT wire/actual OUTER의 전체 관측 누락 검출을 통과한 것이 아니다. 당시 getters는
-test에서만 소비되어 생산 dead_code 경고가 남았다. 경고를 숨기거나 하위 wire 완료를 주장하지 않았다.
+This evidence does not cover detection of missing observations across the OUTPUT wire / actual OUTER. At the time the getters were
+consumed only by tests, so production dead_code warnings remained. The warnings were not hidden, and completion of the downstream wire was not claimed.
 
-### 추가 코드 감사가 드러낸 입구 불일치
+### An entry mismatch revealed by a further code audit
 
-P4 envelope/wire는 NUL을 포함한 submission event ID/OUTER channel·host를 허용하지만, 승인 OUTPUT와
-내부 witness는 허용하지 않는다. `Worker::prefill`에서 이를 확인하지 않으면 native 뒤의 첫 승인에서
-거부될 수 있다. 독립 코드 감사로 찾은 admission/하위 계약 불일치이며, hash 증거가 네트워크 인증을
-제공하지 않는다는 제한과는 별개다. 후속 실제 반례·수정과 최종 소스 재실행은 아래 기록으로 구분한다.
+The P4 envelope/wire allows a submission event ID and OUTER channel/host containing NUL, but the approved OUTPUT and
+the internal witness do not. If `Worker::prefill` does not check this, the request can be rejected at the first approval after native.
+This is an admission/downstream contract mismatch found by an independent code audit, and it is separate from the limitation that the hash evidence does not
+provide network authentication. The later real counterexample and fix, and the final source rerun, are kept apart in the records below.
 
-### 제출 사전검사 RED → GREEN
+### Submission preflight RED → GREEN
 
-`target/submission-identity-red-20260907-01/verification.md` 및 `red.log`의 최초 원본 실행은
-**1 passed /6 failed**였다. NUL event ID/channel/ingress host 각각에 explicit tokens와 prompt를
-사용했다. 원본 EventWire 왕복 후 head native logical 호출1, KV 쓰기, slot0/incarnation1과 거부될
-session_key가 이미 생겼고 Uncertain·worker shutdown으로 끝났다. prompt3종은 Tokenize도1이었다.
-RED raw SHA `FF5AB0D25B3AD80BF99C247C120EAFF1A18541EAF15BAE930C1E62D9C92DA08A`, 보존 EXE SHA
-`68E666889636069371FD7CD71B6C94EC550A61EE0A77B29EE617208A6E05E7A6`다. 이 실행의4개 관심 파일
-전후 해시와 정확한 실행파일은 agent 증거에 있고, 전체 workspace 입력 봉인이라고 확대하지 않는다.
+The first original run in `target/submission-identity-red-20260907-01/verification.md` and `red.log` gave
+**1 passed /6 failed**. Explicit tokens and a prompt were used for each of NUL in the event ID, channel and ingress host.
+After a round trip through the original EventWire, head had already made native logical call1, written KV, and created slot0/incarnation1 and the
+session_key that would be rejected, ending in Uncertain and worker shutdown. The 3 prompt variants also had Tokenize1.
+RED raw SHA `FF5AB0D25B3AD80BF99C247C120EAFF1A18541EAF15BAE930C1E62D9C92DA08A`, preserved EXE SHA
+`68E666889636069371FD7CD71B6C94EC550A61EE0A77B29EE617208A6E05E7A6`. The before/after hashes of the 4 files of interest in this run
+and the exact executable are in the agent evidence, and this is not extended to a seal of all workspace inputs.
 
-공통 `validate_submission_identity`를 PREFILL의 원본 source/target 검사 직후 호출하게 했다.
-정산용 authority 검사도 같은 공통 형식을 재사용한다. 새 slot/incarnation 또는 witness를 가짜 값으로
-먼저 만들지 않는다. canonical bytes/digest 골든은 변경하지 않았다. 수정 후 bad 요청은 Tokenize·
-native·원장 효과 없이 정확한 adapter 오류를 반환한다. 같은 request_id를 다른 session_key의 정상
-제출로 재시도하여 slot0/incarnation1, 기존 exact output/KV/해제를 완주한다. 정상 Unicode와 별도의
-correlation 양성도 유지한다. 시험 작성 중 정상 재제출의 OUTER sequence를2로 명시하고, 새 witness
-fixture의 불필요한 clone 한 곳을 제거한 뒤 아래 최종 전체 소스를 다시 봉인했다.
+The common `validate_submission_identity` is now called right after PREFILL's original source/target check.
+The authority check for settlement reuses the same common format. No new slot/incarnation or witness is created
+with fake values first. The canonical bytes/digest goldens were not changed. After the fix, a bad request returns the exact adapter error without Tokenize,
+native or ledger effects. Retrying the same request_id as a valid submission with a different session_key
+completes with slot0/incarnation1 and the existing exact output/KV/release. The valid Unicode case and a separate
+correlation positive are also kept. While writing the tests, the OUTER sequence of the valid resubmission was set explicitly to2, one unnecessary clone in the new witness
+fixture was removed, and then the final full source below was sealed again.
 
-### 최종 소스의 독립 변이·전체 재실행
+### Independent mutations of the final source and full rerun
 
-`target/issue-witness-final-source.json`은 **386파일**,
-SHA `ac955f7e2ce1ca7f5c73748ea7835a96a10730f430850d57faf3e46ec1cb02a2`다. 첫385 봉인을 덮어쓰지 않았다.
-`target/issued-work-mutations-20260907-02/verification.json`의 최종 복사본에서 전부 다시 컴파일했다.
-선택된 primitive12+L1 API9+actual loop26 = **47개**이며 시험/골든 bytes는 모든 arm에서 고정이다.
+`target/issue-witness-final-source.json` is **386 files**,
+SHA `ac955f7e2ce1ca7f5c73748ea7835a96a10730f430850d57faf3e46ec1cb02a2`. The first 385 seal was not overwritten.
+Everything was recompiled in the final copy for `target/issued-work-mutations-20260907-02/verification.json`.
+The selection is primitive12 + L1 API9 + actual loop26 = **47**, and the test/golden bytes are fixed across all arms.
 
-| 최종 arm | 결과 | 검출 |
+| Final arm | Result | Detection |
 | --- | --- | --- |
-| baseline | 47/0, exit0 | 원본386파일과 동일 |
-| omitted-witness | 42/5, exit101 | L1 2 + 실제 worker 3 |
-| premature-commit | 42/5, exit101 | 후순위 오류/overflow/등록 실패의 상태 보존 |
-| missing-execution-identity | 40/7, exit101 | 골든·동일량 교체·실제 승인/worker digest |
-| missing-submission-guard | 41/6, exit101 | 실제 PREFILL의 NUL6종이 native 뒤 실패로 회귀 |
-| restored-final | 47/0, exit0 | copy386파일 원본과 동일, 다시 Compiling·새 EXE |
+| baseline | 47/0, exit0 | Identical to the 386 original files |
+| omitted-witness | 42/5, exit101 | L1 2 + real worker 3 |
+| premature-commit | 42/5, exit101 | State preservation on lower-priority error/overflow/registration failure |
+| missing-execution-identity | 40/7, exit101 | Golden, equal-count substitution, real approval/worker digest |
+| missing-submission-guard | 41/6, exit101 | The 6 NUL variants of the real PREFILL regress to failure after native |
+| restored-final | 47/0, exit0 | copy386 files identical to the original, Compiling again with a new EXE |
 
-매 arm의 input before/after 및 원본 before/after 변화0, 실행 로그와 보존 EXE 해시를 검증했다.
-최종 restored EXE SHA `dc9020d7ef5e117320bc9b50b712953f0fbbd7ab21876fe465b2228aa7416f86`.
-이 EXE는 독립 복사본의 선택47 시험이고 원본 전체 workspace의 모든 테스트 바이너리를 대신하지 않는다.
-공통 검사 전체를 제거하는 추가 변이는 하지 않았으며, prefill 소비 호출 제거와 입력 멤버십 변이를 구분한다.
+For every arm, input before/after and original before/after change0, the run logs and the preserved EXE hashes were verified.
+Final restored EXE SHA `dc9020d7ef5e117320bc9b50b712953f0fbbd7ab21876fe465b2228aa7416f86`.
+This EXE is the selected 47 tests of the independent copy and does not stand in for every test binary of the original full workspace.
+No additional mutation removing the whole common check was done, and removal of the prefill consumer call is kept apart from input membership mutations.
 
-- `target/issue-witness-final-workspace.log`: `cargo test --workspace --no-fail-fast` 최종 exit0,
-  **57 summaries /1153 passed /0 failed /7 ignored**. 이전1122 + 내부 witness24 + 입구7이다.
-- `target/issue-witness-js-final.log`: 하네스68+build wiring6+event config3+four-node config9 =
-  **86/0**, skipped0. 입력25파일은 이전 `report-metrics-source.json`의
-  `41dbff05c72d143191348766d6802924611e36fdc6f1006ec9a5240f1d0a26b8`와 동일하다.
-- `target/issue-witness-vectors-verified.json`: Node 독립 generator 출력과 literal JSON의 구조가 동일,
-  authority5/chain13이다. Node26.4.0 및 generator/literal 해시도 기록했다. Rust 결과로 골든을 재생성하지 않았다.
-- `target/issue-witness-final-clippy.log`: staged/event-drive all-targets exit0. staged lib15/lib-test26
-  (12 duplicates), drive bin6/test8(6 duplicates)의 경고가 남는다. witness getter4개의 생산 미사용
-  경고는 OUTPUT 미이관 상태 그대로이며 warning-free 주장이 아니다.
-- private-header81 clean/common0 header·5 source를 재확인했다. include 문자열 게이트이며 native
-  재컴파일·link 폐쇄·upstream 의미 호환 또는 backend conformance 증명이 아니다.
+- `target/issue-witness-final-workspace.log`: `cargo test --workspace --no-fail-fast` final exit0,
+  **57 summaries /1153 passed /0 failed /7 ignored**. That is the previous1122 + internal witness24 + entry7.
+- `target/issue-witness-js-final.log`: harness68+build wiring6+event config3+four-node config9 =
+  **86/0**, skipped0. The 25 input files are identical to the earlier `report-metrics-source.json`
+  `41dbff05c72d143191348766d6802924611e36fdc6f1006ec9a5240f1d0a26b8`.
+- `target/issue-witness-vectors-verified.json`: the Node independent generator output and the literal JSON have identical structure,
+  authority5/chain13. Node26.4.0 and the generator/literal hashes are recorded too. The goldens were not regenerated from Rust results.
+- `target/issue-witness-final-clippy.log`: staged/event-drive all-targets exit0. Warnings remain: staged lib15/lib-test26
+  (12 duplicates), drive bin6/test8 (6 duplicates). The production-unused warnings for the 4 witness getters
+  remain because OUTPUT is not migrated; this is not a warning-free claim.
+- private-header81 clean/common0 header, 5 source were rechecked. This is an include string gate, not proof of native
+  recompilation, link closure, upstream semantic compatibility or backend conformance.
 
-최종 Rust386과 JS25 봉인은 변이 후에도 동일했다. 문서 편집은 그 코드 봉인 밖이다. 최종 문서 게이트는
-추적73/전체79파일 clean, 자체 시험12/12이며 `cargo test -p p4-agent --test docs_lint`도 1/1이다.
-원문은 `target/issue-witness-docs-{tracked,all,self}.log`와 `target/issue-witness-final-cargo-docs.log`에
-보존했다. target 파일은 로컬 보존 증거이고 immutable 배포 bundle이 아니다. 새 소스로 C++/CUDA,
-모델 적재·원격 네트워크·강한 GPU 웨이브·VRAM-only/RAM 오프로딩·deploy·commit/push는 실행하지 않았다.
+The final Rust386 and JS25 seals were identical after the mutations. Document edits are outside those code seals. The final document gates are
+tracked73/all79 files clean and self-tests12/12, and `cargo test -p p4-agent --test docs_lint` is also 1/1.
+The raw output is preserved in `target/issue-witness-docs-{tracked,all,self}.log` and `target/issue-witness-final-cargo-docs.log`.
+The target files are locally preserved evidence, not an immutable deployment bundle. With the new sources, C++/CUDA,
+model load, remote network, heavy GPU waves, VRAM-only/RAM offloading, deploy and commit/push were not run.
 
-### 여전히 열린 경계
+### Boundaries still open
 
-내부 witness는 아직 OUTPUT로 나가지 않는다. late/missing 관측을 actual OUTER가 완결 대조하는
-wire/소유 투영/effect fan-out도 미이관이며 이번 GREEN으로 승인하지 않는다. 과거 RequestState 전체
-프롬프트 clone, 매 issue의 ReplySpec parse/authority 재해시·현재 행 정렬 비용은 별도로 남는다.
-추가 읽기 전용 감사의 serialized ReplySpec>4096 사전검사 누락은 이번 NUL 반례와 다른 열린 표면이다.
-그 최대 길이 반례를 실행했다고 하지 않는다. 다음 첫 행동과 이후 순서는 로드맵의 최신 절만 소유한다.
+The internal witness does not go out in OUTPUT yet. The wire, owner projection and effect fan-out by which the actual OUTER checks late/missing observations for completeness
+are not migrated either, and this GREEN does not approve them. The earlier full RequestState
+prompt clone and the cost of ReplySpec parse / authority rehash / current row sorting on every issue remain separately.
+The missing serialized ReplySpec>4096 preflight found by a further read-only audit is an open surface distinct from this NUL counterexample.
+We do not claim that this maximum-length counterexample was run. The first next action and the order after it are owned only by the latest roadmap section.
 
-## 2026-09-07 후속 — 제출 문자열의 실제 byte 경계
+## 2026-09-07 follow-up — the real byte boundary of submission strings
 
-앞 절의 code-only ReplySpec 크기 표면을 이번에 실제 Worker::run으로 재현하고 수정했다. HEAD는
-`a9e1967fc59dffa6c2e458f1b91f916b1df826c1`이며 미커밋 작업 트리다. 원본 commit/push·원격 배포는 하지 않았다.
-현재 입력 한도의 단독 소유는 배치 계약의 제출 경계이며, 다음 행동/단계 상태는 로드맵 최신 절을 따른다.
+The code-only ReplySpec size surface from the previous section was reproduced this time with a real Worker::run and fixed. HEAD is
+`a9e1967fc59dffa6c2e458f1b91f916b1df826c1`, with an uncommitted working tree. No commit/push of the original or remote deploy was done.
+The current input limits are owned solely by the submission boundary of the batching contract, and the next action / stage status follow the latest roadmap section.
 
-### 반례의 원인과 수정 범위
+### Cause of the counterexample and scope of the fix
 
-`worker.rs::prefill`은 ReplySpec/options의 한도를 확인하지 않고 session key를 기억하고 요청을
-수용했다. 이후 `LogicalBatch::encode`가 InvalidRow를 반환하면 요청 거부가 아니라 worker 종료였다.
-prompt 입력은 이미 Tokenize를 실행했다. 이번 반례에서는 logical/native KV 실행 전 encode가 실패하므로
-KV가 쓰였다고 하지 않는다. 앞 NUL 반례의 native 후 Uncertain과는 다른 경로다.
+`worker.rs::prefill` remembered the session key and accepted the request without checking the ReplySpec/options limits.
+When `LogicalBatch::encode` later returned InvalidRow, the result was a worker shutdown, not a request rejection.
+Prompt input had already run Tokenize. In this counterexample, encode fails before logical/native KV execution, so
+we do not claim KV was written. This is a different path from the previous NUL counterexample's post-native Uncertain.
 
-공유 `capsule.rs::validate_reply_options`를 actual serialized ReplySpec과 원문 options에 적용한다.
-Logical/Physical도 같은 검사를 유지하며 원래 4096-byte 한도와 다른 identity/position/speculative 검사를
-바꾸지 않았다. PREFILL 호출은 record/remember_session_key·Tokenize·slot/incarnation 수용보다 앞이다.
-options의 JSON 의미를 Rust에 재구현하거나 strip/재직렬화하지 않는다. generic P4·llama/backend 변경은 없다.
+The shared `capsule.rs::validate_reply_options` is applied to the actual serialized ReplySpec and the raw options.
+Logical/Physical keep the same check, and the original 4096-byte limit and the other identity/position/speculative checks were
+not changed. The PREFILL call comes before record/remember_session_key, Tokenize and slot/incarnation acceptance.
+The JSON semantics of options are not reimplemented in Rust, and options are not stripped or reserialized. There are no generic P4 or llama/backend changes.
 
-- `submission_limits.rs`: 12 libtest 안의 정상16회/초과8회. 정상 입력 4095/4096은 ASCII·escape·UTF-8와
-  tokens/prompt를 포함하며 기존 exact token/text/position/stop·KV·release oracle로 완주한다.
-- 초과 4097은 native/tokenize/기록·수용 전에 명시 오류1로 거부되고 같은 request ID/다른 session key를
-  원래 worker에 재제출해 정상 완주한다. incarnation1/slot0을 오염하지 않는다.
-- 독립 literal ReplySpec에서 escaped correlation 원문1982bytes가 reply4097이 되고, Unicode
-  correlation3962bytes/1322scalars가 reply4097이 된다. 옵션4096을 가진 외부 JSON payload4276/4326bytes는
-  유효하다. 외부 payload 크기·문자 수·trim 문자열을 검사하는 대체를 금지한다.
-- `logical.rs::reply_and_options_wire_limits_preserve_exact_utf8_bytes`는 별도 codec 회귀1이다.
-  실제 모델 tokenizer/options parser 또는 전역 admission 예산/다른 실패의 원자성 증명은 아니다.
+- `submission_limits.rs`: 16 valid and 8 over-limit cases within 12 libtests. The valid inputs of 4095/4096 cover ASCII, escapes, UTF-8, and
+  tokens/prompt, and complete with the existing exact token/text/position/stop, KV and release oracles.
+- An over-limit 4097 is rejected with explicit error1 before native/tokenize/recording/acceptance, and resubmitting the same request ID with a different session key
+  to the original worker completes normally. incarnation1/slot0 is not polluted.
+- In an independent literal ReplySpec, an escaped correlation of 1982bytes raw becomes reply4097, and a Unicode
+  correlation of 3962bytes/1322scalars becomes reply4097. External JSON payloads of 4276/4326bytes carrying options4096 are
+  valid. Substituting checks on external payload size, character count or trimmed strings is forbidden.
+- `logical.rs::reply_and_options_wire_limits_preserve_exact_utf8_bytes` is a separate codec regression1.
+  It is not proof of a real model tokenizer/options parser, a global admission budget, or atomicity under other failures.
 
-### 수정 전 실행 봉인과 오류 정정
+### Sealing the pre-fix run and correcting an error
 
-`target/submission-limits-20260907-01/red.log` 첫 실행은4P/8F였으나 동시에 root가 logical codec 회귀를
-추가하여 source before/after가 달랐다. **비봉인 역사 관측**으로만 보존하고 수정 전 확정 증거로 쓰지 않았다.
-편집을 멈춘 뒤 `sealed-red.log`로 실제 재컴파일5.44s 후 다시4P/8F를 재현했다. 관심7파일 before/after가
-동일했다. 이는 workspace 전체 봉인이 아니라 해당 소스 목록의 봉인이다.
+The first run in `target/submission-limits-20260907-01/red.log` gave 4P/8F, but at the same time root was adding the logical codec regression,
+so source before/after differed. It is preserved only as an **unsealed historical observation** and was not used as definitive pre-fix evidence.
+After editing stopped, `sealed-red.log` reproduced 4P/8F again after an actual 5.44s recompile. The 7 files of interest were identical
+before/after. This is a seal of that source list, not of the whole workspace.
 
 - sealed raw SHA256 `d23d1b10bdc9efc9dbee8cc9920593b473f8da206489f057e2238e69565a74e9`
 - sealed RED EXE SHA256 `00c5fcc34c4826c23e41c7a14dfb86d94e800349ea67e811e3cdae5529a70a2b`
-- 8초과 모두 `LLAMA_LOGICAL_BATCH_ENCODE_FAILED/InvalidRow`, requests1·session key 등록·incarnation1/
-  next2·shutdown1. prompt4종은 Tokenize1, 모든 경우 logical/physical native0·KV0.
-- 수정 후 `target/submission-limits-green.log`: actual compile5.58s, 입구12+codec1 =13/13.
-  후속 전체 봉인/변이/전체 suite가 이 부분 실행을 보강한다.
+- All 8 over-limit cases: `LLAMA_LOGICAL_BATCH_ENCODE_FAILED/InvalidRow`, requests1, session key registered, incarnation1/
+  next2, shutdown1. The 4 prompt variants had Tokenize1; in every case logical/physical native0 and KV0.
+- After the fix, `target/submission-limits-green.log`: actual compile 5.58s, entry12+codec1 =13/13.
+  The later full seal, mutations and full suite reinforce this partial run.
 
-### 최종 Rust 소스와 독립 변이
+### Final Rust source and independent mutations
 
-`node target/submission-limits-proof.mjs seal`이 Rust/Cargo·adapter fixture·독립 issue vector를
-**387파일**로 복사하고 봉인했다. `target/submission-limits-mutations-20260907-01/source-baseline.json`의
-SHA256은 `5a60dbd09c9af3f508b0294670e640170098774ca8d309646983055a54219c38`이다.
-docs·C++·compiler/registry·모델·JS 하네스는 이 봉인에 포함되지 않는다. 이전386 witness 봉인은 보존했다.
+`node target/submission-limits-proof.mjs seal` copied and sealed Rust/Cargo, adapter fixtures and the independent issue vectors
+as **387 files**. The SHA256 of `target/submission-limits-mutations-20260907-01/source-baseline.json`
+is `5a60dbd09c9af3f508b0294670e640170098774ca8d309646983055a54219c38`.
+Docs, C++, compiler/registry, models and the JS harness are not included in this seal. The earlier 386 witness seal was preserved.
 
-각 arm은 `node target/submission-limits-proof.mjs run <arm>`으로 **별도 복사본**의 staged adapter 전체
-421시험을 실행했다. original before/after와 copy input before/after를 대조하고, 실제 Compiling·새 EXE
-mtime·raw log·입력 소스·EXE hash를 arm별 보존한다. 원본 checkout/reset이나 원본 변이는 하지 않았다.
+Each arm ran the full staged adapter suite of 421 tests in a **separate copy** via `node target/submission-limits-proof.mjs run <arm>`.
+It compares original before/after and copy input before/after, and preserves per arm the actual Compiling, new EXE
+mtime, raw log, input sources and EXE hash. No original checkout/reset or original mutation was done.
 
-| arm | 결과 | 반증 대상 |
+| arm | Result | What it refutes |
 | --- | --- | --- |
-| baseline |421/0, exit0|봉인된 정상 소스|
-| missing-ingress-guard |413/8, exit101|helper가 있어도 실제 PREFILL 호출을 제거하면 실패|
-| late-ingress-guard |413/8, exit101|session-key 기록 뒤 검사는 명시 오류를 내도 재제출 상태를 오염|
-| character-count |418/3, exit101|UTF-8 byte 대신 chars로 세는 잘못된 수리|
-| exclusive-boundary |416/5, exit101|정확4096까지 거부하는 과잉 수리|
-| restored-final |421/0, exit0|전체387 source bytes 원복 일치|
+| baseline |421/0, exit0|The sealed valid source|
+| missing-ingress-guard |413/8, exit101|Removing the real PREFILL call fails even if the helper exists|
+| late-ingress-guard |413/8, exit101|A check after session-key recording pollutes resubmission state even if it raises an explicit error|
+| character-count |418/3, exit101|A wrong fix that counts chars instead of UTF-8 bytes|
+| exclusive-boundary |416/5, exit101|An over-fix that also rejects exactly 4096|
+| restored-final |421/0, exit0|All 387 source bytes restored and matching|
 
-`node target/submission-limits-proof.mjs verify`로 보존 입력/log/EXE와 예상 exit를 검증했다.
-`check-source`도 동일387을 확인했다. 시험·골든을 변이에 맞춰 변경하지 않았다.
+`node target/submission-limits-proof.mjs verify` verified the preserved inputs/logs/EXEs and the expected exits.
+`check-source` also confirmed the same 387. Tests and goldens were not changed to accommodate mutations.
 
-### 실제 C++ codec 경계 — 모델 없음
+### Real C++ codec boundary — no model
 
-원본 변경은 `runtime/physical_wire_test.cpp`뿐이다. 최종 test SHA256은
-`395d6293f9bb90d4492b0f836a54c8f99a404fbc8304c9e458c984c3de3ed921`이다. 기존 단언을 유지하고
-reply/options×ASCII/3-byte UTF-8×4095/4096/4097의 **12케이스**를 추가했다. LB/PB literal 입력은
-production encoder 없이 만들며 실제 두 decoder·PB encoder의 한도와 exact bytes를 대조한다.
-empty options도 허용한다. Rust와 C++의 동일 nominal 경계를 독립 시험한 것이며 같은 외부 fixture를
-양쪽에 직접 재생한 cross-language 전체 conformance라고 하지 않는다.
+The only original change is `runtime/physical_wire_test.cpp`. The final test SHA256 is
+`395d6293f9bb90d4492b0f836a54c8f99a404fbc8304c9e458c984c3de3ed921`. The existing assertions were kept and
+**12 cases** of reply/options × ASCII/3-byte UTF-8 × 4095/4096/4097 were added. The LB/PB literal inputs are
+built without the production encoder, and the limits and exact bytes of the two real decoders and the PB encoder are checked.
+Empty options are allowed too. This independently tests the same nominal boundary in Rust and C++; it is not called
+full cross-language conformance that replays the same external fixture directly on both sides.
 
-MSVC14.44.35207로 test/physical_wire_decode/physical_wire_encode/physical_authority **4 TU**를
-각 arm 새로 컴파일했다. `/std:c++17 /EHsc /O2 /UNDEBUG /MD`, public llama/ggml headers만 필요하며
-llama library·모델·GPU는 사용하지 않았다. actual MSVC dependencies의 source/header152개와 compiler,
-commands·EXE·before/after 입력을 보존했다. CMake target/full build/CTest를 실행한 것이 아니다.
+With MSVC14.44.35207, the **4 TUs** test/physical_wire_decode/physical_wire_encode/physical_authority were
+freshly compiled for each arm. `/std:c++17 /EHsc /O2 /UNDEBUG /MD`; only the public llama/ggml headers are needed, and
+no llama library, model or GPU was used. The 152 source/header files from the actual MSVC dependencies, the compiler,
+commands, EXE and before/after inputs are preserved. This did not run a CMake target, a full build or CTest.
 
-- `target/native-row-string-boundaries-final-20260907/verification.{json,md}`: baseline0 → 별도복사본의
-  거짓 assert3 → exact restore0. Release assert가 실제 실행됨을 확인한다. 최초 혼합 EOL 버전의
-  `target/native-row-string-boundaries-20260907`은 별도 역사 자료이며 최종 source 증거로 대체하지 않았다.
-- `target/native-row-string-limit-drift-20260907/verification.{json,md}`: baseline0 → 복사본의
-  `kMaxString=4097`만 변경하여 실제 LB decoder boundary assert 실패(exit3221226505) → 원복0.
-  첫 단언에서 멈추므로 이 변이가 PB 모든 분기의 독립 실패까지 증명한다고 하지 않는다.
-- native drift 최종 restored EXE SHA256
+- `target/native-row-string-boundaries-final-20260907/verification.{json,md}`: baseline0 → false assert3 in a separate
+  copy → exact restore0. This confirms that Release asserts actually run. The first mixed-EOL version in
+  `target/native-row-string-boundaries-20260907` is separate historical material and was not used in place of the final source evidence.
+- `target/native-row-string-limit-drift-20260907/verification.{json,md}`: baseline0 → changing only
+  `kMaxString=4097` in the copy makes the real LB decoder boundary assert fail (exit3221226505) → restore0.
+  It stops at the first assertion, so we do not claim this mutation proves independent failure of every PB branch.
+- Final restored native drift EXE SHA256
   `b8b6c792835bc061a5d7dd38e1194f1d1cd9b39f3188836199a715cac12150b5`.
 
-### 최종 집계와 범위
+### Final tally and scope
 
-- `target/submission-limits-workspace.log`: `cargo test --workspace --no-fail-fast` 최종 exit0,
-  **57 summaries /1166 passed /0 failed /7 ignored** = 이전1153+이번13. 실행 완료를 확인했다.
-- `target/submission-limits-js.log`: 하네스68+build wiring6+event config3+four-node config9 = **86/0**, skipped0.
-  입력25파일은 기존 JS 봉인 `41dbff05c72d143191348766d6802924611e36fdc6f1006ec9a5240f1d0a26b8`과 동일하다.
-- `target/submission-limits-clippy.log`: staged/event-drive all-targets exit0. staged lib15/lib-test26,
-  drive bin6/test8 등 기존 경고는 남아 있으며 warning-free 주장이 아니다.
+- `target/submission-limits-workspace.log`: `cargo test --workspace --no-fail-fast` final exit0,
+  **57 summaries /1166 passed /0 failed /7 ignored** = previous1153 + this13. Run completion was confirmed.
+- `target/submission-limits-js.log`: harness68+build wiring6+event config3+four-node config9 = **86/0**, skipped0.
+  The 25 input files are identical to the existing JS seal `41dbff05c72d143191348766d6802924611e36fdc6f1006ec9a5240f1d0a26b8`.
+- `target/submission-limits-clippy.log`: staged/event-drive all-targets exit0. Existing warnings such as staged lib15/lib-test26 and
+  drive bin6/test8 remain; this is not a warning-free claim.
 
-문서 gate는 최종 문서 편집 뒤 추적73/전체79 clean, 자체12/12, cargo docs_lint1/1이다.
-`target/submission-limits-docs-{tracked,all,self,cargo}.log`에 원문을 보존했다. private-header gate는
-`target/submission-limits-private-headers.log`의81 clean/common0 header·5 source이며 include 문자열
-검사 범위다. Rust387·JS25 봉인은 마지막에도 동일하다. target 자료는 로컬 보존 증거이지 장기 배포 bundle이 아니다.
-OUTPUT v4/관측 wire·소유자 투영/완료 조건은 아직 그대로다. 모델 tokenizer·native options 의미·CUDA/
-엔진 CTest·실제 강한 GPU 웨이브·VRAM-only/RAM 오프로딩·다중 컴퓨터·deploy/commit/push는 미실행이다.
+After the final document edit, the document gates are tracked73/all79 clean, self-tests12/12, cargo docs_lint1/1.
+The raw output is preserved in `target/submission-limits-docs-{tracked,all,self,cargo}.log`. The private-header gate is
+81 clean/common0 header, 5 source in `target/submission-limits-private-headers.log`, within the scope of an include string
+check. The Rust387 and JS25 seals are identical at the end as well. The target material is locally preserved evidence, not a long-term deployment bundle.
+OUTPUT v4, the observation wire, owner projection and completion conditions are still unchanged. Model tokenizer, native options semantics, CUDA/
+engine CTest, real heavy GPU waves, VRAM-only/RAM offloading, multi-computer runs and deploy/commit/push were not run.
 
-## 2026-09-07 후속 — OUTPUT 발행 증거와 소유자별 관측 완결
+## 2026-09-07 follow-up — OUTPUT issue evidence and per-owner observation completeness
 
-HEAD `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`의 미커밋 작업 트리를 대상으로 했다. 앞 절의 내부
-witness와 입력 한도는 유지했다. 아래 구현/시험은 이 소스 범위에 한정하며 과거 GPU 실행을 재인증하지
-않는다. 계약 정의는 배치 계약, 다음 단계/승격 상태는 로드맵 최신 기록이 소유한다.
+The target is the uncommitted working tree on HEAD `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`. The internal
+witness and input limits from the previous sections were kept. The implementation and tests below are limited to this source scope and do not
+re-certify past GPU runs. The contract definition is owned by the batching contract, and the next stage / promotion status by the latest roadmap record.
 
-### 구현된 소비 경계와 유지한 것
+### Implemented consumer boundaries and what was kept
 
-- `completion.rs::ApprovedOutputPayload`는 OUTPUT v5의 엄격한 flat DTO와 terminal 전용 proof를
-  검증한다. `release.rs::tail`은 RequestState를 없애기 전에 실제 승인된 witness를 복사하고 원제출
-  authority digest를 다시 대조한다. raw flight 등록이나 반환 capsule에서 witness를 만들지 않는다.
-- `commands.rs`의 OBS v4/SPAN v4와 `observe.rs`는 full OuterEndpoint로 수신자를 묶는다.
-  서로 다른 correlation은 같은 route에서 하나의 전달로 묶되 carrier는 실제 원 ReplySpec을 사용한다.
-  자기 소유 요청의 정확한 행·phase·position·발행 index와 물리 전체 크기를 구분한다. downstream은
-  가지지 않은 submission ID를 만들어 넣지 않는다. pre-native 수신자 검증과 Fresh-only span을 유지한다.
-- head는 승인 전 관측 후보를 만들고 `accept_prepared_issue`가 설치한 실제 witness count/ordinal과
-  승인 후 대조한다. 관측을 송신했다는 이유로 발행 count를 늘리지 않는다.
-- `effects.rs::flush_effects`는 실제 completion mailbox에 Forward를 넣은 직후 시각을 한 번 고정하고
-  후속 Telemetry intent를 보존한다. Full 복구·Closed·이벤트 번호 고갈을 검사했다. 이는 로컬 전달
-  수용 시각이며 네트워크 도착 시각/내구 재전송/자동 fence 복구를 추가한 것이 아니다.
-- `event-drive`의 실제 송신 경로가 `SubmittedAuthority`를 등록한다. OUTPUT은 budget과 해제 후보를
-  검사하고 증거 후보를 승인한 뒤 요청 출력/해제 기대를 commit한다. 관측은 연속해진 요청별 issue를
-  한 번씩 해시하고, terminal 증거와 configured stage별 execution membership/global 크기를 대조한다.
-  도착 순서 역전과 정확한 body 재전달은 허용하며 충돌은 후보 전체를 반영하기 전에 거부한다.
-- 실제 drive는 terminal+release 뒤에도 Missing이면 원래 overall deadline 안에서 기다린다. 다음
-  wave의 예정 시각이 deadline보다 늦은 경우도 종료한다. `elapsed_ms`는 release 경계에 latch하고
-  `telemetry_complete_elapsed_ms`를 따로 보존한다. 새로운 대기 시간을 기존 TPS 분모에 합치지 않는다.
-- RequestArtifact는 실제 제출 authority와 terminal proof를 보존한다. stage index는 같은 실행의
-  config.json과 함께 해석한다. offline `acceptance::evaluate`는 온라인 hash 검사를 독립 재실행하지
-  않는다. Invalid/Missing EOF·timeout은 Err/nonzero이며 실패 partial artifact 저장은 아직 없다.
+- `completion.rs::ApprovedOutputPayload` validates the strict flat DTO of OUTPUT v5 and the terminal-only proof.
+  `release.rs::tail` copies the actually approved witness before discarding RequestState and rechecks the original submission's
+  authority digest. The witness is not built from a raw flight registration or a returned capsule.
+- OBS v4/SPAN v4 in `commands.rs` and `observe.rs` bind the recipient with the full OuterEndpoint.
+  Different correlations on the same route are bundled into one delivery, but the carrier uses the actual original ReplySpec.
+  The exact rows, phase, position and issue index of the recipient's own requests are kept apart from the full physical size. Downstream
+  does not invent a submission ID it does not have. Pre-native recipient validation and Fresh-only spans are kept.
+- head builds the observation candidate before approval and checks it after approval against the real witness count/ordinal installed by
+  `accept_prepared_issue`. The issue count is not increased just because an observation was sent.
+- `effects.rs::flush_effects` pins the time once, right after putting Forward into the real completion mailbox, and
+  preserves the following Telemetry intent. Full recovery, Closed and event number exhaustion were tested. This is the local delivery
+  acceptance time; it does not add network arrival time, durable retransmission or automatic fence recovery.
+- The real send path of `event-drive` registers `SubmittedAuthority`. OUTPUT checks the budget and release candidates,
+  approves the evidence candidate, and then commits the request output / release expectations. Observations hash each newly contiguous per-request issue
+  once, and compare the terminal evidence with the per-configured-stage execution membership and global size.
+  Reversed arrival order and exact body redelivery are allowed, and conflicts are rejected before any of the candidate is applied.
+- The real drive, if still Missing after terminal+release, waits within the original overall deadline. It also ends when the next
+  wave's scheduled time is later than the deadline. `elapsed_ms` is latched at the release boundary, and
+  `telemetry_complete_elapsed_ms` is kept separately. The new wait time is not added to the existing TPS denominator.
+- RequestArtifact preserves the actual submission authority and terminal proof. Stage indexes are interpreted together with the
+  config.json of the same run. Offline `acceptance::evaluate` does not independently rerun the online hash checks.
+  Invalid/Missing EOF and timeout are Err/nonzero, and saving a partial artifact on failure is not implemented yet.
 
-어댑터 소유 DTO/증거 타입만 공개했다. generic P4 event/NodeAdapter·native opcode/capsule·C++·llama/
-backend는 이번 slice에서 바꾸지 않았다. 정책이 native private 타입을 갖게 하지 않았으며 SHA 증거를
-인증이나 KV 정지점 증명으로 승격하지 않는다. 명시 Cancel/Drain·credit는 미구현이다.
+Only adapter-owned DTO/evidence types were made public. The generic P4 event/NodeAdapter, native opcode/capsule, C++ and llama/
+backend were not changed in this slice. Policy was not given native private types, and the SHA evidence is not promoted
+to authentication or proof of a KV stop point. Explicit Cancel/Drain and credit are not implemented.
 
-### 실제 생산 캡처와 독립 기대량
+### Real production capture and independent expected counts
 
-기존 `head-approved-output-v1.json`(OUTPUT v3), `v2.json`(OUTPUT v4)은 불변이다. 새로운
-`head-approved-output-v3.json`은 actual Worker::run에서 받은 EventWire 원문으로 만들었다.
-기존 승인 필드/원제출/해제 및 token/text/position/stop oracle는 보존한다. 버전 간 비교에서 신규 proof와
-명시 version만 투영하며, 현재 v5 full payload도 새 캡처와 비교한다. 실제 live event ID의 중복·증가와
-causation 존재를 검사하되 cross-run event ID/causation 값·sequence·timing/pacing은 같다고 요구하지 않는다.
-따라서 causation이 특정 terminal 사건 하나를 정확히 가리킨다는 별도 증명으로 확대하지 않는다.
+The existing `head-approved-output-v1.json` (OUTPUT v3) and `v2.json` (OUTPUT v4) are unchanged. The new
+`head-approved-output-v3.json` was built from the raw EventWire received in the actual Worker::run.
+The existing approval fields, original submission, release and token/text/position/stop oracles are kept. Cross-version comparison projects only the new proof and
+the explicit version, and the current v5 full payload is also compared with the new capture. Duplication/increase of real live event IDs and
+causation presence are checked, but cross-run event ID/causation values, sequence and timing/pacing are not required to be equal.
+So this is not extended into a separate proof that causation points exactly to one specific terminal event.
 
-| 실제 case | 원제출 | OUTPUT | receipt | OBS | SPAN |
+| Real case | Original submissions | OUTPUT | receipt | OBS | SPAN |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | ordinary-2 |1|5|1|6|12|
 | checkpoint-2 |2|5|2|5|10|
@@ -1838,1309 +1838,1309 @@ causation 존재를 검사하되 cross-run event ID/causation 값·sequence·tim
 | mixed-owner-4 |2|2|2|2|8|
 | mixed-consumer-2 |2|2|2|2|4|
 | mixed-consumer-4 |2|2|2|2|8|
-| 합계 |13|23|13|24|66|
+| Total |13|23|13|24|66|
 
-`loop_tests/observation_contract.rs`의 기대량은 **수신한 OBS가 아니라 실제 발행 승인 callback**의
-읽기 전용 기록이다. successful native 결과 capsule bytes·원제출 Event·승인 witness·설정 stage를
-기록한 뒤 별도의 수신 wire와 대조한다. old exact token/KV/release와 함께 finish barrier를 적용한다.
-일반 2/4/8-stage와 mixed-owner에는 기존 독립 Node literal digest도 유지한다. 모든 speculative
-시나리오에서 hash 알고리즘을 독립 재구현했다는 뜻은 아니다.
+The expected counts in `loop_tests/observation_contract.rs` are a read-only record of **the real issue approval callback, not the received OBS**.
+It records the successful native result capsule bytes, the original submission Event, the approval witness and the configured stages,
+and then compares them against the separately received wire. The finish barrier is applied together with the old exact token/KV/release checks.
+The existing independent Node literal digests are also kept for plain 2/4/8-stage and mixed-owner. This does not mean the hash algorithm
+was independently reimplemented for every speculative scenario.
 
-기존 mixed-owner는 correlation과 request ID가 다른 양성을 그대로 둔다. 추가 mixed-consumer는
-처음부터 실제 event-drive Sender 방식으로 제출해, 실제 drive 두 개에 각 route의 **전체 캡처 Event**를
-전달한다. foreign owner를 소비 직전에 body에서 지워 맞추지 않는다. checkpoint의 partial request는
-logical ordinal 1/2/3/5를 사용해 count4와 last ordinal5를 구분한다. 같은 OUTER의 checkpoint 요청들은
-별도 issue라 전체 Event를 골라 소비할 수 있다; 같은 OUTER의 여러 요청을 하나의 physical에 함께 담는
-경우까지 이 단일요청 캡처 소비가 증명한다고 하지 않는다(생산 측 다중 요청 시험은 별도다).
+The existing mixed-owner test keeps its positive case in which correlation and request ID differ. The added mixed-consumer test
+submits in the real event-drive Sender style from the start and delivers each route's **full captured Events** to two real drives.
+Foreign owners are not erased from the body just before consumption to make it fit. The checkpoint partial request
+uses logical ordinals 1/2/3/5 to distinguish count4 from last ordinal5. Checkpoint requests from the same OUTER are
+separate issues, so whole Events can be selected for consumption; we do not claim this single-request capture consumption proves the case where several requests
+from the same OUTER share one physical (production-side multi-request tests are separate).
 
-이 시험들은 scripted native tokens를 사용한다. event-drive가 실제 송신한 envelope/설정과 캡처를
-대조하지만, 명시 token 입력과 다른 prompt 본문이 실제 모델에서 같게 토큰화된다는 증명은 아니다.
-actual worker 자체의 command/capsule codecs와 local routing, actual drive의 EventWire 소비를
-연결한 회귀이지 실제 broker/네트워크/native 모델을 하나로 연결한 전체 실기는 아니다.
+These tests use scripted native tokens. They compare the envelope/config actually sent by event-drive with the capture,
+but this does not prove that a prompt body different from the explicit token input tokenizes identically on a real model.
+This is a regression connecting the actual worker's own command/capsule codecs and local routing with the actual drive's EventWire consumption,
+not a full real-hardware run that connects a real broker, network and native model end to end.
 
-### 검수에서 새로 잡힌 완료 오류
+### A completion error newly caught in review
 
-정상 첫 span에 execution999, `owned_requests=[]`, rows+1만 추가해도 기존 소비 후보는 Complete였다.
-`SpanRows`는 unknown1을 보류했으나 `ExecutionEvidence::missing`이 empty-owned unknown을0으로
-세어 완료 조건에서 빠졌다. actual drive는 정상 출력5·issue count6·완료1/해제1을 그대로 승인했다.
+Adding only execution999, `owned_requests=[]` and rows+1 to a valid first span still left the existing consumer candidate Complete.
+`SpanRows` held back unknown1, but `ExecutionEvidence::missing` counted the empty-owned unknown as0,
+so it dropped out of the completion condition. The actual drive approved normal output5, issue count6, completed1/released1 unchanged.
 
-`target/owner-evidence-consumer-20260907-01/04-unresolved-global-red.log`에 실제0P/1F와 성공으로
-잘못 반환한 전체 결과를 보존했다. 이제 수신된 global 실행은 head 크기를 확인하기 전 Missing이다.
-보지 못한 B-only span을 요구하지 않으며, span이 먼저 와도 head가 뒤에 확인하는 양성을 유지했다.
-그 양성의 추가 foreign 실행은 **명시 metamorphic fixture**이지 unmodified native 캡처라고 하지 않는다.
-아래 봉인 소스의 old-missing 변이로 이 오류를 다시 재현한다.
+`target/owner-evidence-consumer-20260907-01/04-unresolved-global-red.log` preserves the real 0P/1F and the full result that was
+wrongly returned as success. A received global execution is now Missing until head size is confirmed.
+Unseen B-only spans are not required, and the positive case where the span arrives first and head confirms later is kept.
+The extra foreign execution in that positive case is an **explicit metamorphic fixture**, not an unmodified native capture.
+The old-missing mutation of the sealed source below reproduces this error again.
 
-다른 실제 소비 반례는 proof의 누락/revision/count/ordinal/authority/digest, 중간 position·attempt·
-issue index 교체, stage별 누락, width/owner/timestamp 충돌, legacy v4, 다른 요청의 carrier다.
-마지막 decode OBS만 삭제하는 경우와 **그 OBS 및 관련 모든 stage span을 함께 삭제하는 경우**를
-나누었다. 후자는 받은 execution 집합까지 없어져도 terminal 기대량이 남아 Missing requests1/stage0이다.
-정상 reorder·exact replay·late telemetry와 mixed-owner 양성을 함께 실행했다.
+The other real consumer counterexamples are missing/revision/count/ordinal/authority/digest in the proof, swapped middle position/attempt/
+issue index, per-stage omissions, width/owner/timestamp conflicts, legacy v4, and a carrier for a different request.
+Deleting only the last decode OBS was separated from **deleting that OBS together with all related stage spans**.
+In the latter, even though the received execution set disappears as well, the terminal expected counts remain, giving Missing requests1/stage0.
+Normal reorder, exact replay, late telemetry and the mixed-owner positive cases were run together.
 
-### 봉인과 실행 범위
+### Seal and execution scope
 
-`node target/observation-proof.mjs seal`이 workspace Rust/Cargo·공용 캡처·독립 issue vector를
-**391파일**로 복사했다. `target/observation-migration-20260907-01/source-baseline.json`의 SHA256은
-`af4249da69e7447caade7182807b9a9bc970ce01b39a700ffd12280e3e5c75dc`다. docs/C++/JS/compiler/registry/
-모델은 이 봉인 밖이다. 각 arm은 원본 before/after와 독립 copy before/after, 실제 재컴파일·새 EXE
-mtime·source bytes·raw log·EXE hash를 보존한다. 원본 checkout/reset 또는 원본 변이는 하지 않았다.
+`node target/observation-proof.mjs seal` copied the workspace Rust/Cargo, shared captures and independent issue vectors as
+**391 files**. The SHA256 of `target/observation-migration-20260907-01/source-baseline.json` is
+`af4249da69e7447caade7182807b9a9bc970ce01b39a700ffd12280e3e5c75dc`. docs/C++/JS/compiler/registry/
+models are outside this seal. Each arm preserves original before/after and independent copy before/after, the actual recompile, new EXE
+mtime, source bytes, raw log and EXE hash. No original checkout/reset or original mutation was done.
 
-`target/observation-migration-workspace.log`의 `cargo test --workspace --no-fail-fast`는 최종 exit0,
-**57 summaries /1196 passed /0 failed /7 ignored**다. 이전1166에서 staged adapter15, drive15가 늘었다.
-구 adapter/deployment 시험을 숨기거나 골든/상한을 낮추지 않았다. 단계별 실행/변이 내역은 아래에 이어진다.
+`cargo test --workspace --no-fail-fast` in `target/observation-migration-workspace.log` gave final exit0,
+**57 summaries /1196 passed /0 failed /7 ignored**. Compared with the previous1166, staged adapter15 and drive15 were added.
+Old adapter/deployment tests were not hidden, and goldens/bounds were not lowered. Per-stage runs and mutation details follow below.
 
-`target/observation-migration-js.log`: 하네스72+build wiring6+event config3+four-node config9 =
-**90/0**, skipped0. 별도 JS25 입력의 SHA256은
-`039b98f651c5154823a37f2c9b9ea018f8cc1cc5efd1b0d45c937882f3703b3d`다.
-`target/observation-js-20260907-01/verification.json`은 독립 copy의 report baseline15/0 → conflicting
-span 허용14/1 → telemetry를 TPS 분모로 사용14/1 → exact restore15/0을 보존한다. 이것은 report
-조립의 검증이며 worker/모델/네트워크 증명이 아니다. fleet의 다른 OUTER projection을 합산하는 모드도 아니다.
+`target/observation-migration-js.log`: harness72+build wiring6+event config3+four-node config9 =
+**90/0**, skipped0. The SHA256 of the separate JS25 inputs is
+`039b98f651c5154823a37f2c9b9ea018f8cc1cc5efd1b0d45c937882f3703b3d`.
+`target/observation-js-20260907-01/verification.json` preserves, in an independent copy, report baseline15/0 → allowing a conflicting
+span14/1 → using telemetry as the TPS denominator14/1 → exact restore15/0. This verifies report
+assembly, not the worker, model or network. Nor is it a mode that sums the projections of other OUTERs in the fleet.
 
-clippy는 `target/observation-migration-clippy.log`에서 exit0지만 warning-free가 아니다. staged lib16/
-test28, drive bin8/test9 등이 남는다. production에서 안 쓰는 `approve_output` convenience와 새 type
-complexity 등도 포함되며 증거 봉인 뒤 소스를 몰래 청소하지 않았다. 정리는 다음 소스 변경 때 재검증한다.
+clippy gives exit0 in `target/observation-migration-clippy.log`, but it is not warning-free. staged lib16/
+test28, drive bin8/test9 and others remain. They include the `approve_output` convenience that production does not use and new type
+complexity, and the source was not quietly cleaned up after the evidence was sealed. Cleanup will be re-verified with the next source change.
 
-최종 문서/독립 변이 확인은 아래 기록을 따른다. 모델/GPU/전체 CTest·원격 배포·강한 실제 웨이브·
-VRAM-only/RAM 오프로딩·다중 컴퓨터·commit/push는 이번 slice에서 미실행이다. 실제 tokenizer/KV 수치,
-교차 호스트 clock bound·내구 전달·Cancel/Drain·restart freshness·bounded RSS·최적 배치 성능은 남는다.
+Final document checks and independent mutation checks follow the record below. Models/GPU, full CTest, remote deploy, heavy real waves,
+VRAM-only/RAM offloading, multi-computer runs and commit/push were not run in this slice. Real tokenizer/KV values,
+cross-host clock bounds, durable delivery, Cancel/Drain, restart freshness, bounded RSS and optimal batching performance remain.
 
-### 독립 복사본의 변이와 exact restore
+### Mutations in an independent copy and exact restore
 
-`node target/observation-proof.mjs run <label> [crate] [filter]`의 crate는 staged adapter 또는
-event-drive다. baseline/restore는 해당 crate 전체, 두 terminal/승인 full-loop arm은
-`b2_two_stage_run_loop_completes_one_request_through_real_event_and_native_codecs`, 생산 관측 arm은
-`observe_tests`, 소비 arm은 `output_contract` 필터를 사용했다. 필터 제외를 실행 통과에 더하지 않는다.
+The crate in `node target/observation-proof.mjs run <label> [crate] [filter]` is the staged adapter or
+event-drive. baseline/restore run the whole crate; the two terminal/approval full-loop arms use the
+`b2_two_stage_run_loop_completes_one_request_through_real_event_and_native_codecs` filter, the production observation arm uses
+`observe_tests`, and the consumer arms use `output_contract`. Tests excluded by the filter are not added to the passes.
 
-| arm | 실행 passed/failed | 판정 범위 |
+| arm | Run passed/failed | Verdict scope |
 | --- | ---: | --- |
-| baseline-adapter |436/0|독립 복사본 전체 staged adapter|
-| baseline-drive |82/0|독립 복사본 전체 실제 drive 시험|
-| terminal-proof-missing |0/1|terminal 복사를 제거하면 실제 run이 정상 완료하지 못함|
-| accepted-witness-missing |0/1|승인 hook의 읽기 전용 기대량이 witness 설치 누락 검출|
-| accepted-witness-missing-observe |6/2|읽기 hook 없는 실제 head 경로도 `accepted observation has no witness`로 실패|
-| span-recipient-loss |3/5|첫 recipient만 남기면 실제 fan-out/포화 보존 검사 실패|
-| telemetry-suffix-loss |3/5|Forward 성공 뒤 관측 intent를 비우면 보존/전달 검사 실패|
-| drive-stage-coverage-bypass |13/4|stage 증거 누락을 완료로 취급하면 실제 소비 회귀 실패|
-| drive-digest-bypass |15/2|명시 conflict 검사를 제거하면 Invalid가 Missing으로 바뀌어 실패|
-| drive-unresolved-global-bypass |16/1|empty-owner 미확인 실행을 무시하는 기존 반례 재현|
-| restored-adapter |436/0|391개 source bytes 원복 뒤 새 컴파일/EXE|
-| restored-drive |82/0|동일 원복 소스로 새 컴파일/EXE|
+| baseline-adapter |436/0|Whole staged adapter in the independent copy|
+| baseline-drive |82/0|All real drive tests in the independent copy|
+| terminal-proof-missing |0/1|Removing the terminal copy keeps the real run from completing normally|
+| accepted-witness-missing |0/1|The read-only expected counts in the approval hook detect the missing witness installation|
+| accepted-witness-missing-observe |6/2|The real head path without the read hook also fails with `accepted observation has no witness`|
+| span-recipient-loss |3/5|Keeping only the first recipient fails the real fan-out/saturation preservation checks|
+| telemetry-suffix-loss |3/5|Clearing the observation intent after a successful Forward fails the preservation/delivery checks|
+| drive-stage-coverage-bypass |13/4|Treating missing stage evidence as complete fails the real consumer regressions|
+| drive-digest-bypass |15/2|Removing the explicit conflict check turns Invalid into Missing and fails|
+| drive-unresolved-global-bypass |16/1|Reproduces the existing counterexample that ignores an unconfirmed empty-owner execution|
+| restored-adapter |436/0|New compile/EXE after restoring the 391 source files byte-for-byte|
+| restored-drive |82/0|New compile/EXE with the same restored source|
 
-모든 RED의 cargo exit는101, baseline/restore는0이다. digest arm은 최종 equality가 별도로 남아
-거짓 성공이 아니라 Missing/EOF로 끝났으며, 이를 “변이 후 손상 승인”으로 보고하지 않는다. 첫 승인
-누락 arm은 test-only observer가 먼저 panic하므로, 별도 observe arm으로 실제 생산 guard도 확인했다.
-여러 gate가 겹쳐 있다는 사실을 숨기거나 시험 쪽 안전장치를 같이 지워 반증하지 않았다.
+The cargo exit for every RED is101, and for baseline/restore0. In the digest arm, the final equality check still remained, so it
+ended in Missing/EOF rather than a false success; this is not reported as "approval of corruption after mutation". In the first missing-approval
+arm, the test-only observer panics first, so the real production guard was also confirmed with the separate observe arm.
+The fact that several gates overlap was not hidden, and nothing was refuted by also removing test-side safeguards.
 
-`node target/observation-proof.mjs verify`는 정확히12개 arm·예상 exit·실제 실행 수·실패 수·원본
-before/after·각 arm의 변경 파일1개·보존 input/log/EXE hash·최종 copy exact restore를 확인했다.
-`verification.json`과 각 `manifest.json`/`output.log`/source/EXE가 같은 로컬 디렉터리에 있다.
-현재 root source의 `check-source`도391/동일 SHA이며 JS25 입력도 별도로 대조했다. 새 proof runner는
-target 로컬 검증 도구이며 정식 저장소 gate에 자동 연결됐다고 하지 않는다.
+`node target/observation-proof.mjs verify` confirmed exactly12 arms, the expected exits, actual run counts, failure counts, original
+before/after, 1 changed file per arm, the preserved input/log/EXE hashes, and exact restore of the final copy.
+`verification.json` and each `manifest.json`/`output.log`/source/EXE are in the same local directory.
+`check-source` on the current root source also gives 391/identical SHA, and the JS25 inputs were compared separately. The new proof runner is
+a local verification tool under target and is not claimed to be wired automatically into the official repository gates.
 
-문서 최종 대조는 `target/observation-migration-final-gates.json`과 개별 raw log에 보존한다.
-추적73/전체79 문서 clean, docs 자체12/12, cargo docs_lint1/1, private-header81 clean/common0 header·
-5 source다. 문서 내 EOL은 일관되게 정규화했다. 이 문자열/색인 gate를 의미 정확성·native full/relink
-격리의 증명으로 부르지 않는다. Rust391 및 JS25 최종 입력 hash는 위 봉인과 일치한다.
+The final document checks are preserved in `target/observation-migration-final-gates.json` and the individual raw logs.
+Tracked73/all79 documents clean, docs self-tests12/12, cargo docs_lint1/1, private-header81 clean/common0 header,
+5 source. EOL within the documents was normalized consistently. These string/index gates are not called proof of semantic correctness or of native full/relink
+isolation. The final Rust391 and JS25 input hashes match the seals above.
 
-## 2026-09-07 후속 — completion Full의 정상 ACK 기아 RED와 중립 통지
+## 2026-09-07 follow-up — RED for a genuine ACK starved by completion Full, and neutral notification
 
-### 실제 worker의 수정 전 반례
+### Pre-fix counterexample in the real worker
 
-같은 HEAD의 후속 미커밋 트리다. 앞 절의 OUTPUT/관측 소스391 봉인은 수정하지 않았다. 그 입력에
-`loop_tests/effect_backpressure.rs`, 모듈 등록, `released()` commit 뒤의 읽기 전용 test hook만 더한
-392개 입력으로 actual Worker::run 반례를 먼저 컴파일·실행했다. 아직 effect pump 수정은 없다.
+A later uncommitted tree at the same HEAD. The OUTPUT/observation source391 seal from the previous section was not modified. The actual Worker::run counterexample
+was first compiled and run with 392 inputs: those inputs plus `loop_tests/effect_backpressure.rs`, its module registration,
+and a read-only test hook after the `released()` commit. There is no effect pump fix yet.
 
 `cargo test -p p4-llamacpp-staged-adapter completion_full_cannot_starve_a_genuine_release_acknowledgement -- --nocapture`
-실행은 **0 passed / 1 failed / 436 filtered**, exit101이었다. 필터 제외를 통과에 더하지 않았다.
-빌드가 실제 staged adapter를 재컴파일했고, 마지막 신규 단언에 도달하기 전 기존 복구 양성은 통과했다.
+gave **0 passed / 1 failed / 436 filtered**, exit101. Tests excluded by the filter were not added to the passes.
+The build actually recompiled the staged adapter, and the existing recovery positives passed before the last new assertion was reached.
 
-| 관측 | 수정 전 실행 |
+| Observation | Pre-fix run |
 | --- | --- |
-| A의 native 해제 | 두 stage 모두 완료, 정확한 최종 RELEASED 원문 보류 |
-| B의 completion Full | capacity1, 실제 B OUTPUT이 유일 큐 슬롯 점유, 새로운 Full snapshot 확인 |
-| A ACK의 입력 수용 | 실제 sync input queue의 try_send 성공, event wire 왕복 원문 동일 |
-| 공간을 열기 전 A 정산 | 없음; pending/slot이 남음 |
-| 공간 복구 후 | 출력2, 해제 영수증2; stage별 A/B native release 각1회 |
-| 기존 oracle | token/text/position/stop·KV·release provenance·관측 완결·event ID 유일성 유지 |
+| A's native release | Completed on both stages; the exact final RELEASED raw event held back |
+| B's completion Full | capacity1; the real B OUTPUT occupies the only queue slot; a new Full snapshot confirmed |
+| Input acceptance of A's ACK | try_send on the real sync input queue succeeded; raw event identical after an event wire round trip |
+| A settlement before space is opened | none; pending/slot remain |
+| After space recovers | outputs2, release receipts2; A/B native release 1 each per stage |
+| Existing oracles | token/text/position/stop, KV, release provenance, observation completeness, event ID uniqueness kept |
 
-실패 문자열은 `completion Full starved a genuine RELEASED already accepted at input`이다.
-200ms는 새 진행 단언의 관찰 창이며 포화의 근거 자체가 아니다. 테스트는 공간을 복구하고 기존
-정상 완료를 먼저 검사한 뒤 마지막 단언에서 실패한다. 실제 EventNode/broker/network·Cancel/Drain,
-전체 순환망의 진행이나 CPU 사용률을 증명하지 않는다.
+The failure string is `completion Full starved a genuine RELEASED already accepted at input`.
+200ms is the observation window for the new progress assertion, not the basis for saturation itself. The test recovers space, first checks the existing
+normal completion, and fails at the last assertion. It does not prove real EventNode/broker/network, Cancel/Drain,
+progress across the whole cyclic network, or CPU utilization.
 
-보존 위치는 `target/effect-backpressure-red-20260907-01/`의 source-before/after.json,
-red.log, seal.txt, verification.md와 시험 EXE다. 입력 manifest의 SHA-256은 양쪽 모두
-`cf97679e268e3938cd287c8dfedbda28f338e131259b06bfe2af55245788830f`, 실행파일은
-`69c71e97b0494c7800ccfba8ff1a270697d9fee09d997511d4aa9380a90ec748`이다.
-재검수에서 입력392의 빌드 중 변경0과 앞391 봉인 대비 변경3개를 대조했다. 이후 mailbox 편집은
-다른 소스 상태이며 이 RED 실행에 소급하지 않는다. target은 로컬 증거이고 영속 배포 bundle이 아니다.
+Preserved in `target/effect-backpressure-red-20260907-01/`: source-before/after.json,
+red.log, seal.txt, verification.md and the test EXE. The SHA-256 of the input manifest is
+`cf97679e268e3938cd287c8dfedbda28f338e131259b06bfe2af55245788830f` on both sides, and the executable is
+`69c71e97b0494c7800ccfba8ff1a270697d9fee09d997511d4aa9380a90ec748`.
+Re-review confirmed change0 in the 392 inputs during the build and 3 changes relative to the earlier 391 seal. Later mailbox edits are
+a different source state and are not applied retroactively to this RED run. target is local evidence, not a persistent deployment bundle.
 
-### 변경 전에 추가로 확인한 안전 경계
+### Safety boundaries confirmed before the change
 
-`emit.rs`는 호출마다 next_event를 소비하고 직접 LOAD/SESSION/UNLOAD/오류 전송도 수행한다.
-`effects.rs`만 Pending으로 바꾸면 ID 재발급·별도 무상한 큐·fatal ERROR 유실을 만들 수 있다.
-`tail()`의 pending 설치는 native Release/Settle 및 Forward보다 앞서므로, 양보하는 pump에서는
-pending 존재만으로 조기 ACK를 승인해서는 안 된다. `validate_control_batch`의 읽기 검사는
-같은 native command 내부의 비선점 전제도 갖는다. 이것들은 코드 감사이지 이번 RED가 실행한
-별도 결함이라고 주장하지 않는다. 목표 계약은 배치 문서가, 시험 의무는 검증 규약이 소유한다.
+`emit.rs` consumes next_event on every call and also performs direct LOAD/SESSION/UNLOAD/error sends.
+Changing only `effects.rs` to Pending could cause ID reissue, a separate unbounded queue and loss of fatal ERRORs.
+The pending installation in `tail()` precedes the native Release/Settle and Forward, so in a yielding pump
+an early ACK must not be approved merely because pending exists. The read check in `validate_control_batch`
+also assumes non-preemption within the same native command. These are code audit findings, not claims of
+separate defects executed by this RED. The target contract is owned by the batching document, and the test obligations by the verification protocol.
 
-중립 mailbox에서도 등록된 reader가 마지막 publisher 종료에 깨어나지 않는 것과 publish가
-waker lock 안에서 callback을 호출하는 것을 별도 기존 API 시험으로 재현했다. 원본 구현에서
-2개 시험 모두 실패했고 실제 재컴파일 로그는
-`target/mailbox-capacity-notification-20260907-01/01-before-fix.log`에 보존한다.
-이 두 반례와 additive capacity 통지는 actor의 ACK 기아 해결과 구분한다.
+In the neutral mailbox too, a registered reader not waking on the last publisher's shutdown, and publish
+invoking callbacks inside the waker lock, were reproduced with separate tests of the existing API. On the original implementation
+both of the 2 tests failed, and the actual recompile log is preserved in
+`target/mailbox-capacity-notification-20260907-01/01-before-fix.log`.
+These two counterexamples and the additive capacity notification are kept apart from resolving the actor's ACK starvation.
 
-### 중립 mailbox 구현과 검증 경계
+### Neutral mailbox implementation and verification boundaries
 
-`node_adapter/mailbox.rs`에 `CompletionPublisher::capacity_listener`와 RAII 등록을 추가했다.
-동시 등록은64개로 제한하며 Closed/Exhausted를 명시 반환한다. 이 숫자는 listener 자원의 상한이지
-노드 수·이벤트·바이트·전체 RSS 상한이 아니다. 등록은 공간을 예약하지 않고, drain 또는 receiver
-종료 후 다시 try_publish할 이유만 제공한다. 기본 completion capacity와 Full/Closed의 Event 반환
-의미는 바꾸지 않았다. 이 API의 현재 소비자는 시험이며 staged worker에는 아직 연결하지 않았다.
+`CompletionPublisher::capacity_listener` and RAII registration were added to `node_adapter/mailbox.rs`.
+Concurrent registrations are limited to64, and Closed/Exhausted are returned explicitly. This number bounds listener resources, not
+node count, events, bytes or total RSS. Registration does not reserve space; it only provides a reason to try_publish again after a drain or receiver
+shutdown. The default completion capacity and the semantics of returning the Event on Full/Closed
+were not changed. The current consumer of this API is tests; it is not yet wired into the staged worker.
 
-마지막 sender는 실제 disconnect 뒤 reader를 깨우고, 마지막 receiver는 disconnect 뒤 capacity
-waiter를 깨운다. 사용자 Waker의 clone/drop/wake는 내부 mutex 밖에서 실행한다. 수신 객체가
-사라지거나 poll이 Ready로 끝났을 때 남은 reader 참조도 제거한다. 검수 중 후자의 수명 표면을
-추가로 확인했고, receiver 종료 후 publisher가 reader를 붙잡는 경우를 0P/1F로 재현한 뒤 수정했다.
-그 로그는 `02-reader-lifetime-red.log`다. caller callback은 짧고 nonblocking/nonpanicking이어야
-하며 panic은 숨기지 않는다. 내부 mutex가 poison되지 않는 시험을 전체 panic 복구/이벤트 전달
-보장으로 확대하지 않는다.
+The last sender wakes readers after the actual disconnect, and the last receiver wakes capacity
+waiters after disconnect. Clone/drop/wake of user Wakers run outside the internal mutex. When the receiving object
+goes away or poll ends Ready, any remaining reader reference is also removed. During review, the latter lifetime surface was
+additionally checked; the case where a publisher holds on to a reader after receiver shutdown was reproduced as 0P/1F and then fixed.
+That log is `02-reader-lifetime-red.log`. Caller callbacks must be short and nonblocking/nonpanicking,
+and panics are not hidden. A test showing the internal mutex is not poisoned is not extended into a guarantee of full panic recovery or event
+delivery.
 
-1차 동결 세 파일로 실행한 `04-final-green.log`는 p4-adapter **61 passed /0 failed**다(기존47+새14).
-새 회귀는 close 순서, buffered Event와 sender clone 수명, 등록/재검사 경쟁, 다중 drainer의
-정확한 Event 전달, listener 상한/해제/ID 고갈, 재진입 자기 해제/재등록, reader 참조 해제,
-Waker clone/drop/wake의 잠금 경계를 검사한다. 무기한 Barrier 대신 5초 제한 rendezvous와
-join 완료 watchdog을 사용한다. 이것은 실기 latency·전체 스케줄링 결정성·worker ACK 처리 보장이 아니다.
+`04-final-green.log`, run with the three files of the 1st freeze, gives p4-adapter **61 passed /0 failed** (existing47 + new14).
+The new regressions check close order, buffered Event and sender clone lifetime, registration/recheck races, exact Event delivery
+with multiple drainers, the listener bound/release/ID exhaustion, reentrant self-release/re-registration, reader reference release,
+and the lock boundaries of Waker clone/drop/wake. A 5-second bounded rendezvous and a
+join completion watchdog are used instead of an unbounded Barrier. This is not a guarantee of real-hardware latency, overall scheduling determinism or worker ACK handling.
 
-그 1차 동결 구현/시험/재수출 SHA-256은 다음과 같다.
+The SHA-256 values of that 1st-freeze implementation/test/re-export are:
 
-| 파일 | SHA-256 |
+| File | SHA-256 |
 | --- | --- |
 | `node_adapter/mailbox.rs` | `09a0a2b870d19311c29d911fcdc249e7216cc7d8563f7f0f57610da758bd1c2f` |
 | `node_adapter/mailbox_tests.rs` | `6ae33daa0488b540de68885b36d3638a7c15ae64066a2cf439d438d0991bb830` |
 | `node_adapter/mod.rs` | `16d2f658244ce0e6b929bf6ab570d3e03cde42b0d9003af0f12a9d2cbadbdc15` |
 
-세 경로의 root는 `layers/adapters/adapter/src/`다. protocol envelope·NodeAdapter trait·llama/native
-wire는 바꾸지 않았다. 구성요소 README에서 현재 event 경계와 과거 Work/hop 설명도 분리하고,
-Cargo.toml과 반대였던 “p4-protocol 의존 없음” 서술을 실제 중립 의존성으로 정정했다.
+The root of the three paths is `layers/adapters/adapter/src/`. The protocol envelope, NodeAdapter trait and llama/native
+wire were not changed. The component README now also separates the current event boundary from the old Work/hop description,
+and the statement "no p4-protocol dependency", which contradicted Cargo.toml, was corrected to the actual neutral dependency.
 
-그 상태의 원본 전체 실행은 `target/capacity-slice-20260907-01/`에 보존했다. 입력393의 SHA는
-`6d77de2ab50560cd4c9cd3d12801d1b37b78a9fe21f1625b5932660c27da9ff3`이며 실행 전후 일치했다.
-57개 summary 합계는 **1210 passed /1 failed /7 ignored**, cargo exit101이다. 실패는 위 actor
-ACK 진행 시험 단1개다. proof runner도 suite_passed=false로 기록하며 이 집계를 green으로 바꾸지 않는다.
+The full original run in that state is preserved in `target/capacity-slice-20260907-01/`. The SHA of the 393 inputs is
+`6d77de2ab50560cd4c9cd3d12801d1b37b78a9fe21f1625b5932660c27da9ff3`, and it matched before and after the run.
+The total across the 57 summaries is **1210 passed /1 failed /7 ignored**, cargo exit101. The only failure is 1 test, the actor
+ACK progress test above. The proof runner also records suite_passed=false, and this tally is not turned into green.
 
-변이 준비 중 reentrant test callback이 정리 때 이미 사라진 mailbox를 unwrap하면 두 번째 panic으로
-원래 실패를 가릴 수 있음을 확인했다. 전체 실행을 끝낼 때까지 원본을 동결한 뒤 그 시험의 Weak
-upgrade만 정리 안전 guard로 바꿨다. 생산코드·핵심 단언은 무변경이다. `06-teardown-safe-green.log`의
-61P/0F 이후 최종 시험 파일 SHA는
-`64ac910f32097dbd59165fb91a8b5b1261425fa4a4215005c08d671e7c47b9d4`이고 나머지 두 SHA는 같다.
-이 후속 상태와 첫 동결 상태를 같은 source로 합치지 않는다.
+While preparing mutations, it was found that if the reentrant test callback unwraps an already-dropped mailbox during cleanup, a second panic
+can mask the original failure. After keeping the original frozen until the full run finished, only that test's Weak
+upgrade was changed to a cleanup-safe guard. Production code and the core assertions are unchanged. After 61P/0F in `06-teardown-safe-green.log`,
+the final test file SHA is
+`64ac910f32097dbd59165fb91a8b5b1261425fa4a4215005c08d671e7c47b9d4`, and the other two SHAs are the same.
+This later state and the 1st freeze state are not merged as the same source.
 
-### 최종 원본 전체 집계
+### Final full tally of the original
 
-시험 정리 guard를 포함한 **최종393 입력**을 `target/capacity-slice-20260907-02/source/`에 보존했다.
-manifest의 SHA-256은 `87e1a42d9071865b2f25850e521d76bebd472a178e3e540131f7416845a36c92`이고,
-전체 실행 전후의 파일 집합·각 바이트 hash가 일치했다. 이 봉인은 Rust/Cargo/명시된 모델 없는 fixture
-범위다. 문서·third-party registry/toolchain·native·모델·JS 전체 build provenance가 아니다.
+The **final393 inputs**, including the test cleanup guard, are preserved in `target/capacity-slice-20260907-02/source/`.
+The manifest SHA-256 is `87e1a42d9071865b2f25850e521d76bebd472a178e3e540131f7416845a36c92`, and
+the file set and each byte hash matched before and after the full run. This seal covers Rust/Cargo and the listed model-free fixtures.
+It is not the full build provenance of documents, third-party registry/toolchain, native, models or JS.
 
-`cargo test --workspace --no-fail-fast --locked`는 최종 종료까지 실행해 **57 summaries,
-1210 passed /1 failed /7 ignored**, cargo exit101이었다. 실패는
-`completion_full_cannot_starve_a_genuine_release_acknowledgement` 단1개다. 새14개의 중립 시험을
-더하면서 actor의 필수 RED는 정상 실행에 남겼다. 런타임 skip/ignore/feature로 숨기거나 현재 대기를
-정상 기대값으로 바꾸지 않았다. 이것은 **전체 suite 실패**이지 '알려진 실패를 제외하면 제품 승인'이 아니다.
+`cargo test --workspace --no-fail-fast --locked` ran to the final exit and gave **57 summaries,
+1210 passed /1 failed /7 ignored**, cargo exit101. The only failure is
+`completion_full_cannot_starve_a_genuine_release_acknowledgement`, 1 test only. While adding the 14 new neutral tests,
+the actor's mandatory RED was left in the normal run. It was not hidden with a runtime skip/ignore/feature, and the current wait
+was not turned into a normal expectation. This is a **full suite failure**, not "product approval except for the known failure".
 
-`workspace.log`의 SHA-256은 `ba3b211a257dfcf83b3b770c69d22e26a6e8e961ae963a2b4662ef4d1073c9d1`이며
-`workspace-result.json`에 실제 cargo exit와 suite_passed=false가 있다. 로컬 runner는
-`node target/capacity-slice-verify.mjs workspace capacity-slice-20260907-02`이고 해당 runner 사본도
-그 디렉터리에 보존했다. 이 명령은 기존 log를 덮어쓰지 않으므로 재실행에는 새 proof 이름을 사용한다.
+The SHA-256 of `workspace.log` is `ba3b211a257dfcf83b3b770c69d22e26a6e8e961ae963a2b4662ef4d1073c9d1`, and
+`workspace-result.json` holds the actual cargo exit and suite_passed=false. The local runner is
+`node target/capacity-slice-verify.mjs workspace capacity-slice-20260907-02`, and a copy of that runner is also preserved
+in that directory. This command does not overwrite existing logs, so a rerun uses a new proof name.
 
-현재 staged worker의 `publish_or_wait` 1ms 대기·EventNode 입력 재시도·Cancel/Drain·effect 예산/
-ACK 전송 단계·실제 broker 통합은 미완이다. 중립 API가 있는 것과 실제 consumer가 통지를 사용하는
-것을 구분한다. C++/JS 실기 harness·모델/GPU·원격 배포·커밋/push는 이번에 수행하지 않았다.
+The current staged worker's 1ms `publish_or_wait` wait, EventNode input retries, Cancel/Drain, effect budget /
+ACK send stages and real broker integration are unfinished. Having a neutral API is kept apart from a real consumer using
+the notification. The C++/JS real-hardware harness, models/GPU, remote deploy and commit/push were not done this time.
 
-기본 비활성 `cross-wire-fixture`의 agent_relay/agent_relay_full/broker_registry/cross_wire/
-reconnect_delivery **5개 target, 각1개 시험은 빌드·실행 제외**이며 위 passed/ignored에 넣지 않았다.
-기존 외부 의존 feature 설정은 바꾸지 않았다. `cargo clippy -p p4-adapter --all-targets --locked`는
-exit0이지만 Event enum/Err 크기 경고4개가 남는다. 이 결과는
-`target/capacity-slice-20260907-02/clippy-neutral.log`에 보존하며 warning-free라고 하지 않는다.
+The disabled-by-default `cross-wire-fixture` targets agent_relay/agent_relay_full/broker_registry/cross_wire/
+reconnect_delivery — **5 targets with 1 test each — are excluded from build and run** and are not counted in the passed/ignored above.
+The existing external-dependency feature settings were not changed. `cargo clippy -p p4-adapter --all-targets --locked` gives
+exit0, but 4 warnings about Event enum/Err size remain. This result is
+preserved in `target/capacity-slice-20260907-02/clippy-neutral.log` and is not called warning-free.
 
-### 독립 복사본 변이와 정리 실패의 구분
+### Mutations in an independent copy, kept apart from cleanup failures
 
-`target/mailbox-capacity-notification-20260907-01/copy/`는 실제 p4-protocol/p4-adapter의
-59개 프로젝트 소스/의존 선언/fixture를 그대로 복사한 최소 workspace다. root workspace 전체가
-아니며 workspace membership과 복사본 lockfile은 그 두 crate에 맞게 정리됐다. 원본과 복사본의
-해당59개 입력은 closure-manifest.json/closure-after.json으로 전후 대조했고 최종 복원까지 일치했다.
-registry/toolchain까지 포함한 hermetic build 증명으로 확대하지 않는다.
+`target/mailbox-capacity-notification-20260907-01/copy/` is a minimal workspace that copies, unchanged, the
+59 project sources/dependency declarations/fixtures of the real p4-protocol/p4-adapter. It is not the whole root workspace;
+the workspace membership and the copy's lockfile were trimmed to fit those two crates. The corresponding 59 inputs of the original and the copy
+were compared before and after via closure-manifest.json/closure-after.json and matched through the final restore.
+This is not extended into a hermetic build proof that includes the registry/toolchain.
 
-아래는 최종 시험 SHA `64ac910f...`를 고정하고 **복사본 production source만** 바꾼 결과다.
-모든 유효 arm에서 실제 p4-adapter 재컴파일과 최종 libtest summary, source/EXE hash를 확인했다.
-원본과 복사본 source가 같다는 것과 MSVC 링크 바이너리가 bit-identical하다는 것은 별개다.
+Below are the results with the final test SHA `64ac910f...` pinned and **only the copy's production source** changed.
+For every valid arm, the actual p4-adapter recompile, the final libtest summary and the source/EXE hashes were confirmed.
+The original and copy sources being identical is a separate matter from the MSVC-linked binaries being bit-identical.
 
-| arm | 실행 passed/failed | 검출 조건 |
+| arm | Run passed/failed | Detection condition |
 | --- | ---: | --- |
-| 최종 copy 기준선 |14/0|원본과 같은 mailbox 회귀|
-| M1 drain 통지 제거 |8/6|원본 Event 보존/재시도 및 실제 wake 누락|
-| M2 sender disconnect 전 wake |13/1|callback 안에서 Closed를 관측하지 못함|
-| M3 receiver disconnect 전 통지 |13/1|재진입 publish가 Closed 대신 Full|
-| M4 등록 후 재검사 제거 |12/2|제어된 arrival/close 경쟁에서 Pending|
-| M5 reader 참조 회수 제거 |11/3|Ready/receiver Drop 뒤 Weak가 살아 있음|
-| M6 reader wake를 잠금 안으로 |13/1|기존 lock 재진입 반례|
-| M7b capacity callback만 잠금 안으로 |12/2|자기 해제/재등록 및 mutex 비오염 조건 위반|
-| M8 listener 상한 검사 제거 |13/1|65번째 등록이 Exhausted 대신 Ok|
-| 정확 복원 |14/0|새 컴파일, 최종 source/test bytes 복원|
+| Final copy baseline |14/0|Same mailbox regressions as the original|
+| M1 drain notification removed |8/6|Original Event preservation/retry and actual wake missing|
+| M2 wake before sender disconnect |13/1|Closed cannot be observed inside the callback|
+| M3 notification before receiver disconnect |13/1|Reentrant publish gets Full instead of Closed|
+| M4 recheck after registration removed |12/2|Pending in the controlled arrival/close race|
+| M5 reader reference reclamation removed |11/3|Weak still alive after Ready/receiver Drop|
+| M6 reader wake moved inside the lock |13/1|Existing lock reentrancy counterexample|
+| M7b only the capacity callback moved inside the lock |12/2|Violates the self-release/re-registration and mutex non-poisoning conditions|
+| M8 listener bound check removed |13/1|The 65th registration returns Ok instead of Exhausted|
+| Exact restore |14/0|New compile, final source/test bytes restored|
 
-유효 변이8건은 모두 exit101이며 기준선/복원은0이다. 47개 기존 adapter 시험은 이 필터 실행에서
-제외됐고, 원본 전체61/전체 workspace1210 집계와 섞지 않는다. 중간 수명 RED의 전체 소스는 별도
-봉인하지 못했으므로 그 로그만으로 재구성 가능하다고 하지 않는다. 최종 M5가 같은 수명 조건을
-독립 소스로 재현·고정한다.
+All 8 valid mutations are exit101, and baseline/restore are0. The 47 existing adapter tests were excluded from this filtered run
+and are not mixed with the original full61 / full workspace1210 tallies. The full source of the intermediate lifetime RED could not be sealed separately,
+so we do not claim it can be reconstructed from that log alone. The final M5 reproduces and pins the same lifetime condition
+on an independent source.
 
-넓은 M7은 callback뿐 아니라 마지막 Waker destructor까지 잠금 안에 남겨 정리 중 교착했다.
-**FAILED summary 없이 강제 종료된 INVALID/HANG 1건**으로 따로 보존하고 위8건에서 제외했다.
-경로를 확인한 복사본 시험 프로세스만 종료했다. 원본 기대값을 낮추지 않고 callback 잠금만 바꾸는
-M7b로 좁혀 두 개의 정상 종료 실패를 확보했다. 실패 단언이 한 번 출력됐다는 것만으로 완료된 변이
-시험이라고 보고하지 않는다.
+The broader M7 left not only the callback but also the last Waker destructor inside the lock and deadlocked during cleanup.
+It is preserved separately as **1 INVALID/HANG, force-terminated without a FAILED summary**, and excluded from the 8 above.
+Only the copy's test process, after confirming its path, was terminated. Without lowering the original expectations, it was narrowed to
+M7b, which changes only the callback locking, to obtain two failures that terminate normally. A failing assertion being printed once is not by itself
+reported as a completed mutation test.
 
-명령·각 source/EXE SHA·raw log·도구 버전·최종 closure 대조는 같은 디렉터리의 verification.txt와
-각 meta.log를 따른다. verification.txt의 SHA는
-`eb8ee9456ac4855aaa99b0f0115e366af3281617887cd20a9d854f371e5f2556`이다.
+Commands, each source/EXE SHA, raw logs, tool versions and the final closure comparison follow verification.txt and
+each meta.log in the same directory. The SHA of verification.txt is
+`eb8ee9456ac4855aaa99b0f0115e366af3281617887cd20a9d854f371e5f2556`.
 
-최종 문서/스캐너 실행은 `target/capacity-slice-20260907-02/gates.json`에 보존했다.
-추적73/전체79 문서 clean, docs 자체12/12, cargo docs1/1, private-header81 clean/common0 header·
-5 source다. 이 문자열/색인/의존 패턴 검사는 의미 정확성·미구현 actor 진행·native full/relink
-격리의 증명이 아니다. 최종 source check도393/`87e1a42d...`와 일치한다. 이 결과 문단을 추가한 뒤
-문서 lint는 docs-final-tracked.log/docs-final-all.log로 다시 확인한다.
+The final document/scanner runs are preserved in `target/capacity-slice-20260907-02/gates.json`.
+Tracked73/all79 documents clean, docs self-tests12/12, cargo docs1/1, private-header81 clean/common0 header,
+5 source. These string/index/dependency pattern checks are not proof of semantic correctness, of the unimplemented actor progress, or of native full/relink
+isolation. The final source check also matches 393/`87e1a42d...`. After this result paragraph was added,
+document lint is rechecked with docs-final-tracked.log/docs-final-all.log.
 
-## 2026-09-07 후속 — head 제어의 적용·전송 권위
+## 2026-09-07 follow-up — application and transmission authority for head control
 
-기준 HEAD `a9e1967fc` 위 미커밋 구현이다. 이번 변경의 범위는 `node/state.rs`의 dispatch 상태,
-`worker/control_dispatch.rs`의 head 전용 검증, `effects.rs`의 실제 성공 hook 및 RELEASED/SETTLED
-소비 전제다. 중립 P4 envelope/core·native wire·llama/backend는 이 slice에서 변경하지 않았다.
-현재 계획/다음 행동은 로드맵, 단계 의미와 ticket 수명은 배치 계약, 시험 의무는 검증 규약 T23이 소유한다.
+An uncommitted implementation on base HEAD `a9e1967fc`. The scope of this change is the dispatch state in `node/state.rs`,
+head-only validation in `worker/control_dispatch.rs`, and the actual success hooks in `effects.rs` plus the RELEASED/SETTLED
+consumption preconditions. The neutral P4 envelope/core, native wire and llama/backend were not changed in this slice.
+The current plan/next action is owned by the roadmap, stage semantics and ticket lifetime by the batching contract, and test obligations by verification protocol T23.
 
-### 수정 전 ACK 소비 반례
+### Pre-fix ACK consumption counterexample
 
-`target/control-progress-red-20260907-01/`에 최초 두 시험·당시 소스·실행파일·원문을 보존했다.
-실제 staged/agent-core 재컴파일 뒤 `cargo test -p p4-llamacpp-staged-adapter control_progress_tests
--- --nocapture`는 **0 passed/2 failed/437 filtered**, exit101이었다. 준비한 pending 상태에
-인코딩된 정상 형식 ACK를 actual codec→Worker::handle로 넣었다. RELEASED는 미적용 슬롯 둘을
-free로 반환했고, SETTLED는 미적용 direct Proposal/Replay 둘을 재개시켰다. 원장/요청/native 호출/
-출력 효과까지 대조했다. 이 시험은 future yielding seam의 승인 전제이며 기존 동기 run-loop에서
-같은 중간 상태가 외부에 노출된다는 공격 재현은 아니다. 실제 Full ACK 기아 RED와 합치지 않는다.
+`target/control-progress-red-20260907-01/` preserves the first two tests, the sources at the time, the executable and the raw output.
+After an actual staged/agent-core recompile, `cargo test -p p4-llamacpp-staged-adapter control_progress_tests
+-- --nocapture` gave **0 passed/2 failed/437 filtered**, exit101. Well-formed encoded ACKs were fed into a prepared pending state
+through the actual codec→Worker::handle. RELEASED returned two unapplied slots
+as free, and SETTLED resumed two unapplied direct Proposal/Replay entries. The ledger, requests, native calls and
+output effects were all compared. This test is an approval precondition for a future yielding seam; it is not a reproduction of an attack
+in which the same intermediate state is exposed externally in the existing synchronous run-loop. It is not merged with the real Full ACK starvation RED.
 
-RED 소스405 파일의 manifest SHA는 `e7418f942945455a8e859a57c268bb0caab96096341f3c1163fcf42e3dd08ce0`,
-실행 EXE는 `bcd325c2882da2308c532bb06dd389f67abc35275064bdb9326f0f37b89ae44c`다.
-원본/보존본405개가 전후 일치했다. 이 closure는 Rust/Cargo/JSON glob 범위여서 아래396개와 파일
-선정 범위가 다르다. 숫자 또는 hash가 다르다는 사실만으로 source 변경량을 추정하지 않는다.
+The manifest SHA of the 405 RED source files is `e7418f942945455a8e859a57c268bb0caab96096341f3c1163fcf42e3dd08ce0`,
+and the executed EXE is `bcd325c2882da2308c532bb06dd389f67abc35275064bdb9326f0f37b89ae44c`.
+The 405 original/preserved files matched before and after. This closure uses a Rust/Cargo/JSON glob scope, so its file
+selection differs from the 396 below. A different count or hash alone is not used to estimate the amount of source change.
 
-### 실제 소비 경계와 증명 한계
+### Real consumer boundaries and limits of proof
 
-후속 `control_progress_tests`6개는 미완 멤버의 양순서·Queued/LocalApplied·load/session 불일치를
-whole-event 거부하고, dispatch만 수리한 동일 ACK는 정상 해제/direct Proposal/Replay로 재개하는지
-검사한다. 진단 next_event만 정확히1 증가하고 나머지 업무 snapshot과 native 호출은 보존돼야 한다.
-기존 소비 시험에 handcrafted ForwardAccepted를 둔 것은 그 소비 전제를 명시한 것이지 native/
-송신을 시험했다는 뜻이 아니다. 새 효과 시험으로 생산 경계를 별도로 검사했다.
+The 6 follow-up `control_progress_tests` reject, as whole events, both orders of unfinished members, Queued/LocalApplied, and load/session mismatches,
+and check that the same ACK, with only dispatch repaired, resumes normal release/direct Proposal/Replay.
+Only the diagnostic next_event may increase, by exactly1; every other business snapshot and the native calls must be preserved.
+Placing a handcrafted ForwardAccepted in the existing consumer tests makes that consumption precondition explicit; it does not mean native or
+sending was tested. The production boundary was checked separately with new effect tests.
 
-`control_dispatch_effect_tests`9개는 load/session/KV 초기 상태를 주입하고 실제 flush_effects→
-native Frame/P4ID→owner receipt/frontier→completion을 통과한다. fake engine은 독립 byte parser로
-native 변경을 먼저 반영하고 정상·변조·손실 응답을 만든다. 새 파일은 production 수정 뒤 추가됐으므로
-구버전 RED를 주장하지 않는다. 전체 실행과 아래 독립 변이가 회귀의 실패 가능성을 고정한다.
+The 9 `control_dispatch_effect_tests` inject the initial load/session/KV state and go through the real flush_effects→
+native Frame/P4ID→owner receipt/frontier→completion. The fake engine applies native changes first with an independent byte parser
+and produces normal, tampered and lost responses. The new file was added after the production fix, so
+no old-version RED is claimed. The full run and the independent mutations below pin down that the regressions can fail.
 
-| 검사 | 요구 결과 |
+| Check | Required result |
 | --- | --- |
-| RELEASE/SETTLE native 성공 | 정확한 receipt/frontier 반영 뒤 LocalApplied; Forward 권한 없음 |
-| native 변경 후 손실/변조 | Queued 유지, 상태 commit 없음, fence, intent 보존, native 재시도 없음 |
-| cached native replay | 추가 native0회, LocalApplied/ForwardAccepted 승격·퇴행 없음 |
-| 정확한 whole-command forward | 정확한 Event/본문/target이 수용된 뒤 전 멤버 ForwardAccepted |
-| Closed/ID 고갈 | LocalApplied·pending·native·미전송 intent 보존, fence |
-| stale scope/identity·wrong route/class·마지막 오류 멤버 | 선행 멤버 부분 승격/송신/native 실행 없음 |
+| RELEASE/SETTLE native success | LocalApplied after exact receipt/frontier application; no Forward authority |
+| Loss/tampering after a native change | Stays Queued, no state commit, fence, intent preserved, no native retry |
+| cached native replay | Additional native 0 calls, no promotion/regression of LocalApplied/ForwardAccepted |
+| Exact whole-command forward | All members ForwardAccepted after the exact Event/body/target is accepted |
+| Closed/ID exhaustion | LocalApplied, pending, native and unsent intent preserved, fence |
+| stale scope/identity, wrong route/class, last member in error | No partial promotion/send/native execution of the leading members |
 
-현재 local/forward ticket은 다른 private 타입이다. prepare→동기 effect→성공 callback 사이에
-actor yield가 없다는 전제에서만 key가 유효하다. 이는 비동기 예약이 아니다. Full 뒤 ticket 유지,
-command native 그룹 중간 yield, ACK receipt 예산 예약은 아직 구현·증명하지 않았다. 이9개는
-Worker::run/가상 네트워크 전체·실제 llama·GPU 시험도 아니다.
+The current local and forward tickets are different private types. The key is valid only on the premise that there is no
+actor yield between prepare→synchronous effect→success callback. This is not an asynchronous reservation. Keeping the ticket after Full,
+yielding in the middle of a command's native group, and reserving the ACK receipt budget are not yet implemented or proven. These 9 are
+not tests of the full Worker::run/virtual network, real llama or GPU either.
 
-### 최종 원본 전체 실행
+### Final full run of the original
 
-`target/capacity-slice-20260907-03/source/`의 **396 Rust/Cargo/명시된 모델 없는 fixture**를 동결했다.
-manifest SHA-256은 `db6f4968083b76573a0b7cda139bcaf06d913198d96055d614d30d323d61041a`이며
-실행 전후 파일 집합과 바이트 hash가 일치했다. native/toolchain/registry/문서/JS 전체 provenance가 아니다.
-`cargo test --workspace --no-fail-fast --locked`의 최종 **57 summaries는1225 passed/1 failed/7 ignored**,
-cargo exit101이다. 신규15개와 기존 정상 경로를 모두 포함한다. 실패는 기존
-`completion_full_cannot_starve_a_genuine_release_acknowledgement` 단1개이며 oracle/기본 실행을 바꾸지 않았다.
+The **396 Rust/Cargo/listed model-free fixture files** in `target/capacity-slice-20260907-03/source/` were frozen.
+The manifest SHA-256 is `db6f4968083b76573a0b7cda139bcaf06d913198d96055d614d30d323d61041a`, and
+the file set and byte hashes matched before and after the run. This is not the full provenance of native/toolchain/registry/documents/JS.
+The final **57 summaries of `cargo test --workspace --no-fail-fast --locked` are 1225 passed/1 failed/7 ignored**,
+cargo exit101. This includes the 15 new tests and the existing normal paths. The only failure is the existing
+`completion_full_cannot_starve_a_genuine_release_acknowledgement`, 1 test, and the oracle/default run were not changed.
 
-`workspace.log` SHA는 `c173cc0bb4cc90fc75e765edeb9dd2432d4ff54a8eb75f93a21fcc1347238c9a`다.
-실제 명령·시작/종료·source는 workspace-result.json에 있고 **suite_passed=false**다. 로컬 runner 사본과
-`node target/capacity-slice-verify.mjs workspace capacity-slice-20260907-03` 명령도 보존했다.
-기존 log는 덮어쓰지 않으며 새 재실행은 새 proof 이름을 사용한다. 앞선 예비 좁은 시험6/9/전체 staged
-442P1F를 이 최종 실행의 별도 추가 표본으로 합산하지 않는다.
+The `workspace.log` SHA is `c173cc0bb4cc90fc75e765edeb9dd2432d4ff54a8eb75f93a21fcc1347238c9a`.
+The actual command, start/end and source are in workspace-result.json, with **suite_passed=false**. The local runner copy and
+the command `node target/capacity-slice-verify.mjs workspace capacity-slice-20260907-03` are preserved too.
+Existing logs are not overwritten, and a new rerun uses a new proof name. The earlier preliminary narrow tests 6/9 and the full staged
+442P1F are not added to this final run as separate additional samples.
 
-외부 `cross-wire-fixture`5개 target/각1개는 기본 빌드·실행 제외이며 passed/ignored에 넣지 않았다.
-전체 C++/JS 하네스·모델/GPU·원격 배포·커밋/push는 이번 slice에서 하지 않았다. capacity API의
-production 소비·bounded outbox/미래 OUTPUT·receipt 예약·Cancel/Drain이 남아 있으므로 이 결과는
-성능 단계나 실제 VRAM-only/RAM 오프로딩 웨이브 승격 증거가 아니다.
+The 5 external `cross-wire-fixture` targets, 1 test each, are excluded from the default build/run and are not counted in passed/ignored.
+The full C++/JS harness, models/GPU, remote deploy and commit/push were not done in this slice. Production consumption of the capacity API,
+a bounded outbox / future OUTPUT, receipt reservation and Cancel/Drain remain, so this result is
+not evidence for promoting a performance stage or a real VRAM-only/RAM offloading wave.
 
-### 독립 복사본의 phase 변이8종
+### 8 phase mutations in an independent copy
 
-`target/control-dispatch-mutations-20260907-01/`은 같은396 입력과 workspace 선언/Cargo.lock을
-원문 그대로 복사했다. `--locked --offline`으로 신규15개만 실행하며 매 arm 실제 staged 재컴파일,
-그 시작 이후 EXE 수정시각, 실제 최종 summary/exit와 보존 EXE hash를 확인했다. 테스트와 기대값은
-변경하지 않고 production 한 파일만 바꿨다. 원본396 입력은 모든 arm 전후 동일했고 복사본은 정확히 복원됐다.
+`target/control-dispatch-mutations-20260907-01/` copied the same 396 inputs and the workspace declarations/Cargo.lock
+verbatim. Only the 15 new tests are run with `--locked --offline`, and for every arm the actual staged recompile,
+an EXE modification time after that start, the actual final summary/exit and the preserved EXE hash were confirmed. Tests and expectations
+were not changed; only one production file was changed. The 396 original inputs were identical before and after every arm, and the copy was restored exactly.
 
-| arm | passed/failed | 검출 |
+| arm | passed/failed | Detection |
 | --- | ---: | --- |
-| baseline |15/0|주입된 초기 상태의 두 실제 소비 경계|
-| ack-phase-bypass |11/4|미적용 ACK가 상태를 소비함|
-| local-hook-omitted |9/6|native 성공 뒤 LocalApplied 전이 누락|
-| forward-hook-omitted |13/2|송신 수용 뒤 ForwardAccepted 전이 누락|
-| forward-before-send |14/1|Release의 ID 고갈 전 조기 승격|
-| replay-phase-downgrade |14/1|native replay가 전송 완료 단계를 퇴행|
-| forward-route-bypass |14/1|선언된 다음 stage가 아닌 target 송신|
-| pending-member-bypass |13/2|원래 제어 identity 변경을 선검증하지 않음|
-| queued-forward-bypass |13/2|native 적용 없이 송신 단계로 건너뜀|
-| exact restore |15/0|새 실제 컴파일과 전체 source bytes 복원|
+| baseline |15/0|The two real consumer boundaries on the injected initial state|
+| ack-phase-bypass |11/4|An unapplied ACK consumes state|
+| local-hook-omitted |9/6|LocalApplied transition missing after native success|
+| forward-hook-omitted |13/2|ForwardAccepted transition missing after send acceptance|
+| forward-before-send |14/1|Early promotion before Release's ID exhaustion|
+| replay-phase-downgrade |14/1|native replay regresses the send-complete stage|
+| forward-route-bypass |14/1|Sending to a target that is not the declared next stage|
+| pending-member-bypass |13/2|Changes to the original control identity are not pre-validated|
+| queued-forward-bypass |13/2|Skips to the send stage without native application|
+| exact restore |15/0|New actual compile and full source bytes restored|
 
-유효 변이8개는 모두 cargo101, baseline/restore는0이다. compile failure/hang을 검출로 센 arm은 없다.
-forward-before-send는 첫 Release/ID 고갈 단언에서 실패했으므로 그 변이의 Closed/Settle 분기까지
-검출됐다고 확대하지 않는다. 원본 양성9개는 그 분기를 실행했다. pending-member-bypass의 실패2개 중
-하나는 마지막 op999 송신 허용을 직접 검출했고, 나머지는 StageOwners가 뒤에서 거부해 예상 오류
-계층이 달라진 부차 실패다. 서로 독립인 결함2개를 발견했다는 수치가 아니다.
-각 arm의 source 사본·source manifest·raw output·EXE와 실제 명령은 arm 디렉터리에 있다.
-`verification.json`은 모든 source/로그/EXE를 재대조한 결과다. 동일 소스에서 MSVC 링크한 EXE hash의
-차이를 소스 불일치로 읽지 않는다. 기존 실제 Full ACK 시험은 이15개 필터 밖이며 원본 전체 실행에서는
-그대로 실패한다. 따라서 이 변이8개가 포화 actor 문제를 해결했다는 의미가 아니다.
-verification.json SHA-256은 `88060ec41b72444d68a5000fe3a7018adc8a046dae72a0ec7a6bc514e2cf0eeb`이다.
+All 8 valid mutations are cargo101, and baseline/restore are0. No arm counted a compile failure or hang as a detection.
+forward-before-send failed at the first Release/ID exhaustion assertion, so we do not extend this to claim its Closed/Settle branches
+were detected. The 9 original positives did exercise those branches. Of the 2 failures in pending-member-bypass,
+one directly detected that sending the last op999 was allowed, and the other is a secondary failure in which StageOwners rejected later and the expected error
+layer changed. This is not a count of 2 independent defects found.
+Each arm's source copy, source manifest, raw output, EXE and actual command are in the arm directory.
+`verification.json` is the result of rechecking every source/log/EXE. A difference in MSVC-linked EXE hashes from the same source
+is not read as a source mismatch. The existing real Full ACK test is outside this 15-test filter and still fails
+in the full original run. So these 8 mutations do not mean the saturated actor problem has been solved.
+The verification.json SHA-256 is `88060ec41b72444d68a5000fe3a7018adc8a046dae72a0ec7a6bc514e2cf0eeb`.
 
-### 정적 검사와 문서 게이트
+### Static checks and document gates
 
-같은 동결 소스의 `cargo clippy -p p4-llamacpp-staged-adapter --all-targets --locked`는 exit0이다.
-로그는 `target/capacity-slice-20260907-03/clippy-staged.log`. staged lib16, lib test28(14 duplicates),
-의존 adapter4/agent-core1 경고가 남으며 warning-free라고 하지 않는다. 소스 정리를 동결 실행에 섞지 않았다.
-문서/의존 스캐너는 같은 디렉터리 `gates.json`에 보존했다: 추적73/전체79 clean, docs 자체12/12,
-cargo docs1/1, private81/common0 header·5 source. 숫자/링크/패턴 검사는 의미·native link 격리·
-미완 actor나 실제 하드웨어 승격의 증명이 아니다. 이 결과 추가 뒤 문서 lint는 별도 final 로그로 재확인한다.
+`cargo clippy -p p4-llamacpp-staged-adapter --all-targets --locked` on the same frozen source gives exit0.
+Log: `target/capacity-slice-20260907-03/clippy-staged.log`. Warnings remain — staged lib16, lib test28 (14 duplicates),
+dependency adapter4/agent-core1 — and it is not called warning-free. Source cleanup was not mixed into the frozen run.
+The document/dependency scanners are preserved in `gates.json` in the same directory: tracked73/all79 clean, docs self-tests12/12,
+cargo docs1/1, private81/common0 header, 5 source. The number/link/pattern checks are not proof of semantics, native link isolation,
+the unfinished actor, or real-hardware promotion. After this result was added, document lint is rechecked with a separate final log.
 
-### 다음 예약 slice의 SESSION 반례 — 원본 전체 집계 밖
+### SESSION counterexample for the next reservation slice — outside the original full tally
 
-`target/session-emission-reservation-red-20260907-01/source/`는 위396 입력의 독립 원형 복사본이다.
-workspace 선언/lock/fixture는 그대로이며 새 target에 `--locked --offline` 실제 재컴파일41.04초로
-기존 SESSION6개/0실패 기준선을 얻었다. 이후 복사본 `worker/session_tests.rs`에만 시험3개를 추가했다.
-원본 production/test 바이트는 바꾸지 않았다. 재컴파일12.06초 뒤 **7 passed/2 failed/446 filtered**,
-cargo101이다. 원본 전체1225 집계 또는 phase 변이15개에 이 probe를 합산하지 않는다.
+`target/session-emission-reservation-red-20260907-01/source/` is an independent pristine copy of the 396 inputs above.
+The workspace declarations/lock/fixtures are unchanged, and an actual `--locked --offline` recompile into a new target (41.04 s) gave
+the existing SESSION baseline of 6 tests / 0 failures. After that, 3 tests were added only to the copy's `worker/session_tests.rs`.
+The original production/test bytes were not changed. After a 12.06 s recompile, **7 passed/2 failed/446 filtered**,
+cargo101. This probe is not added to the original full1225 tally or to the 15 phase mutation tests.
 
-`next_event=u64::MAX`에서 actual `Worker::session`과 actual `Worker::handle` 각각은 거부하지만
-sessions가 빈 상태에서 declared-pipeline 하나로 변한다. next_event·effects=[]·effects_fenced=false·
-Lifecycle::Empty·has_server=false는 보존되고 completion Event는0개다. 즉 이 반례는 모델/native를
-설치하지 않고 generation/route 입력 상태를 주입한 **응답 ID 선확보 전 상태 commit** 문제다.
-direct 오류는 실제로 `completion queue is full`이라고 잘못 표기된다. ID 고갈은 publish_or_wait 진입
-전에 발생하므로 이 실행은 실제 Full/Closed를 관측한 증거가 아니다.
+At `next_event=u64::MAX`, the actual `Worker::session` and the actual `Worker::handle` each reject, but
+sessions changes from empty to one declared-pipeline. next_event, effects=[], effects_fenced=false,
+Lifecycle::Empty and has_server=false are preserved, and there are0 completion Events. In other words, this counterexample is a **state commit before the response ID
+is secured**, with generation/route input state injected and no model/native
+installed. The direct error is actually mislabelled as `completion queue is full`. ID exhaustion happens before entering publish_or_wait,
+so this run is not evidence of observing a real Full/Closed.
 
-추가 정상 handle 양성은 sequence41→42, SESSION_READY v4 JSON·전체 Event 인코딩340바이트와
-왕복·한 번 전달을 대조했다. ID 실패 입력만 지워 통과시키지 않는다. 실제 원문은 02-probe.log,
-그 SHA-256은 `dcb7d7b0a4140c027a157dadc78153d86bd8c54950814b4619dcc9ddf04babf0`이며
-보존 실행 EXE SHA는 `6784d3c8dcb0e9c87efda33641feae0a782a263440fc9c3a67a7233c26246b1c`다.
-전후 source manifest와 추가 시험 diff를 같은 디렉터리에 보존했다. 원본 수정/완료는 아직 아니며,
-Full 중 native 결과 보존·전체 count/byte 예산·capacity wake·actor 진행의 증명으로 확대하지 않는다.
+The added normal handle positive compares sequence41→42, the SESSION_READY v4 JSON, and the 340-byte full Event encoding with its
+round trip and single delivery. It is not made to pass by removing only the ID-failure input. The raw output is 02-probe.log,
+its SHA-256 is `dcb7d7b0a4140c027a157dadc78153d86bd8c54950814b4619dcc9ddf04babf0`, and
+the preserved executed EXE SHA is `6784d3c8dcb0e9c87efda33641feae0a782a263440fc9c3a67a7233c26246b1c`.
+The before/after source manifests and the added test diff are preserved in the same directory. The original is not yet fixed or complete, and
+this is not extended into proof of preserving native results during Full, a full count/byte budget, capacity wake or actor progress.
 
-## 2026-09-07 후속 — SESSION 응답 준비
+## 2026-09-07 follow-up — SESSION response preparation
 
-위 ID 고갈 반례를 원본 기본 시험으로 옮기고 SESSION 소비 경계를 수정했다. 이 slice의 생산/시험
-변경은 `worker/emit.rs`, `control.rs`, `session_tests.rs` 세 파일뿐이다. 기존 phase396 소스와
-나머지 입력은 같으며 중립 protocol/native/llama/backend는 수정하지 않았다.
+The ID exhaustion counterexample above was moved into the original default tests, and the SESSION consumer boundary was fixed. The production/test
+changes in this slice are only three files: `worker/emit.rs`, `control.rs` and `session_tests.rs`. The existing phase396 sources and
+the remaining inputs are the same, and the neutral protocol/native/llama/backend were not modified.
 
-### 추가 독립 RED와 소비 의미
+### An additional independent RED and the consumer semantics
 
-`target/session-envelope-red-20260907-01/`는 앞 phase396/db6f4968 봉인의 production을 그대로
-사용한 독립 복사본이다. session_tests에 probe1개만 추가하고 새 컴파일39.90초 뒤 **0 passed/1 failed**,
-cargo101을 얻었다. 정상 응답 양성을 먼저 실행한 뒤 원본 ID140,000바이트 입력의 실제 wire 왕복이
-성공함을 확인했다. 그 입력 envelope는140,232바이트지만 응답은 ID와 causation에 원본 ID가 중복돼
-280,253바이트가 된다. actual session()은 Ok·sessions0→1·ID1→2였는데 내보낸 Event는 encode 성공/
-decode 실패였다. 개별 필드 검사와 합산 envelope 검사가 다르다는 실제 소비 반례다.
+`target/session-envelope-red-20260907-01/` is an independent copy that uses the production code of the earlier phase396/db6f4968 seal
+unchanged. Adding only 1 probe to session_tests and compiling fresh (39.90 s) gave **0 passed/1 failed**,
+cargo101. The normal response positive ran first, and then the real wire round trip of an input with an original ID of 140,000 bytes was confirmed to
+succeed. That input envelope was 140,232 bytes, but the response duplicates the original ID in both the ID and causation, so it
+becomes 280,253 bytes. The actual session() gave Ok, sessions0→1, ID1→2, but the emitted Event encoded successfully and
+failed to decode. This is a real consumer counterexample showing that per-field checks differ from the aggregate envelope check.
 
-이 RED의 raw SHA는 `3e54bc6915945187a3b6c09bd1e77e935ddce7650ff8805245702eedc2d7bd99`,
-보존 EXE SHA는 `aa8c621f3f0446fdc819713ec94cf5ef4218387d2245201f4c4167828cc7458b`다.
-verification.json/md·source·raw log를 보존했고 원본 생산 바이트는 바꾸지 않았다. 세션 generation과
-route를 주입한 handler 시험이지 실제 LOAD/Worker::run/네트워크/native/GPU 시험이 아니다.
+The raw SHA of this RED is `3e54bc6915945187a3b6c09bd1e77e935ddce7650ff8805245702eedc2d7bd99`,
+and the preserved EXE SHA is `aa8c621f3f0446fdc819713ec94cf5ef4218387d2245201f4c4167828cc7458b`.
+verification.json/md, the source and the raw log are preserved, and the original production bytes were not changed. This is a handler test with the session generation and
+route injected, not a real LOAD/Worker::run/network/native/GPU test.
 
-현재 prepare_json_emission은 &self에서 JSON 직렬화→checked ID 후보→정확한 Event 구성→실제
-encode/decode 동일성 검사를 끝낸다. 그 뒤 session 설치→next_event1회 commit→기존 동기 publish다.
-SESSION만 이 helper를 소비한다. private 준비물은 동기 구간 전용으로, 다른 emitter나 await/yield가
-끼어들 수 있는 예약이 아니다. 임시 encode/decode 복제는 응답 표현 가능성 검사이지 메모리 예산 확보가 아니다.
+The current prepare_json_emission completes, on &self, JSON serialization → a checked ID candidate → exact Event construction → a real
+encode/decode identity check. After that comes session installation → 1 next_event commit → the existing synchronous publish.
+Only SESSION consumes this helper. The private prepared data is only for the synchronous section; it is not a reservation that other emitters or an await/yield
+could interleave with. The temporary encode/decode copies check whether the response is representable; they do not secure a memory budget.
 
-정식 SESSION12개는 기존6+신규6이다: ID 고갈 direct/handle2, 기존340바이트 응답1, 합산 envelope
-direct/handle2, Unicode metadata/body1. 정확한 payload·Event route·ID·원문과 단일 전달을 유지했다.
-direct 준비 실패는 session/ID/effects를 보존한다. handle의 정상 거부 루프는 진단 ID를 따로1개
-소비할 수 있으며, 거대 ID의 일반 ERROR fallback은 아직 수신 불가능한 envelope를 만들 수 있다.
-ID가 완전히 고갈됐으면 진단도 송신하지 못한다. 이를 정상 오류 응답 전달 성공으로 주장하지 않는다.
-준비 후 Closed의 기존 state/ID commit도 rollback시키지 않았다. 그 실패 수명과 고정 outbox는 미완이다.
+The 12 formal SESSION tests are existing6 + new6: ID exhaustion direct/handle2, the existing 340-byte response1, aggregate envelope
+direct/handle2, and Unicode metadata/body1. The exact payload, Event route, ID and raw bytes, and single delivery are kept.
+A direct preparation failure preserves session/ID/effects. handle's normal rejection loop may consume 1 separate diagnostic
+ID, and the generic ERROR fallback for a huge ID can still produce an envelope that cannot be received.
+If IDs are completely exhausted, the diagnostic cannot be sent either. This is not claimed as successful delivery of a normal error response.
+The existing state/ID commit on Closed after preparation was not rolled back either. That failure lifetime and a fixed outbox are unfinished.
 
-### 최종 원본 실행과 소스
+### Final original run and sources
 
-`target/capacity-slice-20260907-04/source/`는 최종396 Rust/Cargo/명시된 모델 없는 fixture를
-보존한다. SHA-256은 `9394a953b28063add0e5919c641fab6f872f8449d15bc980d3022504ee3fe8eb`이며
-전체 실행 전후 파일 집합·바이트 hash가 일치했다. `cargo test --workspace --no-fail-fast --locked`의
-최종57개 summary는 **1231 passed/1 failed/7 ignored**, cargo101이다. 실패는 기존
-`completion_full_cannot_starve_a_genuine_release_acknowledgement` 그대로다. 원본 전체 suite는 실패다.
+`target/capacity-slice-20260907-04/source/` preserves the final 396 Rust/Cargo/listed model-free fixture files.
+The SHA-256 is `9394a953b28063add0e5919c641fab6f872f8449d15bc980d3022504ee3fe8eb`, and
+the file set and byte hashes matched before and after the full run. The final 57 summaries of `cargo test --workspace --no-fail-fast --locked`
+are **1231 passed/1 failed/7 ignored**, cargo101. The failure is still the existing
+`completion_full_cannot_starve_a_genuine_release_acknowledgement`. The original full suite fails.
 
-workspace.log SHA는 `f5aee2f6d4efd51d752a3c390777ea3d137b80fc2bf7bffcf78a1df8bec5b544`,
-실제 종료/명령/source는 workspace-result.json에 있으며 suite_passed=false다. 앞선1225 집계와
-source를 섞지 않는다. 외부 cross-wire-fixture5 target/각1개는 여전히 기본 빌드·실행 제외다.
-clippy staged/all-targets/locked는 exit0, staged lib16/test28(14 duplicates)·adapter4 경고가 남는다.
-이는 warning-free가 아니며 `clippy-staged.log`에 보존한다. C++/JS 하네스·모델/GPU 웨이브·원격 배포·
-커밋/push는 이번에 수행하지 않았다. 문서와 모델 파일 stat 조사도 이 Rust source 봉인의 일부가 아니다.
+The workspace.log SHA is `f5aee2f6d4efd51d752a3c390777ea3d137b80fc2bf7bffcf78a1df8bec5b544`;
+the actual exit/command/source are in workspace-result.json, with suite_passed=false. This is not mixed with the earlier 1225 tally
+or its source. The external cross-wire-fixture 5 targets / 1 test each are still excluded from the default build/run.
+clippy staged/all-targets/locked gives exit0, with staged lib16/test28 (14 duplicates) and adapter4 warnings remaining.
+This is not warning-free and is preserved in `clippy-staged.log`. The C++/JS harness, model/GPU waves, remote deploy and
+commit/push were not done this time. The document and model file stat survey is not part of this Rust source seal either.
 
-### 로컬 모델 경로 예비 목록
+### Preliminary list of local model paths
 
-사용자가 지정한 S:\models를 현재 로컬 계정에서 읽었다. `target/model-file-inventory-20260907-01.json`은
-GGUF156파일의 경로/크기/mtime이며 파일명으로 묶으면63그룹이다. 임시 이름 분류는 모델 후보40,
-embedding1, projector22이며 split 번호 누락은 없었다. metadata manifest SHA는
-`a83dda1d0ca046d3be91bccbffd7ecf0a40984b3c46ab22888ff620da306fc2e`다. 실제 내용 hash가 아니며
-파일명/크기/mtime가 같다는 것이 모델 정체성 또는 load 가능성의 증거는 아니다. non-GGUF·헤더 metadata·
-memory family·원격 계정 접근·전체 모델/variant 감사는 미완이다. 모델을 읽어 적재하거나 실행하지 않았다.
-실기 자원 단계와 승인 기준은 로드맵 §1과 검증 규약 H0를 따른다.
+The user-specified S:\models was read under the current local account. `target/model-file-inventory-20260907-01.json` holds
+the path/size/mtime of 156 GGUF files, which group into 63 groups by file name. The provisional name classification is 40 model candidates,
+1 embedding and 22 projectors, with no missing split numbers. The metadata manifest SHA is
+`a83dda1d0ca046d3be91bccbffd7ecf0a40984b3c46ab22888ff620da306fc2e`. This is not a hash of the actual contents, and
+matching file name/size/mtime is not evidence of model identity or loadability. Non-GGUF files, header metadata,
+memory family, remote account access and a full model/variant audit are unfinished. No model was read, loaded or run.
+The real-hardware resource stages and approval criteria follow roadmap §1 and verification protocol H0.
 
-### SESSION 독립 변이와 최종 게이트
+### Independent SESSION mutations and final gates
 
-`target/session-preparation-mutations-20260907-01/`은 최종396/9394a953 원형 source·workspace
-선언·Cargo.lock을 보존한 독립 복사본이다. 현재 SESSION12개만 `--locked --offline`로 검사했다.
-각 arm의 실제 staged 재컴파일·새 EXE 시각/hash·전체 source·raw log·최종 summary를 보존했고,
-원본396 입력과 테스트 기대값은 모든 실행 전후 같았다.
+`target/session-preparation-mutations-20260907-01/` is an independent copy that preserves the final 396/9394a953 pristine source, workspace
+declarations and Cargo.lock. Only the current 12 SESSION tests were checked with `--locked --offline`.
+Each arm preserves the actual staged recompile, new EXE time/hash, full source, raw log and final summary, and
+the 396 original inputs and the test expectations were the same before and after every run.
 
-| arm | passed/failed | 검출 |
+| arm | passed/failed | Detection |
 | --- | ---: | --- |
-| baseline |12/0|현재 실제 SESSION 소비 경계|
-| install-before-prepare |8/4|준비 실패 전에 session 권한 설치|
-| checked-id-bypass |10/2|ID 고갈 입력을 승인|
-| id-commit-omitted |10/2|정상 응답 뒤 ID41 유지|
-| id-commit-twice |10/2|정상 응답 뒤 ID43으로 이중 증가|
-| decode-preflight-omitted |10/2|encode는 유지했지만 합산 envelope를 받는 쪽이 거부|
-| exact restore |12/0|source 전체 정확복원·새 재컴파일|
+| baseline |12/0|The current real SESSION consumer boundary|
+| install-before-prepare |8/4|Session authority installed before the preparation failure|
+| checked-id-bypass |10/2|Approves an ID-exhausted input|
+| id-commit-omitted |10/2|ID stays at 41 after a normal response|
+| id-commit-twice |10/2|Double increment to ID43 after a normal response|
+| decode-preflight-omitted |10/2|encode kept, but the receiver rejects the aggregate envelope|
+| exact restore |12/0|Full source restored exactly, new recompile|
 
-변이5개는 실제 상태/승인/ID 차이를 검출했고 단순 오류 문자열 차이만으로 센 실패는 없다.
-baseline/restore는0, 변이는101이며 compile failure/timeout을 검출로 세지 않았다. 이12개 필터의
-통과는 별도 원본 전체1231P/1F/7ignored나 포화 actor 통과를 대신하지 않는다. verification.json/md에
-실제 실행 명령/도구 버전/각 source·EXE·로그 hash와 범위를 기록했다.
+The 5 mutations detected real differences in state/approval/ID, and no failure was counted based only on a different error string.
+baseline/restore are0 and the mutations are101; compile failures/timeouts were not counted as detections. Passing this 12-test filter
+does not stand in for the separate original full 1231P/1F/7ignored or for a pass of the saturated actor. verification.json/md
+record the actual run commands, tool versions, each source/EXE/log hash, and the scope.
 
-최종 문서 게이트는 `target/capacity-slice-20260907-04/gates.json`: 추적73/전체79 clean,
-docs 자체12/12·cargo docs1/1, private81/common0 header·5 source다. 이 표 추가 뒤 final 문서
-로그와 source check를 다시 확인한다. B1/B2/B5 또는 실기 승격은 승인하지 않는다. 남은 첫 행동은
-로드맵 마지막 진행 기록이 소유한다.
+The final document gates are in `target/capacity-slice-20260907-04/gates.json`: tracked73/all79 clean,
+docs self-tests12/12, cargo docs1/1, private81/common0 header, 5 source. After this table is added, the final document
+logs and the source check are rechecked. B1/B2/B5 or real-hardware promotion is not approved. The remaining first action is
+owned by the last progress record in the roadmap.
 
-## 2026-09-07 후속 — 효과 보존 표현과 할당 전 검사
+## 2026-09-07 follow-up — effect-preserving representation and pre-allocation checks
 
-### 구현과 증명 범위
+### Implementation and proof scope
 
-코드 근거는 HEAD `a9e1967fc59dffa6c2e458f1b91f916b1df826c1` 위 미커밋 변경이며, 아래 최종
-397파일 source 봉인이 이 회차의 실제 코드다. 출발 HEAD에 이미 구현돼 있었다고 읽지 않는다.
+The code basis is uncommitted changes on HEAD `a9e1967fc59dffa6c2e458f1b91f916b1df826c1`, and the final
+397-file source seal below is the actual code of this round. Do not read it as already implemented in the starting HEAD.
 
-- `worker/effects.rs::CommittedEffect`와 `observe.rs::PreparedTelemetry`의 base는 모두 Envelope다.
-  OUTPUT마다 TAIL payload를 복제하거나 Forward에 이전 물리 입력 본문을 별도로 보관하지 않는다.
-  생산자 `release/settlement/physical/drive`와 기존 소비 시험도 함께 이관했다.
-- `Worker::flush_effects`는 front 전체 clone 대신 pop으로 원본 의도를 소유하고, 실패하면 같은
-  원본을 front에 복구한다. `CommittedEffect`의 Clone 파생도 제거했다. Forward의 Vec는 mailbox로
-  이동하고 Closed/ID 고갈/shutdown 실패에서 원래 의도로 돌아간다. 작은 native SETTLE 후보 복제는
-  응답 proposal이 원본 의도를 바꾸지 않도록 유지한다. 성공 forward 뒤에만 관측 시각을 고정하고
-  telemetry를 앞에 이동한다. 후속 관측 실패 때문에 forwarding을 다시 하지 않는다.
-- 이행 대상은 **동기 소비 경계**다. Full 중에는 여전히 blocking하며, 실패 뒤 남는 것은
-  Envelope+DTO/body이지 재개 가능한 고정 Event 전체가 아니다. 일반 송신의 ID 소비·fence 의미는
-  유지했다. 활성 입력·파싱 객체·JSON 직렬화·실행 중 effect까지 포함한 RSS 예산은 아직 없다.
-- `capsule/decode.rs::read_capsule`은 outcome 헤더24바이트와 generated 최소12바이트,
-  남은 outcome 헤더·proposal/replay i32 배열의 합계가 cursor 잔량 안에 들어가는지 **예약 전** 검사한다.
-  곱셈 전에 나눗셈으로 범위를 확인해 overflow를 피한다. 기존 유효 wire count 상한을 줄이지 않았다.
-  이는 필요한 wire-size 조건이며 전체 parsed heap/allocator/RSS 상한이나 native 의미 검증은 아니다.
+- The base of both `worker/effects.rs::CommittedEffect` and `observe.rs::PreparedTelemetry` is an Envelope.
+  The TAIL payload is not copied per OUTPUT, and Forward does not keep a separate copy of the earlier physical input body.
+  The producers `release/settlement/physical/drive` and the existing consumer tests were migrated too.
+- `Worker::flush_effects` owns the original intent via pop instead of cloning the whole front, and on failure restores the same
+  original to the front. The Clone derive on `CommittedEffect` was also removed. Forward's Vec moves into the mailbox
+  and returns to the original intent on Closed/ID exhaustion/shutdown failure. The small native SETTLE candidate copy is
+  kept so that the response proposal does not change the original intent. The observation time is pinned only after a successful forward, and
+  telemetry is moved to the front. A later observation failure does not cause forwarding to happen again.
+- The target of this migration is the **synchronous consumer boundary**. It still blocks during Full, and what remains after a failure is
+  Envelope+DTO/body, not a whole fixed Event that can be resumed. The ID consumption and fence semantics of normal sends are
+  kept. There is still no RSS budget that covers active inputs, parsed objects, JSON serialization and in-flight effects.
+- `capsule/decode.rs::read_capsule` checks **before reserving** that the 24-byte outcome header, the generated minimum of 12 bytes,
+  and the sum of the remaining outcome headers and proposal/replay i32 arrays fit within the cursor's remaining bytes.
+  It checks the range with division before multiplying to avoid overflow. The existing valid wire count bound was not reduced.
+  This is a necessary wire-size condition, not a bound on total parsed heap/allocator/RSS or validation of native semantics.
 
-### 실제 소비 회귀와 수정 전 반례
+### Real consumer regressions and the pre-fix counterexample
 
-`worker/effect_representation_tests.rs`의6개는 actual prepare_outputs/flush_effects/mailbox를
-호출한다. native/model/run-loop를 대신하지 않는다. 작은/큰 causal payload와 출력 수1/8을 대조하고,
-32KiB nonempty Vec의 원래 allocation이 실제 mailbox에 도착하는지 검사한다. 정상 Unicode 출력의
-Event ID/sequence/causation/source/target/return route/correlation/deadline·token/text/position/stop/
-완료 필드와 순서·중복0을 확인한다. Closed·ID 고갈·Full-at-shutdown에서 body/중첩 telemetry/queue suffix
-및 원본 allocation을 보존하고, 성공 forwarding 뒤 관측 ID 고갈에서는 고정 시각·순서·forward 재실행0을 본다.
-포인터 검사는 nonempty allocation의 소유 이동에 한정되며 TPS나 RSS 수치가 아니다.
+The 6 tests in `worker/effect_representation_tests.rs` call the actual prepare_outputs/flush_effects/mailbox.
+They do not stand in for native/model/run-loop. They compare small/large causal payloads and output counts1/8, and
+check that the original allocation of a 32KiB nonempty Vec arrives in the real mailbox. For normal Unicode output, they confirm
+Event ID/sequence/causation/source/target/return route/correlation/deadline, token/text/position/stop/
+completion fields, order, and duplicates0. On Closed, ID exhaustion and Full-at-shutdown, they preserve body/nested telemetry/queue suffix
+and the original allocation; on observation ID exhaustion after a successful forward, they check the pinned time, order and forward re-execution0.
+The pointer check is limited to the ownership move of a nonempty allocation and is not a TPS or RSS figure.
 
-기존 head native dispatch9개와 관측8개, 해제 통지·actual loop의 출력/KV oracle는 전체 실행에서
-유지했다. 기존 ReleaseReceipt의 `base.payload.is_empty()` 단언은 payload 필드가 없는 Envelope 타입
-제약으로 이관하고 원래 제출 provenance/recipient/payload 단언은 유지했다.
+The existing 9 head native dispatch tests and 8 observation tests, and the output/KV oracles of release notification and the actual loop, were
+kept in the full run. The existing ReleaseReceipt assertion `base.payload.is_empty()` was migrated into the type constraint of an Envelope
+that has no payload field, and the original submission provenance/recipient/payload assertions were kept.
 
-`target/capsule-capacity-red-20260907-01/`은 기존 decoder에 테스트 전용 capacity 관측만 붙여
-선언 count=3인 작은 무효 입력으로 **0 passed/2 failed**를 재현했다. 실제 컴파일9.58초이며
-코드가 요청한 capacity trace가 반례다. 3개 decoder/cursor/capsule 입력은 실행 전후 같았고
-manifest SHA `42d5595aefb6afce02f0312ec41dfa43c8f1a3db192441bb66ad5a0380ef2a3e`, 실제 EXE는
-`054649a151630c0b77f315282b78fe45013974f1976e726eb8d00038aee03cfb`다. 이것은 부분 입력 봉인이지
-전체 workspace 전이 증거가 아니다. 거대 할당·원본 production 변이는 수행하지 않았다.
+`target/capsule-capacity-red-20260907-01/` attached only a test-only capacity observation to the existing decoder and
+reproduced **0 passed/2 failed** with a small invalid input declaring count=3. The actual compile took 9.58 s, and
+the capacity trace requested by the code is the counterexample. The 3 decoder/cursor/capsule inputs were the same before and after the run;
+manifest SHA `42d5595aefb6afce02f0312ec41dfa43c8f1a3db192441bb66ad5a0380ef2a3e`, actual EXE
+`054649a151630c0b77f315282b78fe45013974f1976e726eb8d00038aee03cfb`. This is a partial input seal, not
+evidence for the whole workspace transition. No huge allocation or mutation of the original production code was performed.
 
-decoder 새7개 회귀는 actual CapsuleSet::decode에서 zero/exact minimum/one byte short·Unicode·
-혼합 capsule·checkpoint/proposal 배열과 불가능한 MAX-u32 선언을 검사한다. 활성 테스트 관측은
-1024 초과 capacity가 allocator에 도달하기 전에 panic시켜 변이도 개발 호스트를 고갈시키지 않는다.
-정상 production에는 이 테스트 ceiling이 없다. 중간 `green.log`의 Envelope 이관 중 compile 실패는
-실행 증거에서 제외했다. 별도 focused7/0 뒤 아래 최종397 입력의 전체 실행에서 다시 통과했다.
+The 7 new decoder regressions check, in the actual CapsuleSet::decode, zero/exact minimum/one byte short, Unicode,
+mixed capsules, checkpoint/proposal arrays, and an impossible MAX-u32 declaration. The active test observation
+panics on a capacity over 1024 before it reaches the allocator, so mutations do not exhaust the development host either.
+Normal production has no such test ceiling. The compile failure during the Envelope migration in the intermediate `green.log` was excluded
+from the execution evidence. After a separate focused7/0, it passed again in the full run of the final 397 inputs below.
 
-### 최종 원본 실행
+### Final original run
 
-`target/capacity-slice-20260907-05/source/`는397 Rust/Cargo/명시 fixture 입력을 보존한다.
-SHA-256은 `ce33c532f53e8a8c50a454303d1aa672d8883c6fb619fa3915cbd332958d7e07`이며,
-전체 실행 전후 파일 집합과 바이트 hash가 같았다. `cargo test --workspace --no-fail-fast --locked`
-최종57개 summary는 **1244 passed/1 failed/7 ignored**, cargo101, suite_passed=false다.
-workspace.log SHA는 `11760b25b4821842881cd2d570c7c3d85d1151d73f3f9a2a47662ba880deeda0`이다.
-기존 `completion_full_cannot_starve_a_genuine_release_acknowledgement`가 유일한 실패이며
-시험/기대값을 수정하지 않았다. 기본 feature에서 제외된 cross-wire-fixture5개 target은 미실행이다.
+`target/capacity-slice-20260907-05/source/` preserves the 397 Rust/Cargo/listed fixture inputs.
+The SHA-256 is `ce33c532f53e8a8c50a454303d1aa672d8883c6fb619fa3915cbd332958d7e07`, and
+the file set and byte hashes were the same before and after the full run. The final 57 summaries of `cargo test --workspace --no-fail-fast --locked`
+are **1244 passed/1 failed/7 ignored**, cargo101, suite_passed=false.
+The workspace.log SHA is `11760b25b4821842881cd2d570c7c3d85d1151d73f3f9a2a47662ba880deeda0`.
+The existing `completion_full_cannot_starve_a_genuine_release_acknowledgement` is the only failure, and
+the test/expectations were not modified. The 5 cross-wire-fixture targets excluded from the default features were not run.
 
-clippy staged/all-targets/locked는 exit0이고 staged lib17/test29(15 duplicates), adapter4,
-agent-core1 경고다. `publish_or_retain`의 owned Event 반환에 **result_large_err 경고1개가 증가**했다.
-경고를 숨기거나 마지막에 boxing/인터페이스를 바꿔 검증 소스를 어긋나게 하지 않았다. 전체 warning-free가
-아니다. clippy log SHA는 `871406ac44416c5f7d7dbbbdd20e859306594c2c4249c8df7bfc05840313afd0`이다.
+clippy staged/all-targets/locked gives exit0, with warnings staged lib17/test29 (15 duplicates), adapter4 and
+agent-core1. The owned Event return of `publish_or_retain` **added 1 result_large_err warning**.
+The warning was not hidden, and boxing or interface changes were not made at the last minute in a way that would diverge from the verified source. This is not
+warning-free overall. The clippy log SHA is `871406ac44416c5f7d7dbbbdd20e859306594c2c4249c8df7bfc05840313afd0`.
 
-이번 회차는 C++/JS 실기 하네스·모델/GPU·원격 배포·커밋/push를 수행하지 않았다. VRAM-only 및
-RAM 오프로딩 웨이브·다중 컴퓨터 성과가 아니며, 단계 승격을 승인하지 않는다. 향후 수명/예산/ID
-예약 결정은 배치 계약의 목표 절, 현재 첫 행동은 로드맵 마지막 기록이 소유한다.
+This round did not run the C++/JS real-hardware harness, models/GPU, remote deploy or commit/push. It is not a VRAM-only or
+RAM offloading wave or a multi-computer result, and it does not approve stage promotion. Future lifetime/budget/ID
+reservation decisions are owned by the target section of the batching contract, and the current first action by the last roadmap record.
 
-### 표현 이관의 독립 변이와 EOL 정정
+### Independent mutations of the representation migration and an EOL correction
 
-`target/effect-storage-mutations-20260907-01/verification.json`은 source05 전체397파일을 복사한
-독립 실행이다. baseline/restored는13/0이고 동일13시험에서 front clone2건, 실패 효과 복구 누락3건,
-forward body clone3건, telemetry 승격 누락1건, outcome 길이 검사 제거2건, generated 합산 검사
-제거5건의 실제 assertion 실패를 검출했다. 모든 arm은 실제 새 컴파일·EXE·동일 시험 구성원을
-확인했고 parser 테스트 전용 할당 감시는 유지했다. 컴파일 오류/timeout은 검출로 세지 않았다.
-이는 source05의 증거이며 이후 소스로 바꿔 인용하지 않는다.
+`target/effect-storage-mutations-20260907-01/verification.json` is an independent run that copied all 397 files of source05.
+baseline/restored are13/0, and on the same 13 tests it detected real assertion failures for front clone (2), missing restore of a failed effect (3),
+forward body clone (3), missing telemetry promotion (1), removed outcome length check (2), and removed generated sum check
+(5). Every arm confirmed an actual fresh compile, EXE and the same test membership, and the parser's test-only allocation watch was kept.
+Compile errors/timeouts were not counted as detections.
+This is evidence for source05 and is not cited as applying to later sources.
 
-cursor.rs 행말 정규화 명령이 처음 실패해 source06은05와 같은 바이트로 다시 실행됐다
-(1244/1/7). 실제 정규화 뒤 source07은397파일 SHA
-`94c9f1d4ce95a069ade5fb88ae14374fc3e630a02ab1803f97a8420092f89e07`이고 전체57 summary가
-1244/1/7, cargo101이었다. 05→07의 유일한 코드 차이는 cursor.rs의 EOL이며 LF 정규형 hash
-`644abc79f5a2219648706fde961b04288dabd1b84e576e76a064bca8a086cac6`는 같다.
-07 workspace.log SHA는 `410bb928ca4bcf9bcc30b54556e6479a5237e9ab3b36e69f83594e94e681cb17`이다.
+The cursor.rs line-ending normalization command failed at first, so source06 was rerun with the same bytes as05
+(1244/1/7). After the actual normalization, source07 has the 397-file SHA
+`94c9f1d4ce95a069ade5fb88ae14374fc3e630a02ab1803f97a8420092f89e07`, and its full 57 summaries were
+1244/1/7, cargo101. The only code difference from 05→07 is the EOL of cursor.rs, and the LF-normalized hash
+`644abc79f5a2219648706fde961b04288dabd1b84e576e76a064bca8a086cac6` is the same.
+The 07 workspace.log SHA is `410bb928ca4bcf9bcc30b54556e6479a5237e9ab3b36e69f83594e94e681cb17`.
 
-## 2026-09-07 전체 WIP 체크포인트 — 제한된 ACK 서비스 통합
+## 2026-09-07 full WIP checkpoint — bounded ACK service integration
 
-### 설계 재판정과 구현 범위
+### Design re-evaluation and implementation scope
 
-사용자 지시에 따라 장기간의 누적 변경을 일부만 남기지 않고 전체 체크포인트로 커밋한다.
-임시 빌드·실행 원문·독립 복사본은 기존 target ignore 정책을 유지한다. 이 기록을 포함하는
-커밋은 **중간 복원 지점이지 완료/승격 커밋이 아니다**. 이후 최초 git show로 이 기록과 소스를 대조한다.
+At the user's instruction, the long-running accumulated changes are committed as a full checkpoint instead of keeping only part of them.
+Temporary builds, raw run output and independent copies keep the existing target ignore policy. The commit that includes this record
+is **an intermediate restore point, not a completion/promotion commit**. Afterwards, the first git show will be used to compare this record against the sources.
 
-독립 읽기 검수3건과 실제 코드의 결론은 동일했다. 현재 Full 반례의 blocked sender는 B OUTPUT이
-아닌 **B RELEASE forward**이고, A ACK를 적용할 같은 worker가 송신 공간을 기다린다. 전체 RSS/
-native HELLO 자원 모델은 이 한 반례 수정의 직렬 선행이 아니었다. 원본 송신 Event의 소유를
-유지하며 접근 가능한 ACK를 외부효과 없는 prepare/commit으로 처리하는 한 경계로 변경했다.
+The 3 independent read-only reviews and the actual code reached the same conclusion. In the current Full counterexample, the blocked sender is not the B OUTPUT
+but the **B RELEASE forward**, and the same worker that would apply A's ACK is waiting for send space. The full RSS/
+native HELLO resource model was not a serial prerequisite for fixing this one counterexample. The change is a single boundary that keeps ownership
+of the original outgoing Event and handles reachable ACKs with side-effect-free prepare/commit.
 
-- `ack_service.rs`: 한 번에 입력1개. RELEASED/SETTLED만 허용하고 handle/flush/native/drive
-  재귀 호출0. non-ACK는 원본 입력1개로 보관, 첫 잘못된 ACK는 진단1개로 보관하며 두 번째 오류는
-  원본 입력으로 보관하고 더 읽지 않는다. FIFO 뒤에 갇힌 ACK 진행까지 보장하지 않는다.
-- `release.rs`: RELEASED prepare와 순수 commit을 분리했다. 원래 전체 검증·reply별 그룹화·
-  슬롯/입장 순서·정산 observer는 보존하고 통지는 기존 FIFO 뒤에 등록한다.
-- `obligations.rs`: pending release의 미래 receipt 개수, queued effect와 활성 effect의 미구체화
-  suffix, 진단의 ID 의무를 합산한다. 실제 Event sequence는 송신물 구체화 시점에만 발급한다.
-  이것은 count/ID 불변식이며 미래 receipt bytes 사전 할당·전체 RSS 예산 구현이 아니다.
-- `emit/effects`: Full 재시도의 같은 Event를 유지하고 각 head forward offer 직전에 권위를
-  다시 확인한다. 성공 offer와 callback 사이에는 ACK를 처리하지 않는다. 종료 관측에 활성 송신·
-  보관 입력·진단을 추가했다. native 호출 그룹은 계속 비선점적이다.
+- `ack_service.rs`: 1 input at a time. Only RELEASED/SETTLED are allowed, with 0 recursive calls into handle/flush/native/drive.
+  A non-ACK is held as 1 original input; the first bad ACK is held as 1 diagnostic, and a second error is
+  held as the original input with no further reads. It does not guarantee progress for an ACK trapped behind the FIFO.
+- `release.rs`: RELEASED prepare and the pure commit were separated. The original full validation, per-reply grouping,
+  slot/admission order and settlement observer are preserved, and notifications are registered behind the existing FIFO.
+- `obligations.rs`: sums the number of future receipts of pending releases, the unmaterialized suffix of queued and active effects,
+  and the diagnostic ID obligations. The actual Event sequence is issued only when an outgoing item is materialized.
+  This is a count/ID invariant, not preallocation of future receipt bytes or an implementation of a full RSS budget.
+- `emit/effects`: a Full retry keeps the same Event, and authority is rechecked right before each head forward
+  offer. No ACK is processed between a successful offer and its callback. Active sends,
+  held inputs and diagnostics were added to the shutdown observation. native call groups remain non-preemptive.
 
-### 현재 검증과 미완
+### Current verification and what is unfinished
 
-`target/capacity-slice-20260907-08/source/`399 Rust/Cargo/fixture 입력의 SHA는
-`7ba8cf32852e4d8820200ef3d6cd14a4098710b95b3326eb9a7496db51c2ab7d`다. 전체
-`cargo test --workspace --no-fail-fast --locked`는 **1236 passed/9 failed/7 ignored**, cargo101,
-최종57 summary이며 source before/after는 동일하다. log SHA는
-`ce5bb371a1dfae71e35c46480c1e688620b510552c1b97107460edfb3a3bf578`이다.
+The SHA of the 399 Rust/Cargo/fixture inputs in `target/capacity-slice-20260907-08/source/` is
+`7ba8cf32852e4d8820200ef3d6cd14a4098710b95b3326eb9a7496db51c2ab7d`. The full
+`cargo test --workspace --no-fail-fast --locked` gave **1236 passed/9 failed/7 ignored**, cargo101,
+across the final 57 summaries, with source before/after identical. The log SHA is
+`ce5bb371a1dfae71e35c46480c1e688620b510552c1b97107460edfb3a3bf578`.
 
-기존 actual Worker의 Full ACK 반례는 통과했다. 그러나 전체 green 또는 이번 수정 완성은 아니다.
-실패9개는 다음과 같으며 숨기거나 ignored/feature 제외로 바꾸지 않는다.
+The existing actual Worker Full ACK counterexample passed. However, this is neither full green nor a completed fix.
+The 9 failures are as follows, and they are not hidden or turned into ignored/feature exclusions.
 
-| 실패군 | 개수 | 다음 판정 |
+| Failure group | Count | Next judgement |
 | --- | ---: | --- |
-| head forward 거부3개 |3|구체 원인/ID 무변경을 유지한 최초 preflight와 매 offer 재검증을 함께 유지|
-| SESSION ID 오류 사유 |1|기존 진단 계약 보존|
-| 관측/forward 후 고갈3개 |3|사전 예약과 이미 commit한 효과의 전달 실패를 혼동하지 않도록 소비 경계 분리|
-| receipt·OUTPUT 고갈2개 |2|commit 전 거부 반례를 추가하고, 기존 commit 후 실패 보존 시험은 실제 그 시점에 주입|
+| 3 head forward rejections |3|Keep both the initial preflight that preserves the specific cause/unchanged ID and the recheck on every offer|
+| SESSION ID error reason |1|Preserve the existing diagnostic contract|
+| 3 exhaustion after observation/forward |3|Separate the consumer boundaries so pre-reservation is not confused with delivery failure of already committed effects|
+| 2 receipt/OUTPUT exhaustion |2|Add pre-commit rejection counterexamples, and inject the existing post-commit failure preservation tests at that actual point|
 
-추가 실제 루프의 잘못된 ACK→정상 ACK와 non-ACK FIFO 복구 시험은 이 체크포인트에서 아직 작성
-완료되지 않았다. fixture 공통 준비·복구 helper만 추출됐다. 기존 단언은 보존했으며 신규 미실행을
-통과로 세지 않는다. 추가 설계 시험·독립 변이·capacity wake·일반 byte 예산·EventNode credit·
-Cancel/Drain·GPU 웨이브는 미완이다. C++/JS 하네스·모델·원격 실행·push는 이번 통합에서 수행하지 않았다.
+The additional real-loop tests for bad ACK→valid ACK and non-ACK FIFO recovery were not yet finished at this checkpoint.
+Only the shared fixture preparation/recovery helpers were extracted. The existing assertions are preserved, and new tests that were not run are not
+counted as passes. Additional design tests, independent mutations, capacity wake, a general byte budget, EventNode credit,
+Cancel/Drain and GPU waves are unfinished. The C++/JS harness, models, remote runs and push were not done in this integration.
 
-## 두 번째 전체 체크포인트 — 제한된 ACK 진행 검증 (2026-09-07)
+## Second full checkpoint — verification of bounded ACK progress (2026-09-07)
 
-첫 중간 커밋 `2e9451a5cb349740982db3e7478b6c9beb1440d3`은 누적196파일 전체를 보존했고,
-커밋 직후 비무시 변경/미추적0을 확인했다. 이번 기록은 그 이후 수정과 검증이며, 당시 회귀9개를
-통과했다고 소급하지 않는다. 소스·시험·문서 변경은 이번에도 전부 다음 체크포인트에 포함한다.
+The first intermediate commit `2e9451a5cb349740982db3e7478b6c9beb1440d3` preserved all 196 accumulated files, and
+right after the commit, non-ignored changes/untracked files were confirmed to be 0. This record covers the fixes and verification since then, and does not claim retroactively that the
+9 regressions at that time passed. All source, test and document changes are again included in the next checkpoint.
 
-### 수정의 논리와 경계
+### Rationale and boundaries of the fix
 
-1. 최초 head control preflight는 구체 오류와 ID 보존을 책임지고, 매 offer 직전 검사는 Full 중
-   ACK가 바꾼 현재 권위를 책임진다. 어느 하나를 다른 하나로 대체하지 않는다. ACK가 은퇴시킨
-   historical control replay는 원래 본문/의도를 복구하고 fenced된다. 무해한 성공으로 흡수되지는 않는다.
-2. 의무의 사전 검사는 **commit 전**이며, 이미 commit된 효과는 자기 몫을 소비한다. 후자의
-   직렬화마다 전체 몫을 다시 요구하지 않는다. 그래도 실제 ID의 checked_add는 유지하여 commit
-   뒤 ID 장애/손상이 나면 전달하지 않은 의도를 보존한다. 직접 응답은 미래 몫을 빌리지 못한다.
-3. RELEASED의 N개 pending을 G개 원래 소유자 receipt로 전환할 때 `G <= N`이다. queued effects,
-   active ForwardObserved의 아직 구체화하지 않은 관측, 미래 receipt, 보류 진단의 합을 검사한다.
-   실제 Event sequence는 FIFO 발행물 구체화에서만 소비한다. 이 산식은 ID 개수이지 RAM 예약이 아니다.
-4. TAIL의 반환 후보·효과를 전량 검사한 뒤 commit한다. 기존 OUTPUT/receipt 고갈 시험은 이제
-   실제 commit 후에 장애를 주입하며 원래의 의도 보존/재정산 금지 단언을 유지한다. 별도 사전
-   부족 시험이 전체 요청·원장·slot·effect·ID·mailbox/native 효과의 보존과 정확한 여유량의 성공을 검사한다.
-5. head native 결과의 의무 검사도 prepare_issue **전**이다. 부족한 채 두 번 재시도해도 prepared
-   issue/flight/요청/owner/frontier/native를 바꾸지 않으며, 정확한3개 ID 여유에서는 첫 logical ordinal1로 실행한다.
+1. The initial head control preflight is responsible for the specific error and ID preservation, and the check right before each offer is responsible for
+   the current authority that an ACK changed during Full. Neither replaces the other. A historical control replay
+   retired by an ACK restores the original body/intent and is fenced. It is not absorbed as a harmless success.
+2. The obligation pre-check is **before commit**, and already committed effects consume their own share. The latter
+   does not re-require the whole share at each serialization. The checked_add on the actual ID is still kept, so if an ID failure or corruption occurs
+   after commit, the undelivered intent is preserved. Direct responses cannot borrow future shares.
+3. When N pending RELEASED entries are converted into receipts for G original owners, `G <= N`. The check covers the sum of queued effects,
+   the not-yet-materialized observations of active ForwardObserved, future receipts, and held diagnostics.
+   The actual Event sequence is consumed only when FIFO outgoing items are materialized. This formula is an ID count, not a RAM reservation.
+4. All TAIL return candidates and effects are checked in full before commit. The existing OUTPUT/receipt exhaustion tests now
+   inject the fault after the actual commit and keep the original assertions on intent preservation / no re-settlement. Separate pre-commit
+   shortage tests check preservation of all requests, ledger, slots, effects, IDs and mailbox/native effects, and success with exactly enough room.
+5. The obligation check on head native results is also **before** prepare_issue. Retrying twice while short does not change the prepared
+   issue/flight/request/owner/frontier/native, and with exactly 3 IDs of room it runs with the first logical ordinal1.
 
-### 새 실제 소비 시험8개
+### 8 new real consumer tests
 
-모든 시험은 기본 staged lib 집합에 들어가며 ignored/feature 제외로 숨기지 않았다.
+All tests are in the default staged lib set and are not hidden with ignored/feature exclusions.
 
-| 시험 이름 | 실제 소비와 보장 |
+| Test name | Real consumption and guarantee |
 | --- | --- |
-| `completion_full_defers_one_bad_ack_error_without_blocking_the_genuine_ack` | Worker::run, 실제 B OUTPUT으로 Full; 잘못된 ACK의 원래 provenance/JSON 진단1개를 보존하면서 정상 ACK는 공간 복구 전에 commit, native 증가0; 복구 후 정상 OUTPUT/KV/receipt 유지 |
-| `completion_full_holds_a_non_ack_without_reading_past_it_then_recovers_fifo` | Worker::run, C PREFILL→정상 ACK 순서를 보관하며 Full 안에서 C 실행/ACK 추월0; 복구 후 C가 ACK보다 먼저 수용되고 모두 정상 완주 |
-| `b2_completion_full_settles_both_speculative_continuations_without_native_reentry` | 실제 모든 stage의 SETTLE 후 보류한 ACK와 실제 SESSION_READY 두 건으로 Full; Direct/Checkpoint 각각 정산만 먼저 적용하고 native 이력 불변; 기존 literal 토큰/위치/KV oracle 유지 |
-| `full_control_replay_revalidates_its_ticket_after_ack_retirement` | 실제 flush/native Frame/mailbox; RELEASE/SETTLE replay Full 중 ACK가 권위를 제거하면 stale 재전달0·추가 native0·원본 body allocation/intent 보존. 시작 KV와 ACK echo는 단일-worker 주입이며 다중-stage ACK 생성 증명 아님 |
-| `head_id_shortage_precedes_prepared_issue_and_exact_room_still_runs` | 실제 head handle/drive/codec. 사전부족2회 상태보존과 정확한3개 ID 양성 실행 |
-| `receipt_id_shortage_before_commit_preserves_ack_and_slot_authority` | 실제 RELEASED consumer. 사전 전체 거부, native/통지0, pending/slot/ID 보존 |
-| `direct_responses_cannot_spend_ids_owed_to_pending_receipts` | 직접 ERROR가 pending2개의 몫을 소비하지 못함; 이어 실제 ACK가 자기 몫으로 owner별 receipt2개 발행 |
-| `output_id_obligations_refuse_whole_return_before_commit_and_accept_exact_room` | 실제 TAIL decoder/flight consumer. OUTPUT2개 전체의 사전부족 원자 거부와 정확한2개 ID 성공 |
+| `completion_full_defers_one_bad_ack_error_without_blocking_the_genuine_ack` | Worker::run, Full caused by a real B OUTPUT; while keeping 1 diagnostic with the bad ACK's original provenance/JSON, the valid ACK commits before space recovers, native increase0; normal OUTPUT/KV/receipt kept after recovery |
+| `completion_full_holds_a_non_ack_without_reading_past_it_then_recovers_fifo` | Worker::run, holds the order C PREFILL→valid ACK, with C execution/ACK overtaking0 during Full; after recovery C is accepted before the ACK and everything completes normally |
+| `b2_completion_full_settles_both_speculative_continuations_without_native_reentry` | Full caused by the ACKs held after real SETTLE on every stage and two real SESSION_READY events; Direct/Checkpoint each apply only settlement first with native history unchanged; existing literal token/position/KV oracles kept |
+| `full_control_replay_revalidates_its_ticket_after_ack_retirement` | Real flush/native Frame/mailbox; if an ACK removes authority during a RELEASE/SETTLE replay Full, stale redelivery0, additional native0, original body allocation/intent preserved. The initial KV and ACK echo are single-worker injections, not proof of multi-stage ACK generation |
+| `head_id_shortage_precedes_prepared_issue_and_exact_room_still_runs` | Real head handle/drive/codec. State preserved across 2 pre-shortage attempts, and a positive run with exactly 3 IDs |
+| `receipt_id_shortage_before_commit_preserves_ack_and_slot_authority` | Real RELEASED consumer. Whole pre-rejection, native/notification0, pending/slot/ID preserved |
+| `direct_responses_cannot_spend_ids_owed_to_pending_receipts` | A direct ERROR cannot consume the share of 2 pending entries; the subsequent real ACK then publishes 2 per-owner receipts from its own share |
+| `output_id_obligations_refuse_whole_return_before_commit_and_accept_exact_room` | Real TAIL decoder/flight consumer. Atomic pre-shortage rejection of both OUTPUTs (2) and success with exactly 2 IDs |
 
-기존 `completion_full_cannot_starve_a_genuine_release_acknowledgement`의 긍정 복구·출력·정산
-단언은 유지했다. Full/ACK 서비스는 새 native 계산을 발행하지 않는다. 기존 non-ACK FIFO 앞단과
-두 번째 오류 뒤의 ACK 진행은 범위 밖이다. stale replay의 fenced 수렴 또한 완전한 재연결/drain은 아니다.
+The positive recovery, output and settlement assertions of the existing `completion_full_cannot_starve_a_genuine_release_acknowledgement`
+were kept. The Full/ACK service does not issue new native computation. ACK progress in front of an existing non-ACK FIFO and
+after a second error is out of scope. Fenced convergence of a stale replay is not a complete reconnect/drain either.
 
-### 봉인된 전체 실행
+### Sealed full run
 
-- 원본: `target/capacity-slice-20260907-09/source/` 및 `source.json`, Rust/Cargo/fixture399개.
-- 입력 SHA-256: `b50af68ed3760f10b04b1cb88eb6e5ccfaf0d3d7a4f1c079d082c9a6079e2ea6`.
-- 명령: `cargo test --workspace --no-fail-fast --locked`.
-- 결과: **1253 passed /0 failed /7 ignored**, 최종57 summary, exit0. staged lib은479/0.
-- 실행 전후 소스 동일. 원문: `target/capacity-slice-20260907-09/workspace.log`.
-- 원문 SHA-256: `54525d9de589023a710b47894e7f458a833c739991bc4ad0c235a3c2bf5a4715`.
-- 전체 실행은2026-09-07 03:01:47~03:04:09 UTC. C++/JS 실기 하네스/모델/GPU 실행이 아니다.
-- 후속 문서 게이트: tracked/all 각각79파일 clean, 자체12/12, cargo 문서1/1.
-  private-header 문자열 게이트81파일 clean, common 부채0 header/5 source(기존 부채 유지).
-  이는 C++ 재빌드나 의미 호환 증명이 아니다. 원문은 같은 proof의 `gates.json`과 개별 log다.
+- Original: `target/capacity-slice-20260907-09/source/` and `source.json`, 399 Rust/Cargo/fixture files.
+- Input SHA-256: `b50af68ed3760f10b04b1cb88eb6e5ccfaf0d3d7a4f1c079d082c9a6079e2ea6`.
+- Command: `cargo test --workspace --no-fail-fast --locked`.
+- Result: **1253 passed /0 failed /7 ignored**, final 57 summaries, exit0. staged lib479/0.
+- Sources identical before and after the run. Raw output: `target/capacity-slice-20260907-09/workspace.log`.
+- Raw output SHA-256: `54525d9de589023a710b47894e7f458a833c739991bc4ad0c235a3c2bf5a4715`.
+- The full run took place 2026-09-07 03:01:47~03:04:09 UTC. This is not a C++/JS real-hardware harness, model or GPU run.
+- Later document gates: tracked/all 79 files each clean, self-tests12/12, cargo docs1/1.
+  private-header string gate 81 files clean, common debt 0 header/5 source (existing debt kept).
+  This is not a C++ rebuild or proof of semantic compatibility. The raw output is `gates.json` and the individual logs in the same proof.
 
-### 독립 복사본 변이5종
+### 5 mutations in an independent copy
 
-`target/ack-service-mutations-20260907-01/verification.json`과 각 arm의 source/log/manifest/EXE가
-원문이다. 전체399입력과 Cargo.lock/fixture를 복사하고 매 arm 실제 staged 재컴파일·새 EXE 해시와
-25개 시험 이름 동일성을 검사했다. 원본 변경0, 최종 복사본 exact 복원, compile 실패/timeout을
-검출로 세지 않음. arm별 소스와 EXE를 보존한다. runner는 해당 proof 안 `runner.mjs`다.
+The raw data is `target/ack-service-mutations-20260907-01/verification.json` and each arm's source/log/manifest/EXE.
+All 399 inputs plus Cargo.lock/fixtures were copied, and each arm checked an actual staged recompile, a new EXE hash, and
+identical names for the 25 tests. Original changes0, exact restore of the final copy, compile failures/timeouts not counted
+as detections. Per-arm sources and EXEs are preserved. The runner is `runner.mjs` inside that proof.
 
-| arm | passed/failed | 제거한 불변식 |
+| arm | passed/failed | Invariant removed |
 | --- | --- | --- |
-| baseline |25/0|없음|
-| ack-service-omitted |20/5|Full 안에서 ACK 소비|
-| id-check-after-issue |24/1|ID 거부가 issue 준비보다 선행|
-| future-receipt-omitted |24/1|pending receipt의 미래 몫|
-| diagnostic-blocks-valid-ack |24/1|진단1개 보류 중에도 정상 ACK는 처리|
-| head-recheck-omitted |24/1|각 offer 직전 현재 권위 검사|
-| restored |25/0|봉인 원본으로 복원|
+| baseline |25/0|none|
+| ack-service-omitted |20/5|ACK consumption during Full|
+| id-check-after-issue |24/1|ID rejection precedes issue preparation|
+| future-receipt-omitted |24/1|Future share of pending receipts|
+| diagnostic-blocks-valid-ack |24/1|A valid ACK is processed even while 1 diagnostic is held|
+| head-recheck-omitted |24/1|Current authority check right before each offer|
+| restored |25/0|Restored to the sealed original|
 
-기본 회귀의 재현은 `cargo test -p p4-llamacpp-staged-adapter --lib --locked`로 실행한다.
-변이는 독립 복사본에만 위 한 가지 변경을 적용하고 동일25시험을 유지한다. 필터는 `completion_full_`,
+The default regressions are reproduced with `cargo test -p p4-llamacpp-staged-adapter --lib --locked`.
+Each mutation applies only the one change above to an independent copy and keeps the same 25 tests. The filters are `completion_full_`,
 `full_control_replay_revalidates_`, `head_id_shortage_`, `v2::node::worker::release_notification_tests`,
 `v2::node::worker_tests::t23_`, `v2::node::worker_tests::output_id_obligations_`,
-`v2::node::worker::effect_representation_tests`다. 원본을 checkout/reset으로 되돌리는 방식은 금지한다.
+`v2::node::worker::effect_representation_tests`. Reverting the original with checkout/reset is forbidden.
 
-### 승격하지 않는 것
+### What is not promoted
 
-국소 ACK 기아와 이번 ID/효과 소비 회귀를 닫았을 뿐 B1/B2/B5 전체 완료가 아니다. byte/RSS/
-native 결과 공간의 예약, 통합 capacity wake, non-ACK 뒤 반환 경로, EventNode/broker credit,
-graceful Cancel/Drain은 남아 있다. 최종 출력 품질/TPS/GPU 활용 또는 다중 컴퓨터 실기는 이 증거에
-없다. 다음 첫 행동과 전체 순서는 실행 로드맵의 최신 진행 기록만 소유한다.
+This only closes the local ACK starvation and these ID/effect consumption regressions; it is not full completion of B1/B2/B5. Reservation of byte/RSS/
+native result space, integrated capacity wake, the return route behind a non-ACK, EventNode/broker credit and
+graceful Cancel/Drain remain. This evidence contains no final output quality, TPS, GPU utilization or multi-computer real-hardware results.
+The first next action and the overall order are owned only by the latest progress record of the execution roadmap.
 
-## 외부 감수 대조와 Git 포함 심사 (2026-09-07)
+## Cross-check against the external review and Git inclusion review (2026-09-07)
 
-### 시간과 검증 범위
+### Timing and verification scope
 
-외부 감수의11:43~11:45 스냅샷은 첫 WIP의1236 passed/9 failed/7 ignored와 일치한다.
-그 뒤 `96c90f99e`의1253/0/7 및399봉인 입력 대조와 혼동하지 않는다. ACK 서비스의
-국소 GREEN과 변이5종은 앞 절에 기록돼 있지만 ResourceBudget/byte/RSS 완료는 아니다.
-현재 `native_calls`와 `requests`는 Full 중 native 불변 및 보류 PREFILL의 FIFO 복구 단언에
-쓰이므로 미사용이라는 옛 지적을 근거로 제거하지 않았다.
+The external review's 11:43~11:45 snapshot matches the first WIP's 1236 passed/9 failed/7 ignored.
+Do not confuse it with the later `96c90f99e` result of 1253/0/7 and the 399-file sealed input comparison. The local GREEN of the ACK service
+and the 5 mutations are recorded in the previous section, but that is not completion of ResourceBudget/byte/RSS.
+The current `native_calls` and `requests` are used in the assertions for native invariance during Full and FIFO recovery of the held PREFILL,
+so they were not removed on the basis of an old remark that they were unused.
 
-이번 코드 차이는 두 가지다. 단일 WorkerInput::Event를 이미 처리한 뒤의 도달 불가 Full(_)
-분기를 제거했다. 또 `cancel_prepared_issue`를 시험 빌드로 한정했고 기존 시험 호출4개는
-유지했다. 성공한 prepare_issue와 begin_native_issue 사이에 yield/일반 취소 분기는 없다.
-이것은 운영 Cancel 구현이나 실제 도달 가능한 Full의 Closed 오분류 수정이 아니다.
-native 시도 후 불명 상태를 취소로 되돌리는 동작도 추가하지 않았다.
+There are two code differences this time. The unreachable Full(_) branch after a single WorkerInput::Event has already been handled
+was removed. And `cancel_prepared_issue` was restricted to test builds, with the 4 existing test calls
+kept. There is no yield or general cancel branch between a successful prepare_issue and begin_native_issue.
+This is neither an operational Cancel implementation nor a fix for misclassifying a truly reachable Full as Closed.
+No behavior was added that turns an unknown state after a native attempt back into a cancel.
 
-중간 실행 `target/capacity-slice-20260907-10`은1253/0/7이었다. 이후 주석 표현을 정밀화한
-최종 Rust399입력 SHA256은 `c56ff070e61aec2a857d6b0a6113842ab04ee650b69d3855d74be6efb90a4d23`다.
-`target/capacity-slice-20260907-11`의 전체 실행은 **1252/1/7**,57summary·cargo101이다.
-실패는 문서2개의 혼합 EOL이며, 문서 형식 정리 전에 전체 시험을 시작한 절차 오류다.
-원문 SHA256은 `e5a43fb4b2071801bb8ca7d9f4f61f2b9ece2364eddc7cced104be9eab39f148`다.
-하네스는 `node --test`에 `test/benchmarks/p4-4node/**/*.test.mjs`의 실제 파일 목록을 전달해
-**72 passed/0 failed/0 skipped**를 확인했다. C++·GPU·원격 배포·push는 실행하지 않았다.
-이 정리에 대한 변이5종 재실행도 주장하지 않는다. 그것은 앞 체크포인트의 별도 증거다.
+The intermediate run `target/capacity-slice-20260907-10` was 1253/0/7. After refining comment wording, the
+final Rust 399-input SHA256 is `c56ff070e61aec2a857d6b0a6113842ab04ee650b69d3855d74be6efb90a4d23`.
+The full run in `target/capacity-slice-20260907-11` gave **1252/1/7**, 57 summaries, cargo101.
+The failure was mixed EOL in 2 documents, a procedural error of starting the full tests before the document format cleanup.
+The raw output SHA256 is `e5a43fb4b2071801bb8ca7d9f4f61f2b9ece2364eddc7cced104be9eab39f148`.
+The harness passed the actual file list of `test/benchmarks/p4-4node/**/*.test.mjs` to `node --test` and
+confirmed **72 passed/0 failed/0 skipped**. C++, GPU, remote deploy and push were not run.
+No rerun of the 5 mutations is claimed for this cleanup. That is separate evidence from the previous checkpoint.
 
-문서 형식 정리 후 **요청된3라운드 상한 중 추가1라운드**를
-`target/capacity-slice-20260907-12`로 실행했다. 위와 동일한 Rust399입력에서
-`cargo test --workspace --no-fail-fast --locked`는 **1253 passed/0 failed/7 ignored**,
-57summary·cargo0이다(04:00:53~04:02:58 UTC). 원문 SHA256은
-`276c791ccdeb3fa4ca85efc5bd76e9462a5c12cf3f0743857ce0be7641a68ad1`다.
-같은 묶음은 docs-lint 기본/전체79파일, 자체시험12/12, cargo docs1/1,
-private-header81파일·common 부채0header/5source, 하네스72/0/0skipped를 확인했다.
-Rust 입력의 실행 전후 내용은 동일하다. 실행 중에는 입력을 편집하지 않았으며 종료 뒤에는
-이 결과 기록만 추가하고 문서 형식/색인을 다시 확인한다. 이번 비동작 정리는 첫 라운드에서
-통과해 둘째/셋째 반복을 하지 않는다. 앞의 문서 실패 원문은 보존한다. 아직 미구현인 순환
-대기 수정이나 분산 배치 전체가 이1라운드로 완료됐다는 뜻은 아니다.
+After the document format cleanup, **1 additional round out of the requested cap of 3 rounds** was run
+as `target/capacity-slice-20260907-12`. On the same Rust 399 inputs as above,
+`cargo test --workspace --no-fail-fast --locked` gave **1253 passed/0 failed/7 ignored**,
+57 summaries, cargo0 (04:00:53~04:02:58 UTC). The raw output SHA256 is
+`276c791ccdeb3fa4ca85efc5bd76e9462a5c12cf3f0743857ce0be7641a68ad1`.
+The same batch confirmed docs-lint default/all 79 files, self-tests12/12, cargo docs1/1,
+private-header 81 files with common debt 0header/5source, and the harness 72/0/0skipped.
+The contents of the Rust inputs were identical before and after the run. The inputs were not edited during the run, and after it ended
+only this result record was added and the document format/index rechecked. This non-behavioral cleanup passed in the first round,
+so no second or third iteration was run. The earlier raw output of the document failure is preserved. This 1 round does not mean that the still unimplemented
+cyclic wait fix or distributed batching as a whole is complete.
 
-### 보관 결정
+### Retention decision
 
-약1.06MB·36파일의 생성 묶음과 특정 커밋 전용104줄 보관 도구를 만들었지만 **Git 포함을 철회**했다.
-대부분은399소스 원장의 반복이며, 원문 해시 검사는 당시 EXE·환경·경로 독립 재실행을 복구하지 않는다.
-이것을 배치 개발의 새 공용 도구로 확장하지 않는다. 삭제 없이
-`target/unpublished-ack-archive-20260907-01/`로 옮겼으며 기존 `/target/` 무시 규칙을 확인했다.
-보존된 `bundle/manifest.json` SHA256은
-`35fc1d91f0405f6f8c69c52209ec6a4d755477efbc3565a2dace2fe66581563e`다.
-원 실행 결과와 변이 원자료 경로는 앞 절 그대로다. 이들은 **로컬 보존일 뿐 장기 증거가 아니다**.
-다른 경로에서35원문/399Git내용 대조와 사본 변조 거부를 확인했어도 시험 재실행이 아니므로,
-검증 규약의 다른 머신 재열람/재현 항목은 미충족이다. 외부 저장소로 업로드하지 않았다.
-Git에는 실제 소스·회귀 시험과 이 간결한 기록을 유지한다. 새 JSON/보관 도구/원문 복제는 넣지 않는다.
+A generated bundle of about 1.06MB / 36 files and a 104-line retention tool specific to one commit were built, but **their inclusion in Git was withdrawn**.
+Most of it repeats the 399-file source ledger, and checking raw output hashes does not recover an independent rerun of the EXE, environment and paths of that time.
+This is not extended into a new shared tool for batching development. Without deleting anything, it was moved to
+`target/unpublished-ack-archive-20260907-01/`, and the existing `/target/` ignore rule was confirmed.
+The SHA256 of the preserved `bundle/manifest.json` is
+`35fc1d91f0405f6f8c69c52209ec6a4d755477efbc3565a2dace2fe66581563e`.
+The paths of the original run results and mutation raw data are as in the previous section. They are **only preserved locally, not long-term evidence**.
+Even though comparison of the 35 raw files / 399 Git contents and rejection of a tampered copy were confirmed from another path, that is not a test rerun,
+so the verification protocol's item for re-inspection/reproduction on another machine is not met. Nothing was uploaded to an external store.
+Git keeps the actual sources, regression tests and this concise record. New JSON, retention tools and raw output copies are not added.
 
-### 다음 반례의 코드상 후보 — 실행된 RED 아님
+### Code-level candidate for the next counterexample — not an executed RED
 
-근거는 `layers/agent/src/event_node/mod.rs::EventNode::run` @ 96c90f99e의 보류 출력 뒤
-completion 수신 제한, `layers/adapters/llamacpp/staged/adapter/src/v2/node/worker/ack_service.rs::Worker::service_blocked_ack` @ 96c90f99e의
-nonACK 보류 뒤 수신 제한이다. `entrypoints/agent/src/event_runtime/control.rs::create` @ 96c90f99e는
-broker 입력과 worker 입력을 각각 같은 선언 용량으로 만든다. 기존 duplex 시험의
-`layers/agent/src/event_node/tests.rs::DuplexProbeAdapter::try_offer` @ 96c90f99e는 항상 성공한다.
+The basis is the completion receive limit after held output in `layers/agent/src/event_node/mod.rs::EventNode::run` @ 96c90f99e, and
+the receive limit after holding a nonACK in `layers/adapters/llamacpp/staged/adapter/src/v2/node/worker/ack_service.rs::Worker::service_blocked_ack` @ 96c90f99e.
+`entrypoints/agent/src/event_runtime/control.rs::create` @ 96c90f99e creates the broker input and the worker input
+each with the same declared capacity. In the existing duplex test,
+`layers/agent/src/event_node/tests.rs::DuplexProbeAdapter::try_offer` @ 96c90f99e always succeeds.
 
-후보 입력은 두 노드H/T, 각 큐 용량1, 정상 요청R의 RELEASE, 정상 요청Q의 PHYSICAL,
-추가 정상 PREFILL H1~H4, 동일한 설치 내용의 SESSION 재전달 C1~C6이다. R의 유한 native
-RELEASE 중 T 입력을 C1~C3으로 채워 Q의 송신을 보류시키고, H 입력을 H1~H4로 채운다.
-R의 진짜 RELEASED도 H 앞에서 보류된다. T가 C1 응답으로 완료큐를 채우고 C2 응답에서
-Full이 되면 C3을 보류하며 C4~C6으로 나머지 입력 공간을 채우는 유한 순서가 후보이다.
+The candidate input is two nodes H/T, each queue with capacity1, a RELEASE for valid request R, a PHYSICAL for valid request Q,
+additional valid PREFILLs H1~H4, and SESSION redeliveries C1~C6 with identical installed content. During R's finite native
+RELEASE, T's input is filled with C1~C3 so that Q's send is held, and H's input is filled with H1~H4.
+R's genuine RELEASED is also held in front of H. The candidate is the finite order in which T fills the completion queue with the C1 response,
+becomes Full on the C2 response, holds C3, and fills the remaining input space with C4~C6.
 
-| 공간 | H | T |
+| Space | H | T |
 | --- | --- | --- |
-| EventNode 보류 출력 | PHYSICAL(Q)→T | RELEASED(R)→H |
-| broker 입력 / EventNode 보류 입력 | H4 / H3 | C6 / C5 |
-| worker 입력 / worker 보류 입력 | H2 / H1 | C4 / C3 |
-| 완료큐 / Full 송신 | Q 관측 / Q StageSpan | C1 SESSION_READY / C2 SESSION_READY |
+| EventNode held output | PHYSICAL(Q)→T | RELEASED(R)→H |
+| broker input / EventNode held input | H4 / H3 | C6 / C5 |
+| worker input / worker held input | H2 / H1 | C4 / C3 |
+| completion queue / Full send | Q observation / Q StageSpan | C1 SESSION_READY / C2 SESSION_READY |
 
-정상 OUTER 소비와 모든 태스크의 공정한 재개 뒤에도 내부에서 공간을 만들 수 있는지가
-검사할 질문이다. 강제 종료나 시험이 외부에서 여유를 주는 것으로 정상 해제 완료를 대체하지 않는다.
-아직 이 순서를 실제 EventNode·broker·Worker로 실행하지 않았으며, 순수 PREFILL 웨이브만으로
-같은 상태에 도달한다고 증명한 것도 아니다. 구현 전에 도달성·정상 진행 oracle부터 고정한다.
+The question to test is whether space can be created internally even after normal OUTER consumption and fair resumption of every task.
+A forced shutdown, or the test granting room from outside, does not substitute for normal release completion.
+This order has not yet been run on the real EventNode, broker and Worker, and it has not been proven that a pure PREFILL wave alone
+reaches the same state. Before implementing, pin down reachability and the normal-progress oracle first.
 
-## 실제 actor 순환 반례 — 수정 전 봉인 (2026-09-07)
+## Real actor cycle counterexample — sealed before the fix (2026-09-07)
 
-### 실행 전 고정한 범위와 oracle
+### Scope and oracles pinned before the run
 
-기준 HEAD `f13e2560b`에 test-only actor_ring.rs와 Cargo dev 배선만 추가한다. 운영 코드는
-바꾸지 않는다. 두 시험은 같은14개 원본 입력(SESSION8개, 정상 추론6개)을 실제 broker/node/
-adapter/worker에 전달한다. native Frame 처리와 유한 지연만 fake이며 post-LOAD 상태에서 시작한다.
-이것은 자연어/llama/GPU/remote 실기 또는 모든 스케줄에 대한 교착 자유 증명이 아니다.
+Only a test-only actor_ring.rs and Cargo dev wiring are added on base HEAD `f13e2560b`. Production code
+is not changed. Both tests deliver the same 14 original inputs (8 SESSION, 6 normal inference) to the real broker/node/
+adapter/worker. Only native Frame handling and finite delays are fake, and they start from the post-LOAD state.
+This is not a natural-language/llama/GPU/remote real-hardware run, nor a proof of deadlock freedom for every schedule.
 
-| 필수 시험 | 수정 전 예상 | 독립 판정 |
+| Required test | Expected before the fix | Independent verdict |
 | --- | --- | --- |
-| `event_actor_ring_saturated_normal_ingress_must_progress_without_external_dequeue` | 마지막 정상 진행 단언 RED | cap1의 실제 보류 소유자/Full, genuine RELEASED의 pending operation 일치, OUTER 계속 배출, native 진행0 |
-| `event_actor_ring_same_normal_ingress_completes_with_capacity_eight` | GREEN | 같은 입력·동일 출력 oracle, 외부 completion dequeue 없이 완주 |
+| `event_actor_ring_saturated_normal_ingress_must_progress_without_external_dequeue` | RED on the last normal-progress assertion | cap1 real held owner/Full, match with the genuine RELEASED's pending operation, OUTER keeps draining, native progress0 |
+| `event_actor_ring_same_normal_ingress_completes_with_capacity_eight` | GREEN | Same inputs and same output oracle, completes without external completion dequeue |
 
-cap1의 보류 소유자 표와 유한 입력 순서는 바로 앞 후보 절 그대로다. 시험은 실제 수용/Full 반환의
-전체 Event 동등성, source/target/load/session/slot/incarnation/operation, R 슬롯 미반환과 H1~H4
-미수용 상태를 대조한다. 단순 완료 수만 검사하지 않는다. 별도 외부 복구 뒤에는 입력14개 전부
-실제 adapter에서 정확히 한 번 수용, 요청별 token1000/position1/text/stop=length, native 입력
-[(0,10)] 한 번, 두 stage의 각 KV 해제 한 번과 잔량0, SESSION_READY8개를 검사한다.
+The cap1 held-owner table and the finite input order are exactly those of the candidate section just before. The test compares full Event equality
+of the real acceptance/Full return, source/target/load/session/slot/incarnation/operation, R's slot not returned, and H1~H4
+not accepted. It does not check only completion counts. After the separate external recovery, it checks that all 14 inputs
+are accepted exactly once by the real adapter, token1000/position1/text/stop=length per request, native input
+[(0,10)] once, one KV release on each of the two stages with leftovers0, and 8 SESSION_READY.
 
-**정상 진행과 외부 복구는 분리**한다. 공정한 node polling100회 뒤 정상 완료 여부를 먼저 고정한다.
-실제 OS worker와1ms 타이머를 쓰므로100회는 논리 시계 독립 증명이 아니다. 실제 대기 고리의 소유자
-관측·native 상태 불변·OUTER 배출 및 정상 대조를 함께 읽는다. 이후 알려진 C1~C6 SESSION_READY만
-최대6개 외부에서 꺼내 원본 그대로 broker로 전달할 수 있다. 다른 correlation의 PHYSICAL/TAIL/
-관측을 꺼내 순서를 바꾸지 않는다. 이 복구가 성공해도 정상 진행 RED를 GREEN으로 바꾸지 않는다.
-보강 전 외부 감수의 “C1 한 개로 복구”를 이번 소스의 관측으로 인용하지 않는다.
+**Normal progress and external recovery are kept apart.** Whether normal completion happened is pinned first, after 100 fair node polls.
+Real OS workers and a 1ms timer are used, so the 100 polls are not a logical-clock-independent proof. The owner observations of the actual wait cycle,
+native state invariance, OUTER draining and the normal control are read together. After that, only the known C1~C6 SESSION_READY events,
+at most 6, may be taken out externally and forwarded to the broker unchanged. PHYSICAL/TAIL/observations of other correlations
+are not taken out to reorder them. Even if this recovery succeeds, it does not turn the normal-progress RED into GREEN.
+The external review's "recovery with a single C1" from before the hardening is not cited as an observation on this source.
 
-native gate의10초 만료는 sticky 실패이며 각 poll/완료에서 별도 fixture-expired 단언으로 검사한다.
-setup/finish3초 초과, gate 만료, EventNode 종료 또는 컴파일 실패는 예정된 liveness RED가 아니다.
-Drop은 모든 native gate를 먼저 열고 실제 adapter worker를 join하지만 graceful 분산 Drain은 아니다.
+The native gate's 10-second expiry is a sticky failure and is checked with a separate fixture-expired assertion at each poll/completion.
+A setup/finish over 3 seconds, a gate expiry, EventNode shutdown or a compile failure is not the expected liveness RED.
+Drop first opens all native gates and joins the real adapter workers, but this is not a graceful distributed Drain.
 
-### 검증 묶음과 시행착오 점검
+### Verification batch and review of trial and error
 
-요청한3라운드 상한 중 앞 실행12가 첫째, 이번13이 둘째다. 실행 전에 위 정상·포화·복구 oracle,
-입력 및 문서 형식을 고정하고 Rust/Cargo/fixture와 문서 소스를 봉인한다. 전체 실행 명령은
-`cargo test --workspace --no-fail-fast --locked`이며 actor 두 시험도 기본 목록에 포함된다.
-예상 밖 실패는 분리 기록하고, 기대값을 바꿔 같은 묶음을 다시 돌리지 않는다. 이번은 운영 fix가
-없으므로 fix 제거 변이를 주장하지 않는다. 원자료는 무시 경로의 로컬 증거로 보존하고 Git에는
-회귀 시험·필수 배선·계약·이 기록만 넣는다. 장기 외부 재열람은 계속 미충족이다.
+Of the requested cap of 3 rounds, the earlier run12 was the first and this run13 is the second. Before the run, the normal, saturation and recovery oracles above,
+the inputs and the document format are pinned, and the Rust/Cargo/fixture and document sources are sealed. The full run command is
+`cargo test --workspace --no-fail-fast --locked`, and both actor tests are in the default list.
+Unexpected failures are recorded separately, and the same batch is not rerun with changed expectations. This time there is no production fix,
+so no fix-removal mutation is claimed. The raw data is kept as local evidence in an ignored path, and Git receives only
+the regression tests, required wiring, contracts and this record. Long-term external re-inspection is still not met.
 
-### 두 번째 라운드 실제 결과 — 예정된 RED 한 건
+### Actual results of the second round — the one expected RED
 
-`target/capacity-slice-20260907-13/`에400개 Rust/Cargo/fixture 입력을 봉인했다. source SHA256은
-`4a353e02335162a53371df334f8bd55b53742745392178cfb99ec1dc8ddb49eb`다. 실행 전후 입력 목록과
-전체 bytes/hash가 동일하며 함께 읽힌 변경 문서4개의 SHA256도 전후 동일했다. 종료 뒤 이 결과
-기록과 색인만 추가한다. 로그는 `workspace.log`, 집계는 `workspace-result.json`이다.
+400 Rust/Cargo/fixture inputs were sealed in `target/capacity-slice-20260907-13/`. The source SHA256 is
+`4a353e02335162a53371df334f8bd55b53742745392178cfb99ec1dc8ddb49eb`. The input list and
+all bytes/hashes were identical before and after the run, and the SHA256 of the 4 changed documents read alongside were also identical before and after. After the run ended, only this result
+record and the index are added. The log is `workspace.log`, and the tally is `workspace-result.json`.
 
-- 명령: `cargo test --workspace --no-fail-fast --locked`.
-- 시간: 2026-09-07 04:29:42~04:32:06 UTC. cargo exit101,57summary.
-- 전체 **1254 passed/1 failed/7 ignored**. staged lib480/1, 실행2.21초.
-- 유일한 실패는 위 cap1 시험의 `actor_ring.rs` 마지막 `normal_progress` 단언이다. cap8 대조는 PASS.
-- native gate 만료·setup/finish timeout·EventNode 종료·컴파일 오류는 없었다. 복구 뒤 전체14입력/
-  6결과/native 해제 oracle는 마지막 단언 전에 전부 통과했다. 외부 복구는 실제로 C1~C6 **6개**였다.
-- 로그 SHA256: `a2889eef868a1b68ab732df88c7afd46ff4aa38416b0ad31848886eb318f9ce7`.
-- 실제 staged lib 재컴파일 로그와 실행 EXE `p4_llamacpp_staged_adapter-60c4f56e88389385.exe`를 대조했다.
+- Command: `cargo test --workspace --no-fail-fast --locked`.
+- Time: 2026-09-07 04:29:42~04:32:06 UTC. cargo exit101, 57 summaries.
+- Overall **1254 passed/1 failed/7 ignored**. staged lib480/1, run time 2.21 s.
+- The only failure is the last `normal_progress` assertion in `actor_ring.rs` for the cap1 test above. The cap8 control PASSED.
+- There was no native gate expiry, setup/finish timeout, EventNode shutdown or compile error. After recovery, the full 14-input/
+  6-result/native release oracles all passed before the last assertion. The external recovery actually took C1~C6, **6 events**.
+- Log SHA256: `a2889eef868a1b68ab732df88c7afd46ff4aa38416b0ad31848886eb318f9ce7`.
+- The actual staged lib recompile log was compared with the executed EXE `p4_llamacpp_staged_adapter-60c4f56e88389385.exe`.
   EXE SHA256: `78aa35288537e0960ebe0a6dbe1e85ca3a9dd9ef325e916f81288cdfcf08c26d`.
-  검증 당시 EXE는 proof 디렉터리에 별도 보존한다. source/로그/EXE 모두 로컬 증거이며 장기 보존은 아니다.
+  The EXE at verification time is preserved separately in the proof directory. Source, logs and EXE are all local evidence, not long-term retention.
 
-로컬 집계기의 `expected_red_only`는 **이전 국소 ACK 시험 이름**을 찾는 필드라 false다. 이번에는
-`workspace-any`로 전체 실패/exit를 그대로 보존했고 위 실제 유일 실패 이름·단언을 직접 대조했다.
-false를 PASS로 바꾸거나 실패 시험을 ignore하지 않았다. 집계기 수정이나 재실행은 하지 않는다.
-하네스·C++·GPU·remote·변이 재실행은 이 전체 Rust 결과에 포함하지 않는다.
+The local tally tool's `expected_red_only` is false because that field looks for **the name of the earlier local ACK test**. This time
+`workspace-any` preserved the full failure/exit as-is, and the actual single failure name and assertion above were compared directly.
+false was not turned into PASS, and the failing test was not ignored. The tally tool is not being fixed or rerun.
+Harness, C++, GPU, remote and mutation reruns are not part of this full Rust result.
 
-### 코드 판정과 체크포인트
+### Code verdict and checkpoint
 
-`EventNode::run`은 held_output 뒤 completion 수신을 멈추고 held_input 뒤 broker 수신을 멈춘다.
-`Worker::service_blocked_ack`는 held non-ACK 뒤 수신을 멈춘다. 이 소유 관계에서 두 방향이 모두
-포화하면 타이머 wake만 반복해도 어느 소비자도 공간을 만들지 못한다. 위 실행은 유한 정상 입력으로
-그 상태의 도달·정지·보존 복구를 관측한 반례이며 무손실 또는 교착 자유의 전역 증명은 아니다.
+`EventNode::run` stops receiving completions after held_output and stops receiving from the broker after held_input.
+`Worker::service_blocked_ack` stops receiving after a held non-ACK. With this ownership, if both directions
+are saturated, no consumer can create space even if only timer wakes repeat. The run above is a counterexample that, with finite normal input,
+observed reaching that state, stalling, and recovery with preservation; it is not a global proof of losslessness or deadlock freedom.
 
-수정 위치는 기존 B2/B3 목표의 원인 작업별 후속 공간 보장이다. 단일 ACK 예외 확장은 선택하지 않는다.
-ID 사전 거부/사후 intent 보존 구분은 배치 계약의 기존 소유 절에, actor 시험의 dev-only 중립 API/
-tokio 사용 범위는 격리 계약에 명시했다. production normal/build 의존은 바뀌지 않았다.
-**운영 수정 없이 필수 RED를 별도 전체 커밋**으로 보존하며 후속 운영 수정은 이 커밋 뒤에 시작한다.
-세 라운드를 새 이름으로 초기화하지 않고 마지막 후보 확인은 재설계가 닫힌 뒤에만 한다.
+The fix belongs in the existing B2/B3 goal of guaranteeing follow-up space per causing work item. Extending the single-ACK exception is not chosen.
+The distinction between ID pre-rejection and post-hoc intent preservation is stated in the batching contract's existing ownership section, and the dev-only neutral API/
+tokio usage scope of the actor tests in the isolation contract. Production normal/build dependencies did not change.
+**The required RED is preserved in a separate full commit without a production fix**, and the follow-up production fix starts after this commit.
+The three rounds are not reset under a new name, and the final candidate check happens only after the redesign is closed.
 
-## 로컬 완료 저장소 예약 기반 — 실행 전 WIP (2026-09-07)
+## Reservation foundation for local completion storage — pre-run WIP (2026-09-07)
 
-기준 HEAD는 `393a6c23e`다. source/binary 봉인 또는 새 실행 결과가 아닌 **구현/정적 검토 기록**이다.
-이 체크포인트는 검증 전 진행 보존이며 RED를 GREEN으로 바꾸었다는 보고가 아니다.
+The base HEAD is `393a6c23e`. This is an **implementation/static review record**, not a source/binary seal or new run results.
+This checkpoint preserves progress before verification and is not a report that RED was turned into GREEN.
 
-### 변경과 정적 판정
+### Changes and static verdict
 
-- 중립 `node_adapter/event_cost.rs`는 Event/Envelope/Endpoint/Address를 exhaustive 분해한다.
-  inline 및 독립 String/Vec capacity의 checked 합산이며 직렬화나 clone은 하지 않는다.
-- `node_adapter/mailbox.rs`는 실제 사전 할당 큐와 ordinary/reserved/owned의 count/bytes를
-  동일 원장에 연결한다. move-only 예약, 원본+예약 거부 반환, dequeue 이후 claim 유지,
-  새 실제 저장소 수용 후 책임 이전, Event 먼저 폐기 후 claim 반환을 구현했다.
-- 단일 비용 초과는 TooLarge, 단일 산술 overflow는 CostOverflow, 다른 소유물 때문에 현재
-  부족한 경우는 Full이다. 실제 worker publication match도 영구 오류를 재시도하지 않고
-  원본 Event를 호출자로 돌려준다. 그 이후 기존 호출자의 실패/보존 한계는 이번에 일반 해결하지 않았다.
-- lock 순서는 Storage→Budget이며 reserve는 Budget을 해제한 뒤 Storage에 들어간다.
-  waker 호출/소멸·Event/claim 소멸은 잠금 밖이다. 이는 두 검토자의 정적 경로 확인이며 실행 증명이 아니다.
-- RELEASE의 native 전 ID 고갈·기존 prefix 의무·마지막 ID 정상 전달·native 부분 실패 oracle를
-  기존 실제 handle/native fixture에 추가했다. RELEASE 운영 코드 자체는 이번에 수정하지 않았다.
+- The neutral `node_adapter/event_cost.rs` destructures Event/Envelope/Endpoint/Address exhaustively.
+  It is a checked sum of inline and independent String/Vec capacity, with no serialization or clone.
+- `node_adapter/mailbox.rs` connects the real preallocated queue and the ordinary/reserved/owned count/bytes to
+  the same ledger. It implements move-only reservations, returning the original + reservation on rejection, keeping the claim after dequeue,
+  transferring responsibility after acceptance into a new real store, and returning the claim after the Event is discarded first.
+- A single cost overrun is TooLarge, a single arithmetic overflow is CostOverflow, and a current shortage caused by other
+  holdings is Full. The real worker publication match also does not retry permanent errors and
+  returns the original Event to the caller. The failure/preservation limits of existing callers beyond that point were not solved in general this time.
+- The lock order is Storage→Budget, and reserve releases Budget before entering Storage.
+  Waker calls/destruction and Event/claim destruction happen outside the locks. This is a static path check by two reviewers, not an execution proof.
+- Oracles for pre-native ID exhaustion on RELEASE, the existing prefix obligation, normal delivery of the last ID, and native partial failure were
+  added to the existing real handle/native fixture. The RELEASE production code itself was not changed this time.
 
-### 작성했지만 실행하지 않은 시험
+### Tests written but not run
 
-| 범위 | 작성 수 | 판정할 계약 |
+| Scope | Written | Contract to judge |
 | --- | --- | --- |
-| Event 보존 비용 | 5 | inline 한 번, 모든 필드 capacity, 중첩 독립 할당, spare Vec, checked overflow |
-| 실제 mailbox 예약 | 14 | count/bytes·취소·wrong receiver·too-small·close·owned/transfer·lost wake·경쟁 |
-| 실제 Worker publication | 1 | 영구 초과는 원본 allocation을 반환하며 Full/shutdown으로 오분류하지 않음 |
-| 실제 RELEASE handle | 4 | 거부 전 native0/보존, 동일 Event 정상 대조, 정확한 successor, 부분 실패 fence |
+| Event retention cost | 5 | inline once, capacity of every field, nested independent allocations, spare Vec, checked overflow |
+| Real mailbox reservation | 14 | count/bytes, cancel, wrong receiver, too-small, close, owned/transfer, lost wake, races |
+| Real Worker publication | 1 | A permanent overrun returns the original allocation and is not misclassified as Full/shutdown |
+| Real RELEASE handle | 4 | native0/preservation before rejection, normal comparison of the same Event, exact successor, partial failure fence |
 
-Worker 영구 오류 시험은 shutdown guard로 잘못된 Full 구현도 유한하게 종료시킨다. 영구 오류와
-shutdown abandonment의 snapshot을 구분하므로 잘못된 재시도 분기는 단언 실패가 되어야 한다.
-RELEASE의 retained-prefix 경우는 직접 method 경로이며 현 동기 run loop가 flush 도중 그 명령을
-수용한다는 주장이 아니다. 정상 대조는 정렬되지 않은 두 owner와 exact Event/wire를 검사한다.
+The Worker permanent-error test makes even a wrong Full implementation terminate in finite time via the shutdown guard. It distinguishes the snapshots of a permanent error and
+shutdown abandonment, so a wrong retry branch must become an assertion failure.
+The retained-prefix case for RELEASE is a direct method path, not a claim that the current synchronous run loop accepts that command
+during a flush. The normal comparison checks two unsorted owners and the exact Event/wire.
 
-기존 mailbox_tests.rs·actor_ring.rs의 입력/기대는 변경0이다. 기존 1ms worker 대기·원격 serve/pump·
-wire version·native 결과 상한·product byte 설정은 그대로다. count-only 생성자는 제품의 byte 한도
-선언이 아니다. reserved front를 legacy 소비자로 전달하면 정지하므로 새 예약 생산자는 운영에서
-활성화하지 않았다. 단일 작업의 다중 결과를 cap1 슬롯 전부에 선예약하는 것으로 진행을 보장할 수도 없다.
+The inputs/expectations of the existing mailbox_tests.rs and actor_ring.rs have change0. The existing 1ms worker wait, remote serve/pump,
+wire version, native result bound and product byte settings are unchanged. The count-only constructor is not a declaration of a product byte
+limit. Passing a reserved front to a legacy consumer would stall, so the new reservation producer was not
+enabled in production. Nor can progress be guaranteed by pre-reserving every cap1 slot for the multiple results of a single work item.
 
-### 검증 지위와 보존
+### Verification status and retention
 
-이번 변경에 대한 컴파일/단위/전체/변이/docs-lint/C++/GPU 실행은 **모두 미실행**이다. 실행 전
-계약과 코드 대조·서식 정리만 했다. 마지막 고정 검증 라운드는 사용하지 않았고 현재 통과 수를 만들지 않는다.
-기존 실행13의1254/1/7은 그 봉인 소스의 결과다. 후보 전체의 수용/반환 연결이 완성되기 전에 마지막
-라운드를 이 기반 API 확인용으로 사용하지 않는다. 이번에는 결과 로그/해시 생성물을 추가하지 않았다.
-사용자 지시에 따라 전체 비무시 소스·시험·관련 문서를 **미검증 WIP 체크포인트**로 함께 커밋한다.
-현재 순서와 다음 첫 행동은 로드맵만 소유하며 B3/전체 교착/최종 실기 완료를 주장하지 않는다.
+Compile/unit/full/mutation/docs-lint/C++/GPU runs for this change were **all not run**. Only a pre-run
+comparison of contract and code and formatting cleanup were done. The last fixed verification round was not used, and no current pass count is produced.
+run13's 1254/1/7 is the result of that sealed source. The last round is not used to check this foundation API before the acceptance/return
+wiring of the whole candidate is complete. No result logs or hash artifacts were added this time.
+At the user's instruction, all non-ignored sources, tests and related documents are committed together as an **unverified WIP checkpoint**.
+The current order and the first next action are owned only by the roadmap, and no completion of B3, overall deadlock, or final real-hardware runs is claimed.
 
-## 고정 committed 송신물 — 정적 검토 WIP (2026-09-07)
+## Pinned committed outgoing items — static review WIP (2026-09-07)
 
-기준 HEAD는 `7f402aba5`다. 현재 변경의 **컴파일·시험·변이·docs-lint는 미실행**이며 새 source/binary
-봉인이나 통과 수가 없다. 서식 정리와 코드 대조만 했다. 실행13의1254/1/7은 수정 전 소스의 결과다.
+The base HEAD is `7f402aba5`. **Compile, tests, mutations and docs-lint for the current changes were not run**, and there is no new source/binary
+seal or pass count. Only formatting cleanup and code comparison were done. run13's 1254/1/7 is the result of the pre-fix source.
 
-### 변경 범위와 결정 근거
+### Scope of the change and rationale
 
-- `effects.rs::Worker::flush_effects`는 FIFO 선두를 완전한 Event로 한 번 만들고 최종 실패에도
-  envelope/ID/sequence/payload와 after-action을 함께 보존한다. 기존 Full loop 자체는 이미 원 Event를
-  유지했다. Closed/shutdown 뒤 body만 돌리거나 DTO만 남던 경계를 이관한 것이지 Full 동작 발견이 아니다.
-- `obligations.rs::CommittedEffect::event_count`는 아직 발급하지 않은 몫이다. ForwardObserved의1+N이
-  materialize 뒤 next_event+1과 미할당N으로 바뀐다. Full 중 활성N을 다시1감산하면 진단이 관측 몫을
-  쓸 수 있으므로 감산하지 않는다. 이 합 보존과 head ticket의 매 시도 재검증을 독립 정적 검토했다.
-- broker는 목적지의 실제 슬롯을 확보한 뒤 수용용 복사를 한다. Full은 원본 Event의 spare capacity와
-  allocation까지 돌려준다. 성공 시 큐/ledger 복사·Closed 원본 비반환·전역 순서 영역은 그대로다.
-- ID/직렬화 실패는 원 DTO 보존, Event 생성 후 전송 실패는 완전한 Publication 보존으로 표현을 나눴다.
-  기존 시험의 입력·ID 경계·native/slot/fence·실제 수신물 기준은 바꾸지 않았다. 이관 중 전체 telemetry
-  대조와 Output envelope 대조가 빠질 수 있음을 독립 검토자가 지적해 실행 전에 둘 다 보강했다.
-- release_notification 시험은 Closed 뒤 첫 항목이 고정 Event임을 명시하고 원 pending provenance로 만든
-  기대 Event 전체와 wire를 대조한다. ID 발급 전 실패는 여전히 원 DTO만 허용한다. 둘 중 아무 표현이나
-  허용하는 느슨한 단언으로 바꾸지 않았다. 원래 조기 거부와 post-commit 거부는 그대로 구분한다.
+- `effects.rs::Worker::flush_effects` builds the FIFO head into a complete Event once and, even on final failure, preserves
+  the envelope/ID/sequence/payload together with the after-action. The existing Full loop itself already kept the original Event.
+  This migrates the boundaries where only the body was returned or only the DTO remained after Closed/shutdown; it is not a discovery about Full behavior.
+- `obligations.rs::CommittedEffect::event_count` is the share not yet issued. ForwardObserved's 1+N
+  becomes next_event+1 and unallocated N after materialization. Subtracting 1 again from the active N during Full would let a diagnostic use the observation share,
+  so it is not subtracted. The preservation of this sum and the per-attempt revalidation of the head ticket were statically reviewed independently.
+- The broker makes the acceptance copy after securing the destination's real slot. Full returns the original Event including its spare capacity and
+  allocation. The queue/ledger copy on success, not returning the original on Closed, and the global ordering domain are unchanged.
+- The representations are split: an ID/serialization failure preserves the original DTO, and a send failure after Event construction preserves the complete Publication.
+  The existing tests' inputs, ID boundaries, native/slot/fence and actual-received-item criteria were not changed. An independent reviewer pointed out that the full telemetry
+  comparison and the Output envelope comparison could be lost during the migration, so both were reinforced before running.
+- The release_notification test states explicitly that the first item after Closed is a pinned Event, and compares the full expected Event built from the original pending provenance
+  with the wire. A failure before ID issuance still allows only the original DTO. It was not changed into a loose assertion that accepts
+  either representation. The original early rejection and the post-commit rejection are still distinguished.
 
-### 작성한 신규 시험과 예정된 제거 변이 — 전부 미실행
+### New tests written and planned removal mutations — none run
 
-실제 `flush_effects`→completion mailbox의 `publication_tests.rs` 6개와 broker 시험2개다.
-시험용 fence 해제/수신기 교체는 운영 재연결 API가 아니며 native 완료를 합성하지 않는다.
+There are 6 `publication_tests.rs` tests on the real `flush_effects`→completion mailbox, and 2 broker tests.
+The test-only fence release / receiver swap is not a production reconnect API, and it does not synthesize native completion.
 
-| 시험/범위 | 고정한 판정 | 나중에 제거할 동작 |
+| Test/scope | Pinned verdict | Behavior to remove later |
 | --- | --- | --- |
-| final_forward_failures | Closed/Full-at-shutdown/TooLarge 원 Event·ID·allocation·FIFO, 수동 재개 뒤 정확한 한 번 전달 | 실패 뒤 Event 대신 DTO 재생성 |
-| reply_publications | Output/Receipt/Telemetry 전체 reply/envelope/payload, 이미 발급한 ID 재소비0 | frozen Event의 ID 재발급 |
-| unallocated_id_failure | 발급 전 의도 전체 보존, Observed 미할당1+N→N | Publication을 다시1+N으로 회계 |
-| active_frozen_forward | 실제 Full/invalid ACK에서 후속 observation N개 몫을 진단이 소비하지 못함 | 활성N에서 잘못된1감산 |
-| accepted_forward | forward 성공 뒤 observation 실패/재개에 무재forward·고정 timestamp/ID/allocation | observation 실패에서 forward 복원/시각 재설정 |
-| native_precondition | native 사전 권한 거부에서 원 intent·미생성 suffix·fence 유지 | 거부 시 intent 제거/후속 materialize |
-| broker Full | 같은 원본 allocation3회 반환 후 실제 수용·Duplicate | Full에서 원본 대신 clone 반환 |
-| broker order domain | 같은 source/correlation의 다른 목적지에도 순서 위반 거부; 동일 입력의 올바른 순서 성공 | 목적지별 순서 원장으로 변경 |
+| final_forward_failures | Original Event/ID/allocation/FIFO on Closed/Full-at-shutdown/TooLarge, exactly-once delivery after manual resume | Regenerating a DTO instead of the Event after failure |
+| reply_publications | Full reply/envelope/payload for Output/Receipt/Telemetry, re-consumption of already issued IDs0 | Reissuing the ID of a frozen Event |
+| unallocated_id_failure | Whole intent preserved before issuance, Observed unallocated 1+N→N | Accounting a Publication as 1+N again |
+| active_frozen_forward | On a real Full/invalid ACK, a diagnostic cannot consume the share of the N later observations | Wrongly subtracting 1 from the active N |
+| accepted_forward | After a successful forward, observation failure/resume causes no re-forward and keeps timestamp/ID/allocation pinned | Restoring the forward / resetting the time on observation failure |
+| native_precondition | On a native pre-authority rejection, the original intent, ungenerated suffix and fence are kept | Removing the intent / materializing later items on rejection |
+| broker Full | The same original allocation returned 3 times, then real acceptance and Duplicate | Returning a clone instead of the original on Full |
+| broker order domain | Order violations rejected even across different destinations of the same source/correlation; the correct order of the same input succeeds | Changing to per-destination ordering ledgers |
 
-Full/ACK 시험은 실제 소비 뒤 test-only 관측점에서 mailbox를 닫는다. 누락된 관측점/회귀가 무한
-대기가 되지 않도록5초 guard를 두고, 실제 관측점 도달을 별도 단언한다. 이는 시계 독립 liveness 증명이
-아니다. 기존 실제 native 성공/실패/불명 결과/ACK 퇴역 검사는 control_dispatch_effect_tests가 유지한다.
+The Full/ACK tests close the mailbox at a test-only observation point after real consumption. A 5-second guard keeps a missing
+observation point or regression from turning into an infinite wait, and reaching the real observation point is asserted separately. This is not a clock-independent liveness
+proof. The existing checks for real native success/failure/unknown results and ACK retirement are kept by control_dispatch_effect_tests.
 
-기존 실패 표현 이관은 effect_representation/observe/control_dispatch_effect/release_notification의
-4개 시험 파일에만 적용했다. 전체 DTO Debug 대신 필요한 wire Event 전체와 아직 미생성 suffix/관측
-전체를 비교한다. 변경 전부터 있던 ID/전달순서/원본 allocation/정산/native oracle를 지우지 않는다.
+The migration of the existing failure representation was applied only to 4 test files:
+effect_representation/observe/control_dispatch_effect/release_notification. Instead of the full DTO Debug, they compare the needed full wire Event and the full not-yet-generated suffix/observations.
+The ID/delivery order/original allocation/settlement/native oracles that existed before the change are not removed.
 
-### 아직 연결되지 않은 경계와 증명 제한
+### Boundaries not yet wired and limits of proof
 
-이 코드는 동기 publication이고 byte/native 결과 예약이나 actor 입력 양보는 아니다. SESSION/error
-직접 응답·EventNode raw 소비·remote serve/pump·전달 grant·Cancel/Drain은 여전히 별도다.
-actor_ring.rs의 cap1/cap8·14입력/6결과·full recovery oracle는 변경하지 않았다. 정상 수용을 모두
-차단하거나 completion 큐를 늘려 RED를 숨기지 않는다. 제품 예약 생산자도 아직 활성화하지 않는다.
+This code is synchronous publication, not byte/native result reservation or actor input yielding. SESSION/error
+direct responses, EventNode raw consumption, remote serve/pump, delivery grants and Cancel/Drain are still separate.
+The cap1/cap8, 14-input/6-result and full recovery oracles in actor_ring.rs were not changed. The RED is not hidden by blocking all
+normal acceptance or enlarging the completion queue. The product reservation producer is not enabled yet either.
 
-정적 fan-out 계산에서 SESSION은1, head issue는PHYSICAL+BatchObservation+Span의3, tail physical은
-TAIL+Span의2를 만든다. head TAIL은 stopped owner별OUTPUT와 native RELEASE 및 command를 만들고,
-RELEASED 뒤에는 원 제출별 receipt가 필요하다. cap1 전달 슬롯에 이 전체를 선예약하면 정상 작업도
-시작하지 못하므로 effect 보존 공간과 transfer 슬롯을 분리해야 한다. 이 값은 해당 fake2stage fixture의
-경로 계산이며 일반 모델/실제 배치 수/byte 상한을 증명하지 않는다.
+In the static fan-out calculation, SESSION produces 1, a head issue produces 3 (PHYSICAL+BatchObservation+Span), and a tail physical produces
+2 (TAIL+Span). A head TAIL produces per-stopped-owner OUTPUT plus native RELEASE and commands, and
+after RELEASED, per-original-submission receipts are needed. Pre-reserving all of this in the cap1 delivery slot would keep even normal work from
+starting, so effect retention space must be separated from transfer slots. These values are path calculations for that fake 2-stage fixture
+and do not prove general model, real batch count or byte bounds.
 
-같은 source/correlation의 PHYSICAL와 뒤의 OUTER 관측은 목적지가 달라도 순서를 공유한다.
-따라서 destination 우회나 ACK 우선 lane만으로 해결할 수 없다. 다음 구현 순서는 로드맵이 소유한다.
-마지막 검증 라운드는 아직 사용하지 않았으며, 부분 API를 확인하기 위해 새 라운드를 만들지 않는다.
-전체 비무시 변경은 미검증 WIP로 커밋한다. 모델·원문로그·일회성 도구·바이너리를 Git에 추가하거나
-원격/GPU/C++/push를 실행한 것은 아니다.
+A PHYSICAL and the later OUTER observations of the same source/correlation share ordering even if their destinations differ.
+So this cannot be solved by bypassing destinations or with an ACK-priority lane alone. The next implementation order is owned by the roadmap.
+The last verification round has not been used yet, and no new round is created just to check a partial API.
+All non-ignored changes are committed as unverified WIP. No models, raw logs, one-off tools or binaries were added to Git, and
+no remote/GPU/C++/push was run.
 
-## 전달 큐와 필수 결과 보존 공간 — 정적 검토 WIP (2026-09-07)
+## Delivery queue and retention space for required results — static review WIP (2026-09-07)
 
-기준 HEAD는 `bcbadf101`이다. 이 절의 수정은 **컴파일·실행시험·변이·docs-lint 미실행**이며,
-수정 전 봉인 실행13의1254/1/7을 이번 소스 결과로 재사용하지 않는다. 마지막 검증 회차도 미사용이다.
-기존 actor cap1/cap8·14입력/6결과·native/회복 oracle는 변경하지 않았다. 새 장기 원자료도 생성하지 않았다.
+The base HEAD is `bcbadf101`. The changes in this section have **not been compiled, run as tests, mutated or checked with docs-lint**, and
+the 1254/1/7 of the pre-fix sealed run13 is not reused as the result for this source. The last verification round is also unused.
+The existing actor cap1/cap8, 14-input/6-result and native/recovery oracles were not changed. No new long-term raw data was generated either.
 
-### 코드 변경과 정적 결정
+### Code changes and static decisions
 
-- 실제 mailbox의 delivery queue_capacity와 retained count/bytes를 분리했다. 기존 두 생성자는
-  count 상한을 양쪽에 동일하게 적용하며 새 `completion_mailbox_with_limits`만 별도 한도를 받는다.
-  reserved publication도 실제 queue Full에서는 원 Event allocation과 선형 예약을 그대로 반환한다.
-  owned dequeue는 queue slot만 반환하고 보관 claim을 유지한다. 수신 성공 전 transfer 실패는 양쪽
-  claim을 보존한다. 이것은 수신 측 원격 grant나 actor 순환의 전체 수용 계약이 아니다.
-- ordinary Full에서 임시 예약을 만들었다 파기하면 자신을 깨워 재시도하는 loop가 생길 수 있으므로
-  queue admission과 일반 claim 확보를 Storage→Budget 순서로 같은 push 구간에 뒀다. 영구적인
-  단일 Event byte 초과는 queue Full보다 먼저 판정한다. 새 큐 크기나 실험 threshold를 선택하지 않았다.
-- `mailbox_group.rs`는 알려진 Event footprint 목록의 count+bytes를 같은 임계구역에서 확보한다.
-  각 항목·합산·실제 배열 backing 크기를 checked 연산하고, 준비 후 Closed/경합을 다시 검사한다.
-  budget commit 전에는 active Claim을 만들지 않아 사전 실패가 다른 소유자의 공간을 반환하지 않는다.
-  commit 이후에는 이미 확보된 배열에 claim만 설치하며 fallible allocation이나 caller callback이 없다.
-- 배열 capacity를 claim과 별도로 과금한다. 그룹 항목을 꺼내도 배열은 남기 때문에 count-only에는
-  새 group API를 허용하지 않았다. 동시 준비 중 임시 배열은 이 성공한 보존 공간 한도 밖이며 RSS
-  예산 완료라 하지 않는다. Event 미래 상한의 정확성은 호출자 계약이고 실제 생산자 연결은 아직 없다.
-- 독립 정적 감수에서 그룹 항목별 알림 중 첫 panic→unwind의 다음 알림이라는 이중 호출 반례를
-  발견했다. 미사용 항목/배열 회계를 먼저 반환하고 마지막 한 번만 통지하도록 고정했다. 새 owned
-  dequeue의 동일 경로도 확인해 Claim은 unwind 중 회계만 반환한다. 첫 panic은 숨기지 않는다.
-  callback 위반 뒤 전달/진행이나 임의 RawWaker destructor까지 안전하다는 보장은 하지 않는다.
+- The real mailbox's delivery queue_capacity was separated from retained count/bytes. The two existing constructors
+  apply the count bound identically to both, and only the new `completion_mailbox_with_limits` takes separate limits.
+  A reserved publication, on a real queue Full, also returns the original Event allocation and the linear reservation unchanged.
+  An owned dequeue returns only the queue slot and keeps the retention claim. A transfer failure before successful receipt preserves both
+  claims. This is not a receiver-side remote grant or a full acceptance contract for the actor cycle.
+- Creating and then discarding a temporary reservation on an ordinary Full could produce a loop that wakes itself to retry, so
+  queue admission and securing the ordinary claim were placed in the same push section, in Storage→Budget order. A permanent
+  single-Event byte overrun is judged before queue Full. No new queue size or experiment threshold was chosen.
+- `mailbox_group.rs` secures count+bytes for a list of known Event footprints in the same critical section.
+  Each item, the sum and the actual array backing size are computed with checked arithmetic, and Closed/contention is rechecked after preparation.
+  No active Claim is created before the budget commit, so an early failure does not return another owner's space.
+  After commit, only claims are installed into the already secured array, with no fallible allocation or caller callback.
+- Array capacity is charged separately from claims. The array remains even after group items are taken out, so the new group API
+  is not allowed for count-only. Temporary arrays during concurrent preparation are outside this successful retention space bound, and this is not
+  called a completed RSS budget. The correctness of the future Event bound is the caller's contract, and there is no real producer wiring yet.
+- An independent static review found a double-call counterexample in per-item group notification: the first panic→unwind, then the next notification.
+  This was pinned by returning the accounting for unused items/the array first and notifying only once at the end. The same path of the new owned
+  dequeue was checked too, and a Claim only returns accounting during unwind. The first panic is not hidden.
+  No guarantee is made about delivery/progress after a callback violation or about arbitrary RawWaker destructors being safe.
 
-### 신규 회귀 oracle와 제거 변이 계획 — 실행 전
+### New regression oracles and planned removal mutations — before running
 
-| 실제 경로 | 작성 수 | 판정 / 제거하면 실패해야 할 동작 |
+| Real path | Written | Verdict / behavior whose removal must fail |
 | --- | --- | --- |
-| group 예약·cap1 순차 전달 | 1 |3개 결과를 실제 저장소에 원자 예약, Full 무변이, 독립 retirement, 빈 배열 비용 유지 / queue와 retained 재결합 |
-| group 입력/용량 거부 | 3 |빈 목록·마지막 overflow·permanent TooLarge·count-only·일시 Full 무변이와 같은 입력 재수용 / 부분 claim 설치 또는 배열 과금 누락 |
-| group 경합/닫힘 | 3 |최종 commit 전 close·ordinary 경쟁·동시 group1개만 승인 / 최종 검사 제거 |
-| group 정리/owned dequeue callback | 3 |잠금 밖 한 번 통지, 다른 소유 claim 보존, 첫 panic 전파·재호출0 / quiet cleanup·unwind guard 제거 |
-| queue/retained 실제 전달 | 3 |queue1/retained3, dequeue wake paired control, destination Full의 양쪽 claim / Full에서 claim 반환 또는 원 Event 교체 |
-| ordinary 거부·생성자 | 3 |Full3회 snapshot/wake0, Full이어도 영구 TooLarge, queue/retained0 거부 / 임시 claim 자기 wake·검사 순서 역전 |
+| group reservation, sequential cap1 delivery | 1 |Atomically reserve 3 results in real storage, no mutation on Full, independent retirement, empty-array cost kept / recombining queue and retained |
+| group input/capacity rejection | 3 |Empty list, last-item overflow, permanent TooLarge, count-only, no mutation on transient Full and re-acceptance of the same input / partial claim installation or missing array charge |
+| group contention/close | 3 |close before the final commit, ordinary contention, only 1 concurrent group approved / removing the final check |
+| group cleanup / owned dequeue callback | 3 |One notification outside the lock, other owners' claims preserved, first panic propagated with re-calls0 / removing the quiet cleanup or unwind guard |
+| queue/retained real delivery | 3 |queue1/retained3, dequeue wake paired control, both claims on destination Full / returning the claim or replacing the original Event on Full |
+| ordinary rejection, constructors | 3 |Full 3 times with snapshot/wake0, permanent TooLarge even when Full, queue/retained0 rejected / temporary claim self-wake, reversed check order |
 
-새 시험은 `mailbox_group_tests.rs`10개와 `mailbox_queue_storage_tests.rs`6개다. 원본 Event equality와
-payload allocation, permit identity와 실제 storage snapshot을 함께 대조한다. callback 반례는
-첫 호출만 panic하게 해 제거 변이가 프로세스 abort가 아닌 재호출 횟수 단언 실패로 드러나게 했다.
-동시 group 시험의5초 채널 guard는 실행 실패를 유한하게 보고하기 위한 것이지 시계 독립 진행 증거가 아니다.
-표의 변이도 **예정**이며 아직 실행하거나 통과를 보고한 것이 아니다.
+The new tests are 10 in `mailbox_group_tests.rs` and 6 in `mailbox_queue_storage_tests.rs`. They compare original Event equality,
+payload allocation, permit identity and the actual storage snapshot together. The callback counterexample
+panics only on the first call, so a removal mutation shows up as a failed re-call count assertion rather than a process abort.
+The 5-second channel guard in the concurrent group test exists to report a run failure in finite time; it is not clock-independent progress evidence.
+The mutations in the table are also **planned**; they have not been run and no pass is reported.
 
-### 현재 한계와 Git 포함 판단
+### Current limits and Git inclusion decision
 
-변경은 backend 중립 `p4-adapter` 저장소와 그 실제 경로 시험, 소유 계약/로드맵/증거 색인에 한정한다.
-새 API를 사용하는 제품 producer/owned consumer·broker dedupe byte 비용·원격 수용 grant·native
-가변 결과 bound·통합 input/capacity/shutdown pump는 미완이다. wire/llama/native/모델은 변경하지 않았다.
-현재 HELLO row/seq limit와 frame 수신 cap을 native 출력 사전 메모리 bound로 오독하지 않는다.
-전체 순환 교착 해결이나 최종 웨이브 성과로 승격할 수 없다. 다음 순서는 로드맵의 최신 기록만 따른다.
+The changes are limited to the backend-neutral `p4-adapter` storage, its real-path tests, and the ownership contract/roadmap/evidence index.
+Product producers/owned consumers using the new API, broker dedupe byte cost, remote acceptance grants, native
+variable result bounds and an integrated input/capacity/shutdown pump are unfinished. wire/llama/native/models were not changed.
+The current HELLO row/seq limits and the frame receive cap are not misread as a preallocated memory bound for native output.
+This cannot be promoted to resolving the full cyclic deadlock or to a final wave result. The next order follows only the latest roadmap record.
 
-유지할 구현·회귀 시험·간결한 계약/진행 기록만 전체 WIP 체크포인트에 포함한다. 생성 로그·중복
-manifest·일회성 도구·모델·바이너리는 기존 ignore 경로에 남긴다. 새 시험 파일은 필수 oracle이므로
-ignore하지 않으며, 다른 머신에서 원자료를 재열람하는 B8 조건은 여전히 미충족이다.
+Only the implementation to keep, the regression tests, and the concise contract/progress records are included in the full WIP checkpoint. Generated logs, duplicate
+manifests, one-off tools, models and binaries stay in the existing ignored paths. The new test files are required oracles, so
+they are not ignored, and the B8 condition of re-inspecting raw data on another machine is still not met.
 
-## PREFILL 수용 연결의 선행 원자성 — 정적 검토 WIP (2026-09-07)
+## Up-front atomicity for wiring PREFILL acceptance — static review WIP (2026-09-07)
 
-기준 HEAD는 `d8fff7d2712de2bd90daed4c0de8292662761246`이다. 실제 producer/owned consumer 연결을
-읽으며 발견한 **코드상의 거부 전이**를 먼저 분리했다. 이번에는 컴파일·시험·변이·docs-lint를 실행하지
-않았다. 새 봉인 소스/바이너리/실행 로그와 통과 수는 없다. 검증2회 사용·마지막1회 미사용 상태다.
-실행13의1254/1/7은 그때 봉인한 수정 전 소스에만 귀속한다.
+The base HEAD is `d8fff7d2712de2bd90daed4c0de8292662761246`. **Code-level rejection transitions** found while reading
+the real producer/owned consumer wiring were separated out first. This time compile, tests, mutations and docs-lint were not
+run. There are no new sealed sources/binaries/run logs or pass counts. 2 verification rounds used, the last 1 unused.
+run13's 1254/1/7 is attributed only to the pre-fix source sealed at that time.
 
-### 수정 전 경로와 수정 지점
+### Pre-fix path and the fix point
 
-`worker.rs::Worker::prefill` @ `d8fff7d27`은 session key를 기억한 뒤 Tokenize/context/incarnation을
-검사했다. 요청 삽입·incarnation 증가·pending 추가 뒤 `admit_pending`이 거부하는 경로도 있었다.
-따라서 일반 요청 처리 함수를 그대로 포화 중 수용 경로에 연결하면 실패한 admission이 기억/요청을
-남긴다. 이 절의 반례는 **실행한 RED가 아니라 정적 경로 분석**이다. 실행 전/제거 변이 증명은 남아 있다.
+`worker.rs::Worker::prefill` @ `d8fff7d27` checked Tokenize/context/incarnation after remembering the session key.
+There was also a path where `admit_pending` rejected after the request was inserted, the incarnation incremented and pending appended.
+So wiring the ordinary request handler directly into the acceptance path during saturation would leave the memory/request behind after a failed
+admission. The counterexample in this section is **static path analysis, not an executed RED**. Pre-run and removal-mutation proofs remain.
 
-이번 코드는 새 요청을 기존 pending 뒤에 가상으로 붙여 이번 배정 접두 전체를 검사하고, incarnation·
-Tokenize·context까지 통과한 뒤 첫 admission 쓰기를 한다. 기존 ACK의 prefix 검사와 같은 validator를
-쓰되 ACK의 입력/검사 범위를 넓히지 않았다. 확정 구간에는 새 Result 거부/handler/yield/publication이
-없으며 ADMITTED 기록은 확정 뒤다. 오류 우선순위 변경과 보장하지 않는 자원 범위는
-[L2 소유 계약](../../../../../../../docs/adapter-batching-layers.md#l2-수용점유-admission)을 따른다.
+This code virtually appends the new request behind the existing pending entries, checks the whole assignment prefix for this round, and makes the first admission write only after
+incarnation, Tokenize and context have all passed. It uses the same validator as the existing ACK prefix check,
+without widening the ACK's input or check scope. The committed section has no new Result rejection/handler/yield/publication,
+and the ADMITTED record comes after commit. The change in error priority and the resource scope not guaranteed follow the
+[L2 ownership contract](../../../../../../../docs/adapter-batching-layers.md#l2-acceptance-and-occupancy-admission).
 
-### 작성한 실제 consumer oracle7개 — 실행·변이는 아직 없음
+### 7 real consumer oracles written — not yet run or mutated
 
-`worker/session_tests.rs`의 기존 SESSION fixture 아래 `prefill_admission_tests.rs`를 연결했다.
-native가 설치되지 않은 fixture이므로 Tokenize 요청 거부 외에는 token 입력으로 실제 prefill/handle을
-지난다. Event는 기존 wire codec으로 encode/decode한다. 기존 시험 내용/기대값은 변경하지 않았다.
+`prefill_admission_tests.rs` was wired under the existing SESSION fixture in `worker/session_tests.rs`.
+The fixture has no native installed, so apart from the Tokenize request rejection, the tests go through the real prefill/handle with
+token input. Events are encoded/decoded with the existing wire codec. Existing test contents/expectations were not changed.
 
-| 시험 | 거부/정상 입력과 고정한 판정 |
+| Test | Rejected/normal input and pinned verdict |
 | --- | --- |
-| context_refusal | context32에서 prompt32+max1 거부; 동일 request를 prompt31+max1 및 다른 session key로 정상 수용 |
-| zero_or_exhausted_incarnation | incarnation0/MAX 모두 무변이 거부; 값만7로 고쳐 동일 입력 수용 |
-| invalid_free_slot | 정상 기존 pending 뒤 새 후보, 범위 밖/중복 free id가 접두 전체를 거부; 슬롯만 고쳐 FIFO 배정 |
-| a_free_slot_that_is_still_owned | 기존 요청 소유 id를 free에 다시 넣어도 이중 배정0; free 수정 뒤 기존/새 요청의 소유 분리 |
-| an_invalid_later_pending_member | 정상 첫 pending 뒤 missing/이미 소유한 두 번째가 있으면 첫 요청도 미배정; 원인 수정 뒤3개 FIFO 배정 |
-| tokenize_failure | 실제 tokenize→Empty lifecycle.request 거부에서 admission 보존; 같은 request의 token 입력 수용 |
-| two_available_slots | pending2개+새1개, free2개일 때 기존2개 먼저 배정하고 새 요청만 대기, 원본 Event·incarnation 유지 |
+| context_refusal | At context32, prompt32+max1 is rejected; the same request is accepted normally with prompt31+max1 and a different session key |
+| zero_or_exhausted_incarnation | incarnation0/MAX both rejected without mutation; the same input is accepted once only the value is fixed to7 |
+| invalid_free_slot | With a new candidate after a valid existing pending, an out-of-range/duplicate free id rejects the whole prefix; fixing only the slot gives FIFO assignment |
+| a_free_slot_that_is_still_owned | Putting an id owned by an existing request back into free gives double assignment0; after fixing free, the existing and new requests own separate slots |
+| an_invalid_later_pending_member | If a valid first pending is followed by a missing/already-owned second, the first request is also unassigned; after fixing the cause, 3 FIFO assignments |
+| tokenize_failure | Admission preserved on a real tokenize→Empty lifecycle.request rejection; token input for the same request accepted |
+| two_available_slots | With 2 pending + 1 new and 2 free, the existing 2 are assigned first and only the new request waits; original Event and incarnation kept |
 
-각 거부는 direct 호출의 admission/원장 snapshot 및 next_event 불변, 실제 handle의 정확한 ERROR
-Event1개와 next_event+1, 원인 수정 뒤 재제출을 함께 검사한다. 일반 handle의 상태 문자열은
-`failed:<detail>`로 바뀌므로 **전체 Worker 불변**이라 하지 않는다. private session_key_order와
-기록 파일 출력 자체는 검사하지 않으며 전역 환경변수를 조작하지 않는다. Tokenize 사례는 native
-parser/GPU 실패 주입이나 Loaded 복구가 아니다. 성공 token 경로도 native 없는 fixture 그대로다.
+Each rejection checks together the admission/ledger snapshot and unchanged next_event of the direct call, exactly 1 ERROR
+Event and next_event+1 from the real handle, and resubmission after fixing the cause. The status string of the ordinary handle changes to
+`failed:<detail>`, so this is not called **full Worker invariance**. The private session_key_order and
+the record file output itself are not checked, and global environment variables are not manipulated. The Tokenize case is not native
+parser/GPU failure injection or Loaded recovery. The successful token path is also the native-less fixture as-is.
 
-예정된 변이는 session key 기억/ADMITTED를 검증 앞으로 되돌림, 요청 삽입 뒤 FIFO 검증으로 되돌림,
-배정 접두의 후기 구성원 검사 제거, 기존 pending 대신 신규 요청을 먼저 배정하는 것이다. 기록 파일을
-관측하지 않는 현 oracle가 ADMITTED 출력 시점만의 변이까지 검출한다고 주장하지 않는다. 최소한 key
-조기 기억과 post-insert 거부 변이가 실제 consumer의 상태 보존 단언에서 실패해야 승격할 수 있다.
+The planned mutations are: moving session key memory/ADMITTED back before validation, moving FIFO validation back after request insertion,
+removing the check on later members of the assignment prefix, and assigning the new request before the existing pending entries. Since the current oracles do not observe the record file,
+we do not claim they detect a mutation that only changes when ADMITTED is output. At minimum, the early key
+memory and post-insert rejection mutations must fail the real consumer's state preservation assertions before this can be promoted.
 
-### 실제 연결 경로 감사와 범위
+### Audit of the real wiring paths and scope
 
-독립 정적 검토에서 테스트 모듈 가시성/타입, ERROR의 envelope·ID·detail, Empty Tokenize의 lifecycle
-상태와 동일 접두 검사를 대조했다. 이는 컴파일러나 실행 결과의 대체 증거가 아니다.
+An independent static review compared test module visibility/types, the ERROR envelope/ID/detail, the lifecycle
+state of Empty Tokenize, and the same prefix check. This is not a substitute for compiler or run results.
 
-- raw Event 수신은 broker/node만이 아니라 `entrypoints/agent/src/event_runtime/{mod,control,transport}.rs`,
-  transport ConnectionSender와 adapter WorkerInput/held_input에도 남아 있다. producer만 예약형으로
-  바꾸거나 중간 raw 다리에서 claim을 버리면 소비자 보존 공간은 추적되지 않는다.
-- broker는 성공 시 큐용 사본과 exact 중복 원장을 만든다. 중복 원장에 source claim을 붙이면 정상
-  count-window 퇴역까지 producer가 묶인다. 독립 중복 비용과 callback의 ledger 잠금 밖 retirement가
-  필요하다. count-window 이후에도 byte가 영구 부족한 경우를 destination Full로 기다리게 하지 않는다.
-- 실제 remote serve는 dispatch 실패 시 연결을 끝내고, outbound/outer pump 및 connection writer는
-  로컬 owned claim/원격 acceptance로 아직 이관되지 않았다. socket write 완료는 수신 공간 증거가 아니다.
-- 현재 수정은 byte grant·원인별 필수 출력 예약·blocked worker pump·native 결과 사전 bound를 만들지
-  않는다. actor cap1/cap8의 입력·완료·native/외부 복구 oracle는 그대로이며 교착 해결을 주장하지 않는다.
+- Raw Event receipt remains not only in broker/node but also in `entrypoints/agent/src/event_runtime/{mod,control,transport}.rs`,
+  the transport ConnectionSender, and the adapter WorkerInput/held_input. If only the producer is switched to reservations,
+  or a claim is dropped at an intermediate raw bridge, the consumer's retention space is not tracked.
+- On success, the broker makes a copy for the queue and an exact-duplicate ledger. Attaching the source claim to the duplicate ledger would tie up the producer
+  until normal count-window retirement. An independent duplicate cost and retirement outside the ledger lock in the callback are
+  needed. A case where bytes are permanently short even after the count window must not be made to wait as destination Full.
+- The real remote serve ends the connection on dispatch failure, and the outbound/outer pumps and connection writer
+  have not yet been migrated to local owned claims / remote acceptance. Completing a socket write is not evidence of receive space.
+- The current fix does not create byte grants, per-cause required output reservations, a blocked worker pump, or a native result pre-bound.
+  The actor cap1/cap8 input, completion, native and external recovery oracles are unchanged, and no deadlock resolution is claimed.
 
-다음 구현 순서의 단독 소유자는 로드맵이다. 이번 변경은 운영 함수2개 파일·새 필수 회귀/배선·관련
-소유 계약/진행/증거만 전체 미검증 WIP로 보존한다. generated proof·모델·바이너리·임시 도구는 기존
-ignore 경로에 둔다. remote/GPU/C++ 실행이나 push를 하지 않았고 최종 웨이브 성과 승격은 없다.
+The roadmap is the sole owner of the next implementation order. This change preserves only the 2 production function files, the new required regressions/wiring, and the related
+ownership contract/progress/evidence as a full unverified WIP. Generated proofs, models, binaries and temporary tools stay in the existing
+ignored paths. No remote/GPU/C++ runs or push were done, and there is no promotion of final wave results.
 
-## 실제 전달 거부의 원본 소유권 — 정적 검토 WIP (2026-09-07)
+## Original ownership on real delivery rejection — static review WIP (2026-09-07)
 
-기준 HEAD `2b1d1d5398e182eeb0a6532f384ce8203257918c`에서 성공/실패 소비 경계를 추적했다.
-기존 `EventBroker::dispatch`의 Full만 원 Event를 돌려주고 나머지는 소비했으며, EventNode terminal은
-다른 방향에 이미 보류한 Event도 버렸다. `control::create`의 spawned task는 오류를 로그한 뒤 결과를
-버렸다. 이번 수정은 **이 실제 거부 반환과 소비 경로**이며 성공 경로의 공간 claim 연결은 아직 아니다.
+The success/failure consumption boundaries were traced at base HEAD `2b1d1d5398e182eeb0a6532f384ce8203257918c`.
+The existing `EventBroker::dispatch` returned the original Event only on Full and consumed it otherwise, and the EventNode terminal
+also discarded an Event already held in the other direction. The spawned task in `control::create` logged the error and then discarded
+the result. This fix covers **these real rejection returns and consumption paths**; wiring space claims into the success path is not done yet.
 
-### 구현과 정적 대조
+### Implementation and static comparison
 
-- broker의 모든 Err가 move-only `DispatchFailure { error, event: Box<Event> }`를 반환한다. validate→
-  정확 duplicate/sequence→destination→실제 queue slot→성공 ledger commit의 기존 순서는 유지한다.
-  register/unregister는 입력 Event가 없어 기존 순수 DispatchError다. 동작 분류와 wire는 바뀌지 않는다.
-- 실제 llama `try_offer`는 sender 부재/Disconnected에서도 원 Event를 반환한다. Full도 원래처럼 같은
-  값이다. EventNode의 terminal은 `EventNodeFailure`로 양쪽 held 원본을 모두 넘긴다. payload를 복사해
-  대신 돌려주거나 실패를 Full로 재분류하지 않는다. Box는 실패 반환값의 inline 크기만 줄인다.
-- 제품 `NodeOwner`가 `JoinHandle<Result<(), EventNodeFailure>>`를 유지하며 spawned task는 reason을
-  borrow해 로그한 뒤 결과를 반환한다. 이 handle의 수명 내 보존이지 durable outbox나 재시작 복구가 아니다.
-  DELETE의 abort/handle 폐기·프로세스 종료, 아직 읽지 않은 큐와 adapter 내부 작업의 drain은 별개다.
-- control reply loop와 remote serve/pump의 최종 폐기는 남아 있다. 새 broker 오류가 원문을 갖는다는
-  이유로 그 미완을 숨기지 않는다. Display/운영 로그는 reason만 출력해 전체 사용자 payload를 찍지 않는다.
+- Every broker Err returns a move-only `DispatchFailure { error, event: Box<Event> }`. The existing order validate→
+  exact duplicate/sequence→destination→real queue slot→success ledger commit is kept.
+  register/unregister have no input Event, so they remain a pure DispatchError. Behavior classification and wire do not change.
+- The real llama `try_offer` returns the original Event even when the sender is absent/Disconnected. Full returns the same
+  value as before. The EventNode terminal hands over both held originals via `EventNodeFailure`. It does not copy the payload
+  to return instead, or reclassify the failure as Full. Box only reduces the inline size of the failure return value.
+- The product `NodeOwner` keeps `JoinHandle<Result<(), EventNodeFailure>>`, and the spawned task borrows the reason
+  to log it and then returns the result. This is retention within the lifetime of that handle, not a durable outbox or restart recovery.
+  DELETE's abort/handle discard and process shutdown, and draining unread queues and adapter-internal work, are separate matters.
+- The final discard in the control reply loop and remote serve/pump remains. That gap is not hidden on the grounds that
+  the new broker error carries the original. Display/operational logs print only the reason and do not dump the full user payload.
 
-독립 정적 검토는 오류 종류/호출자, nested test 접근, Box의 원 allocation 보존, poison guard 수명,
-양성 대조의 correlation/sequence를 대조했다. 컴파일·실행·변이의 대체 증거로 세지 않는다.
+An independent static review compared error kinds/callers, nested test access, preservation of the original allocation by Box, poison guard lifetime,
+and the correlation/sequence of the positive controls. It is not counted as a substitute for compile, run or mutation evidence.
 
-### 작성한 회귀9개 — 전부 미실행
+### 9 regressions written — none run
 
-| 경로 | 수 | 고정한 판정 / 예정된 제거 변이 |
+| Path | Count | Pinned verdict / planned removal mutation |
 | --- | --- | --- |
-| canonical broker dispatch |4| invalid envelope·missing/stale/Closed·conflict/regression·poison의 원 Event/value/allocation/비용·전체 ledger 불변, 가능한 원인 정정 후 실제 수용 / clone 대체·사전 ledger commit |
-| actual EventNode loop |3| adapter Closed 입력, broker Closed 출력+이미 held 입력, completion Closed held 입력의 원 allocation 반환 / 어느 한 방향을 terminal에서 버림 |
-| actual LlamaNodeAdapter::try_offer |2| sender None/Disconnected 원본 반환, Full 뒤 같은 Event의 정확한 한 번 수용 / Closed에서 소비·Full에서 copy 반환 |
+| canonical broker dispatch |4| For invalid envelope, missing/stale/Closed, conflict/regression and poison: original Event/value/allocation/cost and full ledger unchanged, real acceptance after correcting the cause where possible / substituting a clone, committing the ledger up front |
+| actual EventNode loop |3| Original allocation returned for adapter Closed input, broker Closed output + already held input, and completion Closed held input / discarding either direction at terminal |
+| actual LlamaNodeAdapter::try_offer |2| Original returned for sender None/Disconnected, exactly-once acceptance of the same Event after Full / consuming on Closed, returning a copy on Full |
 
-broker4개는 `event_broker/failure_tests.rs`, node3개는 기존 `event_node/tests.rs`, adapter2개는
-`node/offer_tests.rs`다. 기존 test API 이관은 정확한 실패 원인과 원문 대조를 유지했다. 실제 actor
-`ObservedAdapter`도 같은 canonical 타입을 전달하며 14입력/6결과/cap1·cap8/timeout/정상 진행 oracle는
-변경하지 않았다. 원본 actor RED가 GREEN이 됐다고 하지 않는다.
+The 4 broker tests are in `event_broker/failure_tests.rs`, the 3 node tests in the existing `event_node/tests.rs`, and the 2 adapter tests in
+`node/offer_tests.rs`. The migration of the existing test API kept the exact failure causes and raw comparisons. The real actor
+`ObservedAdapter` also forwards the same canonical type, and the 14-input/6-result/cap1/cap8/timeout/normal-progress oracles
+were not changed. We do not claim that the original actor RED has become GREEN.
 
-node 시험은 입력이 이미 held됨을 실제 loop poll로 확정한 뒤 completion/Closed를 발생시킨다. 수신
-채널에 실제로 이동시킨 allocation을 대조하며 broker 성공 시 복사된 값과 호출자 원본을 혼동하지 않는다.
-1초 guard는 유한 실패 보고용이지 모든 CI 지연이나 시계 독립 liveness 증명이 아니다. poison 해제는
-시험의 원인 정정이며 운영 자동 복구가 아니다. NodeOwner handle의 제품 수명은 코드로 대조했으나
-CREATE/DELETE 전체 소비 시험이나 자동 복구 검증은 이번 신규9개 범위에 포함되지 않는다.
+The node tests trigger completion/Closed after confirming via a real loop poll that the input is already held. They compare the allocation actually moved into the receive
+channel and do not confuse the value copied on broker success with the caller's original.
+The 1-second guard is for reporting failure in finite time, not proof against every CI delay or of clock-independent liveness. Clearing poison is
+the test's correction of the cause, not automatic recovery in production. The product lifetime of the NodeOwner handle was checked in code, but
+full CREATE/DELETE consumer tests and automatic recovery verification are not within the scope of these 9 new tests.
 
-### 검증 지위와 남은 경계
+### Verification status and remaining boundaries
 
-컴파일·시험·변이·docs-lint/C++/GPU/원격은 **미실행**이다. 서식 정리와 diff 대조만 하며 새 실행
-소스/바이너리 봉인이나 결과 수를 만들지 않는다. 마지막 실행13의1254/1/7은 수정 전 소스에만 귀속한다.
-검증2회 사용·마지막1회 미사용이고 완성 후보 전 부분 API 확인으로 마지막 회차를 소비하지 않는다.
+Compile, tests, mutations, docs-lint/C++/GPU/remote were **not run**. Only formatting cleanup and diff comparison are done, and no new run
+source/binary seal or result count is produced. The last run13's 1254/1/7 is attributed only to the pre-fix source.
+2 verification rounds used, the last 1 unused, and the last round is not spent on checking a partial API before a complete candidate exists.
 
-소유형 성공 전달에는 producer/held/destination/WorkerInput뿐 아니라 장기 RequestState 원문 보관,
-독립 exact dedupe 비용·잠금 밖 callback, causal 필수 결과/반환 선예약, blocked worker 대기가 모두
-남아 있다. remote는 local acceptance/socket written/receiver acceptance를 구별해야 하며 현재 하네스의
-한 agent 다중 노드를 agent 간 outbound 검증으로 쓰지 않는다. 최종 목표·다음 순서는 로드맵이 소유한다.
+Owned successful delivery still needs not only producer/held/destination/WorkerInput but also long-term retention of RequestState originals,
+an independent exact dedupe cost and callbacks outside the lock, pre-reservation of causal required results/returns, and blocked worker waiting.
+Remote must distinguish local acceptance / socket written / receiver acceptance, and the current harness's
+multiple nodes in one agent are not used as inter-agent outbound verification. The final goal and next order are owned by the roadmap.
 
-운영 코드·실제 소비 회귀·소유 문서만 전체 미검증 체크포인트에 포함한다. generated proof와 일회성
-도구·모델·바이너리는 ignore 경로에 유지하며 push하지 않는다. byte admission·전체 교착·실기 TPS 완료는 아니다.
+Only production code, real consumer regressions and ownership documents are included in the full unverified checkpoint. Generated proofs and one-off
+tools, models and binaries stay in ignored paths and are not pushed. This is not completion of byte admission, the full deadlock or real-hardware TPS.
 
-## 직접 응답 FIFO와 알림 경계 — 정적 검토 WIP (2026-09-07)
+## Direct response FIFO and notification boundaries — static review WIP (2026-09-07)
 
-기준 HEAD `658c9cded723b17d8d1b422748f3c8ff733406cd`. 이번 변경은 **실행 결과에 맞춘 수정이 아닌
-실제 소유권/순서/종료 경로의 정적 대조**다. 컴파일·시험·변이·docs-lint를 실행하지 않았으며 신규
-실행 로그·통과 수·봉인 바이너리는 없다. 수정 전 실행13의1254/1/7과 검증2회 사용·마지막1회 미사용을
-유지한다. 정적 대조는 실행 증명을 대체하지 않으며 이 체크포인트는 미검증 WIP다.
+Base HEAD `658c9cded723b17d8d1b422748f3c8ff733406cd`. This change is **not a fix fitted to run results but a static comparison of
+the real ownership/ordering/shutdown paths**. Compile, tests, mutations and docs-lint were not run, and there are no new
+run logs, pass counts or sealed binaries. The pre-fix run13's 1254/1/7 and the status of 2 verification rounds used / the last 1 unused
+are unchanged. Static comparison does not replace execution proof, and this checkpoint is unverified WIP.
 
-### 실제 코드 변경
+### Actual code changes
 
-- `EventBroker::dispatch` 성공 큐에 원 allocation을 이동하고 exact dedupe에는 독립 사본을 둔다.
-  실패·중복 순서 검사는 유지한다. raw 큐이고 알림이 아직 ledger 잠금 안에서 일어나므로 owned
-  수용/잠금 밖 알림의 제품 완료가 아니다. claim을 중복 사본에 붙여 퇴역까지 producer를 묶지 않는다.
-- 실제 mailbox enqueue와 이후 reader/capacity 알림을 분리했다. 기존 즉시 publication/transfer도
-  같은 enqueue 뒤 명시 notify를 사용한다. Drop/콜백 panic의 회계·가시성 제약은 배치 계약이 소유한다.
-  broker가 이 deferred API를 사용하는 것은 아직 아니며, 새 알림 API만으로 순환 대기가 풀리지 않는다.
-- 직접 LOAD/SESSION/UNLOAD/오류 응답은 미번호 intent→FIFO 선두의 고정 Event→실제 mailbox로 간다.
-  앞선 ForwardObserved의 관측 suffix가 뒤의 응답보다 먼저 번호를 얻는다. 첫 Closed가 뒤 참여자의
-  batch 진단을 없애지 않도록 전체 진단을 먼저 보존한다. Full 동기 대기는 그대로다.
-- native 실패가 이미 fence를 세웠어도 기존 effect prefix가 없으면 새 종료 진단만 보낼 수 있다.
-  prefix가 있으면 뒤에 보존할 뿐 기존 효과를 replay하거나 fence를 해제하지 않는다. 기존 실제
-  native 실패의 ERROR1 시험은 변경하지 않는다. 진단 전송 실패 때 원래 snapshot 원인도 보존한다.
-- wire 준비물은 최대 발급 가능 ID 폭으로 round-trip한다. 현재 짧은 ID만으로는 맞던 경계 크기를
-  거부할 수 있으므로 단순 리팩터가 아니다. SESSION 권한/ID 쓰기 전 거부와 정상 작은 입력을 함께
-  검사한다. 표현 불가능한 오류는 `UndeliverableDirect`로 원문/실패 이유를 보존하고 ID0개를 요구한다.
+- `EventBroker::dispatch` moves the original allocation into the success queue and keeps an independent copy for exact dedupe.
+  The failure and duplicate ordering checks are kept. It is a raw queue, and notification still happens inside the ledger lock, so this is not product completion of owned
+  acceptance / out-of-lock notification. The claim is not attached to the duplicate copy, which would tie up the producer until retirement.
+- The real mailbox enqueue was separated from the subsequent reader/capacity notifications. The existing immediate publication/transfer also
+  uses an explicit notify after the same enqueue. The accounting and visibility constraints on Drop/callback panic are owned by the batching contract.
+  The broker does not use this deferred API yet, and the new notification API alone does not release the cyclic wait.
+- Direct LOAD/SESSION/UNLOAD/error responses go unnumbered intent → pinned Event at the FIFO head → real mailbox.
+  The observation suffix of an earlier ForwardObserved gets its number before the later response. All diagnostics are preserved first so that the first Closed
+  does not erase the batch diagnostics of later participants. The synchronous wait on Full is unchanged.
+- Even if a native failure has already raised the fence, a new shutdown diagnostic alone can be sent when there is no existing effect prefix.
+  If there is a prefix, the diagnostic is only preserved behind it; existing effects are not replayed and the fence is not released. The existing real
+  native failure ERROR1 test is unchanged. When sending the diagnostic fails, the original snapshot cause is preserved too.
+- The wire preparation round-trips at the maximum issuable ID width. This can reject boundary sizes that fit with the current short IDs,
+  so it is not a simple refactor. Rejection before SESSION authority/ID writes and a normal small input are checked
+  together. An unrepresentable error preserves the original and the failure reason as `UndeliverableDirect` and requires 0 IDs.
 
-### 작성한 consumer oracle — 실행·제거 변이는 미실시
+### Consumer oracles written — no runs or removal mutations yet
 
-| 실제 경로 | 파일 / 확인할 조건 |
+| Real path | File / conditions to check |
 | --- | --- |
-| broker 성공/정확 dedupe | 기존 Full 재시도 시험을 성공 allocation까지 강화; 신규1개가 agent/node/outer/outbound 원 allocation·수신자 변조와 독립 영수증·중복 무재발행을 검사 |
-| actual mailbox | `mailbox_deferred_tests.rs`9개: 즉시/예약 enqueue, transfer, Full/영구 거부, receipt Drop, reader/source callback panic, publisher 종료, notify 전 dequeue; move-only compile-fail 예제도 미실행 |
-| actual direct emit/SESSION/FIFO | `direct_emission_tests.rs`8개: 지연 관측 앞지르기 금지, Closed의 전체 Event/allocation, 미래 ID 폭, 실제 번호 고갈, 빈 prefix 진단/기존 prefix 보존, 첫 Closed 뒤 모든 실패 소유자 보존, 전체 ID 부족의 원자 거부/단일 진단 정상 대조 |
-| 기존 SESSION handle | `handle_undecodable_ready_does_not_install_session_authority`의 동일140,000자 ID 입력 유지; malformed ERROR 발행 성공을 무발행·무ID소비·진단 보존·fence로 정정 |
+| broker success / exact dedupe | The existing Full retry test strengthened through the success allocation; 1 new test checks the original agent/node/outer/outbound allocation, receiver tampering, an independent receipt, and no re-publication of duplicates |
+| actual mailbox | 9 in `mailbox_deferred_tests.rs`: immediate/reserved enqueue, transfer, Full/permanent rejection, receipt Drop, reader/source callback panic, publisher shutdown, dequeue before notify; the move-only compile-fail example was not run either |
+| actual direct emit/SESSION/FIFO | 8 in `direct_emission_tests.rs`: no overtaking of deferred observations, full Event/allocation on Closed, future ID width, real number exhaustion, empty-prefix diagnostic / existing prefix preserved, all failed owners preserved after the first Closed, atomic rejection on total ID shortage / normal comparison with a single diagnostic |
+| existing SESSION handle | The same 140,000-character ID input of `handle_undecodable_ready_does_not_install_session_authority` kept; a successful malformed ERROR publication corrected to no publication, no ID consumption, diagnostic preserved, and fence |
 
-새 SESSION fixture는 실제 post-LOAD 상태지만 native 서버를 설치하지 않는다. FIFO 앞 PHYSICAL는
-codec/순서 대조용이며 native 실행 증거가 아니다. Closed 뒤 시험 내부 publisher 교체/fence 해제는
-보존된 동일 Event 대조일 뿐 운영 복구 기능이 아니다. 미래 ID 경계는 codec envelope 길이에서 산술로
-만들며 실패 길이를 탐색하지 않는다. broker/노드/actor 테스트 입력의 정상 요청 수·큐 용량을 줄이지 않는다.
-active publication 도중 Direct append 자체의 재진입 전용 oracle는 없고, source capacity callback의
-caller-lock 재진입도 별도 신규 oracle가 아니다. 이 둘을 실제 통과 경로에 포함했다고 세지 않는다.
+The new SESSION fixture is a real post-LOAD state but does not install a native server. The PHYSICAL at the front of the FIFO is
+for codec/order comparison and is not native execution evidence. The in-test publisher swap / fence release after Closed only
+compares the same preserved Event; it is not an operational recovery feature. The future ID boundary is computed arithmetically from the codec envelope length,
+without searching for the failure length. The number of normal requests and the queue capacities in the broker/node/actor test inputs are not reduced.
+There is no dedicated reentrancy oracle for a Direct append during an active publication, and caller-lock reentrancy in the source capacity callback
+is not a separate new oracle either. These two are not counted as included in the real passing paths.
 
-예정된 제거 변이는 큐에 원본 대신 복사본 이동, enqueue 중 조기 callback, source 회계 이중 반환,
-직접 응답 FIFO 우회/ID 선발급, 첫 batch 진단 Closed에서 뒤 소유자 폐기, native fence 전면 해제,
-malformed 진단 발행 허용이다. 어느 변이도 이번에 실행했다고 주장하지 않는다. 기존 actor cap1/cap8의
-14입력/6결과/native/외부 dequeue0 판정은 변경하지 않았다.
+The planned removal mutations are: moving a copy instead of the original into the queue, early callbacks during enqueue, returning source accounting twice,
+bypassing the direct response FIFO / issuing the ID early, discarding later owners on the first batch diagnostic Closed, releasing the native fence entirely,
+and allowing a malformed diagnostic to be published. None of these mutations is claimed to have run this time. The existing actor cap1/cap8
+verdicts on 14 inputs/6 results/native/external dequeue0 were not changed.
 
-### 다음 연결과 Git 포함 범위
+### Next wiring and Git inclusion scope
 
-독립 정적 검토는 broker receipt·원 allocation, mailbox 알림/Drop/panic, direct 종료 진단의 기존
-회귀 의도와 수용 범위 차이를 대조했다. canonical owned 성공 경로의 필수 연결 표를 배치 계약에
-남겼다. raw 호환 다리에서 claim을 버리지 않고 장기 RequestState/해제 출처/파싱 복사 비용까지
-추적해야 한다. control/transport의 terminal 소비와 원격 acceptance는 여전히 미완이다.
+An independent static review compared the broker receipt and original allocation, mailbox notification/Drop/panic, and direct shutdown diagnostics against the
+intent of the existing regressions and the difference in acceptance scope. A table of the required wiring for the canonical owned success path was
+recorded in the batching contract. Claims must not be dropped at raw compatibility bridges, and long-term RequestState, release provenance and parse copy costs
+must be tracked as well. Terminal consumption in control/transport and remote acceptance are still unfinished.
 
-유지할 운영 코드·필수 회귀·소유 문서만 전체 WIP 체크포인트에 포함한다. 생성 proof·임시 도구·모델·
-바이너리는 기존 ignore에 남긴다. 새로운 규약 문서는 만들지 않았다. 남은 순서는 로드맵 최신 기록만
-따르며 C++/원격/GPU/모델 실행·push와 최종 웨이브 성과 승격은 이번 범위에 없다.
+Only the production code to keep, the required regressions and the ownership documents are included in the full WIP checkpoint. Generated proofs, temporary tools, models and
+binaries stay in the existing ignore. No new protocol documents were created. The remaining order follows only the latest roadmap record,
+and C++/remote/GPU/model runs, push, and promotion of final wave results are outside this scope.
 
-## 요청 입력의 불변 공유 — 정적 검토 WIP (2026-09-07)
+## Immutable sharing of request inputs — static review WIP (2026-09-07)
 
-기준 HEAD `f5aa09675119f377a92accfb9fe67b87eeef07a0`. 이번 내용은 실제 코드의 소유/수명 대조와
-작성한 oracle이며 **실행 증거가 아니다**. 컴파일·시험·변이·docs-lint를 실행하지 않았다. 수정 전
-실행13의1254/1/7, 검증2회 사용·마지막1회 미사용을 유지한다. 새 결과 수나 봉인 바이너리는 없다.
+Base HEAD `f5aa09675119f377a92accfb9fe67b87eeef07a0`. This content is a comparison of ownership/lifetimes in the real code and
+oracles that were written; it is **not execution evidence**. Compile, tests, mutations and docs-lint were not run. The pre-fix
+run13's 1254/1/7 and the status of 2 verification rounds used / the last 1 unused are unchanged. There are no new result counts or sealed binaries.
 
-### 변경 전 전제와 제한된 변경
+### Premises before the change and the limited change
 
-- `worker.rs::Worker::handle`은 분기마다 전체 Event를 clone해 handler에 주었다. blocked ACK
-  경로도 같은 복사를 했다. 이제 원본은 호출자에 남고 handler는 대여한다. 실패 진단과 held_input의
-  원본 수명, ACK no-flush/native 금지 순서는 그대로다.
-- `node/state.rs::RequestState`는 command(tokens/options)/template/reply를 직접 소유했으므로
-  실제 prepare_issue/tail/settled의 후보 clone이 큰 입력도 복제했다. private Arc의 RequestInput으로
-  묶고 readonly Deref를 제공했다. 진행 상태는 기존 독립 candidate이고 생산용 가변 접근자는 없다.
-- `worker/drive.rs::Worker::drive_one_batch`의 template·batch_events는 매 발행에 full Event를
-  각각 복제했다. 이제 SharedRequestInput을 보유하고 관측/오류 발행은 원 template를 참조한다.
-  `emit_batch_errors`는 Borrow<Event>로 모든 기존 소유자의 진단을 같은 FIFO에 준비한다.
-- PHYSICAL/RELEASE/SETTLE 후속 effect의 base는 동일 ingress envelope의 clone이다. tail 출력과
-  PendingRelease는 계속 원 RequestState/template의 authority를 쓴다. 현재 ACK 출처로 바꾸지 않았다.
-- PREFILL의 `RequestState::new(command, event.clone(), ...)`는 여전히 입구 복사1회를 수행한다.
-  raw 원본의 선형 claim 이전은 아니다. ReadyRows/continuation/RowOwner/native 결과 복사와 초기
-  파싱 비용은 남으며 zero-copy·T19/T45 비용 전체 완료·메모리 상한·actor GREEN을 주장하지 않는다.
+- `worker.rs::Worker::handle` cloned the whole Event for each branch and passed it to the handler. The blocked ACK
+  path made the same copy. Now the original stays with the caller and the handler borrows it. The original lifetime of failure diagnostics and held_input,
+  and the ACK no-flush/no-native ordering, are unchanged.
+- `node/state.rs::RequestState` directly owned command (tokens/options)/template/reply, so
+  the candidate clones in the real prepare_issue/tail/settled also copied large inputs. They are now bundled into a RequestInput behind a private Arc,
+  with a read-only Deref. Progress state is the existing independent candidate, and there is no mutable accessor for production.
+- The template and batch_events in `worker/drive.rs::Worker::drive_one_batch` each copied a full Event on every issue.
+  It now holds a SharedRequestInput, and observation/error publication refer to the original template.
+  `emit_batch_errors` prepares diagnostics for all existing owners in the same FIFO via Borrow<Event>.
+- The base of the PHYSICAL/RELEASE/SETTLE follow-up effects is a clone of the same ingress envelope. Tail output and
+  PendingRelease still use the authority of the original RequestState/template. They were not switched to the current ACK source.
+- PREFILL's `RequestState::new(command, event.clone(), ...)` still performs 1 copy at entry.
+  This is not a linear claim transfer of the raw original. ReadyRows/continuation/RowOwner/native result copies and initial
+  parse costs remain, and no zero-copy, full completion of T19/T45 costs, memory bound or actor GREEN is claimed.
 
-기존 fixture의 직접 불변 필드 쓰기는 test-only COW로, 임시 fixture field move는 명시 clone으로
-이관했다. 원 입력·주입 횟수·단언·거부 이유를 바꾸지 않았다. RequestInput의 Clone 자체도 시험
-빌드에만 존재한다. 이 시험용 복사를 생산 반복 복제 제거 수치에 섞지 않는다.
+Direct writes to immutable fields in existing fixtures were migrated to test-only COW, and temporary fixture field moves to explicit clones.
+The original inputs, injection counts, assertions and rejection reasons were not changed. The Clone on RequestInput itself exists only in test
+builds. These test-only copies are not mixed into figures for removing repeated copies in production.
 
-### 신규 oracle3개 — 모두 미실행
+### 3 new oracles — none run
 
-`node/issue_tests.rs`에 다음 판정을 작성했다. equality만으로 이전 deep clone도 통과하므로
-Arc·tokens/payload/options/reply allocation의 동일성을 함께 요구한다.
+The following verdicts were written in `node/issue_tests.rs`. Equality alone would also pass the earlier deep clone, so
+identity of the Arc and of the tokens/payload/options/reply allocations is also required.
 
-| 시험 | 소비와 판정 |
+| Test | Consumption and verdict |
 | --- | --- |
-| `actual_issue_candidates_share_input_through_refusal_and_acceptance` | 실제 prepare→잘못된 split accept 거부→정상 accept; 원본/후보 allocation 공유, 값 불변, 거부 시 전체 상태 보존 |
-| `a_later_invalid_issue_member_preserves_every_original_input_and_progress` | 앞 후보 뒤의 잘못된 owner에서 전체 prepare 거부; 원 입력/진행 불변, 잔류 후보 소유자 없음; 수정 원인으로 정상 재준비 |
-| `shared_input_outlives_independent_progress_and_retires_with_its_last_owner` | 정산 후보 진행 격리·거부 보존, 시험 COW의 분리, 별도 읽기 소유자가 남은 수명과 마지막 Drop |
+| `actual_issue_candidates_share_input_through_refusal_and_acceptance` | Real prepare→rejection of a wrong split accept→normal accept; original/candidate allocations shared, values unchanged, whole state preserved on rejection |
+| `a_later_invalid_issue_member_preserves_every_original_input_and_progress` | The whole prepare is rejected on a wrong owner after an earlier candidate; original input/progress unchanged, no leftover candidate owners; normal re-preparation once the cause is fixed |
+| `shared_input_outlives_independent_progress_and_retires_with_its_last_owner` | Settlement candidate progress isolation and preservation on rejection, separation by the test COW, lifetime while a separate read owner remains, and the last Drop |
 
-이 세 시험은 실제 issue prepare/accept와 RequestState 정산을 소비하지만 실제 Worker::run 전체의
-메모리 계측/진행 시험은 아니다. handler borrowing과 drive는 기존 consumer 시험의 다음 실행 대상이며
-이번에 새 실행으로 입증했다고 세지 않는다. 공유 clone을 deep clone으로 바꾸거나 후보가 원본 입력을
-변경하게 하는 제거 변이는 예정일 뿐 미실시다. 원 actor의 cap1/cap8·14입력·6결과·외부 dequeue0·
-native·timeout oracle는 변경하지 않았다.
+These three tests consume the real issue prepare/accept and RequestState settlement, but they are not memory-measurement or progress tests of the full real Worker::run.
+Handler borrowing and drive are targets for the next run of the existing consumer tests, and
+are not counted as proven by a new run this time. Removal mutations that turn the shared clone into a deep clone or let a candidate modify the original input
+are only planned and not yet done. The original actor's cap1/cap8, 14 inputs, 6 results, external dequeue0,
+native and timeout oracles were not changed.
 
-### 정적 대조와 checkpoint 범위
+### Static comparison and checkpoint scope
 
-독립 정적 검토는 모든 변경 handler의 source/target 권한, borrow 수명, ACK와 native 전이 순서,
-drive가 self.state 변경 중에도 원본을 소유하는지, fixture의 동등 이관을 대조했다. production DerefMut/
-raw Arc/COW 우회는 추가하지 않았다. 정적 검토에서 차단점 미발견은 컴파일·실행 보증이 아니다.
+An independent static review compared source/target authority in every changed handler, borrow lifetimes, the ACK and native transition order,
+whether drive owns the original even while self.state is changing, and the equivalence of the fixture migration. No production DerefMut/
+raw Arc/COW bypass was added. Finding no blockers in static review is not a compile or run guarantee.
 
-제품의 현재 queue_capacity/completion_capacity는 count 선언이고 byte/retained/receipt 예산을
-대체하지 못한다. 계약 소유 문서에 숫자/기본값/미선언 처리 방침이 정해져 있지 않아, 행 수·queue count로
-임의 상한을 만들지 않았다. 이것을 제품 ResourceBudget 완료 또는 owned 성공 연결이라고 쓰지 않는다.
-다음 실행 순서는 로드맵만 소유한다. 유지할 소스·필수 회귀·소유 문서를 전부 WIP로 남기고 생성물은
-기존 ignore에 둔다. C++/모델/GPU/원격 실행·push·성능/최종 다중 컴퓨터 승격은 이번 범위에 없다.
+The product's current queue_capacity/completion_capacity are count declarations and cannot replace a byte/retained/receipt budget.
+The contract-owning documents do not define numbers, defaults or a policy for undeclared cases, so no arbitrary bound was made from row counts or queue counts.
+This is not written up as product ResourceBudget completion or owned success wiring.
+The next run order is owned only by the roadmap. The sources to keep, required regressions and ownership documents all remain as WIP, and generated artifacts stay in
+the existing ignore. C++/model/GPU/remote runs, push, and performance / final multi-computer promotion are outside this scope.
 
-## 2026-09-07 중단 기록 — 새 검증 없이 현황 문서화
+## 2026-09-07 stop record — documenting the current state without new verification
 
-사용자가 구현 전진을 중단하고 확실한 진전/남은 일 정리를 요청했다. 이후에는 문서만 갱신하며
-새 소스 수정·컴파일·시험·변이·배포·실기를 진행하지 않는다. 현재 요약과 재개 조건의 소유자는
-[로드맵 §0](../../../../../../../docs/distributed-batching-roadmap.md#current-status)이다.
+The user asked to stop advancing the implementation and to summarize the verified progress and the remaining work. From here on only documents are updated,
+with no new source edits, compiles, tests, mutations, deploys or real-hardware runs. The owner of the current summary and the resume conditions is
+[roadmap §0](../../../../../../../docs/distributed-batching-roadmap.md#current-status).
 
-### 다시 대조한 실제 자료
+### Actual material rechecked
 
-- Git HEAD `6fe10eb104b783f6ea5cacbc2e549a0a7e504677`; RED 보존 `393a6c23e` 뒤 WIP7개.
-  이 구간 `git diff --stat 393a6c23e..6fe10eb10`은55파일 +7589/-709이며 실행된 성과량이 아니다.
-- `target/capacity-slice-20260907-{09,12,13}/workspace-result.json`을 다시 읽었다.
-  앞 둘은 각각1253/0/7, 마지막은1254/1/7·exit101이다. 다른 봉인의 결과를 합산하지 않는다.
-- 실행13 로그에서 T10/T11/T12·실제 simulator malformed arrival·genuine ACK 및 speculative
-  소비 시험의 통과를 대조했다. 이들은 당시 정합성 진전이며 현재 WIP의 검증은 아니다.
-- `target/ack-service-mutations-20260907-01/verification.json`은25시험 baseline/restored25/0,
-  ACK 서비스 제거20/5, 나머지4변이 각각24/1과 실제 재컴파일을 기록한다. 이번에 재실행하지 않았다.
-- 실행13의 cap1 마지막 정상 진행만 실패했다. cap8과 외부 C1~C6 6개 복구 후14입력·6결과·
-  SESSION_READY8개·native 정산 oracle 통과를 정상 진행 성공으로 바꾸지 않는다.
+- Git HEAD `6fe10eb104b783f6ea5cacbc2e549a0a7e504677`; 7 WIP commits after the RED-preserving `393a6c23e`.
+  For this range, `git diff --stat 393a6c23e..6fe10eb10` shows 55 files +7589/-709; this is not an amount of executed results.
+- `target/capacity-slice-20260907-{09,12,13}/workspace-result.json` was reread.
+  The first two are 1253/0/7 each, and the last is 1254/1/7 with exit101. Results from different seals are not summed.
+- The run13 log was checked for passes of T10/T11/T12, the real simulator malformed arrival, the genuine ACK and speculative
+  consumer tests. These are correctness progress at that time, not verification of the current WIP.
+- `target/ack-service-mutations-20260907-01/verification.json` records the 25-test baseline/restored 25/0,
+  ACK service removed 20/5, the other 4 mutations 24/1 each, and actual recompiles. It was not rerun this time.
+- In run13, only the last normal-progress check of cap1 failed. cap8, and passing the 14-input, 6-result,
+  8 SESSION_READY and native settlement oracles after the external recovery of the 6 events C1~C6, are not turned into a normal-progress success.
 
-### 중단 전에 작성한 독립 completion 후보 — 전부 미검증
+### Independent completion candidate written before the stop — all unverified
 
-실제 수정 후보는 `EventNode::forward_independent_front`,
+The actual fix candidates are `EventNode::forward_independent_front`,
 `EventBroker::{reserve_completion,dispatch_completion}`, `EventLedger::inspect_completion_header`,
-`NodeAdapter::{peek_completion,try_take_completion_matching}`와 mailbox/Llama 위임이다.
-다른 source/correlation의 ordinary front에 실제 목적지 슬롯을 확보한 뒤 원본을 이동시키고,
-같은 순서 영역·Full·바뀐 front는 유지한다. exact receipt pin과 terminal 세 원본 반환을 포함한다.
-이 정적 설계는 새 큐 한도/SESSION 전용 규칙/전체 owned·byte 보장과 다르다.
+`NodeAdapter::{peek_completion,try_take_completion_matching}`, and the mailbox/Llama delegation.
+For an ordinary front with a different source/correlation, the real destination slot is secured and then the original is moved;
+the same ordering domain, Full and a changed front are kept as-is. This includes the exact receipt pin and returning the three originals at terminal.
+This static design is different from a new queue limit, a SESSION-only rule, or a full owned/byte guarantee.
 
-작성한 기본 회귀는 broker12개, mailbox4개, EventNode4개다. actor wrapper에도 실제 API를 연결했고
-head를 poll하지 않은 상태의 capacity0·genuine RELEASED pending identity와 C1의 실제 OUTER 도착을
-동시에 요구하는 예방 witness를 추가했다. 이는 **도착을 검사할 코드**이지 도착 관측 결과가 아니다.
-기존cap1/cap8·14입력/6결과/8응답·정상 진행/외부 복구 분리·timeout 구분은 유지 대상이다.
+The default regressions written are 12 for the broker, 4 for the mailbox and 4 for EventNode. The real API was also wired into the actor wrapper, and
+a preventive witness was added that requires, at the same time, capacity0 while head has not been polled, the genuine RELEASED pending identity, and the real OUTER arrival of C1.
+This is **code that will check arrival**, not an observed arrival result.
+The existing cap1/cap8, 14 inputs/6 results/8 responses, the separation of normal progress from external recovery, and the timeout distinctions are to be kept.
 
-예정했던 독립 진행 제거·동일 순서 검사 제거·front 일치 검사 제거 변이는 실행하지 않았다.
-새 후보의 compile/전체 통과/actor GREEN/소스·EXE 봉인은 없다. 검증 예산은2회 사용·1회 미사용이며
-이번 문서화 때문에 재시작하거나 소비하지 않는다. root와 정적 검토자 모두 추가 실행을 중단했다.
+The planned mutations — removing independent progress, removing the same-order check, removing the front-match check — were not run.
+There is no compile, full pass, actor GREEN or source/EXE seal for the new candidate. The verification budget is 2 rounds used / 1 unused, and
+it is not restarted or consumed because of this documentation. Both root and the static reviewers stopped further runs.
 
-### 보존의 의미
+### What preservation means
 
-보존할 것은 이미 작성한 운영 후보·필수 회귀·이 문서를 포함한 소유 문서다. 보존 커밋은
-**미검증 중단 스냅샷**이며 기능 완료 커밋이 아니다. 구현 중단 후 코드 기대값/용량/입력을 바꾸지
-않는다. 생성 소스 사본·로그·EXE·모델은 기존 ignore 경로에 유지하며 Git에 추가하지 않는다.
-로컬 원문을 다른 머신에서 재열람할 장기 보관은 계속 미충족이다. 이번에는 외부 업로드/push도 없다.
+What is preserved is the production candidate already written, the required regressions, and the ownership documents including this one. The preservation commit is
+an **unverified stop snapshot**, not a feature completion commit. After the implementation stop, code expectations, capacities and inputs are not
+changed. Generated source copies, logs, EXEs and models stay in the existing ignored paths and are not added to Git.
+Long-term retention that would let the local raw material be re-inspected on another machine is still not met. There was no external upload or push this time either.

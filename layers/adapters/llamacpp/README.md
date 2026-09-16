@@ -1,10 +1,10 @@
 # llama.cpp, where it is llama.cpp's alone
 
-현재 native/llama/backend의 책임과 잦은 upstream 변경을 흡수할 강제 경계는
-[계층 격리 계약](../../../docs/layer-isolation-contract.md)을 따른다.
+The current native/llama/backend responsibilities, and the enforced boundary that absorbs frequent upstream changes,
+follow the [layer isolation contract](../../../docs/layer-isolation-contract.md).
 
-> 문서 지위 (2026-09-06): **구성요소 안내**. 해당 경로의 API·구조 안내다. 과거 service 경로와 현재 event 경로는 실제 호출자로 구분한다.
-> 현재 목표·상태·순서는 [실행 로드맵](../../../docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](../../../docs/document-map.md)를 따른다.
+> Document status (2026-09-06): **Component guide**. This is an API and structure guide for this path. The legacy service path and the current event path are distinguished by their actual callers.
+> Current goals, status and ordering follow the [execution roadmap](../../../docs/distributed-batching-roadmap.md); document authority and reading paths follow the [document map](../../../docs/document-map.md).
 
 | Path | What it is |
 | --- | --- |

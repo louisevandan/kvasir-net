@@ -1,50 +1,50 @@
-> 역사 기록: 독립 저장소 시점의 요구·상태·측정이다. 현재 배치와 사용법은 [HF 안내](../../../README.md)를 따른다. 원본 전체는 이관 시 보존한 Git bundle에 있다.
+> Historical record: requirements, status and measurements from the time of the standalone repository. The current layout and usage follow the [HF guide](../../../README.md). The complete original is in the Git bundle preserved during the migration.
 
-# 목적과 범위
+# Purpose and scope
 
-지위: 사용자 요구와 프로젝트 범위. 구현 상태는 [로드맵](roadmap.md)이 소유합니다.
+Status: user requirements and project scope. Implementation status is owned by the [roadmap](roadmap.md).
 
-## 목적
+## Purpose
 
-특정 모델의 제조사 Python 실행 코드와 Hugging Face Transformers/PyTorch를 이용해,
-모델의 일부를 여러 물리 컴퓨터에 적재·실행하는 P4 구상 어댑터를 만듭니다.
-모델 정의와 지원 연산은 재사용하고 부분 적재·부분 forward·상태·통신 경계를 모델별로 구현합니다.
-모델마다 전용 Python 어댑터를 작성하는 것이 이 프로젝트의 존재 가치입니다.
-선택 모델의 실제 구조에 맞춰 loader·forward·cache/state·분할·양자화를 직접 구현합니다.
-모든 모델을 같은 인터페이스에 끼워 넣는 범용 처리기나 plugin framework는 개발 목표가 아닙니다.
-제조사 코드와 검증된 연산 라이브러리는 재사용하며 행렬곱 커널을 전부 새로 작성할 필요는 없습니다.
+Using a specific model's vendor Python execution code and Hugging Face Transformers/PyTorch,
+build a concrete P4 adapter that loads and runs parts of the model across multiple physical computers.
+Model definitions and supported operations are reused; partial loading, partial forward, state and the communication boundary are implemented per model.
+Writing a dedicated Python adapter for each model is the reason this project exists.
+The loader, forward, cache/state, partitioning and quantization are implemented directly to fit the actual structure of the selected model.
+A general-purpose processor or plugin framework that fits every model into the same interface is not a development goal.
+Vendor code and verified operator libraries are reused; there is no need to rewrite every matrix-multiplication kernel.
 
-사용자의 판단은 모델별 Python 코드에 대응한다면 P4 노드 분산을 구성할 수 있으며,
-실질적인 설계 쟁점은 양자화 가중치와 실행 방법이라는 것입니다. 본 계획은 그 전제를 따릅니다.
-제조사의 Python 예제가 있다는 사실만으로 양자화·분할·모든 장치 커널 호환성이 입증되지는 않습니다.
+The user's judgement is that P4 node distribution can be built as long as per-model Python code is supported,
+and that the real design issue is quantized weights and how to execute them. This plan follows that premise.
+The existence of a vendor Python example alone does not prove quantization, partitioning or kernel compatibility on every device.
 
-## 확정 범위
+## Confirmed scope
 
-- 독립 저장소: `F:\dev\p4hfadapter`.
-- 참고 저장소: `F:\dev\p4`. 문서·현재 실행 경로·중립 경계를 읽고 필요한 설계 근거를 얻습니다.
-- P4 공통 규격과 상위 노드 수명을 유지하고 모델별 의미는 새 구상 어댑터 안에 둡니다.
-- 향후 P4 최종 실행 파일이 새 어댑터 bridge를 포함하도록 별도 통합 작업을 합니다.
-- 사용자 후속 지시에 따라 이 저장소에서 독립 개발을 수행합니다. P4 파일은 수정·이동하지 않습니다.
+- Standalone repository: `F:\dev\p4hfadapter`.
+- Reference repository: `F:\dev\p4`. Read its documents, current execution paths and neutral boundaries to obtain the necessary design grounds.
+- Keep the P4 common specification and the upper-level node lifetime, and put model-specific semantics inside the new concrete adapter.
+- Later, a separate integration task will make the final P4 executable include the new adapter bridge.
+- Following the user's later instruction, independent development is done in this repository. P4 files are not modified or moved.
 
-## 제안하는 첫 기능 범위
+## Proposed first feature scope
 
-- 하나의 정확한 모델 revision, 명시된 장치/OS 조합, 수동으로 검증한 연속 레이어 분할.
-- 가중치 4비트 후보, 경계 텐서 FP16/BF16, KV/recurrent 상태는 모델이 요구하는 검증된 정밀도.
-- prefill·decode·EOS·출력 제한·취소·상태 반환·노드 재사용.
-- 독립 기준 실행 → 분할 정확성 → 실제 여러 컴퓨터 → 연속 웨이브 순서의 증명.
+- One exact model revision, a specified device/OS combination, and a manually verified contiguous layer split.
+- 4-bit weight candidates, FP16/BF16 boundary tensors, and KV/recurrent state at the verified precision the model requires.
+- Prefill, decode, EOS, output limit, cancellation, state return, node reuse.
+- Proof in the order: independent reference run → partition correctness → real multiple computers → continuous waves.
 
-4비트는 제안이며 사용자 확정값이 아닙니다. 이미 제공되는 양자화 가중치, 품질과 실제 커널에 따라
-8비트·BF16·혼합 정밀도가 더 적합할 수 있습니다. 미결정 목록은 [결정 기록](decisions.md)을 따릅니다.
+4-bit is a proposal, not a value confirmed by the user. Depending on already-available quantized weights, quality and the actual kernels,
+8-bit, BF16 or mixed precision may fit better. Open items follow the [decision record](decisions.md).
 
-## 별도 후속 범위
+## Separate follow-up scope
 
-모든 HF 모델 자동 지원, 자동 모델 탐색·배치, 호스트 간 TP/EP, KV 저장·복원, KV/통신 양자화,
-MTP·speculative decoding, 멀티모달, 인증된 외부 서비스, 재시작 후 내구 복구는 첫 단계에 자동 포함하지 않습니다.
-선택 모델의 필수 연산이 멀티모달 또는 특수 상태라면 모델 범위 자체를 먼저 명시합니다.
+Automatic support for every HF model, automatic model discovery and placement, cross-host TP/EP, KV save/restore, KV/communication quantization,
+MTP/speculative decoding, multimodal, authenticated external services and durable recovery after restart are not automatically included in the first phase.
+If the selected model's required operations are multimodal or involve special state, the model scope itself is specified first.
 
-## 성공의 뜻
+## What success means
 
-Python으로 한 번 토큰을 생성하거나 여러 프로세스가 켜진 것은 제품 완료가 아닙니다.
-정확한 모델/양자화 아티팩트에서 다중 물리 컴퓨터의 정상 응답·연속 요청·취소/실패 후 회수와 재수용을
-증명하고, 고정된 품질/SLO 조건에서 유효 생성 TPS·TTFT·ITL·메모리를 보고해야 합니다.
-llama.cpp 대비 우월성은 동등 조건의 실제 비교가 있기 전에는 주장하지 않습니다.
+Generating a token once in Python, or having several processes running, is not product completion.
+With the exact model/quantization artifact, the work must prove normal responses, continuous requests, reclaim after cancellation/failure, and re-acceptance
+across multiple physical computers, and must report useful generation TPS, TTFT, ITL and memory under pinned quality/SLO conditions.
+Superiority over llama.cpp is not claimed until a real comparison under equal conditions exists.

@@ -23,8 +23,10 @@ after the integrity stages (I1–I4) pass.
 
 ## Documentation
 
-Most design notes, plans and evidence reports are written in Korean. English
-entry points: [overview](docs/overview.md), [architecture](docs/architecture.md),
+All design notes, plans and evidence reports on this branch are in English
+(translated from the team's Korean originals). Quoted model prompts and outputs
+keep their original Korean text next to an English rendering. Start with the
+[overview](docs/overview.md), [architecture](docs/architecture.md),
 [wire API](docs/api.md), [implementation map](docs/implementation.md) and the
 sections below.
 
@@ -38,35 +40,35 @@ Change Date stated in [LICENSE](LICENSE). Third-party notices: [NOTICE](NOTICE).
 
 ---
 
-## 개발 문서 (Development notes)
+## Development notes
 
-## 현재 개발 목표와 새 세션 시작점
+## Current development goal and new-session starting point
 
-[Fleet 및 최신 upstream 통합 증거](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)
-[MiniMax M3 dense GGUF 4-stage 적재 증거](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-13-minimax-m3-dense-load.md)
+[Fleet and latest upstream integration evidence](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md)
+[MiniMax M3 dense GGUF 4-stage load evidence](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-13-minimax-m3-dense-load.md)
 
-**릴리즈:** [v0.9.0 릴리즈 노트](docs/release/v0.9.0.md) — 검증한 것의 봉인이며 §7 최종 체크리스트의 달성이 아니다.
+**Release:** [v0.9.0 release notes](docs/release/v0.9.0.md) — a seal of what was verified, not completion of the §7 final checklist.
 
-최우선 목표는 **초대형 모델을 여러 물리 컴퓨터의 분산 노드에서 실행하고,
-강한 연속 요청 웨이브에 정상 응답을 내면서 유효 생성 TPS와 GPU 활용을 최대화하는 것**이다.
-단위 시험·작은 모델·한 호스트의 여러 프로세스는 최종 성과 증명이 아니다.
+The top priority is **to run very large models on distributed nodes across several physical computers,
+return correct responses under strong waves of continuous requests, and maximize useful generation TPS and GPU utilization**.
+Unit tests, small models and several processes on one host are not proof of the final outcome.
 
-1. [새 세션 규칙](AGENTS.md)
-2. [현재 상태와 전체 실행 로드맵](docs/distributed-batching-roadmap.md)
-3. [결정론적 시험·실기 웨이브 수용 규약](docs/distributed-batching-verification.md)
-4. [P4·어댑터·llama.cpp 계층 격리 계약](docs/layer-isolation-contract.md)
-5. [전체 문서 안내도와 권위](docs/document-map.md)
+1. [New-session rules](AGENTS.md)
+2. [Current status and full execution roadmap](docs/distributed-batching-roadmap.md)
+3. [Deterministic testing and real-hardware wave acceptance protocol](docs/distributed-batching-verification.md)
+4. [P4 / adapter / llama.cpp layer isolation contract](docs/layer-isolation-contract.md)
+5. [Full document map and authority](docs/document-map.md)
 
-최초 감사 기준은 `a9e1967fc`다. **검증된 진전·미검증 변경·구현 중단 지점과 재개 조건**은
-[로드맵 맨 앞의 현재 상태](docs/distributed-batching-roadmap.md#current-status)를 확인한다. 이 색인에 상태표를 복제하지 않는다.
-과거 U/P 단계표·성공 수치·Chain/Hop 설명을 현재 구현의 완료 증거로 사용하지 않는다.
+The initial audit baseline is `a9e1967fc`. For **verified progress, unverified changes, implementation stop points and resume conditions**, see
+[the current status at the top of the roadmap](docs/distributed-batching-roadmap.md#current-status). This index does not duplicate the status table.
+Do not use the old U/P stage tables, success figures or Chain/Hop descriptions as evidence that the current implementation is complete.
 
 The communication layer for distributed inference. Agents carry work between
 machines; a concrete adapter runs it.
 
-llama.cpp 어댑터와 CUDA·CPU·Metal backend는 같은 추상층이 아니다.
-각 층의 책임과 업데이트 수정 허용 범위는 [계층 격리 계약](docs/layer-isolation-contract.md)이 소유하며,
-include 수뿐 아니라 상태 변경 권한·public 타입·간접 링크·codec·의미 회귀로 검증한다.
+The llama.cpp adapter and the CUDA, CPU and Metal backends are not the same abstraction layer.
+The [layer isolation contract](docs/layer-isolation-contract.md) owns each layer's responsibilities and the scope of changes allowed during updates.
+It is verified not only by include counts but also by state-mutation authority, public types, indirect linking, codecs and semantic regressions.
 
 One process type: the agent. There is no controller and no node process — a
 node lives inside an agent, and an agent reaching another agent is the same
@@ -131,16 +133,16 @@ comparison path. Its queue statistics are not proof of the default event path.
 
 | Goal | File |
 | --- | --- |
-| 현재 목표·감사 상태·개발 순서의 단독 소유 | [docs/distributed-batching-roadmap.md](docs/distributed-batching-roadmap.md) |
-| 개발 계획·외부 HF 어댑터 수용 우선·릴리즈 인수인계·배치/모델/가속 투자 판단 | [docs/external-analysis-improvement-plan.md](docs/external-analysis-improvement-plan.md) |
-| MI250·Hy3 배치 진단·구현·동시 실기 선별 | [통합 진단](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md) |
-| 시험 제약·mutation·다중 머신 강한 웨이브·정상 응답·성능 승인 | [docs/distributed-batching-verification.md](docs/distributed-batching-verification.md) |
-| P4/어댑터 층별 책임·native 경계·잦은 llama.cpp 업데이트 충격 흡수 | [docs/layer-isolation-contract.md](docs/layer-isolation-contract.md) |
-| 모든 문서의 지위·계약 소유·새 세션 읽기 순서 | [docs/document-map.md](docs/document-map.md) |
-| LOAD·UNLOAD로 노드 생성·제거 통합 — 사용자 합의·변경 경로·검증·새 세션 구현계획 | [docs/node-load-lifecycle-plan.md](docs/node-load-lifecycle-plan.md) |
-| 반복 실패의 원인·자동 차단·다음 단계 재사용 장부 | [docs/deterministic-execution-register.md](docs/deterministic-execution-register.md) |
-| 마이크로 배치 제안과 실제 배처의 코드 대조·개선 후보·로컬 재현 | [docs/batching-code-review.md](docs/batching-code-review.md) |
-| Studio 관측 요구 수용안·추가 트래픽/성능 예산·상시 집계와 선택 진단 | [docs/inference-observability-proposal.md](docs/inference-observability-proposal.md) |
+| Sole owner of the current goal, audit status and development order | [docs/distributed-batching-roadmap.md](docs/distributed-batching-roadmap.md) |
+| Development plan, external HF adapter acceptance priority, release handoff, batching/model/acceleration investment decisions | [docs/external-analysis-improvement-plan.md](docs/external-analysis-improvement-plan.md) |
+| MI250 and Hy3 batching diagnosis, implementation, concurrent real-hardware screening | [Integrated diagnosis](layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md) |
+| Test constraints, mutation, strong multi-machine waves, correct responses, performance approval | [docs/distributed-batching-verification.md](docs/distributed-batching-verification.md) |
+| P4/adapter per-layer responsibilities, native boundary, absorbing the impact of frequent llama.cpp updates | [docs/layer-isolation-contract.md](docs/layer-isolation-contract.md) |
+| Status of every document, contract ownership, new-session reading order | [docs/document-map.md](docs/document-map.md) |
+| Unifying node creation and removal under LOAD and UNLOAD — user agreement, change paths, verification, new-session implementation plan | [docs/node-load-lifecycle-plan.md](docs/node-load-lifecycle-plan.md) |
+| Ledger of repeated-failure root causes, automatic blocks and reuse by later stages | [docs/deterministic-execution-register.md](docs/deterministic-execution-register.md) |
+| Code comparison of the micro-batching proposal with the actual batcher, improvement candidates, local reproduction | [docs/batching-code-review.md](docs/batching-code-review.md) |
+| Proposed acceptance of Studio observability requirements, extra traffic/performance budget, always-on aggregation and optional diagnostics | [docs/inference-observability-proposal.md](docs/inference-observability-proposal.md) |
 | What the layer is and why it is shaped this way | [docs/overview.md](docs/overview.md) |
 | Every crate, what it holds, and what is not built | [docs/implementation.md](docs/implementation.md) |
 | The wire and the message vocabulary | [docs/api.md](docs/api.md) |
@@ -167,133 +169,133 @@ comparison path. Its queue statistics are not proof of the default event path.
 | Measured behaviour of the backend below | [docs/runtime-evidence.md](docs/runtime-evidence.md) |
 | The revision that produced all this | [P4_REVISION_PLAN.md](P4_REVISION_PLAN.md) |
 
-내부 HF 빌드·실행 및 양쪽 어댑터 수용: [HF 통합 안내](docs/hf-integration.md).
+Internal HF build and run, and acceptance on both adapters: [HF integration guide](docs/hf-integration.md).
 
-Release A: [단계별 시험 계획](tests/plans/release-a-20260914.md) · [A-RED/trace 감사](tests/reports/release-a/20260914_040306.md).
-Corpus와 명세 검증: [준비 결과](tests/reports/release-a/20260914_041920.md).
-Native 준비와 양쪽 어댑터: [회귀 결과](tests/reports/release-a/20260914_043652.md).
-Native 비용 관측: [CPU 실제 경로와 제거 변이](tests/reports/release-a/20260914_050400.md).
-현재 pin과 배포 후보: [token·CUDA/Metal·양쪽 어댑터·비용 귀속](tests/reports/release-a/20260914_054100.md).
-Fleet 사전 검사: [7-host 연결·native PLAN6개·모델 접근 차단](tests/reports/release-a/20260914_062025.md).
-앱 실행 환경 재확인: [모델 접근·native PLAN8/8](tests/reports/release-a/20260914_102600.md).
-후속 실기 준비: [기존 fleet 노드 회수](tests/reports/release-a/20260915_005456.md).
-현재 fleet 재개: [재빌드·양쪽 어댑터·550B arm](tests/reports/release-a/20260915_011200.md).
-동시 HF 작업 인수: [로딩 계획기 재현 계획](layers/adapters/hf/tests/plans/loading-planner-20260915.md) · [검증](layers/adapters/hf/tests/reports/loading-planner/20260915_013600.md).
+Release A: [staged test plan](tests/plans/release-a-20260914.md) · [A-RED/trace audit](tests/reports/release-a/20260914_040306.md).
+Corpus and spec validation: [preparation results](tests/reports/release-a/20260914_041920.md).
+Native preparation and both adapters: [regression results](tests/reports/release-a/20260914_043652.md).
+Native cost observation: [actual CPU path and removal mutation](tests/reports/release-a/20260914_050400.md).
+Current pin and deployment candidate: [token, CUDA/Metal, both adapters, cost attribution](tests/reports/release-a/20260914_054100.md).
+Fleet preflight: [7-host connectivity, 6 native PLANs, model access blocked](tests/reports/release-a/20260914_062025.md).
+App runtime environment recheck: [model access, native PLAN 8/8](tests/reports/release-a/20260914_102600.md).
+Follow-up real-hardware run preparation: [reclaiming existing fleet nodes](tests/reports/release-a/20260915_005456.md).
+Current fleet resumption: [rebuild, both adapters, 550B arm](tests/reports/release-a/20260915_011200.md).
+Taking over concurrent HF work: [loading planner reproduction plan](layers/adapters/hf/tests/plans/loading-planner-20260915.md) · [verification](layers/adapters/hf/tests/reports/loading-planner/20260915_013600.md).
 
-## HF 어댑터 문서
+## HF adapter documents
 
-| 문서 | 지위 |
+| Document | Status |
 | --- | --- |
-| [layers/adapters/hf/adapter/docs/api.md](layers/adapters/hf/adapter/docs/api.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/adapter/docs/architecture.md](layers/adapters/hf/adapter/docs/architecture.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/adapter/docs/constraints.md](layers/adapters/hf/adapter/docs/constraints.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/adapter/docs/internals.md](layers/adapters/hf/adapter/docs/internals.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/adapter/docs/overview.md](layers/adapters/hf/adapter/docs/overview.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/adapter/docs/testing.md](layers/adapters/hf/adapter/docs/testing.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/adapter/docs/usage.md](layers/adapters/hf/adapter/docs/usage.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/adapter/README.md](layers/adapters/hf/adapter/README.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/AGENTS.md](layers/adapters/hf/AGENTS.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/api.md](layers/adapters/hf/docs/api.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/architecture.md](layers/adapters/hf/docs/architecture.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/constraints.md](layers/adapters/hf/docs/constraints.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/history/initial/api.md](layers/adapters/hf/docs/history/initial/api.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/architecture.md](layers/adapters/hf/docs/history/initial/architecture.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/bootstrap-evidence.md](layers/adapters/hf/docs/history/initial/bootstrap-evidence.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/constraints.md](layers/adapters/hf/docs/history/initial/constraints.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/decisions.md](layers/adapters/hf/docs/history/initial/decisions.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/development-plan.md](layers/adapters/hf/docs/history/initial/development-plan.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/HANDOFF.md](layers/adapters/hf/docs/history/initial/HANDOFF.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/internals.md](layers/adapters/hf/docs/history/initial/internals.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/overview.md](layers/adapters/hf/docs/history/initial/overview.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/references.md](layers/adapters/hf/docs/history/initial/references.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/roadmap.md](layers/adapters/hf/docs/history/initial/roadmap.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/testing.md](layers/adapters/hf/docs/history/initial/testing.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/history/initial/usage.md](layers/adapters/hf/docs/history/initial/usage.md) | HF 역사 기록 |
-| [layers/adapters/hf/docs/integration/README.md](layers/adapters/hf/docs/integration/README.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/internals.md](layers/adapters/hf/docs/internals.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/migration/README.md](layers/adapters/hf/docs/migration/README.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md](layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/overview.md](layers/adapters/hf/docs/overview.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/quantization.md](layers/adapters/hf/docs/quantization.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/structure/README.md](layers/adapters/hf/docs/structure/README.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/testing.md](layers/adapters/hf/docs/testing.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/transport/framing/README.md](layers/adapters/hf/docs/transport/framing/README.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/docs/usage.md](layers/adapters/hf/docs/usage.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/README.md](layers/adapters/hf/README.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/tests/plans/framing-20260913.md](layers/adapters/hf/tests/plans/framing-20260913.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/tests/plans/migration-20260914.md](layers/adapters/hf/tests/plans/migration-20260914.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/tests/plans/p4-integration-20260914.md](layers/adapters/hf/tests/plans/p4-integration-20260914.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/tests/plans/qwen3_5_0_8b-20260913.md](layers/adapters/hf/tests/plans/qwen3_5_0_8b-20260913.md) | HF 구성·계약·검증 |
-| [layers/adapters/hf/tests/reports/framing/20260913_174516.md](layers/adapters/hf/tests/reports/framing/20260913_174516.md) | HF 역사 기록 |
-| [layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md](layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md) | HF 역사 기록 |
-| [layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md](layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md) | HF 역사 기록 |
-| [layers/adapters/hf/tests/reports/migration/20260914_120000.md](layers/adapters/hf/tests/reports/migration/20260914_120000.md) | HF 내부 통합 검증·원본 정리 결과 |
+| [layers/adapters/hf/adapter/docs/api.md](layers/adapters/hf/adapter/docs/api.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/adapter/docs/architecture.md](layers/adapters/hf/adapter/docs/architecture.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/adapter/docs/constraints.md](layers/adapters/hf/adapter/docs/constraints.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/adapter/docs/internals.md](layers/adapters/hf/adapter/docs/internals.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/adapter/docs/overview.md](layers/adapters/hf/adapter/docs/overview.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/adapter/docs/testing.md](layers/adapters/hf/adapter/docs/testing.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/adapter/docs/usage.md](layers/adapters/hf/adapter/docs/usage.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/adapter/README.md](layers/adapters/hf/adapter/README.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/AGENTS.md](layers/adapters/hf/AGENTS.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/api.md](layers/adapters/hf/docs/api.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/architecture.md](layers/adapters/hf/docs/architecture.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/constraints.md](layers/adapters/hf/docs/constraints.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/history/initial/api.md](layers/adapters/hf/docs/history/initial/api.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/architecture.md](layers/adapters/hf/docs/history/initial/architecture.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/bootstrap-evidence.md](layers/adapters/hf/docs/history/initial/bootstrap-evidence.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/constraints.md](layers/adapters/hf/docs/history/initial/constraints.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/decisions.md](layers/adapters/hf/docs/history/initial/decisions.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/development-plan.md](layers/adapters/hf/docs/history/initial/development-plan.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/HANDOFF.md](layers/adapters/hf/docs/history/initial/HANDOFF.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/internals.md](layers/adapters/hf/docs/history/initial/internals.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/overview.md](layers/adapters/hf/docs/history/initial/overview.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/references.md](layers/adapters/hf/docs/history/initial/references.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/roadmap.md](layers/adapters/hf/docs/history/initial/roadmap.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/testing.md](layers/adapters/hf/docs/history/initial/testing.md) | HF historical record |
+| [layers/adapters/hf/docs/history/initial/usage.md](layers/adapters/hf/docs/history/initial/usage.md) | HF historical record |
+| [layers/adapters/hf/docs/integration/README.md](layers/adapters/hf/docs/integration/README.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/internals.md](layers/adapters/hf/docs/internals.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/migration/README.md](layers/adapters/hf/docs/migration/README.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md](layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/overview.md](layers/adapters/hf/docs/overview.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/quantization.md](layers/adapters/hf/docs/quantization.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/structure/README.md](layers/adapters/hf/docs/structure/README.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/testing.md](layers/adapters/hf/docs/testing.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/transport/framing/README.md](layers/adapters/hf/docs/transport/framing/README.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/docs/usage.md](layers/adapters/hf/docs/usage.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/README.md](layers/adapters/hf/README.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/tests/plans/framing-20260913.md](layers/adapters/hf/tests/plans/framing-20260913.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/tests/plans/migration-20260914.md](layers/adapters/hf/tests/plans/migration-20260914.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/tests/plans/p4-integration-20260914.md](layers/adapters/hf/tests/plans/p4-integration-20260914.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/tests/plans/qwen3_5_0_8b-20260913.md](layers/adapters/hf/tests/plans/qwen3_5_0_8b-20260913.md) | HF configuration, contract, verification |
+| [layers/adapters/hf/tests/reports/framing/20260913_174516.md](layers/adapters/hf/tests/reports/framing/20260913_174516.md) | HF historical record |
+| [layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md](layers/adapters/hf/tests/reports/p4-integration/20260914_023000.md) | HF historical record |
+| [layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md](layers/adapters/hf/tests/reports/qwen3_5_0_8b/20260913_220709.md) | HF historical record |
+| [layers/adapters/hf/tests/reports/migration/20260914_120000.md](layers/adapters/hf/tests/reports/migration/20260914_120000.md) | HF internal integration verification and source cleanup results |
 
-연결 회수 WIP: [검증 계획](tests/plans/release-a-transport-20260915.md) · [실패3회 중단 보고](tests/reports/release-a/20260915_044735.md).
+Connection reclaim WIP: [verification plan](tests/plans/release-a-transport-20260915.md) · [stop report after 3 failures](tests/reports/release-a/20260915_044735.md).
 
-접수 에이전트 경유: [검증 계획](tests/plans/ingress-envelope-20260915.md) · [엔벨롭·양쪽 어댑터 검증](tests/reports/release-a/20260915_113754.md).
+Routing through the ingress agent: [verification plan](tests/plans/ingress-envelope-20260915.md) · [envelope and both-adapter verification](tests/reports/release-a/20260915_113754.md).
 
-의뢰 반환 문맥: [검증 계획](tests/plans/return-context-20260915.md).
-반환 문맥 구현 검증: [공통 계약·두 어댑터·독립 변이](tests/reports/release-a/20260915_121000.md).
+Commission return context: [verification plan](tests/plans/return-context-20260915.md).
+Return context implementation verification: [common contract, two adapters, independent mutation](tests/reports/release-a/20260915_121000.md).
 
-클러스터 반환 경로: [시험 계획](tests/plans/cluster-envelope-20260915.md) · [9대·MI250 SSH 검증](tests/reports/release-a/20260915_124433.md).
+Cluster return route: [test plan](tests/plans/cluster-envelope-20260915.md) · [9 hosts and MI250 SSH verification](tests/reports/release-a/20260915_124433.md).
 
-Release A 대상 변경: [Qwen122B 명세·corpus 준비](tests/reports/release-a/20260915_131432.md).
+Release A target change: [Qwen122B spec and corpus preparation](tests/reports/release-a/20260915_131432.md).
 
-Release A FINISH 재개: [결정론적 검토·전체 회귀·양쪽 어댑터](tests/reports/release-a/20260915_142237.md).
+Release A FINISH resumption: [deterministic review, full regression, both adapters](tests/reports/release-a/20260915_142237.md).
 
-Release A 전송 정산: [불명 결과·hop receipt·재연결 시험 계획](tests/plans/release-a-transport-reconciliation-20260915.md).
+Release A transport settlement: [test plan for unknown outcomes, hop receipts and reconnection](tests/plans/release-a-transport-reconciliation-20260915.md).
 
-Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](tests/reports/release-a/20260915_183158.md).
+Release A transport settlement acceptance: [R1–R9, physical receipt recovery, final both-adapter run](tests/reports/release-a/20260915_183158.md).
 
-Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 거부](tests/reports/release-a/20260915_190631.md).
+Release A Qwen122B A-PLAN: [native PLAN on 3 physical hosts, shared pool, rejection before deployment](tests/reports/release-a/20260915_190631.md).
 
-Release A Qwen122B A-LOAD: [3물리 host 실제 allocation·회수](tests/reports/release-a/20260915_195106.md).
+Release A Qwen122B A-LOAD: [actual allocation and reclaim on 3 physical hosts](tests/reports/release-a/20260915_195106.md).
 
-Release A A-BYTES: [native result·completion·receipt·edge 정수 byte 시험 계획](tests/plans/release-a-bytes-20260915.md).
+Release A A-BYTES: [test plan for exact integer bytes of native result, completion, receipt and edge](tests/plans/release-a-bytes-20260915.md).
 
-Release A A-BYTES B0: [Qwen122B physical result 상한·실제 LOAD·제거 변이](tests/reports/release-a/20260915_211000.md).
+Release A A-BYTES B0: [Qwen122B physical result upper bound, actual LOAD, removal mutation](tests/reports/release-a/20260915_211000.md).
 
-Release A A-BYTES B1: [versioned LOAD profile·실제 잔여 용량·Qwen122B LOAD/회수](tests/reports/release-a/20260915_222346.md).
+Release A A-BYTES B1: [versioned LOAD profile, actual remaining capacity, Qwen122B LOAD/reclaim](tests/reports/release-a/20260915_222346.md).
 
-Release A A-BYTES B2: [native 전 completion group 예약·거부 무효과·독립 변이](tests/reports/release-a/20260915_232600.md).
+Release A A-BYTES B2: [completion group reservation before native, side-effect-free rejection, independent mutation](tests/reports/release-a/20260915_232600.md).
 
-Release A A-BYTES B3/B4: [보존 수명 분리·실제 경계·독립 변이·로컬 전원 사고](tests/reports/release-a/20260915_235900.md).
+Release A A-BYTES B3/B4: [separated retention lifetimes, actual boundary, independent mutation, local power incident](tests/reports/release-a/20260915_235900.md).
 
-Release A A-BYTES B5: [양쪽 어댑터 회귀·Qwen122B 3-host 정상 요청·회수·원격 사전검사](tests/reports/release-a/20260916_013500.md).
+Release A A-BYTES B5: [both-adapter regression, Qwen122B 3-host correct request, reclaim, remote preflight](tests/reports/release-a/20260916_013500.md).
 
-노드 LOAD·UNLOAD 수명 M0: [현재 호출 경로·NL01–NL14 소유권 매핑](tests/reports/node-load-lifecycle/20260916_014500.md).
-M1: [결정론적 실행계획](tests/plans/node-load-lifecycle-m1-20260916.md).
-Typed adapter completion: [원격 baseline·독립 변이 보고](tests/reports/node-load-lifecycle/20260916_015702.md).
-M1 supervisor 완료: [실제 TCP LOAD·UNLOAD·회수 보존·workspace off/on·제거 변이](tests/reports/node-load-lifecycle/20260916_023059.md).
-M2: [결정론적 실행계획](tests/plans/node-load-lifecycle-m2-20260916.md), [llama.cpp/HF 실제 worker·포화·cleanup·독립 변이 보고](tests/reports/node-load-lifecycle/20260916_032621.md).
-M3: [Rust/HF OUTER 이관·legacy CREATE/DELETE 제거 결정론적 실행계획](tests/plans/node-load-lifecycle-m3-20260916.md), [실제 Agent/HF child·workspace·독립 변이 검증 보고](tests/reports/node-load-lifecycle/20260916_041848.md).
-M4: [실제 llama.cpp/HF 생성·취소·해제·재적재 결정론적 실행계획](tests/plans/node-load-lifecycle-m4-20260916.md), [두 adapter 실제 모델·전체 회귀·독립 변이 수용 보고](tests/reports/node-load-lifecycle/20260916_064306.md).
+Node LOAD/UNLOAD lifecycle M0: [current call paths and NL01–NL14 ownership mapping](tests/reports/node-load-lifecycle/20260916_014500.md).
+M1: [deterministic execution plan](tests/plans/node-load-lifecycle-m1-20260916.md).
+Typed adapter completion: [remote baseline and independent mutation report](tests/reports/node-load-lifecycle/20260916_015702.md).
+M1 supervisor complete: [real TCP LOAD, UNLOAD, reclaim retention, workspace off/on, removal mutation](tests/reports/node-load-lifecycle/20260916_023059.md).
+M2: [deterministic execution plan](tests/plans/node-load-lifecycle-m2-20260916.md), [llama.cpp/HF real worker, saturation, cleanup and independent mutation report](tests/reports/node-load-lifecycle/20260916_032621.md).
+M3: [deterministic execution plan for the Rust/HF OUTER migration and legacy CREATE/DELETE removal](tests/plans/node-load-lifecycle-m3-20260916.md), [real Agent/HF child, workspace and independent mutation verification report](tests/reports/node-load-lifecycle/20260916_041848.md).
+M4: [deterministic execution plan for real llama.cpp/HF generation, cancellation, release and reload](tests/plans/node-load-lifecycle-m4-20260916.md), [acceptance report: real models on both adapters, full regression, independent mutation](tests/reports/node-load-lifecycle/20260916_064306.md).
 
-Release A Qwen122B H0 v3: [봉인 benchmark-spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v3.json) · [H1 latency 판정 보강·2차 INVALID·정상 회수 보고](tests/reports/release-a/20260916_104300.md). [H0 v2 spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)과 [보고](tests/reports/release-a/20260916_093739.md), [H0 v1 spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)과 [보고](tests/reports/release-a/20260916_072100.md)는 역사 증거다.
+Release A Qwen122B H0 v3: [sealed benchmark-spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v3.json) · [report: stronger H1 latency verdict, second INVALID, clean reclaim](tests/reports/release-a/20260916_104300.md). [H0 v2 spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json) and its [report](tests/reports/release-a/20260916_093739.md), and [H0 v1 spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json) and its [report](tests/reports/release-a/20260916_072100.md), are historical evidence.
 
-Release A Qwen122B H1 1차: [64건 동시 명세 RED·실패 recovery·closed-loop 교정 구현](tests/reports/release-a/20260916_084650.md).
+Release A Qwen122B H1 run 1: [64-request concurrent spec RED, failure recovery, closed-loop correction implementation](tests/reports/release-a/20260916_084650.md).
 
-Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVALID, 정상 UNLOAD·작업 자원 회수](tests/reports/release-a/20260916_104300.md).
+Release A Qwen122B H1 run 2: [INVALID for missing judge SLO and absent terminal artifact; clean UNLOAD and task resource reclaim](tests/reports/release-a/20260916_104300.md).
 
-Release A 무결성 우선 재개: [I0–I4 정밀 시험계획](tests/plans/release-a-integrity-first-20260916.md) · [실행 계약 v2](test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json). I0–I4 GREEN 전에는 성능 후보와 H5를 시작하지 않는다.
+Release A integrity-first resumption: [detailed I0–I4 test plan](tests/plans/release-a-integrity-first-20260916.md) · [execution contract v2](test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json). Do not start performance candidates or H5 before I0–I4 are GREEN.
 
-Release A 무결성 시험 계약: [14개 실기 arm·계약/판정 변이·로드맵 재조정 보고](tests/reports/release-a/20260916_131446.md).
+Release A integrity test contract: [report: 14 real-hardware arms, contract/verdict mutation, roadmap rebalancing](tests/reports/release-a/20260916_131446.md).
 
-Release A I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요청/배치/stage/GPU 판정](tests/reports/release-a/20260916_133038.md).
+Release A I0 raw execution contract: [sequential short/medium/long runs within a single LOAD; request/batch/stage/GPU verdicts](tests/reports/release-a/20260916_133038.md).
 
-Release A Qwen122B H0 v5: [결정론적 관측 장벽·절대 실행창·원시 GPU/자원 증거·세 원격 바이너리 봉인](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v5.json) · [검증 보고](tests/reports/release-a/20260916_143000.md). 역사 봉인이며 새 LOAD 권위가 아니다.
+Release A Qwen122B H0 v5: [deterministic observation barrier, absolute execution window, raw GPU/resource evidence, seal of three remote binaries](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v5.json) · [verification report](tests/reports/release-a/20260916_143000.md). This is a historical seal, not authority for a new LOAD.
 
-Release A I0 첫 실기 역사 증거: [정답 1/3 RED·단일 호스트 기준 역검증·당시 새 LOAD 차단](tests/reports/release-a/20260916_161600.md).
+Release A I0 first real-hardware run, historical evidence: [correct answers 1/3 RED, reverse check against the single-host baseline, new LOADs blocked at the time](tests/reports/release-a/20260916_161600.md).
 
-Release A I0 오답 원인 진단: [사전 봉인 관측·판정 계획](tests/plans/release-a-quality-cause-20260916.md).
+Release A I0 wrong-answer root-cause diagnosis: [pre-sealed observation and verdict plan](tests/plans/release-a-quality-cause-20260916.md).
 
-Release A I0 오답 원인 확정: [원격 6개 분리 진단·정확 사실 추출과 산술 실패·정상 회수](tests/reports/release-a/20260916_172000.md).
+Release A I0 wrong-answer root cause confirmed: [6 separated remote diagnostics, exact fact extraction versus arithmetic failure, clean reclaim](tests/reports/release-a/20260916_172000.md).
 
-Release A OUTER 오답 판정 경계: [JSON 오라클 결속·원격 회귀·제품 수정 미완](tests/reports/release-a/20260916_180500.md).
+Release A OUTER wrong-answer verdict boundary: [JSON oracle binding, remote regression, product fix incomplete](tests/reports/release-a/20260916_180500.md).
 
-과거 Qwen122B H0 v7/I0: [봉인 명세](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v7.json) · [3물리 host 단일 요청 정답 3/3·유효 TPS 정정·정상 회수 보고](tests/reports/release-a/20260916_204300.md). [H0 v6 과거 보고와 정정](tests/reports/release-a/20260916_195500.md).
+Past Qwen122B H0 v7/I0: [sealed spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v7.json) · [report: single-request correct answers 3/3 on 3 physical hosts, useful TPS correction, clean reclaim](tests/reports/release-a/20260916_204300.md). [H0 v6 past report and correction](tests/reports/release-a/20260916_195500.md).
 
-H0 v8/I1 사전계약: [봉인 명세](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v8.json) · [21개 비모델 게이트·64건 전체 경로·I0 재검증 전 보고](tests/reports/release-a/20260916_210000.md). I1 실기는 아직 미실행이다.
+H0 v8/I1 pre-run contract: [sealed spec](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v8.json) · [report: 21 non-model gates, full 64-request path, before I0 re-verification](tests/reports/release-a/20260916_210000.md). The I1 real-hardware run has not been run yet.
 
-현재 Qwen122B H0 v8/I0: [3물리 host 단일 요청 3/3·정상 회수·성능 계측 보고](tests/reports/release-a/20260916_213700.md). I1–I4 실기와 전체 무결성은 남아 있다.
+Current Qwen122B H0 v8/I0: [report: single request 3/3 on 3 physical hosts, clean reclaim, performance measurement](tests/reports/release-a/20260916_213700.md). The I1–I4 real-hardware runs and full integrity remain.

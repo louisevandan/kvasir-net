@@ -1,15 +1,15 @@
-# 구현 배치
+# Implementation layout
 
-| 경로 | 소유 |
+| Path | Owns |
 | --- | --- |
-| `adapter/src/` | construction·retained·lifecycle·ipc·process Rust 역할 |
-| `python/p4hfadapter/models/qwen3_5_0_8b/` | 제조사 기준·부분 적재/forward·state·모델 스케줄링 |
-| `python/p4hfadapter/transport/framing/` | 제한된 frame 직렬화·송수신 |
-| `python/p4hfadapter/integration/` | HF controller의 P4 packet/transport |
-| `scripts/deployment/` | worker bundle와 단일 P4 source archive |
-| `scripts/models/` | 모델별 CLI·checkpoint 준비 |
-| `scripts/testing/`, `scripts/verification/` | 시험 실행과 독립 변이/실기 검증 |
-| `environments/`, `manifests/`, `plans/`, `scenarios/` | 고정 환경·artifact 정체성·분할·입력 |
-| `tests/`, `adapter/tests/` | 시험·fixture·검증 의도·실행 보고 |
+| `adapter/src/` | Rust roles: construction, retained, lifecycle, ipc, process |
+| `python/p4hfadapter/models/qwen3_5_0_8b/` | Vendor reference, partial load/forward, state, model scheduling |
+| `python/p4hfadapter/transport/framing/` | Bounded frame serialization, send and receive |
+| `python/p4hfadapter/integration/` | P4 packet/transport for the HF controller |
+| `scripts/deployment/` | Worker bundle and the single P4 source archive |
+| `scripts/models/` | Per-model CLI and checkpoint preparation |
+| `scripts/testing/`, `scripts/verification/` | Test execution and independent mutation/real-hardware verification |
+| `environments/`, `manifests/`, `plans/`, `scenarios/` | Pinned environments, artifact identity, partitioning, inputs |
+| `tests/`, `adapter/tests/` | Tests, fixtures, verification intent, run reports |
 
-구체 역할은 [폴더 계약](structure/README.md)을 따른다.
+Specific roles follow the [folder contract](structure/README.md).

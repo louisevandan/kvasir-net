@@ -1,16 +1,16 @@
-# 실행 API
+# Execution API
 
-agent의 adapter kind와 optional feature는 `hf-transformers`다. LOAD 지원 광고와 실제 생성은 동일 factory를 소비한다.
-Rust 공개 타입은 `p4_hf_adapter::HfNodeAdapter`, `COMMAND`, `RESULT`다.
-Agent-target `NODE_LOAD`가 bounded node와 bridge를 만들고 Python worker readiness까지 완료한다.
-`NODE_UNLOAD` 성공은 worker와 node route/owner가 모두 제거된 뒤에만 반환된다.
-구체 packet/identity/epoch/abort·예산은 [통합 계약](integration/README.md),
-모델 계획과 독립 기준 실행은 [Qwen 계약](models/qwen3_5_0_8b/README.md)을 따른다.
+The agent's adapter kind and optional feature is `hf-transformers`. The LOAD support advertisement and actual creation consume the same factory.
+The public Rust types are `p4_hf_adapter::HfNodeAdapter`, `COMMAND` and `RESULT`.
+An Agent-target `NODE_LOAD` creates a bounded node and bridge and completes through Python worker readiness.
+`NODE_UNLOAD` returns success only after both the worker and the node route/owner have been removed.
+Concrete packets, identity, epoch, abort and budgets follow the [integration contract](integration/README.md);
+model planning and independent reference execution follow the [Qwen contract](models/qwen3_5_0_8b/README.md).
 
-`p4hfadapter.models.qwen3_5_0_8b.planning.plan_loading(request, profiles)`는
-실행 가능한 `plan`과 자원별 합산 용량·목적값·입력 hash를 반환한다. 실패는 미측정/불일치
-`ValueError`와 주어진 탐색 공간의 용량 부족 `LoadingInfeasible`로 구별한다.
-CLI `profile`은 실제 stage를 측정하고 `plan`은 모델 패키지 없이 계획을 생성한다.
-생성 plan의 선택적 `limits.prefill_chunk`는 scenario admission과 Python worker가 소비한다.
-기존 plan에 해당 필드가 없으면 기존 context 상한을 유지한다. 상세 입력은
-[자동 계획 계약](models/qwen3_5_0_8b/README.md#automatic-loading-planner)을 따른다.
+`p4hfadapter.models.qwen3_5_0_8b.planning.plan_loading(request, profiles)` returns
+an executable `plan` together with per-resource summed capacity, objective value and input hash. Failures are distinguished as
+`ValueError` for unmeasured/mismatched input and `LoadingInfeasible` for insufficient capacity within the given search space.
+The CLI `profile` measures real stages, and `plan` generates a plan without the model package.
+The optional `limits.prefill_chunk` in a generated plan is consumed by scenario admission and the Python worker.
+If an existing plan lacks that field, the existing context cap is kept. For detailed inputs, see the
+[automatic planning contract](models/qwen3_5_0_8b/README.md#automatic-loading-planner).

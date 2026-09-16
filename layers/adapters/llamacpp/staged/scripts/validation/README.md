@@ -1,12 +1,12 @@
 # Compat manifest validation
 
-Dense MiniMax M3의 현재 Windows CUDA 4-stage 적재 결과와 검증 경계는
-[`evidence/2026-09-13-minimax-m3-dense-load.md`](evidence/2026-09-13-minimax-m3-dense-load.md)에 기록한다.
-정상 MSA GGUF의 이기종 분산 적재 거부와 코드 회수 판정은
-[`evidence/2026-09-13-minimax-m3-msa-distributed-rejection.md`](evidence/2026-09-13-minimax-m3-msa-distributed-rejection.md)에 기록한다.
+The current Windows CUDA 4-stage load result for dense MiniMax M3 and its verification boundary are recorded in
+[`evidence/2026-09-13-minimax-m3-dense-load.md`](evidence/2026-09-13-minimax-m3-dense-load.md).
+The rejection of heterogeneous distributed load for a well-formed MSA GGUF and the verdict to withdraw the related code are recorded in
+[`evidence/2026-09-13-minimax-m3-msa-distributed-rejection.md`](evidence/2026-09-13-minimax-m3-msa-distributed-rejection.md).
 
-> 문서 지위 (2026-09-06): **구성요소 안내**. 해당 경로의 API·구조 안내다. 과거 service 경로와 현재 event 경로는 실제 호출자로 구분한다.
-> 현재 목표·상태·순서는 [실행 로드맵](../../../../../../docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](../../../../../../docs/document-map.md)를 따른다.
+> Document status (2026-09-06): **Component guide**. This is an API and structure guide for this path. The legacy service path and the current event path are distinguished by their actual callers.
+> Current goals, status and ordering follow the [execution roadmap](../../../../../../docs/distributed-batching-roadmap.md); document authority and reading paths follow the [document map](../../../../../../docs/document-map.md).
 
 `validate-compat-manifest.mjs` is a read-only contract check for a staged
 compatibility revision. It does not invoke Git, apply patches, create a

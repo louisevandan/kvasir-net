@@ -39,7 +39,7 @@ test("mixed EOL in one file fails", () => {
 });
 
 test("retired phrase fails anywhere, README included", () => {
-  const dir = fixture({ "README.md": "\ud558\ub098\ub77c\ub3c4 \uc2e4\ud328 \u2192 Abort\n" });
+  const dir = fixture({ "README.md": "if any one fails \u2192 Abort\n" });
   const result = run(dir);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /retired phrase/);
@@ -48,7 +48,7 @@ test("retired phrase fails anywhere, README included", () => {
 test("an owned claim restated outside its owner fails", () => {
   const dir = fixture({
     "README.md": "| a | [docs/other.md](docs/other.md) |\n",
-    "docs/other.md": "\uc21c\uc11c\ub294 P-1 \u2192 P0 \u2192 P1a \ub2e4\n",
+    "docs/other.md": "The order is P-1 \u2192 P0 \u2192 P1a\n",
   });
   const result = run(dir);
   assert.equal(result.status, 1);
@@ -66,8 +66,8 @@ test("vendored and build directories are skipped", () => {
   const dir = fixture({
     "README.md": "clean\n",
     ".cache/hf/environment/bad.md": "cache\r\ncontains mixed\n",
-    "upstream/bad.md": "\ud558\ub098\ub77c\ub3c4 \uc2e4\ud328 \u2192 Abort mixed\r\n\n",
-    "target/bad.md": "\uc6d0\uc7a5 \ubd80\uc7ac\uc758 \uc99d\uac70\n",
+    "upstream/bad.md": "if any one fails \u2192 Abort mixed\r\n\n",
+    "target/bad.md": "evidence of the missing ledger\n",
   });
   const result = run(dir);
   assert.equal(result.status, 0, result.stderr);

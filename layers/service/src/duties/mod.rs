@@ -231,7 +231,7 @@ impl Duties for Standard {
 /// The distinction matters to a caller: nothing waiting means the request had
 /// already finished, which is a different outcome from having cancelled it,
 /// and a caller that cannot tell them apart cannot report either.
-// See docs/protocol-outer.md#결과와-재시도.
+// See docs/protocol-outer.md#results-and-retries.
 struct CancelRequest {
     route: String,
     request_id: String,
@@ -439,7 +439,7 @@ fn reply_frame(frame: &Frame, reply: Reply) -> Option<Frame> {
 }
 
 /// Makes a cancellation terminal replayable even when the queued carrier has
-/// not emitted an event yet. See docs/protocol-outer.md#결과와-재시도.
+/// not emitted an event yet. See docs/protocol-outer.md#results-and-retries.
 fn terminal_reply_frame(frame: &Frame, reply: Reply) -> Option<Frame> {
     let mut reply = reply_frame(frame, reply)?;
     reply.envelope.event_seq = frame.envelope.event_seq.saturating_add(1);

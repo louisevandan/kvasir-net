@@ -1,49 +1,49 @@
-# Release A 연결 회수 검증 계획
+# Release A connection reclaim verification plan
 
-생성일 2026-09-15 KST. 기준 P4 `530985320`, native/모델 변경 없음.
-[로드맵](../../docs/distributed-batching-roadmap.md#current-status)의 A0 잔여 제어 연결 포화를 다룬다.
+Created 2026-09-15 KST. Baseline P4 `530985320`; no native/model changes.
+Covers the remaining A0 control-connection saturation from the [roadmap](../../docs/distributed-batching-roadmap.md#current-status).
 
-## 목표·환경·전제
+## Goal, environment and prerequisites
 
-Windows PowerShell, Rust/Cargo, 실제 로컬 TCP와 bounded mailbox. 원격 설치 앱은 유지한다.
-정상 TCP half-close의 지연 응답을 보존하면서 명시적으로 끝낸 연결의 슬롯을 반환한다.
-EOF는 상대가 출력을 더 받지 않는다는 증명이 아니다. 명시 FINISH도 native/request/KV 정산이 아니다.
-변경 계약은 [event transport](../../docs/event-protocol-v2.md#connection-finish-candidate)를 따른다.
+Windows PowerShell, Rust/Cargo, real local TCP and bounded mailboxes. Remotely installed apps are left as they are.
+Return the slot of an explicitly finished connection while preserving delayed responses on a normal TCP half-close.
+EOF is not proof that the peer will accept no more output. An explicit FINISH is not native/request/KV settlement either.
+The change contract follows [event transport](../../docs/event-protocol-v2.md#connection-finish-candidate).
 
-## 절차·기대값
+## Procedure and expected values
 
-1. 실제 Runtime→INSPECT→응답→종료→다음 연결을 연결 한도보다 많이 반복한다. 기준 실패를 보존한다.
-2. 대기 출력 원본·비용을 유지한 채 ACK 전에 모두 전송하고 슬롯을 반환한다. half-close 지연 응답을 유지한다.
-3. 이전 소켓 FINISH가 새 소켓 binding·실패 tombstone을 삭제하지 않는지 검사한다.
-4. 늦은 출력과 부분 write 실패는 원본·저장 비용·실패 소유자를 보존하며 자동 재전송/정산하지 않는다.
-5. Rust/Python OUTER 소비자는 종료 ACK·분할 수신·EOF·예상 밖 출력·timeout을 검증한다.
-6. 독립 복사본 제거 변이, 전체 workspace, 양쪽 adapter 실제 생성·회수, 현재 호출자 및 fleet를 검증한다.
+1. Repeat a real Runtime→INSPECT→response→close→next connection cycle more times than the connection limit. Preserve the baseline failure.
+2. Keep the pending output originals and costs, send all of them before the ACK, and return the slot. Keep delayed responses on half-close.
+3. Check that FINISH on an earlier socket does not delete the new socket's binding or failure tombstone.
+4. Late output and partial write failures preserve the original, the stored cost and the failure owner, with no automatic resend or settlement.
+5. The Rust/Python OUTER consumers verify the close ACK, split receive, EOF, unexpected output and timeout.
+6. Verify independent-copy removal mutations, the full workspace, real generation/reclaim on both adapters, and the current callers and fleet.
 
-## 기록·중단
+## Records and stop
 
-원자료 `target/release-a-transport-20260915/`: 명령별 log/exit, source-manifest.json.
-의도된 기준 반례·제거 변이의 실패는 검출 증거다. 구현 검증의 실패는 컴파일·시험 작성 오류도 포함해
-같은 단계에서 누적3회이면 중단한다. 중간 PASS로 횟수를 초기화하지 않는다.
-사용자의 중단 조건이 기존 최대3라운드보다 엄격하게 적용된다. 중단 뒤 추가 수정·실행·배포는 하지 않고
-WIP 소스·실패·미실행을 기록한다. UI 없음.
+Raw data `target/release-a-transport-20260915/`: per-command log/exit, source-manifest.json.
+Failures of intended baseline counterexamples and removal mutations are detection evidence. Implementation verification failures, including compile and test-writing errors,
+stop the work once they reach 3 cumulatively in the same phase. An intermediate PASS does not reset the count.
+The user's stop condition applies more strictly than the existing maximum of 3 rounds. After a stop, make no further fixes, runs or deployments, and
+record the WIP source, failures and items not run. No UI.
 
-## 2026-09-15 결정론적 재개
+## 2026-09-15 deterministic resumption
 
-사용자 지시로 첫 실행 성공을 기본 목표로 재개한다. 앞의 세 실패는 지우거나 새 회차에서 성공으로
-재분류하지 않는다. 새 후보 실행 전에 다음 계약을 코드·호출자·반례로 모두 확인한다.
+At the user's instruction, work resumes with first-run success as the default goal. The three earlier failures are not erased or
+reclassified as successes in a new round. Before running a new candidate, confirm the whole contract below with code, callers and counterexamples.
 
-| 경계 | 첫 실행 전에 확정한 결과 |
+| Boundary | Result fixed before the first run |
 | --- | --- |
-| 정상 ACK | u32-LE 0을 분할 수신해도 성공하고 이후 send를 거부한다. |
-| 유효한 비정상 frame | 길이 prefix와 body 전체를 같은 deadline 안에서 읽어 client buffer에 보존하고, frame/buffer byte 수를 오류와 run cleanup artifact에 남긴다. Event를 승인·정산하지 않는다. |
-| 비정상 frame 중 EOF/timeout | 수신한 prefix/body를 버리지 않고 EOF/timeout으로 실패한다. 재전송·재사용하지 않는다. |
-| 과대 frame | protocol/client 상한을 넘는 prefix만 보존하고 body를 할당하거나 읽지 않는다. |
-| agent FINISH | 해당 socket의 live route만 분리하고 이미 소유한 출력 queue를 drain한 뒤 ACK한다. replacement route·failure tombstone·receipt/KV는 변경하지 않는다. |
-| 호출자 | Rust event-drive와 HF Python client가 같은 종료 의미와 진단 보존을 사용한다. |
+| Normal ACK | Receiving u32-LE 0 in split pieces still succeeds, and later sends are rejected. |
+| Valid abnormal frame | Read the length prefix and the whole body within the same deadline and keep them in the client buffer; record the frame/buffer byte counts in the error and in the run cleanup artifact. The Event is not approved or settled. |
+| EOF/timeout during an abnormal frame | Do not discard the received prefix/body; fail with EOF/timeout. No resend or reuse. |
+| Oversized frame | Keep only the prefix that exceeds the protocol/client limit; do not allocate or read the body. |
+| agent FINISH | Detach only that socket's live route, drain the output queue it already owns, then ACK. The replacement route, failure tombstone and receipt/KV are not changed. |
+| Callers | Rust event-drive and the HF Python client use the same close semantics and diagnostic preservation. |
 
-첫 후보는 위 표 전체, 기존 half-close/route/비용 반례, 실제 TCP, Python suite를 함께 구현한 뒤 실행한다.
-1회차 PASS 뒤에는 기능을 고치지 않고 전체 workspace·독립 제거 변이·llama.cpp/HF 실제 생성/회수로
-확인한다. 각 실행은 목적·source hash·명령·전체 summary를 기록한다.
+The first candidate runs only after the whole table above is implemented together with the existing half-close/route/cost counterexamples, real TCP and the Python suite.
+After a PASS in round 1, no functionality is changed; confirmation comes from the full workspace, independent removal mutations and real llama.cpp/HF generation/reclaim.
+Each run records its purpose, source hash, command and full summary.
 
-`first_pass`는 표적 crate/Python 묶음이 아니라 docs gate, feature off/on 전체 workspace와 필수 실제
-소비 경로를 모두 포함한 첫 완전 gate의 결과다. 부분 시험 통과를 first pass 성공으로 승격하지 않는다.
+`first_pass` is the result of the first complete gate, which includes the docs gate, the full workspace with the feature off and on, and the required real
+consumption paths; it is not a targeted crate/Python bundle. A partial test pass is not promoted to first-pass success.

@@ -1,324 +1,324 @@
 # Runtime evidence
 
-> 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **evidence index**. Each entry keeps its own date and run scope apart. A newer record does not turn a past run into evidence for the current HEAD.
+> For current goals, status and order, follow the [execution roadmap](distributed-batching-roadmap.md); for document authority and reading paths, follow the [document map](document-map.md).
 
-## 2026-09-16: Qwen3.5-122B H1 2차 INVALID와 H0 v3
+## 2026-09-16: Qwen3.5-122B H1 second run INVALID and H0 v3
 
-3-host closed-loop quality64는 실제 계산을 진행했지만 terminal artifact가 없고 H0 v2 judge가 요청별
-E2E deadline과 class별 TTFT/ITL p95를 판정하지 않아 INVALID다. 부분 native 로그를 성능 수치로
-승격하지 않았다. NODE_UNLOAD 3/3과 작업 자원 회수를 끝냈고 보호 agent 3개는 보존했다. 같은 runtime과
-SLO를 유지한 H0 v3 judge는 위 수치를 실제 timestamp로 강제하며 로컬 고정 gate를 통과했다. 다음은
-단일 short A-COST feasibility gate이고, 통과 전 H1 3차를 열지 않는다. 상세는
-[H1 2차 실행·회수 보고](../tests/reports/release-a/20260916_104300.md)를 따른다.
+The 3-host closed-loop quality64 run did real computation, but it has no terminal artifact, and the H0 v2 judge did not
+judge the per-request E2E deadline or the per-class TTFT/ITL p95, so it is INVALID. Partial native logs were not promoted
+to performance figures. NODE_UNLOAD 3/3 and task resource cleanup are done, and the 3 protected agents were preserved. The H0 v3 judge,
+which keeps the same runtime and SLO, enforces the figures above against real timestamps and passed the local pinned gate. Next is
+a single short A-COST feasibility gate; the third H1 run does not open until it passes. For details, follow the
+[H1 second run and cleanup report](../tests/reports/release-a/20260916_104300.md).
 
-## 2026-09-16: Qwen3.5-122B Release A H0 v2 재봉인
+## 2026-09-16: Qwen3.5-122B Release A H0 v2 re-seal
 
-runtime `25edd33cf`와 3-host 실행물, RELEASE closed-loop H1 quality, class별 event deadline,
-tracked materializer/judge를 [H0 v2 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)에
-결속했다. 검사4·host inspector4·preflight5·materializer2·judge4와 약화 변이40종이 통과했다.
-`load_authorized=true`, `runtime_acceptance=false`이며 실제 H1 2차는 아직 실행하지 않았다.
-기존 보호 agent의 모델 child/GPU 점유는0이고 Mac20/21은 nodes0이다. Spark 구형 agent의 CLOSE-WAIT310과
-full backlog는 별도 작업 agent 사용 조건으로 고정했다. 상세는 [H0 v2 보고](../tests/reports/release-a/20260916_093739.md)를 따른다.
+Runtime `25edd33cf`, the 3-host artifacts, RELEASE closed-loop H1 quality, per-class event deadlines and the
+tracked materializer/judge are bound to the [H0 v2 spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json).
+4 checks, 4 host inspectors, 5 preflights, 2 materializers, 4 judges and 40 weakening mutations passed.
+`load_authorized=true` and `runtime_acceptance=false`; the real second H1 run has not been executed yet.
+The existing protected agents hold 0 model children/GPU, and Mac20/21 have 0 nodes. The old Spark agent's CLOSE-WAIT 310 and
+full backlog are pinned as conditions for using a separate task agent. For details, follow the [H0 v2 report](../tests/reports/release-a/20260916_093739.md).
 
-## 2026-09-16: Qwen3.5-122B H1 1차 RED
+## 2026-09-16: Qwen3.5-122B H1 first run RED
 
-세 물리 host LOAD 뒤 quality64를 동시에 제출해 30분 동안 8건만 EOS·RELEASE했다. 종료 시 나머지
-중·장문8은 실제 stage prefill을 계속 수행했고 48건은 pending이었다. 최초 deadline 오류, busy UNLOAD,
-부분 evidence와 실패 recovery를 [H1 1차 보고](../tests/reports/release-a/20260916_084650.md)에 보존했다.
-H0 v1의 동시 quality schedule은 H1/H2 경계를 위반하므로 새 LOAD 승인에는 사용하지 않는다.
+After LOAD on three physical hosts, quality64 was submitted concurrently, and only 8 requests reached EOS and RELEASE in 30 minutes. At the stop, the remaining
+8 medium/long requests were still running real stage prefill and 48 were pending. The first deadline error, busy UNLOAD,
+partial evidence and the failure recovery are preserved in the [H1 first run report](../tests/reports/release-a/20260916_084650.md).
+H0 v1's concurrent quality schedule violates the H1/H2 boundary, so it is not used to authorize a new LOAD.
 
-## 2026-09-16: Qwen3.5-122B Release A H0 v1 역사 봉인
+## 2026-09-16: Qwen3.5-122B Release A H0 v1 historical seal
 
-현재 runtime source `c6a28b582`와 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard, Spark GB10와
-두 M4 Pro의 실제 agent/native/library hash, 3-stage placement, count/byte/token/KV/result 상한,
-H1–H7 workload/SLO/A-B/telemetry를 [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)에
-봉인했다. H0 검사와 26개 부정 변이가 통과해 LOAD는 허용하지만 실제 모델을 적재하지 않았으므로
-`runtime_acceptance=false`다. 물리 host 조사·결정론적 회차·다음 H1 사전조건은
-[H0 보고](../tests/reports/release-a/20260916_072100.md)를 따른다.
+The current runtime source `c6a28b582`, the Qwen3.5-122B-A10B UD-Q5_K_S 3-shard, the real agent/native/library hashes of Spark GB10 and
+two M4 Pro machines, the 3-stage placement, the count/byte/token/KV/result limits, and the
+H1–H7 workload/SLO/A-B/telemetry are sealed in the [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json).
+The H0 checks and 26 negative mutations passed, so LOAD is allowed, but no real model was loaded, so
+`runtime_acceptance=false`. For the physical host survey, the deterministic rounds and the next H1 preconditions, follow the
+[H0 report](../tests/reports/release-a/20260916_072100.md).
 
-## 2026-09-10: 맥 포함 다섯 호스트 CUDA·Metal 122B
+## 2026-09-10: 122B on CUDA and Metal across five hosts including Macs
 
-실제 Mac agent CREATE/DELETE 응답 복구 후, 소형8/8과 122B32/32 완료·EOS·해제·UNLOAD를 통과했다.
-여섯 단계의 메모리 계획=실제와 로드된 후보 파일 해시가 일치한다. 발열 설명8건·긴 TTFT·TUF/두 번째 Mac 미참여는 남는다.
-제품 수정이나 과거 시험 재집계 없이 실행·응답 전문·108파일 로컬 번들 해시를
-[혼합 실행 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#mac-included-five-host-retry-2026-09-10)에 기록했다.
+After recovering the real Mac agent CREATE/DELETE responses, the small model passed 8/8 and 122B passed 32/32 on completion, EOS, release and UNLOAD.
+The memory plan equals the actual allocation for all six stages, and the hashes of the loaded candidate files match. 8 thermal explanations, long TTFT, and TUF and the second Mac not participating remain open.
+Without product fixes or re-tallying past tests, the runs, the full response texts and the hash of the 108-file local bundle are recorded in the
+[mixed run evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#mac-included-five-host-retry-2026-09-10).
 
-## 2026-09-10: 예약된 전체 장비 재접속·네 CUDA 호스트 122B
+## 2026-09-10: scheduled reconnect of all machines, 122B on four CUDA hosts
 
-M42·Spark·이 PC·Ubuntu의 다섯 stage에서 122B 32/32 완료·EOS·해제·UNLOAD, 계획=실제 할당을 확인했다.
-Mac NECP, TUF SSH, Mac .20 NAS 때문에 전체 장비·CUDA/Metal은 BLOCKED다. 발열 설명8건과 TTFT 대기를 남기며 정상 서비스·성능 개선으로 승인하지 않는다.
-첫 소형 실패와 후속 통과, 소스/파일 해시, 154개 원자료의 로컬 ZIP 해시·검증·재현 범위는
-[fleet 재시도 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#scheduled-all-computer-retry-2026-09-10)를 따른다.
+Across five stages on M42, Spark, this PC and Ubuntu, 122B passed 32/32 on completion, EOS, release and UNLOAD, and plan = actual allocation was confirmed.
+Because of Mac NECP, TUF SSH and the Mac .20 NAS, all-machine and CUDA/Metal runs are BLOCKED. 8 thermal explanations and the TTFT wait remain, and this is not approved as normal service or a performance improvement.
+For the first small-model failure and the later pass, the source/file hashes, and the local ZIP hash, verification and reproduction scope of the 154 raw files, follow the
+[fleet retry evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-10-fleet-latest-integration.md#scheduled-all-computer-retry-2026-09-10).
 
-## 2026-09-07: 구현 중단·증거 경계 재정리
+## 2026-09-07: implementation stop and evidence boundary reset
 
-새 컴파일/시험/변이/실기 결과를 만들지 않고 기존 Git과 원집계를 대조했다. 마지막 실행은
-`capacity-slice-20260907-13`의1254/1/7이며 현재 후보 결과가 아니다. 그 뒤 WIP와 독립 completion
-진행 후보를 통과 구현으로 세지 않는다. 검증된 진전·현재 중단 상태·남은 작업의 단독 요약은
-[로드맵 §0](distributed-batching-roadmap.md#current-status), 원문 경로와 후보 범위는
-[정산 증거의 중단 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)이 소유한다.
+No new compile, test, mutation or real-hardware results were produced; the existing Git history and raw tallies were cross-checked. The last run is
+`capacity-slice-20260907-13` at 1254/1/7, and it is not a result for the current candidate. WIP after that and the independent completion
+progress candidate are not counted as passing implementations. The standalone summary of verified progress, the current stop state and remaining work is owned by
+[roadmap §0](distributed-batching-roadmap.md#current-status); the source paths and candidate scope are owned by
+[the stop record in the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
 
-## 2026-09-07: 요청 입력의 불변 공유 — 정적 검토 WIP
+## 2026-09-07: immutable sharing of request input — static review WIP
 
-`f5aa09675` 뒤 실제 handler의 대여, RequestState 후보의 입력 공유, drive 관측/오류 원본 보존을
-변경했다. 신규 oracle3개와 기존 fixture 이관은 **컴파일·시험·변이 미실행**이다. PREFILL 입구 복사와
-raw/owned claim 경계는 남아 있으며 actor 진행성·메모리 상한·성능 증거가 아니다. 상세는
-[입력 공유 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: 직접 응답 FIFO와 알림 경계 — 정적 검토 WIP
+After `f5aa09675`, the real handler's borrowing, input sharing in the RequestState candidate, and preservation of drive observations/error originals
+were changed. The 3 new oracles and the migration of existing fixtures are **not compiled, tested or mutation-tested**. The PREFILL ingress copy and the
+raw/owned claim boundary remain, and this is not evidence of actor liveness, memory bounds or performance. For details, follow the
+[input sharing record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: direct-response FIFO and notification boundary — static review WIP
 
-`658c9cded` 뒤 직접 응답의 FIFO/오류 보존, 실제 enqueue의 지연 알림, broker 성공 원본/영수증 분리를
-작성했다. **컴파일·시험·변이는 미실행**이며 actor 교착 GREEN·owned 성공 전달 전체·성능 증거가 아니다.
-최대 미래 ID 폭으로 인한 수용 범위 차이와 동일 malformed 입력의 시험 정정, 신규 oracle 범위는
-[정적 변경 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: 실제 전달 거부의 원본 소유권 — 정적 검토 WIP
-
-`2b1d1d539` 뒤 broker/adapter/node의 canonical 오류 반환과 제품 node task 보존을 변경했다.
-신규 oracle9개는 **컴파일·시험·변이 미실행**이며, 성공 경로의 공간 claim 이관·actor 교착 해결을
-주장하지 않는다. 원본/할당/원장/양방향 보류물의 소비 대조와 남은 terminal 수명은
-[거부 소유권 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: PREFILL 수용 연결의 선행 원자성 — 정적 검토 WIP
-
-`d8fff7d27` 뒤 PREFILL의 조기 key 기억과 요청 삽입 후 FIFO 검사를 준비→확정으로 분리했다.
-실제 consumer oracle7개를 작성했지만 **컴파일·시험·변이는 미실행**이다. 오류 우선순위가
-바뀌며 count/byte 예약·actor 진행성·실기 성과를 증명하지 않는다. 경로/거부/재제출의 대조 범위는
-[수용 원자성 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: 전달 큐와 필수 결과 보존 공간 — 정적 검토 WIP
-
-`bcbadf101` 뒤 로컬 queue/retained 한도 분리와 알려진 fan-out의 원자적 그룹 예약을 작성했다.
-신규 oracle16개는 **컴파일·실행·변이 미실행**이며 actor 교착 해결 증거가 아니다. 마지막 검증
-라운드는 미사용이다. 실제 변경과 연결하지 않은 경계는
-[저장소 분리 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: committed 송신물 고정 — 정적 검토 WIP
-
-`7f402aba5` 뒤 committed FIFO의 완전한 Event 보존·미할당 ID 의무와 broker Full 원본 반환을
-변경했다. 실제 소비 시험8개 작성과 기존 실패 표현 시험의 의미 보존 이관은 **실행하지 않았다**.
-컴파일·변이·전체 집계가 없으며 actor RED 해결/예약 연결/최종 성과로 승격하지 않는다.
-정적 검토·oracle 보강·범위는 [고정 송신물 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: 로컬 완료 저장소 예약 — 실행 전 WIP
-
-`393a6c23e`의 RED 뒤 실제 완료 저장소·비용 회계·owned 전달 API와 소비 거부 시험을 작성했다.
-정적 검토와 서식 정리만 했고 **컴파일·실행시험·변이는 하지 않았다**. 제품의 예약 생산/owned 소비
-연결과 actor 교착 수정은 미완이다. 과거 통과 수를 이번 소스에 귀속하지 않는다.
-구현 범위·미실행 시험·체크포인트는
-[로컬 저장소 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: 실제 broker/node/worker 순환 포화 — 수정 전 필수 RED
-
-`f13e2560b`의 운영 코드에 actual actor 시험 두 개와 dev 배선만 추가했다. 정상 SESSION/추론14입력에서
-cap1은 OUTER를 비워도 정지했고 cap8 동일 입력은 통과했다. 별도 외부 복구 뒤 입력/출력/native KV/
-해제 보존 검사는 통과했지만 정상 진행은 실패다. 전체 Rust1254/1/7 ignored,57summary·cargo101이며
-유일한 실패는 cap1의 마지막 정상 진행 단언이다. 실행 소스400개·EXE·원문·시간/소유/복구 한계는
-[actor 순환 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)가 소유한다.
-운영 수정과 섞지 않은 RED 체크포인트이며 B2/B3 완료·remote/GPU 실기·최종 성능 증명이 아니다.
-
-## 2026-09-07: 외부 감수 대조 — 원자료 Git 심사와 작업 범위 점검
-
-감수의1236/9/7은 첫 WIP 시점이며 이후 `96c90f99e`의1253/0/7과 구분한다. 이번 작은 정리는
-도달 불가 분기 제거와 취소 함수의 시험 빌드 한정이다. 생성 증거 묶음·일회성 보관 도구는
-Git에 넣지 않고 무시 경로에 보존했다. 원자료 장기 보존/재실행은 여전히 미충족이다.
-현재 실행·실패·한계는 [후속 감수 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-문서 형식 정리 후 고정 묶음의 추가1라운드에서 전체1253/0/7·하네스72/0·문서79파일을 확인했다.
-이는 이번 정리분의 결과이며 미구현 순환 대기/byte 예산이나 최종 실기 완료가 아니다.
-
-## 2026-09-07: 두 번째 전체 체크포인트 — 제한된 ACK 진행 검증
-
-첫 전체 WIP `2e9451a5c`의 회귀9개를 해소하고 실제 소비 시험8개를 추가했다. 봉인399입력의
-전체 집계는 **1253 passed/0 failed/7 ignored**, 57 summary·cargo0이다. 독립 복사본의25시험은
-baseline/복원25/0, ACK 서비스 제거20/5, 그 외 ID 순서·미래 영수증·진단 차단·head 재검증 제거는
-각24/1이다. 모든 arm을 실제 재컴파일했고 원본 소스·시험 집합은 보존했다.
-실제 Worker Full 중 RELEASED 및 Direct/Checkpoint SETTLED의 국소 진행 증거다. non-ACK 뒤 우회,
-전역 byte/RSS·capacity wake·Cancel/Drain·GPU/성능을 증명하지 않는다. 정확한 범위·원문·재현은
-[두 번째 체크포인트 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: 전체 WIP 체크포인트 — 당시 ACK 서비스 통합, 회귀9개 미해결
-
-제한된 ACK-only prepare/commit과 송신 재검증·ID 의무 대조를 통합한399입력 봉인의 전체 집계는
-**1236 passed/9 failed/7 ignored**, cargo101이다. 기존 actual Full ACK 반례는 통과했지만
-구체 오류와 commit 전/후 고갈을 구분하는 기존 회귀9개는 실패하므로 완료나 단계 승격이 아니다.
-사용자 지시로 누적 소스·시험·문서를 모두 WIP 커밋에 포함한다. 정확한 실패 목록·다음 행동·
-봉인과 범위는 [체크포인트 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-
-## 2026-09-07: 효과 보존 표현·할당 전 검사 — 당시 ACK 기아 미해결
-
-모든 committed effect의 base를 Envelope로 이관하고, 큰 forward 본문과 관측의 소유권을
-실제 flush/mailbox에서 이동·실패 복구하도록 했다. 캡슐의 불가능한 outcome/generated 선언은
-Vec 예약 전에 거부한다. 최종397 Rust 입력 봉인의 전체 집계는 **1244 passed/1 failed/7 ignored**,
-cargo101이며 기존 실제 completion Full ACK 기아가 유일한 실패다. 13개 추가 회귀와 소스·변이는
-[정산 증거의 효과 보존 표현 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-전체 RSS/예약·비동기 pump·정상 모델 응답·성능 개선을 증명한 것은 아니다. 실기는 실행하지 않았다.
-
-## 2026-09-07: SESSION 응답 준비 — ID·표현 가능성 실패 원자화
-
-응답을 만들 수 없는데 먼저 session 권한을 설치하는 ID 고갈/합산 envelope 반례를 각각 독립
-복사본에서 재현했다. SESSION만 응답 준비→권한 설치→ID commit→기존 송신으로 이관하고,
-기존 정상 wire와 Unicode를 포함한 소비 회귀12개를 유지했다. 최종396 입력 봉인의 전체 집계는
-**1231 passed/1 failed/7 ignored**, cargo exit101이다. 실패는 기존 actual Full ACK 기아 그대로다.
-정확한 RED/범위/소스·변이는
-[정산 증거의 SESSION 응답 준비 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-일반 ERROR fallback·전체 outbox/native 예산·비동기 pump는 미완이며, 모델/GPU 실기는 하지 않았다.
-
-## 2026-09-07: head 제어의 적용·전송 권위 — 실제 ACK 기아는 미해결
-
-pending 등록, local native 적용, 다음 stage 송신 수용을 분리했다. 조기 ACK 소비의 수정 전2개 RED와
-후속6개 소비 회귀, native Frame/receipt/frontier·completion을 지나는9개 효과 시험을 구분해 보존했다.
-최종 Rust396 입력 봉인의 전체 집계는 **1225 passed/1 failed/7 ignored**, cargo exit101이다.
-실패는 기존 actual Worker의 completion Full ACK 기아다. 이번에 actor pump를 구현한 것은 아니다.
-실제 범위·원문·변이·소스 대조는
-[정산 증거의 head 제어 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-모델 없는 소비 경로 증거이며 실제 llama/GPU·VRAM-only/RAM 오프로딩 웨이브나 다중 컴퓨터 증명이 아니다.
-
-## 2026-09-07: completion Full의 실제 ACK 기아·중립 공간 통지 — 필수 RED 남음
-
-actual worker에서 출력 공간이 없을 때 정상 해제 ACK가 입력에 들어와도 처리되지 않는 반례를 고정했다.
-공간 복구 뒤 기존 출력·해제·관측 완결은 유지됐다. 중립 mailbox의 종료 wake·참조 수명은 수정하고
-공간 통지와 새 회귀14개를 추가했지만 actor pump에는 아직 연결하지 않았다. 최종 원본 Rust393 봉인에서
-전체1210 passed/1 failed/7 ignored이며, 실패는 새 필수 ACK 진행 시험이다. 이전 green 집계를
-현재 상태로 인용하지 않는다. 소스별 결과·독립 변이·남은 한계는
-[정산 증거의 completion Full 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)에 보존한다.
-모델/GPU·VRAM-only/RAM 오프로딩·다중 컴퓨터 성과는 아니며 현재 순서와 다음 행동은 로드맵이 소유한다.
-
-## 2026-09-07: OUTPUT 발행 증거·소유 관측·실제 소비 완료 — 부분 구현
-
-새 OUTPUT v5/관측 v4 생산·소비를 함께 이관했다. actual worker의 기존 출력/KV/해제 검사를 유지하고
-새 원문 캡처7건·독립 발행 기대량·actual drive의 전체 issue/stage 대조를 검사했다. 검수에서 발견한
-empty-owner 미확인 실행의 거짓 완료도 실제 반례와 독립 변이로 고정했다. 원본 Rust1196/0/7 ignored,
-JS90/0, 독립 복사본12개 arm·source391 봉인 및 정확한 증명 한계는
-[정산 증거의 OUTPUT·관측 이관 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-정상 출력/해제와 늦은 관측의 시간 분모는 분리했다. 실제 모델 tokenizer·GPU 웨이브·전체 broker/drain·
-VRAM-only/RAM 오프로딩·다중 컴퓨터 성과는 아니며 단계 상태와 다음 행동은 로드맵만 소유한다.
-
-## 2026-09-07: 제출 문자열 경계 — 실제 worker와 모델 없는 native codec
-
-직렬화된 반환 정보/옵션의 초과 입력이 요청 등록 뒤 worker를 종료시키는 반례를 입구 거부로 수정했다.
-기존 byte 한도·정상 Unicode/escape/원문 옵션·정상 출력/KV/해제 oracle를 유지하며 독립 복사본 변이를 검사했다.
-Rust 전체 집계와 모델 없는 native codec의 경계·assert 활성·한도 변경 검출은
-[정산 증거의 제출 문자열 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)에 보존한다.
-전체 CTest/native engine·모델/GPU 웨이브 증거가 아니며 OUTPUT/관측 이관도 아직 남는다.
-
-## 2026-09-07: 내부 발행 증거와 제출 입구 — 부분 구현
-
-실제 L1 승인에 요청별 고정 크기 witness를 결속하고 독립 literal, 실제 worker 2/4/8-stage,
-실패 원자성·포화·재전달 및 재컴파일 변이를 검증했다. 추가 NUL 제출 반례는 native 뒤 worker 종료를
-재현한 뒤 입구 거부로 바꾸고 정상 재제출까지 시험했다. 소스별 집계와 정확한 증명 범위는
-[정산 증거의 내부 witness 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-OUTPUT/관측 완결은 미이관이며 모델·GPU·VRAM-only/RAM 오프로딩 실기 성과가 아니다.
-
-## 2026-09-07: 보고 지표 분리와 관측 완결 감사 — 실기 미실행
-
-실제 하네스 report 소비 경로에서 생성 토큰과 계산 행, Verify/Replay 혼합을 구분하는 버전화된
-수식을 구현했다. 새 report 회귀11, 확장 JS86/0, 변경 없는 Rust379 소스에서 전체1122/0/7 ignored를
-확인했다. 구 수식 RED·독립 변이·분모/품질 한계는
-[정산 증거의 보고 지표 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-관측 소유권·완결 witness는 코드 감사 뒤 명세만 보강했으며 아직 구현하지 않았다. 자원 단계 순서와
-RAM 분류는 H0에 결속돼 있지만 모델 적재·GPU/VRAM-only/RAM 오프로딩 실기는 이번에 실행하지 않았다.
-
-## 2026-09-07: 요청별 해제 증명·소유자 통지 — 현재 run의 정상 종료
-
-실제 제출→terminal 승인→명시 해제 집합을 생산/소비 양쪽에서 결속했다. 다중 OUTER actual worker,
-알림 포화/실패 시 intent 보존, 실제 캡처 소비와 독립 변이를 확인했다. Rust1122/0/7 ignored,
-소스379 봉인·JS75/0과 증명 범위는
-[정산 증거의 요청별 해제 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-전체 다중 OUTER 관측·재시작 freshness·출력 없는 종료·내구 전달은 미완이며 실제 모델/GPU/
-VRAM-only/RAM 오프로딩 성과가 아니다. 다음 작업과 단계 상태는 로드맵만 소유한다.
-
-## 2026-09-07: SESSION 선언·해제 ACK 발신자 검증 — 부분 구현
-
-중간 노드 ACK가 슬롯을 반환하는 구코드 반례를 실제 broker/worker 및 별도 3-stage run에서 고정했다.
-SESSION 생산·설치와 stage source/target 검사를 함께 이관하고, 정상 ACK 재개 뒤 기존 출력/KV 검사를 유지했다.
-원본 Rust 1090/0/7 ignored, 소스 374파일 봉인, 양방향 guard 변이와 OUTER 생산 변이는
-[정산 증거의 SESSION 권위 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-scalar 해제 집합·소유자별 통지/관측·알림 의도 보존은 미해결이다. 전송 인증이나 실제 모델/GPU·
-VRAM-only/RAM 오프로딩 실기 성과로 확대하지 않는다.
-
-## 2026-09-07: OUTPUT 예산·요청별 fresh-prefill 소비 검증 — 부분 구현
-
-실제 drive의 출력 적용 전 sampled 예산과 최종 경계의 요청별 관측 대조를 구현했다. actual producer의
-기존 wire 출력은 보존하고 실제 관측을 독립 workload 상수와 비교한다. 소비 경로 호출 제거·생산 관측
-오분류를 독립 재컴파일 변이로 검증했다. 소스 373파일 봉인·1076/0/7 ignored 집계·실행 범위와 제외한
-stale-EXE 시도는 [정산 증거의 OUTPUT 예산 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-scalar RELEASED 멤버십은 여전히 미해결이다. Restore/LCP·독립 native 토큰화·실제 네트워크/GPU·
-VRAM-only/RAM 오프로딩 또는 성능 승격 증거는 아니다.
-
-## 2026-09-07: head 승인 출력의 생산·소비 계약 — 부분 구현
-
-actual Worker::run의 encoded OUTPUT과 현재 producer, 실제 OUTER drive를 공용 fixture로 결속했다.
-잘못된 tail/any-node 허용과 경로 검증 제거를 독립 변이로 검사한다. 전체 소스/집계·정규화 한계·
-다음 소비자 반례 세 건은 [정산 증거의 head OUTPUT 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-source 승인만의 수리이며 해제 집합·상한·요청별 첫 위치의 전체 승인 정확성은 아직 미완이다.
-native 모델/GPU·실제 네트워크·VRAM-only/RAM 오프로딩 성과가 아니다.
-
-## 2026-09-07: busy UNLOAD 보존·native 종료 실패 fence — 부분 구현
-
-실제 run에서 ordinary/speculative의 미완 작업을 성공 UNLOAD로 지우던 반례와 native 종료 실패 뒤
-새 SESSION을 승인하던 반례를 고정했다. 거부 뒤 정상 완주·idle 성공 및 독립 생산 변이를 검사했다.
-범위·원문·소스/실행파일·전체 집계는 [정산 증거의 UNLOAD 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-Cancel/Drain·OUTER 전달·실제 OS cleanup·모델/GPU 또는 VRAM-only/RAM 오프로딩 성과는 아니다.
-
-## 2026-09-07: speculative actual run·native Replay 소비 경계 — 부분 구현
-
-전량 수용·부분 SETTLE·checkpoint Replay를 actual Worker::run 2/4스테이지로 검사하고,
-생산 소비 변이를 검출했다. fake 성공과 별개로 native logits 요청 누락을 찾았으며 실제 배치
-생성 코드의 모델 없는 소비 시험과 llama 빌드 범위를 따로 기록한다. 원문·소스/실행파일·집계와
-다음 UNLOAD RED는 [정산 증거의 speculative 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-실제 llama sampler/checkpoint·GPU 모델 또는 VRAM-only/RAM 오프로딩 강한 웨이브 성과는 아니다.
-
-## 2026-09-07: 유한 actor 기회·종료 실패 보존 — 부분 구현
-
-지속 입력이 head의 계산 기회를 무한히 미루는 반례와, 계산이 입력/제어를 추월하는 경로를
-실제 Worker::run으로 검사했다. 중지/EOF, 잔존 원장 조회, cleanup 실패의 정상 종료 오표시와
-기존 거부 사유 유실도 회귀로 고정했다. 독립 변이·원문·소스/집계는
-[정산 증거의 유한 actor 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-전체 graceful drain·speculative full-loop·GPU 또는 RAM 오프로딩 웨이브 성과는 아니다.
-
-## 2026-09-07: continuation 폭·actual run-loop·양방향 Full — 부분 구현
-
-native proposal 폭 위반의 실제 소비자 거부, 2/4/8개의 actual Worker::run 웨이브,
-중립 EventNode/broker의 양방향 포화 반례와 복구를 검증했다. 소스 동결·원문·변이·정확한
-집계와 제한은 [정산 증거의 최신 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-계산 엔진은 fake이며 실제 모델 품질·GPU/RAM 오프로딩 성능이나 전체 credit/drain 증명이 아니다.
-
-## 2026-09-07: stage KV frontier — 당시 부분 구현, 추가 P1 반례 유지
-
-새 execution ID로 위치·phase를 우회하는 반례를 실제 워커에서 재현한 뒤, 순수 frontier와
-head/중간/꼬리 소비 경로를 결속했다. 전체 집계·소스 동결·독립 변이 6종과 원본 GREEN 밖의
-proposal 폭 상한 RED 두 경로는 [최신 정산 증거의 마지막 절](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-전체 run-loop나 native/GPU 모델·RAM 오프로딩·다중 컴퓨터 실기 성과로 승인하지 않는다.
-
-## 2026-09-07: PHYSICAL 재전달·opaque plan 수명 — 부분 구현
-
-같은 HEAD의 후속 미커밋 작업 트리에서 actual middle/tail과 수신 원장을 연결했다.
-보존 중인 정확한 재전달·발급 head 구분·Fresh 부분 실행·native 결과 불명 fence를 검사했다.
-모델 없는 plan 수명 회귀 시험도 추가했다. source/변이/실행 및 모델 경로 생략은
-[정산 증거의 후속 기록](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)을 따른다.
-GPU/RAM 오프로딩 또는 실제 모델 웨이브 성과가 아니다. 현재 자원·다음 행동은 로드맵이 소유한다.
-
-## 2026-09-06: B1 발행/정산과 최소 가짜 stage 연결 — 미완
-
-HEAD `a9e1967fc` + 미커밋 어댑터/시험/문서 변경에서 CPU-only 검증했다.
-전체 Rust는 914 passed / 0 failed / 7 ignored(57 summary, exit 0), 하네스 57 passed다.
-발행 expected membership, 이벤트 전체 정산, head 승인 뒤 output intent, native 사후 오류 fence를
-보강했다. **전 홉 멱등·요청 incarnation·전체 worker 루프·credit·native/GPU 성능 완료가 아니다.**
-시험별 범위·변이·소스 식별·남은 결함은
-[최신 정산 구현 증거](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md)의 마지막 절을 따른다.
-단계 상태/다음 행동은 [로드맵](distributed-batching-roadmap.md)에만 기록한다.
-
-## 2026-09-06: 최초 감사 기준과 증거의 지위
-
-현재 목표·상태·실행 순서는 [분산 배치 로드맵](distributed-batching-roadmap.md),
-실기 승인 규칙은 [검증 규약](distributed-batching-verification.md)이 소유한다.
-아래 수치는 해당 날짜·모델·토폴로지·소스의 관측이지 현재 초대형 다중 머신 제품의 완료 증거가 아니다.
-
-- `a9e1967fc` 코드 감사: Rust 844 passed / 0 failed / 7 ignored, 하네스 57 passed.
-- 최초 감사에서는 요청별 부기 공유만 확인했으며 이벤트 전체 정산·발행 identity/range 대조·실제 simulator 거부 시험이 미완이었다. 후속 상태는 위 최신 기록을 따른다.
-- [정산 감사의 반례와 재현 조건](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
-- 이번 기록은 GPU 실측이 아니다. 최종 다중 컴퓨터·초대형 모델·강한 웨이브의 정상 응답/성능은 아직 미증명.
+After `658c9cded`, FIFO/error preservation for direct responses, deferred notification on real enqueue, and separation of the broker success original from its receipt
+were written. **Compile, tests and mutations are not run**, and this is not evidence of an actor deadlock GREEN, full owned success delivery or performance.
+For the acceptance range difference caused by the maximum future ID width, the test correction for the same malformed input, and the new oracle scope, follow the
+[static change record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: ownership of the original on real delivery rejection — static review WIP
+
+After `2b1d1d539`, canonical error return in broker/adapter/node and preservation of the product node task were changed.
+The 9 new oracles are **not compiled, tested or mutation-tested**, and this does not claim migration of the space claim on the success path or a fix for the actor deadlock.
+For the consumption cross-check of the original, allocation, ledger and held items in both directions, and the remaining terminal lifetimes, follow the
+[rejection ownership record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: up-front atomicity of the PREFILL acceptance link — static review WIP
+
+After `d8fff7d27`, PREFILL's early key recording and the FIFO check after request insertion were split into prepare → commit.
+7 real consumer oracles were written, but **compile, tests and mutations are not run**. Error precedence
+changes, and this does not prove count/byte reservation, actor liveness or real-hardware results. For the cross-check scope of paths, rejections and resubmissions, follow the
+[acceptance atomicity record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: delivery queue and reserved space for required results — static review WIP
+
+After `bcbadf101`, the split of the local queue/retained limits and atomic group reservation for known fan-out were written.
+The 16 new oracles are **not compiled, run or mutation-tested**, and this is not evidence of an actor deadlock fix. The last verification
+round is unused. For the boundaries not yet connected to real changes, follow the
+[storage split record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: pinning committed outbound items — static review WIP
+
+After `7f402aba5`, full Event preservation in the committed FIFO, the unassigned-ID obligation, and return of the original on broker Full
+were changed. Writing 8 real consumption tests and migrating the existing failure-representation tests with their meaning preserved were **not run**.
+There is no compile, mutation run or full tally, and this is not promoted to an actor RED fix, reservation wiring or a final result.
+For the static review, oracle reinforcement and scope, follow the [pinned outbound record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: local completion store reservation — pre-run WIP
+
+After the RED at `393a6c23e`, the real completion store, cost accounting, owned delivery API and consumption-rejection tests were written.
+Only static review and formatting were done; **compile, test runs and mutations were not done**. Wiring product reservation production to owned consumption,
+and the actor deadlock fix, are unfinished. Past pass counts are not attributed to this source.
+For the implementation scope, the tests not run and the checkpoints, follow the
+[local store record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: real broker/node/worker cyclic saturation — required RED before the fix
+
+Only two actual actor tests and dev wiring were added to the operational code at `f13e2560b`. With normal SESSION plus 14 inference inputs,
+cap1 stalled even after OUTER was drained, while cap8 passed on the same input. After a separate external recovery, the input/output/native KV/
+release preservation checks passed, but normal progress failed. Full Rust is 1254/1/7 ignored, 57 summary, cargo 101, and
+the only failure is cap1's final normal-progress assertion. The 400 run sources, the EXE, the raw texts and the time/ownership/recovery limits are owned by the
+[actor cycle evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is a RED checkpoint kept apart from operational fixes; it is not proof of B2/B3 completion, remote/GPU real-hardware runs or final performance.
+
+## 2026-09-07: external review cross-check — Git audit of raw data and task scope check
+
+The review's 1236/9/7 is from the first WIP point and is distinct from the later 1253/0/7 at `96c90f99e`. This small cleanup is
+limited to removing an unreachable branch and restricting the cancel function to test builds. The generated evidence bundle and the one-off archiving tool
+were not added to Git and were preserved under an ignored path. Long-term preservation and re-running of raw data are still not met.
+For the current runs, failures and limits, follow the [follow-up review record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+After the document formatting cleanup, 1 extra round on the pinned bundle confirmed full 1253/0/7, harness 72/0 and 79 document files.
+This is the result for this cleanup only; it is not the unimplemented cyclic wait/byte budget or final real-hardware completion.
+
+## 2026-09-07: second full checkpoint — bounded ACK progress verification
+
+The 9 regressions of the first full WIP `2e9451a5c` were resolved and 8 real consumption tests were added. The full tally of the sealed 399 inputs
+is **1253 passed/0 failed/7 ignored**, 57 summary, cargo 0. The 25 tests in the independent copy gave
+baseline/restored 25/0, ACK service removed 20/5, and 24/1 each for removing ID ordering, future receipts, diagnostic blocking and head re-verification.
+Every arm was actually recompiled, and the original source and test set were preserved.
+This is local progress evidence for RELEASED and Direct/Checkpoint SETTLED during a real Worker Full. It does not prove bypass after non-ACK,
+global byte/RSS, capacity wake, Cancel/Drain or GPU/performance. For the exact scope, raw texts and reproduction, follow the
+[second checkpoint record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: full WIP checkpoint — ACK service integrated at the time, 9 regressions unresolved
+
+The full tally of the sealed 399 inputs that integrate bounded ACK-only prepare/commit, send re-verification and the ID obligation cross-check is
+**1236 passed/9 failed/7 ignored**, cargo 101. The existing actual Full ACK counterexample passed, but
+9 existing regressions that distinguish specific errors and exhaustion before/after commit fail, so this is not completion or a stage promotion.
+At the user's instruction, all accumulated source, tests and documents are included in the WIP commit. For the exact failure list, next action,
+seal and scope, follow the [checkpoint record](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+
+## 2026-09-07: effect-preserving representation and pre-allocation checks — ACK starvation unresolved at the time
+
+The base of every committed effect was migrated to Envelope, and ownership of large forward bodies and observations now
+moves on the real flush/mailbox and recovers on failure. Impossible outcome/generated declarations in a capsule are
+rejected before the Vec reservation. The full tally of the final sealed 397 Rust inputs is **1244 passed/1 failed/7 ignored**,
+cargo 101, and the existing real completion Full ACK starvation is the only failure. For the 13 added regressions, the sources and mutations, follow the
+[effect-preserving representation section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This does not prove overall RSS/reservation, an async pump, normal model responses or a performance improvement. No real-hardware run was done.
+
+## 2026-09-07: SESSION response preparation — atomic ID and representability failures
+
+The ID exhaustion and summed-envelope counterexamples, where session authority is installed first even though no response can be built, were each reproduced in an independent
+copy. Only SESSION was migrated to response preparation → authority install → ID commit → existing send, and
+12 consumption regressions, including the existing normal wire and Unicode, were kept. The full tally of the final sealed 396 inputs is
+**1231 passed/1 failed/7 ignored**, cargo exit 101. The failure is the same existing actual Full ACK starvation.
+For the exact RED, scope, sources and mutations, follow the
+[SESSION response preparation section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+General ERROR fallback, the full outbox/native budget and the async pump are unfinished, and no model/GPU real-hardware run was done.
+
+## 2026-09-07: apply and send authority for head control — real ACK starvation unresolved
+
+Pending registration, local native apply and acceptance of the send to the next stage were separated. The 2 pre-fix REDs for early ACK consumption,
+6 follow-up consumption regressions, and 9 effect tests that pass through native Frame/receipt/frontier/completion are kept apart.
+The full tally of the final sealed 396 Rust inputs is **1225 passed/1 failed/7 ignored**, cargo exit 101.
+The failure is the existing completion Full ACK starvation in the actual Worker. The actor pump was not implemented this time.
+For the real scope, raw texts, mutations and source cross-check, follow the
+[head control section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is evidence for a model-free consumption path, not proof of a real llama/GPU, VRAM-only/RAM offloading wave or multiple computers.
+
+## 2026-09-07: real ACK starvation and neutral space notification on completion Full — required RED remains
+
+A counterexample was pinned in which, on the actual worker with no output space, a normal release ACK arriving on the input is not processed.
+After space recovered, the existing output, release and observation completeness held. The neutral mailbox's shutdown wake and reference lifetime were fixed, and
+space notification and 14 new regressions were added, but they are not yet wired to the actor pump. On the final original sealed 393 Rust inputs,
+the full tally is 1210 passed/1 failed/7 ignored, and the failure is the new required ACK progress test. Earlier green tallies are
+not quoted as the current state. Per-source results, independent mutations and remaining limits are preserved in the
+[completion Full section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is not a model/GPU, VRAM-only/RAM offloading or multi-computer result; the roadmap owns the current order and next action.
+
+## 2026-09-07: OUTPUT publication evidence, owned observation and real consumption completion — partial implementation
+
+Production and consumption of the new OUTPUT v5/observation v4 were migrated together. The actual worker's existing output/KV/release checks were kept, and
+7 new raw captures, the independent expected publication count, and the full issue/stage cross-check of the actual drive were checked. The false completion on an
+unconfirmed empty-owner run, found in review, was also pinned with a real counterexample and an independent mutation. For original Rust 1196/0/7 ignored,
+JS 90/0, 12 independent-copy arms, the sealed 391 sources and the exact proof limits, follow the
+[OUTPUT and observation migration section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+The time denominators for normal output/release and late observation are separated. This is not a real model tokenizer, GPU wave, full broker/drain,
+VRAM-only/RAM offloading or multi-computer result; only the roadmap owns the stage status and next action.
+
+## 2026-09-07: submission string boundary — real worker and model-free native codec
+
+The counterexample where oversized serialized return info/options terminate the worker after request registration was fixed by rejecting at ingress.
+The existing byte limits, normal Unicode/escape/raw options and the normal output/KV/release oracles were kept, and independent-copy mutations were checked.
+The full Rust tally, and the model-free native codec boundary, assert activation and limit-change detection, are preserved in the
+[submission string section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is not evidence for full CTest/native engine or model/GPU waves, and the OUTPUT/observation migration still remains.
+
+## 2026-09-07: internal publication evidence and submission ingress — partial implementation
+
+A fixed-size per-request witness was bound to the real L1 approval, and independent literals, real worker 2/4/8-stage runs,
+failure atomicity, saturation, redelivery and recompiled mutations were verified. The extra NUL submission counterexample first reproduced a worker exit after native,
+was then changed to an ingress rejection, and was tested through a normal resubmission. For per-source tallies and the exact proof scope, follow the
+[internal witness section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+OUTPUT/observation completeness is not migrated, and this is not a model, GPU or VRAM-only/RAM offloading real-hardware result.
+
+## 2026-09-07: report metric split and observation completeness audit — real-hardware run not run
+
+On the real harness report consumption path, a versioned formula that distinguishes generated tokens from computed rows and mixed Verify/Replay
+was implemented. 11 new report regressions, extended JS 86/0, and full 1122/0/7 ignored on the unchanged 379 Rust sources
+were confirmed. For the old-formula RED, independent mutations and denominator/quality limits, follow the
+[report metric section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+For observation ownership and the completeness witness, only the spec was reinforced after a code audit; neither is implemented yet. The resource stage order and
+RAM classification are bound to H0, but model loading and GPU/VRAM-only/RAM offloading real-hardware runs were not executed this time.
+
+## 2026-09-07: per-request release proof and owner notification — normal shutdown of the current run
+
+The real submit → terminal approval → explicit release set is bound on both the production and consumption sides. A multi-OUTER actual worker,
+intent preservation on notification saturation/failure, real capture consumption and independent mutations were confirmed. For Rust 1122/0/7 ignored,
+the sealed 379 sources, JS 75/0 and the proof scope, follow the
+[per-request release section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+Full multi-OUTER observation, restart freshness, shutdown without output and durable delivery are unfinished, and this is not a real model/GPU/
+VRAM-only/RAM offloading result. Only the roadmap owns the next task and stage status.
+
+## 2026-09-07: SESSION declaration and release ACK sender verification — partial implementation
+
+The old-code counterexample where a middle node's ACK returns a slot was pinned on the real broker/worker and in a separate 3-stage run.
+SESSION production/installation and the stage source/target check were migrated together, and the existing output/KV checks were kept after normal ACK resumption.
+For original Rust 1090/0/7 ignored, the sealed 374 source files, the bidirectional guard mutations and the OUTER production mutation, follow the
+[SESSION authority section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+The scalar release set, per-owner notification/observation and notification intent preservation are unresolved. This is not extended to transport authentication or a real model/GPU/
+VRAM-only/RAM offloading real-hardware result.
+
+## 2026-09-07: OUTPUT budget and per-request fresh-prefill consumption verification — partial implementation
+
+The sampled budget before output apply in the real drive, and the per-request observation cross-check at the final boundary, were implemented. The actual producer's
+existing wire output is preserved, and real observations are compared against independent workload constants. Removal of the consumption-path call and production observation
+misclassification were verified with independent recompiled mutations. For the sealed 373 source files, the 1076/0/7 ignored tally, the run scope and the excluded
+stale-EXE attempt, follow the [OUTPUT budget section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+Scalar RELEASED membership is still unresolved. This is not evidence for Restore/LCP, independent native tokenization, a real network/GPU,
+VRAM-only/RAM offloading or a performance promotion.
+
+## 2026-09-07: production and consumption contract for head-approved output — partial implementation
+
+The encoded OUTPUT of actual Worker::run, the current producer and the real OUTER drive are bound through a shared fixture.
+Wrong tail/any-node acceptance and removal of path verification are checked with independent mutations. For the full sources/tallies, normalization limits and
+the three next consumer counterexamples, follow the [head OUTPUT section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This repairs source approval only; full approval correctness for the release set, limits and per-request first position is still unfinished.
+It is not a native model/GPU, real network or VRAM-only/RAM offloading result.
+
+## 2026-09-07: busy UNLOAD preservation and native shutdown failure fence — partial implementation
+
+Two counterexamples were pinned in the real run: unfinished ordinary/speculative work erased by a successful UNLOAD, and a
+new SESSION approved after a native shutdown failure. Normal completion after rejection, idle success and independent production mutations were checked.
+For the scope, raw texts, sources/executables and full tallies, follow the [UNLOAD section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is not a Cancel/Drain, OUTER delivery, real OS cleanup, model/GPU or VRAM-only/RAM offloading result.
+
+## 2026-09-07: speculative actual run and native Replay consumption boundary — partial implementation
+
+Full acceptance, partial SETTLE and checkpoint Replay were checked with actual Worker::run at 2/4 stages, and
+production consumption mutations were detected. Separately from the fake success, a missing native logits request was found; the model-free consumption test of the real batch
+generation code and the llama build scope are recorded separately. For the raw texts, sources/executables, tallies and
+the next UNLOAD RED, follow the [speculative section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is not a real llama sampler/checkpoint, GPU model or VRAM-only/RAM offloading strong-wave result.
+
+## 2026-09-07: bounded actor opportunities and shutdown failure preservation — partial implementation
+
+The counterexample where sustained input postpones the head's compute opportunity indefinitely, and the path where compute overtakes input/control,
+were checked with the real Worker::run. Stop/EOF, residual ledger queries, cleanup failures misreported as normal shutdown and
+loss of the existing rejection reason were also pinned as regressions. For independent mutations, raw texts and sources/tallies, follow the
+[bounded actor section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is not a full graceful drain, speculative full-loop, GPU or RAM offloading wave result.
+
+## 2026-09-07: continuation width, actual run-loop and bidirectional Full — partial implementation
+
+Real consumer rejection of native proposal width violations, actual Worker::run waves of 2/4/8,
+and bidirectional saturation counterexamples and recovery on the neutral EventNode/broker were verified. For the source freeze, raw texts, mutations, exact
+tallies and limits, follow the [latest section of the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+The compute engine is fake, and this is not proof of real model quality, GPU/RAM offloading performance or full credit/drain.
+
+## 2026-09-07: stage KV frontier — partial implementation at the time, additional P1 counterexamples kept
+
+After reproducing on a real worker the counterexample that bypasses position/phase with a new execution ID, the pure frontier and the
+head/middle/tail consumption paths were bound. For the full tally, source freeze, 6 independent mutations and the two proposal width limit RED
+paths outside the original GREEN, follow the [last section of the latest settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is not approved as a full run-loop, native/GPU model, RAM offloading or multi-computer real-hardware result.
+
+## 2026-09-07: PHYSICAL redelivery and opaque plan lifetime — partial implementation
+
+In a later uncommitted working tree on the same HEAD, the actual middle/tail were connected to the receive ledger.
+Exact redelivery while retained, issuing-head distinction, Fresh partial execution and the native unknown-result fence were checked.
+A model-free plan lifetime regression test was also added. For the sources, mutations, runs and the skipped model path, follow the
+[follow-up record in the settlement evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+This is not a GPU/RAM offloading or real model wave result. The roadmap owns the current resources and next action.
+
+## 2026-09-06: B1 publication/settlement and minimal fake stage wiring — unfinished
+
+Verified CPU-only on HEAD `a9e1967fc` plus uncommitted adapter/test/document changes.
+Full Rust is 914 passed / 0 failed / 7 ignored (57 summary, exit 0), and the harness is 57 passed.
+Publication expected membership, full event settlement, output intent after head approval and the native post-hoc error fence were
+reinforced. **This is not completion of all-hop idempotence, request incarnation, the full worker loop, credit or native/GPU performance.**
+For per-test scope, mutations, source identification and remaining defects, follow the last section of the
+[latest settlement implementation evidence](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+Stage status and next actions are recorded only in the [roadmap](distributed-batching-roadmap.md).
+
+## 2026-09-06: initial audit baseline and the status of evidence
+
+The [distributed batching roadmap](distributed-batching-roadmap.md) owns the current goals, status and run order, and the
+[verification rules](distributed-batching-verification.md) own the real-hardware approval rules.
+The figures below are observations for their date, model, topology and source; they are not completion evidence for the current very-large multi-machine product.
+
+- `a9e1967fc` code audit: Rust 844 passed / 0 failed / 7 ignored, harness 57 passed.
+- The initial audit confirmed only per-request bookkeeping sharing; full event settlement, the publication identity/range cross-check and real simulator rejection tests were unfinished. For the later state, follow the latest records above.
+- [Counterexamples and reproduction conditions from the settlement audit](../layers/adapters/llamacpp/staged/scripts/validation/evidence/2026-09-06-settlement-review.md).
+- This record is not a GPU measurement. Normal responses and performance on the final multiple computers, very large models and strong waves are still unproven.
 
 ## 2026-09-04: four stages on two cards costs a third to a half of the throughput
 
@@ -1630,7 +1630,7 @@ as `max_inflight=256`, `max_queued=1024`.
 | session IDs | eight distinct controller-issued IDs |
 | completion order | `4, 0, 2, 3, 6, 7, 5, 1`; no batch barrier |
 | llama-server slot evidence | slots `0..7` each logged `processing task` |
-| generated text | one `안녕하세요!`; seven `안녕하세요 (Annyeonghaseyo)` |
+| generated text | one `안녕하세요!` (English: "Hello!"); seven `안녕하세요 (Annyeonghaseyo)` (English: "Hello (Annyeonghaseyo)") |
 | adapter errors | none |
 
 The raw server proof is
@@ -1762,11 +1762,11 @@ The maximum-native-capacity test was repeated with per-session evidence. The run
 
 | Input prompt | Final streamed text | Terminal |
 | --- | --- | --- |
-| `Rust 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `Rust은 고성능이고 안전한 프로그래밍 언어` | `length`, 16 |
-| `C 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `C 언어는 간단하고 효율적인 프로그래밍 언` | `length`, 16 |
-| `C++ 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `C++는 객체지향 언어로, 데이터와 함수를 분리` | `length`, 16 |
-| `C# 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `C#은 객체지향 언어로, 변수와 함수를 쉽게 사용` | `length`, 16 |
-| `Java 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` | `Java는 객체지향 프로그래밍 언어로, 복잡` | `length`, 16 |
+| `Rust 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` (English: "Briefly explain the Rust language in Korean. Include its key feature in one sentence.") | `Rust은 고성능이고 안전한 프로그래밍 언어` (English: "Rust is a high-performance, safe programming language") | `length`, 16 |
+| `C 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` (English: "Briefly explain the C language in Korean. Include its key feature in one sentence.") | `C 언어는 간단하고 효율적인 프로그래밍 언` (English: "The C language is a simple, efficient programming lang") | `length`, 16 |
+| `C++ 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` (English: "Briefly explain the C++ language in Korean. Include its key feature in one sentence.") | `C++는 객체지향 언어로, 데이터와 함수를 분리` (English: "C++ is an object-oriented language that separates data and functions") | `length`, 16 |
+| `C# 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` (English: "Briefly explain the C# language in Korean. Include its key feature in one sentence.") | `C#은 객체지향 언어로, 변수와 함수를 쉽게 사용` (English: "C# is an object-oriented language that makes variables and functions easy to use") | `length`, 16 |
+| `Java 언어를 한국어로 간단히 설명해. 핵심 특징을 한 문장으로 포함해.` (English: "Briefly explain the Java language in Korean. Include its key feature in one sentence.") | `Java는 객체지향 프로그래밍 언어로, 복잡` (English: "Java is an object-oriented programming language, compl") | `length`, 16 |
 
 Each request used the 16-token output cap, so `reason=length` and incomplete sentences are expected. This is complete transport evidence, not answer-quality evidence.
 
@@ -1774,7 +1774,7 @@ Each request used the 16-token output cap, so `reason=length` and incomplete sen
 
 The planner estimated that `parallel=1000` with `1,024` context tokens per request would fit GPU memory, but the measured native load failed before KV allocation: `llama_init_from_model: failed to initialize the context: n_seq_max must be <= 256`. This is a native Pipeline/llama runtime ceiling, not a P4 controller or Agent queue result, and means VRAM cannot establish a higher usable session count for the currently linked binary.
 
-The owned E2E then set the actual maximum, `parallel=256`, `ConcurrentRequests=256`, `P4_AGENT_MAX_INFLIGHT=256`, and `262,144` total context tokens. It generated 256 distinct Korean prompts in the form `<language> 언어를 한국어로 간단히 설명해. <style>` from programming and human language names. Every stream emitted text and reached `DONE`; no session was queued for later execution.
+The owned E2E then set the actual maximum, `parallel=256`, `ConcurrentRequests=256`, `P4_AGENT_MAX_INFLIGHT=256`, and `262,144` total context tokens. It generated 256 distinct Korean prompts in the form `<language> 언어를 한국어로 간단히 설명해. <style>` (English: "Briefly explain the <language> language in Korean. <style>") from programming and human language names. Every stream emitted text and reached `DONE`; no session was queued for later execution.
 
 | Measurement | Observed value |
 | --- | ---: |
@@ -1797,6 +1797,7 @@ Command:
 
 ```powershell
 .\scripts\run-pipeline-e2e.ps1 -P4ListenPort 29221 -Prompt '러스트에 대해 한국어로 설명하라.' -MaxTokens 32 -Parallel 20 -ConcurrentRequests 20
+# English: -Prompt 'Explain Rust in Korean.'
 ```
 
 The planner and Pipeline runtime both received `parallel=20`. Because native context is divided among the parallel slots, the E2E calculated a total context of `20,480` tokens to preserve `1,024` tokens per request. The Agent gave the bound NodeSlot `p4_max_inflight=20`, opened 20 ingress streams concurrently, and every stream emitted text and reached `DONE`.
@@ -1852,7 +1853,7 @@ This proves agent-side lifecycle separation and ingress relay, not durable contr
 
 The owned stock E2E used `run-inference.mjs`, whose `infer()` call supplied `options: { top_p: 0.9, top_k: 20, seed: 7 }`, at agent listener `127.0.0.1:29101`. The model streamed `12` P4 token events and ended with `P4_DONE`.
 
-The owned two-stage Pipeline E2E used the same options at `127.0.0.1:29201` with prompt `러스트에 대해 설명하라.` and a `16` token cap. The current Pipeline parser accepted its supported subset and returned:
+The owned two-stage Pipeline E2E used the same options at `127.0.0.1:29201` with prompt `러스트에 대해 설명하라.` (English: "Explain Rust.") and a `16` token cap. The current Pipeline parser accepted its supported subset and returned:
 
 | Measurement | Observed value |
 | --- | ---: |
@@ -1872,6 +1873,7 @@ Command:
 
 ```powershell
 .\scripts\run-pipeline-e2e.ps1 -Prompt '러스트에 대해 설명하라.' -MaxTokens 128
+# English: -Prompt 'Explain Rust.'
 ```
 
 The current `S:\models` inventory contained one GGUF file, `Qwen2.5-1.5B-Instruct-Q8_0.gguf`; this run did not select among multiple model sizes. The test created one P4 controller identity and routed its logical `pipeline-2gpu` node to a native Pipeline group with these stages:
@@ -1909,7 +1911,7 @@ The relay implementation was rebuilt into a policy-free listener/frame-forwardin
 
 `tools/scripts/e2e/stock/run-real-e2e.ps1` then completed an owned stock CPU `llama-server` request through `p4-agent` with 12 streamed tokens and `P4_DONE`.
 
-`tools/scripts/e2e/pipeline/run-pipeline-e2e.ps1 -Prompt 'P4 agent 경로가 동작하는지 한 문장으로 답하라.' -MaxTokens 16` completed the actual two-GPU Pipeline path through the same combined agent:
+`tools/scripts/e2e/pipeline/run-pipeline-e2e.ps1 -Prompt 'P4 agent 경로가 동작하는지 한 문장으로 답하라.' -MaxTokens 16` (English prompt: "Answer in one sentence whether the P4 agent path works.") completed the actual two-GPU Pipeline path through the same combined agent:
 
 | Measurement | Observed value |
 | --- | ---: |

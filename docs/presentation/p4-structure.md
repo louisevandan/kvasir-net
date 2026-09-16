@@ -1,338 +1,338 @@
-# P4 구조 설명 — 일반 개발자용
+# P4 structure — for general developers
 
-> 문서 지위: **구조 설명**. 슬라이드 덱 `p4-architecture.html`/생성기 `build-intro-pptx.js`와 같은 내용의 Markdown 판이다.
-> 성능 수치는 조건에 묶인 별도 측정 기록이 소유한다. 현재 목표·상태·순서는 [실행 로드맵](../distributed-batching-roadmap.md),
-> 층별 책임과 upstream 격리는 [계층 격리 계약](../layer-isolation-contract.md)을 따른다.
+> Document status: **Structure explainer**. A Markdown edition with the same content as the slide deck `p4-architecture.html` and the generator `build-intro-pptx.js`.
+> Performance figures are owned by separate, condition-bound measurement records. Current goals, status and ordering follow the [execution roadmap](../distributed-batching-roadmap.md);
+> per-layer responsibilities and upstream isolation follow the [layer isolation contract](../layer-isolation-contract.md).
 
-코드 수치 기준: `b3a0d51ef` (2026-09-12). 이 문서의 사실은 문서가 아니라 코드에서 확인했고, 각 절 끝에 확인한 위치를 적었다.
+Code figures baseline: `b3a0d51ef` (2026-09-12). The facts in this document were checked against the code, not against other documents, and each section ends with the locations checked.
 
 ---
 
-## 1. 한 줄 요약
+## 1. One-line summary
 
-GPU 한 장에 들어가지 않는 모델을 여러 머신에 레이어 단위로 나눠 싣고, 추론 중에는 계산 중간값만 주고받는다.
-P4는 그 연결을 담당하는 계층이다 — 추론 엔진이 아니다.
+A model that does not fit on one GPU is split by layer and loaded across several machines; during inference only intermediate computation values are exchanged.
+P4 is the layer responsible for that connection — it is not an inference engine.
 
-| 수치 | 값 |
+| Figure | Value |
 | --- | --- |
-| 프로세스 타입 | 1종 (agent) |
-| llama.cpp가 받치는 ggml backend | 18 |
-| Rust | 114,154줄 · 419파일 · 12 crate |
-| 고정된 llama.cpp pin | 10 (최신 `451b89bae`, 패치 27개) |
+| Process types | 1 (agent) |
+| ggml backends supported through llama.cpp | 18 |
+| Rust | 114,154 lines · 419 files · 12 crates |
+| Fixed llama.cpp pins | 10 (latest `451b89bae`, 27 patches) |
 
 ---
 
-## 2. 왜 이런 계층이 필요한가
+## 2. Why a layer like this is needed
 
-모델이 장치 한 개에 들어가지 않으면, **나누는 방법이 성능을 정한다.**
+When a model does not fit on one device, **how you split it determines performance.**
 
-**텐서 병렬** — 레이어 하나를 여러 장치에 쪼갠다. 자르는 곳마다 전체 활성값을 맞춰야 하므로
-장치 사이 대역폭이 곧 한계가 되고, 한 대 안의 초고속 링크를 전제한다.
+**Tensor parallelism** — splits a single layer across several devices. Every cut must reconcile the full activations,
+so the bandwidth between devices becomes the limit, and it assumes the ultra-fast links inside a single machine.
 
-**파이프라인 병렬** — 레이어 구간으로 자른다. 자른 경계에서만 계산 중간값이 건너가고
-가중치와 KV 캐시는 각 머신에 머문다. 일반적인 네트워크로 여러 대를 묶을 수 있는 이유다.
-P4가 구현한 쪽이 이것이다.
+**Pipeline parallelism** — cuts by layer range. Intermediate values cross only at the cut boundaries, and
+weights and the KV cache stay on each machine. That is why several machines can be joined over an ordinary network.
+This is what P4 implements.
 
-공짜는 아니다. 한 요청이 스테이지를 차례로 지나므로 스테이지 수만큼 지연이 쌓이고 앞 스테이지가 노는 시간이 생긴다.
-여러 요청을 겹쳐 흘리는 배치 구성이 이 계층의 핵심 과제가 되는 이유이며, 6절과 7절이 그 이야기다.
+It is not free. A request passes through the stages in turn, so latency accumulates with the number of stages and earlier stages sit idle for part of the time.
+That is why batch composition, which overlaps many requests in the flow, is the core problem of this layer; sections 6 and 7 cover it.
 
-P4가 **맡는 것**은 어느 머신의 어느 노드가 어느 구간을 맡는지, 요청이 그 사슬을 어떤 순서로 지나는지,
-무엇이 언제 건너가는지다. **맡지 않는 것**은 행렬 곱, 커널, 양자화, 샘플링이다 — 그건 backend의 일이다.
+What P4 **does take on** is which node on which machine serves which range, the order in which a request passes through that chain,
+and what crosses over when. What it **does not take on** is matrix multiplication, kernels, quantization and sampling — those are the backend's job.
 
 ---
 
-## 3. 레이어 구조 — 위층은 아래층의 이름을 모른다
+## 3. Layer structure — upper layers do not know the names of lower layers
 
-| 층 | 하는 일 | 갖지 않는 것 |
+| Layer | What it does | What it does not hold |
 | --- | --- | --- |
-| OUTER | 어디에 무엇을 싣고 누가 무엇을 받을지 정한다 | 엔진 KV 직접 변경 |
-| `layers/protocol` | 봉투와 프레임 — 주소·순서·경계 | 내용 해석 (불투명 바이트) |
-| `layers/agent` | 프로세스·큐·워커·노드 수명·전달과 역압 | backend 이름 |
-| `layers/adapters/adapter` | 노드가 backend에 요구하는 것 — 제출·완료·취소 | 특정 engine의 타입 |
-| 구상 어댑터 | `llamacpp-staged` · `llamacpp` · `vllm` · `sglang` · `mock` | 다른 backend의 상태 |
+| OUTER | decides what to load where and who receives what | direct changes to engine KV |
+| `layers/protocol` | envelopes and frames — address, order, boundaries | content interpretation (opaque bytes) |
+| `layers/agent` | processes, queues, workers, node lifetime, delivery and backpressure | backend names |
+| `layers/adapters/adapter` | what a node requires of a backend — submission, completion, cancellation | types of a specific engine |
+| Concrete adapters | `llamacpp-staged` · `llamacpp` · `vllm` · `sglang` · `mock` | state of other backends |
 | backend | llama.cpp → ggml → CUDA · ROCm · Metal · CPU … | — |
 
-이 구조가 만드는 세 가지 성질:
+Three properties this structure creates:
 
-- **봉투만 읽으면 전달된다.** 중계 노드는 내용을 열지 않으므로 새 메시지 종류가 중계를 무겁게 만들지 않는다.
-- **backend 등록은 한 파일이다.** `entrypoints/agent/src/adapters/mod.rs` — 이름 하나, 팩토리 하나, 구현 하나.
-- **mock이 항상 들어 있다.** GPU 없이 전체 fleet을 띄워 배치와 순서를 검증할 수 있다.
+- **Delivery needs only the envelope.** Relay nodes do not open the content, so new message kinds do not make relaying heavier.
+- **Registering a backend is one file.** `entrypoints/agent/src/adapters/mod.rs` — one name, one factory, one implementation.
+- **mock is always included.** You can bring up a whole fleet without a GPU and verify batching and ordering.
 
-agent가 바깥에 내보이는 표면은 소켓 위의 P4 하나뿐이다. 어댑터가 자기 backend와 HTTP로 말하든,
-파이프로 말하든, 같은 프로세스 안에서 함수로 부르든 그 위에서는 보이지 않는다.
-
----
-
-## 4. 토폴로지 — 머신마다 프로세스 하나, 그 안에 노드 여러 개
-
-controller 프로세스는 없다. agent가 다른 agent에 닿는 길과, agent가 바깥에 답하는 길이 같은 길이다.
-
-- **agent** — 머신마다 하나 뜨는 프로세스. 소켓으로 프레임을 받아 큐에 넣고, 워커가 주소만 보고 자기 것인지 판단한다.
-  자기 것이 아니면 통째로 넘긴다.
-- **node** — agent 안의 논리 실행 단위. id 하나로 시작해 LOAD가 어댑터를 물리면 실체가 된다.
-  자기 큐를 갖고 긴 작업을 혼자 쥔다. 레이어 구간 하나를 맡는다.
-- **OUTER** — 바깥에서 요청하는 쪽. 어느 노드가 어느 구간을 맡을지, 어떤 노드들이 한 세션을 이룰지 정한다.
-
-agent ↔ agent 와 agent ↔ OUTER 는 같은 P4 프레임을 쓴다.
-
-지금까지 돌린 구성 예: 1호스트 8스테이지, 2호스트 16스테이지, 5호스트 6스테이지.
-노드 수는 모델 크기·KV 용량·합법적인 자르기 지점이 정하지, 카드 수가 정하지 않는다.
+The only surface an agent exposes to the outside is P4 over a socket. Whether an adapter talks to its backend over HTTP,
+over a pipe, or calls it as a function in the same process is invisible from above.
 
 ---
 
-## 5. 적재와 파이프라인은 서로 다른 수명이다
+## 4. Topology — one process per machine, several nodes inside it
 
-**1단계 LOAD — 노드마다 독립 명령.** 각 노드가 GGUF에서 자기 레이어 구간만 읽어 장치에 올린다.
-구간은 `stage_begin`/`stage_end` 반열린 구간이다. 이웃도, 순서도, 세션도 이 명령에 없다.
+There is no controller process. The path an agent uses to reach another agent and the path it uses to answer the outside are the same path.
 
-**2단계 SESSION — 순서를 설치.** 참여 노드 전체 목록과 각 노드의 자기 번호를 한 번에 알려 준다.
+- **agent** — one process per machine. It receives frames on a socket and puts them in a queue; workers look only at the address to decide whether a frame is theirs.
+  If it is not, they pass it on whole.
+- **node** — a logical execution unit inside an agent. It starts as just an id and becomes real when LOAD attaches an adapter.
+  It has its own queue and holds long work by itself. It serves one layer range.
+- **OUTER** — the side that makes requests from outside. It decides which node serves which range and which nodes form one session.
+
+agent ↔ agent and agent ↔ OUTER use the same P4 frames.
+
+Configurations run so far: 1 host with 8 stages, 2 hosts with 16 stages, 5 hosts with 6 stages.
+The node count is set by model size, KV capacity and legal cut points, not by the number of cards.
+
+---
+
+## 5. Load and pipeline have separate lifetimes
+
+**Step 1, LOAD — an independent command per node.** Each node reads only its own layer range from the GGUF and places it on the device.
+The range is the half-open interval `stage_begin`/`stage_end`. The command carries no neighbours, no order and no session.
+
+**Step 2, SESSION — install the order.** It tells every participating node the full list of nodes and that node's own index, in one go.
 
 ```text
 stages: [ {agent, node, generation}, … ]   +   stage_index
 ```
 
-설치 조건이 엄격하다. `stages[stage_index]`가 **실제로 이 워커의 endpoint**여야 하고
-envelope의 target도 같아야 한다. `load_generation`이 현재 적재 세대와 다르면 거절한다.
-first/previous/next/terminal은 **설치한 순서에서만** 파생한다 — 노드가 스스로 정하지 않는다.
+Installation conditions are strict. `stages[stage_index]` must **actually be this worker's endpoint**, and
+the envelope's target must match. If `load_generation` differs from the current load generation, it is rejected.
+first/previous/next/terminal are derived **only from the installed order** — nodes do not decide them on their own.
 
-이 분리가 사는 이유:
+Why this separation pays off:
 
-- 같은 적재 위에 세션을 여러 번 세울 수 있다. 순서를 바꾸는 데 재적재가 필요 없다.
-- UNLOAD는 유휴 상태에서만 받고, 통과하면 세션·요청·비행 기록·세션 키를 모두 지우고 세대를 0으로 만든다.
-  옛 세대를 든 SESSION은 그 뒤 stale로 거절된다.
-- head는 정산과 출력 승인을 소유하고 terminal은 토큰을 만든다. 둘은 다른 노드다.
+- Sessions can be set up many times on the same load. Changing the order does not need a reload.
+- UNLOAD is accepted only when idle; once it passes, it clears sessions, requests, in-flight records and session keys, and resets the generation to 0.
+  A SESSION carrying an old generation is then rejected as stale.
+- The head owns settlement and output approval, and the terminal produces tokens. They are different nodes.
 
-*확인: `v2/node/worker/control.rs`의 `session`/`unload`.*
+*Checked: `session`/`unload` in `v2/node/worker/control.rs`.*
 
 ---
 
-## 6. 노드가 backend를 고르는 법
+## 6. How a node picks a backend
 
-노드가 아는 것은 어댑터 계약 하나다. 그 아래는 갈아끼운다.
+A node knows only the adapter contract. Everything below it is swappable.
 
-| 등록 이름 | 붙는 backend |
+| Registered name | Attached backend |
 | --- | --- |
-| `mock` | 산술만. 장치 없이 |
-| `mock-instant` | 즉시 응답. 순서 시험용 |
+| `mock` | arithmetic only; no device |
+| `mock-instant` | immediate response; for ordering tests |
 | `llamacpp` | llama-server (HTTP) |
-| `vllm` | vLLM 서버 |
-| `sglang` | SGLang 서버 |
-| `llamacpp-staged` | 레이어 분할 실행 (준비된 실행 파일이 있는 호스트에서만 노출) |
+| `vllm` | vLLM server |
+| `sglang` | SGLang server |
+| `llamacpp-staged` | layer-split execution (exposed only on hosts with a prepared executable) |
 
-두 가지 모양의 llama.cpp가 있다. `llamacpp`는 한 프로세스가 모델 전체를 쥐고 HTTP로 답하므로
-노드 하나로 끝나고 사슬 길이가 1이다. `llamacpp-staged`는 모델을 레이어 구간으로 잘라 여러 노드에 싣고,
-사슬 길이는 노드 수만큼이다. vLLM·SGLang처럼 backend가 스스로 모델을 펼치는 쪽은 사슬 길이 1로 참여한다.
+llama.cpp comes in two shapes. With `llamacpp`, one process holds the whole model and answers over HTTP, so
+it is a single node and the chain length is 1. `llamacpp-staged` cuts the model into layer ranges loaded on several nodes,
+and the chain length equals the node count. Backends that lay out the model themselves, such as vLLM and SGLang, participate with chain length 1.
 
-`mock`이 항상 빌드에 들어 있다는 점이 실용적으로 중요하다. GPU도 모델 파일도 없이 fleet 전체를 띄워
-라우팅·순서·배치·취소를 끝까지 돌려 볼 수 있고, 계산이 산술로 대체되므로 결과가 결정론적이다.
-두 번 돌린 결과가 다르면 그 차이는 P4에 있다.
+It matters in practice that `mock` is always in the build. Without a GPU or model files you can bring up the whole fleet
+and run routing, ordering, batching and cancellation end to end, and because computation is replaced with arithmetic the results are deterministic.
+If two runs give different results, the difference is in P4.
 
-*확인: `entrypoints/agent/src/adapters/mod.rs`의 `registry`.*
-
----
-
-## 7. 배치 ① — 한 배치에 무엇을 넣는가
-
-**논리 배치 하나를 채우는 순서.** decode가 1행씩 먼저 들어가고, 남은 행을 prefill이 회전 water-fill로 채운다.
-
-- 어텐션 모델은 논리 배치를 `llama_n_batch`까지 채우고, 쪼개는 일은 llama.cpp가 `n_ubatch`에서 한다.
-- recurrent·hybrid는 시퀀스마다 같은 폭을 요구하므로, 한 번의 호출이 정확히 물리 UBATCH 하나를 만든다.
-- Verify·Replay는 쪼갤 수 없는 한 트랜잭션이다 — 한 물리 UBATCH 안에 있어야 한다.
-
-**묶음의 폭은 "지금 빈자리"가 아니라 모집단이 정한다.** 준비됨 + 비행 중 + 대기 중을 창 수로 나눠
-코호트 폭을 파생한다. 요청 하나가 잠깐 돌아왔다고 묶음이 넓어지지 않고, 프롬프트를 다 낸 뒤 아직
-정산되지 않은 요청은 자기 코호트에 남되 새 묶음을 넓히지 않는다.
-
-**생성이 살아 있으면 prefill은 몫만 쓴다.** 디코드가 하나라도 진행 중이면 prefill 행이
-`mixed_prefill_rows`로 제한된다. 순수 prefill이면 전체 토큰 예산을 쓴다 — 시험이 고정한 예로
-생성 중 128행, 순수 prefill 512행이다. 선점이 아니라 비선점 작업 단위다.
-
-**`PREFILL_PATIENCE = 8`.** decode에 연속 8배치를 준 뒤에도 프롬프트가 기다리고 있으면 다음 배치는
-프롬프트 차례다. 몫이 아니라 상한이다. 코드 주석이 스스로 밝힌다 — *8은 측정값이 아니다. 바운드가
-존재하게 만드는 최소한일 뿐이고, 실제 하드웨어의 처리량으로 판정된 적이 없다.*
-
-준비된 선택은 수락되기 전까지 공정성을 소비하지 않는다. 거부되거나 취소된 후보는 순번을 쓰지 않고,
-남의 계획과 낡은 계획은 이름을 붙여 거절한다. 선택 층은 순수하다 — 여기서 KV도 실행 권한도 확정되지 않는다.
-
-*확인: `v2/scheduler.rs`(`Phase`·`Demand`·`PREFILL_PATIENCE`·`PreparedPlan`), `v2/scheduler/pipeline.rs`의 `PipelinePolicy::select`.*
+*Checked: `registry` in `entrypoints/agent/src/adapters/mod.rs`.*
 
 ---
 
-## 8. 배치 ② — 언제 내보내는가
+## 7. Batching ① — what goes into a batch
 
-고른 배치를 즉시 보내면 꼬리에 줄이 서고, 무조건 기다리면 깊이를 잃는다.
-그래서 **실제로 걸린 시간을 모아 다음 작업의 비용을 예측한다.**
+**The order for filling one logical batch.** Decode goes in first at 1 row each, and prefill fills the remaining rows with a rotating water-fill.
 
-관측 → 예측 → 투영 → 판정. 스테이지마다 Frame 왕복 시간을 표본으로 쌓고, 후보 배치 모양의
-스테이지별 시간을 프로파일에서 추정하고, 아직 확정되지 않은 비행분까지 전 스테이지 FIFO로 더한 뒤 판정한다.
+- Attention models fill the logical batch up to `llama_n_batch`, and llama.cpp does the splitting at `n_ubatch`.
+- Recurrent and hybrid models require the same width per sequence, so one call produces exactly one physical UBATCH.
+- Verify and Replay are single indivisible transactions — they must sit inside one physical UBATCH.
 
-| 판정 | 뜻 |
+**The width of a group is set by the population, not by "the free slots right now".** Ready + in flight + waiting is divided by the number of windows
+to derive the cohort width. A group does not widen just because one request briefly came back, and a request that has emitted its whole prompt but is not yet
+settled stays in its cohort without widening new groups.
+
+**While generation is live, prefill uses only its share.** If even one decode is in progress, prefill rows are
+limited to `mixed_prefill_rows`. Pure prefill uses the whole token budget — in the example fixed by the tests,
+128 rows during generation and 512 rows for pure prefill. This is a non-preemptive unit of work, not preemption.
+
+**`PREFILL_PATIENCE = 8`.** If a prompt is still waiting after decode has had 8 consecutive batches, the next batch is
+the prompt's turn. It is a cap, not a share. The code comment says so itself — *8 is not a measured value. It is only the minimum needed for a bound
+to exist, and it has never been judged against throughput on real hardware.*
+
+A prepared selection does not consume fairness until it is accepted. A rejected or cancelled candidate does not use up its turn,
+and plans that belong to someone else or are stale are rejected by name. The selection layer is pure — neither KV nor execution authority is committed here.
+
+*Checked: `v2/scheduler.rs` (`Phase`·`Demand`·`PREFILL_PATIENCE`·`PreparedPlan`), `PipelinePolicy::select` in `v2/scheduler/pipeline.rs`.*
+
+---
+
+## 8. Batching ② — when to send
+
+Sending a chosen batch immediately makes a queue form at the tail; always waiting loses depth.
+So **the time things actually took is collected to predict the cost of the next piece of work.**
+
+Observe → predict → project → decide. Per stage it accumulates Frame round-trip times as samples, estimates per-stage time for the candidate batch shape
+from the profile, adds the not-yet-committed in-flight work across all stages as a FIFO, and then decides.
+
+| Verdict | Meaning |
 | --- | --- |
-| `PurePrefill` | 생성이 없다 — 전체 폭 |
-| `DecodeOnly` | prefill 행이 없다 |
-| `Cold` | 내가 내지 않은 배치가 열려 있다 — 프로파일 없음 |
-| `CalibrationWait` | 표본이 아직 모자라다 |
-| `Admit` | 예산 안에 들어온다 |
-| `DeferPrefill` | 넘는다 — 이번에는 prefill을 넣지 않는다 |
-| `ProgressProbe` | 목표가 닿지 않아도 굶기지 않으려고 한 몫을 낸다 |
+| `PurePrefill` | no generation — full width |
+| `DecodeOnly` | no prefill rows |
+| `Cold` | a batch this node did not send is open — no profile |
+| `CalibrationWait` | not enough samples yet |
+| `Admit` | fits within the budget |
+| `DeferPrefill` | exceeds it — no prefill this time |
+| `ProgressProbe` | sends one share even if the target is not met, to avoid starvation |
 
-예산은 `P4_STAGED_PREFILL_SERVICE_MS`로 밀리초를 주면 마이크로초 예산이 된다. 주지 않으면 이 정책 자체가 꺼져 있다.
+Giving milliseconds via `P4_STAGED_PREFILL_SERVICE_MS` sets a microsecond budget. If it is not given, this policy is off entirely.
 
-코드가 스스로 못을 박아 둔다 — **이것은 예측 정책이지 실행도, KV 권한도, 전송 credit도, 응답 시간 보장도 아니다.**
-투영에는 측정하지 않은 전송·반환 지연이 빠져 있고, 클라이언트가 체감하는 토큰 간 간격을 약속하지 않는다.
-decode만 모으는 지연은 최대 2 ms로 묶여 있다.
+The code nails this down itself — **this is a prediction policy, not execution, not KV authority, not transport credit, and not a response-time guarantee.**
+The projection leaves out unmeasured transport and return latency, and it makes no promise about the inter-token gap the client experiences.
+The delay for gathering decode only is capped at 2 ms.
 
-별도로, 이미 충분한 배치가 비행 중이면 계획을 head에서 잠시 쥔다. 그 근거도 주석에 숫자로 남아 있다 —
-꼬리가 바쁠 때 도착한 배치는 앞 배치를 p50 128 ms 기다렸고 전체의 63%가 그랬다. 배치 하나는 꼬리에서
-첫 레이어까지 약 55 ms의 고정비를 쓴다. 자리가 있으면 얇아도 즉시 보낸다 — 자리와 무관하게 폭을
-기다렸던 이전 실험은 26%를 잃었다.
+Separately, if enough batches are already in flight, the head holds the plan for a moment. The basis for that is also left in a comment, with numbers —
+batches that arrived while the tail was busy waited p50 128 ms for the batch ahead, and 63% of all batches did. One batch spends a fixed cost of about 55 ms
+from the tail back to the first layer. If there is a slot, it sends immediately even if thin — an earlier experiment that waited for width
+regardless of slots lost 26%.
 
-**이 knob들은 전부 기본 off다.** `DECODE_MEMBERS` · `PREFILL_MEMBERS` · `PREFILL_ROWS` ·
+**All of these knobs are off by default.** `DECODE_MEMBERS` · `PREFILL_MEMBERS` · `PREFILL_ROWS` ·
 `PREFILL_ROWS_PER_REQUEST` · `MAX_OPEN_BATCHES` · `MAX_ISSUE_ROWS` · `MIN_BATCH_ROWS` ·
 `PREFILL_FRAGMENTS` · `PIPELINE_BATCHING` · `MIXED_BATCH_ROWS` · `MIXED_PREFILL_ROWS` · `PREFILL_SERVICE_MS`.
-켜지 않으면 기존 경로 그대로 돈다. 위 수치는 그 가설의 근거이지 승격 결과가 아니다.
+If they are not turned on, the existing path runs unchanged. The figures above are the basis of the hypothesis, not a promotion result.
 
-*확인: `v2/scheduler/service.rs`(`ServiceSample`·`ServiceVerdict`·`ServiceBudget::decide`), `v2/node/worker/service.rs`, `v2/node/worker/drive.rs`, `v2/node/state.rs`의 기본값.*
+*Checked: `v2/scheduler/service.rs` (`ServiceSample`·`ServiceVerdict`·`ServiceBudget::decide`), `v2/node/worker/service.rs`, `v2/node/worker/drive.rs`, defaults in `v2/node/state.rs`.*
 
 ---
 
-## 9. 적재된 모습 — 노드마다 자기 구간의 가중치와 KV
+## 9. What a load looks like — each node holds weights and KV for its own range
 
-80레이어 모델을 네 노드에 나눈 예:
+Example of an 80-layer model split across four nodes:
 
-| 노드 | 레이어 | 장치 | 그 노드가 갖는 것 |
+| Node | Layers | Device | What that node holds |
 | --- | --- | --- | --- |
-| node 0 | `[0, 20)` | `CUDA0` | 가중치 · KV · compute buffer — 이 구간만 |
+| node 0 | `[0, 20)` | `CUDA0` | weights · KV · compute buffer — for this range only |
 | node 1 | `[20, 40)` | `CUDA1` | 〃 |
 | node 2 | `[40, 60)` | `ROCm0` | 〃 |
 | node 3 | `[60, 80)` | `MTL0` | 〃 |
 
-같은 `n_ctx`인데도 노드마다 KV 비용이 다르다. 과거 관측에서 173.5 / 63.3 / 157.7 / 126.1 MB였다 —
-레이어 구성이 구간마다 다르기 때문이고, 파이프라인의 한계는 가장 비싼 노드가 정한다.
+Even with the same `n_ctx`, KV cost differs by node. In a past observation it was 173.5 / 63.3 / 157.7 / 126.1 MB —
+because the layer makeup differs per range, and the pipeline's limit is set by the most expensive node.
 
-계획과 실제가 같은지 확인하는 장치가 있다. `--expect-layer-device begin:end:name`으로 선언하면
-구간이 빈틈도 겹침도 없이 전체 컷을 덮는지 검사하고, 적재 전(PLAN)과 적재 후(LOAD) 두 번 장치 배치를
-질의해 대조한다. 메모리 총량이 맞는 것만으로는 통과하지 않는다. CPU에 남길 구간도 명시적으로 선언한다.
+There is a mechanism to confirm that plan and reality match. Declaring `--expect-layer-device begin:end:name`
+checks that the ranges cover the whole cut with no gaps and no overlaps, and queries the device placement twice, before load (PLAN) and after load (LOAD),
+and compares them. Matching total memory alone does not pass. Ranges to be left on the CPU are also declared explicitly.
 
-"노드 = GPU 한 장"이 규칙인 것은 아니다. 한 장치에 여러 스테이지를 둘 수도, 한 스테이지가 여러 장치를
-쓸 수도, 일부 구간을 CPU에 둘 수도 있다.
+"Node = one GPU" is not a rule. One device can hold several stages, one stage can use several devices,
+and some ranges can be placed on the CPU.
 
-*확인: `staged/adapter/src/config.inc.rs`의 `stage_begin`/`stage_end`, `server/src/runtime/stage_memory_plan.hpp`, `docs/llamacpp-stage-memory.md`.*
+*Checked: `stage_begin`/`stage_end` in `staged/adapter/src/config.inc.rs`, `server/src/runtime/stage_memory_plan.hpp`, `docs/llamacpp-stage-memory.md`.*
 
 ---
 
-## 10. 추론 중 네트워크를 넘는 것
+## 10. What crosses the network during inference
 
-**가중치도 KV 캐시도 compute buffer도 노드를 떠나지 않는다.**
-한 스텝에서 건너가는 것은 자른 경계의 텐서 묶음 — in-flight 배치다.
+**Neither weights, nor the KV cache, nor the compute buffer leave the node.**
+What crosses in one step is the bundle of tensors at the cut boundary — the in-flight batch.
 
-| 무엇 | 크기 | 움직임 |
+| What | Size | Movement |
 | --- | --- | --- |
-| 가중치 | 수십~수백 GB | 한 번 적재, 이후 이동 없음 |
-| KV 캐시 | 노드·요청마다 수십~수백 MB | 이동 없음 — 그래서 요청은 자기 KV가 있는 노드 집합에 묶인다 |
-| 스텝당 전송 | 경계 텐서 몇 개 | gemma-4에서 31·27·23개, 스텝당 81회. Qwen 계열은 1개 |
+| Weights | tens to hundreds of GB | loaded once, never moved afterwards |
+| KV cache | tens to hundreds of MB per node and request | never moved — so a request is bound to the set of nodes holding its KV |
+| Per-step transfer | a few boundary tensors | 31·27·23 for gemma-4, 81 transfers per step. 1 for the Qwen family |
 
-terminal이 만든 토큰은 head로 돌아가 **승인된 뒤에야** 바깥으로 나간다. head는 원본 제출의 권한 지문과
-꼬리가 돌려준 발행 증거를 대조한 뒤 출력을 만든다.
+Tokens produced by the terminal return to the head and go out **only after approval**. The head compares the authority fingerprint of the original submission
+with the issuance evidence returned by the tail, and then produces the output.
 
-그래서 노드 사이에 요구되는 대역폭이 텐서 병렬보다 훨씬 작다. 대신 값을 치른다 — 스테이지가 늘수록
-지연이 쌓이고, 한 번에 한 요청만 흘리면 앞 스테이지가 논다. 그 빈 시간을 메우는 것이 7·8절의 주제다.
+So the bandwidth required between nodes is far smaller than for tensor parallelism. There is a price instead — latency
+accumulates as stages are added, and if only one request flows at a time the earlier stages sit idle. Filling that idle time is the subject of sections 7 and 8.
 
-*확인: `v2/capsule.rs`의 `PhysicalCapsule`/`Tensor`, `v2/node/worker/release.rs`의 `prepare_outputs` 호출부(head), `docs/adapter-batching-layers.md`의 관측표.*
+*Checked: `PhysicalCapsule`/`Tensor` in `v2/capsule.rs`, the `prepare_outputs` call site (head) in `v2/node/worker/release.rs`, the observation table in `docs/adapter-batching-layers.md`.*
 
 ---
 
-## 11. KV 캐시 영속화
+## 11. KV cache persistence
 
-스테이지가 자기 레이어 구간의 KV를 갖고 있으므로 저장도 복원도 노드마다 따로 일어난다.
-llama.cpp의 공개 상태 API를 그대로 쓴다.
+Each stage holds the KV for its own layer range, so save and restore happen separately on each node.
+llama.cpp's public state API is used as is.
 
 1. **Persist** — `llama_state_seq_get_size_ext` / `llama_state_seq_get_data_ext`
-2. `<kv-root>/<key>.lkv` 에 manifest와 상태 바이트, 체크섬을 함께 기록
-3. **셀 회수** — `llama_memory_seq_rm`으로 저장한 뒤 KV 셀을 비운다
-4. **Restore** — 파일을 읽어 `llama_state_seq_set_data_ext`로 되돌리고, 그 업로드가 끝나기 전에는 다음 디코드를 허용하지 않는다
+2. Write the manifest, the state bytes and a checksum together to `<kv-root>/<key>.lkv`
+3. **Cell reclaim** — after saving, clear the KV cells with `llama_memory_seq_rm`
+4. **Restore** — read the file and put it back with `llama_state_seq_set_data_ext`; the next decode is not allowed until that upload finishes
 
-되살릴 자격은 manifest 여섯 항목이 정한다: `build_identity`, `runtime_identity`, `context_identity`,
-`kv_format`(K=타입;V=타입;flags), `token_position`, `checksum`/`bytes`.
-**하나라도 다르면 거부한다** — 다른 빌드·다른 컨텍스트·다른 KV 타입의 상태를 되살리지 않는다.
+Eligibility to restore is decided by six manifest items: `build_identity`, `runtime_identity`, `context_identity`,
+`kv_format` (K=type;V=type;flags), `token_position`, `checksum`/`bytes`.
+**If any one differs, it is rejected** — state from a different build, a different context or a different KV type is not restored.
 
-- `--kv-root`를 주지 않으면 기능 자체가 꺼진 것으로 보고된다. 조용히 메모리에만 남는 경로가 없다.
-- 디코드가 실패해 메모리가 더러워진 런타임은 저장·복원·삭제를 **모두** 거부한다.
-  어느 시퀀스가 망가졌는지 llama.cpp가 알려 주지 않으므로, 찢어졌을 수 있는 상태를 파일로 만들지 않는다.
-- 시퀀스 하나의 상태가 128 MiB를 넘으면 거절한다.
+- If `--kv-root` is not given, the feature is reported as off. There is no path that silently keeps state only in memory.
+- A runtime whose memory is dirty because a decode failed rejects **all** of save, restore and delete.
+  llama.cpp does not say which sequence was damaged, so possibly torn state is never written to a file.
+- State for a single sequence larger than 128 MiB is rejected.
 
-이것은 대화를 이어 붙이기 위한 저장이지 장애 복구 장치가 아니다.
+This is storage for continuing conversations, not a failure-recovery mechanism.
 
-*확인: `server/src/runtime/llama_stage_runtime_kv.cpp`의 `save`/`restore`, `state_store.cpp`의 manifest 대조, `main.cpp`의 capability 설정.*
-
----
-
-## 12. MTP와 그 밖의 스페큘러티브 — 자동이 아니다
-
-**"llama.cpp가 지원하면 자동으로 지원된다"는 이 경로에는 해당하지 않는다.**
-스테이지를 자른 경로에서 제안·검증·롤백은 노드 경계를 넘는 상태이므로, 상류가 새 방법을 추가해도
-자동으로 켜지지 않도록 일부러 반대로 만들어져 있다.
-
-- **구현된 것**: `COMMON_SPECULATIVE_TYPE_DRAFT_MTP` 하나 — 모델이 스스로 다음 토큰을 제안하는 방식.
-- **거부되는 것**: 별도 draft 모델을 요구하면 `CAPABILITY_UNAVAILABLE: draft_context_and_proposal_state_not_in_hop`,
-  그 밖의 speculative 방법이면 `CAPABILITY_UNAVAILABLE: proposal_accept_rollback_state_not_in_hop`로 **LOAD가 실패한다.**
-
-지원 목록을 한곳에 적어 두는 이유를 주석이 밝힌다 — 호출 지점에서 상류 enum을 훑는 방식이었다면
-새 열거자가 조용히 지원되는 것으로 오분류된다.
-
-MTP를 위해 따로 있는 것들: 스케줄러의 1급 phase로 `Verify`·`Replay`가 있고 둘은 원자 트랜잭션이다.
-꼬리 스테이지가 제안을 만들고 시퀀스마다 제안 상태를 따로 관리한다. 메모리 계획이 draft 컨텍스트의
-사용량까지 적재 전에 함께 측정한다. compat 패치에 MTP 꼬리 스테이지와 speculative 시퀀스 수명이
-별도 항목으로 들어 있다.
-
-**진짜로 자동인 자리는 따로 있다 — 장치 backend다.** 스테이지 런타임은 `ggml_backend_load_all()`을
-부르고 끝이며, CUDA·Vulkan·HIP·Metal·OpenCL 분기를 하나도 갖고 있지 않다. 모델 구조·양자화·샘플러·문법도
-같은 뜻에서 llama.cpp의 것을 그대로 쓴다. 따라오는 것과, 경계를 넘는 상태라서 명시 구현이 필요한 것이
-나뉘는 지점이 여기다.
-
-*확인: `compat/p4_llama_compat.cpp`의 `LlamaPlan::requests_unsupported_speculative`, `runtime/llama_stage_runtime.cpp`의 `StageRuntime::load`.*
+*Checked: `save`/`restore` in `server/src/runtime/llama_stage_runtime_kv.cpp`, manifest comparison in `state_store.cpp`, capability settings in `main.cpp`.*
 
 ---
 
-## 13. KV 말고 더 잡는 모델 — 선언한 것만 자를 수 있다
+## 12. MTP and other speculative methods — not automatic
 
-llama.cpp의 메모리는 평범한 KV 하나가 아니다. 핀된 upstream에 구현이 10종 있다:
+**"If llama.cpp supports it, it is supported automatically" does not hold on this path.**
+On the stage-split path, proposal, verification and rollback are state that crosses node boundaries, so the design is deliberately the opposite:
+new methods added upstream are not switched on automatically.
 
-| 스테이지 잔여 선언 | 구현 |
+- **Implemented**: only `COMMON_SPECULATIVE_TYPE_DRAFT_MTP` — the method where the model itself proposes the next tokens.
+- **Rejected**: requiring a separate draft model fails **LOAD** with `CAPABILITY_UNAVAILABLE: draft_context_and_proposal_state_not_in_hop`,
+  and any other speculative method fails it with `CAPABILITY_UNAVAILABLE: proposal_accept_rollback_state_not_in_hop`.
+
+A comment explains why the support list is written down in one place — if call sites scanned the upstream enum,
+a new enumerator would be silently misclassified as supported.
+
+Things that exist specifically for MTP: `Verify` and `Replay` are first-class phases in the scheduler, and both are atomic transactions.
+The tail stage produces proposals and manages proposal state per sequence. The memory plan measures the draft context's
+usage together with everything else before load. The compat patches include the MTP tail stage and the speculative sequence lifetime
+as separate items.
+
+**The place that really is automatic is elsewhere — the device backend.** The stage runtime calls `ggml_backend_load_all()`
+and that is all; it has no CUDA, Vulkan, HIP, Metal or OpenCL branches at all. Model architectures, quantization, samplers and grammars
+likewise use llama.cpp's own implementation as is. This is where the line falls between what comes along for free and what needs explicit implementation
+because it is state that crosses boundaries.
+
+*Checked: `LlamaPlan::requests_unsupported_speculative` in `compat/p4_llama_compat.cpp`, `StageRuntime::load` in `runtime/llama_stage_runtime.cpp`.*
+
+---
+
+## 13. Models that hold more than KV — only what is declared can be split
+
+llama.cpp memory is not just one plain KV. The pinned upstream has 10 implementations:
+
+| Stage residency declaration | Implementations |
 | --- | --- |
-| 선언함 (4) | `llama-kv-cache` · `llama-kv-cache-iswa` · `llama-memory-recurrent` · `llama-memory-hybrid` |
-| 선언 없음 (6) | `llama-kv-cache-dsa` · `llama-kv-cache-dsa-iswa` · `llama-kv-cache-dsv4` · `llama-kv-cache-msa` · `llama-memory-hybrid-idx` · `llama-memory-hybrid-iswa` |
+| Declared (4) | `llama-kv-cache` · `llama-kv-cache-iswa` · `llama-memory-recurrent` · `llama-memory-hybrid` |
+| Not declared (6) | `llama-kv-cache-dsa` · `llama-kv-cache-dsa-iswa` · `llama-kv-cache-dsv4` · `llama-kv-cache-msa` · `llama-memory-hybrid-idx` · `llama-memory-hybrid-iswa` |
 
-게이트는 두 겹이다. 기본값은 **거부**(`linkcpp_stage_residency_supported = false`)이고,
-구현이 명시적으로 `true`로 덮어써야 자를 수 있다.
+The gate has two layers. The default is **reject** (`linkcpp_stage_residency_supported = false`), and
+an implementation must explicitly override it with `true` before it can be split.
 
-1. 팩토리에서 컴파일 타임 상수로 한 번 — 부분 stage인데 선언이 없으면 메모리를 아예 만들지 않는다.
-2. 컨텍스트 생성에서 가상 호출로 다시 한 번 — "스테이지 잔여를 선언하지 않았다"로 던진다.
+1. Once in the factory, as a compile-time constant — for a partial stage without a declaration, memory is not created at all.
+2. Again at context creation, through a virtual call — it throws with "stage residency not declared".
 
-iSWA는 자기 저장소가 없고 base·swa 두 캐시에 위임한다. 재사용되는 KV 영역을 가르는 경계는
-그 둘의 생성자가 거절한다.
+iSWA has no storage of its own and delegates to two caches, base and swa. Boundaries that would split a reused KV region
+are rejected by the constructors of those two.
 
-적재 전에 장치별로 쪼개 계산한다 — `model`(가중치) · `context`(KV와 그 밖의 상태) · `compute`(실행 버퍼).
-셋의 합을 장치의 여유와 대조하고, 맞지 않으면 **할당하기 전에** LOAD가 실패한다.
+Before load, memory is computed per device, split into `model` (weights) · `context` (KV and other state) · `compute` (execution buffers).
+The sum of the three is compared with the device's free memory, and if it does not fit, LOAD fails **before allocating**.
 
-그래서 "캐시를 더 잡는 모델도 처리된다"는 반만 맞다. 추가 저장소가 계획에 잡히고 스테이지에 상주하는 것은
-선언한 4종에 한정되며, DSA·DSV4·MSA 같은 희소 어텐션 계열은 아직 선언이 없어 자르면 거부된다.
-한 노드에 통째로 싣는 경로에서는 upstream 그대로 동작한다.
+So "models that hold extra cache are handled too" is only half true. Having extra storage captured in the plan and resident on a stage is
+limited to the 4 declared kinds; sparse-attention families such as DSA, DSV4 and MSA have no declaration yet and are rejected when split.
+On the path that loads a whole model onto one node, they behave exactly as upstream.
 
-*확인: `upstream/src`의 메모리 구현 목록, `staged/compat/451b89bae/0016·0017·0022` 패치, `server/src/runtime/stage_memory_plan.hpp`.*
+*Checked: the list of memory implementations in `upstream/src`, patches `staged/compat/451b89bae/0016·0017·0022`, `server/src/runtime/stage_memory_plan.hpp`.*
 
 ---
 
-## 14. 정리 — 개발자에게 무엇을 주는가
+## 14. Summary — what this gives developers
 
-1. **큰 모델을 노드를 더해 돌린다.** GPU 한 장, 머신 한 대의 한계가 모델 크기의 한계가 아니게 된다.
-   레이어 구간으로 자르므로 노드를 더해도 늘어나는 통신은 경계 하나뿐이다.
-2. **backend를 갈아끼운다.** 노드가 아는 것은 어댑터 계약 하나다. 이름 하나와 구현 하나를 등록하면
-   그 위층은 한 줄도 바뀌지 않는다.
-3. **플랫폼 대응을 빌려 쓴다.** 장치 대응은 llama.cpp가 이미 하고 있고, 상류 변화의 충격은 pin 디렉터리 안에서 끝난다.
-4. **느린 곳을 지목할 수 있다.** agent의 큐 깊이와 노드 안에서 실행 중인 수를 따로 보고하므로,
-   느려졌을 때 P4가 쥐고 있는지 backend가 쥐고 있는지가 관측값으로 갈린다.
+1. **Run large models by adding nodes.** The limits of one GPU and one machine stop being the limit on model size.
+   Because the split is by layer range, adding nodes only adds communication at one boundary.
+2. **Swap backends.** A node knows only the adapter contract. Register one name and one implementation, and
+   not a single line above it changes.
+3. **Borrow platform support.** llama.cpp already handles device support, and the impact of upstream changes stays inside the pin directory.
+4. **Pinpoint the slow part.** The agent's queue depth and the number running inside a node are reported separately, so
+   when things slow down, the observations show whether P4 or the backend is holding the work.
 
-경계를 분명히 해 둔다 — **TLS·인증·인가는 없다.** 주소가 스스로를 밝히는 것을 믿는 구조이므로
-신뢰할 수 있는 망 안에서만 쓴다. **내구 상태도 없다.** agent가 재시작하면 노드는 사라지고,
-무엇이 있어야 하는지에 대한 기록은 OUTER가 쥐고 있다.
+To be clear about the boundaries — **there is no TLS, authentication or authorization.** The design trusts addresses to identify themselves,
+so use it only inside a trusted network. **There is no durable state either.** When an agent restarts its nodes disappear,
+and the record of what should exist is held by OUTER.

@@ -1,11 +1,11 @@
-# llama.cpp Adapter 구현 요약
+# llama.cpp Adapter implementation summary
 
-> 문서 지위 (2026-09-06): **역사·구 계획**. 당시 계획/관측을 보존한다. 현재 상태·실행 순서·승격 기준으로 사용하지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](docs/document-map.md)를 따른다.
+> Document status (2026-09-06): **History / old plan**. It preserves the plans and observations of the time. Do not use it for current status, execution order or promotion criteria.
+> Current goals, status and ordering follow the [execution roadmap](docs/distributed-batching-roadmap.md); document authority and reading paths follow the [document map](docs/document-map.md).
 
-이 문서는 이 세션에서 확인·구현한 P4의 llama.cpp 어댑터와 staged runtime의 현재 상태를 요약한다. `MTP`는 현재 테스트 범위에서 제외한다.
+This document summarizes the current state of P4's llama.cpp adapter and staged runtime as confirmed and implemented in this session. `MTP` is excluded from the current test scope.
 
-## 구조
+## Structure
 
 ```text
 OUTER
@@ -16,93 +16,93 @@ OUTER
           -> patched llama.cpp runtime
 ```
 
-주요 경로:
+Main paths:
 
-| 경로 | 책임 |
+| Path | Responsibility |
 | --- | --- |
-| [`layers/adapters/llamacpp/staged/adapter`](layers/adapters/llamacpp/staged/adapter) | Rust `Adapter` 구현, plan 전달, 서버 생명주기, 로컬 프로토콜 클라이언트 |
-| [`layers/adapters/llamacpp/staged/server`](layers/adapters/llamacpp/staged/server) | C++ stage server, llama.cpp 호출, hop 입출력, KV 상태 처리 |
-| [`layers/adapters/llamacpp/staged/compat`](layers/adapters/llamacpp/staged/compat) | 공식 llama.cpp에 적용하는 versioned compatibility patch set |
-| [`tools/scripts/e2e/run-ssh-forwarded-real-four-node.ps1`](tools/scripts/e2e/run-ssh-forwarded-real-four-node.ps1) | 중앙 3090·4080과 원격 3090×2를 연결하는 실제 4노드 검증 실행기 |
-| [`docs/protocol.md`](docs/protocol.md) | OUTER/P4가 이미 정의한 hop, sequence, option, capability 계약 |
-| [`docs/buildplan.md`](docs/buildplan.md) | staged 구현 및 검증 게이트 |
+| [`layers/adapters/llamacpp/staged/adapter`](layers/adapters/llamacpp/staged/adapter) | Rust `Adapter` implementation, plan delivery, server lifecycle, local protocol client |
+| [`layers/adapters/llamacpp/staged/server`](layers/adapters/llamacpp/staged/server) | C++ stage server, llama.cpp calls, hop input/output, KV state handling |
+| [`layers/adapters/llamacpp/staged/compat`](layers/adapters/llamacpp/staged/compat) | Versioned compatibility patch set applied to official llama.cpp |
+| [`tools/scripts/e2e/run-ssh-forwarded-real-four-node.ps1`](tools/scripts/e2e/run-ssh-forwarded-real-four-node.ps1) | Real 4-node verification runner that connects the central 3090 and 4080 with the remote 3090×2 |
+| [`docs/protocol.md`](docs/protocol.md) | hop, sequence, option and capability contracts already defined by OUTER/P4 |
+| [`docs/buildplan.md`](docs/buildplan.md) | staged implementation and verification gates |
 
-## 구현된 동작
+## Implemented behavior
 
-### 서버 생명주기
+### Server lifecycle
 
-- 각 llama.cpp stage는 하나의 독립 프로세스로 실행된다.
-- Rust adapter가 stage server를 생성·연결하고 프로세스 핸들을 소유한다.
-- 정상 언로드는 `UNLOAD` 후 컨텍스트·모델·runtime을 정리한다.
-- 비정상 부모 종료에 대비해 서버의 stdin은 기동 plan 뒤에도 닫지 않는다. stdin EOF는 liveness 종료 신호다.
-- 원격 Windows의 `S:` 네트워크 드라이브는 비대화형 SSH 세션에 보이지 않으므로, 원격 interactive 계정의 숨김 Scheduled Task로 Agent를 실행한다.
+- Each llama.cpp stage runs as one independent process.
+- The Rust adapter creates and connects the stage server and owns the process handle.
+- A normal unload cleans up the context, model and runtime after `UNLOAD`.
+- To handle abnormal parent exit, the server's stdin is not closed even after the startup plan. stdin EOF is the liveness termination signal.
+- The `S:` network drive on remote Windows is not visible to non-interactive SSH sessions, so the Agent runs as a hidden Scheduled Task under the remote interactive account.
 
-### 분산 추론
+### Distributed inference
 
-- 모델 plan은 stage별 `layer_begin/layer_end`, KV 범위, batch, ubatch, context, GPU layer 수를 포함한다.
-- 각 stage는 자기 레이어와 KV 범위만 소유한다.
-- hop은 P4 protocol의 여러 sequence/window 계약을 따르며, staged adapter는 각 sequence의 cut-set payload를 stage server 사이에 전달한다.
-- stage 출력은 `output_get`과 `terminal_get`을 모두 처리한 뒤 한 번 synchronize하고 전송한다.
-- alias descriptor는 별도 payload를 보내지 않고 유효한 alias 범위만 허용한다.
-- adapter Rust 코드에는 backend FFI를 두지 않고 C++ server가 llama.cpp 헤더와 라이브러리를 직접 사용한다.
+- The model plan includes per-stage `layer_begin/layer_end`, KV range, batch, ubatch, context and GPU layer count.
+- Each stage owns only its own layers and KV range.
+- A hop follows the P4 protocol's multi-sequence/window contract, and the staged adapter forwards each sequence's cut-set payload between stage servers.
+- Stage output is synchronized once and sent after both `output_get` and `terminal_get` are processed.
+- An alias descriptor sends no separate payload and allows only a valid alias range.
+- The adapter's Rust code has no backend FFI; the C++ server uses the llama.cpp headers and library directly.
 
-### 디코드 배치 (실험, `P4_STAGED_DECODE_BATCH`)
+### Decode batching (experimental, `P4_STAGED_DECODE_BATCH`)
 
-hop 하나가 여러 sequence를 실어와도 stage server는 sequence마다 `llama_decode`를
-따로 불렀다. 그 결과 stage의 가중치를 sequence 수만큼 다시 읽는다 — 4 GPU 실측에서
-디코드 lap 35,000회에 그래프 실행 35,500회, hop당 sequence 1개였다.
+Even when one hop carried several sequences, the stage server called `llama_decode`
+separately for each sequence. As a result, the stage weights are read again once per sequence — on the 4-GPU measurement,
+35,000 decode laps produced 35,500 graph executions, one sequence per hop.
 
-배치 경로는 lap 하나를 `llama_batch` 하나로 만든다. 동작을 확인했고(폭 2~3,
-`llama_decode` 실패 0, ubatch 분할 0), 그 과정에서 확정한 세 가지 제약을 지킨다.
+The batched path turns one lap into one `llama_batch`. Its behavior was confirmed (width 2–3,
+0 `llama_decode` failures, 0 ubatch splits), and it respects three constraints established in the process.
 
-- cut-set을 소비하는 stage는 **embedding batch**(`llama_batch_init(n, n_embd, 1)`,
-  `embd`를 0으로 채움)를 쓴다. token batch를 쓰면 그래프가 token embedding을
-  찾으러 가서 입력 형상이 어긋난다.
-- **position은 llama.cpp가 정한다.** staged는 lap 인덱스만 알고, 절대 위치는
-  프롬프트 길이를 포함한다. lap 22를 그대로 넣으면 KV가 뒤로 간 것으로 거절된다.
-- **`--kv-unified`가 필요하다.** 통합이 아니면 ubatch는 sequence id가 연속으로
-  증가하는 것만 받아들여, slot이 흩어진 lap이 조각난다.
+- A stage that consumes a cut-set uses an **embedding batch** (`llama_batch_init(n, n_embd, 1)`,
+  with `embd` filled with zeros). With a token batch, the graph goes looking for a token embedding
+  and the input shape does not match.
+- **llama.cpp decides the position.** staged knows only the lap index, and the absolute position
+  includes the prompt length. Passing lap 22 as is gets rejected as KV moving backwards.
+- **`--kv-unified` is required.** Without it, a ubatch accepts only consecutively increasing sequence ids,
+  so a lap with scattered slots gets fragmented.
 
-이 경로는 다룰 수 없는 모양이면 조용히 거절하고 기존 sequence별 경로로 떨어진다.
-아직 기본 비활성인 이유는 켰을 때 일부 sequence가 생성 후반에 멈추기 때문이며,
-그 결함은 llama.cpp가 아니라 chain 회계 쪽에 있다.
+When the shape cannot be handled, this path quietly declines and falls back to the existing per-sequence path.
+It is still disabled by default because, when enabled, some sequences stall late in generation,
+and that defect lies in the chain accounting, not in llama.cpp.
 
-배치·오프로딩·텐서 배치는 전부 이 계층에서 끝난다. P4는 plan을 불투명하게
-취급하므로 이런 최적화가 프로토콜을 바꾸지 않는다.
+Batching, offloading and tensor placement all end at this layer. P4 treats the plan as opaque,
+so these optimizations do not change the protocol.
 
-### 모델 옵션 전달
+### Model option passing
 
-- llama.cpp의 개별 옵션을 Rust adapter가 열거하지 않는다.
-- OUTER/P4가 전달한 opaque option/plan을 adapter가 보존하고 C++ server가 llama.cpp `common` 계층으로 해석한다.
-- 세밀한 offload, unified KV, sampling, reasoning budget, context/batch 옵션은 pass-through 대상이다.
-- speculative decoding과 MTP는 staged 의미 검증이 필요한 별도 capability이며, 현재 MTP는 테스트 대상에서 제외한다.
+- The Rust adapter does not enumerate individual llama.cpp options.
+- The adapter preserves the opaque option/plan delivered by OUTER/P4, and the C++ server interprets it through the llama.cpp `common` layer.
+- Fine-grained offload, unified KV, sampling, reasoning budget and context/batch options are pass-through.
+- Speculative decoding and MTP are separate capabilities that need staged semantic verification; MTP is currently excluded from testing.
 
 ## KV cache
 
-- KV cache는 각 stage server가 소유한다.
-- KV 저장/복원은 stage 범위, sequence, model identity, cache key, checksum을 대조한다.
-- 복원 대상과 메타데이터가 맞지 않으면 복원하지 않는다.
-- 현재 검수에서 `runtime/build identity`, context parameter, KV format, token position을 cache key에 명시적으로 포함해야 한다는 결함이 확인됐다. 이 부분은 최종 운영 승인 전 보강 대상이다.
+- Each stage server owns its KV cache.
+- KV save/restore checks the stage range, sequence, model identity, cache key and checksum.
+- If the restore target and metadata do not match, nothing is restored.
+- The current review found a defect: `runtime/build identity`, context parameters, KV format and token position must be included explicitly in the cache key. This needs to be reinforced before final operational approval.
 
-## 실제 검증 결과
+## Real verification results
 
-### 성공한 범위
+### What succeeded
 
-- 중앙 RTX 3090·RTX 4080과 원격 RTX 3090×2를 SSH forwarding으로 연결했다.
-- 모델 파일을 로컬/원격 디스크로 복사하지 않고 `S:\models\...` 공유 경로에서 사용했다.
-- 원격 Agent를 숨김 Scheduled Task로 기동하고 각 원격 포트가 열리는 것을 확인했다.
-- 4080 stage는 초기 실험에서 `n-gpu-layers=2`로 제한했다.
-- 실행기는 산출물 SHA-256 검증, VRAM 샘플링, stage range/GPU layer override, hidden process, cleanup을 지원한다.
+- The central RTX 3090 and RTX 4080 were connected with the remote RTX 3090×2 through SSH forwarding.
+- Model files were used from the shared `S:\models\...` path without copying them to local/remote disks.
+- The remote Agent was started as a hidden Scheduled Task, and each remote port was confirmed open.
+- The 4080 stage was limited to `n-gpu-layers=2` in the initial experiment.
+- The runner supports artifact SHA-256 verification, VRAM sampling, stage range/GPU layer overrides, hidden processes and cleanup.
 
-### MiniMax-M3 결과
+### MiniMax-M3 results
 
-사용 모델:
+Model used:
 
 ```text
 S:\models\unsloth\MiniMax-M3-GGUF\MiniMax-M3-UD-Q5_K_S-00001-of-00008.gguf
 ```
 
-시도한 stage 배치:
+Stage placement attempted:
 
 ```text
 ranges:   0:15,15:30,30:45,45:60
@@ -110,51 +110,51 @@ gpu:      4,2,4,4
 4080 max: 10500 MiB
 ```
 
-4개 stage 모두 모델 로더 진입까지 갔지만 다음 오류로 중단됐다.
+All 4 stages reached the model loader but stopped with the following error.
 
 ```text
 key not found in model: minimax-m3.attention.indexer.head_count
 ```
 
-이는 분산 cut-set이나 원격 연결 실패가 아니다. 현재 pinned llama.cpp의 MSA 경로가 요구하는 인덱서 메타데이터가 `S:`의 초기 MiniMax-M3 GGUF에 없기 때문이다. 공식 모델 문서도 해당 GGUF를 실험적 PR #24523 기반 포맷으로 설명한다.
+This is not a distributed cut-set or remote connection failure. The early MiniMax-M3 GGUF on `S:` lacks the indexer metadata that the MSA path of the currently pinned llama.cpp requires. The official model documentation also describes that GGUF as a format based on experimental PR #24523.
 
-따라서 아직 다음 결과는 없다:
+The following results therefore do not exist yet:
 
-- MiniMax-M3 4노드 실제 토큰 생성
+- Real 4-node MiniMax-M3 token generation
 - 5,000-token prefill
 - 5,000-token generation
 - prefill/generation TPS
-- 병렬 calibration 및 queue saturation
+- Parallel calibration and queue saturation
 
-결과 파일:
+Result files:
 
 - [`target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/result.json`](../target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/result.json)
 - [`target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/central-agent-52003.err.log`](../target/ssh-forwarded-four-node-e2e/m3-smoke-20260819-3/central-agent-52003.err.log)
 
-## M3 호환 경계
+## M3 compatibility boundary
 
-초기 M3 GGUF의 누락된 MSA 메타데이터를 어댑터가 추론하던 실험 패치는 제거했다. 최신 공식 llama.cpp도 이 변형을 지원하지 않으므로, 로컬 호환층이 모델별 dense fallback을 유지하면 새 모델마다 어댑터를 수정해야 한다.
+The experimental patch in which the adapter inferred the missing MSA metadata of the early M3 GGUF has been removed. The latest official llama.cpp does not support this variant either, so if the local compatibility layer kept a per-model dense fallback, the adapter would need changes for every new model.
 
-- GGUF 해석과 모델별 memory/graph 선택은 공식 llama.cpp만 수행한다.
-- staged 호환층은 모델명이 아니라 공식 memory 객체의 일반 capability만 소비한다.
-- 공식 llama.cpp가 읽지 못하는 GGUF는 fail-closed로 거부하고, 공식 포맷 GGUF 또는 새 upstream revision을 사용한다.
-- compatibility patch와 native runtime에 architecture 분기나 private model header가 추가되면 preparation 단계가 실패한다.
+- Only official llama.cpp interprets GGUF and selects per-model memory/graph.
+- The staged compatibility layer consumes only generic capabilities of the official memory object, not model names.
+- A GGUF that official llama.cpp cannot read is rejected fail-closed; use an official-format GGUF or a new upstream revision.
+- The preparation step fails if an architecture branch or a private model header is added to the compatibility patch or native runtime.
 
-## 알려진 문제와 다음 게이트
+## Known issues and next gates
 
-1. 공식 llama.cpp가 읽는 GGUF인지 stock runtime에서 먼저 확인한다.
-2. 단일 stage에서 동일 GGUF의 load와 1-token decode를 확인한다.
-3. 중앙 3090·4080 두 stage에서 load와 hop을 확인한다.
-4. 원격 3090×2를 포함한 4-stage 1-token inference를 확인한다.
-5. 4080 VRAM을 11GB 이하로 유지하면서 stage range/GPU layer를 조정한다.
-6. 5k/5k 의미 있는 프롬프트 테스트를 실행한다. 이때 `batch-size=5000`, 충분한 context, MTP 제외를 명시한다.
-7. 동일한 parallel 수로 동시 요청을 만들고 이후 요청을 계속 투입해 node queue/adaptor queue가 쌓이는지 측정한다.
-8. prefill TPS, generation TPS, 통합 TPS, 세션별 평균 TPS를 별도로 기록한다.
-9. 실제 결과가 통과한 뒤에만 `buildplan.md`와 validation evidence를 갱신한다.
+1. First confirm in the stock runtime that official llama.cpp can read the GGUF.
+2. Confirm load and 1-token decode of the same GGUF on a single stage.
+3. Confirm load and hop on the two central stages, 3090 and 4080.
+4. Confirm 4-stage 1-token inference including the remote 3090×2.
+5. Adjust stage range/GPU layers while keeping 4080 VRAM at 11GB or less.
+6. Run the 5k/5k meaningful-prompt test, stating `batch-size=5000`, sufficient context and MTP excluded.
+7. Create concurrent requests at the same parallel count, keep submitting further requests, and measure whether the node queue/adapter queue builds up.
+8. Record prefill TPS, generation TPS, combined TPS and per-session mean TPS separately.
+9. Update `buildplan.md` and the validation evidence only after real results pass.
 
-## 주의사항
+## Cautions
 
-- `apps/p4/layers/adapters/llamacpp/upstream`은 교체 가능한 공식 llama.cpp 경계이므로 Linker 전용 코드를 넣지 않는다.
-- compatibility 수정은 versioned patch/prepared tree에 두되 모델별 해석이나 분기는 넣지 않는다.
-- M3 로딩 오류를 레이어 배치 오류로 해석하지 않는다. 모델 포맷과 runtime 지원 수준을 먼저 맞춘다.
-- 실험 실행은 모두 hidden/background 방식으로 수행하고, 중단 시 중앙/원격 Agent·SSH tunnel·VRAM sampler를 함께 정리한다.
+- `apps/p4/layers/adapters/llamacpp/upstream` is the replaceable official llama.cpp boundary, so do not put Linker-specific code there.
+- Keep compatibility changes in the versioned patch/prepared tree, but do not add per-model interpretation or branches.
+- Do not interpret the M3 loading error as a layer placement error. Align the model format and runtime support level first.
+- Run all experiments in hidden/background mode, and when stopping, clean up the central/remote Agents, SSH tunnels and VRAM sampler together.

@@ -6,7 +6,7 @@
 //!
 //! `apps/llama/src/server/pipeline-runtime-manager/manager.ts` and
 //! `apps/llama/src/server/pipeline-inference-stream.ts` are outside this
-//! crate's allowlist (both belong to the "llama 경로" agent's rows in
+//! crate's allowlist (both belong to the "llama path" agent's rows in
 //! `SEALED-CONTRACT.md` §7), so this file documents what was found there
 //! by reading, rather than adding a test to those files directly.
 //!
@@ -38,7 +38,7 @@
 //! lease release happens-before the terminal event reaches the wire, by the
 //! structure of one promise chain, not by a timing accident that could slip.
 //!
-//! This is v1 evidence. v2's coordinator is the same "llama 경로" allowlist
+//! This is v1 evidence. v2's coordinator is the same "llama path" allowlist
 //! row and did not exist in the tree when this crate was written -- the
 //! ordering has to hold there too for the sealed contract's claim about
 //! `Settled` to be true, and this checkpoint's report asks the root/llama-path

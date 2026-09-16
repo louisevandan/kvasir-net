@@ -1,233 +1,233 @@
-# OUTER 세션과 KV 수명주기
+# OUTER sessions and the KV lifecycle
 
-> 문서 지위 (2026-09-06): **분야 계약·구현과 구별**. 소유 분야의 계약/목표를 읽되 구현 완료로 간주하지 않는다. 현재 개발 순서와 충돌하면 로드맵의 명시적 이관을 따른다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Area contract, distinct from implementation**. Read it as the owning area's contract and goals, not as a completed implementation. Where it conflicts with the current development order, follow the explicit hand-over recorded in the roadmap.
+> Current goals, status and ordering follow the [execution roadmap](distributed-batching-roadmap.md); document authority and reading paths follow the [document map](document-map.md).
 
-## 상태와 범위
+## Status and scope
 
-이 문서는 OUTER 연결 단절, heartbeat, inference 중지, KV Persist/Restore/Discard,
-보존기간 GC의 계층 경계를 정의한다. P4는 정책 엔진이나 KV 스케줄러가 아니라
-메시지 브로커다. P4가 해석하지 않는 정책은 agent 상주 정책 컴포넌트가 결정하고,
-실제 KV 슬롯·GPU·메모리 스케줄링은 구상 adapter가 결정한다.
+This document defines the layer boundaries for OUTER disconnects, heartbeat, stopping inference, KV Persist/Restore/Discard,
+and retention-period GC. P4 is a message broker, not a policy engine or a KV scheduler.
+Policy that P4 does not interpret is decided by a policy component resident in the agent, and
+actual KV slot, GPU and memory scheduling is decided by the concrete adapter.
 
-현재 node-bound worker는 `target:node`를 순서 키로 사용하고 프레임 `route`는
-handle로만 사용한다. 이 변경은 같은 node에 도착하는 서로 다른 route의 경쟁을
-줄이지만, main queue의 Control/Response/Decode/Prefill lane 선택보다 뒤에서
-적용된다. 따라서 `sequence_id` 단위의 발행 순서 보장은 아직 목표 계약이며,
-현재 구현의 완료를 의미하지 않는다.
+The current node-bound worker uses `target:node` as the ordering key and uses the frame `route`
+only as a handle. This change reduces contention between different routes arriving at the same node,
+but it is applied after the main queue's Control/Response/Decode/Prefill lane selection.
+Issue-order guarantees per `sequence_id` are therefore still a target contract,
+not something the current implementation has completed.
 
-## 계층별 책임
+## Responsibilities by layer
 
-| 계층 | 책임 | 하지 않는 일 |
+| Layer | Responsibilities | Does not do |
 | --- | --- | --- |
-| Agent 상주 세션 정책 | heartbeat, 단절 판정, 요청 소유권, Persist/Restore/Discard 발행, TTL GC | KV 바이트 배치·GPU 슬롯 선택 |
-| P4 agent/protocol | 메시지 전달, 식별자 보존, 세션 단위 전달 순서, 결과·거절·실패 운반 | sampling, decoding, eviction 정책, restore 시점 결정 |
-| 구상 adapter | inference 경계, KV 슬롯 확보·축출·복원, 실제 동시성 및 장치 스케줄링 | P4 메시지 의미의 재정의 |
+| Agent-resident session policy | heartbeat, disconnect verdict, request ownership, issuing Persist/Restore/Discard, TTL GC | KV byte placement, GPU slot selection |
+| P4 agent/protocol | message delivery, identifier preservation, per-session delivery order, carrying results, refusals and failures | sampling, decoding, eviction policy, deciding when to restore |
+| Concrete adapter | inference boundaries, securing, evicting and restoring KV slots, actual concurrency and device scheduling | redefining the meaning of P4 messages |
 
-관련 구현 진입점은 [agent (`Agent`)](../layers/agent/src/agent/mod.rs), [node runner (`Node`)](../layers/agent/src/node/runner/mod.rs),
+The related implementation entry points are [agent (`Agent`)](../layers/agent/src/agent/mod.rs), [node runner (`Node`)](../layers/agent/src/node/runner/mod.rs),
 [service message vocabulary (`ToAgent`/`ToNode`)](../layers/service/src/message/mod.rs),
-[cache coordinator (`CacheTransaction`)](../layers/service/src/cache.rs)다.
+and [cache coordinator (`CacheTransaction`)](../layers/service/src/cache.rs).
 
-## 식별자
+## Identifiers
 
-식별자는 서로 대체하지 않는다.
+Identifiers do not substitute for one another.
 
-| 식별자 | 의미 | 수명 |
+| Identifier | Meaning | Lifetime |
 | --- | --- | --- |
-| `return_channel` | OUTER의 논리 채널과 소유권 축 | 재접속에도 논리 채널로 유지 |
-| `ingress_generation` | 해당 `return_channel`의 연결 세대 | 소켓 재접속마다 증가 |
-| `sequence_id` | KV가 보존하는 대화 세션 | Persist 이후에도 유지 |
-| `request_id` 또는 `route` | 개별 프레임·실행 handle | 메시지 하나 또는 실행 하나 |
-| `operation_id` | Persist/Restore/Discard 한 번의 작업 | 해당 작업 동안 |
+| `return_channel` | OUTER's logical channel and ownership axis | kept as a logical channel across reconnects |
+| `ingress_generation` | connection generation of that `return_channel` | incremented on every socket reconnect |
+| `sequence_id` | the conversation session that KV preserves | kept after Persist |
+| `request_id` or `route` | handle for an individual frame or execution | one message or one execution |
+| `operation_id` | one Persist/Restore/Discard operation | for the duration of that operation |
 
-KV의 durable key는 `request_id`가 아니라 `sequence_id`다. 동일한
-`sequence_id`의 여러 실행 요청은 하나의 대화 상태를 이어가며, 각 실행은 별도의
-`request_id`와 `operation_id`를 가질 수 있다. Restore 이후 후속 inference가 어떤
-세션을 이어갈지는 반드시 명시적인 `sequence_id`로 결정한다.
+The durable key for KV is `sequence_id`, not `request_id`. Multiple execution requests with the same
+`sequence_id` continue one conversation state, and each execution may have its own
+`request_id` and `operation_id`. Which session a later inference continues after Restore
+is always decided by an explicit `sequence_id`.
 
-## P4 순서 계약
+## P4 ordering contract
 
-P4가 보장하는 순서는 정책이 아니라 전달 순서다.
+The order P4 guarantees is delivery order, not policy.
 
-> 동일한 `sequence_id`를 가진 모든 메시지는 각 대상 node에 발행 순서대로
-> 전달된다. 서로 다른 `sequence_id` 사이에는 순서를 보장하지 않는다.
+> All messages with the same `sequence_id` are delivered to each target node in issue
+> order. No order is guaranteed between different `sequence_id`s.
 
-`sequence_id`는 ordering key이고, `route` 또는 별도 request handle은 프레임을
-식별하는 키여야 한다. 둘을 같은 필드로 사용하면 다음 문제가 생긴다.
+`sequence_id` is the ordering key, and `route` or a separate request handle must be the key that identifies
+a frame. Using the same field for both causes the following problems.
 
-- Restore와 후속 Hop을 같은 세션 순서로 묶을 수 없다.
-- 서로 다른 worker로 분산되어 순서가 사라진다.
-- node queue의 `claim`/`remove`가 여러 프레임을 같은 항목으로 오인할 수 있다.
+- Restore and the following Hop cannot be tied into the same session order.
+- They are spread across different workers and the order is lost.
+- `claim`/`remove` on the node queue may mistake several frames for the same item.
 
-현재 node worker 선택은 [agent dispatch](../layers/agent/src/agent/mod.rs)에서
-`target:node`를 사용하고, 일반 peer traffic은 `route`를 사용한다. 이 선택은
-node별 ingress를 한 worker에 직렬화하지만, [main queue](../layers/agent/src/queue/main/mod.rs)의
-lane 우선순위를 없애지 않는다. 따라서 `ordering_key`와 `frame_handle`을 완전히
-분리하고 발행 순서를 보장하는 변경은 별도 수용조건이다.
+Current node worker selection uses `target:node` in [agent dispatch](../layers/agent/src/agent/mod.rs),
+and ordinary peer traffic uses `route`. This choice
+serializes per-node ingress onto one worker, but it does not remove the lane priority of the [main queue](../layers/agent/src/queue/main/mod.rs).
+A change that fully separates `ordering_key` from `frame_handle`
+and guarantees issue order is therefore a separate acceptance condition.
 
-전달 순서가 실행 완료를 뜻하지는 않는다. 같은 세션의 후속 inference는 Restore
-완료 전 실행 가능 상태가 될 수 없으며, 그 경계를 유지하는 위치는 adapter
-capability에 따른다.
+Delivery order does not mean execution completion. A later inference in the same session cannot become runnable before Restore
+completes, and where that boundary is enforced depends on the adapter's
+capability.
 
-## OUTER heartbeat와 단절
+## OUTER heartbeat and disconnect
 
-heartbeat는 TCP 생존 확인이 아니라 application-level 메시지여야 한다.
-아래는 목표 wire/policy이며, 현재 P4 코드에 구현됐다는 뜻이 아니다.
+A heartbeat must be an application-level message, not a TCP liveness check.
+The following is the target wire/policy; it does not mean it is implemented in the current P4 code.
 
 ```text
 Agent → Outer: Ping(nonce, issued_at)
 Outer → Agent: Pong(nonce, ingress_generation)
 ```
 
-구현 시 agent는 nonce와 `ingress_generation`을 검증하고, 단일 실패가 아니라 설정된
-miss threshold를 넘었을 때만 `Disconnected`로 전이해야 한다. 재접속은 새 연결 세대로 등록하며,
-이전 연결의 응답·ACK가 새 세션 소유권을 침범하지 않아야 한다.
+When implemented, the agent must validate the nonce and `ingress_generation`, and transition to `Disconnected` only when the configured
+miss threshold is exceeded, not on a single failure. A reconnect registers as a new connection generation,
+and responses and ACKs from the previous connection must not intrude on the new session's ownership.
 
-## 단절과 KV 흐름
+## Disconnect and KV flow
 
-연결 단절 시 정책 컴포넌트는 해당 `return_channel`과 `ingress_generation`이 소유한
-모든 실행을 찾아야 한다. 현재 구현에는 이 실행 집합을 열거하거나 집합 단위로
-취소하는 primitive가 없으므로, 이는 수용 조건이다. 실행 중인 hop은 현재 P4의
-취소 의미에 따라 hop 경계까지 진행될 수
-있으며, 다음 hop은 시작하지 않는다.
+On disconnect, the policy component must find all executions owned by that `return_channel` and `ingress_generation`.
+The current implementation has no primitive to enumerate this set of executions or to cancel it
+as a set, so this is an acceptance condition. A running hop may continue up to the hop boundary,
+according to P4's current cancellation semantics,
+and the next hop does not start.
 
 ```text
 Connected
-  └─ heartbeat miss threshold 초과
+  └─ heartbeat miss threshold exceeded
        └─ Disconnected
-            ├─ 관련 inference 취소/중지 요청
-            ├─ 진행 상태를 sequence_id에 귀속
-            └─ Persist(sequence_id) 발행
+            ├─ request cancel/stop of related inference
+            ├─ attribute progress state to sequence_id
+            └─ issue Persist(sequence_id)
 ```
 
-Persist가 완료되면 세션은 `Detached`다. durable KV가 있으므로 Restore가 지금
-실행되지 않아도 세션 손실은 아니다.
+Once Persist completes, the session is `Detached`. Because durable KV exists, not running Restore right now
+does not mean the session is lost.
 
-## Restore는 메시지 요청이다
+## Restore is a message request
 
-Restore는 P4의 특별한 스케줄링 명령이 아니라 큐에 들어가는 하나의 요청이다.
+Restore is not a special P4 scheduling command; it is one request that goes into the queue.
 
 ```text
 Detached
   └─ Restore(sequence_id)
-       └─ adapter가 자신의 scheduler에서 처리
-            ├─ 현재 inference 경계까지 대기
-            ├─ KV 슬롯 확보 또는 축출
-            ├─ KV 복원
-            └─ 복원 완료 후 후속 inference 허용
+       └─ handled by the adapter in its own scheduler
+            ├─ wait until the current inference boundary
+            ├─ secure or evict a KV slot
+            ├─ restore the KV
+            └─ allow later inference after restore completes
 ```
 
-P4는 Restore를 decode window에 끼워 넣지 않으며, 용량 예약·victim 선택·GPU
-전송 방식도 정의하지 않는다. adapter는 서로 다른 세션의 Restore를 겹칠 수
-있지만, 같은 `sequence_id`의 Restore와 후속 inference 순서는 지켜야 한다.
+P4 does not slot Restore into a decode window, and it does not define capacity reservation, victim selection or the GPU
+transfer method. An adapter may overlap Restores of different sessions,
+but it must keep the order between a Restore and later inference for the same `sequence_id`.
 
-기본 adapter capability는 Restore와 inference를 같은 node barrier에서 처리하는
-안전한 방식이다. 별도 capability를 광고하는 adapter만 cross-session overlap을
-허용할 수 있다. 모든 stage의 Restore가 완료되기 전까지 해당 세션은 실행
-가능 상태로 공개하지 않는다.
+The default adapter capability is the safe mode that handles Restore and inference at the same node
+barrier. Only an adapter that advertises a separate capability may allow cross-session overlap.
+The session is not exposed as runnable until Restore has completed on every
+stage.
 
-### 목 어댑터 우선과 라마 지연 허용선
+### Mock adapter first, and the line for deferring llama
 
-프로토콜·agent·service의 복원 정책은 목 어댑터로 먼저 고정한다. 실제 라마
-어댑터의 KV 파일 포맷, GPU 슬롯 회수, 장치 전송 최적화는 다음 조건을 지키는
-동안 지연할 수 있다.
+The restore policy of protocol, agent and service is fixed first with the mock adapter. For the real llama
+adapter, the KV file format, GPU slot reclaim and device transfer optimization may be deferred as long as the following conditions
+hold.
 
-- 목 어댑터가 `Adapter::start`의 비동기 이벤트 경계와 `Work::Cache` 수명주기를
-  통과한다.
-- `sequence`를 durable key로 사용하고, `operation_id`와 `generation`을 섞거나
-  추측하지 않는다.
-- `PreparePersist/Restore/Discard` 뒤에는 반드시 `Commit` 또는 `Abort`가 오며,
-  `Reconcile`은 상태를 바꾸지 않는다.
-- Restore가 완료되기 전에는 후속 Hop을 성공시킬 수 없고, 처리할 수 없는
-  용량·세대·무결성 상태는 `Refused` 또는 `Failed`로 보고한다.
+- The mock adapter passes the asynchronous event boundary of `Adapter::start` and the `Work::Cache`
+  lifecycle.
+- `sequence` is used as the durable key, and `operation_id` and `generation` are never mixed up or
+  guessed.
+- `PreparePersist/Restore/Discard` is always followed by `Commit` or `Abort`,
+  and `Reconcile` does not change state.
+- A later Hop cannot succeed before Restore completes, and capacity, generation and integrity states that cannot be handled
+  are reported as `Refused` or `Failed`.
 
-이 선을 넘지 않는 한 라마 어댑터가 아직 실제 KV를 저장·복원하지 않아도 P4의
-순서, 단절, 재시도, GC 정책 테스트를 완료할 수 있다. 라마 어댑터를 완료로
-판정하려면 이 계약을 실제 KV와 장치 슬롯에 연결한 별도 acceptance가 필요하다.
+As long as this line is not crossed, P4's ordering, disconnect, retry and GC policy tests can be completed even if the llama adapter
+does not yet actually store and restore KV. Judging the llama adapter complete
+requires a separate acceptance that connects this contract to real KV and device slots.
 
-## 결과와 재시도
+## Results and retries
 
-정책 컴포넌트가 재시도 여부를 결정할 수 있도록 cache 결과는 최소한 다음을
-구분해야 한다.
+So that the policy component can decide whether to retry, cache results must distinguish at least
+the following.
 
-| 결과 | 의미 | 정책 |
+| Result | Meaning | Policy |
 | --- | --- | --- |
-| `Cached` | cache 작업이 완료됨 (`bytes` 포함) | 다음 inference 또는 GC 상태 갱신 |
-| `Accepted` | 일반 명령이 접수됨 | 해당 명령의 후속 결과 대기 |
-| `Done` | inference 생성이 종료됨 | 다음 inference 진행 |
-| `Refused` | 지금은 처리할 수 없으나 durable 상태는 보존됨 | adapter가 제시한 재시점에 재시도 |
-| `Failed` | 손상·세션 없음 등 영구 실패 | 자동 재시도 금지 |
-| `Inconsistent` | receipt와 실제 상태를 확정할 수 없음 | fail-close, reconciliation |
+| `Cached` | cache operation completed (`bytes` included) | next inference or GC state update |
+| `Accepted` | an ordinary command was received | wait for that command's later result |
+| `Done` | inference generation finished | proceed to the next inference |
+| `Refused` | cannot be handled now, but durable state is preserved | retry at the time the adapter suggests |
+| `Failed` | permanent failure such as corruption or no session | automatic retry forbidden |
+| `Inconsistent` | the receipt and actual state cannot be determined | fail-close, reconciliation |
 
-현재 `CacheStatus.state`는 reconciliation 경로에서 `Inconsistent`를 기계적으로
-전달할 수 있다. 반면 `CacheFailed.detail`은 자유 텍스트이므로 실패 경로에서
-`Refused`와 영구 `Failed`를 구분할 수 없다. 실패 코드와 선택적 재시점 필드는
-추가 계약으로 남는다. 이 구분은 eviction 정책을 P4에 넣기 위한 것이 아니라,
-adapter의 backpressure와 정책 계층의 재시도를 안전하게 운반하기 위한 계약이다.
+The current `CacheStatus.state` can mechanically carry `Inconsistent` on the reconciliation path.
+By contrast, `CacheFailed.detail` is free text, so the failure path cannot distinguish
+`Refused` from a permanent `Failed`. Failure codes and an optional retry-time field
+remain as additional contract. This distinction is not about putting eviction policy into P4;
+it is a contract for safely carrying the adapter's backpressure and the policy layer's retries.
 
-## 30일 보존과 GC
+## 30-day retention and GC
 
-30일 보존은 OUTER가 아니라 agent에 상주하는 정책 컴포넌트가 실행한다. OUTER가
-사라진 뒤에도 보존기간이 진행되어야 하기 때문이다.
+30-day retention is executed by a policy component resident in the agent, not by OUTER,
+because the retention period must keep running after OUTER is gone.
 
-- Persist 완료 시 `retain_until`을 durable manifest/receipt에 기록한다.
-- 기본 정책은 `retain_until = persisted_at + 30일`이다.
-- 성공한 Restore 또는 정책상 사용 시 보존기간을 갱신할 수 있다.
-- agent scheduler는 하루 한 번 만료 목록을 조회해 `Discard(sequence_id)`를 발행한다.
-- Discard는 idempotent해야 하며, 완료 receipt 확인 전 로컬 목록을 삭제하지 않는다.
-- agent 재시작 후에도 GC가 가능하도록 adapter는 cache 목록을 열거할 수 있어야 한다.
+- When Persist completes, `retain_until` is recorded in the durable manifest/receipt.
+- The default policy is `retain_until = persisted_at + 30 days`.
+- A successful Restore, or use under the policy, may renew the retention period.
+- The agent scheduler queries the expiry list once a day and issues `Discard(sequence_id)`.
+- Discard must be idempotent, and the local list entry is not deleted before the completion receipt is confirmed.
+- So that GC works after an agent restart, the adapter must be able to enumerate its cache list.
 
-권장 관리 메시지는 다음 형태다.
+The recommended management message has the following form.
 
 ```text
 ListCaches(deployment_id)
   → sequence_id, retain_until, bytes, receipt_state
 ```
 
-P4는 목록의 보존기간을 해석하지 않고 요청과 응답만 운반한다. 실제 KV를 가진
-adapter가 목록과 receipt를 제공하는 편이 coordinator journal과 실물 KV의
-불일치를 줄인다.
+P4 does not interpret the retention periods in the list; it only carries the request and response. Having the adapter that holds the actual KV
+provide the list and receipts reduces mismatches between the coordinator journal and the actual
+KV.
 
-## 현재 구현과 수용 조건
+## Current implementation and acceptance conditions
 
-현재 구현에서 확인된 기반:
+Foundations confirmed in the current implementation:
 
-- [ToNode](../layers/service/src/message/mod.rs)는 Persist/Restore/Discard와
-  Prepare/Commit/Abort를 운반한다.
-- [CacheTransaction](../layers/service/src/cache.rs)은 여러 stage의
-  cache receipt를 operation 단위로 조정한다.
-- node runner는 Cache를 hop과 섞지 않고 lifecycle 작업으로 실행한다.
-- Cancel은 `request_id`, `stream_id`, `return_channel`, `ingress_generation`을
-  함께 검증한다. 중복 Cancel은 멱등적으로 접수하며, 이미 terminal인 요청에는
-  새 terminal을 추가하지 않는다. 이미 시작한 hop의 강제 중단은 보장하지 않고
-  hop 경계까지의 협력적 처리를 명시한다.
-- 취소된 요청에는 원래 `return_channel`로 replay 가능한 terminal `Failed`를
-  요청당 한 번 보내며, 체인의 추가 queued carrier는 폐기한다. 추가 폐기 수는
-  별도 관측값으로 계수해야 하며 현재 status 계약에는 없다.
+- [ToNode](../layers/service/src/message/mod.rs) carries Persist/Restore/Discard and
+  Prepare/Commit/Abort.
+- [CacheTransaction](../layers/service/src/cache.rs) coordinates cache receipts from multiple stages
+  per operation.
+- The node runner runs Cache as lifecycle work without mixing it with hops.
+- Cancel validates `request_id`, `stream_id`, `return_channel` and `ingress_generation`
+  together. Duplicate Cancels are accepted idempotently, and no new terminal is added to a request that is already
+  terminal. Forced interruption of an already started hop is not guaranteed;
+  cooperative handling up to the hop boundary is stated explicitly.
+- A cancelled request receives, once per request, a replayable terminal `Failed` on the original `return_channel`,
+  and additional queued carriers in the chain are discarded. The number of extra discards
+  must be counted as a separate observation; it is not in the current status contract.
 
-목 어댑터 우선 구현의 필수 실패 시나리오는 [testing.md](testing.md)의
-`Cache contract` 표를 따른다. 이 표가 통과하면 라마 어댑터 지연은 프로토콜
-구현의 차단 사유가 아니다.
+The required failure scenarios for the mock-adapter-first implementation follow the `Cache contract` table in [testing.md](testing.md).
+Once that table passes, deferring the llama adapter does not block the protocol
+implementation.
 
-이 문서의 완성을 주장하려면 다음을 별도로 검증해야 한다.
+Claiming completion of this document requires separately verifying the following.
 
-| 조건 | 검증 레벨 |
+| Condition | Verification level |
 | --- | --- |
-| `sequence_id`가 `request_id` 파생이 아닌 독립적인 durable wire 식별자가 됨 | wire/adapter contract |
-| `sequence_id` ordering key와 프레임 handle 분리 | Pure: queue tests; Simulated: `layers/agent/tests/network.rs` |
-| 동일 sequence의 Restore 전후 전달 순서 | Pure: queue tests; Simulated: `layers/service/tests/cache_in_a_deployment.rs` |
-| Restore 완료 전 후속 inference 차단 | Simulated: `layers/service/tests/cache_in_a_deployment.rs`; Fleet: `tools/drive` |
-| heartbeat miss threshold와 `return_channel`/`ingress_generation` fencing | Pure: `layers/service/src/outer_policy.rs`; transport reconnect integration remains |
-| 연결별 실행 집합의 열거와 집합 단위 취소 | Simulated: `layers/service/tests/protocol_in_flight.rs`; Fleet: reconnect run |
-| 요청당 replay 가능한 terminal `Failed` 1회와 추가 carrier 폐기 계수 | Simulated: `layers/service/tests/protocol_in_flight.rs`; Fleet: status snapshot |
-| adapter가 Restore를 bounded하게 거절하고 재시점 또는 실패 코드를 전달함 | Simulated: adapter tests; Fleet: `tools/drive` |
-| adapter의 `Refused`/`Failed`/`Inconsistent` 결과 전달 | Pure: wire tests; Simulated: cache tests |
-| 재시작 후 cache 열거와 30일 GC | Pure retention policy: `layers/service/src/outer_policy.rs`; adapter enumeration/scheduler integration remains |
-| 다단계 Restore 중 partial residency가 실행 가능 상태로 노출되지 않음 | Simulated: `layers/service/src/cache.rs`, `layers/service/tests/cache_barrier.rs`, mock recovery tests |
+| `sequence_id` becomes an independent durable wire identifier, not derived from `request_id` | wire/adapter contract |
+| separation of the `sequence_id` ordering key from the frame handle | Pure: queue tests; Simulated: `layers/agent/tests/network.rs` |
+| delivery order before and after Restore for the same sequence | Pure: queue tests; Simulated: `layers/service/tests/cache_in_a_deployment.rs` |
+| blocking later inference before Restore completes | Simulated: `layers/service/tests/cache_in_a_deployment.rs`; Fleet: `tools/drive` |
+| heartbeat miss threshold and `return_channel`/`ingress_generation` fencing | Pure: `layers/service/src/outer_policy.rs`; transport reconnect integration remains |
+| enumeration of the per-connection execution set and cancellation as a set | Simulated: `layers/service/tests/protocol_in_flight.rs`; Fleet: reconnect run |
+| 1 replayable terminal `Failed` per request and a count of extra carrier discards | Simulated: `layers/service/tests/protocol_in_flight.rs`; Fleet: status snapshot |
+| the adapter refuses Restore in a bounded way and passes a retry time or failure code | Simulated: adapter tests; Fleet: `tools/drive` |
+| delivery of the adapter's `Refused`/`Failed`/`Inconsistent` results | Pure: wire tests; Simulated: cache tests |
+| cache enumeration after restart and 30-day GC | Pure retention policy: `layers/service/src/outer_policy.rs`; adapter enumeration/scheduler integration remains |
+| partial residency during a multi-stage Restore is not exposed as runnable | Simulated: `layers/service/src/cache.rs`, `layers/service/tests/cache_barrier.rs`, mock recovery tests |
 
-이 항목들은 P4가 KV 정책을 해석한다는 뜻이 아니다. P4가 브로커로서 순서,
-식별자, 결과 전달을 잃지 않아야 adapter와 agent 정책이 각자의 책임을 수행할
-수 있다는 뜻이다.
+These items do not mean that P4 interprets KV policy. They mean that P4, as a broker, must not lose ordering,
+identifiers or result delivery, so that the adapter and the agent policy can each carry out their own
+responsibilities.
 
-관련 문서: [protocol.md](protocol.md), [architecture.md](architecture.md),
+Related documents: [protocol.md](protocol.md), [architecture.md](architecture.md),
 [api.md](api.md), [testing.md](testing.md).

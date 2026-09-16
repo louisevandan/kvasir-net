@@ -1,11 +1,11 @@
 # P4 model loading
 
-P4 내부의 OUTER 모듈이다. 별도 저장소·배포 단위가 아니며 P4의 루트 테스트 명령으로 검증한다.
-llama.cpp/GGUF 기반 계획 구현과 입력 타입, 참조 판단, 회귀 시험 및 로컬 검증 산출물의 소유 경로는 이 폴더다.
-Python HF 계획기는 [HF 모델별 모듈](../../layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md#automatic-loading-planner)이
-구현·시험·실측·검증 자료를 함께 소유한다. HF 모델 의미를 이 TS 계획기나 P4 공통 core에 넣지 않는다.
-실행 순서와 실기 수용은 [로드맵](../../docs/distributed-batching-roadmap.md)과
-[검증 규약](../../docs/distributed-batching-verification.md)을 따른다.
+This is an OUTER module inside P4. It is not a separate repository or deployment unit; it is verified by P4's root test command.
+This folder is the owning path for the llama.cpp/GGUF-based planner implementation and its input types, reference judgements, regression tests and local verification artifacts.
+For the Python HF planner, the [HF per-model module](../../layers/adapters/hf/docs/models/qwen3_5_0_8b/README.md#automatic-loading-planner)
+owns the implementation, tests, measurements and verification material together. HF model semantics do not go into this TS planner or into the shared P4 core.
+Execution order and real-hardware acceptance follow the [roadmap](../../docs/distributed-batching-roadmap.md) and
+the [verification convention](../../docs/distributed-batching-verification.md).
 
 | Purpose | Path |
 | --- | --- |

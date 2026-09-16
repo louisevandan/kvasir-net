@@ -1,7 +1,7 @@
 # Four-node acceptance harness
 
-> 문서 지위 (2026-09-06): **개발 하네스 안내**. 현재 하네스 사용법이다. 한 원격 호스트 시험을 다중 컴퓨터 최종 증명으로 세지 않는다.
-> 현재 목표·상태·순서는 [실행 로드맵](../../../docs/distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](../../../docs/document-map.md)를 따른다.
+> Document status (2026-09-06): **Development harness guide**. This describes how to use the current harness. A test on one remote host does not count as final multi-computer proof.
+> Current goals, status and ordering follow the [execution roadmap](../../../docs/distributed-batching-roadmap.md); document authority and reading paths follow the [document map](../../../docs/document-map.md).
 
 This is the existing development/regression harness, not the final multi-host
 large-model acceptance runner. Current work is owned by the

@@ -1,4 +1,4 @@
-<title>P4 구조와 설계</title>
+<title>P4 Architecture and Design</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;600;700&display=swap">
 <style>
@@ -149,13 +149,13 @@ svg.dg{display:block;width:100%;height:auto}
 </style>
 
 <nav class="rail">
-  <span class="mark">P4 — 구조와 설계</span>
-  <span class="hint">← → 이동 · P 발표 모드</span>
+  <span class="mark">P4 — Architecture and Design</span>
+  <span class="hint">← → navigate · P presenter mode</span>
   <span class="sep"></span>
   <span class="count"><b id="cur">01</b> / 16</span>
-  <button id="prev" type="button">이전</button>
-  <button id="next" type="button">다음</button>
-  <button id="present" type="button" aria-pressed="false">발표 모드</button>
+  <button id="prev" type="button">Prev</button>
+  <button id="next" type="button">Next</button>
+  <button id="present" type="button" aria-pressed="false">Presenter mode</button>
 </nav>
 
 <main class="deck" id="deck">
@@ -165,53 +165,53 @@ svg.dg{display:block;width:100%;height:auto}
   <div class="stamp">Distributed inference transport · 2026-09-11</div>
   <div>
     <div class="bigrule"></div>
-    <h1>여러 컴퓨터에 흩어진 모델로 하나의 응답을 만드는 통신 계층</h1>
-    <p class="sub">P4는 모델을 실행하지 않고 처리량을 소유하지 않는다. 일을 backend까지 운반하고 답을 돌려주며,
-      느려진 지점을 <b>논쟁이 아니라 귀속</b>으로 지목할 수 있게 만든다.</p>
+    <h1>A communication layer that builds one response from a model spread across many computers</h1>
+    <p class="sub">P4 does not run the model and does not own throughput. It carries work to the backend and returns the answer,
+      and makes it possible to name where things slowed down <b>by attribution, not argument</b>.</p>
   </div>
   <div class="metrics">
-    <div><div class="v">108,815</div><div class="l">Rust 줄 · 12 crate</div></div>
-    <div><div class="v">14,597</div><div class="l">C++ stage runtime 줄</div></div>
-    <div><div class="v">9</div><div class="l">llama.cpp 호환 pin</div></div>
-    <div><div class="v">1384<span style="font-size:14px;color:var(--muted)"> / 0 / 7</span></div><div class="l">workspace 통과/실패/무시</div></div>
+    <div><div class="v">108,815</div><div class="l">Rust lines · 12 crates</div></div>
+    <div><div class="v">14,597</div><div class="l">C++ stage runtime lines</div></div>
+    <div><div class="v">9</div><div class="l">llama.cpp compat pins</div></div>
+    <div><div class="v">1384<span style="font-size:14px;color:var(--muted)"> / 0 / 7</span></div><div class="l">workspace pass/fail/ignored</div></div>
   </div>
-  <footer>기준 <b>HEAD 429e057de</b> (2026-09-11) · 코드 수치는 `wc -l` 실측(시험 포함), 게이트 수치는 <b>docs/distributed-batching-roadmap.md §0</b> 인용 · 성능 수치는 모두 <b>선별(screening)</b>이며 승인이 아니다</footer>
+  <footer>Baseline <b>HEAD 429e057de</b> (2026-09-11) · code figures measured with `wc -l` (tests included); gate figures quoted from <b>docs/distributed-batching-roadmap.md §0</b> · all performance figures are <b>screening</b> results, not approval</footer>
 </section></div>
 
 <!-- 02 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">전제</span><span>무엇인가 · 무엇이 아닌가</span><span class="num">02 / 16</span></div>
-    <h2>이 계층이 내는 주장은 “검증 가능하다”는 점이 핵심이다</h2>
-    <p class="lede">범용 메시징이 아니다. 워크로드를 상세히 알고 그 모양에 맞춰 깎았다. 그 밖의 것은 의도적으로 없다.</p>
+    <div class="eyebrow"><span class="sect">Premise</span><span>What it is · what it is not</span><span class="num">02 / 16</span></div>
+    <h2>What matters about this layer's claim is that it is “verifiable”</h2>
+    <p class="lede">It is not general-purpose messaging. It knows its workload in detail and is cut to that shape. Everything else is deliberately absent.</p>
   </div>
   <div class="body cols c2n">
     <div style="display:flex;flex-direction:column;gap:16px">
       <div>
-        <h3 class="f">이것이다</h3>
+        <h3 class="f">What it is</h3>
         <ul>
-          <li>레이어 구간으로 <b>여러 노드에 나뉜 모델</b></li>
-          <li>노드들을 source-routing 하는 <b>prefill chain</b></li>
-          <li>한 토큰이 한 바퀴를 요구하는 <b>node-driven decode ring</b></li>
-          <li>선언된 상한 아래의 <b>cohort 배치</b></li>
+          <li>A <b>model split across several nodes</b> by layer range</li>
+          <li>A <b>prefill chain</b> source-routed through the nodes</li>
+          <li>A <b>node-driven decode ring</b> where one token takes one lap</li>
+          <li><b>Cohort batching</b> under a declared ceiling</li>
         </ul>
       </div>
       <div>
-        <h3 class="x">이것이 아니다</h3>
+        <h3 class="x">What it is not</h3>
         <ul>
-          <li>범용 메시징 시스템 — 워크로드에 없는 기능은 없다</li>
-          <li>처리량의 소유자 — 모델을 실행하지 않는다</li>
-          <li>TLS·인증·인가 — 없다. 신뢰망 안에서만 쓴다</li>
-          <li>내구 상태 — 재시작한 agent에는 노드가 없다</li>
+          <li>A general-purpose messaging system — nothing the workload does not use</li>
+          <li>The owner of throughput — it does not run the model</li>
+          <li>TLS, authentication, authorization — none. Use only inside a trusted network</li>
+          <li>Durable state — a restarted agent has no nodes</li>
         </ul>
       </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:18px">
-      <div class="note f"><strong>주장:</strong> 실행 중인 시스템의 문제는 이 계층의 것이 아니다.
-        — 이 주장이 <em>시험 가능하다는 것</em>이 설계의 요점이다. 모든 단계를 <b>산술만 하는 mock backend</b>
-        (장치도, 런타임도, 아래에 탓할 것도 없음)로 실행하고, agent는 자기 <b>lane 깊이를 node 깊이와 나란히</b> 보고한다.</div>
+      <div class="note f"><strong>Claim:</strong> problems in the running system do not belong to this layer.
+        — that this claim <em>is testable</em> is the point of the design. Every stage runs against a <b>mock backend that only does arithmetic</b>
+        (no device, no runtime, nothing underneath to blame), and the agent reports its <b>lane depths side by side with node depth</b>.</div>
       <figure>
-        <svg class="dg" viewBox="0 0 540 214" role="img" aria-label="agent의 lane 깊이와 node의 in-flight 깊이를 adapter 경계 양쪽에서 따로 보고하므로 지연을 한쪽에 귀속할 수 있다">
+        <svg class="dg" viewBox="0 0 540 214" role="img" aria-label="The agent's lane depths and the node's in-flight depth are reported separately on each side of the adapter boundary, so delay can be attributed to one side">
           <defs><marker id="s2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ah"/></marker></defs>
           <rect x="6" y="26" width="214" height="130" rx="2" class="bx"/>
           <text x="18" y="46" class="t11 fl">agent</text>
@@ -223,50 +223,50 @@ svg.dg{display:block;width:100%;height:auto}
           <text x="146" y="81" class="t10">control</text><text x="146" y="98" class="t10">response</text>
           <text x="146" y="115" class="t10">decode</text><text x="146" y="132" class="t10">prefill</text>
           <line x1="264" y1="10" x2="264" y2="176" class="lnb dash"/>
-          <text x="264" y="205" text-anchor="middle" class="t11 bl">adapter 경계</text>
+          <text x="264" y="205" text-anchor="middle" class="t11 bl">adapter boundary</text>
           <rect x="308" y="26" width="226" height="130" rx="2" class="bx"/>
           <text x="320" y="46" class="t11 fl">node</text>
           <text x="320" y="62" class="tk">depth · running · waiting</text>
           <rect x="320" y="74" width="200" height="30" rx="2" class="bxf"/>
-          <text x="420" y="93" text-anchor="middle" class="t11">hop = backend 안의 시간</text>
-          <text x="320" y="124" class="ko10">running: 지금 어댑터 안의 시퀀스 수</text>
-          <text x="320" y="142" class="ko10">= 지켜지고 있는 상한, 관측 가능</text>
+          <text x="420" y="93" text-anchor="middle" class="t11">hop = time inside backend</text>
+          <text x="320" y="124" class="ko10">running: sequences in adapter now</text>
+          <text x="320" y="142" class="ko10">= the ceiling in force, observable</text>
           <line x1="222" y1="91" x2="306" y2="91" class="ln" marker-end="url(#s2a)"/>
           <text x="264" y="84" text-anchor="middle" class="t10">hop</text>
-          <text x="270" y="172" text-anchor="middle" class="ko">느림은 어느 쪽인가 — 두 깊이를 나란히 보고하므로 답이 있다</text>
+          <text x="270" y="172" text-anchor="middle" class="ko">Which side is slow? Both depths are reported side by side, so there is an answer</text>
         </svg>
-        <figcaption>agent 큐 깊이와 node in-flight를 따로 세는 것이 “귀속(attribution)”의 전부다. 노드가 긴 작업을 쥐지 않으면 GPU 시간이 agent 큐 깊이로 보인다.</figcaption>
+        <figcaption>Counting agent queue depth and node in-flight separately is all there is to “attribution”. If the node does not hold the long work, GPU time shows up as agent queue depth.</figcaption>
       </figure>
     </div>
   </div>
-  <footer>출처 <b>docs/overview.md</b>, <b>docs/constraints.md</b>, <b>layers/agent/src/agent</b>(NodeStatus) · `running`은 bool이던 시절 1과 100에서 똑같이 참이었다</footer>
+  <footer>Sources <b>docs/overview.md</b>, <b>docs/constraints.md</b>, <b>layers/agent/src/agent</b>(NodeStatus) · when `running` was a bool, it was equally true at 1 and at 100</footer>
 </section></div>
 
 <!-- 03 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">토폴로지</span><span>프로세스 타입은 하나다</span><span class="num">03 / 16</span></div>
-    <h2>controller는 없다. node는 agent 안에 있다</h2>
-    <p class="lede">agent가 다른 agent에 닿는 경로는, agent가 외부에 답하는 경로와 <b>같은 경로</b>다. 특별한 진입 프로세스를 따로 두지 않는다.</p>
+    <div class="eyebrow"><span class="sect">Topology</span><span>There is one process type</span><span class="num">03 / 16</span></div>
+    <h2>There is no controller. The node lives inside the agent</h2>
+    <p class="lede">The path an agent takes to reach another agent is <b>the same path</b> it uses to answer the outside world. There is no separate, special entry process.</p>
   </div>
   <div class="body" style="display:flex;flex-direction:column;gap:18px">
     <figure>
-      <svg class="dg" viewBox="0 0 1160 250" role="img" aria-label="OUTER가 진입 agent에 요청하고, 진입 agent가 여러 agent로 같은 경로를 통해 전달하며 각 agent 안의 node가 adapter를 거쳐 backend를 실행한다">
+      <svg class="dg" viewBox="0 0 1160 250" role="img" aria-label="OUTER sends a request to the entry agent, the entry agent forwards it over the same path to several agents, and the node inside each agent runs the backend through an adapter">
         <defs><marker id="s3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ah"/></marker>
         <marker id="s3f" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker></defs>
         <rect x="4" y="96" width="104" height="52" rx="2" class="bxb"/>
         <text x="56" y="118" text-anchor="middle" class="t13 bl">OUTER</text>
-        <text x="56" y="136" text-anchor="middle" class="t10">배치·토폴로지 권위</text>
+        <text x="56" y="136" text-anchor="middle" class="t10">layout authority</text>
         <line x1="110" y1="122" x2="156" y2="122" class="lnf" marker-end="url(#s3f)"/>
         <rect x="158" y="90" width="120" height="64" rx="2" class="bxf"/>
         <text x="218" y="114" text-anchor="middle" class="t13">entry agent</text>
-        <text x="218" y="133" text-anchor="middle" class="t10">= 그 agent의 진입점</text>
+        <text x="218" y="133" text-anchor="middle" class="t10">= agent entry point</text>
         <g>
           <line x1="280" y1="122" x2="316" y2="46" class="lnf" marker-end="url(#s3f)"/>
           <line x1="280" y1="122" x2="316" y2="122" class="lnf" marker-end="url(#s3f)"/>
           <line x1="280" y1="122" x2="316" y2="198" class="lnf" marker-end="url(#s3f)"/>
         </g>
-        <text x="298" y="232" text-anchor="middle" class="t10 fl">같은 경로</text>
+        <text x="298" y="232" text-anchor="middle" class="t10 fl">same path</text>
         <g>
           <rect x="320" y="22" width="96" height="48" rx="2" class="bx"/><text x="368" y="51" text-anchor="middle" class="t11">agent</text>
           <rect x="320" y="98" width="96" height="48" rx="2" class="bx"/><text x="368" y="127" text-anchor="middle" class="t11">agent</text>
@@ -291,41 +291,41 @@ svg.dg{display:block;width:100%;height:auto}
           <line x1="688" y1="198" x2="716" y2="198" class="ln" marker-end="url(#s3a)"/>
         </g>
         <rect x="446" y="4" width="386" height="238" rx="3" class="bxq"/>
-        <text x="639" y="246" text-anchor="middle" class="ko10">agent 안의 유일한 내부 엔티티가 node다 — 노드 프로세스는 없다</text>
+        <text x="639" y="246" text-anchor="middle" class="ko10">The node is an agent's only internal entity — there is no node process</text>
         <line x1="850" y1="16" x2="850" y2="230" class="sep"/>
-        <text x="868" y="40" class="t11 fl">일반화하는 축은 하나다</text>
-        <text x="868" y="66" class="tk">경계를 누가 소유하는가</text>
+        <text x="868" y="40" class="t11 fl">There is one axis of generalization</text>
+        <text x="868" y="66" class="tk">who owns the boundary</text>
         <line x1="868" y1="78" x2="1150" y2="78" class="sep"/>
         <text x="868" y="100" class="t11">llama.cpp pipeline</text><text x="1150" y="100" text-anchor="end" class="t11 fl">chain n</text>
-        <text x="868" y="122" class="ko10">P4가 조각 사이 경계를 소유한다</text>
+        <text x="868" y="122" class="ko10">P4 owns the boundaries between pieces</text>
         <line x1="868" y1="134" x2="1150" y2="134" class="sep"/>
         <text x="868" y="156" class="t11">vLLM · SGLang</text><text x="1150" y="156" text-anchor="end" class="t11 fl">chain 1</text>
-        <text x="868" y="178" class="ko10">backend가 스스로 모델을 펼친다</text>
+        <text x="868" y="178" class="ko10">the backend lays out the model itself</text>
         <line x1="868" y1="190" x2="1150" y2="190" class="sep"/>
-        <text x="868" y="212" class="ko10">추가 비용 = 이름 하나 + Adapter 구현 하나</text>
+        <text x="868" y="212" class="ko10">added cost = one name + one Adapter implementation</text>
       </svg>
-      <figcaption>controller는 방화벽 때문에 존재했고, 그것은 결국 소속 agent의 진입점이었다 — 그 진입점이 곧 agent다.</figcaption>
+      <figcaption>The controller existed because of firewalls, and it was really the entry point of the agent it belonged to — that entry point is the agent.</figcaption>
     </figure>
     <div class="cols c3" style="gap:22px">
-      <div><h3>OUTER</h3><p>요청하는 쪽. 배치·load 계획·chain과 <b>모든 업무 식별자</b>를 소유한다. agent는 기계 사실을 보고할 뿐 그것을 배치로 바꾸지 않는다.</p></div>
-      <div><h3>AGENT</h3><p>메인 큐 하나와 worker 풀을 가진 소켓 프로그램. 유일한 내부 엔티티는 node다.</p></div>
-      <div><h3>NODE · ADAPTER</h3><p>node는 load가 어댑터를 물릴 때까지 <b>id에 불과</b>하다. 자기 큐와 자기 긴 작업을 쥔다. adapter는 hop을 받고 event를 보고한다.</p></div>
+      <div><h3>OUTER</h3><p>The requesting side. It owns placement, load plans, chains and <b>every business identifier</b>. The agent only reports machine facts and never turns them into placement.</p></div>
+      <div><h3>AGENT</h3><p>A socket program with one main queue and a worker pool. Its only internal entity is the node.</p></div>
+      <div><h3>NODE · ADAPTER</h3><p>A node is <b>just an id</b> until a load attaches an adapter. It holds its own queue and its own long work. The adapter receives hops and reports events.</p></div>
     </div>
   </div>
-  <footer>출처 <b>README.md</b>, <b>docs/overview.md</b>, <b>docs/event-protocol-v2.md</b> · 실행: `p4-agent 0.0.0.0:52001 tcp://THIS_HOST:52001`</footer>
+  <footer>Sources <b>README.md</b>, <b>docs/overview.md</b>, <b>docs/event-protocol-v2.md</b> · run: `p4-agent 0.0.0.0:52001 tcp://THIS_HOST:52001`</footer>
 </section></div>
 
 <!-- 04 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">wire</span><span>헤더만 읽고 전체 길이를 안다</span><span class="num">04 / 16</span></div>
-    <h2>봉투는 모든 홉이 읽고, 본문은 목적지만 읽는다</h2>
-    <p class="lede">이 분리가 설계다. 중계는 <b>한 번도 디코드하지 않은 바이트를 복사</b>해 전달하므로, 전달 비용이 메시지 종류와 무관하고 새 메시지 종류가 중계기를 무겁게 만들 수 없다.</p>
+    <div class="eyebrow"><span class="sect">wire</span><span>The header alone gives the full length</span><span class="num">04 / 16</span></div>
+    <h2>Every hop reads the envelope; only the destination reads the body</h2>
+    <p class="lede">This split is the design. A relay forwards by <b>copying bytes it never decoded</b>, so forwarding cost does not depend on the message kind, and a new message kind cannot make relays heavier.</p>
   </div>
   <div class="body" style="display:flex;flex-direction:column;gap:14px">
     <figure>
-      <svg class="dg" viewBox="0 0 1160 240" role="img" aria-label="P4B1 프레임은 16바이트 헤더에 envelope 길이와 body 길이를 담고, P4E3 이벤트 프레임은 12바이트 헤더에 envelope 길이와 payload 길이를 담는다">
-        <text x="0" y="14" class="t11 fl">P4B1 · v8 — hop 프레임</text>
+      <svg class="dg" viewBox="0 0 1160 240" role="img" aria-label="The P4B1 frame carries the envelope length and body length in a 16-byte header; the P4E3 event frame carries the envelope length and payload length in a 12-byte header">
+        <text x="0" y="14" class="t11 fl">P4B1 · v8 — hop frame</text>
         <text x="1160" y="14" text-anchor="end" class="t10">layers/protocol/src/frame/mod.rs</text>
         <g>
           <rect x="0" y="26" width="86" height="42" class="bxf"/><text x="43" y="52" text-anchor="middle" class="t11">P4B1</text>
@@ -333,8 +333,8 @@ svg.dg{display:block;width:100%;height:auto}
           <rect x="112" y="26" width="64" height="42" class="bx"/><text x="144" y="52" text-anchor="middle" class="t10">zero×3</text>
           <rect x="176" y="26" width="86" height="42" class="bxb"/><text x="219" y="52" text-anchor="middle" class="t11">env_len</text>
           <rect x="262" y="26" width="86" height="42" class="bxb"/><text x="305" y="52" text-anchor="middle" class="t11">body_len</text>
-          <rect x="348" y="26" width="270" height="42" class="bx"/><text x="483" y="52" text-anchor="middle" class="t11">envelope — 모든 홉이 읽는다</text>
-          <rect x="618" y="26" width="542" height="42" class="bx"/><text x="889" y="52" text-anchor="middle" class="t11">body — 목적지만 읽는다</text>
+          <rect x="348" y="26" width="270" height="42" class="bx"/><text x="483" y="52" text-anchor="middle" class="t11">envelope — read by every hop</text>
+          <rect x="618" y="26" width="542" height="42" class="bx"/><text x="889" y="52" text-anchor="middle" class="t11">body — read only by the destination</text>
           <g class="t10">
             <text x="0" y="84">0</text><text x="86" y="84" text-anchor="middle">4</text><text x="112" y="84" text-anchor="middle">5</text>
             <text x="176" y="84" text-anchor="middle">8</text><text x="262" y="84" text-anchor="middle">12</text><text x="348" y="84" text-anchor="middle">16</text>
@@ -342,14 +342,14 @@ svg.dg{display:block;width:100%;height:auto}
           <text x="348" y="102" class="t10">≤ 256 KiB</text><text x="618" y="102" class="t10">≤ 2 GiB</text>
         </g>
         <line x1="0" y1="120" x2="1160" y2="120" class="sep"/>
-        <text x="0" y="146" class="t11 fl">P4E3 — event 프레임 (현재 실행 경로)</text>
+        <text x="0" y="146" class="t11 fl">P4E3 — event frame (current execution path)</text>
         <text x="1160" y="146" text-anchor="end" class="t10">layers/protocol/src/event/wire.rs</text>
         <g>
           <rect x="0" y="158" width="86" height="42" class="bxf"/><text x="43" y="184" text-anchor="middle" class="t11">P4E3</text>
           <rect x="86" y="158" width="86" height="42" class="bxb"/><text x="129" y="184" text-anchor="middle" class="t11">env_len</text>
           <rect x="172" y="158" width="86" height="42" class="bxb"/><text x="215" y="184" text-anchor="middle" class="t11">payload_len</text>
-          <rect x="258" y="158" width="300" height="42" class="bx"/><text x="408" y="184" text-anchor="middle" class="t11">envelope — 12 필드, 자기서술</text>
-          <rect x="558" y="158" width="602" height="42" class="bx"/><text x="859" y="184" text-anchor="middle" class="t11">payload — 불투명 바이트</text>
+          <rect x="258" y="158" width="300" height="42" class="bx"/><text x="408" y="184" text-anchor="middle" class="t11">envelope — 12 fields, self-describing</text>
+          <rect x="558" y="158" width="602" height="42" class="bx"/><text x="859" y="184" text-anchor="middle" class="t11">payload — opaque bytes</text>
           <g class="t10">
             <text x="0" y="216">0</text><text x="86" y="216" text-anchor="middle">4</text>
             <text x="172" y="216" text-anchor="middle">8</text><text x="258" y="216" text-anchor="middle">12</text>
@@ -357,97 +357,97 @@ svg.dg{display:block;width:100%;height:auto}
           <text x="258" y="234" class="t10">≤ 256 KiB</text><text x="558" y="234" class="t10">≤ 2 GiB</text>
         </g>
       </svg>
-      <figcaption>두 헤더 모두 little-endian 길이만 담는다. 리더는 헤더만 보고 프레임 하나를 온전히 가졌는지 알며, 그것이 “소켓 리더는 큐에만 넣는다”를 가능하게 한다.</figcaption>
+      <figcaption>Both headers carry only little-endian lengths. A reader knows from the header alone whether it holds one complete frame, and that is what makes “the socket reader only enqueues” possible.</figcaption>
     </figure>
     <div class="cols c2" style="gap:20px">
-      <div class="note"><strong>본문 상한을 2 GiB로 올린 이유는 주석에 남아 있다.</strong> staged prefill hop은 시퀀스·토큰마다 hidden-state cut 하나를 F32로 나른다. 2,048폭 모델에 5,000토큰 프롬프트면 시퀀스 하나가 39 MiB, 10폭 prefill 창은 391 MiB다. 이전 128 MiB 상한은 그 창을 3개에서 끊었고 — 배포는 건강한 채로 <b>60요청 중 53개가 `HOP envelope too large`로 실패</b>했다.</div>
-      <div class="note x"><strong>문서·코드 차이(실측):</strong> `docs/api.md`는 “P4B1 v6 · 본문 최대 1 MiB”로 적혀 있으나 코드는 <b>v8 · 2 GiB</b>다. v7→v8 bump 이유도 코드 주석이 소유한다: SessionClose가 단방향 broadcast에서 ack 계약으로 바뀌었고, 절반만 구형인 fleet은 첫 조기 종료까지 정상으로 보이다가 구형 쪽 stage를 조용히 누출시킨다. 버전 bump가 그것을 <b>본문 한 바이트 전에</b> 양방향 거부로 바꾼다.</div>
+      <div class="note"><strong>Why the body ceiling was raised to 2 GiB is kept in a code comment.</strong> A staged prefill hop carries one hidden-state cut per sequence and token, as F32. A 2,048-wide model with a 5,000-token prompt makes one sequence 39 MiB and a 10-wide prefill window 391 MiB. The old 128 MiB ceiling cut that window at 3 — and with the deployment healthy, <b>53 of 60 requests failed with `HOP envelope too large`</b>.</div>
+      <div class="note x"><strong>Doc/code gap (measured):</strong> `docs/api.md` says “P4B1 v6 · body max 1 MiB”, but the code is <b>v8 · 2 GiB</b>. The code comment also owns the reason for the v7→v8 bump: SessionClose changed from a one-way broadcast to an ack contract, and a half-old fleet looks healthy until the first early close, then silently leaks stages on the old side. The version bump turns that into a two-way rejection <b>before a single body byte</b>.</div>
     </div>
   </div>
-  <footer>실측 <b>frame/mod.rs:11–35</b>(MAGIC·VERSION·상한), <b>event/wire.rs:4–6</b> · 문서 인용 <b>docs/api.md</b> — 차이는 문서 갱신 대상이며, 이 장표는 코드 값을 따른다</footer>
+  <footer>Measured <b>frame/mod.rs:11–35</b>(MAGIC·VERSION·ceilings), <b>event/wire.rs:4–6</b> · doc quoted: <b>docs/api.md</b> — the gap calls for a doc update; this slide follows the code values</footer>
 </section></div>
 
 <!-- 05 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
     <div class="eyebrow"><span class="sect">wire</span><span>event envelope</span><span class="num">05 / 16</span></div>
-    <h2>P4는 prompt도 token도 KV도 모른다</h2>
-    <p class="lede">모든 이벤트는 <b>payload를 디코드하지 않고 라우팅</b>할 수 있도록 자기서술적이다. 그 바이트를 해석할 자격은 content-type과 adapter_kind가 지정한 구상 어댑터에만 있다.</p>
+    <h2>P4 knows nothing of prompts, tokens or KV</h2>
+    <p class="lede">Every event is self-describing so it can be <b>routed without decoding the payload</b>. Only the concrete adapter named by content-type and adapter_kind is entitled to interpret those bytes.</p>
   </div>
   <div class="body cols c2w">
     <div>
-      <h3 class="f">Envelope — 12 필드 <span class="tag f" style="margin-left:8px">VERSION = 3</span></h3>
+      <h3 class="f">Envelope — 12 fields <span class="tag f" style="margin-left:8px">VERSION = 3</span></h3>
       <table>
-        <tr><td class="m">protocol_version</td><td>3이 아니면 읽지 않고 거부</td></tr>
-        <tr><td class="m">event_id</td><td>불변 이벤트 정체성</td></tr>
-        <tr><td class="m">correlation_id</td><td>수명/요청 정체성</td></tr>
-        <tr><td class="m">causation_id?</td><td>이 이벤트를 유발한 이벤트</td></tr>
-        <tr><td class="m">source · target</td><td>논리 생산자 · 최종 소비자 (Endpoint 값)</td></tr>
-        <tr><td class="m">return_route?</td><td>안정적인 출력·telemetry 목적지</td></tr>
+        <tr><td class="m">protocol_version</td><td>rejected unread unless it is 3</td></tr>
+        <tr><td class="m">event_id</td><td>immutable event identity</td></tr>
+        <tr><td class="m">correlation_id</td><td>lifetime/request identity</td></tr>
+        <tr><td class="m">causation_id?</td><td>the event that caused this one</td></tr>
+        <tr><td class="m">source · target</td><td>logical producer · final consumer (Endpoint values)</td></tr>
+        <tr><td class="m">return_route?</td><td>stable output/telemetry destination</td></tr>
         <tr><td class="m">class</td><td>control · data · output · telemetry</td></tr>
-        <tr><td class="m">sequence</td><td>correlation + source 안에서 단조 증가</td></tr>
-        <tr><td class="m">deadline_unix_ms?</td><td>수용 펜스. <b>중단 약속이 아니다</b>. 0은 거부</td></tr>
-        <tr><td class="m">adapter_kind?</td><td>구상 어댑터 선택. payload는 여전히 불투명</td></tr>
-        <tr><td class="m">payload_content_type</td><td>그 바이트의 해석 규약</td></tr>
+        <tr><td class="m">sequence</td><td>monotonic within correlation + source</td></tr>
+        <tr><td class="m">deadline_unix_ms?</td><td>acceptance fence. <b>Not a promise to abort</b>. 0 is rejected</td></tr>
+        <tr><td class="m">adapter_kind?</td><td>selects the concrete adapter. payload stays opaque</td></tr>
+        <tr><td class="m">payload_content_type</td><td>how to interpret those bytes</td></tr>
       </table>
     </div>
     <div style="display:flex;flex-direction:column;gap:14px">
       <div>
-        <h3>Endpoint는 레지스트리 키가 아니라 값이다</h3>
+        <h3>An Endpoint is a value, not a registry key</h3>
         <dl class="kv">
           <dt>Agent</dt><dd>{ address }</dd>
           <dt>Node</dt><dd>{ agent_address, node_id }</dd>
           <dt>Outer</dt><dd>{ ingress_agent_address, channel_id, connection_generation }</dd>
         </dl>
       </div>
-      <div class="note f"><strong>source는 회신 주소를 겸할 수 없다.</strong> 꼬리 노드는 앞 노드로부터 데이터를 받지만, 출력은 추론을 시작한 OUTER의 것이다. 안정적인 `channel_id`가 그 스트림을 가리키고, `connection_generation`이 재연결 후 옛 소켓으로 새 스트림이 흘러가는 것을 막는다.</div>
-      <div class="note"><strong>중간 agent는 source·target·return_route를 다시 쓰지 않는다.</strong> 어댑터가 작업을 끝내면 자신을 source로, 정확한 다음 endpoint를 target으로, 유발 이벤트를 causation_id로 하는 <b>새 이벤트</b>를 만든다.</div>
-      <p style="font-size:13px"><b>정의하지 않는 필드:</b> prompt · token · max-token · Prefill · Decode · KV · layer · tensor · batch · backend. 순서와 중복 억제는 <b>per-source sequence + event 정체성</b>이 제공하며, transport route를 해시해 논리 순서를 추론하는 것은 유효하지 않다.</p>
+      <div class="note f"><strong>source cannot double as the reply address.</strong> The tail node receives data from the node before it, but the output belongs to the OUTER that started the inference. A stable `channel_id` points at that stream, and `connection_generation` keeps a new stream from flowing into an old socket after a reconnect.</div>
+      <div class="note"><strong>Intermediate agents do not rewrite source, target or return_route.</strong> When an adapter finishes work, it creates a <b>new event</b> with itself as source, the exact next endpoint as target, and the causing event as causation_id.</div>
+      <p style="font-size:13px"><b>Fields it does not define:</b> prompt · token · max-token · Prefill · Decode · KV · layer · tensor · batch · backend. Ordering and duplicate suppression come from <b>per-source sequence + event identity</b>; inferring logical order by hashing the transport route is not valid.</p>
     </div>
   </div>
-  <footer>실측 <b>layers/protocol/src/event/mod.rs:94–177</b>(Envelope·EventClass·validate) · 계약 <b>docs/event-protocol-v2.md</b></footer>
+  <footer>Measured <b>layers/protocol/src/event/mod.rs:94–177</b>(Envelope·EventClass·validate) · contract <b>docs/event-protocol-v2.md</b></footer>
 </section></div>
 
 <!-- 06 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">agent 코어</span><span>판정과 레인</span><span class="num">06 / 16</span></div>
-    <h2>프레임은 정확히 두 번 판정된다. 그리고 우선순위는 유계다</h2>
+    <div class="eyebrow"><span class="sect">agent core</span><span>Verdicts and lanes</span><span class="num">06 / 16</span></div>
+    <h2>A frame is judged exactly twice, and priority is bounded</h2>
   </div>
   <div class="body cols c2" style="gap:30px">
     <figure>
-      <svg class="dg" viewBox="0 0 520 248" role="img" aria-label="판정은 주소가 내 것인지 묻고, 아니면 전체를 전달하며, 그렇다면 agent 또는 node로 보낸다">
+      <svg class="dg" viewBox="0 0 520 248" role="img" aria-label="The judge asks whether the address is mine; if not, it forwards the whole frame; if so, it sends it to the agent or to a node">
         <defs><marker id="s6a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ah"/></marker></defs>
         <rect x="120" y="4" width="280" height="40" rx="2" class="bxf"/>
-        <text x="260" y="29" text-anchor="middle" class="t13">target이 내 주소인가?</text>
+        <text x="260" y="29" text-anchor="middle" class="t13">Is target my address?</text>
         <line x1="200" y1="46" x2="120" y2="76" class="ln" marker-end="url(#s6a)"/>
-        <text x="128" y="66" class="t10">아니오</text>
+        <text x="128" y="66" class="t10">no</text>
         <line x1="320" y1="46" x2="400" y2="76" class="ln" marker-end="url(#s6a)"/>
-        <text x="368" y="66" class="t10">예</text>
+        <text x="368" y="66" class="t10">yes</text>
         <rect x="4" y="78" width="216" height="52" rx="2" class="bx"/>
         <text x="112" y="100" text-anchor="middle" class="t11">Forward(target)</text>
-        <text x="112" y="118" text-anchor="middle" class="ko10">통째로 전달. peer와 OUTER는 같은 경우</text>
+        <text x="112" y="118" text-anchor="middle" class="ko10">Forwarded whole. Peer and OUTER alike</text>
         <rect x="300" y="78" width="216" height="40" rx="2" class="bx"/>
-        <text x="408" y="103" text-anchor="middle" class="t11">recipient는?</text>
+        <text x="408" y="103" text-anchor="middle" class="t11">recipient?</text>
         <line x1="360" y1="120" x2="330" y2="144" class="ln" marker-end="url(#s6a)"/>
         <line x1="456" y1="120" x2="470" y2="144" class="ln" marker-end="url(#s6a)"/>
         <rect x="252" y="146" width="130" height="48" rx="2" class="bx"/>
         <text x="317" y="168" text-anchor="middle" class="t11">Agent</text>
-        <text x="317" y="186" text-anchor="middle" class="ko10">노드 생성·삭제, 조회</text>
+        <text x="317" y="186" text-anchor="middle" class="ko10">create/delete, query</text>
         <rect x="392" y="146" width="128" height="48" rx="2" class="bxb"/>
         <text x="456" y="168" text-anchor="middle" class="t11 bl">Node(id)</text>
-        <text x="456" y="186" text-anchor="middle" class="ko10">그 노드의 큐로</text>
+        <text x="456" y="186" text-anchor="middle" class="ko10">to that node's queue</text>
         <line x1="4" y1="212" x2="516" y2="212" class="sep"/>
-        <text x="260" y="234" text-anchor="middle" class="ko">판정은 lane이나 chain에 의존하지 않는다 — 의존하는 순간</text>
-        <text x="260" y="250" text-anchor="middle" class="ko">전달이 자기 트래픽을 이해해야 한다</text>
+        <text x="260" y="234" text-anchor="middle" class="ko">The judge does not depend on lanes or chains — the moment it does,</text>
+        <text x="260" y="250" text-anchor="middle" class="ko">forwarding has to understand its own traffic</text>
       </svg>
-      <figcaption>순수 함수: envelope과 자기 주소가 들어가고 판정이 나온다. 세 번째 변종이 생긴다면 agent가 가져선 안 될 상태를 얻은 것이다.</figcaption>
+      <figcaption>A pure function: an envelope and its own address go in, a verdict comes out. If a third variant appears, the agent has acquired state it must not have.</figcaption>
     </figure>
     <div style="display:flex;flex-direction:column;gap:16px">
       <figure>
-        <svg class="dg" viewBox="0 0 520 176" role="img" aria-label="control, response, decode, prefill 네 레인은 선호 순서를 갖지만 16번째 take마다 네 레인이 동등하게 경쟁한다">
+        <svg class="dg" viewBox="0 0 520 176" role="img" aria-label="The four lanes control, response, decode and prefill have a preference order, but on every 16th take all four lanes compete equally">
           <defs><marker id="s6f" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker></defs>
-          <text x="0" y="12" class="t10">선호 순서</text>
+          <text x="0" y="12" class="t10">preference order</text>
           <g>
             <rect x="0" y="20" width="150" height="22" class="bxf"/><text x="8" y="35" class="t11">control</text>
             <rect x="0" y="46" width="150" height="22" class="bx"/><text x="8" y="61" class="t11">response</text>
@@ -457,7 +457,7 @@ svg.dg{display:block;width:100%;height:auto}
           <line x1="152" y1="70" x2="196" y2="70" class="lnf" marker-end="url(#s6f)"/>
           <rect x="198" y="46" width="106" height="48" rx="2" class="bxf"/>
           <text x="251" y="68" text-anchor="middle" class="t11">dispatcher</text>
-          <text x="251" y="85" text-anchor="middle" class="ko10">한 개의 task</text>
+          <text x="251" y="85" text-anchor="middle" class="ko10">a single task</text>
           <text x="330" y="34" class="t10">take 1 … 16</text>
           <g>
             <rect x="330" y="42" width="9" height="18" class="fill2"/><rect x="342" y="42" width="9" height="18" class="fill2"/>
@@ -469,30 +469,30 @@ svg.dg{display:block;width:100%;height:auto}
             <rect x="474" y="42" width="9" height="18" class="fill2"/><rect x="486" y="42" width="9" height="18" class="fill2"/>
             <rect x="498" y="42" width="9" height="18" class="fill2"/><rect x="510" y="42" width="9" height="18" class="fillb"/>
           </g>
-          <text x="514" y="76" text-anchor="end" class="t10 bl">16번째 = 공정</text>
-          <text x="330" y="100" class="ko10">네 레인이 동등하게 경쟁한다</text>
+          <text x="514" y="76" text-anchor="end" class="t10 bl">every 16th = fair</text>
+          <text x="330" y="100" class="ko10">all four lanes compete equally</text>
           <line x1="0" y1="132" x2="520" y2="132" class="sep"/>
-          <text x="0" y="154" class="ko">엄격한 우선순위는 선호가 아니라 <tspan class="xl">거부권</tspan>이다.</text>
-          <text x="0" y="172" class="ko">한 번도 dispatch되지 않은 lap은 끝나지 않는 요청이다.</text>
+          <text x="0" y="154" class="ko">Strict priority is not a preference but a <tspan class="xl">veto</tspan>.</text>
+          <text x="0" y="172" class="ko">A lap that is never dispatched is a request that never finishes.</text>
         </svg>
-        <figcaption>lane은 운반되고 파생되지 않는다 — 수신자가 프레임을 열지 않고 배치할 수 있기 때문에 소켓 리더가 큐에 넣는 일만 할 수 있다.</figcaption>
+        <figcaption>The lane is carried, not derived — because the receiver can place a frame without opening it, the socket reader can get away with only enqueuing.</figcaption>
       </figure>
-      <div class="note"><strong>한 route는 한 worker.</strong> route 안의 순서가 유일한 순서 보장이고, 그 보장은 등록 순서에서 나온다. 한 route의 연속 프레임을 서로 다른 worker에 넘기면 그것이 버려지고, 호출자에게는 <b>P4가 스트림을 재정렬한 것</b>으로 보인다. route를 해시해 route별 직렬성을 지키면서 다른 route는 동시에 달린다.</div>
+      <div class="note"><strong>One route, one worker.</strong> Order within a route is the only ordering guarantee, and it comes from registration order. Handing consecutive frames of one route to different workers throws that away, and to the caller it looks as if <b>P4 reordered the stream</b>. Hashing the route keeps each route serial while different routes run concurrently.</div>
     </div>
   </div>
-  <footer>출처 <b>layers/agent/src/worker/judge</b>, <b>layers/agent/src/queue/main</b>, <b>docs/architecture.md</b>, <b>docs/constraints.md</b> · 전달도 자기 task가 아니라 dispatcher에서 일어난다</footer>
+  <footer>Sources <b>layers/agent/src/worker/judge</b>, <b>layers/agent/src/queue/main</b>, <b>docs/architecture.md</b>, <b>docs/constraints.md</b> · forwarding also happens in the dispatcher, not in a task of its own</footer>
 </section></div>
 
 <!-- 07 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">agent 코어</span><span>노드의 긴 작업</span><span class="num">07 / 16</span></div>
-    <h2>노드는 두 개의 사건으로만 전진한다 — 타이머는 없다</h2>
-    <p class="lede">노드의 속도는 backend의 속도다. 세 번째 트리거는 그 속도에 대한 추측이 된다.</p>
+    <div class="eyebrow"><span class="sect">agent core</span><span>The node's long work</span><span class="num">07 / 16</span></div>
+    <h2>A node advances on exactly two events — there is no timer</h2>
+    <p class="lede">A node's speed is the backend's speed. A third trigger would be a guess about that speed.</p>
   </div>
   <div class="body" style="display:flex;flex-direction:column;gap:16px">
     <figure>
-      <svg class="dg" viewBox="0 0 1160 268" role="img" aria-label="노드 실행 루프는 일이 도착하는 사건과 hop이 끝나는 사건으로만 전진하고, 선언된 상한을 지키며 한 번에 하나의 hop을 실행하고, backpressure는 반대 방향으로 생산자까지 이어진다">
+      <svg class="dg" viewBox="0 0 1160 268" role="img" aria-label="The node run loop advances only when work arrives and when a hop finishes, holds the declared ceiling, runs one hop at a time, and backpressure runs the opposite way back to the producer">
         <defs>
           <marker id="s7a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ah"/></marker>
           <marker id="s7f" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker>
@@ -500,210 +500,210 @@ svg.dg{display:block;width:100%;height:auto}
         </defs>
         <rect x="0" y="40" width="150" height="46" rx="2" class="bx"/>
         <text x="75" y="60" text-anchor="middle" class="t11">worker</text>
-        <text x="75" y="77" text-anchor="middle" class="ko10">옮기고 끝난다</text>
+        <text x="75" y="77" text-anchor="middle" class="ko10">hands off and is done</text>
         <line x1="152" y1="63" x2="214" y2="63" class="lnf" marker-end="url(#s7f)"/>
-        <text x="183" y="54" text-anchor="middle" class="t10 fl">① 일 도착</text>
+        <text x="183" y="54" text-anchor="middle" class="t10 fl">① arrival</text>
         <rect x="216" y="20" width="230" height="150" rx="3" class="bxf"/>
         <text x="331" y="44" text-anchor="middle" class="t13">node run loop</text>
         <line x1="230" y1="54" x2="432" y2="54" class="sep"/>
         <text x="230" y="76" class="t11">queue</text><text x="432" y="76" text-anchor="end" class="tk">depth · waiting</text>
         <text x="230" y="98" class="t11">in-flight map</text><text x="432" y="98" text-anchor="end" class="tk">keyed by sequence</text>
-        <text x="230" y="120" class="t11">ceiling</text><text x="432" y="120" text-anchor="end" class="tk">load가 선언한 값</text>
+        <text x="230" y="120" class="t11">ceiling</text><text x="432" y="120" text-anchor="end" class="tk">declared by load</text>
         <text x="230" y="142" class="t11">lifecycle</text><text x="432" y="142" text-anchor="end" class="tk">Bound: Never·At(gen)·Refused</text>
-        <text x="331" y="163" text-anchor="middle" class="ko10">한 번에 hop 하나 — 구조적으로</text>
+        <text x="331" y="163" text-anchor="middle" class="ko10">one hop at a time — by construction</text>
         <g>
           <circle cx="540" cy="222" r="20" class="bxq"/>
           <line x1="540" y1="222" x2="540" y2="210" class="ln"/><line x1="540" y1="222" x2="549" y2="228" class="ln"/>
           <line x1="524" y1="238" x2="556" y2="206" class="lnx"/>
-          <text x="540" y="262" text-anchor="middle" class="t10 xl">타이머 없음</text>
+          <text x="540" y="262" text-anchor="middle" class="t10 xl">no timer</text>
         </g>
         <line x1="448" y1="76" x2="560" y2="76" class="lnf" marker-end="url(#s7f)"/>
         <text x="504" y="68" text-anchor="middle" class="t10">hop(window)</text>
         <rect x="562" y="50" width="150" height="52" rx="2" class="bx"/>
         <text x="637" y="72" text-anchor="middle" class="t11">adapter</text>
-        <text x="637" y="90" text-anchor="middle" class="ko10">blocking thread에서</text>
+        <text x="637" y="90" text-anchor="middle" class="ko10">on a blocking thread</text>
         <line x1="714" y1="76" x2="778" y2="76" class="ln" marker-end="url(#s7a)"/>
         <rect x="780" y="50" width="150" height="52" rx="2" class="bxb"/>
         <text x="855" y="72" text-anchor="middle" class="t11 bl">backend</text>
-        <text x="855" y="90" text-anchor="middle" class="ko10">장치 위의 시간</text>
+        <text x="855" y="90" text-anchor="middle" class="ko10">time on the device</text>
         <path d="M855 108 L855 140 L360 140 L360 174" class="lnf dash" marker-end="url(#s7f)"/>
-        <text x="620" y="134" text-anchor="middle" class="t10 fl">② hop 종료 — 이것을 보고서야 다음을 시작한다</text>
+        <text x="620" y="134" text-anchor="middle" class="t10 fl">② hop ends — only then does the next one start</text>
         <line x1="0" y1="196" x2="1160" y2="196" class="sep"/>
-        <text x="0" y="216" class="t11 bl">backpressure는 같은 사슬을 거꾸로 흐른다</text>
+        <text x="0" y="216" class="t11 bl">backpressure flows back up the same chain</text>
         <g class="t10">
-          <text x="1150" y="216" text-anchor="end">사슬은 일을 만들어내는 것에서 끝난다</text>
-          <text x="0" y="240">peer 큐 full</text>
+          <text x="1150" y="216" text-anchor="end">the chain ends at whatever produces work</text>
+          <text x="0" y="240">peer Q full</text>
           <line x1="96" y1="236" x2="140" y2="236" class="lnb" marker-end="url(#s7b)"/>
-          <text x="148" y="240">dispatcher 정지</text>
+          <text x="148" y="240">dispatcher halt</text>
           <line x1="262" y1="236" x2="306" y2="236" class="lnb" marker-end="url(#s7b)"/>
-          <text x="314" y="240">lane이 찬다</text>
+          <text x="314" y="240">lane fills</text>
           <line x1="400" y1="236" x2="444" y2="236" class="lnb" marker-end="url(#s7b)"/>
-          <text x="452" y="240">node outbox 정지</text>
+          <text x="452" y="240">node outbox halt</text>
           <line x1="574" y1="236" x2="618" y2="236" class="lnb" marker-end="url(#s7b)"/>
-          <text x="626" y="240">다음 hop에서 노드가 느려진다</text>
+          <text x="626" y="240">node slows on its next hop</text>
           <line x1="820" y1="236" x2="864" y2="236" class="lnb" marker-end="url(#s7b)"/>
-          <text x="872" y="240">생산자</text>
+          <text x="872" y="240">producer</text>
         </g>
       </svg>
-      <figcaption>worker의 일은 노드-바인딩 프레임을 그 노드의 큐로 옮기고 끝나는 것이다. 노드가 1µs에 반응하든 1분에 반응하든 agent 깊이에는 나타나지 않으며, 그것이 어댑터 경계 어느 쪽에 지연을 귀속시킬 수 있게 하는 분리다.</figcaption>
+      <figcaption>A worker's job is to move a node-bound frame to that node's queue and be done. Whether the node responds in 1µs or in 1 minute does not show up in agent depth, and that separation is what lets delay be attributed to one side of the adapter boundary.</figcaption>
     </figure>
     <div class="cols c3" style="gap:22px">
-      <div><h3>취소와 데드라인</h3><p>이 경계에서 결정된다. hop을 <b>중단하는 방법은 없고 필요도 없다</b> — 다음 것을 시작하지 않는 것이 메커니즘 전부다.</p></div>
-      <div><h3>hop은 창을 나른다</h3><p>배치는 노드의 결정이며 load가 선언한 값에 갇히고 결코 파생되지 않는다. 창은 작업에서 <b>멀지 않은 곳</b>에서 구성한다 — 더 먼 게이트는 도착과 어긋나는 상한을 보고했다.</p></div>
-      <div><h3>아무것도 값을 반환하지 않는다</h3><p>핸들러는 큐에 프레임을 놓는 것이 유일한 출력인 절차다. 호출 스택에 묶인 응답 경로는 그 프레임과 함께 죽으므로, 요청자는 <b>continuation을 등록</b>한다.</p></div>
+      <div><h3>Cancellation and deadlines</h3><p>Decided at this boundary. There is <b>no way to abort a hop, and no need for one</b> — not starting the next one is the whole mechanism.</p></div>
+      <div><h3>A hop carries a window</h3><p>Batching is the node's decision, capped by the value the load declared and never derived. The window is composed <b>close to the work</b> — a gate further away reported a ceiling that disagreed with arrivals.</p></div>
+      <div><h3>Nothing returns a value</h3><p>A handler is a procedure whose only output is putting frames on a queue. A response path tied to the call stack dies with that frame, so the requester <b>registers a continuation</b>.</p></div>
     </div>
   </div>
-  <footer>출처 <b>layers/agent/src/node/runner</b>(+events·handle·bound), <b>node/window</b>(compose), <b>docs/architecture.md</b> · run loop는 자기 work 채널이 닫힐 때 끝난다 — 비활성 `Some(...)` 분기로 쓰였을 때 영원히 park했고, 교체·삭제된 노드가 어댑터·큐·in-flight 맵과 함께 상주했다</footer>
+  <footer>Sources <b>layers/agent/src/node/runner</b>(+events·handle·bound), <b>node/window</b>(compose), <b>docs/architecture.md</b> · the run loop ends when its work channel closes — written as a disabled `Some(...)` branch it parked forever, and replaced or deleted nodes stayed resident with their adapter, queue and in-flight map</footer>
 </section></div>
 
 <!-- 08 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">격리 계약</span><span>층별 책임과 의존 방향</span><span class="num">08 / 16</span></div>
-    <h2>잦은 llama.cpp 변경이 전달 코어·비행 원장·배치 정책으로 번지지 않게 한다</h2>
-    <p class="lede">llama.cpp는 단순 장치 wrapper가 아니다. 모델·graph·memory 실행을 소유하는 <b>추상층</b>이고, 그 아래 ggml/backend의 CUDA·CPU·Metal·HIP·Vulkan 구현은 <b>따로</b> 변한다.</p>
+    <div class="eyebrow"><span class="sect">Isolation contract</span><span>Per-layer responsibility and dependency direction</span><span class="num">08 / 16</span></div>
+    <h2>Keep llama.cpp churn out of the transport core, in-flight ledger, batch policy</h2>
+    <p class="lede">llama.cpp is not a simple device wrapper. It is an <b>abstraction layer</b> that owns model, graph and memory execution, and the CUDA, CPU, Metal, HIP and Vulkan implementations in ggml/backend below it change <b>separately</b>.</p>
   </div>
   <div class="body">
     <figure>
-      <svg class="dg" viewBox="0 0 1160 404" role="img" aria-label="OUTER부터 ggml 구상 backend까지 아홉 개 층의 스택과 각 층이 소유하지 않는 것, 아래로 향하는 의미 의존 방향과 위로 향하는 결과 및 telemetry 경로">
+      <svg class="dg" viewBox="0 0 1160 404" role="img" aria-label="A stack of nine layers from OUTER down to the concrete ggml backends, what each layer does not own, the downward semantic dependency direction, and the upward result and telemetry path">
         <defs>
           <marker id="s8d" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker>
           <marker id="s8u" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahb"/></marker>
         </defs>
         <line x1="16" y1="14" x2="16" y2="388" class="lnf" marker-end="url(#s8d)"/>
-        <text x="6" y="200" class="t10 fl" transform="rotate(-90 6 200)" text-anchor="middle">의미 의존 방향</text>
+        <text x="6" y="200" class="t10 fl" transform="rotate(-90 6 200)" text-anchor="middle">semantic dependency direction</text>
         <line x1="1144" y1="388" x2="1144" y2="14" class="lnb dash" marker-end="url(#s8u)"/>
-        <text x="1154" y="200" class="t10 bl" transform="rotate(90 1154 200)" text-anchor="middle">결과·telemetry (소유권을 만들지 않는다)</text>
+        <text x="1154" y="200" class="t10 bl" transform="rotate(90 1154 200)" text-anchor="middle">results/telemetry (creates no ownership)</text>
         <g>
           <rect x="34" y="6" width="1092" height="38" rx="2" class="bxb"/>
           <text x="48" y="30" class="t11 bl">OUTER</text>
-          <text x="300" y="30" class="ko">제품 목표 · 자원/토폴로지 · 요청/SLO · 스냅샷 트리거</text>
-          <text x="1112" y="30" text-anchor="end" class="tk">engine KV 직접 변경 ✗ · wire ACK를 생성 완료로 ✗</text>
-          <text x="590" y="58" text-anchor="middle" class="t10 fl">P4 소유 envelope + adapter-owned content-type</text>
+          <text x="300" y="30" class="ko">product goals · resources/topology · requests/SLO · snapshot triggers</text>
+          <text x="1112" y="30" text-anchor="end" class="tk">direct engine KV edits ✗ · wire ACK as gen. done ✗</text>
+          <text x="590" y="58" text-anchor="middle" class="t10 fl">P4-owned envelope + adapter-owned content-type</text>
 
           <rect x="34" y="66" width="1092" height="38" rx="2" class="bxf"/>
           <text x="48" y="90" class="t11">layers/protocol</text>
-          <text x="300" y="90" class="ko">event envelope · 주소/식별/라우팅/타입 경계</text>
+          <text x="300" y="90" class="ko">event envelope · address/identity/routing/type boundary</text>
           <text x="1112" y="90" text-anchor="end" class="tk">llama seq · ggml type · CUDA device ✗</text>
 
           <rect x="34" y="110" width="1092" height="38" rx="2" class="bxf"/>
           <text x="48" y="134" class="t11">layers/agent</text>
-          <text x="300" y="134" class="ko">transport · broker · 순서/전달 · 노드 수명 · 범용 backpressure</text>
-          <text x="1112" y="134" text-anchor="end" class="tk">prefill/decode 선택 ✗ · KV cell 단가 ✗</text>
-          <text x="590" y="162" text-anchor="middle" class="t10 fl">backend-neutral NodeAdapter · 보존되는 backpressure</text>
+          <text x="300" y="134" class="ko">transport · broker · ordering/delivery · node lifetime · generic backpressure</text>
+          <text x="1112" y="134" text-anchor="end" class="tk">choosing prefill/decode ✗ · KV cell unit cost ✗</text>
+          <text x="590" y="162" text-anchor="middle" class="t10 fl">backend-neutral NodeAdapter · backpressure preserved</text>
 
           <rect x="34" y="170" width="1092" height="38" rx="2" class="bxf"/>
           <text x="48" y="194" class="t11">adapters/adapter</text>
-          <text x="300" y="194" class="ko">offer/take · completion 계약 · 이벤트 소유권 · Full/Closed 구분</text>
-          <text x="1112" y="194" text-anchor="end" class="tk">특정 engine의 private 타입·우회 캐스팅 ✗</text>
+          <text x="300" y="194" class="ko">offer/take · completion contract · event ownership · Full/Closed distinction</text>
+          <text x="1112" y="194" text-anchor="end" class="tk">an engine's private types / bypass casts ✗</text>
 
           <rect x="34" y="214" width="1092" height="38" rx="2" class="bx"/>
           <text x="48" y="238" class="t11">llamacpp/staged</text>
-          <text x="300" y="238" class="ko">L0 큐 → L1 원장 ↔ L2 수용 → L3 정책 → L4 증명 → L5 발행</text>
-          <text x="1112" y="238" text-anchor="end" class="tk">P4 공용 해석기를 모델별로 확장 ✗</text>
-          <text x="590" y="266" text-anchor="middle" class="t10">버전화된 stage 명령 · capability · identity · 결과 — <tspan class="xl">포인터 없음</tspan></text>
+          <text x="300" y="238" class="ko">L0 queue → L1 ledger ↔ L2 acceptance → L3 policy → L4 proof → L5 issue</text>
+          <text x="1112" y="238" text-anchor="end" class="tk">extending the shared P4 interpreter per model ✗</text>
+          <text x="590" y="266" text-anchor="middle" class="t10">versioned stage commands · capability · identity · results — <tspan class="xl">no pointers</tspan></text>
 
           <rect x="34" y="274" width="1092" height="34" rx="2" class="bx"/>
           <text x="48" y="295" class="t11">native stage shell · engine facade</text>
           <text x="420" y="295" class="ko">load/inspect/execute/settle/state/quiesce + opaque handle</text>
-          <text x="1112" y="295" text-anchor="end" class="tk">llama_context 내부 · sampler ownership 세부 ✗</text>
+          <text x="1112" y="295" text-anchor="end" class="tk">llama_context internals · sampler ownership details ✗</text>
 
           <rect x="34" y="312" width="1092" height="34" rx="2" class="bx"/>
           <text x="48" y="333" class="t11">engine bridge · private-common compat</text>
-          <text x="420" y="333" class="ko">현재 pin의 공개 llama.h/ggml + 격리된 private stage hook</text>
-          <text x="1112" y="333" text-anchor="end" class="tk">공개 API도 불변 ABI로 가정 ✗</text>
+          <text x="420" y="333" class="ko">current pin's public llama.h/ggml + isolated private stage hooks</text>
+          <text x="1112" y="333" text-anchor="end" class="tk">treating public API as fixed ABI ✗</text>
 
           <rect x="34" y="350" width="1092" height="24" rx="2" class="bxq"/>
-          <text x="48" y="366" class="t11">llama.cpp 모델 · graph · memory · backend 스케줄러 추상층</text>
-          <text x="1112" y="366" text-anchor="end" class="tk">upstream 소유</text>
+          <text x="48" y="366" class="t11">llama.cpp model · graph · memory · backend scheduler abstraction layer</text>
+          <text x="1112" y="366" text-anchor="end" class="tk">owned upstream</text>
 
           <rect x="34" y="378" width="1092" height="24" rx="2" class="bxq"/>
-          <text x="48" y="394" class="t11">ggml / backend — CUDA · CPU · Metal · HIP · Vulkan 구상 구현</text>
-          <text x="1112" y="394" text-anchor="end" class="tk">따로 변한다</text>
+          <text x="48" y="394" class="t11">ggml / backend — CUDA · CPU · Metal · HIP · Vulkan concrete implementations</text>
+          <text x="1112" y="394" text-anchor="end" class="tk">changes separately</text>
         </g>
       </svg>
-      <figcaption>화살표는 의미 의존 방향이다. 실제 디렉터리 수나 CMake target 수를 이 그림에 맞추는 것은 목표가 아니다. 위층 수정이 필요하면 <b>계약 변경을 별도 승인·검증</b>한다.</figcaption>
+      <figcaption>Arrows show semantic dependency direction. Matching the actual number of directories or CMake targets to this picture is not a goal. If an upper layer needs changes, the <b>contract change is approved and verified separately</b>.</figcaption>
     </figure>
   </div>
-  <footer>출처 <b>docs/layer-isolation-contract.md §2·§4</b> · 현재 event 경계는 <b>adapter/src/node_adapter/mod.rs::NodeAdapter</b>와 <b>agent/src/event_node/mod.rs::EventNode</b>이며 `Adapter::start(Work)`의 이전 service 경계와 섞지 않는다</footer>
+  <footer>Source <b>docs/layer-isolation-contract.md §2·§4</b> · the current event boundary is <b>adapter/src/node_adapter/mod.rs::NodeAdapter</b> and <b>agent/src/event_node/mod.rs::EventNode</b>; do not mix it with the older service boundary of `Adapter::start(Work)`</footer>
 </section></div>
 
 <!-- 09 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">격리 계약</span><span>합격 조건은 세 개다</span><span class="num">09 / 16</span></div>
-    <h2>“include 0 · 컴파일 성공 · 이번 pin clean”은 격리 완료가 아니다</h2>
-    <p class="lede">셋 중 하나만 통과한 리팩터를 전체 계층 격리 완료로 보고하지 않는다.</p>
+    <div class="eyebrow"><span class="sect">Isolation contract</span><span>There are three pass conditions</span><span class="num">09 / 16</span></div>
+    <h2>“include 0 · compiles · clean on this pin” does not mean isolation is done</h2>
+    <p class="lede">A refactor that passes only one of the three is not reported as full layer isolation.</p>
   </div>
   <div class="body cols c3" style="gap:1px;background:var(--rule)">
     <div style="background:var(--surface2);padding:20px 22px;display:flex;flex-direction:column;gap:14px">
-      <div><span class="tag f">01</span><h3 class="f" style="margin-top:11px">의존 격리</h3>
-        <p>상위 코드가 하위 구현을 <b>이름으로 알지 못하게</b> 한다. 허용된 표면만 의존하도록 <b>빌드가 강제</b>한다.</p></div>
+      <div><span class="tag f">01</span><h3 class="f" style="margin-top:11px">Dependency isolation</h3>
+        <p>Upper code <b>cannot know lower implementations by name</b>. The <b>build enforces</b> that only allowed surfaces are depended on.</p></div>
       <ul>
-        <li><b>수단:</b> protocol/agent/adapter-contract crate는 구상 backend에 normal dependency를 갖지 않는다. 등록은 entrypoint에서 한다</li>
-        <li>pure scheduler/ledger 시험은 llama checkout·GPU·네트워크 없이 빌드된다</li>
+        <li><b>Means:</b> protocol/agent/adapter-contract crates have no normal dependency on a concrete backend. Registration happens in the entrypoint</li>
+        <li>pure scheduler/ledger tests build without a llama checkout, GPU or network</li>
       </ul>
-      <div class="note x" style="margin-top:auto"><strong>실측 차이:</strong> `layers/protocol`은 `[dependencies]` 절 자체가 없다(의존 0). 그러나 `adapters/adapter`는 현재 <b>p4-protocol·serde·serde_json</b>에 의존한다 — `docs/implementation.md`의 “protocol조차 의존하지 않는다”는 그 시점 기준이다.</div>
+      <div class="note x" style="margin-top:auto"><strong>Measured gap:</strong> `layers/protocol` has no `[dependencies]` section at all (0 dependencies). But `adapters/adapter` currently depends on <b>p4-protocol·serde·serde_json</b> — the “does not even depend on protocol” in `docs/implementation.md` reflects that earlier point in time.</div>
     </div>
     <div style="background:var(--surface2);padding:20px 22px;display:flex;flex-direction:column;gap:14px">
-      <div><span class="tag b">02</span><h3 class="b" style="margin-top:11px">권한 격리</h3>
-        <p>전송·정책이 <b>실행 원장이나 KV를 임의로 확정</b>하지 못하게 한다. 층을 파일 이름으로만 나누는 것이 아니다.</p></div>
+      <div><span class="tag b">02</span><h3 class="b" style="margin-top:11px">Authority isolation</h3>
+        <p>Transport and policy <b>cannot commit the execution ledger or KV on their own</b>. Layers are not split by file names alone.</p></div>
       <ul>
-        <li><b>기준:</b> 누가 상태를 확정하고 누가 효과만 실행하는가</li>
-        <li>L3의 결과는 <b>후보</b>다. 거부된 issue가 실행량·credit·서비스 순번을 몰래 소비하지 않는다</li>
-        <li>L1이 요청 delta·비행 원장·정산 receipt·출력/해제 <b>의도</b>를 한 commit으로 확정한다</li>
-        <li>L5는 확정된 효과를 실행하고 결과를 되돌린다. 불명확하면 <b>Uncertain/fenced</b>로 남긴다</li>
+        <li><b>Criterion:</b> who commits state, and who only executes effects</li>
+        <li>L3 yields a <b>candidate</b>. A rejected issue never silently spends exec quota, credit or turn</li>
+        <li>L1 commits request delta, in-flight ledger, settle receipt, output/release <b>intent</b> in one commit</li>
+        <li>L5 executes committed effects and returns the results. If unclear, it leaves them <b>Uncertain/fenced</b></li>
       </ul>
-      <div class="note" style="margin-top:auto"><strong>정산 승인을 우회해 token/native 효과를 먼저 내보내지 않는다.</strong> 꼬리 engine의 성공은 원장 승인을 우회할 출력 권한이 아니다.</div>
+      <div class="note" style="margin-top:auto"><strong>No token/native effect goes out ahead of settlement approval.</strong> Success at the tail engine is not output authority that bypasses ledger approval.</div>
     </div>
     <div style="background:var(--surface2);padding:20px 22px;display:flex;flex-direction:column;gap:14px">
-      <div><span class="tag x">03</span><h3 class="x" style="margin-top:11px">의미 격리</h3>
-        <p><b>컴파일 가능한 upstream 변화</b>도 기존 계약을 깨면 승격하지 못하게 한다.</p></div>
+      <div><span class="tag x">03</span><h3 class="x" style="margin-top:11px">Semantic isolation</h3>
+        <p>Even an <b>upstream change that compiles</b> cannot be promoted if it breaks an existing contract.</p></div>
       <ul>
-        <li><b>수단:</b> conformance가 의미 변경을 잡고, 제품 LOAD가 그 검증 결과와 실행 identity를 강제한다</li>
-        <li>이행할 수 없는 capability를 광고하면 LOAD/conformance가 실패한다</li>
-        <li>unknown 값을 “기본 CUDA”나 “지원”으로 자동 해석하지 않는다. mixed-version fleet은 거부를 정의한다</li>
+        <li><b>Means:</b> conformance catches semantic changes, and the product LOAD enforces that verification result and the execution identity</li>
+        <li>Advertising a capability that cannot be honored fails LOAD/conformance</li>
+        <li>An unknown value is never read as “default CUDA” or “supported”. A mixed-version fleet has a defined rejection</li>
       </ul>
-      <div class="note x" style="margin-top:auto"><strong>pin clean replay는 의미 호환 증명이 아니다.</strong> 불투명 클래스의 `impl()`이 공개되고 consumer가 internal header를 include할 수 있으면 완성된 경계가 아니다 — 실제 consumer 컴파일로 확인한다.</div>
+      <div class="note x" style="margin-top:auto"><strong>A clean replay on the pin is not proof of semantic compatibility.</strong> If an opaque class exposes `impl()` and a consumer can include an internal header, the boundary is not finished — confirm by compiling a real consumer.</div>
     </div>
   </div>
-  <footer>출처 <b>docs/layer-isolation-contract.md §1·§3·§4</b> · 실측 <b>layers/protocol/Cargo.toml</b>, <b>layers/adapters/adapter/Cargo.toml</b> @429e057de</footer>
+  <footer>Source <b>docs/layer-isolation-contract.md §1·§3·§4</b> · measured <b>layers/protocol/Cargo.toml</b>, <b>layers/adapters/adapter/Cargo.toml</b> @429e057de</footer>
 </section></div>
 
 <!-- 10 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">어댑터</span><span>배치 레이어 L0–L5</span><span class="num">10 / 16</span></div>
-    <h2>상태를 확정하는 층은 하나다</h2>
-    <p class="lede">OUTER는 모델·토폴로지·SLO·요청 도착·스냅샷 트리거를 정하고, 어댑터가 적격 행과 배치를 구성한다. P4 코어에 llama 전용 배치/KV 규칙을 넣지 않는다.</p>
+    <div class="eyebrow"><span class="sect">Adapter</span><span>Batching layers L0–L5</span><span class="num">10 / 16</span></div>
+    <h2>Only one layer commits state</h2>
+    <p class="lede">OUTER decides the model, topology, SLO, request arrivals and snapshot triggers; the adapter composes eligible rows and batches. No llama-specific batching/KV rules go into the P4 core.</p>
   </div>
   <div class="body" style="display:flex;flex-direction:column;gap:16px">
     <figure>
-      <svg class="dg" viewBox="0 0 1160 188" role="img" aria-label="L0 큐부터 L5 발행까지의 파이프라인에서 L1 원장만이 상태를 확정하고, L3는 순수 결정론적이며, L5는 효과만 실행하고 결과를 L1로 되돌린다">
+      <svg class="dg" viewBox="0 0 1160 188" role="img" aria-label="In the pipeline from the L0 queue to L5 issue, only the L1 ledger commits state, L3 is purely deterministic, and L5 only executes effects and returns results to L1">
         <defs>
           <marker id="s10a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker>
           <marker id="s10b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahb"/></marker>
         </defs>
         <g>
           <rect x="0" y="26" width="168" height="58" rx="2" class="bx"/>
-          <text x="12" y="47" class="t11">L0 큐</text><text x="12" y="66" class="ko10">도착·보류. 정책 없음</text>
-          <text x="12" y="80" class="ko10">drop을 성공으로 ✗</text>
+          <text x="12" y="47" class="t11">L0 queue</text><text x="12" y="66" class="ko10">arrival/hold. No policy</text>
+          <text x="12" y="80" class="ko10">drop as success ✗</text>
           <rect x="198" y="14" width="168" height="82" rx="2" class="bxb"/>
-          <text x="210" y="35" class="t11 bl">L1 원장</text><text x="210" y="54" class="ko10">ID·상주·셀 회계의</text>
-          <text x="210" y="68" class="ko10">단일 진실. atomic commit</text>
-          <text x="210" y="88" class="t10 bl">유일한 쓰기 권한</text>
+          <text x="210" y="35" class="t11 bl">L1 ledger</text><text x="210" y="54" class="ko10">ID/residency/cell accounting</text>
+          <text x="210" y="68" class="ko10">single truth. atomic commit</text>
+          <text x="210" y="88" class="t10 bl">sole write authority</text>
           <rect x="396" y="26" width="168" height="58" rx="2" class="bx"/>
-          <text x="408" y="47" class="t11">L2 수용·점유</text><text x="408" y="66" class="ko10">예약·lease·quota·명시 거절</text>
-          <text x="408" y="80" class="ko10">TTL/victim 발명 ✗</text>
+          <text x="408" y="47" class="t11">L2 acceptance/occupancy</text><text x="408" y="66" class="ko10">reserve·lease·quota·refusal</text>
+          <text x="408" y="80" class="ko10">inventing TTL/victim ✗</text>
           <rect x="594" y="26" width="168" height="58" rx="2" class="bxf"/>
-          <text x="606" y="47" class="t11">L3 구성 정책</text><text x="606" y="66" class="ko10">순수·결정론적 선택</text>
+          <text x="606" y="47" class="t11">L3 compose policy</text><text x="606" y="66" class="ko10">pure, deterministic selection</text>
           <text x="606" y="80" class="ko10">I/O·native call·mutation ✗</text>
           <rect x="792" y="26" width="168" height="58" rx="2" class="bx"/>
-          <text x="804" y="47" class="t11">L4 증명</text><text x="804" y="66" class="ko10">shape·membership·position</text>
-          <text x="804" y="80" class="ko10">byte budget 확인</text>
+          <text x="804" y="47" class="t11">L4 proof</text><text x="804" y="66" class="ko10">shape·membership·position</text>
+          <text x="804" y="80" class="ko10">byte budget check</text>
           <rect x="990" y="26" width="170" height="58" rx="2" class="bx"/>
-          <text x="1002" y="47" class="t11">L5 발행·운반</text><text x="1002" y="66" class="ko10">stage 호출·캡슐 전달</text>
-          <text x="1002" y="80" class="ko10">ACK/terminal 혼동 ✗</text>
+          <text x="1002" y="47" class="t11">L5 issue/transport</text><text x="1002" y="66" class="ko10">stage calls, capsule delivery</text>
+          <text x="1002" y="80" class="ko10">ACK/terminal mix-up ✗</text>
         </g>
         <g>
           <line x1="170" y1="55" x2="196" y2="55" class="lnf" marker-end="url(#s10a)"/>
@@ -712,43 +712,43 @@ svg.dg{display:block;width:100%;height:auto}
           <line x1="764" y1="55" x2="790" y2="55" class="lnf" marker-end="url(#s10a)"/>
           <line x1="962" y1="55" x2="988" y2="55" class="lnf" marker-end="url(#s10a)"/>
         </g>
-        <text x="680" y="18" text-anchor="middle" class="t10">후보 allocation</text>
+        <text x="680" y="18" text-anchor="middle" class="t10">candidate allocation</text>
         <text x="876" y="18" text-anchor="middle" class="t10">validated issue</text>
         <path d="M1075 90 L1075 136 L282 136 L282 100" class="lnb dash" marker-end="url(#s10b)"/>
-        <text x="678" y="130" text-anchor="middle" class="t10 bl">실행 결과 · Full이면 의도 보관 · 실행 여부 불명이면 Uncertain — timeout을 미실행으로 가정해 재실행 ✗</text>
+        <text x="678" y="130" text-anchor="middle" class="t10 bl">execution result · Full: keep intent · execution unknown: Uncertain — re-running because a timeout is assumed not run ✗</text>
         <line x1="0" y1="158" x2="1160" y2="158" class="sep"/>
-        <text x="0" y="180" class="ko">전송 credit 반환은 “peer가 인수했다”이지 <tspan class="xl">compute/KV 완료 증거가 아니다</tspan> — 정지점의 증거는 stage별 SequenceQuiesced attest다.</text>
+        <text x="0" y="180" class="ko">A returned transport credit means “the peer took it”, <tspan class="xl">not evidence that compute/KV finished</tspan> — evidence of a stop point is the per-stage SequenceQuiesced attest.</text>
       </svg>
-      <figcaption>L3는 “llama.cpp와 무관한 아무 일반 큐”가 아니다. llama memory/shape의 <b>정규화된 의미 제약</b>을 입력받되 private enum/struct·CUDA API를 직접 보지 않는다.</figcaption>
+      <figcaption>L3 is not “any generic queue unrelated to llama.cpp”. It takes the <b>normalized semantic constraints</b> of llama memory/shape as input, but never looks at private enums/structs or CUDA APIs directly.</figcaption>
     </figure>
     <div class="cols c2" style="gap:24px">
-      <div><h3>전략이 지켜야 할 불변식 (발췌)</h3>
+      <div><h3>Invariants a strategy must hold (excerpt)</h3>
         <ul>
-          <li><b>상주 전제:</b> 행이 각 스테이지에서 실행되기 전 그 스테이지의 prefix KV·보조 상태가 유효해야 한다 — 모든 행 발행 전에 전 pipeline을 비우라는 뜻은 아니다</li>
-          <li><b>증명 없는 제출 금지:</b> 실행 실패 후 KV가 보존됐다고 가정하지 않는다</li>
-          <li><b>스냅샷 정합 펜스:</b> Checkpoint·Persist·Fork는 in-flight 행이 전무하고 전 스테이지가 정산된 정지점에서만 — 배치 도중 export한 스냅샷은 position이 모호한 오답이다</li>
+          <li><b>Residency precondition:</b> before a row runs on a stage, that stage's prefix KV and auxiliary state must be valid — this does not mean draining the whole pipeline before issuing every row</li>
+          <li><b>No submission without proof:</b> never assume KV survived a failed execution</li>
+          <li><b>Snapshot consistency fence:</b> Checkpoint, Persist and Fork only at a stop point with zero in-flight rows and every stage settled — a snapshot exported mid-batch is a wrong answer with an ambiguous position</li>
         </ul></div>
-      <div><h3>비용은 노드마다 다르다 (과거 관측)</h3>
+      <div><h3>Cost differs per node (past observations)</h3>
         <table>
-          <tr><td class="m">노드별 KV</td><td>동일 n_ctx에 173.5 / 63.3 / 157.7 / 126.1 MB — 병목은 <b>가장 비싼 노드</b></td></tr>
-          <tr><td class="m">compute buffer</td><td>1,412MB@ubatch512 ↔ 386MB@128 — <b>배치 폭이 VRAM 지배 knob</b></td></tr>
-          <tr><td class="m">cut-set 폭</td><td>gemma-4: 31/27/23 텐서, 스텝당 81 전송. Qwen 계열은 1 — <b>모델별 상수</b></td></tr>
+          <tr><td class="m">per-node KV</td><td>173.5 / 63.3 / 157.7 / 126.1 MB at the same n_ctx — the bottleneck is <b>the most expensive node</b></td></tr>
+          <tr><td class="m">compute buffer</td><td>1,412MB@ubatch512 ↔ 386MB@128 — <b>batch width is the dominant VRAM knob</b></td></tr>
+          <tr><td class="m">cut-set width</td><td>gemma-4: 31/27/23 tensors, 81 transfers per step. Qwen family: 1 — <b>a per-model constant</b></td></tr>
         </table></div>
     </div>
   </div>
-  <footer>출처 <b>docs/adapter-batching-layers.md</b>(레이어·불변식·과거 관측), <b>docs/layer-isolation-contract.md §3</b> · 표의 관측값은 당시 조건 한정이며 현재 병목의 확정이 아니다</footer>
+  <footer>Sources <b>docs/adapter-batching-layers.md</b>(layers, invariants, past observations), <b>docs/layer-isolation-contract.md §3</b> · table values hold only for the conditions at the time and do not establish the current bottleneck</footer>
 </section></div>
 
 <!-- 11 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">staged 실행</span><span>스테이지 사슬과 출력 권위</span><span class="num">11 / 16</span></div>
-    <h2>native 계산 위치와 출력 승인 권위는 다른 것이다</h2>
-    <p class="lede">꼬리 노드가 결과를 계산해도, OUTER 출력은 <b>정산을 소유한 head가 원장을 검증·commit한 뒤에만</b> 발행된다.</p>
+    <div class="eyebrow"><span class="sect">staged execution</span><span>Stage chain and output authority</span><span class="num">11 / 16</span></div>
+    <h2>Where native compute runs and who may approve output are different things</h2>
+    <p class="lede">Even if the tail node computes the result, OUTER output is issued <b>only after the head, which owns settlement, verifies and commits the ledger</b>.</p>
   </div>
   <div class="body cols c2n" style="gap:28px">
     <figure>
-      <svg class="dg" viewBox="0 0 520 330" role="img" aria-label="SESSION v4가 전체 스테이지 순서를 설치하고, PHYSICAL은 앞 스테이지를 source로 전진하며, TAIL과 SETTLED와 RELEASED는 terminal을 source로 head로 돌아오고, OUTPUT은 head가 원장 commit 뒤 OUTER로 발행한다">
+      <svg class="dg" viewBox="0 0 520 330" role="img" aria-label="SESSION v4 installs the full stage order; PHYSICAL moves forward with the previous stage as source; TAIL, SETTLED and RELEASED return to the head with the terminal as source; the head issues OUTPUT to OUTER after the ledger commit">
         <defs>
           <marker id="s11a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker>
           <marker id="s11b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ah"/></marker>
@@ -763,13 +763,13 @@ svg.dg{display:block;width:100%;height:auto}
         <g>
           <rect x="150" y="102" width="220" height="52" rx="2" class="bxf"/>
           <text x="164" y="124" class="t11">stage 0 — head</text>
-          <text x="164" y="143" class="ko10">정산·검증·commit·RELEASE 생성</text>
+          <text x="164" y="143" class="ko10">settle, verify, commit, emit RELEASE</text>
           <rect x="150" y="180" width="220" height="44" rx="2" class="bx"/>
           <text x="164" y="200" class="t11">stage 1</text>
-          <text x="164" y="217" class="ko10">next ≠ terminal (3-stage에서)</text>
+          <text x="164" y="217" class="ko10">next ≠ terminal (in 3-stage)</text>
           <rect x="150" y="250" width="220" height="52" rx="2" class="bx"/>
           <text x="164" y="272" class="t11">stage 2 — terminal</text>
-          <text x="164" y="291" class="ko10">native 결과를 head에 반환</text>
+          <text x="164" y="291" class="ko10">returns native result to head</text>
         </g>
         <path d="M170 156 L170 178" class="lnf" marker-end="url(#s11a)"/>
         <path d="M170 226 L170 248" class="lnf" marker-end="url(#s11a)"/>
@@ -784,37 +784,37 @@ svg.dg{display:block;width:100%;height:auto}
         <text x="394" y="204" class="t10">RELEASED</text>
         <text x="394" y="222" class="t10">source = terminal</text>
         <line x1="0" y1="316" x2="520" y2="316" class="sep"/>
-        <text x="0" y="332" class="ko10">first/previous/next/terminal은 설치한 순서에서만 파생한다</text>
+        <text x="0" y="332" class="ko10">first/previous/next/terminal derive only from the installed order</text>
       </svg>
-      <figcaption>검사는 원장·KV·슬롯·출력을 바꾸기 <b>전에</b> 수행한다. head의 next와 terminal은 3-stage에서 서로 다르다.</figcaption>
+      <figcaption>Checks run <b>before</b> the ledger, KV, slots or output change. In a 3-stage chain, the head's next and terminal differ.</figcaption>
     </figure>
     <div style="display:flex;flex-direction:column;gap:14px">
       <div>
-        <h3 class="f">SESSION v4가 설치하는 것</h3>
+        <h3 class="f">What SESSION v4 installs</h3>
         <ul>
-          <li><b>필수:</b> `load_generation`, `session_id`, 전체 순서 `stages: [{agent,node,generation}, …]`, 수신 노드의 `stage_index`</li>
-          <li>role/first/next 선언은 제거했다. 최상위 unknown 필드와 구 v3 명령은 거부한다</li>
-          <li>노드 주소·nonzero generation·중복 없는 정체성·유효한 index를 검사하고, index의 <b>전체 endpoint가 실제 worker와 envelope target과 같아야</b> 설치한다</li>
-          <li>같은 agent/node의 다른 generation을 동시에 다른 stage로 선언할 수 없다</li>
+          <li><b>Required:</b> `load_generation`, `session_id`, the full order `stages: [{agent,node,generation}, …]`, the receiving node's `stage_index`</li>
+          <li>role/first/next declarations were removed. Unknown top-level fields and old v3 commands are rejected</li>
+          <li>Checks node addresses, nonzero generations, duplicate-free identities and a valid index, and installs only if the index's <b>full endpoint equals the actual worker and the envelope target</b></li>
+          <li>Different generations of the same agent/node cannot be declared as different stages at the same time</li>
         </ul>
       </div>
-      <div class="note"><strong>OUTPUT의 envelope source는 configured first endpoint다.</strong> OUTER는 agent 주소·node ID·node generation을 포함한 endpoint 전체와 load/session/request, target/return route·correlation·position을 대조한다. 꼬리도 configured node라는 이유로 동시 허용하지 않는다.</div>
-      <div class="note x"><strong>한계를 분명히 한다.</strong> 수신 노드별 검증만으로는 fleet 전체가 같은 선언을 받았다는 합의, 사용자/네트워크 인증, 프로세스 재시작 후 freshness를 증명하지 않는다. 현재 stage 경로는 head/tail이 분리되는 <b>2개 이상</b>만 지원한다 — 단일 stage 구현이 없다는 제한이며 <b>장치당 노드 수를 줄이라는 배치 정책이 아니다</b>.</div>
+      <div class="note"><strong>The envelope source of OUTPUT is the configured first endpoint.</strong> OUTER checks the full endpoint, including agent address, node ID and node generation, plus load/session/request, target/return route, correlation and position. The tail is not also accepted just because it is a configured node.</div>
+      <div class="note x"><strong>The limits are stated plainly.</strong> Per-receiver checks alone do not prove fleet-wide agreement on the same declaration, user/network authentication, or freshness after a process restart. The current stage path supports only <b>2 or more</b> stages, with head and tail separate — a limit from having no single-stage implementation, <b>not a placement policy to cut nodes per device</b>.</div>
     </div>
   </div>
-  <footer>출처 <b>docs/adapter-batching-layers.md</b>(SESSION/OUTPUT v4 절) · 구현 <b>staged/adapter/src/v2/</b>(commands·worker·completion·issue_witness), <b>tools/event-drive/src/run/mod.rs::session_events</b></footer>
+  <footer>Sources <b>docs/adapter-batching-layers.md</b>(SESSION/OUTPUT v4 section) · implementation <b>staged/adapter/src/v2/</b>(commands·worker·completion·issue_witness), <b>tools/event-drive/src/run/mod.rs::session_events</b></footer>
 </section></div>
 
 <!-- 12 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">upstream</span><span>llama.cpp 변경 흡수</span><span class="num">12 / 16</span></div>
-    <h2>공식 체크아웃은 손대지 않는다. 패치는 pin별 디렉터리 하나가 소유한다</h2>
-    <p class="lede">패치 하나라도 깨끗하게 적용되지 않으면 <b>CMake 전에 멈춘다</b>. 빌드를 통과시키려고 공식 체크아웃을 편집하지 않는다.</p>
+    <div class="eyebrow"><span class="sect">upstream</span><span>Absorbing llama.cpp changes</span><span class="num">12 / 16</span></div>
+    <h2>The official checkout stays untouched. One directory per pin owns the patches</h2>
+    <p class="lede">If even one patch does not apply cleanly, the build <b>stops before CMake</b>. The official checkout is never edited to get a build through.</p>
   </div>
   <div class="body" style="display:flex;flex-direction:column;gap:16px">
     <figure>
-      <svg class="dg" viewBox="0 0 1160 226" role="img" aria-label="공식 클론은 그대로 두고 준비 스크립트가 캐시 아래 생성 worktree를 만들어 pin 디렉터리의 패치를 해시 검증 후 적용하며, 무패치 stock 빌드와 패치된 pipeline 빌드가 따로 나온다">
+      <svg class="dg" viewBox="0 0 1160 226" role="img" aria-label="The official clone is left as is; the prepare script creates a generated worktree under the cache and applies the pin directory's patches after hash verification; an unpatched stock build and a patched pipeline build come out separately">
         <defs>
           <marker id="s12a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker>
           <marker id="s12b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ah"/></marker>
@@ -822,67 +822,67 @@ svg.dg{display:block;width:100%;height:auto}
         </defs>
         <rect x="0" y="56" width="196" height="62" rx="2" class="bxq"/>
         <text x="12" y="78" class="t11">upstream/</text>
-        <text x="12" y="96" class="ko10">공식 클론 · 원본 유지</text>
-        <text x="12" y="111" class="ko10">git ignore · 커밋 안 함</text>
+        <text x="12" y="96" class="ko10">official clone · kept pristine</text>
+        <text x="12" y="111" class="ko10">git ignore · not committed</text>
         <line x1="198" y1="70" x2="272" y2="70" class="ln" marker-end="url(#s12b)"/>
-        <text x="235" y="62" text-anchor="middle" class="t10">무패치</text>
+        <text x="235" y="62" text-anchor="middle" class="t10">unpatched</text>
         <rect x="274" y="46" width="176" height="46" rx="2" class="bx"/>
-        <text x="286" y="66" class="t11">stock 빌드</text>
+        <text x="286" y="66" class="t11">stock build</text>
         <text x="286" y="83" class="ko10">ggml-rpc-server · llama-server</text>
         <line x1="98" y1="120" x2="98" y2="150" class="lnf" marker-end="url(#s12a)"/>
         <rect x="0" y="152" width="196" height="58" rx="2" class="bxf"/>
         <text x="12" y="173" class="t11">prepare-pipeline-</text>
         <text x="12" y="189" class="t11">upstream.mjs</text>
-        <text x="12" y="205" class="ko10">두 번 실행: 생성 → 재사용 검증</text>
+        <text x="12" y="205" class="ko10">run twice: create → verify reuse</text>
         <rect x="274" y="130" width="216" height="80" rx="2" class="bxb"/>
         <text x="286" y="152" class="t11 bl">compat/&lt;pin&gt;/</text>
-        <text x="286" y="170" class="ko10">0001…0021 순서 패치</text>
-        <text x="286" y="186" class="ko10">manifest.json — 패치별 sha256,</text>
+        <text x="286" y="170" class="ko10">ordered patches 0001…0021</text>
+        <text x="286" y="186" class="ko10">manifest.json — per-patch sha256,</text>
         <text x="286" y="201" class="ko10">patch_set_sha256, patched_tree</text>
         <line x1="272" y1="170" x2="200" y2="176" class="lnb" marker-end="url(#s12c)"/>
-        <text x="236" y="166" text-anchor="middle" class="t10 bl">해시 검증</text>
+        <text x="236" y="166" text-anchor="middle" class="t10 bl">hash check</text>
         <line x1="198" y1="181" x2="1" y2="181" class="bxq" stroke-width="0"/>
         <line x1="492" y1="170" x2="556" y2="170" class="lnf" marker-end="url(#s12a)"/>
         <rect x="558" y="140" width="210" height="62" rx="2" class="bx"/>
         <text x="570" y="161" class="t11">.cache/ worktree</text>
-        <text x="570" y="179" class="ko10">생성된 패치 소스</text>
-        <text x="570" y="195" class="ko10">커밋하지 않는다</text>
+        <text x="570" y="179" class="ko10">generated patched source</text>
+        <text x="570" y="195" class="ko10">never committed</text>
         <line x1="770" y1="170" x2="834" y2="170" class="lnf" marker-end="url(#s12a)"/>
         <rect x="836" y="140" width="212" height="62" rx="2" class="bxf"/>
-        <text x="848" y="161" class="t11">pipeline 빌드</text>
+        <text x="848" y="161" class="t11">pipeline build</text>
         <text x="848" y="179" class="ko10">abi_revision: pipeline-abi-v1</text>
-        <text x="848" y="195" class="ko10">필수 심볼 2개 확인</text>
+        <text x="848" y="195" class="ko10">checks 2 required symbols</text>
         <line x1="1050" y1="170" x2="1112" y2="170" class="lnf" marker-end="url(#s12a)"/>
         <rect x="1060" y="46" width="100" height="72" rx="2" class="bxx"/>
-        <text x="1110" y="70" text-anchor="middle" class="t11 xl">fleet 승격</text>
-        <text x="1110" y="88" text-anchor="middle" class="ko10">CUDA·Metal</text>
-        <text x="1110" y="103" text-anchor="middle" class="ko10">·OpenCL 실적재 후</text>
+        <text x="1110" y="70" text-anchor="middle" class="t11 xl">fleet promotion</text>
+        <text x="1110" y="88" text-anchor="middle" class="ko10">after CUDA·Metal</text>
+        <text x="1110" y="103" text-anchor="middle" class="ko10">·OpenCL real load</text>
         <path d="M1114 168 L1114 120" class="lnx" marker-end="url(#s12a)"/>
-        <text x="0" y="22" class="t11 fl">현재 후보 pin — ef6876693</text>
-        <text x="0" y="40" class="ko10">공식 PR #27742 head · upstream_status “open-candidate” · nearest release b10645 · 자체 수용 증거 없이 안정 pack을 대체하지 않는다</text>
-        <text x="556" y="22" class="t11">보관 중인 pin 9개</text>
+        <text x="0" y="22" class="t11 fl">current candidate pin — ef6876693</text>
+        <text x="0" y="40" class="ko10">official PR #27742 head · upstream_status “open-candidate” · nearest release b10645 · stable pack stays until own acceptance</text>
+        <text x="556" y="22" class="t11">9 pins kept</text>
         <text x="556" y="40" class="ko10">0eadefebd · 1269cb1ff · 3e3a7a416 · 4308a4f03 · 434ddbbc0 · 557614e02 · d7a207411 · ef6876693 · fe2adf0e7</text>
       </svg>
-      <figcaption>갱신 절차: 공식 master에서 불변 커밋 하나를 고르고 새 버전 디렉터리를 기록 → 무패치 stock 빌드 증명 → 임시 worktree에서 패치 순서 이식 → `record-pipeline-port.mjs`로 해시·재생 트리 기록 → 준비기 2회 실행 → stock·pipeline 산출물 독립 빌드 후 실제 load/chat/unload 검증.</figcaption>
+      <figcaption>Update procedure: pick one immutable commit on official master and record a new version directory → prove the unpatched stock build → port the patch sequence in a temporary worktree → record hashes and the replay tree with `record-pipeline-port.mjs` → run the preparer 2 times → build stock and pipeline outputs independently, then verify a real load/chat/unload.</figcaption>
     </figure>
     <div class="cols c2" style="gap:24px">
-      <div class="note f"><strong>패치가 건드리는 곳이 곧 격리 지점이다.</strong> ggml-backend·ggml-rpc, public pipeline ABI, llama-context/graph/memory 헤더, model-loader, KV stage window, stage memory residency(+recurrent), MTP tail stage, speculative sequence lifecycle, stage noalloc memory breakdown — 전부 <b>compat 경계 안</b>이며 위층으로 올라오지 않는다.</div>
-      <div class="note"><strong>upstream 적응은 허용 모듈 안에서 끝낸다.</strong> direct include만이 아니라 <b>transitive include·링크·전방 선언·public signature·imported relink</b>를 함께 검사한다. allowlist를 늘린 뒤 “침범 0”이라고 보고하지 않는다.</div>
+      <div class="note f"><strong>Where the patches touch is exactly where isolation happens.</strong> ggml-backend·ggml-rpc, public pipeline ABI, llama-context/graph/memory headers, model-loader, KV stage window, stage memory residency(+recurrent), MTP tail stage, speculative sequence lifecycle, stage noalloc memory breakdown — all <b>inside the compat boundary</b>, never surfacing to upper layers.</div>
+      <div class="note"><strong>Upstream adaptation ends inside the allowed modules.</strong> Not only direct includes but also <b>transitive includes, linking, forward declarations, public signatures and imported relinks</b> are checked together. Never widen the allowlist and then report “0 violations”.</div>
     </div>
   </div>
-  <footer>출처 <b>staged/compat/ef6876693/{README.md, manifest.json}</b>(실측: 패치 21개·필수 심볼 2개), <b>docs/layer-isolation-contract.md §4</b> · pin 개수는 `ls staged/compat` 실측</footer>
+  <footer>Sources <b>staged/compat/ef6876693/{README.md, manifest.json}</b>(measured: 21 patches, 2 required symbols), <b>docs/layer-isolation-contract.md §4</b> · pin count measured with `ls staged/compat`</footer>
 </section></div>
 
 <!-- 13 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">코드 지형</span><span>crate별 실측</span><span class="num">13 / 16</span></div>
-    <h2>무게는 어댑터에 있고, 경계는 의존이 없는 곳에 있다</h2>
-    <p class="lede">Rust 399파일 108,815줄(시험 포함) · staged C++ stage runtime 14,597줄. `wc -l` @429e057de.</p>
+    <div class="eyebrow"><span class="sect">Code landscape</span><span>Measured per crate</span><span class="num">13 / 16</span></div>
+    <h2>The weight is in the adapters; the boundaries have no dependencies</h2>
+    <p class="lede">Rust: 399 files, 108,815 lines (tests included) · staged C++ stage runtime: 14,597 lines. `wc -l` @429e057de.</p>
   </div>
   <div class="body cols c2w" style="gap:30px">
     <figure>
-      <svg class="dg" viewBox="0 0 680 368" role="img" aria-label="crate별 Rust 줄 수 막대그래프. staged 어댑터가 46891줄로 가장 크고 agent 17046, service 9744, event-drive 7241, adapter 6463, deployment 5079, drive 4408, mock 4209, served 3713, protocol 2311, entrypoints 1300, link 410이다">
+      <svg class="dg" viewBox="0 0 680 368" role="img" aria-label="Bar chart of Rust lines per crate. The staged adapter is largest at 46891 lines, followed by agent 17046, service 9744, event-drive 7241, adapter 6463, deployment 5079, drive 4408, mock 4209, served 3713, protocol 2311, entrypoints 1300 and link 410">
         <g class="t10">
           <line x1="196" y1="16" x2="196" y2="322" class="sep"/><text x="196" y="338" text-anchor="middle">0</text>
           <line x1="300" y1="16" x2="300" y2="322" class="sep"/><text x="300" y="338" text-anchor="middle">10k</text>
@@ -917,78 +917,78 @@ svg.dg{display:block;width:100%;height:auto}
           <rect x="196" y="295" width="5" height="14" class="fill2"/><text x="207" y="306" class="t10">410</text>
         </g>
         <rect x="196" y="352" width="10" height="10" class="fillb"/>
-        <text x="212" y="361" class="t10">경계 crate — 여기서 컴파일 에러가 규약을 강제한다</text>
+        <text x="212" y="361" class="t10">boundary crate — compile errors enforce the rules here</text>
       </svg>
-      <figcaption>줄 수는 시험을 포함한다. 시험이 소스보다 많은 것이 이 저장소의 정상 상태다.</figcaption>
+      <figcaption>Line counts include tests. Having more tests than source is normal for this repository.</figcaption>
     </figure>
     <div style="display:flex;flex-direction:column;gap:14px">
       <div>
-        <h3>두 개의 경계 crate</h3>
+        <h3>Two boundary crates</h3>
         <table>
-          <tr><th>crate</th><th>의존</th></tr>
-          <tr><td class="m">p4-protocol</td><td><b>없음</b> — `[dependencies]` 절 자체가 없다. 프로토콜은 backend를 배울 수 없다</td></tr>
+          <tr><th>crate</th><th>dependencies</th></tr>
+          <tr><td class="m">p4-protocol</td><td><b>none</b> — there is no `[dependencies]` section at all. The protocol cannot learn about backends</td></tr>
           <tr><td class="m">p4-adapter</td><td>p4-protocol · serde · serde_json</td></tr>
           <tr><td class="m">p4-agent-core</td><td>p4-adapter · p4-protocol · tokio</td></tr>
-          <tr><td class="m">p4-mock</td><td>p4-adapter · tokio — <b>산술만으로 인터페이스 전체를 구현</b>하는 두 번째 구현</td></tr>
+          <tr><td class="m">p4-mock</td><td>p4-adapter · tokio — a second implementation that <b>implements the whole interface with arithmetic alone</b></td></tr>
         </table>
       </div>
-      <div class="note x"><strong>문서와의 차이를 그대로 둔다.</strong> `docs/implementation.md`는 “9 crate · 16,447줄”, “adapter 계약은 protocol조차 의존하지 않는다”로 적혀 있다. 현재 workspace는 <b>12 crate</b>이고 adapter 계약은 protocol·serde에 의존한다. 그 표는 event 경로 이전 기준이며, 이 장표는 실측을 따른다.</div>
-      <div class="note"><strong>backend 추가 비용은 한 파일이다.</strong> `entrypoints/agent/src/adapters/mod.rs` — 이름 하나, factory 하나, `Adapter` 구현 하나. agent의 유일한 표면은 소켓 위의 P4다. 어댑터가 자기 backend와 HTTP로 말하든 파이프로 말하든 그 위에서는 보이지 않는다.</div>
+      <div class="note x"><strong>The gap with the docs is left as is.</strong> `docs/implementation.md` says “9 crates · 16,447 lines” and “the adapter contract does not even depend on protocol”. The workspace now has <b>12 crates</b> and the adapter contract depends on protocol and serde. That table predates the event path; this slide follows measurement.</div>
+      <div class="note"><strong>Adding a backend costs one file.</strong> `entrypoints/agent/src/adapters/mod.rs` — one name, one factory, one `Adapter` impl. The agent's only surface is P4 over a socket; whether an adapter talks to its backend over HTTP or a pipe is invisible above it.</div>
     </div>
   </div>
-  <footer>실측 명령 <b>find layers entrypoints tools -name '*.rs' | xargs wc -l</b> @429e057de · Cargo.toml 직접 확인 · C++은 <b>staged/server/src</b>의 .cpp/.hpp/.inc 합계</footer>
+  <footer>Measurement command <b>find layers entrypoints tools -name '*.rs' | xargs wc -l</b> @429e057de · Cargo.toml checked directly · C++ is the total of .cpp/.hpp/.inc in <b>staged/server/src</b></footer>
 </section></div>
 
 <!-- 14 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">불변식</span><span>없앴을 때 일어난 일</span><span class="num">14 / 16</span></div>
-    <h2>대부분의 불변식은 한 번 깨졌기 때문에 여기 있다</h2>
+    <div class="eyebrow"><span class="sect">Invariants</span><span>What happened without them</span><span class="num">14 / 16</span></div>
+    <h2>Most invariants are here because they broke once</h2>
   </div>
   <div class="body">
     <table>
-      <tr><th style="width:30%">불변식</th><th>없이 무엇이 잘못됐는가</th></tr>
-      <tr><td><b>소켓 리더는 큐에 넣기만 한다</b></td><td>핸들러가 read loop 안에서 돌아, 모든 핸들러의 실행 시간이 거기 쌓였다</td></tr>
-      <tr><td><b>노드의 큐가 긴 작업을 쥔다</b></td><td>그렇지 않으면 GPU 시간이 agent 큐 깊이로 나타나고 <b>아무것도 귀속할 수 없다</b></td></tr>
-      <tr><td><b>한 route, 한 worker</b></td><td>한 route의 프레임이 여러 worker에서 경합하고, 호출자에게는 P4가 스트림을 재정렬한 것으로 보인다</td></tr>
-      <tr><td><b>노드의 select는 편향되지 않는다</b></td><td>완료를 선호하자 도착이 완전히 굶었다 — 채널에 앉아, 어떤 큐에도 없이, 보이지 않게</td></tr>
-      <tr><td><b>광고한 주소는 peer가 닿을 수 있는 주소다</b></td><td>두 agent가 모두 자신을 `127.0.0.1`로 불러 prefill을 끝내고 <b>한 토큰 뒤 멈췄다</b> — lap이 프레임을 쥔 쪽 기계로 해소됐다</td></tr>
-      <tr><td><b>광고 힌트는 파싱하고 이어붙이지 않는다</b></td><td>포트를 가진 힌트에 바인딩 포트를 덧붙여 `HOST:52001:52001`이 됐다 — 파싱되고, 아무것도 resolve되지 않으며, 스스로 ready라고 보고한다</td></tr>
-      <tr><td><b>노드 run loop는 handle이 drop되면 끝난다</b></td><td>노드가 자기 event sender를 쥐므로 그 채널이 닫히길 기다리는 루프는 자신을 기다린다. 교체·삭제된 모든 노드가 어댑터·큐·in-flight 맵과 함께 상주했다</td></tr>
-      <tr><td><b>조용한 peer는 해제된다</b></td><td>peer 맵이 본 적 있는 모든 주소에 대해 append-only였다 — 고정 fleet에서는 유계, 호출자가 새 포트에서 돌아오는 순간 무계</td></tr>
-      <tr><td><b>선언된 프레임 길이는 할당 전에 제한된다</b></td><td>헤더는 16바이트이고 무엇이든 주장할 수 있다. 상한이 그 함정의 비용을 프로세스가 아니라 <b>연결당 1.25MB</b>로 만든다</td></tr>
-      <tr><td><b>사슬의 끝만 토큰을 생산한다</b></td><td>중간 stage가 함께 세면 n-stage 사슬이 lap마다 n개의 토큰을 낸다</td></tr>
-      <tr><td><b>만료된 작업은 버리지 않고 답한다</b></td><td>오지 않는 terminal을 기다리는 호출자 — 그것이 누출된 route의 모습이다</td></tr>
+      <tr><th style="width:30%">Invariant</th><th>What went wrong without it</th></tr>
+      <tr><td><b>The socket reader only enqueues</b></td><td>Handlers ran inside the read loop, so every handler's run time piled up there</td></tr>
+      <tr><td><b>The node's queue holds the long work</b></td><td>Otherwise GPU time shows up as agent queue depth and <b>nothing can be attributed</b></td></tr>
+      <tr><td><b>One route, one worker</b></td><td>Frames of one route raced across several workers, and to the caller it looked as if P4 had reordered the stream</td></tr>
+      <tr><td><b>The node's select is unbiased</b></td><td>Favoring completions starved arrivals completely — sitting in the channel, in no queue, invisible</td></tr>
+      <tr><td><b>The advertised address is one peers can reach</b></td><td>Both agents called themselves `127.0.0.1`, finished prefill and <b>stopped after one token</b> — the lap resolved to whichever machine held the frame</td></tr>
+      <tr><td><b>Advertise hints are parsed, not concatenated</b></td><td>Appending the bind port to a hint that already had a port gave `HOST:52001:52001` — it parses, resolves nothing, and reports itself ready</td></tr>
+      <tr><td><b>The node run loop ends when its handle is dropped</b></td><td>The node holds its own event sender, so a loop waiting for that channel to close waits on itself. Every replaced or deleted node stayed resident with its adapter, queue and in-flight map</td></tr>
+      <tr><td><b>Quiet peers are released</b></td><td>The peer map was append-only for every address ever seen — bounded on a fixed fleet, unbounded the moment callers come back on new ports</td></tr>
+      <tr><td><b>A declared frame length is capped before allocation</b></td><td>The header is 16 bytes and can claim anything. The ceiling makes that trap cost <b>1.25MB per connection</b>, not the process</td></tr>
+      <tr><td><b>Only the end of the chain produces tokens</b></td><td>If middle stages also count, an n-stage chain emits n tokens per lap</td></tr>
+      <tr><td><b>Expired work is answered, not dropped</b></td><td>A caller waiting for a terminal that never comes — that is what a leaked route looks like</td></tr>
     </table>
   </div>
-  <footer>출처 <b>docs/constraints.md</b> · 전체 표는 그 문서가 소유한다. 여기 실린 것은 발췌이며, 각 행은 수정 당시의 실패 증거와 결속돼 있다</footer>
+  <footer>Source <b>docs/constraints.md</b> · that document owns the full table. This is an excerpt, and each row is bound to the failure evidence from when it was fixed</footer>
 </section></div>
 
 <!-- 15 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">검증</span><span>게이트와 2026-09-11 선별</span><span class="num">15 / 16</span></div>
-    <h2>단위 시험·시뮬레이터·한 컴퓨터의 여러 프로세스는 최종 성과 증명이 아니다</h2>
+    <div class="eyebrow"><span class="sect">Verification</span><span>Gates and the 2026-09-11 screening</span><span class="num">15 / 16</span></div>
+    <h2>Unit tests, simulators and many processes on one machine are not final proof</h2>
   </div>
   <div class="body" style="display:flex;flex-direction:column;gap:18px">
     <figure>
-      <svg class="dg" viewBox="0 0 1160 150" role="img" aria-label="검증 사다리: pure 단위 시험, mock 분산, 단일 호스트 다중 프로세스, 두 클러스터 실기 선별(현재 위치), 100k 연속 웨이브와 긴 정상 응답, H5 성능 및 서비스 승인(BLOCKED)">
+      <svg class="dg" viewBox="0 0 1160 150" role="img" aria-label="Verification ladder: pure unit tests, mock distributed, single-host multi-process, two-cluster real-hardware screening (current position), 100k continuous waves and long valid responses, H5 performance and service approval (BLOCKED)">
         <defs><marker id="s15a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker></defs>
         <g>
           <rect x="0" y="66" width="168" height="44" rx="2" class="bx"/>
-          <text x="12" y="86" class="t11">pure 단위·변이</text><text x="12" y="102" class="ko10">GPU·네트워크 없이</text>
+          <text x="12" y="86" class="t11">pure unit/mutation</text><text x="12" y="102" class="ko10">no GPU or network</text>
           <rect x="196" y="66" width="168" height="44" rx="2" class="bx"/>
-          <text x="208" y="86" class="t11">mock 분산</text><text x="208" y="102" class="ko10">산술 backend</text>
+          <text x="208" y="86" class="t11">mock distributed</text><text x="208" y="102" class="ko10">arithmetic backend</text>
           <rect x="392" y="66" width="168" height="44" rx="2" class="bx"/>
-          <text x="404" y="86" class="t11">단일 호스트 다중 프로세스</text><text x="404" y="102" class="ko10">성과 증명 아님</text>
+          <text x="404" y="86" class="t11">one host, many procs</text><text x="404" y="102" class="ko10">not proof of results</text>
           <rect x="588" y="60" width="188" height="56" rx="2" class="bxf"/>
-          <text x="600" y="82" class="t11">두 클러스터 실기 선별</text><text x="600" y="99" class="ko10">MI250 · Hy3 동시</text>
-          <text x="682" y="44" text-anchor="middle" class="t10 fl">▼ 현재 위치</text>
+          <text x="600" y="82" class="t11">2-cluster real-HW screen</text><text x="600" y="99" class="ko10">MI250 · Hy3 concurrently</text>
+          <text x="682" y="44" text-anchor="middle" class="t10 fl">▼ current position</text>
           <rect x="804" y="66" width="168" height="44" rx="2" class="bxq"/>
-          <text x="816" y="86" class="t11">100k 연속 웨이브</text><text x="816" y="102" class="ko10">긴 정상 응답·오프로딩</text>
+          <text x="816" y="86" class="t11">100k continuous waves</text><text x="816" y="102" class="ko10">long valid replies·offload</text>
           <rect x="1000" y="60" width="160" height="56" rx="2" class="bxx"/>
-          <text x="1012" y="82" class="t11 xl">H5 성능·서비스 승인</text>
-          <text x="1012" y="99" class="ko10">paired 8쌍 / holdout 4쌍</text>
+          <text x="1012" y="82" class="t11 xl">H5 perf/svc approval</text>
+          <text x="1012" y="99" class="ko10">8 paired / 4 holdout</text>
           <text x="1080" y="140" text-anchor="middle" class="t10 xl">BLOCKED</text>
         </g>
         <g>
@@ -998,40 +998,40 @@ svg.dg{display:block;width:100%;height:auto}
           <line x1="778" y1="88" x2="802" y2="88" class="lnf" marker-end="url(#s15a)"/>
           <line x1="974" y1="88" x2="998" y2="88" class="lnf" marker-end="url(#s15a)"/>
         </g>
-        <text x="0" y="20" class="t11 fl">최종 성과는 다중 컴퓨터 실기 웨이브 증거로만 승인한다</text>
+        <text x="0" y="20" class="t11 fl">Final results are approved only on multi-computer real-hardware wave evidence</text>
       </svg>
-      <figcaption>노드 수는 모델·KV 용량·합법적 컷·배포 제약이다. 카드당 한 노드 제한을 일반 규칙으로 만들지 않는다.</figcaption>
+      <figcaption>Node count is set by the model, KV capacity, legal cuts and deployment constraints. A one-node-per-card limit is not made a general rule.</figcaption>
     </figure>
     <div class="cols c2" style="gap:26px">
       <div>
-        <h3 class="f">2026-09-11 동시 선별 — 인용값</h3>
+        <h3 class="f">2026-09-11 concurrent screening — quoted values</h3>
         <table>
-          <tr><th>arm</th><th>결과</th></tr>
-          <tr><td class="m">Hy3 · 5호스트 / 6stage</td><td>decode cap 0→2에서 <b>5.32 → 9.55 TPS</b>, ITL p50 <b>1.179 → 0.533 s</b>, 양쪽 8/8 완료·해제·UNLOAD</td></tr>
-          <tr><td class="m">MI250 · 2호스트 / 16stage</td><td>native CPU threads4 + cap4/min4 후보가 <b>34.05 TPS</b>, ITL p50 <b>0.319 s</b>, 16/16 완료·해제·UNLOAD</td></tr>
-          <tr><td class="m">MI250 · 기본 CPU</td><td>cap4 실패, cap8 <b>8.35 TPS</b> (기준 28.54 / 29.73) — 회귀</td></tr>
-          <tr><td class="m">로컬 최종 게이트</td><td>workspace <b>1384 / 0 / 7</b> (58 summary, filtered 0) · 변이 실패 <b>1/5/3/1</b> · docs-lint <b>92 clean</b></td></tr>
+          <tr><th>arm</th><th>result</th></tr>
+          <tr><td class="m">Hy3 · 5 hosts / 6 stages</td><td>decode cap 0→2: <b>5.32 → 9.55 TPS</b>, ITL p50 <b>1.179 → 0.533 s</b>, 8/8 completed, released, UNLOAD on both</td></tr>
+          <tr><td class="m">MI250 · 2 hosts / 16 stages</td><td>native CPU threads4 + cap4/min4 candidate: <b>34.05 TPS</b>, ITL p50 <b>0.319 s</b>, 16/16 completed, released, UNLOAD</td></tr>
+          <tr><td class="m">MI250 · default CPU</td><td>cap4 failed, cap8 <b>8.35 TPS</b> (baseline 28.54 / 29.73) — regression</td></tr>
+          <tr><td class="m">local final gate</td><td>workspace <b>1384 / 0 / 7</b> (58 summary, filtered 0) · mutation failures <b>1/5/3/1</b> · docs-lint <b>92 clean</b></td></tr>
         </table>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px">
-        <div class="note x"><strong>이 수치가 아닌 것.</strong> 같은 CPU4 기준군은 13.59 TPS로 완주했지만 외부 Python GPU 작업이 겹쳐 <b>배치 단독 개선율 비교에서 제외</b>했다. GPU 비간섭 시간대 재검증 전 개선율 승격은 BLOCKED다. Hy3도 한 쌍의 선별이며 context 100k·출력 256의 짧은 부하다 — <b>실제 100k prefill·정상 EOS·연속 웨이브 승인이 아니다</b>.</div>
-        <div class="note"><strong>합치지 않는 것.</strong> 서로 다른 upstream·모델·backend·워크로드의 TPS를 합산하지 않는다. 8-stage 301.63과 16-stage 7.64는 resident 256/16, 짧은 입력/100k 혼합 등 조건이 달라 <b>노드 수 손실률·최적값으로 승인하지 않고</b> 토폴로지별 기준선을 새로 고정한다. GPU 사용률·RPC 깊이·혼합 배치 수·행 수만으로 성능이나 정상 응답을 승인하지 않는다.</div>
+        <div class="note x"><strong>What these numbers are not.</strong> The matching CPU4 baseline group completed at 13.59 TPS, but an external Python GPU job overlapped, so it was <b>excluded from the batching-only improvement comparison</b>. Promoting the improvement rate is BLOCKED until re-verified in a window free of GPU interference. Hy3 is also a single-pair screening, a short load with context 100k and output 256 — <b>not approval of a real 100k prefill, valid EOS or continuous waves</b>.</div>
+        <div class="note"><strong>What is not combined.</strong> TPS from different upstreams, models, backends or workloads is never summed. 8-stage 301.63 and 16-stage 7.64 ran under different conditions (resident 256/16, short input vs 100k mix, …), so they are <b>not approved as a node-count loss rate or optimum</b>; a new baseline is pinned per topology. GPU utilization, RPC depth, mixed-batch count or row count alone never approve performance or valid responses.</div>
       </div>
     </div>
   </div>
-  <footer>인용 <b>docs/distributed-batching-roadmap.md §0</b>(2026-09-11) · 원자료·해시 <b>staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md</b> · 판정 계약 <b>docs/distributed-batching-verification.md §v11-gates</b></footer>
+  <footer>Quoted <b>docs/distributed-batching-roadmap.md §0</b>(2026-09-11) · raw data and hashes <b>staged/scripts/validation/evidence/2026-09-11-v1.1-inflight-diagnosis.md</b> · verdict contract <b>docs/distributed-batching-verification.md §v11-gates</b></footer>
 </section></div>
 
 <!-- 16 ─────────────────────────────────────────────── -->
 <div class="holder"><section class="slide">
   <div>
-    <div class="eyebrow"><span class="sect">다음</span><span>실험 합성과 V1.1 순서</span><span class="num">16 / 16</span></div>
-    <h2>모델별 브랜치 대신, 입력의 조합으로 실험을 만든다</h2>
-    <p class="lede">장기 개발·릴리즈 기준은 `main` 하나다. 모델 이름은 데이터를 고르는 것이고 Git 브랜치를 고르는 것이 아니다.</p>
+    <div class="eyebrow"><span class="sect">Next</span><span>Experiment composition and V1.1 order</span><span class="num">16 / 16</span></div>
+    <h2>Build experiments from combinations of inputs, not per-model branches</h2>
+    <p class="lede">There is one baseline for long-term development and releases: `main`. A model name selects data, not a Git branch.</p>
   </div>
   <div class="body cols c2" style="gap:30px">
     <figure>
-      <svg class="dg" viewBox="0 0 540 296" role="img" aria-label="model, policy, workload, cluster, runtime 다섯 입력이 합성기를 통해 하나의 run 디렉터리로 결합되고 합성기가 거부하는 조건들이 나열된다">
+      <svg class="dg" viewBox="0 0 540 296" role="img" aria-label="The five inputs model, policy, workload, cluster and runtime are combined by the composer into one run directory, followed by the list of conditions the composer rejects">
         <defs><marker id="s16a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="ahf"/></marker></defs>
         <g>
           <rect x="0" y="8" width="158" height="30" rx="2" class="bx"/><text x="12" y="28" class="t11">model</text><text x="146" y="28" text-anchor="end" class="t10">chat template</text>
@@ -1058,28 +1058,28 @@ svg.dg{display:block;width:100%;height:auto}
         <text x="410" y="116" class="t10">telemetry</text>
         <text x="410" y="132" class="t10">responses</text>
         <line x1="0" y1="164" x2="540" y2="164" class="sep" transform="translate(0,38)"/>
-        <text x="0" y="222" class="t11 xl">합성기가 거부하는 것</text>
-        <text x="0" y="242" class="ko10">기존 출력 디렉터리 · wave 불일치 · runtime identity 누락</text>
-        <text x="0" y="258" class="ko10">중복 native thread 설정 · 측정된 prompt+출력의 context 초과</text>
-        <text x="0" y="282" class="ko10">tokenCounts가 없으면 tokenizer_verified=false — 실제 입력 주장으로 쓰지 않는다</text>
+        <text x="0" y="222" class="t11 xl">What the composer rejects</text>
+        <text x="0" y="242" class="ko10">existing output directory · wave mismatch · missing runtime identity</text>
+        <text x="0" y="258" class="ko10">duplicate native thread settings · measured prompt+output exceeding context</text>
+        <text x="0" y="282" class="ko10">without tokenCounts, tokenizer_verified=false — not used to claim real input</text>
       </svg>
-      <figcaption>이 모듈은 입력을 준비한다. agent 기동·정리, 호스트 가용성, 실제 바이너리 해시 검증, 절대 시간 강제와 실행은 cluster lifecycle 실행기의 책임이다.</figcaption>
+      <figcaption>This module prepares inputs. Agent startup and cleanup, host availability, verifying real binary hashes, enforcing absolute times and execution are the cluster lifecycle runner's job.</figcaption>
     </figure>
     <div style="display:flex;flex-direction:column;gap:13px">
       <div>
-        <h3 class="f">V1.1 구현 순서 — 다음 첫 구현은 V1.1-0</h3>
+        <h3 class="f">V1.1 implementation order — next up: V1.1-0</h3>
         <table>
-          <tr><td class="m">V1.1-0</td><td><b>계측 결속</b> — 유효 환경설정, 요청별 수용·eligible·blocked 사유, head 단조시계 issue→settle, stage queue/native/forward 분해</td></tr>
-          <tr><td class="m">V1.1-1</td><td><b>예산과 종료</b> — pending prompt·KV·전송 payload·출력·완료 receipt를 각각 제한. 한계 초과는 <b>부작용 전</b> 거부</td></tr>
-          <tr><td class="m">V1.1-2</td><td><b>배치 구성</b> — decode 묶음 상한과 prefill quantum을 독립 정책으로. decode outstanding ≤ 1 유지</td></tr>
-          <tr><td class="m">V1.1-3</td><td><b>파이프라인 창</b> — prefill fragment 1→2→4→8을 단계별 검증. node 실행 credit = 1</td></tr>
-          <tr><td class="m">V1.1-4</td><td><b>실기 승격</b> — 짧은 대조 → 후보 선택 → 100k 연속 웨이브·긴 정상 응답·장기 반복</td></tr>
+          <tr><td class="m">V1.1-0</td><td><b>Instrumentation binding</b> — effective configuration, per-request acceptance/eligible/blocked reasons, head monotonic clock issue→settle, stage queue/native/forward breakdown</td></tr>
+          <tr><td class="m">V1.1-1</td><td><b>Budgets and termination</b> — separate limits on pending prompt, KV, transfer payload, output and completion receipts. Over-limit is rejected <b>before side effects</b></td></tr>
+          <tr><td class="m">V1.1-2</td><td><b>Batch composition</b> — decode group ceiling and prefill quantum as independent policies. Keep decode outstanding ≤ 1</td></tr>
+          <tr><td class="m">V1.1-3</td><td><b>Pipeline window</b> — verify prefill fragments 1→2→4→8 step by step. node execution credit = 1</td></tr>
+          <tr><td class="m">V1.1-4</td><td><b>Real-hardware promotion</b> — short comparison → candidate selection → 100k continuous waves, long valid responses, long repetition</td></tr>
         </table>
       </div>
-      <div class="note x"><strong>완료가 아닌 것을 완료로 적지 않는다.</strong> TLS·인증·인가 없음(신뢰망 전용) · 내구 상태 없음(재시작한 agent에는 노드가 없고 OUTER가 기록을 쥔다) · 토큰 종류 필드 없음(reasoning과 답 텍스트가 합쳐진다) · Windows ARM64 미실행. 새 정책은 기본 비활성이고 ordinary attention에만 적용한다.</div>
+      <div class="note x"><strong>Nothing unfinished is recorded as done.</strong> No TLS, authentication or authorization (trusted network only) · no durable state (a restarted agent has no nodes; OUTER holds the record) · no token-kind field (reasoning and answer text are merged) · Windows ARM64 not run. New policies are off by default and apply only to ordinary attention.</div>
     </div>
   </div>
-  <footer>출처 <b>test/benchmarks/cluster-inference/README.md</b>, <b>docs/distributed-batching-roadmap.md §0.V1.1</b>, <b>docs/implementation.md</b>(미구현 절) · 버전 bump/tag는 아직 하지 않는다</footer>
+  <footer>Sources <b>test/benchmarks/cluster-inference/README.md</b>, <b>docs/distributed-batching-roadmap.md §0.V1.1</b>, <b>docs/implementation.md</b>(not-implemented section) · no version bump/tag yet</footer>
 </section></div>
 
 </main>
@@ -1138,7 +1138,7 @@ svg.dg{display:block;width:100%;height:auto}
   presentBtn.addEventListener('click', () => {
     const on = document.body.classList.toggle('present');
     presentBtn.setAttribute('aria-pressed', String(on));
-    presentBtn.textContent = on ? '발표 모드 종료' : '발표 모드';
+    presentBtn.textContent = on ? 'Exit presenter mode' : 'Presenter mode';
     fit();
     requestAnimationFrame(() => go(index));
   });

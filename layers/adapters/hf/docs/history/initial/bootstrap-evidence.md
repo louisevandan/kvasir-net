@@ -1,22 +1,22 @@
-> 역사 기록: 독립 저장소 시점의 요구·상태·측정이다. 현재 배치와 사용법은 [HF 안내](../../../README.md)를 따른다. 원본 전체는 이관 시 보존한 Git bundle에 있다.
+> Historical record: requirements, status and measurements from the time of the standalone repository. The current layout and usage follow the [HF guide](../../../README.md). The complete original is in the Git bundle preserved during the migration.
 
-# 독립 프로젝트 초기화 기록
+# Standalone project initialization record
 
-작업일: 2026-09-13. 범위는 폴더·별도 Git·계획 문서·인수인계입니다.
+Work date: 2026-09-13. Scope: the folder, a separate Git repository, planning documents and handoff.
 
-## 생성 범위
+## What was created
 
-- `F:\dev\p4hfadapter`를 새 디렉터리로 생성했습니다.
-- `git init -b main`으로 독립 저장소를 초기화했습니다. P4의 하위 디렉터리/worktree가 아닙니다.
-- 모델별 Python 실행·Rust/P4 경계·양자화·검증·향후 통합 계획을 문서로 작성했습니다.
-- P4 파일을 이동/삭제하지 않았고 새 문서는 이 저장소에 작성했습니다.
-- `.gitignore`와 UTF-8/LF 문서 규칙을 준비했습니다. 모델/credentials/로컬 산출물은 추적하지 않습니다.
+- Created `F:\dev\p4hfadapter` as a new directory.
+- Initialized a standalone repository with `git init -b main`. It is not a subdirectory or worktree of P4.
+- Wrote documents covering per-model Python execution, the Rust/P4 boundary, quantization, verification and the future integration plan.
+- No P4 files were moved or deleted; the new documents were written in this repository.
+- Prepared `.gitignore` and the UTF-8/LF document rules. Models, credentials and local outputs are not tracked.
 
-## P4 보존 기준
+## P4 preservation baseline
 
-초기 HEAD: `d122125bafeaa6d32790761669f1bfa5868d8078`.
-초기 비무시 tracked/untracked 파일 1,034개의 SHA256과 Git status/HEAD를 `.local/p4-before.json`에 기록했습니다.
-기존 dirty 파일은 아래와 같았습니다. 이 목록은 관측이며 이 프로젝트가 만든 변경이 아닙니다.
+Initial HEAD: `d122125bafeaa6d32790761669f1bfa5868d8078`.
+The SHA256 of the 1,034 initial non-ignored tracked/untracked files, together with the Git status/HEAD, was recorded in `.local/p4-before.json`.
+The existing dirty files were as follows. This list is an observation, not changes made by this project.
 
 ```text
  M README.md
@@ -31,33 +31,33 @@
 ?? tools/cluster-inference/model-loading-policy.ts
 ```
 
-## 최종 점검
+## Final checks
 
-- `python .local/verify_docs.py`: Markdown 15개, 내부 링크 41개, P4 참조 링크 13개 점검, 오류 0.
-- UTF-8/LF·최종 개행·코드 fence·필수 문서/README 색인 검사를 통과했습니다.
-- 공식 외부 링크 13개를 수록했습니다. 이 로컬 검사기는 외부 웹 페이지를 다시 조회하지 않습니다.
-- `git rev-parse --show-toplevel`은 `F:/dev/p4hfadapter`, `--git-dir`은 `.git`입니다.
-- `.local/`, 가중치, `.venv/`, `target/`, `.env` 무시와 `.env.example` 예외를 확인했습니다.
-- Git 작성자는 기존 전역 설정을 그대로 사용했습니다. 별도 remote와 push는 없습니다.
-- 초기 커밋은 이 저장소의 전체 비무시 신규 파일만 포함합니다. 정확한 해시는 `git log -1`로 확인합니다.
+- `python .local/verify_docs.py`: checked 15 Markdown files, 41 internal links and 13 P4 reference links; 0 errors.
+- Passed the UTF-8/LF, final newline, code fence and required document/README index checks.
+- 13 official external links are included. This local checker does not re-fetch external web pages.
+- `git rev-parse --show-toplevel` is `F:/dev/p4hfadapter`, and `--git-dir` is `.git`.
+- Confirmed that `.local/`, weights, `.venv/`, `target/` and `.env` are ignored, with an exception for `.env.example`.
+- The Git author comes from the existing global settings, unchanged. There is no separate remote and no push.
+- The initial commit contains only the full set of non-ignored new files in this repository. Confirm the exact hash with `git log -1`.
 
-이는 문서 검증이며 Python/Rust/모델/양자화/분산 실기 시험 결과가 아닙니다.
+This is document verification, not the result of any Python/Rust/model/quantization/distributed real-hardware test.
 
-## P4 동시 변경 관측
+## Observed concurrent P4 changes
 
-16:22 KST 재확인 시 P4 HEAD가 `484b856ee7e53aea5b850b654c45da53cb0724a6`으로 바뀌었습니다.
-새 커밋 제목은 `feat(outer): plan model loading from typed fleet profiles`였습니다.
-초기 1,034개 대비 비무시 파일은 1,037개였고 내용 변경 6개와 새 경로 3개를 관측했습니다.
-재확인 당시 dirty는 README·로드맵·문서 안내도와 미추적 `docs/batching-code-review.md`,
-`docs/external-analysis-improvement-plan.md`였습니다.
+On a re-check at 16:22 KST, the P4 HEAD had changed to `484b856ee7e53aea5b850b654c45da53cb0724a6`.
+The new commit title was `feat(outer): plan model loading from typed fleet profiles`.
+Against the initial 1,034, there were 1,037 non-ignored files; 6 content changes and 3 new paths were observed.
+At the time of the re-check, the dirty files were the README, the roadmap, the document map, and the untracked `docs/batching-code-review.md` and
+`docs/external-analysis-improvement-plan.md`.
 
-따라서 **P4 전체 작업 트리/HEAD가 초기와 동일하다는 판정은 아닙니다.**
-이 초기화 작업은 P4에 읽기 명령만 실행했으며, 쓰기·Git 초기화·문서 생성·커밋 대상은 p4hfadapter뿐입니다.
-별도 작업 중 발생한 P4 변경은 되돌리거나 이 프로젝트로 가져오지 않았습니다.
-초기 hash 목록과 비교 결과는 무시된 `.local/p4-before.json`, `.local/p4-preservation-result.json`에 있습니다.
-이 로컬 감사 자료는 다른 컴퓨터의 clone에는 포함되지 않으므로 위 관측 요약을 인수인계 근거로 남깁니다.
+Therefore, **this is not a verdict that the entire P4 working tree/HEAD is identical to its initial state.**
+This initialization ran only read commands against P4; the only target of writes, Git initialization, document creation and commits was p4hfadapter.
+P4 changes made by separate work were neither reverted nor brought into this project.
+The initial hash list and the comparison result are in the ignored `.local/p4-before.json` and `.local/p4-preservation-result.json`.
+These local audit files are not included in clones on other computers, so the observation summary above is kept as the basis for the handoff.
 
-## 미수행
+## Not done
 
-P4 수정·통합 빌드, Python/Rust 구현·패키지 설치, 모델 다운로드·양자화·추론,
-원격 배포·프로세스 조작·Git remote 생성·push는 수행하지 않았습니다.
+P4 modification and integrated build, Python/Rust implementation and package installation, model download/quantization/inference,
+remote deployment, process manipulation, Git remote creation and push were not performed.

@@ -1,5 +1,5 @@
 # usage
 
-P4 root에서 cargo test --locked -p p4-hf-adapter --no-fail-fast. 제품 agent는 P4 root에서 --features hf-transformers로 빌드한다.
+From the P4 root, run cargo test --locked -p p4-hf-adapter --no-fail-fast. The product agent is built from the P4 root with --features hf-transformers.
 
-wire·예산·배포와 오류 의미는 [통합 명세](../../docs/integration/README.md)가 소유한다.
+The [integration specification](../../docs/integration/README.md) owns the wire, budget and deployment rules and the error semantics.

@@ -1,105 +1,107 @@
-# P4 추상 프로토콜
+# P4 abstract protocol
 
-> 문서 지위 (2026-09-06): **경로별 참고·재감사 필요**. 기존 Chain/Hop 설명과 당시 결정을 포함한다. event 경로의 현재 보장은 코드 및 새 검증 규약으로 확인한다.
-> 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
+> Document status (2026-09-06): **Per-path reference; re-audit required**. It includes the earlier Chain/Hop description and the decisions made at the time. Confirm the current guarantees of the event path against the code and the new verification conventions.
+> Current goals, status and ordering follow the [execution roadmap](distributed-batching-roadmap.md); document authority and reading paths follow the [document map](document-map.md).
 
-이 문서는 현재 P4 구현의 최종 계약이다. 과거 감사 순서나 수정 경과는
-기록하지 않으며, 코드·테스트로 확인된 동작과 아직 정책이 필요한 경계를
-구분한다.
+This document is the final contract of the current P4 implementation. It does
+not record the past audit order or the history of fixes. It separates behaviour
+confirmed by code and tests from boundaries that still need a policy.
 
-## 1. 범위와 책임
+## 1. Scope and responsibilities
 
-P4는 OUTER가 전달한 요청을 여러 agent/node와 adapter 사이로 운반하고,
-결과를 원래 OUTER의 논리 채널로 되돌리는 추상 전송·스케줄링 계층이다.
+P4 is an abstract transport and scheduling layer. It carries requests handed
+over by OUTER between multiple agents/nodes and adapters, and returns the
+results to the originating OUTER's logical channel.
 
-| 책임 | P4의 계약 | 소유자 |
+| Responsibility | P4 contract | Owner |
 | --- | --- | --- |
-| 라우팅 | envelope의 주소·chain·request identity를 보존하고 다음 hop으로 전달 | P4 |
-| 실행 | bounded queue, hop admission, hop 결과와 terminal 상태 전달 | P4 + adapter seam |
-| 생성 옵션 | 요청 본문을 byte-preserving opaque payload로 운반 | OUTER/구상 adapter |
-| sampling/decoding | 의미 해석·기본값 결정·스위치 변환을 하지 않음 | OUTER/구상 adapter |
-| 모델 분산계획 | GGUF와 adapter capability를 조회해 배치계획을 만드는 일 | OUTER/drive + agent discovery |
-| KV cache | operation identity와 stage barrier를 운반하고 receipt를 조정 | P4 cache coordinator + adapter |
-| 장치·라마 의미 | backend report를 opaque text/capability로 전달 | 구상 adapter |
+| Routing | Preserve the envelope's address, chain and request identity, and forward to the next hop | P4 |
+| Execution | Bounded queue, hop admission, delivery of hop results and terminal states | P4 + adapter seam |
+| Generation options | Carry the request body as a byte-preserving opaque payload | OUTER/concrete adapter |
+| sampling/decoding | No semantic interpretation, no default selection, no switch translation | OUTER/concrete adapter |
+| Model distribution plan | Query GGUF and adapter capabilities and build a placement plan | OUTER/drive + agent discovery |
+| KV cache | Carry the operation identity and stage barrier, and reconcile receipts | P4 cache coordinator + adapter |
+| Device and llama semantics | Forward backend reports as opaque text/capability | Concrete adapter |
 
-`apps/p4/layers/adapters/llamacpp/upstream`은 교체 가능한 외부 경계다.
-추상 계층은 llama.cpp private API에 의존하지 않으며, 다른 adapter도 같은
-P4 seam을 구현할 수 있어야 한다.
+`apps/p4/layers/adapters/llamacpp/upstream` is a replaceable external boundary.
+The abstract layer does not depend on the llama.cpp private API, and other
+adapters must be able to implement the same P4 seam.
 
-## 2. 메시지와 식별자
+## 2. Messages and identifiers
 
-wire frame은 `apps/p4/layers/protocol/src/envelope/`와
-`apps/p4/layers/protocol/src/frame/`이 정의한다. frame version 8의 핵심
-필드는 다음과 같다.
+The wire frame is defined by `apps/p4/layers/protocol/src/envelope/` and
+`apps/p4/layers/protocol/src/frame/`. The core fields of frame version 8 are
+as follows.
 
-| 필드 | 의미 | 불변성 |
+| Field | Meaning | Invariance |
 | --- | --- | --- |
-| `target` | 다음 소비자의 주소 | hop마다 갱신 가능 |
-| `recipient` | 해당 주소 안의 agent/node 이름 | 수신 경계에서 검증 |
-| `route` | legacy shard/order key | transport 보조값, 요청 identity가 아님 |
-| `request_id` | 하나의 inference 요청 identity | 요청 전 생애 동안 불변 |
-| `stream_id` | 하나의 streaming response 집합 | response 전 생애 동안 불변 |
-| `origin_agent` | OUTER 요청을 최초 수락한 agent | reply anchor |
-| `return_channel` | OUTER 논리 반환 채널 | socket 주소로 추론하지 않음 |
-| `event_seq` | stream 내 response event 순번 | non-zero는 단조 증가 |
-| `hop_id` | 한 node에서 실행한 한 hop identity | completion이 echo하며 중복 거부 |
-| `chain` | 순서가 있는 stage/node 목록 | continuation에서 보존 |
-| `operation_id` | cache/lifecycle 작업 identity | 해당 작업 request와 일치 |
+| `target` | Address of the next consumer | May change per hop |
+| `recipient` | agent/node name within that address | Validated at the receiving boundary |
+| `route` | legacy shard/order key | Transport helper value, not the request identity |
+| `request_id` | Identity of one inference request | Immutable for the whole life of the request |
+| `stream_id` | One set of streaming responses | Immutable for the whole life of the response |
+| `origin_agent` | The agent that first accepted the OUTER request | reply anchor |
+| `return_channel` | OUTER logical return channel | Never inferred from a socket address |
+| `event_seq` | Sequence number of a response event within a stream | Non-zero values increase monotonically |
+| `hop_id` | Identity of one hop executed on one node | Echoed by completion; duplicates are rejected |
+| `chain` | Ordered list of stages/nodes | Preserved across continuations |
+| `operation_id` | Identity of a cache/lifecycle operation | Matches the request of that operation |
 
-`origin_agent`가 정상적인 반환 anchor다. `reply_to`는 legacy 또는 직접
-전달 fallback으로만 사용한다. 마지막 node가 생산한 token/terminal frame은
-`request_id`, `stream_id`, `return_channel`, `event_seq`를 유지해 origin
-agent와 OUTER 채널로 돌아간다.
+`origin_agent` is the normal return anchor. `reply_to` is used only as a legacy
+or direct-delivery fallback. Token/terminal frames produced by the last node
+keep `request_id`, `stream_id`, `return_channel` and `event_seq`, and return to
+the origin agent and the OUTER channel.
 
-## 3. OUTER 반환 채널
+## 3. OUTER return channel
 
-주소는 listener를 식별할 뿐 개별 OUTER 연결을 식별하지 않는다. production
-ingress의 `return_channel`은 다음 형태여야 한다.
+An address identifies a listener, not an individual OUTER connection. A
+production ingress `return_channel` must have the following form.
 
 ```text
 <logical-channel>~<at-least-64-hex-digit-bearer>
 ```
 
-이 값은 논리 채널을 accepted socket에 bind하는 possession/shape gate다.
-강한 사용자·프로세스 인증, 발급자 검증, revocation, audience 검증을
-제공하지 않는다.
+This value is a possession/shape gate that binds the logical channel to the
+accepted socket. It does not provide strong user or process authentication,
+issuer verification, revocation or audience verification.
 
-`Subscriptions`는 process-wide registry이며 다음 정책을 적용한다.
+`Subscriptions` is a process-wide registry and applies the following policy.
 
-- 논리 slot 최대 1024개
-- 채널별 pending 최대 1024 frame
-- 채널별 unacked 최대 1024 frame
-- 재연결 시 같은 channel을 bind하면 unacked 후 pending 순서로 replay
-- socket generation이 다른 stale ACK는 거부
-- pending overflow는 oldest drop이며 protocol-level gap frame은 없음
-- 알 수 없는 channel은 registry가 새로 claim하지 않고 일반 fallback으로 보냄
+- At most 1024 logical slots
+- At most 1024 pending frames per channel
+- At most 1024 unacked frames per channel
+- On reconnect, binding the same channel replays unacked frames first, then pending frames
+- Stale ACKs from a different socket generation are rejected
+- Pending overflow drops the oldest frame; there is no protocol-level gap frame
+- The registry does not claim an unknown channel; it sends it to the general fallback
 
-capability 판정은 마지막 `~`만 구분자로 사용하는 `rsplit` 규칙이다. 왼쪽
-logical channel은 비어 있으면 안 되고, 오른쪽 bearer는 최소 32 byte를
-표현하는 64자 이상이어야 하며 길이가 짝수이고 모든 문자가 ASCII hex여야
-한다. capability registry는 최대 4096개이며 insert 때 만료 항목을 먼저
-제거하고, 가득 찬 상태에서 새 id를 넣으면 `expires_at`이 가장 이른 항목
-하나를 eviction한다.
+The capability check uses an `rsplit` rule that treats only the last `~` as the
+separator. The logical channel on the left must not be empty. The bearer on the
+right must be at least 64 characters, representing at least 32 bytes, must have
+an even length, and every character must be ASCII hex. The capability registry
+holds at most 4096 entries. On insert it first removes expired entries; when a
+new id is inserted into a full registry, it evicts the one entry with the
+earliest `expires_at`.
 
-`P4_AGENT_STATE_ROOT`가 설정된 entrypoint는 channel journal을 선택적으로
-사용한다. non-zero `event_seq` frame은 socket write 전에 journal에 기록하고,
-ACK가 확인한 `(return_channel, stream_id, event_seq)`를 제거한다. journal
-읽기/쓰기/초기 snapshot 저장에 실패하거나 corrupt이면 channel은 generation
-`0`으로 fail-closed하며 replay를 반환하지 않는다. 기본 `Subscriptions`는
-process-local이다.
+An entrypoint with `P4_AGENT_STATE_ROOT` set can optionally use a channel
+journal. Frames with a non-zero `event_seq` are written to the journal before
+the socket write, and `(return_channel, stream_id, event_seq)` entries confirmed
+by an ACK are removed. If journal read/write or the initial snapshot save fails,
+or the journal is corrupt, the channel fails closed to generation `0` and
+returns no replay. The default `Subscriptions` is process-local.
 
-다음은 의도적으로 보장하지 않는다.
+The following are intentionally not guaranteed.
 
-- fsync와 parent-directory sync를 포함한 전원장애 내구성
+- Power-failure durability, including fsync and parent-directory sync
 - cross-process channel ownership
-- journal compaction 및 디스크 quota
-- socket write 이후 duplicate 방지
+- journal compaction and disk quota
+- Duplicate prevention after the socket write
 - exactly-once delivery
-- socket/OUTER까지 도달한 durable delivery receipt
+- A durable delivery receipt that reaches the socket/OUTER
 
-## 4. 요청 생명주기와 terminal 규칙
+## 4. Request lifecycle and terminal rules
 
-논리 상태는 다음과 같다.
+The logical states are as follows.
 
 ```text
 accepted -> queued -> running -> yielded -> queued
@@ -110,189 +112,198 @@ accepted -> queued -> running -> yielded -> queued
                          +--------------> expired
 ```
 
-각 실행 event는 `request_id`, stage, `hop_id`, timestamp와 monotonic
-`event_seq`를 보존해야 한다. old generation, stale hop, duplicate completion,
-불완전한 completion set은 node에서 거부한다.
+Each execution event must preserve `request_id`, the stage, `hop_id`, a
+timestamp and a monotonic `event_seq`. The node rejects old generations, stale
+hops, duplicate completions and incomplete completion sets.
 
-terminalization 정책:
+Terminalization policy:
 
-- queued carrier는 거부/취소 시 terminal error를 생성한다.
-- active carrier는 adapter의 다음 hop 경계에서 종료한다.
-- lifecycle/cache carrier도 node shutdown 중 terminalized된다.
-- adapter가 deadline 후에도 응답하지 않으면 `timed_out` 상태를 보고할 수
-  있지만, 강제 native cancellation이나 즉시 resource release는 보장하지
-  않는다.
-- outbox 또는 downstream이 닫히면 외부 전달은 보장되지 않으며,
-  `outbox_lost`/`event_loss` aggregate에 반영될 수 있다.
+- A queued carrier produces a terminal error when it is rejected or cancelled.
+- An active carrier terminates at the adapter's next hop boundary.
+- lifecycle/cache carriers are also terminalized during node shutdown.
+- If the adapter does not respond after the deadline, it may report a
+  `timed_out` state, but forced native cancellation and immediate resource
+  release are not guaranteed.
+- If the outbox or downstream is closed, external delivery is not guaranteed,
+  and the loss may be reflected in the `outbox_lost`/`event_loss` aggregates.
 
-## 5. 파이프라인 병렬과 연속 요청
+## 5. Pipeline parallelism and continuous requests
 
-각 node는 한 번에 하나의 adapter hop을 실행하지만, 하나의 hop window 안에서
-adapter가 선언한 ceiling까지 sequence를 admission한다. 다른 request는
-앞뒤 stage의 bounded queue에 들어가며, stage가 비어 있을 때 event-driven
-feeding으로 다음 작업을 넣는다.
+Each node runs one adapter hop at a time, but within one hop window it admits
+sequences up to the ceiling declared by the adapter. Other requests enter the
+bounded queues of the upstream and downstream stages, and when a stage is
+empty, event-driven feeding puts in the next job.
 
-보장되는 것:
+Guaranteed:
 
-1. 한 `hop_id`는 한 node에서 최대 한 번 실행된다.
-2. adapter admission ceiling과 node queue depth를 초과하지 않는다.
-3. 서로 다른 request는 서로 다른 stage를 동시에 점유할 수 있다.
-4. main dispatcher는 평상시 `Control > Response > Decode > Prefill` 순으로
-   poll하되 16번째 take마다 네 lane을 공정하게 경쟁시킨다. node window는
-   `Decode`를 무조건 우선하지 않는다. live decode가 ceiling만큼 차 있으면
-   Decode를 고르고, 아직 여유가 있으면 Prefill을 먼저 골라 admission을
-   채운다. 따라서 Decode 우선은 bounded preference이지 strict priority나
-   GPU utilization 보장이 아니다.
-5. downstream 포화는 bounded backpressure 또는 명시적 refusal이다.
-6. stage의 queued/running/idle/blocked 상태는 typed status에서 구분되는
-   범위까지만 보고한다.
+1. A `hop_id` runs at most once on a node.
+2. The adapter admission ceiling and the node queue depth are never exceeded.
+3. Different requests can occupy different stages at the same time.
+4. The main dispatcher normally polls in the order
+   `Control > Response > Decode > Prefill`, but every 16th take lets the four
+   lanes compete fairly. The node window does not prioritise `Decode`
+   unconditionally. If live decode is filled up to the ceiling it picks Decode;
+   if there is still headroom it picks Prefill first to fill admission. Decode
+   priority is therefore a bounded preference, not a strict priority or a GPU
+   utilization guarantee.
+5. Downstream saturation results in bounded backpressure or an explicit refusal.
+6. A stage's queued/running/idle/blocked state is reported only to the extent
+   the typed status distinguishes it.
 
-P4 wire는 global credit, min/max batch width, continuous batching ownership,
-prefill/decode service-level guarantee, GPU utilization을 정의하지 않는다.
-따라서 mock overlap 테스트는 scheduling 가능성을 증명하지만 실제 GPU가
-항상 feed된다는 증거는 아니다.
+The P4 wire does not define global credit, min/max batch width, continuous
+batching ownership, prefill/decode service-level guarantees or GPU utilization.
+Mock overlap tests therefore prove that scheduling is possible, but they are
+not evidence that a real GPU is always fed.
 
-## 6. 큐, worker, CPS
+## 6. Queues, workers, CPS
 
-worker와 queue의 책임은 다음과 같다.
+Worker and queue responsibilities are as follows.
 
-기본 agent budget은 `connections=1024`, `in_flight=256`, 공통 lane
-`depth=4096`이다. 이 세 값은 서로 독립적이다. lane 기본값은 Control 1024,
-Prefill 4096, Decode 8192, Response 4096이며, 0인 budget은 시작 시
-검증 오류로 거부한다. peer outbound pump마다 별도로 4096 frame queue가
-있고, subscription socket은 accepted connection semaphore와 channel별
-1024-depth queue의 제한을 동시에 받는다.
+The default agent budget is `connections=1024`, `in_flight=256` and a common
+lane `depth=4096`. These three values are independent. The lane defaults are
+Control 1024, Prefill 4096, Decode 8192 and Response 4096; a budget of 0 is
+rejected at startup as a validation error. Each peer outbound pump has its own
+4096-frame queue, and a subscription socket is bounded both by the accepted
+connection semaphore and by a per-channel queue of depth 1024.
 
-- 중앙 route worker는 route hash로 동일 route를 같은 worker에 보내 순서를
-  보존한다.
-- worker inbox가 차면 `try_send` refusal을 반환하며 다른 route를 무기한
-  기다리지 않는다.
-- main queue, lane, peer queue, node ingress, adapter event, outbox는
-  bounded capacity를 가진다.
-- adapter blocking worker가 event를 `blocking_send`하고, node event loop는
-  adapter completion을 기다리며 reader를 막지 않는다.
-- process-wide adapter admission permit 대기는 async로 수행되어 node가
-  다른 arrival/completion을 계속 받을 수 있다.
-- outbox producer는 bounded send에서 backpressure를 받을 수 있지만,
-  무제한 retry/polling/sleep loop로 전환하지 않는다.
-- shutdown은 runner, outbox, terminal carrier에 각각 bounded wait를 적용한다.
+- The central route worker uses the route hash to send the same route to the
+  same worker and preserve order.
+- When a worker inbox is full it returns a `try_send` refusal and does not wait
+  indefinitely on another route.
+- The main queue, lanes, peer queues, node ingress, adapter events and outbox
+  all have bounded capacity.
+- The adapter blocking worker sends events with `blocking_send`, and the node
+  event loop waits for adapter completion without blocking the reader.
+- Waiting for a process-wide adapter admission permit is async, so the node can
+  keep receiving other arrivals/completions.
+- An outbox producer may receive backpressure on a bounded send, but it does
+  not switch to an unbounded retry/polling/sleep loop.
+- Shutdown applies a bounded wait to the runner, the outbox and terminal
+  carriers separately.
 
-queue가 포화되면 정책은 `queue_full` refusal과 retry guidance다. 현재 P4는
-일반 inference queue를 disk spill하지 않는다. 영속 FIFO spill을 추가하려면
-byte quota, ordering, crash recovery, refusal/expiry 규칙을 별도 wire 정책으로
-정해야 한다.
+When a queue is saturated, the policy is a `queue_full` refusal with retry
+guidance. P4 currently does not spill the general inference queue to disk.
+Adding a persistent FIFO spill would require defining byte quota, ordering,
+crash recovery and refusal/expiry rules as a separate wire policy.
 
-## 7. 모니터링
+## 7. Monitoring
 
-legacy `Status` 문자열은 호환성을 위해 유지한다. 신규 status snapshot은
-service message schema 6이며 schema 1~5 reader compatibility를 유지한다.
+The legacy `Status` string is kept for compatibility. The new status snapshot
+is service message schema 6 and keeps reader compatibility with schemas 1–5.
 
-현재 typed snapshot이 제공하는 범위:
+What the current typed snapshot provides:
 
-- snapshot sequence와 생성 시각
-- agent traffic/lane/peer/continuation aggregate
+- snapshot sequence and creation time
+- agent traffic/lane/peer/continuation aggregates
 - node route/backend report
 - queued request identity
 - active `request_id`, `stream_id`, `hop_id`, phase, timeout marker
-- subscription pending/unacked/dropped/ACK-rejected aggregate
+- subscription pending/unacked/dropped/ACK-rejected aggregates
 - node `outbox_lost` aggregate
 
-다음은 제공하지 않는다.
+Not provided:
 
-- per-event ACK/gap trace와 socket별 delivery receipt
+- per-event ACK/gap trace and per-socket delivery receipts
 - intermediate peer queue depth/capacity/spill
-- per-request enqueue/start/progress timestamp
-- device activity, VRAM/KV residency, allocator trend
-- durable history 또는 exactly-once 증명
+- per-request enqueue/start/progress timestamps
+- device activity, VRAM/KV residency, allocator trends
+- durable history or exactly-once proof
 
-`outbox_lost`, `event_loss`, `ack_rejected`는 원인별·요청별 trace가 아니라
-process-local aggregate다. monitoring consumer는 값이 0인 것과 “보고되지 않음”을
-구분해야 한다.
+`outbox_lost`, `event_loss` and `ack_rejected` are process-local aggregates, not
+per-cause or per-request traces. A monitoring consumer must distinguish a value
+of 0 from "not reported".
 
-## 8. 생성 요청과 adapter portability
+## 8. Generation requests and adapter portability
 
-OUTER는 prompt, max tokens, sampling/decoding parameters, grammar, structured
-output, stop/template, backend launch switch 등 구상 backend 지식을 가지고
-serialized request/options를 만든다. P4는 다음만 책임진다.
+OUTER holds the concrete backend knowledge, such as the prompt, max tokens,
+sampling/decoding parameters, grammar, structured output, stop/template and
+backend launch switches, and builds the serialized request/options. P4 is
+responsible only for the following.
 
-1. opaque generation content를 byte-preserving으로 전달한다.
-2. 모든 hop과 decode lap에서 content를 보존한다.
-3. frame/body size와 transport validity limit을 검사한다.
-4. 필드를 해석해 삭제하거나 다른 기본값으로 치환하지 않는다.
-5. adapter가 이해하지 못하면 adapter-owned error를 반환한다.
+1. Deliver opaque generation content byte-preserving.
+2. Preserve the content across every hop and decode lap.
+3. Check frame/body size and transport validity limits.
+4. Never interpret fields to delete them or replace them with other defaults.
+5. If the adapter does not understand the content, return an adapter-owned error.
 
-adapter는 opaque content를 자신의 API/프로세스 실행 인자로 변환한다.
-따라서 llama.cpp가 아닌 adapter도 동일한 P4 contract를 구현할 수 있으며,
-P4는 특정 backend의 sampling·decoding·speculative 기능 의미를 정의하지
-않는다. 단, 성공한 prefill 뒤에는 요청된 generation에 대해 하나 이상의
-token-bearing event를 전달할 수 있어야 한다. 한 event에 여러 token을 담거나
-여러 Decode lap으로 나누는 것은 adapter 선택이다.
+The adapter translates the opaque content into its own API/process execution
+arguments. Adapters other than llama.cpp can therefore implement the same P4
+contract, and P4 does not define the semantics of any backend's sampling,
+decoding or speculative features. However, after a successful prefill the
+adapter must be able to deliver at least one token-bearing event for the
+requested generation. Whether to put several tokens in one event or split them
+across several Decode laps is the adapter's choice.
 
-### 8.1 이번 비-MTP/speculative 범위에서 닫힌 결정
+### 8.1 Decisions closed for this non-MTP/speculative scope
 
-과거 초안의 §8-3, §8-6, §8-10은 현재 코드와 회귀 테스트로 다음처럼
-고정했다. 이 결정은 P4의 bounded/mock/local 계약과 검증된 staged 범위에
-대한 것이며, broader production 보장을 의미하지 않는다.
+§8-3, §8-6 and §8-10 of the earlier draft are now fixed by the current code and
+regression tests as follows. These decisions cover P4's bounded/mock/local
+contract and the verified staged scope; they do not imply broader production
+guarantees.
 
-| 결정 | 현재 계약 | 근거 |
+| Decision | Current contract | Basis |
 | --- | --- | --- |
-| identity 소유 | `request_id`는 요청 전체에서 불변이고 `route`는 transport key다. `SequenceId`는 payload 경계에서 `request_id`에서 파생하며, `hop_id`는 node의 한 실행 pass, `stream_id`/`return_channel`은 반환 스트림 identity다. legacy에서만 빈 `request_id`를 `route`로 대체한다. | `apps/p4/layers/service/src/payload/mod.rs`, `apps/p4/layers/service/src/payload/tests.rs`, `apps/p4/layers/protocol/src/envelope/mod.rs` |
-| window/admission | `Load.ceiling`이 node adapter admission의 상한이다. `compose`는 한 번에 한 lane만 골라 그 상한 이하로 window를 만들며, P4 wire는 global credit·continuous batching·GPU feed SLA를 소유하지 않는다. | `apps/p4/layers/agent/src/node/window/mod.rs`, `apps/p4/layers/agent/src/node/runner/`, `apps/p4/layers/agent/src/node/window/tests.rs` |
-| KV transaction | multi-stage cache work는 `operation_id`, sequence, deployment generation, stage set을 고정하고 prepare → commit 또는 abort barrier를 통과해야 한다. 잘못된 identity/phase/partial commit은 실패 또는 보상 abort다. | `apps/p4/layers/service/src/cache.rs`, `apps/p4/layers/service/tests/cache_barrier.rs` |
-| MTP/speculative | 이번 범위의 지원 capability가 아니다. parser/ownership probe를 실행 지원으로 승격하지 않으며, 요청은 `CAPABILITY_UNAVAILABLE`로 거부한다. | `buildplan.md` Gate 5, `apps/p4/layers/adapters/llamacpp/staged/server/src/server/` |
+| identity ownership | `request_id` is immutable across the whole request and `route` is a transport key. `SequenceId` is derived from `request_id` at the payload boundary, `hop_id` is one execution pass on a node, and `stream_id`/`return_channel` are the return stream identity. Only legacy frames substitute `route` for an empty `request_id`. | `apps/p4/layers/service/src/payload/mod.rs`, `apps/p4/layers/service/src/payload/tests.rs`, `apps/p4/layers/protocol/src/envelope/mod.rs` |
+| window/admission | `Load.ceiling` is the upper bound of node adapter admission. `compose` picks only one lane at a time and builds a window at or below that bound. The P4 wire does not own global credit, continuous batching or a GPU feed SLA. | `apps/p4/layers/agent/src/node/window/mod.rs`, `apps/p4/layers/agent/src/node/runner/`, `apps/p4/layers/agent/src/node/window/tests.rs` |
+| KV transaction | Multi-stage cache work must pin `operation_id`, the sequence, the deployment generation and the stage set, and pass the prepare → commit or abort barrier. A wrong identity/phase or a partial commit results in failure or a compensating abort. | `apps/p4/layers/service/src/cache.rs`, `apps/p4/layers/service/tests/cache_barrier.rs` |
+| MTP/speculative | Not a supported capability in this scope. Parser/ownership probes are not promoted to execution support, and such requests are rejected with `CAPABILITY_UNAVAILABLE`. | `buildplan.md` Gate 5, `apps/p4/layers/adapters/llamacpp/staged/server/src/server/` |
 
-따라서 이 네 결정은 non-MTP staged local frame을 동결하는 데 더 이상
-열린 의사결정이 아니다. 다만 native 장기 실행, 전원장애, durable delivery,
-강제 cancellation 같은 production gate는 §11에 별도로 남긴다.
+These four decisions are therefore no longer open questions for freezing the
+non-MTP staged local frame. Production gates such as long-running native
+execution, power failure, durable delivery and forced cancellation remain
+separately in §11.
 
-## 9. 모델 discovery와 분산 로딩
+## 9. Model discovery and distributed loading
 
-OUTER가 모델 아키텍처를 직접 알지 못하면 분산 로딩 계획 전에 agent에
-discovery를 요청한다. agent/adapter는 선택된 GGUF 파일 집합에서 얻을 수 있는
-다음 정보를 opaque profile로 반환한다.
+If OUTER does not know the model architecture itself, it asks the agent for
+discovery before planning distributed loading. The agent/adapter returns the
+following information, obtainable from the selected set of GGUF files, as an
+opaque profile.
 
-- artifact identity와 파일 목록/크기
-- model architecture 및 tensor/quantization profile
-- context/embedding/layer 관련 capability
-- 해당 agent가 실제로 제공할 수 있는 adapter/backend 종류
-- placement에 필요한 VRAM/RAM 요구량과 분산 가능 범위
-- profile snapshot identity와 expiry
+- artifact identity and file list/sizes
+- model architecture and tensor/quantization profile
+- context/embedding/layer capabilities
+- the adapter/backend kinds that agent can actually provide
+- VRAM/RAM requirements for placement and the range over which the model can be split
+- profile snapshot identity and expiry
 
-drive/OUTER는 모든 선택 agent의 artifact와 profile identity/expiry를 대조한
-뒤 deployment chain과 stage placement를 결정한다. agent는 Load 시 전달받은
-snapshot이 자신의 artifact와 일치하고 만료되지 않았는지 재검증한다. discovery
-profile은 hardware fingerprint나 durable cross-process registry가 아니다.
+drive/OUTER checks the artifact and profile identity/expiry of every selected
+agent, then decides the deployment chain and stage placement. At Load, the agent
+re-verifies that the snapshot it received matches its own artifact and has not
+expired. A discovery profile is not a hardware fingerprint or a durable
+cross-process registry.
 
-## 10. KV cache와 cache transaction
+## 10. KV cache and cache transactions
 
-`SequenceId`는 immutable `request_id`에서 파생하며 legacy frame에 한해
-`route` fallback을 허용한다. cache work는 다음 identity를 함께 가진다.
+`SequenceId` is derived from the immutable `request_id`; a `route` fallback is
+allowed only for legacy frames. Cache work carries all of the following
+identities.
 
-- `operation_id` = 해당 cache 작업의 request identity
+- `operation_id` = the request identity of that cache operation
 - sequence identity
 - chain generation
 - stage/node identity
 - deployment identity
 
-지원 동작은 persist, restore, fork, discard다. multi-stage save/restore는
-prepare → commit/abort barrier를 사용하고, 각 stage receipt가 operation,
-sequence, generation, stage와 일치해야 진행한다. stale/duplicate/phase가
-맞지 않는 receipt는 거부한다.
+The supported operations are persist, restore, fork and discard. Multi-stage
+save/restore uses the prepare → commit/abort barrier and proceeds only when each
+stage receipt matches the operation, sequence, generation and stage. Stale,
+duplicate or phase-mismatched receipts are rejected.
 
-P4 coordinator의 multi-stage barrier와 journal identity/recovery는 구현·테스트
-범위에서 닫혀 있다. 다음은 그 위에 필요한 broader production 계약이며 이번
-변경에서 닫지 않는다.
+The P4 coordinator's multi-stage barrier and journal identity/recovery are
+closed within the implemented and tested scope. The following are broader
+production contracts needed on top of that; this change does not close them.
 
-- adapter KV bytes와 manifest의 공통 형식
-- receipt 파일과 coordinator journal 사이 cross-file atomicity
-- `Committing` 중 crash recovery의 native parity
-- Windows/Linux 전원장애 복구와 장기 retention
+- A common format for adapter KV bytes and the manifest
+- cross-file atomicity between receipt files and the coordinator journal
+- native parity for crash recovery during `Committing`
+- Windows/Linux power-failure recovery and long-term retention
 
-## 11. 구현·검증 기준
+## 11. Implementation and verification criteria
 
-주요 구현 위치:
+Main implementation locations:
 
-| 영역 | 코드 |
+| Area | Code |
 | --- | --- |
 | envelope/frame wire | `apps/p4/layers/protocol/src/envelope/`, `src/frame/` |
 | agent ingress/replay | `apps/p4/layers/agent/src/transport/inbox/` |
@@ -302,68 +313,71 @@ P4 coordinator의 multi-stage barrier와 journal identity/recovery는 구현·�
 | discovery/capability | `apps/p4/layers/service/src/capability.rs`, `src/payload/` |
 | agent entrypoint | `apps/p4/entrypoints/agent/src/main.rs` |
 
-현재 직접 실행된 회귀 검증:
+Regression checks run directly at present:
 
 - `cargo test -p p4-agent-core --lib`: 100 passed
 - `cargo test -p p4-service --lib`: 62 passed (plus integration suites)
-- journal replay/corruption/slot bound, outbox shutdown, node lifecycle,
-  status schema compatibility, cache barrier 및 message round-trip 테스트 포함
+- Includes journal replay/corruption/slot bound, outbox shutdown, node lifecycle,
+  status schema compatibility, cache barrier and message round-trip tests
 
-이 결과는 bounded mock/local correctness와 문서화된 staged 실모델 범위의
-증거다. 다음 broader production acceptance를 통과하기 전에는 production
-ready로 판정하지 않는다.
+These results are evidence of bounded mock/local correctness and of the
+documented staged real-model scope. The system is not judged production ready
+until it passes the broader production acceptance below.
 
 ### Broader production acceptance gates (intentionally open)
 
-1. native adapter와 실제 GPU에서 장기 pipeline CPS, fairness, p95/p99
-   latency, resident memory/allocator trend
-2. GPU feed-at-capacity와 prefill/decode 지속 overlap
-3. process crash/restart와 power-loss journal/KV recovery
-4. reconnect gap/duplicate 및 durable OUTER delivery policy
+1. Long-running pipeline CPS, fairness, p95/p99 latency and resident
+   memory/allocator trends with the native adapter on real GPUs
+2. GPU feed-at-capacity and sustained prefill/decode overlap
+3. process crash/restart and power-loss journal/KV recovery
+4. reconnect gap/duplicate and a durable OUTER delivery policy
 5. native cancellation, resource release, cross-process capability ownership
 
-문서가 코드보다 강한 보장을 주장하지 않도록, 위 항목은 검증 전까지 OPEN으로
-유지한다.
+So that the document never claims stronger guarantees than the code, the items
+above stay OPEN until verified.
 
-## 12. P4 frame wire 규격
+## 12. P4 frame wire specification
 
-추상 P4 TCP frame의 구현은
-`apps/p4/layers/protocol/src/frame/mod.rs`에 있다. relay는 envelope만
-해석하고 body는 목적지까지 raw bytes로 보존할 수 있다.
+The abstract P4 TCP frame is implemented in
+`apps/p4/layers/protocol/src/frame/mod.rs`. A relay can interpret only the
+envelope and preserve the body as raw bytes up to the destination.
 
-### 12.1 고정 header
+### 12.1 Fixed header
 
-모든 정수는 little-endian이다.
+All integers are little-endian.
 
-| offset | 크기 | 의미 |
+| offset | Size | Meaning |
 | ---: | ---: | --- |
 | 0 | 4 | magic `P4B1` |
 | 4 | 1 | frame version `8` |
-| 5 | 3 | reserved, 현재 0 |
+| 5 | 3 | reserved, currently 0 |
 | 8 | 4 | envelope byte length (`u32`) |
 | 12 | 4 | body byte length (`u32`) |
-| 16 | 가변 | envelope bytes, 이후 body bytes |
+| 16 | variable | envelope bytes, then body bytes |
 
-header 전체는 16 byte다. envelope 최대는 256 KiB, body 최대는 2 GiB다.
-`frame_len()`은 header가 선언한 전체 길이를 계산하지만 body를 decode하지
-않는다. `decode()`는 실제 입력 길이가 header 계산값과 정확히 같아야 성공한다.
+The whole header is 16 bytes. The envelope is at most 256 KiB and the body at
+most 2 GiB. `frame_len()` computes the total length declared by the header but
+does not decode the body. `decode()` succeeds only if the actual input length is
+exactly the value computed from the header.
 
-frame version은 body보다 먼저 검사된다 (`frame_len()`이 body를 슬라이스하기
-전에 `header[4] != VERSION`을 확인한다). 이는 새 메시지 카탈로그나 handshake
-없이도 버전만으로 admission을 막을 수 있게 하는 성질이다. 7에서 8로 올린 것은
-§13.2의 `SessionClose`/`SessionClosed`가 acknowledge 계약이 되었기 때문이다
--- 혼합 fleet(구버전 one-way close, 신버전 acked close)이 정상처럼 돌다가
-첫 조기 종료(EOS well short of the length bound)에서 구버전 쪽 stage의
-reservation만 조용히 누수하는 대신, 양방향 모두 admission 이전에 명확히
-거부되게 하기 위해서다. 무중단 mixed-fleet 업그레이드가 실제로 필요해지면
-frame version 자체가 아니라 agent `HELLO`와 별도 feature set으로 협상한다
--- 이번 범위가 아니다.
-magic, version, 길이, envelope decode 중 하나라도 실패하면 frame 전체를
-거부한다. `reseal()`은 envelope을 바꾸고 body bytes는 그대로 유지한다.
+The frame version is checked before the body (`frame_len()` checks
+`header[4] != VERSION` before slicing the body). This property lets admission be
+blocked by the version alone, without a new message catalogue or handshake. The
+bump from 7 to 8 happened because `SessionClose`/`SessionClosed` in §13.2 became
+an acknowledge contract
+-- instead of a mixed fleet (old one-way close, new acked close) running as if
+healthy and then, on the first early termination (EOS well short of the length
+bound), silently leaking only the old-version stage's reservation, both
+directions are rejected clearly before admission. If a zero-downtime
+mixed-fleet upgrade becomes necessary, it will be negotiated through agent
+`HELLO` and a separate feature set, not the frame version itself
+-- that is not in this scope.
+If any of magic, version, length or envelope decode fails, the whole frame is
+rejected. `reseal()` changes the envelope and keeps the body bytes unchanged.
 
-### 12.2 envelope wire 필드와 검증
+### 12.2 Envelope wire fields and validation
 
-envelope wire 순서는 다음과 같다.
+The envelope wire order is as follows.
 
 ```text
 target Address
@@ -380,215 +394,226 @@ reply_to present flag [, Address]
 chain present flag [, Chain]
 ```
 
-text는 `u32 byte_length + UTF-8 bytes`이며 envelope primitive의 text 최대는
-256 KiB다. optional present flag는 `0=absent`, `1=present`만 허용한다. 다른
-flag, truncated field, invalid UTF-8, trailing bytes는 `ProtocolError`다.
+Text is `u32 byte_length + UTF-8 bytes`, and the maximum text size of an
+envelope primitive is 256 KiB. An optional present flag allows only
+`0=absent` and `1=present`. Any other flag, a truncated field, invalid UTF-8 or
+trailing bytes is a `ProtocolError`.
 
-- `request_id`와 `stream_id`는 wire encode/decode에서 비어 있을 수 없다.
-- chain이 present이면 `origin_agent`와 `return_channel`도 present여야 한다.
-- present return channel은 빈 문자열일 수 없다.
-- `ingress_generation`은 envelope 구조체에 있지만 wire에 기록하지 않는다.
-  decode 결과는 0이며 accepted-socket reader가 local metadata로 주입한다.
-- `return_key()`는 wire field가 아니라
+- `request_id` and `stream_id` cannot be empty in wire encode/decode.
+- If a chain is present, `origin_agent` and `return_channel` must also be present.
+- A present return channel cannot be an empty string.
+- `ingress_generation` exists in the envelope struct but is not written to the wire.
+  Its decoded value is 0, and the accepted-socket reader injects it as local metadata.
+- `return_key()` is not a wire field; it is a process-local key built as
   `len(request_id):request_id + len(stream_id):stream_id +
-  len(return_channel):return_channel`로 만드는 process-local key다.
+  len(return_channel):return_channel`.
 
-주소는 현재 `tcp://host:port`만 지원한다. scheme은 `tcp`, host는 비어 있지
-않아야 하며 port는 1..=65535의 숫자여야 한다. IPv6 host는 마지막 colon
-기준으로 port를 나눈다.
+Addresses currently support only `tcp://host:port`. The scheme must be `tcp`,
+the host must not be empty, and the port must be a number in 1..=65535. For an
+IPv6 host, the port is split off at the last colon.
 
 ### 12.3 recipient, lane, chain
 
-`recipient`는 다음 둘 중 하나다.
+`recipient` is one of the following two.
 
-| tag/개념 | 의미 |
+| tag/concept | Meaning |
 | --- | --- |
-| `Agent` | node registry, inspect, status, cancel, ACK 등 agent 소유 작업 |
-| `Node(node_id)` | load/unload, execute/continue, cache 등 materialized node 작업 |
+| `Agent` | agent-owned work such as node registry, inspect, status, cancel, ACK |
+| `Node(node_id)` | materialized node work such as load/unload, execute/continue, cache |
 
-`QueueClass`는 envelope에 실려 body를 읽지 않고 lane을 선택한다.
+`QueueClass` is carried in the envelope and selects the lane without reading the body.
 
-| lane | 의미 | 기본 main depth |
+| lane | Meaning | Default main depth |
 | --- | --- | ---: |
 | `Control` | create/delete/inspect/status/cancel/ACK | 1024 |
-| `Prefill` | 새 prompt의 첫 hop | 4096 |
-| `Decode` | KV를 보유한 request의 다음 lap | 8192 |
+| `Prefill` | First hop of a new prompt | 4096 |
+| `Decode` | Next lap of a request that holds KV | 8192 |
 | `Response` | token/progress/terminal/cache reply | 4096 |
 
-chain의 각 `Link`는 `address`, `node`, `binding`, `generation`을 가진다.
-wire layout은 `chain present flag`, `count u32`, `position u32` 다음에
-각 link를 `address text`, `node text`, `binding text`, `generation u64`
-순서로 기록한다. count는 최대 256이며 빈 chain은 생성할 수 없고 position은
-마지막 link를 넘어갈 수 없다. chain position이 first이면 `is_first()`,
-마지막이면 `is_last()`다.
+Each `Link` of a chain has `address`, `node`, `binding` and `generation`.
+The wire layout writes `chain present flag`, `count u32` and `position u32`,
+then each link as `address text`, `node text`, `binding text`, `generation u64`
+in that order. count is at most 256, an empty chain cannot be created, and
+position cannot go past the last link. If the chain position is the first link,
+`is_first()` holds; if it is the last, `is_last()` holds.
 
-- `to_next_hop()`은 position을 하나 증가시키고 다음 link의 address/node로
-  target/recipient를 바꾼다. lane은 유지한다.
-- `to_next_lap()`은 chain position을 0으로 되돌리고 lane을 `Decode`로
-  바꾼다.
-- `to_reply()`는 `origin_agent`를 우선하고 없을 때만 `reply_to`를 사용한다.
-  response lane으로 바꾸며 `reply_to`는 제거한다.
-- `relay_home()`은 실패한 target과 다르고 현재 agent 자신도 아닌 chain 첫
-  link를 한 번의 fallback target으로 반환한다.
+- `to_next_hop()` increments position by one and changes target/recipient to the
+  next link's address/node. The lane is kept.
+- `to_next_lap()` resets the chain position to 0 and changes the lane to
+  `Decode`.
+- `to_reply()` prefers `origin_agent` and uses `reply_to` only when it is absent.
+  It switches to the response lane and removes `reply_to`.
+- `relay_home()` returns, as a one-time fallback target, the first link of the
+  chain that differs from the failed target and is not the current agent itself.
 
-## 13. service body 규격
+## 13. Service body specification
 
-service body 구현은 `apps/p4/layers/service/src/message/`에 있다. body tag는
-enum 선언 순서가 아니라 고정 상수이므로 variant를 재배열해도 기존 peer의
-해석이 바뀌지 않는다. 모든 text는 `u32 little-endian length + UTF-8`이고
-각 text 최대는 256 KiB다. body 끝에 남는 trailing bytes, unknown tag,
-truncation, invalid UTF-8은 `Malformed`다.
+The service body is implemented in `apps/p4/layers/service/src/message/`. Body
+tags are fixed constants, not the enum declaration order, so reordering variants
+does not change how existing peers interpret them. All text is
+`u32 little-endian length + UTF-8`, and each text is at most 256 KiB. Trailing
+bytes left at the end of the body, an unknown tag, truncation or invalid UTF-8
+is `Malformed`.
 
-### 13.1 agent 명령 (`ToAgent`)
+### 13.1 Agent commands (`ToAgent`)
 
-| tag | variant | body 필드 | 처리 의미 |
+| tag | variant | Body fields | Handling |
 | ---: | --- | --- | --- |
-| 1 | `CreateNode` | `node: text`, `adapter: text` | registry에 node를 만들고 adapter factory를 연결 |
-| 2 | `DeleteNode` | `node: text` | node admission을 닫고 bounded shutdown 후 제거 |
-| 3 | `Inspect` | 없음 | agent가 가진 machine/backend snapshot 반환 |
-| 4 | `Cancel` | `route: text` | 모든 node의 대기 carrier에서 route를 취소 |
-| 5 | `Status` | 없음 | typed status snapshot 반환 |
-| 6 | `InspectModel` | `artifact: text`, `adapter: text` | 선택 adapter가 artifact/GGUF profile을 검사 |
-| 7 | `Acknowledge` | `return_channel: text`, `stream_id: text`, `event_seq: u64` | 해당 stream의 event_seq 이하 replay journal ACK |
+| 1 | `CreateNode` | `node: text`, `adapter: text` | Create a node in the registry and attach the adapter factory |
+| 2 | `DeleteNode` | `node: text` | Close node admission, remove it after a bounded shutdown |
+| 3 | `Inspect` | none | Return the agent's machine/backend snapshot |
+| 4 | `Cancel` | `route: text` | Cancel the route in the waiting carriers of all nodes |
+| 5 | `Status` | none | Return the typed status snapshot |
+| 6 | `InspectModel` | `artifact: text`, `adapter: text` | The selected adapter inspects the artifact/GGUF profile |
+| 7 | `Acknowledge` | `return_channel: text`, `stream_id: text`, `event_seq: u64` | ACK replay journal entries of that stream up to event_seq |
 
-`CreateNode`는 adapter 이름이 registry에 없으면 node를 만들지 않고 실패한다.
-`InspectModel`은 loaded deployment를 변경하지 않는 discovery operation이다.
-`Acknowledge`는 body channel과 envelope return channel이 같은지 먼저 검사하며,
-다르면 ACK를 적용하지 않고 `ack_rejected` aggregate만 증가시킨다.
+`CreateNode` fails without creating the node if the adapter name is not in the
+registry. `InspectModel` is a discovery operation that does not change the
+loaded deployment. `Acknowledge` first checks that the body channel equals the
+envelope return channel; if they differ, it does not apply the ACK and only
+increments the `ack_rejected` aggregate.
 
-### 13.2 node 명령 (`ToNode`)
+### 13.2 Node commands (`ToNode`)
 
-| tag | variant | body 필드 | queue/수명 |
+| tag | variant | Body fields | queue/lifetime |
 | ---: | --- | --- | --- |
-| 16 | `Load` | `plan`, `artifact`, `ceiling: u32`, `capability_snapshot_id`, `capability_expires_at: u64` | lifecycle, 단독 실행 |
-| 17 | `Unload` | 없음 | lifecycle, 단독 실행 |
-| 18 | `Execute` | `prompt`, `max_tokens: u32`, `options`, `session_epoch: u64` | prefill, sequence 시작 |
-| 19 | `Persist` | `sequence` | cache lifecycle, 단독 실행 |
-| 20 | `Restore` | `sequence` | cache lifecycle, 단독 실행 |
-| 21 | `Fork` | `sequence`, `into` | cache lifecycle, 원본 보존 후 새 identity 생성 |
-| 22 | `Discard` | `sequence` | cache lifecycle, durable copy 삭제 |
+| 16 | `Load` | `plan`, `artifact`, `ceiling: u32`, `capability_snapshot_id`, `capability_expires_at: u64` | lifecycle, runs exclusively |
+| 17 | `Unload` | none | lifecycle, runs exclusively |
+| 18 | `Execute` | `prompt`, `max_tokens: u32`, `options`, `session_epoch: u64` | prefill, starts a sequence |
+| 19 | `Persist` | `sequence` | cache lifecycle, runs exclusively |
+| 20 | `Restore` | `sequence` | cache lifecycle, runs exclusively |
+| 21 | `Fork` | `sequence`, `into` | cache lifecycle, keeps the original and creates a new identity |
+| 22 | `Discard` | `sequence` | cache lifecycle, deletes the durable copy |
 | 23 | `PreparePersist` | `sequence` | transaction prepare |
 | 24 | `PrepareRestore` | `sequence` | transaction prepare |
 | 25 | `PrepareDiscard` | `sequence` | transaction prepare |
-| 26 | `Commit` | `sequence` | prepare mutation 적용 |
-| 27 | `Abort` | `sequence` | prepare mutation 취소 |
-| 28 | `Continue` | `remaining: u32`, `emitted: u32`, `options`, `state: bytes`, `session_epoch: u64` | decode lap의 다음 단계 |
-| 29 | `Reconcile` | `sequence` | mutation 없이 adapter receipt 조회 |
-| 30 | `SessionClose` | `sequence`, `close_id: u64`, `session_epoch: u64` | lifecycle, 단독 실행, acknowledge 대상 |
-| 31 | `SessionClosed` | `sequence`, `close_id: u64` | acknowledgement, 스케줄되지 않음 |
+| 26 | `Commit` | `sequence` | Apply the prepared mutation |
+| 27 | `Abort` | `sequence` | Cancel the prepared mutation |
+| 28 | `Continue` | `remaining: u32`, `emitted: u32`, `options`, `state: bytes`, `session_epoch: u64` | Next step of a decode lap |
+| 29 | `Reconcile` | `sequence` | Query the adapter receipt without mutation |
+| 30 | `SessionClose` | `sequence`, `close_id: u64`, `session_epoch: u64` | lifecycle, runs exclusively, subject to acknowledgement |
+| 31 | `SessionClosed` | `sequence`, `close_id: u64` | acknowledgement, not scheduled |
 
-`Load`의 plan과 `Execute/Continue`의 options는 P4가 해석하지 않는 opaque
-text다. `ceiling`은 load가 선언한 adapter admission ceiling이며 P4가
-backend 정보로 재계산하지 않는다. 현재 node runner는 `ceiling.max(1)`을
-사용하므로 wire의 `ceiling=0`은 adapter에 1로 전달된다. 0을 명시적으로
-거부하는 정책은 아직 없다. `capability_snapshot_id`가 비어 있거나
-expiry가 0/만료이면 production payload 경계에서 adapter 호출 전에 실패한다.
+The plan of `Load` and the options of `Execute/Continue` are opaque text that P4
+does not interpret. `ceiling` is the adapter admission ceiling declared by the
+load, and P4 does not recompute it from backend information. The current node
+runner uses `ceiling.max(1)`, so `ceiling=0` on the wire reaches the adapter as a
+ceiling of 1. There is no policy yet that rejects 0 explicitly. If
+`capability_snapshot_id` is empty or the expiry is 0 or already passed, the
+production payload boundary fails before calling the adapter.
 
-`Execute`는 새 sequence의 prompt와 전체 token bound를 가진다. `Continue`는
-prompt를 반복하지 않고 `remaining`, `emitted`, `options`, `state`만 가진다.
-`remaining`은 원 request의 bound이며 lap마다 보존된다. `emitted`는 P4가 지금까지
-스트리밍한 token 수로, bound를 강제하는 쪽이 자기 출력을 세는 값이다. 세션이
-얼마나 진행되었는지는 backend의 사실이므로 `state` 안에 있고 P4는 읽지 않는다.
+`Execute` carries the new sequence's prompt and the overall token bound.
+`Continue` does not repeat the prompt; it carries only `remaining`, `emitted`,
+`options` and `state`. `remaining` is the original request's bound and is
+preserved across laps. `emitted` is the number of tokens P4 has streamed so far;
+it is the count the bound enforcer keeps of its own output. How far the session
+has progressed is a backend fact, so it lives inside `state`, and P4 does not
+read it.
 
-`SessionClose`/`SessionClosed`는 OUTER가 보내지 않는다. chain의 tail이 조기
-종료(EOS, length bound 미도달)나 아무도 듣지 않는 종료를 관찰했을 때, P4의
-core가 앞선 모든 link에 직접 보낸다 (`agent::node::outcome::close`). 시퀀스와
-실패 동작은 다음과 같다.
+OUTER does not send `SessionClose`/`SessionClosed`. When the tail of the chain
+observes an early termination (EOS before the length bound is reached) or a
+termination nobody is listening to, the P4 core sends them directly to every
+preceding link (`agent::node::outcome::close`). The sequence and failure
+behaviour are as follows.
 
-1. tail이 `Next::Finish`/`Next::Unheard`를 결정하면, chain의 앞선 link마다
-   별도 `close_id: u64`를 발급해 `SessionClose`를 보낸다. `close_id`는
-   sender(tail)의 로컬 카운터이지 `sequence`가 아니다 -- `sequence`
-   (=`request_id`)는 호출자가 나중에 다른 세션에서 재사용할 수 있는
-   식별자이므로(`tools/drive`의 `Admission::retry`), 지연되거나 오염된 ack를
-   `sequence`만으로 fence할 수 없다.
-2. 수신 node는 adapter가 실제로 `Event::Closed`를 raise한 **이후에만** 자기
-   reservation을 제거하고, 받은 `close_id`를 그대로 echo하는 `SessionClosed`를
-   돌려보낸다. 낙관적 선반영은 없다.
-3. 수신 node는 idempotent하다: 이미 처리했거나 한 번도 들어본 적 없는
-   `sequence`에 대한 재전송도 항상 `SessionClosed`로 응답한다
-   (`p4_adapter::work::close::Close`가 이를 계약으로 명시한다).
-4. sender는 ack를 받을 때까지 250ms 간격으로 최대 5회(최초 전송 포함) 재전송한다
-   (`agent::node::runner::pending_close`). 5회를 넘기면 해당 `close_id`의
-   pending 항목을 포기하고 `Counts::session_close_abandoned`를 증가시킨다 --
-   sender 자신은 상대 node의 reservation을 보유하지 않으므로 포기 자체가
-   sender 쪽 누수는 아니지만, 상대의 reservation이 영영 정리되지 않을 수
-   있다는 신호를 operator가 볼 수 있게 남긴다.
-5. `SessionClosed`는 `close_id`로만 pending 항목을 찾는다. `close_id`가
-   맞아도 echo된 `sequence`가 다르면 오염된 것으로 간주해 버리고, `close_id`
-   자체가 없으면(이미 정리됨, 이미 포기됨, 이 node가 보낸 적 없음) stale로
-   버린다 -- 둘 다 `Counts::session_closed_stale`을 증가시키고 아무 상태도
-   바꾸지 않는다.
-6. `SessionClosed`는 `Recipient::Node`로, close를 보낸 node에게 직접
-   전달된다. `Envelope::to_reply`(→ `origin_agent`)는 쓰지 않는다 --
-   `origin_agent`는 OUTER로 돌아가는 anchor이고, ack는 OUTER가 아니라 close를
-   보낸 peer node에게 가야 하기 때문이다. 그래서 ack envelope은 `chain`,
-   `origin_agent`, `return_channel`을 비운다.
+1. When the tail decides `Next::Finish`/`Next::Unheard`, it issues a separate
+   `close_id: u64` for each preceding link of the chain and sends
+   `SessionClose`. `close_id` is a local counter of the sender (the tail), not
+   the `sequence` -- `sequence` (=`request_id`) is an identifier the caller can
+   later reuse in another session (`Admission::retry` in `tools/drive`), so a
+   delayed or corrupted ack cannot be fenced by `sequence` alone.
+2. The receiving node removes its own reservation **only after** the adapter has
+   actually raised `Event::Closed`, and sends back a `SessionClosed` that echoes
+   the received `close_id` unchanged. There is no optimistic pre-application.
+3. The receiving node is idempotent: a retransmission for a `sequence` it has
+   already handled or has never heard of is always answered with
+   `SessionClosed` (`p4_adapter::work::close::Close` states this as a contract).
+4. The sender retransmits every 250ms, at most 5 times including the first
+   send, until it receives the ack (`agent::node::runner::pending_close`).
+   After 5 attempts it abandons the pending entry for that `close_id` and
+   increments `Counts::session_close_abandoned` -- the sender itself does not
+   hold the peer node's reservation, so abandoning is not a leak on the sender
+   side, but it leaves a signal the operator can see that the peer's
+   reservation may never be cleaned up.
+5. `SessionClosed` looks up the pending entry by `close_id` only. If `close_id`
+   matches but the echoed `sequence` differs, the ack is treated as corrupted
+   and dropped; if the `close_id` itself is absent (already cleaned up, already
+   abandoned, never sent by this node), it is dropped as stale -- both cases
+   increment `Counts::session_closed_stale` and change no state.
+6. `SessionClosed` is delivered directly to the node that sent the close, as
+   `Recipient::Node`. `Envelope::to_reply` (→ `origin_agent`) is not used --
+   `origin_agent` is the anchor for returning to OUTER, and the ack must go to
+   the peer node that sent the close, not to OUTER. The ack envelope therefore
+   clears `chain`, `origin_agent` and `return_channel`.
 
-### 13.3 reply body (`Reply`)
+### 13.3 Reply body (`Reply`)
 
-| tag | variant | 필드 | 의미 |
+| tag | variant | Fields | Meaning |
 | ---: | --- | --- | --- |
-| 32 | `Accepted` | `detail` | 명령/작업이 admission됨 |
-| 33 | `Progress` | `stage: u32`, `percent: u32` | load stage 진행률 |
-| 34 | `Bound` | `generation: u64` | deployment가 materialized된 generation |
-| 35 | `Released` | 없음 | unload/delete 완료 |
-| 36 | `Token` | `index: u32`, `text` | 생성 token-bearing event |
-| 37 | `Done` | `reason`, `generated: u32` | 정상/stop terminal |
-| 38 | `Failed` | `detail` | generic 실패, cache identity 없음 |
+| 32 | `Accepted` | `detail` | The command/job was admitted |
+| 33 | `Progress` | `stage: u32`, `percent: u32` | Load stage progress |
+| 34 | `Bound` | `generation: u64` | Generation in which the deployment was materialized |
+| 35 | `Released` | none | unload/delete complete |
+| 36 | `Token` | `index: u32`, `text` | Generated token-bearing event |
+| 37 | `Done` | `reason`, `generated: u32` | Normal/stop terminal |
+| 38 | `Failed` | `detail` | Generic failure, no cache identity |
 | 39 | `Machine` | `snapshot` | legacy machine/discovery text |
 | 40 | `Status` | `snapshot` | legacy human-readable status text |
-| 41 | `Cached` | deployment, stage_id, generation, operation_id, sequence, bytes, detail | cache mutation 완료 |
-| 42 | `Model` | artifact, adapter, profile, capability_snapshot_id, generated_at, expires_at | model discovery 결과 |
+| 41 | `Cached` | deployment, stage_id, generation, operation_id, sequence, bytes, detail | Cache mutation complete |
+| 42 | `Model` | artifact, adapter, profile, capability_snapshot_id, generated_at, expires_at | Model discovery result |
 | 43 | `StatusSnapshot` | typed snapshot | schema 1..6 monitoring |
-| 44 | `CacheFailed` | deployment, stage_id, generation, operation_id, sequence, detail | identity-bearing cache 실패 |
-| 45 | `CacheStatus` | deployment, stage_id, generation, operation_id, sequence, state, bytes, detail | receipt reconciliation 결과 |
+| 44 | `CacheFailed` | deployment, stage_id, generation, operation_id, sequence, detail | Identity-bearing cache failure |
+| 45 | `CacheStatus` | deployment, stage_id, generation, operation_id, sequence, state, bytes, detail | Receipt reconciliation result |
 
-`Token`의 `text`가 비어 있을 수 있는지는 adapter 결과가 결정하며, terminal
-여부는 `Done` 또는 adapter `Outcome.stop`으로 구분한다. 현재 outcome 변환은
-`stop=Some`인 outcome을 먼저 terminal로 판정하므로 text와 stop이 동시에
-있어도 `Token`을 별도로 만들지 않고 `Done`만 만든다. 이는 최종 token과
-terminal을 함께 보장하는 규칙이 아니다. `CacheFailed`는
-current chain link와 cache work를 모두 식별할 수 있을 때만 생성된다. 그
-정보가 없으면 generic `Failed`로 내려간다.
+Whether `Token`'s `text` may be empty is decided by the adapter result, and
+terminal status is distinguished by `Done` or the adapter's `Outcome.stop`. The
+current outcome conversion judges an outcome with `stop=Some` as terminal
+first, so even when text and stop are both present it produces only `Done` and
+no separate `Token`. This is not a rule that guarantees the final token and the
+terminal together. `CacheFailed` is produced only when both the current chain
+link and the cache work can be identified. Without that information it falls
+back to the generic `Failed`.
 
-## 14. agent duties와 body 소비 순서
+## 14. Agent duties and body consumption order
 
-`Standard` duties의 소비 순서는 다음과 같다.
+The consumption order of the `Standard` duties is as follows.
 
-1. envelope target/recipient를 core worker가 판단한다. body를 읽지 않고
-   relay할 수 있다.
-2. target이 현재 agent이고 recipient가 `Agent`이면 body를
-   `decode_to_agent()`한다.
-3. decode 실패는 `Reply::Failed`의 `unreadable agent message` detail로
-   반환한다.
-4. agent 명령은 다음처럼 실행된다.
+1. The core worker evaluates the envelope target/recipient. It can relay without
+   reading the body.
+2. If the target is the current agent and the recipient is `Agent`, the body is
+   passed to `decode_to_agent()`.
+3. A decode failure is returned as `Reply::Failed` with the detail
+   `unreadable agent message`.
+4. Agent commands run as follows.
 
-| 명령 | 성공 | 실패/부작용 |
+| Command | Success | Failure/side effects |
 | --- | --- | --- |
-| CreateNode | `Accepted`, 비동기 node 생성 | unknown adapter면 `Failed` |
-| DeleteNode | shutdown 후 `Released` | 없는 node면 `Failed` |
-| Inspect | `Machine` | snapshot은 adapter/backend text를 opaque로 유지 |
-| InspectModel | `Model` + capability registry insert | adapter inspection 오류면 `Failed` |
-| Cancel | 대기 route가 있으면 `Accepted` | 찾지 못하면 `Failed` |
-| Status | `StatusSnapshot` | typed schema layout 오류는 decode에서 거부 |
-| Acknowledge | journal event 제거 | channel mismatch/stale generation은 aggregate rejection |
+| CreateNode | `Accepted`, asynchronous node creation | `Failed` for an unknown adapter |
+| DeleteNode | `Released` after shutdown | `Failed` for a missing node |
+| Inspect | `Machine` | The snapshot keeps adapter/backend text opaque |
+| InspectModel | `Model` + capability registry insert | `Failed` on an adapter inspection error |
+| Cancel | `Accepted` if a waiting route exists | `Failed` if not found |
+| Status | `StatusSnapshot` | Typed schema layout errors are rejected at decode |
+| Acknowledge | Remove journal events | channel mismatch/stale generation is an aggregate rejection |
 
-5. target이 node이면 `decode_to_node()` 후 lifecycle 또는 sequence 경로로
-   분기한다. 지원하지 않는 body는 node admission 전에 거부한다.
+5. If the target is a node, the body goes through `decode_to_node()` and then
+   branches to the lifecycle or sequence path. Unsupported bodies are rejected
+   before node admission.
 
-응답 frame은 `Envelope::to_reply()`로 origin agent를 목적지로 삼는다. 아무
-reply handler도 없고 return channel도 bind되지 않은 response는 조용히 성공한
-것으로 간주하지 않으며 fallback/duties 경계를 거쳐 `unrouted` 또는 loss
-counter에 반영될 수 있다.
+A response frame uses `Envelope::to_reply()` to make the origin agent its
+destination. A response with no reply handler and no bound return channel is
+not treated as a silent success; it passes through the fallback/duties boundary
+and may be reflected in `unrouted` or a loss counter.
 
-## 15. typed status 상세 layout
+## 15. Typed status layout in detail
 
-현재 `MIN_SUPPORTED_SCHEMA=1`, `MAX_SUPPORTED_SCHEMA=6`이다. schema를 먼저
-검사하므로 0 또는 6보다 큰 schema는 나머지 byte를 읽기 전에 거부한다.
+Currently `MIN_SUPPORTED_SCHEMA=1` and `MAX_SUPPORTED_SCHEMA=6`. The schema is
+checked first, so a schema of 0 or greater than 6 is rejected before the
+remaining bytes are read.
 
-### 15.1 공통 필드
+### 15.1 Common fields
 
-`StatusSnapshot`은 다음을 가진다.
+`StatusSnapshot` has the following.
 
 ```text
 schema: u16
@@ -606,66 +631,67 @@ subscription_dropped: usize
 nodes: NodeSnapshot[]
 ```
 
-wire에서는 schema가 `u32`로 기록되고, 위 aggregate count들은 `u64`로
-기록된다. 각 node는 항상 `node`, `depth`, `running`, `backend` 순으로
-기록되고, schema 6부터 그 다음에 node-local `outbox_lost` aggregate가
-삽입된다. 그 뒤 `waiting[]` 및 schema 3 이상의 waiting request, schema 4
-이상의 active hop이 이어진다. `outbox_lost`는 top-level aggregate가 아니다.
+On the wire, schema is written as `u32` and the aggregate counts above are
+written as `u64`. Each node is always written in the order `node`, `depth`,
+`running`, `backend`; from schema 6 the node-local `outbox_lost` aggregate is
+inserted after that. Then come `waiting[]`, the waiting requests for schema 3
+and later, and the active hop for schema 4 and later. `outbox_lost` is not a
+top-level aggregate.
 
-### 15.2 schema 확장
+### 15.2 Schema extensions
 
-| schema | 추가/기본값 |
+| schema | Additions/defaults |
 | ---: | --- |
-| 1 | 공통 snapshot, waiting route 문자열 |
-| 2 | `subscription_ack_rejected` 추가 |
-| 3 | waiting request의 route/request_id/stream_id/lane/deadline 추가 |
-| 4 | active hop marker, id, phase, request 배열 추가 |
-| 5 | active hop `timed_out` marker 추가 |
-| 6 | 각 node의 `backend` 뒤에 `outbox_lost` 추가 |
+| 1 | Common snapshot, waiting route strings |
+| 2 | Adds `subscription_ack_rejected` |
+| 3 | Adds route/request_id/stream_id/lane/deadline of waiting requests |
+| 4 | Adds active hop marker, id, phase, request array |
+| 5 | Adds the active hop `timed_out` marker |
+| 6 | Adds `outbox_lost` after each node's `backend` |
 
-구 schema를 decode할 때 없는 값은 ACK count 0, outbox loss 0, waiting request
-빈 배열, active hop `None`, timeout false로 복원한다. lane tag는
-`0=Control, 1=Prefill, 2=Decode, 3=Response`, phase tag는
-`0=Prefill, 1=Decode`다. active-hop marker와 timeout marker는 각각 0/1만
-허용한다.
+When an older schema is decoded, missing values are restored as ACK count 0,
+outbox loss 0, an empty waiting request array, active hop `None` and timeout
+false. Lane tags are `0=Control, 1=Prefill, 2=Decode, 3=Response`, and phase
+tags are `0=Prefill, 1=Decode`. The active-hop marker and the timeout marker
+each allow only 0/1.
 
-이 snapshot은 bounded best-effort projection이다. traffic, lane, subscription,
-node 필드는 각각 별도로 읽힌 뒤 하나의 `snapshot_seq`로 포장되므로, 단일
-agent 내부에서도 모든 필드가 하나의 원자적 시점에서 읽혔음을 의미하지
-않는다. `snapshot_seq`는 순서를 비교하기 위한 값이지 모든 request event를
-저장한 log offset이 아니다.
+This snapshot is a bounded best-effort projection. The traffic, lane,
+subscription and node fields are each read separately and then packaged under
+one `snapshot_seq`, so even within a single agent it does not mean all fields
+were read at one atomic point in time. `snapshot_seq` is a value for comparing
+order, not a log offset that stores every request event.
 
-## 16. adapter 추상 경계
+## 16. Adapter abstract boundary
 
-`apps/p4/layers/adapters/adapter/src/lib.rs`의 trait은 다음만 노출한다.
+The trait in `apps/p4/layers/adapters/adapter/src/lib.rs` exposes only the following.
 
 ```text
 inspect_model(artifact) -> Result<opaque profile, error>
 distribution() -> Distribution
-start(work, event_sink) -> 즉시 반환
+start(work, event_sink) -> returns immediately
 report() -> cheap opaque backend text
 ```
 
-`start()`는 결과를 반환하거나 호출자를 기다리게 하지 않는다. adapter는
-`EventSink`에 event를 비동기로 올리고 node runner가 다음 작업을 결정한다.
-`report()`는 status 요청에서 호출되므로 blocking 작업을 해서는 안 된다.
+`start()` neither returns a result nor makes the caller wait. The adapter posts
+events asynchronously to the `EventSink`, and the node runner decides the next
+job. `report()` is called from status requests, so it must not do blocking work.
 
 ### 16.1a `Distribution`
 
-adapter는 `Internal` 또는 `Staged` 중 하나의 model distribution을 보고한다.
+An adapter reports one of two model distributions: `Internal` or `Staged`.
 
-| 값 | 의미 | chain 사용 |
+| Value | Meaning | chain usage |
 | --- | --- | --- |
-| `Internal` | backend가 tensor/pipeline parallelism과 device 경계를 내부에서 소유하고 하나의 entry point를 제공 | 하나의 chain link만 가능 |
-| `Staged` | P4 chain이 layer range 경계를 소유하며 node마다 model 일부를 materialize | 여러 link의 stage 가능 |
+| `Internal` | The backend owns tensor/pipeline parallelism and device boundaries internally and exposes one entry point | Only one chain link allowed |
+| `Staged` | The P4 chain owns the layer range boundaries, and each node materializes part of the model | Stages across multiple links allowed |
 
-`can_be_a_stage()`는 `Staged`에서만 true다. P4는 `Distribution`을 보고하고
-placement를 결정하는 OUTER/drive가 이를 사용한다. node가 `Internal` adapter의
-내부 shard를 별도 chain node처럼 주소화해서는 안 된다.
+`can_be_a_stage()` is true only for `Staged`. P4 reports `Distribution`, and
+OUTER/drive, which decides placement, uses it. A node must not address the
+internal shards of an `Internal` adapter as if they were separate chain nodes.
 
 ### 16.1b `Work`
 
-`Work`는 `Load`, `Unload`, `Hop`, `Cache` 네 종류다.
+`Work` has four kinds: `Load`, `Unload`, `Hop` and `Cache`.
 
 `Load`:
 
@@ -686,7 +712,7 @@ phase: Prefill | Decode
 sequences: Sequence[]
 ```
 
-각 `Sequence`:
+Each `Sequence`:
 
 ```text
 sequence: SequenceId
@@ -696,33 +722,34 @@ remaining: u32
 options: String               # opaque generation options
 ```
 
-`state`는 adapter가 쓰고 adapter만 읽는 opaque byte 값이며, 다음 hop에
-그대로 되돌려받는다. 과거에는 position, 샘플된 token, tensor cut-set과 그
-배치가 각각 별도 필드였지만, 지금은 모두 이 하나의 `state` 안에 산다. P4는
-그 내용을 해석하지 않고 adapter가 쓴 그대로 다음 `Sequence.state`로
-전달한다.
+`state` is an opaque byte value that the adapter writes and only the adapter
+reads; it comes back unchanged on the next hop. Position, the sampled token,
+the tensor cut-set and its batch used to be separate fields; now they all live
+inside this single `state`. P4 does not interpret its contents and passes it,
+exactly as the adapter wrote it, as the next `Sequence.state`.
 
-`prompt`는 first stage 또는 internal backend에만 존재한다. 후속 staged
-stage는 prompt를 다시 해석하지 않고 자신의 resident `state`를 사용한다.
-`remaining=0`은 더 이상 sequence를 예약하지 않는 terminal 경계다.
+`prompt` exists only for the first stage or an internal backend. Later staged
+stages do not re-interpret the prompt; they use their own resident `state`.
+`remaining=0` is the terminal boundary at which no further sequence is reserved.
 
-### 16.2 adapter `Event`
+### 16.2 Adapter `Event`
 
-| event | 필드 | node 의미 |
+| event | Fields | Meaning for the node |
 | --- | --- | --- |
-| `LoadProgress` | deployment, stage, percent, detail | stage별 load 진행 |
-| `Loaded` | deployment, generation, allocations[] | 실행 가능한 materialization |
-| `Unloaded` | deployment | deployment release 완료 |
-| `HopComplete` | hop_id, deployment, expected[], outcomes[] | 현재 hop 종료 및 queue 재평가 |
-| `Cached` | deployment, stage_id, generation, operation_id, sequence, bytes, detail | cache mutation 완료 |
-| `CacheStatus` | 위 identity + state, bytes, detail | receipt query 결과 |
-| `Failed` | deployment, sequence?, hop_id?, detail | 해당 work terminal 실패 |
+| `LoadProgress` | deployment, stage, percent, detail | Per-stage load progress |
+| `Loaded` | deployment, generation, allocations[] | Executable materialization |
+| `Unloaded` | deployment | Deployment release complete |
+| `HopComplete` | hop_id, deployment, expected[], outcomes[] | End of the current hop and queue re-evaluation |
+| `Cached` | deployment, stage_id, generation, operation_id, sequence, bytes, detail | Cache mutation complete |
+| `CacheStatus` | the identity above + state, bytes, detail | Receipt query result |
+| `Failed` | deployment, sequence?, hop_id?, detail | Terminal failure of that work |
 
-`Allocation`은 `category: String`, `bytes: u64`다. allocation category의
-의미는 adapter 소유다. `HopComplete.expected`는 adapter가 실제로 받은
-sequence set이며 node가 in-flight set과 정확히 비교한다.
+`Allocation` is `category: String`, `bytes: u64`. The meaning of an allocation
+category is owned by the adapter. `HopComplete.expected` is the sequence set the
+adapter actually received, and the node compares it exactly with its in-flight
+set.
 
-각 `Outcome`:
+Each `Outcome`:
 
 ```text
 sequence: SequenceId
@@ -731,16 +758,16 @@ text: String
 stop: Option<String>
 ```
 
-`stop`이 Some일 때만 sequence가 terminal이다. middle staged node는 text가
-비어 있을 수 있다. 마지막 node 또는 internal backend만 text/logits 결과를
-생산한다. `forward`는 다음 stage로 넘기는 opaque backend state이며, 다음
-hop에서 그대로 `Sequence.state`가 된다.
+A sequence is terminal only when `stop` is Some. A middle staged node may have
+empty text. Only the last node or an internal backend produces text/logits
+results. `forward` is the opaque backend state handed to the next stage, and on
+the next hop it becomes `Sequence.state` unchanged.
 
-## 17. cache/KV 추상 규격
+## 17. Cache/KV abstract specification
 
 ### 17.1 P4 cache work
 
-`Cache`는 한 sequence에 대한 단독 lifecycle work다.
+`Cache` is exclusive lifecycle work for one sequence.
 
 ```text
 deployment: DeploymentId
@@ -752,55 +779,57 @@ action: Reconcile | PreparePersist | Persist | PrepareRestore | Restore |
         PrepareDiscard | Fork(into) | Discard | Commit | Abort
 ```
 
-`subject()`는 `Fork`이면 `into`, 그 외에는 원래 sequence를 반환한다.
-`operation_id`는 multi-stage transaction 전체를 묶고, stage generation은
-rebound deployment에 낡은 KV를 복원하지 못하게 한다.
+`subject()` returns `into` for `Fork` and the original sequence otherwise.
+`operation_id` ties the whole multi-stage transaction together, and the stage
+generation prevents stale KV from being restored into a rebound deployment.
 
-receipt state는 `Absent`, `Prepared`, `Committed`, `Aborted`, `Inconsistent`다.
-`Inconsistent`는 receipt는 있지만 manifest/identity/checksum이 맞지 않아
-재생 가능한 성공으로 취급할 수 없다는 뜻이다.
+Receipt states are `Absent`, `Prepared`, `Committed`, `Aborted` and
+`Inconsistent`. `Inconsistent` means a receipt exists but the
+manifest/identity/checksum does not match, so it cannot be treated as a
+replayable success.
 
-### 17.2 coordinator state
+### 17.2 Coordinator state
 
-service coordinator의 transaction kind는 `Persist`, `Restore`, `Discard`다.
-phase/state는 다음과 같다.
+The service coordinator's transaction kinds are `Persist`, `Restore` and
+`Discard`. The phases/states are as follows.
 
 ```text
 Preparing -> Committing -> Complete
      |             |
      +-> Aborting -+
      +-> Failed
-Reconcile은 mutation 없이 각 stage receipt를 조회
+Reconcile queries each stage receipt without mutation
 ```
 
-transaction 생성 시 operation id, sequence, deployment, non-zero generation,
-비어 있지 않고 unique한 stage set을 요구한다. 각 stage의 prepare/commit/
-abort receipt가 operation, sequence, deployment, generation, stage와 모두
-일치해야 barrier가 전진한다. unknown stage, duplicate completion, phase와
-맞지 않는 receipt, checksum 오류는 recovery를 중단한다.
+Creating a transaction requires an operation id, a sequence, a deployment, a
+non-zero generation and a non-empty, unique stage set. The barrier advances
+only when each stage's prepare/commit/abort receipt matches the operation,
+sequence, deployment, generation and stage. An unknown stage, a duplicate
+completion, a receipt that does not match the phase, or a checksum error stops
+recovery.
 
-coordinator journal은 의도·진행 상태를 durable snapshot/record로 남길 수
-있지만 adapter가 실제로 보관하는 KV bytes와 cross-file atomicity를 대신하지
-않는다.
+The coordinator journal can leave intent and progress as durable
+snapshots/records, but it does not substitute for the KV bytes the adapter
+actually stores, nor for cross-file atomicity.
 
 ### 17.3 llama.cpp staged private adapter wire
 
-다음은 P4 추상 wire가 아니라 staged adapter와 local server 사이의 별도
-구현 protocol이다. 구현 위치는
-`apps/p4/layers/adapters/llamacpp/staged/adapter/src/protocol/`이다.
+The following is not the P4 abstract wire but a separate implementation
+protocol between the staged adapter and the local server. It is implemented in
+`apps/p4/layers/adapters/llamacpp/staged/adapter/src/protocol/`.
 
-| 항목 | 값 |
+| Item | Value |
 | --- | --- |
 | magic | `LCP4` |
 | revision | `u16 = 1` |
 | header | 12 byte |
-| body length | header offset 8의 `u32` |
-| 기본 max frame/payload | 128 MiB |
-| 기본 max descriptors | 16384 |
-| 기본 max name | 4096 byte |
+| body length | `u32` at header offset 8 |
+| Default max frame/payload | 128 MiB |
+| Default max descriptors | 16384 |
+| Default max name | 4096 byte |
 
-private header는 `magic`, revision, operation `u8`, reserved flags `u8=0`,
-body length `u32` 순서다. operation tag는 다음과 같다.
+The private header is, in order, `magic`, revision, operation `u8`, reserved
+flags `u8=0` and body length `u32`. The operation tags are as follows.
 
 | tag | operation |
 | ---: | --- |
@@ -820,13 +849,13 @@ body length `u32` 순서다. operation tag는 다음과 같다.
 | 14 | `KvReconcile` |
 | 15 | `KvReceipt` |
 
-unknown operation, non-zero reserved flag, wrong revision, bad magic, body
-length mismatch, frame limit 초과는 private frame error다. 이 private wire의
-성공이 P4 OUTER delivery 성공을 의미하지는 않는다.
+An unknown operation, a non-zero reserved flag, a wrong revision, bad magic, a
+body length mismatch or exceeding the frame limit is a private frame error.
+Success on this private wire does not mean P4 OUTER delivery succeeded.
 
-### 17.4 private KV payload
+### 17.4 Private KV payload
 
-`KvPayload`는 다음 순서다.
+`KvPayload` has the following order.
 
 ```text
 sequence_id text
@@ -835,37 +864,39 @@ model_identity text
 stage_begin i32-as-u32
 stage_end i32-as-u32
 flags u32
-expected_checksum text (없으면 "-")
-[legacy direct frame에서는 생략 가능]
+expected_checksum text ("-" if absent)
+[may be omitted in a legacy direct frame]
 operation_id text
 ```
 
-검증 규칙:
+Validation rules:
 
-- private frame/body는 각각 max 128 MiB이며 sequence id는 configured
-  `max_name_bytes`(기본 4096 byte) 이하이고 비어 있으면 안 된다. operation id는
-  같은 길이 제한을 따르며 direct legacy KV에서는 생략 가능하고 transaction
-  verb에서는 필수다.
-- cache key는 최대 256 byte이며 ASCII alphanumeric 및 `.` `_` `-`만 허용
-- model identity 최대 4096 byte, receipt detail 최대 4096 byte
+- The private frame and body are each at most 128 MiB, and the sequence id must
+  be non-empty and at most the configured `max_name_bytes` (default 4096 bytes).
+  The operation id follows the same length limit; it may be omitted in direct
+  legacy KV and is required for transaction verbs.
+- The cache key is at most 256 bytes and allows only ASCII alphanumerics and `.` `_` `-`
+- Model identity at most 4096 bytes, receipt detail at most 4096 bytes
 - `stage_begin >= 0`, `stage_end > stage_begin`
-- flags는 0..=3
-- expected/result/receipt checksum은 `-` 또는 정확히 64 byte인 UTF-8
-  문자열이다. checksum 문자가 hex인지 여부는 구현이 별도로 강제하지 않는다.
-- 모든 field를 소비해야 하며 trailing bytes는 거부
+- flags are 0..=3
+- The expected/result/receipt checksum is `-` or a UTF-8 string of exactly 64
+  bytes. The implementation does not separately enforce that the checksum
+  characters are hex.
+- Every field must be consumed; trailing bytes are rejected
 
-`KvResult`는 sequence id, cache key, bytes, 64-byte checksum을 반환한다.
-`KvReceipt`는 operation id, sequence id, cache key, model identity,
-stage range, kind, state, bytes, checksum, detail을 가진다. receipt state
-private tag는 `0=Absent, 1=Prepared, 2=Committed, 3=Aborted,
-4=Inconsistent, 5=Committing`이다. `kind=0`은 Absent 또는 Inconsistent에서만
-허용된다.
+`KvResult` returns the sequence id, cache key, bytes and a 64-byte checksum.
+`KvReceipt` carries the operation id, sequence id, cache key, model identity,
+stage range, kind, state, bytes, checksum and detail. The private receipt state
+tags are `0=Absent, 1=Prepared, 2=Committed, 3=Aborted,
+4=Inconsistent, 5=Committing`. `kind=0` is allowed only with Absent or
+Inconsistent.
 
-### 17.5 private HOP payload
+### 17.5 Private HOP payload
 
-`Operation::Hop` body는 v2 `HMUX` envelope를 사용한다. legacy one-sequence
-body와 구형 HMUX body도 decode할 수 있지만 `legacy=true`로 표시되어 phase와
-stage-zero metadata가 없는 실행을 실제 llama hop에 사용하지 않는다.
+The `Operation::Hop` body uses the v2 `HMUX` envelope. A legacy one-sequence
+body and an old HMUX body can still be decoded, but they are marked
+`legacy=true`, and an execution without phase and stage-zero metadata is never
+used for a real llama hop.
 
 ```text
 4 bytes  magic = HMUX
@@ -878,10 +909,11 @@ repeat sequence count:
   sequence record
 ```
 
-빈 sequence list, max descriptor 초과, unknown phase, non-zero reserved flag,
-trailing envelope bytes는 거부한다. sequence record의 v2 optional flags는
-bit 0부터 다음을 뜻한다. 실제 byte 순서는 `prompt`, `initial_tokens`,
-`position`, `outcome`, `options`이며, 그 뒤에 공통 tensor body가 온다.
+An empty sequence list, exceeding the max descriptor count, an unknown phase, a
+non-zero reserved flag or trailing envelope bytes is rejected. The v2 optional
+flags of a sequence record mean the following, starting from bit 0. The actual
+byte order is `prompt`, `initial_tokens`, `position`, `outcome`, `options`,
+followed by the common tensor body.
 
 | bit | optional field |
 | ---: | --- |
@@ -891,13 +923,13 @@ bit 0부터 다음을 뜻한다. 실제 byte 순서는 `prompt`, `initial_tokens
 | 3 | position `u32` |
 | 4 | options text |
 
-outcome metadata는 `token: i32`, `position: u32`, `text`, `has_stop`와 optional
-stop text다. reserved flag bit는 0이어야 한다. prompt는 stage zero에서만
-전달되며 middle stage는 prompt를 받지 않는다. initial tokens는 이미
-tokenize한 caller가 보낼 때만 존재한다. options가 empty이면 v2 body에서
-생략된다.
+Outcome metadata is `token: i32`, `position: u32`, `text`, `has_stop` and an
+optional stop text. Reserved flag bits must be 0. The prompt is sent only to
+stage zero; middle stages do not receive it. Initial tokens are present only
+when a caller that has already tokenized sends them. Empty options are omitted
+from the v2 body.
 
-각 sequence의 공통 tensor payload는 다음 순서다.
+The common tensor payload of each sequence has the following order.
 
 ```text
 sequence_id text
@@ -916,493 +948,522 @@ repeat descriptor count:
 [optional] magic NTOK + n_tokens u32
 ```
 
-지원 `wire_type`은 `F32=1`, `F16=2`, `Q8=3`, `Q4=4`, raw `Bytes=255`다.
-rank는 최대 8, descriptor와 payload 배열의 개수는 같아야 한다. non-alias
-descriptor에는 정확히 `nbytes`만큼의 payload가 있어야 하며 alias descriptor는
-payload를 가져서는 안 된다. alias target은 자기 자신이나 범위 밖을 가리킬 수
-없다. 전체 payload는 128 MiB 이하, descriptor/initial-token/sequence count는
-각각 16384 이하이며 `n_tokens=0`은
-거부한다. `n_tokens`는 tensor dimension에서 추정하지 않고 명시된 logical
-token count다.
+The supported `wire_type` values are `F32=1`, `F16=2`, `Q8=3`, `Q4=4` and raw
+`Bytes=255`. rank is at most 8, and the descriptor and payload arrays must have
+the same length. A non-alias descriptor must have exactly `nbytes` of payload,
+and an alias descriptor must not have a payload. An alias target cannot point to
+itself or out of range. The total payload is at most 128 MiB, the
+descriptor/initial-token/sequence counts are each at most 16384, and
+`n_tokens=0` is
+rejected. `n_tokens` is an explicit logical token count, not an estimate from
+the tensor dimensions.
 
-`HopResult`도 같은 sequence context를 바탕으로 결과 descriptor/cut-set과
-outcome metadata를 돌려준다. `Operation::Cancel`은 stage server의 현재
-operation에 대한 cooperative cancel 요청이며, P4의 `ToAgent::Cancel`과
-동일한 route cancel 명령이 아니다. `Operation::Unload`는 private server의
-deployment release 요청이다.
+`HopResult` returns the result descriptor/cut-set and outcome metadata based on
+the same sequence context. `Operation::Cancel` is a cooperative cancel request
+for the stage server's current operation; it is not the same route cancel
+command as P4's `ToAgent::Cancel`. `Operation::Unload` is a deployment release
+request to the private server.
 
-### 17.6 private HELLO와 capability
+### 17.6 Private HELLO and capability
 
-client는 `Hello` body에 protocol revision `u16`을 보낸다. server 응답 body는
-동일 revision과 optional UTF-8 id/feature text를 가지며, feature text에
-`transactions=1`이 있으면 Rust staged adapter가 `KvPrepare/Commit/Abort/
-Reconcile` transaction verbs를 사용할 수 있다. feature가 없으면 Rust 쪽은
-legacy/process-local barrier 경로로 내려가며 transaction verb를 무조건
-전송하지 않는다. HELLO 성공은 stage server protocol compatibility만 증명하고
-model load, KV recovery, P4 OUTER delivery를 증명하지 않는다.
+The client sends the protocol revision `u16` in the `Hello` body. The server
+response body carries the same revision and an optional UTF-8 id/feature text;
+if the feature text contains `transactions=1`, the Rust staged adapter can use
+the `KvPrepare/Commit/Abort/Reconcile` transaction verbs. Without that feature,
+the Rust side falls back to the legacy/process-local barrier path and does not
+send transaction verbs unconditionally. A successful HELLO proves only stage
+server protocol compatibility; it does not prove model load, KV recovery or P4
+OUTER delivery.
 
-## 18. discovery와 placement 데이터 흐름
+## 18. Discovery and placement data flow
 
-분산 로딩에 필요한 모델 지식은 OUTER가 임의로 추측하지 않는다.
+OUTER does not guess the model knowledge needed for distributed loading.
 
 ```text
 OUTER/drive
   -> ToAgent::InspectModel { artifact, adapter }
-  -> origin agent의 선택 adapter::inspect_model()
+  -> the selected adapter::inspect_model() on the origin agent
   -> Reply::Model { artifact, adapter, profile,
                     capability_snapshot_id, generated_at, expires_at }
-  -> OUTER가 모든 stage profile 비교 및 placement plan 생성
+  -> OUTER compares all stage profiles and builds the placement plan
   -> ToNode::Load { plan, artifact, ceiling, snapshot_id, expiry }
-  -> 각 agent가 artifact/expiry/snapshot 일치 검증
+  -> each agent verifies the artifact/expiry/snapshot match
 ```
 
-`Model.profile`은 P4가 해석하지 않는 문자열이다. 위 sequence의 “모든 stage
-profile 비교 및 placement plan 생성”은 OUTER/drive orchestration 책임을
-나타내는 협력 규칙이며 P4 agent 자체가 fleet 전체를 비교하거나 모든 stage의
-`Bound` 전까지 `Execute`를 차단한다는 보장은 아니다. drive는 route와 return
-channel로 reply를 상관시키고 artifact 불일치, 빈 snapshot id, profile 불일치,
-expiry 오류를 거부한다. capability registry의 local match는 현재
-artifact와 expiry를 확인하며 adapter/profile issuance ownership까지 제공하지
-않는다. 그러므로 profile에 대한 cryptographic provenance나 cross-agent
-revocation은 아직 프로토콜 보장이 아니다.
+`Model.profile` is a string that P4 does not interpret. "Compares all stage
+profiles and builds the placement plan" in the sequence above is a cooperation
+rule describing the OUTER/drive orchestration responsibility. It is not a
+guarantee that the P4 agent itself compares the whole fleet or blocks `Execute`
+until every stage is `Bound`. drive correlates replies by route and return
+channel, and rejects artifact mismatches, empty snapshot ids, profile
+mismatches and expiry errors. The capability registry's local match checks the
+current artifact and expiry, but does not provide adapter/profile issuance
+ownership. Cryptographic provenance for profiles and cross-agent revocation are
+therefore not yet protocol guarantees.
 
-## 19. 오류·호환성 표
+## 19. Error and compatibility table
 
-| 경계 | 오류 형식 | 실패 동작 |
+| Boundary | Error form | Failure behaviour |
 | --- | --- | --- |
-| P4 frame | `ProtocolError` | frame decode/ingress 중단 |
-| envelope primitive | `ProtocolError` | malformed envelope 거부 |
-| service body | `Malformed` | body handler가 identity-bearing `Failed`를 만들 수 있으면 응답 |
-| payload decode | `Option::None`/validation error | node/adapter admission 전 거부 |
-| agent duties | `Reply::Failed` | 요청자에게 generic detail 전달 |
-| load capability | lifecycle error | adapter 호출 전 거부 |
-| active hop event | invalid/orphan counter | stale/partial completion 적용 안 함 |
-| cache receipt | identity/phase error | transaction barrier 중단 또는 abort |
+| P4 frame | `ProtocolError` | Stop frame decode/ingress |
+| envelope primitive | `ProtocolError` | Reject the malformed envelope |
+| service body | `Malformed` | Respond if the body handler can build an identity-bearing `Failed` |
+| payload decode | `Option::None`/validation error | Reject before node/adapter admission |
+| agent duties | `Reply::Failed` | Send a generic detail to the requester |
+| load capability | lifecycle error | Reject before calling the adapter |
+| active hop event | invalid/orphan counter | Do not apply stale/partial completions |
+| cache receipt | identity/phase error | Stop the transaction barrier or abort |
 | socket write | I/O error | reconnect/one-time relay/loss accounting |
-| journal | corrupt/I/O | opt-in channel generation 0 fail-closed |
+| journal | corrupt/I/O | opt-in channel fails closed to generation 0 |
 
-wire tag는 명시적으로 고정되어 있으므로 새 variant는 기존 tag를 재사용하지
-말고 새 tag와 compatibility test를 추가해야 한다. status schema는 기존
-reader가 새 layout을 추측하지 않도록 `MAX_SUPPORTED_SCHEMA`를 올리는 변경과
-reader/writer 테스트가 함께 필요하다. envelope 필드의 의미 변경, chain/link
-identity 변경, cache operation identity 변경은 단순 body variant 추가보다
-큰 compatibility 변경이다.
+Wire tags are fixed explicitly, so a new variant must not reuse an existing tag;
+it must add a new tag and a compatibility test. A status schema change needs
+both a bump of `MAX_SUPPORTED_SCHEMA`, so that existing readers do not guess the
+new layout, and reader/writer tests. Changing the meaning of an envelope field,
+changing chain/link identity, or changing cache operation identity is a larger
+compatibility change than adding a simple body variant.
 
-## 20. 상세 규격과 현재 증거의 구분
+## 20. Detailed specification versus current evidence
 
-다음은 현재 소스와 unit/integration 테스트가 직접 다루는 규격이다.
+The following are specifications that the current source and unit/integration
+tests cover directly.
 
-- P4B1 frame framing, envelope validation, fixed body tags와 round-trip
-- request/stream/channel identity 및 chain hop transformation
-- bounded lane/worker/node/outbox admission과 refusal
-- active hop id와 exact completion set 검증
+- P4B1 frame framing, envelope validation, fixed body tags and round-trip
+- request/stream/channel identity and chain hop transformation
+- bounded lane/worker/node/outbox admission and refusal
+- active hop id and exact completion set validation
 - token/done/failed/cache/status reply encoding
-- status schema 1..6 reader/writer 호환
-- capability expiry/artifact validation과 model discovery reply
-- mock cache barrier와 coordinator journal recovery
+- status schema 1..6 reader/writer compatibility
+- capability expiry/artifact validation and the model discovery reply
+- mock cache barrier and coordinator journal recovery
 
-다음은 상세 field가 존재해도 실환경 보장이 확인되지 않은 영역이다.
+The following are areas where the detailed fields exist but real-environment
+guarantees have not been confirmed.
 
-- 실제 TCP peer가 frame을 application까지 소비했다는 receipt
-- process crash/power loss 직후 OUTER journal과 native KV의 원자성
-- duplicate/gap 없이 exactly-once인 streaming response
-- capability 발급자·revocation·cross-process ownership
-- native adapter의 강제 cancellation과 모든 resource release
-- 실제 llama.cpp/GPU 장기 실행의 pipeline feed, CPS, latency, memory
+- A receipt that a real TCP peer consumed the frame up to the application
+- Atomicity of the OUTER journal and native KV right after a process crash/power loss
+- exactly-once streaming responses with no duplicates or gaps
+- capability issuer, revocation and cross-process ownership
+- Forced cancellation and full resource release in the native adapter
+- Pipeline feed, CPS, latency and memory in long real llama.cpp/GPU runs
 
-따라서 이 문서의 field/encoding 규격은 구현자가 따라야 할 wire 계약이고,
-마지막 목록은 그 계약을 실환경에서 증명하기 위한 acceptance gate다.
+The field/encoding specifications in this document are therefore the wire
+contract implementers must follow, and the last list is the acceptance gate for
+proving that contract in a real environment.
 
-## 21. 명령별 실행 명세
+## 21. Per-command execution specification
 
-이 절은 각 body variant를 독립적인 protocol operation으로 정의한다. 모든
-operation은 공통적으로 다음 envelope 조건을 따른다.
+This section defines each body variant as an independent protocol operation.
+All operations share the following envelope conditions.
 
-- `target`은 해당 명령을 소비할 agent 주소여야 한다.
-- agent 명령은 `recipient=Agent`, node 명령은 `recipient=Node(node_id)`여야
-  한다.
-- 요청-응답이 필요한 명령은 `request_id`, `stream_id`, `origin_agent` 또는
-  legacy `reply_to`가 있어야 한다. `to_reply()`가 `None`이면 명령은 fire-and-
-  forget이며 reply body가 만들어지지 않는다.
-- `route`는 취소·legacy continuation의 transport key일 뿐, request identity를
-  대신하지 않는다.
-- 요청이 chain을 가진다면 현재 chain link의 `address`, `node`, `binding`,
-  `generation`이 대상 node와 일치해야 한다.
+- `target` must be the address of the agent that consumes the command.
+- Agent commands must have `recipient=Agent`, and node commands
+  `recipient=Node(node_id)`.
+- Commands that need a request-response must have `request_id`, `stream_id`,
+  and `origin_agent` or legacy `reply_to`. If `to_reply()` is `None`, the
+  command is fire-and-forget and no reply body is produced.
+- `route` is only a transport key for cancellation and legacy continuation; it
+  does not replace the request identity.
+- If the request carries a chain, the current chain link's `address`, `node`,
+  `binding` and `generation` must match the target node.
 
 ### 21.1 `CreateNode`
 
-**방향:** OUTER/drive → agent, `Control` lane, `recipient=Agent`.
+**Direction:** OUTER/drive → agent, `Control` lane, `recipient=Agent`.
 
-**입력:** `node`는 agent 내부에서 사용할 node id, `adapter`는 해당 agent의
-registry에 등록된 adapter kind다. 둘 다 text이며 empty 값의 의미를 별도로
-정의하지 않는다. unknown adapter는 placement 오류다.
+**Input:** `node` is the node id used inside the agent, and `adapter` is an
+adapter kind registered in that agent's registry. Both are text, and the meaning
+of an empty value is not separately defined. An unknown adapter is a placement
+error.
 
-**처리 순서:**
+**Processing order:**
 
-1. registry가 adapter factory를 조회한다.
-2. factory가 node용 adapter를 만들지 못하면 `Failed`를 즉시 생성한다.
-3. factory 성공 시 agent는 초기 ceiling 1인 node handle을 만든다.
-4. node registry 작업은 별도 async task에서 수행되며 duties worker가 factory나
-   node lock을 기다리지 않는다.
+1. The registry looks up the adapter factory.
+2. If the factory cannot build an adapter for the node, `Failed` is produced immediately.
+3. On factory success, the agent creates a node handle with an initial ceiling of 1.
+4. The node registry work runs in a separate async task, and the duties worker
+   does not wait on the factory or the node lock.
 
-**성공:** `Reply::Accepted { detail: "node ... created on ..." }`. 기존 같은
-`node` id가 있으면 새 handle을 등록하고 이전 handle을 bounded shutdown한다.
-따라서 동일 요청 재전송은 단순한 조회형 idempotency가 아니라 replacement
-operation이다.
+**Success:** `Reply::Accepted { detail: "node ... created on ..." }`. If a node
+with the same `node` id already exists, the new handle is registered and the
+previous handle gets a bounded shutdown. Resending the same request is therefore
+a replacement operation, not a simple lookup-style idempotent call.
 
-**실패:** adapter kind 미등록이면 `Reply::Failed`; reply route가 없으면
-실패도 wire로 나가지 않는다. create 이후 node의 실제 model materialization은
-별도의 `Load`다. `CreateNode` 성공만으로 inference 가능 상태가 되지 않는다.
+**Failure:** `Reply::Failed` if the adapter kind is not registered; without a
+reply route, even the failure does not go out on the wire. The node's actual
+model materialization after create is a separate `Load`. A successful
+`CreateNode` alone does not make the node ready for inference.
 
 ### 21.2 `DeleteNode`
 
-**입력:** `node` id. 해당 node의 queued/active/lifecycle carrier를 모두
-terminalize할 수 있는 shutdown 경계를 요청한다.
+**Input:** `node` id. Requests a shutdown boundary that can terminalize all of
+that node's queued/active/lifecycle carriers.
 
-**처리:** node admission을 닫고 stop을 전달한 뒤 runner, outbox에 bounded
-wait를 적용한다. active adapter hop은 native 강제 중단이 아니라 adapter의
-다음 hop/terminal 경계를 기다리는 정책이다.
+**Processing:** Closes node admission, delivers stop, then applies a bounded
+wait to the runner and the outbox. For an active adapter hop, the policy is to
+wait for the adapter's next hop/terminal boundary, not to force a native stop.
 
-**성공:** shutdown 완료 후 `Reply::Released`. node status registry에서는
-shutdown 동안 같은 handle이 보이며, 같은 id가 concurrent replacement된 경우
-replacement를 삭제하지 않는다.
+**Success:** `Reply::Released` after shutdown completes. The node status
+registry shows the same handle during shutdown, and if the same id was
+concurrently replaced, the replacement is not deleted.
 
-**실패:** node가 없으면 `Reply::Failed { "no node ..." }`. timeout 후 local
-shutdown이 반환되어도 downstream/OUTER terminal delivery는 성공으로 확정되지
-않으며 `outbox_lost`가 증가할 수 있다.
+**Failure:** `Reply::Failed { "no node ..." }` if the node does not exist. Even
+if local shutdown returns after a timeout, downstream/OUTER terminal delivery is
+not confirmed as successful, and `outbox_lost` may increase.
 
 ### 21.3 `Inspect`
 
-**입력:** body 없음. machine snapshot은 현재 process가 등록한 adapter kind,
-platform/address 등 machine-owned facts를 담는다.
+**Input:** no body. The machine snapshot carries machine-owned facts such as the
+adapter kinds registered by the current process and the platform/address.
 
-**성공:** `Reply::Machine { snapshot }`. snapshot text는 legacy/opaque
-표현이며 P4가 GPU model, VRAM, driver semantics를 재해석하지 않는다.
+**Success:** `Reply::Machine { snapshot }`. The snapshot text is a
+legacy/opaque representation, and P4 does not reinterpret GPU model, VRAM or
+driver semantics.
 
-**재실행:** read-only snapshot이므로 재요청해도 model load나 node state를
-변경하지 않는다. `Machine`은 특정 artifact의 model profile이 아니다.
-artifact 지식은 `InspectModel`로 얻는다.
+**Re-run:** It is a read-only snapshot, so repeating the request does not change
+model load or node state. `Machine` is not the model profile of a specific
+artifact. Artifact knowledge comes from `InspectModel`.
 
 ### 21.4 `InspectModel`
 
-**입력:** `artifact`, `adapter`. agent registry에 등록된 adapter만 선택할 수
-있다. adapter instance는 `inspect_model()`을 호출할 뿐 loaded deployment를
-변경하지 않아야 한다.
+**Input:** `artifact`, `adapter`. Only adapters registered in the agent registry
+can be selected. The adapter instance only calls `inspect_model()` and must not
+change the loaded deployment.
 
-**처리 및 identity:** agent는 inspection 시작 시각을 `generated_at`으로 잡고
-기본 5분 expiry를 계산한다. capability id는 agent가 생성하고 profile과
-artifact/adapter를 local registry에 보관한다. inspection은 blocking adapter
-API를 `spawn_blocking`으로 실행한다.
+**Processing and identity:** The agent takes the inspection start time as
+`generated_at` and computes a default 5-minute expiry. The agent generates the
+capability id and keeps the profile and artifact/adapter in its local
+registry. Inspection runs the blocking adapter API with `spawn_blocking`.
 
-**성공:** `Reply::Model { artifact, adapter, profile,
-capability_snapshot_id, generated_at, expires_at }`. profile은 GGUF/model
-architecture/tensor facts를 포함할 수 있지만 P4는 문자열을 해석하지 않는다.
+**Success:** `Reply::Model { artifact, adapter, profile,
+capability_snapshot_id, generated_at, expires_at }`. The profile may contain
+GGUF/model architecture/tensor facts, but P4 does not interpret the string.
 
-**실패:** adapter가 artifact를 읽지 못하거나 inspection을 지원하지 않으면
-adapter error를 `Reply::Failed`로 반환한다. guessed profile을 반환하는 것은
-성공이 아니다.
+**Failure:** If the adapter cannot read the artifact or does not support
+inspection, the adapter error is returned as `Reply::Failed`. Returning a
+guessed profile is not success.
 
-**재실행/유효성:** 같은 artifact를 다시 inspect하면 새 snapshot id와 expiry가
-생긴다. 이후 Load는 snapshot id, artifact, expiry를 보내야 하며 만료 snapshot은
-adapter 호출 전에 거부된다. 현재 registry `matches()`는 artifact와 expiry를
-확인하지만 adapter/profile provenance 자체를 cryptographically 검증하지 않는다.
+**Re-run/validity:** Inspecting the same artifact again produces a new snapshot
+id and expiry. A later Load must send the snapshot id, artifact and expiry, and
+an expired snapshot is rejected before the adapter is called. The current
+registry `matches()` checks the artifact and expiry but does not
+cryptographically verify adapter/profile provenance itself.
 
 ### 21.5 `Cancel`
 
-**입력:** `route` 하나. 현재 implementation의 취소 key는 request_id가
-아니라 route다. route가 비어 있거나 재사용되면 caller가 의도한 request와
-다를 수 있으므로 새 protocol에서는 immutable request identity를 함께 관리해야
-한다.
+**Input:** one `route`. The cancellation key in the current implementation is
+the route, not request_id. If the route is empty or reused, it may differ from
+the request the caller intended, so a new protocol must also manage the
+immutable request identity.
 
-**처리:** 모든 node의 bounded waiting queue에서 route를 제거한다. 이미 adapter에
-hand-off된 active hop은 강제로 interrupt하지 않는다. 따라서 cancel은
-“다음 hop을 시작하지 않음”이며 “현재 backend call 즉시 중단”이 아니다.
+**Processing:** Removes the route from every node's bounded waiting queue. An
+active hop already handed off to the adapter is not forcibly interrupted.
+Cancel therefore means "do not start the next hop", not "stop the current
+backend call immediately".
 
-**성공:** 적어도 하나의 waiting carrier가 제거되면 취소 요청자에게
-`Reply::Accepted { detail: "cancelled ..." }`를 보낸다. 원래 요청에는
-`return_channel`로 replay 가능한 terminal `Reply::Failed`를 요청당 한 번 보낸다.
-체인의 추가 queued carrier는 같은 요청의 중복 terminal을 만들지 않고 폐기하며,
-그 폐기 수는 별도 status 관측값으로 집계해야 한다.
+**Success:** If at least one waiting carrier was removed, the cancel requester
+receives `Reply::Accepted { detail: "cancelled ..." }`. The original request
+receives, once per request, a terminal `Reply::Failed` that can be replayed via
+`return_channel`. Additional queued carriers of the chain are discarded without
+producing a duplicate terminal for the same request, and the number of discards
+must be aggregated as a separate status observation.
 
-**실패:** waiting carrier가 없으면 `Reply::Failed { "nothing waiting ..." }`.
-이미 완료된 request와 active-only request가 이 결과에 포함된다. cancel reply는
-작업이 중단됐다는 durable OUTER receipt가 아니다.
+**Failure:** `Reply::Failed { "nothing waiting ..." }` if there is no waiting
+carrier. Already completed requests and active-only requests fall into this
+result. A cancel reply is not a durable OUTER receipt that the work stopped.
 
 ### 21.6 `Status`
 
-**입력:** body 없음, `Control` lane. status 수집은 node lock과 subscription
-metrics를 읽으므로 duties worker에서 기다리지 않고 async task에서 수행한다.
+**Input:** no body, `Control` lane. Status collection reads node locks and
+subscription metrics, so it runs in an async task instead of waiting in the
+duties worker.
 
-**성공:** 현재 schema로 `Reply::StatusSnapshot`. legacy peer 협상을 별도로
-사용하는 경우 `Reply::Status` text도 존재하지만 신규 consumer는 typed
-snapshot을 사용해야 한다.
+**Success:** `Reply::StatusSnapshot` with the current schema. When legacy peer
+negotiation is used separately, `Reply::Status` text also exists, but new
+consumers must use the typed snapshot.
 
-**일관성:** snapshot은 여러 local lock을 순차적으로 읽은 bounded projection이며
-분산 전체에 대한 atomic snapshot이 아니다. `snapshot_seq`로 같은 agent의
-snapshot 순서를 비교할 수 있지만 request event log offset은 아니다.
+**Consistency:** The snapshot is a bounded projection that reads several local
+locks one after another; it is not an atomic snapshot of the whole distributed
+system. `snapshot_seq` lets you compare the order of snapshots from the same
+agent, but it is not a request event log offset.
 
 ### 21.7 `Acknowledge`
 
-**입력:** body의 `return_channel`, `stream_id`, `event_seq`; envelope의
-`return_channel`도 반드시 같은 논리 channel이어야 한다. reader가 주입한
-`ingress_generation`은 wire body가 아니다.
+**Input:** the body's `return_channel`, `stream_id` and `event_seq`; the
+envelope's `return_channel` must be the same logical channel. The
+`ingress_generation` injected by the reader is not part of the wire body.
 
-**처리:** body/envelope channel mismatch면 즉시 폐기하고
-`subscription_ack_rejected`만 증가시킨다. 일치하면 현재 channel generation과
-generation을 비교한 뒤 해당 stream의 `event_seq <= given event_seq`인
-unacked frames를 제거한다.
+**Processing:** On a body/envelope channel mismatch, the ACK is discarded
+immediately and only `subscription_ack_rejected` is incremented. If they match,
+the current channel generation is compared with the generation, and the
+stream's unacked frames with `event_seq <= given event_seq` are removed.
 
-**성공/응답:** ACK 자체에는 별도 reply가 없다. accepted socket generation이
-stale이면 제거하지 않고 false로 끝난다. 현재 journal에 저장된 frame이 실제
-OUTER application까지 소비됐는지는 P4가 판단하지 않는다.
+**Success/response:** An ACK has no reply of its own. If the accepted socket
+generation is stale, nothing is removed and the call ends with false. P4 does
+not judge whether a frame stored in the current journal was actually consumed
+by the OUTER application.
 
-## 22. node 실행·cache 명령별 명세
+## 22. Per-command specification for node execution and cache
 
 ### 22.1 `Load`
 
-**입력 조건:** chain current link가 대상 node를 가리키고, `artifact`와
-`capability_snapshot_id`가 discovery 결과에 묶여 있어야 한다. `plan`은
-placement와 adapter launch에 필요한 opaque text다. `ceiling`은 adapter
-admission 상한으로 사용되며, 0이면 window가 sequence를 admission하지 않는
-경계로 취급된다.
+**Preconditions:** The current chain link must point to the target node, and
+`artifact` and `capability_snapshot_id` must be bound to a discovery result.
+`plan` is opaque text needed for placement and adapter launch. `ceiling` is used
+as the adapter admission upper bound; 0 is treated as a boundary at which the
+window admits no sequences.
 
-**변환:** `Bodies::lifecycle()`가 `Work::Load`로 바꾸고 deployment를 current
-chain `binding`에서, snapshot fields를 body에서 가져온다. node가 adapter에
-`start(Load, sink)`를 호출한다.
+**Conversion:** `Bodies::lifecycle()` turns it into `Work::Load`, taking the
+deployment from the current chain `binding` and the snapshot fields from the
+body. The node calls `start(Load, sink)` on the adapter.
 
-**event/응답:** adapter의 `LoadProgress`는 `Progress`로, `Loaded`는 generation을
-기록하고 `Bound`로 변환된다. load가 완료되어야 해당 generation의 Execute가
-허용된다.
+**Events/response:** The adapter's `LoadProgress` becomes `Progress`, and
+`Loaded` records the generation and becomes `Bound`. Execute for that generation
+is allowed only after the load completes.
 
-**실패:** snapshot missing/zero/expired/mismatch는 adapter 호출 전 실패한다.
-adapter load error는 `Failed`다. partial load는 loaded generation으로
-승격되지 않는다. 동일 deployment 재Load는 adapter/node의 generation policy를
-따르며 기존 generation으로 조용히 간주하지 않는다.
+**Failure:** A missing/zero/expired/mismatched snapshot fails before the adapter
+is called. An adapter load error is `Failed`. A partial load is not promoted to a
+loaded generation. Re-Loading the same deployment follows the adapter/node
+generation policy and is never silently treated as the existing generation.
 
 ### 22.2 `Unload`
 
-**입력 조건:** current deployment가 존재해야 하며 해당 node의 queued/active
-work와 lifecycle ordering을 따른다. node는 unload를 inference hop과 동시에
-임의로 실행하지 않는다.
+**Preconditions:** The current deployment must exist, and the node's
+queued/active work and lifecycle ordering apply. The node does not run an unload
+arbitrarily in parallel with an inference hop.
 
-**성공:** adapter `Unloaded` 후 `Released`; deployment generation은 더 이상
-새 hop의 유효한 bound로 사용할 수 없다.
+**Success:** `Released` after the adapter's `Unloaded`; the deployment generation
+can no longer be used as a valid bound for new hops.
 
-**실패:** adapter unload error는 `Failed`. unload 이후 남은 outbox frame은
-shutdown/backpressure 규칙을 따르며 Released가 OUTER receipt를 의미하지 않는다.
+**Failure:** An adapter unload error is `Failed`. Outbox frames left after the
+unload follow the shutdown/backpressure rules, and Released does not mean an
+OUTER receipt.
 
 ### 22.3 `Execute`
 
-**입력:** `prompt`, `max_tokens`, opaque `options`. 첫 stage/internal backend는
-prompt를 받으며, sequence identity는 envelope `request_id` 우선, legacy에만
-route fallback이다. body가 sequence로 해석되면 `state=None`,
-`remaining=max_tokens`로 만든다.
+**Input:** `prompt`, `max_tokens`, opaque `options`. The first stage/internal
+backend receives the prompt. The sequence identity comes from the envelope
+`request_id` first, with a route fallback only for legacy frames. When the body
+is interpreted as a sequence, it is built with `state=None` and
+`remaining=max_tokens`.
 
-**admission:** node queue가 work를 받고 window composer가 load ceiling 이하의
-여러 sequence를 하나의 `Hop { phase=Prefill }`로 묶을 수 있다. 하나의 Execute가
-반드시 하나의 adapter call이라는 뜻이 아니다.
+**admission:** The node queue accepts the work, and the window composer can
+group several sequences, up to the load ceiling, into one
+`Hop { phase=Prefill }`. One Execute does not necessarily mean one adapter call.
 
-**성공 흐름:** adapter가 hop 결과를 event로 올리고, 마지막 stage의 outcome
-text는 `Token`으로, stop outcome은 `Done`으로 변환된다. 중간 stage는 cut-set을
-다음 chain link로 보낸다. stop이 없으면 `Continue` body를 만들고 chain을
-다음 lap에서 재시작한다.
+**Success flow:** The adapter posts hop results as events. The last stage's
+outcome text becomes `Token`, and a stop outcome becomes `Done`. Middle stages
+send the cut-set to the next chain link. Without a stop, a `Continue` body is
+built and the chain restarts on the next lap.
 
-**실패:** malformed body, node queue refusal, stale hop, partial completion,
-deadline 만료는 해당 carrier의 terminal `Failed`/timeout 경로다. adapter
-호출 stack에서 기다리지 않으므로 다른 request의 arrival/completion을 막지
-않는다.
+**Failure:** A malformed body, node queue refusal, stale hop, partial completion
+or deadline expiry takes the carrier's terminal `Failed`/timeout path. Nothing
+waits on the adapter call stack, so the arrival/completion of other requests is
+not blocked.
 
 ### 22.4 `Continue`
 
-**입력:** `remaining`, `emitted`, `options`, `state`; prompt는 없다. P4는
-options와 state를 해석하지 않고 이전 Execute의 값이 보존되었는지만 보장한다.
+**Input:** `remaining`, `emitted`, `options`, `state`; there is no prompt. P4
+does not interpret options or state; it only guarantees that the values from the
+previous Execute are preserved.
 
-**변환:** `Work::Hop { phase=Decode }`의 sequence가 되고, `state`는 직전 hop의
-`Outcome.forward`를 그대로 되돌려준 값이며, `remaining`은 원 request의 bound다.
-staged chain의 첫 stage부터 다시 시작하여 한 decode lap이 한 token-bearing
-outcome을 만들 수 있다.
+**Conversion:** It becomes a sequence of `Work::Hop { phase=Decode }`. `state` is
+the previous hop's `Outcome.forward` handed back unchanged, and `remaining` is
+the original request's bound. The lap restarts from the first stage of the
+staged chain, so one decode lap can produce one token-bearing outcome.
 
-**종료:** outcome stop이 Some이면 더 이상 Continue를 생성하지 않고 Done을
-만든다. stop이 None이면 다음 lap을 enqueue한다. `remaining=0`은 새 hop을
-예약하지 않는 경계다.
+**Termination:** If the outcome stop is Some, no further Continue is produced
+and Done is built. If stop is None, the next lap is enqueued. `remaining=0` is
+the boundary at which no new hop is reserved.
 
 ### 22.5 `Persist`
 
-**입력:** `sequence`; operation identity는 envelope request_id, deployment/
-stage/generation은 current chain에서 온다.
+**Input:** `sequence`; the operation identity comes from the envelope
+request_id, and the deployment/stage/generation come from the current chain.
 
-**의미:** resident KV를 durable adapter store에 기록하고 resident memory를
-해제하는 단일 sequence mutation이다. multi-stage deployment면 각 stage에
-같은 operation identity로 전송된다.
+**Meaning:** A single-sequence mutation that writes resident KV to the durable
+adapter store and releases the resident memory. For a multi-stage deployment,
+it is sent to each stage with the same operation identity.
 
-**성공/실패:** adapter `Cached` → `Reply::Cached`; 실패 → identity-bearing
-`CacheFailed`. `Cached.bytes`는 durable copy 크기이며 0은 discard 등 backend
-의미다. 이미 commit된 동일 operation 재전송은 coordinator가 receipt를
-reconcile해야 하며 P4 body 자체가 exactly-once를 만들지는 않는다.
+**Success/failure:** adapter `Cached` → `Reply::Cached`; failure →
+identity-bearing `CacheFailed`. `Cached.bytes` is the durable copy size; 0 has a
+backend meaning such as discard. For a resend of the same already committed
+operation, the coordinator must reconcile the receipt; the P4 body itself does
+not create exactly-once behaviour.
 
 ### 22.6 `PreparePersist`
 
-resident KV를 바로 최종 상태로 만들지 않고 transaction prepare 상태로 기록한다.
-prepare가 모든 stage에서 성공하기 전에는 coordinator가 Commit을 보내지 않는다.
-adapter receipt는 `Prepared`여야 하며 `Committed`/다른 operation receipt를
-성공으로 해석하지 않는다.
+Records resident KV in a transaction prepare state instead of making it final
+immediately. The coordinator does not send Commit until prepare has succeeded on
+every stage. The adapter receipt must be `Prepared`; a `Committed` receipt or a
+receipt for another operation is not interpreted as success.
 
 ### 22.7 `Restore`
 
-동일 `sequence`의 durable KV를 resident state로 복원하여 다음 Execute/Continue가
-이어지게 한다. restore는 durable copy를 삭제하지 않는다. 성공 receipt는
-bytes와 generation을 포함한 `Cached`이며, generation이 현재 deployment와
-다르면 복원을 거부한다.
+Restores the durable KV of the same `sequence` into resident state so that the
+next Execute/Continue can continue from it. Restore does not delete the durable
+copy. The success receipt is a `Cached` that includes bytes and generation; if
+the generation differs from the current deployment, the restore is rejected.
 
 ### 22.8 `PrepareRestore`
 
-복원 결과를 즉시 visible state로 확정하지 않고 prepare한다. 모든 stage의
-prepare receipt가 모이면 Commit, 일부 실패하면 Abort다. 이미 resident state가
-있는 경우 adapter가 어떤 rollback snapshot을 갖는지는 adapter 소유다.
+Prepares the restore result instead of committing it immediately as visible
+state. When prepare receipts from all stages have arrived the result is Commit;
+if some fail it is Abort. If resident state already exists, which rollback
+snapshot the adapter keeps is owned by the adapter.
 
 ### 22.9 `Fork`
 
-`sequence`의 durable/resident 상태를 `into`라는 새 sequence identity로 복사한다.
-원본은 변경하지 않는다. 성공 `Cached.sequence`는 원래 sequence가 아니라
-`into`이며 coordinator가 이후 branch를 새 operation/sequence로 추적한다.
-alias/shared-prefix를 만들었다고 간주하지 않는다.
+Copies the durable/resident state of `sequence` into a new sequence identity
+named `into`. The original is not changed. The successful `Cached.sequence` is
+`into`, not the original sequence, and the coordinator tracks the branch from
+then on as a new operation/sequence. It is not assumed that an
+alias/shared-prefix was created.
 
 ### 22.10 `Discard`
 
-`sequence`의 durable copy를 제거한다. resident state를 지우는 시점과 bytes
-정리는 adapter가 보고한다. 성공 receipt bytes는 보통 0이지만 backend가
-정확한 값을 소유한다. 이미 없는 sequence는 adapter receipt에 따라 Absent 또는
-실패가 되며 P4가 임의로 성공 처리하지 않는다.
+Removes the durable copy of `sequence`. The adapter reports when resident state
+is cleared and how bytes are cleaned up. The success receipt bytes are usually
+0, but the backend owns the exact value. A sequence that is already gone
+becomes Absent or a failure depending on the adapter receipt, and P4 never
+treats it as a success on its own.
 
 ### 22.11 `PrepareDiscard`
 
-discard를 staged mutation으로 준비하지만 아직 durable copy를 최종 삭제하지
-않는다. 모든 stage가 Prepared일 때만 Commit으로 삭제하고, 중간 오류는 Abort로
-원상태를 요구한다.
+Prepares the discard as a staged mutation without yet deleting the durable copy
+for good. The copy is deleted by Commit only when every stage is Prepared; an
+error in between requires Abort to restore the original state.
 
 ### 22.12 `Commit`
 
-이전 prepare operation을 final state로 만든다. Commit은 새 독립 mutation이
-아니라 같은 envelope `operation_id`, sequence, generation의 transaction phase다.
-prepared receipt가 없는 stage, 다른 operation id, 다른 generation은 stale
-receipt로 거부한다. 성공은 `Cached` 또는 `CacheStatus(state=committed)`다.
+Makes the previous prepare operation final. Commit is not a new independent
+mutation but a transaction phase of the same envelope `operation_id`, sequence
+and generation. A stage without a prepared receipt, a different operation id or
+a different generation is rejected as a stale receipt. Success is `Cached` or
+`CacheStatus(state=committed)`.
 
 ### 22.13 `Abort`
 
-이전 prepare mutation을 취소하고 pre-state를 복원하도록 adapter에 요구한다.
-Abort는 이미 외부에 commit된 상태를 magic하게 되돌린다는 보장이 아니며,
-adapter receipt가 Aborted인지 확인해야 한다. 실패/불일치는 `Inconsistent`로
-reconcile 대상이 된다.
+Asks the adapter to cancel the previous prepare mutation and restore the
+pre-state.
+Abort does not guarantee that it can magically undo a state already committed
+externally; the adapter receipt must be checked for Aborted. A failure or
+mismatch becomes `Inconsistent` and a reconcile target.
 
 ### 22.14 `Reconcile`
 
-mutation을 재생하지 않고 adapter durable receipt만 읽는다. `Absent`,
-`Prepared`, `Committed`, `Aborted`, `Inconsistent`를 `CacheStatus`로 반환한다.
-coordinator recovery가 process restart 후 마지막으로 어떤 phase가 확정됐는지
-판정하는 operation이다. `Inconsistent`는 성공도 재시도 가능 success도 아니며
-manual/adapter-specific recovery가 필요하다.
+Reads only the adapter's durable receipt, without replaying the mutation. It
+returns `Absent`, `Prepared`, `Committed`, `Aborted` or `Inconsistent` as
+`CacheStatus`. This is the operation coordinator recovery uses after a process
+restart to determine which phase was last settled. `Inconsistent` is neither a
+success nor a retryable success; it requires manual/adapter-specific recovery.
 
-## 23. reply별 의미와 terminal성
+## 23. Meaning and terminality of each reply
 
-아래 reply는 body tag뿐 아니라 envelope의 원래 request/stream/channel identity와
-함께 해석해야 한다.
+The replies below must be interpreted together with the envelope's original
+request/stream/channel identity, not by the body tag alone.
 
-| reply | terminal성 | 생성 조건과 소비 규칙 |
+| reply | Terminality | Production condition and consumption rule |
 | --- | --- | --- |
-| `Accepted` | non-terminal | 명령 admission/취소 요청 접수. 이후 결과가 별도로 올 수 있음 |
-| `Progress` | non-terminal | load stage 진행. percent는 adapter report이며 완료 판정은 `Bound` |
-| `Bound` | lifecycle terminal | deployment generation이 실행 가능해졌음을 의미 |
-| `Released` | lifecycle terminal | unload/delete 완료. socket delivery receipt 아님 |
-| `Token` | stream non-terminal | token index/text. 다음 Decode가 있을 수 있음 |
-| `Done` | inference terminal | reason/generated를 가진 정상 종료 |
-| `Failed` | request/work terminal | generic detail; cache identity가 없을 수 있음 |
+| `Accepted` | non-terminal | Command admitted / cancel request received. A result may follow separately |
+| `Progress` | non-terminal | Load stage progress. percent is an adapter report; completion is judged by `Bound` |
+| `Bound` | lifecycle terminal | The deployment generation has become executable |
+| `Released` | lifecycle terminal | unload/delete complete. Not a socket delivery receipt |
+| `Token` | stream non-terminal | token index/text. A further Decode may follow |
+| `Done` | inference terminal | Normal termination with reason/generated |
+| `Failed` | request/work terminal | Generic detail; may have no cache identity |
 | `Machine` | inspect terminal | process/machine snapshot text |
-| `Model` | inspect terminal | artifact profile와 capability snapshot 발급 결과 |
+| `Model` | inspect terminal | Artifact profile and capability snapshot issuance result |
 | `Status` | status response terminal | legacy text snapshot |
 | `StatusSnapshot` | status response terminal | typed schema snapshot |
-| `Cached` | cache-operation terminal | mutation 결과와 durable bytes |
-| `CacheFailed` | cache-operation terminal | operation/sequence/stage identity가 있는 실패 |
-| `CacheStatus` | reconcile terminal | durable receipt query 결과; mutation을 의미하지 않음 |
+| `Cached` | cache-operation terminal | Mutation result and durable bytes |
+| `CacheFailed` | cache-operation terminal | Failure carrying operation/sequence/stage identity |
+| `CacheStatus` | reconcile terminal | Durable receipt query result; does not imply a mutation |
 
-`Token`은 event_seq를 증가시켜 streaming response로 보낼 수 있고, `Done`은
-마지막 event_seq를 가진 terminal frame이다. 중간 node가 생성한 cut-set frame은
-OUTER reply가 아니므로 Token으로 변환되지 않는다. reply가 downstream에
-전달되지 못하면 reply의 의미가 수행됐다고 외부에서 확정할 수 없다.
+`Token` can be sent as a streaming response with an increasing event_seq, and
+`Done` is the terminal frame carrying the last event_seq. A cut-set frame
+produced by a middle node is not an OUTER reply, so it is not converted to
+Token. If a reply cannot be delivered downstream, nobody outside can confirm
+that the reply's meaning took effect.
 
-## 24. adapter event별 node 적용 규칙
+## 24. Node application rules per adapter event
 
 ### `LoadProgress`
 
-`deployment`가 active lifecycle과 일치하는지 확인하고 stage/percent/detail을
-`Progress`로 전달한다. percent 범위의 backend 의미는 adapter-owned다. 이 event는
-load 완료나 generation 발급을 대신하지 않는다.
+Checks that `deployment` matches the active lifecycle and forwards
+stage/percent/detail as `Progress`. The backend meaning of the percent range is
+adapter-owned. This event does not substitute for load completion or generation
+issuance.
 
 ### `Loaded`
 
-현재 deployment를 generation과 allocation report로 bind한다. generation은
-adapter가 발급하며 P4가 계산하지 않는다. 이후 `Load`의 `Bound`가 나가고 해당
-generation의 hop admission이 가능해진다. 같은 deployment의 stale Loaded는
-현재 lifecycle identity와 맞지 않으면 적용하지 않는다.
+Binds the current deployment with the generation and the allocation report. The
+adapter issues the generation; P4 does not compute it. The `Bound` for the
+`Load` then goes out, and hop admission for that generation becomes possible. A
+stale Loaded for the same deployment is not applied if it does not match the
+current lifecycle identity.
 
 ### `Unloaded`
 
-deployment resident state가 release됐음을 알린다. runner는 lifecycle carrier를
-완료하고 `Released`를 만든다. 이후 해당 generation에 대한 cache/execute는
-재검증 없이 허용하지 않는다.
+Signals that the deployment's resident state has been released. The runner
+completes the lifecycle carrier and produces `Released`. From then on,
+cache/execute for that generation is not allowed without re-verification.
 
 ### `HopComplete`
 
-node가 가장 엄격하게 검증하는 event다.
+The event the node validates most strictly.
 
-1. `hop_id`가 현재 active hop과 같아야 한다.
-2. deployment가 현재 bound deployment와 같아야 한다.
-3. `expected` set이 현재 in-flight sequence set과 같아야 한다.
-4. outcomes의 sequence set이 expected와 정확히 같아야 한다.
-5. duplicate/foreign/missing sequence가 있으면 전체 hop을 성공 처리하지 않는다.
+1. `hop_id` must equal the current active hop.
+2. The deployment must equal the currently bound deployment.
+3. The `expected` set must equal the current in-flight sequence set.
+4. The sequence set of the outcomes must be exactly equal to expected.
+5. If any sequence is duplicate, foreign or missing, the hop as a whole is not treated as a success.
 
-검증을 통과하면 in-flight를 제거하고 node queue permit을 반환한 후 각
-`Outcome`을 다음 stage, Token, Done, Continue 중 하나로 변환한다. 검증 실패는
-새 hop에 적용되지 않고 invalid/orphan counter와 terminal failure policy를
-따른다.
+If validation passes, the in-flight entries are removed, the node queue permit
+is returned, and each `Outcome` is converted into one of: next stage, Token,
+Done or Continue. A validation failure is not applied to a new hop and follows
+the invalid/orphan counter and the terminal failure policy.
 
-### `Cached`와 `CacheStatus`
+### `Cached` and `CacheStatus`
 
-두 event 모두 deployment, stage_id, generation, operation_id, sequence identity를
-검증한다. `Cached`는 mutation이 실제로 끝났음을 뜻하고, `CacheStatus`는 receipt
-질의 결과일 뿐 mutation 성공을 뜻하지 않는다. generation 또는 operation id가
-다르면 late event로 거부한다.
+Both events validate the deployment, stage_id, generation, operation_id and
+sequence identity. `Cached` means the mutation actually finished; `CacheStatus`
+is only a receipt query result and does not mean the mutation succeeded. If the
+generation or operation id differs, the event is rejected as late.
 
 ### `Failed`
 
-`hop_id`가 있으면 active execution failure, 없으면 load/unload/cache lifecycle
-failure다. `sequence`가 있으면 그 sequence만, 없으면 현재 lifecycle carrier의
-범위가 terminal 대상이다. node는 실패 event를 late/foreign event인지 먼저
-검사한 뒤 reply를 생성한다.
+With a `hop_id` it is an active execution failure; without one it is a
+load/unload/cache lifecycle failure. With a `sequence`, only that sequence is
+the terminal target; without one, the scope of the current lifecycle carrier is.
+The node first checks whether the failure event is a late/foreign event, then
+produces the reply.
 
-## 25. 프로토콜 operation의 재시도 원칙
+## 25. Retry principles for protocol operations
 
-현재 P4는 모든 operation에 공통적인 durable idempotency key를 자동 제공하지
-않는다. 재시도자는 다음 규칙을 지켜야 한다.
+P4 currently does not automatically provide a durable idempotency key common to
+all operations. A retrying caller must follow these rules.
 
-- inference는 같은 `request_id + stream_id + return_channel`을 유지해야 한다.
-- 새 decode lap은 같은 request/stream을 유지하되 새 `event_seq`를 사용한다.
-- cache transaction은 같은 `operation_id`, sequence, deployment generation,
-  stage set을 유지하고 먼저 `Reconcile`해야 한다.
-- `CreateNode`는 replacement semantics이므로 timeout 뒤 무조건 재생하지 말고
-  `Status`/node existence를 먼저 확인한다.
-- `InspectModel`은 새 snapshot을 발급하므로 이전 snapshot과 동일하다고
-  가정하지 않는다.
-- `Token`, `Done`, `Cached`가 socket write 이후 재전달될 수 있으므로 OUTER는
-  event_seq/operation identity를 이용해 duplicate를 멱등 처리해야 한다.
+- Inference must keep the same `request_id + stream_id + return_channel`.
+- A new decode lap keeps the same request/stream but uses a new `event_seq`.
+- A cache transaction must keep the same `operation_id`, sequence, deployment
+  generation and stage set, and must `Reconcile` first.
+- `CreateNode` has replacement semantics, so do not replay it unconditionally
+  after a timeout; check `Status`/node existence first.
+- `InspectModel` issues a new snapshot, so do not assume it equals the previous
+  snapshot.
+- `Token`, `Done` and `Cached` can be redelivered after a socket write, so OUTER
+  must handle duplicates idempotently using event_seq/operation identity.
 
-P4의 local journal ACK는 이 caller 정책을 대신하지 않는다. ACK 이전의 replay는
-가능하지만 exactly-once 또는 application-level commit을 뜻하지 않는다.
+P4's local journal ACK does not replace this caller policy. Replay before the ACK
+is possible, but it does not mean exactly-once or an application-level commit.
 
-## 26. 통신 협력 모델
+## 26. Communication cooperation model
 
-앞 절의 operation은 독립적으로 호출하는 API 목록이 아니다. 실제 inference는
-하나의 `request_id`와 `stream_id`를 가진 frame이 여러 actor 사이를 이동하면서
-각 operation의 결과를 다음 operation의 입력으로 만드는 협력 프로토콜이다.
+The operations in the previous sections are not a list of independently called
+APIs. Real inference is a cooperation protocol in which a frame with one
+`request_id` and `stream_id` moves between several actors, and each operation's
+result becomes the next operation's input.
 
 ```mermaid
 sequenceDiagram
@@ -1411,36 +1472,36 @@ sequenceDiagram
     participant N0 as Stage 0 Node
     participant A1 as Stage 1 Agent
     participant N1 as Stage 1 Node
-    participant AN as Origin Agent의 반환 경계
+    participant AN as Origin Agent return boundary
 
     O->>A0: Execute(request_id, stream_id, origin_agent, return_channel)
     A0->>N0: Prefill hop(chain.position=0)
     N0->>A1: cut-set + original context(to_next_hop)
     A1->>N1: Prefill hop(chain.position=1)
     N1-->>A1: HopComplete(outcome)
-    A1-->>A0: Token 또는 Done(to_reply)
-    A0-->>O: socket subscription 전달
+    A1-->>A0: Token or Done(to_reply)
+    A0-->>O: delivered via socket subscription
     O->>A0: Acknowledge(stream_id, event_seq)
 ```
 
-핵심 규칙은 다음과 같다.
+The core rules are as follows.
 
-1. OUTER와 최초 연결된 agent가 `origin_agent`와 `return_channel`을 envelope에
-   넣는다. downstream node는 OUTER socket을 추측하지 않는다.
-2. chain은 source routing 정보다. 각 node는 자신의 current link를 소비하고
-   다음 link를 envelope에 남긴다.
-3. 중간 node는 생성 text를 반환하지 않는다. adapter의 `Outcome.forward`를
-   다음 node로 보낼 `Sequence.state`로 그대로 옮겨 전달한다.
-4. 마지막 node만 logits/text를 결과로 만든다. 결과 envelope은 origin agent를
-   target으로 하고 `Response` lane을 사용한다.
-5. origin agent는 continuation registry, legacy route, return-channel
-   subscription 순서로 response를 소비한다.
-6. OUTER ACK가 오기 전까지 non-zero event frame은 unacked 상태다.
+1. The agent first connected to OUTER puts `origin_agent` and `return_channel`
+   into the envelope. Downstream nodes do not guess the OUTER socket.
+2. The chain is source-routing information. Each node consumes its current link
+   and leaves the next link in the envelope.
+3. Middle nodes do not return generated text. They pass the adapter's
+   `Outcome.forward` unchanged as the `Sequence.state` for the next node.
+4. Only the last node turns logits/text into a result. The result envelope
+   targets the origin agent and uses the `Response` lane.
+5. The origin agent consumes the response in the order: continuation registry,
+   legacy route, return-channel subscription.
+6. Non-zero event frames stay unacked until the OUTER ACK arrives.
 
-## 27. 모델 discovery에서 load 완료까지
+## 27. From model discovery to load completion
 
-OUTER가 GGUF architecture와 stage 배치를 직접 알지 못하는 경우의 협력 순서는
-다음과 같다.
+When OUTER does not know the GGUF architecture and stage placement itself, the
+cooperation order is as follows.
 
 ```mermaid
 sequenceDiagram
@@ -1452,10 +1513,10 @@ sequenceDiagram
 
     O->>A: InspectModel(artifact, adapter)
     A->>D: inspect_model(artifact)
-    D-->>A: opaque profile 또는 error
-    A->>R: capability_snapshot_id, artifact, expiry 등록
+    D-->>A: opaque profile or error
+    A->>R: register capability_snapshot_id, artifact, expiry
     A-->>O: Model(profile, snapshot_id, generated_at, expires_at)
-    O->>O: 모든 agent profile 비교 및 chain/plan 작성
+    O->>O: compare all agent profiles and write chain/plan
     O->>A: CreateNode(node, adapter)
     A-->>O: Accepted
     O->>N: Load(plan, artifact, ceiling, snapshot_id, expiry)
@@ -1466,40 +1527,41 @@ sequenceDiagram
     N-->>O: Bound(generation)
 ```
 
-### 27.1 단계별 전제와 결과
+### 27.1 Preconditions and results per step
 
-| 단계 | 선행 조건 | 성공 결과 | 다음 단계에 전달되는 값 |
+| Step | Precondition | Success result | Values passed to the next step |
 | --- | --- | --- | --- |
-| `InspectModel` | adapter kind 등록, artifact 접근 가능 | `Model` | profile, snapshot id, expiry |
-| profile 비교 | 모든 선택 agent의 reply 수신 | placement plan 확정 | stage 순서, adapter kind, artifact |
-| `CreateNode` | 각 agent에 adapter factory 존재 | node registry materialization | node id |
-| `Load` | snapshot id/expiry/artifact 일치 | `Bound(generation)` | binding, generation |
-| chain 확정 | 모든 stage Bound | 실행 가능한 link set | address, node, binding, generation |
+| `InspectModel` | adapter kind registered, artifact accessible | `Model` | profile, snapshot id, expiry |
+| Profile comparison | Replies received from all selected agents | Placement plan fixed | stage order, adapter kind, artifact |
+| `CreateNode` | adapter factory exists on each agent | node registry materialization | node id |
+| `Load` | snapshot id/expiry/artifact match | `Bound(generation)` | binding, generation |
+| Chain fixed | All stages Bound | Executable link set | address, node, binding, generation |
 
-`InspectModel` 성공만으로 node가 loaded 되지 않는다. `CreateNode` 성공만으로
-model이 실행 가능하지도 않다. 모든 stage의 `Bound` generation과 chain link가
-완성된 뒤에만 Execute를 발행할 수 있다.
+A successful `InspectModel` alone does not load a node. A successful
+`CreateNode` alone does not make the model executable either. Execute can be
+issued only after every stage's `Bound` generation and the chain links are
+complete.
 
-### 27.2 discovery 실패 협력
+### 27.2 Cooperation on discovery failure
 
-- adapter를 모르는 agent는 `Failed`를 반환하고 placement 후보에서 제외된다.
-- 한 artifact에 대한 profile이 agent 간 다르면 OUTER/drive는 plan을 확정하지
-  않는다.
-- snapshot expiry가 Load 시점에 지나면 node는 adapter를 호출하지 않고 실패한다.
-- Load 도중 한 stage가 실패하면 전체 chain을 `Bound`로 선언하지 않는다.
-- 이미 Bound된 다른 stage를 해제할지 재시도할지는 drive의 deployment policy며,
-  P4가 자동으로 partial deployment를 성공으로 승격하지 않는다.
+- An agent that does not know the adapter returns `Failed` and is excluded from placement candidates.
+- If the profiles for one artifact differ between agents, OUTER/drive does not
+  fix the plan.
+- If the snapshot expiry has passed at Load time, the node fails without calling the adapter.
+- If one stage fails during Load, the whole chain is not declared `Bound`.
+- Whether to release or retry other stages that are already Bound is drive's
+  deployment policy; P4 never automatically promotes a partial deployment to success.
 
-## 28. 단일 request의 prefill/decode 협력
+## 28. Prefill/decode cooperation for a single request
 
-### 28.1 첫 prefill
+### 28.1 First prefill
 
-첫 frame은 다음 identity를 모두 가져야 한다.
+The first frame must carry all of the following identities.
 
 ```text
-request_id       = 하나의 논리 inference identity
-stream_id        = streaming response 집합
-origin_agent     = OUTER ingress를 받은 agent address
+request_id       = one logical inference identity
+stream_id        = set of streaming responses
+origin_agent     = address of the agent that received the OUTER ingress
 return_channel   = OUTER logical channel~bearer
 route            = worker/legacy continuation key
 chain.position   = 0
@@ -1507,7 +1569,7 @@ lane             = Prefill
 recipient        = first chain node
 ```
 
-노드에서 일어나는 실제 변환은 다음과 같다.
+The actual conversion on the node is as follows.
 
 ```text
 ToNode::Execute
@@ -1518,13 +1580,13 @@ ToNode::Execute
   -> Adapter::start(Work::Hop, EventSink)
 ```
 
-window composer는 여러 Execute를 하나의 Hop sequence window로 묶을 수 있다.
-그 경우에도 각 Sequence의 request identity와 options는 독립적으로 유지된다.
+The window composer can group several Executes into one Hop sequence window.
+Even then, each Sequence's request identity and options are kept independently.
 
-### 28.2 중간 stage 협력
+### 28.2 Middle-stage cooperation
 
-중간 stage의 `HopComplete` outcome에는 `forward`가 있고 text는 비어 있을 수
-있다.
+A middle stage's `HopComplete` outcome has `forward`, and its text may be
+empty.
 
 ```mermaid
 sequenceDiagram
@@ -1534,21 +1596,21 @@ sequenceDiagram
 
     N0->>N0: HopComplete(h0, expected={r})
     N0->>N1: Sequence.state = outcome.forward, original Execute context
-    N1->>N1: 수신한 state로 resident sequence r 확인
+    N1->>N1: confirm resident sequence r from the received state
     N1->>N1: HopComplete(h1, expected={r})
     N1->>N2: Sequence.state = outcome.forward, original context
-    N2->>N2: final stage에서 text/logits 생산
+    N2->>N2: produce text/logits at the final stage
 ```
 
-각 다음 hop은 이전 hop의 `hop_id`와 다른 새 id를 갖는다. 그러나
-`request_id`, `stream_id`, `origin_agent`, `return_channel`, chain 전체는
-보존된다.
+Each next hop has a new id different from the previous hop's `hop_id`. However,
+`request_id`, `stream_id`, `origin_agent`, `return_channel` and the whole chain
+are preserved.
 
-### 28.3 마지막 stage와 response
+### 28.3 Last stage and response
 
-마지막 stage outcome에 `text`가 있으면 `Reply::Token` body를 만든다. outcome의
-`stop`이 Some이면 같은 stream에 `Reply::Done`을 추가하고 더 이상 Continue를
-만들지 않는다. stop이 None이면 다음 decode lap을 만든다.
+If the last stage's outcome has `text`, a `Reply::Token` body is built. If the
+outcome's `stop` is Some, a `Reply::Done` is added to the same stream and no
+further Continue is built. If stop is None, the next decode lap is built.
 
 ```text
 last HopComplete
@@ -1557,23 +1619,25 @@ last HopComplete
   -> outcome.stop = None
        -> Continue(original remaining, emitted+1, options, outcome.forward)
        -> chain.restart(), lane=Decode
-       -> first stage로 재전송
+       -> resend to the first stage
 ```
 
-최종 outcome의 `text`가 있고 `stop`이 없는 경우에만 `Token`이 생성된다.
-`Token`이 생성됐다는 사실과 OUTER가 받았다는 사실은 별개다. response frame은
-`event_seq`를 증가시켜 origin agent로 보내고, origin agent는 journal 기록과
-live socket 전달을 별도로 처리한다. live socket queue가 가득 차거나 연결이
-끊겨도 journal 기록이 성공하면 재연결 replay 대상으로 보존될 수 있지만,
-그것은 OUTER가 이미 수신했다는 뜻이 아니다. 현재 protocol은 live-send
-성공과 durable-retained를 하나의 Reply 성공으로 구분하지 않는다.
+`Token` is produced only when the final outcome has `text` and no `stop`. The
+fact that a `Token` was produced and the fact that OUTER received it are
+separate. The response frame is sent to the origin agent with an incremented
+`event_seq`, and the origin agent handles journal writes and live socket
+delivery separately. Even if the live socket queue is full or the connection
+drops, a successful journal write can keep the frame as a reconnect replay
+target, but that does not mean OUTER has already received it. The current
+protocol does not distinguish live-send success from durable-retained within a
+single Reply success.
 
-## 29. 연속 요청과 pipeline overlap
+## 29. Continuous requests and pipeline overlap
 
-pipeline parallelism의 목적은 한 request의 한 hop을 동시에 실행하는 것이
-아니다. request A가 stage 1에서 실행되는 동안 request B의 prefill이 stage 0에
-들어가고, request C가 stage 2를 점유하는 식으로 stage마다 서로 다른 request가
-동시에 진행되는 것이다.
+The purpose of pipeline parallelism is not to run one hop of one request in
+parallel. It is for different requests to progress at the same time on
+different stages: while request A runs on stage 1, request B's prefill enters
+stage 0, and request C occupies stage 2.
 
 ```mermaid
 sequenceDiagram
@@ -1582,7 +1646,7 @@ sequenceDiagram
     participant Q2 as Stage 2 queue
     participant G as Adapter event loop
 
-    Note over Q0,Q2: 시간은 아래로 흐름
+    Note over Q0,Q2: time flows downward
     Q0->>G: A prefill admission
     G->>Q1: A cut-set
     Q0->>G: B prefill admission
@@ -1593,105 +1657,108 @@ sequenceDiagram
     Q2->>G: A token/done
 ```
 
-실제 node는 한 시점에 하나의 active `hop_id`만 갖지만, Hop의
-`sequences` window와 stage 간 동시성 때문에 전체 pipeline은 여러 request를
-동시에 보유할 수 있다. 다음 제약이 동시에 적용된다.
+A real node has only one active `hop_id` at a time, but because of the Hop
+`sequences` window and concurrency across stages, the pipeline as a whole can
+hold several requests at once. The following constraints apply together.
 
-- node window width ≤ 해당 deployment Load ceiling
+- node window width ≤ the deployment's Load ceiling
 - node queue depth ≤ NodeQueue capacity
 - agent lane depth ≤ lane budget
 - worker in-flight ≤ global in-flight semaphore
 - peer outbound queue depth ≤ 4096
-- subscription pending/unacked ≤ 각 1024
+- subscription pending/unacked ≤ 1024 each
 
-어느 한 경계가 차면 새 prefill은 refusal 또는 bounded wait를 겪는다. Decode
-lane은 KV를 보유한 lap의 진행을 위해 별도 깊이와 bounded preference를 갖지만,
-16번째 take의 fair pass와 node window의 조건부 prefill admission이 함께
-적용된다. 이것은 GPU utilization 보장이 아니며, 실제 feed-at-capacity는
-runtime measurement가 필요하다.
+When any one boundary is full, a new prefill meets a refusal or a bounded wait.
+The Decode lane has its own depth and a bounded preference so that laps holding
+KV can progress, but the fair pass on every 16th take and the node window's
+conditional prefill admission also apply. This is not a GPU utilization
+guarantee, and real feed-at-capacity needs runtime measurement.
 
-## 30. response dispatch와 OUTER reconnect 협력
+## 30. Response dispatch and OUTER reconnect cooperation
 
-### 30.1 정상 response
+### 30.1 Normal response
 
-`Response` lane은 response frame을 continuation/subscription으로 소비하기
-위한 dispatch 경로다. accepted socket reader는 `Response` frame으로
-subscription writer를 bind하지 않는다. origin agent의 dispatcher가
-`return_key()` continuation을 먼저 resolve하고, 없으면 legacy `route`
-continuation을 resolve하며, 둘 다 없을 때만 `return_channel` subscription을
-시도한다. 모두 실패한 response만 duties/fallback으로 내려가며 조용히
-버리지 않는다. 즉 response dispatch는 response-only lane 판정에 의존하고,
-일반 request frame만 capability channel bind를 유발한다.
+The `Response` lane is the dispatch path for consuming response frames through
+continuations/subscriptions. The accepted socket reader does not bind a
+subscription writer from a `Response` frame. The origin agent's dispatcher first
+resolves the `return_key()` continuation, then the legacy `route` continuation,
+and tries the `return_channel` subscription only when neither exists. Only
+responses for which all of these fail go down to duties/fallback, and they are
+never dropped silently. In other words, response dispatch relies on the
+response-only lane decision, and only general request frames trigger a
+capability channel bind.
 
-origin agent에 도착한 response는 아래 순서로 처리된다.
+A response that arrives at the origin agent is handled in the following order.
 
 ```mermaid
 flowchart TD
-    R[Response frame 도착] --> K{return_key로 continuation 존재?}
-    K -- 예 --> C[one-shot continuation resolve]
-    K -- 아니오 --> L{legacy route handler 존재?}
-    L -- 예 --> H[route handler resolve]
-    L -- 아니오 --> S{return_channel subscription 존재?}
-    S -- 예 --> W[socket writer에 bounded try_send]
-    S -- 아니오 --> D[Duties/fallback 또는 unrouted/loss accounting]
-    W --> A[event_seq non-zero면 ACK 전까지 unacked]
-    A --> O[OUTER 수신]
+    R[Response frame arrives] --> K{continuation exists for return_key?}
+    K -- yes --> C[one-shot continuation resolve]
+    K -- no --> L{legacy route handler exists?}
+    L -- yes --> H[route handler resolve]
+    L -- no --> S{return_channel subscription exists?}
+    S -- yes --> W[bounded try_send to socket writer]
+    S -- no --> D[Duties/fallback or unrouted/loss accounting]
+    W --> A[if event_seq non-zero, unacked until ACK]
+    A --> O[OUTER receives]
     O --> ACK[Acknowledge(channel, stream, seq)]
-    ACK --> J[seq 이하 journal 제거]
+    ACK --> J[remove journal entries up to seq]
 ```
 
-continuation handler는 resolve 즉시 제거되는 process-local `FnOnce`다. durable
-request registry가 아니므로 OUTER가 reconnect할 때는 같은 logical channel로
-명시적으로 bind해야 한다.
+A continuation handler is a process-local `FnOnce` removed as soon as it
+resolves. It is not a durable request registry, so when OUTER reconnects it must
+bind explicitly to the same logical channel.
 
-### 30.2 reconnect와 replay
+### 30.2 Reconnect and replay
 
 ```mermaid
 sequenceDiagram
     participant O as OUTER
-    participant S as 새 TCP socket
+    participant S as New TCP socket
     participant A as Agent Subscriptions
     participant J as channel journal
 
     O->>S: bind frame(return_channel=channel~bearer)
     S->>A: bind(channel)
     A->>J: load unacked/pending
-    J-->>A: bounded snapshot 또는 corruption error
-    A-->>S: generation 증가, unacked 먼저 replay
+    J-->>A: bounded snapshot or corruption error
+    A-->>S: increment generation, replay unacked first
     S-->>O: replay frames
     O->>S: Acknowledge(channel, stream, seq)
-    S->>A: 현재 generation인지 확인
-    A->>J: seq 이하 제거
+    S->>A: check it is the current generation
+    A->>J: remove entries up to seq
 ```
 
-journal load/persist error는 generation 0과 빈 replay로 channel을 fail-closed한다.
-재연결 socket이 이전 generation의 ACK를 보내면 journal을 지우지 않는다.
-socket write가 성공했어도 application이 받았다는 뜻이 아니므로 ACK 전 replay는
-중복 가능성을 갖는다.
+A journal load/persist error fails the channel closed with generation 0 and an
+empty replay. If the reconnected socket sends an ACK from an earlier
+generation, the journal is not cleared. A successful socket write does not mean
+the application received the frame, so replay before the ACK can produce
+duplicates.
 
-### 30.3 peer outbound 실패
+### 30.3 Peer outbound failure
 
-agent-to-agent outbound는 address별 persistent pump를 사용한다. queue에 frame을
-넣는 것과 remote application이 frame을 읽는 것은 별개다.
+Agent-to-agent outbound uses a persistent pump per address. Putting a frame into
+the queue and the remote application reading the frame are separate events.
 
 ```text
 outbound send
-  -> peer queue 대기
+  -> wait in peer queue
   -> TCP connect/write
-  -> 성공: 해당 frame을 다시 보내지 않음
-  -> 실패: bounded reconnect 시도
-       -> chain 첫 link로 한 번 relay
-       -> relay도 실패하면 refusal/loss/deadline
+  -> success: do not send that frame again
+  -> failure: bounded reconnect attempt
+       -> relay once to the first chain link
+       -> if the relay also fails, refusal/loss/deadline
 ```
 
-이미 write된 frame은 duplicate 방지를 위해 자동 replay하지 않는다. 반대로
-OUTER subscription journal은 ACK 전 replay를 허용한다. 두 경로의 delivery
-정책이 다르므로 OUTER ACK를 peer outbound 성공으로 추론하면 안 된다.
+A frame already written is not replayed automatically, to avoid duplicates. The
+OUTER subscription journal, by contrast, allows replay before the ACK. The two
+paths have different delivery policies, so an OUTER ACK must not be taken to
+imply peer outbound success.
 
-## 31. cache persist/restore 협력 시퀀스
+## 31. Cache persist/restore cooperation sequence
 
-multi-stage cache는 한 node 호출이 아니라 coordinator가 동일 transaction
-identity로 모든 stage를 조정하는 protocol이다.
+Multi-stage cache is not a single node call; it is a protocol in which the
+coordinator steers every stage under the same transaction identity.
 
 ```mermaid
 sequenceDiagram
@@ -1701,29 +1768,29 @@ sequenceDiagram
     participant K0 as Adapter KV 0
     participant K1 as Adapter KV 1
 
-    D->>D: operation_id/sequence/deployment/generation 검증
+    D->>D: validate operation_id/sequence/deployment/generation
     D->>N0: PreparePersist(op, seq)
     D->>N1: PreparePersist(op, seq)
     N0->>K0: KvPrepare
     N1->>K1: KvPrepare
     K0-->>N0: CacheStatus(Prepared)
     K1-->>N1: CacheStatus(Prepared)
-    alt 모든 stage Prepared
+    alt all stages Prepared
         D->>N0: Commit(op, seq)
         D->>N1: Commit(op, seq)
         K0-->>N0: KvReceipt(Committed)
         K1-->>N1: KvReceipt(Committed)
         D-->>D: Complete
-    else 한 stage 실패/timeout
+    else one stage failed/timed out
         D->>N0: Abort(op, seq)
         D->>N1: Abort(op, seq)
-        D-->>D: Failed 또는 Reconcile 필요
+        D-->>D: Failed or Reconcile needed
     end
 ```
 
-### 31.1 transaction identity
+### 31.1 Transaction identity
 
-모든 stage frame은 다음을 함께 가져야 한다.
+Every stage frame must carry all of the following.
 
 ```text
 operation_id = envelope.request_id
@@ -1733,29 +1800,30 @@ generation   = current chain generation
 stage_id     = current chain node
 ```
 
-receipt 하나라도 다른 operation, sequence, deployment, generation, stage를
-가리키면 coordinator는 성공으로 합치지 않는다. `Fork`는 subject가 `into`로
-바뀌므로 이후 receipt의 sequence도 새 branch를 가리켜야 한다.
+If even one receipt points to a different operation, sequence, deployment,
+generation or stage, the coordinator does not merge it as a success. For `Fork`
+the subject changes to `into`, so the sequence in later receipts must also point
+to the new branch.
 
-### 31.2 restart recovery
+### 31.2 Restart recovery
 
 ```text
 process restart
   -> coordinator journal recover
-  -> 마지막 state가 Complete이면 이미 완료된 stage 재실행 금지
-  -> Preparing/Committing/Aborting이면 stage별 Reconcile
-  -> receipt 집합과 journal identity 대조
-  -> 모두 일치하면 남은 phase만 진행
-  -> Inconsistent/unknown stage/checksum error이면 자동 성공 금지
+  -> if the last state is Complete, do not re-run stages that already completed
+  -> if Preparing/Committing/Aborting, Reconcile per stage
+  -> check the receipt set against the journal identity
+  -> if everything matches, run only the remaining phase
+  -> on Inconsistent/unknown stage/checksum error, no automatic success
 ```
 
-coordinator journal recovery와 adapter KV receipt recovery는 서로 다른 저장소다.
-coordinator record가 Complete이어도 adapter manifest/bytes가 손상됐을 수 있고,
-adapter receipt가 Committed여도 coordinator가 그 사실을 기록하기 전에 죽을 수
-있다. 이 교차 파일 결합은 현재 P4가 exactly-once atomic commit으로 주장하지
-않는 이유다.
+Coordinator journal recovery and adapter KV receipt recovery use different
+stores. Even if the coordinator record is Complete, the adapter manifest/bytes
+may be damaged; and even if the adapter receipt is Committed, the coordinator
+may die before recording that fact. This cross-file coupling is why P4
+currently does not claim an exactly-once atomic commit.
 
-## 32. cancel, timeout, shutdown 협력 시퀀스
+## 32. Cancel, timeout and shutdown cooperation sequence
 
 ```mermaid
 sequenceDiagram
@@ -1766,31 +1834,32 @@ sequenceDiagram
     participant B as Adapter
 
     O->>A: Cancel(route)
-    A->>Q: route별 waiting carrier 제거
-    alt waiting carrier가 있음
+    A->>Q: remove waiting carriers for the route
+    alt a waiting carrier exists
         Q-->>R: cancellation terminalization
         A-->>O: Accepted(cancelled)
-    else active hop만 있음
+    else only an active hop exists
         A-->>O: Failed(nothing waiting)
-        R->>B: 현재 hop은 boundary까지 계속
+        R->>B: current hop continues until its boundary
     end
     O->>A: DeleteNode(node)
     A->>R: admission_closed + stop
-    R->>R: queued/active/lifecycle carrier terminalize
-    R->>A: done 또는 bounded timeout
-    A->>R: outbox stop 및 bounded drain
-    R-->>A: outbox_lost aggregate 가능
-    A-->>O: Released 또는 local failure
+    R->>R: terminalize queued/active/lifecycle carriers
+    R->>A: done or bounded timeout
+    A->>R: outbox stop and bounded drain
+    R-->>A: outbox_lost aggregate possible
+    A-->>O: Released or local failure
 ```
 
-deadline은 hop boundary에서 검사된다. backend에 이미 hand-off된 native call을
-P4가 강제로 중단한다고 가정하면 안 된다. shutdown 반환 이후에도 socket queue,
-peer queue, OUTER ACK 이전 journal에 frame이 남거나 유실될 수 있다.
+The deadline is checked at hop boundaries. Do not assume P4 forcibly stops a
+native call already handed off to the backend. Even after shutdown returns,
+frames may remain in, or be lost from, the socket queue, the peer queue, or the
+journal before the OUTER ACK.
 
-## 33. monitoring이 협력 흐름을 관찰하는 방법
+## 33. How monitoring observes the cooperation flow
 
-Status는 자동 trace stream이 아니라 OUTER가 origin agent에 요청하는 snapshot
-operation이다.
+Status is not an automatic trace stream; it is a snapshot operation that OUTER
+requests from the origin agent.
 
 ```mermaid
 sequenceDiagram
@@ -1803,21 +1872,23 @@ sequenceDiagram
     A0->>N: node_status snapshot read
     A0->>A0: traffic/lane/peer/subscription counters read
     A0-->>O: StatusSnapshot(schema=6)
-    O->>A1: Status (별도 요청)
+    O->>A1: Status (separate request)
     A1-->>O: StatusSnapshot(schema=6)
-    O->>O: snapshot_seq/generated_at 및 request identity 조합
+    O->>O: combine snapshot_seq/generated_at and request identity
 ```
 
-fleet 전체의 한 순간을 보장하는 coordinator snapshot은 없다. OUTER는 각
-agent의 `address`, `snapshot_seq`, `generated_at`을 별도로 비교해야 하며,
-node `active_hop`과 `waiting_requests`가 보이지 않는 순간을 request 완료로
-해석해서는 안 된다. `outbox_lost`, `event_loss`, `ack_rejected`는 해당 agent
-process의 aggregate이며 다른 agent/OUTER의 동일 request 원인을 자동으로
-연결하지 않는다.
+There is no coordinator snapshot that guarantees a single instant across the
+whole fleet. OUTER must compare each agent's `address`, `snapshot_seq` and
+`generated_at` separately, and must not interpret a moment in which a node's
+`active_hop` and `waiting_requests` are not visible as request completion.
+`outbox_lost`, `event_loss` and `ack_rejected` are aggregates of that agent
+process and are not automatically linked to the cause of the same request on
+other agents/OUTER.
 
-## 34. 전체 request의 정규 상태 전이
+## 34. Canonical state transitions of a whole request
 
-다음 state machine은 여러 통신 operation의 협력 결과를 정의한다.
+The following state machine defines the cooperative result of several
+communication operations.
 
 ```mermaid
 stateDiagram-v2
@@ -1847,8 +1918,9 @@ stateDiagram-v2
     TimedOut --> [*]
 ```
 
-이 state machine의 state는 단일 wire enum으로 전송되는 것이 아니다. `Accepted`,
-`Bound`, `Token`, `Done`, `CacheStatus`, typed Status의 조합과 runner 내부
-carrier/queue 상태로 관찰된다. 따라서 consumer는 한 reply만 보고 전체 state를
-추측하지 말고 request/stream/event identity와 operation phase를 함께 사용해야
-한다.
+The states of this state machine are not transmitted as a single wire enum.
+They are observed through the combination of `Accepted`, `Bound`, `Token`,
+`Done`, `CacheStatus` and the typed Status, together with the runner's internal
+carrier/queue state. A consumer must therefore not guess the whole state from a
+single reply; it must use the request/stream/event identity together with the
+operation phase.

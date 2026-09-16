@@ -1,107 +1,111 @@
-# 2026-09-09 — `pressure`가 처음 완주한 실행의 실측 기준선
+# 2026-09-09 — Measured baseline of the first run in which `pressure` completed
 
-종류: 실측 보고. 응답 품질은 `judge.mjs`가 아니라 **원문을 직접 읽어 판정**했다.
-개선을 주장하지 않는다. 이 시나리오는 이전에 완주한 적이 없어 비교 대상이 없다.
+Kind: measurement report. Response quality was judged **by reading the raw text directly**, not by `judge.mjs`.
+No improvement is claimed. This scenario had never completed before, so there is nothing to compare against.
 
-대상은 [제어 응답 예산 수정](2026-09-09-control-receipt-budget.md)이 통과시킨 두 실행이다.
-`m42-server2`(RTX 3090 ×2), 커밋 `76d9bc3e3`, 작업 트리 clean, agent sha256 `eaa153f4231385ce…`.
+The subjects are the two runs that the [control response budget fix](2026-09-09-control-receipt-budget.md) let pass.
+`m42-server2` (RTX 3090 ×2), commit `76d9bc3e3`, clean working tree, agent sha256 `eaa153f4231385ce…`.
 
-숫자는 전부 각 실행의 보존 산출물에서 재계산했다. 재현 명령:
+Every number was recomputed from each run's preserved artifacts. Reproduction command:
 
 ```
 node test/benchmarks/p4-4node/measure-run.mjs target/pressure-remote-receipt-fix-20260909/<run id>
 ```
 
-이 스크립트는 `artifact.json`·`config.json`·`report.json`·`gpu.csv`만 읽는다. 처리량은 응답에서
-다시 세고 하네스 값을 나란히 찍으므로 어긋나면 보인다. 두 실행 모두 일치했다(382.15, 401.75).
+This script reads only `artifact.json`, `config.json`, `report.json` and `gpu.csv`. It recounts throughput from the
+responses and prints the harness value next to it, so any mismatch is visible. Both runs matched (382.15, 401.75).
 
-## 구성
+## Configuration
 
-| 항목 | 값 |
+| Item | Value |
 | --- | --- |
-| 모델 | `S:\models\unsloth\gemma-4-E2B-it-GGUF\gemma-4-E2B-it-Q8_0.gguf` |
-| 절단 | 4 stage `[0,5) [5,9) [9,13) [13,35)`, device `0,0,1,1` — **카드 하나에 노드 둘** |
-| 층 배분 | 5 / 4 / 4 / **22** — gemma-4-E2B가 13..34를 KV 공유 구역으로 두어 그 안에 경계를 둘 수 없다 |
-| 오프로딩 | **없다(VRAM-only).** 각 stage의 `--override-tensor`는 **자기가 소유하지 않은 층**을 CPU로 보내는 staging 기법이며(node-3은 `blk.(0..12)`), RAM 오프로딩이 아니다 |
+| Model | `S:\models\unsloth\gemma-4-E2B-it-GGUF\gemma-4-E2B-it-Q8_0.gguf` |
+| Cut | 4 stages `[0,5) [5,9) [9,13) [13,35)`, device `0,0,1,1` — **two nodes per card** |
+| Layer split | 5 / 4 / 4 / **22** — gemma-4-E2B makes 13..34 a KV-sharing region, so no boundary can be placed inside it |
+| Offloading | **None (VRAM-only).** Each stage's `--override-tensor` sends **layers it does not own** to CPU as a staging technique (node-3 uses `blk.(0..12)`); it is not RAM offloading |
 | resident | `n-seq-max` 256, per-sequence context 512, `batch/ubatch` 512 |
-| 워크로드 | 512 요청, 1초마다 32건씩 16웨이브, `max_tokens` 200 |
+| Workload | 512 requests, 16 waves of 32 every 1 s, `max_tokens` 200 |
 
-## 1. 응답 — 직접 읽고 판정했다
+## 1. Responses — read and judged directly
 
-프롬프트는 모든 요청이 동일하다.
+The prompt is identical for every request.
 
 ```
 <|turn>user\n타입스크립트에 대해 한국어로 설명하라<turn|>\n<|turn>model\n
+// English: <|turn>user\nExplain TypeScript in Korean<turn|>\n<|turn>model\n
 ```
 
-**이 형식은 이 모델 자신의 것이 맞다.** GGUF의 `tokenizer.chat_template`을 직접 읽어 확인했다.
-템플릿은 `<|turn>ROLE\n … <turn|>\n`을 쓰고 생성 프롬프트로 `<|turn>model\n`을 연다. system turn은
-`enable_thinking`·tools·system 메시지가 있을 때만 열리므로, 사용자 메시지 하나뿐인 이 요청에서
-템플릿이 만들어내는 문자열은 위와 같다. BOS는 토크나이저가 붙인다.
+**This format is this model's own.** It was confirmed by reading the GGUF's `tokenizer.chat_template` directly.
+The template uses `<|turn>ROLE\n … <turn|>\n` and opens `<|turn>model\n` as the generation prompt. The system turn
+opens only when `enable_thinking`, tools or a system message is present, so for this request with a single user message
+the template produces the string above. The tokenizer adds BOS.
 
-응답 표본(A의 `req-001`, 앞부분):
+Response sample (A's `req-001`, beginning):
 
-> \#\# 타입스크립트(TypeScript)에 대한 한국어 설명
-> **타입스크립트(TypeScript)**는 **JavaScript에 정적 타입(Static Typing) 기능을 추가한 언어**입니다. …
-> \#\#\# 1. 왜 타입스크립트를 사용할까요? (핵심 필요성)
-> * **런타임 오류 (Runtime Errors):** … (여기서 끊김: `* **유지`)
+> \#\# 타입스크립트(TypeScript)에 대한 한국어 설명 (English: "## A Korean explanation of TypeScript")
+> **타입스크립트(TypeScript)**는 **JavaScript에 정적 타입(Static Typing) 기능을 추가한 언어**입니다. … (English: "**TypeScript** is **a language that adds static typing to JavaScript**. …")
+> \#\#\# 1. 왜 타입스크립트를 사용할까요? (핵심 필요성) (English: "### 1. Why use TypeScript? (the core need)")
+> * **런타임 오류 (Runtime Errors):** … (English: "* **Runtime errors (Runtime Errors):** …") (cut off here: `* **유지` (English: "* **Maint"))
 
-| 판정 항목 | A `…4ce8e2b1` | B `…9014d441` | 내 판단 |
+| Verdict item | A `…4ce8e2b1` | B `…9014d441` | My judgement |
 | --- | --- | --- | --- |
-| 주제 적합성 | 512/512가 한국어 TypeScript 설명 | 동일 | **통과.** 표본을 읽었고 질문에 답한다 |
-| 한글 비율 | 최소 0.50 / 평균 0.54 | 0.49 / 0.54 | 통과. 영어 이탈 없음 |
-| 반복 붕괴 | 최다 반복 24자 창 비율 최대 **0.06** | 0.06 | 통과. 한 줄 루프 없음 |
-| 서로 다른 응답 | 177/512 | 165/512 | 같은 프롬프트라 당연하다. 다양성 시험이 아니다 |
-| 종료 사유 | **512/512 `length`** | 동일 | **불합격.** 자연 종료가 하나도 없다 |
-| 문장부호로 끝남 | **5/512만** | 5/512 | 위와 같은 사실의 다른 표현 |
+| Topical fit | 512/512 are Korean-language TypeScript explanations | same | **Pass.** I read the samples, and they answer the question |
+| Hangul ratio | min 0.50 / mean 0.54 | 0.49 / 0.54 | Pass. No drift into English |
+| Repetition collapse | max share of the most repeated 24-character window **0.06** | 0.06 | Pass. No single-line loops |
+| Distinct responses | 177/512 | 165/512 | Expected for an identical prompt. This is not a diversity test |
+| Finish reason | **512/512 `length`** | same | **Fail.** Not a single natural stop |
+| Ends with punctuation | **only 5/512** | 5/512 | Another expression of the same fact |
 
-**판정: 내용은 유의미하지만 완결된 응답이 아니다.** 512건 전부가 `max_tokens` 200에서 잘렸고
-대부분 문장 중간에서 끝난다. 이 시나리오는 배치 압력을 재려고 만든 것이고 200토큰은 그 목적의
-설정이지만, **"정상 프롬프트와 정상 응답"의 증거로는 이 실행을 쓸 수 없다.** 완결까지 생성하는
-예산과 stop 조건을 가진 별도 실행이 필요하다.
+**Verdict: the content is meaningful, but these are not complete responses.** All 512 were cut at `max_tokens` 200,
+and most end mid-sentence. This scenario was built to measure batch pressure, and 200 tokens is a setting for that
+purpose, but **this run cannot be used as evidence of "a normal prompt and a normal response".** A separate run with a
+budget that generates to completion and a stop condition is needed.
 
-## 2. 처리량
+## 2. Throughput
 
 | | A | B |
 | --- | ---: | ---: |
-| 생성 토큰 | 102,400 | 102,400 |
-| 벽시계(도착~마지막 해제) | 267.96 s | 254.89 s |
-| **생성 TPS** | **382.15** | **401.75** |
-| prefill / decode 행 | 9,728 / 101,888 | 9,728 / 101,888 |
-| Verify / Replay 행 | 0 / 0 | 0 / 0 |
-| 요청당 토큰 간격(p50) | 692 ms | 698.5 ms |
+| Generated tokens | 102,400 | 102,400 |
+| Wall clock (arrival to last release) | 267.96 s | 254.89 s |
+| **Generation TPS** | **382.15** | **401.75** |
+| prefill / decode rows | 9,728 / 101,888 | 9,728 / 101,888 |
+| Verify / Replay rows | 0 / 0 | 0 / 0 |
+| Per-request inter-token interval (p50) | 692 ms | 698.5 ms |
 
-요청 하나가 보는 속도는 **약 1.45 tok/s**다. 총 382은 256개가 동시에 그 속도로 도는 결과다.
+The speed one request sees is **about 1.45 tok/s**. The total of 382 is the result of 256 requests running at that speed
+at the same time.
 
-도착 순위별 지연은 두 집단으로 갈린다. resident가 256이고 요청이 512이기 때문이다.
+Latency by arrival rank splits into two groups, because resident is 256 and there are 512 requests.
 
-| 도착 순위 (A) | 도착 시각 | TTFT p50 | 종단 p50 |
+| Arrival rank (A) | Arrival time | TTFT p50 | End-to-end p50 |
 | --- | ---: | ---: | ---: |
 | 0–32 | 0 ms | 3,165 ms | 140,959 ms |
 | 128–160 | 4,013 ms | 1,256 ms | 139,719 ms |
 | 256–288 | 8,007 ms | **139,317 ms** | 257,457 ms |
 | 384–416 | 12,004 ms | **135,578 ms** | 253,742 ms |
 
-앞 256건은 즉시 슬롯을 얻어 1.3–3.2초 만에 첫 토큰을 낸다. 뒤 256건은 **앞 웨이브가 끝나 슬롯을
-반납할 때까지 통째로 기다린다.** 전체 중앙값 TTFT를 하나로 인용하면 아무도 겪지 않은 값이 된다.
+The first 256 requests get a slot immediately and emit their first token in 1.3–3.2 s. The last 256 **wait in full until
+the earlier wave finishes and returns its slots.** Quoting a single overall median TTFT would give a value nobody
+experienced.
 
-## 3. 배치 폭과 UBATCH 채움률
+## 3. Batch width and UBATCH fill ratio
 
-채움률은 관측값이지 목표 지표가 아니다. 폭을 기다려서 모으면 채움률은 오르고 처리량과 kernel
-활성은 내려간다는 것을 09-09 정책 실험이 보였다([근거](2026-09-09-saturation-and-utilisation.md)).
+The fill ratio is an observation, not a target metric. The 09-09 policy experiment showed that waiting to accumulate
+width raises the fill ratio but lowers throughput and kernel activity ([evidence](2026-09-09-saturation-and-utilisation.md)).
 
 | | A | B |
 | --- | ---: | ---: |
-| 물리 batch | 1,367 | 1,281 |
+| Physical batches | 1,367 | 1,281 |
 | UBATCH | 512 | 512 |
-| batch당 행 평균 | 81.65 | 87.13 |
-| **UBATCH 채움률** | **15.95 %** | **17.02 %** |
-| decode batch 행 평균 / **최대** | 76.21 / **160** | 81.41 / **160** |
-| prefill batch 행 평균 / 최대 | 324.27 / 512 | 325.71 / 512 |
+| Mean rows per batch | 81.65 | 87.13 |
+| **UBATCH fill ratio** | **15.95 %** | **17.02 %** |
+| decode batch rows mean / **max** | 76.21 / **160** | 81.41 / **160** |
+| prefill batch rows mean / max | 324.27 / 512 | 325.71 / 512 |
 
-**resident가 256인데 decode 폭이 160을 넘은 적이 없다.** A의 decode 폭 분포와 각 폭 직전의 유휴:
+**Resident is 256, yet decode width never exceeded 160.** A's decode width distribution and the idle time just before
+each width:
 
-| 폭 | 횟수 | 직전 유휴 평균 | head stage 평균 |
+| Width | Count | Mean idle before | Mean head stage |
 | ---: | ---: | ---: | ---: |
 | 32 | 546 | 17.2 ms | 46.9 ms |
 | 64 | 317 | 50.1 ms | 79.4 ms |
@@ -109,72 +113,74 @@ node test/benchmarks/p4-4node/measure-run.mjs target/pressure-remote-receipt-fix
 | 128 | 188 | 223.8 ms | 102.0 ms |
 | 160 | 197 | 380.6 ms | 122.5 ms |
 
-**넓은 batch일수록 앞에서 더 오래 기다린 것이다.** 그리고 이것은 발행 정책이 남긴 것이 아니다.
+**The wider the batch, the longer it waited beforehand.** And this was not left behind by the issue policy.
 
-- `idle_gated` = **0** (두 실행 모두)
-- `ready_rows_left` = 평균 2.7 / 2.9, **p50 0, p90 0** — 계획 시점에 두고 간 행이 사실상 없다
-- `ready_sequences` p50 **64**, 최대 **160** — 적격한 시퀀스 자체가 그만큼뿐이었다
+- `idle_gated` = **0** (both runs)
+- `ready_rows_left` = mean 2.7 / 2.9, **p50 0, p90 0** — practically no rows were left behind at planning time
+- `ready_sequences` p50 **64**, max **160** — that was all the eligible sequences there were
 
-즉 **폭의 천장은 "무엇을 발행할지"가 아니라 "무엇이 발행 가능한지"에 있다.**
-[state.rs:356](../../../adapter/src/v2/node/state.rs)의 `phase_within`은 decode에서
-`outstanding > 0`이면 `None`을 반환한다. 자기 앞 decode가 아직 파이프라인에 있는 요청은 다음
-batch에 아무 행도 낼 수 없다. 4 stage 파이프라인에서 `depth_mean`이 3.18(B는 3.07)이므로 resident의
-상당수가 항상 비행 중이고, 그만큼 폭이 깎인다.
+So **the width ceiling lies in "what can be issued", not in "what to issue".**
+`phase_within` in [state.rs:356](../../../adapter/src/v2/node/state.rs) returns `None` during decode when
+`outstanding > 0`. A request whose previous decode is still in the pipeline cannot contribute any row to the next
+batch. In a 4-stage pipeline `depth_mean` is 3.18 (3.07 for B), so a large share of resident is always in flight, and
+width is cut by that much.
 
-head의 유휴 합계는 A **158 s / 267.96 s (59 %)**, B **145.4 s / 254.89 s (57 %)**다.
+The head's total idle time is A **158 s / 267.96 s (59 %)** and B **145.4 s / 254.89 s (57 %)**.
 
-stage별 점유:
+Per-stage occupancy:
 
 | | node0 | node1 | node2 | node3(tail) |
 | --- | ---: | ---: | ---: | ---: |
 | A service | 40.0 % | 29.6 % | 29.4 % | **76.6 %** |
-| A stage 평균 | 78.4 ms | 57.9 ms | 57.6 ms | **149.9 ms** |
+| A mean stage time | 78.4 ms | 57.9 ms | 57.6 ms | **149.9 ms** |
 | B service | 41.8 % | 30.8 % | 30.4 % | **78.5 %** |
 
 `any_stage_open` 95.7 % / 95.9 %, `two_or_more_open` 62.2 % / 65.8 %.
 
-**tail이 느린 이유의 후보로 층 수를 먼저 본다.** 이 절단은 5 / 4 / 4 / **22**층이다. 네 stage 시간에
-`절편 + 층수 × 기울기`를 맞추면(4층 57.9 ms와 22층 149.9 ms를 지나는 직선) 층당 5.11 ms, 절편 약
-37 ms가 나오고 4층인 node2의 57.6 ms가 그 선 위에 있다.
+**Layer count is the first candidate for why the tail is slow.** This cut is 5 / 4 / 4 / **22** layers. Fitting
+`intercept + layers × slope` to the four stage times (a line through 57.9 ms at 4 layers and 149.9 ms at 22 layers) gives
+5.11 ms per layer and an intercept of about 37 ms, and node2 at 4 layers with 57.6 ms lies on that line.
 
-**그러나 이 절편은 실측으로 귀속된 고정비가 아니다.** 네 점은 batch 폭도 stage 역할도 같은 카드를
-쓰는 process 수도 서로 다른 평균이고, 회귀의 절편은 그것들을 층 수로 이은 경험적 값이다. 벽시계에서
-빼도 되는 회수 가능한 비용으로 읽으면 안 된다. 말할 수 있는 것은 **tail의 149.9 ms를 sampler 비중으로
-곧장 설명해서는 안 된다**는 것뿐이며, 09-04 35B 분해를 이 구성에 옮겨 적지 않는다. 내역은
-`P4_STAGED_TRACE_STEP`의 parse/decode/sample/encode로 재야 한다.
+**But this intercept is not a fixed cost attributed by measurement.** The four points are means that differ in batch
+width, stage role and the number of processes sharing a card, and the regression intercept is an empirical value that
+connects them by layer count. It must not be read as a recoverable cost that can be subtracted from wall time. All that
+can be said is that **the tail's 149.9 ms must not be explained directly by the sampler share**; the 09-04 35B
+decomposition is not transcribed to this configuration. The breakdown must be measured with the
+parse/decode/sample/encode of `P4_STAGED_TRACE_STEP`.
 
-이 관측이 `pressure_2stage` 실험을 정당화한다. stage 수를 줄이면 무엇이 달라지는지는 그 실행이 답한다.
+This observation justifies the `pressure_2stage` experiment. That run answers what changes when the stage count is reduced.
 
-## 4. GPU 사용률
+## 4. GPU utilization
 
-창 정의: 어느 한 카드가 5 %를 처음 넘은 표본부터 마지막까지. 적재 머리와 정리 꼬리를 뺀다.
+Window definition: from the first sample where any card exceeds 5 % to the last. The load head and cleanup tail are excluded.
 
 | | A gpu0 | A gpu1 | B gpu0 | B gpu1 |
 | --- | ---: | ---: | ---: | ---: |
-| 전체 캡처 평균 | 16.8 % | 25.3 % | 17.4 % | 25.0 % |
-| **창 평균** | **18.8 %** | **28.2 %** | **19.5 %** | **28.1 %** |
-| 창 p50 / p90 / 최대 | 14 / 46 / 100 % | 25 / 66 / 100 % | 18 / 46 / 100 % | 25 / 63 / 100 % |
-| 창에서 0 %인 표본 | **430/1,205** | 231/1,205 | 376/1,155 | 196/1,155 |
-| 전력 평균 / 최대 | 93.0 / 203.1 W | 177.1 / 298.8 W | 93.2 / 206.5 W | 178.7 / 311.2 W |
-| 메모리 최대 | 9,754 MiB | 9,754 MiB | 9,754 MiB | 9,754 MiB |
+| Full-capture mean | 16.8 % | 25.3 % | 17.4 % | 25.0 % |
+| **Window mean** | **18.8 %** | **28.2 %** | **19.5 %** | **28.1 %** |
+| Window p50 / p90 / max | 14 / 46 / 100 % | 25 / 66 / 100 % | 18 / 46 / 100 % | 25 / 63 / 100 % |
+| Samples at 0 % in window | **430/1,205** | 231/1,205 | 376/1,155 | 196/1,155 |
+| Power mean / max | 93.0 / 203.1 W | 177.1 / 298.8 W | 93.2 / 206.5 W | 178.7 / 311.2 W |
+| Memory max | 9,754 MiB | 9,754 MiB | 9,754 MiB | 9,754 MiB |
 
-gpu1이 높은 것은 배치 때문이다. device 목록이 `0,0,1,1`이므로 **tail(node3)이 gpu1에 있다.**
-gpu0은 창 시간의 **36 %를 0 %로** 보낸다. 전력은 3090 정격의 27 %/51 % 수준이고, 메모리는
-24 GiB 중 9.5 GiB만 쓴다. `utilization.gpu`는 kernel이 올라와 있던 시간의 비율이고 SM 점유율이
-아니므로, **이 값만으로 계산 자원의 포화 여부를 말할 수 없다.** 메모리에 여유가 있다는 것은
-별개의 관측으로 그대로 성립한다.
+gpu1 is higher because of placement. The device list is `0,0,1,1`, so **the tail (node3) is on gpu1.**
+gpu0 spends **36 % of the window at 0 %**. Power is at 27 %/51 % of the 3090 rating, and memory use is only
+9.5 GiB of 24 GiB. `utilization.gpu` is the fraction of time a kernel was running, not SM occupancy, so
+**this value alone cannot say whether compute resources are saturated.** That memory has headroom stands on its own as a
+separate observation.
 
-## 이 문서가 주장하지 않는 것
+## What this document does not claim
 
-- 개선폭. 비교 기준선이 없다.
-- 이 구성의 값을 35B VRAM-only나 다른 시나리오와 같은 열에 놓는 것. 모델·절단·오프로딩이 다르다.
-- tail 비용의 내역. `P4_STAGED_TRACE_STEP`으로 parse·decode·sample·encode를 나눠야 말할 수 있다.
-- 다중 물리 컴퓨터 수용. 3090 두 장은 한 호스트다.
+- An improvement. There is no comparison baseline.
+- Placing this configuration's values in the same column as 35B VRAM-only or other scenarios. Model, cut and offloading differ.
+- The breakdown of the tail cost. That requires splitting parse, decode, sample and encode with `P4_STAGED_TRACE_STEP`.
+- Multi-physical-computer acceptance. The two 3090 cards are in one host.
 
-## 측정으로 뒷받침되는 다음 행동
+## Next actions backed by measurement
 
-1. **완결 응답 기준선.** `max_tokens`와 stop 조건을 이 모델에 맞추고, 잘리지 않은 응답으로 품질을
-   판정하는 실행을 따로 만든다. 지금은 512/512가 잘려 있어 정상 응답 증거가 없다.
-2. **폭 천장의 내역.** 발행 불가 사유별로 시퀀스를 세어 `outstanding > 0` 때문에 빠진 수를 직접
-   기록한다. 지금은 `ready_sequences` 최대 160이라는 결과만 있고 원인 분해가 없다.
-3. **tail 분해.** 기존 STEP 계측으로 node3의 149.9 ms를 나눈다. 새로 만들 계측은 없다.
+1. **Complete-response baseline.** Set `max_tokens` and the stop condition for this model, and build a separate run that
+   judges quality on uncut responses. Right now 512/512 are cut, so there is no evidence of normal responses.
+2. **Breakdown of the width ceiling.** Count sequences by reason they could not be issued, and record directly how many
+   were excluded because of `outstanding > 0`. Right now there is only the result that `ready_sequences` peaks at 160,
+   with no causal breakdown.
+3. **Tail decomposition.** Split node3's 149.9 ms with the existing STEP instrumentation. No new instrumentation is needed.

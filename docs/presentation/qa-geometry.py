@@ -1,4 +1,4 @@
-# 기하 QA: 슬라이드 경계 이탈, 텍스트 넘침 추정, 표 높이 추정
+# Geometry QA: shapes outside slide bounds, estimated text overflow, estimated table height
 import sys, math, unicodedata
 from pptx import Presentation
 from pptx.util import Emu
@@ -34,7 +34,7 @@ def est_lines(txt, box_w_pt, size, mono):
     return n
 
 def run_info(tf):
-    """가장 큰 글자 크기와 mono 여부, 전체 텍스트(문단 줄바꿈 유지)"""
+    """Largest font size, whether a mono font is used, and the full text (paragraph breaks kept)"""
     sizes = []
     mono = False
     parts = []

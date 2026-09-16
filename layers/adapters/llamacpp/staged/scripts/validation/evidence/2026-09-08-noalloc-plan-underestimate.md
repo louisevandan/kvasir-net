@@ -1,41 +1,41 @@
-# 2026-09-08 — no_alloc 메모리 계획이 compute 버퍼를 과소 보고하던 상류 결함
+# 2026-09-08 — Upstream defect: the no_alloc memory plan under-reported the compute buffer
 
-종류: 결함 재현·원인 확정·수정·검증. 성능 증거가 아니다.
-대상 pin `0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0`, 수정 후 patch set `961bd89cd119`.
-현재 작업 순서는 [로드맵](../../../../../../../docs/distributed-batching-roadmap.md)이 소유한다.
+Type: defect reproduction, root cause, fix and verification. This is not performance evidence.
+Target pin `0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0`; patch set after the fix `961bd89cd119`.
+The current work order is owned by the [roadmap](../../../../../../../docs/distributed-batching-roadmap.md).
 
-## 증상
+## Symptom
 
-`StageRuntime::load`는 `inspect_stage_memory_with_initialized_backend`의 계획과 실제 적재 뒤
-`measure_stage_memory`의 측정을 `same_stage_memory_allocation`으로 대조한다. 2026-09-07
-Qwen3.5-122B-A10B 2-stage 오프로딩에서 tail이 이 대조에 실패해 exit 5로 종료했다
+`StageRuntime::load` compares the plan from `inspect_stage_memory_with_initialized_backend` with the measurement
+from `measure_stage_memory` after the actual load, using `same_stage_memory_allocation`. On 2026-09-07,
+in a Qwen3.5-122B-A10B 2-stage offloading run, the tail failed this comparison and exited with exit 5
 (`target/p4-4node/runs/20260907T105822Z-9888cd38`).
 
-| 항목 | 계획 | 실제 |
+| Item | Plan | Actual |
 | --- | ---: | ---: |
 | host compute | 107,251,776 B | 142,951,040 B |
-| host model / context | 40,186,750,976 / 138,936,320 B | 동일 |
-| device compute | 1,283,469,440 B | 동일 |
+| host model / context | 40,186,750,976 / 138,936,320 B | same |
+| device compute | 1,283,469,440 B | same |
 
-같은 실행의 head stage는 계획=실제였고, 같은 날 통과한 Ornith-1.0-35B 오프로딩도 계획=실제였다.
+In the same run the head stage had plan = actual, and the Ornith-1.0-35B offloading run that passed the same day also had plan = actual.
 
-## 원인
+## Cause
 
-`llama-context.cpp`의 컨텍스트 예약은 pp → tg → pp 순서로 세 번 예약한다. 할당 경로는 세 번을
-모두 실제로 예약한 뒤 `ggml_backend_sched_get_buffer_size`로 최종 크기를 읽으므로, 버퍼는 세 그래프
-중 가장 큰 것에 맞춰 커진 상태다. 반면 `no_alloc` 계획 경로는 **첫 pp 예약에만** 크기 출력 배열을
-넘긴다(`model.hparams.no_alloc ? backend_buf_exp_size.data() : nullptr`). 이어지는 tg·2차 pp 예약은
-`sizes` 없이 호출돼 `ggml_backend_sched_split_graph`만 수행하고 크기를 재지 않는다. 따라서 tg 그래프나
-2차 pp 예약이 더 큰 버퍼를 요구하는 모델에서 계획이 실제보다 작게 나온다.
+The context reservation in `llama-context.cpp` reserves three times, in the order pp → tg → pp. The allocating path actually
+performs all three reservations and then reads the final size with `ggml_backend_sched_get_buffer_size`, so the buffer has grown to fit
+the largest of the three graphs. The `no_alloc` planning path, by contrast, passes the size output array **only to the first pp reservation**
+(`model.hparams.no_alloc ? backend_buf_exp_size.data() : nullptr`). The following tg and second pp reservations
+are called without `sizes`, so they only perform `ggml_backend_sched_split_graph` and do not measure sizes. As a result, for models where the tg graph
+or the second pp reservation needs a larger buffer, the plan comes out smaller than the actual allocation.
 
-이 코드는 우리 패치가 아니라 pin의 상류 원본이다(`git show HEAD:src/llama-context.cpp`에 존재).
-실패한 tail은 `graph splits = 111 (with bs=512), 50 (with bs=1)`로 pp와 tg 그래프가 다르고,
-통과한 Ornith tail은 `graph splits = 82`로 같았다. 이 차이가 두 사례를 가른다.
+This code is not one of our patches; it is the pin's upstream original (it exists in `git show HEAD:src/llama-context.cpp`).
+The failing tail had `graph splits = 111 (with bs=512), 50 (with bs=1)`, so its pp and tg graphs differed,
+while the passing Ornith tail had `graph splits = 82` for both. This difference separates the two cases.
 
-## 재현
+## Reproduction
 
-같은 결함을 4.3 GiB 모델 한 프로세스로 27초 만에 재현했다. 하네스·agent·두 번째 노드가 필요 없다.
-`p4_staged_server.exe`는 시작 플랜을 stdin에서 4바이트 LE 길이 접두로 읽는다.
+The same defect was reproduced in 27 seconds with a single process and a 4.3 GiB model. No harness, agent or second node is needed.
+`p4_staged_server.exe` reads the start plan from stdin with a 4-byte LE length prefix.
 
 ```text
 --model S:\models\unsloth\Qwen3.5-4B-MTP-GGUF\Qwen3.5-4B-Q8_0.gguf --memory-topology discrete
@@ -44,30 +44,30 @@ Qwen3.5-122B-A10B 2-stage 오프로딩에서 tail이 이 대조에 실패해 exi
 --n-gpu-layers 16 --device CUDA0 --flash-attn on --no-mmap --cache-type-k q8_0 --cache-type-v q8_0
 ```
 
-| 소스 | MEMORY_PLAN host.compute | MEMORY_ACTUAL host.compute | 판정 |
+| Source | MEMORY_PLAN host.compute | MEMORY_ACTUAL host.compute | Verdict |
 | --- | ---: | ---: | --- |
-| `0681d1c38` 빌드(patch set `3cfc636181e4`) | 72,648,768 | 73,220,736 | 불일치 → 적재 거부 |
-| 수정 빌드(patch set `961bd89cd119`) | 73,220,736 | 73,220,736 | 일치 → 적재 진행 |
+| `0681d1c38` build (patch set `3cfc636181e4`) | 72,648,768 | 73,220,736 | mismatch → load rejected |
+| Fixed build (patch set `961bd89cd119`) | 73,220,736 | 73,220,736 | match → load proceeds |
 
-이 모델은 `graph splits = 35 (with bs=512), 6~8 (with bs=1)`로 두 그래프가 다르다.
+This model has `graph splits = 35 (with bs=512), 6~8 (with bs=1)`, so its two graphs differ.
 
-## 수정
+## Fix
 
-새 패치 `0025-noalloc-reserve-size-max.patch`, 분류 `upstream_fix`(상류 결함, `src/` 허용).
-세 예약 모두에 측정 배열을 넘기고 예약마다 원소별 최댓값을 유지한다. 할당 경로(`no_alloc` 아님)는
-`measured`가 널이므로 동작이 바뀌지 않는다.
+New patch `0025-noalloc-reserve-size-max.patch`, classified `upstream_fix` (upstream defect; `src/` allowed).
+It passes the measurement array to all three reservations and keeps the element-wise maximum across reservations. On the allocating path (not `no_alloc`),
+`measured` is null, so behavior does not change.
 
-검증:
+Verification:
 
 - `validate-compat-manifest.mjs` valid, `validate-patch-classification.mjs` valid
-  (upstream_fix 3 / stage_hook 18 / model_feature 4, 25건).
-- 0001~0025를 pin에 순서대로 적용한 재현 트리가 편집한 트리와 바이트 동일.
-- `prepare-pipeline-upstream.mjs`가 새 patch set으로 `0eadefebd3-961bd89cd119`를 검증 통과.
-- CUDA Release 재빌드 CTest 15/15 통과. 새 exe `b66beffb479afa6db84cb7df697726a4e64e4b77a6a93343d48a545476767248`.
-- 위 표의 전후 대조가 수정 제거 시 실패를 보인다(수정 전 빌드가 RED).
+  (upstream_fix 3 / stage_hook 18 / model_feature 4, 25 in total).
+- The reproduction tree built by applying 0001~0025 to the pin in order is byte-identical to the edited tree.
+- `prepare-pipeline-upstream.mjs` verified `0eadefebd3-961bd89cd119` with the new patch set.
+- CUDA Release rebuild: CTest 15/15 passed. New exe `b66beffb479afa6db84cb7df697726a4e64e4b77a6a93343d48a545476767248`.
+- The before/after comparison in the table above shows the failure when the fix is removed (the pre-fix build is RED).
 
-## 남은 것
+## Remaining
 
-- 최댓값 유지는 세 그래프 각각의 요구를 덮지만, 할당기가 서로 다른 그래프를 연속 예약하며 겪는
-  단편화까지 모사하지는 않는다. 위 두 사례에서는 계획=실제였으나 일반 증명은 아니다.
-- 이 수정은 적재 거부를 없앨 뿐 122B급 모델의 정상 응답·처리량을 증명하지 않는다.
+- Keeping the maximum covers the requirement of each of the three graphs, but it does not model the fragmentation the allocator
+  experiences when it reserves different graphs in succession. In the two cases above plan = actual, but this is not a general proof.
+- This fix only removes the load rejection; it does not prove normal responses or throughput for 122B-class models.
