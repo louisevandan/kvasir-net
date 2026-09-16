@@ -7,6 +7,7 @@ import concurrent.futures
 import hashlib
 import json
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -45,7 +46,7 @@ def validate_manifest(manifest: dict) -> None:
     if [host["host"] for host in manifest["hosts"]] != list(HOST_ORDER):
         raise ValueError("manifest host order differs")
     names = [binding["name"] for binding in manifest["bindings"]]
-    required = {"driver", "config", "route"}
+    required = {"driver", "config", "route", "controller-script", "controller-config"}
     required.update(f"{kind}-{host}" for host in HOST_ORDER for kind in BINDING_KINDS)
     if len(names) != len(set(names)) or set(names) != required:
         raise ValueError("manifest execution bindings differ")
@@ -53,6 +54,28 @@ def validate_manifest(manifest: dict) -> None:
         if (not isinstance(binding.get("command"), list) or not binding["command"] or
                 len(binding.get("sha256", "")) != 64):
             raise ValueError(f"invalid execution binding: {binding.get('name')}")
+    controller = manifest.get("controller_preflight") or {}
+    if (not isinstance(controller.get("command"), list) or not controller["command"] or
+            controller.get("host") != "windows-controller" or
+            controller.get("owned") != ["mac20-return", "mac20-next",
+                                        "mac21-return", "mac21-previous"]):
+        raise ValueError("controller tunnel preflight differs")
+
+
+def inspect_controller(manifest: dict) -> dict:
+    expected = manifest["controller_preflight"]
+    actual = json_command(expected["command"])
+    if actual.get("host") != expected["host"] or actual.get("owned") != expected["owned"]:
+        raise ValueError("controller tunnel identity differs")
+    return actual
+
+
+def preflight(manifest: dict) -> None:
+    for binding in manifest["bindings"]:
+        actual = execute(binding["command"]).decode().strip().split()[0]
+        if actual != binding["sha256"]:
+            raise ValueError(f"sealed execution binding differs: {binding['name']}")
+    inspect_controller(manifest)
 
 
 def snapshot(manifest: dict, expected: str) -> tuple[dict, dict]:
@@ -126,10 +149,7 @@ def run(manifest: dict, output: Path) -> dict:
     validate_manifest(manifest)
     if output.exists():
         raise ValueError("I0 output directory already exists")
-    for binding in manifest["bindings"]:
-        actual = execute(binding["command"]).decode().strip().split()[0]
-        if actual != binding["sha256"]:
-            raise ValueError(f"sealed execution binding differs: {binding['name']}")
+    preflight(manifest)
     output.mkdir(parents=True)
     before, before_route = snapshot(manifest, "unloaded")
     before.update(name="before_load")
@@ -253,9 +273,12 @@ def self_test() -> None:
     assert LOADED != WINDOW != DRAINED
     assert list(HOST_ORDER) == ["spark", "mac20", "mac21"]
     bindings = [{"name": name, "command": ["hash"], "sha256": "0" * 64}
-                for name in ["driver", "config", "route"] +
+                for name in ["driver", "config", "route", "controller-script", "controller-config"] +
                 [f"{kind}-{host}" for host in HOST_ORDER for kind in BINDING_KINDS]]
-    manifest = {"hosts": [{"host": host} for host in HOST_ORDER], "bindings": bindings}
+    controller = {"command": ["inspect"], "host": "windows-controller",
+                  "owned": ["mac20-return", "mac20-next", "mac21-return", "mac21-previous"]}
+    manifest = {"hosts": [{"host": host} for host in HOST_ORDER],
+                "bindings": bindings, "controller_preflight": controller}
     validate_manifest(manifest)
     try:
         validate_manifest({**manifest, "bindings": bindings[:-1]})
@@ -263,7 +286,25 @@ def self_test() -> None:
         assert str(error) == "manifest execution bindings differ"
     else:
         raise AssertionError("missing host binding was accepted")
-    print(json.dumps({"passed": True, "tests": 4}, separators=(",", ":")))
+    try:
+        validate_manifest({**manifest, "controller_preflight": {**controller, "owned": []}})
+    except ValueError as error:
+        assert str(error) == "controller tunnel preflight differs"
+    else:
+        raise AssertionError("missing controller tunnel identities were accepted")
+    runnable = {**manifest, "bindings": [
+        {**row, "command": [sys.executable, "-c", "print('" + "0" * 64 + "')"]}
+        for row in bindings]}
+    runnable["controller_preflight"] = {**controller, "command": [
+        sys.executable, "-c", "import json; print(json.dumps(" +
+        repr({"host": "windows-controller", "owned": controller["owned"][:-1]}) + "))"]}
+    try:
+        preflight(runnable)
+    except ValueError as error:
+        assert str(error) == "controller tunnel identity differs"
+    else:
+        raise AssertionError("preflight allowed a missing live tunnel")
+    print(json.dumps({"passed": True, "tests": 6}, separators=(",", ":")))
 
 
 def main() -> None:

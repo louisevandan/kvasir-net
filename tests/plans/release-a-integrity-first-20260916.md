@@ -13,7 +13,7 @@ failure ownership; recover on the same load; and release every owned resource. T
 performance baseline but does not claim an improvement.
 
 The executable test contract is
-`test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json`. The contract
+`test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json`. The contract
 validator and the artifact judge must pass their own baseline and weakening mutations before any
 model is loaded.
 
@@ -65,6 +65,9 @@ strict oracle; do not adapt the expected outputs to the model's guesses.
    nodes 0, native children 0, exactly one task-agent listener, transport failures 0, and CLOSE_WAIT
    0. `inspect-i0-active-host.py` also binds the task PID, command, binary hash, advertised address,
    and exact topology-owned ESTABLISHED peers. SSH or a one-way socket probe is not a substitute.
+   The controller verifies all four task SSH tunnel PIDs and command lines immediately before the
+   advertised-route probe. A route failure preserves the transport snapshot; the same agent instance
+   cannot enter LOAD because peer failure is deliberately sticky until explicit reconciliation.
 5. Source, binary, native library, model shard, tokenizer/template, corpus, stage plan, device,
    generation, resource profile, telemetry sampler, and judge identities equal the seal.
 6. The event runtime owns bounded deadline to artifact assembly, FINISH, and cleanup. External TERM
