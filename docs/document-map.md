@@ -274,6 +274,8 @@ I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요청/배치
 
 Qwen122B H0 v4: [절대 실행창·결정론적 stress 계약·원시 GPU/자원 증거 builder·세 원격 바이너리 봉인](../tests/reports/release-a/20260916_135000.md).\nQwen122B H0 v5: [결정론적 관측 장벽·절대 실행창·stress 계약·원시 GPU/자원 증거·세 원격 바이너리 봉인](../tests/reports/release-a/20260916_143000.md).
 
+Release A I0 첫 실기: [정답 1/3 RED·단일 호스트 기준 역검증·새 LOAD 차단](../tests/reports/release-a/20260916_161600.md).
+
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 
 Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 거부](../tests/reports/release-a/20260915_190631.md).

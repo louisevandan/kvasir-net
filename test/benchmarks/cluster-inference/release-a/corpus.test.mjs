@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { corpusCase, judge } from './corpus.mjs';
+import { corpusCase, judge, wrap } from './corpus.mjs';
+
+test('Qwen3.5 no-thinking prompt matches the GGUF chat-template suffix exactly', () => {
+  const prompt = wrap('probe');
+  assert.equal(prompt.endsWith('<|im_start|>assistant\n<think>\n\n</think>\n\n'), true);
+  assert.equal(prompt.includes('<think></think>'), false);
+});
 
 test('controlled corpus derives answers from beginning, middle and end source facts', () => {
   const c = corpusCase('long', 0, 8);

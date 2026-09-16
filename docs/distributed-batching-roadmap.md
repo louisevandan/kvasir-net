@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — 구성요소·LOAD/UNLOAD 무결성은 통과했지만 현재 Qwen122B 서비스 무결성은 미달이다. 과거 단일 요청은 정답119 token/EOS를 냈으나 현재 runtime source의 단일 요청은 재검증되지 않았고, H1 1차는64건 중8건만 완료, H1 2차는 terminal artifact가 없어 INVALID다. 실행 순서를 **서비스 무결성 확립 → 기준선 봉인 → 성능 개선**으로 바꾼다. 단일 요청·지속 유입·과부하/취소/drain·다중 host·soak가 모두 GREEN이 되기 전 성능 후보 개발과 H5를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
+최신 현황 정리: 2026-09-16 — 구성요소·LOAD/UNLOAD 무결성은 통과했지만 현재 Qwen122B 서비스 무결성은 미달이다. 현재 source의 I0 단일 요청 3건은 모두 완료·EOS·회수했으나 정확 답은 1/3이며, 독립 단일 host의 정식 템플릿 입력도 1/3이다. H1 1차는64건 중8건만 완료, H1 2차는 terminal artifact가 없어 INVALID다. 실행 순서는 **서비스 무결성 확립 → 기준선 봉인 → 성능 개선**이다. 단일 요청·지속 유입·과부하/취소/drain·다중 host·soak가 모두 GREEN이 되기 전 성능 후보 개발과 H5를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -18,6 +18,17 @@ source가 달라지면 앞선 I 단계부터 다시 실행한다. [무결성 우
 [실행 계약](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json),
 계약 검사기와 결과 판정기를 수용한 뒤에만 모델을 적재한다.
 
+**2026-09-16 I0 첫 실기 RED — 새 분산 실행 차단:** [I0 첫 실행·단일 호스트 역검증](../tests/reports/release-a/20260916_161600.md)은
+세 요청의 실제 완료·EOS·RELEASE·정상 회수와 SLO를 관측했지만 정확 답은 short 1/3뿐이다.
+medium/long은 독립 standalone llama-server에서도 틀렸고, GGUF 정식 no-thinking 접미부로
+corpus를 수정해 다시 검증해도 1/3이다. 접미부 불일치는 실제 결함이지만 오답의 충분 원인이라는
+가설은 반증됐다. 새 capability gate는 원본 프롬프트·토큰 수·EOS·정확 JSON/오라클을 검사해
+medium `oracle_mismatch`, long `invalid_json`으로 분산 I0 2차를 자동 차단한다.
+**현재 H0 v5의 과거 봉인은 수정된 corpus/judge를 승인하지 않는다.** I0 상태는 RED,
+I1–I4/P0–P3은 BLOCKED다. 다음 첫 행동은 요구한 산술·사실 판단의 권위를 모델 추측에
+맡기지 않는 제품 알고리즘/출력 검증 계약을 먼저 설계·구현하고, 같은 엄격한 오라클의
+단일 호스트 3/3 및 제거 변이를 증명하는 것이다. 그 뒤 새 H0로 source/input/judge를 봉인한다.
+
 **2026-09-16 H0 v4 봉인:** [H0 v4 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v4.json)가
 runtime `19f2b1afa`, 세 원격 host의 새 agent/event-drive 바이너리, native/library/model/layout,
 I0 materializer, 원시 증거 builder와 두 단계 judge를 결속했다. 상대 시간 GPU 표본을 다른 실행에 붙일 수
@@ -28,7 +39,7 @@ INSPECT와 정확한 pre-LOAD 상태를 확인한 뒤 I0-S/M/L을 한 LOAD에서
 
 | 단계 | 상태 | 종료 조건 |
 | --- | --- | --- |
-| I0 현재 단일 요청 기준선 | **NEXT (H0 v5 GREEN)** | 봉인된 source/binary/model/topology로 short·medium·long을 한 LOAD에서 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 절대 시간창에 보존. task agent 시작 뒤 LOAD 전에는 nodes/native0·agent listener1/host, 최종 종료 뒤 nodes/child/listener0 |
+| I0 현재 단일 요청 기준선 | **RED (정답 1/3, 새 LOAD 차단)** | 봉인된 source/binary/model/topology로 short·medium·long을 한 LOAD에서 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 절대 시간창에 보존. task agent 시작 뒤 LOAD 전에는 nodes/native0·agent listener1/host, 최종 종료 뒤 nodes/child/listener0 |
 | I1 전체 정상 corpus | TODO | 같은 load에서 64건 closed-loop corpus 전부 정답·EOS·deadline·RELEASE. 오류·미분류·재시작0 |
 | I2 bounded 지속 서비스 | TODO | resident8 cold8, 8×8 sustained, 같은 load recovery3×8. 정상 요청100%, 무응답·유실·세션 오염0, backlog가 유한 시간 안에0으로 수렴 |
 | I3 과부하·취소·장애 | TODO | overload80의 한도 밖 요청 명시 거절, 취소·느린/끊긴 edge·중간 stage 재시작·늦은 반환의 terminal과 원장/KV/credit/출력 권위 회수 |

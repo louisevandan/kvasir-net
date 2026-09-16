@@ -42,6 +42,16 @@ different terminal classification on exact replay fails the arm.
 
 ## Preconditions
 
+The first sealed I0 execution is RED: three actual distributed requests completed and released, but
+only the short answer matched the strict oracle. A corrected GGUF no-thinking template still passed
+only 1/3 on an independent single-host server. The source and input have changed since H0 v5;
+therefore that historical seal cannot authorize a new LOAD. Before H0 v6 or another distributed
+I0 run, establish a product-owned deterministic calculation/validation authority and run
+`judge-reference-capability.py` on the exact sealed short/medium/long prompts. It must return 3/3
+with exact source-derived JSON, prompt identity, evaluated-token count and EOS. This is an
+admission gate, not an iterative prompt search. Preserve the failing response hashes and the
+strict oracle; do not adapt the expected outputs to the model's guesses.
+
 1. `validate-integrity-test-spec.py --self-test` passes the canonical contract and every weakening
    mutation. The actual contract then passes the same validator.
 2. The integrity artifact judge passes its baseline fixture and rejects, independently, missing

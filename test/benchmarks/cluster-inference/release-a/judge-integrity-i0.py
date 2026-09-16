@@ -264,7 +264,13 @@ def build_bundle(artifact: dict, artifact_bytes: bytes, seal: dict, external: di
 
     h1 = load_module("release_a_h1_judge", H1_JUDGE).evaluate(artifact, seal)
     if not h1["passed"]:
-        raise ValueError("I0 raw oracle/timing gate failed: " + ",".join(h1["global_failures"]))
+        global_failures = ",".join(h1["global_failures"]) or "none"
+        request_failures = ";".join(
+            f"{row.get('case_id') or row.get('request_id')}:{','.join(row['failures'])}"
+            for row in h1["rows"] if row["failures"]
+        ) or "none"
+        raise ValueError("I0 raw oracle/timing gate failed: "
+                         f"global={global_failures}; requests={request_failures}")
     request_rows = artifact["requests"]
     h1_by_case = {row["case_id"]: row for row in h1["rows"]}
     executions = request_execution_ids(artifact)
@@ -450,6 +456,17 @@ def self_test(spec: dict) -> None:
     full["arms"] = [replacements.get(row["id"], row) for row in full["arms"]]
     full["integrity_baseline"] = True
     assert integrity.evaluate(full, spec)["passed"]
+    wrong = copy.deepcopy(artifact)
+    wrong["requests"][0]["response"] = json.dumps({"class": "wrong"})
+    wrong_bytes = (json.dumps(wrong, separators=(",", ":")) + "\n").encode()
+    wrong_external = copy.deepcopy(external)
+    wrong_external["artifact_sha256"] = digest(wrong_bytes)
+    try:
+        build_bundle(wrong, wrong_bytes, seal, wrong_external, spec)
+    except ValueError as error:
+        assert "case-00:oracle_mismatch" in str(error)
+    else:
+        raise AssertionError("request-level oracle failure was accepted")
     mutations = (
         lambda a, s, e: a["requests"][0].pop("release_ms"),
         lambda a, s, e: a["requests"][1].update(eligible_ms=50),
@@ -476,7 +493,7 @@ def self_test(spec: dict) -> None:
             pass
         else:
             raise AssertionError("weakened I0 evidence was accepted")
-    print(json.dumps({"passed": True, "tests": 11}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 12}, separators=(",", ":")))
 
 
 def main() -> None:

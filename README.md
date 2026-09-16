@@ -242,4 +242,6 @@ Release A 무결성 시험 계약: [14개 실기 arm·계약/판정 변이·로�
 
 Release A I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요청/배치/stage/GPU 판정](tests/reports/release-a/20260916_133038.md).
 
-Release A Qwen122B H0 v5: [결정론적 관측 장벽·절대 실행창·원시 GPU/자원 증거·세 원격 바이너리 봉인](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v5.json) · [검증 보고](tests/reports/release-a/20260916_143000.md). 모델 LOAD 전 gate만 GREEN이며 I0 실기는 다음 단계다.
+Release A Qwen122B H0 v5: [결정론적 관측 장벽·절대 실행창·원시 GPU/자원 증거·세 원격 바이너리 봉인](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v5.json) · [검증 보고](tests/reports/release-a/20260916_143000.md). 역사 봉인이며 새 LOAD 권위가 아니다.
+
+Release A I0 첫 실기: [정답 1/3 RED·단일 호스트 기준 역검증·새 LOAD 차단](tests/reports/release-a/20260916_161600.md). I1–I4와 성능 후보는 BLOCKED다.
