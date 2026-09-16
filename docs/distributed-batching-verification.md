@@ -831,13 +831,14 @@ A- 접두사는 예정 시험 ID다. 실제 테스트 함수/runner와 ID 대응
 
 ### A 실행 명세와 비용 확인
 
-**2026-09-16 H0 v2 실제 봉인:** [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)과
-[검증 보고](../tests/reports/release-a/20260916_093739.md)가 source `25edd33cf`, binary/model/3-host/layout,
-resource bounds, H1–H7 workload, A/B, telemetry와 LOAD/UNLOAD 수명을 결속했다. H1 quality는
-`max_in_flight=1` RELEASE closed-loop, class별 요청 deadline과 합산 전체 상한을 사용한다. validator는
-H0 v1·open-loop quality·deadline/실행 authority 누락을 거부한다. H0의 판정은
-`load_authorized=true`, `runtime_acceptance=false`이며 아래 H1–H7을 통과한 것으로 읽지 않는다.
-H0 v1은 [당시 보고](../tests/reports/release-a/20260916_072100.md)의 역사 증거로만 유지한다.
+**2026-09-16 H0 v3 실제 봉인:** [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v3.json)과
+[H1 2차 INVALID 보고](../tests/reports/release-a/20260916_104300.md)가 source 25edd33cf, binary/model/3-host/layout,
+resource bounds, H1–H7 workload, A/B, telemetry와 LOAD/UNLOAD 수명을 결속한다. H1 quality는
+max_in_flight=1 RELEASE closed-loop이며 요청별 E2E deadline과 class별 TTFT/ITL nearest-rank p95를
+실제 artifact timestamp로 모두 판정한다. 표본 누락과 순서 역전은 fail-closed다. H0 v1/v2·open-loop
+quality·deadline/실행/판정 authority 누락을 거부한다. H0의 판정은
+load_authorized=true, runtime_acceptance=false이며 아래 H1–H7을 통과한 것으로 읽지 않는다.
+H0 v1/v2는 당시 보고의 역사 증거로만 유지한다.
 대상은 2026-09-15 사용자 지시에 따라 개발 계획의 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard·resident8로 변경한다. 최소2물리 host를 사용하며 정확한 fleet/stage/cut은 새 PLAN·공유 pool 예산·비용 비교 후 봉인한다. 과거550B의7host/8stage를 그대로 적용하지 않는다. 이번 릴리즈의
 수용 목표는 짧은 질의 streaming과 긴 문서의 비동기 분석이다. 다음 새 수치는 측정 예측이 아니라
 제품 사용 한도다. 임의의 향상률 대신 사용자 대기와 작업 완료에 상한을 둔다. 달성 가능성은 A-COST에서

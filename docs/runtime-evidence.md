@@ -3,6 +3,15 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-16: Qwen3.5-122B H1 2차 INVALID와 H0 v3
+
+3-host closed-loop quality64는 실제 계산을 진행했지만 terminal artifact가 없고 H0 v2 judge가 요청별
+E2E deadline과 class별 TTFT/ITL p95를 판정하지 않아 INVALID다. 부분 native 로그를 성능 수치로
+승격하지 않았다. NODE_UNLOAD 3/3과 작업 자원 회수를 끝냈고 보호 agent 3개는 보존했다. 같은 runtime과
+SLO를 유지한 H0 v3 judge는 위 수치를 실제 timestamp로 강제하며 로컬 고정 gate를 통과했다. 다음은
+단일 short A-COST feasibility gate이고, 통과 전 H1 3차를 열지 않는다. 상세는
+[H1 2차 실행·회수 보고](../tests/reports/release-a/20260916_104300.md)를 따른다.
+
 ## 2026-09-16: Qwen3.5-122B Release A H0 v2 재봉인
 
 runtime `25edd33cf`와 3-host 실행물, RELEASE closed-loop H1 quality, class별 event deadline,

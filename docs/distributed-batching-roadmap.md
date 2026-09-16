@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — Qwen3.5-122B-A10B H0 v2를 source `25edd33cf`와 RELEASE closed-loop·요청별 deadline·tracked materializer/judge에 재봉인했다. H0 v2만 GREEN이며 실제 수용은 미완료다. 다음은 H1 2차 quality64를 순차 실행한다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
+최신 현황 정리: 2026-09-16 — H1 2차는 판정기 누락과 terminal artifact 부재로 INVALID 처리하고 정상 UNLOAD·작업 자원 회수를 끝냈다. H0 v3가 요청별 E2E deadline과 class별 TTFT/ITL p95를 실제로 강제한다. 다음은 단일 short A-COST feasibility gate이며 통과 전 H1 3차를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -9,6 +9,16 @@
 이전 기록 안의 “다음”은 당시의 계획이지 지금 구현을 계속하라는 지시가 아니다.
 
 <a id="current-status"></a>
+
+**2026-09-16 H1 2차 INVALID와 H0 v3:** [실행·회수 보고](../tests/reports/release-a/20260916_104300.md)의
+3-host closed-loop 실행은 41분13초 동안 실제 stage 계산을 진행했지만 terminal artifact가 없고, 실행 중
+감사에서 H0 v2 judge가 요청별 E2E deadline과 class별 TTFT/ITL p95를 판정하지 않음을 확인했다.
+측정 source와 judge를 실행 중 바꾸지 않고 정확한 PID를 종료했다. NODE_UNLOAD 3/3은 첫 요청에
+succeeded/absent였고 작업 agent/native/proxy/tunnel을 모두 회수했으며 보호 agent 3개는 보존했다.
+H0 v3는 같은 runtime/model/topology/SLO를 유지하면서 위 수치를 실제 timestamp로 강제하고, 검사6·
+host inspector4·preflight5·materializer4·judge10·spec4를 통과했다. H1 회차는 1차 RED, 2차 INVALID다.
+다음 첫 행동은 단일 short A-COST feasibility gate다. 이 gate가 short SLO와 정상 JSON/EOS를 통과하기 전
+H1 3차 quality64를 시작하지 않는다.
 
 **2026-09-16 Qwen122B H0 v2 재봉인:** [H0 v2 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)와
 [보고](../tests/reports/release-a/20260916_093739.md)가 runtime source `25edd33cf`, 3-host binary/model/layout,

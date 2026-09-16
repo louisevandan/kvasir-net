@@ -260,9 +260,11 @@ M2: [결정론적 실행계획](../tests/plans/node-load-lifecycle-m2-20260916.m
 M3: [Rust/HF OUTER 이관·legacy CREATE/DELETE 제거 결정론적 실행계획](../tests/plans/node-load-lifecycle-m3-20260916.md), [실제 Agent/HF child·workspace·독립 변이 검증 보고](../tests/reports/node-load-lifecycle/20260916_041848.md).
 M4: [실제 llama.cpp/HF 생성·취소·해제·재적재 결정론적 실행계획](../tests/plans/node-load-lifecycle-m4-20260916.md), [두 adapter 실제 모델·전체 회귀·독립 변이 수용 보고](../tests/reports/node-load-lifecycle/20260916_064306.md).
 
-Release A Qwen122B H0 v2: [봉인 benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json) · [closed-loop H1 authority·3-host 실행 전 승인 보고](../tests/reports/release-a/20260916_093739.md). [H0 v1](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)과 [당시 보고](../tests/reports/release-a/20260916_072100.md)는 역사 증거다.
+Release A Qwen122B H0 v3: [봉인 benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v3.json) · [H1 latency 판정 보강·2차 INVALID·정상 회수 보고](../tests/reports/release-a/20260916_104300.md). [H0 v2 spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)과 [보고](../tests/reports/release-a/20260916_093739.md), [H0 v1 spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)과 [보고](../tests/reports/release-a/20260916_072100.md)는 역사 증거다.
 
 Release A Qwen122B H1 1차: [64건 동시 명세 RED·실패 recovery·closed-loop 교정 구현](../tests/reports/release-a/20260916_084650.md).
+
+Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVALID, 정상 UNLOAD·작업 자원 회수](../tests/reports/release-a/20260916_104300.md).
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 
