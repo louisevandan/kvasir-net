@@ -21,30 +21,30 @@ import time
 from pathlib import Path
 
 
-SOURCE_COMMIT = "c6a28b58269f9ff06c21c8cf9aee73a7ec0b21fa"
+SOURCE_COMMIT = "25edd33cf24b46964e432a7cd6d89772417673db"
 HOSTS = {
     "spark": {
         "peers": ["192.168.0.20", "192.168.0.21"],
-        "source": "/home/m42/p4-release-a-h0-c6a28b582",
+        "source": "/home/m42/p4-h0-v2-25edd33cf/source-git",
         "binaries": {
-            "agent": "/home/m42/p4-release-a-h0-c6a28b582-target/release/p4-agent",
-            "event_drive": "/home/m42/p4-release-a-h0-c6a28b582-target/release/p4-event-drive",
+            "agent": "/home/m42/p4-h0-v2-25edd33cf/target/release/p4-agent",
+            "event_drive": "/home/m42/p4-h0-v2-25edd33cf/target/release/p4-event-drive",
             "native": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/p4_staged_server",
         },
     },
     "mac20": {
         "peers": ["192.168.0.26", "192.168.0.21"],
-        "source": "/Users/mobimac/p4-release-a-h0-c6a28b582",
+        "source": "/Users/mobimac/p4-h0-v2-25edd33cf/source-git",
         "binaries": {
-            "agent": "/Users/mobimac/p4-release-a-h0-c6a28b582-target/release/p4-agent",
+            "agent": "/Users/mobimac/p4-h0-v2-25edd33cf/target/release/p4-agent",
             "native": "/Users/mobimac/p4-b5-native-build-48437eaeb/p4_staged_server",
         },
     },
     "mac21": {
         "peers": ["192.168.0.26", "192.168.0.20"],
-        "source": "/Users/mobimac/p4-release-a-h0-c6a28b582",
+        "source": "/Users/mobimac/p4-h0-v2-25edd33cf/source-git",
         "binaries": {
-            "agent": "/Users/mobimac/p4-release-a-h0-c6a28b582-target/release/p4-agent",
+            "agent": "/Users/mobimac/p4-h0-v2-25edd33cf/target/release/p4-agent",
             "native": "/Users/mobimac/p4-b5-native-build-48437eaeb/p4_staged_server",
         },
     },
@@ -223,6 +223,25 @@ def telemetry_capability() -> dict[str, object]:
     ], required=True)}
 
 
+def protected_connection_state() -> dict[str, object]:
+    if sys.platform == "darwin":
+        raw = run(["netstat", "-anv", "-p", "tcp"], required=True)
+        rows = []
+        for line in str(raw["stdout"]).splitlines():
+            fields = line.split()
+            if len(fields) >= 6 and fields[0].startswith("tcp") and fields[3].endswith(".52005"):
+                rows.append(line)
+        states = [line.split()[5] for line in rows]
+    else:
+        raw = run(["ss", "-Htan", "sport", "=", ":52005"], required=True)
+        rows = str(raw["stdout"]).splitlines()
+        states = [line.split()[0] for line in rows if line.split()]
+    counts = {state: states.count(state) for state in sorted(set(states))}
+    raw["stdout"] = "\n".join(rows)
+    return {"connections": raw, "state_counts": counts,
+            "non_listener_count": sum(count for state, count in counts.items() if state != "LISTEN")}
+
+
 def task_safety() -> dict[str, object]:
     processes = run(["ps", "-axo", "pid=,ppid=,command="], required=True)
     processes["stdout"] = "\n".join(
@@ -235,12 +254,14 @@ def task_safety() -> dict[str, object]:
         listeners["stdout"] = "\n".join(
             line for line in str(listeners["stdout"]).splitlines() if "52005" in line
         )
-    return {"processes": processes, "listeners": listeners}
+    return {"processes": processes, "listeners": listeners,
+            "protected_connections": protected_connection_state()}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--role", choices=sorted(HOSTS), required=True)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     config = HOSTS[args.role]
     script = Path(__file__).resolve()
@@ -275,7 +296,12 @@ def main() -> None:
         "telemetry_capability": telemetry_capability(),
         "task_safety": task_safety(),
     }
-    print(json.dumps(inventory, sort_keys=True, separators=(",", ":")))
+    encoded = (json.dumps(inventory, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if args.output:
+        args.output.write_bytes(encoded)
+        print(json.dumps({"role": args.role, "output": str(args.output), "bytes": len(encoded)}, separators=(",", ":")))
+    else:
+        sys.stdout.buffer.write(encoded)
 
 
 if __name__ == "__main__":

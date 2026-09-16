@@ -4,11 +4,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-const EXPECTED_COMMIT = 'c6a28b58269f9ff06c21c8cf9aee73a7ec0b21fa';
+const EXPECTED_COMMIT = '25edd33cf24b46964e432a7cd6d89772417673db';
+const EXPECTED_SOURCE_BUNDLE = Object.freeze({
+  bytes: 5126427,
+  sha256: '4de5d0147fe3ac281ab735ad02f3fbfb46c5874a3b434e33237cdfdf1e314cc6',
+});
+const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9';
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);
 const EXPECTED_MODES = Object.freeze(['quality', 'cold', 'sustained', 'recovery', 'overload', 'soak']);
 const EXPECTED_FAULTS = Object.freeze(['cancel', 'slow_edge', 'disconnected_edge', 'node_restart', 'late_return']);
 const EXPECTED_ARRIVALS = Object.freeze([0, 180000, 480000, 780000, 1080000, 1380000, 1680000, 1980000]);
+const H1_DEADLINES = Object.freeze({ short: 600000, medium: 1200000, long: 1800000 });
+const H1_TIMEOUT_MS = 32 * H1_DEADLINES.short + 16 * H1_DEADLINES.medium +
+  16 * H1_DEADLINES.long + 300000;
 const META = /[$|&;<>()`"'\r\n]/;
 
 const fail = (condition, message) => { if (!condition) throw new Error(message); };
@@ -60,16 +68,15 @@ function validateMode(mode, name) {
 }
 
 export function validateBenchmarkSpec(spec) {
-  fail(spec?.schema === 'p4.release-a.benchmark-spec.v1' && spec.h0_status === 'sealed', 'unsupported or unsealed H0 spec');
+  fail(spec?.schema === 'p4.release-a.benchmark-spec.v2' && spec.h0_status === 'sealed', 'unsupported or unsealed H0 spec');
   fail(typeof spec.spec_id === 'string' && /^[a-z0-9_]+$/.test(spec.spec_id), 'invalid spec identity');
 
   const source = spec.source;
   fail(source?.source_commit === EXPECTED_COMMIT && commit(source.source_commit), 'runtime source commit differs');
   fail(source.runtime_kind === 'event', 'runtime must use the event path');
-  integer(source.source_bundle?.bytes, 'source bundle bytes', 1);
-  fail(sha(source.source_bundle?.sha256), 'source bundle hash missing');
+  fail(isDeepStrictEqual(source.source_bundle, EXPECTED_SOURCE_BUNDLE), 'source bundle binding differs');
   fail(source.compatibility?.pipeline === 'physical-wire-v4' && commit(source.compatibility.upstream_commit) &&
-    sha(source.compatibility.patch_digest), 'compatibility binding missing');
+    source.compatibility.patch_digest === EXPECTED_COMPAT_PATCH, 'compatibility binding missing');
   fail(Array.isArray(source.components) && source.components.length === 3, 'source components missing');
   const components = new Map();
   for (const component of source.components) {
@@ -80,6 +87,13 @@ export function validateBenchmarkSpec(spec) {
     components.set(component.id, component);
   }
   fail(components.size === 3, 'scheduler/judge/summary versions are incomplete');
+  const componentPaths = id => new Set(components.get(id).files.map(item => item.path));
+  for (const required of ['tools/event-drive/src/run/config.rs', 'tools/event-drive/src/run/inference.rs'])
+    fail(componentPaths('scheduler').has(required), `scheduler omits H1 execution authority: ${required}`);
+  for (const required of [
+    'test/benchmarks/cluster-inference/release-a/prepare-h1-quality.py',
+    'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py',
+  ]) fail(componentPaths('judge').has(required), `judge omits H1 sealed tool: ${required}`);
 
   const lifecycle = spec.lifecycle;
   fail(lifecycle?.schema === 1 && lifecycle.load_content_type === 'application/vnd.p4.node.load-v1' &&
@@ -89,15 +103,20 @@ export function validateBenchmarkSpec(spec) {
     lifecycle.node_created_by_load === true && lifecycle.node_removed_by_unload === true &&
     lifecycle.separate_create_delete_allowed === false, 'lifecycle is not the sealed LOAD/UNLOAD contract');
 
-  fail(Array.isArray(spec.artifacts) && spec.artifacts.length >= 5, 'local artifacts missing');
+  fail(Array.isArray(spec.artifacts) && spec.artifacts.length >= 13, 'local artifacts missing');
   const artifacts = new Map();
   for (const artifact of spec.artifacts) {
     fail(typeof artifact.id === 'string' && artifact.id && !artifacts.has(artifact.id), 'duplicate artifact id');
     validateFileRecord(artifact, `artifact ${artifact.id}`);
     artifacts.set(artifact.id, artifact);
   }
-  for (const id of ['corpus', 'native_actual', 'native_actual_result', 'host_inspector', 'gguf_inspector'])
+  for (const id of ['corpus', 'native_actual', 'native_actual_result', 'host_inspector', 'gguf_inspector',
+    'h1_materializer', 'h1_judge', 'h0_verifier', 'spec_validator', 'spec_tests',
+    'host_inspector_tests', 'event_preflight', 'event_preflight_tests'])
     fail(artifacts.has(id), `missing artifact ${id}`);
+  fail(artifacts.get('event_preflight').path === '../../../../tools/validate_event_runtime_preflight.py' &&
+    artifacts.get('event_preflight_tests').path === '../../../../tools/tests/test_validate_event_runtime_preflight.py',
+  'event preflight artifact path differs');
 
   fail(Array.isArray(spec.remote_execution) && spec.remote_execution.length === 3, 'remote execution bindings missing');
   const remoteRoles = new Set();
@@ -109,7 +128,8 @@ export function validateBenchmarkSpec(spec) {
     fail(typeof remote.remote_path === 'string' && remote.remote_path.endsWith(`${remote.runner_sha256}.py`) &&
       !META.test(remote.remote_path), 'remote runner path is unsafe');
     fail(Array.isArray(remote.argv) && isDeepStrictEqual(remote.argv,
-      ['python3', remote.remote_path, '--role', remote.role]), 'remote invocation is not argv-only');
+      ['python3', remote.remote_path, '--role', remote.role, '--output', `/tmp/p4-h0-v2-host-${remote.role}.json`]),
+    'remote invocation is not argv-only');
     fail(remote.argv.every(value => typeof value === 'string' && value && !META.test(value)), 'remote argv has shell metacharacters');
     fail(remote.local_remote_hash_equal === true, 'remote runner hash was not matched');
   }
@@ -291,7 +311,12 @@ export function validateBenchmarkSpec(spec) {
     long: { exact: 100038 } }), 'class token bounds differ');
   fail(workload.modes && isDeepStrictEqual(Object.keys(workload.modes), EXPECTED_MODES), 'workload modes missing or reordered');
   for (const name of EXPECTED_MODES) validateMode(workload.modes[name], name);
-  fail(workload.modes.quality.requests === 64 && workload.modes.cold.requests === 8 &&
+  const quality = workload.modes.quality;
+  fail(quality.requests === 64 && isDeepStrictEqual(quality.waves, [{ after_ms: 0, count: 64 }]) &&
+    quality.submission === 'release_closed_loop' && quality.max_in_flight === 1 && quality.open_loop === false &&
+    isDeepStrictEqual(quality.request_deadline_ms_by_class, H1_DEADLINES) && quality.overall_grace_ms === 300000 &&
+    quality.timeout_ms === H1_TIMEOUT_MS && quality.normal === true, 'H1 quality authority is not sealed closed-loop execution');
+  fail(workload.modes.cold.requests === 8 &&
     isDeepStrictEqual(workload.modes.sustained.waves.map(wave => wave.after_ms), EXPECTED_ARRIVALS) &&
     workload.modes.sustained.waves.every(wave => wave.count === 8) && workload.modes.sustained.open_loop === true &&
     workload.modes.sustained.timeout_ms >= EXPECTED_ARRIVALS.at(-1) + 1800000, 'normal wave contract differs');

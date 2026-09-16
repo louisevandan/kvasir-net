@@ -3,6 +3,15 @@
 > 문서 지위 (2026-09-06): **증거 색인**. 각 항목의 날짜·실행 범위를 구분한다. 최신 기록이 과거 실행을 현재 HEAD 증거로 바꾸지 않는다.
 > 현재 목표·상태·순서는 [실행 로드맵](distributed-batching-roadmap.md), 문서 권위와 읽기 경로는 [문서 안내도](document-map.md)를 따른다.
 
+## 2026-09-16: Qwen3.5-122B Release A H0 v2 재봉인
+
+runtime `25edd33cf`와 3-host 실행물, RELEASE closed-loop H1 quality, class별 event deadline,
+tracked materializer/judge를 [H0 v2 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)에
+결속했다. 검사4·host inspector4·preflight5·materializer2·judge4와 약화 변이40종이 통과했다.
+`load_authorized=true`, `runtime_acceptance=false`이며 실제 H1 2차는 아직 실행하지 않았다.
+기존 보호 agent의 모델 child/GPU 점유는0이고 Mac20/21은 nodes0이다. Spark 구형 agent의 CLOSE-WAIT310과
+full backlog는 별도 작업 agent 사용 조건으로 고정했다. 상세는 [H0 v2 보고](../tests/reports/release-a/20260916_093739.md)를 따른다.
+
 ## 2026-09-16: Qwen3.5-122B H1 1차 RED
 
 세 물리 host LOAD 뒤 quality64를 동시에 제출해 30분 동안 8건만 EOS·RELEASE했다. 종료 시 나머지
@@ -10,7 +19,7 @@
 부분 evidence와 실패 recovery를 [H1 1차 보고](../tests/reports/release-a/20260916_084650.md)에 보존했다.
 H0 v1의 동시 quality schedule은 H1/H2 경계를 위반하므로 새 LOAD 승인에는 사용하지 않는다.
 
-## 2026-09-16: Qwen3.5-122B Release A H0 실행 명세 봉인
+## 2026-09-16: Qwen3.5-122B Release A H0 v1 역사 봉인
 
 현재 runtime source `c6a28b582`와 Qwen3.5-122B-A10B UD-Q5_K_S 3-shard, Spark GB10와
 두 M4 Pro의 실제 agent/native/library hash, 3-stage placement, count/byte/token/KV/result 상한,

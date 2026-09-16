@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — Qwen3.5-122B-A10B H1 1차는 H0 v1이 quality64를 동시에 제출한 명세 오류로 RED다. 작업 소유 node/process는 실패 recovery로 회수했고, RELEASE 기반 closed-loop와 요청 deadline 구현은 독립 변이·전체 회귀·양쪽 adapter 실제 모델 시험을 통과했다. H0 v2 재봉인 전 LOAD하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
+최신 현황 정리: 2026-09-16 — Qwen3.5-122B-A10B H0 v2를 source `25edd33cf`와 RELEASE closed-loop·요청별 deadline·tracked materializer/judge에 재봉인했다. H0 v2만 GREEN이며 실제 수용은 미완료다. 다음은 H1 2차 quality64를 순차 실행한다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -10,6 +10,16 @@
 
 <a id="current-status"></a>
 
+**2026-09-16 Qwen122B H0 v2 재봉인:** [H0 v2 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v2.json)와
+[보고](../tests/reports/release-a/20260916_093739.md)가 runtime source `25edd33cf`, 3-host binary/model/layout,
+H1 materializer/judge를 결속했다. H1 quality는 terminal RELEASE 뒤 다음 요청을 제출하는
+`max_in_flight=1`이며 short32/medium16/long16의 deadline과 67,500,000ms 전체 상한을 고정했다.
+H0 검사4, host inspector4, preflight5, materializer2, judge4와 약화 변이40종을 통과했다. 기존 보호 agent는
+모델 child/GPU 점유가 없고 Mac20/21은 nodes0지만, Spark 구형 agent는 CLOSE-WAIT310과 full backlog로
+INSPECT가 불가능해 H1에 사용하지 않는다. `load_authorized=true`, `runtime_acceptance=false`다. 다음 첫
+행동은 새 task agent의 양방향 INSPECT·nodes/failure/child/listener/non-listener TCP state0을 확인한 뒤
+H1 2차만 실행하는 것이다.
+
 **2026-09-16 H1 1차 RED와 교정 구현:** [실행 보고](../tests/reports/release-a/20260916_084650.md)의
 실제 3-host 실행은 delivered64 중 short8만 EOS·RELEASE했고, 30분 종료 시 중·장문8이 계속 prefill,
 48건이 pending이었다. H0 v1의 quality64 동시 제출은 H1 품질과 H2 동시 wave의 경계를 섞었고 요청별
@@ -17,10 +27,10 @@
 실패 recovery로만 종료했으며 기존 `:52005` agent3개는 보존했다. event-drive의 RELEASE 기반
 `max_in_flight`와 요청별 deadline 구현은 독립 변이2개, workspace feature off/on 각1,529/0,
 HF Python57/0, llama.cpp와 HF 실제 Qwen3.5-0.8B 생성·취소·회수·재수용을 통과했다. H0 v1은 당시
-source의 역사 증거로 남기되 새 LOAD 승인은 중지한다. 다음 첫 행동은 runtime 복원점을 commit·push하고
-tracked H1 materializer/judge와 함께 H0 v2를 재봉인하는 것이다. H1 2차 전에는 LOAD하지 않는다.
+source의 역사 증거로 남기되 새 LOAD 승인에는 사용하지 않는다. 교정 구현은 위 H0 v2에 결속했고,
+H1 2차 전에는 새 task agent 사전검사를 통과해야 한다.
 
-**2026-09-16 Qwen122B H0 명세 봉인:** [H0 보고](../tests/reports/release-a/20260916_072100.md)의
+**2026-09-16 Qwen122B H0 v1 역사 봉인:** [H0 보고](../tests/reports/release-a/20260916_072100.md)의
 현재 runtime source `c6a28b582`와 [benchmark-spec](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v1.json)을
 결속했다. GGUF header의 총124,635,206,144/활성9,954,546,176 parameters, 3물리 host 장치 식별·
 1Gbps/RTT·power unavailable 이유, agent/native/library hash, `[0,24)/[24,36)/[36,48)` placement,

@@ -34,5 +34,30 @@ class NvidiaInventoryTests(unittest.TestCase):
         self.assertEqual(result["power_cap"], {"status": "measured", "watts": [350.0]})
 
 
+class ProtectedConnectionTests(unittest.TestCase):
+    @patch.object(MODULE.sys, "platform", "linux")
+    @patch.object(MODULE, "run")
+    def test_linux_counts_only_listener_owned_connection_states(self, mocked_run):
+        mocked_run.return_value = {
+            "stdout": "LISTEN 0 128 0.0.0.0:52005 0.0.0.0:*\n"
+                      "CLOSE-WAIT 0 0 192.168.0.26:52005 192.168.0.6:50000"
+        }
+        result = MODULE.protected_connection_state()
+        self.assertEqual(result["state_counts"], {"CLOSE-WAIT": 1, "LISTEN": 1})
+        self.assertEqual(result["non_listener_count"], 1)
+
+    @patch.object(MODULE.sys, "platform", "darwin")
+    @patch.object(MODULE, "run")
+    def test_macos_excludes_outbound_connection_to_peer_agent_port(self, mocked_run):
+        mocked_run.return_value = {
+            "stdout": "tcp4 0 0 *.52005 *.* LISTEN 0 0\n"
+                      "tcp4 0 0 192.168.0.20.52005 192.168.0.19.50000 CLOSE_WAIT 0 0\n"
+                      "tcp4 0 0 192.168.0.20.60000 192.168.0.19.52005 CLOSE_WAIT 0 0"
+        }
+        result = MODULE.protected_connection_state()
+        self.assertEqual(result["state_counts"], {"CLOSE_WAIT": 1, "LISTEN": 1})
+        self.assertEqual(result["non_listener_count"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

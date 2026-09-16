@@ -10,9 +10,13 @@ import { validateBenchmarkSpec, verifyFiles } from './benchmark-spec.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../../../..');
-const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v1.json');
+const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v2.json');
 const read = () => JSON.parse(fs.readFileSync(specPath));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
+const reseal = component => {
+  component.version = hash(Buffer.from(component.files
+    .map(item => `${item.path}\0${item.bytes}\0${item.sha256}\n`).join('')));
+};
 
 
 test('sealed H0 spec binds the real model, three hosts, bounded workloads, and LOAD authorization only', () => {
@@ -33,12 +37,26 @@ test('sealed H0 spec binds the real model, three hosts, bounded workloads, and L
 test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded resources, and weakened gates', () => {
   const original = read();
   const mutations = [
+    spec => { spec.schema = 'p4.release-a.benchmark-spec.v1'; },
     spec => { spec.source.source_commit = '0'.repeat(40); },
+    spec => { spec.source.source_bundle.sha256 = hash('other source bundle'); },
+    spec => { spec.source.compatibility.patch_digest = hash('other compatibility patch'); },
     spec => { spec.source.runtime_kind = 'direct'; },
     spec => { spec.source.components[0].files[0].sha256 = hash('different scheduler'); },
+    spec => {
+      spec.source.components[0].files = spec.source.components[0].files
+        .filter(item => item.path !== 'tools/event-drive/src/run/inference.rs');
+      reseal(spec.source.components[0]);
+    },
+    spec => {
+      spec.source.components[1].files = spec.source.components[1].files
+        .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py');
+      reseal(spec.source.components[1]);
+    },
     spec => { spec.lifecycle.load_content_type = 'application/vnd.p4.node.create-v1'; },
     spec => { spec.lifecycle.separate_create_delete_allowed = true; },
     spec => { spec.remote_execution[0].argv[1] = '$HOME/inspect.py'; },
+    spec => { spec.remote_execution[0].argv.pop(); },
     spec => { delete spec.hosts[0].device.identifier; },
     spec => { spec.hosts[1].device.power_cap.reason = ''; },
     spec => { spec.hosts[2].links[0].speed_mbps = null; },
@@ -47,6 +65,15 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.execution_layout.stages[0].native_sha256 = hash('other native'); },
     spec => { spec.execution_layout.stages[0].agent_port = 42000; },
     spec => { spec.capacity.pending.count--; },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'h1_materializer'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'h1_judge'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'h0_verifier'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'spec_validator'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'event_preflight'); },
+    spec => { spec.workload.modes.quality.max_in_flight = 8; },
+    spec => { spec.workload.modes.quality.open_loop = true; },
+    spec => { delete spec.workload.modes.quality.request_deadline_ms_by_class.long; },
+    spec => { spec.workload.modes.quality.timeout_ms = 1800000; },
     spec => { delete spec.workload.modes.recovery; },
     spec => { spec.workload.modes.sustained.timeout_ms--; },
     spec => { spec.workload.modes.overload.rejected_min--; },

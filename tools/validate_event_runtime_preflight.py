@@ -132,6 +132,8 @@ def validate(config: dict[str, Any], evidence: dict[str, Any]) -> list[str]:
             errors.append(f"agent {agent} has task-owned native children")
         if route.get("task_owned_native_listeners") != 0:
             errors.append(f"agent {agent} has task-owned native listeners")
+        if route.get("task_owned_agent_non_listener_connections") != 0:
+            errors.append(f"agent {agent} has retained non-listener TCP connections")
 
     extra = sorted(set(by_agent) - configured_agents)
     if extra:
