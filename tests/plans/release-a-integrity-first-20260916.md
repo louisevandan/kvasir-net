@@ -31,6 +31,9 @@ different terminal classification on exact replay fails the arm.
   inference-window anchor, to freshly built remote binaries and the raw-evidence builder.
 - I0 uses sealed 15-second loaded, inference-window, and drained barriers. Missing or repeated
   barriers invalidate the run; resource snapshots are captured only while a barrier owns the state.
+- Useful generation TPS counts model tokens forwarded as the accepted service response. An OUTER
+  processor's newly calculated response gives the discarded model tokens zero useful count while
+  retaining their nonzero total generation count. The request evidence binds this provenance.
 - Model: Qwen3.5-122B-A10B UD-Q5_K_S, cuts `[0,24)`, `[24,36)`, `[36,48)` on Spark GB10,
   Mac20 M4 Pro, and Mac21 M4 Pro.
 - Shape: resident 8, context 102,400 per sequence, total context 819,200, batch 128, ubatch 64,

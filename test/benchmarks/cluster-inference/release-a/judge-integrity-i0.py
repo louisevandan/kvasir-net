@@ -304,6 +304,13 @@ def build_bundle(artifact: dict, artifact_bytes: bytes, seal: dict, external: di
         release_ms = request["release_ms"] - request["arrival_ms"]
         if useful_ms <= 0 or release_ms <= 0:
             raise ValueError("I0 throughput denominator is not positive")
+        processed = request.get("response_processor") is not None
+        if processed != (request.get("model_response") is not None):
+            raise ValueError("I0 model output provenance differs from response processor")
+        # A processor-produced JSON answer does not forward the model's raw
+        # tokens to the service. Keep those tokens in total generation, but do
+        # not call them useful output merely because the service answer passed.
+        useful_tokens = 0 if processed else generated
         scheduler = [
             {"phase": phase, "metrics": scheduler_metrics(
                 artifact, request["request_id"], phase, spec["model"]["n_ubatch"]
@@ -324,7 +331,7 @@ def build_bundle(artifact: dict, artifact_bytes: bytes, seal: dict, external: di
             "decode_rows": request["decode_rows"], "decode_ms": request["generation_elapsed_ms"],
         }
         run = {
-            "useful_generation_tps": generated * 1000 / useful_ms,
+            "useful_generation_tps": useful_tokens * 1000 / useful_ms,
             "total_generation_tps": generated * 1000 / release_ms,
             "prefill_rows_per_second": request["prefill_rows"] * 1000 / request["prefill_elapsed_ms"],
             "decode_rows_per_second": request["decode_rows"] * 1000 / request["generation_elapsed_ms"],
@@ -458,6 +465,10 @@ def self_test(spec: dict) -> None:
     artifact, artifact_bytes, seal, external = fixture(spec)
     bundle = build_bundle(artifact, artifact_bytes, seal, external, spec)
     assert [row["id"] for row in bundle["arms"]] == ["I0-S", "I0-M", "I0-L"]
+    assert bundle["arms"][0]["scorecard"]["run"]["useful_generation_tps"] > 0
+    for row in bundle["arms"][1:]:
+        assert row["scorecard"]["run"]["useful_generation_tps"] == 0
+        assert row["scorecard"]["run"]["total_generation_tps"] > 0
     integrity = load_module("release_a_integrity_judge", INTEGRITY_JUDGE)
     full = integrity.fixture(spec)
     replacements = {row["id"]: row for row in bundle["arms"]}
@@ -501,7 +512,7 @@ def self_test(spec: dict) -> None:
             pass
         else:
             raise AssertionError("weakened I0 evidence was accepted")
-    print(json.dumps({"passed": True, "tests": 12}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 15}, separators=(",", ":")))
 
 
 def main() -> None:
