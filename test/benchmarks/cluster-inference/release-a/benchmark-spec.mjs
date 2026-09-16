@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-const EXPECTED_COMMIT = 'fd6c7b068653ae7171120d5b6b6224071066fd1a';
+const EXPECTED_COMMIT = 'b8f5214ba9a88a2bc449889af80aff4b2c3ae8c0';
 const EXPECTED_SOURCE_BUNDLE = Object.freeze({
   bytes: 5307481,
   sha256: 'e9173264857b4d6810288110329b2953b8f9ce8ae67b71b68caec839aa8f7a26',
