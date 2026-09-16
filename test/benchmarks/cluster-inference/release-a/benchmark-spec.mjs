@@ -346,7 +346,10 @@ export function validateBenchmarkSpec(spec) {
   fail(quality.requests === 64 && isDeepStrictEqual(quality.waves, [{ after_ms: 0, count: 64 }]) &&
     quality.submission === 'release_closed_loop' && quality.max_in_flight === 1 && quality.open_loop === false &&
     isDeepStrictEqual(quality.request_deadline_ms_by_class, H1_DEADLINES) && quality.overall_grace_ms === 300000 &&
-    quality.timeout_ms === H1_TIMEOUT_MS && quality.normal === true, 'H1 quality authority is not sealed closed-loop execution');
+    quality.timeout_ms === H1_TIMEOUT_MS && quality.normal === true &&
+    quality.pre_inference_hold_ms === 15000 && quality.inference_start_hold_ms === 15000 &&
+    quality.post_inference_hold_ms === 15000,
+    'H1 quality authority is not sealed closed-loop execution with observable barriers');
   fail(workload.modes.cold.requests === 8 &&
     isDeepStrictEqual(workload.modes.sustained.waves.map(wave => wave.after_ms), EXPECTED_ARRIVALS) &&
     workload.modes.sustained.waves.every(wave => wave.count === 8) && workload.modes.sustained.open_loop === true &&

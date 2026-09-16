@@ -118,6 +118,8 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.workload.modes.quality.open_loop = true; },
     spec => { delete spec.workload.modes.quality.request_deadline_ms_by_class.long; },
     spec => { spec.workload.modes.quality.timeout_ms = 1800000; },
+    spec => { delete spec.workload.modes.quality.pre_inference_hold_ms; },
+    spec => { spec.workload.modes.quality.post_inference_hold_ms = 0; },
     spec => { delete spec.workload.modes.recovery; },
     spec => { spec.workload.modes.sustained.timeout_ms--; },
     spec => { spec.workload.modes.overload.rejected_min--; },

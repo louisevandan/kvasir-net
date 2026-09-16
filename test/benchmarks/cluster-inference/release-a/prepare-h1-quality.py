@@ -60,6 +60,22 @@ def quality_slo(spec: dict) -> dict:
     return {"percentile": "nearest_rank", "ttft_ms_by_class": ttft, "itl_p95_ms": itl}
 
 
+def quality_barriers(spec: dict) -> dict:
+    """Keep the loaded, inference-window, and drained states observable."""
+    quality = spec["workload"]["modes"]["quality"]
+    expected = {"pre_inference_hold_ms": 15_000,
+                "inference_start_hold_ms": 15_000,
+                "post_inference_hold_ms": 15_000}
+    if {name: quality.get(name) for name in expected} != expected:
+        raise ValueError("H1 quality observation barriers differ")
+    return expected
+
+
+def verify_barrier_config(config: dict, expected: dict) -> None:
+    if {name: config.get(name) for name in expected} != expected:
+        raise ValueError("H1 materialized observation barriers differ")
+
+
 def resource_profile(capacity: dict, stage: dict) -> dict:
     return {
         "version": 1,
@@ -96,6 +112,7 @@ def materialize(args: argparse.Namespace) -> dict:
     corpus = read_json(args.corpus)
     deadlines = quality_deadlines(spec, corpus)
     slo = quality_slo(spec)
+    barriers = quality_barriers(spec)
     if spec["h0_status"] != "sealed" or spec["runtime_acceptance"] is not False:
         raise ValueError("H0 spec is not sealed for execution")
     if corpus.get("runtime_acceptance") is not False:
@@ -168,8 +185,10 @@ def materialize(args: argparse.Namespace) -> dict:
                        "responses": response_expectations(cases)},
         "response_processors": [None if case["class"] == "short" else "engineering_power_v1"
                                 for case in cases],
+        **barriers,
         "nodes": nodes,
     }
+    verify_barrier_config(config, barriers)
     args.output_dir.mkdir(parents=True, exist_ok=False)
     config_bytes = (json.dumps(config, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
     (args.output_dir / "h1-quality.json").write_bytes(config_bytes)
@@ -179,6 +198,7 @@ def materialize(args: argparse.Namespace) -> dict:
         "materializer_sha256": digest(Path(__file__).read_bytes()), "requests": len(prompts),
         "total_prompt_bytes": total_bytes, "total_input_tokens": total_tokens,
         "max_output_tokens": max_tokens, "max_in_flight": 1,
+        "observation_barriers": barriers,
         "request_timeout_ms_sha256": digest(json.dumps(deadlines, separators=(",", ":")).encode()),
         "request_timeout_ms": deadlines, "slo": slo, "cases": cases,
     }
@@ -193,13 +213,34 @@ def self_test() -> None:
     quality = {"requests": 3, "submission": "release_closed_loop", "max_in_flight": 1,
                "open_loop": False, "waves": [{"after_ms": 0, "count": 3}],
                "request_deadline_ms_by_class": {"short": 10, "medium": 20, "long": 30},
-               "overall_grace_ms": 5, "timeout_ms": 65}
+               "overall_grace_ms": 5, "timeout_ms": 65,
+               "pre_inference_hold_ms": 15_000,
+               "inference_start_hold_ms": 15_000,
+               "post_inference_hold_ms": 15_000}
     spec = {"workload": {"modes": {"quality": quality}},
             "slo": {"ttft_ms": {"short": 4, "medium": 5, "long": 6}, "itl_ms": 3}}
     assert quality_deadlines(spec, corpus) == [10, 20, 30]
     assert quality_slo(spec) == {"percentile": "nearest_rank",
                                  "ttft_ms_by_class": {"short": 4, "medium": 5, "long": 6},
                                  "itl_p95_ms": 3}
+    assert quality_barriers(spec) == {"pre_inference_hold_ms": 15_000,
+                                     "inference_start_hold_ms": 15_000,
+                                     "post_inference_hold_ms": 15_000}
+    verify_barrier_config(quality, quality_barriers(spec))
+    try:
+        verify_barrier_config({"pre_inference_hold_ms": 15_000}, quality_barriers(spec))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("I1 driver config without drained barrier was accepted")
+    missing = dict(quality)
+    del missing["pre_inference_hold_ms"]
+    try:
+        quality_barriers({"workload": {"modes": {"quality": missing}}})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("missing H1 loaded-state barrier was accepted")
     assert response_expectations([{"id": "case-00", "expected": {"answer": 7}}]) == [
         {"minimum_generated_tokens": 1, "minimum_response_chars": 2,
          "expected_json": {"answer": 7}}]
@@ -223,7 +264,7 @@ def self_test() -> None:
         pass
     else:
         raise AssertionError("zero H1 ITL SLO was accepted")
-    print(json.dumps({"passed": True, "tests": 6}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 10}, separators=(",", ":")))
 
 
 def main() -> None:

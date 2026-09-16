@@ -60,6 +60,10 @@ def validate_manifest(manifest: dict) -> None:
             controller.get("owned") != ["mac20-return", "mac20-next",
                                         "mac21-return", "mac21-previous"]):
         raise ValueError("controller tunnel preflight differs")
+    artifact_read_timeout = manifest.get("artifact_read_timeout_seconds", 60)
+    if (not isinstance(artifact_read_timeout, int) or isinstance(artifact_read_timeout, bool)
+            or not 60 <= artifact_read_timeout <= 1800):
+        raise ValueError("artifact read deadline differs")
 
 
 def inspect_controller(manifest: dict) -> dict:
@@ -223,7 +227,8 @@ def run(manifest: dict, output: Path) -> dict:
     if failure:
         (output / "failure.json").write_text(json.dumps({"error": failure}, indent=2) + "\n")
         raise RuntimeError(failure)
-    artifact_bytes = execute([*driver["ssh"], "cat", driver["artifact"]])
+    artifact_bytes = execute([*driver["ssh"], "cat", driver["artifact"]],
+                             timeout=manifest.get("artifact_read_timeout_seconds", 60))
     artifact = json.loads(artifact_bytes)
     (output / "artifact.json").write_bytes(artifact_bytes)
     config_bytes = Path(manifest["local_config"]).read_bytes()
@@ -292,6 +297,12 @@ def self_test() -> None:
         assert str(error) == "controller tunnel preflight differs"
     else:
         raise AssertionError("missing controller tunnel identities were accepted")
+    try:
+        validate_manifest({**manifest, "artifact_read_timeout_seconds": 0})
+    except ValueError as error:
+        assert str(error) == "artifact read deadline differs"
+    else:
+        raise AssertionError("unbounded artifact read was accepted")
     runnable = {**manifest, "bindings": [
         {**row, "command": [sys.executable, "-c", "print('" + "0" * 64 + "')"]}
         for row in bindings]}
@@ -304,7 +315,7 @@ def self_test() -> None:
         assert str(error) == "controller tunnel identity differs"
     else:
         raise AssertionError("preflight allowed a missing live tunnel")
-    print(json.dumps({"passed": True, "tests": 6}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 7}, separators=(",", ":")))
 
 
 def main() -> None:
