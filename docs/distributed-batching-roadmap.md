@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — 구성요소·LOAD/UNLOAD 무결성은 통과했지만 현재 Qwen122B 서비스 무결성은 미달이다. 현재 source의 I0 단일 요청 3건은 모두 완료·EOS·회수했으나 정확 답은 1/3이며, 독립 단일 host의 정식 템플릿 입력도 1/3이다. H1 1차는64건 중8건만 완료, H1 2차는 terminal artifact가 없어 INVALID다. 실행 순서는 **서비스 무결성 확립 → 기준선 봉인 → 성능 개선**이다. 단일 요청·지속 유입·과부하/취소/drain·다중 host·soak가 모두 GREEN이 되기 전 성능 후보 개발과 H5를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
+최신 현황 정리: 2026-09-16 — 구성요소·LOAD/UNLOAD 무결성은 통과했지만 현재 Qwen122B 서비스 무결성은 미달이다. 현재 source의 I0 단일 요청 3건은 모두 완료·EOS·회수했으나 정확 답은 1/3이며, 독립 단일 host의 정식 템플릿 입력도 1/3이다. 원인 분리 진단에서 중·장문 모두 정확한 원자료 추출 뒤 정수 전력 계산이 틀렸고, 짧은 계산 전용 입력도 실패했다. H1 1차는64건 중8건만 완료, H1 2차는 terminal artifact가 없어 INVALID다. 실행 순서는 **서비스 무결성 확립 → 기준선 봉인 → 성능 개선**이다. 단일 요청·지속 유입·과부하/취소/drain·다중 host·soak가 모두 GREEN이 되기 전 성능 후보 개발과 H5를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -28,6 +28,17 @@ medium `oracle_mismatch`, long `invalid_json`으로 분산 I0 2차를 자동 차
 I1–I4/P0–P3은 BLOCKED다. 다음 첫 행동은 요구한 산술·사실 판단의 권위를 모델 추측에
 맡기지 않는 제품 알고리즘/출력 검증 계약을 먼저 설계·구현하고, 같은 엄격한 오라클의
 단일 호스트 3/3 및 제거 변이를 증명하는 것이다. 그 뒤 새 H0로 source/input/judge를 봉인한다.
+
+**2026-09-16 I0 오답 원인 분리:** [사전 봉인 계획](../tests/plans/release-a-quality-cause-20260916.md)과
+[실행 보고](../tests/reports/release-a/20260916_172000.md)의 원격 단일 load·6개 고정 probe에서
+medium/long 모두 선택 사실 3/3을 정확히 출력했으나, 전체 기록과 결합한 전력 계산은
+각각 1/3·0/3이었다. 선택 기록 세 개만 남긴 382/381-token 계산 입력에서도 각각
+0/3이었다. 기존 원본의 잘못된 전력 6건은 모두 에너지 배수에는 그대로 쓰였다.
+따라서 긴 문맥 검색이나 분산 전송만으로 설명할 수 없는 **모델 생성 산술 오류**가 독립 재현됐고,
+그 출력을 정상 EOS로 전달한 데 의미 검증 권위가 없는 것이 서비스 노출 경계다. long의 코드 펜스는
+별도 형식 오류다. 신경망 내부의 숫자 선택 원인은 추정하지 않는다. 다음 첫 행동은 generic
+P4 transport 밖에서 정확 산술을 요구하는 작업의 추출 신원·결정론적 계산/검증·불일치 terminal
+계약을 설계하고 제거 변이를 추가하는 것이다. I0 RED와 새 분산 LOAD 차단은 유지한다.
 
 **2026-09-16 H0 v4 봉인:** [H0 v4 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v4.json)가
 runtime `19f2b1afa`, 세 원격 host의 새 agent/event-drive 바이너리, native/library/model/layout,

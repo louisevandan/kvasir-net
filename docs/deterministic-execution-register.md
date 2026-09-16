@@ -86,6 +86,7 @@
 | L078 | I0 raw judge는 실제 medium/long 오라클이 실패해도 예외에 전역 오류만 표시해 `global=none`으로 원인을 숨겼다. | 전역 실패와 요청별 `case_id:failure`를 함께 예외로 보존하고 원시 증거 builder의 오답 반례를 추가했다. 이 검사 제거 시 사례별 실패가 다시 사라진다. | I0 첫 실행 진단, I1–I4 요청별 실패 분류 |
 | L079 | corpus 생성기의 Qwen3.5 no-thinking assistant 접미부가 GGUF 템플릿의 빈 줄 두 개를 빠뜨렸다. 그러나 정식 접미부로 수정해도 단일 host medium/long 정답은 실패했다. 템플릿 하나를 충분 원인으로 단정한 가설이 반증됐다. | 접미부를 GGUF 형식으로 고정하는 시험을 추가했고, 독립 `judge-reference-capability.py`가 정확 프롬프트·원본 token 수·EOS·JSON/오라클 3/3을 통과하기 전 새 분산 LOAD를 거부한다. 엄격한 오라클을 수정하지 않는다. | H0 v6 입력 봉인과 I0 재실행 진입 |
 | L080 | standalone 기준 빌드 준비에서 Ninja·비대화형 nvcc PATH를 추측해 컴파일 전 설정이 두 번 실패했고, 원격 corpus materializer의 Node 경로도 먼저 오래된 버전을 가리켰다. | 성공한 CMakeCache/flags.make의 generator·include/link·CUDA 경로를 읽고 `/home/m42/.nvm/versions/node/v24.19.0/bin/node` 같은 실제 절대 실행물을 존재·버전 사전검사에 고정한다. 다음 remote 작업은 도구 탐색과 PATH 추측을 금지한다. 이 차단 경로는 아직 별도 자동 runner에 결속되지 않아 다음 원격 build는 보류한다. | H0 v6 이후의 원격 reference/native 빌드 |
+| L081 | 원본 I0 오답의 최종 JSON·GPU/배치 로그만으로는 긴 문맥에서 기록을 잘못 찾았는지 정확 기록을 보고도 계산을 틀렸는지 구별하지 못했다. 입력 형식 수정 뒤의 반복도 충분 원인을 확정하지 못했다. | 같은 모델·seed·원자료에서 전체 기록의 사실 추출 E, 선택 3건만 계산 C, 전체 기록의 사실+계산 T를 사전 봉인해 한 적재에서 실행한다. 실제 E/T의 사실은 3/3 정확, C 전력은 각 0/3, T 전력은 medium1/3·long0/3으로 산술 실패를 독립 재현했다. 판정기는 잘못된 사실/계산·프롬프트/토큰/종료/JSON/증거 누락 7종을 거부한다. 모델 추측값을 정상 서비스 정답으로 승인하지 않을 결정론적 계산/검증 계약을 구현하기 전 새 분산 LOAD를 차단한다. | I0 재설계와 I1–I4 정상 응답 품질 게이트 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 
