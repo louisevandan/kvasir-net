@@ -18,6 +18,12 @@ endpoints — plus a KVR pay-per-use inference gateway.
 ![Runtime](https://img.shields.io/badge/runtime-Docker%20hub%20%2B%20native%20nodes-blue)
 ![Data plane](https://img.shields.io/badge/data%20plane-linkcpp%20RPC%20%2F%20ring-6b7280)
 
+> **Distributed inference engine (P4):** the next-generation engine — agents,
+> the staged llama.cpp adapter, and the multi-host evidence behind the site's
+> proof numbers — is published on the
+> [`p4` branch](https://github.com/louisevandan/kvasir-net/tree/p4)
+> under the same BSL 1.1 terms.
+
 ## Why Kvasir AI Network?
 
 linkcpp already has a capable RPC data plane. Kvasir AI Network adds the missing
