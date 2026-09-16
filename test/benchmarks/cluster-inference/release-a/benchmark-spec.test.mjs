@@ -69,6 +69,11 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
         .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py');
       reseal(spec.source.components[1]);
     },
+    spec => {
+      spec.source.components[1].files = spec.source.components[1].files
+        .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/inspect-i0-active-host.py');
+      reseal(spec.source.components[1]);
+    },
     spec => { spec.lifecycle.load_content_type = 'application/vnd.p4.node.create-v1'; },
     spec => { spec.lifecycle.separate_create_delete_allowed = true; },
     spec => { spec.remote_execution[0].argv[1] = '$HOME/inspect.py'; },
@@ -89,6 +94,7 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'integrity_spec'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_materializer'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_evidence_builder'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_active_preflight'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_judge'); },
     spec => { spec.integrity.execution_order = ['I0', 'P0']; },
     spec => { spec.integrity.integrity_baseline = true; },

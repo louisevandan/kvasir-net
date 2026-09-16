@@ -98,6 +98,7 @@ export function validateBenchmarkSpec(spec) {
     'test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json',
     'test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py',
     'test/benchmarks/cluster-inference/release-a/prepare-integrity-i0.py',
+    'test/benchmarks/cluster-inference/release-a/inspect-i0-active-host.py',
     'test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py',
     'test/benchmarks/cluster-inference/release-a/judge-integrity-i0.py',
     'test/benchmarks/cluster-inference/release-a/judge-integrity.py',
@@ -111,7 +112,7 @@ export function validateBenchmarkSpec(spec) {
     lifecycle.node_created_by_load === true && lifecycle.node_removed_by_unload === true &&
     lifecycle.separate_create_delete_allowed === false, 'lifecycle is not the sealed LOAD/UNLOAD contract');
 
-  fail(Array.isArray(spec.artifacts) && spec.artifacts.length >= 19, 'local artifacts missing');
+  fail(Array.isArray(spec.artifacts) && spec.artifacts.length >= 20, 'local artifacts missing');
   const artifacts = new Map();
   for (const artifact of spec.artifacts) {
     fail(typeof artifact.id === 'string' && artifact.id && !artifacts.has(artifact.id), 'duplicate artifact id');
@@ -122,7 +123,7 @@ export function validateBenchmarkSpec(spec) {
     'h1_materializer', 'h1_judge', 'h0_verifier', 'spec_validator', 'spec_tests',
     'host_inspector_tests', 'event_preflight', 'event_preflight_tests',
     'integrity_spec', 'integrity_spec_validator', 'integrity_judge', 'i0_materializer',
-    'i0_evidence_builder', 'i0_judge'])
+    'i0_active_preflight', 'i0_evidence_builder', 'i0_judge'])
     fail(artifacts.has(id), `missing artifact ${id}`);
   fail(artifacts.get('event_preflight').path === '../../../../tools/validate_event_runtime_preflight.py' &&
     artifacts.get('event_preflight_tests').path === '../../../../tools/tests/test_validate_event_runtime_preflight.py',
@@ -133,6 +134,7 @@ export function validateBenchmarkSpec(spec) {
     performance_blocked_until_integrity_green: true,
     test_spec: 'integrity_spec', spec_validator: 'integrity_spec_validator',
     judge: 'integrity_judge', i0_materializer: 'i0_materializer',
+    i0_active_preflight: 'i0_active_preflight',
     i0_evidence_builder: 'i0_evidence_builder', i0_judge: 'i0_judge',
     status: 'planned', integrity_baseline: false, performance_improvement_claimed: false,
   }), 'integrity-first execution authority differs');

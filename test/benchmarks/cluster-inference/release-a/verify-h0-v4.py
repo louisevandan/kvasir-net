@@ -57,6 +57,8 @@ def main() -> None:
              "overload_arms": 1, "fault_arms": 5}, "integrity contract")
     summary([sys.executable, str(DIRECTORY / "prepare-integrity-i0.py"), "--self-test"],
             {"passed": True, "tests": 5}, "I0 materializer")
+    summary([sys.executable, str(DIRECTORY / "inspect-i0-active-host.py"), "--self-test"],
+            {"passed": True, "tests": 4}, "I0 active-host preflight")
     summary([sys.executable, str(DIRECTORY / "build-integrity-i0-evidence.py"),
              "--spec", str(INTEGRITY_SPEC), "--self-test"],
             {"passed": True, "tests": 10}, "I0 raw evidence builder")
@@ -76,11 +78,12 @@ def main() -> None:
     }
     if verified != expected:
         raise RuntimeError("H0 v4 verifier summary differs")
-    print(json.dumps({"passed": True, "checks": 11, "inspector_tests": 4,
+    print(json.dumps({"passed": True, "checks": 12, "inspector_tests": 4,
                       "preflight_tests": 5, "h1_materializer_tests": 4,
                       "h1_judge_tests": 10, "integrity_spec_tests": 23,
                       "integrity_arms": 14, "i0_materializer_tests": 5,
-                      "i0_evidence_builder_tests": 10, "i0_judge_tests": 11,
+                      "i0_active_preflight_tests": 4, "i0_evidence_builder_tests": 10,
+                      "i0_judge_tests": 11,
                       "integrity_judge_tests": 27,
                       "spec_tests": 4}, separators=(",", ":")))
 

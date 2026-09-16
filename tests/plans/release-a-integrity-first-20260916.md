@@ -51,7 +51,8 @@ different terminal classification on exact replay fails the arm.
 4. Each advertised agent address completes the real bidirectional INSPECT round trip. Before the
    task agents start, task children/listeners are 0. After they start and before LOAD, every host has
    nodes 0, native children 0, exactly one task-agent listener, transport failures 0, and CLOSE_WAIT
-   0. SSH or a one-way socket probe is not a substitute.
+   0. `inspect-i0-active-host.py` also binds the task PID, command, binary hash, advertised address,
+   and exact topology-owned ESTABLISHED peers. SSH or a one-way socket probe is not a substitute.
 5. Source, binary, native library, model shard, tokenizer/template, corpus, stage plan, device,
    generation, resource profile, telemetry sampler, and judge identities equal the seal.
 6. The event runtime owns bounded deadline to artifact assembly, FINISH, and cleanup. External TERM

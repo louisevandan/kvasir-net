@@ -22,7 +22,7 @@ source가 달라지면 앞선 I 단계부터 다시 실행한다. [무결성 우
 runtime `19f2b1afa`, 세 원격 host의 새 agent/event-drive 바이너리, native/library/model/layout,
 I0 materializer, 원시 증거 builder와 두 단계 judge를 결속했다. 상대 시간 GPU 표본을 다른 실행에 붙일 수
 있던 틈을 `started_unix_ms`와 원격 capture 시각으로 닫았고, contract22·builder10·I0 judge11·전체
-judge27·H0 spec4를 포함한 고정 검증이 통과했다. `load_authorized=true`지만 모델 실행 전 상태이므로
+judge27·active-host preflight4·H0 spec4를 포함한 고정 검증이 통과했다. `load_authorized=true`지만 모델 실행 전 상태이므로
 `runtime_acceptance=false`, `integrity_baseline=false`다. 다음 행동은 새 task agent의 실제 양방향
 INSPECT와 정확한 pre-LOAD 상태를 확인한 뒤 I0-S/M/L을 한 LOAD에서 한 번 실행하는 것이다.
 

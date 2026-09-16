@@ -53,7 +53,7 @@
       },
       {
         "id": "judge",
-        "version": "37803bdc3fd10cf9e9a57eff86f2e80bbf802bbe87ad7d3c601350497dd7cdb9",
+        "version": "0790d98108fed94175fa15471989a5d6693b9dae45c66460d7d9cd6e6487a830",
         "files": [
           {
             "path": ".gitattributes",
@@ -84,6 +84,11 @@
             "path": "test/benchmarks/cluster-inference/release-a/prepare-integrity-i0.py",
             "bytes": 10108,
             "sha256": "3a8db3c7c18de6123200b45faea3c0d82b33962182b206d42d5cd9ca6dc565e5"
+          },
+          {
+            "path": "test/benchmarks/cluster-inference/release-a/inspect-i0-active-host.py",
+            "bytes": 6998,
+            "sha256": "86da1324aa2aa6c8d65e8d21509abe7bbbc48e7315a6056293442c4f00546cc5"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py",
@@ -185,20 +190,20 @@
     },
     {
       "path": "verify-h0-v4.py",
-      "bytes": 4151,
-      "sha256": "520c8bac1a4685b18ce58ad118528a9254cff7e89640431753f5e3cfc34aa13a",
+      "bytes": 4366,
+      "sha256": "182476bffdb766a5270a9457157525257c4c4b90308068324feac4da62eab664",
       "id": "h0_verifier"
     },
     {
       "path": "benchmark-spec.mjs",
-      "bytes": 30390,
-      "sha256": "1ce75dca6e474affbf200b1efe8b98c63645f53e66b60f55682641d83dc629e1",
+      "bytes": 30538,
+      "sha256": "0b9375be5cefbbc2022c7e82cbda01d3681bead3769713df0ea4b30f2f599c2a",
       "id": "spec_validator"
     },
     {
       "path": "benchmark-spec.test.mjs",
-      "bytes": 7022,
-      "sha256": "eb4b09d5c6db926a23e927a4c56e21ef889f9d9f2fe8438137c195a487adac8d",
+      "bytes": 7376,
+      "sha256": "f9be39ead586920dcfcff737fbd063c9a3e2dfd78ab7a417cc999e3e968bed8b",
       "id": "spec_tests"
     },
     {
@@ -242,6 +247,12 @@
       "bytes": 10108,
       "sha256": "3a8db3c7c18de6123200b45faea3c0d82b33962182b206d42d5cd9ca6dc565e5",
       "id": "i0_materializer"
+    },
+    {
+      "path": "inspect-i0-active-host.py",
+      "bytes": 6998,
+      "sha256": "86da1324aa2aa6c8d65e8d21509abe7bbbc48e7315a6056293442c4f00546cc5",
+      "id": "i0_active_preflight"
     },
     {
       "path": "build-integrity-i0-evidence.py",
@@ -1730,6 +1741,7 @@
     "spec_validator": "integrity_spec_validator",
     "judge": "integrity_judge",
     "i0_materializer": "i0_materializer",
+    "i0_active_preflight": "i0_active_preflight",
     "i0_evidence_builder": "i0_evidence_builder",
     "i0_judge": "i0_judge",
     "status": "planned",
