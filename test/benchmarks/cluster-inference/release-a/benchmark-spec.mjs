@@ -7,14 +7,14 @@ import { isDeepStrictEqual } from 'node:util';
 
 const EXPECTED_COMMIT = 'b8f5214ba9a88a2bc449889af80aff4b2c3ae8c0';
 const EXPECTED_SOURCE_BUNDLE = Object.freeze({
-  bytes: 5307481,
-  sha256: 'e9173264857b4d6810288110329b2953b8f9ce8ae67b71b68caec839aa8f7a26',
+  bytes: 5339189,
+  sha256: '18d2f4836552d5a0e15a2e7d989bdee96acf01578f50dac2ba0a4b720402af93',
 });
 const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9';
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);
 const EXPECTED_MODES = Object.freeze(['quality', 'cold', 'sustained', 'recovery', 'overload', 'soak']);
 const EXPECTED_FAULTS = Object.freeze(['cancel', 'slow_edge', 'disconnected_edge', 'node_restart', 'late_return']);
-const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v7';
+const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v8';
 const EXPECTED_ARRIVALS = Object.freeze([0, 180000, 480000, 780000, 1080000, 1380000, 1680000, 1980000]);
 const H1_DEADLINES = Object.freeze({ short: 600000, medium: 1200000, long: 1800000 });
 const H1_TIMEOUT_MS = 32 * H1_DEADLINES.short + 16 * H1_DEADLINES.medium +
@@ -109,6 +109,10 @@ export function validateBenchmarkSpec(spec) {
     'test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py',
     'test/benchmarks/cluster-inference/release-a/judge-integrity-i0.py',
     'test/benchmarks/cluster-inference/release-a/judge-integrity.py',
+    'test/benchmarks/cluster-inference/release-a/run-integrity-i1.py',
+    'test/benchmarks/cluster-inference/release-a/build-integrity-i1-evidence.py',
+    'test/benchmarks/cluster-inference/release-a/judge-integrity-i1.py',
+    'test/benchmarks/cluster-inference/release-a/test_integrity_i1.py',
   ]) fail(componentPaths('judge').has(required), `judge omits H1 sealed tool: ${required}`);
 
   const lifecycle = spec.lifecycle;
@@ -131,7 +135,8 @@ export function validateBenchmarkSpec(spec) {
     'host_inspector_tests', 'event_preflight', 'event_preflight_tests',
     'integrity_spec', 'integrity_spec_validator', 'integrity_judge', 'i0_materializer',
     'i0_active_preflight', 'i0_host_observer', 'i0_route_inspector', 'i0_runner',
-    'i0_cleanup', 'i0_evidence_builder', 'i0_judge', 'reference_capability_judge'])
+    'i0_cleanup', 'i0_evidence_builder', 'i0_judge', 'reference_capability_judge',
+    'i1_runner', 'i1_evidence_builder', 'i1_judge', 'i1_path_tests'])
     fail(artifacts.has(id), `missing artifact ${id}`);
   fail(artifacts.get('event_preflight').path === '../../../../tools/validate_event_runtime_preflight.py' &&
     artifacts.get('event_preflight_tests').path === '../../../../tools/tests/test_validate_event_runtime_preflight.py',
@@ -146,6 +151,8 @@ export function validateBenchmarkSpec(spec) {
     i0_host_observer: 'i0_host_observer', i0_route_inspector: 'i0_route_inspector',
     i0_runner: 'i0_runner', i0_cleanup: 'i0_cleanup',
     i0_evidence_builder: 'i0_evidence_builder', i0_judge: 'i0_judge',
+    i1_runner: 'i1_runner', i1_evidence_builder: 'i1_evidence_builder',
+    i1_judge: 'i1_judge', i1_path_tests: 'i1_path_tests',
     status: 'planned', integrity_baseline: false, performance_improvement_claimed: false,
   }), 'integrity-first execution authority differs');
 

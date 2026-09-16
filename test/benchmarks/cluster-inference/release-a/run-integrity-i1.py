@@ -30,6 +30,7 @@ def validate_i1(manifest: dict, config: dict, seal: dict, spec: dict,
                 config_path: Path) -> None:
     quality = spec["workload"]["modes"]["quality"]
     collector = load_module("i1_remote_collector", DIRECTORY / "run-integrity-i0.py")
+    materializer = load_module("i1_materializer", DIRECTORY / "prepare-h1-quality.py")
     collector.validate_manifest(manifest)
     if manifest["local_config"] != str(config_path.resolve()):
         raise ValueError("I1 local config path differs")
@@ -37,6 +38,17 @@ def validate_i1(manifest: dict, config: dict, seal: dict, spec: dict,
         raise ValueError("I1 config seal differs")
     if len(config.get("prompts", [])) != quality["requests"] or seal.get("requests") != quality["requests"]:
         raise ValueError("I1 corpus request count differs")
+    cases = seal.get("cases") or []
+    if (len(cases) != quality["requests"] or
+            len({row.get("prompt_sha256") for row in cases}) != quality["requests"]):
+        raise ValueError("I1 sealed case identity differs")
+    if quality["requests"] == 64 and [sum(row.get("class") == name for row in cases)
+                                      for name in ("short", "medium", "long")] != [32, 16, 16]:
+        raise ValueError("I1 corpus class coverage differs")
+    artifact_hashes = {row["id"]: row["sha256"] for row in spec.get("artifacts", [])}
+    if artifact_hashes and (seal.get("corpus_sha256") != artifact_hashes.get("corpus") or
+                            seal.get("materializer_sha256") != artifact_hashes.get("h1_materializer")):
+        raise ValueError("I1 corpus/materializer authority differs")
     if (config.get("max_in_flight") != 1 or config.get("waves") != quality["waves"]
             or config.get("timeout_ms") != quality["timeout_ms"]
             or config.get("request_timeout_ms") != seal.get("request_timeout_ms")):
@@ -50,7 +62,15 @@ def validate_i1(manifest: dict, config: dict, seal: dict, spec: dict,
         raise ValueError("I1 execution observation barriers differ")
     if len(config.get("response_processors", [])) != quality["requests"]:
         raise ValueError("I1 response processor coverage differs")
-    for row, processor, prompt in zip(seal["cases"], config["response_processors"], config["prompts"]):
+    if config.get("acceptance") != {"minimum_generated_tokens": 1,
+                                   "allowed_stop_reasons": ["eos"],
+                                   "responses": materializer.response_expectations(cases)}:
+        raise ValueError("I1 service oracle authority differs")
+    if (seal.get("total_prompt_bytes") != sum(len(prompt.encode()) for prompt in config["prompts"])
+            or seal.get("request_timeout_ms_sha256") != hashlib.sha256(json.dumps(
+                config["request_timeout_ms"], separators=(",", ":")).encode()).hexdigest()):
+        raise ValueError("I1 input or deadline seal differs")
+    for row, processor, prompt in zip(cases, config["response_processors"], config["prompts"]):
         if (processor != (None if row["class"] == "short" else "engineering_power_v1")
                 or hashlib.sha256(prompt.encode()).hexdigest() != row["prompt_sha256"]):
             raise ValueError("I1 prompt or processor binding differs")
@@ -99,8 +119,15 @@ def self_test() -> None:
                                            "timeout_ms": 100_000, **barriers}}}}
     seal = {"requests": 2, "request_timeout_ms": config["request_timeout_ms"],
             "observation_barriers": barriers, "cases": [
-                {"class": class_name, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()}
-                for class_name, prompt in zip(("short", "long"), prompts)]}
+                {"class": class_name, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                 "expected": {"answer": index}}
+                for index, (class_name, prompt) in enumerate(zip(("short", "long"), prompts))]}
+    materializer = load_module("i1_selftest_materializer", DIRECTORY / "prepare-h1-quality.py")
+    config["acceptance"] = {"minimum_generated_tokens": 1, "allowed_stop_reasons": ["eos"],
+                            "responses": materializer.response_expectations(seal["cases"])}
+    seal["total_prompt_bytes"] = sum(len(prompt.encode()) for prompt in prompts)
+    seal["request_timeout_ms_sha256"] = hashlib.sha256(json.dumps(
+        config["request_timeout_ms"], separators=(",", ":")).encode()).hexdigest()
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "config.json"
         path.write_text(json.dumps(config))
@@ -118,6 +145,8 @@ def self_test() -> None:
                 ({**manifest, "driver_timeout_seconds": 119}, config, seal),
                 ({**manifest, "artifact_read_timeout_seconds": 60}, config, seal),
                 (manifest, {**config, "response_processors": [None, None]}, seal),
+                (manifest, {**config, "acceptance": {"responses": []}}, seal),
+                (manifest, config, {**seal, "cases": seal["cases"][:1]}),
                 (manifest, config, {**seal, "config_sha256": "0" * 64}),
                 (manifest, {**config, "prompts": ["short"]}, seal),
         ):
@@ -127,7 +156,7 @@ def self_test() -> None:
                 pass
             else:
                 raise AssertionError("weakened I1 execution config was accepted")
-    print(json.dumps({"passed": True, "tests": 7}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 9}, separators=(",", ":")))
 
 
 def main() -> None:

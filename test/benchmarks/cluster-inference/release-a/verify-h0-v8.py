@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Run the complete non-model H0 v8 gate with fixed invocations."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+DIRECTORY = Path(__file__).resolve().parent
+ROOT = DIRECTORY.parents[3]
+SPEC = DIRECTORY / "benchmark-spec-qwen122b-h0-v8.json"
+INTEGRITY_SPEC = DIRECTORY / "integrity-test-spec-qwen122b-i0-v2.json"
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(
+        argv, cwd=ROOT, text=True, encoding="utf-8",
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(json.dumps({
+            "argv": argv, "exit_code": completed.returncode,
+            "stdout": completed.stdout, "stderr": completed.stderr,
+        }, ensure_ascii=False))
+    return completed
+
+
+def summary(argv: list[str], expected: dict, name: str) -> None:
+    actual = json.loads(run(argv).stdout)
+    if actual != expected:
+        raise RuntimeError(f"{name} self-test summary differs: {actual!r}")
+
+
+def main() -> None:
+    node = shutil.which("node")
+    if node is None:
+        raise RuntimeError("node executable is required")
+    inspector = run([sys.executable, str(DIRECTORY / "test_inspect_h0_host.py")])
+    if "Ran 4 tests" not in inspector.stderr or "OK" not in inspector.stderr:
+        raise RuntimeError("host inspector test count differs")
+    preflight = run([sys.executable, str(ROOT / "tools/tests/test_validate_event_runtime_preflight.py")])
+    if "Ran 5 tests" not in preflight.stderr or "OK" not in preflight.stderr:
+        raise RuntimeError("event preflight test count differs")
+    summary([sys.executable, str(DIRECTORY / "prepare-h1-quality.py"), "--self-test"],
+            {"passed": True, "tests": 10}, "H1 materializer")
+    summary([sys.executable, str(DIRECTORY / "judge-h1-quality.py"), "--self-test"],
+            {"passed": True, "tests": 15}, "H1 judge")
+    summary([sys.executable, str(DIRECTORY / "judge-reference-capability.py"), "--self-test"],
+            {"passed": True, "mutations": 9}, "standalone service capability judge")
+    summary([sys.executable, str(DIRECTORY / "validate-integrity-test-spec.py"), "--self-test"],
+            {"passed": True, "tests": 26}, "integrity contract validator")
+    summary([sys.executable, str(DIRECTORY / "validate-integrity-test-spec.py"),
+             "--spec", str(INTEGRITY_SPEC)],
+            {"passed": True, "arms": 14, "normal_arms": 8,
+             "overload_arms": 1, "fault_arms": 5}, "integrity contract")
+    summary([sys.executable, str(DIRECTORY / "prepare-integrity-i0.py"), "--self-test"],
+            {"passed": True, "tests": 8}, "I0 materializer")
+    summary([sys.executable, str(DIRECTORY / "inspect-i0-active-host.py"), "--self-test"],
+            {"passed": True, "tests": 4}, "I0 active-host preflight")
+    summary([sys.executable, str(DIRECTORY / "observe-i0-host.py"), "--self-test"],
+            {"passed": True, "tests": 3}, "I0 host observer")
+    summary([sys.executable, str(DIRECTORY / "inspect-i0-routes.py"), "--self-test"],
+            {"passed": True, "tests": 5}, "I0 route inspector")
+    summary([sys.executable, str(DIRECTORY / "run-integrity-i0.py"), "--self-test"],
+            {"passed": True, "tests": 7}, "I0 remote runner")
+    summary([sys.executable, str(DIRECTORY / "cleanup-i0-owned.py"), "--self-test"],
+            {"passed": True, "tests": 7}, "I0 cleanup")
+    summary([sys.executable, str(DIRECTORY / "build-integrity-i0-evidence.py"),
+             "--spec", str(INTEGRITY_SPEC), "--self-test"],
+            {"passed": True, "tests": 10}, "I0 raw evidence builder")
+    summary([sys.executable, str(DIRECTORY / "judge-integrity-i0.py"),
+            "--spec", str(INTEGRITY_SPEC), "--self-test"],
+            {"passed": True, "tests": 15}, "I0 raw judge")
+    summary([sys.executable, str(DIRECTORY / "judge-integrity.py"),
+             "--spec", str(INTEGRITY_SPEC), "--self-test"],
+            {"passed": True, "tests": 27}, "integrity bundle judge")
+    summary([sys.executable, str(DIRECTORY / "run-integrity-i1.py"), "--self-test"],
+            {"passed": True, "tests": 9}, "I1 remote runner")
+    summary([sys.executable, str(DIRECTORY / "build-integrity-i1-evidence.py"),
+             "--spec", str(INTEGRITY_SPEC), "--self-test"],
+            {"passed": True, "tests": 5}, "I1 raw evidence builder")
+    summary([sys.executable, str(DIRECTORY / "judge-integrity-i1.py"), "--self-test"],
+            {"passed": True, "tests": 3}, "I1 raw judge")
+    summary([sys.executable, str(DIRECTORY / "test_integrity_i1.py")],
+            {"passed": True, "tests": 5, "requests": 64}, "I1 64-request path")
+    run([node, "--test", str(DIRECTORY / "benchmark-spec.test.mjs")])
+    verified = json.loads(run([
+        node, str(DIRECTORY / "benchmark-spec.mjs"), str(SPEC),
+    ]).stdout)
+    expected = {
+        "valid": True, "h0_status": "sealed", "load_authorized": True,
+        "runtime_acceptance": False, "hosts": 3, "stages": 3, "corpus_requests": 64,
+    }
+    if verified != expected:
+        raise RuntimeError("H0 v8 verifier summary differs")
+    print(json.dumps({"passed": True, "checks": 21, "inspector_tests": 4,
+                      "preflight_tests": 5, "h1_materializer_tests": 10,
+                      "h1_judge_tests": 15, "reference_capability_mutations": 9,
+                      "integrity_spec_tests": 26,
+                      "integrity_arms": 14, "i0_materializer_tests": 8,
+                      "i0_active_preflight_tests": 4, "i0_evidence_builder_tests": 10,
+                      "i0_host_observer_tests": 3, "i0_route_inspector_tests": 5,
+                      "i0_runner_tests": 7, "i0_cleanup_tests": 7,
+                      "i0_judge_tests": 15,
+                      "integrity_judge_tests": 27,
+                      "i1_runner_tests": 9, "i1_evidence_builder_tests": 5,
+                      "i1_judge_tests": 3, "i1_path_tests": 5,
+                      "spec_tests": 4}, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()
