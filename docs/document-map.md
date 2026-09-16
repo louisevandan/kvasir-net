@@ -282,9 +282,11 @@ Release A I0 오답 원인 확정: [원격 6개 분리 진단·정확 사실 추
 
 Release A OUTER 오답 판정 경계: [JSON 오라클 결속·원격 회귀·제품 수정 미완](../tests/reports/release-a/20260916_180500.md).
 
-현재 Qwen122B H0 v7/I0: [3물리 host 단일 요청 정답 3/3·유효 TPS 정정·정상 회수·성능 계측 보고](../tests/reports/release-a/20260916_204300.md). [H0 v6 과거 보고와 정정](../tests/reports/release-a/20260916_195500.md). I1–I4 전체 무결성은 남아 있다.
+과거 Qwen122B H0 v7/I0: [3물리 host 단일 요청 정답 3/3·유효 TPS 정정·정상 회수·성능 계측 보고](../tests/reports/release-a/20260916_204300.md). [H0 v6 과거 보고와 정정](../tests/reports/release-a/20260916_195500.md).
 
-다음 Qwen122B H0 v8/I1: [봉인 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v8.json) · [관측 장벽·64건 판정 경로·I0 재검증 대기 보고](../tests/reports/release-a/20260916_210000.md). 비모델 게이트만 통과했고 실기는 아직 미실행이다.
+현재 Qwen122B H0 v8/I0: [최종 source 단일 요청 3/3·정상 회수·성능 계측 보고](../tests/reports/release-a/20260916_213700.md). I1–I4 전체 무결성은 남아 있다.
+
+Qwen122B H0 v8/I1 사전계약: [봉인 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v8.json) · [관측 장벽·64건 판정 경로·I0 재검증 전 보고](../tests/reports/release-a/20260916_210000.md). I1 실기는 아직 미실행이다.
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 

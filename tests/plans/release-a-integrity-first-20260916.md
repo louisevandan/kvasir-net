@@ -105,6 +105,9 @@ LOADED, INFERENCE_WINDOW, and DRAINED, a driver timeout beyond the run bound, an
 transfer bound. The remote collector checks all advertised round trips, exact task tunnel PIDs and
 17 source/config/binary hashes. This is deterministic lesson L086; changed source also requires a
 fresh I0 pass before I1 starts.
+The Windows controller tunnel manifest is UTF-8 without BOM and its four exact PIDs/commands pass
+`cleanup-i0-owned.py --inspect-only` before the route check; lesson L087 blocks a malformed manifest
+before LOAD.
 
 All 64 requests must be delivered, oracle-correct, EOS, completed, and released. Incomplete,
 unreleased, uncertain, unsubmitted, runtime error, evidence missing, and cleanup error are all zero.
