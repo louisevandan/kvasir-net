@@ -74,19 +74,29 @@ def scorecard_failures(result: dict, arm: dict, spec: dict) -> list[str]:
                 if not finite_number(itl) or itl > spec["slo"]["itl_p95_ms"]:
                     failures.append(f"itl_exceeded:{request_class}")
 
-    stage_rows = score.get("stage_phases") or []
-    seen = {(row.get("stage"), row.get("phase")) for row in stage_rows}
-    required_pairs = {(stage, phase) for stage in range(3) for phase in ("prefill", "decode")}
-    if not required_pairs.issubset(seen):
-        failures.append("stage_phase_coverage")
+    scheduler_rows = score.get("scheduler_phases") or []
+    if {row.get("phase") for row in scheduler_rows} != {"prefill", "decode"}:
+        failures.append("scheduler_phase_coverage")
+    for row in scheduler_rows:
+        values = row.get("metrics") or {}
+        if set(values) != set(required["scheduler_phase_fields"]):
+            failures.append("scheduler_phase_fields")
+            break
+        numeric = set(required["scheduler_phase_fields"]) - {"blocked_reasons"}
+        if any(not finite_number(values[key]) for key in numeric) or not isinstance(values["blocked_reasons"], dict):
+            failures.append("scheduler_phase_values")
+            break
+
+    stage_rows = score.get("stages") or []
+    if {row.get("stage") for row in stage_rows} != {0, 1, 2}:
+        failures.append("stage_coverage")
     for row in stage_rows:
         values = row.get("metrics") or {}
-        if set(values) != set(required["stage_phase_fields"]):
-            failures.append("stage_phase_fields")
+        if set(values) != set(required["stage_fields"]):
+            failures.append("stage_fields")
             break
-        numeric = set(required["stage_phase_fields"]) - {"blocked_reasons"}
-        if any(not finite_number(values[key]) for key in numeric) or not isinstance(values["blocked_reasons"], dict):
-            failures.append("stage_phase_values")
+        if any(not finite_number(values[key]) for key in required["stage_fields"]):
+            failures.append("stage_values")
             break
 
     hosts = score.get("hosts") or []
@@ -102,11 +112,14 @@ def scorecard_failures(result: dict, arm: dict, spec: dict) -> list[str]:
         coverage = values.get("coverage")
         if not finite_number(coverage) or coverage < required["gpu_minimum_coverage"]:
             failures.append("gpu_coverage")
-        for key in ("util_mean", "util_p50", "util_p90", "zero_fraction"):
+        for key in ("util_mean", "util_p50", "util_p90"):
             value = values.get(key)
             if not finite_number(value) or value < 0 or value > 100:
                 failures.append("gpu_util_value")
                 break
+        zero_fraction = values.get("zero_fraction")
+        if not finite_number(zero_fraction) or zero_fraction < 0 or zero_fraction > 1:
+            failures.append("gpu_zero_fraction")
         if not finite_number(values.get("memory_peak")) or values["memory_peak"] <= 0:
             failures.append("gpu_memory_value")
         for optional in ("power", "temperature"):
@@ -240,8 +253,9 @@ def evaluate(bundle: dict, spec: dict) -> dict:
 
 
 def scorecard_fixture(configured: int, spec: dict) -> dict:
-    stage_metrics = {key: 1 for key in spec["required_scorecard"]["stage_phase_fields"]}
-    stage_metrics["blocked_reasons"] = {}
+    scheduler_metrics = {key: 1 for key in spec["required_scorecard"]["scheduler_phase_fields"]}
+    scheduler_metrics["blocked_reasons"] = {}
+    stage_metrics = {key: 1 for key in spec["required_scorecard"]["stage_fields"]}
     host_metrics = {key: 1 for key in spec["required_scorecard"]["host_fields"]}
     host_metrics.update({"coverage": 1.0, "util_mean": 50.0, "util_p50": 50.0,
                          "util_p90": 70.0, "zero_fraction": 0.0,
@@ -255,8 +269,9 @@ def scorecard_fixture(configured: int, spec: dict) -> dict:
     return {
         "requests_with_all_fields": configured,
         "request_field_names": spec["required_scorecard"]["request_fields"], "run": run,
-        "stage_phases": [{"stage": stage, "phase": phase, "metrics": copy.deepcopy(stage_metrics)}
-                         for stage in range(3) for phase in ("prefill", "decode")],
+        "scheduler_phases": [{"phase": phase, "metrics": copy.deepcopy(scheduler_metrics)}
+                             for phase in ("prefill", "decode")],
+        "stages": [{"stage": stage, "metrics": copy.deepcopy(stage_metrics)} for stage in range(3)],
         "hosts": [{"host": f"h{host}", "metrics": copy.deepcopy(host_metrics)} for host in range(3)],
         "resource_snapshots": spec["required_scorecard"]["resource_snapshots"],
     }
@@ -334,8 +349,10 @@ def self_test(spec: dict) -> None:
         lambda value: value["arms"][0]["scorecard"]["run"].update(deadline_violations=1),
         lambda value: value["arms"][0]["scorecard"]["run"]["ttft"]["short"].update(p95_ms=60001),
         lambda value: value["arms"][0]["scorecard"]["run"]["itl"]["short"].update(p95_ms=251),
-        lambda value: value["arms"][0]["scorecard"]["stage_phases"].pop(),
+        lambda value: value["arms"][0]["scorecard"]["scheduler_phases"].pop(),
+        lambda value: value["arms"][0]["scorecard"]["stages"].pop(),
         lambda value: value["arms"][0]["scorecard"]["hosts"][0]["metrics"].update(coverage=0.94),
+        lambda value: value["arms"][0]["scorecard"]["hosts"][0]["metrics"].update(zero_fraction=1.01),
         lambda value: value["arms"][0]["scorecard"].update(resource_snapshots=[]),
         lambda value: value["arms"][4].update(overlap_proved=False),
         lambda value: value["arms"][5].update(backlog_converged=False),

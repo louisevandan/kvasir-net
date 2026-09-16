@@ -130,9 +130,18 @@ pub struct RequestArtifact {
     pub release_member: Option<p4_llamacpp_staged_adapter::v2::ReleaseMember>,
     pub released: bool,
     pub prompt: String,
+    /// The instant this request became eligible for an OUTER send. Closed-loop
+    /// requests become eligible only after a prior RELEASE frees the permit.
+    pub eligible_ms: u128,
+    /// OUTER clock immediately before the acknowledged wire send begins.
+    pub send_started_ms: u128,
+    /// OUTER clock after the wire send completed without error.
+    pub send_completed_ms: Option<u128>,
     pub arrival_ms: u128,
     pub first_output_ms: Option<u128>,
     pub completed_ms: Option<u128>,
+    /// OUTER receipt time of the RELEASE receipt that named this request.
+    pub release_ms: Option<u128>,
     /// Complete OUTPUT frame receipt times at OUTER, relative to inference start.
     /// Only approved outputs are retained, in the same order as `outcomes`.
     /// These include transport delivery effects and are not GPU completion times.
@@ -691,9 +700,13 @@ mod tests {
             release_member: None,
             released: false,
             prompt: "prompt".into(),
+            eligible_ms: 10,
+            send_started_ms: 10,
+            send_completed_ms: Some(11),
             arrival_ms: 10,
             first_output_ms: Some(210),
             completed_ms: Some(1_210),
+            release_ms: None,
             output_received_ms: Vec::new(),
             prefill_rows: 500,
             decode_rows: 100,

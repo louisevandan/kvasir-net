@@ -75,6 +75,9 @@
 | L067 | 장시간 event-drive를 외부 TERM하면 partial artifact와 FINISH가 없어 이미 계산한 결과가 판정 불능이 되고, agent가 사라진 OUTER로 반환을 반복해 transport failure 2,390건을 남겼다. | 전체 arm 전 task-owned supervisor의 bounded cancel→artifact assemble→FINISH→UNLOAD 경로를 실제 소비 시험한다. 그 전 외부 TERM은 INVALID 회수로만 기록하고, node가 비어도 failure ledger를 성공으로 지우지 않는다. | H1 3차 전 A-COST와 이후 모든 장시간 원격 arm |
 | L068 | 새 .gitattributes는 이미 열린 Windows worktree의 CRLF 파일을 자동 재물질화하지 않아 fresh checkout은 통과하지만 main 통합 첫 verifier가 raw-byte hash에서 실패했다. | raw-byte 봉인 전 working bytes·HEAD blob·staged blob을 전수 비교하고 fresh checkout을 함께 실행한다. 기존 worktree 차이는 내용이 HEAD blob과 의미상 동일함을 확인한 파일만 blob 그대로 재물질화하며, verifier가 두 환경을 모두 통과해야 한다. | 모든 hash-bound spec/materializer/judge |
 | L069 | 구성요소 안전성·문서·소형 모델 시험을 순서대로 통과한 사실을 현재 Qwen122B 제품 진전으로 세어, 현행 source의 단일 요청과 지속 서비스 TPS·batch·GPU 기준선 없이 H1 전체 실행까지 갔다. 결과는 8/64 완료와 다음 실행의 terminal artifact 부재였다. | 모든 단계에 `enabling|integrity|performance` 유형과 현재 source의 서비스 envelope를 기록한다. I0–I4 무결성 전에 H5/성능 후보를 차단하고, 모든 모델 실행은 단일·지속 workload의 TTFT/prefill/useful TPS/batch/GPU/정상 응답·정산·회수 scorecard가 없으면 판정 자체를 거부한다. | Release A I0–I4, P0–P3 및 이후 모든 실기 단계 |
+| L070 | I0-S/M/L에 `same_load_group` 문자열만 둔 계약은 세 번 재적재한 독립 실행도 구별하지 못했다. | `execution_groups.I0`가 정확한 case 순서·deadline vector·closed-loop·`load_count=1`·`unload_count=1`을 봉인하고 materializer/judge가 다음 요청 eligibility가 이전 RELEASE보다 빠르지 않은지 원시 시각으로 검사한다. | I0와 이후 같은 적재 순차 시험 |
+| L071 | head scheduler의 batch/ready/blocked 값과 세 stage의 span/compute 값을 한 `stage_phase` 표로 요구하면 다른 stage에 없는 head 값을 복제해도 형식상 완전해진다. | 점수표를 `scheduler_phases`와 `stages`로 분리한다. 원시 실행 ID로 request별 physical batch와 세 stage span을 결속하며 세 stage 중 하나라도 없으면 거부한다. | I0–I4 batch 포화도·pipeline 증거 |
+| L072 | I0 원시 증거 생성기가 GPU sample count를 계산했지만 95% 하한은 최종 judge에만 맡겨, 중간 bundle 생성만 보면 표본 제거 변이가 통과했다. | 원시 증거 생성기와 최종 judge가 모두 run window의 기대 표본 수와 95% 하한을 독립 검사한다. 표본 제거 변이를 두 계층에 유지한다. | I0–I4 GPU scorecard |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

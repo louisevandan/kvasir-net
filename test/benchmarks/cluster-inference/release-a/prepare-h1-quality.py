@@ -99,6 +99,7 @@ def materialize(args: argparse.Namespace) -> dict:
         prompts.append(prompt_bytes.decode("utf-8"))
         cases.append({"id": row["id"], "class": row["class"],
                       "prompt_sha256": row["prompt_sha256"], "expected": json.loads(oracle_bytes),
+                      "input_tokens": row["input_tokens"],
                       "request_timeout_ms": deadlines[index]})
         total_bytes += len(prompt_bytes)
         total_tokens += row["input_tokens"]

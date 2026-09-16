@@ -91,6 +91,11 @@ where
                     after_ms: config.waves[next_wave].after_ms,
                     count,
                 };
+                // Eligibility is an OUTER scheduling fact. For closed-loop
+                // execution this point is reached only after RELEASE makes a
+                // permit available; for open-loop it is reached at the wave's
+                // declared earliest arrival.
+                let eligible_ms = started.elapsed().as_millis();
                 send_wave(
                     config,
                     &partial,
@@ -103,6 +108,7 @@ where
                     wire,
                     sender,
                     started,
+                    eligible_ms,
                 )
                 .await?;
                 sent_in_wave = sent_in_wave
@@ -189,10 +195,11 @@ where
                             }
                             released = next_released;
                             for member in newly_released {
-                                requests
+                                let request = requests
                                     .get_mut(&member.request_id)
-                                    .expect("registered receipt member")
-                                    .released = true;
+                                    .expect("registered receipt member");
+                                request.released = true;
+                                request.release_ms = Some(received_ms);
                             }
                             if completed == total && released == total {
                                 release_elapsed_ms
@@ -337,6 +344,7 @@ async fn send_wave<R, W>(
     wire: &mut EventWire<R, W>,
     sender: &mut Sender,
     started: Instant,
+    eligible_ms: u128,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     R: AsyncRead + Unpin,
@@ -397,6 +405,7 @@ where
         evidence.register(authority.clone());
         known_requests.insert(request_id.clone());
         let key = request_id.clone();
+        let send_started_ms = started.elapsed().as_millis();
         requests.insert(
             key.clone(),
             RequestArtifact {
@@ -410,9 +419,13 @@ where
                 release_member: None,
                 released: false,
                 prompt,
-                arrival_ms: started.elapsed().as_millis(),
+                eligible_ms,
+                send_started_ms,
+                send_completed_ms: None,
+                arrival_ms: send_started_ms,
                 first_output_ms: None,
                 completed_ms: None,
+                release_ms: None,
                 prefill_rows: 0,
                 decode_rows: 0,
                 verify_rows: 0,
@@ -430,6 +443,7 @@ where
         // Record which of the two this was before propagating, because the
         // artifact is now built even when this run aborts.
         let sent = wire.send(event).await;
+        let send_completed_ms = sent.as_ref().ok().map(|_| started.elapsed().as_millis());
         let acknowledged = wire.acknowledged_mode();
         requests
             .get_mut(&key)
@@ -439,6 +453,10 @@ where
         } else {
             super::SubmissionState::Uncertain
         };
+        requests
+            .get_mut(&key)
+            .expect("registered submission")
+            .send_completed_ms = send_completed_ms;
         sent?;
     }
     Ok(())
@@ -532,6 +550,7 @@ mod tests {
             &mut wire,
             &mut sender,
             Instant::now(),
+            0,
         )
         .await
         .unwrap_err();
@@ -544,6 +563,11 @@ mod tests {
         assert_eq!(sender.sequence, 2);
         assert!(known.contains("r"));
         assert!(!requests["r"].released && requests["r"].release_member.is_none());
+        assert_eq!(requests["r"].eligible_ms, 0);
+        assert!(requests["r"].send_started_ms >= requests["r"].eligible_ms);
+        assert_eq!(requests["r"].arrival_ms, requests["r"].send_started_ms);
+        assert_eq!(requests["r"].send_completed_ms, None);
+        assert_eq!(requests["r"].release_ms, None);
         assert!(ledger.register("r", "new-attempt").is_err());
         let before = serde_json::to_value(&requests).unwrap();
         let error = send_wave(
@@ -558,6 +582,7 @@ mod tests {
             &mut wire,
             &mut sender,
             Instant::now(),
+            0,
         )
         .await
         .unwrap_err();
@@ -697,5 +722,8 @@ mod tests {
         );
         let authority = serde_json::to_value(&result.requests[0].submission_authority).unwrap();
         assert!(authority["deadline"].as_u64().is_some());
+        assert!(result.requests[0].send_completed_ms.is_some());
+        assert!(result.requests[0].send_started_ms >= result.requests[0].eligible_ms);
+        assert_eq!(result.requests[0].release_ms, None);
     }
 }

@@ -215,22 +215,43 @@
       "requires_oracle_eos_release": true
     }
   ],
+  "execution_groups": {
+    "I0": {
+      "arms": ["I0-S", "I0-M", "I0-L"],
+      "same_load": true,
+      "selection": ["case-00", "case-04", "case-06"],
+      "classes": ["short", "medium", "long"],
+      "requests": 3,
+      "waves": [{"after_ms": 0, "count": 3}],
+      "submission": "release_closed_loop",
+      "max_in_flight": 1,
+      "request_deadline_ms": [600000, 1200000, 1800000],
+      "overall_grace_ms": 300000,
+      "timeout_ms": 3900000,
+      "load_count": 1,
+      "unload_count": 1
+    }
+  },
   "required_scorecard": {
     "request_fields": [
-      "scheduled_send_ms", "actual_send_ms", "arrival_ms", "first_output_ms",
+      "eligible_ms", "send_started_ms", "send_completed_ms", "arrival_ms", "first_output_ms",
       "output_received_ms", "terminal_ms", "release_ms", "class", "deadline_ms", "input_tokens",
       "generated_tokens", "stop_reason", "oracle_passed", "queue_ms",
-      "tokenize_ms", "prefill_rows", "prefill_ms", "decode_rows", "decode_ms"
+      "prefill_rows", "prefill_ms", "decode_rows", "decode_ms"
     ],
     "run_fields": [
       "useful_generation_tps", "total_generation_tps", "prefill_rows_per_second",
       "decode_rows_per_second", "ttft", "itl", "deadline_violations", "send_slip_violations",
       "first_scheduled_send_ms", "last_terminal_ms"
     ],
-    "stage_phase_fields": [
+    "scheduler_phase_fields": [
       "physical_batches", "rows_mean", "rows_p50", "rows_p95", "rows_max",
       "full_ubatch_fraction", "mixed_batches", "runnable", "eligible", "blocked",
       "pending", "blocked_reasons", "flight_peak", "open_peak", "idle_ms"
+    ],
+    "stage_fields": [
+      "spans", "executions", "rows", "queue_ms", "compute_ms", "publish_ms",
+      "compute_p50_ms", "compute_p95_ms", "open_peak", "overlap_ms"
     ],
     "host_fields": [
       "samples", "coverage", "util_mean", "util_p50", "util_p90", "zero_fraction",

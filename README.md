@@ -239,3 +239,5 @@ Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVA
 Release A 무결성 우선 재개: [I0–I4 정밀 시험계획](tests/plans/release-a-integrity-first-20260916.md) · [실행 계약](test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json). I0–I4 GREEN 전에는 성능 후보와 H5를 시작하지 않는다.
 
 Release A 무결성 시험 계약: [14개 실기 arm·계약/판정 변이·로드맵 재조정 보고](tests/reports/release-a/20260916_131446.md).
+
+Release A I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요청/배치/stage/GPU 판정](tests/reports/release-a/20260916_133038.md).

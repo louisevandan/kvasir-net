@@ -271,6 +271,12 @@ async fn approved_output_receipt_times_preserve_paced_delivery_before_late_telem
     );
     assert!(times[0] as u128 <= request.first_output_ms.unwrap());
     assert!(*times.last().unwrap() as u128 <= request.completed_ms.unwrap());
+    assert!(request.send_completed_ms.is_some());
+    assert!(
+        request
+            .release_ms
+            .is_some_and(|released| released >= request.completed_ms.unwrap())
+    );
     assert!(run.telemetry_complete_elapsed_ms.unwrap() >= *times.last().unwrap() as u128 + 30);
 }
 

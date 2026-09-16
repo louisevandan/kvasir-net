@@ -270,6 +270,8 @@ Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVA
 
 무결성 우선 계약 보고: [14개 실기 arm과 계약·결과 판정 변이](../tests/reports/release-a/20260916_131446.md).
 
+I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요청/배치/stage/GPU 판정](../tests/reports/release-a/20260916_133038.md).
+
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 
 Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 거부](../tests/reports/release-a/20260915_190631.md).

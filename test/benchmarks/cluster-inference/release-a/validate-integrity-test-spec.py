@@ -20,20 +20,24 @@ ARM_IDS = (
     "I3-DISCONNECT", "I3-RESTART", "I3-LATE", "I4-SOAK",
 )
 REQUEST_FIELDS = {
-    "scheduled_send_ms", "actual_send_ms", "arrival_ms", "first_output_ms",
+    "eligible_ms", "send_started_ms", "send_completed_ms", "arrival_ms", "first_output_ms",
     "output_received_ms", "terminal_ms", "release_ms", "class", "deadline_ms", "input_tokens",
     "generated_tokens", "stop_reason", "oracle_passed", "queue_ms",
-    "tokenize_ms", "prefill_rows", "prefill_ms", "decode_rows", "decode_ms",
+    "prefill_rows", "prefill_ms", "decode_rows", "decode_ms",
 }
 RUN_FIELDS = {
     "useful_generation_tps", "total_generation_tps", "prefill_rows_per_second",
     "decode_rows_per_second", "ttft", "itl", "first_scheduled_send_ms",
     "last_terminal_ms", "deadline_violations", "send_slip_violations",
 }
-STAGE_FIELDS = {
+SCHEDULER_PHASE_FIELDS = {
     "physical_batches", "rows_mean", "rows_p50", "rows_p95", "rows_max",
     "full_ubatch_fraction", "mixed_batches", "runnable", "eligible", "blocked",
     "pending", "blocked_reasons", "flight_peak", "open_peak", "idle_ms",
+}
+STAGE_FIELDS = {
+    "spans", "executions", "rows", "queue_ms", "compute_ms", "publish_ms",
+    "compute_p50_ms", "compute_p95_ms", "open_peak", "overlap_ms",
 }
 HOST_FIELDS = {
     "samples", "coverage", "util_mean", "util_p50", "util_p90", "zero_fraction",
@@ -101,6 +105,18 @@ def validate(spec: dict) -> dict:
                 and arm.get("requires_oracle_eos_release") is True,
                 f"{arm_id} acceptance differs")
 
+    group = (spec.get("execution_groups") or {}).get("I0")
+    require(group == {
+        "arms": ["I0-S", "I0-M", "I0-L"], "same_load": True,
+        "selection": ["case-00", "case-04", "case-06"],
+        "classes": ["short", "medium", "long"], "requests": 3,
+        "waves": [{"after_ms": 0, "count": 3}],
+        "submission": "release_closed_loop", "max_in_flight": 1,
+        "request_deadline_ms": [600000, 1200000, 1800000],
+        "overall_grace_ms": 300000, "timeout_ms": 3900000,
+        "load_count": 1, "unload_count": 1,
+    }, "I0 same-load execution group differs")
+
     q64 = arms["I1-Q64"]
     deadlines = slo["request_deadline_ms"]
     expected_q64_timeout = 32 * deadlines["short"] + 16 * deadlines["medium"] \
@@ -167,7 +183,9 @@ def validate(spec: dict) -> dict:
     score = spec.get("required_scorecard") or {}
     require(set(score.get("request_fields") or []) == REQUEST_FIELDS, "request scorecard differs")
     require(set(score.get("run_fields") or []) == RUN_FIELDS, "run scorecard differs")
-    require(set(score.get("stage_phase_fields") or []) == STAGE_FIELDS, "stage scorecard differs")
+    require(set(score.get("scheduler_phase_fields") or []) == SCHEDULER_PHASE_FIELDS,
+            "scheduler phase scorecard differs")
+    require(set(score.get("stage_fields") or []) == STAGE_FIELDS, "stage scorecard differs")
     require(set(score.get("host_fields") or []) == HOST_FIELDS, "host scorecard differs")
     require(score.get("resource_snapshots") == ["before_load", "peak", "after_drain", "after_unload"],
             "resource snapshots differ")
@@ -204,12 +222,15 @@ def self_test() -> None:
         lambda value: value["slo"]["ttft_p95_ms"].update(short=60001),
         lambda value: value["arms"].pop(),
         lambda value: value["arms"][0].update(selection=["case-01"]),
+        lambda value: value["execution_groups"]["I0"].update(load_count=3),
+        lambda value: value["execution_groups"]["I0"].update(max_in_flight=3),
         lambda value: value["arms"][3].update(max_in_flight=2),
         lambda value: value["arms"][5]["waves"][1].update(after_ms=180001),
         lambda value: value["arms"][7].update(rejected_min=7),
         lambda value: value["arms"][10].update(allowed_target_terminals=["failed"]),
         lambda value: value["arms"][13].update(minimum_duration_ms=5579999),
         lambda value: value["required_scorecard"]["request_fields"].pop(),
+        lambda value: value["required_scorecard"]["stage_fields"].pop(),
         lambda value: value["required_scorecard"].update(gpu_minimum_coverage=0.94),
         lambda value: value["required_distributed_evidence"].update(all_stages_compute=False),
         lambda value: value["cleanup"].update(nodes=1),

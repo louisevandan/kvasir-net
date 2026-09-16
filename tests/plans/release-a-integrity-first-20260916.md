@@ -52,7 +52,9 @@ model is loaded.
 
 ### I0 — Current-source single-request service
 
-Run one LOAD and submit three requests sequentially on that unchanged load.
+Run one LOAD and submit three requests sequentially on that unchanged load. The machine-readable
+`execution_groups.I0` authority fixes `load_count=1`, `unload_count=1`, the exact case order,
+`max_in_flight=1`, deadline vector, and 3,900,000 ms group timeout.
 
 | ID | Corpus input | Submission | Deadline | TTFT p95 | ITL p95 | Required result |
 | --- | --- | --- | ---: | ---: | ---: | --- |
@@ -125,12 +127,15 @@ agent is not cleanup success.
 The following scorecard is mandatory even though this phase does not claim improvement:
 
 - request count by delivered/completed/released/rejected/failed/uncertain/unsubmitted;
-- per request: scheduled and actual send, arrival, first output, every output receipt, terminal,
-  RELEASE, input tokens, generated tokens, stop reason, oracle result, queue/tokenize/prefill/decode;
-- run: useful generation tokens divided by first scheduled send through last terminal, total
+- per request: eligibility, send start/completion, arrival, first output, every output receipt,
+  terminal, RELEASE, input tokens, generated tokens, stop reason, oracle result, and measured
+  queue/prefill/decode values;
+- run: useful generation tokens divided by request arrival through terminal, release-inclusive total
   generation TPS, prefill input rows/s, decode evaluation rows/s, TTFT and ITL distributions;
-- per stage and phase: physical batch count, rows mean/p50/p95/max, full-ubatch fraction, mixed
-  count, runnable/eligible/blocked/pending, block reason, flight/open peak, idle interval;
+- head scheduler per phase: physical batch count, rows mean/p50/p95/max, full-ubatch fraction, mixed
+  count, runnable/eligible/blocked/pending, block reason, flight/open peak, and idle interval;
+- per stage: span and execution counts, rows, queue/compute/publish time, compute p50/p95, open peak,
+  and overlap time. Head-only scheduling evidence is never copied and relabeled as another stage;
 - per host in the same analysis window: sample count and coverage, GPU/device utilization
   mean/p50/p90/zero fraction, memory peak, power and temperature when available; unavailable fields
   carry an explicit reason and are never written as zero;
