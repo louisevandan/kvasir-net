@@ -65,6 +65,8 @@ pub struct RunArtifact {
     pub requests: Vec<RequestArtifact>,
     pub batch_observations: Vec<BatchObservation>,
     pub stage_spans: Vec<StageSpanArtifact>,
+    /// UNIX epoch anchor captured beside the monotonic inference clock.
+    pub started_unix_ms: u128,
     pub elapsed_ms: u128,
     pub telemetry_complete_elapsed_ms: Option<u128>,
     /// The run's own first failure. Survives a failing cleanup, and now also
@@ -329,6 +331,7 @@ fn assemble(
         requests,
         batch_observations: run.batch_observations,
         stage_spans: run.stage_spans,
+        started_unix_ms: run.started_unix_ms,
         elapsed_ms: run.elapsed_ms,
         telemetry_complete_elapsed_ms: run.telemetry_complete_elapsed_ms,
         error: run.error,

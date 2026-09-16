@@ -196,6 +196,7 @@ async fn a_refused_teardown_fails_an_otherwise_clean_run() {
         requests: vec![],
         batch_observations: vec![],
         stage_spans: vec![],
+        started_unix_ms: 1,
         elapsed_ms: 1,
         telemetry_complete_elapsed_ms: Some(1),
         error: None,

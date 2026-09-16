@@ -21,6 +21,9 @@ pub struct InferenceResult {
     pub requests: Vec<RequestArtifact>,
     pub batch_observations: Vec<BatchObservation>,
     pub stage_spans: Vec<super::StageSpanArtifact>,
+    /// Wall-clock anchor for binding independently sampled host telemetry to
+    /// this exact inference window. Relative request timings remain monotonic.
+    pub started_unix_ms: u128,
     pub elapsed_ms: u128,
     pub telemetry_complete_elapsed_ms: Option<u128>,
     pub error: Option<String>,
@@ -44,6 +47,7 @@ where
     if total == 0 || total > 100_000 {
         return Err("request count must be between 1 and 100000".into());
     }
+    let started_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let started = Instant::now();
     let overall = started + Duration::from_millis(config.timeout_ms);
     let mut requests = BTreeMap::new();
@@ -300,6 +304,7 @@ where
         requests: requests.into_values().collect(),
         batch_observations,
         stage_spans,
+        started_unix_ms,
         elapsed_ms: release_elapsed_ms.unwrap_or_else(|| started.elapsed().as_millis()),
         telemetry_complete_elapsed_ms,
         error: failure,
