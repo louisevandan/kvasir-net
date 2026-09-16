@@ -43,6 +43,12 @@ pub struct RunConfig {
     pub options: String,
     #[serde(default)]
     pub pre_inference_hold_ms: u64,
+    /// Deterministic observation barrier inside the measured inference window.
+    #[serde(default)]
+    pub inference_start_hold_ms: u64,
+    /// Deterministic observation barrier after drain and before NODE_UNLOAD.
+    #[serde(default)]
+    pub post_inference_hold_ms: u64,
     #[serde(default)]
     pub acceptance: AcceptanceConfig,
     #[serde(default = "default_timeout")]
@@ -183,6 +189,8 @@ pub(super) fn validate(config: &RunConfig) -> Result<(), &'static str> {
         || config.connection_generation == 0
         || config.load_generation == 0
         || config.pre_inference_hold_ms > 120_000
+        || config.inference_start_hold_ms > 120_000
+        || config.post_inference_hold_ms > 120_000
         || config.waves.is_empty()
         || config.waves[0].after_ms != 0
         || config.waves.iter().any(|wave| wave.count == 0)
@@ -246,6 +254,8 @@ mod tests {
             request_timeout_ms: Vec::new(),
             options: String::new(),
             pre_inference_hold_ms: 0,
+            inference_start_hold_ms: 0,
+            post_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
             timeout_ms: default_timeout(),
             pipeline_compatibility: Default::default(),
@@ -300,6 +310,20 @@ mod tests {
         assert!(validate(&config).is_err());
         config.request_timeout_ms[1] = 1_800_000;
         config.max_in_flight = Some(2);
+        assert!(validate(&config).is_err());
+    }
+
+    #[test]
+    fn observation_barriers_are_bounded_before_execution() {
+        let mut config = valid_config();
+        config.inference_start_hold_ms = 120_000;
+        config.post_inference_hold_ms = 120_000;
+        assert!(validate(&config).is_ok());
+
+        config.inference_start_hold_ms = 120_001;
+        assert!(validate(&config).is_err());
+        config.inference_start_hold_ms = 0;
+        config.post_inference_hold_ms = 120_001;
         assert!(validate(&config).is_err());
     }
 }

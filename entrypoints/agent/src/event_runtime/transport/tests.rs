@@ -899,11 +899,15 @@ async fn hop_partial_write_is_uncertain_and_keeps_current_plus_unstarted_queue()
         events.send(next(&store).await.unwrap()).await.unwrap();
     }
     let writes = AtomicU64::new(0);
+    let hop_writes = AtomicU64::new(0);
+    let hop_bytes = AtomicU64::new(0);
     let failure = write_hop_loop(
         &mut BrokenWrite { bytes_left: 11 },
         receiver,
         control_receiver,
         &writes,
+        &hop_writes,
+        &hop_bytes,
         None,
         2,
         HopLiveTracker::default(),
@@ -944,12 +948,15 @@ async fn inspect_separates_live_hop_outstanding_from_receipts_and_failures() {
     drop(events);
     let (mut reader, mut writer) = tokio::io::duplex(16 * 1024);
     let live = shared.hop_live.clone();
+    let counters = Arc::clone(&shared);
     let task = tokio::spawn(async move {
         write_hop_loop(
             &mut writer,
             receiver,
             control_receiver,
             &AtomicU64::new(0),
+            &counters.hop_data_writes,
+            &counters.hop_data_bytes,
             None,
             1,
             live,
@@ -970,6 +977,8 @@ async fn inspect_separates_live_hop_outstanding_from_receipts_and_failures() {
     let snapshot = inspector.snapshot();
     assert_eq!(snapshot["outstanding"]["events"], 1);
     assert_eq!(snapshot["outstanding"]["event_bytes"], retained_bytes);
+    assert_eq!(snapshot["transfer"]["hop_data_writes"], 1);
+    assert!(snapshot["transfer"]["hop_data_bytes"].as_u64().unwrap() > 0);
     assert_eq!(snapshot["receipts"]["records"], 0);
     assert_eq!(snapshot["failures"]["count"], 0);
     controls

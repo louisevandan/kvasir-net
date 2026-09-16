@@ -240,6 +240,15 @@ pub async fn execute(config: RunConfig) -> Result<RunArtifact, Box<dyn std::erro
 
     let run = inference::drive(&config, &mut wire, &mut sender).await?;
 
+    if config.post_inference_hold_ms > 0 {
+        println!(
+            "P4_EVENT_GATE_DRAINED started_unix_ms={} elapsed_ms={} hold_ms={}",
+            run.started_unix_ms, run.elapsed_ms, config.post_inference_hold_ms
+        );
+        std::io::stdout().flush()?;
+        tokio::time::sleep(Duration::from_millis(config.post_inference_hold_ms)).await;
+    }
+
     // Teardown must not destroy the run it is tearing down. When inference
     // fails the node can still hold owners, UNLOAD then refuses with
     // "unload is busy; active_owners=N/M", and propagating that with `?`
@@ -497,6 +506,8 @@ mod tests {
             request_timeout_ms: Vec::new(),
             options: String::new(),
             pre_inference_hold_ms: 0,
+            inference_start_hold_ms: 0,
+            post_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
             timeout_ms: 1000,
             pipeline_compatibility: Default::default(),

@@ -33,6 +33,8 @@ fn config() -> RunConfig {
         request_timeout_ms: Vec::new(),
         options: String::new(),
         pre_inference_hold_ms: 0,
+        inference_start_hold_ms: 0,
+        post_inference_hold_ms: 0,
         acceptance: AcceptanceConfig::default(),
         timeout_ms: 1000,
         pipeline_compatibility: Default::default(),

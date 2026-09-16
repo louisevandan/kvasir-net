@@ -192,6 +192,8 @@ fn config(port: u16, requests: usize) -> serde_json::Value {
         "max_tokens": 4,
         "waves": [{ "after_ms": 0, "count": requests }],
         "pre_inference_hold_ms": 0,
+        "inference_start_hold_ms": 0,
+        "post_inference_hold_ms": 0,
         "timeout_ms": 10_000,
         "acceptance": { "minimum_generated_tokens": 1 },
     })

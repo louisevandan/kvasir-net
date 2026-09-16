@@ -39,6 +39,8 @@ def reduce_to_i0(config: dict, seal: dict, group: dict, generation: int) -> tupl
         "submission": "release_closed_loop", "max_in_flight": 1,
         "request_deadline_ms": [600000, 1200000, 1800000],
         "overall_grace_ms": 300000, "timeout_ms": 3900000,
+        "pre_inference_hold_ms": 15000,
+        "inference_start_hold_ms": 15000, "post_inference_hold_ms": 15000,
         "load_count": 1, "unload_count": 1,
     }
     if group != expected_group:
@@ -79,6 +81,9 @@ def reduce_to_i0(config: dict, seal: dict, group: dict, generation: int) -> tupl
         "waves": group["waves"],
         "max_in_flight": group["max_in_flight"],
         "request_timeout_ms": group["request_deadline_ms"],
+        "pre_inference_hold_ms": group["pre_inference_hold_ms"],
+        "inference_start_hold_ms": group["inference_start_hold_ms"],
+        "post_inference_hold_ms": group["post_inference_hold_ms"],
     })
     reduced["acceptance"]["responses"] = [responses[index] for _, index, _ in selected]
     for node_index, node in enumerate(reduced["nodes"]):
@@ -168,14 +173,21 @@ def self_test() -> None:
         "waves": [{"after_ms": 0, "count": 3}], "submission": "release_closed_loop",
         "max_in_flight": 1, "request_deadline_ms": [600000, 1200000, 1800000],
         "overall_grace_ms": 300000, "timeout_ms": 3900000,
+        "pre_inference_hold_ms": 15000,
+        "inference_start_hold_ms": 15000, "post_inference_hold_ms": 15000,
         "load_count": 1, "unload_count": 1,
     }
     reduced, result_seal = reduce_to_i0(config, seal, group, 7)
     assert reduced["prompts"] == ["p0", "p4", "p6"]
     assert reduced["max_in_flight"] == 1 and reduced["timeout_ms"] == 3900000
+    assert reduced["pre_inference_hold_ms"] == 15000
+    assert reduced["inference_start_hold_ms"] == 15000
+    assert reduced["post_inference_hold_ms"] == 15000
     assert [case["id"] for case in result_seal["cases"]] == group["selection"]
     mutations = []
-    for key, value in (("load_count", 3), ("max_in_flight", 3), ("timeout_ms", 3899999)):
+    for key, value in (("load_count", 3), ("max_in_flight", 3), ("timeout_ms", 3899999),
+                       ("pre_inference_hold_ms", 0),
+                       ("inference_start_hold_ms", 0), ("post_inference_hold_ms", 0)):
         changed = json.loads(json.dumps(group)); changed[key] = value; mutations.append(changed)
     changed = json.loads(json.dumps(group)); changed["selection"][1] = "case-05"; mutations.append(changed)
     for changed in mutations:
@@ -185,7 +197,7 @@ def self_test() -> None:
             pass
         else:
             raise AssertionError("weakened I0 execution group was accepted")
-    print(json.dumps({"passed": True, "tests": 5}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 7}, separators=(",", ":")))
 
 
 def main() -> None:

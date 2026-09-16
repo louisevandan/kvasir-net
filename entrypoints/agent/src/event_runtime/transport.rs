@@ -196,6 +196,8 @@ struct Shared {
     peers: Mutex<HashMap<Address, Result<ConnectionSender, String>>>,
     limits: RuntimeLimits,
     local_writes: AtomicU64,
+    hop_data_writes: AtomicU64,
+    hop_data_bytes: AtomicU64,
     receipts: StdMutex<hop::ReceiptStore>,
     hop_live: HopLiveTracker,
     sender_id: String,
@@ -215,6 +217,8 @@ impl Shared {
             peers: Mutex::new(HashMap::new()),
             limits,
             local_writes: AtomicU64::new(0),
+            hop_data_writes: AtomicU64::new(0),
+            hop_data_bytes: AtomicU64::new(0),
             receipts: StdMutex::new(hop::ReceiptStore::new(
                 limits.hop_receipts,
                 limits.hop_receipt_bytes,
@@ -311,7 +315,9 @@ impl Shared {
         let shared = Arc::clone(self);
         self.spawn(async move {
             if let Err(value) = write_hop_loop(&mut writer, receiver, control_receiver,
-                &shared.local_writes, finish, max_outstanding, shared.hop_live.clone(), &shared.sender_id,
+                &shared.local_writes, &shared.hop_data_writes, &shared.hop_data_bytes,
+                finish, max_outstanding,
+                shared.hop_live.clone(), &shared.sender_id,
                 connection_generation).await {
                 if target.is_none() && value.current.is_none() && value.outstanding.is_empty()
                     && value.pending_acks.is_empty() && value.pending.is_empty() {
@@ -391,6 +397,8 @@ impl Inspector {
                 "oldest_unix_ms":receipts.oldest_unix_ms},
             "outstanding":{"events":outstanding.events,"event_bytes":outstanding.event_bytes,
                 "limit":self.0.limits.hop_outstanding},
+            "transfer":{"hop_data_writes":self.0.hop_data_writes.load(Ordering::Relaxed),
+                "hop_data_bytes":self.0.hop_data_bytes.load(Ordering::Relaxed)},
             "failures":{"count":failures.len(),"retained_event_bytes":retained_event_bytes,
                 "oldest_unix_ms":failures.iter().map(|value| value.created_unix_ms).min(),
                 "states":states,"failure_ids":ids},
@@ -1349,6 +1357,8 @@ async fn write_hop_loop<W: AsyncWrite + Unpin>(
     mut events: mpsc::Receiver<RetainedCompletion>,
     mut controls: mpsc::Receiver<HopCommand>,
     local_writes: &AtomicU64,
+    hop_data_writes: &AtomicU64,
+    hop_data_bytes: &AtomicU64,
     finish: Option<Arc<AtomicBool>>,
     max_outstanding: usize,
     live: HopLiveTracker,
@@ -1491,6 +1501,8 @@ async fn write_hop_loop<W: AsyncWrite + Unpin>(
                         return Err(hop_failure(error, HopFailureState::Uncertain,
                             Some(current), outstanding, pending_acks, events));
                     }
+                    hop_data_bytes.fetch_add(frame.len() as u64, Ordering::Relaxed);
+                    hop_data_writes.fetch_add(1, Ordering::Relaxed);
                     current.live = match live.claim(current.event.retained_bytes()) {
                         Ok(claim) => Some(claim),
                         Err(error) => return Err(hop_failure(error, HopFailureState::Uncertain,

@@ -88,6 +88,8 @@ export function compose({ cluster, model, policy, workload, runtime, runId, gene
     channel: runId, session_id: runId, connection_generation: generation, load_generation: generation,
     prompt: '', prompts: requests.map(r => r.prompt), session_key_template: '', max_tokens: maxTokens, waves,
     pre_inference_hold_ms: 0,
+    inference_start_hold_ms: 0,
+    post_inference_hold_ms: 0,
     options: JSON.stringify({ temperature: 0, seed: 7, top_p: .9, top_k: 20, ignore_eos: false, stop: model.stop }),
     acceptance: { minimum_generated_tokens: minimum, allowed_stop_reasons: ['eos'], responses: requests.map(r => ({
       required_substrings: [...r.expected.map(x => x.id), '검증 완료: 압력과 발열의 인과관계는 미확인입니다.'],

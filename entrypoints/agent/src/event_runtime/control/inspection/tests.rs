@@ -145,6 +145,8 @@ async fn an_empty_agent_still_reports_machine_and_protocol_identity() {
     assert!(snapshot["machine"]["probes"]["gpus"].is_object());
     assert_eq!(snapshot["nodes"], json!([]));
     assert_eq!(snapshot["transport"]["receipts"]["records"], 0);
+    assert_eq!(snapshot["transport"]["transfer"]["hop_data_writes"], 0);
+    assert_eq!(snapshot["transport"]["transfer"]["hop_data_bytes"], 0);
     assert_eq!(snapshot["transport"]["failures"]["count"], 0);
     assert!(snapshot["generated_at_unix_ms"].as_u64().unwrap_or(0) > 0);
 }

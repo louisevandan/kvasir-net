@@ -9,7 +9,7 @@ use p4_llamacpp_staged_adapter::v2::{
 };
 use p4_protocol::event::EventClass;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io;
+use std::io::{self, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -50,6 +50,14 @@ where
     let started_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let started = Instant::now();
     let overall = started + Duration::from_millis(config.timeout_ms);
+    if config.inference_start_hold_ms > 0 {
+        println!(
+            "P4_EVENT_GATE_INFERENCE_WINDOW started_unix_ms={} hold_ms={}",
+            started_unix_ms, config.inference_start_hold_ms
+        );
+        std::io::stdout().flush()?;
+        tokio::time::sleep(Duration::from_millis(config.inference_start_hold_ms)).await;
+    }
     let mut requests = BTreeMap::new();
     let mut next_index = 0usize;
     let mut next_wave = 0usize;

@@ -134,6 +134,8 @@ def validate(spec: dict) -> dict:
         "submission": "release_closed_loop", "max_in_flight": 1,
         "request_deadline_ms": [600000, 1200000, 1800000],
         "overall_grace_ms": 300000, "timeout_ms": 3900000,
+        "pre_inference_hold_ms": 15000,
+        "inference_start_hold_ms": 15000, "post_inference_hold_ms": 15000,
         "load_count": 1, "unload_count": 1,
     }, "I0 same-load execution group differs")
 
@@ -274,6 +276,9 @@ def self_test() -> None:
         lambda value: value["arms"][0].update(selection=["case-01"]),
         lambda value: value["execution_groups"]["I0"].update(load_count=3),
         lambda value: value["execution_groups"]["I0"].update(max_in_flight=3),
+        lambda value: value["execution_groups"]["I0"].update(pre_inference_hold_ms=0),
+        lambda value: value["execution_groups"]["I0"].update(inference_start_hold_ms=0),
+        lambda value: value["execution_groups"]["I0"].update(post_inference_hold_ms=0),
         lambda value: value["arms"][3].update(max_in_flight=2),
         lambda value: value["arms"][5]["waves"][1].update(after_ms=180001),
         lambda value: value["arms"][7].update(rejected_min=7),

@@ -257,6 +257,9 @@
       "request_deadline_ms": [600000, 1200000, 1800000],
       "overall_grace_ms": 300000,
       "timeout_ms": 3900000,
+      "pre_inference_hold_ms": 15000,
+      "inference_start_hold_ms": 15000,
+      "post_inference_hold_ms": 15000,
       "load_count": 1,
       "unload_count": 1
     }

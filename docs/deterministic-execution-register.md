@@ -80,6 +80,8 @@
 | L072 | I0 원시 증거 생성기가 GPU sample count를 계산했지만 95% 하한은 최종 judge에만 맡겨, 중간 bundle 생성만 보면 표본 제거 변이가 통과했다. | 원시 증거 생성기와 최종 judge가 모두 run window의 기대 표본 수와 95% 하한을 독립 검사한다. 표본 제거 변이를 두 계층에 유지한다. | I0–I4 GPU scorecard |
 | L073 | event-drive artifact와 원격 GPU 표본이 상대 `elapsed_ms`만 가지면 다른 실행에서 채취한 표본의 개수와 간격을 맞춰 현재 실행 증거처럼 결합할 수 있다. | runtime이 monotonic 측정과 함께 `started_unix_ms`를 기록한다. 원시 증거 builder와 최종 judge가 각 원격 capture 시각을 같은 절대 실행창의 1초 grid와 750ms 이내로 독립 결속하고, 절대 anchor 누락·시각 이동 변이를 거부한다. | I0–I4 GPU·자원 시간창 결속 |
 | L074 | 가혹한 시험에서 fault 대상과 주입 시점을 실행 중 선택하면 시험 실패를 보고 제품 알고리즘을 찾는 trial-and-error가 되고, 재실행 결과도 비교할 수 없다. | 제품 전이를 먼저 결정론적 상태기계로 고정한다. integrity spec이 요청 ID 규칙·대상 index·output ordinal·stage·generation·지연·wave와 seed를 사전 봉인하고, exact replay의 terminal 분류가 달라지면 거부한다. 시험은 이 불변식의 증명에만 사용한다. | I0–I4 정상·stress·fault arm |
+| L075 | 원격 전용 단계에서 일반 검증 습관으로 로컬 `cargo test`를 시작해, 제품 build 금지와 이 PC의 전력 보호 경계를 어겼다. 즉시 중단했지만 문서 지시만으로는 실행을 막지 못했다. | Release A 실기 runner에는 build 명령을 두지 않고 원격 실행 manifest의 고정 argv만 허용한다. Rust build/test는 원격 LF runner가 `nice -n 10`, `-j 14`를 함께 검사한 뒤 실행하며, 로컬에서는 Python 계약/구문 검사와 증거 조립만 허용한다. | Release A I0–P3 build와 실기 실행 |
+| L076 | 원격 checkout이 GitHub가 아닌 과거 bundle을 `origin`으로 가진 사실을 확인하지 않고 최신 ref를 추측했고, 이어 Windows 작업 트리의 줄바꿈을 포함한 patch 적용을 시도해 컴파일 전에 세 번 차단됐다. | 원격 build 입력은 patch가 아니라 검증한 commit bundle 하나로 전달한다. build 디렉터리 생성 전에 bundle ref·commit 존재·base ancestry를 검사하고, checkout 뒤 `git status --porcelain` 0과 정확한 HEAD를 단언한다. 원격 ref나 줄바꿈 적합성을 실행으로 발견하지 않는다. | Release A I0–P3 원격 source 배포 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 
