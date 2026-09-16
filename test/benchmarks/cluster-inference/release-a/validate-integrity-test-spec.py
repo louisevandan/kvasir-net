@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 DIRECTORY = Path(__file__).resolve().parent
-CANONICAL = DIRECTORY / "integrity-test-spec-qwen122b-i0-v1.json"
+CANONICAL = DIRECTORY / "integrity-test-spec-qwen122b-i0-v2.json"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -75,7 +75,7 @@ def arms_by_id(spec: dict) -> dict[str, dict]:
 
 def validate(spec: dict) -> dict:
     require(spec.get("schema") == 1, "schema differs")
-    require(spec.get("spec_id") == "release-a-qwen122b-integrity-i0-v1", "spec id differs")
+    require(spec.get("spec_id") == "release-a-qwen122b-integrity-i0-v2", "spec id differs")
     require(spec.get("status") == "planned", "unexecuted contract must remain planned")
     require(spec.get("integrity_baseline") is False, "contract claims integrity before execution")
     require(spec.get("performance_improvement_claimed") is False,

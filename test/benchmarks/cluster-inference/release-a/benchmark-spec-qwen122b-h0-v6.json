@@ -63,7 +63,7 @@
       },
       {
         "id": "judge",
-        "version": "9c438e07feb4615098b51e1396ece2641f5c8b640a438b5a629fd92afd7973e6",
+        "version": "95162250c577f3fe81dbabc970d7ba7c6d33df0cf8cf40b5ee1aba35aec567a2",
         "files": [
           {
             "path": ".gitattributes",
@@ -81,14 +81,14 @@
             "sha256": "2c04fec5ccf5839aed968f6d1aee3a10cee7bf43bf1232f353e98f23ed990b6b"
           },
           {
-            "path": "test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json",
-            "bytes": 11309,
-            "sha256": "9646a80dfbe2d065bb36a9fd7f2af9ba80a3eb8cbc0a5e596758d7c77e3709c1"
+            "path": "test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json",
+            "bytes": 13969,
+            "sha256": "5b7ae728cd949495d67987f0fd4b56617d17cbc2b7b1f67fb011c8e9d5ef5c21"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py",
             "bytes": 16581,
-            "sha256": "f52eea2dbed542d463f3551f75ec14b1b22c264c0d63de9664465f6d5d74b20c"
+            "sha256": "e39a8519bd0276f353a7a2ed8cfa073cf8d772ad241d75238970c3ee1f80bfdd"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/prepare-integrity-i0.py",
@@ -236,13 +236,13 @@
     {
       "path": "verify-h0-v6.py",
       "bytes": 5330,
-      "sha256": "976892d13267eb9e175d7a49d58fa152314b5af55f50c57516194e4383d8f66a",
+      "sha256": "870fd64f380f72772431d79b7c03751361601f036bf7ffb9ad94ee46879a1d21",
       "id": "h0_verifier"
     },
     {
       "path": "benchmark-spec.mjs",
       "bytes": 31769,
-      "sha256": "3bc4a18d4398f93bfc52ffa5c42c6d35ea7e2f9c2e12f97a4156425c273639f1",
+      "sha256": "0acd7f14465e4ffca339f8eed794ffaf5ed07a2b98b434842e8ad446bd774a7b",
       "id": "spec_validator"
     },
     {
@@ -270,15 +270,15 @@
       "id": "event_preflight_tests"
     },
     {
-      "path": "integrity-test-spec-qwen122b-i0-v1.json",
-      "bytes": 11309,
-      "sha256": "9646a80dfbe2d065bb36a9fd7f2af9ba80a3eb8cbc0a5e596758d7c77e3709c1",
+      "path": "integrity-test-spec-qwen122b-i0-v2.json",
+      "bytes": 13969,
+      "sha256": "5b7ae728cd949495d67987f0fd4b56617d17cbc2b7b1f67fb011c8e9d5ef5c21",
       "id": "integrity_spec"
     },
     {
       "path": "validate-integrity-test-spec.py",
       "bytes": 16581,
-      "sha256": "f52eea2dbed542d463f3551f75ec14b1b22c264c0d63de9664465f6d5d74b20c",
+      "sha256": "e39a8519bd0276f353a7a2ed8cfa073cf8d772ad241d75238970c3ee1f80bfdd",
       "id": "integrity_spec_validator"
     },
     {

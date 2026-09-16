@@ -98,7 +98,7 @@ export function validateBenchmarkSpec(spec) {
     'test/benchmarks/cluster-inference/release-a/prepare-h1-quality.py',
     'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py',
     'test/benchmarks/cluster-inference/release-a/judge-reference-capability.py',
-    'test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json',
+    'test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json',
     'test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py',
     'test/benchmarks/cluster-inference/release-a/prepare-integrity-i0.py',
     'test/benchmarks/cluster-inference/release-a/inspect-i0-active-host.py',

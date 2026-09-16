@@ -13,7 +13,7 @@ from pathlib import Path
 DIRECTORY = Path(__file__).resolve().parent
 ROOT = DIRECTORY.parents[3]
 SPEC = DIRECTORY / "benchmark-spec-qwen122b-h0-v6.json"
-INTEGRITY_SPEC = DIRECTORY / "integrity-test-spec-qwen122b-i0-v1.json"
+INTEGRITY_SPEC = DIRECTORY / "integrity-test-spec-qwen122b-i0-v2.json"
 
 
 def run(argv: list[str]) -> subprocess.CompletedProcess[str]:

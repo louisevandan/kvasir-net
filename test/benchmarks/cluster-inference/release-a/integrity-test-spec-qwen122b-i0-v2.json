@@ -1,0 +1,642 @@
+{
+  "schema": 1,
+  "spec_id": "release-a-qwen122b-integrity-i0-v2",
+  "status": "planned",
+  "integrity_baseline": false,
+  "performance_improvement_claimed": false,
+  "determinism": {
+    "product_algorithm": "deterministic_state_machine",
+    "randomized_recovery": false,
+    "runtime_retry_discovery": false,
+    "test_role": "proof_only",
+    "stress_schedule": "fixed",
+    "seed": 20260916,
+    "replay_requires_identical_terminal_classification": true
+  },
+  "source": {
+    "runtime_commit": "b8f5214ba9a88a2bc449889af80aff4b2c3ae8c0",
+    "base_h0_spec_sha256": "d0af5116877d9f2af06c40c712ad2c5b70baa10581615206274e7b0c28402106",
+    "corpus_sha256": "3842cfa8e036fda9cbd8eb28ebe4f4fe52ebb6ab6fa92022e3c28015fd64d2e5"
+  },
+  "model": {
+    "id": "Qwen3.5-122B-A10B",
+    "variant": "UD-Q5_K_S",
+    "physical_hosts": 3,
+    "cuts": [
+      [
+        0,
+        24
+      ],
+      [
+        24,
+        36
+      ],
+      [
+        36,
+        48
+      ]
+    ],
+    "resident": 8,
+    "context_per_sequence": 102400,
+    "total_context": 819200,
+    "n_batch": 128,
+    "n_ubatch": 64,
+    "max_output_tokens": 2048
+  },
+  "slo": {
+    "request_deadline_ms": {
+      "short": 600000,
+      "medium": 1200000,
+      "long": 1800000
+    },
+    "ttft_p95_ms": {
+      "short": 60000,
+      "medium": 300000,
+      "long": 900000
+    },
+    "itl_p95_ms": 250,
+    "send_slip_ms": 1000,
+    "clock_error_ms": 10,
+    "normal_response_pass_rate": 1.0,
+    "normal_terminal_pass_rate": 1.0
+  },
+  "arms": [
+    {
+      "id": "I0-S",
+      "kind": "normal",
+      "selection": [
+        "case-00"
+      ],
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 1
+        }
+      ],
+      "max_in_flight": 1,
+      "timeout_ms": 900000,
+      "same_load_group": "I0",
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I0-M",
+      "kind": "normal",
+      "selection": [
+        "case-04"
+      ],
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 1
+        }
+      ],
+      "max_in_flight": 1,
+      "timeout_ms": 1500000,
+      "same_load_group": "I0",
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I0-L",
+      "kind": "normal",
+      "selection": [
+        "case-06"
+      ],
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 1
+        }
+      ],
+      "max_in_flight": 1,
+      "timeout_ms": 2100000,
+      "same_load_group": "I0",
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I1-Q64",
+      "kind": "normal",
+      "selection": "corpus_order",
+      "requests": 64,
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 64
+        }
+      ],
+      "max_in_flight": 1,
+      "submission": "release_closed_loop",
+      "timeout_ms": 67500000,
+      "same_load": true,
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I2-COLD8",
+      "kind": "normal",
+      "selection": "corpus_0_7",
+      "requests": 8,
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 8
+        }
+      ],
+      "open_loop": true,
+      "timeout_ms": 1800000,
+      "requires_overlap": true,
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I2-WAVE64",
+      "kind": "normal",
+      "selection": "corpus_order",
+      "requests": 64,
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 8
+        },
+        {
+          "after_ms": 180000,
+          "count": 8
+        },
+        {
+          "after_ms": 480000,
+          "count": 8
+        },
+        {
+          "after_ms": 780000,
+          "count": 8
+        },
+        {
+          "after_ms": 1080000,
+          "count": 8
+        },
+        {
+          "after_ms": 1380000,
+          "count": 8
+        },
+        {
+          "after_ms": 1680000,
+          "count": 8
+        },
+        {
+          "after_ms": 1980000,
+          "count": 8
+        }
+      ],
+      "open_loop": true,
+      "timeout_ms": 3780000,
+      "requires_overlap": true,
+      "requires_backlog_convergence": true,
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I2-RECOVERY24",
+      "kind": "normal",
+      "selection": "corpus_0_23",
+      "requests": 24,
+      "blocks": 3,
+      "requests_per_block": 8,
+      "quiescence_ms": 30000,
+      "block_timeout_ms": 1800000,
+      "timeout_ms": 5460000,
+      "same_load": true,
+      "requires_zero_between_blocks": true,
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I3-OVERLOAD80",
+      "kind": "overload",
+      "selection": "corpus_cycle_unique_ids",
+      "requests": 80,
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 80
+        }
+      ],
+      "submit_window_ms": 1000,
+      "accepted_max": 72,
+      "rejected_min": 8,
+      "rejection_deadline_ms": 5000,
+      "request_id_pattern": "integrity-overload-{index:03d}",
+      "timeout_ms": 1800000,
+      "requires_rejection_no_effect": true,
+      "requires_all_classified": true
+    },
+    {
+      "id": "I3-CANCEL",
+      "kind": "fault",
+      "fault": "cancel_after_first_token",
+      "requests": 8,
+      "targets": 2,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [
+        1,
+        6
+      ],
+      "trigger_output_ordinal": 0,
+      "timeout_ms": 1800000,
+      "requires_no_post_linearization_output": true,
+      "requires_all_classified": true
+    },
+    {
+      "id": "I3-SLOW",
+      "kind": "fault",
+      "fault": "slow_edge",
+      "requests": 8,
+      "selection": "corpus_0_7",
+      "affected_request_indexes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "injection_boundary": "outer_output_delivery",
+      "edge_delay_ms": 1000,
+      "timeout_ms": 1800000,
+      "requires_oracle_eos_release": true
+    },
+    {
+      "id": "I3-DISCONNECT",
+      "kind": "fault",
+      "fault": "disconnect_after_first_output",
+      "requests": 8,
+      "targets": 1,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [
+        2
+      ],
+      "trigger_output_ordinal": 0,
+      "allowed_target_terminals": [
+        "failed",
+        "canceled",
+        "uncertain"
+      ],
+      "timeout_ms": 1800000,
+      "requires_failure_ledger": true,
+      "requires_all_classified": true
+    },
+    {
+      "id": "I3-RESTART",
+      "kind": "fault",
+      "fault": "restart_middle_stage_after_first_output",
+      "requests": 8,
+      "targets": 1,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [
+        4
+      ],
+      "restart_stage": "mac20-1",
+      "trigger_output_ordinal": 0,
+      "generation_increment": 1,
+      "timeout_ms": 1800000,
+      "requires_generation_fence": true,
+      "requires_all_classified": true
+    },
+    {
+      "id": "I3-LATE",
+      "kind": "fault",
+      "fault": "late_old_generation_result",
+      "requests": 8,
+      "targets": 1,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [
+        5
+      ],
+      "return_stage": "mac20-1",
+      "source_generation_offset": -1,
+      "delay_ms": 30000,
+      "timeout_ms": 1800000,
+      "requires_generation_fence": true,
+      "requires_rejection_no_effect": true,
+      "requires_all_classified": true
+    },
+    {
+      "id": "I4-SOAK",
+      "kind": "normal",
+      "selection": "corpus_cycle_unique_ids",
+      "requests": 256,
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 8
+        },
+        {
+          "after_ms": 180000,
+          "count": 8
+        },
+        {
+          "after_ms": 360000,
+          "count": 8
+        },
+        {
+          "after_ms": 540000,
+          "count": 8
+        },
+        {
+          "after_ms": 720000,
+          "count": 8
+        },
+        {
+          "after_ms": 900000,
+          "count": 8
+        },
+        {
+          "after_ms": 1080000,
+          "count": 8
+        },
+        {
+          "after_ms": 1260000,
+          "count": 8
+        },
+        {
+          "after_ms": 1440000,
+          "count": 8
+        },
+        {
+          "after_ms": 1620000,
+          "count": 8
+        },
+        {
+          "after_ms": 1800000,
+          "count": 8
+        },
+        {
+          "after_ms": 1980000,
+          "count": 8
+        },
+        {
+          "after_ms": 2160000,
+          "count": 8
+        },
+        {
+          "after_ms": 2340000,
+          "count": 8
+        },
+        {
+          "after_ms": 2520000,
+          "count": 8
+        },
+        {
+          "after_ms": 2700000,
+          "count": 8
+        },
+        {
+          "after_ms": 2880000,
+          "count": 8
+        },
+        {
+          "after_ms": 3060000,
+          "count": 8
+        },
+        {
+          "after_ms": 3240000,
+          "count": 8
+        },
+        {
+          "after_ms": 3420000,
+          "count": 8
+        },
+        {
+          "after_ms": 3600000,
+          "count": 8
+        },
+        {
+          "after_ms": 3780000,
+          "count": 8
+        },
+        {
+          "after_ms": 3960000,
+          "count": 8
+        },
+        {
+          "after_ms": 4140000,
+          "count": 8
+        },
+        {
+          "after_ms": 4320000,
+          "count": 8
+        },
+        {
+          "after_ms": 4500000,
+          "count": 8
+        },
+        {
+          "after_ms": 4680000,
+          "count": 8
+        },
+        {
+          "after_ms": 4860000,
+          "count": 8
+        },
+        {
+          "after_ms": 5040000,
+          "count": 8
+        },
+        {
+          "after_ms": 5220000,
+          "count": 8
+        },
+        {
+          "after_ms": 5400000,
+          "count": 8
+        },
+        {
+          "after_ms": 5580000,
+          "count": 8
+        }
+      ],
+      "minimum_duration_ms": 5580000,
+      "request_id_pattern": "integrity-soak-{index:03d}",
+      "timeout_ms": 7380000,
+      "same_load": true,
+      "requires_backlog_convergence": true,
+      "requires_oracle_eos_release": true
+    }
+  ],
+  "execution_groups": {
+    "I0": {
+      "arms": [
+        "I0-S",
+        "I0-M",
+        "I0-L"
+      ],
+      "same_load": true,
+      "selection": [
+        "case-00",
+        "case-04",
+        "case-06"
+      ],
+      "classes": [
+        "short",
+        "medium",
+        "long"
+      ],
+      "requests": 3,
+      "waves": [
+        {
+          "after_ms": 0,
+          "count": 3
+        }
+      ],
+      "submission": "release_closed_loop",
+      "max_in_flight": 1,
+      "request_deadline_ms": [
+        600000,
+        1200000,
+        1800000
+      ],
+      "overall_grace_ms": 300000,
+      "timeout_ms": 3900000,
+      "pre_inference_hold_ms": 15000,
+      "inference_start_hold_ms": 15000,
+      "post_inference_hold_ms": 15000,
+      "load_count": 1,
+      "unload_count": 1
+    }
+  },
+  "required_scorecard": {
+    "request_fields": [
+      "eligible_ms",
+      "send_started_ms",
+      "send_completed_ms",
+      "arrival_ms",
+      "first_output_ms",
+      "output_received_ms",
+      "terminal_ms",
+      "release_ms",
+      "class",
+      "deadline_ms",
+      "input_tokens",
+      "generated_tokens",
+      "stop_reason",
+      "oracle_passed",
+      "queue_ms",
+      "prefill_rows",
+      "prefill_ms",
+      "decode_rows",
+      "decode_ms"
+    ],
+    "run_fields": [
+      "useful_generation_tps",
+      "total_generation_tps",
+      "prefill_rows_per_second",
+      "decode_rows_per_second",
+      "ttft",
+      "itl",
+      "deadline_violations",
+      "send_slip_violations",
+      "first_scheduled_send_ms",
+      "last_terminal_ms"
+    ],
+    "scheduler_phase_fields": [
+      "physical_batches",
+      "rows_mean",
+      "rows_p50",
+      "rows_p95",
+      "rows_max",
+      "full_ubatch_fraction",
+      "mixed_batches",
+      "runnable",
+      "eligible",
+      "blocked",
+      "pending",
+      "blocked_reasons",
+      "flight_peak",
+      "open_peak",
+      "idle_ms"
+    ],
+    "stage_fields": [
+      "spans",
+      "executions",
+      "rows",
+      "queue_ms",
+      "compute_ms",
+      "publish_ms",
+      "compute_p50_ms",
+      "compute_p95_ms",
+      "open_peak",
+      "overlap_ms"
+    ],
+    "host_fields": [
+      "samples",
+      "coverage",
+      "util_mean",
+      "util_p50",
+      "util_p90",
+      "zero_fraction",
+      "memory_peak",
+      "power",
+      "temperature",
+      "unavailable_reasons"
+    ],
+    "resource_snapshots": [
+      "before_load",
+      "peak",
+      "after_drain",
+      "after_unload"
+    ],
+    "gpu_sample_interval_ms": 1000,
+    "gpu_minimum_coverage": 0.95,
+    "gpu_sample_clock_tolerance_ms": 750,
+    "resource_snapshot_skew_ms": 5000,
+    "resource_snapshot_host_fields": [
+      "host",
+      "captured_unix_ms",
+      "node_count",
+      "task_native_children",
+      "task_listeners",
+      "model_resident"
+    ],
+    "resource_snapshot_states": {
+      "before_load": {
+        "node_count": 0,
+        "task_native_children": 0,
+        "task_listeners": 1,
+        "model_resident": false
+      },
+      "peak": {
+        "node_count": 1,
+        "task_native_children": 1,
+        "task_listeners": 2,
+        "model_resident": true
+      },
+      "after_drain": {
+        "node_count": 1,
+        "task_native_children": 1,
+        "task_listeners": 2,
+        "model_resident": true
+      },
+      "after_unload": {
+        "node_count": 0,
+        "task_native_children": 0,
+        "task_listeners": 1,
+        "model_resident": false
+      }
+    }
+  },
+  "required_distributed_evidence": {
+    "physical_hosts": 3,
+    "stages": 3,
+    "all_hosts_own_model_shard": true,
+    "all_hosts_own_kv": true,
+    "all_stages_compute": true,
+    "cross_host_transfer_bytes_positive": true,
+    "undeclared_hosts": 0
+  },
+  "cleanup": {
+    "node_unload_once_per_node": true,
+    "unload_status": "succeeded",
+    "unload_resource_state": "absent",
+    "nodes": 0,
+    "task_native_children": 0,
+    "task_listeners": 0,
+    "gpu_compute_processes": 0,
+    "transport_failure_policy": "zero_or_preserved_with_reconciliation"
+  }
+}
