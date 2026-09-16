@@ -266,7 +266,7 @@ Release A Qwen122B H1 1차: [64건 동시 명세 RED·실패 recovery·closed-lo
 
 Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVALID, 정상 UNLOAD·작업 자원 회수](../tests/reports/release-a/20260916_104300.md).
 
-현재 Release A 실행 순서: [I0–I4 무결성 우선 시험계획](../tests/plans/release-a-integrity-first-20260916.md), [H0 v5 봉인](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v5.json), [실행 계약](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json), [계약 검사기](../test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py), [원시 증거 builder](../test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py), [결과 판정기](../test/benchmarks/cluster-inference/release-a/judge-integrity.py). 무결성 GREEN 뒤에만 P0–P3 성능 개선으로 이동한다.
+현재 Release A 실행 순서: [I0–I4 무결성 우선 시험계획](../tests/plans/release-a-integrity-first-20260916.md), [H0 v6 봉인](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v6.json), [실행 계약 v2](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json), [계약 검사기](../test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py), [원시 증거 builder](../test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py), [결과 판정기](../test/benchmarks/cluster-inference/release-a/judge-integrity.py). 무결성 GREEN 뒤에만 P0–P3 성능 개선으로 이동한다.
 
 무결성 우선 계약 보고: [14개 실기 arm과 계약·결과 판정 변이](../tests/reports/release-a/20260916_131446.md).
 
@@ -281,6 +281,8 @@ Release A I0 오답 원인 진단: [사전 봉인 관측·판정 계획](../test
 Release A I0 오답 원인 확정: [원격 6개 분리 진단·정확 사실 추출과 산술 실패·정상 회수](../tests/reports/release-a/20260916_172000.md).
 
 Release A OUTER 오답 판정 경계: [JSON 오라클 결속·원격 회귀·제품 수정 미완](../tests/reports/release-a/20260916_180500.md).
+
+현재 Qwen122B H0 v6/I0: [3물리 host 단일 요청 정답 3/3·정상 회수·성능 계측 보고](../tests/reports/release-a/20260916_195500.md). I1–I4 전체 무결성은 남아 있다.
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 

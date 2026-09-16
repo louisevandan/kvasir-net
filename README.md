@@ -236,7 +236,7 @@ Release A Qwen122B H1 1차: [64건 동시 명세 RED·실패 recovery·closed-lo
 
 Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVALID, 정상 UNLOAD·작업 자원 회수](tests/reports/release-a/20260916_104300.md).
 
-Release A 무결성 우선 재개: [I0–I4 정밀 시험계획](tests/plans/release-a-integrity-first-20260916.md) · [실행 계약](test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json). I0–I4 GREEN 전에는 성능 후보와 H5를 시작하지 않는다.
+Release A 무결성 우선 재개: [I0–I4 정밀 시험계획](tests/plans/release-a-integrity-first-20260916.md) · [실행 계약 v2](test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json). I0–I4 GREEN 전에는 성능 후보와 H5를 시작하지 않는다.
 
 Release A 무결성 시험 계약: [14개 실기 arm·계약/판정 변이·로드맵 재조정 보고](tests/reports/release-a/20260916_131446.md).
 
@@ -244,10 +244,12 @@ Release A I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요
 
 Release A Qwen122B H0 v5: [결정론적 관측 장벽·절대 실행창·원시 GPU/자원 증거·세 원격 바이너리 봉인](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v5.json) · [검증 보고](tests/reports/release-a/20260916_143000.md). 역사 봉인이며 새 LOAD 권위가 아니다.
 
-Release A I0 첫 실기: [정답 1/3 RED·단일 호스트 기준 역검증·새 LOAD 차단](tests/reports/release-a/20260916_161600.md). I1–I4와 성능 후보는 BLOCKED다.
+Release A I0 첫 실기 역사 증거: [정답 1/3 RED·단일 호스트 기준 역검증·당시 새 LOAD 차단](tests/reports/release-a/20260916_161600.md).
 
 Release A I0 오답 원인 진단: [사전 봉인 관측·판정 계획](tests/plans/release-a-quality-cause-20260916.md).
 
 Release A I0 오답 원인 확정: [원격 6개 분리 진단·정확 사실 추출과 산술 실패·정상 회수](tests/reports/release-a/20260916_172000.md).
 
 Release A OUTER 오답 판정 경계: [JSON 오라클 결속·원격 회귀·제품 수정 미완](tests/reports/release-a/20260916_180500.md).
+
+현재 Qwen122B H0 v6/I0: [봉인 명세](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v6.json) · [3물리 host 단일 요청 정답 3/3·정상 회수 보고](tests/reports/release-a/20260916_195500.md). I1–I4 전체 무결성은 남아 있다.
