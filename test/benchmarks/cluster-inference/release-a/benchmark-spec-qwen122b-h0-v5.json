@@ -53,7 +53,7 @@
       },
       {
         "id": "judge",
-        "version": "7f227bbfbaac0eae48d82a09c6fdc1f335b665121e73de8636996e98d49cf24d",
+        "version": "a4566bee46842f255ed1094a9c056720b0bfbb4fb966955e50ff157b1608fe22",
         "files": [
           {
             "path": ".gitattributes",
@@ -102,8 +102,8 @@
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/run-integrity-i0.py",
-            "bytes": 12224,
-            "sha256": "8d1c0e5be80a26a973e444d2be042298a1f6df9b7b1936c7db8f0ff4905bee72"
+            "bytes": 13565,
+            "sha256": "b56ccac5db15cb52b1e5c501abfabb6f3f7d2558041dea23ae1b3330d5572723"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/cleanup-i0-owned.py",
@@ -221,7 +221,7 @@
     {
       "path": "verify-h0-v5.py",
       "bytes": 5099,
-      "sha256": "af9d345fe9db62b04540922b73e7fa02360ed0eb49782a4ca845aba1fcc1185f",
+      "sha256": "95b8ac6b2bc088c6d17ebc2a8e68f4ddad6520b4b65ddf74abb2d451332507d5",
       "id": "h0_verifier"
     },
     {
@@ -298,8 +298,8 @@
     },
     {
       "path": "run-integrity-i0.py",
-      "bytes": 12224,
-      "sha256": "8d1c0e5be80a26a973e444d2be042298a1f6df9b7b1936c7db8f0ff4905bee72",
+      "bytes": 13565,
+      "sha256": "b56ccac5db15cb52b1e5c501abfabb6f3f7d2558041dea23ae1b3330d5572723",
       "id": "i0_runner"
     },
     {

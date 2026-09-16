@@ -64,7 +64,7 @@ def main() -> None:
     summary([sys.executable, str(DIRECTORY / "inspect-i0-routes.py"), "--self-test"],
             {"passed": True, "tests": 5}, "I0 route inspector")
     summary([sys.executable, str(DIRECTORY / "run-integrity-i0.py"), "--self-test"],
-            {"passed": True, "tests": 2}, "I0 remote runner")
+            {"passed": True, "tests": 4}, "I0 remote runner")
     summary([sys.executable, str(DIRECTORY / "cleanup-i0-owned.py"), "--self-test"],
             {"passed": True, "tests": 3}, "I0 cleanup")
     summary([sys.executable, str(DIRECTORY / "build-integrity-i0-evidence.py"),
@@ -92,7 +92,7 @@ def main() -> None:
                       "integrity_arms": 14, "i0_materializer_tests": 7,
                       "i0_active_preflight_tests": 4, "i0_evidence_builder_tests": 10,
                       "i0_host_observer_tests": 3, "i0_route_inspector_tests": 5,
-                      "i0_runner_tests": 2, "i0_cleanup_tests": 3,
+                      "i0_runner_tests": 4, "i0_cleanup_tests": 3,
                       "i0_judge_tests": 11,
                       "integrity_judge_tests": 27,
                       "spec_tests": 4}, separators=(",", ":")))

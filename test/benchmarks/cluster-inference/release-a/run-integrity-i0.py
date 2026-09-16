@@ -15,6 +15,7 @@ LOADED = "P4_EVENT_GATE_LOADED"
 WINDOW = "P4_EVENT_GATE_INFERENCE_WINDOW"
 DRAINED = "P4_EVENT_GATE_DRAINED"
 HOST_ORDER = ("spark", "mac20", "mac21")
+BINDING_KINDS = ("observer", "observer-config", "cleanup-script", "cleanup-config")
 
 
 def execute(argv: list[str], timeout: int = 60) -> bytes:
@@ -38,6 +39,20 @@ def route_command(manifest: dict, expected: str) -> list[str]:
     route = manifest["route"]
     return [*route["ssh"], "python3", route["script"], "--config", route["config"],
             "--python-path", route["python_path"], "--expected", expected]
+
+
+def validate_manifest(manifest: dict) -> None:
+    if [host["host"] for host in manifest["hosts"]] != list(HOST_ORDER):
+        raise ValueError("manifest host order differs")
+    names = [binding["name"] for binding in manifest["bindings"]]
+    required = {"driver", "config", "route"}
+    required.update(f"{kind}-{host}" for host in HOST_ORDER for kind in BINDING_KINDS)
+    if len(names) != len(set(names)) or set(names) != required:
+        raise ValueError("manifest execution bindings differ")
+    for binding in manifest["bindings"]:
+        if (not isinstance(binding.get("command"), list) or not binding["command"] or
+                len(binding.get("sha256", "")) != 64):
+            raise ValueError(f"invalid execution binding: {binding.get('name')}")
 
 
 def snapshot(manifest: dict, expected: str) -> tuple[dict, dict]:
@@ -108,8 +123,7 @@ class Sampler:
 
 
 def run(manifest: dict, output: Path) -> dict:
-    if [host["host"] for host in manifest["hosts"]] != list(HOST_ORDER):
-        raise ValueError("manifest host order differs")
+    validate_manifest(manifest)
     if output.exists():
         raise ValueError("I0 output directory already exists")
     for binding in manifest["bindings"]:
@@ -238,7 +252,18 @@ def run(manifest: dict, output: Path) -> dict:
 def self_test() -> None:
     assert LOADED != WINDOW != DRAINED
     assert list(HOST_ORDER) == ["spark", "mac20", "mac21"]
-    print(json.dumps({"passed": True, "tests": 2}, separators=(",", ":")))
+    bindings = [{"name": name, "command": ["hash"], "sha256": "0" * 64}
+                for name in ["driver", "config", "route"] +
+                [f"{kind}-{host}" for host in HOST_ORDER for kind in BINDING_KINDS]]
+    manifest = {"hosts": [{"host": host} for host in HOST_ORDER], "bindings": bindings}
+    validate_manifest(manifest)
+    try:
+        validate_manifest({**manifest, "bindings": bindings[:-1]})
+    except ValueError as error:
+        assert str(error) == "manifest execution bindings differ"
+    else:
+        raise AssertionError("missing host binding was accepted")
+    print(json.dumps({"passed": True, "tests": 4}, separators=(",", ":")))
 
 
 def main() -> None:
