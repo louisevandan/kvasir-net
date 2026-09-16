@@ -6,8 +6,8 @@
     "source_commit": "b8f5214ba9a88a2bc449889af80aff4b2c3ae8c0",
     "runtime_kind": "event",
     "source_bundle": {
-      "bytes": 5339189,
-      "sha256": "18d2f4836552d5a0e15a2e7d989bdee96acf01578f50dac2ba0a4b720402af93"
+      "bytes": 5329168,
+      "sha256": "7694d1458d33f7259bfbe209470128945cee6af2a53572f7e17f69b86b5bb554"
     },
     "components": [
       {
@@ -63,7 +63,7 @@
       },
       {
         "id": "judge",
-        "version": "7cf641d57360ae7a2f6302d2aa73089f5651261574bcdf9bedd9c7d5275456ac",
+        "version": "ed680f9cc63f77275722cff4f0bf68be17a4e12e8403b1d551a6541ba322b6b9",
         "files": [
           {
             "path": ".gitattributes",
@@ -142,8 +142,8 @@
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/run-integrity-i1.py",
-            "bytes": 7815,
-            "sha256": "62b8b5be443c93d26a46e72cd49857f0a0ee1d84348d6f05341e19e078d52c4e"
+            "bytes": 10073,
+            "sha256": "3244a15379e4df0e6574edce9bab5e96726de95e5d09540f080dcc91f57ba0ef"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/build-integrity-i1-evidence.py",
@@ -256,13 +256,13 @@
     {
       "path": "verify-h0-v8.py",
       "bytes": 6123,
-      "sha256": "f66ea6e19e0e6c2b73d55bd0a29b8e94c38b3573a6697980b96a5cf3a41d8458",
+      "sha256": "34d88a4e63ce762f3b523632637c58b3e9cdd995cede17e03ce761b4bce3ed7f",
       "id": "h0_verifier"
     },
     {
       "path": "benchmark-spec.mjs",
       "bytes": 32435,
-      "sha256": "8349be99aab70a6f1b66c6c7e0b08c1c46c01d35bf11942758a462639d899e2c",
+      "sha256": "56dbfd59f6f8e68a182e1340525977fff36cc5fa66df9f56fb61c94180bd4801",
       "id": "spec_validator"
     },
     {
@@ -364,8 +364,8 @@
     {
       "id": "i1_runner",
       "path": "run-integrity-i1.py",
-      "bytes": 7815,
-      "sha256": "62b8b5be443c93d26a46e72cd49857f0a0ee1d84348d6f05341e19e078d52c4e"
+      "bytes": 10073,
+      "sha256": "3244a15379e4df0e6574edce9bab5e96726de95e5d09540f080dcc91f57ba0ef"
     },
     {
       "id": "i1_evidence_builder",

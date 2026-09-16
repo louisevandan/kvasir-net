@@ -7,8 +7,8 @@ import { isDeepStrictEqual } from 'node:util';
 
 const EXPECTED_COMMIT = 'b8f5214ba9a88a2bc449889af80aff4b2c3ae8c0';
 const EXPECTED_SOURCE_BUNDLE = Object.freeze({
-  bytes: 5339189,
-  sha256: '18d2f4836552d5a0e15a2e7d989bdee96acf01578f50dac2ba0a4b720402af93',
+  bytes: 5329168,
+  sha256: '7694d1458d33f7259bfbe209470128945cee6af2a53572f7e17f69b86b5bb554',
 });
 const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9';
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);

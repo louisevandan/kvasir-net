@@ -284,6 +284,8 @@ Release A OUTER 오답 판정 경계: [JSON 오라클 결속·원격 회귀·제
 
 현재 Qwen122B H0 v7/I0: [3물리 host 단일 요청 정답 3/3·유효 TPS 정정·정상 회수·성능 계측 보고](../tests/reports/release-a/20260916_204300.md). [H0 v6 과거 보고와 정정](../tests/reports/release-a/20260916_195500.md). I1–I4 전체 무결성은 남아 있다.
 
+다음 Qwen122B H0 v8/I1: [봉인 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v8.json) · [관측 장벽·64건 판정 경로·I0 재검증 대기 보고](../tests/reports/release-a/20260916_210000.md). 비모델 게이트만 통과했고 실기는 아직 미실행이다.
+
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 
 Release A Qwen122B A-PLAN: [3물리 host native PLAN·공유 pool·배포 전 거부](../tests/reports/release-a/20260915_190631.md).

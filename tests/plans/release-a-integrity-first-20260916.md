@@ -99,6 +99,13 @@ bounded FINISH and NODE_UNLOAD. Passing only I0-S is not product integrity.
 submitted only after the preceding terminal RELEASE. Per-class deadlines are 600,000/1,200,000/
 1,800,000 ms and the total bound is their exact sum plus 300,000 ms cleanup grace.
 
+Before LOAD, H0 v8 must pass `verify-h0-v8.py` and the sealed I1 config must prove 64 distinct cases
+(short32/medium16/long16), exact prompt/JSON oracle/processor/deadline bindings, 15,000 ms holds at
+LOADED, INFERENCE_WINDOW, and DRAINED, a driver timeout beyond the run bound, and a 900 s artifact
+transfer bound. The remote collector checks all advertised round trips, exact task tunnel PIDs and
+17 source/config/binary hashes. This is deterministic lesson L086; changed source also requires a
+fresh I0 pass before I1 starts.
+
 All 64 requests must be delivered, oracle-correct, EOS, completed, and released. Incomplete,
 unreleased, uncertain, unsubmitted, runtime error, evidence missing, and cleanup error are all zero.
 The run stays on one model load and may not restart an agent to make progress.

@@ -24,7 +24,9 @@ deadline을 통과했다. 분산 전송은 3,530,395,645 bytes, 최종 task node
 transport failure는 0이다. 같은 추론창의 TTFT·prefill rows/s·유효/총 모델 생성 TPS·batch·GPU 표본도
 보존했다. 폐기된 medium/long 모델 token의 유효 TPS는 0이며, 종전 v6 보고의 0.884/0.249 유효 TPS 표기는 잘못되어 정정했다. 원시 모델의 중·장문 오답은 `model_response`에 남고, OUTER의 한정된
 `engineering_power_v1` 계산이 서비스 응답을 만든다. I1–I4는 아직 미실행이라 전체
-`integrity_baseline=false`다. I1의 64개 corpus는 원자료 오라클 64/64와 총 2,201,802 input token·7,159,035 prompt byte 및 요청 예산을 정적 대조했다. 하지만 기존 I1 생성기는 LOADED·DRAINED 관측 장벽을 설정하지 않아 실기 증거를 성립시킬 수 없다. 다음 첫 행동은 장벽·긴 artifact 전송 제한·I1 결과 판정기의 반례를 별도 source에서 완결하고 새 H0를 봉인하는 것이다. 최종 source가 바뀌면 I0부터 다시 검증한다.
+`integrity_baseline=false`다. I1의 64개 corpus는 원자료 오라클 64/64와 총 2,201,802 input token·7,159,035 prompt byte 및 요청 예산을 정적 대조했다. 기존 I1 생성기의 LOADED·DRAINED 관측 장벽 누락은 아래 H0 v8에서 차단했다. 최종 source가 바뀌었으므로 I0부터 다시 검증한다.
+
+**2026-09-16 H0 v8 비모델 게이트 GREEN, I0 재검증 대기:** [사전계약 보고](../tests/reports/release-a/20260916_210000.md)의 source bundle과 파일 SHA로 I1 64건 실행기·원시 증거·판정기, 15초 관측 장벽 세 개, 900초 artifact 전송 제한을 결속했다. H0 v8의 21개 고정 검사와 64건 전체 경로 반례가 통과했다. 이는 모델 LOAD 전 계약 승인일 뿐 I1 실기 수용이 아니다. 다음 행동은 동일 3물리 host에서 새 task agent·advertised 반환 왕복·소유 자원 0을 확인하고, 변경된 최종 source로 I0-S/M/L을 다시 실행한 뒤에만 I1-Q64를 한 LOAD에서 실행하는 것이다. I1–I4 미실행 및 `integrity_baseline=false`는 유지한다.
 
 **2026-09-16 I0 첫 실기 RED — 새 분산 실행 차단:** [I0 첫 실행·단일 호스트 역검증](../tests/reports/release-a/20260916_161600.md)은
 세 요청의 실제 완료·EOS·RELEASE·정상 회수와 SLO를 관측했지만 정확 답은 short 1/3뿐이다.
