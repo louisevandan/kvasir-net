@@ -1,4 +1,44 @@
-# P4
+# P4 — the Kvasir distributed inference engine
+
+P4 is the engine behind [Kvasir](https://kvasir-ai.net): the communication layer
+that runs very large models across nodes on separate physical machines. Agents
+carry work between machines; a concrete adapter (the llama.cpp staged server, or
+the HF adapter) executes it. There is one process type — the agent — and no
+central controller process.
+
+This branch publishes the engine source from the team's development repository,
+with its commit history.
+
+## Status (2026-09-16)
+
+| Area | State | Evidence |
+| --- | --- | --- |
+| Single-request baseline across **three physical hosts** (NVIDIA GB10 → Mac M4 Pro → Mac M4 Pro), Qwen3.5-122B-A10B Q5 split into 3 stages | **Passed** — short/medium/long requests completed with exact JSON, EOS, deadline and RELEASE; 3.53 GB moved between hosts; zero transport or cleanup errors | [report](tests/reports/release-a/20260916_213700.md) |
+| Fixed-length request waves on one host (2× RTX 3090), v0.9.0 candidate | 512 / 512 requests completed and released, 2B and 35B models | [release notes](docs/release/v0.9.0.md) |
+| Workspace tests (v0.9.0 gate) | `cargo test --workspace`: 1,374 passed, 0 failed | [release notes](docs/release/v0.9.0.md) |
+| Sustained multi-request service across hosts, overload, soak (I1–I4) | **Not yet proven** — the last 64-request run completed 8 of 64 | [roadmap](docs/distributed-batching-roadmap.md#current-status) |
+
+Throughput figures are not sealed yet: a performance baseline is only recorded
+after the integrity stages (I1–I4) pass.
+
+## Documentation
+
+Most design notes, plans and evidence reports are written in Korean. English
+entry points: [overview](docs/overview.md), [architecture](docs/architecture.md),
+[wire API](docs/api.md), [implementation map](docs/implementation.md) and the
+sections below.
+
+## License
+
+Business Source License 1.1 — the same terms as the
+[`kvasir-net`](https://github.com/louisevandan/kvasir-net/tree/kvasir-net) branch.
+Non-monetized internal use is permitted; hosted, embedded or revenue-generating
+use requires a commercial license. The license converts to Apache 2.0 on the
+Change Date stated in [LICENSE](LICENSE). Third-party notices: [NOTICE](NOTICE).
+
+---
+
+## 개발 문서 (Development notes)
 
 ## 현재 개발 목표와 새 세션 시작점
 

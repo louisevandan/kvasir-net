@@ -1,0 +1,16 @@
+Kvasir AI Network — P4 distributed inference engine
+Copyright (c) 2026 Kvasir AI Network (https://kvasir-ai.net)
+
+This software is licensed under the Business Source License 1.1; see LICENSE.
+
+Third-party components
+----------------------
+The llama.cpp adapter (layers/adapters/llamacpp) builds against llama.cpp /
+ggml (https://github.com/ggml-org/llama.cpp), Copyright (c) 2023-2026 The ggml
+authors, which is distributed under the MIT License. The compatibility patches
+in layers/adapters/llamacpp/staged/compat modify that code; llama.cpp and ggml
+themselves remain under their MIT License, whose terms are reproduced in the
+upstream repository.
+
+Model weights referenced by tests and benchmarks (for example Qwen, MiniMax,
+GLM) are not included in this repository and remain under their own licenses.
