@@ -275,7 +275,7 @@ x = x + combine(p, partials) + shared(cur)  # backbone — numerically exact`,
       { t: "h2", kick: "El modelo de confianza", text: "Verificar hechos on-chain, no afirmaciones del cliente" },
       {
         t: "p",
-        md: "El modelo de custodia de Kvasir deja las claves con los usuarios: las wallets firman transacciones, Solana las registra, y el único trabajo del servicio de liquidación es **verificar qué ocurrió realmente en la cadena** antes de tocar un saldo. Los pagos siguen *quote → payment → inference*, y cada firma de transacción consumida se registra en un registro de un solo uso `usedSignatures`, de modo que nunca puede presentarse dos veces. Eso convierte al servicio de liquidación en el cuello de botella — y la regla que jamás debe romper es: acreditar solo lo que la cadena demuestra, nunca lo que el cliente afirma.",
+        md: "El modelo de custodia de Kvasir deja las claves con los usuarios: las wallets firman transacciones, Solana las registra, y el trabajo del servicio de liquidación es **verificar qué ocurrió realmente en la cadena** antes de tocar un saldo. Los pagos siguen *quote → payment → inference*, y cada firma de transacción consumida se registra en un registro de un solo uso `usedSignatures`, de modo que nunca puede presentarse dos veces. Eso convierte al servicio de liquidación en el cuello de botella — y la regla que jamás debe romper es: acreditar solo lo que la cadena demuestra, nunca lo que el cliente afirma. El servicio sí custodia fondos en devnet: el KVR en staking y los créditos prepago están en su tesorería y se registran en su libro contable hasta que se lance un programa de staking en cadena.",
       },
       { t: "img", src: "/blog/securing-the-kvr-money-path.jpg", alt: "A settlement vault guarded by three locks: sender binding, trusted reporter, and a serialization gate" },
       { t: "h2", kick: "Arreglo #1 · vinculación del remitente", text: "Atar el pago al pagador" },
@@ -344,27 +344,27 @@ inside the lock:
   },
   "linkcpp-control-plane": {
     title: "Phase 0 — El motor: linkcpp, un plano de control para motor de inferencia",
-    dek: "motor de inferencia trae un plano de datos RPC capaz pero sin plano de control. linkcpp añade la mitad que falta — descubrimiento, planificación, arranque y gateways — alrededor de binarios de serie.",
+    dek: "motor de inferencia trae un plano de datos RPC capaz pero sin plano de control. linkcpp añade la mitad que falta — descubrimiento, planificación, arranque y gateways — alrededor de binarios compilados cerca de upstream.",
     blocks: [
       {
         t: "p",
-        md: "Todo lo que corre Kvasir empieza aquí. **linkcpp** es un plano de control de código disponible (Business Source License) alrededor del plano de datos RPC de motor de inferencia: ejecuta grandes modelos de IA en múltiples GPU y máquinas usando binarios `ggml-rpc-server` / `llama-server` *de serie*. El plano de datos queda sin bifurcar — todo lo que linkcpp añade es orquestación.",
+        md: "Todo lo que corre Kvasir empieza aquí. **linkcpp** es un plano de control de código disponible (Business Source License) alrededor del plano de datos RPC del motor de inferencia: ejecuta grandes modelos de IA en múltiples GPU y máquinas usando binarios `ggml-rpc-server` / `llama-server` compilados cerca de upstream. El plano de datos solo lleva un pequeño conjunto de parches — todo lo demás que añade linkcpp es orquestación.",
       },
       { t: "h2", kick: "El hueco", text: "Un plano de datos sin plano de control" },
       {
         t: "p",
         md: "motor de inferencia ya puede repartir un modelo entre máquinas por RPC — pero alguien tiene que descubrir las GPU, decidir qué capas van dónde, lanzar los workers correctos con los presupuestos correctos, comprobar que cada nodo habla el mismo protocolo y exponer una API que los desarrolladores puedan llamar. Hacerlo a mano para un clúster es un fastidio; hacerlo para una red abierta de dispositivos de desconocidos es imposible. Esa capa de coordinación es linkcpp.",
       },
-      { t: "h2", kick: "Arquitectura", text: "Un hub, workers de serie, gateways estándar" },
+      { t: "h2", kick: "Arquitectura", text: "Un hub, workers basados en upstream, gateways estándar" },
       {
         t: "code",
-        caption: "Flujo de la petición — el hub orquesta, los binarios de serie computan.",
+        caption: "Flujo de la petición — el hub orquesta, los binarios basados en upstream computan.",
         code: `browser / SDK
   → hub :19000                      # FastAPI control plane (single Docker image)
   → GPU-less llama-server master    # per-controller, :8080+
   → ggml-rpc-server workers         # local slots, remote units, managed agents`,
       },
-      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of stock motor de inferencia engines below" },
+      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of inference engines below" },
       {
         t: "ul",
         items: [
@@ -376,13 +376,13 @@ inside the lock:
       },
       {
         t: "p",
-        md: "Esta separación deliberada — un plano de datos sin modificar bajo un plano de control abierto — es la base de todo lo posterior: el ring runtime, el mercado de capas y finalmente el enjambre de expertos son evoluciones del plano de control sobre el mismo cómputo de serie.",
+        md: "Esta separación deliberada — un plano de datos mantenido cerca de upstream bajo un plano de control de código disponible — es la base de todo lo posterior: el ring runtime, el mercado de capas y finalmente el enjambre de expertos son evoluciones del plano de control sobre el mismo cómputo.",
       },
     ],
   },
   "ring-topology-pipeline-inference": {
     title: "Phase 1 — El anillo: inferencia en pipeline sin master",
-    dek: "Cada dispositivo carga solo su ventana de capas y pasa una pequeña frontera de hidden-state a su vecino. Ningún nodo tiene el modelo; no existe master central.",
+    dek: "Cada dispositivo carga solo su ventana de capas y pasa una pequeña frontera de hidden-state a su vecino. Ningún nodo tiene que contener el modelo completo, y el anillo no tiene master central.",
     blocks: [
       { t: "h2", kick: "Por qué no una estrella", text: "El master RPC es cuello de botella y portero" },
       {
@@ -394,7 +394,7 @@ inside the lock:
         t: "ul",
         items: [
           "Cada dispositivo almacena el mismo modelo pero **carga solo su ventana de capas contigua**, y abre exactamente dos enlaces: uno a su predecesor, otro a su sucesor.",
-          "Una petición entra al anillo; cada nodo corre sus capas y pasa solo la **frontera de hidden-state** a su vecino. El último rank muestrea el token y lo envía de vuelta — sin master central, y ningún nodo tiene el modelo completo.",
+          "Una petición entra al anillo; cada nodo corre sus capas y pasa solo la **frontera de hidden-state** a su vecino. El último rank muestrea el token y lo envía de vuelta — sin master central en la ruta de datos, y ningún nodo tiene el modelo completo.",
           "La colocación viene del **rank manifest** del planner — para Qwen3.5-122B, 49 capas repartidas entre la mezcla de GPU, CPU, NPU y teléfono que aparezca.",
         ],
       },
@@ -755,7 +755,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "El volante de inercia", text: "Por qué el uso y la oferta crecen juntos" },
       {
         t: "p",
-        md: "El motor del ciclo es una sola regla ya cierta en Kvasir: **la inferencia debe pagarse en KVR**. Eso hace de cada unidad de uso una unidad de demanda real del token — utilidad, no especulación. La demanda del token sostiene el valor del KVR que ganan los nodos; las recompensas atractivas atraen oferta; la oferta expande la capacidad y, mediante la competencia y un sharding de expertos más fino, empuja hacia abajo el coste marginal de servir; un servicio más barato, rápido y capaz atrae más uso. Kvasir aprieta el bucle con una propiedad que ninguna API centralizada puede copiar: un participante puede ser **consumidor y proveedor a la vez**. El lado de la demanda y el lado de la oferta a menudo crecen dentro de las *mismas personas*, lo que amortigua los desequilibrios que arruinan los mercados de un solo lado.",
+        md: "El motor del ciclo es una sola regla ya cierta en Kvasir: **la inferencia debe pagarse en KVR**. Eso vincula el token al uso real — utilidad, no especulación. El uso financia el KVR que ganan los nodos; unas recompensas justas atraen oferta; la oferta expande la capacidad y, mediante la competencia y un sharding de expertos más fino, empuja hacia abajo el coste marginal de servir; un servicio más barato, rápido y capaz atrae más uso. Kvasir aprieta el bucle con una propiedad que ninguna API centralizada puede copiar: un participante puede ser **consumidor y proveedor a la vez**. El lado de la demanda y el lado de la oferta a menudo crecen dentro de las *mismas personas*, lo que amortigua los desequilibrios que arruinan los mercados de un solo lado.",
       },
       { t: "h2", kick: "Los modos de fallo", text: "Cuatro espirales que hacen girar la rueda al revés" },
       {
@@ -777,7 +777,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
         t: "ul",
         items: [
           "**Las recompensas se financian con ingresos reales.** En estado estacionario, lo que ganan los nodos viene de lo que pagan los consumidores — no de una emisión de tokens sin límite. La emisión es un subsidio de arranque que debe *atenuarse* a medida que crecen los ingresos por tarifas. Kvasir ya ayuda aquí recompensando el **trabajo real** — KVR por tokens realmente servidos × cuota de capa, no la mera presencia — así el subsidio no puede filtrarse a nodos 'mercenarios' ociosos.",
-          "**El KVR es el medio obligatorio.** Como no puedes inferir sin pagar KVR, el uso es un sumidero de demanda permanente para el token. Eso ancla el valor del token a la utilidad real en vez de a la especulación — la diferencia entre una moneda y una ficha.",
+          "**El KVR es el medio obligatorio.** Como no puedes inferir sin pagar KVR, el papel del token está ligado al uso real y no a la especulación — es la unidad de cuenta de la inferencia, no una inversión.",
           "**El precio flota dentro de una banda.** Un suelo mantenido por encima del coste marginal del nodo hace que servir valga la pena; un techo mantenido por debajo de las alternativas centralizadas mantiene competitivo a Kvasir. Entre ellos, el precio se mueve — que es donde el crecimiento de la red por fin se manifiesta como un coste menor.",
         ],
       },
@@ -792,7 +792,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "Nada de esto requiere un diseño de mecanismos exótico. Requiere disciplina en tres cosas: recompensa desde los ingresos, valor desde el uso, equilibrio desde un precio flotante acotado. Kvasir ya entrega las partes difíciles y honestas — liquidación no custodial, recompensas proporcionales al trabajo, un token que de verdad debes gastar para usar la red. El resto es la hoja de ruta económica: la atenuación, el reparto de tarifas que financia un fondo de seguro para inferencias fallidas, y el termostato. Construidos en ese orden, el coste y la recompensa dejan de pelear y empiezan a componerse.",
+        md: "Nada de esto requiere un diseño de mecanismos exótico. Requiere disciplina en tres cosas: recompensa desde los ingresos, utilidad desde el uso, equilibrio desde un precio flotante acotado. Kvasir ya entrega las partes difíciles y honestas — recompensas pagadas a la propia wallet de cada nodo, recompensas proporcionales al trabajo, un token que de verdad debes gastar para usar la red. El resto es la hoja de ruta económica: la atenuación, el reparto de tarifas que financia un fondo de seguro para inferencias fallidas, y el termostato. Construidos en ese orden, el coste y la recompensa dejan de pelear y empiezan a componerse.",
       },
     ],
   },
@@ -806,7 +806,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "La premisa de Kvasir es *el hardware que aparezca* — incluido hardware tras NAT de operadora, en internet público, en otra ciudad. Qwen3.5-122B-A10B lleva el **86% de su peso en 12.544 expertos independientes** (48 capas × 256, top-8), cada uno una función pura de 5.3 MB. Ese grano es lo que permite que una máquina distante y ajena sostenga una rebanada y contribuya. La pregunta abierta nunca fue *¿podemos partirlo?* — fue *¿puede un worker al otro lado de internet abierto participar de verdad en una decodificación en vivo, de forma correcta y con rendición de cuentas?*. Ahora lo ha hecho.",
+        md: "La premisa de Kvasir es *el hardware que aparezca* — incluido hardware tras NAT de operadora, en internet público, en otra ciudad. Qwen3.5-122B-A10B lleva el **86% de su peso en 12.544 expertos independientes** (49 capas × 256, top-8), cada uno una función pura de 5.3 MB. Ese grano es lo que permite que una máquina distante y ajena sostenga una rebanada y contribuya. La pregunta abierta nunca fue *¿podemos partirlo?* — fue *¿puede un worker al otro lado de internet abierto participar de verdad en una decodificación en vivo, de forma correcta y con rendición de cuentas?*. Ahora lo ha hecho.",
       },
       { t: "img", src: "/blog/remote-gpu-joins-122b.jpg", alt: "A GPU in one city dialing a single outbound line into a decode running elsewhere" },
       { t: "h2", kick: "Una sola marcación saliente", text: "Sin túnel, sin puertos entrantes" },
@@ -843,7 +843,7 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       { t: "h2", kick: "Pagado por exactamente el trabajo", text: "Los bytes medidos se vuelven KVR" },
       {
         t: "p",
-        md: "La participación no vale nada si no rinde cuentas. El relay **mide los bytes puenteados por sesión** en el registro de contribución del hub; el gateway sondea ese registro y acredita por delta KVR a la wallet **propia** del worker — no custodial, como todo lo demás. La primera sesión a través de internet acumuló de verdad: **1.28 MB de trabajo → 1.277952 units → 0.00895 KVR** en recompensas pendientes. Pequeño, y ese es el punto — es liquidación real por trabajo, no un trofeo de participación.",
+        md: "La participación no vale nada si no rinde cuentas. El relay **mide los bytes puenteados por sesión** en el registro de contribución del hub; el gateway sondea ese registro y acredita por delta KVR a la wallet **propia** del worker. La primera sesión a través de internet acumuló de verdad: **1.28 MB de trabajo → 1.277952 units → 0.00895 KVR** en recompensas pendientes. Pequeño, y ese es el punto — es liquidación real por trabajo, no un trofeo de participación.",
       },
       {
         t: "p",
@@ -906,22 +906,22 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["modelo", "expertos · enrutamiento", "por experto (Q4≈)", "compartido", "estado"],
         rows: [
-          ["Qwen3.5-122B (sirviendo hoy)", "256 · top-8", "5.3 MB (medido)", "sí", "en producción"],
+          ["Qwen3.5-122B (sirviendo hoy)", "256 · top-8", "5.3 MB (medido)", "sí", "sirviendo (flota de pruebas)"],
           ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "sí", "listo — primer candidato"],
-          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "sí", "listo (hook verificado)"],
-          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "no", "listo (hook verificado)"],
-          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "sí", "listo (grafo deepseek2)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "sí", "listo (familia deepseek)"],
+          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "sí", "planificado (hook verificado)"],
+          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "no", "planificado (hook verificado)"],
+          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "sí", "planificado (grafo deepseek2)"],
+          ["Kimi K2 1T", "384 · top-8", "~25 MB", "sí", "planificado (familia deepseek)"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "no", "listo"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "no", "listo"],
-          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "sí", "listo (MoE en capas alternas)"],
+          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "sí", "planificado (MoE en capas alternas)"],
           ["MiniMax M3 428B", "128 · top-4", "por determinar (GGUF)", "sí", "esperando al motor upstream"],
           ["Mixtral 8×22B", "8 · top-2", "~170 MB", "no", "funciona — solo workers de GPU"],
         ],
       },
       {
         t: "p",
-        md: "La industria converge hacia MoE de grano fino — expertos más pequeños, más de ellos, mayor dispersión (DeepSeek, Qwen, Kimi, GLM, gpt-oss se movieron todos en esta dirección). Cada paso en esa dirección hace más pequeña la unidad de participación del enjambre y más fino el grano del mercado de escasez. Los modelos de arriba no son una lista de deseos; cada uno ya fluye por el mismo hook de dispatch que corremos en producción — la incorporación es una puerta de verificación, no un proyecto de ingeniería.",
+        md: "La industria converge hacia MoE de grano fino — expertos más pequeños, más de ellos, mayor dispersión (DeepSeek, Qwen, Kimi, GLM, gpt-oss se movieron todos en esta dirección). Cada paso en esa dirección hace más pequeña la unidad de participación del enjambre y más fino el grano del mercado de escasez. Los modelos de arriba no son una lista de deseos; cada uno ya fluye por el mismo hook de dispatch que corremos en nuestra flota de pruebas — la incorporación es una puerta de verificación, no un proyecto de ingeniería.",
       },
     ],
   },

@@ -12,14 +12,14 @@ export const idWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** adalah jaringan inferensi AI terdesentralisasi: model terbuka berukuran besar dibagi ke perangkat keras bersama dengan mesin **linkcpp**, sehingga tidak ada satu node pun yang memegang seluruh model. Siapa pun dapat menyumbangkan GPU, CPU, NPU — bahkan ponsel — dan memperoleh **KVR** untuk lapisan atau pakar yang benar-benar dilayani perangkatnya. Pengembang mengakses jaringan lewat gateway yang kompatibel dengan OpenAI/Anthropic dan membayar per inferensi.",
+        md: "**Kvasir** adalah jaringan inferensi AI terdesentralisasi: model terbuka berukuran besar dibagi ke perangkat keras bersama dengan mesin **linkcpp**, sehingga tidak ada satu node pun yang harus memegang seluruh model. Siapa pun dapat menyumbangkan GPU, CPU, NPU — bahkan ponsel — dan memperoleh **KVR** untuk lapisan atau pakar yang benar-benar dilayani perangkatnya. Pengembang mengakses jaringan lewat gateway yang kompatibel dengan OpenAI/Anthropic dan membayar per inferensi.",
       },
       {
         t: "ul",
         items: [
-          "**Mesin bersumber tersedia** — linkcpp berlisensi BSL (gratis untuk pengembangan dan pengujian, penggunaan produksi memerlukan lisensi); bidang data mesin inferensi di bawahnya tetap asli dan dapat diperiksa.",
-          "**Non-kustodial** — imbalan diselesaikan ke dompet Solana milik masing-masing pemilik node; kunci tidak pernah meninggalkan pengguna.",
-          "**Terbukti di perangkat nyata** — model 122B pernah berjalan terbagi di 4 GPU AMD MI250, di armada heterogen node GPU/CPU/NPU/seluler, dengan kontribusi tiap node tercatat ujung-ke-ujung.",
+          "**Mesin bersumber tersedia** — linkcpp berlisensi Business Source License 1.1 (penggunaan internal yang tidak dimonetisasi diizinkan; penggunaan yang di-hosting atau menghasilkan pendapatan memerlukan lisensi komersial); bidang data mesin inferensi di bawahnya tetap dekat dengan upstream dan dapat diperiksa.",
+          "**Dompet kustodi mandiri** — kunci tidak pernah meninggalkan perangkat pengguna, dan imbalan dibayarkan ke dompet Solana milik masing-masing pemilik node. Di devnet, KVR yang di-stake dan kredit prabayar disimpan oleh treasury gateway dan dicatat di buku besarnya hingga program staking on-chain dirilis.",
+          "**Terbukti di perangkat nyata** — model 122B pernah berjalan ujung-ke-ujung di 3 mesin fisik pada armada uji kami, dengan kontribusi tiap node tercatat ujung-ke-ujung.",
           "**Dinamai dari mitos Nordik** — Kvasir, makhluk paling bijak, lahir dari sari gabungan semua dewa dan bukan milik siapa pun.",
         ],
       },
@@ -49,7 +49,7 @@ export const idWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Hub** adalah bidang kendali jaringan, disediakan linkcpp sebagai satu image Docker (`controller.hub:app`, layanan FastAPI di port **19000**). Ia menemukan perangkat, memeriksa kompatibilitas runtime, merencanakan penempatan dengan planner, meluncurkan worker mesin inferensi standar, dan mengekspos gateway per controller. Ini infrastruktur yang sengaja membosankan: HTTP request/response, status tahan-restart, tanpa transport eksotis.",
+        md: "**Hub** adalah bidang kendali jaringan, disediakan linkcpp sebagai satu image Docker (`controller.hub:app`, layanan FastAPI di port **19000**). Ia menemukan perangkat, memeriksa kompatibilitas runtime, merencanakan penempatan dengan planner, meluncurkan worker mesin inferensi, dan mengekspos gateway per controller. Ini infrastruktur yang sengaja membosankan: HTTP request/response, status tahan-restart, tanpa transport eksotis.",
       },
       { t: "h2", kick: "Tiga pintu masuk", text: "Bagaimana mesin bergabung ke hub" },
       {
@@ -133,7 +133,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
         t: "ul",
         items: [
           "**Node komputasi** memperoleh per unit kontribusi, dibobot porsi lapisan dan diskalakan tingkat performa — tanpa perlu staking.",
-          "Node terdaftar di bawah dompet pemiliknya; imbalan diselesaikan ke dompet itu, secara non-kustodial. Empat dompet pemilik berbeda yang masing-masing memperoleh porsi lapisannya telah diverifikasi ujung-ke-ujung.",
+          "Node terdaftar di bawah dompet pemiliknya; imbalan dibayarkan ke dompet itu. Empat dompet pemilik terpisah, masing-masing memperoleh porsi lapisannya, telah diverifikasi ujung-ke-ujung pada armada uji milik satu operator.",
           "Data kapabilitas (backend, presisi akumulasi, anggaran sumber daya) menentukan apa yang boleh ditempatkan planner di sebuah node — dan, di swarm, rank mana yang boleh dilayaninya.",
           "Node yang tak dapat menyediakan pemantauan sumber daya dikecualikan dari pemuatan adaptif alih-alih dipercaya membabi buta.",
         ],
@@ -166,7 +166,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
       {
         t: "p",
-        md: "Relay membawa apa pun yang dibutuhkan topologi — batas lapisan ring atau stream dispatch pakar — dan mekanisme yang sama yang terverifikasi untuk ring itulah yang dipakai worker ponsel produksi di swarm.",
+        md: "Relay membawa apa pun yang dibutuhkan topologi — batas lapisan ring atau stream dispatch pakar — dan mekanisme yang sama yang terverifikasi untuk ring itulah yang dipakai worker ponsel di swarm.",
       },
       {
         t: "p",
@@ -181,9 +181,9 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** adalah mesin di balik Kvasir: bidang kendali di sekeliling bidang data RPC mesin inferensi yang menjalankan model AI besar di banyak GPU dan mesin memakai binari `ggml-rpc-server` / `llama-server` *standar*. Semua yang ditambahkannya adalah orkestrasi — penemuan GPU, slot node, perencanaan penempatan lapisan, peluncuran worker, dan gateway OpenAI/Anthropic.",
+        md: "**linkcpp** adalah mesin di balik Kvasir: bidang kendali di sekeliling bidang data RPC mesin inferensi yang menjalankan model AI besar di banyak GPU dan mesin memakai binari `ggml-rpc-server` / `llama-server` yang dibangun dekat dengan upstream. Semua yang ditambahkannya adalah orkestrasi — penemuan GPU, slot node, perencanaan penempatan lapisan, peluncuran worker, dan gateway OpenAI/Anthropic.",
       },
-      { t: "h2", kick: "Arsitektur", text: "Satu hub, worker standar" },
+      { t: "h2", kick: "Arsitektur", text: "Satu hub, worker berbasis upstream" },
       {
         t: "code",
         caption: "Jalur permintaan melalui deployment linkcpp.",
@@ -195,8 +195,8 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       {
         t: "ul",
         items: [
-          "**Sumber tersedia di bawah BSL** — baca, jalankan, dan bangun di atasnya secara gratis untuk pengembangan dan pengujian; penggunaan produksi memerlukan lisensi.",
-          "Bidang data mesin inferensi tetap **tanpa fork** (kecuali satu patch GPU-over-RPC seluler yang dipatok), sehingga peningkatan performa dari upstream terus mengalir.",
+          "**Sumber tersedia di bawah BSL 1.1** — bebas dibaca dan dikembangkan lebih lanjut; penggunaan internal yang tidak dimonetisasi diizinkan, dan penggunaan yang di-hosting atau menghasilkan pendapatan memerlukan lisensi komersial.",
+          "Bidang data mesin inferensi tetap **dekat dengan upstream** — sekumpulan kecil patch (GPU-over-RPC seluler dan hook expert-dispatch MoE) — sehingga peningkatan performa dari upstream terus mengalir.",
           "Dikirim sebagai **satu image Docker**: hub FastAPI plus dua binari mesin inferensi terpanggang di dalamnya; node worker native dibangun di luar Docker untuk CUDA/Metal/Vulkan/CPU.",
         ],
       },
@@ -217,7 +217,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "**Ring runtime** adalah topologi penyajian latensi-rendah Kvasir. Setiap perangkat hanya memuat **jendela lapisan** bersambungnya, lalu membuka tepat dua tautan — pendahulu dan penerus. Batas hidden-state beredar mengelilingi ring; rank terakhir menyampel token dan mengembalikannya. **Tanpa master pusat, dan tak ada node yang memegang seluruh model.**",
+        md: "**Ring runtime** adalah topologi penyajian latensi-rendah Kvasir. Setiap perangkat hanya memuat **jendela lapisan** bersambungnya, lalu membuka tepat dua tautan — pendahulu dan penerus. Batas hidden-state beredar mengelilingi ring; rank terakhir menyampel token dan mengembalikannya. **Tanpa master pusat di jalur data, dan tak ada node yang memegang seluruh model.**",
       },
       { t: "h2", kick: "Mengapa bukan bintang", text: "Masalah master RPC" },
       {
@@ -545,19 +545,19 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Stake KVR untuk memperoleh bunga APR; 100.000 KVR yang di-stake membuat dompet layak mengoperasikan node hub atau gateway.",
+    summary: "Melakukan stake 100.000 KVR membuat dompet layak mengoperasikan node hub atau gateway.",
     blocks: [
       {
         t: "p",
-        md: "Staking mengunci KVR di dompet Anda sendiri untuk memperoleh **bunga APR** dan memenuhi syarat imbalan node. Mengoperasikan node **hub** atau **gateway** memerlukan stake **100.000 KVR**; node komputasi biasa bergabung tanpa stake apa pun dan memperoleh untuk lapisan yang dijalankannya.",
+        md: "Staking mengunci KVR agar dompet memenuhi syarat untuk peran operator dan imbalan node. Mengoperasikan node **hub** atau **gateway** memerlukan stake **100.000 KVR**; node komputasi biasa bergabung tanpa stake apa pun dan memperoleh untuk lapisan yang dijalankannya.",
       },
       {
         t: "ul",
         items: [
-          "Staking dilakukan di panel staking dasbor dompet: masukkan jumlah, **Stake**, dan posisi mulai mengakumulasi APR plus kelayakan imbalan node.",
+          "Staking dilakukan di panel staking dasbor dompet: masukkan jumlah, **Stake**, dan posisi tersebut dihitung untuk kelayakan operator dan imbalan node.",
           "Syarat 100k adalah **filter komitmen nyata** bagi dua peran yang menjadi sandaran lalu lintas orang lain — titik masuk dan bidang kendali.",
-          "Staking bersifat non-kustodial seperti yang lain: posisinya hidup di dompet Anda sendiri, dan pokok, bunga terkumpul, serta imbalan node semuanya terlihat di panel staking.",
-          "KVR devnet untuk staking datang lewat distribusi atau swap (swap SOL/ETH ↔ KVR: segera hadir); SOL devnet untuk biaya berasal dari faucet publik.",
+          "Di devnet, KVR yang di-stake disimpan di vault staking; jumlah yang di-stake dan imbalan node terlihat di panel staking.",
+          "KVR devnet untuk staking berasal dari faucet distribusi; SOL devnet untuk biaya berasal dari faucet publik.",
         ],
       },
     ],
@@ -568,7 +568,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "Kvasir Wallet **non-kustodial sejak desain**: frasa pemulihan 12 kata dan kunci hanya disimpan di perangkat milik pengguna, tak pernah pada operator. Imbalan diselesaikan di Solana langsung ke dompet pemilik tiap node — terverifikasi pada empat dompet pemilik berbeda, masing-masing memperoleh porsi lapisannya sendiri.",
+        md: "Kvasir Wallet **non-kustodial sejak desain**: frasa pemulihan 12 kata dan kunci hanya disimpan di perangkat milik pengguna, tak pernah pada operator. Imbalan diselesaikan di Solana langsung ke dompet pemilik tiap node — terverifikasi pada armada uji di empat dompet pemilik berbeda, masing-masing memperoleh porsi lapisannya sendiri. Staking bekerja secara berbeda di devnet: KVR yang di-stake disimpan di treasury gateway dan dicatat di buku besarnya hingga program staking on-chain dirilis.",
       },
       {
         t: "ul",
@@ -615,7 +615,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       { t: "h2", kick: "Roda gila", text: "Pemakaian dan pasokan tumbuh bersama" },
       {
         t: "p",
-        md: "Karena inferensi **harus** dibayar dalam KVR, setiap unit pemakaian adalah permintaan nyata atas token — utilitas, bukan spekulasi. Permintaan itu menopang nilai KVR yang diperoleh node, yang menjaga kontribusi tetap menarik, yang menumbuhkan kapasitas, yang menurunkan harga dan latensi, yang menarik lebih banyak pemakaian. Keunggulan paling tajam Kvasir mengetatkan lingkar itu lebih jauh lagi: seorang peserta bisa menjadi **konsumen dan pemasok sekaligus** (seorang *prosumer*), sehingga kedua sisi kerap tumbuh di dalam orang yang sama.",
+        md: "Karena inferensi **harus** dibayar dalam KVR, token terikat pada pemakaian nyata — utilitas, bukan spekulasi. Pemakaian mendanai KVR yang diperoleh node, yang menjaga kontribusi tetap menarik, yang menumbuhkan kapasitas, yang menurunkan harga dan latensi, yang menarik lebih banyak pemakaian. Keunggulan paling tajam Kvasir mengetatkan lingkar itu lebih jauh lagi: seorang peserta bisa menjadi **konsumen dan pemasok sekaligus** (seorang *prosumer*), sehingga kedua sisi kerap tumbuh di dalam orang yang sama.",
       },
       {
         t: "callout",
@@ -633,7 +633,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
-        md: "Kvasir sudah mengganjar **kerja nyata** (KVR per token yang dilayani × porsi lapisan, bukan sekadar kehadiran) dan menyelesaikan secara non-kustodial, yang merupakan bagian tersulit dari membuat imbalan berbasis pendapatan menjadi jujur. Sisanya — harga yang digerakkan utilisasi dan peruncingan emisi→pendapatan — adalah peta jalan ekonomi yang mengubah \"lebih banyak node → lebih murah\" dari intuisi menjadi aturan yang ditegakkan protokol. Entri **Harga inferensi** membahas sisi harga; **Unit kontribusi** membahas bagaimana kerja menjadi imbalan.",
+        md: "Kvasir sudah mengganjar **kerja nyata** (KVR per token yang dilayani × porsi lapisan, bukan sekadar kehadiran) dan membayar ke dompet milik tiap node, yang merupakan bagian tersulit dari membuat imbalan berbasis pendapatan menjadi jujur. Sisanya — harga yang digerakkan utilisasi dan peruncingan emisi→pendapatan — adalah peta jalan ekonomi yang mengubah \"lebih banyak node → lebih murah\" dari intuisi menjadi aturan yang ditegakkan protokol. Entri **Harga inferensi** membahas sisi harga; **Unit kontribusi** membahas bagaimana kerja menjadi imbalan.",
       },
     ],
   },
@@ -705,7 +705,7 @@ POST /api/expert-coverage`,
           "**Irisannya mungil.** Irisan layer-0 berisi 128 pakar adalah **794 MB** melawan model penuh 72 GB — butiran yang memungkinkan perangkat lemah ikut serta. Anda hanya mengunduh rentang yang ditetapkan pasar.",
           "**Menelepon keluar, tak pernah masuk.** Langkah 5 membuka satu WebSocket keluar di 443, sehingga NAT operator dan edge CDN meloloskannya dan Anda mengekspos nol port masuk — jalur yang sama yang dipakai ponsel.",
           "**Heartbeat itu penopang.** Tanpa `POST /api/expert-coverage` Anda tak melayani apa pun yang diketahui peta permintaan, dan tak ada yang Anda lakukan yang dikreditkan.",
-          "**Imbalan per kerja.** Kerja yang dijembatani terakumulasi ke buku besar kontribusi hub; gateway meng-delta-kredit KVR ke dompet **milik Anda sendiri** (non-kustodial). Anda perlu alamat dompet untuk dibayar.",
+          "**Imbalan per kerja.** Kerja yang dijembatani terakumulasi ke buku besar kontribusi hub; gateway meng-delta-kredit KVR ke dompet **milik Anda sendiri**. Anda perlu alamat dompet untuk dibayar.",
         ],
       },
       {

@@ -12,14 +12,14 @@ export const nlWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** is een gedecentraliseerd AI-inferentienetwerk: grote open modellen worden met de **linkcpp**-engine over gedeelde hardware verdeeld, zodat geen enkel knooppunt het hele model bezit. Iedereen kan een GPU, CPU, NPU — zelfs een telefoon — bijdragen en **KVR** verdienen voor de lagen of experts die zijn apparaat daadwerkelijk serveert. Ontwikkelaars bereiken het netwerk via OpenAI/Anthropic-compatibele gateways en betalen per inferentie.",
+        md: "**Kvasir** is een gedecentraliseerd AI-inferentienetwerk: grote open modellen worden met de **linkcpp**-engine over gedeelde hardware verdeeld, zodat geen enkel knooppunt het hele model hoeft te bezitten. Iedereen kan een GPU, CPU, NPU — zelfs een telefoon — bijdragen en **KVR** verdienen voor de lagen of experts die zijn apparaat daadwerkelijk serveert. Ontwikkelaars bereiken het netwerk via OpenAI/Anthropic-compatibele gateways en betalen per inferentie.",
       },
       {
         t: "ul",
         items: [
-          "**Engine met beschikbare broncode** — linkcpp is BSL-gelicentieerd (gratis voor ontwikkeling en testen, productiegebruik vereist een licentie); het inferentie-engine-datavlak eronder blijft ongewijzigd en inspecteerbaar.",
-          "**Non-custodial** — beloningen worden verrekend naar de eigen Solana-wallet van elke node-eigenaar; sleutels verlaten de gebruiker nooit.",
-          "**Bewezen op echte hardware** — een 122B-model draaide verdeeld over 4 AMD MI250-GPU's, in een heterogene vloot van GPU/CPU/NPU/mobiele nodes, met de bijdrage van elke node end-to-end bijgeschreven.",
+          "**Engine met beschikbare broncode** — linkcpp valt onder de Business Source License 1.1 (niet-gemonetiseerd intern gebruik is toegestaan; gehost of inkomstengenererend gebruik vereist een commerciële licentie); het inferentie-engine-datavlak eronder blijft dicht bij upstream en inspecteerbaar.",
+          "**Wallet in eigen beheer** — sleutels verlaten nooit het apparaat van de gebruiker, en beloningen worden uitbetaald naar de eigen Solana-wallet van elke node-eigenaar. Op devnet worden gestakete KVR en vooraf betaalde credits aangehouden door de treasury van de gateway en bijgehouden in zijn grootboek, totdat een on-chain stakingprogramma wordt uitgebracht.",
+          "**Bewezen op echte hardware** — een 122B-model draaide end-to-end over 3 fysieke machines op onze testvloot, met de bijdrage van elke node end-to-end bijgeschreven.",
           "**Vernoemd naar de Noorse mythe** — Kvasir, het wijste wezen, geboren uit de samengebrachte essentie van alle goden en het eigendom van geen enkele.",
         ],
       },
@@ -49,7 +49,7 @@ export const nlWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "De **hub** is het besturingsvlak van het netwerk, door linkcpp geleverd als één Docker-image (`controller.hub:app`, een FastAPI-service op poort **19000**). Hij ontdekt apparaten, controleert runtime-compatibiliteit, plant plaatsing met de planner, start standaard inferentie-engine-workers en stelt de gateways per controller beschikbaar. Het is bewust saaie infrastructuur: request/response-HTTP, herstart-veilige staat, geen exotisch transport.",
+        md: "De **hub** is het besturingsvlak van het netwerk, door linkcpp geleverd als één Docker-image (`controller.hub:app`, een FastAPI-service op poort **19000**). Hij ontdekt apparaten, controleert runtime-compatibiliteit, plant plaatsing met de planner, start inferentie-engine-workers en stelt de gateways per controller beschikbaar. Het is bewust saaie infrastructuur: request/response-HTTP, herstart-veilige staat, geen exotisch transport.",
       },
       { t: "h2", kick: "Drie deuren naar binnen", text: "Hoe machines zich bij een hub aansluiten" },
       {
@@ -133,7 +133,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
         t: "ul",
         items: [
           "**Rekennodes** verdienen per bijdrage-eenheid, gewogen naar laagaandeel en geschaald naar prestatieniveau — geen staking vereist.",
-          "Nodes registreren onder de wallet van hun eigenaar; beloningen worden non-custodial naar die wallet verrekend. Vier verschillende eigenaarswallets die elk hun laagaandeel verdienen is end-to-end geverifieerd.",
+          "Nodes registreren onder de wallet van hun eigenaar; beloningen worden naar die wallet uitbetaald. Vier afzonderlijke eigenaarswallets, die elk hun laagaandeel verdienen, zijn end-to-end geverifieerd op de testvloot van één operator.",
           "Capaciteitsdata (backend, accumulatieprecisie, resourcebudgetten) bepaalt wat de planner op een node mag plaatsen — en, in de zwerm, welke rangen hij mag bedienen.",
           "Een node die geen resource-monitoring kan leveren wordt uitgesloten van adaptief laden in plaats van blind vertrouwd.",
         ],
@@ -166,7 +166,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
       {
         t: "p",
-        md: "De relay draagt wat de topologie nodig heeft — ringlaaggrenzen of expert-dispatchstromen — en hetzelfde voor de ring geverifieerde mechanisme is wat productietelefoon-workers in de zwerm gebruiken.",
+        md: "De relay draagt wat de topologie nodig heeft — ringlaaggrenzen of expert-dispatchstromen — en hetzelfde voor de ring geverifieerde mechanisme is wat telefoon-workers in de zwerm gebruiken.",
       },
       {
         t: "p",
@@ -181,9 +181,9 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** is de engine achter Kvasir: een besturingsvlak rond het RPC-datavlak van inferentie-engine dat grote AI-modellen over meerdere GPU's en machines draait met *standaard* `ggml-rpc-server`- / `llama-server`-binaries. Alles wat het toevoegt is orkestratie — GPU-ontdekking, node-slots, laagplaatsingsplanning, worker-start en de OpenAI/Anthropic-gateways.",
+        md: "**linkcpp** is de engine achter Kvasir: een besturingsvlak rond het RPC-datavlak van de inferentie-engine dat grote AI-modellen over meerdere GPU's en machines draait met `ggml-rpc-server`- / `llama-server`-binaries die dicht bij upstream zijn gebouwd. Alles wat het toevoegt is orkestratie — GPU-ontdekking, node-slots, laagplaatsingsplanning, worker-start en de OpenAI/Anthropic-gateways.",
       },
-      { t: "h2", kick: "Architectuur", text: "Eén hub, standaard workers" },
+      { t: "h2", kick: "Architectuur", text: "Eén hub, op upstream gebaseerde workers" },
       {
         t: "code",
         caption: "Het verzoekpad door een linkcpp-deployment.",
@@ -195,8 +195,8 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       {
         t: "ul",
         items: [
-          "**Broncode beschikbaar onder de BSL** — lees hem, draai hem en bouw erop voort, gratis voor ontwikkeling en testen; productiegebruik vereist een licentie.",
-          "Het inferentie-engine-datavlak blijft **ongevorkt** (op één vastgepinde mobiele GPU-over-RPC-patch na), zodat upstream-prestatieverbeteringen blijven binnenstromen.",
+          "**Broncode beschikbaar onder de BSL 1.1** — vrij om te lezen en op voort te bouwen; niet-gemonetiseerd intern gebruik is toegestaan, en gehost of inkomstengenererend gebruik vereist een commerciële licentie.",
+          "Het inferentie-engine-datavlak blijft **dicht bij upstream** — een kleine set patches (mobiele GPU-over-RPC en de MoE-expert-dispatch-hook) — zodat upstream-prestatieverbeteringen blijven binnenstromen.",
           "Geleverd als **één Docker-image**: de FastAPI-hub plus de twee inferentie-engine-binaries ingebakken; native worker-nodes bouwen buiten Docker voor CUDA/Metal/Vulkan/CPU.",
         ],
       },
@@ -217,7 +217,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "De **ring-runtime** is Kvasirs serveertopologie met lage latentie. Elk apparaat laadt alleen zijn aaneengesloten **laagvenster** en opent precies twee verbindingen — voorganger en opvolger. Hidden-state-grenzen circuleren rond de ring; de laatste rang bemonstert het token en stuurt het terug. **Geen centrale master, en geen node bezit het hele model.**",
+        md: "De **ring-runtime** is Kvasirs serveertopologie met lage latentie. Elk apparaat laadt alleen zijn aaneengesloten **laagvenster** en opent precies twee verbindingen — voorganger en opvolger. Hidden-state-grenzen circuleren rond de ring; de laatste rang bemonstert het token en stuurt het terug. **Geen centrale master op het datapad, en geen node bezit het hele model.**",
       },
       { t: "h2", kick: "Waarom geen ster", text: "Het RPC-masterprobleem" },
       {
@@ -545,19 +545,19 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Stake KVR om APR-rente te verdienen; 100.000 gestakete KVR kwalificeert een wallet om hub- of gateway-nodes te draaien.",
+    summary: "Het staken van 100.000 KVR kwalificeert een wallet om hub- of gateway-nodes te draaien.",
     blocks: [
       {
         t: "p",
-        md: "Staking vergrendelt KVR in je eigen wallet om **APR-rente** te verdienen en je te kwalificeren voor node-beloningen. Een **hub**- of **gateway**-node draaien vereist een stake van **100.000 KVR**; gewone rekennodes doen mee zonder stake en verdienen voor de lagen die ze draaien.",
+        md: "Staking vergrendelt KVR om een wallet te kwalificeren voor operatorrollen en node-beloningen. Een **hub**- of **gateway**-node draaien vereist een stake van **100.000 KVR**; gewone rekennodes doen mee zonder stake en verdienen voor de lagen die ze draaien.",
       },
       {
         t: "ul",
         items: [
-          "Staken gebeurt in het staking-paneel van het wallet-dashboard: voer een bedrag in, **Stake**, en de positie begint APR plus node-beloningsgeschiktheid op te bouwen.",
+          "Staken gebeurt in het staking-paneel van het wallet-dashboard: voer een bedrag in, **Stake**, en de positie telt mee voor operatorgeschiktheid en node-beloningen.",
           "De 100k-eis is een **skin-in-the-game-filter** voor de twee rollen waar het verkeer van anderen van afhangt — toegangspunten en het besturingsvlak.",
-          "Staking is non-custodial zoals al het andere: de positie leeft in je eigen wallet, en hoofdsom, opgebouwde rente en node-beloningen zijn allemaal zichtbaar in het staking-paneel.",
-          "Devnet-KVR om te staken komt via distributie of swap (SOL/ETH ↔ KVR-swap: binnenkort); devnet-SOL voor kosten komt uit de publieke faucet.",
+          "Op devnet wordt gestakete KVR in de staking-vault bewaard; het gestakete bedrag en de node-beloningen zijn zichtbaar in het staking-paneel.",
+          "Devnet-KVR om te staken komt uit de distributie-faucet; devnet-SOL voor kosten komt uit de publieke faucet.",
         ],
       },
     ],
@@ -568,7 +568,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "De Kvasir Wallet is **non-custodial by design**: de 12-woorden-herstelzin en de sleutels worden alleen op het eigen apparaat van de gebruiker bewaard, nooit bij een operator. Beloningen worden op Solana direct verrekend naar de eigenaarswallet van elke node — geverifieerd over vier verschillende eigenaarswallets, elk met zijn eigen laagaandeel.",
+        md: "De Kvasir Wallet is **non-custodial by design**: de 12-woorden-herstelzin en de sleutels worden alleen op het eigen apparaat van de gebruiker bewaard, nooit bij een operator. Beloningen worden op Solana direct verrekend naar de eigenaarswallet van elke node — geverifieerd op een testvloot over vier verschillende eigenaarswallets, elk met zijn eigen laagaandeel. Staking werkt op devnet anders: gestakete KVR wordt aangehouden in de treasury van de gateway en bijgehouden in zijn grootboek, totdat een on-chain stakingprogramma wordt uitgebracht.",
       },
       {
         t: "ul",
@@ -615,7 +615,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       { t: "h2", kick: "Het vliegwiel", text: "Gebruik en aanbod groeien samen" },
       {
         t: "p",
-        md: "Omdat inferentie **verplicht** in KVR wordt betaald, is elke eenheid gebruik echte vraag naar het token — nut, geen speculatie. Die vraag ondersteunt de waarde van de KVR die nodes verdienen, wat bijdragen aantrekkelijk houdt, wat de capaciteit vergroot, wat prijs en latency verlaagt, wat meer gebruik aantrekt. Kvasirs scherpste voordeel trekt de lus nog strakker aan: een deelnemer kan **tegelijk consument en leverancier** zijn (een *prosumer*), dus de twee kanten groeien vaak binnen dezelfde mensen.",
+        md: "Omdat inferentie **verplicht** in KVR wordt betaald, is het token verbonden met echt gebruik — nut, geen speculatie. Gebruik financiert de KVR die nodes verdienen, wat bijdragen aantrekkelijk houdt, wat de capaciteit vergroot, wat prijs en latency verlaagt, wat meer gebruik aantrekt. Kvasirs scherpste voordeel trekt de lus nog strakker aan: een deelnemer kan **tegelijk consument en leverancier** zijn (een *prosumer*), dus de twee kanten groeien vaak binnen dezelfde mensen.",
       },
       {
         t: "callout",
@@ -633,7 +633,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
-        md: "Kvasir beloont al **echt werk** (KVR per geserveerde tokens × laagaandeel, niet louter aanwezigheid) en verrekent non-custodial, wat het moeilijke deel is van het eerlijk maken van uit inkomsten gefinancierde beloningen. De rest — een gebruiksgedreven prijs en een afbouw van emissie→inkomsten — is de economische routekaart die \"meer nodes → goedkoper\" van een intuïtie in een door het protocol afgedwongen regel verandert. Het item **Inferentieprijzen** behandelt de prijskant; **Bijdrage-eenheden** behandelt hoe werk beloning wordt.",
+        md: "Kvasir beloont al **echt werk** (KVR per geserveerde tokens × laagaandeel, niet louter aanwezigheid) en betaalt uit naar de eigen wallet van elke node, wat het moeilijke deel is van het eerlijk maken van uit inkomsten gefinancierde beloningen. De rest — een gebruiksgedreven prijs en een afbouw van emissie→inkomsten — is de economische routekaart die \"meer nodes → goedkoper\" van een intuïtie in een door het protocol afgedwongen regel verandert. Het item **Inferentieprijzen** behandelt de prijskant; **Bijdrage-eenheden** behandelt hoe werk beloning wordt.",
       },
     ],
   },
@@ -705,7 +705,7 @@ POST /api/expert-coverage`,
           "**De plak is piepklein.** Een layer-0-plak met 128 experts is **794 MB** tegenover het volledige model van 72 GB — de korrel die zwakke apparaten laat deelnemen. Je downloadt alleen het bereik dat de markt heeft toegewezen.",
           "**Naar buiten bellen, nooit naar binnen.** Stap 5 opent één uitgaande WebSocket op 443, zodat carrier-NAT en CDN-edges hem doorlaten en je nul inkomende poorten blootstelt — hetzelfde pad dat een telefoon gebruikt.",
           "**De heartbeat is dragend.** Zonder `POST /api/expert-coverage` serveer je niets dat de vraagkaart kent, en niets wat je doet wordt bijgeschreven.",
-          "**Beloning is per werk.** Overbrugd werk wordt bijgeboekt op het bijdrageregister van de hub; de gateway delta-crediteert KVR naar je **eigen** wallet (non-custodial). Je hebt een wallet-adres nodig om betaald te worden.",
+          "**Beloning is per werk.** Overbrugd werk wordt bijgeboekt op het bijdrageregister van de hub; de gateway delta-crediteert KVR naar je **eigen** wallet. Je hebt een wallet-adres nodig om betaald te worden.",
         ],
       },
       {

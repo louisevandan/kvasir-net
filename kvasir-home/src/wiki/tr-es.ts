@@ -12,14 +12,14 @@ export const esWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** es una red descentralizada de inferencia de IA: los grandes modelos abiertos se reparten entre hardware compartido con el motor **linkcpp**, de modo que ningún nodo posee el modelo completo. Cualquiera puede aportar una GPU, CPU, NPU — incluso un teléfono — y ganar **KVR** por las capas o expertos que su dispositivo realmente sirve. Los desarrolladores acceden a la red mediante gateways compatibles con OpenAI/Anthropic y pagan por inferencia.",
+        md: "**Kvasir** es una red descentralizada de inferencia de IA: los grandes modelos abiertos se reparten entre hardware compartido con el motor **linkcpp**, de modo que ningún nodo tiene que contener el modelo completo. Cualquiera puede aportar una GPU, CPU, NPU — incluso un teléfono — y ganar **KVR** por las capas o expertos que su dispositivo realmente sirve. Los desarrolladores acceden a la red mediante gateways compatibles con OpenAI/Anthropic y pagan por inferencia.",
       },
       {
         t: "ul",
         items: [
-          "**Motor de código disponible** — linkcpp tiene licencia BSL (gratis para desarrollo y pruebas, el uso en producción requiere una licencia); el plano de datos de motor de inferencia debajo permanece intacto e inspeccionable.",
-          "**No custodial** — las recompensas se liquidan en la propia wallet Solana de cada dueño de nodo; las claves nunca abandonan al usuario.",
-          "**Probado en hardware real** — un modelo de 122B corrió repartido en 4 GPU AMD MI250, sobre una flota heterogénea de nodos GPU/CPU/NPU/móviles, con la contribución de cada nodo acreditada de extremo a extremo.",
+          "**Motor de código disponible** — linkcpp tiene licencia Business Source License 1.1 (se permite el uso interno no monetizado; el uso alojado o que genere ingresos requiere una licencia comercial); el plano de datos del motor de inferencia debajo se mantiene cercano a upstream e inspeccionable.",
+          "**Wallet de autocustodia** — las claves nunca salen del dispositivo del usuario, y las recompensas se pagan en la propia wallet Solana de cada dueño de nodo. En devnet, el KVR en staking y los créditos prepago quedan en poder de la tesorería del gateway y se registran en su libro contable hasta que se lance un programa de staking en cadena.",
+          "**Probado en hardware real** — un modelo de 122B corrió de extremo a extremo en 3 máquinas físicas de nuestra flota de pruebas, con la contribución de cada nodo acreditada de extremo a extremo.",
           "**Nombrado por el mito nórdico** — Kvasir, el ser más sabio, nacido de la esencia común de todos los dioses y propiedad de ninguno.",
         ],
       },
@@ -49,7 +49,7 @@ export const esWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "El **hub** es el plano de control de la red, servido por linkcpp como una única imagen Docker (`controller.hub:app`, un servicio FastAPI en el puerto **19000**). Descubre dispositivos, verifica compatibilidad de runtime, planifica la colocación con el planner, lanza workers de motor de inferencia de serie y expone los gateways por controlador. Es infraestructura deliberadamente aburrida: HTTP de petición/respuesta, estado a prueba de reinicios, sin transportes exóticos.",
+        md: "El **hub** es el plano de control de la red, servido por linkcpp como una única imagen Docker (`controller.hub:app`, un servicio FastAPI en el puerto **19000**). Descubre dispositivos, verifica compatibilidad de runtime, planifica la colocación con el planner, lanza workers del motor de inferencia y expone los gateways por controlador. Es infraestructura deliberadamente aburrida: HTTP de petición/respuesta, estado a prueba de reinicios, sin transportes exóticos.",
       },
       { t: "h2", kick: "Tres puertas de entrada", text: "Cómo se unen las máquinas a un hub" },
       {
@@ -133,7 +133,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
         t: "ul",
         items: [
           "**Los nodos de cómputo** ganan por unidad de contribución, ponderada por su cuota de capas y escalada por su nivel de rendimiento — sin necesidad de staking.",
-          "Los nodos se registran bajo la wallet de su dueño; las recompensas se liquidan a esa wallet, de forma no custodial. Cuatro wallets de dueños distintos ganando cada una su cuota de capas fue verificado de extremo a extremo.",
+          "Los nodos se registran bajo la wallet de su dueño; las recompensas se pagan en esa wallet. Se verificó de extremo a extremo, en la flota de pruebas de un solo operador, que cuatro wallets de dueños separadas ganaban cada una su cuota de capas.",
           "Los datos de capacidades (backend, precisión de acumulación, presupuestos de recursos) deciden qué puede colocar el planner en un nodo — y, en el enjambre, qué rangos puede servir.",
           "Un nodo que no puede proveer monitorización de recursos queda excluido de la carga adaptativa en vez de confiarse a ciegas.",
         ],
@@ -166,7 +166,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
       {
         t: "p",
-        md: "El relay transporta lo que la topología necesite — fronteras de capas del anillo o streams de dispatch de expertos — y el mismo mecanismo verificado para el anillo es el que usan los workers de teléfono en producción dentro del enjambre.",
+        md: "El relay transporta lo que la topología necesite — fronteras de capas del anillo o streams de dispatch de expertos — y el mismo mecanismo verificado para el anillo es el que usan los workers de teléfono dentro del enjambre.",
       },
       {
         t: "p",
@@ -181,9 +181,9 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** es el motor detrás de Kvasir: un plano de control alrededor del plano de datos RPC de motor de inferencia que ejecuta grandes modelos de IA en múltiples GPU y máquinas usando binarios `ggml-rpc-server` / `llama-server` *de serie*. Todo lo que añade es orquestación — descubrimiento de GPU, slots de nodo, planificación de colocación de capas, lanzamiento de workers y los gateways OpenAI/Anthropic.",
+        md: "**linkcpp** es el motor detrás de Kvasir: un plano de control alrededor del plano de datos RPC del motor de inferencia que ejecuta grandes modelos de IA en múltiples GPU y máquinas usando binarios `ggml-rpc-server` / `llama-server` compilados cerca de upstream. Todo lo que añade es orquestación — descubrimiento de GPU, slots de nodo, planificación de colocación de capas, lanzamiento de workers y los gateways OpenAI/Anthropic.",
       },
-      { t: "h2", kick: "Arquitectura", text: "Un hub, workers de serie" },
+      { t: "h2", kick: "Arquitectura", text: "Un hub, workers basados en upstream" },
       {
         t: "code",
         caption: "El camino de una petición por un despliegue linkcpp.",
@@ -195,8 +195,8 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       {
         t: "ul",
         items: [
-          "**Código disponible bajo la BSL** — léelo, ejecútalo y construye sobre él gratis en desarrollo y pruebas; el uso en producción requiere una licencia.",
-          "El plano de datos de motor de inferencia permanece **sin bifurcar** (salvo un parche móvil de GPU-sobre-RPC fijado), así que las mejoras de rendimiento del upstream siguen entrando.",
+          "**Código disponible bajo la BSL 1.1** — léelo y construye sobre él libremente; se permite el uso interno no monetizado, y el uso alojado o que genere ingresos requiere una licencia comercial.",
+          "El plano de datos del motor de inferencia se mantiene **cercano a upstream** — un pequeño conjunto de parches (GPU-sobre-RPC móvil y el hook de dispatch de expertos MoE) — así que las mejoras de rendimiento del upstream siguen entrando.",
           "Se distribuye como **una sola imagen Docker**: el hub FastAPI más los dos binarios de motor de inferencia horneados dentro; los nodos worker nativos se compilan fuera de Docker para CUDA/Metal/Vulkan/CPU.",
         ],
       },
@@ -217,7 +217,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "El **ring runtime** es la topología de servicio de baja latencia de Kvasir. Cada dispositivo carga solo su **ventana de capas** contigua y abre exactamente dos enlaces — predecesor y sucesor. Las fronteras de hidden-state circulan por el anillo; el último rank muestrea el token y lo devuelve. **Sin master central, y ningún nodo posee el modelo completo.**",
+        md: "El **ring runtime** es la topología de servicio de baja latencia de Kvasir. Cada dispositivo carga solo su **ventana de capas** contigua y abre exactamente dos enlaces — predecesor y sucesor. Las fronteras de hidden-state circulan por el anillo; el último rank muestrea el token y lo devuelve. **Sin master central en la ruta de datos, y ningún nodo posee el modelo completo.**",
       },
       { t: "h2", kick: "Por qué no una estrella", text: "El problema del master RPC" },
       {
@@ -545,19 +545,19 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Haz staking de KVR para ganar interés APR; 100,000 KVR en staking habilitan a una wallet para operar nodos hub o gateway.",
+    summary: "Hacer staking de 100,000 KVR habilita a una wallet para operar nodos hub o gateway.",
     blocks: [
       {
         t: "p",
-        md: "El staking bloquea KVR en tu propia wallet para ganar **interés APR** y calificar para recompensas de nodo. Operar un nodo **hub** o **gateway** requiere un stake de **100,000 KVR**; los nodos de cómputo normales se unen sin ningún stake y ganan por las capas que corren.",
+        md: "El staking bloquea KVR para que una wallet califique para roles de operador y recompensas de nodo. Operar un nodo **hub** o **gateway** requiere un stake de **100,000 KVR**; los nodos de cómputo normales se unen sin ningún stake y ganan por las capas que corren.",
       },
       {
         t: "ul",
         items: [
-          "El staking ocurre en el panel de staking del dashboard de la wallet: introduce una cantidad, **Stake**, y la posición empieza a acumular APR más elegibilidad para recompensas de nodo.",
+          "El staking ocurre en el panel de staking del dashboard de la wallet: introduce una cantidad, **Stake**, y la posición cuenta para la elegibilidad de operador y las recompensas de nodo.",
           "El requisito de 100k es un **filtro de compromiso** para los dos roles de los que depende el tráfico de otros — los puntos de entrada y el plano de control.",
-          "El staking es no custodial como todo lo demás: la posición vive en tu propia wallet, y el principal, el interés acumulado y las recompensas de nodo se ven en el panel de staking.",
-          "El KVR de devnet para staking llega por distribución o swap (swap SOL/ETH ↔ KVR: próximamente); el SOL de devnet para comisiones sale del faucet público.",
+          "En devnet, el KVR en staking se guarda en el vault de staking; la cantidad en staking y las recompensas de nodo se ven en el panel de staking.",
+          "El KVR de devnet para staking sale del faucet de distribución; el SOL de devnet para comisiones sale del faucet público.",
         ],
       },
     ],
@@ -568,7 +568,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "La Kvasir Wallet es **no custodial por diseño**: la frase de recuperación de 12 palabras y las claves se guardan solo en el dispositivo del propio usuario, nunca con un operador. Las recompensas se liquidan en Solana directamente a la wallet del dueño de cada nodo — verificado con cuatro wallets de dueños distintos, cada una ganando su propia cuota de capas.",
+        md: "La Kvasir Wallet es **no custodial por diseño**: la frase de recuperación de 12 palabras y las claves se guardan solo en el dispositivo del propio usuario, nunca con un operador. Las recompensas se liquidan en Solana directamente a la wallet del dueño de cada nodo — verificado en una flota de pruebas con cuatro wallets de dueños distintos, cada una ganando su propia cuota de capas. En devnet, el staking funciona de otra manera: el KVR en staking queda en la tesorería del gateway y se registra en su libro contable hasta que se lance un programa de staking en cadena.",
       },
       {
         t: "ul",
@@ -615,7 +615,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       { t: "h2", kick: "El volante de inercia", text: "Uso y oferta crecen juntos" },
       {
         t: "p",
-        md: "Como la inferencia **debe** pagarse en KVR, cada unidad de uso es demanda real del token — utilidad, no especulación. Esa demanda sostiene el valor del KVR que ganan los nodos, lo que mantiene atractivo el contribuir, lo que hace crecer la capacidad, lo que baja el precio y la latencia, lo que atrae más uso. La ventaja más afilada de Kvasir aprieta el bucle todavía más: un participante puede ser **consumidor y proveedor a la vez** (un *prosumer*), así que los dos lados a menudo crecen dentro de las mismas personas.",
+        md: "Como la inferencia **debe** pagarse en KVR, el token está ligado al uso real — utilidad, no especulación. El uso financia el KVR que ganan los nodos, lo que mantiene atractivo el contribuir, lo que hace crecer la capacidad, lo que baja el precio y la latencia, lo que atrae más uso. La ventaja más afilada de Kvasir aprieta el bucle todavía más: un participante puede ser **consumidor y proveedor a la vez** (un *prosumer*), así que los dos lados a menudo crecen dentro de las mismas personas.",
       },
       {
         t: "callout",
@@ -633,7 +633,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
-        md: "Kvasir ya recompensa el **trabajo real** (KVR por tokens servidos × cuota de capa, no la mera presencia) y liquida de forma no custodial, que es la parte difícil de hacer honestas las recompensas financiadas por ingresos. El resto — un precio guiado por la utilización y una atenuación de emisión→ingresos — es la hoja de ruta económica que convierte \"más nodos → más barato\" de una intuición en una regla que el protocolo hace cumplir. La entrada **Precio de inferencia** cubre el lado del precio; **Unidades de contribución** cubre cómo el trabajo se convierte en recompensa.",
+        md: "Kvasir ya recompensa el **trabajo real** (KVR por tokens servidos × cuota de capa, no la mera presencia) y paga directamente en la propia wallet de cada nodo, que es la parte difícil de hacer honestas las recompensas financiadas por ingresos. El resto — un precio guiado por la utilización y una atenuación de emisión→ingresos — es la hoja de ruta económica que convierte \"más nodos → más barato\" de una intuición en una regla que el protocolo hace cumplir. La entrada **Precio de inferencia** cubre el lado del precio; **Unidades de contribución** cubre cómo el trabajo se convierte en recompensa.",
       },
     ],
   },
@@ -705,7 +705,7 @@ POST /api/expert-coverage`,
           "**La rebanada es diminuta.** Una rebanada de layer-0 con 128 expertos son **794 MB** frente al modelo completo de 72 GB — el grano que deja participar a dispositivos débiles. Solo descargas el rango que el mercado te asignó.",
           "**Marcar hacia fuera, nunca hacia dentro.** El paso 5 abre un WebSocket saliente en 443, así que la NAT de operadora y los bordes CDN lo dejan pasar y expones cero puertos entrantes — el mismo camino que usa un teléfono.",
           "**El latido es estructural.** Sin `POST /api/expert-coverage` no sirves nada que el mapa de demanda conozca, y nada de lo que hagas se acredita.",
-          "**La recompensa es por trabajo.** El trabajo puenteado se acumula en el libro de contribuciones del hub; el gateway acredita KVR por deltas a tu **propia** wallet (no custodial). Necesitas una dirección de wallet para cobrar.",
+          "**La recompensa es por trabajo.** El trabajo puenteado se acumula en el libro de contribuciones del hub; el gateway acredita KVR por deltas a tu **propia** wallet. Necesitas una dirección de wallet para cobrar.",
         ],
       },
       {

@@ -350,7 +350,7 @@ x = x + combine(p, partials) + shared(cur)  # backbone — numerically exact`,
       { t: "h2", kick: "The trust model", text: "Verify on-chain facts, not client claims" },
       {
         t: "p",
-        md: "Kvasir's custody model keeps keys with users: wallets sign transactions, Solana records them, and the settlement service's only job is to **verify what actually happened on chain** before touching a balance. Payments follow *quote → payment → inference*, with every consumed transaction signature recorded in a one-shot `usedSignatures` registry so it can never be presented twice. That makes the settlement service the chokepoint — and the rule it must never break is: credit only what the chain proves, never what the client asserts.",
+        md: "Kvasir's custody model keeps keys with users: wallets sign transactions, Solana records them, and the settlement service's job is to **verify what actually happened on chain** before touching a balance. Payments follow *quote → payment → inference*, with every consumed transaction signature recorded in a one-shot `usedSignatures` registry so it can never be presented twice. That makes the settlement service the chokepoint — and the rule it must never break is: credit only what the chain proves, never what the client asserts. The service does hold funds on devnet: staked KVR and prepaid credits sit in its treasury and are tracked in its ledger until an on-chain staking program ships.",
       },
       { t: "img", src: "/blog/securing-the-kvr-money-path.jpg", alt: "A settlement vault guarded by three locks: sender binding, trusted reporter, and a serialization gate" },
       { t: "h2", kick: "Fix #1 · sender binding", text: "Bind the payment to the payer" },
@@ -425,29 +425,29 @@ inside the lock:
     slug: "linkcpp-control-plane",
     category: "milestones",
     title: "Phase 0 — The Engine: linkcpp, a Control Plane for inference engine",
-    dek: "inference engine ships a capable RPC data plane but no control plane. linkcpp adds the missing half — discovery, planning, launch and gateways — around stock binaries.",
+    dek: "inference engine ships a capable RPC data plane but no control plane. linkcpp adds the missing half — discovery, planning, launch and gateways — around binaries built close to upstream.",
     date: "2026-03-10",
     tags: ["linkcpp", "control plane", "BSL"],
     blocks: [
       {
         t: "p",
-        md: "Everything Kvasir runs on starts here. **linkcpp** is a source-available control plane (Business Source License) around inference engine's RPC data plane: it runs large AI models across multiple GPUs and machines using *stock* `ggml-rpc-server` / `llama-server` binaries. The data plane stays unforked — everything linkcpp adds is orchestration.",
+        md: "Everything Kvasir runs on starts here. **linkcpp** is a source-available control plane (Business Source License) around the inference engine's RPC data plane: it runs large AI models across multiple GPUs and machines using `ggml-rpc-server` / `llama-server` binaries built close to upstream. The data plane carries only a small patch set — everything else linkcpp adds is orchestration.",
       },
       { t: "h2", kick: "The gap", text: "A data plane without a control plane" },
       {
         t: "p",
         md: "inference engine can already split a model across machines over RPC — but someone has to discover the GPUs, decide which layers go where, launch the right workers with the right budgets, check that every node speaks the same protocol, and expose an API developers can actually call. Doing that by hand for one cluster is a chore; doing it for an open network of strangers' devices is impossible. That coordination layer is linkcpp.",
       },
-      { t: "h2", kick: "Architecture", text: "One hub, stock workers, standard gateways" },
+      { t: "h2", kick: "Architecture", text: "One hub, upstream-based workers, standard gateways" },
       {
         t: "code",
-        caption: "Request flow — the hub orchestrates, stock binaries compute.",
+        caption: "Request flow — the hub orchestrates, upstream-based binaries compute.",
         code: `browser / SDK
   → hub :19000                      # FastAPI control plane (single Docker image)
   → GPU-less llama-server master    # per-controller, :8080+
   → ggml-rpc-server workers         # local slots, remote units, managed agents`,
       },
-      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of stock inference engine engines below" },
+      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of inference engines below" },
       {
         t: "ul",
         items: [
@@ -459,7 +459,7 @@ inside the lock:
       },
       {
         t: "p",
-        md: "This deliberate split — an unmodified data plane under an open control plane — is what everything later builds on: the ring runtime, the layer market, and eventually the expert-sharded swarm are all control-plane evolutions over the same stock compute.",
+        md: "This deliberate split — a data plane kept close to upstream under a source-available control plane — is what everything later builds on: the ring runtime, the layer market, and eventually the expert-sharded swarm are all control-plane evolutions over the same compute.",
       },
     ],
   },
@@ -467,7 +467,7 @@ inside the lock:
     slug: "ring-topology-pipeline-inference",
     category: "milestones",
     title: "Phase 1 — The Ring: Pipeline Inference Without a Master",
-    dek: "Every device loads only its layer window and passes a small hidden-state boundary to its neighbor. No node holds the model; no central master exists.",
+    dek: "Every device loads only its layer window and passes a small hidden-state boundary to its neighbor. No node has to hold the whole model, and the ring has no central master.",
     date: "2026-04-14",
     tags: ["ring runtime", "topology", "NAT"],
     blocks: [
@@ -481,7 +481,7 @@ inside the lock:
         t: "ul",
         items: [
           "Every device stores the same model but **loads only its contiguous layer window**, then opens exactly two links: one to its predecessor, one to its successor.",
-          "A request enters the ring; each node runs its layers and passes only the **hidden-state boundary** to its neighbor. The last rank samples the token and sends it back around — no central master, and no node holds the whole model.",
+          "A request enters the ring; each node runs its layers and passes only the **hidden-state boundary** to its neighbor. The last rank samples the token and sends it back around — no central master on the data path, and no node holds the whole model.",
           "Placement comes from the planner's **rank manifest** — for Qwen3.5-122B, 49 layers split across whatever mix of GPU, CPU, NPU and phone shows up.",
         ],
       },
@@ -878,7 +878,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "The flywheel", text: "Why usage and supply grow together" },
       {
         t: "p",
-        md: "The engine of the cycle is a single rule already true in Kvasir: **inference must be paid in KVR**. That makes every unit of usage a unit of real demand for the token — utility, not speculation. Token demand supports the value of the KVR nodes earn; attractive rewards pull in supply; supply expands capacity and, through competition and finer expert-sharding, drives the marginal cost of serving down; cheaper, faster, more capable service pulls in more usage. Kvasir tightens the loop with a property no centralized API can copy: a participant can be **consumer and supplier at once**. The demand side and the supply side often grow inside the *same people*, which damps the imbalances that wreck one-sided markets.",
+        md: "The engine of the cycle is a single rule already true in Kvasir: **inference must be paid in KVR**. That ties the token to real usage — utility, not speculation. Usage funds the KVR that nodes earn; fair rewards pull in supply; supply expands capacity and, through competition and finer expert-sharding, drives the marginal cost of serving down; cheaper, faster, more capable service pulls in more usage. Kvasir tightens the loop with a property no centralized API can copy: a participant can be **consumer and supplier at once**. The demand side and the supply side often grow inside the *same people*, which damps the imbalances that wreck one-sided markets.",
       },
       { t: "h2", kick: "The failure modes", text: "Four spirals that run the wheel backward" },
       {
@@ -900,7 +900,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
         t: "ul",
         items: [
           "**Rewards are funded by real revenue.** At steady state, what nodes earn comes from what consumers pay — not from open-ended token emission. Emission is a bootstrap subsidy that must *taper* as fee revenue grows. Kvasir already helps here by rewarding **real work** — KVR per tokens actually served × layer share, not mere presence — so subsidy can't leak to idle 'mercenary' nodes.",
-          "**KVR is the mandatory medium.** Because you can't infer without paying KVR, usage is a permanent demand sink for the token. That anchors token value to real utility instead of speculation — the difference between a currency and a chip.",
+          "**KVR is the mandatory medium.** Because you can't infer without paying KVR, the token's role is tied to real usage instead of speculation — it is the unit of account for inference, not an investment.",
           "**Price floats inside a band.** A floor kept above node marginal cost keeps serving worthwhile; a ceiling kept below centralized alternatives keeps Kvasir competitive. Between them, price moves — which is where the network's growth finally shows up as lower cost.",
         ],
       },
@@ -915,7 +915,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "None of this requires exotic mechanism design. It requires discipline about three things: reward from revenue, value from usage, balance from a bounded floating price. Kvasir already ships the hard, honest parts — non-custodial settlement, work-proportional rewards, a token you must actually spend to use the network. The rest is the economic roadmap: the taper, the fee split that funds an insurance pool for failed inferences, and the thermostat. Built in that order, cost and reward stop fighting and start compounding.",
+        md: "None of this requires exotic mechanism design. It requires discipline about three things: reward from revenue, utility from usage, balance from a bounded floating price. Kvasir already ships the hard, honest parts — rewards paid to each node's own wallet, work-proportional rewards, a token you must actually spend to use the network. The rest is the economic roadmap: the taper, the fee split that funds an insurance pool for failed inferences, and the thermostat. Built in that order, cost and reward stop fighting and start compounding.",
       },
     ],
   },
@@ -933,7 +933,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "Kvasir's premise is *whatever hardware shows up* — including hardware behind carrier NAT, on the public internet, in a different city. Qwen3.5-122B-A10B carries **86% of its weight in 12,544 independent experts** (48 layers × 256, top-8), each a 5.3 MB pure function. That grain is what lets a distant, unrelated machine hold a slice and contribute. The open question was never *can we split it* — it was *can a worker across the open internet actually participate in a live decode, correctly and accountably*. Now it has.",
+        md: "Kvasir's premise is *whatever hardware shows up* — including hardware behind carrier NAT, on the public internet, in a different city. Qwen3.5-122B-A10B carries **86% of its weight in 12,544 independent experts** (49 layers × 256, top-8), each a 5.3 MB pure function. That grain is what lets a distant, unrelated machine hold a slice and contribute. The open question was never *can we split it* — it was *can a worker across the open internet actually participate in a live decode, correctly and accountably*. Now it has.",
       },
       { t: "img", src: "/blog/remote-gpu-joins-122b.jpg", alt: "A GPU in one city dialing a single outbound line into a decode running elsewhere" },
       { t: "h2", kick: "One outbound dial", text: "No tunnel, no inbound ports" },
@@ -970,7 +970,7 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       { t: "h2", kick: "Paid for exactly the work", text: "Metered bytes become KVR" },
       {
         t: "p",
-        md: "Participation is worthless if it isn't accountable. The relay **meters the bytes bridged per session** into the hub's contribution ledger; the gateway polls that ledger and delta-credits KVR to the worker's **own** wallet — non-custodial, like everything else. The first cross-internet session actually accrued: **1.28 MB of work → 1.277952 units → 0.00895 KVR** in pending rewards. Small, and that's the point — it's real, per-work settlement, not a participation trophy.",
+        md: "Participation is worthless if it isn't accountable. The relay **meters the bytes bridged per session** into the hub's contribution ledger; the gateway polls that ledger and delta-credits KVR to the worker's **own** wallet. The first cross-internet session actually accrued: **1.28 MB of work → 1.277952 units → 0.00895 KVR** in pending rewards. Small, and that's the point — it's real, per-work settlement, not a participation trophy.",
       },
       {
         t: "p",
@@ -1037,22 +1037,22 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "experts · routing", "per-expert (Q4≈)", "shared", "status"],
         rows: [
-          ["Qwen3.5-122B (serving today)", "256 · top-8", "5.3 MB (measured)", "yes", "in production"],
+          ["Qwen3.5-122B (serving today)", "256 · top-8", "5.3 MB (measured)", "yes", "serving (test fleet)"],
           ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "yes", "ready — first candidate"],
-          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "yes", "ready (hook verified)"],
-          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "no", "ready (hook verified)"],
-          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "yes", "ready (deepseek2 graph)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "yes", "ready (deepseek-family)"],
+          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "yes", "planned (hook verified)"],
+          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "no", "planned (hook verified)"],
+          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "yes", "planned (deepseek2 graph)"],
+          ["Kimi K2 1T", "384 · top-8", "~25 MB", "yes", "planned (deepseek-family)"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "no", "ready"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "no", "ready"],
-          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "yes", "ready (MoE every other layer)"],
+          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "yes", "planned (MoE every other layer)"],
           ["MiniMax M3 428B", "128 · top-4", "TBD (GGUF)", "yes", "waiting on upstream engine"],
           ["Mixtral 8×22B", "8 · top-2", "~170 MB", "no", "works — GPU workers only"],
         ],
       },
       {
         t: "p",
-        md: "The industry is converging on fine-grained MoE — smaller experts, more of them, higher sparsity (DeepSeek, Qwen, Kimi, GLM, gpt-oss all moved this way). Every step in that direction makes the swarm's unit of participation smaller and the scarcity market's grain finer. The models above aren't a wish list; each already flows through the same dispatch hook we run in production — onboarding is a verification gate, not an engineering project.",
+        md: "The industry is converging on fine-grained MoE — smaller experts, more of them, higher sparsity (DeepSeek, Qwen, Kimi, GLM, gpt-oss all moved this way). Every step in that direction makes the swarm's unit of participation smaller and the scarcity market's grain finer. The models above aren't a wish list; each already flows through the same dispatch hook we run on our test fleet — onboarding is a verification gate, not an engineering project.",
       },
     ],
   },

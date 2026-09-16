@@ -12,14 +12,14 @@ export const deWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** ist ein dezentrales KI-Inferenznetzwerk: Große offene Modelle werden mit der **linkcpp**-Engine über geteilte Hardware verteilt, sodass kein einzelner Knoten das ganze Modell hält. Jeder kann eine GPU, CPU, NPU — sogar ein Smartphone — beisteuern und **KVR** für die Layer oder Experten verdienen, die sein Gerät tatsächlich bedient. Entwickler erreichen das Netzwerk über OpenAI/Anthropic-kompatible Gateways und zahlen pro Inferenz.",
+        md: "**Kvasir** ist ein dezentrales KI-Inferenznetzwerk: Große offene Modelle werden mit der **linkcpp**-Engine über geteilte Hardware verteilt, sodass kein einzelner Knoten das ganze Modell halten muss. Jeder kann eine GPU, CPU, NPU — sogar ein Smartphone — beisteuern und **KVR** für die Layer oder Experten verdienen, die sein Gerät tatsächlich bedient. Entwickler erreichen das Netzwerk über OpenAI/Anthropic-kompatible Gateways und zahlen pro Inferenz.",
       },
       {
         t: "ul",
         items: [
-          "**Quelloffen einsehbare Engine** — linkcpp ist BSL-lizenziert (kostenlos für Entwicklung und Tests, produktive Nutzung erfordert eine Lizenz); die Inferenz-Engine-Datenebene darunter bleibt unverändert und einsehbar.",
-          "**Non-custodial** — Belohnungen werden in die eigene Solana-Wallet jedes Knoten-Besitzers abgerechnet; Schlüssel verlassen den Nutzer nie.",
-          "**Auf echter Hardware bewiesen** — ein 122B-Modell lief verteilt über 4 AMD-MI250-GPUs, in einer heterogenen Flotte aus GPU/CPU/NPU/Mobil-Knoten, mit Ende-zu-Ende gutgeschriebenem Beitrag jedes Knotens.",
+          "**Engine mit verfügbarem Quellcode** — linkcpp steht unter der Business Source License 1.1 (nicht monetarisierte interne Nutzung ist erlaubt; gehostete oder umsatzgenerierende Nutzung erfordert eine kommerzielle Lizenz); die Inferenz-Engine-Datenebene darunter bleibt nah am Upstream und einsehbar.",
+          "**Wallet in Eigenverwahrung** — Schlüssel verlassen nie das Gerät des Nutzers, und Belohnungen werden in die eigene Solana-Wallet jedes Knoten-Besitzers ausgezahlt. Im Devnet werden gestakte KVR und Prepaid-Credits von der Treasury des Gateways gehalten und in dessen Ledger geführt, bis ein On-Chain-Staking-Programm verfügbar ist.",
+          "**Auf echter Hardware bewiesen** — ein 122B-Modell lief durchgängig über 3 physische Maschinen unserer Testflotte, mit Ende-zu-Ende gutgeschriebenem Beitrag jedes Knotens.",
           "**Benannt nach dem nordischen Mythos** — Kvasir, das weiseste Wesen, geboren aus der gesammelten Essenz aller Götter und im Besitz von keinem.",
         ],
       },
@@ -49,7 +49,7 @@ export const deWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "Der **Hub** ist die Steuerungsebene des Netzwerks, von linkcpp als einzelnes Docker-Image bereitgestellt (`controller.hub:app`, ein FastAPI-Dienst auf Port **19000**). Er entdeckt Geräte, prüft Runtime-Kompatibilität, plant Platzierung mit dem Planner, startet unveränderte Inferenz-Engine-Worker und exponiert die Gateways je Controller. Es ist bewusst langweilige Infrastruktur: Request/Response-HTTP, neustartsicherer Zustand, kein exotischer Transport.",
+        md: "Der **Hub** ist die Steuerungsebene des Netzwerks, von linkcpp als einzelnes Docker-Image bereitgestellt (`controller.hub:app`, ein FastAPI-Dienst auf Port **19000**). Er entdeckt Geräte, prüft Runtime-Kompatibilität, plant Platzierung mit dem Planner, startet Inferenz-Engine-Worker und exponiert die Gateways je Controller. Es ist bewusst langweilige Infrastruktur: Request/Response-HTTP, neustartsicherer Zustand, kein exotischer Transport.",
       },
       { t: "h2", kick: "Drei Türen hinein", text: "Wie Maschinen einem Hub beitreten" },
       {
@@ -133,7 +133,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
         t: "ul",
         items: [
           "**Rechenknoten** verdienen pro Beitragseinheit, gewichtet nach Layer-Anteil und skaliert nach Leistungsstufe — kein Staking nötig.",
-          "Nodes registrieren sich unter der Wallet ihres Besitzers; Belohnungen werden non-custodial dorthin abgerechnet. Vier verschiedene Besitzer-Wallets, die jeweils ihren Layer-Anteil verdienen, wurden Ende-zu-Ende verifiziert.",
+          "Nodes registrieren sich unter der Wallet ihres Besitzers; Belohnungen werden dorthin ausgezahlt. Vier separate Besitzer-Wallets, die jeweils ihren Layer-Anteil verdienen, wurden auf der Testflotte eines einzelnen Betreibers Ende-zu-Ende verifiziert.",
           "Fähigkeitsdaten (Backend, Akkumulationspräzision, Ressourcenbudgets) entscheiden, was der Planner auf einem Node platzieren darf — und im Schwarm, welche Ränge er bedienen darf.",
           "Ein Node, der kein Ressourcen-Monitoring liefern kann, wird vom adaptiven Laden ausgeschlossen, statt blind Vertrauen zu genießen.",
         ],
@@ -166,7 +166,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
       {
         t: "p",
-        md: "Das Relay trägt, was die Topologie braucht — Ring-Layer-Grenzen oder Experten-Dispatch-Ströme — und derselbe für den Ring verifizierte Mechanismus ist der, den Produktions-Smartphone-Worker im Schwarm verwenden.",
+        md: "Das Relay trägt, was die Topologie braucht — Ring-Layer-Grenzen oder Experten-Dispatch-Ströme — und derselbe für den Ring verifizierte Mechanismus ist der, den Smartphone-Worker im Schwarm verwenden.",
       },
       {
         t: "p",
@@ -177,13 +177,13 @@ earn      → units × layer_share × perf_tier → owner wallet`,
 
   linkcpp: {
     title: "linkcpp",
-    summary: "Die quelloffen einsehbare (BSL) Steuerungsebene, die Alltagshardware in eine verteilte Inferenz-Engine verwandelt.",
+    summary: "Die Steuerungsebene mit verfügbarem Quellcode (BSL), die Alltagshardware in eine verteilte Inferenz-Engine verwandelt.",
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** ist die Engine hinter Kvasir: eine Steuerungsebene um die RPC-Datenebene von Inferenz-Engine, die große KI-Modelle über mehrere GPUs und Maschinen mit *unveränderten* `ggml-rpc-server`- / `llama-server`-Binaries ausführt. Alles, was sie hinzufügt, ist Orchestrierung — GPU-Discovery, Node-Slots, Layer-Platzierungsplanung, Worker-Start und die OpenAI/Anthropic-Gateways.",
+        md: "**linkcpp** ist die Engine hinter Kvasir: eine Steuerungsebene um die RPC-Datenebene der Inferenz-Engine, die große KI-Modelle über mehrere GPUs und Maschinen mit nah am Upstream gebauten `ggml-rpc-server`- / `llama-server`-Binaries ausführt. Alles, was sie hinzufügt, ist Orchestrierung — GPU-Discovery, Node-Slots, Layer-Platzierungsplanung, Worker-Start und die OpenAI/Anthropic-Gateways.",
       },
-      { t: "h2", kick: "Architektur", text: "Ein Hub, unveränderte Worker" },
+      { t: "h2", kick: "Architektur", text: "Ein Hub, Upstream-basierte Worker" },
       {
         t: "code",
         caption: "Der Anfragepfad durch ein linkcpp-Deployment.",
@@ -195,8 +195,8 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       {
         t: "ul",
         items: [
-          "**Quelle verfügbar unter der BSL** — für Entwicklung und Tests kostenlos lesbar, ausführbar und erweiterbar; produktive Nutzung erfordert eine Lizenz.",
-          "Die Inferenz-Engine-Datenebene bleibt **ungeforkt** (bis auf einen gepinnten mobilen GPU-over-RPC-Patch), sodass Upstream-Performancearbeit weiter einfließt.",
+          "**Quelle verfügbar unter der BSL 1.1** — frei lesbar und erweiterbar; nicht monetarisierte interne Nutzung ist erlaubt, gehostete oder umsatzgenerierende Nutzung erfordert eine kommerzielle Lizenz.",
+          "Die Inferenz-Engine-Datenebene bleibt **nah am Upstream** — ein kleines Patch-Set (mobiles GPU-over-RPC und der MoE-Expert-Dispatch-Hook) — sodass Upstream-Performancearbeit weiter einfließt.",
           "Ausgeliefert als **ein einziges Docker-Image**: der FastAPI-Hub plus die zwei Inferenz-Engine-Binaries eingebacken; native Worker-Nodes bauen außerhalb von Docker für CUDA/Metal/Vulkan/CPU.",
         ],
       },
@@ -217,7 +217,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "Die **Ring-Runtime** ist Kvasirs Serving-Topologie für niedrige Latenz. Jedes Gerät lädt nur sein zusammenhängendes **Layer-Fenster** und öffnet genau zwei Verbindungen — Vorgänger und Nachfolger. Hidden-State-Grenzen zirkulieren um den Ring; der letzte Rang sampelt den Token und gibt ihn zurück. **Kein zentraler Master, und kein Node hält das ganze Modell.**",
+        md: "Die **Ring-Runtime** ist Kvasirs Serving-Topologie für niedrige Latenz. Jedes Gerät lädt nur sein zusammenhängendes **Layer-Fenster** und öffnet genau zwei Verbindungen — Vorgänger und Nachfolger. Hidden-State-Grenzen zirkulieren um den Ring; der letzte Rang sampelt den Token und gibt ihn zurück. **Kein zentraler Master im Datenpfad, und kein Node hält das ganze Modell.**",
       },
       { t: "h2", kick: "Warum kein Stern", text: "Das RPC-Master-Problem" },
       {
@@ -545,19 +545,19 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "KVR staken, um APR-Zinsen zu verdienen; 100.000 gestakte KVR qualifizieren eine Wallet für den Betrieb von Hub- oder Gateway-Nodes.",
+    summary: "100.000 gestakte KVR qualifizieren eine Wallet für den Betrieb von Hub- oder Gateway-Nodes.",
     blocks: [
       {
         t: "p",
-        md: "Staking sperrt KVR in der eigenen Wallet, um **APR-Zinsen** zu verdienen und sich für Node-Belohnungen zu qualifizieren. Der Betrieb eines **Hub**- oder **Gateway**-Nodes erfordert einen Stake von **100.000 KVR**; normale Rechenknoten treten ohne Stake bei und verdienen für die Layer, die sie ausführen.",
+        md: "Staking sperrt KVR, um eine Wallet für Betreiberrollen und Node-Belohnungen zu qualifizieren. Der Betrieb eines **Hub**- oder **Gateway**-Nodes erfordert einen Stake von **100.000 KVR**; normale Rechenknoten treten ohne Stake bei und verdienen für die Layer, die sie ausführen.",
       },
       {
         t: "ul",
         items: [
-          "Gestakt wird im Staking-Panel des Wallet-Dashboards: Betrag eingeben, **Stake**, und die Position beginnt, APR plus Node-Belohnungs-Berechtigung anzusammeln.",
+          "Gestakt wird im Staking-Panel des Wallet-Dashboards: Betrag eingeben, **Stake**, und die Position zählt für die Betreiber-Berechtigung und Node-Belohnungen.",
           "Die 100k-Anforderung ist ein **Haftungs-Filter** für die zwei Rollen, von denen der Verkehr anderer abhängt — Eingänge und die Steuerungsebene.",
-          "Staking ist non-custodial wie alles andere: Die Position lebt in der eigenen Wallet, und Kapital, aufgelaufene Zinsen und Node-Belohnungen sind alle im Staking-Panel sichtbar.",
-          "Devnet-KVR zum Staken kommt per Verteilung oder Swap (SOL/ETH ↔ KVR-Swap: bald verfügbar); Devnet-SOL für Gebühren kommt aus dem öffentlichen Faucet.",
+          "Im Devnet wird gestaktes KVR im Staking-Vault gehalten; der gestakte Betrag und die Node-Belohnungen sind im Staking-Panel sichtbar.",
+          "Devnet-KVR zum Staken kommt aus dem Distributions-Faucet; Devnet-SOL für Gebühren kommt aus dem öffentlichen Faucet.",
         ],
       },
     ],
@@ -568,7 +568,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "Die Kvasir Wallet ist **non-custodial by design**: Die 12-Wort-Wiederherstellungsphrase und die Schlüssel liegen nur auf dem Gerät des Nutzers, nie bei einem Betreiber. Belohnungen werden auf Solana direkt in die Besitzer-Wallet jedes Nodes abgerechnet — verifiziert über vier verschiedene Besitzer-Wallets, jede mit ihrem eigenen Layer-Anteil.",
+        md: "Die Kvasir Wallet ist **non-custodial by design**: Die 12-Wort-Wiederherstellungsphrase und die Schlüssel liegen nur auf dem Gerät des Nutzers, nie bei einem Betreiber. Belohnungen werden auf Solana direkt in die Besitzer-Wallet jedes Nodes abgerechnet — auf einer Testflotte verifiziert über vier verschiedene Besitzer-Wallets, jede mit ihrem eigenen Layer-Anteil. Staking funktioniert im Devnet anders: Gestakte KVR werden in der Treasury des Gateways gehalten und in dessen Ledger geführt, bis ein On-Chain-Staking-Programm verfügbar ist.",
       },
       {
         t: "ul",
@@ -615,7 +615,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       { t: "h2", kick: "Das Schwungrad", text: "Nutzung und Angebot wachsen gemeinsam" },
       {
         t: "p",
-        md: "Weil Inferenz in KVR bezahlt werden **muss**, ist jede Nutzungseinheit echte Nachfrage nach dem Token — Utility, keine Spekulation. Diese Nachfrage stützt den Wert der KVR, die Knoten verdienen, was das Beitragen attraktiv hält, was die Kapazität wachsen lässt, was Preis und Latenz senkt, was mehr Nutzung anzieht. Kvasirs schärfster Vorteil zieht die Schleife noch enger: ein Teilnehmer kann **zugleich Verbraucher und Anbieter** sein (ein *Prosument*), sodass die zwei Seiten oft in denselben Menschen wachsen.",
+        md: "Weil Inferenz in KVR bezahlt werden **muss**, ist der Token an echte Nutzung gebunden — Utility, keine Spekulation. Nutzung finanziert die KVR, die Knoten verdienen, was das Beitragen attraktiv hält, was die Kapazität wachsen lässt, was Preis und Latenz senkt, was mehr Nutzung anzieht. Kvasirs schärfster Vorteil zieht die Schleife noch enger: ein Teilnehmer kann **zugleich Verbraucher und Anbieter** sein (ein *Prosument*), sodass die zwei Seiten oft in denselben Menschen wachsen.",
       },
       {
         t: "callout",
@@ -633,7 +633,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
-        md: "Kvasir belohnt bereits **echte Arbeit** (KVR pro bediente Tokens × Layer-Anteil, nicht bloße Präsenz) und rechnet non-custodial ab, was der schwierige Teil daran ist, umsatzfinanzierte Belohnungen ehrlich zu machen. Der Rest — ein auslastungsgetriebener Preis und ein Taper von Emission → Umsatz — ist die ökonomische Roadmap, die \"mehr Knoten → billiger\" von einer Intuition in eine vom Protokoll erzwungene Regel verwandelt. Der Eintrag **Inferenz-Bepreisung** behandelt die Preisseite; **Beitragseinheiten** behandelt, wie Arbeit zu Belohnung wird.",
+        md: "Kvasir belohnt bereits **echte Arbeit** (KVR pro bediente Tokens × Layer-Anteil, nicht bloße Präsenz) und zahlt direkt in die eigene Wallet jedes Knotens, was der schwierige Teil daran ist, umsatzfinanzierte Belohnungen ehrlich zu machen. Der Rest — ein auslastungsgetriebener Preis und ein Taper von Emission → Umsatz — ist die ökonomische Roadmap, die \"mehr Knoten → billiger\" von einer Intuition in eine vom Protokoll erzwungene Regel verwandelt. Der Eintrag **Inferenz-Bepreisung** behandelt die Preisseite; **Beitragseinheiten** behandelt, wie Arbeit zu Belohnung wird.",
       },
     ],
   },
@@ -705,7 +705,7 @@ POST /api/expert-coverage`,
           "**Die Scheibe ist winzig.** Eine Layer-0-Scheibe mit 128 Experten ist **794 MB** gegenüber dem 72-GB-Vollmodell — die Körnung, die schwachen Geräten die Teilnahme erlaubt. Du lädst nur den Bereich herunter, den der Markt zugewiesen hat.",
           "**Ausgehend wählen, nie eingehend.** Schritt 5 öffnet einen ausgehenden WebSocket auf 443, sodass Carrier-NAT und CDN-Edges ihn durchlassen und du null eingehende Ports exponierst — denselben Weg nutzt ein Smartphone.",
           "**Der Heartbeat ist tragend.** Ohne `POST /api/expert-coverage` bedienst du nichts, wovon die Nachfragekarte weiß, und nichts, was du tust, wird gutgeschrieben.",
-          "**Belohnung erfolgt pro Arbeit.** Gebrückte Arbeit sammelt sich im Beitrags-Ledger des Hubs; das Gateway schreibt KVR per Delta in deine **eigene** Wallet gut (non-custodial). Du brauchst eine Wallet-Adresse, um bezahlt zu werden.",
+          "**Belohnung erfolgt pro Arbeit.** Gebrückte Arbeit sammelt sich im Beitrags-Ledger des Hubs; das Gateway schreibt KVR per Delta in deine **eigene** Wallet gut. Du brauchst eine Wallet-Adresse, um bezahlt zu werden.",
         ],
       },
       {

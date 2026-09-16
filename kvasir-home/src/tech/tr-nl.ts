@@ -275,7 +275,7 @@ x = x + combine(p, partials) + shared(cur)  # backbone — numerically exact`,
       { t: "h2", kick: "Het vertrouwensmodel", text: "Verifieer on-chain feiten, geen clientbeweringen" },
       {
         t: "p",
-        md: "Kvasirs bewaringsmodel laat de sleutels bij de gebruikers: wallets ondertekenen transacties, Solana registreert ze, en de enige taak van de settlement-dienst is **verifiëren wat er werkelijk on-chain gebeurde** voordat hij een saldo aanraakt. Betalingen volgen *quote → payment → inference*, waarbij elke verbruikte transactiehandtekening in een eenmalig `usedSignatures`-register wordt genoteerd zodat ze nooit twee keer kan worden aangeboden. Dat maakt de settlement-dienst het knelpunt — en de regel die hij nooit mag breken: alleen bijschrijven wat de chain bewijst, nooit wat de client beweert.",
+        md: "Kvasirs bewaringsmodel laat de sleutels bij de gebruikers: wallets ondertekenen transacties, Solana registreert ze, en de taak van de settlement-dienst is **verifiëren wat er werkelijk on-chain gebeurde** voordat hij een saldo aanraakt. Betalingen volgen *quote → payment → inference*, waarbij elke verbruikte transactiehandtekening in een eenmalig `usedSignatures`-register wordt genoteerd zodat ze nooit twee keer kan worden aangeboden. Dat maakt de settlement-dienst het knelpunt — en de regel die hij nooit mag breken: alleen bijschrijven wat de chain bewijst, nooit wat de client beweert. De dienst houdt op devnet wel degelijk tegoeden aan: gestakete KVR en vooraf betaalde credits staan in zijn treasury en worden in zijn grootboek bijgehouden totdat een on-chain stakingprogramma wordt uitgebracht.",
       },
       { t: "img", src: "/blog/securing-the-kvr-money-path.jpg", alt: "A settlement vault guarded by three locks: sender binding, trusted reporter, and a serialization gate" },
       { t: "h2", kick: "Fix #1 · afzenderbinding", text: "Bind de betaling aan de betaler" },
@@ -344,27 +344,27 @@ inside the lock:
   },
   "linkcpp-control-plane": {
     title: "Phase 0 — De engine: linkcpp, een besturingsvlak voor inferentie-engine",
-    dek: "inferentie-engine levert een capabel RPC-datavlak maar geen besturingsvlak. linkcpp voegt de ontbrekende helft toe — ontdekking, planning, start en gateways — rond standaard binaries.",
+    dek: "inferentie-engine levert een capabel RPC-datavlak maar geen besturingsvlak. linkcpp voegt de ontbrekende helft toe — ontdekking, planning, start en gateways — rond binaries die dicht bij upstream zijn gebouwd.",
     blocks: [
       {
         t: "p",
-        md: "Alles waar Kvasir op draait begint hier. **linkcpp** is een besturingsvlak met beschikbare broncode (Business Source License) rond het RPC-datavlak van inferentie-engine: het draait grote AI-modellen over meerdere GPU's en machines met *standaard* `ggml-rpc-server`- / `llama-server`-binaries. Het datavlak blijft ongevorkt — alles wat linkcpp toevoegt is orkestratie.",
+        md: "Alles waar Kvasir op draait begint hier. **linkcpp** is een besturingsvlak met beschikbare broncode (Business Source License) rond het RPC-datavlak van de inferentie-engine: het draait grote AI-modellen over meerdere GPU's en machines met `ggml-rpc-server`- / `llama-server`-binaries die dicht bij upstream zijn gebouwd. Het datavlak bevat slechts een kleine set patches — al het overige dat linkcpp toevoegt is orkestratie.",
       },
       { t: "h2", kick: "Het gat", text: "Een datavlak zonder besturingsvlak" },
       {
         t: "p",
         md: "inferentie-engine kan een model al via RPC over machines verdelen — maar iemand moet de GPU's ontdekken, beslissen welke lagen waarheen gaan, de juiste workers met de juiste budgetten starten, controleren dat elke node hetzelfde protocol spreekt, en een API blootstellen die ontwikkelaars echt kunnen aanroepen. Dat met de hand doen voor één cluster is een klus; het doen voor een open netwerk van andermans apparaten is onmogelijk. Die coördinatielaag is linkcpp.",
       },
-      { t: "h2", kick: "Architectuur", text: "Eén hub, standaard workers, standaard gateways" },
+      { t: "h2", kick: "Architectuur", text: "Eén hub, op upstream gebaseerde workers, standaard gateways" },
       {
         t: "code",
-        caption: "Verzoekstroom — de hub orkestreert, standaard binaries rekenen.",
+        caption: "Verzoekstroom — de hub orkestreert, op upstream gebaseerde binaries rekenen.",
         code: `browser / SDK
   → hub :19000                      # FastAPI control plane (single Docker image)
   → GPU-less llama-server master    # per-controller, :8080+
   → ggml-rpc-server workers         # local slots, remote units, managed agents`,
       },
-      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of stock inferentie-engine engines below" },
+      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of inference engines below" },
       {
         t: "ul",
         items: [
@@ -376,13 +376,13 @@ inside the lock:
       },
       {
         t: "p",
-        md: "Deze bewuste scheiding — een ongewijzigd datavlak onder een open besturingsvlak — is waar al het latere op bouwt: de ring-runtime, de laagmarkt en uiteindelijk de expertzwerm zijn allemaal besturingsvlak-evoluties over dezelfde standaard rekenkracht.",
+        md: "Deze bewuste scheiding — een datavlak dat dicht bij upstream blijft, onder een besturingsvlak met beschikbare broncode — is waar al het latere op bouwt: de ring-runtime, de laagmarkt en uiteindelijk de expertzwerm zijn allemaal besturingsvlak-evoluties over dezelfde rekenkracht.",
       },
     ],
   },
   "ring-topology-pipeline-inference": {
     title: "Phase 1 — De ring: pipeline-inferentie zonder master",
-    dek: "Elk apparaat laadt alleen zijn laagvenster en geeft een kleine hidden-state-grens door aan zijn buur. Geen node bezit het model; er bestaat geen centrale master.",
+    dek: "Elk apparaat laadt alleen zijn laagvenster en geeft een kleine hidden-state-grens door aan zijn buur. Geen node hoeft het hele model te bezitten, en de ring heeft geen centrale master.",
     blocks: [
       { t: "h2", kick: "Waarom geen ster", text: "De RPC-master is een knelpunt en een poortwachter" },
       {
@@ -394,7 +394,7 @@ inside the lock:
         t: "ul",
         items: [
           "Elk apparaat slaat hetzelfde model op maar **laadt alleen zijn aaneengesloten laagvenster**, en opent precies twee verbindingen: één naar zijn voorganger, één naar zijn opvolger.",
-          "Een verzoek betreedt de ring; elke node draait zijn lagen en geeft alleen de **hidden-state-grens** door aan zijn buur. De laatste rank bemonstert het token en stuurt het terug — geen centrale master, en geen node bezit het hele model.",
+          "Een verzoek betreedt de ring; elke node draait zijn lagen en geeft alleen de **hidden-state-grens** door aan zijn buur. De laatste rank bemonstert het token en stuurt het terug — geen centrale master op het datapad, en geen node bezit het hele model.",
           "Plaatsing komt uit het **rank manifest** van de planner — voor Qwen3.5-122B worden 49 lagen verdeeld over welke mix van GPU, CPU, NPU en telefoon er ook opduikt.",
         ],
       },
@@ -755,7 +755,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "Het vliegwiel", text: "Waarom gebruik en aanbod samen groeien" },
       {
         t: "p",
-        md: "De motor van de cyclus is één regel die in Kvasir al waar is: **inferentie moet in KVR worden betaald**. Dat maakt elke eenheid gebruik een eenheid echte vraag naar het token — nut, geen speculatie. Tokenvraag ondersteunt de waarde van de KVR die nodes verdienen; aantrekkelijke beloningen trekken aanbod aan; aanbod vergroot de capaciteit en drijft, via concurrentie en fijnere expert-sharding, de marginale kosten van serveren omlaag; goedkopere, snellere, capabelere service trekt meer gebruik aan. Kvasir trekt de lus strakker aan met een eigenschap die geen enkele gecentraliseerde API kan kopiëren: een deelnemer kan **tegelijk consument en leverancier** zijn. De vraagkant en de aanbodkant groeien vaak binnen *dezelfde mensen*, wat de onevenwichtigheden dempt die eenzijdige markten kapotmaken.",
+        md: "De motor van de cyclus is één regel die in Kvasir al waar is: **inferentie moet in KVR worden betaald**. Dat verbindt het token met echt gebruik — nut, geen speculatie. Gebruik financiert de KVR die nodes verdienen; eerlijke beloningen trekken aanbod aan; aanbod vergroot de capaciteit en drijft, via concurrentie en fijnere expert-sharding, de marginale kosten van serveren omlaag; goedkopere, snellere, capabelere service trekt meer gebruik aan. Kvasir trekt de lus strakker aan met een eigenschap die geen enkele gecentraliseerde API kan kopiëren: een deelnemer kan **tegelijk consument en leverancier** zijn. De vraagkant en de aanbodkant groeien vaak binnen *dezelfde mensen*, wat de onevenwichtigheden dempt die eenzijdige markten kapotmaken.",
       },
       { t: "h2", kick: "De faalmodi", text: "Vier spiralen die het wiel achteruit laten draaien" },
       {
@@ -777,7 +777,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
         t: "ul",
         items: [
           "**Beloningen worden gefinancierd uit echte inkomsten.** In de stabiele toestand komt wat nodes verdienen uit wat consumenten betalen — niet uit onbegrensde token-emissie. Emissie is een opstartsubsidie die moet *afbouwen* naarmate de vergoedingsinkomsten groeien. Kvasir helpt hier al door **echt werk** te belonen — KVR per daadwerkelijk geserveerde tokens × laagaandeel, niet louter aanwezigheid — zodat subsidie niet kan weglekken naar inactieve 'huurlingen'-nodes.",
-          "**KVR is het verplichte medium.** Omdat je niet kunt infereren zonder KVR te betalen, is gebruik een permanente vraagput voor het token. Dat verankert de tokenwaarde aan echt nut in plaats van speculatie — het verschil tussen een munt en een fiche.",
+          "**KVR is het verplichte medium.** Omdat je niet kunt infereren zonder KVR te betalen, is de rol van het token verbonden met echt gebruik in plaats van speculatie — het is de rekeneenheid voor inferentie, geen investering.",
           "**De prijs zweeft binnen een band.** Een ondergrens boven de marginale kosten van een node houdt serveren de moeite waard; een bovengrens onder gecentraliseerde alternatieven houdt Kvasir concurrerend. Daartussen beweegt de prijs — en dat is waar de groei van het netwerk zich eindelijk als lagere kosten toont.",
         ],
       },
@@ -792,7 +792,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "Niets hiervan vereist exotisch mechanismeontwerp. Het vereist discipline op drie punten: beloning uit inkomsten, waarde uit gebruik, balans uit een begrensde zwevende prijs. Kvasir levert al de moeilijke, eerlijke delen — non-custodial verrekening, werk-evenredige beloningen, een token dat je daadwerkelijk moet uitgeven om het netwerk te gebruiken. De rest is de economische routekaart: de afbouw, de vergoedingssplitsing die een verzekeringspool voor mislukte inferenties financiert, en de thermostaat. In die volgorde gebouwd, houden kosten en beloning op met vechten en beginnen ze elkaar te versterken.",
+        md: "Niets hiervan vereist exotisch mechanismeontwerp. Het vereist discipline op drie punten: beloning uit inkomsten, nut uit gebruik, balans uit een begrensde zwevende prijs. Kvasir levert al de moeilijke, eerlijke delen — beloningen uitbetaald naar de eigen wallet van elke node, werk-evenredige beloningen, een token dat je daadwerkelijk moet uitgeven om het netwerk te gebruiken. De rest is de economische routekaart: de afbouw, de vergoedingssplitsing die een verzekeringspool voor mislukte inferenties financiert, en de thermostaat. In die volgorde gebouwd, houden kosten en beloning op met vechten en beginnen ze elkaar te versterken.",
       },
     ],
   },
@@ -806,7 +806,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "De premisse van Kvasir is *welke hardware er ook opduikt* — inclusief hardware achter carrier-NAT, op het publieke internet, in een andere stad. Qwen3.5-122B-A10B draagt **86% van zijn gewicht in 12.544 onafhankelijke experts** (48 lagen × 256, top-8), elk een pure functie van 5.3 MB. Die korrel is wat een verre, ongerelateerde machine een plak laat vasthouden en laat bijdragen. De open vraag was nooit *kunnen we het splitsen* — het was *kan een worker aan de andere kant van het open internet werkelijk meedoen aan een live decodering, correct en verantwoord*. Nu is dat gebeurd.",
+        md: "De premisse van Kvasir is *welke hardware er ook opduikt* — inclusief hardware achter carrier-NAT, op het publieke internet, in een andere stad. Qwen3.5-122B-A10B draagt **86% van zijn gewicht in 12.544 onafhankelijke experts** (49 lagen × 256, top-8), elk een pure functie van 5.3 MB. Die korrel is wat een verre, ongerelateerde machine een plak laat vasthouden en laat bijdragen. De open vraag was nooit *kunnen we het splitsen* — het was *kan een worker aan de andere kant van het open internet werkelijk meedoen aan een live decodering, correct en verantwoord*. Nu is dat gebeurd.",
       },
       { t: "img", src: "/blog/remote-gpu-joins-122b.jpg", alt: "A GPU in one city dialing a single outbound line into a decode running elsewhere" },
       { t: "h2", kick: "Eén uitgaande verbinding", text: "Geen tunnel, geen inkomende poorten" },
@@ -843,7 +843,7 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       { t: "h2", kick: "Betaald voor precies het werk", text: "Gemeten bytes worden KVR" },
       {
         t: "p",
-        md: "Deelname is waardeloos als ze niet verantwoord is. De relay **meet de gebridgede bytes per sessie** in het contributieregister van de hub; de gateway pollt dat register en schrijft delta-gewijs KVR bij op de **eigen** wallet van de worker — non-custodial, zoals al het andere. De eerste cross-internet-sessie leverde daadwerkelijk op: **1.28 MB werk → 1.277952 units → 0.00895 KVR** aan openstaande beloningen. Klein, en dat is het punt — het is echte verrekening per werk, geen deelnametrofee.",
+        md: "Deelname is waardeloos als ze niet verantwoord is. De relay **meet de gebridgede bytes per sessie** in het contributieregister van de hub; de gateway pollt dat register en schrijft delta-gewijs KVR bij op de **eigen** wallet van de worker. De eerste cross-internet-sessie leverde daadwerkelijk op: **1.28 MB werk → 1.277952 units → 0.00895 KVR** aan openstaande beloningen. Klein, en dat is het punt — het is echte verrekening per werk, geen deelnametrofee.",
       },
       {
         t: "p",
@@ -906,22 +906,22 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "experts · routering", "per expert (Q4≈)", "gedeeld", "status"],
         rows: [
-          ["Qwen3.5-122B (vandaag in bedrijf)", "256 · top-8", "5.3 MB (gemeten)", "ja", "in productie"],
+          ["Qwen3.5-122B (vandaag in bedrijf)", "256 · top-8", "5.3 MB (gemeten)", "ja", "serveert (testvloot)"],
           ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "ja", "klaar — eerste kandidaat"],
-          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ja", "klaar (hook geverifieerd)"],
-          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "nee", "klaar (hook geverifieerd)"],
-          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "ja", "klaar (deepseek2-graaf)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "ja", "klaar (deepseek-familie)"],
+          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ja", "gepland (hook geverifieerd)"],
+          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "nee", "gepland (hook geverifieerd)"],
+          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "ja", "gepland (deepseek2-graaf)"],
+          ["Kimi K2 1T", "384 · top-8", "~25 MB", "ja", "gepland (deepseek-familie)"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "nee", "klaar"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "nee", "klaar"],
-          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "ja", "klaar (MoE om de laag)"],
+          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "ja", "gepland (MoE om de laag)"],
           ["MiniMax M3 428B", "128 · top-4", "TBD (GGUF)", "ja", "wacht op upstream-engine"],
           ["Mixtral 8×22B", "8 · top-2", "~170 MB", "nee", "werkt — alleen GPU-workers"],
         ],
       },
       {
         t: "p",
-        md: "De industrie convergeert naar fijnkorrelige MoE — kleinere experts, meer ervan, hogere sparsity (DeepSeek, Qwen, Kimi, GLM, gpt-oss gingen allemaal deze kant op). Elke stap in die richting maakt de deelname-eenheid van de zwerm kleiner en de korrel van de schaarstemarkt fijner. De bovenstaande modellen zijn geen verlanglijst; elk stroomt al door dezelfde dispatch-hook die we in productie draaien — onboarding is een verificatiepoort, geen technisch project.",
+        md: "De industrie convergeert naar fijnkorrelige MoE — kleinere experts, meer ervan, hogere sparsity (DeepSeek, Qwen, Kimi, GLM, gpt-oss gingen allemaal deze kant op). Elke stap in die richting maakt de deelname-eenheid van de zwerm kleiner en de korrel van de schaarstemarkt fijner. De bovenstaande modellen zijn geen verlanglijst; elk stroomt al door dezelfde dispatch-hook die we op onze testvloot draaien — onboarding is een verificatiepoort, geen technisch project.",
       },
     ],
   },

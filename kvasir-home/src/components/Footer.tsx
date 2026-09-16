@@ -79,6 +79,12 @@ export default function Footer() {
                 {t.nav.careers}
               </a>
               <a
+                href="/legal"
+                className="text-ink-muted transition-colors hover:text-ink"
+              >
+                {t.footer.legal}
+              </a>
+              <a
                 href={LINKS.github}
                 target="_blank"
                 rel="noreferrer"
@@ -105,7 +111,12 @@ export default function Footer() {
               </strong>{" "}
               {t.footer.disclaimer}
             </p>
-            <p className="mt-4 text-xs text-ink-faint">{t.footer.rights}</p>
+            <p className="mt-4 text-xs text-ink-faint">
+              {t.footer.rights}{" "}
+              <a href="/legal" className="underline decoration-line underline-offset-2 hover:text-ink">
+                {t.footer.legal}
+              </a>
+            </p>
           </div>
         </Container>
       </div>

@@ -42,7 +42,7 @@ export const fr: Dict = {
     eyebrow: "DePIN · IA décentralisée — au-delà du monopole",
     headline1: "Apportez de la puissance de calcul.",
     headline2: "Gagnez des KVR.",
-    sub: "Kvasir répartit de grands modèles ouverts sur du matériel partagé grâce à linkcpp, de sorte qu’aucun nœud ne détient le modèle entier. Contribuez avec un GPU, un CPU, un NPU — même un téléphone — et gagnez des KVR pour les layers que vous exécutez.",
+    sub: "Kvasir répartit de grands modèles ouverts sur du matériel partagé grâce à linkcpp, de sorte qu’aucun nœud n’a besoin de détenir le modèle entier. Contribuez avec un GPU, un CPU ou un téléphone et gagnez des KVR pour les layers que vous exécutez.",
     badges: [
       "Fonctionne sur GPU · CPU · NPU · téléphone",
       "Compatible OpenAI + Anthropic",
@@ -51,7 +51,7 @@ export const fr: Dict = {
     ],
     ringCenter: "un seul anneau · aucun maître",
     topologyCaption:
-      "Un anneau d’appareils — un GPU, un CPU, un NPU et un téléphone — chacun détenant quelques-uns des 49 layers. Chaque nœud exécute sa tranche et ne transmet à son voisin que la frontière de l’état caché ; le dernier renvoie le token autour de l’anneau. Aucun nœud ne détient le modèle entier, et il n’y a pas de maître central — à titre illustratif.",
+      "Un anneau d’appareils — un GPU, un CPU, un NPU et un téléphone — chacun détenant quelques-uns des 49 layers. Chaque nœud exécute sa tranche et ne transmet à son voisin que la frontière de l’état caché ; le dernier renvoie le token autour de l’anneau. Aucun nœud n’a besoin de détenir le modèle entier, et l’anneau n’a pas de maître central — à titre illustratif.",
   },
 
   thesis: {
@@ -67,10 +67,10 @@ export const fr: Dict = {
     ],
     kvasirLabel: "Kvasir",
     kvasirPoints: [
-      "N’importe quel appareil rejoint un anneau pair-à-pair — aucun maître central",
+      "N’importe quel appareil rejoint un anneau pair-à-pair — aucun maître central dans l’anneau",
       "Moteur linkcpp à source disponible — sous licence BSL et entièrement inspectable",
       "Les contributeurs gagnent des KVR pour le calcul réel qu’ils fournissent",
-      "Non-dépositaire — vos clés, votre nœud, vos récompenses",
+      "Portefeuille en auto-garde — vos clés ne quittent jamais votre appareil",
     ],
   },
 
@@ -100,11 +100,11 @@ export const fr: Dict = {
   how: {
     eyebrow: "Comment ça marche",
     title: "Un modèle, de nombreux appareils, payé au layer",
-    lede: "Aucun nœud ne détient le modèle entier. Une requête parcourt le chemin des layers et chaque nœud est récompensé pour exactement le travail qu’il a fourni.",
+    lede: "Aucun nœud n’a besoin de détenir le modèle entier. Une requête parcourt le chemin des layers et chaque nœud est récompensé pour exactement le travail qu’il a fourni.",
     steps: [
       {
         title: "Répartir",
-        body: "Le modèle est divisé en fenêtres de layers contiguës. Chaque appareil stocke le même modèle mais ne charge que sa fenêtre — aucun nœud ne détient l’ensemble.",
+        body: "Le modèle est divisé en fenêtres de layers contiguës. Chaque appareil conserve une copie du fichier du modèle mais ne charge en mémoire que sa propre fenêtre, de sorte qu’aucun nœud n’a besoin d’exécuter le modèle entier.",
         note: "Qwen3.5-122B · 49 layers · manifeste de rangs",
       },
       {
@@ -125,11 +125,11 @@ export const fr: Dict = {
     title: "Transformez le calcul inutilisé en KVR",
     lede: "Pointez un appareil compatible vers le réseau et il commence à servir des layers. Vous gagnez des KVR proportionnellement aux layers que votre nœud exécute — vos clés restent dans votre propre portefeuille.",
     nonCustodial:
-      "Non-dépositaire par conception — la connexion de l’opérateur est une signature de portefeuille (Sign-In With Solana) avec 2FA optionnelle.",
+      "Connexion par signature de portefeuille — l’accès opérateur utilise Sign-In With Solana avec 2FA optionnelle ; aucun mot de passe.",
     points: [
       {
         title: "N’importe quel appareil peut rejoindre",
-        body: "Les GPU, CPU, NPU et téléphones exécutent déjà des layers aujourd’hui. Un ring runtime pair-à-pair permet à chaque appareil de ne détenir que quelques layers et de ne transmettre qu’un petit état de frontière à son voisin — donc aucun gardien, et aucun propriétaire unique.",
+        body: "Les GPU, CPU et téléphones exécutent déjà des layers aujourd’hui, et la prise en charge des NPU est en cours. Un ring runtime pair-à-pair permet à chaque appareil de ne détenir que quelques layers et de ne transmettre qu’un petit état de frontière à son voisin — donc aucun gardien, et aucun propriétaire unique.",
       },
       {
         title: "Récompenses au prorata des layers",
@@ -171,7 +171,7 @@ export const fr: Dict = {
   token: {
     eyebrow: "Jeton & récompenses",
     title: "Le KVR paie le calcul — et le récompense",
-    lede: "Le KVR est l’unité que les développeurs dépensent pour l’inférence et l’unité que les contributeurs gagnent pour les layers qu’ils exécutent. Les récompenses sont calculées à partir du travail réel, pas de la participation.",
+    lede: "Le KVR est l’unité que les développeurs dépensent pour l’inférence et l’unité que les contributeurs gagnent pour les layers qu’ils exécutent. Les récompenses de calcul proviennent du travail mesuré ; les hôtes de passerelle et de hub gagnent aussi pour leur disponibilité.",
     facts: [
       { k: "Symbole", v: "KVR", note: "nom on-chain « Kvasir », 6 decimals" },
       { k: "Chaîne", v: "Solana", note: "devnet aujourd’hui" },
@@ -182,9 +182,9 @@ export const fr: Dict = {
     whatForBody:
       "Un seul jeton, dans les deux sens : les développeurs dépensent des KVR pour lancer des inférences via la passerelle, et les contributeurs gagnent des KVR pour le calcul que fournissent leurs nœuds. C’est l’unité de compte du réseau pour le travail réel — voyez ci-dessous comment les récompenses se répartissent par rôle.",
     whatForChips: ["payer à l’inférence", "récompenser au layer", "régler sur Solana"],
-    custodyTitle: "Portefeuille non-dépositaire",
+    custodyTitle: "Portefeuille en auto-garde",
     custodyBody:
-      "Les récompenses sont réglées vers le propre portefeuille du propriétaire de chaque nœud. Les clés résident dans le portefeuille de l’utilisateur — navigateur, ordinateur ou mobile — jamais chez un opérateur. Vérifié sur quatre portefeuilles propriétaires distincts, chacun gagnant sa part de layers.",
+      "Les clés résident dans le portefeuille de l’utilisateur — navigateur, ordinateur ou mobile — jamais chez un opérateur. Les récompenses sont versées sur le propre portefeuille du propriétaire de chaque nœud, ce qui a été vérifié sur notre flotte de test avec quatre portefeuilles propriétaires. Sur le devnet, les KVR stakés et les crédits prépayés sont détenus par la trésorerie de la passerelle et suivis dans son registre jusqu’à la mise en service d’un programme de staking on-chain.",
     custodyChips: ["web", "desktop", "iOS", "Android"],
     devnetStrong: "Devnet, jeton utilitaire.",
     devnetBody:
@@ -227,7 +227,7 @@ export const fr: Dict = {
   tech: {
     eyebrow: "Sous le capot",
     title: "linkcpp — le moteur derrière le réseau",
-    lede: "linkcpp est le hub de contrôle ouvert qui transforme du matériel du quotidien en un moteur d’inférence distribué. Son ring runtime permet à chaque appareil de ne détenir que quelques layers et de transmettre l’état caché à son voisin — aucun maître central — tandis que le data plane standard de moteur d'inférence reste non forké.",
+    lede: "linkcpp est le hub de contrôle ouvert qui transforme du matériel du quotidien en un moteur d’inférence distribué. Son ring runtime permet à chaque appareil de ne détenir que quelques layers et de transmettre l’état caché à son voisin — aucun maître central dans l’anneau — tandis que le data plane du moteur d'inférence reste proche de l’upstream, avec un petit ensemble de correctifs.",
     taglineCaption: "— linkcpp, en ses propres mots",
     points: [
       {
@@ -236,7 +236,7 @@ export const fr: Dict = {
       },
       {
         title: "Hub de contrôle linkcpp",
-        body: "Un unique hub dockerisé — le plan de contrôle qui manquait au data plane RPC de moteur d'inférence. Il découvre les appareils, planifie le placement des layers, lance les workers standards et expose les passerelles. Source disponible sous la Business Source License (BSL).",
+        body: "Un unique hub dockerisé — le plan de contrôle qui manquait au data plane RPC du moteur d'inférence. Il découvre les appareils, planifie le placement des layers, lance les workers et expose les passerelles. Source disponible sous la Business Source License (BSL) 1.1.",
       },
       {
         title: "Placement distribué des layers",
@@ -248,7 +248,7 @@ export const fr: Dict = {
       },
     ],
     openText:
-      "La source est disponible sous la Business Source License (BSL) — lisez-la, exécutez-la et construisez dessus gratuitement en développement et en test. L'usage en production (commercial) requiert une licence achetée.",
+      "La source est disponible sous la Business Source License (BSL) 1.1 — lisez-la et construisez dessus librement. L'usage interne non monétisé est autorisé ; l'usage hébergé, embarqué ou générateur de revenus requiert une licence commerciale.",
   },
 
   roadmap: {
@@ -259,7 +259,7 @@ export const fr: Dict = {
       {
         phase: "Maintenant",
         title: "Inférence sur n’importe quel appareil, en direct",
-        body: "Les GPU, CPU, NPU et téléphones servent des layers à travers le ring runtime. Le 122B a tourné réparti sur 4 GPU ; la contribution est créditée de bout en bout ; les portefeuilles non-dépositaires sont livrés sur web/desktop/iOS/Android ; l’accès est sécurisé sur des domaines publics.",
+        body: "Les GPU, CPU et téléphones servent des layers à travers le ring runtime (prise en charge des NPU en cours). Un modèle de 122B a tourné de bout en bout sur trois machines physiques ; la contribution est créditée de bout en bout ; les portefeuilles web, desktop, iOS et Android conservent les clés sur l’appareil de l’utilisateur ; l’accès passe par HTTPS sur des domaines publics.",
       },
       {
         phase: "À venir",
@@ -275,28 +275,29 @@ export const fr: Dict = {
   },
 
   proof: {
-    pill: "Prouvé sur cette build",
-    title: "Une véritable inférence distribuée, tournant sur des domaines publics",
+    pill: "Vérifié sur notre flotte de test",
+    title: "Une véritable inférence distribuée, vérifiée sur plusieurs machines",
     items: [
-      "paramètres servis répartis sur 4 GPU AMD MI250",
-      "portefeuilles propriétaires distincts gagnant chacun leur part de layers",
+      "paramètres servis de bout en bout sur 3 machines physiques",
+      "portefeuilles de nœud distincts, chacun crédité pour sa part de layers (flotte de test)",
       "surfaces d’API — compatibles OpenAI + Anthropic",
       "plateformes de portefeuille — web · desktop · iOS · Android",
     ],
     strip:
-      "122B servi sur 4 GPU · compatible OpenAI + Anthropic · portefeuilles sur web / desktop / iOS / Android · en direct sur des domaines publics",
+      "122B servi sur 3 machines · compatible OpenAI + Anthropic · portefeuilles sur web / desktop / iOS / Android · Solana devnet",
   },
 
   footer: {
+    legal: "Conditions et confidentialité",
     ctaTitle: "Mettez votre GPU sur le réseau.",
     ctaBody:
       "Faites tourner un nœud et gagnez des KVR pour les layers que vous servez, ou branchez la passerelle sur votre application avec un endpoint compatible OpenAI/Anthropic.",
     tagline:
-      "La marque réseau de l’inférence IA décentralisée, propulsée par le hub de contrôle linkcpp — un moteur à source disponible (BSL) qui répartit de grands modèles sur des appareils du quotidien (sur un data plane standard moteur d'inférence).",
+      "La marque réseau de l’inférence IA décentralisée, propulsée par le hub de contrôle linkcpp — un moteur à source disponible (BSL) qui répartit de grands modèles sur des appareils du quotidien (sur un data plane de moteur d'inférence maintenu proche de l’upstream).",
     disclaimerStrong: "Avertissement.",
     disclaimer:
-      "Le KVR est un jeton utilitaire / de contribution utilisé pour payer l’inférence et récompenser le calcul. Il fonctionne aujourd’hui sur Solana devnet — ce n’est pas un actif mainnet négociable et rien ici ne constitue une offre, un prix ou une promesse de rendement financier. Les récompenses reflètent le calcul réel apporté, pas la participation.",
-    rights: "© 2026 Kvasir · linkcpp. Moteur sous la Business Source License (BSL) — gratuit pour le développement et les tests ; l'usage en production requiert une licence.",
+      "Le KVR est un jeton utilitaire / de contribution utilisé pour payer l’inférence et récompenser le calcul. Il fonctionne aujourd’hui sur Solana devnet — ce n’est pas un actif mainnet négociable et rien ici ne constitue une offre, un prix ou une promesse de rendement financier. Les récompenses de calcul reflètent le travail mesuré ; les hôtes d’infrastructure gagnent aussi pour leur disponibilité.",
+    rights: "© 2026 Kvasir · linkcpp. Moteur sous la Business Source License (BSL) 1.1 — consultez la licence pour les usages autorisés.",
   },
 
   guide: {
@@ -305,7 +306,7 @@ export const fr: Dict = {
     headline1: "Apportez de la puissance de calcul,",
     headline2: "exécutez un nœud.",
     sub: "Créez un portefeuille, mettez des KVR en jeu (stake), puis connectez votre appareil au réseau Kvasir et gagnez des KVR pour la puissance de calcul que vous apportez. Choisissez votre plateforme ci-dessous pour les étapes de téléchargement, d'installation et d'exécution.",
-    badgeCustody: "Non dépositaire — vos clés",
+    badgeCustody: "Auto-garde — vos clés",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR est un token utilitaire Solana devnet — pas un actif mainnet négociable ni un rendement financier.",
@@ -321,7 +322,7 @@ export const fr: Dict = {
       { title: "Téléchargez l'application", body: "Téléchargez l'installateur de Kvasir Wallet pour votre système d'exploitation ci-dessus. Un GPU (NVIDIA / AMD / Apple Silicon) est recommandé, mais le CPU fonctionne aussi.", body2: "" },
       { title: "Installez et ouvrez", body: "Exécutez l'installateur, puis ouvrez Kvasir Wallet. Sur macOS, si vous voyez un avertissement « développeur non identifié », autorisez-le dans Réglages Système → Confidentialité et sécurité.", body2: "" },
       { title: "Créez votre portefeuille", body: "Choisissez Créer un nouveau portefeuille. Notez votre phrase de récupération de 12 mots et conservez-la en lieu sûr — elle ne peut pas être récupérée si elle est perdue. Définissez ensuite une phrase de passe pour déverrouiller l'application. Les clés sont non dépositaires et stockées uniquement sur cet appareil.", body2: "" },
-      { title: "Alimentez et mettez en jeu des KVR", body: "Recevez des SOL devnet (pour les frais) et des KVR (à mettre en jeu) à l'adresse de réception de votre portefeuille. Dans le panneau de staking du tableau de bord, saisissez un montant et cliquez sur Mettre en jeu pour gagner des intérêts APR et devenir éligible aux récompenses de nœud.", body2: "" },
+      { title: "Alimentez et mettez en jeu des KVR", body: "Recevez des SOL devnet (pour les frais) et des KVR (à mettre en jeu) à l'adresse de réception de votre portefeuille. Dans le panneau de staking du tableau de bord, saisissez un montant et cliquez sur Mettre en jeu pour devenir éligible aux récompenses de nœud.", body2: "" },
       { title: "Configurez le nœud", body: "Dans Paramètres du nœud, choisissez le backend de calcul de cette machine (CUDA / ROCm / Metal / CPU) et sélectionnez Fragment local (recommandé) — il exécute le fragment de couches localement et ne relaie que le petit état de frontière, le mode le plus rapide.", body2: "" },
       { title: "Exécutez le nœud", body: "Activez Exécuter le nœud (en direct) pour enregistrer cette machine sur le réseau sous votre portefeuille (propriétaire) et la mettre en ligne.", body2: "Pour un véritable nœud de calcul GPU, exécutez également l'agent natif ci-dessous. Le planificateur du hub place les couches du modèle sur votre machine, et votre nœud gagne une part de KVR par couche, créditée au portefeuille propriétaire." },
       { title: "Suivez la contribution et les récompenses", body: "Dans Statut des nœuds, surveillez nœuds / en ligne / contribution effective / réclamable. Les nœuds sont classés par niveau selon leur débit (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7) ; brut × niveau = effectif. Utilisez Réclamer les récompenses pour transférer les KVR accumulés vers votre portefeuille.", body2: "" },
@@ -331,7 +332,7 @@ export const fr: Dict = {
     faucetWeb: "Web : faucet.solana.com — collez votre adresse et sélectionnez le réseau Devnet",
     faucetCli: "CLI : solana airdrop 2 <your address> --url devnet",
     faucetAlt: "Alternatives : QuickNode · SolFaucet devnet",
-    faucetKvr: "Obtenez des KVR à mettre en jeu via la distribution ou l'échange (échange KVR : SOL/ETH ↔ KVR — bientôt disponible).",
+    faucetKvr: "Obtenez des KVR devnet à mettre en jeu depuis le faucet de distribution.",
     mobileTitle: "Kvasir Wallet · Application {0}",
     mobileSub: "Créez un portefeuille et connectez votre appareil au réseau.",
     mobile: [
@@ -346,7 +347,7 @@ export const fr: Dict = {
     capPassphrase: "Définissez une phrase de passe → Commencer",
     capReceive: "Recevoir — adresse et QR (adresse partiellement masquée)",
     capBalances: "Solde du portefeuille — KVR · SOL",
-    capStaking: "Staking — APR · capital · intérêts · récompenses de nœud",
+    capStaking: "Panneau de staking (devnet)",
     capBackend: "Backend de calcul (CUDA · ROCm · Metal · CPU)",
     capMode: "Mode du nœud — Fragment local (recommandé)",
     capRunlive: "Exécuter le nœud (en direct) — jauges en direct · ID du nœud · OS",
@@ -416,7 +417,7 @@ export const fr: Dict = {
     codeLede: "Chargez la clé secrète de votre portefeuille depuis l'environnement, devisez, payez et échangez — un extrait autonome. Les étapes 1, 2 et 4 sont du HTTP pur ; seule l'étape 3 (le transfert SPL) diffère selon le SDK.",
     adapterTitle: "Adaptateur compatible OpenAI",
     adapterLede: "Vous avez déjà un client OpenAI (ou un outil qui ne parle qu'OpenAI) ? Lancez cet adaptateur prêt à l'emploi à côté de votre application. Il expose /v1/chat/completions et paie chaque appel depuis votre propre portefeuille — devis, signature, échange — en coulisses. Pointez la base URL de votre client vers l'adaptateur et utilisez n'importe quelle clé d'API factice.",
-    adapterNote: "Non custodial : le secret du portefeuille (KVR_SECRET_KEY) reste dans ce processus et n'atteint jamais Kvasir. Il n'existe pas de clé d'API Kvasir — l'authentification est le paiement KVR on-chain que votre adaptateur signe. Chaque appel est un aller-retour devis/paiement/échange ; mettez en cache ou groupez selon votre débit.",
+    adapterNote: "Non custodial : le secret du portefeuille (KVR_SECRET_KEY) reste dans ce processus et n'atteint jamais Kvasir. Dans ce mode de paiement à l'appel, il n'existe pas de clé d'API Kvasir — l'authentification est le paiement KVR on-chain que votre adaptateur signe (les crédits prépayés, ci-dessous, utilisent plutôt une clé d'API). Chaque appel est un aller-retour devis/paiement/échange ; mettez en cache ou groupez selon votre débit.",
     prereqTitle: "Avant de commencer",
     prereqs: [
       "Un portefeuille devnet Solana qui détient des KVR (pour payer) et un peu de SOL (pour les frais).",
@@ -495,22 +496,22 @@ export const fr: Dict = {
     pill: "Nous recrutons",
     headline1: "Marketing & Croissance",
     headline2: "faites grandir le réseau",
-    sub: "Kvasir est un réseau décentralisé d’inférence IA (DePIN) sur Solana. Le moteur open source linkcpp répartit de grands modèles ouverts sur de nombreux GPU et machines contribués, et chaque nœud gagne des KVR pour les couches qu’il a réellement servies. La technique fonctionne déjà — il nous faut la personne qui le fera savoir au monde.",
+    sub: "Kvasir est un réseau décentralisé d’inférence IA (DePIN) sur Solana. Le moteur linkcpp à source disponible répartit de grands modèles ouverts sur de nombreux GPU et machines contribués, et chaque nœud gagne des KVR pour les couches qu’il a réellement servies. La technique fonctionne déjà — il nous faut la personne qui le fera savoir au monde.",
     factRole: "Rôle",
     factRoleV: "Marketing & croissance — temps plein",
     factLocation: "Lieu",
     factLocationV: "À distance · fuseau États-Unis/Europe ou Asie du Sud-Est · ≥3–4 h de chevauchement quotidien avec KST",
     factComp: "Rémunération",
     factCompV:
-      "Equity early-stage (vesting 4 ans / cliff 1 an) + allocation de tokens conditionnée au TGE · essai rémunéré avant tout engagement",
+      "Equity early-stage (vesting 4 ans / cliff 1 an) · essai rémunéré avant tout engagement",
     factEngine: "Moteur",
     liveTitle: "Ce qui tourne déjà",
-    liveLede: "Vous ne rejoignez pas un whitepaper. Vérifié et en production aujourd’hui :",
+    liveLede: "Vous ne rejoignez pas un whitepaper. Vérifié et opérationnel aujourd’hui :",
     liveProof: [
-      "Modèles testés sur le réseau : Qwen3.5 122B, Qwen3.5 35B et Gemma4 12B — chacun découpé couche par couche sur plusieurs machines, aucun nœud ne détient le modèle entier.",
-      "Une flotte hétérogène en production de 21 nœuds : 4× AMD MI250 (hôte ARM), 4× NVIDIA GB10, 4× NVIDIA RTX Pro 6000, 1 MacBook Pro, 6 machines x86 Windows CPU et 2 nœuds mobiles (iOS + Android).",
+      "Modèles testés sur le réseau : Qwen3.5 122B, Qwen3.5 35B et Gemma4 12B — chacun découpé couche par couche sur plusieurs machines, de sorte qu’aucun nœud n’a besoin de détenir le modèle entier.",
+      "Une flotte hétérogène opérationnelle de 21 nœuds : 4× AMD MI250 (hôte ARM), 4× NVIDIA GB10, 4× NVIDIA RTX Pro 6000, 1 MacBook Pro, 6 machines x86 Windows CPU et 2 nœuds mobiles (iOS + Android).",
       "Comptabilisation de la contribution par nœud : chaque nœud gagne des KVR pondérés par sa part de couches sur chaque inférence servie, réglés sur son propre portefeuille.",
-      "Passerelle de paiement à l’inférence compatible OpenAI et Anthropic, en production sur notre propre domaine.",
+      "Passerelle de paiement à l’inférence compatible OpenAI et Anthropic, déployée sur notre propre domaine.",
       "Portefeuilles non dépositaires livrés sur web, desktop, iOS et Android, avec connexion par signature de portefeuille (Sign-In With Solana) + 2FA.",
     ],
     devnetNote:
@@ -537,7 +538,7 @@ export const fr: Dict = {
       },
       {
         title: "Soutien lancement & partenariats",
-        body: "Soutenir le marketing du lancement du token quand le réseau quittera le devnet, et appuyer la prospection de partenariats (flottes de GPU, portefeuilles, fournisseurs de modèles).",
+        body: "Appuyer la prospection de partenariats (flottes de GPU, portefeuilles, fournisseurs de modèles) et faire grandir la communauté des développeurs et des opérateurs de nœuds.",
       },
     ],
     profileTitle: "Qui nous cherchons",
@@ -545,7 +546,7 @@ export const fr: Dict = {
       "Marketeur crypto-natif : vous avez fait grandir une communauté ou un produit web3 à partir de zéro — vérifiable sur X, Discord ou on-chain.",
       "Une bonne connaissance de DePIN ou de la crypto-IA est un vrai plus ; vous savez expliquer à un possesseur de GPU pourquoi faire tourner un nœud.",
       "Anglais natif ou courant ; fuseau États-Unis/Europe ou Asie du Sud-Est avec ≥3–4 h de chevauchement quotidien avec KST (UTC+9).",
-      "À l’aise avec une rémunération early-stage : un equity significatif + un potentiel token plutôt qu’un gros salaire.",
+      "À l’aise avec une rémunération early-stage : un equity significatif plutôt qu’un gros salaire.",
       "Exécutant de terrain — vous publiez vous-même posts, campagnes et expériences.",
     ],
     processTitle: "Notre processus",
@@ -554,7 +555,7 @@ export const fr: Dict = {
     process: [
       {
         title: "Premier appel",
-        body: "Nous vous présentons le réseau en production et la feuille de route ; vous nous présentez une communauté ou une campagne que vous avez réellement construite.",
+        body: "Nous vous présentons le réseau en fonctionnement et la feuille de route ; vous nous présentez une communauté ou une campagne que vous avez réellement construite.",
       },
       {
         title: "Essai rémunéré (2–4 semaines)",
@@ -562,7 +563,7 @@ export const fr: Dict = {
       },
       {
         title: "Offre",
-        body: "Marketing & Croissance : equity avec vesting standard de 4 ans (cliff d’1 an) plus une allocation de tokens conditionnée au TGE ; une base en cash dès que le financement arrive.",
+        body: "Marketing & Croissance : equity avec vesting standard de 4 ans (cliff d’1 an) ; une base en cash dès que le financement arrive.",
       },
       {
         title: "Construire ensemble",

@@ -425,63 +425,6 @@ function ApiKeyIssuer({ a, copy, copied }: { a: Api; copy: string; copied: strin
   );
 }
 
-/* GitHub star gate (soft, growth-oriented). Content stays public/prerendered
-   for SEO; this is an interactive overlay only. Fails OPEN when the OAuth env
-   vars aren't configured yet, or on any network error, so the page never
-   breaks. z-40 keeps the header (z-50) usable so a visitor can navigate away. */
-function StarGate({ a }: { a: Api }) {
-  const [gate, setGate] = useState<"loading" | "open" | "signin" | "nostar">("loading");
-  const [login, setLogin] = useState<string | null>(null);
-  useEffect(() => {
-    fetch("/api/gh/status", { credentials: "same-origin" })
-      .then((r) => r.json())
-      .then((d) => {
-        if (!d.configured || d.starred) setGate("open");
-        else if (d.authed) {
-          setLogin(d.login);
-          setGate("nostar");
-        } else setGate("signin");
-      })
-      .catch(() => setGate("open"));
-  }, []);
-
-  if (gate === "open" || gate === "loading") return null;
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-bg/85 p-6 backdrop-blur-md">
-      <Card className="w-full max-w-md p-8 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400 ring-1 ring-brand-500/20">
-          <GithubIcon width={24} height={24} />
-        </div>
-        <h2 className="mt-5 text-2xl font-semibold text-ink">{a.gateTitle}</h2>
-        {gate === "signin" ? (
-          <>
-            <p className="mt-3 text-sm leading-relaxed text-ink-muted">{a.gateBody}</p>
-            <Button href="/api/gh/login" variant="primary" size="lg" className="mt-6 w-full justify-center">
-              <GithubIcon width={18} height={18} />
-              {a.gateSignIn}
-            </Button>
-          </>
-        ) : (
-          <>
-            <p className="mt-3 text-sm leading-relaxed text-ink-muted">{fill(a.gateStarBody, login || "")}</p>
-            <a
-              href="https://github.com/louisevandan/kvasir-net"
-              target="_blank"
-              rel="noreferrer"
-              className="mt-5 inline-flex text-sm font-medium text-brand-300 hover:underline"
-            >
-              {a.gateStarLink}
-            </a>
-            <Button href="/api/gh/login" variant="primary" size="lg" className="mt-4 w-full justify-center">
-              {a.gateRecheck}
-            </Button>
-          </>
-        )}
-      </Card>
-    </div>
-  );
-}
-
 export default function ApiDocsPage() {
   const t = useT();
   const a: Api = t.apiDocs;
@@ -496,7 +439,6 @@ export default function ApiDocsPage() {
   return (
     <div className="min-h-screen">
       <Nav />
-      <StarGate a={a} />
 
       {/* ambient background, mirrors the hero */}
       <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 bg-grid" />

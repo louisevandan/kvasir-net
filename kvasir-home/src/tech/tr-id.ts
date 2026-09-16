@@ -275,7 +275,7 @@ x = x + combine(p, partials) + shared(cur)  # backbone — numerically exact`,
       { t: "h2", kick: "Model kepercayaan", text: "Verifikasi fakta on-chain, bukan klaim klien" },
       {
         t: "p",
-        md: "Model kustodi Kvasir menaruh kunci pada pengguna: dompet menandatangani transaksi, Solana mencatatnya, dan satu-satunya tugas layanan settlement adalah **memverifikasi apa yang benar-benar terjadi di chain** sebelum menyentuh saldo. Pembayaran mengikuti *quote → payment → inference*, dengan setiap tanda tangan transaksi yang terpakai dicatat di registri sekali-pakai `usedSignatures` sehingga tak pernah bisa diajukan dua kali. Itu menjadikan layanan settlement titik sempit — dan aturan yang tak boleh dilanggarnya: hanya kreditkan yang dibuktikan chain, jangan pernah yang diklaim klien.",
+        md: "Model kustodi Kvasir menaruh kunci pada pengguna: dompet menandatangani transaksi, Solana mencatatnya, dan tugas layanan settlement adalah **memverifikasi apa yang benar-benar terjadi di chain** sebelum menyentuh saldo. Pembayaran mengikuti *quote → payment → inference*, dengan setiap tanda tangan transaksi yang terpakai dicatat di registri sekali-pakai `usedSignatures` sehingga tak pernah bisa diajukan dua kali. Itu menjadikan layanan settlement titik sempit — dan aturan yang tak boleh dilanggarnya: hanya kreditkan yang dibuktikan chain, jangan pernah yang diklaim klien. Layanan ini memang memegang dana di devnet: KVR yang di-stake dan kredit prabayar berada di treasury-nya dan dicatat di buku besarnya hingga program staking on-chain dirilis.",
       },
       { t: "img", src: "/blog/securing-the-kvr-money-path.jpg", alt: "A settlement vault guarded by three locks: sender binding, trusted reporter, and a serialization gate" },
       { t: "h2", kick: "Perbaikan #1 · pengikatan pengirim", text: "Ikat pembayaran ke pembayarnya" },
@@ -344,27 +344,27 @@ inside the lock:
   },
   "linkcpp-control-plane": {
     title: "Phase 0 — Mesinnya: linkcpp, bidang kendali untuk mesin inferensi",
-    dek: "mesin inferensi membawa bidang data RPC yang cakap tapi tanpa bidang kendali. linkcpp menambahkan separuh yang hilang — penemuan, perencanaan, peluncuran, dan gateway — di sekeliling binari standar.",
+    dek: "mesin inferensi membawa bidang data RPC yang cakap tapi tanpa bidang kendali. linkcpp menambahkan separuh yang hilang — penemuan, perencanaan, peluncuran, dan gateway — di sekeliling binari yang dibangun dekat dengan upstream.",
     blocks: [
       {
         t: "p",
-        md: "Semua yang dijalankan Kvasir bermula di sini. **linkcpp** adalah bidang kendali bersumber tersedia (Business Source License) di sekeliling bidang data RPC mesin inferensi: ia menjalankan model AI besar di banyak GPU dan mesin memakai binari `ggml-rpc-server` / `llama-server` *standar*. Bidang datanya tetap tanpa fork — semua yang ditambahkan linkcpp adalah orkestrasi.",
+        md: "Semua yang dijalankan Kvasir bermula di sini. **linkcpp** adalah bidang kendali bersumber tersedia (Business Source License) di sekeliling bidang data RPC mesin inferensi: ia menjalankan model AI besar di banyak GPU dan mesin memakai binari `ggml-rpc-server` / `llama-server` yang dibangun dekat dengan upstream. Bidang datanya hanya membawa sekumpulan kecil patch — semua hal lain yang ditambahkan linkcpp adalah orkestrasi.",
       },
       { t: "h2", kick: "Celahnya", text: "Bidang data tanpa bidang kendali" },
       {
         t: "p",
         md: "mesin inferensi sudah bisa membagi model antar mesin lewat RPC — tapi seseorang harus menemukan GPU, memutuskan lapisan mana ke mana, meluncurkan worker yang tepat dengan anggaran yang tepat, memeriksa bahwa tiap node berbicara protokol yang sama, dan mengekspos API yang benar-benar bisa dipanggil pengembang. Melakukannya manual untuk satu klaster merepotkan; melakukannya untuk jaringan terbuka berisi perangkat orang asing mustahil. Lapisan koordinasi itulah linkcpp.",
       },
-      { t: "h2", kick: "Arsitektur", text: "Satu hub, worker standar, gateway standar" },
+      { t: "h2", kick: "Arsitektur", text: "Satu hub, worker berbasis upstream, gateway standar" },
       {
         t: "code",
-        caption: "Alur permintaan — hub mengorkestrasi, binari standar menghitung.",
+        caption: "Alur permintaan — hub mengorkestrasi, binari berbasis upstream menghitung.",
         code: `browser / SDK
   → hub :19000                      # FastAPI control plane (single Docker image)
   → GPU-less llama-server master    # per-controller, :8080+
   → ggml-rpc-server workers         # local slots, remote units, managed agents`,
       },
-      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of stock mesin inferensi engines below" },
+      { t: "img", src: "/blog/linkcpp-control-plane.jpg", alt: "A control deck orchestrating rows of inference engines below" },
       {
         t: "ul",
         items: [
@@ -376,13 +376,13 @@ inside the lock:
       },
       {
         t: "p",
-        md: "Pemisahan yang disengaja ini — bidang data tak diubah di bawah bidang kendali terbuka — adalah fondasi semua yang menyusul: ring runtime, pasar lapisan, dan akhirnya swarm pakar semuanya adalah evolusi bidang kendali di atas komputasi standar yang sama.",
+        md: "Pemisahan yang disengaja ini — bidang data yang tetap dekat dengan upstream di bawah bidang kendali bersumber tersedia — adalah fondasi semua yang menyusul: ring runtime, pasar lapisan, dan akhirnya swarm pakar semuanya adalah evolusi bidang kendali di atas komputasi yang sama.",
       },
     ],
   },
   "ring-topology-pipeline-inference": {
     title: "Phase 1 — Ring: inferensi pipeline tanpa master",
-    dek: "Setiap perangkat hanya memuat jendela lapisannya dan meneruskan batas hidden-state kecil ke tetangganya. Tak ada node yang memegang model; tak ada master pusat.",
+    dek: "Setiap perangkat hanya memuat jendela lapisannya dan meneruskan batas hidden-state kecil ke tetangganya. Tak ada node yang harus memegang seluruh model, dan ring tak memiliki master pusat.",
     blocks: [
       { t: "h2", kick: "Mengapa bukan bintang", text: "Master RPC adalah leher botol sekaligus penjaga gerbang" },
       {
@@ -394,7 +394,7 @@ inside the lock:
         t: "ul",
         items: [
           "Setiap perangkat menyimpan model yang sama tapi **hanya memuat jendela lapisan bersambungnya**, lalu membuka tepat dua tautan: satu ke pendahulu, satu ke penerus.",
-          "Permintaan masuk ke ring; tiap node menjalankan lapisannya dan hanya meneruskan **batas hidden-state** ke tetangganya. Rank terakhir menyampel token dan mengirimnya balik — tanpa master pusat, dan tak ada node yang memegang model utuh.",
+          "Permintaan masuk ke ring; tiap node menjalankan lapisannya dan hanya meneruskan **batas hidden-state** ke tetangganya. Rank terakhir menyampel token dan mengirimnya balik — tanpa master pusat di jalur data, dan tak ada node yang memegang model utuh.",
           "Penempatan berasal dari **rank manifest** planner — untuk Qwen3.5-122B, 49 lapisan dibagi ke campuran GPU, CPU, NPU, dan ponsel apa pun yang muncul.",
         ],
       },
@@ -755,7 +755,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "Roda gila", text: "Mengapa pemakaian dan pasokan tumbuh bersama" },
       {
         t: "p",
-        md: "Mesin siklusnya adalah satu aturan yang sudah berlaku di Kvasir: **inferensi harus dibayar dalam KVR**. Itu menjadikan tiap unit pemakaian sebagai unit permintaan nyata atas token — utilitas, bukan spekulasi. Permintaan token menopang nilai KVR yang diperoleh node; imbalan yang menarik menarik masuk pasokan; pasokan memperluas kapasitas dan, lewat persaingan dan sharding pakar yang lebih halus, menurunkan biaya marjinal melayani; layanan yang lebih murah, lebih cepat, lebih cakap menarik lebih banyak pemakaian. Kvasir mengetatkan lingkar itu dengan sifat yang tak bisa ditiru API terpusat mana pun: seorang peserta bisa menjadi **konsumen dan pemasok sekaligus**. Sisi permintaan dan sisi pasokan kerap tumbuh di dalam *orang yang sama*, yang meredam ketimpangan yang merusak pasar satu sisi.",
+        md: "Mesin siklusnya adalah satu aturan yang sudah berlaku di Kvasir: **inferensi harus dibayar dalam KVR**. Itu mengikat token pada pemakaian nyata — utilitas, bukan spekulasi. Pemakaian mendanai KVR yang diperoleh node; imbalan yang adil menarik masuk pasokan; pasokan memperluas kapasitas dan, lewat persaingan dan sharding pakar yang lebih halus, menurunkan biaya marjinal melayani; layanan yang lebih murah, lebih cepat, lebih cakap menarik lebih banyak pemakaian. Kvasir mengetatkan lingkar itu dengan sifat yang tak bisa ditiru API terpusat mana pun: seorang peserta bisa menjadi **konsumen dan pemasok sekaligus**. Sisi permintaan dan sisi pasokan kerap tumbuh di dalam *orang yang sama*, yang meredam ketimpangan yang merusak pasar satu sisi.",
       },
       { t: "h2", kick: "Mode kegagalan", text: "Empat spiral yang memutar roda mundur" },
       {
@@ -777,7 +777,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
         t: "ul",
         items: [
           "**Imbalan didanai pendapatan nyata.** Pada kondisi mapan, yang diperoleh node berasal dari yang dibayar konsumen — bukan dari emisi token tanpa batas. Emisi adalah subsidi perintis yang harus *meruncing* seiring pendapatan biaya tumbuh. Kvasir sudah membantu di sini dengan mengganjar **kerja nyata** — KVR per token yang benar-benar dilayani × porsi lapisan, bukan sekadar kehadiran — sehingga subsidi tak bisa bocor ke node 'tentara bayaran' yang menganggur.",
-          "**KVR adalah medium wajib.** Karena Anda tak bisa berinferensi tanpa membayar KVR, pemakaian adalah lubuk permintaan permanen bagi token. Itu menambatkan nilai token pada utilitas nyata alih-alih spekulasi — beda antara mata uang dan keping judi.",
+          "**KVR adalah medium wajib.** Karena Anda tak bisa berinferensi tanpa membayar KVR, peran token terikat pada pemakaian nyata alih-alih spekulasi — ia adalah satuan hitung untuk inferensi, bukan investasi.",
           "**Harga mengambang di dalam pita.** Lantai yang dijaga di atas biaya marjinal node menjaga melayani tetap sepadan; langit-langit yang dijaga di bawah alternatif terpusat menjaga Kvasir tetap kompetitif. Di antara keduanya, harga bergerak — dan di situlah pertumbuhan jaringan akhirnya tampak sebagai biaya lebih rendah.",
         ],
       },
@@ -792,7 +792,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "Tak satu pun dari ini menuntut desain mekanisme yang eksotis. Ia menuntut disiplin atas tiga hal: imbalan dari pendapatan, nilai dari pemakaian, keseimbangan dari harga mengambang yang terbatas. Kvasir sudah mengirim bagian yang sulit dan jujur — penyelesaian non-kustodial, imbalan sebanding kerja, token yang benar-benar harus Anda belanjakan untuk memakai jaringan. Sisanya adalah peta jalan ekonomi: peruncingan, pembagian biaya yang mendanai kumpulan asuransi untuk inferensi gagal, dan termostat. Dibangun dalam urutan itu, biaya dan imbalan berhenti bertikai dan mulai saling menggandakan.",
+        md: "Tak satu pun dari ini menuntut desain mekanisme yang eksotis. Ia menuntut disiplin atas tiga hal: imbalan dari pendapatan, utilitas dari pemakaian, keseimbangan dari harga mengambang yang terbatas. Kvasir sudah mengirim bagian yang sulit dan jujur — imbalan yang dibayarkan ke dompet milik tiap node, imbalan sebanding kerja, token yang benar-benar harus Anda belanjakan untuk memakai jaringan. Sisanya adalah peta jalan ekonomi: peruncingan, pembagian biaya yang mendanai kumpulan asuransi untuk inferensi gagal, dan termostat. Dibangun dalam urutan itu, biaya dan imbalan berhenti bertikai dan mulai saling menggandakan.",
       },
     ],
   },
@@ -806,7 +806,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       },
       {
         t: "p",
-        md: "Premis Kvasir adalah *perangkat keras apa pun yang datang* — termasuk perangkat keras di balik NAT operator, di internet publik, di kota berbeda. Qwen3.5-122B-A10B membawa **86% bobotnya dalam 12,544 pakar independen** (48 lapisan × 256, top-8), masing-masing fungsi murni 5.3 MB. Butiran itulah yang membuat mesin jauh yang tak berkaitan bisa memegang satu irisan dan berkontribusi. Pertanyaan terbuka tak pernah *bisakah kita membaginya* — melainkan *bisakah sebuah worker lintas internet terbuka benar-benar ikut dalam dekode langsung, dengan benar dan dapat dipertanggungjawabkan*. Kini sudah bisa.",
+        md: "Premis Kvasir adalah *perangkat keras apa pun yang datang* — termasuk perangkat keras di balik NAT operator, di internet publik, di kota berbeda. Qwen3.5-122B-A10B membawa **86% bobotnya dalam 12,544 pakar independen** (49 lapisan × 256, top-8), masing-masing fungsi murni 5.3 MB. Butiran itulah yang membuat mesin jauh yang tak berkaitan bisa memegang satu irisan dan berkontribusi. Pertanyaan terbuka tak pernah *bisakah kita membaginya* — melainkan *bisakah sebuah worker lintas internet terbuka benar-benar ikut dalam dekode langsung, dengan benar dan dapat dipertanggungjawabkan*. Kini sudah bisa.",
       },
       { t: "img", src: "/blog/remote-gpu-joins-122b.jpg", alt: "A GPU in one city dialing a single outbound line into a decode running elsewhere" },
       { t: "h2", kick: "Satu panggilan keluar", text: "Tanpa terowongan, tanpa port masuk" },
@@ -843,7 +843,7 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       { t: "h2", kick: "Dibayar tepat atas kerjanya", text: "Byte terukur menjadi KVR" },
       {
         t: "p",
-        md: "Partisipasi tak berarti jika tak dapat dipertanggungjawabkan. Relay **mengukur byte yang dijembatani per sesi** ke dalam buku besar kontribusi hub; gateway mem-poll buku besar itu dan meng-kredit-delta KVR ke dompet **milik** worker sendiri — non-kustodial, seperti segala hal lainnya. Sesi lintas-internet pertama benar-benar terakumulasi: **1.28 MB kerja → 1.277952 unit → 0.00895 KVR** dalam imbalan tertunda. Kecil, dan itulah maksudnya — ini penyelesaian nyata per-kerja, bukan piala partisipasi.",
+        md: "Partisipasi tak berarti jika tak dapat dipertanggungjawabkan. Relay **mengukur byte yang dijembatani per sesi** ke dalam buku besar kontribusi hub; gateway mem-poll buku besar itu dan meng-kredit-delta KVR ke dompet **milik** worker sendiri. Sesi lintas-internet pertama benar-benar terakumulasi: **1.28 MB kerja → 1.277952 unit → 0.00895 KVR** dalam imbalan tertunda. Kecil, dan itulah maksudnya — ini penyelesaian nyata per-kerja, bukan piala partisipasi.",
       },
       {
         t: "p",
@@ -906,22 +906,22 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "pakar · perutean", "per-pakar (Q4≈)", "bersama", "status"],
         rows: [
-          ["Qwen3.5-122B (dilayani hari ini)", "256 · top-8", "5.3 MB (terukur)", "ya", "di produksi"],
+          ["Qwen3.5-122B (dilayani hari ini)", "256 · top-8", "5.3 MB (terukur)", "ya", "dilayani (armada uji)"],
           ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "ya", "siap — kandidat pertama"],
-          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ya", "siap (hook terverifikasi)"],
-          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "tidak", "siap (hook terverifikasi)"],
-          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "ya", "siap (graf deepseek2)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "ya", "siap (keluarga deepseek)"],
+          ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ya", "direncanakan (hook terverifikasi)"],
+          ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "tidak", "direncanakan (hook terverifikasi)"],
+          ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "ya", "direncanakan (graf deepseek2)"],
+          ["Kimi K2 1T", "384 · top-8", "~25 MB", "ya", "direncanakan (keluarga deepseek)"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "tidak", "siap"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "tidak", "siap"],
-          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "ya", "siap (MoE tiap lapisan berselang)"],
+          ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "ya", "direncanakan (MoE tiap lapisan berselang)"],
           ["MiniMax M3 428B", "128 · top-4", "TBD (GGUF)", "ya", "menunggu mesin upstream"],
           ["Mixtral 8×22B", "8 · top-2", "~170 MB", "tidak", "berfungsi — hanya worker GPU"],
         ],
       },
       {
         t: "p",
-        md: "Industri sedang berkonvergensi ke MoE berbutir-halus — pakar lebih kecil, lebih banyak, sparsitas lebih tinggi (DeepSeek, Qwen, Kimi, GLM, gpt-oss semuanya bergerak ke arah ini). Tiap langkah ke arah itu membuat unit partisipasi swarm lebih kecil dan butiran pasar kelangkaan lebih halus. Model-model di atas bukan daftar keinginan; masing-masing sudah mengalir lewat hook dispatch yang sama yang kami jalankan di produksi — onboarding adalah gerbang verifikasi, bukan proyek rekayasa.",
+        md: "Industri sedang berkonvergensi ke MoE berbutir-halus — pakar lebih kecil, lebih banyak, sparsitas lebih tinggi (DeepSeek, Qwen, Kimi, GLM, gpt-oss semuanya bergerak ke arah ini). Tiap langkah ke arah itu membuat unit partisipasi swarm lebih kecil dan butiran pasar kelangkaan lebih halus. Model-model di atas bukan daftar keinginan; masing-masing sudah mengalir lewat hook dispatch yang sama yang kami jalankan di armada uji kami — onboarding adalah gerbang verifikasi, bukan proyek rekayasa.",
       },
     ],
   },

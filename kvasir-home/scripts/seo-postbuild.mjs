@@ -223,7 +223,7 @@ const staticRoutes = [
     path: "/run-node",
     title: "Run a node — Kvasir",
     description:
-      "Turn your machine into a Kvasir node. Contribute GPU, CPU, NPU or even a phone to the decentralized inference ring and earn KVR for the layers you serve. Non-custodial, Solana devnet.",
+      "Turn your machine into a Kvasir node. Contribute GPU, CPU, NPU or even a phone to the decentralized inference ring and earn KVR for the layers you serve. Self-custody wallet, Solana devnet.",
     image: `${ORIGIN}/og.png`,
     kind: "website",
     bodyHtml:
@@ -249,8 +249,19 @@ const staticRoutes = [
     image: `${ORIGIN}/og.png`,
     kind: "website",
     bodyHtml:
-      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Kvasir developer API</h1><p class="mt-4 text-lg text-ink-muted">Pay-per-inference in KVR over an OpenAI-compatible surface: discover a model, quote, pay on-chain from your own wallet, redeem. Non-custodial, Solana devnet.</p></section>`,
+      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Kvasir developer API</h1><p class="mt-4 text-lg text-ink-muted">Pay-per-inference in KVR over an OpenAI-compatible surface: discover a model, quote, pay on-chain from your own wallet, redeem. Solana devnet.</p></section>`,
     jsonld: [breadcrumb([["API", "/docs/api"]])],
+  },
+  {
+    path: "/legal",
+    title: "Terms of use & privacy — Kvasir",
+    description:
+      "Terms of use and privacy notice for the Kvasir devnet preview: the website, gateway, hub and wallet apps, and the data they handle.",
+    image: `${ORIGIN}/og.png`,
+    kind: "website",
+    bodyHtml:
+      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Terms of use &amp; privacy</h1><p class="mt-4 text-lg text-ink-muted">Kvasir is a devnet preview. KVR is a devnet utility token with no monetary value. Wallet keys stay on your device; on devnet, staked KVR and prepaid credits are held by the gateway treasury. Pay-per-call prompts and answers are stored by the gateway.</p></section>`,
+    jsonld: [breadcrumb([["Terms & privacy", "/legal"]])],
   },
   {
     path: "/technology",
@@ -338,9 +349,11 @@ function pageHtml(r) {
   html = html.replace("</head>", `    ${inject.join("\n    ")}\n  </head>`);
 
   // prerendered body into #root (SPA createRoot replaces it on mount)
+  // Function replacer: bodyHtml can contain "$" sequences (e.g. "~$100") that a
+  // string replacement would treat as capture-group references.
   html = html.replace(
     /(<div id="root">)(<\/div>)/,
-    `$1<div data-prerender>${r.bodyHtml}</div>$2`
+    (_m, open, close) => `${open}<div data-prerender>${r.bodyHtml}</div>${close}`
   );
   return html;
 }
@@ -399,7 +412,7 @@ writeFileSync(
 let notFound = template
   .replace(/<title>[\s\S]*?<\/title>/, `<title>Not found — Kvasir</title>`)
   .replace(/<meta name="robots"[^>]*\/>/, `<meta name="robots" content="noindex" />`)
-  .replace(/(<div id="root">)(<\/div>)/, `$1<div data-prerender><section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Page not found</h1><p class="mt-4 text-ink-muted"><a class="text-brand-300 hover:underline" href="/">Return home</a></p></section></div>$2`);
+  .replace(/(<div id="root">)(<\/div>)/, (_m, open, close) => `${open}<div data-prerender><section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Page not found</h1><p class="mt-4 text-ink-muted"><a class="text-brand-300 hover:underline" href="/">Return home</a></p></section></div>${close}`);
 writeFileSync(resolve(DIST, "404.html"), notFound, "utf8");
 
 console.log(`[seo] prerendered ${count} routes · feed.xml (${sorted.length} items) · sitemap.xml (${ALL.length} urls) · 404.html`);

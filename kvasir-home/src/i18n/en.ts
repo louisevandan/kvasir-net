@@ -39,7 +39,7 @@ export const en = {
     eyebrow: "DePIN · Decentralized AI — beyond the monopoly",
     headline1: "Bring compute.",
     headline2: "Earn KVR.",
-    sub: "Kvasir splits large open models across shared hardware with linkcpp, so no single node holds the whole model. Contribute a GPU, CPU, NPU — even a phone — and earn KVR for the layers you run.",
+    sub: "Kvasir splits large open models across shared hardware with linkcpp, so no single node has to hold the whole model. Contribute a GPU, CPU or phone — and earn KVR for the layers you run.",
     badges: [
       "Runs on GPU · CPU · NPU · phone",
       "OpenAI + Anthropic compatible",
@@ -48,7 +48,7 @@ export const en = {
     ],
     ringCenter: "one ring · no master",
     topologyCaption:
-      "A ring of devices — a GPU, CPU, NPU and phone — each holding a few of the 49 layers. Every node runs its slice and passes only the hidden-state boundary to its neighbor; the last returns the token around the ring. No node holds the whole model, and no central master — illustrative.",
+      "A ring of devices — a GPU, CPU, NPU and phone — each holding a few of the 49 layers. Every node runs its slice and passes only the hidden-state boundary to its neighbor; the last returns the token around the ring. No node has to hold the whole model, and the ring has no central master — illustrative.",
   },
 
   thesis: {
@@ -64,10 +64,10 @@ export const en = {
     ],
     kvasirLabel: "Kvasir",
     kvasirPoints: [
-      "Any device joins a peer-to-peer ring — no central master",
+      "Any device joins a peer-to-peer ring — no central master in the ring",
       "Source-available linkcpp engine — BSL-licensed and fully inspectable",
       "Contributors earn KVR for the real compute they give",
-      "Non-custodial — your keys, your node, your rewards",
+      "Self-custody wallet — your keys never leave your device",
     ],
   },
 
@@ -97,11 +97,11 @@ export const en = {
   how: {
     eyebrow: "How it works",
     title: "One model, many devices, paid per layer",
-    lede: "No single node holds the whole model. A request flows across the layer path and each node is rewarded for exactly the work it did.",
+    lede: "No single node has to hold the whole model. A request flows across the layer path and each node is rewarded for exactly the work it did.",
     steps: [
       {
         title: "Split",
-        body: "The model is divided into contiguous layer windows. Every device stores the same model but loads only its window — no node holds the whole thing.",
+        body: "The model is divided into contiguous layer windows. Every device keeps a copy of the model file but loads only its own window into memory, so no node has to run the whole thing.",
         note: "Qwen3.5-122B · 49 layers · rank manifest",
       },
       {
@@ -122,11 +122,11 @@ export const en = {
     title: "Turn idle compute into KVR",
     lede: "Point a supported device at the network and it starts serving layers. You earn KVR proportional to the layers your node runs — your keys stay in your own wallet.",
     nonCustodial:
-      "Non-custodial by design — operator login is a wallet signature (Sign-In With Solana) with optional 2FA.",
+      "Wallet-signature login — operator access uses Sign-In With Solana with optional 2FA; there are no passwords.",
     points: [
       {
         title: "Any device can join",
-        body: "GPUs, CPUs, NPUs and phones all run layers today. A peer-to-peer ring runtime lets each device hold just a few layers and pass only small boundary state to its neighbor — so no gatekeeper, and no single owner.",
+        body: "GPUs, CPUs and phones run layers today, and NPU support is in progress. A peer-to-peer ring runtime lets each device hold just a few layers and pass only small boundary state to its neighbor — so no gatekeeper, and no single owner.",
       },
       {
         title: "Layer-share rewards",
@@ -168,7 +168,7 @@ export const en = {
   token: {
     eyebrow: "Token & rewards",
     title: "KVR pays for compute — and rewards it",
-    lede: "KVR is the unit developers spend on inference and the unit contributors earn for the layers they run. Rewards are computed from real work, not participation.",
+    lede: "KVR is the unit developers spend on inference and the unit contributors earn for the layers they run. Compute rewards come from measured work; gateway and hub hosts also earn for uptime.",
     facts: [
       { k: "Symbol", v: "KVR", note: "on-chain name “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "devnet today" },
@@ -179,9 +179,9 @@ export const en = {
     whatForBody:
       "One token, both directions: developers spend KVR to run inference through the gateway, and contributors earn KVR for the compute their nodes provide. It is the network’s unit of account for real work — see how rewards break down by role below.",
     whatForChips: ["pay per inference", "reward per layer", "settle on Solana"],
-    custodyTitle: "Non-custodial wallet",
+    custodyTitle: "Self-custody wallet",
     custodyBody:
-      "Rewards settle to each node’s own owner wallet. Keys live in the user’s wallet — browser, desktop, or mobile — never with an operator. Verified across four distinct owner wallets, each earning its layer share.",
+      "Keys live in the user’s wallet — browser, desktop, or mobile — never with an operator. Rewards are paid to each node’s own owner wallet, verified on our test fleet across four owner wallets. On devnet, staked KVR and prepaid credits are held by the gateway's treasury and tracked in its ledger until an on-chain staking program ships.",
     custodyChips: ["web", "desktop", "iOS", "Android"],
     devnetStrong: "Devnet, utility token.",
     devnetBody:
@@ -224,7 +224,7 @@ export const en = {
   tech: {
     eyebrow: "Under the hood",
     title: "linkcpp — the engine behind the network",
-    lede: "linkcpp is the open control hub that turns everyday hardware into a distributed inference engine. Its ring runtime lets each device hold only a few layers and pass hidden state to its neighbor — no central master — while the stock inference engine data plane stays unforked.",
+    lede: "linkcpp is the open control hub that turns everyday hardware into a distributed inference engine. Its ring runtime lets each device hold only a few layers and pass hidden state to its neighbor — no central master in the ring — while the inference engine data plane stays close to upstream, with a small patch set.",
     taglineCaption: "— linkcpp, in its own words",
     points: [
       {
@@ -233,7 +233,7 @@ export const en = {
       },
       {
         title: "linkcpp control hub",
-        body: "A single Dockerized hub — the control plane inference engine’s RPC data plane was missing. It discovers devices, plans layer placement, launches the stock workers, and exposes the gateways. Source-available under the Business Source License (BSL).",
+        body: "A single Dockerized hub — the control plane that the inference engine’s RPC data plane was missing. It discovers devices, plans layer placement, launches the workers, and exposes the gateways. Source-available under the Business Source License (BSL) 1.1.",
       },
       {
         title: "Distributed layer placement",
@@ -245,7 +245,7 @@ export const en = {
       },
     ],
     openText:
-      "The source is available under the Business Source License (BSL) — read it, run it, and build on it for free in development and testing. Production or commercial use requires a purchased license.",
+      "The source is available under the Business Source License (BSL) 1.1 — read it and build on it freely. Non-monetized internal use is permitted; hosted, embedded or revenue-generating use requires a commercial license.",
   },
 
   roadmap: {
@@ -256,7 +256,7 @@ export const en = {
       {
         phase: "Now",
         title: "Any-device inference, live",
-        body: "GPUs, CPUs, NPUs and phones serve layers across the ring runtime. 122B ran split across 4 GPUs; contribution is credited end-to-end; non-custodial wallets ship on web/desktop/iOS/Android; access is secured on public domains.",
+        body: "GPUs, CPUs and phones serve layers across the ring runtime (NPU support in progress). A 122B model ran end to end across three physical machines; contribution is credited end to end; wallets on web, desktop, iOS and Android keep keys on the user's device; access runs over HTTPS on public domains.",
       },
       {
         phase: "Coming",
@@ -272,28 +272,29 @@ export const en = {
   },
 
   proof: {
-    pill: "Proven this build",
-    title: "Real distributed inference, running on public domains",
+    pill: "Verified on our test fleet",
+    title: "Real distributed inference, verified across machines",
     items: [
-      "params served split across 4 AMD MI250 GPUs",
-      "distinct owner wallets each earning their layer share",
+      "params served end to end across 3 physical machines",
+      "separate node wallets, each credited for its layer share (test fleet)",
       "API surfaces — OpenAI + Anthropic compatible",
       "wallet platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "122B served across 4 GPUs · OpenAI + Anthropic compatible · wallets on web / desktop / iOS / Android · live on public domains",
+      "122B served across 3 machines · OpenAI + Anthropic compatible · wallets on web / desktop / iOS / Android · Solana devnet",
   },
 
   footer: {
+    legal: "Terms & Privacy",
     ctaTitle: "Put your GPU on the network.",
     ctaBody:
       "Run a node and earn KVR for the layers you serve, or plug the gateway into your app with an OpenAI/Anthropic-compatible endpoint.",
     tagline:
-      "The network brand for decentralized AI inference, powered by the linkcpp control hub — a source-available (BSL) engine that splits large models across everyday devices (on a stock inference engine data plane).",
+      "The network brand for decentralized AI inference, powered by the linkcpp control hub — a source-available (BSL) engine that splits large models across everyday devices (on an inference engine data plane kept close to upstream).",
     disclaimerStrong: "Disclaimer.",
     disclaimer:
-      "KVR is a utility / contribution token used to pay for inference and to reward compute. It runs on Solana devnet today — it is not a tradable mainnet asset and nothing here is an offer, price, or promise of financial return. Rewards reflect real compute contributed, not participation.",
-    rights: "© 2026 Kvasir · linkcpp. Engine under the Business Source License (BSL) — free for development and testing; production use requires a license.",
+      "KVR is a utility / contribution token used to pay for inference and to reward compute. It runs on Solana devnet today — it is not a tradable mainnet asset and nothing here is an offer, price, or promise of financial return. Compute rewards reflect measured work; infrastructure hosts also earn for uptime.",
+    rights: "© 2026 Kvasir · linkcpp. Engine under the Business Source License (BSL) 1.1 — see the license for permitted use.",
   },
 
   guide: {
@@ -302,7 +303,7 @@ export const en = {
     headline1: "Bring compute,",
     headline2: "run a node.",
     sub: "Create a wallet, stake KVR, then connect your device to the Kvasir network and earn KVR for the compute you contribute. Pick your platform below for download, install and run steps.",
-    badgeCustody: "Non-custodial — your keys",
+    badgeCustody: "Self-custody — your keys",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR is a Solana devnet utility token — not a tradable mainnet asset or a financial return.",
@@ -318,7 +319,7 @@ export const en = {
       { title: "Download the app", body: "Download the Kvasir Wallet installer for your OS above. A GPU (NVIDIA / AMD / Apple Silicon) is recommended, but CPU works too.", body2: "" },
       { title: "Install and open", body: "Run the installer, then open Kvasir Wallet. On macOS, if you see an “unidentified developer” warning, allow it in System Settings → Privacy & Security.", body2: "" },
       { title: "Create your wallet", body: "Choose Create new wallet. Write down your 12-word recovery phrase and keep it safe — it cannot be recovered if lost. Then set a passphrase to unlock the app. Keys are non-custodial and stored only on this device.", body2: "" },
-      { title: "Fund & stake KVR", body: "Receive some devnet SOL (for fees) and KVR (to stake) at your wallet’s Receive address. In the dashboard staking panel, enter an amount and Stake to earn APR interest and qualify for node rewards.", body2: "" },
+      { title: "Fund & stake KVR", body: "Receive some devnet SOL (for fees) and KVR (to stake) at your wallet’s Receive address. In the dashboard staking panel, enter an amount and Stake to qualify for node rewards.", body2: "" },
       { title: "Configure the node", body: "In Node settings pick this machine’s compute backend (CUDA / ROCm / Metal / CPU) and choose Local shard (recommended) — it runs the layer shard locally and relays only small boundary state, the fastest mode.", body2: "" },
       { title: "Run the node", body: "Toggle Run node (live) to register this machine on the network under your wallet (owner) and bring it online.", body2: "For a real GPU compute node, also run the native agent below. The hub’s planner places model layers on your machine, and your node earns a layer-share of KVR credited to the owner wallet." },
       { title: "Track contribution & rewards", body: "In Node status, watch nodes / online / effective contribution / claimable. Nodes are tiered by throughput (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); raw × tier = effective. Use Claim rewards to move accrued KVR to your wallet.", body2: "" },
@@ -328,7 +329,7 @@ export const en = {
     faucetWeb: "Web: faucet.solana.com — paste your address and pick network Devnet",
     faucetCli: "CLI: solana airdrop 2 <your address> --url devnet",
     faucetAlt: "Alternatives: QuickNode · SolFaucet devnet",
-    faucetKvr: "Get KVR to stake via distribution or swap (KVR swap: SOL/ETH ↔ KVR — coming soon).",
+    faucetKvr: "Get devnet KVR to stake from the distribution faucet.",
     mobileTitle: "Kvasir Wallet · {0} app",
     mobileSub: "Create a wallet and connect your device to the network.",
     mobile: [
@@ -343,7 +344,7 @@ export const en = {
     capPassphrase: "Set a passphrase → Get started",
     capReceive: "Receive — address & QR (address partly masked)",
     capBalances: "Wallet balance — KVR · SOL",
-    capStaking: "Staking — APR · principal · interest · node rewards",
+    capStaking: "Staking panel (devnet)",
     capBackend: "Compute backend (CUDA · ROCm · Metal · CPU)",
     capMode: "Node mode — Local shard (recommended)",
     capRunlive: "Run node (live) — live gauges · node id · OS",
@@ -413,7 +414,7 @@ export const en = {
     codeLede: "Load your wallet secret from the environment, quote, pay, and redeem — one self-contained snippet. Steps 1, 2 and 4 are plain HTTP; only step 3 (the SPL transfer) differs by SDK.",
     adapterTitle: "OpenAI-compatible adapter",
     adapterLede: "Already have an OpenAI client (or a tool that only speaks OpenAI)? Run this drop-in adapter next to your app. It exposes /v1/chat/completions and pays each call from your own wallet — quote, sign, redeem — behind the scenes. Point your client's base URL at the adapter and use any dummy API key.",
-    adapterNote: "Non-custodial: the wallet secret stays in this process (KVR_SECRET_KEY) and never reaches Kvasir. There is no Kvasir API key — auth is the on-chain KVR payment your adapter signs. Each call is one quote/pay/redeem round-trip; cache or batch as your throughput needs.",
+    adapterNote: "Non-custodial: the wallet secret stays in this process (KVR_SECRET_KEY) and never reaches Kvasir. In this pay-per-call mode there is no Kvasir API key — auth is the on-chain KVR payment your adapter signs (prepaid credits, below, use an API key instead). Each call is one quote/pay/redeem round-trip; cache or batch as your throughput needs.",
     prereqTitle: "Before you start",
     prereqs: [
       "A Solana devnet wallet that holds KVR (for payment) and a little SOL (for transaction fees).",
@@ -498,22 +499,22 @@ export const en = {
     pill: "We’re hiring",
     headline1: "Marketing & Growth",
     headline2: "grow the network",
-    sub: "Kvasir is a decentralized AI-inference network (DePIN) on Solana. The open-source linkcpp engine splits large open models across many contributed GPUs and machines, and every node earns KVR for the layers it actually served. The technical side works — we need the person who tells the world.",
+    sub: "Kvasir is a decentralized AI-inference network (DePIN) on Solana. The source-available linkcpp engine splits large open models across many contributed GPUs and machines, and every node earns KVR for the layers it actually served. The technical side works — we need the person who tells the world.",
     factRole: "Role",
     factRoleV: "Marketing & growth — full-time",
     factLocation: "Location",
     factLocationV: "Remote · US/EU or SEA timezone · ≥3–4h daily overlap with KST",
     factComp: "Compensation",
     factCompV:
-      "Early-stage equity (4-year vest / 1-year cliff) + TGE-contingent token allocation · paid trial before any commitment",
+      "Early-stage equity (4-year vest / 1-year cliff) · paid trial before any commitment",
     factEngine: "Engine",
     liveTitle: "What’s already live",
     liveLede: "You’re not joining a whitepaper. Verified running today:",
     liveProof: [
-      "Models tested on the network: Qwen3.5 122B, Qwen3.5 35B, and Gemma4 12B — each split layer-by-layer across multiple machines, so no single node holds the whole model.",
+      "Models tested on the network: Qwen3.5 122B, Qwen3.5 35B, and Gemma4 12B — each split layer-by-layer across multiple machines, so no single node has to hold the whole model.",
       "A heterogeneous live fleet of 21 nodes: 4× AMD MI250 (ARM host), 4× NVIDIA GB10, 4× NVIDIA RTX Pro 6000, 1 MacBook Pro, 6 x86 Windows CPU machines, and 2 mobile nodes (iOS + Android).",
       "Per-node contribution crediting: each node earns KVR weighted by the layer share of every inference it served, settled to its own wallet.",
-      "OpenAI- and Anthropic-compatible pay-per-inference gateway, live on our own domain.",
+      "OpenAI- and Anthropic-compatible pay-per-inference gateway, deployed on our own domain.",
       "Non-custodial wallets shipped on web, desktop, iOS, and Android, with wallet-signature login (Sign-In With Solana) + 2FA.",
     ],
     devnetNote:
@@ -540,7 +541,7 @@ export const en = {
       },
       {
         title: "Launch & partnerships support",
-        body: "Support token-launch marketing when the network graduates from devnet, and assist partnership outreach (GPU fleets, wallets, model providers).",
+        body: "Assist partnership outreach (GPU fleets, wallets, model providers) and grow the developer and node-operator community.",
       },
     ],
     profileTitle: "Who we’re looking for",
@@ -548,7 +549,7 @@ export const en = {
       "Crypto-native marketer: you have grown a web3 community or product from zero — verifiable on X, Discord, or on-chain.",
       "DePIN or AI-crypto familiarity strongly preferred; you can explain to a GPU owner why they would run a node.",
       "English native or fluent; US/EU or SEA timezone with ≥3–4h daily overlap with KST (UTC+9).",
-      "Comfortable with early-stage compensation: meaningful equity + token upside over a big salary.",
+      "Comfortable with early-stage compensation: meaningful equity over a big salary.",
       "Hands-on executor — you ship posts, campaigns, and experiments yourself.",
     ],
     processTitle: "How we hire",
@@ -565,7 +566,7 @@ export const en = {
       },
       {
         title: "Offer",
-        body: "Marketing & Growth: equity with standard 4-year vesting (1-year cliff) plus a TGE-contingent token allocation; a cash base as funding lands.",
+        body: "Marketing & Growth: equity with standard 4-year vesting (1-year cliff); a cash base as funding lands.",
       },
       {
         title: "Build together",

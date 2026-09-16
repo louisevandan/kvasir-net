@@ -50,14 +50,14 @@ export const WIKI_ENTRIES: WikiEntry[] = [
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** is a decentralized AI-inference network: large open models are split across shared hardware with the **linkcpp** engine, so no single node holds the whole model. Anyone can contribute a GPU, CPU, NPU — even a phone — and earn **KVR** for the layers or experts their device actually serves. Developers reach the network through OpenAI/Anthropic-compatible gateways and pay per inference.",
+        md: "**Kvasir** is a decentralized AI-inference network: large open models are split across shared hardware with the **linkcpp** engine, so no single node has to hold the whole model. Anyone can contribute a GPU, CPU, NPU — even a phone — and earn **KVR** for the layers or experts their device actually serves. Developers reach the network through OpenAI/Anthropic-compatible gateways and pay per inference.",
       },
       {
         t: "ul",
         items: [
-          "**Source-available engine** — linkcpp is licensed under the BSL (free for development and testing, production use requires a license); the inference engine data plane underneath stays stock and inspectable.",
-          "**Non-custodial** — rewards settle to each node owner's own Solana wallet; keys never leave the user.",
-          "**Proven on real hardware** — a 122B model has run split across 4 AMD MI250 GPUs, across a heterogeneous fleet of GPU/CPU/NPU/mobile nodes, with per-node contribution credited end-to-end.",
+          "**Source-available engine** — linkcpp is licensed under the Business Source License 1.1 (non-monetized internal use is permitted; hosted or revenue-generating use requires a commercial license); the inference engine data plane underneath stays close to upstream and inspectable.",
+          "**Self-custody wallet** — keys never leave the user's device, and rewards are paid to each node owner's own Solana wallet. On devnet, staked KVR and prepaid credits are held by the gateway's treasury and tracked in its ledger until an on-chain staking program ships.",
+          "**Proven on real hardware** — a 122B model has run end to end across 3 physical machines on our test fleet, with per-node contribution credited end-to-end.",
           "**Named after the Norse myth** — Kvasir, the wisest being, born from the pooled essence of every god and owned by none.",
         ],
       },
@@ -91,7 +91,7 @@ export const WIKI_ENTRIES: WikiEntry[] = [
     blocks: [
       {
         t: "p",
-        md: "The **hub** is the network's control plane, served by linkcpp as a single Docker image (`controller.hub:app`, a FastAPI service on port **19000**). It discovers devices, checks runtime compatibility, plans placement with the planner, launches stock inference engine workers, and exposes the per-controller gateways. It is deliberately boring infrastructure: request/response HTTP, restart-safe state, no exotic transport.",
+        md: "The **hub** is the network's control plane, served by linkcpp as a single Docker image (`controller.hub:app`, a FastAPI service on port **19000**). It discovers devices, checks runtime compatibility, plans placement with the planner, launches inference engine workers, and exposes the per-controller gateways. It is deliberately boring infrastructure: request/response HTTP, restart-safe state, no exotic transport.",
       },
       { t: "h2", kick: "Three doors in", text: "How machines join a hub" },
       {
@@ -183,7 +183,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
         t: "ul",
         items: [
           "**Compute nodes** earn per contribution unit, weighted by layer share and scaled by performance tier — no stake required.",
-          "Nodes register under their owner's wallet; rewards settle to that wallet, non-custodially. Four distinct owner wallets each earning their layer share has been verified end-to-end.",
+          "Nodes register under their owner's wallet; rewards are paid to that wallet. Four separate owner wallets, each earning its layer share, have been verified end to end on a single operator's test fleet.",
           "Capability data (backend, accumulation precision, resource budgets) decides what the planner may place on a node — and, in the swarm, which ranks it may serve.",
           "A node that can't provide resource monitoring is excluded from adaptive loading rather than trusted blindly.",
         ],
@@ -220,7 +220,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
       {
         t: "p",
-        md: "The relay carries whatever the topology needs — ring layer boundaries or expert dispatch streams — and the same mechanism verified for the ring is what production phone workers use in the swarm.",
+        md: "The relay carries whatever the topology needs — ring layer boundaries or expert dispatch streams — and the same mechanism verified for the ring is what phone workers use in the swarm.",
       },
       {
         t: "p",
@@ -237,14 +237,14 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     category: "inference",
     title: "linkcpp",
     summary: "The source-available (BSL) control plane that turns everyday hardware into a distributed inference engine.",
-    image: { src: "/wiki/linkcpp.jpg", alt: "A control plane orchestrating stock inference engine workers" },
+    image: { src: "/wiki/linkcpp.jpg", alt: "A control plane orchestrating inference engine workers" },
     imagePos: 2,
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** is the engine behind Kvasir: a control plane around inference engine's RPC data plane that runs large AI models across multiple GPUs and machines using *stock* `ggml-rpc-server` / `llama-server` binaries. Everything it adds is orchestration — GPU discovery, node slots, layer-placement planning, worker launch, and the OpenAI/Anthropic gateways.",
+        md: "**linkcpp** is the engine behind Kvasir: a control plane around the inference engine's RPC data plane that runs large AI models across multiple GPUs and machines using `ggml-rpc-server` / `llama-server` binaries built close to upstream. Everything it adds is orchestration — GPU discovery, node slots, layer-placement planning, worker launch, and the OpenAI/Anthropic gateways.",
       },
-      { t: "h2", kick: "Architecture", text: "One hub, stock workers" },
+      { t: "h2", kick: "Architecture", text: "One hub, upstream-based workers" },
       {
         t: "code",
         caption: "The request path through a linkcpp deployment.",
@@ -256,8 +256,8 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       {
         t: "ul",
         items: [
-          "**Source-available under the BSL** — free to read, run and build on in development and testing; production use requires a license.",
-          "The inference engine data plane stays **unforked** (one pinned mobile GPU-over-RPC patch aside), so upstream performance work keeps flowing in.",
+          "**Source-available under the BSL 1.1** — free to read and build on; non-monetized internal use is permitted, and hosted or revenue-generating use requires a commercial license.",
+          "The inference engine data plane stays **close to upstream** — a small patch set (mobile GPU-over-RPC and the MoE expert-dispatch hook) — so upstream performance work keeps flowing in.",
           "Ships as a **single Docker image**: the FastAPI hub plus the two inference engine binaries baked in; native worker nodes build outside Docker for CUDA/Metal/Vulkan/CPU.",
         ],
       },
@@ -282,7 +282,7 @@ earn      → units × layer_share × perf_tier → owner wallet`,
     blocks: [
       {
         t: "p",
-        md: "The **ring runtime** is Kvasir's low-latency serving topology. Every device loads only its contiguous **layer window**, then opens exactly two links — predecessor and successor. Hidden-state boundaries circulate around the ring; the last rank samples the token and returns it. **No central master, and no node holds the whole model.**",
+        md: "The **ring runtime** is Kvasir's low-latency serving topology. Every device loads only its contiguous **layer window**, then opens exactly two links — predecessor and successor. Hidden-state boundaries circulate around the ring; the last rank samples the token and returns it. **No central master on the data path, and no node holds the whole model.**",
       },
       { t: "h2", kick: "Why not a star", text: "The RPC master problem" },
       {
@@ -651,21 +651,21 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     slug: "staking",
     category: "token",
     title: "Staking",
-    summary: "Stake KVR to earn APR interest; 100,000 KVR staked qualifies a wallet to operate hub or gateway nodes.",
-    image: { src: "/wiki/staking.jpg", alt: "Locked tokens growing interest and unlocking operator roles" },
+    summary: "Staking 100,000 KVR qualifies a wallet to operate hub or gateway nodes.",
+    image: { src: "/wiki/staking.jpg", alt: "Locked tokens unlocking operator roles" },
     imagePos: 0,
     blocks: [
       {
         t: "p",
-        md: "Staking locks KVR in your own wallet to earn **APR interest** and to qualify for node rewards. Running a **hub** or **gateway** node requires a stake of **100,000 KVR**; regular compute nodes join without any stake and earn for the layers they run.",
+        md: "Staking locks KVR to qualify a wallet for operator roles and node rewards. Running a **hub** or **gateway** node requires a stake of **100,000 KVR**; regular compute nodes join without any stake and earn for the layers they run.",
       },
       {
         t: "ul",
         items: [
-          "Staking happens in the wallet's dashboard staking panel: enter an amount, **Stake**, and the position starts accruing APR plus node-reward eligibility.",
+          "Staking happens in the wallet's dashboard staking panel: enter an amount, **Stake**, and the position counts toward operator eligibility and node rewards.",
           "The 100k requirement is a **skin-in-the-game filter** for the two roles that other people's traffic depends on — entry points and the control plane.",
-          "Staking is non-custodial like everything else: the position lives in your own wallet, and principal, accrued interest and node rewards are all visible in the staking panel.",
-          "Devnet KVR for staking comes via distribution or swap (SOL/ETH ↔ KVR swap: coming soon); devnet SOL for fees comes from the public faucet.",
+          "On devnet, staked KVR is held in the staking vault; the staked amount and node rewards are visible in the staking panel.",
+          "Devnet KVR for staking comes from the distribution faucet; devnet SOL for fees comes from the public faucet.",
         ],
       },
     ],
@@ -680,7 +680,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "The Kvasir Wallet is **non-custodial by design**: the 12-word recovery phrase and keys are stored only on the user's own device, never with an operator. Rewards settle on Solana directly to each node's owner wallet — verified across four distinct owner wallets, each earning its own layer share.",
+        md: "The Kvasir Wallet is **non-custodial by design**: the 12-word recovery phrase and keys are stored only on the user's own device, never with an operator. Rewards settle on Solana directly to each node's owner wallet — verified on a test fleet across four distinct owner wallets, each earning its own layer share. Staking works differently on devnet: staked KVR is held in the gateway's treasury and tracked in its ledger until an on-chain staking program ships.",
       },
       {
         t: "ul",
@@ -735,7 +735,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       { t: "h2", kick: "The flywheel", text: "Usage and supply grow together" },
       {
         t: "p",
-        md: "Because inference **must** be paid in KVR, every unit of usage is real demand for the token — utility, not speculation. That demand supports the value of the KVR that nodes earn, which keeps contributing attractive, which grows capacity, which lowers price and latency, which attracts more usage. Kvasir's sharpest advantage turns the loop tighter still: a participant can be **consumer and supplier at once** (a *prosumer*), so the two sides often grow inside the same people.",
+        md: "Because inference **must** be paid in KVR, the token is tied to real usage — utility, not speculation. Usage funds the KVR that nodes earn, which keeps contributing attractive, which grows capacity, which lowers price and latency, which attracts more usage. Kvasir's sharpest advantage turns the loop tighter still: a participant can be **consumer and supplier at once** (a *prosumer*), so the two sides often grow inside the same people.",
       },
       {
         t: "callout",
@@ -753,7 +753,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
-        md: "Kvasir already rewards **real work** (KVR per tokens served × layer share, not mere presence) and settles non-custodially, which is the hard part of making revenue-funded rewards honest. The rest — a utilization-driven price and an emission→revenue taper — is the economic roadmap that turns \"more nodes → cheaper\" from an intuition into a rule the protocol enforces. The **Inference pricing** entry covers the price side; **Contribution units** covers how work becomes reward.",
+        md: "Kvasir already rewards **real work** (KVR per tokens served × layer share, not mere presence) and pays each node's own wallet, which is the hard part of making revenue-funded rewards honest. The rest — a utilization-driven price and an emission→revenue taper — is the economic roadmap that turns \"more nodes → cheaper\" from an intuition into a rule the protocol enforces. The **Inference pricing** entry covers the price side; **Contribution units** covers how work becomes reward.",
       },
     ],
   },
@@ -833,7 +833,7 @@ POST /api/expert-coverage`,
           "**The slice is tiny.** A layer-0, 128-expert slice is **794 MB** against the 72 GB full model — the grain that lets weak devices participate. You only download the range the market assigned.",
           "**Dial-out, never dial-in.** Step 5 opens one outbound WebSocket on 443, so carrier NAT and CDN edges pass it and you expose zero inbound ports — the same path a phone uses.",
           "**The heartbeat is load-bearing.** Without `POST /api/expert-coverage` you serve nothing the demand map knows about, and nothing you do is credited.",
-          "**Reward is per work.** Bridged work accrues to the hub's contribution ledger; the gateway delta-credits KVR to your **own** wallet (non-custodial). You need a wallet address to be paid.",
+          "**Reward is per work.** Bridged work accrues to the hub's contribution ledger; the gateway delta-credits KVR to your **own** wallet. You need a wallet address to be paid.",
         ],
       },
       {

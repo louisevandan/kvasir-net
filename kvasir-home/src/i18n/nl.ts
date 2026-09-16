@@ -42,7 +42,7 @@ export const nl: Dict = {
     eyebrow: "DePIN · Gedecentraliseerde AI — voorbij het monopolie",
     headline1: "Lever rekenkracht.",
     headline2: "Verdien KVR.",
-    sub: "Kvasir verdeelt grote open modellen over gedeelde hardware met linkcpp, zodat geen enkele node het hele model bevat. Draag een GPU, CPU, NPU — zelfs een telefoon — bij en verdien KVR voor de layers die je draait.",
+    sub: "Kvasir verdeelt grote open modellen over gedeelde hardware met linkcpp, zodat geen enkele node het hele model hoeft te bevatten. Draag een GPU, CPU of telefoon bij en verdien KVR voor de layers die je draait.",
     badges: [
       "Draait op GPU · CPU · NPU · telefoon",
       "OpenAI + Anthropic compatibel",
@@ -51,7 +51,7 @@ export const nl: Dict = {
     ],
     ringCenter: "één ring · geen master",
     topologyCaption:
-      "Een ring van apparaten — een GPU, CPU, NPU en telefoon — die elk een paar van de 49 layers bevatten. Elke node draait zijn deel en geeft alleen de hidden-state-grens door aan zijn buur; de laatste stuurt de token via de ring terug. Geen enkele node bevat het hele model, en er is geen centrale master — ter illustratie.",
+      "Een ring van apparaten — een GPU, CPU, NPU en telefoon — die elk een paar van de 49 layers bevatten. Elke node draait zijn deel en geeft alleen de hidden-state-grens door aan zijn buur; de laatste stuurt de token via de ring terug. Geen enkele node hoeft het hele model te bevatten, en de ring heeft geen centrale master — ter illustratie.",
   },
 
   thesis: {
@@ -67,10 +67,10 @@ export const nl: Dict = {
     ],
     kvasirLabel: "Kvasir",
     kvasirPoints: [
-      "Elk apparaat sluit zich aan bij een peer-to-peer-ring — geen centrale master",
+      "Elk apparaat sluit zich aan bij een peer-to-peer-ring — geen centrale master in de ring",
       "linkcpp-engine met beschikbare broncode — BSL-gelicentieerd en volledig inspecteerbaar",
       "Bijdragers verdienen KVR voor de echte rekenkracht die ze leveren",
-      "Non-custodial — jouw sleutels, jouw node, jouw beloningen",
+      "Wallet in eigen beheer — je sleutels verlaten nooit je apparaat",
     ],
   },
 
@@ -100,11 +100,11 @@ export const nl: Dict = {
   how: {
     eyebrow: "Hoe het werkt",
     title: "Eén model, veel apparaten, betaald per layer",
-    lede: "Geen enkele node bevat het hele model. Een verzoek stroomt over het layer-pad en elke node wordt beloond voor precies het werk dat het deed.",
+    lede: "Geen enkele node hoeft het hele model te bevatten. Een verzoek stroomt over het layer-pad en elke node wordt beloond voor precies het werk dat het deed.",
     steps: [
       {
         title: "Splitsen",
-        body: "Het model wordt verdeeld in aaneengesloten layer-vensters. Elk apparaat slaat hetzelfde model op, maar laadt alleen zijn eigen venster — geen enkele node bevat het geheel.",
+        body: "Het model wordt verdeeld in aaneengesloten layer-vensters. Elk apparaat bewaart een kopie van het modelbestand, maar laadt alleen zijn eigen venster in het geheugen, zodat geen enkele node het geheel hoeft te draaien.",
         note: "Qwen3.5-122B · 49 layers · rank manifest",
       },
       {
@@ -125,11 +125,11 @@ export const nl: Dict = {
     title: "Zet ongebruikte rekenkracht om in KVR",
     lede: "Richt een ondersteund apparaat op het netwerk en het begint layers te bedienen. Je verdient KVR in verhouding tot de layers die je node draait — je sleutels blijven in je eigen wallet.",
     nonCustodial:
-      "Non-custodial by design — de operator-login is een wallet-handtekening (Sign-In With Solana) met optionele 2FA.",
+      "Login met wallet-handtekening — operator-toegang gebruikt Sign-In With Solana met optionele 2FA; er zijn geen wachtwoorden.",
     points: [
       {
         title: "Elk apparaat kan meedoen",
-        body: "GPU’s, CPU’s, NPU’s en telefoons draaien vandaag allemaal layers. Een peer-to-peer ring runtime laat elk apparaat slechts een paar layers bevatten en alleen kleine grenstoestand doorgeven aan zijn buur — dus geen poortwachter, en geen enkele eigenaar.",
+        body: "GPU’s, CPU’s en telefoons draaien vandaag layers, en NPU-ondersteuning is in ontwikkeling. Een peer-to-peer ring runtime laat elk apparaat slechts een paar layers bevatten en alleen kleine grenstoestand doorgeven aan zijn buur — dus geen poortwachter, en geen enkele eigenaar.",
       },
       {
         title: "Beloningen naar layer-aandeel",
@@ -171,7 +171,7 @@ export const nl: Dict = {
   token: {
     eyebrow: "Token & beloningen",
     title: "KVR betaalt voor rekenkracht — en beloont het",
-    lede: "KVR is de eenheid die ontwikkelaars uitgeven aan inferentie en de eenheid die bijdragers verdienen voor de layers die ze draaien. Beloningen worden berekend op basis van echt werk, niet van deelname.",
+    lede: "KVR is de eenheid die ontwikkelaars uitgeven aan inferentie en de eenheid die bijdragers verdienen voor de layers die ze draaien. Beloningen voor rekenkracht komen uit gemeten werk; gateway- en hub-hosts verdienen daarnaast voor uptime.",
     facts: [
       { k: "Symbool", v: "KVR", note: "on-chain naam “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "vandaag devnet" },
@@ -182,9 +182,9 @@ export const nl: Dict = {
     whatForBody:
       "Eén token, beide richtingen: ontwikkelaars geven KVR uit om inferentie via de gateway te draaien, en bijdragers verdienen KVR voor de rekenkracht die hun nodes leveren. Het is de rekeneenheid van het netwerk voor echt werk — zie hieronder hoe beloningen per rol zijn opgebouwd.",
     whatForChips: ["betalen per inferentie", "belonen per layer", "afrekenen op Solana"],
-    custodyTitle: "Non-custodial wallet",
+    custodyTitle: "Wallet in eigen beheer",
     custodyBody:
-      "Beloningen worden afgerekend naar de eigen eigenaarswallet van elke node. Sleutels bevinden zich in de wallet van de gebruiker — browser, desktop of mobiel — nooit bij een operator. Geverifieerd over vier afzonderlijke eigenaarswallets, die elk hun layer-aandeel verdienen.",
+      "Sleutels bevinden zich in de wallet van de gebruiker — browser, desktop of mobiel — nooit bij een operator. Beloningen worden uitbetaald naar de eigen eigenaarswallet van elke node, geverifieerd op onze testvloot over vier eigenaarswallets. Op devnet worden gestakete KVR en vooraf betaalde credits aangehouden door de treasury van de gateway en bijgehouden in zijn grootboek, totdat een on-chain stakingprogramma wordt uitgebracht.",
     custodyChips: ["web", "desktop", "iOS", "Android"],
     devnetStrong: "Devnet, utility-token.",
     devnetBody:
@@ -227,7 +227,7 @@ export const nl: Dict = {
   tech: {
     eyebrow: "Onder de motorkap",
     title: "linkcpp — de engine achter het netwerk",
-    lede: "linkcpp is de open control hub die alledaagse hardware verandert in een gedistribueerde inferentie-engine. De ring runtime laat elk apparaat slechts een paar layers bevatten en hidden state doorgeven aan zijn buur — geen centrale master — terwijl de standaard inferentie-engine data plane ongeforkt blijft.",
+    lede: "linkcpp is de open control hub die alledaagse hardware verandert in een gedistribueerde inferentie-engine. De ring runtime laat elk apparaat slechts een paar layers bevatten en hidden state doorgeven aan zijn buur — geen centrale master in de ring — terwijl de inferentie-engine data plane dicht bij upstream blijft, met een kleine set patches.",
     taglineCaption: "— linkcpp, in zijn eigen woorden",
     points: [
       {
@@ -236,7 +236,7 @@ export const nl: Dict = {
       },
       {
         title: "linkcpp control hub",
-        body: "Eén Dockerized hub — de control plane die het RPC data plane van inferentie-engine miste. Het ontdekt apparaten, plant layer-plaatsing, start de standaard workers en stelt de gateways beschikbaar. Broncode beschikbaar onder de Business Source License (BSL).",
+        body: "Eén Dockerized hub — de control plane die het RPC data plane van de inferentie-engine miste. Het ontdekt apparaten, plant layer-plaatsing, start de workers en stelt de gateways beschikbaar. Broncode beschikbaar onder de Business Source License (BSL) 1.1.",
       },
       {
         title: "Gedistribueerde layer-plaatsing",
@@ -248,7 +248,7 @@ export const nl: Dict = {
       },
     ],
     openText:
-      "De broncode is beschikbaar onder de Business Source License (BSL) — lees hem, draai hem en bouw erop voort, gratis voor ontwikkeling en testen. Productie- (commercieel) gebruik vereist een aangeschafte licentie.",
+      "De broncode is beschikbaar onder de Business Source License (BSL) 1.1 — lees hem en bouw er vrij op voort. Niet-gemonetiseerd intern gebruik is toegestaan; gehost, ingebed of inkomstengenererend gebruik vereist een commerciële licentie.",
   },
 
   roadmap: {
@@ -259,7 +259,7 @@ export const nl: Dict = {
       {
         phase: "Nu",
         title: "Inferentie op elk apparaat, live",
-        body: "GPU’s, CPU’s, NPU’s en telefoons bedienen layers via de ring runtime. 122B draaide gesplitst over 4 GPU’s; bijdrage wordt end-to-end gecrediteerd; non-custodial wallets zijn beschikbaar op web/desktop/iOS/Android; toegang is beveiligd op publieke domeinen.",
+        body: "GPU’s, CPU’s en telefoons bedienen layers via de ring runtime (NPU-ondersteuning in ontwikkeling). Een 122B-model draaide end-to-end over drie fysieke machines; bijdrage wordt end-to-end gecrediteerd; wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker; toegang loopt via HTTPS op publieke domeinen.",
       },
       {
         phase: "Binnenkort",
@@ -275,28 +275,29 @@ export const nl: Dict = {
   },
 
   proof: {
-    pill: "Bewezen in deze build",
-    title: "Echte gedistribueerde inferentie, draaiend op publieke domeinen",
+    pill: "Geverifieerd op onze testvloot",
+    title: "Echte gedistribueerde inferentie, geverifieerd over meerdere machines",
     items: [
-      "parameters bediend, gesplitst over 4 AMD MI250-GPU’s",
-      "afzonderlijke eigenaarswallets die elk hun layer-aandeel verdienen",
+      "parameters end-to-end bediend over 3 fysieke machines",
+      "afzonderlijke node-wallets, elk gecrediteerd voor zijn layer-aandeel (testvloot)",
       "API-oppervlakken — OpenAI + Anthropic compatibel",
       "wallet-platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "122B bediend over 4 GPU’s · OpenAI + Anthropic compatibel · wallets op web / desktop / iOS / Android · live op publieke domeinen",
+      "122B bediend over 3 machines · OpenAI + Anthropic compatibel · wallets op web / desktop / iOS / Android · Solana devnet",
   },
 
   footer: {
+    legal: "Voorwaarden & privacy",
     ctaTitle: "Zet je GPU op het netwerk.",
     ctaBody:
       "Draai een node en verdien KVR voor de layers die je bedient, of koppel de gateway aan je app via een OpenAI/Anthropic-compatibel endpoint.",
     tagline:
-      "Het netwerkmerk voor gedecentraliseerde AI-inferentie, aangedreven door de linkcpp control hub — een engine met beschikbare broncode (BSL) die grote modellen splitst over alledaagse apparaten (op een standaard inferentie-engine data plane).",
+      "Het netwerkmerk voor gedecentraliseerde AI-inferentie, aangedreven door de linkcpp control hub — een engine met beschikbare broncode (BSL) die grote modellen splitst over alledaagse apparaten (op een inferentie-engine data plane die dicht bij upstream blijft).",
     disclaimerStrong: "Disclaimer.",
     disclaimer:
-      "KVR is een utility- / bijdrage-token dat wordt gebruikt om voor inferentie te betalen en om rekenkracht te belonen. Het draait vandaag op Solana devnet — het is geen verhandelbaar mainnet-bezit en niets hierin is een aanbod, prijs of belofte van financieel rendement. Beloningen weerspiegelen echt geleverde rekenkracht, niet deelname.",
-    rights: "© 2026 Kvasir · linkcpp. Engine onder de Business Source License (BSL) — gratis voor ontwikkeling en testen; productiegebruik vereist een licentie.",
+      "KVR is een utility- / bijdrage-token dat wordt gebruikt om voor inferentie te betalen en om rekenkracht te belonen. Het draait vandaag op Solana devnet — het is geen verhandelbaar mainnet-bezit en niets hierin is een aanbod, prijs of belofte van financieel rendement. Beloningen voor rekenkracht weerspiegelen gemeten werk; infrastructuurhosts verdienen daarnaast voor uptime.",
+    rights: "© 2026 Kvasir · linkcpp. Engine onder de Business Source License (BSL) 1.1 — zie de licentie voor toegestaan gebruik.",
   },
 
   guide: {
@@ -305,7 +306,7 @@ export const nl: Dict = {
     headline1: "Breng rekenkracht,",
     headline2: "draai een node.",
     sub: "Maak een wallet aan, stake KVR en verbind vervolgens je apparaat met het Kvasir-netwerk om KVR te verdienen met de rekenkracht die je bijdraagt. Kies hieronder je platform voor download-, installatie- en uitvoerstappen.",
-    badgeCustody: "Non-custodial — jouw sleutels",
+    badgeCustody: "Eigen beheer — jouw sleutels",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR is een Solana devnet-utility-token — geen verhandelbaar mainnet-asset en geen financieel rendement.",
@@ -321,7 +322,7 @@ export const nl: Dict = {
       { title: "Download de app", body: "Download hierboven het installatieprogramma van Kvasir Wallet voor jouw besturingssysteem. Een GPU (NVIDIA / AMD / Apple Silicon) wordt aanbevolen, maar CPU werkt ook.", body2: "" },
       { title: "Installeren en openen", body: "Voer het installatieprogramma uit en open daarna Kvasir Wallet. Zie je op macOS de waarschuwing “niet-geïdentificeerde ontwikkelaar”, sta dit dan toe via Systeeminstellingen → Privacy en beveiliging.", body2: "" },
       { title: "Maak je wallet aan", body: "Kies Nieuwe wallet aanmaken. Schrijf je herstelzin van 12 woorden op en bewaar deze veilig — bij verlies kan deze niet worden hersteld. Stel vervolgens een wachtwoordzin in om de app te ontgrendelen. Sleutels zijn non-custodial en worden alleen op dit apparaat opgeslagen.", body2: "" },
-      { title: "Wallet vullen & KVR staken", body: "Ontvang wat devnet SOL (voor kosten) en KVR (om te staken) op het ontvangstadres van je wallet. Voer in het staking-paneel van het dashboard een bedrag in en klik op Staken om APR-rente te verdienen en in aanmerking te komen voor node-beloningen.", body2: "" },
+      { title: "Wallet vullen & KVR staken", body: "Ontvang wat devnet SOL (voor kosten) en KVR (om te staken) op het ontvangstadres van je wallet. Voer in het staking-paneel van het dashboard een bedrag in en klik op Staken om in aanmerking te komen voor node-beloningen.", body2: "" },
       { title: "Configureer de node", body: "Kies in Node-instellingen de compute-backend van deze machine (CUDA / ROCm / Metal / CPU) en selecteer Lokale shard (aanbevolen) — dit draait de laag-shard lokaal en stuurt alleen kleine randstatus door, de snelste modus.", body2: "" },
       { title: "Start de node", body: "Schakel Node draaien (live) in om deze machine onder je wallet (eigenaar) op het netwerk te registreren en online te brengen.", body2: "Voor een echte GPU-compute-node draai je ook de onderstaande native agent. De planner van de hub plaatst modellagen op je machine, en je node verdient een laag-aandeel KVR dat wordt bijgeschreven op de eigenaarswallet." },
       { title: "Volg bijdrage & beloningen", body: "Bekijk in Node-status: nodes / online / effectieve bijdrage / opeisbaar. Nodes worden ingedeeld in tiers op basis van doorvoer (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); ruw × tier = effectief. Gebruik Beloningen claimen om opgebouwde KVR naar je wallet over te maken.", body2: "" },
@@ -331,7 +332,7 @@ export const nl: Dict = {
     faucetWeb: "Web: faucet.solana.com — plak je adres en kies netwerk Devnet",
     faucetCli: "CLI: solana airdrop 2 <your address> --url devnet",
     faucetAlt: "Alternatieven: QuickNode · SolFaucet devnet",
-    faucetKvr: "Verkrijg KVR om te staken via distributie of swap (KVR-swap: SOL/ETH ↔ KVR — binnenkort beschikbaar).",
+    faucetKvr: "Verkrijg devnet-KVR om te staken via de distributie-faucet.",
     mobileTitle: "Kvasir Wallet · {0}-app",
     mobileSub: "Maak een wallet aan en verbind je apparaat met het netwerk.",
     mobile: [
@@ -346,7 +347,7 @@ export const nl: Dict = {
     capPassphrase: "Wachtwoordzin instellen → Aan de slag",
     capReceive: "Ontvangen — adres & QR (adres deels gemaskeerd)",
     capBalances: "Walletsaldo — KVR · SOL",
-    capStaking: "Staking — APR · hoofdsom · rente · node-beloningen",
+    capStaking: "Staking-paneel (devnet)",
     capBackend: "Compute-backend (CUDA · ROCm · Metal · CPU)",
     capMode: "Node-modus — Lokale shard (aanbevolen)",
     capRunlive: "Node draaien (live) — live meters · node-id · OS",
@@ -416,7 +417,7 @@ export const nl: Dict = {
     codeLede: "Laad de geheime sleutel van je wallet uit de omgeving, offreer, betaal en verzilver — één op zichzelf staand fragment. Stappen 1, 2 en 4 zijn puur HTTP; alleen stap 3 (de SPL-overdracht) verschilt per SDK.",
     adapterTitle: "OpenAI-compatibele adapter",
     adapterLede: "Heb je al een OpenAI-client (of een tool die alleen OpenAI spreekt)? Draai deze plug-and-play adapter naast je app. Hij stelt /v1/chat/completions beschikbaar en betaalt elke aanroep vanuit je eigen wallet — offerte, ondertekenen, verzilveren — op de achtergrond. Wijs de base-URL van je client naar de adapter en gebruik een willekeurige dummy-API-sleutel.",
-    adapterNote: "Non-custodial: het wallet-secret (KVR_SECRET_KEY) blijft in dit proces en bereikt Kvasir nooit. Er is geen Kvasir-API-sleutel — authenticatie is de on-chain KVR-betaling die je adapter ondertekent. Elke aanroep is één offerte/betaling/verzilvering-heen-en-weer; cache of batch naar je doorvoer.",
+    adapterNote: "Non-custodial: het wallet-secret (KVR_SECRET_KEY) blijft in dit proces en bereikt Kvasir nooit. In deze modus met betalen per aanroep is er geen Kvasir-API-sleutel — authenticatie is de on-chain KVR-betaling die je adapter ondertekent (vooraf betaalde credits, hieronder, gebruiken in plaats daarvan een API-sleutel). Elke aanroep is één offerte/betaling/verzilvering-heen-en-weer; cache of batch naar je doorvoer.",
     prereqTitle: "Voordat je begint",
     prereqs: [
       "Een Solana-devnet-wallet met KVR (om te betalen) en wat SOL (voor de kosten).",
@@ -495,22 +496,22 @@ export const nl: Dict = {
     pill: "We nemen aan",
     headline1: "Marketing & Growth",
     headline2: "laat het netwerk groeien",
-    sub: "Kvasir is een gedecentraliseerd AI-inferentienetwerk (DePIN) op Solana. De open-source linkcpp-engine verdeelt grote open modellen over vele bijgedragen GPU's en machines, en elke node verdient KVR voor de lagen die hij daadwerkelijk heeft bediend. De techniek werkt al — we zoeken de persoon die het de wereld vertelt.",
+    sub: "Kvasir is een gedecentraliseerd AI-inferentienetwerk (DePIN) op Solana. De linkcpp-engine met beschikbare broncode verdeelt grote open modellen over vele bijgedragen GPU's en machines, en elke node verdient KVR voor de lagen die hij daadwerkelijk heeft bediend. De techniek werkt al — we zoeken de persoon die het de wereld vertelt.",
     factRole: "Rol",
     factRoleV: "Marketing & growth — fulltime",
     factLocation: "Locatie",
     factLocationV: "Remote · tijdzone VS/Europa of Zuidoost-Azië · ≥3–4 u dagelijkse overlap met KST",
     factComp: "Beloning",
     factCompV:
-      "Early-stage equity (4 jaar vesting / 1 jaar cliff) + TGE-afhankelijke tokentoewijzing · betaalde proefopdracht vóór elke verbintenis",
+      "Early-stage equity (4 jaar vesting / 1 jaar cliff) · betaalde proefopdracht vóór elke verbintenis",
     factEngine: "Engine",
     liveTitle: "Wat al live is",
     liveLede: "Je stapt niet in een whitepaper. Geverifieerd en vandaag draaiend:",
     liveProof: [
-      "Modellen getest op het netwerk: Qwen3.5 122B, Qwen3.5 35B en Gemma4 12B — elk laag voor laag verdeeld over meerdere machines, zodat geen enkele node het hele model bevat.",
+      "Modellen getest op het netwerk: Qwen3.5 122B, Qwen3.5 35B en Gemma4 12B — elk laag voor laag verdeeld over meerdere machines, zodat geen enkele node het hele model hoeft te bevatten.",
       "Een heterogene live vloot van in totaal 21 nodes: 4× AMD MI250 (ARM-host), 4× NVIDIA GB10, 4× NVIDIA RTX Pro 6000, 1 MacBook Pro, 6 x86 Windows-CPU-machines en 2 mobiele nodes (iOS + Android).",
       "Bijdrageverrekening per node: elke node verdient KVR gewogen naar zijn laagaandeel in elke bediende inferentie, uitbetaald naar zijn eigen wallet.",
-      "OpenAI- en Anthropic-compatibele pay-per-inference gateway, live op ons eigen domein.",
+      "OpenAI- en Anthropic-compatibele pay-per-inference gateway, uitgerold op ons eigen domein.",
       "Non-custodial wallets uitgebracht op web, desktop, iOS en Android, met wallet-handtekening-login (Sign-In With Solana) + 2FA.",
     ],
     devnetNote:
@@ -537,7 +538,7 @@ export const nl: Dict = {
       },
       {
         title: "Launch- & partnershipsupport",
-        body: "Ondersteun de tokenlaunch-marketing wanneer het netwerk het devnet ontgroeit, en help bij partneracquisitie (GPU-vloten, wallets, modelaanbieders).",
+        body: "Help bij partneracquisitie (GPU-vloten, wallets, modelaanbieders) en laat de community van ontwikkelaars en node-operators groeien.",
       },
     ],
     profileTitle: "Wie we zoeken",
@@ -545,7 +546,7 @@ export const nl: Dict = {
       "Crypto-native marketeer: je hebt een web3-community of -product vanaf nul laten groeien — verifieerbaar op X, Discord of on-chain.",
       "Bekendheid met DePIN of AI-crypto heeft sterke voorkeur; je kunt een GPU-bezitter uitleggen waarom die een node zou draaien.",
       "Engels als moedertaal of vloeiend; tijdzone VS/Europa of Zuidoost-Azië met ≥3–4 u dagelijkse overlap met KST (UTC+9).",
-      "Comfortabel met early-stage beloning: substantiële equity + token-upside boven een hoog salaris.",
+      "Comfortabel met early-stage beloning: substantiële equity boven een hoog salaris.",
       "Hands-on uitvoerder — je levert zelf posts, campagnes en experimenten.",
     ],
     processTitle: "Hoe we aannemen",
@@ -562,7 +563,7 @@ export const nl: Dict = {
       },
       {
         title: "Aanbod",
-        body: "Marketing & Growth: equity met standaard 4 jaar vesting (1 jaar cliff) plus een TGE-afhankelijke tokentoewijzing; een cash-basis zodra funding binnenkomt.",
+        body: "Marketing & Growth: equity met standaard 4 jaar vesting (1 jaar cliff); een cash-basis zodra funding binnenkomt.",
       },
       {
         title: "Samen bouwen",

@@ -36,7 +36,7 @@ export const ko: Dict = {
     eyebrow: "DePIN · 탈중앙화 AI — 독점을 넘어",
     headline1: "컴퓨팅 파워를 제공하고,",
     headline2: "AI 소득을 받으세요.",
-    sub: "Kvasir는 linkcpp로 대형 오픈 모델을 공유 하드웨어에 분산시켜, 어떤 노드도 모델 전체를 갖지 않습니다. GPU, CPU, NPU는 물론 휴대폰까지 제공하고, 실행한 레이어만큼 KVR을 받으세요.",
+    sub: "Kvasir는 linkcpp로 대형 오픈 모델을 공유 하드웨어에 분산시켜, 어떤 노드도 모델 전체를 가질 필요가 없습니다. GPU, CPU 또는 휴대폰을 제공하고, 실행한 레이어만큼 KVR을 받으세요.",
     badges: [
       "GPU · CPU · NPU · 휴대폰에서 실행",
       "OpenAI + Anthropic 호환",
@@ -44,7 +44,7 @@ export const ko: Dict = {
     ],
     ringCenter: "Ring Topology",
     topologyCaption:
-      "GPU, CPU, NPU, 휴대폰으로 이루어진 기기들의 링 — 각 기기가 49개 레이어 중 일부를 보유합니다. 모든 노드는 자기 몫을 실행하고 hidden-state 경계만 이웃에 넘기며, 마지막 노드가 토큰을 링을 따라 되돌려줍니다. 어떤 노드도 모델 전체를 갖지 않고 중앙 마스터도 없습니다 — 예시용.",
+      "GPU, CPU, NPU, 휴대폰으로 이루어진 기기들의 링 — 각 기기가 49개 레이어 중 일부를 보유합니다. 모든 노드는 자기 몫을 실행하고 hidden-state 경계만 이웃에 넘기며, 마지막 노드가 토큰을 링을 따라 되돌려줍니다. 어떤 노드도 모델 전체를 가질 필요가 없고, 링에는 중앙 마스터가 없습니다 — 예시용.",
   },
 
   thesis: {
@@ -60,10 +60,10 @@ export const ko: Dict = {
     ],
     kvasirLabel: "Kvasir",
     kvasirPoints: [
-      "어떤 기기든 P2P 링에 참여 — 중앙 마스터 없음",
+      "어떤 기기든 P2P 링에 참여 — 링에 중앙 마스터 없음",
       "소스 공개 linkcpp 엔진 — BSL 라이선스이며 완전 검증 가능",
       "기여자는 실제로 제공한 연산만큼 KVR을 획득",
-      "비수탁형 — 당신의 키, 당신의 노드, 당신의 보상",
+      "자기 보관형 지갑 — 키는 당신의 기기를 떠나지 않습니다",
     ],
   },
 
@@ -93,11 +93,11 @@ export const ko: Dict = {
   how: {
     eyebrow: "작동 방식",
     title: "하나의 모델, 여러 기기, 레이어별 지불",
-    lede: "어떤 노드도 모델 전체를 갖지 않습니다. 요청은 레이어 경로를 따라 흐르고, 각 노드는 자신이 수행한 정확한 작업만큼 보상받습니다.",
+    lede: "어떤 노드도 모델 전체를 가질 필요가 없습니다. 요청은 레이어 경로를 따라 흐르고, 각 노드는 자신이 수행한 정확한 작업만큼 보상받습니다.",
     steps: [
       {
         title: "분할",
-        body: "모델은 연속된 레이어 구간으로 나뉩니다. 모든 기기는 같은 모델을 저장하되 자기 구간만 로드합니다 — 어떤 노드도 전체를 갖지 않습니다.",
+        body: "모델은 연속된 레이어 구간으로 나뉩니다. 모든 기기는 모델 파일 사본을 두되 자기 구간만 메모리에 로드하므로, 어떤 노드도 전체를 실행할 필요가 없습니다.",
         note: "Qwen3.5-122B · 49 layers · rank manifest",
       },
       {
@@ -118,11 +118,11 @@ export const ko: Dict = {
     title: "유휴 자원을 KVR로 바꾸세요",
     lede: "각종 유휴 컴퓨팅 기기를 네트워크에 연결하면 AI 연산력 제공을 시작합니다. Kvasir 노드가 실행하는 레이어에 비례해 KVR을 획득하며, 키는 당신의 지갑에 남습니다.",
     nonCustodial:
-      "설계부터 비수탁형 — 운영자 로그인은 지갑 서명(Sign-In With Solana)이며, 선택적으로 2FA를 사용합니다.",
+      "지갑 서명 로그인 — 운영자 접근은 Sign-In With Solana와 선택적 2FA를 사용하며, 비밀번호는 없습니다.",
     points: [
       {
         title: "어떤 기기든 참여 가능",
-        body: "GPU, CPU, NPU, 휴대폰 모두 오늘 레이어를 실행합니다. P2P ring runtime 덕분에 각 기기는 몇 개의 레이어만 보유하고 작은 경계 상태만 이웃에 넘깁니다 — 관문지기도 없고 단일 소유자도 없습니다.",
+        body: "GPU, CPU, 휴대폰은 오늘 레이어를 실행하며, NPU 지원은 진행 중입니다. P2P ring runtime 덕분에 각 기기는 몇 개의 레이어만 보유하고 작은 경계 상태만 이웃에 넘깁니다 — 관문지기도 없고 단일 소유자도 없습니다.",
       },
       {
         title: "레이어 몫 기반 보상",
@@ -164,7 +164,7 @@ export const ko: Dict = {
   token: {
     eyebrow: "토큰 & 보상",
     title: "KVR은 AI 추론을 위해 결제하고 — 또 보상합니다",
-    lede: "KVR은 사용자가 AI 추론에 쓰는 단위이자, 기여자가 추론에 참여한 레이어로 얻는 단위입니다. 보상은 참여가 아니라 실제 작업으로 계산됩니다.",
+    lede: "KVR은 사용자가 AI 추론에 쓰는 단위이자, 기여자가 추론에 참여한 레이어로 얻는 단위입니다. 연산 보상은 측정된 작업에서 나오며, 게이트웨이·허브 호스트는 가동 시간에 대해서도 보상을 받습니다.",
     facts: [
       { k: "심볼", v: "KVR", note: "온체인 이름 “Kvasir”, 6 decimals" },
       { k: "체인", v: "Solana", note: "현재 devnet" },
@@ -175,9 +175,9 @@ export const ko: Dict = {
     whatForBody:
       "하나의 토큰, 양방향: 개발자는 게이트웨이를 통해 추론을 실행하려 KVR을 쓰고, 기여자는 노드가 제공한 연산으로 KVR을 얻습니다. 이는 실제 작업에 대한 네트워크의 회계 단위입니다 — 아래에서 역할별 보상 구성을 확인하세요.",
     whatForChips: ["추론당 지불", "레이어당 보상", "Solana에서 정산"],
-    custodyTitle: "비수탁형 지갑",
+    custodyTitle: "자기 보관형 지갑",
     custodyBody:
-      "보상은 각 노드 자신의 소유자 지갑으로 정산됩니다. 키는 브라우저, 데스크톱 또는 모바일 등 사용자의 지갑에 있으며, 운영자에게 맡기지 않습니다. 네 개의 서로 다른 소유자 지갑에서 각각 레이어 몫을 획득함을 검증했습니다.",
+      "키는 브라우저, 데스크톱 또는 모바일 등 사용자의 지갑에 있으며, 운영자에게 맡기지 않습니다. 보상은 각 노드 자신의 소유자 지갑으로 지급되며, 테스트 플릿의 소유자 지갑 4개에서 검증했습니다. devnet에서는 온체인 스테이킹 프로그램이 출시될 때까지 스테이킹된 KVR과 선불 크레딧을 게이트웨이의 트레저리가 보관하고 원장으로 관리합니다.",
     custodyChips: ["web", "desktop", "iOS", "Android"],
     devnetStrong: "Devnet, 유틸리티 토큰.",
     devnetBody:
@@ -220,7 +220,7 @@ export const ko: Dict = {
   tech: {
     eyebrow: "내부 구조",
     title: "linkcpp — 네트워크를 움직이는 엔진",
-    lede: "linkcpp는 일상 하드웨어를 분산 추론 엔진으로 바꾸는 오픈 컨트롤 허브입니다. 그 ring runtime 덕분에 각 기기는 몇 개의 레이어만 보유하고 hidden state를 이웃에 넘깁니다 — 중앙 마스터 없음 — 한편 기본 추론엔진 데이터 플레인은 포크 없이 그대로 유지됩니다.",
+    lede: "linkcpp는 일상 하드웨어를 분산 추론 엔진으로 바꾸는 오픈 컨트롤 허브입니다. 그 ring runtime 덕분에 각 기기는 몇 개의 레이어만 보유하고 hidden state를 이웃에 넘깁니다 — 링에 중앙 마스터 없음 — 한편 추론엔진 데이터 플레인은 소규모 패치 세트만 더해 업스트림에 가깝게 유지됩니다.",
     taglineCaption: "— linkcpp, 그 자신의 말로",
     points: [
       {
@@ -229,7 +229,7 @@ export const ko: Dict = {
       },
       {
         title: "linkcpp 컨트롤 허브",
-        body: "단일 Docker화 허브 — 추론엔진의 RPC 데이터 플레인에 없던 컨트롤 플레인입니다. 기기를 탐색하고 레이어 배치를 계획하며 기본 워커를 실행하고 게이트웨이를 노출합니다. Business Source License(BSL)로 소스가 공개됩니다.",
+        body: "단일 Docker화 허브 — 추론엔진의 RPC 데이터 플레인에 없던 컨트롤 플레인입니다. 기기를 탐색하고 레이어 배치를 계획하며 워커를 실행하고 게이트웨이를 노출합니다. Business Source License(BSL) 1.1로 소스가 공개됩니다.",
       },
       {
         title: "분산 레이어 배치",
@@ -241,7 +241,7 @@ export const ko: Dict = {
       },
     ],
     openText:
-      "소스는 Business Source License(BSL)로 공개됩니다 — 개발·테스트 용도로는 무료로 읽고, 실행하고, 위에 빌드할 수 있습니다. 프로덕션(상업적) 사용에는 라이선스 구매가 필요합니다.",
+      "소스는 Business Source License(BSL) 1.1로 공개됩니다 — 자유롭게 읽고 위에 빌드할 수 있습니다. 수익을 내지 않는 내부 사용은 허용되며, 호스팅·임베디드 또는 수익 창출 용도에는 상용 라이선스가 필요합니다.",
   },
 
   roadmap: {
@@ -252,7 +252,7 @@ export const ko: Dict = {
       {
         phase: "현재",
         title: "어떤 기기로든 추론, 가동 중",
-        body: "GPU, CPU, NPU, 휴대폰이 ring runtime을 통해 레이어를 제공합니다. 122B를 4개의 GPU에 분산해 실행했고, 기여는 끝에서 끝까지 크레딧되며, 비수탁형 지갑은 web/desktop/iOS/Android로 제공되고, 접근은 공개 도메인에서 보호됩니다.",
+        body: "GPU, CPU, 휴대폰이 ring runtime을 통해 레이어를 제공합니다(NPU 지원은 진행 중). 122B 모델을 물리 머신 3대에 걸쳐 끝에서 끝까지 실행했고, 기여는 끝에서 끝까지 크레딧되며, web·desktop·iOS·Android 지갑은 키를 사용자 기기에 보관하고, 접근은 공개 도메인에서 HTTPS로 이루어집니다.",
       },
       {
         phase: "예정",
@@ -268,28 +268,29 @@ export const ko: Dict = {
   },
 
   proof: {
-    pill: "이번 빌드에서 입증",
-    title: "실제 분산 추론, 공개 도메인에서 가동 중",
+    pill: "테스트 플릿에서 검증",
+    title: "실제 분산 추론, 여러 머신에서 검증",
     items: [
-      "params를 4개의 AMD MI250 GPU에 분산해 제공",
-      "서로 다른 소유자 지갑들이 각각 레이어 몫을 획득",
+      "params를 물리 머신 3대에 걸쳐 끝에서 끝까지 제공",
+      "노드별 개별 지갑이 각자 레이어 몫만큼 크레딧됨 (테스트 플릿)",
       "API 표면 — OpenAI + Anthropic 호환",
       "지갑 플랫폼 — web · desktop · iOS · Android",
     ],
     strip:
-      "122B를 4개의 GPU에 분산해 제공 · OpenAI + Anthropic 호환 · web / desktop / iOS / Android 지갑 · 공개 도메인에서 가동 중",
+      "122B를 머신 3대에 분산해 제공 · OpenAI + Anthropic 호환 · web / desktop / iOS / Android 지갑 · Solana devnet",
   },
 
   footer: {
+    legal: "이용약관 및 개인정보",
     ctaTitle: "당신의 기기를 지금 네트워크에 올리세요.",
     ctaBody:
       "노드를 실행해 제공하는 레이어만큼 KVR을 받거나, OpenAI/Anthropic 호환 엔드포인트로 게이트웨이를 앱에 연결하세요.",
     tagline:
-      "linkcpp 컨트롤 허브로 구동되는 탈중앙화 AI 추론 네트워크 브랜드 — 대형 모델을 일상 기기에 분산하는 소스 공개(BSL) 엔진(기본 추론엔진 데이터 플레인 위에서).",
+      "linkcpp 컨트롤 허브로 구동되는 탈중앙화 AI 추론 네트워크 브랜드 — 대형 모델을 일상 기기에 분산하는 소스 공개(BSL) 엔진(업스트림에 가깝게 유지되는 추론엔진 데이터 플레인 위에서).",
     disclaimerStrong: "고지.",
     disclaimer:
-      "KVR은 추론 결제와 연산 보상에 쓰이는 유틸리티 / 기여 토큰입니다. 오늘은 Solana devnet에서 실행됩니다 — 거래 가능한 메인넷 자산이 아니며, 여기의 어떤 내용도 청약, 가격, 또는 금전적 수익 약속이 아닙니다. 보상은 참여가 아니라 실제로 기여한 연산을 반영합니다.",
-    rights: "© 2026 Kvasir · linkcpp. 엔진은 Business Source License(BSL)로 제공됩니다 — 개발·테스트는 무료, 프로덕션 사용에는 라이선스가 필요합니다.",
+      "KVR은 추론 결제와 연산 보상에 쓰이는 유틸리티 / 기여 토큰입니다. 오늘은 Solana devnet에서 실행됩니다 — 거래 가능한 메인넷 자산이 아니며, 여기의 어떤 내용도 청약, 가격, 또는 금전적 수익 약속이 아닙니다. 연산 보상은 측정된 작업을 반영하며, 인프라 호스트는 가동 시간에 대해서도 보상을 받습니다.",
+    rights: "© 2026 Kvasir · linkcpp. 엔진은 Business Source License(BSL) 1.1로 제공됩니다 — 허용되는 사용 범위는 라이선스를 참조하세요.",
   },
 
   guide: {
@@ -298,7 +299,7 @@ export const ko: Dict = {
     headline1: "컴퓨팅 파워를 제공하고,",
     headline2: "노드를 실행하세요.",
     sub: "지갑을 만들고 KVR을 스테이킹한 뒤, 기기를 Kvasir 네트워크에 연결해 기여한 연산만큼 KVR을 받으세요. 아래에서 사용하는 플랫폼을 선택하면 다운로드·설치·실행 과정을 안내합니다.",
-    badgeCustody: "비수탁형 — 당신의 키",
+    badgeCustody: "자기 보관 — 당신의 키",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR은 Solana devnet 유틸리티 토큰입니다 — 거래 가능한 메인넷 자산이나 금전적 수익이 아닙니다.",
@@ -314,7 +315,7 @@ export const ko: Dict = {
       { title: "앱 다운로드", body: "위에서 운영체제에 맞는 Kvasir Wallet 설치 파일을 내려받으세요. GPU(NVIDIA·AMD·Apple Silicon)를 권장하지만 CPU로도 동작합니다.", body2: "" },
       { title: "설치 후 실행", body: "내려받은 설치 파일을 실행해 설치한 뒤 Kvasir Wallet을 엽니다. macOS는 처음 실행 시 “확인되지 않은 개발자” 경고가 나오면 시스템 설정 → 개인정보 보호 및 보안에서 열기를 허용하세요.", body2: "" },
       { title: "지갑 만들기", body: "새 지갑 만들기를 선택합니다. 복구 문구 12단어를 안전한 곳에 적어 보관하세요 — 분실 시 복구할 수 없습니다. 이어서 앱을 잠금 해제할 패스프레이즈를 설정하면 시작됩니다. 키는 이 기기에만 저장되는 비수탁형입니다.", body2: "" },
-      { title: "KVR 준비 & 스테이킹", body: "수수료용 devnet SOL과 스테이킹할 KVR을 지갑의 받기 주소로 받습니다. 대시보드의 스테이킹 패널에서 수량을 입력하고 예치하면 APR 이자와 함께 노드 보상 자격이 생깁니다.", body2: "" },
+      { title: "KVR 준비 & 스테이킹", body: "수수료용 devnet SOL과 스테이킹할 KVR을 지갑의 받기 주소로 받습니다. 대시보드의 스테이킹 패널에서 수량을 입력하고 예치하면 노드 보상 자격이 생깁니다.", body2: "" },
       { title: "노드 설정", body: "노드 설정에서 이 기기의 컴퓨트 백엔드(CUDA·ROCm·Metal·CPU)를 고르고, 노드 모드는 로컬 샤드(권장)를 선택합니다 — 레이어 샤드를 로컬에서 실행하고 작은 경계 상태만 릴레이하는 가장 빠른 방식입니다.", body2: "" },
       { title: "노드 실행", body: "노드 구동(라이브) 토글을 켜면 이 기기가 당신의 지갑(소유자)으로 네트워크에 등록되고 온라인이 됩니다.", body2: "실제 GPU 연산 노드로 참여하려면 아래 네이티브 에이전트도 실행하세요. 허브의 플래너가 이 기기에 모델 레이어를 배치하고, 노드가 처리한 만큼 레이어 몫의 KVR이 소유자 지갑에 적립됩니다." },
       { title: "기여 & 보상 확인", body: "노드 현황에서 노드 수·온라인·유효 기여·청구 가능을 확인합니다. 노드는 처리량(tok/s)으로 성능 등급(S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7)이 매겨지고, 원 기여 × 등급 배수 = 유효 기여로 계산됩니다. 보상 청구로 적립된 KVR을 지갑으로 가져오세요.", body2: "" },
@@ -324,7 +325,7 @@ export const ko: Dict = {
     faucetWeb: "웹: faucet.solana.com — 주소 붙여넣고 네트워크 Devnet 선택",
     faucetCli: "CLI: solana airdrop 2 <내 지갑 주소> --url devnet",
     faucetAlt: "대체: QuickNode · SolFaucet devnet",
-    faucetKvr: "스테이킹할 KVR은 배포 또는 스왑으로 확보합니다 (KVR 스왑: SOL/ETH ↔ KVR — 지원 예정).",
+    faucetKvr: "스테이킹할 devnet KVR은 배포 faucet에서 받습니다.",
     mobileTitle: "Kvasir Wallet · {0} 앱",
     mobileSub: "지갑을 만들고 기기를 네트워크에 연결하세요.",
     mobile: [
@@ -339,7 +340,7 @@ export const ko: Dict = {
     capPassphrase: "패스프레이즈 설정 → 시작하기",
     capReceive: "받기 — 주소·QR (주소 일부 마스킹)",
     capBalances: "지갑 잔액 — KVR · SOL",
-    capStaking: "스테이킹 — APR · 원금 · 누적 이자 · 노드 보상",
+    capStaking: "스테이킹 패널 (devnet)",
     capBackend: "컴퓨트 백엔드 (CUDA · ROCm · Metal · CPU)",
     capMode: "노드 모드 — 로컬 샤드(권장)",
     capRunlive: "노드 구동(라이브) — 라이브 게이지 · 노드 ID · OS",
@@ -409,7 +410,7 @@ export const ko: Dict = {
     codeLede: "환경변수에서 지갑 비밀키를 불러와 견적 → 결제 → 교환까지 하나의 완결 스니펫으로. 1·2·4단계는 순수 HTTP이고, 3단계(SPL 전송)만 SDK마다 다릅니다.",
     adapterTitle: "OpenAI 호환 어댑터",
     adapterLede: "이미 OpenAI 클라이언트(또는 OpenAI 형식만 쓰는 도구)를 쓰고 있나요? 이 드롭인 어댑터를 앱 옆에서 실행하세요. /v1/chat/completions를 노출하고, 내부에서 quote·서명·redeem으로 매 호출을 본인 지갑에서 결제합니다. 클라이언트의 base URL을 어댑터로 두고 아무 더미 API 키나 쓰면 됩니다.",
-    adapterNote: "비수탁: 지갑 비밀키(KVR_SECRET_KEY)는 이 프로세스에만 있고 Kvasir로 전달되지 않습니다. Kvasir API 키는 존재하지 않으며, 인증은 어댑터가 서명하는 온체인 KVR 결제입니다. 호출마다 quote/결제/redeem 왕복 1회이니 처리량에 맞춰 캐싱·배치하세요.",
+    adapterNote: "비수탁: 지갑 비밀키(KVR_SECRET_KEY)는 이 프로세스에만 있고 Kvasir로 전달되지 않습니다. 이 호출당 결제 모드에서는 Kvasir API 키가 없으며, 인증은 어댑터가 서명하는 온체인 KVR 결제입니다(아래의 선불 크레딧 방식은 대신 API 키를 사용합니다). 호출마다 quote/결제/redeem 왕복 1회이니 처리량에 맞춰 캐싱·배치하세요.",
     prereqTitle: "시작하기 전에",
     prereqs: [
       "KVR(결제용)과 SOL 약간(수수료용)을 보유한 Solana devnet 지갑.",
@@ -494,22 +495,22 @@ export const ko: Dict = {
     pill: "채용 중",
     headline1: "마케팅 & 그로스",
     headline2: "네트워크를 함께 키울 사람",
-    sub: "Kvasir는 Solana 기반 탈중앙 AI 추론 네트워크(DePIN)입니다. 오픈소스 linkcpp 엔진이 대형 오픈 모델을 여러 GPU와 머신에 분산시키고, 각 노드는 실제로 서빙한 레이어만큼 KVR을 법니다. 기술은 이미 돌아갑니다 — 이제 세상에 알릴 사람이 필요합니다.",
+    sub: "Kvasir는 Solana 기반 탈중앙 AI 추론 네트워크(DePIN)입니다. 소스 공개 linkcpp 엔진이 대형 오픈 모델을 여러 GPU와 머신에 분산시키고, 각 노드는 실제로 서빙한 레이어만큼 KVR을 법니다. 기술은 이미 돌아갑니다 — 이제 세상에 알릴 사람이 필요합니다.",
     factRole: "역할",
     factRoleV: "마케팅 & 그로스 — 풀타임",
     factLocation: "근무지",
     factLocationV: "원격 · 미국/유럽 또는 동남아 타임존 · KST와 일 3–4시간 이상 겹칠 것",
     factComp: "보상",
     factCompV:
-      "초기 지분(4년 베스팅 / 1년 클리프) + TGE 조건부 토큰 배분 · 확정 전 유료 트라이얼",
+      "초기 지분(4년 베스팅 / 1년 클리프) · 확정 전 유료 트라이얼",
     factEngine: "엔진",
     liveTitle: "이미 라이브인 것",
     liveLede: "백서만 있는 프로젝트가 아닙니다. 현재 검증되어 돌아가는 것들:",
     liveProof: [
-      "네트워크에서 테스트한 모델: Qwen3.5 122B, Qwen3.5 35B, Gemma4 12B — 각 모델을 여러 머신에 레이어 단위로 분산, 어떤 노드도 모델 전체를 들고 있지 않습니다.",
+      "네트워크에서 테스트한 모델: Qwen3.5 122B, Qwen3.5 35B, Gemma4 12B — 각 모델을 여러 머신에 레이어 단위로 분산, 어떤 노드도 모델 전체를 들고 있을 필요가 없습니다.",
       "이기종 라이브 플릿 총 21개 노드: AMD MI250 4장(ARM 호스트), NVIDIA GB10 4장, NVIDIA RTX Pro 6000 4장, MacBook Pro 1대, x86 Windows CPU 머신 6대, 모바일 노드 2개(iOS + Android).",
       "노드별 기여 정산: 각 노드는 서빙한 추론의 레이어 비중만큼 가중된 KVR을 자기 지갑으로 정산받습니다.",
-      "OpenAI·Anthropic 호환 추론 과금 게이트웨이가 자체 도메인에서 라이브.",
+      "OpenAI·Anthropic 호환 추론 과금 게이트웨이를 자체 도메인에 배포.",
       "웹·데스크톱·iOS·Android 논커스터디얼 지갑 출시, 지갑 서명 로그인(Sign-In With Solana) + 2FA.",
     ],
     devnetNote:
@@ -536,7 +537,7 @@ export const ko: Dict = {
       },
       {
         title: "런치 & 파트너십 지원",
-        body: "네트워크가 devnet을 졸업할 때 토큰 런치 마케팅을 지원하고, 파트너십 아웃리치(GPU 플릿, 지갑, 모델 프로바이더)를 돕습니다.",
+        body: "파트너십 아웃리치(GPU 플릿, 지갑, 모델 프로바이더)를 돕고, 개발자·노드 오퍼레이터 커뮤니티를 키웁니다.",
       },
     ],
     profileTitle: "찾는 사람",
@@ -544,7 +545,7 @@ export const ko: Dict = {
       "크립토 네이티브 마케터: web3 커뮤니티나 프로덕트를 제로에서 키워본 사람 — X, Discord, 온체인에서 검증 가능해야 합니다.",
       "DePIN 또는 AI-크립토 이해 강선호; GPU 보유자에게 노드를 돌릴 이유를 설명할 수 있어야 합니다.",
       "영어 네이티브 또는 유창; 미국/유럽 또는 동남아 타임존, KST(UTC+9)와 일 3–4시간 이상 겹칠 것.",
-      "초기 단계 보상 수용: 큰 급여보다 의미 있는 지분 + 토큰 업사이드.",
+      "초기 단계 보상 수용: 큰 급여보다 의미 있는 지분.",
       "실행형 — 포스트, 캠페인, 실험을 직접 만들어 내보내는 사람.",
     ],
     processTitle: "채용 방식",
@@ -561,7 +562,7 @@ export const ko: Dict = {
       },
       {
         title: "오퍼",
-        body: "마케팅 & 그로스: 표준 4년 베스팅(1년 클리프) 지분 + TGE 조건부 토큰 배분; 펀딩이 들어오면 현금 기본급.",
+        body: "마케팅 & 그로스: 표준 4년 베스팅(1년 클리프) 지분; 펀딩이 들어오면 현금 기본급.",
       },
       {
         title: "함께 만들기",

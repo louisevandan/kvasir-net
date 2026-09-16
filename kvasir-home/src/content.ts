@@ -18,8 +18,6 @@ export const LINKS = {
   // KVR SPL token on the Solana explorer — on-chain transaction activity.
   explorerDevnet:
     "https://explorer.solana.com/address/6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ?cluster=devnet",
-  explorerMainnet:
-    "https://explorer.solana.com/address/6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ?cluster=mainnet-beta",
 };
 
 /* Download destinations for the node-operator guide. Empty string => the guide
@@ -83,14 +81,14 @@ export const PERF_TIERS = [
 
 /* linkcpp's own one-liner — a verbatim English quote, shown as a callout. */
 export const LINKCPP_TAGLINE =
-  "Run large AI models across multiple GPUs and machines with stock inference engine binaries.";
+  "Run large AI models across multiple GPUs and machines on an inference engine kept close to upstream.";
 
 /* Device types (name + status are universal; the detail line is translated in
    t.contributors.deviceDetails, aligned by index). */
 export const DEVICE_META = [
   { name: "GPU", status: "live" as const },
   { name: "CPU", status: "live" as const },
-  { name: "NPU", status: "live" as const },
+  { name: "NPU", status: "coming" as "live" | "coming" },
   { name: "Mobile", status: "live" as const },
 ];
 

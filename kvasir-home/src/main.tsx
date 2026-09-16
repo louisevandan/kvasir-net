@@ -10,6 +10,7 @@ import CareersPage from "./components/CareersPage.tsx";
 import TechnologyPage from "./components/TechnologyPage.tsx";
 import WikiPage from "./components/WikiPage.tsx";
 import ApiDocsPage from "./components/ApiDocsPage.tsx";
+import LegalPage from "./components/LegalPage.tsx";
 import { I18nProvider } from "./i18n/provider";
 
 createRoot(document.getElementById("root")!).render(
@@ -25,6 +26,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/wiki" element={<WikiPage />} />
           <Route path="/wiki/:slug" element={<WikiPage />} />
           <Route path="/docs/api" element={<ApiDocsPage />} />
+          <Route path="/legal" element={<LegalPage />} />
         </Routes>
       </BrowserRouter>
     </I18nProvider>

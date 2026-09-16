@@ -41,16 +41,16 @@ export const de: Dict = {
     eyebrow: "DePIN · Dezentrale KI — jenseits des Monopols",
     headline1: "Rechenleistung einbringen.",
     headline2: "KVR verdienen.",
-    sub: "Kvasir verteilt große offene Modelle mit linkcpp über gemeinsam genutzte Hardware, sodass kein einzelner Node das gesamte Modell hält. Steuere eine GPU, CPU, NPU — oder sogar ein Smartphone — bei und verdiene KVR für die Layer, die du ausführst.",
+    sub: "Kvasir verteilt große offene Modelle mit linkcpp über gemeinsam genutzte Hardware, sodass kein einzelner Node das gesamte Modell halten muss. Steuere eine GPU, eine CPU oder ein Smartphone bei und verdiene KVR für die Layer, die du ausführst.",
     badges: [
       "Läuft auf GPU · CPU · NPU · Smartphone",
       "OpenAI- + Anthropic-kompatibel",
-      "Quelloffen einsehbar (BSL)",
+      "Quellcode verfügbar (BSL)",
       "Solana-Devnet",
     ],
     ringCenter: "ein Ring · kein Master",
     topologyCaption:
-      "Ein Ring aus Geräten — eine GPU, CPU, NPU und ein Smartphone — die jeweils einige der 49 Layer halten. Jeder Node führt seinen Abschnitt aus und gibt nur die Hidden-State-Grenze an seinen Nachbarn weiter; der letzte gibt das Token durch den Ring zurück. Kein Node hält das gesamte Modell, und es gibt keinen zentralen Master — illustrativ.",
+      "Ein Ring aus Geräten — eine GPU, CPU, NPU und ein Smartphone — die jeweils einige der 49 Layer halten. Jeder Node führt seinen Abschnitt aus und gibt nur die Hidden-State-Grenze an seinen Nachbarn weiter; der letzte gibt das Token durch den Ring zurück. Kein Node muss das gesamte Modell halten, und der Ring hat keinen zentralen Master — illustrativ.",
   },
 
   thesis: {
@@ -66,10 +66,10 @@ export const de: Dict = {
     ],
     kvasirLabel: "Kvasir",
     kvasirPoints: [
-      "Jedes Gerät tritt einem Peer-to-Peer-Ring bei — kein zentraler Master",
-      "Quelloffen einsehbare linkcpp-Engine — BSL-lizenziert und vollständig einsehbar",
+      "Jedes Gerät tritt einem Peer-to-Peer-Ring bei — kein zentraler Master im Ring",
+      "linkcpp-Engine mit verfügbarem Quellcode — BSL-lizenziert und vollständig einsehbar",
       "Mitwirkende verdienen KVR für die tatsächliche Rechenleistung, die sie beisteuern",
-      "Non-custodial — deine Schlüssel, dein Node, deine Belohnungen",
+      "Wallet in Eigenverwahrung — deine Schlüssel verlassen nie dein Gerät",
     ],
   },
 
@@ -99,11 +99,11 @@ export const de: Dict = {
   how: {
     eyebrow: "Funktionsweise",
     title: "Ein Modell, viele Geräte, Bezahlung pro Layer",
-    lede: "Kein einzelner Node hält das gesamte Modell. Eine Anfrage fließt über den Layer-Pfad, und jeder Node wird für genau die Arbeit belohnt, die er geleistet hat.",
+    lede: "Kein einzelner Node muss das gesamte Modell halten. Eine Anfrage fließt über den Layer-Pfad, und jeder Node wird für genau die Arbeit belohnt, die er geleistet hat.",
     steps: [
       {
         title: "Aufteilen",
-        body: "Das Modell wird in zusammenhängende Layer-Fenster unterteilt. Jedes Gerät speichert dasselbe Modell, lädt aber nur sein Fenster — kein Node hält das Ganze.",
+        body: "Das Modell wird in zusammenhängende Layer-Fenster unterteilt. Jedes Gerät hat eine Kopie der Modelldatei, lädt aber nur sein eigenes Fenster in den Speicher, sodass kein Node das ganze Modell ausführen muss.",
         note: "Qwen3.5-122B · 49 Layer · Rank-Manifest",
       },
       {
@@ -124,11 +124,11 @@ export const de: Dict = {
     title: "Ungenutzte Rechenleistung in KVR verwandeln",
     lede: "Richte ein unterstütztes Gerät auf das Netzwerk aus, und es beginnt, Layer bereitzustellen. Du verdienst KVR proportional zu den Layern, die dein Node ausführt — deine Schlüssel bleiben in deiner eigenen Wallet.",
     nonCustodial:
-      "Non-custodial by Design — die Betreiber-Anmeldung erfolgt per Wallet-Signatur (Sign-In With Solana) mit optionaler 2FA.",
+      "Anmeldung per Wallet-Signatur — der Betreiberzugang nutzt Sign-In With Solana mit optionaler 2FA; es gibt keine Passwörter.",
     points: [
       {
         title: "Jedes Gerät kann teilnehmen",
-        body: "GPUs, CPUs, NPUs und Smartphones führen heute alle Layer aus. Eine ring runtime auf Peer-to-Peer-Basis lässt jedes Gerät nur wenige Layer halten und nur kleinen Grenzzustand an seinen Nachbarn weitergeben — also kein Gatekeeper und kein einzelner Eigentümer.",
+        body: "GPUs, CPUs und Smartphones führen heute Layer aus, und die NPU-Unterstützung ist in Arbeit. Eine ring runtime auf Peer-to-Peer-Basis lässt jedes Gerät nur wenige Layer halten und nur kleinen Grenzzustand an seinen Nachbarn weitergeben — also kein Gatekeeper und kein einzelner Eigentümer.",
       },
       {
         title: "Layer-Share-Belohnungen",
@@ -170,7 +170,7 @@ export const de: Dict = {
   token: {
     eyebrow: "Token & Belohnungen",
     title: "KVR bezahlt für Rechenleistung — und belohnt sie",
-    lede: "KVR ist die Einheit, die Entwickler für Inferenz ausgeben, und die Einheit, die Mitwirkende für die Layer verdienen, die sie ausführen. Belohnungen werden aus echter Arbeit berechnet, nicht aus Teilnahme.",
+    lede: "KVR ist die Einheit, die Entwickler für Inferenz ausgeben, und die Einheit, die Mitwirkende für die Layer verdienen, die sie ausführen. Compute-Belohnungen ergeben sich aus gemessener Arbeit; Gateway- und Hub-Hosts verdienen zusätzlich für Uptime.",
     facts: [
       { k: "Symbol", v: "KVR", note: "On-Chain-Name “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "derzeit Devnet" },
@@ -181,9 +181,9 @@ export const de: Dict = {
     whatForBody:
       "Ein Token, beide Richtungen: Entwickler geben KVR aus, um Inferenz über das Gateway auszuführen, und Mitwirkende verdienen KVR für die Rechenleistung, die ihre Nodes bereitstellen. Es ist die Verrechnungseinheit des Netzwerks für echte Arbeit — sieh unten, wie sich die Belohnungen nach Rolle aufschlüsseln.",
     whatForChips: ["pro Inferenz zahlen", "pro Layer belohnen", "auf Solana abrechnen"],
-    custodyTitle: "Non-custodial Wallet",
+    custodyTitle: "Wallet in Eigenverwahrung",
     custodyBody:
-      "Belohnungen werden an die eigene Owner-Wallet jedes Nodes abgerechnet. Die Schlüssel liegen in der Wallet des Nutzers — Browser, Desktop oder Mobil — niemals bei einem Betreiber. Über vier verschiedene Owner-Wallets verifiziert, die jeweils ihren Layer-Anteil verdienen.",
+      "Die Schlüssel liegen in der Wallet des Nutzers — Browser, Desktop oder Mobil — niemals bei einem Betreiber. Belohnungen werden an die eigene Owner-Wallet jedes Nodes ausgezahlt, verifiziert auf unserer Testflotte über vier Owner-Wallets. Im Devnet werden gestakte KVR und Prepaid-Credits von der Treasury des Gateways gehalten und in dessen Ledger geführt, bis ein On-Chain-Staking-Programm verfügbar ist.",
     custodyChips: ["web", "desktop", "iOS", "Android"],
     devnetStrong: "Devnet, Utility-Token.",
     devnetBody:
@@ -226,7 +226,7 @@ export const de: Dict = {
   tech: {
     eyebrow: "Hinter den Kulissen",
     title: "linkcpp — die Engine hinter dem Netzwerk",
-    lede: "linkcpp ist der offene Control-Hub, der Alltags-Hardware in eine verteilte Inferenz-Engine verwandelt. Seine ring runtime lässt jedes Gerät nur wenige Layer halten und den Hidden State an seinen Nachbarn weitergeben — kein zentraler Master — während die unveränderte Inferenz-Engine-Datenebene ungeforkt bleibt.",
+    lede: "linkcpp ist der offene Control-Hub, der Alltags-Hardware in eine verteilte Inferenz-Engine verwandelt. Seine ring runtime lässt jedes Gerät nur wenige Layer halten und den Hidden State an seinen Nachbarn weitergeben — kein zentraler Master im Ring — während die Datenebene der Inferenz-Engine nah am Upstream bleibt, mit einem kleinen Patch-Set.",
     taglineCaption: "— linkcpp, in eigenen Worten",
     points: [
       {
@@ -235,7 +235,7 @@ export const de: Dict = {
       },
       {
         title: "linkcpp-Control-Hub",
-        body: "Ein einziger dockerisierter Hub — die Steuerungsebene, die der RPC-Datenebene von Inferenz-Engine fehlte. Er erkennt Geräte, plant die Layer-Platzierung, startet die unveränderten Worker und stellt die Gateways bereit. Quelle verfügbar unter der Business Source License (BSL).",
+        body: "Ein einziger dockerisierter Hub — die Steuerungsebene, die der RPC-Datenebene der Inferenz-Engine fehlte. Er erkennt Geräte, plant die Layer-Platzierung, startet die Worker und stellt die Gateways bereit. Quelle verfügbar unter der Business Source License (BSL) 1.1.",
       },
       {
         title: "Verteilte Layer-Platzierung",
@@ -247,7 +247,7 @@ export const de: Dict = {
       },
     ],
     openText:
-      "Die Quelle ist unter der Business Source License (BSL) verfügbar — für Entwicklung und Tests kostenlos lesbar, ausführbar und erweiterbar. Produktive (kommerzielle) Nutzung erfordert eine gekaufte Lizenz.",
+      "Die Quelle ist unter der Business Source License (BSL) 1.1 verfügbar — frei lesbar und erweiterbar. Nicht monetarisierte interne Nutzung ist erlaubt; gehostete, eingebettete oder umsatzgenerierende Nutzung erfordert eine kommerzielle Lizenz.",
   },
 
   roadmap: {
@@ -258,7 +258,7 @@ export const de: Dict = {
       {
         phase: "Jetzt",
         title: "Inferenz auf jedem Gerät, live",
-        body: "GPUs, CPUs, NPUs und Smartphones stellen Layer über die ring runtime bereit. 122B lief aufgeteilt auf 4 GPUs; Beiträge werden durchgängig gutgeschrieben; Non-custodial Wallets sind für web/desktop/iOS/Android verfügbar; der Zugang ist auf öffentlichen Domains abgesichert.",
+        body: "GPUs, CPUs und Smartphones stellen Layer über die ring runtime bereit (NPU-Unterstützung in Arbeit). Ein 122B-Modell lief durchgängig über drei physische Maschinen; Beiträge werden durchgängig gutgeschrieben; Wallets für Web, Desktop, iOS und Android halten die Schlüssel auf dem Gerät des Nutzers; der Zugang läuft über HTTPS auf öffentlichen Domains.",
       },
       {
         phase: "Demnächst",
@@ -274,28 +274,29 @@ export const de: Dict = {
   },
 
   proof: {
-    pill: "In diesem Build nachgewiesen",
-    title: "Echte verteilte Inferenz, live auf öffentlichen Domains",
+    pill: "Auf unserer Testflotte verifiziert",
+    title: "Echte verteilte Inferenz, über mehrere Maschinen verifiziert",
     items: [
-      "Parameter, aufgeteilt auf 4 AMD MI250 GPUs bereitgestellt",
-      "verschiedene Owner-Wallets, die jeweils ihren Layer-Anteil verdienen",
+      "Parameter, durchgängig über 3 physische Maschinen bereitgestellt",
+      "separate Node-Wallets, jeweils für ihren Layer-Anteil gutgeschrieben (Testflotte)",
       "API-Schnittstellen — OpenAI- + Anthropic-kompatibel",
       "Wallet-Plattformen — web · desktop · iOS · Android",
     ],
     strip:
-      "122B bereitgestellt auf 4 GPUs · OpenAI- + Anthropic-kompatibel · Wallets auf web / desktop / iOS / Android · live auf öffentlichen Domains",
+      "122B bereitgestellt auf 3 Maschinen · OpenAI- + Anthropic-kompatibel · Wallets auf web / desktop / iOS / Android · Solana devnet",
   },
 
   footer: {
+    legal: "Bedingungen & Datenschutz",
     ctaTitle: "Bring deine GPU ins Netzwerk.",
     ctaBody:
       "Betreibe einen Node und verdiene KVR für die Layer, die du bereitstellst, oder binde das Gateway mit einem OpenAI/Anthropic-kompatiblen Endpunkt in deine App ein.",
     tagline:
-      "Die Netzwerk-Marke für dezentrale KI-Inferenz, angetrieben vom linkcpp-Control-Hub — eine quelloffen einsehbare (BSL) Engine, die große Modelle über Alltagsgeräte verteilt (auf einer unveränderten Inferenz-Engine-Datenebene).",
+      "Die Netzwerk-Marke für dezentrale KI-Inferenz, angetrieben vom linkcpp-Control-Hub — eine Engine mit verfügbarem Quellcode (BSL), die große Modelle über Alltagsgeräte verteilt (auf einer Inferenz-Engine-Datenebene, die nah am Upstream gehalten wird).",
     disclaimerStrong: "Haftungsausschluss.",
     disclaimer:
-      "KVR ist ein Utility-/Beitrags-Token, das zur Bezahlung von Inferenz und zur Belohnung von Rechenleistung dient. Es läuft heute auf dem Solana-Devnet — es ist kein handelbarer Mainnet-Vermögenswert, und nichts hier ist ein Angebot, ein Preis oder ein Versprechen einer finanziellen Rendite. Belohnungen spiegeln tatsächlich beigesteuerte Rechenleistung wider, nicht Teilnahme.",
-    rights: "© 2026 Kvasir · linkcpp. Engine unter der Business Source License (BSL) — kostenlos für Entwicklung und Tests; produktive Nutzung erfordert eine Lizenz.",
+      "KVR ist ein Utility-/Beitrags-Token, das zur Bezahlung von Inferenz und zur Belohnung von Rechenleistung dient. Es läuft heute auf dem Solana-Devnet — es ist kein handelbarer Mainnet-Vermögenswert, und nichts hier ist ein Angebot, ein Preis oder ein Versprechen einer finanziellen Rendite. Compute-Belohnungen spiegeln gemessene Arbeit wider; Infrastruktur-Hosts verdienen zusätzlich für Uptime.",
+    rights: "© 2026 Kvasir · linkcpp. Engine unter der Business Source License (BSL) 1.1 — zulässige Nutzung siehe Lizenz.",
   },
 
   guide: {
@@ -304,7 +305,7 @@ export const de: Dict = {
     headline1: "Rechenleistung einbringen,",
     headline2: "einen Node betreiben.",
     sub: "Erstelle eine Wallet, stake KVR und verbinde dann dein Gerät mit dem Kvasir-Netzwerk, um KVR für die von dir bereitgestellte Rechenleistung zu verdienen. Wähle unten deine Plattform für Download-, Installations- und Ausführungsschritte.",
-    badgeCustody: "Non-custodial — deine Schlüssel",
+    badgeCustody: "Eigenverwahrung — deine Schlüssel",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR ist ein Utility-Token im Solana-devnet — kein handelbarer Vermögenswert im mainnet und keine finanzielle Rendite.",
@@ -320,7 +321,7 @@ export const de: Dict = {
       { title: "App herunterladen", body: "Lade oben das Kvasir-Wallet-Installationsprogramm für dein Betriebssystem herunter. Eine GPU (NVIDIA / AMD / Apple Silicon) wird empfohlen, aber CPU funktioniert auch.", body2: "" },
       { title: "Installieren und öffnen", body: "Führe das Installationsprogramm aus und öffne dann Kvasir Wallet. Wenn unter macOS die Warnung „nicht verifizierter Entwickler“ erscheint, erlaube dies in den Systemeinstellungen → Datenschutz & Sicherheit.", body2: "" },
       { title: "Wallet erstellen", body: "Wähle Neue Wallet erstellen. Notiere deine 12-Wörter-Wiederherstellungsphrase und bewahre sie sicher auf — sie kann bei Verlust nicht wiederhergestellt werden. Lege anschließend eine Passphrase fest, um die App zu entsperren. Die Schlüssel sind non-custodial und werden ausschließlich auf diesem Gerät gespeichert.", body2: "" },
-      { title: "KVR einzahlen & staken", body: "Empfange etwas devnet-SOL (für Gebühren) und KVR (zum Staken) an der Empfangsadresse deiner Wallet. Gib im Staking-Bereich des Dashboards einen Betrag ein und wähle Staken, um APR-Zinsen zu verdienen und dich für Node-Rewards zu qualifizieren.", body2: "" },
+      { title: "KVR einzahlen & staken", body: "Empfange etwas devnet-SOL (für Gebühren) und KVR (zum Staken) an der Empfangsadresse deiner Wallet. Gib im Staking-Bereich des Dashboards einen Betrag ein und wähle Staken, um dich für Node-Rewards zu qualifizieren.", body2: "" },
       { title: "Node konfigurieren", body: "Wähle in den Node-Einstellungen das Compute-Backend dieses Geräts (CUDA / ROCm / Metal / CPU) und entscheide dich für Lokaler Shard (empfohlen) — dabei läuft der Layer-Shard lokal, und es wird nur ein kleiner Grenzzustand weitergeleitet, der schnellste Modus.", body2: "" },
       { title: "Node ausführen", body: "Aktiviere Node ausführen (live), um dieses Gerät unter deiner Wallet (Eigentümer) im Netzwerk zu registrieren und online zu bringen.", body2: "Für einen echten GPU-Compute-Node führe zusätzlich den nativen Agenten unten aus. Der Planner des Hubs platziert Modell-Layer auf deinem Gerät, und dein Node verdient einen Layer-Anteil an KVR, der der Eigentümer-Wallet gutgeschrieben wird." },
       { title: "Beitrag & Rewards verfolgen", body: "Beobachte im Node-Status Nodes / Online / effektiver Beitrag / einlösbar. Nodes werden nach Durchsatz in Stufen eingeteilt (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); Rohwert × Stufe = effektiv. Nutze Rewards einlösen, um aufgelaufene KVR in deine Wallet zu übertragen.", body2: "" },
@@ -330,7 +331,7 @@ export const de: Dict = {
     faucetWeb: "Web: faucet.solana.com — füge deine Adresse ein und wähle das Netzwerk Devnet",
     faucetCli: "CLI: solana airdrop 2 <your address> --url devnet",
     faucetAlt: "Alternativen: QuickNode · SolFaucet devnet",
-    faucetKvr: "Erhalte KVR zum Staken per Distribution oder Swap (KVR-Swap: SOL/ETH ↔ KVR — demnächst verfügbar).",
+    faucetKvr: "Erhalte Devnet-KVR zum Staken über das Distributions-Faucet.",
     mobileTitle: "Kvasir Wallet · {0}-App",
     mobileSub: "Erstelle eine Wallet und verbinde dein Gerät mit dem Netzwerk.",
     mobile: [
@@ -345,7 +346,7 @@ export const de: Dict = {
     capPassphrase: "Passphrase festlegen → Loslegen",
     capReceive: "Empfangen — Adresse & QR-Code (Adresse teilweise maskiert)",
     capBalances: "Wallet-Guthaben — KVR · SOL",
-    capStaking: "Staking — APR · Kapital · Zinsen · Node-Rewards",
+    capStaking: "Staking-Bereich (Devnet)",
     capBackend: "Compute-Backend (CUDA · ROCm · Metal · CPU)",
     capMode: "Node-Modus — Lokaler Shard (empfohlen)",
     capRunlive: "Node ausführen (live) — Live-Anzeigen · Node-ID · Betriebssystem",
@@ -415,7 +416,7 @@ export const de: Dict = {
     codeLede: "Lade den geheimen Wallet-Schlüssel aus der Umgebung, hole ein Angebot, bezahle und löse ein — ein in sich geschlossenes Snippet. Die Schritte 1, 2 und 4 sind reines HTTP; nur Schritt 3 (die SPL-Überweisung) unterscheidet sich je SDK.",
     adapterTitle: "OpenAI-kompatibler Adapter",
     adapterLede: "Du hast bereits einen OpenAI-Client (oder ein Tool, das nur OpenAI spricht)? Lass diesen Drop-in-Adapter neben deiner App laufen. Er stellt /v1/chat/completions bereit und bezahlt jeden Aufruf aus deiner eigenen Wallet — Angebot, Signatur, Einlösung — im Hintergrund. Richte die Base-URL deines Clients auf den Adapter und nutze einen beliebigen Dummy-API-Key.",
-    adapterNote: "Nicht-verwahrend: Das Wallet-Secret (KVR_SECRET_KEY) bleibt in diesem Prozess und erreicht Kvasir nie. Es gibt keinen Kvasir-API-Key — die Authentifizierung ist die On-Chain-KVR-Zahlung, die dein Adapter signiert. Jeder Aufruf ist ein Angebot/Zahlung/Einlösung-Umlauf; cache oder bündle je nach Durchsatz.",
+    adapterNote: "Nicht-verwahrend: Das Wallet-Secret (KVR_SECRET_KEY) bleibt in diesem Prozess und erreicht Kvasir nie. In diesem Pay-per-Call-Modus gibt es keinen Kvasir-API-Key — die Authentifizierung ist die On-Chain-KVR-Zahlung, die dein Adapter signiert (Prepaid-Credits, siehe unten, nutzen stattdessen einen API-Key). Jeder Aufruf ist ein Angebot/Zahlung/Einlösung-Umlauf; cache oder bündle je nach Durchsatz.",
     prereqTitle: "Bevor du beginnst",
     prereqs: [
       "Eine Solana-Devnet-Wallet, die KVR (zum Bezahlen) und etwas SOL (für Gebühren) hält.",
@@ -494,22 +495,22 @@ export const de: Dict = {
     pill: "Wir stellen ein",
     headline1: "Marketing & Growth",
     headline2: "lass das Netzwerk wachsen",
-    sub: "Kvasir ist ein dezentrales KI-Inferenz-Netzwerk (DePIN) auf Solana. Die Open-Source-Engine linkcpp verteilt große offene Modelle auf viele beigesteuerte GPUs und Maschinen, und jeder Node verdient KVR für die Layer, die er tatsächlich bedient hat. Die Technik läuft — wir brauchen die Person, die es der Welt erzählt.",
+    sub: "Kvasir ist ein dezentrales KI-Inferenz-Netzwerk (DePIN) auf Solana. Die linkcpp-Engine mit verfügbarem Quellcode verteilt große offene Modelle auf viele beigesteuerte GPUs und Maschinen, und jeder Node verdient KVR für die Layer, die er tatsächlich bedient hat. Die Technik läuft — wir brauchen die Person, die es der Welt erzählt.",
     factRole: "Rolle",
     factRoleV: "Marketing & Growth — Vollzeit",
     factLocation: "Standort",
     factLocationV: "Remote · Zeitzone USA/Europa oder Südostasien · ≥3–4 h tägliche Überschneidung mit KST",
     factComp: "Vergütung",
     factCompV:
-      "Early-Stage-Equity (4 Jahre Vesting / 1 Jahr Cliff) + TGE-bedingte Token-Zuteilung · bezahlte Probearbeit vor jeder Festlegung",
+      "Early-Stage-Equity (4 Jahre Vesting / 1 Jahr Cliff) · bezahlte Probearbeit vor jeder Festlegung",
     factEngine: "Engine",
     liveTitle: "Was bereits live ist",
     liveLede: "Du steigst nicht in ein Whitepaper ein. Verifiziert und heute in Betrieb:",
     liveProof: [
-      "Auf dem Netzwerk getestete Modelle: Qwen3.5 122B, Qwen3.5 35B und Gemma4 12B — jeweils Layer für Layer über mehrere Maschinen verteilt, sodass kein Node das ganze Modell hält.",
+      "Auf dem Netzwerk getestete Modelle: Qwen3.5 122B, Qwen3.5 35B und Gemma4 12B — jeweils Layer für Layer über mehrere Maschinen verteilt, sodass kein Node das ganze Modell halten muss.",
       "Eine heterogene Live-Flotte von insgesamt 21 Nodes: 4× AMD MI250 (ARM-Host), 4× NVIDIA GB10, 4× NVIDIA RTX Pro 6000, 1 MacBook Pro, 6 x86-Windows-CPU-Maschinen und 2 mobile Nodes (iOS + Android).",
       "Beitragsabrechnung pro Node: Jeder Node verdient KVR, gewichtet nach seinem Layer-Anteil an jeder bedienten Inferenz, abgerechnet auf seine eigene Wallet.",
-      "OpenAI- und Anthropic-kompatibles Pay-per-Inference-Gateway, live auf unserer eigenen Domain.",
+      "OpenAI- und Anthropic-kompatibles Pay-per-Inference-Gateway, auf unserer eigenen Domain bereitgestellt.",
       "Non-Custodial-Wallets für Web, Desktop, iOS und Android, mit Wallet-Signatur-Login (Sign-In With Solana) + 2FA.",
     ],
     devnetNote:
@@ -536,7 +537,7 @@ export const de: Dict = {
       },
       {
         title: "Launch- & Partnerschafts-Support",
-        body: "Das Token-Launch-Marketing unterstützen, wenn das Netzwerk das Devnet verlässt, und bei der Partnerakquise helfen (GPU-Flotten, Wallets, Modellanbieter).",
+        body: "Bei der Partnerakquise helfen (GPU-Flotten, Wallets, Modellanbieter) und die Community aus Entwicklern und Node-Betreibern ausbauen.",
       },
     ],
     profileTitle: "Wen wir suchen",
@@ -544,7 +545,7 @@ export const de: Dict = {
       "Krypto-nativer Marketer: Du hast eine web3-Community oder ein Produkt von null aufgebaut — nachweisbar auf X, Discord oder on-chain.",
       "DePIN- oder KI-Krypto-Erfahrung stark bevorzugt; du kannst einem GPU-Besitzer erklären, warum er einen Node betreiben sollte.",
       "Englisch auf Muttersprachler-Niveau oder fließend; Zeitzone USA/Europa oder Südostasien mit ≥3–4 h täglicher Überschneidung mit KST (UTC+9).",
-      "Einverstanden mit Early-Stage-Vergütung: substanzielles Equity + Token-Upside statt hohem Gehalt.",
+      "Einverstanden mit Early-Stage-Vergütung: substanzielles Equity statt hohem Gehalt.",
       "Hands-on-Umsetzer — Posts, Kampagnen und Experimente lieferst du selbst.",
     ],
     processTitle: "So stellen wir ein",
@@ -561,7 +562,7 @@ export const de: Dict = {
       },
       {
         title: "Angebot",
-        body: "Marketing & Growth: Equity mit standardmäßigem 4-Jahres-Vesting (1 Jahr Cliff) plus TGE-bedingter Token-Zuteilung; ein Cash-Grundgehalt, sobald Funding eintrifft.",
+        body: "Marketing & Growth: Equity mit standardmäßigem 4-Jahres-Vesting (1 Jahr Cliff); ein Cash-Grundgehalt, sobald Funding eintrifft.",
       },
       {
         title: "Gemeinsam bauen",

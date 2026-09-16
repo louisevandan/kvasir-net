@@ -5,12 +5,12 @@ import { LINKS } from "../content";
 /* ==========================================================================
    Header control that links to the KVR SPL token on the Solana explorer, so
    anyone can inspect on-chain KVR transaction activity. Replaces the old
-   header GitHub icon. Small dropdown: Devnet (live) / Mainnet clusters.
+   header GitHub icon. KVR exists on Solana devnet only; there is no mainnet
+   token, so the dropdown lists the devnet cluster alone.
    Self-contained (own open state + click-away). Reused across every header.
    ========================================================================== */
 const CLUSTERS = [
   { label: "Devnet", href: LINKS.explorerDevnet },
-  { label: "Mainnet", href: LINKS.explorerMainnet },
 ];
 
 function Chevron({ open }: { open: boolean }) {

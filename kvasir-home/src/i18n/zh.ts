@@ -36,7 +36,7 @@ export const zh: Dict = {
     eyebrow: "DePIN · 去中心化 AI — 打破垄断",
     headline1: "贡献算力。",
     headline2: "赚取 KVR。",
-    sub: "Kvasir 借助 linkcpp 将大型开源模型拆分到共享硬件上，任何单一节点都不会持有完整模型。贡献一块 GPU、CPU、NPU — 甚至一部手机 — 即可为你运行的层赚取 KVR。",
+    sub: "Kvasir 借助 linkcpp 将大型开源模型拆分到共享硬件上，任何单一节点都无需持有完整模型。贡献一块 GPU、CPU 或一部手机，即可为你运行的层赚取 KVR。",
     badges: [
       "可在 GPU · CPU · NPU · 手机上运行",
       "兼容 OpenAI + Anthropic",
@@ -45,7 +45,7 @@ export const zh: Dict = {
     ],
     ringCenter: "一环 · 无主控",
     topologyCaption:
-      "由多种设备组成的环 — 一块 GPU、CPU、NPU 和一部手机 — 各自持有 49 层中的少数几层。每个节点运行自己那一片，只将隐藏状态的边界传递给邻居；最后一个节点沿环返回 token。没有节点持有完整模型，也没有中央主控 — 仅为示意。",
+      "由多种设备组成的环 — 一块 GPU、CPU、NPU 和一部手机 — 各自持有 49 层中的少数几层。每个节点运行自己那一片，只将隐藏状态的边界传递给邻居；最后一个节点沿环返回 token。没有节点需要持有完整模型，环中也没有中央主控 — 仅为示意。",
   },
 
   thesis: {
@@ -61,10 +61,10 @@ export const zh: Dict = {
     ],
     kvasirLabel: "Kvasir",
     kvasirPoints: [
-      "任何设备都能加入点对点的环 — 无中央主控",
+      "任何设备都能加入点对点的环 — 环中无中央主控",
       "源码可得的 linkcpp 引擎 — 采用 BSL 许可、可完全审查",
       "贡献者凭借真实贡献的算力赚取 KVR",
-      "非托管 — 你的密钥、你的节点、你的奖励",
+      "自托管钱包 — 你的密钥从不离开你的设备",
     ],
   },
 
@@ -94,11 +94,11 @@ export const zh: Dict = {
   how: {
     eyebrow: "工作原理",
     title: "一个模型，众多设备，按层计酬",
-    lede: "没有单一节点持有完整模型。请求沿着层路径流转，每个节点都因其所做的确切工作而获得奖励。",
+    lede: "没有单一节点需要持有完整模型。请求沿着层路径流转，每个节点都因其所做的确切工作而获得奖励。",
     steps: [
       {
         title: "拆分",
-        body: "模型被划分为连续的层窗口。每台设备都存储同一个模型，但只加载自己的窗口 — 没有节点持有完整模型。",
+        body: "模型被划分为连续的层窗口。每台设备都保留一份模型文件副本，但只把自己的窗口加载到内存中，因此没有节点需要运行完整模型。",
         note: "Qwen3.5-122B · 49 层 · rank manifest",
       },
       {
@@ -119,11 +119,11 @@ export const zh: Dict = {
     title: "把闲置算力变成 KVR",
     lede: "将一台受支持的设备接入网络，它便开始提供层服务。你赚取的 KVR 与节点运行的层数成正比 — 你的密钥始终留在你自己的钱包里。",
     nonCustodial:
-      "从设计上即为非托管 — 运营者登录采用钱包签名（Sign-In With Solana），并可选配 2FA。",
+      "钱包签名登录 — 运营者访问采用 Sign-In With Solana，并可选配 2FA；无需密码。",
     points: [
       {
         title: "任何设备都能加入",
-        body: "GPU、CPU、NPU 和手机如今都能运行层。点对点的 ring runtime 让每台设备只持有少数几层，并只将小小的边界状态传给邻居 — 因此没有守门人，也没有单一所有者。",
+        body: "GPU、CPU 和手机如今都能运行层，NPU 支持正在推进中。点对点的 ring runtime 让每台设备只持有少数几层，并只将小小的边界状态传给邻居 — 因此没有守门人，也没有单一所有者。",
       },
       {
         title: "按层份额发放奖励",
@@ -165,7 +165,7 @@ export const zh: Dict = {
   token: {
     eyebrow: "代币与奖励",
     title: "KVR 为算力付费 — 也奖励算力",
-    lede: "KVR 是开发者用于推理的支付单位，也是贡献者因运行层而赚取的单位。奖励依据真实工作量计算，而非参与度。",
+    lede: "KVR 是开发者用于推理的支付单位，也是贡献者因运行层而赚取的单位。算力奖励来自经计量的工作量；gateway 与 hub 主机还会因在线时长获得奖励。",
     facts: [
       { k: "符号", v: "KVR", note: "链上名称 “Kvasir”，6 decimals" },
       { k: "链", v: "Solana", note: "当前为 devnet" },
@@ -176,9 +176,9 @@ export const zh: Dict = {
     whatForBody:
       "一个代币，双向流转：开发者花费 KVR 通过网关运行推理，贡献者凭借节点提供的算力赚取 KVR。它是网络中衡量真实工作的记账单位 — 下方展示奖励如何按角色细分。",
     whatForChips: ["按次推理付费", "按层发放奖励", "在 Solana 上结算"],
-    custodyTitle: "非托管钱包",
+    custodyTitle: "自托管钱包",
     custodyBody:
-      "奖励结算至每个节点自己的所有者钱包。密钥保存在用户自己的钱包中 — 网页、桌面或移动端 — 绝不交由运营方保管。已在四个不同的所有者钱包上验证，每个钱包各自赚取其层份额。",
+      "密钥保存在用户自己的钱包中 — 网页、桌面或移动端 — 绝不交由运营方保管。奖励支付到每个节点自己的所有者钱包，已在我们测试机队的四个所有者钱包上验证。在 devnet 上，在链上质押程序上线之前，已质押的 KVR 和预付额度由网关的 treasury 持有，并记录在其账本中。",
     custodyChips: ["web", "desktop", "iOS", "Android"],
     devnetStrong: "Devnet，实用型代币。",
     devnetBody:
@@ -221,7 +221,7 @@ export const zh: Dict = {
   tech: {
     eyebrow: "深入底层",
     title: "linkcpp — 网络背后的引擎",
-    lede: "linkcpp 是开放的控制中枢，将日常硬件变成一个分布式推理引擎。它的 ring runtime 让每台设备只持有少数几层，并将隐藏状态传给邻居 — 无中央主控 — 同时保持原生 推理引擎 数据平面不被 fork。",
+    lede: "linkcpp 是开放的控制中枢，将日常硬件变成一个分布式推理引擎。它的 ring runtime 让每台设备只持有少数几层，并将隐藏状态传给邻居 — 环中无中央主控 — 同时推理引擎数据平面仅带一小组补丁，保持贴近上游。",
     taglineCaption: "— linkcpp 的自述",
     points: [
       {
@@ -230,7 +230,7 @@ export const zh: Dict = {
       },
       {
         title: "linkcpp 控制中枢",
-        body: "单个 Docker 化的中枢 — 正是 推理引擎 的 RPC 数据平面所缺失的控制平面。它发现设备、规划层的放置、启动原生工作进程，并对外暴露网关。以 Business Source License（BSL）提供源码。",
+        body: "单个 Docker 化的中枢 — 正是 推理引擎 的 RPC 数据平面所缺失的控制平面。它发现设备、规划层的放置、启动工作进程，并对外暴露网关。以 Business Source License（BSL）1.1 提供源码。",
       },
       {
         title: "分布式层放置",
@@ -242,7 +242,7 @@ export const zh: Dict = {
       },
     ],
     openText:
-      "源码以 Business Source License（BSL）提供 — 用于开发和测试可免费阅读、运行并在其上构建。生产（商业）用途需购买许可证。",
+      "源码以 Business Source License（BSL）1.1 提供 — 可自由阅读并在其上构建。允许不产生收益的内部使用；托管、嵌入或产生收入的用途需要商业许可证。",
   },
 
   roadmap: {
@@ -253,7 +253,7 @@ export const zh: Dict = {
       {
         phase: "现在",
         title: "任意设备推理，已上线",
-        body: "GPU、CPU、NPU 和手机通过 ring runtime 在环上提供层服务。122B 已拆分运行于 4 块 GPU 上；贡献端到端计入；非托管钱包已在 web/desktop/iOS/Android 上线；访问在公共域名上受到保护。",
+        body: "GPU、CPU 和手机通过 ring runtime 在环上提供层服务（NPU 支持推进中）。一个 122B 模型已跨 3 台物理机器端到端运行；贡献端到端计入；web、desktop、iOS 和 Android 钱包将密钥保存在用户自己的设备上；访问通过公共域名上的 HTTPS 进行。",
       },
       {
         phase: "即将推出",
@@ -269,28 +269,29 @@ export const zh: Dict = {
   },
 
   proof: {
-    pill: "本次构建已验证",
-    title: "真实的分布式推理，运行于公共域名之上",
+    pill: "已在我们的测试机队上验证",
+    title: "真实的分布式推理，已跨多台机器验证",
     items: [
-      "参数拆分运行于 4 块 AMD MI250 GPU 上",
-      "各不同所有者钱包各自赚取其层份额",
+      "参数跨 3 台物理机器端到端提供服务",
+      "各节点独立钱包，按各自层份额计入奖励（测试机队）",
       "API 接口 — 兼容 OpenAI + Anthropic",
       "钱包平台 — web · desktop · iOS · Android",
     ],
     strip:
-      "122B 拆分运行于 4 块 GPU · 兼容 OpenAI + Anthropic · 钱包覆盖 web / desktop / iOS / Android · 在公共域名上运行",
+      "122B 跨 3 台机器提供服务 · 兼容 OpenAI + Anthropic · 钱包覆盖 web / desktop / iOS / Android · Solana devnet",
   },
 
   footer: {
+    legal: "条款与隐私",
     ctaTitle: "让你的 GPU 加入网络。",
     ctaBody:
       "运行一个节点，为你所服务的层赚取 KVR，或用兼容 OpenAI/Anthropic 的端点将网关接入你的应用。",
     tagline:
-      "面向去中心化 AI 推理的网络品牌，由 linkcpp 控制中枢驱动 — 一个源码可得（BSL）的引擎，将大型模型拆分到日常设备上运行（基于原生 推理引擎 数据平面）。",
+      "面向去中心化 AI 推理的网络品牌，由 linkcpp 控制中枢驱动 — 一个源码可得（BSL）的引擎，将大型模型拆分到日常设备上运行（基于保持贴近上游的推理引擎数据平面）。",
     disclaimerStrong: "免责声明。",
     disclaimer:
-      "KVR 是一种实用型 / 贡献型代币，用于支付推理费用并奖励算力。它当前运行于 Solana devnet — 并非可交易的主网资产，此处内容均不构成任何要约、价格或财务回报承诺。奖励反映的是真实贡献的算力，而非参与度。",
-    rights: "© 2026 Kvasir · linkcpp. 引擎以 Business Source License（BSL）提供 — 开发与测试免费，生产用途需购买许可证。",
+      "KVR 是一种实用型 / 贡献型代币，用于支付推理费用并奖励算力。它当前运行于 Solana devnet — 并非可交易的主网资产，此处内容均不构成任何要约、价格或财务回报承诺。算力奖励反映经计量的工作量；基础设施主机还会因在线时长获得奖励。",
+    rights: "© 2026 Kvasir · linkcpp. 引擎以 Business Source License（BSL）1.1 提供 — 允许的使用范围请参见许可证。",
   },
 
   guide: {
@@ -299,7 +300,7 @@ export const zh: Dict = {
     headline1: "贡献算力，",
     headline2: "运行节点。",
     sub: "创建钱包，质押 KVR，然后将您的设备连接到 Kvasir 网络，为您贡献的算力赚取 KVR。请在下方选择您的平台，查看下载、安装和运行步骤。",
-    badgeCustody: "非托管 — 您的密钥",
+    badgeCustody: "自托管 — 您的密钥",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR 是 Solana devnet 上的实用型代币 — 并非可交易的 mainnet 资产，也不构成任何财务回报。",
@@ -315,7 +316,7 @@ export const zh: Dict = {
       { title: "下载应用", body: "在上方下载适用于您操作系统的 Kvasir Wallet 安装程序。推荐使用 GPU（NVIDIA / AMD / Apple Silicon），但 CPU 也可以运行。", body2: "" },
       { title: "安装并打开", body: "运行安装程序，然后打开 Kvasir Wallet。在 macOS 上，如果看到“身份不明的开发者”警告，请在系统设置 → 隐私与安全性中允许运行。", body2: "" },
       { title: "创建您的钱包", body: "选择“创建新钱包”。写下您的 12 个单词的助记词并妥善保管 — 一旦丢失将无法找回。然后设置一个密码短语以解锁应用。密钥为非托管形式，仅存储在本设备上。", body2: "" },
-      { title: "充值并质押 KVR", body: "在您钱包的“接收”地址接收一些 devnet SOL（用于支付手续费）和 KVR（用于质押）。在仪表盘的质押面板中，输入金额并点击“质押”，即可赚取 APR 利息并获得节点奖励资格。", body2: "" },
+      { title: "充值并质押 KVR", body: "在您钱包的“接收”地址接收一些 devnet SOL（用于支付手续费）和 KVR（用于质押）。在仪表盘的质押面板中，输入金额并点击“质押”，即可获得节点奖励资格。", body2: "" },
       { title: "配置节点", body: "在“节点设置”中选择此设备的计算后端（CUDA / ROCm / Metal / CPU），并选择“本地分片”（推荐）— 该模式在本地运行层分片，仅中继少量边界状态，是速度最快的模式。", body2: "" },
       { title: "运行节点", body: "开启“运行节点（实时）”，即可在网络上以您的钱包（所有者）身份注册此设备并使其上线。", body2: "若要成为真正的 GPU 算力节点，还需运行下方的原生代理程序。Hub 的规划器会将模型层分配到您的设备上，您的节点将赚取按层计算的 KVR 份额，并计入所有者钱包。" },
       { title: "追踪贡献与奖励", body: "在“节点状态”中查看节点数 / 在线 / 有效贡献 / 可领取。节点按吞吐量分级（S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7）；原始值 × 等级 = 有效值。使用“领取奖励”将已累积的 KVR 转入您的钱包。", body2: "" },
@@ -325,7 +326,7 @@ export const zh: Dict = {
     faucetWeb: "网页：faucet.solana.com — 粘贴您的地址并选择网络 Devnet",
     faucetCli: "命令行：solana airdrop 2 <your address> --url devnet",
     faucetAlt: "其他选择：QuickNode · SolFaucet devnet",
-    faucetKvr: "通过分发或兑换获取用于质押的 KVR（KVR 兑换：SOL/ETH ↔ KVR — 即将推出）。",
+    faucetKvr: "从分发水龙头获取用于质押的 devnet KVR。",
     mobileTitle: "Kvasir Wallet · {0} 应用",
     mobileSub: "创建钱包并将您的设备连接到网络。",
     mobile: [
@@ -340,7 +341,7 @@ export const zh: Dict = {
     capPassphrase: "设置密码短语 → 开始使用",
     capReceive: "接收 — 地址与二维码（地址部分遮挡）",
     capBalances: "钱包余额 — KVR · SOL",
-    capStaking: "质押 — APR · 本金 · 利息 · 节点奖励",
+    capStaking: "质押面板（devnet）",
     capBackend: "计算后端（CUDA · ROCm · Metal · CPU）",
     capMode: "节点模式 — 本地分片（推荐）",
     capRunlive: "运行节点（实时）— 实时仪表 · 节点 ID · 操作系统",
@@ -410,7 +411,7 @@ export const zh: Dict = {
     codeLede: "从环境变量加载钱包密钥，报价 → 支付 → 兑换，一个自包含代码片段。步骤 1、2、4 是纯 HTTP，只有步骤 3（SPL 转账）因 SDK 而异。",
     adapterTitle: "OpenAI 兼容适配器",
     adapterLede: "已经在用 OpenAI 客户端（或只会说 OpenAI 格式的工具）？把这个即插即用的适配器跑在你的应用旁边。它暴露 /v1/chat/completions，在幕后通过 quote、签名、兑换用你自己的钱包为每次调用付费。把客户端的 base URL 指向适配器，随便用一个占位 API key 即可。",
-    adapterNote: "非托管：钱包私钥（KVR_SECRET_KEY）只留在该进程，绝不发送给 Kvasir。Kvasir 没有 API key——认证就是适配器签名的链上 KVR 支付。每次调用是一趟 quote/支付/兑换往返，按吞吐需要做缓存或批处理。",
+    adapterNote: "非托管：钱包私钥（KVR_SECRET_KEY）只留在该进程，绝不发送给 Kvasir。在这种按次付费模式下，Kvasir 没有 API key——认证就是适配器签名的链上 KVR 支付（下文的预付额度则改用 API key）。每次调用是一趟 quote/支付/兑换往返，按吞吐需要做缓存或批处理。",
     prereqTitle: "开始之前",
     prereqs: [
       "一个持有 KVR（用于支付）和少量 SOL（用于手续费）的 Solana devnet 钱包。",
@@ -489,22 +490,22 @@ export const zh: Dict = {
     pill: "招聘中",
     headline1: "市场与增长",
     headline2: "与我们一起壮大网络",
-    sub: "Kvasir 是基于 Solana 的去中心化 AI 推理网络（DePIN）。开源 linkcpp 引擎将大型开放模型拆分到众多贡献的 GPU 和机器上，每个节点按实际服务的层数赚取 KVR。技术已经跑通 — 我们需要把它讲给世界听的人。",
+    sub: "Kvasir 是基于 Solana 的去中心化 AI 推理网络（DePIN）。源码可得的 linkcpp 引擎将大型开放模型拆分到众多贡献的 GPU 和机器上，每个节点按实际服务的层数赚取 KVR。技术已经跑通 — 我们需要把它讲给世界听的人。",
     factRole: "职位",
     factRoleV: "市场与增长 — 全职",
     factLocation: "地点",
     factLocationV: "远程 · 美国/欧洲或东南亚时区 · 与 KST 每天重叠 ≥3–4 小时",
     factComp: "薪酬",
     factCompV:
-      "早期股权（4 年归属 / 1 年悬崖期）+ 以 TGE 为条件的代币分配 · 正式承诺前先进行付费试用",
+      "早期股权（4 年归属 / 1 年悬崖期）· 正式承诺前先进行付费试用",
     factEngine: "引擎",
     liveTitle: "已经上线的",
     liveLede: "你加入的不是一份白皮书。当前已验证运行的：",
     liveProof: [
-      "网络上已测试的模型：Qwen3.5 122B、Qwen3.5 35B、Gemma4 12B — 每个模型按层拆分到多台机器上，没有任何节点持有完整模型。",
+      "网络上已测试的模型：Qwen3.5 122B、Qwen3.5 35B、Gemma4 12B — 每个模型按层拆分到多台机器上，没有任何节点需要持有完整模型。",
       "异构在线机队共 21 个节点：4× AMD MI250（ARM 主机）、4× NVIDIA GB10、4× NVIDIA RTX Pro 6000、1 台 MacBook Pro、6 台 x86 Windows CPU 机器、2 个移动节点（iOS + Android）。",
       "按节点记账的贡献结算：每个节点按其服务的每次推理的层数占比加权赚取 KVR，结算到自己的钱包。",
-      "兼容 OpenAI 与 Anthropic 的按次计费推理网关，已在自有域名上线。",
+      "兼容 OpenAI 与 Anthropic 的按次计费推理网关，已部署在自有域名上。",
       "非托管钱包已发布于网页、桌面、iOS 和 Android，支持钱包签名登录（Sign-In With Solana）+ 2FA。",
     ],
     devnetNote:
@@ -531,7 +532,7 @@ export const zh: Dict = {
       },
       {
         title: "发行与合作支持",
-        body: "在网络从 devnet 毕业时支持代币发行营销，并协助合作拓展（GPU 机队、钱包、模型提供方）。",
+        body: "协助合作拓展（GPU 机队、钱包、模型提供方），并壮大开发者与节点运营者社区。",
       },
     ],
     profileTitle: "我们在找谁",
@@ -539,7 +540,7 @@ export const zh: Dict = {
       "加密原生营销人：曾从零做起 web3 社区或产品 — 可在 X、Discord 或链上验证。",
       "强烈偏好熟悉 DePIN 或 AI-crypto；你能向 GPU 拥有者讲清楚为什么要跑节点。",
       "英语母语或流利；美国/欧洲或东南亚时区，与 KST（UTC+9）每天重叠 ≥3–4 小时。",
-      "接受早期阶段薪酬：有分量的股权 + 代币上行空间，而非高薪。",
+      "接受早期阶段薪酬：有分量的股权，而非高薪。",
       "亲自动手的执行者 — 帖子、活动和实验都由你自己做出来。",
     ],
     processTitle: "招聘流程",
@@ -555,7 +556,7 @@ export const zh: Dict = {
       },
       {
         title: "正式邀约",
-        body: "市场与增长：标准 4 年归属（1 年悬崖期）的股权 + 以 TGE 为条件的代币分配；融资到位后提供现金底薪。",
+        body: "市场与增长：标准 4 年归属（1 年悬崖期）的股权；融资到位后提供现金底薪。",
       },
       {
         title: "一起建设",

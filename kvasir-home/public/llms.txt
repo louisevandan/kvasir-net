@@ -1,22 +1,24 @@
 # Kvasir
 
-> Kvasir is a decentralized AI inference network (DePIN). It splits large open language models across a peer-to-peer **ring** of shared devices — GPUs, CPUs, NPUs and phones — using the open-source **linkcpp** control plane, so no single node holds the whole model. Contributors earn the **KVR** token for the compute they provide.
+> Kvasir is a decentralized AI inference network (DePIN) in devnet preview. It splits large open language models across shared devices — GPUs, CPUs and phones — using the source-available **linkcpp** control plane, so each node holds only part of the model. Contributors earn the **KVR** devnet token for measured compute.
 
-Key facts (accurate as of 2026-07-13):
+Key facts (accurate as of 2026-09-17):
 
-- **Kvasir** = the network/product brand (non-custodial wallet + settlement gateway + node-reward network). **linkcpp** = the source-available (BSL) engine/control plane it runs on. **KVR** = the token (on-chain name "Kvasir", 6 decimals, Solana **devnet**).
-- **Ring topology:** every device stores the same model and loads only its contiguous layer window, opening one link to its predecessor and one to its successor. Hidden-state boundaries circulate around the ring; the last node returns the token. There is **no central master**.
-- **Rewards** are for real compute, not participation. Roles: **compute node** (earns per contribution unit ≈ 1k tokens × layer share × performance tier S/A/B/C = ×1.5/×1.25/×1.0/×0.7), **gateway host** (hourly uptime + ×1.5 inference bonus), **hub host** (highest hourly uptime). Roles stack; rewards settle in KVR to each node's own wallet.
-- **Developers:** OpenAI- and Anthropic-compatible gateway (`/v1/chat/completions`, `/v1/responses`, `/v1/models`, `/anthropic/v1/messages`), pay-per-inference in KVR. An AI agent can **self-issue an API key** (prepaid KVR credits, streaming + tool_calls) from a wallet secret with no browser — the full SIWS flow is in [llms-full.txt](https://kvasir-ai.net/llms-full.txt) and on the developer page https://kvasir-ai.net/docs/api.
-- **Compliance:** KVR is a utility / contribution token on Solana **devnet** — NOT a tradable mainnet asset, price, or investment, and nothing on the site is a promise of financial return. Non-custodial: keys live in the user's own wallet.
-- **Proven:** a 122B model (Qwen3.5-122B-A10B) served split across 4 AMD MI250 GPUs; non-custodial wallets on web/desktop/iOS/Android; live over HTTPS on public domains.
-- **Name origin:** in Norse myth, Kvasir was formed from the pooled essence of all the gods and was the wisest being; his blood became the Mead of Poetry, sharing wisdom with all — a fitting namesake for wisdom pooled from many and shared with everyone.
+- **Kvasir** = the network/product brand (self-custody wallet + settlement gateway + node-reward network). **linkcpp** = the source-available engine/control plane it runs on (Business Source License 1.1). **KVR** = the token (on-chain name "Kvasir", 6 decimals, Solana **devnet** only).
+- **Ring topology:** every device stores the same model and loads only its contiguous layer window, opening one link to its predecessor and one to its successor. Hidden-state boundaries circulate around the ring; the last node returns the token. There is no central master on the data path; a hub plans placement.
+- **Rewards** are for measured compute. Roles: **compute node** (per contribution unit ≈ 1k tokens × layer share × performance tier S/A/B/C = ×1.5/×1.25/×1.0/×0.7), **gateway host** and **hub host** (hourly uptime; the gateway also gets an inference bonus). Roles stack; rewards are paid in KVR to each node owner's wallet.
+- **Developers:** OpenAI- and Anthropic-compatible gateway (`/v1/chat/completions`, `/v1/responses`, `/v1/models`, `/anthropic/v1/messages`). Two ways to pay: pay-per-call (sign an on-chain KVR payment per request, no API key) or prepaid credits with an API key that an AI agent can self-issue from a wallet secret — see [llms-full.txt](https://kvasir-ai.net/llms-full.txt) and https://kvasir-ai.net/docs/api.
+- **Compliance:** KVR is a devnet utility / contribution token — not a tradable mainnet asset, price, or investment, and nothing on the site is a promise of financial return. Wallet keys stay on the user's device; on devnet, staked KVR and prepaid credits are held by the gateway treasury until an on-chain staking program ships.
+- **Verified on the test fleet:** a 122B model (Qwen3.5-122B-A10B) served end to end across 3 physical machines; separate node wallets each credited for their layer share; wallets on web/desktop/iOS/Android. NPU support is in progress.
+- **Terms & privacy:** https://kvasir-ai.net/legal
+- **Name origin:** in Norse myth, Kvasir was formed from the pooled essence of all the gods and was the wisest being; his blood became the Mead of Poetry, sharing wisdom with all.
 - **Languages:** the homepage is available in English, 한국어, 中文, Español, 日本語, Français, Deutsch, Nederlands and Bahasa Indonesia.
 
 ## Links
 
 - [Homepage](https://kvasir-ai.net/): the full marketing site (all sections).
-- [linkcpp on GitHub](https://github.com/louisevandan/kvasir-net): the source-available (BSL) engine.
-- [Gateway](https://gate.kvasir-ai.net): OpenAI/Anthropic-compatible inference gateway.
+- [Source on GitHub](https://github.com/louisevandan/kvasir-net): the source-available engine (BSL 1.1); the `p4` branch holds the distributed inference engine.
+- [Gateway](https://gate.kvasir-ai.net): OpenAI/Anthropic-compatible inference gateway (devnet).
 - [Hub](https://hub.kvasir-ai.net): the linkcpp control hub.
+- [Terms & privacy](https://kvasir-ai.net/legal)
 - [Full text for LLMs](https://kvasir-ai.net/llms-full.txt): the complete site content as plain text.
