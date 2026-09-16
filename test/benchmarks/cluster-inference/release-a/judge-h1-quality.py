@@ -6,11 +6,124 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from collections import defaultdict
 from pathlib import Path
 
 
 CLASSES = ("short", "medium", "long")
+
+SOURCE_RECORD = re.compile(
+    r"\[(R[0-9]{5})\] Station ([0-9]+); revision ([0-9]+)\. "
+    r"Measured RMS current: ([0-9]+) A\. Isolated conductor resistance: "
+    r"([0-9]+) milliohms\. Operating duration: ([0-9]+) hours\. "
+    r"Inlet pressure: ([0-9]+) kPa\. Pressure alarm threshold: ([0-9]+) kPa; "
+    r"equality is not an exceedance\. (?:No temperature measurement is recorded\.|"
+    r"Temperature was not measured\.)"
+)
+POWER_TASK = (
+    'Compute power in milliwatts as current_A squared times resistance_milliohms, '
+    'and energy in milliwatt-hours as power_mW times duration_hours. '
+    'Return JSON with keys "rows" and "temperature_measured". Each row must contain '
+    '"id", "revision", "power_mW", "energy_mWh", and boolean "pressure_alarm". '
+    '"temperature_measured" must state whether those records contain a measured temperature. '
+    'Use integer arithmetic; do not infer a temperature or a pressure/heat causal relation.'
+)
+
+
+def verified_source_response(request: dict, *, check_timing: bool = True) -> list[str]:
+    """Independently check OUTER's result from prompt and preserved model text."""
+    if request.get("response_processor") != "engineering_power_v1":
+        return ["source_processor_missing"]
+    if request.get("service_error") is not None:
+        return ["source_processing_failed"]
+    raw = request.get("model_response")
+    outcomes = request.get("outcomes")
+    if (not isinstance(raw, str) or not isinstance(outcomes, list)
+            or any(not isinstance(outcome, dict) or not isinstance(outcome.get("text"), str)
+                   for outcome in outcomes)
+            or raw != "".join(outcome["text"] for outcome in outcomes)):
+        return ["model_response_evidence_mismatch"]
+    prompt = request.get("prompt", "")
+    if prompt.count("<|im_start|>user\n") != 1:
+        return ["source_user_boundary"]
+    user = prompt.split("<|im_start|>user\n", 1)[1].split("<|im_end|>", 1)[0]
+    if "<|im_end|>" not in prompt.split("<|im_start|>user\n", 1)[1]:
+        return ["source_user_boundary"]
+    source, boundary, task = user.rpartition("\n\n")
+    if not boundary:
+        return ["source_task_boundary"]
+    header, *lines = source.splitlines()
+    count = re.fullmatch(r"Case [0-9]+: ([0-9]+) archived records\.", header)
+    if count is None or not 0 < int(count[1]) <= 10000 or len(lines) != int(count[1]):
+        return ["source_record_count"]
+    records = {}
+    for line in lines:
+        match = SOURCE_RECORD.fullmatch(line)
+        if match is None or match[1] in records:
+            return ["source_record_invalid"]
+        numbers = tuple(int(match[index]) for index in range(2, 9))
+        if any(value > 2**64 - 1 for value in numbers):
+            return ["source_quantity_overflow"]
+        records[match[1]] = numbers
+    prefix = "Connect the source facts for "
+    marker = ", in that order. "
+    if not task.startswith(prefix) or marker not in task or not task.endswith(POWER_TASK):
+        return ["source_operation_contract"]
+    ids, suffix = task[len(prefix):].split(marker, 1)
+    if suffix != POWER_TASK:
+        return ["source_operation_contract"]
+    selected = ids.split(", ")
+    if (not 0 < len(selected) <= 256 or len(selected) != len(set(selected))
+            or any(identifier not in records for identifier in selected)):
+        return ["source_selection"]
+    raw_json = raw.strip()
+    if raw_json.startswith("```json\n"):
+        if not raw_json.endswith("\n```"):
+            return ["model_json_fence"]
+        raw_json = raw_json[len("```json\n"):-len("\n```")]
+    try:
+        model = json.loads(raw_json)
+    except (TypeError, ValueError):
+        return ["model_json_invalid"]
+    if (not isinstance(model, dict) or set(model) != {"rows", "temperature_measured"}
+            or model["temperature_measured"] is not False
+            or not isinstance(model["rows"], list)
+            or len(model["rows"]) != len(selected)):
+        return ["model_schema_or_temperature"]
+    calculated = []
+    for identifier, row in zip(selected, model["rows"]):
+        if (not isinstance(row, dict)
+                or set(row) != {"id", "revision", "power_mW", "energy_mWh", "pressure_alarm"}
+                or row.get("id") != identifier
+                or not isinstance(row.get("revision"), int)
+                or isinstance(row.get("revision"), bool)
+                or row["revision"] != records[identifier][1]
+                or any(not isinstance(row.get(field), int) or isinstance(row.get(field), bool)
+                       or row[field] < 0 or row[field] > 2**64 - 1
+                       for field in ("power_mW", "energy_mWh"))
+                or not isinstance(row.get("pressure_alarm"), bool)):
+            return ["model_source_identity_or_schema"]
+        _, revision, current, resistance, duration, pressure, threshold = records[identifier]
+        power = current * current * resistance
+        energy = power * duration
+        if power > 2**64 - 1 or energy > 2**64 - 1:
+            return ["source_arithmetic_overflow"]
+        calculated.append({"id": identifier, "revision": revision, "power_mW": power,
+                           "energy_mWh": energy, "pressure_alarm": pressure > threshold})
+    try:
+        final = json.loads(request.get("response", ""))
+    except (TypeError, ValueError):
+        return ["service_json_invalid"]
+    if final != {"rows": calculated, "temperature_measured": False}:
+        return ["service_calculation_mismatch"]
+    if check_timing:
+        completed, service, released = (request.get(key) for key in
+                                        ("completed_ms", "service_completed_ms", "release_ms"))
+        if (not all(nonnegative_integer(value) for value in (completed, service, released))
+                or not completed <= service <= released):
+            return ["service_completion_order"]
+    return []
 
 
 def prompt_digest(value: str) -> str:
@@ -45,14 +158,22 @@ def timing_evidence(request: dict, timeout_ms: int | None) -> tuple[list[str], d
         failures.append("timing_order")
     if receipts != sorted(receipts) or receipts[0] != first or receipts[-1] != completed:
         failures.append("output_timing_order")
-    e2e = completed - arrival
+    service = request.get("service_completed_ms")
+    if request.get("response_processor") is not None:
+        if not nonnegative_integer(service) or service < completed:
+            failures.append("service_timing_missing")
+            service = completed
+        first_visible = service
+    else:
+        first_visible = first
+    e2e = (service if request.get("response_processor") is not None else completed) - arrival
     if not nonnegative_integer(timeout_ms):
         failures.append("deadline_contract_missing")
     elif e2e > timeout_ms:
         failures.append("deadline_exceeded")
     timing = {
         "e2e_ms": e2e,
-        "ttft_ms": first - arrival,
+        "ttft_ms": first_visible - arrival,
         "itl_ms": [right - left for left, right in zip(receipts, receipts[1:])],
     }
     return failures, timing
@@ -76,6 +197,10 @@ def evaluate(artifact: dict, seal: dict) -> dict:
             failures.append("duplicate_prompt")
         else:
             seen.add(digest)
+        if case is not None and case.get("class") in ("medium", "long"):
+            failures.extend(verified_source_response(request))
+        elif request.get("response_processor") is not None or request.get("model_response") is not None:
+            failures.append("unexpected_source_processor")
         try:
             value = json.loads(request.get("response", ""))
         except Exception:
@@ -153,13 +278,28 @@ def evaluate(artifact: dict, seal: dict) -> dict:
 
 def fixture() -> tuple[dict, dict]:
     prompts = {name: f"p-{name}" for name in CLASSES}
+    source_row = ("[R00002] Station 7; revision 6. Measured RMS current: 28 A. "
+                  "Isolated conductor resistance: 52 milliohms. Operating duration: 10 hours. "
+                  "Inlet pressure: 121 kPa. Pressure alarm threshold: 120 kPa; "
+                  "equality is not an exceedance. Temperature was not measured.")
+    for name, case_number in (("medium", 5), ("long", 7)):
+        prompts[name] = (f"<|im_start|>user\nCase {case_number}: 1 archived records.\n"
+                         f"{source_row}\n\nConnect the source facts for R00002, in that order. "
+                         f"{POWER_TASK}<|im_end|>")
+    grounded_expected = {"rows": [{"id": "R00002", "revision": 6, "power_mW": 40768,
+                                   "energy_mWh": 407680, "pressure_alarm": True}],
+                         "temperature_measured": False}
+    model_raw = json.dumps({"rows": [{"id": "R00002", "revision": 6, "power_mW": 1,
+                                      "energy_mWh": 2, "pressure_alarm": False}],
+                            "temperature_measured": False})
     seal = {
         "schema": 3, "requests": 3,
         "slo": {"percentile": "nearest_rank",
-                "ttft_ms_by_class": {"short": 10, "medium": 20, "long": 30},
+                "ttft_ms_by_class": {"short": 10, "medium": 50, "long": 60},
                 "itl_p95_ms": 20},
         "cases": [{"id": f"c-{name}", "class": name,
-                   "prompt_sha256": prompt_digest(prompt), "expected": {"class": name},
+                   "prompt_sha256": prompt_digest(prompt),
+                   "expected": {"class": name} if name == "short" else grounded_expected,
                    "request_timeout_ms": 100} for name, prompt in prompts.items()],
     }
     requests = []
@@ -167,9 +307,16 @@ def fixture() -> tuple[dict, dict]:
         arrival = index * 100
         first = arrival + (index + 1) * 10
         completed = first + 20
+        grounded = name != "short"
         requests.append({"request_id": f"r-{name}", "prompt": prompt,
-                         "response": json.dumps({"class": name}),
-                         "outcomes": [{"stop": None}, {"stop": "eos"}],
+                         "response": json.dumps(grounded_expected if grounded else {"class": name}),
+                         "outcomes": [{"stop": None, "text": ""},
+                                      {"stop": "eos", "text": model_raw if grounded else ""}],
+                         "response_processor": "engineering_power_v1" if grounded else None,
+                         "model_response": model_raw if grounded else None,
+                         "service_error": None,
+                         "service_completed_ms": completed + 5 if grounded else None,
+                         "release_ms": completed + 10,
                          "submission": "delivered", "released": True,
                          "submission_authority": {"deadline": 1},
                          "arrival_ms": arrival, "first_output_ms": first,
@@ -202,7 +349,17 @@ def self_test() -> None:
         changed = json.loads(json.dumps([artifact, seal]))
         mutate(changed)
         assert not evaluate(*changed)["passed"]
-    print(json.dumps({"passed": True, "tests": 10}, separators=(",", ":")))
+    for field, value in (("response", "{}"), ("model_response", "{}"),
+                         ("service_completed_ms", 0), ("response_processor", None)):
+        changed = json.loads(json.dumps([artifact, seal]))
+        changed[0]["requests"][1][field] = value
+        assert not evaluate(*changed)["passed"], field
+    changed = json.loads(json.dumps([artifact, seal]))
+    request = changed[0]["requests"][1]
+    request["model_response"] = request["model_response"].replace('"revision": 6', '"revision": 7')
+    request["outcomes"][-1]["text"] = request["model_response"]
+    assert "model_source_identity_or_schema" in evaluate(*changed)["rows"][1]["failures"]
+    print(json.dumps({"passed": True, "tests": 15}, separators=(",", ":")))
 
 
 def main() -> None:

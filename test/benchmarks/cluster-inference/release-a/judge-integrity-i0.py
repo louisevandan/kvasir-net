@@ -363,7 +363,9 @@ def build_bundle(artifact: dict, artifact_bytes: bytes, seal: dict, external: di
 
 
 def fixture(spec: dict) -> tuple[dict, bytes, dict, dict]:
-    prompts = ["p-short", "p-medium", "p-long"]
+    h1_artifact, h1_seal = load_module("release_a_h1_judge_fixture", H1_JUDGE).fixture()
+    prompts = [row["prompt"] for row in h1_artifact["requests"]]
+    expected_values = [row["expected"] for row in h1_seal["cases"]]
     classes = ["short", "medium", "long"]
     starts = [0, 100, 200]
     requests = []
@@ -373,11 +375,15 @@ def fixture(spec: dict) -> tuple[dict, bytes, dict, dict]:
         request_id = f"integrity-i0-{index + 1:03}"
         cases.append({"id": ("case-00", "case-04", "case-06")[index],
                       "class": request_class, "prompt_sha256": digest(prompt.encode()),
-                      "expected": {"class": request_class}, "input_tokens": (10, 20, 30)[index],
+                      "expected": expected_values[index], "input_tokens": (10, 20, 30)[index],
                       "request_timeout_ms": spec["slo"]["request_deadline_ms"][request_class]})
         requests.append({
             "request_id": request_id, "prompt": prompt,
-            "response": json.dumps({"class": request_class}),
+            "response": h1_artifact["requests"][index]["response"],
+            "response_processor": h1_artifact["requests"][index]["response_processor"],
+            "model_response": h1_artifact["requests"][index]["model_response"],
+            "service_error": None,
+            "service_completed_ms": start + 65 if index else None,
             "submission": "delivered", "released": True,
             "submission_authority": {"deadline": 1},
             "eligible_ms": start, "send_started_ms": start + 1, "send_completed_ms": start + 2,
@@ -387,7 +393,9 @@ def fixture(spec: dict) -> tuple[dict, bytes, dict, dict]:
             "prefill_rows": 64, "decode_rows": 2, "verify_rows": 0, "replay_rows": 0,
             "prefill_elapsed_ms": 19, "generation_elapsed_ms": 40,
             "logical_prefill_tps": 1.0, "logical_generation_tps": 1.0,
-            "outcomes": [{"text": "x", "stop": None}, {"text": "", "stop": "eos"}],
+            "outcomes": [{"text": "", "stop": None},
+                         {"text": h1_artifact["requests"][index]["model_response"] or "",
+                          "stop": "eos"}],
         })
         physical = {"execution_id": index + 1, "rows": 66, "prefill_rows": 64,
                     "decode_rows": 2, "verify_rows": 0, "replay_rows": 0,

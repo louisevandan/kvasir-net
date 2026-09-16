@@ -166,6 +166,8 @@ def materialize(args: argparse.Namespace) -> dict:
         "options": json.dumps({"temperature": 0, "seed": spec["model"]["sampling"]["seed"]}, separators=(",", ":")),
         "acceptance": {"minimum_generated_tokens": 1, "allowed_stop_reasons": ["eos"],
                        "responses": response_expectations(cases)},
+        "response_processors": [None if case["class"] == "short" else "engineering_power_v1"
+                                for case in cases],
         "nodes": nodes,
     }
     args.output_dir.mkdir(parents=True, exist_ok=False)

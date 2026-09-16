@@ -68,7 +68,9 @@ def reduce_to_i0(config: dict, seal: dict, group: dict, generation: int) -> tupl
 
     prompts = config.get("prompts") or []
     responses = (config.get("acceptance") or {}).get("responses") or []
-    if len(prompts) != seal.get("requests") or len(responses) != len(prompts):
+    processors = config.get("response_processors") or []
+    if (len(prompts) != seal.get("requests") or len(responses) != len(prompts)
+            or len(processors) != len(prompts)):
         raise ValueError("base H1 materialization shape differs")
 
     reduced = json.loads(json.dumps(config))
@@ -86,6 +88,7 @@ def reduce_to_i0(config: dict, seal: dict, group: dict, generation: int) -> tupl
         "post_inference_hold_ms": group["post_inference_hold_ms"],
     })
     reduced["acceptance"]["responses"] = [responses[index] for _, index, _ in selected]
+    reduced["response_processors"] = [processors[index] for _, index, _ in selected]
     for node_index, node in enumerate(reduced["nodes"]):
         node["node"] = f"release-a-integrity-i0-qwen122-stage-{node_index}"
 
@@ -154,6 +157,7 @@ def self_test() -> None:
     config = {
         "prompts": [f"p{i}" for i in range(7)],
         "acceptance": {"responses": [{"minimum_generated_tokens": 1} for _ in range(7)]},
+        "response_processors": [None] * 4 + ["engineering_power_v1"] * 3,
         "nodes": [{"node": "h1-0"}, {"node": "h1-1"}, {"node": "h1-2"}],
     }
     deadlines = {"short": 600000, "medium": 1200000, "long": 1800000}
@@ -179,6 +183,7 @@ def self_test() -> None:
     }
     reduced, result_seal = reduce_to_i0(config, seal, group, 7)
     assert reduced["prompts"] == ["p0", "p4", "p6"]
+    assert reduced["response_processors"] == [None, "engineering_power_v1", "engineering_power_v1"]
     assert reduced["max_in_flight"] == 1 and reduced["timeout_ms"] == 3900000
     assert reduced["pre_inference_hold_ms"] == 15000
     assert reduced["inference_start_hold_ms"] == 15000
@@ -197,7 +202,15 @@ def self_test() -> None:
             pass
         else:
             raise AssertionError("weakened I0 execution group was accepted")
-    print(json.dumps({"passed": True, "tests": 7}, separators=(",", ":")))
+    missing_processor = json.loads(json.dumps(config))
+    missing_processor.pop("response_processors")
+    try:
+        reduce_to_i0(missing_processor, seal, group, 7)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("I0 accepted a missing product response path")
+    print(json.dumps({"passed": True, "tests": 8}, separators=(",", ":")))
 
 
 def main() -> None:

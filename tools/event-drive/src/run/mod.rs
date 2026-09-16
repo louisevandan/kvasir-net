@@ -15,11 +15,13 @@ mod load_consumer_tests;
 mod output_budget;
 mod release_ledger;
 mod replies;
+mod source_grounded;
 #[cfg(test)]
 mod teardown_preserves_failure_tests;
 mod wire;
 
 pub use config::{AcceptanceConfig, ArrivalWave, ResponseExpectation, RunConfig};
+pub use source_grounded::ResponseProcessor;
 use config::{address, node_endpoint, validate};
 
 use p4_llamacpp_staged_adapter::v2::{
@@ -156,7 +158,16 @@ pub struct RequestArtifact {
     pub generation_elapsed_ms: Option<u128>,
     pub logical_prefill_tps: Option<f64>,
     pub logical_generation_tps: Option<f64>,
+    /// User-visible OUTER response. Opt-in processing replaces model guesses
+    /// only after the selected source records have been checked.
     pub response: String,
+    /// Original model text when a processor was requested; never rewritten.
+    pub model_response: Option<String>,
+    pub response_processor: Option<ResponseProcessor>,
+    pub service_error: Option<String>,
+    /// Time when the verified OUTER response became ready, distinct from the
+    /// model's terminal OUTPUT receipt and native RELEASE.
+    pub service_completed_ms: Option<u128>,
     pub outcomes: Vec<OutcomePayload>,
 }
 
@@ -509,6 +520,7 @@ mod tests {
             inference_start_hold_ms: 0,
             post_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
+            response_processors: Vec::new(),
             timeout_ms: 1000,
             pipeline_compatibility: Default::default(),
         }
@@ -731,6 +743,10 @@ mod tests {
             logical_prefill_tps: None,
             logical_generation_tps: None,
             response: String::new(),
+            model_response: None,
+            response_processor: None,
+            service_error: None,
+            service_completed_ms: None,
             outcomes: Vec::new(),
         };
         finish_phase_metrics(&mut request);

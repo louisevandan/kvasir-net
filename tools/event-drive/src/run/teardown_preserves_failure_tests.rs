@@ -58,6 +58,7 @@ fn config() -> RunConfig {
         pre_inference_hold_ms: 0,
         inference_start_hold_ms: 0,
         post_inference_hold_ms: 0,
+        response_processors: Vec::new(),
         timeout_ms: 2_000,
         pipeline_compatibility: Default::default(),
         acceptance: AcceptanceConfig {

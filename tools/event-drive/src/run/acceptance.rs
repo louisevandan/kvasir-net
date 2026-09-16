@@ -102,6 +102,9 @@ fn evaluate_request(
     if request.response.is_empty() {
         failures.push("response is empty".into());
     }
+    if let Some(error) = &request.service_error {
+        failures.push(format!("OUTER response processing failed: {error}"));
+    }
     if generated_tokens < minimum_generated_tokens {
         failures.push(format!(
             "generated token count {generated_tokens} is below {minimum_generated_tokens}"
@@ -247,6 +250,10 @@ mod tests {
             logical_prefill_tps: None,
             logical_generation_tps: None,
             response: response.into(),
+            model_response: None,
+            response_processor: None,
+            service_error: None,
+            service_completed_ms: None,
             outcomes,
         }
     }

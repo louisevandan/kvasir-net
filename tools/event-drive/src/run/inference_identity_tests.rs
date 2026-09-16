@@ -36,6 +36,7 @@ fn config() -> RunConfig {
         inference_start_hold_ms: 0,
         post_inference_hold_ms: 0,
         acceptance: AcceptanceConfig::default(),
+        response_processors: Vec::new(),
         timeout_ms: 1000,
         pipeline_compatibility: Default::default(),
     }

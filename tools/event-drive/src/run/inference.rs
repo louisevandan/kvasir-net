@@ -184,6 +184,19 @@ where
                             }
                             request.response.push_str(&outcome.text);
                             if outcome.stop.is_some() {
+                                if let Some(processor) = request.response_processor {
+                                    let raw = std::mem::take(&mut request.response);
+                                    match super::source_grounded::process(
+                                        processor,
+                                        &request.prompt,
+                                        &raw,
+                                    ) {
+                                        Ok(verified) => request.response = verified,
+                                        Err(error) => request.service_error = Some(error.into()),
+                                    }
+                                    request.model_response = Some(raw);
+                                    request.service_completed_ms = Some(started.elapsed().as_millis());
+                                }
                                 request.completed_ms = Some(observed_ms);
                                 request.release_member = expected_release;
                                 request.issued_work = approved.issued_work;
@@ -448,6 +461,10 @@ where
                 logical_prefill_tps: None,
                 logical_generation_tps: None,
                 response: String::new(),
+                model_response: None,
+                response_processor: config.response_processors.get(current_index).copied().flatten(),
+                service_error: None,
+                service_completed_ms: None,
                 outcomes: Vec::new(),
             },
         );

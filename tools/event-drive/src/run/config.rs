@@ -3,6 +3,7 @@ use p4_protocol::Address;
 use p4_protocol::event::Endpoint;
 use serde::Deserialize;
 use std::str::FromStr;
+use super::ResponseProcessor;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RunConfig {
@@ -51,6 +52,10 @@ pub struct RunConfig {
     pub post_inference_hold_ms: u64,
     #[serde(default)]
     pub acceptance: AcceptanceConfig,
+    /// Per-request OUTER calculation, in corpus order. Empty leaves the
+    /// backend's original text untouched. None is an explicit pass-through.
+    #[serde(default)]
+    pub response_processors: Vec<Option<ResponseProcessor>>,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
 }
@@ -173,6 +178,8 @@ pub(super) fn validate(config: &RunConfig) -> Result<(), &'static str> {
             .any(String::is_empty)
         || (!config.acceptance.responses.is_empty()
             && config.acceptance.responses.len() != request_count)
+        || (!config.response_processors.is_empty()
+            && config.response_processors.len() != request_count)
         || config.acceptance.responses.iter().any(|expectation| {
             expectation.minimum_generated_tokens == Some(0)
                 || expectation
@@ -261,6 +268,7 @@ mod tests {
             inference_start_hold_ms: 0,
             post_inference_hold_ms: 0,
             acceptance: AcceptanceConfig::default(),
+            response_processors: Vec::new(),
             timeout_ms: default_timeout(),
             pipeline_compatibility: Default::default(),
         }
