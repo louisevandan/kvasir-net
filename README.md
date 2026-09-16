@@ -252,4 +252,4 @@ Release A I0 오답 원인 확정: [원격 6개 분리 진단·정확 사실 추
 
 Release A OUTER 오답 판정 경계: [JSON 오라클 결속·원격 회귀·제품 수정 미완](tests/reports/release-a/20260916_180500.md).
 
-현재 Qwen122B H0 v6/I0: [봉인 명세](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v6.json) · [3물리 host 단일 요청 정답 3/3·정상 회수 보고](tests/reports/release-a/20260916_195500.md). I1–I4 전체 무결성은 남아 있다.
+현재 Qwen122B H0 v7/I0: [봉인 명세](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v7.json) · [3물리 host 단일 요청 정답 3/3·유효 TPS 정정·정상 회수 보고](tests/reports/release-a/20260916_204300.md). I1–I4 전체 무결성은 남아 있다. [H0 v6 과거 보고와 정정](tests/reports/release-a/20260916_195500.md).

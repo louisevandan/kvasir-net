@@ -10,7 +10,7 @@ import { validateBenchmarkSpec, verifyFiles, verifySourceEol } from './benchmark
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../../../..');
-const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v6.json');
+const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v7.json');
 const read = () => JSON.parse(fs.readFileSync(specPath));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const reseal = component => {

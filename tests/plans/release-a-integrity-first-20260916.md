@@ -13,7 +13,7 @@ failure ownership; recover on the same load; and release every owned resource. T
 performance baseline but does not claim an improvement.
 
 The executable test contract is
-`test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json`. The contract
+`test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json`. The contract
 validator and the artifact judge must pass their own baseline and weakening mutations before any
 model is loaded.
 
@@ -31,6 +31,9 @@ different terminal classification on exact replay fails the arm.
   inference-window anchor, to freshly built remote binaries and the raw-evidence builder.
 - I0 uses sealed 15-second loaded, inference-window, and drained barriers. Missing or repeated
   barriers invalidate the run; resource snapshots are captured only while a barrier owns the state.
+- Useful generation TPS counts model tokens forwarded as the accepted service response. An OUTER
+  processor's newly calculated response gives the discarded model tokens zero useful count while
+  retaining their nonzero total generation count. The request evidence binds this provenance.
 - Model: Qwen3.5-122B-A10B UD-Q5_K_S, cuts `[0,24)`, `[24,36)`, `[36,48)` on Spark GB10,
   Mac20 M4 Pro, and Mac21 M4 Pro.
 - Shape: resident 8, context 102,400 per sequence, total context 819,200, batch 128, ubatch 64,
@@ -65,6 +68,9 @@ strict oracle; do not adapt the expected outputs to the model's guesses.
    nodes 0, native children 0, exactly one task-agent listener, transport failures 0, and CLOSE_WAIT
    0. `inspect-i0-active-host.py` also binds the task PID, command, binary hash, advertised address,
    and exact topology-owned ESTABLISHED peers. SSH or a one-way socket probe is not a substitute.
+   The controller verifies all four task SSH tunnel PIDs and command lines immediately before the
+   advertised-route probe. A route failure preserves the transport snapshot; the same agent instance
+   cannot enter LOAD because peer failure is deliberately sticky until explicit reconciliation.
 5. Source, binary, native library, model shard, tokenizer/template, corpus, stage plan, device,
    generation, resource profile, telemetry sampler, and judge identities equal the seal.
 6. The event runtime owns bounded deadline to artifact assembly, FINISH, and cleanup. External TERM

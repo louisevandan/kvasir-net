@@ -1,6 +1,6 @@
 # 초대형 모델 분산 배치 — 현재 상태와 실행 로드맵
 
-최신 현황 정리: 2026-09-16 — Qwen122B의 현행 H0 v6/I0 단일 요청 3건은 실제 3물리 host에서 정확 JSON·EOS·RELEASE·시간 한도·회수를 모두 통과했다. 이 수용은 원자료 기반 `engineering_power_v1` OUTER 서비스 계약에 한정한다. 원시 모델의 중·장문 산술과 형식은 여전히 틀렸고, I1 전체 corpus·I2 지속 유입·I3 장애·I4 soak는 아직 미실행이다. 과거 H1 1차는64건 중8건만 완료, H1 2차는 terminal artifact가 없어 INVALID였다. 실행 순서는 **서비스 무결성 확립 → 기준선 봉인 → 성능 개선**이다. I1–I4가 모두 GREEN이 되기 전 성능 후보 개발과 H5를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
+최신 현황 정리: 2026-09-16 — Qwen122B의 현행 H0 v7/I0 단일 요청 3건은 실제 3물리 host에서 정확 JSON·EOS·RELEASE·시간 한도·회수를 모두 통과했다. 이 수용은 원자료 기반 `engineering_power_v1` OUTER 서비스 계약에 한정한다. 원시 모델의 중·장문 산술과 형식은 여전히 틀렸고, 폐기된 모델 token의 유효 생성 TPS는 0이다. I1 전체 corpus·I2 지속 유입·I3 장애·I4 soak는 아직 미실행이다. 과거 H1 1차는64건 중8건만 완료, H1 2차는 terminal artifact가 없어 INVALID였다. 실행 순서는 **서비스 무결성 확립 → 기준선 봉인 → 성능 개선**이다. I1–I4가 모두 GREEN이 되기 전 성능 후보 개발과 H5를 시작하지 않는다. 이 PC의 build·모델 실행은 차단하고 원격 host만 사용한다.
 이 파일은 **현재 목표·상태·작업 순서·단계 승격의 단독 소유자**다.
 시험 상세와 실기 판정은 [검증 규약](distributed-batching-verification.md), 계층별 책임/업데이트 격리는
 [격리 계약](layer-isolation-contract.md), 기존 문서의 역할은
@@ -11,22 +11,20 @@
 <a id="current-status"></a>
 
 **2026-09-16 무결성 우선 재조정 — 현재 실행 순서:** B0–B5와 노드 수명 M0–M4는 실행 안전성의
-필요조건이지만 현재 제품 서비스의 완료 단계로 세지 않는다. 현행 H0 v6/I0 단일 요청은 수용했으나
+필요조건이지만 현재 제품 서비스의 완료 단계로 세지 않는다. 현행 H0 v7/I0 단일 요청은 수용했으나
 지속 요청의 마지막 실기는 완료율12.5%(8/64)로 수렴하지 않았다. 따라서 아래 I0–I4가 현재 단독 실행 순서다.
 기존 H1 3차 반복은 취소한다. 계약·사전검사·판정기를 바꾼 새 I 단계로 독립 검토하며, 각 단계의 최종
 source가 달라지면 앞선 I 단계부터 다시 실행한다. [무결성 우선 시험계획](../tests/plans/release-a-integrity-first-20260916.md),
 [실행 계약](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v2.json),
 계약 검사기와 결과 판정기를 수용한 뒤에만 모델을 적재한다.
 
-**2026-09-16 I0 v6 GREEN, I1 진입:** [실기 보고](../tests/reports/release-a/20260916_195500.md)의
+**2026-09-16 I0 v7 GREEN, I1 사전계약 보강:** [재실기 보고](../tests/reports/release-a/20260916_204300.md)의
 Spark→Mac20→Mac21 한 LOAD에서 short/medium/long 3건 모두 원자료 기반 정상 JSON·EOS·RELEASE·
-deadline을 통과했다. 분산 전송은 3,530,395,650 bytes, 최종 task nodes/native/listener와
-transport failure는 0이다. 같은 추론창의 TTFT·prefill rows/s·유효 생성 TPS·batch·GPU 표본도
-보존했다. 원시 모델의 중·장문 오답은 `model_response`에 남고, OUTER의 한정된
+deadline을 통과했다. 분산 전송은 3,530,395,645 bytes, 최종 task nodes/native/listener와
+transport failure는 0이다. 같은 추론창의 TTFT·prefill rows/s·유효/총 모델 생성 TPS·batch·GPU 표본도
+보존했다. 폐기된 medium/long 모델 token의 유효 TPS는 0이며, 종전 v6 보고의 0.884/0.249 유효 TPS 표기는 잘못되어 정정했다. 원시 모델의 중·장문 오답은 `model_response`에 남고, OUTER의 한정된
 `engineering_power_v1` 계산이 서비스 응답을 만든다. I1–I4는 아직 미실행이라 전체
-`integrity_baseline=false`다. 다음 첫 행동은 64개 corpus 전체에 대해 처리 가능 요청과 오류 terminal
-계약을 대조하고, 네 controller tunnel 생존 검사를 실행 경로에 결속한 새 H0를 봉인하는 것이다.
-judge component가 바뀌면 이 I0 결과를 새 source 수용으로 재사용하지 않고 I0부터 재검증한다.
+`integrity_baseline=false`다. I1의 64개 corpus는 원자료 오라클 64/64와 총 2,201,802 input token·7,159,035 prompt byte 및 요청 예산을 정적 대조했다. 하지만 기존 I1 생성기는 LOADED·DRAINED 관측 장벽을 설정하지 않아 실기 증거를 성립시킬 수 없다. 다음 첫 행동은 장벽·긴 artifact 전송 제한·I1 결과 판정기의 반례를 별도 source에서 완결하고 새 H0를 봉인하는 것이다. 최종 source가 바뀌면 I0부터 다시 검증한다.
 
 **2026-09-16 I0 첫 실기 RED — 새 분산 실행 차단:** [I0 첫 실행·단일 호스트 역검증](../tests/reports/release-a/20260916_161600.md)은
 세 요청의 실제 완료·EOS·RELEASE·정상 회수와 SLO를 관측했지만 정확 답은 short 1/3뿐이다.
@@ -62,7 +60,7 @@ INSPECT와 정확한 pre-LOAD 상태를 확인한 뒤 I0-S/M/L을 한 LOAD에서
 
 | 단계 | 상태 | 종료 조건 |
 | --- | --- | --- |
-| I0 현재 단일 요청 기준선 | **GREEN (H0 v6, 정답 3/3)** | 봉인된 source/binary/model/topology로 short·medium·long을 한 LOAD에서 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 절대 시간창에 보존. task agent 시작 뒤 LOAD 전에는 nodes/native0·agent listener1/host, 최종 종료 뒤 nodes/child/listener0 |
+| I0 현재 단일 요청 기준선 | **GREEN (H0 v7, 정답 3/3)** | 봉인된 source/binary/model/topology로 short·medium·long을 한 LOAD에서 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, 유효/총 generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 절대 시간창에 보존. task agent 시작 뒤 LOAD 전에는 nodes/native0·agent listener1/host, 최종 종료 뒤 nodes/child/listener0. medium/long 유효 모델 token TPS는 0 |
 | I1 전체 정상 corpus | TODO | 같은 load에서 64건 closed-loop corpus 전부 정답·EOS·deadline·RELEASE. 오류·미분류·재시작0 |
 | I2 bounded 지속 서비스 | TODO | resident8 cold8, 8×8 sustained, 같은 load recovery3×8. 정상 요청100%, 무응답·유실·세션 오염0, backlog가 유한 시간 안에0으로 수렴 |
 | I3 과부하·취소·장애 | TODO | overload80의 한도 밖 요청 명시 거절, 취소·느린/끊긴 edge·중간 stage 재시작·늦은 반환의 terminal과 원장/KV/credit/출력 권위 회수 |

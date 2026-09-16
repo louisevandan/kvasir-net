@@ -48,6 +48,25 @@ def matches(command: str, row: dict) -> bool:
     return all(token in command for token in row["command_contains"])
 
 
+def inspect_owned(config: dict, processes: dict[int, str] | None = None) -> dict:
+    """Prove the declared helpers are still the original live processes."""
+    current = inventory() if processes is None else processes
+    for protected in config.get("protected", []):
+        pid = int(protected["pid"])
+        if pid not in current or protected["command_contains"] not in current[pid]:
+            raise RuntimeError("protected process identity differs")
+    names = []
+    for row in config["owned"]:
+        pid = resolve_pid(row)
+        if pid not in current or not matches(current[pid], row):
+            raise RuntimeError(f"owned process identity differs: {row['name']}")
+        names.append(row["name"])
+    if len(names) != len(set(names)):
+        raise RuntimeError("owned process names are duplicated")
+    return {"host": config["host"], "owned": names,
+            "protected_preserved": len(config.get("protected", []))}
+
+
 def listener_owners() -> set[int]:
     if os.name == "nt":
         command = ("Get-NetTCPConnection -State Listen | Select-Object -ExpandProperty OwningProcess | "
@@ -67,15 +86,10 @@ def listener_owners() -> set[int]:
 
 def cleanup(config: dict) -> dict:
     before = inventory()
-    for protected in config.get("protected", []):
-        pid = int(protected["pid"])
-        if pid not in before or protected["command_contains"] not in before[pid]:
-            raise RuntimeError("protected process identity differs")
+    inspect_owned(config, before)
     owned = []
     for row in config["owned"]:
         pid = resolve_pid(row)
-        if pid not in before or not matches(before[pid], row):
-            raise RuntimeError(f"owned process identity differs: {row['name']}")
         owned.append((pid, row["name"]))
     for pid, _ in owned:
         if os.name == "nt":
@@ -107,17 +121,31 @@ def self_test() -> None:
     assert matches("/a --x 1", {"expected_command": "/a --x 1"})
     assert not matches("/a --x 2", {"expected_command": "/a --x 1"})
     assert matches("ssh -R one host", {"command_contains": ["ssh", "-R", "host"]})
-    print(json.dumps({"passed": True, "tests": 3}, separators=(",", ":")))
+    config = {"host": "windows-controller", "protected": [], "owned": [
+        {"name": "return", "pid": 7, "command_contains": ["ssh", "-R", "host"]}]}
+    assert inspect_owned(config, {7: "ssh -R one host"})["owned"] == ["return"]
+    for changed, processes in (
+        (config, {}),
+        (config, {7: "ssh -N host"}),
+        ({**config, "owned": config["owned"] * 2}, {7: "ssh -R one host"}),
+    ):
+        try: inspect_owned(changed, processes)
+        except RuntimeError: pass
+        else: raise AssertionError("missing, changed, or duplicate tunnel was accepted")
+    print(json.dumps({"passed": True, "tests": 7}, separators=(",", ":")))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--inspect-only", action="store_true")
     args = parser.parse_args()
     if args.self_test: self_test(); return
     if args.config is None: parser.error("--config is required")
-    print(json.dumps(cleanup(json.loads(args.config.read_text())), separators=(",", ":")))
+    config = json.loads(args.config.read_text())
+    result = inspect_owned(config) if args.inspect_only else cleanup(config)
+    print(json.dumps(result, separators=(",", ":")))
 
 
 if __name__ == "__main__":
