@@ -18,9 +18,17 @@ source가 달라지면 앞선 I 단계부터 다시 실행한다. [무결성 우
 [실행 계약](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json),
 계약 검사기와 결과 판정기를 수용한 뒤에만 모델을 적재한다.
 
+**2026-09-16 H0 v4 봉인:** [H0 v4 명세](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v4.json)가
+runtime `19f2b1afa`, 세 원격 host의 새 agent/event-drive 바이너리, native/library/model/layout,
+I0 materializer, 원시 증거 builder와 두 단계 judge를 결속했다. 상대 시간 GPU 표본을 다른 실행에 붙일 수
+있던 틈을 `started_unix_ms`와 원격 capture 시각으로 닫았고, contract22·builder10·I0 judge11·전체
+judge27·H0 spec4를 포함한 고정 검증이 통과했다. `load_authorized=true`지만 모델 실행 전 상태이므로
+`runtime_acceptance=false`, `integrity_baseline=false`다. 다음 행동은 새 task agent의 실제 양방향
+INSPECT와 정확한 pre-LOAD 상태를 확인한 뒤 I0-S/M/L을 한 LOAD에서 한 번 실행하는 것이다.
+
 | 단계 | 상태 | 종료 조건 |
 | --- | --- | --- |
-| I0 현재 단일 요청 기준선 | **NEXT** | 현재 source/binary/model/topology를 봉인하고 short·medium·long을 각각 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 시간창에 보존. LOAD 전과 UNLOAD 후 nodes/child/listener0 |
+| I0 현재 단일 요청 기준선 | **NEXT (H0 v4 GREEN)** | 봉인된 source/binary/model/topology로 short·medium·long을 한 LOAD에서 정상 JSON/EOS·deadline·RELEASE로 완료. 요청별 TTFT, prefill rows/s, generation token/s, E2E, phase별 batch 폭, host별 GPU 표본을 같은 절대 시간창에 보존. task agent 시작 뒤 LOAD 전에는 nodes/native0·agent listener1/host, 최종 종료 뒤 nodes/child/listener0 |
 | I1 전체 정상 corpus | TODO | 같은 load에서 64건 closed-loop corpus 전부 정답·EOS·deadline·RELEASE. 오류·미분류·재시작0 |
 | I2 bounded 지속 서비스 | TODO | resident8 cold8, 8×8 sustained, 같은 load recovery3×8. 정상 요청100%, 무응답·유실·세션 오염0, backlog가 유한 시간 안에0으로 수렴 |
 | I3 과부하·취소·장애 | TODO | overload80의 한도 밖 요청 명시 거절, 취소·느린/끊긴 edge·중간 stage 재시작·늦은 반환의 terminal과 원장/KV/credit/출력 권위 회수 |
@@ -35,6 +43,10 @@ I0는 단순 smoke가 아니다. 첫 실행 자체가 현재 제품 판정이며
 I0–I4에서도 성능 scorecard를 빠짐없이 수집하지만 상승을 주장하지 않는다. P 단계의 비교 가능한
 기준선을 만들기 위한 것이다. 안전성·문서·단위시험만 통과한 단계는 `enabling`으로 기록하며 제품 또는
 성능 진척률에 합산하지 않는다.
+
+I 단계 시험은 알고리즘을 발견하는 탐색 절차가 아니다. 제품 코드는 모든 요청·자원·실패 전이를
+결정론적 상태기계로 먼저 완성하고, 시험은 고정 ID·고정 일정·고정 주입 경계로 그 불변식을 가혹하게
+증명한다. 무작위 회복·타이밍 의존 재시도·재실행마다 달라지는 terminal 분류는 수용하지 않는다.
 
 **2026-09-16 H1 2차 INVALID와 H0 v3:** [실행·회수 보고](../tests/reports/release-a/20260916_104300.md)의
 3-host closed-loop 실행은 41분13초 동안 실제 stage 계산을 진행했지만 terminal artifact가 없고, 실행 중

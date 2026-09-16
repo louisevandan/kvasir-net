@@ -4,9 +4,18 @@
   "status": "planned",
   "integrity_baseline": false,
   "performance_improvement_claimed": false,
+  "determinism": {
+    "product_algorithm": "deterministic_state_machine",
+    "randomized_recovery": false,
+    "runtime_retry_discovery": false,
+    "test_role": "proof_only",
+    "stress_schedule": "fixed",
+    "seed": 20260916,
+    "replay_requires_identical_terminal_classification": true
+  },
   "source": {
-    "runtime_commit": "25edd33cf24b46964e432a7cd6d89772417673db",
-    "h0_spec_sha256": "d069fc04d01bd16ef6bebc44f5bfb8c23659e9b0d31685503dbf2cfacd07d8aa",
+    "runtime_commit": "19f2b1afaa5c4243a59b8bc1edb76d9b82a01d6b",
+    "base_h0_spec_sha256": "d069fc04d01bd16ef6bebc44f5bfb8c23659e9b0d31685503dbf2cfacd07d8aa",
     "corpus_sha256": "47389e9977cfc1de65e129498d2dc0773a3d20d6d85d677004b6334fd8cc2733"
   },
   "model": {
@@ -129,6 +138,7 @@
       "accepted_max": 72,
       "rejected_min": 8,
       "rejection_deadline_ms": 5000,
+      "request_id_pattern": "integrity-overload-{index:03d}",
       "timeout_ms": 1800000,
       "requires_rejection_no_effect": true,
       "requires_all_classified": true
@@ -139,6 +149,9 @@
       "fault": "cancel_after_first_token",
       "requests": 8,
       "targets": 2,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [1, 6],
+      "trigger_output_ordinal": 0,
       "timeout_ms": 1800000,
       "requires_no_post_linearization_output": true,
       "requires_all_classified": true
@@ -148,6 +161,9 @@
       "kind": "fault",
       "fault": "slow_edge",
       "requests": 8,
+      "selection": "corpus_0_7",
+      "affected_request_indexes": [0, 1, 2, 3, 4, 5, 6, 7],
+      "injection_boundary": "outer_output_delivery",
       "edge_delay_ms": 1000,
       "timeout_ms": 1800000,
       "requires_oracle_eos_release": true
@@ -158,6 +174,9 @@
       "fault": "disconnect_after_first_output",
       "requests": 8,
       "targets": 1,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [2],
+      "trigger_output_ordinal": 0,
       "allowed_target_terminals": ["failed", "canceled", "uncertain"],
       "timeout_ms": 1800000,
       "requires_failure_ledger": true,
@@ -169,6 +188,11 @@
       "fault": "restart_middle_stage_after_first_output",
       "requests": 8,
       "targets": 1,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [4],
+      "restart_stage": "mac20-1",
+      "trigger_output_ordinal": 0,
+      "generation_increment": 1,
       "timeout_ms": 1800000,
       "requires_generation_fence": true,
       "requires_all_classified": true
@@ -179,6 +203,10 @@
       "fault": "late_old_generation_result",
       "requests": 8,
       "targets": 1,
+      "selection": "corpus_0_7",
+      "target_request_indexes": [5],
+      "return_stage": "mac20-1",
+      "source_generation_offset": -1,
       "delay_ms": 30000,
       "timeout_ms": 1800000,
       "requires_generation_fence": true,
@@ -209,6 +237,7 @@
         {"after_ms": 5400000, "count": 8}, {"after_ms": 5580000, "count": 8}
       ],
       "minimum_duration_ms": 5580000,
+      "request_id_pattern": "integrity-soak-{index:03d}",
       "timeout_ms": 7380000,
       "same_load": true,
       "requires_backlog_convergence": true,
@@ -259,7 +288,19 @@
     ],
     "resource_snapshots": ["before_load", "peak", "after_drain", "after_unload"],
     "gpu_sample_interval_ms": 1000,
-    "gpu_minimum_coverage": 0.95
+    "gpu_minimum_coverage": 0.95,
+    "gpu_sample_clock_tolerance_ms": 750,
+    "resource_snapshot_skew_ms": 5000,
+    "resource_snapshot_host_fields": [
+      "host", "captured_unix_ms", "node_count", "task_native_children",
+      "task_listeners", "model_resident"
+    ],
+    "resource_snapshot_states": {
+      "before_load": {"node_count": 0, "task_native_children": 0, "task_listeners": 1, "model_resident": false},
+      "peak": {"node_count": 1, "task_native_children": 1, "task_listeners": 2, "model_resident": true},
+      "after_drain": {"node_count": 1, "task_native_children": 1, "task_listeners": 2, "model_resident": true},
+      "after_unload": {"node_count": 0, "task_native_children": 0, "task_listeners": 1, "model_resident": false}
+    }
   },
   "required_distributed_evidence": {
     "physical_hosts": 3,

@@ -17,10 +17,18 @@ The executable test contract is
 validator and the artifact judge must pass their own baseline and weakening mutations before any
 model is loaded.
 
+This suite is a proof procedure, not an algorithm-discovery loop. Product behavior must already be
+defined as a deterministic state machine for every admitted, rejected, canceled, failed, stale, and
+released request. Tests use fixed identities, fixed schedules, fixed fault boundaries, and a sealed
+seed to apply severe load and exceptions. Runtime random recovery, timing-dependent retry, or a
+different terminal classification on exact replay fails the arm.
+
 ## Environment
 
 - P4 runtime source and every binary/library hash are bound by the next H0 revision; no arm may
   replace them after the first LOAD.
+- H0 v4 binds runtime `19f2b1afaa5c4243a59b8bc1edb76d9b82a01d6b`, including the absolute
+  inference-window anchor, to freshly built remote binaries and the raw-evidence builder.
 - Model: Qwen3.5-122B-A10B UD-Q5_K_S, cuts `[0,24)`, `[24,36)`, `[36,48)` on Spark GB10,
   Mac20 M4 Pro, and Mac21 M4 Pro.
 - Shape: resident 8, context 102,400 per sequence, total context 819,200, batch 128, ubatch 64,
@@ -40,9 +48,10 @@ model is loaded.
    acceptance, and incomplete cleanup.
 3. Working bytes, HEAD blobs, staged blobs, and a fresh checkout match every sealed source, corpus,
    plan, materializer, judge, and validator hash.
-4. Each advertised agent address completes the real bidirectional INSPECT round trip. Before LOAD,
-   every task namespace has nodes 0, transport failures 0, task children 0, task listeners 0, and
-   CLOSE_WAIT 0. SSH or a one-way socket probe is not a substitute.
+4. Each advertised agent address completes the real bidirectional INSPECT round trip. Before the
+   task agents start, task children/listeners are 0. After they start and before LOAD, every host has
+   nodes 0, native children 0, exactly one task-agent listener, transport failures 0, and CLOSE_WAIT
+   0. SSH or a one-way socket probe is not a substitute.
 5. Source, binary, native library, model shard, tokenizer/template, corpus, stage plan, device,
    generation, resource profile, telemetry sampler, and judge identities equal the seal.
 6. The event runtime owns bounded deadline to artifact assembly, FINISH, and cleanup. External TERM
@@ -139,6 +148,9 @@ The following scorecard is mandatory even though this phase does not claim impro
 - per host in the same analysis window: sample count and coverage, GPU/device utilization
   mean/p50/p90/zero fraction, memory peak, power and temperature when available; unavailable fields
   carry an explicit reason and are never written as zero;
+- every raw GPU sample carries its remote UNIX capture time. The evidence builder independently
+  binds it to the event artifact's absolute start and 1,000 ms grid within 750 ms, and independently
+  rejects coverage below 95%; relative counters without the absolute anchor are invalid;
 - stage queue/compute/sample/copy/network/settle time, link bytes, clock-error bound, KV and every
   count/byte/token reservation before load, at peak, after drain, and after unload.
 

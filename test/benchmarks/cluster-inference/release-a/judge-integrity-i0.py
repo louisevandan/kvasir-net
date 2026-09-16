@@ -168,7 +168,7 @@ def stage_metrics(artifact: dict, executions: set[int]) -> list[dict]:
     return rows
 
 
-def host_metrics(external: dict, elapsed_ms: int, spec: dict) -> list[dict]:
+def host_metrics(external: dict, started_unix_ms: int, elapsed_ms: int, spec: dict) -> list[dict]:
     gpu = external.get("gpu") or {}
     interval = spec["required_scorecard"]["gpu_sample_interval_ms"]
     if gpu.get("sample_interval_ms") != interval:
@@ -177,12 +177,17 @@ def host_metrics(external: dict, elapsed_ms: int, spec: dict) -> list[dict]:
     if len(hosts) != 3 or len({row.get("host") for row in hosts}) != 3:
         raise ValueError("GPU host coverage differs")
     expected = elapsed_ms // interval + 1
+    tolerance = spec["required_scorecard"]["gpu_sample_clock_tolerance_ms"]
     result = []
     for host in hosts:
         samples = [row for row in host.get("samples") or []
                    if isinstance(row.get("elapsed_ms"), int) and 0 <= row["elapsed_ms"] <= elapsed_ms]
         if [row["elapsed_ms"] for row in samples] != sorted({row["elapsed_ms"] for row in samples}):
             raise ValueError("GPU sample times are duplicate or unordered")
+        if any(not isinstance(row.get("captured_unix_ms"), int)
+               or abs(row["captured_unix_ms"] - (started_unix_ms + row["elapsed_ms"])) > tolerance
+               for row in samples):
+            raise ValueError("GPU samples are not anchored to the runtime window")
         if not samples:
             raise ValueError("GPU samples are absent")
         coverage = min(1.0, len(samples) / expected)
@@ -213,13 +218,19 @@ def host_metrics(external: dict, elapsed_ms: int, spec: dict) -> list[dict]:
     return result
 
 
-def validate_external(external: dict, artifact_bytes: bytes, seal: dict, elapsed_ms: int, spec: dict) -> None:
+def validate_external(external: dict, artifact: dict, artifact_bytes: bytes,
+                      seal: dict, elapsed_ms: int, spec: dict) -> None:
     if external.get("schema") != "p4.release-a.integrity-i0-external.v1":
         raise ValueError("I0 external evidence schema differs")
     if external.get("artifact_sha256") != digest(artifact_bytes):
         raise ValueError("external evidence is not bound to the runtime artifact")
     if external.get("config_sha256") != seal.get("config_sha256"):
         raise ValueError("external evidence is not bound to the execution config")
+    started = artifact.get("started_unix_ms")
+    if not isinstance(started, int) or started <= 0:
+        raise ValueError("runtime artifact lacks an absolute inference window")
+    if external.get("run_window") != {"started_unix_ms": started, "elapsed_ms": elapsed_ms}:
+        raise ValueError("external evidence run window differs")
     snapshots = external.get("resource_snapshots") or []
     names = [row.get("name") for row in snapshots]
     if names != spec["required_scorecard"]["resource_snapshots"]:
@@ -228,7 +239,10 @@ def validate_external(external: dict, artifact_bytes: bytes, seal: dict, elapsed
         hosts = snapshot.get("hosts") or []
         if len(hosts) != 3 or len({row.get("host") for row in hosts}) != 3:
             raise ValueError("resource snapshot host coverage differs")
-    host_metrics(external, elapsed_ms, spec)
+        expected = spec["required_scorecard"]["resource_snapshot_states"][snapshot["name"]]
+        if any({key: row.get(key) for key in expected} != expected for row in hosts):
+            raise ValueError("resource snapshot state differs")
+    host_metrics(external, started, elapsed_ms, spec)
 
 
 def build_bundle(artifact: dict, artifact_bytes: bytes, seal: dict, external: dict, spec: dict) -> dict:
@@ -246,7 +260,7 @@ def build_bundle(artifact: dict, artifact_bytes: bytes, seal: dict, external: di
     elapsed_ms = artifact.get("elapsed_ms")
     if not isinstance(elapsed_ms, int) or elapsed_ms <= 0:
         raise ValueError("I0 elapsed time is invalid")
-    validate_external(external, artifact_bytes, seal, elapsed_ms, spec)
+    validate_external(external, artifact, artifact_bytes, seal, elapsed_ms, spec)
 
     h1 = load_module("release_a_h1_judge", H1_JUDGE).evaluate(artifact, seal)
     if not h1["passed"]:
@@ -254,7 +268,7 @@ def build_bundle(artifact: dict, artifact_bytes: bytes, seal: dict, external: di
     request_rows = artifact["requests"]
     h1_by_case = {row["case_id"]: row for row in h1["rows"]}
     executions = request_execution_ids(artifact)
-    gpu = host_metrics(external, elapsed_ms, spec)
+    gpu = host_metrics(external, artifact["started_unix_ms"], elapsed_ms, spec)
     if any(request.get("release_ms") is None for request in request_rows):
         raise ValueError("I0 release timestamps are missing")
     for prior, following in zip(request_rows, request_rows[1:]):
@@ -388,7 +402,8 @@ def fixture(spec: dict) -> tuple[dict, bytes, dict, dict]:
         "uncertain": 0, "unsubmitted": 0, "incomplete": 0, "unreleased": 0},
         "stage_builds": [{"node": index} for index in range(3)],
         "batch_observations": observations, "stage_spans": spans,
-        "elapsed_ms": 1000, "telemetry_complete_elapsed_ms": 1000,
+        "started_unix_ms": 1_000_000, "elapsed_ms": 1000,
+        "telemetry_complete_elapsed_ms": 1000,
         "error": None, "evidence_missing": None, "cleanup_error": None,
     }
     artifact_bytes = (json.dumps(artifact, separators=(",", ":")) + "\n").encode()
@@ -399,18 +414,22 @@ def fixture(spec: dict) -> tuple[dict, bytes, dict, dict]:
         "slo": {"percentile": "nearest_rank", "ttft_ms_by_class": spec["slo"]["ttft_p95_ms"],
                 "itl_p95_ms": spec["slo"]["itl_p95_ms"]}, "config_sha256": "c" * 64,
     }
-    samples = [{"elapsed_ms": value, "utilization_percent": 50,
+    samples = [{"elapsed_ms": value, "captured_unix_ms": 1_000_000 + value,
+                "utilization_percent": 50,
                 "memory_used_bytes": 1024, "power_w": None, "temperature_c": None}
                for value in (0, 1000)]
+    states = spec["required_scorecard"]["resource_snapshot_states"]
     external = {
         "schema": "p4.release-a.integrity-i0-external.v1",
         "artifact_sha256": digest(artifact_bytes), "config_sha256": seal["config_sha256"],
+        "run_window": {"started_unix_ms": 1_000_000, "elapsed_ms": 1000},
         "gpu": {"sample_interval_ms": 1000, "hosts": [
             {"host": f"h{index}", "samples": copy.deepcopy(samples),
              "unavailable_reasons": {"power": "unsupported", "temperature": "unsupported"}}
             for index in range(3)]},
-        "resource_snapshots": [{"name": name, "hosts": [{"host": f"h{i}"} for i in range(3)]}
-                               for name in spec["required_scorecard"]["resource_snapshots"]],
+        "resource_snapshots": [{"name": name, "hosts": [
+            {"host": f"h{i}", "captured_unix_ms": 1_000_000, **states[name]}
+            for i in range(3)]} for name in spec["required_scorecard"]["resource_snapshots"]],
         "distributed": {"physical_hosts": 3, "stages": 3,
                         "all_hosts_own_model_shard": True, "all_hosts_own_kv": True,
                         "all_stages_compute": True, "cross_host_transfer_bytes": 1,
@@ -437,7 +456,9 @@ def self_test(spec: dict) -> None:
         lambda a, s, e: a["requests"][0].update(send_started_ms=1002),
         lambda a, s, e: a["stage_spans"].__setitem__(slice(None), [x for x in a["stage_spans"] if x["node"] != 2]),
         lambda a, s, e: e["gpu"]["hosts"][0]["samples"].pop(),
+        lambda a, s, e: e["gpu"]["hosts"][0]["samples"][0].update(captured_unix_ms=999_000),
         lambda a, s, e: e["resource_snapshots"].pop(),
+        lambda a, s, e: e["resource_snapshots"][1]["hosts"][0].update(model_resident=False),
         lambda a, s, e: e.update(artifact_sha256="0" * 64),
         lambda a, s, e: s.update(load_count=3),
     )
@@ -455,7 +476,7 @@ def self_test(spec: dict) -> None:
             pass
         else:
             raise AssertionError("weakened I0 evidence was accepted")
-    print(json.dumps({"passed": True, "tests": 9}, separators=(",", ":")))
+    print(json.dumps({"passed": True, "tests": 11}, separators=(",", ":")))
 
 
 def main() -> None:

@@ -241,3 +241,5 @@ Release A 무결성 우선 재개: [I0–I4 정밀 시험계획](tests/plans/rel
 Release A 무결성 시험 계약: [14개 실기 arm·계약/판정 변이·로드맵 재조정 보고](tests/reports/release-a/20260916_131446.md).
 
 Release A I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요청/배치/stage/GPU 판정](tests/reports/release-a/20260916_133038.md).
+
+Release A Qwen122B H0 v4: [절대 실행창·원시 GPU/자원 증거 builder·세 원격 바이너리 봉인](test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v4.json) · [검증 보고](tests/reports/release-a/20260916_135000.md). 모델 LOAD 전 gate만 GREEN이며 I0 실기는 다음 단계다.

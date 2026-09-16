@@ -10,7 +10,7 @@ import { validateBenchmarkSpec, verifyFiles } from './benchmark-spec.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../../../..');
-const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v3.json');
+const specPath = path.join(directory, 'benchmark-spec-qwen122b-h0-v4.json');
 const read = () => JSON.parse(fs.readFileSync(specPath));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const reseal = component => {
@@ -38,7 +38,7 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
   const original = read();
   const mutations = [
     spec => { spec.schema = 'p4.release-a.benchmark-spec.v1'; },
-    spec => { spec.spec_id = 'qwen3_5_122b_a10b_h0_20260916_v2'; },
+    spec => { spec.spec_id = 'qwen3_5_122b_a10b_h0_20260916_v3'; },
     spec => { spec.source.source_commit = '0'.repeat(40); },
     spec => { spec.source.source_bundle.sha256 = hash('other source bundle'); },
     spec => { spec.source.compatibility.patch_digest = hash('other compatibility patch'); },
@@ -59,6 +59,16 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
         .filter(item => item.path !== '.gitattributes');
       reseal(spec.source.components[1]);
     },
+    spec => {
+      spec.source.components[1].files = spec.source.components[1].files
+        .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/judge-integrity-i0.py');
+      reseal(spec.source.components[1]);
+    },
+    spec => {
+      spec.source.components[1].files = spec.source.components[1].files
+        .filter(item => item.path !== 'test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py');
+      reseal(spec.source.components[1]);
+    },
     spec => { spec.lifecycle.load_content_type = 'application/vnd.p4.node.create-v1'; },
     spec => { spec.lifecycle.separate_create_delete_allowed = true; },
     spec => { spec.remote_execution[0].argv[1] = '$HOME/inspect.py'; },
@@ -76,6 +86,13 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'h0_verifier'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'spec_validator'); },
     spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'event_preflight'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'integrity_spec'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_materializer'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_evidence_builder'); },
+    spec => { spec.artifacts = spec.artifacts.filter(artifact => artifact.id !== 'i0_judge'); },
+    spec => { spec.integrity.execution_order = ['I0', 'P0']; },
+    spec => { spec.integrity.integrity_baseline = true; },
+    spec => { spec.integrity.performance_improvement_claimed = true; },
     spec => { spec.workload.modes.quality.max_in_flight = 8; },
     spec => { spec.workload.modes.quality.open_loop = true; },
     spec => { delete spec.workload.modes.quality.request_deadline_ms_by_class.long; },
@@ -89,6 +106,7 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
     spec => { spec.telemetry.sample_interval_ms = 0; },
     spec => { spec.slo.itl_ms = 251; },
     spec => { spec.execution_safety.local_desktop_model_run = true; },
+    spec => { spec.execution_safety.remote_build_jobs_by_role.spark = 15; },
     spec => { spec.model.parameters.active_per_token++; },
     spec => { spec.model.shards[0].sha256 = '0'.repeat(64); },
     spec => { spec.runtime_acceptance = true; },

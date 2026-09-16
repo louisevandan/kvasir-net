@@ -4,16 +4,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-const EXPECTED_COMMIT = '25edd33cf24b46964e432a7cd6d89772417673db';
+const EXPECTED_COMMIT = '19f2b1afaa5c4243a59b8bc1edb76d9b82a01d6b';
 const EXPECTED_SOURCE_BUNDLE = Object.freeze({
-  bytes: 5126427,
-  sha256: '4de5d0147fe3ac281ab735ad02f3fbfb46c5874a3b434e33237cdfdf1e314cc6',
+  bytes: 3489763,
+  sha256: '9a51534a71a65d9c9b471cb43ebee11d9e787504b5aadaed79d0fecb4f551697',
 });
 const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9';
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);
 const EXPECTED_MODES = Object.freeze(['quality', 'cold', 'sustained', 'recovery', 'overload', 'soak']);
 const EXPECTED_FAULTS = Object.freeze(['cancel', 'slow_edge', 'disconnected_edge', 'node_restart', 'late_return']);
-const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v3';
+const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v4';
 const EXPECTED_ARRIVALS = Object.freeze([0, 180000, 480000, 780000, 1080000, 1380000, 1680000, 1980000]);
 const H1_DEADLINES = Object.freeze({ short: 600000, medium: 1200000, long: 1800000 });
 const H1_TIMEOUT_MS = 32 * H1_DEADLINES.short + 16 * H1_DEADLINES.medium +
@@ -95,6 +95,12 @@ export function validateBenchmarkSpec(spec) {
     '.gitattributes',
     'test/benchmarks/cluster-inference/release-a/prepare-h1-quality.py',
     'test/benchmarks/cluster-inference/release-a/judge-h1-quality.py',
+    'test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json',
+    'test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py',
+    'test/benchmarks/cluster-inference/release-a/prepare-integrity-i0.py',
+    'test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py',
+    'test/benchmarks/cluster-inference/release-a/judge-integrity-i0.py',
+    'test/benchmarks/cluster-inference/release-a/judge-integrity.py',
   ]) fail(componentPaths('judge').has(required), `judge omits H1 sealed tool: ${required}`);
 
   const lifecycle = spec.lifecycle;
@@ -105,7 +111,7 @@ export function validateBenchmarkSpec(spec) {
     lifecycle.node_created_by_load === true && lifecycle.node_removed_by_unload === true &&
     lifecycle.separate_create_delete_allowed === false, 'lifecycle is not the sealed LOAD/UNLOAD contract');
 
-  fail(Array.isArray(spec.artifacts) && spec.artifacts.length >= 13, 'local artifacts missing');
+  fail(Array.isArray(spec.artifacts) && spec.artifacts.length >= 19, 'local artifacts missing');
   const artifacts = new Map();
   for (const artifact of spec.artifacts) {
     fail(typeof artifact.id === 'string' && artifact.id && !artifacts.has(artifact.id), 'duplicate artifact id');
@@ -114,11 +120,22 @@ export function validateBenchmarkSpec(spec) {
   }
   for (const id of ['corpus', 'native_actual', 'native_actual_result', 'host_inspector', 'gguf_inspector',
     'h1_materializer', 'h1_judge', 'h0_verifier', 'spec_validator', 'spec_tests',
-    'host_inspector_tests', 'event_preflight', 'event_preflight_tests'])
+    'host_inspector_tests', 'event_preflight', 'event_preflight_tests',
+    'integrity_spec', 'integrity_spec_validator', 'integrity_judge', 'i0_materializer',
+    'i0_evidence_builder', 'i0_judge'])
     fail(artifacts.has(id), `missing artifact ${id}`);
   fail(artifacts.get('event_preflight').path === '../../../../tools/validate_event_runtime_preflight.py' &&
     artifacts.get('event_preflight_tests').path === '../../../../tools/tests/test_validate_event_runtime_preflight.py',
   'event preflight artifact path differs');
+  fail(isDeepStrictEqual(spec.integrity, {
+    execution_order: ['I0', 'I1', 'I2', 'I3', 'I4', 'P0', 'P1', 'P2', 'P3'],
+    integrity_before_performance: true,
+    performance_blocked_until_integrity_green: true,
+    test_spec: 'integrity_spec', spec_validator: 'integrity_spec_validator',
+    judge: 'integrity_judge', i0_materializer: 'i0_materializer',
+    i0_evidence_builder: 'i0_evidence_builder', i0_judge: 'i0_judge',
+    status: 'planned', integrity_baseline: false, performance_improvement_claimed: false,
+  }), 'integrity-first execution authority differs');
 
   fail(Array.isArray(spec.remote_execution) && spec.remote_execution.length === 3, 'remote execution bindings missing');
   const remoteRoles = new Set();
@@ -130,7 +147,7 @@ export function validateBenchmarkSpec(spec) {
     fail(typeof remote.remote_path === 'string' && remote.remote_path.endsWith(`${remote.runner_sha256}.py`) &&
       !META.test(remote.remote_path), 'remote runner path is unsafe');
     fail(Array.isArray(remote.argv) && isDeepStrictEqual(remote.argv,
-      ['python3', remote.remote_path, '--role', remote.role, '--output', `/tmp/p4-h0-v2-host-${remote.role}.json`]),
+      ['python3', remote.remote_path, '--role', remote.role, '--output', `/tmp/p4-h0-v4-host-${remote.role}.json`]),
     'remote invocation is not argv-only');
     fail(remote.argv.every(value => typeof value === 'string' && value && !META.test(value)), 'remote argv has shell metacharacters');
     fail(remote.local_remote_hash_equal === true, 'remote runner hash was not matched');
@@ -363,7 +380,9 @@ export function validateBenchmarkSpec(spec) {
     Array.isArray(telemetry.required) && telemetry.required.length >= 10, 'telemetry contract differs');
   const safety = spec.execution_safety;
   fail(safety?.local_desktop_build === false && safety.local_desktop_model_run === false &&
-    safety.remote_build_max_jobs > 0 && safety.remote_build_max_jobs <= 8 && safety.load_requires_validated_h0 === true &&
+    safety.remote_build_max_cpu_fraction === 0.70 &&
+    isDeepStrictEqual(safety.remote_build_jobs_by_role, { spark: 14, mac20: 9, mac21: 9 }) &&
+    safety.load_requires_validated_h0 === true &&
     safety.inspect_and_unload_task_owned_nodes_before_run === true && safety.protected_agents_must_remain === true &&
     safety.assigned_agent_port === 22150 && isDeepStrictEqual(safety.assigned_native_ports, [23150, 23151, 23152]),
   'execution safety contract differs');

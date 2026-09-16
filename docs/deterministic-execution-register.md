@@ -78,6 +78,8 @@
 | L070 | I0-S/M/L에 `same_load_group` 문자열만 둔 계약은 세 번 재적재한 독립 실행도 구별하지 못했다. | `execution_groups.I0`가 정확한 case 순서·deadline vector·closed-loop·`load_count=1`·`unload_count=1`을 봉인하고 materializer/judge가 다음 요청 eligibility가 이전 RELEASE보다 빠르지 않은지 원시 시각으로 검사한다. | I0와 이후 같은 적재 순차 시험 |
 | L071 | head scheduler의 batch/ready/blocked 값과 세 stage의 span/compute 값을 한 `stage_phase` 표로 요구하면 다른 stage에 없는 head 값을 복제해도 형식상 완전해진다. | 점수표를 `scheduler_phases`와 `stages`로 분리한다. 원시 실행 ID로 request별 physical batch와 세 stage span을 결속하며 세 stage 중 하나라도 없으면 거부한다. | I0–I4 batch 포화도·pipeline 증거 |
 | L072 | I0 원시 증거 생성기가 GPU sample count를 계산했지만 95% 하한은 최종 judge에만 맡겨, 중간 bundle 생성만 보면 표본 제거 변이가 통과했다. | 원시 증거 생성기와 최종 judge가 모두 run window의 기대 표본 수와 95% 하한을 독립 검사한다. 표본 제거 변이를 두 계층에 유지한다. | I0–I4 GPU scorecard |
+| L073 | event-drive artifact와 원격 GPU 표본이 상대 `elapsed_ms`만 가지면 다른 실행에서 채취한 표본의 개수와 간격을 맞춰 현재 실행 증거처럼 결합할 수 있다. | runtime이 monotonic 측정과 함께 `started_unix_ms`를 기록한다. 원시 증거 builder와 최종 judge가 각 원격 capture 시각을 같은 절대 실행창의 1초 grid와 750ms 이내로 독립 결속하고, 절대 anchor 누락·시각 이동 변이를 거부한다. | I0–I4 GPU·자원 시간창 결속 |
+| L074 | 가혹한 시험에서 fault 대상과 주입 시점을 실행 중 선택하면 시험 실패를 보고 제품 알고리즘을 찾는 trial-and-error가 되고, 재실행 결과도 비교할 수 없다. | 제품 전이를 먼저 결정론적 상태기계로 고정한다. integrity spec이 요청 ID 규칙·대상 index·output ordinal·stage·generation·지연·wave와 seed를 사전 봉인하고, exact replay의 terminal 분류가 달라지면 거부한다. 시험은 이 불변식의 증명에만 사용한다. | I0–I4 정상·stress·fault arm |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

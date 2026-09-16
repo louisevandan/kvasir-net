@@ -101,8 +101,11 @@ def materialize(args: argparse.Namespace) -> dict:
     load_module("release_a_integrity_validator", INTEGRITY_VALIDATOR).validate(integrity)
     if h0.get("h0_status") != "sealed" or h0.get("runtime_acceptance") is not False:
         raise ValueError("H0 spec is not sealed for I0 execution")
-    if digest(args.h0_spec.read_bytes()) != integrity["source"]["h0_spec_sha256"]:
-        raise ValueError("integrity contract is not bound to the supplied H0 spec")
+    if h0.get("source", {}).get("source_commit") != integrity["source"]["runtime_commit"]:
+        raise ValueError("H0 runtime source differs from the integrity contract")
+    artifacts = {row.get("id"): row for row in h0.get("artifacts") or []}
+    if (artifacts.get("integrity_spec") or {}).get("sha256") != digest(args.integrity_spec.read_bytes()):
+        raise ValueError("H0 does not bind the supplied integrity contract")
     if digest(args.corpus.read_bytes()) != integrity["source"]["corpus_sha256"]:
         raise ValueError("integrity contract is not bound to the supplied corpus")
 

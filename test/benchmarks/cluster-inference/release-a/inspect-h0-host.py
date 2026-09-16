@@ -21,30 +21,30 @@ import time
 from pathlib import Path
 
 
-SOURCE_COMMIT = "25edd33cf24b46964e432a7cd6d89772417673db"
+SOURCE_COMMIT = "19f2b1afaa5c4243a59b8bc1edb76d9b82a01d6b"
 HOSTS = {
     "spark": {
         "peers": ["192.168.0.20", "192.168.0.21"],
-        "source": "/home/m42/p4-h0-v2-25edd33cf/source-git",
+        "source": "/home/m42/p4-h0-v4-19f2b1afa/source-git",
         "binaries": {
-            "agent": "/home/m42/p4-h0-v2-25edd33cf/target/release/p4-agent",
-            "event_drive": "/home/m42/p4-h0-v2-25edd33cf/target/release/p4-event-drive",
+            "agent": "/home/m42/p4-h0-v4-19f2b1afa/source-git/target/release/p4-agent",
+            "event_drive": "/home/m42/p4-h0-v4-19f2b1afa/source-git/target/release/p4-event-drive",
             "native": "/home/m42/p4-release-a-bytes-b0-a39eef08/build/p4_staged_server",
         },
     },
     "mac20": {
         "peers": ["192.168.0.26", "192.168.0.21"],
-        "source": "/Users/mobimac/p4-h0-v2-25edd33cf/source-git",
+        "source": "/Users/mobimac/p4-h0-v4-19f2b1afa/source-git",
         "binaries": {
-            "agent": "/Users/mobimac/p4-h0-v2-25edd33cf/target/release/p4-agent",
+            "agent": "/Users/mobimac/p4-h0-v4-19f2b1afa/source-git/target/release/p4-agent",
             "native": "/Users/mobimac/p4-b5-native-build-48437eaeb/p4_staged_server",
         },
     },
     "mac21": {
         "peers": ["192.168.0.26", "192.168.0.20"],
-        "source": "/Users/mobimac/p4-h0-v2-25edd33cf/source-git",
+        "source": "/Users/mobimac/p4-h0-v4-19f2b1afa/source-git",
         "binaries": {
-            "agent": "/Users/mobimac/p4-h0-v2-25edd33cf/target/release/p4-agent",
+            "agent": "/Users/mobimac/p4-h0-v4-19f2b1afa/source-git/target/release/p4-agent",
             "native": "/Users/mobimac/p4-b5-native-build-48437eaeb/p4_staged_server",
         },
     },

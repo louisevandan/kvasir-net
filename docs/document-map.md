@@ -266,11 +266,13 @@ Release A Qwen122B H1 1차: [64건 동시 명세 RED·실패 recovery·closed-lo
 
 Release A Qwen122B H1 2차: [판정기 SLO 누락·terminal artifact 부재 INVALID, 정상 UNLOAD·작업 자원 회수](../tests/reports/release-a/20260916_104300.md).
 
-현재 Release A 실행 순서: [I0–I4 무결성 우선 시험계획](../tests/plans/release-a-integrity-first-20260916.md), [실행 계약](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json), [계약 검사기](../test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py), [결과 판정기](../test/benchmarks/cluster-inference/release-a/judge-integrity.py). 무결성 GREEN 뒤에만 P0–P3 성능 개선으로 이동한다.
+현재 Release A 실행 순서: [I0–I4 무결성 우선 시험계획](../tests/plans/release-a-integrity-first-20260916.md), [H0 v4 봉인](../test/benchmarks/cluster-inference/release-a/benchmark-spec-qwen122b-h0-v4.json), [실행 계약](../test/benchmarks/cluster-inference/release-a/integrity-test-spec-qwen122b-i0-v1.json), [계약 검사기](../test/benchmarks/cluster-inference/release-a/validate-integrity-test-spec.py), [원시 증거 builder](../test/benchmarks/cluster-inference/release-a/build-integrity-i0-evidence.py), [결과 판정기](../test/benchmarks/cluster-inference/release-a/judge-integrity.py). 무결성 GREEN 뒤에만 P0–P3 성능 개선으로 이동한다.
 
 무결성 우선 계약 보고: [14개 실기 arm과 계약·결과 판정 변이](../tests/reports/release-a/20260916_131446.md).
 
 I0 원시 실행 계약: [단일 LOAD 단·중·장 순차 실행·요청/배치/stage/GPU 판정](../tests/reports/release-a/20260916_133038.md).
+
+Qwen122B H0 v4: [절대 실행창·결정론적 stress 계약·원시 GPU/자원 증거 builder·세 원격 바이너리 봉인](../tests/reports/release-a/20260916_135000.md).
 
 Release A 전송 정산 수용: [R1–R9·물리 receipt 복구·최종 양쪽 어댑터](../tests/reports/release-a/20260915_183158.md).
 

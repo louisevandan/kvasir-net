@@ -43,6 +43,20 @@ HOST_FIELDS = {
     "samples", "coverage", "util_mean", "util_p50", "util_p90", "zero_fraction",
     "memory_peak", "power", "temperature", "unavailable_reasons",
 }
+SNAPSHOT_HOST_FIELDS = {
+    "host", "captured_unix_ms", "node_count", "task_native_children",
+    "task_listeners", "model_resident",
+}
+SNAPSHOT_STATES = {
+    "before_load": {"node_count": 0, "task_native_children": 0,
+                    "task_listeners": 1, "model_resident": False},
+    "peak": {"node_count": 1, "task_native_children": 1,
+             "task_listeners": 2, "model_resident": True},
+    "after_drain": {"node_count": 1, "task_native_children": 1,
+                    "task_listeners": 2, "model_resident": True},
+    "after_unload": {"node_count": 0, "task_native_children": 0,
+                     "task_listeners": 1, "model_resident": False},
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -66,12 +80,18 @@ def validate(spec: dict) -> dict:
     require(spec.get("integrity_baseline") is False, "contract claims integrity before execution")
     require(spec.get("performance_improvement_claimed") is False,
             "integrity contract claims performance improvement")
+    require(spec.get("determinism") == {
+        "product_algorithm": "deterministic_state_machine",
+        "randomized_recovery": False, "runtime_retry_discovery": False,
+        "test_role": "proof_only", "stress_schedule": "fixed", "seed": 20260916,
+        "replay_requires_identical_terminal_classification": True,
+    }, "deterministic execution contract differs")
 
     source = spec.get("source") or {}
     require(HEX40.fullmatch(str(source.get("runtime_commit"))) is not None,
             "runtime commit is not a full hash")
-    require(HEX64.fullmatch(str(source.get("h0_spec_sha256"))) is not None,
-            "H0 spec digest is invalid")
+    require(HEX64.fullmatch(str(source.get("base_h0_spec_sha256"))) is not None,
+            "base H0 spec digest is invalid")
     require(HEX64.fullmatch(str(source.get("corpus_sha256"))) is not None,
             "corpus digest is invalid")
 
@@ -149,24 +169,43 @@ def validate(spec: dict) -> dict:
     require(overload.get("requests") == 80 and overload.get("accepted_max") == 72
             and overload.get("rejected_min") == 8 and overload.get("submit_window_ms") == 1000
             and overload.get("rejection_deadline_ms") == 5000
+            and overload.get("request_id_pattern") == "integrity-overload-{index:03d}"
             and overload.get("requires_rejection_no_effect") is True
             and overload.get("requires_all_classified") is True,
             "I3-OVERLOAD80 differs")
     require(arms["I3-CANCEL"].get("targets") == 2
+            and arms["I3-CANCEL"].get("selection") == "corpus_0_7"
+            and arms["I3-CANCEL"].get("target_request_indexes") == [1, 6]
+            and arms["I3-CANCEL"].get("trigger_output_ordinal") == 0
             and arms["I3-CANCEL"].get("requires_no_post_linearization_output") is True,
             "I3-CANCEL differs")
     require(arms["I3-SLOW"].get("edge_delay_ms") == 1000
+            and arms["I3-SLOW"].get("selection") == "corpus_0_7"
+            and arms["I3-SLOW"].get("affected_request_indexes") == list(range(8))
+            and arms["I3-SLOW"].get("injection_boundary") == "outer_output_delivery"
             and arms["I3-SLOW"].get("requires_oracle_eos_release") is True,
             "I3-SLOW differs")
     require(arms["I3-DISCONNECT"].get("allowed_target_terminals")
             == ["failed", "canceled", "uncertain"]
+            and arms["I3-DISCONNECT"].get("selection") == "corpus_0_7"
+            and arms["I3-DISCONNECT"].get("target_request_indexes") == [2]
+            and arms["I3-DISCONNECT"].get("trigger_output_ordinal") == 0
             and arms["I3-DISCONNECT"].get("requires_failure_ledger") is True,
             "I3-DISCONNECT differs")
-    for arm_id in ("I3-RESTART", "I3-LATE"):
-        require(arms[arm_id].get("requires_generation_fence") is True
-                and arms[arm_id].get("requires_all_classified") is True,
-                f"{arm_id} differs")
+    require(arms["I3-RESTART"].get("selection") == "corpus_0_7"
+            and arms["I3-RESTART"].get("target_request_indexes") == [4]
+            and arms["I3-RESTART"].get("restart_stage") == "mac20-1"
+            and arms["I3-RESTART"].get("trigger_output_ordinal") == 0
+            and arms["I3-RESTART"].get("generation_increment") == 1
+            and arms["I3-RESTART"].get("requires_generation_fence") is True
+            and arms["I3-RESTART"].get("requires_all_classified") is True,
+            "I3-RESTART differs")
     require(arms["I3-LATE"].get("delay_ms") == 30000
+            and arms["I3-LATE"].get("selection") == "corpus_0_7"
+            and arms["I3-LATE"].get("target_request_indexes") == [5]
+            and arms["I3-LATE"].get("return_stage") == "mac20-1"
+            and arms["I3-LATE"].get("source_generation_offset") == -1
+            and arms["I3-LATE"].get("requires_generation_fence") is True
             and arms["I3-LATE"].get("requires_rejection_no_effect") is True,
             "I3-LATE rejection differs")
 
@@ -179,6 +218,8 @@ def validate(spec: dict) -> dict:
     require(soak.get("minimum_duration_ms") == 5580000 and soak.get("timeout_ms") == 7380000
             and soak.get("same_load") is True and soak.get("requires_backlog_convergence") is True,
             "I4-SOAK duration or convergence differs")
+    require(soak.get("request_id_pattern") == "integrity-soak-{index:03d}",
+            "I4-SOAK request identity differs")
 
     score = spec.get("required_scorecard") or {}
     require(set(score.get("request_fields") or []) == REQUEST_FIELDS, "request scorecard differs")
@@ -190,8 +231,15 @@ def validate(spec: dict) -> dict:
     require(score.get("resource_snapshots") == ["before_load", "peak", "after_drain", "after_unload"],
             "resource snapshots differ")
     require(score.get("gpu_sample_interval_ms") == 1000
-            and score.get("gpu_minimum_coverage") == 0.95,
+            and score.get("gpu_minimum_coverage") == 0.95
+            and score.get("gpu_sample_clock_tolerance_ms") == 750,
             "GPU sampling contract differs")
+    require(score.get("resource_snapshot_skew_ms") == 5000,
+            "resource snapshot skew differs")
+    require(set(score.get("resource_snapshot_host_fields") or []) == SNAPSHOT_HOST_FIELDS,
+            "resource snapshot fields differ")
+    require(score.get("resource_snapshot_states") == SNAPSHOT_STATES,
+            "resource snapshot states differ")
 
     distributed = spec.get("required_distributed_evidence") or {}
     require(distributed == {
@@ -216,8 +264,10 @@ def self_test() -> None:
     validate(canonical)
     mutations = (
         lambda value: value["source"].update(runtime_commit="0" * 39),
+        lambda value: value["source"].pop("base_h0_spec_sha256"),
         lambda value: value.update(integrity_baseline=True),
         lambda value: value.update(performance_improvement_claimed=True),
+        lambda value: value["determinism"].update(runtime_retry_discovery=True),
         lambda value: value["model"].update(resident=9),
         lambda value: value["slo"]["ttft_p95_ms"].update(short=60001),
         lambda value: value["arms"].pop(),
@@ -232,6 +282,7 @@ def self_test() -> None:
         lambda value: value["required_scorecard"]["request_fields"].pop(),
         lambda value: value["required_scorecard"]["stage_fields"].pop(),
         lambda value: value["required_scorecard"].update(gpu_minimum_coverage=0.94),
+        lambda value: value["required_scorecard"]["resource_snapshot_states"]["peak"].update(node_count=0),
         lambda value: value["required_distributed_evidence"].update(all_stages_compute=False),
         lambda value: value["cleanup"].update(nodes=1),
     )
