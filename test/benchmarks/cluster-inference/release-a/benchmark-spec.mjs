@@ -5,16 +5,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-const EXPECTED_COMMIT = 'b8f5214ba9a88a2bc449889af80aff4b2c3ae8c0';
+const EXPECTED_COMMIT = 'fd6c7b068653ae7171120d5b6b6224071066fd1a';
 const EXPECTED_SOURCE_BUNDLE = Object.freeze({
-  bytes: 5275556,
-  sha256: '150f1e795e45e9cdf1fb2730c83eba66fbb0c620d4d50457772718fba3f2a3db',
+  bytes: 5307481,
+  sha256: 'e9173264857b4d6810288110329b2953b8f9ce8ae67b71b68caec839aa8f7a26',
 });
 const EXPECTED_COMPAT_PATCH = 'd8018fa8f7f44d61d23cd68496024fa296d2571c860fda988cef91a28b2572a9';
 const EXPECTED_HOST_ROLES = Object.freeze(['spark', 'mac20', 'mac21']);
 const EXPECTED_MODES = Object.freeze(['quality', 'cold', 'sustained', 'recovery', 'overload', 'soak']);
 const EXPECTED_FAULTS = Object.freeze(['cancel', 'slow_edge', 'disconnected_edge', 'node_restart', 'late_return']);
-const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v6';
+const EXPECTED_SPEC_ID = 'qwen3_5_122b_a10b_h0_20260916_v7';
 const EXPECTED_ARRIVALS = Object.freeze([0, 180000, 480000, 780000, 1080000, 1380000, 1680000, 1980000]);
 const H1_DEADLINES = Object.freeze({ short: 600000, medium: 1200000, long: 1800000 });
 const H1_TIMEOUT_MS = 32 * H1_DEADLINES.short + 16 * H1_DEADLINES.medium +
