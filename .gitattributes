@@ -15,3 +15,5 @@ test/benchmarks/cluster-inference/release-a/** text eol=lf
 tools/event-drive/src/run/** text eol=lf
 tools/validate_event_runtime_preflight.py text eol=lf
 tools/tests/test_validate_event_runtime_preflight.py text eol=lf
+entrypoints/agent/src/event_runtime/transport.rs text eol=lf
+entrypoints/agent/src/event_runtime/control/inspection/mod.rs text eol=lf

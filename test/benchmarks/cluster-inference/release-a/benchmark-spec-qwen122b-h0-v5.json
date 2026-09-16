@@ -53,12 +53,12 @@
       },
       {
         "id": "judge",
-        "version": "d82c66f7c2c675e1cf8f00126a869721b03377c618c6b8970134b4ea9be0fadb",
+        "version": "7f227bbfbaac0eae48d82a09c6fdc1f335b665121e73de8636996e98d49cf24d",
         "files": [
           {
             "path": ".gitattributes",
-            "bytes": 799,
-            "sha256": "f243c65727cc92526c11a2e0b6973a14f08f940ba85e56d56a617717850afae2"
+            "bytes": 934,
+            "sha256": "3d37a817e3a86b527a8b02a6d72ca174956d43852137f89a3de3c08de2c3530c"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/prepare-h1-quality.py",
@@ -92,8 +92,8 @@
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/observe-i0-host.py",
-            "bytes": 8562,
-            "sha256": "a5868943bfa1f572d8446055ac42ef0bbecb9a076affa87ba8a320d74fd8af94"
+            "bytes": 8531,
+            "sha256": "c6228fb5486cd0d5e9bc53abab48d37c174bd0252e5b4e16161ea42b627ef310"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/inspect-i0-routes.py",
@@ -102,8 +102,8 @@
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/run-integrity-i0.py",
-            "bytes": 11985,
-            "sha256": "2ded29ec26f80b7e614548911243ce9ed56e33f33aa283d0c4fcdda4da872ac4"
+            "bytes": 12224,
+            "sha256": "8d1c0e5be80a26a973e444d2be042298a1f6df9b7b1936c7db8f0ff4905bee72"
           },
           {
             "path": "test/benchmarks/cluster-inference/release-a/cleanup-i0-owned.py",
@@ -129,7 +129,7 @@
       },
       {
         "id": "summary",
-        "version": "ce032a3e13542c7da5e7be148f569853a6a5fd2f6824664f132a7a751287cc98",
+        "version": "a4650067a94657b3c84902568521706f643ab9aefe60baed9470ce1140b3f341",
         "files": [
           {
             "path": "tools/event-drive/src/run/mod.rs",
@@ -148,13 +148,13 @@
           },
           {
             "path": "entrypoints/agent/src/event_runtime/transport.rs",
-            "bytes": 65381,
-            "sha256": "78dc41838e502e5700c82481ff96cb837519e3cfbc9f4644d991481da4f21bc1"
+            "bytes": 63772,
+            "sha256": "33744501c4a1490be95d0d393a46a57711938205adf42e38fc5b308ff3dd8633"
           },
           {
             "path": "entrypoints/agent/src/event_runtime/control/inspection/mod.rs",
-            "bytes": 4665,
-            "sha256": "4a0ea75af5d9466ccb651d80703084e44913e528238a566b78d8fb70fb1f97b1"
+            "bytes": 4553,
+            "sha256": "f5963370f83756881f05358db42221388ff06fac3f9f4e16f53670bc13c3598c"
           }
         ]
       }
@@ -226,14 +226,14 @@
     },
     {
       "path": "benchmark-spec.mjs",
-      "bytes": 31033,
-      "sha256": "3dcfdb3e87dc912ce2478d05fa51f943a6931eda4e562772fe19dd7b48202c70",
+      "bytes": 31563,
+      "sha256": "2779110ba5b5b5630677f8d8fcd480e90788718dc5006bb6fa39b1198b3da0e8",
       "id": "spec_validator"
     },
     {
       "path": "benchmark-spec.test.mjs",
-      "bytes": 7785,
-      "sha256": "2ac679328487ae7c9d05d0830a66ef78e7ebd919851e35d4cf74c3332a818924",
+      "bytes": 7946,
+      "sha256": "d6d57d257e674c5791919bcfc74dca4665be80aa03c15d08e8c8be8ffe769e29",
       "id": "spec_tests"
     },
     {
@@ -286,8 +286,8 @@
     },
     {
       "path": "observe-i0-host.py",
-      "bytes": 8562,
-      "sha256": "a5868943bfa1f572d8446055ac42ef0bbecb9a076affa87ba8a320d74fd8af94",
+      "bytes": 8531,
+      "sha256": "c6228fb5486cd0d5e9bc53abab48d37c174bd0252e5b4e16161ea42b627ef310",
       "id": "i0_host_observer"
     },
     {
@@ -298,8 +298,8 @@
     },
     {
       "path": "run-integrity-i0.py",
-      "bytes": 11985,
-      "sha256": "2ded29ec26f80b7e614548911243ce9ed56e33f33aa283d0c4fcdda4da872ac4",
+      "bytes": 12224,
+      "sha256": "8d1c0e5be80a26a973e444d2be042298a1f6df9b7b1936c7db8f0ff4905bee72",
       "id": "i0_runner"
     },
     {

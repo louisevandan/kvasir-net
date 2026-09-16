@@ -112,6 +112,10 @@ def run(manifest: dict, output: Path) -> dict:
         raise ValueError("manifest host order differs")
     if output.exists():
         raise ValueError("I0 output directory already exists")
+    for binding in manifest["bindings"]:
+        actual = execute(binding["command"]).decode().strip().split()[0]
+        if actual != binding["sha256"]:
+            raise ValueError(f"sealed execution binding differs: {binding['name']}")
     output.mkdir(parents=True)
     before, before_route = snapshot(manifest, "unloaded")
     before.update(name="before_load")

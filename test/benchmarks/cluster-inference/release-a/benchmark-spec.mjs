@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -402,9 +403,21 @@ export function validateBenchmarkSpec(spec) {
     hosts: 3, stages: 3, corpus_requests: 64 };
 }
 
+export function verifySourceEol(spec, repositoryRoot, readEol = item =>
+  childProcess.execFileSync('git', ['check-attr', 'eol', '--', item.path], {
+    cwd: repositoryRoot, encoding: 'utf8', windowsHide: true,
+  }).trim()) {
+  for (const component of spec.source.components) {
+    for (const item of component.files) {
+      fail(readEol(item) === `${item.path}: eol: lf`, `source component is not pinned to LF: ${item.path}`);
+    }
+  }
+}
+
 export function verifyFiles(spec, specDirectory, repositoryRoot) {
   const result = validateBenchmarkSpec(spec);
   const artifacts = new Map(spec.artifacts.map(item => [item.id, item]));
+  verifySourceEol(spec, repositoryRoot);
   for (const item of spec.artifacts) {
     const bytes = fs.readFileSync(path.resolve(specDirectory, item.path));
     fail(bytes.length === item.bytes && digest(bytes) === item.sha256, `artifact changed: ${item.id}`);

@@ -54,13 +54,12 @@ def task_processes(config: dict) -> tuple[int | None, list[int], dict[int, tuple
         if sha256(binary) != config["agent_sha256"]:
             raise RuntimeError("task agent binary hash differs")
     native = []
+    if sha256(Path(config["native_binary"])) != config["native_sha256"]:
+        raise RuntimeError("task native binary hash differs")
     if agent_pid is not None:
         for pid, (parent, command) in table.items():
             if parent == agent_pid and command.split(maxsplit=1)[0] == config["native_binary"]:
                 native.append(pid)
-    for pid in native:
-        if sha256(Path(config["native_binary"])) != config["native_sha256"]:
-            raise RuntimeError("task native binary hash differs")
     return agent_pid, native, table
 
 

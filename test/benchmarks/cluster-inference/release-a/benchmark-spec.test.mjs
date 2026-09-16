@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { validateBenchmarkSpec, verifyFiles } from './benchmark-spec.mjs';
+import { validateBenchmarkSpec, verifyFiles, verifySourceEol } from './benchmark-spec.mjs';
 
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -131,6 +131,8 @@ test('H0 rejects missing identity, old lifecycle, unsafe remote shell, unbounded
 
 test('file verification detects a valid-looking replacement before LOAD authorization', () => {
   const spec = read();
+  assert.throws(() => verifySourceEol(spec, repository, item => `${item.path}: eol: unspecified`),
+    /source component is not pinned to LF/);
   const inspector = spec.artifacts.find(artifact => artifact.id === 'gguf_inspector');
   inspector.sha256 = hash('valid-looking replacement');
   assert.doesNotThrow(() => validateBenchmarkSpec(spec));

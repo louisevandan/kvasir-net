@@ -82,6 +82,7 @@
 | L074 | 가혹한 시험에서 fault 대상과 주입 시점을 실행 중 선택하면 시험 실패를 보고 제품 알고리즘을 찾는 trial-and-error가 되고, 재실행 결과도 비교할 수 없다. | 제품 전이를 먼저 결정론적 상태기계로 고정한다. integrity spec이 요청 ID 규칙·대상 index·output ordinal·stage·generation·지연·wave와 seed를 사전 봉인하고, exact replay의 terminal 분류가 달라지면 거부한다. 시험은 이 불변식의 증명에만 사용한다. | I0–I4 정상·stress·fault arm |
 | L075 | 원격 전용 단계에서 일반 검증 습관으로 로컬 `cargo test`를 시작해, 제품 build 금지와 이 PC의 전력 보호 경계를 어겼다. 즉시 중단했지만 문서 지시만으로는 실행을 막지 못했다. | Release A 실기 runner에는 build 명령을 두지 않고 원격 실행 manifest의 고정 argv만 허용한다. Rust build/test는 원격 LF runner가 `nice -n 10`, `-j 14`를 함께 검사한 뒤 실행하며, 로컬에서는 Python 계약/구문 검사와 증거 조립만 허용한다. | Release A I0–P3 build와 실기 실행 |
 | L076 | 원격 checkout이 GitHub가 아닌 과거 bundle을 `origin`으로 가진 사실을 확인하지 않고 최신 ref를 추측했고, 이어 Windows 작업 트리의 줄바꿈을 포함한 patch 적용을 시도해 컴파일 전에 세 번 차단됐다. | 원격 build 입력은 patch가 아니라 검증한 commit bundle 하나로 전달한다. build 디렉터리 생성 전에 bundle ref·commit 존재·base ancestry를 검사하고, checkout 뒤 `git status --porcelain` 0과 정확한 HEAD를 단언한다. 원격 ref나 줄바꿈 적합성을 실행으로 발견하지 않는다. | Release A I0–P3 원격 source 배포 |
+| L077 | H0 source component가 Git blob의 LF가 아니라 한 Windows 작업 트리의 혼합 CRLF/LF 바이트로 봉인되어, 같은 commit의 깨끗한 checkout을 변조로 오인했다. | 모든 봉인 source 경로를 `.gitattributes`의 `text eol=lf`로 고정한다. H0 검증기는 파일 hash 전에 각 경로의 실제 Git `eol` 속성이 `lf`인지 검사하고, 속성 제거 반례를 시험으로 유지한다. | Release A H0–P3 source/judge 봉인 |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 
