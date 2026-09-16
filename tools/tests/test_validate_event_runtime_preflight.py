@@ -33,7 +33,7 @@ class EventRuntimePreflightTests(unittest.TestCase):
                 "transport_failure_count": 0,
                 "task_owned_native_processes": 0,
                 "task_owned_native_listeners": 0,
-                "task_owned_agent_non_listener_connections": 0,
+                "task_owned_agent_close_wait_connections": 0,
                 "dynamic_port_ranges": [{"first": 32768, "last": 60999}],
             }],
         }
@@ -59,10 +59,10 @@ class EventRuntimePreflightTests(unittest.TestCase):
         self.assertTrue(any("not empty" in item for item in errors))
         self.assertTrue(any("native children" in item for item in errors))
 
-    def test_rejects_retained_agent_connection_state(self) -> None:
+    def test_rejects_retained_agent_close_wait_state(self) -> None:
         evidence = copy.deepcopy(self.evidence)
-        evidence["routes"][0]["task_owned_agent_non_listener_connections"] = 1
-        self.assertTrue(any("non-listener TCP" in item for item in MODULE.validate(self.config, evidence)))
+        evidence["routes"][0]["task_owned_agent_close_wait_connections"] = 1
+        self.assertTrue(any("CLOSE_WAIT TCP" in item for item in MODULE.validate(self.config, evidence)))
 
 
 if __name__ == "__main__":

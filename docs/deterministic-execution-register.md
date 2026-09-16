@@ -70,7 +70,7 @@
 | L062 | `cargo test <짧은 이름> -- --exact`는 canonical module 경로와 불일치해 성공 종료하면서 0건을 실행했다. | `cargo test -- --list`에서 canonical 이름을 먼저 추출하고 exact 실행 로그의 `running 1 test`와 의도한 assertion을 함께 단언한다. 0건 실행은 변이 증거에서 제외한다. | 모든 표적 Rust 시험과 독립 변이 |
 | L063 | 실제 adapter 회귀에서 과거 native가 patch-set/ABI 표식은 가졌지만 현재 HELLO의 resource profile 필드를 내보내지 않아 모델 적재 뒤 즉시 거부됐다. | 실제 모델 전에 binary source/hash와 필수 capability 문자열 또는 no-allocation plan을 대조한다. 현재 adapter 계약을 만족하는 한 binary만 실행하고 구형 실패를 다른 후보 탐색에 재사용하지 않는다. | llama.cpp 실제 모델 preflight와 H1 이후 회귀 |
 | L064 | PTY의 Ctrl-C가 SSH 연결만 닫고 foreground 원격 agent를 남겼다. | 시작 runner가 owner PID를 기록한다. 종료는 PID/executable/cmdline/listener를 모두 대조한 뒤 그 PID에 TERM을 보내고 port·worker·GPU·보호 agent를 사후 검사한다. | 모든 원격 task agent 수명 |
-| L065 | `a43950bed` 구형 보호 agent가 peer EOF 뒤 accepted socket을 닫지 않아 Spark에 CLOSE-WAIT 310개와 full listen backlog가 남았고, 모델 child/GPU 점유가 없어도 INSPECT 연결은 시작되지 못했다. | 보호 agent를 실행 agent로 재사용하지 않는다. 새 봉인 바이너리의 task agent를 별도 port/PID로 시작하고 LOAD 전·UNLOAD 후 exact INSPECT와 process/listener/GPU뿐 아니라 agent port의 non-listener TCP state 0을 자동 단언한다. | H1 2차와 이후 모든 원격 task agent preflight/recovery |
+| L065 | `a43950bed` 구형 보호 agent가 peer EOF 뒤 accepted socket을 닫지 않아 Spark에 CLOSE-WAIT 310개와 full listen backlog가 남았고, 모델 child/GPU 점유가 없어도 INSPECT 연결은 시작되지 못했다. | 보호 agent를 실행 agent로 재사용하지 않는다. 새 봉인 바이너리의 task agent를 별도 port/PID로 시작하고 LOAD 전·UNLOAD 후 exact INSPECT와 process/listener/GPU 및 CLOSE_WAIT 0을 자동 단언한다. 정상 ESTABLISHED 재사용 연결은 topology별 예상 수와 peer를 별도로 검사한다. | H1 2차와 이후 모든 원격 task agent preflight/recovery |
 
 새 실패를 관측하면 다음 절차를 같은 변경 안에서 끝낸다.
 

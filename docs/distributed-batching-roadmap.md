@@ -17,7 +17,8 @@ H1 materializer/judge를 결속했다. H1 quality는 terminal RELEASE 뒤 다음
 H0 검사4, host inspector4, preflight5, materializer2, judge4와 약화 변이40종을 통과했다. 기존 보호 agent는
 모델 child/GPU 점유가 없고 Mac20/21은 nodes0지만, Spark 구형 agent는 CLOSE-WAIT310과 full backlog로
 INSPECT가 불가능해 H1에 사용하지 않는다. `load_authorized=true`, `runtime_acceptance=false`다. 다음 첫
-행동은 새 task agent의 양방향 INSPECT·nodes/failure/child/listener/non-listener TCP state0을 확인한 뒤
+행동은 새 task agent의 양방향 INSPECT·nodes/failure/child/listener/CLOSE_WAIT0과 topology별
+ESTABLISHED peer를 확인한 뒤
 H1 2차만 실행하는 것이다.
 
 **2026-09-16 H1 1차 RED와 교정 구현:** [실행 보고](../tests/reports/release-a/20260916_084650.md)의
