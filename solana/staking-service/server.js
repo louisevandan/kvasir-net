@@ -752,9 +752,13 @@ function mockInfer(modelId, prompt) {
 // on different networks) join by POSTing /api/pay/hub/register periodically.
 // The model list aggregates every reachable hub; each model routes inference to
 // its own hub. Falls back to the static demo catalog when no hub is reachable.
-const LINKCPP_HUB_URL = (process.env.LINKCPP_HUB_URL || '').replace(/\/+$/, '');
-// Shared secret so the gateway can reach a hub that has SIWS auth enabled (M2M).
-const HUB_SERVICE_TOKEN = (process.env.LINKCPP_HUB_SERVICE_TOKEN || '').trim();
+// The backend is the p4 bridge (p4bridge/server.js), which serves this same
+// contract on top of the p4 engine. LINKCPP_HUB_URL stays as the fallback so a
+// linkcpp hub keeps working while the fleet migrates.
+const LINKCPP_HUB_URL = (process.env.P4_BRIDGE_URL || process.env.LINKCPP_HUB_URL || '').replace(/\/+$/, '');
+const BACKEND_ENGINE = process.env.P4_BRIDGE_URL ? 'p4' : 'linkcpp';
+// Shared secret so the gateway can reach a backend that has SIWS auth enabled (M2M).
+const HUB_SERVICE_TOKEN = (process.env.P4_BRIDGE_TOKEN || process.env.LINKCPP_HUB_SERVICE_TOKEN || '').trim();
 const hubHeaders = (extra) => Object.assign(HUB_SERVICE_TOKEN ? { 'X-Linkcpp-Service-Token': HUB_SERVICE_TOKEN } : {}, extra || {});
 // One-time bootstrap seed only. Runtime pricing lives in db.pricing (DB), which
 // only the genesis wallet may change (SIWS + fresh TOTP, from the desktop app).
@@ -1622,11 +1626,25 @@ app.get('/v1/models', async (req, res) => {
 const RING_RELOAD = {}; // cid -> { at, inflight }
 const RING_RELOAD_COOLDOWN_MS = Number(process.env.KVR_RING_RELOAD_COOLDOWN_MS || 120000);
 async function reloadRing(hubUrl, cid) {
-  const st = RING_RELOAD[cid] || (RING_RELOAD[cid] = { at: 0, inflight: false });
+  const st = RING_RELOAD[cid] || (RING_RELOAD[cid] = { at: 0, inflight: false, external: false });
   const now = Date.now();
+  // On p4 the placement plan is an operator artifact: the bridge answers 409
+  // and there is nothing for us to reload. Say so once, then stop asking.
+  if (st.external) return false;
   if (st.inflight || (now - st.at) < RING_RELOAD_COOLDOWN_MS) return false;
   st.inflight = true; st.at = now;
   try {
+    if (BACKEND_ENGINE === 'p4') {
+      const probe = await fetch(`${hubUrl}/api/controllers/${cid}/serve`, {
+        method: 'POST', headers: hubHeaders({ 'Content-Type': 'application/json' }), body: '{}',
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => null);
+      if (probe && probe.status === 409) {
+        st.external = true;
+        console.warn(`ring reload ${cid}: p4 placement is an operator action — load the stages, then update the bridge catalog`);
+        return false;
+      }
+    }
     const cr = await (await fetch(`${hubUrl}/api/controllers?full=1`, { headers: hubHeaders(), signal: AbortSignal.timeout(8000) })).json();
     const c = (Array.isArray(cr) ? cr : (cr.controllers || [])).find((x) => x.id === cid);
     const ll = c && c.last_load;

@@ -1,0 +1,18 @@
+{
+  "ingress_agent": "tcp://127.0.0.1:42011",
+  "models": [
+    {
+      "id": "step-3.7-flash",
+      "name": "Step-3.7-Flash (428B MoE)",
+      "load_generation": 1,
+      "context_size": 4096,
+      "max_tokens": 512,
+      "stages": [
+        {"agent": "tcp://127.0.0.1:42011", "node": "step37-s0", "generation": 1},
+        {"agent": "tcp://127.0.0.1:42011", "node": "step37-s1", "generation": 1},
+        {"agent": "tcp://127.0.0.1:42012", "node": "step37-s2", "generation": 1},
+        {"agent": "tcp://127.0.0.1:42012", "node": "step37-s3", "generation": 1}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+# p4-bridge
+
+The HTTP face of the p4 engine.
+
+The settlement gateway (`solana/staking-service`) and the desktop app speak the
+linkcpp hub's HTTP contract: a controller catalog, `/c/{id}/v1/chat/completions`,
+a runtime summary, a contribution ledger. p4 speaks none of it — it is a TCP
+event protocol (OUTER) with no HTTP, no model names and no token counts in a
+reply. This service is the adapter between the two, so the money path keeps its
+shape while the engine underneath changes.
+
+```
+gateway ──HTTP──> p4-bridge ──OUTER/TCP──> p4 agents ──> llama.cpp staged nodes
+```
+
+## Run
+
+```sh
+P4_BRIDGE_CATALOG=./catalog.json \
+P4_BRIDGE_PORT=19100 \
+P4_BRIDGE_TOKEN=<shared secret> \
+P4_BRIDGE_OPERATOR_WALLET=<wallet that earns for these nodes> \
+node server.js
+```
+
+| variable | meaning |
+| --- | --- |
+| `P4_BRIDGE_CATALOG` | model → stages map (default `./catalog.json`) |
+| `P4_BRIDGE_PORT` | HTTP port (default 19100) |
+| `P4_BRIDGE_TOKEN` | shared secret; unset means no auth (loopback only) |
+| `P4_BRIDGE_OPERATOR_WALLET` | owner credited in `/api/contributions` |
+| `P4_BRIDGE_UNITS_PER_KTOKEN` | contribution units per 1k rows (default 1) |
+
+The gateway points at it with `P4_BRIDGE_URL` and `P4_BRIDGE_TOKEN`.
+
+## The catalog, and why it exists
+
+An agent snapshot lists node ids, generations and lifecycle state — nothing
+else. p4 does not know that `step37-s0..s3` together are "Step-3.7-Flash"; that
+mapping is an operator fact, so it lives in `catalog.json` and is re-checked
+against a live INSPECT every 15 s. A stage that is missing, in another state or
+at another generation takes the model out of the catalog: better an empty
+catalog than a model that 500s on its first call.
+
+One connection per agent. An agent answers only for its own nodes — an INSPECT
+addressed to a peer times out — so a pipeline that spans machines holds a
+connection to each. Replies come back on the connection the request left by,
+because the envelope's return route names that connection.
+
+## Endpoints
+
+| method | path | notes |
+| --- | --- | --- |
+| GET | `/health` | 200 while at least one model is serving; no token needed |
+| GET | `/api/controllers` | catalog with live stage verification |
+| GET | `/api/runtime` | operator wallet, machines, GPUs, nodes |
+| GET | `/api/contributions` | per-node units, rows, requests, decode tok/s |
+| GET | `/c/{id}/v1/models` | the one model that controller serves |
+| POST | `/c/{id}/v1/chat/completions` | OpenAI chat, JSON or SSE |
+| POST | `/api/controllers/{id}/serve\|unload` | **409 `placement_is_external`** |
+
+## What it deliberately does not do
+
+**Load or unload a model.** p4 loads from a placement plan an operator prepares
+(`tools/model-loading`) and gates the load on its own integrity checks. Serving
+that from an HTTP call would put those gates behind a web request, so the bridge
+answers 409 and the gateway reports it instead of retrying.
+
+## Billing numbers
+
+p4 returns no usage block, so the bridge derives one: completion tokens are the
+output events it counted, prompt tokens come from `batch-observation-v4`
+(`owned_requests[].prefill_rows`). When no observation arrived, prompt tokens are
+reported as 0 rather than estimated — the gateway must never bill a guess.
+
+## Tests
+
+```sh
+node --test test/
+```
+
+The wire tests pin the byte layout against the engine's own encoder: a field in
+the wrong order still encodes, and the agent answers by closing the socket.
