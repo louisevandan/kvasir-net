@@ -35,5 +35,17 @@
     "ring": "",
     "gateway": "The public endpoint is deliberately down until the p4 port lands.",
     "client": ""
-  }
+  },
+  "commitWatches": [
+    {
+      "repo": "louisevandan/kvasir-net",
+      "label": "Kvasir public repo",
+      "tokenEnv": "LOUIS_GIT_TOKEN"
+    },
+    {
+      "user": "tonythefreedom",
+      "label": "Antonio",
+      "tokenEnv": "GITHUB_TOKEN"
+    }
+  ]
 }

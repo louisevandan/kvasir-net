@@ -8,6 +8,9 @@ collect.mjs  → facts as JSON     (git, the MI250 agents, the public endpoints)
 report.mjs   → report.html + a short summary
 send.mjs     → summary as a message, the page as an attachment
 daily.sh     → the three in order, logged and kept
+
+commits.mjs       → new commits since last seen, across the watched repositories
+commit-watch.sh   → polls every 20 minutes and posts only when there is news
 ```
 
 ## Why three tracks
@@ -28,6 +31,21 @@ good news.
 Known-deliberate states go in `config.json` under `notes` — that is how the
 gateway's red endpoint reads as "down on purpose, pending the p4 port" instead
 of an incident nobody noticed.
+
+## The commit watch
+
+Between the daily reports, `commit-watch.sh` posts commits as they land. Each
+entry in `commitWatches` is one of two shapes:
+
+| shape | endpoint | covers |
+| --- | --- | --- |
+| `{"repo": "owner/name"}` | repository events | pushes on **every branch**, private repos too (with a token that can read them) |
+| `{"user": "login"}` | user events | that person across every repository — but GitHub exposes **public pushes only** here |
+
+`tokenEnv` names the environment variable holding the token for that watch; the
+value is read at the call and never logged. A watch's position is kept in
+`state/commits.json`, and the first run of a new watch only records where it is
+— it does not replay history into the group.
 
 ## Setup
 
