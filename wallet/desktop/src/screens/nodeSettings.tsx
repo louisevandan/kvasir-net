@@ -53,8 +53,12 @@ export function NodeSettingsScreen() {
     nodeId, owner: address as string, os, deviceKind: 'desktop',
     accelerator: backend === 'cpu' ? 'cpu' : 'gpu',
     label: `${osLabel(os)} · ${capability?.gpus[0]?.name ?? capability?.cpu.brand ?? backend}`,
-    // Omitted until a real decode has been measured on this machine.
-    ...(measured ? { perfScore: measured.tps } : {}),
+    // Deliberately not sending perfScore. The settlement service honours it only
+    // from a trusted reporter, because a node that can assert its own tier can
+    // mint its own rewards — so a number sent from here is discarded, and
+    // sending it anyway would only make this screen look like it set the tier.
+    // The tier comes from throughput the network measured, reported by the
+    // bridge in its contribution feed.
     backend, mode: 'p4_agent', hostsGateway: hostsGw.current,
   })
 
@@ -157,10 +161,13 @@ export function NodeSettingsScreen() {
               <div className="grad-text" style={{ fontSize: 24, fontWeight: 800 }}>
                 {measured ? measured.tps.toFixed(1) : '—'}
               </div>
-              <div className="small muted">tok/s · tier {tierOf(measured?.tps ?? null)}</div>
+              <div className="small muted">tok/s measured here</div>
             </div>
           </div>
           <div className="small muted" style={{ margin: '8px 0 12px' }}>{t('ns.measureHint')}</div>
+          <div className="small muted" style={{ margin: '0 0 12px' }}>
+            {t('ns.tierNote')} {measured ? `(${tierOf(measured.tps)})` : ''}
+          </div>
           {isElectron && (
             <button className="btn block" disabled={busy !== null} onClick={measure}>
               {busy === 'measure' ? t('ns.measuring') : t('ns.measure')}

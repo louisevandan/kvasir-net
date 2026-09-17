@@ -31,7 +31,11 @@ const {
 } = require('@solana/spl-token');
 
 const PORT = Number(process.env.PORT || 8791);
-const APR = Number(process.env.STAKING_APR || 0.12); // 12% APR
+// Staking accrual. The default is 0 on purpose: this runs on devnet with a
+// utility token, and a service that pays a yield by default is describing an
+// interest-bearing product whether or not anyone meant it that way. An operator
+// who wants accrual sets it deliberately.
+const APR = Number(process.env.STAKING_APR ?? 0);
 const SECONDS_PER_YEAR = 365 * 24 * 60 * 60;
 // Node operator reward: KVR paid per contribution "unit" (e.g. 1k tokens served).
 const REWARD_PER_UNIT = Number(process.env.LINKCPP_REWARD_PER_UNIT || 0.01);
@@ -502,7 +506,33 @@ app.post('/api/node/remove', (req, res) => {
   res.json({ removed: nodeId });
 });
 
-// Called by the linkcpp hub (or a reporter) to credit a node's contribution.
+/**
+ * Credit a node for raw work.
+ *
+ * Both callers — the hub's push and the contribution poller's delta — used to
+ * carry their own copy of this arithmetic. They agreed, which is exactly how
+ * two copies stay convincing right up until one of them is edited: the tier
+ * multiplier, the gateway bonus and the per-unit rate decide what a node is
+ * paid, so they are computed in one place and nowhere else.
+ */
+function creditContribution(node, rawUnits, at = nowSec()) {
+  const raw = Number(rawUnits);
+  if (!Number.isFinite(raw) || raw <= 0) return { raw: 0, effective: 0, multiplier: 1, gatewayBonus: 1 };
+  const multiplier = node.perfMultiplier || perfTier(node.perfScore).mult;
+  const gatewayBonus = node.hostsGateway ? GATEWAY_BONUS : 1;
+  const effective = raw * multiplier * gatewayBonus;
+  // Rounded on the way into the ledger. Ten units credited at once and the same
+  // ten credited in two reports are the same work and must not end up as
+  // 7 and 6.999999999999999 — a difference that is invisible until someone
+  // reconciles two totals and finds they disagree.
+  node.contributedUnits = round6((node.contributedUnits || 0) + raw);
+  node.effectiveUnits = round6((node.effectiveUnits || 0) + effective);
+  node.pendingRewards = round6((node.pendingRewards || 0) + effective * REWARD_PER_UNIT);
+  node.lastReport = at;
+  return { raw, effective, multiplier, gatewayBonus };
+}
+
+// Called by the hub (or a reporter) to credit a node's contribution.
 app.post('/api/node/contribution', (req, res) => {
   // Contribution units mint claimable KVR, so only the hub/reporter (service token)
   // or an admin may credit them — never an anonymous client.
@@ -514,16 +544,9 @@ app.post('/api/node/contribution', (req, res) => {
   const n = db.nodes[nodeId];
   if (!n) return res.status(404).json({ error: 'node not registered' });
   accrueUptime(n, nowSec()); // infra uptime accrues alongside inference (summed)
-  // Re-score raw work by the node's performance multiplier, then apply the gateway-host
-  // bonus if this node also keeps the gateway online, before crediting reward.
-  const mult = n.perfMultiplier || perfTier(n.perfScore).mult;
-  const gwBonus = n.hostsGateway ? GATEWAY_BONUS : 1;
-  const raw = Number(units);
-  const eff = raw * mult * gwBonus;
-  n.contributedUnits += raw;
-  n.effectiveUnits = (n.effectiveUnits || 0) + eff;
-  n.pendingRewards += eff * REWARD_PER_UNIT;
-  n.lastReport = nowSec();
+  const credit = creditContribution(n, units);
+  const mult = credit.multiplier;
+  const gwBonus = credit.gatewayBonus;
   db.nodes[nodeId] = n;
   saveDB(db);
   res.json({
@@ -1000,15 +1023,7 @@ function upsertInferenceNode(nodeId, owner, label, info) {
   let credited = Number(n.creditedUnits || 0);
   if (cumulative < credited) credited = 0; // hub counters reset -> rebaseline
   const delta = Math.max(0, cumulative - credited);
-  if (delta > 0) {
-    const mult = n.perfMultiplier || perfTier(n.perfScore).mult;
-    const gwBonus = n.hostsGateway ? GATEWAY_BONUS : 1;
-    const eff = delta * mult * gwBonus;
-    n.contributedUnits = (n.contributedUnits || 0) + delta;
-    n.effectiveUnits = (n.effectiveUnits || 0) + eff;
-    n.pendingRewards = (n.pendingRewards || 0) + eff * REWARD_PER_UNIT;
-    n.lastReport = now;
-  }
+  if (delta > 0) creditContribution(n, delta, now);
   n.creditedUnits = cumulative;
   db.nodes[nodeId] = n;
   saveDB(db);
@@ -1131,6 +1146,51 @@ app.get('/api/pay/models', async (_req, res) => {
   });
 });
 
+// How long a pay-per-call request keeps what the user actually wrote.
+//
+// The request row is a billing record — who paid, how much, which signature —
+// and that has to stay auditable. The prompt and the answer are not billing
+// records; they were kept only because nothing removed them. After this window
+// the content is dropped and the accounting row remains, so a refund or a
+// dispute can still be settled from it. Zero disables the sweep.
+const REQUEST_CONTENT_TTL_SEC = Number(process.env.KVR_REQUEST_CONTENT_TTL_SEC ?? 30 * 24 * 3600);
+
+/** Drop prompts and answers past the window; keep the row that money moved on. */
+function sweepRequestContent(db, now = nowSec()) {
+  if (!REQUEST_CONTENT_TTL_SEC) return 0;
+  let redacted = 0;
+  for (const record of Object.values(db.requests || {})) {
+    const at = Number(record.createdAt || 0);
+    if (!at || now - at < REQUEST_CONTENT_TTL_SEC) continue;
+    if (record.prompt === undefined && record.result === undefined) continue;
+    delete record.prompt;
+    delete record.result;
+    record.contentRedactedAt = now;
+    redacted += 1;
+  }
+  return redacted;
+}
+
+// Once at startup as well: a service that is restarted more often than the
+// interval would otherwise never reach a sweep.
+const sweepNow = () => {
+  try {
+    const db = loadDB();
+    const redacted = sweepRequestContent(db);
+    if (redacted) { saveDB(db); console.log(`[retention] redacted ${redacted} request(s) past the content window`); }
+  } catch (error) { console.warn(`[retention] sweep failed: ${error.message}`); }
+};
+setTimeout(sweepNow, 2_000).unref?.();
+
+// Hourly is often enough for a 30-day window and cheap enough not to matter.
+setInterval(() => {
+  try {
+    const db = loadDB();
+    const redacted = sweepRequestContent(db);
+    if (redacted) { saveDB(db); console.log(`[retention] redacted ${redacted} request(s) past the content window`); }
+  } catch (error) { console.warn(`[retention] sweep failed: ${error.message}`); }
+}, 3600_000).unref?.();
+
 app.post('/api/pay/quote', async (req, res) => {
   try {
     const { model, prompt } = req.body || {};
@@ -1142,6 +1202,7 @@ app.post('/api/pay/quote', async (req, res) => {
     const requestId = crypto.randomUUID();
     const db = loadDB();
     db.requests = db.requests || {};
+    sweepRequestContent(db);
     db.requests[requestId] = {
       model: m.id, name: m.name, hubUrl: m.hubUrl || null, cid: m.cid || null, hubModel: m.hubModel || null,
       basePrice: m.basePrice, perToken: m.perToken, estOut: m.estOut,
@@ -1476,7 +1537,9 @@ function bearerWallet(req) {
   const m = String(req.get('authorization') || '').match(/^Bearer\s+(.+)$/i);
   if (!m) return null;
   const ent = loadApiKeys(loadDB())[hashKey(m[1].trim())];
-  return ent ? ent.wallet : null;
+  // A revoked key is kept, not deleted: the record is what lets an operator see
+  // that a key existed, when it was withdrawn, and that it stopped working.
+  return ent && !ent.revokedAt ? ent.wallet : null;
 }
 function creditAudit(db, entry) {
   db.creditAudit = db.creditAudit || [];
@@ -1526,16 +1589,69 @@ app.post('/api/credits/register', (req, res) => {
   res.json({ ok: true, wallet: w, whitelisted: true, added });
 });
 app.post('/api/credits/apikey', (req, res) => {
-  const { wallet, nonce, signature, label } = req.body || {};
+  const { wallet, nonce, signature, label, replace } = req.body || {};
   const w = String(wallet || '').trim();
   if (!gwauth.verifyLogin(w, nonce, signature)) return res.status(401).json({ error: 'signature verification failed' });
   if (!creditWhitelisted(w)) return res.status(403).json({ error: 'wallet is not whitelisted' });
   const key = 'kvr-' + crypto.randomBytes(24).toString('base64url');
   const db = loadDB();
-  loadApiKeys(db)[hashKey(key)] = { wallet: w, label: String(label || ''), createdAt: nowSec() };
+  const keys = loadApiKeys(db);
+  // Reissuing used to leave every earlier key working, which makes "I rotated
+  // it" mean nothing. The caller says whether this replaces the old ones.
+  let replaced = 0;
+  if (replace) {
+    for (const entry of Object.values(keys)) {
+      if (entry.wallet === w && !entry.revokedAt) { entry.revokedAt = nowSec(); entry.revokedBy = 'replaced'; replaced += 1; }
+    }
+  }
+  keys[hashKey(key)] = { wallet: w, label: String(label || ''), createdAt: nowSec() };
   creditAcct(db, w);
   saveDB(db);
-  res.json({ apiKey: key, wallet: w, note: 'store this key now; it is not shown again' });
+  res.json({
+    apiKey: key, wallet: w, replaced,
+    note: 'store this key now; it is not shown again',
+  });
+});
+
+/** Withdraw a key, or every key, for a wallet that proves it owns them. */
+app.post('/api/credits/apikey/revoke', (req, res) => {
+  const { wallet, nonce, signature, apiKey, all } = req.body || {};
+  const w = String(wallet || '').trim();
+  if (!gwauth.verifyLogin(w, nonce, signature)) return res.status(401).json({ error: 'signature verification failed' });
+  if (!apiKey && !all) return res.status(400).json({ error: 'apiKey or all required' });
+  const db = loadDB();
+  const keys = loadApiKeys(db);
+  let revoked = 0;
+  if (all) {
+    for (const entry of Object.values(keys)) {
+      if (entry.wallet === w && !entry.revokedAt) { entry.revokedAt = nowSec(); entry.revokedBy = 'owner'; revoked += 1; }
+    }
+  } else {
+    // The key itself is presented, never its hash: the server stores only the
+    // hash, so this proves the caller holds the key rather than a list of them.
+    const entry = keys[hashKey(String(apiKey).trim())];
+    // A key belonging to another wallet reads as "not found" — this must not
+    // become a way to discover whether someone else's key exists.
+    if (!entry || entry.wallet !== w) return res.status(404).json({ error: 'no such key for this wallet' });
+    if (!entry.revokedAt) { entry.revokedAt = nowSec(); entry.revokedBy = 'owner'; revoked = 1; }
+  }
+  saveDB(db);
+  res.json({ ok: true, wallet: w, revoked });
+});
+
+/** What keys this wallet has, by hash prefix — never the keys themselves. */
+app.post('/api/credits/apikey/list', (req, res) => {
+  const { wallet, nonce, signature } = req.body || {};
+  const w = String(wallet || '').trim();
+  if (!gwauth.verifyLogin(w, nonce, signature)) return res.status(401).json({ error: 'signature verification failed' });
+  const keys = Object.entries(loadApiKeys(loadDB()))
+    .filter(([, entry]) => entry.wallet === w)
+    .map(([hash, entry]) => ({
+      id: hash.slice(0, 12), label: entry.label || '', createdAt: entry.createdAt,
+      revokedAt: entry.revokedAt ?? null, revokedBy: entry.revokedBy ?? null,
+    }))
+    .sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ wallet: w, keys });
 });
 app.get('/api/credits/balance', (req, res) => {
   const w = bearerWallet(req);
