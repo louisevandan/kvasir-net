@@ -43,6 +43,11 @@
       "tokenEnv": "GITHUB_TOKEN"
     },
     {
+      "repo": "louisevandan/p4",
+      "label": "p4 (Kvasir copy)",
+      "tokenEnv": "GITHUB_TOKEN"
+    },
+    {
       "repo": "louisevandan/kvasir-net",
       "label": "Kvasir public repo",
       "tokenEnv": "LOUIS_GIT_TOKEN"

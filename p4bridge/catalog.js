@@ -75,6 +75,7 @@ async function verify(model, snapshots) {
   const stages = model.stages.map((stage) => {
     const snapshot = snapshots.get(stage.agent);
     const node = snapshot?.nodes?.find((row) => row.node_id === stage.node);
+    const reported = node?.load_generation ?? null;
     return {
       agent: stage.agent,
       node: stage.node,
@@ -82,11 +83,26 @@ async function verify(model, snapshots) {
       found: Boolean(node),
       state: node?.state ?? null,
       generationMatches: node ? Number(node.generation) === Number(stage.generation) : false,
-      adapterKind: node?.adapter_kind ?? null,
+      // Present only on engines that report it. When it is there it is the
+      // whole answer; when it is not, we are guessing and say so.
+      loadGeneration: reported,
+      holdsOurLoad: reported === null ? null : Number(reported) === Number(model.loadGeneration),
     };
   });
-  const serving = stages.every((stage) => stage.found && stage.state === 'loaded' && stage.generationMatches);
-  return { serving, stages };
+
+  // The protocol document is explicit that `state` is the adapter's opaque
+  // vocabulary and that callers must display it without interpreting it. This
+  // used to gate serving on `state === 'loaded'`, which is exactly that — and it
+  // takes a model out of service for a string that one refused command rewrote,
+  // even though the stages still hold the load and would accept a correct
+  // session. So serving is decided by the load the node reports holding.
+  const reports = stages.every((stage) => stage.loadGeneration !== null);
+  const serving = reports
+    ? stages.every((stage) => stage.found && stage.holdsOurLoad)
+    // Older engines do not report it. Then the most that can be said is that the
+    // stage is registered at the generation the catalog names.
+    : stages.every((stage) => stage.found && stage.generationMatches);
+  return { serving, stages, loadGenerationReported: reports };
 }
 
 /** Every distinct agent address a catalog refers to. */

@@ -1,47 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  New-commit watch for the Kvasir repositories, every 20 minutes.
-
-  Install:
-    cp com.kvasir.watch.commits.plist ~/Library/LaunchAgents/
-    launchctl unload ~/Library/LaunchAgents/com.kvasir.watch.commits.plist 2>/dev/null
-    launchctl load  ~/Library/LaunchAgents/com.kvasir.watch.commits.plist
-
-  Edit the two paths below if the checkout moves. launchd runs with a bare
-  environment, so PATH has to name where node and ssh live.
--->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>com.kvasir.watch.commits</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/zsh</string>
-    <string>-lc</string>
-    <string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/commit-watch.sh</string>
-  </array>
-
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>KVASIR_WATCH_ENV</key>
-    <string>/Users/tony/project/any/.env</string>
-  </dict>
-
-  <!-- Every 20 minutes: often enough that a push is news, rare enough that the
-       group is not a firehose. -->
-  <key>StartInterval</key>
-  <integer>1200</integer>
-
-  <!-- The Mac sleeps; without this a 09:00 run that was missed never happens. -->
-  <key>RunAtLoad</key>
-  <false/>
-
-  <key>StandardOutPath</key>
-  <string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/log/launchd-commits.out</string>
-  <key>StandardErrorPath</key>
-  <string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/log/launchd-commits.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>KVASIR_WATCH_ENV</key>
+		<string>/Users/tony/project/any/.env</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kvasir.watch.commits</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/zsh</string>
+		<string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/commit-watch.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/commits.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/commits.out</string>
+	<key>StartInterval</key>
+	<integer>1200</integer>
 </dict>
 </plist>

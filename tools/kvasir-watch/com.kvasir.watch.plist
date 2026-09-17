@@ -1,52 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Daily Kvasir report, 09:00 local time.
-
-  Install:
-    cp com.kvasir.watch.plist ~/Library/LaunchAgents/
-    launchctl unload ~/Library/LaunchAgents/com.kvasir.watch.plist 2>/dev/null
-    launchctl load  ~/Library/LaunchAgents/com.kvasir.watch.plist
-
-  Edit the two paths below if the checkout moves. launchd runs with a bare
-  environment, so PATH has to name where node and ssh live.
--->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>com.kvasir.watch</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/zsh</string>
-    <string>-lc</string>
-    <string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/daily.sh</string>
-  </array>
-
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>KVASIR_WATCH_ENV</key>
-    <string>/Users/tony/project/any/.env</string>
-    <!-- A shipped version publishes itself: the release check writes the entry
-         and this deploys the site. Set to 0 to write the entry and stop there. -->
-    <key>KVASIR_RELEASE_AUTODEPLOY</key>
-    <string>1</string>
-  </dict>
-
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key><integer>9</integer>
-    <key>Minute</key><integer>0</integer>
-  </dict>
-
-  <!-- The Mac sleeps; without this a 09:00 run that was missed never happens. -->
-  <key>RunAtLoad</key>
-  <false/>
-
-  <key>StandardOutPath</key>
-  <string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/log/launchd.out</string>
-  <key>StandardErrorPath</key>
-  <string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/log/launchd.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>KVASIR_RELEASE_AUTODEPLOY</key>
+		<string>1</string>
+		<key>KVASIR_WATCH_ENV</key>
+		<string>/Users/tony/project/any/.env</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kvasir.watch</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/zsh</string>
+		<string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/daily.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/daily.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/daily.out</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>9</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
 </dict>
 </plist>
