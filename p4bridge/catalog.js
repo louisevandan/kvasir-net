@@ -13,7 +13,7 @@
  *   "models": [{
  *     "id": "step-3.7-flash",
  *     "name": "Step-3.7-Flash (428B MoE)",
- *     "load_generation": 1,
+ *     "load_generation": 1789148231396,       // from the placement plan
  *     "stages": [
  *       {"agent": "tcp://127.0.0.1:42011", "node": "step37-s0", "generation": 1},
  *       {"agent": "tcp://127.0.0.1:42011", "node": "step37-s1", "generation": 1}
@@ -37,10 +37,22 @@ function load(file) {
         throw new Error(`catalog model ${model.id} has an incomplete stage`);
       }
     }
+    // The load generation is the operator's, and it cannot be guessed. The
+    // adapter compares it for exact equality and rejects a mismatch — which
+    // leaves every stage reporting `failed:session load generation is stale`
+    // until the model is loaded again. A node's own `generation` is a different
+    // number; using it as a fallback is how that mistake gets made. So the
+    // catalog must carry the value from the placement plan, or serve nothing.
+    if (typeof model.load_generation !== 'number' || !Number.isInteger(model.load_generation) || model.load_generation <= 0) {
+      throw new Error(
+        `catalog model ${model.id} needs load_generation from the placement plan ` +
+        '(an integer the loader set; it is not discoverable over OUTER and must not be guessed)',
+      );
+    }
     return {
       id: model.id,
       name: model.name ?? model.id,
-      loadGeneration: model.load_generation ?? model.stages[0].generation,
+      loadGeneration: model.load_generation,
       stages: model.stages.map((stage) => ({
         agent: stage.agent, node: stage.node, generation: stage.generation,
       })),

@@ -33,6 +33,25 @@ node server.js
 
 The gateway points at it with `P4_BRIDGE_URL` and `P4_BRIDGE_TOKEN`.
 
+## The load generation, and a mistake worth not repeating
+
+`load_generation` is set by whoever loaded the model and is compared for **exact
+equality** by the adapter. It is not in an agent snapshot and cannot be derived
+from anything OUTER can see — a node's own `generation` is a different number.
+
+Getting it wrong is not a harmless rejection. Every stage that refuses a session
+records `failed:session load generation is stale` as its reported state, and
+nothing sets that string back to `loaded` except loading the model again. The
+weights stay resident and a session with the right value would still be
+accepted, but every dashboard reading that field — this bridge included — now
+says the model is not serving.
+
+That is exactly what a convenient fallback produced here: the catalog defaulted
+`load_generation` to the first stage's `generation`, which looked plausible, was
+wrong, and put four production stages into that state. The fallback is gone. The
+catalog must carry the value from the placement plan, or the model does not
+serve.
+
 ## The catalog, and why it exists
 
 An agent snapshot lists node ids, generations and lifecycle state — nothing
