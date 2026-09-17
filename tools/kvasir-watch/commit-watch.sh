@@ -1,8 +1,8 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Between the daily reports: poll the watched repositories and post anything new.
 # Exit 10 from commits.mjs means "there is something to send"; 0 means quiet.
 set -u
-HERE="${0:A:h}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${KVASIR_WATCH_LOG:-$HERE/log}"
 mkdir -p "$LOG_DIR"
 

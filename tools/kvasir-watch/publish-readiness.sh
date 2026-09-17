@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Publish the two readiness artifacts from their local files.
 #
 # The Artifact tool lives inside a Claude session, so the publish runs through
@@ -6,7 +6,7 @@
 # already exists at this URL, then publish this file to it. No editing, no
 # judgement — the file was already written by readiness.mjs.
 set -u
-HERE="${0:A:h}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${KVASIR_WATCH_LOG:-$HERE/log}"
 mkdir -p "$LOG_DIR"
 CONFIG="${KVASIR_WATCH_CONFIG:-$HERE/config.json}"

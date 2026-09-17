@@ -11,6 +11,12 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { setDefaultResultOrder } from 'node:dns';
+
+// The fleet hosts have no IPv6 route. Node resolves AAAA first by default, and
+// the upload leg fails with ENETUNREACH while a plain message happens to
+// succeed — a split that looks like Telegram being flaky rather than like DNS.
+try { setDefaultResultOrder('ipv4first'); } catch { /* older runtimes */ }
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 const chatId = (process.env.TELEGRAM_CHAT_ID ?? '').trim();

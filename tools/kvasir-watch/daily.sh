@@ -1,8 +1,8 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # One day's run: collect, render, send. Keeps every artifact it produced, so a
 # report that looked wrong can be read back against the facts it came from.
 set -u
-HERE="${0:A:h}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${KVASIR_WATCH_LOG:-$HERE/log}"
 DAY="$(date +%Y-%m-%d)"
 mkdir -p "$LOG_DIR"

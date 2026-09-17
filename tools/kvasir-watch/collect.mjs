@@ -52,9 +52,15 @@ async function fileCount(paths, days = 1) {
 
 /* ---- ring: the engine itself, on the machines that run it ---------------- */
 
-const ssh = (host, script) => run('ssh', [
-  '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, script,
-], { timeout: 45_000, maxBuffer: 4e6 }).then((r) => r.stdout);
+/** A machine reached over ssh, or this one. Running the job on a host it also
+ *  watches is the normal case once the watch lives beside the fleet. */
+const isLocal = (host) => host === 'localhost' || host === 'local' || host === '127.0.0.1';
+
+const ssh = (host, script) => (isLocal(host)
+  ? run('/bin/sh', ['-c', script], { timeout: 45_000, maxBuffer: 4e6 })
+  : run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, script],
+      { timeout: 45_000, maxBuffer: 4e6 })
+).then((r) => r.stdout);
 
 async function agentHost(agent) {
   // One round trip: liveness, uptime, recent complaints, GPU rows.
@@ -93,10 +99,14 @@ async function agentHost(agent) {
  * change that.
  */
 async function agentStages(agent) {
-  const local = 42900 + (agent.port % 100);
+  // On this machine the agent is already on loopback; a tunnel would only be a
+  // second way to reach the same socket.
+  const local = isLocal(agent.host) ? agent.port : 42900 + (agent.port % 100);
   const control = `/tmp/kvasir-watch-${agent.label}.sock`;
-  await run('ssh', ['-o', 'BatchMode=yes', '-f', '-N', '-M', '-S', control,
-    '-L', `${local}:127.0.0.1:${agent.port}`, agent.host], { timeout: 30_000 });
+  if (!isLocal(agent.host)) {
+    await run('ssh', ['-o', 'BatchMode=yes', '-f', '-N', '-M', '-S', control,
+      '-L', `${local}:127.0.0.1:${agent.port}`, agent.host], { timeout: 30_000 });
+  }
   try {
     const { connect } = await import('kvasir-p4-bridge/wire');
     const address = `tcp://127.0.0.1:${agent.port}`;
@@ -117,7 +127,9 @@ async function agentStages(agent) {
       };
     } finally { client.close?.(); }
   } finally {
-    await run('ssh', ['-S', control, '-O', 'exit', agent.host]).catch(() => {});
+    if (!isLocal(agent.host)) {
+      await run('ssh', ['-S', control, '-O', 'exit', agent.host]).catch(() => {});
+    }
   }
 }
 

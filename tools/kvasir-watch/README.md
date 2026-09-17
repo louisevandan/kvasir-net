@@ -99,6 +99,34 @@ with a line saying where the value came from. Set
 `KVASIR_RELEASE_AUTODEPLOY=1` (the daily job does) to publish the site after
 writing one.
 
+## Where it runs
+
+On **MI250-02**, beside the fleet, under systemd user timers (`kvasir-watch-daily`
+at 09:00 Asia/Seoul, `kvasir-watch-commits` every 20 minutes) with lingering
+enabled so they run without a login session.
+
+It used to run on a Mac under launchd and never actually fired: macOS lets a
+launchd job stat a file on an external volume but not open it, so both jobs died
+as `EX_CONFIG` with no output — indistinguishable from a job that was never
+scheduled. Every message that reached the group before the move came from a
+manual run. Running beside the fleet also removes the SSH tunnels: one agent is
+on loopback here, and the other is one hop away over the LAN.
+
+| piece | where |
+| --- | --- |
+| scripts | `~/kvasir-watch` on MI250-02 |
+| repository | `~/kvasir-net-mirror`, a blobless clone, fetched before each run |
+| credentials | `~/.kvasir-watch.env`, mode 600 |
+| node | `~/.local/node`, user-local, no root |
+| hop to MI250-01 | `~/.ssh/id_ed25519_kvasir_watch`, a key used for nothing else |
+
+Two things do not work from there and stay with a person:
+
+- **The assessment.** It shells out to `claude`, which is not installed on the
+  host, so the section keeps its previous text and says when it was written.
+- **Publishing the claude.ai artifacts and deploying the site.** Both need a
+  session or the site toolchain.
+
 ## Setup
 
 ```sh
