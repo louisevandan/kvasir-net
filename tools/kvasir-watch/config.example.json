@@ -38,6 +38,11 @@
   },
   "commitWatches": [
     {
+      "repo": "hikaMaeng/p4",
+      "label": "p4 engine",
+      "tokenEnv": "GITHUB_TOKEN"
+    },
+    {
       "repo": "louisevandan/kvasir-net",
       "label": "Kvasir public repo",
       "tokenEnv": "LOUIS_GIT_TOKEN"

@@ -37,10 +37,14 @@ of an incident nobody noticed.
 Between the daily reports, `commit-watch.sh` posts commits as they land. Each
 entry in `commitWatches` is one of two shapes:
 
-| shape | endpoint | covers |
+| shape | how | covers |
 | --- | --- | --- |
-| `{"repo": "owner/name"}` | repository events | pushes on **every branch**, private repos too (with a token that can read them) |
+| `{"repo": "owner/name"}` | branch heads, then walk the ones that moved | every branch, private repositories included (with a token that can read them) |
 | `{"user": "login"}` | user events | that person across every repository — but GitHub exposes **public pushes only** here |
+
+Repository events look like the shorter path, but on a private repository
+GitHub returns each push with an empty `commits` array: you learn that something
+landed, not what. Branch heads do not have that hole.
 
 `tokenEnv` names the environment variable holding the token for that watch; the
 value is read at the call and never logged. A watch's position is kept in

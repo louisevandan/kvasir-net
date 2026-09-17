@@ -4,8 +4,9 @@
  *
  * Two ways to watch, because the repositories are not all the same shape:
  *
- *   mode "repo" — GET /repos/{owner}/{name}/commits. Works for a private
- *     repository as long as the token can read it. Use this for the engine.
+ *   mode "branches" (default) — read every branch head and walk the ones that
+ *     moved. Works on private repositories and names the branch. Use this for
+ *     a repository.
  *   mode "user" — GET /users/{login}/events, keeping PushEvents. This follows a
  *     person across every repository they push to, but GitHub only exposes
  *     PUBLIC pushes here; a private push is invisible no matter the token.
@@ -47,33 +48,52 @@ const short = (sha) => String(sha ?? '').slice(0, 7);
 const firstLine = (message) => String(message ?? '').split('\n')[0].slice(0, 110);
 
 /**
- * Repository events carry pushes on EVERY branch, which is what a project with
- * live work on side branches needs; the commits endpoint only follows one.
+ * Follow every branch by its head.
+ *
+ * Repository events look like the obvious source — one call, all branches — but
+ * on a PRIVATE repository GitHub returns the push with `commits: []`: you learn
+ * that something landed, not what. So read the branch heads instead and walk
+ * each one that moved. That works the same whether the repository is public or
+ * private, and it names the branch a commit arrived on.
  */
-async function pollRepoEvents(watch) {
-  const key = `events:${watch.repo}`;
-  const seen = state[key]?.id ?? null;
-  const events = await gh(`/repos/${watch.repo}/events?per_page=30`, watch.tokenEnv);
-  const pushes = events.filter((event) => event.type === 'PushEvent');
+async function pollRepoBranches(watch) {
+  const key = `branches:${watch.repo}`;
+  const previous = state[key]?.heads ?? null;
+  const reported = new Set(state[key]?.reported ?? []);
+  const branches = await gh(`/repos/${watch.repo}/branches?per_page=100`, watch.tokenEnv);
+  const heads = Object.fromEntries(branches.map((branch) => [branch.name, branch.commit.sha]));
+
+  if (previous === null) {                       // first sight: take the mark, stay quiet
+    state[key] = { heads, reported: [...reported].slice(-500), at: new Date().toISOString() };
+    return [];
+  }
+
   const fresh = [];
-  for (const event of pushes) {
-    if (event.id === seen) break;
-    const branch = String(event.payload?.ref ?? '').replace('refs/heads/', '');
-    for (const commit of (event.payload?.commits ?? []).slice().reverse()) {
+  for (const [name, head] of Object.entries(heads)) {
+    if (previous[name] === head) continue;
+    const known = previous[name] ?? null;
+    const commits = await gh(`/repos/${watch.repo}/commits?sha=${encodeURIComponent(name)}&per_page=20`, watch.tokenEnv);
+    for (const commit of commits) {
+      if (commit.sha === known) break;
+      // A commit reachable from two branches is one event, not two.
+      if (reported.has(commit.sha)) continue;
+      reported.add(commit.sha);
       fresh.push({
-        repo: `${watch.repo}${branch ? `@${branch}` : ''}`,
+        repo: `${watch.repo}@${name}`,
         label: watch.label ?? watch.repo,
         sha: short(commit.sha),
-        author: commit.author?.name ?? 'unknown',
-        when: event.created_at,
-        subject: firstLine(commit.message),
-        url: `https://github.com/${watch.repo}/commit/${commit.sha}`,
+        author: commit.commit?.author?.name ?? commit.author?.login ?? 'unknown',
+        when: commit.commit?.author?.date ?? null,
+        subject: firstLine(commit.commit?.message),
+        url: commit.html_url,
       });
     }
+    // A brand-new branch would otherwise replay its whole history.
+    if (known === null && fresh.length) fresh.splice(1);
   }
-  const first = seen === null;
-  if (events.length) state[key] = { id: events[0].id, at: new Date().toISOString() };
-  return first ? [] : fresh;
+
+  state[key] = { heads, reported: [...reported].slice(-500), at: new Date().toISOString() };
+  return fresh;
 }
 
 async function pollRepo(watch) {
@@ -132,7 +152,7 @@ async function main() {
   for (const watch of watches) {
     try {
       const poll = watch.user ? pollUser
-        : (watch.mode ?? 'events') === 'events' ? pollRepoEvents
+        : (watch.mode ?? 'branches') === 'branches' ? pollRepoBranches
         : pollRepo;
       found.push(...await poll(watch));
     } catch (error) {
