@@ -11,6 +11,35 @@ export interface AppConfig { network: Network; stakingUrl: string; language: str
 export interface WalletState { exists: boolean; encrypted: boolean; locked: boolean }
 export interface GatewayStatus { running: boolean; managed: boolean; port: number; hostUrl: string; ipUrl: string; configuredUrl: string; dir?: string; lastError?: string | null; keyPath?: string; keyExists?: boolean }
 
+// What this machine reports about itself. `gpus` and `backend` come from the
+// hardware, `measured` only from a decode this machine actually ran — it stays
+// null until then, because an invented throughput becomes an invented reward.
+export interface NodeCapability {
+  os: string; arch: string
+  cpu: { brand: string; cores: number }
+  ramBytes: number
+  backend: 'metal' | 'cuda' | 'rocm' | 'cpu'
+  gpus: { name: string; memoryBytes: number | null; backend: string | null }[]
+}
+export interface NodeMeasurement { tps: number; tokens: number; elapsedMs: number; model: string; at: number }
+export interface NodeStatus {
+  running: boolean
+  pid: number | null
+  port: number
+  address: string
+  binary: string | null
+  uptimeMs: number
+  lastError: string | null
+  lastExit: { code: number | null; signal: string | null; at: number } | null
+  // Stages the agent actually holds — placement is the operator's, not the app's.
+  nodes: { nodeId: string; state: string; generation: number; adapterKind: string | null }[]
+  gpus: { name: string; backend: string | null; memoryBytes: number | null }[]
+  snapshotAt: number | null
+  log: string[]
+  capability: NodeCapability
+  measured: NodeMeasurement | null
+}
+
 export interface LinkcppAPI {
   isElectron: boolean
   wallet: {
@@ -57,6 +86,14 @@ export interface LinkcppAPI {
     dir(): Promise<string>
     generate(name: string, prompt: string, maxTokens?: number):
       Promise<{ ok: boolean; text?: string; error?: string; usage?: { completion_tokens?: number } }>
+  }
+  // Absent in the served web app: only the desktop app can run a node here.
+  node?: {
+    status(opts?: { inspect?: boolean }): Promise<NodeStatus>
+    start(): Promise<NodeStatus>
+    stop(): Promise<NodeStatus>
+    capability(refresh?: boolean): Promise<NodeCapability>
+    benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string } & Partial<NodeMeasurement>>
   }
   openExternal(url: string): Promise<void>
   revealPath(p: string): Promise<void>
@@ -144,6 +181,31 @@ function makeMock(): LinkcppAPI {
         setDir: async () => snap(),
         setKeyFile: async () => snap(),
         pickKey: async () => snap(),
+      }
+    })(),
+    node: (() => {
+      const capability: NodeCapability = {
+        os: 'macos', arch: 'arm64', cpu: { brand: 'Apple M4 Pro', cores: 12 },
+        ramBytes: 24 * 1024 ** 3, backend: 'metal',
+        gpus: [{ name: 'Apple M4 Pro', memoryBytes: 24 * 1024 ** 3, backend: 'metal' }],
+      }
+      let running = false
+      const snap = (): NodeStatus => ({
+        running, pid: running ? 4242 : null, port: 42031, address: 'tcp://127.0.0.1:42031',
+        binary: running ? '/opt/kvasir/p4-agent' : null, uptimeMs: running ? 125_000 : 0,
+        lastError: running ? null : 'agent not started', lastExit: null,
+        nodes: running ? [{ nodeId: 'demo-s0', state: 'idle', generation: 1, adapterKind: 'llamacpp' }] : [],
+        gpus: running ? [{ name: 'Apple M4 Pro', backend: 'metal', memoryBytes: 24 * 1024 ** 3 }] : [],
+        snapshotAt: running ? Date.now() : null,
+        log: running ? ['12:00:01 agent listening on 127.0.0.1:42031'] : [],
+        capability, measured: null,
+      })
+      return {
+        status: async () => snap(),
+        start: async () => { running = true; return snap() },
+        stop: async () => { running = false; return snap() },
+        capability: async () => capability,
+        benchmark: async () => ({ ok: false, error: 'no local model to measure with — add a GGUF first' }),
       }
     })(),
     openExternal: async (url) => { window.open(url, '_blank') },

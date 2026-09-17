@@ -29,8 +29,8 @@ function load(file) {
   const raw = JSON.parse(fs.readFileSync(resolved, 'utf8'));
   if (!raw.ingress_agent) throw new Error('catalog needs an ingress_agent');
   const models = (raw.models ?? []).map((model) => {
-    if (!model.id || !Array.isArray(model.stages) || model.stages.length < 2) {
-      throw new Error(`catalog model ${model.id ?? '(unnamed)'} needs an id and at least two stages`);
+    if (!model.id || !Array.isArray(model.stages) || model.stages.length < 1) {
+      throw new Error(`catalog model ${model.id ?? '(unnamed)'} needs an id and at least one stage`);
     }
     for (const stage of model.stages) {
       if (!stage.agent || !stage.node || !stage.generation) {

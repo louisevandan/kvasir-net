@@ -8,5 +8,13 @@
     "start": "node server.js",
     "test": "node --test test/"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./server.js",
+    "./wire": "./wire.js",
+    "./pipeline": "./pipeline.js",
+    "./catalog": "./catalog.js"
+  }
 }

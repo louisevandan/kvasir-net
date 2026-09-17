@@ -47,6 +47,10 @@ const REQUIRE_TOP_LEVEL = [
   '@solana/codecs-strings',
   '@solana/codecs-data-structures',
   'call-bind-apply-helpers',
+  // The p4 wire, depended on as `file:../../p4bridge`. npm links it, and a
+  // symlink in the asar resolves to nothing on the user's machine, so it is
+  // injected here as real files (see `dereference` below).
+  'kvasir-p4-bridge',
 ];
 
 // Native modules electron-builder keeps unpacked. Must match its default so the
@@ -101,6 +105,7 @@ module.exports = async function afterPack(context) {
   for (const pkg of missing) {
     fs.cpSync(path.join(projectDir, 'node_modules', pkg), path.join(work, 'node_modules', pkg), {
       recursive: true,
+      dereference: true,   // a `file:` dependency is a symlink; copy what it points at
     });
   }
   fs.rmSync(asarPath, { force: true });

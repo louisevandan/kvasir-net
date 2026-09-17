@@ -48,6 +48,15 @@ contextBridge.exposeInMainWorld('linkcpp', {
     dir: () => ipcRenderer.invoke('models:dir'),
     generate: (name, prompt, maxTokens) => ipcRenderer.invoke('models:generate', { name, prompt, maxTokens }),
   },
+  // This machine as a p4 node: a supervised agent process, its real capability,
+  // and a throughput number only after a run that actually produced one.
+  node: {
+    status: (opts) => ipcRenderer.invoke('node:status', opts),
+    start: () => ipcRenderer.invoke('node:start'),
+    stop: () => ipcRenderer.invoke('node:stop'),
+    capability: (refresh) => ipcRenderer.invoke('node:capability', refresh),
+    benchmark: (maxTokens) => ipcRenderer.invoke('node:benchmark', maxTokens),
+  },
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
   revealPath: (p) => ipcRenderer.invoke('shell:reveal', p),
 })

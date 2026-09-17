@@ -46,8 +46,8 @@ class Pipeline {
    * @param {string} [options.sessionId] reuse an installed session
    */
   constructor({ clientFor, client, stages, loadGeneration, sessionId }) {
-    if (!Array.isArray(stages) || stages.length < 2) {
-      throw new Error('a p4 pipeline needs at least a head and a tail stage');
+    if (!Array.isArray(stages) || stages.length < 1) {
+      throw new Error('a p4 pipeline needs at least one stage');
     }
     this.clientFor = clientFor ?? (() => client);
     this.stages = stages;

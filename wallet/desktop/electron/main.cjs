@@ -6,6 +6,8 @@ const os = require('node:os')
 const http = require('node:http')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
+const { P4Node } = require('./p4node.cjs')
+const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
 const bs58 = require('bs58')
 const nacl = require('tweetnacl')
@@ -427,6 +429,33 @@ async function localGenerate(sender, name, prompt, maxTokens) {
   }
 }
 
+// ---- this machine as a p4 node ----------------------------------------------
+// The agent is a real process holding real accelerators. `measured` is the only
+// throughput number the app is allowed to report: a decode this machine actually
+// ran. Until one exists it stays null, and the settlement service scores the node
+// on its floor tier rather than on a number the app made up.
+const p4node = new P4Node()
+let measured = null   // { tps, tokens, elapsedMs, model, at }
+
+async function benchmark(sender, maxTokens = 64) {
+  const models = listModels()
+  if (!models.length) return { ok: false, error: 'no local model to measure with — add a GGUF first' }
+  const smallest = models.slice().sort((a, b) => a.sizeBytes - b.sizeBytes)[0]
+  const started = Date.now()
+  const result = await localGenerate(sender, smallest.name, 'Write one sentence about distributed systems.', maxTokens)
+  if (!result.ok) return { ok: false, error: result.error }
+  const elapsedMs = Date.now() - started
+  const tokens = Number(result.usage?.completion_tokens ?? 0)
+  if (!tokens || elapsedMs <= 0) return { ok: false, error: 'the run reported no token count' }
+  measured = { tps: tokens / (elapsedMs / 1000), tokens, elapsedMs, model: smallest.name, at: Date.now() }
+  return { ok: true, ...measured }
+}
+
+async function nodeStatus({ inspect = false } = {}) {
+  if (inspect) await p4node.inspect().catch(() => {})
+  return { ...p4node.status(), capability: await capability(), measured }
+}
+
 function register() {
   ipcMain.handle('wallet:has', () => walletExists())
   // exists: any wallet on disk · encrypted: new passphrase format · locked: no live session
@@ -541,6 +570,13 @@ function register() {
   ipcMain.handle('models:dir', () => modelsDir())
   ipcMain.handle('models:generate', (e, { name, prompt, maxTokens }) =>
     localGenerate(e.sender, name, prompt, maxTokens || 512))
+
+  // ---- node: run a p4 agent on this machine ---------------------------------
+  ipcMain.handle('node:status', (_e, opts) => nodeStatus(opts || {}))
+  ipcMain.handle('node:start', async () => { p4node.start(); await new Promise((r) => setTimeout(r, 1200)); return nodeStatus({ inspect: true }) })
+  ipcMain.handle('node:stop', async () => { await p4node.stop(); return nodeStatus() })
+  ipcMain.handle('node:capability', (_e, refresh) => capability({ refresh: !!refresh }))
+  ipcMain.handle('node:benchmark', (e, maxTokens) => benchmark(e.sender, maxTokens || 64))
 }
 
 function createWindow() {
@@ -565,5 +601,5 @@ app.whenReady().then(() => {
   createWindow()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
-app.on('before-quit', () => stopGateway())
+app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}) })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
