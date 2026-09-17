@@ -25,7 +25,11 @@ const tmp = resolve(ROOT, ".seo-data.mjs");
 writeFileSync(
   tmp,
   `export { TECH_ARTICLES } from "./src/tech/articles.ts";\n` +
-    `export { WIKI_ENTRIES } from "./src/wiki/entries.ts";\n`
+    `export { WIKI_ENTRIES } from "./src/wiki/entries.ts";\n` +
+    `export { getTechArticles } from "./src/tech/translations.ts";\n` +
+    `export { getWikiEntries } from "./src/wiki/translations.ts";\n` +
+    `export { LANGS, DEFAULT_LANG } from "./src/i18n/langs.ts";\n` +
+    `export { DICTS } from "./src/i18n/dicts.ts";\n`
 );
 await build({
   entryPoints: [tmp],
@@ -34,7 +38,7 @@ await build({
   outfile: resolve(ROOT, ".seo-data.bundle.mjs"),
   logLevel: "silent",
 });
-const { TECH_ARTICLES, WIKI_ENTRIES } = await import(
+const { TECH_ARTICLES, WIKI_ENTRIES, getTechArticles, getWikiEntries, LANGS, DEFAULT_LANG, DICTS } = await import(
   resolve(ROOT, ".seo-data.bundle.mjs") + "?t=" + Date.now()
 );
 rmSync(tmp, { force: true });
@@ -134,7 +138,73 @@ function blocksToHtml(blocks) {
 }
 
 /* ---- 3. route model ----------------------------------------------------- */
-const blogRoutes = TECH_ARTICLES.map((a) => ({
+
+/** The homepage as text, from the dictionary of the requested language. */
+function homeBody(lang) {
+  const t = DICTS[lang] ?? DICTS[DEFAULT_LANG];
+  const li = (items) => items.map((x) => `<li>${esc(x)}</li>`).join("");
+  const section = (heading, lede, items) =>
+    `<section class="mx-auto max-w-3xl px-6 py-10">` +
+    `<h2 class="text-2xl font-semibold tracking-tight text-ink">${esc(heading)}</h2>` +
+    (lede ? `<p class="mt-3 text-ink-muted">${esc(lede)}</p>` : "") +
+    (items && items.length ? `<ul class="mt-4 list-disc space-y-2 pl-5 text-ink-muted">${li(items)}</ul>` : "") +
+    `</section>`;
+
+  const steps = (t.how?.steps ?? []).map((s) => `${s.title}: ${s.body}`);
+  const points = (t.tech?.points ?? []).map((p) => `${p.title}: ${p.body}`);
+  const roadmap = (t.roadmap?.items ?? []).map((i) => `${i.phase} — ${i.title}: ${i.body}`);
+  const proof = [...(t.proof?.items ?? []), t.proof?.strip].filter(Boolean);
+
+  return (
+    `<section class="mx-auto max-w-3xl px-6 py-24">` +
+    `<p class="text-sm uppercase tracking-wider text-ink-faint">${esc(t.hero?.eyebrow ?? "")}</p>` +
+    `<h1 class="mt-3 text-4xl font-semibold tracking-tight text-ink">${esc(t.hero?.headline1 ?? "")} ${esc(t.hero?.headline2 ?? "")}</h1>` +
+    `<p class="mt-4 text-lg text-ink-muted">${esc(t.hero?.sub ?? "")}</p>` +
+    (t.hero?.badges?.length ? `<ul class="mt-4 flex flex-wrap gap-2 text-sm text-ink-muted">${li(t.hero.badges)}</ul>` : "") +
+    `</section>` +
+    section(t.thesis?.title ?? "", t.thesis?.lede ?? "", t.thesis?.kvasirPoints ?? []) +
+    section(t.how?.title ?? "", t.how?.lede ?? "", steps) +
+    section(t.tech?.title ?? "", t.tech?.lede ?? "", points) +
+    section(t.proof?.title ?? "", t.proof?.pill ?? "", proof) +
+    section(t.roadmap?.title ?? "", t.roadmap?.lede ?? "", roadmap)
+  );
+}
+
+/**
+ * The questions an assistant is actually asked about a project like this, with
+ * the answers we would want quoted — from the dictionary, so every language
+ * gets its own, and grounded in the same facts the page states.
+ */
+function faqFor(lang) {
+  const t = DICTS[lang] ?? DICTS[DEFAULT_LANG];
+  const qa = [
+    [t.thesis?.title, t.hero?.sub],
+    [t.how?.title, (t.how?.steps ?? []).map((s) => `${s.title}: ${s.body}`).join(" ")],
+    [t.tech?.title, t.tech?.lede],
+    [t.proof?.title, t.proof?.strip],
+  ].filter(([q, a]) => q && a);
+  return {
+    "@type": "FAQPage",
+    mainEntity: qa.map(([q, a]) => ({
+      "@type": "Question",
+      name: q,
+      acceptedAnswer: { "@type": "Answer", text: a },
+    })),
+  };
+}
+/**
+ * Routes, per language.
+ *
+ * The site is written in nine languages and used to publish one URL, so a
+ * crawler indexed one of them and the other eight did not exist as far as
+ * search or an LLM was concerned. Each language now gets its own path —
+ * English bare, the rest under a prefix — and every page lists all nine as
+ * alternates so they are understood as one document, not nine duplicates.
+ */
+const routesFor = (lang) => {
+const TECH = lang === DEFAULT_LANG ? TECH_ARTICLES : getTechArticles(lang);
+const WIKI = lang === DEFAULT_LANG ? WIKI_ENTRIES : getWikiEntries(lang);
+const blogRoutes = TECH.map((a) => ({
   path: `/technology/${a.slug}`,
   title: `${a.title} — Kvasir`,
   description: a.dek,
@@ -165,7 +235,7 @@ const blogRoutes = TECH_ARTICLES.map((a) => ({
   ],
 }));
 
-const wikiRoutes = WIKI_ENTRIES.map((e) => ({
+const wikiRoutes = WIKI.map((e) => ({
   path: `/wiki/${e.slug}`,
   title: `${e.title} — Kvasir Wiki`,
   description: e.summary,
@@ -214,10 +284,13 @@ const staticRoutes = [
       "Kvasir is a decentralized AI inference network. The p4 engine splits large open models across a peer-to-peer ring of shared GPUs, CPUs, NPUs and phones — contribute compute, earn KVR. Solana devnet.",
     image: `${ORIGIN}/og.png`,
     kind: "website",
-    bodyHtml:
-      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold tracking-tight text-ink">Decentralized AI inference. Bring compute, earn KVR.</h1>` +
-      `<p class="mt-4 text-lg text-ink-muted">Run frontier-scale open models on a peer-to-peer ring of shared GPUs, CPUs, NPUs and phones — and earn KVR for the compute you contribute. Source-available (BSL) engine, Solana devnet.</p></section>`,
-    jsonld: [],
+    // Built from the dictionary rather than written here: a crawler that does
+    // not run JavaScript used to see a headline and one sentence, in English,
+    // whichever language the URL asked for. It now reads the page's actual
+    // claims — what is served, what was measured, how a node is paid — in the
+    // language it requested.
+    bodyHtml: homeBody(lang),
+    jsonld: [faqFor(lang)],
   },
   {
     path: "/run-node",
@@ -309,15 +382,28 @@ function breadcrumb(pairs) {
   };
 }
 
-const ALL = [...staticRoutes, ...blogRoutes, ...wikiRoutes];
+return [...staticRoutes, ...blogRoutes, ...wikiRoutes];
+};
+
+/** Where a route lives for a language: English bare, everything else prefixed. */
+const localePath = (lang, path) =>
+  lang === DEFAULT_LANG ? path : `/${lang}${path === "/" ? "" : path}`;
+
+const LANG_CODES = LANGS.map((l) => l.code);
+const BY_LANG = new Map(LANG_CODES.map((lang) => [lang, routesFor(lang)]));
+const ALL = BY_LANG.get(DEFAULT_LANG);
 
 /* ---- 4. per-route HTML from the built dist/index.html template ---------- */
 const template = readFileSync(resolve(DIST, "index.html"), "utf8");
 
-function pageHtml(r) {
+function pageHtml(r, lang = DEFAULT_LANG) {
   let html = template;
-  const url = ORIGIN + (r.path === "/" ? "/" : r.path);
+  const here = localePath(lang, r.path);
+  const url = ORIGIN + (here === "/" ? "/" : here);
   const type = r.kind === "article" ? "article" : "website";
+  // The served document must declare the language it is actually written in,
+  // or a translated page reads to a crawler as English prose it cannot parse.
+  html = html.replace(/<html lang="[^"]*"/, `<html lang="${lang}"`);
 
   // <title>
   html = html.replace(/<title>[\s\S]*?<\/title>/, `<title>${esc(r.title)}</title>`);
@@ -349,6 +435,16 @@ function pageHtml(r) {
 
   // head injections: article:published_time + rss alternate + per-route JSON-LD
   const inject = [];
+  // Every language of this page, named to each other. x-default points at the
+  // English one, which is what a crawler with no language preference gets.
+  for (const code of LANG_CODES) {
+    const alt = localePath(code, r.path);
+    inject.push(
+      `<link rel="alternate" hreflang="${code}" href="${ORIGIN}${alt === "/" ? "/" : alt}" />`
+    );
+  }
+  inject.push(`<link rel="alternate" hreflang="x-default" href="${ORIGIN}${r.path === "/" ? "/" : r.path}" />`);
+  inject.push(`<meta property="og:locale" content="${lang}" />`);
   if (r.date) inject.push(`<meta property="article:published_time" content="${escAttr(r.date)}" />`);
   inject.push(`<link rel="alternate" type="application/rss+xml" title="Kvasir blog" href="${ORIGIN}/feed.xml" />`);
   if (r.jsonld && r.jsonld.length) {
@@ -370,14 +466,17 @@ function pageHtml(r) {
 }
 
 let count = 0;
-for (const r of ALL) {
+for (const [lang, routes] of BY_LANG) {
+for (const r of routes) {
   // Flat `<path>.html` files (not `<path>/index.html`) so Cloudflare Pages
   // serves them at the clean no-trailing-slash URL with 200 — no 308 redirect,
   // so the canonical/OG/sitemap URLs match the actually-served URL exactly.
-  const outFile = r.path === "/" ? resolve(DIST, "index.html") : resolve(DIST, r.path.replace(/^\//, "") + ".html");
+  const here = localePath(lang, r.path);
+  const outFile = here === "/" ? resolve(DIST, "index.html") : resolve(DIST, here.replace(/^\//, "") + ".html");
   mkdirSync(dirname(outFile), { recursive: true });
-  writeFileSync(outFile, pageHtml(r), "utf8");
+  writeFileSync(outFile, pageHtml(r, lang), "utf8");
   count++;
+}
 }
 
 /* ---- 5. RSS 2.0 feed (full content:encoded) ----------------------------- */
@@ -407,15 +506,24 @@ const rss =
 writeFileSync(resolve(DIST, "feed.xml"), rss, "utf8");
 
 /* ---- 6. sitemap.xml (all routes) ---------------------------------------- */
-const smUrls = ALL.map((r) => {
-  const loc = ORIGIN + (r.path === "/" ? "/" : r.path);
-  const lastmod = r.date || BUILD_DATE;
-  const pri = r.path === "/" ? "1.0" : r.kind === "article" ? "0.7" : "0.8";
-  return `<url><loc>${loc}</loc><lastmod>${lastmod}</lastmod><changefreq>weekly</changefreq><priority>${pri}</priority></url>`;
-}).join("\n");
+// Every language of every route, each entry listing its alternates so the set
+// is understood as one document in nine languages rather than nine rivals.
+const smUrls = ALL.flatMap((r) =>
+  LANG_CODES.map((lang) => {
+    const here = localePath(lang, r.path);
+    const loc = ORIGIN + (here === "/" ? "/" : here);
+    const lastmod = r.date || BUILD_DATE;
+    const pri = r.path === "/" ? (lang === DEFAULT_LANG ? "1.0" : "0.9") : r.kind === "article" ? "0.7" : "0.8";
+    const alts = LANG_CODES.map((code) => {
+      const alt = localePath(code, r.path);
+      return `<xhtml:link rel="alternate" hreflang="${code}" href="${ORIGIN}${alt === "/" ? "/" : alt}"/>`;
+    }).join("");
+    return `<url><loc>${loc}</loc>${alts}<lastmod>${lastmod}</lastmod><changefreq>weekly</changefreq><priority>${pri}</priority></url>`;
+  })
+).join("\n");
 writeFileSync(
   resolve(DIST, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${smUrls}\n</urlset>\n`,
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${smUrls}\n</urlset>\n`,
   "utf8"
 );
 
