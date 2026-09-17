@@ -1,0 +1,39 @@
+{
+  "repo": "/Volumes/Transcend/Projects/kvasir-net",
+  "site": "https://kvasir-ai.net",
+  "gatewayUrl": "https://kvr.prototypebench.org",
+  "publicRepo": "louisevandan/kvasir-net",
+  "agents": [
+    {
+      "host": "Nuri-AMD-MI250-01",
+      "label": "MI250-01",
+      "port": 42011
+    },
+    {
+      "host": "Nuri-AMD-MI250-02",
+      "label": "MI250-02",
+      "port": 42012
+    }
+  ],
+  "tracks": {
+    "ring": [
+      "src",
+      "controller",
+      "tests",
+      "benchmarks"
+    ],
+    "gateway": [
+      "solana/staking-service",
+      "p4bridge"
+    ],
+    "client": [
+      "wallet",
+      "apps"
+    ]
+  },
+  "notes": {
+    "ring": "",
+    "gateway": "The public endpoint is deliberately down until the p4 port lands.",
+    "client": ""
+  }
+}
