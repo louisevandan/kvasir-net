@@ -1,0 +1,27 @@
+{
+  "ingress_agent": "tcp://127.0.0.1:42011",
+  "model": {
+    "id": "step-3.7-flash",
+    "name": "Step-3.7-Flash (428B MoE)",
+    "context_size": 4096,
+    "max_tokens": 512
+  },
+  "defaults": {
+    "binary": "/home/banya2/.local/p4/f3658f1b/bin/p4_staged_server",
+    "args": [],
+    "environment": [["PATH", "/opt/rocm/bin:/usr/local/bin:/usr/bin:/bin"]],
+    "n_batch": 2048,
+    "n_ubatch": 512,
+    "context_size": 4096,
+    "total_context_size": 32768,
+    "sequence_capacity": 8,
+    "ready_timeout_ms": 1800000,
+    "io_timeout_ms": 120000
+  },
+  "stages": [
+    { "agent": "tcp://127.0.0.1:42011", "node": "step37-s0", "generation": 1, "endpoint": "127.0.0.1:42100", "plan": "<the stage plan the loader produces>" },
+    { "agent": "tcp://127.0.0.1:42011", "node": "step37-s1", "generation": 1, "endpoint": "127.0.0.1:42101", "plan": "<the stage plan the loader produces>" },
+    { "agent": "tcp://127.0.0.1:42012", "node": "step37-s2", "generation": 1, "endpoint": "127.0.0.1:42102", "plan": "<the stage plan the loader produces>" },
+    { "agent": "tcp://127.0.0.1:42012", "node": "step37-s3", "generation": 1, "endpoint": "127.0.0.1:42103", "plan": "<the stage plan the loader produces>" }
+  ]
+}

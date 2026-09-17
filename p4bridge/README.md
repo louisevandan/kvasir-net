@@ -52,6 +52,30 @@ wrong, and put four production stages into that state. The fallback is gone. The
 catalog must carry the value from the placement plan, or the model does not
 serve.
 
+## Driving a load — and keeping the number
+
+`load.mjs` is the only thing here that changes what is loaded, and it exists so
+the generation is never lost again:
+
+```sh
+node load.mjs --plan plan.json --dry-run     # print what would be sent
+node load.mjs --plan plan.json --confirm     # load, then write the catalog
+node load.mjs --unload --confirm             # unload what the record names
+```
+
+It writes the generation to `state/last-load.json` **before the first LOAD
+leaves**, so a load that fails halfway still leaves you able to unload. The
+catalog is only updated after every stage answers `loaded`; a partial load never
+gets to claim the model serves.
+
+For a model someone else loaded, `--unload --generation <n>` takes the number
+from whoever drove it and reads the stages from the catalog. That is the only
+way back for a load driven from another tool — nothing on the machines will
+tell you the number.
+
+`--confirm` is required for anything that acts. See `load-plan.example.json`
+for the shape of a plan.
+
 ## The catalog, and why it exists
 
 An agent snapshot lists node ids, generations and lifecycle state — nothing
