@@ -198,10 +198,13 @@ async function calendarBlock() {
   const plan = existsSync(planFile) ? JSON.parse(readFileSync(planFile, 'utf8')) : { milestones: [] };
   const milestones = plan.milestones ?? [];
 
+  // The feed address is a credential — anyone holding it can read the calendar
+  // — so it lives in the environment, not in a config file that gets committed.
+  const icsUrl = settings.icsUrl || process.env.KVASIR_CALENDAR_ICS || '';
   let events = [];
   let problem = null;
-  if (settings.icsUrl) {
-    try { events = await fetchEvents(settings.icsUrl, start, end); }
+  if (icsUrl) {
+    try { events = await fetchEvents(icsUrl, start, end); }
     catch (error) { problem = error.message; }
   }
 
@@ -215,7 +218,7 @@ async function calendarBlock() {
 
   return (lang) => {
     const t = T[lang];
-    const note = !settings.icsUrl ? t.calNoFeed : problem ? t.calFeedFailed(problem) : null;
+    const note = !icsUrl ? t.calNoFeed : problem ? t.calFeedFailed(problem) : null;
     const grid = renderWeek({
       start, offsetMinutes: offset, events, milestones,
       labels: { days: t.days, allDay: t.allDay }, today,

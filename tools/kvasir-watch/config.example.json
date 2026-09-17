@@ -67,6 +67,7 @@
     "icsUrl": "",
     "timeZone": "Asia/Seoul",
     "offsetMinutes": 540,
-    "plan": "plan.json"
+    "plan": "plan.json",
+    "icsUrlEnv": "KVASIR_CALENDAR_ICS"
   }
 }

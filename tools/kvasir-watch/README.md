@@ -81,10 +81,13 @@ artifact link: a headless `claude -p` authenticates into a different artifact
 space and cannot update those pages, so `publish-readiness.sh` is there for a
 person to run from an interactive session, and the daily job attaches the file.
 
-To include meetings, put the calendar's **secret iCal address** in
-`config.json` under `calendar.icsUrl` — an unattended job cannot hold an
-interactive Google session, and that URL is the same events over plain HTTPS.
-Anyone holding it can read the calendar, so treat it as a credential.
+Meetings come from a calendar's **secret iCal address**, because an unattended
+job cannot hold an interactive Google session and that URL returns the same
+events over plain HTTPS. Anyone holding it can read the calendar, so it lives in
+the environment as `KVASIR_CALENDAR_ICS`, never in a committed file. In Google
+Calendar: the calendar's ⋮ → Settings and sharing → Integrate calendar → Secret
+address in iCal format. If it leaks, the Reset button on that same screen
+invalidates it.
 
 ## Release notes
 
