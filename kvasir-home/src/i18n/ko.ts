@@ -36,7 +36,7 @@ export const ko: Dict = {
     eyebrow: "DePIN · 탈중앙화 AI — 독점을 넘어",
     headline1: "컴퓨팅 파워를 제공하고,",
     headline2: "AI 소득을 받으세요.",
-    sub: "Kvasir는 linkcpp로 대형 오픈 모델을 공유 하드웨어에 분산시켜, 어떤 노드도 모델 전체를 가질 필요가 없습니다. GPU, CPU 또는 휴대폰을 제공하고, 실행한 레이어만큼 KVR을 받으세요.",
+    sub: "Kvasir는 흩어져 있는 기기들 — 데이터센터 GPU, 워크스테이션, 휴대폰 — 을 하나의 서빙 풀로 묶어 최전선 규모의 오픈 모델을 구동합니다. 어떤 노드도 모델 전체를 가질 필요가 없고, 모든 노드는 자신이 실행한 레이어만큼 KVR을 받습니다.",
     badges: [
       "GPU · CPU · NPU · 휴대폰에서 실행",
       "OpenAI + Anthropic 호환",
@@ -44,7 +44,7 @@ export const ko: Dict = {
     ],
     ringCenter: "Ring Topology",
     topologyCaption:
-      "GPU, CPU, NPU, 휴대폰으로 이루어진 기기들의 링 — 각 기기가 49개 레이어 중 일부를 보유합니다. 모든 노드는 자기 몫을 실행하고 hidden-state 경계만 이웃에 넘기며, 마지막 노드가 토큰을 링을 따라 되돌려줍니다. 어떤 노드도 모델 전체를 가질 필요가 없고, 링에는 중앙 마스터가 없습니다 — 예시용.",
+      "GPU, CPU, NPU, 휴대폰으로 이루어진 기기들의 링 — 각 기기가 모델 레이어 중 일부를 보유합니다. 모든 노드는 자기 몫을 실행하고 hidden-state 경계만 이웃에 넘기며, 마지막 노드가 토큰을 링을 따라 되돌려줍니다. 어떤 노드도 모델 전체를 가질 필요가 없고, 링에는 중앙 마스터가 없습니다 — 예시용.",
   },
 
   thesis: {
@@ -61,7 +61,7 @@ export const ko: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "어떤 기기든 P2P 링에 참여 — 링에 중앙 마스터 없음",
-      "소스 공개 linkcpp 엔진 — BSL 라이선스이며 완전 검증 가능",
+      "소스 공개 p4 엔진 — BSL 1.1이며 완전 검증 가능",
       "기여자는 실제로 제공한 연산만큼 KVR을 획득",
       "자기 보관형 지갑 — 키는 당신의 기기를 떠나지 않습니다",
     ],
@@ -98,7 +98,7 @@ export const ko: Dict = {
       {
         title: "분할",
         body: "모델은 연속된 레이어 구간으로 나뉩니다. 모든 기기는 모델 파일 사본을 두되 자기 구간만 메모리에 로드하므로, 어떤 노드도 전체를 실행할 필요가 없습니다.",
-        note: "Qwen3.5-122B · 49 layers · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
       },
       {
         title: "제공",
@@ -219,21 +219,21 @@ export const ko: Dict = {
 
   tech: {
     eyebrow: "내부 구조",
-    title: "linkcpp — 네트워크를 움직이는 엔진",
-    lede: "linkcpp는 일상 하드웨어를 분산 추론 엔진으로 바꾸는 오픈 컨트롤 허브입니다. 그 ring runtime 덕분에 각 기기는 몇 개의 레이어만 보유하고 hidden state를 이웃에 넘깁니다 — 링에 중앙 마스터 없음 — 한편 추론엔진 데이터 플레인은 소규모 패치 세트만 더해 업스트림에 가깝게 유지됩니다.",
-    taglineCaption: "— linkcpp, 그 자신의 말로",
+    title: "p4 — 네트워크를 움직이는 엔진",
+    lede: "p4는 서로 다른 하드웨어를 하나의 서빙 풀로 묶습니다: 각 기기는 모델 레이어 중 몇 개만 보유하고 hidden state만 이웃에 넘기며, 링에 중앙 마스터는 없습니다. p4는 Kvasir가 2026년 중반까지 운영한 이전 엔진 linkcpp를 대체하며, 데이터 플레인은 소규모 패치 세트만 더해 업스트림에 가깝게 유지합니다.",
+    taglineCaption: "— p4, 그 자신의 말로",
     points: [
       {
         title: "Ring runtime",
         body: "모든 기기는 같은 모델을 저장하고 자기 레이어 구간만 로드한 뒤, 선행자에게 하나, 후행자에게 하나의 링크를 엽니다. hidden-state 경계가 링을 따라 순환하고 마지막 rank가 토큰을 반환합니다 — 중앙 마스터 없음, 어떤 노드도 전체를 갖지 않음.",
       },
       {
-        title: "linkcpp 컨트롤 허브",
-        body: "단일 Docker화 허브 — 추론엔진의 RPC 데이터 플레인에 없던 컨트롤 플레인입니다. 기기를 탐색하고 레이어 배치를 계획하며 워커를 실행하고 게이트웨이를 노출합니다. Business Source License(BSL) 1.1로 소스가 공개됩니다.",
+        title: "p4 컨트롤 플레인",
+        body: "RPC 데이터 플레인에 없던 바로 그 컨트롤 플레인입니다. 기기를 탐색하고 레이어와 전문가 배치를 계획하며 워커를 실행하고 게이트웨이를 노출합니다. 배치 계획은 운영자가 만드는 산출물입니다 — 웹 요청이 시켰다고 해서 엔진이 모델을 로드하지는 않습니다. Business Source License(BSL) 1.1로 소스가 공개됩니다.",
       },
       {
         title: "분산 레이어 배치",
-        body: "linkcpp는 GGUF 메타데이터를 읽고 rank manifest를 통해 노드별 연속 레이어 구간을 계산하며, 선택적으로 MoE 전문가-FFN을 노드 RAM으로 오프로드합니다.",
+        body: "p4는 GGUF 메타데이터를 읽고 배치 계획으로부터 노드별 연속 레이어 구간을 계산하며, 선택적으로 MoE 전문가-FFN을 노드 RAM으로 오프로드합니다. 428B MoE인 Step-3.7-Flash는 현재 머신 2대에 16 stages로 올라가 있습니다.",
       },
       {
         title: "SIWS + 2FA 보안",
@@ -251,13 +251,18 @@ export const ko: Dict = {
     items: [
       {
         phase: "현재",
-        title: "어떤 기기로든 추론, 가동 중",
-        body: "GPU, CPU, 휴대폰이 ring runtime을 통해 레이어를 제공합니다(NPU 지원은 진행 중). 122B 모델을 물리 머신 3대에 걸쳐 끝에서 끝까지 실행했고, 기여는 끝에서 끝까지 크레딧되며, web·desktop·iOS·Android 지갑은 키를 사용자 기기에 보관하고, 접근은 공개 도메인에서 HTTPS로 이루어집니다.",
+        title: "최전선 규모 서빙, 가동 중",
+        body: "428B MoE인 Step-3.7-Flash가 AMD MI250 머신 2대에 16 stages로 배치되어 서빙 중입니다. 122B 모델은 물리 머신 3대에 걸쳐 끝에서 끝까지 실행됐고, 그중 한 대는 모델 일부를 보유한 휴대폰이었습니다. web·desktop·iOS·Android 지갑은 키를 사용자 기기에 보관합니다.",
+      },
+      {
+        phase: "진행 중",
+        title: "링, 게이트웨이, 클라이언트",
+        body: "세 가지 작업이 동시에 진행되고 있습니다. 링은 64건 요청 실행이 중단된 뒤 복구 게이트를 통과하는 중입니다. 정산 게이트웨이는 p4로 이식 중이며, 그 작업이 끝날 때까지 공개 엔드포인트는 의도적으로 내려둔 상태입니다. 데스크톱 클라이언트는 p4 에이전트를 등록만 하던 데서 직접 감독하는 진짜 노드로 바뀌고 있습니다.",
       },
       {
         phase: "예정",
-        title: "메인넷 & 온체인 정산",
-        body: "오늘의 모든 것은 오프체인 정산 서비스와 함께 Solana devnet에서 실행됩니다. 온체인 보상 프로그램과 메인넷이 계획되어 있습니다.",
+        title: "Kimi K3, 그리고 devnet을 넘어선 정산",
+        body: "p4에서의 Kimi K3(2.8T MoE) 검증이 다음 관문이며, GLM-5.2 리포트 — 이전 엔진인 linkcpp에서 측정한 것 — 는 아직 공개 전입니다. 정산은 오프체인 서비스와 함께 Solana devnet에서 실행되며, 온체인 보상 프로그램과 메인넷이 계획되어 있습니다.",
       },
       {
         phase: "예정",
@@ -268,16 +273,16 @@ export const ko: Dict = {
   },
 
   proof: {
-    pill: "테스트 플릿에서 검증",
-    title: "실제 분산 추론, 여러 머신에서 검증",
+    pill: "우리 머신에서 직접 측정",
+    title: "무엇이 돌아가고 있고, 무엇이 측정됐는가",
     items: [
-      "params를 물리 머신 3대에 걸쳐 끝에서 끝까지 제공",
-      "노드별 개별 지갑이 각자 레이어 몫만큼 크레딧됨 (테스트 플릿)",
-      "API 표면 — OpenAI + Anthropic 호환",
+      "MoE를 오늘 서빙 중 — Step-3.7-Flash, AMD MI250 머신 2대에 걸쳐",
+      "stages로 모델이 분할되어 두 agent에 배치됨",
+      "코사인 유사도 — ROCm, CUDA, 휴대폰 CPU가 서로 일치",
       "지갑 플랫폼 — web · desktop · iOS · Android",
     ],
     strip:
-      "122B를 머신 3대에 분산해 제공 · OpenAI + Anthropic 호환 · web / desktop / iOS / Android 지갑 · Solana devnet",
+      "Step-3.7-Flash 428B를 MI250 머신 2대에서 · 122B를 머신 3대에 걸쳐 끝에서 끝까지 · OpenAI + Anthropic 호환 · Solana devnet",
   },
 
   footer: {
@@ -286,11 +291,11 @@ export const ko: Dict = {
     ctaBody:
       "노드를 실행해 제공하는 레이어만큼 KVR을 받거나, OpenAI/Anthropic 호환 엔드포인트로 게이트웨이를 앱에 연결하세요.",
     tagline:
-      "linkcpp 컨트롤 허브로 구동되는 탈중앙화 AI 추론 네트워크 브랜드 — 대형 모델을 일상 기기에 분산하는 소스 공개(BSL) 엔진(업스트림에 가깝게 유지되는 추론엔진 데이터 플레인 위에서).",
+      "p4 엔진으로 구동되는 탈중앙화 AI 추론 네트워크 브랜드 — BSL 1.1로 소스가 공개되며, 업스트림에 가깝게 유지되는 데이터 플레인 위에서 대형 모델을 일상 기기에 분산합니다.",
     disclaimerStrong: "고지.",
     disclaimer:
       "KVR은 추론 결제와 연산 보상에 쓰이는 유틸리티 / 기여 토큰입니다. 오늘은 Solana devnet에서 실행됩니다 — 거래 가능한 메인넷 자산이 아니며, 여기의 어떤 내용도 청약, 가격, 또는 금전적 수익 약속이 아닙니다. 연산 보상은 측정된 작업을 반영하며, 인프라 호스트는 가동 시간에 대해서도 보상을 받습니다.",
-    rights: "© 2026 Kvasir · linkcpp. 엔진은 Business Source License(BSL) 1.1로 제공됩니다 — 허용되는 사용 범위는 라이선스를 참조하세요.",
+    rights: "© 2026 Kvasir · p4. 엔진은 Business Source License(BSL) 1.1로 제공됩니다 — 허용되는 사용 범위는 라이선스를 참조하세요.",
   },
 
   guide: {
@@ -355,7 +360,7 @@ export const ko: Dict = {
     docTitle: "Kvasir — 기술 블로그",
     pill: "기술 블로그",
     title: "스웜을 만드는 엔지니어링",
-    lede: "linkcpp 위에 전문가-샤딩 스웜 추론을 구축하며 남긴 설계 노트와 실기기 검증 마일스톤 — 122B 모델이 GPU·CPU·폰을 가로질러 도는 방식.",
+    lede: "전문가-샤딩 스웜 추론을 구축하며 남긴 설계 노트와 실기기 검증 마일스톤 — 122B 모델이 GPU·CPU·폰을 가로질러 도는 방식. 2026년 중반까지의 글은 p4가 대체한 이전 엔진 linkcpp를 다룹니다. 아이디어는 그대로 이어졌고, 이름이 바뀌었습니다.",
     langNote: "",
     sidebarTitle: "글 목록",
     allArticles: "전체 글",
@@ -495,7 +500,7 @@ export const ko: Dict = {
     pill: "채용 중",
     headline1: "마케팅 & 그로스",
     headline2: "네트워크를 함께 키울 사람",
-    sub: "Kvasir는 Solana 기반 탈중앙 AI 추론 네트워크(DePIN)입니다. 소스 공개 linkcpp 엔진이 대형 오픈 모델을 여러 GPU와 머신에 분산시키고, 각 노드는 실제로 서빙한 레이어만큼 KVR을 법니다. 기술은 이미 돌아갑니다 — 이제 세상에 알릴 사람이 필요합니다.",
+    sub: "Kvasir는 Solana 기반 탈중앙 AI 추론 네트워크(DePIN)입니다. 소스 공개 p4 엔진이 대형 오픈 모델을 여러 GPU와 머신에 분산시키고, 각 노드는 실제로 서빙한 레이어만큼 KVR을 법니다. 기술은 이미 돌아갑니다 — 이제 세상에 알릴 사람이 필요합니다.",
     factRole: "역할",
     factRoleV: "마케팅 & 그로스 — 풀타임",
     factLocation: "근무지",

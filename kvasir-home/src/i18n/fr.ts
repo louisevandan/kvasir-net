@@ -1,7 +1,8 @@
 /* Français — traduit à partir du dictionnaire source anglais (en.ts).
-   Termes techniques et identifiants conservés tels quels (KVR, linkcpp,
+   Termes techniques et identifiants conservés tels quels (KVR, p4, linkcpp,
    moteur d'inférence, GPU, CPU, NPU, OpenAI, Anthropic, Solana, GGUF, MoE, SIWS, 2FA,
-   TOTP, ring runtime, MIT, tok/s, layer, Qwen3.5-122B, etc.). Le cadrage
+   TOTP, In-Flight Ring, BSL 1.1, tok/s, layer, stage, Step-3.7-Flash, Qwen3.5-122B,
+   Kimi K3, GLM-5.2, etc.). Le cadrage
    d'honnêteté est préservé (devnet, jeton utilitaire, pas un investissement,
    non-dépositaire). */
 import type { Dict } from "./types";
@@ -42,16 +43,16 @@ export const fr: Dict = {
     eyebrow: "DePIN · IA décentralisée — au-delà du monopole",
     headline1: "Apportez de la puissance de calcul.",
     headline2: "Gagnez des KVR.",
-    sub: "Kvasir répartit de grands modèles ouverts sur du matériel partagé grâce à linkcpp, de sorte qu’aucun nœud n’a besoin de détenir le modèle entier. Contribuez avec un GPU, un CPU ou un téléphone et gagnez des KVR pour les layers que vous exécutez.",
+    sub: "Kvasir relie des machines dispersées — GPU de centre de données, stations de travail, téléphones — en un seul pool de service qui fait tourner des modèles ouverts à l’échelle frontier. Aucun nœud n’a besoin de détenir le modèle entier, et chaque nœud gagne des KVR pour les layers qu’il exécute.",
     badges: [
       "Fonctionne sur GPU · CPU · NPU · téléphone",
       "Compatible OpenAI + Anthropic",
-      "Source disponible (BSL)",
+      "Source disponible (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "un seul anneau · aucun maître",
     topologyCaption:
-      "Un anneau d’appareils — un GPU, un CPU, un NPU et un téléphone — chacun détenant quelques-uns des 49 layers. Chaque nœud exécute sa tranche et ne transmet à son voisin que la frontière de l’état caché ; le dernier renvoie le token autour de l’anneau. Aucun nœud n’a besoin de détenir le modèle entier, et l’anneau n’a pas de maître central — à titre illustratif.",
+      "Un anneau d’appareils — un GPU, un CPU, un NPU et un téléphone — chacun détenant quelques-uns des layers du modèle. Chaque nœud exécute sa tranche et ne transmet à son voisin que la frontière de l’état caché ; le dernier renvoie le token autour de l’anneau. Aucun nœud n’a besoin de détenir le modèle entier, et l’anneau n’a pas de maître central — à titre illustratif.",
   },
 
   thesis: {
@@ -68,7 +69,7 @@ export const fr: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "N’importe quel appareil rejoint un anneau pair-à-pair — aucun maître central dans l’anneau",
-      "Moteur linkcpp à source disponible — sous licence BSL et entièrement inspectable",
+      "Moteur p4 à source disponible — BSL 1.1 et entièrement inspectable",
       "Les contributeurs gagnent des KVR pour le calcul réel qu’ils fournissent",
       "Portefeuille en auto-garde — vos clés ne quittent jamais votre appareil",
     ],
@@ -105,7 +106,7 @@ export const fr: Dict = {
       {
         title: "Répartir",
         body: "Le modèle est divisé en fenêtres de layers contiguës. Chaque appareil conserve une copie du fichier du modèle mais ne charge en mémoire que sa propre fenêtre, de sorte qu’aucun nœud n’a besoin d’exécuter le modèle entier.",
-        note: "Qwen3.5-122B · 49 layers · manifeste de rangs",
+        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
       },
       {
         title: "Servir",
@@ -226,21 +227,21 @@ export const fr: Dict = {
 
   tech: {
     eyebrow: "Sous le capot",
-    title: "linkcpp — le moteur derrière le réseau",
-    lede: "linkcpp est le hub de contrôle ouvert qui transforme du matériel du quotidien en un moteur d’inférence distribué. Son ring runtime permet à chaque appareil de ne détenir que quelques layers et de transmettre l’état caché à son voisin — aucun maître central dans l’anneau — tandis que le data plane du moteur d'inférence reste proche de l’upstream, avec un petit ensemble de correctifs.",
-    taglineCaption: "— linkcpp, en ses propres mots",
+    title: "p4 — le moteur derrière le réseau",
+    lede: "p4 relie du matériel hétérogène en un seul pool de service : chaque appareil ne détient que quelques layers du modèle et ne transmet que l’état caché à son voisin, sans maître central dans l’anneau. Il remplace linkcpp, le moteur que Kvasir a fait tourner jusqu’à mi-2026, et garde le data plane proche de l’upstream avec un petit ensemble de correctifs.",
+    taglineCaption: "— p4, en ses propres mots",
     points: [
       {
         title: "Ring runtime",
         body: "Chaque appareil stocke le même modèle et ne charge que sa fenêtre de layers, puis ouvre un lien vers son prédécesseur et un vers son successeur. Les frontières de l’état caché circulent autour de l’anneau et le dernier rang renvoie le token — aucun maître central, aucun nœud ne détient tout.",
       },
       {
-        title: "Hub de contrôle linkcpp",
-        body: "Un unique hub dockerisé — le plan de contrôle qui manquait au data plane RPC du moteur d'inférence. Il découvre les appareils, planifie le placement des layers, lance les workers et expose les passerelles. Source disponible sous la Business Source License (BSL) 1.1.",
+        title: "Plan de contrôle p4",
+        body: "Le plan de contrôle qui manquait au data plane RPC. Il découvre les appareils, planifie le placement des layers et des experts, lance les workers et expose les passerelles. Un plan de placement est un artefact d’opérateur — le moteur ne chargera pas un modèle parce qu’une requête web le lui a demandé. Source disponible sous la Business Source License (BSL) 1.1.",
       },
       {
         title: "Placement distribué des layers",
-        body: "linkcpp lit les métadonnées GGUF et calcule des fenêtres de layers contiguës par nœud via un manifeste de rangs, avec un déchargement optionnel des FFN d’experts MoE vers la RAM du nœud.",
+        body: "p4 lit les métadonnées GGUF et calcule des fenêtres de layers contiguës par nœud à partir d’un plan de placement, avec un déchargement optionnel des FFN d’experts MoE vers la RAM du nœud. Step-3.7-Flash, un MoE de 428B, est actuellement réparti en 16 stages sur deux machines.",
       },
       {
         title: "Sécurité SIWS + 2FA",
@@ -258,13 +259,18 @@ export const fr: Dict = {
     items: [
       {
         phase: "Maintenant",
-        title: "Inférence sur n’importe quel appareil, en direct",
-        body: "Les GPU, CPU et téléphones servent des layers à travers le ring runtime (prise en charge des NPU en cours). Un modèle de 122B a tourné de bout en bout sur trois machines physiques ; la contribution est créditée de bout en bout ; les portefeuilles web, desktop, iOS et Android conservent les clés sur l’appareil de l’utilisateur ; l’accès passe par HTTPS sur des domaines publics.",
+        title: "Service à l’échelle frontier, en direct",
+        body: "Step-3.7-Flash — un MoE de 428B — est réparti en 16 stages sur deux machines AMD MI250 et sert déjà. Un modèle de 122B a tourné de bout en bout sur trois machines physiques, dont un téléphone qui en détenait une partie. Les portefeuilles web, desktop, iOS et Android conservent les clés sur l’appareil de l’utilisateur.",
+      },
+      {
+        phase: "En cours",
+        title: "Anneau, passerelle, client",
+        body: "Trois chantiers avancent en parallèle. L’anneau passe des tests de reprise après une exécution de 64 requêtes interrompue. La passerelle de règlement est en cours de portage vers p4 — son endpoint public est délibérément hors ligne jusqu’à ce que ce soit fait. Le client desktop devient un véritable nœud qui supervise un agent p4 au lieu de simplement en enregistrer un.",
       },
       {
         phase: "À venir",
-        title: "Mainnet & règlement on-chain",
-        body: "Tout fonctionne aujourd’hui sur Solana devnet avec un service de règlement hors chaîne. Un programme de récompenses on-chain et le mainnet sont prévus.",
+        title: "Kimi K3, et le règlement au-delà du devnet",
+        body: "La vérification de Kimi K3 (MoE de 2.8T) sur p4 est la prochaine étape, et le rapport GLM-5.2 — mesuré sur linkcpp, le moteur précédent — reste à publier. Le règlement fonctionne sur Solana devnet avec un service hors chaîne ; un programme de récompenses on-chain et le mainnet sont prévus.",
       },
       {
         phase: "À venir",
@@ -275,16 +281,16 @@ export const fr: Dict = {
   },
 
   proof: {
-    pill: "Vérifié sur notre flotte de test",
-    title: "Une véritable inférence distribuée, vérifiée sur plusieurs machines",
+    pill: "Mesuré sur nos propres machines",
+    title: "Ce qui tourne, et ce que cela a mesuré",
     items: [
-      "paramètres servis de bout en bout sur 3 machines physiques",
-      "portefeuilles de nœud distincts, chacun crédité pour sa part de layers (flotte de test)",
-      "surfaces d’API — compatibles OpenAI + Anthropic",
+      "MoE servi aujourd’hui — Step-3.7-Flash, sur deux machines AMD MI250",
+      "stages sur lesquels le modèle est réparti, placés sur deux agents",
+      "de similarité cosinus entre ROCm, CUDA et le CPU d’un téléphone — le matériel hétérogène concorde",
       "plateformes de portefeuille — web · desktop · iOS · Android",
     ],
     strip:
-      "122B servi sur 3 machines · compatible OpenAI + Anthropic · portefeuilles sur web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B sur deux machines MI250 · 122B de bout en bout sur trois machines · compatible OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {
@@ -293,11 +299,11 @@ export const fr: Dict = {
     ctaBody:
       "Faites tourner un nœud et gagnez des KVR pour les layers que vous servez, ou branchez la passerelle sur votre application avec un endpoint compatible OpenAI/Anthropic.",
     tagline:
-      "La marque réseau de l’inférence IA décentralisée, propulsée par le hub de contrôle linkcpp — un moteur à source disponible (BSL) qui répartit de grands modèles sur des appareils du quotidien (sur un data plane de moteur d'inférence maintenu proche de l’upstream).",
+      "La marque réseau de l’inférence IA décentralisée, propulsée par le moteur p4 — à source disponible sous BSL 1.1, qui répartit de grands modèles sur des appareils du quotidien, sur un data plane maintenu proche de l’upstream.",
     disclaimerStrong: "Avertissement.",
     disclaimer:
       "Le KVR est un jeton utilitaire / de contribution utilisé pour payer l’inférence et récompenser le calcul. Il fonctionne aujourd’hui sur Solana devnet — ce n’est pas un actif mainnet négociable et rien ici ne constitue une offre, un prix ou une promesse de rendement financier. Les récompenses de calcul reflètent le travail mesuré ; les hôtes d’infrastructure gagnent aussi pour leur disponibilité.",
-    rights: "© 2026 Kvasir · linkcpp. Moteur sous la Business Source License (BSL) 1.1 — consultez la licence pour les usages autorisés.",
+    rights: "© 2026 Kvasir · p4. Moteur sous la Business Source License (BSL) 1.1 — consultez la licence pour les usages autorisés.",
   },
 
   guide: {
@@ -362,7 +368,7 @@ export const fr: Dict = {
     docTitle: "Kvasir — Blog technique",
     pill: "Blog technique",
     title: "L’ingénierie de l’essaim",
-    lede: "Notes de conception et jalons vérifiés sur du matériel réel, issus de la construction de l’inférence en essaim à experts fragmentés sur linkcpp — comment un modèle de 122B tourne à travers GPU, CPU et téléphones.",
+    lede: "Notes de conception et jalons vérifiés sur du matériel réel, issus de la construction de l’inférence en essaim à experts fragmentés — comment un modèle de 122B tourne à travers GPU, CPU et téléphones. Les articles publiés jusqu’à mi-2026 décrivent linkcpp, le moteur auquel p4 a succédé ; les idées ont été reprises, les noms ont changé.",
     langNote: "",
     sidebarTitle: "Parcourir les articles",
     allArticles: "Tous les articles",
@@ -496,7 +502,7 @@ export const fr: Dict = {
     pill: "Nous recrutons",
     headline1: "Marketing & Croissance",
     headline2: "faites grandir le réseau",
-    sub: "Kvasir est un réseau décentralisé d’inférence IA (DePIN) sur Solana. Le moteur linkcpp à source disponible répartit de grands modèles ouverts sur de nombreux GPU et machines contribués, et chaque nœud gagne des KVR pour les couches qu’il a réellement servies. La technique fonctionne déjà — il nous faut la personne qui le fera savoir au monde.",
+    sub: "Kvasir est un réseau décentralisé d’inférence IA (DePIN) sur Solana. Le moteur p4 à source disponible répartit de grands modèles ouverts sur de nombreux GPU et machines contribués, et chaque nœud gagne des KVR pour les couches qu’il a réellement servies. La technique fonctionne déjà — il nous faut la personne qui le fera savoir au monde.",
     factRole: "Rôle",
     factRoleV: "Marketing & croissance — temps plein",
     factLocation: "Lieu",

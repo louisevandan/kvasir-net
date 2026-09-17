@@ -623,7 +623,7 @@ curl -X POST https://gate.kvasir-ai.net/api/credits/apikey \\
 /* Fastest streaming smoke test — plain curl. */
 export const STREAM_CURL_SNIPPET = `curl -N https://gate.kvasir-ai.net/v1/chat/completions \\
   -H "Authorization: Bearer kvr-...." -H 'content-type: application/json' \\
-  -d '{"model":"f793eb7b:ctrl-f11eb9","messages":[{"role":"user","content":"hi"}],"stream":true}'`;
+  -d '{"model":"f793eb7b:step-3.7-flash","messages":[{"role":"user","content":"hi"}],"stream":true}'`;
 
 /* Call it with the standard OpenAI SDK in each language — only base_url + key change. */
 export const INFERENCE_API_SNIPPETS: Snippet[] = [
@@ -640,7 +640,7 @@ const client = new OpenAI({
 });
 
 const stream = await client.chat.completions.create({
-  model: "f793eb7b:ctrl-f11eb9",            // GET /v1/models to list
+  model: "f793eb7b:step-3.7-flash",            // GET /v1/models to list
   messages: [{ role: "user", content: "What's the weather in Seoul?" }],
   tools: [{ type: "function", function: {
     name: "get_weather",
@@ -669,7 +669,7 @@ from openai import OpenAI
 client = OpenAI(base_url="https://gate.kvasir-ai.net/v1", api_key=os.environ["KVR_API_KEY"])
 
 stream = client.chat.completions.create(
-    model="f793eb7b:ctrl-f11eb9",           # GET /v1/models to list
+    model="f793eb7b:step-3.7-flash",           # GET /v1/models to list
     messages=[{"role": "user", "content": "What's the weather in Seoul?"}],
     tools=[{"type": "function", "function": {
         "name": "get_weather",
@@ -700,7 +700,7 @@ OpenAIClient client = OpenAIOkHttpClient.builder()
     .build();
 
 ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-    .model("f793eb7b:ctrl-f11eb9")          // GET /v1/models to list
+    .model("f793eb7b:step-3.7-flash")          // GET /v1/models to list
     .addUserMessage("What's the weather in Seoul?")
     .build();
 
@@ -727,7 +727,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::with_config(config);
 
     let req = CreateChatCompletionRequestArgs::default()
-        .model("f793eb7b:ctrl-f11eb9")      // GET /v1/models to list
+        .model("f793eb7b:step-3.7-flash")      // GET /v1/models to list
         .messages([ChatCompletionRequestUserMessageArgs::default()
             .content("What's the weather in Seoul?").build()?.into()])
         .stream(true).build()?;
@@ -759,7 +759,7 @@ func main() {
 	client := openai.NewClientWithConfig(cfg)
 
 	stream, _ := client.CreateChatCompletionStream(context.Background(), openai.ChatCompletionRequest{
-		Model:    "f793eb7b:ctrl-f11eb9", // GET /v1/models to list
+		Model:    "f793eb7b:step-3.7-flash", // GET /v1/models to list
 		Messages: []openai.ChatCompletionMessage{{Role: "user", Content: "What's the weather in Seoul?"}},
 		Stream:   true,
 	})
@@ -860,7 +860,7 @@ export const INFERENCE_API_REF: CreditRefRow[] = [
   { key: "pricing", value: "basePrice + tokens × perToken KVR  (now 0.01 + tokens × 0.00002)" },
   { key: "errors", value: "402 no credit · 401 bad key · 403 not whitelisted" },
   { key: "context", value: "128K tokens (request body ≤ 2 MB)" },
-  { key: "model", value: "f793eb7b:ctrl-f11eb9 (Qwen3.5-122B-A10B-Q4_K_M)" },
+  { key: "model", value: "f793eb7b:step-3.7-flash (Step-3.7-Flash 428B MoE, Q4_K_XL)" },
 ];
 
 /* The four canonical API calls, shown as a language-agnostic reference. */
@@ -881,7 +881,7 @@ export const API_REFS: ApiRef[] = [
   "recipient": "8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF",
   "mint": "6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ",
   "symbol": "KVR",
-  "models": [{ "id": "f793eb7b:ctrl-f11eb9", "name": "Qwen3.5-122B-A10B-Q4_K_M" }]
+  "models": [{ "id": "f793eb7b:step-3.7-flash", "name": "Step-3.7-Flash (428B MoE, Q4_K_XL)" }]
 }`,
   },
   {
@@ -891,7 +891,7 @@ export const API_REFS: ApiRef[] = [
     body: `{ "model": "<id>", "prompt": "<your prompt>" }`,
     sample: `{
   "requestId": "44b8c15c-4491-4eab-a2a9-62326344ee50",
-  "model": "f793eb7b:ctrl-f11eb9",
+  "model": "f793eb7b:step-3.7-flash",
   "priceToken": 3.08,
   "recipient": "8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF",
   "mint": "6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ",
@@ -916,7 +916,7 @@ export const API_REFS: ApiRef[] = [
     body: `{ "requestId": "<uuid>", "signature": "<tx sig>" }`,
     sample: `{
   "requestId": "…", "paid": true, "signature": "…",
-  "model": "f793eb7b:ctrl-f11eb9", "priceToken": 3.08,
+  "model": "f793eb7b:step-3.7-flash", "priceToken": 3.08,
   "result": "…model response (markdown)…",
   "usage": { "promptTokens": 2, "completionTokens": 141, "totalTokens": 143, "costToken": 1.35 }
 }`,

@@ -355,7 +355,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "A **Mixture-of-Experts** model replaces each layer's single FFN with a bank of independent expert FFNs plus a **router** that picks a few per token. Qwen3.5-122B-A10B is the network's flagship example:",
+        md: "A **Mixture-of-Experts** model replaces each layer's single FFN with a bank of independent expert FFNs plus a **router** that picks a few per token. Step-3.7-Flash, the 428B MoE serving today, has 288 experts per layer with top-8 routing. Qwen3.5-122B-A10B is the worked example below, because it is the one whose numbers were measured end to end:",
       },
       {
         t: "stats",

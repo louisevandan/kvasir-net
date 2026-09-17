@@ -1,7 +1,8 @@
 /* English — the source dictionary. Every other language mirrors this shape.
-   Translators: keep technical terms and identifiers verbatim (KVR, linkcpp,
+   Translators: keep technical terms and identifiers verbatim (KVR, p4, linkcpp,
    inference engine, GPU, CPU, NPU, OpenAI, Anthropic, Solana, GGUF, MoE, SIWS, 2FA,
-   TOTP, ring runtime, MIT, tok/s, layer, Qwen3.5-122B, etc.). Keep the honesty
+   TOTP, In-Flight Ring, BSL 1.1, tok/s, layer, stage, Step-3.7-Flash, Qwen3.5-122B,
+   Kimi K3, GLM-5.2, etc.). Keep the honesty
    framing intact (devnet, utility token, not an investment, non-custodial). */
 export const en = {
   nav: {
@@ -39,16 +40,16 @@ export const en = {
     eyebrow: "DePIN · Decentralized AI — beyond the monopoly",
     headline1: "Bring compute.",
     headline2: "Earn KVR.",
-    sub: "Kvasir splits large open models across shared hardware with linkcpp, so no single node has to hold the whole model. Contribute a GPU, CPU or phone — and earn KVR for the layers you run.",
+    sub: "Kvasir binds scattered machines — data-center GPUs, workstations, phones — into one serving pool that runs frontier-scale open models. No single node has to hold the whole model, and every node earns KVR for the layers it runs.",
     badges: [
       "Runs on GPU · CPU · NPU · phone",
       "OpenAI + Anthropic compatible",
-      "Source-available (BSL)",
+      "Source-available (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "one ring · no master",
     topologyCaption:
-      "A ring of devices — a GPU, CPU, NPU and phone — each holding a few of the 49 layers. Every node runs its slice and passes only the hidden-state boundary to its neighbor; the last returns the token around the ring. No node has to hold the whole model, and the ring has no central master — illustrative.",
+      "A ring of devices — a GPU, CPU, NPU and phone — each holding a few of the model's layers. Every node runs its slice and passes only the hidden-state boundary to its neighbor; the last returns the token around the ring. No node has to hold the whole model, and the ring has no central master — illustrative.",
   },
 
   thesis: {
@@ -65,7 +66,7 @@ export const en = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Any device joins a peer-to-peer ring — no central master in the ring",
-      "Source-available linkcpp engine — BSL-licensed and fully inspectable",
+      "Source-available p4 engine — BSL 1.1 and fully inspectable",
       "Contributors earn KVR for the real compute they give",
       "Self-custody wallet — your keys never leave your device",
     ],
@@ -102,7 +103,7 @@ export const en = {
       {
         title: "Split",
         body: "The model is divided into contiguous layer windows. Every device keeps a copy of the model file but loads only its own window into memory, so no node has to run the whole thing.",
-        note: "Qwen3.5-122B · 49 layers · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
       },
       {
         title: "Serve",
@@ -223,21 +224,21 @@ export const en = {
 
   tech: {
     eyebrow: "Under the hood",
-    title: "linkcpp — the engine behind the network",
-    lede: "linkcpp is the open control hub that turns everyday hardware into a distributed inference engine. Its ring runtime lets each device hold only a few layers and pass hidden state to its neighbor — no central master in the ring — while the inference engine data plane stays close to upstream, with a small patch set.",
-    taglineCaption: "— linkcpp, in its own words",
+    title: "p4 — the engine behind the network",
+    lede: "p4 binds mixed hardware into one serving pool: each device holds a few of the model's layers and passes only the hidden state to its neighbour, with no central master in the ring. It supersedes linkcpp, the engine Kvasir ran through mid-2026, and keeps the data plane close to upstream with a small patch set.",
+    taglineCaption: "— p4, in its own words",
     points: [
       {
         title: "Ring runtime",
         body: "Every device stores the same model and loads only its layer window, then opens one link to its predecessor and one to its successor. Hidden-state boundaries circulate around the ring and the last rank returns the token — no central master, no node holds it all.",
       },
       {
-        title: "linkcpp control hub",
-        body: "A single Dockerized hub — the control plane that the inference engine’s RPC data plane was missing. It discovers devices, plans layer placement, launches the workers, and exposes the gateways. Source-available under the Business Source License (BSL) 1.1.",
+        title: "p4 control plane",
+        body: "The control plane the RPC data plane was missing. It discovers devices, plans layer and expert placement, launches the workers, and exposes the gateways. A placement plan is an operator artifact — the engine will not load a model because a web request asked it to. Source-available under the Business Source License (BSL) 1.1.",
       },
       {
         title: "Distributed layer placement",
-        body: "linkcpp reads GGUF metadata and computes contiguous per-node layer windows via a rank manifest, plus optional MoE expert-FFN offload to node RAM.",
+        body: "p4 reads GGUF metadata and computes contiguous per-node layer windows from a placement plan, plus optional MoE expert-FFN offload to node RAM. Step-3.7-Flash, a 428B MoE, currently sits as 16 stages across two machines.",
       },
       {
         title: "SIWS + 2FA security",
@@ -255,13 +256,18 @@ export const en = {
     items: [
       {
         phase: "Now",
-        title: "Any-device inference, live",
-        body: "GPUs, CPUs and phones serve layers across the ring runtime (NPU support in progress). A 122B model ran end to end across three physical machines; contribution is credited end to end; wallets on web, desktop, iOS and Android keep keys on the user's device; access runs over HTTPS on public domains.",
+        title: "Frontier-scale serving, live",
+        body: "Step-3.7-Flash — a 428B MoE — is placed as 16 stages across two AMD MI250 machines and is serving. A 122B model ran end to end across three physical machines, one of them a phone holding part of it. Wallets on web, desktop, iOS and Android keep keys on the user's device.",
+      },
+      {
+        phase: "In flight",
+        title: "Ring, gateway, client",
+        body: "Three things are being worked on at once. The ring is going through recovery gates after an interrupted 64-request run. The settlement gateway is being ported to p4 — its public endpoint is deliberately offline until that lands. The desktop client is becoming a real node that supervises a p4 agent instead of only registering one.",
       },
       {
         phase: "Coming",
-        title: "Mainnet & on-chain settlement",
-        body: "Everything today runs on Solana devnet with an off-chain settlement service. An on-chain rewards program and mainnet are planned.",
+        title: "Kimi K3, and settlement beyond devnet",
+        body: "Kimi K3 (2.8T MoE) verification on p4 is the next gate, and the GLM-5.2 report — measured on linkcpp, the previous engine — is still to be published. Settlement runs on Solana devnet with an off-chain service; an on-chain rewards program and mainnet are planned.",
       },
       {
         phase: "Coming",
@@ -272,16 +278,16 @@ export const en = {
   },
 
   proof: {
-    pill: "Verified on our test fleet",
-    title: "Real distributed inference, verified across machines",
+    pill: "Measured on our own machines",
+    title: "What is running, and what it measured",
     items: [
-      "params served end to end across 3 physical machines",
-      "separate node wallets, each credited for its layer share (test fleet)",
-      "API surfaces — OpenAI + Anthropic compatible",
+      "MoE serving today — Step-3.7-Flash, across two AMD MI250 machines",
+      "stages the model is split into, placed across two agents",
+      "cosine similarity across ROCm, CUDA and a phone CPU — mixed hardware agrees",
       "wallet platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "122B served across 3 machines · OpenAI + Anthropic compatible · wallets on web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B on two MI250 machines · 122B end to end across three machines · OpenAI + Anthropic compatible · Solana devnet",
   },
 
   footer: {
@@ -290,11 +296,11 @@ export const en = {
     ctaBody:
       "Run a node and earn KVR for the layers you serve, or plug the gateway into your app with an OpenAI/Anthropic-compatible endpoint.",
     tagline:
-      "The network brand for decentralized AI inference, powered by the linkcpp control hub — a source-available (BSL) engine that splits large models across everyday devices (on an inference engine data plane kept close to upstream).",
+      "The network brand for decentralized AI inference, powered by the p4 engine — source-available under BSL 1.1, splitting large models across everyday devices on a data plane kept close to upstream.",
     disclaimerStrong: "Disclaimer.",
     disclaimer:
       "KVR is a utility / contribution token used to pay for inference and to reward compute. It runs on Solana devnet today — it is not a tradable mainnet asset and nothing here is an offer, price, or promise of financial return. Compute rewards reflect measured work; infrastructure hosts also earn for uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine under the Business Source License (BSL) 1.1 — see the license for permitted use.",
+    rights: "© 2026 Kvasir · p4. Engine under the Business Source License (BSL) 1.1 — see the license for permitted use.",
   },
 
   guide: {
@@ -359,7 +365,7 @@ export const en = {
     docTitle: "Kvasir — Technology",
     pill: "Tech blog",
     title: "Engineering the swarm",
-    lede: "Design notes and hardware-verified milestones from building expert-sharded swarm inference on linkcpp — how a 122B model runs across GPUs, CPUs and phones.",
+    lede: "Design notes and hardware-verified milestones from building expert-sharded swarm inference — how a 122B model runs across GPUs, CPUs and phones. Posts through mid-2026 describe linkcpp, the engine p4 superseded; the ideas carried over, the names changed.",
     langNote: "",
     sidebarTitle: "Browse articles",
     allArticles: "All articles",
@@ -499,7 +505,7 @@ export const en = {
     pill: "We’re hiring",
     headline1: "Marketing & Growth",
     headline2: "grow the network",
-    sub: "Kvasir is a decentralized AI-inference network (DePIN) on Solana. The source-available linkcpp engine splits large open models across many contributed GPUs and machines, and every node earns KVR for the layers it actually served. The technical side works — we need the person who tells the world.",
+    sub: "Kvasir is a decentralized AI-inference network (DePIN) on Solana. The source-available p4 engine splits large open models across many contributed GPUs and machines, and every node earns KVR for the layers it actually served. The technical side works — we need the person who tells the world.",
     factRole: "Role",
     factRoleV: "Marketing & growth — full-time",
     factLocation: "Location",

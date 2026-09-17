@@ -281,7 +281,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "**Mixture-of-Experts** 모델은 각 레이어의 단일 FFN을 독립 전문가 FFN들의 뱅크와, 토큰마다 몇 개를 고르는 **라우터**로 대체합니다. Qwen3.5-122B-A10B가 네트워크의 대표 예시입니다:",
+        md: "**Mixture-of-Experts** 모델은 각 레이어의 단일 FFN을 독립 전문가 FFN들의 뱅크와, 토큰마다 몇 개를 고르는 **라우터**로 대체합니다. 오늘 서빙 중인 428B MoE인 Step-3.7-Flash는 레이어당 288개 전문가에 top-8 라우팅을 씁니다. 아래에서 풀어 쓰는 예시는 Qwen3.5-122B-A10B인데, 수치를 엔드투엔드로 실측한 모델이 바로 이것이기 때문입니다:",
       },
       {
         t: "stats",

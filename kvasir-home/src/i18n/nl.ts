@@ -1,8 +1,9 @@
 /* Nederlands — mirror van de Engelse brondictionary (en.ts). Zelfde structuur:
    dezelfde keys, nesting, arraylengtes en volgorde; alleen de tekstwaarden zijn
-   vertaald. Technische termen en identifiers blijven verbatim (KVR, linkcpp,
+   vertaald. Technische termen en identifiers blijven verbatim (KVR, p4, linkcpp,
    inferentie-engine, GPU, CPU, NPU, OpenAI, Anthropic, Solana, GGUF, MoE, SIWS, 2FA,
-   TOTP, ring runtime, MIT, tok/s, layer, Qwen3.5-122B, etc.). De eerlijkheids-
+   TOTP, In-Flight Ring, BSL 1.1, tok/s, layer, stage, Step-3.7-Flash, Qwen3.5-122B,
+   Kimi K3, GLM-5.2, etc.). De eerlijkheids-
    framing blijft intact (devnet, utility-token, geen investering, non-custodial). */
 import type { Dict } from "./types";
 
@@ -42,16 +43,16 @@ export const nl: Dict = {
     eyebrow: "DePIN · Gedecentraliseerde AI — voorbij het monopolie",
     headline1: "Lever rekenkracht.",
     headline2: "Verdien KVR.",
-    sub: "Kvasir verdeelt grote open modellen over gedeelde hardware met linkcpp, zodat geen enkele node het hele model hoeft te bevatten. Draag een GPU, CPU of telefoon bij en verdien KVR voor de layers die je draait.",
+    sub: "Kvasir bindt verspreide machines — datacenter-GPU’s, workstations, telefoons — samen tot één serving pool die open modellen op frontier-schaal draait. Geen enkele node hoeft het hele model te bevatten, en elke node verdient KVR voor de layers die hij draait.",
     badges: [
       "Draait op GPU · CPU · NPU · telefoon",
       "OpenAI + Anthropic compatibel",
-      "Broncode beschikbaar (BSL)",
+      "Broncode beschikbaar (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "één ring · geen master",
     topologyCaption:
-      "Een ring van apparaten — een GPU, CPU, NPU en telefoon — die elk een paar van de 49 layers bevatten. Elke node draait zijn deel en geeft alleen de hidden-state-grens door aan zijn buur; de laatste stuurt de token via de ring terug. Geen enkele node hoeft het hele model te bevatten, en de ring heeft geen centrale master — ter illustratie.",
+      "Een ring van apparaten — een GPU, CPU, NPU en telefoon — die elk een paar van de layers van het model bevatten. Elke node draait zijn deel en geeft alleen de hidden-state-grens door aan zijn buur; de laatste stuurt de token via de ring terug. Geen enkele node hoeft het hele model te bevatten, en de ring heeft geen centrale master — ter illustratie.",
   },
 
   thesis: {
@@ -68,7 +69,7 @@ export const nl: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Elk apparaat sluit zich aan bij een peer-to-peer-ring — geen centrale master in de ring",
-      "linkcpp-engine met beschikbare broncode — BSL-gelicentieerd en volledig inspecteerbaar",
+      "p4-engine met beschikbare broncode — BSL 1.1 en volledig inspecteerbaar",
       "Bijdragers verdienen KVR voor de echte rekenkracht die ze leveren",
       "Wallet in eigen beheer — je sleutels verlaten nooit je apparaat",
     ],
@@ -105,7 +106,7 @@ export const nl: Dict = {
       {
         title: "Splitsen",
         body: "Het model wordt verdeeld in aaneengesloten layer-vensters. Elk apparaat bewaart een kopie van het modelbestand, maar laadt alleen zijn eigen venster in het geheugen, zodat geen enkele node het geheel hoeft te draaien.",
-        note: "Qwen3.5-122B · 49 layers · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
       },
       {
         title: "Bedienen",
@@ -226,21 +227,21 @@ export const nl: Dict = {
 
   tech: {
     eyebrow: "Onder de motorkap",
-    title: "linkcpp — de engine achter het netwerk",
-    lede: "linkcpp is de open control hub die alledaagse hardware verandert in een gedistribueerde inferentie-engine. De ring runtime laat elk apparaat slechts een paar layers bevatten en hidden state doorgeven aan zijn buur — geen centrale master in de ring — terwijl de inferentie-engine data plane dicht bij upstream blijft, met een kleine set patches.",
-    taglineCaption: "— linkcpp, in zijn eigen woorden",
+    title: "p4 — de engine achter het netwerk",
+    lede: "p4 bindt gemengde hardware samen tot één serving pool: elk apparaat bevat een paar layers van het model en geeft alleen de hidden state door aan zijn buur, zonder centrale master in de ring. Het vervangt linkcpp, de engine waarop Kvasir tot medio 2026 draaide, en houdt de data plane dicht bij upstream met een kleine set patches.",
+    taglineCaption: "— p4, in zijn eigen woorden",
     points: [
       {
         title: "Ring runtime",
         body: "Elk apparaat slaat hetzelfde model op en laadt alleen zijn layer-venster, en opent dan één link naar zijn voorganger en één naar zijn opvolger. Hidden-state-grenzen circuleren door de ring en de laatste rank stuurt de token terug — geen centrale master, geen node bevat alles.",
       },
       {
-        title: "linkcpp control hub",
-        body: "Eén Dockerized hub — de control plane die het RPC data plane van de inferentie-engine miste. Het ontdekt apparaten, plant layer-plaatsing, start de workers en stelt de gateways beschikbaar. Broncode beschikbaar onder de Business Source License (BSL) 1.1.",
+        title: "p4 control plane",
+        body: "De control plane die het RPC data plane miste. Het ontdekt apparaten, plant layer- en expertplaatsing, start de workers en stelt de gateways beschikbaar. Een plaatsingsplan is een operator-artefact — de engine laadt geen model omdat een webverzoek daarom vraagt. Broncode beschikbaar onder de Business Source License (BSL) 1.1.",
       },
       {
         title: "Gedistribueerde layer-plaatsing",
-        body: "linkcpp leest GGUF-metadata en berekent aaneengesloten layer-vensters per node via een rank manifest, plus optionele MoE-expert-FFN-offload naar node-RAM.",
+        body: "p4 leest GGUF-metadata en berekent aaneengesloten layer-vensters per node op basis van een plaatsingsplan, plus optionele MoE-expert-FFN-offload naar node-RAM. Step-3.7-Flash, een 428B MoE, staat momenteel als 16 stages verdeeld over twee machines.",
       },
       {
         title: "SIWS + 2FA-beveiliging",
@@ -258,13 +259,18 @@ export const nl: Dict = {
     items: [
       {
         phase: "Nu",
-        title: "Inferentie op elk apparaat, live",
-        body: "GPU’s, CPU’s en telefoons bedienen layers via de ring runtime (NPU-ondersteuning in ontwikkeling). Een 122B-model draaide end-to-end over drie fysieke machines; bijdrage wordt end-to-end gecrediteerd; wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker; toegang loopt via HTTPS op publieke domeinen.",
+        title: "Serving op frontier-schaal, live",
+        body: "Step-3.7-Flash — een 428B MoE — is als 16 stages over twee AMD MI250-machines geplaatst en bedient verkeer. Een 122B-model draaide end-to-end over drie fysieke machines, waarvan één een telefoon die een deel ervan bevatte. Wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker.",
+      },
+      {
+        phase: "In uitvoering",
+        title: "Ring, gateway, client",
+        body: "Er wordt aan drie dingen tegelijk gewerkt. De ring gaat door herstelgates na een onderbroken run van 64 verzoeken. De settlement-gateway wordt geport naar p4 — het publieke endpoint staat bewust offline totdat dat klaar is. De desktopclient wordt een echte node die een p4-agent aanstuurt in plaats van er alleen een te registreren.",
       },
       {
         phase: "Binnenkort",
-        title: "Mainnet & on-chain-afrekening",
-        body: "Alles draait vandaag op Solana devnet met een off-chain afrekenservice. Een on-chain beloningsprogramma en mainnet zijn gepland.",
+        title: "Kimi K3, en afrekening voorbij devnet",
+        body: "Verificatie van Kimi K3 (2.8T MoE) op p4 is de volgende gate, en het GLM-5.2-rapport — gemeten op linkcpp, de vorige engine — moet nog worden gepubliceerd. Afrekening draait op Solana devnet met een off-chain service; een on-chain beloningsprogramma en mainnet zijn gepland.",
       },
       {
         phase: "Binnenkort",
@@ -275,16 +281,16 @@ export const nl: Dict = {
   },
 
   proof: {
-    pill: "Geverifieerd op onze testvloot",
-    title: "Echte gedistribueerde inferentie, geverifieerd over meerdere machines",
+    pill: "Gemeten op onze eigen machines",
+    title: "Wat er draait, en wat het heeft gemeten",
     items: [
-      "parameters end-to-end bediend over 3 fysieke machines",
-      "afzonderlijke node-wallets, elk gecrediteerd voor zijn layer-aandeel (testvloot)",
-      "API-oppervlakken — OpenAI + Anthropic compatibel",
+      "MoE die vandaag bediend wordt — Step-3.7-Flash, over twee AMD MI250-machines",
+      "stages waarin het model is opgesplitst, geplaatst over twee agents",
+      "cosinusgelijkenis tussen ROCm, CUDA en een telefoon-CPU — gemengde hardware komt overeen",
       "wallet-platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "122B bediend over 3 machines · OpenAI + Anthropic compatibel · wallets op web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B op twee MI250-machines · 122B end-to-end over drie machines · OpenAI + Anthropic compatibel · Solana devnet",
   },
 
   footer: {
@@ -293,11 +299,11 @@ export const nl: Dict = {
     ctaBody:
       "Draai een node en verdien KVR voor de layers die je bedient, of koppel de gateway aan je app via een OpenAI/Anthropic-compatibel endpoint.",
     tagline:
-      "Het netwerkmerk voor gedecentraliseerde AI-inferentie, aangedreven door de linkcpp control hub — een engine met beschikbare broncode (BSL) die grote modellen splitst over alledaagse apparaten (op een inferentie-engine data plane die dicht bij upstream blijft).",
+      "Het netwerkmerk voor gedecentraliseerde AI-inferentie, aangedreven door de p4-engine — broncode beschikbaar onder BSL 1.1, die grote modellen splitst over alledaagse apparaten op een data plane die dicht bij upstream blijft.",
     disclaimerStrong: "Disclaimer.",
     disclaimer:
       "KVR is een utility- / bijdrage-token dat wordt gebruikt om voor inferentie te betalen en om rekenkracht te belonen. Het draait vandaag op Solana devnet — het is geen verhandelbaar mainnet-bezit en niets hierin is een aanbod, prijs of belofte van financieel rendement. Beloningen voor rekenkracht weerspiegelen gemeten werk; infrastructuurhosts verdienen daarnaast voor uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine onder de Business Source License (BSL) 1.1 — zie de licentie voor toegestaan gebruik.",
+    rights: "© 2026 Kvasir · p4. Engine onder de Business Source License (BSL) 1.1 — zie de licentie voor toegestaan gebruik.",
   },
 
   guide: {
@@ -362,7 +368,7 @@ export const nl: Dict = {
     docTitle: "Kvasir — Technologie",
     pill: "Techblog",
     title: "De engineering van de zwerm",
-    lede: "Ontwerpnotities en op echte hardware geverifieerde mijlpalen uit de bouw van expert-gesharde zwerm-inferentie op linkcpp — hoe een 122B-model over GPU’s, CPU’s en telefoons draait.",
+    lede: "Ontwerpnotities en op echte hardware geverifieerde mijlpalen uit de bouw van expert-gesharde zwerm-inferentie — hoe een 122B-model over GPU’s, CPU’s en telefoons draait. Posts tot medio 2026 beschrijven linkcpp, de engine die p4 heeft vervangen; de ideeën bleven, de namen veranderden.",
     langNote: "",
     sidebarTitle: "Artikelen bekijken",
     allArticles: "Alle artikelen",
@@ -496,7 +502,7 @@ export const nl: Dict = {
     pill: "We nemen aan",
     headline1: "Marketing & Growth",
     headline2: "laat het netwerk groeien",
-    sub: "Kvasir is een gedecentraliseerd AI-inferentienetwerk (DePIN) op Solana. De linkcpp-engine met beschikbare broncode verdeelt grote open modellen over vele bijgedragen GPU's en machines, en elke node verdient KVR voor de lagen die hij daadwerkelijk heeft bediend. De techniek werkt al — we zoeken de persoon die het de wereld vertelt.",
+    sub: "Kvasir is een gedecentraliseerd AI-inferentienetwerk (DePIN) op Solana. De p4-engine met beschikbare broncode verdeelt grote open modellen over vele bijgedragen GPU's en machines, en elke node verdient KVR voor de lagen die hij daadwerkelijk heeft bediend. De techniek werkt al — we zoeken de persoon die het de wereld vertelt.",
     factRole: "Rol",
     factRoleV: "Marketing & growth — fulltime",
     factLocation: "Locatie",

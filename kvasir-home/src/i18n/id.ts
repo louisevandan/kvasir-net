@@ -36,16 +36,16 @@ export const id: Dict = {
     eyebrow: "DePIN · AI Terdesentralisasi — melampaui monopoli",
     headline1: "Sumbangkan komputasi.",
     headline2: "Dapatkan KVR.",
-    sub: "Kvasir membagi model open besar di seluruh perangkat keras bersama dengan linkcpp, sehingga tidak ada satu node pun yang harus menyimpan seluruh model. Sumbangkan GPU, CPU, atau ponsel — dan dapatkan KVR atas layer yang Anda jalankan.",
+    sub: "Kvasir menyatukan mesin-mesin yang tersebar — GPU pusat data, workstation, ponsel — menjadi satu kumpulan penyaji yang menjalankan model open berskala frontier. Tidak ada satu node pun yang harus menyimpan seluruh model, dan setiap node mendapatkan KVR atas layer yang dijalankannya.",
     badges: [
       "Berjalan di GPU · CPU · NPU · ponsel",
       "Kompatibel dengan OpenAI + Anthropic",
-      "Sumber tersedia (BSL)",
+      "Sumber tersedia (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "satu ring · tanpa master",
     topologyCaption:
-      "Sebuah ring perangkat — GPU, CPU, NPU, dan ponsel — masing-masing menyimpan beberapa dari 49 layer. Setiap node menjalankan bagiannya dan hanya meneruskan batas hidden-state ke tetangganya; node terakhir mengembalikan token melalui ring. Tidak ada node yang harus menyimpan seluruh model, dan ring tidak memiliki master pusat — ilustratif.",
+      "Sebuah ring perangkat — GPU, CPU, NPU, dan ponsel — masing-masing menyimpan beberapa layer dari model. Setiap node menjalankan bagiannya dan hanya meneruskan batas hidden-state ke tetangganya; node terakhir mengembalikan token melalui ring. Tidak ada node yang harus menyimpan seluruh model, dan ring tidak memiliki master pusat — ilustratif.",
   },
 
   thesis: {
@@ -62,7 +62,7 @@ export const id: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Perangkat apa pun bergabung ke ring peer-to-peer — tanpa master pusat di dalam ring",
-      "Engine linkcpp bersumber tersedia — berlisensi BSL dan dapat diperiksa sepenuhnya",
+      "Engine p4 bersumber tersedia — BSL 1.1 dan dapat diperiksa sepenuhnya",
       "Kontributor mendapatkan KVR atas komputasi nyata yang mereka berikan",
       "Dompet kustodi mandiri — kunci Anda tidak pernah meninggalkan perangkat Anda",
     ],
@@ -99,7 +99,7 @@ export const id: Dict = {
       {
         title: "Bagi",
         body: "Model dibagi menjadi jendela layer yang berdekatan. Setiap perangkat menyimpan salinan file model tetapi hanya memuat jendelanya sendiri ke memori, sehingga tidak ada node yang harus menjalankan seluruhnya.",
-        note: "Qwen3.5-122B · 49 layer · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 layer · 16 stage",
       },
       {
         title: "Sajikan",
@@ -220,21 +220,21 @@ export const id: Dict = {
 
   tech: {
     eyebrow: "Di balik layar",
-    title: "linkcpp — engine di balik jaringan",
-    lede: "linkcpp adalah hub kendali terbuka yang mengubah perangkat keras sehari-hari menjadi engine inferensi terdistribusi. Ring runtime-nya memungkinkan setiap perangkat hanya menyimpan beberapa layer dan meneruskan hidden state ke tetangganya — tanpa master pusat di dalam ring — sementara data plane mesin inferensi tetap dekat dengan upstream, dengan sekumpulan kecil patch.",
-    taglineCaption: "— linkcpp, dalam kata-katanya sendiri",
+    title: "p4 — engine di balik jaringan",
+    lede: "p4 menyatukan perangkat keras campuran menjadi satu kumpulan penyaji: setiap perangkat menyimpan beberapa layer model dan hanya meneruskan hidden state ke tetangganya, tanpa master pusat di dalam ring. Ia menggantikan linkcpp, engine yang dijalankan Kvasir hingga pertengahan 2026, dan menjaga data plane tetap dekat dengan upstream dengan sekumpulan kecil patch.",
+    taglineCaption: "— p4, dalam kata-katanya sendiri",
     points: [
       {
         title: "Ring runtime",
         body: "Setiap perangkat menyimpan model yang sama dan hanya memuat jendela layer-nya, lalu membuka satu tautan ke pendahulunya dan satu ke penerusnya. Batas hidden-state bersirkulasi mengelilingi ring dan rank terakhir mengembalikan token — tanpa master pusat, tidak ada node yang menyimpan semuanya.",
       },
       {
-        title: "Hub kendali linkcpp",
-        body: "Satu hub ber-Docker — bidang kendali yang tak dimiliki data plane RPC mesin inferensi. Ia menemukan perangkat, merencanakan penempatan layer, meluncurkan worker, dan mengekspos gateway. Sumber tersedia di bawah Business Source License (BSL) 1.1.",
+        title: "Bidang kendali p4",
+        body: "Bidang kendali yang tak dimiliki data plane RPC. Ia menemukan perangkat, merencanakan penempatan layer dan expert, meluncurkan worker, dan mengekspos gateway. Rencana penempatan adalah artefak operator — engine tidak akan memuat model hanya karena diminta oleh sebuah permintaan web. Sumber tersedia di bawah Business Source License (BSL) 1.1.",
       },
       {
         title: "Penempatan layer terdistribusi",
-        body: "linkcpp membaca metadata GGUF dan menghitung jendela layer berdekatan per node melalui rank manifest, ditambah opsi offload expert-FFN MoE ke RAM node.",
+        body: "p4 membaca metadata GGUF dan menghitung jendela layer berdekatan per node dari sebuah rencana penempatan, ditambah opsi offload expert-FFN MoE ke RAM node. Step-3.7-Flash, MoE 428B, saat ini ditempatkan sebagai 16 stage di dua mesin.",
       },
       {
         title: "Keamanan SIWS + 2FA",
@@ -252,13 +252,18 @@ export const id: Dict = {
     items: [
       {
         phase: "Sekarang",
-        title: "Inferensi lintas perangkat, aktif",
-        body: "GPU, CPU, dan ponsel menyajikan layer melalui ring runtime (dukungan NPU sedang dikembangkan). Model 122B berjalan menyeluruh di tiga mesin fisik; kontribusi dikreditkan menyeluruh; dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna; akses berjalan melalui HTTPS di domain publik.",
+        title: "Penyajian berskala frontier, aktif",
+        body: "Step-3.7-Flash — MoE 428B — ditempatkan sebagai 16 stage di dua mesin AMD MI250 dan sudah menyajikan permintaan. Model 122B berjalan menyeluruh di tiga mesin fisik, salah satunya ponsel yang menyimpan sebagian model. Dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna.",
+      },
+      {
+        phase: "Sedang berjalan",
+        title: "Ring, gateway, klien",
+        body: "Tiga hal sedang dikerjakan sekaligus. Ring sedang melewati gate pemulihan setelah sebuah run 64 permintaan terhenti. Gateway penyelesaian sedang diporting ke p4 — endpoint publiknya sengaja dimatikan sampai itu rampung. Klien desktop sedang dijadikan node sungguhan yang mengawasi agen p4, bukan sekadar mendaftarkannya.",
       },
       {
         phase: "Segera",
-        title: "Mainnet & penyelesaian on-chain",
-        body: "Semua yang ada hari ini berjalan di Solana devnet dengan layanan penyelesaian off-chain. Program imbalan on-chain dan mainnet sedang direncanakan.",
+        title: "Kimi K3, dan penyelesaian melampaui devnet",
+        body: "Verifikasi Kimi K3 (MoE 2.8T) di p4 adalah gate berikutnya, dan laporan GLM-5.2 — diukur di linkcpp, engine sebelumnya — masih belum dipublikasikan. Penyelesaian berjalan di Solana devnet dengan layanan off-chain; program imbalan on-chain dan mainnet sedang direncanakan.",
       },
       {
         phase: "Segera",
@@ -269,16 +274,16 @@ export const id: Dict = {
   },
 
   proof: {
-    pill: "Terverifikasi di armada uji kami",
-    title: "Inferensi terdistribusi nyata, terverifikasi di beberapa mesin",
+    pill: "Diukur di mesin kami sendiri",
+    title: "Apa yang berjalan, dan apa yang terukur",
     items: [
-      "param disajikan menyeluruh di 3 mesin fisik",
-      "dompet node terpisah, masing-masing dikreditkan atas bagian layer-nya (armada uji)",
-      "permukaan API — kompatibel dengan OpenAI + Anthropic",
+      "MoE yang disajikan hari ini — Step-3.7-Flash, di dua mesin AMD MI250",
+      "stage tempat model dipecah, ditempatkan di dua agen",
+      "kemiripan kosinus antara ROCm, CUDA, dan CPU ponsel — perangkat keras campuran sepakat",
       "platform dompet — web · desktop · iOS · Android",
     ],
     strip:
-      "122B disajikan di 3 mesin · kompatibel dengan OpenAI + Anthropic · dompet di web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B di dua mesin MI250 · 122B menyeluruh di tiga mesin · kompatibel dengan OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {
@@ -287,11 +292,11 @@ export const id: Dict = {
     ctaBody:
       "Jalankan node dan dapatkan KVR atas layer yang Anda sajikan, atau sambungkan gateway ke aplikasi Anda dengan endpoint yang kompatibel dengan OpenAI/Anthropic.",
     tagline:
-      "Merek jaringan untuk inferensi AI terdesentralisasi, ditenagai oleh hub kendali linkcpp — engine bersumber tersedia (BSL) yang membagi model besar di seluruh perangkat sehari-hari (pada data plane mesin inferensi yang tetap dekat dengan upstream).",
+      "Merek jaringan untuk inferensi AI terdesentralisasi, ditenagai oleh engine p4 — bersumber tersedia di bawah BSL 1.1, membagi model besar di seluruh perangkat sehari-hari pada data plane yang tetap dekat dengan upstream.",
     disclaimerStrong: "Penafian.",
     disclaimer:
       "KVR adalah token utilitas / kontribusi yang digunakan untuk membayar inferensi dan memberi imbalan komputasi. Saat ini berjalan di Solana devnet — bukan aset mainnet yang dapat diperdagangkan dan tidak ada satu pun di sini yang merupakan penawaran, harga, atau janji imbal hasil finansial. Imbalan komputasi mencerminkan kerja yang terukur; host infrastruktur juga memperoleh imbalan atas uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine di bawah Business Source License (BSL) 1.1 — lihat lisensinya untuk penggunaan yang diizinkan.",
+    rights: "© 2026 Kvasir · p4. Engine di bawah Business Source License (BSL) 1.1 — lihat lisensinya untuk penggunaan yang diizinkan.",
   },
 
   guide: {
@@ -356,7 +361,7 @@ export const id: Dict = {
     docTitle: "Kvasir — Blog Teknologi",
     pill: "Blog teknologi",
     title: "Rekayasa di balik swarm",
-    lede: "Catatan desain dan tonggak yang terverifikasi di perangkat nyata dari pembangunan inferensi swarm dengan sharding pakar di atas linkcpp — bagaimana model 122B berjalan melintasi GPU, CPU, dan ponsel.",
+    lede: "Catatan desain dan tonggak yang terverifikasi di perangkat nyata dari pembangunan inferensi swarm dengan sharding pakar — bagaimana model 122B berjalan melintasi GPU, CPU, dan ponsel. Tulisan sampai pertengahan 2026 membahas linkcpp, engine yang digantikan p4; gagasannya tetap, namanya berubah.",
     langNote: "",
     sidebarTitle: "Jelajahi artikel",
     allArticles: "Semua artikel",
@@ -490,7 +495,7 @@ export const id: Dict = {
     pill: "Kami merekrut",
     headline1: "Marketing & Growth",
     headline2: "besarkan jaringan bersama kami",
-    sub: "Kvasir adalah jaringan inferensi AI terdesentralisasi (DePIN) di Solana. Mesin linkcpp bersumber tersedia membagi model terbuka berukuran besar ke banyak GPU dan mesin yang dikontribusikan, dan setiap node memperoleh KVR untuk layer yang benar-benar dilayaninya. Sisi teknisnya sudah berjalan — kami butuh orang yang menceritakannya ke dunia.",
+    sub: "Kvasir adalah jaringan inferensi AI terdesentralisasi (DePIN) di Solana. Mesin p4 bersumber tersedia membagi model terbuka berukuran besar ke banyak GPU dan mesin yang dikontribusikan, dan setiap node memperoleh KVR untuk layer yang benar-benar dilayaninya. Sisi teknisnya sudah berjalan — kami butuh orang yang menceritakannya ke dunia.",
     factRole: "Peran",
     factRoleV: "Marketing & growth — purnawaktu",
     factLocation: "Lokasi",

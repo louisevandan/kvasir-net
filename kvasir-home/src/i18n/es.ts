@@ -36,16 +36,16 @@ export const es: Dict = {
     eyebrow: "DePIN · IA descentralizada — más allá del monopolio",
     headline1: "Aporta cómputo.",
     headline2: "Gana KVR.",
-    sub: "Kvasir reparte grandes modelos abiertos entre hardware compartido con linkcpp, de modo que ningún nodo tiene que contener el modelo completo. Aporta una GPU, una CPU o un teléfono y gana KVR por las capas que ejecutes.",
+    sub: "Kvasir une máquinas dispersas — GPU de centro de datos, estaciones de trabajo, teléfonos — en un único grupo de servicio que ejecuta modelos abiertos de escala frontera. Ningún nodo tiene que contener el modelo completo, y cada nodo gana KVR por las capas que ejecuta.",
     badges: [
       "Funciona en GPU · CPU · NPU · teléfono",
       "Compatible con OpenAI + Anthropic",
-      "Código disponible (BSL)",
+      "Código disponible (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "un anillo · sin maestro",
     topologyCaption:
-      "Un anillo de dispositivos — una GPU, CPU, NPU y teléfono — cada uno con unas pocas de las 49 capas. Cada nodo ejecuta su porción y solo pasa el límite del estado oculto a su vecino; el último devuelve el token dando la vuelta al anillo. Ningún nodo tiene que contener el modelo completo, y el anillo no tiene maestro central — ilustrativo.",
+      "Un anillo de dispositivos — una GPU, CPU, NPU y teléfono — cada uno con unas pocas de las capas del modelo. Cada nodo ejecuta su porción y solo pasa el límite del estado oculto a su vecino; el último devuelve el token dando la vuelta al anillo. Ningún nodo tiene que contener el modelo completo, y el anillo no tiene maestro central — ilustrativo.",
   },
 
   thesis: {
@@ -62,7 +62,7 @@ export const es: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Cualquier dispositivo se une a un anillo entre pares — sin maestro central en el anillo",
-      "Motor linkcpp de código disponible — con licencia BSL y totalmente inspeccionable",
+      "Motor p4 de código disponible — BSL 1.1 y totalmente inspeccionable",
       "Los colaboradores ganan KVR por el cómputo real que aportan",
       "Billetera de autocustodia — tus claves nunca salen de tu dispositivo",
     ],
@@ -99,7 +99,7 @@ export const es: Dict = {
       {
         title: "Dividir",
         body: "El modelo se divide en ventanas de capas contiguas. Cada dispositivo guarda una copia del archivo del modelo pero solo carga en memoria su propia ventana, así que ningún nodo tiene que ejecutar el modelo entero.",
-        note: "Qwen3.5-122B · 49 capas · manifiesto de rangos",
+        note: "Step-3.7-Flash 428B · 45 capas · 16 etapas",
       },
       {
         title: "Servir",
@@ -220,21 +220,21 @@ export const es: Dict = {
 
   tech: {
     eyebrow: "Bajo el capó",
-    title: "linkcpp — el motor detrás de la red",
-    lede: "linkcpp es el hub de control abierto que convierte hardware cotidiano en un motor de inferencia distribuido. Su ring runtime permite que cada dispositivo contenga solo unas pocas capas y pase el estado oculto a su vecino — sin maestro central en el anillo — mientras el plano de datos del motor de inferencia se mantiene cercano a upstream, con un pequeño conjunto de parches.",
-    taglineCaption: "— linkcpp, en sus propias palabras",
+    title: "p4 — el motor detrás de la red",
+    lede: "p4 une hardware heterogéneo en un único grupo de servicio: cada dispositivo contiene unas pocas capas del modelo y solo pasa el estado oculto a su vecino, sin maestro central en el anillo. Sustituye a linkcpp, el motor que Kvasir usó hasta mediados de 2026, y mantiene el plano de datos cercano a upstream con un pequeño conjunto de parches.",
+    taglineCaption: "— p4, en sus propias palabras",
     points: [
       {
         title: "Ring runtime",
         body: "Cada dispositivo almacena el mismo modelo y solo carga su ventana de capas, luego abre un enlace con su predecesor y otro con su sucesor. Los límites del estado oculto circulan por el anillo y el último rango devuelve el token — sin maestro central, y ningún nodo lo contiene todo.",
       },
       {
-        title: "Hub de control linkcpp",
-        body: "Un único hub en Docker — el plano de control que le faltaba al plano de datos RPC del motor de inferencia. Descubre dispositivos, planifica la colocación de capas, lanza los workers y expone los gateways. Código disponible bajo la Business Source License (BSL) 1.1.",
+        title: "Plano de control p4",
+        body: "El plano de control que le faltaba al plano de datos RPC. Descubre dispositivos, planifica la colocación de capas y expertos, lanza los workers y expone los gateways. Un plan de colocación es un artefacto del operador — el motor no carga un modelo porque lo pida una solicitud web. Código disponible bajo la Business Source License (BSL) 1.1.",
       },
       {
         title: "Colocación de capas distribuida",
-        body: "linkcpp lee los metadatos GGUF y calcula ventanas de capas contiguas por nodo mediante un manifiesto de rangos, más una descarga opcional de FFN de expertos MoE a la RAM del nodo.",
+        body: "p4 lee los metadatos GGUF y calcula ventanas de capas contiguas por nodo a partir de un plan de colocación, más una descarga opcional de FFN de expertos MoE a la RAM del nodo. Step-3.7-Flash, un MoE de 428B, se reparte actualmente en 16 etapas entre dos máquinas.",
       },
       {
         title: "Seguridad SIWS + 2FA",
@@ -252,13 +252,18 @@ export const es: Dict = {
     items: [
       {
         phase: "Ahora",
-        title: "Inferencia en cualquier dispositivo, en vivo",
-        body: "GPU, CPU y teléfonos sirven capas a través del ring runtime (soporte para NPU en desarrollo). Un modelo de 122B se ejecutó de extremo a extremo en tres máquinas físicas; la contribución se acredita de extremo a extremo; las billeteras para web, escritorio, iOS y Android guardan las claves en el dispositivo del usuario; el acceso funciona sobre HTTPS en dominios públicos.",
+        title: "Servicio a escala frontera, en vivo",
+        body: "Step-3.7-Flash — un MoE de 428B — está colocado en 16 etapas entre dos máquinas AMD MI250 y está sirviendo. Un modelo de 122B se ejecutó de extremo a extremo en tres máquinas físicas, una de ellas un teléfono que contenía una parte. Las billeteras para web, escritorio, iOS y Android guardan las claves en el dispositivo del usuario.",
+      },
+      {
+        phase: "En curso",
+        title: "Anillo, gateway, cliente",
+        body: "Se trabaja en tres cosas a la vez. El anillo está pasando por pruebas de recuperación tras una ejecución interrumpida de 64 solicitudes. El gateway de liquidación se está portando a p4 — su endpoint público está deliberadamente fuera de línea hasta que eso llegue. El cliente de escritorio se está convirtiendo en un nodo real que supervisa un agente p4 en lugar de solo registrarlo.",
       },
       {
         phase: "Próximamente",
-        title: "Mainnet y liquidación en cadena",
-        body: "Todo lo actual se ejecuta en Solana devnet con un servicio de liquidación fuera de cadena. Están planeados un programa de recompensas en cadena y la mainnet.",
+        title: "Kimi K3, y la liquidación más allá de devnet",
+        body: "La verificación de Kimi K3 (MoE de 2.8T) sobre p4 es el siguiente hito, y el informe de GLM-5.2 — medido en linkcpp, el motor anterior — aún está por publicarse. La liquidación se ejecuta en Solana devnet con un servicio fuera de cadena; están planeados un programa de recompensas en cadena y la mainnet.",
       },
       {
         phase: "Próximamente",
@@ -269,16 +274,16 @@ export const es: Dict = {
   },
 
   proof: {
-    pill: "Verificado en nuestra flota de pruebas",
-    title: "Inferencia distribuida real, verificada entre varias máquinas",
+    pill: "Medido en nuestras propias máquinas",
+    title: "Qué está en marcha y qué midió",
     items: [
-      "parámetros servidos de extremo a extremo entre 3 máquinas físicas",
-      "billeteras de nodo separadas, cada una acreditada por su porción de capas (flota de pruebas)",
-      "superficies de API — compatibles con OpenAI + Anthropic",
+      "MoE sirviendo hoy — Step-3.7-Flash, en dos máquinas AMD MI250",
+      "etapas en las que se divide el modelo, repartidas entre dos agentes",
+      "de similitud coseno entre ROCm, CUDA y la CPU de un teléfono — el hardware heterogéneo coincide",
       "plataformas de billetera — web · desktop · iOS · Android",
     ],
     strip:
-      "122B servido entre 3 máquinas · compatible con OpenAI + Anthropic · billeteras en web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B en dos máquinas MI250 · 122B de extremo a extremo en tres máquinas · compatible con OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {
@@ -287,11 +292,11 @@ export const es: Dict = {
     ctaBody:
       "Ejecuta un nodo y gana KVR por las capas que sirves, o conecta el gateway a tu aplicación con un endpoint compatible con OpenAI/Anthropic.",
     tagline:
-      "La marca de red para la inferencia de IA descentralizada, impulsada por el hub de control linkcpp — un motor de código disponible (BSL) que reparte grandes modelos entre dispositivos cotidianos (sobre un plano de datos de motor de inferencia que se mantiene cercano a upstream).",
+      "La marca de red para la inferencia de IA descentralizada, impulsada por el motor p4 — de código disponible bajo BSL 1.1, que reparte grandes modelos entre dispositivos cotidianos sobre un plano de datos que se mantiene cercano a upstream.",
     disclaimerStrong: "Aviso legal.",
     disclaimer:
       "KVR es un token de utilidad / contribución usado para pagar la inferencia y recompensar el cómputo. Hoy se ejecuta en Solana devnet — no es un activo negociable de mainnet y nada aquí es una oferta, precio ni promesa de rentabilidad financiera. Las recompensas de cómputo reflejan el trabajo medido; los hosts de infraestructura también ganan por disponibilidad.",
-    rights: "© 2026 Kvasir · linkcpp. Motor bajo la Business Source License (BSL) 1.1 — consulta la licencia para ver los usos permitidos.",
+    rights: "© 2026 Kvasir · p4. Motor bajo la Business Source License (BSL) 1.1 — consulta la licencia para ver los usos permitidos.",
   },
 
   guide: {
@@ -356,7 +361,7 @@ export const es: Dict = {
     docTitle: "Kvasir — Blog técnico",
     pill: "Blog técnico",
     title: "La ingeniería del enjambre",
-    lede: "Notas de diseño e hitos verificados en hardware real al construir la inferencia en enjambre con expertos fragmentados sobre linkcpp: cómo un modelo de 122B corre entre GPU, CPU y teléfonos.",
+    lede: "Notas de diseño e hitos verificados en hardware real al construir la inferencia en enjambre con expertos fragmentados: cómo un modelo de 122B corre entre GPU, CPU y teléfonos. Las publicaciones hasta mediados de 2026 describen linkcpp, el motor al que sustituyó p4; las ideas se mantuvieron, los nombres cambiaron.",
     langNote: "",
     sidebarTitle: "Explorar artículos",
     allArticles: "Todos los artículos",
@@ -490,7 +495,7 @@ export const es: Dict = {
     pill: "Estamos contratando",
     headline1: "Marketing y Crecimiento",
     headline2: "haz crecer la red",
-    sub: "Kvasir es una red descentralizada de inferencia de IA (DePIN) sobre Solana. El motor linkcpp de código disponible divide grandes modelos abiertos entre muchas GPU y máquinas aportadas, y cada nodo gana KVR por las capas que realmente sirvió. La parte técnica ya funciona — necesitamos a la persona que lo cuente al mundo.",
+    sub: "Kvasir es una red descentralizada de inferencia de IA (DePIN) sobre Solana. El motor p4 de código disponible divide grandes modelos abiertos entre muchas GPU y máquinas aportadas, y cada nodo gana KVR por las capas que realmente sirvió. La parte técnica ya funciona — necesitamos a la persona que lo cuente al mundo.",
     factRole: "Rol",
     factRoleV: "Marketing y crecimiento — jornada completa",
     factLocation: "Ubicación",

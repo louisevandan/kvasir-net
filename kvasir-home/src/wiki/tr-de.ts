@@ -282,7 +282,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "Ein **Mixture-of-Experts**-Modell ersetzt die einzelne FFN jeder Schicht durch eine Bank unabhängiger Experten-FFNs plus einen **Router**, der pro Token einige auswählt. Qwen3.5-122B-A10B ist das Flaggschiff-Beispiel des Netzwerks:",
+        md: "Ein **Mixture-of-Experts**-Modell ersetzt die einzelne FFN jeder Schicht durch eine Bank unabhängiger Experten-FFNs plus einen **Router**, der pro Token einige auswählt. Step-3.7-Flash, das heute im Einsatz befindliche 428B-MoE, hat 288 Experten pro Schicht mit top-8-Routing. Qwen3.5-122B-A10B ist das durchgerechnete Beispiel unten, denn es ist dasjenige, dessen Zahlen Ende-zu-Ende gemessen wurden:",
       },
       {
         t: "stats",

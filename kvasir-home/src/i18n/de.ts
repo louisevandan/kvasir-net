@@ -1,7 +1,8 @@
 /* German (Deutsch) — mirrors the shape of en.ts exactly.
-   Technische Begriffe und Bezeichner bleiben unverändert (KVR, linkcpp,
+   Technische Begriffe und Bezeichner bleiben unverändert (KVR, p4, linkcpp,
    Inferenz-Engine, GPU, CPU, NPU, OpenAI, Anthropic, Solana, GGUF, MoE, SIWS, 2FA,
-   TOTP, ring runtime, MIT, tok/s, Layer, Qwen3.5-122B usw.). Die Ehrlichkeits-
+   TOTP, In-Flight Ring, BSL 1.1, tok/s, Layer, stage, Step-3.7-Flash, Qwen3.5-122B,
+   Kimi K3, GLM-5.2 usw.). Die Ehrlichkeits-
    Rahmung bleibt erhalten (Devnet, Utility-Token, keine Investition, non-custodial). */
 import type { Dict } from "./types";
 
@@ -41,16 +42,16 @@ export const de: Dict = {
     eyebrow: "DePIN · Dezentrale KI — jenseits des Monopols",
     headline1: "Rechenleistung einbringen.",
     headline2: "KVR verdienen.",
-    sub: "Kvasir verteilt große offene Modelle mit linkcpp über gemeinsam genutzte Hardware, sodass kein einzelner Node das gesamte Modell halten muss. Steuere eine GPU, eine CPU oder ein Smartphone bei und verdiene KVR für die Layer, die du ausführst.",
+    sub: "Kvasir bündelt verstreute Maschinen — Rechenzentrums-GPUs, Workstations, Smartphones — zu einem einzigen Serving-Pool, der offene Modelle in Frontier-Größe ausführt. Kein einzelner Node muss das gesamte Modell halten, und jeder Node verdient KVR für die Layer, die er ausführt.",
     badges: [
       "Läuft auf GPU · CPU · NPU · Smartphone",
       "OpenAI- + Anthropic-kompatibel",
-      "Quellcode verfügbar (BSL)",
+      "Quellcode verfügbar (BSL 1.1)",
       "Solana-Devnet",
     ],
     ringCenter: "ein Ring · kein Master",
     topologyCaption:
-      "Ein Ring aus Geräten — eine GPU, CPU, NPU und ein Smartphone — die jeweils einige der 49 Layer halten. Jeder Node führt seinen Abschnitt aus und gibt nur die Hidden-State-Grenze an seinen Nachbarn weiter; der letzte gibt das Token durch den Ring zurück. Kein Node muss das gesamte Modell halten, und der Ring hat keinen zentralen Master — illustrativ.",
+      "Ein Ring aus Geräten — eine GPU, CPU, NPU und ein Smartphone — die jeweils einige der Layer des Modells halten. Jeder Node führt seinen Abschnitt aus und gibt nur die Hidden-State-Grenze an seinen Nachbarn weiter; der letzte gibt das Token durch den Ring zurück. Kein Node muss das gesamte Modell halten, und der Ring hat keinen zentralen Master — illustrativ.",
   },
 
   thesis: {
@@ -67,7 +68,7 @@ export const de: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Jedes Gerät tritt einem Peer-to-Peer-Ring bei — kein zentraler Master im Ring",
-      "linkcpp-Engine mit verfügbarem Quellcode — BSL-lizenziert und vollständig einsehbar",
+      "p4-Engine mit verfügbarem Quellcode — BSL 1.1 und vollständig einsehbar",
       "Mitwirkende verdienen KVR für die tatsächliche Rechenleistung, die sie beisteuern",
       "Wallet in Eigenverwahrung — deine Schlüssel verlassen nie dein Gerät",
     ],
@@ -104,7 +105,7 @@ export const de: Dict = {
       {
         title: "Aufteilen",
         body: "Das Modell wird in zusammenhängende Layer-Fenster unterteilt. Jedes Gerät hat eine Kopie der Modelldatei, lädt aber nur sein eigenes Fenster in den Speicher, sodass kein Node das ganze Modell ausführen muss.",
-        note: "Qwen3.5-122B · 49 Layer · Rank-Manifest",
+        note: "Step-3.7-Flash 428B · 45 Layer · 16 stages",
       },
       {
         title: "Bereitstellen",
@@ -225,21 +226,21 @@ export const de: Dict = {
 
   tech: {
     eyebrow: "Hinter den Kulissen",
-    title: "linkcpp — die Engine hinter dem Netzwerk",
-    lede: "linkcpp ist der offene Control-Hub, der Alltags-Hardware in eine verteilte Inferenz-Engine verwandelt. Seine ring runtime lässt jedes Gerät nur wenige Layer halten und den Hidden State an seinen Nachbarn weitergeben — kein zentraler Master im Ring — während die Datenebene der Inferenz-Engine nah am Upstream bleibt, mit einem kleinen Patch-Set.",
-    taglineCaption: "— linkcpp, in eigenen Worten",
+    title: "p4 — die Engine hinter dem Netzwerk",
+    lede: "p4 bündelt gemischte Hardware zu einem einzigen Serving-Pool: Jedes Gerät hält nur wenige Layer des Modells und gibt ausschließlich den Hidden State an seinen Nachbarn weiter — kein zentraler Master im Ring. p4 löst linkcpp ab, die Engine, die Kvasir bis Mitte 2026 betrieben hat, und hält die Datenebene mit einem kleinen Patch-Set nah am Upstream.",
+    taglineCaption: "— p4, in eigenen Worten",
     points: [
       {
         title: "Ring runtime",
         body: "Jedes Gerät speichert dasselbe Modell und lädt nur sein Layer-Fenster, dann öffnet es eine Verbindung zu seinem Vorgänger und eine zu seinem Nachfolger. Hidden-State-Grenzen zirkulieren durch den Ring, und der letzte Rank gibt das Token zurück — kein zentraler Master, kein Node hält alles.",
       },
       {
-        title: "linkcpp-Control-Hub",
-        body: "Ein einziger dockerisierter Hub — die Steuerungsebene, die der RPC-Datenebene der Inferenz-Engine fehlte. Er erkennt Geräte, plant die Layer-Platzierung, startet die Worker und stellt die Gateways bereit. Quelle verfügbar unter der Business Source License (BSL) 1.1.",
+        title: "p4-Control-Plane",
+        body: "Genau die Steuerungsebene, die der RPC-Datenebene fehlte. Sie erkennt Geräte, plant die Platzierung von Layern und Experten, startet die Worker und stellt die Gateways bereit. Ein Platzierungsplan ist ein Artefakt des Betreibers — die Engine lädt kein Modell, nur weil eine Web-Anfrage es verlangt. Quelle verfügbar unter der Business Source License (BSL) 1.1.",
       },
       {
         title: "Verteilte Layer-Platzierung",
-        body: "linkcpp liest GGUF-Metadaten und berechnet zusammenhängende Layer-Fenster pro Node über ein Rank-Manifest, plus optionales MoE-Expert-FFN-Offloading in den Node-RAM.",
+        body: "p4 liest GGUF-Metadaten und berechnet aus einem Platzierungsplan zusammenhängende Layer-Fenster pro Node, plus optionales MoE-Expert-FFN-Offloading in den Node-RAM. Step-3.7-Flash, ein 428B-MoE, liegt derzeit als 16 stages auf zwei Maschinen.",
       },
       {
         title: "SIWS- + 2FA-Sicherheit",
@@ -257,13 +258,18 @@ export const de: Dict = {
     items: [
       {
         phase: "Jetzt",
-        title: "Inferenz auf jedem Gerät, live",
-        body: "GPUs, CPUs und Smartphones stellen Layer über die ring runtime bereit (NPU-Unterstützung in Arbeit). Ein 122B-Modell lief durchgängig über drei physische Maschinen; Beiträge werden durchgängig gutgeschrieben; Wallets für Web, Desktop, iOS und Android halten die Schlüssel auf dem Gerät des Nutzers; der Zugang läuft über HTTPS auf öffentlichen Domains.",
+        title: "Serving in Frontier-Größe, live",
+        body: "Step-3.7-Flash — ein 428B-MoE — liegt als 16 stages auf zwei AMD-MI250-Maschinen und ist im Serving-Betrieb. Ein 122B-Modell lief durchgängig über drei physische Maschinen, eine davon ein Smartphone, das einen Teil davon hielt. Wallets für Web, Desktop, iOS und Android halten die Schlüssel auf dem Gerät des Nutzers.",
+      },
+      {
+        phase: "In Arbeit",
+        title: "Ring, Gateway, Client",
+        body: "An drei Dingen wird gleichzeitig gearbeitet. Der Ring durchläuft nach einem abgebrochenen Lauf über 64 Requests die Recovery-Gates. Das Abrechnungs-Gateway wird auf p4 portiert — bis das steht, ist sein öffentlicher Endpunkt bewusst offline. Der Desktop-Client wird zu einem echten Node, der einen p4-Agenten beaufsichtigt, statt ihn nur zu registrieren.",
       },
       {
         phase: "Demnächst",
-        title: "Mainnet & On-Chain-Abrechnung",
-        body: "Heute läuft alles auf dem Solana-Devnet mit einem Off-Chain-Abrechnungsdienst. Ein On-Chain-Belohnungsprogramm und Mainnet sind geplant.",
+        title: "Kimi K3 und Abrechnung jenseits des Devnets",
+        body: "Die Verifikation von Kimi K3 (2.8T MoE) auf p4 ist das nächste Gate, und der GLM-5.2-Bericht — gemessen auf linkcpp, der vorherigen Engine — steht noch zur Veröffentlichung aus. Die Abrechnung läuft auf dem Solana-Devnet mit einem Off-Chain-Dienst; ein On-Chain-Belohnungsprogramm und Mainnet sind geplant.",
       },
       {
         phase: "Demnächst",
@@ -274,16 +280,16 @@ export const de: Dict = {
   },
 
   proof: {
-    pill: "Auf unserer Testflotte verifiziert",
-    title: "Echte verteilte Inferenz, über mehrere Maschinen verifiziert",
+    pill: "Auf unseren eigenen Maschinen gemessen",
+    title: "Was läuft — und was gemessen wurde",
     items: [
-      "Parameter, durchgängig über 3 physische Maschinen bereitgestellt",
-      "separate Node-Wallets, jeweils für ihren Layer-Anteil gutgeschrieben (Testflotte)",
-      "API-Schnittstellen — OpenAI- + Anthropic-kompatibel",
+      "MoE heute im Serving — Step-3.7-Flash, auf zwei AMD-MI250-Maschinen",
+      "Stages, in die das Modell aufgeteilt ist, verteilt auf zwei Agents",
+      "Kosinus-Ähnlichkeit über ROCm, CUDA und eine Smartphone-CPU — gemischte Hardware stimmt überein",
       "Wallet-Plattformen — web · desktop · iOS · Android",
     ],
     strip:
-      "122B bereitgestellt auf 3 Maschinen · OpenAI- + Anthropic-kompatibel · Wallets auf web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B auf zwei MI250-Maschinen · 122B durchgängig über drei Maschinen · OpenAI- + Anthropic-kompatibel · Solana devnet",
   },
 
   footer: {
@@ -292,11 +298,11 @@ export const de: Dict = {
     ctaBody:
       "Betreibe einen Node und verdiene KVR für die Layer, die du bereitstellst, oder binde das Gateway mit einem OpenAI/Anthropic-kompatiblen Endpunkt in deine App ein.",
     tagline:
-      "Die Netzwerk-Marke für dezentrale KI-Inferenz, angetrieben vom linkcpp-Control-Hub — eine Engine mit verfügbarem Quellcode (BSL), die große Modelle über Alltagsgeräte verteilt (auf einer Inferenz-Engine-Datenebene, die nah am Upstream gehalten wird).",
+      "Die Netzwerk-Marke für dezentrale KI-Inferenz, angetrieben von der p4-Engine — Quellcode verfügbar unter BSL 1.1, die große Modelle über Alltagsgeräte verteilt, auf einer Datenebene, die nah am Upstream gehalten wird.",
     disclaimerStrong: "Haftungsausschluss.",
     disclaimer:
       "KVR ist ein Utility-/Beitrags-Token, das zur Bezahlung von Inferenz und zur Belohnung von Rechenleistung dient. Es läuft heute auf dem Solana-Devnet — es ist kein handelbarer Mainnet-Vermögenswert, und nichts hier ist ein Angebot, ein Preis oder ein Versprechen einer finanziellen Rendite. Compute-Belohnungen spiegeln gemessene Arbeit wider; Infrastruktur-Hosts verdienen zusätzlich für Uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine unter der Business Source License (BSL) 1.1 — zulässige Nutzung siehe Lizenz.",
+    rights: "© 2026 Kvasir · p4. Engine unter der Business Source License (BSL) 1.1 — zulässige Nutzung siehe Lizenz.",
   },
 
   guide: {
@@ -361,7 +367,7 @@ export const de: Dict = {
     docTitle: "Kvasir — Technologie",
     pill: "Tech-Blog",
     title: "Engineering des Schwarms",
-    lede: "Designnotizen und auf echter Hardware verifizierte Meilensteine aus dem Aufbau der experten-geshardeten Schwarm-Inferenz auf linkcpp — wie ein 122B-Modell über GPUs, CPUs und Smartphones läuft.",
+    lede: "Designnotizen und auf echter Hardware verifizierte Meilensteine aus dem Aufbau der experten-geshardeten Schwarm-Inferenz — wie ein 122B-Modell über GPUs, CPUs und Smartphones läuft. Beiträge bis Mitte 2026 beschreiben linkcpp, die Engine, die p4 abgelöst hat; die Ideen wurden übernommen, die Namen haben sich geändert.",
     langNote: "",
     sidebarTitle: "Artikel durchsuchen",
     allArticles: "Alle Artikel",
@@ -495,7 +501,7 @@ export const de: Dict = {
     pill: "Wir stellen ein",
     headline1: "Marketing & Growth",
     headline2: "lass das Netzwerk wachsen",
-    sub: "Kvasir ist ein dezentrales KI-Inferenz-Netzwerk (DePIN) auf Solana. Die linkcpp-Engine mit verfügbarem Quellcode verteilt große offene Modelle auf viele beigesteuerte GPUs und Maschinen, und jeder Node verdient KVR für die Layer, die er tatsächlich bedient hat. Die Technik läuft — wir brauchen die Person, die es der Welt erzählt.",
+    sub: "Kvasir ist ein dezentrales KI-Inferenz-Netzwerk (DePIN) auf Solana. Die p4-Engine mit verfügbarem Quellcode verteilt große offene Modelle auf viele beigesteuerte GPUs und Maschinen, und jeder Node verdient KVR für die Layer, die er tatsächlich bedient hat. Die Technik läuft — wir brauchen die Person, die es der Welt erzählt.",
     factRole: "Rolle",
     factRoleV: "Marketing & Growth — Vollzeit",
     factLocation: "Standort",

@@ -36,16 +36,16 @@ export const zh: Dict = {
     eyebrow: "DePIN · 去中心化 AI — 打破垄断",
     headline1: "贡献算力。",
     headline2: "赚取 KVR。",
-    sub: "Kvasir 借助 linkcpp 将大型开源模型拆分到共享硬件上，任何单一节点都无需持有完整模型。贡献一块 GPU、CPU 或一部手机，即可为你运行的层赚取 KVR。",
+    sub: "Kvasir 把分散各处的机器 — 数据中心 GPU、工作站、手机 — 绑成一个服务池，运行前沿规模的开源模型。任何单一节点都无需持有完整模型，每个节点都按自己运行的层赚取 KVR。",
     badges: [
       "可在 GPU · CPU · NPU · 手机上运行",
       "兼容 OpenAI + Anthropic",
-      "源码可得（BSL）",
+      "源码可得（BSL 1.1）",
       "Solana devnet",
     ],
     ringCenter: "一环 · 无主控",
     topologyCaption:
-      "由多种设备组成的环 — 一块 GPU、CPU、NPU 和一部手机 — 各自持有 49 层中的少数几层。每个节点运行自己那一片，只将隐藏状态的边界传递给邻居；最后一个节点沿环返回 token。没有节点需要持有完整模型，环中也没有中央主控 — 仅为示意。",
+      "由多种设备组成的环 — 一块 GPU、CPU、NPU 和一部手机 — 各自持有模型中的少数几层。每个节点运行自己那一片，只将隐藏状态的边界传递给邻居；最后一个节点沿环返回 token。没有节点需要持有完整模型，环中也没有中央主控 — 仅为示意。",
   },
 
   thesis: {
@@ -62,7 +62,7 @@ export const zh: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "任何设备都能加入点对点的环 — 环中无中央主控",
-      "源码可得的 linkcpp 引擎 — 采用 BSL 许可、可完全审查",
+      "源码可得的 p4 引擎 — BSL 1.1，可完全审查",
       "贡献者凭借真实贡献的算力赚取 KVR",
       "自托管钱包 — 你的密钥从不离开你的设备",
     ],
@@ -99,7 +99,7 @@ export const zh: Dict = {
       {
         title: "拆分",
         body: "模型被划分为连续的层窗口。每台设备都保留一份模型文件副本，但只把自己的窗口加载到内存中，因此没有节点需要运行完整模型。",
-        note: "Qwen3.5-122B · 49 层 · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 层 · 16 stages",
       },
       {
         title: "服务",
@@ -220,21 +220,21 @@ export const zh: Dict = {
 
   tech: {
     eyebrow: "深入底层",
-    title: "linkcpp — 网络背后的引擎",
-    lede: "linkcpp 是开放的控制中枢，将日常硬件变成一个分布式推理引擎。它的 ring runtime 让每台设备只持有少数几层，并将隐藏状态传给邻居 — 环中无中央主控 — 同时推理引擎数据平面仅带一小组补丁，保持贴近上游。",
-    taglineCaption: "— linkcpp 的自述",
+    title: "p4 — 网络背后的引擎",
+    lede: "p4 把异构硬件绑成一个服务池：每台设备只持有模型中的几层，并且只把隐藏状态传给邻居 — 环中无中央主控。它取代了 linkcpp，也就是 Kvasir 在 2026 年年中之前运行的引擎，并以一小组补丁让数据平面保持贴近上游。",
+    taglineCaption: "— p4 的自述",
     points: [
       {
         title: "Ring runtime",
         body: "每台设备存储同一个模型，只加载自己的层窗口，然后向其前驱开启一条链路、向其后继开启一条链路。隐藏状态边界沿环流转，最后一个 rank 返回 token — 无中央主控，没有节点持有全部。",
       },
       {
-        title: "linkcpp 控制中枢",
-        body: "单个 Docker 化的中枢 — 正是 推理引擎 的 RPC 数据平面所缺失的控制平面。它发现设备、规划层的放置、启动工作进程，并对外暴露网关。以 Business Source License（BSL）1.1 提供源码。",
+        title: "p4 控制平面",
+        body: "正是 RPC 数据平面所缺失的那一层控制平面。它发现设备、规划层与专家的放置、启动工作进程，并对外暴露网关。放置方案由运营者制定 — 引擎不会因为一个网页请求就去加载模型。以 Business Source License（BSL）1.1 提供源码。",
       },
       {
         title: "分布式层放置",
-        body: "linkcpp 读取 GGUF 元数据，通过 rank manifest 计算每个节点连续的层窗口，并可选将 MoE 专家 FFN 卸载至节点内存。",
+        body: "p4 读取 GGUF 元数据，依据放置方案计算每个节点连续的层窗口，并可选将 MoE 专家 FFN 卸载至节点内存。428B 的 MoE 模型 Step-3.7-Flash 目前以 16 stages 分布在两台机器上。",
       },
       {
         title: "SIWS + 2FA 安全",
@@ -252,13 +252,18 @@ export const zh: Dict = {
     items: [
       {
         phase: "现在",
-        title: "任意设备推理，已上线",
-        body: "GPU、CPU 和手机通过 ring runtime 在环上提供层服务（NPU 支持推进中）。一个 122B 模型已跨 3 台物理机器端到端运行；贡献端到端计入；web、desktop、iOS 和 Android 钱包将密钥保存在用户自己的设备上；访问通过公共域名上的 HTTPS 进行。",
+        title: "前沿规模的服务，已上线",
+        body: "428B 的 MoE 模型 Step-3.7-Flash 以 16 stages 部署在两台 AMD MI250 机器上，正在提供服务。一个 122B 模型已跨 3 台物理机器端到端运行，其中一台是持有部分模型的手机。web、desktop、iOS 和 Android 钱包将密钥保存在用户自己的设备上。",
+      },
+      {
+        phase: "进行中",
+        title: "环、网关、客户端",
+        body: "三件事正在同时推进。环在一次 64 请求的运行被中断后，正在通过恢复门禁。结算网关正在移植到 p4，在移植完成之前，其公开端点被有意下线。桌面客户端正从只是注册一个 p4 agent，变成真正监管它的节点。",
       },
       {
         phase: "即将推出",
-        title: "主网与链上结算",
-        body: "如今的一切都运行于 Solana devnet，配以链下结算服务。链上奖励程序与主网正在规划中。",
+        title: "Kimi K3，以及超越 devnet 的结算",
+        body: "在 p4 上验证 Kimi K3（2.8T MoE）是下一道关卡；GLM-5.2 的报告 — 在上一代引擎 linkcpp 上测得 — 尚未发布。结算运行于 Solana devnet，配以链下服务；链上奖励程序与主网正在规划中。",
       },
       {
         phase: "即将推出",
@@ -269,16 +274,16 @@ export const zh: Dict = {
   },
 
   proof: {
-    pill: "已在我们的测试机队上验证",
-    title: "真实的分布式推理，已跨多台机器验证",
+    pill: "在我们自己的机器上实测",
+    title: "正在运行的是什么，测出来的又是什么",
     items: [
-      "参数跨 3 台物理机器端到端提供服务",
-      "各节点独立钱包，按各自层份额计入奖励（测试机队）",
-      "API 接口 — 兼容 OpenAI + Anthropic",
+      "MoE 正在提供服务 — Step-3.7-Flash，跨两台 AMD MI250 机器",
+      "stages — 模型被拆分的段数，分布在两个 agent 上",
+      "余弦相似度 — 横跨 ROCm、CUDA 与手机 CPU，异构硬件结果一致",
       "钱包平台 — web · desktop · iOS · Android",
     ],
     strip:
-      "122B 跨 3 台机器提供服务 · 兼容 OpenAI + Anthropic · 钱包覆盖 web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B 跑在两台 MI250 机器上 · 122B 跨 3 台机器端到端 · 兼容 OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {
@@ -287,11 +292,11 @@ export const zh: Dict = {
     ctaBody:
       "运行一个节点，为你所服务的层赚取 KVR，或用兼容 OpenAI/Anthropic 的端点将网关接入你的应用。",
     tagline:
-      "面向去中心化 AI 推理的网络品牌，由 linkcpp 控制中枢驱动 — 一个源码可得（BSL）的引擎，将大型模型拆分到日常设备上运行（基于保持贴近上游的推理引擎数据平面）。",
+      "面向去中心化 AI 推理的网络品牌，由 p4 引擎驱动 — 以 BSL 1.1 提供源码，在保持贴近上游的数据平面上，将大型模型拆分到日常设备上运行。",
     disclaimerStrong: "免责声明。",
     disclaimer:
       "KVR 是一种实用型 / 贡献型代币，用于支付推理费用并奖励算力。它当前运行于 Solana devnet — 并非可交易的主网资产，此处内容均不构成任何要约、价格或财务回报承诺。算力奖励反映经计量的工作量；基础设施主机还会因在线时长获得奖励。",
-    rights: "© 2026 Kvasir · linkcpp. 引擎以 Business Source License（BSL）1.1 提供 — 允许的使用范围请参见许可证。",
+    rights: "© 2026 Kvasir · p4. 引擎以 Business Source License（BSL）1.1 提供 — 允许的使用范围请参见许可证。",
   },
 
   guide: {
@@ -356,7 +361,7 @@ export const zh: Dict = {
     docTitle: "Kvasir — 技术博客",
     pill: "技术博客",
     title: "构建蜂群的工程实录",
-    lede: "在 linkcpp 之上构建专家分片蜂群推理的设计笔记与实机验证里程碑——一个 122B 模型如何横跨 GPU、CPU 与手机运行。",
+    lede: "构建专家分片蜂群推理的设计笔记与实机验证里程碑——一个 122B 模型如何横跨 GPU、CPU 与手机运行。2026 年年中之前的文章讲的是 linkcpp，也就是被 p4 取代的上一代引擎；思路延续了下来，换掉的是名字。",
     langNote: "",
     sidebarTitle: "浏览文章",
     allArticles: "全部文章",
@@ -490,7 +495,7 @@ export const zh: Dict = {
     pill: "招聘中",
     headline1: "市场与增长",
     headline2: "与我们一起壮大网络",
-    sub: "Kvasir 是基于 Solana 的去中心化 AI 推理网络（DePIN）。源码可得的 linkcpp 引擎将大型开放模型拆分到众多贡献的 GPU 和机器上，每个节点按实际服务的层数赚取 KVR。技术已经跑通 — 我们需要把它讲给世界听的人。",
+    sub: "Kvasir 是基于 Solana 的去中心化 AI 推理网络（DePIN）。源码可得的 p4 引擎将大型开放模型拆分到众多贡献的 GPU 和机器上，每个节点按实际服务的层数赚取 KVR。技术已经跑通 — 我们需要把它讲给世界听的人。",
     factRole: "职位",
     factRoleV: "市场与增长 — 全职",
     factLocation: "地点",

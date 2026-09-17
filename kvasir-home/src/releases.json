@@ -1,0 +1,43 @@
+{
+  "updated": "2026-09-17",
+  "note": "An entry is added when a version actually ships. Each one carries what it was accepted on, so a claim here can be checked rather than taken.",
+  "releases": [
+    {
+      "id": "network-step37-2026-09-15",
+      "component": "network",
+      "version": "Step-3.7-Flash",
+      "date": "2026-09-15",
+      "title": "A 428B MoE placed across two machines",
+      "body": "Step-3.7-Flash — 428B parameters, 45 layers, 288 experts per layer with top-8 routing, Q4_K_XL at about 114 GiB — is placed as 16 stages across two AMD MI250 machines and serves from there. Placement comes from an operator's plan; the engine does not load a model because an HTTP call asked it to.",
+      "evidence": [
+        "Both agents report their stages loaded at the same generation, verified by INSPECT rather than by a status page.",
+        "Eight GPUs per machine, 64 GiB each."
+      ]
+    },
+    {
+      "id": "engine-p4-v0.9.0",
+      "component": "engine",
+      "version": "p4 v0.9.0",
+      "date": "2026-09-10",
+      "title": "The engine that replaced linkcpp",
+      "body": "p4 supersedes linkcpp as the engine behind the network. It keeps the data plane close to upstream and moves placement, session identity and the numbers a biller needs out of the engine and into an operator's hands.",
+      "evidence": [
+        "One host, a 35B model: 512 of 512 requests completed, best 313.8 tok/s.",
+        "1,536 tests passing, 0 failing, in the public engine.",
+        "Source-available under BSL 1.1 on the p4 branch."
+      ]
+    },
+    {
+      "id": "network-122b-three-hosts-2026-09-16",
+      "component": "network",
+      "version": "122B across three machines",
+      "date": "2026-09-16",
+      "title": "Three machines, one model, one of them a phone",
+      "body": "Qwen3.5-122B served end to end across a GB10 and two Mac M4 Pros, with a Galaxy S25 holding part of the same model. Mixed backends produced matching tokens.",
+      "evidence": [
+        "Cosine similarity of at least 0.9999 across ROCm, CUDA and a phone CPU.",
+        "Only hidden states crossed the network — no weights, no KV cache."
+      ]
+    }
+  ]
+}

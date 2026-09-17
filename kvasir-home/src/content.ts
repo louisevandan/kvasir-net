@@ -57,7 +57,7 @@ export const CODE_SNIPPET = `curl https://gate.kvasir-ai.net/v1/chat/completions
   -H "Authorization: Bearer $KVR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "Qwen3.5-122B-A10B",
+    "model": "step-3.7-flash",
     "messages": [
       { "role": "user", "content": "Explain layer-split inference." }
     ]
@@ -79,7 +79,7 @@ export const PERF_TIERS = [
   { tier: "C", tps: "< 30 tok/s", mult: "×0.7" },
 ];
 
-/* linkcpp's own one-liner — a verbatim English quote, shown as a callout. */
+/* The engine's own one-liner — a verbatim English quote, shown as a callout. */
 export const LINKCPP_TAGLINE =
   "Run large AI models across multiple GPUs and machines on an inference engine kept close to upstream.";
 
@@ -92,17 +92,22 @@ export const DEVICE_META = [
   { name: "Mobile", status: "live" as const },
 ];
 
-/* Proof stats — the numbers are universal; labels are translated in t.proof.items. */
-export const PROOF_STATS = ["122B", "4", "2", "4"];
+/* Proof stats — the numbers are universal; labels are translated in t.proof.items.
+   Each one is something an operator can check: the model serving right now, how
+   many stages it is placed as, the cross-backend agreement we measured, and the
+   platforms the wallet ships on. */
+export const PROOF_STATS = ["428B", "16", "0.9999", "4"];
 
 /* Roadmap tone per item (positive = live, caution = coming). */
-export const ROADMAP_TONE = ["positive", "caution", "caution"] as const;
+export const ROADMAP_TONE = ["positive", "caution", "caution", "caution"] as const;
 
-/* A 49-layer model split across a heterogeneous set of devices — one of each,
-   to show that any device can be a node. Layers sum to 49 (Qwen3.5-122B). */
+/* A 45-layer model split across a heterogeneous set of devices — one of each, to
+   show that any device can be a node. Layers sum to 45 (Step-3.7-Flash, the 428B
+   MoE serving today). Illustrative: production places it as 16 stages on two
+   machines, not one device per kind. */
 export const NODE_SPLIT = [
-  { id: "GPU", layers: 15, tier: "S" },
-  { id: "CPU", layers: 12, tier: "B" },
-  { id: "NPU", layers: 12, tier: "B" },
-  { id: "Phone", layers: 10, tier: "C" },
+  { id: "GPU", layers: 14, tier: "S" },
+  { id: "CPU", layers: 11, tier: "B" },
+  { id: "NPU", layers: 11, tier: "B" },
+  { id: "Phone", layers: 9, tier: "C" },
 ];

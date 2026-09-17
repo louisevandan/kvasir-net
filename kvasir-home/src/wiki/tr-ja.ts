@@ -281,7 +281,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "**Mixture-of-Experts** モデルは、各レイヤーの単一 FFN を独立したエキスパート FFN 群と、トークンごとに数個を選ぶ**ルーター**に置き換えます。Qwen3.5-122B-A10B がネットワークの旗艦例です：",
+        md: "**Mixture-of-Experts** モデルは、各レイヤーの単一 FFN を独立したエキスパート FFN 群と、トークンごとに数個を選ぶ**ルーター**に置き換えます。今日提供中の 428B MoE である Step-3.7-Flash は、レイヤーあたり 288 エキスパートを top-8 ルーティングで使います。以下で詳しく展開する例は Qwen3.5-122B-A10B です——エンドツーエンドで数値を実測できたのがこのモデルだからです：",
       },
       {
         t: "stats",

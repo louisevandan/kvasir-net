@@ -280,7 +280,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "**专家混合**模型把每层的单个 FFN 换成一组独立的专家 FFN，外加一个每 token 挑选几个的**路由器**。Qwen3.5-122B-A10B 是网络的旗舰示例：",
+        md: "**专家混合**模型把每层的单个 FFN 换成一组独立的专家 FFN，外加一个每 token 挑选几个的**路由器**。今日服务中的 428B MoE —— Step-3.7-Flash 每层有 288 个专家，采用 top-8 路由。下面详细展开的示例是 Qwen3.5-122B-A10B，因为它才是数字被端到端实测过的那一个：",
       },
       {
         t: "stats",

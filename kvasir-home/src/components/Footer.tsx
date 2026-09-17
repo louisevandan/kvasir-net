@@ -79,6 +79,12 @@ export default function Footer() {
                 {t.nav.careers}
               </a>
               <a
+                href="/releases"
+                className="text-ink-muted transition-colors hover:text-ink"
+              >
+                Releases
+              </a>
+              <a
                 href="/legal"
                 className="text-ink-muted transition-colors hover:text-ink"
               >

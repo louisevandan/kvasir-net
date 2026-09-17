@@ -282,7 +282,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "Model **Mixture-of-Experts** mengganti FFN tunggal tiap lapisan dengan bank FFN pakar independen plus **router** yang memilih beberapa per token. Qwen3.5-122B-A10B adalah contoh andalan jaringan:",
+        md: "Model **Mixture-of-Experts** mengganti FFN tunggal tiap lapisan dengan bank FFN pakar independen plus **router** yang memilih beberapa per token. Step-3.7-Flash, MoE 428B yang dilayani hari ini, punya 288 pakar per lapisan dengan perutean top-8. Qwen3.5-122B-A10B adalah contoh terperinci di bawah, karena ia yang angka-angkanya terukur ujung-ke-ujung:",
       },
       {
         t: "stats",

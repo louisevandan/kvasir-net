@@ -211,7 +211,7 @@ const staticRoutes = [
     path: "/",
     title: "Kvasir — Decentralized AI Inference. Bring compute, earn KVR.",
     description:
-      "Kvasir is a decentralized AI inference network. It splits large open models across a peer-to-peer ring of shared GPUs, CPUs, NPUs and phones with linkcpp — contribute compute, earn KVR. Solana devnet.",
+      "Kvasir is a decentralized AI inference network. The p4 engine splits large open models across a peer-to-peer ring of shared GPUs, CPUs, NPUs and phones — contribute compute, earn KVR. Solana devnet.",
     image: `${ORIGIN}/og.png`,
     kind: "website",
     bodyHtml:
@@ -251,6 +251,17 @@ const staticRoutes = [
     bodyHtml:
       `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Kvasir developer API</h1><p class="mt-4 text-lg text-ink-muted">Pay-per-inference in KVR over an OpenAI-compatible surface: discover a model, quote, pay on-chain from your own wallet, redeem. Solana devnet.</p></section>`,
     jsonld: [breadcrumb([["API", "/docs/api"]])],
+  },
+  {
+    path: "/releases",
+    title: "Release notes — Kvasir",
+    description:
+      "What shipped on the Kvasir network and what it was measured on: the p4 engine, the models being served, the gateway and the wallet.",
+    image: `${ORIGIN}/og.png`,
+    kind: "website",
+    bodyHtml:
+      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">What shipped, and what it was measured on</h1><p class="mt-4 text-lg text-ink-muted">Release notes for the Kvasir network: the p4 engine, the models being served, the settlement gateway and the wallet. Each entry carries the evidence it was accepted on.</p></section>`,
+    jsonld: [breadcrumb([["Release notes", "/releases"]])],
   },
   {
     path: "/legal",
