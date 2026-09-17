@@ -11,6 +11,11 @@ daily.sh     → the three in order, logged and kept
 
 commits.mjs       → new commits since last seen, across the watched repositories
 commit-watch.sh   → polls every 20 minutes and posts only when there is news
+
+assess.mjs        → the day's judgement, written by Claude from the same facts
+readiness.mjs     → rewrites the live blocks inside the S5 readiness review
+calendar.mjs      → the week: meetings from an iCal feed, dates from plan.json
+release-check.mjs → notices a shipped version and writes it into the site
 ```
 
 ## Why three tracks
@@ -50,6 +55,46 @@ landed, not what. Branch heads do not have that hole.
 value is read at the call and never logged. A watch's position is kept in
 `state/commits.json`, and the first run of a new watch only records where it is
 — it does not replay history into the group.
+
+## The readiness review
+
+`readiness/en.html` and `readiness/ko.html` are the S5 readiness review. Most of
+each file is reviewed text and the job never touches it; three marked blocks are
+rewritten every morning:
+
+| block | written by | holds |
+| --- | --- | --- |
+| `LIVE:STATUS` | `readiness.mjs` | the three tracks as the machines and the repository report them |
+| `LIVE:CALENDAR` | `calendar.mjs` | this week — meetings from the calendar feed, dates from `plan.json` |
+| `LIVE:ASSESSMENT` | `assess.mjs` | a judgement and the next steps, written from that morning's facts |
+
+Both languages are rewritten together: a Korean reader and an English reader
+must not end up with different numbers.
+
+The assessment is a `claude -p` run over the collected JSON. It is given the
+facts and nothing else, and it returns structured text rather than HTML — the
+markup is ours, so a bad answer can be wrong but cannot break the page. When the
+run fails, the previous assessment stays, clearly dated.
+
+The English copy is what the group receives each morning. Not the claude.ai
+artifact link: a headless `claude -p` authenticates into a different artifact
+space and cannot update those pages, so `publish-readiness.sh` is there for a
+person to run from an interactive session, and the daily job attaches the file.
+
+To include meetings, put the calendar's **secret iCal address** in
+`config.json` under `calendar.icsUrl` — an unattended job cannot hold an
+interactive Google session, and that URL is the same events over plain HTTPS.
+Anyone holding it can read the calendar, so treat it as a credential.
+
+## Release notes
+
+`release-check.mjs` reads the engine version off the running agents, the desktop
+app's version from its manifest, and what the bridge catalog says is being
+served. When one of them changes it appends an entry to the site's
+`src/releases.json` — never inventing a release, only recording a value it read,
+with a line saying where the value came from. Set
+`KVASIR_RELEASE_AUTODEPLOY=1` (the daily job does) to publish the site after
+writing one.
 
 ## Setup
 

@@ -1,0 +1,501 @@
+<title>Kvasir S5 준비도 점검</title>
+<meta name="description" content="YZi Labs EASY Residency S5 마감을 앞두고 Kvasir 웹사이트·공개 저장소·원본 엔진을 읽기 전용으로 점검한 솔직한 평가.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+:root{
+  --bg:#F4F5F8; --surface:#FFFFFF; --raised:#ECEEF3; --ink:#15171E; --muted:#596074; --line:#DADDE6;
+  --accent:#C8246A; --accent-soft:#FBE3EE;
+  --pass:#1D8659; --pass-soft:#E0F2E9; --warn:#9A620C; --warn-soft:#FAEFD9; --fail:#BD3A30; --fail-soft:#FAE4E2;
+  --sans:"Inter","Noto Sans KR",system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans KR",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B0C11; --surface:#14161D; --raised:#1B1E27; --ink:#ECEEF3; --muted:#9AA0AE; --line:#272B37;
+    --accent:#FF3D8B; --accent-soft:#35142A;
+    --pass:#3CBF8E; --pass-soft:#112820; --warn:#F5B74C; --warn-soft:#2D2412; --fail:#E5675F; --fail-soft:#2E1715;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B0C11; --surface:#14161D; --raised:#1B1E27; --ink:#ECEEF3; --muted:#9AA0AE; --line:#272B37;
+  --accent:#FF3D8B; --accent-soft:#35142A;
+  --pass:#3CBF8E; --pass-soft:#112820; --warn:#F5B74C; --warn-soft:#2D2412; --fail:#E5675F; --fail-soft:#2E1715;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.7;padding-inline:20px;word-break:keep-all}
+.wrap{max-width:1040px;margin:0 auto;padding-block:40px 72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--muted)}
+h1{font-size:clamp(30px,4.6vw,44px);line-height:1.15;letter-spacing:-.02em;margin:10px 0 12px;text-wrap:balance}
+h1 .mark{color:var(--accent)}
+.lede{max-width:64ch;color:var(--muted);margin:0}
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.fact{font-family:var(--mono);font-size:12.5px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
+.fact b{color:var(--accent);font-weight:600}
+nav.toc{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);margin:28px -20px 0;padding:10px 20px;display:flex;flex-wrap:wrap;gap:6px 16px}
+nav.toc a{font-size:13px;color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+section{padding-top:44px}
+h2{font-size:22px;letter-spacing:-.01em;margin:0 0 6px;text-wrap:balance}
+.sub{color:var(--muted);margin:0 0 18px;max-width:66ch}
+h3{font-size:16px;margin:26px 0 8px}
+p{max-width:66ch}
+.verdict{margin-top:34px;padding:26px 0 8px;border-top:3px solid var(--accent)}
+.verdict .big{font-size:clamp(20px,2.6vw,26px);line-height:1.45;font-weight:700;letter-spacing:-.01em;max-width:34ch;text-wrap:balance;margin:8px 0 10px}
+.score{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:0;border-top:1px solid var(--line);margin-top:22px}
+.score .item{padding:16px 18px 16px 0;border-bottom:1px solid var(--line)}
+.score .top{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.score .name{font-weight:700}
+.score p{margin:6px 0 0;color:var(--muted);font-size:14.5px}
+.pill{font-family:var(--sans);font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.pill.pass{color:var(--pass);background:var(--pass-soft)}
+.pill.warn{color:var(--warn);background:var(--warn-soft)}
+.pill.fail{color:var(--fail);background:var(--fail-soft)}
+.pill.info{color:var(--muted);background:var(--raised)}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+th{font-size:12px;font-weight:600;color:var(--muted);background:var(--raised)}
+.nowrap{white-space:nowrap}
+td.num,.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13px}
+.note{border-left:2px solid var(--line);padding:2px 0 2px 14px;color:var(--muted);margin:14px 0;max-width:66ch}
+ul.clean{padding-left:18px;margin:8px 0;max-width:68ch}
+ul.clean li{margin:5px 0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.panel h3{margin-top:0}
+ol.plan{list-style:none;counter-reset:step;padding:0;margin:8px 0}
+ol.plan>li{counter-increment:step;display:grid;grid-template-columns:38px 1fr;gap:4px 12px;padding:14px 0;border-bottom:1px solid var(--line)}
+ol.plan>li::before{content:counter(step,decimal-leading-zero);font-family:var(--mono);font-weight:600;color:var(--accent);padding-top:2px}
+ol.plan .what{font-weight:700}
+ol.plan .how{grid-column:2;color:var(--muted);font-size:14.5px}
+.owner{font-size:11.5px;font-weight:500;color:var(--ink);background:var(--raised);border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap}
+.mark-use,.mark-avoid{font-family:var(--mono);font-weight:600;margin-right:6px}
+.mark-use{color:var(--pass)} .mark-avoid{color:var(--fail)}
+ul.flat{list-style:none;padding:0;margin:0}
+ul.flat li{padding:8px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+ul.flat li:last-child{border-bottom:0}
+.closing{margin-top:52px;padding:28px 0 0;border-top:1px solid var(--line)}
+.closing p{font-size:16.5px;max-width:60ch}
+footer{margin-top:40px;color:var(--muted);font-size:13px}
+@media (max-width:560px){body{font-size:15px}.score .item{padding-right:0}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">내부 검토 · 2026년 9월 17일 09:20 KST 갱신 · 읽기 전용 점검</div>
+    <h1>Kvasir <span class="mark">S5</span> 준비도 점검</h1>
+    <p class="lede">밤사이 수정을 마친 뒤 YZi Labs EASY Residency 시즌 5 준비 상태를 다시 점검했습니다. 대상은 네 가지입니다.</p>
+    <ul class="clean">
+      <li>운영 중인 웹사이트 (kvasir-ai.net)</li>
+      <li>공개 저장소 louisevandan/kvasir-net. 이제 <code>p4</code> 브랜치에 엔진이 올라가 있습니다.</li>
+      <li>원본 엔진 hikaMaeng/p4</li>
+      <li>새로 만든 S5 피치덱</li>
+    </ul>
+    <div class="facts">
+      <span class="fact">마감 <b>9월 21일 23:59 (GMT-7)</b></span>
+      <span class="fact">팀당 최대 <b>$500K</b></span>
+      <span class="fact">6~10주차 <b>치앙마이 대면 풀타임</b></span>
+      <span class="fact">레지던시 인원 <b>Guy · Anver</b></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="목차">
+    <a href="#verdict">결론</a><a href="#changes">03:00 이후 변화</a><a href="#program">S5 개요</a><a href="#engine">엔진(p4)</a><a href="#website">웹사이트</a><a href="#deck">S5 덱</a><a href="#risks">투자자 질문</a><a href="#plan">9/21 전 할 일</a><a href="#numbers">써도 되는 숫자</a><a href="#method">검토 방법</a>
+  </nav>
+
+  <section id="verdict" class="verdict">
+    <div class="eyebrow">결론</div>
+    <p class="big">여전히 지원하세요. 지원서는 훨씬 탄탄해졌습니다. 대부분을 바로잡았고, 남은 세 가지 중 하나는 심각합니다.</p>
+    <p class="sub">밤사이 웹사이트, 공개 저장소, 풀타임 인원, 덱을 정리했습니다. 남은 것은 다음 세 가지입니다.</p>
+    <ul class="clean">
+      <li>공개 엔드포인트가 다운돼 있습니다. 정산 게이트웨이는 p4 반영 전까지 일부러 내려 둔 상태입니다.</li>
+      <li>64건 관문(I1)은 제어 PC 전원이 꺼지면서 RED로 끝났습니다.</li>
+      <li>GLM-5.2 결과의 공개 보고서가 아직 없습니다.</li>
+    </ul>
+    <div class="score">
+      <div class="item"><div class="top"><span class="name">분야 적합성</span><span class="pill pass">강함</span></div><p>덱이 S5 중점 분야 네 개(AI, Web3·DePIN, 에이전트 경제, 스테이블코인·결제)에 Kvasir를 연결합니다. 에이전트가 데브넷에서 직접 추론을 사는 흐름도 지금 동작합니다.</p></div>
+      <div class="item"><div class="top"><span class="name">엔지니어링 깊이</span><span class="pill pass">강함</span></div><p>최신 작업 브랜치에서 테스트 1,582개가 통과하고 실패는 0입니다. 엔진 커밋 484개와 영문 문서가 공개됐습니다.</p></div>
+      <div class="item"><div class="top"><span class="name">규모 증명</span><span class="pill warn">보통</span></div><p>3호스트 Qwen 122B는 정식 통과했고 공개돼 있습니다. MI250에서는 Step-3.7-Flash(428B)를 vLLM과 비교 실측한 기록도 있습니다. GLM-5.2(744B)는 이전 엔진인 linkcpp에서 돌렸고 보고서는 아직 공개되지 않았습니다. 첫 64건 실행은 RED로 끝났습니다.</p></div>
+      <div class="item"><div class="top"><span class="name">운영 중인 제품</span><span class="pill warn">의도적 정지</span></div><p>정산 게이트웨이는 p4 이식 전까지 의도적으로 내려 둔 상태입니다. MI250 호스트에서는 linker 허브가 로컬에서 200으로 응답하고 p4 에이전트도 돌고 있지만, 공개 도메인은 502라 심사역에게는 장애로 보입니다.</p></div>
+      <div class="item"><div class="top"><span class="name">공개 주장·규제 대응</span><span class="pill warn">대부분 해결</span></div><p>9개 언어 사이트를 모두 고쳤고 이용약관·개인정보 페이지도 생겼습니다. 법인명 미기재와 서버 코드의 스테이킹 APR 기본값 12%가 남았습니다.</p></div>
+      <div class="item"><div class="top"><span class="name">팀·구조</span><span class="pill pass">정해짐</span></div><p>창업자는 Guy, Anver, Kiwan, Antonio 네 명입니다. Guy와 Anver가 치앙마이를 포함해 레지던시를 풀타임으로 소화합니다. IP 정리는 Antonio가 맡습니다.</p></div>
+    </div>
+  </section>
+
+    <!-- LIVE:STATUS -->
+  <section id="live">
+    <h2>실시간 상태</h2>
+    <p class="sub">머신과 저장소에서 자동으로 다시 쓴 절입니다 — 2026-09-17 01:34 UTC. 나머지 본문은 검토된 원문 그대로입니다.</p>
+    <div class="items">
+      <div class="item"><div class="top"><span class="name">링</span><span class="pill pass">서빙 중</span></div><p>에이전트 2대 중 2대 가동. MI250-01: step37-s0 loaded, step37-s1 loaded · MI250-02: step37-s2 loaded, step37-s3 loaded. 최근 1일간 커밋 0건.</p></div>
+      <div class="item"><div class="top"><span class="name">정산 게이트웨이</span><span class="pill warn">의도적 정지</span></div><p>공개 엔드포인트가 응답하지 않습니다(fetch failed). p4 이식 전까지 의도적으로 내려 둔 상태입니다. 최근 1일간 커밋 2건, 파일 10개.</p></div>
+      <div class="item"><div class="top"><span class="name">클라이언트 앱</span><span class="pill pass">정상</span></div><p>kvasir-ai.net이 200로 208 ms 만에 응답했습니다. 데스크탑 지갑 Kvasir Wallet 0.1.0. 최근 1일간 커밋 1건, 파일 10개.</p></div>
+    </div>
+  </section>
+<!-- /LIVE:STATUS -->
+
+  <!-- LIVE:CALENDAR -->
+  <section id="calendar">
+    <h2>이번 주</h2>
+    <p class="sub">2026-09-14 – 2026-09-20 · Asia/Seoul. 미팅은 팀 캘린더에서 가져오고, 표시된 날짜는 계획상의 일정입니다.</p>
+    <style>
+    .cal { width: 100%; table-layout: fixed; border-collapse: collapse; }
+    .cal th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .6; padding: 6px 4px; text-align: left; }
+    .cal td { vertical-align: top; padding: 8px 6px; border-top: 1px solid rgba(127,127,127,.25); min-height: 84px; }
+    .cal .cal-date { font-size: 12px; opacity: .55; margin-bottom: 6px; }
+    .cal .cal-today { background: rgba(127,127,127,.10); }
+    .cal .cal-today .cal-date { opacity: 1; font-weight: 600; }
+    .cal .cal-event { font-size: 12px; line-height: 1.35; margin-bottom: 5px; }
+    .cal .cal-time { opacity: .6; font-variant-numeric: tabular-nums; }
+    .cal .cal-plan { font-size: 12px; line-height: 1.35; margin-bottom: 5px; font-weight: 600; }
+  </style>
+    <div class="table-wrap"><table class="cal"><thead><tr><th>월</th><th>화</th><th>수</th><th>목</th><th>금</th><th>토</th><th>일</th></tr></thead><tbody><tr><td class=""><div class="cal-date">14</div></td><td class=""><div class="cal-date">15</div></td><td class=""><div class="cal-date">16</div></td><td class="cal-today"><div class="cal-date">17</div></td><td class=""><div class="cal-date">18</div></td><td class=""><div class="cal-date">19</div></td><td class=""><div class="cal-date">20</div></td></tr></tbody></table></div>
+    <p class="sub">캘린더 피드가 설정되지 않아 계획 일정만 표시합니다. 모니터링 설정에 캘린더의 비공개 iCal 주소를 넣으면 미팅도 함께 나옵니다.</p>
+    <p class="sub">이번 주 이후: 2026-09-21 — YZi Labs EASY S5 application due</p>
+  </section>
+<!-- /LIVE:CALENDAR -->
+
+
+  <section id="changes">
+    <h2>첫 점검(03:00) 이후 달라진 것</h2>
+    <p class="sub">밤사이 고치고 다시 확인한 내용입니다. "지금" 열이 심사역이 보게 될 상태입니다.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>항목</th><th>03:00</th><th>지금</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td>사이트 주장</td><td>근거 없는 "4× MI250에서 122B", NPU 가동 표시, "unforked", 48 레이어</td><td>공개 보고서가 뒷받침하는 "물리 머신 3대에서 122B"로 바꿨습니다. NPU는 개발 중, "업스트림에 가깝게", 49 레이어로 고쳤고 9개 언어 모두 반영했습니다.</td><td><span class="pill pass">해결</span></td></tr>
+          <tr><td>규제 관련 문구</td><td>APR 이자, TGE 문구, 토큰 업사이드, 스왑 예고, 메인넷 링크, 곳곳의 "non-custodial"</td><td>모두 삭제했습니다. 보관 방식도 정확히 적었습니다. 키는 기기에 있고, 데브넷에서는 스테이킹 KVR과 크레딧을 게이트웨이 금고가 보관합니다.</td><td><span class="pill pass">해결</span></td></tr>
+          <tr><td>이용약관·개인정보</td><td>없음</td><td>게이트웨이 코드에 근거한 <code>/legal</code>을 공개했습니다. 연락처는 sales@newtype-ai.com입니다.</td><td><span class="pill pass">해결</span></td></tr>
+          <tr><td>개발자 경로</td><td>GitHub 스타 게이트, 서로 다른 인증 방식 두 개</td><td>게이트와 관련 함수를 제거했습니다. 건별 결제와 크레딧 키 두 방식을 구분해 설명합니다.</td><td><span class="pill pass">해결</span></td></tr>
+          <tr><td>라이선스 표기</td><td>JSON-LD "MIT", "open-source"</td><td>모두 BSL 1.1과 "source-available"로 바꿨습니다.</td><td><span class="pill pass">해결</span></td></tr>
+          <tr><td>공개 저장소</td><td>커밋 8개, 마지막 푸시 8월 3일</td><td><code>p4</code> 브랜치에 커밋 484개를 BSL 1.1·NOTICE·영문 문서와 함께 올렸습니다. README가 이 브랜치를 가리키고, 9월 17일에 푸시했습니다.</td><td><span class="pill pass">해결</span></td></tr>
+          <tr><td>풀타임 인원</td><td>미정</td><td>Guy와 Anver가 치앙마이를 포함해 레지던시를 풀타임으로 소화합니다.</td><td><span class="pill pass">정해짐</span></td></tr>
+          <tr><td>S5 덱</td><td>없음</td><td>v4, 44장입니다. 문제 정의·설명은 CRO 덱, 블록체인은 의장 덱에서 가져왔고, 증거 슬라이드·P4 Studio 화면·10주 계획을 더했습니다.</td><td><span class="pill pass">초안 완성</span></td></tr>
+          <tr><td>게이트웨이·허브</td><td>502, 원인 미상</td><td>여전히 502입니다. 원인을 확인했습니다. 정산 게이트웨이는 p4 이식 전까지 일부러 내려 둔 상태이고, MI250의 터널은 오늘 아무 요청도 받지 않았습니다. 허브 자체는 로컬에서 200으로 응답합니다.</td><td><span class="pill warn">결정 필요</span></td></tr>
+          <tr><td>지속 부하 관문(I1)</td><td>사전 봉인, 미실행</td><td>21:44에 시작해, 23:01 Windows 제어 PC가 꺼지면서 중단됐습니다.</td><td><span class="pill fail">RED</span></td></tr>
+          <tr><td>GLM-5.2(744B) 증거</td><td>미공개, p4 성과로 표기</td><td>p4가 아니라 이전 세대 엔진인 linkcpp에서 돌렸습니다. 492GB 모델은 MI250 호스트에 있지만 실행 기록은 찾지 못했고, 보고서도 아직 공개되지 않았습니다.</td><td><span class="pill warn">공개 필요</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="program">
+    <h2>YZi Labs S5 개요</h2>
+    <p class="sub">공식 페이지 기준입니다.</p>
+    <div class="cols">
+      <div class="panel">
+        <h3>중점 분야 (공식)</h3>
+        <p style="margin:0">Web3 · AI · 바이오테크 · 에이전트 경제 · 스테이블코인·결제 · 차세대 DeFi · 토큰화 주식·RWA</p>
+      </div>
+      <div class="panel">
+        <h3>구성</h3>
+        <ul class="clean">
+          <li>10주 과정입니다. 1~5주차는 온라인으로 시장 진출, 채용, 자금 전략, 메커니즘 설계를 다룹니다.</li>
+          <li>6~10주차는 치앙마이에서 대면 풀타임(Guy·Anver)입니다. 숙소·식사·작업 공간이 제공됩니다.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>투자</h3>
+        <p style="margin:0">팀당 최대 $500K입니다. 트래커에는 SAFE 기준 $150K에 지분 5%, 추가 $350K(캡 없음)로 적혀 있지만, 공식 페이지에는 조건이 없습니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="engine">
+    <h2>엔진(p4)이 증명한 것</h2>
+    <p class="sub">p4는 Kvasir의 원본 엔진입니다. 각 노드가 연속된 레이어 구간을 적재하고 은닉 상태만 넘깁니다. 코드는 louisevandan/kvasir-net의 <code>p4</code> 브랜치에 공개돼 있고, 개발은 hikaMaeng/p4의 <code>codex/i1-*</code>, <code>codex/r2-writer</code> 브랜치에서 이어지고 있습니다.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>결과</th><th>수치</th><th>날짜</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td>linkcpp(이전 엔진)의 GLM-5.2 (744B MoE)</td><td class="num">검증 완료 (창업자 확인)</td><td class="num nowrap">—</td><td><span class="pill warn">기록 없음</span> MI250 두 대 모두에서 확인 실패</td></tr>
+          <tr><td>MI250 플릿의 Step-3.7-Flash 428B MoE (linkcpp vs vLLM)</td><td class="num">단일 스트림 1머신(8 GCD) 46.32 tok/s, 2머신(200G IB) 37.86 · 동시 8건 집계 90.32 대 34.36 · 확장률 2.28× 대 1.15×</td><td class="num nowrap">8/4</td><td><span class="pill pass">실측</span> 오늘 호스트에서 직접 확인</td></tr>
+          <tr><td>Qwen3.5-122B-A10B (88.3 GB), 호스트 3대: DGX Spark GB10 + Mac mini M4 Pro 2대</td><td class="num">단일 요청 3/3 완료·완전 정리 · ITL p95 78~98 ms · 짧은 요청 유효 TPS 4.22</td><td class="num nowrap">9/16</td><td><span class="pill pass">통과</span> 단일 요청</td></tr>
+          <tr><td>I1: 같은 구성, 64건 폐루프 코퍼스 (입력 220만 토큰)</td><td class="num">23:01 Windows 제어 PC 종료로 중단 · 요청 1건 미완료 · 전송 2건 "Unknown"</td><td class="num nowrap">9/16~17</td><td><span class="pill fail">RED·무효</span></td></tr>
+          <tr><td>복구 관문 R1~R2 (원격 감독기, 요청 소유권)</td><td class="num">R1 자체 시험 호스트별 4/4 · R2 첫 홉 소유권 증명, 전체 분류는 미완</td><td class="num nowrap">9/17</td><td><span class="pill warn">진행 중</span> R3 전에는 모델 적재 금지</td></tr>
+          <tr><td>이전 64건 시도 (H1)</td><td class="num">64건 중 8건 완료 · 재실행 무효</td><td class="num nowrap">9/16</td><td><span class="pill fail">실패</span></td></tr>
+          <tr><td>Qwen 122B, 호스트 5대 / 스테이지 6개, CUDA + Metal</td><td class="num">32/32 요청 · 디코드 11.77 rows/s</td><td class="num nowrap">9/10</td><td><span class="pill warn">제한적 통과</span> 답변 품질은 미승인</td></tr>
+          <tr><td>MiniMax M3 (278 GiB 밀집 변환), 호스트 2대 / GPU 4장</td><td class="num">4/4 · 동시 4건 2.68 TPS</td><td class="num nowrap">9/13</td><td><span class="pill warn">통과</span> 이 변환본만</td></tr>
+          <tr><td>Step-3.7-Flash(428B), AMD MI250 스테이지 16개, 에이전트 2대 (P4 Studio)</td><td class="num">실제 P4 제어 화면에 배치 상태 표시</td><td class="num nowrap">—</td><td><span class="pill info">화면</span> p4 처리량 보고서는 아직 없음</td></tr>
+          <tr><td>v0.9.0, 호스트 1대 (RTX 3090 2장), 35B 모델</td><td class="num">512/512 · 최고 313.8 TPS</td><td class="num nowrap">9/10</td><td><span class="pill info">후보</span> 최종 봉인 보류</td></tr>
+          <tr><td>자동 테스트</td><td class="num">1,582 통과 / 0 실패 / 7 제외 (codex/r2-writer 보고서 기준) · main은 직접 실행해 1,536 통과</td><td class="num nowrap">9/17</td><td><span class="pill pass">정상</span></td></tr>
+          <tr><td>Kimi K3 (2.8T MoE)</td><td class="num">계획</td><td class="num nowrap">S5</td><td><span class="pill info">다음</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>오늘 MI250 호스트에서 직접 확인한 것</h3>
+    <ul class="clean">
+      <li><b>엔진 호스트는 살아 있습니다.</b> MI250 두 대 모두 linker 허브가 <code>127.0.0.1:19001</code>에서 <code>200</code>으로 응답하고, MI250-01에서는 <code>p4-agent</code>와 <code>p4_staged_serve</code> 워커 두 개가 돌고 있습니다.</li>
+      <li><b>공개 장애의 원인은 연산이 아니라 노출 경로입니다.</b> MI250-01에서 cloudflared 터널이 8월 25일부터 떠 있지만 오늘은 요청 기록이 없고, 마지막 오류(9월 16일)는 "원본 서비스에 연결할 수 없음"이었습니다. 정산 게이트웨이는 열린 포트가 없는데, 이는 p4 이식 전까지 내려 뒀다는 설명과 일치합니다.</li>
+      <li><b>GLM-5.2:</b> 492GB GGUF 전체가 MI250-02에 있지만, 허브의 추론 기록에는 Step-3.7-Flash 실행만 있습니다. 컨테이너 로그와 시스템 로그에도 내려받기와 마운트만 있고 GLM 적재 기록은 없습니다. 따라서 이 주장의 증거는 다른 곳에 있고, 공개가 필요합니다.</li>
+      <li><b>실제로 측정된 가장 큰 모델은 Step-3.7-Flash입니다.</b> 428B MoE(45층, 층당 전문가 288개, top-8), Q4_K_XL 114 GiB를 MI250(gfx90a) 8 GCD × 2대와 200G InfiniBand로 돌렸습니다. 덱에 ~201B로 적혀 있던 표기는 428B로 고쳤습니다.</li>
+      <li><b>운영 위생:</b> MI250-01의 프로세스 목록에 터널 토큰이 그대로 보입니다.</li>
+    </ul>
+
+    <h3>숫자를 인용하기 전에 알아둘 것</h3>
+    <ul class="clean">
+      <li><b>제어 루프에 단일 장애점이 있습니다.</b> I1은 Windows PC 한 대가 구동했고, 그 PC가 꺼지자 수집기와 반환 터널이 함께 사라졌습니다. 호스트에서 계속 돌아가는 원격 감독기(R1)로 고치는 중입니다.</li>
+      <li><b>"3/3 정답"에는 설명이 필요합니다.</b> 중간·긴 요청에서는 모델의 산술이 틀렸고, 반환된 답은 모델 밖의 결정적 계산 단계가 만들었습니다.</li>
+      <li><b>단일 호스트 기준선이 아직 없습니다.</b> GPU 활용률도 낮습니다(Mac 3~5%, MI250 6~10%).</li>
+      <li><b>전송 계층에 TLS와 노드 인증이 없습니다.</b> 신뢰할 수 있는 LAN을 전제로 하므로, 신뢰할 수 없는 DePIN 운영자를 받기에는 이릅니다. 스웜·모바일 노드·지갑·KVR·게이트웨이는 p4가 아니라 kvasir-net 코드에 있습니다.</li>
+      <li><b>개발 방식은 규율 있고 AI 중심입니다.</b> 봉인된 실행, 변이 검사, 실패 보존을 지킵니다. 약점도 셋 있습니다.
+        <ul class="clean">
+          <li>CI가 없습니다.</li>
+          <li>사실상 운영자 한 명에게 의존합니다.</li>
+          <li>원본 저장소 문서는 여전히 한국어라, 공개 브랜치는 동기화할 때마다 다시 번역해야 합니다.</li>
+        </ul>
+      </li>
+    </ul>
+  </section>
+
+  <section id="website">
+    <h2>수정 후 웹사이트 (kvasir-ai.net)</h2>
+    <p class="sub">운영 사이트에 배포하고 다시 확인했습니다. 첫 클릭에서 보이는 내용은 이제 문제가 없습니다. 다만 게이트웨이 링크를 누르면, 의도적으로 내려 둔 서비스라 응답이 없습니다.</p>
+
+    <h3>운영 엔드포인트</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>시각 (KST)</th><th>gate.kvasir-ai.net /v1/models</th><th>hub.kvasir-ai.net</th><th>kvasir-ai.net</th><th>/legal</th></tr></thead>
+        <tbody>
+          <tr><td class="num">03:00~03:09 (5회)</td><td><span class="pill fail">502</span></td><td><span class="pill fail">502</span></td><td><span class="pill pass">200</span></td><td><span class="pill info">—</span></td></tr>
+          <tr><td class="num">03:51</td><td><span class="pill fail">502</span></td><td><span class="pill fail">502</span></td><td><span class="pill pass">200</span></td><td><span class="pill info">—</span></td></tr>
+          <tr><td class="num">09:16~09:17 (3회)</td><td><span class="pill fail">502</span></td><td><span class="pill fail">502</span></td><td><span class="pill pass">200</span></td><td><span class="pill pass">200</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">502는 Cloudflare 자체 오류 페이지입니다. 엣지는 살아 있고 원본 서버에 닿지 못한다는 뜻입니다. 정산 게이트웨이는 p4 이식 전까지 의도적으로 내려 둔 상태이고, 허브는 MI250 호스트에서 로컬로 응답합니다. 6시간 동안의 표본 점검이며, 가동률을 측정한 것은 아닙니다.</p>
+
+    <h3>남은 문제</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>영역</th><th>내용</th><th>심각도</th></tr></thead>
+        <tbody>
+          <tr><td>운영 서비스</td><td>사이트가 여전히 gate.kvasir-ai.net과 hub.kvasir-ai.net을 링크하지만 502를 반환합니다. 게이트웨이는 의도적으로 내려 둔 것인데, 사이트 어디에도 그 사실이 없고 상태 페이지도 없습니다.</td><td><span class="pill fail">높음</span></td></tr>
+          <tr><td>법인명</td><td><code>/legal</code>은 운영 주체를 LICENSE의 라이선서 이름인 "Kvasir AI Network"로만 적습니다. 등기 법인명이 없습니다.</td><td><span class="pill warn">중간</span></td></tr>
+          <tr><td>게이트웨이 코드</td><td>
+            <ul class="clean">
+              <li>스테이킹 APR 기본값이 여전히 12%입니다(<code>STAKING_APR || 0.12</code>).</li>
+              <li>건별 결제 경로가 프롬프트와 응답을 기한 없이 보관합니다. <code>/legal</code>에는 공시했습니다.</li>
+              <li>API 키를 폐기할 수 없습니다. 재발급해도 이전 키가 유효합니다.</li>
+            </ul>
+          </td><td><span class="pill warn">중간</span></td></tr>
+          <tr><td>일관성</td><td>보상 공식이 코드 경로마다 다릅니다.</td><td><span class="pill warn">중간</span></td></tr>
+          <tr><td>개발자 경로</td><td>스타 게이트는 없앴지만, 인증 방식을 하나로 정한 퀵스타트 페이지가 아직 없습니다.</td><td><span class="pill info">낮음</span></td></tr>
+          <tr><td>사이트 품질</td><td>
+            <ul class="clean">
+              <li>언어별 URL(hreflang)이 없고, 주요 페이지가 검색 크롤러에게 빈약하게 보입니다.</li>
+              <li>앱스토어 링크가 비어 있고, 팀 페이지가 없습니다.</li>
+              <li>채용 공고는 1건이고, 최신 기술 글은 7월 17일 것입니다.</li>
+            </ul>
+          </td><td><span class="pill info">낮음</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="deck">
+    <h2>S5 덱 (v4, 44장)</h2>
+    <p class="sub">덱의 출처는 다음과 같습니다.</p>
+    <ul class="clean">
+      <li><b>문제 정의·설명:</b> 메가존 CRO 덱</li>
+      <li><b>블록체인 설명:</b> 의장 덱</li>
+      <li><b>S5용으로 새로 쓴 것:</b> 증거 슬라이드, P4 Studio 실제 화면, S5 적합성, 10주 계획</li>
+      <li><b>아직 설계 단계인 기능:</b> "design" 또는 "target"으로 표시했습니다.</li>
+    </ul>
+    <div class="cols">
+      <div class="panel">
+        <h3>잘 버티는 부분</h3>
+        <ul class="flat">
+          <li><span class="mark-use">+</span>엔진 수치가 모두 보고서로 이어집니다: 3호스트, 5호스트·6스테이지, 512/512, MiniMax M3, 테스트 수.</li>
+          <li><span class="mark-use">+</span>근거 없는 주장을 뺐습니다: "모든 100B+ 모델 검증", "4× MI250에서 122B".</li>
+          <li><span class="mark-use">+</span>강점과 약점을 나란히 보여 줍니다. 8/64와 낮은 GPU 활용률도 포함했습니다.</li>
+          <li><span class="mark-use">+</span>데브넷에서 이미 동작하는 에이전트 결제: 건별 결제와 자가 발급 키.</li>
+          <li><span class="mark-use">+</span>창업자 4명, Guy·Anver 레지던시 풀타임.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>제출 전에 고칠 것</h3>
+        <ul class="flat">
+          <li><span class="mark-avoid">!</span>"GLM-5.2 verified on p4"가 4개 슬라이드에 나옵니다. 보고서를 공개하지 않으면 심사역이 9월 8일 "미지원" 기록을 찾게 됩니다.</li>
+          <li><span class="mark-avoid">!</span>자금 용도 40/25/20/15는 초안입니다.</li>
+          <li><span class="mark-avoid">!</span>GTM 슬라이드에 메가존 이름이 나옵니다. 공개해도 되는지 확인이 필요합니다.</li>
+          <li><span class="mark-avoid">!</span>P4 Studio 캡처의 UI가 한국어입니다. 영문 캡처로 바꾸는 게 좋습니다.</li>
+          <li><span class="mark-avoid">!</span>TGE 계획과 상장 일정이 남아 있어, 법률 의견을 묻는 질문에 대비해야 합니다.</li>
+          <li><span class="mark-avoid">!</span>I1 RED 결과가 덱에 아직 없습니다. 반영하거나, I1을 다시 돌린 뒤 결과를 넣어야 합니다.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="risks">
+    <h2>투자자가 물을 질문</h2>
+    <p class="sub">먼저 나올 가능성이 큰 순서입니다.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>질문</th><th>지금 답할 수 있는 것</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>실제로 돌아가는 게 있나요?</td><td>이용약관을 갖춘 사이트는 열려 있습니다. 엔진 호스트는 돌아가고 허브도 로컬에서 응답하지만, 공개 게이트웨이는 p4 이식 동안 내려 둬서 링크가 502입니다.</td><td><span class="pill warn">설명 필요</span></td></tr>
+          <tr><td class="num">2</td><td>증거는 어디 있나요?</td><td>3호스트 122B 보고서는 공개돼 있고, Step-3.7-Flash 428B 실측치는 MI250 호스트에 있습니다. GLM-5.2는 linkcpp에서 돌렸고 보고서는 미공개입니다. 4× MI250 주장은 철회했습니다.</td><td><span class="pill warn">일부</span></td></tr>
+          <tr><td class="num">3</td><td>여러 사용자를 동시에 처리하나요?</td><td>아직 증명하지 못했습니다. 64건 실행(I1)은 제어 PC 전원이 꺼져 RED였고, 이전 시도는 8/64였습니다.</td><td><span class="pill fail">미해결</span></td></tr>
+          <tr><td class="num">4</td><td>KVR은 증권인가요? 게이트웨이는 수탁자인가요?</td><td>사이트가 이제 분명히 말합니다: 데브넷 유틸리티 토큰이고, 데브넷에서는 게이트웨이 금고가 스테이킹을 보관합니다. 덱은 TGE를 법률 의견 이후로 묶었습니다. 다만 서버의 APR 기본값은 여전히 12%입니다.</td><td><span class="pill warn">개선 중</span></td></tr>
+          <tr><td class="num">5</td><td>누가 풀타임이고, 누가 치앙마이에 가나요?</td><td>Guy와 Anver가 풀타임입니다. Kiwan과 Antonio는 원격으로 엔지니어링을 맡습니다.</td><td><span class="pill pass">답변됨</span></td></tr>
+          <tr><td class="num">6</td><td>코드는 누구 것인가요?</td><td>공개 p4 브랜치는 BSL 1.1입니다. 원본 저장소는 여전히 개인 계정에 있고 Cargo.toml에 MIT로 적혀 있습니다.</td><td><span class="pill info">담당: Antonio</span></td></tr>
+          <tr><td class="num">7</td><td>장비 한 대보다 빠르거나 싼가요?</td><td>단일 호스트 기준선이 아직 없습니다. 한 대 안에서의 총처리량은 vLLM이 앞섭니다.</td><td><span class="pill warn">측정 필요</span></td></tr>
+          <tr><td class="num">8</td><td>통제하지 못하는 노드를 어떻게 믿나요?</td><td>TLS와 노드 인증이 아직 없습니다. 봉인 메시징과 에이전트 위임은 설계 단계입니다.</td><td><span class="pill warn">로드맵</span></td></tr>
+          <tr><td class="num">9</td><td>누가 쓰고 있나요?</td><td>메가존클라우드 공동개발 제안을 준비했지만 계약은 없습니다. 유료 사용자는 아직 보여 줄 수 없습니다.</td><td><span class="pill warn">보여줘야 함</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="plan">
+    <h2>9월 21일 전에 할 일</h2>
+    <p class="sub">영향이 큰 순서입니다. 이미 끝낸 일은 기록용으로 맨 아래에 모았습니다.</p>
+    <ol class="plan">
+      <li><span class="what">공개 엔드포인트를 어떻게 안내할지 결정 <span class="owner">엔지니어링</span></span><span class="how">터널 뒤로 게이트웨이를 복구하거나, p4 이식 동안 데브넷 게이트웨이를 멈춘 상태라고 사이트에 밝혀야 합니다. 어느 쪽이든 상태 페이지가 필요합니다. 심사역은 이 링크부터 누르고, 설명 없는 502는 죽은 제품으로 읽힙니다.</span></li>
+      <li><span class="what">GLM-5.2(744B) 보고서와 로그 공개 <span class="owner">엔지니어링</span></span><span class="how">이 실행은 linkcpp에서 했으므로 그쪽에 공개하고(날짜·호스트·스테이지·tok/s·로그), 이전 세대 엔진의 결과임을 밝힙니다. 이미 MI250 호스트에 있는 Step-3.7-Flash 428B 비교 자료도 함께 공개하면 좋습니다.</span></li>
+      <li><span class="what">복구 R0~R3을 마치고 I1을 다시 실행 <span class="owner">엔지니어링</span></span><span class="how">제어기는 Windows PC가 아니라 호스트에서 돌립니다. 64/64에 못 미쳐도 통과율을 측정한 그대로 발표합니다.</span></li>
+      <li><span class="what">GB10 단일 호스트 기준선 측정 <span class="owner">엔지니어링</span></span><span class="how">"왜 분산해야 하나"에 답하는 숫자 하나가 필요합니다.</span></li>
+      <li><span class="what">게이트웨이 코드 보완 <span class="owner">엔지니어링</span></span><span class="how">
+        <ul class="clean">
+          <li>스테이킹 APR 기본값을 0으로</li>
+          <li>건별 결제 프롬프트의 보관 기한</li>
+          <li>API 키 폐기 기능</li>
+          <li>보상 공식 통일</li>
+        </ul>
+      </span></li>
+      <li><span class="what">/legal에 법인명 기재 <span class="owner">창업자</span></span><span class="how">사이트 수정만으로는 해결할 수 없는 유일한 규제 항목입니다.</span></li>
+      <li><span class="what">덱 마무리 <span class="owner">창업자</span></span><span class="how">
+        <ul class="clean">
+          <li>자금 용도 확정</li>
+          <li>메가존 언급 확인</li>
+          <li>영문 P4 Studio 캡처로 교체</li>
+          <li>I1 결과 반영</li>
+        </ul>
+      </span></li>
+      <li><span class="what">두 쪽짜리 영문 주장-증거 대조표 작성 <span class="owner">Antonio + 엔지니어링</span></span><span class="how">덱 README에 한국어로 정리한 출처를 실사용 문서로 옮깁니다.</span></li>
+      <li><span class="what">라이선스·IP 정리 <span class="owner">Antonio</span></span><span class="how">LICENSE 하나로 통일, 저장소를 회사 조직으로 이전, IP 양도 서명. 공개 브랜치는 이미 BSL 1.1입니다.</span></li>
+      <li><span class="what">밤사이 끝낸 일 <span class="owner">기록</span></span><span class="how">
+        <ul class="clean">
+          <li>사이트: 9개 언어 규제 문구, 이용약관·개인정보, 스타 게이트 제거, 라이선스 표기, 사전 렌더링 버그, llms.txt</li>
+          <li>공개 엔진 브랜치 영문화</li>
+          <li>레지던시 풀타임 인원 확정</li>
+          <li>S5 덱 v4</li>
+        </ul>
+      </span></li>
+    </ol>
+  </section>
+
+  <section id="numbers">
+    <h2>지원서와 덱에 쓸 숫자</h2>
+    <div class="cols">
+      <div class="panel">
+        <h3>써도 되는 것</h3>
+        <ul class="flat">
+          <li><span class="mark-use">+</span>Qwen3.5-122B, 호스트 3대(DGX Spark + Mac mini 2대): 단일 요청 3/3 완료·완전 정리, ITL p95 78 ms (9/16)</li>
+          <li><span class="mark-use">+</span>호스트 5대에 걸친 CUDA + Metal 6단 파이프라인: 32/32 요청 (9/10)</li>
+          <li><span class="mark-use">+</span>MiniMax M3 (428B): 호스트 2대, 동시 요청 4/4 (9/13)</li>
+          <li><span class="mark-use">+</span>자동 테스트 1,582개 통과 (9/17)</li>
+          <li><span class="mark-use">+</span>ROCm·CUDA·폰 ARM 간 수치 동등성(코사인 ≥ 0.9999). 폰과 원격 GPU가 각각 토큰 8/8 일치</li>
+          <li><span class="mark-use">+</span>MI250의 Step-3.7-Flash(428B MoE): 단일 스트림 1머신 46.32 tok/s, 동시 8건 집계 90.32 tok/s, 확장률 2.28× (8/4, linkcpp vs vLLM)</li>
+          <li><span class="mark-use">+</span>linkcpp의 GLM-5.2(744B) — 보고서를 공개한 뒤에</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>당분간 피할 것</h3>
+        <ul class="flat">
+          <li><span class="mark-avoid">−</span>지속·동시 서비스에 관한 모든 주장 (I1이 RED)</li>
+          <li><span class="mark-avoid">−</span>301.6 또는 313.8 TPS (단일 호스트, 길이 제한)</li>
+          <li><span class="mark-avoid">−</span>결정적 계산 단계 설명 없는 "3/3 정답"</li>
+          <li><span class="mark-avoid">−</span>스웜·모바일 노드·KVR을 p4 기능처럼 설명하는 것</li>
+          <li><span class="mark-avoid">−</span>GLM-5.2를 p4 성과처럼 설명하는 것</li>
+          <li><span class="mark-avoid">−</span>53,067 tok/s를 전체 처리량처럼 쓰는 것</li>
+          <li><span class="mark-avoid">−</span>"4× MI250에서 122B", "모든 100B+ 모델"</li>
+          <li><span class="mark-avoid">−</span>Kimi K3를 계획 이상으로 표현하는 것</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="method">
+    <h2>검토 방법</h2>
+    <ul class="clean">
+      <li><b>1차 점검: 9월 17일 03:00 KST</b>
+        <ul class="clean">
+          <li>사이트맵 URL 전체와 사이트 번들</li>
+          <li>공개 저장소</li>
+          <li>p4 스냅샷 (<code>cargo check</code>, <code>cargo test</code> 로컬 실행)</li>
+          <li>S5 공식 페이지</li>
+        </ul>
+      </li>
+      <li><b>밤사이 수정 (창업자 승인):</b>
+        <ul class="clean">
+          <li>사이트를 다시 빌드해 Cloudflare Pages 운영 환경에 배포하고 저장소에 푸시했습니다.</li>
+          <li>p4 브랜치를 이력째 공개하고(공인 IP 하나만 가림) 문서를 영문화했습니다.</li>
+          <li>S5 덱을 제작했습니다.</li>
+        </ul>
+      </li>
+      <li><b>재점검: 09:16~10:10 KST</b>
+        <ul class="clean">
+          <li>엔드포인트와 라이브 번들</li>
+          <li>p4 브랜치와 보고서: <code>tests/reports/release-a/20260917_005000.md</code>(I1 RED·복구), <code>20260917_090430.md</code>(R2, 테스트 1,582개)</li>
+          <li>창업자가 준 접근 권한으로 MI250 두 대를 읽기 전용 SSH 점검: 컨테이너와 허브 상태, 모델 디렉터리, 추론 기록, 컨테이너 로그, 시스템 로그, 열린 포트, 터널 프로세스. 아무것도 시작·중지·수정하지 않았습니다.</li>
+        </ul>
+      </li>
+      <li><b>이 점검에서 따로 확인하지 못한 창업자 진술:</b>
+        <ul class="clean">
+          <li>GLM-5.2는 이전 세대 엔진 linkcpp에서 검증</li>
+          <li>정산 게이트웨이는 p4 이식 전까지 의도적으로 정지</li>
+          <li>Kimi K3는 S5 기간에 검증 예정</li>
+          <li>Guy·Anver 풀타임</li>
+          <li>라이선스·IP 정리는 Antonio가 진행</li>
+        </ul>
+      </li>
+    </ul>
+    <p class="note">출처: <a href="https://www.yzilabs.com/easy-residency">YZi Labs — EASY Residency S5</a> · <a href="https://kvasir-ai.net/">kvasir-ai.net</a> · <a href="https://kvasir-ai.net/legal">kvasir-ai.net/legal</a> · <a href="https://github.com/louisevandan/kvasir-net/tree/p4">kvasir-net p4 브랜치</a></p>
+  </section>
+
+  <section class="closing" aria-label="맺음말">
+    <div class="eyebrow">맺음말</div>
+    <p>하룻밤 사이에 공개된 이야기가 "투자자가 의심할 주장"에서 "출처가 있는 주장"으로 바뀌었습니다.</p>
+    <ul class="clean">
+      <li>사이트는 KVR이 무엇이고 무엇이 아닌지를 9개 언어로 말합니다.</li>
+      <li>엔진은 실패 기록까지 그대로 담아 영문으로 공개됐습니다.</li>
+      <li>덱은 CRO 덱의 선명한 문제 정의와 의장 덱의 블록체인 이야기를 나란히 놓고, 치앙마이에 갈 사람을 밝힙니다.</li>
+    </ul>
+    <p>오늘 점검에서 한 가지는 분명히 말할 만합니다. 기계는 놀고 있지 않습니다. 허브는 응답하고, p4 에이전트는 돌고 있으며, 그 플릿에서 4,280억 파라미터 모델을 이미 vLLM과 비교 측정했습니다. 다만 공개된 얼굴이 그것을 보여 주지 못할 뿐입니다.</p>
+    <p>그래서 남은 일은 대부분 정리입니다.</p>
+    <ul class="clean">
+      <li>게이트웨이가 지금 어떤 상태인지 사이트에 밝힙니다.</li>
+      <li>제어기를 Windows PC에서 떼어 내고 64건을 다시 돌립니다.</li>
+      <li>GLM-5.2와 Step-3.7-Flash 보고서를 심사역이 읽을 수 있는 곳에 둡니다.</li>
+    </ul>
+    <p>이제 거리는 짧습니다. 함께 좁혀 갑시다.</p>
+  </section>
+
+
+  <!-- LIVE:ASSESSMENT -->
+  <section id="assessment">
+    <h2>평가와 권고 계획</h2>
+    <p class="sub">2026-09-17 01:34 UTC 기준으로 그날의 사실만 보고 쓴 판단입니다.</p>
+    <p>관측 구간의 커밋 두 개는 모두 나머지 두 트랙으로 갔다 — 90b9396은 데스크톱이 실제 p4 노드를 구동하게 했고, 2afcca2는 허브 HTTP 계약을 p4 엔진 위에 올렸다 — 반면 Ring은 커밋도 변경 파일도 0이었는데, 지금 실제로 오류가 관측되는 유일한 트랙이 바로 Ring이다. MI250 두 호스트 모두 약 1일 18시간째 가동 중이고 step37 스테이지 네 개가 llamacpp 어댑터·generation 1 상태로 모두 loaded이지만, 두 호스트 다 로컬 127.0.0.1 연결에서 event frame magic mismatch 뒤에 unexpected end of file이 반복 기록되고 있고, MI250-01은 자기 stages 뷰가 GPU 8개와 VRAM 68702699520바이트를 보고하는데도 gpuRows=0을 보고한다. 게이트웨이 공개 엔드포인트 프로브 실패는 포팅에 따른 예정된 비용이지만, 이 GPU 행 모순은 그렇지 않으며 S5 지원서가 내세울 모든 용량 주장의 바로 밑에 깔려 있다.</p>
+    <h3>권고</h3>
+    <ol>
+      <li>MI250-01의 gpuRows=0과 같은 호스트 stages 뷰가 보고하는 GPU 8개·68702699520바이트를 대조해, S5 지원서에 용량 수치를 넣기 전에 어느 쪽이 틀렸는지 확정한다.</li>
+      <li>두 호스트에서 반복되는 event frame magic mismatch → unexpected end of file 쌍(MI250-01의 연결 27/28, MI250-02의 연결 15/16, 모두 127.0.0.1 피어)을 추적해 잘못된 프레임 형식을 말하고 있는 주체를 특정한다.</li>
+      <li>p4bridge와 데스크톱 노드 커밋(2afcca2, 90b9396)을 site/s5-review-fixes에서 별도 브랜치로 분리해, S5 리뷰 브랜치가 사이트 변경만 담도록 정리한다.</li>
+      <li>모니터링 작업에 정산 게이트웨이 공개 엔드포인트가 포팅 기간 동안 의도적으로 내려가 있음을 반영해, 내일 리포트가 단순 fetch failed 대신 계획된 중단으로 표시되게 한다.</li>
+      <li>이번 주 안에 Ring에 하드닝 변경을 최소 한 건 반영하고, 약 1일 18시간 가동 후에도 여전히 generation 1인 step37-s0~step37-s3의 리로드 경로를 실제로 한 번 돌려 본다.</li>
+    </ol>
+  </section>
+<!-- /LIVE:ASSESSMENT -->
+
+  <footer>Kvasir S5 준비도 점검 · 내부용 · 1차 2026년 9월 17일 03:00 KST · 09:20 KST 갱신</footer>
+</div>

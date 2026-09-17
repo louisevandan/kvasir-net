@@ -28,6 +28,10 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>KVASIR_WATCH_ENV</key>
     <string>/Users/tony/project/any/.env</string>
+    <!-- A shipped version publishes itself: the release check writes the entry
+         and this deploys the site. Set to 0 to write the entry and stop there. -->
+    <key>KVASIR_RELEASE_AUTODEPLOY</key>
+    <string>1</string>
   </dict>
 
   <key>StartCalendarInterval</key>

@@ -1,0 +1,460 @@
+<title>Kvasir S5 Readiness Review</title>
+<meta name="description" content="A candid, read-only review of Kvasir's website, public repo and canonical engine ahead of the YZi Labs EASY Residency S5 deadline.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#F4F5F8; --surface:#FFFFFF; --raised:#ECEEF3; --ink:#15171E; --muted:#596074; --line:#DADDE6;
+  --accent:#C8246A; --accent-soft:#FBE3EE;
+  --pass:#1D8659; --pass-soft:#E0F2E9; --warn:#9A620C; --warn-soft:#FAEFD9; --fail:#BD3A30; --fail-soft:#FAE4E2;
+  --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B0C11; --surface:#14161D; --raised:#1B1E27; --ink:#ECEEF3; --muted:#9AA0AE; --line:#272B37;
+    --accent:#FF3D8B; --accent-soft:#35142A;
+    --pass:#3CBF8E; --pass-soft:#112820; --warn:#F5B74C; --warn-soft:#2D2412; --fail:#E5675F; --fail-soft:#2E1715;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B0C11; --surface:#14161D; --raised:#1B1E27; --ink:#ECEEF3; --muted:#9AA0AE; --line:#272B37;
+  --accent:#FF3D8B; --accent-soft:#35142A;
+  --pass:#3CBF8E; --pass-soft:#112820; --warn:#F5B74C; --warn-soft:#2D2412; --fail:#E5675F; --fail-soft:#2E1715;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.6;padding-inline:20px}
+.wrap{max-width:1040px;margin:0 auto;padding-block:40px 72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:clamp(30px,4.6vw,44px);line-height:1.1;letter-spacing:-.02em;margin:10px 0 12px;text-wrap:balance}
+h1 .mark{color:var(--accent)}
+.lede{max-width:68ch;color:var(--muted);margin:0}
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.fact{font-family:var(--mono);font-size:12.5px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
+.fact b{color:var(--accent);font-weight:600}
+nav.toc{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);margin:28px -20px 0;padding:10px 20px;display:flex;flex-wrap:wrap;gap:6px 16px}
+nav.toc a{font-family:var(--mono);font-size:12.5px;color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+section{padding-top:44px}
+h2{font-size:22px;letter-spacing:-.01em;margin:0 0 6px;text-wrap:balance}
+.sub{color:var(--muted);margin:0 0 18px;max-width:72ch}
+h3{font-size:16px;margin:26px 0 8px}
+p{max-width:72ch}
+.verdict{margin-top:34px;padding:26px 0 8px;border-top:3px solid var(--accent)}
+.verdict .big{font-size:clamp(20px,2.6vw,26px);line-height:1.35;font-weight:600;letter-spacing:-.01em;max-width:40ch;text-wrap:balance;margin:8px 0 10px}
+.score{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:0;border-top:1px solid var(--line);margin-top:22px}
+.score .item{padding:16px 18px 16px 0;border-bottom:1px solid var(--line)}
+.score .top{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.score .name{font-weight:600}
+.score p{margin:6px 0 0;color:var(--muted);font-size:14.5px}
+.pill{font-family:var(--mono);font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.pill.pass{color:var(--pass);background:var(--pass-soft)}
+.pill.warn{color:var(--warn);background:var(--warn-soft)}
+.pill.fail{color:var(--fail);background:var(--fail-soft)}
+.pill.info{color:var(--muted);background:var(--raised)}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+th{font-family:var(--mono);font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);background:var(--raised)}
+.nowrap{white-space:nowrap}
+td.num,.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13px}
+.note{border-left:2px solid var(--line);padding:2px 0 2px 14px;color:var(--muted);margin:14px 0;max-width:72ch}
+ul.clean{padding-left:18px;margin:8px 0;max-width:74ch}
+ul.clean li{margin:5px 0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.panel h3{margin-top:0}
+ol.plan{list-style:none;counter-reset:step;padding:0;margin:8px 0}
+ol.plan>li{counter-increment:step;display:grid;grid-template-columns:38px 1fr;gap:4px 12px;padding:14px 0;border-bottom:1px solid var(--line)}
+ol.plan>li::before{content:counter(step,decimal-leading-zero);font-family:var(--mono);font-weight:600;color:var(--accent);padding-top:2px}
+ol.plan .what{font-weight:600}
+ol.plan .how{grid-column:2;color:var(--muted);font-size:14.5px}
+.owner{font-family:var(--mono);font-size:11.5px;color:var(--ink);background:var(--raised);border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap}
+.mark-use,.mark-avoid{font-family:var(--mono);font-weight:600;margin-right:6px}
+.mark-use{color:var(--pass)} .mark-avoid{color:var(--fail)}
+ul.flat{list-style:none;padding:0;margin:0}
+ul.flat li{padding:8px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+ul.flat li:last-child{border-bottom:0}
+.closing{margin-top:52px;padding:28px 0 0;border-top:1px solid var(--line)}
+.closing p{font-size:16.5px;max-width:64ch}
+footer{margin-top:40px;color:var(--muted);font-size:13px}
+@media (max-width:560px){body{font-size:15px}.score .item{padding-right:0}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Internal review · updated 17 Sep 2026, 09:20 KST · read-only checks</div>
+    <h1>Kvasir <span class="mark">S5</span> Readiness Review</h1>
+    <p class="lede">Where Kvasir stands for YZi Labs EASY Residency Season 5, re-checked after the overnight fixes. Sources: the live website (kvasir-ai.net), the public repo (louisevandan/kvasir-net, now with the engine on its <code>p4</code> branch), the canonical engine (hikaMaeng/p4) and the new S5 deck.</p>
+    <div class="facts">
+      <span class="fact">Deadline <b>Sep 21 · 23:59 GMT-7</b></span>
+      <span class="fact">Up to <b>$500K</b> per team</span>
+      <span class="fact">Weeks 6–10 <b>full-time in Chiang Mai</b></span>
+      <span class="fact">Residency team <b>Guy · Anver</b></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Sections">
+    <a href="#verdict">Verdict</a><a href="#changes">Since 03:00</a><a href="#program">S5 at a glance</a><a href="#engine">Engine (p4)</a><a href="#website">Website</a><a href="#deck">S5 deck</a><a href="#risks">Investor questions</a><a href="#plan">Before Sep 21</a><a href="#numbers">Numbers to use</a><a href="#method">Method</a>
+  </nav>
+
+  <section id="verdict" class="verdict">
+    <div class="eyebrow">Verdict</div>
+    <p class="big">Still apply, and the application now reads far better. Most of the story is fixed. Three things remain open, and one of them is serious.</p>
+    <p class="sub">The website, public repo, team answer and deck were fixed overnight. Still open: the public endpoints are down (the settlement gateway on purpose, pending the p4 migration), the 64-request gate went RED after the control PC lost power, and the GLM-5.2 result has no published report.</p>
+    <div class="score">
+      <div class="item"><div class="top"><span class="name">Thesis fit</span><span class="pill pass">Strong</span></div><p>The deck now maps Kvasir to four S5 focus areas: AI, Web3/DePIN, agentic economy, and stablecoins &amp; payments. It also shows agents buying inference on devnet today.</p></div>
+      <div class="item"><div class="top"><span class="name">Engineering depth</span><span class="pill pass">Strong</span></div><p>1,582 tests pass with 0 failures on the newest work branch. 484 engine commits are now public, documented in English.</p></div>
+      <div class="item"><div class="top"><span class="name">Proof at scale</span><span class="pill warn">Mixed</span></div><p>The 3-host Qwen 122B run is accepted and public, and Step-3.7-Flash (428B) was measured against vLLM on the MI250 fleet. GLM-5.2 (744B) ran on linkcpp, the previous engine, and its report is unpublished. The first 64-request run ended RED.</p></div>
+      <div class="item"><div class="top"><span class="name">Live product</span><span class="pill warn">Paused on purpose</span></div><p>The settlement gateway is stopped deliberately until it is ported to p4. On the MI250 hosts the linker hub answers 200 locally and p4 agents are running, but the public hostnames return 502 — so a reviewer sees an outage.</p></div>
+      <div class="item"><div class="top"><span class="name">Public claims &amp; compliance</span><span class="pill warn">Mostly fixed</span></div><p>The site was rewritten in all 9 languages and now has a Terms &amp; Privacy page. Still open: no named legal entity, and a 12% staking APR default in the server code.</p></div>
+      <div class="item"><div class="top"><span class="name">Team &amp; structure</span><span class="pill pass">Decided</span></div><p>Four founders: Guy, Anver, Kiwan and Antonio. Guy and Anver do the residency full-time, including Chiang Mai. Antonio owns the IP cleanup.</p></div>
+    </div>
+  </section>
+
+    <!-- LIVE:STATUS -->
+  <section id="live">
+    <h2>Live status</h2>
+    <p class="sub">Rewritten automatically from the machines and the repository — 2026-09-17 01:34 UTC. Everything else on this page is the reviewed text.</p>
+    <div class="items">
+      <div class="item"><div class="top"><span class="name">Ring</span><span class="pill pass">Serving</span></div><p>2 of 2 agents up. MI250-01: step37-s0 loaded, step37-s1 loaded · MI250-02: step37-s2 loaded, step37-s3 loaded. 0 commits in the last 1 day.</p></div>
+      <div class="item"><div class="top"><span class="name">Settlement gateway</span><span class="pill warn">Paused on purpose</span></div><p>The public endpoint does not answer (fetch failed). This is deliberate: the gateway is stopped until it is ported to p4. 2 commits, 10 files in the last 1 day.</p></div>
+      <div class="item"><div class="top"><span class="name">Client app</span><span class="pill pass">Up</span></div><p>kvasir-ai.net answered 200 in 208 ms. Desktop wallet Kvasir Wallet 0.1.0. 1 commit, 10 files in the last 1 day.</p></div>
+    </div>
+  </section>
+<!-- /LIVE:STATUS -->
+
+  <!-- LIVE:CALENDAR -->
+  <section id="calendar">
+    <h2>This week</h2>
+    <p class="sub">2026-09-14 – 2026-09-20 · Asia/Seoul. Meetings come from the team calendar; the marked days are the plan's own dates.</p>
+    <style>
+    .cal { width: 100%; table-layout: fixed; border-collapse: collapse; }
+    .cal th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .6; padding: 6px 4px; text-align: left; }
+    .cal td { vertical-align: top; padding: 8px 6px; border-top: 1px solid rgba(127,127,127,.25); min-height: 84px; }
+    .cal .cal-date { font-size: 12px; opacity: .55; margin-bottom: 6px; }
+    .cal .cal-today { background: rgba(127,127,127,.10); }
+    .cal .cal-today .cal-date { opacity: 1; font-weight: 600; }
+    .cal .cal-event { font-size: 12px; line-height: 1.35; margin-bottom: 5px; }
+    .cal .cal-time { opacity: .6; font-variant-numeric: tabular-nums; }
+    .cal .cal-plan { font-size: 12px; line-height: 1.35; margin-bottom: 5px; font-weight: 600; }
+  </style>
+    <div class="table-wrap"><table class="cal"><thead><tr><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th></tr></thead><tbody><tr><td class=""><div class="cal-date">14</div></td><td class=""><div class="cal-date">15</div></td><td class=""><div class="cal-date">16</div></td><td class="cal-today"><div class="cal-date">17</div></td><td class=""><div class="cal-date">18</div></td><td class=""><div class="cal-date">19</div></td><td class=""><div class="cal-date">20</div></td></tr></tbody></table></div>
+    <p class="sub">No calendar feed is configured, so only plan dates are shown. Add the calendar's secret iCal address to the monitoring config to include meetings.</p>
+    <p class="sub">Next after this week: 2026-09-21 — YZi Labs EASY S5 application due</p>
+  </section>
+<!-- /LIVE:CALENDAR -->
+
+
+  <section id="changes">
+    <h2>What changed since the first review (03:00 KST)</h2>
+    <p class="sub">Everything below was done and checked overnight; the last column is what a reviewer sees now.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Item</th><th>At 03:00</th><th>Now</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>Website claims</td><td>"122B on 4× MI250" with no evidence; NPU shown live; "unforked"; 48 layers</td><td>"122B across 3 physical machines", backed by the public report. NPU marked in progress, "close to upstream", 49 layers. All 9 languages updated.</td><td><span class="pill pass">Fixed</span></td></tr>
+          <tr><td>Compliance wording</td><td>APR interest, TGE copy, token upside, swap teaser, mainnet link, "non-custodial" everywhere</td><td>All removed. Custody is stated plainly: keys stay on the device, and on devnet the gateway treasury holds staked KVR and credits.</td><td><span class="pill pass">Fixed</span></td></tr>
+          <tr><td>Terms &amp; Privacy</td><td>None</td><td><code>/legal</code> is live, grounded in the gateway code. Contact: sales@newtype-ai.com.</td><td><span class="pill pass">Fixed</span></td></tr>
+          <tr><td>Developer path</td><td>GitHub star gate, two auth models</td><td>The gate and its functions are removed. Pay-per-call and credit-key modes are explained.</td><td><span class="pill pass">Fixed</span></td></tr>
+          <tr><td>Licensing labels</td><td>JSON-LD "MIT", "open-source"</td><td>BSL 1.1 and "source-available" everywhere.</td><td><span class="pill pass">Fixed</span></td></tr>
+          <tr><td>Public repo</td><td>8 commits, last push Aug 3</td><td><code>p4</code> branch: 484 commits under BSL 1.1 with NOTICE and English docs. The README points to it. Pushed Sep 17.</td><td><span class="pill pass">Fixed</span></td></tr>
+          <tr><td>Full-time team</td><td>Undecided</td><td>Guy and Anver full-time through the residency, including Chiang Mai.</td><td><span class="pill pass">Decided</span></td></tr>
+          <tr><td>S5 deck</td><td>None</td><td>v4, 44 slides. Problem and explanations from the CRO deck, blockchain from the chairman deck, plus evidence slides, the P4 Studio screen and a 10-week plan.</td><td><span class="pill pass">Draft ready</span></td></tr>
+          <tr><td>Gateway and hub</td><td>502, cause unknown</td><td>Still 502. Cause identified: the settlement gateway was stopped on purpose pending the p4 port, and the tunnel on the MI250 host received no requests today. The hub itself answers 200 locally.</td><td><span class="pill warn">Decide</span></td></tr>
+          <tr><td>Sustained-load gate (I1)</td><td>Pre-sealed, not run</td><td>Ran 21:44 KST. Interrupted at 23:01 when the Windows control PC shut down.</td><td><span class="pill fail">RED</span></td></tr>
+          <tr><td>GLM-5.2 (744B) evidence</td><td>Unpublished, attributed to p4</td><td>It ran on linkcpp, the previous-generation engine, not on p4. The 492 GB model sits on the MI250 host, but we found no run record there. The report is still unpublished.</td><td><span class="pill warn">Publish</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="program">
+    <h2>YZi Labs S5 at a glance</h2>
+    <p class="sub">From the official page.</p>
+    <div class="cols">
+      <div class="panel">
+        <h3>Focus areas (official)</h3>
+        <p style="margin:0">Web3 · AI · Biotech · Agentic Economy · Stablecoins &amp; Payments · Next-Gen DeFi · Tokenized Equities &amp; RWAs</p>
+      </div>
+      <div class="panel">
+        <h3>Structure</h3>
+        <ul class="clean">
+          <li>10 weeks. Weeks 1–5 online: go-to-market, hiring, capital strategy, mechanism design.</li>
+          <li>Weeks 6–10 in person and full-time in Chiang Mai (Guy and Anver). Accommodation, meals and workspace are covered.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Funding</h3>
+        <p style="margin:0">Up to $500K per team. Our tracker records $150K for 5% on a SAFE plus $350K uncapped; the official page does not state terms.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="engine">
+    <h2>What the engine has proven (p4)</h2>
+    <p class="sub">p4 is Kvasir's canonical engine: each node loads a contiguous layer window and passes hidden states. The code is public on the <code>p4</code> branch of louisevandan/kvasir-net. Engineering continues on the <code>codex/i1-*</code> and <code>codex/r2-writer</code> branches of hikaMaeng/p4.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Result</th><th>Numbers</th><th>Date</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>GLM-5.2 (744B MoE) on linkcpp (previous engine)</td><td class="num">Verified, per the owner</td><td class="num nowrap">—</td><td><span class="pill warn">No record found</span> on either MI250 host</td></tr>
+          <tr><td>Step-3.7-Flash 428B MoE on the MI250 fleet (linkcpp vs vLLM)</td><td class="num">Single stream 46.32 tok/s on one machine (8 GCD) and 37.86 across two machines over 200G IB · aggregate at 8 concurrent 90.32 vs 34.36 · scaling 2.28× vs 1.15×</td><td class="num nowrap">Aug 4</td><td><span class="pill pass">Measured</span> read on the host today</td></tr>
+          <tr><td>Qwen3.5-122B-A10B (88.3 GB) across 3 hosts: DGX Spark GB10 + 2 Mac mini M4 Pro</td><td class="num">3/3 requests end to end, full cleanup · ITL p95 78–98 ms · useful TPS 4.22 on the short request</td><td class="num nowrap">Sep 16</td><td><span class="pill pass">Accepted</span> single requests</td></tr>
+          <tr><td>I1: same setup, 64-request closed-loop corpus (2.2M input tokens)</td><td class="num">Stopped at 23:01 when the Windows controller shut down · 1 request unfinished · 2 transfers "Unknown"</td><td class="num nowrap">Sep 16–17</td><td><span class="pill fail">RED / invalid</span></td></tr>
+          <tr><td>Recovery gates R1–R2 (remote supervisor, request ownership)</td><td class="num">R1 self-test 4/4 on each host · R2 first-hop ownership proven, full census pending</td><td class="num nowrap">Sep 17</td><td><span class="pill warn">In progress</span> no model load until R3</td></tr>
+          <tr><td>Earlier 64-request attempt (H1)</td><td class="num">8/64 completed · rerun invalid</td><td class="num nowrap">Sep 16</td><td><span class="pill fail">Failed</span></td></tr>
+          <tr><td>Qwen 122B across 5 hosts / 6 stages, CUDA + Metal</td><td class="num">32/32 requests · 11.77 decode rows/s</td><td class="num nowrap">Sep 10</td><td><span class="pill warn">Bounded pass</span> answer quality not approved</td></tr>
+          <tr><td>MiniMax M3 (278 GiB dense conversion), 2 hosts / 4 GPUs</td><td class="num">4/4 · 2.68 TPS at 4 concurrent</td><td class="num nowrap">Sep 13</td><td><span class="pill warn">Pass</span> this conversion only</td></tr>
+          <tr><td>Step-3.7-Flash (428B), 16 stages on AMD MI250, 2 agents (P4 Studio)</td><td class="num">Placement shown on the live P4 control plane</td><td class="num nowrap">—</td><td><span class="pill info">Screen</span> no p4 throughput report yet</td></tr>
+          <tr><td>v0.9.0 on one host (2× RTX 3090), 35B model</td><td class="num">512/512 · best run 313.8 TPS</td><td class="num nowrap">Sep 10</td><td><span class="pill info">Candidate</span> final seal blocked</td></tr>
+          <tr><td>Automated tests</td><td class="num">1,582 pass / 0 fail / 7 ignored (codex/r2-writer, per its report) · 1,536 on main in our own run</td><td class="num nowrap">Sep 17</td><td><span class="pill pass">Green</span></td></tr>
+          <tr><td>Kimi K3 (2.8T MoE)</td><td class="num">Planned</td><td class="num nowrap">S5</td><td><span class="pill info">Next</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Checked directly on the MI250 hosts today</h3>
+    <ul class="clean">
+      <li><b>The engine hosts are alive.</b> On both MI250 machines the linker hub answers <code>200</code> at <code>127.0.0.1:19001</code>, and MI250-01 also runs <code>p4-agent</code> and two <code>p4_staged_serve</code> workers.</li>
+      <li><b>The public outage is exposure, not compute.</b> A cloudflared tunnel has run on MI250-01 since Aug 25, but it logged no request today; its last errors (Sep 16) were "unable to reach the origin service". The settlement gateway has no listening port, which matches the owner's decision to stop it until it is ported to p4.</li>
+      <li><b>GLM-5.2:</b> the complete 492 GB GGUF set is on MI250-02, and the hub's own inference history holds only Step-3.7-Flash runs. Container logs and the system journal show downloads and mounts, no GLM load. The evidence for the GLM claim is therefore somewhere else, and needs to be published.</li>
+      <li><b>Step-3.7-Flash is the largest model actually measured</b> — 428B MoE (45 layers, 288 experts per layer, top-8), Q4_K_XL at 114 GiB, on MI250 (gfx90a) 8 GCD × 2 machines with 200G InfiniBand. The deck said ~201B; it now says 428B.</li>
+      <li><b>Operational hygiene:</b> the tunnel token is visible in the process list on MI250-01.</li>
+    </ul>
+
+    <h3>Read these before quoting any number</h3>
+    <ul class="clean">
+      <li><b>The control loop has a single point of failure.</b> The I1 run was driven from one Windows PC. When it shut down, the collector and return tunnels died with it. The fix under way is a remote supervisor that keeps running on the hosts (R1).</li>
+      <li><b>"3/3 correct" needs a note.</b> On the medium and long requests the model's arithmetic was wrong; a deterministic step outside the model produced the returned answer.</li>
+      <li><b>There is no single-host baseline yet</b>, and GPU utilisation is low (Macs 3–5%, MI250s 6–10%).</li>
+      <li><b>The transport has no TLS or node authentication.</b> It assumes a trusted LAN, so it is not ready for untrusted DePIN operators. Swarm, mobile nodes, wallet, KVR and gateway live in the kvasir-net code, not in p4.</li>
+      <li><b>The process is disciplined and AI-driven:</b> sealed runs, mutation checks and preserved failures. Weak spots: no CI, a bus factor of one operator, and a canonical repo that stays in Korean. The public branch was translated and needs re-syncing.</li>
+    </ul>
+  </section>
+
+  <section id="website">
+    <h2>The website after today's fixes (kvasir-ai.net)</h2>
+    <p class="sub">Deployed to production and re-checked. The first click now holds up; the second click still finds a gateway that is intentionally stopped.</p>
+
+    <h3>Live endpoints</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time (KST)</th><th>gate.kvasir-ai.net /v1/models</th><th>hub.kvasir-ai.net</th><th>kvasir-ai.net</th><th>/legal</th></tr></thead>
+        <tbody>
+          <tr><td class="num">03:00–03:09 (5 checks)</td><td><span class="pill fail">502</span></td><td><span class="pill fail">502</span></td><td><span class="pill pass">200</span></td><td><span class="pill info">—</span></td></tr>
+          <tr><td class="num">03:51</td><td><span class="pill fail">502</span></td><td><span class="pill fail">502</span></td><td><span class="pill pass">200</span></td><td><span class="pill info">—</span></td></tr>
+          <tr><td class="num">09:16–09:17 (3 checks)</td><td><span class="pill fail">502</span></td><td><span class="pill fail">502</span></td><td><span class="pill pass">200</span></td><td><span class="pill pass">200</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The 502s come from Cloudflare's own error page, so the edge is up and the origin is unreachable. The settlement gateway is stopped on purpose until it is ported to p4; the hub answers locally on the MI250 hosts. These are spot checks over six hours, not an uptime study.</p>
+
+    <h3>Remaining findings</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Area</th><th>Finding</th><th>Severity</th></tr></thead>
+        <tbody>
+          <tr><td>Live service</td><td>The site still links to gate.kvasir-ai.net and hub.kvasir-ai.net, which return 502. The gateway is stopped on purpose, but nothing on the site says so, and there is no status page.</td><td><span class="pill fail">High</span></td></tr>
+          <tr><td>Legal entity</td><td><code>/legal</code> names the operator only as "Kvasir AI Network" (the licensor in the LICENSE). No registered entity is named.</td><td><span class="pill warn">Medium</span></td></tr>
+          <tr><td>Gateway code</td><td>
+            <ul class="clean">
+              <li>Staking APR still defaults to 12% (<code>STAKING_APR || 0.12</code>).</li>
+              <li>Pay-per-call prompts and answers are kept without expiry. This is disclosed on <code>/legal</code>.</li>
+              <li>API keys cannot be revoked; reissuing leaves the old key valid.</li>
+            </ul>
+          </td><td><span class="pill warn">Medium</span></td></tr>
+          <tr><td>Consistency</td><td>The reward formula still differs by code path.</td><td><span class="pill warn">Medium</span></td></tr>
+          <tr><td>Developer path</td><td>The star gate is gone, but there is still no single quickstart page.</td><td><span class="pill info">Low</span></td></tr>
+          <tr><td>Site quality</td><td>
+            <ul class="clean">
+              <li>No per-language URLs (hreflang), and key pages are thin for crawlers.</li>
+              <li>App store links are empty, and there is no team page.</li>
+              <li>Careers has one posting, and the newest article is from Jul 17.</li>
+            </ul>
+          </td><td><span class="pill info">Low</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="deck">
+    <h2>The S5 deck (v4, 44 slides)</h2>
+    <p class="sub">Problem definition and explanations come from the Megazone CRO deck, and the blockchain story from the chairman deck. Evidence slides, the P4 Studio live screen, the S5 fit and the 10-week plan were written for S5. Design-only features are labelled "design" or "target".</p>
+    <div class="cols">
+      <div class="panel">
+        <h3>Holds up</h3>
+        <ul class="flat">
+          <li><span class="mark-use">+</span>Every engine number traces to a report: 3 hosts, 5 hosts/6 stages, 512/512, MiniMax M3, test counts.</li>
+          <li><span class="mark-use">+</span>Unsupported claims were removed: "every 100B+ model verified" and "122B on 4× MI250".</li>
+          <li><span class="mark-use">+</span>Strengths and gaps are shown side by side, including 8/64 and low GPU utilisation.</li>
+          <li><span class="mark-use">+</span>Agentic payments that already run on devnet: pay per call and self-issued keys.</li>
+          <li><span class="mark-use">+</span>Four founders; Guy and Anver in residence full-time.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Fix before submitting</h3>
+        <ul class="flat">
+          <li><span class="mark-avoid">!</span>"GLM-5.2 verified on p4" appears on 4 slides. Publish the report, or a reviewer will find the Sep 8 "unsupported" entry.</li>
+          <li><span class="mark-avoid">!</span>The 40/25/20/15 use-of-funds split is a draft.</li>
+          <li><span class="mark-avoid">!</span>Megazone is named on the GTM slides. Confirm this is OK.</li>
+          <li><span class="mark-avoid">!</span>The P4 Studio screenshot has Korean UI labels; an English capture would be better.</li>
+          <li><span class="mark-avoid">!</span>The TGE plan and listings stay in the deck, so expect the legal-opinion question.</li>
+          <li><span class="mark-avoid">!</span>The I1 RED result is not in the deck yet. Add it, or rerun I1 first.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="risks">
+    <h2>Questions an investor will ask</h2>
+    <p class="sub">Ranked by how early they are likely to come up.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Question</th><th>What we can say today</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>Is anything live?</td><td>The site is up with Terms &amp; Privacy. The engine hosts run and the hub answers locally, but the public gateway is stopped during the p4 port, so its links 502.</td><td><span class="pill warn">Explain</span></td></tr>
+          <tr><td class="num">2</td><td>Where is the proof?</td><td>The 3-host 122B report is public, and the Step-3.7-Flash 428B measurements sit on the MI250 host. GLM-5.2 ran on linkcpp and its report is unpublished. The 4× MI250 claim was withdrawn.</td><td><span class="pill warn">Partly</span></td></tr>
+          <tr><td class="num">3</td><td>Can it serve many users at once?</td><td>Not proven. The 64-request run (I1) ended RED after the controller lost power, and an earlier attempt completed 8/64.</td><td><span class="pill fail">Open</span></td></tr>
+          <tr><td class="num">4</td><td>Is KVR a security, and is the gateway a custodian?</td><td>The site now says it plainly: a devnet utility token, and a gateway treasury that holds stakes on devnet. The deck ties the TGE to a legal opinion. The server's APR default is still 12%.</td><td><span class="pill warn">Improving</span></td></tr>
+          <tr><td class="num">5</td><td>Who is full-time, and who goes to Chiang Mai?</td><td>Guy and Anver, full-time. Kiwan and Antonio ship engineering remotely.</td><td><span class="pill pass">Answered</span></td></tr>
+          <tr><td class="num">6</td><td>Who owns the code?</td><td>The public p4 branch is under BSL 1.1. The canonical repo is still under a personal account, and its Cargo.toml says MIT.</td><td><span class="pill info">Owner: Antonio</span></td></tr>
+          <tr><td class="num">7</td><td>Is it faster or cheaper than one box?</td><td>There is no single-host baseline yet. vLLM leads aggregate throughput on one machine.</td><td><span class="pill warn">Measure</span></td></tr>
+          <tr><td class="num">8</td><td>How do you trust nodes you don't control?</td><td>There is no TLS or node authentication yet. Sealed messaging and agent delegation are designs.</td><td><span class="pill warn">Roadmap</span></td></tr>
+          <tr><td class="num">9</td><td>Who is using it?</td><td>A co-development proposal for Megazone Cloud is prepared, but nothing is signed. No paying users are shown.</td><td><span class="pill warn">Show</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="plan">
+    <h2>Before Sep 21</h2>
+    <p class="sub">In order of impact. Items already done are kept at the bottom for the record.</p>
+    <ol class="plan">
+      <li><span class="what">Decide what the public endpoints say <span class="owner">engineering</span></span><span class="how">Either restore the gateway behind the tunnel, or state on the site that the devnet gateway is paused during the p4 port. Add a status page either way: a reviewer clicks these links first, and a bare 502 reads as a dead product.</span></li>
+      <li><span class="what">Publish the GLM-5.2 (744B) report and logs <span class="owner">engineering</span></span><span class="how">The run was on linkcpp, so publish it there (date, hosts, stages, tok/s, logs) and label it as the previous-generation engine. While at it, publish the Step-3.7-Flash 428B comparison that already sits on the MI250 host.</span></li>
+      <li><span class="what">Finish recovery R0–R3, then rerun I1 <span class="owner">engineering</span></span><span class="how">Run the controller on the hosts, not the Windows PC. Report the pass rate as measured, even if it is below 64/64.</span></li>
+      <li><span class="what">Record a single-host baseline on the GB10 <span class="owner">engineering</span></span><span class="how">One number that answers "why distribute?".</span></li>
+      <li><span class="what">Close the gateway-code gaps <span class="owner">engineering</span></span><span class="how">
+        <ul class="clean">
+          <li>Set the staking APR default to 0.</li>
+          <li>Add a retention limit for pay-per-call prompts.</li>
+          <li>Add API-key revocation.</li>
+          <li>Unify the reward formula.</li>
+        </ul>
+      </span></li>
+      <li><span class="what">Name the legal entity on /legal <span class="owner">founders</span></span><span class="how">It is the one compliance item the site could not fix on its own.</span></li>
+      <li><span class="what">Finalise the deck <span class="owner">founders</span></span><span class="how">
+        <ul class="clean">
+          <li>Settle the use-of-funds split.</li>
+          <li>Confirm the Megazone mention.</li>
+          <li>Swap in an English P4 Studio capture.</li>
+          <li>Add the I1 outcome.</li>
+        </ul>
+      </span></li>
+      <li><span class="what">Write the two-page claims-to-evidence map in English <span class="owner">Antonio + engineering</span></span><span class="how">The deck README already lists the sources in Korean; turn it into the due-diligence page.</span></li>
+      <li><span class="what">Clean up license and IP <span class="owner">Antonio</span></span><span class="how">One LICENSE, the repo under a company org, IP assignments signed. The public branch already carries BSL 1.1.</span></li>
+      <li><span class="what">Done overnight <span class="owner">record</span></span><span class="how">
+        <ul class="clean">
+          <li>Compliance wording in 9 languages, Terms &amp; Privacy, star gate removed, licensing labels, prerender bug, llms.txt.</li>
+          <li>Public engine branch in English.</li>
+          <li>Full-time residency team named.</li>
+          <li>S5 deck v4.</li>
+        </ul>
+      </span></li>
+    </ol>
+  </section>
+
+  <section id="numbers">
+    <h2>Numbers for the application and the deck</h2>
+    <div class="cols">
+      <div class="panel">
+        <h3>Use</h3>
+        <ul class="flat">
+          <li><span class="mark-use">+</span>Qwen3.5-122B across 3 hosts (DGX Spark + 2 Mac mini): 3/3 single requests end to end with full cleanup, ITL p95 78 ms (Sep 16).</li>
+          <li><span class="mark-use">+</span>A 6-stage CUDA + Metal pipeline across 5 hosts: 32/32 requests (Sep 10).</li>
+          <li><span class="mark-use">+</span>MiniMax M3 (428B): 4/4 concurrent on 2 hosts (Sep 13).</li>
+          <li><span class="mark-use">+</span>1,582 automated tests passing (Sep 17).</li>
+          <li><span class="mark-use">+</span>Numerical equivalence (cosine ≥ 0.9999) across ROCm, CUDA and phone ARM; a phone and a remote GPU each matched 8/8 tokens.</li>
+          <li><span class="mark-use">+</span>Step-3.7-Flash (428B MoE) on MI250: 46.32 tok/s single stream on one machine, 90.32 tok/s aggregate at 8 concurrent, 2.28× scaling (Aug 4, linkcpp vs vLLM).</li>
+          <li><span class="mark-use">+</span>GLM-5.2 (744B) on linkcpp, once its report is published.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Avoid, for now</h3>
+        <ul class="flat">
+          <li><span class="mark-avoid">−</span>Any sustained or concurrent service claim (I1 is RED).</li>
+          <li><span class="mark-avoid">−</span>301.6 or 313.8 TPS (single host, length-capped).</li>
+          <li><span class="mark-avoid">−</span>"3/3 correct" without the deterministic-step note.</li>
+          <li><span class="mark-avoid">−</span>Swarm, mobile nodes or KVR described as p4 capabilities.</li>
+          <li><span class="mark-avoid">−</span>GLM-5.2 described as a p4 result.</li>
+          <li><span class="mark-avoid">−</span>53,067 tok/s as end-to-end throughput.</li>
+          <li><span class="mark-avoid">−</span>122B on 4× MI250, and "every 100B+ model".</li>
+          <li><span class="mark-avoid">−</span>Kimi K3 as anything but a plan.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="method">
+    <h2>How this was reviewed</h2>
+    <ul class="clean">
+      <li><b>First pass: 03:00 KST, 17 Sep 2026.</b> It covered all sitemap URLs, the site bundle, the public repo, a p4 snapshot (<code>cargo check</code> and <code>cargo test</code> run locally) and the official S5 page.</li>
+      <li><b>Fixes applied overnight, with the owner's authorisation:</b>
+        <ul class="clean">
+          <li>the site was rebuilt, deployed to Cloudflare Pages production and pushed;</li>
+          <li>the p4 branch was published with history (one public IP replaced), then translated to English;</li>
+          <li>the S5 deck was built.</li>
+        </ul>
+      </li>
+      <li><b>Re-check: 09:16–10:10 KST.</b>
+        <ul class="clean">
+          <li>Endpoint probes and the live bundle.</li>
+          <li>The p4 branches and reports: <code>tests/reports/release-a/20260917_005000.md</code> (I1 RED and recovery) and <code>20260917_090430.md</code> (R2, 1,582 tests).</li>
+          <li>Read-only SSH checks on both MI250 hosts, with the owner's access: container and hub state, the model directory, inference history, container logs, the system journal, listening ports and the tunnel process. Nothing was started, stopped or modified.</li>
+        </ul>
+      </li>
+      <li><b>Owner statements, not independently verified here:</b>
+        <ul class="clean">
+          <li>GLM-5.2 was verified on linkcpp, the previous-generation engine.</li>
+          <li>The settlement gateway is stopped deliberately until it is ported to p4.</li>
+          <li>Kimi K3 is planned for S5.</li>
+          <li>Guy and Anver are full-time.</li>
+          <li>License and IP cleanup is in Antonio's hands.</li>
+        </ul>
+      </li>
+    </ul>
+    <p class="note">Sources: <a href="https://www.yzilabs.com/easy-residency">YZi Labs — EASY Residency S5</a> · <a href="https://kvasir-ai.net/">kvasir-ai.net</a> · <a href="https://kvasir-ai.net/legal">kvasir-ai.net/legal</a> · <a href="https://github.com/louisevandan/kvasir-net/tree/p4">kvasir-net, p4 branch</a></p>
+  </section>
+
+  <section class="closing" aria-label="Closing note">
+    <div class="eyebrow">A closing note</div>
+    <p>In one night, the public story went from "claims an investor would question" to "claims with a source". The site says what KVR is and isn't in nine languages. The engine is public, in English, with its failures still on the record. The deck puts the CRO deck's clear problem statement next to the chairman deck's blockchain story, and names who will be in Chiang Mai.</p>
+    <p>Today's check also found something worth saying out loud: the machines are not idle. The hub answers, the p4 agents run, and a 428-billion-parameter model has already been measured against vLLM on that fleet. The public face just does not show it.</p>
+    <p>So the remaining work is mostly bookkeeping. Say on the site what the gateway is doing. Get the controller off the Windows PC and run the 64 requests again. Put the GLM-5.2 and Step-3.7-Flash reports where a reviewer can read them. The distance is short now. Let's cover it together.</p>
+  </section>
+
+
+  <!-- LIVE:ASSESSMENT -->
+  <section id="assessment">
+    <h2>Assessment and recommended plan</h2>
+    <p class="sub">Written from this morning's facts alone — 2026-09-17 01:34 UTC.</p>
+    <p>Both commits in the window went to the other two tracks — 90b9396 makes the desktop run a real p4 node, 2afcca2 puts the hub HTTP contract on the p4 engine — while the Ring took zero commits and zero file changes, even though it is the only track currently showing errors. Both MI250 hosts are up (~1d 18h) and all four step37 stages are loaded on the llamacpp adapter at generation 1, but both keep logging event frame magic mismatch followed by unexpected end of file on local 127.0.0.1 connections, and MI250-01 reports gpuRows=0 while its own stages view claims 8 GPUs and 68702699520 bytes of VRAM. The gateway's failed public probe is the expected cost of the port; that GPU-row contradiction is not, and it sits directly underneath any capacity claim the S5 application makes.</p>
+    <h3>Recommended</h3>
+    <ol>
+      <li>Reconcile MI250-01's gpuRows=0 against the 8 GPUs and 68702699520 bytes its own stages view reports, and settle which side is wrong before any capacity number goes into the S5 application.</li>
+      <li>Trace the repeating event frame magic mismatch → unexpected end of file pairs on both hosts (connections 27/28 on MI250-01, 15/16 on MI250-02, all from 127.0.0.1 peers) to whatever is speaking the wrong frame format.</li>
+      <li>Move the p4bridge and desktop-node commits (2afcca2, 90b9396) off site/s5-review-fixes onto their own branch so the S5 review branch carries only site changes.</li>
+      <li>Teach the monitoring job that the settlement gateway's public endpoint is intentionally offline during the port, so tomorrow's report shows a planned outage instead of a bare fetch failed.</li>
+      <li>Land at least one Ring hardening change this week and exercise a reload of step37-s0 through step37-s3, which are still at generation 1 after ~1d 18h of uptime.</li>
+    </ol>
+  </section>
+<!-- /LIVE:ASSESSMENT -->
+
+  <footer>Kvasir S5 Readiness Review · internal · first pass 17 Sep 2026 03:00 KST · updated 09:20 KST</footer>
+</div>

@@ -66,7 +66,10 @@ async function agentHost(agent) {
     'echo ---err---',
     'tail -n 5 ~/p4-envelope-*/studio-*/agent.err 2>/dev/null | tail -n 5',
     'echo ---gpu---',
-    'rocm-smi --showuse --csv 2>/dev/null | head -12 || nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | head -8',
+    // ROCm installs outside a login shell's PATH on one of these hosts, which
+    // reported zero GPUs next to a snapshot listing eight — a contradiction in
+    // the report that was ours, not the fleet's.
+    'PATH=/opt/rocm/bin:$PATH; rocm-smi --showuse --csv 2>/dev/null | head -12 || nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | head -8',
   ].join('; ');
   const out = await ssh(agent.host, script);
   const section = (name) => {

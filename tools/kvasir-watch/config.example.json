@@ -52,5 +52,21 @@
       "label": "Antonio",
       "tokenEnv": "GITHUB_TOKEN"
     }
-  ]
+  ],
+  "readiness": {
+    "en": {
+      "file": "readiness/en.html",
+      "artifact": "https://claude.ai/artifact/BrGoZWws7QfTAJR1bkYkAK"
+    },
+    "ko": {
+      "file": "readiness/ko.html",
+      "artifact": "https://claude.ai/artifact/XC2eTVMWJMCxA61n3qWZBN"
+    }
+  },
+  "calendar": {
+    "icsUrl": "",
+    "timeZone": "Asia/Seoul",
+    "offsetMinutes": 540,
+    "plan": "plan.json"
+  }
 }
