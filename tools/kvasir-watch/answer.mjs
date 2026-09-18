@@ -35,6 +35,7 @@ import { ask, available } from './llm.mjs';
 import { pipeline, pipelineText } from './seed.mjs';
 import { clocksNow, deadlineLines, eventLines } from './clocks.mjs';
 import { fetchEvents } from './calendar.mjs';
+import { toEnglish } from './translate.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const config = JSON.parse(readFileSync(
@@ -152,7 +153,9 @@ async function timeFacts() {
       // meeting is not an answer to "what's next", but this morning's might be.
       const events = await fetchEvents(icsUrl, now.getTime() - DAY_MS, now.getTime() + 14 * DAY_MS,
         { timeoutMs: 10_000 });
-      const rows = eventLines(people, events.sort((a, b) => a.at - b.at).slice(0, 8), now.getTime());
+      const soon = events.sort((a, b) => a.at - b.at).slice(0, 8);
+      const english = await toEnglish(soon.flatMap((e) => [e.summary, e.description].filter(Boolean)));
+      const rows = eventLines(people, soon, now.getTime(), english);
       parts.push(rows.length
         ? '\nCalendar, on everyone\'s clock — the first one that is still ahead is the next one:\n' + rows.join('\n')
         : '\nNothing is on the calendar for the next two weeks.');

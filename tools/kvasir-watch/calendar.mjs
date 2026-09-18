@@ -35,6 +35,22 @@ function parseDate(value, params = '') {
   return { at, allDay: false, floating: !zulu, tzid: (params.match(/TZID=([^;:]+)/) ?? [])[1] ?? null };
 }
 
+/** A calendar note with the invitation boilerplate taken out. */
+function tidyNote(value) {
+  return value
+    .replace(/\\,/g, ',')
+    .replace(/\\n/g, ' ')
+    .replace(/<[^>]+>/g, ' ')                                  // some clients send HTML
+    .replace(/-::~:~[^\n]*/g, ' ')                             // Google's own separator
+    .replace(/Join with Google Meet:?\s*\S+/gi, ' ')
+    .replace(/Learn more about Meet at:?\s*\S+/gi, ' ')
+    .replace(/Or dial:?[^.]*/gi, ' ')
+    .replace(/More phone numbers:?\s*\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+}
+
 export function parseIcs(text) {
   const events = [];
   let current = null;
@@ -50,6 +66,11 @@ export function parseIcs(text) {
     const params = left.slice(name.length);
     if (name === 'SUMMARY') current.summary = value.replace(/\\,/g, ',').replace(/\\n/g, ' ').trim();
     else if (name === 'LOCATION') current.location = value.replace(/\\,/g, ',').trim();
+    // Descriptions carry the detail a title leaves out — an agenda, who is
+    // attending, a link that matters. They also carry a great deal that is not
+    // detail: Google stitches a video-call advert onto every invitation, and
+    // repeating that back to the team is noise wearing the shape of an answer.
+    else if (name === 'DESCRIPTION') current.description = tidyNote(value);
     else if (name === 'DTSTART') current.start = parseDate(value, params);
     else if (name === 'DTEND') current.end = parseDate(value, params);
     else if (name === 'RRULE') current.rrule = value;

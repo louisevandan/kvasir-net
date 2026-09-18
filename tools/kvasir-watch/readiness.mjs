@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fetchEvents, weekStart, renderWeek } from './calendar.mjs';
 import { pipeline } from './seed.mjs';
+import { toEnglish, hasHangul } from './translate.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const config = JSON.parse(readFileSync(
@@ -231,6 +232,22 @@ async function calendarBlock() {
     catch (error) { problem = error.message; }
   }
 
+  // The English edition carries no Hangul — that is the standing rule for
+  // anything an investor reads, and a calendar entry written in Korean walked
+  // straight past it until now. A title that cannot be translated is named
+  // generically rather than published in Korean, and the runner says which one.
+  const english = await toEnglish(events.map((event) => event.summary));
+  const untranslated = events
+    .filter((event) => hasHangul(event.summary) && !english.get(event.summary))
+    .map((event) => event.summary);
+  if (untranslated.length) {
+    console.error(`calendar titles left in Korean, shown generically on the English page: ${untranslated.join(' | ')}`);
+  }
+  const eventsFor = (lang) => (lang !== 'en' ? events : events.map((event) => ({
+    ...event,
+    summary: english.get(event.summary) ?? (hasHangul(event.summary) ? 'Meeting' : event.summary),
+  })));
+
   const iso = (at) => new Date(at + offset * 60_000).toISOString().slice(0, 10);
   const range = `${iso(start)} – ${iso(end - DAY_MS)}`;
   const today = iso(now.getTime());
@@ -243,7 +260,7 @@ async function calendarBlock() {
     const t = T[lang];
     const note = !icsUrl ? t.calNoFeed : problem ? t.calFeedFailed(problem) : null;
     const grid = renderWeek({
-      start, offsetMinutes: offset, events, milestones,
+      start, offsetMinutes: offset, events: eventsFor(lang), milestones,
       labels: { days: t.days, allDay: t.allDay }, today,
     });
     const next = upcoming.length

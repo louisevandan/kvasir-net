@@ -94,11 +94,22 @@ export function deadlineLines(people, deadlines = [], bareDates = []) {
  * to compare wall clocks against wall clocks to find the first one that has not
  * happened yet — which is the arithmetic this module exists to remove.
  */
-export function eventLines(people, events = [], from = Date.now()) {
-  // Written as a sentence, not as a bracketed tag. Anything in the facts may be
-  // quoted back into a reply verbatim, so internal notation ends up in front of
-  // the team — "[in 3h]" did, once.
-  return events.map((e) => (e.allDay
-    ? `  ${e.summary} — ${away(e.at, from)}, all day on ${day(e.at, people[0].zone)} (a whole day, the same date everywhere)`
-    : `  ${e.summary} — ${away(e.at, from)}: ${everywhere(people, e.at)}`));
+export function eventLines(people, events = [], from = Date.now(), english = new Map()) {
+  return events.map((e) => {
+    // The group is bilingual, so an entry written in Korean is given in English
+    // with the original alongside: the English is what everyone can read, the
+    // original is what someone will actually find in their own calendar.
+    const en = english.get(e.summary);
+    const title = en && en !== e.summary ? `${en} (${e.summary})` : (en ?? e.summary);
+    // Written as a sentence, not as a bracketed tag. Anything in the facts may
+    // be quoted back into a reply verbatim, so internal notation ends up in
+    // front of the team — "[in 3h]" did, once.
+    const when = e.allDay
+      ? `${away(e.at, from)}, all day on ${day(e.at, people[0].zone)} (a whole day, the same date everywhere)`
+      : `${away(e.at, from)}: ${everywhere(people, e.at)}`;
+    // A note only earns its place if it says something the title did not.
+    const raw = e.description ? (english.get(e.description) ?? e.description) : '';
+    const note = raw && raw.length > 8 ? ` — ${raw.slice(0, 140)}` : '';
+    return `  ${title} — ${when}${note}`;
+  });
 }

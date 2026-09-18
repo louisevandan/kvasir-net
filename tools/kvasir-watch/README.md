@@ -19,6 +19,9 @@ calendar.mjs      → the week: meetings from an iCal feed, dates from plan.json
 release-check.mjs → notices a shipped version and writes it into the site
 seed.mjs          → the seed pipeline: what closes soon, what moved
 
+clocks.mjs         → what time it is for each of us, and when an event lands where
+translate.mjs      → English for the Korean that arrives from outside, cached
+
 llm.mjs            → our own model, through a tunnel it opens and closes
 telegram-collect.mjs → archives the group's messages, then answers the questions
 answer.mjs         → one short answer, from the facts, only when addressed
@@ -187,6 +190,9 @@ was sent, `log/<date>.log` is the runner's own output. Files older than 31 days
 are removed on each run.
 
 `archive/<month>.jsonl` is the group's own transcript and `state/` holds the
-offsets, the seen-commit marks and the cached pipeline. Along with
+offsets, the seen-commit marks, the cached pipeline and the calendar
+translations. `state/translations.json` is meant to be edited by hand: if a
+meeting comes out with the wrong English name, correct it there and it stays
+corrected. Along with
 `config.json` and `log/`, none of it is tracked: this repository is public and
 the group's messages are not.
