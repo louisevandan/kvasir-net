@@ -172,7 +172,28 @@ async function timeFacts() {
  * `send` is injected so this module never holds the token or decides how a
  * reply travels.
  */
-export async function answerQuestions(messages, { botUsername, botId, chatId, send }) {
+/**
+ * Hold the "typing…" status up while the model thinks.
+ *
+ * An answer takes ten to fifteen seconds — the facts are gathered, a tunnel is
+ * opened, a 27B model reads the lot. In a chat that is a long silence, and a
+ * silent bot and a dead bot look exactly the same, so the asker asks again.
+ *
+ * Telegram expires the status after about five seconds, so it has to be
+ * renewed rather than set once. Nothing here is allowed to fail an answer: a
+ * status that does not arrive is a cosmetic loss, and throwing over it would
+ * turn that into a real one.
+ */
+function whileThinking(typing) {
+  if (!typing) return () => {};
+  const tick = () => { try { Promise.resolve(typing()).catch(() => {}); } catch { /* cosmetic */ } };
+  tick();
+  const timer = setInterval(tick, 4000);
+  timer.unref?.();                      // never hold the process open for this
+  return () => clearInterval(timer);
+}
+
+export async function answerQuestions(messages, { botUsername, botId, chatId, send, typing }) {
   if (!available()) return [];
   const questions = messages
     .filter((m) => String(m.chat?.id) === String(chatId))
@@ -183,18 +204,24 @@ export async function answerQuestions(messages, { botUsername, botId, chatId, se
 
   if (!questions.length) return [];
 
+  // The gathering is slow as well — a calendar fetch, a pipeline read — so the
+  // status starts here rather than at the model call. The silence the asker
+  // sees begins the moment they hit send, not the moment we start thinking.
+  const stopGathering = whileThinking(typing);
   const monitoring = factsText(facts());
   const timing = await timeFacts();
   const chat = recentChat();
   // Fetched once per run, then rendered per question: which rows are worth
   // showing depends on which programme the question names.
   const seed = await pipeline().catch(() => null);
+  stopGathering();
 
   const sent = [];
   for (const { message, question } of questions) {
     let answer;
     const context = `TIME AND PLACE\n${timing}\n\nMONITORING\n${monitoring}\n\n` +
       `SEED PIPELINE\n${pipelineText(seed, question)}\n\nRECENT CONVERSATION\n${chat}`;
+    const stopTyping = whileThinking(typing);
     try {
       const reply = await ask(
         `${BRIEF}\n\n<<<FACTS AND CONVERSATION — the only ground truth>>>\n${context}\n<<<END>>>\n\n` +
@@ -206,6 +233,8 @@ export async function answerQuestions(messages, { botUsername, botId, chatId, se
       // Say why, in the group. A bot that goes quiet when asked looks broken,
       // and someone re-asks instead of reading the reason.
       answer = `I could not answer that: ${error.message}`;
+    } finally {
+      stopTyping();
     }
     if (!answer) continue;
     await send(answer, message.message_id);

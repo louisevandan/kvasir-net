@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import './net.mjs';
 
 const run = promisify(execFile);
 const HERE = path.dirname(new URL(import.meta.url).pathname);

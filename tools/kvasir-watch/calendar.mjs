@@ -11,6 +11,7 @@
  * expand is left out rather than guessed at, and the renderer says when the
  * feed is missing instead of drawing an empty week as if it were a free one.
  */
+import './net.mjs';
 
 const DAY_MS = 86_400_000;
 

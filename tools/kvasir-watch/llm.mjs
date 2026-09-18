@@ -20,6 +20,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import net from 'node:net';
+// No './net.mjs' here on purpose: this only ever fetches 127.0.0.1 through a
+// tunnel it opened itself, so there is no DNS lookup and no address family to
+// get wrong. Every module that reaches a real hostname imports it.
 
 const run = promisify(execFile);
 

@@ -24,17 +24,8 @@
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { setDefaultResultOrder } from 'node:dns';
-import net from 'node:net';
 import { answerQuestions } from './answer.mjs';
-
-// The fleet hosts have no IPv6 default route, but DNS answers with an AAAA for
-// api.telegram.org anyway. Node picks that address and the connection dies as a
-// bare `fetch failed` with no status — while curl, which tries both families,
-// succeeds every time. Ordering v4 first avoids it; autoSelectFamily makes the
-// runtime fall back instead of failing if a v6 address is ever picked again.
-try { setDefaultResultOrder('ipv4first'); } catch { /* older runtimes */ }
-try { net.setDefaultAutoSelectFamily(true); } catch { /* older runtimes */ }
+import './net.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const STATE_DIR = path.join(HERE, 'state');
@@ -206,6 +197,9 @@ async function cycle() {
           reply_to_message_id: replyTo,
           disable_web_page_preview: true,
         }),
+        // "typing…", renewed while the answer is being put together. The token
+        // lives here, so the status is sent from here too.
+        typing: () => api('sendChatAction', { chat_id: onlyChat, action: 'typing' }),
       });
       if (sent.length) console.log(`answered ${sent.length} question(s)`);
     } catch (error) {

@@ -18,6 +18,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import './net.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const config = JSON.parse(readFileSync(

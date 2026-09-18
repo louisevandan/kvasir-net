@@ -11,16 +11,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { setDefaultResultOrder } from 'node:dns';
-import net from 'node:net';
-
-// The fleet hosts have no IPv6 default route, but DNS answers with an AAAA for
-// api.telegram.org anyway. Node picks that address and the connection dies as a
-// bare `fetch failed` with no status — while curl, which tries both families,
-// succeeds every time. Ordering v4 first avoids it; autoSelectFamily makes the
-// runtime fall back instead of failing if a v6 address is ever picked again.
-try { setDefaultResultOrder('ipv4first'); } catch { /* older runtimes */ }
-try { net.setDefaultAutoSelectFamily(true); } catch { /* older runtimes */ }
+import './net.mjs';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 const chatId = (process.env.TELEGRAM_CHAT_ID ?? '').trim();
