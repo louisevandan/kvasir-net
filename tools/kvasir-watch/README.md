@@ -20,6 +20,7 @@ release-check.mjs → notices a shipped version and writes it into the site
 seed.mjs          → the seed pipeline: what closes soon, what moved
 
 research.mjs       → searches our own files for whatever the question is about
+web.mjs            → searches the open web through Tavily, and reads what it finds
 clocks.mjs         → what time it is for each of us, and when an event lands where
 translate.mjs      → English for the Korean that arrives from outside, cached
 
@@ -153,6 +154,8 @@ Credentials come from `~/project/any/.env` (override with `KVASIR_WATCH_ENV`):
 ```
 TELEGRAM_BOT_TOKEN=…              # @BotFather
 TELEGRAM_CHAT_ID=…                # negative for a group; -100… for a supergroup
+TAVILY_API_KEY=…                  # tavily.com — without it the bot answers from our
+                                  # own files only, and says that is what it did
 ```
 
 To find the chat id: add the bot to the group, mention it once, then read
@@ -183,6 +186,11 @@ launchctl load ~/Library/LaunchAgents/com.kvasir.watch.plist
 - Nothing writes to the engine. No model is loaded, no request is submitted.
 - Nothing writes to the seed pipeline. A programme's status changes when a
   person changes it, never because someone asked the bot a question.
+- Outbound HTTPS to Tavily and to whatever pages a search returns. Fetched text
+  is treated as untrusted throughout: it is fenced and labelled as written by
+  strangers, our own files win where the two disagree, and every claim repeated
+  from it carries its source so a reader can judge it. The bot has no tools, so
+  an instruction found on a page has nothing to act on.
 - Read access to the repository roots in `config.research.roots`, and nothing
   else on disk. A question decides which words are searched for, never which
   places: the roots come from the config, keywords are stripped to letters and
