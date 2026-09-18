@@ -16,12 +16,19 @@
  * If the run fails, the previous assessment is left in place and the failure is
  * logged. A stale opinion clearly dated is better than an empty section.
  *
+ * The model is ours. When KVASIR_LLM_URL is set this calls that endpoint —
+ * Qwen3.5-27B on our own GB10, reached through a tunnel this opens and closes
+ * — rather than shelling out to a vendor CLI. Summarising collected facts needs
+ * no browser and no filesystem, which is exactly the shape of work our own
+ * serving can take, so it takes it.
+ *
  * Usage: node assess.mjs <collect.json>
  */
 import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import { ask, available as ourModelAvailable } from './llm.mjs';
 
 const run = promisify(execFile);
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -87,12 +94,19 @@ function block(lang, verdict, steps, stamp) {
 
 async function main() {
   const prompt = `${BRIEF}\n\n--- collected facts (${data.generatedAt}) ---\n${JSON.stringify(data)}`;
-  const { stdout } = await run('claude', ['-p', prompt], {
-    timeout: 240_000,
-    maxBuffer: 8e6,
-    env: { ...process.env },
-  });
-  const answer = extract(stdout);
+  const LANG_SHAPE = {
+    type: 'object', additionalProperties: false, required: ['verdict', 'steps'],
+    properties: {
+      verdict: { type: 'string' },
+      steps: { type: 'array', minItems: 3, maxItems: 5, items: { type: 'string' } },
+    },
+  };
+  const answer = ourModelAvailable()
+    ? await ask(prompt, {
+        type: 'object', additionalProperties: false, required: ['en', 'ko'],
+        properties: { en: LANG_SHAPE, ko: LANG_SHAPE },
+      }, { name: 'assessment' })
+    : extract((await run('claude', ['-p', prompt], { timeout: 240_000, maxBuffer: 8e6, env: { ...process.env } })).stdout);
   for (const lang of ['en', 'ko']) {
     const part = answer[lang];
     if (!part?.verdict || !Array.isArray(part.steps) || !part.steps.length) {

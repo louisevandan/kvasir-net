@@ -37,10 +37,21 @@ function clamp(text, limit = 3900) {
   return `${text.slice(0, limit)}\n… truncated; the full report is attached`;
 }
 
-async function call(method, body, isForm = false) {
-  const response = await fetch(api(method), isForm ? { method: 'POST', body } : {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  });
+async function call(method, body, isForm = false, attempt = 1) {
+  let response;
+  try {
+    response = await fetch(api(method), isForm ? { method: 'POST', body } : {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+  } catch (error) {
+    // The same dropped-connection behaviour the collector sees: the message
+    // goes and the attachment does not, which reads as Telegram being flaky.
+    if (attempt < 3) {
+      await new Promise((r) => setTimeout(r, attempt * 1500));
+      return call(method, body, isForm, attempt + 1);
+    }
+    throw new Error(`${method} could not reach Telegram after ${attempt} tries: ${error.cause?.code ?? error.message}`);
+  }
   const result = await response.json().catch(() => ({}));
   // Telegram echoes the request; never let that reach a log that holds a token.
   if (!result.ok) throw new Error(`${method} failed: ${result.description ?? response.status}`);
