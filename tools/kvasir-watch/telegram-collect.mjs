@@ -76,6 +76,15 @@ async function api(method, params = {}, attempt = 1) {
   return result.result;
 }
 
+/** Append records to the month they belong to. */
+function archive(rows) {
+  if (!rows.length) return;
+  mkdirSync(ARCHIVE_DIR, { recursive: true });
+  for (const row of rows) {
+    appendFileSync(path.join(ARCHIVE_DIR, `${row.at.slice(0, 7)}.jsonl`), JSON.stringify(row) + '\n');
+  }
+}
+
 /** One line per message: enough to read back, nothing the chat did not say. */
 function record(message, kind) {
   const from = message.from ?? {};
@@ -166,12 +175,7 @@ async function cycle() {
     if (kind === 'message') inbound.push(message);
   }
 
-  if (rows.length) {
-    mkdirSync(ARCHIVE_DIR, { recursive: true });
-    const month = rows[0].at.slice(0, 7);
-    const file = path.join(ARCHIVE_DIR, `${month}.jsonl`);
-    appendFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
-  }
+  archive(rows);
 
   // Only now: the batch is durable, so a crash before this re-reads it.
   state.offset = updates[updates.length - 1].update_id + 1;
@@ -191,12 +195,22 @@ async function cycle() {
         botUsername: me.username,
         botId: me.id,
         chatId: onlyChat,
-        send: (text, replyTo) => api('sendMessage', {
-          chat_id: onlyChat,
-          text,
-          reply_to_message_id: replyTo,
-          disable_web_page_preview: true,
-        }),
+        // The archive was one-sided: getUpdates never hands a bot its own
+        // messages back, so 131 records held not one answer. That is not just a
+        // gap in the record — the next question is answered from this
+        // transcript, so the bot could not see what it had just said, and a
+        // follow-up like "why?" arrived with nothing to refer to.
+        send: async (text, replyTo) => {
+          const posted = await api('sendMessage', {
+            chat_id: onlyChat,
+            text,
+            reply_to_message_id: replyTo,
+            disable_web_page_preview: true,
+          });
+          try { archive([record(posted, 'message')]); }
+          catch (error) { console.error(`the answer was sent but not archived: ${error.message}`); }
+          return posted;
+        },
         // "typing…", renewed while the answer is being put together. The token
         // lives here, so the status is sent from here too.
         typing: () => api('sendChatAction', { chat_id: onlyChat, action: 'typing' }),

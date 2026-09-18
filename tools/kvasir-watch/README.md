@@ -19,6 +19,7 @@ calendar.mjs      → the week: meetings from an iCal feed, dates from plan.json
 release-check.mjs → notices a shipped version and writes it into the site
 seed.mjs          → the seed pipeline: what closes soon, what moved
 
+research.mjs       → searches our own files for whatever the question is about
 clocks.mjs         → what time it is for each of us, and when an event lands where
 translate.mjs      → English for the Korean that arrives from outside, cached
 
@@ -182,6 +183,11 @@ launchctl load ~/Library/LaunchAgents/com.kvasir.watch.plist
 - Nothing writes to the engine. No model is loaded, no request is submitted.
 - Nothing writes to the seed pipeline. A programme's status changes when a
   person changes it, never because someone asked the bot a question.
+- Read access to the repository roots in `config.research.roots`, and nothing
+  else on disk. A question decides which words are searched for, never which
+  places: the roots come from the config, keywords are stripped to letters and
+  digits before they reach `git grep`, and anything shaped like a credential is
+  removed from a snippet before it can be quoted.
 
 ## What it keeps
 

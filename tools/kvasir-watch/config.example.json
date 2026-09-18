@@ -63,6 +63,13 @@
     "command": "cd ~/kvasir-seed && python3 sync.py dump",
     "staleHours": 6
   },
+  "research": {
+    "roots": [
+      "/path/to/kvasir-net"
+    ],
+    "maxFiles": 6,
+    "maxChars": 9000
+  },
   "readiness": {
     "en": {
       "file": "readiness/en.html",
