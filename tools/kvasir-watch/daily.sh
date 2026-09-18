@@ -42,6 +42,30 @@ node "$HERE/report.mjs" "$JSON" "$HTML" >"$SUMMARY" || exit 1
 # every morning would point at whatever was last published by hand. The file
 # opens anywhere, needs no account, and is always the current one.
 REVIEW="$HERE/readiness/en.html"
+# What the group settled overnight, from its own transcript. Read-only: this
+# produces a list, it does not change a status anywhere.
+CHAT_OUT="$LOG_DIR/chat-$DAY.txt"
+if [ -f "$HERE/chat-tasks.mjs" ]; then
+  node "$HERE/chat-tasks.mjs" 24 >"$CHAT_OUT" 2>>"$LOG_DIR/chat.log"
+  if [ $? -eq 10 ]; then
+    printf '\n' >>"$SUMMARY"
+    cat "$CHAT_OUT" >>"$SUMMARY"
+  fi
+fi
+
+# The seed pipeline is money with dates on it, and the dates are the part that
+# cannot be caught up on. Only deadlines inside a fortnight and statuses that
+# actually moved are reported; a daily line about a table nobody touched is how
+# a report stops being read.
+SEED_OUT="$LOG_DIR/seed-$DAY.txt"
+if [ -f "$HERE/seed.mjs" ]; then
+  node "$HERE/seed.mjs" --brief >"$SEED_OUT" 2>>"$LOG_DIR/seed.log"
+  if [ $? -eq 10 ]; then
+    printf '\n' >>"$SUMMARY"
+    cat "$SEED_OUT" >>"$SUMMARY"
+  fi
+fi
+
 # The judgement at the end of the review is written fresh from the same facts;
 # if that run fails the previous one stays, clearly dated, rather than a gap.
 node "$HERE/assess.mjs" "$JSON" >>"$LOG_DIR/readiness.log" 2>&1 \

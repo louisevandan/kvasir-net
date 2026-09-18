@@ -58,6 +58,11 @@
       "tokenEnv": "GITHUB_TOKEN"
     }
   ],
+  "seed": {
+    "host": "user@seed-pipeline-host",
+    "command": "cd ~/kvasir-seed && python3 sync.py dump",
+    "staleHours": 6
+  },
   "readiness": {
     "en": {
       "file": "readiness/en.html",

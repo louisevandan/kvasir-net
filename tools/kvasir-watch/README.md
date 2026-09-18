@@ -1,21 +1,28 @@
 # kvasir-watch
 
 One report a day, in the Telegram group: what moved on each of the three tracks,
-and what the machines actually say.
+and what the machines actually say. It also keeps what the group said back, and
+answers when asked.
 
 ```
 collect.mjs  → facts as JSON     (git, the MI250 agents, the public endpoints)
 report.mjs   → report.html + a short summary
 send.mjs     → summary as a message, the page as an attachment
-daily.sh     → the three in order, logged and kept
+daily.sh     → the whole morning in order, logged and kept
 
 commits.mjs       → new commits since last seen, across the watched repositories
 commit-watch.sh   → polls every 20 minutes and posts only when there is news
 
-assess.mjs        → the day's judgement, written by Claude from the same facts
+assess.mjs        → the day's judgement, written from the same facts
 readiness.mjs     → rewrites the live blocks inside the S5 readiness review
 calendar.mjs      → the week: meetings from an iCal feed, dates from plan.json
 release-check.mjs → notices a shipped version and writes it into the site
+seed.mjs          → the seed pipeline: what closes soon, what moved
+
+llm.mjs            → our own model, through a tunnel it opens and closes
+telegram-collect.mjs → archives the group's messages, then answers the questions
+answer.mjs         → one short answer, from the facts, only when addressed
+chat-tasks.mjs     → decisions and promises pulled out of the transcript
 ```
 
 ## Why three tracks
@@ -119,13 +126,15 @@ on loopback here, and the other is one hop away over the LAN.
 | credentials | `~/.kvasir-watch.env`, mode 600 |
 | node | `~/.local/node`, user-local, no root |
 | hop to MI250-01 | `~/.ssh/id_ed25519_kvasir_watch`, a key used for nothing else |
+| model | GB10 #1, same key, a tunnel opened and closed per call |
+| seed pipeline | GB10 #1, read-only `sync.py dump`, cached here |
 
-Two things do not work from there and stay with a person:
+A third timer carries the inbound side: `kvasir-chat` polls the group every five
+minutes, and the answering happens inside that run.
 
-- **The assessment.** It shells out to `claude`, which is not installed on the
-  host, so the section keeps its previous text and says when it was written.
-- **Publishing the claude.ai artifacts and deploying the site.** Both need a
-  session or the site toolchain.
+One thing does not work from there and stays with a person: **publishing the
+claude.ai artifacts and deploying the site**, which need a session or the site
+toolchain.
 
 ## Setup
 
@@ -165,10 +174,19 @@ launchctl load ~/Library/LaunchAgents/com.kvasir.watch.plist
   password prompt — the job runs unattended).
 - A read-only INSPECT of each agent, over a tunnel it opens and closes itself.
   The agents bind loopback and this does not change that.
+- `ssh` to the model host and to the seed pipeline host, both on the same
+  dedicated key, both for reading only.
 - Nothing writes to the engine. No model is loaded, no request is submitted.
+- Nothing writes to the seed pipeline. A programme's status changes when a
+  person changes it, never because someone asked the bot a question.
 
 ## What it keeps
 
 `log/<date>.json` is the evidence, `log/kvasir-<date>.html` is the artifact that
 was sent, `log/<date>.log` is the runner's own output. Files older than 31 days
-are removed on each run. `config.json` and `log/` are untracked.
+are removed on each run.
+
+`archive/<month>.jsonl` is the group's own transcript and `state/` holds the
+offsets, the seen-commit marks and the cached pipeline. Along with
+`config.json` and `log/`, none of it is tracked: this repository is public and
+the group's messages are not.
