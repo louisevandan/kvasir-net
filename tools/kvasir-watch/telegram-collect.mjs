@@ -125,10 +125,16 @@ function describeEvent(message) {
   return null;
 }
 
-async function main() {
+/**
+ * One long poll, and whatever came back.
+ *
+ * Returns the number of messages archived, so the caller can keep a run's
+ * tally without this printing a line per poll.
+ */
+async function cycle() {
   const offset = state.offset ?? 0;
-  // A long poll costs one request per minute when the group is quiet, and
-  // returns the moment someone speaks.
+  // A long poll returns the moment someone speaks, and costs one request a
+  // minute while the group is quiet.
   const updates = await api('getUpdates', {
     offset,
     limit: 100,
@@ -136,10 +142,7 @@ async function main() {
     allowed_updates: ['message', 'edited_message', 'channel_post'],
   });
 
-  if (!updates.length) {
-    console.log('no new messages');
-    return;
-  }
+  if (!updates.length) return 0;
 
   // Upgrading a basic group to a supergroup gives it a new id, and every
   // message then arrives from a chat this job is filtering out — so it goes
@@ -209,6 +212,33 @@ async function main() {
       console.error(`answering failed: ${error.message}`);
     }
   }
+  return rows.length;
+}
+
+/**
+ * Listen for as long as this run is allotted, not for one poll.
+ *
+ * A single 50-second poll under a five-minute timer means nobody is listening
+ * for 250 seconds out of every 300. A question asked in that gap sits unread
+ * until the next run — which, to the person who asked, is indistinguishable
+ * from a bot that is broken. Polling in a loop for most of the interval closes
+ * the gap: the poll returns the instant someone speaks, and the next one starts
+ * straight away.
+ *
+ * The budget stops short of the timer's period on purpose. Two pollers on one
+ * token take turns eating each other's messages, so this run must be finished
+ * and gone before the next one is started.
+ */
+async function main() {
+  const budgetMs = Number(process.env.KVASIR_CHAT_RUN_SECONDS ?? 240) * 1000;
+  const until = Date.now() + budgetMs;
+  let kept = 0;
+  let polls = 0;
+  do {
+    kept += await cycle();
+    polls += 1;
+  } while (Date.now() < until);
+  if (!kept) console.log(`no new messages (${polls} poll(s))`);
 }
 
 main().catch((error) => { console.error(error.message); process.exit(1); });
