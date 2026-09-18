@@ -58,6 +58,18 @@ async function call(method, body, isForm = false, attempt = 1) {
     throw new Error(`${method} could not reach Telegram after ${attempt} tries: ${error.cause?.code ?? error.message}`);
   }
   const result = await response.json().catch(() => ({}));
+  // The group was upgraded to a supergroup and has a new id. Telegram hands us
+  // that id rather than delivering the message; follow it once so the report
+  // still arrives, and name the file that has to be corrected.
+  const moved = result.parameters?.migrate_to_chat_id;
+  if (moved && attempt < 3) {
+    console.error(`the group has a new id: ${chatId} -> ${moved}. Sending there; update TELEGRAM_CHAT_ID.`);
+    const retarget = (value) => {
+      if (isForm) { value.set('chat_id', String(moved)); return value; }
+      return { ...value, chat_id: moved };
+    };
+    return call(method, retarget(body), isForm, attempt + 1);
+  }
   // A rate limit is Telegram telling us when to come back, not a refusal.
   if (response.status === 429 && attempt < 3) {
     await new Promise((r) => setTimeout(r, ((result.parameters?.retry_after ?? 2) + 1) * 1000));

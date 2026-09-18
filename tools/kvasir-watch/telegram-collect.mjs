@@ -43,7 +43,7 @@ const ARCHIVE_DIR = process.env.KVASIR_CHAT_ARCHIVE ?? path.join(HERE, 'archive'
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) { console.error('TELEGRAM_BOT_TOKEN must be set'); process.exit(2); }
-const onlyChat = (process.env.TELEGRAM_CHAT_ID ?? '').trim();
+let onlyChat = (process.env.TELEGRAM_CHAT_ID ?? '').trim();
 
 const state = existsSync(STATE_FILE) ? JSON.parse(readFileSync(STATE_FILE, 'utf8')) : {};
 
@@ -140,6 +140,21 @@ async function main() {
     console.log('no new messages');
     return;
   }
+
+  // Upgrading a basic group to a supergroup gives it a new id, and every
+  // message then arrives from a chat this job is filtering out — so it goes
+  // quiet with no error at all, which is the worst way for a monitor to fail.
+  // Follow the move for this run and say, loudly, what has to change on disk.
+  for (const update of updates) {
+    const moved = (update.message ?? update.channel_post)?.migrate_to_chat_id;
+    if (moved && onlyChat && String(moved) !== onlyChat) {
+      console.error(`the group became a supergroup: ${onlyChat} -> ${moved}. ` +
+        'Following it for this run; set TELEGRAM_CHAT_ID to the new id or the next run is filtered to nothing.');
+      state.migratedTo = String(moved);
+      onlyChat = String(moved);
+    }
+  }
+  if (!onlyChat && state.migratedTo) onlyChat = state.migratedTo;
 
   const rows = [];
   const inbound = [];
