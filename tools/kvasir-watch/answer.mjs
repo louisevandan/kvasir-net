@@ -244,7 +244,19 @@ async function timeFacts() {
  */
 function whileThinking(typing) {
   if (!typing) return () => {};
-  const tick = () => { try { Promise.resolve(typing()).catch(() => {}); } catch { /* cosmetic */ } };
+  // Swallowing every failure is how this hid: the status never appeared, and
+  // nothing anywhere said why. Report the first one and then go quiet, so a
+  // broken indicator is discoverable without filling the log with it.
+  let complained = false;
+  const tick = () => {
+    try {
+      Promise.resolve(typing()).catch((error) => {
+        if (!complained) { complained = true; console.error(`typing status not delivered: ${error.message}`); }
+      });
+    } catch (error) {
+      if (!complained) { complained = true; console.error(`typing status not delivered: ${error.message}`); }
+    }
+  };
   tick();
   const timer = setInterval(tick, 4000);
   timer.unref?.();                      // never hold the process open for this

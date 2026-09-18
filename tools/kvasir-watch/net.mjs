@@ -21,5 +21,26 @@ import { setDefaultResultOrder } from 'node:dns';
 import net from 'node:net';
 
 try { setDefaultResultOrder('ipv4first'); } catch { /* older runtimes */ }
-// And if a v6 address is chosen anyway, fall back rather than fail.
-try { net.setDefaultAutoSelectFamily(true); } catch { /* older runtimes */ }
+
+/**
+ * The line that actually fixes it.
+ *
+ * Node races the address families (Happy Eyeballs) and gives the first one
+ * 250 ms to connect before starting the second. From here the IPv4 handshake to
+ * api.telegram.org takes 700-800 ms, so it never wins that race: at 250 ms Node
+ * starts the IPv6 attempt, that address has no route, and the whole connection
+ * fails at about 0.3 s reporting ETIMEDOUT.
+ *
+ * Measured, first request of a fresh process, six runs each:
+ *   250 ms attempt timeout — 2 of 6 failed, always at ~0.3 s
+ *   5000 ms attempt timeout — 6 of 6 succeeded, all at ~0.8 s
+ *
+ * Only the first request is exposed, because undici pools the connection
+ * afterwards. That is what made this so hard to see: a run fails on its opening
+ * call and then behaves perfectly, which reads as "the other service is flaky"
+ * rather than as a setting on our side.
+ *
+ * Ordering v4 first is not enough on its own — it decides which address is
+ * tried first, not how long it is given.
+ */
+try { net.setDefaultAutoSelectFamilyAttemptTimeout(5000); } catch { /* older runtimes */ }
