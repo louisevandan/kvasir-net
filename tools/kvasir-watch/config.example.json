@@ -73,6 +73,31 @@
       "artifact": "https://claude.ai/artifact/XC2eTVMWJMCxA61n3qWZBN"
     }
   },
+  "people": [
+    {
+      "who": "Tony, Kiwan",
+      "where": "Seoul",
+      "zone": "Asia/Seoul"
+    },
+    {
+      "who": "Anver",
+      "where": "Abu Dhabi",
+      "zone": "Asia/Dubai"
+    },
+    {
+      "who": "Guy",
+      "where": "Michigan",
+      "zone": "America/Detroit"
+    }
+  ],
+  "deadlines": [
+    {
+      "label": "YZi Labs EASY Residency S5 application",
+      "at": "2026-09-22T06:59:00Z",
+      "as_stated": "21 Sep 23:59 GMT-7",
+      "source": "yzilabs.com/easy-residency, checked 2026-09-17"
+    }
+  ],
   "calendar": {
     "icsUrl": "",
     "timeZone": "Asia/Seoul",

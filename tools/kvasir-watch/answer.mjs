@@ -33,8 +33,13 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { ask, available } from './llm.mjs';
 import { pipeline, pipelineText } from './seed.mjs';
+import { clocksNow, deadlineLines, eventLines } from './clocks.mjs';
+import { fetchEvents } from './calendar.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
+const config = JSON.parse(readFileSync(
+  process.env.KVASIR_WATCH_CONFIG ?? path.join(HERE, 'config.json'), 'utf8',
+));
 const LOG_DIR = process.env.KVASIR_WATCH_LOG ?? path.join(HERE, 'log');
 const ARCHIVE_DIR = process.env.KVASIR_CHAT_ARCHIVE ?? path.join(HERE, 'archive');
 const MAX_PER_RUN = Number(process.env.KVASIR_ANSWER_MAX ?? 3);
@@ -47,6 +52,8 @@ const SCHEMA = {
 };
 
 const BRIEF = `You are the Kvasir project's monitoring bot, answering a question in the team's own group chat.
+
+Every time and date in the FACTS was computed, not guessed. Quote them; never convert a time yourself and never work out what day it is — the team is spread over thirteen hours and an hour of arithmetic here costs someone a day. If asked what time it is, or when something happens, give the answer for each place rather than picking one.
 
 Answer from the FACTS section only. It is what the monitoring job actually collected this morning, the seed pipeline as it stands, and the recent conversation. If the facts do not contain the answer, say so plainly and name what would be needed — never fill the gap with something plausible. Do not restate the whole report; answer the question that was asked.
 
@@ -118,6 +125,44 @@ export function addressedTo(message, botUsername, botId) {
   return null;
 }
 
+const DAY_MS = 86_400_000;
+
+/**
+ * Where everyone is, what time it is there, and when the next things land.
+ *
+ * Computed here rather than asked of the model, because a model does not know
+ * the time and converts zones plausibly rather than correctly. See clocks.mjs.
+ */
+async function timeFacts() {
+  const people = config.people ?? [];
+  if (!people.length) return 'No team timezones are configured.';
+  const now = new Date();
+  const parts = [clocksNow(people, now)];
+
+  const lines = deadlineLines(people, config.deadlines ?? []);
+  if (lines.length) parts.push('\nDeadlines, on everyone\'s clock:', ...lines);
+
+  // The week's meetings, each shown on every wall. A failure here is stated
+  // rather than swallowed: "no meetings" and "could not read the calendar" are
+  // different answers and must not look the same.
+  const icsUrl = config.calendar?.icsUrl || process.env[config.calendar?.icsUrlEnv ?? ''] || '';
+  if (icsUrl) {
+    try {
+      // From the start of today, not the start of the week: last Monday's
+      // meeting is not an answer to "what's next", but this morning's might be.
+      const events = await fetchEvents(icsUrl, now.getTime() - DAY_MS, now.getTime() + 14 * DAY_MS,
+        { timeoutMs: 10_000 });
+      const rows = eventLines(people, events.sort((a, b) => a.at - b.at).slice(0, 8), now.getTime());
+      parts.push(rows.length
+        ? '\nCalendar, on everyone\'s clock — the first one that is still ahead is the next one:\n' + rows.join('\n')
+        : '\nNothing is on the calendar for the next two weeks.');
+    } catch (error) {
+      parts.push(`\nThe calendar could not be read (${error.message}), so meetings are not listed here.`);
+    }
+  }
+  return parts.join('\n');
+}
+
 /**
  * Answer the questions in this batch, newest last, and return what was sent.
  *
@@ -136,6 +181,7 @@ export async function answerQuestions(messages, { botUsername, botId, chatId, se
   if (!questions.length) return [];
 
   const monitoring = factsText(facts());
+  const timing = await timeFacts();
   const chat = recentChat();
   // Fetched once per run, then rendered per question: which rows are worth
   // showing depends on which programme the question names.
@@ -144,8 +190,8 @@ export async function answerQuestions(messages, { botUsername, botId, chatId, se
   const sent = [];
   for (const { message, question } of questions) {
     let answer;
-    const context = `MONITORING\n${monitoring}\n\nSEED PIPELINE\n${pipelineText(seed, question)}\n\n` +
-      `RECENT CONVERSATION\n${chat}`;
+    const context = `TIME AND PLACE\n${timing}\n\nMONITORING\n${monitoring}\n\n` +
+      `SEED PIPELINE\n${pipelineText(seed, question)}\n\nRECENT CONVERSATION\n${chat}`;
     try {
       const reply = await ask(
         `${BRIEF}\n\n<<<FACTS AND CONVERSATION — the only ground truth>>>\n${context}\n<<<END>>>\n\n` +
