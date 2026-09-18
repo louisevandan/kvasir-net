@@ -25,9 +25,16 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { setDefaultResultOrder } from 'node:dns';
+import net from 'node:net';
 import { answerQuestions } from './answer.mjs';
 
+// The fleet hosts have no IPv6 default route, but DNS answers with an AAAA for
+// api.telegram.org anyway. Node picks that address and the connection dies as a
+// bare `fetch failed` with no status — while curl, which tries both families,
+// succeeds every time. Ordering v4 first avoids it; autoSelectFamily makes the
+// runtime fall back instead of failing if a v6 address is ever picked again.
 try { setDefaultResultOrder('ipv4first'); } catch { /* older runtimes */ }
+try { net.setDefaultAutoSelectFamily(true); } catch { /* older runtimes */ }
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const STATE_DIR = path.join(HERE, 'state');
@@ -51,10 +58,9 @@ async function api(method, params = {}, attempt = 1) {
       signal: AbortSignal.timeout(70_000),
     });
   } catch (error) {
-    // This host drops the second HTTPS connection of a process often enough to
-    // matter: the first call succeeds, the next dies as a bare "fetch failed"
-    // with no status. It is not Telegram refusing anything, so retry rather
-    // than report a refusal that never happened.
+    // A bare "fetch failed" with no status is the address-family problem above,
+    // not Telegram refusing anything, so retry rather than report a refusal
+    // that never happened.
     if (attempt < 3) {
       await new Promise((r) => setTimeout(r, attempt * 1500));
       return api(method, params, attempt + 1);
@@ -68,6 +74,11 @@ async function api(method, params = {}, attempt = 1) {
   // connects to a second process.
   if (response.status === 409) {
     throw new Error('another process is polling getUpdates with this token — only one reader may');
+  }
+  // A rate limit is Telegram telling us when to come back, not a refusal.
+  if (response.status === 429 && attempt < 3) {
+    await new Promise((r) => setTimeout(r, ((result.parameters?.retry_after ?? 2) + 1) * 1000));
+    return api(method, params, attempt + 1);
   }
   // Never let Telegram's echo of the request reach a log that holds the token.
   if (!result.ok) throw new Error(`${method} failed: ${result.description ?? response.status}`);

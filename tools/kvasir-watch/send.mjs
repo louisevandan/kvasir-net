@@ -12,11 +12,15 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { setDefaultResultOrder } from 'node:dns';
+import net from 'node:net';
 
-// The fleet hosts have no IPv6 route. Node resolves AAAA first by default, and
-// the upload leg fails with ENETUNREACH while a plain message happens to
-// succeed — a split that looks like Telegram being flaky rather than like DNS.
+// The fleet hosts have no IPv6 default route, but DNS answers with an AAAA for
+// api.telegram.org anyway. Node picks that address and the connection dies as a
+// bare `fetch failed` with no status — while curl, which tries both families,
+// succeeds every time. Ordering v4 first avoids it; autoSelectFamily makes the
+// runtime fall back instead of failing if a v6 address is ever picked again.
 try { setDefaultResultOrder('ipv4first'); } catch { /* older runtimes */ }
+try { net.setDefaultAutoSelectFamily(true); } catch { /* older runtimes */ }
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 const chatId = (process.env.TELEGRAM_CHAT_ID ?? '').trim();
@@ -44,8 +48,9 @@ async function call(method, body, isForm = false, attempt = 1) {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     });
   } catch (error) {
-    // The same dropped-connection behaviour the collector sees: the message
-    // goes and the attachment does not, which reads as Telegram being flaky.
+    // Reaching Telegram at all. The form body is a Blob built from memory, not
+    // a stream, so undici re-serializes it on each attempt and the attachment
+    // retry actually re-sends something.
     if (attempt < 3) {
       await new Promise((r) => setTimeout(r, attempt * 1500));
       return call(method, body, isForm, attempt + 1);
@@ -53,6 +58,11 @@ async function call(method, body, isForm = false, attempt = 1) {
     throw new Error(`${method} could not reach Telegram after ${attempt} tries: ${error.cause?.code ?? error.message}`);
   }
   const result = await response.json().catch(() => ({}));
+  // A rate limit is Telegram telling us when to come back, not a refusal.
+  if (response.status === 429 && attempt < 3) {
+    await new Promise((r) => setTimeout(r, ((result.parameters?.retry_after ?? 2) + 1) * 1000));
+    return call(method, body, isForm, attempt + 1);
+  }
   // Telegram echoes the request; never let that reach a log that holds a token.
   if (!result.ok) throw new Error(`${method} failed: ${result.description ?? response.status}`);
   return result.result;
