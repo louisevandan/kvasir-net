@@ -17,6 +17,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fetchEvents, weekStart, renderWeek } from './calendar.mjs';
+import { pipeline } from './seed.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const config = JSON.parse(readFileSync(
@@ -28,6 +29,8 @@ const OPEN = '<!-- LIVE:STATUS -->';
 const CLOSE = '<!-- /LIVE:STATUS -->';
 const CAL_OPEN = '<!-- LIVE:CALENDAR -->';
 const CAL_CLOSE = '<!-- /LIVE:CALENDAR -->';
+const PIPE_OPEN = '<!-- LIVE:PIPELINE -->';
+const PIPE_CLOSE = '<!-- /LIVE:PIPELINE -->';
 
 const esc = (value) => String(value ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const byName = (probes, name) => probes.find((probe) => probe.name === name);
@@ -68,6 +71,16 @@ const T = {
     calNothing: 'Nothing scheduled in this window.',
     allDay: 'all day',
     days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    pipeHeading: 'Funding pipeline',
+    pipeSub: (n, at) => `${n} programmes tracked, read from the pipeline at ${esc(at)}. Listed here: everything we are in the middle of, and everything that closes within 60 days. A status changes only when a person changes it.`,
+    pipeCols: ['Programme', 'Where', 'Closes', 'Status', 'What it needs, where we stand'],
+    pipeNone: 'Nothing is live and nothing closes in the next 60 days.',
+    pipeUnread: (why) => `The pipeline could not be read (${esc(why)}).`,
+    pipeStale: (why) => `Shown from the last copy that could be read — the refresh failed (${esc(why)}).`,
+    pipeDays: (d) => (d < 0 ? `${-d}d ago` : d === 0 ? 'today' : `in ${d}d`),
+    pipeNoDate: 'rolling',
+    pipeKoOnly: '(note is in Korean — see the Korean edition)',
+    pipeStatus: {},
   },
   ko: {
     heading: '실시간 상태',
@@ -98,6 +111,16 @@ const T = {
     calNothing: '이 기간에 잡힌 일정이 없습니다.',
     allDay: '종일',
     days: ['월', '화', '수', '목', '금', '토', '일'],
+    pipeHeading: '자금 파이프라인',
+    pipeSub: (n, at) => `추적 중인 프로그램 ${n}건, ${esc(at)} 기준으로 파이프라인에서 읽었습니다. 여기 실린 것은 진행 중인 건과 60일 안에 마감되는 건뿐입니다. 상태는 사람이 바꿀 때만 바뀝니다.`,
+    pipeCols: ['프로그램', '지역', '마감', '상태', '요구 조건과 진행 상황'],
+    pipeNone: '진행 중인 건이 없고 60일 안에 마감되는 것도 없습니다.',
+    pipeUnread: (why) => `파이프라인을 읽지 못했습니다(${esc(why)}).`,
+    pipeStale: (why) => `갱신에 실패해(${esc(why)}) 마지막으로 읽힌 사본을 표시합니다.`,
+    pipeDays: (d) => (d < 0 ? `${-d}일 지남` : d === 0 ? '오늘' : `${d}일 남음`),
+    pipeNoDate: '상시',
+    pipeKoOnly: '',
+    pipeStatus: { 'Applied': '지원 완료', 'Researching': '검토 중', 'Not started': '미착수', 'Rejected': '탈락', 'Accepted': '선정' },
   },
 };
 
@@ -243,6 +266,129 @@ async function calendarBlock() {
 
 const renderCalendar = await calendarBlock();
 
+const HANGUL = /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]/;
+
+/** The few enum-ish values the pipeline stores in Korean. */
+const ENUM_EN = {
+  '공개 지원': 'Open application',
+  '확인 불가': 'Not stated',
+  '초청': 'By invitation',
+  '이메일': 'Email',
+};
+
+/**
+ * The English edition carries no Hangul — that is a standing rule for anything
+ * an investor may read, and a pipeline note written in Korean would break it
+ * silently. Known values are translated; anything else is withheld and named in
+ * the runner's output, so the fix happens in the row rather than in the page.
+ */
+function english(text, missing, row, field) {
+  const value = String(text ?? '').trim();
+  if (!value) return '';
+  if (ENUM_EN[value]) return ENUM_EN[value];
+  if (HANGUL.test(value)) { missing.push(`${row.id}.${field}`); return null; }
+  return value;
+}
+
+/**
+ * The research behind a row is a paragraph; the table needs the part that
+ * decides something. Cut at a sentence boundary so the cell ends on a thought
+ * rather than mid-clause, and leave the owner's own note whole — that one is
+ * the current fact, not background.
+ */
+function gist(text, limit = 220) {
+  const value = String(text ?? '').trim();
+  if (value.length <= limit) return value;
+  const cut = value.slice(0, limit);
+  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+  return (stop > limit * 0.4 ? cut.slice(0, stop + 1) : cut.replace(/\s+\S*$/, '') + '…');
+}
+
+/**
+ * Where the money is coming from, and when each door shuts.
+ *
+ * The review is about one deadline, but that deadline sits in a list of them,
+ * and a reader deciding what to spend the week on needs to see the others. Only
+ * what is live and what closes inside two months: the rest of the table is
+ * research, and research on a page about readiness reads as padding.
+ */
+async function pipelineBlock() {
+  const entry = await pipeline().catch(() => null);
+
+  return (lang) => {
+    const t = T[lang];
+    const head = (body) => [
+      PIPE_OPEN,
+      '  <section id="pipeline">',
+      `    <h2>${t.pipeHeading}</h2>`,
+      ...body,
+      '  </section>',
+      PIPE_CLOSE,
+    ].join('\n');
+
+    if (!entry) return head([`    <p class="sub">${t.pipeUnread('no cached copy')}</p>`]);
+
+    const rows = entry.rows ?? [];
+    const now = Date.now();
+    const shown = rows
+      .map((row) => {
+        const at = Date.parse(row.deadline ?? '');
+        const days = Number.isNaN(at) ? null : Math.round((at - now) / DAY_MS);
+        return { row, days };
+      })
+      .filter(({ row, days }) => (row.status && row.status !== 'Not started') || (days !== null && days >= -7 && days <= 60))
+      .sort((a, b) => (a.days ?? 9e9) - (b.days ?? 9e9));
+
+    const stamp = entry.at.replace('T', ' ').slice(0, 16) + ' UTC';
+    const sub = [`    <p class="sub">${t.pipeSub(rows.length, stamp)}</p>`];
+    if (entry.staleBecause) sub.push(`    <p class="sub">${t.pipeStale(entry.staleBecause)}</p>`);
+    if (!shown.length) return head([...sub, `    <p class="sub">${t.pipeNone}</p>`]);
+
+    const missing = [];
+    const cell = (value, row, field) => {
+      if (lang !== 'en') return esc(value ?? '');
+      const out = english(value, missing, row, field);
+      return out === null ? `<em>${esc(t.pipeKoOnly)}</em>` : esc(out);
+    };
+
+    const body = shown.map(({ row, days }) => {
+      const tone = days === null ? 'info' : days < 0 ? 'fail' : days <= 7 ? 'warn' : 'info';
+      const when = days === null
+        ? t.pipeNoDate
+        : `${esc(row.deadline)} <span class="pill ${tone}">${esc(t.pipeDays(days))}</span>`;
+      const status = t.pipeStatus[row.status] ?? row.status ?? '—';
+      const standing = [
+        cell(gist(row.note), row, 'note'),
+        row.owner_note ? `<strong>${cell(row.owner_note, row, 'owner_note')}</strong>` : '',
+      ].filter(Boolean).join(' ');
+      return '      <tr>' +
+        `<td>${cell(row.name, row, 'name')}</td>` +
+        `<td>${cell(row.base, row, 'base')}</td>` +
+        `<td>${when}</td>` +
+        `<td>${esc(status)}</td>` +
+        `<td>${standing}</td>` +
+        '</tr>';
+    });
+
+    if (missing.length) console.error(`pipeline rows still holding Korean text, withheld from the English page: ${missing.join(', ')}`);
+
+    return head([
+      ...sub,
+      '    <div class="table-wrap">',
+      '      <table>',
+      `        <thead><tr>${t.pipeCols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>`,
+      '        <tbody>',
+      ...body,
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+    ]);
+  };
+}
+
+const renderPipeline = await pipelineBlock();
+
+
 let wrote = 0;
 for (const [lang, entry] of Object.entries(config.readiness ?? {})) {
   const file = path.resolve(HERE, entry.file);
@@ -255,11 +401,17 @@ for (const [lang, entry] of Object.entries(config.readiness ?? {})) {
   }
   let next = html.slice(0, start) + render(lang) + html.slice(end + CLOSE.length);
 
-  // The calendar is its own block so a document without one is left untouched.
+  // Each of these is its own block, so a document without one is left untouched.
   const calStart = next.indexOf(CAL_OPEN);
   const calEnd = next.indexOf(CAL_CLOSE);
   if (calStart >= 0 && calEnd >= 0) {
     next = next.slice(0, calStart) + renderCalendar(lang) + next.slice(calEnd + CAL_CLOSE.length);
+  }
+
+  const pipeStart = next.indexOf(PIPE_OPEN);
+  const pipeEnd = next.indexOf(PIPE_CLOSE);
+  if (pipeStart >= 0 && pipeEnd >= 0) {
+    next = next.slice(0, pipeStart) + renderPipeline(lang) + next.slice(pipeEnd + PIPE_CLOSE.length);
   }
 
   writeFileSync(file, next);
