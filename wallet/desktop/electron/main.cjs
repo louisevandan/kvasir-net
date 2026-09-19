@@ -7,6 +7,7 @@ const http = require('node:http')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
+const { RelayTunnel } = require('./relay.cjs')
 const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
 const bs58 = require('bs58')
@@ -435,6 +436,7 @@ async function localGenerate(sender, name, prompt, maxTokens) {
 // ran. Until one exists it stays null, and the settlement service scores the node
 // on its floor tier rather than on a number the app made up.
 const p4node = new P4Node()
+const relay = new RelayTunnel()
 let measured = null   // { tps, tokens, elapsedMs, model, at }
 
 async function benchmark(sender, maxTokens = 64) {
@@ -453,7 +455,42 @@ async function benchmark(sender, maxTokens = 64) {
 
 async function nodeStatus({ inspect = false } = {}) {
   if (inspect) await p4node.inspect().catch(() => {})
-  return { ...p4node.status(), capability: await capability(), measured }
+  return { ...p4node.status(), capability: await capability(), measured, relay: relay.status() }
+}
+
+/**
+ * Give this machine an address the network can dial.
+ *
+ * The agent binds loopback, which is right — nothing here should be listening
+ * on a public port, least of all a protocol with no authentication. The tunnel
+ * is what makes it reachable anyway: one outbound connection, and work dialled
+ * at the relay's address arrives down it.
+ *
+ * It needs the wallet, because the relay will not hand out an address to
+ * someone who cannot prove which operator they are. A locked wallet therefore
+ * means an agent that runs but cannot be given work, and the status says so
+ * rather than the app retrying into a wall.
+ */
+function startRelay() {
+  const cfg = readConfig()
+  if (cfg.relayEnabled === false) return { skipped: 'turned off in settings' }
+  const owner = session ? session.address : (cfg.address || null)
+  if (!owner) return { skipped: 'no wallet on this machine' }
+  if (!session) return { skipped: 'wallet is locked' }
+  const { host, port } = cfg.relay || C.relay
+  relay.start({
+    relayHost: host,
+    relayPort: port,
+    // The same identity the settlement service and this app's node screen use.
+    nodeId: `desktop-${owner.slice(0, 8)}`,
+    owner,
+    agentPort: p4node.port,
+    sign: async (text) => {
+      const kp = keypairFromMnemonic(requireUnlocked())
+      return Buffer.from(nacl.sign.detached(Buffer.from(text, 'utf8'), kp.secretKey)).toString('base64')
+    },
+  })
+  return { started: true }
 }
 
 function register() {
@@ -573,8 +610,16 @@ function register() {
 
   // ---- node: run a p4 agent on this machine ---------------------------------
   ipcMain.handle('node:status', (_e, opts) => nodeStatus(opts || {}))
-  ipcMain.handle('node:start', async () => { p4node.start(); await new Promise((r) => setTimeout(r, 1200)); return nodeStatus({ inspect: true }) })
-  ipcMain.handle('node:stop', async () => { await p4node.stop(); return nodeStatus() })
+  ipcMain.handle('node:start', async () => {
+    p4node.start()
+    // The tunnel comes up beside the agent, not after it is proven: the relay
+    // only needs the port to exist by the time somebody dials, and a stream
+    // that arrives early closes itself and says the agent is not up yet.
+    startRelay()
+    await new Promise((r) => setTimeout(r, 1200))
+    return nodeStatus({ inspect: true })
+  })
+  ipcMain.handle('node:stop', async () => { relay.stop(); await p4node.stop(); return nodeStatus() })
   ipcMain.handle('node:capability', (_e, refresh) => capability({ refresh: !!refresh }))
   ipcMain.handle('node:benchmark', (e, maxTokens) => benchmark(e.sender, maxTokens || 64))
 }
