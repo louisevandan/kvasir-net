@@ -72,27 +72,34 @@ Leave `KVASIR_RELAY_ALLOW_FROM` empty only on a private network. On a public
 address it is the difference between "the OUTER can reach our nodes" and
 "anyone on the internet can send NODE_LOAD to a contributor's machine".
 
-## Deployment: what is settled and what is not
+## Where it runs
 
-The host must have a public address **and accept inbound TCP on the relay's
-ports**. Measured on the fleet, 2026-09-19:
+`mobile-coder-vm` in GCP `banya2025`, zone `asia-northeast3-a`, public
+`34.50.62.159`. Installed entirely under the user's home — `~/.local/node` and
+`~/kvasir-p4-relay` — so nothing system-wide changed on a machine that already
+serves other things.
 
-| host | public | reachable inbound |
-| --- | --- | --- |
-| MI250-01 / MI250-02 | 1.214.116.122, LAN 192.168.20.x | no — behind NAT. This is why the hub needs a cloudflared tunnel |
-| GB10 #1 (office) | 1.220.225.155, directly attached | **port 22 only** |
+Inbound is admitted by a firewall rule of its own, `kvasir-p4-relay`, targeting
+a tag of the same name rather than the instance's existing `banya-agent` tag.
+Removing the tag removes the relay's exposure and leaves the rest of that
+instance untouched. Sources are named addresses, never `0.0.0.0/0`.
 
-GB10 #1 is the only candidate. The relay was deployed there and passes its own
-tests on that machine, but a dial from outside the office times out and never
-reaches the process — `22` is open, `80`, `443`, `8080`, `8443`, `3000`, `19001`
-and `43000` are all filtered upstream. Two services listening on `0.0.0.0`
-(vLLM on 8002, this relay on 43100) are both unreachable while 22 works, which
-puts the filter above the host rather than on it.
+```
+rule    kvasir-p4-relay   tcp:43000, tcp:43100-43199
+target  tag kvasir-p4-relay  (mobile-coder-vm)
+source  the office, the MI250 egress, and an operator machine
+```
 
-**So one thing is needed before a desktop node can join: an inbound port.**
-Either the office firewall admits 43000 and a public range, or the relay moves
-to a host that already accepts inbound — a small VPS is enough, since it
-forwards bytes and does no inference.
+Verified end to end on 2026-09-20 with the real topology: a Mac behind NAT
+registered as a node and became reachable at `tcp://34.50.62.159:43100`, and
+MI250-02 dialled that address and got 256 KiB back byte-identical in 89 ms.
+
+### Hosts that cannot do this, and why
+
+| host | verdict |
+| --- | --- |
+| MI250-01 / MI250-02 | behind NAT, LAN `192.168.20.x`. A relay there would be caught by the problem it exists to solve — the same reason the hub needs a cloudflared tunnel |
+| GB10 #1 (office) | has a directly attached public address, but only port 22 is admitted. `80`, `443`, `8080`, `19001` and `43000` are all filtered above the host, so a dial never reaches the process. Opening it needs someone at the router |
 
 ## What it does not do yet
 
@@ -101,4 +108,5 @@ forwards bytes and does no inference.
 - Gate registration on the operator's KVR balance. `MIN_OPERATOR_KVR` lives in
   the gateway; the relay proves the wallet and should ask the gateway whether
   that wallet may run a node.
-- Run under a supervisor. It is started by hand today.
+- Run under a supervisor. It is started by hand and will not survive a reboot
+  of the instance.
