@@ -1,0 +1,9 @@
+{
+  "name": "kvasir-p4-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Gives a p4 node a dialable address it does not have.",
+  "bin": { "kvasir-p4-relay": "./relay.mjs" },
+  "dependencies": { "tweetnacl": "^1.0.3" }
+}
