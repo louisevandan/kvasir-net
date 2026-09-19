@@ -38,6 +38,17 @@ export interface NodeStatus {
   log: string[]
   capability: NodeCapability
   measured: NodeMeasurement | null
+  // Whether the network can reach this machine. The agent binds loopback, so
+  // without a tunnel the node runs and is never given work.
+  relay: {
+    enabled: boolean
+    connected: boolean
+    registered: boolean
+    advertise: string | null
+    lastError: string | null
+    streams: number
+    log: string[]
+  }
 }
 
 export interface LinkcppAPI {
@@ -195,6 +206,9 @@ function makeMock(): LinkcppAPI {
         binary: running ? '/opt/kvasir/p4-agent' : null, uptimeMs: running ? 125_000 : 0,
         lastError: running ? null : 'agent not started', lastExit: null,
         nodes: running ? [{ nodeId: 'demo-s0', state: 'idle', generation: 1, adapterKind: 'llamacpp' }] : [],
+        // The browser build runs no agent and holds no tunnel, so it is never
+        // reachable. Saying so is more honest than a demo address.
+        relay: { enabled: false, connected: false, registered: false, advertise: null, lastError: null, streams: 0, log: [] },
         gpus: running ? [{ name: 'Apple M4 Pro', backend: 'metal', memoryBytes: 24 * 1024 ** 3 }] : [],
         snapshotAt: running ? Date.now() : null,
         log: running ? ['12:00:01 agent listening on 127.0.0.1:42031'] : [],

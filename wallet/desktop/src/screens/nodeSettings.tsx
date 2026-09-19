@@ -132,6 +132,18 @@ export function NodeSettingsScreen() {
                   pid {status?.pid} · {status?.address} · {Math.round((status?.uptimeMs ?? 0) / 1000)}s
                 </div>
               )}
+              {/* Running is not the same as reachable. The agent binds loopback,
+                  so until the tunnel has an address the network cannot dial this
+                  machine and no work will ever arrive. Say which it is. */}
+              {running && (
+                <div className="mono small" style={{ marginTop: 6, color: status?.relay?.registered ? 'var(--ok)' : 'var(--warn)' }}>
+                  {status?.relay?.registered
+                    ? `${t('ns.reachable')} ${status.relay.advertise}`
+                    : status?.relay?.lastError
+                      ? `${t('ns.notReachable')} — ${status.relay.lastError}`
+                      : t('ns.reachPending')}
+                </div>
+              )}
               {status?.lastError && !running && <div className="small" style={{ marginTop: 10, color: 'var(--danger)' }}>{status.lastError}</div>}
             </>
           ) : (
