@@ -24,6 +24,8 @@
   "activeCluster": "devnet",
   "$genesis": "Genesis gateway. Served publicly via Cloudflare Tunnel (gate.kvasir-ai.net, HTTPS, no router port-forward needed). Clients still auto-adopt /api/config.publicUrl if it ever changes.",
   "stakingServiceUrl": "https://gate.kvasir-ai.net",
+  "$nodeGuide": "Homepage node-operator guide (desktop installers + mobile store links). The web wallet can't run a node itself, so it hands off here via QR / download link. Must match kvasir-home LINKS.runNode and NODE_GUIDE_URL in wallet/desktop/src/api.ts.",
+  "nodeGuideUrl": "https://kvasir-ai.net/run-node",
   "solanaPay": {
     "$comment": "Phase 2 inference-payment scheme. Kvasir issues a Solana Pay transaction request; the wallet signs and submits; Kvasir verifies on-chain by reference.",
     "scheme": "solana",

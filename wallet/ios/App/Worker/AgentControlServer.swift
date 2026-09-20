@@ -3,7 +3,7 @@ import Network
 import UIKit
 
 /// Minimal managed-node-agent control plane (the phone-side counterpart of
-/// controller/nodeagent.py). The hub polls `GET /control/status`, hands us a
+/// the deleted controller/nodeagent.py). The hub polls `GET /control/status`, hands us a
 /// report URL + M2M token on bind via `POST /control/join`, and drives loads
 /// with `POST /control/load|unload|load/cancel`. The data plane is the in-app
 /// ggml RPC worker (KvasirRpcWorker); the master streams tensors directly to
@@ -208,7 +208,7 @@ final class AgentControlServer: ObservableObject {
             return (200, ["log": logLines.suffix(200).joined(separator: "\n"),
                           "worker_running": KvasirRpcWorkerIsRunning()])
 
-        // ---- ring stage control plane (phone-side controller/proxy/node_api.py) ----
+        // ---- ring stage control plane (phone side of the retired node_api.py) ----
         case ("GET", "/control/proxy/runtime"):
             return (200, ["runtime_mode": ringCatalogEntry(),
                           "installed_packs": [], "install_enabled": false])

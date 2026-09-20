@@ -1,5 +1,5 @@
 // C bridge: run one linkcpp ring stage (linkcpp-stage static lib) inside the app.
-// Mirrors what controller/proxy/stage_service.py does with the linkcpp-node
+// Mirrors what the retired controller/proxy/stage_service.py did with the linkcpp-node
 // binary on desktop nodes — same wire protocol, same ready marker in the log.
 #ifndef KVASIR_STAGE_WORKER_H
 #define KVASIR_STAGE_WORKER_H

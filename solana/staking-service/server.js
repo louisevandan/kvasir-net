@@ -2118,7 +2118,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 // forwards untouched — the bridge enforces auth, the gateway grants nothing.
 app.all(['/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
          '/api/proxy/models/:model/expert-shard'], async (req, res) => {
-  if (!BRIDGE_URL) return res.status(503).json({ error: 'no hub configured' });
+  if (!BRIDGE_URL) return res.status(503).json({ error: 'no bridge configured' });
   try {
     const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
     const headers = {};

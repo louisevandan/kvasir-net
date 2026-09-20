@@ -12,7 +12,8 @@ import kotlin.concurrent.thread
 
 /**
  * The phone-side managed node agent: the Android counterpart of the iOS
- * AgentControlServer and controller/nodeagent.py. It speaks the hub's control
+ * AgentControlServer. (It also mirrored controller/nodeagent.py, which was
+ * deleted with the rest of the retired control plane.) It speaks the hub's control
  * protocol over a raw HTTP server and, unlike iOS, drives the data plane by
  * spawning the bundled native binaries (linkcpp-node ring stage, ggml-rpc-server)
  * — Android can exec, so this is a real on-demand node.

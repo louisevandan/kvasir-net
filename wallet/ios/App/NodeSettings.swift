@@ -9,7 +9,10 @@ struct NodeSettingsView: View {
     @ObservedObject private var agent = AgentControlServer.shared
     @ObservedObject private var participation = HubParticipation.shared
     @State private var stats = DeviceStats()
-    @State private var hubURL = "https://hub.kvasir-ai.net"
+    // hub.kvasir-ai.net was the old control plane and has been 502 since it was
+    // retired. A NAT-bound phone now reaches the bridge through the settlement
+    // gateway, which passes the participation calls through to it.
+    @State private var hubURL = "https://gate.kvasir-ai.net"
     @State private var hubStatus = ""
     @State private var hubBusy = false
     @State private var keyStatus = ""

@@ -46,7 +46,8 @@ public enum SharedSpecError: Error, CustomStringConvertible {
 }
 
 /// Loads the shared-spec JSON bundled as package/app resources. These files are
-/// copied from `wallet/shared-spec/` by `wallet/ios/sync-spec.sh`.
+/// copied from `wallet/shared-spec/` by `wallet/sync-spec.sh`, which also syncs
+/// the Android bundle and takes `--check` to fail when a copy has drifted.
 public enum SharedSpec {
     public static func loadToken(bundle: Bundle? = nil) throws -> TokenDevnetSpec {
         try load("token.devnet", as: TokenDevnetSpec.self, bundle: bundle ?? .module)

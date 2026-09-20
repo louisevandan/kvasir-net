@@ -4,8 +4,9 @@ import TweetNacl
 /// Sign-In-With-Solana against a Kvasir hub to obtain the bearer token an
 /// autonomous node uses to poll/enroll on an auth-gated (public, remote) hub.
 ///
-/// Mirrors `wallet/android/.../HubAuthService.kt`. Flow (controller/siws.py,
-/// controller/hub.py):
+/// Mirrors `wallet/android/.../HubAuthService.kt`. The server side of this flow
+/// — controller/siws.py and controller/hub.py — was deleted with the retired
+/// control plane, so /api/auth/* 404s until the bridge serves node tokens:
 ///   1. POST /api/auth/challenge {wallet}          -> {nonce, message}
 ///   2. sign the message bytes with the wallet key -> base64 ed25519 signature
 ///   3. POST /api/auth/node-token {wallet,nonce,signature} -> {node_token}

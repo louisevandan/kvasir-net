@@ -10,7 +10,11 @@ import java.net.URL
  * Sign-In With Solana against a Kvasir hub, to obtain the bearer token an
  * autonomous node uses to poll/enroll on an auth-gated (public, remote) hub.
  *
- * Flow (see controller/siws.py, controller/hub.py):
+ * Flow. The server side of this — controller/siws.py and controller/hub.py —
+ * was deleted with the retired control plane and nothing serves the /api/auth routes
+ * today, so these calls 404 until the bridge grows a node-token endpoint
+ * (avoid writing the route as a glob here — Kotlin block comments nest, and
+ * the slash-star inside one opens a comment that is never closed):
  *   1. POST /api/auth/challenge {wallet}         -> {nonce, message}
  *   2. sign message bytes with the wallet key    -> base64 signature (ed25519)
  *   3. POST /api/auth/verify {wallet,nonce,sig}  -> session cookie, OR

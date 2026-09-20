@@ -235,7 +235,10 @@ private fun HubConnectCard(vm: WalletViewModel) {
     val b = LocalBrand.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var url by remember { mutableStateOf("https://hub.kvasir-ai.net") }
+    // hub.kvasir-ai.net was the old control plane and has been 502 since it was
+    // retired. A NAT-bound phone now reaches the bridge through the settlement
+    // gateway, which passes the participation calls through to it.
+    var url by remember { mutableStateOf("https://gate.kvasir-ai.net") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     val hubs = remember { mutableStateOf(NodeService.agent?.knownHubList() ?: emptyList()) }
