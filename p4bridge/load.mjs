@@ -24,7 +24,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { connect } from './wire.js';
+import { connect, agentEndpoint } from './wire.js';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const STATE_DIR = path.join(HERE, 'state');
@@ -32,11 +32,29 @@ const RECORD = path.join(STATE_DIR, 'last-load.json');
 const CATALOG = process.env.P4_BRIDGE_CATALOG ?? path.join(HERE, 'catalog.json');
 
 const ADAPTER = 'llamacpp';
-const LOAD = 'application/vnd.p4.llamacpp.load-v3+json';
-const LOADED = 'application/vnd.p4.llamacpp.loaded-v3+json';
+
+// LOAD and UNLOAD are backend-neutral node lifecycle commands addressed to the
+// AGENT, not to the node: the node does not exist until LOAD creates it, and an
+// event for an unregistered node is forwarded outbound instead of handled
+// (layers/agent/src/event_broker/mod.rs:466). The adapter's own command rides
+// inside as an opaque body. Sending the bare llamacpp command to a node
+// endpoint — what this tool did before — is silently dropped.
+const NODE_LOAD = 'application/vnd.p4.node.load-v1';
+const NODE_UNLOAD = 'application/vnd.p4.node.unload-v1';
+const NODE_RESULT = 'application/vnd.p4.node.lifecycle-result-v1';
+const LIFECYCLE_SCHEMA = 1;
+
+const LOAD = 'application/vnd.p4.llamacpp.load-v4+json';
+const LOADED = 'application/vnd.p4.llamacpp.loaded-v4+json';
 const UNLOAD = 'application/vnd.p4.llamacpp.unload-v3+json';
 const UNLOADED = 'application/vnd.p4.llamacpp.unloaded-v3+json';
-const ERROR = 'application/vnd.p4.llamacpp.error-v2+json';
+
+// The allocation the retired CREATE path used; the adapter's resource profile
+// enforces the smaller per-request limits within it.
+const QUEUE_CAPACITY = 65_536;
+const COMPLETION_CAPACITY = 65_536;
+const RETAINED_CAPACITY = 65_536;
+const RETAINED_BYTES = 256 * 1024 * 1024;
 
 const argv = process.argv.slice(2);
 const flag = (name) => argv.includes(`--${name}`);
@@ -44,6 +62,44 @@ const value = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? a
 
 const json = (v) => Buffer.from(JSON.stringify(v), 'utf8');
 const nodeAddress = (agent) => agent.replace(/^tcp:\/\//, '').split(':');
+
+/** Lifecycle payload: u32le metadata length, the metadata JSON, then the body. */
+function encodeLifecycle(metadata, opaque) {
+  const meta = json(metadata);
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(meta.length, 0);
+  return Buffer.concat([length, meta, opaque]);
+}
+
+function decodeLifecycle(payload) {
+  if (payload.length < 4) throw new Error('lifecycle payload is truncated');
+  const length = payload.readUInt32LE(0);
+  if (payload.length < 4 + length) throw new Error('lifecycle metadata is truncated');
+  return {
+    metadata: JSON.parse(payload.subarray(4, 4 + length).toString('utf8')),
+    opaque: payload.subarray(4 + length),
+  };
+}
+
+/** The lifecycle envelope for one stage's LOAD or UNLOAD. */
+function lifecycleMetadata(stage, operation) {
+  const allocating = operation === 'load';
+  return {
+    schema: LIFECYCLE_SCHEMA,
+    node_id: stage.node,
+    node_generation: stage.generation,
+    adapter_kind: ADAPTER,
+    adapter_content_type: allocating ? LOAD : UNLOAD,
+    ...(allocating
+      ? {
+          queue_capacity: QUEUE_CAPACITY,
+          completion_capacity: COMPLETION_CAPACITY,
+          retained_capacity: RETAINED_CAPACITY,
+          retained_bytes: RETAINED_BYTES,
+        }
+      : {}),
+  };
+}
 
 /** One connection per agent; a stage is only reachable through its own. */
 async function clientsFor(agents) {
@@ -58,22 +114,44 @@ async function clientsFor(agents) {
   return clients;
 }
 
-/** Wait for one content type from every stage, or the first refusal. */
+/**
+ * Wait for every stage's lifecycle result.
+ *
+ * Every stage is heard out rather than aborting on the first refusal. One
+ * stage's rejection usually means all four share the cause, and each carries
+ * its own detail — the physical result bound, for one, is only knowable from
+ * what the stage server reports at READY, so a run that collects all four
+ * failures tells you every number you need to correct the plan.
+ */
 function awaitAll(clients, correlationId, wanted, stages, timeoutMs) {
   return new Promise((resolve, reject) => {
     const seen = new Set();
+    const failures = [];
     const offs = [...clients.values()].map((client) => client.subscribe(correlationId, (event) => {
       if (event.error) return finish(event.error);
-      const type = event.meta.contentType;
-      if (type === ERROR) {
-        return finish(new Error(`stage refused: ${event.payload.toString('utf8').slice(0, 300)}`));
+      if (event.meta.contentType !== NODE_RESULT) return;
+      let metadata; let opaque;
+      try { ({ metadata, opaque } = decodeLifecycle(event.payload)); }
+      catch (error) { return finish(error); }
+      const node = metadata.node_id ?? `stage-${seen.size}`;
+      if (seen.has(node)) return;
+      seen.add(node);
+      if (metadata.status !== 'succeeded' || metadata.adapter_content_type !== wanted) {
+        const detail = metadata.first_error
+          ?? metadata.cleanup_error
+          ?? opaque.toString('utf8').slice(0, 400)
+          ?? metadata.status;
+        failures.push(`${node}: ${metadata.status} (${metadata.resource_state}) ${detail}`);
       }
-      if (type !== wanted) return;
-      seen.add(event.meta.source.node ?? `stage-${seen.size}`);
-      if (seen.size >= stages.length) finish(null, [...seen]);
+      if (seen.size < stages.length) return;
+      if (failures.length) return finish(new Error(`\n  ${failures.join('\n  ')}`));
+      finish(null, [...seen]);
     }));
     const timer = setTimeout(
-      () => finish(new Error(`timed out with ${seen.size}/${stages.length} stages answering`)),
+      () => finish(new Error(
+        `timed out with ${seen.size}/${stages.length} stages answering`
+        + (failures.length ? `\n  ${failures.join('\n  ')}` : ''),
+      )),
       timeoutMs,
     );
     function finish(error, result) {
@@ -102,8 +180,26 @@ async function doLoad() {
   const plan = JSON.parse(readFileSync(path.resolve(planFile), 'utf8'));
   if (!plan.stages?.length) throw new Error('the plan has no stages');
 
-  const generation = Number(value('generation') ?? Date.now());
+  // The load generation is not free: the adapter compares a RELEASE receipt's
+  // source node generation against the receipt's load_generation and stops the
+  // node when they differ (v2/transport_owners.rs:1216). A ring loaded with a
+  // load generation that is not its node generation serves one request and
+  // then loses its head, which reads like a crash rather than a mismatch. So
+  // the plan's node generation is the load generation, and a disagreement is
+  // refused here rather than discovered after the first request.
+  const nodeGenerations = new Set(plan.stages.map((stage) => stage.generation));
+  if (nodeGenerations.size !== 1) {
+    throw new Error(`every stage must share one node generation; the plan has ${[...nodeGenerations].join(', ')}`);
+  }
+  const [nodeGeneration] = nodeGenerations;
+  const generation = Number(value('generation') ?? plan.load_generation ?? nodeGeneration);
   if (!Number.isInteger(generation) || generation <= 0) throw new Error('generation must be a positive integer');
+  if (generation !== nodeGeneration) {
+    throw new Error(
+      `load generation ${generation} differs from the plan's node generation ${nodeGeneration}; `
+      + 'they are one number, and a ring loaded with two loses its head on the first release',
+    );
+  }
 
   const commands = plan.stages.map((stage) => ({
     stage,
@@ -119,6 +215,9 @@ async function doLoad() {
       context_size: stage.context_size ?? plan.defaults?.context_size,
       total_context_size: stage.total_context_size ?? plan.defaults?.total_context_size,
       sequence_capacity: stage.sequence_capacity ?? plan.defaults?.sequence_capacity,
+      // The adapter checks this against the stage server's own READY report and
+      // refuses any mismatch, so it belongs in the plan as data, not here.
+      resource_profile: stage.resource_profile ?? plan.defaults?.resource_profile,
       ready_timeout_ms: stage.ready_timeout_ms ?? plan.defaults?.ready_timeout_ms ?? 900_000,
       io_timeout_ms: stage.io_timeout_ms ?? plan.defaults?.io_timeout_ms ?? 120_000,
     },
@@ -150,8 +249,8 @@ async function doLoad() {
 
   for (const { stage, payload } of commands) {
     clients.get(stage.agent).send(
-      { kind: 1, agent: stage.agent, node: stage.node, generation: stage.generation },
-      LOAD, json(payload),
+      agentEndpoint(stage.agent),
+      NODE_LOAD, encodeLifecycle(lifecycleMetadata(stage, 'load'), json(payload)),
       { adapterKind: ADAPTER, eventClass: 'control', correlationId },
     );
     console.log(`  LOAD → ${stage.node}`);
@@ -178,6 +277,8 @@ async function doLoad() {
     load_generation: generation,
     context_size: plan.model.context_size ?? null,
     max_tokens: plan.model.max_tokens ?? 512,
+    prompt_format: plan.model.prompt_format ?? 'raw',
+    reasoning: plan.model.reasoning === true,
     stages: plan.stages.map((stage) => ({ agent: stage.agent, node: stage.node, generation: stage.generation })),
   };
   const index = (catalog.models ?? []).findIndex((model) => model.id === entry.id);
@@ -223,8 +324,9 @@ async function doUnload() {
   const waiting = awaitAll(clients, correlationId, UNLOADED, record.stages, 300_000);
   for (const stage of record.stages) {
     clients.get(stage.agent).send(
-      { kind: 1, agent: stage.agent, node: stage.node, generation: stage.generation },
-      UNLOAD, json({ load_generation: generation }),
+      agentEndpoint(stage.agent),
+      NODE_UNLOAD,
+      encodeLifecycle(lifecycleMetadata(stage, 'unload'), json({ load_generation: generation })),
       { adapterKind: ADAPTER, eventClass: 'control', correlationId },
     );
     console.log(`  UNLOAD → ${stage.node}`);

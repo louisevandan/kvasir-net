@@ -174,7 +174,7 @@ export function PricingSim({ pricing, symbol, gwUrl }: { pricing: ModelPricing; 
       setEcon({
         rewardPerUnit: Number(c.rewardPerUnit) || ECON_FALLBACK.rewardPerUnit,
         aprPercent: Number(c.aprPercent) || ECON_FALLBACK.aprPercent,
-        uptimePerDay: ((Number(c.hubUptimePerHour) || 2) + (Number(c.gatewayUptimePerHour) || 1)) * 24,
+        uptimePerDay: ((Number(c.bridgeUptimePerHour) || 2) + (Number(c.gatewayUptimePerHour) || 1)) * 24,
       })
     }).catch(() => {})
     st.allNodes().then((g) => {

@@ -3,7 +3,7 @@
 The HTTP face of the p4 engine.
 
 The settlement gateway (`solana/staking-service`) and the desktop app speak the
-linkcpp hub's HTTP contract: a controller catalog, `/c/{id}/v1/chat/completions`,
+settlement gateway's HTTP contract: a controller catalog, `/c/{id}/v1/chat/completions`,
 a runtime summary, a contribution ledger. p4 speaks none of it — it is a TCP
 event protocol (OUTER) with no HTTP, no model names and no token counts in a
 reply. This service is the adapter between the two, so the money path keeps its

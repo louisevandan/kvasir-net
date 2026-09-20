@@ -1,10 +1,10 @@
 'use strict'
 const { contextBridge, ipcRenderer } = require('electron')
 
-// Typed bridge exposed to the renderer as window.linkcpp. Keys never leave main;
+// Typed bridge exposed to the renderer as window.kvasir. Keys never leave main;
 // the renderer only asks main to derive/sign. HTTP (staking/gateway) is done in
 // the renderer directly via fetch.
-contextBridge.exposeInMainWorld('linkcpp', {
+contextBridge.exposeInMainWorld('kvasir', {
   isElectron: true,
   wallet: {
     has: () => ipcRenderer.invoke('wallet:has'),

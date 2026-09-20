@@ -2,7 +2,7 @@
 /**
  * p4 bridge — the HTTP face of the p4 engine.
  *
- * The settlement gateway (solana/staking-service) speaks the linkcpp hub's
+ * The settlement gateway (solana/staking-service) speaks this bridge's
  * HTTP contract: a controller catalog, `/c/{id}/v1/chat/completions`, a runtime
  * summary and a contribution ledger. p4 speaks none of that: it is a TCP event
  * protocol with no model names, no token counts in a reply, and no HTTP at all.
@@ -33,7 +33,7 @@ const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000
 // loopback this is the only thing between the engine and the network. Unset in
 // a private deployment; set it and every path but /health needs the header.
 const SERVICE_TOKEN = (process.env.P4_BRIDGE_TOKEN ?? '').trim();
-const HEADERS = ['x-kvasir-service-token', 'x-linkcpp-service-token'];
+const HEADERS = ['x-kvasir-service-token'];
 
 function authorized(req) {
   if (!SERVICE_TOKEN) return true;
@@ -78,6 +78,13 @@ class Bridge {
       address: agent,
       channel: `kvr-bridge-${crypto.randomBytes(6).toString('hex')}`,
       deadlineMs: 300_000,
+      // Direct ingress, not the receipt-framed hop transport. The agent writes
+      // an admission record only for events that arrive directly
+      // (transport.rs:1022); hop-framed events get an inbound record instead
+      // (transport.rs:1228). The head binds every submission against its
+      // admission, so a hop-framed prefill fails at the head with ENOENT
+      // before any work is done. Set P4_BRIDGE_HOP=1 to go back.
+      hop: process.env.P4_BRIDGE_HOP === '1',
     });
     this.clients.set(agent, client);
     this.pipelines.clear();           // sessions do not survive a new connection
@@ -182,19 +189,67 @@ const readBody = (req, limit = 8 * 1024 * 1024) => new Promise((resolve, reject)
   req.on('error', reject);
 });
 
-/** The prompt an OpenAI chat body asks for, flattened the way the adapter takes it. */
-function promptFrom(body) {
+const textOf = (message) => (Array.isArray(message.content)
+  ? message.content.map((part) => part.text ?? '').join('')
+  : String(message.content ?? ''));
+
+/**
+ * The prompt an OpenAI chat body asks for, in the turn format the model was
+ * trained on.
+ *
+ * `raw` is the old behaviour: the messages flattened into one string. It reads
+ * as a document to the model, so an instruct model continues it instead of
+ * answering — the reply wanders past the answer into invented follow-up turns,
+ * and never emits its end-of-turn token, so generation runs to max_tokens.
+ *
+ * `chatml` renders `<|im_start|>role\n…<|im_end|>`, which is what the
+ * end-of-turn token belongs to. A reasoning model additionally opens the
+ * assistant turn with a thinking block.
+ */
+function promptFrom(body, format = 'raw', reasoning = false, thinkingOpen = reasoning) {
   if (typeof body.prompt === 'string') return body.prompt;
   const messages = Array.isArray(body.messages) ? body.messages : [];
+  if (format === 'chatml') {
+    const turns = messages
+      .map((message) => `<|im_start|>${message.role ?? 'user'}\n${textOf(message)}<|im_end|>\n`)
+      .join('');
+    // A caller can turn thinking off, and the settlement gateway does: a
+    // reasoning pass can spend the whole token budget and leave `content`
+    // empty, which bills the payer for a blank reply. The template has no
+    // switch — it always opens `<think>` — so when thinking is off the block
+    // is opened AND closed here, and the model writes its answer after it.
+    const think = !reasoning ? '' : thinkingOpen ? '<think>\n' : '<think>\n\n</think>\n\n';
+    return `${turns}<|im_start|>assistant\n${think}`;
+  }
   return messages
     .map((message) => {
-      const content = Array.isArray(message.content)
-        ? message.content.map((part) => part.text ?? '').join('')
-        : String(message.content ?? '');
+      const content = textOf(message);
       const role = message.role ?? 'user';
       return role === 'user' ? content : `${role}: ${content}`;
     })
     .join('\n\n');
+}
+
+/**
+ * Split a reasoning model's thinking block off the answer.
+ *
+ * Only call this when the prompt left `<think>` open: then the model's text
+ * starts inside the block and the closing tag is the boundary. When thinking
+ * was disabled the prompt already closed the block, so nothing in the output
+ * is reasoning — splitting there would file the whole answer as a thought and
+ * hand the caller an empty `content`.
+ *
+ * An unterminated block means the reply was cut off while still thinking:
+ * there is no answer to show, so the whole thing is returned as reasoning
+ * rather than half a thought presented as a reply.
+ */
+function splitReasoning(text) {
+  const end = text.indexOf('</think>');
+  if (end === -1) return { content: '', reasoning_content: text.trim() };
+  return {
+    content: text.slice(end + '</think>'.length).trim(),
+    reasoning_content: text.slice(0, end).trim(),
+  };
 }
 
 function chunkFrame(id, model, delta, finishReason = null) {
@@ -303,9 +358,13 @@ function createServer(bridge) {
 
 async function chatCompletions(bridge, model, req, res) {
   const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
-  const prompt = promptFrom(body);
+  const thinkingOpen = Boolean(model.reasoning) && body.chat_template_kwargs?.enable_thinking !== false;
+  const prompt = promptFrom(body, model.promptFormat, model.reasoning, thinkingOpen);
   if (!prompt) return send(res, 400, { error: { message: 'a prompt or messages are required' } });
-  const maxTokens = Number(body.max_tokens ?? model.maxTokens);
+  // Clamp rather than forward: a request above the loaded resource profile is
+  // refused by the adapter outright, and a caller asking for more than the ring
+  // was loaded to give should get a shorter answer, not an engine error.
+  const maxTokens = Math.min(Number(body.max_tokens ?? model.maxTokens), model.maxTokens);
   const id = `chatcmpl-${crypto.randomBytes(12).toString('hex')}`;
   const stream = Boolean(body.stream);
   const abort = new AbortController();
@@ -324,7 +383,13 @@ async function chatCompletions(bridge, model, req, res) {
       bridge.recordContribution(model, result.stageRows, result);
       return send(res, 200, {
         id, object: 'chat.completion', created: Math.floor(Date.now() / 1000), model: model.id,
-        choices: [{ index: 0, message: { role: 'assistant', content: result.text }, finish_reason: result.finishReason }],
+        choices: [{
+          index: 0,
+          message: thinkingOpen
+            ? { role: 'assistant', ...splitReasoning(result.text) }
+            : { role: 'assistant', content: result.text },
+          finish_reason: result.finishReason,
+        }],
         usage: {
           prompt_tokens: result.promptTokens ?? 0,
           completion_tokens: result.completionTokens,
@@ -369,15 +434,20 @@ async function chatCompletions(bridge, model, req, res) {
 async function main() {
   const catalogFile = process.env.P4_BRIDGE_CATALOG ?? './catalog.json';
   const port = Number(process.env.P4_BRIDGE_PORT ?? 19100);
+  // Loopback by default. Without P4_BRIDGE_TOKEN this service is unauthenticated
+  // and will run inference on the ring for anyone who can reach it, so the
+  // public path is a tunnel that terminates here — not an open bind.
+  const host = process.env.P4_BRIDGE_HOST ?? '127.0.0.1';
   const bridge = new Bridge({
     catalogFile,
     operatorWallet: process.env.P4_BRIDGE_OPERATOR_WALLET ?? '',
   });
   await bridge.refresh();
   setInterval(() => { bridge.refresh().catch(() => {}); }, bridge.inspectIntervalMs).unref?.();
-  createServer(bridge).listen(port, () => {
+  createServer(bridge).listen(port, host, () => {
     const serving = bridge.controllers().filter((controller) => controller.serving).map((controller) => controller.id);
-    console.log(`p4-bridge listening on :${port} · ingress ${bridge.catalog.ingressAgent} · serving [${serving.join(', ') || 'none'}]`);
+    const auth = SERVICE_TOKEN ? 'token required' : 'NO TOKEN — anyone who can reach this can use the ring';
+    console.log(`p4-bridge listening on ${host}:${port} · ${auth} · ingress ${bridge.catalog.ingressAgent} · serving [${serving.join(', ') || 'none'}]`);
   });
 }
 

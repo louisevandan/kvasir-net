@@ -1248,6 +1248,138 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       },
     ],
   },
+  /* ------------------------------------------------------------------ */
+  /* The move to p4                                                      */
+  /* ------------------------------------------------------------------ */
+  {
+    slug: "moving-the-ring-onto-p4",
+    category: "milestones",
+    title: "Moving the Ring onto p4",
+    dek: "Seven contract changes between an engine and its caller. Each one failed differently, and only one of them looked like an error.",
+    date: "2026-09-20",
+    tags: ["p4", "migration", "engineering"],
+    blocks: [
+      {
+        t: "p",
+        md: "We merged a new release of the p4 engine and the ring stopped serving. Not with a crash — the loader reported success, the agents reported ready, and nothing happened. Working back from that silence took a day and turned up **seven** places where our caller and the engine had drifted apart. What makes them worth writing down is not the count. It is that six of the seven did not produce an error.",
+      },
+      { t: "h2", kick: "Failure one", text: "An event for a node that does not exist is forwarded, not refused" },
+      {
+        t: "p",
+        md: "Our loader addressed the LOAD command to the node it wanted to create. But a node does not exist until LOAD creates it, and the broker's rule for an event naming an unknown node is to **forward it outbound** rather than reject it. The command left the agent looking for somewhere else to go, found nowhere, and was dropped. No log line, because from the broker's point of view nothing had gone wrong.",
+      },
+      {
+        t: "p",
+        md: "The fix was to address LOAD to the *agent*, wrapped in the engine's backend-neutral lifecycle envelope, with the adapter's own command as an opaque body. Obvious in hindsight; invisible from the outside.",
+      },
+      { t: "h2", kick: "Failure two", text: "A number that must equal another number" },
+      {
+        t: "p",
+        md: "A model is loaded under a **load generation**, and each node is registered with a **node generation**. We had been treating these as independent — a timestamp for one, `1` for the other — and everything worked. The ring loaded. It answered a request correctly. Then the head node died.",
+      },
+      {
+        t: "code",
+        caption: "The check, in the adapter's release accounting.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "The receipt that closes out a finished request carries the load generation, and the node that sends it carries its own. When they differ the node is stopped. So the shape of the bug is: **load succeeds, first request succeeds, head dies, every session after that hangs part-loaded.** It reads exactly like a crash under load and not at all like a mismatch. Our loader now refuses a plan whose two numbers disagree, before anything is loaded.",
+      },
+      { t: "h2", kick: "Failure three", text: "A bound that could never be satisfied" },
+      {
+        t: "p",
+        md: "The adapter compares the largest result a stage may return against the figure the stage server reports when it comes up, for exact equality. We could not know that figure without loading the model — so we loaded with a guess, and the failure told us all four stages' real numbers at once:",
+      },
+      {
+        t: "code",
+        caption: "One run, four answers.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. The agent's retained stores are 256 MiB, so that ring could never have been admitted. Reading the derivation out of the stage server showed why: the bound scales with `n_batch × n_ubatch`, and we had inherited a batch width of 2048 from a configuration that predated this check. At 128 rows — the width the production layout uses — the bound is 138 MB and fits. We now derive it in the plan from the same formula rather than carrying a remembered constant, and the tail stage's predicted figure came out to the exact number another deployment had recorded, which is the kind of agreement worth having before spending twenty minutes on a load.",
+      },
+      { t: "h2", kick: "The other four", text: "Briefly" },
+      {
+        t: "ul",
+        items: [
+          "**Loopback addresses in a two-host ring.** A stage dials the next stage's agent at the address that agent advertises. Advertise `127.0.0.1` and host A dials itself. The ring's recorded configuration had been loopback all along — it could never have worked across hosts.",
+          "**The journal is mandatory.** A model will not load without the agent's operational journal. We turned it off while chasing a different error and made the symptom worse in a way that looked like progress.",
+          "**The device name is backend-specific.** The reference plan builder targets CUDA and emits `--device CUDA0`. The HIP build names its devices `ROCm0`. That plan loads the entire model and *then* fails to find the device.",
+          "**The native server is part of the release.** An agent built from a newer tree wants capabilities the installed stage server does not report. Also discovered after a full model load.",
+        ],
+      },
+      { t: "h2", kick: "What we took from it", text: "Silence is the expensive failure mode" },
+      {
+        t: "p",
+        md: "Every one of these was cheap to fix and expensive to find, and the pattern is consistent: the costly failures were the ones where a correct-looking system did nothing, or did something once. The guards we added are all of the same shape — refuse early, at the place where the mistake is still legible. The loader writes the load generation to disk *before* the first command leaves, because it is otherwise unrecoverable. It refuses a generation mismatch rather than discovering it after the first request. It derives the result bound instead of remembering it.",
+      },
+      {
+        t: "callout",
+        md: "**The ring is serving.** Four stages across two machines, 113 GiB of weights resident, first token in 1.4 s cold and ~0.3 s warm, and per-node contribution flowing through to the settlement ledger for the first time.",
+      },
+    ],
+  },
+  {
+    slug: "the-template-is-the-callers-job",
+    category: "core",
+    title: "The Template Is the Caller's Job",
+    dek: "p4 forwards an opaque prompt and applies no chat template. Forget that and the model answers a question you did not ask — fluently, and all the way to the token limit.",
+    date: "2026-09-20",
+    tags: ["p4", "inference", "settlement"],
+    blocks: [
+      {
+        t: "p",
+        md: "The first real answer out of our recovered ring was correct arithmetic followed by a conversation nobody had:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, asked of a served model.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "The number is right. Everything after it is the model continuing a document, because that is what we handed it: the messages flattened into one string. An instruct model reads that as text to extend, not a turn to answer. It never emits its end-of-turn token, so generation runs to the cap every single time.",
+      },
+      { t: "h2", kick: "Whose job", text: "A deliberate omission, not a gap" },
+      {
+        t: "p",
+        md: "p4 hands the stage server an opaque prompt and applies no turn format of its own — the staged adapter carries only a tool for *reading* a template out of a GGUF, never for applying one. That is a reasonable line to draw: the engine stays narrow and model-agnostic, and the caller, which already knows which model it is talking to, renders the format. But a line drawn and not documented is a line somebody walks over.",
+      },
+      {
+        t: "p",
+        md: "Reading the template out of the model file settled it: ChatML turns, `<|im_end|>` as the end-of-turn token, and an assistant turn that opens with a thinking block. With that rendered by the bridge, the same question:",
+      },
+      {
+        t: "code",
+        caption: "The same model, the same ring, the turn format applied.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "The part that costs money", text: "A thinking pass can eat the answer" },
+      {
+        t: "p",
+        md: "A reasoning model spends tokens before it says anything. Give it a budget and a hard question and it can spend the whole budget thinking, leaving the answer empty — and in a network where the caller has **already paid on-chain before the request ran**, an empty answer is not a quality problem. It is a charge for nothing.",
+      },
+      {
+        t: "p",
+        md: "The settlement gateway already knew this and asks for thinking to be disabled. The model's template has no switch for it, so the bridge opens *and closes* the thinking block in the prompt, and the model writes its answer after it. We got this wrong once in the obvious way — closing the block in the prompt meant the closing tag was no longer in the output, so the splitter filed the entire answer as reasoning and returned empty content. Which is the exact failure the setting exists to prevent.",
+      },
+      {
+        t: "callout",
+        md: "**Where this leaves the contract.** The engine forwards bytes. The bridge knows the model: it renders the turn format named in the placement plan, returns the thinking pass as `reasoning_content` separate from `content`, and clamps a request that asks for more output than the ring was loaded to give — because an over-large request is otherwise refused outright, and a shorter answer beats an engine error.",
+      },
+    ],
+  },
+
 ];
 
 export function techArticleBySlug(slug: string): TechArticle | undefined {

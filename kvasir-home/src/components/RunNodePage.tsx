@@ -156,12 +156,15 @@ function FaucetNote({ g }: { g: Guide }) {
   );
 }
 
-const CLI = `# linkcpp checkout · backend = auto|cuda|rocm|metal|cpu
-bash scripts/build-node-runtime.sh auto
+/* The desktop app ships the p4 agent, so a contributor does not run anything by
+   hand — this is only the headless path, for a machine with no desktop session. */
+const CLI = `# headless node · the desktop app does all of this for you
+p4-agent 0.0.0.0:42011 tcp://<address other agents can dial>:42011
 
-LINKCPP_HUB_URL=https://hub.kvasir-ai.net \\
-LINKCPP_NODE_OWNER=<your wallet address> \\
-  bash scripts/run-node-agent.sh auto`;
+# then link the machine to your wallet so its work is credited
+KVR_SERVICE=https://gate.kvasir-ai.net \\
+KVR_OWNER=<your wallet address> \\
+  node solana/node-client/connect.js`;
 
 /* ============================ platform panels ============================ */
 

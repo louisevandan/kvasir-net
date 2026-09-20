@@ -59,6 +59,17 @@ function load(file) {
       contextSize: model.context_size ?? null,
       maxTokens: model.max_tokens ?? 1024,
       options: model.options ?? '',
+      // p4 hands the stage server an opaque prompt and applies no chat
+      // template of its own — the staged adapter carries only a probe for
+      // reading one out of a GGUF. Rendering the model's turn format is
+      // therefore OUTER's job, and it has to be stated per model: a ChatML
+      // template rendered for a Llama-3 model produces fluent nonsense, not
+      // an error. Unstated means 'raw', which is what this bridge did before
+      // the field existed.
+      promptFormat: model.prompt_format ?? 'raw',
+      // A reasoning model opens its reply with a thinking block. Kept out of
+      // `content` so a chat client shows the answer, and returned alongside.
+      reasoning: model.reasoning === true,
     };
   });
   return { file: resolved, ingressAgent: raw.ingress_agent, models };

@@ -22,7 +22,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { randomBytes } from '@noble/hashes/utils.js'
 import { gcm } from '@noble/ciphers/aes.js'
 import nacl from 'tweetnacl'
-import type { LinkcppAPI, AppConfig, Network, Balances, TxRef } from './api'
+import type { KvasirAPI, AppConfig, Network, Balances, TxRef } from './api'
 
 // Chain constants — must match wallet/shared-spec/token.devnet.json + wallet-constants.json.
 const DERIVATION_PATH = "m/44'/501'/0'/0'"
@@ -88,7 +88,7 @@ async function hostOs(stakingUrl: string): Promise<string> {
   return osGuess()
 }
 
-export function makeBrowserWallet(defaultStakingUrl: string): LinkcppAPI {
+export function makeBrowserWallet(defaultStakingUrl: string): KvasirAPI {
   // In-memory unlocked session — cleared on lock / logout / reload.
   let session: { mnemonic: string; kp: Keypair; address: string } | null = null
 

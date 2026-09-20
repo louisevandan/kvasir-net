@@ -80,7 +80,7 @@ export const PERF_TIERS = [
 ];
 
 /* The engine's own one-liner — a verbatim English quote, shown as a callout. */
-export const LINKCPP_TAGLINE =
+export const ENGINE_TAGLINE =
   "Run large AI models across multiple GPUs and machines on an inference engine kept close to upstream.";
 
 /* Device types (name + status are universal; the detail line is translated in

@@ -570,7 +570,7 @@ inside the lock:
         t: "code",
         caption: "Keluaran planner — format aturan -ot mesin inferensi.",
         code: `node 0  layers [0,48]  vram=62.6  ram=14.2  ot_rules=10
-sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # mesin inferensi -ot format`,
+sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inference engine -ot format`,
       },
       { t: "h2", kick: "Apa yang dikawatkan · Python murni, tanpa rebuild C++", text: "Membawa aturan offload planner ke pemuatan nyata" },
       {
@@ -1102,6 +1102,126 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       {
         t: "p",
         md: "Itulah bentuk sebuah jaringan yang dapat melayani model triliun-parameter pada perangkat keras yang tak dimiliki satu orang pun: kapasitas menganggur diundang masuk persis ketika layak diundang, dan hanya saat itu.",
+      },
+    ],
+  },
+  "moving-the-ring-onto-p4": {
+    title: "Memindahkan Ring ke p4",
+    dek: "Tujuh perubahan kontrak antara sebuah mesin dan pemanggilnya. Masing-masing gagal dengan cara berbeda, dan hanya satu yang tampak seperti error.",
+    blocks: [
+      {
+        t: "p",
+        md: "Kami menggabungkan rilis baru mesin p4 dan ring berhenti melayani. Bukan dengan crash — pemuat melaporkan sukses, para agen melaporkan ready, dan tak terjadi apa-apa. Menelusuri balik dari kesunyian itu memakan satu hari dan menemukan **tujuh** tempat di mana pemanggil kami dan mesinnya sudah saling menyimpang. Yang membuatnya layak dicatat bukan jumlahnya. Melainkan bahwa enam dari tujuh tak menghasilkan error apa pun.",
+      },
+      { t: "h2", kick: "Kegagalan satu", text: "Peristiwa untuk node yang tak ada diteruskan, bukan ditolak" },
+      {
+        t: "p",
+        md: "Pemuat kami mengalamatkan perintah LOAD ke node yang ingin diciptakannya. Tetapi sebuah node belum ada sampai LOAD menciptakannya, dan aturan broker untuk peristiwa yang menyebut node tak dikenal adalah **meneruskannya keluar** alih-alih menolaknya. Perintah itu meninggalkan agen sambil mencari tempat lain untuk dituju, tak menemukan apa pun, lalu dibuang. Tak ada satu baris log pun, karena dari sudut pandang broker tak ada yang salah.",
+      },
+      {
+        t: "p",
+        md: "Perbaikannya adalah mengalamatkan LOAD ke *agen*, dibungkus dalam amplop siklus-hidup mesin yang netral-backend, dengan perintah adapter sendiri sebagai isi yang buram. Jelas setelah tahu; tak terlihat dari luar.",
+      },
+      { t: "h2", kick: "Kegagalan dua", text: "Sebuah angka yang harus sama dengan angka lain" },
+      {
+        t: "p",
+        md: "Sebuah model dimuat di bawah **load generation**, dan tiap node didaftarkan dengan **node generation**. Kami memperlakukan keduanya sebagai independen — timestamp untuk yang satu, `1` untuk yang lain — dan semuanya berjalan. Ring termuat. Ia menjawab satu permintaan dengan benar. Lalu node kepala mati.",
+      },
+      {
+        t: "code",
+        caption: "Pemeriksaannya, di dalam akuntansi pelepasan milik adapter.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "Tanda terima yang menutup sebuah permintaan yang selesai membawa load generation, dan node yang mengirimnya membawa miliknya sendiri. Saat keduanya berbeda, node dihentikan. Jadi bentuk bug-nya adalah: **pemuatan sukses, permintaan pertama sukses, kepala mati, dan setiap sesi sesudah itu menggantung setengah-termuat.** Itu terbaca persis seperti crash di bawah beban dan sama sekali tak seperti ketidakcocokan. Pemuat kami kini menolak rencana yang kedua angkanya tak sepakat, sebelum apa pun dimuat.",
+      },
+      { t: "h2", kick: "Kegagalan tiga", text: "Sebuah batas yang tak mungkin terpenuhi" },
+      {
+        t: "p",
+        md: "Adapter membandingkan hasil terbesar yang boleh dikembalikan sebuah stage terhadap angka yang dilaporkan stage server saat ia menyala, untuk kesetaraan persis. Kami tak bisa tahu angka itu tanpa memuat modelnya — jadi kami memuat dengan tebakan, dan kegagalannya memberi tahu kami angka nyata keempat stage sekaligus:",
+      },
+      {
+        t: "code",
+        caption: "Satu run, empat jawaban.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. Retained store milik agen adalah 256 MiB, jadi ring itu tak akan pernah bisa diterima. Membaca penurunan rumusnya dari stage server menunjukkan sebabnya: batas itu menskala dengan `n_batch × n_ubatch`, dan kami mewarisi lebar batch 2048 dari sebuah konfigurasi yang mendahului pemeriksaan ini. Pada 128 baris — lebar yang dipakai tata letak produksi — batasnya 138 MB dan muat. Kini kami menurunkannya di dalam rencana dari rumus yang sama alih-alih membawa konstanta yang diingat, dan angka prediksi untuk stage ekor keluar persis sama dengan yang pernah dicatat deployment lain — jenis kesepakatan yang layak dimiliki sebelum menghabiskan dua puluh menit untuk satu pemuatan.",
+      },
+      { t: "h2", kick: "Empat yang lain", text: "Ringkas saja" },
+      {
+        t: "ul",
+        items: [
+          "**Alamat loopback di ring dua-host.** Sebuah stage menelepon agen stage berikutnya di alamat yang diiklankan agen itu. Iklankan `127.0.0.1` dan host A menelepon dirinya sendiri. Konfigurasi ring yang tercatat ternyata loopback sejak awal — ia tak pernah bisa bekerja antar-host.",
+          "**Jurnalnya wajib.** Sebuah model tak akan dimuat tanpa jurnal operasional agen. Kami mematikannya saat mengejar error lain dan memperburuk gejalanya dengan cara yang tampak seperti kemajuan.",
+          "**Nama perangkat bersifat khusus-backend.** Pembangun rencana acuan menargetkan CUDA dan memancarkan `--device CUDA0`. Build HIP menamai perangkatnya `ROCm0`. Rencana itu memuat seluruh model *lalu* gagal menemukan perangkatnya.",
+          "**Server native adalah bagian dari rilis.** Agen yang dibangun dari pohon sumber lebih baru menginginkan kapabilitas yang tak dilaporkan stage server yang terpasang. Juga ditemukan setelah pemuatan model penuh.",
+        ],
+      },
+      { t: "h2", kick: "Apa yang kami ambil darinya", text: "Kesunyian adalah mode kegagalan yang mahal" },
+      {
+        t: "p",
+        md: "Setiap satu dari semua ini murah untuk diperbaiki dan mahal untuk ditemukan, dan polanya konsisten: kegagalan yang mahal adalah yang membuat sistem tampak benar tetapi tak melakukan apa-apa, atau melakukan sesuatu sekali saja. Penjaga yang kami tambahkan semuanya berbentuk sama — menolak lebih awal, di tempat kesalahannya masih terbaca. Pemuat menuliskan load generation ke disk *sebelum* perintah pertama berangkat, karena tanpa itu ia tak terpulihkan. Ia menolak ketidakcocokan generation alih-alih menemukannya setelah permintaan pertama. Ia menurunkan batas hasil alih-alih mengingatnya.",
+      },
+      {
+        t: "callout",
+        md: "**Ring sedang melayani.** Empat stage di dua mesin, 113 GiB bobot residen, token pertama dalam 1.4 dtk saat dingin dan ~0.3 dtk saat hangat, dan kontribusi per-node mengalir sampai ke buku besar penyelesaian untuk pertama kalinya.",
+      },
+    ],
+  },
+  "the-template-is-the-callers-job": {
+    title: "Template Adalah Tugas Pemanggil",
+    dek: "p4 meneruskan prompt buram dan tak menerapkan template chat apa pun. Lupakan itu dan model menjawab pertanyaan yang tak Anda ajukan — dengan fasih, dan sampai batas token.",
+    blocks: [
+      {
+        t: "p",
+        md: "Jawaban nyata pertama dari ring kami yang baru pulih adalah aritmetika yang benar, disusul percakapan yang tak pernah terjadi:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, ditanyakan kepada sebuah model yang dilayani.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "Angkanya benar. Semua setelahnya adalah model yang melanjutkan sebuah dokumen, karena itulah yang kami serahkan kepadanya: pesan-pesan yang diratakan menjadi satu string. Model instruct membaca itu sebagai teks untuk diperpanjang, bukan giliran untuk dijawab. Ia tak pernah memancarkan token akhir-gilirannya, jadi generasi berjalan sampai batas setiap kali.",
+      },
+      { t: "h2", kick: "Tugas siapa", text: "Kelalaian yang disengaja, bukan lubang" },
+      {
+        t: "p",
+        md: "p4 menyerahkan prompt buram ke stage server dan tak menerapkan format giliran apa pun dari dirinya sendiri — adapter berstage hanya membawa perkakas untuk *membaca* template dari sebuah GGUF, tak pernah untuk menerapkannya. Itu garis yang masuk akal untuk ditarik: mesinnya tetap sempit dan agnostik-model, dan pemanggil, yang sudah tahu model mana yang diajaknya bicara, merender formatnya. Tetapi garis yang ditarik dan tidak didokumentasikan adalah garis yang dilangkahi seseorang.",
+      },
+      {
+        t: "p",
+        md: "Membaca template dari berkas model menyelesaikannya: giliran ChatML, `<|im_end|>` sebagai token akhir-giliran, dan giliran asisten yang dibuka dengan blok berpikir. Setelah itu dirender oleh bridge, pertanyaan yang sama:",
+      },
+      {
+        t: "code",
+        caption: "Model yang sama, ring yang sama, format giliran diterapkan.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "Bagian yang memakan biaya", text: "Sesi berpikir bisa melahap jawabannya" },
+      {
+        t: "p",
+        md: "Model penalaran membelanjakan token sebelum ia mengatakan apa pun. Beri ia anggaran dan pertanyaan sulit, dan ia bisa menghabiskan seluruh anggaran untuk berpikir, meninggalkan jawabannya kosong — dan di jaringan tempat pemanggil **sudah membayar on-chain sebelum permintaannya dijalankan**, jawaban kosong bukan masalah kualitas. Itu tagihan untuk nol hasil.",
+      },
+      {
+        t: "p",
+        md: "Gateway penyelesaian sudah tahu ini dan meminta agar berpikir dinonaktifkan. Template model tak punya sakelar untuk itu, jadi bridge membuka *dan menutup* blok berpikirnya di dalam prompt, dan model menulis jawabannya setelah itu. Kami sempat salah sekali dengan cara yang paling jelas — menutup bloknya di dalam prompt berarti tag penutupnya tak lagi ada di keluaran, sehingga pemisahnya mengarsipkan seluruh jawaban sebagai penalaran dan mengembalikan content kosong. Yang persis merupakan kegagalan yang hendak dicegah pengaturan itu.",
+      },
+      {
+        t: "callout",
+        md: "**Di mana ini menempatkan kontraknya.** Mesin meneruskan byte. Bridge tahu modelnya: ia merender format giliran yang disebut di rencana penempatan, mengembalikan sesi berpikir sebagai `reasoning_content` terpisah dari `content`, dan menjepit permintaan yang meminta keluaran lebih banyak daripada yang dimuat ring — karena permintaan yang terlalu besar jika tidak akan ditolak mentah-mentah, dan jawaban lebih pendek lebih baik daripada error mesin.",
       },
     ],
   },

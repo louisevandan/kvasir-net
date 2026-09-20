@@ -1,6 +1,6 @@
 /* 中文 — 维基条目翻译。结构（slug、分类、区块顺序、代码）严格镜像 entries.ts
-   （英文源）；技术术语与标识符（KVR, linkcpp, 推理引擎, GGUF, MoE, ring runtime,
-   tok/s 等）保持原文。合规表述（devnet、实用型代币、非托管）保持不变。 */
+   （英文源）；技术术语与标识符（KVR, p4, bridge, GGUF, MoE, tok/s 等）保持原文。
+   合规表述（devnet、实用型代币、非托管）保持不变。 */
 import type { WikiTranslation } from "./entries";
 
 export const zhWiki: Record<string, WikiTranslation> = {
@@ -28,12 +28,12 @@ export const zhWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** 是一个去中心化 AI 推理网络：大型开源模型通过 **linkcpp** 引擎分布在共享硬件上，任何单一节点都无需持有完整模型。任何人都可以贡献 GPU、CPU、NPU——甚至手机——并按设备实际服务的层或专家赚取 **KVR**。开发者通过 OpenAI/Anthropic 兼容网关访问网络，按推理付费。",
+        md: "**Kvasir** 是一个去中心化 AI 推理网络：大型开源模型通过 **p4** 引擎分布在共享硬件上，任何单一节点都无需持有完整模型。任何人都可以贡献 GPU、CPU、NPU——甚至手机——并按设备实际服务的层或专家赚取 **KVR**。开发者通过 OpenAI/Anthropic 兼容网关访问网络，按推理付费。",
       },
       {
         t: "ul",
         items: [
-          "**源码可得的引擎** — linkcpp 采用 Business Source License 1.1 许可（允许不产生收益的内部使用；托管服务或产生收入的用途需要商业许可证）；其下的推理引擎数据平面保持贴近上游、可审查。",
+          "**源码可得的引擎** — p4 采用 Business Source License 1.1 许可（允许不产生收益的内部使用；托管服务或产生收入的用途需要商业许可证）；其下的 llama.cpp 数据平面保持贴近上游、可审查。",
           "**自托管钱包** — 密钥从不离开用户的设备，奖励支付到每个节点所有者自己的 Solana 钱包。在 devnet 上，在链上质押程序上线之前，已质押的 KVR 和预付额度由网关的 treasury 持有，并记录在其账本中。",
           "**已在真实硬件上验证** — 一个 122B 模型已在我们测试机队的 3 台物理机器上端到端运行，并端到端记账每个节点的贡献。",
           "**名字源自北欧神话** — Kvasir：由众神的精华汇聚而生、却不属于任何一位神的最智慧存在。",
@@ -44,14 +44,14 @@ export const zhWiki: Record<string, WikiTranslation> = {
         t: "code",
         caption: "每一跳都是普通的 HTTP/TCP；被分布的是模型本身。",
         code: `client SDK ──▶ gateway (OpenAI/Anthropic API, KVR settlement)
-        ──▶ hub controller (plan · orchestrate)
+        ──▶ bridge (session · submit · gather)
         ──▶ serving topology: pipeline ring over layer windows,
             or expert-swarm dispatch at (layer, expert-range) grain
         ──▶ token streams back · each node's contribution is credited`,
       },
       {
         t: "p",
-        md: "角色可以**叠加**：一台机器可以同时是计算节点、网关主机和 hub 主机，奖励相加。网络的职责是让这个集合看起来像一台机器——前面是一个端点，后面是成千上万台并不完美的设备。",
+        md: "角色可以**叠加**：一台机器可以同时是计算节点、网关主机和 bridge 主机，奖励相加。网络的职责是让这个集合看起来像一台机器——前面是一个端点，后面是成千上万台并不完美的设备。",
       },
       {
         t: "p",
@@ -59,39 +59,120 @@ export const zhWiki: Record<string, WikiTranslation> = {
       },
     ],
   },
-  hub: {
-    title: "Hub",
-    summary: "控制平面：发现设备、规划层放置、启动 worker、编排环。",
+  architecture: {
+    title: "Kvasir 架构",
+    summary: "整个系统的一张图：钱包、收款的网关、为引擎装上门面的 bridge，以及真正运行模型的 p4 网络。",
     blocks: [
       {
         t: "p",
-        md: "**Hub** 是网络的控制平面，由 linkcpp 以单个 Docker 镜像提供（`controller.hub:app`，端口 **19000** 的 FastAPI 服务）。它发现设备、检查运行时兼容性、用规划器计算放置、启动 推理引擎 worker，并暴露每个控制器的网关。它刻意做成\"无聊\"的基础设施：请求/响应式 HTTP、重启安全的状态、没有花哨的传输层。",
+        md: "Kvasir 是四个层次，每两层之间只有一道接缝。**钱包**持有密钥。**网关**收取付款并保管账本。**bridge** 为推理引擎装上 HTTP 门面。**p4 网络**真正运行模型。下面的一切都是这些接缝落在何处的结果——示意图也标出了哪些今天已在运行、哪些仍只是设计。",
       },
-      { t: "h2", kick: "三扇门", text: "机器如何加入 hub" },
+      { t: "h2", kick: "钱包", text: "密钥从不离开设备" },
+      {
+        t: "p",
+        md: "iOS（Swift）、Android（Kotlin）和桌面（React + Electron）是同一个钱包的三种构建，而桌面构建同时也是网关在 `/` 上提供的浏览器钱包——一个支持页内签名的完整钱包，不是只读控制台。奖励支付到每位所有者自己的 Solana 地址；网关从不持有用户的密钥。",
+      },
+      { t: "h2", kick: "网关", text: "一个进程，两张面孔" },
+      {
+        t: "p",
+        md: "`solana/staking-service` 既是 **API 网关**（OpenAI 兼容的 `/v1/chat/completions`，以及 `/api/pay/quote` → `/api/inference` 的按次付费流程），也是**结算网关**（质押、节点注册表、额度账户、贡献记账）。它们是同一个进程，因为共享同一本账：一个请求只有在其 KVR 转账在链上被验证之后才会被服务，而同一本账随后又为服务了它的节点记账。",
+      },
+      {
+        t: "callout",
+        md: "**付款在推理运行之前就已结算。**如果随后 bridge 失败，网关会从 treasury 向付款方退款并返回 502，而不是收了钱什么都不给。它背后没有模拟模型，也没有占位目录：应用列出的模型一定是某个 bridge 正在服务的，否则列表就是空的。",
+      },
+      { t: "h2", kick: "Bridge", text: "引擎的 HTTP 门面" },
+      {
+        t: "p",
+        md: "bridge（`p4bridge`）在 p4 的术语里是一个 **OUTER**：它在各 stage 上装配会话、向头部提交请求、汇集 token 流。对网关而言，它只是一份小而固定的契约——哪些模型已加载、谁贡献了多少、以及补全。",
+      },
+      {
+        t: "table",
+        head: ["路由", "它回答什么"],
+        rows: [
+          ["`/api/controllers`", "哪些模型已加载，以及每个 stage 的状态"],
+          ["`/api/runtime`", "运营者钱包，以及它背后的机器"],
+          ["`/api/contributions`", "每节点的 rows、units、请求数、吞吐"],
+          ["`/c/<model>/v1/chat/completions`", "推理"],
+        ],
+      },
+      {
+        t: "p",
+        md: "p4 刻意留给 bridge 的两件事：**对话模板**（p4 把不透明的提示词原样交给 stage server，自己不套用任何格式，因此 instruct 模型会续写你的文本而不是回答它）和**思考块**（作为 `reasoning_content` 返回，与 `content` 分开，这样一次思考过程就不会悄悄吃光 token 预算、让付款方为一份空白回复买单）。",
+      },
+      {
+        t: "callout",
+        md: "**bridge 从不对外发布。**它唯一的认证是一个共享服务令牌，任何能触达它的东西都能驱动整个环。它绑定 loopback；隧道才是那扇门。",
+      },
+      { t: "h2", kick: "p4 网络", text: "agent 拥有节点，stage server 持有层" },
+      {
+        t: "p",
+        md: "**agent** 拥有一台主机上的节点；**stage server** 是持有模型一段层切片的单个进程。一个 stage 把结果交给下一个的方式，是请自己的 agent 去拨通那个 stage 的 agent——**按那个 agent 所公示的地址**。因此公示地址必须能被其他主机访问，并且应当是它们共享的最快的那张网。在 MI250 机架上那是 InfiniBand 链路，而不是办公室 LAN，更绝不是 loopback。",
+      },
       {
         t: "ul",
         items: [
-          "**本地节点槽** — 每个 hub 五个固定槽位，映射到 RPC 端口 **50052–50056**。槽位始终存在；你编辑槽位的 GPU + VRAM/RAM/CPU 预算而不是创建任意节点，且资源**仅在槽位未绑定时**可编辑——这保护了运行中控制器之下的容量契约。",
-          "**远程单元** — 注册另一个运行中的 linkcpp hub 并导入其可见节点。数据平面端点始终从注册的*单元* URL 加上单元暴露的 worker 端口推导——绝不采用远端系统自报的节点主机。",
-          "**受管节点代理** — 仅作 worker 的服务（`nodeagent.py`），通过普通请求/响应 HTTP（`/control/join|status|download|load|unload`）加入并经 `POST /api/node-reports` 汇报。刻意**不用**持久流，以便在简单的 LAN/VPN 路由下存活。",
+          "**`p4-agent` 与 `p4_staged_server` 是同一个发行版。**用更新的代码树构建的 agent 会在 READY 阶段因缺少 HELLO 能力而失败——而且是在整个模型加载完之后。",
+          "**放置是运营者的产物。**哪些层落在哪张 GPU 上、在哪个 load generation 下，来自一份放置方案（placement plan）；谁要求 bridge 去服务，它就回 `409`，而网关的看门狗说一次之后就不再问了。",
+          "**一条流水线至少要两个 stage。**会话命令会拒绝单 stage 的流水线。",
         ],
       },
-      { t: "h2", kick: "未经验证，一概不加载", text: "兼容性闸门" },
+      { t: "h2", kick: "中继", text: "给一台笔记本一个可拨号的地址" },
       {
         t: "p",
-        md: "每个单元、节点和代理都汇报协议/运行时包身份及后端细节。单元、运行时包、推理引擎 修订版和 RPC ABI 不匹配会在 bind/plan/load/infer **之前被硬性阻断**；后端差异（CUDA/Metal/Vulkan/CPU）作为节点能力记录，而不是拒绝理由。无法提供安全规划所需资源监控的节点也会被排除在自适应加载之外。",
+        md: "边缘节点——桌面应用、手机——没有任何人能拨通的地址。**中继**给了它们一个：节点向外连接，用 ed25519 挑战证明自己的钱包密钥对，此后即可经由中继被访问。中继就是认证边界，且从不解析载荷。桌面安装包把 p4 agent 与应用一起装上，因此加入网络不需要第二次安装。",
       },
+      { t: "h2", kick: "结算", text: "记账跟随参与" },
       {
-        t: "code",
-        caption: "重启后什么会保留，什么不会。",
-        code: `persisted   → /models/linkcpp/hub-state.json
-              slots · controllers · bindings · remote units · 2FA enrollment
-runtime-only → live worker/model processes, in-flight operations
-              (a container restart stops serving; models reload on demand)`,
+        t: "p",
+        md: "每个 stage 汇报自己跑过的 token 行数。bridge 按节点累计，网关每 30 秒轮询一次 `/api/contributions`，并以 `rows / 1000` 个单位、按节点的性能等级缩放后，记入 bridge 指名的那个钱包。**在一条流水线里每个 stage 看到的行数相同**，因此一个四 stage 的环会平均付给它的四个 stage，无论各自持有多少层——记账跟随参与，而不是权重份额。专家分片让节点各持一层的不同部分，那正是需要重新审视这一点的场景。",
+      },
+      { t: "h2", kick: "P4 Studio", text: "示意图中标为提案的部分" },
+      {
+        t: "p",
+        md: "**P4 Studio** 是 p4 自己的运营者控制台。它想从 agent 那里获取的逐请求可观测性数据流，在上游还只是一份提案，并不是此处正在运行的东西——示意图为此把它画成虚线，与它并列的还有从边缘节点提供的专家分片：已完成设计，尚未运行。",
+      },
+    ],
+  },
+  bridge: {
+    title: "Bridge",
+    summary: "推理引擎的 HTTP 门面：加载了什么、谁贡献了多少、以及补全——除此之外什么都没有。",
+    blocks: [
+      {
+        t: "p",
+        md: "**bridge** 是结算网关在推理这件事上唯一对话的对象。它在 p4 的术语里是一个 **OUTER**：它在模型的各个 stage 上装配会话、向头部 stage 提交请求、汇集 token 流，并汇报每个节点贡献了什么。它不拥有放置、不做调度，除了一份\"什么已加载\"的目录之外不持有任何状态——它刻意做得很小，因为凡是它不决定的事情就不会走样。",
+      },
+      { t: "h2", kick: "契约", text: "四条路由，一个令牌" },
+      {
+        t: "table",
+        head: ["路由", "它回答什么"],
+        rows: [
+          ["`/api/controllers`", "哪些模型已加载，以及每个 stage 的状态"],
+          ["`/api/runtime`", "运营者钱包，以及它背后的机器"],
+          ["`/api/contributions`", "每节点的 rows、units、请求数、吞吐"],
+          ["`/c/<model>/v1/chat/completions`", "推理"],
+        ],
       },
       {
         t: "p",
-        md: "由于 hub 是最关键的角色，hub 主机获得**最高的按小时在线奖励**。运营公共 hub 需要质押 **100,000 KVR**。",
+        md: "除 `/api/health` 之外的每条路由都需要一个共享服务令牌，经 `X-Kvasir-Service-Token` 发送。那个令牌是横在开放互联网与\"免费驱动这个环\"之间的**唯一**屏障，这也是为什么 bridge 绑定 loopback、经隧道访问，而不对外发布。",
+      },
+      { t: "h2", kick: "p4 留给它的", text: "引擎不肯做的两件事" },
+      {
+        t: "ul",
+        items: [
+          "**对话模板。**p4 把不透明的提示词原样交给 stage server，自己不套用任何轮次格式。由 bridge 渲染模型的格式——从 GGUF 中读出，并在目录里以 `prompt_format` 命名。跳过它，instruct 模型就会续写你的文本而不是回答它，永远不发出自己的轮次结束 token，每次都跑到 token 上限。",
+          "**思考块。**推理模型开口先思考。bridge 把那部分作为 `reasoning_content` 返回，与 `content` 分开，并通过在提示词中把思考块闭合来遵守 `enable_thinking: false`——否则一次漫长的思考就能吃光整个预算，把一份已经付过钱的空答案交给调用方。",
+        ],
+      },
+      { t: "h2", kick: "放置不归它管", text: "它为什么回 409" },
+      {
+        t: "p",
+        md: "要求 bridge 去服务一个模型，得到的是 **409**。哪些层落在哪张 GPU 上、在哪个 load generation 下，来自运营者写好并加载的放置方案；这里没有可执行的远程重载。网关的环看门狗学会这一点之后就不再问，而不是反复重试一件不可能成功的事。",
+      },
+      {
+        t: "callout",
+        md: "**贡献计数器活在内存里。**bridge 重启会丢掉网关尚未轮询到的部分——它每 30 秒轮询一次——而当计数器倒退时，网关会重设基线而不是重复计数。bridge 不知道其所有者的节点会被**静默**跳过，因此一个未设置的运营者钱包读起来就是\"这些机器什么都没赚到\"。",
       },
     ],
   },
@@ -115,14 +196,14 @@ runtime-only → live worker/model processes, in-flight operations
       { t: "h2", kick: "计费", text: "KVR 按推理付费" },
       {
         t: "p",
-        md: "用量以 KVR 通过三步流程结算——**quote → payment → inference**——请求在执行前定价，服务它的节点在执行后记账。网关还从每个可达的 hub 聚合**实时模型目录**，因此 `/v1/models` 反映的是网络此刻真正能服务的内容。",
+        md: "用量以 KVR 通过三步流程结算——**quote → payment → inference**——请求在执行前定价，服务它的节点在执行后记账。网关还从每个可达的 bridge 聚合**实时模型目录**，因此 `/v1/models` 反映的是网络此刻真正能服务的内容。",
       },
       {
         t: "ul",
         items: [
           "网关主机因保持入口在线获得**按小时在线奖励**，并对其协助服务的每次推理获得 **×1.5 加成**。",
-          "运营公共网关需要质押 **100,000 KVR**（与 hub 相同）。",
-          "公共部署用 **SIWS + 2FA** 保护运营者访问；裸 hub 仅为可信主机 / LAN / VPN 设计。",
+          "运营公共网关需要质押 **100,000 KVR**（与 bridge 相同）。",
+          "公共部署用 **SIWS + 2FA** 保护运营者访问；裸 bridge 仅为可信主机 / LAN / VPN 设计。",
         ],
       },
     ],
@@ -156,109 +237,86 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
     ],
   },
-  "relay-443": {
-    title: "443 中继",
-    summary: "面向 NAT 后设备的数据平面：两端都通过 443 端口的 WebSocket 桥向外拨号。",
-    blocks: [
-      {
-        t: "p",
-        md: "运营商 NAT 后的手机无法接受入站连接，而 Cloudflare 这类边缘只放行 80/443 端口。**443 中继**同时解决两者：带 **1 字节 role preamble** 的每边缘 WebSocket 桥让两端都**向外**拨号，因此手机**不开放任何入站端口**即可参与数据平面。",
-      },
-      {
-        t: "code",
-        caption: "两个出站连接在中间相遇；preamble 表明谁是谁。",
-        code: `phone   ──outbound──▶ wss://edge:443  ◀──outbound── backbone
-                     [role byte: worker]   [role byte: dialer]
-        bridge splices the two streams → one ordinary TCP pipe`,
-      },
-      { t: "h2", kick: "在生产中淬炼", text: "三个真实 bug，三个修复" },
-      {
-        t: "ul",
-        items: [
-          "**构建指纹一致性** — 在任何张量字节流动之前，两端必须证明运行同一运行时包。",
-          "**node-token 下载鉴权** — 部分分片下载用应用已持有的、由钱包派生的 node token 鉴权。",
-          "**`Int.ushr` 帧停滞** — Kotlin 的 `ushr` 只取移位量的低 5 位，`len ushr 56` 变成了 `len ushr 24`，静默损坏所有 ≥ 64 KiB 的帧（593 KB 的 `result_output` 是第一个受害者）。改用 `Long` 移位打包长度修复——对经常超过 64 KiB 的批量专家调度而言是承重修复。",
-        ],
-      },
-      {
-        t: "p",
-        md: "中继承载拓扑所需的一切——环的层边界或专家调度流——为环验证过的同一机制，正是蜂群中手机 worker 所用的。",
-      },
-      {
-        t: "p",
-        md: "`/api/expert-relay` 与 `/api/ring-relay` 两个升级端点都是**裸拼接**的：网关逐字节转发 WebSocket 帧而不加解析，因此中继始终是一根轻薄、与模型无关的管道。它仍会**按会话计量所桥接的字节数**，而这份测得的工作流入 hub 的贡献账本，并以 **KVR** 结算到 worker 自己的钱包——为 NAT 后的手机做中继，与直连节点赚得分毫不差。",
-      },
-    ],
-  },
 
-  linkcpp: {
-    title: "linkcpp",
-    summary: "源码可得（BSL）的控制平面，把日常硬件变成分布式推理引擎。",
+  p4: {
+    title: "p4",
+    summary: "Kvasir 背后的引擎：一套以事件寻址的协议——agent 拥有节点、stage server 持有层，而放置是运营者写明的，不是网络猜出来的。",
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** 是 Kvasir 背后的引擎：围绕 推理引擎 RPC 数据平面的控制平面，用贴近上游构建的 `ggml-rpc-server` / `llama-server` 二进制在多张 GPU 和多台机器上运行大型 AI 模型。它增加的一切都是编排——GPU 发现、节点槽、层放置规划、worker 启动，以及 OpenAI/Anthropic 网关。",
+        md: "**p4** 把一个模型切成若干 **stage**——连续的层切片——并让每个 stage 独占一个进程，从而在多台机器上运行它。**agent** 拥有一台主机上的节点：它启动 stage server、在它们之间路由事件，并为其生命周期负责。这里没有决定东西该放在哪里的调度器；运营者写一份放置方案、加载它，网络随后就精确地照此服务。",
       },
-      { t: "h2", kick: "架构", text: "一个 hub，基于上游的 worker" },
       {
         t: "code",
-        caption: "经过 linkcpp 部署的请求路径。",
+        caption: "一次请求在 p4 部署中的路径。",
         code: `browser / SDK
-  → hub :19000                      # FastAPI control plane (Docker)
-  → GPU-less llama-server master    # per controller, :8080+
-  → ggml-rpc-server workers         # slots :50052-50056 · units · agents`,
+  → gateway :8791              # payment, settlement, the wallet app
+  → bridge :19000              # OUTER: session, submit, gather
+  → p4 agent                   # owns this host's nodes
+  → stage servers              # one process per layer slice`,
       },
+      { t: "h2", kick: "寻址", text: "一个 stage 拨通下一个 stage 的 agent" },
+      {
+        t: "p",
+        md: "当一个 stage 跑完自己的层，它把结果交给下一个 stage 的方式，是请自己的 agent 去连接**那个 stage 的 agent，按那个 agent 所公示的地址**。因此公示地址绝非装饰：它必须能被环中其他每一台主机访问，并且应当指向它们共享的最快网络。公示 loopback，一个双主机的环就会悄悄地拨给自己。",
+      },
+      { t: "h2", kick: "生命周期", text: "一个数字把一次加载绑在一起" },
       {
         t: "ul",
         items: [
-          "**以 BSL 1.1 提供源码**——可免费阅读并在其上构建；允许不产生收益的内部使用，托管服务或产生收入的用途需要商业许可证。",
-          "推理引擎数据平面保持**贴近上游**——仅带一小组补丁（移动端 GPU-over-RPC 与 MoE 专家调度钩子）——因此上游的性能改进持续流入。",
-          "以**单个 Docker 镜像**交付：FastAPI hub 加两个 推理引擎 二进制；原生 worker 节点在 Docker 之外为 CUDA/Metal/Vulkan/CPU 构建。",
+          "**load generation 由加载者选定**，并在每一次会话、推理、结算和卸载时按完全相等比对。它在机器上不留任何记录，所以加载者要在第一条命令发出*之前*把它写到磁盘上——没有它，已加载的模型连拆都拆不掉。",
+          "**节点的 generation 与 load generation 是同一个数字。**适配器会把 release receipt 的来源 generation 与它所属的那次加载比对，不一致就停掉该节点——因此一个用两个不同数字加载的环，服务完一次请求就会失去头部。",
+          "**模型加载之前必须有运行日志（operational journal）**：它是让一次加载可重放安全的准入记录，而不是调试辅助。",
         ],
       },
-      { t: "h2", kick: "规划器", text: "输入 GGUF 元数据，输出放置方案" },
+      { t: "h2", kick: "它不做什么", text: "刻意的省略" },
       {
         t: "p",
-        md: "规划器读取 GGUF 元数据，产出每节点连续层窗口、对应的 `--tensor-split`、每节点 KV 缓存/层/专家 VRAM 估算——以及可选的 MoE 专家 FFN 向节点 RAM 卸载，以 推理引擎 `-ot` 规则形式生成（如 `blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU`）并经 `--override-tensor` 传到启动。放不下的方案会在加载前被报为 **infeasible**，而不是在运行时以 OOM 的形式被发现。",
+        md: "p4 **不套用任何对话模板**——它转发不透明的提示词，并期待调用方已经渲染好模型的轮次格式。它**不做任何放置决策**。它也没有\"谁该收钱\"的概念：stage 汇报自己跑过的 token 行数，结算是别人的契约。每一项都是 Kvasir 在 [bridge](/wiki/bridge) 中填补的接缝，也正因如此，引擎才窄到足以持续跟上上游。",
       },
       {
-        t: "p",
-        md: "运行时兼容性是一等概念：协议、运行时包、推理引擎 修订版和 RPC ABI 都会被校验，任何不匹配都在 bind/plan/load/推理之前被硬性阻断。",
+        t: "callout",
+        md: "**agent 与原生 stage server 是同一个发行版。**用更新的代码树构建的 agent 会在 READY 阶段失败，原因是 stage server 的 HELLO 中缺少某项能力——而且是在整个模型加载完之后。两者要从同一个 checkout 构建。",
       },
     ],
   },
-  "ring-runtime": {
-    title: "环运行时",
-    summary: "无 master 的流水线推理：每台设备运行自己的层窗口，只向邻居传递边界。",
+  "in-flight-ring": {
+    title: "在途环",
+    summary: "一条永不排空的流水线：多个请求同时占据不同 stage，没有哪个 stage 需要等前面那个跑完。",
     blocks: [
       {
         t: "p",
-        md: "**环运行时**是 Kvasir 的低延迟服务拓扑。每台设备只加载自己连续的**层窗口**，然后恰好打开两条链路——前驱与后继。hidden-state 边界沿环流动；最后一个 rank 采样 token 并送回。**数据路径上没有中心 master，也没有节点持有完整模型。**",
+        md: "Kvasir 以 **stage 流水线**的形式服务一个模型，每个 stage 持有其中一段连续的层。一个 stage 跑完自己的层，把边界——一个 hidden state，而不是权重——传给下一个。没有节点持有完整模型，数据路径中间也不坐着任何东西：bridge 向头部提交、从尾部读取，而各 stage 通过自己的 agent 互相递交结果。",
       },
-      { t: "h2", kick: "为什么不是星形", text: "RPC master 问题" },
+      { t: "h2", kick: "在途的那部分", text: "为什么排空的流水线浪费掉大半台机器" },
       {
         t: "p",
-        md: "在经典 RPC 拓扑中，一个 master 打开**整个 GGUF** 并向每个 worker 拨号。这在开放网络中有三处失效：master 必须持有并服务完整检查点；每个 worker 都必须可被拨号——运营商 NAT 后的手机不行；master 还是这个本不该有所有者的网络中的单一所有者。环消除了这三点：每个 stage 拥有自己的窗口，连接只在邻居之间，中继让 NAT 设备可达。",
+        md: "如果一条流水线要先跑完一个请求才接纳下一个，那么任一时刻除一个 stage 之外全都闲着——四 stage 的环只跑出四分之一的硬件。**在途（in-flight）**设计让多个请求同时流动：stage 3 在解码一个请求时，stage 0 已经在为另一个做 prefill。stage 会汇报自己持有一个批次多久、又有多久无事可提交，因此一个被饿着的环和一个饱和的环看起来不一样。",
       },
       {
         t: "code",
-        caption: "4-stage 环上的一个解码步。",
-        code: `token n:  stage A (layers 0-14)  ──h──▶  stage B (15-26)
-                                             │h
-          stage D (37-48) ◀──h──  stage C (27-36)
-          └─ samples token n, sends it around → client`,
+        caption: "四个 stage、三个请求、同一个瞬间。",
+        code: `           stage 0        stage 1        stage 2        stage 3
+           layers 0-11    12-22          23-33          34-44
+
+request A                                              decode
+request B                 decode
+request C  prefill
+
+boundaries pass →  agent to agent, never through the caller`,
+      },
+      { t: "h2", kick: "成员构成", text: "一个批次究竟是什么" },
+      {
+        t: "p",
+        md: "来自不同请求的行被打包进同一个物理批次，而这份确切的成员构成会原样转发给下游每一个 stage，而不是每跳重新决定一次。正是它让一次 prefill 与若干次 decode 共享同一趟计算，也正因如此，批次大小是一次加载的属性：方案事先写明 row 与 micro-batch 宽度，而这些宽度决定了一个 stage 所能返回的最大结果。",
       },
       {
-        t: "ul",
-        items: [
-          "放置来自规划器的 **rank manifest**——例如 Qwen3.5-122B 的 49 层分布到 GPU、CPU、NPU 和手机上。",
-          "边界很小（每 token 一个 hidden-state 向量），即使链路很弱，跳的代价也低。",
-          "移动 GPU **直接**运行环 stage（Adreno 经 OpenCL）——通往手机 GPU 的 RPC 路径不可行，因为 Adreno 的缓冲布局无法经受 RPC 序列化；而本地 stage 自己拥有后端，只有边界过线。",
-        ],
+        t: "callout",
+        md: "**一条流水线至少要两个 stage。**单 stage 的流水线会被直接拒绝——头部与尾部是不同的角色，一个节点把两者合一，那是另一种引擎，而不是更小的环。",
       },
       {
         t: "p",
-        md: "环是**延迟**路径；它的下限是层粒度（122B 上约 1.4 GB）。专家分片蜂群移除了这个下限，并接入同一服务网络。",
+        md: "环是**延迟**路径，它的粒度是层。专家分片通过在层内部切分移除了这个下限，并接入同一套服务网络。",
       },
     ],
   },
@@ -339,6 +397,10 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
         t: "p",
         md: "**专家分片**把蜂群的承载单位从层（122B 上约 1.4 GB）降到专家（**5.3 MB**）。弱设备下载 8–64 个专家的切片（**42–340 MB**），作为纯函数 worker 加载——没有注意力、没有 KV、没有采样器——在骨干的路由器选中自己的专家时进行计算。",
       },
+      {
+        t: "callout",
+        md: "**引擎状态。**专家粒度分片是在 Kvasir 上一代引擎上构建并演示的，下面的结果来自那项工作。当前引擎 [p4](/wiki/p4) 今天以层为粒度提供服务；把专家分片迁移到它上面已完成设计、正在推进。凡是点到具体工具或路由的细节，都是当时在上一代引擎上运行的那一套。",
+      },
       { t: "h2", kick: "两个角色", text: "骨干 × worker" },
       {
         t: "code",
@@ -377,6 +439,10 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
       {
         t: "callout",
         md: "**不变式：**网络内唯一的离散决策是 MoE 路由（256 选 top-8）。Kvasir 让路由器**只在骨干上跑恰好一次**，只把选中的专家 id 派发给 worker。异构蜂群可能在每个专家输出的*幅值*上略有差异——但在*哪些专家运行*上绝不会分歧。",
+      },
+      {
+        t: "callout",
+        md: "**引擎状态。**专家粒度分片是在 Kvasir 上一代引擎上构建并演示的，下面的结果来自那项工作。当前引擎 [p4](/wiki/p4) 今天以层为粒度提供服务；把专家分片迁移到它上面已完成设计、正在推进。凡是点到具体工具或路由的细节，都是当时在上一代引擎上运行的那一套。",
       },
       {
         t: "p",
@@ -443,11 +509,11 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
   },
   gguf: {
     title: "GGUF",
-    summary: "推理引擎 使用的量化模型文件格式——正是它的布局让部分与专家切片变得廉价。",
+    summary: "推理引擎使用的量化模型文件格式——正是它的布局让部分切片与专家切片变得廉价。",
     blocks: [
       {
         t: "p",
-        md: "**GGUF** 是 推理引擎 生态的单文件模型格式：元数据（架构、层数、维度、量化方式）加上以原始量化字节存储的张量（如 Q4_K_M）。linkcpp 的规划器读取元数据来计算放置与大小估算；服务侧对张量字节切片来生成下载。",
+        md: "**GGUF** 是推理引擎生态的单文件模型格式：元数据（架构、层数、维度、量化方式）加上以原始量化字节存储的张量（如 Q4_K_M）。放置方案正是照着这份元数据写的——层范围、设备分配与大小估算；服务侧则对张量字节切片来生成下载。",
       },
       {
         t: "ul",
@@ -484,7 +550,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         t: "ul",
         items: [
           "**支出侧** — 通过网关按推理付费：quote → payment → inference。",
-          "**收入侧** — 算力按贡献单位 × 层份额 × 性能等级；hub/网关角色按小时在线奖励。",
+          "**收入侧** — 算力按贡献单位 × 层份额 × 性能等级；bridge/网关角色按小时在线奖励。",
           "**结算** — 在 Solana 上，直达每个节点所有者自己的钱包；结算服务为经手请求的每个节点记账。",
           "**得名于神话** — 由 Kvasir 酿成的诗之蜜酒，让每个饮者获得智慧：开放的访问，以及给每个注入者的奖励。",
         ],
@@ -504,7 +570,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         caption: "算力奖励如何计算。",
         code: `units    += (tokens / 1k) × (node_layers / total_layers)
 effective = units × perf_tier × gateway_bonus
-infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
+infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
@@ -525,7 +591,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "ul",
         items: [
           "奖励跟随**真实工作**：什么都没服务的节点无论在线多久都赚不到（就计算角色而言）。",
-          "角色可**叠加**——一台机器可以身兼计算 + 网关 + hub，各条流水相加。",
+          "角色可**叠加**——一台机器可以身兼计算 + 网关 + bridge，各条流水相加。",
           "一切都以 KVR 结算到节点自己的所有者钱包；仪表盘展示原始 × 等级 = 有效贡献及可领取余额。",
         ],
       },
@@ -561,11 +627,11 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "质押",
-    summary: "质押 100,000 KVR 的钱包即有资格运营 hub 或网关节点。",
+    summary: "质押 100,000 KVR 的钱包即有资格运营 bridge 或网关节点。",
     blocks: [
       {
         t: "p",
-        md: "质押会锁定 KVR，使钱包具备运营者角色与节点奖励资格。运营 **hub** 或**网关**节点需要质押 **100,000 KVR**；普通计算节点无需任何质押即可加入，并按其运行的层赚取。",
+        md: "质押会锁定 KVR，使钱包具备运营者角色与节点奖励资格。运营 **bridge** 或**网关**节点需要质押 **100,000 KVR**；普通计算节点无需任何质押即可加入，并按其运行的层赚取。",
       },
       {
         t: "ul",
@@ -607,15 +673,15 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "在公共部署中，hub 与网关的运营者访问通过 **Sign-In With Solana** 认证：运营者的钱包对服务器签发的 nonce 签名，无需任何密码或托管凭据即可证明所有权。在此之上，**TOTP 2FA** 和一次性备份码保护会话——hub 与网关两侧皆然。",
+        md: "在公共部署中，运营者对网关的访问通过 **Sign-In With Solana** 认证：运营者的钱包对服务器签发的 nonce 签名，无需任何密码或托管凭据即可证明所有权。在此之上，**TOTP 2FA** 和一次性备份码保护会话。",
       },
       {
         t: "ul",
         items: [
           "**任何地方都没有密码** — 钱包密钥即身份，nonce 防止重放；服务器端没有可被钓鱼或泄漏的东西。",
-          "**按钱包的 TOTP 登记**持久化在 hub 状态中，2FA 与槽位、绑定一起在重启后保留。",
+          "**按钱包的 TOTP 登记**持久化在网关账本中，因此 2FA 在重启后依然有效。",
           "**备份码一次性使用** — 每次登录消耗一个，用于认证设备不可用时的恢复。",
-          "**范围如实声明** — 裸 hub 与 RPC 端口为可信主机 / LAN / VPN 设计；SIWS + 2FA 是让*公共*域名可以安全暴露的那一层。",
+          "**范围如实声明** — bridge 与引擎端口为可信主机 / LAN / VPN 设计；SIWS + 2FA 是让*公共*域名可以安全暴露的那一层。",
         ],
       },
     ],
@@ -659,7 +725,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "访问网络采用**按推理付费**：网关为你的请求报出一个 KVR 价格，你的钱包在链上支付，然后 hub 才运行模型。定价是一个小而透明的公式——每请求的下限加上每 token 的费率——预先报价，并在生成后按**实际** token 用量结算。",
+        md: "访问网络采用**按推理付费**：网关为你的请求报出一个 KVR 价格，你的钱包在链上支付，然后环才运行模型。定价是一个小而透明的公式——每请求的下限加上每 token 的费率——预先报价，并在生成后按**实际** token 用量结算。",
       },
       {
         t: "code",
@@ -692,6 +758,10 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "p",
         md: "一个**专家 worker** 是纯 `(hidden, ids) → out` 函数——没有注意力、没有 KV 缓存、没有采样器——在骨干的路由器选中它们时计算 MoE 模型专家的一个切片。你不选择服务什么；**覆盖市场**把裁剪到你预算内的、最稀缺、最高奖励的范围交给你，因此一台 4 GB 手机和一张数据中心 GPU 都能找到位置。",
       },
+      {
+        t: "callout",
+        md: "**引擎状态。**专家粒度分片是在 Kvasir 上一代引擎上构建并演示的，下面的结果来自那项工作。当前引擎 [p4](/wiki/p4) 今天以层为粒度提供服务；把专家分片迁移到它上面已完成设计、正在推进。凡是点到具体工具或路由的细节，都是当时在上一代引擎上运行的那一套。",
+      },
       { t: "h2", kick: "七个步骤", text: "构建 → 报名 → 服务 → 拨号 → 赚取" },
       {
         t: "code",
@@ -721,7 +791,7 @@ POST /api/expert-coverage`,
           "**切片很小。** layer-0 的 128 专家切片对比 72 GB 的完整模型只有 **794 MB**——正是让弱设备也能参与的粒度。你只下载市场分配给你的范围。",
           "**只拨出，绝不拨入。** 第 5 步在 443 上打开一条出站 WebSocket，因此运营商 NAT 和 CDN 边缘都放行，而你不暴露任何入站端口——与手机所用的路径相同。",
           "**心跳是承重的。** 没有 `POST /api/expert-coverage`，你所服务的一切对需求图都不可见，你所做的一切也都不会入账。",
-          "**奖励按工作计。** 桥接的工作累积到 hub 的贡献账本；网关把 KVR 增量记入你**自己的**钱包。你需要一个钱包地址才能收款。",
+          "**奖励按工作计。** 桥接的工作累积到 bridge 的贡献账本；网关把 KVR 增量记入你**自己的**钱包。你需要一个钱包地址才能收款。",
         ],
       },
       {
@@ -730,57 +800,59 @@ POST /api/expert-coverage`,
       },
     ],
   },
-  "hub-operations": {
-    title: "运营 hub",
-    summary: "运营 hub 与网关的运营者笔记：不重建即热补丁、挺过重启、保持目录注册、并把暴露面收拢到 443。",
+  "bridge-operations": {
+    title: "运营 bridge",
+    summary: "运营 bridge 及其背后那个环的笔记：加载一份方案、挺过重启、让贡献持续流动，并把引擎挡在互联网之外。",
     blocks: [
       {
         t: "p",
-        md: "hub（控制平面）和网关（公共入口）是运营者要保持健康的两个长期运行服务。hub 及其 RPC 端口**在设计上不做认证**——仅限可信主机 / LAN / VPN——所有公共流量都汇聚到网关唯一的 443 暴露面。以下运营笔记让这套安排在代码变更、服务重启和系统重启之间保持稳定。",
+        md: "**网关**（公共入口）与 **bridge**（引擎门面）是运营者要保持健康的两个长期服务，其后是 p4 的 agent 和它们的 stage server。引擎完全不做认证——它假定彼此可达的机器就是应该彼此可达的——所以一切公共流量都汇聚到网关，而 bridge 经隧道访问、不对外发布。",
       },
-      { t: "h2", kick: "部署与热补丁", text: "不重建即改代码" },
+      { t: "h2", kick: "加载", text: "一份方案，以及加载它所用的那个数字" },
       {
         t: "ul",
         items: [
-          "**快捷路径：**用 `docker cp <file> <container>:/app/...` + `docker restart` 更新 hub/网关代码——无需重建镜像。但**新增环境变量无法这样做**（它需要重建容器）；应改用持久化到 hub-state 的运行时配置 API。",
-          "**Compose 漂移：**长期运行的容器可能偏离其 compose 文件（网络模式、entrypoint、env）。在 `docker compose up -d` 重建之前，务必先 `docker inspect` 真实配置——如果已漂移，重建会抹掉生产设置。改用 cp + restart。",
-          "**打补丁前先 diff：**替换之前，先把容器内文件 `docker cp` 出来并与仓库 HEAD 比对，以免前一次会话的热补丁被静默丢失。",
+          "**放置是你写的方案**，不是你发的请求：谁要求 bridge 去服务，它就回 `409`。先生成方案、dry-run，再用 `--confirm` 加载。",
+          "**load generation 在第一条命令发出之前就写到磁盘上。**它由加载者选定，在每次会话和卸载时按完全相等校验，且在机器上不留任何记录——弄丢了，已加载的模型连拆都拆不掉。",
+          "**节点的 generation 就是同一个数字。**用两个不同的数字加载一个环，它只服务一次请求头部就会停，下一次会话则会半加载地挂住。每次加载都用一个新值，否则上一次失败尝试遗留的注册会与它冲突。",
+          "**没有运行日志（operational journal），agent 就拒绝加载。**那是可重放安全的加载所需的准入记录，不是调试开关。",
         ],
       },
-      { t: "h2", kick: "挺过重启", text: "状态会保留；已加载的模型不会" },
+      { t: "h2", kick: "挺过重启", text: "什么会回来，什么不会" },
       {
         t: "ul",
         items: [
-          "hub 重启会**停止服务。**槽位、控制器和绑定从 `hub-state.json` 恢复，但已加载的模型只存在于运行时。重启后，读取每个控制器的 `last_load` 并重新触发 `POST /api/controllers/{cid}/serve`——得益于页缓存，即使大模型也能在约 1 分钟内回来。",
-          "**网关看门狗：**每 30 s 用 1-token 请求探测每个已服务模型，失败时从 `last_load` 自动重载（带冷却）。**探测*所有*模型，而不是 `catalog[0]`**——一旦来自另一个 hub 的健康模型排到最前，只探首个的做法会漏掉正在宕掉的大模型（一个真实的 bug，现已修复）。",
-          "**目录 TTL：**`POST /api/pay/hub/register` 有 90 s TTL，所以用约 60 s 的心跳循环保持注册存活，并用 `@reboot` cron 或 systemd unit 让它在系统重启后依然可靠。",
+          "**agent 重启会丢掉它的节点。**stage server 只存在于运行时；模型必须照方案重新加载一次。这是恢复流程，而不是哪里出了故障。",
+          "**网关不会替你重新加载。**它的环看门狗会发现某个模型停止了服务，从 bridge 的 `409` 中得知放置在外部，说一次之后就不再问。",
+          "**贡献计数器活在 bridge 的内存里。**网关每 30 s 轮询一次并增量记账；重启只丢掉尚未被轮询的部分，而当计数器倒退时网关会重设基线，而不是重复支付。",
         ],
       },
-      { t: "h2", kick: "锁紧", text: "所有公共流量都走 443" },
+      { t: "h2", kick: "锁紧", text: "引擎不面向互联网" },
       {
         t: "ul",
         items: [
-          "hub（:19000）和 RPC 端口假定处于可信网络；唯一应当面向互联网的只有 443 上的网关（包括其 WebSocket 中继透传）。",
-          "如果 hub 必须处于公网 IP 上，用防火墙将其限制到可信 IP——但 Docker 发布的端口在 **INPUT 链之前就已被 DNAT**，因此针对 `dport` 的规则不会命中。改在 `DOCKER-USER` 链中用 conntrack 的原始目的端口（`--ctorigdstport`）过滤，并用排在 `After=docker.service` 之后的 systemd oneshot 持久化这些规则。",
+          "把 bridge 绑定到 loopback 并给它一个服务令牌。没有令牌它谁都不认证，任何能触达它的东西都能免费驱动整个环——它在启动时就会这样告诉你，而不是让你事后才发现。",
+          "agent 公示的是其他 agent 要拨的地址。用主机之间最快的那张网，跨主机绝不用 loopback，并把那张网挡在公网之外。",
+          "如果某个东西必须坐在公网 IP 上，记住 Docker 发布的端口**在 INPUT 链之前就已被 DNAT**，因此针对 `dport` 的规则不会命中。改在 `DOCKER-USER` 链中按 conntrack 的原始目的端口（`--ctorigdstport`）过滤，并用排在 `After=docker.service` 之后的 systemd oneshot 持久化。",
         ],
       },
-      { t: "h2", kick: "结算与自伤陷阱", text: "拉取而非推送——以及一个 shell 陷阱" },
+      { t: "h2", kick: "自伤陷阱", text: "两个真花时间的坑" },
       {
         t: "ul",
         items: [
-          "**结算是拉取而非推送：**hub 累积贡献；网关轮询 `GET /api/contributions` 并增量记入 KVR。如果 hub 重启重置了计数器，网关会重设基线，因此不会重复支付。专家工作的费率由 `LINKCPP_EXPERT_UNITS_PER_MB` 设定。",
-          "**`pkill` 自伤陷阱：**`ssh host 'pkill -f X; ...'` 会匹配到它*自己*的命令行并杀掉自己。在模式中用字符类（`X[x]`），且绝不要把启动进程和 pkill 放进同一条远程命令里。",
+          "**未设置的运营者钱包看上去就是零收益。**网关会跳过任何没有所有者的贡献行，且不记录任何日志。节点明明在服务，看起来却像闲置。",
+          "**`pkill` 会匹配到它自己的命令行。**`ssh host 'pkill -f server.js; ...'` 杀掉的是正在运行它的那个 shell。把匹配模式放进脚本文件而不是远程命令里，用字符类（`server[.]js`），并且记住以裸 `node server.js` 启动的进程没有路径可匹配——改用它监听的端口去找。",
         ],
       },
     ],
   },
-  "hub-wan-interconnect": {
-    title: "Hub 广域互联（200G 光模块）",
-    summary: "hub 如何以 200 Gb/s 跨越一个房间、一个园区或一座城市互联：什么距离用什么光模块、什么插到哪里、以及真正跑满线速需要什么。",
+  "wan-interconnect": {
+    title: "广域互联（200G 光模块）",
+    summary: "算力站点如何以 200 Gb/s 跨越一个房间、一个园区或一座城市互联：什么距离用什么光模块、什么插到哪里，以及真正跑满线速需要什么。",
     blocks: [
       {
         t: "p",
-        md: "当两个 hub 都有公网路由时，专家调度的数据平面应当是**直连**——443 中继是给 NAT 后的边缘用的。本条目是用目录现货零件把那条直连做到 200 Gb/s 级别的具体配方。一条规则统领一切：**光纤是与速率无关的玻璃；速率活在两端的可插拔模块里。**",
+        md: "当两个站点都有公网路由时，专家调度的数据平面应当是**直连**——中继是给没有自己地址的边缘用的。本条目是用目录现货零件把那条直连做到 200 Gb/s 级别的具体配方。一条规则统领一切：**光纤是与速率无关的玻璃；速率活在两端的可插拔模块里。**",
       },
       { t: "h2", kick: "第 1 步 · 按距离挑选", text: "可达距离阶梯" },
       {
@@ -799,8 +871,8 @@ POST /api/expert-coverage`,
       {
         t: "ul",
         items: [
-          "**NIC 侧** — ConnectX-6/7 级别的网卡暴露 QSFP56 笼位；DAC/AOC/FR4/LR4/ER4 全都可直接插入 NIC。GB10 级别的 hub 板载已有两个 200 GbE QSFP 端口，因此两个 hub 的链路恰好只需一根线缆、零新硬件。",
-          "**交换机侧** — 相干 ZR+ 光模块是 QSFP-DD 形态，应插入交换机或路由器；hub 的 NIC 再经一条短 DAC 以 200G 接入那台交换机。当对端 hub 在数十公里之外时用这一档。",
+          "**NIC 侧** — ConnectX-6/7 级别的网卡暴露 QSFP56 笼位；DAC/AOC/FR4/LR4/ER4 全都可直接插入 NIC。GB10 级别的主机板载已有两个 200 GbE QSFP 端口，因此两个站点之间的链路恰好只需一根线缆、零新硬件。",
+          "**交换机侧** — 相干 ZR+ 光模块是 QSFP-DD 形态，应插入交换机或路由器；站点的 NIC 再经一条短 DAC 以 200G 接入那台交换机。当对端站点在数十公里之外时用这一档。",
           "**光纤本身** — 标准单模（G.652）双工 LC 对，按每芯以暗光纤租用。同一根玻璃今天承载 100G、日后承载 400G；升级只是换模块，绝非土建工程。",
           "**超过约 120 km** — 你不再购买零件，而是开始向运营商租用一个波长；分界点是你交换机上的一次以太网交接。",
         ],
@@ -808,33 +880,37 @@ POST /api/expert-coverage`,
       {
         t: "code",
         caption: "三种参考搭建，从最便宜开始。",
-        code: `two-hub bench   : hub A qsfp0 ──QSFP56 DAC 1m── hub B qsfp0
-campus pair     : hub A [LR4] ──dark fiber, ≤10km── [LR4] hub B
-metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── hub`,
+        code: `two-site bench  : site A qsfp0 ──QSFP56 DAC 1m── site B qsfp0
+campus pair     : site A [LR4] ──dark fiber, ≤10km── [LR4] site B
+metro federation: site ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── site`,
       },
       { t: "h2", kick: "第 3 步 · 真正跑满 200G", text: "线速是配置出来的，不是买来的" },
       {
         t: "ul",
         items: [
           "在可用之处，为调度流使用 **RDMA (RoCE)**——GB10 级别的主机通过拆分的 PCIe 链路给 NIC 供数据，在拓扑正确映射的情况下 RoCE 下能测得满速（约 185–190 Gb/s）；映射错误的路径会卡在约一半速率，而未调优的普通 TCP 则低得多。",
-          "端到端启用**巨型帧（MTU 9000）**，并在调度套接字上保持 `TCP_NODELAY`（hub 已经设置了它）。",
-          "要*验证*，别假设：每次物理改动后都在两个 hub 之间跑一次 perftest——95 与 190 Gb/s 之间的差距在测量之前是看不见的。",
+          "端到端启用**巨型帧（MTU 9000）**，并在调度套接字上保持 `TCP_NODELAY`（bridge 已经设置了它）。",
+          "要*验证*，别假设：每次物理改动后都在两个站点之间跑一次 perftest——95 与 190 Gb/s 之间的差距在测量之前是看不见的。",
           "把 **443 中继保留为回退路径**——拨号策略对公网对端是直连优先、对 NAT 走中继。中继的职责是可达性，直连的职责是速度。",
         ],
       },
       {
         t: "p",
-        md: "这对架构为何重要：解码延迟受往返时间约束（光纤中约 5 µs/km——是物理规律，不受带宽影响），所以粗管道买到的是**prefill 速度、批量调度吞吐，以及近乎瞬时的专家切片分发**，而不是更低的每 token 延迟。这正是双层设计中 hub 层的角色：在粗管道层提供容量，在中继层提供可达性。",
+        md: "这对架构为何重要：解码延迟受往返时间约束（光纤中约 5 µs/km——是物理规律，不受带宽影响），所以粗管道买到的是**prefill 速度、批量调度吞吐，以及近乎瞬时的专家切片分发**，而不是更低的每 token 延迟。这正是双层设计中站点层的角色：在粗管道层提供容量，在中继层提供可达性。",
       },
     ],
   },
   "load-adaptive-scaling": {
     title: "负载自适应扩展",
-    summary: "Kvasir 的 MoE 服务路径随流量伸缩：饱和时协调器重新启用已验证的 worker，hub 通过抬高专家需求招募闲置节点——全部拉取式，因此 NAT 后的设备也能加入。",
+    summary: "Kvasir 的 MoE 服务路径随流量伸缩：饱和时协调器重新启用已验证的 worker，bridge 通过抬高专家需求招募闲置节点——全部拉取式，因此 NAT 后的设备也能加入。",
     blocks: [
       {
         t: "p",
         md: "Kvasir 的 MoE 服务路径随负载弹性扩展，分为两个协作的层。清闲时协调器在本地服务一切，取得每 token 最快的路径；饱和时，下述两层把蜂群扩大——浪涌过去后再度收缩。",
+      },
+      {
+        t: "callout",
+        md: "**引擎状态。**专家粒度分片是在 Kvasir 上一代引擎上构建并演示的，下面的结果来自那项工作。当前引擎 [p4](/wiki/p4) 今天以层为粒度提供服务；把专家分片迁移到它上面已完成设计、正在推进。凡是点到具体工具或路由的细节，都是当时在上一代引擎上运行的那一套。",
       },
       { t: "h2", kick: "第 1 层", text: "协调器侧：负载自适应调度" },
       {
@@ -850,17 +926,17 @@ metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km─�
           "自查询有时间上限，因此一次卡住的轮询绝不会阻塞调度。",
         ],
       },
-      { t: "h2", kick: "第 2 层", text: "hub 侧：负载自适应招募" },
+      { t: "h2", kick: "第 2 层", text: "控制平面侧：负载自适应招募" },
       {
         t: "p",
-        md: "控制 hub 盯着每个 MoE 协调器，并在需要时扩大 worker 池：",
+        md: "控制平面盯着每个 MoE 协调器，并在需要时扩大 worker 池：",
       },
       {
         t: "ul",
         items: [
           "一个后台循环轮询每个协调器的槽位，并按模型记录饱和度。",
           "当一个模型处于饱和时，其**有效专家副本目标**被抬高（base + boost）。覆盖市场随即把已覆盖的专家重新读作稀缺，而**没有**任何在线 worker 的模型则从其 GGUF 元数据（专家数）播种，使需求即便从零也可见。",
-          "闲置节点轮询需求市场（`/api/expert-volunteer`），被交予一份 `(layer, expert-range)` 切片去服务。它们下载切片、拨通 relay、注册覆盖；hub 自动把它们接线到协调器的调度图。",
+          "闲置节点轮询需求市场（`/api/expert-volunteer`），被交予一份 `(layer, expert-range)` 切片去服务。它们下载切片、拨通 relay、注册覆盖；控制平面自动把它们接线到协调器的调度图。",
           "当负载退去，目标回落、需求消失，于是多余的 worker 不再被调度并逐渐老化退出。",
         ],
       },

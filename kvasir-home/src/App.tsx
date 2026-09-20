@@ -34,7 +34,7 @@ import {
   CODE_SNIPPET,
   REWARD_EXPR,
   PERF_TIERS,
-  LINKCPP_TAGLINE,
+  ENGINE_TAGLINE,
   DEVICE_META,
   PROOF_STATS,
   ROADMAP_TONE,
@@ -696,12 +696,12 @@ function Tech() {
           />
         </Reveal>
 
-        {/* linkcpp's own tagline, verbatim */}
+        {/* The engine's own tagline, verbatim */}
         <Reveal>
           <figure className="mt-8 rounded-2xl bg-surface-2/50 p-6 ring-1 ring-line sm:p-7">
             <blockquote className="text-lg font-medium leading-relaxed text-ink sm:text-xl">
               <span className="mr-1 text-brand-400">&ldquo;</span>
-              {LINKCPP_TAGLINE}
+              {ENGINE_TAGLINE}
               <span className="ml-0.5 text-brand-400">&rdquo;</span>
             </blockquote>
             <figcaption className="mt-3 font-mono text-xs text-ink-faint">

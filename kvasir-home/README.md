@@ -1,7 +1,7 @@
 # Kvasir — homepage
 
 Marketing homepage for **Kvasir**, the decentralized AI-inference network built on the
-**linkcpp** control plane. Single-page scroll, dark-themed, brand-continuous with the app.
+**p4** engine. Single-page scroll, dark-themed, brand-continuous with the app.
 
 Built with **Vite + React + TypeScript + Tailwind CSS v4**.
 
@@ -109,7 +109,7 @@ phone — owned and earned by contributors, not a handful of hyperscalers.
 - **The name.** A `#name` section ties "Kvasir" (the Norse being of pooled, shared wisdom) to
   the decentralization thesis.
 - **Node roles & rewards.** The `#network` section explains the three roles (compute node,
-  gateway host, hub host) and how each earns KVR — performance tiers (S/A/B/C), the gateway
+  gateway host, bridge host) and how each earns KVR — performance tiers (S/A/B/C), the gateway
   bonus, and infra uptime — grounded in `solana/staking-service` on the `kvasir-net` branch.
 
 ## Content guardrails
@@ -135,7 +135,7 @@ Set in [`src/content.ts`](src/content.ts) → `LINKS`:
 
 - **GitHub:** `https://github.com/louisevandan/kvasir-net`
 - **Gateway / wallet:** `https://gate.kvasir-ai.net` (also the base URL in the API code snippet)
-- **Hub:** `https://hub.kvasir-ai.net`
+- **Bridge:** reached from the gateway only; not a public hostname
 
 Official domain is **`kvasir-ai.net`** (Cloudflare Tunnel). The retired `*.prototypebench.org`
 hosts are intentionally not referenced anywhere.

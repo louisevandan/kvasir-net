@@ -1,0 +1,2 @@
+/usr/bin/ar qc liblinkcpp-expert.a "CMakeFiles/linkcpp-expert.dir/main.cpp.o"
+/usr/bin/ranlib liblinkcpp-expert.a

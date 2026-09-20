@@ -1,8 +1,8 @@
 /* Nederlands — vertaling van de wiki-items. Structuur (slug, categorie,
    blokvolgorde, code) spiegelt exact entries.ts (Engelse bron); technische
-   termen en identifiers (KVR, linkcpp, inferentie-engine, GGUF, MoE, ring runtime,
-   tok/s enz.) blijven letterlijk. De compliance-framing (devnet,
-   utility-token, non-custodial) blijft intact. */
+   termen en identifiers (KVR, p4, GGUF, MoE, bridge, tok/s enz.) blijven
+   letterlijk. De compliance-framing (devnet, utility-token, non-custodial)
+   blijft intact. */
 import type { WikiTranslation } from "./entries";
 
 export const nlWiki: Record<string, WikiTranslation> = {
@@ -30,12 +30,12 @@ export const nlWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** is een gedecentraliseerd AI-inferentienetwerk: grote open modellen worden met de **linkcpp**-engine over gedeelde hardware verdeeld, zodat geen enkel knooppunt het hele model hoeft te bezitten. Iedereen kan een GPU, CPU, NPU — zelfs een telefoon — bijdragen en **KVR** verdienen voor de lagen of experts die zijn apparaat daadwerkelijk serveert. Ontwikkelaars bereiken het netwerk via OpenAI/Anthropic-compatibele gateways en betalen per inferentie.",
+        md: "**Kvasir** is een gedecentraliseerd AI-inferentienetwerk: grote open modellen worden met de **p4**-engine over gedeelde hardware verdeeld, zodat geen enkel knooppunt het hele model hoeft te bezitten. Iedereen kan een GPU, CPU, NPU — zelfs een telefoon — bijdragen en **KVR** verdienen voor de lagen of experts die zijn apparaat daadwerkelijk serveert. Ontwikkelaars bereiken het netwerk via OpenAI/Anthropic-compatibele gateways en betalen per inferentie.",
       },
       {
         t: "ul",
         items: [
-          "**Engine met beschikbare broncode** — linkcpp valt onder de Business Source License 1.1 (niet-gemonetiseerd intern gebruik is toegestaan; gehost of inkomstengenererend gebruik vereist een commerciële licentie); het inferentie-engine-datavlak eronder blijft dicht bij upstream en inspecteerbaar.",
+          "**Engine met beschikbare broncode** — p4 valt onder de Business Source License 1.1 (niet-gemonetiseerd intern gebruik is toegestaan; gehost of inkomstengenererend gebruik vereist een commerciële licentie); het llama.cpp-datavlak eronder blijft dicht bij upstream en inspecteerbaar.",
           "**Wallet in eigen beheer** — sleutels verlaten nooit het apparaat van de gebruiker, en beloningen worden uitbetaald naar de eigen Solana-wallet van elke node-eigenaar. Op devnet worden gestakete KVR en vooraf betaalde credits aangehouden door de treasury van de gateway en bijgehouden in zijn grootboek, totdat een on-chain stakingprogramma wordt uitgebracht.",
           "**Bewezen op echte hardware** — een 122B-model draaide end-to-end over 3 fysieke machines op onze testvloot, met de bijdrage van elke node end-to-end bijgeschreven.",
           "**Vernoemd naar de Noorse mythe** — Kvasir, het wijste wezen, geboren uit de samengebrachte essentie van alle goden en het eigendom van geen enkele.",
@@ -46,14 +46,14 @@ export const nlWiki: Record<string, WikiTranslation> = {
         t: "code",
         caption: "Elke hop is gewoon HTTP/TCP; het model zelf is wat verdeeld wordt.",
         code: `client SDK ──▶ gateway (OpenAI/Anthropic API, KVR settlement)
-        ──▶ hub controller (plan · orchestrate)
+        ──▶ bridge (session · submit · gather)
         ──▶ serving topology: pipeline ring over layer windows,
             or expert-swarm dispatch at (layer, expert-range) grain
         ──▶ token streams back · each node's contribution is credited`,
       },
       {
         t: "p",
-        md: "Rollen **stapelen**: één machine kan tegelijk rekennode, gateway-host en hub-host zijn, en de beloningen tellen op. De taak van het netwerk is om het geheel op één machine te laten lijken — één endpoint vooraan, duizenden imperfecte apparaten erachter.",
+        md: "Rollen **stapelen**: één machine kan tegelijk rekennode, gateway-host en bridge-host zijn, en de beloningen tellen op. De taak van het netwerk is om het geheel op één machine te laten lijken — één endpoint vooraan, duizenden imperfecte apparaten erachter.",
       },
       {
         t: "p",
@@ -61,39 +61,120 @@ export const nlWiki: Record<string, WikiTranslation> = {
       },
     ],
   },
-  hub: {
-    title: "Hub",
-    summary: "Het besturingsvlak: ontdekt apparaten, plant laagplaatsing, start workers, orkestreert de ring.",
+  architecture: {
+    title: "Kvasir-architectuur",
+    summary: "Eén kaart van het hele systeem: wallets, de gateway die de betaling aanneemt, de bridge die de engine afschermt, en het p4-netwerk dat het model draait.",
     blocks: [
       {
         t: "p",
-        md: "De **hub** is het besturingsvlak van het netwerk, door linkcpp geleverd als één Docker-image (`controller.hub:app`, een FastAPI-service op poort **19000**). Hij ontdekt apparaten, controleert runtime-compatibiliteit, plant plaatsing met de planner, start inferentie-engine-workers en stelt de gateways per controller beschikbaar. Het is bewust saaie infrastructuur: request/response-HTTP, herstart-veilige staat, geen exotisch transport.",
+        md: "Kvasir bestaat uit vier lagen met elk één naad. **Wallets** houden de sleutels. De **gateway** neemt de betaling aan en houdt het grootboek bij. De **bridge** zet een HTTP-gezicht op de inferentie-engine. Het **p4-netwerk** draait het model daadwerkelijk. Alles hieronder volgt uit waar die naden liggen — en het diagram markeert wat vandaag draait tegenover wat nog ontwerp is.",
       },
-      { t: "h2", kick: "Drie deuren naar binnen", text: "Hoe machines zich bij een hub aansluiten" },
+      { t: "h2", kick: "Wallets", text: "Sleutels verlaten het apparaat nooit" },
+      {
+        t: "p",
+        md: "iOS (Swift), Android (Kotlin) en desktop (React + Electron) zijn aparte builds van dezelfde wallet, en de desktop-build is ook wat de gateway op `/` serveert als browser-wallet — een volwaardige wallet die in de pagina ondertekent, geen alleen-lezen console. Beloningen gaan naar het eigen Solana-adres van elke eigenaar; de gateway houdt nooit een gebruikerssleutel vast.",
+      },
+      { t: "h2", kick: "Gateway", text: "Eén proces, twee oppervlakken" },
+      {
+        t: "p",
+        md: "`solana/staking-service` is tegelijk de **API-gateway** (een OpenAI-compatibele `/v1/chat/completions`, plus de betaal-per-verzoek-flow `/api/pay/quote` → `/api/inference`) en de **verrekengateway** (staking, het node-register, creditrekeningen, bijdragekrediet). Ze zijn één proces omdat ze één grootboek delen: een verzoek wordt pas bediend nadat de KVR-overdracht on-chain is geverifieerd, en hetzelfde grootboek schrijft de nodes bij die het bedienden.",
+      },
+      {
+        t: "callout",
+        md: "**De betaling wordt verrekend voordat de inferentie draait.** Faalt de bridge daarna, dan betaalt de gateway de betaler terug uit de treasury en geeft een 502 in plaats van te rekenen voor niets. Er zit geen mock-model en geen placeholder-catalogus achter: een model dat de app aanbiedt, is een model dat een bridge serveert — of de lijst is leeg.",
+      },
+      { t: "h2", kick: "Bridge", text: "Het HTTP-gezicht van de engine" },
+      {
+        t: "p",
+        md: "De bridge (`p4bridge`) is in p4-termen een **OUTER**: hij installeert een sessie over de stages, dient in bij de kopstage en verzamelt de tokenstroom. Voor de gateway is hij een klein, vast contract — welke modellen geladen zijn, wie hoeveel bijdroeg, en completions.",
+      },
+      {
+        t: "table",
+        head: ["Route", "Wat het beantwoordt"],
+        rows: [
+          ["`/api/controllers`", "welke modellen geladen zijn, en de staat van elke stage"],
+          ["`/api/runtime`", "de operator-wallet en de machines erachter"],
+          ["`/api/contributions`", "rijen, eenheden, verzoeken en doorvoer per node"],
+          ["`/c/<model>/v1/chat/completions`", "inferentie"],
+        ],
+      },
+      {
+        t: "p",
+        md: "Twee taken die p4 bewust aan de bridge overlaat: **het chat-template** (p4 geeft de stage-server een ondoorzichtige prompt en past er geen enkele toe, dus een instruct-model zou je tekst voortzetten in plaats van hem te beantwoorden) en **het redeneerblok** (teruggegeven als `reasoning_content`, los van `content`, zodat een denkfase het tokenbudget niet stilletjes kan opeten en de betaler een leeg antwoord in rekening kan brengen).",
+      },
+      {
+        t: "callout",
+        md: "**De bridge wordt nooit gepubliceerd.** Zijn enige authenticatie is een gedeeld service-token, en alles wat hem bereikt kan de ring draaien. Hij bindt op loopback; de tunnel is de deur.",
+      },
+      { t: "h2", kick: "p4-netwerk", text: "Agents bezitten nodes, stage-servers houden lagen" },
+      {
+        t: "p",
+        md: "Een **agent** bezit de nodes van een host; een **stage-server** is één proces dat een plak van de lagen van het model vasthoudt. Een stage geeft zijn resultaat door aan de volgende door zijn eigen agent te vragen de agent van die stage te bellen **op het adres dat die agent adverteert** — het geadverteerde adres moet dus bereikbaar zijn vanaf de andere hosts, en hoort het snelste netwerk te zijn dat ze delen. Op het MI250-rack is dat de InfiniBand-link, niet het kantoor-LAN en nooit loopback.",
+      },
       {
         t: "ul",
         items: [
-          "**Lokale node-slots** — vijf vaste slots per hub, gemapt op RPC-poorten **50052–50056**. Slots bestaan altijd; je bewerkt de GPU- + VRAM/RAM/CPU-budgetten van een slot in plaats van willekeurige nodes te maken, en resources zijn **alleen bewerkbaar zolang een slot niet gebonden is** — dat beschermt het capaciteitscontract onder een draaiende controller.",
-          "**Remote units** — registreer een andere draaiende linkcpp-hub en importeer diens zichtbare nodes. Het datavlak-endpoint wordt altijd afgeleid van de geregistreerde *unit*-URL plus de door de unit blootgestelde worker-poort — nooit van een node-host die het externe systeem adverteert.",
-          "**Beheerde node-agents** — worker-only services (`nodeagent.py`) die zich aansluiten via simpel request/response-HTTP (`/control/join|status|download|load|unload`) en rapporteren via `POST /api/node-reports`. Bewust **geen** persistente stream, zodat ze simpele LAN/VPN-routering overleven.",
+          "**`p4-agent` en `p4_staged_server` zijn één release.** Een agent die uit een nieuwere tree is gebouwd faalt bij READY op een ontbrekende HELLO-capaciteit — nadat het hele model is geladen.",
+          "**Plaatsing is een operator-artefact.** Welke lagen op welke GPU zitten, onder welke load generation, komt uit een placement plan; de bridge antwoordt `409` aan wie hem vraagt te serveren, en de watchdog van de gateway zegt dat één keer en stopt met vragen.",
+          "**Een pipeline heeft minstens twee stages nodig.** Het sessiecommando weigert een pipeline met één stage.",
         ],
       },
-      { t: "h2", kick: "Niets laadt ongeverifieerd", text: "Compatibiliteitspoort" },
+      { t: "h2", kick: "Relay", text: "Een belbaar adres voor een laptop" },
       {
         t: "p",
-        md: "Elke unit, node en agent rapporteert een protocol- / runtime-pack-identiteit plus backend-details. Mismatches in unit, runtime-pack, inferentie-engine-revisie en RPC-ABI worden **hard geblokkeerd vóór bind, plan, load of infer**; backend-verschillen (CUDA/Metal/Vulkan/CPU) worden bijgehouden als node-capaciteiten, niet als afwijzingen. Adaptief laden wordt ook geblokkeerd wanneer een node de resource-monitoring niet kan leveren die een veilig plan nodig heeft.",
+        md: "Edge-nodes — een desktop-app, een telefoon — hebben geen adres dat iemand kan bellen. De **relay** geeft ze er een: de node belt naar buiten, bewijst het wallet-sleutelpaar met een ed25519-challenge, en is daarna via de relay bereikbaar. De relay is de authenticatiegrens en parseert nooit payloads. De desktop-installer levert de p4-agent samen met de app, dus meedoen is geen tweede installatie.",
       },
+      { t: "h2", kick: "Verrekening", text: "Krediet volgt deelname" },
       {
-        t: "code",
-        caption: "Wat een herstart overleeft, en wat niet.",
-        code: `persisted   → /models/linkcpp/hub-state.json
-              slots · controllers · bindings · remote units · 2FA enrollment
-runtime-only → live worker/model processes, in-flight operations
-              (a container restart stops serving; models reload on demand)`,
+        t: "p",
+        md: "Elke stage rapporteert de tokenrijen die hij heeft gedraaid. De bridge telt ze per node op, en de gateway pollt elke 30 seconden `/api/contributions` en schrijft bij op de wallet die de bridge noemt, als `rows / 1000` eenheden geschaald naar het prestatieniveau van de node. **In een pipeline ziet elke stage dezelfde rijen**, dus een ring met vier stages betaalt zijn vier stages gelijk, ongeacht hoeveel lagen elk vasthoudt — krediet volgt deelname, niet gewichtsaandeel. Expert-sharding, waarbij nodes verschillende fracties van een laag vasthouden, is het geval dat dit opnieuw ter discussie zal stellen.",
+      },
+      { t: "h2", kick: "P4 Studio", text: "Wat het diagram als voorstel markeert" },
+      {
+        t: "p",
+        md: "**P4 Studio** is de eigen operatorconsole van p4. De observability-feed per verzoek die hij van de agents wil hebben, is een voorstel upstream en draait hier niet — daarom tekent het diagram hem gestippeld, naast expert-shards die vanaf edge-nodes worden geserveerd, wat ontworpen is maar nog niet draait.",
+      },
+    ],
+  },
+  bridge: {
+    title: "Bridge",
+    summary: "Het HTTP-gezicht van de inferentie-engine: wat er geladen is, wie heeft bijgedragen, en completions — en verder niets.",
+    blocks: [
+      {
+        t: "p",
+        md: "De **bridge** is het enige waar de verrekengateway voor inferentie mee praat. Hij is in p4-termen een **OUTER**: hij installeert een sessie over de stages van het model, dient een verzoek in bij de kopstage, verzamelt de tokenstroom en rapporteert wat elke node heeft bijgedragen. Hij bezit geen plaatsing, geen scheduling en geen staat behalve een catalogus van wat er geladen is — bewust klein, want alles wat hij niet beslist, kan ook niet afdrijven.",
+      },
+      { t: "h2", kick: "Het contract", text: "Vier routes, één token" },
+      {
+        t: "table",
+        head: ["Route", "Wat het beantwoordt"],
+        rows: [
+          ["`/api/controllers`", "welke modellen geladen zijn, en de staat van elke stage"],
+          ["`/api/runtime`", "de operator-wallet en de machines erachter"],
+          ["`/api/contributions`", "rijen, eenheden, verzoeken en doorvoer per node"],
+          ["`/c/<model>/v1/chat/completions`", "inferentie"],
+        ],
       },
       {
         t: "p",
-        md: "Omdat de hub de meest kritieke rol is, verdienen hub-hosts de **hoogste uurlijkse uptime-beloning**. Een publieke hub draaien vereist het staken van **100.000 KVR**.",
+        md: "Elke route behalve `/api/health` vereist een gedeeld service-token, meegestuurd als `X-Kvasir-Service-Token`. Dat token is het **enige** dat tussen het open internet en gratis gebruik van de ring staat, en daarom bindt de bridge op loopback en wordt hij via een tunnel bereikt in plaats van gepubliceerd.",
+      },
+      { t: "h2", kick: "Wat p4 aan hem overlaat", text: "Twee taken die de engine niet doet" },
+      {
+        t: "ul",
+        items: [
+          "**Het chat-template.** p4 geeft de stage-server een ondoorzichtige prompt en past geen eigen beurtformaat toe. De bridge rendert dat van het model — uit de GGUF gelezen en in de catalogus benoemd als `prompt_format`. Sla het over en een instruct-model zet je tekst voort in plaats van hem te beantwoorden, stuurt nooit zijn einde-beurt-token, en loopt elke keer tot de tokenlimiet.",
+          "**Het redeneerblok.** Een redeneermodel opent zijn antwoord met denken. De bridge geeft dat terug als `reasoning_content`, los van `content`, en respecteert `enable_thinking: false` door het blok in de prompt te sluiten — anders kan een lange denkfase het hele budget opsouperen en de aanroeper een leeg antwoord geven waarvoor hij al heeft betaald.",
+        ],
+      },
+      { t: "h2", kick: "Plaatsing is niet zijn taak", text: "Waarom hij 409 antwoordt" },
+      {
+        t: "p",
+        md: "De bridge vragen een model te serveren levert **409** op. Welke lagen op welke GPU zitten, onder welke load generation, komt uit een placement plan dat een operator heeft geschreven en geladen; er valt op afstand niets te herladen. De ring-watchdog van de gateway leert dat één keer en stopt met vragen in plaats van iets te blijven proberen dat niet kan werken.",
+      },
+      {
+        t: "callout",
+        md: "**Bijdragetellers leven in het geheugen.** Een herstart van de bridge verliest wat de gateway nog niet had opgehaald — hij pollt elke 30 seconden — en de gateway herbaseert in plaats van dubbel te tellen wanneer een teller terugloopt. Een node waarvan de bridge de eigenaar niet kent, wordt **stilzwijgend** overgeslagen, dus een niet-ingestelde operator-wallet leest als \"deze machines hebben niets verdiend\".",
       },
     ],
   },
@@ -117,14 +198,14 @@ runtime-only → live worker/model processes, in-flight operations
       { t: "h2", kick: "Metering", text: "Betalen per inferentie in KVR" },
       {
         t: "p",
-        md: "Gebruik wordt in KVR verrekend via een driestappenflow — **quote → payment → inference** — zodat een verzoek geprijsd is vóór het draait en de nodes die het bedienden erna worden bijgeschreven. De gateway aggregeert ook een **live modelcatalogus** van elke bereikbare hub, zodat `/v1/models` weerspiegelt wat het netwerk nu echt kan serveren.",
+        md: "Gebruik wordt in KVR verrekend via een driestappenflow — **quote → payment → inference** — zodat een verzoek geprijsd is vóór het draait en de nodes die het bedienden erna worden bijgeschreven. De gateway aggregeert ook een **live modelcatalogus** van elke bereikbare bridge, zodat `/v1/models` weerspiegelt wat het netwerk nu echt kan serveren.",
       },
       {
         t: "ul",
         items: [
           "Gateway-hosts verdienen een **uurlijkse uptime-beloning** voor het online houden van het toegangspunt, plus een **×1.5-bonus** op elke inferentie die ze mee bedienen.",
-          "Een publieke gateway draaien vereist het staken van **100.000 KVR** (net als een hub).",
-          "Publieke deployments beschermen operator-toegang met **SIWS + 2FA**; kale hubs zijn alleen ontworpen voor vertrouwde host / LAN / VPN.",
+          "Een publieke gateway draaien vereist het staken van **100.000 KVR** (net als een bridge).",
+          "Publieke deployments beschermen operator-toegang met **SIWS + 2FA**; een kale bridge is alleen ontworpen voor vertrouwde host / LAN / VPN.",
         ],
       },
     ],
@@ -158,109 +239,86 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
     ],
   },
-  "relay-443": {
-    title: "443-relay",
-    summary: "Het datavlak voor apparaten achter NAT: beide uiteinden bellen naar buiten via een WebSocket-brug op poort 443.",
-    blocks: [
-      {
-        t: "p",
-        md: "Telefoons achter carrier-NAT kunnen geen inkomende verbindingen accepteren, en edges zoals Cloudflare laten alleen poorten 80/443 door. De **443-relay** lost beide op: een WebSocket-brug per edge met een **1-byte rol-preamble** laat beide kanten **naar buiten** bellen, zodat een telefoon aan het datavlak deelneemt en daarbij **nul inkomende poorten** opent.",
-      },
-      {
-        t: "code",
-        caption: "Twee uitgaande verbindingen ontmoeten elkaar in het midden; de preamble zegt wie wie is.",
-        code: `phone   ──outbound──▶ wss://edge:443  ◀──outbound── backbone
-                     [role byte: worker]   [role byte: dialer]
-        bridge splices the two streams → one ordinary TCP pipe`,
-      },
-      { t: "h2", kick: "Gehard in productie", text: "Drie echte bugs, drie fixes" },
-      {
-        t: "ul",
-        items: [
-          "**Build-fingerprint-overeenstemming** — beide uiteinden moeten bewijzen dat ze hetzelfde runtime-pack draaien voordat er ook maar één tensor-byte stroomt.",
-          "**Node-token-downloadauthenticatie** — partial-shard-downloads authenticeren met hetzelfde wallet-afgeleide node-token dat de app al bezit.",
-          "**De `Int.ushr`-framestilstand** — Kotlins `ushr` gebruikt alleen de laagste 5 bits van de shift, dus `len ushr 56` werd `len ushr 24` en beschadigde stilletjes elk frame ≥ 64 KiB (een `result_output` van 593 KB was het eerste slachtoffer). Opgelost door de lengteverpakking naar `Long`-shifts te verplaatsen — dragend voor gebundelde expert-dispatch, die routinematig 64 KiB overschrijdt.",
-        ],
-      },
-      {
-        t: "p",
-        md: "De relay draagt wat de topologie nodig heeft — ringlaaggrenzen of expert-dispatchstromen — en hetzelfde voor de ring geverifieerde mechanisme is wat telefoon-workers in de zwerm gebruiken.",
-      },
-      {
-        t: "p",
-        md: "Zowel de `/api/expert-relay`- als de `/api/ring-relay`-upgrades zijn **rauw doorgelust**: de gateway stuurt WebSocket-frames byte-voor-byte door zonder ze te parsen, zodat de relay een dunne, modelagnostische pijp blijft. Hij **meet nog steeds de bytes die hij per sessie overbrugt**, en dat gemeten werk vloeit in het bijdrageregister van de hub en wordt in **KVR** verrekend naar de eigen wallet van de worker — relayen voor een telefoon achter NAT verdient precies zoals een direct verbonden node.",
-      },
-    ],
-  },
 
-  linkcpp: {
-    title: "linkcpp",
-    summary: "Het besturingsvlak met beschikbare broncode (BSL) dat alledaagse hardware in een gedistribueerde inferentie-engine verandert.",
+  p4: {
+    title: "p4",
+    summary: "De engine achter Kvasir: een event-geadresseerd protocol waarin agents nodes bezitten, stage-servers lagen vasthouden, en plaatsing iets is wat een operator vastlegt in plaats van iets wat het netwerk raadt.",
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** is de engine achter Kvasir: een besturingsvlak rond het RPC-datavlak van de inferentie-engine dat grote AI-modellen over meerdere GPU's en machines draait met `ggml-rpc-server`- / `llama-server`-binaries die dicht bij upstream zijn gebouwd. Alles wat het toevoegt is orkestratie — GPU-ontdekking, node-slots, laagplaatsingsplanning, worker-start en de OpenAI/Anthropic-gateways.",
+        md: "**p4** draait één model over meerdere machines door het in **stages** te knippen — aaneengesloten plakken van zijn lagen — en elke stage een eigen proces te geven. Een **agent** bezit de nodes op een host: hij start stage-servers, routeert events ertussen en staat in voor hun levenscyclus. Er is geen scheduler die bepaalt waar iets heen gaat; een operator schrijft een placement plan, laadt het, en het netwerk serveert daarna precies dat.",
       },
-      { t: "h2", kick: "Architectuur", text: "Eén hub, op upstream gebaseerde workers" },
       {
         t: "code",
-        caption: "Het verzoekpad door een linkcpp-deployment.",
+        caption: "Het verzoekpad door een p4-deployment.",
         code: `browser / SDK
-  → hub :19000                      # FastAPI control plane (Docker)
-  → GPU-less llama-server master    # per controller, :8080+
-  → ggml-rpc-server workers         # slots :50052-50056 · units · agents`,
+  → gateway :8791              # payment, settlement, the wallet app
+  → bridge :19000              # OUTER: session, submit, gather
+  → p4 agent                   # owns this host's nodes
+  → stage servers              # one process per layer slice`,
       },
+      { t: "h2", kick: "Adressering", text: "Een stage belt de agent van de volgende stage" },
+      {
+        t: "p",
+        md: "Wanneer een stage zijn lagen af heeft, geeft hij het resultaat door aan de volgende stage door zijn eigen agent te vragen een verbinding te openen naar **de agent van die stage, op het adres dat die agent adverteert**. Het geadverteerde adres is daarom niet cosmetisch: het moet bereikbaar zijn vanaf elke andere host in de ring, en het hoort het snelste netwerk te noemen dat ze delen. Adverteer loopback en een ring van twee hosts belt stilletjes zichzelf.",
+      },
+      { t: "h2", kick: "Levenscyclus", text: "Eén getal bindt een load samen" },
       {
         t: "ul",
         items: [
-          "**Broncode beschikbaar onder de BSL 1.1** — vrij om te lezen en op voort te bouwen; niet-gemonetiseerd intern gebruik is toegestaan, en gehost of inkomstengenererend gebruik vereist een commerciële licentie.",
-          "Het inferentie-engine-datavlak blijft **dicht bij upstream** — een kleine set patches (mobiele GPU-over-RPC en de MoE-expert-dispatch-hook) — zodat upstream-prestatieverbeteringen blijven binnenstromen.",
-          "Geleverd als **één Docker-image**: de FastAPI-hub plus de twee inferentie-engine-binaries ingebakken; native worker-nodes bouwen buiten Docker voor CUDA/Metal/Vulkan/CPU.",
+          "**De load generation wordt gekozen door wie laadt** en wordt op exacte gelijkheid gecontroleerd bij elke sessie, inferentie, verrekening en unload. Hij wordt nergens op de machines vastgelegd, dus de lader schrijft hem naar schijf *voordat* het eerste commando vertrekt — zonder dat getal kan een geladen model niet eens meer worden afgebroken.",
+          "**De generation van een node en de load generation zijn hetzelfde getal.** De adapter vergelijkt de bron-generation van een release-bon met de load waar die bij hoort en stopt de node wanneer ze verschillen, dus een ring die met twee verschillende getallen is geladen serveert één verzoek en verliest dan zijn kop.",
+          "**Een operationeel journaal is verplicht** voordat een model überhaupt laadt: het is de toelatingsregistratie die een load replay-veilig maakt, geen debughulpmiddel.",
         ],
       },
-      { t: "h2", kick: "De planner", text: "GGUF-metadata erin, plaatsing eruit" },
+      { t: "h2", kick: "Wat het niet doet", text: "Bewuste weglatingen" },
       {
         t: "p",
-        md: "De planner leest GGUF-metadata en produceert aaneengesloten laagvensters per node, de bijbehorende `--tensor-split` en KV-cache- / laag- / expert-VRAM-schattingen per node — plus optionele offload van MoE-expert-FFN's naar node-RAM, uitgegeven als inferentie-engine `-ot`-regels (bijv. `blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU`) en via `--override-tensor` naar de start gedragen. Een plan dat niet past wordt **vóór** het laden als **infeasible** gemeld, in plaats van als OOM tijdens runtime ontdekt.",
+        md: "p4 past **geen chat-template** toe — het stuurt een ondoorzichtige prompt door en verwacht dat de aanroeper het beurtformaat van het model al heeft gerenderd. Het neemt **geen plaatsingsbeslissingen**. En het kent geen begrip van wie er betaald moet worden: stages rapporteren de tokenrijen die ze hebben gedraaid, en verrekening is andermans contract. Elk daarvan is een naad die Kvasir invult in de [bridge](/wiki/bridge), waardoor de engine smal genoeg blijft om upstream te kunnen volgen.",
       },
       {
-        t: "p",
-        md: "Runtime-compatibiliteit is een eersteklas concept: protocol, runtime-pack, inferentie-engine-revisie en RPC-ABI worden geverifieerd, en mismatches worden hard geblokkeerd vóór elke bind, plan, load of inferentie.",
+        t: "callout",
+        md: "**De agent en de native stage-server zijn één release.** Een agent die uit een nieuwere tree is gebouwd faalt bij READY op een ontbrekende capaciteit in de HELLO van de stage-server — nadat het hele model is geladen. Bouw beide uit dezelfde checkout.",
       },
     ],
   },
-  "ring-runtime": {
-    title: "Ring-runtime",
-    summary: "Pipeline-inferentie zonder master: elk apparaat draait zijn laagvenster en geeft alleen grenzen door aan zijn buur.",
+  "in-flight-ring": {
+    title: "In-flight ring",
+    summary: "Een pipeline die nooit leegloopt: meerdere verzoeken bezetten tegelijk verschillende stages, zodat geen stage hoeft te wachten op de stage ervoor.",
     blocks: [
       {
         t: "p",
-        md: "De **ring-runtime** is Kvasirs serveertopologie met lage latentie. Elk apparaat laadt alleen zijn aaneengesloten **laagvenster** en opent precies twee verbindingen — voorganger en opvolger. Hidden-state-grenzen circuleren rond de ring; de laatste rang bemonstert het token en stuurt het terug. **Geen centrale master op het datapad, en geen node bezit het hele model.**",
+        md: "Kvasir serveert een model als een **pipeline van stages**, die elk een aaneengesloten plak van zijn lagen vasthouden. Een stage draait zijn lagen en geeft de grens door — een hidden state, geen gewichten — aan de volgende. Geen enkele stage bezit het hele model, en er zit niets midden in het datapad: de bridge dient in bij de kop en leest van de staart, terwijl de stages hun resultaten via hun eigen agents aan elkaar doorgeven.",
       },
-      { t: "h2", kick: "Waarom geen ster", text: "Het RPC-masterprobleem" },
+      { t: "h2", kick: "Het in-flight-deel", text: "Waarom een leeggelopen pipeline het grootste deel van de machine verspilt" },
       {
         t: "p",
-        md: "In de klassieke RPC-topologie opent één master de **hele GGUF** en belt naar elke worker. Dat breekt in een open netwerk op drie manieren: de master moet de hele checkpoint bezitten en serveren; elke worker moet belbaar zijn — telefoons achter carrier-NAT zijn dat niet; en de master is één eigenaar in een netwerk dat er geen zou moeten hebben. De ring verwijdert alle drie: elke stage bezit zijn venster, verbindingen lopen van buur naar buur, en de relay maakt NAT-apparaten bereikbaar.",
+        md: "Als een pipeline eerst één verzoek afmaakt voordat hij het volgende toelaat, staat op elk moment elke stage op één na stil — een ring met vier stages draait op een kwart van zijn hardware. Het **in-flight**-ontwerp houdt meerdere verzoeken tegelijk in beweging: terwijl stage 3 het ene verzoek decodeert, is stage 0 al bezig met de prefill van een ander. Stages rapporteren hoe lang ze een batch vasthielden en hoe lang ze niets hadden om in te dienen, zodat een uitgehongerde ring er anders uitziet dan een verzadigde.",
       },
       {
         t: "code",
-        caption: "Eén decodeerstap rond een ring met 4 stages.",
-        code: `token n:  stage A (layers 0-14)  ──h──▶  stage B (15-26)
-                                             │h
-          stage D (37-48) ◀──h──  stage C (27-36)
-          └─ samples token n, sends it around → client`,
+        caption: "Vier stages, drie verzoeken, één moment in de tijd.",
+        code: `           stage 0        stage 1        stage 2        stage 3
+           layers 0-11    12-22          23-33          34-44
+
+request A                                              decode
+request B                 decode
+request C  prefill
+
+boundaries pass →  agent to agent, never through the caller`,
+      },
+      { t: "h2", kick: "Samenstelling", text: "Wat een batch precies is" },
+      {
+        t: "p",
+        md: "Rijen uit verschillende verzoeken worden in één fysieke batch verpakt, en die exacte samenstelling wordt doorgegeven aan elke stroomafwaartse stage in plaats van per hop opnieuw bepaald. Dat is wat een prefill en meerdere decodes samen één pass laat delen, en daarom is de grootte van een batch een eigenschap van de load: het plan legt de rij- en micro-batchbreedtes vooraf vast, en die breedtes bepalen het grootste resultaat dat een stage ooit kan teruggeven.",
       },
       {
-        t: "ul",
-        items: [
-          "Plaatsing komt uit het **rank manifest** van de planner — bijv. de 49 lagen van Qwen3.5-122B verdeeld over een GPU, CPU, NPU en telefoon.",
-          "Grenzen zijn klein (één hidden-state-vector per token), dus hops zijn goedkoop, zelfs over zwakke verbindingen.",
-          "Mobiele GPU's draaien ringstages **direct** (Adreno via OpenCL) — de RPC-route naar een telefoon-GPU bleek onhaalbaar omdat Adrenos bufferindeling RPC-serialisatie niet overleeft, maar een lokale stage bezit zijn backend, dus alleen grenzen kruisen de lijn.",
-        ],
+        t: "callout",
+        md: "**Een pipeline heeft minstens twee stages nodig.** Een pipeline met één stage wordt botweg geweigerd — de kop en de staart zijn verschillende rollen, en één node die beide samenvouwt is een andere engine, geen kleinere ring.",
       },
       {
         t: "p",
-        md: "De ring is het **latentie**-pad; zijn vloer is laaggranulariteit (~1.4 GB op de 122B). De expertzwerm verwijdert die vloer en sluit aan op hetzelfde serveerweefsel.",
+        md: "De ring is het **latentie**-pad, en zijn granulariteit is een laag. Expert-sharding verwijdert die vloer door binnen een laag te snijden, en sluit aan op hetzelfde serveerweefsel.",
       },
     ],
   },
@@ -341,6 +399,10 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
         t: "p",
         md: "**Expert-sharding** verlaagt de draageenheid van de zwerm van een laag (~1.4 GB op de 122B) naar een expert (**5.3 MB**). Een zwak apparaat downloadt een plak van 8–64 experts (**42–340 MB**), laadt die als pure-functieworker — geen attention, geen KV, geen sampler — en berekent zijn experts wanneer de router van de backbone ze selecteert.",
       },
+      {
+        t: "callout",
+        md: "**Engine-status.** Sharding op expertkorrel is gebouwd en gedemonstreerd op Kvasirs vorige engine, en de resultaten hieronder komen uit dat werk. De huidige engine, [p4](/wiki/p4), serveert vandaag op laagkorrel; het overzetten van expert-sharding daarnaartoe is ontworpen en in uitvoering. Waar een detail een tool of een route noemt, is dat de tool of route die op de vorige engine draaide.",
+      },
       { t: "h2", kick: "Twee rollen", text: "Backbone × worker" },
       {
         t: "code",
@@ -379,6 +441,10 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
       {
         t: "callout",
         md: "**De invariant:** de enige discrete beslissing in het netwerk is MoE-routering (top-8 van 256). Kvasir draait de router **precies één keer, op de backbone**, en stuurt workers alleen de id's van de geselecteerde experts. Een heterogene zwerm kan licht verschillen in de *grootte* van de uitvoer van elke expert — hij verschilt nooit in *welke experts draaien*.",
+      },
+      {
+        t: "callout",
+        md: "**Engine-status.** Sharding op expertkorrel is gebouwd en gedemonstreerd op Kvasirs vorige engine, en de resultaten hieronder komen uit dat werk. De huidige engine, [p4](/wiki/p4), serveert vandaag op laagkorrel; het overzetten van expert-sharding daarnaartoe is ontworpen en in uitvoering. Waar een detail een tool of een route noemt, is dat de tool of route die op de vorige engine draaide.",
       },
       {
         t: "p",
@@ -449,7 +515,7 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
     blocks: [
       {
         t: "p",
-        md: "**GGUF** is het één-bestandsmodelformaat van het inferentie-engine-ecosysteem: metadata (architectuur, laagaantal, dimensies, kwantisatie) plus de tensoren als rauwe gekwantiseerde bytes (bijv. Q4_K_M). De planner van linkcpp leest de metadata voor plaatsingen en grootteschattingen; de serveerkant snijdt de tensorbytes om downloads te produceren.",
+        md: "**GGUF** is het één-bestandsmodelformaat van het inferentie-engine-ecosysteem: metadata (architectuur, laagaantal, dimensies, kwantisatie) plus de tensoren als rauwe gekwantiseerde bytes (bijv. Q4_K_M). Een placement plan wordt tegen die metadata geschreven — laagbereiken, apparaattoewijzing en grootteschattingen; de serveerkant snijdt de tensorbytes om downloads te produceren.",
       },
       {
         t: "ul",
@@ -486,7 +552,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         t: "ul",
         items: [
           "**Uitgavenkant** — betalen per inferentie via de gateway: quote → payment → inference.",
-          "**Verdienkant** — bijdrage-eenheden × laagaandeel × prestatieniveau voor rekenwerk; uurlijkse uptime voor hub-/gateway-rollen.",
+          "**Verdienkant** — bijdrage-eenheden × laagaandeel × prestatieniveau voor rekenwerk; uurlijkse uptime voor bridge-/gateway-rollen.",
           "**Verrekening** — op Solana, naar de eigen wallet van elke node-eigenaar; de verrekenservice schrijft elke node bij die een verzoek raakte.",
           "**Vernoemd naar de mythe** — de Mede der Poëzie, gebrouwen uit Kvasir, die wijsheid schonk aan ieder die ervan dronk: open toegang, en beloningen voor iedereen die bijschenkt.",
         ],
@@ -506,7 +572,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         caption: "Hoe rekenbeloningen worden berekend.",
         code: `units    += (tokens / 1k) × (node_layers / total_layers)
 effective = units × perf_tier × gateway_bonus
-infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
+infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
@@ -527,7 +593,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "ul",
         items: [
           "Beloningen volgen **echt werk**: een node die niets serveerde verdient niets, ongeacht uptime (bij rekenrollen).",
-          "Rollen **stapelen** — één machine kan rekenwerk + gateway + hub zijn, en de stromen tellen op.",
+          "Rollen **stapelen** — één machine kan rekenwerk + gateway + bridge zijn, en de stromen tellen op.",
           "Alles wordt in KVR verrekend naar de eigen eigenaarswallet van de node; het dashboard toont ruw × niveau = effectief en een opeisbaar saldo.",
         ],
       },
@@ -563,11 +629,11 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Het staken van 100.000 KVR kwalificeert een wallet om hub- of gateway-nodes te draaien.",
+    summary: "Het staken van 100.000 KVR kwalificeert een wallet om bridge- of gateway-nodes te draaien.",
     blocks: [
       {
         t: "p",
-        md: "Staking vergrendelt KVR om een wallet te kwalificeren voor operatorrollen en node-beloningen. Een **hub**- of **gateway**-node draaien vereist een stake van **100.000 KVR**; gewone rekennodes doen mee zonder stake en verdienen voor de lagen die ze draaien.",
+        md: "Staking vergrendelt KVR om een wallet te kwalificeren voor operatorrollen en node-beloningen. Een **bridge**- of **gateway**-node draaien vereist een stake van **100.000 KVR**; gewone rekennodes doen mee zonder stake en verdienen voor de lagen die ze draaien.",
       },
       {
         t: "ul",
@@ -609,15 +675,15 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "Voor publieke deployments wordt operator-toegang tot hub en gateway geauthenticeerd met **Sign-In With Solana**: de wallet van de operator ondertekent een door de server uitgegeven nonce en bewijst eigendom zonder wachtwoord of bewaarde inloggegevens. Daarbovenop beschermen **TOTP-2FA** en eenmalige back-upcodes de sessie — op zowel hub als gateway.",
+        md: "Voor publieke deployments wordt operator-toegang tot de gateway geauthenticeerd met **Sign-In With Solana**: de wallet van de operator ondertekent een door de server uitgegeven nonce en bewijst eigendom zonder wachtwoord of bewaarde inloggegevens. Daarbovenop beschermen **TOTP-2FA** en eenmalige back-upcodes de sessie.",
       },
       {
         t: "ul",
         items: [
           "**Nergens wachtwoorden** — de walletsleutel is de identiteit en de nonce voorkomt replay; er is serverzijdig niets te phishen of te lekken.",
-          "**TOTP-inschrijving per wallet** wordt in de hub-staat gepersisteerd, dus 2FA overleeft herstarts samen met slots en bindingen.",
+          "**TOTP-inschrijving per wallet** wordt in het grootboek van de gateway gepersisteerd, dus 2FA overleeft een herstart.",
           "**Back-upcodes zijn eenmalig** — elke code wordt bij het inloggen verbruikt, voor herstel wanneer het authenticator-apparaat niet beschikbaar is.",
-          "**Eerlijk verklaarde reikwijdte** — kale hub en RPC-poorten zijn ontworpen voor vertrouwde host / LAN / VPN; SIWS + 2FA is de laag die *publieke* domeinen veilig blootstelbaar maakt.",
+          "**Eerlijk verklaarde reikwijdte** — de bridge en de engine-poorten gaan uit van een vertrouwde host / LAN / VPN; SIWS + 2FA is de laag die *publieke* domeinen veilig blootstelbaar maakt.",
         ],
       },
     ],
@@ -661,7 +727,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "Toegang tot het netwerk is **betalen-per-inferentie**: de gateway geeft een KVR-prijs op voor je verzoek, je wallet betaalt die on-chain, en pas daarna draait de hub het model. De prijsstelling is een kleine, transparante formule — een ondergrens per verzoek plus een tarief per token — vooraf opgegeven en verrekend op het **werkelijke** tokengebruik na generatie.",
+        md: "Toegang tot het netwerk is **betalen-per-inferentie**: de gateway geeft een KVR-prijs op voor je verzoek, je wallet betaalt die on-chain, en pas daarna draait de ring het model. De prijsstelling is een kleine, transparante formule — een ondergrens per verzoek plus een tarief per token — vooraf opgegeven en verrekend op het **werkelijke** tokengebruik na generatie.",
       },
       {
         t: "code",
@@ -694,6 +760,10 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "p",
         md: "Een **expert-worker** is een pure `(hidden, ids) → out`-functie — geen attention, geen KV-cache, geen sampler — die een plak van de experts van een MoE-model berekent wanneer de router van de backbone ze selecteert. Je kiest niet wat je serveert; de **dekkingsmarkt** overhandigt je het schaarste, hoogst belonende bereik bijgesneden op je budget, zodat een telefoon van 4 GB en een datacenter-GPU allebei een plek vinden.",
       },
+      {
+        t: "callout",
+        md: "**Engine-status.** Sharding op expertkorrel is gebouwd en gedemonstreerd op Kvasirs vorige engine, en de resultaten hieronder komen uit dat werk. De huidige engine, [p4](/wiki/p4), serveert vandaag op laagkorrel; het overzetten van expert-sharding daarnaartoe is ontworpen en in uitvoering. Waar een detail een tool of een route noemt, is dat de tool of route die op de vorige engine draaide.",
+      },
       { t: "h2", kick: "Zeven stappen", text: "Bouwen → aanmelden → serveren → bellen → verdienen" },
       {
         t: "code",
@@ -723,7 +793,7 @@ POST /api/expert-coverage`,
           "**De plak is piepklein.** Een layer-0-plak met 128 experts is **794 MB** tegenover het volledige model van 72 GB — de korrel die zwakke apparaten laat deelnemen. Je downloadt alleen het bereik dat de markt heeft toegewezen.",
           "**Naar buiten bellen, nooit naar binnen.** Stap 5 opent één uitgaande WebSocket op 443, zodat carrier-NAT en CDN-edges hem doorlaten en je nul inkomende poorten blootstelt — hetzelfde pad dat een telefoon gebruikt.",
           "**De heartbeat is dragend.** Zonder `POST /api/expert-coverage` serveer je niets dat de vraagkaart kent, en niets wat je doet wordt bijgeschreven.",
-          "**Beloning is per werk.** Overbrugd werk wordt bijgeboekt op het bijdrageregister van de hub; de gateway delta-crediteert KVR naar je **eigen** wallet. Je hebt een wallet-adres nodig om betaald te worden.",
+          "**Beloning is per werk.** Overbrugd werk wordt bijgeboekt op het bijdrageregister van de bridge; de gateway delta-crediteert KVR naar je **eigen** wallet. Je hebt een wallet-adres nodig om betaald te worden.",
         ],
       },
       {
@@ -732,57 +802,59 @@ POST /api/expert-coverage`,
       },
     ],
   },
-  "hub-operations": {
-    title: "Een hub beheren",
-    summary: "Operatornotities voor het draaien van een hub en gateway: hot-patchen zonder rebuilds, herstarts overleven, de catalogus geregistreerd houden en het oppervlak afgrendelen tot 443.",
+  "bridge-operations": {
+    title: "Een bridge beheren",
+    summary: "Operatornotities voor het draaien van de bridge en de ring erachter: een plan laden, een herstart overleven, bijdrage laten doorstromen en de engine van het internet af houden.",
     blocks: [
       {
         t: "p",
-        md: "De hub (besturingsvlak) en gateway (publiek toegangspunt) zijn de twee langlevende services die een operator gezond houdt. De hub en zijn RPC-poorten zijn **ongeauthenticeerd by design** — alleen vertrouwde host / LAN / VPN — en al het publieke verkeer komt samen op het enkele 443-oppervlak van de gateway. Dit zijn de operationele notities die die opzet stabiel houden bij codewijzigingen, herstarts en reboots.",
+        md: "De **gateway** (publiek toegangspunt) en de **bridge** (het gezicht van de engine) zijn de twee langlevende services die een operator gezond houdt, met daarachter de p4-agents en hun stage-servers. De engine spreekt helemaal geen authenticatie — hij gaat ervan uit dat machines die elkaar kunnen bereiken dat ook horen te doen — dus alles wat publiek is komt samen op de gateway, en de bridge wordt via een tunnel bereikt in plaats van gepubliceerd.",
       },
-      { t: "h2", kick: "Deployen & hot-patchen", text: "Code wijzigen zonder rebuild" },
+      { t: "h2", kick: "Laden", text: "Een plan, en het getal waaronder het geladen wordt" },
       {
         t: "ul",
         items: [
-          "**Snelle route:** werk hub-/gateway-code bij met `docker cp <file> <container>:/app/...` + `docker restart` — geen image-rebuild. Maar **een omgevingsvariabele toevoegen kan zo niet** (dat vereist een container-recreate); geef in plaats daarvan de voorkeur aan een runtime-config-API die naar de hub-staat persisteert.",
-          "**Compose-drift:** een langdraaiende container kan afwijken van zijn compose-bestand (netwerkmodus, entrypoint, env). Doe altijd `docker inspect` op de echte config vóór een `docker compose up -d`-recreate — als hij is afgedreven, wist recreatie de productie-instellingen. Gebruik cp + restart.",
-          "**Diff voordat je patcht:** `docker cp` het bestand uit de container naar buiten en diff het tegen repo-HEAD voordat je het vervangt, zodat de hot-patch van een eerdere sessie niet stilletjes verloren gaat.",
+          "**Plaatsing is een plan dat je schrijft**, geen verzoek dat je doet: de bridge antwoordt `409` aan wie hem vraagt te serveren. Genereer het plan, draai het droog, en laad het daarna met `--confirm`.",
+          "**De load generation wordt naar schijf geschreven voordat het eerste commando vertrekt.** Hij wordt gekozen door de lader, bij elke sessie en bij elke unload op exacte gelijkheid gecontroleerd, en nergens op de machines vastgelegd — raak je hem kwijt, dan kan een geladen model niet eens meer worden afgebroken.",
+          "**De node generation is datzelfde getal.** Laad een ring met twee verschillende getallen en hij serveert precies één verzoek voordat de kop stopt; de volgende sessie blijft halfgeladen hangen. Gebruik per load een verse waarde, anders botst een registratie die een mislukte poging heeft achtergelaten ermee.",
+          "**De agent weigert te laden zonder zijn operationele journaal.** Dat is de toelatingsregistratie die een replay-veilige load nodig heeft, geen debugvlag.",
         ],
       },
-      { t: "h2", kick: "Een herstart overleven", text: "Staat blijft; geladen modellen niet" },
+      { t: "h2", kick: "Een herstart overleven", text: "Wat terugkomt en wat niet" },
       {
         t: "ul",
         items: [
-          "Een hub-herstart **stopt met serveren.** Slots, controllers en bindingen herstellen uit `hub-state.json`, maar een geladen model is alleen runtime. Lees na een herstart de `last_load` van elke controller en vuur `POST /api/controllers/{cid}/serve` opnieuw af — zelfs een groot model komt in ~1 minuut terug dankzij de page cache.",
-          "**Gateway-watchdog:** peil elk geserveerd model met een verzoek van 1 token elke 30 s en herlaad automatisch uit `last_load` bij falen (met een cooldown). **Peil *alle* modellen, niet `catalog[0]`** — zodra een gezond model van een andere hub naar voren sorteert, mist een peiling die alleen de eerste bekijkt een groot model dat uitvalt (een echte bug, sindsdien opgelost).",
-          "**Catalogus-TTL:** `POST /api/pay/hub/register` heeft een TTL van 90 s, dus houd registratie levend met een heartbeat-lus van ~60 s, bestand tegen reboots gemaakt met een `@reboot`-cron of een systemd-unit.",
+          "**Een herstart van een agent laat zijn nodes vallen.** Stage-servers bestaan alleen tijdens runtime; het model moet opnieuw uit het plan worden geladen. Dat is de herstelprocedure, niet het falen ervan.",
+          "**De gateway herlaadt het niet voor je.** Zijn ring-watchdog merkt op dat een model niet meer serveert, leert uit de `409` van de bridge dat plaatsing extern is, zegt dat één keer en stopt met vragen.",
+          "**Bijdragetellers leven in het geheugen van de bridge.** De gateway pollt elke 30 s en schrijft het verschil bij; een herstart verliest alleen wat nog niet was opgehaald, en de gateway herbaseert in plaats van dubbel te betalen wanneer een teller terugloopt.",
         ],
       },
-      { t: "h2", kick: "Afgrendelen", text: "Alles wat publiek is gaat via 443" },
+      { t: "h2", kick: "Afgrendelen", text: "De engine staat niet naar het internet gericht" },
       {
         t: "ul",
         items: [
-          "De hub (:19000) en RPC-poorten gaan uit van een vertrouwd netwerk; het enige dat naar het internet gericht mag zijn is de gateway op 443 (inclusief zijn WebSocket-relay-passthrough).",
-          "Als een hub op een publiek IP moet staan, firewall hem dan tot vertrouwde IP's — maar Dockers gepubliceerde poorten worden **ge-DNAT vóór de INPUT-chain**, dus een regel op `dport` matcht niet. Filter in plaats daarvan in de `DOCKER-USER`-chain met de originele bestemmingspoort van conntrack (`--ctorigdstport`), en persisteer de regels met een systemd-oneshot geordend `After=docker.service`.",
+          "Bind de bridge op loopback en geef hem een service-token. Zonder dat token authenticeert hij niemand, en alles wat hem bereikt kan de ring gratis draaien — hij zegt dat bij het opstarten, in plaats van je het later te laten ontdekken.",
+          "Agents adverteren het adres dat andere agents bellen. Gebruik het snelste netwerk dat de hosts delen, nooit loopback tussen hosts, en houd dat netwerk van het publieke internet af.",
+          "Moet er iets op een publiek IP staan, onthoud dan dat Dockers gepubliceerde poorten **ge-DNAT worden vóór de INPUT-chain**, dus een regel op `dport` matcht niet. Filter in de `DOCKER-USER`-chain op de originele bestemmingspoort van conntrack (`--ctorigdstport`), en persisteer met een systemd-oneshot geordend `After=docker.service`.",
         ],
       },
-      { t: "h2", kick: "Verrekening & valkuilen", text: "Pull, niet push — en één shell-valkuil" },
+      { t: "h2", kick: "Valkuilen", text: "Twee die echt tijd kosten" },
       {
         t: "ul",
         items: [
-          "**Verrekening is pull, geen push:** de hub accumuleert bijdragen; de gateway pollt `GET /api/contributions` en delta-crediteert KVR. Als een hub-herstart zijn tellers reset, herbaseert de gateway zodat niets dubbel wordt betaald. Het expert-werktarief wordt bepaald door `LINKCPP_EXPERT_UNITS_PER_MB`.",
-          "**De `pkill`-valkuil:** `ssh host 'pkill -f X; ...'` matcht zijn *eigen* commandoregel en doodt zichzelf. Gebruik een character class in het patroon (`X[x]`), en zet nooit de spawn en de pkill in hetzelfde remote commando.",
+          "**Een niet-ingestelde operator-wallet leest als nul verdiensten.** De gateway slaat elke bijdrageregel zonder eigenaar over en logt er niets over. De nodes lijken stil te staan terwijl ze serveren.",
+          "**`pkill` matcht zijn eigen commandoregel.** `ssh host 'pkill -f server.js; ...'` doodt de shell die het draait. Zet het patroon in een scriptbestand in plaats van in het remote commando, gebruik een character class (`server[.]js`), en onthoud dat een proces dat als kale `node server.js` is gestart geen pad heeft om op te matchen — vind het dan via zijn luisterpoort.",
         ],
       },
     ],
   },
-  "hub-wan-interconnect": {
-    title: "Hub-WAN-interconnect (200G-optiek)",
-    summary: "Hoe hubs koppelen op 200 Gb/s over een kamer, een campus of een stad: welke optiek op welke afstand, wat waar in past, en wat er nodig is om echt line rate te halen.",
+  "wan-interconnect": {
+    title: "WAN-interconnect (200G-optiek)",
+    summary: "Hoe rekensites koppelen op 200 Gb/s over een kamer, een campus of een stad: welke optiek op welke afstand, wat waar in past, en wat er nodig is om echt line rate te halen.",
     blocks: [
       {
         t: "p",
-        md: "Wanneer twee hubs allebei publieke routes hebben, hoort het expert-dispatch-datavlak een **directe link** te zijn — de 443-relay is voor edges achter NAT. Dit item is het concrete recept om die directe link 200 Gb/s-klasse te maken met catalogusonderdelen. Eén regel ordent alles: **de glasvezel is snelheidsneutraal glas; de snelheid zit in de pluggable aan elk uiteinde.**",
+        md: "Wanneer twee sites allebei publieke routes hebben, hoort het expert-dispatch-datavlak een **directe link** te zijn — de relay is voor edges zonder eigen adres. Dit item is het concrete recept om die directe link 200 Gb/s-klasse te maken met catalogusonderdelen. Eén regel ordent alles: **de glasvezel is snelheidsneutraal glas; de snelheid zit in de pluggable aan elk uiteinde.**",
       },
       { t: "h2", kick: "Stap 1 · kies op afstand", text: "De reikwijdteladder" },
       {
@@ -801,8 +873,8 @@ POST /api/expert-coverage`,
       {
         t: "ul",
         items: [
-          "**NIC-kant** — kaarten van de ConnectX-6/7-klasse bieden QSFP56-cages; DAC/AOC/FR4/LR4/ER4 zitten allemaal direct in de NIC. Een hub van de GB10-klasse heeft al twee 200 GbE QSFP-poorten aan boord, dus een link tussen twee hubs heeft precies één kabel en nul nieuwe hardware nodig.",
-          "**Switch-kant** — coherente ZR+-optiek is QSFP-DD-formfactor en hoort in een switch of router; de NIC van de hub sluit dan op 200G via een korte DAC aan op die switch. Gebruik deze tier wanneer de verre hub tientallen kilometers weg is.",
+          "**NIC-kant** — kaarten van de ConnectX-6/7-klasse bieden QSFP56-cages; DAC/AOC/FR4/LR4/ER4 zitten allemaal direct in de NIC. Een host van de GB10-klasse heeft al twee 200 GbE QSFP-poorten aan boord, dus een link tussen twee sites heeft precies één kabel en nul nieuwe hardware nodig.",
+          "**Switch-kant** — coherente ZR+-optiek is QSFP-DD-formfactor en hoort in een switch of router; de NIC van de site sluit dan op 200G via een korte DAC aan op die switch. Gebruik deze tier wanneer de verre site tientallen kilometers weg is.",
           "**De glasvezel zelf** — standaard single-mode (G.652) duplex-LC-paren, geleased als dark fiber per streng. Hetzelfde glas draagt vandaag 100G en later 400G; upgrades zijn een moduleverwisseling, nooit graafwerk.",
           "**Voorbij ~120 km** — stop je met onderdelen kopen en ga je een wavelength leasen bij een carrier; de demarcatie is een Ethernet-overdracht op je switch.",
         ],
@@ -810,33 +882,37 @@ POST /api/expert-coverage`,
       {
         t: "code",
         caption: "Drie referentieopstellingen, goedkoopste eerst.",
-        code: `two-hub bench   : hub A qsfp0 ──QSFP56 DAC 1m── hub B qsfp0
-campus pair     : hub A [LR4] ──dark fiber, ≤10km── [LR4] hub B
-metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── hub`,
+        code: `two-site bench  : site A qsfp0 ──QSFP56 DAC 1m── site B qsfp0
+campus pair     : site A [LR4] ──dark fiber, ≤10km── [LR4] site B
+metro federation: site ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── site`,
       },
       { t: "h2", kick: "Stap 3 · echt 200G halen", text: "Line rate is een configuratie, geen aankoop" },
       {
         t: "ul",
         items: [
           "Gebruik **RDMA (RoCE)** voor de dispatch-stream waar beschikbaar — hosts van de GB10-klasse voeden de NIC via gesplitste PCIe-links, en de gemeten volle snelheid (~185–190 Gb/s) verschijnt onder RoCE met een correct gemapte topologie; een verkeerd gemapt pad topt op bijna de helft van het tarief en ongetunede platte TCP landt veel lager.",
-          "Schakel **jumbo frames (MTU 9000)** end-to-end in en houd `TCP_NODELAY` aan op de dispatch-sockets (de hub zet het al).",
-          "Verwacht te *verifiëren*, niet aan te nemen: draai een perftest tussen hubs na elke fysieke wijziging — het verschil tussen 95 en 190 Gb/s is onzichtbaar tot het gemeten is.",
+          "Schakel **jumbo frames (MTU 9000)** end-to-end in en houd `TCP_NODELAY` aan op de dispatch-sockets (de bridge zet het al).",
+          "Verwacht te *verifiëren*, niet aan te nemen: draai een perftest tussen de sites na elke fysieke wijziging — het verschil tussen 95 en 190 Gb/s is onzichtbaar tot het gemeten is.",
           "Houd de **443-relay als fallback-pad** — het belbeleid is direct-eerst voor publieke peers, relay voor NAT. De taak van de relay is bereik, de taak van de directe link is snelheid.",
         ],
       },
       {
         t: "p",
-        md: "Waarom dit voor de architectuur uitmaakt: decodeerlatentie wordt begrensd door de round-trip-tijd (~5 µs/km in glasvezel — natuurkunde, onafhankelijk van bandbreedte), dus een dikke pijp koopt **prefill-snelheid, doorvoer van gebundelde dispatch en vrijwel directe distributie van expert-plakken**, geen lagere latentie per token. Dat is precies de hub-tier-rol in het twee-tier-ontwerp: capaciteit in de dikke-pijp-tier, bereik in de relay-tier.",
+        md: "Waarom dit voor de architectuur uitmaakt: decodeerlatentie wordt begrensd door de round-trip-tijd (~5 µs/km in glasvezel — natuurkunde, onafhankelijk van bandbreedte), dus een dikke pijp koopt **prefill-snelheid, doorvoer van gebundelde dispatch en vrijwel directe distributie van expert-plakken**, geen lagere latentie per token. Dat is precies de rol van de site-tier in het twee-tier-ontwerp: capaciteit in de dikke-pijp-tier, bereik in de relay-tier.",
       },
     ],
   },
   "load-adaptive-scaling": {
     title: "Belasting-adaptieve schaling",
-    summary: "Kvasirs MoE-serveerpad groeit en krimpt met het verkeer: de coördinator schakelt bewezen workers opnieuw in onder verzadiging, en de hub werft inactieve nodes door de expertvraag te verhogen — alles pull-gebaseerd, zodat ook NAT-apparaten meedoen.",
+    summary: "Kvasirs MoE-serveerpad groeit en krimpt met het verkeer: de coördinator schakelt bewezen workers opnieuw in onder verzadiging, en de bridge werft inactieve nodes door de expertvraag te verhogen — alles pull-gebaseerd, zodat ook NAT-apparaten meedoen.",
     blocks: [
       {
         t: "p",
         md: "Kvasirs MoE-serveerpad schaalt elastisch mee met de belasting, in twee samenwerkende lagen. Bij rust serveert de coördinator alles lokaal voor het snelste pad per token; bij verzadiging laten de twee lagen hieronder de zwerm groeien — en krimpen hem weer wanneer de piek voorbij is.",
+      },
+      {
+        t: "callout",
+        md: "**Engine-status.** Sharding op expertkorrel is gebouwd en gedemonstreerd op Kvasirs vorige engine, en de resultaten hieronder komen uit dat werk. De huidige engine, [p4](/wiki/p4), serveert vandaag op laagkorrel; het overzetten van expert-sharding daarnaartoe is ontworpen en in uitvoering. Waar een detail een tool of een route noemt, is dat de tool of route die op de vorige engine draaide.",
       },
       { t: "h2", kick: "Laag 1", text: "Coördinatorkant: belasting-adaptieve dispatch" },
       {
@@ -852,17 +928,17 @@ metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km─�
           "De zelfquery is in tijd begrensd zodat een vastgelopen poll de dispatch nooit kan blokkeren.",
         ],
       },
-      { t: "h2", kick: "Laag 2", text: "Hubkant: belasting-adaptieve werving" },
+      { t: "h2", kick: "Laag 2", text: "Besturingsvlakkant: belasting-adaptieve werving" },
       {
         t: "p",
-        md: "De control-hub bewaakt elke MoE-coördinator en laat de workerpool groeien wanneer dat nodig is:",
+        md: "Het besturingsvlak bewaakt elke MoE-coördinator en laat de workerpool groeien wanneer dat nodig is:",
       },
       {
         t: "ul",
         items: [
           "Een achtergrondlus pollt de slots van elke coördinator en registreert verzadiging per model.",
           "Zolang een model verzadigd is, wordt zijn **effectief expert-replicadoel** verhoogd (base + boost). De dekkingsmarkt leest dan al-gedekte experts opnieuw als schaars, en een model met **geen** live workers wordt geseed vanuit zijn GGUF-metadata (aantal experts), zodat de vraag zelfs vanaf nul zichtbaar is.",
-          "Inactieve nodes pollen de vraagmarkt (`/api/expert-volunteer`) en krijgen een `(layer, expert-range)`-plak toegewezen om te serveren. Ze downloaden de plak, bellen de relay en registreren dekking; de hub bedraadt ze automatisch in de dispatch-map van de coördinator.",
+          "Inactieve nodes pollen de vraagmarkt (`/api/expert-volunteer`) en krijgen een `(layer, expert-range)`-plak toegewezen om te serveren. Ze downloaden de plak, bellen de relay en registreren dekking; het besturingsvlak bedraadt ze automatisch in de dispatch-map van de coördinator.",
           "Wanneer de belasting wegebt, valt het doel terug en verdwijnt de vraag, zodat de extra workers niet meer gedispatcht worden en na verloop van tijd wegvallen.",
         ],
       },

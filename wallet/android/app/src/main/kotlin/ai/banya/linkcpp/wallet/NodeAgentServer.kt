@@ -540,12 +540,12 @@ class NodeAgentServer(private val ctx: Context) {
         val conn = (URL(url).openConnection() as java.net.HttpURLConnection).apply {
             requestMethod = "POST"; connectTimeout = 8000; readTimeout = 8000; doOutput = true
             setRequestProperty("Content-Type", "application/json")
-            // Wallet-authenticated hubs read a session/node token from the
-            // Authorization header (see hub _authed_wallet); a static M2M service
-            // token is also accepted on its own header. Send whichever we have.
+            // A wallet-authenticated endpoint reads a session/node token from the
+            // Authorization header; a static M2M service token is accepted on its
+            // own header. Send whichever we have.
             if (token.isNotEmpty()) {
                 setRequestProperty("Authorization", "Bearer $token")
-                setRequestProperty("x-linkcpp-service-token", token)
+                setRequestProperty("X-Kvasir-Service-Token", token)
             }
         }
         conn.outputStream.use { it.write(body.toString().toByteArray()) }

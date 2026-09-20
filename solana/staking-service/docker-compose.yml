@@ -21,13 +21,14 @@ services:
       - "${GATEWAY_PORT:-8791}:8791"
     environment:
       PORT: "8791"
-      LINKCPP_RPC_URL: "${LINKCPP_RPC_URL:-https://api.devnet.solana.com}"
-      # linkcpp inference hub — set LINKCPP_HUB_URL (e.g. in .env) to the hub's
-      # address to make the pay-inference model list + completions use real served
-      # models. Left empty, the gateway falls back to the static demo catalog.
-      LINKCPP_HUB_URL: "${LINKCPP_HUB_URL:-}"
-      # Shared secret to reach a SIWS-protected hub (must match the hub's value).
-      LINKCPP_HUB_SERVICE_TOKEN: "${LINKCPP_HUB_SERVICE_TOKEN:-}"
+      KVR_RPC_URL: "${KVR_RPC_URL:-https://api.devnet.solana.com}"
+      # p4 bridge — the HTTP face of the p4 engine. Set P4_BRIDGE_URL to its
+      # address to make the pay-inference model list and completions use the
+      # models the ring is actually serving. Left empty, the model pool is empty:
+      # there is no demo catalogue to fall back to.
+      P4_BRIDGE_URL: "${P4_BRIDGE_URL:-}"
+      # Shared secret the bridge requires (must match the bridge's P4_BRIDGE_TOKEN).
+      P4_BRIDGE_TOKEN: "${P4_BRIDGE_TOKEN:-}"
       # Gateway admin login (Sign-In With Solana + TOTP 2FA) at /admin. Comma-separated
       # admin wallet allowlist; EMPTY => admin surface disabled. KVR_SESSION_SECRET keeps
       # admin sessions valid across restarts (random per-process if unset).
@@ -35,16 +36,16 @@ services:
       KVR_SESSION_SECRET: "${KVR_SESSION_SECRET:-}"
       # Operator token-gate: registering/running a node requires the owner wallet to
       # hold >= this many KVR on-chain (0 disables). Should match the hub's value.
-      LINKCPP_MIN_OPERATOR_KVR: "${LINKCPP_MIN_OPERATOR_KVR:-0}"
+      KVR_MIN_OPERATOR_KVR: "${KVR_MIN_OPERATOR_KVR:-0}"
       STAKING_APR: "${STAKING_APR:-0.12}"
       KVR_GATEWAY_BONUS: "${KVR_GATEWAY_BONUS:-1.5}"
       # Infra operator rewards: wallet that owns the headless hub/gateway roles on
       # this host. The gateway auto-registers a node on its behalf (uptime rewards +
       # visibility in that wallet's node monitor). Empty => not reported.
       KVR_INFRA_OWNER: "${KVR_INFRA_OWNER:-}"
-      KVR_HUB_OWNER: "${KVR_HUB_OWNER:-}"
+      KVR_BRIDGE_OWNER: "${KVR_BRIDGE_OWNER:-}"
       KVR_GATEWAY_OWNER: "${KVR_GATEWAY_OWNER:-}"
-      KVR_HUB_UPTIME_PER_HOUR: "${KVR_HUB_UPTIME_PER_HOUR:-2.0}"
+      KVR_BRIDGE_UPTIME_PER_HOUR: "${KVR_BRIDGE_UPTIME_PER_HOUR:-2.0}"
       KVR_GATEWAY_UPTIME_PER_HOUR: "${KVR_GATEWAY_UPTIME_PER_HOUR:-1.0}"
       # The canonical URL clients should use (returned by /api/config). e.g. https://gw.example.com
       KVR_PUBLIC_URL: "${KVR_PUBLIC_URL:-}"
@@ -71,11 +72,6 @@ services:
       - ./secrets/admin.json:/run/secrets/admin.json:ro
     networks:
       - default
-      # The linkcpp gateway's own network, so LINKCPP_HUB_URL can name it as a
-      # service instead of routing back out through the host. fetchModelsFrom()
-      # swallows connection errors and returns [], so an unreachable hub shows
-      # up only as an empty model list in the app — not as an error anywhere.
-      - linkcpp
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8791/health"]
       interval: 30s
@@ -105,7 +101,7 @@ volumes:
 
 networks:
   default:
-  # Created by the linkcpp gateway's compose project; joined, never managed.
-  linkcpp:
-    external: true
-    name: linkcpp_default
+  # The linkcpp gateway's external network is gone with linkcpp. Do not add an
+  # `external: true` network back unless something still creates it — compose
+  # refuses to start the gateway when a declared external network is missing.
+  # The p4 bridge is reached over its own URL, not a shared docker network.

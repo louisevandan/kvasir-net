@@ -61,7 +61,7 @@ const NONCE_TTL_MS = 300 * 1000;
 
 function signInMessage(wallet, nonce) {
   // The exact text the wallet signs. Kept human-readable + domain-bound.
-  return `linkcpp gateway admin sign-in\nwallet: ${wallet}\nnonce: ${nonce}`;
+  return `Kvasir gateway admin sign-in\nwallet: ${wallet}\nnonce: ${nonce}`;
 }
 
 function newChallenge(wallet) {
@@ -195,7 +195,7 @@ function verifyCode(secretB32, code, { step = 30, digits = 6, window = 1 } = {})
   return false;
 }
 
-function otpauthUri(secretB32, account, issuer = 'linkcpp-gateway') {
+function otpauthUri(secretB32, account, issuer = 'kvasir-gateway') {
   const label = encodeURIComponent(`${issuer}:${account}`);
   return `otpauth://totp/${label}?secret=${secretB32}`
     + `&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;

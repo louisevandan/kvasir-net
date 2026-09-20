@@ -570,7 +570,7 @@ inside the lock:
         t: "code",
         caption: "Planner-uitvoer — inferentie-engine -ot-regelformaat.",
         code: `node 0  layers [0,48]  vram=62.6  ram=14.2  ot_rules=10
-sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inferentie-engine -ot format`,
+sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inference engine -ot format`,
       },
       { t: "h2", kick: "Wat er bedraad werd · puur Python, geen C++-rebuild", text: "De offload-regels van de planner naar een echte load dragen" },
       {
@@ -1102,6 +1102,126 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       {
         t: "p",
         md: "Dat is de vorm van een netwerk dat modellen met biljoenen parameters kan serveren op hardware die niemand alleen bezit: inactieve capaciteit wordt precies dan uitgenodigd wanneer dat de moeite waard is, en alleen dan.",
+      },
+    ],
+  },
+  "moving-the-ring-onto-p4": {
+    title: "De ring verhuizen naar p4",
+    dek: "Zeven contractwijzigingen tussen een engine en zijn aanroeper. Elk ervan faalde anders, en maar één ervan zag eruit als een fout.",
+    blocks: [
+      {
+        t: "p",
+        md: "We hebben een nieuwe release van de p4-engine samengevoegd en de ring stopte met serveren. Niet met een crash — de lader meldde succes, de agents meldden ready, en er gebeurde niets. Terugwerken vanuit die stilte kostte een dag en leverde **zeven** plekken op waar onze aanroeper en de engine uit elkaar waren gedreven. Wat ze het opschrijven waard maakt is niet het aantal. Het is dat zes van de zeven geen enkele fout opleverden.",
+      },
+      { t: "h2", kick: "Fout één", text: "Een event voor een node die niet bestaat wordt doorgestuurd, niet geweigerd" },
+      {
+        t: "p",
+        md: "Onze lader adresseerde het LOAD-commando aan de node die hij wilde aanmaken. Maar een node bestaat niet totdat LOAD hem aanmaakt, en de regel van de broker voor een event dat een onbekende node noemt is om het **naar buiten door te sturen** in plaats van het te weigeren. Het commando verliet de agent op zoek naar ergens anders om heen te gaan, vond niets, en werd weggegooid. Geen logregel, want vanuit het standpunt van de broker was er niets misgegaan.",
+      },
+      {
+        t: "p",
+        md: "De oplossing was om LOAD aan de *agent* te adresseren, verpakt in de backend-neutrale levenscyclus-envelop van de engine, met het eigen commando van de adapter als ondoorzichtige body. Achteraf vanzelfsprekend; van buitenaf onzichtbaar.",
+      },
+      { t: "h2", kick: "Fout twee", text: "Een getal dat gelijk moet zijn aan een ander getal" },
+      {
+        t: "p",
+        md: "Een model wordt geladen onder een **load generation**, en elke node wordt geregistreerd met een **node generation**. Wij behandelden die als onafhankelijk — een timestamp voor de een, `1` voor de ander — en alles werkte. De ring laadde. Hij beantwoordde een verzoek correct. Toen stierf de kopnode.",
+      },
+      {
+        t: "code",
+        caption: "De check, in de release-boekhouding van de adapter.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "De bon die een afgerond verzoek afsluit draagt de load generation, en de node die hem verstuurt draagt de zijne. Verschillen ze, dan wordt de node gestopt. De vorm van de bug is dus: **laden slaagt, het eerste verzoek slaagt, de kop sterft, en elke sessie daarna blijft halfgeladen hangen.** Dat leest precies als een crash onder belasting en totaal niet als een mismatch. Onze lader weigert nu een plan waarvan de twee getallen niet overeenkomen, vóórdat er iets geladen wordt.",
+      },
+      { t: "h2", kick: "Fout drie", text: "Een grens die nooit gehaald kon worden" },
+      {
+        t: "p",
+        md: "De adapter vergelijkt het grootste resultaat dat een stage mag teruggeven met het getal dat de stage-server meldt zodra hij opkomt, op exacte gelijkheid. Dat getal konden we niet kennen zonder het model te laden — dus laadden we met een gok, en het falen vertelde ons de echte getallen van alle vier de stages in één keer:",
+      },
+      {
+        t: "code",
+        caption: "Eén run, vier antwoorden.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. De behouden stores van de agent zijn 256 MiB, dus die ring had nooit toegelaten kunnen worden. De afleiding uit de stage-server lezen liet zien waarom: de grens schaalt met `n_batch × n_ubatch`, en wij hadden een batchbreedte van 2048 geërfd uit een configuratie van vóór deze check. Bij 128 rijen — de breedte die de productie-layout gebruikt — is de grens 138 MB en past hij wél. We leiden hem nu in het plan af uit dezelfde formule in plaats van een onthouden constante mee te dragen, en het voorspelde getal van de staartstage kwam exact uit op het getal dat een andere deployment had vastgelegd — het soort overeenstemming dat je wilt hebben voordat je twintig minuten aan een load besteedt.",
+      },
+      { t: "h2", kick: "De andere vier", text: "Kort" },
+      {
+        t: "ul",
+        items: [
+          "**Loopback-adressen in een ring van twee hosts.** Een stage belt de agent van de volgende stage op het adres dat die agent adverteert. Adverteer `127.0.0.1` en host A belt zichzelf. De vastgelegde configuratie van de ring was al die tijd loopback — hij had nooit over hosts heen kunnen werken.",
+          "**Het journaal is verplicht.** Een model laadt niet zonder het operationele journaal van de agent. We zetten het uit terwijl we een andere fout achtervolgden, en maakten het symptoom erger op een manier die op vooruitgang leek.",
+          "**De apparaatnaam is backend-specifiek.** De referentie-planbouwer mikt op CUDA en zendt `--device CUDA0` uit. De HIP-build noemt zijn apparaten `ROCm0`. Dat plan laadt het hele model en vindt *daarna* het apparaat niet.",
+          "**De native server hoort bij de release.** Een agent die uit een nieuwere tree is gebouwd wil capaciteiten die de geïnstalleerde stage-server niet meldt. Ook ontdekt na een volledige modelload.",
+        ],
+      },
+      { t: "h2", kick: "Wat we eruit meenamen", text: "Stilte is de dure faalmodus" },
+      {
+        t: "p",
+        md: "Elk van deze was goedkoop te repareren en duur te vinden, en het patroon is consistent: de kostbare fouten waren die waarbij een correct ogend systeem niets deed, of iets één keer deed. De guards die we hebben toegevoegd hebben allemaal dezelfde vorm — vroeg weigeren, op de plek waar de vergissing nog leesbaar is. De lader schrijft de load generation naar schijf *voordat* het eerste commando vertrekt, want anders is hij onherstelbaar. Hij weigert een generation-mismatch in plaats van hem na het eerste verzoek te ontdekken. Hij leidt de resultaatgrens af in plaats van hem te onthouden.",
+      },
+      {
+        t: "callout",
+        md: "**De ring serveert.** Vier stages over twee machines, 113 GiB aan gewichten resident, het eerste token in 1.4 s koud en ~0.3 s warm, en bijdrage per node die voor het eerst doorstroomt naar het verrekeningsgrootboek.",
+      },
+    ],
+  },
+  "the-template-is-the-callers-job": {
+    title: "Het template is de taak van de aanroeper",
+    dek: "p4 stuurt een ondoorzichtige prompt door en past geen chat-template toe. Vergeet dat, en het model beantwoordt een vraag die je niet hebt gesteld — vloeiend, en helemaal tot aan de tokenlimiet.",
+    blocks: [
+      {
+        t: "p",
+        md: "Het eerste echte antwoord uit onze herstelde ring was correcte rekenkunde, gevolgd door een gesprek dat niemand had gevoerd:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, gevraagd aan een geserveerd model.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "Het getal klopt. Alles erna is het model dat een document voortzet, want dat is wat we het hebben gegeven: de berichten platgeslagen tot één string. Een instruct-model leest dat als tekst om uit te breiden, niet als een beurt om te beantwoorden. Het stuurt nooit zijn einde-beurt-token, dus generatie loopt elke keer tot de limiet.",
+      },
+      { t: "h2", kick: "Wiens taak", text: "Een bewuste weglating, geen gat" },
+      {
+        t: "p",
+        md: "p4 geeft de stage-server een ondoorzichtige prompt en past geen eigen beurtformaat toe — de staged adapter draagt alleen een tool om een template *uit* een GGUF te lezen, nooit om er een toe te passen. Dat is een redelijke grens: de engine blijft smal en modelagnostisch, en de aanroeper, die toch al weet met welk model hij praat, rendert het formaat. Maar een grens die wel getrokken en niet gedocumenteerd is, is een grens waar iemand overheen loopt.",
+      },
+      {
+        t: "p",
+        md: "Het template uit het modelbestand lezen gaf de doorslag: ChatML-beurten, `<|im_end|>` als einde-beurt-token, en een assistent-beurt die opent met een denkblok. Met dat gerenderd door de bridge, dezelfde vraag:",
+      },
+      {
+        t: "code",
+        caption: "Hetzelfde model, dezelfde ring, het beurtformaat toegepast.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "Het deel dat geld kost", text: "Een denkfase kan het antwoord opeten" },
+      {
+        t: "p",
+        md: "Een redeneermodel geeft tokens uit voordat het iets zegt. Geef het een budget en een moeilijke vraag en het kan het hele budget aan denken besteden, met een leeg antwoord tot gevolg — en in een netwerk waarin de aanroeper **al on-chain heeft betaald voordat het verzoek draaide**, is een leeg antwoord geen kwaliteitsprobleem. Het is een rekening voor niets.",
+      },
+      {
+        t: "p",
+        md: "De verrekengateway wist dit al en vraagt om denken uit te schakelen. Het template van het model heeft daar geen schakelaar voor, dus de bridge opent *en sluit* het denkblok in de prompt, en het model schrijft zijn antwoord erna. We hebben dit één keer op de voor de hand liggende manier fout gedaan — het blok in de prompt sluiten betekende dat de sluittag niet meer in de uitvoer zat, dus de splitter boekte het hele antwoord als redenering en gaf lege content terug. Precies het falen dat de instelling moet voorkomen.",
+      },
+      {
+        t: "callout",
+        md: "**Waar dit het contract achterlaat.** De engine stuurt bytes door. De bridge kent het model: hij rendert het beurtformaat dat het placement plan noemt, geeft de denkfase terug als `reasoning_content` los van `content`, en klemt een verzoek dat om meer uitvoer vraagt dan de ring geladen is te geven — want een te groot verzoek wordt anders botweg geweigerd, en een korter antwoord is beter dan een engine-fout.",
       },
     ],
   },

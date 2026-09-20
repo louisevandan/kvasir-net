@@ -14,7 +14,7 @@ const displayName = (name: string) => name.replace(/\.gguf$/i, '')
 /// delete. Downloaded models also appear in AI 추론's picker for on-device runs.
 export function ModelsScreen() {
   const { t } = useI18n()
-  const models = window.linkcpp?.models
+  const models = window.kvasir?.models
   const [items, setItems] = useState<LocalModelInfo[]>([])
   const [dir, setDir] = useState('')
   const [pending, setPending] = useState<string | null>(null)
