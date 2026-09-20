@@ -84,7 +84,19 @@ enum KeyStore {
 /// Best-effort biometric / passcode gate. On a Simulator with no enrolled
 /// biometrics it allows access so development flows aren't blocked.
 enum Biometrics {
+    /// The UI tests relaunch the app for every case, and every cold launch hits
+    /// this gate. XCUITest cannot present a face, so without a way past it the
+    /// only screens a device run can reach are the ones in front of the lock —
+    /// which is most of what is worth looking at, missed. A debug build started
+    /// with this argument skips the gate; a release build has no such path, and
+    /// the argument has to be passed deliberately, so nothing changes for anyone
+    /// who installs the app.
+    static let uiTestBypassArgument = "-kvasir-ui-test-unlocked"
+
     static func unlock(reason: String = "Unlock your Kvasir wallet") async -> Bool {
+        #if DEBUG
+        if CommandLine.arguments.contains(uiTestBypassArgument) { return true }
+        #endif
         let ctx = LAContext()
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {

@@ -21,6 +21,9 @@ final class WalletWalkthroughUITests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
+        // Debug-only, and only because XCUITest cannot present a face. See
+        // Biometrics.uiTestBypassArgument.
+        app.launchArguments = ["-kvasir-ui-test-unlocked"]
         app.launch()
     }
 
@@ -127,6 +130,64 @@ final class WalletWalkthroughUITests: XCTestCase {
         XCTAssertFalse(command.contains("LINKCPP"), "command still uses the retired variable names: \(command)")
     }
 
+    /// The whole money path, from this phone: the catalogue comes from the
+    /// gateway, the prompt crosses gateway → bridge → the ring, and the reply
+    /// comes back with the tokens it actually cost. Nothing below this line is
+    /// mocked, so a failure here means the production path is down rather than
+    /// that the app is wrong — read it together with the gateway's own health.
+    func testInferenceRoundTripAndBilling() throws {
+        try skipIfLocked()
+        tapFirstButton(containing: ["AI 추론", "AI inference"], label: "the AI inference entry")
+        shoot("05-inference")
+
+        // The model dropdown is populated from the gateway, so its presence is
+        // already evidence the catalogue call succeeded.
+        let model = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Step-3.7-Flash")
+        ).firstMatch
+        XCTAssertTrue(
+            model.waitForExistence(timeout: 30),
+            "the gateway catalogue never reached the composer"
+        )
+
+        // The composer is `TextField(..., axis: .vertical)`, which SwiftUI backs
+        // with a text view rather than a text field, so asking only for
+        // `textFields` types into nothing and leaves the send button disabled.
+        let field = [app.textViews.firstMatch, app.textFields.firstMatch]
+            .first { $0.waitForExistence(timeout: 10) }
+        XCTAssertNotNil(field, "the composer has neither a text view nor a text field")
+        guard let field else { return }
+        field.tap()
+        field.typeText("Say hello in one short sentence.")
+        shoot("05b-typed")
+
+        let send = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "전송", "Send")
+        ).firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 5), "the composer has no send button")
+        send.tap()
+
+        // A 428B model on a two-stage ring answers a short prompt in seconds,
+        // but the request also crosses a paid gateway and a settlement write,
+        // so give it room before calling it a failure.
+        let billed = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@",
+                        "실제 사용 토큰", "Actual tokens used")
+        ).firstMatch
+        XCTAssertTrue(
+            billed.waitForExistence(timeout: 180),
+            "no reply was billed within 180s — the gateway, the bridge or the ring did not answer"
+        )
+        shoot("06-inference-reply")
+
+        let tokens = billed.label
+            .components(separatedBy: CharacterSet.decimalDigits.inverted)
+            .compactMap(Int.init)
+            .first
+        XCTAssertNotNil(tokens, "the usage line carries no token count: \(billed.label)")
+        XCTAssertGreaterThan(tokens ?? 0, 0, "the reply was billed zero tokens: \(billed.label)")
+    }
+
     // MARK: - navigation
 
     /// Tap the first tappable element whose label contains any of `needles`.
@@ -141,17 +202,45 @@ final class WalletWalkthroughUITests: XCTestCase {
             format: needles.map { _ in "label CONTAINS[c] %@" }.joined(separator: " OR "),
             argumentArray: needles
         )
-        let deadline = Date().addingTimeInterval(25)
+        let queries = { [self] in [app.buttons, app.staticTexts, app.cells, app.otherElements] }
+
+        // A row far down a NavigationStack's scroll view exists in the tree long
+        // before it is hittable, so "exists" is the signal to scroll towards and
+        // "isHittable" the signal to tap. Scroll the scroll view rather than the
+        // application: swiping the app can land on the wrong container and
+        // leave the row where it was.
+        let scroller = app.scrollViews.firstMatch
+        let deadline = Date().addingTimeInterval(30)
         while Date() < deadline {
-            for query in [app.buttons, app.staticTexts, app.otherElements, app.cells] {
+            for query in queries() {
                 let match = query.matching(predicate).firstMatch
+                guard match.exists else { continue }
+                if match.isHittable {
+                    match.tap()
+                    return
+                }
+                // A row resting on the bottom edge is drawn but not hittable.
+                // Nudge it up rather than scrolling past it.
+                if scroller.exists { scroller.swipeUp() } else { app.swipeUp() }
                 if match.exists && match.isHittable {
                     match.tap()
                     return
                 }
             }
-            app.swipeUp()
+            if scroller.exists { scroller.swipeUp() } else { app.swipeUp() }
         }
+
+        // Last resort: the element is in the tree but XCTest will not call it
+        // hittable — a composed SwiftUI NavigationLink label does this. Tapping
+        // its centre works where tap() refuses.
+        for query in queries() {
+            let match = query.matching(predicate).firstMatch
+            if match.exists {
+                match.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                return
+            }
+        }
+        shoot("nav-failed-\(label.replacingOccurrences(of: " ", with: "-"))")
         XCTFail("\(label) was not on screen, and scrolling did not reveal it")
     }
 }
