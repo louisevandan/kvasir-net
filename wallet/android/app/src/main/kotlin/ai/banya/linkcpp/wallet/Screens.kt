@@ -61,9 +61,33 @@ import ai.banya.linkcpp.core.TxRef
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.text.DecimalFormat
 
 fun fmt(v: Double): String =
     BigDecimal(v).setScale(6, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+
+/**
+ * The hero balance, on one line.
+ *
+ * `fmt` keeps six decimals and no grouping, which is right for a figure read
+ * digit by digit but wrong for the one at the top of the wallet: a six-figure
+ * balance is thirteen characters at 44sp and wrapped mid-number, so the screen
+ * showed "106043.08377" with a lone "9" underneath it. Group the thousands so
+ * the magnitude reads at a glance, keep every decimal — a wallet must never
+ * appear to round someone's balance away — and let the size fall as the number
+ * grows instead of letting the line break.
+ */
+fun heroAmount(v: Double): String {
+    val exact = BigDecimal(v).setScale(6, RoundingMode.HALF_UP).stripTrailingZeros()
+    return DecimalFormat("#,##0.######").format(exact)
+}
+
+fun heroFontSize(text: String) = when {
+    text.length <= 9 -> 44.sp
+    text.length <= 12 -> 36.sp
+    text.length <= 15 -> 30.sp
+    else -> 24.sp
+}
 
 fun shorten(s: String, head: Int = 6, tail: Int = 6): String =
     if (s.length > head + tail + 1) "${s.take(head)}…${s.takeLast(tail)}" else s
@@ -236,8 +260,10 @@ fun HomeScreen(vm: WalletViewModel, nav: NavController) {
                 Spacer(Modifier.height(10.dp))
                 Text(if (vm.hasToken) "${vm.tokenSymbol} ${s.t("home.balance")}" else "SOL ${s.t("home.balance")}", color = b.textSecondary, fontSize = 14.sp)
                 val amount = if (vm.hasToken) vm.token?.amount else vm.sol?.amount
-                Text(amount?.let { fmt(it) } ?: "—",
-                    style = TextStyle(brush = brandGradient(), fontSize = 44.sp, fontWeight = FontWeight.ExtraBold))
+                val hero = amount?.let { heroAmount(it) } ?: "—"
+                Text(hero, maxLines = 1, softWrap = false,
+                    style = TextStyle(brush = brandGradient(), fontSize = heroFontSize(hero),
+                        fontWeight = FontWeight.ExtraBold))
                 if (vm.hasToken) {
                     Text("${vm.sol?.amount?.let { fmt(it) } ?: "0"} SOL", color = b.textSecondary, fontSize = 14.sp)
                 } else {

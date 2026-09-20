@@ -129,7 +129,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     private fun configuredBridgeUrls(): List<String> = runCatching {
         val prefs = getApplication<Application>().getSharedPreferences("kvasir-node", android.content.Context.MODE_PRIVATE)
         val arr = org.json.JSONArray(prefs.getString("configuredHubs", "[]"))
-        (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("url")?.takeIf { u -> u.isNotEmpty() } }
+        (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("url")?.takeIf(::isLiveBridgeUrl) }
     }.getOrDefault(emptyList())
 
     private fun rpcFor(n: Net) = constants.clusters[n.id]?.rpcUrl ?: tokenSpec.rpcUrl

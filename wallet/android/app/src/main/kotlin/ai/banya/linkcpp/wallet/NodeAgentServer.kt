@@ -18,6 +18,20 @@ import kotlin.concurrent.thread
  * spawning the bundled native binaries (linkcpp-node ring stage, ggml-rpc-server)
  * — Android can exec, so this is a real on-demand node.
  */
+/** Hosts that used to serve the control plane and never will again. */
+private val RETIRED_BRIDGE_HOSTS = listOf("hub.kvasir-ai.net")
+
+/**
+ * Whether a stored bridge address is still worth dialling.
+ *
+ * Two screens read the stored list — the agent when it starts polling, and the
+ * wallet view model when the node monitor has no live agent to ask. They have
+ * to agree about what the list means, or the monitor shows a bridge the agent
+ * has already dropped, which is exactly what it did.
+ */
+fun isLiveBridgeUrl(url: String): Boolean =
+    url.isNotEmpty() && RETIRED_BRIDGE_HOSTS.none { url.contains(it) }
+
 class NodeAgentServer(private val ctx: Context) {
     val agentPort = 9101
     val rpcPort = 50072
@@ -371,22 +385,40 @@ class NodeAgentServer(private val ctx: Context) {
         val base = url.substringBefore("/api/").trimEnd('/')
         if (!base.startsWith("http")) return
         knownBridges[base] = token
+        persistBridges()
+        log("bridge registered: $base${if (token.isNotEmpty()) " (auth)" else ""}")
+    }
+
+    /** The stored key keeps its old spelling: it names data already on phones. */
+    private fun persistBridges() {
         runCatching {
             val prefs = ctx.getSharedPreferences("kvasir-node", Context.MODE_PRIVATE)
             val arr = JSONArray()
             knownBridges.forEach { (u, t) -> arr.put(JSONObject().put("url", u).put("token", t)) }
             prefs.edit().putString("configuredHubs", arr.toString()).apply()
         }
-        log("bridge registered: $base${if (token.isNotEmpty()) " (auth)" else ""}")
     }
 
     private fun loadConfiguredBridges() {
         runCatching {
             val prefs = ctx.getSharedPreferences("kvasir-node", Context.MODE_PRIVATE)
             val arr = JSONArray(prefs.getString("configuredHubs", "[]"))
+            var dropped = false
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                val u = o.optString("url", ""); if (u.isNotEmpty()) knownBridges[u] = o.optString("token", "")
+                val u = o.optString("url", "")
+                if (u.isEmpty()) continue
+                // Anyone who connected before the control plane was retired still has
+                // hub.kvasir-ai.net on their phone, and it has answered 502 ever since.
+                // Keeping it means the monitor shows a permanently disconnected bridge
+                // the user cannot diagnose, so drop it on load rather than make them
+                // find and remove it. Any other stored address is theirs to keep.
+                if (!isLiveBridgeUrl(u)) { dropped = true; continue }
+                knownBridges[u] = o.optString("token", "")
+            }
+            if (dropped) {
+                log("dropped the retired hub.kvasir-ai.net from the stored bridge list")
+                persistBridges()
             }
         }
     }
