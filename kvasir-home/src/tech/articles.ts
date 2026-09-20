@@ -1380,6 +1380,179 @@ reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`
     ],
   },
 
+  {
+    slug: "the-cost-was-the-directory",
+    category: "core",
+    title: "The Cost Was the Directory",
+    dek: "A four-stage ring served at 0.55 tokens a second and we blamed the network. It was a readdir, and it got slower every time we ran it.",
+    date: "2026-09-21",
+    tags: ["p4", "performance", "debugging"],
+    blocks: [
+      {
+        t: "p",
+        md: "Four stages across two hosts decoded at **0.55 tok/s**. Two stages on one host decoded at **20.19**. The difference was thirty-six fold and the obvious culprit was the thing we had added: a hop across the machine boundary. We wrote that down as the finding and started looking for where the network time was going.",
+      },
+      {
+        t: "p",
+        md: "It was the wrong finding, and the way it was wrong is the interesting part. Comparing those two configurations moves **two** variables — the number of stages and the number of hosts — and we attributed the whole gap to one of them. Every measurement after that was an attempt to explain a number the experiment could not isolate.",
+      },
+      { t: "h2", kick: "Isolating", text: "Hold the host fixed" },
+      {
+        t: "p",
+        md: "The fix for a confounded comparison is to stop confounding it. We put three stages on one host, then four, then four split across two agents on that same host — the slow shape with the machine boundary removed and nothing else changed.",
+      },
+      {
+        t: "table",
+        head: ["Ring", "tok/s"],
+        rows: [
+          ["2 stages, 1 agent, 1 host", "20.19"],
+          ["3 stages, 1 agent, 1 host", "13.86"],
+          ["4 stages, 1 agent, 1 host", "7.37"],
+          ["4 stages, 2 agents, 1 host", "2.80"],
+        ],
+      },
+      {
+        t: "p",
+        md: "Stage count alone degrades gracefully. Splitting the same four stages across two agents on one machine costs another 2.6×, with no network involved. So the host boundary was not the mechanism — but the number still did not reach 0.55, and while we were measuring it something else surfaced: **the same ring got slower the more we ran it.**",
+      },
+      { t: "h2", kick: "The shape of it", text: "Not a constant, a slope" },
+      {
+        t: "table",
+        head: ["Journal entries", "tok/s"],
+        rows: [["0", "4.10"], ["3,267", "2.01"], ["6,444", "1.33"], ["9,655", "0.96"], ["12,881", "0.75"]],
+      },
+      {
+        t: "p",
+        md: "Five consecutive runs of the identical request on the identical ring. Per-token cost rose linearly with the number of files in the agent\'s outbound journal. A ring that had been up all day was at 1.5 seconds a token because it had been up all day — which is exactly what a two-host ring is, and why the host boundary looked guilty.",
+      },
+      { t: "h2", kick: "Cause", text: "require_capacity walks the whole directory" },
+      {
+        t: "code",
+        caption: "entrypoints/agent/src/event_runtime/transport/journal.rs",
+        code: `fn occupied_bytes(&self) -> io::Result<u64> {
+    let mut occupied = 0u64;
+    for item in fs::read_dir(&self.root)? {
+        let path = item?.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        ...
+
+fn require_capacity(&self, additional: u64) -> io::Result<()> {
+    let occupied = self.occupied_bytes()?;   // before every single record`,
+      },
+      {
+        t: "p",
+        md: "Every journal record asks whether it fits, and the answer is computed by listing the directory and stat-ing every entry in it. The journal has **no deletion path at all** — no `remove_file`, no prune, no retirement — so the directory only grows, and each write pays for every record the agent has ever written. Agent-to-agent hops write records a single-agent ring never writes, which is why splitting across two agents decayed so much faster than one.",
+      },
+      { t: "h2", kick: "Proof", text: "Twenty thousand empty files" },
+      {
+        t: "p",
+        md: "A correlation is not a cause, so we changed exactly one thing. We padded the journal with 20,000 zero-byte entries. They charge nothing against the byte budget — the capacity check sums file sizes, and these have none — but each one is a directory entry that must be listed and stat-ed.",
+      },
+      {
+        t: "table",
+        head: ["Journal", "tok/s"],
+        rows: [["baseline, 3,697 entries", "9.52"], ["+20,000 empty entries", "2.23"], ["entries removed", "7.71"]],
+      },
+      {
+        t: "p",
+        md: "It is the walk. Not the bytes, and not the fsync either: moving the journal to tmpfs, where `fsync` is free but `readdir` still is not, recovered about ten percent and left the slope intact.",
+      },
+      { t: "h2", kick: "Fix", text: "Count instead of counting again" },
+      {
+        t: "p",
+        md: "The agent keeps an occupancy figure per journal root and charges each write against it, walking the directory at startup and again only when the estimate approaches half the cap — where the exact number is what decides whether a write is refused. The estimate only ever over-counts, so it can refuse a write early but never admit one that does not fit.",
+      },
+      {
+        t: "table",
+        head: ["Run", "1", "2", "3", "4", "5", "6"],
+        rows: [
+          ["Before", "22.90", "18.82", "15.53", "12.58", "—", "—"],
+          ["After", "30.04", "31.21", "28.21", "29.04", "27.84", "28.73"],
+        ],
+      },
+      {
+        t: "p",
+        md: "Flat, and higher than the old best. The same 20,000-entry padding now costs nothing: 28.45 → 28.80 → 29.83. At 19,761 journal entries the production ring holds 28 tok/s, where before the patch it would have been under one.",
+      },
+      { t: "h2", kick: "Alongside", text: "Threads that spin while the GPU works" },
+      {
+        t: "p",
+        md: "The same investigation turned up a second cost. All the arithmetic runs on the GPU, but each stage server starts a 48-thread ggml CPU pool, and libgomp spins those threads while idle. Two stages therefore pegged all 96 logical cores of the machine, and the agent\'s per-event work — which is what actually paces the ring — ran on what was left. The stage servers were burning about 790 CPU-seconds each per 100-token run. Setting `OMP_WAIT_POLICY=PASSIVE` took agent CPU per token from 116 ms to 8 ms.",
+      },
+      {
+        t: "callout",
+        md: "**What we would do differently.** The first measurement was not wrong, it was unattributable — and we attributed it anyway. A comparison that moves two variables can only produce a hypothesis, never a cause. The tell was available early and we walked past it: the number was not reproducible run to run, and a constant cause does not produce a slope.",
+      },
+      {
+        t: "p",
+        md: "One thing this does not fix: the journal still grows without bound. Reading it is now cheap; retiring settled records is the follow-up.",
+      },
+    ],
+  },
+
+  {
+    slug: "a-client-with-nothing-to-call",
+    category: "milestones",
+    title: "A Client With Nothing to Call",
+    dek: "Both phones had shipped the node-participation client. The server it talked to had been deleted three commits earlier, and nothing said so.",
+    date: "2026-09-21",
+    tags: ["bridge", "mobile", "engineering"],
+    blocks: [
+      {
+        t: "p",
+        md: "Tapping **Connect with wallet** on the node settings screen produced an error. Not a friendly one — the raw body of a 404, printed where a status message goes. The route it called, `/api/auth/challenge`, had been served by the control plane we retired. The client half was complete, shipped, and running on real phones. The server half no longer existed.",
+      },
+      {
+        t: "p",
+        md: "So had every step after it: the coverage market that tells a node what to work on, the shard endpoint it downloads its slice from, and the relays that let a NAT-bound phone be reached at all. A whole feature, half present, failing at the first call with a message nobody could act on.",
+      },
+      { t: "h2", kick: "Recovering the contract", text: "The clients cannot be asked to change" },
+      {
+        t: "p",
+        md: "A reimplementation here has an unusual constraint: the callers are already in people\'s pockets. Field names, error shapes and call order are fixed by what shipped. We read the deleted implementation out of git history rather than guessing, and the reading turned up things guessing would have missed — most of all the ordering: **the coverage POST is what creates the relay target the worker then dials.** Reverse those and the socket connects, carries bytes, and credits nobody.",
+      },
+      { t: "h2", kick: "Built", text: "Three files, no dependencies" },
+      {
+        t: "ul",
+        items: [
+          "**Node tokens.** A wallet signs a single-use nonce; the bridge verifies ed25519 and returns a bearer token scoped to participation and nothing else. `node:crypto` verifies a raw 32-byte Solana address as a key once you prepend the DER header for Ed25519 — no library needed.",
+          "**The market.** Which expert windows are under-covered, what a volunteering node should take, what it reports having taken, and who is owed for the bytes its relay carried.",
+          "**The relay.** A WebSocket spliced to a TCP endpoint, handshake and frame codec written out. Carrier NAT and a 443-only edge mean neither side can dial the other, so both dial here.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**The one-byte preamble.** A ring peer writes a single ASCII byte before its first frame — `P` for \"I am your predecessor\", `N` for \"I am your successor\" — which is how a stage that dials both neighbours tells each one which descriptor it is. To the relay it is payload, not protocol: it must not be buffered, inspected or reordered. There is a test that fails if it is.",
+      },
+      { t: "h2", kick: "Two deliberate departures", text: "Where we did not copy the original" },
+      {
+        t: "p",
+        md: "The old hub emitted `{\"detail\": ...}` from its handlers and `{\"error\": ...}` from its middleware. Both mobile clients read only `error`. Every explained refusal therefore reached the user as a bare \"HTTP 403\" — the server said why and the phone could not hear it. Every error body is now `error`.",
+      },
+      {
+        t: "p",
+        md: "More consequentially: the old hub gated the challenge on `_operator_authorized` — an admin wallet, or one holding a minimum KVR balance. Operating a bridge and contributing compute to one are different things, and with the shipped defaults that gate refused **every phone that ever asked**. Participation is open here unless an operator sets a floor, and that floor is a separate setting from operator eligibility.",
+      },
+      { t: "h2", kick: "Verified", text: "A wallet that did not exist a minute earlier" },
+      {
+        t: "code",
+        caption: "against gate.kvasir-ai.net, freshly generated keypair",
+        code: `challenge    200
+node-token   200   ttl 30 days
+volunteer    200   assigned layer 0, experts [0,32), n_embd 4096
+coverage     200   wired, session expert-probe, listen_port 52970`,
+      },
+      {
+        t: "p",
+        md: "`n_embd` is not decoration in that response. Both clients abort an assignment when it is missing rather than guess a hidden size and produce silent garbage, so a model is only offered as work when its dimensions are recorded. They travel in the load plan, because the loader regenerates the catalog and anything not in the plan does not survive a reload — and they are recorded rather than read from the file on the request path, because a coverage poll must not wait seconds on a 122 GB GGUF\'s metadata.",
+      },
+      {
+        t: "callout",
+        md: "**What this cost to find.** Nothing in the build, the tests, or the type checker knows that a client calls a route that no longer exists. The deletion was correct; the thing that made it expensive is that the two halves of the feature live in different languages, different repositories and different release cadences, and only a person tapping a button connects them.",
+      },
+    ],
+  },
+
 ];
 
 export function techArticleBySlug(slug: string): TechArticle | undefined {

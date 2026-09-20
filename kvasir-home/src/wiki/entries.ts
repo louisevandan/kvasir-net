@@ -199,7 +199,7 @@ export const WIKI_ENTRIES: WikiEntry[] = [
     slug: "bridge",
     category: "network",
     title: "Bridge",
-    summary: "The HTTP face of the inference engine: what is loaded, who contributed, and completions — and nothing else.",
+    summary: "The HTTP face of the inference engine: what is loaded, who contributed, completions — and the market a contributing device joins.",
     image: { src: "/wiki/bridge.jpg", alt: "A bridge fronting a ring of stage servers" },
     imagePos: 2,
     blocks: [
@@ -229,6 +229,26 @@ export const WIKI_ENTRIES: WikiEntry[] = [
           "**The chat template.** p4 hands the stage server an opaque prompt and applies no turn format of its own. The bridge renders the model's — read from the GGUF and named in the catalog as `prompt_format`. Skip it and an instruct model continues your text instead of answering it, never emits its end-of-turn token, and runs to the token limit every time.",
           "**The reasoning block.** A reasoning model opens its reply by thinking. The bridge returns that as `reasoning_content`, separate from `content`, and honours `enable_thinking: false` by closing the block in the prompt — otherwise a long thinking pass can consume the whole budget and hand the caller an empty answer it has already paid for.",
         ],
+      },
+      { t: "h2", kick: "Participation", text: "The half that was missing" },
+      {
+        t: "p",
+        md: "A device that wants to contribute does not have a service token and should not be given one. It proves a **wallet** instead: the bridge issues a single-use nonce, the device signs it, and an ed25519 check returns a bearer token scoped to participation and nothing else. From there it asks what is under-covered, claims a window, and opens a relay — because a phone behind carrier NAT cannot be dialled, so both ends dial the bridge and it splices them.",
+      },
+      {
+        t: "table",
+        head: ["Route", "What it answers"],
+        rows: [
+          ["`/api/auth/challenge` → `/api/auth/node-token`", "a wallet signature becomes a 30-day participation token"],
+          ["`/api/expert-demand`", "which expert windows are short of replicas"],
+          ["`/api/expert-volunteer`", "the scarcest window this device should take"],
+          ["`/api/expert-coverage`", "what it has taken — and this is what wires its relay session"],
+          ["`ws /api/expert-relay`, `ws /api/ring-relay`", "a WebSocket spliced to a TCP endpoint"],
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Order matters, and silently.** The coverage POST is what creates the relay target the device then dials. Reverse them and the socket still connects and still carries bytes — it simply credits nobody. Two more traps worth naming: the ring's one-byte role preamble (`P` predecessor, `N` successor) is payload to the relay and must cross untouched; and participation eligibility is **not** operator eligibility — the retired control plane gated this on holding a minimum balance, which refused every phone that ever asked.",
       },
       { t: "h2", kick: "Placement is not its job", text: "Why it answers 409" },
       {
@@ -357,6 +377,15 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       {
         t: "callout",
         md: "**The agent and the native stage server are one release.** An agent built from a newer tree fails at READY with a missing capability in the stage server's HELLO — after loading the entire model. Build both from the same checkout.",
+      },
+      { t: "h2", kick: "Operating it", text: "Two costs that do not announce themselves" },
+      {
+        t: "ul",
+        items: [
+          "**A ring gets slower the longer it runs.** Every journal record asks whether it fits, and the answer is computed by listing the journal directory and stat-ing every entry; nothing is ever deleted from it, so each write pays for every record the agent has written since it started. Measured on two stages: 22.90 tok/s falling to 12.58 over four consecutive runs. Agent-to-agent hops write records a single-agent ring never writes, so a ring split across agents decays several times faster.",
+          "**The stage servers spin while the GPU works.** All the arithmetic runs on the accelerator, but each stage starts a CPU thread pool the size of the machine's cores and the OpenMP runtime spins those threads while idle — two stages peg every logical core, and the agent's per-event work, which paces the ring, runs on what is left. `OMP_WAIT_POLICY=PASSIVE` took agent CPU per token from 116 ms to 8 ms.",
+          "**One agent per host, where the shape allows it.** A hop inside an agent is a function call; a hop between two agents is a journalled, durable event. Four stages under one agent served 7.37 tok/s; the same four split across two agents on the same machine served 2.80.",
+        ],
       },
     ],
   },
@@ -495,7 +524,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
       },
       {
         t: "callout",
-        md: "**Engine status.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. The current engine, [p4](/wiki/p4), serves at layer grain today; carrying expert sharding onto it is designed and in progress. Where a detail names a tool or a route, it is the one that ran on the previous engine.",
+        md: "**Engine status, 2026-09-21.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. Carrying it onto [p4](/wiki/p4) is partly done. Live: a device proves a wallet, is told which expert window is scarcest, claims it, opens a relay, and is credited for the bytes it carries. Not yet: the endpoint that hands it the weights for that window, and — more fundamentally — any path in the p4 stage adapter for dispatching expert work to a remote device. The market and the transport run; the data path and the engine hook do not. Where a detail below names a tool or a route, it is the one that ran on the previous engine.",
       },
       { t: "h2", kick: "Two roles", text: "Backbone × worker" },
       {
@@ -542,7 +571,7 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
       },
       {
         t: "callout",
-        md: "**Engine status.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. The current engine, [p4](/wiki/p4), serves at layer grain today; carrying expert sharding onto it is designed and in progress. Where a detail names a tool or a route, it is the one that ran on the previous engine.",
+        md: "**Engine status, 2026-09-21.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. Carrying it onto [p4](/wiki/p4) is partly done. Live: a device proves a wallet, is told which expert window is scarcest, claims it, opens a relay, and is credited for the bytes it carries. Not yet: the endpoint that hands it the weights for that window, and — more fundamentally — any path in the p4 stage adapter for dispatching expert work to a remote device. The market and the transport run; the data path and the engine hook do not. Where a detail below names a tool or a route, it is the one that ran on the previous engine.",
       },
       {
         t: "p",
@@ -907,7 +936,7 @@ infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "callout",
-        md: "**Engine status.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. The current engine, [p4](/wiki/p4), serves at layer grain today; carrying expert sharding onto it is designed and in progress. Where a detail names a tool or a route, it is the one that ran on the previous engine.",
+        md: "**Engine status, 2026-09-21.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. Carrying it onto [p4](/wiki/p4) is partly done. Live: a device proves a wallet, is told which expert window is scarcest, claims it, opens a relay, and is credited for the bytes it carries. Not yet: the endpoint that hands it the weights for that window, and — more fundamentally — any path in the p4 stage adapter for dispatching expert work to a remote device. The market and the transport run; the data path and the engine hook do not. Where a detail below names a tool or a route, it is the one that ran on the previous engine.",
       },
       { t: "h2", kick: "Seven steps", text: "Build → volunteer → serve → dial → earn" },
       {
@@ -1069,7 +1098,7 @@ metro federation: site ──DAC── switch [ZR+ @200G] ──SMF ≤120km─�
       },
       {
         t: "callout",
-        md: "**Engine status.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. The current engine, [p4](/wiki/p4), serves at layer grain today; carrying expert sharding onto it is designed and in progress. Where a detail names a tool or a route, it is the one that ran on the previous engine.",
+        md: "**Engine status, 2026-09-21.** Expert-grain sharding was built and demonstrated on Kvasir's previous engine, and the results below are from that work. Carrying it onto [p4](/wiki/p4) is partly done. Live: a device proves a wallet, is told which expert window is scarcest, claims it, opens a relay, and is credited for the bytes it carries. Not yet: the endpoint that hands it the weights for that window, and — more fundamentally — any path in the p4 stage adapter for dispatching expert work to a remote device. The market and the transport run; the data path and the engine hook do not. Where a detail below names a tool or a route, it is the one that ran on the previous engine.",
       },
       { t: "h2", kick: "Layer 1", text: "Coordinator-side: load-adaptive dispatch" },
       {
