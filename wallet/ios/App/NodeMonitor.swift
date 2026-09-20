@@ -5,7 +5,7 @@ import Core
 struct NodeMonitorView: View {
     @ObservedObject var staking: StakingStore
     @ObservedObject private var loc = Localizer.shared
-    @ObservedObject private var hub = HubParticipation.shared
+    @ObservedObject private var bridge = BridgeParticipation.shared
     @State private var pendingRemove: NodeStatusItem?
     @State private var showRemoveConfirm = false
 
@@ -14,7 +14,7 @@ struct NodeMonitorView: View {
             BrandBackground()
             ScrollView {
                 VStack(spacing: 16) {
-                    hubConnectionCard
+                    bridgeConnectionCard
                     if let s = staking.nodeStatus {
                         summaryCard(s.totals)
                         tierLegend
@@ -59,19 +59,19 @@ struct NodeMonitorView: View {
         }
     }
 
-    /// Hub connection status — which known hubs the node auto-connects to on
+    /// Bridge connection status — which known bridges the node auto-connects to on
     /// launch and whether it is currently serving one.
-    private var hubConnectionCard: some View {
-        let serving = !hub.servingHost.isEmpty
-        let dotColor: Color = serving ? .green : (hub.connected ? Brand.pink : Brand.textSecondary)
+    private var bridgeConnectionCard: some View {
+        let serving = !bridge.servingHost.isEmpty
+        let dotColor: Color = serving ? .green : (bridge.connected ? Brand.pink : Brand.textSecondary)
         let stateText: String = serving
-            ? loc.t("monitor.hubServing")
-            : (hub.connected ? loc.t("monitor.hubConnectedIdle") : loc.t("monitor.hubDisconnected"))
+            ? loc.t("monitor.bridgeServing")
+            : (bridge.connected ? loc.t("monitor.bridgeConnectedIdle") : loc.t("monitor.bridgeDisconnected"))
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .foregroundStyle(Brand.pink)
-                Text(loc.t("monitor.hubTitle"))
+                Text(loc.t("monitor.bridgeTitle"))
                     .font(.system(.subheadline, design: .rounded).weight(.bold))
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
@@ -80,19 +80,19 @@ struct NodeMonitorView: View {
                     Text(stateText).font(.caption.weight(.semibold)).foregroundStyle(Brand.textSecondary)
                 }
             }
-            if hub.hubs.isEmpty {
-                Text(loc.t("monitor.hubNone"))
+            if bridge.bridges.isEmpty {
+                Text(loc.t("monitor.bridgeNone"))
                     .font(.caption2).foregroundStyle(Brand.textSecondary)
             } else {
-                ForEach(hub.hubs, id: \.self) { url in
+                ForEach(bridge.bridges, id: \.self) { url in
                     HStack(spacing: 6) {
-                        let isServed = serving && hubHost(url) == hub.servingHost
+                        let isServed = serving && bridgeHost(url) == bridge.servingHost
                         Circle().fill(isServed ? Color.green : Brand.pink).frame(width: 6, height: 6)
-                        Text(hubHost(url))
+                        Text(bridgeHost(url))
                             .font(.caption.monospaced()).foregroundStyle(Brand.textPrimary)
                         Spacer()
                         if isServed {
-                            Text(hub.lastStatus).font(.caption2).foregroundStyle(Brand.textSecondary)
+                            Text(bridge.lastStatus).font(.caption2).foregroundStyle(Brand.textSecondary)
                                 .lineLimit(1).truncationMode(.tail)
                         }
                     }
@@ -103,7 +103,7 @@ struct NodeMonitorView: View {
         .brandCard()
     }
 
-    private func hubHost(_ url: String) -> String { URL(string: url)?.host ?? url }
+    private func bridgeHost(_ url: String) -> String { URL(string: url)?.host ?? url }
 
     private func summaryCard(_ t: NodeStatusTotals) -> some View {
         VStack(spacing: 14) {
@@ -335,7 +335,7 @@ struct NodeMonitorView: View {
     }
 }
 
-// The settlement gateway upserts a hub-qualified node (`infer-<hubKey>-<nodeId>`)
+// The settlement gateway upserts a bridge-qualified node (`infer-<bridgeKey>-<nodeId>`)
 // for a phone's expert-shard contribution, separate from the phone's own
 // registration node (`<nodeId>`). Fold every such work-node's reward into its
 // base node so a phone's earnings show on its own card, not a mystery second one.
@@ -344,7 +344,7 @@ private func consolidateExpertNodes(_ nodes: [NodeStatusItem]) -> [NodeStatusIte
     let ids = Set(nodes.map { $0.nodeId })
     func baseId(_ id: String) -> String? {
         guard id.hasPrefix("infer-") else { return nil }
-        let rest = id.dropFirst("infer-".count)                 // <hubKey>-<baseId>
+        let rest = id.dropFirst("infer-".count)                 // <bridgeKey>-<baseId>
         guard let dash = rest.firstIndex(of: "-") else { return nil }
         return String(rest[rest.index(after: dash)...])
     }

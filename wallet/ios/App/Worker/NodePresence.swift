@@ -4,7 +4,7 @@ import Core
 /// App-wide owner of the phone-node lifecycle.
 ///
 /// The staking screens' `StakingStore` is created per-sheet and does not exist on
-/// the home screen, so the node's worker, hub participation and staking-service
+/// the home screen, so the node's worker, bridge participation and staking-service
 /// heartbeat cannot live there — they must run app-wide so that:
 ///  - a live node stays "online" no matter which screen is shown,
 ///  - once the live toggle is on, the node auto-resumes participation on cold start,
@@ -68,12 +68,13 @@ final class NodePresence {
             if !wantServe { NodeBackgroundTask.cancel() }
         }
 
-        // Outbound participation: poll every registered remote hub and serve a scarce
-        // shard/expert range — how a NAT'd phone serves hub.kvasir-ai.net outbound.
+        // Outbound participation: poll every registered remote bridge and serve a scarce
+        // shard/expert range — how a NAT'd phone serves the bridge (gate.kvasir-ai.net)
+        // outbound.
         if nodeLive && !blockedByCharge {
-            HubParticipation.shared.start(owner: owner)
+            BridgeParticipation.shared.start(owner: owner)
         } else {
-            HubParticipation.shared.stop()
+            BridgeParticipation.shared.stop()
         }
 
         // Registration + heartbeat keeps the node "online" while live (off-charge it

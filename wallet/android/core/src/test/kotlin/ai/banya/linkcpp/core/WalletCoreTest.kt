@@ -12,7 +12,11 @@ class WalletCoreTest {
         val spec = SharedSpec.loadToken()
         assertEquals("KVR", spec.token.symbol)
         assertEquals(6, spec.token.decimals)
-        assertEquals("DhtWwpWBXcL7WoWAgWk8f5ZHVNxAkHESmcdiQNma1msL", spec.token.mint)
+        // The live mint, agreed by three sources that do not copy each other:
+        // wallet/shared-spec/token.devnet.json, the explorer link inside it, and
+        // what gate.kvasir-ai.net returns from /api/pay/models. The value this
+        // test used to carry predates the mint the network actually runs on.
+        assertEquals("6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ", spec.token.mint)
         assertEquals("devnet", spec.cluster)
     }
 

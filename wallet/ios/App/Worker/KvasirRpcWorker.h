@@ -1,6 +1,6 @@
 // C bridge: run a ggml RPC worker (data plane) inside the iOS app.
 // The server loop is ggml's own ggml_backend_rpc_start_server — the same code
-// path as the desktop ggml-rpc-server binary, so the hub master drives this
+// path as the desktop ggml-rpc-server binary, so the bridge master drives this
 // device exactly like any other RPC worker.
 #ifndef KVASIR_RPC_WORKER_H
 #define KVASIR_RPC_WORKER_H

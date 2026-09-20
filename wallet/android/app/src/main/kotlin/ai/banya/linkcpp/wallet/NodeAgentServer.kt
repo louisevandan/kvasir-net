@@ -13,7 +13,7 @@ import kotlin.concurrent.thread
 /**
  * The phone-side managed node agent: the Android counterpart of the iOS
  * AgentControlServer. (It also mirrored controller/nodeagent.py, which was
- * deleted with the rest of the retired control plane.) It speaks the hub's control
+ * deleted with the rest of the retired control plane.) It speaks the bridge's control
  * protocol over a raw HTTP server and, unlike iOS, drives the data plane by
  * spawning the bundled native binaries (linkcpp-node ring stage, ggml-rpc-server)
  * — Android can exec, so this is a real on-demand node.
@@ -26,31 +26,32 @@ class NodeAgentServer(private val ctx: Context) {
     @Volatile var lastEvent = ""; private set
     @Volatile var boundController: String? = null; private set
 
-    // Connection status for the node dashboard: the hubs this node polls and
+    // Connection status for the node dashboard: the bridges this node polls and
     // whether it is actively serving a shard/expert range for one right now.
-    val knownHubUrls: List<String> get() = knownHubs.keys.toList()
+    val knownBridgeUrls: List<String> get() = knownBridges.keys.toList()
     val serving: Boolean get() =
         stageProc != null || rpcProc != null || activeRelay != null || expertWorker.serving
 
-    // Autonomous shard participation: the phone proactively polls the hub's
+    // Autonomous shard participation: the phone proactively polls the bridge's
     // scarcity/demand market and advertises which under-covered window it is
-    // ready to serve (and its reward multiplier). The hub still force-places the
+    // ready to serve (and its reward multiplier). The bridge still force-places the
     // node and triggers the partial download; this is the bottom-up signal.
     @Volatile var autonomousShard = true
     @Volatile var shardIntent: JSONObject? = null; private set
-    // Layer budget offered to the hub's matchmaker; it clips the scarce gap to a
+    // Layer budget offered to the bridge's matchmaker; it clips the scarce gap to a
     // coverable sub-window, so this only bounds how much this phone volunteers.
     @Volatile var shardLayerBudget = 8
 
-    // Multi-hub: the node polls EVERY hub it knows, not just the one that joined
-    // it. Hubs are learned from an inbound join/download (LAN hubs, no token) and
-    // configured explicitly via POST /control/hubs (remote public hubs, which the
-    // node can only reach outbound and which are usually auth-gated). base URL ->
-    // service token ("" = none). Per-hub shard_intent is tracked separately.
-    private val knownHubs = java.util.concurrent.ConcurrentHashMap<String, String>()
+    // Multi-bridge: the node polls EVERY bridge it knows, not just the one that
+    // joined it. Bridges are learned from an inbound join/download (LAN bridges,
+    // no token) and configured explicitly via POST /control/hubs (remote public
+    // bridges, which the node can only reach outbound and which are usually
+    // auth-gated). base URL -> service token ("" = none). Per-bridge shard_intent
+    // is tracked separately.
+    private val knownBridges = java.util.concurrent.ConcurrentHashMap<String, String>()
     // MoE expert-parallel participation (runs alongside the layer-shard poll):
-    // volunteer for scarce expert ranges on every known hub and serve them.
-    private val expertWorker = ExpertWorker(ctx, { knownHubs.toMap() }, { m -> log(m) })
+    // volunteer for scarce expert ranges on every known bridge and serve them.
+    private val expertWorker = ExpertWorker(ctx, { knownBridges.toMap() }, { m -> log(m) })
     private val shardIntents = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
     @Volatile private var enrolling = false
     @Volatile private var activeRelay: RingRelay? = null
@@ -59,11 +60,12 @@ class NodeAgentServer(private val ctx: Context) {
     private var stageProc: Process? = null
     private var rpcProc: Process? = null
     private var reportUrl: String? = null
-    // Hub base URL for the autonomous shard poll. Captured from any hub-origin
-    // URL we're handed — the join report_url or a model download source — since
-    // a binding restored after a hub restart re-stages without re-joining, so
+    // Bridge base URL for the autonomous shard poll. Captured from any
+    // bridge-origin URL we're handed — the join report_url or a model download
+    // source — since a binding restored after a bridge restart re-stages
+    // without re-joining, so
     // report_url alone is not reliably present.
-    @Volatile private var hubBaseUrl: String? = null
+    @Volatile private var bridgeBaseUrl: String? = null
     private var serviceToken: String? = null
     private var owner = ""
     private var desiredLoad: JSONObject? = null
@@ -87,7 +89,7 @@ class NodeAgentServer(private val ctx: Context) {
     fun start(owner: String) {
         this.owner = owner
         if (server != null) return
-        loadConfiguredHubs()
+        loadConfiguredBridges()
         try {
             server = ServerSocket(agentPort)
             running = true
@@ -162,7 +164,7 @@ class NodeAgentServer(private val ctx: Context) {
         method == "POST" && path == "/control/join" -> {
             boundController = json.optString("controller_id", null)
             reportUrl = json.optString("report_url", null)
-            captureHubBase(reportUrl)
+            captureBridgeBase(reportUrl)
             json.optString("service_token", "").takeIf { it.isNotEmpty() }?.let { serviceToken = it }
             log("joined ${boundController ?: "?"}")
             200 to JSONObject().put("joined", true).put("status", info())
@@ -185,22 +187,25 @@ class NodeAgentServer(private val ctx: Context) {
             stopStage(); stopRpc(); stopRelay(); desiredLoad = null; 200 to JSONObject().put("unloaded", true).put("status", info())
         }
         method == "POST" && path == "/control/download" -> downloadModel(json)
+        // The hub -> bridge rename stops at the wire: this path keeps the old
+        // spelling because an external caller may already be posting to it.
         method == "POST" && path == "/control/hubs" -> {
             val url = json.optString("url", "")
             if (url.isEmpty()) 400 to err("url required")
-            else { addHub(url, json.optString("token", "")); 200 to JSONObject().put("added", true).put("hubs", JSONArray(knownHubs.keys.toList())) }
+            else { addBridge(url, json.optString("token", "")); 200 to JSONObject().put("added", true).put("hubs", JSONArray(knownBridges.keys.toList())) }
         }
+        // Same here — legacy path spelling, kept for existing callers.
         method == "GET" && path == "/control/hubs" -> 200 to JSONObject()
-            .put("hubs", JSONArray(knownHubs.keys.toList())).put("shard_intents", JSONObject(shardIntents as Map<*, *>))
+            .put("hubs", JSONArray(knownBridges.keys.toList())).put("shard_intents", JSONObject(shardIntents as Map<*, *>))
         method == "POST" && path == "/control/autonomous" -> {
             autonomousShard = json.optBoolean("enabled", true)
             200 to JSONObject().put("autonomous", autonomousShard)
         }
         method == "POST" && path == "/control/self-enroll" -> {
-            val hub = json.optString("hub", ""); val model = json.optString("model", "")
+            val bridge = json.optString("hub", ""); val model = json.optString("model", "")
             val ctrlId = json.optString("controller_id", "")
-            if (hub.isEmpty() || model.isEmpty()) 400 to err("hub + model required")
-            else { thread(name = "kvasir-enroll") { runCatching { selfEnroll(hub, model, ctrlId) }.onFailure { log("self-enroll: $it") } }
+            if (bridge.isEmpty() || model.isEmpty()) 400 to err("hub + model required")
+            else { thread(name = "kvasir-enroll") { runCatching { selfEnroll(bridge, model, ctrlId) }.onFailure { log("self-enroll: $it") } }
                    200 to JSONObject().put("started", true) }
         }
         method == "GET" && path == "/control/logs" -> 200 to JSONObject()
@@ -255,13 +260,13 @@ class NodeAgentServer(private val ctx: Context) {
             .put("cores", resources.getInt("cores_budget")).put("resources", resources)
             .put("bound_to", boundController).put("rpc_port", rpcPort)
             // "working" for either data plane: an RPC worker (rpcProc) OR a ring
-            // stage (stageProc). The hub's shard-coverage rollup counts a node as
+            // stage (stageProc). The bridge's shard-coverage rollup counts a node as
             // a live replica only when worker_running is true, so a ring-staging
             // phone must report true or its layer window looks uncovered.
             .put("worker_running", rpcProc?.isAlive == true || stageProc?.isAlive == true)
             .put("models", stagedModels()).put("desired_load", desiredLoad)
             .put("shard_intent", shardIntent ?: JSONObject.NULL)
-            .put("known_hubs", JSONArray(knownHubs.keys.toList()))
+            .put("known_hubs", JSONArray(knownBridges.keys.toList()))
             .put("shard_intents", JSONObject(shardIntents as Map<*, *>))
             .put("runtime", runtime)
             .put("backend", JSONObject().put("backend_kind", backend)
@@ -279,7 +284,7 @@ class NodeAgentServer(private val ctx: Context) {
         val role = json.optString("role", "")
         val listen = json.optInt("listen_port", 0)
         val next = json.optString("next_endpoint", "")
-        // NAT traversal: this phone is reachable only outbound, so the hub tells
+        // NAT traversal: this phone is reachable only outbound, so the bridge tells
         // it to dial its predecessor (dial_prev_endpoint) rather than waiting for
         // an inbound connection it could never accept.
         val dialPrev = json.optString("dial_prev_endpoint", "")
@@ -337,60 +342,60 @@ class NodeAgentServer(private val ctx: Context) {
     private fun stopRelay() { activeRelay?.stop(); activeRelay = null }
     private fun stopRpc() { rpcProc?.destroy(); rpcProc = null }
 
-    // ---- autonomous shard participation (phone -> hub demand market) ----------
+    // ---- autonomous shard participation (phone -> bridge demand market) -------
 
-    /** Best hub base URL we've captured (join report_url or a download source). */
-    private fun hubBase(): String? =
-        (hubBaseUrl ?: reportUrl)?.substringBefore("/api/")?.takeIf { it.startsWith("http") }
+    /** Best bridge base URL we've captured (join report_url or a download source). */
+    private fun bridgeBase(): String? =
+        (bridgeBaseUrl ?: reportUrl)?.substringBefore("/api/")?.takeIf { it.startsWith("http") }
 
-    /** Remember the hub's base URL from any hub-origin URL we're handed. */
-    private fun captureHubBase(url: String?) {
+    /** Remember the bridge's base URL from any bridge-origin URL we're handed. */
+    private fun captureBridgeBase(url: String?) {
         if (url == null) return
         val base = url.substringBefore("/api/")
         if (base.startsWith("http") && base != url) {
-            hubBaseUrl = base
-            knownHubs.putIfAbsent(base, "")   // LAN hubs authenticate by origin, no token
+            bridgeBaseUrl = base
+            knownBridges.putIfAbsent(base, "")   // LAN bridges authenticate by origin, no token
         }
     }
 
-    /** Public entry: the app registers a hub (with a wallet-auth token) for the
-     *  node to poll. Used after an in-app SIWS + 2FA sign-in to a remote hub. */
-    fun registerHub(url: String, token: String) = addHub(url, token)
+    /** Public entry: the app registers a bridge (with a wallet-auth token) for the
+     *  node to poll. Used after an in-app SIWS + 2FA sign-in to a remote bridge. */
+    fun registerBridge(url: String, token: String) = addBridge(url, token)
 
-    /** Hubs this node currently polls, for the settings UI. */
-    fun knownHubList(): List<String> = knownHubs.keys.toList()
+    /** Bridges this node currently polls, for the settings UI. */
+    fun knownBridgeList(): List<String> = knownBridges.keys.toList()
 
-    /** Register a hub the node should poll (e.g. a remote public hub reachable
+    /** Register a bridge the node should poll (e.g. a remote public bridge reachable
      *  only outbound). Persisted so the node keeps polling it across restarts. */
-    private fun addHub(url: String, token: String) {
+    private fun addBridge(url: String, token: String) {
         val base = url.substringBefore("/api/").trimEnd('/')
         if (!base.startsWith("http")) return
-        knownHubs[base] = token
+        knownBridges[base] = token
         runCatching {
             val prefs = ctx.getSharedPreferences("kvasir-node", Context.MODE_PRIVATE)
             val arr = JSONArray()
-            knownHubs.forEach { (u, t) -> arr.put(JSONObject().put("url", u).put("token", t)) }
+            knownBridges.forEach { (u, t) -> arr.put(JSONObject().put("url", u).put("token", t)) }
             prefs.edit().putString("configuredHubs", arr.toString()).apply()
         }
-        log("hub registered: $base${if (token.isNotEmpty()) " (auth)" else ""}")
+        log("bridge registered: $base${if (token.isNotEmpty()) " (auth)" else ""}")
     }
 
-    private fun loadConfiguredHubs() {
+    private fun loadConfiguredBridges() {
         runCatching {
             val prefs = ctx.getSharedPreferences("kvasir-node", Context.MODE_PRIVATE)
             val arr = JSONArray(prefs.getString("configuredHubs", "[]"))
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                val u = o.optString("url", ""); if (u.isNotEmpty()) knownHubs[u] = o.optString("token", "")
+                val u = o.optString("url", ""); if (u.isNotEmpty()) knownBridges[u] = o.optString("token", "")
             }
         }
     }
 
     /**
-     * Poll the hub's shard demand market and volunteer for the scarcest window.
-     * The hub replies with the model + layer window whose coverage is lowest
+     * Poll the bridge's shard demand market and volunteer for the scarcest window.
+     * The bridge replies with the model + layer window whose coverage is lowest
      * (highest reward), which we advertise via info().shard_intent. Placement and
-     * the partial download of that window are still driven by the hub force-place
+     * the partial download of that window are still driven by the bridge force-place
      * path; this is the bottom-up availability signal that lets the market self-heal.
      */
     private fun shardPollLoop() {
@@ -398,9 +403,9 @@ class NodeAgentServer(private val ctx: Context) {
             try { Thread.sleep(45_000) } catch (_: InterruptedException) { break }
             if (!running) break
             if (!autonomousShard) { shardIntents.clear(); updateBestIntent(); continue }
-            // Poll EVERY known hub outbound and volunteer to each independently —
-            // a node can detect and offer to serve on multiple hubs at once.
-            for ((base, token) in knownHubs) {
+            // Poll EVERY known bridge outbound and volunteer to each independently —
+            // a node can detect and offer to serve on multiple bridges at once.
+            for ((base, token) in knownBridges) {
                 val body = JSONObject()
                     .put("node_id", DeviceNode.nodeId(ctx))
                     .put("max_layers", shardLayerBudget)
@@ -416,7 +421,7 @@ class NodeAgentServer(private val ctx: Context) {
                         .put("reward_multiplier", 1.0 + resp.optDouble("scarcity", 0.0))
                     shardIntents[base] = intent
                     logIntentChange(base, intent)
-                    // Autonomous participation: a hub we can only reach outbound
+                    // Autonomous participation: a bridge we can only reach outbound
                     // (auth-gated, i.e. has a token) won't force-place us, so if
                     // we're idle, self-enroll to serve the window it offered.
                     if (token.isNotEmpty() && !enrolling
@@ -434,7 +439,7 @@ class NodeAgentServer(private val ctx: Context) {
         }
     }
 
-    /** The advertised primary intent = the highest-reward one across all hubs. */
+    /** The advertised primary intent = the highest-reward one across all bridges. */
     private fun updateBestIntent() {
         shardIntent = shardIntents.values.maxByOrNull { it.optDouble("scarcity", 0.0) }
     }
@@ -451,12 +456,12 @@ class NodeAgentServer(private val ctx: Context) {
     }
 
     /**
-     * Self-enroll to a hub reachable only outbound (e.g. a remote public hub):
-     * declare intent to serve a shard, pull the stage config the hub plans for
+     * Self-enroll to a bridge reachable only outbound (e.g. a remote public bridge):
+     * declare intent to serve a shard, pull the stage config the bridge plans for
      * us, download just our window, and self-start the ring stage dialing the
-     * coordinator. The hub never calls back — the whole lifecycle is node-driven.
+     * coordinator. The bridge never calls back — the whole lifecycle is node-driven.
      */
-    fun selfEnroll(hubBase: String, model: String, controllerId: String = ""): JSONObject {
+    fun selfEnroll(bridgeBase: String, model: String, controllerId: String = ""): JSONObject {
         // Single-flight: never enroll twice concurrently or while already serving,
         // or two stages race and restart each other.
         synchronized(this) {
@@ -464,15 +469,15 @@ class NodeAgentServer(private val ctx: Context) {
             enrolling = true
         }
         try {
-            return selfEnrollInner(hubBase, model, controllerId)
+            return selfEnrollInner(bridgeBase, model, controllerId)
         } finally {
             enrolling = false   // re-entry is then blocked by the stageProc.isAlive check
         }
     }
 
-    private fun selfEnrollInner(hubBase: String, model: String, controllerId: String): JSONObject {
-        val base = hubBase.substringBefore("/api/").trimEnd('/')
-        val token = knownHubs[base] ?: ""
+    private fun selfEnrollInner(bridgeBase: String, model: String, controllerId: String): JSONObject {
+        val base = bridgeBase.substringBefore("/api/").trimEnd('/')
+        val token = knownBridges[base] ?: ""
         val backend = if (File(libDir, "libggml-opencl.so").exists()) "opencl" else "cpu"
         val enrollBody = JSONObject()
             .put("node_id", DeviceNode.nodeId(ctx)).put("name", Build.MODEL).put("model", model)
@@ -500,7 +505,7 @@ class NodeAgentServer(private val ctx: Context) {
         val url = "$base/api/proxy/models/$name/stage?layers=${layers.getInt(0)}:${layers.getInt(1)}"
         log("self-enroll: downloading window [${layers.getInt(0)},${layers.getInt(1)})")
         if (!httpDownload(url, token, dest)) return err("shard download failed")
-        // Relay: the hub can only be reached over 443, so bridge the ring stream
+        // Relay: the bridge can only be reached over 443, so tunnel the ring stream
         // through a WebSocket instead of dialing the coordinator's port directly.
         rr.optJSONObject("relay")?.let { relay ->
             stopRelay()
@@ -555,7 +560,7 @@ class NodeAgentServer(private val ctx: Context) {
         if (conn.responseCode in 200..299 && text.isNotEmpty()) JSONObject(text) else null
     }.getOrNull()
 
-    // ---- model download (hub -> phone staging) --------------------------------
+    // ---- model download (bridge -> phone staging) -----------------------------
 
     private val downloading = HashSet<String>()
 
@@ -563,7 +568,7 @@ class NodeAgentServer(private val ctx: Context) {
         val model = json.optString("model", "")
         val url = json.optJSONObject("source")?.optString("url", "") ?: ""
         if (model.isEmpty() || url.isEmpty()) return 400 to err("download requires model + source.url")
-        captureHubBase(url)
+        captureBridgeBase(url)
         val op = json.optString("op_id", "dl-${System.nanoTime()}")
         val name = File(model).name
         val dest = File(shardsDir, name)

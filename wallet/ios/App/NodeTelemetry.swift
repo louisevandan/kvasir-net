@@ -121,6 +121,6 @@ enum NodeBackend {
         ("mlx", "GPU · MLX"),
         ("cpu", "CPU"),
     ]
-    /// Accelerator category reported to the hub for reward/monitor grouping.
+    /// Accelerator category reported to the bridge for reward/monitor grouping.
     static func accelerator(_ backend: String) -> String { backend == "cpu" ? "cpu" : "gpu" }
 }

@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import java.io.File
 
-/** A GGUF the hub has staged onto this device (filesDir/models). */
+/** A GGUF the bridge has staged onto this device (filesDir/models). */
 private data class LocalModel(val name: String, val sizeBytes: Long) {
     val display: String get() = name.removeSuffix(".gguf")
     val sizeLabel: String get() = when {
@@ -27,7 +27,7 @@ private data class LocalModel(val name: String, val sizeBytes: Long) {
 }
 
 /**
- * Manage models the hub has downloaded to this phone: list each GGUF with its
+ * Manage models the bridge has downloaded to this phone: list each GGUF with its
  * size and delete ones no longer needed. Mirrors the iOS/desktop models page.
  */
 @androidx.compose.runtime.Composable

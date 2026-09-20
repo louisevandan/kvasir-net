@@ -10,7 +10,7 @@ import UIKit
 /// alive and reachable. We also take a short UIApplication background assertion
 /// on the way out so an in-flight request can finish before suspension.
 ///
-/// v1 reality: a hub can reliably reach the phone while it is foregrounded
+/// v1 reality: a bridge can reliably reach the phone while it is foregrounded
 /// (screen on) or during a granted background window while charging. Continuous
 /// on-demand availability is not possible under iOS app sandboxing.
 @MainActor

@@ -42,7 +42,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     var nodeBackend by mutableStateOf(prefs.getString("nodeBackend", "opencl")!!); private set   // opencl | vulkan | cpu
     var nodeMode by mutableStateOf(prefs.getString("nodeMode", "local_shard")!!); private set     // local_shard | rpc_worker
     var nodeChargingOnly by mutableStateOf(prefs.getBoolean("nodeChargingOnly", true)); private set
-    // Persisted so the node auto-connects to its known hubs on the next launch:
+    // Persisted so the node auto-connects to its known bridges on the next launch:
     // once live, it resumes as soon as the wallet is restored (see activate()).
     var nodeLive by mutableStateOf(prefs.getBoolean("nodeLive", false)); private set
 
@@ -102,11 +102,11 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /// Run the node data plane (foreground service + agent) whenever live. The
-    /// agent serves the hub control protocol for BOTH node modes — local_shard
+    /// agent serves the bridge control protocol for BOTH node modes — local_shard
     /// (ring stage via /control/proxy/stage/start) and rpc_worker (tensor
     /// executor via /control/load) — and drives the autonomous shard-demand
     /// poll, so it must run in either mode. The service survives a screen lock,
-    /// so the hub can reach this phone on demand.
+    /// so the bridge can reach this phone on demand.
     private fun syncNodeService() {
         val app = getApplication<Application>()
         if (nodeLive) NodeService.start(app, address ?: "")
@@ -118,15 +118,15 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     val nodeAgentEvent: String get() = NodeService.agent?.lastEvent ?: ""
     val nodeAgentPort: Int get() = NodeService.agent?.agentPort ?: 9101
 
-    /// Hub-connection status for the node dashboard. The known hubs come from the
-    /// running agent when live, or from persisted config otherwise, so the card
-    /// shows which hubs the node auto-connects to even before it starts.
+    /// Bridge-connection status for the node dashboard. The known bridges come from
+    /// the running agent when live, or from persisted config otherwise, so the card
+    /// shows which bridges the node auto-connects to even before it starts.
     val nodeConnected: Boolean get() = nodeLive && NodeService.agent?.running == true
     val nodeServing: Boolean get() = NodeService.agent?.serving == true
-    val nodeHubUrls: List<String> get() =
-        NodeService.agent?.knownHubUrls?.takeIf { it.isNotEmpty() } ?: configuredHubUrls()
+    val nodeBridgeUrls: List<String> get() =
+        NodeService.agent?.knownBridgeUrls?.takeIf { it.isNotEmpty() } ?: configuredBridgeUrls()
 
-    private fun configuredHubUrls(): List<String> = runCatching {
+    private fun configuredBridgeUrls(): List<String> = runCatching {
         val prefs = getApplication<Application>().getSharedPreferences("kvasir-node", android.content.Context.MODE_PRIVATE)
         val arr = org.json.JSONArray(prefs.getString("configuredHubs", "[]"))
         (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("url")?.takeIf { u -> u.isNotEmpty() } }
@@ -161,7 +161,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                 keypair = kp
                 address = kp.publicKey.toBase58()
                 // Auto-connect: if the operator left the node live, resume it now
-                // that the wallet (owner) is available — it reloads its known hubs
+                // that the wallet (owner) is available — it reloads its known bridges
                 // and re-connects to them without any manual step.
                 if (nodeLive) syncNodeService()
                 refresh()

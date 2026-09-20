@@ -39,7 +39,7 @@ targets:
           - processing
         BGTaskSchedulerPermittedIdentifiers:
           - ai.banya.linkcpp.wallet.node
-        # Stamped identity the in-app RPC worker reports to the hub (advisory fields).
+        # Stamped identity the in-app RPC worker reports to the bridge (advisory fields).
         KvasirUnitVersion: "0.0.7"
         KvasirLlamaCppRev: "6b85b26bdee2"
     settings:

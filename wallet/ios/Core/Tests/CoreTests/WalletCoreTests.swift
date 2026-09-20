@@ -9,7 +9,11 @@ final class WalletCoreTests: XCTestCase {
         let spec = try SharedSpec.loadToken()
         XCTAssertEqual(spec.token.symbol, "KVR")
         XCTAssertEqual(spec.token.decimals, 6)
-        XCTAssertEqual(spec.token.mint, "DhtWwpWBXcL7WoWAgWk8f5ZHVNxAkHESmcdiQNma1msL")
+        // The live mint, agreed by three sources that do not copy each other:
+        // wallet/shared-spec/token.devnet.json, the explorer link inside it, and
+        // what gate.kvasir-ai.net returns from /api/pay/models. The value this
+        // test used to carry predates the mint the network actually runs on.
+        XCTAssertEqual(spec.token.mint, "6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ")
         XCTAssertEqual(spec.cluster, "devnet")
         XCTAssertFalse(spec.rpcUrl.isEmpty)
     }

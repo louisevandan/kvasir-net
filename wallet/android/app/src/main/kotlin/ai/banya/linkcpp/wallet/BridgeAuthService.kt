@@ -7,8 +7,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Sign-In With Solana against a Kvasir hub, to obtain the bearer token an
- * autonomous node uses to poll/enroll on an auth-gated (public, remote) hub.
+ * Sign-In With Solana against a Kvasir bridge, to obtain the bearer token an
+ * autonomous node uses to poll/enroll on an auth-gated (public, remote) bridge.
  *
  * Flow. The server side of this — controller/siws.py and controller/hub.py —
  * was deleted with the retired control plane and nothing serves the /api/auth routes
@@ -21,9 +21,9 @@ import java.net.URL
  *                                                   {twofa_required, pre_auth}
  *   4. POST /api/auth/2fa/login {pre_auth,code}  -> session cookie
  * The session cookie value (linkcpp_session) doubles as the Authorization
- * bearer token the hub accepts (_authed_wallet).
+ * bearer token the bridge accepts (_authed_wallet).
  */
-class HubAuthService(baseUrl: String, private val mnemonic: List<String>) {
+class BridgeAuthService(baseUrl: String, private val mnemonic: List<String>) {
     private val base = baseUrl.trimEnd('/')
     private val sessionCookie = "linkcpp_session"
 
@@ -32,7 +32,7 @@ class HubAuthService(baseUrl: String, private val mnemonic: List<String>) {
 
     /**
      * Mint a long-lived NODE token with a wallet signature alone — no OTP.
-     * The node token is scoped to participation, so the hub skips 2FA (which a
+     * The node token is scoped to participation, so the bridge skips 2FA (which a
      * mobile wallet has no UI for). Returns the bearer token the node polls with.
      */
     fun nodeToken(): String {
@@ -40,11 +40,11 @@ class HubAuthService(baseUrl: String, private val mnemonic: List<String>) {
         val w = kp.publicKey.toBase58()
         val ch = postJson("/api/auth/challenge", JSONObject().put("wallet", w))
         val message = ch.optString("message"); val nonce = ch.optString("nonce")
-        if (message.isEmpty() || nonce.isEmpty()) error("hub did not issue a challenge")
+        if (message.isEmpty() || nonce.isEmpty()) error("bridge did not issue a challenge")
         val sigB64 = Base64.encodeToString(kp.sign(message.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
         val resp = postJson("/api/auth/node-token",
             JSONObject().put("wallet", w).put("nonce", nonce).put("signature", sigB64))
-        return resp.optString("node_token").ifEmpty { error("hub issued no node token") }
+        return resp.optString("node_token").ifEmpty { error("bridge issued no node token") }
     }
 
     private fun postJson(path: String, body: JSONObject): JSONObject {

@@ -24,14 +24,14 @@ import kotlin.concurrent.thread
  *   over /api/expert-relay (443, NAT-friendly) -> heartbeat coverage.
  *
  * Model-agnostic by contract: the phone hardcodes NOTHING about a model. The
- * hub carries the per-model dims — `n_embd` (required by the worker to serve),
+ * bridge carries the per-model dims — `n_embd` (required by the worker to serve),
  * `n_layer`, `n_expert` — in the /api/expert-volunteer response (or the slice
  * GGUF carries n_embd and the worker reads it). If the response omits n_embd the
  * assignment is skipped with a clear log rather than guessing.
  */
 class ExpertWorker(
     private val ctx: Context,
-    private val knownHubs: () -> Map<String, String>,   // base URL -> node token
+    private val knownBridges: () -> Map<String, String>,   // base URL -> node token
     private val log: (String) -> Unit,
 ) {
     @Volatile private var running = false
@@ -42,7 +42,7 @@ class ExpertWorker(
     @Volatile private var enrolling = false
     private var pollThread: Thread? = null
     private val servePort = 52800
-    private val maxExperts = 32          // experts/layer budget offered; hub clips to the scarce gap
+    private val maxExperts = 32          // experts/layer budget offered; bridge clips to the scarce gap
 
     private val libDir get() = ctx.applicationInfo.nativeLibraryDir
     private val ldPath get() = "$libDir:/vendor/lib64:/system/lib64"
@@ -69,9 +69,9 @@ class ExpertWorker(
             try { Thread.sleep(45_000) } catch (_: InterruptedException) { break }
             if (!running) break
             if (worker?.isAlive == true) continue      // already serving; keep the assignment
-            for ((base, token) in knownHubs()) {
+            for ((base, token) in knownBridges()) {
                 if (!running || worker?.isAlive == true) break
-                // Volunteer for ANY under-covered model (model="" => hub picks the scarcest).
+                // Volunteer for ANY under-covered model (model="" => bridge picks the scarcest).
                 val body = JSONObject().put("model", "").put("max_experts", maxExperts)
                 val resp = postJson("$base/api/expert-volunteer", body, token) ?: continue
                 if (!resp.optBoolean("assigned", false)) continue
@@ -95,7 +95,7 @@ class ExpertWorker(
         val nExpert = a.optInt("n_expert", 0)
         if (model.isEmpty() || layer < 0 || e0 < 0 || e1 <= e0) { log("bad expert assignment: $a"); return }
         if (nEmbd <= 0) {
-            log("hub did not supply n_embd for '$model' — cannot serve (hub must carry per-model dims). skipping.")
+            log("bridge did not supply n_embd for '$model' — cannot serve (bridge must carry per-model dims). skipping.")
             return
         }
 
@@ -108,8 +108,8 @@ class ExpertWorker(
             if (!download(url, token, slice)) { slice.delete(); return }
         }
 
-        // 2) bridge the dispatch stream over the hub relay (443). The worker LISTENS
-        //    on servePort; the dial connects that port + the hub WS and pipes.
+        // 2) tunnel the dispatch stream over the bridge relay (443). The worker LISTENS
+        //    on servePort; the dial connects that port + the bridge WS and pipes.
         val session = "expert-${DeviceNode.nodeId(ctx)}"
         relay?.stop()
         relay = ExpertRelayDial(base, session, token, servePort, log).also { it.start() }
@@ -144,7 +144,7 @@ class ExpertWorker(
         val c = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; connectTimeout = 12000; readTimeout = 30000; doOutput = true
             setRequestProperty("Content-Type", "application/json")
-            // Node tokens are verified from the Authorization bearer (hub
+            // Node tokens are verified from the Authorization bearer (bridge
             // _bearer_or_cookie); the M2M header covers a static service token.
             if (token.isNotEmpty()) {
                 setRequestProperty("Authorization", "Bearer $token")
@@ -173,18 +173,18 @@ class ExpertWorker(
 
 /**
  * Worker-mode dial-out bridge: pipe the local expert-worker --serve TCP port to
- * the hub's /api/expert-relay WebSocket, so a NAT phone reaches the backbone
+ * the bridge's /api/expert-relay WebSocket, so a NAT phone reaches the backbone
  * over 443. Android port of expert-relay-dial.py (--mode worker); minimal
  * RFC 6455 client (masked binary frames out, ping answered) like RingRelay.kt.
  */
 class ExpertRelayDial(
-    hubBase: String,
+    bridgeBase: String,
     private val session: String,
     private val token: String,
     private val localPort: Int,
     private val log: (String) -> Unit,
 ) {
-    private val uri = URI(hubBase.replaceFirst("http", "ws").trimEnd('/') + "/api/expert-relay")
+    private val uri = URI(bridgeBase.replaceFirst("http", "ws").trimEnd('/') + "/api/expert-relay")
     private val tls = uri.scheme == "wss"
     private val host = uri.host
     private val port = if (uri.port > 0) uri.port else if (tls) 443 else 80

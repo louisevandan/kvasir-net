@@ -1,61 +1,63 @@
 import Foundation
 import UIKit
 
-/// Outbound hub participation for iOS — the half of the node that `AgentControlServer`
+/// Outbound bridge participation for iOS — the half of the node that `AgentControlServer`
 /// (inbound only) lacks. Mirrors `wallet/android/.../NodeAgentServer.kt`'s
-/// `shardPollLoop` + `selfEnroll`: the phone learns remote public hubs (with a
-/// SIWS node token), polls each hub's demand market outbound, and when a hub
+/// `shardPollLoop` + `selfEnroll`: the phone learns remote public bridges (with a
+/// SIWS node token), polls each bridge's demand market outbound, and when a bridge
 /// offers an under-covered layer window it self-enrolls — pulls the partial
 /// shard, bridges the ring stream over a WebSocket relay, and starts the native
-/// ring stage. This is what lets a NAT'd phone serve a hub it can only reach
-/// outbound (e.g. hub.kvasir-ai.net behind Cloudflare).
+/// ring stage. This is what lets a NAT'd phone serve a bridge it can only reach
+/// outbound (the p4-bridge, reached through gate.kvasir-ai.net behind Cloudflare).
 @MainActor
-final class HubParticipation: ObservableObject {
-    static let shared = HubParticipation()
+final class BridgeParticipation: ObservableObject {
+    static let shared = BridgeParticipation()
 
-    // base URL -> node token ("" = LAN hub, origin-authenticated)
-    @Published private(set) var hubs: [String] = []
+    // base URL -> node token ("" = LAN bridge, origin-authenticated)
+    @Published private(set) var bridges: [String] = []
     @Published private(set) var lastStatus: String = ""
     // Whether the outbound poll loop is live (the node is "connected" to its known
-    // hubs and volunteering), surfaced on the node dashboard.
+    // bridges and volunteering), surfaced on the node dashboard.
     @Published private(set) var connected: Bool = false
-    // Host of the hub the node is currently serving a shard/expert range for, if any.
+    // Host of the bridge the node is currently serving a shard/expert range for, if any.
     @Published private(set) var servingHost: String = ""
 
-    private var knownHubs: [String: String] = [:]
+    private var knownBridges: [String: String] = [:]
     private var pollTask: Task<Void, Never>?
     private var owner: String = ""
     private var relay: RingRelay?
     private var enrolling = false
     private let session = URLSession(configuration: .ephemeral)
-    private let maxLayers = 8   // layer budget offered; the hub clips it to the scarce gap
+    private let maxLayers = 8   // layer budget offered; the bridge clips it to the scarce gap
     private let maxExperts = 32          // experts/layer budget for the MoE expert path
     private let expertServePort = 52800
     private var expertRelay: ExpertRelayDial?
     private let defaults = UserDefaults.standard
+    // Persisted registry key. It keeps the old "hub" spelling on purpose: it names
+    // data already stored on people's phones, so renaming it would orphan it.
     private let storeKey = "kvasir.knownHubs"
 
-    private init() { loadHubs() }
+    private init() { loadBridges() }
 
     // MARK: registry
 
-    func knownHubList() -> [String] { Array(knownHubs.keys) }
+    func knownBridgeList() -> [String] { Array(knownBridges.keys) }
 
-    /// Register a remote hub (with a wallet-auth node token) for the node to poll.
+    /// Register a remote bridge (with a wallet-auth node token) for the node to poll.
     /// Persisted so the node keeps polling it across launches.
-    func registerHub(url: String, token: String) {
+    func registerBridge(url: String, token: String) {
         guard let base = normalize(url) else { return }
-        knownHubs[base] = token
-        hubs = knownHubList()
-        saveHubs()
-        log("hub registered: \(base)\(token.isEmpty ? "" : " (auth)")")
+        knownBridges[base] = token
+        bridges = knownBridgeList()
+        saveBridges()
+        log("bridge registered: \(base)\(token.isEmpty ? "" : " (auth)")")
     }
 
-    func removeHub(_ url: String) {
+    func removeBridge(_ url: String) {
         guard let base = normalize(url) else { return }
-        knownHubs.removeValue(forKey: base)
-        hubs = knownHubList()
-        saveHubs()
+        knownBridges.removeValue(forKey: base)
+        bridges = knownBridgeList()
+        saveBridges()
     }
 
     private func normalize(_ url: String) -> String? {
@@ -65,15 +67,15 @@ final class HubParticipation: ObservableObject {
         return b.hasPrefix("http") ? b : nil
     }
 
-    private func loadHubs() {
+    private func loadBridges() {
         if let data = defaults.data(forKey: storeKey),
            let m = try? JSONDecoder().decode([String: String].self, from: data) {
-            knownHubs = m
+            knownBridges = m
         }
-        hubs = knownHubList()
+        bridges = knownBridgeList()
     }
-    private func saveHubs() {
-        if let data = try? JSONEncoder().encode(knownHubs) { defaults.set(data, forKey: storeKey) }
+    private func saveBridges() {
+        if let data = try? JSONEncoder().encode(knownBridges) { defaults.set(data, forKey: storeKey) }
     }
 
     // MARK: poll lifecycle
@@ -81,7 +83,7 @@ final class HubParticipation: ObservableObject {
     func start(owner: String) {
         self.owner = owner
         guard pollTask == nil else { return }
-        connected = !knownHubs.isEmpty
+        connected = !knownBridges.isEmpty
         if lastStatus.isEmpty { lastStatus = connected ? statusText("연결됨 · 대기") : "" }
         pollTask = Task.detached(priority: .background) { [weak self] in
             await self?.pollLoop()
@@ -102,13 +104,13 @@ final class HubParticipation: ObservableObject {
         while !Task.isCancelled {
             let serving = kvasir_expert_running() || kvasir_stage_running()
             await MainActor.run {
-                self.connected = !self.knownHubs.isEmpty
+                self.connected = !self.knownBridges.isEmpty
                 if !serving { self.servingHost = "" }
                 if !serving && self.connected { self.lastStatus = self.statusText("연결됨 · 대기") }
             }
             try? await Task.sleep(nanoseconds: 45_000_000_000)   // 45s, matches Android
             if Task.isCancelled { break }
-            let snapshot = await MainActor.run { self.knownHubs }
+            let snapshot = await MainActor.run { self.knownBridges }
             for (base, token) in snapshot {
                 if Task.isCancelled { break }
                 if kvasir_expert_running() || kvasir_stage_running() { break }   // already serving
@@ -147,10 +149,10 @@ final class HubParticipation: ObservableObject {
         let nLayer = a["n_layer"] as? Int ?? 0
         let nExpert = a["n_expert"] as? Int ?? 0
         guard !model.isEmpty, layer >= 0, experts.count == 2, experts[1] > experts[0] else {
-            throw HubPartError.message("bad expert assignment")
+            throw BridgePartError.message("bad expert assignment")
         }
         guard nEmbd > 0 else {
-            log("hub did not supply n_embd for '\(model)' — cannot serve (hub must carry per-model dims). skipping.")
+            log("bridge did not supply n_embd for '\(model)' — cannot serve (bridge must carry per-model dims). skipping.")
             return
         }
         let e0 = experts[0], e1 = experts[1]
@@ -164,12 +166,12 @@ final class HubParticipation: ObservableObject {
         // Bridge the dispatch stream over the relay (443), then serve in-process.
         let session = "expert-\(DeviceInfo.nodeId)"
         expertRelay?.stop()
-        let dial = ExpertRelayDial(hubBase: base, session: session, token: token, localPort: expertServePort)
+        let dial = ExpertRelayDial(bridgeBase: base, session: session, token: token, localPort: expertServePort)
         dial.start()
         expertRelay = dial
         guard kvasir_expert_start(slice.path, Int32(expertServePort), Int32(layer), Int32(nEmbd)) else {
             expertRelay?.stop(); expertRelay = nil
-            throw HubPartError.message("expert worker failed to start")
+            throw BridgePartError.message("expert worker failed to start")
         }
         await MainActor.run {
             self.servingHost = self.host(base)
@@ -190,15 +192,15 @@ final class HubParticipation: ObservableObject {
         expertRelay?.stop(); expertRelay = nil
     }
 
-    /// Offer to serve a shard on one hub; self-enroll if it hands us a window.
+    /// Offer to serve a shard on one bridge; self-enroll if it hands us a window.
     private func volunteer(base: String, token: String) async {
         let body: [String: Any] = ["node_id": DeviceInfo.nodeId, "max_layers": maxLayers]
         guard let resp = try? await postJSON("\(base)/api/shard-volunteer", body: body, token: token),
               resp["assigned"] as? Bool == true else { return }
         let model = resp["model"] as? String ?? ""
         let scarcity = resp["scarcity"] as? Double ?? 0
-        await setStatus("hub \(host(base)): 배정 \(model) (희소도 \(String(format: "%.2f", scarcity)))")
-        // A token-gated hub won't force-place us; if idle, self-enroll to the
+        await setStatus("bridge \(host(base)): 배정 \(model) (희소도 \(String(format: "%.2f", scarcity)))")
+        // A token-gated bridge won't force-place us; if idle, self-enroll to the
         // window it offered. Single-flight, and never while a stage is running.
         let serving = kvasir_stage_running()
         if !token.isEmpty, !enrolling, !serving, !model.isEmpty {
@@ -224,11 +226,11 @@ final class HubParticipation: ObservableObject {
         ]
         guard let enr = try? await postJSON("\(base)/api/shard-enroll", body: enrollBody, token: token),
               enr["enrolled"] as? Bool == true else {
-            throw HubPartError.message("not enrolled")
+            throw BridgePartError.message("not enrolled")
         }
         log("self-enrolled to \(host(base)) (controller \(enr["controller_id"] as? String ?? "?"))")
 
-        // Poll for the stage config the hub prepares for us.
+        // Poll for the stage config the bridge prepares for us.
         var config: [String: Any]?
         var relayInfo: [String: Any]?
         for _ in 0..<40 {
@@ -239,7 +241,7 @@ final class HubParticipation: ObservableObject {
             }
         }
         guard var c = config, let layers = c["layers"] as? [Int], layers.count == 2 else {
-            throw HubPartError.message("stage config not ready")
+            throw BridgePartError.message("stage config not ready")
         }
 
         // Download just our layer window (partial shard).
@@ -249,11 +251,11 @@ final class HubParticipation: ObservableObject {
         log("self-enroll: downloading window [\(layers[0]),\(layers[1]))")
         try await download(dlURL, token: token, to: dest)
 
-        // Bridge the ring stream over a WebSocket when the hub is reachable only
+        // Relay the ring stream over a WebSocket when the bridge is reachable only
         // over 443 (Cloudflare) — rewrite the stage's dial endpoints to the proxy.
         if let relayInfo {
             relay?.stop()
-            let rl = RingRelay(hubBase: base, controllerId: relayInfo["controller_id"] as? String ?? "",
+            let rl = RingRelay(bridgeBase: base, controllerId: relayInfo["controller_id"] as? String ?? "",
                                token: token, log: { [weak self] m in self?.log(m) })
             let proxyEp = "127.0.0.1:\(try rl.start())"
             relay = rl
@@ -267,8 +269,8 @@ final class HubParticipation: ObservableObject {
 
     private func startStage(model: String, config c: [String: Any], layers: [Int]) throws {
         let modelPath = AgentControlServer.shardsDir.appendingPathComponent((model as NSString).lastPathComponent)
-        guard FileManager.default.fileExists(atPath: modelPath.path) else { throw HubPartError.message("model missing") }
-        if kvasir_stage_running() { throw HubPartError.message("stage already running") }
+        guard FileManager.default.fileExists(atPath: modelPath.path) else { throw BridgePartError.message("model missing") }
+        if kvasir_stage_running() { throw BridgePartError.message("stage already running") }
         let role = c["role"] as? String ?? "stage"
         let listen = c["listen_port"] as? Int ?? 51072
         let next = c["next_endpoint"] as? String ?? ""
@@ -280,7 +282,7 @@ final class HubParticipation: ObservableObject {
                                     c["cache_type_k"] as? String ?? "f16",
                                     c["cache_type_v"] as? String ?? "f16",
                                     c["kv_offload"] as? Bool ?? true)
-        guard ok else { throw HubPartError.message("stage failed to start") }
+        guard ok else { throw BridgePartError.message("stage failed to start") }
         log("ring stage started: \(role) layers \(layers[0])..\(layers[1]) -> \(next)")
     }
 
@@ -292,7 +294,7 @@ final class HubParticipation: ObservableObject {
         req.httpMethod = "POST"; req.timeoutInterval = 20
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty {
-            // Node tokens are verified from the Authorization bearer (hub
+            // Node tokens are verified from the Authorization bearer (bridge
             // _bearer_or_cookie); the M2M header covers a static service token.
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.setValue(token, forHTTPHeaderField: "X-Kvasir-Service-Token")
@@ -307,7 +309,7 @@ final class HubParticipation: ObservableObject {
         guard let url = URL(string: urlStr) else { return nil }
         var req = URLRequest(url: url); req.timeoutInterval = 20
         if !token.isEmpty {
-            // Node tokens are verified from the Authorization bearer (hub
+            // Node tokens are verified from the Authorization bearer (bridge
             // _bearer_or_cookie); the M2M header covers a static service token.
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.setValue(token, forHTTPHeaderField: "X-Kvasir-Service-Token")
@@ -318,17 +320,17 @@ final class HubParticipation: ObservableObject {
     }
 
     private func download(_ urlStr: String, token: String, to dest: URL) async throws {
-        guard let url = URL(string: urlStr) else { throw HubPartError.message("bad shard URL") }
+        guard let url = URL(string: urlStr) else { throw BridgePartError.message("bad shard URL") }
         var req = URLRequest(url: url); req.timeoutInterval = 600
         if !token.isEmpty {
-            // Node tokens are verified from the Authorization bearer (hub
+            // Node tokens are verified from the Authorization bearer (bridge
             // _bearer_or_cookie); the M2M header covers a static service token.
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.setValue(token, forHTTPHeaderField: "X-Kvasir-Service-Token")
         }
         let (tmp, resp) = try await session.download(for: req)
         guard (200..<300).contains((resp as? HTTPURLResponse)?.statusCode ?? 0) else {
-            throw HubPartError.message("shard download failed")
+            throw BridgePartError.message("shard download failed")
         }
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)
@@ -338,10 +340,10 @@ final class HubParticipation: ObservableObject {
 
     private func host(_ base: String) -> String { URL(string: base)?.host ?? base }
     private func setStatus(_ s: String) async { await MainActor.run { self.lastStatus = s } }
-    private nonisolated func log(_ m: String) { NSLog("[HubParticipation] %@", m) }
+    private nonisolated func log(_ m: String) { NSLog("[BridgeParticipation] %@", m) }
 }
 
-enum HubPartError: Error, CustomStringConvertible {
+enum BridgePartError: Error, CustomStringConvertible {
     case message(String)
-    var description: String { if case let .message(m) = self { return m }; return "hub participation error" }
+    var description: String { if case let .message(m) = self { return m }; return "bridge participation error" }
 }

@@ -30,7 +30,7 @@ bool kvasir_stage_request_stop(void);
 const char *kvasir_stage_runtime_info_json(void);
 
 // Redirect this process's stderr to a file — llama/ring logs (including the
-// "ring stage ready:" marker the hub polls for) become readable by the app.
+// "ring stage ready:" marker the bridge polls for) become readable by the app.
 void kvasir_worker_redirect_stderr(const char *path);
 
 #ifdef __cplusplus

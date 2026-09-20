@@ -2,9 +2,9 @@ import Foundation
 import Network
 
 /// Worker-mode expert-relay bridge: pipe the local `kvasir_expert` serve port to
-/// the hub's /api/expert-relay WebSocket (443), so a NAT phone reaches the
+/// the bridge's /api/expert-relay WebSocket (443), so a NAT phone reaches the
 /// backbone over one long-lived stream. iOS port of expert-relay-dial.py
-/// (--mode worker): connect the hub WS AND 127.0.0.1:localPort, then pipe.
+/// (--mode worker): connect the bridge WS AND 127.0.0.1:localPort, then pipe.
 /// Uses `URLSessionWebSocketTask` (native RFC 6455) + `NWConnection` (TCP client).
 final class ExpertRelayDial {
     private let wsURL: URL
@@ -15,8 +15,8 @@ final class ExpertRelayDial {
     private var ws: URLSessionWebSocketTask?
     private var stopped = false
 
-    init(hubBase: String, session: String, token: String, localPort: Int) {
-        var base = hubBase
+    init(bridgeBase: String, session: String, token: String, localPort: Int) {
+        var base = bridgeBase
         while base.hasSuffix("/") { base.removeLast() }
         if base.hasPrefix("https") { base = "wss" + base.dropFirst("https".count) }
         else if base.hasPrefix("http") { base = "ws" + base.dropFirst("http".count) }
