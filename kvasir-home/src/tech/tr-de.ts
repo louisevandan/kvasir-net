@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const deTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Eine erreichbare Adresse für einen Laptop",
+    dek: "p4 erreicht einen Knoten, indem es ihn anwählt, und eine Maschine hinter NAT hat keine Adresse, die man anwählen könnte. Die meisten Maschinen stehen hinter NAT. Was nötig war, damit eine davon trotzdem beitritt — und die Messungen des Tages, an dem sie es tat.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**Das Hindernis war nicht der Aufwand, sondern die Richtung.** p4 liefert Arbeit aus, indem es eine TCP-Verbindung *zu* einem Knoten öffnet. Eine Verbindung, die der Knoten selbst geöffnet hat, dient nur Quittungen: Ein `Data`-Frame, das darauf eintrifft, wird mit `peer_closed(\"unexpected frame on outbound hop\")` beantwortet. Ein Laptop kann keinen Tunnel nach außen öffnen und darüber Arbeit entgegennehmen. Nicht mit gutem Willen, nicht mit Wiederholungen, nicht mit einem besseren Client.",
+      },
+      { t: "h2", kick: "Die Randbedingung", text: "Die Maschine eines Beitragenden ist standardmäßig nicht erreichbar" },
+      {
+        t: "p",
+        md: "Eine Maschine zu Hause sitzt hinter einer Adressumsetzung. Sie erreicht das Internet; das Internet erreicht sie nicht. Unsere eigene Flotte zeigt beide Seiten: Der GB10 im Büro trägt eine öffentliche Adresse direkt, während die beiden MI250 unter `192.168.20.x` hinter einem gemeinsamen Ausgang stehen. Die MI250 sind nichts Besonderes — genau so sieht die Maschine eines Beitragenden aus.",
+      },
+      {
+        t: "p",
+        md: "In p4 gibt es keine Routingtabelle, keinen Rendezvous-Dienst, kein Hole Punching. `deliver_outbound` entnimmt dem Ereignisumschlag die Adresse und ruft `connect` auf. Mehr ist es nicht, und im Rack ist das ein vernünftiger Entwurf. Nur eben keiner, den ein Laptop erfüllen kann.",
+      },
+      { t: "h2", kick: "Die Antwort", text: "Eine ausgehende Verbindung, offen gehalten" },
+      {
+        t: "p",
+        md: "Das Relay hält stellvertretend eine öffentliche Adresse. Der Knoten unterhält eine einzige ausgehende Verbindung dorthin und lauscht auf nichts. Wählt jemand die öffentliche Adresse an, laufen diese Bytes die Verbindung hinunter, die der Knoten ohnehin hält. Beide Enden von p4 sehen einen gewöhnlichen Socket zu einer gewöhnlichen Adresse, und keines erfährt, dass es das Relay gibt.",
+      },
+      {
+        t: "code",
+        caption: "Was der Anrufende sieht und was der Knoten tatsächlich ausführt",
+        code: "caller  ->  tcp://relay:43100        # eine gewöhnliche p4-Adresse\n            |\n            +-- relay      öffentlich; leitet Bytes weiter, liest keines\n                  |\n                  +-- tunnel   eine ausgehende Verbindung des Knotens\n                        |\n                        +-- p4-agent  127.0.0.1:42031, lauscht nur auf Loopback",
+      },
+      {
+        t: "p",
+        md: "Das Relay liest p4 nie. Nutzlasten werden Byte für Byte weitergereicht und niemals geparst: Es kann ein `LOAD` nicht von einem `INSPECT` unterscheiden, und es darf es nicht können — in dem Moment, in dem es den Verkehr versteht, wird es zu etwas, das ihn verändern kann.",
+      },
+      { t: "h2", kick: "Warum das zugleich die Sicherheitsgrenze ist", text: "Portweiterleitung war nie eine Option" },
+      {
+        t: "p",
+        md: "p4 besitzt keinerlei Authentifizierung. Kein TLS, keine Token, keine Freigabeliste — jeder Host, der den Port eines Agenten erreicht, darf `NODE_LOAD`, `NODE_UNLOAD` und `INSPECT` senden. Von einem Beitragenden zu verlangen, einen Port seines Heimrouters dorthin weiterzuleiten, wäre nicht zu rechtfertigen, und genau deshalb ist die naheliegende Lösung die falsche.",
+      },
+      {
+        t: "p",
+        md: "Über ein Relay lauscht der Knoten auf nichts. Er hält eine ausgehende Verbindung und weist eine Betreiber-Wallet nach, bevor diese Verbindung irgendetwas trägt — dieselbe ed25519-Signatur über base58, die das Abrechnungs-Gateway bereits verwendet, sodass die Identität, mit der sich ein Knoten registriert, die Identität ist, auf die das Belohnungsbuch lautet. Erreichbarkeit und Authentifizierung hatten dieselbe Antwort.",
+      },
+      { t: "h2", kick: "Der Tag, an dem es lief", text: "Gemessen, nicht behauptet" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "von einem Flottenhost zu einem Mac hinter NAT" },
+          { n: "28 ms", l: "bis der Agent seine eigene Regel anwandte" },
+          { n: "512 KiB", l: "Byte für Byte identisch zurück" },
+          { n: "0", l: "auf dem Laptop geöffnete Ports" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Ein MI250-Host im Rechenzentrum wählte `tcp://34.50.62.159:43100` an und erreichte in 6 ms einen p4-Agenten auf einem MacBook hinter NAT. 28 ms später schloss der Agent die Verbindung, weil das erste Frame kein `Hello` war — seine eigene Protokollregel, von ihm selbst angewandt, von einer Maschine, die einen Moment zuvor überhaupt nicht ansprechbar war. Diese Zurückweisung ist der Beweis: Das Relay parst keine Nutzlasten und konnte sie daher nicht erzeugen.",
+      },
+      {
+        t: "table",
+        head: ["Prüfung", "Ergebnis"],
+        rows: [
+          ["512 KiB Umlauf", "Byte für Byte identisch, 177 ms"],
+          ["256 KiB Umlauf", "Byte für Byte identisch, 108 ms"],
+          ["Drei gleichzeitige Anrufer", "kein Strom kreuzte einen anderen"],
+          ["Unsignierte Registrierung", "abgelehnt"],
+          ["Wiederholte Challenge", "abgelehnt"],
+        ],
+      },
+      { t: "h2", kick: "Die andere Hälfte", text: "Ein Knoten braucht etwas zum Ausführen" },
+      {
+        t: "p",
+        md: "Erreichbarkeit ist ohne Maschine dahinter wertlos, und die Desktop-Anwendung lieferte keine mit: Sie suchte eine `p4-agent`-Binärdatei in drei Build-Verzeichnissen und fand sie nur dort, wo jemand p4 bereits von Hand übersetzt hatte. Nun bringt die Anwendung ihre eigene mit, gebaut für jede Plattform, auf der sie ausgeliefert wird.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: eine universelle Binärdatei aus beiden Architekturen. Die Mac-App wird als `universal` gepackt und Ressourcen werden unverändert in beide Hälften kopiert; eine reine arm64-Datei gäbe einem Intel-Mac also eine App, die vollständig aussieht und keinen Knoten starten kann — ein Fehler, der nur auf Hardware sichtbar wird, die der Entwickler nicht besitzt.",
+          "Windows: quer übersetzt, und die Suche weiß, dass sie nach `p4-agent.exe` fragen muss. Die Endung zu vergessen ist der Weg, auf dem ein Windows-Build einen Agenten ausliefert, den er dann nicht findet.",
+          "Der Agentenbau läuft vor jedem Paketieren, eine Auslieferung ohne ihn ist also gar nicht herstellbar.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Was noch nicht geht.** Ein Knoten kann jetzt laufen und erreicht werden. Für Inferenz verdient er weiterhin nichts: Die Maschine gibt Arbeitsnachweise je Stufe aus, aber niemand sammelt sie ein, und der Beitrags-Endpunkt des Gateways — korrekt verriegelt, damit kein Knoten sich selbst gutschreiben kann — wurde nie aufgerufen. Laufen und bezahlt werden sind zwei Probleme; gelöst ist bisher nur das erste.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Experten-geshardete Schwarm-Inferenz: das Design",
     dek: "86 % eines 122B-MoE sind 12.544 unabhängige 5.3-MB-Experten. Schneide das Modell an diesem Korn, und ein Smartphone trägt einen echten Anteil der Frontier-Inferenz.",

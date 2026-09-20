@@ -6,6 +6,24 @@
 import type { WikiTranslation } from "./entries";
 
 export const nlWiki: Record<string, WikiTranslation> = {
+  "node-relay": {
+    title: "Node-relay",
+    summary: "Een publiek adres dat wordt aangehouden namens een machine die er geen heeft, zodat een node achter NAT bereikbaar is zonder ook maar één poort te openen.",
+    blocks: [
+      { t: "p", md: "Een **node-relay** geeft de machine van een deelnemer een adres dat het netwerk kan bellen. p4 levert werk af door een verbinding *naar* een node te openen, en een thuismachine achter netwerkadresvertaling heeft zo'n adres niet. De relay houdt er publiek één aan, de node onderhoudt één uitgaande verbinding daarheen, en werk dat op het publieke adres binnenkomt daalt af langs de verbinding die de node al had." },
+      { t: "p", md: "Geen van beide uiteinden van p4 merkt dat de relay bestaat. De beller ziet een gewoon adres; de agent van de node blijft gebonden aan `127.0.0.1` en luistert nergens anders op." },
+      { t: "h2", text: "Waarom een tunnel en geen doorgeschakelde poort" },
+      { t: "p", md: "p4 draagt geen enkele authenticatie: elke host die de poort van een agent bereikt mag `NODE_LOAD`, `NODE_UNLOAD` of `INSPECT` sturen. Een poort op de thuisrouter daarheen doorschakelen zou de machine blootstellen aan iedereen die haar vindt. Achter een relay luistert de node nergens op en bewijst hij een operator-wallet voordat zijn verbinding iets vervoert, met hetzelfde handtekeningschema als de afrekengateway: bereikbaarheid en authenticatie worden door hetzelfde mechanisme opgelost." },
+      { t: "h2", text: "Wat het niet doet" },
+      { t: "ul", items: [
+        "**Het leest het verkeer niet.** Payloads gaan byte voor byte door en worden nooit ontleed, dus de relay kan opdrachten niet onderscheiden — en mag dat niet, want het verkeer begrijpen zou hem in staat stellen het te wijzigen.",
+        "**Het plant niet.** Plaatsing blijft bij het plan van de operator; voor de relay is een node een adres en verder niets.",
+        "**Het is geen bewijs van werk.** Bytes die een relay passeren zeggen niets over verrichte inferentie en tellen nooit mee als bijdrage.",
+      ] },
+      { t: "h2", text: "Zie ook" },
+      { t: "p", md: "**p4-agent**, het proces dat de machine van een deelnemer draait, en **node-operator**, de wallet die een relay verifieert voordat een adres wordt toegekend." },
+    ],
+  },
   "kvasir-network": {
     title: "Kvasir-netwerk",
     summary: "Een gedecentraliseerd AI-inferentienetwerk (DePIN) waar alledaagse apparaten open modellen serveren en KVR verdienen.",

@@ -37,6 +37,41 @@ export type WikiEntry = {
 export type WikiTranslation = Pick<WikiEntry, "title" | "summary" | "blocks">;
 
 export const WIKI_ENTRIES: WikiEntry[] = [
+  {
+    slug: "node-relay",
+    category: "network",
+    title: "Node relay",
+    summary: "A public address held on behalf of a machine that has none, so a node behind NAT can be reached without opening a single port.",
+    blocks: [
+      {
+        t: "p",
+        md: "A **node relay** gives a contributor's machine an address the network can dial. p4 delivers work by opening a connection *to* a node, and a home machine behind network address translation has no address to open a connection to. The relay holds one publicly, the node keeps a single outbound connection to the relay, and work dialled at the public address travels down the connection the node already has.",
+      },
+      {
+        t: "p",
+        md: "Neither end of p4 learns the relay is there. The caller sees an ordinary address; the node's agent still binds `127.0.0.1` and listens on nothing else.",
+      },
+      { t: "h2", text: "Why a tunnel and not a forwarded port" },
+      {
+        t: "p",
+        md: "p4 carries no authentication — any host that can reach an agent's port may send `NODE_LOAD`, `NODE_UNLOAD` or `INSPECT`. Forwarding a port on a home router into that would expose the machine to anyone who finds it. Behind a relay the node listens on nothing and proves an operator wallet before its connection carries anything, using the same signature scheme the settlement gateway uses, so reachability and authentication are solved by the same mechanism.",
+      },
+      { t: "h2", text: "What it does not do" },
+      {
+        t: "ul",
+        items: [
+          "**It does not read the traffic.** Payloads pass through byte for byte and are never parsed, so the relay cannot distinguish one command from another — and must not, since understanding the traffic would make it capable of changing it.",
+          "**It does not schedule.** Placement stays with the operator's plan; to the relay a node is an address and nothing more.",
+          "**It is not evidence of work.** Bytes carried through a relay say nothing about inference performed, and are never counted toward contribution.",
+        ],
+      },
+      { t: "h2", text: "Related" },
+      {
+        t: "p",
+        md: "See also **p4 agent**, the process a contributor's machine runs, and **node operator**, the wallet a relay authenticates before granting an address.",
+      },
+    ],
+  },
   /* ------------------------------------------------------------------ */
   /* Network & roles                                                     */
   /* ------------------------------------------------------------------ */

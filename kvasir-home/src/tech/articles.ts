@@ -43,6 +43,94 @@ export type TechArticle = {
 export type TechTranslation = Pick<TechArticle, "title" | "dek" | "blocks">;
 
 export const TECH_ARTICLES: TechArticle[] = [
+  {
+    slug: "a-dialable-address-for-a-laptop",
+    category: "milestones",
+    title: "A Dialable Address for a Laptop",
+    dek: "p4 reaches a node by dialling it, and a machine behind NAT has no address to dial. Most machines are behind NAT. Here is what it took to let one join anyway, and the measurements from the day it did.",
+    date: "2026-09-20",
+    tags: ["p4", "DePIN", "desktop", "networking"],
+    blocks: [
+      {
+        t: "callout",
+        md: "**The obstacle was not effort, it was direction.** p4 delivers work by opening a TCP connection *to* a node. A connection the node opened itself is receipts-only — a `Data` frame arriving on it is answered with `peer_closed(\"unexpected frame on outbound hop\")`. So a laptop cannot tunnel outward and be handed work down the tunnel. Not with willingness, not with retries, not with a better client.",
+      },
+      { t: "h2", kick: "The constraint", text: "Every contributor machine is unreachable by default" },
+      {
+        t: "p",
+        md: "A home machine sits behind network address translation. It can reach the internet; the internet cannot reach it. Our own fleet shows both sides of this: the office GB10 has a public address attached directly, while the two MI250 hosts sit on `192.168.20.x` behind one shared egress. The MI250s are not unusual. They are what a contributor's machine looks like.",
+      },
+      {
+        t: "p",
+        md: "There is no route table in p4, no rendezvous service, no hole punching. `deliver_outbound` takes the address out of the event envelope and calls `connect`. That is the whole of it, and it is a reasonable design for a rack. It is simply not a design that a laptop can satisfy.",
+      },
+      { t: "h2", kick: "The answer", text: "One outbound connection, held open" },
+      {
+        t: "p",
+        md: "The relay owns a public address on the node's behalf. The node keeps a single outbound connection to it and listens on nothing at all. When somebody dials the public address, those bytes travel down the connection the node already has. Both ends of p4 see an ordinary socket to an ordinary address, and neither learns the relay is there.",
+      },
+      {
+        t: "code",
+        caption: "What a dialler sees, and what the node runs",
+        code: "caller  ->  tcp://relay:43100        # an ordinary p4 address\n            |\n            +-- relay      public, forwards bytes, parses none of them\n                  |\n                  +-- tunnel   one outbound connection the node opened\n                        |\n                        +-- p4-agent  127.0.0.1:42031, listening on loopback only",
+      },
+      {
+        t: "p",
+        md: "The relay never reads p4. Payloads are forwarded byte for byte and never parsed — it cannot tell a `LOAD` from an `INSPECT`, and it must not be able to, because the moment it understands the traffic it becomes something that can alter it.",
+      },
+      { t: "h2", kick: "Why this is also the security boundary", text: "Port forwarding was never an option" },
+      {
+        t: "p",
+        md: "p4 has no authentication of any kind. No TLS, no tokens, no allowlist — any host that can reach an agent's port may send `NODE_LOAD`, `NODE_UNLOAD` and `INSPECT`. Asking a contributor to forward a port on their home router into that would be indefensible, and it is the reason the obvious fix is the wrong one.",
+      },
+      {
+        t: "p",
+        md: "Through a relay the node listens on nothing. It holds one outbound connection and proves an operator wallet before that connection carries anything — the same ed25519-over-base58 signature the settlement gateway already uses, so the identity a node registers is the identity the rewards ledger is keyed on. Reachability and authentication turn out to have the same answer.",
+      },
+      { t: "h2", kick: "The day it worked", text: "Measured, not asserted" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "fleet host to a NAT-bound Mac" },
+          { n: "28 ms", l: "until the agent applied its own rule" },
+          { n: "512 KiB", l: "returned byte-identical" },
+          { n: "0", l: "ports opened on the laptop" },
+        ],
+      },
+      {
+        t: "p",
+        md: "An MI250 host in a data centre dialled `tcp://34.50.62.159:43100` and reached a p4 agent running on a MacBook behind NAT in 6 ms. The agent closed the connection 28 ms later because the first frame was not a `Hello` — its own protocol rule, applied by itself, from a machine that a moment earlier could not be contacted at all. That refusal is the proof: the relay does not parse payloads, so it could not have produced it.",
+      },
+      {
+        t: "table",
+        head: ["Check", "Result"],
+        rows: [
+          ["512 KiB round trip", "byte-identical, 177 ms"],
+          ["256 KiB round trip", "byte-identical, 108 ms"],
+          ["Three concurrent callers", "no stream crossed another"],
+          ["Unsigned registration", "refused"],
+          ["Replayed challenge", "refused"],
+        ],
+      },
+      { t: "h2", kick: "The other half", text: "A node needs something to run" },
+      {
+        t: "p",
+        md: "Reachability is worthless without an engine behind it, and the desktop app had shipped none: it looked for a `p4-agent` binary in three build directories and found one only on a machine where somebody had already compiled p4 by hand. The app now carries its own, built for each platform it ships to.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: a universal binary, both architectures merged. The Mac app packs as `universal` and resources are copied into both slices unchanged, so an arm64-only binary would give an Intel Mac an app that looks complete and cannot start a node — a failure visible only on hardware the developer does not own.",
+          "Windows: cross-compiled, and the lookup knows to ask for `p4-agent.exe`. Forgetting the extension is how a Windows build ships an agent it then cannot find.",
+          "The build runs before every package, so a release cannot be produced without one.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**What this does not yet do.** A node can now run and be reached. It still earns nothing for inference: the engine emits per-stage work records but nothing collects them, and the settlement gateway's contribution endpoint — correctly gated so that no node can credit itself — has never been called. Running and being paid are separate problems, and only the first one is solved.",
+      },
+    ],
+  },
   /* ------------------------------------------------------------------ */
   /* Overview                                                            */
   /* ------------------------------------------------------------------ */

@@ -6,6 +6,24 @@
 import type { WikiTranslation } from "./entries";
 
 export const frWiki: Record<string, WikiTranslation> = {
+  "node-relay": {
+    title: "Relais de nœud",
+    summary: "Une adresse publique détenue au nom d'une machine qui n'en a pas, afin qu'un nœud derrière un NAT soit joignable sans ouvrir le moindre port.",
+    blocks: [
+      { t: "p", md: "Un **relais de nœud** donne à la machine d'un contributeur une adresse que le réseau peut appeler. p4 distribue le travail en ouvrant une connexion *vers* un nœud, et une machine domestique derrière une traduction d'adresses n'en possède aucune. Le relais en détient une publiquement, le nœud maintient une unique connexion sortante vers lui, et le travail appelé sur l'adresse publique redescend par la connexion que le nœud tient déjà." },
+      { t: "p", md: "Aucune des deux extrémités de p4 n'apprend l'existence du relais. L'appelant voit une adresse ordinaire ; l'agent du nœud reste lié à `127.0.0.1` et n'écoute rien d'autre." },
+      { t: "h2", text: "Pourquoi un tunnel plutôt qu'un port redirigé" },
+      { t: "p", md: "p4 ne porte aucune authentification : tout hôte capable d'atteindre le port d'un agent peut envoyer `NODE_LOAD`, `NODE_UNLOAD` ou `INSPECT`. Rediriger un port de sa box vers cela exposerait la machine à quiconque la découvre. Derrière un relais, le nœud n'écoute rien et prouve un portefeuille d'opérateur avant que sa connexion ne transporte quoi que ce soit, avec le même schéma de signature que la passerelle de règlement : joignabilité et authentification sont résolues par le même mécanisme." },
+      { t: "h2", text: "Ce qu'il ne fait pas" },
+      { t: "ul", items: [
+        "**Il ne lit pas le trafic.** Les charges passent octet par octet et ne sont jamais analysées ; le relais ne peut donc distinguer une commande d'une autre — et ne le doit pas, car comprendre le trafic le rendrait capable de le modifier.",
+        "**Il n'ordonnance rien.** Le placement reste au plan de l'opérateur ; pour le relais, un nœud est une adresse, rien de plus.",
+        "**Il ne prouve aucun travail.** Les octets transitant par un relais ne disent rien de l'inférence effectuée et ne comptent jamais comme contribution.",
+      ] },
+      { t: "h2", text: "Voir aussi" },
+      { t: "p", md: "**Agent p4**, le processus qu'exécute la machine d'un contributeur, et **opérateur de nœud**, le portefeuille qu'un relais authentifie avant d'accorder une adresse." },
+    ],
+  },
   "kvasir-network": {
     title: "Réseau Kvasir",
     summary: "Un réseau d'inférence IA décentralisé (DePIN) où des appareils du quotidien servent des modèles ouverts et gagnent des KVR.",

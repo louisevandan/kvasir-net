@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const esTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Una dirección marcable para un portátil",
+    dek: "p4 llega a un nodo marcándolo, y una máquina tras NAT no tiene dirección que marcar. La mayoría de las máquinas están tras NAT. Esto es lo que hizo falta para que una se uniera igualmente, y las mediciones del día en que lo hizo.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**El obstáculo no era el empeño, era la dirección.** p4 entrega trabajo abriendo una conexión TCP *hacia* un nodo. Una conexión que el nodo abrió por su cuenta sirve solo para acuses: una trama `Data` que llegue por ella recibe `peer_closed(\"unexpected frame on outbound hop\")`. Un portátil no puede abrir un túnel hacia fuera y recibir trabajo por él. Ni con voluntad, ni con reintentos, ni con un cliente mejor.",
+      },
+      { t: "h2", kick: "La restricción", text: "La máquina de un colaborador es inalcanzable por defecto" },
+      {
+        t: "p",
+        md: "Una máquina doméstica vive tras una traducción de direcciones. Puede salir a internet; internet no puede entrar. Nuestra propia flota muestra ambos lados: el GB10 de la oficina tiene una dirección pública directamente asignada, mientras que los dos MI250 están en `192.168.20.x` tras una única salida compartida. Los MI250 no son una rareza: son exactamente el aspecto que tiene la máquina de un colaborador.",
+      },
+      {
+        t: "p",
+        md: "En p4 no hay tabla de rutas, ni servicio de encuentro, ni perforación de NAT. `deliver_outbound` saca la dirección del sobre del evento y llama a `connect`. Eso es todo, y es un diseño razonable dentro de un rack. Sencillamente no es un diseño que un portátil pueda satisfacer.",
+      },
+      { t: "h2", kick: "La respuesta", text: "Una conexión saliente, mantenida abierta" },
+      {
+        t: "p",
+        md: "El relay posee una dirección pública en nombre del nodo. El nodo mantiene una única conexión saliente hacia él y no escucha en ningún puerto. Cuando alguien marca la dirección pública, esos bytes bajan por la conexión que el nodo ya tenía. Ambos extremos de p4 ven un socket corriente hacia una dirección corriente, y ninguno se entera de que el relay existe.",
+      },
+      {
+        t: "code",
+        caption: "Lo que ve quien marca, y lo que el nodo realmente ejecuta",
+        code: "caller  ->  tcp://relay:43100        # una dirección p4 corriente\n            |\n            +-- relay      pública; reenvía bytes, no analiza ninguno\n                  |\n                  +-- tunnel   una conexión saliente que abrió el nodo\n                        |\n                        +-- p4-agent  127.0.0.1:42031, solo escucha en loopback",
+      },
+      {
+        t: "p",
+        md: "El relay nunca lee p4. Las cargas se reenvían byte a byte y jamás se analizan: no sabe distinguir un `LOAD` de un `INSPECT`, y no debe poder hacerlo, porque en el momento en que entiende el tráfico se convierte en algo capaz de alterarlo.",
+      },
+      { t: "h2", kick: "Por qué es además la frontera de seguridad", text: "Abrir un puerto nunca fue una opción" },
+      {
+        t: "p",
+        md: "p4 no tiene autenticación de ningún tipo. Ni TLS, ni tokens, ni lista de permitidos: cualquier host que alcance el puerto de un agente puede enviar `NODE_LOAD`, `NODE_UNLOAD` e `INSPECT`. Pedirle a un colaborador que redirija un puerto de su router doméstico hacia eso es indefendible, y por eso la solución evidente es la equivocada.",
+      },
+      {
+        t: "p",
+        md: "A través de un relay el nodo no escucha nada. Mantiene una conexión saliente y demuestra una cartera de operador antes de que esa conexión transporte nada: la misma firma ed25519 sobre base58 que ya usa la pasarela de liquidación, de modo que la identidad con la que un nodo se registra es la identidad sobre la que se lleva el libro de recompensas. Alcanzabilidad y autenticación resultaron tener la misma respuesta.",
+      },
+      { t: "h2", kick: "El día que funcionó", text: "Medido, no afirmado" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "de un host de la flota a un Mac tras NAT" },
+          { n: "28 ms", l: "hasta que el agente aplicó su propia regla" },
+          { n: "512 KiB", l: "devueltos byte a byte idénticos" },
+          { n: "0", l: "puertos abiertos en el portátil" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Un host MI250 en un centro de datos marcó `tcp://34.50.62.159:43100` y alcanzó en 6 ms a un agente p4 corriendo en un MacBook tras NAT. El agente cerró la conexión 28 ms después porque la primera trama no era un `Hello`: su propia regla de protocolo, aplicada por él mismo, desde una máquina con la que un momento antes no se podía contactar en absoluto. Ese rechazo es la prueba: el relay no analiza cargas, así que no pudo haberlo producido.",
+      },
+      {
+        t: "table",
+        head: ["Comprobación", "Resultado"],
+        rows: [
+          ["Ida y vuelta de 512 KiB", "idéntico byte a byte, 177 ms"],
+          ["Ida y vuelta de 256 KiB", "idéntico byte a byte, 108 ms"],
+          ["Tres llamantes simultáneos", "ningún flujo se cruzó con otro"],
+          ["Registro sin firma", "rechazado"],
+          ["Desafío reutilizado", "rechazado"],
+        ],
+      },
+      { t: "h2", kick: "La otra mitad", text: "Un nodo necesita algo que ejecutar" },
+      {
+        t: "p",
+        md: "La alcanzabilidad no vale nada sin un motor detrás, y la aplicación de escritorio no distribuía ninguno: buscaba un binario `p4-agent` en tres directorios de compilación y solo lo encontraba en una máquina donde alguien ya había compilado p4 a mano. Ahora la aplicación lleva el suyo, compilado para cada plataforma a la que se distribuye.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: un binario universal con ambas arquitecturas fusionadas. La aplicación Mac se empaqueta como `universal` y los recursos se copian sin cambios en ambas mitades, de modo que un binario solo arm64 daría a un Mac Intel una aplicación que parece completa y no puede arrancar un nodo: un fallo visible únicamente en hardware que el desarrollador no posee.",
+          "Windows: compilado de forma cruzada, y la búsqueda sabe que debe pedir `p4-agent.exe`. Olvidar la extensión es como una compilación de Windows acaba distribuyendo un agente que luego no encuentra.",
+          "La compilación del agente se ejecuta antes de cada empaquetado, así que no puede producirse una versión sin él.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Lo que todavía no hace.** Un nodo ya puede ejecutarse y ser alcanzado. Sigue sin ganar nada por inferencia: el motor emite registros de trabajo por etapa pero nadie los recoge, y el endpoint de contribución de la pasarela —correctamente cerrado para que ningún nodo pueda acreditarse a sí mismo— no se ha llamado nunca. Funcionar y cobrar son problemas distintos, y solo está resuelto el primero.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Inferencia en enjambre con sharding de expertos: el diseño",
     dek: "El 86% de un MoE de 122B son 12.544 expertos independientes de 5.3 MB. Corta el modelo a ese grano y un teléfono puede cargar una parte real de la inferencia de frontera.",

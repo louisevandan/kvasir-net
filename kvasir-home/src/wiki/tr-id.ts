@@ -6,6 +6,24 @@
 import type { WikiTranslation } from "./entries";
 
 export const idWiki: Record<string, WikiTranslation> = {
+  "node-relay": {
+    title: "Relay node",
+    summary: "Alamat publik yang dipegang atas nama mesin yang tidak memilikinya, sehingga node di balik NAT dapat dijangkau tanpa membuka satu porta pun.",
+    blocks: [
+      { t: "p", md: "**Relay node** memberi mesin seorang kontributor sebuah alamat yang dapat dihubungi jaringan. p4 mengantarkan pekerjaan dengan membuka koneksi *ke* sebuah node, dan mesin rumahan di balik penerjemahan alamat jaringan tidak punya alamat semacam itu. Relay memegangnya secara publik, node memelihara satu koneksi keluar ke relay, dan pekerjaan yang dihubungi pada alamat publik itu turun melalui koneksi yang sudah dipegang node." },
+      { t: "p", md: "Kedua ujung p4 tidak tahu bahwa relay itu ada. Penghubung melihat alamat biasa; agen node tetap terikat pada `127.0.0.1` dan tidak mendengarkan apa pun selain itu." },
+      { t: "h2", text: "Mengapa terowongan, bukan porta yang diteruskan" },
+      { t: "p", md: "p4 tidak membawa autentikasi apa pun: host mana pun yang menjangkau porta agen dapat mengirim `NODE_LOAD`, `NODE_UNLOAD`, atau `INSPECT`. Meneruskan porta router rumah ke sana akan memaparkan mesin kepada siapa pun yang menemukannya. Di balik relay, node tidak mendengarkan apa pun dan membuktikan dompet operator sebelum koneksinya membawa apa pun, dengan skema tanda tangan yang sama seperti gerbang penyelesaian: keterjangkauan dan autentikasi diselesaikan oleh mekanisme yang sama." },
+      { t: "h2", text: "Yang tidak dilakukannya" },
+      { t: "ul", items: [
+        "**Tidak membaca lalu lintas.** Muatan lewat byte demi byte dan tidak pernah diurai, sehingga relay tidak dapat membedakan satu perintah dari yang lain — dan memang tidak boleh, karena memahami lalu lintas berarti mampu mengubahnya.",
+        "**Tidak menjadwalkan.** Penempatan tetap milik rencana operator; bagi relay, node hanyalah sebuah alamat.",
+        "**Bukan bukti kerja.** Byte yang melewati relay tidak mengatakan apa pun tentang inferensi yang dilakukan, dan tidak pernah dihitung sebagai kontribusi.",
+      ] },
+      { t: "h2", text: "Terkait" },
+      { t: "p", md: "Lihat juga **agen p4**, proses yang dijalankan mesin kontributor, dan **operator node**, dompet yang diautentikasi relay sebelum memberikan alamat." },
+    ],
+  },
   "kvasir-network": {
     title: "Jaringan Kvasir",
     summary: "Jaringan inferensi AI terdesentralisasi (DePIN) tempat perangkat sehari-hari melayani model terbuka dan memperoleh KVR.",

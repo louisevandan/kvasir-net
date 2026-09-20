@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const frTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Une adresse joignable pour un ordinateur portable",
+    dek: "p4 atteint un nœud en l'appelant, et une machine derrière un NAT n'a aucune adresse à appeler. La plupart des machines sont derrière un NAT. Voici ce qu'il a fallu pour qu'une d'elles rejoigne quand même le réseau, et les mesures du jour où elle l'a fait.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**L'obstacle n'était pas l'effort mais le sens.** p4 distribue le travail en ouvrant une connexion TCP *vers* un nœud. Une connexion que le nœud a lui-même ouverte ne sert qu'aux accusés : une trame `Data` qui y arrive reçoit `peer_closed(\"unexpected frame on outbound hop\")`. Un portable ne peut pas ouvrir un tunnel vers l'extérieur et recevoir du travail par ce tunnel. Ni par bonne volonté, ni par réessais, ni avec un meilleur client.",
+      },
+      { t: "h2", kick: "La contrainte", text: "La machine d'un contributeur est injoignable par défaut" },
+      {
+        t: "p",
+        md: "Une machine domestique est assise derrière une traduction d'adresses. Elle atteint internet ; internet ne l'atteint pas. Notre propre flotte montre les deux faces : le GB10 du bureau porte une adresse publique directement, tandis que les deux MI250 sont en `192.168.20.x` derrière une sortie partagée. Les MI250 n'ont rien d'exceptionnel : c'est exactement à cela que ressemble la machine d'un contributeur.",
+      },
+      {
+        t: "p",
+        md: "p4 n'a pas de table de routage, pas de service de rendez-vous, pas de perçage de NAT. `deliver_outbound` extrait l'adresse de l'enveloppe de l'événement et appelle `connect`. C'est tout, et c'est une conception raisonnable dans une baie. Simplement pas une conception qu'un portable puisse satisfaire.",
+      },
+      { t: "h2", kick: "La réponse", text: "Une connexion sortante, maintenue ouverte" },
+      {
+        t: "p",
+        md: "Le relais détient une adresse publique pour le compte du nœud. Le nœud garde une seule connexion sortante vers lui et n'écoute sur rien. Quand quelqu'un appelle l'adresse publique, ces octets redescendent par la connexion que le nœud tient déjà. Les deux extrémités de p4 voient une socket ordinaire vers une adresse ordinaire, et ni l'une ni l'autre n'apprend que le relais existe.",
+      },
+      {
+        t: "code",
+        caption: "Ce que voit l'appelant, et ce que le nœud exécute réellement",
+        code: "caller  ->  tcp://relay:43100        # une adresse p4 ordinaire\n            |\n            +-- relay      publique ; transmet les octets, n'en analyse aucun\n                  |\n                  +-- tunnel   une connexion sortante ouverte par le nœud\n                        |\n                        +-- p4-agent  127.0.0.1:42031, n'écoute que la boucle locale",
+      },
+      {
+        t: "p",
+        md: "Le relais ne lit jamais p4. Les charges utiles sont transmises octet par octet et jamais analysées : il ne sait pas distinguer un `LOAD` d'un `INSPECT`, et il ne doit pas le pouvoir, car dès l'instant où il comprend le trafic il devient capable de le modifier.",
+      },
+      { t: "h2", kick: "Pourquoi c'est aussi la frontière de sécurité", text: "La redirection de port n'a jamais été envisageable" },
+      {
+        t: "p",
+        md: "p4 n'a aucune authentification. Ni TLS, ni jetons, ni liste d'autorisation : tout hôte capable d'atteindre le port d'un agent peut envoyer `NODE_LOAD`, `NODE_UNLOAD` et `INSPECT`. Demander à un contributeur de rediriger un port de sa box vers cela est indéfendable, et c'est pourquoi la solution évidente est la mauvaise.",
+      },
+      {
+        t: "p",
+        md: "Par un relais, le nœud n'écoute rien. Il tient une connexion sortante et prouve un portefeuille d'opérateur avant que cette connexion ne transporte quoi que ce soit — la même signature ed25519 sur base58 qu'utilise déjà la passerelle de règlement, si bien que l'identité sous laquelle un nœud s'enregistre est celle sur laquelle repose le registre des récompenses. Joignabilité et authentification avaient la même réponse.",
+      },
+      { t: "h2", kick: "Le jour où cela a fonctionné", text: "Mesuré, non affirmé" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "d'un hôte de la flotte à un Mac derrière NAT" },
+          { n: "28 ms", l: "avant que l'agent applique sa propre règle" },
+          { n: "512 Kio", l: "renvoyés octet pour octet" },
+          { n: "0", l: "port ouvert sur le portable" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Un hôte MI250 en centre de données a appelé `tcp://34.50.62.159:43100` et atteint en 6 ms un agent p4 tournant sur un MacBook derrière un NAT. L'agent a fermé la connexion 28 ms plus tard parce que la première trame n'était pas un `Hello` — sa propre règle de protocole, appliquée par lui-même, depuis une machine qu'on ne pouvait pas contacter un instant plus tôt. Ce refus est la preuve : le relais n'analyse pas les charges utiles, il n'a donc pas pu le produire.",
+      },
+      {
+        t: "table",
+        head: ["Vérification", "Résultat"],
+        rows: [
+          ["Aller-retour de 512 Kio", "identique octet pour octet, 177 ms"],
+          ["Aller-retour de 256 Kio", "identique octet pour octet, 108 ms"],
+          ["Trois appelants simultanés", "aucun flux n'en a croisé un autre"],
+          ["Enregistrement non signé", "refusé"],
+          ["Défi rejoué", "refusé"],
+        ],
+      },
+      { t: "h2", kick: "L'autre moitié", text: "Un nœud a besoin de quelque chose à exécuter" },
+      {
+        t: "p",
+        md: "La joignabilité ne vaut rien sans moteur derrière, et l'application de bureau n'en livrait aucun : elle cherchait un binaire `p4-agent` dans trois répertoires de compilation et ne le trouvait que là où quelqu'un avait déjà compilé p4 à la main. L'application emporte désormais le sien, construit pour chaque plateforme où elle est distribuée.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS : un binaire universel fusionnant les deux architectures. L'application Mac est empaquetée en `universal` et les ressources sont copiées telles quelles dans les deux tranches ; un binaire arm64 seul donnerait donc à un Mac Intel une application qui paraît complète et ne peut pas démarrer de nœud — une panne visible uniquement sur du matériel que le développeur ne possède pas.",
+          "Windows : compilation croisée, et la recherche sait demander `p4-agent.exe`. Oublier l'extension, c'est ainsi qu'une version Windows livre un agent qu'elle ne retrouve pas.",
+          "La construction de l'agent précède chaque empaquetage : impossible de produire une version sans lui.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Ce qui ne marche pas encore.** Un nœud peut désormais tourner et être joint. Il ne gagne toujours rien pour l'inférence : le moteur émet des relevés de travail par étage mais personne ne les collecte, et le point d'entrée de contribution de la passerelle — correctement verrouillé pour qu'aucun nœud ne puisse se créditer lui-même — n'a jamais été appelé. Tourner et être payé sont deux problèmes distincts ; seul le premier est résolu.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Inférence en essaim par sharding d'experts : la conception",
     dek: "86 % d'un MoE de 122B, ce sont 12 544 experts indépendants de 5.3 MB. Découpez le modèle à ce grain et un téléphone peut porter une part réelle de l'inférence de frontière.",

@@ -6,6 +6,24 @@
 import type { WikiTranslation } from "./entries";
 
 export const deWiki: Record<string, WikiTranslation> = {
+  "node-relay": {
+    title: "Knoten-Relay",
+    summary: "Eine öffentliche Adresse, stellvertretend für eine Maschine gehalten, die keine hat — damit ein Knoten hinter NAT erreichbar ist, ohne einen einzigen Port zu öffnen.",
+    blocks: [
+      { t: "p", md: "Ein **Knoten-Relay** gibt der Maschine eines Beitragenden eine Adresse, die das Netz anwählen kann. p4 liefert Arbeit aus, indem es eine Verbindung *zu* einem Knoten öffnet, und eine Maschine zu Hause hinter einer Adressumsetzung hat keine solche Adresse. Das Relay hält eine öffentlich, der Knoten unterhält eine einzige ausgehende Verbindung dorthin, und an der öffentlichen Adresse angewählte Arbeit läuft die Verbindung hinunter, die der Knoten ohnehin hält." },
+      { t: "p", md: "Keines der beiden Enden von p4 erfährt, dass es das Relay gibt. Der Anrufende sieht eine gewöhnliche Adresse; der Agent des Knotens bleibt an `127.0.0.1` gebunden und lauscht auf nichts sonst." },
+      { t: "h2", text: "Warum ein Tunnel und keine Portweiterleitung" },
+      { t: "p", md: "p4 trägt keinerlei Authentifizierung: Jeder Host, der den Port eines Agenten erreicht, darf `NODE_LOAD`, `NODE_UNLOAD` oder `INSPECT` senden. Einen Port des Heimrouters dorthin weiterzuleiten hieße, die Maschine jedem preiszugeben, der sie findet. Hinter einem Relay lauscht der Knoten auf nichts und weist eine Betreiber-Wallet nach, bevor seine Verbindung irgendetwas trägt — mit demselben Signaturverfahren wie das Abrechnungs-Gateway. Erreichbarkeit und Authentifizierung löst derselbe Mechanismus." },
+      { t: "h2", text: "Was es nicht tut" },
+      { t: "ul", items: [
+        "**Es liest den Verkehr nicht.** Nutzlasten gehen Byte für Byte hindurch und werden nie geparst; das Relay kann Befehle nicht unterscheiden — und darf es nicht, denn den Verkehr zu verstehen hieße, ihn ändern zu können.",
+        "**Es plant nicht.** Die Platzierung bleibt beim Plan des Betreibers; für das Relay ist ein Knoten eine Adresse und sonst nichts.",
+        "**Es ist kein Arbeitsnachweis.** Bytes, die ein Relay passieren, sagen nichts über geleistete Inferenz und zählen nie als Beitrag.",
+      ] },
+      { t: "h2", text: "Siehe auch" },
+      { t: "p", md: "**p4-Agent**, der Prozess auf der Maschine eines Beitragenden, und **Knotenbetreiber**, die Wallet, die ein Relay vor der Vergabe einer Adresse prüft." },
+    ],
+  },
   "kvasir-network": {
     title: "Kvasir-Netzwerk",
     summary: "Ein dezentrales KI-Inferenznetzwerk (DePIN), in dem Alltagsgeräte offene Modelle bedienen und KVR verdienen.",

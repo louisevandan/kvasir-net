@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const idTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Alamat yang Bisa Dihubungi untuk Sebuah Laptop",
+    dek: "p4 menjangkau sebuah node dengan menghubunginya, dan mesin di balik NAT tidak punya alamat untuk dihubungi. Sebagian besar mesin berada di balik NAT. Inilah yang diperlukan agar satu di antaranya tetap bisa bergabung, beserta pengukuran pada hari itu.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**Hambatannya bukan usaha, melainkan arah.** p4 mengantarkan pekerjaan dengan membuka koneksi TCP *ke* sebuah node. Koneksi yang dibuka sendiri oleh node hanya untuk tanda terima — frame `Data` yang tiba di sana dijawab dengan `peer_closed(\"unexpected frame on outbound hop\")`. Sebuah laptop tidak bisa membuka terowongan keluar lalu menerima pekerjaan lewat terowongan itu. Tidak dengan niat baik, tidak dengan percobaan ulang, tidak dengan klien yang lebih baik.",
+      },
+      { t: "h2", kick: "Kendalanya", text: "Mesin seorang kontributor pada dasarnya tak terjangkau" },
+      {
+        t: "p",
+        md: "Mesin di rumah duduk di balik penerjemahan alamat jaringan. Ia bisa menjangkau internet; internet tidak bisa menjangkaunya. Armada kami sendiri memperlihatkan kedua sisi: GB10 di kantor memegang alamat publik secara langsung, sementara dua MI250 berada di `192.168.20.x` di balik satu jalan keluar bersama. MI250 bukan kekecualian — begitulah rupa mesin seorang kontributor.",
+      },
+      {
+        t: "p",
+        md: "Di p4 tidak ada tabel rute, tidak ada layanan pertemuan, tidak ada hole punching. `deliver_outbound` mengambil alamat dari amplop peristiwa lalu memanggil `connect`. Hanya itu, dan di dalam rak itu rancangan yang masuk akal. Hanya saja bukan rancangan yang bisa dipenuhi sebuah laptop.",
+      },
+      { t: "h2", kick: "Jawabannya", text: "Satu koneksi keluar, dijaga tetap terbuka" },
+      {
+        t: "p",
+        md: "Relay memegang alamat publik atas nama node. Node memelihara satu koneksi keluar ke sana dan tidak mendengarkan apa pun. Ketika seseorang menghubungi alamat publik itu, byte-byte tersebut turun melalui koneksi yang sudah dipegang node. Kedua ujung p4 melihat soket biasa menuju alamat biasa, dan tak satu pun tahu bahwa relay itu ada.",
+      },
+      {
+        t: "code",
+        caption: "Apa yang dilihat penghubung, dan apa yang benar-benar dijalankan node",
+        code: "caller  ->  tcp://relay:43100        # alamat p4 biasa\n            |\n            +-- relay      publik; meneruskan byte, tidak mengurainya\n                  |\n                  +-- tunnel   satu koneksi keluar yang dibuka node\n                        |\n                        +-- p4-agent  127.0.0.1:42031, hanya mendengarkan loopback",
+      },
+      {
+        t: "p",
+        md: "Relay tidak pernah membaca p4. Muatan diteruskan byte demi byte dan tidak pernah diurai: ia tidak bisa membedakan `LOAD` dari `INSPECT`, dan memang tidak boleh bisa — begitu ia memahami lalu lintas, ia menjadi sesuatu yang mampu mengubahnya.",
+      },
+      { t: "h2", kick: "Mengapa ini sekaligus batas keamanan", text: "Penerusan porta tidak pernah menjadi pilihan" },
+      {
+        t: "p",
+        md: "p4 tidak memiliki autentikasi apa pun. Tanpa TLS, tanpa token, tanpa daftar izin — host mana pun yang bisa menjangkau porta sebuah agen dapat mengirim `NODE_LOAD`, `NODE_UNLOAD`, dan `INSPECT`. Meminta kontributor meneruskan porta pada router rumahnya ke sana tidak dapat dibenarkan, dan itulah sebabnya solusi yang paling jelas justru yang keliru.",
+      },
+      {
+        t: "p",
+        md: "Melalui relay, node tidak mendengarkan apa pun. Ia memegang satu koneksi keluar dan membuktikan dompet operator sebelum koneksi itu membawa apa pun — tanda tangan ed25519 atas base58 yang sama seperti yang sudah dipakai gerbang penyelesaian, sehingga identitas yang didaftarkan node adalah identitas yang menjadi kunci buku besar imbalan. Keterjangkauan dan autentikasi ternyata punya jawaban yang sama.",
+      },
+      { t: "h2", kick: "Hari saat ia bekerja", text: "Diukur, bukan diklaim" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "dari host armada ke Mac di balik NAT" },
+          { n: "28 ms", l: "hingga agen menerapkan aturannya sendiri" },
+          { n: "512 KiB", l: "kembali identik byte demi byte" },
+          { n: "0", l: "porta yang dibuka pada laptop" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Sebuah host MI250 di pusat data menghubungi `tcp://34.50.62.159:43100` dan mencapai agen p4 yang berjalan di MacBook di balik NAT dalam 6 ms. Agen menutup koneksi 28 ms kemudian karena frame pertama bukan `Hello` — aturan protokolnya sendiri, diterapkan olehnya sendiri, dari mesin yang sesaat sebelumnya sama sekali tak bisa dihubungi. Penolakan itulah buktinya: relay tidak mengurai muatan, jadi ia tidak mungkin menghasilkannya.",
+      },
+      {
+        t: "table",
+        head: ["Pemeriksaan", "Hasil"],
+        rows: [
+          ["Pulang-pergi 512 KiB", "identik byte demi byte, 177 ms"],
+          ["Pulang-pergi 256 KiB", "identik byte demi byte, 108 ms"],
+          ["Tiga penghubung serentak", "tidak ada aliran yang bersilangan"],
+          ["Pendaftaran tanpa tanda tangan", "ditolak"],
+          ["Tantangan yang diulang", "ditolak"],
+        ],
+      },
+      { t: "h2", kick: "Separuh lainnya", text: "Sebuah node perlu sesuatu untuk dijalankan" },
+      {
+        t: "p",
+        md: "Keterjangkauan tidak berarti tanpa mesin di belakangnya, dan aplikasi desktop tidak pernah menyertakannya: ia mencari biner `p4-agent` di tiga direktori build dan hanya menemukannya di mesin tempat seseorang sudah mengompilasi p4 secara manual. Kini aplikasi membawa binernya sendiri, dibangun untuk setiap platform tempat ia dirilis.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: biner universal dengan kedua arsitektur digabungkan. Aplikasi Mac dikemas sebagai `universal` dan sumber daya disalin apa adanya ke kedua irisan, sehingga biner arm64 saja akan memberi pengguna Mac Intel sebuah aplikasi yang tampak lengkap namun tak bisa menyalakan node — kegagalan yang hanya terlihat pada perangkat keras yang tidak dimiliki pengembang.",
+          "Windows: dikompilasi silang, dan pencariannya tahu harus meminta `p4-agent.exe`. Melupakan ekstensi itulah cara sebuah build Windows merilis agen yang kemudian tak dapat ditemukannya.",
+          "Pembangunan agen berjalan sebelum setiap pengemasan, sehingga rilis tanpa agen tidak mungkin terbentuk.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Yang belum bisa.** Sebuah node kini dapat berjalan dan dihubungi. Ia tetap tidak memperoleh apa pun dari inferensi: mesin memancarkan catatan kerja per tahap tetapi tidak ada yang mengumpulkannya, dan titik akhir kontribusi pada gerbang — yang dengan benar dikunci agar tidak ada node yang bisa mengkredit dirinya sendiri — belum pernah dipanggil. Berjalan dan dibayar adalah dua persoalan berbeda; yang terpecahkan baru yang pertama.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Inferensi swarm dengan sharding pakar: desainnya",
     dek: "86% dari MoE 122B adalah 12.544 pakar independen berukuran 5.3 MB. Iris model pada butiran itu dan ponsel dapat memikul bagian nyata dari inferensi frontier.",

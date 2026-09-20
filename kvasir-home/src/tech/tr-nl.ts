@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const nlTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Een bereikbaar adres voor een laptop",
+    dek: "p4 bereikt een node door hem te bellen, en een machine achter NAT heeft geen adres om te bellen. De meeste machines staan achter NAT. Dit is wat er nodig was om er toch één te laten meedoen, en de metingen van de dag waarop dat lukte.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**Het obstakel was niet de inspanning maar de richting.** p4 levert werk af door een TCP-verbinding *naar* een node te openen. Een verbinding die de node zelf heeft geopend dient alleen voor ontvangstbewijzen: een `Data`-frame dat erop binnenkomt wordt beantwoord met `peer_closed(\"unexpected frame on outbound hop\")`. Een laptop kan geen tunnel naar buiten openen en daarlangs werk krijgen. Niet met goede wil, niet met herhalingen, niet met een betere client.",
+      },
+      { t: "h2", kick: "De beperking", text: "De machine van een deelnemer is standaard onbereikbaar" },
+      {
+        t: "p",
+        md: "Een machine thuis zit achter netwerkadresvertaling. Hij kan het internet bereiken; het internet hem niet. Onze eigen vloot toont beide kanten: de GB10 op kantoor heeft rechtstreeks een publiek adres, terwijl de twee MI250's op `192.168.20.x` achter één gedeelde uitgang staan. De MI250's zijn niet bijzonder — zo ziet de machine van een deelnemer er nu eenmaal uit.",
+      },
+      {
+        t: "p",
+        md: "p4 kent geen routeringstabel, geen rendez-vousdienst, geen hole punching. `deliver_outbound` haalt het adres uit de envelop van het event en roept `connect` aan. Meer is het niet, en binnen een rack is dat een redelijk ontwerp. Alleen niet een ontwerp waaraan een laptop kan voldoen.",
+      },
+      { t: "h2", kick: "Het antwoord", text: "Eén uitgaande verbinding, open gehouden" },
+      {
+        t: "p",
+        md: "De relay bezit namens de node een publiek adres. De node houdt er één uitgaande verbinding naartoe open en luistert nergens op. Belt iemand dat publieke adres, dan komen die bytes naar beneden over de verbinding die de node al had. Beide uiteinden van p4 zien een gewone socket naar een gewoon adres, en geen van beide merkt dat de relay bestaat.",
+      },
+      {
+        t: "code",
+        caption: "Wat de beller ziet, en wat de node werkelijk draait",
+        code: "caller  ->  tcp://relay:43100        # een gewoon p4-adres\n            |\n            +-- relay      publiek; geeft bytes door, leest er geen\n                  |\n                  +-- tunnel   één uitgaande verbinding van de node\n                        |\n                        +-- p4-agent  127.0.0.1:42031, luistert alleen op loopback",
+      },
+      {
+        t: "p",
+        md: "De relay leest p4 nooit. Payloads gaan byte voor byte door en worden nooit ontleed: hij kan een `LOAD` niet van een `INSPECT` onderscheiden, en dat mag hij ook niet kunnen — op het moment dat hij het verkeer begrijpt, wordt hij iets dat het kan veranderen.",
+      },
+      { t: "h2", kick: "Waarom dit tegelijk de veiligheidsgrens is", text: "Poortdoorschakeling was nooit een optie" },
+      {
+        t: "p",
+        md: "p4 heeft geen enkele authenticatie. Geen TLS, geen tokens, geen toegangslijst — elke host die de poort van een agent bereikt mag `NODE_LOAD`, `NODE_UNLOAD` en `INSPECT` sturen. Een deelnemer vragen een poort op zijn thuisrouter daarheen door te schakelen valt niet te verdedigen, en daarom is de voor de hand liggende oplossing de verkeerde.",
+      },
+      {
+        t: "p",
+        md: "Via een relay luistert de node nergens op. Hij houdt één uitgaande verbinding en bewijst een operator-wallet voordat die verbinding iets vervoert — dezelfde ed25519-handtekening over base58 die de afrekengateway al gebruikt, zodat de identiteit waarmee een node zich registreert dezelfde is als die waarop het beloningsgrootboek staat. Bereikbaarheid en authenticatie bleken hetzelfde antwoord te hebben.",
+      },
+      { t: "h2", kick: "De dag dat het werkte", text: "Gemeten, niet beweerd" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "van een vlootmachine naar een Mac achter NAT" },
+          { n: "28 ms", l: "tot de agent zijn eigen regel toepaste" },
+          { n: "512 KiB", l: "byte voor byte identiek terug" },
+          { n: "0", l: "geopende poorten op de laptop" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Een MI250-host in een datacentrum belde `tcp://34.50.62.159:43100` en bereikte in 6 ms een p4-agent op een MacBook achter NAT. De agent sloot de verbinding 28 ms later omdat het eerste frame geen `Hello` was — zijn eigen protocolregel, door hemzelf toegepast, vanaf een machine die even daarvoor helemaal niet te bereiken was. Die weigering is het bewijs: de relay ontleedt geen payloads en kan haar dus niet hebben geproduceerd.",
+      },
+      {
+        t: "table",
+        head: ["Controle", "Resultaat"],
+        rows: [
+          ["512 KiB heen en weer", "byte voor byte identiek, 177 ms"],
+          ["256 KiB heen en weer", "byte voor byte identiek, 108 ms"],
+          ["Drie gelijktijdige bellers", "geen stroom kruiste een andere"],
+          ["Registratie zonder handtekening", "geweigerd"],
+          ["Hergebruikte challenge", "geweigerd"],
+        ],
+      },
+      { t: "h2", kick: "De andere helft", text: "Een node heeft iets nodig om te draaien" },
+      {
+        t: "p",
+        md: "Bereikbaarheid is waardeloos zonder motor erachter, en de desktoptoepassing leverde er geen mee: ze zocht een `p4-agent`-binary in drie build-mappen en vond die alleen waar iemand p4 al met de hand had gecompileerd. Nu draagt de toepassing haar eigen exemplaar, gebouwd voor elk platform waarop ze wordt uitgeleverd.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: een universele binary met beide architecturen samengevoegd. De Mac-app wordt als `universal` verpakt en bronnen worden ongewijzigd in beide helften gekopieerd; een binary met alleen arm64 zou een Intel-Mac dus een app geven die compleet lijkt en geen node kan starten — een storing die alleen zichtbaar is op hardware die de ontwikkelaar niet bezit.",
+          "Windows: cross-gecompileerd, en het zoeken weet dat het om `p4-agent.exe` moet vragen. De extensie vergeten is precies hoe een Windows-build een agent uitlevert die hij vervolgens niet vindt.",
+          "De agentbuild draait vóór elke verpakking, dus een release zonder agent kan niet ontstaan.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Wat nog niet lukt.** Een node kan nu draaien en bereikt worden. Voor inferentie verdient hij nog steeds niets: de motor zendt werkverslagen per fase uit maar niemand verzamelt ze, en het bijdrage-eindpunt van de gateway — terecht afgesloten zodat geen node zichzelf kan crediteren — is nooit aangeroepen. Draaien en betaald worden zijn twee problemen; alleen het eerste is opgelost.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Zwerm-inferentie met expert-sharding: het ontwerp",
     dek: "86% van een 122B-MoE bestaat uit 12.544 onafhankelijke experts van 5.3 MB. Snijd het model op die korrel en een telefoon draagt een echt aandeel van frontier-inferentie.",

@@ -6,6 +6,24 @@
 import type { WikiTranslation } from "./entries";
 
 export const esWiki: Record<string, WikiTranslation> = {
+  "node-relay": {
+    title: "Relay de nodo",
+    summary: "Una dirección pública mantenida en nombre de una máquina que no tiene ninguna, para que un nodo tras NAT sea alcanzable sin abrir un solo puerto.",
+    blocks: [
+      { t: "p", md: "Un **relay de nodo** da a la máquina de un colaborador una dirección que la red puede marcar. p4 entrega trabajo abriendo una conexión *hacia* un nodo, y una máquina doméstica tras traducción de direcciones no tiene ninguna a la que conectarse. El relay sostiene una públicamente, el nodo mantiene una única conexión saliente hacia él, y el trabajo marcado en la dirección pública baja por la conexión que el nodo ya tenía." },
+      { t: "p", md: "Ninguno de los dos extremos de p4 se entera de que el relay existe. Quien marca ve una dirección corriente; el agente del nodo sigue enlazado a `127.0.0.1` y no escucha en nada más." },
+      { t: "h2", text: "Por qué un túnel y no un puerto redirigido" },
+      { t: "p", md: "p4 no lleva autenticación alguna: cualquier host que alcance el puerto de un agente puede enviar `NODE_LOAD`, `NODE_UNLOAD` o `INSPECT`. Redirigir un puerto del router doméstico hacia eso expondría la máquina a quien la encuentre. Tras un relay el nodo no escucha nada y demuestra una cartera de operador antes de que su conexión transporte algo, con el mismo esquema de firma que usa la pasarela de liquidación: alcanzabilidad y autenticación quedan resueltas por el mismo mecanismo." },
+      { t: "h2", text: "Lo que no hace" },
+      { t: "ul", items: [
+        "**No lee el tráfico.** Las cargas pasan byte a byte y nunca se analizan, así que el relay no puede distinguir un comando de otro — ni debe, porque entender el tráfico lo haría capaz de alterarlo.",
+        "**No planifica.** La colocación sigue siendo del plan del operador; para el relay un nodo es una dirección y nada más.",
+        "**No es prueba de trabajo.** Los bytes que atraviesan un relay no dicen nada sobre la inferencia realizada y jamás cuentan como contribución.",
+      ] },
+      { t: "h2", text: "Relacionado" },
+      { t: "p", md: "Véanse también **agente p4**, el proceso que ejecuta la máquina de un colaborador, y **operador de nodo**, la cartera que un relay autentica antes de conceder una dirección." },
+    ],
+  },
   "kvasir-network": {
     title: "Red Kvasir",
     summary: "Una red descentralizada de inferencia de IA (DePIN) donde dispositivos cotidianos sirven modelos abiertos y ganan KVR.",
