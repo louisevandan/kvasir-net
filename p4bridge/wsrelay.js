@@ -25,6 +25,18 @@ const crypto = require('node:crypto');
 const net = require('node:net');
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+/**
+ * The largest frame a peer may declare.
+ *
+ * A ring hop carries a hidden-state capsule, which is a fraction of a megabyte;
+ * 16 MiB is generous for anything legitimate. Without a ceiling the decoder
+ * trusts a declared length and keeps concatenating until the process dies: a
+ * peer can announce a terabyte in the header and then dribble, and every byte
+ * it never sends still costs us the wait. The length check itself is not
+ * enough — MAX_SAFE_INTEGER is not a memory bound.
+ */
+const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
 const OP_CONTINUATION = 0x0;
 const OP_TEXT = 0x1;
 const OP_BINARY = 0x2;
@@ -68,11 +80,19 @@ function closeFrame(code, reason = '') {
  * Calls `onData` for each payload chunk of a data frame, in order.
  */
 class FrameDecoder {
-  constructor({ onData, onPing, onClose }) {
+  /**
+   * @param {object} handlers
+   * @param {boolean} [handlers.requireMask] Enforce RFC 6455's rule that a
+   *   client masks its frames. Only true when decoding the client side: a
+   *   server's own frames are unmasked by the same rule, so enforcing this in
+   *   both directions rejects correct traffic — which is exactly what it did.
+   */
+  constructor({ onData, onPing, onClose, requireMask = false }) {
     this.buffer = Buffer.alloc(0);
     this.onData = onData;
     this.onPing = onPing;
     this.onClose = onClose;
+    this.requireMask = requireMask;
   }
 
   push(chunk) {
@@ -92,9 +112,15 @@ class FrameDecoder {
       } else if (length === 127) {
         if (this.buffer.length < offset + 8) return;
         const big = this.buffer.readBigUInt64BE(offset);
-        if (big > BigInt(Number.MAX_SAFE_INTEGER)) { this.onClose(1009, 'frame too large'); return; }
+        if (big > BigInt(MAX_FRAME_BYTES)) { this.onClose(1009, 'frame too large'); return; }
         length = Number(big);
         offset += 8;
+      }
+      if (length > MAX_FRAME_BYTES) { this.onClose(1009, 'frame too large'); return; }
+      if (this.requireMask && !masked) {
+        // RFC 6455 requires a client to mask every frame it sends.
+        this.onClose(1002, 'client frames must be masked');
+        return;
       }
       let mask = null;
       if (masked) {
@@ -174,6 +200,7 @@ function bridge(req, socket, head, target, hooks = {}) {
   });
 
   const decoder = new FrameDecoder({
+    requireMask: true,
     onData: (payload) => {
       hooks.onBytes?.('ws2tcp', payload.length);
       upstream.write(payload);

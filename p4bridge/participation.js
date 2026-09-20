@@ -24,6 +24,7 @@
  *   - Participation is not operator eligibility. See nodeauth.js.
  */
 const crypto = require('node:crypto');
+const { timingSafeEqual } = require('./nodeauth');
 
 /** How long a worker's coverage claim stands without a heartbeat. The clients
  *  beat every 15s; the margin is for a backgrounded phone, not for slack. */
@@ -35,6 +36,23 @@ const UNITS_PER_MB = Number(process.env.KVR_EXPERT_UNITS_PER_MB ?? 1);
 /** Coordinator listen ports handed to relay sessions, sticky per worker. */
 const PORT_BASE = 52_970;
 const PORT_SPAN = 60;
+
+/**
+ * Bounds on what one caller can make the server hold or walk.
+ *
+ * Everything below `/api/auth` takes a node token, but a token costs only a
+ * wallet and a signature — anyone can mint one. So these are not protection
+ * against an outsider; they are protection against any single participant,
+ * malicious or merely broken, turning its own bookkeeping into the host's
+ * problem. `coverage()` walks every live worker's segments on every volunteer
+ * poll, so an unbounded segment list is unbounded work for everyone else.
+ */
+const MAX_SEGMENTS_PER_WORKER = 256;
+const MAX_WORKERS = 4_096;
+/** A base58 Solana address is 32 bytes, so 44 characters at most. */
+const MAX_WALLET_LENGTH = 64;
+/** A relay session name is ours to shape; a caller may not make it a payload. */
+const MAX_SESSION_LENGTH = 128;
 
 const json = (res, status, body) => {
   const text = JSON.stringify(body);
@@ -77,8 +95,19 @@ class Participation {
     const cutoff = Date.now() - WORKER_STALE_MS;
     const live = [];
     for (const [id, w] of this.workers) {
-      if (w.ts >= cutoff) live.push([id, w]);
-      else this.workers.delete(id);
+      if (w.ts >= cutoff) { live.push([id, w]); continue; }
+      // Everything a worker held goes with it. The port span is sixty wide, so
+      // a port that is never released means sixty coverage posts — free to make,
+      // a node token costs a keypair and a signature — permanently stop every
+      // other device in the fleet from being wired for a relay.
+      this.workers.delete(id);
+      this.ports.delete(id);
+      for (const [session, target] of this.relayTargets) {
+        if (target.nodeId === id) {
+          this.relayTargets.delete(session);
+          this.relayStats.delete(session);
+        }
+      }
     }
     return live;
   }
@@ -171,10 +200,22 @@ class Participation {
     if (req.method === 'POST' && path === '/api/auth/challenge') {
       const wallet = String(body?.wallet ?? '').trim();
       if (!wallet) return fail(res, 400, 'wallet is required'), true;
+      // The nonce cap bounds how many challenges are held, not how large each
+      // one is, and this string is what gets held. A Solana address is at most
+      // 44 base58 characters; without this, ten thousand outstanding challenges
+      // carrying a two-megabyte "wallet" each is twenty gigabytes of the host's
+      // memory, bought for twenty gigabytes of upload.
+      if (wallet.length > MAX_WALLET_LENGTH) {
+        return fail(res, 400, 'that is not a wallet address'), true;
+      }
       if (!await this.auth.allows(wallet)) {
         return fail(res, 403, 'this wallet is not allowed to participate'), true;
       }
-      return json(res, 200, this.auth.newChallenge(wallet)), true;
+      try {
+        return json(res, 200, this.auth.newChallenge(wallet)), true;
+      } catch (error) {
+        return fail(res, error.status ?? 500, error.message), true;
+      }
     }
 
     if (req.method === 'POST' && path === '/api/auth/node-token') {
@@ -261,11 +302,18 @@ class Participation {
       if (!workerId || !model) {
         return fail(res, 400, 'worker_id and model are required'), true;
       }
-      const segments = Array.isArray(body?.segments)
-        ? body.segments.filter((s) => Array.isArray(s) && s.length === 3).map((s) => s.map(Number))
-        : [];
+      const segments = (Array.isArray(body?.segments) ? body.segments : [])
+        .filter((s) => Array.isArray(s) && s.length === 3)
+        .slice(0, MAX_SEGMENTS_PER_WORKER)
+        .map((s) => s.map(Number))
+        .filter((s) => s.every(Number.isFinite));
       const url = String(body?.url ?? '');
       const previous = this.workers.get(workerId);
+      if (!previous && this.liveWorkers().length >= MAX_WORKERS) {
+        // The census is already at capacity with workers that are still beating.
+        // Admitting more would slow every other participant's poll.
+        return fail(res, 503, 'the coverage census is full; try again shortly'), true;
+      }
       // A heartbeat must not clobber an owner the relay dial has since adopted,
       // or the node stops being paid halfway through its own session.
       const owner = String(body?.owner ?? '') || previous?.owner || '';
@@ -283,7 +331,8 @@ class Participation {
       let listenPort = null;
       let session = null;
       if (url.startsWith('relay:')) {
-        session = url.slice('relay:'.length) || `expert-${workerId}`;
+        session = (url.slice('relay:'.length) || `expert-${workerId}`)
+          .slice(0, MAX_SESSION_LENGTH);
         listenPort = this.portFor(workerId);
         if (listenPort) {
           const prior = this.relayTargets.get(session);
@@ -326,7 +375,10 @@ class Participation {
   resolveUpgrade(path, query) {
     const token = query.get('token') ?? '';
     const wallet = this.auth.verifyToken(token);
-    const service = this.auth.serviceToken && token === this.auth.serviceToken;
+    // Constant-time, like identify() on the HTTP path. A plain === here leaks
+    // the secret one byte at a time to anyone who can time the refusal.
+    const service = Boolean(this.auth.serviceToken)
+      && timingSafeEqual(token, this.auth.serviceToken);
     if (!wallet && !service) return { code: 4401, reason: 'authentication required' };
 
     if (path === '/api/expert-relay') {

@@ -18,6 +18,17 @@
 const crypto = require('node:crypto');
 
 const NONCE_TTL_MS = 5 * 60 * 1000;
+/**
+ * How many challenges may be outstanding at once.
+ *
+ * `/api/auth/challenge` has to be open — it is how a device with no token gets
+ * one — so anyone on the internet can make this map grow. Sweeping expired
+ * entries is not a bound: within the five-minute window an attacker can hold as
+ * many as they can send. The cap makes the cost of that flood a refusal rather
+ * than the process's memory. Ten thousand is far above any real fleet and far
+ * below anything that matters to a host.
+ */
+const MAX_OUTSTANDING_NONCES = 10_000;
 const TOKEN_TTL_DAYS = Number(process.env.KVR_NODE_TOKEN_TTL_DAYS ?? 30);
 
 /** The DER prefix for an Ed25519 SubjectPublicKeyInfo, so a raw 32-byte key
@@ -132,6 +143,13 @@ class NodeAuth {
     for (const [key, entry] of this.nonces) {
       if (entry.expires < now) this.nonces.delete(key);
     }
+    if (this.nonces.size >= MAX_OUTSTANDING_NONCES) {
+      // Refusing here costs a legitimate device one retry. Not refusing costs
+      // the host its memory, and takes inference down with it.
+      const error = new Error('too many challenges are outstanding; try again shortly');
+      error.status = 429;
+      throw error;
+    }
     const nonce = crypto.randomBytes(16).toString('hex');
     this.nonces.set(nonce, { wallet, expires: now + NONCE_TTL_MS });
     return { nonce, message: NodeAuth.messageFor(wallet, nonce) };
@@ -209,4 +227,4 @@ class NodeAuth {
   }
 }
 
-module.exports = { NodeAuth, base58Decode, verifyWalletSignature };
+module.exports = { NodeAuth, base58Decode, verifyWalletSignature, timingSafeEqual };
