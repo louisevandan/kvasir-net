@@ -55,7 +55,8 @@ Supported devices: GPU (CUDA · ROCm · Metal · Vulkan), CPU (x86-64 · ARM), N
 
 One endpoint, backed by many devices. Keep your existing OpenAI or Anthropic client, point it at the Kvasir gateway, and pay per inference in KVR — no rewrites.
 
-- OpenAI-compatible: /v1/chat/completions, /v1/responses, /v1/models
+- OpenAI-compatible: /v1/chat/completions, /v1/models
+- Anthropic-compatible: /anthropic/v1/messages, /anthropic/v1/models — non-streaming for now; a stream request is refused with a reason rather than answered in the wrong protocol
 - Anthropic-compatible: /anthropic/v1/messages and /anthropic/v1/models
 - Pay-per-call in KVR: quote → on-chain payment → inference (no API key)
 - Prepaid credits with an API key (see below)

@@ -1819,6 +1819,130 @@ function sseFirstError(text) {
   return null;
 }
 
+/* ---- Anthropic-compatible surface -----------------------------------------
+ *
+ * The site has advertised an Anthropic surface alongside the OpenAI one, and
+ * until now there was none: /anthropic/v1/messages answered 404 and
+ * /anthropic/v1/models answered with the wallet app. A reviewer found it with
+ * one curl.
+ *
+ * This translates and re-dispatches rather than re-implementing. The OpenAI
+ * route already carries authentication, the whitelist, the credit check and
+ * debit, model resolution, the ring-outage path and streaming; a parallel
+ * implementation would have to keep all of that in step forever, and would not.
+ * A loopback request costs a millisecond and cannot drift.
+ */
+
+/** Anthropic allows a content block array where OpenAI wants a string. */
+function anthropicTextOf(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block) => block && (block.type === 'text' || typeof block.text === 'string'))
+    .map((block) => block.text ?? '')
+    .join('');
+}
+
+const STOP_REASON = { stop: 'end_turn', length: 'max_tokens', tool_calls: 'tool_use' };
+
+app.post('/anthropic/v1/messages', async (req, res) => {
+  const body = req.body || {};
+  if (body.stream) {
+    // Anthropic's stream is a different event protocol from OpenAI's, not a
+    // reformat of it. Saying so is better than emitting OpenAI frames under an
+    // Anthropic content type and letting the SDK fail somewhere harder to read.
+    return res.status(400).json({
+      type: 'error',
+      error: {
+        type: 'invalid_request_error',
+        message: 'streaming is not implemented on the Anthropic surface yet; '
+          + 'send stream:false here, or use /v1/chat/completions for streaming',
+      },
+    });
+  }
+  const messages = [];
+  if (body.system) messages.push({ role: 'system', content: anthropicTextOf(body.system) });
+  for (const message of Array.isArray(body.messages) ? body.messages : []) {
+    messages.push({ role: message.role, content: anthropicTextOf(message.content) });
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(`http://127.0.0.1:${PORT}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}),
+        ...(req.headers['x-api-key'] ? { authorization: `Bearer ${req.headers['x-api-key']}` } : {}),
+      },
+      body: JSON.stringify({
+        model: body.model,
+        messages,
+        max_tokens: body.max_tokens,
+        temperature: body.temperature,
+        top_p: body.top_p,
+        stop: body.stop_sequences,
+        stream: false,
+      }),
+    });
+  } catch (e) {
+    return res.status(502).json({
+      type: 'error',
+      error: { type: 'api_error', message: `gateway could not reach itself: ${e.message}` },
+    });
+  }
+
+  const raw = await upstream.text().catch(() => '');
+  let d; try { d = JSON.parse(raw); } catch { d = null; }
+  if (!upstream.ok || !d) {
+    // Carry the OpenAI-side status and reason across rather than flattening
+    // every failure to 500: a 401 must still read as a 401 to an Anthropic SDK.
+    return res.status(upstream.status || 502).json({
+      type: 'error',
+      error: {
+        type: upstream.status === 401 ? 'authentication_error' : 'api_error',
+        message: d?.error?.message ?? raw.slice(0, 300) ?? 'upstream failure',
+      },
+    });
+  }
+
+  const choice = d.choices?.[0] ?? {};
+  return res.json({
+    id: (d.id ?? '').replace(/^chatcmpl/, 'msg') || `msg_${Date.now().toString(36)}`,
+    type: 'message',
+    role: 'assistant',
+    model: d.model ?? body.model,
+    content: [{ type: 'text', text: choice.message?.content ?? '' }],
+    stop_reason: STOP_REASON[choice.finish_reason] ?? 'end_turn',
+    stop_sequence: null,
+    usage: {
+      input_tokens: d.usage?.prompt_tokens ?? 0,
+      output_tokens: d.usage?.completion_tokens ?? 0,
+    },
+  });
+});
+
+app.get('/anthropic/v1/models', async (req, res) => {
+  const w = bearerWallet(req);
+  if (!w) {
+    return res.status(401).json({
+      type: 'error',
+      error: {
+        type: 'authentication_error',
+        message: 'this endpoint needs an API key: send x-api-key or '
+          + 'Authorization: Bearer <key>. See https://kvasir-ai.net/docs/api',
+      },
+    });
+  }
+  const pool = await resolveModels().catch(() => []);
+  return res.json({
+    data: pool.map((m) => ({
+      type: 'model', id: m.id, display_name: m.name ?? m.id, created_at: null,
+    })),
+    has_more: false,
+  });
+});
+
 app.post('/v1/chat/completions', async (req, res) => {
  // Wrap the whole handler: any unforeseen throw must become a typed error, never
  // an Express default 500 with an empty {} body (the exact symptom banya-agent
@@ -2111,13 +2235,35 @@ if (WEB_ENABLED) {
     else if (/\/assets\//.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   };
   app.use(express.static(WEB_DIR, { setHeaders: noCacheIndex }));
-  // SPA fallback: serve index.html for client-side routes (never for /api or /health).
+  // SPA fallback: serve index.html for client-side routes, never for an API
+  // path. An unregistered API route must fail as an API route: handing an SDK a
+  // page of HTML where it expects JSON turns "this endpoint does not exist"
+  // into a parse error three frames deep, which is a much longer afternoon.
+  // GET /anthropic/v1/models used to answer 200 with the wallet app.
   app.use((req, res, next) => {
-    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path === '/health') return next();
+    if (API_PATH.test(req.path)) return next();
+    if (req.method !== 'GET' || req.path === '/health') return next();
     res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     res.sendFile(path.join(WEB_DIR, 'index.html'));
   });
 }
+
+/**
+ * Nothing matched, and it was an API path. Answer in the shape the caller's
+ * client can read, and say what does exist rather than only what does not.
+ */
+app.use((req, res, next) => {
+  if (!API_PATH.test(req.path)) return next();
+  res.status(404).json({
+    error: {
+      message: `no such endpoint: ${req.method} ${req.path}. `
+        + 'This gateway serves /v1/chat/completions and /v1/models; '
+        + 'see https://kvasir-ai.net/docs/api',
+      type: 'invalid_request_error',
+      code: 'unknown_endpoint',
+    },
+  });
+});
 
 // Final backstop: any error that escapes a route handler (sync throw, next(err))
 // returns a typed JSON body, never Express's default empty 500. Must be last.
@@ -2176,6 +2322,9 @@ app.all(['/api/auth/challenge', '/api/auth/node-token',
 // splices the raw upgraded socket to the bridge — it never parses WS frames, so
 // relay traffic is opaque to it. Anything else on the upgrade port is dropped.
 const net = require('net');
+/** Paths that belong to an API rather than to the wallet app. */
+const API_PATH = /^\/(api|v1|anthropic|c)\//;
+
 const RELAY_WS_PATHS = ['/api/expert-relay', '/api/ring-relay'];
 server.on('upgrade', (req, socket, head) => {
   let pathname = '';

@@ -158,7 +158,7 @@ export const en = {
     title: "One endpoint, backed by many devices",
     lede: "Keep your existing OpenAI or Anthropic client. Point it at the Kvasir gateway and pay per inference in KVR — no rewrites.",
     points: [
-      "OpenAI-compatible: drop-in for /v1/chat/completions, /v1/responses, /v1/models",
+      "OpenAI-compatible: drop-in for /v1/chat/completions and /v1/models",
       "Anthropic-compatible: /anthropic/v1/messages and /anthropic/v1/models",
       "Pay-per-inference in KVR: quote → payment → inference",
       "Live model catalog aggregated from reachable bridges",
@@ -219,7 +219,7 @@ export const en = {
     formulaLabels: ["Compute units", "Effective", "Infra uptime"],
     tiersTitle: "Performance tiers",
     tiersBody:
-      "A node’s measured decode speed sets its multiplier — faster hardware earns proportionally more for the same work.",
+      "A node’s measured decode speed sets its multiplier — faster hardware earns proportionally more for the same work. The thresholds are absolute tokens per second, so they compare a node against the model it is serving, not against other nodes: a 428B MoE decodes far slower than a small model on the same silicon, and our own reference fleet sits at 28–31 tok/s on Step-3.7-Flash. Read a tier as a measure of the work a node is doing, not of how good the hardware is — and expect the thresholds to be stated per model class before mainnet.",
   },
 
   tech: {
@@ -287,7 +287,7 @@ export const en = {
       "wallet platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B on two MI250 machines · 122B end to end across three machines · OpenAI + Anthropic compatible · Solana devnet",
+      "Step-3.7-Flash 428B at 28–31 tok/s, first token in 270–285 ms · 122B end to end across three machines · OpenAI + Anthropic compatible · Solana devnet",
   },
 
   footer: {
