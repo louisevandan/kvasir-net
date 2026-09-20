@@ -337,6 +337,64 @@ const staticRoutes = [
     jsonld: [breadcrumb([["Release notes", "/releases"]])],
   },
   {
+    path: "/install",
+    title: "Installing the mobile builds — Kvasir",
+    description:
+      "How to install the Kvasir wallet on Android and iOS. Both are development builds, and both platforms ask the owner of the device to allow one on purpose.",
+    image: `${ORIGIN}/og.png`,
+    kind: "website",
+    bodyHtml:
+      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Installing the mobile builds</h1><p class="mt-4 text-lg text-ink-muted">The Kvasir wallet is not in the App Store or on Google Play yet. The Android package is signed with a development key and installs once you permit your browser to install it. iOS will not run an application that is not signed for your specific device, so there is no file to tap — you build it with Xcode and a free Apple ID.</p></section>`,
+    jsonld: [
+      breadcrumb([["Installing the mobile builds", "/install"]]),
+      howTo({
+        name: "Install the Kvasir wallet on Android",
+        description:
+          "The Android package is a development build. Android asks the owner of the device to allow an install from outside a store, and this is how.",
+        path: "/install",
+        steps: [
+          { name: "Download the APK on the phone", text: "Open the install page on the phone itself and tap Download the APK. Copying the file from a computer also works but is the longer road." },
+          { name: "Allow your browser to install apps", text: "Android blocks installs from outside a store until you permit a specific app to ask. Follow the prompt to Settings, Install unknown apps, and turn it on for that browser only." },
+          { name: "Install, and read the scanner's warning", text: "Play Protect will say the app was not scanned or comes from an unknown developer, which is what it should say about a build signed with a development key. Choose Install anyway only because you know where the file came from." },
+          { name: "If it says App not installed", text: "Either an older Kvasir build signed with a different key is already installed — uninstall it first, exporting your recovery phrase beforehand — or the download was truncated." },
+          { name: "Verify what you installed", text: "Compare the file's SHA-256 against the value published on the install page." },
+        ],
+      }),
+      howTo({
+        name: "Build and install the Kvasir wallet on iOS",
+        description:
+          "Apple will not run an application that is not signed for the specific device, so there is no file to tap. You build it with Xcode and a free Apple ID.",
+        path: "/install",
+        steps: [
+          { name: "Get the source and its build tooling", text: "Clone github.com/louisevandan/kvasir-net and install xcodegen with Homebrew." },
+          { name: "Build the native libraries the app links", text: "Initialise the submodules and run scripts/build-ios-ring.sh. The wallet runs inference on the device, so it links a compiled ring stage and expert worker." },
+          { name: "Generate the Xcode project", text: "The project file is generated from wallet/ios/project.yml rather than committed. Run xcodegen generate in wallet/ios and open the project." },
+          { name: "Sign it with your own Apple ID", text: "In Signing and Capabilities, enable automatic signing, choose your own team, and change the bundle identifier to one of your own — a free account cannot claim an identifier someone else registered." },
+          { name: "Connect the phone and run", text: "Plug the phone in, unlock it, tap Trust, pick it as the run destination and press Run." },
+          { name: "Trust the developer on the phone", text: "The first launch is refused with Untrusted Developer. In Settings, General, VPN and Device Management, tap your Apple ID and trust it." },
+        ],
+      }),
+      softwareApp({
+        name: "Kvasir Wallet for Android",
+        os: "Android 8.0+",
+        url: "/download/Kvasir-Wallet-android-arm64.apk",
+        description: "Self-custody KVR wallet and inference node for Android. Development build.",
+      }),
+      softwareApp({
+        name: "Kvasir Wallet for macOS",
+        os: "macOS",
+        url: "/download/Kvasir-Wallet-mac-universal.dmg",
+        description: "Self-custody KVR wallet and node dashboard for macOS, supervising a p4 agent.",
+      }),
+      softwareApp({
+        name: "Kvasir Wallet for Windows",
+        os: "Windows",
+        url: "/download/Kvasir-Wallet-win-x64.exe",
+        description: "Self-custody KVR wallet and node dashboard for Windows, supervising a p4 agent.",
+      }),
+    ],
+  },
+  {
     path: "/legal",
     title: "Terms of use & privacy — Kvasir",
     description:
@@ -372,6 +430,47 @@ const staticRoutes = [
     jsonld: [breadcrumb([["Wiki", "/wiki"]])],
   },
 ];
+
+/**
+ * Step-by-step instructions, declared as such.
+ *
+ * /install is a how-to in the literal sense — a person follows it with a phone
+ * in hand — and search engines and assistants surface that kind of page
+ * differently when it says so. The steps here mirror the page; when the page
+ * changes, change both, because a HowTo that disagrees with its own page is
+ * worse than none.
+ */
+function howTo({ name, description, path, steps }) {
+  return {
+    "@type": "HowTo",
+    name,
+    description,
+    url: ORIGIN + path,
+    step: steps.map((step, i) => ({
+      "@type": "HowToStep",
+      position: i + 1,
+      name: step.name,
+      text: step.text,
+      url: `${ORIGIN}${path}#step-${i + 1}`,
+    })),
+  };
+}
+
+/** The wallet, as software someone can actually download and run. */
+function softwareApp({ name, os, url, description }) {
+  return {
+    "@type": "SoftwareApplication",
+    name,
+    applicationCategory: "FinanceApplication",
+    operatingSystem: os,
+    description,
+    softwareVersion: "0.1.0",
+    url: ORIGIN + "/run-node",
+    downloadUrl: url.startsWith("http") ? url : ORIGIN + url,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    author: { "@type": "Organization", name: "Kvasir AI Network", url: ORIGIN },
+  };
+}
 
 function breadcrumb(pairs) {
   return {

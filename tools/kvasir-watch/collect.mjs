@@ -84,9 +84,16 @@ async function agentHost(agent) {
     return body.split(/---[a-z]+---/)[0].trim();
   };
   const proc = section('proc');
+  // An agent's identity is the address it advertises, not the one we dial it
+  // on. Address it by any other spelling and it does not recognise itself: the
+  // request is routed outbound to that address, the agent dials itself, and the
+  // call times out with nothing in the log to say why. Read the advertisement
+  // off its own command line so this cannot drift.
+  const advertised = (proc.match(/\btcp:\/\/\S+/) ?? [])[0] ?? null;
   return {
     label: agent.label,
     running: Boolean(proc),
+    advertised,
     uptime: proc.trim().split(/\s+/)[1] ?? null,
     listening: section('listen').length > 0,
     recentErrors: section('err').split('\n').filter(Boolean).slice(-3),
@@ -99,7 +106,7 @@ async function agentHost(agent) {
  * the agents bind loopback — the engine is not exposed, and this must not
  * change that.
  */
-async function agentStages(agent) {
+async function agentStages(agent, advertised) {
   // On this machine the agent is already on loopback; a tunnel would only be a
   // second way to reach the same socket.
   const local = isLocal(agent.host) ? agent.port : 42900 + (agent.port % 100);
@@ -110,7 +117,9 @@ async function agentStages(agent) {
   }
   try {
     const { connect } = await import('kvasir-p4-bridge/wire');
-    const address = `tcp://127.0.0.1:${agent.port}`;
+    // The tunnel decides where the bytes go; the advertised address decides
+    // whether the agent believes the request is for it.
+    const address = advertised ?? `tcp://127.0.0.1:${agent.port}`;
     const client = await connect({
       host: '127.0.0.1', port: local, address,
       channel: `watch-${Date.now().toString(16)}`,
@@ -157,7 +166,10 @@ async function main() {
       probe('commits', () => commits(config.tracks.ring, since)),
       probe('files', () => fileCount(config.tracks.ring, since)),
       ...config.agents.map((agent) => probe(`host:${agent.label}`, () => agentHost(agent))),
-      ...config.agents.map((agent) => probe(`stages:${agent.label}`, () => agentStages(agent))),
+      ...config.agents.map((agent) => probe(`stages:${agent.label}`, async () => {
+        const host = await agentHost(agent).catch(() => null);
+        return agentStages(agent, host?.advertised);
+      })),
     ]),
     Promise.all([
       probe('commits', () => commits(config.tracks.gateway, since)),

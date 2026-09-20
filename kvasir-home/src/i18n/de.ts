@@ -57,7 +57,7 @@ export const de: Dict = {
   thesis: {
     eyebrow: "Warum dezentrale KI",
     title: "KI sollte nicht einer Handvoll Unternehmen gehören",
-    lede: "Spitzen-Inferenz konzentriert sich hinter wenigen abgeschotteten Rechenzentren — geschlossene Gewichte, nutzungsbasierte Abrechnung, eine Rechnung an einen Eigentümer. Kvasir weist in die andere Richtung: offene Modelle, bereitgestellt über ein erlaubnisfreies Netzwerk aus Alltagsgeräten — im Besitz der Menschen, die es betreiben, und von ihnen verdient.",
+    lede: "Spitzen-Inferenz konzentriert sich hinter wenigen abgeschotteten Rechenzentren — geschlossene Gewichte, nutzungsbasierte Abrechnung, eine Rechnung an einen Eigentümer. Kvasir ist andersherum gebaut: offene Modelle, bereitgestellt über ein Netzwerk aus Alltagsgeräten — im Besitz der Menschen, die es betreiben, und von ihnen verdient. Heute laufen diese Engine und ihre Abrechnung auf unserer eigenen Flotte, und ein Gerät kann sich bereits registrieren, Rechenleistung beisteuern und dafür bezahlt werden; den Serving-Ring selbst für alle zu öffnen, ist das nächste Gate. Die Roadmap weiter unten sagt, wo jeder Teil steht.",
     centralizedLabel: "Zentralisierte KI",
     centralizedPoints: [
       "Wenige Hyperscaler besitzen die GPUs",
@@ -163,7 +163,7 @@ export const de: Dict = {
       "OpenAI-kompatibel: Drop-in für /v1/chat/completions, /v1/responses, /v1/models",
       "Anthropic-kompatibel: /anthropic/v1/messages und /anthropic/v1/models",
       "Pay-per-Inference in KVR: quote → payment → inference",
-      "Live-Modellkatalog, aggregiert aus erreichbaren Hubs",
+      "Live-Modellkatalog, aggregiert aus erreichbaren Bridges",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -171,7 +171,7 @@ export const de: Dict = {
   token: {
     eyebrow: "Token & Belohnungen",
     title: "KVR bezahlt für Rechenleistung — und belohnt sie",
-    lede: "KVR ist die Einheit, die Entwickler für Inferenz ausgeben, und die Einheit, die Mitwirkende für die Layer verdienen, die sie ausführen. Compute-Belohnungen ergeben sich aus gemessener Arbeit; Gateway- und Hub-Hosts verdienen zusätzlich für Uptime.",
+    lede: "KVR ist die Einheit, die Entwickler für Inferenz ausgeben, und die Einheit, die Mitwirkende für die Layer verdienen, die sie ausführen. Compute-Belohnungen ergeben sich aus gemessener Arbeit; Gateway- und Bridge-Hosts verdienen zusätzlich für Uptime.",
     facts: [
       { k: "Symbol", v: "KVR", note: "On-Chain-Name “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "derzeit Devnet" },
@@ -194,7 +194,7 @@ export const de: Dict = {
   network: {
     eyebrow: "Netzwerk & Belohnungen",
     title: "Jede Rolle im Netzwerk verdient KVR",
-    lede: "Der Ring aus Compute-Nodes wird von Hub- und Gateway-Rollen koordiniert. Jede wird in KVR für das bezahlt, was sie tatsächlich leistet — Rechenleistung für die ausgeführten Layer, Infrastruktur für die aufrechterhaltene Uptime.",
+    lede: "Vor dem Ring aus Compute-Nodes stehen die Bridge und das Abrechnungs-Gateway. Jede Rolle wird in KVR für das bezahlt, was sie tatsächlich leistet — Rechenleistung für die ausgeführten Layer, Infrastruktur für die aufrechterhaltene Uptime.",
     roles: [
       {
         role: "Compute-Node",
@@ -209,14 +209,14 @@ export const de: Dict = {
         earns: "stündliche Uptime + ×1.5 Inferenz-Bonus",
       },
       {
-        role: "Hub-Host",
-        tagline: "Die Steuerungsebene",
-        body: "Erkennt Geräte, plant die Layer-Platzierung und orchestriert den Ring. Die kritischste Rolle — daher verdient er die höchste stündliche Uptime-Belohnung dafür, das Netzwerk koordiniert zu halten.",
+        role: "Bridge-Host",
+        tagline: "Die Eingangstür der Engine",
+        body: "Installiert eine Session über die Stages eines Modells hinweg, reicht Anfragen an den Head weiter, sammelt den Token-Stream ein und meldet, was jeder Node beigetragen hat — und stellt den Markt bereit, dem ein beitragendes Gerät beitritt. Ohne sie erreicht nichts den Ring, daher verdient sie die höchste stündliche Uptime-Belohnung.",
         earns: "höchste stündliche Uptime",
       },
     ],
     rolesNote:
-      "Rollen lassen sich kombinieren: Eine Maschine kann gleichzeitig Compute, Gateway und Hub sein, und ihre Belohnungen summieren sich. Alles wird in KVR an die eigene Wallet des Nodes abgerechnet.",
+      "Rollen lassen sich kombinieren: Eine Maschine kann gleichzeitig Compute, Gateway und Bridge sein, und ihre Belohnungen summieren sich. Alles wird in KVR an die eigene Wallet des Nodes abgerechnet.",
     formulaTitle: "Wie Belohnungen berechnet werden",
     formulaLabels: ["Compute-Units", "Effektiv", "Infra-Uptime"],
     tiersTitle: "Leistungsstufen",
@@ -244,7 +244,7 @@ export const de: Dict = {
       },
       {
         title: "SIWS- + 2FA-Sicherheit",
-        body: "Für öffentliche Deployments erfolgt der Betreiber-Zugang über eine Sign-In-With-Solana-Signatur auf einer Server-Nonce, plus TOTP-2FA und Einmal-Backup-Codes — sowohl auf Hub als auch auf Gateway.",
+        body: "Für öffentliche Deployments erfolgt der Betreiber-Zugang über eine Sign-In-With-Solana-Signatur auf einer Server-Nonce, plus TOTP-2FA und Einmal-Backup-Codes. Ein Gerät, das nur Rechenleistung beisteuern will, meldet sich nie an: Es weist gegenüber der Bridge eine Wallet nach und erhält ein Token, das ausschließlich auf die Teilnahme beschränkt ist.",
       },
     ],
     openText:
@@ -264,7 +264,7 @@ export const de: Dict = {
       {
         phase: "In Arbeit",
         title: "Ring, Gateway, Client",
-        body: "An drei Dingen wird gleichzeitig gearbeitet. Der Ring durchläuft nach einem abgebrochenen Lauf über 64 Requests die Recovery-Gates. Das Abrechnungs-Gateway wird auf p4 portiert — bis das steht, ist sein öffentlicher Endpunkt bewusst offline. Der Desktop-Client wird zu einem echten Node, der einen p4-Agenten beaufsichtigt, statt ihn nur zu registrieren.",
+        body: "Das Abrechnungs-Gateway ist auf p4 portiert und antwortet: Eine bezahlte Anfrage läuft über das Gateway, die Bridge und den MI250-Ring und wird nach den tatsächlich verbrauchten Tokens abgerechnet. Auf dem Serving-Ring liefert Step-3.7-Flash im Einzelstream 28–31 Tokens pro Sekunde, das erste Token nach 270–285 ms. Weiterhin in Arbeit: Der Ring durchläuft nach einem abgebrochenen Lauf über 64 Requests die Recovery-Gates, der Desktop-Client wird zu einem echten Node, der einen p4-Agenten beaufsichtigt, statt ihn nur zu registrieren, und das Sharding auf Expert-Granularität wird auf p4 übertragen — ein Gerät kann bereits ein Window beanspruchen und ein Relay öffnen, aber der Shard-Download und das Dispatch auf Engine-Seite sind noch nicht geschrieben.",
       },
       {
         phase: "Demnächst",
@@ -315,8 +315,8 @@ export const de: Dict = {
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR ist ein Utility-Token im Solana-devnet — kein handelbarer Vermögenswert im mainnet und keine finanzielle Rendite.",
-    reqTitle: "Hub · Gateway-Betreiber-Voraussetzung",
-    reqBody: "Um einen Hub-Node oder einen Gateway-Node zu betreiben, musst du 100.000 KVR in deiner Wallet staken. Reguläre Compute-Nodes treten ohne diese Voraussetzung bei und verdienen für die Layer, die sie ausführen.",
+    reqTitle: "Bridge · Gateway-Betreiber-Voraussetzung",
+    reqBody: "Um einen Bridge-Node oder einen Gateway-Node zu betreiben, musst du 100.000 KVR in deiner Wallet staken. Reguläre Compute-Nodes treten ohne diese Voraussetzung bei und verdienen für die Layer, die sie ausführen.",
     tabDesktop: "Desktop",
     tabMobile: "Mobil",
     soon: "Demnächst verfügbar",
@@ -329,7 +329,7 @@ export const de: Dict = {
       { title: "Wallet erstellen", body: "Wähle Neue Wallet erstellen. Notiere deine 12-Wörter-Wiederherstellungsphrase und bewahre sie sicher auf — sie kann bei Verlust nicht wiederhergestellt werden. Lege anschließend eine Passphrase fest, um die App zu entsperren. Die Schlüssel sind non-custodial und werden ausschließlich auf diesem Gerät gespeichert.", body2: "" },
       { title: "KVR einzahlen & staken", body: "Empfange etwas devnet-SOL (für Gebühren) und KVR (zum Staken) an der Empfangsadresse deiner Wallet. Gib im Staking-Bereich des Dashboards einen Betrag ein und wähle Staken, um dich für Node-Rewards zu qualifizieren.", body2: "" },
       { title: "Node konfigurieren", body: "Wähle in den Node-Einstellungen das Compute-Backend dieses Geräts (CUDA / ROCm / Metal / CPU) und entscheide dich für Lokaler Shard (empfohlen) — dabei läuft der Layer-Shard lokal, und es wird nur ein kleiner Grenzzustand weitergeleitet, der schnellste Modus.", body2: "" },
-      { title: "Node ausführen", body: "Aktiviere Node ausführen (live), um dieses Gerät unter deiner Wallet (Eigentümer) im Netzwerk zu registrieren und online zu bringen.", body2: "Für einen echten GPU-Compute-Node führe zusätzlich den nativen Agenten unten aus. Der Planner des Hubs platziert Modell-Layer auf deinem Gerät, und dein Node verdient einen Layer-Anteil an KVR, der der Eigentümer-Wallet gutgeschrieben wird." },
+      { title: "Node ausführen", body: "Aktiviere Node ausführen (live), um dieses Gerät unter deiner Wallet (Eigentümer) im Netzwerk zu registrieren und online zu bringen.", body2: "Für einen echten GPU-Compute-Node führe zusätzlich den nativen Agenten unten aus. Welche Layer auf deinem Gerät liegen, ergibt sich aus einem Platzierungsplan, den der Betreiber lädt, und dein Node verdient einen Layer-Anteil an KVR, der der Eigentümer-Wallet gutgeschrieben wird." },
       { title: "Beitrag & Rewards verfolgen", body: "Beobachte im Node-Status Nodes / Online / effektiver Beitrag / einlösbar. Nodes werden nach Durchsatz in Stufen eingeteilt (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); Rohwert × Stufe = effektiv. Nutze Rewards einlösen, um aufgelaufene KVR in deine Wallet zu übertragen.", body2: "" },
     ],
     faucetTitle: "Devnet-SOL erhalten (kostenloser Faucet)",
@@ -417,7 +417,7 @@ export const de: Dict = {
     apiModels: "Listet die Modelle auf, die der Schwarm gerade bereitstellt — ein leeres Array, wenn keines läuft, also codiere niemals eine id fest.",
     apiQuote: "Hole ein Preisangebot und eine an deinen Prompt gebundene requestId. priceToken ist die zu zahlende KVR-Menge; die endgültige Abrechnung erfolgt nach tatsächlicher Token-Nutzung.",
     apiPay: "Überweise die angebotenen KVR an das zugehörige Token-Konto des Empfängers (das Vault) und signiere mit deiner Wallet. Die Signatur ist einmalig gültig.",
-    apiInfer: "Das Gateway pollt die Chain, um die Zahlung zu prüfen, führt die Inferenz auf dem Hub aus und liefert das Ergebnis samt tatsächlicher Nutzung und Kosten.",
+    apiInfer: "Das Gateway pollt die Chain, um die Zahlung zu prüfen, führt die Inferenz über die Bridge aus und liefert das Ergebnis samt tatsächlicher Nutzung und Kosten.",
     codeTitle: "End-to-End-Beispiel",
     codeLede: "Lade den geheimen Wallet-Schlüssel aus der Umgebung, hole ein Angebot, bezahle und löse ein — ein in sich geschlossenes Snippet. Die Schritte 1, 2 und 4 sind reines HTTP; nur Schritt 3 (die SPL-Überweisung) unterscheidet sich je SDK.",
     adapterTitle: "OpenAI-kompatibler Adapter",
@@ -454,7 +454,7 @@ export const de: Dict = {
     catUseApi: "Die API nutzen",
     selfHostTitle: "Betreibe einen Node, bekomme kostenlose Inferenz",
     selfHostPitch: "Willst du KI-Modelle kostenlos nutzen? Lass deinen Coding-Agent deine Maschine als Node ins Netz einklinken — und dir dafür einen Inferenz-Endpunkt zurückgeben.",
-    selfHostBody: "Ein Skript startet den Hub (und optional das KVR-Gateway) mit Docker. Füge in der Hub-UI deine GPU hinzu, lade ein offenes Modell und rufe dann einen standardmäßigen OpenAI-kompatiblen Endpunkt — /c/<id>/v1/chat/completions — auf, der auf deiner eigenen Hardware läuft. Richte jedes Tool, das OpenAI spricht, darauf aus.",
+    selfHostBody: "Bring die Bridge vor deine eigenen p4-Agenten, optional mit dem KVR-Gateway daneben. Lade ein offenes Modell mit einem Platzierungsplan und rufe dann einen standardmäßigen OpenAI-kompatiblen Endpunkt — /c/<id>/v1/chat/completions — auf, der auf deiner eigenen Hardware läuft. Richte jedes Tool, das OpenAI spricht, darauf aus.",
     selfHostNote: "Das stellt offene Modelle, die deine Maschine halten kann, kostenlos bereit — es ist deine Rechenleistung. Für Frontier-Modelle, die zu groß für eine Maschine sind, tritt dem Schwarm bei: dafür ist die KVR-Pay-per-Use-API unten da.",
     inferenceApiTitle: "Inferenz-API (Guthaben)",
     inferenceApiLede: "Der einfachste Weg: ein nativer OpenAI-Endpunkt mit einem API-Key. Streaming (SSE) und native Tool-Calls funktionieren einfach, und jeder Aufruf wird von einem im Voraus aufgeladenen KVR-Guthaben abgezogen — kein Wallet-Signieren pro Aufruf. Der Zugang wird über eine Wallet-Whitelist gesteuert.",

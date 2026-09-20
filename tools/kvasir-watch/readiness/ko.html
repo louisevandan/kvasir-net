@@ -123,7 +123,7 @@ footer{margin-top:40px;color:var(--muted);font-size:13px}
       <div class="item"><div class="top"><span class="name">분야 적합성</span><span class="pill pass">강함</span></div><p>덱이 S5 중점 분야 네 개(AI, Web3·DePIN, 에이전트 경제, 스테이블코인·결제)에 Kvasir를 연결합니다. 에이전트가 데브넷에서 직접 추론을 사는 흐름도 지금 동작합니다.</p></div>
       <div class="item"><div class="top"><span class="name">엔지니어링 깊이</span><span class="pill pass">강함</span></div><p>최신 작업 브랜치에서 테스트 1,582개가 통과하고 실패는 0입니다. 엔진 커밋 484개와 영문 문서가 공개됐습니다.</p></div>
       <div class="item"><div class="top"><span class="name">규모 증명</span><span class="pill warn">보통</span></div><p>3호스트 Qwen 122B는 정식 통과했고 공개돼 있습니다. MI250에서는 Step-3.7-Flash(428B)를 vLLM과 비교 실측한 기록도 있습니다. GLM-5.2(744B)는 이전 엔진인 linkcpp에서 돌렸고 보고서는 아직 공개되지 않았습니다. 첫 64건 실행은 RED로 끝났습니다.</p></div>
-      <div class="item"><div class="top"><span class="name">운영 중인 제품</span><span class="pill warn">의도적 정지</span></div><p>정산 게이트웨이는 p4 이식 전까지 의도적으로 내려 둔 상태입니다. MI250 호스트에서는 linker 허브가 로컬에서 200으로 응답하고 p4 에이전트도 돌고 있지만, 공개 도메인은 502라 심사역에게는 장애로 보입니다.</p></div>
+      <div class="item"><div class="top"><span class="name">운영 중인 제품</span><span class="pill pass">가동</span></div><p>2026-09-20에 p4 이식이 끝났습니다. 공개 게이트웨이가 200으로 응답하고, 폰에서 보낸 유료 요청이 게이트웨이·브릿지·MI250 링을 거쳐 실제 사용 토큰으로 과금됩니다. 허브 도메인은 내려간 것이 아니라 <strong>은퇴</strong>했습니다 — 뒤에 있던 컨트롤 플레인을 삭제했고, 사이트에서 링크를 걷어냈으며, 위키 슬러그는 리다이렉트합니다. 남은 것은 상태 페이지가 없다는 점입니다.</p></div>
       <div class="item"><div class="top"><span class="name">공개 주장·규제 대응</span><span class="pill warn">대부분 해결</span></div><p>9개 언어 사이트를 모두 고쳤고 이용약관·개인정보 페이지도 생겼습니다. 법인명 미기재와 서버 코드의 스테이킹 APR 기본값 12%가 남았습니다.</p></div>
       <div class="item"><div class="top"><span class="name">팀·구조</span><span class="pill pass">정해짐</span></div><p>창업자는 Guy, Anver, Kiwan, Antonio 네 명입니다. Guy와 Anver가 치앙마이를 포함해 레지던시를 풀타임으로 소화합니다. IP 정리는 Antonio가 맡습니다.</p></div>
     </div>
@@ -132,11 +132,11 @@ footer{margin-top:40px;color:var(--muted);font-size:13px}
     <!-- LIVE:STATUS -->
   <section id="live">
     <h2>실시간 상태</h2>
-    <p class="sub">머신과 저장소에서 자동으로 다시 쓴 절입니다 — 2026-09-17 01:34 UTC. 나머지 본문은 검토된 원문 그대로입니다.</p>
+    <p class="sub">머신과 저장소에서 자동으로 다시 쓴 절입니다 — 2026-09-20 16:24 UTC. 나머지 본문은 검토된 원문 그대로입니다.</p>
     <div class="items">
-      <div class="item"><div class="top"><span class="name">링</span><span class="pill pass">서빙 중</span></div><p>에이전트 2대 중 2대 가동. MI250-01: step37-s0 loaded, step37-s1 loaded · MI250-02: step37-s2 loaded, step37-s3 loaded. 최근 1일간 커밋 0건.</p></div>
-      <div class="item"><div class="top"><span class="name">정산 게이트웨이</span><span class="pill warn">의도적 정지</span></div><p>공개 엔드포인트가 응답하지 않습니다(fetch failed). p4 이식 전까지 의도적으로 내려 둔 상태입니다. 최근 1일간 커밋 2건, 파일 10개.</p></div>
-      <div class="item"><div class="top"><span class="name">클라이언트 앱</span><span class="pill pass">정상</span></div><p>kvasir-ai.net이 200로 208 ms 만에 응답했습니다. 데스크탑 지갑 Kvasir Wallet 0.1.0. 최근 1일간 커밋 1건, 파일 10개.</p></div>
+      <div class="item"><div class="top"><span class="name">링</span><span class="pill warn">일부 이상</span></div><p>에이전트 2대 중 2대 가동. MI250-01: step37-s0 loaded, step37-s1 loaded · MI250-02: 보유 스테이지 없음. 최근 1일간 커밋 5건, 파일 37개.</p></div>
+      <div class="item"><div class="top"><span class="name">정산 게이트웨이</span><span class="pill pass">정상</span></div><p>공개 엔드포인트가 200로 455 ms 만에 응답했습니다. 최근 1일간 커밋 4건, 파일 4개.</p></div>
+      <div class="item"><div class="top"><span class="name">클라이언트 앱</span><span class="pill pass">정상</span></div><p>kvasir-ai.net이 200로 575 ms 만에 응답했습니다. 데스크탑 지갑 Kvasir Wallet 0.1.0. 최근 1일간 커밋 12건, 파일 64개.</p></div>
     </div>
   </section>
 <!-- /LIVE:STATUS -->
@@ -144,7 +144,7 @@ footer{margin-top:40px;color:var(--muted);font-size:13px}
   <!-- LIVE:CALENDAR -->
   <section id="calendar">
     <h2>이번 주</h2>
-    <p class="sub">2026-09-14 – 2026-09-20 · Asia/Seoul. 미팅은 팀 캘린더에서 가져오고, 표시된 날짜는 계획상의 일정입니다.</p>
+    <p class="sub">2026-09-21 – 2026-09-27 · Asia/Seoul. 미팅은 팀 캘린더에서 가져오고, 표시된 날짜는 계획상의 일정입니다.</p>
     <style>
     .cal { width: 100%; table-layout: fixed; border-collapse: collapse; }
     .cal th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .6; padding: 6px 4px; text-align: left; }
@@ -156,25 +156,25 @@ footer{margin-top:40px;color:var(--muted);font-size:13px}
     .cal .cal-time { opacity: .6; font-variant-numeric: tabular-nums; }
     .cal .cal-plan { font-size: 12px; line-height: 1.35; margin-bottom: 5px; font-weight: 600; }
   </style>
-    <div class="table-wrap"><table class="cal"><thead><tr><th>월</th><th>화</th><th>수</th><th>목</th><th>금</th><th>토</th><th>일</th></tr></thead><tbody><tr><td class=""><div class="cal-date">14</div></td><td class=""><div class="cal-date">15</div></td><td class=""><div class="cal-date">16</div></td><td class="cal-today"><div class="cal-date">17</div></td><td class=""><div class="cal-date">18</div></td><td class=""><div class="cal-date">19</div></td><td class=""><div class="cal-date">20</div></td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="cal"><thead><tr><th>월</th><th>화</th><th>수</th><th>목</th><th>금</th><th>토</th><th>일</th></tr></thead><tbody><tr><td class="cal-today"><div class="cal-date">21</div><div class="cal-plan">YZi Labs EASY S5 application due</div></td><td class=""><div class="cal-date">22</div></td><td class=""><div class="cal-date">23</div></td><td class=""><div class="cal-date">24</div></td><td class=""><div class="cal-date">25</div></td><td class=""><div class="cal-date">26</div></td><td class=""><div class="cal-date">27</div></td></tr></tbody></table></div>
     <p class="sub">캘린더 피드가 설정되지 않아 계획 일정만 표시합니다. 모니터링 설정에 캘린더의 비공개 iCal 주소를 넣으면 미팅도 함께 나옵니다.</p>
-    <p class="sub">이번 주 이후: 2026-09-21 — YZi Labs EASY S5 application due</p>
   </section>
 <!-- /LIVE:CALENDAR -->
 
   <!-- LIVE:PIPELINE -->
   <section id="pipeline">
     <h2>자금 파이프라인</h2>
-    <p class="sub">추적 중인 프로그램 71건, 2026-09-18 01:09 UTC 기준으로 파이프라인에서 읽었습니다. 여기 실린 것은 진행 중인 건과 60일 안에 마감되는 건뿐입니다. 상태는 사람이 바꿀 때만 바뀝니다.</p>
+    <p class="sub">추적 중인 프로그램 72건, 2026-09-20 16:24 UTC 기준으로 파이프라인에서 읽었습니다. 여기 실린 것은 진행 중인 건과 60일 안에 마감되는 건뿐입니다. 상태는 사람이 바꿀 때만 바뀝니다.</p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>프로그램</th><th>지역</th><th>마감</th><th>상태</th><th>요구 조건과 진행 상황</th></tr></thead>
         <tbody>
-      <tr><td>Nexus Programme — MZN Hub Abu Dhabi (Khalifa Fund)</td><td>Abu Dhabi, UAE</td><td>2026-09-20 <span class="pill warn">2일 남음</span></td><td>지원 완료</td><td>Requires an Emirati founder or an Emirati co-founder — the only programme on this list that does. <strong>Form submitted 2026-09-17 by Anver. Emirati co-founder still being sought — Guy asking around. Awaiting decision.</strong></td></tr>
-      <tr><td>YZi Labs EASY Residency S5</td><td>Global (formerly Binance Labs)</td><td>2026-09-21 <span class="pill warn">3일 남음</span></td><td>검토 중</td><td>The most urgent item. The amount matches our target exactly. Closes 21 Sep, 23:59 GMT-7. A separate general application form is open year-round. <strong>Opened their questionnaire. 5 stages. Filling them (Anver)</strong></td></tr>
-      <tr><td>Colosseum Crypto World's Fair</td><td>Solana ecosystem</td><td>2026-10-12 <span class="pill info">24일 남음</span></td><td>미착수</td><td>We read the official rules directly: nothing prohibits submitting an existing product or pre-existing code. Judging weighs functionality and business plan, so a working product is an advantage.</td></tr>
-      <tr><td>a16z SPEEDRUN</td><td>San Francisco</td><td>2026-11-01 <span class="pill info">44일 남음</span></td><td>미착수</td><td>Priority review window 12 Oct – 1 Nov. Open worldwide with no re-incorporation required, which makes it the best fit for keeping the ADGM entity.</td></tr>
-      <tr><td>Y Combinator W27</td><td>San Francisco</td><td>2026-11-02 <span class="pill info">45일 남음</span></td><td>미착수</td><td>Warning: an ADGM entity cannot apply as is — YC requires a parent company in the US, Canada, Singapore or the Cayman Islands. Requires being in San Francisco January to March.</td></tr>
+      <tr><td>Nexus Programme — MZN Hub Abu Dhabi (Khalifa Fund)</td><td>Abu Dhabi, UAE</td><td>2026-09-20 <span class="pill fail">1일 지남</span></td><td>지원 완료</td><td>공식 페이지(khalifafund.ae/nexus-program)에서 오늘 직접 확인: 지원 마감 2026-09-20, 그대로 유지. 중요 신규 확인 사항 — 자격 요건에 "스타트업이 51% 이상 에미라티 소유여야 한다"고 명시돼 있음(기존에 파악한 '에미라티 창업자 또는 공동창업자 필요'보다 훨씬 엄격한 기준). <strong>Form submitted 2026-09-17 by Anver. Emirati co-founder still being sought — Guy asking around. Awaiting decision.</strong></td></tr>
+      <tr><td>YZi Labs EASY Residency S5</td><td>Global (formerly Binance Labs)</td><td>2026-09-21 <span class="pill warn">오늘</span></td><td>검토 중</td><td>공식 페이지(yzilabs.com/easy-residency)에서 오늘 재확인: 마감 2026-09-21 23:59 GMT-7 그대로 유지, 금액 조건도 변동 없음. 신규 확인 사항 — 이번 시즌(S5)은 "Build From Bangkok"으로 명명돼 있고, 9주 프로그램 중 1–5주는 원격, 6–9주는 방콕 현지 상주(공동 워크스페이스)가 필수다. <strong>Opened their questionnaire. 5 stages. Filling them (Anver)</strong></td></tr>
+      <tr><td>Colosseum Crypto World's Fair</td><td>Solana ecosystem</td><td>2026-10-12 <span class="pill info">21일 남음</span></td><td>미착수</td><td>We read the official rules directly: nothing prohibits submitting an existing product or pre-existing code. Judging weighs functionality and business plan, so a working product is an advantage.</td></tr>
+      <tr><td>a16z SPEEDRUN</td><td>San Francisco</td><td>2026-11-01 <span class="pill info">41일 남음</span></td><td>미착수</td><td>Priority review window 12 Oct – 1 Nov. Open worldwide with no re-incorporation required, which makes it the best fit for keeping the ADGM entity.</td></tr>
+      <tr><td>Y Combinator W27</td><td>San Francisco</td><td>2026-11-02 <span class="pill info">42일 남음</span></td><td>미착수</td><td>Warning: an ADGM entity cannot apply as is — YC requires a parent company in the US, Canada, Singapore or the Cayman Islands. Requires being in San Francisco January to March.</td></tr>
+      <tr><td>Techstars Spring 2027</td><td>Anywhere · London · Baltimore</td><td>2026-11-18 <span class="pill info">58일 남음</span></td><td>미착수</td><td>$200K uncapped MFN SAFE plus $20K for 5% common. The Anywhere track is restricted to North American time zones.</td></tr>
         </tbody>
       </table>
     </div>
@@ -197,7 +197,7 @@ footer{margin-top:40px;color:var(--muted);font-size:13px}
           <tr><td>공개 저장소</td><td>커밋 8개, 마지막 푸시 8월 3일</td><td><code>p4</code> 브랜치에 커밋 484개를 BSL 1.1·NOTICE·영문 문서와 함께 올렸습니다. README가 이 브랜치를 가리키고, 9월 17일에 푸시했습니다.</td><td><span class="pill pass">해결</span></td></tr>
           <tr><td>풀타임 인원</td><td>미정</td><td>Guy와 Anver가 치앙마이를 포함해 레지던시를 풀타임으로 소화합니다.</td><td><span class="pill pass">정해짐</span></td></tr>
           <tr><td>S5 덱</td><td>없음</td><td>v4, 44장입니다. 문제 정의·설명은 CRO 덱, 블록체인은 의장 덱에서 가져왔고, 증거 슬라이드·P4 Studio 화면·10주 계획을 더했습니다.</td><td><span class="pill pass">초안 완성</span></td></tr>
-          <tr><td>게이트웨이·허브</td><td>502, 원인 미상</td><td>여전히 502입니다. 원인을 확인했습니다. 정산 게이트웨이는 p4 이식 전까지 일부러 내려 둔 상태이고, MI250의 터널은 오늘 아무 요청도 받지 않았습니다. 허브 자체는 로컬에서 200으로 응답합니다.</td><td><span class="pill warn">결정 필요</span></td></tr>
+          <tr><td>게이트웨이·허브</td><td>502, 원인 미상</td><td><strong>2026-09-20 해소.</strong> 게이트웨이는 p4로 이식되어 응답하고 추론이 끝까지 돕니다. 허브 도메인은 복구가 아니라 은퇴 처리했습니다.</td><td><span class="pill pass">해소</span></td></tr>
           <tr><td>지속 부하 관문(I1)</td><td>사전 봉인, 미실행</td><td>21:44에 시작해, 23:01 Windows 제어 PC가 꺼지면서 중단됐습니다.</td><td><span class="pill fail">RED</span></td></tr>
           <tr><td>GLM-5.2(744B) 증거</td><td>미공개, p4 성과로 표기</td><td>p4가 아니라 이전 세대 엔진인 linkcpp에서 돌렸습니다. 492GB 모델은 MI250 호스트에 있지만 실행 기록은 찾지 못했고, 보고서도 아직 공개되지 않았습니다.</td><td><span class="pill warn">공개 필요</span></td></tr>
         </tbody>
@@ -289,7 +289,7 @@ footer{margin-top:40px;color:var(--muted);font-size:13px}
         </tbody>
       </table>
     </div>
-    <p class="note">502는 Cloudflare 자체 오류 페이지입니다. 엣지는 살아 있고 원본 서버에 닿지 못한다는 뜻입니다. 정산 게이트웨이는 p4 이식 전까지 의도적으로 내려 둔 상태이고, 허브는 MI250 호스트에서 로컬로 응답합니다. 6시간 동안의 표본 점검이며, 가동률을 측정한 것은 아닙니다.</p>
+    <p class="note">502는 Cloudflare 자체 오류 페이지였습니다. 엣지는 살아 있고 원본 서버에 닿지 못했다는 뜻이며, 정산 게이트웨이를 p4 이식 전까지 일부러 내려 둔 결과입니다. <strong>그 이식은 2026-09-20에 끝났습니다.</strong> 게이트웨이는 200으로 응답하며 추론이 끝까지 돌고, <code>hub.kvasir-ai.net</code>은 내려간 것이 아니라 은퇴했습니다. 위 표는 현재 상태가 아니라 당시 장애의 기록으로 남겨 둡니다.</p>
 
     <h3>남은 문제</h3>
     <div class="table-wrap">

@@ -1735,10 +1735,32 @@ app.post('/api/credits/deposit', async (req, res) => {
   } catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
 });
 
+/**
+ * Say which of the two things went wrong.
+ *
+ * Answering "invalid API key" to a request that carried no key at all sends the
+ * developer looking for a fault in a key they never sent. A reviewer copying
+ * the documented curl example hit exactly that and read the whole gateway as
+ * broken. The status is the same; the sentence is not.
+ */
+function unauthenticated(req, res) {
+  const supplied = /^Bearer\s+\S/i.test(String(req.headers.authorization ?? ''))
+    || Boolean(req.headers['x-api-key']);
+  return res.status(401).json({
+    error: {
+      message: supplied
+        ? 'invalid API key'
+        : 'this endpoint needs an API key: send Authorization: Bearer <key>. '
+          + 'A wallet can issue one for itself — see https://kvasir-ai.net/docs/api',
+      type: 'invalid_request_error',
+    },
+  });
+}
+
 // OpenAI-compatible model list (API-key auth).
 app.get('/v1/models', async (req, res) => {
   const mw = bearerWallet(req);
-  if (!mw) return res.status(401).json({ error: { message: 'invalid API key', type: 'invalid_request_error' } });
+  if (!mw) return unauthenticated(req, res);
   if (creditUnmetered(mw) && !unmeteredIpAllowed(req)) {
     return res.status(403).json({ error: { message: 'key not permitted from this address', type: 'access_denied' } });
   }
@@ -1804,7 +1826,7 @@ app.post('/v1/chat/completions', async (req, res) => {
  let m;
  try {
   const w = bearerWallet(req);
-  if (!w) return res.status(401).json({ error: { message: 'invalid API key', type: 'invalid_request_error' } });
+  if (!w) return unauthenticated(req, res);
   if (!creditWhitelisted(w)) return res.status(403).json({ error: { message: 'wallet is not whitelisted', type: 'access_denied' } });
   if (creditUnmetered(w)) {
     if (!unmeteredIpAllowed(req)) {

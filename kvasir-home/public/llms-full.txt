@@ -1,6 +1,6 @@
 # Kvasir — Decentralized AI Inference (full site text)
 
-Source: https://kvasir-ai.net/ · Engine: https://github.com/louisevandan/kvasir-net (BSL 1.1) · Last updated: 2026-09-17
+Source: https://kvasir-ai.net/ · Engine: https://github.com/louisevandan/kvasir-net (BSL 1.1) · Last updated: 2026-09-21
 
 This file is a plain-text mirror of the Kvasir homepage for LLM ingestion. All
 claims are grounded in the p4 / Kvasir codebase. Compliance note: KVR is a
@@ -24,7 +24,7 @@ Badges: Runs on GPU · CPU · NPU · phone · OpenAI + Anthropic compatible · B
 
 ## Why decentralized AI (thesis)
 
-AI shouldn't be owned by a handful of companies. Frontier inference is concentrating behind a few walled datacenters — closed weights, metered access, one bill paid to one owner. Kvasir points the other way: open models served across a permissionless network of everyday devices, owned and earned by the people who run it.
+AI shouldn't be owned by a handful of companies. Frontier inference is concentrating behind a few walled datacenters — closed weights, metered access, one bill paid to one owner. Kvasir is built the other way: open models served across a network of everyday devices, owned and earned by the people who run it. Stated plainly, because the difference matters: the engine and its settlement run today on our own fleet, and a device can already register, contribute and be paid — opening the serving ring itself to anyone is the next gate, not a thing already done.
 
 Centralized AI: a few hyperscalers own the GPUs; models and infrastructure behind closed APIs; you rent access and value flows upward; opaque — you trust the operator.
 Kvasir: any device joins a peer-to-peer ring — no central master on the data path; source-available p4 engine (BSL 1.1), inspectable; contributors earn KVR for the real compute they give; self-custody wallet — your keys never leave your device.
@@ -59,7 +59,7 @@ One endpoint, backed by many devices. Keep your existing OpenAI or Anthropic cli
 - Anthropic-compatible: /anthropic/v1/messages and /anthropic/v1/models
 - Pay-per-call in KVR: quote → on-chain payment → inference (no API key)
 - Prepaid credits with an API key (see below)
-- Live model catalog aggregated from reachable hubs
+- Live model catalog aggregated from reachable bridges
 
 Example:
 curl https://gate.kvasir-ai.net/v1/chat/completions \
@@ -76,13 +76,13 @@ KVR is the unit developers spend on inference and the unit contributors earn for
 
 ## Network roles & rewards
 
-Every role in the network earns KVR. The ring of compute nodes is coordinated by hub and gateway roles; each is paid in KVR for what it actually does.
+Every role in the network earns KVR. The ring of compute nodes is fronted by the bridge and the settlement gateway; each is paid in KVR for what it actually does.
 - Compute node (runs the model's layers): holds a few contiguous layers in the ring; earns per contribution unit (≈1k tokens served) × layer share × performance tier.
 - Gateway host (public entry + settlement): serves the OpenAI/Anthropic gateway and settles KVR payments; earns hourly uptime + a ×1.5 bonus on every inference it helps serve.
-- Hub host (the control plane): discovers devices, plans layer placement, orchestrates the ring; the most critical role, so it earns the highest hourly uptime reward.
-Roles stack: one machine can be compute, gateway and hub at once, and its rewards sum together — all paid in KVR to that node's own wallet.
+- Bridge host: the HTTP face of the engine — it installs a session across a model's stages, submits to the head, gathers the token stream, and reports what each node contributed. It also serves the market a contributing device joins. It does not plan placement: which layers sit on which GPU comes from a plan an operator loads. Highest hourly uptime reward, because nothing reaches the ring without it.
+Roles stack: one machine can be compute, gateway and bridge at once, and its rewards sum together — all paid in KVR to that node's own wallet.
 
-Reward math: units += (tokens / 1k) × (node_layers / total_layers); effective = units × perf_tier × gateway_bonus; infra roles also earn hourly uptime (hub rate > gateway rate), summed on top.
+Reward math: units += (tokens / 1k) × (node_layers / total_layers); effective = units × perf_tier × gateway_bonus; infra roles also earn hourly uptime (bridge rate > gateway rate), summed on top.
 Performance tiers (by measured decode throughput): S ≥ 90 tok/s ×1.5; A ≥ 60 tok/s ×1.25; B ≥ 30 tok/s ×1.0; C < 30 tok/s ×0.7.
 
 ## Under the hood (p4)
@@ -91,13 +91,14 @@ p4 is the source-available engine that binds mixed hardware into one serving poo
 - Ring runtime: every device stores the same model and loads only its layer window, opening one link to its predecessor and one to its successor; hidden-state boundaries circulate around the ring and the last rank returns the token — no central master on the data path.
 - p4 control plane: the control plane the RPC data plane was missing. Discovers devices, plans layer and expert placement, launches the workers, exposes the gateways. A placement plan is an operator artifact — the engine does not load a model because an HTTP call asked it to. Source-available under the Business Source License (BSL) 1.1.
 - Distributed layer placement: reads GGUF metadata and computes contiguous per-node layer windows via a rank manifest, plus optional MoE expert-FFN offload to node RAM.
-- SIWS + 2FA security: for public deployments, operator access is a Sign-In With Solana signature over a server nonce, plus TOTP 2FA and single-use backup codes — on both hub and gateway.
+- SIWS + 2FA security: for public deployments, operator access is a Sign-In With Solana signature over a server nonce, plus TOTP 2FA and single-use backup codes, on the gateway. A device that only wants to contribute compute does not sign in at all: it proves a wallet against the bridge and receives a token scoped to participation and nothing else.
 The engine is source-available under the Business Source License (BSL) 1.1 — non-monetized internal use is permitted; hosted, embedded or revenue-generating use requires a commercial license: https://github.com/louisevandan/kvasir-net (distributed inference engine on the `p4` branch)
 
 ## Roadmap
 
 - Now — Frontier-scale serving, live: Step-3.7-Flash, a 428B MoE, is placed as 16 stages across two AMD MI250 machines and is serving. A 122B model ran end to end across three physical machines — a GB10 and two Mac M4 Pros — one of them a phone holding part of it. Wallets on web/desktop/iOS/Android keep keys on the user's device.
-- In flight — Ring, gateway, client: the ring is going through recovery gates after an interrupted 64-request run; the settlement gateway is being ported to p4 and its public endpoint is deliberately offline until that lands; the desktop client is becoming a node that supervises a p4 agent rather than only registering one.
+- Live as of 2026-09-21 — the settlement gateway is ported to p4 and answering at gate.kvasir-ai.net. A paid request crosses the gateway, the bridge and the MI250 ring and is billed on the tokens it actually used; /v1/models answers 401 without a key, which is the gateway working rather than an outage. Measured on the serving ring the same day: Step-3.7-Flash (428B MoE) across two stages at 28-31 tok/s single stream, 270-285 ms to first token.
+- In flight — the ring is going through recovery gates after an interrupted 64-request run; the desktop client is becoming a node that supervises a p4 agent rather than only registering one; and expert-grain sharding is being carried onto p4 — the market and the relays that let a phone join are live and credited, the shard download and the engine-side dispatch are not written yet.
 - Coming — Kimi K3 (2.8T MoE) verification on p4, and the GLM-5.2 (744B) report from linkcpp published.
 - Coming — Mainnet & on-chain settlement: everything today runs on Solana devnet with an off-chain settlement service; an on-chain rewards program and mainnet are planned.
 - Coming — A permissionless global network: current demos ran on one operator's hardware; opening the network so anyone, anywhere can plug in a device and earn (no gatekeeper) is next.
@@ -134,5 +135,6 @@ Runnable self-issue scripts (TS/Node, Python), the streaming + tool-call example
 - Homepage: https://kvasir-ai.net/
 - p4 (engine, BSL 1.1): https://github.com/louisevandan/kvasir-net/tree/p4
 - Gateway (OpenAI/Anthropic-compatible): https://gate.kvasir-ai.net
-- Hub (control plane): https://hub.kvasir-ai.net
+- Installing the mobile builds: https://kvasir-ai.net/install
+(hub.kvasir-ai.net is retired: the control plane behind it was deleted and the bridge took over its role. The host still resolves and returns 502 — do not link it.)
 - Terms & privacy: https://kvasir-ai.net/legal

@@ -10,6 +10,7 @@ import CareersPage from "./components/CareersPage.tsx";
 import TechnologyPage from "./components/TechnologyPage.tsx";
 import WikiPage from "./components/WikiPage.tsx";
 import ApiDocsPage from "./components/ApiDocsPage.tsx";
+import InstallPage from "./components/InstallPage.tsx";
 import LegalPage from "./components/LegalPage.tsx";
 import ReleasesPage from "./components/ReleasesPage.tsx";
 import { I18nProvider } from "./i18n/provider";
@@ -35,6 +36,7 @@ function Localized() {
       <InnerRoute path="wiki" element={<WikiPage />} />
       <InnerRoute path="wiki/:slug" element={<WikiPage />} />
       <InnerRoute path="docs/api" element={<ApiDocsPage />} />
+      <InnerRoute path="install" element={<InstallPage />} />
       <InnerRoute path="legal" element={<LegalPage />} />
       <InnerRoute path="releases" element={<ReleasesPage />} />
     </InnerRoutes>
@@ -61,6 +63,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/wiki" element={<WikiPage />} />
           <Route path="/wiki/:slug" element={<WikiPage />} />
           <Route path="/docs/api" element={<ApiDocsPage />} />
+          <Route path="/install" element={<InstallPage />} />
           <Route path="/legal" element={<LegalPage />} />
           <Route path="/releases" element={<ReleasesPage />} />
         </Routes>

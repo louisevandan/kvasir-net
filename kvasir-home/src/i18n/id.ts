@@ -51,7 +51,7 @@ export const id: Dict = {
   thesis: {
     eyebrow: "Mengapa AI terdesentralisasi",
     title: "AI tidak seharusnya dimiliki oleh segelintir perusahaan",
-    lede: "Inferensi terdepan kian terkonsentrasi di balik segelintir pusat data tertutup — bobot tertutup, akses berbayar, satu tagihan dibayar ke satu pemilik. Kvasir menempuh arah sebaliknya: model open yang disajikan melalui jaringan tanpa izin dari perangkat sehari-hari, dimiliki dan dihasilkan oleh orang-orang yang menjalankannya.",
+    lede: "Inferensi terdepan kian terkonsentrasi di balik segelintir pusat data tertutup — bobot tertutup, akses berbayar, satu tagihan dibayar ke satu pemilik. Kvasir dibangun dengan arah sebaliknya: model open yang disajikan melalui jaringan perangkat sehari-hari, dimiliki dan dihasilkan oleh orang-orang yang menjalankannya. Hari ini engine itu beserta penyelesaiannya berjalan di armada kami sendiri, dan sebuah perangkat sudah bisa mendaftar, menyumbang komputasi, dan dibayar; membuka ring penyajian itu sendiri untuk siapa pun adalah gate berikutnya. Peta jalan di bawah menyebutkan sejauh mana setiap bagian sudah sampai.",
     centralizedLabel: "AI Terpusat",
     centralizedPoints: [
       "Segelintir hyperscaler memiliki GPU",
@@ -157,7 +157,7 @@ export const id: Dict = {
       "Kompatibel dengan OpenAI: langsung pakai untuk /v1/chat/completions, /v1/responses, /v1/models",
       "Kompatibel dengan Anthropic: /anthropic/v1/messages dan /anthropic/v1/models",
       "Bayar per inferensi dengan KVR: kuotasi → pembayaran → inferensi",
-      "Katalog model langsung yang diagregasi dari hub yang dapat dijangkau",
+      "Katalog model langsung yang diagregasi dari bridge yang dapat dijangkau",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -165,7 +165,7 @@ export const id: Dict = {
   token: {
     eyebrow: "Token & imbalan",
     title: "KVR membayar komputasi — dan memberi imbalan atasnya",
-    lede: "KVR adalah unit yang dibelanjakan pengembang untuk inferensi dan unit yang didapatkan kontributor atas layer yang mereka jalankan. Imbalan komputasi berasal dari kerja yang terukur; host gateway dan hub juga memperoleh imbalan atas uptime.",
+    lede: "KVR adalah unit yang dibelanjakan pengembang untuk inferensi dan unit yang didapatkan kontributor atas layer yang mereka jalankan. Imbalan komputasi berasal dari kerja yang terukur; host gateway dan bridge juga memperoleh imbalan atas uptime.",
     facts: [
       { k: "Simbol", v: "KVR", note: "nama on-chain “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "devnet hari ini" },
@@ -188,7 +188,7 @@ export const id: Dict = {
   network: {
     eyebrow: "Jaringan & imbalan",
     title: "Setiap peran dalam jaringan mendapatkan KVR",
-    lede: "Ring node komputasi dikoordinasikan oleh peran hub dan gateway. Masing-masing dibayar dengan KVR atas apa yang sebenarnya dilakukannya — komputasi atas layer yang dijalankan, infrastruktur atas uptime yang dijaga.",
+    lede: "Di depan ring node komputasi berdiri bridge dan gateway penyelesaian. Masing-masing dibayar dengan KVR atas apa yang sebenarnya dilakukannya — komputasi atas layer yang dijalankan, infrastruktur atas uptime yang dijaga.",
     roles: [
       {
         role: "Node komputasi",
@@ -203,14 +203,14 @@ export const id: Dict = {
         earns: "uptime per jam + bonus inferensi ×1.5",
       },
       {
-        role: "Host hub",
-        tagline: "Bidang kendali",
-        body: "Menemukan perangkat, merencanakan penempatan layer, dan mengorkestrasi ring. Peran paling krusial — sehingga mendapatkan imbalan uptime per jam tertinggi karena menjaga jaringan tetap terkoordinasi.",
+        role: "Host bridge",
+        tagline: "Pintu depan engine",
+        body: "Memasang sesi di seluruh stage sebuah model, mengirim permintaan ke node kepala, mengumpulkan aliran token, dan melaporkan kontribusi setiap node — serta menyajikan market yang diikuti perangkat yang berkontribusi. Tidak ada yang mencapai ring tanpanya, sehingga mendapatkan imbalan uptime per jam tertinggi.",
         earns: "uptime per jam tertinggi",
       },
     ],
     rolesNote:
-      "Peran bisa ditumpuk: satu mesin bisa menjadi komputasi, gateway, dan hub sekaligus, dan imbalannya dijumlahkan. Semuanya diselesaikan dalam KVR ke dompet milik node itu sendiri.",
+      "Peran bisa ditumpuk: satu mesin bisa menjadi komputasi, gateway, dan bridge sekaligus, dan imbalannya dijumlahkan. Semuanya diselesaikan dalam KVR ke dompet milik node itu sendiri.",
     formulaTitle: "Bagaimana imbalan dihitung",
     formulaLabels: ["Unit komputasi", "Efektif", "Uptime infra"],
     tiersTitle: "Tingkat performa",
@@ -238,7 +238,7 @@ export const id: Dict = {
       },
       {
         title: "Keamanan SIWS + 2FA",
-        body: "Untuk deployment publik, akses operator adalah tanda tangan Sign-In With Solana atas nonce server, ditambah TOTP 2FA dan kode cadangan sekali pakai — di hub maupun gateway.",
+        body: "Untuk deployment publik, akses operator adalah tanda tangan Sign-In With Solana atas nonce server, ditambah TOTP 2FA dan kode cadangan sekali pakai. Perangkat yang hanya ingin menyumbang komputasi tidak pernah masuk: ia membuktikan kepemilikan dompet ke bridge dan menerima token yang cakupannya hanya partisipasi, tidak lebih.",
       },
     ],
     openText:
@@ -258,7 +258,7 @@ export const id: Dict = {
       {
         phase: "Sedang berjalan",
         title: "Ring, gateway, klien",
-        body: "Tiga hal sedang dikerjakan sekaligus. Ring sedang melewati gate pemulihan setelah sebuah run 64 permintaan terhenti. Gateway penyelesaian sedang diporting ke p4 — endpoint publiknya sengaja dimatikan sampai itu rampung. Klien desktop sedang dijadikan node sungguhan yang mengawasi agen p4, bukan sekadar mendaftarkannya.",
+        body: "Gateway penyelesaian sudah diporting ke p4 dan sudah melayani: satu permintaan berbayar melewati gateway, bridge, dan ring MI250, lalu ditagih berdasarkan token yang dipakainya. Di ring yang menyajikan, Step-3.7-Flash mengembalikan 28–31 token per detik pada satu stream, dengan token pertama dalam 270–285 ms. Masih berjalan: ring sedang melewati gate pemulihan setelah sebuah run 64 permintaan terhenti, klien desktop sedang dijadikan node sungguhan yang mengawasi agen p4 bukan sekadar mendaftarkannya, dan sharding bergranularitas expert sedang dibawa ke p4 — perangkat sudah bisa mengklaim window dan membuka relay, tetapi unduhan shard dan dispatch di sisi engine belum ditulis.",
       },
       {
         phase: "Segera",
@@ -309,8 +309,8 @@ export const id: Dict = {
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR adalah token utilitas Solana devnet — bukan aset mainnet yang dapat diperdagangkan atau imbal hasil finansial.",
-    reqTitle: "Persyaratan operator hub · gateway",
-    reqBody: "Untuk menjalankan node hub atau node gateway, Anda harus men-stake 100.000 KVR di dompet Anda. Node komputasi biasa dapat bergabung tanpa persyaratan ini dan mendapatkan imbalan untuk layer yang mereka jalankan.",
+    reqTitle: "Persyaratan operator bridge · gateway",
+    reqBody: "Untuk menjalankan node bridge atau node gateway, Anda harus men-stake 100.000 KVR di dompet Anda. Node komputasi biasa dapat bergabung tanpa persyaratan ini dan mendapatkan imbalan untuk layer yang mereka jalankan.",
     tabDesktop: "Desktop",
     tabMobile: "Seluler",
     soon: "Segera hadir",
@@ -323,7 +323,7 @@ export const id: Dict = {
       { title: "Buat dompet Anda", body: "Pilih Create new wallet. Catat frasa pemulihan 12 kata Anda dan simpan dengan aman — tidak dapat dipulihkan jika hilang. Kemudian atur passphrase untuk membuka aplikasi. Kunci bersifat non-kustodian dan hanya disimpan di perangkat ini.", body2: "" },
       { title: "Danai & stake KVR", body: "Terima sejumlah SOL devnet (untuk biaya transaksi) dan KVR (untuk di-stake) di alamat Receive dompet Anda. Di panel staking pada dashboard, masukkan jumlah lalu pilih Stake untuk memenuhi syarat imbalan node.", body2: "" },
       { title: "Konfigurasi node", body: "Di Node settings, pilih backend komputasi mesin ini (CUDA / ROCm / Metal / CPU) dan pilih Local shard (recommended) — mode ini menjalankan layer shard secara lokal dan hanya meneruskan status batas yang kecil, mode tercepat.", body2: "" },
-      { title: "Jalankan node", body: "Aktifkan Run node (live) untuk mendaftarkan mesin ini ke jaringan di bawah dompet Anda (pemilik) dan membuatnya online.", body2: "Untuk node komputasi GPU yang sesungguhnya, jalankan juga agent native di bawah ini. Planner pada hub menempatkan layer model di mesin Anda, dan node Anda mendapatkan bagian KVR per layer yang dikreditkan ke dompet pemilik." },
+      { title: "Jalankan node", body: "Aktifkan Run node (live) untuk mendaftarkan mesin ini ke jaringan di bawah dompet Anda (pemilik) dan membuatnya online.", body2: "Untuk node komputasi GPU yang sesungguhnya, jalankan juga agent native di bawah ini. Layer mana yang ditempatkan di mesin Anda berasal dari rencana penempatan yang dimuat operator, dan node Anda mendapatkan bagian KVR per layer yang dikreditkan ke dompet pemilik." },
       { title: "Pantau kontribusi & imbalan", body: "Di Node status, pantau nodes / online / effective contribution / claimable. Node dikelompokkan berdasarkan tier throughput (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); raw × tier = effective. Gunakan Claim rewards untuk memindahkan KVR yang terkumpul ke dompet Anda.", body2: "" },
     ],
     faucetTitle: "Dapatkan SOL devnet (faucet gratis)",
@@ -411,7 +411,7 @@ export const id: Dict = {
     apiModels: "Menampilkan model yang sedang dilayani swarm saat ini — array kosong bila tidak ada, jadi jangan pernah hardcode sebuah id.",
     apiQuote: "Dapatkan penawaran harga dan requestId yang terikat pada prompt-mu. priceToken adalah jumlah KVR yang harus dibayar; tagihan akhir berdasarkan penggunaan token nyata.",
     apiPay: "Transfer KVR yang ditawarkan ke akun token terasosiasi milik penerima (vault) dan tanda tangani dengan dompetmu. Tanda tangan hanya sekali pakai.",
-    apiInfer: "Gateway melakukan polling ke chain untuk memverifikasi pembayaran, menjalankan inferensi di hub, lalu mengembalikan hasil beserta penggunaan dan biaya nyata.",
+    apiInfer: "Gateway melakukan polling ke chain untuk memverifikasi pembayaran, menjalankan inferensi melalui bridge, lalu mengembalikan hasil beserta penggunaan dan biaya nyata.",
     codeTitle: "Contoh ujung ke ujung",
     codeLede: "Muat kunci rahasia dompet dari environment, minta penawaran, bayar, dan tukarkan — satu cuplikan mandiri. Langkah 1, 2, dan 4 adalah HTTP murni; hanya langkah 3 (transfer SPL) yang berbeda per SDK.",
     adapterTitle: "Adapter kompatibel OpenAI",
@@ -448,7 +448,7 @@ export const id: Dict = {
     catUseApi: "Gunakan API",
     selfHostTitle: "Jalankan node, dapatkan inferensi gratis",
     selfHostPitch: "Ingin memakai model AI gratis? Suruh agen coding-mu menautkan mesinmu ke jaringan sebagai node — dan mengembalikan sebuah endpoint inferensi untukmu.",
-    selfHostBody: "Satu skrip menyalakan hub (dan, opsional, gateway KVR) dengan Docker. Tambahkan GPU-mu dan muat model terbuka di UI hub, lalu panggil endpoint standar kompatibel OpenAI — /c/<id>/v1/chat/completions — yang berjalan di perangkat kerasmu sendiri. Arahkan alat apa pun yang berbicara OpenAI ke sana.",
+    selfHostBody: "Nyalakan bridge di depan agen p4 milikmu sendiri, opsional dengan gateway KVR di sampingnya. Muat model terbuka dengan rencana penempatan, lalu panggil endpoint standar kompatibel OpenAI — /c/<id>/v1/chat/completions — yang berjalan di perangkat kerasmu sendiri. Arahkan alat apa pun yang berbicara OpenAI ke sana.",
     selfHostNote: "Ini menyajikan model terbuka yang bisa ditampung mesinmu secara gratis — itu komputasimu. Untuk model frontier yang terlalu besar untuk satu mesin, bergabunglah dengan swarm: itulah gunanya API bayar per pakai KVR di bawah.",
     inferenceApiTitle: "API Inferensi (kredit)",
     inferenceApiLede: "Jalur paling sederhana: endpoint OpenAI native dengan kunci API. Streaming (SSE) dan tool call native langsung berfungsi, dan setiap panggilan dipotong dari saldo KVR prabayar — tanpa penandatanganan dompet per panggilan. Akses dikendalikan oleh whitelist dompet.",

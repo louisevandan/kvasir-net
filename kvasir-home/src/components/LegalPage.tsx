@@ -10,11 +10,12 @@ import { useT, useLang } from "../i18n/provider";
    Terms of use & privacy notice (/legal). English only in every locale — a
    single authoritative text avoids translation drift in legal wording.
    Every statement is grounded in the code as of the date below:
-   solana/staking-service (gate), controller/hub.py (hub), wallet/*, and this
-   site. Update the date and the facts together when those change.
+   solana/staking-service (gate), p4bridge (the bridge that replaced the retired
+   hub control plane), wallet/*, and this site. Update the date and the facts
+   together when those change.
    ========================================================================== */
 
-const UPDATED = "2026-09-17";
+const UPDATED = "2026-09-21";
 const CONTACT = "sales@newtype-ai.com";
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
@@ -59,9 +60,8 @@ export default function LegalPage() {
           </h1>
           <p className="mt-5 text-lg leading-relaxed text-ink-muted">
             Kvasir is a devnet preview. This page explains the terms for using the website, the gateway
-            (<span className="font-mono text-base">gate.kvasir-ai.net</span>), the hub
-            (<span className="font-mono text-base">hub.kvasir-ai.net</span>) and the Kvasir Wallet apps, and what
-            data they handle.
+            (<span className="font-mono text-base">gate.kvasir-ai.net</span>), the inference bridge behind it
+            and the Kvasir Wallet apps, and what data they handle.
           </p>
           <p className="mt-3 text-sm text-ink-faint">
             Last updated {UPDATED} · Operator: Kvasir AI Network (the licensor named in the{" "}

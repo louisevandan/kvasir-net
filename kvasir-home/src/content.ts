@@ -8,7 +8,9 @@
 
 export const LINKS = {
   github: "https://github.com/louisevandan/kvasir-net",
-  hub: "https://hub.kvasir-ai.net",
+  // There is no hub link. The control plane that answered at hub.kvasir-ai.net
+  // was retired and the bridge took over its role; the host still resolves and
+  // returns 502, so linking it sends a reader to a dead page.
   gateway: "https://gate.kvasir-ai.net",
   runNode: "/run-node",
   technology: "/technology",
@@ -32,6 +34,13 @@ export const DOWNLOADS = {
   desktopMac: `${DOWNLOAD_BASE}/Kvasir-Wallet-mac-universal.dmg`,
   desktopWin: `${DOWNLOAD_BASE}/Kvasir-Wallet-win-x64.exe`,
   desktopLinux: `${DOWNLOAD_BASE}/Kvasir-Wallet-linux-x64.tar.gz`,
+  // A development build, signed with a development key. /install says what that
+  // means before anyone taps it — Android refuses the install until the owner
+  // permits it, and a download with no explanation just reads as broken.
+  android: `${DOWNLOAD_BASE}/Kvasir-Wallet-android-arm64.apk`,
+  // iOS has no equivalent file to host: Apple will not run an application that
+  // is not signed for the specific device, so /install explains building it.
+  installGuide: "/install",
   appStore: "",
   googlePlay: "",
 };

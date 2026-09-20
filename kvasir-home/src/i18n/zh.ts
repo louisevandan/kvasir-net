@@ -51,7 +51,7 @@ export const zh: Dict = {
   thesis: {
     eyebrow: "为什么要去中心化 AI",
     title: "AI 不应被少数几家公司所拥有",
-    lede: "前沿推理正日益集中在少数封闭的数据中心背后 — 封闭权重、计量访问，账单由一家所有者独收。Kvasir 走的是另一条路：开源模型在一个由日常设备组成的无需许可网络上提供服务，由运行它的人们共同拥有并从中获益。",
+    lede: "前沿推理正日益集中在少数封闭的数据中心背后 — 封闭权重、计量访问，账单由一家所有者独收。Kvasir 是按另一条路造的：开源模型在一个由日常设备组成的网络上提供服务，由运行它的人们共同拥有并从中获益。今天，这套引擎和它的结算跑在我们自己的机群上，设备也已经可以注册、贡献算力并拿到报酬；把服务环本身向任何人开放，是下一道关卡。下面的路线图写明了每一部分各自走到了哪里。",
     centralizedLabel: "中心化 AI",
     centralizedPoints: [
       "少数超大规模厂商掌握着 GPU",
@@ -157,7 +157,7 @@ export const zh: Dict = {
       "兼容 OpenAI：直接对接 /v1/chat/completions、/v1/responses、/v1/models",
       "兼容 Anthropic：/anthropic/v1/messages 和 /anthropic/v1/models",
       "以 KVR 按次推理付费：报价 → 支付 → 推理",
-      "实时模型目录，聚合自可达的 hub",
+      "实时模型目录，聚合自可达的桥接",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -165,7 +165,7 @@ export const zh: Dict = {
   token: {
     eyebrow: "代币与奖励",
     title: "KVR 为算力付费 — 也奖励算力",
-    lede: "KVR 是开发者用于推理的支付单位，也是贡献者因运行层而赚取的单位。算力奖励来自经计量的工作量；gateway 与 hub 主机还会因在线时长获得奖励。",
+    lede: "KVR 是开发者用于推理的支付单位，也是贡献者因运行层而赚取的单位。算力奖励来自经计量的工作量；gateway 与桥接主机还会因在线时长获得奖励。",
     facts: [
       { k: "符号", v: "KVR", note: "链上名称 “Kvasir”，6 decimals" },
       { k: "链", v: "Solana", note: "当前为 devnet" },
@@ -188,7 +188,7 @@ export const zh: Dict = {
   network: {
     eyebrow: "网络与奖励",
     title: "网络中的每个角色都赚取 KVR",
-    lede: "算力节点组成的环由 hub 和 gateway 角色进行协调。每个角色都因其实际所做的工作以 KVR 计酬 — 算力节点因运行的层获酬，基础设施因保持在线获酬。",
+    lede: "算力节点组成的环，前面由桥接和结算网关承接。每个角色都因其实际所做的工作以 KVR 计酬 — 算力节点因运行的层获酬，基础设施因保持在线获酬。",
     roles: [
       {
         role: "算力节点",
@@ -203,14 +203,14 @@ export const zh: Dict = {
         earns: "按小时在线时长 + ×1.5 推理加成",
       },
       {
-        role: "Hub 主机",
-        tagline: "控制平面",
-        body: "发现设备、规划层的放置，并编排环。这是最关键的角色 — 因此它赚取最高的按小时在线时长奖励，以保持网络协调运转。",
+        role: "桥接主机",
+        tagline: "引擎的正门",
+        body: "在模型的各个 stages 上安装会话，向头节点提交请求，汇集 token 流，并报告每个节点贡献了什么 — 同时为贡献算力的设备提供其加入的市场。没有它，任何请求都到不了环，因此它赚取最高的按小时在线时长奖励。",
         earns: "最高的按小时在线时长",
       },
     ],
     rolesNote:
-      "角色可叠加：一台机器可同时担任算力、gateway 和 hub，其奖励相加汇总。一切均以 KVR 结算至该节点自己的钱包。",
+      "角色可叠加：一台机器可同时担任算力、gateway 和桥接，其奖励相加汇总。一切均以 KVR 结算至该节点自己的钱包。",
     formulaTitle: "奖励如何计算",
     formulaLabels: ["算力单位", "有效值", "基础设施在线时长"],
     tiersTitle: "性能等级",
@@ -238,7 +238,7 @@ export const zh: Dict = {
       },
       {
         title: "SIWS + 2FA 安全",
-        body: "对于公开部署，运营者访问采用对服务器 nonce 的 Sign-In With Solana 签名，外加 TOTP 2FA 和一次性备份码 — hub 和 gateway 均适用。",
+        body: "对于公开部署，运营者访问采用对服务器 nonce 的 Sign-In With Solana 签名，外加 TOTP 2FA 和一次性备份码。只想贡献算力的设备从不登录：它向桥接证明一个钱包，并获得一个仅限参与、别无其他权限的令牌。",
       },
     ],
     openText:
@@ -258,7 +258,7 @@ export const zh: Dict = {
       {
         phase: "进行中",
         title: "环、网关、客户端",
-        body: "三件事正在同时推进。环在一次 64 请求的运行被中断后，正在通过恢复门禁。结算网关正在移植到 p4，在移植完成之前，其公开端点被有意下线。桌面客户端正从只是注册一个 p4 agent，变成真正监管它的节点。",
+        body: "结算网关已移植到 p4 并在应答：一次付费请求会穿过网关、桥接和 MI250 环，并按其实际使用的 token 计费。在服务中的环上，Step-3.7-Flash 单流返回每秒 28–31 tokens，首个 token 用时 270–285 ms。仍在推进中的是：环在一次 64 请求的运行被中断后，正在通过恢复门禁；桌面客户端正从只是注册一个 p4 agent，变成真正监管它的节点；以及把专家粒度的分片搬到 p4 上 — 设备已经可以认领一个 window 并打开中继，但分片下载和引擎侧的调度还没有写。",
       },
       {
         phase: "即将推出",
@@ -309,8 +309,8 @@ export const zh: Dict = {
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR 是 Solana devnet 上的实用型代币 — 并非可交易的 mainnet 资产，也不构成任何财务回报。",
-    reqTitle: "Hub · 网关运营要求",
-    reqBody: "要运行 hub 节点或网关节点，您必须在钱包中质押 100,000 KVR。普通算力节点无需满足此要求即可加入，并根据其运行的层数获得收益。",
+    reqTitle: "桥接 · 网关运营要求",
+    reqBody: "要运行桥接节点或网关节点，您必须在钱包中质押 100,000 KVR。普通算力节点无需满足此要求即可加入，并根据其运行的层数获得收益。",
     tabDesktop: "Desktop",
     tabMobile: "移动端",
     soon: "即将推出",
@@ -323,7 +323,7 @@ export const zh: Dict = {
       { title: "创建您的钱包", body: "选择“创建新钱包”。写下您的 12 个单词的助记词并妥善保管 — 一旦丢失将无法找回。然后设置一个密码短语以解锁应用。密钥为非托管形式，仅存储在本设备上。", body2: "" },
       { title: "充值并质押 KVR", body: "在您钱包的“接收”地址接收一些 devnet SOL（用于支付手续费）和 KVR（用于质押）。在仪表盘的质押面板中，输入金额并点击“质押”，即可获得节点奖励资格。", body2: "" },
       { title: "配置节点", body: "在“节点设置”中选择此设备的计算后端（CUDA / ROCm / Metal / CPU），并选择“本地分片”（推荐）— 该模式在本地运行层分片，仅中继少量边界状态，是速度最快的模式。", body2: "" },
-      { title: "运行节点", body: "开启“运行节点（实时）”，即可在网络上以您的钱包（所有者）身份注册此设备并使其上线。", body2: "若要成为真正的 GPU 算力节点，还需运行下方的原生代理程序。Hub 的规划器会将模型层分配到您的设备上，您的节点将赚取按层计算的 KVR 份额，并计入所有者钱包。" },
+      { title: "运行节点", body: "开启“运行节点（实时）”，即可在网络上以您的钱包（所有者）身份注册此设备并使其上线。", body2: "若要成为真正的 GPU 算力节点，还需运行下方的原生代理程序。您的设备上承载哪些层，取决于运营者加载的放置方案，您的节点将赚取按层计算的 KVR 份额，并计入所有者钱包。" },
       { title: "追踪贡献与奖励", body: "在“节点状态”中查看节点数 / 在线 / 有效贡献 / 可领取。节点按吞吐量分级（S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7）；原始值 × 等级 = 有效值。使用“领取奖励”将已累积的 KVR 转入您的钱包。", body2: "" },
     ],
     faucetTitle: "获取 devnet SOL（免费水龙头）",
@@ -411,7 +411,7 @@ export const zh: Dict = {
     apiModels: "蜂群当前正在服务的模型列表 — 没有时返回空数组，因此切勿硬编码 id。",
     apiQuote: "获取价格报价和与提示词绑定的 requestId。priceToken 是应付的 KVR 数量，最终计费按实际 token 用量。",
     apiPay: "将报价的 KVR 转入收款方的关联代币账户（vault）并用钱包签名。签名一次性有效。",
-    apiInfer: "网关轮询链上以验证支付，在中枢执行推理，然后返回结果以及实际用量与费用。",
+    apiInfer: "网关轮询链上以验证支付，通过桥接执行推理，然后返回结果以及实际用量与费用。",
     codeTitle: "端到端示例",
     codeLede: "从环境变量加载钱包密钥，报价 → 支付 → 兑换，一个自包含代码片段。步骤 1、2、4 是纯 HTTP，只有步骤 3（SPL 转账）因 SDK 而异。",
     adapterTitle: "OpenAI 兼容适配器",
@@ -448,7 +448,7 @@ export const zh: Dict = {
     catUseApi: "使用 API",
     selfHostTitle: "运行一个节点，免费推理",
     selfHostPitch: "想免费使用 AI 模型？让你的编码智能体把你的机器作为节点加入网络——并回赠给你一个推理端点。",
-    selfHostBody: "一个脚本用 Docker 拉起中枢（可选 KVR 网关）。在中枢 UI 里加入你的 GPU 并加载一个开源模型，然后调用运行在你自己硬件上的标准 OpenAI 兼容端点——/c/<id>/v1/chat/completions。任何会说 OpenAI 的工具都能指向它。",
+    selfHostBody: "在你自己的 p4 agent 前面拉起桥接，需要的话再在旁边加上 KVR 网关。用一份放置方案加载一个开源模型，然后调用运行在你自己硬件上的标准 OpenAI 兼容端点——/c/<id>/v1/chat/completions。任何会说 OpenAI 的工具都能指向它。",
     selfHostNote: "这会免费提供你机器能承载的开源模型——因为算力是你的。对于单机装不下的前沿模型，加入蜂群：下面的 KVR 按次付费 API 正是为此而设。",
     inferenceApiTitle: "推理 API（预付额度）",
     inferenceApiLede: "最简单的路径：带 API key 的原生 OpenAI 端点。流式（SSE）和原生工具调用开箱即用，每次调用从预付的 KVR 余额中扣除——无需为每次调用做钱包签名。访问权限由钱包白名单控制。",

@@ -58,7 +58,7 @@ export const nl: Dict = {
   thesis: {
     eyebrow: "Waarom gedecentraliseerde AI",
     title: "AI hoort niet in handen te zijn van een handvol bedrijven",
-    lede: "Frontier-inferentie concentreert zich achter een paar afgeschermde datacenters — gesloten gewichten, afgemeten toegang, één rekening betaald aan één eigenaar. Kvasir wijst de andere kant op: open modellen bediend via een permissionless netwerk van alledaagse apparaten, in bezit van en verdiend door de mensen die het draaien.",
+    lede: "Frontier-inferentie concentreert zich achter een paar afgeschermde datacenters — gesloten gewichten, afgemeten toegang, één rekening betaald aan één eigenaar. Kvasir is andersom gebouwd: open modellen bediend via een netwerk van alledaagse apparaten, in bezit van en verdiend door de mensen die het draaien. Vandaag draaien die engine en de afrekening op onze eigen vloot, en een apparaat kan zich al registreren, rekenkracht bijdragen en daarvoor betaald worden; de bedienende ring zelf voor iedereen openstellen is de volgende gate. De roadmap hieronder zegt hoe ver elk onderdeel is.",
     centralizedLabel: "Gecentraliseerde AI",
     centralizedPoints: [
       "Een paar hyperscalers bezitten de GPU’s",
@@ -164,7 +164,7 @@ export const nl: Dict = {
       "OpenAI-compatibel: drop-in voor /v1/chat/completions, /v1/responses, /v1/models",
       "Anthropic-compatibel: /anthropic/v1/messages en /anthropic/v1/models",
       "Betalen per inferentie in KVR: prijsopgave → betaling → inferentie",
-      "Live modelcatalogus samengesteld uit bereikbare hubs",
+      "Live modelcatalogus samengesteld uit bereikbare bridges",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -172,7 +172,7 @@ export const nl: Dict = {
   token: {
     eyebrow: "Token & beloningen",
     title: "KVR betaalt voor rekenkracht — en beloont het",
-    lede: "KVR is de eenheid die ontwikkelaars uitgeven aan inferentie en de eenheid die bijdragers verdienen voor de layers die ze draaien. Beloningen voor rekenkracht komen uit gemeten werk; gateway- en hub-hosts verdienen daarnaast voor uptime.",
+    lede: "KVR is de eenheid die ontwikkelaars uitgeven aan inferentie en de eenheid die bijdragers verdienen voor de layers die ze draaien. Beloningen voor rekenkracht komen uit gemeten werk; gateway- en bridge-hosts verdienen daarnaast voor uptime.",
     facts: [
       { k: "Symbool", v: "KVR", note: "on-chain naam “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "vandaag devnet" },
@@ -195,7 +195,7 @@ export const nl: Dict = {
   network: {
     eyebrow: "Netwerk & beloningen",
     title: "Elke rol in het netwerk verdient KVR",
-    lede: "De ring van compute-nodes wordt gecoördineerd door hub- en gateway-rollen. Elk wordt in KVR betaald voor wat het daadwerkelijk doet — rekenkracht voor de layers die het draait, infrastructuur voor de uptime die het behoudt.",
+    lede: "Voor de ring van compute-nodes staan de bridge en de settlement-gateway. Elk wordt in KVR betaald voor wat het daadwerkelijk doet — rekenkracht voor de layers die het draait, infrastructuur voor de uptime die het behoudt.",
     roles: [
       {
         role: "Compute-node",
@@ -210,14 +210,14 @@ export const nl: Dict = {
         earns: "uurlijkse uptime + ×1.5-inferentiebonus",
       },
       {
-        role: "Hub-host",
-        tagline: "De control plane",
-        body: "Ontdekt apparaten, plant layer-plaatsing en orkestreert de ring. De meest kritieke rol — daarom verdient het de hoogste uurlijkse uptime-beloning voor het gecoördineerd houden van het netwerk.",
+        role: "Bridge-host",
+        tagline: "De voordeur van de engine",
+        body: "Installeert een sessie over de stages van een model, dient verzoeken in bij de kopnode, verzamelt de tokenstroom en rapporteert wat elke node heeft bijgedragen — en bedient de markt waar een bijdragend apparaat zich bij aansluit. Zonder de bridge bereikt niets de ring, dus verdient het de hoogste uurlijkse uptime-beloning.",
         earns: "hoogste uurlijkse uptime",
       },
     ],
     rolesNote:
-      "Rollen stapelen: één machine kan tegelijk compute, gateway en hub zijn, en zijn beloningen tellen op. Alles wordt in KVR afgerekend naar de eigen wallet van die node.",
+      "Rollen stapelen: één machine kan tegelijk compute, gateway en bridge zijn, en zijn beloningen tellen op. Alles wordt in KVR afgerekend naar de eigen wallet van die node.",
     formulaTitle: "Hoe beloningen worden berekend",
     formulaLabels: ["Compute-units", "Effectief", "Infra-uptime"],
     tiersTitle: "Prestatieklassen",
@@ -245,7 +245,7 @@ export const nl: Dict = {
       },
       {
         title: "SIWS + 2FA-beveiliging",
-        body: "Bij publieke deployments is operator-toegang een Sign-In With Solana-handtekening over een server-nonce, plus TOTP-2FA en eenmalige back-upcodes — op zowel hub als gateway.",
+        body: "Bij publieke deployments is operator-toegang een Sign-In With Solana-handtekening over een server-nonce, plus TOTP-2FA en eenmalige back-upcodes. Een apparaat dat alleen rekenkracht wil bijdragen logt nooit in: het bewijst een wallet tegenover de bridge en krijgt een token dat alleen tot deelname reikt en verder tot niets.",
       },
     ],
     openText:
@@ -265,7 +265,7 @@ export const nl: Dict = {
       {
         phase: "In uitvoering",
         title: "Ring, gateway, client",
-        body: "Er wordt aan drie dingen tegelijk gewerkt. De ring gaat door herstelgates na een onderbroken run van 64 verzoeken. De settlement-gateway wordt geport naar p4 — het publieke endpoint staat bewust offline totdat dat klaar is. De desktopclient wordt een echte node die een p4-agent aanstuurt in plaats van er alleen een te registreren.",
+        body: "De settlement-gateway is geport naar p4 en beantwoordt verkeer: een betaald verzoek gaat via de gateway, de bridge en de MI250-ring en wordt afgerekend op de tokens die het heeft gebruikt. Op de bedienende ring geeft Step-3.7-Flash 28–31 tokens per seconde bij één stream, met het eerste token in 270–285 ms. Nog in uitvoering: de ring gaat door herstelgates na een onderbroken run van 64 verzoeken, de desktopclient wordt een echte node die een p4-agent aanstuurt in plaats van er alleen een te registreren, en sharding op expert-korrel wordt naar p4 overgebracht — een apparaat kan al een venster claimen en een relay openen, maar de shard-download en de dispatch aan de engine-kant zijn nog niet geschreven.",
       },
       {
         phase: "Binnenkort",
@@ -316,8 +316,8 @@ export const nl: Dict = {
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR is een Solana devnet-utility-token — geen verhandelbaar mainnet-asset en geen financieel rendement.",
-    reqTitle: "Vereiste voor hub- en gateway-operators",
-    reqBody: "Om een hub-node of een gateway-node te draaien, moet je 100.000 KVR staken in je wallet. Reguliere compute-nodes kunnen zonder deze vereiste meedoen en verdienen voor de lagen die ze draaien.",
+    reqTitle: "Vereiste voor bridge- en gateway-operators",
+    reqBody: "Om een bridge-node of een gateway-node te draaien, moet je 100.000 KVR staken in je wallet. Reguliere compute-nodes kunnen zonder deze vereiste meedoen en verdienen voor de lagen die ze draaien.",
     tabDesktop: "Desktop",
     tabMobile: "Mobiel",
     soon: "Binnenkort beschikbaar",
@@ -330,7 +330,7 @@ export const nl: Dict = {
       { title: "Maak je wallet aan", body: "Kies Nieuwe wallet aanmaken. Schrijf je herstelzin van 12 woorden op en bewaar deze veilig — bij verlies kan deze niet worden hersteld. Stel vervolgens een wachtwoordzin in om de app te ontgrendelen. Sleutels zijn non-custodial en worden alleen op dit apparaat opgeslagen.", body2: "" },
       { title: "Wallet vullen & KVR staken", body: "Ontvang wat devnet SOL (voor kosten) en KVR (om te staken) op het ontvangstadres van je wallet. Voer in het staking-paneel van het dashboard een bedrag in en klik op Staken om in aanmerking te komen voor node-beloningen.", body2: "" },
       { title: "Configureer de node", body: "Kies in Node-instellingen de compute-backend van deze machine (CUDA / ROCm / Metal / CPU) en selecteer Lokale shard (aanbevolen) — dit draait de laag-shard lokaal en stuurt alleen kleine randstatus door, de snelste modus.", body2: "" },
-      { title: "Start de node", body: "Schakel Node draaien (live) in om deze machine onder je wallet (eigenaar) op het netwerk te registreren en online te brengen.", body2: "Voor een echte GPU-compute-node draai je ook de onderstaande native agent. De planner van de hub plaatst modellagen op je machine, en je node verdient een laag-aandeel KVR dat wordt bijgeschreven op de eigenaarswallet." },
+      { title: "Start de node", body: "Schakel Node draaien (live) in om deze machine onder je wallet (eigenaar) op het netwerk te registreren en online te brengen.", body2: "Voor een echte GPU-compute-node draai je ook de onderstaande native agent. Welke lagen op je machine terechtkomen, komt uit een plaatsingsplan dat de operator laadt, en je node verdient een laag-aandeel KVR dat wordt bijgeschreven op de eigenaarswallet." },
       { title: "Volg bijdrage & beloningen", body: "Bekijk in Node-status: nodes / online / effectieve bijdrage / opeisbaar. Nodes worden ingedeeld in tiers op basis van doorvoer (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); ruw × tier = effectief. Gebruik Beloningen claimen om opgebouwde KVR naar je wallet over te maken.", body2: "" },
     ],
     faucetTitle: "Devnet SOL verkrijgen (gratis faucet)",
@@ -418,7 +418,7 @@ export const nl: Dict = {
     apiModels: "Toont de modellen die de swarm nu bedient — een lege array wanneer er geen is, dus codeer nooit een id hard.",
     apiQuote: "Vraag een prijsofferte en een requestId gekoppeld aan je prompt. priceToken is de te betalen hoeveelheid KVR; de eindafrekening is op basis van werkelijk tokengebruik.",
     apiPay: "Stuur de geoffreerde KVR naar de bijbehorende tokenrekening van de ontvanger (de vault) en onderteken met je wallet. De handtekening is eenmalig te gebruiken.",
-    apiInfer: "De gateway pollt de chain om de betaling te verifiëren, voert de inferentie uit op de hub en geeft het resultaat terug samen met het werkelijke gebruik en de kosten.",
+    apiInfer: "De gateway pollt de chain om de betaling te verifiëren, voert de inferentie uit via de bridge en geeft het resultaat terug samen met het werkelijke gebruik en de kosten.",
     codeTitle: "End-to-end voorbeeld",
     codeLede: "Laad de geheime sleutel van je wallet uit de omgeving, offreer, betaal en verzilver — één op zichzelf staand fragment. Stappen 1, 2 en 4 zijn puur HTTP; alleen stap 3 (de SPL-overdracht) verschilt per SDK.",
     adapterTitle: "OpenAI-compatibele adapter",
@@ -455,7 +455,7 @@ export const nl: Dict = {
     catUseApi: "De API gebruiken",
     selfHostTitle: "Draai een node, krijg gratis inferentie",
     selfHostPitch: "Wil je AI-modellen gratis gebruiken? Laat je coding-agent je machine als node aan het netwerk koppelen — en je er een inferentie-endpoint voor teruggeven.",
-    selfHostBody: "Eén script start de hub (en optioneel de KVR-gateway) met Docker. Voeg je GPU toe en laad een open model in de hub-UI, en roep dan een standaard OpenAI-compatibel endpoint aan — /c/<id>/v1/chat/completions — dat op je eigen hardware draait. Richt elk hulpmiddel dat OpenAI spreekt erop.",
+    selfHostBody: "Zet de bridge voor je eigen p4-agents, optioneel met de KVR-gateway ernaast. Laad een open model met een plaatsingsplan en roep dan een standaard OpenAI-compatibel endpoint aan — /c/<id>/v1/chat/completions — dat op je eigen hardware draait. Richt elk hulpmiddel dat OpenAI spreekt erop.",
     selfHostNote: "Dit serveert de open modellen die je machine aankan gratis — het is jouw rekenkracht. Voor frontier-modellen die te groot zijn voor één machine, sluit je aan bij de swarm: daar is de KVR betalen-per-gebruik-API hieronder voor.",
     inferenceApiTitle: "Inference API (credits)",
     inferenceApiLede: "De eenvoudigste weg: een native OpenAI-endpoint met een API-sleutel. Streaming (SSE) en native tool calls werken meteen, en elke aanroep wordt afgeschreven van een vooruitbetaald KVR-saldo — geen wallet-ondertekening per aanroep. Toegang wordt geregeld door een wallet-whitelist.",

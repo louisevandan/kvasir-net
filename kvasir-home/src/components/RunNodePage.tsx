@@ -244,11 +244,24 @@ function MobileGuide({ g, base }: { g: Guide; base: string }) {
             <div className="text-sm font-semibold text-ink">{fill(g.mobileTitle, "Mobile")}</div>
             <div className="mt-1 text-sm text-ink-muted">{g.mobileSub}</div>
           </div>
+          {/* Neither store carries these yet. Rather than two disabled buttons
+              that say only "soon", offer what actually exists: the Android
+              package, and the page that explains what a development build
+              requires of the person installing it. A download with no
+              explanation reads as broken the moment Android refuses it. */}
           <div className="flex flex-wrap gap-3">
-            <StoreButton href={DOWNLOADS.appStore} top="Download on the" main="App Store" sub="" soon={g.soon} />
-            <StoreButton href={DOWNLOADS.googlePlay} top="GET IT ON" main="Google Play" sub="▶" soon={g.soon} />
+            <StoreButton href={DOWNLOADS.android} top="Download the" main="Android APK" sub="🤖" soon={g.soon} />
+            <StoreButton href={DOWNLOADS.installGuide} top="iOS · build it yourself" main="How to install" sub="" soon={g.soon} />
           </div>
         </div>
+        <p className="mt-4 text-sm text-ink-muted">
+          Both mobile builds are development builds, and both platforms ask the owner of the
+          device to allow one on purpose.{" "}
+          <a className="underline underline-offset-2 hover:text-ink" href={DOWNLOADS.installGuide}>
+            Installing the mobile builds
+          </a>{" "}
+          walks through each step, including what to do when the install is refused.
+        </p>
       </Card>
 
       <div className="mt-12">

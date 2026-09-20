@@ -51,7 +51,7 @@ export const es: Dict = {
   thesis: {
     eyebrow: "Por qué la IA descentralizada",
     title: "La IA no debería ser propiedad de un puñado de empresas",
-    lede: "La inferencia de vanguardia se está concentrando tras unos pocos centros de datos cerrados — pesos cerrados, acceso medido, una factura pagada a un único dueño. Kvasir apunta en la dirección contraria: modelos abiertos servidos a través de una red sin permisos de dispositivos cotidianos, propiedad de quienes la ejecutan y ganada por ellos.",
+    lede: "La inferencia de vanguardia se está concentrando tras unos pocos centros de datos cerrados — pesos cerrados, acceso medido, una factura pagada a un único dueño. Kvasir está construido en la dirección contraria: modelos abiertos servidos a través de una red de dispositivos cotidianos, propiedad de quienes la ejecutan y ganada por ellos. Hoy ese motor y su liquidación funcionan sobre nuestra propia flota, y un dispositivo ya puede registrarse, aportar cómputo y cobrar por ello; abrir el anillo de servicio a cualquiera es el siguiente hito. La hoja de ruta de más abajo dice en qué punto está cada parte.",
     centralizedLabel: "IA centralizada",
     centralizedPoints: [
       "Unos pocos hyperscalers son dueños de las GPU",
@@ -157,7 +157,7 @@ export const es: Dict = {
       "Compatible con OpenAI: sustitución directa para /v1/chat/completions, /v1/responses, /v1/models",
       "Compatible con Anthropic: /anthropic/v1/messages y /anthropic/v1/models",
       "Pago por inferencia en KVR: cotización → pago → inferencia",
-      "Catálogo de modelos en vivo agregado desde los hubs accesibles",
+      "Catálogo de modelos en vivo agregado desde los bridges accesibles",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -165,7 +165,7 @@ export const es: Dict = {
   token: {
     eyebrow: "Token y recompensas",
     title: "KVR paga por el cómputo — y lo recompensa",
-    lede: "KVR es la unidad que los desarrolladores gastan en inferencia y la unidad que los colaboradores ganan por las capas que ejecutan. Las recompensas de cómputo se basan en el trabajo medido; los hosts de gateway y de hub también ganan por disponibilidad.",
+    lede: "KVR es la unidad que los desarrolladores gastan en inferencia y la unidad que los colaboradores ganan por las capas que ejecutan. Las recompensas de cómputo se basan en el trabajo medido; los hosts de gateway y de bridge también ganan por disponibilidad.",
     facts: [
       { k: "Símbolo", v: "KVR", note: "nombre en cadena “Kvasir”, 6 decimals" },
       { k: "Cadena", v: "Solana", note: "devnet hoy" },
@@ -188,7 +188,7 @@ export const es: Dict = {
   network: {
     eyebrow: "Red y recompensas",
     title: "Cada rol de la red gana KVR",
-    lede: "El anillo de nodos de cómputo es coordinado por los roles de hub y gateway. Cada uno cobra en KVR por lo que realmente hace — cómputo por las capas que ejecuta, infraestructura por la disponibilidad que mantiene.",
+    lede: "Delante del anillo de nodos de cómputo están el bridge y el gateway de liquidación. Cada uno cobra en KVR por lo que realmente hace — cómputo por las capas que ejecuta, infraestructura por la disponibilidad que mantiene.",
     roles: [
       {
         role: "Nodo de cómputo",
@@ -203,14 +203,14 @@ export const es: Dict = {
         earns: "disponibilidad por hora + bono ×1.5 por inferencia",
       },
       {
-        role: "Host de hub",
-        tagline: "El plano de control",
-        body: "Descubre dispositivos, planifica la colocación de capas y orquesta el anillo. El rol más crítico — por eso gana la mayor recompensa de disponibilidad por hora por mantener la red coordinada.",
+        role: "Host de bridge",
+        tagline: "La puerta de entrada del motor",
+        body: "Instala una sesión a lo largo de las etapas de un modelo, envía las solicitudes al nodo cabecera, reúne el flujo de tokens e informa de lo que aportó cada nodo — y sirve el mercado al que se une un dispositivo que contribuye. Nada llega al anillo sin él, así que gana la mayor recompensa de disponibilidad por hora.",
         earns: "mayor disponibilidad por hora",
       },
     ],
     rolesNote:
-      "Los roles se acumulan: una misma máquina puede ser cómputo, gateway y hub a la vez, y sus recompensas se suman. Todo se liquida en KVR a la propia billetera de ese nodo.",
+      "Los roles se acumulan: una misma máquina puede ser cómputo, gateway y bridge a la vez, y sus recompensas se suman. Todo se liquida en KVR a la propia billetera de ese nodo.",
     formulaTitle: "Cómo se calculan las recompensas",
     formulaLabels: ["Unidades de cómputo", "Efectivo", "Disponibilidad de infra"],
     tiersTitle: "Niveles de rendimiento",
@@ -238,7 +238,7 @@ export const es: Dict = {
       },
       {
         title: "Seguridad SIWS + 2FA",
-        body: "Para despliegues públicos, el acceso del operador es una firma Sign-In With Solana sobre un nonce del servidor, más 2FA TOTP y códigos de respaldo de un solo uso — tanto en el hub como en el gateway.",
+        body: "Para despliegues públicos, el acceso del operador es una firma Sign-In With Solana sobre un nonce del servidor, más 2FA TOTP y códigos de respaldo de un solo uso. Un dispositivo que solo quiere aportar cómputo nunca inicia sesión: demuestra una billetera ante el bridge y recibe un token limitado a la participación y a nada más.",
       },
     ],
     openText:
@@ -258,7 +258,7 @@ export const es: Dict = {
       {
         phase: "En curso",
         title: "Anillo, gateway, cliente",
-        body: "Se trabaja en tres cosas a la vez. El anillo está pasando por pruebas de recuperación tras una ejecución interrumpida de 64 solicitudes. El gateway de liquidación se está portando a p4 — su endpoint público está deliberadamente fuera de línea hasta que eso llegue. El cliente de escritorio se está convirtiendo en un nodo real que supervisa un agente p4 en lugar de solo registrarlo.",
+        body: "El gateway de liquidación ya está portado a p4 y responde: una solicitud pagada atraviesa el gateway, el bridge y el anillo MI250, y se factura por los tokens que consumió. En el anillo en servicio, Step-3.7-Flash devuelve 28–31 tokens por segundo en flujo único, con el primer token en 270–285 ms. Sigue en curso: el anillo está pasando por pruebas de recuperación tras una ejecución interrumpida de 64 solicitudes, el cliente de escritorio se está convirtiendo en un nodo real que supervisa un agente p4 en lugar de solo registrarlo, y el sharding con granularidad de experto se está llevando a p4 — un dispositivo ya puede reclamar una ventana y abrir un relay, pero la descarga del shard y el despacho del lado del motor todavía no están escritos.",
       },
       {
         phase: "Próximamente",
@@ -309,8 +309,8 @@ export const es: Dict = {
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR es un token de utilidad de Solana devnet — no es un activo negociable en mainnet ni un rendimiento financiero.",
-    reqTitle: "Requisito para operadores de hub · gateway",
-    reqBody: "Para ejecutar un nodo hub o un nodo gateway debes hacer staking de 100.000 KVR en tu wallet. Los nodos de cómputo normales se unen sin este requisito y ganan por las capas que ejecutan.",
+    reqTitle: "Requisito para operadores de bridge · gateway",
+    reqBody: "Para ejecutar un nodo bridge o un nodo gateway debes hacer staking de 100.000 KVR en tu wallet. Los nodos de cómputo normales se unen sin este requisito y ganan por las capas que ejecutan.",
     tabDesktop: "Escritorio",
     tabMobile: "Móvil",
     soon: "Próximamente",
@@ -323,7 +323,7 @@ export const es: Dict = {
       { title: "Crea tu wallet", body: "Elige Crear nueva wallet. Anota tu frase de recuperación de 12 palabras y guárdala en un lugar seguro — no se puede recuperar si se pierde. Luego establece una contraseña para desbloquear la app. Las claves son no custodiales y se guardan solo en este dispositivo.", body2: "" },
       { title: "Deposita fondos y haz staking de KVR", body: "Recibe algo de SOL de devnet (para las comisiones) y KVR (para el staking) en la dirección de Recibir de tu wallet. En el panel de staking del dashboard, ingresa un monto y pulsa Stake para calificar para las recompensas de nodo.", body2: "" },
       { title: "Configura el nodo", body: "En Configuración del nodo, elige el backend de cómputo de esta máquina (CUDA / ROCm / Metal / CPU) y selecciona Shard local (recomendado) — ejecuta el shard de capas localmente y solo retransmite un pequeño estado de frontera, el modo más rápido.", body2: "" },
-      { title: "Ejecuta el nodo", body: "Activa Ejecutar nodo (en vivo) para registrar esta máquina en la red bajo tu wallet (propietario) y ponerla en línea.", body2: "Para un nodo de cómputo GPU real, ejecuta también el agente nativo que se indica abajo. El planificador del hub coloca capas del modelo en tu máquina, y tu nodo gana una parte de KVR por capas, acreditada a la wallet propietaria." },
+      { title: "Ejecuta el nodo", body: "Activa Ejecutar nodo (en vivo) para registrar esta máquina en la red bajo tu wallet (propietario) y ponerla en línea.", body2: "Para un nodo de cómputo GPU real, ejecuta también el agente nativo que se indica abajo. Qué capas se alojan en tu máquina proviene de un plan de colocación que carga el operador, y tu nodo gana una parte de KVR por capas, acreditada a la wallet propietaria." },
       { title: "Sigue tu contribución y recompensas", body: "En Estado del nodo, observa nodos / en línea / contribución efectiva / reclamable. Los nodos se clasifican por nivel según el rendimiento (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); bruto × nivel = efectivo. Usa Reclamar recompensas para transferir el KVR acumulado a tu wallet.", body2: "" },
     ],
     faucetTitle: "Consigue SOL de devnet (faucet gratuito)",
@@ -411,7 +411,7 @@ export const es: Dict = {
     apiModels: "Lista los modelos que el enjambre sirve ahora mismo — un array vacío cuando no hay ninguno, así que nunca codifiques un id de forma fija.",
     apiQuote: "Obtén una cotización de precio y un requestId ligado a tu prompt. priceToken es la cantidad de KVR a pagar; la facturación final se basa en el uso real de tokens.",
     apiPay: "Transfiere los KVR cotizados a la cuenta de token asociada del destinatario (el vault) y firma con tu monedero. La firma es de un solo uso.",
-    apiInfer: "La pasarela sondea la cadena para verificar el pago, ejecuta la inferencia en el hub y devuelve el resultado junto con el uso y el coste reales.",
+    apiInfer: "La pasarela sondea la cadena para verificar el pago, ejecuta la inferencia a través del bridge y devuelve el resultado junto con el uso y el coste reales.",
     codeTitle: "Ejemplo de extremo a extremo",
     codeLede: "Carga la clave secreta de tu monedero desde el entorno, cotiza, paga y canjea — un fragmento autónomo. Los pasos 1, 2 y 4 son HTTP puro; solo el paso 3 (la transferencia SPL) difiere según el SDK.",
     adapterTitle: "Adaptador compatible con OpenAI",
@@ -448,7 +448,7 @@ export const es: Dict = {
     catUseApi: "Usa la API",
     selfHostTitle: "Ejecuta un nodo y obtén inferencia gratis",
     selfHostPitch: "¿Quieres usar modelos de IA gratis? Haz que tu agente de código una tu máquina a la red como nodo — y te devuelva un endpoint de inferencia.",
-    selfHostBody: "Un script levanta el hub (y, opcionalmente, la pasarela KVR) con Docker. Añade tu GPU y carga un modelo abierto en la interfaz del hub, luego llama a un endpoint estándar compatible con OpenAI — /c/<id>/v1/chat/completions — que corre en tu propio hardware. Apunta a él cualquier herramienta que hable OpenAI.",
+    selfHostBody: "Levanta el bridge delante de tus propios agentes p4 y, opcionalmente, la pasarela KVR junto a él. Carga un modelo abierto con un plan de colocación, luego llama a un endpoint estándar compatible con OpenAI — /c/<id>/v1/chat/completions — que corre en tu propio hardware. Apunta a él cualquier herramienta que hable OpenAI.",
     selfHostNote: "Esto sirve gratis los modelos abiertos que tu máquina pueda alojar — es tu cómputo. Para modelos de frontera demasiado grandes para un equipo, únete al enjambre: para eso está la API de pago por uso en KVR de abajo.",
     inferenceApiTitle: "API de inferencia (créditos)",
     inferenceApiLede: "El camino más simple: un endpoint nativo de OpenAI con una clave de API. El streaming (SSE) y las llamadas a herramientas nativas funcionan sin más, y cada llamada se descuenta de un saldo prepago de KVR — sin firmar con el monedero en cada llamada. El acceso se controla mediante una lista blanca de monederos.",

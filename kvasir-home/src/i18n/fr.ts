@@ -58,7 +58,7 @@ export const fr: Dict = {
   thesis: {
     eyebrow: "Pourquoi une IA décentralisée",
     title: "L’IA ne devrait pas appartenir à une poignée d’entreprises",
-    lede: "L’inférence de pointe se concentre derrière quelques centres de données fermés — poids fermés, accès facturé à l’usage, une seule facture payée à un seul propriétaire. Kvasir prend le chemin inverse : des modèles ouverts servis sur un réseau sans permission d’appareils du quotidien, possédé et gagné par ceux qui le font tourner.",
+    lede: "L’inférence de pointe se concentre derrière quelques centres de données fermés — poids fermés, accès facturé à l’usage, une seule facture payée à un seul propriétaire. Kvasir est construit dans l’autre sens : des modèles ouverts servis sur un réseau d’appareils du quotidien, possédé et gagné par ceux qui le font tourner. Aujourd’hui, ce moteur et son règlement tournent sur notre propre parc de machines, et un appareil peut déjà s’enregistrer, contribuer du calcul et être payé ; ouvrir l’anneau de service lui-même à tout le monde est la prochaine étape. La feuille de route ci-dessous indique où en est chaque partie.",
     centralizedLabel: "IA centralisée",
     centralizedPoints: [
       "Quelques hyperscalers possèdent les GPU",
@@ -164,7 +164,7 @@ export const fr: Dict = {
       "Compatible OpenAI : prêt à l’emploi pour /v1/chat/completions, /v1/responses, /v1/models",
       "Compatible Anthropic : /anthropic/v1/messages et /anthropic/v1/models",
       "Paiement à l’inférence en KVR : devis → paiement → inférence",
-      "Catalogue de modèles en direct agrégé depuis les hubs accessibles",
+      "Catalogue de modèles en direct agrégé depuis les bridges accessibles",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -172,7 +172,7 @@ export const fr: Dict = {
   token: {
     eyebrow: "Jeton & récompenses",
     title: "Le KVR paie le calcul — et le récompense",
-    lede: "Le KVR est l’unité que les développeurs dépensent pour l’inférence et l’unité que les contributeurs gagnent pour les layers qu’ils exécutent. Les récompenses de calcul proviennent du travail mesuré ; les hôtes de passerelle et de hub gagnent aussi pour leur disponibilité.",
+    lede: "Le KVR est l’unité que les développeurs dépensent pour l’inférence et l’unité que les contributeurs gagnent pour les layers qu’ils exécutent. Les récompenses de calcul proviennent du travail mesuré ; les hôtes de passerelle et de bridge gagnent aussi pour leur disponibilité.",
     facts: [
       { k: "Symbole", v: "KVR", note: "nom on-chain « Kvasir », 6 decimals" },
       { k: "Chaîne", v: "Solana", note: "devnet aujourd’hui" },
@@ -195,7 +195,7 @@ export const fr: Dict = {
   network: {
     eyebrow: "Réseau & récompenses",
     title: "Chaque rôle du réseau gagne des KVR",
-    lede: "L’anneau de nœuds de calcul est coordonné par les rôles de hub et de passerelle. Chacun est payé en KVR pour ce qu’il fait réellement — du calcul pour les layers qu’il exécute, de l’infrastructure pour la disponibilité qu’il assure.",
+    lede: "Devant l’anneau de nœuds de calcul se trouvent le bridge et la passerelle de règlement. Chacun est payé en KVR pour ce qu’il fait réellement — du calcul pour les layers qu’il exécute, de l’infrastructure pour la disponibilité qu’il assure.",
     roles: [
       {
         role: "Nœud de calcul",
@@ -210,14 +210,14 @@ export const fr: Dict = {
         earns: "disponibilité horaire + bonus d’inférence ×1.5",
       },
       {
-        role: "Hôte de hub",
-        tagline: "Le plan de contrôle",
-        body: "Découvre les appareils, planifie le placement des layers et orchestre l’anneau. Le rôle le plus critique — il gagne donc la récompense horaire de disponibilité la plus élevée pour maintenir la coordination du réseau.",
+        role: "Hôte de bridge",
+        tagline: "La porte d’entrée du moteur",
+        body: "Installe une session sur les stages d’un modèle, soumet les requêtes au nœud de tête, rassemble le flux de tokens et rapporte ce que chaque nœud a contribué — et sert le marché que rejoint un appareil contributeur. Rien n’atteint l’anneau sans lui, il gagne donc la récompense horaire de disponibilité la plus élevée.",
         earns: "disponibilité horaire la plus élevée",
       },
     ],
     rolesNote:
-      "Les rôles se cumulent : une même machine peut être à la fois calcul, passerelle et hub, et ses récompenses s’additionnent. Tout est réglé en KVR vers le propre portefeuille de ce nœud.",
+      "Les rôles se cumulent : une même machine peut être à la fois calcul, passerelle et bridge, et ses récompenses s’additionnent. Tout est réglé en KVR vers le propre portefeuille de ce nœud.",
     formulaTitle: "Comment les récompenses sont calculées",
     formulaLabels: ["Unités de calcul", "Effectif", "Disponibilité infra"],
     tiersTitle: "Paliers de performance",
@@ -245,7 +245,7 @@ export const fr: Dict = {
       },
       {
         title: "Sécurité SIWS + 2FA",
-        body: "Pour les déploiements publics, l’accès de l’opérateur est une signature Sign-In With Solana sur un nonce serveur, plus une 2FA TOTP et des codes de secours à usage unique — sur le hub comme sur la passerelle.",
+        body: "Pour les déploiements publics, l’accès de l’opérateur est une signature Sign-In With Solana sur un nonce serveur, plus une 2FA TOTP et des codes de secours à usage unique. Un appareil qui veut seulement contribuer du calcul ne se connecte jamais : il prouve un portefeuille auprès du bridge et reçoit un token limité à la participation, et à rien d’autre.",
       },
     ],
     openText:
@@ -265,7 +265,7 @@ export const fr: Dict = {
       {
         phase: "En cours",
         title: "Anneau, passerelle, client",
-        body: "Trois chantiers avancent en parallèle. L’anneau passe des tests de reprise après une exécution de 64 requêtes interrompue. La passerelle de règlement est en cours de portage vers p4 — son endpoint public est délibérément hors ligne jusqu’à ce que ce soit fait. Le client desktop devient un véritable nœud qui supervise un agent p4 au lieu de simplement en enregistrer un.",
+        body: "La passerelle de règlement est portée sur p4 et répond : une requête payée traverse la passerelle, le bridge et l’anneau MI250, et est facturée sur les tokens qu’elle a consommés. Sur l’anneau en service, Step-3.7-Flash renvoie 28–31 tokens par seconde en flux unique, avec le premier token en 270–285 ms. Toujours en cours : l’anneau passe des tests de reprise après une exécution de 64 requêtes interrompue, le client desktop devient un véritable nœud qui supervise un agent p4 au lieu de simplement en enregistrer un, et le sharding à granularité d’expert est en cours de portage vers p4 — un appareil peut déjà réclamer une fenêtre et ouvrir un relais, mais le téléchargement du shard et la répartition côté moteur ne sont pas encore écrits.",
       },
       {
         phase: "À venir",
@@ -316,8 +316,8 @@ export const fr: Dict = {
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR est un token utilitaire Solana devnet — pas un actif mainnet négociable ni un rendement financier.",
-    reqTitle: "Exigence pour opérateur de hub · gateway",
-    reqBody: "Pour exécuter un nœud hub ou un nœud gateway, vous devez mettre en jeu 100 000 KVR dans votre portefeuille. Les nœuds de calcul classiques rejoignent le réseau sans cette exigence et gagnent des récompenses pour les couches qu'ils exécutent.",
+    reqTitle: "Exigence pour opérateur de bridge · gateway",
+    reqBody: "Pour exécuter un nœud bridge ou un nœud gateway, vous devez mettre en jeu 100 000 KVR dans votre portefeuille. Les nœuds de calcul classiques rejoignent le réseau sans cette exigence et gagnent des récompenses pour les couches qu'ils exécutent.",
     tabDesktop: "Ordinateur",
     tabMobile: "Mobile",
     soon: "Bientôt disponible",
@@ -330,7 +330,7 @@ export const fr: Dict = {
       { title: "Créez votre portefeuille", body: "Choisissez Créer un nouveau portefeuille. Notez votre phrase de récupération de 12 mots et conservez-la en lieu sûr — elle ne peut pas être récupérée si elle est perdue. Définissez ensuite une phrase de passe pour déverrouiller l'application. Les clés sont non dépositaires et stockées uniquement sur cet appareil.", body2: "" },
       { title: "Alimentez et mettez en jeu des KVR", body: "Recevez des SOL devnet (pour les frais) et des KVR (à mettre en jeu) à l'adresse de réception de votre portefeuille. Dans le panneau de staking du tableau de bord, saisissez un montant et cliquez sur Mettre en jeu pour devenir éligible aux récompenses de nœud.", body2: "" },
       { title: "Configurez le nœud", body: "Dans Paramètres du nœud, choisissez le backend de calcul de cette machine (CUDA / ROCm / Metal / CPU) et sélectionnez Fragment local (recommandé) — il exécute le fragment de couches localement et ne relaie que le petit état de frontière, le mode le plus rapide.", body2: "" },
-      { title: "Exécutez le nœud", body: "Activez Exécuter le nœud (en direct) pour enregistrer cette machine sur le réseau sous votre portefeuille (propriétaire) et la mettre en ligne.", body2: "Pour un véritable nœud de calcul GPU, exécutez également l'agent natif ci-dessous. Le planificateur du hub place les couches du modèle sur votre machine, et votre nœud gagne une part de KVR par couche, créditée au portefeuille propriétaire." },
+      { title: "Exécutez le nœud", body: "Activez Exécuter le nœud (en direct) pour enregistrer cette machine sur le réseau sous votre portefeuille (propriétaire) et la mettre en ligne.", body2: "Pour un véritable nœud de calcul GPU, exécutez également l'agent natif ci-dessous. Les couches placées sur votre machine proviennent d'un plan de placement chargé par l'opérateur, et votre nœud gagne une part de KVR par couche, créditée au portefeuille propriétaire." },
       { title: "Suivez la contribution et les récompenses", body: "Dans Statut des nœuds, surveillez nœuds / en ligne / contribution effective / réclamable. Les nœuds sont classés par niveau selon leur débit (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7) ; brut × niveau = effectif. Utilisez Réclamer les récompenses pour transférer les KVR accumulés vers votre portefeuille.", body2: "" },
     ],
     faucetTitle: "Obtenir des SOL devnet (faucet gratuit)",
@@ -418,7 +418,7 @@ export const fr: Dict = {
     apiModels: "Liste les modèles que l'essaim sert en ce moment — un tableau vide quand il n'y en a aucun, donc ne codez jamais un id en dur.",
     apiQuote: "Obtenez un devis de prix et un requestId lié à votre prompt. priceToken est la quantité de KVR à payer ; la facturation finale se base sur l'usage réel de jetons.",
     apiPay: "Transférez les KVR devisés vers le compte de jetons associé du destinataire (le vault) et signez avec votre portefeuille. La signature est à usage unique.",
-    apiInfer: "La passerelle interroge la chaîne pour vérifier le paiement, exécute l'inférence sur le hub, puis renvoie le résultat ainsi que l'usage et le coût réels.",
+    apiInfer: "La passerelle interroge la chaîne pour vérifier le paiement, exécute l'inférence via le bridge, puis renvoie le résultat ainsi que l'usage et le coût réels.",
     codeTitle: "Exemple de bout en bout",
     codeLede: "Chargez la clé secrète de votre portefeuille depuis l'environnement, devisez, payez et échangez — un extrait autonome. Les étapes 1, 2 et 4 sont du HTTP pur ; seule l'étape 3 (le transfert SPL) diffère selon le SDK.",
     adapterTitle: "Adaptateur compatible OpenAI",
@@ -455,7 +455,7 @@ export const fr: Dict = {
     catUseApi: "Utiliser l'API",
     selfHostTitle: "Lancez un nœud, obtenez de l'inférence gratuite",
     selfHostPitch: "Envie d'utiliser des modèles d'IA gratuitement ? Demandez à votre agent de code de relier votre machine au réseau en tant que nœud — et de vous rendre un endpoint d'inférence.",
-    selfHostBody: "Un script démarre le hub (et, en option, la passerelle KVR) avec Docker. Ajoutez votre GPU et chargez un modèle ouvert dans l'UI du hub, puis appelez un endpoint standard compatible OpenAI — /c/<id>/v1/chat/completions — qui tourne sur votre propre matériel. Pointez-y n'importe quel outil qui parle OpenAI.",
+    selfHostBody: "Démarrez le bridge devant vos propres agents p4, éventuellement avec la passerelle KVR à côté. Chargez un modèle ouvert avec un plan de placement, puis appelez un endpoint standard compatible OpenAI — /c/<id>/v1/chat/completions — qui tourne sur votre propre matériel. Pointez-y n'importe quel outil qui parle OpenAI.",
     selfHostNote: "Cela sert gratuitement les modèles ouverts que votre machine peut héberger — c'est votre calcul. Pour les modèles de pointe trop gros pour une seule machine, rejoignez l'essaim : c'est à cela que sert l'API KVR au paiement à l'usage ci-dessous.",
     inferenceApiTitle: "API d'inférence (crédits)",
     inferenceApiLede: "Le chemin le plus simple : un endpoint OpenAI natif avec une clé d'API. Le streaming (SSE) et les appels d'outils natifs fonctionnent d'emblée, et chaque appel est déduit d'un solde KVR prépayé — pas de signature du portefeuille à chaque appel. L'accès est contrôlé par une liste blanche de portefeuilles.",

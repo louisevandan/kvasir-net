@@ -55,7 +55,7 @@ export const en = {
   thesis: {
     eyebrow: "Why decentralized AI",
     title: "AI shouldn’t be owned by a handful of companies",
-    lede: "Frontier inference is concentrating behind a few walled datacenters — closed weights, metered access, one bill paid to one owner. Kvasir points the other way: open models served across a permissionless network of everyday devices, owned and earned by the people who run it.",
+    lede: "Frontier inference is concentrating behind a few walled datacenters — closed weights, metered access, one bill paid to one owner. Kvasir is built the other way: open models served across a network of everyday devices, owned and earned by the people who run it. Today that engine and its settlement run on our own fleet, and a device can already register, contribute and be paid; opening the serving ring itself to anyone is the next gate. The roadmap below says where each part stands.",
     centralizedLabel: "Centralized AI",
     centralizedPoints: [
       "A few hyperscalers own the GPUs",
@@ -161,7 +161,7 @@ export const en = {
       "OpenAI-compatible: drop-in for /v1/chat/completions, /v1/responses, /v1/models",
       "Anthropic-compatible: /anthropic/v1/messages and /anthropic/v1/models",
       "Pay-per-inference in KVR: quote → payment → inference",
-      "Live model catalog aggregated from reachable hubs",
+      "Live model catalog aggregated from reachable bridges",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -169,7 +169,7 @@ export const en = {
   token: {
     eyebrow: "Token & rewards",
     title: "KVR pays for compute — and rewards it",
-    lede: "KVR is the unit developers spend on inference and the unit contributors earn for the layers they run. Compute rewards come from measured work; gateway and hub hosts also earn for uptime.",
+    lede: "KVR is the unit developers spend on inference and the unit contributors earn for the layers they run. Compute rewards come from measured work; gateway and bridge hosts also earn for uptime.",
     facts: [
       { k: "Symbol", v: "KVR", note: "on-chain name “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "devnet today" },
@@ -192,7 +192,7 @@ export const en = {
   network: {
     eyebrow: "Network & rewards",
     title: "Every role in the network earns KVR",
-    lede: "The ring of compute nodes is coordinated by hub and gateway roles. Each is paid in KVR for what it actually does — compute for the layers it runs, infrastructure for the uptime it keeps.",
+    lede: "The ring of compute nodes is fronted by the bridge and the settlement gateway. Each is paid in KVR for what it actually does — compute for the layers it runs, infrastructure for the uptime it keeps.",
     roles: [
       {
         role: "Compute node",
@@ -207,14 +207,14 @@ export const en = {
         earns: "hourly uptime + ×1.5 inference bonus",
       },
       {
-        role: "Hub host",
-        tagline: "The control plane",
-        body: "Discovers devices, plans layer placement, and orchestrates the ring. The most critical role — so it earns the highest hourly uptime reward for keeping the network coordinated.",
+        role: "Bridge host",
+        tagline: "The engine's front door",
+        body: "Installs a session across a model's stages, submits to the head, gathers the token stream, and reports what each node contributed — and serves the market a contributing device joins. Nothing reaches the ring without it, so it earns the highest hourly uptime reward.",
         earns: "highest hourly uptime",
       },
     ],
     rolesNote:
-      "Roles stack: one machine can be compute, gateway and hub at once, and its rewards sum together. Everything settles in KVR to that node’s own wallet.",
+      "Roles stack: one machine can be compute, gateway and bridge at once, and its rewards sum together. Everything settles in KVR to that node’s own wallet.",
     formulaTitle: "How rewards are computed",
     formulaLabels: ["Compute units", "Effective", "Infra uptime"],
     tiersTitle: "Performance tiers",
@@ -242,7 +242,7 @@ export const en = {
       },
       {
         title: "SIWS + 2FA security",
-        body: "For public deployments, operator access is a Sign-In With Solana signature over a server nonce, plus TOTP 2FA and single-use backup codes — on both hub and gateway.",
+        body: "For public deployments, operator access is a Sign-In With Solana signature over a server nonce, plus TOTP 2FA and single-use backup codes. A device that only wants to contribute compute never signs in: it proves a wallet against the bridge and receives a token scoped to participation and nothing else.",
       },
     ],
     openText:
@@ -262,7 +262,7 @@ export const en = {
       {
         phase: "In flight",
         title: "Ring, gateway, client",
-        body: "Three things are being worked on at once. The ring is going through recovery gates after an interrupted 64-request run. The settlement gateway is being ported to p4 — its public endpoint is deliberately offline until that lands. The desktop client is becoming a real node that supervises a p4 agent instead of only registering one.",
+        body: "The settlement gateway is ported to p4 and answering: a paid request crosses the gateway, the bridge and the MI250 ring and is billed on the tokens it used. On the serving ring, Step-3.7-Flash returns 28–31 tokens a second single stream, first token in 270–285 ms. Still in flight: the ring is going through recovery gates after an interrupted 64-request run, the desktop client is becoming a real node that supervises a p4 agent instead of only registering one, and expert-grain sharding is being carried onto p4 — a device can already claim a window and open a relay, but the shard download and the engine-side dispatch are not written yet.",
       },
       {
         phase: "Coming",
@@ -313,8 +313,8 @@ export const en = {
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR is a Solana devnet utility token — not a tradable mainnet asset or a financial return.",
-    reqTitle: "Hub · gateway operator requirement",
-    reqBody: "To run a hub node or a gateway node you must stake 100,000 KVR in your wallet. Regular compute nodes join without this requirement and earn for the layers they run.",
+    reqTitle: "Bridge · gateway operator requirement",
+    reqBody: "To run a bridge node or a gateway node you must stake 100,000 KVR in your wallet. Regular compute nodes join without this requirement and earn for the layers they run.",
     tabDesktop: "Desktop",
     tabMobile: "Mobile",
     soon: "Coming soon",
@@ -327,7 +327,7 @@ export const en = {
       { title: "Create your wallet", body: "Choose Create new wallet. Write down your 12-word recovery phrase and keep it safe — it cannot be recovered if lost. Then set a passphrase to unlock the app. Keys are non-custodial and stored only on this device.", body2: "" },
       { title: "Fund & stake KVR", body: "Receive some devnet SOL (for fees) and KVR (to stake) at your wallet’s Receive address. In the dashboard staking panel, enter an amount and Stake to qualify for node rewards.", body2: "" },
       { title: "Configure the node", body: "In Node settings pick this machine’s compute backend (CUDA / ROCm / Metal / CPU) and choose Local shard (recommended) — it runs the layer shard locally and relays only small boundary state, the fastest mode.", body2: "" },
-      { title: "Run the node", body: "Toggle Run node (live) to register this machine on the network under your wallet (owner) and bring it online.", body2: "For a real GPU compute node, also run the native agent below. The hub’s planner places model layers on your machine, and your node earns a layer-share of KVR credited to the owner wallet." },
+      { title: "Run the node", body: "Toggle Run node (live) to register this machine on the network under your wallet (owner) and bring it online.", body2: "For a real GPU compute node, also run the native agent below. Which layers sit on your machine comes from a placement plan the operator loads, and your node earns a layer-share of KVR credited to the owner wallet." },
       { title: "Track contribution & rewards", body: "In Node status, watch nodes / online / effective contribution / claimable. Nodes are tiered by throughput (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); raw × tier = effective. Use Claim rewards to move accrued KVR to your wallet.", body2: "" },
     ],
     faucetTitle: "Get devnet SOL (free faucet)",
@@ -415,7 +415,7 @@ export const en = {
     apiModels: "List the models the swarm is serving right now — an empty array when nothing is live, so never hardcode an id.",
     apiQuote: "Get a price quote and a requestId bound to your prompt. priceToken is the KVR amount to pay; final billing is by real token usage.",
     apiPay: "Transfer the quoted KVR to the recipient's associated token account (the vault) and sign with your wallet. The signature is single-use.",
-    apiInfer: "The gateway polls the chain to verify the payment, runs the inference on the hub, and returns the result plus real usage and cost.",
+    apiInfer: "The gateway polls the chain to verify the payment, runs the inference through the bridge, and returns the result plus real usage and cost.",
     codeTitle: "End-to-end example",
     codeLede: "Load your wallet secret from the environment, quote, pay, and redeem — one self-contained snippet. Steps 1, 2 and 4 are plain HTTP; only step 3 (the SPL transfer) differs by SDK.",
     adapterTitle: "OpenAI-compatible adapter",
@@ -452,7 +452,7 @@ export const en = {
     catUseApi: "Use the API",
     selfHostTitle: "Run a node, get free inference",
     selfHostPitch: "Want to use AI models for free? Have your coding agent join your machine to the network as a node — and hand you back an inference endpoint.",
-    selfHostBody: "One script brings up the hub (and, optionally, the KVR gateway) with Docker. Add your GPU and load an open model in the hub UI, then call a standard OpenAI-compatible endpoint — /c/<id>/v1/chat/completions — running on your own hardware. Point any tool that speaks OpenAI at it.",
+    selfHostBody: "Bring up the bridge in front of your own p4 agents, optionally with the KVR gateway beside it. Load an open model with a placement plan, then call a standard OpenAI-compatible endpoint — /c/<id>/v1/chat/completions — running on your own hardware. Point any tool that speaks OpenAI at it.",
     selfHostNote: "This serves the open models your machine can hold, for free — it's your compute. For frontier models too big for one box, join the swarm: that's what the KVR pay-per-use API below is for.",
     inferenceApiTitle: "Inference API (credits)",
     inferenceApiLede: "The simplest path: a native OpenAI endpoint with an API key. Streaming (SSE) and native tool calls just work, and each call is deducted from a prepaid KVR balance — no per-call wallet signing. Access is controlled by a wallet whitelist.",
