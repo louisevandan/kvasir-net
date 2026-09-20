@@ -67,10 +67,22 @@ final class BridgeParticipation: ObservableObject {
         return b.hasPrefix("http") ? b : nil
     }
 
+    /// Hosts that used to serve the control plane and never will again.
+    private static let retiredBridgeHosts = ["hub.kvasir-ai.net"]
+
+    /// Whether a stored bridge address is still worth dialling. Anyone who
+    /// paired before the control plane was retired still has hub.kvasir-ai.net
+    /// on their phone and it has answered 502 ever since, so the monitor showed
+    /// a permanently disconnected bridge the user could do nothing about.
+    static func isLiveBridgeURL(_ url: String) -> Bool {
+        !url.isEmpty && !retiredBridgeHosts.contains { url.contains($0) }
+    }
+
     private func loadBridges() {
         if let data = defaults.data(forKey: storeKey),
            let m = try? JSONDecoder().decode([String: String].self, from: data) {
-            knownBridges = m
+            knownBridges = m.filter { Self.isLiveBridgeURL($0.key) }
+            if knownBridges.count != m.count { saveBridges() }
         }
         bridges = knownBridgeList()
     }

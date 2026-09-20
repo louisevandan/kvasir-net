@@ -68,3 +68,43 @@ targets:
           - "$(SRCROOT)/../../build-ios-ring/external/llama.cpp/ggml/src/ggml-metal"
           - "$(SRCROOT)/../../build-ios-ring/external/llama.cpp/ggml/src/ggml-rpc"
         OTHER_LDFLAGS: "-llinkcpp-stage -llinkcpp-expert -lllama -lllama-common -lllama-common-base -lggml -lggml-base -lggml-cpu -lggml-metal -lggml-rpc -lc++ -framework Metal -framework Accelerate"
+
+  # A UI test target, because a physical iPhone cannot be driven or photographed
+  # from a shell: there is no devicectl screenshot and no equivalent of
+  # `adb shell input`. Every defect the Android run actually found — a balance
+  # that wrapped mid-number, a dead host still listed as connected — was visible
+  # only on a real screen and invisible to the build and the unit tests. This is
+  # how the same pass gets run against iOS.
+  KvasirWalletUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: UITests
+    dependencies:
+      - target: KvasirWallet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.banya.linkcpp.wallet.uitests
+        # The app target carries a checked-in Info.plist; a test bundle has
+        # nothing to say in one, but code signing still requires it to exist.
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: N47DUU3PJJ
+        CODE_SIGN_STYLE: Automatic
+        TEST_TARGET_NAME: KvasirWallet
+
+schemes:
+  KvasirWallet:
+    build:
+      targets:
+        KvasirWallet: all
+        KvasirWalletUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - KvasirWalletUITests

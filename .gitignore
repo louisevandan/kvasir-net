@@ -35,3 +35,6 @@ docs/
 
 # Downloaded Cloudflare Tunnel binary (fetched by hand on the host, not source).
 bin/cloudflared
+
+# Xcode build products and result bundles from device runs
+wallet/ios/build/
