@@ -486,7 +486,7 @@ inside the lock:
         t: "code",
         caption: "Salida del planner — formato de reglas -ot de motor de inferencia.",
         code: `node 0  layers [0,48]  vram=62.6  ram=14.2  ot_rules=10
-sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # motor de inferencia -ot format`,
+sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inference engine -ot format`,
       },
       { t: "h2", kick: "Qué se cableó · Python puro, sin recompilar C++", text: "Llevar las reglas de offload del planner a una carga real" },
       {
@@ -1018,6 +1018,177 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       {
         t: "p",
         md: "Esa es la forma de una red que puede servir modelos de un billón de parámetros sobre hardware que ninguna persona posee: la capacidad ociosa se invita exactamente cuando vale la pena invitarla, y solo entonces.",
+      },
+    ],
+  },
+  "a-dialable-address-for-a-laptop": {
+    title: "Una dirección marcable para un portátil",
+    dek: "p4 alcanza un nodo marcándolo. A los portátiles y a los teléfonos no se les puede marcar. El relay es lo más pequeño que cierra esa brecha sin entregarle a internet un motor sin autenticación.",
+    blocks: [
+      {
+        t: "p",
+        md: "El motor p4 encuentra un nodo abriendo una conexión hacia él. Cada stage que termina sus capas entrega el resultado marcando al agente del siguiente stage en la dirección que ese agente anuncia. Es un modelo limpio y tiene un borde duro: **una máquina que no puede aceptar una conexión entrante no puede participar.** Y eso es la mayor parte del hardware interesante — un portátil tras un router doméstico, un teléfono tras la NAT de una operadora, una estación de trabajo en una oficina cuyo cortafuegos es la tarde de otra persona.",
+      },
+      {
+        t: "p",
+        md: "Ese borde lo medimos en vez de suponerlo. Un nodo de escritorio que anunciaba su dirección de oficina era alcanzable desde dentro del edificio y daba timeout desde cualquier otro sitio; el router mantenía cerrado el puerto entrante, y abrirlo era un viaje físico y una conversación de políticas. Todos los nodos que de verdad queremos — los que ya están sobre los escritorios de la gente — tienen esa misma forma.",
+      },
+      { t: "h2", kick: "Primero, el arreglo equivocado", text: "Por qué no basta con abrir un puerto" },
+      {
+        t: "p",
+        md: "El port forwarding funciona para una máquina que controlas y fracasa como diseño de red: le pide a cada contribuyente reconfigurar hardware que puede no ser suyo, y escala la superficie de ataque con el número de nodos. Más grave aún: **p4 no lleva ninguna autenticación.** Asume que las máquinas que pueden alcanzarse entre sí están destinadas a hacerlo, lo cual es razonable dentro de un rack y peligroso en una dirección pública. Publicar un nodo no es solo un rodeo a la NAT; es entregarle a internet un motor sin autenticar.",
+      },
+      { t: "h2", kick: "El relay", text: "Una conexión saliente, una firma" },
+      {
+        t: "p",
+        md: "Así que el relay hace dos trabajos a la vez. Le da una dirección a un nodo, y es el sitio donde se prueba la identidad — precisamente porque el protocolo que va por encima no lo hará.",
+      },
+      {
+        t: "code",
+        caption: "Framing y handshake.",
+        code: `frame   magic | u8 type | u32 stream | u32 length | payload
+
+node ──────── connect ───────▶ relay
+     ◀─────── CHALLENGE ──────
+     ─── HELLO (ed25519 sig) ─▶   signed with the wallet keypair
+     ◀─────── WELCOME ────────    the node is now reachable`,
+      },
+      {
+        t: "p",
+        md: "El nodo firma el desafío del relay con **el mismo par de claves que posee su wallet**. Esa es la parte en la que vale la pena detenerse: hace que el nodo que se une y la wallet que cobra sean la misma parte por construcción, en vez de por una tabla de correspondencias que alguien tiene que mantener honesta. No hay ninguna credencial de nodo aparte que emitir, rotar o filtrar.",
+      },
+      {
+        t: "p",
+        md: "Pasado el handshake, el relay es una tubería. Reenvía frames sin parsearlos — nunca ve un prompt, un token ni un tensor — y no necesita saber nada del modelo ni del propio framing de p4. Es deliberado: lo que sostiene la frontera de confianza debería ser lo bastante pequeño como para leerlo de una sentada.",
+      },
+      { t: "h2", kick: "Ponerlo en marcha", text: "El agente viaja con la app" },
+      {
+        t: "p",
+        md: "Nada de esto sirve si unirse a la red es una segunda instalación. El instalador de escritorio ahora trae el agente p4 junto a la app — un binario universal en macOS, un `.exe` en Windows — así que contribuir es: instalar, desbloquear la wallet, y el nodo se registra y se conecta con la clave que ya está ahí.",
+      },
+      {
+        t: "callout",
+        md: "**Lo que esto todavía no hace.** Un nodo alcanzable a través del relay puede unirse a la red; servir *shards de expertos* desde él es un trabajo aparte, diseñado y todavía no en marcha. El anillo de hoy corre al grano de capa sobre hardware de servidor.",
+      },
+    ],
+  },
+  "moving-the-ring-onto-p4": {
+    title: "Mudar el anillo a p4",
+    dek: "Siete cambios de contrato entre un motor y quien lo llama. Cada uno falló de forma distinta, y solo uno de ellos parecía un error.",
+    blocks: [
+      {
+        t: "p",
+        md: "Fusionamos una nueva release del motor p4 y el anillo dejó de servir. No con un crash — el cargador reportó éxito, los agentes reportaron ready, y no pasó nada. Remontar desde ese silencio costó un día y sacó a la luz **siete** puntos en los que quien llama y el motor se habían separado. Lo que los hace dignos de anotar no es la cuenta. Es que seis de los siete no produjeron ningún error.",
+      },
+      { t: "h2", kick: "Fallo uno", text: "Un evento para un nodo que no existe se reenvía, no se rechaza" },
+      {
+        t: "p",
+        md: "Nuestro cargador dirigía el comando LOAD al nodo que quería crear. Pero un nodo no existe hasta que LOAD lo crea, y la regla del broker ante un evento que nombra un nodo desconocido es **reenviarlo hacia fuera** en vez de rechazarlo. El comando salió del agente buscando otro sitio al que ir, no encontró ninguno y se descartó. Ni una línea de log, porque desde el punto de vista del broker no había pasado nada malo.",
+      },
+      {
+        t: "p",
+        md: "El arreglo fue dirigir LOAD al *agente*, envuelto en el sobre de ciclo de vida neutral al backend del motor, con el comando propio del adaptador como cuerpo opaco. Obvio a posteriori; invisible desde fuera.",
+      },
+      { t: "h2", kick: "Fallo dos", text: "Un número que tiene que ser igual a otro número" },
+      {
+        t: "p",
+        md: "Un modelo se carga bajo una **load generation**, y cada nodo se registra con una **generación de nodo**. Las habíamos tratado como independientes — un timestamp para una, `1` para la otra — y todo funcionaba. El anillo cargaba. Respondía correctamente a una petición. Y entonces moría el nodo de cabeza.",
+      },
+      {
+        t: "code",
+        caption: "La comprobación, en la contabilidad de release del adaptador.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "El recibo que cierra una petición terminada lleva la load generation, y el nodo que lo envía lleva la suya. Cuando difieren, el nodo se detiene. Así que la forma del bug es: **la carga funciona, la primera petición funciona, la cabeza muere, y todas las sesiones posteriores se quedan colgadas a medio cargar.** Se lee exactamente como un crash bajo carga y en absoluto como un desajuste. Nuestro cargador ahora rechaza un plan cuyos dos números no coinciden, antes de cargar nada.",
+      },
+      { t: "h2", kick: "Fallo tres", text: "Una cota que nunca podría cumplirse" },
+      {
+        t: "p",
+        md: "El adaptador compara el resultado más grande que un stage puede devolver con la cifra que el stage server reporta al arrancar, por igualdad exacta. No podíamos conocer esa cifra sin cargar el modelo — así que cargamos con una estimación, y el fallo nos dio de golpe los números reales de los cuatro stages:",
+      },
+      {
+        t: "code",
+        caption: "Una ejecución, cuatro respuestas.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. Los almacenes retenidos del agente son de 256 MiB, así que ese anillo nunca podría haber sido admitido. Leer la derivación dentro del stage server explicó por qué: la cota escala con `n_batch × n_ubatch`, y habíamos heredado un ancho de batch de 2048 de una configuración anterior a esta comprobación. Con 128 filas — el ancho que usa el layout de producción — la cota es de 138 MB y cabe. Ahora la derivamos en el plan a partir de la misma fórmula en vez de arrastrar una constante recordada, y la cifra predicha para el stage de cola salió exactamente igual a la que otro despliegue había registrado, que es la clase de acuerdo que conviene tener antes de gastar veinte minutos en una carga.",
+      },
+      { t: "h2", kick: "Los otros cuatro", text: "En breve" },
+      {
+        t: "ul",
+        items: [
+          "**Direcciones de loopback en un anillo de dos hosts.** Un stage marca al agente del siguiente stage en la dirección que ese agente anuncia. Anuncia `127.0.0.1` y el host A se marca a sí mismo. La configuración registrada del anillo había sido loopback todo el tiempo — nunca podría haber funcionado entre hosts.",
+          "**El diario es obligatorio.** Un modelo no se carga sin el diario operativo del agente. Lo desactivamos mientras perseguíamos otro error y empeoramos el síntoma de una forma que parecía progreso.",
+          "**El nombre del dispositivo depende del backend.** El constructor de planes de referencia apunta a CUDA y emite `--device CUDA0`. La build de HIP llama a sus dispositivos `ROCm0`. Ese plan carga el modelo entero y *después* no encuentra el dispositivo.",
+          "**El servidor nativo es parte de la release.** Un agente compilado desde un árbol más nuevo quiere capacidades que el stage server instalado no reporta. También descubierto después de una carga completa del modelo.",
+        ],
+      },
+      { t: "h2", kick: "Qué sacamos de esto", text: "El silencio es el modo de fallo caro" },
+      {
+        t: "p",
+        md: "Cada uno de estos fue barato de arreglar y caro de encontrar, y el patrón es consistente: los fallos costosos fueron aquellos en los que un sistema con buena pinta no hacía nada, o lo hacía una sola vez. Las guardas que añadimos tienen todas la misma forma — rechazar pronto, en el punto donde el error todavía es legible. El cargador escribe la load generation a disco *antes* de que salga el primer comando, porque de otro modo es irrecuperable. Rechaza un desajuste de generaciones en vez de descubrirlo tras la primera petición. Deriva la cota de resultado en vez de recordarla.",
+      },
+      {
+        t: "callout",
+        md: "**El anillo está sirviendo.** Cuatro stages repartidos en dos máquinas, 113 GiB de pesos residentes, primer token en 1.4 s en frío y ~0.3 s en caliente, y la contribución por nodo fluyendo hasta el libro de liquidación por primera vez.",
+      },
+    ],
+  },
+  "the-template-is-the-callers-job": {
+    title: "La plantilla es trabajo de quien llama",
+    dek: "p4 reenvía un prompt opaco y no aplica ninguna plantilla de chat. Olvídalo y el modelo responde una pregunta que no hiciste — con fluidez, y hasta el límite de tokens.",
+    blocks: [
+      {
+        t: "p",
+        md: "La primera respuesta real de nuestro anillo recuperado fue una aritmética correcta seguida de una conversación que nadie había tenido:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, preguntado a un modelo servido.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "El número está bien. Todo lo que viene después es el modelo continuando un documento, porque eso es lo que le entregamos: los mensajes aplanados en una sola cadena. Un modelo instruct lee eso como texto que extender, no como un turno que responder. Nunca emite su token de fin de turno, así que la generación llega al tope siempre.",
+      },
+      { t: "h2", kick: "De quién es el trabajo", text: "Una omisión deliberada, no un hueco" },
+      {
+        t: "p",
+        md: "p4 le entrega al stage server un prompt opaco y no aplica ningún formato de turno propio — el adaptador staged lleva únicamente una herramienta para *leer* una plantilla de un GGUF, nunca para aplicarla. Es una línea razonable donde trazar: el motor se mantiene estrecho y agnóstico al modelo, y quien llama, que ya sabe con qué modelo habla, renderiza el formato. Pero una línea trazada y no documentada es una línea que alguien cruza.",
+      },
+      {
+        t: "p",
+        md: "Leer la plantilla del archivo del modelo lo zanjó: turnos ChatML, `<|im_end|>` como token de fin de turno, y un turno de asistente que abre con un bloque de pensamiento. Con eso renderizado por el bridge, la misma pregunta:",
+      },
+      {
+        t: "code",
+        caption: "El mismo modelo, el mismo anillo, con el formato de turno aplicado.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "La parte que cuesta dinero", text: "Una pasada de pensamiento puede comerse la respuesta" },
+      {
+        t: "p",
+        md: "Un modelo de razonamiento gasta tokens antes de decir nada. Dale un presupuesto y una pregunta difícil y puede gastarse el presupuesto entero pensando, dejando la respuesta vacía — y en una red donde quien llama **ya ha pagado on-chain antes de que la petición corriera**, una respuesta vacía no es un problema de calidad. Es un cobro por nada.",
+      },
+      {
+        t: "p",
+        md: "El gateway de liquidación ya lo sabía y pide que se desactive el pensamiento. La plantilla del modelo no tiene interruptor para eso, así que el bridge abre *y cierra* el bloque de pensamiento dentro del prompt, y el modelo escribe su respuesta después. Nos equivocamos una vez de la forma obvia: cerrar el bloque en el prompt significaba que la etiqueta de cierre ya no estaba en la salida, así que el separador archivó la respuesta entera como razonamiento y devolvió contenido vacío. Que es exactamente el fallo que ese ajuste existe para prevenir.",
+      },
+      {
+        t: "callout",
+        md: "**Dónde deja esto el contrato.** El motor reenvía bytes. El bridge conoce el modelo: renderiza el formato de turno nombrado en el plan de colocación, devuelve la pasada de pensamiento como `reasoning_content` separada de `content`, y recorta una petición que pide más salida de la que el anillo se cargó para dar — porque de lo contrario una petición demasiado grande se rechaza de plano, y una respuesta más corta es mejor que un error del motor.",
       },
     ],
   },

@@ -486,7 +486,7 @@ inside the lock:
         t: "code",
         caption: "Planner-Ausgabe — Inferenz-Engine -ot-Regelformat.",
         code: `node 0  layers [0,48]  vram=62.6  ram=14.2  ot_rules=10
-sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # Inferenz-Engine -ot format`,
+sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inference engine -ot format`,
       },
       { t: "h2", kick: "Was verdrahtet wurde · reines Python, kein C++-Rebuild", text: "Die Offload-Regeln des Planners in einen echten Load tragen" },
       {
@@ -1018,6 +1018,177 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       {
         t: "p",
         md: "Das ist die Gestalt eines Netzwerks, das Modelle mit Billionen Parametern auf Hardware bedienen kann, die keine einzelne Person besitzt: Brachliegende Kapazität wird genau dann eingeladen, wenn es sich lohnt, sie einzuladen — und nur dann.",
+      },
+    ],
+  },
+  "a-dialable-address-for-a-laptop": {
+    title: "Eine wählbare Adresse für ein Notebook",
+    dek: "p4 erreicht einen Node, indem es ihn anwählt. Notebooks und Smartphones lassen sich nicht anwählen. Das Relay ist das Kleinste, was diese Lücke schließt, ohne dem Internet eine unauthentifizierte Engine in die Hand zu geben.",
+    blocks: [
+      {
+        t: "p",
+        md: "Die p4-Engine findet einen Node, indem sie eine Verbindung zu ihm öffnet. Jede Stage, die ihre Layer abgeschlossen hat, reicht das Ergebnis weiter, indem sie den Agent der nächsten Stage unter der Adresse anwählt, die dieser Agent bewirbt. Das ist ein sauberes Modell, und es hat eine harte Kante: **Eine Maschine, die keine eingehende Verbindung annehmen kann, kann nicht teilnehmen.** Das ist der Großteil der interessanten Hardware — ein Notebook hinter einem Heimrouter, ein Smartphone hinter Carrier-NAT, eine Workstation in einem Büro, deren Firewall der Nachmittag von jemand anderem ist.",
+      },
+      {
+        t: "p",
+        md: "Wir haben diese Kante gemessen, statt sie anzunehmen. Ein Desktop-Node, der seine Büroadresse bewarb, war aus dem Gebäude heraus erreichbar und lief von überall sonst in einen Timeout; der Router hielt den eingehenden Port geschlossen, und ihn zu öffnen war eine Dienstfahrt und ein Gespräch über Richtlinien. Jeder Node, den wir tatsächlich wollen — die, die schon auf den Schreibtischen der Leute stehen —, hat dieselbe Gestalt.",
+      },
+      { t: "h2", kick: "Zuerst die falsche Lösung", text: "Warum nicht einfach einen Port öffnen" },
+      {
+        t: "p",
+        md: "Portweiterleitung funktioniert für eine Maschine, die dir gehört, und scheitert als Netzwerkdesign: Sie verlangt von jedem Mitwirkenden, Hardware umzukonfigurieren, die ihm womöglich gar nicht gehört, und sie skaliert die Angriffsfläche mit der Knotenzahl. Schwerwiegender noch: **p4 trägt überhaupt keine Authentifizierung.** Es nimmt an, dass Maschinen, die einander erreichen können, das auch sollen — eine vernünftige Annahme im Rack und eine gefährliche auf einer öffentlichen Adresse. Einen Node zu veröffentlichen ist nicht bloß ein NAT-Workaround; es reicht dem Internet eine unauthentifizierte Engine.",
+      },
+      { t: "h2", kick: "Das Relay", text: "Eine ausgehende Verbindung, eine Signatur" },
+      {
+        t: "p",
+        md: "Das Relay erledigt deshalb zwei Aufgaben auf einmal. Es gibt einem Node eine Adresse, und es ist der Ort, an dem Identität nachgewiesen wird — gerade weil das Protokoll darüber das nicht tut.",
+      },
+      {
+        t: "code",
+        caption: "Framing und Handshake.",
+        code: `frame   magic | u8 type | u32 stream | u32 length | payload
+
+node ──────── connect ───────▶ relay
+     ◀─────── CHALLENGE ──────
+     ─── HELLO (ed25519 sig) ─▶   signed with the wallet keypair
+     ◀─────── WELCOME ────────    the node is now reachable`,
+      },
+      {
+        t: "p",
+        md: "Der Node signiert die Challenge des Relays mit **demselben Schlüsselpaar, das seiner Wallet gehört**. Auf diesem Punkt lohnt es zu verweilen: Er macht den beitretenden Node und die bezahlte Wallet per Konstruktion zur selben Partei — nicht über eine Zuordnungstabelle, die jemand ehrlich halten muss. Es gibt kein separates Node-Credential, das ausgestellt, rotiert oder geleakt werden könnte.",
+      },
+      {
+        t: "p",
+        md: "Nach dem Handshake ist das Relay eine Leitung. Es leitet Frames weiter, ohne sie zu parsen — es sieht nie einen Prompt, ein Token oder einen Tensor — und es braucht kein Wissen über das Modell oder über p4s eigenes Framing. Das ist Absicht: Was die Vertrauensgrenze hält, sollte klein genug sein, um es in einem Zug zu lesen.",
+      },
+      { t: "h2", kick: "Ausliefern", text: "Der Agent reist mit der App" },
+      {
+        t: "p",
+        md: "Nichts davon hilft, wenn der Beitritt zum Netzwerk eine zweite Installation ist. Der Desktop-Installer liefert jetzt den p4-Agent zusammen mit der App aus — ein Universal Binary auf macOS, eine `.exe` unter Windows —, sodass Beitragen heißt: installieren, Wallet entsperren, und der Node registriert und verbindet sich mit dem Schlüssel, der ohnehin schon da ist.",
+      },
+      {
+        t: "callout",
+        md: "**Was das noch nicht leistet.** Ein über das Relay erreichbarer Node kann dem Netzwerk beitreten; *Experten-Shards* von ihm aus zu bedienen, ist ein eigenes Stück Arbeit — entworfen und noch nicht in Betrieb. Der heutige Ring läuft auf Layer-Körnung auf Server-Hardware.",
+      },
+    ],
+  },
+  "moving-the-ring-onto-p4": {
+    title: "Den Ring auf p4 umziehen",
+    dek: "Sieben Vertragsänderungen zwischen einer Engine und ihrem Aufrufer. Jede scheiterte anders, und nur eine davon sah wie ein Fehler aus.",
+    blocks: [
+      {
+        t: "p",
+        md: "Wir haben ein neues Release der p4-Engine gemerged, und der Ring hörte auf zu bedienen. Nicht mit einem Absturz — der Loader meldete Erfolg, die Agents meldeten ready, und nichts geschah. Aus dieser Stille zurückzuarbeiten kostete einen Tag und förderte **sieben** Stellen zutage, an denen unser Aufrufer und die Engine auseinandergedriftet waren. Aufschreibenswert macht sie nicht die Anzahl. Sondern dass sechs der sieben keinen Fehler erzeugten.",
+      },
+      { t: "h2", kick: "Fehler eins", text: "Ein Event für einen nicht existierenden Node wird weitergeleitet, nicht abgelehnt" },
+      {
+        t: "p",
+        md: "Unser Loader adressierte das LOAD-Kommando an den Node, den es erzeugen wollte. Aber ein Node existiert erst, wenn LOAD ihn erzeugt, und die Regel des Brokers für ein Event, das einen unbekannten Node nennt, lautet: **nach außen weiterleiten** statt ablehnen. Das Kommando verließ den Agent auf der Suche nach einem anderen Ziel, fand keines und wurde verworfen. Keine Logzeile, denn aus Sicht des Brokers war nichts schiefgegangen.",
+      },
+      {
+        t: "p",
+        md: "Die Lösung war, LOAD an den *Agent* zu adressieren, verpackt in die backend-neutrale Lifecycle-Hülle der Engine, mit dem eigenen Kommando des Adapters als opakem Body. Im Nachhinein offensichtlich; von außen unsichtbar.",
+      },
+      { t: "h2", kick: "Fehler zwei", text: "Eine Zahl, die einer anderen Zahl gleichen muss" },
+      {
+        t: "p",
+        md: "Ein Modell wird unter einer **Load-Generation** geladen, und jeder Node wird mit einer **Node-Generation** registriert. Wir hatten die beiden als unabhängig behandelt — ein Zeitstempel für die eine, `1` für die andere — und alles funktionierte. Der Ring lud. Er beantwortete eine Anfrage korrekt. Dann starb der Kopf-Node.",
+      },
+      {
+        t: "code",
+        caption: "Die Prüfung, in der Release-Verbuchung des Adapters.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "Die Quittung, die eine abgeschlossene Anfrage schließt, trägt die Load-Generation, und der Node, der sie sendet, trägt seine eigene. Weichen sie ab, wird der Node gestoppt. Die Gestalt des Bugs ist also: **Load gelingt, erste Anfrage gelingt, der Kopf stirbt, jede Session danach hängt halb geladen.** Das liest sich exakt wie ein Absturz unter Last und überhaupt nicht wie eine Abweichung. Unser Loader verweigert jetzt einen Plan, dessen zwei Zahlen sich widersprechen, bevor irgendetwas geladen wird.",
+      },
+      { t: "h2", kick: "Fehler drei", text: "Eine Schranke, die nie erfüllbar war" },
+      {
+        t: "p",
+        md: "Der Adapter vergleicht das größte Ergebnis, das eine Stage zurückgeben darf, auf exakte Gleichheit mit der Zahl, die der Stage-Server beim Hochfahren meldet. Diese Zahl konnten wir ohne Laden des Modells nicht kennen — also luden wir mit einer Schätzung, und der Fehlschlag nannte uns die echten Zahlen aller vier Stages auf einmal:",
+      },
+      {
+        t: "code",
+        caption: "Ein Lauf, vier Antworten.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. Die vorgehaltenen Speicher des Agents sind 256 MiB, dieser Ring hätte also nie zugelassen werden können. Die Herleitung aus dem Stage-Server zeigte, warum: Die Schranke skaliert mit `n_batch × n_ubatch`, und wir hatten eine Batch-Breite von 2048 aus einer Konfiguration geerbt, die älter war als diese Prüfung. Bei 128 Zeilen — der Breite, die das Produktions-Layout nutzt — liegt die Schranke bei 138 MB und passt. Wir leiten sie jetzt im Plan aus derselben Formel ab, statt eine gemerkte Konstante mitzuschleppen, und die vorhergesagte Zahl der Schluss-Stage traf exakt den Wert, den ein anderes Deployment aufgezeichnet hatte — die Art von Übereinstimmung, die man gern hat, bevor man zwanzig Minuten in einen Load steckt.",
+      },
+      { t: "h2", kick: "Die anderen vier", text: "In Kürze" },
+      {
+        t: "ul",
+        items: [
+          "**Loopback-Adressen in einem Zwei-Host-Ring.** Eine Stage wählt den Agent der nächsten Stage unter der Adresse an, die dieser Agent bewirbt. Bewirb `127.0.0.1`, und Host A wählt sich selbst an. Die aufgezeichnete Konfiguration des Rings war die ganze Zeit Loopback — sie hätte über Hosts hinweg nie funktionieren können.",
+          "**Das Journal ist Pflicht.** Ein Modell lädt nicht ohne das Betriebsjournal des Agents. Wir schalteten es ab, während wir einem anderen Fehler nachjagten, und verschlimmerten das Symptom auf eine Weise, die nach Fortschritt aussah.",
+          "**Der Gerätename ist backend-spezifisch.** Der Referenz-Plan-Builder zielt auf CUDA und gibt `--device CUDA0` aus. Der HIP-Build nennt seine Geräte `ROCm0`. Dieser Plan lädt das gesamte Modell und findet *dann* das Gerät nicht.",
+          "**Der native Server gehört zum Release.** Ein Agent aus einem neueren Baum will Capabilities, die der installierte Stage-Server nicht meldet. Ebenfalls erst nach einem vollständigen Modell-Load entdeckt.",
+        ],
+      },
+      { t: "h2", kick: "Was wir daraus mitgenommen haben", text: "Stille ist der teure Fehlermodus" },
+      {
+        t: "p",
+        md: "Jeder dieser Punkte war billig zu beheben und teuer zu finden, und das Muster ist durchgängig: Die kostspieligen Fehlschläge waren die, bei denen ein korrekt aussehendes System nichts tat — oder etwas genau einmal tat. Die Wächter, die wir eingebaut haben, haben alle dieselbe Gestalt: früh ablehnen, an der Stelle, an der der Fehler noch lesbar ist. Der Loader schreibt die Load-Generation auf die Platte, *bevor* das erste Kommando hinausgeht, weil sie sonst unwiederbringlich ist. Er verweigert eine abweichende Generation, statt sie nach der ersten Anfrage zu entdecken. Er leitet die Ergebnis-Schranke ab, statt sie sich zu merken.",
+      },
+      {
+        t: "callout",
+        md: "**Der Ring bedient.** Vier Stages über zwei Maschinen, 113 GiB Gewichte resident, erstes Token nach 1.4 s kalt und ~0.3 s warm, und der Beitrag je Node fließt zum ersten Mal bis ins Abrechnungs-Ledger durch.",
+      },
+    ],
+  },
+  "the-template-is-the-callers-job": {
+    title: "Das Template ist Sache des Aufrufers",
+    dek: "p4 leitet einen opaken Prompt weiter und wendet kein Chat-Template an. Vergiss das, und das Modell beantwortet eine Frage, die du nie gestellt hast — flüssig, und bis zum Token-Limit.",
+    blocks: [
+      {
+        t: "p",
+        md: "Die erste echte Antwort aus unserem wiederhergestellten Ring war korrekte Arithmetik, gefolgt von einem Gespräch, das nie jemand geführt hatte:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, an ein bedientes Modell gestellt.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "Die Zahl stimmt. Alles danach ist das Modell, das ein Dokument fortsetzt — denn genau das haben wir ihm gegeben: die Nachrichten flachgeklopft zu einer einzigen Zeichenkette. Ein Instruct-Modell liest das als Text zum Weiterschreiben, nicht als Zug, den es beantworten soll. Es gibt nie sein End-of-Turn-Token aus, die Generierung läuft also jedes einzelne Mal bis zur Obergrenze.",
+      },
+      { t: "h2", kick: "Wessen Aufgabe", text: "Eine bewusste Auslassung, keine Lücke" },
+      {
+        t: "p",
+        md: "p4 reicht dem Stage-Server einen opaken Prompt weiter und wendet kein eigenes Turn-Format an — der staged Adapter trägt nur ein Werkzeug, um ein Template aus einem GGUF *zu lesen*, nie um eines anzuwenden. Das ist eine vernünftig gezogene Grenze: Die Engine bleibt schmal und modell-agnostisch, und der Aufrufer, der ohnehin weiß, mit welchem Modell er spricht, rendert das Format. Aber eine Grenze, die gezogen und nicht dokumentiert ist, ist eine Grenze, über die jemand läuft.",
+      },
+      {
+        t: "p",
+        md: "Das Template aus der Modelldatei zu lesen, klärte die Sache: ChatML-Züge, `<|im_end|>` als End-of-Turn-Token und ein Assistenten-Zug, der mit einem Thinking-Block beginnt. Mit dem von der Bridge gerenderten Format, dieselbe Frage:",
+      },
+      {
+        t: "code",
+        caption: "Dasselbe Modell, derselbe Ring, das Turn-Format angewendet.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "Der Teil, der Geld kostet", text: "Ein Denk-Durchlauf kann die Antwort auffressen" },
+      {
+        t: "p",
+        md: "Ein Reasoning-Modell gibt Tokens aus, bevor es überhaupt etwas sagt. Gib ihm ein Budget und eine schwere Frage, und es kann das ganze Budget mit Denken verbrauchen und die Antwort leer lassen — und in einem Netzwerk, in dem der Aufrufer **bereits on-chain bezahlt hat, bevor die Anfrage lief**, ist eine leere Antwort kein Qualitätsproblem. Sie ist eine Rechnung für nichts.",
+      },
+      {
+        t: "p",
+        md: "Das Abrechnungs-Gateway wusste das bereits und bittet darum, das Denken abzuschalten. Das Template des Modells hat dafür keinen Schalter, also öffnet *und schließt* die Bridge den Thinking-Block im Prompt, und das Modell schreibt seine Antwort dahinter. Einmal haben wir das auf die naheliegende Weise falsch gemacht: Den Block im Prompt zu schließen hieß, dass das schließende Tag nicht mehr in der Ausgabe stand, also legte der Splitter die gesamte Antwort als Reasoning ab und lieferte leeren Content zurück. Also genau der Fehlschlag, den die Einstellung verhindern soll.",
+      },
+      {
+        t: "callout",
+        md: "**Wo das den Vertrag lässt.** Die Engine leitet Bytes weiter. Die Bridge kennt das Modell: Sie rendert das im Platzierungsplan benannte Turn-Format, gibt den Denk-Durchlauf als `reasoning_content` getrennt von `content` zurück und deckelt eine Anfrage, die mehr Ausgabe verlangt, als der Ring zu liefern geladen wurde — denn eine zu große Anfrage wird sonst rundheraus abgelehnt, und eine kürzere Antwort ist besser als ein Engine-Fehler.",
       },
     ],
   },
