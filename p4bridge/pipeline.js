@@ -22,8 +22,8 @@ const PREFILL = 'application/vnd.p4.llamacpp.prefill-v3+json';
 const OUTPUT_V5 = 'application/vnd.p4.llamacpp.output-v5+json';
 const OUTPUT_V4 = 'application/vnd.p4.llamacpp.output-v4+json';
 const RELEASE_RECEIPT = 'application/vnd.p4.llamacpp.release-receipt-v1+json';
-const BATCH_OBSERVATION = 'application/vnd.p4.llamacpp.batch-observation-v4+json';
-const STAGE_SPAN = 'application/vnd.p4.llamacpp.stage-span-v4+json';
+const BATCH_OBSERVATION = 'application/vnd.p4.llamacpp.batch-observation-v5+json';
+const STAGE_SPAN = 'application/vnd.p4.llamacpp.stage-span-v5+json';
 const ERROR_V2 = 'application/vnd.p4.llamacpp.error-v2+json';
 
 const json = (value) => Buffer.from(JSON.stringify(value), 'utf8');

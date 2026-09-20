@@ -9,7 +9,7 @@
 
 module.exports = {
   cluster: 'devnet',
-  rpcUrl: process.env.LINKCPP_RPC_URL || 'https://api.devnet.solana.com',
+  rpcUrl: process.env.KVR_RPC_URL || 'https://api.devnet.solana.com',
 
   token: {
     name: 'Kvasir',

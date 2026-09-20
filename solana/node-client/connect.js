@@ -1,20 +1,20 @@
 #!/usr/bin/env node
-// linkcpp node client — connect a compute device (desktop/laptop) to a linkcpp
+// Kvasir node client — connect a compute device (desktop/laptop) to a Kvasir
 // account (wallet address) so it appears in the wallet's node monitoring.
 //
 // Zero dependencies (uses Node's built-in fetch, Node 18+).
 //
-//   LINKCPP_SERVICE=http://your-gateway-host:8791 LINKCPP_OWNER=<account_pubkey> node connect.js
+//   KVR_SERVICE=http://your-gateway-host:8791 KVR_OWNER=<account_pubkey> node connect.js
 //   node connect.js <serviceUrl> <ownerPubkey>
 'use strict';
 
 const os = require('os');
 const { execSync } = require('child_process');
 
-const SERVICE = process.env.LINKCPP_SERVICE || process.argv[2];
-const OWNER = process.env.LINKCPP_OWNER || process.argv[3];
+const SERVICE = process.env.KVR_SERVICE || process.argv[2];
+const OWNER = process.env.KVR_OWNER || process.argv[3];
 if (!SERVICE || !OWNER) {
-  console.error('usage: LINKCPP_SERVICE=http://<host>:8791 LINKCPP_OWNER=<account_pubkey> node connect.js');
+  console.error('usage: KVR_SERVICE=http://<host>:8791 KVR_OWNER=<account_pubkey> node connect.js');
   console.error('   or: node connect.js <serviceUrl> <ownerPubkey>');
   process.exit(1);
 }
@@ -29,7 +29,7 @@ function detectOs() {
 }
 function cmdOk(cmd) { try { execSync(cmd, { stdio: 'ignore' }); return true; } catch { return false; } }
 function detectAccel() {
-  if (process.env.LINKCPP_ACCEL) return process.env.LINKCPP_ACCEL.toLowerCase();
+  if (process.env.KVR_ACCEL) return process.env.KVR_ACCEL.toLowerCase();
   if (cmdOk('nvidia-smi -L')) return 'gpu';        // CUDA GPU
   if (os.platform() === 'darwin') return 'gpu';    // Apple GPU (Metal); ANE/NPU also present
   return 'cpu';
@@ -37,9 +37,9 @@ function detectAccel() {
 
 const OSCAT = detectOs();
 const ACCEL = detectAccel();
-const DEVICE_KIND = process.env.LINKCPP_DEVICE_KIND || 'computer';
-const NODE_ID = (process.env.LINKCPP_NODE_ID || os.hostname()).replace(/[^A-Za-z0-9_.-]/g, '-');
-const LABEL = process.env.LINKCPP_LABEL || os.hostname();
+const DEVICE_KIND = process.env.KVR_DEVICE_KIND || 'computer';
+const NODE_ID = (process.env.KVR_NODE_ID || os.hostname()).replace(/[^A-Za-z0-9_.-]/g, '-');
+const LABEL = process.env.KVR_LABEL || os.hostname();
 const base = SERVICE.replace(/\/$/, '');
 
 async function post(path, body) {

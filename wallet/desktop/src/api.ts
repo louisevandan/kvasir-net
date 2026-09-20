@@ -1,4 +1,4 @@
-// Bridge to the Electron main process (window.linkcpp). When absent (plain
+// Bridge to the Electron main process (window.kvasir). When absent (plain
 // browser / Playwright verification), a mock keeps the UI renderable with
 // believable data so layout can be inspected without a chain connection.
 
@@ -40,7 +40,7 @@ export interface NodeStatus {
   measured: NodeMeasurement | null
 }
 
-export interface LinkcppAPI {
+export interface KvasirAPI {
   isElectron: boolean
   wallet: {
     has(): Promise<boolean>
@@ -106,7 +106,7 @@ export interface AdminFetchResult { status: number; ok: boolean; body: string }
 // call goes through main (cross-origin cookies don't work in the renderer);
 // in the served web wallet a same-origin fetch carries the cookie itself.
 export async function adminRequest(url: string, init: { method?: string; body?: string } = {}): Promise<AdminFetchResult> {
-  const bridge = typeof window !== 'undefined' ? window.linkcpp?.gateway.adminFetch : undefined
+  const bridge = typeof window !== 'undefined' ? window.kvasir?.gateway.adminFetch : undefined
   if (bridge) return bridge(url, init)
   const r = await fetch(url, {
     method: init.method || 'GET',
@@ -138,7 +138,7 @@ function servedStakingUrl(): string {
   return DEFAULT_STAKING_URL
 }
 
-function makeMock(): LinkcppAPI {
+function makeMock(): KvasirAPI {
   let cfg: AppConfig = { network: 'devnet', stakingUrl: servedStakingUrl(), language: null }
   const DEMO_MNEMONIC = 'demo demo demo demo demo demo demo demo demo demo demo demo'
   let has = true
@@ -213,14 +213,14 @@ function makeMock(): LinkcppAPI {
   }
 }
 
-declare global { interface Window { linkcpp?: LinkcppAPI } }
+declare global { interface Window { kvasir?: KvasirAPI } }
 
 // Provider selection:
-//  - Electron bridge (window.linkcpp) → keys live in the main process.
+//  - Electron bridge (window.kvasir) → keys live in the main process.
 //  - Served web app (http/https) → real in-browser non-custodial wallet.
 //  - Otherwise (file:// preview / tests) → mock with demo data.
-function pickProvider(): { api: LinkcppAPI; kind: 'electron' | 'browser' | 'mock' } {
-  if (typeof window !== 'undefined' && window.linkcpp) return { api: window.linkcpp, kind: 'electron' }
+function pickProvider(): { api: KvasirAPI; kind: 'electron' | 'browser' | 'mock' } {
+  if (typeof window !== 'undefined' && window.kvasir) return { api: window.kvasir, kind: 'electron' }
   try {
     if (typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol)) {
       return { api: makeBrowserWallet(servedStakingUrl()), kind: 'browser' }
@@ -229,7 +229,7 @@ function pickProvider(): { api: LinkcppAPI; kind: 'electron' | 'browser' | 'mock
   return { api: makeMock(), kind: 'mock' }
 }
 const picked = pickProvider()
-export const api: LinkcppAPI = picked.api
+export const api: KvasirAPI = picked.api
 export const walletKind = picked.kind
 export const isElectron = picked.kind === 'electron'
 // Providers with a real persistent encrypted key store enforce the passphrase
