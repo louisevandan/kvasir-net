@@ -9,8 +9,9 @@
 export const LINKS = {
   github: "https://github.com/louisevandan/kvasir-net",
   // There is no hub link. The control plane that answered at hub.kvasir-ai.net
-  // was retired and the bridge took over its role; the host still resolves and
-  // returns 502, so linking it sends a reader to a dead page.
+  // was retired, the bridge took over its role, and the DNS record was removed
+  // on 2026-09-21 — the host does not resolve, so a link to it cannot even fail
+  // informatively.
   gateway: "https://gate.kvasir-ai.net",
   runNode: "/run-node",
   technology: "/technology",

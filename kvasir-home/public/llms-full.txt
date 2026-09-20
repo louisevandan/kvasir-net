@@ -136,5 +136,5 @@ Runnable self-issue scripts (TS/Node, Python), the streaming + tool-call example
 - p4 (engine, BSL 1.1): https://github.com/louisevandan/kvasir-net/tree/p4
 - Gateway (OpenAI/Anthropic-compatible): https://gate.kvasir-ai.net
 - Installing the mobile builds: https://kvasir-ai.net/install
-(hub.kvasir-ai.net is retired: the control plane behind it was deleted and the bridge took over its role. The host still resolves and returns 502 — do not link it.)
+(hub.kvasir-ai.net is retired: the control plane behind it was deleted and the bridge took over its role. Its DNS record was removed on 2026-09-21, so the host no longer resolves.)
 - Terms & privacy: https://kvasir-ai.net/legal
