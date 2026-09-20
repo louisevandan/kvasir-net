@@ -35,6 +35,7 @@ const TOTAL_CONTEXT = CONTEXT * PARALLEL;
 const N_BATCH = 128;
 const N_UBATCH = 32;
 const HIDDEN_SIZE = 4096;         // step35.embedding_length
+const EXPERT_COUNT = 288;         // step35.expert_count (8 used per token)
 const FLASH_ATTENTION = false;    // conservative for the first recovery load
 
 // The v4 LOAD command carries the adapter's resource profile, and the adapter
@@ -222,6 +223,13 @@ const plan = {
     name: 'Step-3.7-Flash (428B MoE)',
     context_size: CONTEXT,
     max_tokens: 1024,
+    // Dimensions the participation market needs to hand a volunteering node a
+    // window. They travel in the plan so a reload rewrites them into the
+    // catalog: the loader regenerates that file, and anything not in the plan
+    // is lost the next time the ring is loaded.
+    n_embd: HIDDEN_SIZE,
+    n_layer: TOTAL_LAYERS,
+    n_expert: EXPERT_COUNT,
     // From the GGUF's own tokenizer.chat_template: ChatML turns, ending the
     // assistant turn opener with a <think> block, and <|im_end|> (128007) as
     // the end-of-turn token. p4 applies no template, so OUTER renders this.

@@ -20,7 +20,10 @@
           "node": "step37-s1",
           "generation": 1789893888650
         }
-      ]
+      ],
+      "n_embd": 4096,
+      "n_layer": 45,
+      "n_expert": 288
     }
   ]
 }

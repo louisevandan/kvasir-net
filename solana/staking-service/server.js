@@ -2114,10 +2114,18 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 // ---- bridge participation API pass-through ---------------------------------------
 // Remote expert workers (NAT) reach the LAN-only bridge's participation surface
-// through the gateway: market calls + shard download. The caller's OWN token
-// forwards untouched — the bridge enforces auth, the gateway grants nothing.
-app.all(['/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
-         '/api/proxy/models/:model/expert-shard'], async (req, res) => {
+// through the gateway: node-token issuance, market calls, and shard download.
+// The caller's OWN token forwards untouched — the bridge enforces auth, the
+// gateway grants nothing.
+//
+// /api/auth/* is deliberately in this list and deliberately not authenticated
+// here: it is how a phone that has no token yet gets one, and it proves itself
+// with a wallet signature the bridge verifies. The gateway's own admin login is
+// /api/admin/*, which is a different surface with a different lifetime.
+app.all(['/api/auth/challenge', '/api/auth/node-token',
+         '/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
+         '/api/proxy/models/:model/expert-shard',
+         '/api/proxy/models/:model/stage'], async (req, res) => {
   if (!BRIDGE_URL) return res.status(503).json({ error: 'no bridge configured' });
   try {
     const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';

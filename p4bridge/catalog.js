@@ -66,6 +66,15 @@ function load(file) {
       // template rendered for a Llama-3 model produces fluent nonsense, not
       // an error. Unstated means 'raw', which is what this bridge did before
       // the field existed.
+      // Dimensions the participation market hands to a volunteering node. A
+      // client aborts an assignment when n_embd is missing rather than guess a
+      // hidden size, so these are required for a model to be offered as work.
+      // They are recorded here rather than read from the GGUF on the request
+      // path: reading a 122 GB file's metadata is seconds-slow and a coverage
+      // poll must not wait for it.
+      nEmbd: model.n_embd ?? null,
+      nLayer: model.n_layer ?? null,
+      nExpert: model.n_expert ?? null,
       promptFormat: model.prompt_format ?? 'raw',
       // A reasoning model opens its reply with a thinking block. Kept out of
       // `content` so a chat client shows the answer, and returned alongside.

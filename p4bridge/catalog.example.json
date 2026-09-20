@@ -28,7 +28,10 @@
           "node": "step37-s3",
           "generation": 1
         }
-      ]
+      ],
+      "n_embd": 4096,
+      "n_layer": 45,
+      "n_expert": 288
     }
   ]
 }

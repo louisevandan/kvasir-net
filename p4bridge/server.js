@@ -27,6 +27,9 @@ const crypto = require('node:crypto');
 const { connect } = require('./wire');
 const { Pipeline } = require('./pipeline');
 const catalogModule = require('./catalog');
+const { NodeAuth } = require('./nodeauth');
+const { Participation } = require('./participation');
+const wsrelay = require('./wsrelay');
 
 const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000;
 // Optional shared secret. p4 itself has no auth, so when the bridge is not on
@@ -34,6 +37,9 @@ const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000
 // a private deployment; set it and every path but /health needs the header.
 const SERVICE_TOKEN = (process.env.P4_BRIDGE_TOKEN ?? '').trim();
 const HEADERS = ['x-kvasir-service-token'];
+
+/** Paths the participation module owns, including its own authentication. */
+const PARTICIPATION_PATHS = /^\/api\/(auth\/(challenge|node-token)|expert-(demand|volunteer|coverage))$/;
 
 function authorized(req) {
   if (!SERVICE_TOKEN) return true;
@@ -127,6 +133,26 @@ class Bridge {
     await pipeline.install();
     this.pipelines.set(model.id, pipeline);
     return pipeline;
+  }
+
+  /**
+   * Credit a phone for the bytes its relay carried.
+   *
+   * This is a different kind of contribution from a stage's rows and is paid to
+   * a different wallet: the ring stages here are ours, but a participating node
+   * is someone else's device and earns for the wallet that authenticated it.
+   * The gateway reads both out of the same ledger, so the owner has to travel
+   * with the entry rather than be assumed.
+   */
+  creditRelay(nodeId, units, { owner = '', model = '' } = {}) {
+    if (!(units > 0)) return;
+    const current = this.contributions.get(nodeId) ?? {
+      units: 0, rows: 0, requests: 0, agent: null, tps: null,
+      owner, model, backend: 'relay', os: 'mobile', accelerator: 'gpu', deviceKind: 'phone',
+    };
+    current.units += units;
+    if (owner) current.owner = owner;
+    this.contributions.set(nodeId, current);
   }
 
   /**
@@ -264,6 +290,18 @@ function createServer(bridge) {
     const url = new URL(req.url, 'http://bridge.local');
     const path = url.pathname.replace(/\/+$/, '') || '/';
     try {
+      // The participation surface authenticates itself: /api/auth/* is open by
+      // necessity, and everything after it takes a node token rather than the
+      // machine-to-machine secret. It therefore has to be offered the request
+      // before the blanket gate below, which knows only the secret.
+      if (bridge.participation && PARTICIPATION_PATHS.test(path)) {
+        let body = {};
+        if (req.method === 'POST') {
+          try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+          catch { return send(res, 400, { error: 'request body is not JSON' }); }
+        }
+        if (await bridge.participation.handle(req, res, path, url.searchParams, body)) return;
+      }
       if (path !== '/health' && path !== '/api/health' && !authorized(req)) {
         return send(res, 401, { error: { message: 'service token required', type: 'unauthorized' } });
       }
@@ -305,13 +343,15 @@ function createServer(bridge) {
       if (req.method === 'GET' && path === '/api/contributions') {
         const contributions = [...bridge.contributions.entries()].map(([node, entry]) => ({
           node_id: node,
-          owner: bridge.operatorWallet,
+          // A stage this bridge runs earns for the operator; a phone that
+          // carried bytes over a relay earns for the wallet that opened it.
+          owner: entry.owner || bridge.operatorWallet,
           units: Number(entry.units.toFixed(6)),
           node_name: node,
-          backend: 'p4',
-          os: 'linux',
-          accelerator: 'gpu',
-          device_kind: 'server',
+          backend: entry.backend ?? 'p4',
+          os: entry.os ?? 'linux',
+          accelerator: entry.accelerator ?? 'gpu',
+          device_kind: entry.deviceKind ?? 'server',
           perf_tps: entry.tps === null || entry.tps === undefined ? null : Number(entry.tps.toFixed(2)),
           rows: entry.rows,
           requests: entry.requests,
@@ -431,6 +471,35 @@ async function chatCompletions(bridge, model, req, res) {
   res.end();
 }
 
+/**
+ * Splice the two relay sockets. A phone cannot be dialled — carrier NAT and a
+ * 443-only edge mean neither side can open a socket to the other — so both
+ * dial out and meet here.
+ */
+function attachRelays(server, bridge) {
+  server.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url, 'http://bridge.local');
+    const path = url.pathname.replace(/\/+$/, '');
+    if (!bridge.participation || !['/api/expert-relay', '/api/ring-relay'].includes(path)) {
+      socket.destroy();
+      return;
+    }
+    const target = bridge.participation.resolveUpgrade(path, url.searchParams);
+    if (!target || target.code) {
+      // A close code rather than a reset: the clients log it, and 4401 from
+      // 4404 is the difference between "your token expired" and "nothing has
+      // claimed that session yet", which are diagnosed very differently.
+      return wsrelay.refuse(req, socket, target?.code ?? 4404, target?.reason ?? 'unknown relay');
+    }
+    wsrelay.bridge(req, socket, head, target, {
+      onBytes: (direction, bytes) =>
+        bridge.participation.noteRelayBytes(target.session, direction, bytes),
+      onClose: () => bridge.participation.noteRelayClosed(target.session),
+      log: (line) => console.log(`[relay ${target.session}] ${line}`),
+    });
+  });
+}
+
 async function main() {
   const catalogFile = process.env.P4_BRIDGE_CATALOG ?? './catalog.json';
   const port = Number(process.env.P4_BRIDGE_PORT ?? 19100);
@@ -443,11 +512,40 @@ async function main() {
     operatorWallet: process.env.P4_BRIDGE_OPERATOR_WALLET ?? '',
   });
   await bridge.refresh();
+
+  // Participation is optional: without a token secret a node token could not
+  // outlive a restart, and a fleet of phones silently dropping off is worse
+  // than a surface that is plainly absent. Say which it is at startup.
+  const tokenSecret = (process.env.KVR_NODE_TOKEN_SECRET ?? '').trim();
+  if (tokenSecret) {
+    const minKvr = Number(process.env.KVR_PARTICIPATION_MIN_KVR ?? 0);
+    bridge.participation = new Participation({
+      auth: new NodeAuth({
+        secret: tokenSecret,
+        serviceToken: SERVICE_TOKEN,
+        // Operating a bridge and contributing compute to one are different
+        // things. The retired hub conflated them and refused every phone that
+        // ever asked; participation is open here unless an operator sets a
+        // floor, and that floor is a separate knob from operator eligibility.
+        eligible: minKvr > 0 ? async () => false : null,
+      }),
+      credit: (nodeId, units, meta) => bridge.creditRelay(nodeId, units, meta),
+      models: () => bridge.catalog.models
+        .filter((m) => m.nEmbd && m.nLayer && m.nExpert)
+        .map((m) => ({ id: m.id, name: m.name, nEmbd: m.nEmbd, nLayer: m.nLayer, nExpert: m.nExpert })),
+    });
+  }
+
   setInterval(() => { bridge.refresh().catch(() => {}); }, bridge.inspectIntervalMs).unref?.();
-  createServer(bridge).listen(port, host, () => {
+  const server = createServer(bridge);
+  attachRelays(server, bridge);
+  server.listen(port, host, () => {
     const serving = bridge.controllers().filter((controller) => controller.serving).map((controller) => controller.id);
     const auth = SERVICE_TOKEN ? 'token required' : 'NO TOKEN — anyone who can reach this can use the ring';
-    console.log(`p4-bridge listening on ${host}:${port} · ${auth} · ingress ${bridge.catalog.ingressAgent} · serving [${serving.join(', ') || 'none'}]`);
+    const market = bridge.participation
+      ? `participation open for [${bridge.catalog.models.filter((m) => m.nEmbd).map((m) => m.id).join(', ') || 'no model with recorded dimensions'}]`
+      : 'participation off (set KVR_NODE_TOKEN_SECRET to serve it)';
+    console.log(`p4-bridge listening on ${host}:${port} · ${auth} · ingress ${bridge.catalog.ingressAgent} · serving [${serving.join(', ') || 'none'}] · ${market}`);
   });
 }
 
@@ -455,4 +553,4 @@ if (require.main === module) {
   main().catch((error) => { console.error(`p4-bridge failed to start: ${error.message}`); process.exit(1); });
 }
 
-module.exports = { Bridge, createServer, promptFrom };
+module.exports = { Bridge, createServer, attachRelays, promptFrom };
