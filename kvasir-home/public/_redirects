@@ -1,0 +1,7 @@
+# Desktop installers are served from the Cloudflare R2 bucket `kvasir-downloads`
+# but published under kvasir-ai.net/download/... so the advertised link survives
+# a change of storage. Keys are version-less: re-upload the same key to ship a
+# new build and every published link keeps working.
+/download/Kvasir-Wallet-mac-universal.dmg   https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/Kvasir-Wallet-mac-universal.dmg   302
+/download/Kvasir-Wallet-win-x64.exe         https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/Kvasir-Wallet-win-x64.exe         302
+/download/Kvasir-Wallet-linux-x64.tar.gz    https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/Kvasir-Wallet-linux-x64.tar.gz    302

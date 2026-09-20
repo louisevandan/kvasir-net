@@ -1,5 +1,5 @@
 {
-  "name": "kvasir-wallet-desktop",
+  "name": "linkcpp-wallet-desktop",
   "version": "0.1.0",
   "description": "Kvasir non-custodial KVR wallet + node dashboard for Windows/macOS/Linux desktop",
   "author": "kvasir-ai.net",
@@ -84,6 +84,7 @@
         }
       ],
       "category": "public.app-category.finance",
+      "x64ArchFiles": "Contents/Resources/p4/p4-agent",
       "identity": null,
       "extraResources": [
         {

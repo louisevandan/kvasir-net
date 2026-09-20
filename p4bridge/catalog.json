@@ -4,29 +4,21 @@
     {
       "id": "step-3.7-flash",
       "name": "Step-3.7-Flash (428B MoE)",
-      "load_generation": null,
+      "load_generation": 1789893888650,
       "context_size": 4096,
-      "max_tokens": 512,
+      "max_tokens": 1024,
+      "prompt_format": "chatml",
+      "reasoning": true,
       "stages": [
         {
           "agent": "tcp://127.0.0.1:42011",
           "node": "step37-s0",
-          "generation": 1
+          "generation": 1789893888650
         },
         {
           "agent": "tcp://127.0.0.1:42011",
           "node": "step37-s1",
-          "generation": 1
-        },
-        {
-          "agent": "tcp://127.0.0.1:42012",
-          "node": "step37-s2",
-          "generation": 1
-        },
-        {
-          "agent": "tcp://127.0.0.1:42012",
-          "node": "step37-s3",
-          "generation": 1
+          "generation": 1789893888650
         }
       ]
     }

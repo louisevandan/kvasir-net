@@ -295,7 +295,7 @@ final class HubParticipation: ObservableObject {
             // Node tokens are verified from the Authorization bearer (hub
             // _bearer_or_cookie); the M2M header covers a static service token.
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue(token, forHTTPHeaderField: "X-Linkcpp-Service-Token")
+            req.setValue(token, forHTTPHeaderField: "X-Kvasir-Service-Token")
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await session.data(for: req)
@@ -310,7 +310,7 @@ final class HubParticipation: ObservableObject {
             // Node tokens are verified from the Authorization bearer (hub
             // _bearer_or_cookie); the M2M header covers a static service token.
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue(token, forHTTPHeaderField: "X-Linkcpp-Service-Token")
+            req.setValue(token, forHTTPHeaderField: "X-Kvasir-Service-Token")
         }
         let (data, resp) = try await session.data(for: req)
         guard (200..<300).contains((resp as? HTTPURLResponse)?.statusCode ?? 0) else { return nil }
@@ -324,7 +324,7 @@ final class HubParticipation: ObservableObject {
             // Node tokens are verified from the Authorization bearer (hub
             // _bearer_or_cookie); the M2M header covers a static service token.
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue(token, forHTTPHeaderField: "X-Linkcpp-Service-Token")
+            req.setValue(token, forHTTPHeaderField: "X-Kvasir-Service-Token")
         }
         let (tmp, resp) = try await session.download(for: req)
         guard (200..<300).contains((resp as? HTTPURLResponse)?.statusCode ?? 0) else {

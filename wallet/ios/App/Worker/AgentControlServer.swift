@@ -419,7 +419,7 @@ final class AgentControlServer: ObservableObject {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let serviceToken { req.setValue(serviceToken, forHTTPHeaderField: "X-Linkcpp-Service-Token") }
+        if let serviceToken { req.setValue(serviceToken, forHTTPHeaderField: "X-Kvasir-Service-Token") }
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         URLSession.shared.dataTask(with: req).resume()
     }

@@ -148,7 +148,7 @@ class ExpertWorker(
             // _bearer_or_cookie); the M2M header covers a static service token.
             if (token.isNotEmpty()) {
                 setRequestProperty("Authorization", "Bearer $token")
-                setRequestProperty("X-Linkcpp-Service-Token", token)
+                setRequestProperty("X-Kvasir-Service-Token", token)
             }
         }
         c.outputStream.use { it.write(body.toString().toByteArray()) }
@@ -161,7 +161,7 @@ class ExpertWorker(
             connectTimeout = 12000; readTimeout = 600000
             if (token.isNotEmpty()) {
                 setRequestProperty("Authorization", "Bearer $token")
-                setRequestProperty("X-Linkcpp-Service-Token", token)
+                setRequestProperty("X-Kvasir-Service-Token", token)
             }
         }
         if (c.responseCode !in 200..299) return false

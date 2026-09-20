@@ -4,6 +4,17 @@ A non-custodial KVR wallet and distributed-inference node dashboard for the
 desktop (Windows x86/x64, macOS, Linux), built with **React + Electron**. Feature
 parity with the iOS/Android wallets, laid out as a full-screen dashboard.
 
+## The package name is installed-data identity
+
+`package.json`'s `name` is `linkcpp-wallet-desktop`, and it must stay that way
+even though nothing else here is called linkcpp any more. Electron derives
+`app.getName()` from it when the app is not packaged, and `app.getName()` picks
+the `userData` directory that holds the encrypted mnemonic. Renaming it moves
+every existing wallet somewhere the app will not look for it — the wallet simply
+appears to be gone. It is the same kind of identity as `appId` and the mobile
+bundle identifiers, which are also still `ai.banya.linkcpp.*` for the same
+reason. Changing any of them is a data migration, not a rename.
+
 ## Features
 - Non-custodial wallet — BIP39 mnemonic, SLIP-0010 ed25519 at `m/44'/501'/0'/0'`
   (same derivation as the mobile apps and Phantom). The mnemonic is encrypted at

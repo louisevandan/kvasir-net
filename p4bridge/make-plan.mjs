@@ -90,26 +90,50 @@ const resourceProfile = (physicalResultBytes) => ({
 
 const HOSTS = {
   h1: {
-    agent: 'tcp://10.10.10.111:42011',
+    agent: 'tcp://127.0.0.1:42011',
     model: '/home/banya/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf',
     binary: '/home/banya/p4-native-build/hip/p4_staged_server',
   },
   h2: {
-    agent: 'tcp://10.10.10.2:42012',
-    model: '/home/banya2/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf',
-    binary: '/home/banya2/p4-native-build/hip/p4_staged_server',
+    agent: 'tcp://127.0.0.1:42012',
+    model: '/home/banya/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf',
+    binary: '/home/banya/p4-native-build/hip/p4_staged_server',
   },
 };
 
 // Two stages per host, each on a GCD of a different MI250 package (0 and 2),
 // so the pair does not share one package's memory bandwidth while the pipeline
 // keeps both busy at once.
-const PLACEMENT = [
-  { node: 'step37-s0', host: 'h1', begin: 0,  end: 12, gcd: 0, port: 42100 },
-  { node: 'step37-s1', host: 'h1', begin: 12, end: 23, gcd: 2, port: 42101 },
-  { node: 'step37-s2', host: 'h2', begin: 23, end: 34, gcd: 0, port: 42102 },
-  { node: 'step37-s3', host: 'h2', begin: 34, end: 45, gcd: 2, port: 42103 },
-];
+// Two stages, both on the host that still holds the model. A pipeline needs at
+// least two; this is the shortest ring the engine will accept, and the fewest
+// hops a token can cross.
+const PLACEMENT = (process.env.P4_PLACEMENT ?? '3x1').split(',').includes('4x1')
+  ? [
+    { node: 'step37-s0', host: 'h1', begin: 0,  end: 12, gcd: 0, port: 42100 },
+    { node: 'step37-s1', host: 'h1', begin: 12, end: 23, gcd: 2, port: 42101 },
+    { node: 'step37-s2', host: 'h1', begin: 23, end: 34, gcd: 4, port: 42102 },
+    { node: 'step37-s3', host: 'h1', begin: 34, end: 45, gcd: 6, port: 42103 },
+  ]
+  : process.env.P4_PLACEMENT === '4x2agents'
+  ? [
+    // Four stages, two agents, ONE host. This is the slow four-stage shape with
+    // the physical host boundary removed and nothing else changed — the one
+    // variable the earlier comparison moved twice at once.
+    { node: 'step37-s0', host: 'h1', begin: 0,  end: 12, gcd: 0, port: 42100 },
+    { node: 'step37-s1', host: 'h2', begin: 12, end: 23, gcd: 2, port: 42101 },
+    { node: 'step37-s2', host: 'h1', begin: 23, end: 34, gcd: 4, port: 42102 },
+    { node: 'step37-s3', host: 'h2', begin: 34, end: 45, gcd: 6, port: 42103 },
+  ]
+  : process.env.P4_PLACEMENT === '2x1'
+  ? [
+    { node: 'step37-s0', host: 'h1', begin: 0,  end: 23, gcd: 0, port: 42100 },
+    { node: 'step37-s1', host: 'h1', begin: 23, end: 45, gcd: 2, port: 42101 },
+  ]
+  : [
+    { node: 'step37-s0', host: 'h1', begin: 0,  end: 15, gcd: 0, port: 42100 },
+    { node: 'step37-s1', host: 'h1', begin: 15, end: 30, gcd: 2, port: 42101 },
+    { node: 'step37-s2', host: 'h1', begin: 30, end: 45, gcd: 4, port: 42102 },
+  ];
 
 const quote = (value) => {
   if (value.includes('"')) throw new Error('plan values cannot contain a double quote');
@@ -163,7 +187,19 @@ const stages = PLACEMENT.map((stage) => {
       // name is set to the same value so either resolution masks one GCD.
       ['HIP_VISIBLE_DEVICES', `${stage.gcd}`],
       ['CUDA_VISIBLE_DEVICES', `${stage.gcd}`],
+      // All the arithmetic runs on the GCD; the ggml CPU pool exists only to
+      // drive it. libgomp's default wait policy spins those 48 threads while
+      // idle, so two stages peg all 96 logical cores and the agent's per-event
+      // work — which is what actually paces the ring — runs on scraps. Measured:
+      // the stage servers burned ~790 CPU-seconds each per 100-token run.
+      ['OMP_WAIT_POLICY', 'PASSIVE'],
+      ['GOMP_SPINCOUNT', '0'],
       ['P4_STAGED_TRACE_HELLO', '1'],
+      // Per-step and per-hop timing, so a stall can be attributed to a hop
+      // rather than guessed at.
+      ['P4_STAGED_TRACE_STEP', '1'],
+      ['P4_STAGED_TRACE_HOP', '1'],
+
     ],
     n_batch: N_BATCH,
     n_ubatch: N_UBATCH,

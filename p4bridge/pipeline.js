@@ -170,6 +170,10 @@ class Pipeline {
         }
         if (type === BATCH_OBSERVATION) {
           const body = JSON.parse(event.payload.toString('utf8'));
+          if (process.env.P4_BRIDGE_TRACE_BATCHES === '1') {
+            const node = event.meta.source.node ?? '?';
+            console.log(`[batch] ${node} rows=${body.logical_rows} stage_ms=${body.stage_ms} idle_ms=${body.idle_ms} idle_gated=${body.idle_gated} ready_rows=${body.ready_rows} ready_seq=${body.ready_sequences} phys=${(body.physical_batches||[]).length}`);
+          }
           if (body.observation_id && result.observations.has(body.observation_id)) return;
           if (body.observation_id) result.observations.add(body.observation_id);
           for (const batch of body.physical_batches ?? []) {

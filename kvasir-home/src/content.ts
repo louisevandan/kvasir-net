@@ -23,14 +23,15 @@ export const LINKS = {
 /* Download destinations for the node-operator guide. Empty string => the guide
    renders a "준비 중 (coming soon)" state instead of a dead link. Fill these in
    as the desktop installers ship and the mobile apps are published. */
-// Desktop installers live in the Cloudflare R2 bucket `kvasir-downloads`
-// (public r2.dev URL). Version-less object keys keep these links stable across
-// releases — re-upload the same key to publish a new build.
-const R2_DOWNLOADS = "https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev";
+// Desktop installers are published under kvasir-ai.net/download/... — see
+// public/_redirects, which forwards each key to the Cloudflare R2 bucket
+// `kvasir-downloads`. Keys carry no version, so re-uploading the same key ships
+// a new build without invalidating a single published link.
+const DOWNLOAD_BASE = "/download";
 export const DOWNLOADS = {
-  desktopMac: `${R2_DOWNLOADS}/Kvasir-Wallet-mac-universal.dmg`,
-  desktopWin: `${R2_DOWNLOADS}/Kvasir-Wallet-win-x64.exe`,
-  desktopLinux: `${R2_DOWNLOADS}/Kvasir-Wallet-linux-x64.tar.gz`,
+  desktopMac: `${DOWNLOAD_BASE}/Kvasir-Wallet-mac-universal.dmg`,
+  desktopWin: `${DOWNLOAD_BASE}/Kvasir-Wallet-win-x64.exe`,
+  desktopLinux: `${DOWNLOAD_BASE}/Kvasir-Wallet-linux-x64.tar.gz`,
   appStore: "",
   googlePlay: "",
 };

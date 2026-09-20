@@ -530,7 +530,10 @@ fun DeviceConnectScreen(vm: WalletViewModel, nav: NavController) {
     val staking = remember(vm.stakingUrl) { StakingService(vm.stakingUrl) }
     val androidId = remember { Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID) ?: "device" }
     val nodeId = "android-${androidId.take(8)}"
-    val command = "LINKCPP_SERVICE=${vm.stakingUrl} LINKCPP_OWNER=$owner node connect.js"
+    // The variables and the path are read verbatim off the screen by whoever
+    // runs the node client, so they must be the ones solana/node-client/connect.js
+    // actually reads (KVR_SERVICE / KVR_OWNER) and the path it actually lives at.
+    val command = "KVR_SERVICE=${vm.stakingUrl} KVR_OWNER=$owner node solana/node-client/connect.js"
     var urlText by remember { mutableStateOf(vm.stakingUrl) }
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
