@@ -20,17 +20,32 @@ const { connect } = require('kvasir-p4-bridge/wire')
 const DEFAULT_PORT = Number(process.env.KVASIR_P4_PORT || 42031)
 const LOG_LINES = 200
 
-/** Where a p4-agent binary may live: explicit env, packaged resources, repo build. */
+/**
+ * Where a p4-agent binary may live.
+ *
+ * The packaged app carries its own — `scripts/build-agent.cjs` builds it and
+ * electron-builder puts it under `resources/p4`. Before that existed this
+ * returned null on every machine nobody had built p4 on, which was all of them,
+ * and the node button could not work.
+ *
+ * The others are for developing: an explicit override first, then a checkout
+ * beside this repository. Windows names it with an extension, and forgetting
+ * that is how a Windows build ships an agent it then cannot find.
+ */
 function agentBinary() {
+  const exe = process.platform === 'win32' ? 'p4-agent.exe' : 'p4-agent'
   const explicit = process.env.KVASIR_P4_AGENT
   if (explicit && fs.existsSync(explicit)) return explicit
   const candidates = []
-  if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, 'p4', 'p4-agent'))
+  if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, 'p4', exe))
+  // Unpacked during development, before anything is packaged.
+  candidates.push(path.join(__dirname, '..', 'resources', 'p4', process.platform, exe))
   const repo = path.resolve(__dirname, '..', '..', '..')
   candidates.push(
-    path.join(repo, 'p4', 'build', 'release', 'p4-agent'),
-    path.join(repo, 'p4', 'target', 'release', 'p4-agent'),
-    path.join(repo, 'build', 'release', 'p4-agent'),
+    path.join(repo, '..', 'p4', 'target', 'release', exe),
+    path.join(repo, 'p4', 'target', 'release', exe),
+    path.join(repo, 'p4', 'build', 'release', exe),
+    path.join(repo, 'build', 'release', exe),
   )
   return candidates.find((candidate) => fs.existsSync(candidate)) || null
 }

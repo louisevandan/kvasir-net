@@ -11,10 +11,11 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_DEV=1 electron .\"",
     "build:web": "vite build",
     "build": "vite build",
-    "build:win": "vite build && electron-builder --win --x64",
-    "build:mac": "vite build && electron-builder --mac",
-    "build:linux": "vite build && electron-builder --linux --x64",
-    "typecheck": "tsc --noEmit"
+    "build:win": "node scripts/build-agent.cjs --platform win32 && vite build && electron-builder --win --x64",
+    "build:mac": "node scripts/build-agent.cjs --platform darwin && vite build && electron-builder --mac",
+    "build:linux": "node scripts/build-agent.cjs --platform linux && vite build && electron-builder --linux --x64",
+    "typecheck": "tsc --noEmit",
+    "build:agent": "node scripts/build-agent.cjs"
   },
   "overrides": {
     "uuid": "9.0.1"
@@ -83,7 +84,13 @@
         }
       ],
       "category": "public.app-category.finance",
-      "identity": null
+      "identity": null,
+      "extraResources": [
+        {
+          "from": "resources/p4/darwin",
+          "to": "p4"
+        }
+      ]
     },
     "dmg": {
       "title": "Kvasir Wallet ${version}"
@@ -96,6 +103,12 @@
             "x64"
           ]
         }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/p4/win32",
+          "to": "p4"
+        }
       ]
     },
     "linux": {
@@ -107,7 +120,13 @@
           ]
         }
       ],
-      "category": "Finance"
+      "category": "Finance",
+      "extraResources": [
+        {
+          "from": "resources/p4/linux",
+          "to": "p4"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
