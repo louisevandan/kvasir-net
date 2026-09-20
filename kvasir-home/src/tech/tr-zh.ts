@@ -454,7 +454,7 @@ inside the lock:
           "**机器加入的三种方式：**可编辑 VRAM/RAM/CPU 预算的固定**本地节点槽**；注册另一个 hub 并导入其节点的**远程单元**；以及**受管节点代理**——通过普通请求/响应 HTTP 加入的纯 worker 服务，刻意不用持久流，因而能在简单的 LAN/VPN 路由下存活。",
           "**兼容性闸门是一等概念：**每个单元、节点和代理都上报协议/运行时包身份及后端细节。单元、运行时包、推理引擎 修订版与 RPC ABI 不匹配会在 **bind/plan/load/infer 之前硬性阻断**——后端差异（CUDA/Metal/Vulkan/CPU）作为能力记录，而非拒绝。",
           "**规划器**读取 GGUF 元数据，产出按节点的连续层放置、`--tensor-split`、KV 缓存/层/专家 VRAM 估算，以及可选的专家 FFN RAM 卸载。",
-          "**网关：**每个控制器都暴露 OpenAI 兼容（`/v1/chat/completions`、`/v1/responses`、`/v1/models`）与 Anthropic 兼容（`/anthropic/v1/messages|models`）端点，由同一个已加载模型支撑——现有客户端无需改动即可使用。",
+          "**网关：**每个控制器都暴露 OpenAI 兼容（`/v1/chat/completions`、`/v1/models`）与 Anthropic 兼容（`/anthropic/v1/messages|models`）端点，由同一个已加载模型支撑——现有客户端无需改动即可使用。",
         ],
       },
       {

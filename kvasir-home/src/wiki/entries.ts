@@ -271,7 +271,7 @@ export const WIKI_ENTRIES: WikiEntry[] = [
     blocks: [
       {
         t: "p",
-        md: "The **gateway** is where developers meet the network. Every controller exposes OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) and Anthropic-compatible ones (`/anthropic/v1/messages`, `/anthropic/v1/models`), all backed by the same loaded model — an existing client works by changing only the base URL and key.",
+        md: "The **gateway** is where developers meet the network. Every controller exposes OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/models`) and Anthropic-compatible ones (`/anthropic/v1/messages`, `/anthropic/v1/models`), all backed by the same loaded model — an existing client works by changing only the base URL and key.",
       },
       {
         t: "code",

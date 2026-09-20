@@ -153,7 +153,7 @@ export const ko: Dict = {
     title: "하나의 엔드포인트, 여러 기기가 뒷받침",
     lede: "기존 OpenAI 또는 Anthropic 클라이언트를 그대로 쓰세요. Kvasir 게이트웨이로 연결하고 사용한 만큼의 KVR을 지불하면 됩니다. 내 기기가 추론에 기여하면 사용료가 무료입니다.",
     points: [
-      "OpenAI 호환: /v1/chat/completions, /v1/responses, /v1/models에 그대로 사용",
+      "OpenAI 호환: /v1/chat/completions, /v1/models에 그대로 사용",
       "Anthropic 호환: /anthropic/v1/messages 및 /anthropic/v1/models",
       "추론당 KVR 지불: quote → payment → inference",
       "접근 가능한 브릿지에서 집계된 실시간 모델 카탈로그",

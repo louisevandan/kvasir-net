@@ -161,7 +161,7 @@ export const fr: Dict = {
     title: "Un seul endpoint, adossé à de nombreux appareils",
     lede: "Conservez votre client OpenAI ou Anthropic existant. Pointez-le vers la passerelle Kvasir et payez à l’inférence en KVR — sans réécriture.",
     points: [
-      "Compatible OpenAI : prêt à l’emploi pour /v1/chat/completions, /v1/responses, /v1/models",
+      "Compatible OpenAI : prêt à l’emploi pour /v1/chat/completions et /v1/models",
       "Compatible Anthropic : /anthropic/v1/messages et /anthropic/v1/models",
       "Paiement à l’inférence en KVR : devis → paiement → inférence",
       "Catalogue de modèles en direct agrégé depuis les bridges accessibles",

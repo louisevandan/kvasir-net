@@ -542,7 +542,7 @@ inside the lock:
           "**Three ways a machine joins:** fixed **local node slots** with editable VRAM/RAM/CPU budgets; **remote units** — register another hub and import its nodes; and **managed node agents** — worker-only services that join over plain request/response HTTP, deliberately not a persistent stream, so they survive simple LAN/VPN routing.",
           "**Compatibility gating is first-class:** every unit, node and agent reports a protocol / runtime-pack identity plus backend details. Unit, runtime-pack, inference engine-revision and RPC-ABI mismatches are **hard-blocked before bind, plan, load or infer** — backend differences (CUDA/Metal/Vulkan/CPU) are tracked as capabilities, not rejections.",
           "**The planner** reads GGUF metadata and produces contiguous per-node layer placement, `--tensor-split`, KV-cache/layer/expert VRAM estimates, and optional expert-FFN offload to RAM.",
-          "**Gateways:** every controller exposes OpenAI-compatible (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) and Anthropic-compatible (`/anthropic/v1/messages|models`) endpoints, backed by the same loaded model — existing clients work unchanged.",
+          "**Gateways:** every controller exposes OpenAI-compatible (`/v1/chat/completions`, `/v1/models`) and Anthropic-compatible (`/anthropic/v1/messages|models`) endpoints, backed by the same loaded model — existing clients work unchanged.",
         ],
       },
       {

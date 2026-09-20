@@ -184,7 +184,7 @@ export const idWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**Gateway** adalah tempat pengembang bertemu jaringan. Setiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), semuanya ditopang model termuat yang sama — klien yang ada berfungsi hanya dengan mengganti base URL dan kunci.",
+        md: "**Gateway** adalah tempat pengembang bertemu jaringan. Setiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), semuanya ditopang model termuat yang sama — klien yang ada berfungsi hanya dengan mengganti base URL dan kunci.",
       },
       {
         t: "code",

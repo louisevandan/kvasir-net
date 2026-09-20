@@ -455,7 +455,7 @@ inside the lock:
           "**Tiga cara mesin bergabung:** **slot node lokal** tetap dengan anggaran VRAM/RAM/CPU yang dapat diedit; **unit jarak jauh** — daftarkan hub lain dan impor node-nodenya; dan **agen node terkelola** — layanan khusus-worker yang bergabung lewat HTTP request/response sederhana, sengaja tanpa stream persisten agar bertahan di perutean LAN/VPN sederhana.",
           "**Gerbang kompatibilitas kelas satu:** tiap unit, node, dan agen melaporkan identitas protokol/runtime-pack plus detail backend. Ketidakcocokan unit, runtime-pack, revisi mesin inferensi, dan ABI RPC **diblokir keras sebelum bind, plan, load, atau infer** — perbedaan backend (CUDA/Metal/Vulkan/CPU) dicatat sebagai kapabilitas, bukan penolakan.",
           "**Planner** membaca metadata GGUF dan menghasilkan penempatan lapisan bersambung per node, `--tensor-split`, perkiraan VRAM KV-cache/lapisan/pakar, dan offload FFN pakar opsional ke RAM.",
-          "**Gateway:** tiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages|models`), ditopang model termuat yang sama — klien yang ada bekerja tanpa perubahan.",
+          "**Gateway:** tiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages|models`), ditopang model termuat yang sama — klien yang ada bekerja tanpa perubahan.",
         ],
       },
       {

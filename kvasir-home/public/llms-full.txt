@@ -57,7 +57,6 @@ One endpoint, backed by many devices. Keep your existing OpenAI or Anthropic cli
 
 - OpenAI-compatible: /v1/chat/completions, /v1/models
 - Anthropic-compatible: /anthropic/v1/messages, /anthropic/v1/models — non-streaming for now; a stream request is refused with a reason rather than answered in the wrong protocol
-- Anthropic-compatible: /anthropic/v1/messages and /anthropic/v1/models
 - Pay-per-call in KVR: quote → on-chain payment → inference (no API key)
 - Prepaid credits with an API key (see below)
 - Live model catalog aggregated from reachable bridges
@@ -115,7 +114,7 @@ Summary: Step-3.7-Flash 428B on two MI250 machines · 122B end to end across thr
 
 ## Inference API — self-issue an API key (for agents)
 
-A native OpenAI-compatible endpoint with a prepaid-credit API key. An AI agent holding a Solana wallet secret can obtain a key headlessly (no browser). Note: the public gateway is offline while it is ported to p4, so these calls will not answer until it returns — the contract below is what it answers with.
+A native OpenAI-compatible endpoint with a prepaid-credit API key. An AI agent holding a Solana wallet secret can obtain a key headlessly (no browser). The gateway is live at https://gate.kvasir-ai.net; a call without a key answers 401, which is the gateway working rather than an outage.
 
 - Base URL: https://gate.kvasir-ai.net/v1 · Auth: `Authorization: Bearer <apiKey>`
 - Model: `step-3.7-flash` (Step-3.7-Flash, 428B MoE); `GET /v1/models` to list. Streaming (SSE) and native tool_calls are supported.

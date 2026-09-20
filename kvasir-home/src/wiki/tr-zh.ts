@@ -182,7 +182,7 @@ export const zhWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**网关**是开发者接触网络的地方。每个控制器都暴露 OpenAI 兼容端点（`/v1/chat/completions`、`/v1/responses`、`/v1/models`）和 Anthropic 兼容端点（`/anthropic/v1/messages`、`/anthropic/v1/models`），全部由同一个已加载模型支撑——现有客户端只需改 base URL 和密钥即可使用。",
+        md: "**网关**是开发者接触网络的地方。每个控制器都暴露 OpenAI 兼容端点（`/v1/chat/completions`、`/v1/models`）和 Anthropic 兼容端点（`/anthropic/v1/messages`、`/anthropic/v1/models`），全部由同一个已加载模型支撑——现有客户端只需改 base URL 和密钥即可使用。",
       },
       {
         t: "code",

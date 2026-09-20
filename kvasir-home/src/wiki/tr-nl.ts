@@ -184,7 +184,7 @@ export const nlWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "De **gateway** is waar ontwikkelaars het netwerk ontmoeten. Elke controller stelt OpenAI-compatibele endpoints beschikbaar (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) en Anthropic-compatibele (`/anthropic/v1/messages`, `/anthropic/v1/models`), allemaal gedragen door hetzelfde geladen model — een bestaande client werkt door alleen de base-URL en sleutel te wisselen.",
+        md: "De **gateway** is waar ontwikkelaars het netwerk ontmoeten. Elke controller stelt OpenAI-compatibele endpoints beschikbaar (`/v1/chat/completions`, `/v1/models`) en Anthropic-compatibele (`/anthropic/v1/messages`, `/anthropic/v1/models`), allemaal gedragen door hetzelfde geladen model — een bestaande client werkt door alleen de base-URL en sleutel te wisselen.",
       },
       {
         t: "code",

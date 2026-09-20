@@ -184,7 +184,7 @@ export const esWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "El **gateway** es donde los desarrolladores se encuentran con la red. Cada controlador expone endpoints compatibles con OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) y con Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), todos respaldados por el mismo modelo cargado — un cliente existente funciona cambiando solo la base URL y la clave.",
+        md: "El **gateway** es donde los desarrolladores se encuentran con la red. Cada controlador expone endpoints compatibles con OpenAI (`/v1/chat/completions`, `/v1/models`) y con Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), todos respaldados por el mismo modelo cargado — un cliente existente funciona cambiando solo la base URL y la clave.",
       },
       {
         t: "code",

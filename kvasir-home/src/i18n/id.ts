@@ -154,7 +154,7 @@ export const id: Dict = {
     title: "Satu endpoint, didukung banyak perangkat",
     lede: "Pertahankan klien OpenAI atau Anthropic Anda yang sudah ada. Arahkan ke gateway Kvasir dan bayar per inferensi dengan KVR — tanpa penulisan ulang.",
     points: [
-      "Kompatibel dengan OpenAI: langsung pakai untuk /v1/chat/completions, /v1/responses, /v1/models",
+      "Kompatibel dengan OpenAI: langsung pakai untuk /v1/chat/completions dan /v1/models",
       "Kompatibel dengan Anthropic: /anthropic/v1/messages dan /anthropic/v1/models",
       "Bayar per inferensi dengan KVR: kuotasi → pembayaran → inferensi",
       "Katalog model langsung yang diagregasi dari bridge yang dapat dijangkau",

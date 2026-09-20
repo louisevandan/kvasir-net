@@ -2251,17 +2251,57 @@ if (WEB_ENABLED) {
 /**
  * Nothing matched, and it was an API path. Answer in the shape the caller's
  * client can read, and say what does exist rather than only what does not.
+ *
+ * The list is read off the router instead of being written out here. The
+ * hand-kept copy that used to live in this string named only the OpenAI pair,
+ * so a typo against /anthropic/v1/messages answered by pointing the caller at
+ * an endpoint on the other surface, in the other surface's error shape.
  */
+const SURFACES = [
+  { prefix: '/anthropic/', anthropic: true },
+  { prefix: '/v1/', anthropic: false },
+];
+
+let servedBySurface = null;
+function servedUnder(prefix) {
+  if (!servedBySurface) {
+    // Safe to read now: every route is registered before a request can arrive.
+    servedBySurface = new Map(SURFACES.map((s) => [s.prefix, []]));
+    for (const layer of (app._router && app._router.stack) || []) {
+      const routePath = layer.route && layer.route.path;
+      if (typeof routePath !== 'string') continue;
+      for (const s of SURFACES) {
+        const list = servedBySurface.get(s.prefix);
+        if (routePath.startsWith(s.prefix) && !list.includes(routePath)) list.push(routePath);
+      }
+    }
+    for (const list of servedBySurface.values()) list.sort();
+  }
+  return servedBySurface.get(prefix) || [];
+}
+
+const andList = (xs) => (xs.length > 1
+  ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`
+  : xs[0]);
+
 app.use((req, res, next) => {
   if (!API_PATH.test(req.path)) return next();
+  const surface = SURFACES.find((s) => req.path.startsWith(s.prefix));
+  const served = surface ? servedUnder(surface.prefix) : [];
+  const message = `no such endpoint: ${req.method} ${req.path}. `
+    + (served.length
+      ? `This gateway serves ${andList(served)}; see https://kvasir-ai.net/docs/api`
+      : 'See https://kvasir-ai.net/docs/api');
+  if (surface && surface.anthropic) {
+    // An Anthropic SDK reads {type:"error",error:{...}}; the OpenAI envelope
+    // would reach it as an object with no error field it recognises.
+    return res.status(404).json({
+      type: 'error',
+      error: { type: 'invalid_request_error', message },
+    });
+  }
   res.status(404).json({
-    error: {
-      message: `no such endpoint: ${req.method} ${req.path}. `
-        + 'This gateway serves /v1/chat/completions and /v1/models; '
-        + 'see https://kvasir-ai.net/docs/api',
-      type: 'invalid_request_error',
-      code: 'unknown_endpoint',
-    },
+    error: { message, type: 'invalid_request_error', code: 'unknown_endpoint' },
   });
 });
 

@@ -454,7 +454,7 @@ inside the lock:
           "**머신이 참여하는 세 가지 방법:** VRAM/RAM/CPU 예산을 편집할 수 있는 고정 **로컬 노드 슬롯**; 다른 허브를 등록해 노드를 가져오는 **원격 유닛**; 그리고 평범한 요청/응답 HTTP로 참여하는 워커 전용 서비스 **관리형 노드 에이전트** — 의도적으로 지속 스트림이 아니라서 단순한 LAN/VPN 라우팅에서도 살아남는다.",
           "**호환성 게이팅은 일급 개념:** 모든 유닛·노드·에이전트가 프로토콜/런타임 팩 정체성과 백엔드 상세를 보고한다. 유닛·런타임 팩·추론엔진 리비전·RPC ABI 불일치는 **bind/plan/load/infer 전에 하드 블록**되고, 백엔드 차이(CUDA/Metal/Vulkan/CPU)는 거부가 아닌 capability로 추적된다.",
           "**플래너**는 GGUF 메타데이터를 읽어 노드별 연속 레이어 배치, `--tensor-split`, KV 캐시/레이어/전문가 VRAM 추정치, 그리고 선택적 전문가-FFN RAM offload를 만든다.",
-          "**게이트웨이:** 모든 컨트롤러가 OpenAI 호환(`/v1/chat/completions`, `/v1/responses`, `/v1/models`)과 Anthropic 호환(`/anthropic/v1/messages|models`) 엔드포인트를 같은 로드된 모델로 노출한다 — 기존 클라이언트가 수정 없이 동작한다.",
+          "**게이트웨이:** 모든 컨트롤러가 OpenAI 호환(`/v1/chat/completions`, `/v1/models`)과 Anthropic 호환(`/anthropic/v1/messages|models`) 엔드포인트를 같은 로드된 모델로 노출한다 — 기존 클라이언트가 수정 없이 동작한다.",
         ],
       },
       {

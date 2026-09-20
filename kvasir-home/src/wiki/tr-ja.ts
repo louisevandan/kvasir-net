@@ -183,7 +183,7 @@ export const jaWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**ゲートウェイ**は開発者がネットワークに出会う場所です。各コントローラは OpenAI 互換エンドポイント（`/v1/chat/completions`、`/v1/responses`、`/v1/models`）と Anthropic 互換エンドポイント（`/anthropic/v1/messages`、`/anthropic/v1/models`）を公開し、すべて同じロード済みモデルが支えます — 既存クライアントは base URL とキーを替えるだけで動きます。",
+        md: "**ゲートウェイ**は開発者がネットワークに出会う場所です。各コントローラは OpenAI 互換エンドポイント（`/v1/chat/completions`、`/v1/models`）と Anthropic 互換エンドポイント（`/anthropic/v1/messages`、`/anthropic/v1/models`）を公開し、すべて同じロード済みモデルが支えます — 既存クライアントは base URL とキーを替えるだけで動きます。",
       },
       {
         t: "code",

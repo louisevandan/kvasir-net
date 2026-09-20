@@ -154,7 +154,7 @@ export const es: Dict = {
     title: "Un endpoint, respaldado por muchos dispositivos",
     lede: "Conserva tu cliente actual de OpenAI o Anthropic. Apúntalo al gateway de Kvasir y paga por inferencia en KVR — sin reescrituras.",
     points: [
-      "Compatible con OpenAI: sustitución directa para /v1/chat/completions, /v1/responses, /v1/models",
+      "Compatible con OpenAI: sustitución directa para /v1/chat/completions y /v1/models",
       "Compatible con Anthropic: /anthropic/v1/messages y /anthropic/v1/models",
       "Pago por inferencia en KVR: cotización → pago → inferencia",
       "Catálogo de modelos en vivo agregado desde los bridges accesibles",

@@ -160,7 +160,7 @@ export const de: Dict = {
     title: "Ein Endpunkt, gestützt von vielen Geräten",
     lede: "Behalte deinen bestehenden OpenAI- oder Anthropic-Client. Richte ihn auf das Kvasir-Gateway aus und bezahle pro Inferenz in KVR — ohne Umschreiben.",
     points: [
-      "OpenAI-kompatibel: Drop-in für /v1/chat/completions, /v1/responses, /v1/models",
+      "OpenAI-kompatibel: Drop-in für /v1/chat/completions und /v1/models",
       "Anthropic-kompatibel: /anthropic/v1/messages und /anthropic/v1/models",
       "Pay-per-Inference in KVR: quote → payment → inference",
       "Live-Modellkatalog, aggregiert aus erreichbaren Bridges",

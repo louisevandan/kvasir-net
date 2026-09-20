@@ -160,7 +160,7 @@ export const ja: Dict = {
     title: "ひとつのエンドポイント、多くのデバイスが支える",
     lede: "既存のOpenAIまたはAnthropicクライアントをそのまま使えます。Kvasirゲートウェイに向けて、推論ごとにKVRで支払うだけ — 書き換えは不要です。",
     points: [
-      "OpenAI互換: /v1/chat/completions、/v1/responses、/v1/models にそのまま対応",
+      "OpenAI互換: /v1/chat/completions、/v1/models にそのまま対応",
       "Anthropic互換: /anthropic/v1/messages と /anthropic/v1/models",
       "KVRによる推論ごとの支払い: 見積もり → 支払い → 推論",
       "到達可能なブリッジから集約された、リアルタイムのモデルカタログ",

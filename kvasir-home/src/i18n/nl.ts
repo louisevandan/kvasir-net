@@ -161,7 +161,7 @@ export const nl: Dict = {
     title: "Eén endpoint, ondersteund door veel apparaten",
     lede: "Behoud je bestaande OpenAI- of Anthropic-client. Richt hem op de Kvasir-gateway en betaal per inferentie in KVR — zonder te herschrijven.",
     points: [
-      "OpenAI-compatibel: drop-in voor /v1/chat/completions, /v1/responses, /v1/models",
+      "OpenAI-compatibel: drop-in voor /v1/chat/completions en /v1/models",
       "Anthropic-compatibel: /anthropic/v1/messages en /anthropic/v1/models",
       "Betalen per inferentie in KVR: prijsopgave → betaling → inferentie",
       "Live modelcatalogus samengesteld uit bereikbare bridges",

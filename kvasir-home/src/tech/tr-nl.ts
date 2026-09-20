@@ -455,7 +455,7 @@ inside the lock:
           "**Drie manieren om aan te sluiten:** vaste **lokale node-slots** met bewerkbare VRAM/RAM/CPU-budgetten; **remote units** — registreer een andere hub en importeer zijn nodes; en **beheerde node-agents** — worker-only services die via simpel request/response-HTTP aansluiten, bewust zonder persistente stream, zodat ze simpele LAN/VPN-routering overleven.",
           "**Compatibiliteitsgating is eersteklas:** elke unit, node en agent rapporteert een protocol-/runtime-pack-identiteit plus backend-details. Mismatches in unit, runtime-pack, inferentie-engine-revisie en RPC-ABI worden **hard geblokkeerd vóór bind, plan, load of infer** — backend-verschillen (CUDA/Metal/Vulkan/CPU) worden als capaciteiten bijgehouden, niet als afwijzingen.",
           "**De planner** leest GGUF-metadata en produceert aaneengesloten laagplaatsing per node, `--tensor-split`, KV-cache-/laag-/expert-VRAM-schattingen, en optionele expert-FFN-offload naar RAM.",
-          "**Gateways:** elke controller stelt OpenAI-compatibele (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) en Anthropic-compatibele (`/anthropic/v1/messages|models`) endpoints beschikbaar, gedragen door hetzelfde geladen model — bestaande clients werken ongewijzigd.",
+          "**Gateways:** elke controller stelt OpenAI-compatibele (`/v1/chat/completions`, `/v1/models`) en Anthropic-compatibele (`/anthropic/v1/messages|models`) endpoints beschikbaar, gedragen door hetzelfde geladen model — bestaande clients werken ongewijzigd.",
         ],
       },
       {

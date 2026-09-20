@@ -184,7 +184,7 @@ export const deWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "Das **Gateway** ist der Ort, an dem Entwickler auf das Netzwerk treffen. Jeder Controller exponiert OpenAI-kompatible Endpoints (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) und Anthropic-kompatible (`/anthropic/v1/messages`, `/anthropic/v1/models`), alle vom selben geladenen Modell getragen — ein bestehender Client funktioniert, indem nur Base-URL und Key getauscht werden.",
+        md: "Das **Gateway** ist der Ort, an dem Entwickler auf das Netzwerk treffen. Jeder Controller exponiert OpenAI-kompatible Endpoints (`/v1/chat/completions`, `/v1/models`) und Anthropic-kompatible (`/anthropic/v1/messages`, `/anthropic/v1/models`), alle vom selben geladenen Modell getragen — ein bestehender Client funktioniert, indem nur Base-URL und Key getauscht werden.",
       },
       {
         t: "code",

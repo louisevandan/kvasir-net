@@ -455,7 +455,7 @@ inside the lock:
           "**Tres maneras de unirse:** **slots locales de nodo** fijos con presupuestos VRAM/RAM/CPU editables; **unidades remotas** — registra otro hub e importa sus nodos; y **agentes de nodo gestionados** — servicios solo-worker que se unen por HTTP simple de petición/respuesta, deliberadamente sin stream persistente, para sobrevivir enrutamientos simples de LAN/VPN.",
           "**El gating de compatibilidad es de primera clase:** cada unidad, nodo y agente reporta una identidad de protocolo/runtime-pack más detalles de backend. Los desajustes de unidad, runtime-pack, revisión de motor de inferencia y ABI de RPC se **bloquean duro antes de bind, plan, load o infer** — las diferencias de backend (CUDA/Metal/Vulkan/CPU) se registran como capacidades, no rechazos.",
           "**El planner** lee metadata GGUF y produce colocación contigua de capas por nodo, `--tensor-split`, estimaciones de VRAM de KV-cache/capa/experto, y offload opcional de FFN de expertos a RAM.",
-          "**Gateways:** cada controlador expone endpoints compatibles con OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) y con Anthropic (`/anthropic/v1/messages|models`), respaldados por el mismo modelo cargado — los clientes existentes funcionan sin cambios.",
+          "**Gateways:** cada controlador expone endpoints compatibles con OpenAI (`/v1/chat/completions`, `/v1/models`) y con Anthropic (`/anthropic/v1/messages|models`), respaldados por el mismo modelo cargado — los clientes existentes funcionan sin cambios.",
         ],
       },
       {

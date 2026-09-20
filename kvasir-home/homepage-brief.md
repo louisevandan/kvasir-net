@@ -149,7 +149,7 @@ Single-page scroll, three-audience aware. Order:
 - Rewards math: per node, `units += (output_tokens / 1000) × (node_layers / total_layers)`;
   `effective = units × perf_multiplier × gateway_bonus`; performance tiers S(×1.5)/A(×1.25)/B(×1.0)/C(×0.7) by measured tok/s; infra roles earn hourly **uptime** rewards too.
 - Settlement: **Solana** (devnet); token **KVR** (6 decimals). Off-chain staking/settlement service today (custodial devnet MVP), on-chain program later.
-- Gateways per model: `/v1/chat/completions`, `/v1/responses`, `/v1/models`, `/anthropic/v1/messages|models`.
+- Gateways per model: `/v1/chat/completions`, `/v1/models`, `/anthropic/v1/messages|models`.
 - Security: Sign-In With Solana (ed25519 signature over a server nonce) + TOTP 2FA + backup codes; unauthenticated LAN/VPN mode for local use.
 - Nodes: fixed local GPU slots, imported remote units, and managed native agents (Linux/macOS/Windows).
 - License: **MIT**.

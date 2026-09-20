@@ -183,7 +183,7 @@ export const koWiki: Record<string, WikiTranslation> = {
     blocks: [
       {
         t: "p",
-        md: "**게이트웨이**는 개발자가 네트워크를 만나는 곳입니다. 모든 컨트롤러는 OpenAI 호환 엔드포인트(`/v1/chat/completions`, `/v1/responses`, `/v1/models`)와 Anthropic 호환 엔드포인트(`/anthropic/v1/messages`, `/anthropic/v1/models`)를 노출하며, 모두 같은 로드된 모델이 뒷받침합니다 — 기존 클라이언트는 base URL과 키만 바꾸면 동작합니다.",
+        md: "**게이트웨이**는 개발자가 네트워크를 만나는 곳입니다. 모든 컨트롤러는 OpenAI 호환 엔드포인트(`/v1/chat/completions`, `/v1/models`)와 Anthropic 호환 엔드포인트(`/anthropic/v1/messages`, `/anthropic/v1/models`)를 노출하며, 모두 같은 로드된 모델이 뒷받침합니다 — 기존 클라이언트는 base URL과 키만 바꾸면 동작합니다.",
       },
       {
         t: "code",

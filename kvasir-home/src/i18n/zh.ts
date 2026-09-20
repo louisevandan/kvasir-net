@@ -154,7 +154,7 @@ export const zh: Dict = {
     title: "一个端点，由众多设备支撑",
     lede: "沿用你现有的 OpenAI 或 Anthropic 客户端。将其指向 Kvasir 网关，按每次推理以 KVR 付费 — 无需重写代码。",
     points: [
-      "兼容 OpenAI：直接对接 /v1/chat/completions、/v1/responses、/v1/models",
+      "兼容 OpenAI：直接对接 /v1/chat/completions、/v1/models",
       "兼容 Anthropic：/anthropic/v1/messages 和 /anthropic/v1/models",
       "以 KVR 按次推理付费：报价 → 支付 → 推理",
       "实时模型目录，聚合自可达的桥接",
