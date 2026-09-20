@@ -385,16 +385,40 @@ function deleteModel(name) {
   try { fs.unlinkSync(path.join(modelsDir(), safe)) } catch {}
 }
 // Resolve a llama-server binary: explicit env, then common repo build dirs.
+/**
+ * The local inference runtime.
+ *
+ * Only repository build directories were looked at, which meant the feature
+ * worked for whoever had just compiled llama.cpp in this tree and for nobody
+ * else — the same shape of gap the p4 agent had. A packaged app carries its own
+ * under `resources/llama`, and a developer's installed copy is now found too.
+ */
 function llamaServerBin() {
+  const exe = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server'
   const explicit = process.env.LINKCPP_LLAMA_SERVER
   if (explicit && fs.existsSync(explicit)) return explicit
+  const candidates = []
+  if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, 'llama', exe))
   const repo = path.resolve(__dirname, '..', '..', '..')
-  const candidates = [
-    path.join(repo, 'build-node-darwin-metal', 'bin', 'llama-server'),
-    path.join(repo, 'build-ring-darwin-metal', 'bin', 'llama-server'),
-    path.join(repo, 'build', 'bin', 'llama-server'),
-  ]
-  return candidates.find((p) => fs.existsSync(p)) || null
+  candidates.push(
+    path.join(repo, 'build-node-darwin-metal', 'bin', exe),
+    path.join(repo, 'build-ring-darwin-metal', 'bin', exe),
+    path.join(repo, 'build', 'bin', exe),
+    // Installed by a package manager: Homebrew on either Mac architecture, or
+    // anywhere on PATH. A developer who has llama.cpp should not have to build
+    // it again inside this tree.
+    '/opt/homebrew/bin/' + exe,
+    '/usr/local/bin/' + exe,
+  )
+  const found = candidates.find((candidate) => fs.existsSync(candidate))
+  if (found) return found
+  try {
+    const which = require('node:child_process')
+      .execFileSync(process.platform === 'win32' ? 'where' : 'which', [exe], { encoding: 'utf8' })
+      .split('\n')[0].trim()
+    if (which && fs.existsSync(which)) return which
+  } catch { /* not on PATH either */ }
+  return null
 }
 let localProc = null
 async function localGenerate(sender, name, prompt, maxTokens) {
