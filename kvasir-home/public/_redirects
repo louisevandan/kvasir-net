@@ -5,3 +5,13 @@
 /download/Kvasir-Wallet-mac-universal.dmg   https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/Kvasir-Wallet-mac-universal.dmg   302
 /download/Kvasir-Wallet-win-x64.exe         https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/Kvasir-Wallet-win-x64.exe         302
 /download/Kvasir-Wallet-linux-x64.tar.gz    https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/Kvasir-Wallet-linux-x64.tar.gz    302
+
+# Wiki slugs that changed when the vocabulary did. These were published — the
+# blog links to some of them — so they redirect rather than 404. 301, because
+# the new slug is where the page lives now, not a temporary stand-in.
+/wiki/hub                   /wiki/bridge              301
+/wiki/hub-operations        /wiki/bridge-operations   301
+/wiki/hub-wan-interconnect  /wiki/wan-interconnect    301
+/wiki/linkcpp               /wiki/p4                  301
+/wiki/ring-runtime          /wiki/in-flight-ring      301
+/wiki/relay-443             /wiki/node-relay          301
