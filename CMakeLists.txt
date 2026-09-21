@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.18)
 project(linkcpp C CXX)
 
+# The desktop app ships only the expert worker, which needs ggml and nothing
+# else from llama.cpp. Building just those two keeps a Windows/CUDA packaging
+# build to ggml + one executable instead of the full server toolchain.
+option(LINKCPP_EXPERT_WORKER_ONLY "Build only ggml and linkcpp-expert-worker" OFF)
+if(LINKCPP_EXPERT_WORKER_ONLY)
+    add_subdirectory(external/llama.cpp/ggml)
+    add_subdirectory(apps/linkcpp-expert-worker)
+    return()
+endif()
+
 # Build the pinned llama.cpp submodule in-tree. All backends (CUDA/Vulkan/CPU),
 # model support, and the ggml-rpc transport come from here unmodified.
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)

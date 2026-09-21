@@ -6,6 +6,13 @@
 add_executable(linkcpp-expert-worker main.cpp)
 
 target_link_libraries(linkcpp-expert-worker PRIVATE ggml)
+if (WIN32)
+    target_link_libraries(linkcpp-expert-worker PRIVATE ws2_32)
+endif()
+if (MSVC)
+    # Sources are UTF-8; without this MSVC reads them in the system code page.
+    target_compile_options(linkcpp-expert-worker PRIVATE /utf-8)
+endif()
 target_include_directories(linkcpp-expert-worker PRIVATE
     ${CMAKE_SOURCE_DIR}/external/llama.cpp/ggml/include
 )
@@ -17,6 +24,12 @@ set_target_properties(linkcpp-expert-worker PROPERTIES CXX_STANDARD 17 CXX_STAND
 add_library(linkcpp-expert STATIC main.cpp)
 target_compile_definitions(linkcpp-expert PRIVATE LINKCPP_EXPERT_NO_MAIN)
 target_link_libraries(linkcpp-expert PRIVATE ggml)
+if (WIN32)
+    target_link_libraries(linkcpp-expert INTERFACE ws2_32)
+endif()
+if (MSVC)
+    target_compile_options(linkcpp-expert PRIVATE /utf-8)
+endif()
 target_include_directories(linkcpp-expert PRIVATE
     ${CMAKE_SOURCE_DIR}/external/llama.cpp/ggml/include
 )

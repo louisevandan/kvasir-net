@@ -33,11 +33,33 @@
 #include <mutex>
 #include <thread>
 
+// Sockets: Winsock on Windows, BSD sockets elsewhere. sock_t / sock_close /
+// sock_io_t hide the three real differences (handle type, close call, and the
+// int length Winsock's send/recv take) so the serving code below is shared.
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+using sock_t = SOCKET;
+using sock_io_t = int;
+static const sock_t BAD_SOCK = INVALID_SOCKET;
+static void sock_close(sock_t s) { ::closesocket(s); }
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
+using sock_t = int;
+using sock_io_t = ssize_t;
+static const sock_t BAD_SOCK = -1;
+static void sock_close(sock_t s) { ::close(s); }
+#endif
 
 namespace {
 
@@ -48,9 +70,29 @@ const char * arg_value(int argc, char ** argv, const char * key) {
     return nullptr;
 }
 
-int32_t meta_i32(const gguf_context * gguf, const char * key, int32_t fallback) {
+// Reads an integer key whatever width/signedness the writer chose (the gateway
+// writes u32; older slices wrote i32). gguf_get_val_* asserts on a type
+// mismatch, so the type is checked first. Missing or non-integer -> fallback.
+int64_t meta_int(const gguf_context * gguf, const char * key, int64_t fallback) {
     const int64_t id = gguf_find_key(gguf, key);
-    return id < 0 ? fallback : gguf_get_val_i32(gguf, id);
+    if (id < 0) return fallback;
+    switch (gguf_get_kv_type(gguf, id)) {
+        case GGUF_TYPE_UINT8:  return gguf_get_val_u8(gguf, id);
+        case GGUF_TYPE_INT8:   return gguf_get_val_i8(gguf, id);
+        case GGUF_TYPE_UINT16: return gguf_get_val_u16(gguf, id);
+        case GGUF_TYPE_INT16:  return gguf_get_val_i16(gguf, id);
+        case GGUF_TYPE_UINT32: return gguf_get_val_u32(gguf, id);
+        case GGUF_TYPE_INT32:  return gguf_get_val_i32(gguf, id);
+        case GGUF_TYPE_UINT64: return (int64_t) gguf_get_val_u64(gguf, id);
+        case GGUF_TYPE_INT64:  return gguf_get_val_i64(gguf, id);
+        default:               return fallback;
+    }
+}
+
+// The gateway's shards use kvasir.expert_shard.*; slices cut by the older
+// hub tooling use linkcpp.expert_shard.*. Prefer the first, accept the second.
+int32_t shard_meta(const gguf_context * gguf, const char * kvasir_key, const char * linkcpp_key) {
+    return (int32_t) meta_int(gguf, kvasir_key, meta_int(gguf, linkcpp_key, 0));
 }
 
 std::vector<uint8_t> read_file(const char * path, size_t expect_bytes) {
@@ -90,11 +132,16 @@ struct expert_shard {
         gguf = gguf_init_from_file(path, gp);
         (void) mp;
         if (!gguf) { std::fprintf(stderr, "failed to open gguf %s\n", path); return false; }
-        expert_begin    = meta_i32(gguf, "linkcpp.expert_shard.expert_begin", 0);
-        expert_end      = meta_i32(gguf, "linkcpp.expert_shard.expert_end", 0);
-        n_expert_global = meta_i32(gguf, "linkcpp.expert_shard.n_expert_global", 0);
-        n_embd          = meta_i32(gguf, "linkcpp.expert_shard.n_embd", 0);
-        n_layer         = meta_i32(gguf, "linkcpp.expert_shard.n_layer", 0);
+        expert_begin    = shard_meta(gguf, "kvasir.expert_shard.expert_begin",   "linkcpp.expert_shard.expert_begin");
+        expert_end      = shard_meta(gguf, "kvasir.expert_shard.expert_end",     "linkcpp.expert_shard.expert_end");
+        n_expert_global = shard_meta(gguf, "kvasir.expert_shard.n_expert_total", "linkcpp.expert_shard.n_expert_global");
+        n_embd          = shard_meta(gguf, "kvasir.expert_shard.n_embd",         "linkcpp.expert_shard.n_embd");
+        n_layer         = (int32_t) meta_int(gguf, "linkcpp.expert_shard.n_layer", 0);
+        // Older gateway shards did not carry n_embd; it is the input width of
+        // the gate/up matrices, i.e. ne[0] of any ffn_gate_exps tensor.
+        for (ggml_tensor * t = ggml_get_first_tensor(meta); t && n_embd == 0; t = ggml_get_next_tensor(meta, t)) {
+            if (std::strstr(ggml_get_name(t), "ffn_gate_exps")) n_embd = (int32_t) t->ne[0];
+        }
 
         buffer = ggml_backend_alloc_ctx_tensors(meta, backend);
         if (!buffer) { std::fprintf(stderr, "backend buffer alloc failed\n"); return false; }
@@ -110,7 +157,12 @@ struct expert_shard {
             const size_t sz  = ggml_nbytes(t);
             const size_t off = data_off + gguf_get_tensor_offset(gguf, i);
             tmp.resize(sz);
-            std::fseek(f, (long) off, SEEK_SET);
+            // A multi-layer slice passes 2 GiB; long is 32-bit on Windows.
+#ifdef _WIN32
+            if (_fseeki64(f, (__int64) off, SEEK_SET) != 0) { std::fclose(f); return false; }
+#else
+            if (fseeko(f, (off_t) off, SEEK_SET) != 0) { std::fclose(f); return false; }
+#endif
             if (std::fread(tmp.data(), 1, sz, f) != sz) { std::fclose(f); return false; }
             ggml_backend_tensor_set(t, tmp.data(), 0, sz);
         }
@@ -181,14 +233,26 @@ bool run_ffn(const expert_shard & shard, ggml_backend_t backend, int layer,
 }
 
 // ---- serving mode: dispatch experts over TCP (M2 productionization) --------
-bool send_all(int fd, const void * p, size_t n) {
+// Winsock takes an int length, so large transfers go in chunks of at most 1 GiB.
+constexpr size_t IO_CHUNK = size_t(1) << 30;
+bool send_all(sock_t fd, const void * p, size_t n) {
     const char * c = (const char *) p;
-    while (n) { ssize_t k = ::send(fd, c, n, 0); if (k <= 0) return false; c += k; n -= (size_t) k; }
+    while (n) {
+        const size_t want = n < IO_CHUNK ? n : IO_CHUNK;
+        sock_io_t k = ::send(fd, c, (int) want, 0);
+        if (k <= 0) return false;
+        c += k; n -= (size_t) k;
+    }
     return true;
 }
-bool recv_all(int fd, void * p, size_t n) {
+bool recv_all(sock_t fd, void * p, size_t n) {
     char * c = (char *) p;
-    while (n) { ssize_t k = ::recv(fd, c, n, 0); if (k <= 0) return false; c += k; n -= (size_t) k; }
+    while (n) {
+        const size_t want = n < IO_CHUNK ? n : IO_CHUNK;
+        sock_io_t k = ::recv(fd, c, (int) want, 0);
+        if (k <= 0) return false;
+        c += k; n -= (size_t) k;
+    }
     return true;
 }
 
@@ -233,9 +297,9 @@ bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int la
 // the ggml backend is not safe for concurrent graph compute — while I/O (recv of
 // the next request, send of the last result) runs off-lock. Returning ends the
 // connection; a dead/half-open peer errors out here without wedging the worker.
-void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
+void handle_conn(sock_t c, const expert_shard & shard, ggml_backend_t backend,
                  int layer, int n_embd, std::mutex & compute_mu) {
-    int one2 = 1; ::setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one2, sizeof(one2));
+    int one2 = 1; ::setsockopt(c, IPPROTO_TCP, TCP_NODELAY, (const char *) &one2, sizeof(one2));
     for (;;) {
         int32_t hdr[2];
         if (!recv_all(c, hdr, sizeof(hdr))) break;
@@ -317,7 +381,7 @@ void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
           if (!compute_dispatch(shard, backend, layer, n_embd, n_used, n_tokens, cur.data(), sel.data(), out)) break; }
         if (!send_all(c, out.data(), out.size() * sizeof(float))) break;
     }
-    ::close(c);
+    sock_close(c);
 }
 
 // Wire protocol per request: [int32 n_used, int32 n_tokens] + cur f32[n_embd*n_tokens]
@@ -326,8 +390,20 @@ void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
 // each connection gets its own thread so a stalled/dead peer can never wedge the accept
 // loop and a restarted coordinator connects immediately (a real hang seen under --parallel).
 int serve_loop(const expert_shard & shard, ggml_backend_t backend, int layer, int n_embd, int port) {
-    int srv = ::socket(AF_INET, SOCK_STREAM, 0);
-    int one = 1; ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#ifdef _WIN32
+    WSADATA wsa;
+    if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { std::fprintf(stderr, "WSAStartup failed\n"); return 1; }
+#endif
+    sock_t srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (srv == BAD_SOCK) { std::perror("socket"); return 1; }
+    int one = 1;
+#ifdef _WIN32
+    // On Windows SO_REUSEADDR lets another process bind the same port; exclusive
+    // use is the equivalent of the POSIX behaviour we want (fast rebind, no sharing).
+    ::setsockopt(srv, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &one, sizeof(one));
+#else
+    ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
     sockaddr_in addr {}; addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); addr.sin_port = htons((uint16_t) port);
     if (::bind(srv, (sockaddr *) &addr, sizeof(addr)) || ::listen(srv, 8)) {
@@ -336,8 +412,8 @@ int serve_loop(const expert_shard & shard, ggml_backend_t backend, int layer, in
     std::fprintf(stderr, "expert worker serving layer %d on 127.0.0.1:%d\n", layer, port);
     static std::mutex compute_mu;
     for (;;) {
-        int c = ::accept(srv, nullptr, nullptr);
-        if (c < 0) continue;
+        sock_t c = ::accept(srv, nullptr, nullptr);
+        if (c == BAD_SOCK) continue;
         std::thread(handle_conn, c, std::cref(shard), backend, layer, n_embd,
                     std::ref(compute_mu)).detach();
     }
