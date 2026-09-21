@@ -291,7 +291,7 @@ export const WIKI_ENTRIES: WikiEntry[] = [
         t: "ul",
         items: [
           "Gateway hosts earn an **hourly uptime reward** for keeping the entry point online, plus a **×1.5 bonus** on every inference they help serve.",
-          "Operating a public gateway requires staking **100,000 KVR** (same as a bridge).",
+          "The gateway role is **assigned by the network, not claimed**: a node cannot set its own gateway or bridge flag, and uptime is credited only while the gateway can see it answering.",
           "Public deployments protect operator access with **SIWS + 2FA**; a bare bridge is designed for trusted host / LAN / VPN only.",
         ],
       },
@@ -781,19 +781,20 @@ infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
     slug: "staking",
     category: "token",
     title: "Staking",
-    summary: "Staking 100,000 KVR qualifies a wallet to operate bridge or gateway nodes.",
+    summary: "Locking KVR in the vault. It no longer gates operator roles, and nothing requires it.",
     image: { src: "/wiki/staking.jpg", alt: "Locked tokens unlocking operator roles" },
     imagePos: 0,
     blocks: [
       {
         t: "p",
-        md: "Staking locks KVR to qualify a wallet for operator roles and node rewards. Running a **bridge** or **gateway** node requires a stake of **100,000 KVR**; regular compute nodes join without any stake and earn for the layers they run.",
+        md: "Staking locks KVR in the vault from the wallet's staking panel. It used to be the gate on operator roles — a bridge or gateway required a stake of 100,000 KVR — and **that requirement is gone**. No stake is needed to run any node, and a wallet holding no KVR at all can register one and earn. Those two infra roles are assigned by the network instead, which is a stronger control than a price: the old check read a wallet balance once at registration, never locked it and never looked again, so the same 100,000 KVR could register any number of nodes and then be moved away.",
       },
       {
         t: "ul",
         items: [
-          "Staking happens in the wallet's dashboard staking panel: enter an amount, **Stake**, and the position counts toward operator eligibility and node rewards.",
-          "The 100k requirement is a **skin-in-the-game filter** for the two roles that other people's traffic depends on — entry points and the control plane.",
+          "Staking happens in the wallet's dashboard staking panel: enter an amount, **Stake**, and the position is held in the vault until you unstake it.",
+          "It is not a requirement for anything. Node rewards come from the work a node actually does, plus verified uptime for infra roles — never from holding a balance.",
+          "The devnet staking rate is currently **0%**, so a position earns nothing on its own. Treat the panel as a mechanism that exists, not as a way to earn.",
           "On devnet, staked KVR is held in the staking vault; the staked amount and node rewards are visible in the staking panel.",
           "Devnet KVR for staking comes from the distribution faucet; devnet SOL for fees comes from the public faucet.",
         ],

@@ -204,7 +204,7 @@ export const idWiki: Record<string, WikiTranslation> = {
         t: "ul",
         items: [
           "Host gateway memperoleh **imbalan uptime per jam** karena menjaga titik masuk tetap daring, plus **bonus ×1.5** pada setiap inferensi yang ikut mereka layani.",
-          "Mengoperasikan gateway publik memerlukan staking **100.000 KVR** (sama seperti bridge).",
+          "Peran gateway **ditetapkan oleh jaringan, bukan diklaim sendiri**: sebuah node tidak bisa menyetel flag gateway atau bridge-nya sendiri, dan uptime hanya dikreditkan selama gateway melihatnya menjawab.",
           "Deployment publik melindungi akses operator dengan **SIWS + 2FA**; bridge polos dirancang hanya untuk host tepercaya / LAN / VPN.",
         ],
       },
@@ -629,17 +629,18 @@ infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Melakukan stake 100.000 KVR membuat dompet layak mengoperasikan node bridge atau gateway.",
+    summary: "Mengunci KVR di vault. Ini tidak lagi menentukan peran operator, dan tidak ada yang mensyaratkannya.",
     blocks: [
       {
         t: "p",
-        md: "Staking mengunci KVR agar dompet memenuhi syarat untuk peran operator dan imbalan node. Mengoperasikan node **bridge** atau **gateway** memerlukan stake **100.000 KVR**; node komputasi biasa bergabung tanpa stake apa pun dan memperoleh untuk lapisan yang dijalankannya.",
+        md: "Staking mengunci KVR di vault lewat panel staking dompet. Dulu inilah gerbang ke peran operator — bridge atau gateway memerlukan stake 100.000 KVR — dan **syarat itu sudah tidak ada lagi**. Tidak ada stake yang dibutuhkan untuk menjalankan node apa pun, dan dompet yang sama sekali tidak memegang KVR pun bisa mendaftarkan satu node dan memperoleh imbalan. Kedua peran infrastruktur itu kini ditetapkan oleh jaringan, kendali yang lebih kuat daripada sekadar harga: pemeriksaan lama membaca saldo dompet sekali saat pendaftaran, tak pernah menguncinya dan tak pernah menengoknya lagi, sehingga 100.000 KVR yang sama bisa mendaftarkan berapa pun node lalu dipindahkan.",
       },
       {
         t: "ul",
         items: [
-          "Staking dilakukan di panel staking dasbor dompet: masukkan jumlah, **Stake**, dan posisi tersebut dihitung untuk kelayakan operator dan imbalan node.",
-          "Syarat 100k adalah **filter komitmen nyata** bagi dua peran yang menjadi sandaran lalu lintas orang lain — titik masuk dan bidang kendali.",
+          "Staking dilakukan di panel staking dasbor dompet: masukkan jumlah, **Stake**, dan posisi itu tersimpan di vault sampai Anda menariknya kembali.",
+          "Ini bukan syarat untuk apa pun. Imbalan node berasal dari pekerjaan yang benar-benar dilakukan node, plus uptime terverifikasi untuk peran infrastruktur — bukan dari memegang saldo.",
+          "Tingkat staking devnet saat ini **0%**, jadi sebuah posisi tidak menghasilkan apa pun dengan sendirinya. Anggap panel itu sebagai mekanisme yang tersedia, bukan cara untuk memperoleh penghasilan.",
           "Di devnet, KVR yang di-stake disimpan di vault staking; jumlah yang di-stake dan imbalan node terlihat di panel staking.",
           "KVR devnet untuk staking berasal dari faucet distribusi; SOL devnet untuk biaya berasal dari faucet publik.",
         ],

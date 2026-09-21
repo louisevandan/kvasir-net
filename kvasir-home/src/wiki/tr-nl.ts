@@ -204,7 +204,7 @@ export const nlWiki: Record<string, WikiTranslation> = {
         t: "ul",
         items: [
           "Gateway-hosts verdienen een **uurlijkse uptime-beloning** voor het online houden van het toegangspunt, plus een **×1.5-bonus** op elke inferentie die ze mee bedienen.",
-          "Een publieke gateway draaien vereist het staken van **100.000 KVR** (net als een bridge).",
+          "De gateway-rol wordt **door het netwerk toegewezen, niet zelf geclaimd**: een node kan zijn eigen gateway- of bridge-vlag niet zetten, en uptime wordt alleen bijgeschreven zolang de gateway hem ziet antwoorden.",
           "Publieke deployments beschermen operator-toegang met **SIWS + 2FA**; een kale bridge is alleen ontworpen voor vertrouwde host / LAN / VPN.",
         ],
       },
@@ -629,17 +629,18 @@ infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Het staken van 100.000 KVR kwalificeert een wallet om bridge- of gateway-nodes te draaien.",
+    summary: "KVR vastzetten in de vault. Het bepaalt geen operatorrollen meer, en niets vereist het.",
     blocks: [
       {
         t: "p",
-        md: "Staking vergrendelt KVR om een wallet te kwalificeren voor operatorrollen en node-beloningen. Een **bridge**- of **gateway**-node draaien vereist een stake van **100.000 KVR**; gewone rekennodes doen mee zonder stake en verdienen voor de lagen die ze draaien.",
+        md: "Staking vergrendelt KVR in de vault vanuit het staking-paneel van de wallet. Vroeger was het de poort naar operatorrollen — een bridge of gateway vereiste een stake van 100.000 KVR — en **die eis is verdwenen**. Voor geen enkele node is een stake nodig, en een wallet die helemaal geen KVR houdt, kan er een registreren en verdienen. Die twee infra-rollen worden nu door het netwerk toegewezen, wat een sterkere controle is dan een prijs: de oude check las het walletsaldo één keer bij registratie, vergrendelde het nooit en keek er nooit meer naar, dus dezelfde 100.000 KVR kon een willekeurig aantal nodes registreren en daarna gewoon weggeboekt worden.",
       },
       {
         t: "ul",
         items: [
-          "Staken gebeurt in het staking-paneel van het wallet-dashboard: voer een bedrag in, **Stake**, en de positie telt mee voor operatorgeschiktheid en node-beloningen.",
-          "De 100k-eis is een **skin-in-the-game-filter** voor de twee rollen waar het verkeer van anderen van afhangt — toegangspunten en het besturingsvlak.",
+          "Staken gebeurt in het staking-paneel van het wallet-dashboard: voer een bedrag in, **Stake**, en de positie blijft in de vault tot je hem weer vrijgeeft.",
+          "Het is nergens een vereiste voor. Node-beloningen komen uit het werk dat een node echt doet, plus geverifieerde uptime voor infra-rollen — nooit uit het aanhouden van een saldo.",
+          "Het devnet-stakingtarief staat momenteel op **0%**, dus een positie levert op zichzelf niets op. Zie het paneel als een mechanisme dat bestaat, niet als een manier om te verdienen.",
           "Op devnet wordt gestakete KVR in de staking-vault bewaard; het gestakete bedrag en de node-beloningen zijn zichtbaar in het staking-paneel.",
           "Devnet-KVR om te staken komt uit de distributie-faucet; devnet-SOL voor kosten komt uit de publieke faucet.",
         ],

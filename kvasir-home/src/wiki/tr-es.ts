@@ -204,7 +204,7 @@ export const esWiki: Record<string, WikiTranslation> = {
         t: "ul",
         items: [
           "Los hosts de gateway ganan una **recompensa por hora de actividad** por mantener el punto de entrada en línea, más un **bono de ×1.5** en cada inferencia que ayudan a servir.",
-          "Operar un gateway público requiere staking de **100,000 KVR** (igual que un bridge).",
+          "El rol de gateway lo **asigna la red, no se reclama**: un nodo no puede activar por su cuenta su flag de gateway o de bridge, y el uptime solo se acredita mientras el gateway lo ve responder.",
           "Los despliegues públicos protegen el acceso de operador con **SIWS + 2FA**; un bridge a pelo está diseñado solo para host confiable / LAN / VPN.",
         ],
       },
@@ -629,17 +629,18 @@ infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Hacer staking de 100,000 KVR habilita a una wallet para operar nodos bridge o gateway.",
+    summary: "Bloquear KVR en el vault. Ya no condiciona los roles de operador, y nada lo exige.",
     blocks: [
       {
         t: "p",
-        md: "El staking bloquea KVR para que una wallet califique para roles de operador y recompensas de nodo. Operar un nodo **bridge** o **gateway** requiere un stake de **100,000 KVR**; los nodos de cómputo normales se unen sin ningún stake y ganan por las capas que corren.",
+        md: "El staking bloquea KVR en el vault desde el panel de staking de la wallet. Antes era el filtro de los roles de operador — un bridge o un gateway exigía un stake de 100,000 KVR — y **ese requisito ya no existe**. No hace falta ningún stake para correr un nodo, y una wallet que no tiene nada de KVR puede registrar uno y ganar. Esos dos roles de infraestructura los asigna ahora la red, que es un control más fuerte que un precio: la comprobación antigua leía el saldo de una wallet una sola vez en el registro, nunca lo bloqueaba y nunca volvía a mirar, así que los mismos 100,000 KVR podían registrar cualquier cantidad de nodos y luego moverse a otro sitio.",
       },
       {
         t: "ul",
         items: [
-          "El staking ocurre en el panel de staking del dashboard de la wallet: introduce una cantidad, **Stake**, y la posición cuenta para la elegibilidad de operador y las recompensas de nodo.",
-          "El requisito de 100k es un **filtro de compromiso** para los dos roles de los que depende el tráfico de otros — los puntos de entrada y el plano de control.",
+          "El staking ocurre en el panel de staking del dashboard de la wallet: introduce una cantidad, **Stake**, y la posición queda retenida en el vault hasta que la retires.",
+          "No es un requisito para nada. Las recompensas de nodo salen del trabajo que el nodo hace de verdad, más el uptime verificado de los roles de infraestructura — nunca de mantener un saldo.",
+          "La tasa de staking en devnet es actualmente del **0%**, así que una posición no genera nada por sí sola. Trata el panel como un mecanismo que existe, no como una forma de ganar.",
           "En devnet, el KVR en staking se guarda en el vault de staking; la cantidad en staking y las recompensas de nodo se ven en el panel de staking.",
           "El KVR de devnet para staking sale del faucet de distribución; el SOL de devnet para comisiones sale del faucet público.",
         ],

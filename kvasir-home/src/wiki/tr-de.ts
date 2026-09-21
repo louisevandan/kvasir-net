@@ -204,7 +204,7 @@ export const deWiki: Record<string, WikiTranslation> = {
         t: "ul",
         items: [
           "Gateway-Hosts verdienen eine **stündliche Uptime-Belohnung** dafür, den Eingang online zu halten, plus einen **×1.5-Bonus** auf jede Inferenz, die sie mit bedienen.",
-          "Der Betrieb eines öffentlichen Gateways erfordert das Staking von **100.000 KVR** (wie bei einer Bridge).",
+          "Die Gateway-Rolle wird **vom Netzwerk zugewiesen, nicht beansprucht**: Ein Node kann sein eigenes Gateway- oder Bridge-Flag nicht setzen, und Uptime wird nur gutgeschrieben, solange das Gateway ihn antworten sieht.",
           "Öffentliche Deployments schützen den Operator-Zugang mit **SIWS + 2FA**; eine nackte Bridge ist nur für vertrauenswürdige Hosts / LAN / VPN gedacht.",
         ],
       },
@@ -629,17 +629,18 @@ infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "100.000 gestakte KVR qualifizieren eine Wallet für den Betrieb von Bridge- oder Gateway-Nodes.",
+    summary: "KVR im Vault sperren. Es kontrolliert keine Betreiberrollen mehr, und nichts setzt es voraus.",
     blocks: [
       {
         t: "p",
-        md: "Staking sperrt KVR, um eine Wallet für Betreiberrollen und Node-Belohnungen zu qualifizieren. Der Betrieb eines **Bridge**- oder **Gateway**-Nodes erfordert einen Stake von **100.000 KVR**; normale Rechenknoten treten ohne Stake bei und verdienen für die Layer, die sie ausführen.",
+        md: "Staking sperrt KVR im Vault, aus dem Staking-Panel der Wallet heraus. Früher war es die Hürde für Betreiberrollen — eine Bridge oder ein Gateway erforderte einen Stake von 100.000 KVR — und **diese Anforderung ist weg**. Für keinen Node ist ein Stake nötig, und selbst eine Wallet ganz ohne KVR kann einen registrieren und verdienen. Diese beiden Infra-Rollen werden stattdessen vom Netzwerk zugewiesen, was eine stärkere Kontrolle ist als ein Preis: Die alte Prüfung las den Wallet-Stand einmal bei der Registrierung, sperrte ihn nie und schaute nie wieder hin — dieselben 100.000 KVR konnten also beliebig viele Nodes registrieren und danach weiterwandern.",
       },
       {
         t: "ul",
         items: [
-          "Gestakt wird im Staking-Panel des Wallet-Dashboards: Betrag eingeben, **Stake**, und die Position zählt für die Betreiber-Berechtigung und Node-Belohnungen.",
-          "Die 100k-Anforderung ist ein **Haftungs-Filter** für die zwei Rollen, von denen der Verkehr anderer abhängt — Eingänge und die Steuerungsebene.",
+          "Gestakt wird im Staking-Panel des Wallet-Dashboards: Betrag eingeben, **Stake**, und die Position bleibt im Vault, bis du sie wieder abziehst.",
+          "Es ist für nichts eine Voraussetzung. Node-Belohnungen kommen aus der Arbeit, die ein Node tatsächlich leistet, plus verifizierter Uptime für Infra-Rollen — nie aus einem gehaltenen Guthaben.",
+          "Die Devnet-Staking-Rate liegt derzeit bei **0 %**, eine Position verdient also für sich genommen nichts. Sieh das Panel als vorhandenen Mechanismus, nicht als Verdienstmöglichkeit.",
           "Im Devnet wird gestaktes KVR im Staking-Vault gehalten; der gestakte Betrag und die Node-Belohnungen sind im Staking-Panel sichtbar.",
           "Devnet-KVR zum Staken kommt aus dem Distributions-Faucet; Devnet-SOL für Gebühren kommt aus dem öffentlichen Faucet.",
         ],

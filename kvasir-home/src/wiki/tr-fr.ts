@@ -204,7 +204,7 @@ export const frWiki: Record<string, WikiTranslation> = {
         t: "ul",
         items: [
           "Les hôtes de gateway gagnent une **récompense horaire de disponibilité** pour maintenir le point d'entrée en ligne, plus un **bonus ×1.5** sur chaque inférence qu'ils aident à servir.",
-          "Exploiter un gateway public exige un staking de **100 000 KVR** (comme un bridge).",
+          "Le rôle de gateway est **attribué par le réseau, pas revendiqué** : un nœud ne peut pas activer lui-même son drapeau gateway ou bridge, et la disponibilité n'est créditée que tant que le gateway le voit répondre.",
           "Les déploiements publics protègent l'accès opérateur avec **SIWS + 2FA** ; un bridge nu est conçu pour hôte de confiance / LAN / VPN uniquement.",
         ],
       },
@@ -628,17 +628,18 @@ infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Staker 100 000 KVR qualifie un wallet pour opérer des nœuds bridge ou gateway.",
+    summary: "Verrouiller des KVR dans le vault. Cela ne conditionne plus les rôles d'opérateur, et rien ne l'exige.",
     blocks: [
       {
         t: "p",
-        md: "Le staking verrouille des KVR pour qualifier un wallet aux rôles d'opérateur et aux récompenses de nœud. Exploiter un nœud **bridge** ou **gateway** exige un stake de **100 000 KVR** ; les nœuds de calcul ordinaires rejoignent sans aucun stake et gagnent pour les couches qu'ils exécutent.",
+        md: "Le staking verrouille des KVR dans le vault depuis le panneau de staking du wallet. C'était autrefois la condition d'accès aux rôles d'opérateur — un bridge ou un gateway exigeait un stake de 100 000 KVR — et **cette exigence a disparu**. Aucun stake n'est nécessaire pour faire tourner un nœud, et un wallet ne détenant aucun KVR peut en enregistrer un et gagner. Ces deux rôles d'infrastructure sont désormais attribués par le réseau, un contrôle plus solide qu'un prix : l'ancienne vérification lisait le solde du wallet une seule fois à l'enregistrement, ne le verrouillait jamais et ne le regardait plus jamais, si bien que les mêmes 100 000 KVR pouvaient enregistrer autant de nœuds qu'on voulait avant d'être déplacés.",
       },
       {
         t: "ul",
         items: [
-          "Le staking se fait dans le panneau de staking du tableau de bord du wallet : saisissez un montant, **Stake**, et la position compte pour l'éligibilité opérateur et les récompenses de nœud.",
-          "L'exigence de 100k est un **filtre d'engagement** pour les deux rôles dont dépend le trafic des autres — les points d'entrée et le plan de contrôle.",
+          "Le staking se fait dans le panneau de staking du tableau de bord du wallet : saisissez un montant, **Stake**, et la position reste dans le vault jusqu'à ce que vous la retiriez.",
+          "Ce n'est une condition pour rien. Les récompenses de nœud viennent du travail réellement accompli par le nœud, plus la disponibilité vérifiée pour les rôles d'infrastructure — jamais du simple fait de détenir un solde.",
+          "Le taux de staking du devnet est actuellement de **0 %**, une position ne rapporte donc rien par elle-même. Voyez ce panneau comme un mécanisme qui existe, pas comme un moyen de gagner.",
           "Sur le devnet, les KVR stakés sont conservés dans le vault de staking ; le montant staké et les récompenses de nœud sont visibles dans le panneau de staking.",
           "Le KVR de devnet pour staker vient du faucet de distribution ; le SOL de devnet pour les frais vient du faucet public.",
         ],
