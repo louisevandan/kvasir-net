@@ -24,9 +24,12 @@
  * the developer does not own. This builds both and `lipo`s them, and fails
  * loudly rather than shipping one architecture quietly.
  *
- * ## Cross-compiling to Windows
+ * ## Windows: MSVC natively, mingw when cross-compiling
  *
- * Needs the `x86_64-pc-windows-gnu` Rust target and a mingw-w64 linker
+ * On Windows this builds `x86_64-pc-windows-msvc` with the C runtime linked
+ * statically, so the agent needs nothing beyond system DLLs (needs Visual
+ * Studio Build Tools with the C++ workload). From another OS it cross-compiles
+ * `x86_64-pc-windows-gnu`, which needs that Rust target and a mingw-w64 linker
  * (`brew install mingw-w64`). Without them this says so and stops, rather than
  * producing a Windows package with no agent in it.
  *
@@ -51,7 +54,11 @@ const ROOT = path.join(HERE, '..', 'resources', 'p4')
 /** What each platform needs built, and what the result is called. */
 const PLATFORMS = {
   darwin: { targets: ['aarch64-apple-darwin', 'x86_64-apple-darwin'], exe: 'p4-agent', merge: true },
-  win32: { targets: ['x86_64-pc-windows-gnu'], exe: 'p4-agent.exe', merge: false },
+  win32: {
+    targets: [process.platform === 'win32' ? 'x86_64-pc-windows-msvc' : 'x86_64-pc-windows-gnu'],
+    exe: 'p4-agent.exe',
+    merge: false,
+  },
   linux: { targets: ['x86_64-unknown-linux-gnu'], exe: 'p4-agent', merge: false },
 }
 
@@ -80,7 +87,11 @@ const quiet = (cmd, args) => {
 function buildTarget(source, target, exe) {
   console.log(`\n=== ${target}`)
   try {
-    run('cargo', ['build', '--release', '-p', 'p4-agent', '--bin', 'p4-agent', '--target', target], { cwd: source })
+    // A static CRT keeps the MSVC build free of the Visual C++ redistributable.
+    const env = target.endsWith('-msvc')
+      ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS || ''} -C target-feature=+crt-static`.trim() }
+      : process.env
+    run('cargo', ['build', '--release', '-p', 'p4-agent', '--bin', 'p4-agent', '--target', target], { cwd: source, env })
   } catch (error) {
     const installed = quiet('rustup', ['target', 'list', '--installed'])
     const hint = installed.includes(target)

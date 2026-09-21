@@ -73,11 +73,9 @@ const KNOWN = [
     // Built from apps/linkcpp-expert-worker in this repository. (The copy on
     // the MI250 host is named linker-expert-worker; same program, different
     // build tree — the name here is what this repo's CMake target produces.)
-    //
-    // NOTE: main.cpp includes POSIX socket headers unconditionally, outside
-    // its LINKCPP_EXPERT_NO_MAIN guard, so it does not yet build for Windows
-    // — not even as the static library. On Windows this is expected to report
-    // "not installed" until the socket layer is ported to Winsock.
+    // On Windows it is the CUDA build (MSVC + CUDA 12.x), which also needs
+    // the cuBLAS DLLs beside it; without them the loader refuses it with
+    // STATUS_DLL_NOT_FOUND, which probe() reports as such.
     id: 'linkcpp-expert-worker',
     purpose: 'MoE expert FFN via ggml mul_mat_id — the executor a remote expert shard needs.',
     locate: () => candidates({
@@ -91,6 +89,20 @@ const KNOWN = [
     // It has --serve and --self-test; --help is the cheapest thing that makes
     // the OS load the binary and its DLLs without opening a port or a model.
     probeArgs: ['--help'],
+    // What hosting N experts costs on the GPU, as N = (budget - F - S - H) / R.
+    // Measured on an RTX 4060 (CUDA 12.9, sm_89 build, 2026-09-22) by loading
+    // 2, 8 and 64 experts and then serving batches of 1, 64 and 512 tokens x 8
+    // experts: +110 / +167 / +675 MiB after load, +28 MiB more at 512 tokens.
+    // So R ~ 9.11 MiB (the served bytes, 9.06 MiB, plus allocator rounding),
+    // F ~ 92 MiB (CUDA context and ggml buffers). Values below round those up.
+    // This is ggml's model: it computes on the quantized bytes as served. An
+    // executor that expands weights (e.g. to fp16) must report its own R.
+    memoryModel: {
+      residentBytesPerExpert: 9_568_256,   // 9.125 MiB
+      fixedBytes: 128 * MIB,
+      scratchBytes: 64 * MIB,              // up to 512 tokens x 8 experts per request
+      headroomBytes: 128 * MIB,
+    },
   },
 ]
 
@@ -202,4 +214,19 @@ async function executors() {
   }
 }
 
-module.exports = { executors, gpuReadiness, KNOWN, NTSTATUS }
+const MAX_EXPERTS_PER_REQUEST = 64   // the bridge refuses more in one shard
+
+/**
+ * Experts that fit: floor((min(budget, available) - F - S - H) / R), clamped to
+ * [0, 64]. No budget or no model yet -> the most one shard can carry, never
+ * "unlimited". src/api.ts mirrors this for the slider's preview.
+ */
+function expertsForBudget(budget, model, availableBytes) {
+  if (budget == null || !model) return MAX_EXPERTS_PER_REQUEST
+  const usable = availableBytes == null ? budget : Math.min(budget, availableBytes)
+  const n = Math.floor((usable - model.fixedBytes - model.scratchBytes - model.headroomBytes)
+    / model.residentBytesPerExpert)
+  return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
+}
+
+module.exports = { executors, expertsForBudget, gpuReadiness, KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST }

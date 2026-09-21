@@ -4,7 +4,7 @@ import { useI18n } from '../i18n'
 import { Card, MetricRow, CopyButton } from '../components'
 import { QR } from '../qr'
 import { Staking } from '../services'
-import { api, isElectron, NODE_GUIDE_URL } from '../api'
+import { api, expertsForBudget, isElectron, NODE_GUIDE_URL } from '../api'
 import type { NodeStatus } from '../api'
 
 const osLabel = (os: string) => ({ macos: 'macOS', windows: 'Windows', linux: 'Linux' }[os] || os)
@@ -77,9 +77,14 @@ function VramCard({ status, onChange }: { status: NodeStatus | null; onChange: (
     )
   }
   const max = Math.floor(gpu.totalBytes / VRAM_STEP) * VRAM_STEP
-  const experts = Math.max(0, Math.min(64, Math.floor(current / (9_502_720 * 1.25))))
-  const usedByOthers = gpu.usedBytes
-  const overFree = current > gpu.freeBytes
+  // Same conversion the app uses for its offer: the budget, capped by what is
+  // actually free (our own worker's share added back), through the executor's
+  // measured memory model.
+  const own = status?.ownWorkerGpuBytes ?? 0
+  const available = Math.max(0, gpu.freeBytes + own - (status?.vramReserveBytes ?? 0))
+  const experts = expertsForBudget(current, status?.expertMemoryModel, available)
+  const usedByOthers = Math.max(0, gpu.usedBytes - own)
+  const overFree = current > available
   const pct = (b: number) => `${Math.min(100, Math.max(0, (b / gpu.totalBytes) * 100))}%`
   return (
     <Card>
@@ -105,7 +110,7 @@ function VramCard({ status, onChange }: { status: NodeStatus | null; onChange: (
         {current === 0 ? t('ns.vramNone') : t('ns.vramExperts', experts)}
       </div>
       {overFree && current > 0 && (
-        <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>{t('ns.vramOverFree', gib1(gpu.freeBytes))}</div>
+        <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>{t('ns.vramOverFree', gib1(available))}</div>
       )}
       <div className="small muted mono" style={{ marginTop: 6 }}>
         {gpu.name} · {gpu.driver} · CUDA {status?.compute?.gpu.cudaVersion ?? '—'} · {gpu.utilizationPct}%

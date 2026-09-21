@@ -8,7 +8,7 @@ const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
 const { Participation } = require('./participation.cjs')
-const { executors } = require('./executors.cjs')
+const { executors, expertsForBudget, KNOWN: KNOWN_EXECUTORS } = require('./executors.cjs')
 const { RelayTunnel } = require('./relay.cjs')
 const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
@@ -553,15 +553,34 @@ const nodeTokenStore = {
 // The GPU on a desktop is usually shared — an image generator or a game can
 // want most of it. So the operator chooses how much the node may use, and the
 // app turns that into something the bridge understands: how many experts to
-// accept. ggml's mul_mat_id runs on the quantized weights, so an expert costs
-// about its on-disk size in VRAM; the rest is headroom for compute buffers.
-const EXPERT_BYTES = 9_502_720          // gate + up (Q4_K) + down (Q5_K), one expert
-const EXPERT_VRAM_OVERHEAD = 1.25       // activations, scratch, allocator slack
-const MAX_EXPERTS_PER_REQUEST = 64      // the bridge refuses more in one shard
+// accept.
+//
+// The conversion is the executor's memory model, not a fixed factor:
+//
+//     usable = min(budget, free VRAM now + what our own worker holds - reserve)
+//     N      = floor((usable - F - S - H) / R), clamped to [0, 64]
+//
+// R (resident bytes per expert), F (fixed cost), S (scratch at the largest
+// batch served) and H (headroom) come from the executor — they are measured
+// per backend in executors.cjs. A flat "expert size x 1.25" over-asks when the
+// budget is small (F alone is ~100 MiB) and would be badly wrong for an
+// executor that expands the weights, e.g. fp16 at 3.3x the served size.
 const VRAM_STEP = 256 * 1024 * 1024
-// Total VRAM from the most recent probe. The default budget is derived from it,
-// so it is refreshed whenever the node screen polls status.
+// Kept free for the desktop itself (compositor, browser) whatever the budget.
+const SYSTEM_VRAM_RESERVE = 512 * 1024 * 1024
+// From the most recent probe. The default budget is derived from the total and
+// the usable part from free, so both refresh whenever the node screen polls.
 let lastGpuTotalBytes = null
+let lastGpuFreeBytes = null
+// VRAM our own expert worker holds right now. It shows up as "used" in the
+// probe, and must be added back or the node would shrink its own offer every
+// time it took work.
+let ownWorkerGpuBytes = 0
+
+function expertMemoryModel() {
+  const worker = KNOWN_EXECUTORS.find((k) => k.id === 'linkcpp-expert-worker')
+  return worker && worker.memoryModel ? worker.memoryModel : null
+}
 
 /**
  * The budget in effect. An operator who never touched the slider still gets a
@@ -578,21 +597,25 @@ function vramBudgetBytes() {
   if (lastGpuTotalBytes) return Math.floor(lastGpuTotalBytes / 2 / VRAM_STEP) * VRAM_STEP
   return null
 }
+
 /**
- * Experts that fit the budget. With no GPU probe yet, fall back to the most the
- * bridge will ship in one shard rather than to "no cap" — asking for a whole
- * layer before we even know the card size is how the unlimited request happened.
+ * Experts to volunteer for now. With no GPU probe yet, fall back to the most
+ * the bridge will ship in one shard rather than to "no cap" — asking for a
+ * whole layer before we even know the card size is how the unlimited request
+ * happened.
  */
 function maxExpertsForBudget(budget = vramBudgetBytes()) {
-  if (budget == null) return MAX_EXPERTS_PER_REQUEST
-  const n = Math.floor(budget / (EXPERT_BYTES * EXPERT_VRAM_OVERHEAD))
-  return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
+  const available = lastGpuFreeBytes == null
+    ? null
+    : Math.max(0, lastGpuFreeBytes + ownWorkerGpuBytes - SYSTEM_VRAM_RESERVE)
+  return expertsForBudget(budget, expertMemoryModel(), available)
 }
 async function refreshGpuTotal() {
   try {
     const c = await executors()
-    const total = c.gpu && c.gpu.gpus && c.gpu.gpus[0] && c.gpu.gpus[0].totalBytes
-    if (total) lastGpuTotalBytes = total
+    const gpu = c.gpu && c.gpu.gpus && c.gpu.gpus[0]
+    if (gpu && gpu.totalBytes) lastGpuTotalBytes = gpu.totalBytes
+    if (gpu && Number.isFinite(gpu.freeBytes)) lastGpuFreeBytes = gpu.freeBytes
     return c
   } catch { return null }
 }
@@ -639,6 +662,10 @@ async function nodeStatus({ inspect = false } = {}) {
     compute: await refreshGpuTotal(),
     vramBudgetBytes: vramBudgetBytes(),
     maxExperts: maxExpertsForBudget(),
+    // So the slider's live preview uses the same conversion as the offer.
+    expertMemoryModel: expertMemoryModel(),
+    vramReserveBytes: SYSTEM_VRAM_RESERVE,
+    ownWorkerGpuBytes,
   }
 }
 

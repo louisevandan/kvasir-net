@@ -44,6 +44,26 @@ export interface NodeCompute {
   summary: { canHostPipelineStages: boolean; canServeExperts: boolean; blockers: string[] }
 }
 export interface NodeMeasurement { tps: number; tokens: number; elapsedMs: number; model: string; at: number }
+/** What hosting experts costs an executor: N = (budget - F - S - H) / R. */
+export type ExpertMemoryModel = {
+  residentBytesPerExpert: number
+  fixedBytes: number
+  scratchBytes: number
+  headroomBytes: number
+}
+
+export const MAX_EXPERTS_PER_REQUEST = 64
+
+/** Mirrors expertsForBudget in electron/main.cjs — keep the two identical. */
+export function expertsForBudget(budget: number | null, model: ExpertMemoryModel | null | undefined,
+  availableBytes: number | null): number {
+  if (budget == null || !model) return MAX_EXPERTS_PER_REQUEST
+  const usable = availableBytes == null ? budget : Math.min(budget, availableBytes)
+  const n = Math.floor((usable - model.fixedBytes - model.scratchBytes - model.headroomBytes)
+    / model.residentBytesPerExpert)
+  return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
+}
+
 export interface NodeStatus {
   running: boolean
   pid: number | null
@@ -65,6 +85,11 @@ export interface NodeStatus {
   // GPU memory the operator lends the network, and how many experts that holds.
   vramBudgetBytes?: number | null
   maxExperts?: number | null
+  // The executor's measured cost of hosting experts, so the slider previews
+  // with the same conversion the app uses for its offer (see expertsForBudget).
+  expertMemoryModel?: ExpertMemoryModel | null
+  vramReserveBytes?: number
+  ownWorkerGpuBytes?: number
   debugWallet?: string | null
   // Whether the network can reach this machine. The agent binds loopback, so
   // without a tunnel the node runs and is never given work.
@@ -235,8 +260,11 @@ function makeMock(): KvasirAPI {
       // installed — a demo that claimed a working expert server would mislead
       // exactly the way a dev build's silent "start node" did.
       let vramBudgetBytes: number | null = 8 * 1024 ** 3
-      const EXPERT_SLOT = 9_502_720 * 1.25
-      const maxExperts = () => (vramBudgetBytes == null ? null : Math.max(0, Math.min(64, Math.floor(vramBudgetBytes / EXPERT_SLOT))))
+      const MIB = 1024 * 1024
+      const expertMemoryModel: ExpertMemoryModel = {
+        residentBytesPerExpert: 9_568_256, fixedBytes: 128 * MIB, scratchBytes: 64 * MIB, headroomBytes: 128 * MIB,
+      }
+      const maxExperts = () => expertsForBudget(vramBudgetBytes, expertMemoryModel, null)
       const compute: NodeCompute = {
         executors: [
           { id: 'p4-agent', purpose: 'Pipeline stages for the p4 engine.', found: false, runnable: false, path: null, reason: 'not installed' },
@@ -257,7 +285,7 @@ function makeMock(): KvasirAPI {
         snapshotAt: running ? Date.now() : null,
         log: running ? ['12:00:01 agent listening on 127.0.0.1:42031'] : [],
         capability, measured: null,
-        compute, vramBudgetBytes, maxExperts: maxExperts(),
+        compute, vramBudgetBytes, maxExperts: maxExperts(), expertMemoryModel,
       })
       return {
         status: async () => snap(),
