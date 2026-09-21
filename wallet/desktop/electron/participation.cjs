@@ -261,11 +261,19 @@ class Participation {
    * thrown: a node that stops volunteering because the bridge blipped is worse
    * than one that keeps asking.
    */
-  start({ pollMs = DEFAULT_POLL_MS, model = null } = {}) {
+  /**
+   * @param {object} [opts]
+   * @param {number|(() => number|null)} [opts.maxExperts] a number, or a function
+   *        read on every tick so a budget the operator changes (the VRAM slider)
+   *        applies on the next poll without restarting the loop. null/undefined
+   *        means "no cap — let the bridge decide".
+   */
+  start({ pollMs = DEFAULT_POLL_MS, model = null, maxExperts = null } = {}) {
     if (this.running) return
     this.running = true
     this.pollMs = pollMs
     this.model = model
+    this.maxExpertsFn = typeof maxExperts === 'function' ? maxExperts : () => maxExperts
     this.tick()
   }
 
@@ -273,7 +281,14 @@ class Participation {
       if (!this.running) return
       let failed = true
       try {
-        await this.volunteer({ model: this.model })
+        const cap = this.maxExpertsFn ? this.maxExpertsFn() : null
+        if (cap === 0) {
+          // The operator lent the network no GPU memory. Asking for work we
+          // have said we cannot hold would only earn an assignment to refuse.
+          this.assignment = null
+        } else {
+          await this.volunteer({ model: this.model, maxExperts: cap })
+        }
         // Report every tick, assignment or not: the census keys on heartbeat
         // freshness, so staying silent drops this machine out of the market.
         await this.reportCoverage(this.heldSegments(), { model: this.model })
@@ -354,7 +369,12 @@ class Participation {
 
   async request(method, path, body, token) {
     const url = this.base + path
-    const headers = { Accept: 'application/json' }
+    // Cloudflare fronts the gateway, and its Browser Integrity Check answers a
+    // client it classes as a bot with a bare 403 ("error code: 1010") that is
+    // indistinguishable from an auth failure. Python's default agent is refused
+    // outright today; Node's passes, but only by policy. Name the client so a
+    // Cloudflare rule change cannot silently turn every poll into a "401".
+    const headers = { Accept: 'application/json', 'User-Agent': 'kvasir-wallet-desktop' }
     if (body != null) headers['Content-Type'] = 'application/json'
     if (token) headers.Authorization = `Bearer ${token}`
 

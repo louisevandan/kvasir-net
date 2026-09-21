@@ -21,6 +21,28 @@ export interface NodeCapability {
   backend: 'metal' | 'cuda' | 'rocm' | 'cpu'
   gpus: { name: string; memoryBytes: number | null; backend: string | null }[]
 }
+export interface ExecutorProbe {
+  id: string
+  purpose: string
+  found: boolean
+  runnable: boolean
+  path: string | null
+  reason: string
+  banner?: string
+}
+export interface GpuLive {
+  name: string
+  driver: string
+  totalBytes: number
+  usedBytes: number
+  freeBytes: number
+  utilizationPct: number
+}
+export interface NodeCompute {
+  executors: ExecutorProbe[]
+  gpu: { vendor: string | null; ready: boolean; reason?: string; cudaVersion?: string | null; gpus?: GpuLive[] }
+  summary: { canHostPipelineStages: boolean; canServeExperts: boolean; blockers: string[] }
+}
 export interface NodeMeasurement { tps: number; tokens: number; elapsedMs: number; model: string; at: number }
 export interface NodeStatus {
   running: boolean
@@ -38,6 +60,12 @@ export interface NodeStatus {
   log: string[]
   capability: NodeCapability
   measured: NodeMeasurement | null
+  // What can actually compute on this machine, with live GPU memory.
+  compute?: NodeCompute
+  // GPU memory the operator lends the network, and how many experts that holds.
+  vramBudgetBytes?: number | null
+  maxExperts?: number | null
+  debugWallet?: string | null
   // Whether the network can reach this machine. The agent binds loopback, so
   // without a tunnel the node runs and is never given work.
   relay: {
@@ -104,6 +132,8 @@ export interface KvasirAPI {
     start(): Promise<NodeStatus>
     stop(): Promise<NodeStatus>
     capability(refresh?: boolean): Promise<NodeCapability>
+    executors(): Promise<NodeCompute>
+    setVramBudget(bytes: number): Promise<{ vramBudgetBytes: number | null; maxExperts: number | null }>
     benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string } & Partial<NodeMeasurement>>
   }
   openExternal(url: string): Promise<void>
@@ -201,6 +231,20 @@ function makeMock(): KvasirAPI {
         gpus: [{ name: 'Apple M4 Pro', memoryBytes: 24 * 1024 ** 3, backend: 'metal' }],
       }
       let running = false
+      // The browser build runs nothing, so it reports that no executor is
+      // installed — a demo that claimed a working expert server would mislead
+      // exactly the way a dev build's silent "start node" did.
+      let vramBudgetBytes: number | null = 8 * 1024 ** 3
+      const EXPERT_SLOT = 9_502_720 * 1.25
+      const maxExperts = () => (vramBudgetBytes == null ? null : Math.max(0, Math.min(64, Math.floor(vramBudgetBytes / EXPERT_SLOT))))
+      const compute: NodeCompute = {
+        executors: [
+          { id: 'p4-agent', purpose: 'Pipeline stages for the p4 engine.', found: false, runnable: false, path: null, reason: 'not installed' },
+          { id: 'linkcpp-expert-worker', purpose: 'MoE expert FFN via ggml mul_mat_id.', found: false, runnable: false, path: null, reason: 'not installed' },
+        ],
+        gpu: { vendor: null, ready: false, reason: 'browser preview — no GPU probe' },
+        summary: { canHostPipelineStages: false, canServeExperts: false, blockers: ['browser preview runs no executor'] },
+      }
       const snap = (): NodeStatus => ({
         running, pid: running ? 4242 : null, port: 42031, address: 'tcp://127.0.0.1:42031',
         binary: running ? '/opt/kvasir/p4-agent' : null, uptimeMs: running ? 125_000 : 0,
@@ -213,12 +257,15 @@ function makeMock(): KvasirAPI {
         snapshotAt: running ? Date.now() : null,
         log: running ? ['12:00:01 agent listening on 127.0.0.1:42031'] : [],
         capability, measured: null,
+        compute, vramBudgetBytes, maxExperts: maxExperts(),
       })
       return {
         status: async () => snap(),
         start: async () => { running = true; return snap() },
         stop: async () => { running = false; return snap() },
         capability: async () => capability,
+        executors: async () => compute,
+        setVramBudget: async (bytes: number) => { vramBudgetBytes = bytes; return { vramBudgetBytes, maxExperts: maxExperts() } },
         benchmark: async () => ({ ok: false, error: 'no local model to measure with — add a GGUF first' }),
       }
     })(),

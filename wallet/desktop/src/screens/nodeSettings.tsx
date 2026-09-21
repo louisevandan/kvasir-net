@@ -14,6 +14,106 @@ const gib = (bytes: number | null | undefined) => (bytes ? `${(bytes / 1024 ** 3
 // where a measured number lands instead of guessing.
 const tierOf = (tps: number | null) => (tps === null ? '—' : tps >= 90 ? 'S' : tps >= 60 ? 'A' : tps >= 30 ? 'B' : 'C')
 
+// VRAM is shown to one decimal: 8 GiB cards are common and whole-GiB rounding
+// hides the difference between "fits" and "does not".
+const gib1 = (bytes: number | null | undefined) => (bytes == null ? '—' : `${(bytes / 1024 ** 3).toFixed(1)} GiB`)
+const VRAM_STEP = 256 * 1024 ** 2
+
+/** Which engines can actually compute here — "a GPU" is not the same as "able to work". */
+function ComputeCard({ status }: { status: NodeStatus | null }) {
+  const { t } = useI18n()
+  const compute = status?.compute
+  return (
+    <Card>
+      <div className="spread"><div className="label">{t('ns.compute')}</div>
+        <span className="chip" style={{ color: compute?.summary.canServeExperts ? 'var(--good)' : 'var(--muted)' }}>
+          {compute?.summary.canServeExperts ? t('ns.exReady') : t('ns.exMissing')}
+        </span>
+      </div>
+      <div className="muted small" style={{ margin: '4px 0 12px' }}>{t('ns.computeDesc')}</div>
+      {(compute?.executors ?? []).map((ex) => {
+        // Three states, not two: "installed but broken" is the one that used
+        // to hide behind a node that looked idle.
+        const state = ex.runnable ? 'ok' : ex.found ? 'broken' : 'missing'
+        const color = state === 'ok' ? 'var(--good)' : state === 'broken' ? 'var(--danger)' : 'var(--muted)'
+        return (
+          <div key={ex.id} style={{ padding: '6px 0', borderTop: '1px solid var(--line)' }}>
+            <div className="spread small">
+              <span className="mono">{ex.id}</span>
+              <span style={{ color, fontWeight: 600 }}>
+                {state === 'ok' ? t('ns.exReady') : state === 'broken' ? t('ns.exBroken') : t('ns.exMissing')}
+              </span>
+            </div>
+            <div className="small muted">{ex.purpose}</div>
+            {state === 'broken' && <div className="small" style={{ color: 'var(--danger)' }}>{ex.reason}</div>}
+          </div>
+        )
+      })}
+      {compute?.gpu.ready === false && (
+        <div className="small muted" style={{ marginTop: 6 }}>{t('ns.vramNoGpu')}</div>
+      )}
+    </Card>
+  )
+}
+
+/**
+ * How much GPU memory the node may use. The GPU is usually shared with other
+ * software, so this is the operator's decision, not the app's — and it takes
+ * effect immediately, as a cap on how many experts the bridge will assign.
+ */
+function VramCard({ status, onChange }: { status: NodeStatus | null; onChange: (bytes: number) => void }) {
+  const { t } = useI18n()
+  const gpu = status?.compute?.gpu.gpus?.[0]
+  const [value, setValue] = useState<number | null>(null)
+  // Follow the saved budget until the operator starts dragging.
+  const saved = status?.vramBudgetBytes ?? null
+  const current = value ?? saved ?? (gpu ? Math.floor(gpu.totalBytes / 2 / VRAM_STEP) * VRAM_STEP : 0)
+  if (!gpu) {
+    return (
+      <Card>
+        <div className="label">{t('ns.vram')}</div>
+        <div className="muted small" style={{ marginTop: 4 }}>{t('ns.vramNoGpu')}</div>
+      </Card>
+    )
+  }
+  const max = Math.floor(gpu.totalBytes / VRAM_STEP) * VRAM_STEP
+  const experts = Math.max(0, Math.min(64, Math.floor(current / (9_502_720 * 1.25))))
+  const usedByOthers = gpu.usedBytes
+  const overFree = current > gpu.freeBytes
+  const pct = (b: number) => `${Math.min(100, Math.max(0, (b / gpu.totalBytes) * 100))}%`
+  return (
+    <Card>
+      <div className="spread"><div className="label">{t('ns.vram')}</div>
+        <span className="chip mono">{gib1(current)} / {gib1(gpu.totalBytes)}</span>
+      </div>
+      <div className="muted small" style={{ margin: '4px 0 12px' }}>{t('ns.vramDesc')}</div>
+      {/* Live picture of the card: what others hold now, and what this node would take. */}
+      <div style={{ position: 'relative', height: 10, background: 'var(--surface-2)', borderRadius: 5, overflow: 'hidden', marginBottom: 8 }}
+        title={`${gpu.name} · used ${gib1(usedByOthers)} · free ${gib1(gpu.freeBytes)}`}>
+        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: pct(usedByOthers), background: 'var(--muted)', opacity: 0.45 }} />
+        <div style={{ position: 'absolute', left: pct(usedByOthers), top: 0, bottom: 0, width: pct(current), background: overFree ? 'var(--danger)' : 'var(--pink)' }} />
+      </div>
+      <label htmlFor="vram-budget" className="sr-only">{t('ns.vram')}</label>
+      <input id="vram-budget" type="range" min={0} max={max} step={VRAM_STEP} value={Math.min(current, max)}
+        onChange={(e) => setValue(Number(e.target.value))}
+        // Commit on release, not on every pixel of the drag.
+        onMouseUp={() => { if (value != null) onChange(value) }}
+        onKeyUp={() => { if (value != null) onChange(value) }}
+        onTouchEnd={() => { if (value != null) onChange(value) }}
+        style={{ width: '100%', padding: 0 }} />
+      <div className="small" style={{ marginTop: 6 }}>
+        {current === 0 ? t('ns.vramNone') : t('ns.vramExperts', experts)}
+      </div>
+      {overFree && current > 0 && (
+        <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>{t('ns.vramOverFree', gib1(gpu.freeBytes))}</div>
+      )}
+      <div className="small muted mono" style={{ marginTop: 6 }}>
+        {gpu.name} · {gpu.driver} · CUDA {status?.compute?.gpu.cudaVersion ?? '—'} · {gpu.utilizationPct}%
+      </div>
+    </Card>
+  )
+}
+
 export function NodeSettingsScreen() {
   const { t } = useI18n()
   const { address, stakingUrl, os, arch } = useWallet()
@@ -96,6 +196,16 @@ export function NodeSettingsScreen() {
     } catch (e: any) { setConnectMsg(String(e?.message ?? e)) }
   }
 
+  // The slider commits on release; the main process caps the next volunteer
+  // request with it, so it takes effect without restarting the node.
+  const saveVram = async (bytes: number) => {
+    if (!api.node) return
+    try {
+      await api.node.setVramBudget(bytes)
+      setStatus(await api.node.status())
+    } catch { /* the next poll will show the saved value */ }
+  }
+
   return (
     <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr', alignItems: 'start' }}>
       {/* col 1 — what this machine actually is */}
@@ -115,6 +225,9 @@ export function NodeSettingsScreen() {
             </div>
           ))}
         </Card>
+
+        {isElectron && <ComputeCard status={status} />}
+        {isElectron && <VramCard status={status} onChange={saveVram} />}
 
         <Card>
           <div className="spread"><div className="label">{t('ns.agent')}</div>

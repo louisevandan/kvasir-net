@@ -8,6 +8,7 @@ const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
 const { Participation } = require('./participation.cjs')
+const { executors } = require('./executors.cjs')
 const { RelayTunnel } = require('./relay.cjs')
 const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
@@ -103,6 +104,55 @@ function clearSession() { session = null }
 function requireUnlocked() {
   if (!session) throw new Error('locked')
   return session.mnemonic
+}
+
+// ---- debug identity (DEVELOPMENT ONLY) --------------------------------------
+// Lets automated testing of node participation, shard download and the relay
+// run without a human unlocking the wallet.
+//
+// It deliberately does NOT unlock or bypass the real wallet. It substitutes a
+// separate test keypair, and the real wallet's passphrase protection is left
+// exactly as it was. A switch that opened the real wallet would be one leaked
+// env var away from being a way into anybody's funds.
+//
+// Two gates, both required:
+//   - !app.isPackaged — a packaged/release build ignores this entirely, so the
+//     switch cannot ship to users even if the variable is set on their machine.
+//   - KVASIR_DEBUG_WALLET=1
+//
+// None of the flows under test need the real wallet: the bridge accepts a
+// zero-balance identity for everything participation does. Anything earned
+// lands on the test identity, never on the operator's wallet.
+const DEBUG_WALLET = !app.isPackaged && process.env.KVASIR_DEBUG_WALLET === '1'
+const debugWalletFile = () => path.join(app.getPath('userData'), 'debug-wallet.json')
+let debugKeypair = null
+function debugIdentity() {
+  if (!DEBUG_WALLET) return null
+  if (!debugKeypair) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(debugWalletFile(), 'utf8'))
+      debugKeypair = Keypair.fromSecretKey(Uint8Array.from(bs58.decode(raw.secretKey)))
+    } catch {
+      // Stable across restarts so the node keeps one identity (and one node
+      // token) instead of appearing as a new machine on every launch.
+      debugKeypair = Keypair.generate()
+      fs.writeFileSync(debugWalletFile(), JSON.stringify({
+        secretKey: bs58.encode(debugKeypair.secretKey),
+        note: 'DEBUG ONLY: a test identity for development. Not a real wallet — never fund it.',
+      }, null, 2))
+    }
+    console.log(`[DEBUG WALLET] using test identity ${debugKeypair.publicKey.toBase58()} — NOT the real wallet`)
+  }
+  return debugKeypair
+}
+/** Address everything signs as: the test identity in debug mode, else the real wallet. */
+function activeAddress() {
+  const d = debugIdentity()
+  return d ? d.publicKey.toBase58() : (readConfig().address || '')
+}
+/** Keypair to sign with. Throws 'locked' when the real wallet is locked. */
+function activeKeypair() {
+  return debugIdentity() || keypairFromMnemonic(requireUnlocked())
 }
 function saveEncrypted(mnemonic, passphrase) {
   if (!passphrase || String(passphrase).length < 8) throw new Error('passphrase must be at least 8 characters')
@@ -481,7 +531,7 @@ const nodeTokenStore = {
       const rec = JSON.parse(safeStorage.decryptString(buf))
       // A token minted for a different wallet is useless: the bridge scopes it
       // to the signer. Silently dropping it makes switching wallets just work.
-      return rec && rec.wallet === readConfig().address ? rec : null
+      return rec && rec.wallet === activeAddress() ? rec : null
     } catch { return null }
   },
   save(rec) {
@@ -499,12 +549,61 @@ const nodeTokenStore = {
   },
 }
 
+// ---- GPU memory the operator lends to the network ---------------------------
+// The GPU on a desktop is usually shared — an image generator or a game can
+// want most of it. So the operator chooses how much the node may use, and the
+// app turns that into something the bridge understands: how many experts to
+// accept. ggml's mul_mat_id runs on the quantized weights, so an expert costs
+// about its on-disk size in VRAM; the rest is headroom for compute buffers.
+const EXPERT_BYTES = 9_502_720          // gate + up (Q4_K) + down (Q5_K), one expert
+const EXPERT_VRAM_OVERHEAD = 1.25       // activations, scratch, allocator slack
+const MAX_EXPERTS_PER_REQUEST = 64      // the bridge refuses more in one shard
+const VRAM_STEP = 256 * 1024 * 1024
+// Total VRAM from the most recent probe. The default budget is derived from it,
+// so it is refreshed whenever the node screen polls status.
+let lastGpuTotalBytes = null
+
+/**
+ * The budget in effect. An operator who never touched the slider still gets a
+ * budget — half the card — and it is the same number the slider displays.
+ *
+ * Returning "unlimited" when unset was the first version, and it asked the
+ * bridge for everything: the very first poll came back with all 288 experts of
+ * a layer, while the slider on screen showed 4 GiB. A control that displays a
+ * value other than the one in force is worse than no control.
+ */
+function vramBudgetBytes() {
+  const v = Number(readConfig().vramBudgetBytes)
+  if (Number.isFinite(v) && v >= 0 && readConfig().vramBudgetBytes != null) return v
+  if (lastGpuTotalBytes) return Math.floor(lastGpuTotalBytes / 2 / VRAM_STEP) * VRAM_STEP
+  return null
+}
+/**
+ * Experts that fit the budget. With no GPU probe yet, fall back to the most the
+ * bridge will ship in one shard rather than to "no cap" — asking for a whole
+ * layer before we even know the card size is how the unlimited request happened.
+ */
+function maxExpertsForBudget(budget = vramBudgetBytes()) {
+  if (budget == null) return MAX_EXPERTS_PER_REQUEST
+  const n = Math.floor(budget / (EXPERT_BYTES * EXPERT_VRAM_OVERHEAD))
+  return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
+}
+async function refreshGpuTotal() {
+  try {
+    const c = await executors()
+    const total = c.gpu && c.gpu.gpus && c.gpu.gpus[0] && c.gpu.gpus[0].totalBytes
+    if (total) lastGpuTotalBytes = total
+    return c
+  } catch { return null }
+}
+
 const participation = new Participation({
   baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
-  wallet: () => readConfig().address || '',
-  // Signing needs the unlocked mnemonic. Throwing here (rather than returning
-  // an empty signature) is what surfaces "wallet is locked" as a real reason.
-  sign: (bytes) => nacl.sign.detached(Uint8Array.from(bytes), keypairFromMnemonic(requireUnlocked()).secretKey),
+  wallet: () => activeAddress(),
+  // Signing needs the unlocked mnemonic (or the debug identity). Throwing here
+  // rather than returning an empty signature is what surfaces "wallet is
+  // locked" as a real reason.
+  sign: (bytes) => nacl.sign.detached(Uint8Array.from(bytes), activeKeypair().secretKey),
   store: nodeTokenStore,
   log: (line) => console.log(line),
 })
@@ -533,6 +632,13 @@ async function nodeStatus({ inspect = false } = {}) {
   return {
     ...p4node.status(), capability: await capability(), measured,
     relay: relay.status(), participation: participation.status(),
+    // Surfaced so a test identity can never be mistaken for the real wallet.
+    debugWallet: DEBUG_WALLET ? activeAddress() : null,
+    // What can actually compute here, and live GPU memory (not cached — the
+    // GPU is shared, so free VRAM moves while the app runs).
+    compute: await refreshGpuTotal(),
+    vramBudgetBytes: vramBudgetBytes(),
+    maxExperts: maxExpertsForBudget(),
   }
 }
 
@@ -552,9 +658,9 @@ async function nodeStatus({ inspect = false } = {}) {
 function startRelay() {
   const cfg = readConfig()
   if (cfg.relayEnabled === false) return { skipped: 'turned off in settings' }
-  const owner = session ? session.address : (cfg.address || null)
+  const owner = debugIdentity() ? activeAddress() : (session ? session.address : (cfg.address || null))
   if (!owner) return { skipped: 'no wallet on this machine' }
-  if (!session) return { skipped: 'wallet is locked' }
+  if (!session && !debugIdentity()) return { skipped: 'wallet is locked' }
   const { host, port } = cfg.relay || C.relay
   relay.start({
     relayHost: host,
@@ -564,7 +670,7 @@ function startRelay() {
     owner,
     agentPort: p4node.port,
     sign: async (text) => {
-      const kp = keypairFromMnemonic(requireUnlocked())
+      const kp = activeKeypair()
       return Buffer.from(nacl.sign.detached(Buffer.from(text, 'utf8'), kp.secretKey)).toString('base64')
     },
   })
@@ -699,8 +805,10 @@ function register() {
     p4node.start()
     // Volunteer beside the agent. It polls, so a locked wallet or an
     // unreachable bridge is a logged retry rather than a failed start — the
-    // local agent is useful on its own.
-    participation.start({ pollMs: 60_000 })
+    // local agent is useful on its own. Size the card first so the first
+    // request carries a budget rather than asking for a whole layer.
+    await refreshGpuTotal()
+    participation.start({ pollMs: 45_000, maxExperts: () => maxExpertsForBudget() })
     // The tunnel comes up beside the agent, not after it is proven: the relay
     // only needs the port to exist by the time somebody dials, and a stream
     // that arrives early closes itself and says the agent is not up yet.
@@ -710,6 +818,14 @@ function register() {
   })
   ipcMain.handle('node:stop', async () => { participation.stop(); relay.stop(); await p4node.stop(); return nodeStatus() })
   ipcMain.handle('node:capability', (_e, refresh) => capability({ refresh: !!refresh }))
+  ipcMain.handle('node:executors', () => executors())
+  ipcMain.handle('node:setVramBudget', (_e, bytes) => {
+    const v = Number(bytes)
+    if (!Number.isFinite(v) || v < 0) throw new Error('VRAM budget must be a non-negative number of bytes')
+    writeConfig({ vramBudgetBytes: Math.round(v) })
+    // Takes effect on the next volunteer poll; no restart needed.
+    return { vramBudgetBytes: vramBudgetBytes(), maxExperts: maxExpertsForBudget() }
+  })
   ipcMain.handle('node:benchmark', (e, maxTokens) => benchmark(e.sender, maxTokens || 64))
 }
 
@@ -733,6 +849,18 @@ function createWindow() {
 app.whenReady().then(() => {
   register()
   createWindow()
+  // Debug mode exists so participation can be tested without a human at the
+  // lock screen — which is also what stands between the operator and the
+  // "start node" button. Start the market loop directly; the local p4 agent is
+  // left to the UI, since a dev checkout may not have an agent binary at all.
+  if (DEBUG_WALLET) {
+    debugIdentity()
+    // Size the card first, so the first volunteer request already carries a
+    // budget instead of asking for an entire layer.
+    refreshGpuTotal().finally(() => {
+      participation.start({ pollMs: 45_000, maxExperts: () => maxExpertsForBudget() })
+    })
+  }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}) })

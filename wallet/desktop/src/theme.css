@@ -186,3 +186,10 @@ select { appearance: none; }
 .menu-item:hover { background: var(--surface-2); }
 .menu-sep { height: 1px; background: var(--stroke); margin: 6px 4px; }
 .menu-label { font-size: 11px; color: var(--text-3); padding: 6px 10px 2px; text-transform: uppercase; letter-spacing: .08em; }
+
+/* Visually hidden, still read by screen readers — for controls whose purpose
+   is already shown by a visible heading (e.g. the VRAM slider). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
