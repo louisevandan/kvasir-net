@@ -43,6 +43,11 @@ export function InferenceScreen() {
   const [creditBalance, setCreditBalance] = useState<number | null>(null)
   const [depositRecipient, setDepositRecipient] = useState('')
   const [showTopUp, setShowTopUp] = useState(false)
+  // Gateway reachability. Every networked feature on this screen (model
+  // list, credit balance, API-key minting) goes through one gateway, so a
+  // dead URL empties all of them at once. Swallowing that error made a
+  // config problem look like a broken product — surface it instead.
+  const [gatewayError, setGatewayError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -51,7 +56,13 @@ export function InferenceScreen() {
       setLocalModels(list)
       if (!model && list[0]) setModel(`local:${list[0].name}`)
     }).catch(() => {})
-    gw.models().then((m) => { setModels(m.models); setDepositRecipient(m.recipient); setModel((cur) => cur || m.models[0]?.id || '') }).catch(() => {})
+    gw.models()
+      .then((m) => {
+        setGatewayError(null)
+        setModels(m.models); setDepositRecipient(m.recipient)
+        setModel((cur) => cur || m.models[0]?.id || '')
+      })
+      .catch((e) => setGatewayError(String(e?.message ?? e)))
     refreshBalance()
   }, [stakingUrl])
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) }, [msgs])
@@ -78,7 +89,8 @@ export function InferenceScreen() {
     if (!addr) return
     const key = cachedApiKey(addr)
     if (!key) { setCreditBalance(null); return }
-    try { setCreditBalance((await credit.balance(key)).balance) } catch { /* ignore */ }
+    try { setCreditBalance((await credit.balance(key)).balance); setGatewayError(null) }
+    catch (e: any) { setCreditBalance(null); setGatewayError(String(e?.message ?? e)) }
   }
 
   async function topUp(amount: number): Promise<string> {
@@ -166,6 +178,11 @@ export function InferenceScreen() {
       </div>
 
       <div className="composer">
+        {gatewayError && (
+          <div className="small" style={{ color: 'var(--danger)', marginBottom: 10 }}>
+            {t('inf.gatewayDown', stakingUrl)} · {t('inf.gatewayHint')}
+          </div>
+        )}
         <div className="row" style={{ gap: 8, marginBottom: 10 }}>
           <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} disabled={!models.length && !localModels.length}>
             {!models.length && !localModels.length && <option value="">—</option>}
@@ -200,7 +217,7 @@ export function InferenceScreen() {
       </div>
 
       {showTopUp && (
-        <TopUpModal balance={creditBalance} recipient={depositRecipient} onClose={() => setShowTopUp(false)} onTopUp={topUp} />
+        <TopUpModal balance={creditBalance} recipient={depositRecipient} error={gatewayError} onClose={() => setShowTopUp(false)} onTopUp={topUp} />
       )}
     </div>
   )
@@ -208,8 +225,9 @@ export function InferenceScreen() {
 
 // Credit top-up: transfer KVR on-chain to the gateway vault and credit it to the
 // prepaid balance that networked (streaming) inference debits.
-function TopUpModal({ balance, recipient, onClose, onTopUp }: {
-  balance: number | null; recipient: string; onClose: () => void; onTopUp: (amount: number) => Promise<string>
+function TopUpModal({ balance, recipient, error, onClose, onTopUp }: {
+  balance: number | null; recipient: string; error: string | null
+  onClose: () => void; onTopUp: (amount: number) => Promise<string>
 }) {
   const { t } = useI18n()
   const [amount, setAmount] = useState('10')
@@ -226,6 +244,11 @@ function TopUpModal({ balance, recipient, onClose, onTopUp }: {
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: 380, maxWidth: '90vw', display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ fontWeight: 700, fontSize: 16 }}>{t('inf.topUpTitle')}</div>
         <div className="small">{t('inf.currentBalance')}: <b>{balance != null ? `${fmt(balance)} KVR` : '—'}</b></div>
+        {/* A dash with no reason is why '잔액이 안 보여서 충전을 못 한다' looked like a
+            product bug. Say why it is a dash. */}
+        {balance == null && error && (
+          <div className="small" style={{ color: 'var(--danger)' }}>{error}</div>
+        )}
         <div className="small" style={{ color: 'var(--text-2)' }}>{t('inf.topUpNote')}</div>
         <input className="input" type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={t('inf.topUpAmount')} />
         {msg && <div className="small" style={{ color: 'var(--text-2)' }}>{msg}</div>}
