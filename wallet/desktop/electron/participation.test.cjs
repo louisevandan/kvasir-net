@@ -279,6 +279,43 @@ function client(base, extra = {}) {
     } finally { await br.close() }
   })
 
+  await test('retries sooner after a failed tick than after a good one', async () => {
+    // The bridge evicts a worker after 120s and reclaims its relay port with
+    // it. Because the next tick is scheduled after the current one returns,
+    // a poll interval close to that budget plus one slow tick drops the
+    // machine out of the market — so a failure must not wait a full period.
+    const br = await fakeBridge({
+      'POST /api/auth/challenge': () => ({ status: 503, body: { error: 'bridge down' } }),
+    })
+    try {
+      const p = client(br.base)
+      const delays = []
+      const realTimeout = global.setTimeout
+      global.setTimeout = (fn, ms) => { delays.push(ms); return realTimeout(() => {}, 0) }
+      try {
+        p.running = true
+        p.pollMs = 45_000
+        await p.tick()
+      } finally { global.setTimeout = realTimeout }
+      p.running = false
+      // The request's own abort timer also lands here; the reschedule is last.
+      const next = delays[delays.length - 1]
+      assert.ok(next < 45_000, `failed tick rescheduled in ${next}ms, expected sooner than the poll interval`)
+    } finally { await br.close() }
+  })
+
+  await test('polls inside the bridge staleness budget', async () => {
+    const WORKER_STALE_MS = 120_000 // p4bridge/participation.js:31
+    const p = client('http://127.0.0.1:1')
+    p.start({ pollMs: undefined })
+    const used = p.pollMs
+    p.stop()
+    // Two consecutive intervals must still fit inside the eviction window,
+    // leaving room for the tick's own duration on top.
+    assert.ok(used * 2 < WORKER_STALE_MS,
+      `poll ${used}ms: two in a row reach ${used * 2}ms against a ${WORKER_STALE_MS}ms budget`)
+  })
+
   console.log('\nbridge participation')
   console.log(results.join('\n'))
   console.log(`\n${passed}/${results.length} passed`)

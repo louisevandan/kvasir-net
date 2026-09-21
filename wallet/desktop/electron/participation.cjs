@@ -34,7 +34,15 @@ const DEMAND_PATH = '/api/expert-demand'
 // The bridge rejects anything longer; a base58 Solana address is 32-44.
 const MAX_WALLET_LEN = 44
 
-const DEFAULT_POLL_MS = 60_000
+// The bridge drops a worker from the census after WORKER_STALE_MS (120s) and
+// takes its relay port and session with it. The next tick is scheduled AFTER
+// the current one finishes, so the real interval is pollMs + however long the
+// tick took — at 60s two slow-or-failed ticks in a row already exceed 120s and
+// the machine falls out of the market. 45s leaves room for that.
+const DEFAULT_POLL_MS = 45_000
+// A failed tick means the census entry is already ageing, so retry well before
+// the next scheduled poll rather than letting the gap compound.
+const RETRY_MS = 15_000
 const REQUEST_TIMEOUT_MS = 20_000
 
 class ParticipationError extends Error {
@@ -263,12 +271,14 @@ class Participation {
 
   async tick() {
       if (!this.running) return
+      let failed = true
       try {
         await this.volunteer({ model: this.model })
         // Report every tick, assignment or not: the census keys on heartbeat
         // freshness, so staying silent drops this machine out of the market.
         await this.reportCoverage(this.heldSegments(), { model: this.model })
         this.lastError = null
+        failed = false
       } catch (e) {
         this.lastError = e.message
         // A locked wallet is the expected state after a restart, not a fault.
@@ -276,7 +286,9 @@ class Participation {
           ? 'bridge: waiting for the wallet to be unlocked'
           : `bridge: ${e.message}`)
       }
-      if (this.running) this.timer = setTimeout(() => this.tick(), this.pollMs)
+      if (this.running) {
+        this.timer = setTimeout(() => this.tick(), failed ? RETRY_MS : this.pollMs)
+      }
   }
 
   /**
