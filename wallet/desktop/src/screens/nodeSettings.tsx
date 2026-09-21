@@ -60,9 +60,9 @@ function ComputeCard({ status }: { status: NodeStatus | null }) {
 const mb = (bytes: number) => `${Math.round(bytes / 1e6).toLocaleString()} MB`
 
 /**
- * The expert engine for NVIDIA GPUs is not in the installer — it and NVIDIA
- * cuBLAS are ~730 MB, which nobody without such a GPU should download. Offered
- * only when there is an NVIDIA GPU and no working expert engine yet.
+ * The expert engine for NVIDIA GPUs is not in the installer — nobody without
+ * such a GPU should download it. Offered only when there is an NVIDIA GPU and
+ * no working expert engine yet.
  */
 function CudaPackRow({ status }: { status: NodeStatus | null }) {
   const { t } = useI18n()

@@ -80,9 +80,9 @@ const KNOWN = [
     // Built from apps/linkcpp-expert-worker in this repository. (The copy on
     // the MI250 host is named linker-expert-worker; same program, different
     // build tree — the name here is what this repo's CMake target produces.)
-    // On Windows it is the CUDA build (MSVC + CUDA 12.x), which also needs
-    // the cuBLAS DLLs beside it; without them the loader refuses it with
-    // STATUS_DLL_NOT_FOUND, which probe() reports as such.
+    // On Windows it is the CUDA build (MSVC + CUDA 12.x) from the on-demand
+    // pack (cudaPack.cjs). It needs only the NVIDIA driver; a machine without
+    // one fails to load nvcuda.dll, which probe() reports as a missing DLL.
     id: 'linkcpp-expert-worker',
     purpose: 'MoE expert FFN via ggml mul_mat_id — the executor a remote expert shard needs.',
     locate: () => candidates({

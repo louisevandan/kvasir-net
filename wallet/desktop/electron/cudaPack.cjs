@@ -2,11 +2,12 @@
 /**
  * The CUDA expert-worker pack: downloaded on demand, never bundled.
  *
- * The Windows CUDA worker needs cuBLAS beside it — about 770 MB of NVIDIA
- * DLLs. Bundling them would make every installer ~9x larger, including for
- * the people with no NVIDIA GPU and the people who never host experts. So the
- * worker and its runtime ship as one versioned pack, fetched only when this
- * machine has a GPU that can run it and the operator asks for it.
+ * The Windows CUDA worker carries its GPU kernels for every architecture from
+ * Pascal to Blackwell, which makes it large — and useless to anyone without
+ * an NVIDIA GPU or who never hosts experts. So it ships as a versioned pack,
+ * fetched only when this machine has a GPU that can run it and the operator
+ * asks for it. (It needs no NVIDIA DLLs: cuBLAS is delay-loaded and never
+ * called — see scripts/build-expert-worker.cjs — and cudart is static.)
  *
  * Trust comes from the app, not from the server the pack is on: the expected
  * SHA-256 is compiled in (PACKS below). A hash file next to the archive would
@@ -29,13 +30,14 @@ const { execFile } = require('node:child_process')
  */
 const PACKS = {
   win32: {
-    version: '2026.09.22-4171aef7',
+    version: '2026.09.22-eb20920f',
     url: null,
-    sha256: 'bcdb1bcbe39f598065680b014b1fd0e826e6928c2a7f82c63a6318666145de98',
-    bytes: 731_114_203,
+    sha256: '4ae7c1505d765ee34f7bd0b0323c84a8843f2354130e0bb9a2da25dfbe0d851e',
+    bytes: 176_377_760,
     worker: 'linkcpp-expert-worker.exe',
-    // ggml's CUDA arch list for this build starts at sm_50 (as PTX).
-    minComputeCapability: 5.0,
+    // The worker computes with ggml's MMQ kernels, which need DP4A (6.1).
+    // Older GPUs would fall back to cuBLAS, which the pack does not carry.
+    minComputeCapability: 6.1,
     minCudaMajor: 12,
   },
 }
@@ -46,8 +48,8 @@ const run = (cmd, args) => new Promise((resolve) => {
 
 /**
  * Can this machine run the pack at all? Checked before anything is
- * downloaded: 731 MB for a GPU that cannot load the kernels is the worst way
- * to find out.
+ * downloaded: a large download for a GPU that cannot load the kernels is the
+ * worst way to find out.
  */
 async function eligibility(pack = PACKS[process.platform]) {
   if (!pack) return { ok: false, reason: `no CUDA pack is built for ${process.platform}` }
