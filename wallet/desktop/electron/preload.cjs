@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld('kvasir', {
     stop: () => ipcRenderer.invoke('node:stop'),
     capability: (refresh) => ipcRenderer.invoke('node:capability', refresh),
     executors: () => ipcRenderer.invoke('node:executors'),
+    installCudaPack: () => ipcRenderer.invoke('node:installCudaPack'),
+    cancelCudaPack: () => ipcRenderer.invoke('node:cancelCudaPack'),
     setVramBudget: (bytes) => ipcRenderer.invoke('node:setVramBudget', bytes),
     benchmark: (maxTokens) => ipcRenderer.invoke('node:benchmark', maxTokens),
   },

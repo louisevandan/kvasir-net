@@ -45,12 +45,19 @@ const exe = (name) => (process.platform === 'win32' ? `${name}.exe` : name)
  * explicit override, the packaged app's resources, then dev checkouts.
  * Mirrors p4node.cjs's agentBinary() so both find binaries the same way.
  */
-function candidates({ envVar, resourceDir, devPaths }) {
+// Executors installed at runtime rather than shipped (the CUDA pack): id ->
+// () => path|null. Set by main, which owns where such installs live.
+const installed = new Map()
+function setInstalledExecutor(id, fn) { installed.set(id, fn) }
+
+function candidates({ id, envVar, resourceDir, devPaths }) {
   const file = exe(resourceDir.bin)
   const out = []
   const explicit = process.env[envVar]
   if (explicit) out.push(explicit)
   if (process.resourcesPath) out.push(path.join(process.resourcesPath, resourceDir.dir, file))
+  const fromInstall = installed.has(id) ? installed.get(id)() : null
+  if (fromInstall) out.push(fromInstall)
   out.push(path.join(__dirname, '..', 'resources', resourceDir.dir, process.platform, file))
   for (const p of devPaths(file)) out.push(p)
   return out
@@ -79,6 +86,7 @@ const KNOWN = [
     id: 'linkcpp-expert-worker',
     purpose: 'MoE expert FFN via ggml mul_mat_id — the executor a remote expert shard needs.',
     locate: () => candidates({
+      id: 'linkcpp-expert-worker',
       envVar: 'KVASIR_EXPERT_WORKER',
       resourceDir: { dir: 'expert-worker', bin: 'linkcpp-expert-worker' },
       devPaths: (file) => [
@@ -235,4 +243,4 @@ function locateExecutor(id) {
   return k ? findBinary(k.locate()) : null
 }
 
-module.exports = { executors, expertsForBudget, locateExecutor, gpuReadiness, KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST }
+module.exports = { executors, expertsForBudget, locateExecutor, setInstalledExecutor, gpuReadiness, KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST }

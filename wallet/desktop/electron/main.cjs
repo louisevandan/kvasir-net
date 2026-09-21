@@ -8,7 +8,8 @@ const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
 const { Participation } = require('./participation.cjs')
-const { executors, expertsForBudget, locateExecutor, KNOWN: KNOWN_EXECUTORS } = require('./executors.cjs')
+const { executors, expertsForBudget, locateExecutor, setInstalledExecutor, KNOWN: KNOWN_EXECUTORS } = require('./executors.cjs')
+const { CudaPack } = require('./cudaPack.cjs')
 const { ExpertHost } = require('./expertHost.cjs')
 const { RelayTunnel } = require('./relay.cjs')
 const { capability } = require('./hardware.cjs')
@@ -626,6 +627,11 @@ async function refreshGpuTotal() {
   } catch { return null }
 }
 
+// The Windows CUDA worker and its cuBLAS DLLs, fetched on demand rather than
+// bundled (see cudaPack.cjs). Once installed, the executor probe finds it.
+const cudaPack = new CudaPack({ dir: path.join(app.getPath('userData'), 'cuda-pack'), log: (line) => console.log(line) })
+setInstalledExecutor('linkcpp-expert-worker', () => cudaPack.workerPath())
+
 // Turns an assignment into a served segment: shard download, the worker, the
 // relay. Declared before participation, which drives it.
 let participation = null
@@ -683,6 +689,7 @@ async function nodeStatus({ inspect = false } = {}) {
     expertMemoryModel: expertMemoryModel(),
     vramReserveBytes: SYSTEM_VRAM_RESERVE,
     ownWorkerGpuBytes: ownWorkerGpuBytes(),
+    cudaPack: cudaPack.status(),
   }
 }
 
@@ -863,6 +870,15 @@ function register() {
   ipcMain.handle('node:stop', async () => { participation.stop(); relay.stop(); await p4node.stop(); return nodeStatus() })
   ipcMain.handle('node:capability', (_e, refresh) => capability({ refresh: !!refresh }))
   ipcMain.handle('node:executors', () => executors())
+  // Starts the pack install and returns at once; progress arrives through
+  // node:status (cudaPack), which the node screen already polls.
+  ipcMain.handle('node:installCudaPack', () => {
+    cudaPack.install()
+      .then(() => { if (participation.running) participation.poke() })
+      .catch(() => { /* the reason is in cudaPack.status() */ })
+    return cudaPack.status()
+  })
+  ipcMain.handle('node:cancelCudaPack', () => { cudaPack.cancel(); return cudaPack.status() })
   ipcMain.handle('node:setVramBudget', (_e, bytes) => {
     const v = Number(bytes)
     if (!Number.isFinite(v) || v < 0) throw new Error('VRAM budget must be a non-negative number of bytes')

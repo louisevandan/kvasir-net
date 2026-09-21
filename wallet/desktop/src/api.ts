@@ -44,6 +44,18 @@ export interface NodeCompute {
   summary: { canHostPipelineStages: boolean; canServeExperts: boolean; blockers: string[] }
 }
 export interface NodeMeasurement { tps: number; tokens: number; elapsedMs: number; model: string; at: number }
+/** The on-demand NVIDIA pack (electron/cudaPack.cjs). */
+export type CudaPackStatus = {
+  available: boolean            // published (the app knows where to get it)
+  version: string | null
+  bytes: number
+  installed: boolean
+  phase: 'idle' | 'downloading' | 'verifying' | 'installing' | 'installed' | 'failed'
+  received: number
+  total: number
+  error: string | null
+}
+
 /** What hosting experts costs an executor: N = (budget - F - S - H) / R. */
 export type ExpertMemoryModel = {
   residentBytesPerExpert: number
@@ -90,6 +102,7 @@ export interface NodeStatus {
   expertMemoryModel?: ExpertMemoryModel | null
   vramReserveBytes?: number
   ownWorkerGpuBytes?: number
+  cudaPack?: CudaPackStatus
   debugWallet?: string | null
   // Whether the network can reach this machine. The agent binds loopback, so
   // without a tunnel the node runs and is never given work.
@@ -159,6 +172,8 @@ export interface KvasirAPI {
     capability(refresh?: boolean): Promise<NodeCapability>
     executors(): Promise<NodeCompute>
     setVramBudget(bytes: number): Promise<{ vramBudgetBytes: number | null; maxExperts: number | null }>
+    installCudaPack(): Promise<CudaPackStatus>
+    cancelCudaPack(): Promise<CudaPackStatus>
     benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string } & Partial<NodeMeasurement>>
   }
   openExternal(url: string): Promise<void>
@@ -265,6 +280,7 @@ function makeMock(): KvasirAPI {
         residentBytesPerExpert: 9_568_256, fixedBytes: 128 * MIB, scratchBytes: 64 * MIB, headroomBytes: 128 * MIB,
       }
       const maxExperts = () => expertsForBudget(vramBudgetBytes, expertMemoryModel, null)
+      const noPack: CudaPackStatus = { available: false, version: null, bytes: 0, installed: false, phase: 'idle', received: 0, total: 0, error: 'browser preview' }
       const compute: NodeCompute = {
         executors: [
           { id: 'p4-agent', purpose: 'Pipeline stages for the p4 engine.', found: false, runnable: false, path: null, reason: 'not installed' },
@@ -294,6 +310,9 @@ function makeMock(): KvasirAPI {
         capability: async () => capability,
         executors: async () => compute,
         setVramBudget: async (bytes: number) => { vramBudgetBytes = bytes; return { vramBudgetBytes, maxExperts: maxExperts() } },
+        // The browser preview has no GPU and installs nothing.
+        installCudaPack: async () => noPack,
+        cancelCudaPack: async () => noPack,
         benchmark: async () => ({ ok: false, error: 'no local model to measure with — add a GGUF first' }),
       }
     })(),

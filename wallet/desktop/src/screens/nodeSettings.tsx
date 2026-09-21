@@ -52,7 +52,48 @@ function ComputeCard({ status }: { status: NodeStatus | null }) {
       {compute?.gpu.ready === false && (
         <div className="small muted" style={{ marginTop: 6 }}>{t('ns.vramNoGpu')}</div>
       )}
+      <CudaPackRow status={status} />
     </Card>
+  )
+}
+
+const mb = (bytes: number) => `${Math.round(bytes / 1e6).toLocaleString()} MB`
+
+/**
+ * The expert engine for NVIDIA GPUs is not in the installer — it and NVIDIA
+ * cuBLAS are ~730 MB, which nobody without such a GPU should download. Offered
+ * only when there is an NVIDIA GPU and no working expert engine yet.
+ */
+function CudaPackRow({ status }: { status: NodeStatus | null }) {
+  const { t } = useI18n()
+  const pack = status?.cudaPack
+  const compute = status?.compute
+  const expert = compute?.executors.find((e) => e.id === 'linkcpp-expert-worker')
+  if (!pack || !compute?.gpu.ready || expert?.runnable) return null
+  const busy = pack.phase === 'downloading' || pack.phase === 'verifying' || pack.phase === 'installing'
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+      <div className="small muted" style={{ marginBottom: 8 }}>{t('ns.packDesc')}</div>
+      {!pack.available && <div className="small muted">{t('ns.packUnpublished')}</div>}
+      {pack.available && !busy && (
+        <button className="btn" onClick={() => { void api.node?.installCudaPack() }}>{t('ns.packGet', mb(pack.bytes))}</button>
+      )}
+      {pack.phase === 'downloading' && (
+        <>
+          <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden', margin: '4px 0' }}>
+            <div style={{ height: '100%', width: `${pack.total ? (pack.received / pack.total) * 100 : 0}%`, background: 'var(--pink)' }} />
+          </div>
+          <div className="spread small">
+            <span className="muted">{t('ns.packProgress', mb(pack.received), mb(pack.total))}</span>
+            <button className="btn ghost" onClick={() => { void api.node?.cancelCudaPack() }}>{t('ns.packCancel')}</button>
+          </div>
+        </>
+      )}
+      {(pack.phase === 'verifying' || pack.phase === 'installing') && <div className="small muted">{t('ns.packVerifying')}</div>}
+      {pack.phase === 'failed' && pack.error && (
+        <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>{t('ns.packFailed', pack.error)}</div>
+      )}
+    </div>
   )
 }
 
