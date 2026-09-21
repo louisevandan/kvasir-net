@@ -183,6 +183,8 @@ function withLock(key, fn) {
 // Operator token-gate: registering/operating a node requires the owner wallet to
 // hold at least this many KVR on-chain (0 disables the gate). Mirrors the bridge.
 const MIN_OPERATOR_KVR = Number(process.env.KVR_MIN_OPERATOR_KVR || 0);
+/** Smallest balance worth settling on chain. See /api/node/claim for why. */
+const MIN_CLAIM = Number(process.env.KVR_MIN_CLAIM || 1);
 async function kvrBalance(owner) {
   try {
     const ata = await getAssociatedTokenAddress(MINT, new PublicKey(owner));
@@ -465,19 +467,47 @@ app.post('/api/node/register', async (req, res) => {
     hostsGateway: false, hostsBridge: false, uptimeRewards: 0,
     registeredAt: nowSec(), lastReport: null, lastUptimeAt: nowSec(),
   };
+  // Reward-affecting fields (perf tier, infra roles) are honored ONLY from a trusted
+  // reporter — otherwise a node could self-assert S-tier / bridge-host and mint rewards.
+  const trusted = trustedReporter(req);
+
+  // A node id that is holding value may not change hands. Registering is an
+  // upsert keyed on nodeId and node ids are public at /api/node/all, so without
+  // this a stranger could re-register someone else's id under their own wallet
+  // and then claim its pendingRewards — `infra-bridge-*` carries the largest
+  // balance on the network.
+  //
+  // Narrow on purpose. An Android or iOS nodeId is derived from the device, not
+  // from the wallet (`android-<ANDROID_ID>`), so a person who switches wallets
+  // in the app re-registers the same id under a new owner — an honest move that
+  // a blanket rule would lock out of their own phone. Refusing only when there
+  // is something to take keeps that working: a fresh device has no pending
+  // balance and no infra role. (The desktop derives its id from the wallet
+  // instead, so it never lands here at all.) A trusted reporter may always
+  // re-point, which is how reportInfraNodes() follows a bridge whose operator
+  // wallet changed.
+  const existing = db.nodes[nodeId];
+  if (existing && existing.owner && existing.owner !== owner && !trusted) {
+    const holdsValue = (existing.pendingRewards || 0) > 0
+      || existing.hostsBridge || existing.hostsGateway;
+    if (holdsValue) {
+      return res.status(403).json({ error: 'nodeId is registered to another owner and has an unclaimed balance or an infra role' });
+    }
+  }
   n.owner = owner;
   n.os = normOs(os != null ? os : n.os);
   n.deviceKind = deviceKind || n.deviceKind || 'unknown';
   n.accelerator = normAccel(accelerator != null ? accelerator : n.accelerator);
   n.label = label || n.label || nodeId;
-  // Reward-affecting fields (perf tier, infra roles) are honored ONLY from a trusted
-  // reporter — otherwise a node could self-assert S-tier / bridge-host and mint rewards.
-  const trusted = trustedReporter(req);
   // Performance re-scoring: node advertises its measured decode throughput.
   if (trusted && perfScore != null) n.perfScore = Number(perfScore);
   if (backend != null) n.backend = String(backend);
   if (mode != null) n.mode = String(mode);
-  accrueUptime(n, nowSec()); // credit elapsed infra uptime under the CURRENT roles first
+  // Credit elapsed infra uptime under the CURRENT roles first — but only on the
+  // trusted path, for the same reason as the heartbeat: otherwise re-registering
+  // an id is a way to pay an infra node that is not answering. For an ordinary
+  // device both role flags are false and this credited zero regardless.
+  if (trusted) accrueUptime(n, nowSec());
   if (trusted && hostsGateway != null) n.hostsGateway = !!hostsGateway;
   if (trusted && hostsBridge != null) n.hostsBridge = !!hostsBridge;
   const pt = perfTier(n.perfScore);
@@ -503,9 +533,27 @@ app.post('/api/node/heartbeat', (req, res) => {
   const n = (db.nodes || {})[nodeId];
   if (!n) return res.status(404).json({ error: 'node not registered' });
   const now = nowSec();
-  accrueUptime(n, now); // credit uptime for the interval that just elapsed, then update roles
   // Infra roles drive uptime KVR, so only a trusted reporter may change them here.
-  if (trustedReporter(req)) {
+  const trusted = trustedReporter(req);
+  if (trusted) {
+    // Credit the interval that just elapsed BEFORE refreshing the roles, so time
+    // is always paid at the rate that was actually in force during it.
+    //
+    // Paying only on the trusted path closes the last way to be paid for
+    // presence you did not have. Roles were already unforgeable — register() and
+    // the branch below both refuse to set hostsBridge/hostsGateway for an
+    // untrusted caller — but accrual itself used to run for anyone who could
+    // name a node, and node ids are public at /api/node/all. So a third party
+    // could keep an infra node on the payroll by heartbeating it, which is
+    // exactly the property reportInfraNodes() exists to prevent: it probes the
+    // bridge and credits it "only while the bridge actually answers".
+    //
+    // Nothing legitimate is lost. Uptime pays only hostsBridge/hostsGateway
+    // nodes, and those are credited in-process by reportInfraNodes(), never
+    // through this endpoint. For every ordinary device both flags are false, so
+    // this call always credited zero for them anyway — a phone or a desktop
+    // sees no change.
+    accrueUptime(n, now);
     if (hostsGateway != null) n.hostsGateway = !!hostsGateway; // reflect current gateway-host state
     if (hostsBridge != null) n.hostsBridge = !!hostsBridge;          // reflect current bridge-host state
   }
@@ -696,6 +744,19 @@ app.post('/api/node/claim', async (req, res) => {
       const db = loadDB();
       const summary = operatorRewards(db, owner);
       if (summary.pending <= 1e-9) { const e = new Error('no rewards to claim'); e.status = 400; throw e; }
+      // A floor under a payout, because this endpoint takes a wallet address and
+      // nothing else — no signature, no key — so anyone may trigger anyone's
+      // settlement. The money still goes to its rightful owner, but each payout
+      // is a transaction the treasury pays for, and without a floor a third
+      // party can drain that fee over and over by claiming a few thousandths of
+      // a KVR the moment it accrues. Rewards are not lost by waiting: they keep
+      // accumulating until they are worth a transaction.
+      if (summary.pending < MIN_CLAIM) {
+        const e = new Error(
+          `below the minimum claim of ${MIN_CLAIM} ${SPEC.token.symbol} `
+          + `(${summary.pending.toFixed(6)} pending) — rewards keep accruing until then`);
+        e.status = 400; throw e;
+      }
 
       // Serialized by withLock(owner): pay out first, then zero the claimed rewards.
       // Without the lock two concurrent claims both read `pending` and both pay it.
@@ -724,6 +785,26 @@ app.post('/api/node/claim', async (req, res) => {
 // pay-per-inference flow. Pays from the treasury (ADMIN), same as claim/payout.
 const FAUCET_AMOUNT = Number(process.env.KVR_FAUCET_AMOUNT || 100);
 const FAUCET_COOLDOWN_MS = Number(process.env.KVR_FAUCET_COOLDOWN_SEC || 86400) * 1000;
+/**
+ * How many never-before-seen addresses the faucet may open a token account for.
+ *
+ * This is the one endpoint on the service that spends the treasury's SOL at the
+ * request of a stranger. The KVR itself is devnet play money, but `payout()`
+ * creates the recipient's associated token account when it does not exist, and
+ * the treasury pays that account's rent — ~0.001488 SOL, every time, for an
+ * address nobody has to prove anything about. The per-address cooldown does not
+ * bound it: an attacker generates a fresh keypair per request, so the ceiling is
+ * the treasury's whole balance (at today's 8.5 SOL, about 5,700 addresses).
+ *
+ * Requiring a token account to already exist would bound it perfectly and also
+ * break the thing the faucet is for: the wallet apps open an account for a
+ * RECIPIENT they send to, never for themselves, so a developer with a brand-new
+ * wallet would be told to fund an account they have no way to open. A budget
+ * keeps that path working for real newcomers and caps what a flood can cost.
+ * Addresses that already hold a token account cost only the transaction fee and
+ * are never refused by this.
+ */
+const FAUCET_NEW_ACCOUNT_BUDGET = Number(process.env.KVR_FAUCET_NEW_ACCOUNT_BUDGET || 500);
 
 app.post('/api/faucet', async (req, res) => {
   try {
@@ -745,7 +826,23 @@ app.post('/api/faucet', async (req, res) => {
         const e = new Error(`rate limited — already funded, try again in ~${Math.ceil(wait / 3600000)}h`);
         e.status = 429; throw e;
       }
+      // Opening a token account spends treasury SOL; topping up an existing one
+      // does not. Only the first kind is budgeted. Checked before the transfer so
+      // a refusal costs nothing, and counted after it so a failed transfer does
+      // not consume budget it never spent.
+      const ata = await getAssociatedTokenAddress(MINT, pubkey);
+      const exists = await conn.getAccountInfo(ata).catch(() => null);
+      if (!exists) {
+        db.faucetAccountsOpened = db.faucetAccountsOpened || 0;
+        if (db.faucetAccountsOpened >= FAUCET_NEW_ACCOUNT_BUDGET) {
+          const e = new Error(
+            'the faucet has opened as many new token accounts as it is funded to open. '
+            + 'An address that already holds a KVR token account can still be topped up.');
+          e.status = 429; throw e;
+        }
+      }
       const sig = await payout(addr, FAUCET_AMOUNT);
+      if (!exists) db.faucetAccountsOpened = (db.faucetAccountsOpened || 0) + 1;
       db.faucet[addr] = now;
       saveDB(db);
       return { address: addr, amount: FAUCET_AMOUNT, symbol: SPEC.token.symbol, signature: sig, cluster: SPEC.cluster };
