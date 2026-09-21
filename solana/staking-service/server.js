@@ -2381,6 +2381,47 @@ const andList = (xs) => (xs.length > 1
   ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`
   : xs[0]);
 
+// Registered BEFORE the surface-aware 404 below, which is the whole point: that
+// middleware answers every /api/ path it does not recognise, and Express matches
+// in registration order, so while this block sat after it the entire
+// participation surface was unreachable from outside — a phone asking for a
+// challenge got "no such endpoint" even though both sides implemented it.
+// ---- bridge participation API pass-through ---------------------------------------
+// Remote expert workers (NAT) reach the LAN-only bridge's participation surface
+// through the gateway: node-token issuance, market calls, and shard download.
+// The caller's OWN token forwards untouched — the bridge enforces auth, the
+// gateway grants nothing.
+//
+// /api/auth/* is deliberately in this list and deliberately not authenticated
+// here: it is how a phone that has no token yet gets one, and it proves itself
+// with a wallet signature the bridge verifies. The gateway's own admin login is
+// /api/admin/*, which is a different surface with a different lifetime.
+app.all(['/api/auth/challenge', '/api/auth/node-token',
+         '/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
+         '/api/proxy/models/:model/expert-shard',
+         '/api/proxy/models/:model/stage'], async (req, res) => {
+  if (!BRIDGE_URL) return res.status(503).json({ error: 'no bridge configured' });
+  try {
+    const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    const headers = {};
+    for (const h of [...SERVICE_TOKEN_HEADERS, 'authorization', 'content-type']) {
+      if (req.headers[h]) headers[h] = req.headers[h];
+    }
+    const r = await fetch(BRIDGE_URL + req.path + qs, {
+      method: req.method, headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
+    });
+    res.status(r.status);
+    for (const h of ['content-type', 'content-length']) {
+      const v = r.headers.get(h);
+      if (v) res.setHeader(h, v);
+    }
+    require('stream').Readable.fromWeb(r.body).pipe(res);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 app.use((req, res, next) => {
   if (!API_PATH.test(req.path)) return next();
   const surface = SURFACES.find((s) => req.path.startsWith(s.prefix));
@@ -2417,41 +2458,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`gatewayBonus=${GATEWAY_BONUS}  webUI=${WEB_ENABLED ? WEB_DIR : 'disabled'}  publicUrl=${PUBLIC_URL || '(unset)'}`);
 });
 
-// ---- bridge participation API pass-through ---------------------------------------
-// Remote expert workers (NAT) reach the LAN-only bridge's participation surface
-// through the gateway: node-token issuance, market calls, and shard download.
-// The caller's OWN token forwards untouched — the bridge enforces auth, the
-// gateway grants nothing.
-//
-// /api/auth/* is deliberately in this list and deliberately not authenticated
-// here: it is how a phone that has no token yet gets one, and it proves itself
-// with a wallet signature the bridge verifies. The gateway's own admin login is
-// /api/admin/*, which is a different surface with a different lifetime.
-app.all(['/api/auth/challenge', '/api/auth/node-token',
-         '/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
-         '/api/proxy/models/:model/expert-shard',
-         '/api/proxy/models/:model/stage'], async (req, res) => {
-  if (!BRIDGE_URL) return res.status(503).json({ error: 'no bridge configured' });
-  try {
-    const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-    const headers = {};
-    for (const h of [...SERVICE_TOKEN_HEADERS, 'authorization', 'content-type']) {
-      if (req.headers[h]) headers[h] = req.headers[h];
-    }
-    const r = await fetch(BRIDGE_URL + req.path + qs, {
-      method: req.method, headers,
-      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
-    });
-    res.status(r.status);
-    for (const h of ['content-type', 'content-length']) {
-      const v = r.headers.get(h);
-      if (v) res.setHeader(h, v);
-    }
-    require('stream').Readable.fromWeb(r.body).pipe(res);
-  } catch (e) {
-    res.status(502).json({ error: String(e.message || e) });
-  }
-});
 
 // ---- bridge relay WS pass-through ----------------------------------------------
 // NAT/remote workers dial wss://gate/api/{expert,ring}-relay over 443; the bridge
