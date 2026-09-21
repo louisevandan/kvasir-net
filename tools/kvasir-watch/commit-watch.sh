@@ -1,30 +1,20 @@
 #!/usr/bin/env bash
-# Between the daily reports: poll the watched repositories and post anything new.
-# Exit 10 from commits.mjs means "there is something to send"; 0 means quiet.
+# Retired: this job used to poll the watched repositories every twenty minutes
+# and post new commits to the group. It no longer sends anything.
+#
+# Kept as a stub rather than deleted, because `com.kvasir.watch.commits.plist`
+# still exists here and in ~/Library/LaunchAgents/disabled-kvasir-watch/. If
+# either is ever loaded again, this is what it will run — a no-op — instead of
+# a poller that quietly resumes posting.
+#
+# `commits.mjs` is untouched and still works by hand:
+#
+#     node commits.mjs          # prints what is new; sends nothing
+#
+# It exits 10 when it has something to show, which is what the old job keyed on.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${KVASIR_WATCH_LOG:-$HERE/log}"
 mkdir -p "$LOG_DIR"
-
-ENV_FILE="${KVASIR_WATCH_ENV:-$HOME/project/any/.env}"
-[[ -f "$ENV_FILE" ]] || { echo "no env file at $ENV_FILE" >>"$LOG_DIR/commits.log"; exit 2; }
-set -a; source "$ENV_FILE"; set +a
-
-# A line on every run, sent or not: without it a job that never fires and a job
-# that fires quietly look identical in the log.
-echo "$(date -Iseconds) run" >>"$LOG_DIR/commits.log"
-
-OUT="$LOG_DIR/commits-latest.txt"
-node "$HERE/commits.mjs" >"$OUT" 2>>"$LOG_DIR/commits.log"
-code=$?
-
-if [[ $code -eq 10 ]]; then
-  node "$HERE/send.mjs" "$OUT" >>"$LOG_DIR/commits.log" 2>&1
-  echo "$(date -Iseconds) sent $(wc -l <"$OUT" | tr -d ' ') lines" >>"$LOG_DIR/commits.log"
-elif [[ $code -ne 0 ]]; then
-  echo "$(date -Iseconds) poll failed ($code)" >>"$LOG_DIR/commits.log"
-fi
-
-# A quiet run is a successful run; without this the last failed test is the
-# script exit status and launchd reports the job as failing every 20 minutes.
+echo "$(date -Iseconds) commit-watch is retired; nothing sent" >>"$LOG_DIR/commits.log"
 exit 0

@@ -92,7 +92,9 @@ function factsText(data) {
       if (!probe.ok) { lines.push(`  ${probe.name}: could not be read — ${probe.error}`); continue; }
       const value = probe.value;
       if (probe.name === 'commits') {
-        lines.push(`  ${value.length} commit(s)${value.length ? ': ' + value.slice(0, 5).map((c) => c.subject).join(' | ') : ''}`);
+        // The count only: commit subjects must not reach the group, and
+        // anything in this digest can be quoted back into an answer.
+        lines.push(`  ${value.length} commit(s)`);
       } else if (probe.name.startsWith('stages:')) {
         lines.push(`  ${value.label}: ${value.nodes.map((n) => `${n.node} ${n.state}`).join(', ') || 'no stages'} (${value.gpus} GPUs)`);
       } else if (probe.name.startsWith('host:')) {

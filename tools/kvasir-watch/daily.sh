@@ -17,6 +17,29 @@ else
   echo "no env file at $ENV_FILE — cannot send"; exit 2
 fi
 
+# Refresh the mirror before collecting. Nothing else updates it, so without this
+# the report describes the repository as it stood the day the clone was made —
+# which is exactly what had been happening: a mirror stuck at one commit reads as
+# "0 commits today" every day, and that is indistinguishable from a quiet day.
+#
+# Fast-forward only, deliberately. A ff-only merge cannot discard a commit and
+# refuses outright on a dirty tree, so pointing this at a working checkout by
+# mistake costs a skipped update, not someone's afternoon. The flag is a second
+# guard: the unit beside the fleet sets it, a laptop running this by hand does
+# not. A failed refresh is not fatal — slightly old facts beat no report.
+if [[ "${KVASIR_WATCH_MIRROR:-0}" == "1" ]]; then
+  REPO="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"])' "$HERE/config.json" 2>/dev/null || true)"
+  if [[ -n "${REPO:-}" && -d "$REPO/.git" ]]; then
+    BRANCH="$(git -C "$REPO" branch --show-current)"
+    if git -C "$REPO" fetch --quiet --prune origin "$BRANCH" \
+       && git -C "$REPO" merge --quiet --ff-only "origin/$BRANCH"; then
+      echo "$(date -Iseconds) mirror $BRANCH at $(git -C "$REPO" rev-parse --short HEAD)"
+    else
+      echo "$(date -Iseconds) mirror not fast-forwarded; collecting from what is on disk"
+    fi
+  fi
+fi
+
 JSON="$LOG_DIR/$DAY.json"
 HTML="$LOG_DIR/kvasir-$DAY.html"
 SUMMARY="$LOG_DIR/$DAY.txt"

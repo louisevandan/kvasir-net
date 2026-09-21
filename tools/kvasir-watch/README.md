@@ -11,7 +11,8 @@ send.mjs     → summary as a message, the page as an attachment
 daily.sh     → the whole morning in order, logged and kept
 
 commits.mjs       → new commits since last seen, across the watched repositories
-commit-watch.sh   → polls every 20 minutes and posts only when there is news
+                    (a hand tool now — it prints, it does not send)
+commit-watch.sh   → retired: a stub that sends nothing. See "Commit history".
 
 assess.mjs        → the day's judgement, written from the same facts
 readiness.mjs     → rewrites the live blocks inside the S5 readiness review
@@ -114,8 +115,26 @@ writing one.
 ## Where it runs
 
 On **MI250-02**, beside the fleet, under systemd user timers (`kvasir-watch-daily`
-at 09:00 Asia/Seoul, `kvasir-watch-commits` every 20 minutes) with lingering
-enabled so they run without a login session.
+at 09:00 Asia/Seoul, `kvasir-chat` every five minutes) with lingering enabled so
+they run without a login session. `kvasir-watch-commits.timer` existed too and is
+now stopped and disabled — see below.
+
+## Commit history
+
+**The bot does not send commit history.** That is a standing instruction, and it
+is enforced in three places rather than one, because a single switch is the kind
+of thing that gets flipped back by a future deploy:
+
+- `kvasir-watch-commits.timer` is stopped and disabled on MI250-02.
+- `commit-watch.sh`, which the timer ran, is a stub that sends nothing.
+- `report.mjs` and `answer.mjs` render counts only — no subject, hash or author,
+  in the chat summary, the attached page, or the digest an answer is written
+  from.
+
+Collection is untouched: `collect.mjs` still writes subjects into `log/*.json`,
+which stays on the host. The omission belongs where a fact becomes a message,
+not where it is gathered — blinding the collector would also blind the evidence
+a wrong report gets read back against.
 
 It used to run on a Mac under launchd and never actually fired: macOS lets a
 launchd job stat a file on an external volume but not open it, so both jobs died

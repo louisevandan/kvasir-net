@@ -10,6 +10,12 @@
  *
  * Reads the JSON from stdin or a path; writes `<out>.html` and prints the
  * summary on stdout.
+ *
+ * Commit history is deliberately absent from both. A standing instruction says
+ * the bot must not send it, and the collection still carries subjects, hashes
+ * and authors — so the omission lives here, at the point where a fact becomes a
+ * message, rather than in the collector where dropping it would also blind the
+ * local evidence. What remains is the count: how much moved, not what moved.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -106,13 +112,14 @@ const MARK = { good: '🟢', warn: '🟡', bad: '🔴', unknown: '⚪', idle: '�
 
 const summary = [
   `Kvasir · ${day}`,
-  head ? `head ${head.hash} on ${head.branch} — ${head.subject}` : 'head unavailable',
+  head ? `head ${head.hash} on ${head.branch}` : 'head unavailable',
   '',
   ...views.flatMap((view) => [
     `${view.title} — ${view.commits.length} commit${view.commits.length === 1 ? '' : 's'}${view.files ? `, ${view.files} files` : ''}`,
     ...view.facts.slice(0, 4).map((fact) => `  ${MARK[fact.state] ?? '·'} ${fact.text}`),
     ...(view.note ? [`  note: ${view.note}`] : []),
-    ...view.commits.slice(0, 3).map((commit) => `  • ${commit.subject}`),
+    // Commit subjects are deliberately not sent — see the note at the top of
+    // this file. The count above is the activity signal; the log is on GitHub.
     '',
   ]),
 ].join('\n').trim();
@@ -135,7 +142,7 @@ const card = (view) => `
       <div class="changes">
         <h3>${view.commits.length} commit${view.commits.length === 1 ? '' : 's'}${view.files ? ` · ${view.files} files` : ''}</h3>
         ${view.commits.length
-          ? `<ol>${view.commits.map((commit) => `<li><code>${esc(commit.hash)}</code> ${esc(commit.subject)}<em>${esc(commit.author)}</em></li>`).join('')}</ol>`
+          ? '<p class="quiet">Subjects are not listed here; read them on GitHub.</p>'
           : `<p class="quiet">${esc(view.commitError ?? 'no commits in this window')}</p>`}
       </div>
       ${view.failures.length ? `<p class="failed">could not reach: ${view.failures.map(esc).join(' · ')}</p>` : ''}
@@ -198,7 +205,7 @@ const html = `<!doctype html>
   <div class="wrap">
     <header>
       <h1>Kvasir · ${day}</h1>
-      <p class="meta">${head ? `head <code>${esc(head.hash)}</code> on <code>${esc(head.branch)}</code> — ${esc(head.subject)}` : 'repository head unavailable'}<br>
+      <p class="meta">${head ? `head <code>${esc(head.hash)}</code> on <code>${esc(head.branch)}</code>` : 'repository head unavailable'}<br>
       window: last ${data.sinceDays} day${data.sinceDays === 1 ? '' : 's'} · collected ${esc(data.generatedAt)}</p>
     </header>
     ${views.map(card).join('\n')}
