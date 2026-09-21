@@ -24,6 +24,7 @@
  *   - Participation is not operator eligibility. See nodeauth.js.
  */
 const crypto = require('node:crypto');
+const { pipeline } = require('node:stream');
 const { timingSafeEqual } = require('./nodeauth');
 
 /** How long a worker's coverage claim stands without a heartbeat. The clients
@@ -395,55 +396,51 @@ class Participation {
         if (value === null) return fail(res, 400, `${key} is required`), true;
         target.searchParams.set(key, value);
       }
-      // A shard is hundreds of megabytes and the client is on the far side of
-      // a CDN, so it WILL sometimes go away mid-body. When it does, the pipe
-      // below pauses the upstream reader, and undici asserts
-      // `assert(!this.paused)` the moment the upstream socket ends while
-      // paused — an uncaught exception, which took the whole bridge down and
-      // inference with it the first time a worker aborted a download.
+      // Node's own HTTP client, not fetch.
       //
-      // So the fetch is abortable and the client going away aborts it, which
-      // ends the read rather than pausing it.
-      const abort = new AbortController();
-      const giveUp = () => abort.abort();
-      res.on('close', giveUp);
-      let upstream;
-      try {
-        upstream = await fetch(target, {
+      // fetch is undici, and undici asserts `assert(!this.paused)` when the
+      // upstream socket ends while its parser is paused. A relay pauses its
+      // source constantly — that is what backpressure is — so the assertion
+      // fires whenever the reader finishes while the bridge still has bytes it
+      // has not drained to a slower client. It is an uncaught exception, and
+      // this process also serves the ring, so a shard download was taking
+      // inference down with it. Aborting on client disconnect fixed only the
+      // half of it where the client left first.
+      //
+      // There is nothing here that wants a Response object. This is a pipe.
+      const shardUrl = new URL(target);
+      const http = require(shardUrl.protocol === 'https:' ? 'node:https' : 'node:http');
+      await new Promise((resolve) => {
+        const upstream = http.request(shardUrl, {
           headers: { 'x-kvasir-service-token': this.shard.token },
-          signal: abort.signal,
+        }, (reply) => {
+          const headers = { 'content-type': reply.headers['content-type'] ?? 'application/octet-stream' };
+          if (reply.headers['content-length']) headers['content-length'] = reply.headers['content-length'];
+          // Which checkpoint the weights came from, so a worker can refuse a
+          // shard that does not belong with the ones it already holds.
+          if (reply.headers['x-kvasir-shard-digest']) {
+            headers['x-kvasir-shard-digest'] = reply.headers['x-kvasir-shard-digest'];
+          }
+          res.writeHead(reply.statusCode, headers);
+          // Streamed, not buffered: one window is hundreds of megabytes.
+          // `pipeline` rather than `pipe` so a failure on either side is
+          // handled instead of thrown at the process.
+          pipeline(reply, res, (error) => {
+            if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+              this.log?.(`shard relay ended early: ${error.message}`);
+            }
+            resolve();
+          });
         });
-      } catch (error) {
-        res.off('close', giveUp);
-        return fail(res, 502, `the shard reader is unreachable: ${error.message}`), true;
-      }
-      // Its refusals are the useful ones — "layer 0 holds no routed experts"
-      // says more than any sentence this could invent — so they pass through
-      // with their status intact.
-      res.writeHead(upstream.status, {
-        'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
-        ...(upstream.headers.get('content-length')
-          ? { 'content-length': upstream.headers.get('content-length') } : {}),
-        // Which checkpoint the weights came from, so a worker can refuse a
-        // shard that does not belong with the ones it already holds.
-        ...(upstream.headers.get('x-kvasir-shard-digest')
-          ? { 'x-kvasir-shard-digest': upstream.headers.get('x-kvasir-shard-digest') } : {}),
-      });
-      if (!upstream.body) { res.off('close', giveUp); res.end(); return true; }
-      // Streamed, not buffered: one window is hundreds of megabytes and the
-      // bridge holds the ring in the same process.
-      //
-      // `pipeline` rather than `pipe`, because pipe leaves a failure on either
-      // side unhandled, and an unhandled stream error here is the same crash by
-      // another route. Everything this can throw is a transfer that did not
-      // finish; the response is already committed, so there is nothing to say
-      // to the client but to stop.
-      const { Readable, pipeline } = require('node:stream');
-      pipeline(Readable.fromWeb(upstream.body), res, (error) => {
-        res.off('close', giveUp);
-        if (error && error.name !== 'AbortError') {
-          this.log?.(`shard relay ended early: ${error.message}`);
-        }
+        upstream.on('error', (error) => {
+          if (!res.headersSent) fail(res, 502, `the shard reader is unreachable: ${error.message}`);
+          else res.destroy();
+          resolve();
+        });
+        // The client walking away must tear down the upstream read, not leave
+        // it filling a buffer nobody will drain.
+        res.on('close', () => upstream.destroy());
+        upstream.end();
       });
       return true;
     }

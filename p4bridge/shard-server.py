@@ -174,6 +174,9 @@ class Model:
             raise ValueError(f"{path}: {arch} declares no expert_count")
         self.n_embd = meta.get(f"{arch}.embedding_length")
         self.n_layer = meta.get(f"{arch}.block_count")
+        # The expert FFN width, which is not the dense one: this model's dense
+        # blocks are 11264 wide and its experts 1280.
+        self.n_ff_expert = meta.get(f"{arch}.expert_feed_forward_length")
 
         self.slice: dict[int, dict] = {}
         for name, dims, type_id, offset in tensors:
@@ -316,6 +319,16 @@ def build_shard_gguf(model: "Model", layer: int, begin: int, end: int) -> tuple[
         # The model's own totals, so a shard can be placed in the whole without
         # fetching anything else.
         ("kvasir.expert_shard.n_expert_total", GGUF_U32, model.n_expert),
+        # Also under the architecture-prefixed names below, which is where GGUF
+        # convention puts them — but finding those means reading
+        # general.architecture first and building the key from it. A shard
+        # consumer is not a model loader and should not have to know the
+        # architecture to learn the two numbers its graph needs, so they are
+        # repeated here where they can be looked up directly. The Windows
+        # worker was deriving n_embd from a tensor's first dimension for want
+        # of this.
+        ("kvasir.expert_shard.n_embd", GGUF_U32, model.n_embd),
+        ("kvasir.expert_shard.n_ff", GGUF_U32, model.n_ff_expert),
         # Which checkpoint these weights came from. Name and shape are not
         # identity: a requantisation of the same model has both and different
         # numbers, and mixing two of those silently produces garbage nobody can
