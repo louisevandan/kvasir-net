@@ -217,22 +217,65 @@ function client(base, extra = {}) {
     } finally { await br.close() }
   })
 
-  await test('coverage segments describe the accepted assignment', async () => {
+  await test('coverage posts the bridge contract shape, not an object list', async () => {
     const br = await fakeBridge({
       'POST /api/auth/challenge': () => ({ body: { nonce: 'n', message: 'm' } }),
       'POST /api/auth/node-token': () => ({ body: { node_token: 't', expires_in: 100 } }),
-      'POST /api/expert-coverage': () => ({ body: { ok: true } }),
+      'POST /api/expert-coverage': (b) => {
+        // Mirror p4bridge/participation.js:300-310 exactly: required top-level
+        // fields, and segments kept only if they are 3-element arrays.
+        if (!b.worker_id || !b.model) return { status: 400, body: { error: 'worker_id and model are required' } }
+        const kept = (Array.isArray(b.segments) ? b.segments : [])
+          .filter((x) => Array.isArray(x) && x.length === 3)
+        return { body: { ok: true, kept: kept.length, workers: 1 } }
+      },
     })
     try {
       const p = client(br.base)
-      const segs = p.segmentsFor({ model: 'step-3.7', layer: 4, experts: [8, 15] })
-      assert.deepStrictEqual(segs, [{ model: 'step-3.7', layer: 4, expert_begin: 8, expert_end: 15 }])
-      await p.reportCoverage(segs)
-      const call = br.seen.find((s) => s.key === 'POST /api/expert-coverage')
-      assert.deepStrictEqual(call.body.segments, segs)
-      // Nothing held yet means nothing to report — and no pointless request.
-      assert.deepStrictEqual(p.segmentsFor(null), [])
-      assert.strictEqual(await p.reportCoverage([]), null)
+      p.assignment = { model: 'step-3.7', layer: 4, experts: [8, 15], n_embd: 4096, n_layer: 61, n_expert: 256 }
+      const r = await p.reportCoverage([[4, 8, 15]])
+      assert.strictEqual(r.kept, 1, 'a [layer,begin,end] triple must survive the bridge filter')
+      const call = br.seen.find((x) => x.key === 'POST /api/expert-coverage')
+      assert.strictEqual(call.body.worker_id, 'desktop-CZpGzzYQ')
+      assert.strictEqual(call.body.model, 'step-3.7')
+      assert.strictEqual(call.body.n_layer, 61)
+      assert.strictEqual(call.body.n_expert, 256)
+      assert.strictEqual(call.body.owner, WALLET)
+      // url is omitted until there is something to serve: relay wiring only
+      // happens for a "relay:<session>" url, and a blank one must not wire.
+      assert.ok(!('url' in call.body), 'url must be absent while nothing is served')
+    } finally { await br.close() }
+  })
+
+  await test('holds nothing, so reports no segments but still joins the census', async () => {
+    const br = await fakeBridge({
+      'POST /api/auth/challenge': () => ({ body: { nonce: 'n', message: 'm' } }),
+      'POST /api/auth/node-token': () => ({ body: { node_token: 't', expires_in: 100 } }),
+      'POST /api/expert-coverage': () => ({ body: { ok: true, workers: 1 } }),
+    })
+    try {
+      const p = client(br.base)
+      // No shard download exists yet, so claiming a held segment would inflate
+      // the bridge's replica count and stop it recruiting for a range nothing
+      // can serve.
+      assert.deepStrictEqual(p.heldSegments(), [])
+      const r = await p.reportCoverage(p.heldSegments(), { model: 'step-3.7' })
+      assert.strictEqual(r.workers, 1, 'an empty report still registers the worker')
+      const call = br.seen.find((x) => x.key === 'POST /api/expert-coverage')
+      assert.deepStrictEqual(call.body.segments, [])
+    } finally { await br.close() }
+  })
+
+  await test('skips the post when it would be a guaranteed 400', async () => {
+    const br = await fakeBridge({
+      'POST /api/auth/challenge': () => ({ body: { nonce: 'n', message: 'm' } }),
+      'POST /api/auth/node-token': () => ({ body: { node_token: 't', expires_in: 100 } }),
+    })
+    try {
+      const p = client(br.base)
+      // No assignment and no model: worker_id/model would be missing.
+      assert.strictEqual(await p.reportCoverage([], {}), null)
+      assert.ok(!br.seen.some((x) => x.key === 'POST /api/expert-coverage'))
     } finally { await br.close() }
   })
 

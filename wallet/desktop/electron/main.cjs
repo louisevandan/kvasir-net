@@ -487,7 +487,13 @@ const nodeTokenStore = {
   save(rec) {
     try {
       if (rec == null) { fs.unlinkSync(nodeTokenFile()); return }
-      if (!safeStorage.isEncryptionAvailable()) return
+      if (!safeStorage.isEncryptionAvailable()) {
+        // Refuse rather than fall back to plaintext: a 30-day bearer identity
+        // on disk in the clear is worse than re-signing on every start, which
+        // is all this costs (the wallet is unlocked by then anyway).
+        console.log('node token: OS keystore unavailable — not persisting; will re-authenticate each start')
+        return
+      }
       fs.writeFileSync(nodeTokenFile(), safeStorage.encryptString(JSON.stringify(rec)))
     } catch { /* best effort: a lost token is re-minted on the next poll */ }
   },
@@ -596,6 +602,13 @@ function register() {
     const env = readEnvelope(); if (!env) throw new Error('no encrypted wallet')
     let m; try { m = openMnemonic(env, passphrase) } catch { throw new Error('invalid passphrase') }
     const address = setSession(m); writeConfig({ address })
+    // Resume market participation the operator already asked for. Signing on
+    // unlock is only acceptable as "carry on with what you turned on" — never
+    // as a side effect of unlocking, which is why this is gated on the node
+    // being started rather than firing for every unlock.
+    if (participation.running) {
+      participation.poke()
+    }
     return { address }
   })
   ipcMain.handle('wallet:lock', () => { clearSession(); return true })

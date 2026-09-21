@@ -59,9 +59,17 @@ class ParticipationError extends Error {
  * @param {(line:string)=>void} [opts.log]
  */
 class Participation {
-  constructor({ baseUrl, wallet, sign, store = null, log = () => {} }) {
+  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null }) {
     this.base = String(baseUrl || '').replace(/\/+$/, '')
     this.walletFn = wallet
+    // Same identity the settlement side already uses for this machine
+    // (nodeSettings.tsx: `desktop-${address.slice(0,8)}`), so one machine is
+    // one node in both the census and the reward ledger rather than two
+    // half-visible ones.
+    this.workerIdFn = workerId || (() => {
+      const w = String(this.walletFn() || '')
+      return w ? `desktop-${w.slice(0, 8)}` : ''
+    })
     this.signFn = sign
     this.store = store
     this.log = log
@@ -193,10 +201,44 @@ class Participation {
     return resp
   }
 
-  /** Step 6. `segments` is what this machine currently holds. */
-  async reportCoverage(segments) {
-    if (!Array.isArray(segments) || segments.length === 0) return null
-    return this.authed((token) => this.post(COVERAGE_PATH, { segments }, token))
+  /**
+   * Step 6. Announce this machine to the census and report what it HOLDS.
+   *
+   * Two things about the contract are easy to get wrong, and both fail
+   * quietly (p4bridge/participation.js:298):
+   *
+   *   - A segment is a THREE-ELEMENT ARRAY [layer, begin, end]. The handler
+   *     filters with `Array.isArray(s) && s.length === 3`, so objects are
+   *     dropped one by one and the response is still {ok:true} — work that
+   *     was never registered, reported as success.
+   *   - worker_id and model are TOP-LEVEL and required; without them the
+   *     post is a 400.
+   *
+   * Posting with no segments is correct and useful: liveWorkers() filters on
+   * heartbeat freshness alone, so an empty report still puts this machine in
+   * the census as an available volunteer. Claiming segments it does not hold
+   * would be worse than useless — coverage() counts a replica per reported
+   * expert, and expert-volunteer then reads that range as covered and stops
+   * recruiting for it. That is a gap marked full: silently wrong.
+   */
+  async reportCoverage(segments, { model = null, workerId = null, nLayer = 0, nExpert = 0, url = '' } = {}) {
+    const a = this.assignment
+    const modelId = model || (a && a.model)
+    const worker = workerId || this.workerIdFn()
+    // Without these the bridge answers 400; there is nothing to salvage.
+    if (!modelId || !worker) return null
+    const body = {
+      worker_id: worker,
+      model: modelId,
+      segments: Array.isArray(segments) ? segments : [],
+      n_layer: nLayer || (a && a.n_layer) || 0,
+      n_expert: nExpert || (a && a.n_expert) || 0,
+      owner: this.walletFn() || '',
+    }
+    // Relay wiring only happens for a "relay:<session>" url, and an empty one
+    // leaves this worker unwired — correct until there is something to serve.
+    if (url) body.url = url
+    return this.authed((token) => this.post(COVERAGE_PATH, body, token))
   }
 
   /** Step 7, read-only: what the bridge is currently recruiting for. */
@@ -214,11 +256,18 @@ class Participation {
   start({ pollMs = DEFAULT_POLL_MS, model = null } = {}) {
     if (this.running) return
     this.running = true
-    const tick = async () => {
+    this.pollMs = pollMs
+    this.model = model
+    this.tick()
+  }
+
+  async tick() {
       if (!this.running) return
       try {
-        await this.volunteer({ model })
-        if (this.assignment) await this.reportCoverage(this.segmentsFor(this.assignment))
+        await this.volunteer({ model: this.model })
+        // Report every tick, assignment or not: the census keys on heartbeat
+        // freshness, so staying silent drops this machine out of the market.
+        await this.reportCoverage(this.heldSegments(), { model: this.model })
         this.lastError = null
       } catch (e) {
         this.lastError = e.message
@@ -227,9 +276,19 @@ class Participation {
           ? 'bridge: waiting for the wallet to be unlocked'
           : `bridge: ${e.message}`)
       }
-      if (this.running) this.timer = setTimeout(tick, pollMs)
-    }
-    tick()
+      if (this.running) this.timer = setTimeout(() => this.tick(), this.pollMs)
+  }
+
+  /**
+   * Run the next poll now instead of waiting out the interval. Called when the
+   * wallet is unlocked: the loop was almost certainly parked on "wallet is
+   * locked", and making the operator wait a further minute to see their node
+   * join is the kind of delay that reads as broken.
+   */
+  poke() {
+    if (!this.running) return
+    if (this.timer) { clearTimeout(this.timer); this.timer = null }
+    this.timer = setTimeout(() => this.tick(), 0)
   }
 
   stop() {
@@ -238,21 +297,39 @@ class Participation {
   }
 
   /**
-   * What to report as held. Until shard download exists this machine holds
-   * nothing it has fetched, so it reports the assignment it accepted — which is
-   * what keeps it visible in the market and lets the bridge count replicas.
+   * What this machine actually HOLDS, as [layer, begin, end] triples.
+   *
+   * Empty until shard download exists. An accepted assignment is not a held
+   * segment: reporting one would inflate the bridge's replica count for a
+   * range nothing can serve, and expert-volunteer would stop recruiting for
+   * it. The machine still appears as a volunteer with an empty report, which
+   * is exactly the truth — "here, holding nothing yet".
    */
-  segmentsFor(a) {
-    if (!a) return []
-    const [begin, end] = Array.isArray(a.experts) ? a.experts : [null, null]
-    if (begin == null || end == null) return []
-    return [{ model: a.model, layer: a.layer, expert_begin: begin, expert_end: end }]
+  heldSegments() {
+    return []
   }
 
+  /**
+   * What the UI shows. "the agent is running" and "the bridge has given this
+   * machine work" looked identical before, which is how a node that earned
+   * nothing read as healthy. `phase` is the one-word answer.
+   */
   status() {
+    const hasToken = !!this.cachedToken()
+    let phase = 'stopped'
+    if (this.running) {
+      if (this.lastError === 'wallet is locked') phase = 'awaiting_unlock'
+      else if (!hasToken) phase = 'authenticating'
+      else if (this.assignment) phase = 'assigned'
+      else phase = 'volunteering'
+    }
     return {
       running: this.running,
-      hasToken: !!this.cachedToken(),
+      phase,
+      hasToken,
+      // True once the signature is done: later restarts reuse the 30-day
+      // token, so the wallet only has to be unlocked for the first one.
+      workerId: this.workerIdFn(),
       assignment: this.assignment,
       lastError: this.lastError,
     }
