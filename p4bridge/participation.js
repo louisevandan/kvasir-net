@@ -73,10 +73,17 @@ class Participation {
    * @param {() => Array<{id: string, name: string, nEmbd: number, nLayer: number, nExpert: number}>}
    *        options.models what this bridge can hand out work for.
    */
-  constructor({ auth, credit, models }) {
+  constructor({ auth, credit, models, shard = null }) {
     this.auth = auth;
     this.credit = credit;
     this.models = models;
+    /**
+     * Where expert weights come from: a reader sitting beside the GGUF, on this
+     * same host. Absent means shard download is simply not offered — a bridge
+     * without the model file has nothing to serve, and saying so is better than
+     * a relay that times out.
+     */
+    this.shard = shard;
     /** worker_id -> {model, nLayer, nExpert, segments, url, owner, ts} */
     this.workers = new Map();
     /** session -> {host, port, model, layer, experts, owner, nodeId, ts} */
@@ -125,20 +132,29 @@ class Participation {
   coverage(model) {
     const info = this.modelInfo(model);
     if (!info) return [];
-    const layers = [];
-    for (let layer = 0; layer < info.nLayer; layer += 1) {
-      layers.push(new Array(info.nExpert).fill(0));
-    }
+    // Only the layers that actually hold routed experts. `nLayer` is the block
+    // count, which is not the same thing: this model's first three blocks are
+    // dense, and a GGUF may also place MoE every n-th layer. Counting from zero
+    // to nLayer offered a volunteer layer 0 of Step 3.7 — a window with no
+    // tensors behind it, which nothing would have caught until the device asked
+    // for the shard and the file had nothing to give.
+    //
+    // A model whose topology was never read has no expert layers here, so it is
+    // offered nothing. That is deliberate: refusing to recruit is recoverable,
+    // and handing out windows that cannot be served is not.
+    const expertLayers = Array.isArray(info.expertLayers) ? info.expertLayers : [];
+    const replicasFor = new Map(expertLayers.map((l) => [l, new Array(info.nExpert).fill(0)]));
     for (const [, w] of this.liveWorkers()) {
       if (w.model !== info.id && w.model !== info.name) continue;
       for (const [layer, begin, end] of w.segments) {
-        if (layer < 0 || layer >= layers.length) continue;
+        const replicas = replicasFor.get(layer);
+        if (!replicas) continue;            // a layer this model does not shard
         for (let e = Math.max(0, begin); e < Math.min(end, info.nExpert); e += 1) {
-          layers[layer][e] += 1;
+          replicas[e] += 1;
         }
       }
     }
-    return layers.map((replicas, layer) => {
+    return [...replicasFor.entries()].map(([layer, replicas]) => {
       const segments = [];
       let start = 0;
       for (let e = 1; e <= replicas.length; e += 1) {
@@ -356,6 +372,53 @@ class Participation {
         listen_port: listenPort,
         session,
       }), true;
+    }
+
+    const shardPath = /^\/api\/proxy\/models\/([^/]+)\/expert-shard$/.exec(path);
+    if (req.method === 'GET' && shardPath) {
+      if (!needsNode()) return true;
+      if (!this.shard) {
+        return fail(res, 503, 'this bridge serves no expert shards'), true;
+      }
+      // The request is semantic on the way in and semantic on the way out: the
+      // reader beside the file decides what a layer and an expert range mean,
+      // and refuses anything it cannot map. Nothing here interprets the bytes,
+      // and nothing here can be talked into reading an arbitrary offset.
+      //
+      // Any node token opens this. The weights are a quantisation of a
+      // published model, so what a token buys is not secrecy but a name to
+      // attribute bandwidth to; the reader caps how much one request may pull.
+      const target = new URL(`${this.shard.origin}/shard`);
+      target.searchParams.set('model', decodeURIComponent(shardPath[1]));
+      for (const key of ['layer', 'expert_begin', 'expert_end']) {
+        const value = query.get(key);
+        if (value === null) return fail(res, 400, `${key} is required`), true;
+        target.searchParams.set(key, value);
+      }
+      let upstream;
+      try {
+        upstream = await fetch(target, {
+          headers: { 'x-kvasir-service-token': this.shard.token },
+        });
+      } catch (error) {
+        return fail(res, 502, `the shard reader is unreachable: ${error.message}`), true;
+      }
+      // Its refusals are the useful ones — "layer 0 holds no routed experts"
+      // says more than any sentence this could invent — so they pass through
+      // with their status intact.
+      res.writeHead(upstream.status, {
+        'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+        ...(upstream.headers.get('content-length')
+          ? { 'content-length': upstream.headers.get('content-length') } : {}),
+        ...(upstream.headers.get('x-kvasir-shard-manifest-bytes')
+          ? { 'x-kvasir-shard-manifest-bytes': upstream.headers.get('x-kvasir-shard-manifest-bytes') } : {}),
+      });
+      if (!upstream.body) { res.end(); return true; }
+      // Streamed, not buffered: one window is hundreds of megabytes and the
+      // bridge holds the ring in the same process.
+      const { Readable } = require('node:stream');
+      Readable.fromWeb(upstream.body).pipe(res);
+      return true;
     }
 
     return false;

@@ -38,8 +38,13 @@ const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000
 const SERVICE_TOKEN = (process.env.P4_BRIDGE_TOKEN ?? '').trim();
 const HEADERS = ['x-kvasir-service-token'];
 
+/** The expert-shard reader: see shard-server.py. Loopback by default. */
+const SHARD_ORIGIN = (process.env.P4_SHARD_URL ?? 'http://127.0.0.1:42300').replace(/\/+$/, '');
+const SHARD_TOKEN = (process.env.P4_SHARD_TOKEN ?? '').trim();
+
 /** Paths the participation module owns, including its own authentication. */
-const PARTICIPATION_PATHS = /^\/api\/(auth\/(challenge|node-token)|expert-(demand|volunteer|coverage))$/;
+const PARTICIPATION_PATHS =
+  /^\/api\/(auth\/(challenge|node-token)|expert-(demand|volunteer|coverage)|proxy\/models\/[^/]+\/expert-shard)$/;
 
 function authorized(req) {
   if (!SERVICE_TOKEN) return true;
@@ -530,9 +535,22 @@ async function main() {
         eligible: minKvr > 0 ? async () => false : null,
       }),
       credit: (nodeId, units, meta) => bridge.creditRelay(nodeId, units, meta),
+      // The reader that owns the model file. It runs beside this process —
+      // the bridge, the agents and the GGUF are all on the same machine — so
+      // this is loopback and the weights never touch a network on the way out
+      // of the file. Without both settings shard download is not offered.
+      shard: SHARD_ORIGIN && SHARD_TOKEN
+        ? { origin: SHARD_ORIGIN, token: SHARD_TOKEN }
+        : null,
+      // A model is offered to volunteers only once its expert layout has been
+      // read off the GGUF. Dimensions alone are not enough — they were what let
+      // the market offer a dense layer as an expert window.
       models: () => bridge.catalog.models
-        .filter((m) => m.nEmbd && m.nLayer && m.nExpert)
-        .map((m) => ({ id: m.id, name: m.name, nEmbd: m.nEmbd, nLayer: m.nLayer, nExpert: m.nExpert })),
+        .filter((m) => m.nEmbd && m.nLayer && m.nExpert && m.expertLayers?.length)
+        .map((m) => ({
+          id: m.id, name: m.name, nEmbd: m.nEmbd, nLayer: m.nLayer, nExpert: m.nExpert,
+          expertLayers: m.expertLayers, bytesPerExpert: m.bytesPerExpert,
+        })),
     });
   }
 

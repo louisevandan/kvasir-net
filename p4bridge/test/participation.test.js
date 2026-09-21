@@ -36,14 +36,36 @@ function makeWallet() {
   };
 }
 
-const MODEL = { id: 'step-3.7-flash', name: 'Step-3.7-Flash', nEmbd: 4096, nLayer: 4, nExpert: 8 };
+/** A wallet that has proved itself, reduced to the token the market wants. */
+async function tokenFor(port) {
+  const wallet = makeWallet();
+  const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: wallet.address } });
+  const minted = await call(port, 'POST', '/api/auth/node-token', {
+    body: {
+      wallet: wallet.address,
+      nonce: challenge.body.nonce,
+      signature: wallet.sign(challenge.body.message),
+    },
+  });
+  return minted.body.node_token;
+}
 
-function startBridge() {
+// Layer 0 is dense on purpose: the real Step 3.7 has three leading dense
+// blocks, and the market used to offer them as expert windows because it
+// counted layers instead of reading which ones hold experts.
+const MODEL = {
+  id: 'step-3.7-flash', name: 'Step-3.7-Flash',
+  nEmbd: 4096, nLayer: 4, nExpert: 8,
+  expertLayers: [1, 2, 3],
+};
+
+function startBridge({ shard = null } = {}) {
   const credited = [];
   const participation = new Participation({
     auth: new NodeAuth({ secret: 'test-secret', serviceToken: 'svc-secret' }),
     credit: (nodeId, units, meta) => credited.push({ nodeId, units, ...meta }),
     models: () => [MODEL],
+    shard,
   });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://test.local');
@@ -74,13 +96,21 @@ const listen = (server) => new Promise((resolve) => {
   server.listen(0, '127.0.0.1', () => resolve(server.address().port));
 });
 
-async function call(port, method, path, { body, token } = {}) {
+async function call(port, method, path, { body, token, raw = false } = {}) {
   const headers = { 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
   const response = await fetch(`http://127.0.0.1:${port}${path}`, {
     method, headers, body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: response.status, body: await response.json().catch(() => null) };
+  const headersOut = Object.fromEntries(response.headers);
+  // A shard is bytes, not JSON, and a test that parsed it would be asserting
+  // about null rather than about the weights that came back.
+  if (raw) {
+    return { status: response.status, headers: headersOut,
+      body: Buffer.from(await response.arrayBuffer()) };
+  }
+  return { status: response.status, headers: headersOut,
+    body: await response.json().catch(() => null) };
 }
 
 test('a phone earns a node token from a wallet signature alone', async (t) => {
@@ -131,6 +161,106 @@ test('a challenge is single use and a foreign signature is refused', async (t) =
     body: { wallet: wallet.address, nonce: challenge.body.nonce, signature },
   });
   assert.equal(replay.status, 401);
+});
+
+test('a shard download is gated, relayed verbatim, and refused when there is no reader', async (t) => {
+  // A stand-in for the reader beside the GGUF. It asserts what the bridge sends
+  // it — the semantic parameters, and its own token, never the caller's.
+  const seen = [];
+  const reader = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://reader.local');
+    seen.push({
+      path: url.pathname,
+      query: Object.fromEntries(url.searchParams),
+      token: req.headers['x-kvasir-service-token'],
+    });
+    if (url.searchParams.get('layer') === '0') {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'layer 0 holds no routed experts' }));
+    }
+    const body = Buffer.from('EXPERTBYTES');
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': String(body.length),
+      'x-kvasir-shard-manifest-bytes': '7',
+    });
+    res.end(body);
+  });
+  const readerPort = await listen(reader);
+  t.after(() => reader.close());
+
+  const { server, participation } = startBridge({
+    shard: { origin: `http://127.0.0.1:${readerPort}`, token: 'reader-secret' },
+  });
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const token = await tokenFor(port);
+  const shard = `/api/proxy/models/step-3.7-flash/expert-shard?layer=3&expert_begin=0&expert_end=2`;
+
+  // Open to the internet is exactly what this must not be.
+  const anonymous = await call(port, 'GET', shard);
+  assert.equal(anonymous.status, 401, 'a shard download without a node token');
+
+  const ok = await call(port, 'GET', shard, { token, raw: true });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.toString(), 'EXPERTBYTES', 'bytes must arrive unaltered');
+  assert.equal(ok.headers['x-kvasir-shard-manifest-bytes'], '7', 'the manifest length must survive');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].query,
+    { model: 'step-3.7-flash', layer: '3', expert_begin: '0', expert_end: '2' });
+  assert.equal(seen[0].token, 'reader-secret', 'the bridge presents its own token, not the caller\'s');
+
+  // The reader's refusal is more useful than anything the bridge could invent,
+  // so it arrives with its status and its sentence intact.
+  const dense = await call(port, 'GET',
+    '/api/proxy/models/step-3.7-flash/expert-shard?layer=0&expert_begin=0&expert_end=2', { token });
+  assert.equal(dense.status, 400);
+  assert.match(dense.body.error, /no routed experts/);
+
+  // A bridge with no model file beside it says so rather than hanging.
+  const { server: bare, participation: bareP } = startBridge();
+  const barePort = await listen(bare);
+  t.after(() => { bare.close(); bareP.stop(); });
+  const refused = await call(barePort, 'GET', shard, { token: await tokenFor(barePort) });
+  assert.equal(refused.status, 503);
+});
+
+test('a layer with no experts is never offered, and an unread model offers nothing', async (t) => {
+  // The bug this guards: nLayer was treated as "every layer has experts", so a
+  // volunteer was handed layer 0 of a model whose first blocks are dense. The
+  // window looked valid and had no tensors behind it; nothing would have caught
+  // it until the device asked for a shard that does not exist.
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const token = await tokenFor(port);
+
+  // Every window the market hands out, until coverage is satisfied, must be a
+  // layer that actually holds experts.
+  for (let i = 0; i < 12; i += 1) {
+    const offer = await call(port, 'POST', '/api/expert-volunteer', { token, body: { max_experts: 8 } });
+    assert.equal(offer.status, 200);
+    if (!offer.body.assigned) break;
+    assert.ok(MODEL.expertLayers.includes(offer.body.layer),
+      `offered layer ${offer.body.layer}, which holds no experts`);
+    await call(port, 'POST', '/api/expert-coverage', {
+      token,
+      body: {
+        worker_id: `w-${i}`, model: MODEL.id, n_layer: MODEL.nLayer, n_expert: MODEL.nExpert,
+        segments: [[offer.body.layer, offer.body.experts[0], offer.body.experts[1]]],
+      },
+    });
+  }
+
+  // A model whose topology was never read is offered nothing rather than
+  // guessed at.
+  const blind = new Participation({
+    auth: new NodeAuth({ secret: 'test-secret', serviceToken: 'svc-secret' }),
+    credit: () => {},
+    models: () => [{ ...MODEL, expertLayers: undefined }],
+  });
+  assert.deepEqual(blind.coverage(MODEL.id), [], 'an unread model must expose no windows');
+  blind.stop();
 });
 
 test('the market offers the scarcest window, and coverage shrinks it', async (t) => {
