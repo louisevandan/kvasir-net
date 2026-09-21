@@ -31,7 +31,7 @@ const { execFile } = require('node:child_process')
 const PACKS = {
   win32: {
     version: '2026.09.22-eb20920f',
-    url: null,
+    url: 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/expert-worker/kvasir-expert-worker-win-x64-cuda12-2026.09.22-eb20920f.zip',
     sha256: '4ae7c1505d765ee34f7bd0b0323c84a8843f2354130e0bb9a2da25dfbe0d851e',
     bytes: 176_377_760,
     worker: 'linkcpp-expert-worker.exe',
