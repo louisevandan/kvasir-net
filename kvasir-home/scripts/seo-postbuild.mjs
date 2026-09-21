@@ -279,9 +279,13 @@ function linkList(items, base) {
 const staticRoutes = [
   {
     path: "/",
-    title: "Kvasir — Decentralized AI Inference. Bring compute, earn KVR.",
+    // The title is what a search result and a shared link show, so it carries
+    // the same claim the page now leads with: a model too large for any one
+    // machine, running across ordinary ones. The old title sold the supply
+    // side, which rests on a network that is not open yet.
+    title: "Kvasir — a 428B model on machines that cannot hold it",
     description:
-      "Kvasir is a decentralized AI inference network. The p4 engine splits large open models across a peer-to-peer ring of shared GPUs, CPUs, NPUs and phones — contribute compute, earn KVR. Solana devnet.",
+      "Kvasir runs open models larger than any single machine serving them. The p4 engine cuts a model into layer windows across a peer-to-peer ring of GPUs, CPUs, NPUs and phones, each holding only its own. Step-3.7-Flash, 428B parameters, at 28–31 tokens a second. Solana devnet.",
     image: `${ORIGIN}/og.png`,
     kind: "website",
     // Built from the dictionary rather than written here: a crawler that does

@@ -40,10 +40,10 @@ export const nl: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · Gedecentraliseerde AI — voorbij het monopolie",
-    headline1: "Lever rekenkracht.",
-    headline2: "Verdien KVR.",
-    sub: "Kvasir bindt verspreide machines — datacenter-GPU’s, workstations, telefoons — samen tot één serving pool die open modellen op frontier-schaal draait. Geen enkele node hoeft het hele model te bevatten, en elke node verdient KVR voor de layers die hij draait.",
+    eyebrow: "DePIN · Frontier-modellen zonder datacenter",
+    headline1: "Jij hebt geen hardware",
+    headline2: "voor een 428B-model. Wij ook niet.",
+    sub: "Niets in deze vloot kan Step-3.7-Flash bevatten — 428 miljard parameters, ver voorbij elk apparaat dat we bezitten. Kvasir snijdt het op in layer-vensters, zodat elke machine alleen zijn eigen venster bevat en een hidden state doorgeeft aan de volgende. Vandaag gemeten op de bedienende ring: 28–31 tokens per seconde, eerste token in 270 ms.",
     badges: [
       "Draait op GPU · CPU · NPU · telefoon",
       "OpenAI + Anthropic compatibel",

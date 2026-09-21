@@ -37,10 +37,15 @@ export const en = {
   },
 
   hero: {
-    eyebrow: "DePIN · Decentralized AI — beyond the monopoly",
-    headline1: "Bring compute.",
-    headline2: "Earn KVR.",
-    sub: "Kvasir binds scattered machines — data-center GPUs, workstations, phones — into one serving pool that runs frontier-scale open models. No single node has to hold the whole model, and every node earns KVR for the layers it runs.",
+    // The pitch used to lead with "bring compute, earn KVR" — a supply-side
+    // promise that rests on the one claim we cannot yet demonstrate, a network
+    // anyone can join, and puts a devnet token in the first line. What we can
+    // demonstrate is stranger and better: a model far too large for any machine
+    // here runs across these machines anyway, and the numbers are from today.
+    eyebrow: "DePIN · Frontier models without the datacenter",
+    headline1: "You don’t have the hardware",
+    headline2: "for a 428B model. Neither do we.",
+    sub: "Nothing in this fleet can hold Step-3.7-Flash — 428 billion parameters, far past any single device we own. Kvasir cuts it into layer windows so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring today: 28–31 tokens a second, first token in 270 ms.",
     badges: [
       "Runs on GPU · CPU · NPU · phone",
       "OpenAI + Anthropic compatible",

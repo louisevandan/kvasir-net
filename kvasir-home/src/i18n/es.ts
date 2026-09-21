@@ -33,10 +33,10 @@ export const es: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · IA descentralizada — más allá del monopolio",
-    headline1: "Aporta cómputo.",
-    headline2: "Gana KVR.",
-    sub: "Kvasir une máquinas dispersas — GPU de centro de datos, estaciones de trabajo, teléfonos — en un único grupo de servicio que ejecuta modelos abiertos de escala frontera. Ningún nodo tiene que contener el modelo completo, y cada nodo gana KVR por las capas que ejecuta.",
+    eyebrow: "DePIN · Modelos frontera sin centro de datos",
+    headline1: "No tienes hardware",
+    headline2: "para un modelo de 428B. Nosotros tampoco.",
+    sub: "Nada en esta flota puede contener Step-3.7-Flash — 428 mil millones de parámetros, muy por encima de cualquier dispositivo que tengamos. Kvasir lo divide en ventanas de capas para que cada máquina contenga solo la suya y entregue un estado oculto a la siguiente. Medido hoy en el anillo en servicio: 28–31 tokens por segundo, primer token en 270 ms.",
     badges: [
       "Funciona en GPU · CPU · NPU · teléfono",
       "Compatible con OpenAI + Anthropic",

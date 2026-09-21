@@ -33,10 +33,10 @@ export const id: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · AI Terdesentralisasi — melampaui monopoli",
-    headline1: "Sumbangkan komputasi.",
-    headline2: "Dapatkan KVR.",
-    sub: "Kvasir menyatukan mesin-mesin yang tersebar — GPU pusat data, workstation, ponsel — menjadi satu kumpulan penyaji yang menjalankan model open berskala frontier. Tidak ada satu node pun yang harus menyimpan seluruh model, dan setiap node mendapatkan KVR atas layer yang dijalankannya.",
+    eyebrow: "DePIN · Model frontier tanpa pusat data",
+    headline1: "Anda tidak punya perangkat keras",
+    headline2: "untuk model 428B. Kami juga tidak.",
+    sub: "Tidak ada satu mesin pun di armada ini yang sanggup menyimpan Step-3.7-Flash — 428 miliar parameter, jauh melampaui perangkat mana pun yang kami miliki. Kvasir memotongnya menjadi jendela layer sehingga setiap mesin hanya menyimpan jendelanya sendiri dan menyerahkan satu hidden state ke mesin berikutnya. Diukur di ring penyajian hari ini: 28–31 token per detik, token pertama dalam 270 ms.",
     badges: [
       "Berjalan di GPU · CPU · NPU · ponsel",
       "Kompatibel dengan OpenAI + Anthropic",

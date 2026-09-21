@@ -33,10 +33,10 @@ export const zh: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · 去中心化 AI — 打破垄断",
-    headline1: "贡献算力。",
-    headline2: "赚取 KVR。",
-    sub: "Kvasir 把分散各处的机器 — 数据中心 GPU、工作站、手机 — 绑成一个服务池，运行前沿规模的开源模型。任何单一节点都无需持有完整模型，每个节点都按自己运行的层赚取 KVR。",
+    eyebrow: "DePIN · 不靠数据中心的前沿模型",
+    headline1: "你没有能跑 428B 模型的硬件。",
+    headline2: "其实，我们也没有。",
+    sub: "这支机群里没有任何一台机器装得下 Step-3.7-Flash — 4280 亿参数，远远超出我们拥有的任何单台设备。Kvasir 把它切成层窗口，每台机器只持有自己的那一个，并把一份隐藏状态交给下一台。今天在服务环上实测：每秒 28–31 tokens，首个 token 用时 270 ms。",
     badges: [
       "可在 GPU · CPU · NPU · 手机上运行",
       "兼容 OpenAI + Anthropic",

@@ -39,10 +39,10 @@ export const de: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · Dezentrale KI — jenseits des Monopols",
-    headline1: "Rechenleistung einbringen.",
-    headline2: "KVR verdienen.",
-    sub: "Kvasir bündelt verstreute Maschinen — Rechenzentrums-GPUs, Workstations, Smartphones — zu einem einzigen Serving-Pool, der offene Modelle in Frontier-Größe ausführt. Kein einzelner Node muss das gesamte Modell halten, und jeder Node verdient KVR für die Layer, die er ausführt.",
+    eyebrow: "DePIN · Frontier-Modelle ohne Rechenzentrum",
+    headline1: "Du hast nicht die Hardware",
+    headline2: "für ein 428B-Modell. Und wir? Auch nicht.",
+    sub: "Nichts in dieser Flotte kann Step-3.7-Flash halten — 428 Milliarden Parameter, weit jenseits jedes einzelnen Geräts, das uns gehört. Kvasir zerschneidet es in Layer-Fenster, sodass jede Maschine nur ihr eigenes hält und einen Hidden State an die nächste weitergibt. Heute auf dem Serving-Ring gemessen: 28–31 Tokens pro Sekunde, das erste Token nach 270 ms.",
     badges: [
       "Läuft auf GPU · CPU · NPU · Smartphone",
       "OpenAI- + Anthropic-kompatibel",

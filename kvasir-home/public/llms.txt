@@ -1,8 +1,8 @@
 # Kvasir
 
-> Kvasir is a decentralized AI inference network (DePIN) in devnet preview. It splits large open language models across shared devices — GPUs, CPUs and phones — using the source-available **p4** engine, so each node holds only part of the model. Contributors earn the **KVR** devnet token for measured compute.
+> Kvasir is a decentralized AI inference network (DePIN) in devnet preview. It runs open models that are larger than any single machine serving them: the source-available **p4** engine cuts a model into layer windows, and each device — GPU, CPU or phone — holds only its own window and hands a hidden state to the next. Step-3.7-Flash, 428B parameters, serves this way at 28-31 tokens a second. Contributors earn the **KVR** devnet token for measured compute.
 
-Key facts (accurate as of 2026-09-17):
+Key facts (accurate as of 2026-09-21):
 
 - **Kvasir** = the network/product brand (self-custody wallet + settlement gateway + node-reward network). **p4** = the source-available engine it runs on (Business Source License 1.1), on the `p4` branch of the repository below. **linkcpp** = the previous engine, superseded by p4 in mid-2026; results attributed to it are labelled as such. **KVR** = the token (on-chain name "Kvasir", 6 decimals, Solana **devnet** only).
 - **Ring topology:** every device stores the same model and loads only its contiguous layer window, opening one link to its predecessor and one to its successor. Hidden-state boundaries circulate around the ring; the last node returns the token. There is no central master on the data path; placement comes from a plan an operator loads.
