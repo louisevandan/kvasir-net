@@ -2412,7 +2412,11 @@ app.all(['/api/auth/challenge', '/api/auth/node-token',
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
     });
     res.status(r.status);
-    for (const h of ['content-type', 'content-length']) {
+    // x-kvasir-shard-digest names the checkpoint a shard came from. It is also
+    // inside the GGUF, so dropping it loses nothing that cannot be recovered —
+    // but a worker that holds several shards wants to compare them before
+    // parsing megabytes, and this is how it does that cheaply.
+    for (const h of ['content-type', 'content-length', 'x-kvasir-shard-digest']) {
       const v = r.headers.get(h);
       if (v) res.setHeader(h, v);
     }

@@ -410,8 +410,10 @@ class Participation {
         'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
         ...(upstream.headers.get('content-length')
           ? { 'content-length': upstream.headers.get('content-length') } : {}),
-        ...(upstream.headers.get('x-kvasir-shard-manifest-bytes')
-          ? { 'x-kvasir-shard-manifest-bytes': upstream.headers.get('x-kvasir-shard-manifest-bytes') } : {}),
+        // Which checkpoint the weights came from, so a worker can refuse a
+        // shard that does not belong with the ones it already holds.
+        ...(upstream.headers.get('x-kvasir-shard-digest')
+          ? { 'x-kvasir-shard-digest': upstream.headers.get('x-kvasir-shard-digest') } : {}),
       });
       if (!upstream.body) { res.end(); return true; }
       // Streamed, not buffered: one window is hundreds of megabytes and the

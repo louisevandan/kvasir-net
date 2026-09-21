@@ -178,11 +178,13 @@ test('a shard download is gated, relayed verbatim, and refused when there is no 
       res.writeHead(400, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: 'layer 0 holds no routed experts' }));
     }
-    const body = Buffer.from('EXPERTBYTES');
+    // A GGUF in miniature: the relay never parses it, so the magic is enough
+    // to show that whatever the reader produced arrives unaltered.
+    const body = Buffer.concat([Buffer.from('GGUF'), Buffer.from('EXPERTBYTES')]);
     res.writeHead(200, {
       'content-type': 'application/octet-stream',
       'content-length': String(body.length),
-      'x-kvasir-shard-manifest-bytes': '7',
+      'x-kvasir-shard-digest': 'deadbeef',
     });
     res.end(body);
   });
@@ -203,8 +205,9 @@ test('a shard download is gated, relayed verbatim, and refused when there is no 
 
   const ok = await call(port, 'GET', shard, { token, raw: true });
   assert.equal(ok.status, 200);
-  assert.equal(ok.body.toString(), 'EXPERTBYTES', 'bytes must arrive unaltered');
-  assert.equal(ok.headers['x-kvasir-shard-manifest-bytes'], '7', 'the manifest length must survive');
+  assert.equal(ok.body.toString(), 'GGUFEXPERTBYTES', 'bytes must arrive unaltered');
+  assert.equal(ok.headers['x-kvasir-shard-digest'], 'deadbeef',
+    'the checkpoint identity must survive the relay');
   assert.equal(seen.length, 1);
   assert.deepEqual(seen[0].query,
     { model: 'step-3.7-flash', layer: '3', expert_begin: '0', expert_end: '2' });

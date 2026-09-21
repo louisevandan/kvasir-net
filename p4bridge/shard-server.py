@@ -51,6 +51,7 @@ an open one would hand the model out to anyone who can reach the port.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import struct
@@ -77,6 +78,12 @@ GGML_TYPES = {
 }
 
 EXPERT_TENSORS = ("ffn_gate_exps", "ffn_up_exps", "ffn_down_exps")
+
+# GGUF pads every tensor to this, and so does the shard. The earlier raw
+# framing did not: its three tensors started at offsets congruent to 14 mod
+# 32, because a JSON manifest of whatever length sat in front of them. numpy
+# does not care; a ggml consumer reading with aligned loads does.
+GGUF_ALIGNMENT = 32
 
 
 class Reader:
@@ -158,8 +165,10 @@ class Model:
             alignment = meta.get("general.alignment", 32)
             header_end = fh.tell()
         data_start = -(-header_end // alignment) * alignment
+        self.data_start = data_start
 
         arch = meta.get("general.architecture")
+        self.arch = arch
         self.n_expert = meta.get(f"{arch}.expert_count")
         if not self.n_expert:
             raise ValueError(f"{path}: {arch} declares no expert_count")
@@ -197,6 +206,33 @@ class Model:
             raise ValueError(f"{path}: no complete routed-expert layers")
         first = self.slice[self.expert_layers[0]]
         self.bytes_per_expert = sum(first[w]["per_expert"] for w in EXPERT_TENSORS)
+        self.digest = self._digest(header_end, data_start)
+
+    def _digest(self, header_end: int, data_start: int) -> str:
+        """A cheap identity for the checkpoint these weights come from.
+
+        Not a hash of the file. Reading 122 GB to answer one shard request is
+        not a trade anyone would take, and doing it once at startup would still
+        delay serving by minutes for a number that only has to distinguish one
+        checkpoint from another.
+
+        So: the size, the whole header — every tensor's name, shape, type and
+        offset — and two megabytes sampled from the head and tail of the tensor
+        data. The header alone would not do it, because a requantisation of the
+        same model keeps every shape and can keep every offset; the sampled data
+        is what separates those. It is a identity check, not an integrity check,
+        and it is named `digest` rather than `sha256` so nobody reads it as one.
+        """
+        h = hashlib.sha256()
+        size = os.path.getsize(self.path)
+        h.update(str(size).encode())
+        with open(self.path, "rb") as fh:
+            h.update(fh.read(header_end))
+            fh.seek(data_start)
+            h.update(fh.read(1 << 20))
+            fh.seek(max(data_start, size - (1 << 20)))
+            h.update(fh.read(1 << 20))
+        return h.hexdigest()
 
     def plan(self, layer: int, begin: int, end: int) -> list[dict]:
         """The byte ranges that make up experts [begin, end) of `layer`."""
@@ -228,6 +264,95 @@ class Model:
             "bytes_per_expert": self.bytes_per_expert,
             "expert_slice": {str(k): v for k, v in sorted(self.slice.items())},
         }
+
+
+
+# ---- GGUF writing ----------------------------------------------------------
+# The inverse of the parse above. A shard goes out as a GGUF because the thing
+# that will compute with it is a ggml program, and a GGUF is what ggml opens —
+# `gguf_init_from_file` instead of a bespoke header, an offset table and three
+# assumptions about axis order. It also carries its own description, which the
+# raw framing did not: three defects Astra found reading the earlier format are
+# structural here rather than documented.
+
+GGUF_U32, GGUF_U64, GGUF_STR = 4, 10, 8
+
+
+def _kv(key: str, vtype: int, value) -> bytes:
+    out = _gstr(key) + struct.pack("<I", vtype)
+    if vtype == GGUF_STR:
+        return out + _gstr(value)
+    if vtype == GGUF_U32:
+        return out + struct.pack("<I", value)
+    if vtype == GGUF_U64:
+        return out + struct.pack("<Q", value)
+    raise ValueError(f"no writer for metadata type {vtype}")
+
+
+def _gstr(text: str) -> bytes:
+    raw = text.encode("utf-8")
+    return struct.pack("<Q", len(raw)) + raw
+
+
+def build_shard_gguf(model: "Model", layer: int, begin: int, end: int) -> tuple[bytes, list[dict]]:
+    """The header for a shard, and the byte ranges whose contents follow it.
+
+    Returns the complete GGUF up to the start of tensor data, so the caller can
+    write it and then stream the ranges straight off the model file.
+    """
+    plan = model.plan(layer, begin, end)
+    n_local = end - begin
+
+    meta = [
+        ("general.architecture", GGUF_STR, model.arch),
+        ("general.alignment", GGUF_U32, GGUF_ALIGNMENT),
+        # What this is a shard OF. Without it a shard is three anonymous slabs:
+        # a reader cannot tell experts [0,32) of layer 7 from [64,96) of layer 9,
+        # and the local->global mapping a router needs is not recoverable.
+        ("kvasir.expert_shard.model", GGUF_STR, model.id),
+        ("kvasir.expert_shard.layer", GGUF_U32, layer),
+        ("kvasir.expert_shard.expert_begin", GGUF_U32, begin),
+        ("kvasir.expert_shard.expert_end", GGUF_U32, end),
+        # The model's own totals, so a shard can be placed in the whole without
+        # fetching anything else.
+        ("kvasir.expert_shard.n_expert_total", GGUF_U32, model.n_expert),
+        # Which checkpoint these weights came from. Name and shape are not
+        # identity: a requantisation of the same model has both and different
+        # numbers, and mixing two of those silently produces garbage nobody can
+        # trace. See Model.digest for exactly what this covers.
+        ("kvasir.expert_shard.source_digest", GGUF_STR, model.digest),
+        ("step35.embedding_length" if model.arch == "step35"
+         else f"{model.arch}.embedding_length", GGUF_U32, model.n_embd),
+        (f"{model.arch}.block_count", GGUF_U32, model.n_layer),
+        (f"{model.arch}.expert_count", GGUF_U32, model.n_expert),
+    ]
+
+    header = b"GGUF" + struct.pack("<IQQ", 3, len(plan), len(meta))
+    for key, vtype, value in meta:
+        header += _kv(key, vtype, value)
+
+    # Tensor infos. The stored expert dimension is n_local, NOT the model's 288:
+    # writing the source count would mean the file describes 288 experts while
+    # holding a handful, and a reader that believes the header walks off the end
+    # of the data. The global range lives in the metadata above instead.
+    offset = 0
+    infos = b""
+    for part in plan:
+        dims = list(part["dims"][:-1]) + [n_local]
+        infos += _gstr(f"blk.{layer}.{part['tensor']}.weight")
+        infos += struct.pack("<I", len(dims))
+        for d in dims:
+            infos += struct.pack("<Q", d)
+        infos += struct.pack("<II", part["type"], 0)[:4]          # type
+        infos += struct.pack("<Q", offset)                        # offset in data
+        part["data_offset"] = offset
+        offset += part["bytes"]
+        offset = -(-offset // GGUF_ALIGNMENT) * GGUF_ALIGNMENT    # pad to alignment
+
+    header += infos
+    pad = (-len(header)) % GGUF_ALIGNMENT
+    header += b"\x00" * pad
+    return header, plan
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -288,26 +413,32 @@ class Handler(BaseHTTPRequestHandler):
         except KeyError as e:
             return self._json(400, {"error": str(e)})
 
-        manifest = json.dumps({
-            "model": model.id, "layer": layer, "experts": [begin, end],
-            "n_embd": model.n_embd, "n_expert": model.n_expert,
-            "parts": [{k: p[k] for k in ("tensor", "bytes", "per_expert", "type", "type_name", "dims")}
-                      for p in plan],
-        }).encode()
-        total = 4 + len(manifest) + sum(p["bytes"] for p in plan)
+        try:
+            header, plan = build_shard_gguf(model, layer, begin, end)
+        except KeyError as e:
+            return self._json(400, {"error": str(e)})
+        # Each tensor is padded up to the alignment the header declares, so the
+        # offsets in it are the offsets a reader will compute.
+        body = 0
+        for p in plan:
+            body = p["data_offset"] + p["bytes"]
+            body = -(-body // GGUF_ALIGNMENT) * GGUF_ALIGNMENT
 
         self.send_response(200)
         self.send_header("content-type", "application/octet-stream")
-        self.send_header("content-length", str(total))
-        self.send_header("x-kvasir-shard-manifest-bytes", str(len(manifest)))
+        self.send_header("content-length", str(len(header) + body))
+        self.send_header("x-kvasir-shard-digest", model.digest)
         self.end_headers()
-        self.wfile.write(struct.pack(">I", len(manifest)))
-        self.wfile.write(manifest)
+        self.wfile.write(header)
 
         # One descriptor per request: pread would let threads share one, but a
         # separate open is simpler to reason about and the cost is a syscall.
+        written = 0
         with open(model.path, "rb") as fh:
             for p in plan:
+                if p["data_offset"] > written:
+                    self.wfile.write(b"\x00" * (p["data_offset"] - written))
+                    written = p["data_offset"]
                 fh.seek(p["start"])
                 left = p["bytes"]
                 while left:
@@ -319,6 +450,9 @@ class Handler(BaseHTTPRequestHandler):
                         raise IOError(f"{model.path}: short read serving {p['tensor']}")
                     self.wfile.write(chunk)
                     left -= len(chunk)
+                    written += len(chunk)
+        if body > written:
+            self.wfile.write(b"\x00" * (body - written))
 
 
 def main():
