@@ -62,14 +62,22 @@ fun ExportPhraseScreen(vm: WalletViewModel, nav: NavController) {
         if (w.isNullOrEmpty()) err = s.t("error.invalidMnemonic") else { words = w; err = null }
     }
 
-    // Gate the reveal behind device auth (biometric / device credential) when available.
+    // Gate the reveal behind device auth (biometric / device credential).
+    //
+    // This used to call doReveal() when the device had nothing enrolled — a
+    // comment called it "falling back to the on-screen warning gate", but the
+    // code went straight past the warning and printed the phrase. A phone with
+    // no screen lock would hand the twelve words to whoever picked it up, and
+    // those words spend the wallet from anywhere, forever; no lock set
+    // afterwards takes that back. So an absent device lock now refuses, and
+    // says what to do about it.
     fun authAndReveal() {
         err = null
         val act = activity
         val allowed = BiometricManager.Authenticators.BIOMETRIC_WEAK or
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
         if (act == null || BiometricManager.from(act).canAuthenticate(allowed) != BiometricManager.BIOMETRIC_SUCCESS) {
-            doReveal() // no enrolled auth on this device — fall back to the on-screen warning gate
+            err = s.t("export.needsDeviceLock")
             return
         }
         val prompt = BiometricPrompt(

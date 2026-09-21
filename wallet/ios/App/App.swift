@@ -61,7 +61,11 @@ struct RootView: View {
         .task {
             guard !unlocking else { return }
             unlocking = true
-            if await Biometrics.unlock() {
+            // An iPhone with no passcode protects nothing the app could add a
+            // gate in front of — whoever is holding it already has the screen.
+            // So an absent device lock lets the app open. Reading the recovery
+            // phrase is the opposite case and refuses; see ExportPhrase.
+            if await Biometrics.unlock() != .refused {
                 await store.restoreIfNeeded()
             }
             unlocking = false

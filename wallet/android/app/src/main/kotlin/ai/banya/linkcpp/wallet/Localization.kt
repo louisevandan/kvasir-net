@@ -267,6 +267,7 @@ class Strings(val lang: AppLanguage) {
             "export.copy" to "문구 복사",
             "export.hide" to "숨기기",
             "export.desc" to "이 12/24단어로 다른 기기(iOS·Android·데스크톱)에서 같은 계정을 복구합니다.",
+            "export.needsDeviceLock" to "이 기기에 화면 잠금(암호·생체)이 설정되어 있지 않습니다. 복구 문구는 한 번 새어 나가면 되돌릴 수 없으므로, 기기 설정에서 잠금을 켠 뒤에 다시 시도하세요.",
 
             // errors
             "error.invalidMnemonic" to "복구 문구가 올바르지 않습니다.",
@@ -514,6 +515,7 @@ class Strings(val lang: AppLanguage) {
             "export.reveal" to "Reveal recovery phrase",
             "export.warn" to "⚠️ View this where no one can see. Anyone with this phrase can take all your assets. Never share or photograph it.",
             "export.copy" to "Copy phrase",
+            "export.needsDeviceLock" to "This device has no screen lock. A recovery phrase cannot be taken back once it leaks, so set a screen lock in your device settings and try again.",
             "export.hide" to "Hide",
             "export.desc" to "Restore the same account on another device (iOS · Android · desktop) with these 12/24 words.",
 

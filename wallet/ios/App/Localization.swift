@@ -340,6 +340,7 @@ private let ko: [String: String] = [
     "export.copy": "문구 복사",
     "export.warn": "⚠️ 아무도 보지 않는 곳에서 확인하세요. 이 문구를 아는 사람은 자산을 모두 가져갈 수 있습니다. 절대 공유·촬영하지 마세요.",
     "export.denied": "생체 인증에 실패했습니다. 다시 시도하세요.",
+    "export.needsDeviceLock": "이 기기에 화면 잠금(암호·생체)이 설정되어 있지 않습니다. 복구 문구는 한 번 새어 나가면 되돌릴 수 없으므로, 기기 설정에서 잠금을 켠 뒤에 다시 시도하세요.",
 
     // errors / status
     "error.setStakingUrl": "스테이킹 서비스 URL을 설정하세요.",
@@ -613,6 +614,7 @@ private let en: [String: String] = [
     "export.copy": "Copy phrase",
     "export.warn": "⚠️ View this where no one can see. Anyone with this phrase can take all your assets. Never share or photograph it.",
     "export.denied": "Biometric authentication failed. Please try again.",
+    "export.needsDeviceLock": "This device has no screen lock. A recovery phrase cannot be taken back once it leaks, so set a passcode or biometric lock in your device settings and try again.",
 
     // errors / status
     "error.setStakingUrl": "Please set the staking service URL.",

@@ -81,9 +81,26 @@ enum KeyStore {
     }
 }
 
-/// Best-effort biometric / passcode gate. On a Simulator with no enrolled
-/// biometrics it allows access so development flows aren't blocked.
+/// The device's biometric / passcode gate.
+///
+/// This used to return "allowed" when the device could not authenticate at all,
+/// so that a Simulator with nothing enrolled would not block development. That
+/// is a fail-open authentication gate, and one of the two things behind it is
+/// the recovery phrase: on an iPhone with no passcode set, anyone holding it
+/// could read the twelve words and drain the wallet from anywhere, later,
+/// permanently. So the answer is now three-valued and each caller decides what
+/// an absent device lock means for what it is protecting — which is not the
+/// same answer in both places.
 enum Biometrics {
+    enum Outcome {
+        /// The person proved they are the device owner.
+        case authenticated
+        /// They were asked and failed, or cancelled.
+        case refused
+        /// The device offers no biometric and no passcode; nobody was asked.
+        case unavailable
+    }
+
     /// The UI tests relaunch the app for every case, and every cold launch hits
     /// this gate. XCUITest cannot present a face, so without a way past it the
     /// only screens a device run can reach are the ones in front of the lock —
@@ -93,18 +110,18 @@ enum Biometrics {
     /// who installs the app.
     static let uiTestBypassArgument = "-kvasir-ui-test-unlocked"
 
-    static func unlock(reason: String = "Unlock your Kvasir wallet") async -> Bool {
+    static func unlock(reason: String = "Unlock your Kvasir wallet") async -> Outcome {
         #if DEBUG
-        if CommandLine.arguments.contains(uiTestBypassArgument) { return true }
+        if CommandLine.arguments.contains(uiTestBypassArgument) { return .authenticated }
         #endif
         let ctx = LAContext()
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
-            return true
+            return .unavailable
         }
         return await withCheckedContinuation { cont in
             ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, _ in
-                cont.resume(returning: ok)
+                cont.resume(returning: ok ? .authenticated : .refused)
             }
         }
     }
