@@ -81,7 +81,7 @@ const PEOPLE: Person[] = [
   {
     name: "Louis E. Vandan",
     role: "AI Model Engineering",
-    based: "Korea",
+    based: "United Arab Emirates",
     avatar: "/team/louis.webp",
     motif: "A grid stepping down — quantisation",
     body:
@@ -185,8 +185,9 @@ export default function TeamPage() {
                   fleet the network serves from today. No token issuance happens here.
                 </p>
                 <p>
-                  Business development and marketing leadership sit in the UAE alongside the
-                  issuing entity, which is also where exchange relationships are held.
+                  The split is by function, not by discipline: business development, marketing
+                  and part of the model engineering sit in the UAE alongside the issuing entity,
+                  which is also where exchange relationships are held.
                 </p>
               </StructureBox>
             </div>
