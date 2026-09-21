@@ -44,7 +44,7 @@ const SHARD_TOKEN = (process.env.P4_SHARD_TOKEN ?? '').trim();
 
 /** Paths the participation module owns, including its own authentication. */
 const PARTICIPATION_PATHS =
-  /^\/api\/(auth\/(challenge|node-token)|expert-(demand|volunteer|coverage)|proxy\/models\/[^/]+\/expert-shard)$/;
+  /^\/api\/(auth\/(challenge|node-token)|expert-(demand|volunteer|coverage)|proxy\/models\/[^/]+\/expert-shard|expert-relay\/sessions)$/;
 
 function authorized(req) {
   if (!SERVICE_TOKEN) return true;

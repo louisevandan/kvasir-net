@@ -375,6 +375,36 @@ class Participation {
       }), true;
     }
 
+    if (req.method === 'GET' && path === '/api/expert-relay/sessions') {
+      // Service token only, not a node token. A worker has no business
+      // enumerating the fleet, and the coordinator ports are the one thing here
+      // that something outside could usefully connect to.
+      if (who.kind !== 'service') {
+        return fail(res, 403, 'a service token is required to list relay sessions'), true;
+      }
+      // What a backbone needs in order to be dispatched to: which sessions are
+      // claimed, what each one holds, and the port the bridge will dial when
+      // that worker's socket arrives. The bridge dials out, so the port is
+      // where the backbone must be LISTENING — it is not somewhere to connect.
+      const sessions = [...this.relayTargets.entries()].map(([session, t]) => {
+        const stats = this.relayStats.get(session);
+        return {
+          session,
+          node_id: t.nodeId ?? null,
+          owner: t.owner || null,
+          model: t.model ?? null,
+          layer: t.layer ?? null,
+          experts: t.experts ?? null,
+          listen_host: t.host,
+          listen_port: t.port,
+          claimed_at: t.ts ?? null,
+          connected: Boolean(stats && !stats.closed),
+          bytes: stats ? { ws2tcp: stats.ws2tcp, tcp2ws: stats.tcp2ws } : null,
+        };
+      });
+      return json(res, 200, { sessions }), true;
+    }
+
     const shardPath = /^\/api\/proxy\/models\/([^/]+)\/expert-shard$/.exec(path);
     if (req.method === 'GET' && shardPath) {
       if (!needsNode()) return true;
