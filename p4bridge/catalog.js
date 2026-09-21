@@ -75,6 +75,11 @@ function load(file) {
       nEmbd: model.n_embd ?? null,
       nLayer: model.n_layer ?? null,
       nExpert: model.n_expert ?? null,
+      // The layers that hold routed experts, read from the GGUF rather than
+      // assumed to be all of them. Absent means "topology unknown", and the
+      // market offers such a model nothing at all.
+      expertLayers: Array.isArray(model.expert_layers) ? model.expert_layers : null,
+      bytesPerExpert: model.bytes_per_expert ?? null,
       promptFormat: model.prompt_format ?? 'raw',
       // A reasoning model opens its reply with a thinking block. Kept out of
       // `content` so a chat client shows the answer, and returned alongside.

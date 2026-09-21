@@ -280,6 +280,11 @@ async function doLoad() {
     n_embd: plan.model.n_embd ?? null,
     n_layer: plan.model.n_layer ?? null,
     n_expert: plan.model.n_expert ?? null,
+    // Derived from the model file by gguf-topology.mjs and carried through the
+    // plan, because this file regenerates the catalog and anything not in the
+    // plan is lost at the next load.
+    expert_layers: plan.model.expert_layers ?? null,
+    bytes_per_expert: plan.model.bytes_per_expert ?? null,
     prompt_format: plan.model.prompt_format ?? 'raw',
     reasoning: plan.model.reasoning === true,
     stages: plan.stages.map((stage) => ({ agent: stage.agent, node: stage.node, generation: stage.generation })),

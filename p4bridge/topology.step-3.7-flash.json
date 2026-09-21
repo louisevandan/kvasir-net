@@ -1,0 +1,1536 @@
+{
+  "id": "step-3.7-flash",
+  "architecture": "step35",
+  "source": "(model file on the agent host)",
+  "n_embd": 4096,
+  "n_layer": 45,
+  "n_expert": 288,
+  "n_expert_used": 8,
+  "leading_dense_block_count": 3,
+  "moe_every_n_layers": 1,
+  "expert_ffn_length": 1280,
+  "shared_expert_ffn_length": 1280,
+  "expert_layers": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44
+  ],
+  "incomplete_expert_layers": [],
+  "bytes_per_expert": 9502720,
+  "expert_tensors": [
+    "ffn_gate_exps",
+    "ffn_up_exps",
+    "ffn_down_exps"
+  ],
+  "expert_slice": {
+    "3": {
+      "ffn_down_exps": {
+        "offset": 1997866144,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 3041526944,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 3901179040,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "4": {
+      "ffn_down_exps": {
+        "offset": 4836609312,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 5880270112,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 6739922208,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "5": {
+      "ffn_down_exps": {
+        "offset": 7711143328,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 8754804128,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 9614456224,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "6": {
+      "ffn_down_exps": {
+        "offset": 10585677344,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 11629338144,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 12488990240,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "7": {
+      "ffn_down_exps": {
+        "offset": 13460211360,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 14503872160,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 15363524256,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "8": {
+      "ffn_down_exps": {
+        "offset": 16298954528,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 17342615328,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 18202267424,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "9": {
+      "ffn_down_exps": {
+        "offset": 19173488544,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 20217149344,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 21076801440,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "10": {
+      "ffn_down_exps": {
+        "offset": 22048022560,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 23091683360,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 23951335456,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "11": {
+      "ffn_down_exps": {
+        "offset": 24922556576,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 25966217376,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 26825869472,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "12": {
+      "ffn_down_exps": {
+        "offset": 27761299744,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 28804960544,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 29664612640,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "13": {
+      "ffn_down_exps": {
+        "offset": 30635833760,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 31679494560,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 32539146656,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "14": {
+      "ffn_down_exps": {
+        "offset": 33510367776,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 34554028576,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 35413680672,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "15": {
+      "ffn_down_exps": {
+        "offset": 36384901792,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 37428562592,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 38288214688,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "16": {
+      "ffn_down_exps": {
+        "offset": 39223644960,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 40267305760,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 41126957856,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "17": {
+      "ffn_down_exps": {
+        "offset": 42098178976,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 43141839776,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 44001491872,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "18": {
+      "ffn_down_exps": {
+        "offset": 44972712992,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 46016373792,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 46876025888,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "19": {
+      "ffn_down_exps": {
+        "offset": 47847247008,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 48890907808,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 49750559904,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "20": {
+      "ffn_down_exps": {
+        "offset": 50685990176,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 51729650976,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 52589303072,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "21": {
+      "ffn_down_exps": {
+        "offset": 53560524192,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 54604184992,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 55463837088,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "22": {
+      "ffn_down_exps": {
+        "offset": 56435058208,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 57478719008,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 58338371104,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "23": {
+      "ffn_down_exps": {
+        "offset": 59309592224,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 60353253024,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 61212905120,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "24": {
+      "ffn_down_exps": {
+        "offset": 62148335392,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 63191996192,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 64051648288,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "25": {
+      "ffn_down_exps": {
+        "offset": 65022869408,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 66066530208,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 66926182304,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "26": {
+      "ffn_down_exps": {
+        "offset": 67897403424,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 68941064224,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 69800716320,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "27": {
+      "ffn_down_exps": {
+        "offset": 70771937440,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 71815598240,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 72675250336,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "28": {
+      "ffn_down_exps": {
+        "offset": 73610680608,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 74654341408,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 75513993504,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "29": {
+      "ffn_down_exps": {
+        "offset": 76485214624,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 77528875424,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 78388527520,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "30": {
+      "ffn_down_exps": {
+        "offset": 79359748640,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 80403409440,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 81263061536,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "31": {
+      "ffn_down_exps": {
+        "offset": 82234282656,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 83277943456,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 84137595552,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "32": {
+      "ffn_down_exps": {
+        "offset": 85073025824,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 86116686624,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 86976338720,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "33": {
+      "ffn_down_exps": {
+        "offset": 87947559840,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 88991220640,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 89850872736,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "34": {
+      "ffn_down_exps": {
+        "offset": 90822093856,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 91865754656,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 92725406752,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "35": {
+      "ffn_down_exps": {
+        "offset": 93696627872,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 94740288672,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 95599940768,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "36": {
+      "ffn_down_exps": {
+        "offset": 96535371040,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 97579031840,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 98438683936,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "37": {
+      "ffn_down_exps": {
+        "offset": 99409905056,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 100453565856,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 101313217952,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "38": {
+      "ffn_down_exps": {
+        "offset": 102284439072,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 103328099872,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 104187751968,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "39": {
+      "ffn_down_exps": {
+        "offset": 105158973088,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 106202633888,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 107062285984,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "40": {
+      "ffn_down_exps": {
+        "offset": 107997716256,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 109041377056,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 109901029152,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "41": {
+      "ffn_down_exps": {
+        "offset": 110872250272,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 111915911072,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 112775563168,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "42": {
+      "ffn_down_exps": {
+        "offset": 113746784288,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 114790445088,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 115650097184,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "43": {
+      "ffn_down_exps": {
+        "offset": 116621318304,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 117664979104,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 118524631200,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    },
+    "44": {
+      "ffn_down_exps": {
+        "offset": 119460061472,
+        "per_expert": 3604480,
+        "type": 13,
+        "type_name": "Q5_K",
+        "dims": [
+          1280,
+          4096,
+          288
+        ]
+      },
+      "ffn_gate_exps": {
+        "offset": 120503722272,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      },
+      "ffn_up_exps": {
+        "offset": 121363374368,
+        "per_expert": 2949120,
+        "type": 12,
+        "type_name": "Q4_K",
+        "dims": [
+          4096,
+          1280,
+          288
+        ]
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 {
   "ingress_agent": "tcp://127.0.0.1:42011",
-  "load_generation": 1789893888650,
+  "load_generation": 1790008369145,
   "model": {
     "id": "step-3.7-flash",
     "name": "Step-3.7-Flash (428B MoE)",
@@ -9,6 +9,51 @@
     "n_embd": 4096,
     "n_layer": 45,
     "n_expert": 288,
+    "expert_layers": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "bytes_per_expert": 9502720,
     "prompt_format": "chatml",
     "reasoning": true
   },
@@ -16,10 +61,10 @@
     {
       "agent": "tcp://127.0.0.1:42011",
       "node": "step37-s0",
-      "generation": 1789893888650,
+      "generation": 1790008369145,
       "binary": "/home/banya/p4-native-build/hip/p4_staged_server",
       "endpoint": "127.0.0.1:42100",
-      "plan": "--model \"/home/banya/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf\" --memory-topology discrete --layer-begin 0 --layer-end 23 --kv-layer-begin 0 --kv-layer-end 23 --n-seq-max 8 --spec-type none --kv-unified --batch-size 128 --ubatch-size 32 --ctx-size 32768 --n-gpu-layers 45 --device ROCm0 --flash-attn off --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44)\\..*=CPU\"",
+      "plan": "--model \"/home/banya/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf\" --memory-topology discrete --layer-begin 0 --layer-end 15 --kv-layer-begin 0 --kv-layer-end 15 --n-seq-max 8 --spec-type none --kv-unified --batch-size 128 --ubatch-size 32 --ctx-size 32768 --n-gpu-layers 45 --device ROCm0 --flash-attn off --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44)\\..*=CPU\"",
       "args": [],
       "environment": [
         [
@@ -80,10 +125,10 @@
     {
       "agent": "tcp://127.0.0.1:42011",
       "node": "step37-s1",
-      "generation": 1789893888650,
+      "generation": 1790008369145,
       "binary": "/home/banya/p4-native-build/hip/p4_staged_server",
       "endpoint": "127.0.0.1:42101",
-      "plan": "--model \"/home/banya/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf\" --memory-topology discrete --layer-begin 23 --layer-end 45 --kv-layer-begin 23 --kv-layer-end 45 --n-seq-max 8 --spec-type none --kv-unified --batch-size 128 --ubatch-size 32 --ctx-size 32768 --n-gpu-layers 22 --device ROCm0 --flash-attn off --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22)\\..*=CPU\"",
+      "plan": "--model \"/home/banya/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf\" --memory-topology discrete --layer-begin 15 --layer-end 30 --kv-layer-begin 15 --kv-layer-end 30 --n-seq-max 8 --spec-type none --kv-unified --batch-size 128 --ubatch-size 32 --ctx-size 32768 --n-gpu-layers 30 --device ROCm0 --flash-attn off --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44)\\..*=CPU\"",
       "args": [],
       "environment": [
         [
@@ -97,6 +142,70 @@
         [
           "CUDA_VISIBLE_DEVICES",
           "2"
+        ],
+        [
+          "OMP_WAIT_POLICY",
+          "PASSIVE"
+        ],
+        [
+          "GOMP_SPINCOUNT",
+          "0"
+        ],
+        [
+          "P4_STAGED_TRACE_HELLO",
+          "1"
+        ],
+        [
+          "P4_STAGED_TRACE_STEP",
+          "1"
+        ],
+        [
+          "P4_STAGED_TRACE_HOP",
+          "1"
+        ]
+      ],
+      "n_batch": 128,
+      "n_ubatch": 32,
+      "context_size": 4096,
+      "total_context_size": 32768,
+      "sequence_capacity": 8,
+      "resource_profile": {
+        "version": 1,
+        "max_requests": 8,
+        "max_request_retained_bytes": 16777216,
+        "max_input_tokens": 32768,
+        "max_request_bytes": 2097152,
+        "max_output_tokens_per_request": 1024,
+        "max_output_tokens": 8192,
+        "max_physical_result_bytes": 137935244,
+        "max_completion_payload_bytes": 201326592,
+        "max_completion_retained_bytes": 201326592,
+        "max_edge_retained_bytes": 201326592,
+        "max_receipt_retained_bytes": 1048576
+      },
+      "ready_timeout_ms": 1800000,
+      "io_timeout_ms": 120000
+    },
+    {
+      "agent": "tcp://127.0.0.1:42011",
+      "node": "step37-s2",
+      "generation": 1790008369145,
+      "binary": "/home/banya/p4-native-build/hip/p4_staged_server",
+      "endpoint": "127.0.0.1:42102",
+      "plan": "--model \"/home/banya/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf\" --memory-topology discrete --layer-begin 30 --layer-end 45 --kv-layer-begin 30 --kv-layer-end 45 --n-seq-max 8 --spec-type none --kv-unified --batch-size 128 --ubatch-size 32 --ctx-size 32768 --n-gpu-layers 15 --device ROCm0 --flash-attn off --no-mmap --cache-type-k q8_0 --cache-type-v f16 --override-tensor \"blk\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29)\\..*=CPU\"",
+      "args": [],
+      "environment": [
+        [
+          "PATH",
+          "/opt/rocm/bin:/usr/local/bin:/usr/bin:/bin"
+        ],
+        [
+          "HIP_VISIBLE_DEVICES",
+          "4"
+        ],
+        [
+          "CUDA_VISIBLE_DEVICES",
+          "4"
         ],
         [
           "OMP_WAIT_POLICY",
