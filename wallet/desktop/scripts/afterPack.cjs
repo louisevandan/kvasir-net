@@ -78,12 +78,20 @@ module.exports = async function afterPack(context) {
   };
   uncache();
 
-  const top = new Set(
+  // asar.listPackage returns paths with the HOST separator: "/node_modules/x"
+  // on macOS/Linux but "\node_modules\x" on Windows. Matching the POSIX form
+  // only meant `top` came back empty on Windows, so every package looked
+  // missing — and the post-repack verification failed the same way, throwing
+  // even though the injection had actually worked (the packages were in the
+  // asar). Normalise separators before matching.
+  const topLevelPackages = () =>
     asar
       .listPackage(asarPath)
+      .map((p) => p.split(path.sep).join('/'))
       .filter((p) => /^\/node_modules\/(@[^/]+\/)?[^/]+$/.test(p))
-      .map((p) => p.replace(/^\/node_modules\//, '')),
-  );
+      .map((p) => p.replace(/^\/node_modules\//, ''));
+
+  const top = new Set(topLevelPackages());
 
   const missing = REQUIRE_TOP_LEVEL.filter((pkg) => {
     if (top.has(pkg)) return false;
@@ -114,10 +122,7 @@ module.exports = async function afterPack(context) {
   fs.rmSync(work, { recursive: true, force: true });
 
   uncache(); // repacked asar replaced the cached one at the same path
-  const after = asar
-    .listPackage(asarPath)
-    .filter((p) => /^\/node_modules\/(@[^/]+\/)?[^/]+$/.test(p))
-    .map((p) => p.replace(/^\/node_modules\//, ''));
+  const after = topLevelPackages();
   const still = REQUIRE_TOP_LEVEL.filter((p) => !after.includes(p));
   if (still.length) throw new Error(`[afterPack] injection failed, still missing: ${still.join(', ')}`);
   console.log('  [afterPack] app.asar dependency injection complete');

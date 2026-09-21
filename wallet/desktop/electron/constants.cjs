@@ -13,7 +13,12 @@ module.exports = {
   treasuryOwner: '8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF',
   // Genesis gateway — served publicly via Cloudflare Tunnel (HTTPS, no port-forward).
   // Clients still auto-adopt /api/config.publicUrl if it ever changes.
-  stakingServiceUrl: 'https://kvr.prototypebench.org',
+  // Must match wallet/shared-spec/wallet-constants.json (iOS/Android read that
+  // file directly; this file is the desktop copy). The retired
+  // kvr.prototypebench.org host no longer resolves — while it was still listed
+  // here, every gateway-backed screen came up blank: no model list, no credit
+  // balance, no API-key minting.
+  stakingServiceUrl: 'https://gate.kvasir-ai.net',
   defaultCluster: 'devnet',
   // A p4 node is reached by somebody dialling it, and a machine behind NAT has
   // no address to dial. The relay holds one on its behalf; the app keeps a
